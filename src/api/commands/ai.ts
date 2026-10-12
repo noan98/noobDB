@@ -5,7 +5,7 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import { aiStreamChannels } from "../streamChannels";
-import type { AiConnectionTestResult } from "../tauri";
+import type { AiConnectionTestResult, AiUsageRecord } from "../tauri";
 
 export const aiCommands = {
   /**
@@ -25,6 +25,15 @@ export const aiCommands = {
     invoke<AiConnectionTestResult>("test_ai_connection", { settings }).then((r) =>
       parseResponse(schemas.aiConnectionTestResult, r, "test_ai_connection"),
     ),
+
+  /** AI 使用量の台帳 (日 × タスク × モデルのトークン数、#1540)。数値のみ。 */
+  getAiUsageHistory: () =>
+    invoke<AiUsageRecord[]>("get_ai_usage_history").then((r) =>
+      parseResponse(schemas.aiUsageRecordArray, r, "get_ai_usage_history"),
+    ),
+
+  /** AI 使用量の台帳を空にする。 */
+  clearAiUsageHistory: () => invoke<void>("clear_ai_usage_history"),
 
   /**
    * AI へのストリーミング要求 (#690)。モデル / エフォートは呼び出し側から渡さず、

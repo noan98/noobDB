@@ -33,6 +33,16 @@
     "kind": "retrying",
     "maxAttempts": 3
   },
+  "aiUsageRecord": {
+    "cacheCreationInputTokens": 50,
+    "cacheReadInputTokens": 800,
+    "calls": 3,
+    "day": "2026-10-12",
+    "inputTokens": 1200,
+    "model": "claude-opus-5-5",
+    "outputTokens": 340,
+    "task": "nl2sql"
+  },
   "alterTableContext": {
     "columns": [
       {

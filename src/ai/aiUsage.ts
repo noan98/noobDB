@@ -1,6 +1,6 @@
 // AI の使用量表示と今月の累計 (#1474)。完了メッセージ (Channel の `done`) の整形と、
 // JST 基準の月次累計の加算・月替わり判定を純関数で持つ。保存は `aiUsageStore.ts`。
-// 料金の概算は扱わない (単価は変わるため。トークン数だけを見せる)。
+// 料金の概算はここでは扱わない (日次・タスク別と合わせて `aiUsageCost.ts` / 台帳 #1540 が担う)。
 
 import { AI_MODEL_LABELS, isAiModelId } from "./aiModels";
 

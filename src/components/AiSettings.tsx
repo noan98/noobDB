@@ -32,6 +32,7 @@ import {
   useSettings,
 } from "../settings";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { AiUsageHistory } from "./AiUsageHistory";
 import { AiUsageNote, cacheUsageSuffix } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -585,6 +586,14 @@ export function AiSettings() {
         </Callout>
       )}
       {usageSection}
+      <AiUsageHistory
+        taskLabel={(task) =>
+          (AI_TASK_KINDS as readonly string[]).includes(task)
+            ? t(TASK_LABEL[task as AiTaskKind])
+            : task
+        }
+        reloadKey={`${sample.kind}:${testResult ? 1 : 0}`}
+      />
       {dialog}
     </Flex>
   );

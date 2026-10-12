@@ -3130,6 +3130,18 @@ export interface AiConnectionTestResult {
   elapsedMs: number;
 }
 
+/** 使用量台帳の 1 行 (日 JST × タスク種別 × モデル、#1540)。 */
+export interface AiUsageRecord {
+  day: string;
+  task: string;
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+}
+
 export interface AiDeltaEvent {
   streamId: string;
   text: string;

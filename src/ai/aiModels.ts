@@ -25,6 +25,26 @@ export const AI_MODEL_LABELS: Record<AiModelId, string> = {
   "claude-fable-5-1": "Claude Fable 5.1",
 };
 
+/**
+ * 概算コストの単価表 (USD / 100 万トークン、#1540)。**概算用の手書き定数**で、公式の料金改定には
+ * 追随しない (画面では「概算」と明示する)。Rust 側はトークン数だけを記録し単価を持たないので、
+ * 単価の定義はここだけ (過去の記録を書き換えずに単価表だけ更新できる)。キャッシュ書き込みは
+ * 入力単価の 1.25 倍 (5 分キャッシュ)。長いプロンプト向けの割増料金帯は考慮しない。
+ */
+export interface AiModelPrice {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export const AI_MODEL_PRICES: Record<AiModelId, AiModelPrice> = {
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+};
+
 export const AI_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type AiEffort = (typeof AI_EFFORTS)[number];
 

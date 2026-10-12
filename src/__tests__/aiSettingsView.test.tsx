@@ -20,6 +20,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       setAiApiKey: (...a: unknown[]) => setAiApiKey(...a),
       hasAiApiKey: () => hasAiApiKey(),
+      getAiUsageHistory: () => Promise.resolve([]),
       testAiConnection: (...a: unknown[]) => testAiConnection(...a),
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       cancelStream: vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 }),

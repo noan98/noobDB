@@ -318,7 +318,10 @@ fn combine_fixes(driver: DriverKind, table: &str, actions: &[FixAction]) -> Opti
                     .join(", ");
                 std_lines.push(format!("DROP INDEX {names};"));
                 for d in &drops {
-                    online_lines.push(format!("DROP INDEX CONCURRENTLY {};", quote_ident(driver, d)));
+                    online_lines.push(format!(
+                        "DROP INDEX CONCURRENTLY {};",
+                        quote_ident(driver, d)
+                    ));
                 }
             }
             for cols in &creates {
@@ -331,7 +334,10 @@ fn combine_fixes(driver: DriverKind, table: &str, actions: &[FixAction]) -> Opti
         }
         DriverKind::Sqlite => {
             // SQLite の DROP INDEX は 1 本ずつ。オンライン版は無い。
-            let mut lines: Vec<String> = drops.iter().map(|d| drop_index_ddl(driver, table, d)).collect();
+            let mut lines: Vec<String> = drops
+                .iter()
+                .map(|d| drop_index_ddl(driver, table, d))
+                .collect();
             lines.extend(creates.iter().map(|c| create_index_ddl(driver, table, c)));
             (lines.join("\n"), None)
         }
@@ -1599,7 +1605,11 @@ mod tests {
     fn postgres_plan_joins_several_drops_into_one_statement_but_not_online() {
         let t = table(
             "t",
-            vec![col("id", "int", true), col("a", "int", false), col("b", "int", false)],
+            vec![
+                col("id", "int", true),
+                col("a", "int", false),
+                col("b", "int", false),
+            ],
             vec![
                 idx("PRIMARY", &["id"], true, true),
                 idx("i_a", &["a"], false, false),
@@ -1648,7 +1658,10 @@ mod tests {
         let t2 = table(
             "zeta",
             vec![col("id", "int", true), col("x", "int", false)],
-            vec![idx("PRIMARY", &["id"], true, true), idx("i_x", &["x"], false, false)],
+            vec![
+                idx("PRIMARY", &["id"], true, true),
+                idx("i_x", &["x"], false, false),
+            ],
         );
         let mut i = messy_orders();
         i.tables = vec![t1, t2];
@@ -1668,8 +1681,12 @@ mod tests {
         let actions = vec![
             FixAction::DropIndex { name: "a".into() },
             FixAction::DropIndex { name: "A".into() },
-            FixAction::CreateIndex { columns: vec!["x".into()] },
-            FixAction::CreateIndex { columns: vec!["X".into()] },
+            FixAction::CreateIndex {
+                columns: vec!["x".into()],
+            },
+            FixAction::CreateIndex {
+                columns: vec!["X".into()],
+            },
         ];
         let plan = combine_fixes(DriverKind::Mysql, "t", &actions);
         assert_eq!(plan.map(|p| p.change_count), Some(2));
@@ -1684,8 +1701,12 @@ mod tests {
     #[test]
     fn plan_quotes_hostile_identifiers() {
         let actions = vec![
-            FixAction::DropIndex { name: "we`ird".into() },
-            FixAction::CreateIndex { columns: vec!["c`ol".into()] },
+            FixAction::DropIndex {
+                name: "we`ird".into(),
+            },
+            FixAction::CreateIndex {
+                columns: vec!["c`ol".into()],
+            },
         ];
         let plan = combine_fixes(DriverKind::Mysql, "ta`ble", &actions).map(|p| p.ddl);
         let ddl = plan.unwrap_or_default();

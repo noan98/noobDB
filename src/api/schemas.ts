@@ -1282,6 +1282,20 @@ export const aiConnectionTestResult = z.object({
   elapsedMs: z.number(),
 });
 
+/** `get_ai_usage_history` の要素 (`ai/usage.rs::AiUsageRecord`、#1540)。数値のみで内容は含まない。 */
+export const aiUsageRecord = z.object({
+  day: z.string(),
+  task: z.string(),
+  model: z.string(),
+  calls: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheCreationInputTokens: z.number(),
+});
+
+export const aiUsageRecordArray = z.array(aiUsageRecord);
+
 // `run_ai_request` は結果を Tauri Channel の `kind` タグ付きメッセージで送る (#1534)。
 // Channel は 1 要求にスコープされるので `streamId` は載らない。
 
