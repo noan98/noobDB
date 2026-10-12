@@ -400,6 +400,34 @@ impl SshTunnel {
     }
 }
 
+impl SshTunnel {
+    /// トンネルがまだ使える状態か (#1537)。外部に見えるのは `local_port` だけだったため、
+    /// SSH セッションが落ちても accept ループは待ち受けを続け、次のクエリが失敗して
+    /// 初めて切断に気付けた。ここでは次の 3 点を**ネットワークに触れず**に調べる:
+    ///
+    /// - SSH セッションの制御チャネルが閉じていないか (`Handle::is_closed`。サーバからの
+    ///   切断・keepalive 失敗 (30 秒間隔) ・ネットワーク断で run ループが終わると true)。
+    /// - accept ループのタスクが終了していないか。
+    /// - 多段トンネルなら踏み台側の `_upstream` も同様に生きているか (踏み台が落ちると
+    ///   その上に載った本ホップのセッションも遠からず落ちるが、先に検知できる)。
+    pub fn is_alive(&self) -> bool {
+        tunnel_state_alive(
+            self._session.is_closed(),
+            self.accept_task.as_ref().map_or(true, |h| h.is_finished()),
+            self._upstream.as_ref().map(|u| u.is_alive()),
+        )
+    }
+}
+
+/// `is_alive` の判定本体 (純関数。ソケットなしでテストできる)。
+fn tunnel_state_alive(
+    session_closed: bool,
+    accept_finished: bool,
+    upstream_alive: Option<bool>,
+) -> bool {
+    !session_closed && !accept_finished && upstream_alive.unwrap_or(true)
+}
+
 impl Drop for SshTunnel {
     fn drop(&mut self) {
         if let Some(h) = self.accept_task.take() {
@@ -448,6 +476,17 @@ mod tests {
         }
         assert_eq!(backoff, MAX_ACCEPT_BACKOFF);
         assert_eq!(next_accept_backoff(backoff), MAX_ACCEPT_BACKOFF);
+    }
+
+    // #1537: トンネル生存判定は「セッション閉鎖・accept ループ終了・踏み台の死」のどれか
+    // 一つでも当てはまれば死んでいる扱い。
+    #[test]
+    fn tunnel_state_alive_requires_every_part_alive() {
+        assert!(tunnel_state_alive(false, false, None));
+        assert!(tunnel_state_alive(false, false, Some(true)));
+        assert!(!tunnel_state_alive(true, false, None));
+        assert!(!tunnel_state_alive(false, true, None));
+        assert!(!tunnel_state_alive(false, false, Some(false)));
     }
 
     // #708: エラーメッセージにどの段 (bastion/jump か target か) の失敗かが

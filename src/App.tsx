@@ -340,6 +340,7 @@ import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
   shouldAutoReconnect,
+  TUNNEL_WATCH_INTERVAL_MS,
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
@@ -482,7 +483,12 @@ import {
   watchedIds,
   type PlanWatchState,
 } from "./planWatch";
-import { buildDriftDetail, migrateLegacySchemaDrift } from "./schemaDrift";
+import {
+  buildDriftDetail,
+  createDdlCaptureCoalescer,
+  isDriftTrackedDatabase,
+  migrateLegacySchemaDrift,
+} from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
 import { Tooltip } from "./components/Tooltip";
@@ -2857,6 +2863,27 @@ export default function App() {
     };
   }, [selectedProfile?.id]);
   const schemaDriftInFlightRef = useRef<Set<string>>(new Set());
+  // DDL 成功時の自動取得 (#1537): 連続する DDL を `createDdlCaptureCoalescer` でまとめ、
+  // 静かになった時点で 1 回だけ取得する。flush 時点のセッションを引くため ref に持つ。
+  const ddlCaptureTargetRef = useRef<{ sessionId: string; profile: ConnectionProfile } | null>(null);
+  const ddlCoalescerRef = useRef<ReturnType<typeof createDdlCaptureCoalescer> | null>(null);
+  const captureSchemaSnapshotRef = useRef<
+    (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => Promise<void>
+  >(async () => {});
+  if (ddlCoalescerRef.current === null) {
+    ddlCoalescerRef.current = createDdlCaptureCoalescer({
+      onFlush: (key, triggerSql) => {
+        const target = ddlCaptureTargetRef.current;
+        // 取得までに接続やプロファイルが変わっていたら捨てる (別接続のスキーマを混ぜない)。
+        if (!target || target.profile.id !== key) return;
+        void captureSchemaSnapshotRef.current(target.sessionId, target.profile, { triggerSql });
+      },
+    });
+  }
+  useEffect(() => {
+    const coalescer = ddlCoalescerRef.current;
+    return () => coalescer?.dispose();
+  }, []);
 
   /**
    * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を Rust 側で
@@ -2865,18 +2892,26 @@ export default function App() {
    * 変化があれば控えめなトーストで要約を知らせる。読み取り操作のみでクエリ履歴は
    * 汚さない。デフォルトデータベースが無いプロファイル (SQLite の空パス等) では静かに
    * 何もしない。
+   *
+   * `opts.triggerSql` は DDL の成功をきっかけにした取得 (#1537) のときの実行 SQL で、世代に
+   * 紐づけて保存する。この場合の取得失敗は DDL 自体の成否と無関係なのでトーストを出さない。
    */
   const captureSchemaSnapshot = useCallback(
-    async (sid: string, profile: ConnectionProfile) => {
+    async (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => {
       const database = profile.database;
       if (!database) return;
-      if (schemaDriftInFlightRef.current.has(profile.id)) return;
+      const triggerSql = opts?.triggerSql ?? null;
+      if (schemaDriftInFlightRef.current.has(profile.id)) {
+        // 取得中に走った DDL は取りこぼさないよう、静かになってからもう一度流す。
+        if (triggerSql) ddlCoalescerRef.current?.push(profile.id, triggerSql);
+        return;
+      }
       schemaDriftInFlightRef.current.add(profile.id);
       setSchemaDriftCapturing(true);
       try {
         // 旧 localStorage 世代があれば、前世代として比較に使えるよう先に取り込む。
         await migrateLegacySchemaDrift(profile.id, api.schemaDriftImportLegacy);
-        const res = await api.schemaDriftCapture(sid, profile.id, database);
+        const res = await api.schemaDriftCapture(sid, profile.id, database, triggerSql);
         if (!res.added) return;
         if (activeProfileIdRef.current === profile.id) setSchemaDrift(res.generations);
         if (res.summary && res.summary.tables.length > 0) {
@@ -2887,10 +2922,16 @@ export default function App() {
             severity: "warning",
             // アクティビティで行を展開すると、テーブルごとの列/インデックスの増減を表で見られる。
             detail: { kind: "schemaDrift", summary: res.summary },
+            // タイムラインから、変化したテーブルの構造 / データを 1 クリックで開ける (#1537)。
+            action: {
+              label: translate("schemaDriftToastOpen"),
+              onAction: () => setSchemaDriftOpen(true),
+            },
           });
         }
       } catch (e) {
-        toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
+        if (triggerSql) console.warn("schema drift capture after DDL failed", e);
+        else toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
       } finally {
         schemaDriftInFlightRef.current.delete(profile.id);
         setSchemaDriftCapturing(false);
@@ -2898,6 +2939,19 @@ export default function App() {
     },
     [toast],
   );
+  captureSchemaSnapshotRef.current = captureSchemaSnapshot;
+
+  /**
+   * DDL が成功したことをスキーマドリフトに知らせる (#1537)。設定が有効で、実行先が
+   * プロファイルの既定データベースのときだけ、間引き付きで世代の自動取得を予約する。
+   * 手動キャプチャの押し忘れでタイムラインに抜けができるのを防ぐ。
+   */
+  const noteSchemaDdl = useCallback((sql: string, database: string | null | undefined) => {
+    const target = ddlCaptureTargetRef.current;
+    if (!target || !getSettings().schemaDriftOnDdl) return;
+    if (!isDriftTrackedDatabase(database, target.profile.database)) return;
+    ddlCoalescerRef.current?.push(target.profile.id, sql);
+  }, []);
 
   const handleOpenSchemaDrift = useCallback(() => setSchemaDriftOpen(true), []);
 
@@ -4127,6 +4181,8 @@ export default function App() {
         // バックエンドが実行後に返した判定値を使う (JS でマスクし直さない、#1256)。
         if (schemaMayChange) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
+          // DDL 成功時のスキーマドリフト自動取得 (#1537)。
+          noteSchemaDdl(sql, tab?.database);
         }
         finalize();
         // Auto-refresh ticks fire this same onDone every cadence — notifying on
@@ -4274,6 +4330,7 @@ export default function App() {
     cancelStreamForTab,
     releaseResultHandle,
     invalidateSchemaCache,
+    noteSchemaDdl,
     notifyQueryOutcome,
     pushQueryHistory,
     settings.flightRecorderEnabled,
@@ -4309,6 +4366,7 @@ export default function App() {
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  ddlCaptureTargetRef.current = sessionId && selectedProfile ? { sessionId, profile: selectedProfile } : null;
   // 接続ヘルスチェックの同時実行を防ぐフラグ。
   const healthCheckBusyRef = useRef(false);
 
@@ -6572,13 +6630,14 @@ export default function App() {
     try {
       await api.runQuery(sessionId, sql, database);
       invalidateSchemaCache(database);
+      noteSchemaDdl(sql, database);
       connectionListRef.current?.refreshSchema();
       return true;
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
       return false;
     }
-  }, [sessionId, invalidateSchemaCache, toast]);
+  }, [sessionId, invalidateSchemaCache, noteSchemaDdl, toast]);
 
   const handleCopyTableName = useCallback(async (table: string) => {
     if (await copyToClipboard(table)) {
@@ -6686,6 +6745,7 @@ export default function App() {
       try {
         await api.runQueryTransaction(sessionId, statements, target.database);
         invalidateSchemaCache(target.database);
+        noteSchemaDdl(statements.join(";\n"), target.database);
         connectionListRef.current?.refreshSchema();
         toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
       } catch (e) {
@@ -6710,7 +6770,7 @@ export default function App() {
         );
       }
     })();
-  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
+  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast]);
 
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
@@ -6762,6 +6822,7 @@ export default function App() {
     try {
       await api.runQueryTransaction(sessionId, sqls, target.database);
       invalidateSchemaCache(target.database);
+      noteSchemaDdl(sqls.join(";\n"), target.database);
       connectionListRef.current?.refreshSchema();
       toast.success(translate("alterTableSuccess", { table: target.table }));
       setAlterTableTarget(null);
@@ -6773,7 +6834,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
-  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, tabsRef]);
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, noteSchemaDdl, tabsRef]);
 
   // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
   // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
@@ -7349,6 +7410,8 @@ export default function App() {
     }
     // 失敗しても念のためツリーは読み直す。
     invalidateSchemaCache(database);
+    // 一部だけ落ちた可能性もあるので失敗時も取得する (内容が同じなら世代は増えない)。
+    noteSchemaDdl(statements.join(";\n"), database);
     connectionListRef.current?.refreshSchema();
     let dropped: string[] = failed ? [] : tables;
     if (failed) {
@@ -7371,7 +7434,7 @@ export default function App() {
     if (!failed) {
       toast.success(translate("batchDropSuccess", { count: dropped.length }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
+  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, noteSchemaDdl, toast, tabsRef]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -8235,6 +8298,42 @@ export default function App() {
     window.addEventListener("focus", onFocusEvent);
     return () => window.removeEventListener("focus", onFocusEvent);
   }, [sessionId, selectedProfile, connectingId]);
+
+  // SSH トンネルの切断を先回りで検知する (#1537)。トンネルの SSH セッションが落ちても
+  // ローカルの待ち受けポートは残るので、従来は次のクエリが失敗して初めて切断に気付いた。
+  // DB には触れない軽量チェック (`session_tunnel_alive`) を定期的に呼び、閉じていたら
+  // 統一ハンドラ (自動再接続 or 手動再接続への誘導, #712) へ倒す。ウィンドウが隠れている間は
+  // 叩かない (フォーカス復帰時の `pingSession` が拾う)。
+  useEffect(() => {
+    if (!sessionId || !selectedProfile?.ssh) return;
+    const sid = sessionId;
+    const profileName = selectedProfile.name;
+    const check = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (healthCheckBusyRef.current || connectingId || reconnectingRef.current) return;
+      if (connectionStatusRef.current !== "connected") return;
+      healthCheckBusyRef.current = true;
+      try {
+        const alive = await api.sessionTunnelAlive(sid);
+        if (alive === false && sessionIdRef.current === sid && !reconnectingRef.current) {
+          toast.notify({
+            message: translate("toastSshTunnelLost", { name: profileName }),
+            tone: "info",
+            severity: "warning",
+          });
+          await handleConnectionLostRef.current();
+        }
+      } catch {
+        // セッションが既に消えている等は無視 (UI 側で切断扱い)。
+      } finally {
+        healthCheckBusyRef.current = false;
+      }
+    };
+    const handle = setInterval(() => {
+      void check();
+    }, TUNNEL_WATCH_INTERVAL_MS);
+    return () => clearInterval(handle);
+  }, [sessionId, selectedProfile, connectingId, toast]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
@@ -10620,6 +10719,8 @@ export default function App() {
             capturing={schemaDriftCapturing}
             onCapture={handleCaptureSchemaDrift}
             onClose={() => setSchemaDriftOpen(false)}
+            onOpenStructure={sessionId ? handleOpenStructure : undefined}
+            onOpenData={sessionId ? handleOpenTable : undefined}
           />
         )}
       </AnimatePresence>

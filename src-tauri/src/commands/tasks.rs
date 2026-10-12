@@ -14,8 +14,8 @@ use crate::error::{AppError, Result};
 use crate::profiles;
 use crate::state::{AppState, StreamHandle, StreamKind};
 use crate::tasks::{
-    executor, runs, schedule, scheduler, store, AssertionRunRecord, SchedulerSettings, TaskAction,
-    TaskDefinition, TaskRun, TaskSchedule,
+    executor, runs, schedule, scheduler, store, AssertionRunRecord, ConnectRetry,
+    SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
 };
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +29,9 @@ pub struct SaveTaskRequest {
     pub schedule: TaskSchedule,
     #[serde(default = "default_task_enabled")]
     pub enabled: bool,
+    /// 接続失敗時の自動リトライ (#1537)。省略時は再試行なし。保存時に範囲へ丸める。
+    #[serde(default)]
+    pub connect_retry: ConnectRetry,
 }
 
 fn default_task_enabled() -> bool {
@@ -76,6 +79,10 @@ fn validate_action(action: &TaskAction) -> Result<()> {
         // `db::assertions::build_sql` が生成する (生成時に読み取り専用を検証済み)。
         // ここで検証するものは無い。
         TaskAction::RunAssertions { .. } => {}
+        // タイムラプス / 実行計画ウォッチは保存済みのウォッチ登録を読むだけ (#1537)。
+        // 実行する SQL は取得側が組み立てる読み取り専用の SELECT / EXPLAIN で、
+        // タスク定義にユーザの SQL は載らない。
+        TaskAction::TimelapseCapture { .. } | TaskAction::RefreshPlanWatch { .. } => {}
     }
     Ok(())
 }
@@ -116,6 +123,7 @@ fn apply_save(
         next_run_at,
         last_run_at: existing.as_ref().and_then(|t| t.last_run_at.clone()),
         last_status: existing.as_ref().and_then(|t| t.last_status.clone()),
+        connect_retry: req.connect_retry.normalized(),
     };
     match tasks.iter_mut().find(|t| t.id == id) {
         Some(slot) => *slot = task.clone(),
@@ -330,10 +338,31 @@ mod apply_save_tests {
             action: TaskAction::RunAssertions {
                 database: None,
                 assertion_ids: vec![],
+                notify_only_on_increase: false,
             },
             schedule: TaskSchedule::Interval { minutes: 5 },
             enabled: true,
+            connect_retry: ConnectRetry::default(),
         }
+    }
+
+    #[test]
+    fn save_clamps_connect_retry_into_range() {
+        let mut r = req(None);
+        r.connect_retry = ConnectRetry {
+            max_retries: 99,
+            interval_secs: 1,
+        };
+        let mut tasks = Vec::new();
+        let saved = apply_save(&mut tasks, None, "new1", &r, None, Utc::now()).unwrap();
+        assert_eq!(
+            saved.connect_retry.max_retries,
+            crate::tasks::MAX_CONNECT_RETRIES
+        );
+        assert_eq!(
+            saved.connect_retry.interval_secs,
+            crate::tasks::MIN_RETRY_INTERVAL_SECS
+        );
     }
 
     #[test]

@@ -59,6 +59,89 @@ export function buildDriftDetail(summary: SchemaDriftSummary, maxTables = 3): st
   return more > 0 ? `${shown.join(", ")}, …` : shown.join(", ");
 }
 
+// --- DDL 成功時の自動取得 (#1537) ---
+
+/** 最後の DDL からこの時間 (ms) 静かになったら 1 回だけ取得する。連続する DDL をまとめる。 */
+export const DDL_CAPTURE_QUIET_MS = 3_000;
+/** DDL が途切れず続いても、最初の DDL からこの時間 (ms) を超えて待たずに取得する。 */
+export const DDL_CAPTURE_MAX_WAIT_MS = 15_000;
+/** 1 回の取得に紐づける SQL 文の最大数 (超過分は捨てる)。 */
+export const DDL_CAPTURE_MAX_STATEMENTS = 20;
+
+/**
+ * まとめた DDL 文を、世代に紐づける 1 つの文字列にする (純粋)。空白だけの文は捨て、
+ * 先頭 `DDL_CAPTURE_MAX_STATEMENTS` 文だけを改行で連結する。何も無ければ null。
+ */
+export function joinTriggerSql(statements: readonly string[]): string | null {
+  const kept = statements
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .slice(0, DDL_CAPTURE_MAX_STATEMENTS);
+  return kept.length > 0 ? kept.join("\n") : null;
+}
+
+/**
+ * DDL 成功をきっかけにしたスキーマ取得を間引く (連続実行時に取得が走り続けて重くならない
+ * ようにする)。同じキー (プロファイル + データベース) の DDL を `quietMs` の間まとめ、
+ * 静かになった時点 (または最初の DDL から `maxWaitMs` 経過した時点) で `onFlush` を 1 回だけ
+ * 呼ぶ。タイマーは注入できるのでテストでフェイクタイマーを使える。
+ */
+export function createDdlCaptureCoalescer(opts: {
+  onFlush: (key: string, triggerSql: string | null) => void;
+  quietMs?: number;
+  maxWaitMs?: number;
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  now?: () => number;
+}): { push: (key: string, sql: string) => void; dispose: () => void } {
+  const quietMs = opts.quietMs ?? DDL_CAPTURE_QUIET_MS;
+  const maxWaitMs = opts.maxWaitMs ?? DDL_CAPTURE_MAX_WAIT_MS;
+  const setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
+  const now = opts.now ?? (() => Date.now());
+  const pending = new Map<string, { statements: string[]; firstAt: number; timer: unknown }>();
+
+  const flush = (key: string) => {
+    const entry = pending.get(key);
+    if (!entry) return;
+    pending.delete(key);
+    clearTimer(entry.timer);
+    opts.onFlush(key, joinTriggerSql(entry.statements));
+  };
+
+  return {
+    push(key, sql) {
+      const t = now();
+      const entry = pending.get(key);
+      if (entry) clearTimer(entry.timer);
+      const firstAt = entry?.firstAt ?? t;
+      const statements = entry?.statements ?? [];
+      // 上限を超えた分は捨てる (取得自体は走る)。
+      if (statements.length < DDL_CAPTURE_MAX_STATEMENTS) statements.push(sql);
+      const wait = Math.max(0, Math.min(quietMs, firstAt + maxWaitMs - t));
+      pending.set(key, { statements, firstAt, timer: setTimer(() => flush(key), wait) });
+    },
+    dispose() {
+      for (const entry of pending.values()) clearTimer(entry.timer);
+      pending.clear();
+    },
+  };
+}
+
+/**
+ * DDL が走ったデータベースが、スキーマドリフトの記録対象 (プロファイルの既定データベース)
+ * かを判定する (純粋)。タイムラインはプロファイルごとに既定データベースの世代を積むので、
+ * 別のデータベースへの DDL を混ぜると前世代との比較が意味を失う。タブがデータベースを
+ * 固定していない (null/空) ときは既定データベースへの実行なので対象。
+ */
+export function isDriftTrackedDatabase(
+  ranOn: string | null | undefined,
+  profileDatabase: string | null | undefined,
+): boolean {
+  if (!profileDatabase) return false;
+  return !ranOn || ranOn === profileDatabase;
+}
+
 // --- 旧 localStorage 世代の移行 (#1260) ---
 
 function isDriver(v: unknown): v is DriverKind {

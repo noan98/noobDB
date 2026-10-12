@@ -40,6 +40,15 @@ export const connectionCommands = {
    */
   pingSession: (sessionId: string) => invoke<boolean>("ping_session", { sessionId }),
   /**
+   * セッションの SSH トンネルが生きているか (#1537)。DB には問い合わせず、ネットワークにも
+   * 触れない軽量チェックで、クエリが失敗するより先に切断を知るためのポーリング用。
+   * トンネル越しでなければ null、セッションが無ければ false。
+   */
+  sessionTunnelAlive: (sessionId: string) =>
+    invoke<boolean | null>("session_tunnel_alive", { sessionId }).then((r) =>
+      parseResponse(schemas.nullableBooleanResponse, r, "session_tunnel_alive"),
+    ),
+  /**
    * 接続ヘルスダッシュボード (#1068 / #1259) 用に、全セッションの生死・往復レイテンシ・
    * バージョン・接続数を 1 回の IPC でまとめて取得する。Rust 側が並列に問い合わせ、
    * 各セッションを `timeoutMs` で打ち切る (問い合わせ自体も止まる)。バージョンは

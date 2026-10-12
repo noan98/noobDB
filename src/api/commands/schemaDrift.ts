@@ -11,11 +11,20 @@ export const schemaDriftCommands = {
   /**
    * `database` のスキーマ (テーブル・列・インデックス) を Rust 内で一括取得して世代として
    * 記録し、前世代からの変化サマリだけを返す。メタデータの読み取りのみ。
+   * `triggerSql` は DDL の成功をきっかけにした自動取得のときの実行 SQL (#1537)。
    */
-  schemaDriftCapture: (sessionId: string, profileId: string, database: string) =>
-    invoke<SchemaDriftCapture>("schema_drift_capture", { sessionId, profileId, database }).then(
-      (r) => parseResponse(schemas.schemaDriftCapture, r, "schema_drift_capture"),
-    ),
+  schemaDriftCapture: (
+    sessionId: string,
+    profileId: string,
+    database: string,
+    triggerSql: string | null = null,
+  ) =>
+    invoke<SchemaDriftCapture>("schema_drift_capture", {
+      sessionId,
+      profileId,
+      database,
+      triggerSql,
+    }).then((r) => parseResponse(schemas.schemaDriftCapture, r, "schema_drift_capture")),
 
   /** プロファイルの保存済み世代 (新しい順)。セッション不要。 */
   schemaDriftList: (profileId: string) =>

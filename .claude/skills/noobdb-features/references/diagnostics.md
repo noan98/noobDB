@@ -114,5 +114,17 @@ UI: `ServerInfoPanel.tsx` / `ServerMetricsPanel.tsx`、純ロジックは `serve
 取得が余計な世代を積まない)。
 UI: `components/SchemaDriftPanel.tsx`、フロントに残る整形・移行ロジックは `schemaDrift.ts`。
 
+**DDL 成功時の自動取得 (#1537)。** DDL (`sql_may_change_schema`) の成功を `App.tsx` の
+`noteSchemaDdl` が `schemaDrift.ts::createDdlCaptureCoalescer` に渡し、同じプロファイルの
+DDL を**静かになってから 3 秒 (最大 15 秒) まとめて 1 回だけ** `schema_drift_capture` する
+(頻繁な DDL / スクリプトの連続実行で取得が走り続けない)。実行先がプロファイルの既定
+データベースのときだけ対象 (`isDriftTrackedDatabase`。別 DB への DDL を混ぜると前世代比較が
+無意味になる)。エディタ実行のほか、テーブル保守・複製・ALTER・一括削除の GUI 経路も呼ぶ。
+`schema_drift_capture` の `trigger_sql` が世代 (`generation.trigger_sql` 列。旧 DB には
+`ALTER TABLE ADD COLUMN` で後付け) に紐づき、`GenerationMeta.triggerSql` としてパネルの
+世代一覧に出る。`skip_history` の接続では SQL を保存しない。設定 `schemaDriftOnDdl` (既定オン)。
+変化のトーストには「タイムラインを開く」アクションが付き、差分リストの各テーブル行から
+構造タブ / データタブを開ける (`onOpenStructure` / `onOpenData`)。
+
 実行計画のウォッチ (#743) は別機能で、`components/PlanWatchPanel.tsx` /
 `planDiff.ts` / `planWatch.ts` が担います (`noobdb-frontend` スキル参照)。

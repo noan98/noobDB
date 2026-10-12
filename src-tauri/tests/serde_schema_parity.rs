@@ -1200,6 +1200,7 @@ fn build_fixtures() -> serde_json::Value {
                 latency_ms: Some(12),
                 version: Some("8.0.36".into()),
                 connections: Some(5),
+                tunnel_alive: Some(true),
             })
             .collect();
     let incoming_foreign_key = t::IncomingForeignKey {
@@ -1399,8 +1400,21 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskAction::RunAssertions {
                 database: None,
                 assertion_ids: vec!["asrt0001".into()],
+                notify_only_on_increase: true,
             },
             t::TaskSchedule::Interval { minutes: 5 },
+        ),
+        (
+            t::TaskAction::TimelapseCapture {
+                max_generations: Some(30),
+            },
+            t::TaskSchedule::Daily { hour: 2, minute: 0 },
+        ),
+        (
+            t::TaskAction::RefreshPlanWatch {
+                snippet_ids: vec!["snip0001".into()],
+            },
+            t::TaskSchedule::Interval { minutes: 60 },
         ),
     ]
     .into_iter()
@@ -1416,6 +1430,10 @@ fn build_fixtures() -> serde_json::Value {
         next_run_at: Some("2026-01-03T00:00:00Z".into()),
         last_run_at: Some("2026-01-02T00:00:00Z".into()),
         last_status: Some("ok".into()),
+        connect_retry: t::ConnectRetry {
+            max_retries: 3,
+            interval_secs: 30,
+        },
     })
     .collect();
     // ExportFormat 全種 (zod `exportFormat` と突き合わせる)。
@@ -1442,6 +1460,7 @@ fn build_fixtures() -> serde_json::Value {
         next_run_at: None,
         last_run_at: None,
         last_status: None,
+        connect_retry: t::ConnectRetry::default(),
     })
     .collect();
     let task_run = t::TaskRun {
@@ -1456,6 +1475,7 @@ fn build_fixtures() -> serde_json::Value {
         bytes: Some(4096),
         elapsed_ms: 3000,
         catch_up: true,
+        attempts: 2,
     };
     let scheduler_settings = t::SchedulerSettings {
         catch_up_missed: true,
@@ -1511,6 +1531,7 @@ fn build_fixtures() -> serde_json::Value {
         fingerprint: "deadbeef".into(),
         table_count: 12,
         omitted: false,
+        trigger_sql: Some("ALTER TABLE users ADD COLUMN age INT".into()),
     };
     let schema_drift_summary = t::DriftSummary {
         tables: variants!(TableChangeStatus [Added, Removed, Changed])
@@ -1563,6 +1584,7 @@ fn build_fixtures() -> serde_json::Value {
             name: "slow query".into(),
             error: "syntax error".into(),
         }],
+        warned: vec![],
     };
 
     // ダンプツール (#546 周辺): 導入方法あり / なしの 2 形。

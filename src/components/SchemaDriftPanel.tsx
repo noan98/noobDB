@@ -35,6 +35,12 @@ interface Props {
   capturing: boolean;
   onCapture: () => void;
   onClose: () => void;
+  /**
+   * 変化したテーブルの「構造」タブ / 「データ」を開く (#1537)。指定されると、差分リストの各行に
+   * 開くボタンを出す。開いたあとはパネルを閉じて作業画面へ戻す。
+   */
+  onOpenStructure?: (database: string, table: string) => void;
+  onOpenData?: (database: string, table: string) => void;
 }
 
 function formatCaptured(iso: string): string {
@@ -49,6 +55,8 @@ export function SchemaDriftPanel({
   capturing,
   onCapture,
   onClose,
+  onOpenStructure,
+  onOpenData,
 }: Props) {
   const t = useT();
 
@@ -143,6 +151,20 @@ export function SchemaDriftPanel({
                         {t("schemaDriftGenerationTables", { count: g.tableCount })}
                         {g.omitted && ` · ${t("schemaDriftOmittedBadge")}`}
                       </chakra.div>
+                      {/* DDL の成功をきっかけに自動取得した世代は、そのときの SQL を残している (#1537)。 */}
+                      {g.triggerSql && (
+                        <chakra.div
+                          textStyle="caption"
+                          color="app.textMuted"
+                          fontFamily="var(--font-mono)"
+                          overflow="hidden"
+                          textOverflow="ellipsis"
+                          whiteSpace="nowrap"
+                          title={g.triggerSql}
+                        >
+                          {t("schemaDriftTriggerSql", { sql: g.triggerSql.replace(/\s+/g, " ") })}
+                        </chakra.div>
+                      )}
                     </Box>
                   </Flex>
                 );
@@ -236,11 +258,41 @@ export function SchemaDriftPanel({
                         if (c.indexesRemoved > 0) fragments.push(t("schemaDriftIdxRemoved", { count: c.indexesRemoved }));
                         if (c.indexesChanged > 0) fragments.push(t("schemaDriftIdxChanged", { count: c.indexesChanged }));
                       }
+                      // 削除されたテーブルは開けない。比較先の世代のデータベースで開く (#1537)。
+                      const canOpen = c.tableStatus !== "removed" && !!genB;
                       return (
-                        <chakra.li key={c.table} fontSize="sm" color="app.text">
-                          <chakra.span fontWeight={600}>{c.table}</chakra.span>
-                          {": "}
-                          {fragments.join(", ")}
+                        <chakra.li key={c.table} fontSize="sm" color="app.text" display="flex" alignItems="center" gap="2" flexWrap="wrap">
+                          <chakra.span flex="1" minWidth={0}>
+                            <chakra.span fontWeight={600}>{c.table}</chakra.span>
+                            {": "}
+                            {fragments.join(", ")}
+                          </chakra.span>
+                          {canOpen && onOpenStructure && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              aria-label={t("schemaDriftOpenStructureAria", { table: c.table })}
+                              onClick={() => {
+                                onOpenStructure(genB.database, c.table);
+                                onClose();
+                              }}
+                            >
+                              <Icon name="columns" size={ICON_SIZES.sm} /> {t("schemaDriftOpenStructure")}
+                            </Button>
+                          )}
+                          {canOpen && onOpenData && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              aria-label={t("schemaDriftOpenDataAria", { table: c.table })}
+                              onClick={() => {
+                                onOpenData(genB.database, c.table);
+                                onClose();
+                              }}
+                            >
+                              <Icon name="table" size={ICON_SIZES.sm} /> {t("schemaDriftOpenData")}
+                            </Button>
+                          )}
                         </chakra.li>
                       );
                     })}

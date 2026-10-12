@@ -66,7 +66,86 @@ pub enum TaskAction {
         /// 実行するアサーションの ID。空ならプロファイルのスコープに合うものすべて。
         #[serde(default)]
         assertion_ids: Vec<String>,
+        /// true: 失敗 (違反 + 実行エラー) の件数が**前回の実行より増えたときだけ**タスクを
+        /// `error` にして通知に乗せる (#1537)。既に知っている違反が残り続けているだけの
+        /// 実行は `ok` で終わり、通知が毎回鳴り続けない。合否の記録 (`assertion_runs`) は
+        /// どちらでも同じ。既定 false (従来どおり 1 件でも失敗があれば `error`)。
+        #[serde(default)]
+        notify_only_on_increase: bool,
     },
+    /// ウォッチ中のテーブルのスナップショット (テーブル・タイムラプス #739) を無人で
+    /// 取得して履歴を積む (#1537)。`timelapse_capture` と同じ実装 (`fetch_snapshot` →
+    /// 世代記録) を通るので 3 ドライバ共通で、読み取りのみ。テーブルごとの取得失敗は
+    /// タスクの `error` になる (他のテーブルの取得は続ける)。
+    TimelapseCapture {
+        /// 1 ウォッチあたりの保持世代数の上限。未指定ならタイムラプスの既定値。
+        #[serde(default)]
+        max_generations: Option<u32>,
+    },
+    /// ウォッチ中の EXPLAIN (実行計画ウォッチ #743) を無人で再取得し、**警告相当の変化**
+    /// (インデックス使用からフルスキャンへの退行・推定行数の桁違いの増加など) が出たときだけ
+    /// タスクを `error` にして通知に乗せる (#1537)。情報レベルの変化は世代として記録される
+    /// だけで通知しない。判定は `plan_watch::compare_plans` で、画面の手動更新と同一。
+    RefreshPlanWatch {
+        /// 対象スニペットの ID。空ならこのプロファイルでウォッチ中のものすべて。
+        #[serde(default)]
+        snippet_ids: Vec<String>,
+    },
+}
+
+/// 接続段階の自動リトライ設定 (#1537)。夜間バッチが一時的な瞬断や DB 再起動で丸ごと
+/// 欠けないよう、**接続の確立に失敗したときだけ**指数バックオフで再試行する。
+/// クエリ / エクスポート / ダンプの実行が始まった後の失敗は再試行しない (副作用の二重発生を
+/// 避けるため)。`tasks.json` の旧データには無いので、すべて `serde(default)` で読む。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConnectRetry {
+    /// 初回に失敗した後の再試行回数。0 (既定) なら再試行しない。
+    #[serde(default)]
+    pub max_retries: u32,
+    /// 最初の待機秒数。以降は 2 倍ずつ伸ばす (上限 `MAX_RETRY_DELAY_SECS`)。
+    #[serde(default = "default_retry_interval_secs")]
+    pub interval_secs: u32,
+}
+
+impl Default for ConnectRetry {
+    fn default() -> Self {
+        Self {
+            max_retries: 0,
+            interval_secs: default_retry_interval_secs(),
+        }
+    }
+}
+
+/// 再試行回数の上限 (保存時に丸める)。
+pub const MAX_CONNECT_RETRIES: u32 = 10;
+/// 最初の待機秒数の下限 / 上限 (保存時に丸める)。
+pub const MIN_RETRY_INTERVAL_SECS: u32 = 5;
+pub const MAX_RETRY_INTERVAL_SECS: u32 = 3600;
+/// バックオフで伸ばした待機秒数の上限 (15 分)。
+pub const MAX_RETRY_DELAY_SECS: u64 = 15 * 60;
+
+fn default_retry_interval_secs() -> u32 {
+    30
+}
+
+impl ConnectRetry {
+    /// 保存前に範囲へ丸める (回数 0..=10、間隔 5 秒..=1 時間)。
+    pub fn normalized(self) -> Self {
+        Self {
+            max_retries: self.max_retries.min(MAX_CONNECT_RETRIES),
+            interval_secs: self
+                .interval_secs
+                .clamp(MIN_RETRY_INTERVAL_SECS, MAX_RETRY_INTERVAL_SECS),
+        }
+    }
+
+    /// `attempt` 回目 (0 始まり) の再試行の前に待つ秒数。`interval * 2^attempt` を
+    /// `MAX_RETRY_DELAY_SECS` で頭打ちにする (純関数)。
+    pub fn delay_secs(&self, attempt: u32) -> u64 {
+        let base = u64::from(self.interval_secs.max(1));
+        let factor = 1u64.checked_shl(attempt.min(32)).unwrap_or(u64::MAX);
+        base.saturating_mul(factor).min(MAX_RETRY_DELAY_SECS)
+    }
 }
 
 /// タスクの発火スケジュール。時刻はすべて UTC で解釈する
@@ -102,6 +181,9 @@ pub struct TaskDefinition {
     /// 直近の実行結果 ("ok" / "error")。表示用のミラー。
     #[serde(default)]
     pub last_status: Option<String>,
+    /// 接続失敗時の自動リトライ設定 (#1537)。旧 `tasks.json` には無く、既定は再試行なし。
+    #[serde(default)]
+    pub connect_retry: ConnectRetry,
 }
 
 fn default_true() -> bool {
@@ -137,6 +219,13 @@ pub struct TaskRun {
     /// 起動時の追い掛け実行だったか (#730 の「未起動中に過ぎたスケジュール」対応)。
     #[serde(default)]
     pub catch_up: bool,
+    /// 接続を試みた回数 (#1537)。再試行なしの通常実行は 1。2 以上なら接続リトライが働いた。
+    #[serde(default = "default_attempts")]
+    pub attempts: i64,
+}
+
+fn default_attempts() -> i64 {
+    1
 }
 
 /// アサーション実行タスク (#1170) の 1 アサーション分の結果。`task_runs` の 1 行に
@@ -182,4 +271,91 @@ pub struct NewTaskRun {
     pub bytes: Option<i64>,
     pub elapsed_ms: i64,
     pub catch_up: bool,
+    pub attempts: i64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_retry_delay_doubles_and_caps() {
+        let r = ConnectRetry {
+            max_retries: 5,
+            interval_secs: 30,
+        };
+        assert_eq!(r.delay_secs(0), 30);
+        assert_eq!(r.delay_secs(1), 60);
+        assert_eq!(r.delay_secs(2), 120);
+        assert_eq!(r.delay_secs(4), 480);
+        assert_eq!(r.delay_secs(5), MAX_RETRY_DELAY_SECS);
+        // 大きな試行回数でもオーバーフローしない。
+        assert_eq!(r.delay_secs(u32::MAX), MAX_RETRY_DELAY_SECS);
+    }
+
+    #[test]
+    fn connect_retry_normalized_clamps_both_fields() {
+        let n = ConnectRetry {
+            max_retries: 1000,
+            interval_secs: 0,
+        }
+        .normalized();
+        assert_eq!(n.max_retries, MAX_CONNECT_RETRIES);
+        assert_eq!(n.interval_secs, MIN_RETRY_INTERVAL_SECS);
+        let n = ConnectRetry {
+            max_retries: 2,
+            interval_secs: 999_999,
+        }
+        .normalized();
+        assert_eq!(n.interval_secs, MAX_RETRY_INTERVAL_SECS);
+        assert_eq!(ConnectRetry::default().max_retries, 0);
+    }
+
+    /// 後方互換: #1537 より前に保存された `tasks.json` (connect_retry も新アクションも
+    /// notify_only_on_increase も無い) がそのまま読める。
+    #[test]
+    fn legacy_task_json_without_new_fields_still_loads() {
+        let json = r#"{
+            "id": "abcd1234", "name": "n", "profile_id": "p",
+            "action": {"kind": "run_assertions", "assertion_ids": ["a1"]},
+            "schedule": {"kind": "interval", "minutes": 5},
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        }"#;
+        let t: TaskDefinition = serde_json::from_str(json).unwrap();
+        assert!(t.enabled);
+        assert_eq!(t.connect_retry, ConnectRetry::default());
+        assert!(matches!(
+            t.action,
+            TaskAction::RunAssertions {
+                notify_only_on_increase: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn new_actions_round_trip() {
+        let a: TaskAction = serde_json::from_str(r#"{"kind":"timelapse_capture"}"#).unwrap();
+        assert!(matches!(
+            a,
+            TaskAction::TimelapseCapture {
+                max_generations: None
+            }
+        ));
+        let b: TaskAction =
+            serde_json::from_str(r#"{"kind":"refresh_plan_watch","snippet_ids":["s1"]}"#).unwrap();
+        match b {
+            TaskAction::RefreshPlanWatch { snippet_ids } => assert_eq!(snippet_ids, vec!["s1"]),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_run_without_attempts_defaults_to_one() {
+        let json = r#"{"id":1,"task_id":"t","started_at":"a","finished_at":"b","status":"ok",
+            "error":null,"output_path":null,"rows":null,"bytes":null,"elapsed_ms":1}"#;
+        let r: TaskRun = serde_json::from_str(json).unwrap();
+        assert_eq!(r.attempts, 1);
+        assert!(!r.catch_up);
+    }
 }

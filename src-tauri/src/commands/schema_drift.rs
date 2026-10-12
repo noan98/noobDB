@@ -38,17 +38,45 @@ fn parse_id(id: &str) -> Result<i64> {
         .map_err(|_| AppError::InvalidInput(format!("invalid schema drift generation id '{id}'")))
 }
 
+/// 世代に紐づける実行 SQL の最大文字数。長大なスクリプトでタイムラインを重くしない。
+const MAX_TRIGGER_SQL_CHARS: usize = 2000;
+
+/// 世代に紐づける SQL を整える (純関数)。前後の空白を落とし、空なら `None`、長すぎるときは
+/// 先頭 `MAX_TRIGGER_SQL_CHARS` 文字で切って `…` を付ける。
+pub(crate) fn normalize_trigger_sql(sql: Option<&str>) -> Option<String> {
+    let sql = sql?.trim();
+    if sql.is_empty() {
+        return None;
+    }
+    if sql.chars().count() <= MAX_TRIGGER_SQL_CHARS {
+        return Some(sql.to_string());
+    }
+    let mut cut: String = sql.chars().take(MAX_TRIGGER_SQL_CHARS).collect();
+    cut.push('…');
+    Some(cut)
+}
+
 /// `database` の現在のスキーマを取得して世代として記録し、前世代からの変化サマリを返す。
+///
+/// `trigger_sql` は DDL の成功をきっかけにした自動取得のときに、そのとき実行した SQL
+/// (#1537)。世代に紐づけて保存し、タイムラインで「どの文でスキーマが変わったか」を辿れる
+/// ようにする。履歴を残さない接続 (`skip_history`) では SQL を保存しない。
 #[tauri::command]
 pub async fn schema_drift_capture(
     session_id: String,
     profile_id: String,
     database: String,
+    trigger_sql: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<SchemaDriftCapture> {
     let session = session_of(&state, &session_id).await?;
     let payload = capture_payload(&session.conn, &database).await?;
-    let outcome = store::record(&profile_id, &payload).await?;
+    let trigger_sql = if session.skip_history {
+        None
+    } else {
+        normalize_trigger_sql(trigger_sql.as_deref())
+    };
+    let outcome = store::record(&profile_id, &payload, trigger_sql.as_deref()).await?;
     if !outcome.added {
         return Ok(SchemaDriftCapture {
             added: false,
@@ -106,4 +134,29 @@ pub async fn schema_drift_import_legacy(
         .filter_map(|v| serde_json::from_value(v).ok())
         .collect();
     store::import_legacy(&profile_id, generations).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_trigger_sql_trims_and_drops_empty() {
+        assert_eq!(normalize_trigger_sql(None), None);
+        assert_eq!(normalize_trigger_sql(Some("  \n ")), None);
+        assert_eq!(
+            normalize_trigger_sql(Some("  ALTER TABLE t ADD c INT;\n")).as_deref(),
+            Some("ALTER TABLE t ADD c INT;")
+        );
+    }
+
+    #[test]
+    fn normalize_trigger_sql_truncates_on_char_boundary() {
+        let long = "あ".repeat(MAX_TRIGGER_SQL_CHARS + 10);
+        let out = normalize_trigger_sql(Some(&long)).unwrap();
+        assert_eq!(out.chars().count(), MAX_TRIGGER_SQL_CHARS + 1);
+        assert!(out.ends_with('…'));
+        let exact = "x".repeat(MAX_TRIGGER_SQL_CHARS);
+        assert_eq!(normalize_trigger_sql(Some(&exact)).unwrap(), exact);
+    }
 }

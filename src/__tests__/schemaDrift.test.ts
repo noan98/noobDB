@@ -1,7 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildDriftDetail,
   canDiff,
+  createDdlCaptureCoalescer,
+  DDL_CAPTURE_MAX_STATEMENTS,
+  isDriftTrackedDatabase,
+  joinTriggerSql,
   formatTableChangeFragment,
   legacySchemaDriftKey,
   MAX_LEGACY_GENERATIONS,
@@ -190,5 +194,96 @@ describe("formatTableChangeFragment / buildDriftDetail", () => {
 
   it("returns an empty string for an empty summary", () => {
     expect(buildDriftDetail({ tables: [] })).toBe("");
+  });
+});
+
+// --- DDL 成功時の自動取得 (#1537) ---
+
+describe("joinTriggerSql", () => {
+  it("空白だけの文を捨て、改行で連結する", () => {
+    expect(joinTriggerSql([" ALTER TABLE a ADD c INT; ", "  ", "DROP TABLE b"])).toBe(
+      "ALTER TABLE a ADD c INT;\nDROP TABLE b",
+    );
+  });
+  it("何も無ければ null", () => {
+    expect(joinTriggerSql([])).toBeNull();
+    expect(joinTriggerSql(["  \n"])).toBeNull();
+  });
+  it("文数の上限で打ち切る", () => {
+    const many = Array.from({ length: DDL_CAPTURE_MAX_STATEMENTS + 5 }, (_, i) => `DDL ${i}`);
+    expect(joinTriggerSql(many)?.split("\n")).toHaveLength(DDL_CAPTURE_MAX_STATEMENTS);
+  });
+});
+
+describe("isDriftTrackedDatabase", () => {
+  it("タブが DB を固定していない / 既定 DB と同じなら対象", () => {
+    expect(isDriftTrackedDatabase(null, "app")).toBe(true);
+    expect(isDriftTrackedDatabase(undefined, "app")).toBe(true);
+    expect(isDriftTrackedDatabase("", "app")).toBe(true);
+    expect(isDriftTrackedDatabase("app", "app")).toBe(true);
+  });
+  it("別の DB への DDL、既定 DB の無いプロファイルは対象外", () => {
+    expect(isDriftTrackedDatabase("other", "app")).toBe(false);
+    expect(isDriftTrackedDatabase(null, "")).toBe(false);
+    expect(isDriftTrackedDatabase("app", null)).toBe(false);
+  });
+});
+
+describe("createDdlCaptureCoalescer", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("連続した DDL を静かになるまでまとめて 1 回だけ flush する", () => {
+    vi.useFakeTimers();
+    const onFlush = vi.fn();
+    const c = createDdlCaptureCoalescer({ onFlush, quietMs: 3000, maxWaitMs: 15000 });
+    c.push("p1", "CREATE TABLE a (id INT)");
+    vi.advanceTimersByTime(2000);
+    c.push("p1", "CREATE TABLE b (id INT)");
+    vi.advanceTimersByTime(2999);
+    expect(onFlush).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("p1", "CREATE TABLE a (id INT)\nCREATE TABLE b (id INT)");
+    // flush 後は何も残らない。
+    vi.advanceTimersByTime(60_000);
+    expect(onFlush).toHaveBeenCalledTimes(1);
+  });
+
+  it("DDL が途切れず続いても最初から maxWait を超えて待たない", () => {
+    vi.useFakeTimers();
+    const onFlush = vi.fn();
+    const c = createDdlCaptureCoalescer({ onFlush, quietMs: 3000, maxWaitMs: 10000 });
+    for (let i = 0; i < 20; i++) {
+      c.push("p1", `ALTER TABLE t${i} ADD c INT`);
+      vi.advanceTimersByTime(2000); // quiet に達しないペースで流し続ける
+    }
+    expect(onFlush).toHaveBeenCalled();
+    // 最初の flush は 10 秒付近 (まとめた文は 5 件前後)。
+    const first = onFlush.mock.calls[0];
+    expect((first[1] as string).split("\n").length).toBeLessThanOrEqual(6);
+  });
+
+  it("キーごとに独立して flush する", () => {
+    vi.useFakeTimers();
+    const onFlush = vi.fn();
+    const c = createDdlCaptureCoalescer({ onFlush, quietMs: 1000 });
+    c.push("a", "DDL A");
+    c.push("b", "DDL B");
+    vi.advanceTimersByTime(1000);
+    expect(onFlush).toHaveBeenCalledTimes(2);
+    expect(onFlush).toHaveBeenCalledWith("a", "DDL A");
+    expect(onFlush).toHaveBeenCalledWith("b", "DDL B");
+  });
+
+  it("dispose で保留中の flush を捨てる", () => {
+    vi.useFakeTimers();
+    const onFlush = vi.fn();
+    const c = createDdlCaptureCoalescer({ onFlush, quietMs: 1000 });
+    c.push("a", "DDL A");
+    c.dispose();
+    vi.advanceTimersByTime(10_000);
+    expect(onFlush).not.toHaveBeenCalled();
   });
 });

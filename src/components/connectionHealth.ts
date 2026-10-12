@@ -45,6 +45,11 @@ export interface HealthProbeResult {
    * 現在の接続数。サーバを持たないドライバは `"na"`、取得に失敗したら null。
    */
   connections: number | "na" | null;
+  /**
+   * SSH トンネルの SSH セッションが閉じていることをバックエンドが確認済みか (#1537)。
+   * true のとき DB へは問い合わせずに down を確定している。トンネル越しでない / 生存は false。
+   */
+  tunnelClosed?: boolean;
 }
 
 /** ヘルスチェック対象 (開いているセッション)。 */
@@ -60,6 +65,8 @@ export interface HealthProbeItemLike {
   latency_ms: number | null;
   version: string | null;
   connections: number | null;
+  /** SSH トンネルの生存 (#1537)。トンネル越しでなければ null / 省略。 */
+  tunnel_alive?: boolean | null;
 }
 
 /** 1 回の問い合わせの個別タイムアウト (ms)。 */
@@ -94,6 +101,8 @@ export function toHealthProbeResult(
     latencyMs: status === "up" ? (item?.latency_ms ?? null) : null,
     version,
     connections: serverless ? "na" : status === "up" ? (item?.connections ?? null) : null,
+    // トンネルが閉じていると確認できたときだけ持つ (#1537)。
+    ...(item?.tunnel_alive === false ? { tunnelClosed: true } : {}),
   };
 }
 
@@ -113,6 +122,8 @@ export interface HealthRow {
   latencyMs: number | null;
   version: string | null;
   connections: number | "na" | null;
+  /** SSH トンネルが閉じていると確認済み (#1537)。再接続の誘導に使う。 */
+  tunnelClosed?: boolean;
 }
 
 /** 行の組み立てに要るプロファイルの最小形 (秘密を含むフィールドは受け取らない)。 */
@@ -166,6 +177,7 @@ export function buildHealthRows(
       latencyMs: r?.latencyMs ?? null,
       version: r?.version ?? null,
       connections: r?.connections ?? (isServerlessDriver(profile.driver) ? "na" : null),
+      ...(r?.tunnelClosed ? { tunnelClosed: true } : {}),
     };
   });
   openRows.sort((a, b) => Number(b.isActive) - Number(a.isActive));
@@ -277,6 +289,7 @@ export function changedHealthSessions(
       p.status !== n.status ||
       p.version !== n.version ||
       p.connections !== n.connections ||
+      (p.tunnelClosed ?? false) !== (n.tunnelClosed ?? false) ||
       level(p) !== level(n)
     ) {
       out.add(sid);

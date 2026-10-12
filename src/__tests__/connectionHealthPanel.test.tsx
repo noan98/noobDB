@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.mocked(api.healthProbeAll).mockImplementation(async (ids) =>
     ids.map((sid) =>
       sid === "dead"
-        ? { session_id: sid, status: "down" as const, latency_ms: null, version: null, connections: null }
+        ? { session_id: sid, status: "down" as const, latency_ms: null, version: null, connections: null, tunnel_alive: null }
         : {
             session_id: sid,
             status: "up" as const,
@@ -60,6 +60,7 @@ beforeEach(() => {
             version: "8.0.36",
             // SQLite はバックエンドが接続数を返さない。
             connections: sid === "s-l" ? null : 7,
+            tunnel_alive: null,
           },
     ),
   );
@@ -177,7 +178,9 @@ describe("ConnectionHealthPanel (#1068)", () => {
     expect(within(row).getByText(t("healthStatusUnknown"))).toBeInTheDocument();
     expect(screen.queryByText(t("healthEmpty"))).not.toBeInTheDocument();
 
-    resolveProbe([{ session_id: "s-m", status: "up", latency_ms: 5, version: "8.0.36", connections: 7 }]);
+    resolveProbe([
+      { session_id: "s-m", status: "up", latency_ms: 5, version: "8.0.36", connections: 7, tunnel_alive: null },
+    ]);
     await waitFor(() => expect(within(row).getByText(t("healthStatusUp"))).toBeInTheDocument());
   });
 

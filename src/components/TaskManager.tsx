@@ -537,6 +537,7 @@ function TaskRow({
                   <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
                   <chakra.span minW="50px">{r.status}</chakra.span>
                   {r.catch_up && <chakra.span>({t("taskRunCatchUp")})</chakra.span>}
+                  {r.attempts > 1 && <chakra.span>({t("taskRunAttempts", { n: r.attempts })})</chakra.span>}
                   {r.output_path && <chakra.span flex="1" wordBreak="break-all">{r.output_path}</chakra.span>}
                   {r.rows != null && <chakra.span>{t("taskRunRows", { rows: r.rows })}</chakra.span>}
                   {r.bytes != null && <chakra.span>{t("taskRunBytes", { bytes: r.bytes })}</chakra.span>}
@@ -657,7 +658,23 @@ function TaskForm({
     task?.action.kind === "export_query" && task.action.sql_batch_size ? String(task.action.sql_batch_size) : "",
   );
   const [outputPath, setOutputPath] = useState(
-    task && task.action.kind !== "run_assertions" ? task.action.output_path : "",
+    task && (task.action.kind === "export_query" || task.action.kind === "dump")
+      ? task.action.output_path
+      : "",
+  );
+  // 出力先を持つのはファイルを書くアクションだけ (#1537 で増えた取得系アクションは持たない)。
+  const needsOutputPath = actionKind === "export_query" || actionKind === "dump";
+  const [notifyOnlyIncrease, setNotifyOnlyIncrease] = useState(
+    task?.action.kind === "run_assertions" ? (task.action.notify_only_on_increase ?? false) : false,
+  );
+  const [timelapseMaxGenerations, setTimelapseMaxGenerations] = useState(
+    task?.action.kind === "timelapse_capture" && task.action.max_generations
+      ? String(task.action.max_generations)
+      : "",
+  );
+  const [connectRetries, setConnectRetries] = useState(String(task?.connect_retry?.max_retries ?? 0));
+  const [connectRetryInterval, setConnectRetryInterval] = useState(
+    String(task?.connect_retry?.interval_secs ?? 30),
   );
   const [assertions, setAssertions] = useState<Assertion[]>([]);
   const [pickAssertions, setPickAssertions] = useState(
@@ -727,7 +744,7 @@ function TaskForm({
       setFormError(t("taskFormProfileRequired"));
       return;
     }
-    if (actionKind !== "run_assertions" && outputPath.trim() === "") {
+    if (needsOutputPath && outputPath.trim() === "") {
       setFormError(t("taskFormOutputPathRequired"));
       return;
     }
@@ -760,7 +777,18 @@ function TaskForm({
         kind: "run_assertions",
         database: database.trim() === "" ? null : database.trim(),
         assertion_ids: pickAssertions ? assertionIds : [],
+        notify_only_on_increase: notifyOnlyIncrease,
       };
+    } else if (actionKind === "timelapse_capture") {
+      const n = Number(timelapseMaxGenerations);
+      action = {
+        kind: "timelapse_capture",
+        max_generations:
+          timelapseMaxGenerations.trim() !== "" && Number.isFinite(n) && n >= 1 ? Math.floor(n) : null,
+      };
+    } else if (actionKind === "refresh_plan_watch") {
+      // ウォッチ中のものすべて (スニペット単位の絞り込み UI は持たない)。
+      action = { kind: "refresh_plan_watch", snippet_ids: [] };
     } else {
       if (database.trim() === "") {
         setFormError(t("taskFormDatabaseRequired"));
@@ -801,6 +829,10 @@ function TaskForm({
         action,
         schedule,
         enabled,
+        connect_retry: {
+          max_retries: Math.max(0, Math.floor(Number(connectRetries) || 0)),
+          interval_secs: Math.max(1, Math.floor(Number(connectRetryInterval) || 30)),
+        },
       });
       toast.success(t("taskSaved", { name: name.trim() }));
       onSaved();
@@ -847,6 +879,8 @@ function TaskForm({
           <option value="export_query">{t("taskFormActionExport")}</option>
           <option value="dump">{t("taskFormActionDump")}</option>
           <option value="run_assertions">{t("taskFormActionAssertions")}</option>
+          <option value="timelapse_capture">{t("taskFormActionTimelapse")}</option>
+          <option value="refresh_plan_watch">{t("taskFormActionPlanWatch")}</option>
         </Select>
       </FormSection>
 
@@ -901,6 +935,27 @@ function TaskForm({
             </Flex>
           )}
         </>
+      ) : actionKind === "timelapse_capture" ? (
+        <>
+          <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+            {t("taskFormTimelapseHint")}
+          </chakra.p>
+          <FormSection>
+            <FieldLabel htmlFor="task-timelapse-generations">{t("taskFormTimelapseMaxGenerations")}</FieldLabel>
+            <Input
+              id="task-timelapse-generations"
+              type="number"
+              min={1}
+              width="120px"
+              value={timelapseMaxGenerations}
+              onChange={(e) => setTimelapseMaxGenerations(e.target.value)}
+            />
+          </FormSection>
+        </>
+      ) : actionKind === "refresh_plan_watch" ? (
+        <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+          {t("taskFormPlanWatchHint")}
+        </chakra.p>
       ) : actionKind === "run_assertions" ? (
         <>
           <chakra.p margin={0} fontSize="xs" color="app.textMuted">
@@ -943,6 +998,15 @@ function TaskForm({
                 </chakra.div>
               ))}
           </FormSection>
+          <chakra.label display="inline-flex" alignItems="center" gap="1.5">
+            <Switch checked={notifyOnlyIncrease} onChange={setNotifyOnlyIncrease} />
+            <chakra.span fontSize="sm" color="app.textSecondary">
+              {t("taskFormNotifyOnlyIncrease")}
+            </chakra.span>
+          </chakra.label>
+          <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+            {t("taskFormNotifyOnlyIncreaseHint")}
+          </chakra.p>
         </>
       ) : (
         <>
@@ -979,7 +1043,7 @@ function TaskForm({
         </>
       )}
 
-      {actionKind !== "run_assertions" && (
+      {needsOutputPath && (
       <FormSection>
         <FieldLabel htmlFor="task-output-path">{t("taskFormOutputPath")}</FieldLabel>
         <PathRow>
@@ -1049,6 +1113,38 @@ function TaskForm({
             </Flex>
           )}
         </Flex>
+      </FormSection>
+
+      <FormSection>
+        <FieldLabel as="div">{t("taskFormConnectRetries")}</FieldLabel>
+        <Flex gap="3" align="center" flexWrap="wrap">
+          <Input
+            type="number"
+            min={0}
+            max={10}
+            width="90px"
+            aria-label={t("taskFormConnectRetries")}
+            value={connectRetries}
+            onChange={(e) => setConnectRetries(e.target.value)}
+          />
+          <Flex align="center" gap="1.5">
+            <chakra.span fontSize="sm" color="app.textMuted">
+              {t("taskFormConnectRetryInterval")}
+            </chakra.span>
+            <Input
+              type="number"
+              min={5}
+              max={3600}
+              width="90px"
+              aria-label={t("taskFormConnectRetryInterval")}
+              value={connectRetryInterval}
+              onChange={(e) => setConnectRetryInterval(e.target.value)}
+            />
+          </Flex>
+        </Flex>
+        <chakra.p margin={0} marginTop="1" textStyle="caption" color="app.textMuted">
+          {t("taskFormConnectRetryHint")}
+        </chakra.p>
       </FormSection>
 
       <chakra.label display="inline-flex" alignItems="center" gap="1.5">

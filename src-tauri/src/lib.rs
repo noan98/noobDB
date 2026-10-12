@@ -202,7 +202,8 @@ pub mod __test_api {
     };
     pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
-        AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
+        AssertionRunRecord, ConnectRetry, SchedulerSettings, TaskAction, TaskDefinition, TaskRun,
+        TaskSchedule,
     };
     pub use crate::timelapse::{
         GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
@@ -1180,6 +1181,7 @@ pub fn run() {
             commands::connection::disconnect,
             commands::connection::reconnect,
             commands::connection::ping_session,
+            commands::connection::session_tunnel_alive,
             commands::connection::health_probe_all,
             commands::ssh::list_known_hosts,
             commands::ssh::forget_host_key,

@@ -68,6 +68,10 @@ pub struct GenerationMeta {
     pub table_count: usize,
     /// true のとき、サイズ暴走ガードでペイロードを保存していない (差分表示不可)。
     pub omitted: bool,
+    /// この世代が DDL の実行をきっかけに自動取得されたとき、そのときの SQL (#1537)。
+    /// 接続時・手動の取得、旧データでは `None`。
+    #[serde(default)]
+    pub trigger_sql: Option<String>,
 }
 
 /// インデックス差分の種別。
