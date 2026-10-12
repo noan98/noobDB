@@ -197,7 +197,11 @@ struct NewRow<'a> {
     payload_json: Option<&'a str>,
 }
 
-async fn insert_in(pool: &SqlitePool, profile_id: &str, row: NewRow<'_>) -> Result<i64> {
+async fn insert_in(
+    conn: &mut sqlx::SqliteConnection,
+    profile_id: &str,
+    row: NewRow<'_>,
+) -> Result<i64> {
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO generation
             (profile_id, captured_at, driver, \"database\", fingerprint, table_count, omitted, payload)
@@ -212,12 +216,16 @@ async fn insert_in(pool: &SqlitePool, profile_id: &str, row: NewRow<'_>) -> Resu
     .bind(row.table_count as i64)
     .bind(row.payload_json.is_none())
     .bind(row.payload_json)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
     Ok(id)
 }
 
-async fn rotate_in(pool: &SqlitePool, profile_id: &str, max_generations: usize) -> Result<()> {
+async fn rotate_in(
+    conn: &mut sqlx::SqliteConnection,
+    profile_id: &str,
+    max_generations: usize,
+) -> Result<()> {
     sqlx::query(
         "DELETE FROM generation WHERE profile_id = ? AND id NOT IN (
             SELECT id FROM generation WHERE profile_id = ? ORDER BY id DESC LIMIT ?
@@ -226,7 +234,7 @@ async fn rotate_in(pool: &SqlitePool, profile_id: &str, max_generations: usize) 
     .bind(profile_id)
     .bind(profile_id)
     .bind(max_generations.max(1) as i64)
-    .execute(pool)
+    .execute(&mut *conn)
     .await?;
     Ok(())
 }
@@ -264,8 +272,11 @@ async fn record_in(
         None => None,
     };
     let omitted = json.len() > MAX_SNAPSHOT_BYTES;
+    // 追加と間引きを 1 トランザクションにまとめる (#1534): コミットが 1 回で済み、途中で失敗しても
+    // 世代数が上限を超えたまま残らない (どちらも反映されない)。WRITE_LOCK 下なので競合は増えない。
+    let mut tx = pool.begin().await?;
     insert_in(
-        pool,
+        &mut tx,
         profile_id,
         NewRow {
             captured_at,
@@ -277,7 +288,8 @@ async fn record_in(
         },
     )
     .await?;
-    rotate_in(pool, profile_id, max_generations).await?;
+    rotate_in(&mut tx, profile_id, max_generations).await?;
+    tx.commit().await?;
     Ok(RecordOutcome { added: true, prev })
 }
 
@@ -300,6 +312,8 @@ async fn import_legacy_in(
         return Ok(0);
     }
     let mut imported = 0;
+    // 取り込みも 1 トランザクションにする (途中で失敗したら 1 件も入らず、次回やり直せる)。
+    let mut tx = pool.begin().await?;
     // ID が時系列順になるよう、古い世代から挿入する。
     for g in generations.iter().take(MAX_GENERATIONS).rev() {
         let (fingerprint, json) = match &g.payload {
@@ -313,7 +327,7 @@ async fn import_legacy_in(
             None => (g.fingerprint.clone(), None),
         };
         insert_in(
-            pool,
+            &mut tx,
             profile_id,
             NewRow {
                 captured_at: &g.captured_at,
@@ -327,6 +341,7 @@ async fn import_legacy_in(
         .await?;
         imported += 1;
     }
+    tx.commit().await?;
     Ok(imported)
 }
 
@@ -427,6 +442,30 @@ mod tests {
             .unwrap();
         assert_eq!(newest.payload.unwrap().tables[0].columns.len(), 5);
         assert_eq!(list_in(&pool, "other").await.unwrap().len(), 1);
+    }
+
+    /// 追加と間引きは 1 トランザクション (#1534): 間引きが失敗したら追加も巻き戻り、
+    /// 世代数が上限を超えたまま残らない。
+    #[tokio::test]
+    async fn failed_rotation_rolls_back_the_insert() {
+        let pool = temp_pool().await;
+        rec(&pool, "p", &payload(&["a"]), 1).await;
+        sqlx::query(
+            "CREATE TRIGGER no_delete BEFORE DELETE ON generation \
+             BEGIN SELECT RAISE(ABORT, 'rotation blocked'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = record_in(&pool, "p", &payload(&["a", "b"]), "2026-01-02T00:00:00Z", 1).await;
+        assert!(err.is_err());
+        let list = list_in(&pool, "p").await.unwrap();
+        assert_eq!(list.len(), 1, "追加だけが残って上限を超えてはいけない");
+        let only = load_in(&pool, "p", list[0].id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(only.payload.unwrap().tables[0].columns.len(), 1);
     }
 
     #[tokio::test]
