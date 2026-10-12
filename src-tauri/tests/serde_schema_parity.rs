@@ -40,22 +40,23 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    AiConnectionStatus, AiConnectionTestResult, BatchStatementResult, BatchStatus,
-    BatchStreamMessage, BroadcastDiff, BroadcastEnvReport, BroadcastMessage, CancelStreamResult,
-    CellBlobProbe, ChangedRow, Column, ColumnDiff, ColumnProfile, ConnectPhaseEvent,
-    ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode, DiffStatus, DriverKind,
-    DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent, ExportErrorEvent,
-    ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry, ImportDoneEvent,
-    ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent, IndexInfo, KnownHost,
-    LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage, ProcessListItem,
-    ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
-    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
-    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
-    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
-    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
-    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow, StreamCancelledEvent,
-    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
-    TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, Value,
+    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, BatchStatementResult,
+    BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport, BroadcastMessage,
+    CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff, ColumnProfile,
+    ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode,
+    DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent,
+    ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry,
+    ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent,
+    IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage,
+    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
+    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
+    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
+    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
+    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule,
+    Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
+    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
+    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    TaskRunProgressEvent, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -410,6 +411,37 @@ fn build_fixtures() -> serde_json::Value {
         message: "ok".into(),
         model: Some("claude-opus-5-5".into()),
         elapsed_ms: 812,
+    };
+
+    // --- #1534: AI ストリーム (Channel) とタスク進捗 ---
+    let ai_stream_delta_message = AiStreamMessage::Delta { text: "SEL".into() };
+    let ai_stream_retrying_message = AiStreamMessage::Retrying {
+        attempt: 1,
+        max_attempts: 3,
+        delay_ms: 1500,
+    };
+    let ai_stream_done_message = AiStreamMessage::Done {
+        model: "claude-opus-5-5".into(),
+        requested_model: "claude-opus-5-5".into(),
+        fallback_used: false,
+        stop_reason: "end_turn".into(),
+        usage: AiUsage {
+            input_tokens: 120,
+            output_tokens: 45,
+            cache_read_input_tokens: 80,
+            cache_creation_input_tokens: 0,
+        },
+    };
+    let ai_stream_error_message = AiStreamMessage::Error {
+        error: "overloaded".into(),
+        error_kind: "aiOverloaded".into(),
+    };
+    let ai_stream_cancelled_message = AiStreamMessage::Cancelled { delivered_rows: 3 };
+    let task_run_progress_event = TaskRunProgressEvent {
+        stream_id: "task_t1_abc".into(),
+        task_id: "t1".into(),
+        count: 1234,
+        unit: "rows",
     };
 
     let known_host = KnownHost {
@@ -1587,6 +1619,12 @@ fn build_fixtures() -> serde_json::Value {
         "profileImportResult": profile_import_result,
         "cancelStreamResponse": cancel_stream_response,
         "aiConnectionTestResult": ai_connection_test_result,
+        "aiStreamDeltaMessage": ai_stream_delta_message,
+        "aiStreamRetryingMessage": ai_stream_retrying_message,
+        "aiStreamDoneMessage": ai_stream_done_message,
+        "aiStreamErrorMessage": ai_stream_error_message,
+        "channelCancelledMessageAi": ai_stream_cancelled_message,
+        "taskRunProgressEvent": task_run_progress_event,
         "knownHost": known_host,
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,

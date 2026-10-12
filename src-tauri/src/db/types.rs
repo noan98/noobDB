@@ -907,7 +907,6 @@ mod js_safe_tests {
         // `as f64` だと f32 の丸め誤差が見える。最短表記経由なら DB の表示と同じ値になる (#1534)。
         assert_ne!(f64::from(0.1f32), 0.1_f64);
         assert_eq!(Value::from_f32_shortest(0.1), Value::Float(0.1));
-        assert_eq!(Value::from_f32_shortest(0.1), Value::Float(0.1));
         assert_eq!(Value::from_f32_shortest(-2.5), Value::Float(-2.5));
         assert_eq!(Value::from_f32_shortest(0.0), Value::Float(0.0));
         assert_eq!(

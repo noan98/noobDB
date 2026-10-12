@@ -19,7 +19,7 @@ use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
 use crate::ai::client::{
-    run_once, run_streaming_with, AiCompletion, ReqwestTransport, RetryPolicy,
+    run_once_with, run_streaming_with, AiCompletion, ReqwestTransport, RetryPolicy,
 };
 use crate::ai::models::{resolve_effort, resolve_model, AiSettingsSnapshot, AiTaskKind};
 use crate::ai::request::{AiChatMessage, AiChatRole, AiRequestSpec, DEFAULT_MAX_TOKENS};
@@ -83,6 +83,8 @@ pub enum AiConnectionStatus {
     AuthError,
     NetworkError,
     ApiError,
+    /// 混雑 (429 / 529)。一時的なので API エラーとは文言を分ける。
+    Overloaded,
     Refused,
 }
 
@@ -110,9 +112,8 @@ pub fn classify_connection_test(
         Err(e @ AppError::AiAuth(_)) => (AiConnectionStatus::AuthError, e.to_string(), None),
         Err(e @ AppError::AiNetwork(_)) => (AiConnectionStatus::NetworkError, e.to_string(), None),
         Err(e @ AppError::AiRefused(_)) => (AiConnectionStatus::Refused, e.to_string(), None),
-        Err(e @ (AppError::AiApi(_) | AppError::AiOverloaded(_))) => {
-            (AiConnectionStatus::ApiError, e.to_string(), None)
-        }
+        Err(e @ AppError::AiOverloaded(_)) => (AiConnectionStatus::Overloaded, e.to_string(), None),
+        Err(e @ AppError::AiApi(_)) => (AiConnectionStatus::ApiError, e.to_string(), None),
         // keyring 障害など、AI 呼び出し以外の失敗は結果の区分にせず IPC エラーとして返す。
         Err(e) => return Err(e),
     };
@@ -391,7 +392,8 @@ pub async fn test_ai_connection(settings: AiSettingsSnapshot) -> Result<AiConnec
         );
         match tokio::time::timeout(
             Duration::from_secs(TEST_TIMEOUT_SECS),
-            run_once(&transport, &api_key, &spec),
+            // 接続テストは待たせず、混雑 (429/529) も即座に結果として見せる。
+            run_once_with(&transport, &api_key, &spec, &RetryPolicy::NONE),
         )
         .await
         {
@@ -436,7 +438,7 @@ mod tests {
             (AppError::AiApi("x".into()), AiConnectionStatus::ApiError),
             (
                 AppError::AiOverloaded("x".into()),
-                AiConnectionStatus::ApiError,
+                AiConnectionStatus::Overloaded,
             ),
             (AppError::AiRefused("x".into()), AiConnectionStatus::Refused),
         ];

@@ -154,10 +154,13 @@ pub async fn run_once(
     // ログに残すのみで、タスクの成否には影響させない (アクションはもう完了/
     // 失敗している)。
     let state = app.state::<AppState>();
-    disconnect_guard.armed = false;
+    // `armed` は切断の await が終わってから下ろす。await の途中で中断 (Drop) されても
+    // ガードが切断を引き継ぐ。disconnect は冪等 (既に無いセッションは何もしない) なので
+    // 二重に呼ばれても安全。
     if let Err(e) = disconnect(session_id.clone(), state).await {
         tracing::warn!(session_id = %session_id, error = %e, "task scheduler: failed to close connection after run");
     }
+    disconnect_guard.armed = false;
 
     outcome
 }

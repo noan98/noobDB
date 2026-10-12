@@ -8631,7 +8631,7 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
             {autoLimitNote && (
               <chakra.span
                 color="app.textMuted"
-                marginLeft="6px"
+                ml="1.5"
                 data-testid="auto-limit-note"
               >
                 {autoLimitNote}

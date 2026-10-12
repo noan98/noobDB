@@ -125,6 +125,10 @@ describe("接続テスト結果の表示 (#690)", () => {
       key: "aiTestNetworkError",
     });
     expect(connectionTestView({ ...base, status: "apiError", message: "x" }).key).toBe("aiTestApiError");
+    expect(connectionTestView({ ...base, status: "overloaded", message: "x" })).toMatchObject({
+      tone: "warning",
+      key: "aiTestOverloaded",
+    });
     expect(connectionTestView({ ...base, status: "refused", message: "x" }).key).toBe("aiTestRefused");
   });
 });

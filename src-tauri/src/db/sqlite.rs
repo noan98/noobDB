@@ -13,9 +13,7 @@ use super::types::{
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
-use super::{
-    build_insert_sql, columns_of, columns_of_statement, init_sql_of, DbConnectOptions, DriverKind,
-};
+use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
@@ -205,13 +203,7 @@ impl SqliteConn {
         if !columns_emitted {
             // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
             drop(stream);
-            columns = sqlx::Executor::prepare(
-                &mut *conn,
-                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
-            )
-            .await
-            .map(|stmt| columns_of_statement(&stmt))
-            .unwrap_or_default();
+            columns = super::prepared_columns!(conn, sql);
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -1497,13 +1489,7 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
             .await?;
         let columns = if rows.is_empty() {
             // 0 行でも列見出しを返す (#1534)。
-            sqlx::Executor::prepare(
-                &mut *conn,
-                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
-            )
-            .await
-            .map(|stmt| columns_of_statement(&stmt))
-            .unwrap_or_default()
+            super::prepared_columns!(conn, sql)
         } else {
             columns_of(&rows)
         };

@@ -404,6 +404,51 @@ function baseRowSql(overrides: Partial<BuildRowSqlInput>): BuildRowSqlInput {
   };
 }
 
+describe("単精度 float 列の行識別 WHERE (#1534)", () => {
+  it("PG FLOAT4 / MySQL FLOAT は = ではなく相対許容差で比較する", () => {
+    const sqls = buildRowSql(
+      {
+        driver: "postgres",
+        database: "public",
+        table: "t",
+        columns: [col("a", "FLOAT4"), col("b", "TEXT")],
+        rows: [[0.1, "x"]],
+        pkIndices: [0, 1],
+      },
+      "delete",
+    );
+    expect(sqls).toHaveLength(1);
+    expect(sqls[0]).toContain('ABS("a" - (0.1)) <= ABS((0.1)) * 0.000001');
+    expect(sqls[0]).toContain(`"b" = 'x'`);
+    expect(sqls[0]).not.toContain('"a" = 0.1');
+
+    const my = buildRowSql(
+      { ...baseRowSql({}), columns: [col("f", "FLOAT"), col("n", "INT")], rows: [[-2.5, 3]], pkIndices: [0, 1] },
+      "delete",
+    );
+    expect(my[0]).toContain("ABS(`f` - (-2.5)) <= ABS((-2.5)) * 0.000001");
+    expect(my[0]).toContain("`n` = 3");
+  });
+
+  it("倍精度 (DOUBLE / SQLite REAL) と NULL は従来どおり", () => {
+    const dbl = buildRowSql(
+      { ...baseRowSql({}), columns: [col("d", "DOUBLE")], rows: [[0.1]], pkIndices: [0] },
+      "delete",
+    );
+    expect(dbl[0]).toContain("`d` = 0.1");
+    const lite = buildRowSql(
+      { ...baseRowSql({}), driver: "sqlite", columns: [col("r", "REAL")], rows: [[0.1]], pkIndices: [0] },
+      "delete",
+    );
+    expect(lite[0]).toContain('"r" = 0.1');
+    const nul = buildRowSql(
+      { ...baseRowSql({}), columns: [col("f", "FLOAT")], rows: [[null]], pkIndices: [0] },
+      "delete",
+    );
+    expect(nul[0]).toContain("`f` IS NULL");
+  });
+});
+
 describe("buildRowSql", () => {
   describe("INSERT", () => {
     it("lists every column with quoted, qualified MySQL syntax", () => {

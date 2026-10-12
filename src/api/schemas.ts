@@ -1265,7 +1265,7 @@ export const streamCancelledEvent = z.object({
 
 /** `test_ai_connection` の戻り値 (`commands/ai.rs::AiConnectionTestResult`)。 */
 export const aiConnectionTestResult = z.object({
-  status: z.enum(["success", "authError", "networkError", "apiError", "refused"]),
+  status: z.enum(["success", "authError", "networkError", "apiError", "overloaded", "refused"]),
   message: z.string(),
   model: z.string().nullable(),
   elapsedMs: z.number(),

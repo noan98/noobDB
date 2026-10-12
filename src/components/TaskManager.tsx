@@ -334,6 +334,7 @@ export function TaskManager({
                       profileName={profileName(task.profile_id)}
                       now={now}
                       running={runningId === task.id}
+                      runDisabled={runningId !== null}
                       progress={runningId === task.id ? runProgress : null}
                       onStopRun={handleStopRun}
                       expanded={historyTaskId === task.id}
@@ -373,6 +374,7 @@ function TaskRow({
   profileName,
   now,
   running,
+  runDisabled,
   progress,
   onStopRun,
   expanded,
@@ -389,6 +391,8 @@ function TaskRow({
   profileName: string;
   now: Date;
   running: boolean;
+  /** どれかのタスクが実行中のあいだ全行の「今すぐ実行」を無効にする (実行は 1 本ずつ)。 */
+  runDisabled: boolean;
   /** 実行中の進捗 (届くまで null)。 */
   progress: TaskRunProgressEvent | null;
   onStopRun: () => void;
@@ -441,7 +445,7 @@ function TaskRow({
         </chakra.div>
         <Flex gap="1.5">
           <Tooltip label={t("taskRunNow")}>
-            <Button type="button" onClick={onRunNow} disabled={running} aria-label={t("taskRunNow")}>
+            <Button type="button" onClick={onRunNow} disabled={runDisabled || running} aria-label={t("taskRunNow")}>
               {running ? <Spinner size={14} decorative /> : <Icon name="query" size={ICON_SIZES.sm} />}
             </Button>
           </Tooltip>

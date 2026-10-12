@@ -50,8 +50,7 @@ impl RetryPolicy {
         max_delay: Duration::from_secs(20),
     };
 
-    /// 再試行しない方針 (テスト用)。
-    #[cfg(test)]
+    /// 再試行しない方針 (接続テスト・テスト用)。
     pub const NONE: RetryPolicy = RetryPolicy {
         max_retries: 0,
         base_delay: Duration::ZERO,
@@ -321,7 +320,9 @@ pub async fn run_streaming_with<T: AiTransport, F: FnMut(&str), R: FnMut(AiRetry
     )
 }
 
-/// 非ストリーミング要求 (接続テスト用)。`spec.stream` は false であること。
+/// 既定の再試行方針での非ストリーミング要求 (テスト用)。接続テスト本体は
+/// `run_once_with(.., &RetryPolicy::NONE)` を使う。`spec.stream` は false であること。
+#[cfg(test)]
 pub async fn run_once<T: AiTransport>(
     transport: &T,
     api_key: &str,
@@ -330,7 +331,8 @@ pub async fn run_once<T: AiTransport>(
     run_once_with(transport, api_key, spec, &RetryPolicy::DEFAULT).await
 }
 
-async fn run_once_with<T: AiTransport>(
+/// `run_once` の完全版。接続テストのように再試行したくない呼び出しが `policy` を選ぶ。
+pub async fn run_once_with<T: AiTransport>(
     transport: &T,
     api_key: &str,
     spec: &AiRequestSpec,

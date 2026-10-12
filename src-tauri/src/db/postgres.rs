@@ -18,7 +18,7 @@ use super::types::{
     UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
-use super::{columns_of, columns_of_statement, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -276,13 +276,7 @@ impl PostgresConn {
         if !columns_emitted {
             // 0 行の結果でも列見出しを出せるよう、準備済み文から列を取る (#1534)。
             drop(stream);
-            columns = sqlx::Executor::prepare(
-                &mut *conn,
-                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
-            )
-            .await
-            .map(|stmt| columns_of_statement(&stmt))
-            .unwrap_or_default();
+            columns = super::prepared_columns!(conn, sql);
             on_batch(StreamBatch::Columns(columns.clone()))?;
         }
 
@@ -877,7 +871,9 @@ impl PostgresConn {
     /// `pg_stat_statements` 拡張が要る: 未導入なら理由コード
     /// `pg_stat_statements_missing` (フロントが `CREATE EXTENSION` /
     /// `shared_preload_libraries` の導入手順をヘルプ表示)、導入済みでも読めない
-    /// (権限不足・PG12 以前の列名差) 場合は `stats_unreadable` で縮退する。
+    /// (権限不足・PG12 以前の列名差) 場合は `stats_unreadable` で縮退する。拡張は
+    /// あるが `shared_preload_libraries` に無く読めない場合は専用の
+    /// `pg_stat_statements_not_preloaded` (postgresql.conf への追記と再起動が要る)。
     pub async fn query_stats_support(&self) -> Result<QueryStatsSupport> {
         let statements_reason = match self.pg_stat_statements_schema().await? {
             None => Some("pg_stat_statements_missing".to_string()),
@@ -2249,13 +2245,7 @@ async fn run_sql_on(conn: &mut sqlx::PgConnection, sql: &str) -> Result<QueryRes
             .await?;
         let columns = if rows.is_empty() {
             // 0 行でも列見出しを返す (#1534)。
-            sqlx::Executor::prepare(
-                &mut *conn,
-                sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe(sql)),
-            )
-            .await
-            .map(|stmt| columns_of_statement(&stmt))
-            .unwrap_or_default()
+            super::prepared_columns!(conn, sql)
         } else {
             columns_of(&rows)
         };

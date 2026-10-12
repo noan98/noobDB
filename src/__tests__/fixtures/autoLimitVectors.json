@@ -222,6 +222,36 @@
       }
     },
     {
+      "sql": "SELECT a INTO @x FROM t FOR UPDATE",
+      "limit": 100,
+      "note": "SELECT ... INTO @var + FOR UPDATE: INTO 変数への代入は LIMIT を足さず、ロック句でも変更しない",
+      "expected": {
+        "mysql": null,
+        "postgres": null,
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "lockingClause",
+        "postgres": "lockingClause",
+        "sqlite": "lockingClause"
+      }
+    },
+    {
+      "sql": "SELECT * FROM t LIMIT 5 FOR UPDATE",
+      "limit": 100,
+      "note": "既存の LIMIT とロック句が両方あるときは既存の LIMIT が勝つ (existingLimit)",
+      "expected": {
+        "mysql": null,
+        "postgres": null,
+        "sqlite": null
+      },
+      "skip": {
+        "mysql": "existingLimit",
+        "postgres": "existingLimit",
+        "sqlite": "existingLimit"
+      }
+    },
+    {
       "sql": "SELECT * FROM t FOR UPDATE NOWAIT",
       "limit": 100,
       "note": "ロック句の NOWAIT 接尾辞付きでも変更しない",

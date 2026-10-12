@@ -576,24 +576,30 @@ async fn execute_preview(
     let mut columns: Vec<Column> = Vec::new();
     let mut capped = false;
     let res = conn
-        .execute_stream(sql, database, limit + 1, limit + 1, |batch| match batch {
-            StreamBatch::Columns(c) => {
-                columns = c;
-                Ok(())
-            }
-            StreamBatch::Rows(mut r) => {
-                let room = limit.saturating_sub(rows.len());
-                let more = r.len() > room;
-                r.truncate(room);
-                rows.append(&mut r);
-                if more {
-                    capped = true;
-                    Err(AppError::Other(PREVIEW_CAP_MARKER.into()))
-                } else {
+        .execute_stream(
+            sql,
+            database,
+            limit.saturating_add(1),
+            limit.saturating_add(1),
+            |batch| match batch {
+                StreamBatch::Columns(c) => {
+                    columns = c;
                     Ok(())
                 }
-            }
-        })
+                StreamBatch::Rows(mut r) => {
+                    let room = limit.saturating_sub(rows.len());
+                    let more = r.len() > room;
+                    r.truncate(room);
+                    rows.append(&mut r);
+                    if more {
+                        capped = true;
+                        Err(AppError::Other(PREVIEW_CAP_MARKER.into()))
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
         .await;
     match res {
         Ok(mut r) => {

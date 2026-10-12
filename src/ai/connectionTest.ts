@@ -25,6 +25,8 @@ export function connectionTestView(r: AiConnectionTestResult): ConnectionTestVie
       return { tone: "warning", key: "aiTestNetworkError", vars: { message: r.message } };
     case "refused":
       return { tone: "warning", key: "aiTestRefused", vars: { message: r.message } };
+    case "overloaded":
+      return { tone: "warning", key: "aiTestOverloaded", vars: { message: r.message } };
     case "apiError":
       return { tone: "danger", key: "aiTestApiError", vars: { message: r.message } };
   }

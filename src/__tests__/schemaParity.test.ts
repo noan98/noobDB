@@ -77,6 +77,13 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["cancelStreamResponse", schemas.cancelStreamResponse],
   // AI 基盤 (#690)
   ["aiConnectionTestResult", schemas.aiConnectionTestResult],
+  // #1534: AI ストリーム (Channel) とタスク進捗。
+  ["aiStreamDeltaMessage", schemas.aiStreamDeltaMessage],
+  ["aiStreamRetryingMessage", schemas.aiStreamRetryingMessage],
+  ["aiStreamDoneMessage", schemas.aiStreamDoneMessage],
+  ["aiStreamErrorMessage", schemas.aiStreamErrorMessage],
+  ["channelCancelledMessageAi", schemas.channelCancelledMessage],
+  ["taskRunProgressEvent", schemas.taskRunProgressEvent],
   ["knownHost", schemas.knownHost],
   ["schemaDiff", schemas.schemaDiff],
   ["syncPlan", schemas.syncPlan],

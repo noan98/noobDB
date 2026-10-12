@@ -26,8 +26,9 @@ mod timelapse;
 /// Test-only re-exports. Not part of the public API; subject to change.
 #[doc(hidden)]
 pub mod __test_api {
+    pub use crate::ai::sse::AiUsage;
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
-    pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult};
+    pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult, AiStreamMessage};
     pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
@@ -198,6 +199,7 @@ pub mod __test_api {
     pub use crate::schema_drift::{
         GenerationMeta as DriftGenerationMeta, TableChangeStatus, TableChangeSummary,
     };
+    pub use crate::tasks::scheduler::TaskRunProgressEvent;
     pub use crate::tasks::{
         AssertionRunRecord, SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
     };

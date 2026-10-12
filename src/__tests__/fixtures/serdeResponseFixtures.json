@@ -5,6 +5,34 @@
     "model": "claude-opus-5-5",
     "status": "success"
   },
+  "aiStreamDeltaMessage": {
+    "kind": "delta",
+    "text": "SEL"
+  },
+  "aiStreamDoneMessage": {
+    "fallbackUsed": false,
+    "kind": "done",
+    "model": "claude-opus-5-5",
+    "requestedModel": "claude-opus-5-5",
+    "stopReason": "end_turn",
+    "usage": {
+      "cacheCreationInputTokens": 0,
+      "cacheReadInputTokens": 80,
+      "inputTokens": 120,
+      "outputTokens": 45
+    }
+  },
+  "aiStreamErrorMessage": {
+    "error": "overloaded",
+    "errorKind": "aiOverloaded",
+    "kind": "error"
+  },
+  "aiStreamRetryingMessage": {
+    "attempt": 1,
+    "delayMs": 1500,
+    "kind": "retrying",
+    "maxAttempts": 3
+  },
   "alterTableContext": {
     "columns": [
       {
@@ -448,6 +476,10 @@
   },
   "channelCancelledMessage": {
     "deliveredRows": 5,
+    "kind": "cancelled"
+  },
+  "channelCancelledMessageAi": {
+    "deliveredRows": 3,
     "kind": "cancelled"
   },
   "channelCancelledMessageZero": {
@@ -4643,6 +4675,12 @@
     "started_at": "2026-01-02T00:00:00Z",
     "status": "ok",
     "task_id": "task0001"
+  },
+  "taskRunProgressEvent": {
+    "count": 1234,
+    "streamId": "task_t1_abc",
+    "taskId": "t1",
+    "unit": "rows"
   },
   "timelapseCaptureOutcome": {
     "added": true,

@@ -58,8 +58,11 @@ export const aiCommands = {
   }) => {
     const channel = aiStreamChannels.get(params.streamId);
     if (!channel) {
-      throw new Error(
-        `runAiRequest: listenAiStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      // 同期 throw ではなく reject で返す (呼び出し側の await / .catch で一様に扱えるように)。
+      return Promise.reject(
+        new Error(
+          `runAiRequest: listenAiStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+        ),
       );
     }
     return invoke<void>("run_ai_request", {

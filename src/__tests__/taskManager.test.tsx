@@ -118,6 +118,27 @@ describe("TaskManager 今すぐ実行の中断・進捗 (#1534)", () => {
     await act(async () => finish({ ...RUN, status: "error", error: "cancelled by user" }));
     await waitFor(() => expect(screen.queryByTestId("task-run-progress")).toBeNull());
   });
+
+  it("どれかが実行中のあいだは全タスクの「今すぐ実行」が無効になり、終了後に戻る", async () => {
+    let finish: (r: typeof RUN) => void = () => {};
+    runTaskNow.mockImplementation(() => new Promise<typeof RUN>((res) => (finish = res)));
+    listTasks.mockResolvedValue([TASK, { ...TASK, id: "task-2", name: "Second task" }]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Second task")).toBeInTheDocument());
+
+    const runButtons = () => screen.getAllByRole("button", { name: t("taskRunNow") });
+    expect(runButtons()).toHaveLength(2);
+    await user.click(runButtons()[0]);
+    await waitFor(() => expect(runTaskNow).toHaveBeenCalledTimes(1));
+    for (const b of runButtons()) expect(b).toBeDisabled();
+    expect(screen.getAllByRole("button", { name: t("taskRunStop") })).toHaveLength(1);
+
+    await act(async () => finish(RUN));
+    await waitFor(() => {
+      for (const b of runButtons()) expect(b).toBeEnabled();
+    });
+  });
 });
 
 describe("TaskManager 実行履歴の消去 (#910)", () => {

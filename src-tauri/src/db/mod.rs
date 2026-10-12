@@ -2088,6 +2088,23 @@ pub(crate) fn columns_of_statement<S: sqlx::Statement>(stmt: &S) -> Vec<Column> 
         .collect()
 }
 
+/// 接続 `conn` で `sql` を prepare し、そのメタデータから列情報を得る (#1534)。
+/// 失敗したときは空 (列見出しが出ないだけで、結果自体は成功のまま)。`columns_of_statement`
+/// を 3 ドライバの 0 行経路で共有するための await 式マクロ (`&mut *conn` が
+/// `Executor` になる型ごとに別の実装を要するため、関数ではなくマクロにしている)。
+macro_rules! prepared_columns {
+    ($conn:expr, $sql:expr) => {
+        sqlx::Executor::prepare(
+            &mut *$conn,
+            sqlx::SqlSafeStr::into_sql_str(sqlx::AssertSqlSafe($sql)),
+        )
+        .await
+        .map(|stmt| $crate::db::columns_of_statement(&stmt))
+        .unwrap_or_default()
+    };
+}
+pub(crate) use prepared_columns;
+
 /// Shared decode fallback tail for MySQL / Postgres: try `String`, else
 /// hex-encode `Vec<u8>` (the JSON-safe BLOB representation), else `Null`.
 /// SQLite keeps its own tail (it also tries int/float for dynamically typed

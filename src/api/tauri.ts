@@ -3002,7 +3002,7 @@ export async function listenTaskRunEvents(handlers: {
 
 // --- AI 基盤 (#690) ---------------------------------------------------------
 
-export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "refused";
+export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "overloaded" | "refused";
 
 export interface AiConnectionTestResult {
   status: AiConnectionStatus;
