@@ -1264,10 +1264,21 @@ export const aiConnectionTestResult = z.object({
   elapsedMs: z.number(),
 });
 
-/** `ai-stream:delta` イベント。 */
-export const aiDeltaEvent = z.object({
-  streamId: z.string(),
+// `run_ai_request` は結果を Tauri Channel の `kind` タグ付きメッセージで送る (#1534)。
+// Channel は 1 要求にスコープされるので `streamId` は載らない。
+
+/** 本文の差分。 */
+export const aiStreamDeltaMessage = z.object({
+  kind: z.literal("delta"),
   text: z.string(),
+});
+
+/** 429 / 529 を受けて待ってから再試行する (ストリーム開始前のみ)。 */
+export const aiStreamRetryingMessage = z.object({
+  kind: z.literal("retrying"),
+  attempt: z.number(),
+  maxAttempts: z.number(),
+  delayMs: z.number(),
 });
 
 const aiUsage = z.object({
@@ -1277,9 +1288,9 @@ const aiUsage = z.object({
   cacheCreationInputTokens: z.number(),
 });
 
-/** `ai-stream:done` イベント。`model` は実際に応答したモデル (フォールバック時は要求と異なる)。 */
-export const aiDoneEvent = z.object({
-  streamId: z.string(),
+/** 完了メッセージ。`model` は実際に応答したモデル (フォールバック時は要求と異なる)。 */
+export const aiStreamDoneMessage = z.object({
+  kind: z.literal("done"),
   model: z.string(),
   requestedModel: z.string(),
   fallbackUsed: z.boolean(),
@@ -1287,11 +1298,11 @@ export const aiDoneEvent = z.object({
   usage: aiUsage,
 });
 
-/** `ai-stream:error` イベント。`kind` は `AppError.kind` (`aiRefused` など)。 */
-export const aiErrorEvent = z.object({
-  streamId: z.string(),
+/** エラーメッセージ。`errorKind` は `AppError.kind` (`aiRefused` など。タグ名 `kind` と別名)。 */
+export const aiStreamErrorMessage = z.object({
+  kind: z.literal("error"),
   error: z.string(),
-  kind: z.string(),
+  errorKind: z.string(),
 });
 
 export const importStartedEvent = z.object({

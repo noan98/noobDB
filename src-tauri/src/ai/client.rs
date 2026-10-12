@@ -27,6 +27,106 @@ pub trait AiBody {
 pub struct AiHttpResponse<B> {
     pub status: u16,
     pub body: B,
+    /// `Retry-After` ヘッダ (秒指定のみ解釈する)。無い・解釈できなければ `None`。
+    pub retry_after: Option<Duration>,
+}
+
+/// 429 / 529 を受けたときの再試行の方針 (#1534)。再試行するのは**応答の本文を読み始める前**
+/// (HTTP エラーが返った時点) だけで、ストリームの途中では再送しない (本文の二重配信を避ける)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RetryPolicy {
+    /// 初回に加えて再試行する最大回数。
+    pub max_retries: u32,
+    /// `Retry-After` が無いときの待ち時間の基準。試行ごとに倍にする (指数バックオフ)。
+    pub base_delay: Duration,
+    /// 1 回の待ち時間の上限。`Retry-After` がこれを超えるときは待たずに諦める。
+    pub max_delay: Duration,
+}
+
+impl RetryPolicy {
+    pub const DEFAULT: RetryPolicy = RetryPolicy {
+        max_retries: 3,
+        base_delay: Duration::from_secs(1),
+        max_delay: Duration::from_secs(20),
+    };
+
+    /// 再試行しない方針 (テスト用)。
+    #[cfg(test)]
+    pub const NONE: RetryPolicy = RetryPolicy {
+        max_retries: 0,
+        base_delay: Duration::ZERO,
+        max_delay: Duration::ZERO,
+    };
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// 再試行を始める直前の通知 (UI の「混雑のため再試行中」表示用)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AiRetryNotice {
+    /// 何回目の再試行か (1 始まり)。
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub delay: Duration,
+}
+
+/// 再試行すべきステータスか (429 = レート制限、529 = 過負荷)。
+fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 429 | 529)
+}
+
+/// `attempt` (0 始まり = これまでの再試行回数) 回目の再試行前に待つ時間。`None` なら諦める。
+/// `Retry-After` があればそれに従い (上限超過なら諦める)、無ければ指数バックオフ。
+fn retry_delay(
+    policy: &RetryPolicy,
+    attempt: u32,
+    retry_after: Option<Duration>,
+) -> Option<Duration> {
+    if attempt >= policy.max_retries {
+        return None;
+    }
+    match retry_after {
+        Some(d) if d > policy.max_delay => None,
+        Some(d) => Some(d),
+        None => Some(
+            policy
+                .base_delay
+                .saturating_mul(1u32.checked_shl(attempt).unwrap_or(u32::MAX))
+                .min(policy.max_delay),
+        ),
+    }
+}
+
+/// `post` を送り、429 / 529 なら方針に従って待って送り直す。再試行を使い切った・待てない
+/// 応答はそのまま返す (呼び出し側が `error_from_status` で分類する)。
+async fn post_with_retry<T: AiTransport, R: FnMut(AiRetryNotice)>(
+    transport: &T,
+    api_key: &str,
+    body: &Value,
+    policy: &RetryPolicy,
+    on_retry: &mut R,
+) -> Result<AiHttpResponse<T::Body>> {
+    let mut attempt: u32 = 0;
+    loop {
+        let resp = transport.post(api_key, body).await?;
+        if !is_retryable_status(resp.status) {
+            return Ok(resp);
+        }
+        let Some(delay) = retry_delay(policy, attempt, resp.retry_after) else {
+            return Ok(resp);
+        };
+        attempt += 1;
+        on_retry(AiRetryNotice {
+            attempt,
+            max_attempts: policy.max_retries,
+            delay,
+        });
+        tokio::time::sleep(delay).await;
+    }
 }
 
 /// `POST /v1/messages` を 1 回送る抽象 (本番は reqwest、テストはスタブ)。
@@ -115,6 +215,15 @@ fn error_from_status(status: u16, body: &[u8]) -> AppError {
         })
         .unwrap_or(("error", ""));
     match status {
+        // レート制限・過負荷は本文の種別に関わらず「一時的な混雑」(#1534)。
+        429 | 529 => AppError::AiOverloaded(format!(
+            "HTTP {status}: {etype}{}",
+            if message.is_empty() {
+                String::new()
+            } else {
+                format!(": {message}")
+            }
+        )),
         401 | 403 => AppError::AiAuth(format!(
             "API key was rejected (HTTP {status}, {etype}){}",
             if message.is_empty() {
@@ -127,19 +236,44 @@ fn error_from_status(status: u16, body: &[u8]) -> AppError {
             // 認証系の種別が 401/403 以外で返ってきても分類は保つ。
             e @ AppError::AiAuth(_) => e,
             AppError::AiApi(m) => AppError::AiApi(format!("HTTP {status}: {m}")),
+            AppError::AiOverloaded(m) => AppError::AiOverloaded(format!("HTTP {status}: {m}")),
             other => other,
         },
     }
 }
 
-/// ストリーミング要求。本文の差分ごとに `on_delta` を呼び、完了時に `AiCompletion` を返す。
+/// ストリーミング要求。本文の差分ごとに `on_delta` を呼び、完了時に `AiCompletion` を返す
+/// (既定の再試行方針、通知なし。本番は `run_streaming_with`)。
+#[cfg(test)]
 pub async fn run_streaming<T: AiTransport, F: FnMut(&str)>(
     transport: &T,
     api_key: &str,
     spec: &AiRequestSpec,
+    on_delta: F,
+) -> Result<AiCompletion> {
+    run_streaming_with(
+        transport,
+        api_key,
+        spec,
+        &RetryPolicy::DEFAULT,
+        |_| {},
+        on_delta,
+    )
+    .await
+}
+
+/// `run_streaming` の完全版。429 / 529 はストリーム開始前に限り `policy` に従って再試行し、
+/// 待つ直前に `on_retry` で知らせる (#1534)。
+pub async fn run_streaming_with<T: AiTransport, F: FnMut(&str), R: FnMut(AiRetryNotice)>(
+    transport: &T,
+    api_key: &str,
+    spec: &AiRequestSpec,
+    policy: &RetryPolicy,
+    mut on_retry: R,
     mut on_delta: F,
 ) -> Result<AiCompletion> {
-    let resp = transport.post(api_key, &build_body(spec)).await?;
+    let resp =
+        post_with_retry(transport, api_key, &build_body(spec), policy, &mut on_retry).await?;
     if !(200..300).contains(&resp.status) {
         let body = read_limited(resp.body, MAX_ERROR_BODY_BYTES).await?;
         return Err(error_from_status(resp.status, &body));
@@ -193,7 +327,16 @@ pub async fn run_once<T: AiTransport>(
     api_key: &str,
     spec: &AiRequestSpec,
 ) -> Result<AiCompletion> {
-    let resp = transport.post(api_key, &build_body(spec)).await?;
+    run_once_with(transport, api_key, spec, &RetryPolicy::DEFAULT).await
+}
+
+async fn run_once_with<T: AiTransport>(
+    transport: &T,
+    api_key: &str,
+    spec: &AiRequestSpec,
+    policy: &RetryPolicy,
+) -> Result<AiCompletion> {
+    let resp = post_with_retry(transport, api_key, &build_body(spec), policy, &mut |_| {}).await?;
     let status = resp.status;
     let bytes = read_limited(resp.body, 4 * 1024 * 1024).await?;
     if !(200..300).contains(&status) {
@@ -282,6 +425,18 @@ impl ReqwestTransport {
     }
 }
 
+/// `Retry-After` を秒数として読む (HTTP 日付形式は解釈せず `None`)。
+fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
+}
+
 impl AiTransport for ReqwestTransport {
     type Body = ReqwestBody;
 
@@ -301,6 +456,7 @@ impl AiTransport for ReqwestTransport {
         match req.json(body).send().await {
             Ok(resp) => Ok(AiHttpResponse {
                 status: resp.status().as_u16(),
+                retry_after: parse_retry_after(resp.headers()),
                 body: ReqwestBody(resp),
             }),
             // ヘッダ値として不正な文字を含むキー (改行など)。キー自体はメッセージに出さない。
@@ -330,6 +486,8 @@ mod tests {
         chunks: Vec<Vec<u8>>,
         sent: Mutex<Vec<(String, Value)>>,
         network_error: bool,
+        /// 先頭から順に消費する (ステータス, Retry-After 秒)。尽きたら `status` を返す。
+        script: Mutex<std::collections::VecDeque<(u16, Option<u64>)>>,
     }
     impl Stub {
         fn new(status: u16, chunks: Vec<&str>) -> Self {
@@ -338,6 +496,7 @@ mod tests {
                 chunks: chunks.into_iter().map(|c| c.as_bytes().to_vec()).collect(),
                 sent: Mutex::new(Vec::new()),
                 network_error: false,
+                script: Mutex::new(std::collections::VecDeque::new()),
             }
         }
     }
@@ -351,8 +510,15 @@ mod tests {
             if self.network_error {
                 return Err(AppError::AiNetwork("dns".into()));
             }
+            let (status, retry_after) = self
+                .script
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or((self.status, None));
             Ok(AiHttpResponse {
-                status: self.status,
+                status,
+                retry_after: retry_after.map(Duration::from_secs),
                 body: StubBody(self.chunks.clone().into_iter()),
             })
         }
@@ -533,7 +699,8 @@ mod tests {
         let err = run_streaming(&stub, "k", &spec(true), |_| {})
             .await
             .unwrap_err();
-        assert_eq!(err.kind(), "aiApi");
+        // 過負荷はストリームの途中で来ても「一時的な混雑」(#1534)。
+        assert_eq!(err.kind(), "aiOverloaded");
     }
 
     #[tokio::test]
@@ -551,18 +718,124 @@ mod tests {
         assert!(!err.to_string().contains("sk-secret"));
     }
 
+    const FAST: RetryPolicy = RetryPolicy {
+        max_retries: 3,
+        base_delay: Duration::ZERO,
+        max_delay: Duration::from_secs(20),
+    };
+
     #[tokio::test]
-    async fn http_429_and_garbage_body_are_api_errors() {
+    async fn http_429_529_are_overloaded_and_garbage_body_is_api_error() {
         let stub = Stub::new(
             429,
             vec![r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#],
         );
-        let err = run_once(&stub, "k", &spec(false)).await.unwrap_err();
-        assert_eq!(err.kind(), "aiApi");
+        let err = run_once_with(&stub, "k", &spec(false), &RetryPolicy::NONE)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), "aiOverloaded");
         assert!(err.to_string().contains("429"));
+        // 本文が壊れていても 529 は過負荷として扱う。
+        let stub = Stub::new(529, vec!["<html>overloaded</html>"]);
+        let err = run_once_with(&stub, "k", &spec(false), &RetryPolicy::NONE)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), "aiOverloaded");
+        assert!(err.to_string().contains("529"));
         let stub = Stub::new(502, vec!["<html>bad gateway</html>"]);
         let err = run_once(&stub, "k", &spec(false)).await.unwrap_err();
         assert_eq!(err.kind(), "aiApi");
+        // 502 は再試行しない。
+        assert_eq!(stub.sent.lock().unwrap().len(), 1);
+    }
+
+    fn ok_stream() -> Vec<String> {
+        sse(&[
+            ("message_start", START),
+            (
+                "content_block_delta",
+                r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"ok"}}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+            ),
+            ("message_stop", r#"{"type":"message_stop"}"#),
+        ])
+    }
+
+    #[tokio::test]
+    async fn overloaded_before_the_stream_is_retried_then_succeeds() {
+        let events = ok_stream();
+        let stub = Stub::new(200, events.iter().map(String::as_str).collect());
+        // 1 回目 529、2 回目 429 (Retry-After 0 秒)、3 回目で成功。
+        stub.script
+            .lock()
+            .unwrap()
+            .extend([(529, None), (429, Some(0))]);
+        let mut notices = Vec::new();
+        let mut deltas = Vec::new();
+        let done = run_streaming_with(
+            &stub,
+            "k",
+            &spec(true),
+            &FAST,
+            |n| notices.push(n),
+            |t| deltas.push(t.to_string()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(done.text, "ok");
+        assert_eq!(deltas, vec!["ok"]);
+        assert_eq!(stub.sent.lock().unwrap().len(), 3);
+        assert_eq!(
+            notices.iter().map(|n| n.attempt).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(notices.iter().all(|n| n.max_attempts == 3));
+    }
+
+    #[tokio::test]
+    async fn retries_are_bounded_and_end_as_overloaded() {
+        let stub = Stub::new(
+            529,
+            vec![r#"{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}"#],
+        );
+        let mut count = 0;
+        let err = run_streaming_with(&stub, "k", &spec(true), &FAST, |_| count += 1, |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), "aiOverloaded");
+        assert_eq!(count, 3);
+        // 初回 + 3 回の再試行。
+        assert_eq!(stub.sent.lock().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn auth_errors_are_never_retried() {
+        let stub = Stub::new(
+            401,
+            vec![r#"{"type":"error","error":{"type":"authentication_error","message":"bad"}}"#],
+        );
+        let err = run_streaming_with(&stub, "k", &spec(true), &FAST, |_| {}, |_| {})
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), "aiAuth");
+        assert_eq!(stub.sent.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn retry_delay_follows_retry_after_or_backs_off_exponentially() {
+        let p = RetryPolicy::DEFAULT;
+        let secs = Duration::from_secs;
+        assert_eq!(retry_delay(&p, 0, None), Some(secs(1)));
+        assert_eq!(retry_delay(&p, 1, None), Some(secs(2)));
+        assert_eq!(retry_delay(&p, 2, None), Some(secs(4)));
+        assert_eq!(retry_delay(&p, 3, None), None);
+        assert_eq!(retry_delay(&p, 0, Some(secs(7))), Some(secs(7)));
+        // 上限を超える Retry-After は待たずに諦める。
+        assert_eq!(retry_delay(&p, 0, Some(secs(120))), None);
+        assert_eq!(retry_delay(&RetryPolicy::NONE, 0, None), None);
     }
 
     #[tokio::test]

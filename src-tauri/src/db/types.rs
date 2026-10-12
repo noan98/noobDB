@@ -672,6 +672,8 @@ pub struct UserPrivileges {
 /// - `statements_consumer_off` — MySQL で events_statements 系 consumer が無効
 /// - `statements_digest_off` — MySQL で `statements_digest` consumer が無効
 /// - `pg_stat_statements_missing` — PostgreSQL で拡張が未導入
+/// - `pg_stat_statements_not_preloaded` — 拡張は導入済みだが
+///   `shared_preload_libraries` に無く読めない (postgresql.conf への追記と再起動が要る)
 /// - `stats_unreadable` — ソースは存在するが読めない (権限不足・非対応バージョン)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryStatsSupport {

@@ -4,6 +4,7 @@ import type { AiSettingsSnapshot } from "../../ai/aiSettings";
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
+import { aiStreamChannels } from "../streamChannels";
 import type { AiConnectionTestResult } from "../tauri";
 
 export const aiCommands = {
@@ -28,7 +29,8 @@ export const aiCommands = {
   /**
    * AI へのストリーミング要求 (#690)。モデル / エフォートは呼び出し側から渡さず、
    * タスク種別 + 設定スナップショットからバックエンドが解決する。結果は
-   * `ai-stream:*` イベント (`listenAiStream`) で届き、`cancelStream` で中断できる。
+   * Tauri Channel (`listenAiStream` が作る、#1534) で届き、`cancelStream` で中断できる。
+   * `listenAiStream(streamId)` を先に await しておくこと。
    */
   runAiRequest: (params: {
     streamId: string;
@@ -53,8 +55,14 @@ export const aiCommands = {
      * 省略すると従来どおりの単発。組み立ては `ai/conversation.ts`。
      */
     history?: ReadonlyArray<{ role: "user" | "assistant"; content: string }> | null;
-  }) =>
-    invoke<void>("run_ai_request", {
+  }) => {
+    const channel = aiStreamChannels.get(params.streamId);
+    if (!channel) {
+      throw new Error(
+        `runAiRequest: listenAiStream(streamId) must be awaited before invoking (streamId="${params.streamId}")`,
+      );
+    }
+    return invoke<void>("run_ai_request", {
       streamId: params.streamId,
       task: params.task,
       system: params.system ?? null,
@@ -63,5 +71,7 @@ export const aiCommands = {
       format: params.format ?? null,
       systemCached: params.systemCached ?? null,
       history: params.history ?? null,
-    }),
+      onEvent: channel,
+    });
+  },
 };

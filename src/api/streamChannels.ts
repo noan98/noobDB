@@ -13,5 +13,7 @@ export const previewStreamChannels = new Map<string, Channel<unknown>>();
 export const batchStreamChannels = new Map<string, Channel<unknown>>();
 export const whereUsedChannels = new Map<string, Channel<unknown>>();
 export const dataSearchChannels = new Map<string, Channel<unknown>>();
+/** `streamId` → AI リクエスト (`run_ai_request`) の Channel (#1534)。 */
+export const aiStreamChannels = new Map<string, Channel<unknown>>();
 /** `runId` → 環境横断実行 (broadcast) の Channel。 */
 export const broadcastChannels = new Map<string, Channel<unknown>>();

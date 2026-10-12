@@ -900,6 +900,8 @@ const en = {
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
+  errorHintAiOverloaded:
+    "The AI service is busy (rate limit or overload). Wait a little and run it again.",
   errorHintTimeout:
     "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
   errorHintSsh:
@@ -3673,6 +3675,8 @@ const en = {
     "the statements_digest consumer is disabled. Enable it with: UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest';",
   inspectorReasonPgssMissing:
     "the pg_stat_statements extension is not installed. Add pg_stat_statements to shared_preload_libraries in postgresql.conf, restart the server, then run CREATE EXTENSION pg_stat_statements;",
+  inspectorReasonPgssNotPreloaded:
+    "pg_stat_statements is installed but not loaded. Add pg_stat_statements to shared_preload_libraries in postgresql.conf and restart the server (CREATE EXTENSION alone is not enough).",
   inspectorReasonUnreadable:
     "the statistics source exists but could not be read (insufficient privileges or an unsupported server version). Only what your database user is allowed to see is shown.",
   inspectorReasonUnknown: "not available on this server.",
@@ -4498,6 +4502,7 @@ const en = {
   aiErrorExplainRunning: "Asking the AI...",
   aiErrorExplainCancel: "Stop",
   aiErrorExplainCancelled: "Stopped.",
+  aiStreamRetrying: "The AI service is busy. Retrying automatically ({attempt}/{max}, in {sec}s)...",
   aiStreamWaiting: "Waiting for the AI to start responding...",
   aiStreamReceiving: "Receiving",
   aiStreamElapsed: "{sec}s elapsed",
@@ -5474,6 +5479,8 @@ const ja: Dict = {
     "データベースサーバーに到達できませんでした。ホストとポート、サーバーが起動しているか、SSH トンネルやファイアウォールの設定を確認してください。",
   errorHintConnectionLost:
     "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
+  errorHintAiOverloaded:
+    "AI サービスが混み合っています (レート制限または過負荷)。しばらく待ってからもう一度実行してください。",
   errorHintTimeout:
     "操作が制限時間を超えたため中断されました。クエリを絞り込む (WHERE / LIMIT を付ける) か、設定でクエリタイムアウトを延ばしてください。",
   errorHintSsh:
@@ -8241,6 +8248,8 @@ const ja: Dict = {
     "statements_digest consumer が無効です。UPDATE performance_schema.setup_consumers SET ENABLED='YES' WHERE NAME='statements_digest'; で有効化できます。",
   inspectorReasonPgssMissing:
     "pg_stat_statements 拡張が未導入です。postgresql.conf の shared_preload_libraries に pg_stat_statements を追加してサーバを再起動し、CREATE EXTENSION pg_stat_statements; を実行してください。",
+  inspectorReasonPgssNotPreloaded:
+    "pg_stat_statements は導入済みですが読み込まれていません。postgresql.conf の shared_preload_libraries に pg_stat_statements を追加してサーバを再起動してください (CREATE EXTENSION だけでは有効になりません)。",
   inspectorReasonUnreadable:
     "統計ソースは存在しますが読み取れませんでした (権限不足、または非対応のサーババージョン)。DB ユーザに見えている範囲のみ表示します。",
   inspectorReasonUnknown: "このサーバでは利用できません。",
@@ -9063,6 +9072,7 @@ const ja: Dict = {
   aiErrorExplainRunning: "AI に問い合わせ中...",
   aiErrorExplainCancel: "中止",
   aiErrorExplainCancelled: "中止しました。",
+  aiStreamRetrying: "AI サービスが混み合っているため再試行しています ({attempt}/{max}回目、{sec} 秒後)...",
   aiStreamWaiting: "AI の応答開始を待っています...",
   aiStreamReceiving: "受信中",
   aiStreamElapsed: "{sec} 秒経過",

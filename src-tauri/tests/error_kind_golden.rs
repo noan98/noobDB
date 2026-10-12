@@ -75,6 +75,9 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
         "AiAuth" => AppError::AiAuth(arg.expect("AiAuth requires arg").to_string()),
         "AiNetwork" => AppError::AiNetwork(arg.expect("AiNetwork requires arg").to_string()),
         "AiApi" => AppError::AiApi(arg.expect("AiApi requires arg").to_string()),
+        "AiOverloaded" => {
+            AppError::AiOverloaded(arg.expect("AiOverloaded requires arg").to_string())
+        }
         other => panic!(
             "error_kind_golden.rs の build_native が未対応の variant: {other} (フィクスチャと \
              このテストファイルの対応表を両方更新してください)"

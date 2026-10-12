@@ -892,7 +892,7 @@ impl PostgresConn {
                     .await
                 {
                     Ok(_) => None,
-                    Err(_) => Some("stats_unreadable".to_string()),
+                    Err(e) => Some(statements_unreadable_reason(&e.to_string()).to_string()),
                 }
             }
         };
@@ -3186,9 +3186,39 @@ async fn fetch_capped_pg(
     Ok(rows)
 }
 
+/// `pg_stat_statements` を読めなかったときの理由コード (#1534)。拡張が
+/// `CREATE EXTENSION` 済みでも `shared_preload_libraries` に無いとビューの読み取りが
+/// 「must be loaded via shared_preload_libraries」で失敗する。権限不足
+/// (`stats_unreadable`) と対処法が違う (postgresql.conf への追記と再起動) ので、
+/// 専用コード `pg_stat_statements_not_preloaded` に分けて導入手順を出せるようにする。
+fn statements_unreadable_reason(error_message: &str) -> &'static str {
+    if error_message
+        .to_ascii_lowercase()
+        .contains("shared_preload_libraries")
+    {
+        "pg_stat_statements_not_preloaded"
+    } else {
+        "stats_unreadable"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statements_probe_error_is_classified() {
+        assert_eq!(
+            statements_unreadable_reason(
+                "pg_stat_statements must be loaded via \"shared_preload_libraries\""
+            ),
+            "pg_stat_statements_not_preloaded"
+        );
+        assert_eq!(
+            statements_unreadable_reason("permission denied for view pg_stat_statements"),
+            "stats_unreadable"
+        );
+    }
 
     #[test]
     fn is_call_shape_detects_call_only() {

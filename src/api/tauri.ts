@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import * as schemas from "./schemas";
 import { parseResponse } from "./schemas";
 import {
+  aiStreamChannels,
   batchStreamChannels,
   broadcastChannels,
   dataSearchChannels,
@@ -956,7 +957,7 @@ export interface KnownHost {
  * ライブクエリ・インスペクタ (#746) の前提可否。使えない機能には機械可読な
  * 理由コード (`unsupported_driver` / `performance_schema_off` /
  * `statements_consumer_off` / `statements_digest_off` /
- * `pg_stat_statements_missing` / `stats_unreadable`) が付き、UI は有効化手順
+ * `pg_stat_statements_missing` / `pg_stat_statements_not_preloaded` / `stats_unreadable`) が付き、UI は有効化手順
  * つきのヘルプ文言にマップして縮退表示する (黙って空にしない)。
  */
 export interface QueryStatsSupport {
@@ -3000,12 +3001,23 @@ export interface AiDoneEvent {
 export interface AiErrorEvent {
   streamId: string;
   error: string;
-  /** `AppError.kind` (`aiRefused` / `aiAuth` / `aiNetwork` / `aiApi`)。 */
+  /** `AppError.kind` (`aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded`)。 */
   kind: string;
+}
+
+export interface AiRetryingEvent {
+  streamId: string;
+  /** 何回目の再試行か (1 始まり)。 */
+  attempt: number;
+  maxAttempts: number;
+  /** 再試行までの待ち時間 (ms)。 */
+  delayMs: number;
 }
 
 export interface AiStreamHandlers {
   onDelta?: (event: AiDeltaEvent) => void;
+  /** 429 / 529 (混雑) を受けて、待ってから自動で再試行する (#1534)。 */
+  onRetrying?: (event: AiRetryingEvent) => void;
   onDone?: (event: AiDoneEvent) => void;
   onError?: (event: AiErrorEvent) => void;
   /** `deliveredRows` は送信済みの本文差分 (delta) の件数。 */
@@ -3013,40 +3025,85 @@ export interface AiStreamHandlers {
 }
 
 /**
- * AI リクエスト (#690) の `ai-stream:*` イベントを `streamId` で絞って購読する。
- * 戻り値の関数ですべてのリスナーを外す。
+ * AI リクエスト (#690) の Tauri Channel を `streamId` 向けに作って購読する (#1534。以前は
+ * `ai-stream:*` のグローバルイベントで、webview 内の全リスナーに配られていた)。`runAiRequest`
+ * の前に await すること。戻り値の関数でハンドラを外す。ハンドラへは従来どおり `streamId`
+ * 付きのイベントを渡す。
  */
 export async function listenAiStream(
   streamId: string,
   handlers: AiStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
+  const channel = new Channel<unknown>();
+  channel.onmessage = (raw) => {
+    const msg = raw as RawStreamMessage;
+    switch (msg.kind) {
+      case "delta": {
+        const m = parseChannelMessage<{ text: string }>(
+          schemas.aiStreamDeltaMessage,
+          msg,
+          "aiStreamDeltaMessage",
+        );
+        handlers.onDelta?.({ streamId, text: m.text });
+        break;
       }
-    };
-  return registerListeners([
-    listen<AiDeltaEvent>(
-      "ai-stream:delta",
-      filter(schemas.aiDeltaEvent, "ai-stream:delta", handlers.onDelta),
-    ),
-    listen<AiDoneEvent>(
-      "ai-stream:done",
-      filter(schemas.aiDoneEvent, "ai-stream:done", handlers.onDone),
-    ),
-    listen<AiErrorEvent>(
-      "ai-stream:error",
-      filter(schemas.aiErrorEvent, "ai-stream:error", handlers.onError),
-    ),
-    listen<StreamCancelledEvent>(
-      "ai-stream:cancelled",
-      filter(schemas.streamCancelledEvent, "ai-stream:cancelled", handlers.onCancelled),
-    ),
-  ]);
+      case "retrying": {
+        const m = parseChannelMessage<Omit<AiRetryingEvent, "streamId">>(
+          schemas.aiStreamRetryingMessage,
+          msg,
+          "aiStreamRetryingMessage",
+        );
+        handlers.onRetrying?.({
+          streamId,
+          attempt: m.attempt,
+          maxAttempts: m.maxAttempts,
+          delayMs: m.delayMs,
+        });
+        break;
+      }
+      case "done": {
+        const m = parseChannelMessage<Omit<AiDoneEvent, "streamId">>(
+          schemas.aiStreamDoneMessage,
+          msg,
+          "aiStreamDoneMessage",
+        );
+        handlers.onDone?.({
+          streamId,
+          model: m.model,
+          requestedModel: m.requestedModel,
+          fallbackUsed: m.fallbackUsed,
+          stopReason: m.stopReason,
+          usage: m.usage,
+        });
+        break;
+      }
+      case "error": {
+        const m = parseChannelMessage<{ error: string; errorKind: string }>(
+          schemas.aiStreamErrorMessage,
+          msg,
+          "aiStreamErrorMessage",
+        );
+        handlers.onError?.({ streamId, error: m.error, kind: m.errorKind });
+        break;
+      }
+      case "cancelled": {
+        const m = parseChannelMessage<ChannelCancelledMessage>(
+          schemas.channelCancelledMessage,
+          msg,
+          "channelCancelledMessage",
+        );
+        handlers.onCancelled?.({ streamId, deliveredRows: m.deliveredRows });
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  aiStreamChannels.set(streamId, channel);
+  return () => {
+    channel.onmessage = () => {};
+    if (aiStreamChannels.get(streamId) === channel) {
+      aiStreamChannels.delete(streamId);
+    }
+  };
 }

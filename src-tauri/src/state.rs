@@ -37,7 +37,7 @@ pub enum StreamKind {
     /// 結果を送り終えたテーブル数。キャンセルは Channel の `Cancelled` で通知する。
     Search,
     /// AI リクエスト (#690)。`delivered_rows` は送信済みの本文差分 (delta) の件数。
-    /// キャンセルは `ai-stream:cancelled` で通知する。
+    /// キャンセルは Channel の `Cancelled` で通知する (#1534)。
     Ai,
 }
 

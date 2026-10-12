@@ -176,6 +176,7 @@ export function supportReasonI18nKey(
   | "inspectorReasonConsumerOff"
   | "inspectorReasonDigestOff"
   | "inspectorReasonPgssMissing"
+  | "inspectorReasonPgssNotPreloaded"
   | "inspectorReasonUnreadable"
   | "inspectorReasonUnknown" {
   switch (code) {
@@ -189,6 +190,8 @@ export function supportReasonI18nKey(
       return "inspectorReasonDigestOff";
     case "pg_stat_statements_missing":
       return "inspectorReasonPgssMissing";
+    case "pg_stat_statements_not_preloaded":
+      return "inspectorReasonPgssNotPreloaded";
     case "stats_unreadable":
       return "inspectorReasonUnreadable";
     default:
