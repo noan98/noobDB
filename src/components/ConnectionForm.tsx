@@ -28,6 +28,7 @@ import {
   isSslModeAllowedForIam,
   type DbAuthMethod,
 } from "./awsIam";
+import { parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import {
   COLOR_INPUT_FALLBACK,
@@ -408,6 +409,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshPassword, setSshPassword] = useState("");
   const [loadingSshConfig, setLoadingSshConfig] = useState(false);
 
+  // 接続 URL の取り込み (#1540)。貼り付けた文字列はパスワードを含みうるので、取り込み後は
+  // 入力欄ごと消し、URL もその解析結果もログ・保存には出さない。
+  const [urlText, setUrlText] = useState("");
+  const [urlNote, setUrlNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+
   // Bastion/jump hop (#708 multi-hop tunnel — capped at one jump hop, 2 SSH
   // hops total). Mirrors the main SSH fields above; only the auth-method-
   // specific secret fields differ (their own keyring kind, `_hop0`).
@@ -450,6 +456,52 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     if (port === String(defaultPortFor(driver))) setPort(String(defaultPortFor(next)));
     if (user === defaultUserFor(driver)) setUser(defaultUserFor(next));
     setDriver(next);
+  };
+
+  // 接続 URL (mysql:// postgres:// sqlite: またはファイルパス) をフォームへ反映する。
+  // パスワードは keyring 保存対象のパスワード欄 (state) に入れるだけで、profiles.json
+  // には書かれない。URL に無い項目は現在の値を残す (ポートだけはドライバ既定へ戻す)。
+  const handleImportUrl = () => {
+    const result = parseConnectionUrl(urlText);
+    if (!result.ok) {
+      const key = {
+        empty: "formUrlErrEmpty",
+        unsupported_scheme: "formUrlErrScheme",
+        invalid_port: "formUrlErrPort",
+        multiple_hosts: "formUrlErrMultiHost",
+        malformed: "formUrlErrMalformed",
+      } as const;
+      setUrlNote({ tone: "error", text: t(key[result.error]) });
+      return;
+    }
+    const v = result.value;
+    setDriver(v.driver);
+    if (v.driver === "sqlite") {
+      setFilePath(v.filePath ?? "");
+    } else {
+      if (v.host !== undefined) setHost(v.host);
+      setPort(String(v.port ?? defaultPortFor(v.driver)));
+      setPortError(null);
+      // ドライバが変わったとき、前ドライバの既定ユーザーを持ち越さない。
+      setUser(v.user ?? (user === defaultUserFor(driver) ? defaultUserFor(v.driver) : user));
+      setDatabase(v.database ?? "");
+      if (v.password !== undefined) {
+        setPassword(v.password);
+        setAuthMethod("password");
+      }
+      if (v.sslMode !== undefined) setSslMode(v.sslMode);
+      if (v.sslRootCert !== undefined) setSslRootCert(v.sslRootCert);
+      if (v.sslClientCert !== undefined) setSslClientCert(v.sslClientCert);
+      if (v.sslClientKey !== undefined) setSslClientKey(v.sslClientKey);
+    }
+    setUrlText("");
+    setUrlNote({
+      tone: "ok",
+      text:
+        v.ignoredParams.length > 0
+          ? t("formUrlImportedIgnored", { params: v.ignoredParams.join(", ") })
+          : t("formUrlImported"),
+    });
   };
 
   const pickKeyFile = async () => {
@@ -777,6 +829,54 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       <Heading gridColumn="span 2">
         {initial?.id ? t("formEditTitle", { name: initial.name }) : t("formNewTitle")}
       </Heading>
+
+      <Box gridColumn="span 2">
+        <label htmlFor={`${fid}-url`}>{t("formUrlImport")}</label>
+        <Flex gap="2" align="end">
+          <Input
+            id={`${fid}-url`}
+            data-testid="connection-form-url"
+            value={urlText}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(e) => {
+              setUrlText(e.target.value);
+              if (urlNote) setUrlNote(null);
+            }}
+            onKeyDown={(e) => {
+              // Enter は取り込み。フォーム全体の Cmd/Ctrl+Enter (保存) とは分ける。
+              if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                handleImportUrl();
+              }
+            }}
+            placeholder={t("formUrlImportPlaceholder")}
+          />
+          <Button
+            type="button"
+            data-testid="connection-form-url-import"
+            onClick={handleImportUrl}
+            disabled={urlText.trim() === ""}
+          >
+            {t("formUrlImportButton")}
+          </Button>
+        </Flex>
+        {urlNote?.tone === "error" ? (
+          <FieldError display="block" mt="1">
+            {urlNote.text}
+          </FieldError>
+        ) : (
+          <Text
+            color={urlNote ? "app.textSuccess" : "app.textMuted"}
+            fontSize="xs"
+            mt="1"
+            mb="0"
+            role={urlNote ? "status" : undefined}
+          >
+            {urlNote ? urlNote.text : t("formUrlImportHelp")}
+          </Text>
+        )}
+      </Box>
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-name`}>{t("formName")}</label>

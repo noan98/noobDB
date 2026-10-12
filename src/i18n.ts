@@ -1096,6 +1096,20 @@ const en = {
   formSshLoadFromConfigHelp:
     "Enter an alias from your ~/.ssh/config above, then click this to fill in HostName / Port / User / IdentityFile (and the jump host, if ProxyJump is set). Values are copied once — the config file is not read again after saving.",
   formSshConfigNoMatch: 'No "Host {alias}" entry found in ~/.ssh/config.',
+  formUrlImport: "Import from connection URL",
+  formUrlImportPlaceholder: "mysql://user:password@host:3306/db?sslmode=require",
+  formUrlImportButton: "Import",
+  formUrlImportHelp:
+    "Paste mysql:// mariadb:// postgres:// postgresql:// sqlite: or a file path to fill in this form. The password goes only into the password field (OS keyring on save).",
+  formUrlImported: "Filled in the form from the URL. Review it before saving.",
+  formUrlImportedIgnored:
+    "Filled in the form from the URL. These parameters are not supported and were skipped: {params}",
+  formUrlErrEmpty: "Enter a connection URL.",
+  formUrlErrScheme:
+    "Unsupported URL. Use mysql://, mariadb://, postgres://, postgresql://, sqlite: or a file path.",
+  formUrlErrPort: "The port in the URL is not a number between 1 and 65535.",
+  formUrlErrMultiHost: "URLs with multiple hosts are not supported.",
+  formUrlErrMalformed: "Could not read the URL. Check its format and percent-encoding.",
   formSshConfigLoaded: "Loaded settings for \"{alias}\" from ~/.ssh/config.",
   formUseSshJump: "Use a jump host (bastion)",
   formSshJumpHelp:
@@ -5863,6 +5877,20 @@ const ja: Dict = {
   formSshLoadFromConfigHelp:
     "上の欄に ~/.ssh/config のエイリアスを入力してこれをクリックすると、HostName / Port / User / IdentityFile (ProxyJump があればジャンプホストも) を自動入力します。値は一度だけコピーされ、保存後に設定ファイルを再参照することはありません。",
   formSshConfigNoMatch: "~/.ssh/config に \"Host {alias}\" のエントリが見つかりませんでした。",
+  formUrlImport: "接続 URL から取り込む",
+  formUrlImportPlaceholder: "mysql://user:password@host:3306/db?sslmode=require",
+  formUrlImportButton: "取り込む",
+  formUrlImportHelp:
+    "mysql:// mariadb:// postgres:// postgresql:// sqlite: またはファイルパスを貼ると、このフォームに反映します。パスワードはパスワード欄にだけ入り、保存時に OS の keyring へ保存されます。",
+  formUrlImported: "URL からフォームに反映しました。内容を確認してから保存してください。",
+  formUrlImportedIgnored:
+    "URL からフォームに反映しました。次のパラメータは未対応のため読み飛ばしました: {params}",
+  formUrlErrEmpty: "接続 URL を入力してください。",
+  formUrlErrScheme:
+    "対応していない URL です。mysql:// mariadb:// postgres:// postgresql:// sqlite: またはファイルパスを指定してください。",
+  formUrlErrPort: "URL のポートが 1〜65535 の数値ではありません。",
+  formUrlErrMultiHost: "複数ホストの URL には対応していません。",
+  formUrlErrMalformed: "URL を読み取れませんでした。形式と % エンコードを確認してください。",
   formSshConfigLoaded: "~/.ssh/config から \"{alias}\" の設定を読み込みました。",
   formUseSshJump: "踏み台 (ジャンプホスト) を使用",
   formSshJumpHelp: "この踏み台を経由してから上記の SSH ホストへ接続します (計2ホップ)。",
