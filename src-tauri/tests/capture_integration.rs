@@ -479,9 +479,9 @@ async fn my_pk_changing_update_does_not_wait_on_unrelated_row_lock() {
     assert_eq!(r.rows_affected, 1);
 }
 
-/// ロック競合 (innodb_lock_wait_timeout) になっても、記録を辞退して書き込みは 1 回だけ実行する。
+/// 他接続のロックを待ってから取得できた場合でも、記録つき書き込みは 1 回だけ実行される。
 #[tokio::test]
-async fn my_lock_conflict_declines_capture_but_writes_once() {
+async fn my_lock_wait_then_acquire_writes_once() {
     let Some(o) = my_opts().await else { return };
     let c = connect(&o).await;
     let tb = "cap1536_my_conf";
@@ -504,7 +504,8 @@ async fn my_lock_conflict_declines_capture_but_writes_once() {
         .await
         .unwrap();
     // c2 が S ロックを持つ間、FOR UPDATE は待つ。待ち時間は短縮できないので、c2 を少し後に解放して
-    // 「待って取れた」経路でも壊れないことを確認する (競合時の辞退経路は is_lock_conflict の単体テスト)。
+    // 「待って取れた」経路でも壊れないことを確認する (デッドロック / ロック待ちタイムアウトは
+    // エラーとして返す。判定は is_deadlock / is_lock_wait_timeout の単体テスト)。
     let release = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(800)).await;
         c2.finish_transaction(false).await.unwrap();
