@@ -2505,6 +2505,21 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
               },
             ]
           : []),
+        // スキーマツリーの展開をまとめて閉じる (#1541)。永続化済みの展開状態も空にする
+        // (次の接続で開き直されない)。開いているものが無ければ出さない。
+        ...(p.id === activeProfileId &&
+        (Object.values(expandedDbs).some(Boolean) || Object.values(expandedTables).some(Boolean))
+          ? [
+              {
+                label: t("contextMenuCollapseAll"),
+                onSelect: () => {
+                  setExpandedDbs({});
+                  setExpandedTables({});
+                  persistTree({}, {});
+                },
+              },
+            ]
+          : []),
         ...(onCreateNamespace && p.id === activeProfileId && treeNamespaceKind(p.driver) !== null
           ? [
               {
