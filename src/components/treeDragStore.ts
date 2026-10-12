@@ -28,8 +28,12 @@ export interface TreeDropTarget {
   posAtCoords: (x: number, y: number) => number | null;
   /** 挿入予定位置のマーカーを出す / 消す (null)。 */
   setMarker: (pos: number | null) => void;
-  /** `pos` へ挿入する。`qualified=false` は列名のみ (Alt)。 */
-  insert: (item: TreeDragItem, pos: number | null, qualified: boolean) => void;
+  /**
+   * `pos` へ挿入する。`qualified=false` は列名のみ (Alt)。`joinFk=true` (Shift を押して
+   * ドロップ) は、外部キー列なら通常の列名ではなく `JOIN 参照先 ON ...` の雛形を入れる
+   * (#1540。外部キーでない列・FK 情報が無いときは通常の挿入に落とす)。
+   */
+  insert: (item: TreeDragItem, pos: number | null, qualified: boolean, joinFk: boolean) => void;
 }
 
 export interface TreeDragSnapshot {
@@ -185,7 +189,7 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     const pos = target ? target.posAtCoords(e.clientX, e.clientY) : null;
     cleanup();
     if (wasDragged) swallowClick();
-    if (drop && target) target.insert(drop, pos, !(e.altKey || altKey));
+    if (drop && target) target.insert(drop, pos, !(e.altKey || altKey), e.shiftKey);
   };
 
   const onCancel = (e: PointerEvent) => {

@@ -54,6 +54,7 @@ import {
 import { tags } from "@lezer/highlight";
 import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
+import { fkJoinSnippets } from "./fkJoin";
 import { derivedCompletions } from "./sqlDerivedCompletion";
 import {
   buildSchemaNamespace,
@@ -796,6 +797,9 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
   // 列の情報パネル (#1413) 用の `describe_table` キャッシュ。スキーマ更新で捨てる。
   const columnCacheRef = useRef(new Map<string, Promise<TableColumnInfo[]>>());
   const fkDatabase = schemaTable?.database ?? defaultDatabase ?? null;
+  // ツリーからのドロップ (マウント時に 1 度だけ登録されるコールバック) が現在値を読むための ref。
+  const fkDatabaseRef = useRef<string | null>(null);
+  fkDatabaseRef.current = fkDatabase;
   const loadColumnsRef = useRef<(table: string) => Promise<TableColumnInfo[]>>(() =>
     Promise.reject(new Error("no session")),
   );
@@ -1200,8 +1204,20 @@ export const QueryEditor = memo(forwardRef<QueryEditorHandle, Props>(function Qu
       element: view.dom,
       posAtCoords: (x, y) => view.posAtCoords({ x, y }, false),
       setMarker: (pos) => view.dispatch({ effects: treeDropMarkerEffect.of(pos) }),
-      insert: (item, pos, qualified) => {
-        const text = treeItemInsertText(driverRef.current, item, qualified);
+      insert: (item, pos, qualified, joinFk) => {
+        // Shift ドロップ: FK 列なら JOIN 雛形 (#1540)。FK 一覧はエディタの対象 DB のものだけなので、
+        // 別 DB の列や FK でない列は通常の挿入に落とす。
+        const joinText =
+          joinFk && item.kind === "column" && item.database === fkDatabaseRef.current
+            ? fkJoinSnippets({
+                driver: driverRef.current,
+                database: item.database,
+                table: item.table,
+                column: item.column,
+                fks: fksRef.current,
+              })[0]?.text
+            : undefined;
+        const text = joinText ?? treeItemInsertText(driverRef.current, item, qualified);
         const at = pos ?? view.state.doc.length;
         view.dispatch({
           changes: { from: at, insert: text },

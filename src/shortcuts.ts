@@ -182,3 +182,45 @@ export function resolveShortcutBindings(
   }
   return out;
 }
+
+/**
+ * キー表記の絞り込み用に正規化する: 小文字化し、修飾キーの表記ゆれ (`Cmd/Ctrl` ・ `ctrl` ・
+ * `cmd` ・ `command` ・ `⌘` ・ `control` ・ `meta` を `mod`、`opt` ・ `option` ・ `⌥` を `alt`、
+ * `⇧` を `shift`) を揃え、空白と `+` を除く (`Ctrl + K` ≡ `Cmd/Ctrl+K` ≡ `⌘K` ≡ `modk`)。
+ * Ctrl と Cmd は同じ「主修飾キー」として区別しない (一覧に出るのは `Cmd/Ctrl` 表記のため)。
+ */
+function normalizeKeyText(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/cmd\/ctrl|ctrl\/cmd/g, "mod")
+    .replace(/command|control|ctrl|ctl|cmd|meta|⌘|⌃/g, "mod")
+    .replace(/option|opt|⌥/g, "alt")
+    .replace(/⇧/g, "shift")
+    .replace(/[\s+]/g, "");
+}
+
+/**
+ * ショートカット一覧を検索語で絞り込む (チートシート #1540)。表示名 (説明) の部分一致、または
+ * 表示中のキー表記の部分一致 (`ctrl+k` / `Ctrl K` / `⌘K` など、空白と `+` は無視) で残す。
+ * 元の並び (= カテゴリ表示順の基になる定義順) は変えない。空クエリは全件 (新しい配列)。
+ */
+export function filterShortcuts<T>(
+  items: readonly T[],
+  query: string,
+  textsOf: (item: T) => { label: string; keys: string },
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (q === "") return [...items];
+  const qKeys = normalizeKeyText(q);
+  const qRaw = q.replace(/[\s+]/g, "");
+  return items.filter((item) => {
+    const { label, keys } = textsOf(item);
+    if (label.toLowerCase().includes(q)) return true;
+    // 正規化後の一致に加え、元の表記 (空白と + を除き小文字化) への部分一致も残す。
+    // 入力途中の `ctr` などは正規化すると `mod` にならず外れるため。
+    return (
+      (qKeys !== "" && normalizeKeyText(keys).includes(qKeys)) ||
+      (qRaw !== "" && keys.toLowerCase().replace(/[\s+]/g, "").includes(qRaw))
+    );
+  });
+}

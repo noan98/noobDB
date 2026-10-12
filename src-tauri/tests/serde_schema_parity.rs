@@ -40,23 +40,23 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, BatchStatementResult,
-    BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport, BroadcastMessage,
-    CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff, ColumnProfile,
-    ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff, DiffMode,
-    DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent, ExportDoneEvent,
-    ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding, HistoryEntry,
-    ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult, ImportStartedEvent,
-    IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PreviewStreamMessage,
-    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
-    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
-    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
-    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
-    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule,
-    Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
-    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    TaskRunProgressEvent, Value,
+    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, AiUsageRecord,
+    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
+    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
+    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
+    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
+    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
+    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
+    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
+    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
+    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
+    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
+    StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -318,6 +318,12 @@ fn build_fixtures() -> serde_json::Value {
         tables_analyzed: 3,
         findings: vec![health_finding.clone()],
         skipped: vec![skipped_rule.clone()],
+        table_plans: vec![TableFixPlan {
+            table: "orders".into(),
+            change_count: 2,
+            ddl: "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);".into(),
+            ddl_online: Some("ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;".into()),
+        }],
     };
 
     // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
@@ -444,6 +450,17 @@ fn build_fixtures() -> serde_json::Value {
         message: "ok".into(),
         model: Some("claude-opus-5-5".into()),
         elapsed_ms: 812,
+    };
+
+    let ai_usage_record = AiUsageRecord {
+        day: "2026-10-12".into(),
+        task: "nl2sql".into(),
+        model: "claude-opus-5-5".into(),
+        calls: 3,
+        input_tokens: 1200,
+        output_tokens: 340,
+        cache_read_input_tokens: 800,
+        cache_creation_input_tokens: 50,
     };
 
     // --- #1534: AI ストリーム (Channel) とタスク進捗 ---
@@ -958,6 +975,17 @@ fn build_fixtures() -> serde_json::Value {
                     reason: "performance_schema_off".into(),
                 })
                 .collect(),
+            // SQLite ではオンライン版が無い (None) 形も通す。
+            table_plans: vec![TableFixPlan {
+                table: "orders".into(),
+                change_count: 3,
+                ddl: "DROP INDEX \"a\";\nCREATE INDEX \"b\" ON \"orders\" (\"c\");".into(),
+                ddl_online: if *driver == DriverKind::Sqlite {
+                    None
+                } else {
+                    Some("DROP INDEX CONCURRENTLY \"a\";".into())
+                },
+            }],
         })
         .collect();
 
@@ -1729,6 +1757,7 @@ fn build_fixtures() -> serde_json::Value {
         "profileImportResult": profile_import_result,
         "cancelStreamResponse": cancel_stream_response,
         "aiConnectionTestResult": ai_connection_test_result,
+        "aiUsageRecord": ai_usage_record,
         "aiStreamDeltaMessage": ai_stream_delta_message,
         "aiStreamRetryingMessage": ai_stream_retrying_message,
         "aiStreamDoneMessage": ai_stream_done_message,

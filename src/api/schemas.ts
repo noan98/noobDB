@@ -759,11 +759,19 @@ export const skippedRule = z.object({
   reason: z.string(),
 });
 
+export const tableFixPlan = z.object({
+  table: z.string(),
+  change_count: z.number(),
+  ddl: z.string(),
+  ddl_online: z.string().nullable(),
+});
+
 export const schemaHealthReport = z.object({
   driver: driverKind,
   tables_analyzed: z.number(),
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
+  table_plans: z.array(tableFixPlan),
 });
 
 export const csvPreview = z.object({
@@ -1307,6 +1315,20 @@ export const aiConnectionTestResult = z.object({
   model: z.string().nullable(),
   elapsedMs: z.number(),
 });
+
+/** `get_ai_usage_history` の要素 (`ai/usage.rs::AiUsageRecord`、#1540)。数値のみで内容は含まない。 */
+export const aiUsageRecord = z.object({
+  day: z.string(),
+  task: z.string(),
+  model: z.string(),
+  calls: z.number(),
+  inputTokens: z.number(),
+  outputTokens: z.number(),
+  cacheReadInputTokens: z.number(),
+  cacheCreationInputTokens: z.number(),
+});
+
+export const aiUsageRecordArray = z.array(aiUsageRecord);
 
 // `run_ai_request` は結果を Tauri Channel の `kind` タグ付きメッセージで送る (#1534)。
 // Channel は 1 要求にスコープされるので `streamId` は載らない。

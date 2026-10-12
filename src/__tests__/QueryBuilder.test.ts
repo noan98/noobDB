@@ -8,6 +8,8 @@ import {
   isNullValueOnNotNullColumn,
   isRequiredColumn,
   buildSql,
+  removeWhereCondition,
+  hasAmbiguousAndOr,
   type WhereCondition,
   type ColumnValuePair,
   type OrderByItem,
@@ -425,5 +427,200 @@ describe("IN の値が空なら Run をブロックする (#1527)", () => {
     expect(
       computeBuilderBlockedReason({ ...base, whereConditions: [{ column: "id", operator: "in", value: "1,2" }] }),
     ).toBeNull();
+  });
+});
+
+// WHERE の OR / 括弧グループ (#1540)。既存の AND のみの出力が変わらないことを固定する。
+describe("buildSql — WHERE の AND / OR とグループ", () => {
+  const cond = (
+    column: string,
+    value: string,
+    extra: Partial<WhereCondition> = {},
+  ): WhereCondition => ({ column, operator: "=", value, ...extra });
+  const where = (conds: WhereCondition[], driver = "mysql") =>
+    buildSelectSql(driver, { whereEnabled: true, whereConditions: conds });
+
+  it("connector / group 指定なし (旧スナップショット) は従来どおり AND のみ", () => {
+    expect(where([cond("a", "1"), cond("b", "2"), cond("c", "3")])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `a` = 1 AND `b` = 2 AND `c` = 3;",
+    );
+    expect(where([cond("a", "1", { connector: "AND", groupWithPrevious: false }), cond("b", "2")])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `a` = 1 AND `b` = 2;",
+    );
+  });
+
+  it("OR でつなげる (括弧なしでは SQL の優先順位どおり平坦に出す)", () => {
+    expect(where([cond("a", "1"), cond("b", "2", { connector: "OR" })])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `a` = 1 OR `b` = 2;",
+    );
+  });
+
+  it("グループ先頭の connector が前後との結合: A AND (B OR C)", () => {
+    expect(
+      where([
+        cond("a", "1"),
+        cond("b", "2", { connector: "AND" }),
+        cond("c", "3", { connector: "OR", groupWithPrevious: true }),
+      ]),
+    ).toBe("SELECT * FROM `db`.`users` WHERE `a` = 1 AND (`b` = 2 OR `c` = 3);");
+  });
+
+  it("先頭グループと後続: (A OR B) AND C", () => {
+    expect(
+      where([
+        cond("a", "1"),
+        cond("b", "2", { connector: "OR", groupWithPrevious: true }),
+        cond("c", "3", { connector: "AND" }),
+      ]),
+    ).toBe("SELECT * FROM `db`.`users` WHERE (`a` = 1 OR `b` = 2) AND `c` = 3;");
+  });
+
+  it("グループが 1 つだけで全体を覆うときは括弧を付けない", () => {
+    expect(where([cond("a", "1"), cond("b", "2", { connector: "OR", groupWithPrevious: true })])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `a` = 1 OR `b` = 2;",
+    );
+  });
+
+  it("複数グループ: (A OR B) OR (C AND D)", () => {
+    expect(
+      where([
+        cond("a", "1"),
+        cond("b", "2", { connector: "OR", groupWithPrevious: true }),
+        cond("c", "3", { connector: "OR" }),
+        cond("d", "4", { connector: "AND", groupWithPrevious: true }),
+      ]),
+    ).toBe("SELECT * FROM `db`.`users` WHERE (`a` = 1 OR `b` = 2) OR (`c` = 3 AND `d` = 4);");
+  });
+
+  it("先頭条件の connector / groupWithPrevious は無視する", () => {
+    expect(
+      where([cond("a", "1", { connector: "OR", groupWithPrevious: true }), cond("b", "2")]),
+    ).toBe("SELECT * FROM `db`.`users` WHERE `a` = 1 AND `b` = 2;");
+  });
+
+  it("空の列の条件は取り除かれるが、グループは空行を落とす前の並びで確定する", () => {
+    expect(
+      where([
+        cond("a", "1"),
+        cond("", "", { connector: "OR" }),
+        cond("c", "3", { connector: "OR", groupWithPrevious: true }),
+        cond("d", "4"),
+      ]),
+    ).toBe("SELECT * FROM `db`.`users` WHERE `a` = 1 OR `c` = 3 AND `d` = 4;");
+  });
+
+  it("IN / IS NULL を含み、3 ドライバで識別子の引用が揃う", () => {
+    const conds: WhereCondition[] = [
+      { column: "a", operator: "IN", value: "1, 2" },
+      { column: "b", operator: "IS NULL", value: "", connector: "OR" },
+    ];
+    expect(where(conds, "postgres")).toBe(
+      'SELECT * FROM "db"."users" WHERE "a" IN (1, 2) OR "b" IS NULL;',
+    );
+    expect(buildSelectSql("sqlite", { whereEnabled: true, whereConditions: conds, database: "" })).toBe(
+      'SELECT * FROM "users" WHERE "a" IN (1, 2) OR "b" IS NULL;',
+    );
+  });
+
+  it("UPDATE / DELETE でも OR / グループが効く", () => {
+    const sql = buildSql(
+      "mysql", [], "DELETE", "db", "users", [], true, true,
+      [cond("a", "1"), cond("b", "2", { connector: "OR" }), cond("c", "3", { connector: "AND" })],
+      [], false, "", [], [],
+    );
+    expect(sql).toBe("DELETE FROM `db`.`users` WHERE `a` = 1 OR `b` = 2 AND `c` = 3;");
+  });
+});
+
+// レビュー指摘: 空行・グループ先頭の削除で AND が OR に化けない (#1540)。
+describe("WHERE のグループ: 空行と削除", () => {
+  const cond = (column: string, extra: Partial<WhereCondition> = {}): WhereCondition => ({
+    column,
+    operator: "=",
+    value: "1",
+    ...extra,
+  });
+  const where = (conds: WhereCondition[]) =>
+    buildSelectSql("mysql", { whereEnabled: true, whereConditions: conds });
+
+  it("空行を挟んでも、グループ化した行は独立グループの結合子を保つ (AND が OR に化けない)", () => {
+    // a / (空) / c(OR, グループ化) → 空行がグループ先頭なので c は空行のグループに属し、
+    // a とは空行の connector (AND) で結ばれる。
+    const sql = where([cond("a"), cond("", { connector: "AND" }), cond("c", { connector: "OR", groupWithPrevious: true })]);
+    expect(sql).toContain("WHERE `a` = 1 AND `c` = 1");
+    expect(sql).not.toContain(" OR ");
+  });
+
+  it("グループ内で最初に残った行の connector は捨てる", () => {
+    const sql = where([
+      cond("a"),
+      cond("", { connector: "AND" }),
+      cond("c", { connector: "OR", groupWithPrevious: true }),
+      cond("d", { connector: "OR", groupWithPrevious: true }),
+    ]);
+    expect(sql).toContain("WHERE `a` = 1 AND (`c` = 1 OR `d` = 1)");
+  });
+
+  it("グループ全体が空ならそのグループは出さない", () => {
+    expect(where([cond("a"), cond("", { connector: "OR" }), cond("", { groupWithPrevious: true })])).toContain(
+      "WHERE `a` = 1",
+    );
+  });
+
+  it("グループ先頭を消すと次の行が昇格し、消した行の connector を引き継ぐ (A AND (B OR C) から B を削除)", () => {
+    const list = [
+      cond("a"),
+      cond("b", { connector: "AND" }),
+      cond("c", { connector: "OR", groupWithPrevious: true }),
+    ];
+    const next = removeWhereCondition(list, 1);
+    expect(next.map((c) => c.column)).toEqual(["a", "c"]);
+    expect(next[1]).toMatchObject({ groupWithPrevious: false, connector: "AND" });
+    expect(where(next)).toContain("WHERE `a` = 1 AND `c` = 1");
+  });
+
+  it("グループの途中の行を消してもグループ構造は変わらない", () => {
+    const list = [
+      cond("a"),
+      cond("b", { connector: "AND" }),
+      cond("c", { connector: "OR", groupWithPrevious: true }),
+      cond("d", { connector: "OR", groupWithPrevious: true }),
+    ];
+    const next = removeWhereCondition(list, 2);
+    expect(next[2]).toMatchObject({ column: "d", groupWithPrevious: true });
+  });
+
+  it("先頭行を消したら新しい先頭は独立した行になる", () => {
+    const next = removeWhereCondition([cond("a"), cond("b", { groupWithPrevious: true })], 0);
+    expect(next).toHaveLength(1);
+    expect(next[0].groupWithPrevious).toBe(false);
+  });
+});
+
+describe("hasAmbiguousAndOr", () => {
+  const c = (column: string, extra: Partial<WhereCondition> = {}): WhereCondition => ({
+    column,
+    operator: "=",
+    value: "1",
+    ...extra,
+  });
+  it("AND だけ / OR だけ / 括弧で括った混在は警告しない", () => {
+    expect(hasAmbiguousAndOr([c("a"), c("b"), c("c")])).toBe(false);
+    expect(hasAmbiguousAndOr([c("a"), c("b", { connector: "OR" }), c("c", { connector: "OR" })])).toBe(false);
+    expect(
+      hasAmbiguousAndOr([c("a"), c("b", { connector: "AND" }), c("c", { connector: "OR", groupWithPrevious: true })]),
+    ).toBe(false);
+  });
+  it("単一グループ (括弧が付かない) の中身の AND/OR 混在も警告する: a / b(OR,グループ) / c(AND,グループ)", () => {
+    expect(
+      hasAmbiguousAndOr([
+        c("a"),
+        c("b", { connector: "OR", groupWithPrevious: true }),
+        c("c", { connector: "AND", groupWithPrevious: true }),
+      ]),
+    ).toBe(true);
+  });
+  it("最上位で AND と OR が混ざると警告する", () => {
+    expect(hasAmbiguousAndOr([c("a"), c("b", { connector: "OR" }), c("c", { connector: "AND" })])).toBe(true);
   });
 });

@@ -348,6 +348,68 @@ export function AdvisorPanel({
         </chakra.table>
       )}
 
+      {report && !running && report.table_plans.length > 0 && (
+        // テーブル単位のまとめ DDL (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。
+        <Box
+          borderRadius="var(--radius-sm)"
+          border="1px solid"
+          borderColor="app.border"
+          px="3"
+          py="2.5"
+          data-testid="advisor-table-plans"
+        >
+          <Flex align="center" gap="3" flexWrap="wrap">
+            <chakra.div textStyle="subheading">{t("advisorPlansTitle")}</chakra.div>
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              onClick={() =>
+                insertFix(
+                  report.table_plans.map((p) => `-- ${p.table}\n${p.ddl}`).join("\n\n"),
+                )
+              }
+            >
+              <Icon name="insert-sql" size={ICON_SIZES.sm} />
+              <chakra.span marginLeft="1.5">{t("advisorPlansInsertAll")}</chakra.span>
+            </Button>
+          </Flex>
+          <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
+            {t("advisorPlansNote")}
+          </chakra.div>
+          {report.table_plans.map((p) => (
+            <Box key={p.table} marginTop="2.5">
+              <chakra.div fontFamily="var(--font-mono)" fontWeight={600}>
+                {p.table}{" "}
+                <chakra.span textStyle="caption">
+                  {t("advisorPlanChanges", { count: String(p.change_count) })}
+                </chakra.span>
+              </chakra.div>
+              <FixDdlBlock
+                ddl={p.ddl}
+                label={p.ddl_online ? t("advisorFixStandard") : null}
+                note={p.ddl_online ? t("advisorFixStandardNote") : null}
+                onInsert={insertFix}
+                onCopy={copyFix}
+              />
+              {p.ddl_online && (
+                <FixDdlBlock
+                  ddl={p.ddl_online}
+                  label={t("advisorFixOnline")}
+                  note={
+                    report.driver === "postgres"
+                      ? t("advisorFixOnlineNotePostgres")
+                      : t("advisorFixOnlineNoteMysql")
+                  }
+                  onInsert={insertFix}
+                  onCopy={copyFix}
+                />
+              )}
+            </Box>
+          ))}
+        </Box>
+      )}
+
       {report && !running && report.findings.length > 0 && (
         <MotionReveal
           initial={variants.fade.initial}

@@ -88,6 +88,39 @@ const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "ce
 // 行内の入力は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
 const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
+// WHERE 行の先頭にある AND/OR 選択と括弧グループのトグル (#1540)。先頭行は
+// 結合相手がないので、同じ幅の空きを置いて列を揃える。
+const connectorCss: SystemStyleObject = { width: "76px", flexShrink: 0 };
+const connectorSpacerCss: SystemStyleObject = {
+  width: "76px",
+  flexShrink: 0,
+  textAlign: "center",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-muted)",
+};
+const groupBtnCss: SystemStyleObject = {
+  py: "0.5",
+  px: "2",
+  fontSize: "var(--text-sm)",
+  fontFamily: "var(--font-mono)",
+  border: "1px solid var(--border-strong)",
+  background: "var(--bg-elevated)",
+  color: "var(--text-muted)",
+  borderRadius: "var(--radius-sm)",
+  cursor: "pointer",
+  flexShrink: 0,
+  "&[aria-pressed=true]": {
+    color: "var(--text)",
+    borderColor: "var(--accent)",
+    background: "var(--bg-hover)",
+  },
+  "&:hover:not(:disabled)": { color: "var(--text)" },
+};
+// 括弧グループに入っている条件行の左の目印。
+const groupedRowCss: SystemStyleObject = {
+  borderLeft: "2px solid var(--accent)",
+  paddingLeft: "var(--space-1-5)",
+};
 const eqCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
@@ -249,6 +282,17 @@ export interface WhereCondition {
   column: string;
   operator: string;
   value: string;
+  /**
+   * 直前の条件との結合 (#1540)。省略 / `"AND"` は AND、`"OR"` は OR。先頭の条件では
+   * 無視される。旧スナップショット (このフィールドなし) は全 AND として復元される。
+   */
+  connector?: "AND" | "OR";
+  /**
+   * 直前の条件と同じ括弧グループに入れる (#1540)。連続してこれが真の条件が 1 つの
+   * `( ... )` にまとまる (グループは 1 段のみ・入れ子なし)。省略 / false は単独。
+   * グループ全体と前後の結合には、グループ先頭の条件の `connector` を使う。
+   */
+  groupWithPrevious?: boolean;
 }
 
 function normalizeOperator(op: string): string {
@@ -445,32 +489,102 @@ function tableRef(driver: string, database: string, table: string): string {
   return tbl;
 }
 
+/**
+ * WHERE 条件を括弧グループへ分ける。グループは空行を落とす「前」に全行で確定する
+ * (空行を挟んでも groupWithPrevious の行が前のグループに吸われて AND が OR に化けない
+ * ように)。グループ先頭 (空行でも) の connector が前グループとの結合で、グループが空に
+ * なったら捨てる。列が空の行は出力に含めない。
+ */
+function whereGroups(
+  conditions: WhereCondition[],
+): { connector: "AND" | "OR"; items: WhereCondition[] }[] {
+  const groups: { connector: "AND" | "OR"; items: WhereCondition[] }[] = [];
+  conditions.forEach((c, i) => {
+    const connector = c.connector === "OR" ? "OR" : "AND";
+    const last = groups[groups.length - 1];
+    if (i > 0 && c.groupWithPrevious === true && last) {
+      if (c.column) last.items.push(c);
+    } else {
+      groups.push({ connector, items: c.column ? [c] : [] });
+    }
+  });
+  return groups.filter((g) => g.items.length > 0);
+}
+
+/**
+ * 括弧でまとめていない AND と OR が最上位で混在しているか (`a OR b AND c` のように
+ * SQL の優先順位 = AND が先、で読まれる並び)。UPDATE / DELETE で意図とずれると
+ * 広い範囲を書き換えうるので、UI が注意を出す。
+ */
+export function hasAmbiguousAndOr(conditions: WhereCondition[]): boolean {
+  const live = whereGroups(conditions);
+  // グループが 1 つだけだと括弧が付かない (renderWhereClause の wrap) ので、中身の結合子が
+  // そのまま最上位に並ぶ。複数グループなら括弧の外 (グループ間) の結合子を見る。
+  const joins =
+    live.length > 1
+      ? live.slice(1).map((g) => g.connector)
+      : (live[0]?.items.slice(1).map((c) => (c.connector === "OR" ? "OR" : "AND")) ?? []);
+  return joins.includes("AND") && joins.includes("OR");
+}
+
+/**
+ * WHERE 条件を 1 件消した新しい配列。グループ先頭 (括弧の開始) を消したときは、次の行が
+ * 前の行と同じグループに吸われて AND が OR に化けないよう、次の行を新しい先頭へ昇格する
+ * (結合子は消した行のものを引き継ぐ)。先頭行を消したときは単に独立させる。
+ */
+export function removeWhereCondition(prev: WhereCondition[], idx: number): WhereCondition[] {
+  const removed = prev[idx];
+  const next = prev.filter((_, i) => i !== idx);
+  if (removed && !removed.groupWithPrevious && next[idx]?.groupWithPrevious) {
+    next[idx] = {
+      ...next[idx],
+      groupWithPrevious: false,
+      connector: idx === 0 ? next[idx].connector : removed.connector,
+    };
+  } else if (idx === 0 && next[0]?.groupWithPrevious) {
+    next[0] = { ...next[0], groupWithPrevious: false };
+  }
+  return next;
+}
+
 function renderWhereClause(
   driver: string,
   columns: TableColumnInfo[],
   conditions: WhereCondition[],
 ): string {
-  const rendered = conditions
-    .filter((c) => c.column)
-    .map((c) => {
-      const col = quoteIdentFor(driver, c.column);
-      const info = resolveColumnInfo(columns, c.column);
-      const literal = (raw: string) =>
-        info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
-      const opNorm = normalizeOperator(c.operator);
-      if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") {
-        return `${col} ${opNorm}`;
-      }
-      if (opNorm === "IN") {
-        const items = splitInItems(c.value).map(literal);
-        const inner = items.length > 0 ? items.join(", ") : "<values>";
-        return `${col} IN (${inner})`;
-      }
-      const opOut = c.operator.trim() || "=";
-      return `${col} ${opOut} ${literal(c.value)}`;
-    });
-  if (rendered.length === 0) return " WHERE <column> = <value>";
-  return " WHERE " + rendered.join(" AND ");
+  const renderOne = (c: WhereCondition): string => {
+    const col = quoteIdentFor(driver, c.column);
+    const info = resolveColumnInfo(columns, c.column);
+    const literal = (raw: string) =>
+      info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
+    const opNorm = normalizeOperator(c.operator);
+    if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") return `${col} ${opNorm}`;
+    if (opNorm === "IN") {
+      const items = splitInItems(c.value).map(literal);
+      const inner = items.length > 0 ? items.join(", ") : "<values>";
+      return `${col} IN (${inner})`;
+    }
+    const opOut = c.operator.trim() || "=";
+    return `${col} ${opOut} ${literal(c.value)}`;
+  };
+  const live = whereGroups(conditions).map((g) => ({
+    connector: g.connector,
+    items: g.items.map((c) => ({
+      text: renderOne(c),
+      connector: c.connector === "OR" ? "OR" : "AND",
+    })),
+  }));
+  if (live.length === 0) return " WHERE <column> = <value>";
+  const joinItems = (items: { text: string; connector: string }[]) =>
+    items.map((r, i) => (i === 0 ? r.text : `${r.connector} ${r.text}`)).join(" ");
+  // グループが 1 つだけなら括弧は意味を変えないので付けない。
+  const wrap = live.length > 1;
+  const parts = live.map((g) =>
+    wrap && g.items.length > 1 ? `(${joinItems(g.items)})` : joinItems(g.items),
+  );
+  return (
+    " WHERE " + parts.map((part, i) => (i === 0 ? part : `${live[i].connector} ${part}`)).join(" ")
+  );
 }
 
 /** Renders the `ORDER BY` clause (leading space included, empty string if no
@@ -785,7 +899,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   const addCondition = () =>
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
   const removeCondition = (idx: number) =>
-    setWhereConditions((prev) => prev.filter((_, i) => i !== idx));
+    setWhereConditions((prev) => removeWhereCondition(prev, idx));
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
     setOrderBy((prev) => prev.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
@@ -1151,9 +1265,41 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                 // "IS [NOT] NULL" operators need no value at all.
                 const isIn = normalizeOperator(c.operator) === "IN";
                 const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
+                const inGroup =
+                  c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
                 return (
                   <Box css={stackedRowCss} key={`w-${i}`}>
-                    <Box css={rowCss}>
+                    <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
+                      {i === 0 ? (
+                        <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
+                      ) : (
+                        <>
+                          <Select
+                            css={connectorCss}
+                            value={c.connector === "OR" ? "OR" : "AND"}
+                            aria-label={t("qbWhereConnector")}
+                            onChange={(e) =>
+                              updateCondition(i, { connector: e.target.value as "AND" | "OR" })
+                            }
+                          >
+                            <option value="AND">AND</option>
+                            <option value="OR">OR</option>
+                          </Select>
+                          <Tooltip label={t("qbWhereGroupTip")}>
+                            <chakra.button
+                              type="button"
+                              css={groupBtnCss}
+                              aria-pressed={c.groupWithPrevious === true}
+                              aria-label={t("qbWhereGroupTip")}
+                              onClick={() =>
+                                updateCondition(i, { groupWithPrevious: c.groupWithPrevious !== true })
+                              }
+                            >
+                              ( )
+                            </chakra.button>
+                          </Tooltip>
+                        </>
+                      )}
                       <ComboSelect
                         css={rowInputCss}
                         value={c.column}
@@ -1207,6 +1353,11 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </Box>
                 );
               })}
+              {whereEnabled && (kind === "UPDATE" || kind === "DELETE") && hasAmbiguousAndOr(whereConditions) && (
+                <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
+                  {t("qbWhereAndOrPrecedence")}
+                </chakra.span>
+              )}
             </chakra.section>
           )}
 

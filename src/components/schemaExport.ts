@@ -13,6 +13,8 @@ import { mdEscape } from "./exportPreview";
 export interface SchemaExportTable {
   name: string;
   columns: TableColumnInfo[] | null;
+  /** テーブルコメント (#1540)。無い・未取得・SQLite は省略 / 空。 */
+  comment?: string | null;
 }
 
 export interface SchemaExportInput {
@@ -65,6 +67,8 @@ const OPTIONAL_COLUMNS: {
   { header: "Key", value: (c) => c.key },
   { header: "Default", value: (c) => c.default ?? "" },
   { header: "Extra", value: (c) => c.extra },
+  // 列コメント (#1540): 業務上の意味を AI に伝える。1 つでもあるときだけ列を出す。
+  { header: "Comment", value: (c) => c.comment ?? "" },
 ];
 
 function buildColumnsTable(columns: TableColumnInfo[]): string {
@@ -128,6 +132,7 @@ function fkLines(fks: ForeignKey[]): string[] {
 /**
  * スキーマ全体 (または選択済みテーブル群) の Markdown を生成する。
  *
+ * - Comment 列 / テーブルコメントは存在するときだけ出す (#1540)。
  * - ヘッダは `# <db> (<driver>) — N tables` の 1 行のみ。
  * - テーブルごとに見出し + カラム表。Key / Default / Extra 列はそのテーブルの
  *   全行で空なら省略する (トークン節約)。
@@ -147,6 +152,9 @@ export function buildSchemaMarkdown(input: SchemaExportInput): string {
   let out = `# ${database} (${driver}) — ${count} ${count === 1 ? "table" : "tables"}\n`;
   for (const table of tables) {
     out += `\n## ${mdEscape(table.name)}\n\n`;
+    // テーブルコメントは見出し直下に添える (#1540)。改行は <br> に畳んで 1 行に保つ。
+    const tableComment = table.comment?.trim();
+    if (tableComment) out += `${mdEscape(tableComment)}\n\n`;
     out +=
       table.columns === null
         ? "_column details unavailable_\n"

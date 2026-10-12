@@ -12,8 +12,6 @@ import {
   type AiTaskKind,
 } from "../ai/aiModels";
 import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
-import { formatTokens, modelLabel, sumUsage } from "../ai/aiUsage";
-import { resetAiUsage, useAiUsage } from "../ai/aiUsageStore";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
@@ -32,7 +30,8 @@ import {
   useSettings,
 } from "../settings";
 import { AiStreamProgress } from "./AiStreamProgress";
-import { AiUsageNote, cacheUsageSuffix } from "./AiUsageNote";
+import { AiUsageHistory } from "./AiUsageHistory";
+import { AiUsageNote } from "./AiUsageNote";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -208,71 +207,6 @@ export function AiSettings() {
   const usable = ai.enabled && hasKey;
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
-
-  // 今月 (JST) の累計 (#1474)。月替わりの判定はストア側。
-  const usageTotals = useAiUsage();
-  const usageSum = sumUsage(usageTotals);
-  const usageModels = Object.entries(usageTotals.byModel);
-  const usageCache = (u: ReturnType<typeof sumUsage>) =>
-    cacheUsageSuffix(
-      t,
-      u.cacheCreationInputTokens > 0 ? formatTokens(u.cacheCreationInputTokens) : null,
-      u.cacheReadInputTokens > 0 ? formatTokens(u.cacheReadInputTokens) : null,
-    );
-  const usageSection = (
-    <FormSection data-testid="ai-usage-month">
-      <Flex align="center" gap="2" wrap="wrap">
-        <FieldLabel as="div">{t("aiUsageMonthTitle")}</FieldLabel>
-        <SettingsInfo>{t("aiUsageMonthHelp")}</SettingsInfo>
-        <Button
-          type="button"
-          variant="dangerOutline"
-          size="sm"
-          disabled={usageModels.length === 0}
-          onClick={() => {
-            void confirm({
-              title: t("aiUsageResetConfirmTitle"),
-              message: t("aiUsageResetConfirmBody"),
-              confirmLabel: t("aiUsageReset"),
-              tone: "warning",
-            }).then((ok) => {
-              if (ok) resetAiUsage();
-            });
-          }}
-        >
-          {t("aiUsageReset")}
-        </Button>
-      </Flex>
-      {usageModels.length === 0 ? (
-        <chakra.span fontSize="sm" color="app.textMuted">
-          {t("aiUsageMonthEmpty")}
-        </chakra.span>
-      ) : (
-        <>
-          {usageModels.map(([model, u]) => (
-            <chakra.span key={model} fontSize="sm" color="app.text">
-              {t("aiUsageMonthRow", {
-                model: modelLabel(model),
-                requests: u.requests,
-                input: formatTokens(u.inputTokens),
-                output: formatTokens(u.outputTokens),
-                cache: usageCache(u),
-              })}
-            </chakra.span>
-          ))}
-          <chakra.span fontSize="sm" fontWeight={500} color="app.text">
-            {t("aiUsageMonthTotal", {
-              month: usageTotals.month,
-              requests: usageSum.requests,
-              input: formatTokens(usageSum.inputTokens),
-              output: formatTokens(usageSum.outputTokens),
-              cache: usageCache(usageSum),
-            })}
-          </chakra.span>
-        </>
-      )}
-    </FormSection>
-  );
 
   return (
     <Flex direction="column" gap="2">
@@ -584,7 +518,14 @@ export function AiSettings() {
           {t("aiSampleCancelled")}
         </Callout>
       )}
-      {usageSection}
+      <AiUsageHistory
+        taskLabel={(task) =>
+          (AI_TASK_KINDS as readonly string[]).includes(task)
+            ? t(TASK_LABEL[task as AiTaskKind])
+            : task
+        }
+        reloadKey={`${sample.kind}:${testResult ? 1 : 0}`}
+      />
       {dialog}
     </Flex>
   );

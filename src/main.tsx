@@ -28,6 +28,13 @@ function MotionRoot({ children }: { children: React.ReactNode }) {
   return <MotionConfig reducedMotion={reducedMotion}>{children}</MotionConfig>;
 }
 
+// 廃止した今月の使用量累計 (#1474) の localStorage を片付ける (使用量は台帳 #1540 へ統合済み)。
+try {
+  localStorage.removeItem("noobdb.aiUsage");
+} catch {
+  // 使えない環境では何もしない
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ChakraProvider value={system}>

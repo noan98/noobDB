@@ -178,6 +178,48 @@ describe("buildSchemaMarkdown", () => {
   });
 });
 
+describe("buildSchemaMarkdown: コメント (#1540)", () => {
+  const input = (tables: SchemaExportInput["tables"]): SchemaExportInput => ({
+    database: "shop",
+    driver: "mysql",
+    tables,
+    foreignKeys: [],
+  });
+
+  it("列コメントが 1 つでもあれば Comment 列を出し、無い行は空欄にする", () => {
+    const md = buildSchemaMarkdown(
+      input([
+        {
+          name: "users",
+          columns: [col({ name: "id", comment: "ユーザー ID" }), col({ name: "x" })],
+        },
+      ]),
+    );
+    expect(md).toContain("| Column | Type | Nullable | Comment |");
+    expect(md).toContain("| id | int | NO | ユーザー ID |");
+    expect(md).toContain("| x | int | NO |  |");
+  });
+
+  it("コメントが無い (null / 空) ときは Comment 列を出さない", () => {
+    const md = buildSchemaMarkdown(
+      input([{ name: "t", columns: [col({ name: "a", comment: null }), col({ name: "b", comment: "" })] }]),
+    );
+    expect(md).not.toContain("Comment");
+  });
+
+  it("テーブルコメントは見出し直下に添え、改行と | はエスケープする", () => {
+    const md = buildSchemaMarkdown(
+      input([{ name: "t", comment: "a|b\nc", columns: [col({ name: "a" })] }]),
+    );
+    expect(md).toContain("## t\n\na\\|b<br>c\n\n| Column");
+  });
+
+  it("空白だけのテーブルコメントは出さない", () => {
+    const md = buildSchemaMarkdown(input([{ name: "t", comment: "  ", columns: [col({ name: "a" })] }]));
+    expect(md).toContain("## t\n\n| Column");
+  });
+});
+
 describe("expandWithFkRelated", () => {
   const fks: ForeignKey[] = [
     fk("orders", "user_id", "users"),

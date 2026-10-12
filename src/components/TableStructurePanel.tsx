@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
@@ -10,6 +10,10 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
+import { CopyButton } from "./CopyButton";
+import { CodePreview, FieldError } from "./modalForm";
+import { useCopyFeedback } from "./useCopyFeedback";
+import { isSynthesizedTableDdl, TABLE_DDL_KIND } from "./tableDdl";
 import {
   indexKind,
   sortIndexes,
@@ -124,6 +128,12 @@ function SectionCaption({ label, count }: { label: string; count: number }) {
   );
 }
 
+type DdlState =
+  | { kind: "hidden" }
+  | { kind: "loading" }
+  | { kind: "ready"; ddl: string }
+  | { kind: "error"; message: string };
+
 export function TableStructurePanel({
   sessionId,
   driver,
@@ -144,6 +154,13 @@ export function TableStructurePanel({
   const [indexes, setIndexes] = useState<IndexInfo[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // CREATE TABLE の DDL (#1540)。見るまで取得しない (get_object_definition は
+  // 構造パネルを開くたびに要るものではないため)。テーブルや再読み込みで破棄する。
+  const [ddl, setDdl] = useState<DdlState>({ kind: "hidden" });
+  const { copied: ddlCopied, copy: copyDdl } = useCopyFeedback();
+  // DDL 取得の世代。テーブル切替・再読み込み・再取得のたびに進め、古い応答を捨てる
+  // (A の応答が B を表示中に届いて、B の欄に A の DDL が出るのを防ぐ)。
+  const ddlSeq = useRef(0);
 
   const { database, table } = target;
 
@@ -153,6 +170,8 @@ export function TableStructurePanel({
     setColumns(null);
     setIndexes(null);
     setError(null);
+    ddlSeq.current += 1;
+    setDdl({ kind: "hidden" });
     api
       .describeTable(sessionId, database, table)
       .then((cols) => {
@@ -174,6 +193,19 @@ export function TableStructurePanel({
       cancelled = true;
     };
   }, [sessionId, database, table, reloadKey]);
+
+  const showDdl = useCallback(() => {
+    const seq = ++ddlSeq.current;
+    setDdl({ kind: "loading" });
+    api
+      .getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)
+      .then((text) => {
+        if (seq === ddlSeq.current) setDdl({ kind: "ready", ddl: text });
+      })
+      .catch((e) => {
+        if (seq === ddlSeq.current) setDdl({ kind: "error", message: String(e) });
+      });
+  }, [sessionId, database, table]);
 
   const reload = useCallback(() => setReloadKey((n) => n + 1), []);
   const selectReferenced = useCallback(
@@ -396,6 +428,45 @@ export function TableStructurePanel({
               </>
             )}
           </chakra.table>
+
+          <chakra.section display="flex" flexDirection="column" gap="1.5" aria-label={t("structureDdl")}>
+            <Flex align="center" gap="2">
+              <chakra.span textStyle="overline" color="app.textMuted">
+                {t("structureDdl")}
+              </chakra.span>
+              {ddl.kind === "hidden" || ddl.kind === "error" ? (
+                <Button type="button" variant="secondary" size="sm" onClick={showDdl}>
+                  {t("structureDdlShow")}
+                </Button>
+              ) : null}
+              {ddl.kind === "ready" && (
+                <CopyButton
+                  copied={ddlCopied}
+                  onClick={() => void copyDdl(ddl.ddl)}
+                  label={t("structureDdlCopy")}
+                  copiedLabel={t("gridCopied")}
+                />
+              )}
+            </Flex>
+            {ddl.kind === "loading" && (
+              <chakra.div role="status" textStyle="caption">
+                {t("structureDdlLoading")}
+              </chakra.div>
+            )}
+            {ddl.kind === "error" && (
+              <FieldError>{t("structureDdlError", { error: ddl.message })}</FieldError>
+            )}
+            {ddl.kind === "ready" && (
+              <>
+                <CodePreview maxH="320px" aria-label={t("structureDdl")}>
+                  {ddl.ddl}
+                </CodePreview>
+                {isSynthesizedTableDdl(driver) && (
+                  <chakra.div textStyle="caption">{t("tableDdlSynthesizedHint")}</chakra.div>
+                )}
+              </>
+            )}
+          </chakra.section>
           </>
           )}
         </>

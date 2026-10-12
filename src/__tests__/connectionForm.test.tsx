@@ -413,3 +413,91 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     expect(screen.queryByLabelText(t("formAuthMethod"))).toBeNull();
   });
 });
+
+/**
+ * 接続 URL の取り込み (#1540)。URL をフォームの各欄へ反映し、パスワードは
+ * パスワード欄 (保存時に keyring へ渡す db_password) にだけ入る。
+ */
+describe("ConnectionForm connection URL import (#1540)", () => {
+  const saveProfile = vi.mocked(api.saveProfile);
+
+  beforeEach(() => {
+    saveProfile.mockReset();
+  });
+
+  function importUrl(url: string) {
+    fireEvent.change(screen.getByTestId("connection-form-url"), { target: { value: url } });
+    fireEvent.click(screen.getByTestId("connection-form-url-import"));
+  }
+
+  it("PostgreSQL の URL をドライバ・ホスト・ポート・ユーザー・DB・TLS・パスワードへ反映する", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    const onSaved = vi.fn();
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={onSaved} onCancel={() => {}} />,
+    );
+    importUrl("postgresql://app:p%40ss@db.example.com:6543/shop?sslmode=verify-full&application_name=x");
+
+    expect((screen.getByLabelText(t("formHost")) as HTMLInputElement).value).toBe("db.example.com");
+    expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("6543");
+    expect((screen.getByLabelText(t("formUser")) as HTMLInputElement).value).toBe("app");
+    expect((screen.getByLabelText(t("formDatabase")) as HTMLInputElement).value).toBe("shop");
+    expect((screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement).value).toBe("verify_full");
+    expect((screen.getByTestId("connection-form-driver") as HTMLSelectElement).value).toBe("postgres");
+    // 入力欄は消え、未対応パラメータの名前だけが案内される。
+    expect((screen.getByTestId("connection-form-url") as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("status")).toHaveTextContent("application_name");
+
+    fireEvent.change(screen.getByTestId("connection-form-name"), { target: { value: "p" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    const req = saveProfile.mock.calls[0][0];
+    expect(req.db_password).toBe("p@ss");
+    // プロファイル本体 (profiles.json に書かれる側) にパスワードは含まれない。
+    expect(JSON.stringify({ ...req, db_password: undefined })).not.toContain("p@ss");
+    expect(req.port).toBe(6543);
+    expect(req.ssl_mode).toBe("verify_full");
+  });
+
+  it("URL に無い項目 (DB 名・ポート) は、ドライバが同じなら現在の値を残す", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    importUrl("postgres://h/shop");
+    fireEvent.change(screen.getByLabelText(t("formPort")), { target: { value: "6543" } });
+    importUrl("postgres://other-host");
+    expect((screen.getByLabelText(t("formHost")) as HTMLInputElement).value).toBe("other-host");
+    expect((screen.getByLabelText(t("formDatabase")) as HTMLInputElement).value).toBe("shop");
+    expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("6543");
+  });
+
+  it("ポート省略時はドライバの既定ポートに戻る", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    importUrl("postgres://h/d");
+    expect((screen.getByLabelText(t("formPort")) as HTMLInputElement).value).toBe("5432");
+    expect((screen.getByLabelText(t("formUser")) as HTMLInputElement).value).toBe("postgres");
+  });
+
+  it("sqlite: とファイルパスは SQLite のファイルパス欄へ入る", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    importUrl("sqlite:///var/data/app.db");
+    expect((screen.getByTestId("connection-form-driver") as HTMLSelectElement).value).toBe("sqlite");
+    expect((screen.getByTestId("connection-form-sqlite-path") as HTMLInputElement).value).toBe(
+      "/var/data/app.db",
+    );
+  });
+
+  it("不正な URL はエラーを出し、フォームを変えず、入力内容を表示しない", () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    importUrl("mysql://u:topsecret@h:abc/d");
+    expect(screen.getByRole("alert")).toHaveTextContent(t("formUrlErrPort"));
+    expect(screen.getByRole("alert")).not.toHaveTextContent("topsecret");
+    expect((screen.getByLabelText(t("formHost")) as HTMLInputElement).value).toBe("127.0.0.1");
+  });
+});

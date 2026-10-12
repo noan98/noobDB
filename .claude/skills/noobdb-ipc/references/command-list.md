@@ -38,6 +38,8 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `has_ai_api_key`
 - `run_ai_request`
 - `test_ai_connection`
+- `get_ai_usage_history`
+- `clear_ai_usage_history`
 
 - API キーは OS keyring (`ai/anthropic_api_key`) のみ。`set_ai_api_key(key)` は `None` = 変更なし /
   `Some("")` = 削除。`has_ai_api_key` は bool だけ返し、値を返す IPC は無い。
@@ -57,6 +59,8 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   中断は既存の `cancel_stream` (`StreamKind::Ai`)。モデル・エフォートは呼び出し側から渡さず、
   `task` + `settings` (設定スナップショット) からバックエンド (`ai/models.rs`) が
   `taskModels[kind] ?? defaultModel` / `taskEfforts[kind] ?? 推奨` で解決する。
+- `get_ai_usage_history` / `clear_ai_usage_history` (#1540) は使用量台帳 (`ai_usage.json`: 日 JST × タスク × モデルのトークン数のみ。
+  キー・送信内容は含まない)。概算コストはフロント `aiModels.ts` の単価表で掛ける。
 - `test_ai_connection(settings)` は短い非ストリーミング要求。認証 / ネットワーク / API / refusal は
   戻り値の `status` で区別する。
 - エラー kind: `aiRefused` / `aiAuth` / `aiNetwork` / `aiApi` / `aiOverloaded` (429 / 529。再試行しても通らなかった一時的な混雑)。

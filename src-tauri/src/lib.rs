@@ -28,13 +28,14 @@ mod timelapse;
 #[doc(hidden)]
 pub mod __test_api {
     pub use crate::ai::sse::AiUsage;
+    pub use crate::ai::usage::AiUsageRecord;
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
     pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult, AiStreamMessage};
     pub use crate::commands::assertions::AssertionOutcome;
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
-        TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
@@ -1460,6 +1461,8 @@ pub fn run() {
             commands::ai::has_ai_api_key,
             commands::ai::run_ai_request,
             commands::ai::test_ai_connection,
+            commands::ai::get_ai_usage_history,
+            commands::ai::clear_ai_usage_history,
             commands::script::run_sql_batch,
             commands::transfer::transfer_data,
             commands::transfer::preview_transfer,

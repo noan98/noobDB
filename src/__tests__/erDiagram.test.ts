@@ -5,6 +5,7 @@ import {
   buildErGraph,
   endGlyph,
   erHighlight,
+  focusNeighborhood,
   sourceEndKind,
   targetEndKind,
   layoutErGraph,
@@ -372,5 +373,84 @@ describe("端記号", () => {
     expect(left.paths).toEqual(["M 94 55 L 94 45"]);
     expect(left.circle).toEqual({ cx: 86.5, cy: 50, r: 3.5 });
     expect(endGlyph("one-mandatory", "bottom", 0, 0).paths).toHaveLength(2);
+  });
+});
+
+describe("focusNeighborhood / buildErGraph の focus (#1540)", () => {
+  // a → b → c → d、e は孤立、b ← x (別の子)。
+  const names = ["a", "b", "c", "d", "e", "x"];
+  const fks: ForeignKey[] = [
+    fk("a", "b_id", "b", "id"),
+    fk("b", "c_id", "c", "id"),
+    fk("c", "d_id", "d", "id"),
+    fk("x", "b_id", "b", "id"),
+  ];
+
+  it("1 ホップは直接つながるテーブル (向きは問わない) を中心から近い順に返す", () => {
+    expect(focusNeighborhood(names, fks, "b", 1)).toEqual(["b", "a", "c", "x"]);
+  });
+
+  it("2 ホップは 2 つ先まで、同距離は名前順", () => {
+    expect(focusNeighborhood(names, fks, "b", 2)).toEqual(["b", "a", "c", "x", "d"]);
+  });
+
+  it("ホップ 0・孤立テーブル・存在しないテーブル", () => {
+    expect(focusNeighborhood(names, fks, "b", 0)).toEqual(["b"]);
+    expect(focusNeighborhood(names, fks, "e", 2)).toEqual(["e"]);
+    expect(focusNeighborhood(names, fks, "nope", 2)).toEqual([]);
+  });
+
+  it("known に無いテーブルへの FK は辿らない", () => {
+    expect(focusNeighborhood(["a", "b"], [fk("a", "z", "zzz", "id")], "a", 3)).toEqual(["a"]);
+  });
+
+  it("自己参照があっても無限ループしない", () => {
+    expect(focusNeighborhood(["emp"], [fk("emp", "m", "emp", "id")], "emp", 5)).toEqual(["emp"]);
+  });
+
+  it("focus を渡すとその範囲のテーブルと辺だけの図になり、totalTables は全体のまま", () => {
+    const tables = names.map((name) => ({ name, columns: ["id"] }));
+    const g = buildErGraph({ tables, foreignKeys: fks, focus: { table: "b", hops: 1 } });
+    expect(g.nodes.map((n) => n.id).sort()).toEqual(["a", "b", "c", "x"]);
+    expect(g.edges.map((e) => `${e.source}>${e.target}`).sort()).toEqual(["a>b", "b>c", "x>b"]);
+    expect(g.totalTables).toBe(6);
+    expect(g.capped).toBe(false);
+  });
+
+  it("MAX_TABLES の切り捨てで消えるテーブルにも focus できる", () => {
+    const tables = [
+      ...Array.from({ length: MAX_TABLES + 10 }, (_, i) => ({ name: `t${i}`, columns: ["id"] })),
+      { name: "zz1", columns: ["id"] },
+      { name: "zz2", columns: ["id"] },
+    ];
+    // t0 に MAX_TABLES 本以上の FK を集めて、次数 1 の孤立ペア (zz1 → zz2) を名前順で押し出す。
+    const foreignKeys: ForeignKey[] = [
+      ...Array.from({ length: MAX_TABLES + 1 }, (_, i) => fk(`t${i + 1}`, "id", "t0", "id")),
+      fk("zz1", "id", "zz2", "id"),
+    ];
+    const normal = buildErGraph({ tables, foreignKeys });
+    expect(normal.nodes.some((n) => n.id === "zz1")).toBe(false);
+    expect(normal.capped).toBe(true);
+    const focused = buildErGraph({ tables, foreignKeys, focus: { table: "zz1", hops: 1 } });
+    expect(focused.nodes.map((n) => n.id).sort()).toEqual(["zz1", "zz2"]);
+    expect(focused.edges).toHaveLength(1);
+    expect(focused.capped).toBe(false);
+  });
+
+  it("近傍が MAX_TABLES を超えるときは近い順に切り、capped を立てる", () => {
+    const tables = [{ name: "hub", columns: ["id"] }].concat(
+      Array.from({ length: MAX_TABLES + 5 }, (_, i) => ({ name: `s${i}`, columns: ["id"] })),
+    );
+    const foreignKeys = tables.slice(1).map((t) => fk(t.name, "id", "hub", "id"));
+    const g = buildErGraph({ tables, foreignKeys, focus: { table: "hub", hops: 1 } });
+    expect(g.nodes).toHaveLength(MAX_TABLES);
+    expect(g.nodes[0].id).toBe("hub");
+    expect(g.capped).toBe(true);
+  });
+
+  it("存在しない focus は無視して通常の図を返す", () => {
+    const tables = names.map((name) => ({ name, columns: ["id"] }));
+    const g = buildErGraph({ tables, foreignKeys: fks, focus: { table: "nope", hops: 1 } });
+    expect(g.nodes).toHaveLength(6);
   });
 });

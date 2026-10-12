@@ -71,12 +71,15 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
     let cancelled = false;
     setLoad({ kind: "loading" });
     (async () => {
-      const [detailed, foreignKeys] = await Promise.all([
+      const [detailed, foreignKeys, tableComments] = await Promise.all([
         api.describeDatabase(sessionId, database),
         api.foreignKeys(sessionId, database),
+        // コメント取得の失敗はスキーマ出力全体を止めない (コメント無しで出す)。
+        api.listTableComments(sessionId, database).catch(() => []),
       ]);
       if (cancelled) return;
-      setTables(detailed);
+      const commentByName = new Map(tableComments.map((c) => [c.name, c.comment]));
+      setTables(detailed.map((tb) => ({ ...tb, comment: commentByName.get(tb.name) ?? null })));
       setFks(foreignKeys);
       setLoad({ kind: "ready" });
     })().catch((e) => {

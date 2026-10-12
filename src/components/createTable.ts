@@ -4,6 +4,7 @@
 // 識別子のクオートは sqlDialect.ts、DEFAULT のリテラルエスケープは cellEdit.ts の
 // quoteString を流用する。副作用が無いので Vitest でユニットテストする。
 
+import type { TableColumnInfo } from "../api/tauri";
 import { quoteIdentFor } from "./sqlDialect";
 import { quoteString } from "./cellEdit";
 import {
@@ -194,4 +195,62 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
   if (def !== null) parts.push(`DEFAULT ${def}`);
 
   return parts.join(" ");
+}
+
+/**
+ * 既存テーブルの列メタデータから CREATE TABLE ウィザードの列定義の雛形を作る (#1540)。
+ *
+ * 型名は方言のまま (`data_type` を逐語) 渡すので、同じドライバの接続なら追加変換なしで
+ * 使える。主キー (`PRI`)・単一列 UNIQUE (`UNI`)・NOT NULL・既定値を引き継ぐ。
+ * - 自動採番 (MySQL `auto_increment` / PostgreSQL の `nextval(...)` 既定値) は
+ *   `autoIncrement` に写し、既定値は空にする (`nextval` は元テーブルのシーケンスを指すため)。
+ * - 生成列 (`GENERATED`、`DEFAULT_GENERATED` を除く) は式が取れないので既定値なしの通常列として写す。
+ * - 外部キー・CHECK・インデックスは引き継がない (必要なら制約エディタで足す)。
+ */
+export function columnDefsFromTableInfo(columns: readonly TableColumnInfo[]): ColumnDef[] {
+  return columns.map((c) => {
+    const extra = c.extra.toLowerCase();
+    const def = (c.default ?? "").trim();
+    const serial = /^nextval\(/i.test(def);
+    const autoIncrement = extra.includes("auto_increment") || serial;
+    const generated = extra.replace("default_generated", "").includes("generated");
+    const primaryKey = c.key.toUpperCase() === "PRI";
+    return {
+      name: c.name,
+      type: c.data_type,
+      notNull: !c.nullable || primaryKey,
+      primaryKey,
+      unique: c.key.toUpperCase() === "UNI",
+      autoIncrement,
+      defaultValue: autoIncrement || generated ? "" : def,
+    };
+  });
+}
+
+/** 雛形の読み込みで忠実に写せない列 (画面の注記用)。 */
+export interface TemplateCaveats {
+  /** PostgreSQL の USER-DEFINED (ENUM・ドメイン・拡張型など) の列名。型名が取れず `USER-DEFINED` のまま入る。 */
+  userDefined: string[];
+  /** PostgreSQL の ARRAY の列名。要素型が取れず `ARRAY` のまま入る。 */
+  arrays: string[];
+  /** IDENTITY の可能性がある列 (PostgreSQL の整数主キーで既定値なし)。IDENTITY は検出できず通常の列として写る。 */
+  identityMaybe: string[];
+}
+
+export function templateCaveats(driver: string, columns: readonly TableColumnInfo[]): TemplateCaveats {
+  const out: TemplateCaveats = { userDefined: [], arrays: [], identityMaybe: [] };
+  if (driver !== "postgres") return out;
+  for (const c of columns) {
+    const ty = c.data_type.trim().toUpperCase();
+    if (ty === "USER-DEFINED") out.userDefined.push(c.name);
+    else if (ty === "ARRAY") out.arrays.push(c.name);
+    else if (
+      c.key.toUpperCase() === "PRI" &&
+      (c.default ?? "").trim() === "" &&
+      /^(SMALL|BIG)?INT(EGER)?[248]?$/.test(ty.replace(/\s+/g, ""))
+    ) {
+      out.identityMaybe.push(c.name);
+    }
+  }
+  return out;
 }
