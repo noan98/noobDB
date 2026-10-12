@@ -17,6 +17,16 @@ LIKE ワイルドカードはエスケープされます。
 エディタの ↑/↓ ナビとコマンドパレット用には `list_history_sql(profile_id, limit)` が
 SQL 全文だけを返す (実行のたびの再取得はせず、実行直後の SQL はフロントが先頭へ積む)。
 
+**保持ポリシーは行数と期間の 2 本立て (#1539)。** 行数上限は `MAX_HISTORY_ROWS` (10,000 件、
+`id` の古い順に削除)。加えて期間上限 `retention_days` (0 = 無効が既定、最大 3650 日) を
+`get_history_retention_days` / `set_history_retention_days` で持つ。値は同じ `history.sqlite` の
+`history_settings` テーブルに保存して `pool()` 初期化時にプロセス内キャッシュへ読み込む
+(フロントの localStorage 設定ではない。履歴を書く Rust 側の全経路が同じ値を参照でき、
+起動直後の同期が要らない)。挿入のたびに `prune_expired` が `julianday(executed_at)` で比較して
+期限切れの行を削除する (最古行が期限内なら全件走査しない)。`set_*` は保存と同時に
+即時削除し、削除件数を返す。flight_recorder の `retention_days` と同じ意味。UI は設定画面の
+「クエリ履歴」セクション。
+
 ## スニペット
 
 `snippets/store.rs` は保存済み SQL を JSON ファイルに永続化します。`Snippet` は

@@ -1299,6 +1299,8 @@ pub fn run() {
             commands::history::get_history_sql,
             commands::history::list_history_sql,
             commands::history::clear_history,
+            commands::history::get_history_retention_days,
+            commands::history::set_history_retention_days,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,

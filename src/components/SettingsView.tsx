@@ -557,6 +557,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
   { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
   { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
+  { id: "settings-sec-history", titleKey: "settingsHistory" },
   { id: "settings-sec-result-grid", titleKey: "settingsResultGridMode" },
   { id: "settings-sec-quick-launcher", titleKey: "quickLauncherSettingsTitle" },
   { id: "settings-sec-ai", titleKey: "aiSettingsTitle" },
@@ -666,6 +667,28 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const [flightRetentionInput, setFlightRetentionInput] = useState(
     String(settings.flightRecorderRetentionDays),
   );
+  // クエリ履歴の保持日数 (#1539)。設定ストア (localStorage) ではなくバックエンド側に持つので、
+  // 開いたときに IPC で読み、確定したときに IPC で保存する (保存と同時に期限切れ行を削除)。
+  const [historyRetentionInput, setHistoryRetentionInput] = useState("0");
+  const [historyRetentionSaved, setHistoryRetentionSaved] = useState(0);
+  const [historyRetentionLoading, setHistoryRetentionLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getHistoryRetentionDays()
+      .then((d) => {
+        if (cancelled) return;
+        setHistoryRetentionSaved(d);
+        setHistoryRetentionInput(String(d));
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setHistoryRetentionLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const [timelapseGenInput, setTimelapseGenInput] = useState(
     String(settings.timelapseMaxGenerations),
   );
@@ -755,6 +778,28 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       setFlightRecorderRetentionDays(n);
     }
     setFlightRetentionInput(String(getSettings().flightRecorderRetentionDays));
+  };
+  const commitHistoryRetention = () => {
+    const n = Number.parseInt(historyRetentionInput, 10);
+    if (
+      Number.isSafeInteger(n) &&
+      n >= 0 &&
+      n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS &&
+      n !== historyRetentionSaved
+    ) {
+      api
+        .setHistoryRetentionDays(n)
+        .then((pruned) => {
+          setHistoryRetentionSaved(n);
+          if (pruned > 0) toast.info(t("settingsHistoryRetentionPruned", { count: pruned }));
+        })
+        .catch((e) => {
+          setHistoryRetentionInput(String(historyRetentionSaved));
+          toast.error(String(e));
+        });
+    }
+    // 入力欄は保存済みの値へ戻す (不正な入力は破棄、保存成功時は直後に同じ値になる)。
+    setHistoryRetentionInput(String(Number.isSafeInteger(n) && n >= 0 && n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS ? n : historyRetentionSaved));
   };
   const commitTimelapseGenerations = () => {
     const n = Number.parseInt(timelapseGenInput, 10);
@@ -1436,6 +1481,38 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
             disabled={!settings.flightRecorderEnabled}
             onChange={(e) => setFlightRetentionInput(e.target.value)}
             onBlur={commitFlightRetention}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+        </SettingsNumberRow>
+      </SettingsSection>
+
+      <SettingsSection id="settings-sec-history" scrollMarginTop="8px">
+        <SettingsSectionHeader>
+          <SettingsLabelWithInfo>
+            <chakra.h3>{t("settingsHistory")}</chakra.h3>
+            <SettingsInfo>{t("settingsHistoryHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+        </SettingsSectionHeader>
+        <SettingsNumberRow>
+          <SettingsLabelWithInfo>
+            <chakra.label htmlFor="settings-history-retention">
+              {t("settingsHistoryRetentionDays")}
+            </chakra.label>
+            <SettingsInfo>{t("settingsHistoryRetentionDaysHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Input
+            id="settings-history-retention"
+            type="number"
+            min={0}
+            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
+            step={1}
+            value={historyRetentionInput}
+            placeholder="0"
+            disabled={historyRetentionLoading}
+            onChange={(e) => setHistoryRetentionInput(e.target.value)}
+            onBlur={commitHistoryRetention}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
             }}

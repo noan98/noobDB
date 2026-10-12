@@ -456,6 +456,13 @@ const en = {
   settingsPlanWatchOnConnect: "Check watched plans on connect",
   settingsPlanWatchOnConnectHelp: "When connecting, run EXPLAIN for the profile's watched snippets and record a new generation when the plan changed. Read-only and never written to query history. Turn off to only refresh manually.",
   settingsFlightRecorder: "DML flight recorder",
+  settingsHistory: "Query history",
+  settingsHistoryHelp:
+    "History keeps the most recent 10,000 statements. Add an age limit to also drop old entries, e.g. to avoid keeping literal values in WHERE clauses for long.",
+  settingsHistoryRetentionDays: "Retention period (days)",
+  settingsHistoryRetentionDaysHelp:
+    "Entries older than this are deleted automatically (also right after you change it). 0 keeps them until the 10,000-row cap evicts them.",
+  settingsHistoryRetentionPruned: "Deleted {count} old history entries.",
   settingsFlightRecorderHelp: "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   settingsFlightRecorderEnabled: "Capture writes for undo",
   settingsFlightRecorderEnabledHelp: "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
@@ -5147,6 +5154,13 @@ const ja: Dict = {
   settingsPlanWatchOnConnect: "接続時にウォッチ済み計画をチェック",
   settingsPlanWatchOnConnectHelp: "接続確立時に、そのプロファイルでウォッチ登録済みのスニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると手動更新のみになります。",
   settingsFlightRecorder: "DML フライトレコーダ",
+  settingsHistory: "クエリ履歴",
+  settingsHistoryHelp:
+    "履歴は直近 10,000 件まで保持します。期間の上限を足すと古い履歴も自動で消えます (WHERE 句のリテラル値などを長く残したくないとき)。",
+  settingsHistoryRetentionDays: "保持期間 (日数)",
+  settingsHistoryRetentionDaysHelp:
+    "この日数を過ぎた履歴は自動的に削除されます (変更した直後にも削除します)。0 は無期限 (10,000 件の上限を超えた分だけ古い順に消えます)。",
+  settingsHistoryRetentionPruned: "古い履歴を {count} 件削除しました。",
   settingsFlightRecorderHelp: "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
   settingsFlightRecorderEnabledHelp: "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",

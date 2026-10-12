@@ -335,6 +335,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `get_history_sql`
 - `list_history_sql`
 - `clear_history`
+- `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
 

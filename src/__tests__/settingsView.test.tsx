@@ -15,6 +15,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       readLogs: vi.fn().mockResolvedValue({ text: "", path: "/tmp/noobdb.log" }),
+      getHistoryRetentionDays: vi.fn().mockResolvedValue(0),
+      setHistoryRetentionDays: vi.fn().mockResolvedValue(0),
     },
   };
 });
@@ -31,6 +33,7 @@ vi.mock("../components/updatePrompt", () => ({
 }));
 
 import { SettingsView } from "../components/SettingsView";
+import { api } from "../api/tauri";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -136,5 +139,34 @@ describe("SettingsView の数値欄 (#1534)", () => {
     fireEvent.change(input, { target: { value: "30" } });
     fireEvent.blur(input);
     await waitFor(() => expect(input.value).toBe("24"));
+  });
+});
+
+describe("クエリ履歴の保持期間 (#1539)", () => {
+  // フライトレコーダにも同名ラベル「保持期間 (日数)」があるので id で引く。
+  const historyInput = async () => {
+    await waitFor(() => expect(document.getElementById("settings-history-retention")).not.toBeNull());
+    return document.getElementById("settings-history-retention") as HTMLInputElement;
+  };
+
+  it("保存済みの値を読み込み、変更を確定するとバックエンドへ保存する", async () => {
+    vi.mocked(api.getHistoryRetentionDays).mockResolvedValue(14);
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    const input = await historyInput();
+    await waitFor(() => expect(input.value).toBe("14"));
+    fireEvent.change(input, { target: { value: "30" } });
+    fireEvent.blur(input);
+    await waitFor(() => expect(api.setHistoryRetentionDays).toHaveBeenCalledWith(30));
+  });
+
+  it("範囲外の入力は保存せず元の値に戻す", async () => {
+    vi.mocked(api.getHistoryRetentionDays).mockResolvedValue(7);
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    const input = await historyInput();
+    await waitFor(() => expect(input.value).toBe("7"));
+    fireEvent.change(input, { target: { value: "99999" } });
+    fireEvent.blur(input);
+    expect(api.setHistoryRetentionDays).not.toHaveBeenCalled();
+    await waitFor(() => expect(input.value).toBe("7"));
   });
 });
