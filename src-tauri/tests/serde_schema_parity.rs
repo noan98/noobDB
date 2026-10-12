@@ -720,8 +720,26 @@ fn build_fixtures() -> serde_json::Value {
         failed_count: 1,
         failures: vec![script_failure.clone()],
         skipped_control: 2,
+        skipped_excluded: 3,
+        skipped_before_start: 10,
         rows_affected: 57,
         elapsed_ms: 900,
+    };
+    // 事前確認 (#1535): 全種別・全危険種別・制御文を含むスクリプトの集計。
+    let script_analyzed_event = t::ScriptAnalyzedEvent {
+        stream_id: "strm0007".into(),
+        encoding: t::TextEncoding::ShiftJis,
+        total_bytes: 2048,
+        elapsed_ms: 12,
+        analysis: t::analyze_script_text(
+            t::DriverKind::Sqlite,
+            true,
+            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nROLLBACK;",
+        ),
+    };
+    let sql_file_content = t::SqlFileContent {
+        content: "SELECT 1;".into(),
+        encoding: t::TextEncoding::Utf8Bom,
     };
     let script_error_event = ScriptErrorEvent {
         stream_id: "strm0007".into(),
@@ -1690,6 +1708,8 @@ fn build_fixtures() -> serde_json::Value {
         "scriptProgressEvent": script_progress_event,
         "scriptDoneEvent": script_done_event,
         "scriptErrorEvent": script_error_event,
+        "scriptAnalyzedEvent": script_analyzed_event,
+        "sqlFileContent": sql_file_content,
 
         // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
         "healthFindingVariants": health_finding_variants,

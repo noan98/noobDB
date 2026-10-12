@@ -80,6 +80,17 @@
 - キャンセルは子タスクの abort。abort は future を drop するだけでドライバが握る
   専用接続のトランザクションは閉じないので、`TxGuard` の `Drop` が ROLLBACK を
   spawn して後始末する。
+- **文字コード (#1535)**: `open_script_file` が実行前にファイル全体を事前スキャンして文字コードを
+  判定 (`options.encoding` が `None` のとき。BOM → UTF-8 → Shift_JIS / EUC-JP) し、その文字コード
+  として全体が妥当かまで確かめる。不正バイトなら 1 文も実行しない。コアは判定結果の `Decoder` で
+  チャンクをデコードする (`text_encoding.rs`)。
+- **再開・除外 (#1535)**: `options.startAtStatement` より前の文は実行せず読み飛ばし (`USE` の DB 切り替えにだけ
+  追従)、`options.skipStatements` の通し番号の文も実行しない。通し番号は `ScriptFailure.index` と同じ
+  (1 始まり、制御文を含む)。
+- **事前確認 `analyze_sql_script` (#1535)**: 同じ 3 点セット (`StreamKind::Script`、`sql-script:progress` /
+  `:analyzed` / `:error` / `:cancelled`) で、DB に触れずに分割 → `db/script_analysis.rs` の
+  `ScriptAnalyzer` で集計する。保持するのは有限個 (先頭 300 文・危険文 200 件・制御文の位置 200 件・件数)
+  だけなので GB 級でもメモリに全文を載せない。
 
 ## エディタのバッチ実行 (`run_sql_batch`, #1256)
 

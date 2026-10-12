@@ -36,8 +36,30 @@ describe("writeTextFile", () => {
     await expect(api.writeTextFile("/tmp/a.sql", "SELECT 'あ';")).resolves.toBe(12);
     expect(mockInvoke).toHaveBeenCalledWith(
       "write_text_file",
-      { path: "/tmp/a.sql", content: "SELECT 'あ';" },
+      { path: "/tmp/a.sql", content: "SELECT 'あ';", encoding: null },
     );
+  });
+
+  it("文字コードを指定すると encoding を送る (#1535)", async () => {
+    mockInvoke.mockResolvedValue(8);
+    await api.writeTextFile("/tmp/a.sql", "SELECT 1;", "shift_jis");
+    expect(mockInvoke).toHaveBeenCalledWith(
+      "write_text_file",
+      { path: "/tmp/a.sql", content: "SELECT 1;", encoding: "shift_jis" },
+    );
+  });
+});
+
+describe("readSqlFile (#1535)", () => {
+  it("encoding 省略は null (自動判定) で送り、判定結果を返す", async () => {
+    mockInvoke.mockResolvedValue({ content: "SELECT 1;", encoding: "shift_jis" });
+    await expect(api.readSqlFile("/tmp/a.sql")).resolves.toEqual({
+      content: "SELECT 1;",
+      encoding: "shift_jis",
+    });
+    expect(mockInvoke).toHaveBeenCalledWith("read_sql_file", { path: "/tmp/a.sql", encoding: null });
+    await api.readSqlFile("/tmp/a.sql", "euc-jp");
+    expect(mockInvoke).toHaveBeenLastCalledWith("read_sql_file", { path: "/tmp/a.sql", encoding: "euc-jp" });
   });
 });
 

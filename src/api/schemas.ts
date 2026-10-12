@@ -1397,8 +1397,60 @@ export const scriptDoneEvent = z.object({
   failedCount: z.number(),
   failures: z.array(scriptFailure),
   skippedControl: z.number(),
+  skippedExcluded: z.number(),
+  skippedBeforeStart: z.number(),
   rowsAffected: z.number(),
   elapsedMs: z.number(),
+});
+
+/** SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致させる。 */
+export const textEncoding = z.enum(["utf-8", "utf-8-bom", "utf-16le", "utf-16be", "shift_jis", "euc-jp"]);
+
+/** `read_sql_file` の戻り値 (#1535)。 */
+export const sqlFileContent = z.object({
+  content: z.string(),
+  encoding: textEncoding,
+});
+
+const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);
+
+/** 事前確認の一覧の 1 文 (#1535)。`index` は実行時の通し番号と同じ。 */
+const analyzedStatement = z.object({
+  index: z.number(),
+  line: z.number(),
+  sql: z.string(),
+  category: z.enum(["read", "write", "ddl", "txControl"]),
+  danger: scriptDangerKind.optional(),
+  blocked: z.boolean(),
+});
+
+/** 事前確認 (`analyze_sql_script`) の集計 (#1535)。 */
+export const scriptAnalysis = z.object({
+  totalStatements: z.number(),
+  categories: z.object({ read: z.number(), write: z.number(), ddl: z.number(), txControl: z.number() }),
+  dangerCounts: z.object({
+    deleteNoWhere: z.number(),
+    updateNoWhere: z.number(),
+    drop: z.number(),
+    truncate: z.number(),
+  }),
+  dangerousTotal: z.number(),
+  blockedTotal: z.number(),
+  txControlTotal: z.number(),
+  head: z.array(analyzedStatement),
+  dangerous: z.array(analyzedStatement),
+  txControls: z.array(z.object({ index: z.number(), line: z.number(), kind: z.enum(["begin", "commit", "rollback"]) })),
+  headLimit: z.number(),
+  listLimit: z.number(),
+});
+
+/** `sql-script:analyzed` (#1535)。 */
+export const scriptAnalyzedEvent = z.object({
+  streamId: z.string(),
+  encoding: textEncoding,
+  totalBytes: z.number(),
+  elapsedMs: z.number(),
+  analysis: scriptAnalysis,
 });
 
 export const scriptErrorEvent = z.object({

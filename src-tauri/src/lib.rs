@@ -21,6 +21,7 @@ mod snippets;
 mod ssh;
 mod state;
 mod tasks;
+mod text_encoding;
 mod timelapse;
 
 /// Test-only re-exports. Not part of the public API; subject to change.
@@ -233,6 +234,7 @@ pub mod __test_api {
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
+    pub use crate::commands::file::SqlFileContent;
     pub use crate::commands::import::{
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
@@ -240,9 +242,45 @@ pub mod __test_api {
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
     };
     pub use crate::commands::script::{
-        BatchStatementResult, BatchStatus, BatchStreamMessage, ScriptDoneEvent, ScriptErrorEvent,
-        ScriptFailure, ScriptOptions, ScriptProgress, ScriptProgressEvent, ScriptRun,
+        BatchStatementResult, BatchStatus, BatchStreamMessage, ScriptAnalyzedEvent,
+        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
+        ScriptProgressEvent, ScriptRun,
     };
+    pub use crate::db::script_analysis::ScriptAnalysis;
+    pub use crate::text_encoding::TextEncoding;
+
+    /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
+    /// フロント `analyzeDangerousSql` の `DangerKind` と同じ文字列で、共有ゴールデン
+    /// (`tests/dangerous_sql_golden.rs`) が使う。危険でなければ `None`。
+    pub fn classify_dangerous_kind(driver: DriverKind, sql: &str) -> Option<&'static str> {
+        use crate::db::script_analysis::{classify_dangerous, DangerKind};
+        classify_dangerous(driver, sql).map(|k| match k {
+            DangerKind::DeleteNoWhere => "deleteNoWhere",
+            DangerKind::UpdateNoWhere => "updateNoWhere",
+            DangerKind::Drop => "drop",
+            DangerKind::Truncate => "truncate",
+        })
+    }
+
+    /// スクリプト文字列を事前確認 (ドライラン) の集計にかける (#1535)。ファイル入出力も
+    /// ストリーミング読みも通さず、分割 → 文ごとの解析だけを駆動する。
+    pub fn analyze_script_text(
+        driver: DriverKind,
+        enforce_read_only: bool,
+        sql: &str,
+    ) -> ScriptAnalysis {
+        let mut analyzer =
+            crate::db::script_analysis::ScriptAnalyzer::new(driver, enforce_read_only);
+        for stmt in crate::db::script::split_script(driver, sql) {
+            analyzer.push(&stmt);
+        }
+        analyzer.finish()
+    }
+
+    /// テキストを指定の文字コードのバイト列にする (`text_encoding::encode`)。
+    pub fn encode_text(text: &str, encoding: TextEncoding) -> crate::error::Result<Vec<u8>> {
+        crate::text_encoding::encode(text, encoding)
+    }
 
     /// `.sql` スクリプトのストリーミング文分割 (#973) を一括で行い、各文の本文だけを
     /// 返す。フロント `splitSqlStatements` との共有ゴールデン
@@ -269,7 +307,12 @@ pub mod __test_api {
         F: FnMut(ScriptProgress),
     {
         let total = crate::commands::script::script_file_size(path).await?;
-        let file = crate::commands::script::open_script_file(path).await?;
+        let (file, encoding) =
+            crate::commands::script::open_script_file(path, options.encoding).await?;
+        let options = ScriptOptions {
+            encoding: Some(encoding),
+            ..options
+        };
         crate::commands::script::run_script_core(
             session,
             file,
@@ -1310,6 +1353,7 @@ pub fn run() {
             commands::import::parse_csv_preview,
             commands::import::import_csv,
             commands::script::run_sql_script,
+            commands::script::analyze_sql_script,
             commands::ai::set_ai_api_key,
             commands::ai::has_ai_api_key,
             commands::ai::run_ai_request,
@@ -1319,6 +1363,7 @@ pub fn run() {
             commands::transfer::preview_transfer,
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
+            commands::file::read_sql_file,
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,

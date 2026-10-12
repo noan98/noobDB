@@ -35,6 +35,7 @@ pub mod savepoint;
 pub mod schema_insight;
 /// `.sql` スクリプトファイルのストリーミング文分割 (#973)。
 pub mod script;
+pub mod script_analysis;
 pub mod server_messages;
 pub mod sqlite;
 /// ストリーミング結果のバッチ合流と逐次統計 (#1257)。

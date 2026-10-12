@@ -5,6 +5,32 @@
  * 既定ファイル名を組み立てる」部分だけ — App.tsx から切り離してユニットテストする。
  */
 
+import type { TextEncodingId } from "./api/tauri";
+
+/**
+ * SQL ファイルの文字コード選択肢 (#1535)。日本語環境では Shift_JIS / EUC-JP のダンプや
+ * UTF-16 保存の SQL が流通するため、開く・保存・スクリプト実行で共通に選べるようにする。
+ * ラベルは固有名詞なので i18n しない。`utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
+ */
+export const TEXT_ENCODING_OPTIONS: { id: TextEncodingId; label: string }[] = [
+  { id: "utf-8", label: "UTF-8" },
+  { id: "utf-8-bom", label: "UTF-8 (BOM)" },
+  { id: "shift_jis", label: "Shift_JIS" },
+  { id: "euc-jp", label: "EUC-JP" },
+  { id: "utf-16le", label: "UTF-16LE" },
+  { id: "utf-16be", label: "UTF-16BE" },
+];
+
+/** 文字コード識別子の表示名。未知の値はそのまま返す。 */
+export function textEncodingLabel(id: TextEncodingId): string {
+  return TEXT_ENCODING_OPTIONS.find((o) => o.id === id)?.label ?? id;
+}
+
+/** `<select>` の値 (文字列) を文字コード識別子へ。空文字 (自動判定) と未知の値は `null`。 */
+export function parseTextEncodingId(value: string): TextEncodingId | null {
+  return TEXT_ENCODING_OPTIONS.find((o) => o.id === value)?.id ?? null;
+}
+
 /**
  * タブのタイトルから「名前を付けて保存」ダイアログの既定ファイル名を組み立てる。
  * ドラッグ&ドロップ / 「SQL ファイルを開く」で開いたタブは、タイトルが元のファイル名

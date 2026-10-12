@@ -2139,6 +2139,67 @@ export interface ScriptOptions {
   continueOnError: boolean;
   /** 全体を 1 トランザクションで包む (失敗・キャンセルで ROLLBACK)。 */
   wrapInTransaction: boolean;
+  /** ファイルの文字コード (#1535)。`null` は自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。 */
+  encoding: TextEncodingId | null;
+  /**
+   * この通し番号 (1 始まり、トランザクション制御文を含む) より前の文を実行せず読み飛ばす
+   * (#1535)。失敗した文からの再開に使う。0 は先頭から。
+   */
+  startAtStatement: number;
+  /** 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。 */
+  skipStatements: number[];
+}
+
+/**
+ * SQL ファイルの文字コード識別子 (#1535)。Rust `TextEncoding` の serde 名と一致する。
+ * `utf-8-bom` / `utf-16*` は保存時に BOM を付ける。
+ */
+export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "shift_jis" | "euc-jp";
+
+/** `read_sql_file` の戻り値: 本文と実際に使った文字コード (保存時に同じ文字コードへ戻す)。 */
+export interface SqlFileContent {
+  content: string;
+  encoding: TextEncodingId;
+}
+
+/** 事前確認で検出する危険な文の種別 (`src/dangerousSql.ts` の `DangerKind` と同じ名前)。 */
+export type ScriptDangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
+
+/** 事前確認の一覧の 1 文。`index` は実行時の通し番号 (`ScriptFailure.index`) と同じ。 */
+export interface ScriptAnalyzedStatement {
+  index: number;
+  line: number;
+  sql: string;
+  category: "read" | "write" | "ddl" | "txControl";
+  danger?: ScriptDangerKind;
+  /** 読み取り専用セッションで実行時に拒否される文。 */
+  blocked: boolean;
+}
+
+/** 事前確認 (`analyze_sql_script`) の集計。一覧は上限つきで、全文は保持しない。 */
+export interface ScriptAnalysis {
+  totalStatements: number;
+  categories: { read: number; write: number; ddl: number; txControl: number };
+  dangerCounts: { deleteNoWhere: number; updateNoWhere: number; drop: number; truncate: number };
+  dangerousTotal: number;
+  blockedTotal: number;
+  txControlTotal: number;
+  /** 先頭 `headLimit` 文 (個別除外の対象)。 */
+  head: ScriptAnalyzedStatement[];
+  /** 危険文の先頭 `listLimit` 件。 */
+  dangerous: ScriptAnalyzedStatement[];
+  /** トランザクション制御文の位置 (先頭 `listLimit` 件)。 */
+  txControls: { index: number; line: number; kind: "begin" | "commit" | "rollback" }[];
+  headLimit: number;
+  listLimit: number;
+}
+
+export interface ScriptAnalyzedEvent {
+  streamId: string;
+  encoding: TextEncodingId;
+  totalBytes: number;
+  elapsedMs: number;
+  analysis: ScriptAnalysis;
 }
 
 /** 失敗した 1 文。`index` はスクリプト内の通し番号、`line` はファイル内の開始行 (1 始まり)。 */
@@ -2166,6 +2227,10 @@ export interface ScriptDoneEvent {
   failures: ScriptFailure[];
   /** wrap-in-transaction で読み飛ばしたスクリプト内の BEGIN/COMMIT 等の数。 */
   skippedControl: number;
+  /** 事前確認で個別除外して読み飛ばした文の数 (#1535)。 */
+  skippedExcluded: number;
+  /** 開始位置より前で読み飛ばした文の数 (#1535)。 */
+  skippedBeforeStart: number;
   rowsAffected: number;
   elapsedMs: number;
 }
@@ -2181,6 +2246,8 @@ export interface ScriptErrorEvent {
 
 export interface ScriptStreamHandlers {
   onProgress?: (event: ScriptProgressEvent) => void;
+  /** 事前確認 (`analyzeSqlScript`) の完了 (#1535)。 */
+  onAnalyzed?: (event: ScriptAnalyzedEvent) => void;
   onDone?: (event: ScriptDoneEvent) => void;
   onError?: (event: ScriptErrorEvent) => void;
   /** `deliveredRows` は確定済み (キャンセル後も残る) 文の数。 */
@@ -2808,6 +2875,10 @@ export async function listenScriptStream(
     listen<ScriptDoneEvent>(
       "sql-script:done",
       filter(schemas.scriptDoneEvent, "sql-script:done", handlers.onDone),
+    ),
+    listen<ScriptAnalyzedEvent>(
+      "sql-script:analyzed",
+      filter(schemas.scriptAnalyzedEvent, "sql-script:analyzed", handlers.onAnalyzed),
     ),
     listen<ScriptErrorEvent>(
       "sql-script:error",

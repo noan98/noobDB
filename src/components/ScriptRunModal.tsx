@@ -6,6 +6,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   api,
   listenScriptStream,
+  type ScriptAnalyzedEvent,
   type ScriptDoneEvent,
   type ScriptErrorEvent,
   type ScriptOptions,
@@ -19,16 +20,25 @@ import {
   describeScriptError,
   makeScriptStreamId,
   omittedFailureCount,
+  parseStartAt,
+  remainingDangerous,
+  resumeStartAt,
   scriptProgressPercent,
+  setDangerousExcluded,
+  skipList,
+  toggleExcluded,
   toggleScriptOption,
+  type ScriptToggleKey,
 } from "../scriptRun";
+import { parseTextEncodingId, TEXT_ENCODING_OPTIONS } from "../sqlFileIO";
 import { useConfirm } from "./ConfirmDialog";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { ScriptAnalysisPanel } from "./ScriptAnalysisPanel";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useToast } from "./Toast";
-import { Button, Input, Switch } from "./ui";
+import { Button, Input, Select, Switch } from "./ui";
 
 interface Props {
   sessionId: string;
@@ -42,11 +52,14 @@ interface Props {
 type Status =
   | { kind: "idle" }
   | { kind: "running" }
+  /** 事前確認 (ドライラン) の走査中 (#1535)。 */
+  | { kind: "analyzing" }
+  | { kind: "analysisError"; message: string }
   | { kind: "done"; event: ScriptDoneEvent }
   | { kind: "error"; event: ScriptErrorEvent }
   | { kind: "setupError"; message: string };
 
-const OPTION_ROWS: { key: keyof ScriptOptions; label: I18nKey; hint: I18nKey }[] = [
+const OPTION_ROWS: { key: ScriptToggleKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "continueOnError", label: "scriptOptContinue", hint: "scriptOptContinueHint" },
   { key: "wrapInTransaction", label: "scriptOptWrap", hint: "scriptOptWrapHint" },
 ];
@@ -68,8 +81,16 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
   const { confirm, dialog } = useConfirm();
   const [path, setPath] = useState("");
   const [options, setOptions] = useState<ScriptOptions>(DEFAULT_SCRIPT_OPTIONS);
+  /** 開始文番号の入力欄の文字列 (空 = 先頭から)。 */
+  const [startAtText, setStartAtText] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<ScriptProgressEvent | null>(null);
+  /** 事前確認 (ドライラン) の結果と、それを取ったときの入力 (ファイル + 文字コード)。 */
+  const [analysis, setAnalysis] = useState<{ event: ScriptAnalyzedEvent; key: string } | null>(null);
+  /** 事前確認の一覧で「実行しない」にした文の通し番号。 */
+  const [excluded, setExcluded] = useState<ReadonlySet<number>>(new Set());
+  const analysisRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<HTMLDivElement>(null);
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
 
@@ -91,7 +112,21 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     };
   }, []);
 
+  // 結果 (完了・エラー・再開ボタン) はオプションの下に出るので、見える位置へスクロールする。
+  useEffect(() => {
+    if (status.kind === "done" || status.kind === "error" || status.kind === "analysisError" || status.kind === "setupError") {
+      // フェードインで高さが確定してからスクロールする。
+      const timer = window.setTimeout(() => statusRef.current?.scrollIntoView?.({ block: "end" }), 250);
+      return () => window.clearTimeout(timer);
+    }
+  }, [status.kind]);
+
   const isRunning = status.kind === "running";
+  const isAnalyzing = status.kind === "analyzing";
+  const busy = isRunning || isAnalyzing;
+  const inputKey = `${path.trim()}\n${options.encoding ?? ""}`;
+  // 事前確認の結果は、取ったときと同じファイル・文字コードのときだけ実行に反映する。
+  const analysisFresh = analysis !== null && analysis.key === inputKey;
 
   const cleanupStream = () => {
     unlistenRef.current?.();
@@ -108,9 +143,70 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     if (typeof selected === "string" && selected) setPath(selected);
   };
 
-  const handleRun = async () => {
+  /** 実行せずにファイルを走査して、文数・危険文・先頭の文の一覧を出す (#1535)。 */
+  const handleAnalyze = async () => {
     const target = path.trim();
-    if (!target) return;
+    if (!target || busy) return;
+    const streamId = makeScriptStreamId();
+    streamIdRef.current = streamId;
+    const key = inputKey;
+    setStatus({ kind: "analyzing" });
+    setProgress(null);
+    setAnalysis(null);
+    setExcluded(new Set());
+    try {
+      const unlisten = await listenScriptStream(streamId, {
+        onProgress: (e) => setProgress(e),
+        onAnalyzed: (e) => {
+          cleanupStream();
+          setAnalysis({ event: e, key });
+          setStatus({ kind: "idle" });
+          setProgress(null);
+          // 結果は折りたたみの下に出るので、見える位置へスクロールする。
+          requestAnimationFrame(() => analysisRef.current?.scrollIntoView?.({ block: "start" }));
+        },
+        onError: (e) => {
+          cleanupStream();
+          setStatus({ kind: "analysisError", message: describeScriptError(e).message });
+          setProgress(null);
+        },
+        onCancelled: () => {
+          cleanupStream();
+          setStatus({ kind: "idle" });
+          setProgress(null);
+        },
+      });
+      if (unmountedRef.current || streamIdRef.current !== streamId) {
+        unlisten();
+        return;
+      }
+      unlistenRef.current = unlisten;
+      await api.analyzeSqlScript({ sessionId, streamId, path: target, encoding: options.encoding });
+    } catch (e) {
+      cleanupStream();
+      setStatus({ kind: "analysisError", message: String(e) });
+      setProgress(null);
+    }
+  };
+
+  /** `override` は再開位置など、状態を介さずに今回だけ差し替えるオプション。 */
+  const handleRun = async (override?: Partial<ScriptOptions>) => {
+    const target = path.trim();
+    if (!target || busy) return;
+    const startAt = override?.startAtStatement ?? parseStartAt(startAtText);
+    const skip = analysisFresh ? excluded : new Set<number>();
+    if (analysisFresh && analysis) {
+      const dangerous = remainingDangerous(analysis.event.analysis, skip, startAt);
+      if (dangerous > 0) {
+        const ok = await confirm({
+          title: t("scriptDangerConfirmTitle"),
+          message: t("scriptDangerConfirmMessage", { count: dangerous.toLocaleString() }),
+          confirmLabel: t("scriptDangerConfirmOk"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+    }
     if (isProduction) {
       const ok = await confirm({
         title: t("scriptProductionConfirmTitle"),
@@ -120,6 +216,12 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       });
       if (!ok) return;
     }
+    const runOptions: ScriptOptions = {
+      ...options,
+      ...override,
+      startAtStatement: startAt,
+      skipStatements: skipList(skip),
+    };
     const streamId = makeScriptStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "running" });
@@ -164,7 +266,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
         return;
       }
       unlistenRef.current = unlisten;
-      await api.runSqlScript({ sessionId, streamId, database, path: target, options });
+      await api.runSqlScript({ sessionId, streamId, database, path: target, options: runOptions });
     } catch (e) {
       // 購読・開始 (入力検証) の失敗は終端イベントが来ないので、ここで UI を戻す。
       cleanupStream();
@@ -174,23 +276,33 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     }
   };
 
+  /** 失敗した文 (または次の文) から再開する。開始文番号の欄にも反映する。 */
+  const handleResume = (startAt: number) => {
+    setStartAtText(String(startAt));
+    return handleRun({ startAtStatement: startAt });
+  };
+
   const handleCancelRun = async () => {
     const streamId = streamIdRef.current;
     if (!streamId) return;
+    const analyzing = isAnalyzing;
     // 先に購読を外し、バックエンドの cancelled イベントと二重に処理しない
     // (Dump / Export と同じキャンセル手順)。確定済み文数は戻り値から読む。
     cleanupStream();
     setStatus({ kind: "idle" });
     setProgress(null);
     const res = await api.cancelStream(streamId).catch(() => null);
-    toast.info(t("scriptCancelled", { count: res?.deliveredRows ?? 0 }));
+    if (analyzing) toast.info(t("scriptAnalysisCancelled"));
+    else toast.info(t("scriptCancelled", { count: res?.deliveredRows ?? 0 }));
   };
 
   const percent = progress ? scriptProgressPercent(progress) : null;
+  const resumeAt = status.kind === "error" ? resumeStartAt(status.event, options) : null;
+  const resumeSkipAt = status.kind === "error" ? resumeStartAt(status.event, options, true) : null;
 
   return (
-    <Modal onSubmit={handleRun} submitDisabled={isRunning || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!isRunning} closeOnEscape={!isRunning}>
-      <ModalHeader onClose={onClose} closeLabel={t("scriptClose")} closeDisabled={isRunning}>
+    <Modal onSubmit={() => handleRun()} submitDisabled={busy || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!busy} closeOnEscape={!busy}>
+      <ModalHeader onClose={onClose} closeLabel={t("scriptClose")} closeDisabled={busy}>
         {database ? t("scriptTitleDb", { database }) : t("scriptTitle")}
       </ModalHeader>
 
@@ -210,13 +322,64 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               value={path}
               onChange={(e) => setPath(e.target.value)}
               placeholder={t("scriptFilePlaceholder")}
-              disabled={isRunning}
+              disabled={busy}
             />
-            <Button type="button" onClick={handleBrowse} disabled={isRunning}>
+            <Button type="button" onClick={handleBrowse} disabled={busy}>
               {t("scriptBrowse")}
             </Button>
           </PathRow>
         </FormSection>
+
+        <FormSection flexDirection="row" flexWrap="wrap" gap="4" alignItems="flex-start">
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <FieldLabel htmlFor="script-encoding">{t("scriptEncodingLabel")}</FieldLabel>
+            <Select
+              id="script-encoding"
+              minW="160px"
+              value={options.encoding ?? ""}
+              onChange={(e) => setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(e.target.value) }))}
+              disabled={busy}
+            >
+              <option value="">{t("scriptEncodingAuto")}</option>
+              {TEXT_ENCODING_OPTIONS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </chakra.div>
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <FieldLabel htmlFor="script-start-at">{t("scriptStartAtLabel")}</FieldLabel>
+            <Input
+              id="script-start-at"
+              maxW="140px"
+              type="text"
+              inputMode="numeric"
+              value={startAtText}
+              onChange={(e) => setStartAtText(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="1"
+              disabled={busy}
+            />
+          </chakra.div>
+          <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug" flexBasis="100%">
+            {t("scriptEncodingHint")} {t("scriptStartAtHint")}
+          </chakra.div>
+        </FormSection>
+
+        {analysis && status.kind !== "analyzing" && (
+          <div ref={analysisRef}>
+            <ScriptAnalysisPanel
+              event={analysis.event}
+              excluded={excluded}
+              stale={!analysisFresh}
+              disabled={busy || !analysisFresh}
+              onToggle={(index) => setExcluded((prev) => toggleExcluded(prev, index))}
+              onExcludeDangerous={(exclude) =>
+                setExcluded((prev) => setDangerousExcluded(prev, analysis.event.analysis, exclude))
+              }
+            />
+          </div>
+        )}
 
         <FormSection>
           <FieldLabel as="div">{t("scriptOptionsLabel")}</FieldLabel>
@@ -227,7 +390,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
                   <Switch
                     checked={options[row.key]}
                     onChange={() => setOptions((prev) => toggleScriptOption(prev, row.key))}
-                    disabled={isRunning}
+                    disabled={busy}
                     size="sm"
                     aria-label={t(row.label)}
                   />
@@ -236,22 +399,23 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
                   <chakra.span fontSize="md" color="app.text">
                     {t(row.label)}
                   </chakra.span>
-                  <chakra.span fontSize="xs" color="app.textMuted" lineHeight="snug">
+                  <chakra.span color="app.textMuted" textStyle="caption" lineHeight="snug">
                     {t(row.hint)}
                   </chakra.span>
                 </chakra.span>
               </chakra.div>
             ))}
           </chakra.div>
-          <chakra.div fontSize="xs" color="app.textMuted" lineHeight="snug">
+          <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug">
             {t("scriptSessionNote")}
           </chakra.div>
         </FormSection>
 
-        <StreamProgressBar active={isRunning} />
+        <StreamProgressBar active={busy} />
 
+        <div ref={statusRef}>
         <AnimatePresence mode="wait" initial={false}>
-          {isRunning && (
+          {(isRunning || isAnalyzing) && (
             <motion.div
               key="script-progress"
               initial={variants.fade.initial}
@@ -261,9 +425,15 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
             >
               <chakra.div fontSize="sm" color="app.textMuted" display="flex" flexWrap="wrap" alignItems="center" gap="2">
                 <chakra.span fontWeight={500} color="app.text">
-                  {progress ? t("scriptProgress", { executed: progress.executed }) : t("scriptRunning")}
+                  {isAnalyzing
+                    ? progress
+                      ? t("scriptAnalyzingProgress", { count: progress.executed.toLocaleString() })
+                      : t("scriptAnalyzing")
+                    : progress
+                      ? t("scriptProgress", { executed: progress.executed })
+                      : t("scriptRunning")}
                 </chakra.span>
-                {progress && progress.failed > 0 && (
+                {isRunning && progress && progress.failed > 0 && (
                   <chakra.span color="app.textError">{t("scriptProgressFailed", { failed: progress.failed })}</chakra.span>
                 )}
                 {percent != null && <chakra.span>{t("scriptProgressPercent", { percent })}</chakra.span>}
@@ -294,7 +464,12 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               exit={variants.fade.exit}
               transition={transitions.crossfade}
             >
-              <ScriptErrorSummary event={status.event} />
+              <ScriptErrorSummary
+                event={status.event}
+                resumeAt={resumeAt}
+                resumeSkipAt={resumeSkipAt}
+                onResume={handleResume}
+              />
             </motion.div>
           )}
           {status.kind === "setupError" && (
@@ -308,12 +483,34 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               <ErrorNote>{t("scriptError", { error: status.message })}</ErrorNote>
             </motion.div>
           )}
+          {status.kind === "analysisError" && (
+            <motion.div
+              key="script-analysis-error"
+              initial={variants.fade.initial}
+              animate={variants.fade.animate}
+              exit={variants.fade.exit}
+              transition={transitions.crossfade}
+            >
+              <ErrorNote>{t("scriptAnalysisFailed", { error: status.message })}</ErrorNote>
+            </motion.div>
+          )}
         </AnimatePresence>
+        </div>
       </ModalBody>
 
       <ModalFooter>
+        <LoadingButton
+          pressable
+          type="button"
+          variant="secondary"
+          loading={isAnalyzing}
+          onClick={handleAnalyze}
+          disabled={busy || !path.trim()}
+        >
+          {isAnalyzing ? t("scriptAnalyzing") : t("scriptAnalyze")}
+        </LoadingButton>
         <div style={{ flex: 1 }} />
-        {isRunning ? (
+        {busy ? (
           <Button type="button" variant="secondary" onClick={handleCancelRun}>
             {t("scriptCancelRun")}
           </Button>
@@ -327,8 +524,8 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
           type="button"
           variant="primary"
           loading={isRunning}
-          onClick={handleRun}
-          disabled={isRunning || !path.trim()}
+          onClick={() => handleRun()}
+          disabled={busy || !path.trim()}
         >
           {isRunning ? t("scriptRunning") : t("scriptExecute")}
         </LoadingButton>
@@ -354,8 +551,18 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
             })}
       </chakra.div>
       {event.skippedControl > 0 && (
-        <chakra.div color="app.textMuted" fontSize="xs">
+        <chakra.div color="app.textMuted" textStyle="caption">
           {t("scriptDoneSkippedControl", { count: event.skippedControl })}
+        </chakra.div>
+      )}
+      {event.skippedExcluded > 0 && (
+        <chakra.div color="app.textMuted" textStyle="caption">
+          {t("scriptDoneSkippedExcluded", { count: event.skippedExcluded.toLocaleString() })}
+        </chakra.div>
+      )}
+      {event.skippedBeforeStart > 0 && (
+        <chakra.div color="app.textMuted" textStyle="caption">
+          {t("scriptDoneSkippedBefore", { count: event.skippedBeforeStart.toLocaleString() })}
         </chakra.div>
       )}
       {event.failures.length > 0 && (
@@ -385,14 +592,14 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
                 <chakra.span fontSize="xs" color="app.textError">
                   {t("scriptFailureLine", { line: f.line })} — {f.error}
                 </chakra.span>
-                <chakra.span fontSize="xs" color="app.textMuted" fontFamily="mono" wordBreak="break-all">
+                <chakra.span color="app.textMuted" textStyle="caption" fontFamily="mono" wordBreak="break-all">
                   {f.sql}
                 </chakra.span>
               </chakra.li>
             ))}
           </chakra.ul>
           {omitted > 0 && (
-            <chakra.div fontSize="xs" color="app.textMuted">
+            <chakra.div color="app.textMuted" textStyle="caption">
               {t("scriptFailuresOmitted", { count: omitted })}
             </chakra.div>
           )}
@@ -402,24 +609,59 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
   );
 }
 
-function ScriptErrorSummary({ event }: { event: ScriptErrorEvent }) {
+function ScriptErrorSummary({
+  event,
+  resumeAt,
+  resumeSkipAt,
+  onResume,
+}: {
+  event: ScriptErrorEvent;
+  /** 失敗した文から再開できるときの開始文番号。`null` は再開できない。 */
+  resumeAt: number | null;
+  resumeSkipAt: number | null;
+  onResume: (startAt: number) => void;
+}) {
   const t = useT();
   const d = describeScriptError(event);
   return (
-    <ErrorNote>
-      <chakra.div display="flex" flexDirection="column" gap="1">
-        <chakra.span>
-          {d.line != null
-            ? t("scriptErrorAt", { line: d.line, error: d.message })
-            : t("scriptError", { error: d.message })}
-        </chakra.span>
-        {d.sql && (
-          <chakra.span fontFamily="mono" fontSize="xs" wordBreak="break-all">
-            {d.sql}
+    <chakra.div display="flex" flexDirection="column" gap="2">
+      <ErrorNote>
+        <chakra.div display="flex" flexDirection="column" gap="1">
+          <chakra.span>
+            {d.index != null && d.line != null
+              ? t("scriptErrorAtIndex", { index: d.index, line: d.line, error: d.message })
+              : d.line != null
+                ? t("scriptErrorAt", { line: d.line, error: d.message })
+                : t("scriptError", { error: d.message })}
           </chakra.span>
-        )}
-        {d.rolledBack && <chakra.span fontSize="xs">{t("scriptRolledBack")}</chakra.span>}
-      </chakra.div>
-    </ErrorNote>
+          {d.sql && (
+            <chakra.span fontFamily="mono" fontSize="xs" wordBreak="break-all">
+              {d.sql}
+            </chakra.span>
+          )}
+          {d.rolledBack && <chakra.span fontSize="xs">{t("scriptRolledBack")}</chakra.span>}
+        </chakra.div>
+      </ErrorNote>
+      {resumeAt != null && resumeSkipAt != null && (
+        <chakra.div display="flex" flexDirection="column" gap="1.5">
+          <chakra.div display="flex" flexWrap="wrap" gap="2">
+            <Button type="button" variant="secondary" onClick={() => onResume(resumeAt)}>
+              {t("scriptResume")}
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => onResume(resumeSkipAt)}>
+              {t("scriptResumeSkip")}
+            </Button>
+          </chakra.div>
+          <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug">
+            {t("scriptResumeHint", { index: resumeAt })}
+          </chakra.div>
+        </chakra.div>
+      )}
+      {resumeAt == null && d.index != null && (
+        <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug">
+          {t("scriptResumeUnavailable")}
+        </chakra.div>
+      )}
+    </chakra.div>
   );
 }

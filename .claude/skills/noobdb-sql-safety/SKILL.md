@@ -18,6 +18,7 @@ description: noobDB の SQL 安全網を変更するとき — 読み取り専�
    |---|---|
    | `readOnlySqlVectors.json` | `is_read_only_sql` / `isReadOnlySql` |
    | `schemaMutatingVectors.json` | `sql_may_change_schema` / `isSchemaMutatingSql` (スキーマ変更検出、#1221)。Rust `tests/schema_mutating_golden.rs` と `schemaMutatingGolden.test.ts` |
+   | `dangerousSqlVectors.json` | 危険文検出 `classify_dangerous` (Rust `db/script_analysis.rs`、スクリプト事前確認が使う) と `analyzeDangerousSql` (#1535)。Rust `tests/dangerous_sql_golden.rs` と `dangerousSqlGolden.test.ts`。1 文ずつの判定で、`kindMysql` はバックスラッシュエスケープ解釈の差 |
 | `maskVectors.json` | コメント/リテラルのマスク (全判定の土台) |
    | `statementSplitVectors.json` | 文境界 (`splitSqlStatements` / `isMultiStatement`、#1074) |
    | `autoLimitVectors.json` | `apply_auto_limit_for` (5 ドライバ) |
