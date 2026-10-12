@@ -1018,6 +1018,9 @@ function makeTab(kind: TabKind, title: string, sql: string): Tab {
   };
 }
 
+/** 出力ログへ記録する接続の情報 (実行開始時に確定する, #1541)。 */
+type OutputCtx = { connectionId: string | null; connectionName: string | null; defaultDatabase: string | null };
+
 function makeQueryTab(): Tab {
   // 新規クエリタブは空のエディタで開く。
   return makeTab("query", translate("tabUntitledQuery"), "");
@@ -3904,20 +3907,36 @@ export default function App() {
   // 呼ぶだけで、DB アクセスそのものには関与しない。接続名 / 既定 DB は ref 経由で
   // 引き、実行系 useCallback の依存配列を増やさない (増やすと接続切替のたびに
   // ハンドラが作り直され、エディタのキーマップへの再バインドが走る)。
-  const outputProfileRef = useRef<{ name: string | null; database: string | null }>({
-    name: null,
-    database: null,
+  const outputProfileRef = useRef<OutputCtx>({
+    connectionId: null,
+    connectionName: null,
+    defaultDatabase: null,
   });
   outputProfileRef.current = {
-    name: selectedProfile?.name ?? null,
-    database: selectedProfile?.database ?? null,
+    connectionId: selectedProfile?.id ?? null,
+    connectionName: selectedProfile?.name ?? null,
+    defaultDatabase: selectedProfile?.database ?? null,
   };
+  // 実行を開始した時点の接続 (id / 表示名 / 既定 DB) を確定する (#1541)。実行中に接続を切り替えても
+  // 出力の記録が新しい接続へずれないよう、各実行の冒頭で 1 回だけ呼んで recordOutput に渡す。
+  const outputCtxFor = useCallback((sid: string | null | undefined): OutputCtx => {
+    const p = sid ? openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile : undefined;
+    if (p) return { connectionId: p.id, connectionName: p.name, defaultDatabase: p.database ?? null };
+    return { ...outputProfileRef.current };
+  }, []);
+  // `execDatabase` は実行に使った DB (タブの database のみ。既定へのフォールバックはしない)。
   const recordOutput = useCallback(
-    (input: Omit<OutputInput, "connection" | "database">, database: string | null | undefined) => {
+    (
+      input: Omit<OutputInput, "connection" | "connectionId" | "database" | "execDatabase">,
+      execDatabase: string | null | undefined,
+      ctx: OutputCtx = outputProfileRef.current,
+    ) => {
       pushOutput({
         ...input,
-        connection: outputProfileRef.current.name,
-        database: database ?? outputProfileRef.current.database,
+        connection: ctx.connectionName,
+        connectionId: ctx.connectionId,
+        database: execDatabase ?? ctx.defaultDatabase,
+        execDatabase: execDatabase ?? null,
       });
     },
     [],
@@ -3949,6 +3968,7 @@ export default function App() {
       return;
     }
     const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
+    const outCtx = outputCtxFor(sid);
     await cancelStreamForTab(tabId);
 
     const timeoutSecs = settings.queryTimeoutSecs;
@@ -4189,6 +4209,7 @@ export default function App() {
               serverMessages,
             },
             tab?.database,
+            outCtx,
           );
         }
         // A new entry was just written to history; refresh the panel. Auto-refresh
@@ -4259,6 +4280,7 @@ export default function App() {
               error: error ?? null,
             },
             tab?.database,
+            outCtx,
           );
         }
         if (!autoRefresh && !connectionLost) {
@@ -4341,6 +4363,7 @@ export default function App() {
         recordOutput(
           { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
           tab?.database,
+          outCtx,
         );
       }
       finalize();
@@ -5063,6 +5086,7 @@ export default function App() {
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
     const db = tab.database ?? selectedProfile?.database ?? null;
+    const outCtx = outputCtxFor(sessionId);
     patchTab(tabId, (tt) => ({
       ...tt,
       title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
@@ -5104,7 +5128,7 @@ export default function App() {
         },
         onResults: ({ results: incoming }) => {
           for (const r of incoming) {
-            recordOutput(toBatchOutputInput(r), db);
+            recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
             results.push(toBatchResult(r));
           }
           // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
@@ -5144,6 +5168,7 @@ export default function App() {
   // 明示トランザクション内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
   const runTxInTab = useCallback(async (tabId: string, sql: string) => {
     if (!sessionId) return;
+    const outCtx = outputCtxFor(sessionId);
     patchTab(tabId, (tt) => ({
       ...tt,
       title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
@@ -5183,7 +5208,8 @@ export default function App() {
           error: null,
           serverMessages: res.server_messages,
         },
-        null,
+        tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null,
+        outCtx,
       );
     } catch (e) {
       patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
@@ -5195,9 +5221,13 @@ export default function App() {
         errorKind: errorKindOf(e),
         aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
       });
-      recordOutput({ sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) }, null);
+      recordOutput(
+        { sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) },
+        tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null,
+        outCtx,
+      );
     }
-  }, [sessionId, patchTab, recordOutput, tabsRef]);
+  }, [sessionId, patchTab, recordOutput, outputCtxFor, tabsRef]);
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -5598,10 +5628,11 @@ export default function App() {
         recordOutput(
           { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
           tab.database,
+          outputCtxFor(sessionId),
         );
       }
     }
-  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput]);
+  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput, outputCtxFor, sessionId]);
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.
@@ -5853,9 +5884,9 @@ export default function App() {
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
-  const handleOutputRunSql = useCallback((sql: string, database: string | null) => {
+  const handleOutputRunSql = useCallback((sql: string, execDatabase: string | null) => {
     if (!sessionId) return;
-    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(database ? { database } : {}) };
+    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(execDatabase ? { database: execDatabase } : {}) };
     addTab(tab);
     runInTabWithGate(tab, sql, { newTab: false });
   }, [sessionId, addTab, runInTabWithGate]);
@@ -9939,7 +9970,7 @@ export default function App() {
                       onInsertSql={handleLauncherInsertSql}
                       onRunSql={handleOutputRunSql}
                       canRun={sessionId !== null}
-                      currentConnection={selectedProfile?.name ?? null}
+                      currentConnectionId={selectedProfile?.id ?? null}
                     />
                   ) : activeBottomPanelTab === "activity" ? (
                     <ActivityLogPanel />

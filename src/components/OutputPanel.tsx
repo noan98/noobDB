@@ -40,17 +40,17 @@ export function OutputPanel({
   onInsertSql,
   onRunSql,
   canRun = false,
-  currentConnection = null,
+  currentConnectionId = null,
 }: {
   onOpenSql: (sql: string) => void;
   /** フォーカス中のエディタへ挿入する (#1541)。省略時はボタンを出さない。 */
   onInsertSql?: (sql: string) => void;
   /** 新しいタブで再実行する (#1541)。実行は通常の実行経路 (安全網つき) に委ねる。省略時は出さない。 */
-  onRunSql?: (sql: string, database: string | null) => void;
+  onRunSql?: (sql: string, execDatabase: string | null) => void;
   /** 接続中か。再実行に必要 (挿入は未接続でも使える)。 */
   canRun?: boolean;
-  /** いま接続している接続名。記録時の接続と違う行は再実行を無効にする。 */
-  currentConnection?: string | null;
+  /** いま接続しているプロファイル id。記録時の接続 (id) と違う行、id を持たない行は再実行を無効にする。 */
+  currentConnectionId?: string | null;
 }) {
   const t = useT();
   const entries = useOutputLog();
@@ -101,7 +101,7 @@ export function OutputPanel({
               onInsertSql={onInsertSql}
               onRunSql={onRunSql}
               canRun={canRun}
-              currentConnection={currentConnection}
+              currentConnectionId={currentConnectionId}
             />
           ))}
         </chakra.ul>
@@ -118,16 +118,16 @@ function OutputRow({
   onInsertSql,
   onRunSql,
   canRun,
-  currentConnection,
+  currentConnectionId,
 }: {
   entry: OutputEntry;
   expanded: boolean;
   onToggle: () => void;
   onOpenSql: (sql: string) => void;
   onInsertSql?: (sql: string) => void;
-  onRunSql?: (sql: string, database: string | null) => void;
+  onRunSql?: (sql: string, execDatabase: string | null) => void;
   canRun: boolean;
-  currentConnection: string | null;
+  currentConnectionId: string | null;
 }) {
   const t = useT();
   const toast = useToast();
@@ -142,8 +142,8 @@ function OutputRow({
     ? t("outputOpenTruncatedDisabled")
     : !canRun
       ? t("outputNeedsConnection")
-      : entry.connection !== null && entry.connection !== currentConnection
-        ? t("outputRerunOtherConnection", { name: entry.connection })
+      : entry.connectionId === null || entry.connectionId !== currentConnectionId
+        ? t("outputRerunOtherConnection", { name: entry.connection ?? "?" })
         : null;
   const serverMessages = entry.serverMessages ?? [];
   const worstServer = worstServerSeverity(serverMessages);
@@ -281,7 +281,7 @@ function OutputRow({
                   size="sm"
                   variant="secondary"
                   disabled={rerunBlock !== null}
-                  onClick={() => onRunSql(entry.sql, entry.database)}
+                  onClick={() => onRunSql(entry.sql, entry.execDatabase)}
                 >
                   <Icon name="play" size={ICON_SIZES.md} />
                   {t("outputRerun")}

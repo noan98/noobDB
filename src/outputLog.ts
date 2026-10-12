@@ -55,8 +55,19 @@ export interface OutputEntry {
   error: string | null;
   /** 実行した接続の表示名。 */
   connection: string | null;
-  /** 実行した DB (タブの DB → プロファイル既定)。 */
+  /**
+   * 実行した接続のプロファイル id (#1541)。表示名は一意でないため、再実行の接続照合はこちらで行う。
+   * 記録できなかった行は null (再実行不可)。
+   */
+  connectionId: string | null;
+  /** 表示用の DB (タブの DB → プロファイル既定)。再実行には使わない (`execDatabase` を使う)。 */
   database: string | null;
+  /**
+   * 実行に使った DB (#1541)。タブの `database` そのもので、プロファイル既定にはフォールバックしない。
+   * PostgreSQL ではタブの `database` がスキーマ (search_path) を指し、プロファイルの `database` は
+   * 実 DB 名なので、混ぜると再実行で `SET search_path` が壊れる。null は「接続の既定のまま実行した」。
+   */
+  execDatabase: string | null;
   /**
    * サーバが実行中に返した通知・警告 (#1165)。PostgreSQL の `RAISE NOTICE` や
    * MySQL の `SHOW WARNINGS`。noobDB 自身の結末とは別物で、行を展開すると読める。
