@@ -1807,6 +1807,20 @@
               "target": null
             }
           ],
+          "foreign_keys": [
+            {
+              "columns": [
+                "org_id"
+              ],
+              "name": "fk_users_org",
+              "on_delete": "CASCADE",
+              "on_update": null,
+              "referenced_columns": [
+                "id"
+              ],
+              "referenced_table": "orgs"
+            }
+          ],
           "name": "users",
           "status": "different"
         }
@@ -1917,6 +1931,20 @@
             },
             "status": "source_only",
             "target": null
+          }
+        ],
+        "foreign_keys": [
+          {
+            "columns": [
+              "org_id"
+            ],
+            "name": "fk_users_org",
+            "on_delete": "CASCADE",
+            "on_update": null,
+            "referenced_columns": [
+              "id"
+            ],
+            "referenced_table": "orgs"
           }
         ],
         "name": "users",
@@ -2048,6 +2076,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "source_only"
         },
@@ -2170,6 +2199,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "target_only"
         },
@@ -2292,6 +2322,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "different"
         },
@@ -2414,6 +2445,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "same"
         }
@@ -2542,6 +2574,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "source_only"
         },
@@ -2664,6 +2697,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "target_only"
         },
@@ -2786,6 +2820,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "different"
         },
@@ -2908,6 +2943,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "same"
         }
@@ -3036,6 +3072,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "source_only"
         },
@@ -3158,6 +3195,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "target_only"
         },
@@ -3280,6 +3318,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "different"
         },
@@ -3402,6 +3441,7 @@
               }
             }
           ],
+          "foreign_keys": [],
           "name": "users",
           "status": "same"
         }
@@ -4217,6 +4257,12 @@
         {
           "destructive": false,
           "kind": "alter_column",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "add_foreign_key",
           "sql": "SELECT 1;",
           "table": "users"
         },

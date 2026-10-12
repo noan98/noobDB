@@ -262,3 +262,9 @@
   専用文に限る。同一セッション・同一テーブルへの `create` / `replace` も拒否。
   `is_production` の確認 (置き換えなら接続名タイプ入力の強確認) は UI レベル。
 - 統合テスト: `tests/transfer_integration.rs` (SQLite ↔ SQLite、環境変数不要で常時実走)。
+
+## データ転送のバイナリ列 (#1530)
+
+SQLite / MySQL へ転送するバイナリ列は hex 文字列で bind し、`Connection::import_rows_with_binary`
+が INSERT の値式を `unhex(?)` / `UNHEX(?)` に包む (`db::transfer::hex_binary_columns`)。
+全件投入後の `UPDATE … SET c = unhex(c)` は廃止した。追記モードでも既存行を巻き込まない。

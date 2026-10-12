@@ -78,12 +78,24 @@ pub async fn compare_schema(
     let source_tables = collect_table_columns(&source.conn, &source_database).await?;
     let target_tables = collect_table_columns(&target.conn, &target_database).await?;
 
-    Ok(compute_schema_diff(
-        source_driver,
-        target_driver,
-        &source_tables,
-        &target_tables,
-    ))
+    let mut diff =
+        compute_schema_diff(source_driver, target_driver, &source_tables, &target_tables);
+    // CREATE TABLE 同期が外部キーを出せるよう、source 側の制約を載せる。取得に失敗
+    // しても比較自体は妨げない (FK 無しの CREATE になる)。
+    if diff
+        .tables
+        .iter()
+        .any(|t| t.status == crate::db::diff::DiffStatus::SourceOnly)
+    {
+        match source.conn.foreign_keys(&source_database).await {
+            Ok(fks) => crate::db::diff::attach_source_foreign_keys(&mut diff, &fks),
+            Err(e) => tracing::warn!(
+                kind = e.kind(),
+                "schema compare: could not load foreign keys of the source"
+            ),
+        }
+    }
+    Ok(diff)
 }
 
 /// Builds `SELECT <cols> FROM <table> ORDER BY <pk> LIMIT <n>` with identifiers

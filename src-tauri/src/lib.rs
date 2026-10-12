@@ -39,7 +39,9 @@ pub mod __test_api {
     pub use crate::db::data_diff::{
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
-    pub use crate::db::diff::{compute_schema_diff, ColumnDiff, DiffStatus, SchemaDiff, TableDiff};
+    pub use crate::db::diff::{
+        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffStatus, SchemaDiff, TableDiff,
+    };
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{

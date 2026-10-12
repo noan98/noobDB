@@ -2022,7 +2022,7 @@ mod query_result_cache_tests {
     /// 期限切れエントリが容量判定に残って、有効なエントリごと全消去されないこと (#1530)。
     #[tokio::test]
     async fn capacity_purges_expired_entries_before_clearing_valid_ones() {
-        let cache = QueryResultCache::new(Duration::from_millis(150), 2, 1000, 1024 * 1024);
+        let cache = QueryResultCache::new(Duration::from_millis(1000), 2, 1000, 1024 * 1024);
         let fetch = |sql: &'static str| {
             let cache = &cache;
             async move {
@@ -2035,7 +2035,7 @@ mod query_result_cache_tests {
             }
         };
         fetch("SELECT 1").await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
         // 1 は期限切れ、2 は有効。容量 2 を満たした状態で 3 を挿入する。
         fetch("SELECT 2").await;
         fetch("SELECT 3").await;

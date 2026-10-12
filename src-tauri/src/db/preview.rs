@@ -147,29 +147,10 @@ pub(crate) fn update_assigns_primary_key(
     if primary_key.is_empty() {
         return false;
     }
-    let cleaned = super::strip_sql_comments(sql, flavor);
-    if !cleaned
-        .trim_start()
-        .to_ascii_lowercase()
-        .starts_with("update")
-    {
-        return false;
-    }
-    let Some((set_pos, _)) = find_top_level_keyword(&cleaned, &["set"], flavor) else {
+    let Some(segment) = update_set_segment(sql, flavor) else {
         return false;
     };
-    let Some(after_set) = cleaned.get(set_pos + 3..) else {
-        return false;
-    };
-    let end = find_top_level_keyword(
-        after_set,
-        &["where", "from", "returning", "order", "limit"],
-        flavor,
-    )
-    .map_or(after_set.len(), |(p, _)| p);
-    let Some(segment) = after_set.get(..end) else {
-        return false;
-    };
+    let segment = segment.as_str();
     let pk_lower: Vec<String> = primary_key.iter().map(|c| c.to_lowercase()).collect();
     split_top_level(segment, ',', flavor).iter().any(|assign| {
         let Some(eq) = split_top_level(assign, '=', flavor).into_iter().next() else {
@@ -183,6 +164,29 @@ pub(crate) fn update_assigns_primary_key(
             pk_lower.iter().any(|p| p == &name.to_lowercase())
         })
     })
+}
+
+/// `UPDATE` の `SET` 句の本体 (`SET` の後から `WHERE` / `FROM` / `RETURNING` /
+/// `ORDER` / `LIMIT` の手前まで、コメント除去済み)。UPDATE でない・`SET` が見つからない
+/// ときは `None`。
+pub(crate) fn update_set_segment(sql: &str, flavor: SqlFlavor) -> Option<String> {
+    let cleaned = super::strip_sql_comments(sql, flavor);
+    if !cleaned
+        .trim_start()
+        .to_ascii_lowercase()
+        .starts_with("update")
+    {
+        return None;
+    }
+    let (set_pos, _) = find_top_level_keyword(&cleaned, &["set"], flavor)?;
+    let after_set = cleaned.get(set_pos + 3..)?;
+    let end = find_top_level_keyword(
+        after_set,
+        &["where", "from", "returning", "order", "limit"],
+        flavor,
+    )
+    .map_or(after_set.len(), |(p, _)| p);
+    after_set.get(..end).map(str::to_string)
 }
 
 /// 文字列リテラル・引用付き識別子・括弧の外にある `sep` で `text` を分割する。

@@ -590,3 +590,85 @@ async fn create_sandbox_rejects_reserved_prefix_pulled_in_via_fk_closure() {
 
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// FK 付きの表でもサンドボックスを作れる (#1530)。サンドボックスの SQLite は外部キー
+/// 強制が有効なので、CREATE に FK を含めると、表名順の投入・行数上限で欠けた親行・
+/// 関連テーブルを含めない選択のいずれでも INSERT が失敗する。サンドボックスには FK を
+/// 持ち込まない。
+#[tokio::test]
+async fn create_sandbox_with_foreign_key_tables_does_not_carry_the_constraints() {
+    let (source_path, source_conn) = fresh_sqlite("fk_tables").await;
+    source_conn
+        .execute(
+            "CREATE TABLE zparent (id INTEGER PRIMARY KEY, name TEXT)",
+            None,
+        )
+        .await
+        .expect("parent");
+    source_conn
+        .execute(
+            "CREATE TABLE achild (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES zparent(id))",
+            None,
+        )
+        .await
+        .expect("child");
+    source_conn
+        .execute(
+            "INSERT INTO zparent (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+            None,
+        )
+        .await
+        .expect("seed parent");
+    source_conn
+        .execute(
+            "INSERT INTO achild (id, parent_id) VALUES (10, 1), (11, 2), (12, 3)",
+            None,
+        )
+        .await
+        .expect("seed child");
+
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_fk_tables",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    // 子だけを選ぶ (親は含めない) / 関連込みで行数上限により親が欠ける、の 2 通り。
+    for (label, tables, related, limit) in [
+        (
+            "fk child only",
+            vec!["achild".to_string()],
+            false,
+            Some(100),
+        ),
+        (
+            "fk related truncated",
+            vec!["achild".to_string()],
+            true,
+            Some(2),
+        ),
+    ] {
+        let create = t::create_sandbox_via_command(
+            &state,
+            &source_session_id,
+            None,
+            label,
+            tables,
+            related,
+            limit,
+        )
+        .await
+        .unwrap_or_else(|e| panic!("{label}: create_sandbox failed: {e}"));
+        let guard = DiscardGuard {
+            state: state.clone(),
+            sandbox_id: Some(create.sandbox.id.clone()),
+            session_id: Some(create.session_id.clone()),
+        };
+        guard.discard().await;
+    }
+
+    let _ = std::fs::remove_file(&source_path);
+}

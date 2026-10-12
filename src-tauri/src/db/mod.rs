@@ -556,6 +556,68 @@ impl Connection {
         }
     }
 
+    /// [`Connection::import_rows`] の、バイナリ列を hex 文字列で受け取る版。
+    /// `hex_columns[i]` が真の列のセルは hex テキストで、SQLite / MySQL では
+    /// INSERT の値式 (`unhex(?)` / `UNHEX(?)`) でバイト列にする。PostgreSQL は
+    /// `\x<hex>` のテキストを bytea が受けるので通常の `import_rows` と同じ (#1530)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn import_rows_with_binary<F>(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        batch_size: usize,
+        conflict: &ImportConflict,
+        hex_columns: &[bool],
+        on_progress: F,
+    ) -> Result<u64>
+    where
+        F: FnMut(u64) -> Result<()>,
+    {
+        conflict.validate(columns)?;
+        match self {
+            Connection::MySql(c) => {
+                c.import_rows_with_hex(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    hex_columns,
+                    on_progress,
+                )
+                .await
+            }
+            Connection::Sqlite(c) => {
+                c.import_rows_with_hex(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    hex_columns,
+                    on_progress,
+                )
+                .await
+            }
+            Connection::Postgres(c) => {
+                c.import_rows(
+                    database,
+                    table,
+                    columns,
+                    rows,
+                    batch_size,
+                    conflict,
+                    on_progress,
+                )
+                .await
+            }
+        }
+    }
+
     /// Bulk-inserts `rows` into `table` using batched multi-row INSERT
     /// statements wrapped in a single transaction (all-or-nothing). Each cell
     /// is `Some(text)` for a value or `None` for SQL NULL; the driver coerces
@@ -1418,21 +1480,6 @@ impl Connection {
 
         let row_cap = row_cap.max(1);
 
-        // NOW() / RANDOM() / UUID() など実行ごとに値が変わる関数を含む文は、dry-run と
-        // 本実行で値がずれ、記録した after-image が実データと一致せず Undo の競合検出で
-        // 止まる。しかも文を 2 回実行するコストも払うので、記録を辞退して 1 回だけ
-        // 実行する (#1530)。
-        if contains_nondeterministic_function(self.driver_kind(), sql) {
-            let result = self.execute(sql, database).await?;
-            return Ok((
-                result,
-                WriteCapture::not_capturable(
-                    kind,
-                    "実行ごとに値が変わる関数 (NOW() / RANDOM() / UUID() など) を含むため記録できません",
-                ),
-            ));
-        }
-
         // 対象行数が記録の上限を超えるなら、どのみち下で「対象行を特定できない」と
         // 辞退する。dry-run で文を丸ごと 1 回余計に実行する (時間・ロック保持・
         // undo/WAL 負荷が約 2 倍) 前に、上限 + 1 件で打ち切る件数見積もりで先に判定する。
@@ -1565,6 +1612,29 @@ impl Connection {
                     }
                 }
 
+                // SET 句に NOW() / RANDOM() / UUID() など実行ごとに値が変わる関数があると、
+                // dry-run の after-image は本実行の値とずれる (Undo の競合検出で止まる)。
+                // 主キーを書き換えないなら before-image は dry-run のまま使い、after-image は
+                // 本実行の後に主キーで取り直す。主キーごと非決定的に書き換える文は記録を辞退する。
+                let flavor = sql_flavor_of(self.driver_kind());
+                let set_nondeterministic =
+                    preview::update_set_segment(sql, flavor).is_some_and(|seg| {
+                        contains_nondeterministic_function(self.driver_kind(), &seg)
+                    });
+                if set_nondeterministic
+                    && preview::update_assigns_primary_key(sql, flavor, &primary_key)
+                {
+                    let result = self.execute(sql, database).await?;
+                    return Ok((
+                        result,
+                        WriteCapture::not_capturable_with_meta(
+                            kind,
+                            "実行ごとに値が変わる関数で主キーを書き換えるため記録できません",
+                            &dry,
+                        ),
+                    ));
+                }
+
                 let result = self.execute(sql, database).await?;
 
                 if before_changed.len() as u64 != result.rows_affected {
@@ -1572,6 +1642,40 @@ impl Connection {
                         result,
                         WriteCapture::not_capturable_with_meta(kind, ambiguous_reason, &dry),
                     ));
+                }
+
+                if set_nondeterministic {
+                    let pks: Vec<Vec<Value>> = before_changed.iter().map(|r| pk_of(r)).collect();
+                    let live = self
+                        .fetch_rows_by_pk(
+                            table.as_deref().unwrap_or_default(),
+                            &primary_key,
+                            &pks,
+                            database,
+                        )
+                        .await
+                        .unwrap_or_default();
+                    let live_by_key: std::collections::HashMap<String, Vec<Value>> = live
+                        .into_iter()
+                        .map(|r| (row_signature(&pk_of(&r)), r))
+                        .collect();
+                    let refetched: Option<Vec<Vec<Value>>> = pks
+                        .iter()
+                        .map(|k| live_by_key.get(&row_signature(k)).cloned())
+                        .collect();
+                    match refetched {
+                        Some(rows) => after_changed = rows,
+                        None => {
+                            return Ok((
+                                result,
+                                WriteCapture::not_capturable_with_meta(
+                                    kind,
+                                    "更新後の行を取り直せませんでした (実行ごとに値が変わる関数を含む文)",
+                                    &dry,
+                                ),
+                            ));
+                        }
+                    }
                 }
 
                 Ok((
@@ -1723,26 +1827,18 @@ impl Connection {
         if !matches!(kind, WriteKind::Update | WriteKind::Delete) {
             return false;
         }
-        let (target, flavor) = match self {
-            Connection::MySql(_) => (mysql::extract_target_table(sql), SqlFlavor::MySql),
-            Connection::Postgres(_) => (postgres::extract_target_table(sql), SqlFlavor::Postgres),
-            Connection::Sqlite(_) => (sqlite::extract_target_table(sql), SqlFlavor::Sqlite),
+        let flavor = sql_flavor_of(self.driver_kind());
+        let target = match self {
+            Connection::MySql(_) => mysql::extract_target_table(sql),
+            Connection::Postgres(_) => postgres::extract_target_table(sql),
+            Connection::Sqlite(_) => sqlite::extract_target_table(sql),
         };
         let Some(target) = target else {
             return false;
         };
-        // WHERE 無しは全行対象。ある場合はその句 (ORDER BY / LIMIT 付きは見積もらない)。
-        let tail = preview::extract_where_and_after(sql, flavor);
-        if let Some(t) = &tail {
-            if preview::has_top_level_keyword(t, &["limit", "order"], flavor) {
-                return false;
-            }
-        }
-        let probe = format!(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM {target} {} LIMIT {}) AS noobdb_probe",
-            tail.as_deref().unwrap_or(""),
-            row_cap.saturating_add(1)
-        );
+        let Some(probe) = write_count_probe_sql(sql, flavor, &target, row_cap) else {
+            return false;
+        };
         match self.execute(&probe, database).await {
             Ok(r) => match r.rows.first().and_then(|row| row.first()) {
                 Some(Value::Int(n)) => *n > row_cap as i64,
@@ -2117,13 +2213,32 @@ pub(crate) fn build_insert_sql(
     ncols: usize,
     nrows: usize,
 ) -> String {
+    build_insert_sql_with(table_ident, cols_sql, ncols, nrows, &[], "")
+}
+
+/// [`build_insert_sql`] の拡張。`hex_columns[i]` が真の列は、プレースホルダを
+/// `{unhex_fn}(?)` で包む (hex 文字列で bind した値をバイト列にする)。`hex_columns`
+/// が短い・空のときは残りを素の `?` にする。
+pub(crate) fn build_insert_sql_with(
+    table_ident: &str,
+    cols_sql: &str,
+    ncols: usize,
+    nrows: usize,
+    hex_columns: &[bool],
+    unhex_fn: &str,
+) -> String {
     let mut tuple = String::with_capacity(ncols * 2 + 2);
     tuple.push('(');
     for c in 0..ncols {
         if c > 0 {
             tuple.push(',');
         }
-        tuple.push('?');
+        if hex_columns.get(c).copied().unwrap_or(false) {
+            tuple.push_str(unhex_fn);
+            tuple.push_str("(?)");
+        } else {
+            tuple.push('?');
+        }
     }
     tuple.push(')');
     // Write the statement directly into one pre-sized buffer instead of
@@ -2983,6 +3098,56 @@ fn driver_backslash_escapes(driver: DriverKind) -> bool {
     }
 }
 
+/// UPDATE / DELETE の対象行数を `row_cap + 1` 件で打ち切って数える SELECT を作る
+/// (純関数)。次の文は見積もらず `None` を返す: 先頭が UPDATE / DELETE でない、
+/// WHERE 句に ORDER BY / LIMIT が付く、PostgreSQL の `UPDATE ... FROM` /
+/// `DELETE ... USING` (WHERE が別テーブルを参照して単独の SELECT にならない)。
+pub(crate) fn write_count_probe_sql(
+    sql: &str,
+    flavor: SqlFlavor,
+    target: &str,
+    row_cap: usize,
+) -> Option<String> {
+    let cleaned = strip_sql_comments(sql, flavor);
+    let head = cleaned.trim_start().to_ascii_lowercase();
+    if flavor == SqlFlavor::Postgres {
+        let joined_keyword = if head.starts_with("update") {
+            "from"
+        } else if head.starts_with("delete") {
+            "using"
+        } else {
+            return None;
+        };
+        // DELETE 自身の `FROM` は正当なので、DELETE では `using` だけを見る。
+        if preview::has_top_level_keyword(&cleaned, &[joined_keyword], flavor) {
+            return None;
+        }
+    } else if !(head.starts_with("update") || head.starts_with("delete")) {
+        return None;
+    }
+    // WHERE 無しは全行対象。ある場合はその句 (ORDER BY / LIMIT 付きは見積もらない)。
+    let tail = preview::extract_where_and_after(sql, flavor);
+    if let Some(t) = &tail {
+        if preview::has_top_level_keyword(t, &["limit", "order"], flavor) {
+            return None;
+        }
+    }
+    Some(format!(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM {target} {} LIMIT {}) AS noobdb_probe",
+        tail.as_deref().unwrap_or(""),
+        row_cap.saturating_add(1)
+    ))
+}
+
+/// ドライバに対応する SQL 方言 (コメント除去・句の切り出し用)。
+pub(crate) fn sql_flavor_of(driver: DriverKind) -> SqlFlavor {
+    match driver {
+        DriverKind::Mysql => SqlFlavor::MySql,
+        DriverKind::Postgres => SqlFlavor::Postgres,
+        DriverKind::Sqlite => SqlFlavor::Sqlite,
+    }
+}
+
 /// 文に、実行のたびに結果が変わる関数 (現在時刻・乱数・UUID・採番) が含まれるか。
 /// 文字列リテラル・コメント・引用識別子の中身は読まない。dry-run と本実行で値が
 /// ずれるため、フライトレコーダーは該当する文の記録を辞退する (#1530)。
@@ -3004,7 +3169,12 @@ pub(crate) fn contains_nondeterministic_function(driver: DriverKind, sql: &str) 
         "uuid",
         "uuid_short",
         "gen_random_uuid",
+        "gen_random_bytes",
+        "random_bytes",
+        "uuidv4",
+        "uuidv7",
         "uuid_generate_v1",
+        "uuid_generate_v1mc",
         "uuid_generate_v4",
         "clock_timestamp",
         "statement_timestamp",
@@ -3050,21 +3220,59 @@ pub(crate) fn contains_nondeterministic_function(driver: DriverKind, sql: &str) 
         }
         i = j;
     }
-    // SQLite: `datetime('now')` など。'now' はリテラルで上のマスクに消えるので原文で
-    // 探す (date/time 系の関数呼び出しと併用されているときだけ)。
-    if driver == DriverKind::Sqlite {
-        let l = sql.to_ascii_lowercase();
-        return l.contains("'now'")
-            && [
-                "datetime(",
-                "date(",
-                "time(",
-                "julianday(",
-                "strftime(",
-                "unixepoch(",
-            ]
-            .iter()
-            .any(|f| l.contains(f));
+    let l = sql.to_ascii_lowercase();
+    match driver {
+        // SQLite: `datetime('now')` など。'now' はリテラルで上のマスクに消えるので原文で
+        // 探す (date/time 系の関数呼び出しと併用されているときだけ)。
+        DriverKind::Sqlite => {
+            l.contains("'now'")
+                && [
+                    "datetime(",
+                    "date(",
+                    "time(",
+                    "julianday(",
+                    "strftime(",
+                    "unixepoch(",
+                ]
+                .iter()
+                .any(|f| l.contains(f))
+        }
+        // PostgreSQL: `'now'::timestamp` / `timestamp 'now'` / `'today'::date` など、
+        // 特殊な日時リテラルは実行時刻で評価される。単なる文字列値 (`SET s = 'now'`) は
+        // 誤検知しないよう、型キャストが付いたものだけを見る。
+        DriverKind::Postgres => pg_special_datetime_literal(&l),
+        DriverKind::Mysql => false,
+    }
+}
+
+/// PostgreSQL の特殊日時リテラル (`'now'` / `'today'` / `'tomorrow'` / `'yesterday'`)
+/// が、`::型` キャストまたは `timestamp 'now'` 形式の型付きリテラルとして使われているか。
+fn pg_special_datetime_literal(lower: &str) -> bool {
+    const LITERALS: &[&str] = &["'now'", "'today'", "'tomorrow'", "'yesterday'"];
+    const TYPES: &[&str] = &["timestamp", "timestamptz", "date", "time", "timetz"];
+    for lit in LITERALS {
+        let mut from = 0;
+        while let Some(pos) = lower[from..].find(lit) {
+            let start = from + pos;
+            let end = start + lit.len();
+            let after = lower[end..].trim_start();
+            if after.starts_with("::") {
+                return true;
+            }
+            let before = lower[..start].trim_end();
+            let word: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if TYPES.contains(&word.as_str()) {
+                return true;
+            }
+            from = end;
+        }
     }
     false
 }
@@ -4776,6 +4984,49 @@ mod tests {
     }
 
     #[test]
+    fn write_count_probe_sql_per_dialect() {
+        use super::{write_count_probe_sql as probe, SqlFlavor::*};
+        assert_eq!(
+            probe("UPDATE `t` SET a = 1 WHERE b > 2", MySql, "`t`", 100).as_deref(),
+            Some("SELECT COUNT(*) FROM (SELECT 1 FROM `t` WHERE b > 2 LIMIT 101) AS noobdb_probe")
+        );
+        assert_eq!(
+            probe("DELETE FROM \"t\" WHERE b > 2", Postgres, "\"t\"", 5).as_deref(),
+            Some("SELECT COUNT(*) FROM (SELECT 1 FROM \"t\" WHERE b > 2 LIMIT 6) AS noobdb_probe")
+        );
+        // WHERE 無しは全行。
+        assert_eq!(
+            probe("DELETE FROM t", Sqlite, "t", 10).as_deref(),
+            Some("SELECT COUNT(*) FROM (SELECT 1 FROM t  LIMIT 11) AS noobdb_probe")
+        );
+        // ORDER BY / LIMIT 付きは見積もらない。
+        assert!(probe(
+            "DELETE FROM t WHERE a = 1 ORDER BY id LIMIT 3",
+            MySql,
+            "t",
+            10
+        )
+        .is_none());
+        // PostgreSQL の UPDATE ... FROM / DELETE ... USING は見積もらない。
+        assert!(probe(
+            "UPDATE t SET a = o.a FROM other o WHERE o.id = t.id",
+            Postgres,
+            "t",
+            10
+        )
+        .is_none());
+        assert!(probe(
+            "DELETE FROM t USING other o WHERE o.id = t.id",
+            Postgres,
+            "t",
+            10
+        )
+        .is_none());
+        // INSERT は対象外。
+        assert!(probe("INSERT INTO t VALUES (1)", Sqlite, "t", 10).is_none());
+    }
+
+    #[test]
     fn nondeterministic_functions_are_detected_outside_literals() {
         use super::DriverKind::{Mysql, Postgres, Sqlite};
         assert!(nondet(Mysql, "UPDATE t SET at = NOW() WHERE id = 1"));
@@ -4803,6 +5054,17 @@ mod tests {
             "UPDATE t SET randomized = 1 WHERE id = 2"
         ));
         assert!(!nondet(Mysql, "UPDATE t SET name = 'a' WHERE id = 1"));
+        // 追加の関数・リテラル。
+        assert!(nondet(Postgres, "UPDATE t SET id = uuidv7()"));
+        assert!(nondet(Postgres, "UPDATE t SET id = uuidv4()"));
+        assert!(nondet(Postgres, "UPDATE t SET id = uuid_generate_v1mc()"));
+        assert!(nondet(Mysql, "UPDATE t SET tok = RANDOM_BYTES(16)"));
+        assert!(nondet(Postgres, "UPDATE t SET at = 'now'::timestamp"));
+        assert!(nondet(Postgres, "UPDATE t SET at = timestamp 'now'"));
+        assert!(nondet(Postgres, "UPDATE t SET d = 'today'::date"));
+        // 型付きでない 'now' はただの文字列。
+        assert!(!nondet(Postgres, "UPDATE t SET s = 'now' WHERE id = 1"));
+        assert!(!nondet(Postgres, "UPDATE t SET s = 'it''s now()'"));
     }
 }
 

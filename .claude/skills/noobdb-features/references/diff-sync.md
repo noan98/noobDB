@@ -61,3 +61,13 @@
 - 保存するのは実データのローカルコピー (秘密情報は含めない)。機微カラムマスク
   (#1069) は**表示専用**で、保存データはマスクしない。UI は Bottom Panel の
   `timelapse` タブ (`TableTimelapsePanel.tsx` / `tableTimelapse.ts`)。
+
+## CREATE TABLE 同期の外部キー (#1530)
+
+- `TableDiff.foreign_keys` (制約単位・複合キーと ON DELETE/UPDATE を保つ) は
+  `compare_schema` が `attach_source_foreign_keys` で **SourceOnly テーブルにだけ**載せる。
+  載せない経路 (サンドボックスなど) では FK を出さない — サンドボックスの SQLite は
+  FK 強制が有効で、親行の欠落や関連テーブル未選択で取り込みが失敗するため。
+- MySQL / PostgreSQL は全 CREATE の後に `ALTER TABLE … ADD CONSTRAINT …`
+  (`SyncKind::AddForeignKey`)、SQLite は CREATE TABLE 内に出す。描画は
+  `db::table_ddl::render_foreign_key` と共通。再現できない索引は warnings に列挙する。

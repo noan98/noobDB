@@ -123,8 +123,10 @@ impl AppError {
                 actual: actual.clone(),
             },
             AppError::Io(e) => AppError::Io(std::io::Error::new(e.kind(), e.to_string())),
-            AppError::Sqlx(_) if self.is_connection_lost() => AppError::Sqlx(sqlx::Error::Io(
-                std::io::Error::new(std::io::ErrorKind::ConnectionAborted, self.to_string()),
+            // 内側の sqlx エラーの文言だけを載せる (`self.to_string()` だと
+            // 「sqlx error: …」が二重になる)。
+            AppError::Sqlx(e) if self.is_connection_lost() => AppError::Sqlx(sqlx::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::ConnectionAborted, e.to_string()),
             )),
             AppError::Sqlx(_) | AppError::Serde(_) => AppError::Other(self.to_string()),
             AppError::Keyring(m) => AppError::Keyring(m.clone()),
@@ -301,6 +303,11 @@ mod tests {
         let lost: AppError = sqlx::Error::PoolClosed.into();
         assert_eq!(lost.replicate().kind(), "connectionLost");
         assert!(lost.replicate().is_connection_lost());
+        assert_eq!(
+            lost.replicate().to_string().matches("sqlx error").count(),
+            1,
+            "メッセージの接頭辞が二重にならない"
+        );
         assert_eq!(AppError::Timeout(3).replicate().kind(), "timeout");
         assert_eq!(
             AppError::InvalidInput("x".into()).replicate().to_string(),

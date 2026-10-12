@@ -2245,7 +2245,9 @@ async fn capture_write_skips_dry_run_when_rows_exceed_cap() {
 }
 
 #[tokio::test]
-async fn capture_write_declines_nondeterministic_statement_but_still_executes() {
+async fn capture_write_refetches_after_image_for_nondeterministic_set() {
+    // SET 句が非決定的でも、主キーを書き換えないなら before は dry-run、after は本実行後に
+    // 主キーで取り直して記録する (#1530)。
     let (path, conn) = flight_fixture("nondet").await;
     let (result, capture) = conn
         .capture_write(
@@ -2256,11 +2258,43 @@ async fn capture_write_declines_nondeterministic_statement_but_still_executes() 
         .await
         .expect("capture_write");
     assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    let name_idx = capture.columns.iter().position(|c| c == "name").unwrap();
+    assert_eq!(
+        capture.before_rows[0][name_idx],
+        t::Value::String("alice".to_string())
+    );
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert_eq!(
+        capture.after_rows[0][name_idx], live.rows[0][0],
+        "after-image は実データと一致する"
+    );
+
+    // 主キーを非決定的に書き換える文は記録しない。
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET id = abs(random()) WHERE id = 2", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
     assert!(!capture.capturable);
     assert!(capture
         .reason
         .as_deref()
-        .is_some_and(|r| r.contains("関数")));
+        .is_some_and(|r| r.contains("主キー")));
+
+    // DELETE は WHERE に時刻関数があっても before-image で記録できる。
+    let (_, capture) = conn
+        .capture_write(
+            "DELETE FROM t WHERE id = 1 AND datetime('now') > '2000-01-01'",
+            None,
+            100,
+        )
+        .await
+        .expect("capture_write");
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
@@ -4334,6 +4368,57 @@ async fn sqlite_savepoint_create_rollback_release_commit() {
         .expect("count");
     assert!(matches!(&res.rows[0][0], t::Value::Int(1)));
 
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
+    // 転送のバイナリ列は hex で bind し、INSERT の値式で unhex する (後処理 UPDATE 不要, #1530)。
+    let (path, conn) = flight_fixture("hexblob").await;
+    conn.execute(
+        "CREATE TABLE b (id INTEGER PRIMARY KEY, data BLOB, note TEXT)",
+        None,
+    )
+    .await
+    .expect("create");
+    let columns = vec!["id".to_string(), "data".to_string(), "note".to_string()];
+    let rows = vec![
+        vec![
+            Some("1".to_string()),
+            Some("deadbeef".to_string()),
+            Some("abcd".to_string()),
+        ],
+        vec![Some("2".to_string()), None, Some("x".to_string())],
+        vec![Some("3".to_string()), Some("".to_string()), None],
+    ];
+    let n = conn
+        .import_rows_with_binary(
+            None,
+            "b",
+            &columns,
+            &rows,
+            100,
+            &t::ImportConflict::insert_only(),
+            &[false, true, false],
+            |_| Ok(()),
+        )
+        .await
+        .expect("import");
+    assert_eq!(n, 3);
+    let res = conn
+        .execute(
+            "SELECT id, typeof(data), hex(data), note FROM b ORDER BY id",
+            None,
+        )
+        .await
+        .expect("select");
+    assert_eq!(res.rows[0][1], t::Value::String("blob".to_string()));
+    assert_eq!(res.rows[0][2], t::Value::String("DEADBEEF".to_string()));
+    // 値式を通らない通常のテキスト列は hex のまま (unhex されない)。
+    assert_eq!(res.rows[0][3], t::Value::String("abcd".to_string()));
+    assert_eq!(res.rows[1][1], t::Value::String("null".to_string()));
+    assert_eq!(res.rows[2][1], t::Value::String("blob".to_string()));
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

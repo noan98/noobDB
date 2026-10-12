@@ -721,7 +721,14 @@ pub(crate) async fn sandbox_schema_diff_inner(
             // 表ごとの往復 (N 回) を避け、DB 単位の一括取得 (#1255) を 1 回で済ませる。
             // 一括取得に失敗したときだけ従来の表ごとの取得へ戻る (#1530)。
             let mut current_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
-            match crate::commands::schema::fetch_columns_bulk(&source, &db).await {
+            // 対象表が少数なら DB 全体を取る一括取得のほうが重いので、表ごとに取る。
+            const BULK_THRESHOLD: usize = 4;
+            let bulk = if record.tables.len() >= BULK_THRESHOLD {
+                crate::commands::schema::fetch_columns_bulk(&source, &db).await
+            } else {
+                Err(AppError::Other("few tables: per-table fetch".into()))
+            };
+            match bulk {
                 Ok(all) => {
                     let mut by_name: std::collections::HashMap<String, TableColumns> =
                         all.into_iter().map(|t| (t.name.clone(), t)).collect();

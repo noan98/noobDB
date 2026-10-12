@@ -116,10 +116,9 @@ impl LogStore {
         for mut file in [prev, cur].into_iter().flatten() {
             let mut bytes = Vec::new();
             if file.read_to_end(&mut bytes).is_ok() {
-                // read_to_string と同様に、不正な UTF-8 のセグメントは読み飛ばす。
-                if let Ok(text) = String::from_utf8(bytes) {
-                    out.push_str(&text);
-                }
+                // ロック外で読むので、書き込み途中の末尾 (UTF-8 の途中で切れた
+                // マルチバイト文字) を読むことがある。lossy にして捨てない。
+                out.push_str(&String::from_utf8_lossy(&bytes));
             }
         }
         out
@@ -258,6 +257,18 @@ mod tests {
         let content = store.read();
         let last = format!("{:012}", iterations - 1);
         assert!(content.contains(&last), "recent entry was lost");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn read_tolerates_a_partially_written_multibyte_tail() {
+        let dir = scratch_dir("lossy");
+        let store = LogStore::open(dir.clone()).unwrap();
+        store.write_bytes("ok\n".as_bytes()).unwrap();
+        // 「あ」(3 バイト) の先頭 2 バイトだけが書かれた状態。
+        store.write_bytes(&"あ".as_bytes()[..2]).unwrap();
+        let text = store.read();
+        assert!(text.starts_with("ok\n"), "got: {text:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -486,6 +486,7 @@ mod tests {
         TableDiff {
             name: name.to_string(),
             status,
+            foreign_keys: vec![],
             columns: Vec::<ColumnDiff>::new(),
         }
     }
