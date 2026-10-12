@@ -1,6 +1,9 @@
 use tokio::io::AsyncReadExt;
 
+use serde::Serialize;
+
 use crate::error::{AppError, Result};
+use crate::text_encoding::{self, TextEncoding};
 
 /// エディタへ取り込めるテキストファイルのサイズ上限 (8 MiB)。ドラッグ&ドロップ
 /// で巨大ファイルを誤って落としたときに、エディタへ全文を載せてフロントを
@@ -87,9 +90,23 @@ pub async fn write_binary_file(request: tauri::ipc::Request<'_>) -> Result<u64> 
 /// テキスト (SQL・Markdown・JSON など) を UTF-8 でユーザが選んだ `path` へ書き出す
 /// コマンド (#1258)。`write_binary_file` と同じ上限 (32 MiB) を課す。フロントで
 /// `TextEncoder` → 数値配列へ変換する無駄を避けるため、文字列のまま渡す。
+///
+/// `encoding` (#1535) を渡すと、その文字コード (Shift_JIS / EUC-JP / UTF-16 / BOM 付き
+/// UTF-8) に変換して書く。省略 (`None`) は従来どおり BOM なし UTF-8。その文字コードで
+/// 表せない文字があれば、置換せずエラーにする。
 #[tauri::command]
-pub async fn write_text_file(path: String, content: String) -> Result<u64> {
-    write_bytes_checked(&path, content.as_bytes()).await
+pub async fn write_text_file(
+    path: String,
+    content: String,
+    encoding: Option<TextEncoding>,
+) -> Result<u64> {
+    match encoding {
+        None | Some(TextEncoding::Utf8) => write_bytes_checked(&path, content.as_bytes()).await,
+        Some(enc) => {
+            let bytes = text_encoding::encode(&content, enc)?;
+            write_bytes_checked(&path, &bytes).await
+        }
+    }
 }
 
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
@@ -99,6 +116,41 @@ pub async fn write_text_file(path: String, content: String) -> Result<u64> {
 /// 保存・実行したときに元の文字を復元できないため。
 #[tauri::command]
 pub async fn read_text_file(path: String) -> Result<String> {
+    let bytes = read_limited(&path).await?;
+    String::from_utf8(bytes).map_err(|_| {
+        AppError::InvalidInput(
+            "file is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported by this command); open it as a SQL file and pick the encoding"
+                .into(),
+        )
+    })
+}
+
+/// `read_sql_file` の結果。`encoding` は実際に使った文字コード (自動判定の結果、または
+/// 指定どおり)。保存時に同じ文字コードへ戻すため、フロントがタブに覚えておく。
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct SqlFileContent {
+    pub content: String,
+    pub encoding: TextEncoding,
+}
+
+/// SQL ファイルを文字コード付きで読む (#1535)。`encoding` が `None` なら BOM → UTF-8 の
+/// 妥当性 → Shift_JIS / EUC-JP の順に自動判定し、指定があればその文字コードで読む。
+/// 不正なバイトは U+FFFD に置換せずエラーにする (化けたまま保存・実行しないため)。
+/// 先頭の BOM は本文から取り除き、`encoding` (`utf-8-bom` / `utf-16*`) に反映する。
+/// サイズ上限は [`read_text_file`] と同じ。
+#[tauri::command]
+pub async fn read_sql_file(path: String, encoding: Option<TextEncoding>) -> Result<SqlFileContent> {
+    let bytes = read_limited(&path).await?;
+    let enc = text_encoding::detect_with(&bytes, encoding).map_err(|e| e.into_app_error())?;
+    let content = text_encoding::decode_all(&bytes, enc)?;
+    Ok(SqlFileContent {
+        content,
+        encoding: enc,
+    })
+}
+
+/// サイズ上限つきでファイル全体を読む共通処理 (エディタへ取り込むテキスト用)。
+async fn read_limited(path: &str) -> Result<Vec<u8>> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("file path is empty".into()));
     }
@@ -108,7 +160,7 @@ pub async fn read_text_file(path: String) -> Result<String> {
     // 名前付きパイプなど metadata 長が 0 または不定な特殊ファイルで上限が効かず
     // 無制限に読む (あるいは FIFO で永久ブロックする) 問題がある。そのため実際の
     // 読み取り側でも `take` で打ち切り、実読み取りバイト数で上限を強制する。
-    if let Ok(meta) = tokio::fs::metadata(&path).await {
+    if let Ok(meta) = tokio::fs::metadata(path).await {
         if meta.len() > MAX_TEXT_FILE_BYTES {
             return Err(AppError::InvalidInput(format!(
                 "file too large to open in the editor ({} bytes, limit {} bytes)",
@@ -118,7 +170,7 @@ pub async fn read_text_file(path: String) -> Result<String> {
         }
     }
 
-    let file = tokio::fs::File::open(&path).await?;
+    let file = tokio::fs::File::open(path).await?;
     // 上限ちょうどのファイルを正しく許可しつつ超過を検出するため、上限 + 1 バイト
     // まで読む。読めたバイト数が上限を超えていれば拒否する。
     let mut limited = file.take(MAX_TEXT_FILE_BYTES + 1);
@@ -129,12 +181,7 @@ pub async fn read_text_file(path: String) -> Result<String> {
             "file too large to open in the editor (limit {MAX_TEXT_FILE_BYTES} bytes)"
         )));
     }
-    String::from_utf8(bytes).map_err(|_| {
-        AppError::InvalidInput(
-            "file is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported); convert it to UTF-8 and try again"
-                .into(),
-        )
-    })
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -212,6 +259,7 @@ mod tests {
         let n = write_text_file(
             path.to_string_lossy().into_owned(),
             "SELECT '日本語';\n".into(),
+            None,
         )
         .await
         .unwrap();
@@ -219,7 +267,9 @@ mod tests {
         assert_eq!(n, expected.len() as u64);
         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), expected);
         let _ = tokio::fs::remove_file(&path).await;
-        let err = write_text_file("".into(), "x".into()).await.unwrap_err();
+        let err = write_text_file("".into(), "x".into(), None)
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
     }
 
@@ -285,5 +335,60 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
         let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn read_sql_file_detects_and_round_trips_shift_jis() {
+        let path = std::env::temp_dir().join(format!("noobdb_sjis_{}.sql", std::process::id()));
+        let p = path.to_string_lossy().into_owned();
+        let text = "INSERT INTO 顧客 VALUES ('山田太郎');\n";
+        write_text_file(p.clone(), text.into(), Some(TextEncoding::ShiftJis))
+            .await
+            .unwrap();
+        // 自動判定は Shift_JIS、本文は復元される。
+        let r = read_sql_file(p.clone(), None).await.unwrap();
+        assert_eq!(r.encoding, TextEncoding::ShiftJis);
+        assert_eq!(r.content, text);
+        // 手動で UTF-8 を指定すると不正バイトでエラー (置換しない)。
+        let err = read_sql_file(p.clone(), Some(TextEncoding::Utf8))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        // read_text_file (UTF-8 固定) は従来どおり拒否。
+        assert!(read_text_file(p).await.is_err());
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn read_sql_file_strips_bom_and_reports_it() {
+        let path = std::env::temp_dir().join(format!("noobdb_bom_{}.sql", std::process::id()));
+        let p = path.to_string_lossy().into_owned();
+        write_text_file(p.clone(), "SELECT 1;".into(), Some(TextEncoding::Utf16Le))
+            .await
+            .unwrap();
+        let r = read_sql_file(p.clone(), None).await.unwrap();
+        assert_eq!(r.encoding, TextEncoding::Utf16Le);
+        assert_eq!(r.content, "SELECT 1;");
+        write_text_file(p.clone(), "SELECT 2;".into(), Some(TextEncoding::Utf8Bom))
+            .await
+            .unwrap();
+        let r = read_sql_file(p, None).await.unwrap();
+        assert_eq!(r.encoding, TextEncoding::Utf8Bom);
+        assert_eq!(r.content, "SELECT 2;");
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn write_text_file_rejects_unmappable_characters() {
+        let path = std::env::temp_dir().join(format!("noobdb_unmap_{}.sql", std::process::id()));
+        let err = write_text_file(
+            path.to_string_lossy().into_owned(),
+            "SELECT '😀'".into(),
+            Some(TextEncoding::ShiftJis),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        assert!(!path.exists());
     }
 }

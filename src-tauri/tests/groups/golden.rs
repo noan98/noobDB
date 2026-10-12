@@ -10,6 +10,8 @@
 mod auto_limit_golden;
 #[path = "../cache_invalidation_matrix.rs"]
 mod cache_invalidation_matrix;
+#[path = "../dangerous_sql_golden.rs"]
+mod dangerous_sql_golden;
 #[path = "../data_search_golden.rs"]
 mod data_search_golden;
 #[path = "../diff_sync_golden.rs"]

@@ -1,0 +1,228 @@
+{
+  "description": "classify_dangerous (Rust db/script_analysis.rs) と analyzeDangerousSql (src/dangerousSql.ts) の共有ゴールデン (#1535)。1 文ずつの判定で、kind は標準解釈 (PostgreSQL / SQLite / ドライバ不明)、kindMysql は MySQL のバックスラッシュエスケープ解釈で判定が変わるケースだけに書く。null は危険ではない。 kindUnknown はフロントだけが持つ『ドライバ不明』の期待値 (# を行コメントとして扱うため)。省略時は kind と同じ。",
+  "cases": [
+    {
+      "sql": "DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "WHERE なしの DELETE"
+    },
+    {
+      "sql": "delete from t where id = 1",
+      "kind": null,
+      "note": "WHERE ありの DELETE"
+    },
+    {
+      "sql": "DELETE FROM t WHERE id IN (SELECT id FROM u)",
+      "kind": null,
+      "note": "外側に WHERE がある"
+    },
+    {
+      "sql": "DELETE FROM t USING u",
+      "kind": "deleteNoWhere",
+      "note": "USING だけでは WHERE ではない"
+    },
+    {
+      "sql": "UPDATE t SET a = 1",
+      "kind": "updateNoWhere",
+      "note": "WHERE なしの UPDATE"
+    },
+    {
+      "sql": "UPDATE t SET a = 1 WHERE id = 2",
+      "kind": null,
+      "note": "WHERE ありの UPDATE"
+    },
+    {
+      "sql": "UPDATE t SET a = (SELECT b FROM u WHERE u.id = 1)",
+      "kind": "updateNoWhere",
+      "note": "サブクエリ内の WHERE は文自身のガードではない"
+    },
+    {
+      "sql": "UPDATE t SET a = 'where'",
+      "kind": "updateNoWhere",
+      "note": "文字列リテラル内の where は無視"
+    },
+    {
+      "sql": "UPDATE t SET a = 1 -- where id = 1",
+      "kind": "updateNoWhere",
+      "note": "コメント内の where は無視"
+    },
+    {
+      "sql": "UPDATE t SET a = 1 /* WHERE x */",
+      "kind": "updateNoWhere",
+      "note": "ブロックコメント内の WHERE は無視"
+    },
+    {
+      "sql": "UPDATE t SET somewhere = 1",
+      "kind": "updateNoWhere",
+      "note": "単語の一部の where は WHERE ではない"
+    },
+    {
+      "sql": "TRUNCATE TABLE t",
+      "kind": "truncate",
+      "note": "TRUNCATE TABLE"
+    },
+    {
+      "sql": "truncate t",
+      "kind": "truncate",
+      "note": "TRUNCATE (TABLE 省略)"
+    },
+    {
+      "sql": "DROP TABLE t",
+      "kind": "drop",
+      "note": "DROP TABLE"
+    },
+    {
+      "sql": "drop database if exists d",
+      "kind": "drop",
+      "note": "DROP DATABASE IF EXISTS"
+    },
+    {
+      "sql": "DROP INDEX i ON t",
+      "kind": "drop",
+      "note": "DROP INDEX"
+    },
+    {
+      "sql": "  \n  DROP TABLE t",
+      "kind": "drop",
+      "note": "先頭の空白"
+    },
+    {
+      "sql": "(DELETE FROM t)",
+      "kind": "deleteNoWhere",
+      "note": "先頭の括弧"
+    },
+    {
+      "sql": "/* c */ DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "先頭のブロックコメントは無視して判定"
+    },
+    {
+      "sql": "-- DROP TABLE t\nSELECT 1",
+      "kind": null,
+      "note": "コメント内の DROP は無視"
+    },
+    {
+      "sql": "SELECT * FROM t",
+      "kind": null,
+      "note": "SELECT"
+    },
+    {
+      "sql": "INSERT INTO t VALUES (1)",
+      "kind": null,
+      "note": "INSERT"
+    },
+    {
+      "sql": "CREATE TABLE t (id INT)",
+      "kind": null,
+      "note": "CREATE"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN c INT",
+      "kind": null,
+      "note": "ALTER は対象外"
+    },
+    {
+      "sql": "SELECT 'DROP TABLE t'",
+      "kind": null,
+      "note": "文字列内の DROP は無視"
+    },
+    {
+      "sql": "dropdown",
+      "kind": null,
+      "note": "単語境界: drop で始まる別の語"
+    },
+    {
+      "sql": "updated_at",
+      "kind": null,
+      "note": "単語境界: update で始まる別の語"
+    },
+    {
+      "sql": "",
+      "kind": null,
+      "note": "空文"
+    },
+    {
+      "sql": "   ",
+      "kind": null,
+      "note": "空白のみ"
+    },
+    {
+      "sql": "/*!40101 DROP TABLE t */",
+      "kind": "drop",
+      "note": "MySQL の条件付きコメントは実行されるコード"
+    },
+    {
+      "sql": "UPDATE t SET a = 'it\\'s where'",
+      "kind": null,
+      "kindMysql": "updateNoWhere",
+      "note": "バックスラッシュは MySQL だけがエスケープ (標準解釈では引用が閉じて where が見える)"
+    },
+    {
+      "sql": "WITH x AS (SELECT 1) DELETE FROM t",
+      "kind": null,
+      "note": "WITH で始まる文は先頭キーワードが違うため対象外 (ベストエフォート)"
+    },
+    {
+      "sql": "﻿DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "先頭の U+FEFF (BOM / ZWNBSP) は空白扱いで読み飛ばす (JS の trim と Rust の trim の差)"
+    },
+    {
+      "sql": "DELETE FROM t",
+      "kind": "deleteNoWhere",
+      "note": "先頭の U+0085 (NEL) も読み飛ばす (Rust の trim は空白、JS は非空白)"
+    },
+    {
+      "sql": "﻿UPDATE t SET a = 1",
+      "kind": "updateNoWhere",
+      "note": "先頭 U+FEFF の UPDATE"
+    },
+    {
+      "sql": "DELETE FROM t # where id = 1",
+      "kind": null,
+      "kindMysql": "deleteNoWhere",
+      "note": "# は MySQL とドライバ不明だけ行コメント: そこでは where がコメント内なので WHERE なし (PostgreSQL / SQLite では演算子扱いで where が見える)",
+      "kindUnknown": "deleteNoWhere"
+    },
+    {
+      "sql": "DELETE FROM t RETURNING $$ where $$",
+      "kind": "deleteNoWhere",
+      "note": "$$...$$ 内の where は (保守的なマスクにより全ドライバで) 文字列として無視する"
+    },
+    {
+      "sql": "DELETE FROM t RETURNING \"where\"",
+      "kind": "deleteNoWhere",
+      "note": "\"where\" の引用識別子は WHERE 句ではない"
+    },
+    {
+      "sql": "DELETE FROM t /*!50000 WHERE id=1 */",
+      "kind": null,
+      "note": "/*!50000 ... */ の中身は MySQL が実行するので WHERE ありとみなす。既知の制限: マスクは全ドライバ共通でこの本文を残すため、PostgreSQL / SQLite では実際はただのコメントなのに WHERE ありと判定し、WHERE なしの DELETE を見逃す (読み取り専用ガードと共有のマスクを変えない判断。現状の仕様をフロントとバックで固定)"
+    },
+    {
+      "sql": "(DELETE FROM t WHERE id=1)",
+      "kind": null,
+      "note": "括弧で囲まれていても WHERE があれば安全"
+    },
+    {
+      "sql": "(DELETE FROM t)",
+      "kind": "deleteNoWhere",
+      "note": "括弧で囲まれた WHERE なし DELETE も検出する"
+    },
+    {
+      "sql": "DELETE\r\nFROM t",
+      "kind": "deleteNoWhere",
+      "note": "CRLF 区切りの WHERE なし DELETE"
+    },
+    {
+      "sql": "DELETE FROM t\r\nWHERE id = 1",
+      "kind": null,
+      "note": "CRLF 区切りの WHERE あり"
+    },
+    {
+      "sql": "UPDATE t\r\nSET a = 1",
+      "kind": "updateNoWhere",
+      "note": "CRLF 区切りの WHERE なし UPDATE"
+    }
+  ]
+}

@@ -195,3 +195,101 @@ export function buildBlockingTree(processes: readonly ProcessInfo[]): BlockingTr
   }
   return rows;
 }
+
+/** プロセス一覧の絞り込み条件 (#1538)。空文字 / 0 は「条件なし」。 */
+export interface ProcessFilter {
+  /** id・ユーザ・ホスト・DB・状態・クエリ要約を大文字小文字無視で部分一致検索する。 */
+  text: string;
+  /** ユーザ名の完全一致。 */
+  user: string;
+  /** データベース名の完全一致。 */
+  database: string;
+  /** `command` (粗い活動状態) の完全一致。 */
+  command: string;
+  /** 経過秒がこの値以上のものだけ残す。経過秒が不明 (null) のプロセスは条件ありのとき除外。 */
+  minSecs: number;
+}
+
+export const EMPTY_PROCESS_FILTER: ProcessFilter = {
+  text: "",
+  user: "",
+  database: "",
+  command: "",
+  minSecs: 0,
+};
+
+/** 絞り込み条件が 1 つでも有効か。 */
+export function isProcessFilterActive(f: ProcessFilter): boolean {
+  return f.text.trim() !== "" || f.user !== "" || f.database !== "" || f.command !== "" || f.minSecs > 0;
+}
+
+/**
+ * 一覧を絞り込む (#1538)。描画上限 (`PROCESS_RENDER_LIMIT`) で切る**前**に適用するための
+ * 純関数で、501 件目以降のプロセスも条件に合えば先頭側に現れる。条件なしなら入力をそのまま返す。
+ */
+export function filterProcesses(
+  rows: readonly ProcessInfo[],
+  filter: ProcessFilter,
+): readonly ProcessInfo[] {
+  if (!isProcessFilterActive(filter)) return rows;
+  const needle = filter.text.trim().toLowerCase();
+  return rows.filter((p) => {
+    if (filter.user !== "" && (p.user ?? "") !== filter.user) return false;
+    if (filter.database !== "" && (p.database ?? "") !== filter.database) return false;
+    if (filter.command !== "" && (p.command ?? "") !== filter.command) return false;
+    if (filter.minSecs > 0 && (p.time_secs == null || p.time_secs < filter.minSecs)) return false;
+    if (needle !== "") {
+      const hay = [p.id, p.user, p.host, p.database, p.command, p.state, p.query_summary]
+        .filter((v) => v != null)
+        .join("\n")
+        .toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
+}
+
+/** 並べ替えキー。`default` はサーバが返した順のまま。 */
+export type ProcessSortKey = "default" | "timeDesc" | "timeAsc" | "id";
+
+/**
+ * 一覧を並べ替える (#1538)。入力は変更しない。経過秒が不明 (null / 負) のプロセスは
+ * 昇順・降順どちらでも末尾に置く (長時間クエリ探しで不明が先頭を占めないように)。
+ * 同値は id 昇順で安定させる。
+ */
+export function sortProcesses(
+  rows: readonly ProcessInfo[],
+  key: ProcessSortKey,
+): readonly ProcessInfo[] {
+  if (key === "default") return rows;
+  const copy = [...rows];
+  if (key === "id") return copy.sort((a, b) => a.id - b.id);
+  const known = (p: ProcessInfo) => p.time_secs != null && p.time_secs >= 0;
+  const dir = key === "timeDesc" ? -1 : 1;
+  return copy.sort((a, b) => {
+    const ka = known(a);
+    const kb = known(b);
+    if (ka !== kb) return ka ? -1 : 1;
+    if (ka && kb) {
+      const d = (a.time_secs as number) - (b.time_secs as number);
+      if (d !== 0) return d * dir;
+    }
+    return a.id - b.id;
+  });
+}
+
+/** 絞り込みの選択肢用に、列の値を重複なし・昇順で集める。null / 空は含めない。 */
+export function distinctProcessValues(
+  rows: readonly ProcessInfo[],
+  field: "user" | "database" | "command",
+): string[] {
+  const set = new Set<string>();
+  for (const p of rows) {
+    const v = p[field];
+    if (v != null && v !== "") set.add(v);
+  }
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+/** 経過秒の絞り込みプリセット (秒)。0 は「条件なし」。 */
+export const PROCESS_MIN_SECS_OPTIONS: readonly number[] = [0, 1, 10, 60, 300, 3600];

@@ -37,14 +37,19 @@ use crate::db::script::{
     classify_tx_statement, parse_use_database, split_script, ScriptSplitter, ScriptStatement,
     TxControl,
 };
+use crate::db::script_analysis::{ScriptAnalysis, ScriptAnalyzer};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::Connection;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
+use crate::text_encoding::{self, EncodingDetector, TextEncoding};
 
 const EV_SCRIPT_PROGRESS: &str = "sql-script:progress";
 const EV_SCRIPT_DONE: &str = "sql-script:done";
 const EV_SCRIPT_ERROR: &str = "sql-script:error";
+/// 事前確認 (ドライラン) の完了イベント (#1535)。進捗は `sql-script:progress`、失敗は
+/// `sql-script:error`、中断は `sql-script:cancelled` を実行本体と共有する。
+const EV_SCRIPT_ANALYZED: &str = "sql-script:analyzed";
 
 /// ファイルを読むチャンクサイズ。
 const READ_CHUNK_BYTES: usize = 64 * 1024;
@@ -54,11 +59,16 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(150);
 const FAILURE_SQL_PREVIEW_CHARS: usize = 200;
 /// continue-on-error で返す失敗一覧の上限。超えた分は件数 (`failedCount`) だけ数える。
 const MAX_REPORTED_FAILURES: usize = 1000;
+/// 「事前確認のあとでファイルが変わった」エラーの固定の目印 (メッセージの先頭)。フロントが
+/// 文言ではなくこの目印で判定する (`src/scriptRun.ts` の `isAnalysisStaleError`)。
+pub const FILE_CHANGED_MARKER: &str = "[script-file-changed]";
+/// 個別除外できる文の数の上限 (リクエストが無制限に膨らまないように)。
+const MAX_SKIP_STATEMENTS: usize = 100_000;
 
 /// 実行オプション。`continue_on_error` と `wrap_in_transaction` は排他 —
 /// all-or-nothing のトランザクションで「失敗をスキップして続行」は意味を持たない
 /// (PostgreSQL ではエラー後のトランザクションが abort 状態になり後続がすべて失敗する)。
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptOptions {
     /// 失敗した文をスキップして続行し、最後に失敗一覧を返す。
@@ -68,6 +78,31 @@ pub struct ScriptOptions {
     /// MySQL の DDL は暗黙コミットするため原子的にはならない (#640)。
     #[serde(default)]
     pub wrap_in_transaction: bool,
+    /// スクリプトファイルの文字コード (#1535)。`None` は自動判定 (BOM → UTF-8 →
+    /// Shift_JIS / EUC-JP)。判定結果は [`open_script_file`] が返し、コアは
+    /// `Some` になった値でデコードする。エディタのバッチ実行 (UTF-8 の文字列) では使わない。
+    #[serde(default)]
+    pub encoding: Option<TextEncoding>,
+    /// この通し番号 (1 始まり、トランザクション制御文を含む。`ScriptFailure.index` と同じ)
+    /// より前の文を実行せず読み飛ばす (#1535)。失敗した文からの再開に使う。0 / 1 は先頭から。
+    /// 読み飛ばした文の `USE` による接続先 DB の切り替えだけは追従する。
+    #[serde(default)]
+    pub start_at_statement: u64,
+    /// 実行せず読み飛ばす文の通し番号 (事前確認の一覧での個別除外、#1535)。
+    #[serde(default)]
+    pub skip_statements: Vec<u64>,
+    /// 事前確認 (ドライラン) をしたときのファイルの大きさと更新時刻。指定されていて実行時の
+    /// ファイルと違えば、除外・開始位置の文番号がずれるので実行前にエラーにする (#1535)。
+    #[serde(default)]
+    pub expected_file: Option<FileStamp>,
+}
+
+/// ファイルの大きさと更新時刻 (ミリ秒)。事前確認の後でファイルが書き換わっていないかの照合用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileStamp {
+    pub size: u64,
+    pub mtime_ms: u64,
 }
 
 /// 失敗した 1 文。`index` はスクリプト内の文の通し番号 (1 始まり、制御文を含む)、`line` はファイル内の
@@ -108,6 +143,12 @@ pub struct ScriptDoneEvent {
     /// wrap-in-transaction で読み飛ばしたスクリプト内のトランザクション制御文の数。
     #[serde(rename = "skippedControl")]
     pub skipped_control: u64,
+    /// 事前確認で個別除外した文のうち、読み飛ばした数 (#1535)。
+    #[serde(rename = "skippedExcluded")]
+    pub skipped_excluded: u64,
+    /// 開始位置 (`startAtStatement`) より前で読み飛ばした文の数 (#1535)。
+    #[serde(rename = "skippedBeforeStart")]
+    pub skipped_before_start: u64,
     #[serde(rename = "rowsAffected")]
     pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
@@ -126,6 +167,14 @@ pub struct ScriptErrorEvent {
     /// 開いていたトランザクションを ROLLBACK したか (その範囲の文は取り消された)。
     #[serde(rename = "rolledBack")]
     pub rolled_back: bool,
+    /// 失敗した時点でトランザクションが開いていたか (ROLLBACK の成否に関係なく true)。
+    /// 開いていたなら、失敗した文だけから再開すると BEGIN 以降の文が欠けるので再開を出さない。
+    #[serde(rename = "inTransaction")]
+    pub in_transaction: bool,
+    /// 開いていたトランザクションを始めた BEGIN 文の通し番号 (スクリプト内の BEGIN のとき。
+    /// 全体を包む `wrapInTransaction` の場合は `null`)。ここから再開すれば取り消された範囲をやり直せる。
+    #[serde(rename = "txBeginStatement")]
+    pub tx_begin_statement: Option<u64>,
 }
 
 /// 進捗のスナップショット (コア → emit 側)。
@@ -147,6 +196,8 @@ pub enum ScriptRun {
         failed_count: u64,
         failures: Vec<ScriptFailure>,
         skipped_control: u64,
+        skipped_excluded: u64,
+        skipped_before_start: u64,
         rows_affected: u64,
         elapsed_ms: u64,
     },
@@ -155,6 +206,8 @@ pub enum ScriptRun {
         failure: Option<ScriptFailure>,
         executed: u64,
         rolled_back: bool,
+        in_transaction: bool,
+        tx_begin_statement: Option<u64>,
     },
 }
 
@@ -194,29 +247,42 @@ fn preview_sql(sql: &str) -> String {
     }
 }
 
-const NOT_UTF8_MESSAGE: &str = "the script is not valid UTF-8 (Shift_JIS / EUC-JP etc. are not supported); convert it to UTF-8 and try again";
-
-/// スクリプトファイルを開く。**先にファイル全体を UTF-8 として事前スキャン**し、不正な
-/// バイトがあれば 1 文も実行する前にエラーにする。チャンクごとの検査だけだと、後半に不正
-/// バイトがあるとき前半の文が実行済み (トランザクション無しならコミット済み) になる。
-pub(crate) async fn open_script_file(path: &str) -> Result<tokio::fs::File> {
-    let mut scan = tokio::fs::File::open(path).await?;
-    let mut decoder = encoding_rs::UTF_8.new_decoder();
-    let mut raw = vec![0u8; READ_CHUNK_BYTES];
-    let mut out = String::with_capacity(READ_CHUNK_BYTES * 3);
-    loop {
-        let n = scan.read(&mut raw).await?;
-        let eof = n == 0;
-        out.clear();
-        let (res, _) = decoder.decode_to_string_without_replacement(&raw[..n], &mut out, eof);
-        if let encoding_rs::DecoderResult::Malformed(_, _) = res {
-            return Err(AppError::InvalidInput(NOT_UTF8_MESSAGE.into()));
+/// チャンクが満たされる (または EOF) まで読む。`read` が短く返っても先頭 4 バイトの
+/// BOM 判定などが崩れないようにする。
+async fn fill_chunk(file: &mut tokio::fs::File, buf: &mut [u8]) -> std::io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = file.read(&mut buf[filled..]).await?;
+        if n == 0 {
+            break;
         }
+        filled += n;
+    }
+    Ok(filled)
+}
+
+/// スクリプトファイルを開く。**先にファイル全体を事前スキャン**し、文字コードの判定
+/// (`requested` が `None` のとき、#1535) と、その文字コードとしてファイル全体が妥当かの
+/// 確認を済ませる。不正なバイトがあれば 1 文も実行する前にエラーにする。チャンクごとの
+/// 検査だけだと、後半に不正バイトがあるとき前半の文が実行済み (トランザクション無しなら
+/// コミット済み) になる。返す文字コードは実行時のデコードにそのまま使う。
+pub(crate) async fn open_script_file(
+    path: &str,
+    requested: Option<TextEncoding>,
+) -> Result<(tokio::fs::File, TextEncoding)> {
+    let mut scan = tokio::fs::File::open(path).await?;
+    let mut detector = EncodingDetector::new(requested);
+    let mut raw = vec![0u8; READ_CHUNK_BYTES];
+    loop {
+        let n = fill_chunk(&mut scan, &mut raw).await?;
+        let eof = n < raw.len();
+        detector.feed(&raw[..n], eof);
         if eof {
             break;
         }
     }
-    Ok(tokio::fs::File::open(path).await?)
+    let encoding = detector.finish().map_err(|e| e.into_app_error())?;
+    Ok((tokio::fs::File::open(path).await?, encoding))
 }
 
 /// スクリプト実行の本体。Tauri ランタイムに依存しない (統合テストから直接駆動する)。
@@ -268,7 +334,7 @@ where
     R: AsyncRead + Unpin,
     F: FnMut(ScriptProgress),
 {
-    validate_options(options)?;
+    validate_options(&options)?;
     let driver = session.conn.driver_kind();
     let tx_active = session.conn.transaction_active().await;
     // スクリプトファイル実行は、ユーザの明示トランザクションと干渉しないよう拒否する。
@@ -281,6 +347,10 @@ where
     }
 
     let started = Instant::now();
+    let encoding = options.encoding.unwrap_or(TextEncoding::Utf8);
+    let skip_set: std::collections::HashSet<u64> =
+        options.skip_statements.iter().copied().collect();
+    let start_at = options.start_at_statement;
     let mut runner = Runner {
         guard: TxGuard {
             session: session.clone(),
@@ -290,6 +360,10 @@ where
         driver,
         database,
         options,
+        skip_set,
+        start_at,
+        skipped_excluded: 0,
+        skipped_before_start: 0,
         committed,
         seen: 0,
         executed: 0,
@@ -299,6 +373,8 @@ where
         skipped_control: 0,
         rows_affected: 0,
         pending_in_tx: 0,
+        tx_begin_index: None,
+        tx_restart_unsafe: false,
         wrote: false,
         schema_changed: false,
         batch: batch.map(|cfg| BatchState {
@@ -310,7 +386,7 @@ where
         caches_invalidated: false,
     };
 
-    if options.wrap_in_transaction {
+    if runner.options.wrap_in_transaction {
         session
             .conn
             .begin_transaction(runner.database.as_deref())
@@ -319,8 +395,9 @@ where
     }
 
     let mut splitter = ScriptSplitter::new(driver);
-    let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut decoder = encoding.new_decoder();
     let mut raw = vec![0u8; READ_CHUNK_BYTES];
+    let mut text = String::new();
     let mut bytes_read = 0u64;
     let mut last_emit = Instant::now();
     let progress = |runner: &Runner, bytes_read: u64| ScriptProgress {
@@ -344,18 +421,13 @@ where
         };
         eof = n == 0;
         bytes_read += n as u64;
-        let mut text = String::with_capacity(
-            decoder
-                .max_utf8_buffer_length_without_replacement(n)
-                .unwrap_or(READ_CHUNK_BYTES * 3),
-        );
-        // UTF-8 として不正なバイトは**置換せずエラーにする**。Shift_JIS 等の SQL を
-        // U+FFFD 混じりで実行すると、文字列リテラルが化けたまま DB に書き込まれるため。
-        // 先頭の BOM は decoder が取り除く。
-        let (dec_result, _) =
-            decoder.decode_to_string_without_replacement(&raw[..n], &mut text, eof);
-        if let encoding_rs::DecoderResult::Malformed(_, _) = dec_result {
-            return Ok(runner.abort_with(NOT_UTF8_MESSAGE.to_string(), None).await);
+        // 指定 / 判定した文字コードとして不正なバイトは**置換せずエラーにする**。
+        // 別の文字コードの SQL を U+FFFD 混じりで実行すると、文字列リテラルが化けたまま
+        // DB に書き込まれるため。先頭の BOM は decoder が取り除く。
+        if !text_encoding::decode_chunk(&mut decoder, &raw[..n], eof, &mut text) {
+            return Ok(runner
+                .abort_with(not_decodable_message(encoding), None)
+                .await);
         }
         let statements: Vec<ScriptStatement> = if eof {
             let mut v = match splitter.push(&text) {
@@ -398,9 +470,18 @@ where
         failed_count: runner.failed_count,
         failures: std::mem::take(&mut runner.failures),
         skipped_control: runner.skipped_control,
+        skipped_excluded: runner.skipped_excluded,
+        skipped_before_start: runner.skipped_before_start,
         rows_affected: runner.rows_affected,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
+}
+
+fn not_decodable_message(encoding: TextEncoding) -> String {
+    format!(
+        "the script is not valid {}; pick the correct text encoding and try again",
+        encoding.label()
+    )
 }
 
 fn too_large_message(e: &crate::db::script::StatementTooLarge) -> String {
@@ -410,11 +491,17 @@ fn too_large_message(e: &crate::db::script::StatementTooLarge) -> String {
     )
 }
 
-pub(crate) fn validate_options(options: ScriptOptions) -> Result<()> {
+pub(crate) fn validate_options(options: &ScriptOptions) -> Result<()> {
     if options.continue_on_error && options.wrap_in_transaction {
         return Err(AppError::InvalidInput(
             "continueOnError and wrapInTransaction cannot be combined".into(),
         ));
+    }
+    if options.skip_statements.len() > MAX_SKIP_STATEMENTS {
+        return Err(AppError::InvalidInput(format!(
+            "too many excluded statements ({}, limit {MAX_SKIP_STATEMENTS})",
+            options.skip_statements.len()
+        )));
     }
     Ok(())
 }
@@ -655,7 +742,7 @@ where
         database,
         ScriptOptions {
             continue_on_error: !stop_on_error,
-            wrap_in_transaction: false,
+            ..ScriptOptions::default()
         },
         committed,
         |_| {},
@@ -673,6 +760,12 @@ struct Runner {
     driver: crate::db::DriverKind,
     database: Option<String>,
     options: ScriptOptions,
+    /// 個別除外する文の通し番号 (`options.skip_statements`)。
+    skip_set: std::collections::HashSet<u64>,
+    /// 開始位置 (`options.start_at_statement`)。
+    start_at: u64,
+    skipped_excluded: u64,
+    skipped_before_start: u64,
     committed: Arc<AtomicU64>,
     /// スクリプト内で出会った文の通し番号 (トランザクション制御文を含む)。
     seen: u64,
@@ -684,6 +777,13 @@ struct Runner {
     rows_affected: u64,
     /// 開いているトランザクション内で成功した (未確定の) 文の数。
     pending_in_tx: u64,
+    /// スクリプト内の BEGIN で開いたトランザクションの BEGIN 文の通し番号。COMMIT / ROLLBACK が
+    /// 成功するまで残す (ROLLBACK が失敗しても「開いていた」ことを失敗報告に載せるため)。
+    tx_begin_index: Option<u64>,
+    /// 今のトランザクションを BEGIN からやり直すと二重適用になりうるか。失敗した文が COMMIT のとき
+    /// (確定したか不明) と、MySQL でトランザクション内に暗黙 COMMIT する DDL が実行済みのとき。
+    /// true なら失敗報告に BEGIN の番号を載せない (`in_transaction` は true のまま)。
+    tx_restart_unsafe: bool,
     wrote: bool,
     schema_changed: bool,
     /// エディタのバッチ実行モード (#1256)。`None` なら `.sql` スクリプト実行。
@@ -725,6 +825,15 @@ impl Runner {
             self.emit_batch(BatchStatementResult::skipped(stmt.sql));
             return None;
         }
+        // 失敗した文からの再開 (#1535): 開始位置より前の文は実行しない。ただし `USE` による
+        // 接続先 DB の切り替えには追従する (以降の文が正しい DB に流れるように)。
+        if self.start_at > 1 && self.seen < self.start_at {
+            self.skipped_before_start += 1;
+            if let Some(db) = parse_use_database(self.driver, &stmt.sql) {
+                self.database = Some(db);
+            }
+            return None;
+        }
         // バッチ実行が呼び出し側の明示トランザクションの上で動くときは、制御文も
         // 従来どおり生の SQL として同じ接続へ流す (読み替えると UI 側のトランザクション
         // 状態 (`txActive`) と食い違う)。
@@ -734,6 +843,13 @@ impl Runner {
         } else {
             classify_tx_statement(self.driver, &stmt.sql)
         };
+        // 事前確認の一覧で個別除外された文は実行しない (#1535)。ただしトランザクション制御文
+        // (BEGIN / COMMIT / ROLLBACK) は除外できない — 片方だけ外すと取り消されるはずの範囲が
+        // 確定したり、COMMIT が抜けたままになるので、番号が指定されていても無視して実行する。
+        if ctl.is_none() && !self.skip_set.is_empty() && self.skip_set.contains(&self.seen) {
+            self.skipped_excluded += 1;
+            return None;
+        }
         if let Some((ctl, tx_opts)) = ctl {
             let ctl_started = Instant::now();
             if self.options.wrap_in_transaction {
@@ -759,6 +875,8 @@ impl Runner {
                             .await;
                         if r.is_ok() {
                             self.guard.active = true;
+                            self.tx_begin_index = Some(self.seen);
+                            self.tx_restart_unsafe = false;
                         }
                         r
                     }
@@ -774,12 +892,30 @@ impl Runner {
                     if self.guard.active {
                         self.guard.active = false;
                         self.pending_in_tx = 0;
-                        self.session.conn.finish_transaction(false).await
+                        let r = self.session.conn.finish_transaction(false).await;
+                        if r.is_ok() {
+                            self.tx_begin_index = None;
+                        }
+                        r
                     } else {
                         Ok(())
                     }
                 }
             };
+            if result.is_err() {
+                if ctl == TxControl::Commit {
+                    // COMMIT が失敗: 確定したかどうか分からないので BEGIN からのやり直しは勧めない。
+                    self.tx_restart_unsafe = true;
+                }
+                if self.options.continue_on_error
+                    && matches!(ctl, TxControl::Commit | TxControl::Rollback)
+                    && !self.guard.active
+                {
+                    // 続行モードでは失敗した COMMIT / ROLLBACK のあとも実行が続く。トランザクションは
+                    // もう閉じた扱いなので、後続の失敗を「トランザクション中」と報告しないよう忘れる。
+                    self.tx_begin_index = None;
+                }
+            }
             return match result {
                 Ok(()) => {
                     if self.batch.is_some() {
@@ -856,6 +992,12 @@ impl Runner {
                     self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r).with_cut(cut));
                 }
                 if self.guard.active {
+                    if self.driver == crate::db::DriverKind::Mysql
+                        && crate::db::sql_may_change_schema(self.driver, &stmt.sql)
+                    {
+                        // MySQL の DDL は暗黙 COMMIT する: ここまでのトランザクションは確定済み。
+                        self.tx_restart_unsafe = true;
+                    }
                     self.pending_in_tx += 1;
                 } else if !external_tx {
                     self.committed.fetch_add(1, Ordering::SeqCst);
@@ -876,6 +1018,7 @@ impl Runner {
     async fn commit(&mut self) -> Result<()> {
         self.guard.active = false;
         self.session.conn.finish_transaction(true).await?;
+        self.tx_begin_index = None;
         self.committed
             .fetch_add(self.pending_in_tx, Ordering::SeqCst);
         self.pending_in_tx = 0;
@@ -939,6 +1082,12 @@ impl Runner {
     /// 実行を止める。開いているトランザクションがあれば ROLLBACK する。
     async fn abort_with(&mut self, message: String, failure: Option<ScriptFailure>) -> ScriptRun {
         let mut rolled_back = false;
+        let in_transaction = self.guard.active || self.tx_begin_index.is_some();
+        let tx_begin_statement = if self.tx_restart_unsafe {
+            None
+        } else {
+            self.tx_begin_index
+        };
         if self.guard.active {
             self.guard.active = false;
             self.pending_in_tx = 0;
@@ -955,6 +1104,8 @@ impl Runner {
             failure,
             executed: self.executed,
             rolled_back,
+            in_transaction,
+            tx_begin_statement,
         }
     }
 
@@ -1008,7 +1159,8 @@ impl Drop for CancelHistoryGuard {
 }
 
 /// 対象ファイルのメタデータを確認する (空パス・ディレクトリ・特殊ファイルを拒否)。
-pub(crate) async fn script_file_size(path: &str) -> Result<u64> {
+/// [`script_file_size`] に更新時刻を添えたもの (事前確認との照合用)。
+pub(crate) async fn script_file_stamp(path: &str) -> Result<FileStamp> {
     if path.trim().is_empty() {
         return Err(AppError::InvalidInput("script file path is empty".into()));
     }
@@ -1018,7 +1170,28 @@ pub(crate) async fn script_file_size(path: &str) -> Result<u64> {
             "not a regular file: {path}"
         )));
     }
-    Ok(meta.len())
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64);
+    Ok(FileStamp {
+        size: meta.len(),
+        mtime_ms,
+    })
+}
+
+/// 事前確認のときのファイルと今のファイルが同じか確かめる。違えば文番号 (除外・開始位置) が
+/// ずれるので、実行前にエラーにして再確認を促す (#1535)。
+pub(crate) fn check_expected_file(expected: Option<FileStamp>, actual: FileStamp) -> Result<()> {
+    match expected {
+        Some(e) if e != actual => Err(AppError::InvalidInput(
+            format!(
+                "{FILE_CHANGED_MARKER} the script file changed after the dry run, so statement numbers may no longer match; run the dry run again"
+            ),
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// `.sql` スクリプトファイルを文単位でストリーミング実行する (#973)。進捗は
@@ -1037,8 +1210,10 @@ pub async fn run_sql_script(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    validate_options(options)?;
-    let total_bytes = script_file_size(&path).await?;
+    validate_options(&options)?;
+    let stamp = script_file_stamp(&path).await?;
+    check_expected_file(options.expected_file, stamp)?;
+    let total_bytes = stamp.size;
     if session.conn.transaction_active().await {
         return Err(AppError::InvalidInput(
             "an explicit transaction is already active on this session; commit or roll it back before running a script".into(),
@@ -1110,8 +1285,13 @@ async fn spawn_script(
         armed: true,
     };
 
-    let result = match open_script_file(&path).await {
-        Ok(file) => {
+    let result = match open_script_file(&path, options.encoding).await {
+        Ok((file, encoding)) => {
+            // 判定した文字コードをコアへ渡す (コアは `Some` の値でデコードする)。
+            let options = ScriptOptions {
+                encoding: Some(encoding),
+                ..options
+            };
             let emit_app = app.clone();
             let emit_id = stream_id.clone();
             run_script_core(
@@ -1194,6 +1374,8 @@ async fn spawn_script(
             failed_count,
             failures,
             skipped_control,
+            skipped_excluded,
+            skipped_before_start,
             rows_affected,
             elapsed_ms,
         }) => {
@@ -1207,6 +1389,8 @@ async fn spawn_script(
                     failed_count,
                     failures,
                     skipped_control,
+                    skipped_excluded,
+                    skipped_before_start,
                     rows_affected,
                     elapsed_ms,
                 },
@@ -1217,6 +1401,8 @@ async fn spawn_script(
             failure,
             executed,
             rolled_back,
+            in_transaction,
+            tx_begin_statement,
         }) => {
             tracing::error!(stream_id = %stream_id, error = %message, "sql script stopped");
             app.emit(
@@ -1227,6 +1413,8 @@ async fn spawn_script(
                     failure,
                     executed,
                     rolled_back,
+                    in_transaction,
+                    tx_begin_statement,
                 },
             )
         }
@@ -1240,6 +1428,8 @@ async fn spawn_script(
                     failure: None,
                     executed: 0,
                     rolled_back: false,
+                    in_transaction: false,
+                    tx_begin_statement: None,
                 },
             )
         }
@@ -1248,6 +1438,231 @@ async fn spawn_script(
         tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit script terminal event");
     }
 
+    if let Some(state) = app.try_state::<AppState>() {
+        state.forget_stream(&stream_id, stream_token).await;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 事前確認 / ドライラン (`analyze_sql_script`, #1535)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 実行前に「何が流れるか」を見せるための読み取り専用の走査。ファイルは実行時と同じく
+// 64 KiB ずつ読んで [`ScriptSplitter`] で 1 文ずつ確定させ、[`ScriptAnalyzer`] が
+// 件数・先頭の一覧・危険文・トランザクション制御文の位置だけを保持するので、GB 級でも
+// メモリに載るのは「いま見ている 1 文」と有限個の集計だけ。DB には一切触れない。
+
+/// 事前確認の完了イベント (`sql-script:analyzed`)。
+#[derive(Debug, Serialize, Clone)]
+pub struct ScriptAnalyzedEvent {
+    #[serde(rename = "streamId")]
+    pub stream_id: String,
+    /// 実際に使った文字コード (自動判定の結果、または指定どおり)。
+    pub encoding: TextEncoding,
+    #[serde(rename = "totalBytes")]
+    pub total_bytes: u64,
+    /// 事前確認したときのファイルの大きさ・更新時刻。実行時に `expectedFile` として渡すと、
+    /// 事前確認の後でファイルが変わっていれば実行前にエラーになる。
+    #[serde(rename = "fileStamp")]
+    pub file_stamp: FileStamp,
+    #[serde(rename = "elapsedMs")]
+    pub elapsed_ms: u64,
+    pub analysis: ScriptAnalysis,
+}
+
+/// 事前確認の本体 (Tauri ランタイム非依存)。`reader` を `encoding` でデコードし、文ごとに
+/// 解析する。`enforce_read_only` は「実行すると非読み取り専用の文が拒否される」セッションか。
+pub(crate) async fn analyze_script_core<R, F>(
+    driver: crate::db::DriverKind,
+    enforce_read_only: bool,
+    mut reader: R,
+    total_bytes: u64,
+    encoding: TextEncoding,
+    mut on_progress: F,
+) -> Result<ScriptAnalysis>
+where
+    R: AsyncRead + Unpin,
+    F: FnMut(ScriptProgress),
+{
+    let started = Instant::now();
+    let mut analyzer = ScriptAnalyzer::new(driver, enforce_read_only);
+    let mut splitter = ScriptSplitter::new(driver);
+    let mut decoder = encoding.new_decoder();
+    let mut raw = vec![0u8; READ_CHUNK_BYTES];
+    let mut text = String::new();
+    let mut bytes_read = 0u64;
+    let mut last_emit = Instant::now();
+    let snapshot = |a: &ScriptAnalyzer, bytes_read: u64| ScriptProgress {
+        executed: a.seen(),
+        failed: a.dangerous_so_far(),
+        bytes_read,
+        total_bytes,
+        elapsed_ms: started.elapsed().as_millis() as u64,
+    };
+    on_progress(snapshot(&analyzer, 0));
+
+    let mut eof = false;
+    while !eof {
+        let n = reader.read(&mut raw).await.map_err(AppError::from)?;
+        eof = n == 0;
+        bytes_read += n as u64;
+        if !text_encoding::decode_chunk(&mut decoder, &raw[..n], eof, &mut text) {
+            return Err(AppError::InvalidInput(not_decodable_message(encoding)));
+        }
+        let mut statements = splitter
+            .push(&text)
+            .map_err(|e| AppError::InvalidInput(too_large_message(&e)))?;
+        if eof {
+            let last = std::mem::replace(&mut splitter, ScriptSplitter::new(driver));
+            statements.extend(last.finish());
+        }
+        for stmt in &statements {
+            analyzer.push(stmt);
+        }
+        if last_emit.elapsed() >= PROGRESS_INTERVAL || eof {
+            on_progress(snapshot(&analyzer, bytes_read));
+            last_emit = Instant::now();
+        }
+        // 長い走査の途中でもキャンセル (abort) が効くよう、チャンクごとに譲る。
+        tokio::task::yield_now().await;
+    }
+    Ok(analyzer.finish())
+}
+
+/// `.sql` スクリプトを**実行せずに**走査し、文数・種別・危険文・トランザクション制御文の
+/// 位置・先頭の文の一覧を返す事前確認 (#1535)。進捗は `sql-script:progress`
+/// (`executed` = 走査済みの文数、`failed` = 見つけた危険文の数)、結果は
+/// `sql-script:analyzed`、失敗は `sql-script:error`、中断は `cancel_stream` による
+/// `sql-script:cancelled`。判定は実行時と同じ読み取り専用ガード / 危険文検出を文ごとに通す。
+#[tauri::command]
+pub async fn analyze_sql_script(
+    app: AppHandle,
+    session_id: String,
+    stream_id: String,
+    path: String,
+    encoding: Option<TextEncoding>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let stamp = script_file_stamp(&path).await?;
+    let total_bytes = stamp.size;
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
+    let stream_id_for_task = stream_id.clone();
+    let committed = Arc::new(AtomicU64::new(0));
+    let handle = tokio::spawn(async move {
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
+        spawn_analysis(
+            app,
+            session,
+            stream_id_for_task,
+            token,
+            path,
+            total_bytes,
+            stamp,
+            encoding,
+        )
+        .await;
+    });
+    let token = state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: committed,
+                kind: StreamKind::Script,
+                on_cancel: None,
+            },
+        )
+        .await;
+    let _ = ready_tx.send(token);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn spawn_analysis(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    stream_token: u64,
+    path: String,
+    total_bytes: u64,
+    stamp: FileStamp,
+    requested: Option<TextEncoding>,
+) {
+    let started = Instant::now();
+    let driver = session.conn.driver_kind();
+    // 実行時の `ensure_allowed_for_session` と同じ条件 (緊急モード中は拒否されない)。
+    let enforce_read_only = session.read_only && !session.emergency_write_active();
+    let result = match open_script_file(&path, requested).await {
+        Ok((file, encoding)) => {
+            let emit_app = app.clone();
+            let emit_id = stream_id.clone();
+            analyze_script_core(
+                driver,
+                enforce_read_only,
+                file,
+                total_bytes,
+                encoding,
+                move |p| {
+                    if let Err(e) = emit_app.emit(
+                        EV_SCRIPT_PROGRESS,
+                        ScriptProgressEvent {
+                            stream_id: emit_id.clone(),
+                            executed: p.executed,
+                            failed: p.failed,
+                            bytes_read: p.bytes_read,
+                            total_bytes: p.total_bytes,
+                            elapsed_ms: p.elapsed_ms,
+                        },
+                    ) {
+                        tracing::warn!(stream_id = %emit_id, error = %e, "failed to emit script analysis progress");
+                    }
+                },
+            )
+            .await
+            .map(|analysis| (encoding, analysis))
+        }
+        Err(e) => Err(e),
+    };
+    let emitted = match result {
+        Ok((encoding, analysis)) => {
+            tracing::info!(stream_id = %stream_id, statements = analysis.total_statements, dangerous = analysis.dangerous_total, "sql script analyzed");
+            app.emit(
+                EV_SCRIPT_ANALYZED,
+                ScriptAnalyzedEvent {
+                    stream_id: stream_id.clone(),
+                    encoding,
+                    total_bytes,
+                    file_stamp: stamp,
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                    analysis,
+                },
+            )
+        }
+        Err(e) => {
+            tracing::error!(stream_id = %stream_id, error = %e, "sql script analysis failed");
+            app.emit(
+                EV_SCRIPT_ERROR,
+                ScriptErrorEvent {
+                    stream_id: stream_id.clone(),
+                    error: e.to_string(),
+                    failure: None,
+                    executed: 0,
+                    rolled_back: false,
+                    in_transaction: false,
+                    tx_begin_statement: None,
+                },
+            )
+        }
+    };
+    if let Err(e) = emitted {
+        tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit script analysis terminal event");
+    }
     if let Some(state) = app.try_state::<AppState>() {
         state.forget_stream(&stream_id, stream_token).await;
     }
@@ -1452,16 +1867,23 @@ mod tests {
 
     #[test]
     fn options_are_mutually_exclusive() {
-        assert!(validate_options(ScriptOptions {
+        assert!(validate_options(&ScriptOptions {
             continue_on_error: true,
-            wrap_in_transaction: true
+            wrap_in_transaction: true,
+            ..ScriptOptions::default()
         })
         .is_err());
-        assert!(validate_options(ScriptOptions {
+        assert!(validate_options(&ScriptOptions {
             continue_on_error: true,
-            wrap_in_transaction: false
+            wrap_in_transaction: false,
+            ..ScriptOptions::default()
         })
         .is_ok());
+        assert!(validate_options(&ScriptOptions {
+            skip_statements: vec![1; MAX_SKIP_STATEMENTS + 1],
+            ..ScriptOptions::default()
+        })
+        .is_err());
     }
 
     #[test]
@@ -1482,24 +1904,72 @@ mod tests {
         let mut data = b"SELECT 1;\n".repeat(READ_CHUNK_BYTES / 4);
         data.push(0xff);
         std::fs::write(&bad, &data).unwrap();
-        let err = open_script_file(&bad.to_string_lossy()).await.unwrap_err();
+        // 後半の不正バイトは自動判定でも明示指定でも実行前に検出される。
+        let err = open_script_file(&bad.to_string_lossy(), None)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AppError::InvalidInput(_)));
+        let err = open_script_file(&bad.to_string_lossy(), Some(TextEncoding::Utf8))
+            .await
+            .unwrap_err();
         assert!(matches!(err, AppError::InvalidInput(_)));
         let good = dir.join("good.sql");
         std::fs::write(&good, "SELECT '山田';\n").unwrap();
-        assert!(open_script_file(&good.to_string_lossy()).await.is_ok());
+        let (_, enc) = open_script_file(&good.to_string_lossy(), None)
+            .await
+            .unwrap();
+        assert_eq!(enc, TextEncoding::Utf8);
+        // Shift_JIS のスクリプトは自動判定され、UTF-8 指定だと拒否される。
+        let sj = dir.join("sjis.sql");
+        std::fs::write(
+            &sj,
+            text_encoding::encode(
+                "INSERT INTO t VALUES ('山田太郎');\n",
+                TextEncoding::ShiftJis,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let (_, enc) = open_script_file(&sj.to_string_lossy(), None).await.unwrap();
+        assert_eq!(enc, TextEncoding::ShiftJis);
+        assert!(
+            open_script_file(&sj.to_string_lossy(), Some(TextEncoding::Utf8))
+                .await
+                .is_err()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn rejects_empty_path_and_directories() {
         assert!(matches!(
-            script_file_size("  ").await,
+            script_file_stamp("  ").await,
             Err(AppError::InvalidInput(_))
         ));
         let dir = std::env::temp_dir();
         assert!(matches!(
-            script_file_size(&dir.to_string_lossy()).await,
+            script_file_stamp(&dir.to_string_lossy()).await,
             Err(AppError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn expected_file_must_match_when_given() {
+        let a = FileStamp {
+            size: 10,
+            mtime_ms: 1000,
+        };
+        assert!(check_expected_file(None, a).is_ok());
+        assert!(check_expected_file(Some(a), a).is_ok());
+        for other in [
+            FileStamp { size: 11, ..a },
+            FileStamp {
+                mtime_ms: 1001,
+                ..a
+            },
+        ] {
+            let err = check_expected_file(Some(a), other).unwrap_err();
+            assert!(err.to_string().contains(FILE_CHANGED_MARKER));
+        }
     }
 }
