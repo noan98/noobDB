@@ -1915,6 +1915,9 @@ export default function App() {
     name: string | null;
     id: string | null;
   } | null>(null);
+  // トランザクション開始時に実際に渡した DB (出力ログの execDatabase 用)。PG は begin に渡す値が
+  // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
+  const txDatabaseRef = useRef<string | null>(null);
   const txActiveRef = useRef(false);
   useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
   // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了で空にする。
@@ -5086,7 +5089,8 @@ export default function App() {
     if (!tab) return;
     // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
     if (tab.batchRunning || tab.streaming) return;
-    const db = tab.database ?? selectedProfile?.database ?? null;
+    // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
+    const db = tab.database ?? null;
     const outCtx = outputCtxFor(sessionId);
     patchTab(tabId, (tt) => ({
       ...tt,
@@ -5161,7 +5165,7 @@ export default function App() {
       finish();
       finishRun({ error: String(e) });
     }
-  }, [sessionId, selectedProfile?.database, patchTab, recordOutput, tabsRef, outputCtxFor]);
+  }, [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor]);
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
@@ -5209,7 +5213,7 @@ export default function App() {
           error: null,
           serverMessages: res.server_messages,
         },
-        tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null,
+        txDatabaseRef.current,
         outCtx,
       );
     } catch (e) {
@@ -5224,7 +5228,7 @@ export default function App() {
       });
       recordOutput(
         { sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) },
-        tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null,
+        txDatabaseRef.current,
         outCtx,
       );
     }
@@ -5234,6 +5238,8 @@ export default function App() {
   const handleBeginTransaction = useCallback(async () => {
     if (!sessionId) return;
     try {
+      txDatabaseRef.current =
+        selectedProfile?.driver === "postgres" ? null : (selectedProfile?.database ?? null);
       await api.beginTransaction(
         sessionId,
         selectedProfile?.database ?? null,
@@ -5452,7 +5458,7 @@ export default function App() {
       void runTxInTab(target.id, sql);
       return;
     }
-    void runQueryInTab(target.id, sql, null, autoLimit);
+    void runQueryInTab(target.id, sql, null, autoLimit, false, openedInNewTab ? { tab: target } : undefined);
   }, [
     runQueryInTab,
     runExplainInTab,
@@ -5889,7 +5895,7 @@ export default function App() {
     if (!sessionId) return;
     const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(execDatabase ? { database: execDatabase } : {}) };
     addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false });
+    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
   }, [sessionId, addTab, runInTabWithGate]);
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
