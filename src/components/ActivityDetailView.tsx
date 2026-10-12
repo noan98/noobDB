@@ -1,9 +1,15 @@
+import { useEffect, useState } from "react";
 import { chakra, type SystemStyleObject } from "@chakra-ui/react";
 
 import type { SchemaDriftTableChange } from "../api/tauri";
+import { buildIpcDiagnosticText } from "../api/ipcDiagnostics";
 import type { ActivityDetail } from "../activityLog";
 import { useT } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
+import { getCurrentAppVersion } from "../updater";
+import { CodePreview } from "./modalForm";
+import { useCopyFeedback } from "./useCopyFeedback";
+import { Button } from "./ui";
 
 /**
  * アクティビティの行を展開したときに出す詳細 (#912 の拡張)。
@@ -15,7 +21,42 @@ export function ActivityDetailView({ detail }: { detail: ActivityDetail }) {
   switch (detail.kind) {
     case "schemaDrift":
       return <SchemaDriftDetailTable tables={detail.summary.tables} />;
+    case "ipcValidation":
+      return <IpcValidationDetail detail={detail} />;
   }
+}
+
+/**
+ * IPC 検証失敗の詳細 (#1536): 診断テキストを見せ、コピーできるようにする。バージョンは
+ * 行を展開したときにだけ取りに行く (失敗経路以外の性能に影響しない)。
+ */
+function IpcValidationDetail({ detail }: { detail: Extract<ActivityDetail, { kind: "ipcValidation" }> }) {
+  const t = useT();
+  const { copied, copy } = useCopyFeedback();
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getCurrentAppVersion().then((v) => {
+      if (alive) setVersion(v);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const text = buildIpcDiagnosticText(detail, version);
+  return (
+    <chakra.div display="flex" flexDirection="column" gap="1.5" mt="1" data-testid="ipc-diagnostic">
+      <chakra.span textStyle="caption" color="app.textMuted">
+        {t("ipcValidationHint")}
+      </chakra.span>
+      <CodePreview wrap maxH="160px">
+        {text}
+      </CodePreview>
+      <Button type="button" size="sm" variant="secondary" alignSelf="flex-start" onClick={() => void copy(text)}>
+        {copied ? t("ipcValidationCopied") : t("ipcValidationCopy")}
+      </Button>
+    </chakra.div>
+  );
 }
 
 const thCss: SystemStyleObject = {

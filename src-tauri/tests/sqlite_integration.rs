@@ -2249,7 +2249,12 @@ async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
         .await
         .expect("select");
     assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"alice\")");
-    let (res, cap) = conn.capture_finish(prep, sql, None).await.expect("finish");
+    let run = conn
+        .capture_execute(prep, sql, None)
+        .await
+        .expect("execute");
+    // COMMIT 前でも同じ接続の外からは未確定 (BEGIN IMMEDIATE) だが、commit すれば確定する。
+    let (res, cap) = conn.capture_commit(run, sql).await.expect("commit");
     assert_eq!(res.rows_affected, 1);
     assert!(cap.capturable, "{:?}", cap.reason);
     let rows = conn
@@ -2716,6 +2721,134 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
         "force must still produce a statement"
     );
 
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_runs_the_statement_exactly_once_even_with_a_trigger() {
+    // #1536: 以前は dry-run と本実行で文が 2 回走っていた。単一トランザクション化後は
+    // トリガの副作用も 1 回分だけ残る。
+    let (path, conn) = flight_fixture("trigger_once").await;
+    conn.execute("CREATE TABLE audit (n INTEGER)", None)
+        .await
+        .expect("create audit");
+    conn.execute(
+        "CREATE TRIGGER t_upd AFTER UPDATE ON t BEGIN INSERT INTO audit (n) VALUES (1); END",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'zed' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+
+    let audit = conn
+        .execute("SELECT COUNT(*) FROM audit", None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&audit.rows[0][0], t::Value::Int(1) | t::Value::UInt(1)),
+        "trigger must fire once: {:?}",
+        audit.rows[0][0]
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_records_autoincrement_insert_outside_the_head_window() {
+    // #1536: 行数が row_cap を超える表でも、採番で末尾に付く INSERT は PK 降順の
+    // 末尾窓で捕捉できる (先頭窓では新規行が窓の外になり辞退していた)。
+    let (path, conn) = flight_fixture("insert_tail").await;
+    for id in 3..=8 {
+        conn.execute(
+            &format!("INSERT INTO t (id, name) VALUES ({id}, 'n{id}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+    let (result, capture) = conn
+        .capture_write("INSERT INTO t (name) VALUES ('fresh')", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    let id_idx = capture.columns.iter().position(|c| c == "id").unwrap();
+    assert_eq!(capture.after_rows.len(), 1);
+    assert_eq!(capture.after_rows[0][id_idx], t::Value::Int(9));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn redo_plan_reapplies_an_undone_capture() {
+    // #1536: capture → undo → redo をドライバ層で通す (永続化を伴わない経路)。
+    let (path, conn) = flight_fixture("redo").await;
+    let (_r, capture) = conn
+        .capture_write("UPDATE t SET name = 'alice2' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    let record = t::WriteCaptureRecord {
+        id: 1,
+        profile_id: None,
+        driver: "sqlite".to_string(),
+        database: None,
+        table: capture.table.clone().unwrap(),
+        kind: capture.kind,
+        sql: "UPDATE t SET name = 'alice2' WHERE id = 1".to_string(),
+        primary_key: capture.primary_key.clone(),
+        columns: capture.columns.clone(),
+        column_types: capture.column_types.clone(),
+        before_rows: capture.before_rows.clone(),
+        after_rows: capture.after_rows.clone(),
+        rows_affected: capture.rows_affected as i64,
+        captured_at: "2026-01-01T00:00:00Z".to_string(),
+        undone: false,
+    };
+    let keys = vec![vec![t::Value::Int(1)]];
+    let current = conn
+        .fetch_rows_by_pk("t", &record.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    for stmt in &t::build_undo_plan(&record, &current, false).statements {
+        conn.execute(stmt, None).await.expect("undo");
+    }
+
+    let mut undone = record.clone();
+    undone.undone = true;
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    assert_eq!(plan.statements.len(), 1);
+    for stmt in &plan.statements {
+        conn.execute(stmt, None).await.expect("redo");
+    }
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
+
+    // Undo 後に別の値へ変わっていれば Redo は衝突として止まる。
+    conn.execute("UPDATE t SET name = 'other' WHERE id = 1", None)
+        .await
+        .expect("drift");
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert_eq!(plan.conflicts.len(), 1);
+    assert!(plan.statements.is_empty());
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
@@ -4477,6 +4610,61 @@ async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
     assert_eq!(res.rows[0][3], t::Value::String("abcd".to_string()));
     assert_eq!(res.rows[1][1], t::Value::String("null".to_string()));
     assert_eq!(res.rows[2][1], t::Value::String("blob".to_string()));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 新規行が取得窓の外にあり、同じ文のトリガが窓の行を消すと、窓の外にいた既存行が繰り上がって
+/// 「新規行」に見える。既存行を挿入行として記録しない (Undo が無関係な行を消さない) (#1536)。
+#[tokio::test]
+async fn capture_insert_outside_window_with_trigger_delete_is_not_misattributed() {
+    let (path, conn) = flight_fixture("insert_window_trigger").await;
+    conn.execute("CREATE TABLE w (id INTEGER PRIMARY KEY, name TEXT)", None)
+        .await
+        .expect("create");
+    for i in 10..=20 {
+        conn.execute(&format!("INSERT INTO w VALUES ({i}, 'r{i}')"), None)
+            .await
+            .expect("seed");
+    }
+    conn.execute(
+        "CREATE TRIGGER w_t AFTER INSERT ON w BEGIN DELETE FROM w WHERE id = 20; END",
+        None,
+    )
+    .await
+    .expect("trigger");
+    let (res, cap) = conn
+        .capture_write("INSERT INTO w VALUES (1, 'new')", None, 3)
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    let idx = cap.columns.iter().position(|c| c == "id").unwrap_or(0);
+    let recorded: Vec<String> = cap
+        .after_rows
+        .iter()
+        .map(|r| format!("{:?}", r[idx]))
+        .collect();
+    assert!(
+        !cap.capturable || recorded == vec!["Int(1)".to_string()],
+        "取り違え: {recorded:?}"
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_upsert_is_declined_but_written_once() {
+    let (path, conn) = flight_fixture("upsert_decline").await;
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1, 'u') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    assert!(!cap.capturable);
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

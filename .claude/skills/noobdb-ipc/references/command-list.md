@@ -305,6 +305,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `clear_flight_records`
 - `preview_undo`
 - `undo_flight_record`
+- `preview_redo` (#1536。取り消し済みの記録を再適用する SQL と衝突のプレビュー)
+- `redo_flight_record` (#1536。Undo と同じ衝突検出・force・read_only ガード・履歴記録の経路で再適用し、記録を「取り消し済み」から戻す)
 
 ## ローカル横断クエリ (`commands/local.rs`)
 

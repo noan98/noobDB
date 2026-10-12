@@ -20,7 +20,7 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
-import { Button, Checkbox, Heading, Input } from "./ui";
+import { Button, Checkbox, Heading, Input, Select } from "./ui";
 import { isPlainEnterKey } from "./modalKeys";
 
 /**
@@ -89,6 +89,25 @@ function diffFlags(original: Flags, edited: Flags, want: boolean): Flags {
     ddl: edited.ddl === want && original.ddl !== want,
   };
 }
+
+/**
+ * 権限コピー (#1536): 編集後の権限を「コピー元の権限そのもの」に揃えた行集合を返す純関数。
+ * コピー元にあるテーブルはその権限へ、コピー先だけが持つテーブルは全権限 OFF (= 剥奪) にする。
+ * 結果は `edited` に入れるだけで、実際の GRANT / REVOKE は従来の差分 SQL 生成・確認ダイアログ・
+ * 適用の経路に乗る (新しい SQL 生成は無い)。
+ */
+export function mergeCopiedPrivileges(
+  original: Record<string, Flags>,
+  source: Record<string, Flags>,
+): Record<string, Flags> {
+  const out: Record<string, Flags> = {};
+  for (const table of new Set([...Object.keys(original), ...Object.keys(source)])) {
+    out[table] = source[table] ? { ...source[table] } : { ...EMPTY_FLAGS };
+  }
+  return out;
+}
+
+const userKey = (u: DbUserInfo) => `${u.name}@@${u.host ?? ""}`;
 
 const thCss: SystemStyleObject = {
   position: "sticky",
@@ -191,6 +210,12 @@ export function UsersPanel({
   const [showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
 
+  // 他ユーザの権限コピー (#1536)。コピー元は `${name}@@${host}` で持つ。
+  const [showCopy, setShowCopy] = useState(false);
+  const [copySourceKey, setCopySourceKey] = useState("");
+  // 直近にコピーした内容 (注意書き用)。別ユーザへ切り替え・変更の破棄・再読込で消す。
+  const [copied, setCopied] = useState<{ name: string; sourceRows: number } | null>(null);
+
   const [busy, setBusy] = useState(false);
 
   const loadUsers = useCallback(async () => {
@@ -231,6 +256,7 @@ export function UsersPanel({
         }
         setOriginal(rows);
         setEdited({ ...rows });
+        setCopied(null);
       } catch (e) {
         if (seq !== privSeq.current) return;
         setPrivsError(String(e));
@@ -251,6 +277,7 @@ export function UsersPanel({
       // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
       setOriginal({});
       setEdited({});
+      setCopied(null);
       setGlobalRow(null);
       void loadPrivileges(u);
     },
@@ -284,8 +311,20 @@ export function UsersPanel({
     [rowKeys, original, edited],
   );
 
+  // コピー後の注意 (#1536): コピー元に権限が 0 件、または適用すると既存の権限を REVOKE する行がある。
+  const copyRevokeCount = useMemo(
+    () =>
+      rowKeys.filter((k) => {
+        const before = original[k] ?? EMPTY_FLAGS;
+        const after = edited[k] ?? EMPTY_FLAGS;
+        return (Object.keys(EMPTY_FLAGS) as (keyof Flags)[]).some((f) => before[f] && !after[f]);
+      }).length,
+    [rowKeys, original, edited],
+  );
+
   const discardChanges = useCallback(() => {
     setEdited({ ...original });
+    setCopied(null);
     setNewTable("");
   }, [original]);
 
@@ -336,6 +375,35 @@ export function UsersPanel({
       setBusy(false);
     }
   }, [selected, database, rowKeys, original, edited, driver, confirm, t, sessionId, toast, loadPrivileges]);
+
+  // 他ユーザの権限をコピー (#1536): コピー元の権限を読み、編集中のマトリクスへ反映する。
+  // 反映後は通常の編集と同じく「変更を適用」→ SQL 全文プレビュー → 適用の経路に乗る。
+  const copyPrivilegesFromSource = useCallback(async () => {
+    if (!selected || !database) return;
+    const source = users.find((u) => userKey(u) === copySourceKey);
+    if (!source) return;
+    const seqBefore = privSeq.current;
+    setBusy(true);
+    try {
+      const p = await api.listUserPrivileges(sessionId, source.name, source.host, database);
+      // 読み込み中に別ユーザへ切り替わっていたら反映しない。
+      if (privSeq.current !== seqBefore) return;
+      const prefix = `${database}.`;
+      const rows: Record<string, Flags> = {};
+      for (const row of p.tables) {
+        if (!row.table.startsWith(prefix)) continue;
+        rows[row.table.slice(prefix.length)] = flagsFromRow(row);
+      }
+      setEdited(mergeCopiedPrivileges(original, rows));
+      setCopied({ name: source.name, sourceRows: Object.keys(rows).length });
+      setShowCopy(false);
+      toast.info(t("usersCopyLoaded", { name: source.name }));
+    } catch (e) {
+      toast.error(t("usersCopyFailed", { error: String(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }, [selected, database, users, copySourceKey, sessionId, original, toast, t]);
 
   const submitCreateUser = useCallback(async () => {
     const name = createName.trim();
@@ -638,6 +706,18 @@ export function UsersPanel({
                 </Heading>
                 <Flex gap="2">
                   <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+                    <Button
+                      type="button"
+                      disabled={readOnly || !database || users.length < 2}
+                      onClick={() => {
+                        setCopySourceKey("");
+                        setShowCopy((v) => !v);
+                      }}
+                    >
+                      {t("usersCopyPrivileges")}
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
                     <Button type="button" disabled={readOnly} onClick={() => setShowPassword((v) => !v)}>
                       {t("usersChangePassword")}
                     </Button>
@@ -655,8 +735,58 @@ export function UsersPanel({
                 </Flex>
               </Flex>
 
+              {showCopy && (
+                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
+                  <FieldLabel htmlFor="users-copy-source">{t("usersCopySourceLabel")}</FieldLabel>
+                  <Select
+                    id="users-copy-source"
+                    value={copySourceKey}
+                    onChange={(e) => setCopySourceKey(e.target.value)}
+                  >
+                    <option value="">{t("usersCopySourcePlaceholder")}</option>
+                    {users
+                      .filter((u) => userKey(u) !== userKey(selected))
+                      .map((u) => (
+                        <option key={userKey(u)} value={userKey(u)}>
+                          {u.name}
+                          {u.host ? `@${u.host}` : ""}
+                        </option>
+                      ))}
+                  </Select>
+                  <chakra.p margin={0} textStyle="caption">
+                    {t("usersCopyHint", { database: database ?? "" })}
+                  </chakra.p>
+                  {driver === "mysql" && (
+                    <chakra.p margin={0} textStyle="caption">
+                      {t("usersCopyMysqlNote")}
+                    </chakra.p>
+                  )}
+                  <Flex gap="2" justifyContent="flex-end">
+                    <Button type="button" onClick={() => setShowCopy(false)} disabled={busy}>
+                      {t("usersCopyCancel")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      disabled={busy || !copySourceKey}
+                      onClick={() => void copyPrivilegesFromSource()}
+                    >
+                      {t("usersCopySubmit")}
+                    </Button>
+                  </Flex>
+                </FormSection>
+              )}
+
+              {copied && (copied.sourceRows === 0 || copyRevokeCount > 0) && (
+                <Callout tone="warning" role="status" data-testid="users-copy-warning">
+                  {copied.sourceRows === 0
+                    ? t("usersCopyEmptySource", { name: copied.name, database: database ?? "" })
+                    : t("usersCopyRevokes", { count: copyRevokeCount })}
+                </Callout>
+              )}
+
               {showPassword && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "360px" }}>
+                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
                   <FieldLabel htmlFor="users-new-password">{t("usersPasswordLabel")}</FieldLabel>
                   <Input
                     id="users-new-password"

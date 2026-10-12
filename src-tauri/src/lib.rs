@@ -85,7 +85,9 @@ pub mod __test_api {
         DbConnectOptions, DriverKind, SslMode, WriteCapture, WriteKind,
     };
     pub use crate::error::AppError;
-    pub use crate::flight_recorder::undo::{build_undo_plan, UndoConflict, UndoPlan};
+    pub use crate::flight_recorder::undo::{
+        build_redo_plan, build_undo_plan, UndoConflict, UndoPlan,
+    };
     pub use crate::flight_recorder::{NewWriteCapture, WriteCaptureRecord, WriteCaptureSummary};
     pub use crate::plan_watch::{
         compare_plans, explain_prefix, explain_snapshot, ops_from_payload, plan_fingerprint,
@@ -691,6 +693,32 @@ pub mod __test_api {
         .await
     }
 
+    /// 記録つき書き込みの実行コア (`run_captured_write`) を、クエリタイムアウト付きで直接
+    /// 叩く (#1536)。永続化 (フライトレコーダーのストア) と履歴は経由しない。返り値は
+    /// `(rows_affected, capturable)`。タイムアウトすれば `AppError::Timeout`、その場合は
+    /// トランザクションがロールバックされ書き込みは残らない。
+    pub async fn run_captured_write_with_timeout(
+        state: &AppState,
+        session_id: &str,
+        sql: &str,
+        row_cap: usize,
+        timeout_secs: u64,
+    ) -> crate::error::Result<(u64, bool)> {
+        let session = state
+            .get(session_id)
+            .await
+            .ok_or_else(|| crate::error::AppError::SessionNotFound(session_id.to_string()))?;
+        let (result, capture) = crate::commands::query::run_captured_write(
+            session,
+            sql.to_string(),
+            None,
+            row_cap,
+            Some(timeout_secs),
+        )
+        .await?;
+        Ok((result.rows_affected, capture.capturable))
+    }
+
     /// Drives the `undo_flight_record` IPC command's core path without a
     /// Tauri runtime (#735).
     pub async fn undo_flight_record_via_command(
@@ -722,6 +750,23 @@ pub mod __test_api {
             conflicts: plan.conflicts,
             warnings: plan.warnings,
         })
+    }
+
+    /// Drives the `redo_flight_record` IPC command's core path without a
+    /// Tauri runtime (#1536).
+    pub async fn redo_flight_record_via_command(
+        state: &AppState,
+        session_id: &str,
+        id: i64,
+        force: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::redo_flight_record_inner(
+            state,
+            session_id.to_string(),
+            id,
+            force,
+        )
+        .await
     }
 
     /// Lists flight-recorder captures directly against the store, for tests
@@ -1335,6 +1380,8 @@ pub fn run() {
             commands::flight_recorder::clear_flight_records,
             commands::flight_recorder::preview_undo,
             commands::flight_recorder::undo_flight_record,
+            commands::flight_recorder::preview_redo,
+            commands::flight_recorder::redo_flight_record,
             commands::timelapse::timelapse_watch_table,
             commands::timelapse::timelapse_capture,
             commands::timelapse::timelapse_list_watches,

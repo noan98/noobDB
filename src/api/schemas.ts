@@ -1,3 +1,4 @@
+import { recordIpcValidationFailure } from "./ipcDiagnostics";
 import { z } from "zod";
 
 /**
@@ -1727,12 +1728,13 @@ export function parseResponse<T>(
       value,
     );
   }
-  const summary = result.error.issues
-    .map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-      return `${path}: ${issue.message}`;
-    })
-    .join("; ");
+  const issueLines = result.error.issues.map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+    return `${path}: ${issue.message}`;
+  });
+  const summary = issueLines.join("; ");
+  // 失敗経路だけ: 本番の利用者にもアクティビティ経由で原因を伝えられるよう記録する (#1536)。
+  recordIpcValidationFailure(command, issueLines);
   throw new Error(
     `IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`,
   );

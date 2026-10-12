@@ -4,6 +4,7 @@ import type { CellValue, Column } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import type { BulkEditTarget } from "./bulkEdit";
 import {
+  buildColumnReplaceCountSql,
   buildColumnReplaceSql,
   columnReplaceUnsupported,
   isTextColumnType,
@@ -14,6 +15,8 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { buildServerFilterClause, type ServerFilter } from "./serverBrowse";
 import { Button, Checkbox, Input, Radio } from "./ui";
+import { useCountPreviews } from "../useCountPreviews";
+import type { ValueLookup } from "./useValuePicker";
 
 /**
  * 結果グリッド列の「検索して置換」ダイアログ (#1242)。
@@ -42,6 +45,11 @@ interface Props {
   serverFilter?: ServerFilter | null;
   /** 列全体モードの実行ハンドラ。未指定なら列全体モードを出さない。 */
   onApplyColumn?: (sql: string) => void;
+  /**
+   * 読み取り専用の件数クエリ (`run_lookup_query` を束ねたもの)。渡されたときだけ、列全体モードで
+   * 「N 行が対象」を表示する (#1536)。read_only セッションでも使える読み取り専用の経路。
+   */
+  onLookupQuery?: ValueLookup;
   onApplyInGrid: (targets: BulkEditTarget[]) => void;
   onClose: () => void;
 }
@@ -60,6 +68,7 @@ export function GridReplaceModal({
   validateEdit,
   serverFilter,
   onApplyColumn,
+  onLookupQuery,
   onApplyInGrid,
   onClose,
 }: Props) {
@@ -111,6 +120,32 @@ export function GridReplaceModal({
       extraWhere: filterActive && serverFilter ? buildServerFilterClause(driver, serverFilter) : null,
     });
   }, [columnModeAvailable, col, table, database, driver, find, replace, options, filterActive, serverFilter]);
+
+  // 列全体モードの対象行数 (#1536)。UPDATE と同じ WHERE 句の COUNT(*) を、入力変更のたびに
+  // デバウンスして 1 本だけ発行する。入力が確定しない (検索語が空・非対応・テキスト列でない) 間は撃たない。
+  const countSql = useMemo(() => {
+    if (!columnModeAvailable || !col || !table || database === null) return null;
+    const built = buildColumnReplaceCountSql({
+      driver,
+      database,
+      table,
+      column: col.name,
+      find,
+      replace,
+      options,
+      extraWhere: filterActive && serverFilter ? buildServerFilterClause(driver, serverFilter) : null,
+    });
+    return built.ok ? built.sql : null;
+  }, [columnModeAvailable, col, table, database, driver, find, replace, options, filterActive, serverFilter]);
+  const runCount = useMemo(
+    () =>
+      onLookupQuery
+        ? (sql: string) => onLookupQuery(sql, 1)
+        : null,
+    [onLookupQuery],
+  );
+  const countItems = useMemo(() => (countSql ? [{ id: "target", sql: countSql }] : []), [countSql]);
+  const countState = useCountPreviews(runCount, countItems, mode === "column" && textColumn).target;
 
   const canApply =
     mode === "grid"
@@ -243,6 +278,21 @@ export function GridReplaceModal({
                 {columnSql?.ok ? columnSql.sql : t("gridReplacePreviewEmpty")}
               </CodePreview>
             </FormSection>
+            {countSql && runCount && textColumn && (
+              <Callout
+                tone={countState?.status === "ok" && countState.count > 0 ? "info" : "warning"}
+                role="status"
+                data-testid="grid-replace-count"
+              >
+                {countState?.status === "ok"
+                  ? t(countState.count > 0 ? "gridReplaceColumnCount" : "gridReplaceColumnCountZero", {
+                      count: countState.count.toLocaleString(),
+                    })
+                  : countState?.status === "error"
+                    ? t("gridReplaceColumnCountError", { error: countState.error })
+                    : t("gridReplaceColumnCountRunning")}
+              </Callout>
+            )}
             <Callout tone="warning" role="status">
               {t("gridReplaceColumnWarning")}
             </Callout>
