@@ -183,9 +183,9 @@ pub fn changes_default_namespace(driver: DriverKind, sql: &str) -> bool {
     match lex(driver, sql) {
         Some(toks) => match toks.first() {
             Some(t) if t.is_kw("use") => true,
-            Some(t) if t.is_kw("set") => toks[1..].iter().any(|t| {
-                t.is_kw("search_path") || t.is_kw("schema") || t.is_kw("current_schema")
-            }),
+            Some(t) if t.is_kw("set") => toks[1..]
+                .iter()
+                .any(|t| t.is_kw("search_path") || t.is_kw("schema") || t.is_kw("current_schema")),
             _ => false,
         },
         None => {
@@ -268,7 +268,10 @@ mod tests {
         assert_eq!(t(Postgres, "ALTER TABLE a DROP COLUMN x CASCADE"), None);
         assert!(changes_default_namespace(Mysql, "USE other"));
         assert!(changes_default_namespace(Postgres, "SET search_path TO s2"));
-        assert!(changes_default_namespace(Postgres, "set local search_path = s2, public"));
+        assert!(changes_default_namespace(
+            Postgres,
+            "set local search_path = s2, public"
+        ));
         assert!(changes_default_namespace(Postgres, "SET SCHEMA 's2'"));
         assert!(!changes_default_namespace(Postgres, "SELECT 1"));
         assert!(!changes_default_namespace(Mysql, "ALTER TABLE a ADD c INT"));

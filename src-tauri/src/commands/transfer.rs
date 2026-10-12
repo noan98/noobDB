@@ -480,10 +480,7 @@ async fn resolve_conflict(
     target
         .conn
         .check_upsert_keys(
-            request
-                .target_database
-                .as_deref()
-                .filter(|d| !d.is_empty()),
+            request.target_database.as_deref().filter(|d| !d.is_empty()),
             request.target_table.trim(),
             &names,
             &conflict,

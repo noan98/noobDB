@@ -823,8 +823,7 @@ pub async fn run_table_overview(
                     match conn.execute(&sql, None).await {
                         Ok(res) => {
                             let row = res.rows.into_iter().next().unwrap_or_default();
-                            let (t, mut part) =
-                                read_overview_row(&row, std::slice::from_ref(one));
+                            let (t, mut part) = read_overview_row(&row, std::slice::from_ref(one));
                             total.get_or_insert(t);
                             mark_skipped(&mut part, std::slice::from_ref(one), include_distinct);
                             columns.extend(part);

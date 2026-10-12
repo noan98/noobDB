@@ -906,7 +906,11 @@ mod tests {
         );
         // 長さはバイト数で数え、UTF-8 の文字境界で切る (3 バイト文字 40 個 = 120 バイト)。
         let jp = blob_file_stem(&[key("id", Value::String("あ".repeat(40)))], 1);
-        assert!(jp.len() <= 100 && jp.chars().all(|c| c == 'あ'), "{}", jp.len());
+        assert!(
+            jp.len() <= 100 && jp.chars().all(|c| c == 'あ'),
+            "{}",
+            jp.len()
+        );
         assert_eq!(jp.len(), 99);
     }
 

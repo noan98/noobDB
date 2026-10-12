@@ -249,7 +249,9 @@ pub(crate) async fn invalidate_schema_cache_for(
     let mut any_ddl = false;
     // 同じバッチに既定の DB / スキーマを切り替える文 (`USE`・`SET search_path` など) が
     // あると、非修飾の表名が指す先が変わるので表単位では判断できない。
-    if statements.iter().any(|s| crate::db::sql_may_change_schema(driver, s))
+    if statements
+        .iter()
+        .any(|s| crate::db::sql_may_change_schema(driver, s))
         && statements
             .iter()
             .any(|s| crate::db::schema_scope::changes_default_namespace(driver, s))

@@ -327,12 +327,28 @@ async fn verify_one_sided(
         .map(|r| &r.key)
         .collect();
     if !target_only.is_empty()
-        && any_key_exists(source.0, source.1, table, primary_key, pk_types, &target_only).await?
+        && any_key_exists(
+            source.0,
+            source.1,
+            table,
+            primary_key,
+            pk_types,
+            &target_only,
+        )
+        .await?
     {
         return Err(collation_mismatch_error());
     }
     if !source_only.is_empty()
-        && any_key_exists(target.0, target.1, table, primary_key, pk_types, &source_only).await?
+        && any_key_exists(
+            target.0,
+            target.1,
+            table,
+            primary_key,
+            pk_types,
+            &source_only,
+        )
+        .await?
     {
         return Err(collation_mismatch_error());
     }
@@ -469,13 +485,8 @@ async fn keyset_compare(
 
         out.source_count += src_page.len();
         out.target_count += tgt_window.len();
-        let window_rows = compute_data_diff_ignoring(
-            columns,
-            pk_idx,
-            &src_page,
-            &tgt_window,
-            ignore_columns,
-        );
+        let window_rows =
+            compute_data_diff_ignoring(columns, pk_idx, &src_page, &tgt_window, ignore_columns);
         verify_one_sided(
             (source, source_db),
             (target, target_db),
@@ -1191,7 +1202,17 @@ mod keyset_tests {
         for (a, b) in [(&src, &tgt), (&tgt, &src)] {
             for page in [1usize, 100] {
                 let err = keyset_compare(
-                    a, "main", b, "main", "t", &columns, &types, &pk, &[0], &[], page,
+                    a,
+                    "main",
+                    b,
+                    "main",
+                    "t",
+                    &columns,
+                    &types,
+                    &pk,
+                    &[0],
+                    &[],
+                    page,
                 )
                 .await
                 .unwrap_err();
