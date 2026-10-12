@@ -763,6 +763,8 @@ fn build_fixtures() -> serde_json::Value {
                 elapsed_ms: Some(2),
                 error: None,
                 server_messages: vec![],
+                truncated: true,
+                total_rows: Some(10_000),
             },
             BatchStatementResult {
                 sql: "DELETE FROM t".into(),
@@ -773,6 +775,8 @@ fn build_fixtures() -> serde_json::Value {
                 elapsed_ms: None,
                 error: Some("boom".into()),
                 server_messages: vec![],
+                truncated: false,
+                total_rows: None,
             },
         ],
     };
@@ -1018,6 +1022,8 @@ fn build_fixtures() -> serde_json::Value {
                 elapsed_ms: None,
                 error: None,
                 server_messages: vec![],
+                truncated: false,
+                total_rows: None,
             })
             .collect(),
     }];

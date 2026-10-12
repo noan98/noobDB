@@ -1804,6 +1804,8 @@ const en = {
   batchSkipped: "skipped",
   batchError: "error",
   batchRows: "{rows} rows",
+  batchRowsTruncated: "First {shown} rows only (more rows exist)",
+  batchRowsTruncatedOfTotal: "First {shown} rows / {total} total",
   batchAffected: "{rows} affected",
 
   dumpTitle: "Dump database \"{database}\"",
@@ -6394,6 +6396,8 @@ const ja: Dict = {
   batchSkipped: "スキップ",
   batchError: "エラー",
   batchRows: "{rows} 行",
+  batchRowsTruncated: "先頭 {shown} 行のみ (さらに行があります)",
+  batchRowsTruncatedOfTotal: "先頭 {shown} 行 / 全 {total} 行",
   batchAffected: "{rows} 行に影響",
 
   dumpTitle: "データベース「{database}」のダンプ",

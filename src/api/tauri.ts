@@ -1900,6 +1900,10 @@ export interface BatchStreamStatementResult {
   elapsedMs?: number;
   error?: string;
   serverMessages?: ServerMessage[];
+  /** `rows` がプレビュー上限で切り詰められている (まだ続きの行がある、#1534)。 */
+  truncated?: boolean;
+  /** 結果セットの総行数。取得を途中で打ち切ったときは数えていないので省略される。 */
+  totalRows?: number;
 }
 
 export interface BatchStreamStartedMessage {

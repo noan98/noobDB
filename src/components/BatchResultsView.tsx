@@ -91,7 +91,7 @@ function StatementCard({
             : result.status === "error"
               ? t("batchError")
               : result.columns
-                ? t("batchRows", { rows: result.rows?.length ?? 0 })
+                ? batchRowsLabel(result, t)
                 : t("batchAffected", { rows: result.rowsAffected ?? 0 })}
           {result.elapsedMs != null ? ` · ${result.elapsedMs}ms` : ""}
         </chakra.span>
@@ -108,6 +108,16 @@ function StatementCard({
       )}
     </chakra.div>
   );
+}
+
+/** SELECT の件数表示。プレビュー上限で切り詰めたときは「先頭 N 行 / 全 M 行」(総数が分かる
+ *  場合) か「先頭 N 行のみ」と注記して、全件に見えないようにする (#1534)。 */
+function batchRowsLabel(result: BatchStatementResult, t: ReturnType<typeof useT>): string {
+  const shown = result.rows?.length ?? 0;
+  if (!result.truncated) return t("batchRows", { rows: shown });
+  return result.totalRows != null
+    ? t("batchRowsTruncatedOfTotal", { shown, total: result.totalRows.toLocaleString() })
+    : t("batchRowsTruncated", { shown });
 }
 
 function MiniTable({ columns, rows }: { columns: string[]; rows: CellValue[][] }) {

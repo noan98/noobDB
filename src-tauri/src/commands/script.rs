@@ -462,6 +462,21 @@ pub struct BatchStatementResult {
     /// サーバの通知・警告 (#1165)。出力ログ用で、空なら省略する。
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub server_messages: Vec<ServerMessage>,
+    /// `rows` がプレビュー上限で切り詰められている (結果にはまだ続きの行がある、#1534)。
+    /// 切り詰めていなければ省略する。
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// 結果セットの総行数。取得を途中で打ち切った場合は数えていないので省略する
+    /// (`truncated` が true で `total_rows` が無ければ「先頭 N 行のみ・総数は不明」)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_rows: Option<u64>,
+}
+
+/// SELECT の結果をプレビュー上限で切ったかどうか (#1534)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PreviewCut {
+    truncated: bool,
+    total_rows: Option<u64>,
 }
 
 impl BatchStatementResult {
@@ -478,7 +493,18 @@ impl BatchStatementResult {
             elapsed_ms: Some(r.elapsed_ms),
             error: None,
             server_messages: r.server_messages.clone(),
+            truncated: false,
+            total_rows: None,
         }
+    }
+
+    /// SELECT のプレビュー切り詰め情報を載せる (#1534)。
+    fn with_cut(mut self, cut: Option<PreviewCut>) -> Self {
+        if let Some(cut) = cut {
+            self.truncated = cut.truncated;
+            self.total_rows = cut.total_rows;
+        }
+        self
     }
 
     fn error(sql: String, error: String) -> Self {
@@ -491,6 +517,8 @@ impl BatchStatementResult {
             elapsed_ms: None,
             error: Some(error),
             server_messages: Vec::new(),
+            truncated: false,
+            total_rows: None,
         }
     }
 
@@ -504,6 +532,8 @@ impl BatchStatementResult {
             elapsed_ms: None,
             error: None,
             server_messages: Vec::new(),
+            truncated: false,
+            total_rows: None,
         }
     }
 }
@@ -529,31 +559,34 @@ struct BatchState {
 const PREVIEW_CAP_MARKER: &str = "batch preview row cap reached";
 
 /// `sql` を実行し、結果行を `limit` 件までで打ち切る。SELECT 系は `execute_stream` の
-/// `on_batch` で `limit` 件に達した時点で取得を止める (残りの行は読まない)。書き込み系は
-/// 通常どおり影響行数を返す。
+/// `on_batch` で `limit` 件を超える行が見えた時点で取得を止める (残りの行は読まない)。
+/// 書き込み系は通常どおり影響行数を返す (切り詰め情報は `None`)。
+///
+/// 切り詰めの有無を正しく言えるよう、1 バッチを `limit + 1` 件にして「`limit` 件を超える行が
+/// ある」ことを確かめる。打ち切った場合は総行数を数えていないので `total_rows` は `None`。
 async fn execute_preview(
     conn: &Connection,
     sql: &str,
     database: Option<&str>,
     limit: usize,
-) -> Result<QueryResult> {
+) -> Result<(QueryResult, Option<PreviewCut>)> {
     let limit = limit.max(1);
     let started = Instant::now();
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let mut columns: Vec<Column> = Vec::new();
     let mut capped = false;
     let res = conn
-        .execute_stream(sql, database, limit, limit, |batch| match batch {
+        .execute_stream(sql, database, limit + 1, limit + 1, |batch| match batch {
             StreamBatch::Columns(c) => {
                 columns = c;
                 Ok(())
             }
             StreamBatch::Rows(mut r) => {
                 let room = limit.saturating_sub(rows.len());
-                let reached = r.len() >= room;
+                let more = r.len() > room;
                 r.truncate(room);
                 rows.append(&mut r);
-                if reached {
+                if more {
                     capped = true;
                     Err(AppError::Other(PREVIEW_CAP_MARKER.into()))
                 } else {
@@ -564,18 +597,29 @@ async fn execute_preview(
         .await;
     match res {
         Ok(mut r) => {
+            let is_query = !r.columns.is_empty() || !rows.is_empty();
             r.rows = rows;
-            Ok(r)
+            let cut = is_query.then(|| PreviewCut {
+                truncated: false,
+                total_rows: Some(r.rows.len() as u64),
+            });
+            Ok((r, cut))
         }
         Err(AppError::Other(m)) if capped && m == PREVIEW_CAP_MARKER => {
             let n = rows.len() as u64;
-            Ok(QueryResult {
-                columns,
-                rows,
-                rows_affected: n,
-                elapsed_ms: started.elapsed().as_millis() as u64,
-                server_messages: Vec::new(),
-            })
+            Ok((
+                QueryResult {
+                    columns,
+                    rows,
+                    rows_affected: n,
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                    server_messages: Vec::new(),
+                },
+                Some(PreviewCut {
+                    truncated: true,
+                    total_rows: None,
+                }),
+            ))
         }
         Err(e) => Err(e),
     }
@@ -749,36 +793,48 @@ impl Runner {
         if let Err(e) = ensure_allowed_for_session(&self.session, &stmt.sql) {
             return self.on_failure(&stmt, e).await;
         }
-        let result = if let Some(preview_rows) = self.batch.as_ref().map(|b| b.preview_rows) {
-            if self.guard.active || external_tx {
-                // トランザクション経路は結果を全件受け取ってから切り詰める。
+        let result: Result<(QueryResult, Option<PreviewCut>)> =
+            if let Some(preview_rows) = self.batch.as_ref().map(|b| b.preview_rows) {
+                if self.guard.active || external_tx {
+                    // トランザクション経路は結果を全件受け取ってから切り詰める (総行数が分かる)。
+                    self.session
+                        .conn
+                        .execute_in_transaction(&stmt.sql)
+                        .await
+                        .map(|mut r| {
+                            let total = r.rows.len();
+                            let is_query = !r.columns.is_empty();
+                            r.rows.truncate(preview_rows);
+                            let cut = is_query.then(|| PreviewCut {
+                                truncated: total > preview_rows,
+                                total_rows: Some(total as u64),
+                            });
+                            (r, cut)
+                        })
+                } else {
+                    execute_preview(
+                        &self.session.conn,
+                        &stmt.sql,
+                        self.database.as_deref(),
+                        preview_rows,
+                    )
+                    .await
+                }
+            } else if self.guard.active {
                 self.session
                     .conn
                     .execute_in_transaction(&stmt.sql)
                     .await
-                    .map(|mut r| {
-                        r.rows.truncate(preview_rows);
-                        r
-                    })
+                    .map(|r| (r, None))
             } else {
-                execute_preview(
-                    &self.session.conn,
-                    &stmt.sql,
-                    self.database.as_deref(),
-                    preview_rows,
-                )
-                .await
-            }
-        } else if self.guard.active {
-            self.session.conn.execute_in_transaction(&stmt.sql).await
-        } else {
-            self.session
-                .conn
-                .execute(&stmt.sql, self.database.as_deref())
-                .await
-        };
+                self.session
+                    .conn
+                    .execute(&stmt.sql, self.database.as_deref())
+                    .await
+                    .map(|r| (r, None))
+            };
         match result {
-            Ok(r) => {
+            Ok((r, cut)) => {
                 self.succeeded += 1;
                 self.rows_affected = self.rows_affected.saturating_add(r.rows_affected);
                 if !crate::db::is_read_only_sql_for(self.driver, &stmt.sql) {
@@ -791,7 +847,7 @@ impl Runner {
                     self.database = Some(db);
                 }
                 if self.batch.is_some() {
-                    self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r));
+                    self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r).with_cut(cut));
                 }
                 if self.guard.active {
                     self.pending_in_tx += 1;

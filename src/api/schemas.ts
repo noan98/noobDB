@@ -1184,6 +1184,10 @@ export const batchStatementResult = z.object({
   elapsedMs: z.number().optional(),
   error: z.string().optional(),
   serverMessages: z.array(serverMessage).optional(),
+  /** `rows` がプレビュー上限で切り詰められている (#1534)。切り詰めが無ければ省略。 */
+  truncated: z.boolean().optional(),
+  /** 結果セットの総行数。取得を途中で打ち切ったときは数えていないので省略 (#1534)。 */
+  totalRows: z.number().optional(),
 });
 
 export const batchStreamStartedMessage = z.object({

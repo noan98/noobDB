@@ -279,7 +279,9 @@
           ]
         ],
         "sql": "SELECT 1",
-        "status": "ok"
+        "status": "ok",
+        "totalRows": 10000,
+        "truncated": true
       },
       {
         "error": "boom",
