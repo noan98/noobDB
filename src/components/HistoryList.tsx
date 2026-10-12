@@ -25,6 +25,9 @@ import { useKeyedCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import {
+  applyHistorySpeedFilter,
+  HISTORY_SPEED_FILTERS,
+  HistorySpeedFilter,
   HISTORY_PERIOD_FILTERS,
   HISTORY_STATUS_FILTERS,
   historyPeriodRange,
@@ -83,6 +86,12 @@ const PERIOD_FILTER_LABEL_KEYS: Record<HistoryPeriodFilter, I18nKey> = {
   all: "historyPeriodFilterAll",
   today: "historyPeriodFilterToday",
   "7d": "historyPeriodFilterWeek",
+};
+
+const SPEED_FILTER_LABEL_KEYS: Record<HistorySpeedFilter, I18nKey> = {
+  recent: "historySpeedFilterRecent",
+  slowest: "historySpeedFilterSlowest",
+  slow: "historySpeedFilterSlow",
 };
 
 interface Props {
@@ -297,6 +306,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   const [showAll, setShowAll] = useState(false);
   const [statusFilter, setStatusFilter] = useState<HistoryStatusFilter>("all");
   const [periodFilter, setPeriodFilter] = useState<HistoryPeriodFilter>("all");
+  const [speedFilter, setSpeedFilter] = useState<HistorySpeedFilter>("recent");
   const [aiSearchOpen, setAiSearchOpen] = useState(false);
   const aiAvailable = useAiAvailable();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
@@ -353,7 +363,10 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
   // timer) don't recompute `now` and spuriously re-trigger the fetch effect
   // below with a millisecond-shifted `from` bound.
   const { from, to } = useMemo(() => historyPeriodRange(periodFilter), [periodFilter]);
-  const hasActiveFilter = Boolean(debounced) || statusFilter !== "all" || periodFilter !== "all";
+  const hasActiveFilter =
+    Boolean(debounced) || statusFilter !== "all" || periodFilter !== "all" || speedFilter === "slow";
+  // 実行時間の並べ替え / 絞り込み (#1541) は取得済みの行へクライアント側で掛ける。
+  const shownEntries = useMemo(() => applyHistorySpeedFilter(entries, speedFilter), [entries, speedFilter]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
@@ -446,6 +459,18 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
             </FilterSegmentButton>
           ))}
         </FilterSegment>
+        <FilterSegment role="group" aria-label={t("historySpeedFilterLabel")}>
+          {HISTORY_SPEED_FILTERS.map((m) => (
+            <FilterSegmentButton
+              key={m}
+              type="button"
+              aria-pressed={speedFilter === m}
+              onClick={() => setSpeedFilter(m)}
+            >
+              {t(SPEED_FILTER_LABEL_KEYS[m])}
+            </FilterSegmentButton>
+          ))}
+        </FilterSegment>
         {aiAvailable && (
           <Tooltip label={t("aiHistoryToggleHint")}>
             <PressableButton
@@ -487,8 +512,8 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
 
       {error ? (
         <chakra.p color="app.textError" p="3">{error}</chakra.p>
-      ) : entries.length === 0 ? (
-        hasActiveFilter ? (
+      ) : shownEntries.length === 0 ? (
+        hasActiveFilter || entries.length > 0 ? (
           <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
         ) : (
           <EmptyState
@@ -505,7 +530,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
               なるため、ここは「控えめ」方針に従い、マウント時の
               opacity フェードイン (enter のみ・height 補間なし) に留める。新しい
               クエリ実行で先頭に積まれた項目が軽く出現し、削除は即時。 */}
-          {entries.map((h, i) => (
+          {shownEntries.map((h, i) => (
             <HistoryRow
               key={h.id}
               h={h}
