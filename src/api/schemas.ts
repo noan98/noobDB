@@ -309,6 +309,25 @@ export const columnProfile = z.object({
   notes: z.array(z.string()),
 });
 
+/** 全列の概要 (#1539)。 */
+export const tableProfileOverview = z.object({
+  table: z.string(),
+  total_count: z.union([z.number(), z.string()]),
+  columns: z.array(
+    z.object({
+      column: z.string(),
+      data_type: z.string(),
+      non_null_count: z.union([z.number(), z.string()]),
+      null_count: z.union([z.number(), z.string()]),
+      distinct_count: z.union([z.number(), z.string()]).nullable(),
+      min_value: cellValue,
+      max_value: cellValue,
+      notes: z.array(z.string()),
+    }),
+  ),
+  scans: z.number(),
+});
+
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
@@ -930,6 +949,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const schemaCacheTimeArray = z.array(schemaCacheTime);
 export const tableCommentArray = z.array(tableComment);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
@@ -949,7 +969,6 @@ export const historyEntryArray = z.array(historyEntry);
 // `PreviewStreamMessage` 参照)。チャンネル自体がそのストリームにスコープされる
 // ため、個々のメッセージに `streamId` は乗らない — 旧 `query-stream:*` /
 // `preview-stream:*` イベント (下の CSV インポート/エクスポート/ダンプ系イベント
-export const schemaCacheTimeArray = z.array(schemaCacheTime);
 // と同じ形) では全メッセージが `streamId` を重複して運んでいた分の payload を
 // 削減している。CSV インポート/エクスポート/ダンプは従来どおり名前付きイベント
 // のまま (下のセクション参照)。

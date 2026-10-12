@@ -2430,3 +2430,51 @@ async fn postgres_columns_report_generated_columns_in_extra() {
         .expect("cleanup");
     conn.close().await;
 }
+
+/// 全列の概要 (#1539)。json / jsonb / bytea を含む表でも 1 本の SELECT で取れ、
+/// 型の都合で MIN/MAX を外した列に理由コードが付くこと。
+#[tokio::test]
+async fn postgres_table_overview_single_scan() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_overview", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_overview (id INT PRIMARY KEY, score DOUBLE PRECISION, \
+         tag TEXT, j JSON, jb JSONB, b BYTEA)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO public.noobdb_pg_overview VALUES \
+         (1, 1.5, 'a', '{\"k\":1}', '{\"k\":1}', '\\x01'), (2, 2.5, 'a', NULL, NULL, NULL), \
+         (3, NULL, NULL, NULL, NULL, NULL)",
+        None,
+    )
+    .await
+    .expect("insert");
+    let o = conn
+        .table_profile("public", "noobdb_pg_overview", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1);
+    assert_eq!(o.total_count, t::Value::UInt(3));
+    assert_eq!(o.columns.len(), 6);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    assert_eq!(by("score").null_count, t::Value::UInt(1));
+    assert_eq!(by("tag").distinct_count, Some(t::Value::UInt(1)));
+    assert_eq!(by("j").non_null_count, t::Value::UInt(1));
+    assert!(
+        !by("j").notes.is_empty(),
+        "json は MIN/MAX を外した理由が付く"
+    );
+    conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_overview", None)
+        .await
+        .expect("cleanup");
+}

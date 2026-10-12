@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
-import { api, type ColumnProfile, type ProfileCount, type TableColumnInfo } from "../api/tauri";
+import {
+  api,
+  type ColumnProfile,
+  type ProfileCount,
+  type TableColumnInfo,
+  type TableProfileOverview,
+} from "../api/tauri";
 import { useT } from "../i18n";
 import { chartSeriesColors } from "./chartData";
 import { CartesianChart } from "./ChartView";
@@ -101,6 +107,11 @@ export function ColumnProfilePanel({
   const [error, setError] = useState<string | null>(null);
   // 連続して列を切り替えたとき、遅れて返った古い結果で上書きしない。
   const requestSeq = useRef(0);
+  // 全列の概要 (#1539)。全件走査になるので自動実行せず、ボタンで明示的に取る。
+  const [overview, setOverview] = useState<TableProfileOverview | null>(null);
+  const [overviewRunning, setOverviewRunning] = useState(false);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const overviewSeq = useRef(0);
   // 自動実行の debounce タイマー (手動実行で取り消せるよう ref に持つ)。
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -122,6 +133,32 @@ export function ColumnProfilePanel({
       cancelled = true;
     };
   }, [sessionId, database, table]);
+
+  // 対象の表が変わったら前の表の概要は捨てる。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 依存は「表が変わった」ことの検知にだけ使う
+  useEffect(() => {
+    overviewSeq.current++;
+    setOverview(null);
+    setOverviewError(null);
+    setOverviewRunning(false);
+  }, [sessionId, database, table]);
+
+  const runOverview = async () => {
+    const seq = ++overviewSeq.current;
+    setOverviewRunning(true);
+    setOverviewError(null);
+    try {
+      const o = await api.profileTable(sessionId, database, table, true);
+      if (seq === overviewSeq.current) setOverview(o);
+    } catch (e) {
+      if (seq === overviewSeq.current) {
+        setOverview(null);
+        setOverviewError(String(e));
+      }
+    } finally {
+      if (seq === overviewSeq.current) setOverviewRunning(false);
+    }
+  };
 
   const run = useCallback(async () => {
     if (!column) return;
@@ -228,6 +265,20 @@ export function ColumnProfilePanel({
           <Icon name="refresh" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">{profile ? t("profileRerun") : t("profileRun")}</chakra.span>
         </Button>
+        <Tooltip label={t("profileOverviewHint")}>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void runOverview()}
+            disabled={overviewRunning}
+          >
+            <Icon name="columns" size={ICON_SIZES.sm} />
+            <chakra.span marginLeft="1.5">
+              {overview ? t("profileOverviewRerun") : t("profileOverviewRun")}
+            </chakra.span>
+          </Button>
+        </Tooltip>
         {running && (
           <Flex align="center" gap="2">
             <Spinner size={14} />
@@ -237,6 +288,110 @@ export function ColumnProfilePanel({
           </Flex>
         )}
       </Flex>
+
+      {overviewError && (
+        <ErrorNote role="alert">{t("profileOverviewError", { error: overviewError })}</ErrorNote>
+      )}
+      {overviewRunning && (
+        <Flex align="center" gap="2">
+          <Spinner size={14} />
+          <chakra.span fontSize="sm" color="app.textMuted">
+            {t("profileOverviewRunning")}
+          </chakra.span>
+        </Flex>
+      )}
+      {overview && !overviewRunning && (
+        <Box data-testid="profile-overview" maxH="260px" overflow="auto" flexShrink={0}>
+          <chakra.div textStyle="caption" color="app.textMuted" marginBottom="1">
+            {t("profileOverviewSummary", {
+              rows: formatProfileCount(overview.total_count),
+              columns: overview.columns.length,
+              scans: overview.scans,
+            })}
+          </chakra.div>
+          <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+            <chakra.thead>
+              <chakra.tr>
+                <chakra.th css={thCss}>{t("profileColumnLabel")}</chakra.th>
+                <chakra.th css={thCss}>{t("profileType")}</chakra.th>
+                <chakra.th css={thCss} textAlign="right">{t("profileOverviewNonNull")}</chakra.th>
+                <chakra.th css={thCss} textAlign="right">{t("profileNulls")}</chakra.th>
+                <chakra.th css={thCss} textAlign="right">{t("profileDistinct")}</chakra.th>
+                <chakra.th css={thCss}>{t("profileMin")}</chakra.th>
+                <chakra.th css={thCss}>{t("profileMax")}</chakra.th>
+              </chakra.tr>
+            </chakra.thead>
+            <chakra.tbody>
+              {overview.columns.map((c) => {
+                const skipped = c.notes.length > 0;
+                return (
+                  <chakra.tr
+                    key={c.column}
+                    css={{ background: c.column === column ? "var(--bg-muted)" : undefined }}
+                  >
+                    <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                      <chakra.button
+                        type="button"
+                        onClick={() => onSelectColumn(c.column)}
+                        aria-label={t("profileOverviewSelect", { column: c.column })}
+                        textAlign="left"
+                        color="app.textAccent"
+                        cursor="pointer"
+                        background="transparent"
+                        border="none"
+                        padding="0"
+                        _hover={{ textDecoration: "underline" }}
+                      >
+                        {c.column}
+                      </chakra.button>
+                    </chakra.td>
+                    <chakra.td css={tdCss} color="app.textMuted">{c.data_type}</chakra.td>
+                    <chakra.td css={tdCss} textAlign="right" fontFamily="var(--font-mono)">
+                      {formatProfileCount(c.non_null_count)}
+                    </chakra.td>
+                    <chakra.td css={tdCss} textAlign="right" fontFamily="var(--font-mono)">
+                      {formatPercent(profilePercent(c.null_count, overview.total_count))}
+                    </chakra.td>
+                    <chakra.td css={tdCss} textAlign="right" fontFamily="var(--font-mono)">
+                      {c.distinct_count === null ? "—" : formatProfileCount(c.distinct_count)}
+                    </chakra.td>
+                    <chakra.td
+                      css={tdCss}
+                      fontFamily="var(--font-mono)"
+                      maxW="160px"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {skipped ? (
+                        <Tooltip label={c.notes.map((n) => t(profileNoteKey(n))).join(" ")}>
+                          <chakra.span color="app.textMuted">{t("profileOverviewSkippedMark")}</chakra.span>
+                        </Tooltip>
+                      ) : (
+                        (profileValueLabel(c.min_value) ?? "NULL")
+                      )}
+                    </chakra.td>
+                    <chakra.td
+                      css={tdCss}
+                      fontFamily="var(--font-mono)"
+                      maxW="160px"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {skipped ? (
+                        <chakra.span color="app.textMuted">{t("profileOverviewSkippedMark")}</chakra.span>
+                      ) : (
+                        (profileValueLabel(c.max_value) ?? "NULL")
+                      )}
+                    </chakra.td>
+                  </chakra.tr>
+                );
+              })}
+            </chakra.tbody>
+          </chakra.table>
+        </Box>
+      )}
 
       {columnsError && (
         <ErrorNote role="alert">{t("profileLoadColumnsError", { error: columnsError })}</ErrorNote>

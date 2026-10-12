@@ -2895,3 +2895,54 @@ async fn mysql_metadata_lock_reader_behind_pending_alter_waits_on_the_alter() {
         .expect("cleanup");
     admin.close().await;
 }
+
+/// 全列の概要 (#1539)。BLOB / JSON を含む表でも 1 本の SELECT で取れ、
+/// 型の都合で MIN/MAX を外した列に理由コードが付くこと。
+#[tokio::test]
+async fn mysql_table_overview_single_scan() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in URL");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_overview", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_overview (id INT PRIMARY KEY, score DOUBLE, tag VARCHAR(10), \
+         j JSON, b BLOB)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO noobdb_my_overview VALUES \
+         (1, 1.5, 'a', '{\"k\":1}', X'01'), (2, 2.5, 'a', NULL, NULL), (3, NULL, NULL, NULL, NULL)",
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    let o = conn
+        .table_profile(&db, "noobdb_my_overview", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1);
+    assert_eq!(o.total_count, t::Value::UInt(3));
+    assert_eq!(o.columns.len(), 5);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    assert_eq!(by("score").null_count, t::Value::UInt(1));
+    assert_eq!(by("tag").distinct_count, Some(t::Value::UInt(1)));
+    assert_eq!(by("b").non_null_count, t::Value::UInt(1));
+    assert!(
+        !by("b").notes.is_empty(),
+        "BLOB は MIN/MAX を外した理由が付く"
+    );
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_overview", Some(&db))
+        .await
+        .expect("cleanup");
+}

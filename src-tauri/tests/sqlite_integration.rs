@@ -3089,6 +3089,71 @@ async fn sqlite_profile_column_via_command_layer() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 表の全列の概要 (#1539)。全列の件数 / NULL 数 / DISTINCT / MIN・MAX が 1 回の走査で
+/// 揃うこと (scans == 1)、read_only でも動くこと、存在しない表を弾くことを固定する。
+#[tokio::test]
+async fn sqlite_profile_table_overview_single_scan() {
+    let path = temp_cmd_db("profile_overview");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE ov_t (id INTEGER PRIMARY KEY, score REAL, tag TEXT, blobby BLOB)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO ov_t (score, tag, blobby) VALUES \
+         (1.0, 'a', x'01'), (2.0, 'a', NULL), (2.0, 'b', NULL), (NULL, NULL, NULL)",
+        None,
+    )
+    .await
+    .expect("insert");
+    let session = t::make_session("ov", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let o = t::profile_table_inner(&state, &sid, "main", "ov_t", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1, "全列が 1 本の SELECT で取れること");
+    assert_eq!(o.total_count, t::Value::UInt(4));
+    assert_eq!(o.columns.len(), 4);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    let score = by("score");
+    assert_eq!(score.non_null_count, t::Value::UInt(3));
+    assert_eq!(score.null_count, t::Value::UInt(1));
+    assert_eq!(score.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&score.min_value), "1");
+    assert_eq!(cell_text(&score.max_value), "2");
+    let tag = by("tag");
+    assert_eq!(tag.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&tag.min_value), "a");
+    assert_eq!(cell_text(&tag.max_value), "b");
+    let id = by("id");
+    assert_eq!(id.distinct_count, Some(t::Value::UInt(4)));
+
+    // DISTINCT を求めない指定。
+    let no_distinct = t::profile_table_inner(&state, &sid, "main", "ov_t", false)
+        .await
+        .expect("overview without distinct");
+    assert!(no_distinct
+        .columns
+        .iter()
+        .all(|c| c.distinct_count.is_none()));
+
+    assert!(
+        t::profile_table_inner(&state, &sid, "main", "no_such_table", true)
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        t::profile_table_inner(&state, "nope", "main", "ov_t", true).await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
+    let _ = std::fs::remove_file(&path);
+}
+
 /// セル値をテスト比較用の文字列へ (64bit 整数は安全整数を超えると lossless
 /// デコードで文字列になるため、Int / String の両方を同じ表記に揃える)。
 fn cell_text(v: &t::Value) -> String {

@@ -1047,6 +1047,26 @@ export interface ColumnProfile {
   notes: string[];
 }
 
+/** 全列の概要の 1 列分 (#1539)。`distinct_count` が null なら求めていない / 求められなかった。 */
+export interface ColumnOverview {
+  column: string;
+  data_type: string;
+  non_null_count: ProfileCount;
+  null_count: ProfileCount;
+  distinct_count: ProfileCount | null;
+  min_value: CellValue;
+  max_value: CellValue;
+  notes: string[];
+}
+
+/** 表の全列の概要 (#1539)。`scans` は集計に使った SELECT の本数 (通常 1)。 */
+export interface TableProfileOverview {
+  table: string;
+  total_count: ProfileCount;
+  columns: ColumnOverview[];
+  scans: number;
+}
+
 /**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,

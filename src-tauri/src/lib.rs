@@ -378,7 +378,7 @@ pub mod __test_api {
         start_statement_recording_inner,
     };
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
-    pub use crate::commands::profile::profile_column_inner;
+    pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
@@ -1242,6 +1242,7 @@ pub fn run() {
             commands::inspector::start_statement_recording,
             commands::inspector::sample_statement_delta,
             commands::profile::profile_column,
+            commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
@@ -1343,9 +1344,9 @@ pub fn run() {
             commands::tasks::get_scheduler_settings,
             commands::tasks::set_scheduler_settings,
             commands::schema::refresh_schema_cache,
-        ])
             commands::schema::invalidate_table_cache,
             commands::schema::schema_cache_times,
+        ])
         .run(tauri::generate_context!());
 
     if let Err(e) = result {

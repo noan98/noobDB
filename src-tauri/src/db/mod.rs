@@ -1422,6 +1422,18 @@ impl Connection {
         profile::run_column_profile(self, db, table, column, approximate, top_n).await
     }
 
+    /// 表の全列の概要 (件数 / NULL 数 / DISTINCT / MIN・MAX) を、列数ぶんの集計式を
+    /// 並べた少数の SELECT (通常 1 本) でまとめて取る (#1539)。上位値・ヒストグラムは
+    /// 含まず、列ごとの `column_profile` で遅延取得する。
+    pub async fn table_profile(
+        &self,
+        db: &str,
+        table: &str,
+        include_distinct: bool,
+    ) -> Result<profile::TableProfileOverview> {
+        profile::run_table_overview(self, db, table, include_distinct).await
+    }
+
     pub async fn close(&self) {
         match self {
             Connection::MySql(c) => c.close().await,
