@@ -3,6 +3,7 @@
 //! (`task_runs.sqlite`)。プールは初回利用時に遅延オープンし、テーブルは
 //! `CREATE TABLE IF NOT EXISTS` で用意するのでマイグレーション手順は不要。
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
@@ -176,14 +177,18 @@ async fn record_assertion_results_in(
     Ok(())
 }
 
-/// そのタスクの**直前の**アサーション実行で失敗 (違反 + 実行エラー) だった件数 (#1537)。
-/// まだ実行が無ければ `None`。「失敗が前回より増えたときだけ通知」の比較元で、現在の実行を
-/// 記録する**前**に読む。
-pub async fn last_assertion_failed_count(task_id: &str) -> Result<Option<usize>> {
-    last_assertion_failed_count_in(pool().await?, task_id).await
+/// そのタスクの**直前の**アサーション実行で失敗 (違反 + 実行エラー) だった assertion ID の
+/// 集合 (#1537)。まだ実行が無ければ `None`。「新しく失敗したものがあるときだけ通知」の比較元で、
+/// 現在の実行を記録する**前**に読む。件数ではなく ID で比べるのは、別の項目が直って別の項目が
+/// 壊れたとき (件数は同じ) を見逃さないため。
+pub async fn last_failed_assertion_ids(task_id: &str) -> Result<Option<HashSet<String>>> {
+    last_failed_assertion_ids_in(pool().await?, task_id).await
 }
 
-async fn last_assertion_failed_count_in(pool: &SqlitePool, task_id: &str) -> Result<Option<usize>> {
+async fn last_failed_assertion_ids_in(
+    pool: &SqlitePool,
+    task_id: &str,
+) -> Result<Option<HashSet<String>>> {
     let latest: Option<String> = sqlx::query_scalar(
         "SELECT run_started_at FROM assertion_runs WHERE task_id = ?
           ORDER BY run_started_at DESC, id DESC LIMIT 1",
@@ -194,15 +199,15 @@ async fn last_assertion_failed_count_in(pool: &SqlitePool, task_id: &str) -> Res
     let Some(started) = latest else {
         return Ok(None);
     };
-    let failed: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM assertion_runs
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT assertion_id FROM assertion_runs
           WHERE task_id = ? AND run_started_at = ? AND passed = 0",
     )
     .bind(task_id.to_string())
     .bind(started)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await?;
-    Ok(Some(usize::try_from(failed).unwrap_or(0)))
+    Ok(Some(ids.into_iter().collect()))
 }
 
 /// アサーション実行の履歴を新しい順に返す。`task_id` / `assertion_id` で絞り込める。
@@ -473,17 +478,17 @@ mod tests {
         assert_eq!(runs[0].attempts, 1);
     }
 
-    /// #1537: 直前の実行の失敗件数。実行が無ければ `None`、新しい実行が優先される。
+    /// #1537: 直前の実行で失敗した ID の集合。実行が無ければ `None`、新しい実行が優先される。
     #[tokio::test]
-    async fn last_failed_count_reads_the_latest_run_only() {
+    async fn last_failed_ids_reads_the_latest_run_only() {
         let pool = temp_pool().await;
         assert_eq!(
-            last_assertion_failed_count_in(&pool, "t1").await.unwrap(),
+            last_failed_assertion_ids_in(&pool, "t1").await.unwrap(),
             None
         );
-        let res = |passed: bool| NewAssertionResult {
-            assertion_id: "a".into(),
-            assertion_name: "a".into(),
+        let res = |id: &str, passed: bool| NewAssertionResult {
+            assertion_id: id.into(),
+            assertion_name: id.into(),
             passed,
             observed: None,
             error: None,
@@ -493,7 +498,7 @@ mod tests {
             &pool,
             "t1",
             "2026-01-01T00:00:00Z",
-            vec![res(false), res(false), res(true)],
+            vec![res("a", false), res("b", false), res("c", true)],
             100,
         )
         .await
@@ -502,21 +507,28 @@ mod tests {
             &pool,
             "t1",
             "2026-01-02T00:00:00Z",
-            vec![res(false), res(true)],
+            vec![res("a", false), res("b", true)],
             100,
         )
         .await
         .unwrap();
-        record_assertion_results_in(&pool, "t2", "2026-01-03T00:00:00Z", vec![res(false)], 100)
-            .await
-            .unwrap();
+        record_assertion_results_in(
+            &pool,
+            "t2",
+            "2026-01-03T00:00:00Z",
+            vec![res("z", false)],
+            100,
+        )
+        .await
+        .unwrap();
+        let ids = |v: &[&str]| -> HashSet<String> { v.iter().map(|s| s.to_string()).collect() };
         assert_eq!(
-            last_assertion_failed_count_in(&pool, "t1").await.unwrap(),
-            Some(1)
+            last_failed_assertion_ids_in(&pool, "t1").await.unwrap(),
+            Some(ids(&["a"]))
         );
         assert_eq!(
-            last_assertion_failed_count_in(&pool, "t2").await.unwrap(),
-            Some(1)
+            last_failed_assertion_ids_in(&pool, "t2").await.unwrap(),
+            Some(ids(&["z"]))
         );
     }
 

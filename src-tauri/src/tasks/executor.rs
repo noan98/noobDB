@@ -5,6 +5,7 @@
 //! **既存の実行基盤をそのまま呼び出す**ことで、通常のクエリ/エクスポート/ダンプと
 //! 同じ安全網・挙動を共有する。
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -201,6 +202,17 @@ pub async fn run_once(
                         "task scheduler: connect failed; will retry"
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    // 待っている間に無効化・削除されたタスクは、定義を読み直して中止する。
+                    let current = super::store::load_all()
+                        .ok()
+                        .and_then(|all| all.into_iter().find(|t| t.id == task.id));
+                    if let Some(reason) = retry_abort_reason(task.enabled, current.as_ref()) {
+                        let mut outcome = TaskOutcome::err(format!(
+                            "connect retry aborted ({reason}) after {attempts} attempts: {e}"
+                        ));
+                        outcome.attempts = attempts;
+                        return outcome;
+                    }
                     continue;
                 }
                 let mut outcome = TaskOutcome::err(if attempts > 1 {
@@ -260,24 +272,71 @@ pub async fn run_once(
 pub fn is_retryable_connect_error(e: &AppError) -> bool {
     match e {
         AppError::ConnectTimeout { .. } | AppError::Io(_) => true,
-        // SSH 層は認証失敗も `Ssh` で返る。メッセージに auth を含むものは再試行しない。
-        AppError::Ssh(msg) => !msg.to_ascii_lowercase().contains("auth"),
-        AppError::Sqlx(err) => matches!(
-            err,
-            sqlx::Error::Io(_)
-                | sqlx::Error::PoolTimedOut
-                | sqlx::Error::PoolClosed
-                | sqlx::Error::WorkerCrashed
-        ),
+        // SSH 層は認証失敗も `Ssh` で返るので、語の有無ではなく「接続段階の失敗」の
+        // 接頭辞 (`ssh/tunnel.rs`) だけを許可する。認証・agent・鍵の不備は再試行しない。
+        AppError::Ssh(msg) => crate::ssh::tunnel::is_ssh_connect_stage_failure(msg),
+        AppError::Sqlx(err) => is_transient_sqlx_error(err),
         _ => false,
     }
 }
 
-/// `RunAssertions` の `notify_only_on_increase` 用の判定 (#1537): 今回の失敗件数
-/// `failed` を通知 (= タスクを `error` にする) すべきか。`prev_failed` は直前の実行の
-/// 失敗件数 (初回は `None` で、失敗 0 件を基準にする)。
-pub fn assertion_failures_increased(failed: usize, prev_failed: Option<usize>) -> bool {
-    failed > prev_failed.unwrap_or(0)
+/// 一時的と見なす sqlx のエラー。ネットワーク層の失敗に加え、DB の再起動中・接続数上限
+/// (PostgreSQL 57P03 `cannot_connect_now` / 57P01 `admin_shutdown`、MySQL 1040
+/// `Too many connections` / 1053 `Server shutdown in progress`) を含む。認証失敗
+/// (PostgreSQL 28xxx / MySQL 1045) などは待っても直らないので含めない。
+fn is_transient_sqlx_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Io(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => true,
+        sqlx::Error::Database(db) => {
+            if let Some(my) = db.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>() {
+                return is_transient_mysql_code(my.number());
+            }
+            db.code()
+                .is_some_and(|code| is_transient_sqlstate(code.as_ref()))
+        }
+        _ => false,
+    }
+}
+
+/// PostgreSQL の SQLSTATE のうち、再起動・シャットダウン中のもの (純粋)。
+fn is_transient_sqlstate(code: &str) -> bool {
+    matches!(code, "57P03" | "57P01")
+}
+
+/// MySQL のエラー番号のうち、接続数上限・シャットダウン中のもの (純粋)。
+fn is_transient_mysql_code(number: u16) -> bool {
+    matches!(number, 1040 | 1053)
+}
+
+/// 再試行の待機のあとにタスク定義を読み直した結果、再試行を中止すべき理由 (純粋)。
+/// `started_enabled` は実行開始時点で有効だったか。待機中に削除された、または有効から
+/// 無効に変えられたタスクは中止する。無効なまま手動実行 (「今すぐ実行」) されたものは、
+/// 無効であること自体は中止の理由にしない。
+fn retry_abort_reason(
+    started_enabled: bool,
+    current: Option<&TaskDefinition>,
+) -> Option<&'static str> {
+    match current {
+        None => Some("task was deleted"),
+        Some(t) if started_enabled && !t.enabled => Some("task was disabled"),
+        Some(_) => None,
+    }
+}
+
+/// `RunAssertions` の `notify_only_on_increase` 用の判定 (#1537): 今回の失敗 ID の中に、
+/// 直前の実行では失敗していなかったもの (= 新しく失敗したもの) があるか。`prev_failed` は
+/// 直前の実行の失敗 ID (初回は `None` で、失敗 0 件を基準にする)。件数ではなく ID の差分で
+/// 見るので、別の項目が直ると同時に別の項目が壊れた (件数は同じ) ときも通知できる。
+pub fn assertion_failures_increased(
+    failed: &HashSet<&str>,
+    prev_failed: Option<&HashSet<String>>,
+) -> bool {
+    failed
+        .iter()
+        .any(|id| !prev_failed.is_some_and(|prev| prev.contains(*id)))
 }
 
 /// `run_once` の future が実行の途中で破棄されたとき (「今すぐ実行」の中断) に、張った接続を
@@ -422,7 +481,7 @@ async fn run_action(
         } => {
             // 比較元は今回の結果を記録する前に読む (`record_outcome` が後で記録する)。
             let prev_failed = if *notify_only_on_increase {
-                match runs::last_assertion_failed_count(&task.id).await {
+                match runs::last_failed_assertion_ids(&task.id).await {
                     Ok(n) => n,
                     Err(e) => {
                         tracing::warn!(task_id = %task.id, error = %e, "task scheduler: failed to read previous assertion failures");
@@ -492,8 +551,12 @@ async fn run_action(
             }
             let mut error = summarize_assertion_failures(&results);
             if *notify_only_on_increase {
-                let failed = results.iter().filter(|r| !r.passed).count();
-                if !assertion_failures_increased(failed, prev_failed) {
+                let failed: HashSet<&str> = results
+                    .iter()
+                    .filter(|r| !r.passed)
+                    .map(|r| r.assertion_id.as_str())
+                    .collect();
+                if !assertion_failures_increased(&failed, prev_failed.as_ref()) {
                     // 失敗が増えていなければ既知の状態が続いているだけ。通知に乗せず ok で終える
                     // (合否の推移は `assertion_runs` に記録される)。
                     error = None;
@@ -758,13 +821,36 @@ mod tests {
     }
 
     #[test]
-    fn assertion_failures_increase_is_strict_and_first_run_baseline_is_zero() {
-        assert!(!assertion_failures_increased(0, None));
-        assert!(assertion_failures_increased(1, None));
-        assert!(!assertion_failures_increased(2, Some(2)));
-        assert!(!assertion_failures_increased(1, Some(2)));
-        assert!(assertion_failures_increased(3, Some(2)));
-        assert!(assertion_failures_increased(1, Some(0)));
+    fn assertion_failures_increase_means_a_newly_failing_id() {
+        let cur = |v: &[&'static str]| -> HashSet<&'static str> { v.iter().copied().collect() };
+        let prev = |v: &[&str]| -> HashSet<String> { v.iter().map(|s| s.to_string()).collect() };
+        // 初回は失敗 0 件が基準。
+        assert!(!assertion_failures_increased(&cur(&[]), None));
+        assert!(assertion_failures_increased(&cur(&["a"]), None));
+        // 同じ失敗が続く / 減るだけなら通知しない。
+        assert!(!assertion_failures_increased(
+            &cur(&["a", "b"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(!assertion_failures_increased(
+            &cur(&["a"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(!assertion_failures_increased(
+            &cur(&[]),
+            Some(&prev(&["a"]))
+        ));
+        // 新しく失敗した ID があれば通知する。
+        assert!(assertion_failures_increased(
+            &cur(&["a", "c"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(assertion_failures_increased(&cur(&["a"]), Some(&prev(&[]))));
+        // 件数は同じでも、入れ替わりは新規の失敗 (b が直って c が壊れた)。
+        assert!(assertion_failures_increased(
+            &cur(&["c"]),
+            Some(&prev(&["b"]))
+        ));
     }
 
     #[test]
@@ -799,6 +885,70 @@ mod tests {
         assert!(!is_retryable_connect_error(&AppError::Sqlx(
             sqlx::Error::RowNotFound
         )));
+    }
+
+    #[test]
+    fn ssh_retry_is_decided_by_the_stage_not_by_a_substring() {
+        // ホスト名に auth を含んでいても、接続段階の失敗なら再試行する。
+        assert!(is_retryable_connect_error(&AppError::Ssh(
+            "[host auth.example.com:22] ssh connect failed: timed out".into()
+        )));
+        // 認証・agent の不備は、メッセージに auth の語が無くても再試行しない。
+        assert!(!is_retryable_connect_error(&AppError::Ssh(
+            "[host h:22] ssh-agent holds no identities (add one with `ssh-add`)".into()
+        )));
+        assert!(!is_retryable_connect_error(&AppError::Ssh(
+            "[host h:22] ssh password authentication failed".into()
+        )));
+    }
+
+    #[test]
+    fn db_restart_codes_are_transient_but_auth_codes_are_not() {
+        for c in ["57P03", "57P01"] {
+            assert!(is_transient_sqlstate(c), "{c}");
+        }
+        for c in ["28000", "28P01", "42P01", "08006"] {
+            assert!(!is_transient_sqlstate(c), "{c}");
+        }
+        assert!(is_transient_mysql_code(1040));
+        assert!(is_transient_mysql_code(1053));
+        assert!(!is_transient_mysql_code(1045));
+        assert!(!is_transient_mysql_code(1049));
+    }
+
+    fn task_with_enabled(enabled: bool) -> TaskDefinition {
+        TaskDefinition {
+            id: "t1".into(),
+            name: "n".into(),
+            profile_id: "p".into(),
+            action: TaskAction::TimelapseCapture {
+                max_generations: None,
+            },
+            schedule: crate::tasks::TaskSchedule::Interval { minutes: 5 },
+            enabled,
+            created_at: String::new(),
+            updated_at: String::new(),
+            next_run_at: None,
+            last_run_at: None,
+            last_status: None,
+            connect_retry: Default::default(),
+        }
+    }
+
+    #[test]
+    fn retry_aborts_when_the_task_was_deleted_or_disabled_while_waiting() {
+        assert!(retry_abort_reason(true, None).is_some());
+        assert!(retry_abort_reason(true, Some(&task_with_enabled(false))).is_some());
+        assert_eq!(
+            retry_abort_reason(true, Some(&task_with_enabled(true))),
+            None
+        );
+        // 無効なタスクの手動実行は、無効であることだけでは中止しない (削除は中止)。
+        assert_eq!(
+            retry_abort_reason(false, Some(&task_with_enabled(false))),
+            None
+        );
+        assert!(retry_abort_reason(false, None).is_some());
     }
 
     #[test]

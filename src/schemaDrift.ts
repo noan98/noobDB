@@ -70,19 +70,22 @@ export const DDL_CAPTURE_MAX_STATEMENTS = 20;
 
 /**
  * まとめた DDL 文を、世代に紐づける 1 つの文字列にする (純粋)。空白だけの文は捨て、
- * 先頭 `DDL_CAPTURE_MAX_STATEMENTS` 文だけを改行で連結する。何も無ければ null。
+ * 先頭 `DDL_CAPTURE_MAX_STATEMENTS` 文だけを、末尾が `;` でなければ補って改行で連結する
+ * (文の境目が分かるように)。何も無ければ null。
  */
 export function joinTriggerSql(statements: readonly string[]): string | null {
   const kept = statements
     .map((s) => s.trim())
     .filter((s) => s.length > 0)
-    .slice(0, DDL_CAPTURE_MAX_STATEMENTS);
+    .slice(0, DDL_CAPTURE_MAX_STATEMENTS)
+    .map((s) => (s.endsWith(";") ? s : `${s};`));
   return kept.length > 0 ? kept.join("\n") : null;
 }
 
 /**
  * DDL 成功をきっかけにしたスキーマ取得を間引く (連続実行時に取得が走り続けて重くならない
- * ようにする)。同じキー (プロファイル + データベース) の DDL を `quietMs` の間まとめ、
+ * ようにする)。同じキー (呼び出し側が渡すプロファイル ID。実行先のデータベースは
+ * 呼び出し側が事前に絞る) の DDL を、`quietMs` の間まとめ、
  * 静かになった時点 (または最初の DDL から `maxWaitMs` 経過した時点) で `onFlush` を 1 回だけ
  * 呼ぶ。タイマーは注入できるのでテストでフェイクタイマーを使える。
  */
@@ -133,7 +136,24 @@ export function createDdlCaptureCoalescer(opts: {
  * かを判定する (純粋)。タイムラインはプロファイルごとに既定データベースの世代を積むので、
  * 別のデータベースへの DDL を混ぜると前世代との比較が意味を失う。タブがデータベースを
  * 固定していない (null/空) ときは既定データベースへの実行なので対象。
+ *
+ * PostgreSQL では、ツリー/タブの「データベース」はスキーマ名で、プロファイルの `database` は
+ * 実 DB 名なので比較できない。記録対象は取得時にバックエンドが決める既定スキーマ
+ * (`current_schema()`、`schema_drift_capture` の応答の `database`) で、`resolvedTarget` に
+ * それを渡す。まだ取得していない (不明) ときは、取得そのものが変化の無いときは世代を
+ * 増やさないので、対象として通す。
  */
+export function isDriftTracked(
+  ranOn: string | null | undefined,
+  profile: { driver: string; database: string | null | undefined },
+  resolvedTarget: string | null | undefined,
+): boolean {
+  if (profile.driver !== "postgres") return isDriftTrackedDatabase(ranOn, profile.database);
+  if (!ranOn) return true;
+  if (!resolvedTarget) return true;
+  return ranOn === resolvedTarget || ranOn === profile.database;
+}
+
 export function isDriftTrackedDatabase(
   ranOn: string | null | undefined,
   profileDatabase: string | null | undefined,

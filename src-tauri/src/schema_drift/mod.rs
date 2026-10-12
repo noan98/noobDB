@@ -179,10 +179,52 @@ pub fn build_payload(
     }
 }
 
+/// 取得対象の名前を接続に合わせて解決する (#1537)。
+///
+/// PostgreSQL のスキーマツリー・タブの「データベース」はスキーマ名で、プロファイルの
+/// `database` は実 DB 名のため、そのまま `columns_for_database` に渡すと実 DB 名という
+/// 名前のスキーマ (通常は存在しない) を見て空になる。要求が空か実 DB 名 (`current_database()`)
+/// と一致するときは `current_schema()` (search_path の先頭の既定スキーマ。無ければ `public`)
+/// に読み替える。それ以外 (スキーマ名の明示) はそのまま使う。MySQL / SQLite は要求どおり。
+pub async fn resolve_capture_database(conn: &Connection, requested: &str) -> Result<String> {
+    if !matches!(conn, Connection::Postgres(_)) {
+        return Ok(requested.to_string());
+    }
+    let res = conn
+        .execute("SELECT current_database(), current_schema()", None)
+        .await?;
+    let row = res.rows.first();
+    let text = |i: usize| match row.and_then(|r| r.get(i)) {
+        Some(crate::db::types::Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    };
+    Ok(pick_postgres_target(
+        requested,
+        text(0).as_deref(),
+        text(1).as_deref(),
+    ))
+}
+
+/// [`resolve_capture_database`] の判定部分 (純粋)。
+pub(crate) fn pick_postgres_target(
+    requested: &str,
+    current_database: Option<&str>,
+    current_schema: Option<&str>,
+) -> String {
+    if requested.is_empty() || Some(requested) == current_database {
+        return current_schema.unwrap_or("public").to_string();
+    }
+    requested.to_string()
+}
+
 /// 接続から `database` のスキーマスナップショットを取得する。列とインデックスを
 /// それぞれ 1 クエリで DB 全体ぶん取る (テーブル数に比例した往復をしない)。
 /// キャッシュは経由せず常にドライバへ直接問い合わせる (変化の検知が目的のため)。
+/// PostgreSQL では `database` を [`resolve_capture_database`] でスキーマ名に解決し、
+/// 返すペイロードの `database` も解決後の名前になる。
 pub async fn capture_payload(conn: &Connection, database: &str) -> Result<SnapshotPayload> {
+    let database = resolve_capture_database(conn, database).await?;
+    let database = database.as_str();
     let (columns, indexes) = tokio::join!(
         conn.columns_for_database(database),
         conn.indexes_for_database(database)
@@ -376,6 +418,25 @@ pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> Dri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn postgres_target_resolves_db_name_to_the_current_schema() {
+        // 空・実 DB 名 → 既定スキーマ。スキーマ名の明示はそのまま。
+        assert_eq!(
+            pick_postgres_target("testdb", Some("testdb"), Some("public")),
+            "public"
+        );
+        assert_eq!(pick_postgres_target("", Some("testdb"), Some("app")), "app");
+        assert_eq!(
+            pick_postgres_target("sales", Some("testdb"), Some("public")),
+            "sales"
+        );
+        // current_schema() が取れない (search_path が空) ときは public。
+        assert_eq!(
+            pick_postgres_target("testdb", Some("testdb"), None),
+            "public"
+        );
+    }
+
     use super::*;
 
     fn col(name: &str, data_type: &str) -> TableColumnInfo {

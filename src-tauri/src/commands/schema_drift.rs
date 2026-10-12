@@ -19,6 +19,9 @@ use crate::state::{AppState, Session};
 pub struct SchemaDriftCapture {
     /// 新しい世代が追加されたか (直前世代と同一内容なら false)。
     pub added: bool,
+    /// 実際に取得した対象の名前。PostgreSQL ではプロファイルの DB 名が既定スキーマ
+    /// (`current_schema()`) に解決される (#1537)。MySQL / SQLite は要求した名前のまま。
+    pub database: String,
     /// 追加後の世代一覧 (新しい順)。`added` が false のときは空 (一覧は変わっていない)。
     pub generations: Vec<GenerationMeta>,
     /// 直前世代からの変化サマリ。初回取得・どちらかの世代が省略済み・追加なしのときは `None`。
@@ -80,6 +83,7 @@ pub async fn schema_drift_capture(
     if !outcome.added {
         return Ok(SchemaDriftCapture {
             added: false,
+            database: payload.database,
             generations: Vec::new(),
             summary: None,
         });
@@ -89,9 +93,13 @@ pub async fn schema_drift_capture(
         .prev
         .as_ref()
         .and_then(|p| p.payload.as_ref())
+        // 対象 (DB / スキーマ) が前世代と違うと全テーブルが増減したように見えるので比べない
+        // (PostgreSQL で DB 名のまま空を取っていた旧世代との境目など)。
+        .filter(|prev| prev.database == payload.database)
         .map(|prev| summarize_payloads(prev, &payload));
     Ok(SchemaDriftCapture {
         added: true,
+        database: payload.database,
         generations: store::list(&profile_id).await?,
         summary,
     })

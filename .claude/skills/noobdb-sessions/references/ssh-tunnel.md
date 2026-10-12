@@ -96,7 +96,7 @@ fingerprint"` へアンカーし、ホストのキャプチャを非貪欲 (`+?`
 - accept ループのタスクが終了していないか (`JoinHandle::is_finished`)
 - 多段トンネルなら踏み台側 `_upstream` も生きているか
 
-`Session::tunnel_alive()` (トンネル越しでなければ `None`) を `health_probe_all` の
+`Session::tunnel_alive()` (トンネル越しでなければ `None`。`session_tunnel_alive` はセッションが無いときも `None` で、切断と断定しない) を `health_probe_all` の
 `tunnel_alive` と `session_tunnel_alive` IPC が使う。`false` のときは `SELECT 1` を投げずに
 `down` を確定する。フロントは `App.tsx` が 10 秒ごと (`TUNNEL_WATCH_INTERVAL_MS`、ウィンドウが
 隠れている間は止める) に `session_tunnel_alive` を呼び、閉じていれば統一ハンドラ

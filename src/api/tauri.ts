@@ -1181,6 +1181,8 @@ export interface SchemaDriftSummary {
 export interface SchemaDriftCapture {
   /** 新しい世代が追加されたか (直前世代と同一内容なら false)。 */
   added: boolean;
+  /** 実際に取得した対象。PostgreSQL ではプロファイルの DB 名が既定スキーマに解決される。 */
+  database: string;
   /** 追加後の世代一覧 (新しい順)。`added` が false のときは空。 */
   generations: SchemaDriftGeneration[];
   /** 直前世代からの変化サマリ。初回取得・比較不能のときは null。 */

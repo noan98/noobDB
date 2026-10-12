@@ -486,7 +486,7 @@ import {
 import {
   buildDriftDetail,
   createDdlCaptureCoalescer,
-  isDriftTrackedDatabase,
+  isDriftTracked,
   migrateLegacySchemaDrift,
 } from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
@@ -2866,6 +2866,9 @@ export default function App() {
   // DDL 成功時の自動取得 (#1537): 連続する DDL を `createDdlCaptureCoalescer` でまとめ、
   // 静かになった時点で 1 回だけ取得する。flush 時点のセッションを引くため ref に持つ。
   const ddlCaptureTargetRef = useRef<{ sessionId: string; profile: ConnectionProfile } | null>(null);
+  // 直近の取得でバックエンドが解決した記録対象 (PostgreSQL は既定スキーマ)。DDL の実行先が
+  // 記録対象かをスキーマ名同士で比べるのに使う (#1537)。
+  const driftResolvedTargetRef = useRef<{ profileId: string; database: string } | null>(null);
   const ddlCoalescerRef = useRef<ReturnType<typeof createDdlCaptureCoalescer> | null>(null);
   const captureSchemaSnapshotRef = useRef<
     (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => Promise<void>
@@ -2898,8 +2901,10 @@ export default function App() {
    */
   const captureSchemaSnapshot = useCallback(
     async (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => {
-      const database = profile.database;
-      if (!database) return;
+      // PostgreSQL のプロファイルの `database` は実 DB 名 (空もありうる) で、記録対象の
+      // 既定スキーマはバックエンドが決める。他のドライバは既定 DB が無ければ何もしない。
+      const database = profile.database ?? "";
+      if (!database && profile.driver !== "postgres") return;
       const triggerSql = opts?.triggerSql ?? null;
       if (schemaDriftInFlightRef.current.has(profile.id)) {
         // 取得中に走った DDL は取りこぼさないよう、静かになってからもう一度流す。
@@ -2912,6 +2917,7 @@ export default function App() {
         // 旧 localStorage 世代があれば、前世代として比較に使えるよう先に取り込む。
         await migrateLegacySchemaDrift(profile.id, api.schemaDriftImportLegacy);
         const res = await api.schemaDriftCapture(sid, profile.id, database, triggerSql);
+        driftResolvedTargetRef.current = { profileId: profile.id, database: res.database };
         if (!res.added) return;
         if (activeProfileIdRef.current === profile.id) setSchemaDrift(res.generations);
         if (res.summary && res.summary.tables.length > 0) {
@@ -2949,7 +2955,9 @@ export default function App() {
   const noteSchemaDdl = useCallback((sql: string, database: string | null | undefined) => {
     const target = ddlCaptureTargetRef.current;
     if (!target || !getSettings().schemaDriftOnDdl) return;
-    if (!isDriftTrackedDatabase(database, target.profile.database)) return;
+    const resolved = driftResolvedTargetRef.current;
+    const resolvedTarget = resolved?.profileId === target.profile.id ? resolved.database : null;
+    if (!isDriftTracked(database, target.profile, resolvedTarget)) return;
     ddlCoalescerRef.current?.push(target.profile.id, sql);
   }, []);
 

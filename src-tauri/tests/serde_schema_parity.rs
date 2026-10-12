@@ -1556,6 +1556,7 @@ fn build_fixtures() -> serde_json::Value {
     };
     let schema_drift_capture = t::SchemaDriftCapture {
         added: true,
+        database: "public".into(),
         generations: vec![schema_drift_generation.clone()],
         summary: Some(schema_drift_summary.clone()),
     };

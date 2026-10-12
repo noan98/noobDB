@@ -45,13 +45,19 @@
   (`compare_plans` の `Warning`: フルスキャンへの退行・推定行数の桁違いの増加) か更新エラーが
   あったときだけ `error` (= `task-run:error` → トースト + OS 通知)。情報レベルの変化は世代として
   記録されるだけで通知しない。計画は新世代として記録されるので同じ退行は再通知されない。
-- **`RunAssertions.notify_only_on_increase`** (#1537) — true なら失敗件数が**前回の実行より増えた
-  ときだけ** `error` にする (`runs::last_assertion_failed_count` と
-  `executor::assertion_failures_increased`。初回は 0 件基準)。合否の記録は常に同じ。
+- **`RunAssertions.notify_only_on_increase`** (#1537) — true なら**前回の実行で失敗していなかった
+  項目が新しく失敗したときだけ** `error` にする (`runs::last_failed_assertion_ids` と
+  `executor::assertion_failures_increased` による失敗 ID の集合の差分。件数ではなく ID なので、
+  別の項目が直ると同時に別の項目が壊れたときも通知する。初回は失敗 0 件基準)。合否の記録は常に同じ。
 - **`TaskDefinition.connect_retry`** (#1537) — `{ max_retries (0..=10), interval_secs (5..=3600) }`。
   `executor::run_once` が**接続段階の失敗だけ**を指数バックオフ (`interval * 2^n`、上限 15 分) で
-  再試行する。再試行対象は `is_retryable_connect_error` (接続タイムアウト・I/O・SSH 接続失敗・
-  sqlx の I/O / プールタイムアウトのみ。認証失敗・ホスト鍵不一致・設定不備は再試行しない)。
+  再試行する。再試行対象は `is_retryable_connect_error` (接続タイムアウト・I/O・SSH の接続段階の失敗
+  (`ssh connect failed:` 接頭辞。ホップのタグを除いた本文で判定し、語の有無では見ない)・
+  sqlx の I/O / プールタイムアウト・DB 再起動中 (PostgreSQL 57P03 / 57P01、MySQL 1040 / 1053) のみ。
+  認証失敗 (PostgreSQL 28xxx / MySQL 1045 / SSH 認証)・ホスト鍵不一致・設定不備は再試行しない)。
+  待機のあとにタスク定義を読み直し、削除された (または実行開始時に有効だったのが無効化された) ら
+  中止する。最悪の総待機は 10 回 × 15 分 = 2 時間 30 分で、その間は実行が「継続中」なので
+  次の発火は重複としてスキップされる (`TASK_MAX_RUN_SECS` は接続後のアクションだけに掛かる)。
   アクション実行が始まった後の失敗は再試行しない (副作用の二重発生を避ける)。試行回数は
   `TaskRun.attempts` (`task_runs.attempts` 列。旧 DB には `ADD COLUMN` で後付け) に残る。
   旧 `tasks.json` には無いので `serde(default)` で読む (既定は再試行なし)。

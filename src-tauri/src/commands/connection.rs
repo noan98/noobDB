@@ -347,18 +347,19 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
 }
 
 /// セッションの SSH トンネルが生きているかを、DB へ問い合わせずに返す (#1537)。
-/// トンネル越しでない (直結・ファイル) セッションは `None`、セッションが無ければ
-/// `Some(false)`。クエリが失敗するより先に切断を知らせ、再接続 (#712) へ誘導するための
+/// トンネル越しでない (直結・ファイル) セッションは `None`、セッションが無いときも `None`
+/// (切断・自動再接続の最中にセッションが入れ替わるのは正常で、ここでは「トンネルが切れた」
+/// と断定しない)。クエリが失敗するより先に切断を知らせ、再接続 (#712) へ誘導するための
 /// 軽量なポーリング用で、ネットワークには一切触れない。
 #[tauri::command]
 pub async fn session_tunnel_alive(
     session_id: String,
     state: State<'_, AppState>,
 ) -> Result<Option<bool>> {
-    Ok(match state.get(&session_id).await {
-        Some(session) => session.tunnel_alive(),
-        None => Some(false),
-    })
+    Ok(state
+        .get(&session_id)
+        .await
+        .and_then(|session| session.tunnel_alive()))
 }
 
 /// `health_probe_all` の 1 セッション分の結果 (#1259)。状態判定

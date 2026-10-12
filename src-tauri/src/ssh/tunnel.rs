@@ -136,6 +136,22 @@ impl HopRole {
     }
 }
 
+/// 接続 (TCP / 鍵交換) 段階の失敗メッセージの接頭辞。認証失敗 (`ssh/auth.rs`) や鍵・agent の
+/// 不備とは接頭辞で区別でき、タスクの接続リトライは「この接頭辞の失敗だけ」を一時的な
+/// ネットワーク障害として扱う (#1537)。
+pub const SSH_CONNECT_FAILED_PREFIX: &str = "ssh connect failed: ";
+
+/// `AppError::Ssh` のメッセージが接続段階の失敗か (純粋)。ホップのタグ
+/// (`[jump host:22] ` — [`tag_hop_error`]) を除いた本文の先頭で判定するので、
+/// 本文のどこかに "auth" 等の語が含まれていても影響されない。
+pub fn is_ssh_connect_stage_failure(msg: &str) -> bool {
+    let body = match msg.strip_prefix('[').and_then(|rest| rest.split_once("] ")) {
+        Some((_, body)) => body,
+        None => msg,
+    };
+    body.starts_with(SSH_CONNECT_FAILED_PREFIX)
+}
+
 /// Prefix an SSH-shaped error with which hop (and its `host:port` identity)
 /// produced it. Other error variants (host-key mismatch, `Io`, ...) already
 /// carry their own `host`/`port` context or don't originate from a specific
@@ -287,7 +303,7 @@ impl SshTunnel {
                             actual: m.actual,
                         });
                     }
-                    return Err(AppError::Ssh(format!("ssh connect failed: {e}")));
+                    return Err(AppError::Ssh(format!("{SSH_CONNECT_FAILED_PREFIX}{e}")));
                 }
             };
 
@@ -453,6 +469,28 @@ impl Drop for SshTunnel {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connect_stage_failures_are_told_apart_from_auth_failures() {
+        assert!(is_ssh_connect_stage_failure("ssh connect failed: reset"));
+        assert!(is_ssh_connect_stage_failure(
+            "[jump bastion:22] ssh connect failed: connection refused"
+        ));
+        // 本文に auth を含む接続失敗でも接続段階として扱う (語の有無では判定しない)。
+        assert!(is_ssh_connect_stage_failure(
+            "[host auth.example.com:22] ssh connect failed: timed out"
+        ));
+        for m in [
+            "ssh authentication failed",
+            "[host h:22] ssh password authentication failed",
+            "[host h:22] ssh auth error: boom",
+            "ssh-agent holds no identities (add one with `ssh-add`)",
+            "failed to connect to ssh-agent (check SSH_AUTH_SOCK)",
+            "[host h:22] failed to list ssh-agent identities: x",
+        ] {
+            assert!(!is_ssh_connect_stage_failure(m), "{m}");
+        }
+    }
+
     use super::*;
 
     // H1: accept ループの一時的エラーからの回復戦略 (指数バックオフ、上限あり)

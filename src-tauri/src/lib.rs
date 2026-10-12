@@ -94,7 +94,8 @@ pub mod __test_api {
     pub use crate::profiles::{ConnectionProfile, SshAuthMethod, SshJumpProfile, SshProfile};
     pub use crate::schema_drift::{
         build_payload as build_drift_payload, capture_payload as capture_drift_payload,
-        fingerprint_payload as fingerprint_drift_payload, summarize_payloads as summarize_drift,
+        fingerprint_payload as fingerprint_drift_payload,
+        resolve_capture_database as resolve_drift_database, summarize_payloads as summarize_drift,
         DriftSummary, SnapshotPayload as DriftSnapshotPayload,
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};

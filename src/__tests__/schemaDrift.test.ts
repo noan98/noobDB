@@ -4,6 +4,7 @@ import {
   canDiff,
   createDdlCaptureCoalescer,
   DDL_CAPTURE_MAX_STATEMENTS,
+  isDriftTracked,
   isDriftTrackedDatabase,
   joinTriggerSql,
   formatTableChangeFragment,
@@ -202,7 +203,12 @@ describe("formatTableChangeFragment / buildDriftDetail", () => {
 describe("joinTriggerSql", () => {
   it("空白だけの文を捨て、改行で連結する", () => {
     expect(joinTriggerSql([" ALTER TABLE a ADD c INT; ", "  ", "DROP TABLE b"])).toBe(
-      "ALTER TABLE a ADD c INT;\nDROP TABLE b",
+      "ALTER TABLE a ADD c INT;\nDROP TABLE b;",
+    );
+  });
+  it("末尾の ; が無い文には補い、あるものは重ねない", () => {
+    expect(joinTriggerSql(["CREATE TABLE a (id INT)", "DROP TABLE b;"])).toBe(
+      "CREATE TABLE a (id INT);\nDROP TABLE b;",
     );
   });
   it("何も無ければ null", () => {
@@ -212,6 +218,29 @@ describe("joinTriggerSql", () => {
   it("文数の上限で打ち切る", () => {
     const many = Array.from({ length: DDL_CAPTURE_MAX_STATEMENTS + 5 }, (_, i) => `DDL ${i}`);
     expect(joinTriggerSql(many)?.split("\n")).toHaveLength(DDL_CAPTURE_MAX_STATEMENTS);
+  });
+});
+
+describe("isDriftTracked (PostgreSQL はスキーマ名で比べる)", () => {
+  const pg = { driver: "postgres", database: "testdb" };
+  it("取得で解決した既定スキーマと同じ / 固定なしなら対象", () => {
+    expect(isDriftTracked("public", pg, "public")).toBe(true);
+    expect(isDriftTracked(null, pg, "public")).toBe(true);
+    expect(isDriftTracked("", pg, "public")).toBe(true);
+    // DB 名が入っているタブも既定扱い。
+    expect(isDriftTracked("testdb", pg, "public")).toBe(true);
+  });
+  it("別のスキーマへの DDL は対象外", () => {
+    expect(isDriftTracked("sales", pg, "public")).toBe(false);
+  });
+  it("既定スキーマが未解決のうちは通す (変化が無ければ世代は増えない)", () => {
+    expect(isDriftTracked("sales", pg, null)).toBe(true);
+    expect(isDriftTracked("public", { driver: "postgres", database: null }, undefined)).toBe(true);
+  });
+  it("MySQL / SQLite は従来どおりプロファイルの DB と比べる", () => {
+    expect(isDriftTracked("app", { driver: "mysql", database: "app" }, "ignored")).toBe(true);
+    expect(isDriftTracked("other", { driver: "mysql", database: "app" }, null)).toBe(false);
+    expect(isDriftTracked(null, { driver: "sqlite", database: null }, null)).toBe(false);
   });
 });
 
@@ -245,7 +274,7 @@ describe("createDdlCaptureCoalescer", () => {
     expect(onFlush).not.toHaveBeenCalled();
     vi.advanceTimersByTime(1);
     expect(onFlush).toHaveBeenCalledTimes(1);
-    expect(onFlush).toHaveBeenCalledWith("p1", "CREATE TABLE a (id INT)\nCREATE TABLE b (id INT)");
+    expect(onFlush).toHaveBeenCalledWith("p1", "CREATE TABLE a (id INT);\nCREATE TABLE b (id INT);");
     // flush 後は何も残らない。
     vi.advanceTimersByTime(60_000);
     expect(onFlush).toHaveBeenCalledTimes(1);
@@ -273,8 +302,8 @@ describe("createDdlCaptureCoalescer", () => {
     c.push("b", "DDL B");
     vi.advanceTimersByTime(1000);
     expect(onFlush).toHaveBeenCalledTimes(2);
-    expect(onFlush).toHaveBeenCalledWith("a", "DDL A");
-    expect(onFlush).toHaveBeenCalledWith("b", "DDL B");
+    expect(onFlush).toHaveBeenCalledWith("a", "DDL A;");
+    expect(onFlush).toHaveBeenCalledWith("b", "DDL B;");
   });
 
   it("dispose で保留中の flush を捨てる", () => {

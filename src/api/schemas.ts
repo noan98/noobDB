@@ -1742,6 +1742,7 @@ export const schemaDriftSummaryOrNull = schemaDriftSummary.nullable();
 
 export const schemaDriftCapture = z.object({
   added: z.boolean(),
+  database: z.string(),
   generations: z.array(schemaDriftGeneration),
   summary: schemaDriftSummary.nullable(),
 });
