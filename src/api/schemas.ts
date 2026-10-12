@@ -1,3 +1,4 @@
+import { recordIpcValidationFailure } from "./ipcDiagnostics";
 import { z } from "zod";
 
 /**
@@ -109,6 +110,12 @@ export const tableRowEstimate = z.object({
   estimate: z.number().nullable(),
 });
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export const schemaCacheTime = z.object({
+  database: z.string(),
+  fetched_at_ms: z.number(),
+});
+
 /** テーブルのサイズ・統計 (サイズダッシュボード #562)。 */
 export const tableSizeInfo = z.object({
   name: z.string(),
@@ -210,6 +217,8 @@ export const healthProbeItem = z.object({
   latency_ms: z.number().nullable(),
   version: z.string().nullable(),
   connections: z.number().nullable(),
+  // SSH トンネルの生存 (#1537)。トンネル越しでないセッションは null。
+  tunnel_alive: z.boolean().nullable(),
 });
 export const healthProbeItemArray = z.array(healthProbeItem);
 
@@ -301,6 +310,25 @@ export const columnProfile = z.object({
   top_values: z.array(profileValueCount),
   histogram: z.array(profileHistogramBucket),
   notes: z.array(z.string()),
+});
+
+/** 全列の概要 (#1539)。 */
+export const tableProfileOverview = z.object({
+  table: z.string(),
+  total_count: z.union([z.number(), z.string()]),
+  columns: z.array(
+    z.object({
+      column: z.string(),
+      data_type: z.string(),
+      non_null_count: z.union([z.number(), z.string()]),
+      null_count: z.union([z.number(), z.string()]),
+      distinct_count: z.union([z.number(), z.string()]).nullable(),
+      min_value: cellValue,
+      max_value: cellValue,
+      notes: z.array(z.string()),
+    }),
+  ),
+  scans: z.number(),
 });
 
 export const schemaObject = z.object({
@@ -692,6 +720,10 @@ export const sandboxTableDiffResult = z.object({
   source_error: z.string().nullable(),
 });
 
+export const sandboxResetResult = z.object({
+  restored_rows: z.number(),
+});
+
 export const sandboxSchemaDiffResult = z.object({
   desired: schemaDiff,
   external_changed_tables: z.array(z.string()),
@@ -774,6 +806,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
@@ -932,6 +965,7 @@ export const tableColumnInfoArray = z.array(tableColumnInfo);
 export const tableSchemaArray = z.array(tableSchema);
 export const foreignKeyArray = z.array(foreignKey);
 export const tableRowEstimateArray = z.array(tableRowEstimate);
+export const schemaCacheTimeArray = z.array(schemaCacheTime);
 export const tableCommentArray = z.array(tableComment);
 export const indexInfoArray = z.array(indexInfo);
 export const processInfoArray = z.array(processInfo);
@@ -1387,6 +1421,16 @@ export const cellBlobProbe = z.object({
   image: z.boolean(),
 });
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export const blobFolderSaveResult = z.object({
+  saved: z.number(),
+  totalBytes: z.number(),
+  skippedNull: z.number(),
+  skippedTooLarge: z.number(),
+  failed: z.number(),
+  errors: z.array(z.object({ row: z.number(), error: z.string() })),
+});
+
 export const importErrorEvent = z.object({
   streamId: z.string(),
   error: z.string(),
@@ -1530,6 +1574,7 @@ const dumpOptions = z.object({
   noPrivileges: z.boolean().optional(),
   pgSchema: z.string().nullable().optional(),
   formatSql: z.boolean().optional(),
+  gzip: z.boolean().optional(),
   tables: z.array(z.string()).nullable().optional(),
 });
 
@@ -1557,8 +1602,23 @@ const taskAction = z.discriminatedUnion("kind", [
     kind: z.literal("run_assertions"),
     database: z.string().nullable().optional(),
     assertion_ids: z.array(z.string()),
+    notify_only_on_increase: z.boolean().optional(),
+  }),
+  z.object({
+    kind: z.literal("timelapse_capture"),
+    max_generations: z.number().nullable().optional(),
+  }),
+  z.object({
+    kind: z.literal("refresh_plan_watch"),
+    snippet_ids: z.array(z.string()),
   }),
 ]);
+
+/** 接続失敗時の自動リトライ設定 (#1537)。 */
+const connectRetry = z.object({
+  max_retries: z.number(),
+  interval_secs: z.number(),
+});
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
@@ -1577,6 +1637,7 @@ export const taskDefinition = z.object({
   next_run_at: z.string().nullable(),
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
+  connect_retry: connectRetry,
 });
 
 export const taskRun = z.object({
@@ -1591,6 +1652,8 @@ export const taskRun = z.object({
   bytes: z.number().nullable(),
   elapsed_ms: z.number(),
   catch_up: z.boolean(),
+  // 接続を試みた回数 (#1537)。再試行なしの通常実行は 1。
+  attempts: z.number(),
 });
 
 export const assertionRunRecord = z.object({
@@ -1728,12 +1791,13 @@ export function parseResponse<T>(
       value,
     );
   }
-  const summary = result.error.issues
-    .map((issue) => {
-      const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
-      return `${path}: ${issue.message}`;
-    })
-    .join("; ");
+  const issueLines = result.error.issues.map((issue) => {
+    const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+    return `${path}: ${issue.message}`;
+  });
+  const summary = issueLines.join("; ");
+  // 失敗経路だけ: 本番の利用者にもアクティビティ経由で原因を伝えられるよう記録する (#1536)。
+  recordIpcValidationFailure(command, issueLines);
   throw new Error(
     `IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`,
   );
@@ -1753,6 +1817,8 @@ export const schemaDriftGeneration = z.object({
   fingerprint: z.string(),
   tableCount: z.number(),
   omitted: z.boolean(),
+  // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
+  triggerSql: z.string().nullable().optional(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
@@ -1796,6 +1862,7 @@ export const schemaDriftSummaryOrNull = schemaDriftSummary.nullable();
 
 export const schemaDriftCapture = z.object({
   added: z.boolean(),
+  database: z.string(),
   generations: z.array(schemaDriftGeneration),
   summary: schemaDriftSummary.nullable(),
 });

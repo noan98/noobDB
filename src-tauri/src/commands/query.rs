@@ -207,7 +207,7 @@ pub(crate) async fn run_query_inner(
         );
     }
     if result.is_ok() {
-        invalidate_caches_after_success(&session, sql).await;
+        invalidate_caches_after_success(&session, sql, database).await;
     }
     result
 }
@@ -222,13 +222,67 @@ pub(crate) async fn run_query_inner(
 ///   丸ごと invalidate (Schema Cache と違い DML でも stale になるため対象が広い)。
 ///
 /// `sql` は auto-limit 適用前の元の文を渡す (LIMIT の注入は判定を変えない)。
-pub(crate) async fn invalidate_caches_after_success(session: &Session, sql: &str) {
+pub(crate) async fn invalidate_caches_after_success(
+    session: &Session,
+    sql: &str,
+    database: Option<&str>,
+) {
     let driver = session.conn.driver_kind();
-    if crate::db::sql_may_change_schema(driver, sql) {
-        session.schema_cache.invalidate_all().await;
-    }
+    invalidate_schema_cache_for(session, database, &[sql]).await;
     if !crate::db::is_read_only_sql_for(driver, sql) {
         session.query_cache.invalidate_all().await;
+    }
+}
+
+/// DDL 成功後の Schema Cache の無効化 (#1539)。`statements` のうちスキーマを変えうる文
+/// (`sql_may_change_schema`) が全部「単一テーブルだけに効く単純な形」
+/// (`db::schema_scope::sql_schema_change_table`) で、対象の DB も分かるときは、そのテーブルの
+/// エントリだけを捨てる。1 つでも対象が特定できない文があれば従来どおり接続全体を捨てる
+/// (fail-closed)。`database` は文が実行された DB (文中で修飾されていなければこれを使う)。
+pub(crate) async fn invalidate_schema_cache_for(
+    session: &Session,
+    database: Option<&str>,
+    statements: &[&str],
+) {
+    let driver = session.conn.driver_kind();
+    let mut targets: Vec<(String, String)> = Vec::new();
+    let mut any_ddl = false;
+    // 同じバッチに既定の DB / スキーマを切り替える文 (`USE`・`SET search_path` など) が
+    // あると、非修飾の表名が指す先が変わるので表単位では判断できない。
+    if statements
+        .iter()
+        .any(|s| crate::db::sql_may_change_schema(driver, s))
+        && statements
+            .iter()
+            .any(|s| crate::db::schema_scope::changes_default_namespace(driver, s))
+    {
+        session.schema_cache.invalidate_all().await;
+        return;
+    }
+    for sql in statements {
+        if !crate::db::sql_may_change_schema(driver, sql) {
+            continue;
+        }
+        any_ddl = true;
+        let scoped = crate::db::schema_scope::sql_schema_change_table(driver, sql).and_then(
+            |(schema, table)| Some((schema.or_else(|| database.map(str::to_string))?, table)),
+        );
+        match scoped {
+            Some(target) => {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+            None => {
+                session.schema_cache.invalidate_all().await;
+                return;
+            }
+        }
+    }
+    if any_ddl {
+        for (db, table) in targets {
+            session.schema_cache.invalidate_table(&db, &table).await;
+        }
     }
 }
 
@@ -409,12 +463,9 @@ pub(crate) async fn run_query_transaction_inner(
     // ALTER/CREATE 文の適用はここを必ず通る。
     if result.is_ok() {
         let driver = session.conn.driver_kind();
-        if statements
-            .iter()
-            .any(|sql| crate::db::sql_may_change_schema(driver, sql))
-        {
-            session.schema_cache.invalidate_all().await;
-        }
+        // 対象が 1 テーブルと分かる ALTER / CREATE INDEX だけなら、そのテーブルだけを捨てる (#1539)。
+        let stmt_refs: Vec<&str> = statements.iter().map(String::as_str).collect();
+        invalidate_schema_cache_for(&session, database.as_deref(), &stmt_refs).await;
         // Query Result Cache (#1097): 束ねた文のいずれか 1 つでも書き込み
         // (DDL/DML 問わず) なら丸ごと invalidate する。cell-edit の Apply は
         // 通常 DML のみだが、Schema Cache と違い DML でも対象になるため、ここは
@@ -1220,7 +1271,7 @@ async fn spawn_query_stream(
         // Schema Cache (#1220): DDL 成功後は SchemaCache も invalidate する。以前は
         // query_cache だけで、エディタ (ストリーミング) で流した ALTER / CREATE INDEX
         // 後もツリー・補完・describe が最大 TTL まで旧スキーマのままだった。
-        invalidate_caches_after_success(&session, &sql).await;
+        invalidate_caches_after_success(&session, &sql, database.as_deref()).await;
     }
 
     match &result {
@@ -1348,11 +1399,39 @@ async fn spawn_query_stream(
     }
 }
 
-/// 記録つき書き込みの実行。タイムアウト/キャンセルの配下に置くのは、書き込みを
-/// 一切実行しない準備段階 (件数見積もり + dry-run) だけにする。本実行と after-image の
-/// 取り直しは独立タスクで走らせ、呼び出し側の future が落とされても、タイムアウトが
-/// 来ても中断しない (書き込み済みなのに失敗扱い / 記録なしになるのを防ぐ、#1530)。
-/// 取り直しの失敗は記録の辞退になるだけで、結果は `Ok` のまま。
+/// 記録つき書き込みの前半 (準備 + 同一トランザクションでの実行〜after 取得)。タイムアウトが
+/// あればここだけを配下に置く。打ち切られると `PendingTx` の drop でロールバックされる。
+async fn stage_captured_write(
+    session: &Session,
+    sql: &str,
+    database: Option<&str>,
+    row_cap: usize,
+    query_timeout_secs: Option<u64>,
+) -> Result<crate::db::CaptureRun> {
+    let staged = async {
+        let prep = session.conn.capture_prepare(sql, database, row_cap).await?;
+        session.conn.capture_execute(prep, sql, database).await
+    };
+    match query_timeout_secs {
+        Some(secs) if secs > 0 => {
+            match tokio::time::timeout(std::time::Duration::from_secs(secs), staged).await {
+                Ok(res) => res,
+                Err(_) => Err(AppError::Timeout(secs)),
+            }
+        }
+        _ => staged.await,
+    }
+}
+
+/// 記録つき書き込みの実行 (単一トランザクション、#1536)。
+///
+/// 「対象行の取得 → 文の実行 → after 取得」までは 1 つのトランザクションの中で行い、
+/// **タイムアウト / キャンセルの配下**に置く。ここで打ち切られたときはトランザクションが
+/// drop されてロールバックされ、書き込みは何も残らない (エラーとして返るので、
+/// 「失敗したのに書き込まれていた」状態にならない)。`COMMIT` だけを独立タスクで走らせ、
+/// 呼び出し側の future が落とされても中断しない (確定直前で記録だけ失う / 確定したのに
+/// 失敗扱いになるのを防ぐ、#1530)。after-image からの記録の組み立ては COMMIT の前に
+/// 済ませるので、特定に失敗しても結果は `Ok` (記録を辞退して確定) になる。
 pub(crate) async fn run_captured_write(
     session: Arc<Session>,
     sql: String,
@@ -1360,26 +1439,15 @@ pub(crate) async fn run_captured_write(
     row_cap: usize,
     query_timeout_secs: Option<u64>,
 ) -> Result<(crate::db::types::QueryResult, crate::db::WriteCapture)> {
-    let prep = {
-        let prepare = session
-            .conn
-            .capture_prepare(&sql, database.as_deref(), row_cap);
-        match query_timeout_secs {
-            Some(secs) if secs > 0 => {
-                match tokio::time::timeout(std::time::Duration::from_secs(secs), prepare).await {
-                    Ok(res) => res?,
-                    Err(_) => return Err(AppError::Timeout(secs)),
-                }
-            }
-            _ => prepare.await?,
-        }
-    };
-    let handle = tokio::spawn(async move {
-        session
-            .conn
-            .capture_finish(prep, &sql, database.as_deref())
-            .await
-    });
+    let run = stage_captured_write(
+        &session,
+        &sql,
+        database.as_deref(),
+        row_cap,
+        query_timeout_secs,
+    )
+    .await?;
+    let handle = tokio::spawn(async move { session.conn.capture_commit(run, &sql).await });
     match handle.await {
         Ok(res) => res,
         Err(e) => Err(AppError::Other(format!("captured write task failed: {e}"))),
@@ -1417,14 +1485,74 @@ async fn spawn_captured_write(
         "captured write starting"
     );
     let started = std::time::Instant::now();
-    let outcome = run_captured_write(
-        session.clone(),
-        sql.clone(),
-        database.clone(),
+    let staged = stage_captured_write(
+        &session,
+        &sql,
+        database.as_deref(),
         row_cap,
         query_timeout_secs,
     )
     .await;
+    match staged {
+        Err(e) => {
+            finish_captured_write(
+                app,
+                session,
+                stream_id,
+                stream_token,
+                sql,
+                database,
+                retention_days,
+                delivered_rows,
+                on_event,
+                started,
+                Err(e),
+            )
+            .await;
+        }
+        Ok(run) => {
+            // COMMIT から記録・履歴・Done 送信までを 1 つの切り離したタスクにまとめる。
+            // COMMIT 中や直後にキャンセルされても、確定した書き込みの記録・履歴は必ず残る
+            // (ただし UI 側はキャンセル表示になりうる。中断できるのは確定前の実行段階まで)。
+            let task_session = session.clone();
+            let task_sql = sql.clone();
+            let handle = tokio::spawn(async move {
+                let outcome = task_session.conn.capture_commit(run, &task_sql).await;
+                finish_captured_write(
+                    app,
+                    task_session,
+                    stream_id,
+                    stream_token,
+                    task_sql,
+                    database,
+                    retention_days,
+                    delivered_rows,
+                    on_event,
+                    started,
+                    outcome,
+                )
+                .await;
+            });
+            let _ = handle.await;
+        }
+    }
+}
+
+/// 記録つき書き込みの後半: キャッシュ無効化 → Done / Error 送信 → 記録の永続化 → 履歴。
+#[allow(clippy::too_many_arguments)]
+async fn finish_captured_write(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    stream_token: u64,
+    sql: String,
+    database: Option<String>,
+    retention_days: Option<i64>,
+    delivered_rows: Arc<AtomicU64>,
+    on_event: Channel<QueryStreamMessage>,
+    started: std::time::Instant,
+    outcome: Result<(QueryResult, crate::db::WriteCapture)>,
+) {
     let elapsed_ms = started.elapsed().as_millis() as u64;
 
     // Query Result Cache (#1097): capture 対象は呼び出し元 (`run_query_stream`)

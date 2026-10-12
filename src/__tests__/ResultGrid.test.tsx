@@ -3,7 +3,7 @@ import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
-import { rowEditKey } from "../components/cellEdit";
+import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
 import { setLocale, t } from "../i18n";
@@ -2246,5 +2246,76 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     a.unmount();
     const b = renderWithProviders(<ResultGrid result={result} tableColumns={meta("users", "id")} />);
     expect(b.container.querySelector(".cell-fk-jump")).toBeNull();
+  });
+});
+
+describe("ペースト超過行を保留の追加行にする (#1539)", () => {
+  beforeEach(() => setLocale("en"));
+
+  const columns: Column[] = [
+    { name: "id", type_name: "INT" },
+    { name: "name", type_name: "VARCHAR" },
+  ];
+  const meta = (name: string, over: Partial<TableColumnInfo> = {}): TableColumnInfo => ({
+    name,
+    data_type: name === "id" ? "int" : "varchar",
+    nullable: true,
+    key: name === "id" ? "PRI" : "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+    ...over,
+  });
+  const tableColumns = [meta("id", { extra: "auto_increment" }), meta("name")];
+  const result = makeResult(columns, [[1, "banana"]]);
+
+  function renderGrid(props: { onPasteInsertRows?: (rows: PendingInsertRow[]) => void }) {
+    const onBulkEdit = vi.fn();
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={result}
+        editable
+        tableColumns={tableColumns}
+        driver="mysql"
+        onSetCellEdit={vi.fn()}
+        onBulkEdit={onBulkEdit}
+        {...props}
+      />,
+    );
+    const cell = container.querySelectorAll("tbody tr")[0].querySelectorAll("td[role='gridcell']")[1] as HTMLElement;
+    fireEvent.focus(cell);
+    return { cell, onBulkEdit };
+  }
+  const paste = (cell: HTMLElement, text: string) =>
+    fireEvent.paste(cell, { clipboardData: { getData: () => text } });
+
+  it("表示行を超えた行は確認のうえ onPasteInsertRows に渡し、範囲内の行は従来どおり編集になる", async () => {
+    const user = userEvent.setup();
+    const onPasteInsertRows = vi.fn();
+    const { cell, onBulkEdit } = renderGrid({ onPasteInsertRows });
+    paste(cell, "apple\ncherry\n\ndate");
+    // 範囲内 (1 行目) はその場で保留編集に。
+    expect(onBulkEdit).toHaveBeenCalledTimes(1);
+    // 超過行は確認ダイアログを経てから渡る (空行は値が無いので積まない)。
+    expect(onPasteInsertRows).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: t("gridPasteInsertConfirm") }));
+    expect(onPasteInsertRows).toHaveBeenCalledWith([{ 1: "cherry" }, { 1: "date" }]);
+  });
+
+  it("確認でキャンセルすると何も積まない", async () => {
+    const user = userEvent.setup();
+    const onPasteInsertRows = vi.fn();
+    const { cell } = renderGrid({ onPasteInsertRows });
+    paste(cell, "apple\ncherry");
+    await user.click((await screen.findAllByRole("button", { name: t("confirmDefaultCancel") })).at(-1) as HTMLElement);
+    expect(onPasteInsertRows).not.toHaveBeenCalled();
+  });
+
+  it("onPasteInsertRows が無ければ従来どおり確認を出さない", () => {
+    const { cell, onBulkEdit } = renderGrid({});
+    paste(cell, "apple\ncherry");
+    expect(onBulkEdit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(t("gridPasteInsertTitle"))).toBeNull();
   });
 });

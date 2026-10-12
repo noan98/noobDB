@@ -25,6 +25,8 @@ export const exportCommands = {
      * 行を書き出す。破棄済みなら `isResultGoneError` のエラーになるので rows 付きで再試行する。
      */
     resultId?: string | null;
+    /** SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (#1539)。他形式では無視。 */
+    ddlHeader?: string | null;
   }) =>
     invoke<ExportResult>("export_query_result", {
       path: params.path,
@@ -37,6 +39,7 @@ export const exportCommands = {
       batchSize: params.batchSize ?? null,
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
       resultId: params.resultId ?? null,
+      ddlHeader: params.ddlHeader ?? null,
     }).then((r) => parseResponse(schemas.exportResult, r, "export_query_result")),
 
   /**
@@ -77,6 +80,8 @@ export const exportCommands = {
     batchSize?: number | null;
     /** 列単位のマスキングルール (#733)。未指定 / 空ならマスクしない。 */
     masks?: ExportColumnMask[] | null;
+    /** SQL 形式のとき先頭に `CREATE TABLE` 文を含める (#1539)。バックエンドが取得する。 */
+    includeDdl?: boolean | null;
   }) =>
     invoke<void>("export_query_stream", {
       sessionId: params.sessionId,
@@ -91,5 +96,6 @@ export const exportCommands = {
       table: params.table ?? null,
       batchSize: params.batchSize ?? null,
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
+      includeDdl: params.includeDdl ?? null,
     }),
 };

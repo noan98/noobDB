@@ -351,6 +351,19 @@
     "kind": "started",
     "total": 3
   },
+  "blobFolderSaveResult": {
+    "errors": [
+      {
+        "error": "expected exactly one row for the key, got 0",
+        "row": 4
+      }
+    ],
+    "failed": 1,
+    "saved": 3,
+    "skippedNull": 1,
+    "skippedTooLarge": 2,
+    "totalBytes": 4096
+  },
   "broadcastCancelledMessage": {
     "kind": "cancelled",
     "sessionId": "sess0002"
@@ -1276,6 +1289,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "up",
+      "tunnel_alive": true,
       "version": "8.0.36"
     },
     {
@@ -1283,6 +1297,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "down",
+      "tunnel_alive": true,
       "version": "8.0.36"
     },
     {
@@ -1290,6 +1305,7 @@
       "latency_ms": 12,
       "session_id": "sess0001",
       "status": "timeout",
+      "tunnel_alive": true,
       "version": "8.0.36"
     }
   ],
@@ -1836,6 +1852,9 @@
       "users"
     ]
   },
+  "sandboxResetResult": {
+    "restored_rows": 3
+  },
   "sandboxSchemaDiffResult": {
     "desired": {
       "source_driver": "mysql",
@@ -1962,6 +1981,10 @@
   },
   "schedulerSettings": {
     "catch_up_missed": true
+  },
+  "schemaCacheTime": {
+    "database": "appdb",
+    "fetched_at_ms": 1760000000000
   },
   "schemaDiff": {
     "source_driver": "mysql",
@@ -3504,6 +3527,7 @@
   ],
   "schemaDriftCapture": {
     "added": true,
+    "database": "public",
     "generations": [
       {
         "capturedAt": "2026-01-01T00:00:00Z",
@@ -3512,7 +3536,8 @@
         "fingerprint": "deadbeef",
         "id": "gen00001",
         "omitted": false,
-        "tableCount": 12
+        "tableCount": 12,
+        "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
       }
     ],
     "summary": {
@@ -3611,7 +3636,8 @@
     "fingerprint": "deadbeef",
     "id": "gen00001",
     "omitted": false,
-    "tableCount": 12
+    "tableCount": 12,
+    "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
   },
   "schemaDriftSummary": {
     "tables": [
@@ -4575,6 +4601,35 @@
     "comment": "registered users",
     "name": "users"
   },
+  "tableProfileOverview": {
+    "columns": [
+      {
+        "column": "id",
+        "data_type": "bigint",
+        "distinct_count": "9007199254740993",
+        "max_value": "9007199254740993",
+        "min_value": 1,
+        "non_null_count": 100,
+        "notes": [],
+        "null_count": 0
+      },
+      {
+        "column": "payload",
+        "data_type": "longblob",
+        "distinct_count": null,
+        "max_value": null,
+        "min_value": null,
+        "non_null_count": 40,
+        "notes": [
+          "overview_skipped_type"
+        ],
+        "null_count": 60
+      }
+    ],
+    "scans": 1,
+    "table": "orders",
+    "total_count": 100
+  },
   "tableRowEstimate": {
     "estimate": 1234,
     "name": "users"
@@ -4638,6 +4693,10 @@
         "sql_batch_size": 100,
         "sql_table": "users"
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4662,6 +4721,7 @@
           "events": false,
           "extendedInsert": false,
           "formatSql": false,
+          "gzip": false,
           "noCreateInfo": false,
           "noData": false,
           "noOwner": false,
@@ -4673,6 +4733,10 @@
           "triggers": false
         },
         "output_path": "/tmp/dump.sql"
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
@@ -4695,7 +4759,12 @@
           "asrt0001"
         ],
         "database": null,
-        "kind": "run_assertions"
+        "kind": "run_assertions",
+        "notify_only_on_increase": true
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
@@ -4710,6 +4779,55 @@
         "minutes": 5
       },
       "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "action": {
+        "kind": "timelapse_capture",
+        "max_generations": 30
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "enabled": true,
+      "id": "task0001",
+      "last_run_at": "2026-01-02T00:00:00Z",
+      "last_status": "ok",
+      "name": "nightly",
+      "next_run_at": "2026-01-03T00:00:00Z",
+      "profile_id": "abc12345",
+      "schedule": {
+        "hour": 2,
+        "kind": "daily",
+        "minute": 0
+      },
+      "updated_at": "2026-01-02T00:00:00Z"
+    },
+    {
+      "action": {
+        "kind": "refresh_plan_watch",
+        "snippet_ids": [
+          "snip0001"
+        ]
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 3
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "enabled": true,
+      "id": "task0001",
+      "last_run_at": "2026-01-02T00:00:00Z",
+      "last_status": "ok",
+      "name": "nightly",
+      "next_run_at": "2026-01-03T00:00:00Z",
+      "profile_id": "abc12345",
+      "schedule": {
+        "kind": "interval",
+        "minutes": 60
+      },
+      "updated_at": "2026-01-02T00:00:00Z"
     }
   ],
   "taskExportFormatVariants": [
@@ -4722,6 +4840,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4747,6 +4869,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4770,6 +4896,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4795,6 +4925,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4818,6 +4952,10 @@
         "sql": "SELECT 1",
         "sql_batch_size": null,
         "sql_table": null
+      },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
       },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
@@ -4843,6 +4981,10 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "connect_retry": {
+        "interval_secs": 30,
+        "max_retries": 0
+      },
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4859,6 +5001,7 @@
     }
   ],
   "taskRun": {
+    "attempts": 2,
     "bytes": 4096,
     "catch_up": true,
     "elapsed_ms": 3000,

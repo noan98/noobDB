@@ -61,3 +61,16 @@ pub async fn list_history_sql(
     let limit = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
     store::list_sqls(profile_id.as_deref(), limit).await
 }
+
+/// 履歴の保持日数 (#1539)。0 は無効 (行数上限 10,000 件だけが効く)。
+#[tauri::command]
+pub async fn get_history_retention_days() -> Result<u32> {
+    Ok(u32::try_from(store::retention_days().await?).unwrap_or(0))
+}
+
+/// 履歴の保持日数を保存し、期限切れの行をすぐ削除する。削除した行数を返す。
+/// `flight_recorder` の保持日数と同じ意味で、範囲は 0〜3650 日。
+#[tauri::command]
+pub async fn set_history_retention_days(days: u32) -> Result<u64> {
+    store::set_retention_days(i64::from(days)).await
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { renderWithProviders, screen, waitFor, fireEvent } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -15,6 +15,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       describeTable: vi.fn(),
       profileColumn: vi.fn(),
+      profileTable: vi.fn(),
     },
   };
 });
@@ -139,5 +140,54 @@ describe("ColumnProfilePanel StatTile (#1238)", () => {
     vi.mocked(api.profileColumn).mockResolvedValueOnce({ ...base, total_count: 0 } as never);
     renderPanel();
     expect((await screen.findAllByText("—")).length).toBeGreaterThan(0);
+  });
+});
+
+describe("ColumnProfilePanel all-columns overview (#1539)", () => {
+  it("ボタンで全列の概要を取り、行の列名から列を選べる", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValue({ notes: [], top_values: [], histogram: [] } as never);
+    vi.mocked(api.profileTable).mockResolvedValue({
+      table: "orders",
+      total_count: 4,
+      scans: 1,
+      columns: [
+        {
+          column: "id",
+          data_type: "int",
+          non_null_count: 4,
+          null_count: 0,
+          distinct_count: 4,
+          min_value: 1,
+          max_value: 4,
+          notes: [],
+        },
+        {
+          column: "payload",
+          data_type: "longblob",
+          non_null_count: 2,
+          null_count: 2,
+          distinct_count: null,
+          min_value: null,
+          max_value: null,
+          notes: ["overview_skipped_type"],
+        },
+      ],
+    });
+    const onSelect = vi.fn();
+    renderWithProviders(
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column: null }}
+        onSelectColumn={onSelect}
+      />,
+    );
+    fireEvent.click(await screen.findByText(t("profileOverviewRun")));
+    await screen.findByTestId("profile-overview");
+    expect(api.profileTable).toHaveBeenCalledWith("s1", "app", "orders", true);
+    expect(screen.getByText(t("profileOverviewSummary", { rows: "4", columns: 2, scans: 1 }))).toBeInTheDocument();
+    expect(screen.getAllByText(t("profileOverviewSkippedMark"))).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: t("profileOverviewSelect", { column: "payload" }) }));
+    expect(onSelect).toHaveBeenCalledWith("payload");
   });
 });

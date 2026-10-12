@@ -12,14 +12,19 @@ import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import { useSettings } from "../settings";
 import {
+  buildTimelapseExportRows,
   buildTimelapseRows,
   countTimelapseDiff,
+  timelapseRowsToJson,
+  timelapseRowsToTable,
   resolveGenerationPair,
   summarizeCapture,
   totalTimelapseBytes,
   type TimelapseRowKind,
 } from "../tableTimelapse";
 import { resolveMaskedColumns } from "./columnMask";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv } from "./tabularText";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
 import { EmptyState } from "./EmptyState";
@@ -359,6 +364,31 @@ export function TableTimelapsePanel({
   const rows = useMemo(() => (diff ? buildTimelapseRows(diff.diff, masked) : []), [diff, masked]);
   const counts = diff ? countTimelapseDiff(diff.diff) : null;
 
+  // 差分の書き出し (#1539)。行モデルは画面と同じマスク判定を通し、マスク列は伏せ字のまま出す。
+  const buildExport = (kind: "csv" | "json"): string => {
+    if (!diff) return "";
+    const exportRows = buildTimelapseExportRows(diff.diff, masked);
+    if (kind === "json") {
+      return timelapseRowsToJson(exportRows, {
+        table: diff.diff.table,
+        fromCapturedAt: diff.from_captured_at,
+        toCapturedAt: diff.to_captured_at,
+      });
+    }
+    const table = timelapseRowsToTable(exportRows, [
+      t("timelapseExportColKind"),
+      t("timelapseExportColKey"),
+      t("timelapseExportColColumn"),
+      t("timelapseExportColBefore"),
+      t("timelapseExportColAfter"),
+    ], {
+      added: t("timelapseKindAdded"),
+      removed: t("timelapseKindRemoved"),
+      changed: t("timelapseKindChanged"),
+    });
+    return tableToCsv(table.header, table.rows);
+  };
+
   const kindLabel: Record<TimelapseRowKind, string> = {
     added: t("timelapseKindAdded"),
     removed: t("timelapseKindRemoved"),
@@ -560,6 +590,15 @@ export function TableTimelapsePanel({
                     <Chip status="source_only">{t("timelapseCountAdded", { count: counts.added })}</Chip>
                     <Chip status="different">{t("timelapseCountChanged", { count: counts.changed })}</Chip>
                     <Chip status="target_only">{t("timelapseCountRemoved", { count: counts.removed })}</Chip>
+                    <Box flex="1" />
+                    <TextExportButton
+                      filenameBase={`timelapse-${diff.diff.table}`}
+                      disabled={rows.length === 0}
+                      formats={[
+                        { id: "csv", label: "CSV", build: () => buildExport("csv") },
+                        { id: "json", label: "JSON", build: () => buildExport("json") },
+                      ]}
+                    />
                   </Flex>
                   {diff.partial && (
                     <chakra.p fontSize="xs" color="app.textWarning">

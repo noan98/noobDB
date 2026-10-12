@@ -1,6 +1,7 @@
-import type { CellValue, Column } from "../api/tauri";
-import { editIsNoop, rowEditKey } from "./cellEdit";
+import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
+import { editIsNoop, isBinaryColumnType, rowEditKey, type PendingInsertRow } from "./cellEdit";
 import type { BulkEditTarget } from "./bulkEdit";
+import { insertDefaultHint } from "./insertDefaults";
 
 /**
  * 結果グリッドへのクリップボード貼り付けによる複数セル一括編集 (#793)。
@@ -30,8 +31,9 @@ export interface PastePlan {
   skippedInvalid: number;
   /**
    * 貼り付け範囲が現在表示中の行/列数を超えたためスキップしたセル数。
-   * 行の自動追加 (INSERT 化) はスコープ外 — 足りない行/列はここに計上して
-   * トーストで件数を提示する (「何もしないより保守的に伝える」方針)。
+   * 足りない列はここに計上してトーストで件数を提示する (「何もしないより保守的に伝える」
+   * 方針)。足りない**行**は、呼び出し側が `planPasteInsertRows` で保留 INSERT 行へ積む
+   * 選択肢を出せる (#1539)。積まなかった場合はここに計上されたままになる。
    */
   skippedOutOfBounds: number;
 }
@@ -189,4 +191,106 @@ export function parseClipboardGrid(text: string): string[][] {
     if (last.length === 1 && last[0] === "") rows.pop();
   }
   return rows;
+}
+
+/** `planPasteInsertRows` の入力。 */
+export interface PlanPasteInsertInput {
+  /** 保留 INSERT 行へ積む貼り付け行 (表示行を超えた分)。`parseClipboardGrid` の行×列。 */
+  grid: string[][];
+  /** 貼り付け先の列の元添字 (表示順)。`grid` の列番号に対応。 */
+  targetColIndices: number[];
+  /** 結果列メタ。 */
+  columns: Column[];
+  driver: string;
+  /** テーブルの列メタ (生成列・自動採番の判定用)。無ければ判定を省く。 */
+  tableColumns: TableColumnInfo[] | null | undefined;
+  /** 値が列型に対して妥当か (`planPasteEdit` と共有)。妥当なら null。 */
+  validate: (colIdx: number, value: string) => unknown;
+}
+
+/** 保留 INSERT 行へ積む計画。 */
+export interface PasteInsertPlan {
+  rows: PendingInsertRow[];
+  /** 積まれるセル数。 */
+  cells: number;
+  /** 生成列のため入れなかったセル数 (値を入れると INSERT がエラーになる)。 */
+  skippedGenerated: number;
+  /** BLOB / バイナリ列のため入れなかったセル数 (貼り付けテキストはバイト列にならない)。 */
+  skippedBinary: number;
+  /** 列型に対して不正な値のため入れなかったセル数。 */
+  skippedInvalid: number;
+  /** 表示列を超えたため入れなかったセル数。 */
+  skippedOutOfBounds: number;
+  /** 入れる値が 1 つも残らず捨てた行数。 */
+  skippedBlankRows: number;
+}
+
+/**
+ * 貼り付けが表示行を超えた分を、行追加モーダルと同じ `PendingInsertRow` に変換する (#1539)。
+ *
+ * - 空欄セルは INSERT の列から省く (DB の既定値 / 自動採番に任せる。行追加モーダルと同じ規約)。
+ *   `NULL` と書かれたセルは `PendingInsertRow` の規約どおり SQL の NULL になる。
+ * - 生成列 (`insertDefaultHint` が `generated`) は値を入れられないので外す。自動採番列は
+ *   値が明示されていればそのまま入れる (意図して ID を貼ることがあるため。重複は反映時の
+ *   DB エラーで分かる)。
+ * - BLOB / バイナリ列は文字列の貼り付けでは正しいバイト列にならないので外す (`skippedBinary`)。
+ * - 型に合わない値のセルだけを外し、行の他のセルは積む。値が 1 つも残らない行は積まない。
+ *
+ * 書き込みはここでは行わない — 呼び出し側が既存の保留 INSERT バッファへ足し、反映は従来どおり
+ * 保留編集の確認フロー (`buildInsertStatements`) を通る。
+ */
+export function planPasteInsertRows(input: PlanPasteInsertInput): PasteInsertPlan {
+  const plan: PasteInsertPlan = {
+    rows: [],
+    cells: 0,
+    skippedGenerated: 0,
+    skippedBinary: 0,
+    skippedInvalid: 0,
+    skippedOutOfBounds: 0,
+    skippedBlankRows: 0,
+  };
+  const generated = new Set<number>();
+  if (input.tableColumns) {
+    input.columns.forEach((c, i) => {
+      const meta = input.tableColumns?.find((m) => m.name === c.name);
+      if (meta && insertDefaultHint(input.driver, meta, input.tableColumns ?? [])?.kind === "generated") {
+        generated.add(i);
+      }
+    });
+  }
+  for (const gridRow of input.grid) {
+    const row: PendingInsertRow = {};
+    let count = 0;
+    for (let c = 0; c < gridRow.length; c++) {
+      const value = gridRow[c];
+      const colIdx = input.targetColIndices[c];
+      if (colIdx === undefined) {
+        plan.skippedOutOfBounds++;
+        continue;
+      }
+      if (!input.columns[colIdx]) continue;
+      if (value === "") continue;
+      if (generated.has(colIdx)) {
+        plan.skippedGenerated++;
+        continue;
+      }
+      if (isBinaryColumnType(input.columns[colIdx].type_name)) {
+        plan.skippedBinary++;
+        continue;
+      }
+      if (input.validate(colIdx, value)) {
+        plan.skippedInvalid++;
+        continue;
+      }
+      row[colIdx] = value;
+      count++;
+    }
+    if (count === 0) {
+      plan.skippedBlankRows++;
+      continue;
+    }
+    plan.rows.push(row);
+    plan.cells += count;
+  }
+  return plan;
 }

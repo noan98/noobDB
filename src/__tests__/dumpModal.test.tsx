@@ -50,4 +50,19 @@ describe("DumpModal render smoke (#604)", () => {
     expect(screen.queryByText(t("dumpOptSingleTransaction"))).not.toBeInTheDocument();
     expect(screen.queryByText(t("dumpOptEvents"))).not.toBeInTheDocument();
   });
+
+  // gzip (#1539): 全ドライバで選べ、切り替えると保存先の拡張子が .sql ⇔ .sql.gz に追従する。
+  it("gzip toggle swaps the save path extension between .sql and .sql.gz", () => {
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />,
+    );
+    const pathInput = screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement;
+    expect(pathInput.value.endsWith(".sql")).toBe(true);
+    const gzip = screen.getByRole("switch", { name: t("dumpOptGzip") });
+    fireEvent.click(gzip);
+    expect(pathInput.value.endsWith(".sql.gz")).toBe(true);
+    fireEvent.click(gzip);
+    expect(pathInput.value.endsWith(".sql")).toBe(true);
+    expect(pathInput.value.endsWith(".gz")).toBe(false);
+  });
 });

@@ -279,3 +279,16 @@ describe("buildAssertionTrends (#1170)", () => {
     expect(t.dots).toEqual([true, true, false]);
   });
 });
+
+describe("summarizeAction for timelapse / plan watch (#1537)", () => {
+  it("タイムラプス取得とプランウォッチ再取得を要約する", () => {
+    expect(summarizeAction({ kind: "timelapse_capture" }, en)).toBe("timelapse capture");
+    expect(summarizeAction({ kind: "timelapse_capture", max_generations: 30 }, ja)).toBe("タイムラプス取得");
+    expect(summarizeAction({ kind: "refresh_plan_watch", snippet_ids: [] }, en)).toBe(
+      "plan watch (all watched)",
+    );
+    expect(summarizeAction({ kind: "refresh_plan_watch", snippet_ids: ["a", "b"] }, en)).toBe(
+      "plan watch (2)",
+    );
+  });
+});

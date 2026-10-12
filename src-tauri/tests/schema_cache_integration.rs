@@ -429,3 +429,97 @@ async fn reconnect_replaces_the_session_with_an_empty_cache() {
     assert!(tables.iter().any(|t| t == "t"));
     assert!(!tables.iter().any(|t| t == "GHOST"));
 }
+
+// ---------------------------------------------------------------------------
+// #1539: 対象が 1 テーブルと分かる DDL はそのテーブルのキャッシュだけを捨てる
+// ---------------------------------------------------------------------------
+
+/// `ALTER TABLE t1 ADD COLUMN` (ALTER モーダルが流す形) の後、t1 の列だけが取り直され、
+/// 別テーブル t2 の列・テーブル一覧のキャッシュは残る。`CREATE TABLE` のように対象を
+/// 特定できない DDL は従来どおり全体が捨てられる。
+#[tokio::test]
+async fn single_table_ddl_invalidates_only_that_table() {
+    let (conn, opts, _path) = temp_conn("scoped").await;
+    conn.execute("CREATE TABLE t1 (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create t1");
+    conn.execute("CREATE TABLE t2 (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create t2");
+
+    let state = AppState::default();
+    let id = register(&state, "s1", conn, opts).await;
+    let session = state.get(&id).await.expect("session exists");
+
+    let calls = std::sync::atomic::AtomicUsize::new(0);
+    let read = |table: &'static str| {
+        let session = session.clone();
+        let calls = &calls;
+        async move {
+            session
+                .schema_cache
+                .columns("main", table, || async {
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    session.conn.columns("main", table).await
+                })
+                .await
+                .expect("columns")
+        }
+    };
+    let tables_calls = std::sync::atomic::AtomicUsize::new(0);
+    let read_tables = || async {
+        session
+            .schema_cache
+            .tables("main", || async {
+                tables_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                session.conn.tables("main").await
+            })
+            .await
+            .expect("tables")
+    };
+    read("t1").await;
+    read("t2").await;
+    read_tables().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+
+    t::run_query_transaction_via_command(
+        &state,
+        &id,
+        vec!["ALTER TABLE t1 ADD COLUMN extra TEXT".to_string()],
+        Some("main"),
+    )
+    .await
+    .expect("alter t1");
+
+    let t1_cols = read("t1").await;
+    assert!(
+        t1_cols.iter().any(|c| c.name == "extra"),
+        "t1 は取り直されて新しい列が見える"
+    );
+    read("t2").await;
+    read_tables().await;
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "取り直されたのは t1 だけ (t2 はキャッシュのまま)"
+    );
+    assert_eq!(
+        tables_calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "テーブル一覧も残る"
+    );
+
+    // 対象を特定できない DDL は全体を捨てる (従来どおり)。
+    t::run_query_transaction_via_command(
+        &state,
+        &id,
+        vec!["CREATE TABLE t3 (id INTEGER PRIMARY KEY)".to_string()],
+        Some("main"),
+    )
+    .await
+    .expect("create t3");
+    read("t2").await;
+    let tables = read_tables().await;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 4);
+    assert!(tables.iter().any(|t| t == "t3"));
+}

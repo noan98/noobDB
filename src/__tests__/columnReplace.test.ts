@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { CellValue, Column } from "../api/tauri";
 import {
+  buildColumnReplaceCountSql,
   buildColumnReplaceSql,
   columnReplaceUnsupported,
   buildReplacer,
@@ -72,6 +73,39 @@ describe("buildColumnReplaceSql: 通常置換 (3 ドライバ)", () => {
       "WHERE (`id` > 5) AND INSTR(`url`, 'http://') > 0;",
     );
     expect(sqlOf(base({ extraWhere: "   " }))).toContain("WHERE INSTR(");
+  });
+});
+
+describe("buildColumnReplaceCountSql (#1536)", () => {
+  const countOf = (input: ColumnReplaceSqlInput): string => {
+    const r = buildColumnReplaceCountSql(input);
+    if (!r.ok) throw new Error(`unexpected: ${r.reason}`);
+    return r.sql;
+  };
+  it("UPDATE と同じ WHERE 句で COUNT(*) を数える (3 ドライバ)", () => {
+    expect(countOf(base())).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE INSTR(`url`, 'http://') > 0");
+    expect(countOf(base({ driver: "postgres" }))).toBe(
+      'SELECT COUNT(*) FROM "app"."users" WHERE POSITION(\'http://\' IN "url") > 0',
+    );
+    expect(countOf(base({ driver: "sqlite" }))).toBe('SELECT COUNT(*) FROM "users" WHERE INSTR("url", \'http://\') > 0');
+  });
+  it("UPDATE 文の WHERE 句と常に一致する (正規表現・大小無視・extraWhere を含む)", () => {
+    const cases: ColumnReplaceSqlInput[] = [
+      base(),
+      base({ options: ci }),
+      base({ options: re, find: "^a(.)$", replace: "$1" }),
+      base({ driver: "postgres", options: ci, extraWhere: '"id" > 5' }),
+      base({ driver: "postgres", options: re }),
+      base({ extraWhere: "`id` > 5" }),
+    ];
+    for (const c of cases) {
+      const where = sqlOf(c).replace(/^.* WHERE /, "").replace(/;$/, "");
+      expect(countOf(c)).toMatch(new RegExp(`WHERE ${where.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+    }
+  });
+  it("空の検索文字列・非対応の組み合わせは組み立てない", () => {
+    expect(buildColumnReplaceCountSql(base({ find: "" }))).toEqual({ ok: false, reason: "emptyFind" });
+    expect(buildColumnReplaceCountSql(base({ driver: "sqlite", options: re })).ok).toBe(false);
   });
 });
 

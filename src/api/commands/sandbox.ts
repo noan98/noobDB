@@ -8,6 +8,7 @@ import type {
   SandboxCreateResponse,
   SandboxTableDiffResult,
   SandboxSchemaDiffResult,
+  SandboxResetResult,
 } from "../tauri";
 
 export const sandboxCommands = {
@@ -90,4 +91,14 @@ export const sandboxCommands = {
       skipKeys: params.skipKeys && params.skipKeys.length > 0 ? params.skipKeys : null,
       allowDelete: params.allowDelete,
     }),
+  /**
+   * 1 表だけを base スナップショットの内容へ戻す (#1539)。ライブ表を全行削除して
+   * shadow から入れ直す 1 トランザクション。行データだけが対象でスキーマ変更は戻さない。
+   */
+  sandboxResetTable: (params: { sandboxId: string; sandboxSessionId: string; table: string }) =>
+    invoke<SandboxResetResult>("sandbox_reset_table", {
+      sandboxId: params.sandboxId,
+      sandboxSessionId: params.sandboxSessionId,
+      table: params.table,
+    }).then((r) => parseResponse(schemas.sandboxResetResult, r, "sandbox_reset_table")),
 };

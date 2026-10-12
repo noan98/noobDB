@@ -209,3 +209,130 @@ export function formatMs(ms: number | null): string {
   if (ms < 10_000) return `${(ms / 1000).toFixed(2)}s`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
+
+// ── フィンガープリント集計の並べ替えと書き出し (#1539) ─────────────────
+
+/** 統計タブで並べ替えられる列。 */
+export type StatSortKey = "calls" | "total" | "mean" | "max" | "rows" | "db" | "fingerprint";
+export type StatSortDir = "asc" | "desc";
+export interface StatSort {
+  key: StatSortKey;
+  dir: StatSortDir;
+}
+
+/** 文字列列は昇順、数値列は降順 (多い・遅いものが上) から始める。 */
+export function defaultStatSortDir(key: StatSortKey): StatSortDir {
+  return key === "db" || key === "fingerprint" ? "asc" : "desc";
+}
+
+/**
+ * ヘッダクリックの遷移: 別の列なら既定の向きで開始 → 同じ列なら反転 → さらにクリックで
+ * 並べ替え解除 (バックエンドが返す総時間降順に戻る)。
+ */
+export function nextStatSort(current: StatSort | null, key: StatSortKey): StatSort | null {
+  if (current === null || current.key !== key) return { key, dir: defaultStatSortDir(key) };
+  if (current.dir === defaultStatSortDir(key)) {
+    return { key, dir: current.dir === "asc" ? "desc" : "asc" };
+  }
+  return null;
+}
+
+type StatRowLike = {
+  digest: string;
+  database: string | null;
+  calls: number;
+  total_time_ms: number;
+  mean_time_ms: number;
+  max_time_ms: number;
+  rows: number | null;
+  n_plus_one: boolean;
+};
+
+/**
+ * 差分行を並べ替えた新しい配列を返す (入力は変更しない)。`sort` が null なら入力順。
+ * 値が無い (null) 行は向きに関わらず末尾、同値は元の順序を保つ (安定ソート)。
+ * フィンガープリント列は `fingerprintOf(row)` の文字列で比較する。
+ */
+export function sortStatRows<T extends StatRowLike>(
+  rows: readonly T[],
+  sort: StatSort | null,
+  fingerprintOf: (row: T) => string,
+): T[] {
+  if (sort === null) return [...rows];
+  const factor = sort.dir === "asc" ? 1 : -1;
+  const value = (r: T): number | string | null => {
+    switch (sort.key) {
+      case "calls":
+        return r.calls;
+      case "total":
+        return r.total_time_ms;
+      case "mean":
+        return r.mean_time_ms;
+      case "max":
+        return r.max_time_ms;
+      case "rows":
+        return r.rows;
+      case "db":
+        return r.database;
+      case "fingerprint":
+        return fingerprintOf(r);
+    }
+  };
+  return rows
+    .map((row, index) => ({ row, index, v: value(row) }))
+    .sort((a, b) => {
+      if (a.v === null && b.v === null) return a.index - b.index;
+      if (a.v === null) return 1;
+      if (b.v === null) return -1;
+      let cmp: number;
+      if (typeof a.v === "number" && typeof b.v === "number") cmp = a.v - b.v;
+      else cmp = String(a.v).localeCompare(String(b.v));
+      return cmp !== 0 ? cmp * factor : a.index - b.index;
+    })
+    .map((x) => x.row);
+}
+
+/** 書き出し用の列見出し (i18n 済みの文言を呼び出し側が渡す)。 */
+export interface StatExportLabels {
+  calls: string;
+  total: string;
+  mean: string;
+  max: string;
+  rows: string;
+  db: string;
+  fingerprint: string;
+  nPlusOne: string;
+}
+
+/**
+ * 表示中の統計行を書き出し用の表 (見出し + 行) にする。時間は ms の数値のまま
+ * (表計算で集計しやすいよう単位付き文字列にしない)。N+1 目安は `Y` / 空。
+ */
+export function statRowsToTable<T extends StatRowLike>(
+  rows: readonly T[],
+  fingerprintOf: (row: T) => string,
+  labels: StatExportLabels,
+): { header: string[]; rows: (string | number | null)[][] } {
+  return {
+    header: [
+      labels.calls,
+      labels.total,
+      labels.mean,
+      labels.max,
+      labels.rows,
+      labels.db,
+      labels.nPlusOne,
+      labels.fingerprint,
+    ],
+    rows: rows.map((r) => [
+      r.calls,
+      r.total_time_ms,
+      r.mean_time_ms,
+      r.max_time_ms,
+      r.rows,
+      r.database,
+      r.n_plus_one ? "Y" : "",
+      fingerprintOf(r),
+    ]),
+  };
+}

@@ -699,6 +699,13 @@ export interface TableRowEstimate {
   estimate: number | null;
 }
 
+/** スキーマキャッシュの取得時刻 (DB ごと, #1539)。 */
+export interface SchemaCacheTime {
+  database: string;
+  /** UNIX epoch ミリ秒 (壁時計)。表示はローカル時刻。 */
+  fetched_at_ms: number;
+}
+
 /** テーブル (またはビュー) のコメント 1 件 (#1002)。コメントを持つものだけが返る。 */
 export interface TableComment {
   name: string;
@@ -927,6 +934,8 @@ export interface HealthProbeItem {
   version: string | null;
   /** 現在の接続数。SQLite / 取得不可は null。 */
   connections: number | null;
+  /** SSH トンネルの生存 (#1537)。トンネル越しでなければ null、false なら SSH セッションが閉じている。 */
+  tunnel_alive: boolean | null;
 }
 
 export interface ServerMetrics {
@@ -1040,6 +1049,26 @@ export interface ColumnProfile {
   notes: string[];
 }
 
+/** 全列の概要の 1 列分 (#1539)。`distinct_count` が null なら求めていない / 求められなかった。 */
+export interface ColumnOverview {
+  column: string;
+  data_type: string;
+  non_null_count: ProfileCount;
+  null_count: ProfileCount;
+  distinct_count: ProfileCount | null;
+  min_value: CellValue;
+  max_value: CellValue;
+  notes: string[];
+}
+
+/** 表の全列の概要 (#1539)。`scans` は集計に使った SELECT の本数 (通常 1)。 */
+export interface TableProfileOverview {
+  table: string;
+  total_count: ProfileCount;
+  columns: ColumnOverview[];
+  scans: number;
+}
+
 /**
  * Where a table or column sits relative to the two schemas in a comparison.
  * `source_only` would be added to the target, `target_only` would be removed,
@@ -1121,6 +1150,8 @@ export interface SchemaDriftGeneration {
   tableCount: number;
   /** true のとき、サイズ暴走ガードで中身を保存していない (差分表示不可)。 */
   omitted: boolean;
+  /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
+  triggerSql?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
@@ -1177,6 +1208,8 @@ export interface SchemaDriftSummary {
 export interface SchemaDriftCapture {
   /** 新しい世代が追加されたか (直前世代と同一内容なら false)。 */
   added: boolean;
+  /** 実際に取得した対象。PostgreSQL ではプロファイルの DB 名が既定スキーマに解決される。 */
+  database: string;
   /** 追加後の世代一覧 (新しい順)。`added` が false のときは空。 */
   generations: SchemaDriftGeneration[];
   /** 直前世代からの変化サマリ。初回取得・比較不能のときは null。 */
@@ -1442,6 +1475,12 @@ export interface SandboxTableDiffResult {
   source_error: string | null;
 }
 
+/** `sandboxResetTable` の戻り値 (#1539)。 */
+export interface SandboxResetResult {
+  /** リセット後にライブ表へ戻った行数 (= base スナップショットの行数)。 */
+  restored_rows: number;
+}
+
 /** `sandboxSchemaDiff` の戻り値。 */
 export interface SandboxSchemaDiffResult {
   /** サンドボックスでのスキーマ変更 (base 比較)。`generateSyncSql` にそのまま渡せる。 */
@@ -1509,6 +1548,11 @@ export interface DumpOptions {
    */
   formatSql?: boolean;
   /**
+   * All drivers — gzip-compress the finished dump (`.sql.gz`, #1539). Applied after
+   * `formatSql`. Off by default. The save path's extension is chosen by the caller.
+   */
+  gzip?: boolean;
+  /**
    * 指定したテーブルだけをダンプする (#1399)。未指定 / null はデータベース全体。
    * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
    */
@@ -1545,7 +1589,29 @@ export type TaskAction =
       database?: string | null;
       /** 実行するアサーション ID。空ならプロファイルのスコープに合うものすべて。 */
       assertion_ids: string[];
+      /** true: 失敗件数が前回の実行より増えたときだけ失敗扱い (通知) にする (#1537)。 */
+      notify_only_on_increase?: boolean;
+    }
+  | {
+      /** ウォッチ中のテーブルのスナップショットを無人で取得する (#1537)。 */
+      kind: "timelapse_capture";
+      /** 1 ウォッチあたりの保持世代数の上限。未指定ならタイムラプスの既定値。 */
+      max_generations?: number | null;
+    }
+  | {
+      /** ウォッチ中の EXPLAIN を再取得し、警告相当の変化だけを失敗扱い (通知) にする (#1537)。 */
+      kind: "refresh_plan_watch";
+      /** 対象スニペット ID。空ならこのプロファイルでウォッチ中のものすべて。 */
+      snippet_ids: string[];
     };
+
+/** 接続失敗時の自動リトライ設定 (#1537)。接続段階の失敗だけを指数バックオフで再試行する。 */
+export interface ConnectRetry {
+  /** 初回失敗後の再試行回数 (0 = しない、上限 10)。 */
+  max_retries: number;
+  /** 最初の待機秒数 (5〜3600)。以降 2 倍ずつ伸びる (上限 15 分)。 */
+  interval_secs: number;
+}
 
 /** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
 export type TaskSchedule =
@@ -1564,6 +1630,7 @@ export interface TaskDefinition {
   next_run_at: string | null;
   last_run_at: string | null;
   last_status: string | null;
+  connect_retry: ConnectRetry;
 }
 
 export interface SaveTaskRequest {
@@ -1573,6 +1640,7 @@ export interface SaveTaskRequest {
   action: TaskAction;
   schedule: TaskSchedule;
   enabled: boolean;
+  connect_retry?: ConnectRetry;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -1588,6 +1656,8 @@ export interface TaskRun {
   bytes: number | null;
   elapsed_ms: number;
   catch_up: boolean;
+  /** 接続を試みた回数 (#1537)。2 以上なら接続リトライが働いた。 */
+  attempts: number;
 }
 
 /** アサーション実行タスクの 1 アサーション分の合否履歴 (#1170)。 */
@@ -2029,6 +2099,22 @@ export interface CellBlobProbe {
   image: boolean;
 }
 
+/** BLOB 列のフォルダ一括保存の結果 (#1539)。 */
+export interface BlobFolderSaveResult {
+  /** 保存したファイル数。 */
+  saved: number;
+  /** 保存した合計バイト数。 */
+  totalBytes: number;
+  /** NULL のセルで保存しなかった行数。 */
+  skippedNull: number;
+  /** 上限 (16 MiB) を超えて保存しなかった行数。 */
+  skippedTooLarge: number;
+  /** 取得・書き込みに失敗した行数。 */
+  failed: number;
+  /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
+  errors: { row: number; error: string }[];
+}
+
 export interface ImportErrorEvent {
   streamId: string;
   error: string;
@@ -2070,7 +2156,7 @@ export interface ExportStreamHandlers {
 }
 
 /** 接続間データ転送 (#986) で既存テーブルと衝突したときの扱い。 */
-export type TransferMode = "create" | "replace" | "append";
+export type TransferMode = "create" | "replace" | "append" | "upsert";
 
 export interface TransferRequest {
   sourceSessionId: string;
@@ -2084,6 +2170,10 @@ export interface TransferRequest {
   targetTable: string;
   mode: TransferMode;
   batchSize?: number | null;
+  /** `mode === "upsert"` の衝突方針。省略は `update` (#1539)。 */
+  conflictMode?: "skip" | "update" | null;
+  /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
+  keyColumns?: string[] | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {

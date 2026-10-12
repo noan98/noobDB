@@ -11,6 +11,7 @@ import type {
   RoutineSignature,
   ForeignKey,
   TableRowEstimate,
+  SchemaCacheTime,
   TableComment,
   TableStatistic,
   AlterTableContext,
@@ -142,4 +143,16 @@ export const schemaCommands = {
    */
   refreshSchemaCache: (sessionId: string) =>
     invoke<void>("refresh_schema_cache", { sessionId }),
+  /**
+   * 1 つのテーブルのスキーマキャッシュだけを無効化する (#1539)。ALTER / CREATE INDEX の
+   * 適用後のように対象が分かるとき、`refreshSchemaCache` (接続全体) の代わりに使うと
+   * 他のテーブルの列・インデックスを取り直さずに済む。
+   */
+  invalidateTableCache: (sessionId: string, database: string, table: string) =>
+    invoke<void>("invalidate_table_cache", { sessionId, database, table }),
+  /** テーブル一覧をキャッシュした DB ごとの取得時刻 (epoch ミリ秒, #1539)。ツリーの「キャッシュ取得 HH:MM」用。 */
+  schemaCacheTimes: (sessionId: string) =>
+    invoke<SchemaCacheTime[]>("schema_cache_times", { sessionId }).then((r) =>
+      parseResponse(schemas.schemaCacheTimeArray, r, "schema_cache_times"),
+    ),
 };

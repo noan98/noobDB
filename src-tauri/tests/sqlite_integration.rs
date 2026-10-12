@@ -2249,7 +2249,12 @@ async fn capture_prepare_has_no_side_effect_and_finish_applies_the_write() {
         .await
         .expect("select");
     assert_eq!(format!("{:?}", rows.rows[0][0]), "String(\"alice\")");
-    let (res, cap) = conn.capture_finish(prep, sql, None).await.expect("finish");
+    let run = conn
+        .capture_execute(prep, sql, None)
+        .await
+        .expect("execute");
+    // COMMIT 前でも同じ接続の外からは未確定 (BEGIN IMMEDIATE) だが、commit すれば確定する。
+    let (res, cap) = conn.capture_commit(run, sql).await.expect("commit");
     assert_eq!(res.rows_affected, 1);
     assert!(cap.capturable, "{:?}", cap.reason);
     let rows = conn
@@ -2720,6 +2725,134 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[tokio::test]
+async fn capture_write_runs_the_statement_exactly_once_even_with_a_trigger() {
+    // #1536: 以前は dry-run と本実行で文が 2 回走っていた。単一トランザクション化後は
+    // トリガの副作用も 1 回分だけ残る。
+    let (path, conn) = flight_fixture("trigger_once").await;
+    conn.execute("CREATE TABLE audit (n INTEGER)", None)
+        .await
+        .expect("create audit");
+    conn.execute(
+        "CREATE TRIGGER t_upd AFTER UPDATE ON t BEGIN INSERT INTO audit (n) VALUES (1); END",
+        None,
+    )
+    .await
+    .expect("create trigger");
+
+    let (result, capture) = conn
+        .capture_write("UPDATE t SET name = 'zed' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+
+    let audit = conn
+        .execute("SELECT COUNT(*) FROM audit", None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&audit.rows[0][0], t::Value::Int(1) | t::Value::UInt(1)),
+        "trigger must fire once: {:?}",
+        audit.rows[0][0]
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_write_records_autoincrement_insert_outside_the_head_window() {
+    // #1536: 行数が row_cap を超える表でも、採番で末尾に付く INSERT は PK 降順の
+    // 末尾窓で捕捉できる (先頭窓では新規行が窓の外になり辞退していた)。
+    let (path, conn) = flight_fixture("insert_tail").await;
+    for id in 3..=8 {
+        conn.execute(
+            &format!("INSERT INTO t (id, name) VALUES ({id}, 'n{id}')"),
+            None,
+        )
+        .await
+        .expect("seed");
+    }
+    let (result, capture) = conn
+        .capture_write("INSERT INTO t (name) VALUES ('fresh')", None, 3)
+        .await
+        .expect("capture_write");
+    assert_eq!(result.rows_affected, 1);
+    assert!(capture.capturable, "reason: {:?}", capture.reason);
+    let id_idx = capture.columns.iter().position(|c| c == "id").unwrap();
+    assert_eq!(capture.after_rows.len(), 1);
+    assert_eq!(capture.after_rows[0][id_idx], t::Value::Int(9));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn redo_plan_reapplies_an_undone_capture() {
+    // #1536: capture → undo → redo をドライバ層で通す (永続化を伴わない経路)。
+    let (path, conn) = flight_fixture("redo").await;
+    let (_r, capture) = conn
+        .capture_write("UPDATE t SET name = 'alice2' WHERE id = 1", None, 100)
+        .await
+        .expect("capture_write");
+    let record = t::WriteCaptureRecord {
+        id: 1,
+        profile_id: None,
+        driver: "sqlite".to_string(),
+        database: None,
+        table: capture.table.clone().unwrap(),
+        kind: capture.kind,
+        sql: "UPDATE t SET name = 'alice2' WHERE id = 1".to_string(),
+        primary_key: capture.primary_key.clone(),
+        columns: capture.columns.clone(),
+        column_types: capture.column_types.clone(),
+        before_rows: capture.before_rows.clone(),
+        after_rows: capture.after_rows.clone(),
+        rows_affected: capture.rows_affected as i64,
+        captured_at: "2026-01-01T00:00:00Z".to_string(),
+        undone: false,
+    };
+    let keys = vec![vec![t::Value::Int(1)]];
+    let current = conn
+        .fetch_rows_by_pk("t", &record.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    for stmt in &t::build_undo_plan(&record, &current, false).statements {
+        conn.execute(stmt, None).await.expect("undo");
+    }
+
+    let mut undone = record.clone();
+    undone.undone = true;
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+    assert_eq!(plan.statements.len(), 1);
+    for stmt in &plan.statements {
+        conn.execute(stmt, None).await.expect("redo");
+    }
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
+
+    // Undo 後に別の値へ変わっていれば Redo は衝突として止まる。
+    conn.execute("UPDATE t SET name = 'other' WHERE id = 1", None)
+        .await
+        .expect("drift");
+    let current = conn
+        .fetch_rows_by_pk("t", &undone.primary_key, &keys, None)
+        .await
+        .expect("fetch");
+    let plan = t::build_redo_plan(&undone, &current, false);
+    assert_eq!(plan.conflicts.len(), 1);
+    assert!(plan.statements.is_empty());
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 // ---------------------------------------------------------------------------
 // #735 コマンド層: 読み取り専用ガード・存在しないレコードの拒否
 // (永続化を伴わない経路のみ; 理由は上のコメント参照)
@@ -3086,6 +3219,71 @@ async fn sqlite_profile_column_via_command_layer() {
         Err(t::AppError::SessionNotFound(_))
     ));
 
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 表の全列の概要 (#1539)。全列の件数 / NULL 数 / DISTINCT / MIN・MAX が 1 回の走査で
+/// 揃うこと (scans == 1)、read_only でも動くこと、存在しない表を弾くことを固定する。
+#[tokio::test]
+async fn sqlite_profile_table_overview_single_scan() {
+    let path = temp_cmd_db("profile_overview");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE ov_t (id INTEGER PRIMARY KEY, score REAL, tag TEXT, blobby BLOB)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute(
+        "INSERT INTO ov_t (score, tag, blobby) VALUES \
+         (1.0, 'a', x'01'), (2.0, 'a', NULL), (2.0, 'b', NULL), (NULL, NULL, NULL)",
+        None,
+    )
+    .await
+    .expect("insert");
+    let session = t::make_session("ov", conn, opts, /* read_only */ true);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let o = t::profile_table_inner(&state, &sid, "main", "ov_t", true)
+        .await
+        .expect("overview");
+    assert_eq!(o.scans, 1, "全列が 1 本の SELECT で取れること");
+    assert_eq!(o.total_count, t::Value::UInt(4));
+    assert_eq!(o.columns.len(), 4);
+    let by = |n: &str| o.columns.iter().find(|c| c.column == n).expect("column");
+    let score = by("score");
+    assert_eq!(score.non_null_count, t::Value::UInt(3));
+    assert_eq!(score.null_count, t::Value::UInt(1));
+    assert_eq!(score.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&score.min_value), "1");
+    assert_eq!(cell_text(&score.max_value), "2");
+    let tag = by("tag");
+    assert_eq!(tag.distinct_count, Some(t::Value::UInt(2)));
+    assert_eq!(cell_text(&tag.min_value), "a");
+    assert_eq!(cell_text(&tag.max_value), "b");
+    let id = by("id");
+    assert_eq!(id.distinct_count, Some(t::Value::UInt(4)));
+
+    // DISTINCT を求めない指定。
+    let no_distinct = t::profile_table_inner(&state, &sid, "main", "ov_t", false)
+        .await
+        .expect("overview without distinct");
+    assert!(no_distinct
+        .columns
+        .iter()
+        .all(|c| c.distinct_count.is_none()));
+
+    assert!(
+        t::profile_table_inner(&state, &sid, "main", "no_such_table", true)
+            .await
+            .is_err()
+    );
+    assert!(matches!(
+        t::profile_table_inner(&state, "nope", "main", "ov_t", true).await,
+        Err(t::AppError::SessionNotFound(_))
+    ));
     let _ = std::fs::remove_file(&path);
 }
 
@@ -4069,6 +4267,108 @@ async fn sqlite_cell_blob_probe_and_fetch() {
     );
 }
 
+/// 複数行の BLOB をフォルダへ書き出す (#1539)。主キー由来のファイル名・種別由来の拡張子・
+/// NULL と上限超過のスキップ・既存ファイルを上書きしないこと・存在しない行の失敗集計。
+#[tokio::test]
+async fn sqlite_save_cells_to_folder() {
+    let db = temp_cmd_db("blob_folder");
+    let db_path = db.to_str().expect("utf8 path");
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-blob-folder", conn, t::sqlite_options(db_path), true);
+    // read_only セッションでも SELECT だけなので書き出せる。作表は別接続で行う。
+    let writer = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("writer");
+    writer
+        .execute(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB)",
+            None,
+        )
+        .await
+        .expect("create");
+    let png = "89504E470D0A1A0A0000";
+    let big = "00".repeat(16 * 1024 * 1024 + 1);
+    for sql in [
+        format!("INSERT INTO files VALUES (1, X'{png}')"),
+        "INSERT INTO files VALUES (2, X'0102')".to_string(),
+        "INSERT INTO files VALUES (3, NULL)".to_string(),
+        format!("INSERT INTO files VALUES (4, X'{big}')"),
+        "INSERT INTO files VALUES (5, X'0A')".to_string(),
+    ] {
+        writer.execute(&sql, None).await.expect("insert");
+    }
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("noobdb_blob_folder_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    // 既存ファイルは上書きされない。
+    std::fs::write(dir.join("2.bin"), b"keep").expect("existing");
+
+    let keys = serde_json::json!([
+        [{ "column": "id", "value": 1 }],
+        [{ "column": "id", "value": 2 }],
+        [{ "column": "id", "value": 3 }],
+        [{ "column": "id", "value": 4 }],
+        [{ "column": "id", "value": 99 }],
+        [{ "column": "id", "value": 5 }],
+    ]);
+    let folder = dir.to_str().expect("utf8");
+    let r = t::save_cells_to_folder_via_session(&session, None, "files", "data", keys, folder)
+        .await
+        .expect("save to folder");
+    assert_eq!(r.saved, 3, "{r:?}");
+    assert_eq!(r.skipped_null, 1);
+    assert_eq!(r.skipped_too_large, 1);
+    assert_eq!(r.failed, 1, "存在しない行");
+    assert_eq!(r.errors.len(), 1);
+    assert_eq!(r.errors[0].row, 4);
+    assert_eq!(r.total_bytes, 10 + 2 + 1);
+    assert_eq!(
+        std::fs::read(dir.join("1.png")).expect("png"),
+        hex_to_bytes(png)
+    );
+    assert_eq!(std::fs::read(dir.join("2.bin")).expect("kept"), b"keep");
+    assert_eq!(
+        std::fs::read(dir.join("2_2.bin")).expect("renamed"),
+        vec![1u8, 2]
+    );
+    assert_eq!(
+        std::fs::read(dir.join("5.bin")).expect("five"),
+        vec![0x0au8]
+    );
+
+    // 存在しないフォルダ・空の行リストは入力エラー。
+    assert!(t::save_cells_to_folder_via_session(
+        &session,
+        None,
+        "files",
+        "data",
+        serde_json::json!([[{ "column": "id", "value": 1 }]]),
+        dir.join("missing").to_str().expect("utf8"),
+    )
+    .await
+    .is_err());
+    assert!(t::save_cells_to_folder_via_session(
+        &session,
+        None,
+        "files",
+        "data",
+        serde_json::json!([]),
+        folder
+    )
+    .await
+    .is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn hex_to_bytes(hex: &str) -> Vec<u8> {
+    (0..hex.len() / 2)
+        .map(|i| u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).expect("hex"))
+        .collect()
+}
+
 // ── スキーマドリフト / 実行計画ウォッチ (#1260) ──
 
 /// #1260: スキーマドリフトのキャプチャ (`capture_payload`) は、テーブルごとの
@@ -4477,6 +4777,61 @@ async fn import_rows_with_binary_unhexes_blob_columns_in_the_insert() {
     assert_eq!(res.rows[0][3], t::Value::String("abcd".to_string()));
     assert_eq!(res.rows[1][1], t::Value::String("null".to_string()));
     assert_eq!(res.rows[2][1], t::Value::String("blob".to_string()));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 新規行が取得窓の外にあり、同じ文のトリガが窓の行を消すと、窓の外にいた既存行が繰り上がって
+/// 「新規行」に見える。既存行を挿入行として記録しない (Undo が無関係な行を消さない) (#1536)。
+#[tokio::test]
+async fn capture_insert_outside_window_with_trigger_delete_is_not_misattributed() {
+    let (path, conn) = flight_fixture("insert_window_trigger").await;
+    conn.execute("CREATE TABLE w (id INTEGER PRIMARY KEY, name TEXT)", None)
+        .await
+        .expect("create");
+    for i in 10..=20 {
+        conn.execute(&format!("INSERT INTO w VALUES ({i}, 'r{i}')"), None)
+            .await
+            .expect("seed");
+    }
+    conn.execute(
+        "CREATE TRIGGER w_t AFTER INSERT ON w BEGIN DELETE FROM w WHERE id = 20; END",
+        None,
+    )
+    .await
+    .expect("trigger");
+    let (res, cap) = conn
+        .capture_write("INSERT INTO w VALUES (1, 'new')", None, 3)
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    let idx = cap.columns.iter().position(|c| c == "id").unwrap_or(0);
+    let recorded: Vec<String> = cap
+        .after_rows
+        .iter()
+        .map(|r| format!("{:?}", r[idx]))
+        .collect();
+    assert!(
+        !cap.capturable || recorded == vec!["Int(1)".to_string()],
+        "取り違え: {recorded:?}"
+    );
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_upsert_is_declined_but_written_once() {
+    let (path, conn) = flight_fixture("upsert_decline").await;
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1, 'u') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1);
+    assert!(!cap.capturable);
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

@@ -101,6 +101,7 @@ const DEFAULT_OPTIONS: DumpOptions = {
   noPrivileges: false,
   pgSchema: null,
   formatSql: false,
+  gzip: false,
 };
 
 type BoolOptionKey = {
@@ -121,6 +122,7 @@ const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "noOwner", label: "dumpOptNoOwner", hint: "dumpOptNoOwnerHint" },
   { key: "noPrivileges", label: "dumpOptNoPrivileges", hint: "dumpOptNoPrivilegesHint" },
   { key: "formatSql", label: "dumpOptFormatSql", hint: "dumpOptFormatSqlHint" },
+  { key: "gzip", label: "dumpOptGzip", hint: "dumpOptGzipHint" },
 ];
 
 /** Which toggle keys each driver shows. Omitted fields are sent at their default
@@ -137,9 +139,10 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
     "noData",
     "noCreateInfo",
     "formatSql",
+    "gzip",
   ],
-  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql"],
-  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql"],
+  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql", "gzip"],
+  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql", "gzip"],
 };
 
 /** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
@@ -326,14 +329,17 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
     );
   }, [driver, tableScope]);
 
-  const toggle = (key: BoolOptionKey) =>
+  const toggle = (key: BoolOptionKey) => {
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
+    // gzip (#1539): 保存先の拡張子を `.sql` ⇔ `.sql.gz` に追従させる (手で別の名前にした場合は触らない)。
+    if (key === "gzip") setPath((cur) => (options.gzip ? cur.replace(/\.sql\.gz$/i, ".sql") : cur.replace(/\.sql$/i, ".sql.gz")));
+  };
 
   const handleBrowse = async () => {
     const selected = await save({
       defaultPath: path || `${initialBasename}.sql`,
       title: t("dumpPickFileTitle"),
-      filters: [{ name: "SQL", extensions: ["sql"] }],
+      filters: [{ name: "SQL", extensions: options.gzip ? ["gz"] : ["sql"] }],
     });
     if (typeof selected === "string" && selected) {
       setPath(selected);
@@ -355,7 +361,7 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
       const selected = await save({
         defaultPath: target,
         title: t("dumpPickFileTitle"),
-        filters: [{ name: "SQL", extensions: ["sql"] }],
+        filters: [{ name: "SQL", extensions: options.gzip ? ["gz"] : ["sql"] }],
       });
       if (typeof selected !== "string" || !selected) return;
       setPath(selected);

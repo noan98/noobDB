@@ -86,6 +86,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
   const [opError, setOpError] = useState<string | null>(null);
+  const [resettingTable, setResettingTable] = useState<string | null>(null);
 
   // 読み込みの世代。対象接続の切替・再読み込みで進め、古い世代の応答は捨てる
   // (捨てないと旧接続の差分が state を上書きし、別接続へ誤って適用されうる)。
@@ -188,6 +189,27 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
       [table]: { ...prev[table], resolutions: { ...prev[table]?.resolutions, [key]: resolution } },
     }));
     setCombined(null);
+  };
+
+  // 1 表を base スナップショットへ戻す (#1539)。確認のうえ実行し、完了後は差分を再読込する。
+  const resetTable = async (table: string) => {
+    const ok = await confirm({
+      title: t("sandboxResetConfirmTitle", { table }),
+      message: t("sandboxResetConfirmMessage", { table }),
+      tone: "danger",
+    });
+    if (!ok) return;
+    setResettingTable(table);
+    setOpError(null);
+    try {
+      const r = await api.sandboxResetTable({ sandboxId: sandbox.id, sandboxSessionId, table });
+      loadAll();
+      setApplyResult(t("sandboxResetDone", { table, rows: r.restored_rows }));
+    } catch (e) {
+      setOpError(String(e));
+    } finally {
+      setResettingTable(null);
+    }
   };
 
   const unresolvedCount = useMemo(() => {
@@ -432,6 +454,18 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
             >
               <chakra.div display="flex" alignItems="center" gap="2" fontFamily="mono" fontSize="sm" fontWeight={600}>
                 {table}
+                <div style={{ flex: 1 }} />
+                <Tooltip label={t("sandboxResetTableHint")} focusableWrapper={applying || resettingTable !== null}>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => void resetTable(table)}
+                    disabled={applying || resettingTable !== null}
+                  >
+                    {t("sandboxResetTable")}
+                  </Button>
+                </Tooltip>
               </chakra.div>
               {hasChanges && (
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">

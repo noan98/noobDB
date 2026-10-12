@@ -9,6 +9,7 @@ import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
   findingDescription,
+  findingsToTable,
   findingTarget,
   nextAdvisorSort,
   reasonTextKey,
@@ -30,6 +31,8 @@ import { SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { useToast } from "./Toast";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { transitions, variants } from "../motion";
 
 /**
@@ -211,6 +214,31 @@ export function AdvisorPanel({
     </chakra.th>
   );
 
+  // 診断結果の書き出し (#1539): 画面の並び順のまま、修正 DDL まで含めて CSV / Markdown にする。
+  const buildExport = (kind: "csv" | "markdown") => {
+    const table = findingsToTable(findings, {
+      headers: {
+        severity: t("advisorColSeverity"),
+        rule: t("advisorColRule"),
+        table: t("advisorExportColTable"),
+        columns: t("advisorExportColColumns"),
+        detail: t("advisorColDetail"),
+        fixDdl: t("advisorExportColFixDdl"),
+        fixDdlOnline: t("advisorExportColFixDdlOnline"),
+        statistical: t("advisorExportColStatistical"),
+      },
+      severity: (s) => t(severityLabelKey(s)),
+      rule: (f) => t(ruleTitleKey(f.rule)),
+      detail: (f) => {
+        const d = findingDescription(f);
+        return t(d.key, d.params);
+      },
+    });
+    return kind === "csv"
+      ? tableToCsv(table.header, table.rows)
+      : tableToMarkdown(table.header, table.rows);
+  };
+
   const copyFix = useCallback(
     async (sql: string) => {
       const ok = await copyToClipboard(sql);
@@ -236,6 +264,15 @@ export function AdvisorPanel({
             {report ? t("advisorRerun") : t("advisorRun")}
           </chakra.span>
         </Button>
+        {report && !running && report.findings.length > 0 && (
+          <TextExportButton
+            filenameBase={`schema-health-${database}`}
+            formats={[
+              { id: "csv", label: "CSV", build: () => buildExport("csv") },
+              { id: "markdown", label: "Markdown", build: () => buildExport("markdown") },
+            ]}
+          />
+        )}
         {running && (
           <Flex align="center" gap="2">
             <Spinner size={14} />

@@ -106,6 +106,28 @@ export type ColumnReplaceSql =
  * 避け、影響行数を実際に変わる行数に近づける)。NULL 行は条件に合致しないので除外される。
  */
 export function buildColumnReplaceSql(input: ColumnReplaceSqlInput): ColumnReplaceSql {
+  const parts = columnReplaceParts(input);
+  if (!parts.ok) return parts;
+  return { ok: true, sql: `UPDATE ${parts.ref} SET ${parts.col} = ${parts.expr} WHERE ${parts.where};` };
+}
+
+/**
+ * `buildColumnReplaceSql` の UPDATE が当たる行数を数える読み取り専用の
+ * `SELECT COUNT(*) FROM t WHERE ...` (#1536)。WHERE 句は UPDATE と同一の部品を共有するので、
+ * 「N 行が対象」と表示した件数と実際に書き換わる行がずれない。
+ */
+export function buildColumnReplaceCountSql(input: ColumnReplaceSqlInput): ColumnReplaceSql {
+  const parts = columnReplaceParts(input);
+  if (!parts.ok) return parts;
+  return { ok: true, sql: `SELECT COUNT(*) FROM ${parts.ref} WHERE ${parts.where}` };
+}
+
+/** UPDATE 版と COUNT 版が共有する、置換式・WHERE 句・対象テーブル参照の組み立て。 */
+function columnReplaceParts(
+  input: ColumnReplaceSqlInput,
+):
+  | { ok: true; ref: string; col: string; expr: string; where: string }
+  | { ok: false; reason: "emptyFind" | ColumnReplaceUnsupported } {
   const { driver, options } = input;
   if (input.find === "") return { ok: false, reason: "emptyFind" };
   const unsupported = columnReplaceUnsupported(driver, options);
@@ -137,7 +159,7 @@ export function buildColumnReplaceSql(input: ColumnReplaceSqlInput): ColumnRepla
   const extra = input.extraWhere?.trim();
   const where = extra ? `(${extra}) AND ${cond}` : cond;
   const ref = qualifiedTableRef(driver, input.database, input.table);
-  return { ok: true, sql: `UPDATE ${ref} SET ${col} = ${expr} WHERE ${where};` };
+  return { ok: true, ref, col, expr, where };
 }
 
 /**

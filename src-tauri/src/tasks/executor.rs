@@ -5,6 +5,7 @@
 //! **既存の実行基盤をそのまま呼び出す**ことで、通常のクエリ/エクスポート/ダンプと
 //! 同じ安全網・挙動を共有する。
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -12,7 +13,7 @@ use std::time::Instant;
 use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Manager};
 
-use super::{NewAssertionResult, TaskAction, TaskDefinition};
+use super::{runs, NewAssertionResult, TaskAction, TaskDefinition};
 use crate::assertions;
 use crate::commands::assertions::run_assertion_with;
 use crate::commands::connection::{
@@ -20,6 +21,8 @@ use crate::commands::connection::{
 };
 use crate::commands::dump;
 use crate::commands::export;
+use crate::commands::plan_watch::{self as plan_watch, PlanWatchRefresh};
+use crate::commands::timelapse::{self as timelapse, CaptureOutcome};
 use crate::db::{is_read_only_sql, is_read_only_sql_for, DriverKind};
 use crate::error::AppError;
 use crate::profiles::{self, ConnectionProfile};
@@ -35,6 +38,8 @@ pub struct TaskOutcome {
     pub bytes: Option<i64>,
     /// `RunAssertions` (#1170) の 1 アサーションごとの結果。他のアクションでは空。
     pub assertion_results: Vec<NewAssertionResult>,
+    /// 接続を試みた回数 (#1537)。再試行なしなら 1。実行ログ (`TaskRun.attempts`) に残す。
+    pub attempts: u32,
 }
 
 impl TaskOutcome {
@@ -46,6 +51,7 @@ impl TaskOutcome {
             rows: None,
             bytes: None,
             assertion_results: Vec::new(),
+            attempts: 1,
         }
     }
 }
@@ -78,6 +84,57 @@ pub fn summarize_assertion_failures(results: &[NewAssertionResult]) -> Option<St
         results.len(),
         failed.join(", ")
     ))
+}
+
+/// タイムラプス取得の結果から、タスクのエラー要約を決める (純関数)。取得に失敗したテーブルが
+/// 無ければ `None`。内容が変わっただけ (`added`) はエラーではない (#1537)。
+pub fn summarize_timelapse_failures(outcomes: &[CaptureOutcome]) -> Option<String> {
+    let failed: Vec<String> = outcomes
+        .iter()
+        .filter_map(|o| {
+            o.error
+                .as_ref()
+                .map(|e| format!("{}.{} ({e})", o.database, o.table))
+        })
+        .collect();
+    if failed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "{} of {} watched tables failed to capture: {}",
+        failed.len(),
+        outcomes.len(),
+        failed.join(", ")
+    ))
+}
+
+/// 実行計画ウォッチの更新結果から、タスクのエラー要約を決める (純関数)。警告相当の変化
+/// (`warned`) か更新エラーがあれば `Some`。情報レベルの変化だけなら `None` (通知しない)。
+pub fn summarize_plan_watch(res: &PlanWatchRefresh) -> Option<String> {
+    let mut parts = Vec::new();
+    if !res.warned.is_empty() {
+        parts.push(format!(
+            "plan regression detected: {}",
+            res.warned.join(", ")
+        ));
+    }
+    if !res.errors.is_empty() {
+        let errs: Vec<String> = res
+            .errors
+            .iter()
+            .map(|e| format!("{} ({})", e.name, e.error))
+            .collect();
+        parts.push(format!(
+            "{} watched queries failed to refresh: {}",
+            errs.len(),
+            errs.join(", ")
+        ));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
 }
 
 /// エクスポートのストリーミング読み出しバッチサイズ。ユーザ操作の
@@ -119,16 +176,70 @@ pub async fn run_once(
         Err(e) => return TaskOutcome::err(e.to_string()),
     };
 
-    let req = match build_connect_request(&profile) {
-        Ok(r) => r,
-        Err(e) => return TaskOutcome::err(e.to_string()),
+    // 接続段階だけを再試行する (#1537)。クエリ / エクスポート / ダンプが始まった後の失敗は
+    // 再試行しない (副作用の二重発生を避ける)。再試行しないタスクは従来どおり 1 回で終わる。
+    let retry = task.connect_retry.normalized();
+    let mut attempts: u32 = 0;
+    let session_id = loop {
+        attempts += 1;
+        // 接続のたびに組み立て直す (`connect` が `ConnectRequest` を消費するため)。
+        let req = match build_connect_request(&profile) {
+            Ok(r) => r,
+            Err(e) => return TaskOutcome::err(e.to_string()),
+        };
+        let state = app.state::<AppState>();
+        match connect(app.clone(), req, None, None, state).await {
+            Ok(resp) => break resp.session_id,
+            Err(e) => {
+                let retries_done = attempts - 1;
+                if retries_done < retry.max_retries && is_retryable_connect_error(&e) {
+                    let delay = retry.delay_secs(retries_done);
+                    tracing::warn!(
+                        task_id = %task.id,
+                        attempt = attempts,
+                        retry_in_secs = delay,
+                        error = %e,
+                        "task scheduler: connect failed; will retry"
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    // 待っている間に無効化・削除されたタスクは、定義を読み直して中止する。
+                    // 読み直せなかったとき (一時的な I/O エラー等) は削除扱いにせず、警告だけ
+                    // 残して再試行を続ける。
+                    match super::store::load_all() {
+                        Ok(all) => {
+                            let current = all.into_iter().find(|t| t.id == task.id);
+                            if let Some(reason) = retry_abort_reason(task.enabled, current.as_ref())
+                            {
+                                let mut outcome = TaskOutcome::err(format!(
+                                    "connect retry aborted ({reason}) after {attempts} attempts: {e}"
+                                ));
+                                outcome.attempts = attempts;
+                                return outcome;
+                            }
+                        }
+                        Err(load_err) => {
+                            tracing::warn!(
+                                task_id = %task.id,
+                                error = %load_err,
+                                "task scheduler: failed to re-read the task definition before retrying; continuing"
+                            );
+                        }
+                    }
+                    continue;
+                }
+                let mut outcome = TaskOutcome::err(if attempts > 1 {
+                    format!("connect failed after {attempts} attempts: {e}")
+                } else {
+                    format!("connect failed: {e}")
+                });
+                outcome.attempts = attempts;
+                return outcome;
+            }
+        }
     };
-
-    let state = app.state::<AppState>();
-    let session_id = match connect(app.clone(), req, None, None, state).await {
-        Ok(resp) => resp.session_id,
-        Err(e) => return TaskOutcome::err(format!("connect failed: {e}")),
-    };
+    if attempts > 1 {
+        tracing::info!(task_id = %task.id, attempts, "task scheduler: connected after retrying");
+    }
     // 以降で future が途中で破棄されたら (中断)、Drop で切断を投げる。
     let mut disconnect_guard = DisconnectOnDrop {
         app: app.clone(),
@@ -138,7 +249,7 @@ pub async fn run_once(
 
     // 無人実行なのでロック待ち等で終わらないクエリが接続とタスクを溜めないよう、
     // タスク単位の最大実行時間で打ち切る。超過は error として記録される。
-    let outcome = match tokio::time::timeout(
+    let mut outcome = match tokio::time::timeout(
         std::time::Duration::from_secs(TASK_MAX_RUN_SECS),
         run_action(app, &session_id, task, &profile, progress),
     )
@@ -162,7 +273,82 @@ pub async fn run_once(
     }
     disconnect_guard.armed = false;
 
+    outcome.attempts = attempts;
     outcome
+}
+
+/// 接続失敗を再試行してよいか (#1537)。一時的な瞬断・DB / SSH サーバの再起動で起こる
+/// ネットワーク層の失敗だけを対象にする。認証失敗・ホスト鍵不一致・設定不備・TLS 証明書の
+/// 問題は、待っても直らないうえ再試行で口座ロックや踏み台の fail2ban を招きうるので
+/// 再試行しない。
+pub fn is_retryable_connect_error(e: &AppError) -> bool {
+    match e {
+        AppError::ConnectTimeout { .. } | AppError::Io(_) => true,
+        // SSH 層は認証失敗も `Ssh` で返るので、語の有無ではなく「接続段階の失敗」の
+        // 接頭辞 (`ssh/tunnel.rs`) だけを許可する。認証・agent・鍵の不備は再試行しない。
+        AppError::Ssh(msg) => crate::ssh::tunnel::is_ssh_connect_stage_failure(msg),
+        AppError::Sqlx(err) => is_transient_sqlx_error(err),
+        _ => false,
+    }
+}
+
+/// 一時的と見なす sqlx のエラー。ネットワーク層の失敗に加え、DB の再起動中・接続数上限
+/// (PostgreSQL 57P03 `cannot_connect_now` / 57P01 `admin_shutdown`、MySQL 1040
+/// `Too many connections` / 1053 `Server shutdown in progress`) を含む。認証失敗
+/// (PostgreSQL 28xxx / MySQL 1045) などは待っても直らないので含めない。
+fn is_transient_sqlx_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Io(_)
+        | sqlx::Error::PoolTimedOut
+        | sqlx::Error::PoolClosed
+        | sqlx::Error::WorkerCrashed => true,
+        sqlx::Error::Database(db) => {
+            if let Some(my) = db.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>() {
+                return is_transient_mysql_code(my.number());
+            }
+            db.code()
+                .is_some_and(|code| is_transient_sqlstate(code.as_ref()))
+        }
+        _ => false,
+    }
+}
+
+/// PostgreSQL の SQLSTATE のうち、再起動・シャットダウン中のもの (純粋)。
+fn is_transient_sqlstate(code: &str) -> bool {
+    matches!(code, "57P03" | "57P01")
+}
+
+/// MySQL のエラー番号のうち、接続数上限・シャットダウン中のもの (純粋)。
+fn is_transient_mysql_code(number: u16) -> bool {
+    matches!(number, 1040 | 1053)
+}
+
+/// 再試行の待機のあとにタスク定義を読み直した結果、再試行を中止すべき理由 (純粋)。
+/// `started_enabled` は実行開始時点で有効だったか。待機中に削除された、または有効から
+/// 無効に変えられたタスクは中止する。無効なまま手動実行 (「今すぐ実行」) されたものは、
+/// 無効であること自体は中止の理由にしない。
+fn retry_abort_reason(
+    started_enabled: bool,
+    current: Option<&TaskDefinition>,
+) -> Option<&'static str> {
+    match current {
+        None => Some("task was deleted"),
+        Some(t) if started_enabled && !t.enabled => Some("task was disabled"),
+        Some(_) => None,
+    }
+}
+
+/// `RunAssertions` の `notify_only_on_increase` 用の判定 (#1537): 今回の失敗 ID の中に、
+/// 直前の実行では失敗していなかったもの (= 新しく失敗したもの) があるか。`prev_failed` は
+/// 直前の実行の失敗 ID (初回は `None` で、失敗 0 件を基準にする)。件数ではなく ID の差分で
+/// 見るので、別の項目が直ると同時に別の項目が壊れた (件数は同じ) ときも通知できる。
+pub fn assertion_failures_increased(
+    failed: &HashSet<&str>,
+    prev_failed: Option<&HashSet<String>>,
+) -> bool {
+    failed
+        .iter()
+        .any(|id| !prev_failed.is_some_and(|prev| prev.contains(*id)))
 }
 
 /// `run_once` の future が実行の途中で破棄されたとき (「今すぐ実行」の中断) に、張った接続を
@@ -233,6 +419,8 @@ async fn run_action(
                 // スケジュール実行のエクスポートはマスキング (#733) 非対応 (タスク定義に
                 // ルールを持たない)。マスクが必要な出力は ExportModal から行う。
                 None,
+                // スケジュール実行は表定義 (CREATE TABLE) を付けない (#1539。ExportModal から行う)。
+                false,
                 |rows| progress.store(rows, Ordering::SeqCst),
             )
             .await;
@@ -260,6 +448,7 @@ async fn run_action(
                         rows: Some(written as i64),
                         bytes: Some(outcome.bytes as i64),
                         assertion_results: Vec::new(),
+                        attempts: 1,
                     }
                 }
                 Err(e) => TaskOutcome::err(e.to_string()),
@@ -294,6 +483,7 @@ async fn run_action(
                     rows: None,
                     bytes: Some(bytes as i64),
                     assertion_results: Vec::new(),
+                    attempts: 1,
                 },
                 Err(e) => TaskOutcome::err(e.to_string()),
             }
@@ -301,7 +491,20 @@ async fn run_action(
         TaskAction::RunAssertions {
             database,
             assertion_ids,
+            notify_only_on_increase,
         } => {
+            // 比較元は今回の結果を記録する前に読む (`record_outcome` が後で記録する)。
+            let prev_failed = if *notify_only_on_increase {
+                match runs::last_failed_assertion_ids(&task.id).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        tracing::warn!(task_id = %task.id, error = %e, "task scheduler: failed to read previous assertion failures");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
             let all = match assertions::store::load_all() {
                 Ok(v) => v,
                 Err(e) => return TaskOutcome::err(e.to_string()),
@@ -360,7 +563,19 @@ async fn run_action(
                     }
                 }
             }
-            let error = summarize_assertion_failures(&results);
+            let mut error = summarize_assertion_failures(&results);
+            if *notify_only_on_increase {
+                let failed: HashSet<&str> = results
+                    .iter()
+                    .filter(|r| !r.passed)
+                    .map(|r| r.assertion_id.as_str())
+                    .collect();
+                if !assertion_failures_increased(&failed, prev_failed.as_ref()) {
+                    // 失敗が増えていなければ既知の状態が続いているだけ。通知に乗せず ok で終える
+                    // (合否の推移は `assertion_runs` に記録される)。
+                    error = None;
+                }
+            }
             TaskOutcome {
                 ok: error.is_none(),
                 error,
@@ -368,6 +583,45 @@ async fn run_action(
                 rows: Some(results.len() as i64),
                 bytes: None,
                 assertion_results: results,
+                attempts: 1,
+            }
+        }
+        TaskAction::TimelapseCapture { max_generations } => {
+            match timelapse::capture_all(&session, *max_generations).await {
+                Ok(outcomes) => {
+                    progress.store(outcomes.len() as u64, Ordering::SeqCst);
+                    let error = summarize_timelapse_failures(&outcomes);
+                    TaskOutcome {
+                        ok: error.is_none(),
+                        error,
+                        output_path: None,
+                        // 記録した世代数 (= 内容が変わったテーブルの数)。
+                        rows: Some(outcomes.iter().filter(|o| o.added).count() as i64),
+                        bytes: None,
+                        assertion_results: Vec::new(),
+                        attempts: 1,
+                    }
+                }
+                Err(e) => TaskOutcome::err(e.to_string()),
+            }
+        }
+        TaskAction::RefreshPlanWatch { snippet_ids } => {
+            let only = (!snippet_ids.is_empty()).then_some(snippet_ids.as_slice());
+            match plan_watch::refresh_plans(&session, &profile.id, only).await {
+                Ok(res) => {
+                    let error = summarize_plan_watch(&res);
+                    TaskOutcome {
+                        ok: error.is_none(),
+                        error,
+                        output_path: None,
+                        // 新しく記録した計画の世代数。
+                        rows: Some(res.recorded as i64),
+                        bytes: None,
+                        assertion_results: Vec::new(),
+                        attempts: 1,
+                    }
+                }
+                Err(e) => TaskOutcome::err(e.to_string()),
             }
         }
     }
@@ -520,6 +774,195 @@ mod tests {
             summarize_assertion_failures(&r).as_deref(),
             Some("2 of 3 assertions failed: b (observed 4), c (error: timeout)")
         );
+    }
+
+    fn capture(table: &str, added: bool, error: Option<&str>) -> CaptureOutcome {
+        CaptureOutcome {
+            watch_id: 1,
+            database: "app".into(),
+            table: table.into(),
+            added,
+            truncated: false,
+            error: error.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn timelapse_summary_ignores_changes_and_lists_failures() {
+        assert_eq!(summarize_timelapse_failures(&[]), None);
+        let ok = vec![capture("a", true, None), capture("b", false, None)];
+        assert_eq!(summarize_timelapse_failures(&ok), None);
+        let bad = vec![capture("a", true, None), capture("b", false, Some("no pk"))];
+        assert_eq!(
+            summarize_timelapse_failures(&bad).as_deref(),
+            Some("1 of 2 watched tables failed to capture: app.b (no pk)")
+        );
+    }
+
+    #[test]
+    fn plan_watch_summary_notifies_only_on_warnings_or_errors() {
+        use crate::commands::plan_watch::PlanWatchRefreshError;
+        // 情報レベルの変化 (changed > 0 だが warned は空) は通知しない。
+        let info_only = PlanWatchRefresh {
+            recorded: 2,
+            changed: 2,
+            ..Default::default()
+        };
+        assert_eq!(summarize_plan_watch(&info_only), None);
+        let warned = PlanWatchRefresh {
+            recorded: 1,
+            changed: 1,
+            warned: vec!["slow report".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            summarize_plan_watch(&warned).as_deref(),
+            Some("plan regression detected: slow report")
+        );
+        let both = PlanWatchRefresh {
+            warned: vec!["q1".into()],
+            errors: vec![PlanWatchRefreshError {
+                snippet_id: "s".into(),
+                name: "q2".into(),
+                error: "boom".into(),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            summarize_plan_watch(&both).as_deref(),
+            Some("plan regression detected: q1; 1 watched queries failed to refresh: q2 (boom)")
+        );
+    }
+
+    #[test]
+    fn assertion_failures_increase_means_a_newly_failing_id() {
+        let cur = |v: &[&'static str]| -> HashSet<&'static str> { v.iter().copied().collect() };
+        let prev = |v: &[&str]| -> HashSet<String> { v.iter().map(|s| s.to_string()).collect() };
+        // 初回は失敗 0 件が基準。
+        assert!(!assertion_failures_increased(&cur(&[]), None));
+        assert!(assertion_failures_increased(&cur(&["a"]), None));
+        // 同じ失敗が続く / 減るだけなら通知しない。
+        assert!(!assertion_failures_increased(
+            &cur(&["a", "b"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(!assertion_failures_increased(
+            &cur(&["a"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(!assertion_failures_increased(
+            &cur(&[]),
+            Some(&prev(&["a"]))
+        ));
+        // 新しく失敗した ID があれば通知する。
+        assert!(assertion_failures_increased(
+            &cur(&["a", "c"]),
+            Some(&prev(&["a", "b"]))
+        ));
+        assert!(assertion_failures_increased(&cur(&["a"]), Some(&prev(&[]))));
+        // 件数は同じでも、入れ替わりは新規の失敗 (b が直って c が壊れた)。
+        assert!(assertion_failures_increased(
+            &cur(&["c"]),
+            Some(&prev(&["b"]))
+        ));
+    }
+
+    #[test]
+    fn only_transient_connect_errors_are_retried() {
+        assert!(is_retryable_connect_error(&AppError::ConnectTimeout {
+            phase: "tcp".into(),
+            secs: 10
+        }));
+        assert!(is_retryable_connect_error(&AppError::Io(
+            std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused")
+        )));
+        assert!(is_retryable_connect_error(&AppError::Ssh(
+            "ssh connect failed: connection reset".into()
+        )));
+        assert!(is_retryable_connect_error(&AppError::Sqlx(
+            sqlx::Error::PoolTimedOut
+        )));
+        // 待っても直らない / 再試行が害になるもの。
+        assert!(!is_retryable_connect_error(&AppError::Ssh(
+            "ssh authentication failed".into()
+        )));
+        assert!(!is_retryable_connect_error(&AppError::SshKey("bad".into())));
+        assert!(!is_retryable_connect_error(&AppError::InvalidInput(
+            "unknown driver".into()
+        )));
+        assert!(!is_retryable_connect_error(&AppError::SshHostKeyMismatch {
+            host: "h".into(),
+            port: 22,
+            expected: "a".into(),
+            actual: "b".into()
+        }));
+        assert!(!is_retryable_connect_error(&AppError::Sqlx(
+            sqlx::Error::RowNotFound
+        )));
+    }
+
+    #[test]
+    fn ssh_retry_is_decided_by_the_stage_not_by_a_substring() {
+        // ホスト名に auth を含んでいても、接続段階の失敗なら再試行する。
+        assert!(is_retryable_connect_error(&AppError::Ssh(
+            "[host auth.example.com:22] ssh connect failed: timed out".into()
+        )));
+        // 認証・agent の不備は、メッセージに auth の語が無くても再試行しない。
+        assert!(!is_retryable_connect_error(&AppError::Ssh(
+            "[host h:22] ssh-agent holds no identities (add one with `ssh-add`)".into()
+        )));
+        assert!(!is_retryable_connect_error(&AppError::Ssh(
+            "[host h:22] ssh password authentication failed".into()
+        )));
+    }
+
+    #[test]
+    fn db_restart_codes_are_transient_but_auth_codes_are_not() {
+        for c in ["57P03", "57P01"] {
+            assert!(is_transient_sqlstate(c), "{c}");
+        }
+        for c in ["28000", "28P01", "42P01", "08006"] {
+            assert!(!is_transient_sqlstate(c), "{c}");
+        }
+        assert!(is_transient_mysql_code(1040));
+        assert!(is_transient_mysql_code(1053));
+        assert!(!is_transient_mysql_code(1045));
+        assert!(!is_transient_mysql_code(1049));
+    }
+
+    fn task_with_enabled(enabled: bool) -> TaskDefinition {
+        TaskDefinition {
+            id: "t1".into(),
+            name: "n".into(),
+            profile_id: "p".into(),
+            action: TaskAction::TimelapseCapture {
+                max_generations: None,
+            },
+            schedule: crate::tasks::TaskSchedule::Interval { minutes: 5 },
+            enabled,
+            created_at: String::new(),
+            updated_at: String::new(),
+            next_run_at: None,
+            last_run_at: None,
+            last_status: None,
+            connect_retry: Default::default(),
+        }
+    }
+
+    #[test]
+    fn retry_aborts_when_the_task_was_deleted_or_disabled_while_waiting() {
+        assert!(retry_abort_reason(true, None).is_some());
+        assert!(retry_abort_reason(true, Some(&task_with_enabled(false))).is_some());
+        assert_eq!(
+            retry_abort_reason(true, Some(&task_with_enabled(true))),
+            None
+        );
+        // 無効なタスクの手動実行は、無効であることだけでは中止しない (削除は中止)。
+        assert_eq!(
+            retry_abort_reason(false, Some(&task_with_enabled(false))),
+            None
+        );
+        assert!(retry_abort_reason(false, None).is_some());
     }
 
     #[test]

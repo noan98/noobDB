@@ -293,6 +293,9 @@ const QueryInspectorPanel = lazy(() =>
 const AdvisorPanel = lazy(() =>
   import("./components/AdvisorPanel").then((m) => ({ default: m.AdvisorPanel })),
 );
+const ColumnProfileCompareModal = lazy(() =>
+  import("./components/ColumnProfileCompareModal").then((m) => ({ default: m.ColumnProfileCompareModal })),
+);
 const ColumnProfilePanel = lazy(() =>
   import("./components/ColumnProfilePanel").then((m) => ({ default: m.ColumnProfilePanel })),
 );
@@ -345,6 +348,7 @@ import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
   shouldAutoReconnect,
+  TUNNEL_WATCH_INTERVAL_MS,
   type ConnectionStatus,
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
@@ -362,6 +366,8 @@ import {
   type QueryNotificationKind,
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
+import { collectDropImpacts, type DropImpact } from "./dropImpact";
+import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
 import { springs, transitions, variants } from "./motion";
@@ -487,9 +493,15 @@ import {
   watchedIds,
   type PlanWatchState,
 } from "./planWatch";
-import { buildDriftDetail, migrateLegacySchemaDrift } from "./schemaDrift";
+import {
+  buildDriftDetail,
+  createDdlCaptureCoalescer,
+  isDriftTracked,
+  migrateLegacySchemaDrift,
+} from "./schemaDrift";
 import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
+import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
 
 type Theme = "light" | "dark";
@@ -1280,6 +1292,8 @@ export default function App() {
   const [pinnedResults, setPinnedResults] = useState<PinnedResult[]>([]);
   // 環境横断ブロードキャスト実行 (#738)。非 null の間だけ `BroadcastModal` を
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
+  // 列の分布を複数接続で比べるモーダル (#1539)。非 null の間だけマウントする。
+  const [profileCompare, setProfileCompare] = useState<{ approximate: boolean } | null>(null);
   const [broadcastRequest, setBroadcastRequest] = useState<
     { sql: string; tableColumns: TableColumnInfo[] | null } | null
   >(null);
@@ -1916,9 +1930,25 @@ export default function App() {
   );
   // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
   const txOwnerRef = useRef<string | null>(null);
+  // 背景接続の TX 状態 (ref) が変わったことを接続一覧のバッジへ伝える再描画トリガ (#1536)。
+  const [txTick, setTxTick] = useState(0);
   const forgetTxState = useCallback((sid: string) => {
     txBySessionRef.current.delete(sid);
+    setTxTick((n) => n + 1);
   }, []);
+  // 未確定の TX を保持している接続のプロファイル id (接続一覧の「TX」バッジ用, #1536)。
+  // 表示中の接続は state (`txActive`)、背景の接続は接続ごとの保存先 (ref) を見る。
+  // ref の変化は `txTick` で再計算する。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: txTick は ref (txBySessionRef) の変化を知らせる再計算トリガ
+  const txProfileIds = useMemo(
+    () =>
+      new Set(
+        openConnections
+          .filter((c) => (c.sessionId === sessionId ? txActive : txBySessionRef.current.has(c.sessionId)))
+          .map((c) => c.profile.id),
+      ),
+    [openConnections, sessionId, txActive, txTick],
+  );
   // await の後で「操作した接続」がまだ表示中とは限らない。表示中でなければ保存先
   // (txBySessionRef) だけを更新し、state (別の接続のぶん) には触らない。
   const updateSavepointsFor = useCallback(
@@ -1939,6 +1969,7 @@ export default function App() {
       setTxActive(false);
     } else {
       txBySessionRef.current.delete(sid);
+      setTxTick((n) => n + 1);
     }
   }, []);
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
@@ -2869,6 +2900,30 @@ export default function App() {
     };
   }, [selectedProfile?.id]);
   const schemaDriftInFlightRef = useRef<Set<string>>(new Set());
+  // DDL 成功時の自動取得 (#1537): 連続する DDL を `createDdlCaptureCoalescer` でまとめ、
+  // 静かになった時点で 1 回だけ取得する。flush 時点のセッションを引くため ref に持つ。
+  const ddlCaptureTargetRef = useRef<{ sessionId: string; profile: ConnectionProfile } | null>(null);
+  // 直近の取得でバックエンドが解決した記録対象 (PostgreSQL は既定スキーマ)。DDL の実行先が
+  // 記録対象かをスキーマ名同士で比べるのに使う (#1537)。
+  const driftResolvedTargetRef = useRef<{ profileId: string; database: string } | null>(null);
+  const ddlCoalescerRef = useRef<ReturnType<typeof createDdlCaptureCoalescer> | null>(null);
+  const captureSchemaSnapshotRef = useRef<
+    (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => Promise<void>
+  >(async () => {});
+  if (ddlCoalescerRef.current === null) {
+    ddlCoalescerRef.current = createDdlCaptureCoalescer({
+      onFlush: (key, triggerSql) => {
+        const target = ddlCaptureTargetRef.current;
+        // 取得までに接続やプロファイルが変わっていたら捨てる (別接続のスキーマを混ぜない)。
+        if (!target || target.profile.id !== key) return;
+        void captureSchemaSnapshotRef.current(target.sessionId, target.profile, { triggerSql });
+      },
+    });
+  }
+  useEffect(() => {
+    const coalescer = ddlCoalescerRef.current;
+    return () => coalescer?.dispose();
+  }, []);
 
   /**
    * プロファイルの既定データベースのスキーマ (テーブル・列・インデックス) を Rust 側で
@@ -2877,18 +2932,29 @@ export default function App() {
    * 変化があれば控えめなトーストで要約を知らせる。読み取り操作のみでクエリ履歴は
    * 汚さない。デフォルトデータベースが無いプロファイル (SQLite の空パス等) では静かに
    * 何もしない。
+   *
+   * `opts.triggerSql` は DDL の成功をきっかけにした取得 (#1537) のときの実行 SQL で、世代に
+   * 紐づけて保存する。この場合の取得失敗は DDL 自体の成否と無関係なのでトーストを出さない。
    */
   const captureSchemaSnapshot = useCallback(
-    async (sid: string, profile: ConnectionProfile) => {
-      const database = profile.database;
-      if (!database) return;
-      if (schemaDriftInFlightRef.current.has(profile.id)) return;
+    async (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => {
+      // PostgreSQL のプロファイルの `database` は実 DB 名 (空もありうる) で、記録対象の
+      // 既定スキーマはバックエンドが決める。他のドライバは既定 DB が無ければ何もしない。
+      const database = profile.database ?? "";
+      if (!database && profile.driver !== "postgres") return;
+      const triggerSql = opts?.triggerSql ?? null;
+      if (schemaDriftInFlightRef.current.has(profile.id)) {
+        // 取得中に走った DDL は取りこぼさないよう、静かになってからもう一度流す。
+        if (triggerSql) ddlCoalescerRef.current?.push(profile.id, triggerSql);
+        return;
+      }
       schemaDriftInFlightRef.current.add(profile.id);
       setSchemaDriftCapturing(true);
       try {
         // 旧 localStorage 世代があれば、前世代として比較に使えるよう先に取り込む。
         await migrateLegacySchemaDrift(profile.id, api.schemaDriftImportLegacy);
-        const res = await api.schemaDriftCapture(sid, profile.id, database);
+        const res = await api.schemaDriftCapture(sid, profile.id, database, triggerSql);
+        driftResolvedTargetRef.current = { profileId: profile.id, database: res.database };
         if (!res.added) return;
         if (activeProfileIdRef.current === profile.id) setSchemaDrift(res.generations);
         if (res.summary && res.summary.tables.length > 0) {
@@ -2899,10 +2965,16 @@ export default function App() {
             severity: "warning",
             // アクティビティで行を展開すると、テーブルごとの列/インデックスの増減を表で見られる。
             detail: { kind: "schemaDrift", summary: res.summary },
+            // タイムラインから、変化したテーブルの構造 / データを 1 クリックで開ける (#1537)。
+            action: {
+              label: translate("schemaDriftToastOpen"),
+              onAction: () => setSchemaDriftOpen(true),
+            },
           });
         }
       } catch (e) {
-        toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
+        if (triggerSql) console.warn("schema drift capture after DDL failed", e);
+        else toast.error(translate("schemaDriftRefreshFailedToast", { error: String(e) }));
       } finally {
         schemaDriftInFlightRef.current.delete(profile.id);
         setSchemaDriftCapturing(false);
@@ -2910,6 +2982,21 @@ export default function App() {
     },
     [toast],
   );
+  captureSchemaSnapshotRef.current = captureSchemaSnapshot;
+
+  /**
+   * DDL が成功したことをスキーマドリフトに知らせる (#1537)。設定が有効で、実行先が
+   * プロファイルの既定データベースのときだけ、間引き付きで世代の自動取得を予約する。
+   * 手動キャプチャの押し忘れでタイムラインに抜けができるのを防ぐ。
+   */
+  const noteSchemaDdl = useCallback((sql: string, database: string | null | undefined) => {
+    const target = ddlCaptureTargetRef.current;
+    if (!target || !getSettings().schemaDriftOnDdl) return;
+    const resolved = driftResolvedTargetRef.current;
+    const resolvedTarget = resolved?.profileId === target.profile.id ? resolved.database : null;
+    if (!isDriftTracked(database, target.profile, resolvedTarget)) return;
+    ddlCoalescerRef.current?.push(target.profile.id, sql);
+  }, []);
 
   const handleOpenSchemaDrift = useCallback(() => setSchemaDriftOpen(true), []);
 
@@ -3101,9 +3188,19 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
-  const switchToOpenConnection = useCallback(async (target: OpenConnection) => {
+  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean }) => {
     if (target.sessionId === sessionId) return;
     if (!(await confirmDiscardPendingEdits())) return;
+    // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
+    if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
+      const ok = await confirmDiscard({
+        title: translate("connSwitchTxTitle"),
+        message: translate("connSwitchTxBody"),
+        confirmLabel: translate("connSwitchTxAction"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
     // 進行中の自動再接続ループは手動切替で中断する。
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
@@ -3136,7 +3233,7 @@ export default function App() {
     }
     setStatus({ kind: "idle" });
     toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits]);
+  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits, confirmDiscard]);
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3422,7 +3519,8 @@ export default function App() {
     // 残っていなければ未接続状態へ。
     const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
     if (remaining.length > 0) {
-      await switchToOpenConnection(remaining[remaining.length - 1]);
+      // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
+      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true });
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
@@ -4139,6 +4237,8 @@ export default function App() {
         // バックエンドが実行後に返した判定値を使う (JS でマスクし直さない、#1256)。
         if (schemaMayChange) {
           invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
+          // DDL 成功時のスキーマドリフト自動取得 (#1537)。
+          noteSchemaDdl(sql, tab?.database);
         }
         finalize();
         // Auto-refresh ticks fire this same onDone every cadence — notifying on
@@ -4286,6 +4386,7 @@ export default function App() {
     cancelStreamForTab,
     releaseResultHandle,
     invalidateSchemaCache,
+    noteSchemaDdl,
     notifyQueryOutcome,
     pushQueryHistory,
     settings.flightRecorderEnabled,
@@ -4321,6 +4422,7 @@ export default function App() {
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  ddlCaptureTargetRef.current = sessionId && selectedProfile ? { sessionId, profile: selectedProfile } : null;
   // 接続ヘルスチェックの同時実行を防ぐフラグ。
   const healthCheckBusyRef = useRef(false);
 
@@ -5142,6 +5244,7 @@ export default function App() {
       if (txOwnerRef.current !== sessionId) {
         // 開始の await 中に別の接続へ切り替わった: 状態は開始した接続のぶんとして保存する。
         txBySessionRef.current.set(sessionId, { savepoints: [], counter: 0 });
+        setTxTick((n) => n + 1);
         toast.info(translate("txBegun"));
         return;
       }
@@ -6304,6 +6407,13 @@ export default function App() {
     patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
   }, [patchTab]);
 
+  // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
+  // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
+  const addInsertRowsForTab = useCallback((tabId: string, rows: PendingInsertRow[]) => {
+    if (rows.length === 0) return;
+    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+  }, [patchTab]);
+
   // 行操作 (追加/削除) の保留を破棄する。
   const discardRowOpsForTab = useCallback((tabId: string) => {
     patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
@@ -6579,18 +6689,21 @@ export default function App() {
   }, [openQueryInEditor]);
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
-  const runMaintenanceDdl = useCallback(async (sql: string, database: string): Promise<boolean> => {
+  // `table` を渡すと (CREATE / DROP INDEX など対象が 1 テーブルと分かる DDL)、そのテーブルの
+  // バックエンドキャッシュだけを捨てて再読込する (#1539)。
+  const runMaintenanceDdl = useCallback(async (sql: string, database: string, table?: string): Promise<boolean> => {
     if (!sessionId) return false;
     try {
       await api.runQuery(sessionId, sql, database);
       invalidateSchemaCache(database);
-      connectionListRef.current?.refreshSchema();
+      noteSchemaDdl(sql, database);
+      connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
       return true;
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
       return false;
     }
-  }, [sessionId, invalidateSchemaCache, toast]);
+  }, [sessionId, invalidateSchemaCache, noteSchemaDdl, toast]);
 
   const handleCopyTableName = useCallback(async (table: string) => {
     if (await copyToClipboard(table)) {
@@ -6628,11 +6741,35 @@ export default function App() {
     await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
 
+  // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
+  // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
+  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  const loadDropImpacts = useCallback(async (database: string, tables: string[]): Promise<DropImpact[]> => {
+    if (!sessionId) return [];
+    const entries = await Promise.all(
+      tables.map(async (tbl): Promise<[string, IncomingFk[]]> => {
+        try {
+          return [tbl, await api.incomingForeignKeys(sessionId, database, tbl)];
+        } catch {
+          return [tbl, []];
+        }
+      }),
+    );
+    return collectDropImpacts(Object.fromEntries(entries), tables);
+  }, [sessionId]);
+
   const handleDropTable = useCallback(async (database: string, table: string) => {
     // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
+    const impacts = await loadDropImpacts(database, [table]);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     const ok = await confirm({
       title: translate("dropConfirmTitle", { table }),
-      message: maintenanceMessage(translate("dropConfirmBody", { table })),
+      message: maintenanceMessage(
+        <>
+          {translate("dropConfirmBody", { table })}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("dropConfirmOk"),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? table : undefined,
@@ -6646,7 +6783,7 @@ export default function App() {
         .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
         .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
 
   // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
   // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
@@ -6698,6 +6835,7 @@ export default function App() {
       try {
         await api.runQueryTransaction(sessionId, statements, target.database);
         invalidateSchemaCache(target.database);
+        noteSchemaDdl(statements.join(";\n"), target.database);
         connectionListRef.current?.refreshSchema();
         toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
       } catch (e) {
@@ -6722,7 +6860,7 @@ export default function App() {
         );
       }
     })();
-  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
+  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast]);
 
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
@@ -6774,7 +6912,9 @@ export default function App() {
     try {
       await api.runQueryTransaction(sessionId, sqls, target.database);
       invalidateSchemaCache(target.database);
-      connectionListRef.current?.refreshSchema();
+      noteSchemaDdl(sqls.join(";\n"), target.database);
+      // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
+      connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
       toast.success(translate("alterTableSuccess", { table: target.table }));
       setAlterTableTarget(null);
       // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
@@ -6785,7 +6925,7 @@ export default function App() {
     } catch (e) {
       toast.error(translate("statusQueryError", { error: String(e) }));
     }
-  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, tabsRef]);
+  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, noteSchemaDdl, tabsRef]);
 
   // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
   // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
@@ -6860,7 +7000,7 @@ export default function App() {
   const handleCreateIndexRun = useCallback(async (sql: string) => {
     const target = createIndexTarget;
     if (!target) return;
-    const success = await runMaintenanceDdl(sql, target.database);
+    const success = await runMaintenanceDdl(sql, target.database, target.table);
     if (success) {
       toast.success(translate("createIndexSuccess"));
       setCreateIndexTarget(null);
@@ -6886,7 +7026,7 @@ export default function App() {
       typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
     });
     if (!ok) return;
-    const success = await runMaintenanceDdl(sql, database);
+    const success = await runMaintenanceDdl(sql, database, table);
     if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
   }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
 
@@ -7337,6 +7477,9 @@ export default function App() {
   // メニュー無効化に加え、バックエンドのガードが拒否する。
   const handleDropTables = useCallback(async (database: string, tables: string[]) => {
     if (tables.length === 0) return;
+    // DROP されずに残る子テーブルからの FK 参照を警告に添える (#1536)。
+    const impacts = await loadDropImpacts(database, tables);
+    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
     // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
     const production = Boolean(selectedProfile?.is_production);
     const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
@@ -7356,7 +7499,12 @@ export default function App() {
     );
     const ok = await confirm({
       title: translate("batchDropConfirmTitle", { count: tables.length }),
-      message: maintenanceMessage(body),
+      message: maintenanceMessage(
+        <>
+          {body}
+          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+        </>,
+      ),
       confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
       tone: "danger",
       typedConfirmation: selectedProfile?.is_production ? database : undefined,
@@ -7383,6 +7531,8 @@ export default function App() {
     }
     // 失敗しても念のためツリーは読み直す。
     invalidateSchemaCache(database);
+    // 一部だけ落ちた可能性もあるので失敗時も取得する (内容が同じなら世代は増えない)。
+    noteSchemaDdl(statements.join(";\n"), database);
     connectionListRef.current?.refreshSchema();
     let dropped: string[] = failed ? [] : tables;
     if (failed) {
@@ -7405,7 +7555,7 @@ export default function App() {
     if (!failed) {
       toast.success(translate("batchDropSuccess", { count: dropped.length }));
     }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, toast, tabsRef]);
+  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, noteSchemaDdl, toast, tabsRef]);
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -7807,6 +7957,7 @@ export default function App() {
     // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
     gridScrollRef.current.delete(id);
     preflightRef.current.delete(id);
+    clearExplainPin(id);
     // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
     // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
     // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
@@ -8281,6 +8432,42 @@ export default function App() {
     window.addEventListener("focus", onFocusEvent);
     return () => window.removeEventListener("focus", onFocusEvent);
   }, [sessionId, selectedProfile, connectingId]);
+
+  // SSH トンネルの切断を先回りで検知する (#1537)。トンネルの SSH セッションが落ちても
+  // ローカルの待ち受けポートは残るので、従来は次のクエリが失敗して初めて切断に気付いた。
+  // DB には触れない軽量チェック (`session_tunnel_alive`) を定期的に呼び、閉じていたら
+  // 統一ハンドラ (自動再接続 or 手動再接続への誘導, #712) へ倒す。ウィンドウが隠れている間は
+  // 叩かない (フォーカス復帰時の `pingSession` が拾う)。
+  useEffect(() => {
+    if (!sessionId || !selectedProfile?.ssh) return;
+    const sid = sessionId;
+    const profileName = selectedProfile.name;
+    const check = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (healthCheckBusyRef.current || connectingId || reconnectingRef.current) return;
+      if (connectionStatusRef.current !== "connected") return;
+      healthCheckBusyRef.current = true;
+      try {
+        const alive = await api.sessionTunnelAlive(sid);
+        if (alive === false && sessionIdRef.current === sid && !reconnectingRef.current) {
+          toast.notify({
+            message: translate("toastSshTunnelLost", { name: profileName }),
+            tone: "info",
+            severity: "warning",
+          });
+          await handleConnectionLostRef.current();
+        }
+      } catch {
+        // セッションが既に消えている等は無視 (UI 側で切断扱い)。
+      } finally {
+        healthCheckBusyRef.current = false;
+      }
+    };
+    const handle = setInterval(() => {
+      void check();
+    }, TUNNEL_WATCH_INTERVAL_MS);
+    return () => clearInterval(handle);
+  }, [sessionId, selectedProfile, connectingId, toast]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
@@ -9046,7 +9233,7 @@ export default function App() {
     handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
     openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
     redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
-    requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
+    addInsertRowsForTab, requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
     runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
     setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
     setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,
@@ -9556,6 +9743,7 @@ export default function App() {
             connectingId={connectingId}
             errorProfileId={errorProfileId}
             openProfileIds={openProfileIds}
+            txProfileIds={txProfileIds}
             {...connectionListHandlers}
             selectLimit={Math.max(1, settings.defaultDisplayCount)}
             favorites={quickAccess.favorites}
@@ -9807,6 +9995,7 @@ export default function App() {
                         onSelectColumn={(column) =>
                           setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
                         }
+                        onCompare={(approximate) => setProfileCompare({ approximate })}
                       />
                     ) : null
                   ) : activeBottomPanelTab === "structure" ? (
@@ -10683,6 +10872,8 @@ export default function App() {
             capturing={schemaDriftCapturing}
             onCapture={handleCaptureSchemaDrift}
             onClose={() => setSchemaDriftOpen(false)}
+            onOpenStructure={sessionId ? handleOpenStructure : undefined}
+            onOpenData={sessionId ? handleOpenTable : undefined}
           />
         )}
       </AnimatePresence>
@@ -10828,6 +11019,24 @@ export default function App() {
             confirm={confirm}
             onClose={() => setBroadcastRequest(null)}
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
+          <Suspense fallback={null}>
+            <ColumnProfileCompareModal
+              baseline={{ sessionId, profile: selectedProfile }}
+              candidates={openConnections.filter(
+                (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
+              )}
+              driver={selectedProfile.driver}
+              target={{ ...profileTarget, column: profileTarget.column }}
+              approximate={profileCompare.approximate}
+              confirm={confirm}
+              onClose={() => setProfileCompare(null)}
+            />
+          </Suspense>
         )}
       </AnimatePresence>
 
