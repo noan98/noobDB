@@ -10,15 +10,26 @@ use crate::profiles::SshAuthMethod;
 
 type Session = russh::client::Handle<ClientHandler>;
 
+/// 鍵ファイルを読めなかったときのメッセージ。踏み台と接続先で別の鍵を使うプロファイルでは、
+/// OS のエラー (`No such file or directory`) だけだとどの鍵か分からないので、パスを含める
+/// (#1534)。パスは非秘密のフィールド (`profiles.json` に平文で保存、ログにも出している)。
+/// 鍵の中身やパスフレーズは含めない。
+fn key_read_error_message(path: &Path, error: &std::io::Error) -> String {
+    format!("failed to read key file {}: {error}", path.display())
+}
+
 /// Load a private key from a file path, optionally decrypting with a passphrase.
 pub fn load_private_key(path: &Path, passphrase: Option<&str>) -> Result<Arc<PrivateKey>> {
     let content = std::fs::read_to_string(path).map_err(|e| {
         tracing::error!(path = %path.display(), error = %e, "ssh: failed to read private key file");
-        AppError::SshKey(format!("failed to read key file: {e}"))
+        AppError::SshKey(key_read_error_message(path, &e))
     })?;
     let key = decode_secret_key(&content, passphrase).map_err(|e| {
         tracing::error!(path = %path.display(), error = %e, "ssh: failed to decode private key");
-        AppError::SshKey(format!("failed to decode private key: {e}"))
+        AppError::SshKey(format!(
+            "failed to decode private key {}: {e}",
+            path.display()
+        ))
     })?;
     Ok(Arc::new(key))
 }
@@ -191,4 +202,29 @@ where
     Err(AppError::Ssh(
         "ssh-agent authentication failed for all identities".into(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_key_file_error_names_the_path_but_not_the_passphrase() {
+        let path = Path::new("/nonexistent-dir/id_ed25519_bastion");
+        let err = load_private_key(path, Some("s3cret-passphrase")).unwrap_err();
+        assert_eq!(err.kind(), "sshKey");
+        let msg = err.to_string();
+        assert!(msg.contains("/nonexistent-dir/id_ed25519_bastion"), "{msg}");
+        assert!(!msg.contains("s3cret-passphrase"), "{msg}");
+    }
+
+    #[test]
+    fn undecodable_key_file_error_names_the_path() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("noobdb_bad_key_{}", std::process::id()));
+        std::fs::write(&path, "not a private key").unwrap();
+        let err = load_private_key(&path, None).unwrap_err();
+        let _ = std::fs::remove_file(&path);
+        assert!(err.to_string().contains(&path.display().to_string()));
+    }
 }

@@ -34,7 +34,7 @@ pub mod store;
 
 use serde::{Deserialize, Serialize};
 
-use crate::db::data_diff::{compute_data_diff, DataDiff};
+use crate::db::data_diff::{compute_data_diff, DataDiff, RowStatus};
 use crate::db::types::Value;
 use crate::db::DriverKind;
 
@@ -169,13 +169,23 @@ pub fn diff_snapshots(
         .iter()
         .filter_map(|name| columns.iter().position(|c| c == name))
         .collect();
-    let rows = compute_data_diff(&columns, &pk_idx, &newer.rows, &older_rows);
-    let columns_added = newer
+    let mut rows = compute_data_diff(&columns, &pk_idx, &newer.rows, &older_rows);
+    let columns_added: Vec<String> = newer
         .columns
         .iter()
         .filter(|c| !older.columns.contains(c))
         .cloned()
         .collect();
+    // 追加された列は古い世代に無く NULL で埋めて比べているので、そのままだと列を 1 つ足しただけで
+    // 全行が「変更」になり、実際の値の変化を見分けられない (#1534)。追加列は行の変更に数えず、
+    // 変更列から外す (「列追加」は `columns_added` として別に表示する)。追加列だけが差の行は
+    // 変更なしとして落とす。追加・削除された行 (PK 単位) はそのまま。
+    if !columns_added.is_empty() {
+        for row in &mut rows {
+            row.changed_columns.retain(|c| !columns_added.contains(c));
+        }
+        rows.retain(|r| r.status != RowStatus::Different || !r.changed_columns.is_empty());
+    }
     let columns_removed = older
         .columns
         .iter()
@@ -301,9 +311,57 @@ mod tests {
         assert_eq!(added, vec![s("note")]);
         assert_eq!(removed, vec![s("legacy")]);
         assert_eq!(diff.columns, vec![s("id"), s("v"), s("note")]);
-        // 追加列は古い側が NULL 扱いなので「変更」として現れる。削除列は比較対象外。
-        assert_eq!(diff.rows.len(), 1);
-        assert_eq!(diff.rows[0].changed_columns, vec![s("note")]);
+        // 追加列は行の変更に数えない (#1534)。削除列も比較対象外。値の差が無いので行も出ない。
+        assert!(diff.rows.is_empty());
+    }
+
+    #[test]
+    fn added_column_is_not_counted_as_a_row_change_but_real_changes_still_are() {
+        // 列追加 (note) の世代間。id=1 は値が同じ、id=2 は v が実際に変わった。
+        let older = snap(
+            &["id", "v"],
+            vec![
+                vec![Value::Int(1), Value::Int(1)],
+                vec![Value::Int(2), Value::Int(2)],
+                vec![Value::Int(3), Value::Int(3)],
+            ],
+        );
+        let newer = snap(
+            &["id", "v", "note"],
+            vec![
+                vec![Value::Int(1), Value::Int(1), Value::String(s("a"))],
+                vec![Value::Int(2), Value::Int(20), Value::String(s("b"))],
+                vec![Value::Int(4), Value::Int(4), Value::Null],
+            ],
+        );
+        let (diff, added, removed) = diff_snapshots(DriverKind::Mysql, "t", &older, &newer);
+        assert_eq!(added, vec![s("note")]);
+        assert!(removed.is_empty());
+        // id=1 は変更なし。id=2 は v だけが変更列 (note は含めない)。追加行 4 / 削除行 3 はそのまま。
+        let different: Vec<_> = diff
+            .rows
+            .iter()
+            .filter(|r| r.status == RowStatus::Different)
+            .collect();
+        assert_eq!(different.len(), 1);
+        assert_eq!(different[0].key, vec![Value::Int(2)]);
+        assert_eq!(different[0].changed_columns, vec![s("v")]);
+        assert_eq!(
+            diff.rows
+                .iter()
+                .filter(|r| r.status == RowStatus::SourceOnly)
+                .count(),
+            1
+        );
+        assert_eq!(
+            diff.rows
+                .iter()
+                .filter(|r| r.status == RowStatus::TargetOnly)
+                .count(),
+            1
+        );
+        // 表示は新しい世代の列に揃える。
+        assert_eq!(diff.columns, vec![s("id"), s("v"), s("note")]);
     }
 
     #[test]
