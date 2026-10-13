@@ -1173,6 +1173,22 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(container.querySelectorAll("td.is-selected-cell")).toHaveLength(4);
   });
 
+  it("ソート中でも行番号セルのクリックはその行を選ぶ", async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    // name 昇順: apple / banana / cherry (元の順は banana / apple / cherry)。
+    await user.click(screen.getByRole("button", { name: /^name/ }));
+    const rows = Array.from(container.querySelectorAll<HTMLElement>("tbody tr")).filter((tr) =>
+      tr.querySelector("td.row-index"),
+    );
+    fireEvent.click(rows[0].querySelector<HTMLElement>("td.row-index") as HTMLElement);
+    const selected = Array.from(container.querySelectorAll("td.is-selected-cell"));
+    expect(selected).toHaveLength(2);
+    expect(selected.every((td) => rows[0].contains(td))).toBe(true);
+    expect(rows[0].textContent).toContain("apple");
+  });
+
   it("並び替えグリップとリサイズハンドルはキーボードで操作できる (#1529)", async () => {
     localStorage.clear();
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
