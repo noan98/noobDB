@@ -183,7 +183,9 @@
   環境変数の違いによる再コンパイルも起きない)。
   Rust の統合テストは `src-tauri/Cargo.toml` の `[[test]]` で 4 本の実行ファイルに束ねてあり
   (golden / integration / external と単独の serde_schema_parity。`autotests = false`。詳細は
-  `noobdb-testing` の commands.md)、リンク回数を減らしています。Windows の 2 ジョブは
+  `noobdb-testing` の commands.md)、リンク回数を減らしています。`rust (windows test)` は
+  env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
+  --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
   フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
