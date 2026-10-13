@@ -3447,7 +3447,9 @@ const GridRow = memo(function GridRow({
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
         }}
-        onClick={(e) => handlers.onRowIndexClick(e, rowIdx)}
+        // 表示する番号は表示順 (`rowIdx`)、選択に渡すのは元の行 index (`row.index`)。
+        // ソート・フィルタ中は両者がずれるので、表示順を渡すと別の行が選ばれる。
+        onClick={(e) => handlers.onRowIndexClick(e, row.index)}
       >
         {rowIdx + 1}
       </td>
