@@ -1,5 +1,5 @@
 import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from "react";
-import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
+import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
@@ -145,7 +145,8 @@ import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
-import { Icon, ICON_SIZES } from "./components/Icon";
+import { Icon, ICON_SIZES, type IconName } from "./components/Icon";
+import { SIDEBAR_TAB_LABEL_ATTR, useSidebarTabsCompact } from "./components/useSidebarTabsCompact";
 import { Button } from "./components/ui";
 import { buildTabsEmptyActions } from "./components/tabsEmptyActions";
 import { ListboxSelect } from "./components/ListboxSelect";
@@ -590,6 +591,15 @@ const SIDEBAR_TAB_ORDER: readonly SidebarTab[] = ["connections", "snippets", "hi
 const sidebarTabId = (key: SidebarTab) => `sidebar-tab-${key}`;
 const sidebarPanelId = (key: SidebarTab) => `sidebar-panel-${key}`;
 
+// サイドバータブのアイコン。各パネルの空状態 (`EmptyState`) と同じグリフに揃え、
+// タブとパネルの中身が同じ記号で結びつくようにする。
+const SIDEBAR_TAB_ICONS: Record<SidebarTab, IconName> = {
+  connections: "server",
+  snippets: "snippet",
+  history: "clock",
+  local: "database",
+};
+
 // サイドバータブのアクティブインジケータの layoutId。サイドバーのタブリストは
 // アプリ内に 1 つしか存在しない (`TabBar` の分割ペインのような複数インスタンス化が
 // 無い) ため、`useId` を使わず固定文字列で足りる。他の layoutId (`TabBar` の
@@ -639,58 +649,71 @@ const SidebarTabButton = forwardRef<
     active: boolean;
     onActivate: () => void;
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => void;
-    children: ReactNode;
+    label: string;
+    /** 幅が足りないときはラベルを隠してアイコンだけにする (`useSidebarTabsCompact`)。 */
+    compact: boolean;
   }
->(function SidebarTabButton({ tabKey, active, onActivate, onKeyDown, children }, ref) {
+>(function SidebarTabButton({ tabKey, active, onActivate, onKeyDown, label, compact }, ref) {
   return (
-    <chakra.button
-      ref={ref}
-      role="tab"
-      id={sidebarTabId(tabKey)}
-      aria-controls={sidebarPanelId(tabKey)}
-      aria-selected={active}
-      tabIndex={active ? 0 : -1}
-      position="relative"
-      flex="1"
-      bg="transparent"
-      border="none"
-      // 下線の分の高さは透明な枠で確保し続ける (インジケータ導入前とタブの高さを変えない)。
-      borderBottom="2px solid transparent"
-      borderRadius="0"
-      px="2"
-      py="1.75"
-      fontSize="sm"
-      fontWeight={600}
-      // 日本語ラベル (「スニペット」) が 2 行に折り返してタブの高さが揃わなくなるのを防ぐ (#1283)。
-      // 収まらない幅では親のタブ列が横スクロールで逃がす。
-      whiteSpace="nowrap"
-      color={active ? "app.text" : "app.textMuted"}
-      cursor="pointer"
-      transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)"
-      _hover={{ bg: "app.hover", color: "app.text" }}
-      _focusVisible={{
-        outline: "none",
-        boxShadow: "var(--focus-ring)",
-      }}
-      onClick={onActivate}
-      onKeyDown={onKeyDown}
-    >
-      {children}
-      {active && (
-        <MotionSidebarTabIndicator
-          layoutId={SIDEBAR_TAB_INDICATOR_ID}
-          transition={springs.snappy}
-          position="absolute"
-          left="0"
-          right="0"
-          // 以前の下線 (borderBottom 2px) と同じ位置に重ねる。
-          bottom="-2px"
-          h="2px"
-          bg="app.accent"
-          aria-hidden
-        />
-      )}
-    </chakra.button>
+    // アイコンだけのときはラベルをツールチップで補う (読み上げ名はラベルのまま)。
+    <Tooltip label={compact ? label : undefined} placement="bottom">
+      <chakra.button
+        ref={ref}
+        role="tab"
+        id={sidebarTabId(tabKey)}
+        aria-controls={sidebarPanelId(tabKey)}
+        aria-selected={active}
+        tabIndex={active ? 0 : -1}
+        position="relative"
+        flex="1"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        gap="1"
+        bg="transparent"
+        border="none"
+        // 下線の分の高さは透明な枠で確保し続ける (インジケータ導入前とタブの高さを変えない)。
+        borderBottom="2px solid transparent"
+        borderRadius="0"
+        // アイコンを足した分、左右の余白を詰めて既定幅 (300px) でもラベル付きで収める。
+        px="1.5"
+        py="1.75"
+        fontSize="sm"
+        fontWeight={600}
+        // 日本語ラベル (「スニペット」) が 2 行に折り返してタブの高さが揃わなくなるのを防ぐ (#1283)。
+        // 収まらない幅ではラベルを隠してアイコンだけにする (`useSidebarTabsCompact`)。
+        whiteSpace="nowrap"
+        color={active ? "app.text" : "app.textMuted"}
+        cursor="pointer"
+        transition="background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease)"
+        _hover={{ bg: "app.hover", color: "app.text" }}
+        _focusVisible={{
+          outline: "none",
+          boxShadow: "var(--focus-ring)",
+        }}
+        onClick={onActivate}
+        onKeyDown={onKeyDown}
+      >
+        <Icon name={SIDEBAR_TAB_ICONS[tabKey]} size={ICON_SIZES.sm} />
+        <chakra.span {...{ [SIDEBAR_TAB_LABEL_ATTR]: "" }} css={compact ? visuallyHiddenStyle : undefined}>
+          {label}
+        </chakra.span>
+        {active && (
+          <MotionSidebarTabIndicator
+            layoutId={SIDEBAR_TAB_INDICATOR_ID}
+            transition={springs.snappy}
+            position="absolute"
+            left="0"
+            right="0"
+            // 以前の下線 (borderBottom 2px) と同じ位置に重ねる。
+            bottom="-2px"
+            h="2px"
+            bg="app.accent"
+            aria-hidden
+          />
+        )}
+      </chakra.button>
+    </Tooltip>
   );
 });
 
@@ -1577,6 +1600,11 @@ export default function App() {
   const [showForm, setShowForm] = useState(false);
 
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("connections");
+  const sidebarTablistRef = useRef<HTMLDivElement>(null);
+  const sidebarTabsCompact = useSidebarTabsCompact(
+    sidebarTablistRef,
+    [t("sidebarTabConnections"), t("sidebarTabSnippets"), t("sidebarTabHistory"), t("sidebarTabLocal")].join("\n"),
+  );
   // ローピング tabindex 用に各サイドバータブのボタン要素を保持する。矢印キーで
   // フォーカスを物理的に移動させるために必要 (`setState` だけでは tabIndex は
   // 変わるがフォーカスは移らない)。
@@ -9795,47 +9823,55 @@ export default function App() {
         <Flex
           borderBottomWidth="1px"
           borderBottomColor="app.border"
-          // 最小幅・フォント拡大時は折り返さず横スクロール (ボトムパネルのタブ列と同じ方式, #1283)。
+          // ラベル付きで収まらない幅ではアイコンだけになる。それでも足りない極端なフォント拡大時の
+          // 逃げとして、折り返さず横スクロールにしておく (ボトムパネルのタブ列と同じ方式, #1283)。
           overflowX="auto"
+          ref={sidebarTablistRef}
           role="tablist"
           aria-label={t("sidebarTablistAria")}
         >
-          <SidebarTabButton
-            ref={(el) => { sidebarTabRefs.current.connections = el; }}
-            tabKey="connections"
-            active={sidebarTab === "connections"}
-            onActivate={() => setSidebarTab("connections")}
-            onKeyDown={handleSidebarTabKeyDown("connections")}
-          >
-            {t("sidebarTabConnections")}
-          </SidebarTabButton>
-          <SidebarTabButton
-            ref={(el) => { sidebarTabRefs.current.snippets = el; }}
-            tabKey="snippets"
-            active={sidebarTab === "snippets"}
-            onActivate={() => setSidebarTab("snippets")}
-            onKeyDown={handleSidebarTabKeyDown("snippets")}
-          >
-            {t("sidebarTabSnippets")}
-          </SidebarTabButton>
-          <SidebarTabButton
-            ref={(el) => { sidebarTabRefs.current.history = el; }}
-            tabKey="history"
-            active={sidebarTab === "history"}
-            onActivate={() => setSidebarTab("history")}
-            onKeyDown={handleSidebarTabKeyDown("history")}
-          >
-            {t("sidebarTabHistory")}
-          </SidebarTabButton>
-          <SidebarTabButton
-            ref={(el) => { sidebarTabRefs.current.local = el; }}
-            tabKey="local"
-            active={sidebarTab === "local"}
-            onActivate={() => setSidebarTab("local")}
-            onKeyDown={handleSidebarTabKeyDown("local")}
-          >
-            {t("sidebarTabLocal")}
-          </SidebarTabButton>
+          {/* アクティブ下線のスプリングが端のタブで行き過ぎる (オーバーシュート) と、その数 px が
+              スクロール可能な範囲に数えられ、タブ切替のたびに一瞬スクロールバーが出ていた。
+              タブを overflow: clip の枠に入れ、行き過ぎた分は枠で切り落とす (スクロール量に
+              数えさせない)。枠はタブ列の内容幅まで伸びるので、狭い幅での横スクロールはそのまま。 */}
+          <Flex flex="1 0 auto" overflow="clip">
+            <SidebarTabButton
+              ref={(el) => { sidebarTabRefs.current.connections = el; }}
+              tabKey="connections"
+              active={sidebarTab === "connections"}
+              onActivate={() => setSidebarTab("connections")}
+              onKeyDown={handleSidebarTabKeyDown("connections")}
+              label={t("sidebarTabConnections")}
+              compact={sidebarTabsCompact}
+            />
+            <SidebarTabButton
+              ref={(el) => { sidebarTabRefs.current.snippets = el; }}
+              tabKey="snippets"
+              active={sidebarTab === "snippets"}
+              onActivate={() => setSidebarTab("snippets")}
+              onKeyDown={handleSidebarTabKeyDown("snippets")}
+              label={t("sidebarTabSnippets")}
+              compact={sidebarTabsCompact}
+            />
+            <SidebarTabButton
+              ref={(el) => { sidebarTabRefs.current.history = el; }}
+              tabKey="history"
+              active={sidebarTab === "history"}
+              onActivate={() => setSidebarTab("history")}
+              onKeyDown={handleSidebarTabKeyDown("history")}
+              label={t("sidebarTabHistory")}
+              compact={sidebarTabsCompact}
+            />
+            <SidebarTabButton
+              ref={(el) => { sidebarTabRefs.current.local = el; }}
+              tabKey="local"
+              active={sidebarTab === "local"}
+              onActivate={() => setSidebarTab("local")}
+              onKeyDown={handleSidebarTabKeyDown("local")}
+              label={t("sidebarTabLocal")}
+              compact={sidebarTabsCompact}
+            />
+          </Flex>
         </Flex>
         <Box
           role="tabpanel"
