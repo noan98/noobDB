@@ -1485,10 +1485,16 @@ jobs:
           tool: cargo-nextest
 
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
-      # 実行される。MySQL/PostgreSQL は URL 環境変数を渡していないのでスキップ。
+      # 実行される (integration グループ)。
+      # external グループ (MySQL/PostgreSQL/SSH/TLS) は NOOBDB_TEST_* の env ゲート
+      # 付きで、このジョブは env を渡さないためほぼ 0 件実行になる (env 不要なのは
+      # SSH 多段のエラー表示テスト 1 件だけ)。重いリンク (sqlx の mysql/postgres・
+      # russh) を払うだけなので対象から外す (#1511)。external は env を渡す
+      # `rust (test)` で全件実走する。Cargo.toml に [[test]] を足したら
+      # ここにも --test を追加すること。
       - name: cargo nextest run
         working-directory: src-tauri
-        run: cargo nextest run --locked --lib --test '*'
+        run: cargo nextest run --locked --lib --test golden --test integration --test serde_schema_parity
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
