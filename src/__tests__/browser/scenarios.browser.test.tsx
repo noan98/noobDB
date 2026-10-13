@@ -842,7 +842,8 @@ describe("シナリオ: サイドバータブの sliding indicator とクロス�
   // アクティブインジケータ (`MotionSidebarTabIndicator`) は `aria-hidden` の
   // motion.span としてアクティブなタブの内側にのみ描画される (`SidebarTabButton`)。
   function hasIndicator(tabEl: Element) {
-    return tabEl.querySelector('[aria-hidden="true"]') !== null;
+    // タブのアイコン (svg) も aria-hidden なので、下線 (motion.span) に絞って探す。
+    return tabEl.querySelector(':scope > span[aria-hidden="true"]') !== null;
   }
 
   it("インジケータはアクティブなタブにだけ描かれ、切替に追従する", async () => {
