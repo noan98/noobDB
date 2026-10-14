@@ -11,6 +11,7 @@ import {
   sanitizePivotConfig,
   writeStoredPivotConfig,
   MAX_PIVOT_ROWS,
+  MAX_PIVOT_COLS,
   type PivotConfig,
 } from "../components/pivotData";
 import type { CellValue, Column } from "../api/tauri";
@@ -171,6 +172,50 @@ describe("buildPivotModel のセルキー衝突", () => {
       [1, null],
       [null, 10],
     ]);
+  });
+});
+
+describe("buildPivotModel の NULL と上限超過", () => {
+  it("NULL グループと文字列 \"(null)\" を別の行にする", () => {
+    const rows: CellValue[][] = [
+      [null, 1],
+      ["(null)", 10],
+    ];
+    const m = buildPivotModel(cols("k", "v"), rows, {
+      rowField: 0,
+      colField: null,
+      valueField: 1,
+      agg: "sum",
+    });
+    expect(m.rowKeys).toEqual(["(null)", '"(null)"']);
+    expect(m.rowTotals).toEqual([1, 10]);
+  });
+
+  it("列数上限を超えても総計と行小計は生データ全体の合計になる", () => {
+    const rows: CellValue[][] = [];
+    for (let i = 0; i < MAX_PIVOT_COLS + 1; i++) rows.push(["r", `c${i}`, 1]);
+    const m = buildPivotModel(cols("r", "c", "v"), rows, {
+      rowField: 0,
+      colField: 1,
+      valueField: 2,
+      agg: "sum",
+    });
+    expect(m.truncated).toBe(true);
+    expect(m.colKeys.length).toBe(MAX_PIVOT_COLS);
+    expect(m.grandTotal).toBe(MAX_PIVOT_COLS + 1);
+    expect(m.rowTotals).toEqual([MAX_PIVOT_COLS + 1]);
+  });
+
+  it("行数上限を超えても総計は全体の合計になる", () => {
+    const rows: CellValue[][] = [];
+    for (let i = 0; i < MAX_PIVOT_ROWS + 3; i++) rows.push([`g${i}`, 1]);
+    const m = buildPivotModel(cols("g", "v"), rows, {
+      rowField: 0,
+      colField: null,
+      valueField: 1,
+      agg: "sum",
+    });
+    expect(m.grandTotal).toBe(MAX_PIVOT_ROWS + 3);
   });
 });
 

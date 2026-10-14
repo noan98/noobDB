@@ -30,7 +30,7 @@ interface SortFilterCase {
   kinds: CellKind[];
   rows: CellValue[][];
   sort?: { col: number; desc: boolean }[];
-  filters?: { col: number; op: ColumnFilter["op"]; value: string; value2: string; nullMode: ColumnFilter["nullMode"] }[];
+  filters?: { col: number; op: ColumnFilter["op"]; value: string; value2: string; nullMode: ColumnFilter["nullMode"]; caseSensitive?: boolean }[];
   global?: string;
   expected: number[];
 }
@@ -50,7 +50,13 @@ function applyJs(c: SortFilterCase): number[] {
   const sorting = (c.sort ?? []).map((s) => ({ id: String(s.col), desc: s.desc }));
   const filters = (c.filters ?? []).map((f) => ({
     id: String(f.col),
-    value: { op: f.op, value: f.value, value2: f.value2, nullMode: f.nullMode } as ColumnFilter,
+    value: {
+      op: f.op,
+      value: f.value,
+      value2: f.value2,
+      nullMode: f.nullMode,
+      ...(f.caseSensitive ? { caseSensitive: true } : {}),
+    } as ColumnFilter,
   }));
   const req = buildHandleRequest(sorting, filters, c.global, c.kinds);
   const needle = (c.global ?? "").toLowerCase();
