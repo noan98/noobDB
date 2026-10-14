@@ -121,7 +121,13 @@
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL / PostgreSQL に対し
   **計装なしの** nextest (`--lib --test '*'`。テストの無い bin ターゲットはビルドしない) を実行します
-  (PR ブロッキング)。カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
+  (PR ブロッキング)。nextest は `src-tauri/.config/nextest.toml` の
+  `slow-timeout = { period = "20s", terminate-after = 15 }` で、20 秒超のテストに `SLOW` を出し、
+  300 秒で強制終了して失敗扱いにします (#1635。SSH / TLS 待ちのハングがジョブの
+  `timeout-minutes: 45` まで居座るのを防ぐ。観測した最長テストは約 40 秒)。正当に長いテストが
+  増えたら `[[profile.default.overrides]]` で個別に延長します。CI 用の別プロファイルは無く、
+  `rust (test)` / `rust (coverage)` / `rust (windows test)` はすべて default を使います。
+  カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを

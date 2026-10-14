@@ -1,4 +1,4 @@
-# cargo-nextest の設定 (CI の `rust (test)` / `rust (windows test)` が使う)。
+# cargo-nextest の設定 (CI の `rust (test)` / `rust (coverage)` / `rust (windows test)` が使う)。
 #
 # nextest は**テストごとにプロセスを分けて**並列実行する。これは各テストを
 # 隔離できる利点がある一方、「プロセス内の Mutex による直列化」がまったく効か
@@ -21,11 +21,17 @@
 # 同時に走ると、前者が後者のファイルを消してしまう。モジュール内の
 # `CRED_FILE_TEST_LOCK` が `cargo test` (スレッド並列) では防いでいるが、
 # nextest のプロセス並列には効かないので、ここでも 1 本ずつに落とす。
-# 10 秒を超えたテストを実行中に `SLOW` と出す (打ち切りはしない。terminate-after を
-# 付けていないため、表示だけ)。CI のログで遅いテスト (SSH / TLS 接続待ち・proptest・
-# sleep など) を見つけて、次の短縮の根拠にする。
+#
+# 20 秒を超えたテストを実行中に `SLOW` と出し (遅いテストをログで見つけて次の短縮の
+# 根拠にする)、15 回分 (= 300 秒 = 5 分) 経っても終わらないテストは強制終了して
+# 失敗扱いにする (#1635)。SSH / TLS 接続待ちなどでハングしたテストが、ジョブの
+# timeout-minutes (45 分) まで runner を占有するのを防ぐ。
+# 閾値の根拠: 直近の CI ログで観測した最長テストは約 40 秒 (Windows の SQLite の
+# 450 行シード。複数行 VALUES の 1 文にして解消済み)。カバレッジ計装
+# (`cargo llvm-cov nextest`) 下でも全体 40 秒前後で、300 秒には 1 桁以上の余裕がある。
+# 正当に 300 秒を超えるテストが現れたら、下の overrides で個別に延ばす。
 [profile.default]
-slow-timeout = { period = "10s" }
+slow-timeout = { period = "20s", terminate-after = 15 }
 
 [test-groups]
 sandbox-store = { max-threads = 1 }
