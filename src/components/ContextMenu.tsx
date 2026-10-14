@@ -125,10 +125,10 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    // メニュー自身 (サブメニューは別 portal なので role=menu の祖先で判定) の
+    // メニュー自身 (サブメニューは別 portal なので data-context-menu の祖先で判定) の
     // スクロールでは閉じない。項目が多いとパネルがスクロールするため。
     const onScroll = (e: Event) => {
-      if (e.target instanceof Element && e.target.closest('[role="menu"]')) return;
+      if (e.target instanceof Element && e.target.closest("[data-context-menu]")) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
@@ -304,6 +304,7 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
           overflowY: "auto",
         }}
         role="menu"
+        data-context-menu=""
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
