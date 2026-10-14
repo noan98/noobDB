@@ -868,7 +868,8 @@ impl Connection {
     /// UPSERT モードのインポート前の検証。MySQL の `ON DUPLICATE KEY UPDATE` は
     /// PRIMARY を含む全一意キーの衝突で発火するため、選択キー列と一致しない
     /// 一意キーがあると別の行を黙って上書き / 読み飛ばす。実行前に理由付きで
-    /// 拒否する。PostgreSQL / SQLite は `ON CONFLICT (キー列)` で判定するので何もしない。
+    /// 拒否する。PostgreSQL / SQLite は `ON CONFLICT (キー列)` で判定するので他の一意キーは
+    /// 問わず、キー列に完全一致する PRIMARY / UNIQUE があるかだけ確かめる (#1612)。
     pub async fn check_upsert_keys(
         &self,
         database: Option<&str>,
@@ -879,6 +880,14 @@ impl Connection {
         match self {
             Connection::MySql(c) if conflict.is_upsert() => {
                 c.check_upsert_keys(database, table, imported, &conflict.key_columns)
+                    .await
+            }
+            Connection::Postgres(c) if conflict.is_upsert() => {
+                c.check_upsert_keys(database, table, &conflict.key_columns)
+                    .await
+            }
+            Connection::Sqlite(c) if conflict.is_upsert() => {
+                c.check_upsert_keys(database.unwrap_or(""), table, &conflict.key_columns)
                     .await
             }
             _ => Ok(()),

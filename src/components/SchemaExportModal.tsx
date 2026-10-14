@@ -146,6 +146,15 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
     });
   };
 
+  // 絞り込み後にまとめて選ぶ / 解除する (#1612)。「表示中を選択」は表示中の一覧だけを足す。
+  const selectVisible = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const tb of filteredTables) next.add(tb.name);
+      return next;
+    });
+  const clearSelection = () => setSelected(new Set());
+
   const isSaving = status.kind === "saving";
   const hasOutput = markdown.length > 0;
   const emptySelection = scope === "selected" && selected.size === 0;
@@ -269,14 +278,34 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                     </chakra.span>
                   </chakra.span>
                 </chakra.div>
-                <Input
-                  type="text"
-                  value={filter}
-                  onChange={(e) => setFilter(e.target.value)}
-                  placeholder={t("schemaExportFilterPlaceholder")}
-                  disabled={isSaving}
-                  mb="1.5"
-                />
+                <chakra.div display="flex" alignItems="center" gap="2" mb="1.5">
+                  <Input
+                    type="text"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder={t("schemaExportFilterPlaceholder")}
+                    disabled={isSaving}
+                    flex="1"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={selectVisible}
+                    disabled={isSaving || filteredTables.length === 0}
+                  >
+                    {t("schemaExportSelectVisible")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={clearSelection}
+                    disabled={isSaving || selected.size === 0}
+                  >
+                    {t("schemaExportClearSelection")}
+                  </Button>
+                </chakra.div>
                 <chakra.div
                   maxH="160px"
                   overflowY="auto"

@@ -12,6 +12,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       getObjectDefinition: vi.fn(),
       describeTable: vi.fn(),
       runLookupQuery: vi.fn(),
+      tableRowEstimate: vi.fn(),
     },
   };
 });
@@ -23,12 +24,14 @@ const listTables = api.listTables as ReturnType<typeof vi.fn>;
 const describeTable = api.describeTable as ReturnType<typeof vi.fn>;
 const lookup = api.runLookupQuery as ReturnType<typeof vi.fn>;
 const getDef = api.getObjectDefinition as ReturnType<typeof vi.fn>;
+const rowEstimate = api.tableRowEstimate as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   listTables.mockResolvedValue(["users", "orders"]);
   describeTable.mockResolvedValue([{ name: "id", extra: "" }]);
   getDef.mockResolvedValue('CREATE TABLE "users" (id INTEGER PRIMARY KEY);\n');
+  rowEstimate.mockResolvedValue(null);
 });
 
 const mount = (onConfirm = vi.fn(), onClose = vi.fn(), driver: "sqlite" | "mysql" | "postgres" = "sqlite") =>
@@ -123,5 +126,26 @@ describe("TableCloneModal (#1398)", () => {
     mount(vi.fn(), vi.fn(), "postgres");
     expect(await screen.findByText(/boom/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("cloneTableConfirm") })).toBeDisabled();
+  });
+});
+
+describe("TableCloneModal の推定行数 (#1612)", () => {
+  it("データも複製を入れると推定行数を出し、大きい表では警告も出す", async () => {
+    rowEstimate.mockResolvedValue(2_000_000);
+    mount();
+    await waitFor(() => expect(rowEstimate).toHaveBeenCalledWith("s1", "main", "users"));
+    expect(screen.queryByText(/2,000,000/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: t("cloneTableIncludeData") }));
+    expect(await screen.findByText(t("cloneTableRowEstimate", { rows: "2,000,000" }))).toBeInTheDocument();
+    expect(screen.getByText(t("cloneTableLargeData", { rows: "2,000,000" }))).toBeInTheDocument();
+  });
+
+  it("小さい表では推定行数だけで警告は出さない", async () => {
+    rowEstimate.mockResolvedValue(1200);
+    mount();
+    await waitFor(() => expect(rowEstimate).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("switch", { name: t("cloneTableIncludeData") }));
+    expect(await screen.findByText(t("cloneTableRowEstimate", { rows: "1,200" }))).toBeInTheDocument();
+    expect(screen.queryByText(/INSERT \.\.\. SELECT may take|時間がかかり/)).not.toBeInTheDocument();
   });
 });

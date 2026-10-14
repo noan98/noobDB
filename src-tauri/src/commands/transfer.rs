@@ -171,6 +171,16 @@ pub(crate) async fn prepare_transfer(
     state: &AppState,
     request: TransferRequest,
 ) -> Result<PreparedTransfer> {
+    prepare_transfer_with(state, request, true).await
+}
+
+/// [`prepare_transfer`] の本体。`require_writable = false` は書き込みをしないプレビュー用で、
+/// 読み取り専用の転送先でも列計画を見せる (スキーマアドバイザと同じ方針, #1612)。
+async fn prepare_transfer_with(
+    state: &AppState,
+    request: TransferRequest,
+    require_writable: bool,
+) -> Result<PreparedTransfer> {
     let source = state
         .get(&request.source_session_id)
         .await
@@ -179,7 +189,9 @@ pub(crate) async fn prepare_transfer(
         .get(&request.target_session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(request.target_session_id.clone()))?;
-    ensure_transfer_target_writable(&target)?;
+    if require_writable {
+        ensure_transfer_target_writable(&target)?;
+    }
     validate_target_table(&request.target_table)?;
 
     let source_driver = source.conn.driver_kind();
@@ -790,7 +802,8 @@ pub async fn preview_transfer_inner(
     if request.target_table.trim().is_empty() {
         request.target_table = "preview".into();
     }
-    let prepared = prepare_transfer(state, request).await?;
+    // プレビューは書き込まないので、読み取り専用の転送先でも許可する。
+    let prepared = prepare_transfer_with(state, request, false).await?;
     let driver = prepared.target.conn.driver_kind();
     let request = &prepared.request;
 

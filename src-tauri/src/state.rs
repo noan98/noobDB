@@ -97,12 +97,12 @@ pub struct DiffStore {
 
 impl DiffStore {
     /// 差分を保存して ID を返す。`owners` は取得元のセッション ID。
-    pub fn insert(&mut self, diff: DataDiff, owners: Vec<SessionId>) -> String {
+    pub fn insert(&mut self, diff: Arc<DataDiff>, owners: Vec<SessionId>) -> String {
         let id = random_slug(16);
         self.entries.push(StoredDiff {
             id: id.clone(),
             owners,
-            diff: Arc::new(diff),
+            diff,
         });
         // 直近に入れた 1 件は必ず残す (単体で行数上限を超えてもその 1 件は使える)。
         while self.entries.len() > 1
@@ -341,9 +341,13 @@ impl AppState {
 
     /// `DataDiff` を保存して ID を返す (#1259)。ロック汚染時は保存せず空 ID を返す
     /// (後続の `get_data_diff` が「期限切れ」として扱う)。
-    pub fn store_data_diff(&self, diff: DataDiff, owners: Vec<SessionId>) -> String {
+    pub fn store_data_diff(
+        &self,
+        diff: impl Into<Arc<DataDiff>>,
+        owners: Vec<SessionId>,
+    ) -> String {
         match self.data_diffs.lock() {
-            Ok(mut store) => store.insert(diff, owners),
+            Ok(mut store) => store.insert(diff.into(), owners),
             Err(_) => String::new(),
         }
     }

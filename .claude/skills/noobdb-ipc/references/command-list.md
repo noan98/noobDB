@@ -212,6 +212,8 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 
 `compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
+`compare_table_data` に `streamId` を渡して `allRows` で呼ぶと、ページごとの進捗を `data-diff:progress` イベント
+(`streamId` / `rows`) で通知し、`cancel_stream(streamId)` で中止できる (中止時は `InvalidInput` で返る, #1612)。
 
 ## サンドボックス (`commands/sandbox.rs`)
 

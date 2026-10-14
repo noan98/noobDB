@@ -1986,6 +1986,48 @@ impl PostgresConn {
         ))
     }
 
+    /// UPSERT (`ON CONFLICT (キー列)`) の事前検証 (#1612)。表の PRIMARY / UNIQUE のうち
+    /// 部分インデックスでないものを読み、選択キー列と完全一致するものがあるか確かめる。
+    pub(crate) async fn check_upsert_keys(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        key_columns: &[String],
+    ) -> Result<()> {
+        // 空文字は「未指定」と同じ扱い (現在のスキーマを使う)。
+        let schema = database.filter(|d| !d.is_empty());
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
+            r#"SELECT i.relname::text, a.attname::text
+               FROM pg_class t
+               JOIN pg_namespace n ON n.oid = t.relnamespace
+               JOIN pg_index ix    ON ix.indrelid = t.oid
+               JOIN pg_class i     ON i.oid = ix.indexrelid
+               JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+               LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+               WHERE t.relname = $2 AND n.nspname = COALESCE($1, current_schema())
+                 AND ix.indisunique AND ix.indpred IS NULL AND ix.indisvalid AND ix.indimmediate
+                 AND k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
+               ORDER BY i.relname, k.ord"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut uniques: Vec<super::upsert::UniqueKey> = Vec::new();
+        for (name, col) in rows {
+            // 式インデックスの列 (attname が NULL) は実列と一致しないよう空文字で表す。
+            let col = col.unwrap_or_default();
+            match uniques.last_mut() {
+                Some(u) if u.name == name => u.columns.push(col),
+                _ => uniques.push(super::upsert::UniqueKey {
+                    name,
+                    columns: vec![col],
+                }),
+            }
+        }
+        super::upsert::check_conflict_target_unique(DriverKind::Postgres, &uniques, key_columns)
+    }
+
     pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // Expand pg_index.indkey (the ordered column attnums) with ordinality so
         // composite indexes keep declaration order, then resolve each attnum to a

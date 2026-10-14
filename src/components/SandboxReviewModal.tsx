@@ -394,18 +394,9 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         {t("sandboxReviewTitle", { name: sandbox.name })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
-        <chakra.div
-          fontSize="xs"
-          color="app.textMuted"
-          lineHeight={1.5}
-          bg="app.bgMuted"
-          border="1px solid"
-          borderColor="app.border"
-          borderRadius="md"
-          p="2.5"
-        >
+        <Callout tone="info" role="note" fontSize="xs">
           {t("sandboxReviewLimitationNote")}
-        </chakra.div>
+        </Callout>
 
         <chakra.div display="flex" alignItems="center" gap="2.5" flexWrap="wrap">
           <FieldLabel htmlFor="sandbox-review-target">{t("sandboxReviewTarget")}</FieldLabel>
@@ -495,12 +486,17 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
             </chakra.label>
           </chakra.div>
         )}
+        {schema?.source_error && (
+          <Callout tone="warning" role="alert">
+            {t("sandboxReviewSchemaSourceError", { error: schema.source_error })}
+          </Callout>
+        )}
         {schema && schema.external_changed_tables.length > 0 && (
-          <chakra.div fontSize="sm" color="app.textError">
+          <Callout tone="warning" role="alert">
             {t("sandboxReviewSchemaExternalWarning", {
               tables: schema.external_changed_tables.join(", "),
             })}
-          </chakra.div>
+          </Callout>
         )}
 
         {sandbox.tables.map((table) => {
@@ -563,7 +559,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               )}
               {st.diff.conflicts.length > 0 && (
                 <chakra.div mt="2" display="flex" flexDirection="column" gap="1.5">
-                  <chakra.strong fontSize="xs" color="app.textError">
+                  <chakra.strong fontSize="xs" color="app.textWarning">
                     {t("sandboxReviewConflictsTitle", { count: st.diff.conflicts.length })}
                   </chakra.strong>
                   {st.diff.conflicts.map((c) => {
@@ -634,16 +630,16 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         </chakra.label>
 
         {unresolvedCount > 0 && (
-          <chakra.div fontSize="sm" color="app.textError">
+          <Callout tone="warning" role="alert">
             {t("sandboxReviewUnresolvedConflicts", { count: unresolvedCount })}
-          </chakra.div>
+          </Callout>
         )}
 
         {opError && <ErrorNote>{opError}</ErrorNote>}
         {applyResult && (
-          <chakra.div fontSize="sm" color="app.status.success">
+          <Callout tone="success" role="status">
             {applyResult}
-          </chakra.div>
+          </Callout>
         )}
 
         {combined && (

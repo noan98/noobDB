@@ -685,6 +685,8 @@ pub struct SandboxSchemaDiffResult {
     /// database since the snapshot — informational only, not auto-resolved.
     pub external_changed_tables: Vec<String>,
     pub source_checked: bool,
+    /// 実 DB 側の列取得に失敗した理由 (#1612)。失敗しても `desired` は返す。
+    pub source_error: Option<String>,
 }
 
 /// Computes the schema writeback diff for a whole sandbox: its live tables vs.
@@ -747,53 +749,67 @@ pub(crate) async fn sandbox_schema_diff_inner(
 
     let mut external_changed_tables = Vec::new();
     let mut source_checked = false;
+    let mut source_error: Option<String> = None;
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
             let db = record.source_database.clone().unwrap_or_default();
             // 表ごとの往復 (N 回) を避け、DB 単位の一括取得 (#1255) を 1 回で済ませる。
             // 一括取得に失敗したときだけ従来の表ごとの取得へ戻る (#1530)。
-            let mut current_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
-            // 対象表が少数なら DB 全体を取る一括取得のほうが重いので、表ごとに取る。
-            const BULK_THRESHOLD: usize = 4;
-            let bulk = if record.tables.len() >= BULK_THRESHOLD {
-                crate::commands::schema::fetch_columns_bulk(&source, &db)
-                    .await
-                    .ok()
-            } else {
-                None
-            };
-            match bulk {
-                Some(all) => {
-                    let mut by_name: std::collections::HashMap<String, TableColumns> =
-                        all.into_iter().map(|t| (t.name.clone(), t)).collect();
-                    for t in &record.tables {
-                        // 一括結果に無い表 (外部で削除済みなど) は空の列として扱う。
-                        current_tables.push(by_name.remove(t).unwrap_or_else(|| TableColumns {
-                            name: t.clone(),
-                            columns: Vec::new(),
-                        }));
+            // 実 DB 側の取得失敗は競合検出ができなかった (`source_checked = false`) として扱い、
+            // サンドボックス側の差分 (desired) は返す (`sandbox_table_diff` と同じ方針, #1612)。
+            let fetched: Result<Vec<TableColumns>> = async {
+                let mut current_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
+                // 対象表が少数なら DB 全体を取る一括取得のほうが重いので、表ごとに取る。
+                const BULK_THRESHOLD: usize = 4;
+                let bulk = if record.tables.len() >= BULK_THRESHOLD {
+                    crate::commands::schema::fetch_columns_bulk(&source, &db)
+                        .await
+                        .ok()
+                } else {
+                    None
+                };
+                match bulk {
+                    Some(all) => {
+                        let mut by_name: std::collections::HashMap<String, TableColumns> =
+                            all.into_iter().map(|t| (t.name.clone(), t)).collect();
+                        for t in &record.tables {
+                            // 一括結果に無い表 (外部で削除済みなど) は空の列として扱う。
+                            current_tables.push(by_name.remove(t).unwrap_or_else(|| {
+                                TableColumns {
+                                    name: t.clone(),
+                                    columns: Vec::new(),
+                                }
+                            }));
+                        }
+                    }
+                    None => {
+                        for t in &record.tables {
+                            let cols = source.conn.columns(&db, t).await?;
+                            current_tables.push(TableColumns {
+                                name: t.clone(),
+                                columns: cols,
+                            });
+                        }
                     }
                 }
-                None => {
-                    for t in &record.tables {
-                        let cols = source.conn.columns(&db, t).await?;
-                        current_tables.push(TableColumns {
-                            name: t.clone(),
-                            columns: cols,
-                        });
-                    }
-                }
+                Ok(current_tables)
             }
-            // SQLite のベースが持たない extra / 外部キー / コメントは比較から外す。
-            normalize_columns_for_sqlite_base(&mut current_tables);
-            let external = compute_schema_diff(
-                record.source_driver,
-                record.source_driver,
-                &current_tables,
-                &base_tables,
-            );
-            external_changed_tables = schema_conflict_tables(&desired, &external);
-            source_checked = true;
+            .await;
+            match fetched {
+                Ok(mut current_tables) => {
+                    // SQLite のベースが持たない extra / 外部キー / コメントは比較から外す。
+                    normalize_columns_for_sqlite_base(&mut current_tables);
+                    let external = compute_schema_diff(
+                        record.source_driver,
+                        record.source_driver,
+                        &current_tables,
+                        &base_tables,
+                    );
+                    external_changed_tables = schema_conflict_tables(&desired, &external);
+                    source_checked = true;
+                }
+                Err(e) => source_error = Some(e.to_string()),
+            }
         }
     }
 
@@ -801,6 +817,7 @@ pub(crate) async fn sandbox_schema_diff_inner(
         desired,
         external_changed_tables,
         source_checked,
+        source_error,
     })
 }
 

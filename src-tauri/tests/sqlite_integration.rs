@@ -3119,6 +3119,24 @@ async fn assert_upsert_roundtrip(conn: &t::Connection, table: &str) {
         .import_rows(None, table, &columns, &rows, 500, &no_keys, |_| Ok(()))
         .await
         .is_err());
+
+    // 事前検証 (#1612): 主キーに一致するキーは通り、一意キーでない列は取り込み前に拒否される。
+    let ok_key = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: vec!["id".to_string()],
+    };
+    conn.check_upsert_keys(None, table, &columns, &ok_key)
+        .await
+        .expect("primary key matches");
+    let bad_key = t::ImportConflict {
+        mode: t::ConflictMode::Update,
+        key_columns: vec!["name".to_string()],
+    };
+    let err = conn
+        .check_upsert_keys(None, table, &columns, &bad_key)
+        .await
+        .expect_err("non-unique key must be rejected before importing");
+    assert!(err.to_string().contains("PRIMARY or UNIQUE"), "{err}");
 }
 
 #[tokio::test]

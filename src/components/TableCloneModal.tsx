@@ -21,6 +21,10 @@ import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./m
 import { Button, Input, PressableButton, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { isPlainEnterKey } from "./modalKeys";
+import { formatRowCount } from "./tableSize";
+
+/** この行数を超えると「データも複製」が長い処理になりうるので警告を出す (推定値で判定)。 */
+const LARGE_CLONE_ROWS = 500_000;
 
 /**
  * テーブル複製ダイアログ (#1398)。
@@ -53,6 +57,8 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const [metaError, setMetaError] = useState<string | null>(null);
   const [existingTables, setExistingTables] = useState<string[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
+  // 複製元の行数の推定 (統計がない・ビュー・SQLite などは null = 表示しない)。
+  const [rowEstimate, setRowEstimate] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -83,6 +89,13 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         if (!cancelled && driver === "postgres") setMetaError(String(e));
       }
     })();
+    // 失敗しても複製自体は続けられるので、推定行数は黙って出さないだけにする。
+    Promise.resolve()
+      .then(() => api.tableRowEstimate(sessionId, database, sourceTable))
+      .then((n) => {
+        if (!cancelled) setRowEstimate(n);
+      })
+      .catch(() => {});
     api
       .listTables(sessionId, database)
       .then((tables) => {
@@ -179,6 +192,18 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         </FormSection>
 
         <Switch checked={includeData} onChange={setIncludeData} label={t("cloneTableIncludeData")} />
+        {includeData && rowEstimate !== null && (
+          <>
+            <chakra.span textStyle="caption">
+              {t("cloneTableRowEstimate", { rows: formatRowCount(rowEstimate) })}
+            </chakra.span>
+            {rowEstimate >= LARGE_CLONE_ROWS && (
+              <Callout tone="warning">
+                {t("cloneTableLargeData", { rows: formatRowCount(rowEstimate) })}
+              </Callout>
+            )}
+          </>
+        )}
 
         {ddlError && <ErrorNote>{t("cloneTableDdlError", { error: ddlError })}</ErrorNote>}
         {metaError && <ErrorNote>{t("cloneTableMetaError", { error: metaError })}</ErrorNote>}

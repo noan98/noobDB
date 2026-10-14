@@ -132,18 +132,9 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
           {t("sandboxCreateNote")}
         </chakra.div>
-        <chakra.div
-          fontSize="xs"
-          color="app.textMuted"
-          lineHeight={1.5}
-          bg="app.bgMuted"
-          border="1px solid"
-          borderColor="app.border"
-          borderRadius="md"
-          p="2.5"
-        >
+        <Callout tone="info" role="note" fontSize="xs">
           {t("sandboxCreateLimitationNote")}
-        </chakra.div>
+        </Callout>
 
         <FormSection>
           <FieldLabel as="label" htmlFor="sandbox-create-name">
