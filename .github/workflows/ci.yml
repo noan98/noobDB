@@ -252,12 +252,14 @@ jobs:
       # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
       # 「  <pkg>」形式の行だけを拾う。
       #
-      # この列挙 (apt-get update + dry-run、実測 12〜26 秒) は毎回同じ結果になるため、
-      # 結果のパッケージ一覧を actions/cache に保存して使い回す。ヒット時は apt-get
-      # update も dry-run も省く。キーは pnpm-lock.yaml (= Playwright のバージョン) +
-      # ランナー OS + ISO 週。ISO 週を入れるのは、ランナーイメージが週次で更新されて
-      # 「事前導入済みのパッケージ」が変わると一覧も変わりうるため、最長 1 週間で
-      # 一覧を取り直すため。空の一覧は保存しない (空キャッシュ汚染の再発防止)。
+      # この dry-run による列挙は毎回同じ結果になるため、結果のパッケージ一覧を
+      # actions/cache に保存して使い回す。ヒット時は dry-run だけを省く (apt-get update
+      # は常に行う: cache-apt-pkgs-action はキーの算出にランナーの apt インデックスを
+      # 使うため、古いままだとキーがずれてクリーンインストール→404 に回りやすい)。
+      # キーは pnpm-lock.yaml (= Playwright のバージョン) + ランナー OS + ISO 週。
+      # ISO 週を入れるのは、ランナーイメージが週次で更新されて「事前導入済みの
+      # パッケージ」が変わると一覧も変わりうるため、最長 1 週間で取り直すため。
+      # 空の一覧は保存しない (空キャッシュ汚染の再発防止)。
       - name: Playwright deps cache key (ISO week)
         id: pw-week
         run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
@@ -275,12 +277,12 @@ jobs:
           DEPS_CACHE_HIT: ${{ steps.pw-deps-cache.outputs.cache-hit }}
         run: |
           LIST_FILE="$HOME/.cache/noobdb-playwright-deps/packages.txt"
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
           if [ "$DEPS_CACHE_HIT" = "true" ] && [ -s "$LIST_FILE" ]; then
             PKGS=$(cat "$LIST_FILE")
             echo "Playwright system deps (cache hit): ${PKGS}"
           else
-            printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-            sudo apt-get update
             PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
             echo "Playwright system deps: ${PKGS:-<none>}"
             if [ -n "$PKGS" ]; then
@@ -290,10 +292,9 @@ jobs:
           fi
           echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
 
-      # キャッシュヒット時は apt-get update を省くため、ランナーイメージの古い apt
-      # インデックスで cache-apt-pkgs-action がキャッシュミス→クリーンインストールに
-      # 回ると 404 で落ちうる。その場合だけ、ミラー差し替え + update + 直接 install の
-      # フォールバックで救う (成功時・ミス時は従来どおり何もしない)。
+      # cache-apt-pkgs-action が失敗した、または 0 パッケージの空キャッシュを静かに
+      # 復元した (all-package-version-list が空) 場合だけ、直接 install のフォールバックで
+      # 救う。正常時は何もしない。
       - name: Playwright system deps (apt cache)
         id: pw-apt
         if: steps.pw-deps.outputs.packages != ''
@@ -305,14 +306,13 @@ jobs:
           version: playwright-1
 
       - name: Playwright system deps (fallback install)
-        if: steps.pw-apt.outcome == 'failure'
+        if: steps.pw-deps.outputs.packages != '' && (steps.pw-apt.outcome == 'failure' || steps.pw-apt.outputs.all-package-version-list == '')
         env:
           PKGS: ${{ steps.pw-deps.outputs.packages }}
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
+          echo "::warning::cache-apt-pkgs-action が失敗または空キャッシュだったため、apt で直接インストールします (Playwright system deps)"
           # shellcheck disable=SC2086
-          sudo apt-get install -y --no-install-recommends $PKGS
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $PKGS
 
       # Playwright の Chromium を導入する。システム依存は上の apt キャッシュ
       # ステップで導入済みなので `--with-deps` は付けない (毎回の apt-get install を

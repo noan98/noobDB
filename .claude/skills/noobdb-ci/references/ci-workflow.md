@@ -36,11 +36,12 @@
   Playwright の OS 依存 (apt: 共有ライブラリ・フォント・xvfb) は `playwright
   install-deps --dry-run chromium` の出力からパッケージ一覧を動的に取り、rust ジョブと
   同じ `cache-apt-pkgs-action` でキャッシュします (`--with-deps` は付けない, #1244)。
-  この一覧の算出 (`apt-get update` + dry-run, 実測 12〜26 秒) 自体も `actions/cache` に
-  保存し (キーは `pnpm-lock.yaml` ハッシュ + OS + ISO 週。週を入れるのはランナーイメージの
-  事前導入パッケージが変わりうるため)、ヒット時は `apt-get update` と dry-run を省きます
-  (#1634)。ヒット時は apt インデックスが古いので、`cache-apt-pkgs-action` が失敗したとき
-  だけミラー差し替え + update + 直接 install のフォールバックステップが走ります。
+  この dry-run による一覧の算出も `actions/cache` に保存し (キーは `pnpm-lock.yaml`
+  ハッシュ + OS + ISO 週。週を入れるのはランナーイメージの事前導入パッケージが変わりうる
+  ため)、ヒット時は dry-run だけを省きます (#1634)。`apt-get update` は常に実行します
+  (`cache-apt-pkgs-action` のキー算出が apt インデックスに依存するため)。
+  `cache-apt-pkgs-action` が失敗、または空キャッシュを静かに復元したとき
+  (`all-package-version-list` が空) だけ、警告を出して直接 install するフォールバックが走ります。
   rust (clippy) / (test) の `apt-get update` (各約 6 秒) は**省けません**: action は
   キャッシュキーの算出にもランナーの apt インデックスを使い、インデックスが古いと
   キーがずれてクリーンインストールに回り 404 になる (2026-07-23 の事例) ため、ヒット
@@ -60,7 +61,7 @@
   `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
   カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
   `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
-  `frontend (unit shard N/3)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  `frontend (unit shard N/4)` は集約ジョブが `needs.frontend-unit.result` を見て fail
   させるので必須に含めなくてよい)。
 
   **PR では単体テストのカバレッジを計装しない (#1634)**: v8 計装は 1 shard あたり約
