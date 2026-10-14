@@ -208,3 +208,30 @@ describe("FlightRecorderPanel 取り消しの整合 (#1600)", () => {
     expect(undoFlightRecord).not.toHaveBeenCalled();
   });
 });
+
+describe("FlightRecorderPanel 強制適用の再確認 (#1600)", () => {
+  it("同じキーで current の値だけが変わった場合も強制適用せず中止する", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue([ENTRY]);
+    const stmts = ["UPDATE users SET name = 'a' WHERE id = 1"];
+    previewUndo
+      .mockResolvedValueOnce({
+        statements: stmts,
+        conflicts: [{ key: [1], expected: [1, "a"], current: [1, "b"] }],
+        warnings: [],
+      })
+      .mockResolvedValueOnce({
+        statements: stmts,
+        conflicts: [{ key: [1], expected: [1, "a"], current: [1, "c"] }],
+        warnings: [],
+      });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderUndoAction") }));
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("flightRecorderForceApply") }));
+
+    await waitFor(() => expect(previewUndo).toHaveBeenCalledTimes(2));
+    expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+});

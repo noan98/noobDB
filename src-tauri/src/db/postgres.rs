@@ -1294,10 +1294,6 @@ impl PostgresConn {
         Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
     }
 
-    /// `schema` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。
-    /// [`PgConn::columns`] の `table_name = $2` 条件を外し、PK / FK の副問い合わせを
-    /// (テーブル名, 列名) で結合し直しただけなので、列ごとの値・並び
-    /// (`ordinal_position`) は単一テーブル版と同じになる。
     /// 生成列 (`GENERATED ALWAYS AS (...) STORED`) の列名 (#1600)。`database` は
     /// スキーマ名で、`None` なら接続の現在のスキーマ。
     pub async fn generated_columns(
@@ -1319,6 +1315,10 @@ impl PostgresConn {
         Ok(rows.into_iter().map(|(n,)| n).collect())
     }
 
+    /// `schema` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。
+    /// [`PgConn::columns`] の `table_name = $2` 条件を外し、PK / FK の副問い合わせを
+    /// (テーブル名, 列名) で結合し直しただけなので、列ごとの値・並び
+    /// (`ordinal_position`) は単一テーブル版と同じになる。
     pub async fn columns_for_database(
         &self,
         schema: &str,

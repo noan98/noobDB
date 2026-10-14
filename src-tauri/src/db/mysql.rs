@@ -888,9 +888,12 @@ impl MySqlConn {
     /// must not run against a non-transactional table (#687 review follow-up).
     /// Returns `true` for an unknown table (no row), since InnoDB is the
     /// overwhelming default. A **view** has a NULL engine, so its base tables
-    /// (resolved through `VIEW_TABLE_USAGE`, nested views included) are checked
-    /// instead: a write through a view onto a MyISAM base table is not rolled
-    /// back either (#1600). A query error is returned as `Err`.
+    /// (`VIEW_TABLE_USAGE`, falling back to parsing `VIEW_DEFINITION`; nested
+    /// views included) are checked instead: a write through a view onto a MyISAM
+    /// base table is not rolled back either (#1600). A query error — or a view
+    /// whose base tables cannot be determined — is returned as `Err`; callers
+    /// decide the safe side (`write_target_is_non_transactional` and
+    /// `probe_failing_row` treat it as non-transactional).
     pub(crate) async fn table_is_transactional(
         &self,
         database: Option<&str>,
@@ -925,17 +928,7 @@ impl MySqlConn {
                     "view dependency chain is too deep to inspect".into(),
                 ));
             }
-            let bases: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
-                "SELECT u.TABLE_SCHEMA, u.TABLE_NAME, t.TABLE_TYPE, t.ENGINE \
-                 FROM information_schema.VIEW_TABLE_USAGE u \
-                 LEFT JOIN information_schema.TABLES t \
-                   ON t.TABLE_SCHEMA = u.TABLE_SCHEMA AND t.TABLE_NAME = u.TABLE_NAME \
-                 WHERE u.VIEW_SCHEMA = ? AND u.VIEW_NAME = ?",
-            )
-            .bind(&view_schema)
-            .bind(&view_name)
-            .fetch_all(&self.pool)
-            .await?;
+            let bases = self.view_base_tables(&view_schema, &view_name).await?;
             for (base_schema, base_name, base_type, base_engine) in bases {
                 if base_type.eq_ignore_ascii_case("VIEW") {
                     pending.push((base_schema, base_name));
@@ -945,6 +938,70 @@ impl MySqlConn {
             }
         }
         Ok(true)
+    }
+
+    /// ビュー `schema`.`view` が参照する基底表 `(スキーマ, 名前, TABLE_TYPE, ENGINE)`。
+    /// まず `VIEW_TABLE_USAGE` (MySQL 8.0.13+) を使い、失敗した (MariaDB / 古い MySQL) か
+    /// 0 件だった (権限不足の DEFINER ビューなど) ときは `VIEWS.VIEW_DEFINITION` の
+    /// 解析で補う。それでも 1 件も特定できなければ `Err` — 基底表が MyISAM かどうか
+    /// 確認できないまま「トランザクショナル」と見なさない (#1600)。
+    async fn view_base_tables(&self, schema: &str, view: &str) -> Result<Vec<ViewBase>> {
+        let usage: Result<Vec<ViewBase>> =
+            sqlx::query_as::<_, (String, String, Option<String>, Option<String>)>(
+                "SELECT u.TABLE_SCHEMA, u.TABLE_NAME, t.TABLE_TYPE, t.ENGINE \
+                 FROM information_schema.VIEW_TABLE_USAGE u \
+                 LEFT JOIN information_schema.TABLES t \
+                   ON t.TABLE_SCHEMA = u.TABLE_SCHEMA AND t.TABLE_NAME = u.TABLE_NAME \
+                 WHERE u.VIEW_SCHEMA = ? AND u.VIEW_NAME = ?",
+            )
+            .bind(schema)
+            .bind(view)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(AppError::from)
+            .map(|rows| {
+                rows.into_iter()
+                    // TABLES に見えない基底表 (権限不足) は種別が空 → 下で信用しない。
+                    .map(|(s, n, t, e)| (s, n, t.unwrap_or_default(), e))
+                    .collect()
+            });
+        if let Ok(rows) = &usage {
+            // 種別が分からない行 (TABLES に見えない) があるときは信用せず定義解析へ。
+            if !rows.is_empty() && rows.iter().all(|(_, _, t, _)| !t.is_empty()) {
+                return usage;
+            }
+        }
+        let definition: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT VIEW_DEFINITION FROM information_schema.VIEWS \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1",
+        )
+        .bind(schema)
+        .bind(view)
+        .fetch_optional(&self.pool)
+        .await?;
+        let refs = definition
+            .and_then(|(d,)| d)
+            .map(|d| view_definition_table_refs(&d))
+            .unwrap_or_default();
+        let mut bases = Vec::new();
+        for (ref_schema, ref_name) in refs {
+            let row: Option<(String, Option<String>)> = sqlx::query_as(
+                "SELECT TABLE_TYPE, ENGINE FROM information_schema.TABLES \
+                 WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? LIMIT 1",
+            )
+            .bind(&ref_schema)
+            .bind(&ref_name)
+            .fetch_optional(&self.pool)
+            .await?;
+            // 存在しない名前 (列参照 `a`.`id` など) は無視する。
+            if let Some((table_type, engine)) = row {
+                bases.push((ref_schema, ref_name, table_type, engine));
+            }
+        }
+        if bases.is_empty() {
+            return Err(AppError::ViewBaseUnresolved);
+        }
+        Ok(bases)
     }
 
     /// 書き込み文 `sql` の対象表が非トランザクショナル (MyISAM 等) か。
@@ -3079,6 +3136,82 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
     decode_string_or_bytes(row, i)
 }
 
+/// ビューの基底表 1 件: `(スキーマ, 名前, TABLE_TYPE, ENGINE)`。
+type ViewBase = (String, String, String, Option<String>);
+
+/// `information_schema.VIEWS.VIEW_DEFINITION` (MySQL / MariaDB が正規化した定義) から
+/// `` `スキーマ`.`名前` `` 形式の 2 部名をすべて拾う (重複は除く)。文字列リテラルの
+/// 中は読み飛ばし、`` `` `` のエスケープは戻す。列参照 (`` `a`.`id` ``) も拾うが、
+/// 呼び出し側が存在しない表を無視するので害はない。
+fn view_definition_table_refs(definition: &str) -> Vec<(String, String)> {
+    fn read_ident(chars: &[char], i: &mut usize) -> Option<String> {
+        if chars.get(*i) != Some(&'`') {
+            return None;
+        }
+        let mut j = *i + 1;
+        let mut out = String::new();
+        while j < chars.len() {
+            if chars[j] == '`' {
+                if chars.get(j + 1) == Some(&'`') {
+                    out.push('`');
+                    j += 2;
+                    continue;
+                }
+                *i = j + 1;
+                return Some(out);
+            }
+            out.push(chars[j]);
+            j += 1;
+        }
+        None
+    }
+    let chars: Vec<char> = definition.chars().collect();
+    let mut refs: Vec<(String, String)> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\'' => {
+                // 文字列リテラルを読み飛ばす (`''` と `\x` のエスケープ込み)。
+                i += 1;
+                while i < chars.len() {
+                    if chars[i] == '\\' {
+                        i += 2;
+                    } else if chars[i] == '\'' {
+                        if chars.get(i + 1) == Some(&'\'') {
+                            i += 2;
+                        } else {
+                            i += 1;
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            '`' => {
+                let mut k = i;
+                let Some(first) = read_ident(&chars, &mut k) else {
+                    break;
+                };
+                if chars.get(k) == Some(&'.') {
+                    let mut m = k + 1;
+                    if let Some(second) = read_ident(&chars, &mut m) {
+                        let pair = (first, second);
+                        if !refs.contains(&pair) {
+                            refs.push(pair);
+                        }
+                        i = m;
+                        continue;
+                    }
+                }
+                i = k;
+            }
+            _ => i += 1,
+        }
+    }
+    refs
+}
+
 /// `information_schema.TABLES.ENGINE` がロールバック可能なエンジンか。
 /// NULL / 不明 (表が見つからない等) は InnoDB 想定で `true`。
 fn engine_is_transactional(engine: Option<&str>) -> bool {
@@ -4092,6 +4225,22 @@ mod tests {
             extract_target_table("DELETE FROM orders"),
             Some("orders".into())
         );
+    }
+
+    #[test]
+    fn view_definition_refs_are_extracted() {
+        let def = "select `a`.`id` AS `id`,'x`y`.`z' AS `lit` from (`shop`.`orders` `a` join `shop`.`we``ird` on((`a`.`id` = `we``ird`.`oid`)))";
+        let refs = view_definition_table_refs(def);
+        assert!(refs.contains(&("shop".into(), "orders".into())), "{refs:?}");
+        assert!(refs.contains(&("shop".into(), "we`ird".into())), "{refs:?}");
+        // 文字列リテラルの中は拾わない。
+        assert!(!refs.contains(&("y".into(), "z".into())), "{refs:?}");
+        // 重複は 1 回だけ。
+        let dup = view_definition_table_refs("select 1 from `d`.`t` union select 1 from `d`.`t`");
+        assert_eq!(dup, vec![("d".to_string(), "t".to_string())]);
+        assert!(view_definition_table_refs("select 1").is_empty());
+        // 閉じていないバッククォートでも panic しない。
+        assert!(view_definition_table_refs("select `d`.`t").is_empty());
     }
 
     #[test]

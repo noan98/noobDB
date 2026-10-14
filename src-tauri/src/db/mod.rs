@@ -901,7 +901,7 @@ impl Connection {
         let transactional = self
             .table_is_transactional(database, table)
             .await
-            .unwrap_or(true);
+            .unwrap_or(false);
         // Cap the batch modestly: a chunk that still exceeds a driver's
         // statement/placeholder limit just fails and falls back to per-row, so
         // correctness never depends on this bound — it only keeps the happy path

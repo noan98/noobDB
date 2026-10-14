@@ -961,6 +961,9 @@ impl SqliteConn {
         _database: Option<&str>,
         table: &str,
     ) -> Result<Vec<String>> {
+        // 記録の表名は SQL 上の表記のまま (引用符付きのことがある) なので外す。
+        let table = strip_identifier_quotes(table);
+        let table = table.as_str();
         if table.contains('"') || table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }

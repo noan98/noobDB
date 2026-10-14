@@ -125,6 +125,16 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             : await api.undoFlightRecord(sessionId, entry.id, false);
           if (settled.applied) setReloadKey((k) => k + 1);
           for (const w of settled.warnings ?? []) toast.info(w, 8000);
+          toast.info(
+            t(
+              settled.applied
+                ? "flightRecorderAlreadyRestored"
+                : redo
+                  ? "flightRecorderNothingToRedo"
+                  : "flightRecorderNothingToUndo",
+            ),
+          );
+          return;
         }
         toast.info(t(redo ? "flightRecorderNothingToRedo" : "flightRecorderNothingToUndo"));
         return;
@@ -164,8 +174,10 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         const fresh = redo
           ? await api.previewRedo(sessionId, entry.id)
           : await api.previewUndo(sessionId, entry.id);
-        const shown = new Set(preview.conflicts.map((c) => JSON.stringify(c.key)));
-        if (fresh.conflicts.some((c) => !shown.has(JSON.stringify(c.key)))) {
+        // キーだけでなく現在値も比べる (同じ行が別の値へ変わった場合も、表示した内容と違う)。
+        const sig = (c: (typeof preview.conflicts)[number]) => JSON.stringify([c.key, c.current]);
+        const shown = new Set(preview.conflicts.map(sig));
+        if (fresh.conflicts.some((c) => !shown.has(sig(c)))) {
           toast.error(t("flightRecorderConflictsChanged"));
           return;
         }
@@ -174,7 +186,13 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         ? await api.redoFlightRecord(sessionId, entry.id, force)
         : await api.undoFlightRecord(sessionId, entry.id, force);
       if (outcome.applied) {
-        toast.success(t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: outcome.rowsAffected }));
+        if (outcome.rowsAffected > 0) {
+          toast.success(
+            t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: outcome.rowsAffected }),
+          );
+        } else {
+          toast.info(t("flightRecorderAlreadyRestored"));
+        }
         setReloadKey((k) => k + 1);
         // 逆 SQL は適用済みだが記録の状態を保存できなかった等の警告を利用者へ伝える (#1600)。
         for (const w of outcome.warnings ?? []) toast.info(w, 8000);
