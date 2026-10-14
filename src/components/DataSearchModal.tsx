@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import { api, listenDataSearchStream, type DataSearchEntry, type ScanColumn } from "../api/tauri";
@@ -207,6 +207,9 @@ function toResultEntry(entry: DataSearchEntry): ResultEntry {
   }
 }
 
+/** 「選択したテーブル」一覧で最初に描画する件数。残りは「さらに表示」で広げる。 */
+const TABLE_LIST_PAGE = 200;
+
 export function DataSearchModal({
   sessionId,
   database,
@@ -273,11 +276,16 @@ export function DataSearchModal({
   const allTables = meta.kind === "ready" ? meta.tables : [];
   const estimates = meta.kind === "ready" ? meta.estimates : {};
 
+  // 数千テーブルでも入力欄を先に反映できるよう、絞り込みは遅延値で回し、描画行数にも上限を置く。
+  const deferredTableFilter = useDeferredValue(tableFilter);
   const filteredTables = useMemo(() => {
-    const q = tableFilter.trim().toLowerCase();
+    const q = deferredTableFilter.trim().toLowerCase();
     if (!q) return allTables;
     return allTables.filter((tb) => tb.toLowerCase().includes(q));
-  }, [allTables, tableFilter]);
+  }, [allTables, deferredTableFilter]);
+  const [tableLimit, setTableLimit] = useState(TABLE_LIST_PAGE);
+  const visibleTables =
+    filteredTables.length > tableLimit ? filteredTables.slice(0, tableLimit) : filteredTables;
 
   const targetTables = useMemo(
     () => (scope === "all" ? allTables : allTables.filter((tb) => selected.has(tb))),
@@ -550,7 +558,10 @@ export function DataSearchModal({
                 <Input
                   type="text"
                   value={tableFilter}
-                  onChange={(e) => setTableFilter(e.target.value)}
+                  onChange={(e) => {
+                    setTableFilter(e.target.value);
+                    setTableLimit(TABLE_LIST_PAGE);
+                  }}
                   placeholder={t("dataSearchFilterPlaceholder")}
                   disabled={scanning}
                   mb="1.5"
@@ -565,7 +576,7 @@ export function DataSearchModal({
                   display="flex"
                   flexDirection="column"
                 >
-                  {filteredTables.map((tb) => (
+                  {visibleTables.map((tb) => (
                     <TableCheckRow
                       key={tb}
                       name={tb}
@@ -574,6 +585,18 @@ export function DataSearchModal({
                       onToggle={toggleTable}
                     />
                   ))}
+                  {filteredTables.length > visibleTables.length && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setTableLimit((l) => l + TABLE_LIST_PAGE)}
+                    >
+                      {t("dataSearchShowMoreTables", {
+                        remaining: filteredTables.length - visibleTables.length,
+                      })}
+                    </Button>
+                  )}
                   {filteredTables.length === 0 && (
                     // テーブル名フィルタで 0 件になったケース: 「検索一致なし」の
                     // 軽量アイコンを compact で使う (#847)。

@@ -5012,7 +5012,18 @@ export const DataGrid = memo(function DataGrid({
   // Original column indices in their current *display* order (reorder/hide
   // aware). Keyboard navigation steps through this; data lookups use the
   // original index it yields.
-  const visibleColIds = table.getVisibleLeafColumns().map((c) => Number(c.id));
+  // 内容が同じなら前回と同じ参照を返す (selectionRect / selColSet が無関係な再描画で作り直されず、
+  // 選択範囲内の行 (memo) が描き直されない)。
+  const visibleColIdsRaw = table.getVisibleLeafColumns().map((c) => Number(c.id));
+  const visibleColIdsRef = useRef(visibleColIdsRaw);
+  const prevVisibleColIds = visibleColIdsRef.current;
+  if (
+    prevVisibleColIds.length !== visibleColIdsRaw.length ||
+    prevVisibleColIds.some((v, i) => v !== visibleColIdsRaw[i])
+  ) {
+    visibleColIdsRef.current = visibleColIdsRaw;
+  }
+  const visibleColIds = visibleColIdsRef.current;
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;

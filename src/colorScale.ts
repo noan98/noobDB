@@ -323,13 +323,32 @@ function readDataTheme(): string | null {
   return document.documentElement.getAttribute("data-theme");
 }
 
+// 購読者ごとに MutationObserver を作らず、モジュールで 1 つだけ共有する。
+// 購読者が 0 になったら disconnect する。
+const dataThemeListeners = new Set<() => void>();
+let dataThemeObserver: MutationObserver | null = null;
+
 function subscribeDataTheme(cb: () => void): () => void {
   if (typeof document === "undefined" || typeof MutationObserver === "undefined") {
     return () => {};
   }
-  const observer = new MutationObserver(cb);
-  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-  return () => observer.disconnect();
+  dataThemeListeners.add(cb);
+  if (!dataThemeObserver) {
+    dataThemeObserver = new MutationObserver(() => {
+      for (const l of [...dataThemeListeners]) l();
+    });
+    dataThemeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+  }
+  return () => {
+    dataThemeListeners.delete(cb);
+    if (dataThemeListeners.size === 0 && dataThemeObserver) {
+      dataThemeObserver.disconnect();
+      dataThemeObserver = null;
+    }
+  };
 }
 
 /**

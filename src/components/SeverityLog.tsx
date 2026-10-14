@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion } from "motion/react";
 import { Box, chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
 import { useT, type I18nKey } from "../i18n";
@@ -84,7 +84,7 @@ const MotionLi = chakra(motion.li, {}, { forwardProps: ["variants"] });
  *   (開きっぱなしで相対時刻が古くなるため、絶対時刻を出す)。
  * - `repeat` が 2 以上なら「×N」を添える (メッセージ履歴で同じ行を畳んだ回数)。
  */
-export function SeverityLogRow({
+export const SeverityLogRow = memo(function SeverityLogRow({
   entry,
   now,
   animated,
@@ -100,7 +100,6 @@ export function SeverityLogRow({
 }) {
   const t = useT();
   const role = ACTIVITY_SEVERITY_ROLE[entry.severity];
-  const absolute = new Date(entry.at).toLocaleString();
   const [expanded, setExpanded] = useState(false);
   return (
     <MotionLi
@@ -139,7 +138,7 @@ export function SeverityLogRow({
           {time === "relative" ? (
             <>
               {formatRelative(t, entry.at, now)}
-              <VisuallyHidden> ({absolute})</VisuallyHidden>
+              <VisuallyHidden> ({new Date(entry.at).toLocaleString()})</VisuallyHidden>
             </>
           ) : (
             <chakra.span textStyle="numeric">{clockTime(entry.at)}</chakra.span>
@@ -183,7 +182,7 @@ export function SeverityLogRow({
       </Box>
     </MotionLi>
   );
-}
+});
 
 /** フィルタチップ 1 個 (「すべて」+ 重大度ごと)。 */
 export function FilterChip({

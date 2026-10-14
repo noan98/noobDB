@@ -472,6 +472,31 @@ interface NodeRowProps {
   staggerIds: ReadonlySet<string>;
 }
 
+/**
+ * 行の描画に使う派生値 (最悪ヒント重大度・見積り乖離・実測合計時間)。PlanNode は parse 後に
+ * 変更されないので、選択変更で全行が再描画されても再計算しないよう WeakMap に載せる。
+ */
+const rowDerivedCache = new WeakMap<
+  PlanNode,
+  {
+    worstHint: ReturnType<typeof worstSeverity>;
+    misestimate: ReturnType<typeof nodeMisestimate>["level"];
+    totalMs: number | null;
+  }
+>();
+function rowDerived(node: PlanNode) {
+  let d = rowDerivedCache.get(node);
+  if (!d) {
+    d = {
+      worstHint: worstSeverity(computeHints(node)),
+      misestimate: nodeMisestimate(node).level,
+      totalMs: actualTotalMs(node),
+    };
+    rowDerivedCache.set(node, d);
+  }
+  return d;
+}
+
 function NodeRow({
   node,
   depth,
@@ -497,13 +522,11 @@ function NodeRow({
   const selected = selectedId === node.id;
   // Only surface a marker for actionable hints (caution / warning); the
   // positive "info" hints are still shown in the detail panel on selection.
-  const worstHint = worstSeverity(computeHints(node));
+  const { worstHint, misestimate, totalMs } = rowDerived(node);
   const showHintMarker = worstHint === "caution" || worstHint === "warning";
   // 実測モード (#1164): 推定 / 実測の行数を並記し、乖離が大きいノードは既存の
   // semantic 色 (warm=警告色 / hot=危険色) のバッジにする。
   const actual = node.actual;
-  const misestimate = nodeMisestimate(node).level;
-  const totalMs = actualTotalMs(node);
   return (
     <>
       <MotionNode
