@@ -1456,10 +1456,11 @@ fn build_fixtures() -> serde_json::Value {
         desired: schema_diff.clone(),
         external_changed_tables: vec!["users".into()],
         source_checked: true,
+        source_error: None,
     };
     let data_diff_handle = t::DataDiffHandle {
         diff_id: "diff0002".into(),
-        diff: data_diff.clone(),
+        diff: std::sync::Arc::new(data_diff.clone()),
     };
 
     // フライトレコーダーの Undo (#1259 周辺)。

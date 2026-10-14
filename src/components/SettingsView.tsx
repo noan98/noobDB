@@ -343,6 +343,59 @@ const SettingsColorInput = chakra("input", {
   },
 });
 
+/**
+ * 色ピッカー。ドラッグ中は input イベントが連続して出るので、設定ストアへの反映
+ * (永続化 + 全購読者の再描画) は 1 フレームに 1 回へ間引き、ピッカーを閉じた (blur) /
+ * アンマウントしたときに最後の値を必ず確定する。表示中の値はローカルのドラフトで追従する。
+ */
+export function ThrottledColorInput({
+  value,
+  onCommit,
+  ...rest
+}: { value: string; onCommit: (v: string) => void } & Omit<
+  React.ComponentProps<typeof SettingsColorInput>,
+  "value" | "onChange" | "onBlur"
+>) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const latest = useRef<string | null>(null);
+  const raf = useRef<number | null>(null);
+  const commitRef = useRef(onCommit);
+  commitRef.current = onCommit;
+  const flush = useRef(() => {
+    if (raf.current !== null) {
+      cancelAnimationFrame(raf.current);
+      raf.current = null;
+    }
+    const v = latest.current;
+    latest.current = null;
+    if (v !== null) commitRef.current(v);
+  }).current;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: flush は ref 由来の安定関数
+  useEffect(() => flush, []);
+  return (
+    <SettingsColorInput
+      {...rest}
+      value={draft ?? value}
+      onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+        const v = e.target.value;
+        setDraft(v);
+        latest.current = v;
+        if (raf.current === null) {
+          raf.current = requestAnimationFrame(() => {
+            raf.current = null;
+            flush();
+            setDraft(null);
+          });
+        }
+      }}
+      onBlur={() => {
+        flush();
+        setDraft(null);
+      }}
+    />
+  );
+}
+
 const SettingsColorHex = chakra("span", {
   base: { fontFamily: "mono", fontSize: "sm", color: "app.textMuted", minWidth: "70px" },
 });
@@ -868,21 +921,38 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       active = false;
     };
   }, []);
+  // 確認ダイアログを開いている間はボタンを押せるが、二重にダイアログを出さない。
+  const updateFlowRef = useRef(false);
   const handleCheckForUpdates = async () => {
-    if (checkingUpdate) return;
-    setCheckingUpdate(true);
+    if (checkingUpdate || updateFlowRef.current) return;
+    updateFlowRef.current = true;
     try {
-      const update = await checkForAppUpdate();
-      if (!update) {
-        toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
-        return;
-      }
-      await confirmAndInstallUpdate(update, { t, toast, confirm });
+      await runUpdateCheck();
+    } finally {
+      updateFlowRef.current = false;
+    }
+  };
+  const runUpdateCheck = async () => {
+    setCheckingUpdate(true);
+    let update: Awaited<ReturnType<typeof checkForAppUpdate>>;
+    try {
+      update = await checkForAppUpdate();
     } catch {
       // 手動チェックは失敗を明示的に知らせる (起動時の静かな無視とは対照的)。
       toast.error(t("updateCheckFailed"));
+      return;
     } finally {
+      // ローディングは「配布元へ問い合わせている区間」だけ。確認ダイアログの間は戻す。
       setCheckingUpdate(false);
+    }
+    if (!update) {
+      toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
+      return;
+    }
+    try {
+      await confirmAndInstallUpdate(update, { t, toast, confirm });
+    } catch {
+      toast.error(t("updateCheckFailed"));
     }
   };
 
@@ -1163,11 +1233,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                       );
                     })}
                     <Tooltip label={t("settingsAccentCustom")}>
-                      <SettingsColorInput
+                      <ThrottledColorInput
                         type="color"
                         aria-label={t("settingsAccentCustom")}
                         value={settings.accentColor ?? ACCENT_INPUT_FALLBACK}
-                        onChange={(e) => setAccentColor(e.target.value)}
+                        onCommit={setAccentColor}
                       />
                     </Tooltip>
                   </SettingsSwatchRow>
@@ -1963,11 +2033,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     <SettingsColorRow key={f.key}>
                       <chakra.label htmlFor={`syntax-${f.key}`}>{t(f.labelKey)}</chakra.label>
                       <SettingsColorControls>
-                        <SettingsColorInput
+                        <ThrottledColorInput
                           id={`syntax-${f.key}`}
                           type="color"
                           value={colors[f.key]}
-                          onChange={(e) => setSyntaxColor(theme, f.key, e.target.value)}
+                          onCommit={(v) => setSyntaxColor(theme, f.key, v)}
                         />
                         <SettingsColorHex>{colors[f.key]}</SettingsColorHex>
                         <SettingsColorSample style={{ color: colors[f.key] }}>
@@ -1996,11 +2066,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                       {t("settingsPreviewHighlightLabel")}
                     </chakra.label>
                     <SettingsColorControls>
-                      <SettingsColorInput
+                      <ThrottledColorInput
                         id="preview-highlight"
                         type="color"
                         value={previewHighlight}
-                        onChange={(e) => setPreviewHighlight(theme, e.target.value)}
+                        onCommit={(v) => setPreviewHighlight(theme, v)}
                       />
                       <SettingsColorHex>{previewHighlight}</SettingsColorHex>
                       <SettingsColorSample

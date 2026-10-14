@@ -334,6 +334,44 @@ pub fn check_mysql_unique_keys(
     Ok(())
 }
 
+/// PostgreSQL / SQLite の `ON CONFLICT (キー列)` が使える表か、一意キーから事前に検証する
+/// (#1612)。選んだキー列の集合と完全に一致する PRIMARY / UNIQUE が無いと、最初のチャンクで
+/// DB の生エラー (`there is no unique or exclusion constraint matching the ON CONFLICT
+/// specification` など) になり取り込みが途中で失敗するため、実行前に分かりやすく拒否する。
+/// MySQL と違い他の一意キーは `ON CONFLICT` の判定に影響しないので、一致の有無だけ見る。
+pub fn check_conflict_target_unique(
+    driver: DriverKind,
+    uniques: &[UniqueKey],
+    key_columns: &[String],
+) -> Result<()> {
+    // SQLite の列名は大文字小文字を区別しない (PostgreSQL は区別する)。
+    let fold = driver == DriverKind::Sqlite;
+    let eq = |a: &String, b: &String| {
+        if fold {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
+    let same_set = |a: &[String], b: &[String]| {
+        a.len() == b.len()
+            && a.iter().all(|c| b.iter().any(|d| eq(c, d)))
+            && b.iter().all(|c| a.iter().any(|d| eq(c, d)))
+    };
+    if uniques.iter().any(|u| same_set(&u.columns, key_columns)) {
+        return Ok(());
+    }
+    let name = match driver {
+        DriverKind::Postgres => "PostgreSQL",
+        DriverKind::Sqlite => "SQLite",
+        DriverKind::Mysql => "MySQL",
+    };
+    Err(AppError::InvalidInput(format!(
+        "{name} upsert requires the key columns ({}) to exactly match a PRIMARY or UNIQUE key of the table",
+        key_columns.join(", ")
+    )))
+}
+
 /// 取り込まない列が、省略時 (= 既定値が入るとき) に一意キーの衝突を起こさないか。
 /// 安全なのは AUTO_INCREMENT、または NULL 許容で既定値が NULL の列 (NULL は衝突しない。
 /// MariaDB は既定値を文字列 `'NULL'` で返す)。生成列 (`STORED` / `VIRTUAL` /
@@ -429,6 +467,41 @@ mod tests {
 
     fn row(cells: &[Option<&str>]) -> Vec<Option<String>> {
         cells.iter().map(|c| c.map(str::to_string)).collect()
+    }
+
+    #[test]
+    fn conflict_target_requires_exact_unique_match() {
+        let u = vec![
+            UniqueKey {
+                name: "pk".into(),
+                columns: cols(&["a", "b"]),
+            },
+            UniqueKey {
+                name: "email".into(),
+                columns: cols(&["email"]),
+            },
+        ];
+        let ok = |k: &[&str]| check_conflict_target_unique(DriverKind::Postgres, &u, &cols(k));
+        assert!(ok(&["b", "a"]).is_ok());
+        assert!(ok(&["email"]).is_ok());
+        // 部分集合・上位集合・無関係な列は拒否 (メッセージにキー列が入る)。
+        assert!(ok(&["a"]).is_err());
+        assert!(ok(&["a", "b", "email"]).is_err());
+        let msg = ok(&["name"])
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(msg.contains("PostgreSQL") && msg.contains("name"), "{msg}");
+        assert!(check_conflict_target_unique(DriverKind::Sqlite, &[], &cols(&["a"])).is_err());
+        // SQLite だけ列名の大文字小文字を無視する。
+        let lower = vec![UniqueKey {
+            name: "pk".into(),
+            columns: cols(&["id"]),
+        }];
+        assert!(check_conflict_target_unique(DriverKind::Sqlite, &lower, &cols(&["ID"])).is_ok());
+        assert!(
+            check_conflict_target_unique(DriverKind::Postgres, &lower, &cols(&["ID"])).is_err()
+        );
     }
 
     #[test]

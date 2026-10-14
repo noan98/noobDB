@@ -16,6 +16,9 @@ use super::upsert::{conflict_clause, ImportConflict};
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 
+/// 同梱 SQLite (3.32 以降) の bound variable 上限。
+const SQLITE_MAX_VARIABLES: usize = 32766;
+
 /// Default "database" name reported to the UI tree. SQLite uses `main` for
 /// the primary database attached to a connection. ATTACH is out of scope.
 pub const DEFAULT_DB_NAME: &str = "main";
@@ -534,9 +537,11 @@ impl SqliteConn {
         Ok(inserted)
     }
 
-    /// Auto-commit insert of one chunk (no wrapping transaction). See
-    /// [`Connection::try_insert_chunk`] (#687). A chunk that exceeds SQLite's
-    /// bound-variable limit simply errors, and the caller retries it row by row.
+    /// Insert one chunk atomically in its own transaction. See
+    /// [`Connection::try_insert_chunk`] (#687). When the chunk would exceed SQLite's
+    /// bound-variable limit (32766), it is split into several multi-row INSERTs by
+    /// column count inside that transaction (#1613), so wide tables don't fall back
+    /// to row-by-row retries.
     pub(crate) async fn try_insert_chunk(
         &self,
         _database: Option<&str>,
@@ -555,16 +560,25 @@ impl SqliteConn {
             .collect::<Vec<_>>()
             .join(", ");
         let table_ident = quote_ident(table);
-        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, rows.len());
-        sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
-        for row in rows {
-            for ci in 0..ncols {
-                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
-            }
-        }
+        // 同梱 SQLite (3.32 以降) の変数上限 (32766) を超えないよう、列数から 1 文あたり
+        // の行数を決める。超える分は 1 つのトランザクション内で複数文に分けるので、
+        // チャンク全体の原子性は保たれる (列数が多い表で全チャンクが失敗し 1 行ずつ
+        // 自動コミットになるのを防ぐ)。
+        let max_rows = (SQLITE_MAX_VARIABLES / ncols.max(1)).max(1);
         let mut conn = self.pool.acquire().await?;
-        q.execute(&mut *conn).await?;
+        let mut tx = conn.begin().await?;
+        for sub in rows.chunks(max_rows) {
+            let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, sub.len());
+            sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+            for row in sub {
+                for ci in 0..ncols {
+                    q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+                }
+            }
+            q.execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1330,6 +1344,41 @@ impl SqliteConn {
         }
         out.sort_by_key(|fk| order.get(fk.table.as_str()).copied().unwrap_or(usize::MAX));
         Ok(out)
+    }
+
+    /// UPSERT (`ON CONFLICT (キー列)`) の事前検証 (#1612)。部分・式でない UNIQUE / PRIMARY KEY
+    /// (rowid の別名になる `INTEGER PRIMARY KEY` は index_list に出ないので列定義からも拾う) が
+    /// 選択キー列と完全一致するか確かめる。
+    pub(crate) async fn check_upsert_keys(
+        &self,
+        db: &str,
+        table: &str,
+        key_columns: &[String],
+    ) -> Result<()> {
+        let mut uniques: Vec<super::upsert::UniqueKey> = self
+            .list_indexes(db, table)
+            .await?
+            .into_iter()
+            .filter(|i| i.unique && i.predicate.is_none() && i.first_expression_at.is_none())
+            .map(|i| super::upsert::UniqueKey {
+                name: i.name,
+                columns: i.columns,
+            })
+            .collect();
+        let pk: Vec<String> = self
+            .columns(db, table)
+            .await?
+            .into_iter()
+            .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+            .map(|c| c.name)
+            .collect();
+        if !pk.is_empty() {
+            uniques.push(super::upsert::UniqueKey {
+                name: "PRIMARY".into(),
+                columns: pk,
+            });
+        }
+        super::upsert::check_conflict_target_unique(DriverKind::Sqlite, &uniques, key_columns)
     }
 
     pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {

@@ -2525,6 +2525,9 @@ mod tests {
         assert!(sheet.contains("<t>0xab</t>"), "{sheet}");
         assert!(sheet.contains("<t>日本語</t>"), "{sheet}");
         assert!(sheet.contains(r#"t="b""#), "{sheet}");
+        // 先頭行の固定と、ヘッダから最終データ行までのオートフィルタ (#1613)。
+        assert!(sheet.contains("<pane "), "{sheet}");
+        assert!(sheet.contains(r#"<autoFilter ref="A1:B4""#), "{sheet}");
     }
 
     /// マスキング (#733) × xlsx (#711): 在グリッド / ストリーミングの両経路で xlsx にも

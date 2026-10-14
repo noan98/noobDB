@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Box, Flex, chakra } from "@chakra-ui/react";
+import { Box, Flex, Grid, chakra } from "@chakra-ui/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import {
@@ -25,6 +25,7 @@ import { resolvePkIndices } from "./cellEdit";
 import type { ConfirmOptions } from "./ConfirmDialog";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
+import { Callout } from "./Callout";
 import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
 import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
@@ -110,6 +111,32 @@ function syntheticPkColumns(columns: Column[], pkNames: Set<string>): TableColum
     referenced_table: null,
     referenced_column: null,
   }));
+}
+
+/** 行ハッシュ比較のときに提案するキー列。列名が `id` / `*_id` で、基準の行の値が一意 (NULL なし) な最初の列。 */
+export function suggestKeyColumn(columns: Column[], rows: CellValue[][]): string | null {
+  if (rows.length === 0) return null;
+  for (let i = 0; i < columns.length; i++) {
+    const name = columns[i].name.toLowerCase();
+    if (name !== "id" && !name.endsWith("_id")) continue;
+    const seen = new Set<string>();
+    let unique = true;
+    for (const row of rows) {
+      const v = row[i];
+      if (v === null || v === undefined) {
+        unique = false;
+        break;
+      }
+      const key = typeof v === "string" ? `s:${v}` : `j:${JSON.stringify(v)}`;
+      if (seen.has(key)) {
+        unique = false;
+        break;
+      }
+      seen.add(key);
+    }
+    if (unique) return columns[i].name;
+  }
+  return null;
 }
 
 function entryResult(e: Entry) {
@@ -309,6 +336,16 @@ export function BroadcastModal({
     [baseline, pkIndices],
   );
 
+  // キー列が未解決で行ハッシュ比較になっているときのヒント (#1612)。変化したセルの強調には
+  // キー列が要るので、列名が id / *_id で基準の値が一意な最初の列を候補として示す。
+  const keyHint = useMemo(() => {
+    if (!baseline || baseline.status === "running" || baseline.columns.length === 0) return null;
+    if (pkIndices.length > 0) return null;
+    const hashMode = entries.some((e) => e.sessionId !== baselineSessionId && e.diff?.mode === "hash");
+    if (!hashMode) return null;
+    return { candidate: suggestKeyColumn(baseline.columns, baseline.rows) };
+  }, [baseline, pkIndices, entries, baselineSessionId]);
+
   if (step === "select") {
     return (
       <Modal onSubmit={handleRun} submitDisabled={selected.size === 0} onClose={handleClose} width="560px">
@@ -407,7 +444,33 @@ export function BroadcastModal({
             </chakra.label>
           )}
         </Flex>
-        <Flex direction="column" gap="4">
+        {keyHint && (
+          <Callout
+            tone="info"
+            role="status"
+            mb="3.5"
+            action={
+              keyHint.candidate ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleKeyColumnChange(keyHint.candidate ?? "")}
+                >
+                  {t("broadcastKeyHintUse", { column: keyHint.candidate })}
+                </Button>
+              ) : undefined
+            }
+          >
+            {keyHint.candidate
+              ? t("broadcastKeyHintCandidate", { column: keyHint.candidate })
+              : t("broadcastKeyHint")}
+          </Callout>
+        )}
+        <Grid
+          gap="4"
+          gridTemplateColumns={entries.length >= 2 ? "repeat(2, minmax(0, 1fr))" : "minmax(0, 1fr)"}
+        >
           {entries.map((e) => (
             <EntryCard
               key={e.sessionId}
@@ -419,7 +482,7 @@ export function BroadcastModal({
               onCancel={() => cancelEntry(e.sessionId)}
             />
           ))}
-        </Flex>
+        </Grid>
       </ModalBody>
       <ModalFooter>
         <Button type="button" variant="secondary" onClick={cancelAll} disabled={!anyRunning}>
@@ -542,9 +605,12 @@ function EntryCard({
           {statusLabel(t, entry.status)}
         </Flex>
         <chakra.span fontSize="xs" color="app.textMuted">
-          {entry.totalRows > entry.rows.length
-            ? t("broadcastRowsShown", { rows: entry.totalRows, shown: entry.rows.length })
-            : t("broadcastRowCount", { rows: entry.totalRows || entry.rows.length })}
+          {entry.totalRows === MAX_BROADCAST_COMPARE_ROWS + 1
+            ? // 取得は上限 + 1 行で打ち切るので、実際の総数は不明 (「以上」と表示する, #1612)。
+              t("broadcastRowsAtLeast", { rows: MAX_BROADCAST_COMPARE_ROWS, shown: entry.rows.length })
+            : entry.totalRows > entry.rows.length
+              ? t("broadcastRowsShown", { rows: entry.totalRows, shown: entry.rows.length })
+              : t("broadcastRowCount", { rows: entry.totalRows || entry.rows.length })}
         </chakra.span>
         <chakra.span flex="1" />
         {entry.status === "running" && (

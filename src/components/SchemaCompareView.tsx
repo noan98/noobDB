@@ -1,3 +1,4 @@
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -15,6 +16,7 @@ import {
   type SyncStatement,
   type TableColumnInfo,
   type TableDiff,
+  listenDataDiffProgress,
 } from "../api/tauri";
 import type { SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
@@ -201,6 +203,15 @@ const syncControlsCss: SystemStyleObject = {
   flexWrap: "wrap",
   margin: "var(--space-2-5) 0",
 };
+// 非破壊の表示オプション (全行比較など) のラベル。危険色 (`destructiveCss`) にしない。
+const optionLabelCss: SystemStyleObject = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: "1.5",
+  fontSize: "var(--text-sm)",
+  color: "var(--text)",
+  cursor: "pointer",
+};
 const destructiveCss: SystemStyleObject = {
   display: "inline-flex",
   alignItems: "center",
@@ -350,6 +361,15 @@ export function coerceDriver(driver: string): DriverKind {
  */
 /** 同期プランを 1 度に描画する件数 (#1321)。 */
 export const SYNC_STATEMENT_PAGE = 300;
+/** テーブル差分一覧の 1 回あたりの描画件数 (#1612)。千テーブル規模でも初回描画を軽く保つ。 */
+const TABLE_DIFF_PAGE = 300;
+
+let dataDiffStreamSeq = 0;
+/** 全行データ比較 1 回ごとの一意な stream id (進捗イベントと中止の宛先, #1612)。 */
+function makeDataDiffStreamId(): string {
+  dataDiffStreamSeq += 1;
+  return `datadiff_${Date.now().toString(36)}_${dataDiffStreamSeq.toString(36)}`;
+}
 
 function defaultSelection(plan: SyncPlan): Set<number> {
   const next = new Set<number>();
@@ -419,6 +439,8 @@ export function SchemaCompareView({
   // 同期プランの描画件数 (#1321)。5,000 件超でも 1 画面ぶんだけ DOM に置き、続きは「さらに表示」。
   // 選択・適用は全件 (`plan.statements`) が対象。
   const [statementLimit, setStatementLimit] = useState(SYNC_STATEMENT_PAGE);
+  // テーブル差分一覧の描画件数 (#1612)。差分・絞り込みが変わったら先頭ページへ戻す。
+  const [tableLimit, setTableLimit] = useState(TABLE_DIFF_PAGE);
   const [generating, setGenerating] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
@@ -446,6 +468,12 @@ export function SchemaCompareView({
   const [dataDiffId, setDataDiffId] = useState<string | null>(null);
   const heldDiffIdRef = useRef<string | null>(null);
   const [dataComparing, setDataComparing] = useState(false);
+  // 全行比較の進捗 (これまでに読んだ行数) と中止 (#1612)。
+  const [dataProgressRows, setDataProgressRows] = useState<number | null>(null);
+  const dataStreamIdRef = useRef<string | null>(null);
+  // 比較開始時に全行比較だったか (比較中にチェックを外しても中止ボタンを残す)。
+  const [dataCancellable, setDataCancellable] = useState(false);
+  const dataCancelledRef = useRef(false);
   const [allowDelete, setAllowDelete] = useState(false);
 
   // 適用直後の再比較で得た差分。この差分への切り替えでは適用成功の表示を残す。
@@ -622,6 +650,11 @@ export function SchemaCompareView({
     [diff, hideSame],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 差分と絞り込みの変化を契機に先頭ページへ戻す。
+  useEffect(() => {
+    setTableLimit(TABLE_DIFF_PAGE);
+  }, [diff, hideSame]);
+
   const hasDifferences = counts.different + counts.source_only + counts.target_only > 0;
 
   const generatePlan = useCallback(async () => {
@@ -666,7 +699,17 @@ export function SchemaCompareView({
     setPlan(null);
     setPlanKind(null);
     setSelected(new Set());
+    dataCancelledRef.current = false;
+    setDataProgressRows(null);
+    // 全行比較だけ、進捗の購読と中止のための stream id を渡す。
+    const streamId = dataAllRows ? makeDataDiffStreamId() : null;
+    dataStreamIdRef.current = streamId;
+    setDataCancellable(streamId !== null);
+    let unlisten: UnlistenFn | null = null;
     try {
+      if (streamId) {
+        unlisten = await listenDataDiffProgress(streamId, (e) => setDataProgressRows(e.rows));
+      }
       const result = await api.compareTableData({
         sourceSessionId: source.sessionId,
         sourceDatabase: source.database,
@@ -679,6 +722,7 @@ export function SchemaCompareView({
           .split(",")
           .map((c) => c.trim())
           .filter((c) => c !== ""),
+        streamId,
       });
       // 直前の比較結果はバックエンドの保持を解放してから差し替える。
       releaseHeldDiff();
@@ -687,14 +731,35 @@ export function SchemaCompareView({
       setDataDiff(result.diff);
       setDataDiffId(result.diff_id);
     } catch (e) {
-      setSyncError(String(e));
+      // 利用者が中止したときはエラー表示にしない。
+      setSyncError(dataCancelledRef.current ? t("schemaCompareDataCancelled") : String(e));
       releaseHeldDiff();
       setDataDiff(null);
       setDataDiffId(null);
     } finally {
+      unlisten?.();
+      dataStreamIdRef.current = null;
+      setDataCancellable(false);
+      setDataProgressRows(null);
       setDataComparing(false);
     }
-  }, [source, target, dataTable, dataLimit, dataAllRows, dataIgnore, releaseHeldDiff]);
+  }, [t, source, target, dataTable, dataLimit, dataAllRows, dataIgnore, releaseHeldDiff]);
+
+  // 画面を閉じたら、実行中の全行比較の問い合わせも止める。
+  useEffect(
+    () => () => {
+      const streamId = dataStreamIdRef.current;
+      if (streamId) void api.cancelStream(streamId).catch(() => {});
+    },
+    [],
+  );
+
+  const cancelDataCompare = useCallback(() => {
+    const streamId = dataStreamIdRef.current;
+    if (!streamId) return;
+    dataCancelledRef.current = true;
+    void api.cancelStream(streamId).catch(() => {});
+  }, []);
 
   const generateDataPlan = useCallback(async () => {
     if (!dataDiffId) return;
@@ -951,9 +1016,24 @@ export function SchemaCompareView({
                 </chakra.p>
               ) : (
                 <Box css={tablesCss}>
-                  {visibleTables.map((tbl) => (
+                  {visibleTables.slice(0, tableLimit).map((tbl) => (
                     <TableDiffRow key={tbl.name} table={tbl} t={t} />
                   ))}
+                  {visibleTables.length > tableLimit && (
+                    <Box css={actionsCss} display="flex" gap="2" alignItems="center">
+                      <chakra.span textStyle="caption">
+                        {t("schemaCompareTablesShown", {
+                          shown: tableLimit,
+                          total: visibleTables.length,
+                        })}
+                      </chakra.span>
+                      <Button type="button" onClick={() => setTableLimit((n) => n + TABLE_DIFF_PAGE)}>
+                        {t("schemaCompareStatementsMore", {
+                          count: Math.min(TABLE_DIFF_PAGE, visibleTables.length - tableLimit),
+                        })}
+                      </Button>
+                    </Box>
+                  )}
                 </Box>
               )}
 
@@ -1010,7 +1090,7 @@ export function SchemaCompareView({
                         </option>
                       ))}
                     </Select>
-                    <chakra.label css={destructiveCss}>
+                    <chakra.label css={optionLabelCss}>
                       <Checkbox
                         checked={dataAllRows}
                         onChange={(e) => setDataAllRows(e.target.checked)}
@@ -1036,6 +1116,16 @@ export function SchemaCompareView({
                     <Button onClick={compareData} disabled={!dataTable || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
                     </Button>
+                    {dataComparing && dataCancellable && (
+                      <>
+                        <chakra.span textStyle="caption">
+                          {t("schemaCompareDataProgress", { rows: (dataProgressRows ?? 0).toLocaleString() })}
+                        </chakra.span>
+                        <Button type="button" variant="secondary" size="sm" onClick={cancelDataCompare}>
+                          {t("schemaCompareDataCancel")}
+                        </Button>
+                      </>
+                    )}
                   </Box>
 
                   {dataDiff && (

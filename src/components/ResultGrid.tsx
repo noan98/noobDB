@@ -151,7 +151,8 @@ import { ResultPaneSkeleton } from "./ResultPaneSkeleton";
 import { DENSITY_ROW_ESTIMATE } from "./resultSkeleton";
 import { deriveQueryPhase, formatElapsed } from "../queryRunState";
 import { useToast } from "./Toast";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
+import { FieldLabel, FormSection } from "./modalForm";
 import { LoadingButton } from "./LoadingButton";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { columnCommentsFor, withComment } from "./schemaComment";
@@ -5006,7 +5007,18 @@ export const DataGrid = memo(function DataGrid({
   // Original column indices in their current *display* order (reorder/hide
   // aware). Keyboard navigation steps through this; data lookups use the
   // original index it yields.
-  const visibleColIds = table.getVisibleLeafColumns().map((c) => Number(c.id));
+  // 内容が同じなら前回と同じ参照を返す (selectionRect / selColSet が無関係な再描画で作り直されず、
+  // 選択範囲内の行 (memo) が描き直されない)。
+  const visibleColIdsRaw = table.getVisibleLeafColumns().map((c) => Number(c.id));
+  const visibleColIdsRef = useRef(visibleColIdsRaw);
+  const prevVisibleColIds = visibleColIdsRef.current;
+  if (
+    prevVisibleColIds.length !== visibleColIdsRaw.length ||
+    prevVisibleColIds.some((v, i) => v !== visibleColIdsRaw[i])
+  ) {
+    visibleColIdsRef.current = visibleColIdsRaw;
+  }
+  const visibleColIds = visibleColIdsRef.current;
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
@@ -6931,45 +6943,32 @@ export const DataGrid = memo(function DataGrid({
                   count: bulkEdit.rowIndices.length * bulkEdit.colIndices.length,
                 })}
               </chakra.p>
-              <chakra.input
-                autoFocus
-                value={bulkEdit.value}
-                onChange={(e) => setBulkEdit({ ...bulkEdit, value: e.target.value })}
-                onKeyDown={(e) => {
-                  if (isPlainEnterKey(e)) {
-                    e.preventDefault();
-                    applyBulkEdit();
-                  }
-                }}
-                placeholder={t("gridBulkEditPlaceholder")}
-                aria-label={t("gridBulkEditTitle")}
-                width="100%"
-                fontFamily="var(--font-mono)"
-                fontSize="sm"
-                py="1"
-                px="2"
-                border="1px solid var(--border)"
-                background="var(--bg-input)"
-                color="var(--text)"
-                borderRadius="var(--radius-sm)"
-                _focus={{
-                  outline: "none",
-                  borderColor: "var(--accent)",
-                  boxShadow: "var(--focus-ring)",
-                }}
-              />
-              <chakra.button
-                type="button"
-                onClick={() => setBulkEdit({ ...bulkEdit, value: "NULL" })}
-                marginTop="1.5"
-                fontSize="xs"
-                color="app.textMuted"
-                textDecoration="underline"
-                cursor="pointer"
-                background="transparent"
-              >
-                {t("gridBulkEditSetNull")}
-              </chakra.button>
+              <FormSection>
+                <FieldLabel htmlFor="grid-bulk-edit-value">{t("gridBulkEditValueLabel")}</FieldLabel>
+                <Input
+                  id="grid-bulk-edit-value"
+                  autoFocus
+                  value={bulkEdit.value}
+                  onChange={(e) => setBulkEdit({ ...bulkEdit, value: e.target.value })}
+                  onKeyDown={(e) => {
+                    if (isPlainEnterKey(e)) {
+                      e.preventDefault();
+                      applyBulkEdit();
+                    }
+                  }}
+                  placeholder={t("gridBulkEditPlaceholder")}
+                  fontFamily="var(--font-mono)"
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  alignSelf="flex-start"
+                  onClick={() => setBulkEdit({ ...bulkEdit, value: "NULL" })}
+                >
+                  {t("gridBulkEditSetNull")}
+                </Button>
+              </FormSection>
             </ModalBody>
             <ModalFooter>
               <div style={{ flex: 1 }} />

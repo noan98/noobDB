@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Flex, VisuallyHidden, chakra } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import type { ConnectionProfile, SchemaDriftGeneration, SchemaDriftSummary } from "../api/tauri";
 import { useT } from "../i18n";
+import { useRovingFocus } from "../keyboardNav";
 import { canDiff } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
@@ -60,6 +61,8 @@ export function SchemaDriftPanel({
 }: Props) {
   const t = useT();
 
+  const timelineRef = useRef<HTMLDivElement>(null);
+  const { onKeyDown: onTimelineKeyDown } = useRovingFocus(timelineRef, "[data-generation-item]");
   const [pickA, setPickA] = useState<string | null>(null);
   const [pickB, setPickB] = useState<string | null>(null);
   const genB = gens.find((g) => g.id === pickB) ?? (gens.length > 0 ? gens[0] : null);
@@ -141,45 +144,62 @@ export function SchemaDriftPanel({
               borderColor="app.border"
               borderRadius="md"
             >
-              {gens.map((g, i) => {
-                const selected = g.id === genA?.id || g.id === genB?.id;
-                return (
-                  <Flex
-                    key={g.id}
-                    px="2.5"
-                    py="2"
-                    gap="2"
-                    align="center"
-                    bg={selected ? "app.active" : undefined}
-                  >
-                    <Icon name="clock" size={ICON_SIZES.sm} />
-                    <Box flex="1" minWidth={0}>
-                      <chakra.div textStyle="subheading">
-                        {formatCaptured(g.capturedAt)}
-                        {i === 0 && ` ${t("schemaDriftLatestSuffix")}`}
-                      </chakra.div>
-                      <chakra.div textStyle="caption">
-                        {t("schemaDriftGenerationTables", { count: g.tableCount })}
-                        {g.omitted && ` · ${t("schemaDriftOmittedBadge")}`}
-                      </chakra.div>
-                      {/* DDL の成功をきっかけに自動取得した世代は、そのときの SQL を残している (#1537)。 */}
-                      {g.triggerSql && (
-                        <chakra.div
-                          textStyle="caption"
-                          color="app.textMuted"
-                          fontFamily="var(--font-mono)"
-                          overflow="hidden"
-                          textOverflow="ellipsis"
-                          whiteSpace="nowrap"
-                          title={g.triggerSql}
-                        >
-                          {t("schemaDriftTriggerSql", { sql: g.triggerSql.replace(/\s+/g, " ") })}
+              <chakra.div textStyle="caption" color="app.textMuted" px="2.5" py="1.5">
+                {t("schemaDriftTimelineHint")}
+              </chakra.div>
+              <div ref={timelineRef} onKeyDown={onTimelineKeyDown}>
+                {gens.map((g, i) => {
+                  const selected = g.id === genA?.id || g.id === genB?.id;
+                  return (
+                    <chakra.button
+                      key={g.id}
+                      type="button"
+                      data-generation-item
+                      aria-pressed={selected}
+                      // クリックで比較先 (B)、Shift / Alt + クリックで比較元 (A) に設定する (#1612)。
+                      onClick={(e) => (e.shiftKey || e.altKey ? setPickA(g.id) : setPickB(g.id))}
+                      display="flex"
+                      width="100%"
+                      textAlign="left"
+                      px="2.5"
+                      py="2"
+                      gap="2"
+                      alignItems="center"
+                      cursor="pointer"
+                      bg={selected ? "app.active" : undefined}
+                      _hover={{ bg: "app.hover" }}
+                      _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
+                    >
+                      <Icon name="clock" size={ICON_SIZES.sm} />
+                      <Box flex="1" minWidth={0}>
+                        <chakra.div textStyle="subheading">
+                          {formatCaptured(g.capturedAt)}
+                          {i === 0 && ` ${t("schemaDriftLatestSuffix")}`}
                         </chakra.div>
-                      )}
-                    </Box>
-                  </Flex>
-                );
-              })}
+                        <chakra.div textStyle="caption">
+                          {t("schemaDriftGenerationTables", { count: g.tableCount })}
+                          {g.omitted && ` · ${t("schemaDriftOmittedBadge")}`}
+                        </chakra.div>
+                        {/* DDL の成功をきっかけに自動取得した世代は、そのときの SQL を残している (#1537)。 */}
+                        {g.triggerSql && (
+                          <Tooltip label={g.triggerSql}>
+                            <chakra.div
+                              textStyle="caption"
+                              color="app.textMuted"
+                              fontFamily="var(--font-mono)"
+                              overflow="hidden"
+                              textOverflow="ellipsis"
+                              whiteSpace="nowrap"
+                            >
+                              {t("schemaDriftTriggerSql", { sql: g.triggerSql.replace(/\s+/g, " ") })}
+                            </chakra.div>
+                          </Tooltip>
+                        )}
+                      </Box>
+                    </chakra.button>
+                  );
+                })}
+              </div>
             </Box>
 
             {/* 右: 世代選択 + 差分リスト */}

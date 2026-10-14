@@ -1,7 +1,9 @@
 import {
   memo,
   useCallback,
+  useDeferredValue,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -211,12 +213,16 @@ export function TableStatisticsPanel({
   onOpenTableRef.current = onOpenTable;
   const openTable = useCallback((name: string) => onOpenTableRef.current?.(name), []);
 
-  const filtered = filterTableStats(rows, { nameQuery, onlyNoIndex, onlyNoPrimaryKey });
-  const sorted = sortTableStats(filtered, sortKey, sortDir);
-  const totals = computeTableSizeTotals(sorted);
+  // 入力欄は即時反映し、全件の絞り込み・ソート・集計は遅延値で回す (数千テーブルでも入力が詰まらない)。
+  const deferredNameQuery = useDeferredValue(nameQuery);
+  const { sorted, totals } = useMemo(() => {
+    const filtered = filterTableStats(rows, { nameQuery: deferredNameQuery, onlyNoIndex, onlyNoPrimaryKey });
+    const sortedRows = sortTableStats(filtered, sortKey, sortDir);
+    return { sorted: sortedRows, totals: computeTableSizeTotals(sortedRows) };
+  }, [rows, deferredNameQuery, onlyNoIndex, onlyNoPrimaryKey, sortKey, sortDir]);
   // データバーは合計サイズ列に対して、絞り込み前の一覧中の最大値を基準にスケールする
   // (フィルタで最大が消えてもバーの物差しが揺れないように)。
-  const maxTotal = rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0);
+  const maxTotal = useMemo(() => rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0), [rows]);
   const arrow = (key: TableStatSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   // 現在のソート状態を支援技術へ伝える aria-sort 値。
   const ariaSort = (key: TableStatSortKey): "ascending" | "descending" | "none" =>

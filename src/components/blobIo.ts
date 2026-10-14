@@ -27,7 +27,7 @@ export function bytesToHex(bytes: Uint8Array): string {
  * bin) を付ける。拡張子はバックエンドの probe (`probe_cell_blob`) が判定して返す。
  */
 export function blobFileName(columnName: string, ext: string | null): string {
-  const base = columnName.replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "blob";
+  const base = columnName.replace(/[^\p{L}\p{N}_.-]+/gu, "_").replace(/^_+|_+$/g, "") || "blob";
   return `${base}.${ext ?? "bin"}`;
 }
 

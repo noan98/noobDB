@@ -537,9 +537,39 @@ export function CartesianChart({
   const bandW = plotW / Math.max(1, n);
   const xAt = (i: number) => PAD.left + bandW * i + bandW / 2;
   const yAt = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
-  const zeroY = yAt(0);
   // キリの良い目盛り値でグリッド線を引き、値を読み取りやすくする。
-  const ticks = niceTicks(min, max, 5);
+  const ticks = useMemo(() => niceTicks(min, max, 5), [min, max]);
+  // 系列のパス文字列。ホバーでは再計算せず、モデル・種別・寸法が変わったときだけ作る。
+  const seriesGeom = useMemo(
+    () =>
+      model.series.map((s, si) => {
+        const seriesCount = model.series.length;
+        const xc = (i: number) => PAD.left + bandW * i + bandW / 2;
+        const yv = (v: number) => PAD.top + plotH - ((v - min) / span) * plotH;
+        const zy = yv(0);
+        if (type === "bar") {
+          const barW = (bandW * 0.7) / seriesCount;
+          return {
+            bars: s.values.map((v, i) => {
+              const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
+              const y = Math.min(yv(v), zy);
+              const h = Math.abs(yv(v) - zy);
+              const up = v >= 0;
+              return { d: roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up), up };
+            }),
+            pts: "",
+            areaPath: "",
+          };
+        }
+        const coords = s.values.map((v, i) => `${xc(i)},${yv(v)}`);
+        return {
+          bars: [],
+          pts: coords.join(" "),
+          areaPath: `M ${xc(0)},${zy} L ${coords.join(" L ")} L ${xc(n - 1)},${zy} Z`,
+        };
+      }),
+    [model, type, bandW, plotH, min, span, n, barRadius],
+  );
   // X 軸ラベルは多すぎると間引く。
   const labelStep = Math.ceil(n / 16);
   // 点が少ないときだけマーカーを描く (多いとつぶれて逆に読みにくい)。
@@ -567,7 +597,7 @@ export function CartesianChart({
     setHover(idx >= 0 && idx < n ? idx : null);
   };
 
-  const summary = chartSummary(model, type);
+  const summary = useMemo(() => chartSummary(model, type), [model, type]);
   const ariaLabel = t("chartAriaSummary", {
     series: summary.series,
     points: summary.points,
@@ -707,42 +737,32 @@ export function CartesianChart({
         {model.series.map((s, si) => {
           const color = colors[si % colors.length];
           if (type === "bar") {
-            const seriesCount = model.series.length;
-            const barW = (bandW * 0.7) / seriesCount;
             return (
               <g key={si}>
-                {s.values.map((v, i) => {
-                  const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
-                  const y = Math.min(yAt(v), zeroY);
-                  const h = Math.abs(yAt(v) - zeroY);
+                {seriesGeom[si].bars.map((bar, i) => (
                   // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
                   // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
-                  // ため、値側の端だけ丸めたパスで描く。半径は radius トークンの実値を
-                  // `barRadius` で読み、トークンを単一ソースに保つ。
-                  const up = v >= 0;
-                  return (
-                    <motion.path
-                      key={i}
-                      d={roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up)}
-                      fill={valueColors?.[i] ?? color}
-                      fillOpacity={hover == null || hover === i ? 1 : 0.5}
-                      style={{ originX: 0.5, originY: up ? 1 : 0 }}
-                      initial={animate ? { scaleY: 0 } : false}
-                      animate={{ scaleY: 1 }}
-                      transition={
-                        animate
-                          ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
-                          : { duration: 0 }
-                      }
-                    />
-                  );
-                })}
+                  // ため、値側の端だけ丸めたパスで描く (パスは seriesGeom で前計算)。
+                  <motion.path
+                    key={i}
+                    d={bar.d}
+                    fill={valueColors?.[i] ?? color}
+                    fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                    style={{ originX: 0.5, originY: bar.up ? 1 : 0 }}
+                    initial={animate ? { scaleY: 0 } : false}
+                    animate={{ scaleY: 1 }}
+                    transition={
+                      animate
+                        ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                        : { duration: 0 }
+                    }
+                  />
+                ))}
               </g>
             );
           }
           // line / area
-          const pts = s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-          const areaPath = `M ${xAt(0)},${zeroY} L ${s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" L ")} L ${xAt(n - 1)},${zeroY} Z`;
+          const { pts, areaPath } = seriesGeom[si];
           return (
             <g key={si}>
               {type === "area" && (

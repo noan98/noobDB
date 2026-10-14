@@ -162,49 +162,68 @@ function batchRowsLabel(result: BatchStatementResult, t: ReturnType<typeof useT>
     : t("batchRowsTruncated", { shown });
 }
 
+/** カード 1 枚で最初に DOM へ出す行数。残りは「さらに表示」で段階的に広げる。 */
+const MINI_TABLE_PAGE = 100;
+
 function MiniTable({ columns, rows }: { columns: string[]; rows: CellValue[][] }) {
+  const t = useT();
+  const [limit, setLimit] = useState(MINI_TABLE_PAGE);
+  const visible = rows.length > limit ? rows.slice(0, limit) : rows;
+  const remaining = rows.length - visible.length;
   return (
-    <chakra.table fontSize="xs" width="100%" css={{ borderCollapse: "collapse" }}>
-      <chakra.thead position="sticky" top="0" bg="app.surface">
-        <tr>
-          {columns.map((c, i) => (
-            <chakra.th
-              key={i}
-              textAlign="left"
-              px="2"
-              py="1"
-              borderBottomWidth="1px"
-              borderColor="app.border"
-              fontFamily="mono"
-              color="app.textSecondary"
-              whiteSpace="nowrap"
-            >
-              {c}
-            </chakra.th>
-          ))}
-        </tr>
-      </chakra.thead>
-      <tbody>
-        {rows.map((row, ri) => (
-          <tr key={ri}>
-            {columns.map((_, ci) => (
-              <chakra.td
-                key={ci}
+    <>
+      <chakra.table fontSize="xs" width="100%" css={{ borderCollapse: "collapse" }}>
+        <chakra.thead position="sticky" top="0" bg="app.surface">
+          <tr>
+            {columns.map((c, i) => (
+              <chakra.th
+                key={i}
+                textAlign="left"
                 px="2"
-                py="0.75"
+                py="1"
                 borderBottomWidth="1px"
                 borderColor="app.border"
                 fontFamily="mono"
-                color="app.text"
+                color="app.textSecondary"
                 whiteSpace="nowrap"
               >
-                {cellText(row[ci])}
-              </chakra.td>
+                {c}
+              </chakra.th>
             ))}
           </tr>
-        ))}
-      </tbody>
-    </chakra.table>
+        </chakra.thead>
+        <tbody>
+          {visible.map((row, ri) => (
+            <tr key={ri}>
+              {columns.map((_, ci) => (
+                <chakra.td
+                  key={ci}
+                  px="2"
+                  py="0.75"
+                  borderBottomWidth="1px"
+                  borderColor="app.border"
+                  fontFamily="mono"
+                  color="app.text"
+                  whiteSpace="nowrap"
+                >
+                  {cellText(row[ci])}
+                </chakra.td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </chakra.table>
+      {remaining > 0 && (
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => setLimit((l) => l + MINI_TABLE_PAGE)}
+        >
+          {t("batchShowMore", { n: Math.min(MINI_TABLE_PAGE, remaining), remaining })}
+        </Button>
+      )}
+    </>
   );
 }
 

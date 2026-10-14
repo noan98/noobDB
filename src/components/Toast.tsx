@@ -158,6 +158,8 @@ interface ToastApi {
   info: (message: string, duration?: number) => number;
   /** id 指定でトーストを閉じる。`duration: 0` の進行中トーストを完了/失敗時に消す用途。 */
   dismiss: (id: number) => void;
+  /** 表示中のトーストの文言だけを差し替える (ダウンロード進捗など)。消えた id は無視する。 */
+  update: (id: number, message: string) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -298,6 +300,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [armTimer],
   );
 
+  const update = useCallback((id: number, message: string) => {
+    setToasts((cur) => cur.map((tt) => (tt.id === id ? { ...tt, message } : tt)));
+  }, []);
+
   const api = useMemo<ToastApi>(
     () => ({
       notify,
@@ -305,8 +311,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       error: (message, duration) => notify({ message, tone: "error", duration }),
       info: (message, duration) => notify({ message, tone: "info", duration }),
       dismiss,
+      update,
     }),
-    [notify, dismiss],
+    [notify, dismiss, update],
   );
 
   return (

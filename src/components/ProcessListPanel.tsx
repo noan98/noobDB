@@ -235,14 +235,16 @@ export function ProcessListPanel({
   // 別のボトムパネルのタブへ移っている間 (keep-alive で非表示, #1311) は止め、
   // 戻ってきた時点で 1 度取り直す。
   const active = useKeepAliveActive();
+  // メトリクスタブを見ている間は一覧が画面に出ないので、ポーリングしない (サーバ負荷と無駄な再描画を避ける)。
+  const listVisible = tab === "processes" || !showMetricsTab;
   useEffect(() => {
-    if (!autoRefresh || !active) return;
+    if (!autoRefresh || !active || !listVisible) return;
     const handle = setInterval(() => {
       void load();
     }, intervalSecs * 1000);
     return () => clearInterval(handle);
-  }, [autoRefresh, intervalSecs, load, active]);
-  useRefreshOnReactivate(active, load);
+  }, [autoRefresh, intervalSecs, load, active, listVisible]);
+  useRefreshOnReactivate(active && listVisible, load);
 
   const countParts = splitAroundCountUpToken(t("processCount", { count: COUNT_UP_TOKEN }));
 
@@ -899,6 +901,9 @@ const ProcessRow = memo(
     sameProcess(a.process, b.process),
 );
 
+/** ホバーしてから全文を取りに行くまでの待ち時間 (ms)。通過しただけの行では取得しない。 */
+const PROCESS_QUERY_HOVER_DELAY_MS = 250;
+
 /**
  * クエリ列のセル。一覧が運ぶのは Rust 側で作った 1 行要約だけなので、ツールチップ用の
  * 全文は初めてポインタ / フォーカスが乗ったときに `get_process_query` で id 指定取得し、
@@ -931,13 +936,31 @@ function ProcessQueryCell({
         inFlight.current = false;
       });
   }, [full, p.id, p.query_summary, sessionId]);
+  // マウスを動かしただけで全件照会が走らないよう、ホバーは少し留まったときだけ取得する
+  // (通過しただけの行では取らない)。フォーカスは意図的な操作なので即時。
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelHover = useCallback(() => {
+    if (hoverTimer.current !== null) {
+      clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+  }, []);
+  const onHover = useCallback(() => {
+    cancelHover();
+    hoverTimer.current = setTimeout(() => {
+      hoverTimer.current = null;
+      fetchFull();
+    }, PROCESS_QUERY_HOVER_DELAY_MS);
+  }, [cancelHover, fetchFull]);
+  useEffect(() => cancelHover, [cancelHover]);
   const cell = (
     <LiveCell
       css={queryTdCss}
       innerCss={queryInnerCss}
       collapse={false}
       flash={flash}
-      onMouseEnter={fetchFull}
+      onMouseEnter={onHover}
+      onMouseLeave={cancelHover}
       // 要約の付くセルはキーボードでもフォーカスできるようにし、フォーカスで全文
       // ツールチップの表示と取得 (onFocus) が実際に動くようにする。
       tabIndex={p.query_summary ? 0 : undefined}
