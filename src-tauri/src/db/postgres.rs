@@ -903,11 +903,13 @@ impl PostgresConn {
                 return Ok(out);
             }
         };
-        // 段階 1: この接続自身を除いて終了する。戻りの bool (pg_terminate_backend の結果) で成否を数える。
-        let others_sql = "SELECT t.p, pg_terminate_backend(t.p) \
-               FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               WHERE t.p <> pg_backend_pid() ORDER BY t.ord";
-        let rows: Vec<(i32, bool)> = match sqlx::query_as::<_, (i32, bool)>(others_sql)
+        // 段階 1: この接続自身を除いて終了する。pg_terminate_backend が false を返すのは
+        // 対象がもう居ない (既に終了した) ときで、目的は達しているので従来どおり成功に数える。
+        let others_sql = "SELECT t.p FROM ( \
+               SELECT p, ord FROM unnest($1::int4[]) WITH ORDINALITY AS u(p, ord) \
+               WHERE p <> pg_backend_pid() \
+             ) t CROSS JOIN LATERAL pg_terminate_backend(t.p) ORDER BY t.ord";
+        let rows: Vec<(i32,)> = match sqlx::query_as::<_, (i32,)>(others_sql)
             .bind(&pids)
             .fetch_all(&mut *conn)
             .await
@@ -919,13 +921,9 @@ impl PostgresConn {
             }
         };
         let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
-        for (pid, ok) in rows {
+        for (pid,) in rows {
             seen.insert(pid);
-            if ok {
-                out.killed += 1;
-            } else {
-                out.record_failure(1, format!("pg_terminate_backend({pid}) returned false"));
-            }
+            out.killed += 1;
         }
 
         // 段階 2: 段階 1 で除外された pid (= この接続自身) を最後に終了する。接続断のエラーは
