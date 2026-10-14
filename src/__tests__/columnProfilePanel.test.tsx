@@ -151,6 +151,7 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
       total_count: 4,
       scans: 1,
       distinct_approximate: false,
+      notes: [],
       columns: [
         {
           column: "id",
@@ -199,6 +200,7 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
       total_count: 4,
       scans: 1,
       distinct_approximate: true,
+      notes: [],
       columns: [
         {
           column: "id",
@@ -225,6 +227,41 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
     await screen.findByTestId("profile-overview");
     expect(api.profileTable).toHaveBeenCalledWith("s1", "public", "orders", true, true);
     expect(screen.getByText(`${t("profileDistinct")} ≈`)).toBeInTheDocument();
+    expect(screen.queryByTestId("profile-overview-nostats")).toBeNull();
+  });
+
+  it("近似で統計が無い表は、DISTINCT を省略した理由を出す (#1609)", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValue({ notes: [], top_values: [], histogram: [] } as never);
+    vi.mocked(api.profileTable).mockResolvedValue({
+      table: "orders",
+      total_count: 4,
+      scans: 1,
+      distinct_approximate: false,
+      notes: ["overview_approx_no_stats"],
+      columns: [
+        {
+          column: "id",
+          data_type: "int",
+          non_null_count: 4,
+          null_count: 0,
+          distinct_count: null,
+          min_value: 1,
+          max_value: 4,
+          notes: [],
+        },
+      ],
+    });
+    renderWithProviders(
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="postgres"
+        target={{ database: "public", table: "orders", column: null }}
+        onSelectColumn={vi.fn()}
+      />,
+    );
+    fireEvent.click(await screen.findByLabelText(t("profileApproximate")));
+    fireEvent.click(await screen.findByText(t("profileOverviewRun")));
+    expect(await screen.findByText(t("profileOverviewNoStats"))).toBeInTheDocument();
   });
 });
 

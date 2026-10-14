@@ -1567,11 +1567,29 @@ impl PostgresConn {
         // `all_columns` に落ちてしまう。
         let row: Option<PgRow> = sqlx::query(
             r#"SELECT c.relkind::text AS relkind,
-                      EXISTS (SELECT 1 FROM pg_catalog.pg_index i
-                               WHERE i.indrelid = c.oid AND i.indisprimary) AS has_pk,
-                      EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
-                               WHERE a.attrelid = c.oid AND a.attnum > 0
-                                 AND NOT a.attisdropped) AS has_columns
+                      -- information_schema.table_constraints と同じ可視性条件
+                      -- (権限の無いユーザには PK が見えず、columns() も PRI を返さない)。
+                      -- PK 列のどれかが key_column_usage / columns に見えること (列権限) も要る。
+                      (EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                                CROSS JOIN LATERAL unnest(i.indkey) AS k(attnum)
+                                WHERE i.indrelid = c.oid AND i.indisprimary AND k.attnum > 0
+                                  AND (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+                                       OR pg_catalog.has_column_privilege(c.oid, k.attnum,
+                                            'SELECT, INSERT, UPDATE, REFERENCES')))
+                       AND (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+                            OR pg_catalog.has_table_privilege(c.oid,
+                                 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                            OR pg_catalog.has_any_column_privilege(c.oid,
+                                 'INSERT, UPDATE, REFERENCES'))) AS has_pk,
+                      -- information_schema.columns に載る条件 (対象 relkind + 列権限)。
+                      (c.relkind IN ('r', 'p', 'v', 'f')
+                       AND EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                                    WHERE a.attrelid = c.oid AND a.attnum > 0
+                                      AND NOT a.attisdropped
+                                      AND (pg_catalog.pg_has_role(c.relowner, 'USAGE')
+                                           OR pg_catalog.has_column_privilege(c.oid, a.attnum,
+                                                'SELECT, INSERT, UPDATE, REFERENCES')))
+                      ) AS has_columns
                FROM pg_catalog.pg_class c
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                WHERE n.nspname = $1 AND c.relname = $2"#,

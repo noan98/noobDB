@@ -2290,13 +2290,10 @@ impl MySqlConn {
     /// 全スキーマの (スキーマ, テーブル, 列) を 1 回の問い合わせで返す (#1261)。
     /// [`MySqlConn::schema_overview`] の `TABLE_SCHEMA = ?` を外しただけの SQL で、
     /// グローバルオブジェクト検索の索引構築が DB 数ぶんの往復をしないために使う。
-    /// 列数が多く検索で使われにくい `information_schema` / `performance_schema` /
-    /// `sys` は取得しない (#1609。これらの DB の列は索引に載らない)。
     pub async fn schema_columns_all(&self) -> Result<Vec<(String, String, String)>> {
         let rows: Vec<MySqlRow> = sqlx::query(
             r#"SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME
                FROM information_schema.COLUMNS
-               WHERE TABLE_SCHEMA NOT IN ('information_schema', 'performance_schema', 'sys')
                ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"#,
         )
         .fetch_all(&self.pool)

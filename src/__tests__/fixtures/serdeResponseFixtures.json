@@ -4639,6 +4639,9 @@
       }
     ],
     "distinct_approximate": true,
+    "notes": [
+      "overview_approx_no_stats"
+    ],
     "scans": 1,
     "table": "orders",
     "total_count": 100

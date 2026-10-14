@@ -330,6 +330,11 @@ export function ColumnProfilePanel({
               scans: overview.scans,
             })}
           </chakra.div>
+          {overview.notes.includes("overview_approx_no_stats") && (
+            <chakra.div textStyle="caption" color="app.textMuted" marginBottom="1" data-testid="profile-overview-nostats">
+              {t("profileOverviewNoStats")}
+            </chakra.div>
+          )}
           <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
             <chakra.thead>
               <chakra.tr>

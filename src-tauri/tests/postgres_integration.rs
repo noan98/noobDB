@@ -225,6 +225,93 @@ async fn postgres_table_sizes_and_server_info() {
     conn.close().await;
 }
 
+/// #1609: row_identity を 1 本のカタログ問い合わせにしても、information_schema 基準の
+/// 従来の結果と変わらない。マテビューは列が見えず "none"、列権限だけのユーザは
+/// PK が見えず ctid、SELECT だけのユーザは書き込み不可で "none" 相当の結果になる。
+#[tokio::test]
+async fn postgres_row_identity_matview_and_column_privileges() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP MATERIALIZED VIEW IF EXISTS public.noobdb_pg_ri_mv",
+        "DROP TABLE IF EXISTS public.noobdb_pg_ri_priv",
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'noobdb_pg_ri_colonly') THEN DROP OWNED BY noobdb_pg_ri_colonly; END IF; END $$",
+        "DROP ROLE IF EXISTS noobdb_pg_ri_colonly",
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'noobdb_pg_ri_selonly') THEN DROP OWNED BY noobdb_pg_ri_selonly; END IF; END $$",
+        "DROP ROLE IF EXISTS noobdb_pg_ri_selonly",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    conn.execute(
+        "CREATE TABLE public.noobdb_pg_ri_priv (id INT PRIMARY KEY, v TEXT)",
+        None,
+    )
+    .await
+    .expect("create table");
+    conn.execute(
+        "CREATE MATERIALIZED VIEW public.noobdb_pg_ri_mv AS SELECT id FROM public.noobdb_pg_ri_priv",
+        None,
+    )
+    .await
+    .expect("create matview");
+    // マテビューは information_schema.columns に載らないので従来どおり "none"。
+    let mv = conn
+        .row_identity("public", "noobdb_pg_ri_mv")
+        .await
+        .expect("matview identity");
+    assert_eq!(mv.strategy, "none");
+
+    for sql in [
+        "CREATE ROLE noobdb_pg_ri_colonly LOGIN PASSWORD 'pw'",
+        "CREATE ROLE noobdb_pg_ri_selonly LOGIN PASSWORD 'pw'",
+        "GRANT USAGE ON SCHEMA public TO noobdb_pg_ri_colonly, noobdb_pg_ri_selonly",
+        "GRANT SELECT (v), UPDATE (v) ON public.noobdb_pg_ri_priv TO noobdb_pg_ri_colonly",
+        "GRANT SELECT ON public.noobdb_pg_ri_priv TO noobdb_pg_ri_selonly",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    for (role, expected_columns) in [
+        ("noobdb_pg_ri_colonly", true),
+        ("noobdb_pg_ri_selonly", true),
+    ] {
+        let mut o = opts.clone();
+        o.user = role.into();
+        o.password = "pw".into();
+        let rc = t::connect(&o).await.expect("connect as limited role");
+        let cols = rc
+            .columns("public", "noobdb_pg_ri_priv")
+            .await
+            .expect("columns as limited role");
+        assert!(
+            !cols.iter().any(|c| c.key == "PRI"),
+            "{role}: PK は見えない"
+        );
+        assert_eq!(!cols.is_empty(), expected_columns);
+        // columns() が PRI を返さない以上、row_identity も primary_key にならない。
+        let ident = rc
+            .row_identity("public", "noobdb_pg_ri_priv")
+            .await
+            .expect("identity as limited role");
+        assert_eq!(ident.strategy, "ctid", "{role}");
+        rc.close().await;
+    }
+    for sql in [
+        "DROP MATERIALIZED VIEW public.noobdb_pg_ri_mv",
+        "DROP TABLE public.noobdb_pg_ri_priv",
+        "DROP OWNED BY noobdb_pg_ri_colonly",
+        "DROP ROLE noobdb_pg_ri_colonly",
+        "DROP OWNED BY noobdb_pg_ri_selonly",
+        "DROP ROLE noobdb_pg_ri_selonly",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    conn.close().await;
+}
+
 /// #849: row identity fallback for inline editing. A table with a PK reports
 /// `primary_key`; a PK-less ordinary heap table falls back to the physical
 /// `ctid`; a view (no storage/`ctid` of its own) falls back further to
@@ -2619,6 +2706,16 @@ async fn postgres_table_overview_single_scan() {
         !o.distinct_approximate,
         "正確モードでは近似マークを付けない"
     );
+    // 統計 (ANALYZE) がまだ無い表で近似を求めると、DISTINCT は省略され理由が付く。
+    let nostats = conn
+        .table_profile("public", "noobdb_pg_overview", true, true)
+        .await
+        .expect("approximate overview without stats");
+    assert!(!nostats.distinct_approximate);
+    assert!(nostats
+        .notes
+        .iter()
+        .any(|n| n == "overview_approx_no_stats"));
     // #1609: 近似モードは COUNT(DISTINCT) を外し、ANALYZE 済みの pg_stats から埋める。
     conn.execute("ANALYZE public.noobdb_pg_overview", None)
         .await

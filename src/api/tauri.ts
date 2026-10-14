@@ -1068,6 +1068,8 @@ export interface TableProfileOverview {
   columns: ColumnOverview[];
   /** `distinct_count` が統計情報からの近似値か (PostgreSQL で近似を要求したとき)。 */
   distinct_approximate: boolean;
+  /** 表単位の縮退理由コード (近似を求めたが統計が無い、など)。 */
+  notes: string[];
   scans: number;
 }
 

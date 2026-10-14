@@ -48,6 +48,7 @@ pub const NOTE_TOP_VALUES_UNAVAILABLE: &str = "top_values_unavailable";
 pub const NOTE_HISTOGRAM_UNAVAILABLE: &str = "histogram_unavailable";
 pub const NOTE_APPROX_UNSUPPORTED: &str = "approx_distinct_unsupported";
 pub const NOTE_APPROX_NO_STATS: &str = "approx_distinct_no_stats";
+pub const NOTE_OVERVIEW_APPROX_NO_STATS: &str = "overview_approx_no_stats";
 
 /// プロファイル対象の列。`database` は MySQL ではデータベース、PostgreSQL では
 /// スキーマ、SQLite では無視される (UI ツリーの規約と同じ)。
@@ -469,6 +470,10 @@ pub struct TableProfileOverview {
     /// `None` のまま (正確値への縮退はしない)。
     #[serde(default)]
     pub distinct_approximate: bool,
+    /// 表単位の縮退理由コード (`NOTE_*`)。近似を求めたが統計情報が 1 列も無かったとき
+    /// `NOTE_OVERVIEW_APPROX_NO_STATS` が入る (#1609)。
+    #[serde(default)]
+    pub notes: Vec<String>,
     /// 集計に使った SELECT の本数 (正常時は 列数 / [`OVERVIEW_CHUNK_COLUMNS`] の切り上げ。
     /// 失敗して列ごとに縮退した分も数える)。
     pub scans: u32,
@@ -912,6 +917,7 @@ pub async fn run_table_overview(
     }
     let total = total.unwrap_or(0);
     let mut distinct_approximate = false;
+    let mut notes: Vec<String> = Vec::new();
     if pg_approx {
         // 失敗しても概要全体は返す (DISTINCT が「—」になるだけ)。
         let estimates: std::collections::HashMap<String, f64> = conn
@@ -948,6 +954,13 @@ pub async fn run_table_overview(
                 distinct_approximate = true;
             }
         }
+        // 統計 (ANALYZE) が 1 列も無いと DISTINCT がすべて「—」になるので、理由を表単位で残す。
+        let any_distinct_capable = infos
+            .iter()
+            .any(|i| overview_aggs(driver, &i.data_type, true).distinct);
+        if any_distinct_capable && !distinct_approximate {
+            notes.push(NOTE_OVERVIEW_APPROX_NO_STATS.to_string());
+        }
         // 型の都合で DISTINCT を外した列の注記 (`mark_skipped` は近似時に付けない)。
         for (c, info) in columns.iter_mut().zip(&infos) {
             if !overview_aggs(driver, &info.data_type, true).distinct
@@ -962,6 +975,7 @@ pub async fn run_table_overview(
         total_count: Value::from_u64_lossless(total),
         columns,
         distinct_approximate,
+        notes,
         scans,
     })
 }
