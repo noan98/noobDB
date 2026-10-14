@@ -9,6 +9,7 @@
 import type { Snippet } from "./api/tauri";
 import type { SnippetQuickAccessState } from "./snippetQuickAccess";
 import type { QuickAccessState, TableRef } from "./tableQuickAccess";
+import { takeGraphemes } from "./truncateText";
 
 // ---------------------------------------------------------------------------
 // セクションの表示件数 (設定)
@@ -133,7 +134,10 @@ export function buildQuickLauncherSections(
 /** 一覧に出す 1 行ぶんの SQL (改行・連続空白を畳み、長すぎれば省略)。 */
 export function singleLineSql(sql: string, max = 80): string {
   const s = sql.trim().replace(/\s+/g, " ");
-  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+  if (s.length <= max) return s;
+  // 書記素単位で数える。max 書記素に収まるなら省略しない。
+  if (takeGraphemes(s, max) === null) return s;
+  return `${takeGraphemes(s, max - 1) ?? s}…`;
 }
 
 // ---------------------------------------------------------------------------

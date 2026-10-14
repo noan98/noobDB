@@ -45,7 +45,8 @@ export function appendTypeaheadKey(
   return { query: char.toLowerCase(), lastKeyAt: now };
 }
 
-/** 型入力バッファに前方一致するラベルを、現在位置の次から探してループする。
+/** 型入力バッファに前方一致するラベルを探してループする (1 文字目は現在位置の次から、
+ *  2 文字以上は現在位置から)。
  *  一致が無ければ null (ハイライトは変えない)。 */
 export function findTypeaheadIndex(
   labels: readonly string[],
@@ -56,7 +57,9 @@ export function findTypeaheadIndex(
   if (!needle) return null;
   const n = labels.length;
   if (n === 0) return null;
-  const start = current === null ? 0 : (current + 1) % n;
+  // 1 文字目は同じ頭文字を巡回するため現在位置の次から。2 文字以上に伸びた途中経過は、
+  // 現在位置がまだ条件を満たすならそこに留まる (a → ab で次の候補へ飛ばない)。
+  const start = current === null ? 0 : needle.length > 1 ? current : (current + 1) % n;
   for (let i = 0; i < n; i++) {
     const idx = (start + i) % n;
     if (labels[idx].toLowerCase().startsWith(needle)) return idx;

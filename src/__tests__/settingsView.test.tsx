@@ -165,3 +165,30 @@ describe("クエリ履歴の保持期間 (#1539)", () => {
     await waitFor(() => expect(input.value).toBe("30"));
   });
 });
+
+describe("設定画面の不整合 (#1604)", () => {
+  it("スキーマドリフトのセクションがナビに出る", async () => {
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    const nav = await screen.findByRole("navigation", { name: t("settingsTitle") });
+    expect(within(nav).getByText(t("settingsSchemaDrift"))).toBeInTheDocument();
+  });
+
+  it("履歴保持日数の取得に失敗したら欄を無効のままにする (0 と誤表示して編集させない)", async () => {
+    vi.mocked(api.getHistoryRetentionDays).mockRejectedValueOnce(new Error("boom"));
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    await waitFor(() => expect(document.getElementById("settings-history-retention")).not.toBeNull());
+    const input = document.getElementById("settings-history-retention") as HTMLInputElement;
+    await waitFor(() => expect(screen.getByText("Error: boom")).toBeInTheDocument());
+    expect(input).toBeDisabled();
+  });
+
+  it("フォントで「カスタム」を選ぶと既定に戻らず入力欄が出る", async () => {
+    renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
+    // ラベル検索は巨大な DOM では遅く 5 秒の既定タイムアウトに近づくため id で引く。
+    await waitFor(() => expect(document.getElementById("settings-mono-font")).not.toBeNull());
+    const select = document.getElementById("settings-mono-font") as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: "__custom__" } });
+    expect(select.value).toBe("__custom__");
+    expect(document.querySelectorAll(`input[placeholder="${t("settingsFontCustomPlaceholder")}"]`).length).toBe(1);
+  });
+});
