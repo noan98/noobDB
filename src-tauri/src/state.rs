@@ -374,6 +374,11 @@ impl AppState {
             if released > 0 {
                 tracing::debug!(session_id = %id, released, "released result handles");
             }
+            // 自動リフレッシュのスナップショット (行ハッシュ) も切断後は使われないので解放する。
+            self.refresh_snapshots
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .release_session(id);
         }
         removed
     }

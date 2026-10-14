@@ -2,6 +2,12 @@ import type { Column, TableColumnInfo } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import { classifyEditType, type EditTypeKind } from "./cellEdit";
 
+/** 空文字 '' を正当な値として受け付ける (文字列系の) 型名か。型名なし (SQLite) も許す。 */
+function acceptsEmptyString(base: string): boolean {
+  if (base === "") return true;
+  return /CHAR|TEXT|STRING|CLOB|^NAME$|^CITEXT$/.test(base);
+}
+
 /**
  * Right-click "set value" shortcuts for the result grid (`ResultGrid`'s cell
  * context menu).
@@ -177,6 +183,9 @@ export function quickSetOptions(input: {
       });
       break;
     default:
+      // JSON / uuid / inet / xml / 配列など '' を受け付けない型では、Apply が必ず失敗する値を
+      // 出さない。空文字が正当なのは文字列系 (と型名が無い SQLite の列) だけ。
+      if (!acceptsEmptyString(base)) break;
       options.push({
         id: "empty",
         labelKey: "gridQuickSetEmpty",

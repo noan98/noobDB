@@ -52,7 +52,11 @@ pub fn tasks_path() -> Result<PathBuf> {
 /// 実際のファイル読み込み (ロック非取得)。ロックを跨いだ複合操作から使うための
 /// 内部版。
 fn load_file_locked() -> Result<TaskFile> {
-    let path = tasks_path()?;
+    load_file_at(&tasks_path()?)
+}
+
+fn load_file_at(path: &std::path::Path) -> Result<TaskFile> {
+    let path = path.to_path_buf();
     if !path.exists() {
         return Ok(TaskFile::default());
     }
@@ -65,10 +69,7 @@ fn load_file_locked() -> Result<TaskFile> {
         Err(e) => {
             // JSON として読めない: 放置すると tick の読み込みも保存もすべて失敗し、全タスクが
             // 止まって復旧手段が無くなる。壊れたファイルを退避して空として扱う。
-            let backup = path.with_file_name(format!(
-                "tasks.json.corrupt-{}",
-                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
+            let backup = corrupt_backup_path(&path);
             tracing::error!(
                 path = %path.display(),
                 backup = %backup.display(),
@@ -79,7 +80,41 @@ fn load_file_locked() -> Result<TaskFile> {
             return Ok(TaskFile::default());
         }
     };
-    Ok(parse_tolerant(value).0)
+    // JSON としては正しいが想定外の形 (トップレベルが配列、`tasks` が配列でない) だと、
+    // `parse_tolerant` は既定値を返すだけで、次の保存が元の内容を退避なしで上書きする。
+    // 壊れた JSON と同じく退避してから空として扱う。
+    let tasks_not_array = value.get("tasks").is_some_and(|t| !t.is_array());
+    if !value.is_object() || tasks_not_array {
+        let backup = corrupt_backup_path(&path);
+        tracing::error!(
+            path = %path.display(),
+            backup = %backup.display(),
+            "tasks: tasks.json has an unexpected shape; moving it aside and starting empty"
+        );
+        std::fs::rename(&path, &backup)?;
+        return Ok(TaskFile::default());
+    }
+    let settings_bad = value
+        .get("settings")
+        .is_some_and(|s| serde_json::from_value::<SchedulerSettings>(s.clone()).is_err());
+    let file = parse_tolerant(value).0;
+    if settings_bad {
+        // settings だけ解釈できない: タスクは生かしつつ、元のファイルを退避用にコピーしてから
+        // 既定の settings で書き直す (以後の読み込みで毎回コピーが増えない)。
+        let backup = corrupt_backup_path(&path);
+        tracing::error!(
+            path = %path.display(),
+            backup = %backup.display(),
+            "tasks: unparsable settings; backing up tasks.json and resetting settings to defaults"
+        );
+        std::fs::copy(&path, &backup)?;
+        save_file_at(&path, &file)?;
+    }
+    Ok(file)
+}
+
+fn corrupt_backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    crate::json_tolerant::corrupt_backup_path(path)
 }
 
 /// 要素単位の寛容パース。解釈できないタスクは警告して読み飛ばし、生の JSON を第 2 戻り値で
@@ -131,14 +166,17 @@ fn unparsable_raw(path: &std::path::Path, known: &[TaskDefinition]) -> Vec<serde
 
 /// 実際のファイル書き込み (ロック非取得)。`load_file_locked` と対。
 fn save_file_locked(file: &TaskFile) -> Result<()> {
-    let path = tasks_path()?;
+    save_file_at(&tasks_path()?, file)
+}
+
+fn save_file_at(path: &std::path::Path, file: &TaskFile) -> Result<()> {
     let mut value = serde_json::to_value(file)?;
-    let raw = unparsable_raw(&path, &file.tasks);
+    let raw = unparsable_raw(path, &file.tasks);
     if let Some(serde_json::Value::Array(tasks)) = value.get_mut("tasks") {
         tasks.extend(raw);
     }
     let content = serde_json::to_string_pretty(&value)?;
-    write_atomic(&path, content.as_bytes())?;
+    write_atomic(path, content.as_bytes())?;
     Ok(())
 }
 
@@ -257,6 +295,47 @@ mod tests {
 
     fn file_at(dir: &std::path::Path) -> PathBuf {
         dir.join("tasks.json")
+    }
+
+    fn backups(dir: &std::path::Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().contains(".corrupt-"))
+            .collect()
+    }
+
+    // JSON としては正しいが想定外の形 (配列 / tasks がオブジェクト) は退避され、
+    // 次の保存で元の内容が消えない (#1593)。
+    #[test]
+    fn unexpected_shapes_are_quarantined_not_overwritten() {
+        for (tag, body) in [("arr", "[1,2,3]"), ("obj", r#"{"tasks": {"a": 1}}"#)] {
+            let dir = scratch_dir(tag);
+            let path = file_at(&dir);
+            std::fs::write(&path, body).unwrap();
+            let file = load_file_at(&path).unwrap();
+            assert!(file.tasks.is_empty());
+            let b = backups(&dir);
+            assert_eq!(b.len(), 1, "{tag}");
+            assert_eq!(std::fs::read_to_string(&b[0]).unwrap(), body);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    // settings だけ解釈できないときは退避コピーを残し、書き直した後は再読込でコピーが増えない。
+    #[test]
+    fn unparsable_settings_are_backed_up_once() {
+        let dir = scratch_dir("settings");
+        let path = file_at(&dir);
+        let body = r#"{"settings": "bogus", "tasks": []}"#;
+        std::fs::write(&path, body).unwrap();
+        load_file_at(&path).unwrap();
+        load_file_at(&path).unwrap();
+        let b = backups(&dir);
+        assert_eq!(b.len(), 1);
+        assert_eq!(std::fs::read_to_string(&b[0]).unwrap(), body);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // 同一プロセス内で `write_atomic` を並行に呼んでも一時ファイル名が衝突しない

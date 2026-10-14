@@ -333,6 +333,16 @@ impl RefreshSnapshotStore {
         }
     }
 
+    /// セッション切断時に、そのセッションのスナップショットをすべて解放する
+    /// (キーは `"{session_id}\u{1}{タブ}"`)。解放した件数を返す。
+    pub fn release_session(&mut self, session_id: &str) -> usize {
+        let prefix = format!("{session_id}\u{1}");
+        let before = self.map.len();
+        self.map.retain(|k, _| !k.starts_with(&prefix));
+        self.order.retain(|k| !k.starts_with(&prefix));
+        before - self.map.len()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }
@@ -398,6 +408,22 @@ mod tests {
             b.observe(r);
         }
         b.finish().patch.expect("patch")
+    }
+
+    #[test]
+    fn release_session_drops_only_that_sessions_snapshots() {
+        let mut store = RefreshSnapshotStore::default();
+        let snap = || {
+            let mut b = RefreshBuilder::new(None, &[0], &cols()).expect("builder");
+            b.observe(&row(1, "a"));
+            b.finish().snapshot.expect("snapshot")
+        };
+        store.put("s1\u{1}tabA", snap());
+        store.put("s1\u{1}tabB", snap());
+        store.put("s10\u{1}tabA", snap());
+        assert_eq!(store.release_session("s1"), 2);
+        assert_eq!(store.len(), 1);
+        assert!(store.get_matching("s10\u{1}tabA", Some(3)).is_some());
     }
 
     #[test]

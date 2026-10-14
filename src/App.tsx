@@ -45,7 +45,7 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
 import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, isBinaryColumnType, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
-import { remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
+import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
@@ -6355,6 +6355,17 @@ export default function App() {
       });
     }
     patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
+    // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
+    // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
+    if (appliedRowShortfall(opCount, totalAffected) > 0) {
+      setStatus({
+        kind: "key",
+        key: "statusAppliedEditsShortfall",
+        vars: { rows: totalAffected, count: opCount },
+        error: true,
+      });
+      return true;
+    }
     setStatus({
       kind: "key",
       key: "statusAppliedEdits",

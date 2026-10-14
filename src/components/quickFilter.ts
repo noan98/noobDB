@@ -79,12 +79,14 @@ export function serverQuickFilter(
  * クライアント側 (クエリ結果タブ) 用の `ColumnFilter` へ変換する。数値列は
  * `eq`/`ne` (BigInt を含む数値比較)、それ以外は `equals`/`notEquals` (大小無視の
  * 文字列比較) を使い、列ヘッダのポップアップから同じ条件を組んだときと完全に
- * 同じ値になるようにする。
+ * 同じ値になるようにする。`caseSensitive` は大小区別の DB (PostgreSQL / SQLite) の
+ * テーブルタブと食い違わないよう、文字列の等値比較を大小区別にする。
  */
 export function clientQuickFilter(
   v: CellValue | undefined,
   mode: QuickFilterMode,
   numeric: boolean,
+  caseSensitive = false,
 ): ColumnFilter {
   if (isNullCell(v)) {
     return {
@@ -99,5 +101,8 @@ export function clientQuickFilter(
     value: String(v),
     value2: "",
     nullMode: "any",
+    // 数値比較には無関係。文字列の等値だけ、DB の比較規則 (PostgreSQL / SQLite は大小区別)
+    // に合わせられるよう呼び出し側が指定する。
+    ...(!numeric && caseSensitive ? { caseSensitive: true } : {}),
   };
 }
