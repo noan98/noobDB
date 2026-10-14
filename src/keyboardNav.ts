@@ -80,10 +80,7 @@ export function useReturnFocus(): void {
  * useFocusTrap(menuRef, onClose);
  * ```
  */
-export function useFocusTrap(
-  containerRef: React.RefObject<HTMLElement | null>,
-  onEscape?: () => void,
-): void {
+export function useFocusTrap(containerRef: React.RefObject<HTMLElement | null>, onEscape?: () => void): void {
   const onEscapeRef = useRef(onEscape);
   // 最新のコールバックを ref に保持して、クロージャの古い参照を防ぐ。
   useEffect(() => {
@@ -95,7 +92,7 @@ export function useFocusTrap(
     if (!container) return;
 
     const FOCUSABLE =
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+      "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), " +
       'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
     const getFocusable = (): HTMLElement[] =>
@@ -189,28 +186,28 @@ export function useRovingFocus(
       const isVertical = orientation === "vertical" || orientation === "both";
       const isHorizontal = orientation === "horizontal" || orientation === "both";
 
-      const isNext =
-        (isVertical && e.key === "ArrowDown") ||
-        (isHorizontal && e.key === "ArrowRight");
-      const isPrev =
-        (isVertical && e.key === "ArrowUp") ||
-        (isHorizontal && e.key === "ArrowLeft");
+      const isNext = (isVertical && e.key === "ArrowDown") || (isHorizontal && e.key === "ArrowRight");
+      const isPrev = (isVertical && e.key === "ArrowUp") || (isHorizontal && e.key === "ArrowLeft");
       const isHome = e.key === "Home";
       const isEnd = e.key === "End";
       // 印字可能な単一文字のみ対象。修飾キー (Ctrl/Alt/Meta) 付きはショートカット
       // 用途と衝突しうるため除外する (Shift は "A" 等の大文字入力に必要なので許可)。
       const isTypeahead =
-        !isNext && !isPrev && !isHome && !isEnd &&
-        e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
+        !isNext &&
+        !isPrev &&
+        !isHome &&
+        !isEnd &&
+        e.key.length === 1 &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.metaKey;
 
       if (!isNext && !isPrev && !isHome && !isEnd && !isTypeahead) return;
 
       const container = containerRef.current;
       if (!container) return;
 
-      const items = Array.from(
-        container.querySelectorAll<HTMLElement>(itemSelector),
-      );
+      const items = Array.from(container.querySelectorAll<HTMLElement>(itemSelector));
       if (items.length === 0) return;
 
       if (isTypeahead) {
@@ -244,20 +241,10 @@ export function useRovingFocus(
       const idx = items.indexOf(document.activeElement as HTMLElement);
 
       if (isNext) {
-        const next =
-          idx < items.length - 1
-            ? items[idx + 1]
-            : wrap
-              ? items[0]
-              : items[items.length - 1];
+        const next = idx < items.length - 1 ? items[idx + 1] : wrap ? items[0] : items[items.length - 1];
         next.focus();
       } else {
-        const prev =
-          idx > 0
-            ? items[idx - 1]
-            : wrap
-              ? items[items.length - 1]
-              : items[0];
+        const prev = idx > 0 ? items[idx - 1] : wrap ? items[items.length - 1] : items[0];
         prev.focus();
       }
     },

@@ -263,9 +263,9 @@ describe("TestDataModal AI モード (#698)", () => {
     await screen.findByLabelText(t("testDataStrategyAria", { column: "product_name" }));
     fireEvent.change(screen.getByLabelText(t("testDataSeed")), { target: { value: "123" } });
     fireEvent.change(screen.getByLabelText(t("testDataRowCount")), { target: { value: "5" } });
-    const specs = (await describeTable("s1", "app", "orders")).map((c) => inferColumnSpec(c)).map((sp) =>
-      sp.column === "customer_id" ? { ...sp, choices: [98765, 98766, 98767] } : sp,
-    );
+    const specs = (await describeTable("s1", "app", "orders"))
+      .map((c) => inferColumnSpec(c))
+      .map((sp) => (sp.column === "customer_id" ? { ...sp, choices: [98765, 98766, 98767] } : sp));
     const expected = generateRows(specs, 5, 123).map((r) => r.map((v) => String(v)));
     await waitFor(() => {
       const rows = Array.from(document.querySelectorAll("tbody tr")).map((tr) =>

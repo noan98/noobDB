@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
-import {
-  ContextMenu,
-  submenuOrFlat,
-  type ContextMenuEntry,
-} from "../components/ContextMenu";
+import { ContextMenu, submenuOrFlat, type ContextMenuEntry } from "../components/ContextMenu";
 
 // 右クリックメニューの階層化 (#1018)。項目数が状況で膨らむグループ (結果グリッドの
 // 「参照元を表示」など) をサブメニューへ畳めるようにしたので、ここでは共有
@@ -55,10 +51,7 @@ describe("ContextMenu のサブメニュー", () => {
     expect(screen.queryByRole("menuitem", { name: "a.x" })).toBeNull();
 
     await user.hover(screen.getByRole("menuitem", { name: "参照元を表示" }));
-    expect(screen.getByRole("menuitem", { name: "参照元を表示" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    expect(screen.getByRole("menuitem", { name: "参照元を表示" })).toHaveAttribute("aria-expanded", "true");
 
     await user.click(await screen.findByRole("menuitem", { name: "a.x" }));
     expect(onSelect).toHaveBeenCalledTimes(1);
@@ -135,10 +128,7 @@ describe("ContextMenu のサブメニュー", () => {
 
   it("サブメニューを開いても親メニューの矢印移動は子項目を拾わない", async () => {
     const user = userEvent.setup();
-    renderMenu([
-      { label: "グループ", items: [child("a"), child("b")] },
-      child("トップ項目"),
-    ]);
+    renderMenu([{ label: "グループ", items: [child("a"), child("b")] }, child("トップ項目")]);
 
     const trigger = screen.getByRole("menuitem", { name: "グループ" });
     await user.hover(trigger);

@@ -106,7 +106,11 @@ describe("tokenizeSql / highlightSqlHtml", () => {
     "",
   ];
   it.each(samples)("連結すると元の SQL に戻る: %s", (sql) => {
-    expect(tokenizeSql(sql).map((t) => t.text).join("")).toBe(sql);
+    expect(
+      tokenizeSql(sql)
+        .map((t) => t.text)
+        .join(""),
+    ).toBe(sql);
   });
 
   it("キーワード・文字列・数値・コメントを色分けする", () => {
@@ -118,7 +122,9 @@ describe("tokenizeSql / highlightSqlHtml", () => {
   });
 
   it("SQL 中の <script> はエスケープされタグにならない (XSS)", () => {
-    const html = highlightSqlHtml("SELECT '</code></pre><script>alert(1)</script>' AS x -- <img src=x onerror=alert(1)>");
+    const html = highlightSqlHtml(
+      "SELECT '</code></pre><script>alert(1)</script>' AS x -- <img src=x onerror=alert(1)>",
+    );
     expect(html).not.toContain("<script");
     expect(html).not.toContain("<img");
     expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
@@ -130,7 +136,7 @@ describe("extractReferencedTables", () => {
   it("FROM / JOIN の参照テーブルを抽出する (エイリアス・修飾・引用符)", () => {
     expect(
       extractReferencedTables(
-        "SELECT * FROM users u JOIN `app`.`orders` AS o ON o.uid = u.id LEFT JOIN \"public\".\"items\" i ON 1=1",
+        'SELECT * FROM users u JOIN `app`.`orders` AS o ON o.uid = u.id LEFT JOIN "public"."items" i ON 1=1',
       ),
     ).toEqual([
       { database: null, table: "users" },
@@ -191,7 +197,15 @@ describe("bundleSchemaTargets / loadBundleSchema", () => {
 
   it("1 テーブルの失敗は error として残し、他は取得する", async () => {
     const cols: TableColumnInfo[] = [
-      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", fk: null } as unknown as TableColumnInfo,
+      {
+        name: "id",
+        data_type: "int",
+        nullable: false,
+        key: "PRI",
+        default: null,
+        extra: "",
+        fk: null,
+      } as unknown as TableColumnInfo,
     ];
     const describe = vi.fn(async (_db: string, table: string) => {
       if (table === "bad") throw new Error("boom");
@@ -288,7 +302,14 @@ describe("buildInvestigationBundleHtml", () => {
           },
           { database: null, table: "missing", columns: null, error: evil },
         ],
-        plan: { result: { columns: [{ name: "p", type_name: "" }], rows: [[evil]], rows_affected: 0, elapsed_ms: 0 } },
+        plan: {
+          result: {
+            columns: [{ name: "p", type_name: "" }],
+            rows: [[evil]],
+            rows_affected: 0,
+            elapsed_ms: 0,
+          },
+        },
         labels: { ...LABELS, title: evil, notice: evil },
       }),
     );
@@ -301,9 +322,31 @@ describe("buildInvestigationBundleHtml", () => {
     expect(html).not.toMatch(/<[a-z][^>]*\son\w+\s*=/i);
     // 出現するタグは生成器が出す固定の集合だけ。
     const allowed = new Set([
-      "html", "head", "meta", "title", "style", "body", "header", "h1", "h2", "h3", "p", "main",
-      "section", "table", "thead", "tbody", "tr", "th", "td", "div", "pre", "code", "span",
-      "footer", "script",
+      "html",
+      "head",
+      "meta",
+      "title",
+      "style",
+      "body",
+      "header",
+      "h1",
+      "h2",
+      "h3",
+      "p",
+      "main",
+      "section",
+      "table",
+      "thead",
+      "tbody",
+      "tr",
+      "th",
+      "td",
+      "div",
+      "pre",
+      "code",
+      "span",
+      "footer",
+      "script",
     ]);
     expect(tagNames(html).filter((t) => !allowed.has(t))).toEqual([]);
     expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
@@ -377,7 +420,14 @@ describe("buildInvestigationBundleHtml", () => {
             database: "appdb",
             table: "users",
             columns: [
-              { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "auto_increment" } as unknown as TableColumnInfo,
+              {
+                name: "id",
+                data_type: "int",
+                nullable: false,
+                key: "PRI",
+                default: null,
+                extra: "auto_increment",
+              } as unknown as TableColumnInfo,
             ],
           },
         ],
@@ -395,7 +445,9 @@ describe("buildInvestigationBundleHtml", () => {
     expect(html).toContain("appdb.users");
     expect(html).toContain("auto_increment");
     expect(html).toContain(">Plan<");
-    expect(html).toContain('<pre class="plan">{\n  &quot;query_block&quot;: {\n    &quot;select_id&quot;: 1\n  }\n}</pre>');
+    expect(html).toContain(
+      '<pre class="plan">{\n  &quot;query_block&quot;: {\n    &quot;select_id&quot;: 1\n  }\n}</pre>',
+    );
   });
 
   it("実行計画の取得失敗は理由付きで表示する", () => {

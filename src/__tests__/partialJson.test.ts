@@ -22,7 +22,7 @@ describe("extractPartialJsonStrings (#1470)", () => {
     expect(extractPartialJsonStrings('{"explanation":')).toEqual({});
   });
 
-  it("先頭の空白と、エスケープ (\\n \\\" \\\\ \\uXXXX) を解釈する", () => {
+  it('先頭の空白と、エスケープ (\\n \\" \\\\ \\uXXXX) を解釈する', () => {
     const text = ' \n{"a":"x\\ny \\"q\\" \\\\ \\u3042"}';
     expect(extractPartialJsonStrings(text)).toEqual({ a: 'x\ny "q" \\ あ' });
   });
@@ -40,7 +40,8 @@ describe("extractPartialJsonStrings (#1470)", () => {
   });
 
   it("入れ子のオブジェクトや配列の中の文字列は拾わない", () => {
-    const text = '{"items":[{"explanation":"inner"},"s"],"meta":{"explanation":"inner2"},"explanation":"outer"}';
+    const text =
+      '{"items":[{"explanation":"inner"},"s"],"meta":{"explanation":"inner2"},"explanation":"outer"}';
     expect(extractPartialJsonStrings(text)).toEqual({ explanation: "outer" });
   });
 
@@ -54,19 +55,22 @@ describe("extractPartialJsonStrings (#1470)", () => {
   });
 
   it("数値・真偽値・null の値の後ろの文字列は、そのキーの値として扱わない", () => {
-    expect(extractPartialJsonStrings('{"n":1,"s":"x","b":true,"z":null,"t":"y"}')).toEqual({ s: "x", t: "y" });
+    expect(extractPartialJsonStrings('{"n":1,"s":"x","b":true,"z":null,"t":"y"}')).toEqual({
+      s: "x",
+      t: "y",
+    });
   });
 
   it("同じ入力を 1 文字ずつ受信しても、届いた分だけが単調に伸びる", () => {
-    const full = JSON.stringify({ explanation: "あいう\n\"え\"", cause: "かきく" });
+    const full = JSON.stringify({ explanation: 'あいう\n"え"', cause: "かきく" });
     let prev = "";
     for (let i = 0; i <= full.length; i++) {
       const got = extractPartialJsonStrings(full.slice(0, i)).explanation ?? "";
-      expect("あいう\n\"え\"".startsWith(got)).toBe(true);
+      expect('あいう\n"え"'.startsWith(got)).toBe(true);
       expect(got.length).toBeGreaterThanOrEqual(prev.length);
       prev = got;
     }
-    expect(prev).toBe("あいう\n\"え\"");
+    expect(prev).toBe('あいう\n"え"');
   });
 });
 

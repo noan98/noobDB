@@ -158,76 +158,89 @@ const HistoryRow = memo(function HistoryRow({
         ? t("historyAffectedMeta", { rows: h.rows_affected })
         : "";
   return (
-      <MotionTreeNode
-        key={h.id}
-        initial={fadeIn ? variants.fade.initial : false}
-        animate={variants.fade.animate}
-        transition={transitions.crossfade}
-      >
-        <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
-          <TreeRow
-            position="relative"
-            role="treeitem"
-            tabIndex={0}
-            onClick={() => onRestore(h.id)}
-            onKeyDown={(e) => {
-              // 行内のボタン (コピー等) から伝わったキーはボタンに任せる
-              if (e.target !== e.currentTarget) return;
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onRestore(h.id);
-              }
-            }}
-            css={{
-              "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
-                opacity: 1,
-                pointerEvents: "auto",
-              },
-            }}
-          >
-            <TreeChevron visibility="hidden" aria-hidden />
-            <TreeIcon color="app.accent" aria-hidden>
-              <Icon name={failed ? "close" : "refresh"} />
-            </TreeIcon>
-            <TreeLabel fontFamily="mono">{h.sql_preview}</TreeLabel>
-            {failed && (
-              <TreeBadge
-                bg={semanticColorToken("info", "subtle")}
-                color="app.text"
-                borderColor="app.borderStrong"
-                fontWeight={700}
-              >
-                {t("historyStatusError")}
-              </TreeBadge>
-            )}
-            {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
-            {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
-            <chakra.span
-              data-row-actions=""
-              position="absolute"
-              top="0"
-              right="0"
-              bottom="0"
-              display="flex"
-              alignItems="center"
-              gap="0.5"
-              pl="4"
-              pr="1.5"
-              background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
-              opacity={0}
-              pointerEvents="none"
-              transitionProperty="opacity"
-              transitionDuration="var(--dur-fast)"
-              transitionTimingFunction="var(--ease)"
+    <MotionTreeNode
+      key={h.id}
+      initial={fadeIn ? variants.fade.initial : false}
+      animate={variants.fade.animate}
+      transition={transitions.crossfade}
+    >
+      <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
+        <TreeRow
+          position="relative"
+          role="treeitem"
+          tabIndex={0}
+          onClick={() => onRestore(h.id)}
+          onKeyDown={(e) => {
+            // 行内のボタン (コピー等) から伝わったキーはボタンに任せる
+            if (e.target !== e.currentTarget) return;
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onRestore(h.id);
+            }
+          }}
+          css={{
+            "&:hover [data-row-actions], &:focus-within [data-row-actions]": {
+              opacity: 1,
+              pointerEvents: "auto",
+            },
+          }}
+        >
+          <TreeChevron visibility="hidden" aria-hidden />
+          <TreeIcon color="app.accent" aria-hidden>
+            <Icon name={failed ? "close" : "refresh"} />
+          </TreeIcon>
+          <TreeLabel fontFamily="mono">{h.sql_preview}</TreeLabel>
+          {failed && (
+            <TreeBadge
+              bg={semanticColorToken("info", "subtle")}
+              color="app.text"
+              borderColor="app.borderStrong"
+              fontWeight={700}
             >
-              <CopyButton
-                copied={copied}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onCopy(h.id);
-                }}
-                label={t("historyCopySql")}
-                copiedLabel={t("historyCopied")}
+              {t("historyStatusError")}
+            </TreeBadge>
+          )}
+          {!failed && meta && <TreeBadge>{meta}</TreeBadge>}
+          {h.elapsed_ms != null && <TreeBadge>{h.elapsed_ms} ms</TreeBadge>}
+          <chakra.span
+            data-row-actions=""
+            position="absolute"
+            top="0"
+            right="0"
+            bottom="0"
+            display="flex"
+            alignItems="center"
+            gap="0.5"
+            pl="4"
+            pr="1.5"
+            background="linear-gradient(to right, transparent, var(--bg-hover) 28%)"
+            opacity={0}
+            pointerEvents="none"
+            transitionProperty="opacity"
+            transitionDuration="var(--dur-fast)"
+            transitionTimingFunction="var(--ease)"
+          >
+            <CopyButton
+              copied={copied}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCopy(h.id);
+              }}
+              label={t("historyCopySql")}
+              copiedLabel={t("historyCopied")}
+              minW="0"
+              w="24px"
+              h="24px"
+              p="0"
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              color="app.textSecondary"
+              _hover={{ color: "app.text" }}
+            />
+            <Tooltip label={t("historyOpenInNewTab")}>
+              <chakra.button
+                type="button"
                 minW="0"
                 w="24px"
                 h="24px"
@@ -237,8 +250,17 @@ const HistoryRow = memo(function HistoryRow({
                 justifyContent="center"
                 color="app.textSecondary"
                 _hover={{ color: "app.text" }}
-              />
-              <Tooltip label={t("historyOpenInNewTab")}>
+                aria-label={t("historyOpenInNewTab")}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenInNewTab(h.id);
+                }}
+              >
+                <Icon name="query" size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
+            {canSaveAsSnippet && (
+              <Tooltip label={t("historySaveAsSnippet")}>
                 <chakra.button
                   type="button"
                   minW="0"
@@ -250,45 +272,23 @@ const HistoryRow = memo(function HistoryRow({
                   justifyContent="center"
                   color="app.textSecondary"
                   _hover={{ color: "app.text" }}
-                  aria-label={t("historyOpenInNewTab")}
+                  aria-label={t("historySaveAsSnippet")}
                   onClick={(e) => {
                     e.stopPropagation();
-                    onOpenInNewTab(h.id);
+                    onSaveAsSnippet(h.id);
                   }}
                 >
-                  <Icon name="query" size={ICON_SIZES.md} />
+                  <Icon name="snippet" size={ICON_SIZES.md} />
                 </chakra.button>
               </Tooltip>
-              {canSaveAsSnippet && (
-                <Tooltip label={t("historySaveAsSnippet")}>
-                  <chakra.button
-                    type="button"
-                    minW="0"
-                    w="24px"
-                    h="24px"
-                    p="0"
-                    display="inline-flex"
-                    alignItems="center"
-                    justifyContent="center"
-                    color="app.textSecondary"
-                    _hover={{ color: "app.text" }}
-                    aria-label={t("historySaveAsSnippet")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSaveAsSnippet(h.id);
-                    }}
-                  >
-                    <Icon name="snippet" size={ICON_SIZES.md} />
-                  </chakra.button>
-                </Tooltip>
-              )}
-            </chakra.span>
-          </TreeRow>
-        </Tooltip>
-        <Box pt="0" pr="1.5" pb="1" pl="7" fontSize="2xs" color="app.textMuted">
-          {formatTime(h.executed_at)}
-        </Box>
-      </MotionTreeNode>
+            )}
+          </chakra.span>
+        </TreeRow>
+      </Tooltip>
+      <Box pt="0" pr="1.5" pb="1" pl="7" fontSize="2xs" color="app.textMuted">
+        {formatTime(h.executed_at)}
+      </Box>
+    </MotionTreeNode>
   );
 });
 
@@ -297,7 +297,15 @@ const HISTORY_FADE_IN_ROWS = 20;
 
 // memo 化して App.tsx の高頻度な再レンダリングから切り離す。props は親で
 // useCallback 安定化済み。i18n は内部の useT 購読で追従する。
-export const HistoryList = memo(function HistoryList({ activeProfile, sessionId, reloadKey, onRestore, onOpenInNewTab, onSaveAsSnippet, onNewQuery }: Props) {
+export const HistoryList = memo(function HistoryList({
+  activeProfile,
+  sessionId,
+  reloadKey,
+  onRestore,
+  onOpenInNewTab,
+  onSaveAsSnippet,
+  onNewQuery,
+}: Props) {
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [flightRecorderOpen, setFlightRecorderOpen] = useState(false);
@@ -357,7 +365,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
 
   // Scope to the active profile unless "show all" is on. When disconnected
   // there is no active profile, so everything is shown.
-  const scopeId = showAll ? null : activeProfile?.id ?? null;
+  const scopeId = showAll ? null : (activeProfile?.id ?? null);
   const statusParam = historyStatusParam(statusFilter);
   // Memoized so re-renders unrelated to the period filter (e.g. the copy-icon
   // timer) don't recompute `now` and spuriously re-trigger the fetch effect
@@ -425,10 +433,7 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
         />
         {activeProfile && (
           <ScopeToggle>
-            <Checkbox
-              checked={showAll}
-              onChange={(e) => setShowAll(e.target.checked)}
-            />
+            <Checkbox checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
             {t("historyShowAll")}
           </ScopeToggle>
         )}
@@ -460,18 +465,18 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
           ))}
         </FilterSegment>
         <Tooltip label={t("historySpeedFilterHint")}>
-        <FilterSegment role="group" aria-label={t("historySpeedFilterLabel")}>
-          {HISTORY_SPEED_FILTERS.map((m) => (
-            <FilterSegmentButton
-              key={m}
-              type="button"
-              aria-pressed={speedFilter === m}
-              onClick={() => setSpeedFilter(m)}
-            >
-              {t(SPEED_FILTER_LABEL_KEYS[m])}
-            </FilterSegmentButton>
-          ))}
-        </FilterSegment>
+          <FilterSegment role="group" aria-label={t("historySpeedFilterLabel")}>
+            {HISTORY_SPEED_FILTERS.map((m) => (
+              <FilterSegmentButton
+                key={m}
+                type="button"
+                aria-pressed={speedFilter === m}
+                onClick={() => setSpeedFilter(m)}
+              >
+                {t(SPEED_FILTER_LABEL_KEYS[m])}
+              </FilterSegmentButton>
+            ))}
+          </FilterSegment>
         </Tooltip>
         {aiAvailable && (
           <Tooltip label={t("aiHistoryToggleHint")}>
@@ -513,10 +518,14 @@ export const HistoryList = memo(function HistoryList({ activeProfile, sessionId,
       )}
 
       {error ? (
-        <chakra.p color="app.textError" p="3">{error}</chakra.p>
+        <chakra.p color="app.textError" p="3">
+          {error}
+        </chakra.p>
       ) : shownEntries.length === 0 ? (
         hasActiveFilter || entries.length > 0 ? (
-          <chakra.p color="app.textMuted" p="3">{t("historyNoMatches")}</chakra.p>
+          <chakra.p color="app.textMuted" p="3">
+            {t("historyNoMatches")}
+          </chakra.p>
         ) : (
           <EmptyState
             icon="clock"

@@ -37,11 +37,7 @@ function makeColumnDiff(name: string, status: DiffStatus): ColumnDiff {
   };
 }
 
-function makeTableDiff(
-  name: string,
-  status: DiffStatus,
-  columns: ColumnDiff[] = [],
-): TableDiff {
+function makeTableDiff(name: string, status: DiffStatus, columns: ColumnDiff[] = []): TableDiff {
   return { name, status, columns };
 }
 
@@ -59,9 +55,7 @@ describe("TableDiffRow アコーディオン (#1008)", () => {
   });
 
   it("差分ありのテーブルは初期状態で展開済み", () => {
-    const table = makeTableDiff("orders", "different", [
-      makeColumnDiff("total", "different"),
-    ]);
+    const table = makeTableDiff("orders", "different", [makeColumnDiff("total", "different")]);
     renderWithProviders(<TableDiffRow table={table} t={t} />);
 
     const toggle = screen.getByRole("button", { name: /orders/ });
@@ -71,9 +65,7 @@ describe("TableDiffRow アコーディオン (#1008)", () => {
 
   it("クリックで展開/折りたたみを切り替え、カラム行が出入りする", async () => {
     const user = userEvent.setup();
-    const table = makeTableDiff("products", "target_only", [
-      makeColumnDiff("sku", "target_only"),
-    ]);
+    const table = makeTableDiff("products", "target_only", [makeColumnDiff("sku", "target_only")]);
     renderWithProviders(<TableDiffRow table={table} t={t} />);
 
     const toggle = screen.getByRole("button", { name: /products/ });
@@ -89,9 +81,7 @@ describe("TableDiffRow アコーディオン (#1008)", () => {
 
   it("キーボード (Enter) だけで展開できる — ネイティブ button semantics を保つ", async () => {
     const user = userEvent.setup();
-    const table = makeTableDiff("invoices", "source_only", [
-      makeColumnDiff("amount", "source_only"),
-    ]);
+    const table = makeTableDiff("invoices", "source_only", [makeColumnDiff("amount", "source_only")]);
     renderWithProviders(<TableDiffRow table={table} t={t} />);
 
     const toggle = screen.getByRole("button", { name: /invoices/ });

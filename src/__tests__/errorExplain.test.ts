@@ -58,7 +58,10 @@ describe("テーブル名抽出", () => {
         "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE",
       ),
     ).toEqual(["orders", "users"]);
-    expect(tables("ALTER TABLE a ADD FOREIGN KEY (x) REFERENCES b(id) ON UPDATE NO ACTION")).toEqual(["a", "b"]);
+    expect(tables("ALTER TABLE a ADD FOREIGN KEY (x) REFERENCES b(id) ON UPDATE NO ACTION")).toEqual([
+      "a",
+      "b",
+    ]);
     expect(tables("CREATE TABLE IF NOT EXISTS t (id INT)")).toEqual(["t"]);
     expect(tables("ALTER TABLE IF EXISTS ONLY a ADD FOREIGN KEY (x) REFERENCES b(id)")).toEqual(["a", "b"]);
   });
@@ -82,9 +85,9 @@ describe("テーブル名抽出", () => {
   });
 
   it("リテラル・コメント内の FROM は無視し、重複と上限を処理する", () => {
-    expect(extractTableRefs("SELECT 'x FROM fake' FROM real -- FROM nope", "mysql").map((r) => r.table)).toEqual([
-      "real",
-    ]);
+    expect(
+      extractTableRefs("SELECT 'x FROM fake' FROM real -- FROM nope", "mysql").map((r) => r.table),
+    ).toEqual(["real"]);
     expect(extractTableRefs("SELECT * FROM a, (SELECT 1 FROM a)", "mysql")).toHaveLength(1);
     const many = Array.from({ length: 9 }, (_, i) => `JOIN t${i} ON 1=1`).join(" ");
     expect(extractTableRefs(`SELECT 1 FROM t ${many}`, "mysql")).toHaveLength(5);
@@ -104,7 +107,14 @@ describe("プロンプト", () => {
         {
           name: "users",
           columns: [
-            { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+            {
+              name: "id",
+              data_type: "int",
+              nullable: false,
+              key: "PRI",
+              referenced_table: null,
+              referenced_column: null,
+            },
           ],
         },
       ],
@@ -141,7 +151,6 @@ describe("応答パース", () => {
     expect(ERROR_EXPLAIN_FORMAT.schema.additionalProperties).toBe(false);
   });
 });
-
 
 describe("エラー文のマスク (#692)", () => {
   it("SQL のリテラルと一致する部分を伏せ、識別子は残す", () => {

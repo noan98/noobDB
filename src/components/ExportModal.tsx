@@ -228,7 +228,22 @@ type Status =
  */
 type ExportScope = "current" | "selection" | "full";
 
-export function ExportModal({ columns, rows, database, table, driver, partial, stoppedPartial, fullExport, selection, bundle, elapsedMs, resultId, maskConfig, onClose }: Props) {
+export function ExportModal({
+  columns,
+  rows,
+  database,
+  table,
+  driver,
+  partial,
+  stoppedPartial,
+  fullExport,
+  selection,
+  bundle,
+  elapsedMs,
+  resultId,
+  maskConfig,
+  onClose,
+}: Props) {
   const t = useT();
   const locale = useLocale();
   const toast = useToast();
@@ -302,7 +317,13 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   };
   // バンドルでのマスク対象列 (列名で判定するので選択範囲の列部分集合にもそのまま効く)。
   const bundleMasked = useMemo(
-    () => (maskConfig ? resolveMaskedColumns(effectiveColumns.map((c) => c.name), maskConfig) : null),
+    () =>
+      maskConfig
+        ? resolveMaskedColumns(
+            effectiveColumns.map((c) => c.name),
+            maskConfig,
+          )
+        : null,
     [effectiveColumns, maskConfig],
   );
   const bundleMaskedNames = useMemo(
@@ -385,16 +406,14 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   useEffect(() => {
     if (masks.length === 0) return;
     let cancelled = false;
-    api
-      .maskExportRows({ columns: effectiveColumns, rows: previewRows, masks })
-      .then(
-        (out) => {
-          if (!cancelled) setMaskedPreview({ masks, source: previewRows, rows: out });
-        },
-        (e) => {
-          if (!cancelled) setMaskedPreview({ masks, source: previewRows, error: String(e) });
-        },
-      );
+    api.maskExportRows({ columns: effectiveColumns, rows: previewRows, masks }).then(
+      (out) => {
+        if (!cancelled) setMaskedPreview({ masks, source: previewRows, rows: out });
+      },
+      (e) => {
+        if (!cancelled) setMaskedPreview({ masks, source: previewRows, error: String(e) });
+      },
+    );
     return () => {
       cancelled = true;
     };
@@ -454,7 +473,21 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
           : ddlPreviewHeader +
             buildExportContent(format, effectiveColumns, previewSourceRows, queryForJson, exportCtx),
     // buildBundleHtmlSync は下記の依存だけから決まる (毎レンダーで作り直される関数自体は除外)。
-    [format, effectiveColumns, previewSourceRows, queryForJson, exportCtx, ddlPreviewHeader, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
+    [
+      format,
+      effectiveColumns,
+      previewSourceRows,
+      queryForJson,
+      exportCtx,
+      ddlPreviewHeader,
+      bundleMasked,
+      bundleHost,
+      bundle,
+      elapsedMs,
+      partial,
+      scope,
+      locale,
+    ],
   );
   const previewMaskError = currentMasked && "error" in currentMasked ? currentMasked.error : null;
   const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
@@ -597,16 +630,16 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         format === "bundle"
           ? { name: "HTML", extensions: ["html", "htm"] }
           : format === "csv"
-          ? { name: "CSV", extensions: ["csv"] }
-          : format === "ndjson"
-            ? { name: "NDJSON", extensions: ["ndjson", "jsonl"] }
-            : format === "markdown"
-              ? { name: "Markdown", extensions: ["md", "markdown"] }
-              : format === "sql"
-                ? { name: "SQL", extensions: ["sql"] }
-                : format === "xlsx"
-                  ? { name: "Excel", extensions: ["xlsx"] }
-                  : { name: "JSON", extensions: ["json"] },
+            ? { name: "CSV", extensions: ["csv"] }
+            : format === "ndjson"
+              ? { name: "NDJSON", extensions: ["ndjson", "jsonl"] }
+              : format === "markdown"
+                ? { name: "Markdown", extensions: ["md", "markdown"] }
+                : format === "sql"
+                  ? { name: "SQL", extensions: ["sql"] }
+                  : format === "xlsx"
+                    ? { name: "Excel", extensions: ["xlsx"] }
+                    : { name: "JSON", extensions: ["json"] },
       ],
     });
     if (typeof selected === "string" && selected) {
@@ -703,8 +736,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     setStatus({ kind: "streaming", rows: 0, streamId });
     unlistenRef.current?.();
     const unlisten = await listenExportStream(streamId, {
-      onProgress: (e) =>
-        setStatus((cur) => (cur.kind === "streaming" ? { ...cur, rows: e.rows } : cur)),
+      onProgress: (e) => setStatus((cur) => (cur.kind === "streaming" ? { ...cur, rows: e.rows } : cur)),
       onDone: (e) => {
         unlistenRef.current?.();
         unlistenRef.current = null;
@@ -780,7 +812,13 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         {(hasSelection || (fullExport && !isBundle)) && (
           <FormSection>
             <FieldLabel as="div">{t("exportScope")}</FieldLabel>
-            <chakra.div role="radiogroup" aria-label={t("exportScope")} display="flex" flexDirection="column" gap="1.5">
+            <chakra.div
+              role="radiogroup"
+              aria-label={t("exportScope")}
+              display="flex"
+              flexDirection="column"
+              gap="1.5"
+            >
               {(
                 [
                   "current",
@@ -790,7 +828,14 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                   ...(fullExport && !isBundle ? (["full"] as const) : []),
                 ] as const
               ).map((sc) => (
-                <chakra.label key={sc} display="inline-flex" alignItems="flex-start" gap="2" cursor="pointer" userSelect="none">
+                <chakra.label
+                  key={sc}
+                  display="inline-flex"
+                  alignItems="flex-start"
+                  gap="2"
+                  cursor="pointer"
+                  userSelect="none"
+                >
                   <Radio
                     name="export-scope"
                     value={sc}
@@ -831,7 +876,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         {partial && (scope === "current" || (isBundle && scope === "full")) && (
           <chakra.div
             role="status"
-            py="2" px="2.5"
+            py="2"
+            px="2.5"
             border="1px solid"
             borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
             bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
@@ -845,13 +891,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         )}
         <FormSection>
           <FieldLabel as="div">{t("exportFormat")}</FieldLabel>
-          <chakra.div
-            role="radiogroup"
-            aria-label={t("exportFormat")}
-            display="flex"
-            flexWrap="wrap"
-            gap="2"
-          >
+          <chakra.div role="radiogroup" aria-label={t("exportFormat")} display="flex" flexWrap="wrap" gap="2">
             {(
               [
                 "json",
@@ -868,7 +908,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 display="inline-flex"
                 alignItems="center"
                 gap="1.5"
-                py="1.5" px="3"
+                py="1.5"
+                px="3"
                 border="1px solid"
                 borderColor={format === fmt ? "app.accent" : "app.border"}
                 borderRadius="md"
@@ -893,16 +934,16 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                   {fmt === "bundle"
                     ? t("exportFormatBundle")
                     : fmt === "csv"
-                    ? t("exportFormatCsv")
-                    : fmt === "ndjson"
-                      ? t("exportFormatNdjson")
-                      : fmt === "markdown"
-                        ? t("exportFormatMarkdown")
-                        : fmt === "sql"
-                          ? t("exportFormatSql")
-                          : fmt === "xlsx"
-                            ? t("exportFormatXlsx")
-                            : t("exportFormatJson")}
+                      ? t("exportFormatCsv")
+                      : fmt === "ndjson"
+                        ? t("exportFormatNdjson")
+                        : fmt === "markdown"
+                          ? t("exportFormatMarkdown")
+                          : fmt === "sql"
+                            ? t("exportFormatSql")
+                            : fmt === "xlsx"
+                              ? t("exportFormatXlsx")
+                              : t("exportFormatJson")}
                 </span>
               </chakra.label>
             ))}
@@ -956,7 +997,14 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 </chakra.div>
                 {fullExport && (
                   <chakra.div mt="2">
-                    <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+                    <chakra.label
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="2"
+                      cursor="pointer"
+                      userSelect="none"
+                      fontSize="md"
+                    >
                       <Checkbox
                         checked={sqlIncludeDdl && canIncludeDdl}
                         onChange={(e) => setSqlIncludeDdl(e.target.checked)}
@@ -990,7 +1038,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             <chakra.div
               role="note"
               data-testid="export-bundle-warning"
-              py="2" px="2.5"
+              py="2"
+              px="2.5"
               border="1px solid"
               borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
               bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
@@ -1007,13 +1056,22 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
               </chakra.span>
               <chakra.span>
                 {bundleMaskedNames.length > 0
-                  ? t("exportBundleMasked", { count: bundleMaskedNames.length, names: bundleMaskedNames.join(", ") })
+                  ? t("exportBundleMasked", {
+                      count: bundleMaskedNames.length,
+                      names: bundleMaskedNames.join(", "),
+                    })
                   : t("exportBundleNoMasked")}
               </chakra.span>
               <chakra.span color="app.textMuted">{t("exportBundleNoSecrets")}</chakra.span>
             </chakra.div>
             <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+              <chakra.label
+                display="inline-flex"
+                alignItems="center"
+                gap="2"
+                cursor="pointer"
+                userSelect="none"
+              >
                 <Checkbox
                   checked={bundleHost}
                   onChange={(e) => setBundleHost(e.target.checked)}
@@ -1022,7 +1080,13 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 <span>{t("exportBundleIncludeHost")}</span>
               </chakra.label>
               {canBundleSchema && (
-                <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="2"
+                  cursor="pointer"
+                  userSelect="none"
+                >
                   <Checkbox
                     checked={bundleSchema}
                     onChange={(e) => setBundleSchema(e.target.checked)}
@@ -1032,7 +1096,13 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 </chakra.label>
               )}
               {canBundlePlan && (
-                <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="2"
+                  cursor="pointer"
+                  userSelect="none"
+                >
                   <Checkbox
                     checked={bundlePlan}
                     onChange={(e) => setBundlePlan(e.target.checked)}
@@ -1089,7 +1159,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
 
         <FormSection>
           <chakra.div display="flex" alignItems="center" gap="2">
-            <FieldLabel as="div" mb={0}>{t("exportPreview")}</FieldLabel>
+            <FieldLabel as="div" mb={0}>
+              {t("exportPreview")}
+            </FieldLabel>
             {maskEnabled && (
               <chakra.span
                 data-testid="export-masked-count"
@@ -1101,7 +1173,9 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                 borderColor="app.border"
                 color={maskedCount > 0 ? "app.text" : "app.textMuted"}
               >
-                {maskedCount > 0 ? t("exportMaskedColumns", { count: maskedCount }) : t("exportMaskingNoColumns")}
+                {maskedCount > 0
+                  ? t("exportMaskedColumns", { count: maskedCount })
+                  : t("exportMaskingNoColumns")}
               </chakra.span>
             )}
             <chakra.div flex="1" />
@@ -1152,7 +1226,8 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         {notices.length > 0 && (
           <chakra.div
             role="status"
-            py="2" px="2.5"
+            py="2"
+            px="2.5"
             border="1px solid"
             borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
             bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
@@ -1169,9 +1244,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             ))}
           </chakra.div>
         )}
-        {status.kind === "error" && (
-          <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>
-        )}
+        {status.kind === "error" && <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>}
       </ModalBody>
 
       <ModalFooter>

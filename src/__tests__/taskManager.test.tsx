@@ -337,8 +337,6 @@ describe("TaskManager 取得系アクションと接続リトライ (#1537)", ()
     await waitFor(() => expect(screen.getByText("Plan watch task")).toBeInTheDocument());
     expect(screen.getByText(t("taskSummaryPlanWatchAll"), { exact: false })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: t("taskHistory") }));
-    await waitFor(() =>
-      expect(screen.getByText(`(${t("taskRunAttempts", { n: 3 })})`)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(`(${t("taskRunAttempts", { n: 3 })})`)).toBeInTheDocument());
   });
 });

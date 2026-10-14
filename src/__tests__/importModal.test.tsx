@@ -158,9 +158,7 @@ describe("ImportModal xlsx source (#1171)", () => {
     const picker = await screen.findByLabelText(t("importSheet"));
     expect(picker).toHaveValue("First");
     fireEvent.change(picker, { target: { value: "Second" } });
-    await waitFor(() =>
-      expect(vi.mocked(api.parseCsvPreview).mock.lastCall?.[1].sheet).toBe("Second"),
-    );
+    await waitFor(() => expect(vi.mocked(api.parseCsvPreview).mock.lastCall?.[1].sheet).toBe("Second"));
 
     fireEvent.click(await screen.findByRole("button", { name: t("importExecute") }));
     await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
@@ -193,12 +191,8 @@ describe("ImportModal create a new table (#985)", () => {
     // 推論された型 (id → 整数, name → 文字列) と、バックエンド生成の DDL プレビュー。
     const idType = screen.getByLabelText(t("importNewTableColumnType", { name: "id" }));
     expect(idType).toHaveValue("integer");
-    expect(screen.getByLabelText(t("importNewTableColumnType", { name: "name" }))).toHaveValue(
-      "text",
-    );
-    expect(await screen.findByTestId("import-new-table-ddl")).toHaveTextContent(
-      'CREATE TABLE "new_users"',
-    );
+    expect(screen.getByLabelText(t("importNewTableColumnType", { name: "name" }))).toHaveValue("text");
+    expect(await screen.findByTestId("import-new-table-ddl")).toHaveTextContent('CREATE TABLE "new_users"');
 
     // 型を上書きして実行する。
     fireEvent.change(idType, { target: { value: "bigint" } });
@@ -234,9 +228,7 @@ describe("ImportModal create a new table (#985)", () => {
     fireEvent.change(screen.getByLabelText(t("importNewTableColumnName", { n: 2 })), {
       target: { value: "ID" },
     });
-    expect(
-      await screen.findByText(t("importNewTableDuplicateColumn", { name: "ID" })),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(t("importNewTableDuplicateColumn", { name: "ID" }))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("importExecute") })).toBeDisabled();
     // MySQL では真偽型を選択肢に出さない。
     const typeSelect = screen.getByLabelText(t("importNewTableColumnType", { name: "id" }));
@@ -328,7 +320,10 @@ describe("ImportModal preview spinner", () => {
     // 新 effect は早期 return するためスピナーが残り続けていた。
     let resolvePreview: (v: unknown) => void = () => {};
     vi.mocked(api.parseCsvPreview).mockImplementationOnce(
-      () => new Promise((r) => { resolvePreview = r; }) as never,
+      () =>
+        new Promise((r) => {
+          resolvePreview = r;
+        }) as never,
     );
     renderWithProviders(
       <ImportModal
@@ -343,9 +338,7 @@ describe("ImportModal preview spinner", () => {
     );
     expect(await screen.findByText(t("importLoadingPreview"))).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(t("importQuote")), { target: { value: "ab" } });
-    await waitFor(() =>
-      expect(screen.queryByText(t("importLoadingPreview"))).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText(t("importLoadingPreview"))).not.toBeInTheDocument());
     resolvePreview({ headers: [], rows: [], truncated: false, sheets: [] });
   });
 });
@@ -400,10 +393,7 @@ describe("ImportModal skipped rows (#1258)", () => {
 
     fireEvent.click(screen.getByRole("button", { name: t("importSkippedCopy") }));
     await waitFor(() => expect(copyMock).toHaveBeenCalledWith("ALL SKIPPED ROWS"));
-    expect(api.getImportSkippedText).toHaveBeenCalledWith(
-      t("importSkippedRow"),
-      t("importSkippedRowLine"),
-    );
+    expect(api.getImportSkippedText).toHaveBeenCalledWith(t("importSkippedRow"), t("importSkippedRowLine"));
 
     fireEvent.click(screen.getByRole("button", { name: t("importSkippedSave") }));
     await waitFor(() =>
@@ -419,9 +409,7 @@ describe("ImportModal skipped rows (#1258)", () => {
     await finishWithSkips(3, 3);
     await screen.findAllByText(t("importSkippedSummary", { inserted: 10, skipped: 3 }));
     expect(screen.queryByText(/importSkippedShowing/)).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(t("importSkippedShowing", { shown: 3, total: 3 })),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(t("importSkippedShowing", { shown: 3, total: 3 }))).not.toBeInTheDocument();
   });
 
   it("does not call save when the file dialog is cancelled", async () => {

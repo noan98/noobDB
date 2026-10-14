@@ -117,7 +117,8 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   // `!tab.streaming` 条件)、useState の初期化関数だけで再実行時の復元が完結する。
   const persistKey = useMemo(() => chartConfigKeyFrom(sourceSql), [sourceSql]);
   const [config, setConfigState] = useState<ChartConfig | null>(
-    () => readStoredChartConfig(persistKey, result.columns) ?? defaultChartConfig(result.columns, result.rows),
+    () =>
+      readStoredChartConfig(persistKey, result.columns) ?? defaultChartConfig(result.columns, result.rows),
   );
   const setConfig = (next: ChartConfig) => {
     setConfigState(next);
@@ -153,9 +154,11 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   }, [dbAgg, onRunQuery, config, sourceSql, driver, result.columns, result.rows]);
   const dbAggSql = dbAggPlan?.sql ?? null;
   const dbAggBucket = dbAggPlan?.bucket;
-  const [remote, setRemote] = useState<
-    { sql: string; model: ChartModel | null; error: string | null } | null
-  >(null);
+  const [remote, setRemote] = useState<{
+    sql: string;
+    model: ChartModel | null;
+    error: string | null;
+  } | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: 結果列の参照は config と一緒に変わるので dbAggSql だけで十分。
   useEffect(() => {
     if (!dbAggSql || !onRunQuery || !config || config.aggregation === "none") return;
@@ -167,12 +170,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         if (cancelled) return;
         setRemote({
           sql: dbAggSql,
-          model: chartModelFromAggregatedRows(
-            res.rows,
-            yNames,
-            agg,
-            dbAggBucket,
-          ),
+          model: chartModelFromAggregatedRows(res.rows, yNames, agg, dbAggBucket),
           error: null,
         });
       })
@@ -218,14 +216,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
     // 経由せずピボットへ直接移れるようにする。
     return (
       <Flex direction="column" h="100%" minH={0} minW={0}>
-        <Flex
-          align="center"
-          px="3"
-          py="2"
-          flex="none"
-          borderBottomWidth="1px"
-          borderBottomColor="app.border"
-        >
+        <Flex align="center" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
           <ResultViewSwitch value="chart" onChange={onChangeView} />
         </Flex>
         <Flex flex="1" minH={0} align="center" justify="center">
@@ -248,9 +239,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   const toggleY = (c: number) =>
     setConfig({
       ...config,
-      yCols: config.yCols.includes(c)
-        ? config.yCols.filter((y) => y !== c)
-        : [...config.yCols, c],
+      yCols: config.yCols.includes(c) ? config.yCols.filter((y) => y !== c) : [...config.yCols, c],
     });
 
   // 系列色 (#916)。既定はこれまでどおりカテゴリスケールで、連続/発散ランプを
@@ -270,7 +259,17 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   return (
     <Flex direction="column" h="100%" minH={0} minW={0}>
       {/* 設定バー */}
-      <Flex align="center" gap="2.5" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border" flexWrap="wrap" fontSize="sm">
+      <Flex
+        align="center"
+        gap="2.5"
+        px="3"
+        py="2"
+        flex="none"
+        borderBottomWidth="1px"
+        borderBottomColor="app.border"
+        flexWrap="wrap"
+        fontSize="sm"
+      >
         <ResultViewSwitch value="chart" onChange={onChangeView} />
         <ImageExportButton
           filenameBase="chart"
@@ -336,20 +335,20 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           config.aggregation !== "none" &&
           canAggregateInDb(result.columns, config, sourceSql) &&
           canTimeBucket(driver ?? "mysql", result.columns, result.rows, config.xCol) && (
-          <Field label={t("chartTimeBucket")}>
-            <ListboxSelect
-              value={config.timeBucket ?? "none"}
-              ariaLabel={t("chartTimeBucket")}
-              onChange={(v) => setBucket(v as TimeBucket)}
-              options={[
-                { value: "none", label: t("chartTimeBucketNone") },
-                { value: "day", label: t("chartTimeBucketDay") },
-                { value: "week", label: t("chartTimeBucketWeek") },
-                { value: "month", label: t("chartTimeBucketMonth") },
-              ]}
-            />
-          </Field>
-        )}
+            <Field label={t("chartTimeBucket")}>
+              <ListboxSelect
+                value={config.timeBucket ?? "none"}
+                ariaLabel={t("chartTimeBucket")}
+                onChange={(v) => setBucket(v as TimeBucket)}
+                options={[
+                  { value: "none", label: t("chartTimeBucketNone") },
+                  { value: "day", label: t("chartTimeBucketDay") },
+                  { value: "week", label: t("chartTimeBucketWeek") },
+                  { value: "month", label: t("chartTimeBucketMonth") },
+                ]}
+              />
+            </Field>
+          )}
         {dbAgg &&
           config.aggregation !== "none" &&
           config.timeBucket &&
@@ -378,7 +377,14 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           <Flex gap="2" flexWrap="wrap">
             {result.columns.map((c, i) =>
               numericCols[i] && i !== config.xCol ? (
-                <chakra.label key={i} display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
+                <chakra.label
+                  key={i}
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1"
+                  fontSize="xs"
+                  cursor="pointer"
+                >
                   <Checkbox checked={config.yCols.includes(i)} onChange={() => toggleY(i)} />
                   {c.name}
                 </chakra.label>
@@ -440,7 +446,12 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         ) : config.yCols.length === 0 ? (
           <EmptyState compact icon="filter" title={t("chartPickY")} />
         ) : config.type === "pie" ? (
-          <PieChart model={model} palette={config.palette ?? DEFAULT_CHART_PALETTE} isDark={isDark} donut={isDonut(config)} />
+          <PieChart
+            model={model}
+            palette={config.palette ?? DEFAULT_CHART_PALETTE}
+            isDark={isDark}
+            donut={isDonut(config)}
+          />
         ) : (
           <CartesianChart
             model={model}
@@ -458,7 +469,9 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Flex align="center" gap="1.5">
-      <chakra.span color="app.textMuted" fontSize="xs">{label}</chakra.span>
+      <chakra.span color="app.textMuted" fontSize="xs">
+        {label}
+      </chakra.span>
       {children}
     </Flex>
   );
@@ -574,197 +587,224 @@ export function CartesianChart({
 
   return (
     <>
-    <chakra.svg
-      viewBox={`0 0 ${W} ${H}`}
-      width="100%"
-      style={{ maxHeight: "100%" }}
-      role="group"
-      aria-roledescription={t("chartAriaRoleDescription")}
-      aria-label={ariaLabel}
-      tabIndex={0}
-      css={CHART_FOCUS_CSS}
-      data-chart-svg=""
-      onMouseMove={onMove}
-      onMouseLeave={() => setHover(null)}
-      onKeyDown={onKey}
-      onBlur={() => setHover(null)}
-    >
-      <defs>
-        {/* 面グラフの縦グラデ: 系列色をプロット上端で濃く、下端で透明へ (userSpaceOnUse で
+      <chakra.svg
+        viewBox={`0 0 ${W} ${H}`}
+        width="100%"
+        style={{ maxHeight: "100%" }}
+        role="group"
+        aria-roledescription={t("chartAriaRoleDescription")}
+        aria-label={ariaLabel}
+        tabIndex={0}
+        css={CHART_FOCUS_CSS}
+        data-chart-svg=""
+        onMouseMove={onMove}
+        onMouseLeave={() => setHover(null)}
+        onKeyDown={onKey}
+        onBlur={() => setHover(null)}
+      >
+        <defs>
+          {/* 面グラフの縦グラデ: 系列色をプロット上端で濃く、下端で透明へ (userSpaceOnUse で
             負値や全 0 の面でも外接矩形に左右されない)。色は系列色 (colorScale 由来) のまま。 */}
-        {type === "area" &&
-          model.series.map((_, si) => (
-            <linearGradient
-              key={si}
-              id={`${uid}-area-${si}`}
-              gradientUnits="userSpaceOnUse"
-              x1="0"
-              y1={PAD.top}
-              x2="0"
-              y2={PAD.top + plotH}
-            >
-              <stop offset="0%" stopColor={colors[si % colors.length]} stopOpacity={0.38} />
-              <stop offset="100%" stopColor={colors[si % colors.length]} stopOpacity={0.02} />
-            </linearGradient>
-          ))}
-      </defs>
-      {/* 水平グリッド線 + Y 目盛ラベル。0 基線だけ濃く実線にする。 */}
-      {ticks.map((v, i) => {
-        const y = yAt(v);
-        const baseline = v === 0;
-        return (
-          <g key={i}>
-            <line
-              x1={PAD.left}
-              y1={y}
-              x2={PAD.left + plotW}
-              y2={y}
-              stroke={baseline ? "var(--border)" : "var(--border-subtle)"}
-              strokeDasharray={baseline ? undefined : "3 4"}
-            />
-            <text x={PAD.left - 8} y={y + 3} textAnchor="end" style={{ fontSize: "var(--text-xs)" }} fill="var(--text-muted)">
-              {formatTick(v)}
-            </text>
-          </g>
-        );
-      })}
-      {/* Y 軸線 */}
-      <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + plotH} stroke="var(--border)" />
-
-      {/* ホバー中バンドの強調 + 縦ガイド */}
-      {hover != null && (
-        <>
-          <rect
-            x={PAD.left + bandW * hover}
-            y={PAD.top}
-            width={bandW}
-            height={plotH}
-            fill="var(--accent)"
-            fillOpacity={0.08}
-          />
-          <line
-            x1={xAt(hover)}
-            y1={PAD.top}
-            x2={xAt(hover)}
-            y2={PAD.top + plotH}
-            stroke="var(--accent)"
-            strokeOpacity={0.5}
-            strokeDasharray="2 3"
-          />
-        </>
-      )}
-
-      {/* X 軸ラベル */}
-      {model.labels.map((lab, i) =>
-        i % labelStep === 0 ? (
-          <text key={i} x={xAt(i)} y={H - PAD.bottom + 16} textAnchor="end" style={{ fontSize: "var(--text-2xs)" }} fill="var(--text-muted)"
-            transform={`rotate(-30 ${xAt(i)} ${H - PAD.bottom + 16})`}>
-            {truncate(lab)}
-          </text>
-        ) : null,
-      )}
-      {/* X 軸タイトル (どの列が横軸かを明示) */}
-      {xName && (
-        <text x={PAD.left + plotW / 2} y={H - 6} textAnchor="middle" style={{ fontSize: "var(--text-xs)" }} fontWeight={600} fill="var(--text-secondary)">
-          {truncate(xName, 48)}
-        </text>
-      )}
-
-      {/* 系列 */}
-      {model.series.map((s, si) => {
-        const color = colors[si % colors.length];
-        if (type === "bar") {
-          const seriesCount = model.series.length;
-          const barW = (bandW * 0.7) / seriesCount;
+          {type === "area" &&
+            model.series.map((_, si) => (
+              <linearGradient
+                key={si}
+                id={`${uid}-area-${si}`}
+                gradientUnits="userSpaceOnUse"
+                x1="0"
+                y1={PAD.top}
+                x2="0"
+                y2={PAD.top + plotH}
+              >
+                <stop offset="0%" stopColor={colors[si % colors.length]} stopOpacity={0.38} />
+                <stop offset="100%" stopColor={colors[si % colors.length]} stopOpacity={0.02} />
+              </linearGradient>
+            ))}
+        </defs>
+        {/* 水平グリッド線 + Y 目盛ラベル。0 基線だけ濃く実線にする。 */}
+        {ticks.map((v, i) => {
+          const y = yAt(v);
+          const baseline = v === 0;
           return (
-            <g key={si}>
-              {s.values.map((v, i) => {
-                const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
-                const y = Math.min(yAt(v), zeroY);
-                const h = Math.abs(yAt(v) - zeroY);
-                // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
-                // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
-                // ため、値側の端だけ丸めたパスで描く。半径は radius トークンの実値を
-                // `barRadius` で読み、トークンを単一ソースに保つ。
-                const up = v >= 0;
-                return (
-                  <motion.path
-                    key={i}
-                    d={roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up)}
-                    fill={valueColors?.[i] ?? color}
-                    fillOpacity={hover == null || hover === i ? 1 : 0.5}
-                    style={{ originX: 0.5, originY: up ? 1 : 0 }}
-                    initial={animate ? { scaleY: 0 } : false}
-                    animate={{ scaleY: 1 }}
-                    transition={
-                      animate
-                        ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
-                        : { duration: 0 }
-                    }
-                  />
-                );
-              })}
+            <g key={i}>
+              <line
+                x1={PAD.left}
+                y1={y}
+                x2={PAD.left + plotW}
+                y2={y}
+                stroke={baseline ? "var(--border)" : "var(--border-subtle)"}
+                strokeDasharray={baseline ? undefined : "3 4"}
+              />
+              <text
+                x={PAD.left - 8}
+                y={y + 3}
+                textAnchor="end"
+                style={{ fontSize: "var(--text-xs)" }}
+                fill="var(--text-muted)"
+              >
+                {formatTick(v)}
+              </text>
             </g>
           );
-        }
-        // line / area
-        const pts = s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
-        const areaPath = `M ${xAt(0)},${zeroY} L ${s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" L ")} L ${xAt(n - 1)},${zeroY} Z`;
-        return (
-          <g key={si}>
-            {type === "area" && (
-              <motion.path
-                d={areaPath}
-                fill={`url(#${uid}-area-${si})`}
-                initial={animate ? { opacity: 0 } : false}
-                animate={{ opacity: 1 }}
+        })}
+        {/* Y 軸線 */}
+        <line x1={PAD.left} y1={PAD.top} x2={PAD.left} y2={PAD.top + plotH} stroke="var(--border)" />
+
+        {/* ホバー中バンドの強調 + 縦ガイド */}
+        {hover != null && (
+          <>
+            <rect
+              x={PAD.left + bandW * hover}
+              y={PAD.top}
+              width={bandW}
+              height={plotH}
+              fill="var(--accent)"
+              fillOpacity={0.08}
+            />
+            <line
+              x1={xAt(hover)}
+              y1={PAD.top}
+              x2={xAt(hover)}
+              y2={PAD.top + plotH}
+              stroke="var(--accent)"
+              strokeOpacity={0.5}
+              strokeDasharray="2 3"
+            />
+          </>
+        )}
+
+        {/* X 軸ラベル */}
+        {model.labels.map((lab, i) =>
+          i % labelStep === 0 ? (
+            <text
+              key={i}
+              x={xAt(i)}
+              y={H - PAD.bottom + 16}
+              textAnchor="end"
+              style={{ fontSize: "var(--text-2xs)" }}
+              fill="var(--text-muted)"
+              transform={`rotate(-30 ${xAt(i)} ${H - PAD.bottom + 16})`}
+            >
+              {truncate(lab)}
+            </text>
+          ) : null,
+        )}
+        {/* X 軸タイトル (どの列が横軸かを明示) */}
+        {xName && (
+          <text
+            x={PAD.left + plotW / 2}
+            y={H - 6}
+            textAnchor="middle"
+            style={{ fontSize: "var(--text-xs)" }}
+            fontWeight={600}
+            fill="var(--text-secondary)"
+          >
+            {truncate(xName, 48)}
+          </text>
+        )}
+
+        {/* 系列 */}
+        {model.series.map((s, si) => {
+          const color = colors[si % colors.length];
+          if (type === "bar") {
+            const seriesCount = model.series.length;
+            const barW = (bandW * 0.7) / seriesCount;
+            return (
+              <g key={si}>
+                {s.values.map((v, i) => {
+                  const x = PAD.left + bandW * i + bandW * 0.15 + barW * si;
+                  const y = Math.min(yAt(v), zeroY);
+                  const h = Math.abs(yAt(v) - zeroY);
+                  // 棒は 0 基線から伸びるように出現させる (最終形のパスを基線起点で scaleY
+                  // 0 → 1)。上端 (負の値は下端) だけを丸めたいが rect の rx は四隅に効く
+                  // ため、値側の端だけ丸めたパスで描く。半径は radius トークンの実値を
+                  // `barRadius` で読み、トークンを単一ソースに保つ。
+                  const up = v >= 0;
+                  return (
+                    <motion.path
+                      key={i}
+                      d={roundedBarPath(x, y, Math.max(1, barW), h, barRadius, up)}
+                      fill={valueColors?.[i] ?? color}
+                      fillOpacity={hover == null || hover === i ? 1 : 0.5}
+                      style={{ originX: 0.5, originY: up ? 1 : 0 }}
+                      initial={animate ? { scaleY: 0 } : false}
+                      animate={{ scaleY: 1 }}
+                      transition={
+                        animate
+                          ? { duration: durations.slow, ease: easings.out, delay: Math.min(i, 24) * 0.006 }
+                          : { duration: 0 }
+                      }
+                    />
+                  );
+                })}
+              </g>
+            );
+          }
+          // line / area
+          const pts = s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" ");
+          const areaPath = `M ${xAt(0)},${zeroY} L ${s.values.map((v, i) => `${xAt(i)},${yAt(v)}`).join(" L ")} L ${xAt(n - 1)},${zeroY} Z`;
+          return (
+            <g key={si}>
+              {type === "area" && (
+                <motion.path
+                  d={areaPath}
+                  fill={`url(#${uid}-area-${si})`}
+                  initial={animate ? { opacity: 0 } : false}
+                  animate={{ opacity: 1 }}
+                  transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
+                />
+              )}
+              {/* 折れ線は左から描き進むように pathLength を 0 → 1 へ補間する。 */}
+              <motion.polyline
+                points={pts}
+                fill="none"
+                stroke={color}
+                strokeWidth={2}
+                initial={animate ? { pathLength: 0 } : false}
+                animate={{ pathLength: 1 }}
                 transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
               />
-            )}
-            {/* 折れ線は左から描き進むように pathLength を 0 → 1 へ補間する。 */}
-            <motion.polyline
-              points={pts}
-              fill="none"
-              stroke={color}
-              strokeWidth={2}
-              initial={animate ? { pathLength: 0 } : false}
-              animate={{ pathLength: 1 }}
-              transition={animate ? { duration: durations.slow, ease: easings.out } : { duration: 0 }}
-            />
-            {showMarkers &&
-              s.values.map((v, i) => (
+              {showMarkers &&
+                s.values.map((v, i) => (
+                  <circle
+                    key={i}
+                    cx={xAt(i)}
+                    cy={yAt(v)}
+                    r={hover === i ? 4.5 : 2.5}
+                    fill={color}
+                    stroke="var(--bg-elevated)"
+                    strokeWidth={1}
+                  />
+                ))}
+              {/* マーカー非表示時もホバー点だけは強調する。 */}
+              {!showMarkers && hover != null && (
                 <circle
-                  key={i}
-                  cx={xAt(i)}
-                  cy={yAt(v)}
-                  r={hover === i ? 4.5 : 2.5}
+                  cx={xAt(hover)}
+                  cy={yAt(s.values[hover])}
+                  r={4}
                   fill={color}
                   stroke="var(--bg-elevated)"
                   strokeWidth={1}
                 />
-              ))}
-            {/* マーカー非表示時もホバー点だけは強調する。 */}
-            {!showMarkers && hover != null && (
-              <circle cx={xAt(hover)} cy={yAt(s.values[hover])} r={4} fill={color} stroke="var(--bg-elevated)" strokeWidth={1} />
-            )}
-          </g>
-        );
-      })}
+              )}
+            </g>
+          );
+        })}
 
-      {/* ツールチップ (ホバー中バンドの全系列の値) */}
-      {hover != null && (
-        <HoverTooltip
-          model={model}
-          index={hover}
-          gx={xAt(hover)}
-          colors={colors}
-          valueColors={valueColors}
-        />
-      )}
-    </chakra.svg>
-    <VisuallyHidden role="status" aria-live="polite">
-      {announce}
-    </VisuallyHidden>
+        {/* ツールチップ (ホバー中バンドの全系列の値) */}
+        {hover != null && (
+          <HoverTooltip
+            model={model}
+            index={hover}
+            gx={xAt(hover)}
+            colors={colors}
+            valueColors={valueColors}
+          />
+        )}
+      </chakra.svg>
+      <VisuallyHidden role="status" aria-live="polite">
+        {announce}
+      </VisuallyHidden>
     </>
   );
 }
@@ -813,7 +853,13 @@ function HoverTooltip({
           shadow="elevationPopover"
         />
       </foreignObject>
-      <text x={left + 10} y={top + 18} style={{ fontSize: "var(--text-xs)" }} fontWeight={700} fill="var(--text)">
+      <text
+        x={left + 10}
+        y={top + 18}
+        style={{ fontSize: "var(--text-xs)" }}
+        fontWeight={700}
+        fill="var(--text)"
+      >
         {header}
       </text>
       {rows.map((r, i) => {
@@ -824,7 +870,14 @@ function HoverTooltip({
             <text x={left + 24} y={ry} style={{ fontSize: "var(--text-xs)" }} fill="var(--text-secondary)">
               {r.name}
             </text>
-            <text x={left + boxW - 10} y={ry} textAnchor="end" style={{ fontSize: "var(--text-xs)" }} fontWeight={600} fill="var(--text)">
+            <text
+              x={left + boxW - 10}
+              y={ry}
+              textAnchor="end"
+              style={{ fontSize: "var(--text-xs)" }}
+              fontWeight={600}
+              fill="var(--text)"
+            >
               {r.value}
             </text>
           </g>
@@ -856,7 +909,8 @@ function PieChart({
   // 円は元からスライス単位の着色なので、色はスライス数ぶん用意する (#916)。
   // ランプを選んだときは値の大小で、離散パレットでは従来どおりカテゴリ色の
   // 循環でスライスを塗り分ける。`isDark` (#1187) でダーク用の色を選ぶ。
-  const colors = chartValueColors(values, palette, isDark) ?? chartSeriesColors(palette, values.length, isDark);
+  const colors =
+    chartValueColors(values, palette, isDark) ?? chartSeriesColors(palette, values.length, isDark);
   // スライスは数が限られるため常に出現アニメーション可。reduced-motion は
   // ルートの MotionConfig が自動抑制する。
   const animate = values.length <= ANIM_MAX_ELEMENTS;
@@ -884,100 +938,146 @@ function PieChart({
   };
   return (
     <>
-    <chakra.svg
-      viewBox="0 0 720 440"
-      width="100%"
-      style={{ maxHeight: "100%" }}
-      role="group"
-      aria-roledescription={t("chartAriaRoleDescription")}
-      aria-label={ariaLabel}
-      tabIndex={0}
-      css={CHART_FOCUS_CSS}
-      data-chart-svg=""
-      onKeyDown={onKey}
-      onBlur={() => setHover(null)}
-    >
-      {total === 0 ? (
-        <text x={cx} y={cy} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fill="var(--text-muted)">∅</text>
-      ) : (
-        values.map((v, i) => {
-          const frac = v / total;
-          const start = angle;
-          const end = angle + frac * Math.PI * 2;
-          angle = end;
-          const mid = (start + end) / 2;
-          // ホバー中のスライスは中心から少し飛び出させて強調する。
-          const pop = hover === i ? 10 : 0;
-          const ox = Math.cos(mid) * pop;
-          const oy = Math.sin(mid) * pop;
-          const color = colors[i % colors.length];
-          const pct = frac * 100;
-          // ラベルは十分大きいスライスにだけ重ねる (小さいと文字がはみ出す)。
-          const lx = cx + ox + labelR * Math.cos(mid);
-          const ly = cy + oy + labelR * Math.sin(mid);
-          // 全周 (frac がほぼ 1) のときの経路の退化は `donutSlicePath` が半円 2 つで
-          // 吸収する。環では穴を抜くため evenodd で塗る。
-          return (
-            <g key={i} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)} style={{ cursor: "default" }}>
-              <motion.path
-                d={donutSlicePath(cx + ox, cy + oy, r, rInner, start, end)}
-                fillRule="evenodd"
-                fill={color}
-                stroke="var(--bg-elevated)"
-                strokeWidth={donut ? 2 : 1}
-                strokeLinejoin="round"
-                initial={animate ? { opacity: 0 } : false}
-                animate={{ opacity: 1 }}
-                transition={
-                  animate
-                    ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
-                    : { duration: 0 }
-                }
-              >
-                <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
-              </motion.path>
-              {frac >= 0.05 && (
-                <text x={lx} y={ly} textAnchor="middle" style={{ fontSize: "var(--text-sm)" }} fontWeight={700} fill={readableInk(color)} pointerEvents="none">
-                  {pct.toFixed(0)}%
-                </text>
-              )}
-            </g>
-          );
-        })
-      )}
-      {/* ドーナツの中央に合計と系列名を置く。 */}
-      {donut && total > 0 && (
-        <g pointerEvents="none">
-          <text x={cx} y={cy + 4} textAnchor="middle" style={{ fontSize: "var(--text-xl)" }} fontWeight={700} fill="var(--text)">
-            {formatValue(total)}
-          </text>
-          <text x={cx} y={cy + 24} textAnchor="middle" style={{ fontSize: "var(--text-xs)" }} fill="var(--text-muted)">
-            {truncate(series.name, 18)}
-          </text>
-        </g>
-      )}
-      {/* 凡例 (ラベル + 値 + 割合) */}
-      {model.labels.map((lab, i) => {
-        const pct = total > 0 ? (values[i] / total) * 100 : 0;
-        return (
-          <g
-            key={i}
-            transform={`translate(440 ${28 + i * 20})`}
-            onMouseEnter={() => setHover(i)}
-            onMouseLeave={() => setHover(null)}
-            style={{ cursor: "default" }}
+      <chakra.svg
+        viewBox="0 0 720 440"
+        width="100%"
+        style={{ maxHeight: "100%" }}
+        role="group"
+        aria-roledescription={t("chartAriaRoleDescription")}
+        aria-label={ariaLabel}
+        tabIndex={0}
+        css={CHART_FOCUS_CSS}
+        data-chart-svg=""
+        onKeyDown={onKey}
+        onBlur={() => setHover(null)}
+      >
+        {total === 0 ? (
+          <text
+            x={cx}
+            y={cy}
+            textAnchor="middle"
+            style={{ fontSize: "var(--text-sm)" }}
+            fill="var(--text-muted)"
           >
-            <rect width="12" height="12" rx="2" fill={colors[i % colors.length]} fillOpacity={hover == null || hover === i ? 1 : 0.5} />
-            <text x="18" y="11" style={{ fontSize: "var(--text-xs)" }} fontWeight={hover === i ? 700 : 400} fill="var(--text)">
-              {truncate(lab)} — {formatValue(values[i])} ({pct.toFixed(1)}%)
+            ∅
+          </text>
+        ) : (
+          values.map((v, i) => {
+            const frac = v / total;
+            const start = angle;
+            const end = angle + frac * Math.PI * 2;
+            angle = end;
+            const mid = (start + end) / 2;
+            // ホバー中のスライスは中心から少し飛び出させて強調する。
+            const pop = hover === i ? 10 : 0;
+            const ox = Math.cos(mid) * pop;
+            const oy = Math.sin(mid) * pop;
+            const color = colors[i % colors.length];
+            const pct = frac * 100;
+            // ラベルは十分大きいスライスにだけ重ねる (小さいと文字がはみ出す)。
+            const lx = cx + ox + labelR * Math.cos(mid);
+            const ly = cy + oy + labelR * Math.sin(mid);
+            // 全周 (frac がほぼ 1) のときの経路の退化は `donutSlicePath` が半円 2 つで
+            // 吸収する。環では穴を抜くため evenodd で塗る。
+            return (
+              <g
+                key={i}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                style={{ cursor: "default" }}
+              >
+                <motion.path
+                  d={donutSlicePath(cx + ox, cy + oy, r, rInner, start, end)}
+                  fillRule="evenodd"
+                  fill={color}
+                  stroke="var(--bg-elevated)"
+                  strokeWidth={donut ? 2 : 1}
+                  strokeLinejoin="round"
+                  initial={animate ? { opacity: 0 } : false}
+                  animate={{ opacity: 1 }}
+                  transition={
+                    animate
+                      ? { duration: durations.med, ease: easings.out, delay: Math.min(i, 24) * 0.02 }
+                      : { duration: 0 }
+                  }
+                >
+                  <title>{`${model.labels[i]}: ${formatValue(values[i])} (${pct.toFixed(1)}%)`}</title>
+                </motion.path>
+                {frac >= 0.05 && (
+                  <text
+                    x={lx}
+                    y={ly}
+                    textAnchor="middle"
+                    style={{ fontSize: "var(--text-sm)" }}
+                    fontWeight={700}
+                    fill={readableInk(color)}
+                    pointerEvents="none"
+                  >
+                    {pct.toFixed(0)}%
+                  </text>
+                )}
+              </g>
+            );
+          })
+        )}
+        {/* ドーナツの中央に合計と系列名を置く。 */}
+        {donut && total > 0 && (
+          <g pointerEvents="none">
+            <text
+              x={cx}
+              y={cy + 4}
+              textAnchor="middle"
+              style={{ fontSize: "var(--text-xl)" }}
+              fontWeight={700}
+              fill="var(--text)"
+            >
+              {formatValue(total)}
+            </text>
+            <text
+              x={cx}
+              y={cy + 24}
+              textAnchor="middle"
+              style={{ fontSize: "var(--text-xs)" }}
+              fill="var(--text-muted)"
+            >
+              {truncate(series.name, 18)}
             </text>
           </g>
-        );
-      })}
-    </chakra.svg>
-    <VisuallyHidden role="status" aria-live="polite">
-      {announce}
-    </VisuallyHidden>
+        )}
+        {/* 凡例 (ラベル + 値 + 割合) */}
+        {model.labels.map((lab, i) => {
+          const pct = total > 0 ? (values[i] / total) * 100 : 0;
+          return (
+            <g
+              key={i}
+              transform={`translate(440 ${28 + i * 20})`}
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              style={{ cursor: "default" }}
+            >
+              <rect
+                width="12"
+                height="12"
+                rx="2"
+                fill={colors[i % colors.length]}
+                fillOpacity={hover == null || hover === i ? 1 : 0.5}
+              />
+              <text
+                x="18"
+                y="11"
+                style={{ fontSize: "var(--text-xs)" }}
+                fontWeight={hover === i ? 700 : 400}
+                fill="var(--text)"
+              >
+                {truncate(lab)} — {formatValue(values[i])} ({pct.toFixed(1)}%)
+              </text>
+            </g>
+          );
+        })}
+      </chakra.svg>
+      <VisuallyHidden role="status" aria-live="polite">
+        {announce}
+      </VisuallyHidden>
     </>
   );
 }

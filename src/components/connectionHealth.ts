@@ -20,7 +20,6 @@
  * 明示操作 = 行の「接続」ボタンのみ)。SSH トンネルを大量に同時に張る事故を防ぐ。
  */
 
-
 /** 1 接続のヘルス状態。 */
 export type HealthStatus =
   /** `SELECT 1` が返った。 */
@@ -213,9 +212,7 @@ export function latencyLevel(ms: number): LatencyLevel {
 }
 
 /** 状態 → 意味色の役割 (`semanticColorToken` に渡す)。null は中立 (muted)。 */
-export function healthStatusRole(
-  status: HealthStatus,
-): "success" | "warning" | "danger" | null {
+export function healthStatusRole(status: HealthStatus): "success" | "warning" | "danger" | null {
   switch (status) {
     case "up":
       return "success";
@@ -264,9 +261,7 @@ export function summarizeHealth(rows: readonly HealthRow[]): HealthSummary {
     s.maxLatencyMs = latencies[latencies.length - 1];
     const mid = Math.floor(latencies.length / 2);
     s.medianLatencyMs =
-      latencies.length % 2 === 1
-        ? latencies[mid]
-        : Math.round((latencies[mid - 1] + latencies[mid]) / 2);
+      latencies.length % 2 === 1 ? latencies[mid] : Math.round((latencies[mid - 1] + latencies[mid]) / 2);
   }
   return s;
 }

@@ -5,11 +5,7 @@ import { renderInBrowser } from "./render";
 import { TabBar, type TabInfo } from "../../components/TabBar";
 import { FlightIcon } from "../../components/FlightIcon";
 import { Icon } from "../../components/Icon";
-import {
-  beginTabOpenFlight,
-  resetTabOpenFlightForTest,
-  useTabOpenFlightFor,
-} from "../../sharedElement";
+import { beginTabOpenFlight, resetTabOpenFlightForTest, useTabOpenFlightFor } from "../../sharedElement";
 
 // サイドバー行 → 新規タブのアイコン morph (#1415) を実ブラウザで検証する。
 // 起点 (行のアイコン) は終点 (タブ) が現れても DOM に残るので、飛行中だけ

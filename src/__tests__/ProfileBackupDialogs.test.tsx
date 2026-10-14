@@ -23,9 +23,7 @@ describe("ProfileBackupExportDialog (#710)", () => {
     expect(confirmBtn).toBeDisabled();
 
     await user.type(screen.getByLabelText(t("profileBackupPassphrase")), "short");
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      t("profileBackupPassphraseTooShort", { min: 8 }),
-    );
+    expect(screen.getByRole("alert")).toHaveTextContent(t("profileBackupPassphraseTooShort", { min: 8 }));
     expect(confirmBtn).toBeDisabled();
 
     await user.type(screen.getByLabelText(t("profileBackupPassphrase")), "-enough");
@@ -58,9 +56,7 @@ describe("ProfileImportDialog 暗号化モード (#710)", () => {
 
   it("パスフレーズ入力後に戦略とパスフレーズを渡す", async () => {
     const onConfirm = vi.fn();
-    renderWithProviders(
-      <ProfileImportDialog encrypted onConfirm={onConfirm} onCancel={() => {}} />,
-    );
+    renderWithProviders(<ProfileImportDialog encrypted onConfirm={onConfirm} onCancel={() => {}} />);
     const user = userEvent.setup();
     const importBtn = await screen.findByRole("button", { name: t("profileImportConfirm") });
     expect(importBtn).toBeDisabled();
@@ -80,9 +76,7 @@ describe("ProfileImportDialog 暗号化モード (#710)", () => {
         onCancel={() => {}}
       />,
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "wrong passphrase or modified file",
-    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("wrong passphrase or modified file");
   });
 
   it("平文インポートではパスフレーズ欄を出さず、そのまま確定できる", async () => {

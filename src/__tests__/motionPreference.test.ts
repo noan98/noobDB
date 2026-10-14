@@ -30,9 +30,7 @@ describe("motionPreference の正規化 (#787)", () => {
 
   it("未知の値・型不一致は既定へ落ちる (例外を投げない)", () => {
     for (const bad of ["bogus", 1, null, {}, ["reduced"], true]) {
-      expect(normalizeSettings({ motionPreference: bad }).motionPreference).toBe(
-        DEFAULT_MOTION_PREFERENCE,
-      );
+      expect(normalizeSettings({ motionPreference: bad }).motionPreference).toBe(DEFAULT_MOTION_PREFERENCE);
     }
   });
 

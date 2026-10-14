@@ -10,9 +10,9 @@ import {
 describe("sanitizeAutoReconnectRetries (#600)", () => {
   it("keeps valid in-range retry counts", () => {
     expect(sanitizeAutoReconnectRetries(3, DEFAULT_AUTO_RECONNECT_MAX_RETRIES)).toBe(3);
-    expect(
-      sanitizeAutoReconnectRetries(MAX_AUTO_RECONNECT_RETRIES, DEFAULT_AUTO_RECONNECT_MAX_RETRIES),
-    ).toBe(MAX_AUTO_RECONNECT_RETRIES);
+    expect(sanitizeAutoReconnectRetries(MAX_AUTO_RECONNECT_RETRIES, DEFAULT_AUTO_RECONNECT_MAX_RETRIES)).toBe(
+      MAX_AUTO_RECONNECT_RETRIES,
+    );
   });
 
   it("clamps below the minimum and above the maximum", () => {

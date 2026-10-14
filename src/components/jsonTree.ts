@@ -275,7 +275,7 @@ export function scalarPreview(node: JsonNode, max = 200): string {
     case "string":
       // 巨大文字列を丸ごと JSON.stringify しないよう、先に切ってからエスケープする。
       s = JSON.stringify(node.value.length > max ? node.value.slice(0, max) : node.value);
-      if (node.value.length > max) return s.slice(0, -1) + "…\"";
+      if (node.value.length > max) return s.slice(0, -1) + '…"';
       return s;
     case "number":
       s = node.raw;
@@ -560,9 +560,7 @@ export function jsonPathSqlUpdate(
   if (driver === "postgres") {
     const arr =
       "{" +
-      path
-        .map((seg) => '"' + String(seg).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"')
-        .join(",") +
+      path.map((seg) => '"' + String(seg).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"').join(",") +
       "}";
     set = `jsonb_set(${col}::jsonb, ${sqlString(driver, arr)}, ${json}::jsonb)`;
   } else if (driver === "sqlite") {

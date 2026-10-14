@@ -34,7 +34,10 @@ export type LocalRefetchPlan =
   | { kind: "noConnection"; profileName: string | null };
 
 export function planLocalRefetch(
-  meta: Pick<LocalTableMeta, "source_profile" | "source_profile_id" | "source_sql" | "source_driver" | "source_database">,
+  meta: Pick<
+    LocalTableMeta,
+    "source_profile" | "source_profile_id" | "source_sql" | "source_driver" | "source_database"
+  >,
   connections: readonly { sessionId: string; profile: { id: string; name: string; driver: string } }[],
 ): LocalRefetchPlan {
   if (!isReadOnlySql(meta.source_sql, meta.source_driver ?? undefined)) {
@@ -49,7 +52,9 @@ export function planLocalRefetch(
   const label = meta.source_profile;
   if (meta.source_profile_id !== null) {
     const hit = connections.find((c) => c.profile.id === meta.source_profile_id);
-    return hit ? { kind: "ok", sessionId: hit.sessionId, database } : { kind: "noConnection", profileName: label };
+    return hit
+      ? { kind: "ok", sessionId: hit.sessionId, database }
+      : { kind: "noConnection", profileName: label };
   }
   const hits = connections.filter(
     (c) =>

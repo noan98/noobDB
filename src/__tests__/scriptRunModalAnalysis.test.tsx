@@ -85,7 +85,9 @@ function errorEvent(over: Partial<ScriptErrorEvent>): ScriptErrorEvent {
 }
 
 function setup() {
-  renderWithProviders(<ScriptRunModal sessionId="s1" database={null} isProduction={false} onClose={() => {}} />);
+  renderWithProviders(
+    <ScriptRunModal sessionId="s1" database={null} isProduction={false} onClose={() => {}} />,
+  );
   fireEvent.change(screen.getByPlaceholderText(t("scriptFilePlaceholder")), {
     target: { value: "/tmp/a.sql" },
   });
@@ -129,7 +131,14 @@ describe("ScriptRunModal: 自動事前確認 (#1535)", () => {
           dangerousTotal: 1,
           dangerCounts: { deleteNoWhere: 1, updateNoWhere: 0, drop: 0, truncate: 0 },
           dangerous: [
-            { index: 2, line: 2, sql: "DELETE FROM t", category: "write", danger: "deleteNoWhere", blocked: false },
+            {
+              index: 2,
+              line: 2,
+              sql: "DELETE FROM t",
+              category: "write",
+              danger: "deleteNoWhere",
+              blocked: false,
+            },
           ],
         }),
       );
@@ -154,7 +163,9 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
       );
     setup();
     fireEvent.click(screen.getByText(t("scriptAnalyze")));
-    expect(await screen.findByText(t("scriptUnclosedTransactionWarning"), {}, { timeout: 3000 })).toBeTruthy();
+    expect(
+      await screen.findByText(t("scriptUnclosedTransactionWarning"), {}, { timeout: 3000 }),
+    ).toBeTruthy();
   });
 
   it("閉じている場合は警告しない", async () => {
@@ -191,11 +202,15 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
 describe("ScriptRunModal: 失敗時の再開 (#1535)", () => {
   it("トランザクション中の失敗は ROLLBACK 失敗でも『この文から再開』を出さず、BEGIN から再開できる", async () => {
     runBehavior = (id) => {
-      handlers.get(id)?.onError?.(errorEvent({ inTransaction: true, rolledBack: false, txBeginStatement: 2 }));
+      handlers
+        .get(id)
+        ?.onError?.(errorEvent({ inTransaction: true, rolledBack: false, txBeginStatement: 2 }));
     };
     setup();
     fireEvent.click(screen.getByText(t("scriptExecute")));
-    expect(await screen.findByText(t("scriptResumeFromBegin", { index: 2 }), {}, { timeout: 3000 })).toBeTruthy();
+    expect(
+      await screen.findByText(t("scriptResumeFromBegin", { index: 2 }), {}, { timeout: 3000 }),
+    ).toBeTruthy();
     expect(screen.queryByText(t("scriptResume"))).toBeNull();
     expect(screen.queryByText(t("scriptResumeSkip"))).toBeNull();
   });
@@ -237,7 +252,9 @@ describe("ScriptRunModal: 事前確認後のファイル変更 (#1535)", () => {
     setup();
     fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "3" } });
     fireEvent.click(screen.getByText(t("scriptExecute")));
-    expect((await screen.findAllByText(t("scriptAnalysisFileChanged"), {}, { timeout: 3000 })).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText(t("scriptAnalysisFileChanged"), {}, { timeout: 3000 })).length,
+    ).toBeGreaterThan(0);
     // 開始文番号は残す (自動では再実行しない)。
     expect((screen.getByLabelText(t("scriptStartAtLabel")) as HTMLInputElement).value).toBe("3");
   });
@@ -259,7 +276,13 @@ describe("ScriptRunModal: 開始文番号がトランザクションの途中 (#
     fireEvent.click(screen.getByText(t("scriptAnalyze")));
     await screen.findByText(t("scriptAnalysisTxLocked"), {}, { timeout: 3000 });
     fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "4" } });
-    expect(await screen.findByText(t("scriptStartInTransactionWarning", { start: 4, begin: 2 }), {}, { timeout: 3000 })).toBeTruthy();
+    expect(
+      await screen.findByText(
+        t("scriptStartInTransactionWarning", { start: 4, begin: 2 }),
+        {},
+        { timeout: 3000 },
+      ),
+    ).toBeTruthy();
     fireEvent.change(screen.getByLabelText(t("scriptStartAtLabel")), { target: { value: "7" } });
     await waitFor(() =>
       expect(screen.queryByText(t("scriptStartInTransactionWarning", { start: 7, begin: 2 }))).toBeNull(),

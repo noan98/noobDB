@@ -232,7 +232,9 @@ describe("ResultGrid 結果ハンドル経由の結果内検索 (#1264)", () => 
     act(() => ref.current!.openFind());
     await user.click(screen.getByRole("button", { name: t("gridFindRegexTitle") }));
     await user.type(screen.getByLabelText(t("gridFindInputAria")), "row-5$");
-    await waitFor(() => expect(screen.getByText(t("gridFindCount", { current: 1, total: 1 }))).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(t("gridFindCount", { current: 1, total: 1 }))).toBeInTheDocument(),
+    );
     expect(api.resultFind).not.toHaveBeenCalled();
   });
 });
@@ -252,7 +254,10 @@ describe("ResultGrid 結果ハンドル経由のソートの行クロスフェ�
     attachResultHandle(result.rows, "qs_fade");
     let resolve: (order: number[]) => void = () => {};
     vi.mocked(api.resultSortFilter).mockImplementation(
-      () => new Promise<number[]>((r) => { resolve = r; }),
+      () =>
+        new Promise<number[]>((r) => {
+          resolve = r;
+        }),
     );
     const user = userEvent.setup();
     const { container } = renderWithProviders(<ResultGrid result={result} />);
@@ -281,7 +286,10 @@ describe("ResultGrid 結果ハンドル経由のソートの行クロスフェ�
 
     let resolve: (order: number[]) => void = () => {};
     vi.mocked(api.resultSortFilter).mockImplementationOnce(
-      () => new Promise<number[]>((r) => { resolve = r; }),
+      () =>
+        new Promise<number[]>((r) => {
+          resolve = r;
+        }),
     );
     await user.click(screen.getByRole("button", { name: /^id/ }));
     await waitFor(() => expect(api.resultSortFilter).toHaveBeenCalledTimes(2));

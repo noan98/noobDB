@@ -12,7 +12,6 @@ import type {
 } from "../tauri";
 
 export const assertionsCommands = {
-
   /** データ品質アサーション (#742) の一覧 (`assertions.json`)。 */
   listAssertions: () =>
     invoke<Assertion[]>("list_assertions").then((r) =>

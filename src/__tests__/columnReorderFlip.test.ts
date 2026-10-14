@@ -52,7 +52,16 @@ describe("computeFlipOffsets (#1021)", () => {
   });
 
   it("前後どちらかにしか無い列 (列仮想化で出入り) は対象外", () => {
-    const out = computeFlipOffsets(new Map([["A", 0], ["X", 50]]), new Map([["A", 80], ["Y", 10]]));
+    const out = computeFlipOffsets(
+      new Map([
+        ["A", 0],
+        ["X", 50],
+      ]),
+      new Map([
+        ["A", 80],
+        ["Y", 10],
+      ]),
+    );
     expect(Object.fromEntries(out)).toEqual({ A: -80 });
   });
 

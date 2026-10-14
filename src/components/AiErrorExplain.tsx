@@ -196,7 +196,11 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         )}
       </Flex>
       {running && (
-        <AiStreamProgress stream={stream} fields={["explanation"]} waitingLabel={t("aiErrorExplainRunning")} />
+        <AiStreamProgress
+          stream={stream}
+          fields={["explanation"]}
+          waitingLabel={t("aiErrorExplainRunning")}
+        />
       )}
       {state.kind !== "idle" && (
         <chakra.span color="app.textMuted" fontSize="xs">

@@ -41,11 +41,7 @@ export function useKeyedStable(): KeyedStable & { prune(alive: (key: string) => 
       },
       memo<V>(key: string, deps: readonly unknown[], factory: () => V): V {
         const hit = memos.current.get(key);
-        if (
-          hit &&
-          hit.deps.length === deps.length &&
-          hit.deps.every((d, i) => Object.is(d, deps[i]))
-        ) {
+        if (hit && hit.deps.length === deps.length && hit.deps.every((d, i) => Object.is(d, deps[i]))) {
           return hit.value as V;
         }
         const value = factory();

@@ -32,13 +32,7 @@ const TABS: TabInfo[] = [
 describe("TabBar render smoke (#604)", () => {
   it("renders a tab per entry and a new-tab control", () => {
     renderWithProviders(
-      <TabBar
-        tabs={TABS}
-        activeTabId="t1"
-        onSelect={() => {}}
-        onClose={() => {}}
-        onNew={() => {}}
-      />,
+      <TabBar tabs={TABS} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
     );
     expect(screen.getAllByRole("tab")).toHaveLength(2);
     expect(screen.getByText("Query 1")).toBeInTheDocument();
@@ -48,13 +42,7 @@ describe("TabBar render smoke (#604)", () => {
   it("invokes onNew when the new-tab button is clicked", () => {
     const onNew = vi.fn();
     renderWithProviders(
-      <TabBar
-        tabs={TABS}
-        activeTabId="t1"
-        onSelect={() => {}}
-        onClose={() => {}}
-        onNew={onNew}
-      />,
+      <TabBar tabs={TABS} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={onNew} />,
     );
     fireEvent.click(screen.getByRole("button", { name: t("tabNew") }));
     expect(onNew).toHaveBeenCalledOnce();
@@ -71,13 +59,7 @@ describe("TabBar rename (#1390)", () => {
       onRenameRequest: vi.fn(),
     };
     renderWithProviders(
-      <TabBar
-        tabs={TABS}
-        activeTabId="t1"
-        onNew={() => {}}
-        renamingTabId={renamingTabId}
-        {...fns}
-      />,
+      <TabBar tabs={TABS} activeTabId="t1" onNew={() => {}} renamingTabId={renamingTabId} {...fns} />,
     );
     return fns;
   }
@@ -165,7 +147,6 @@ describe("TabBar rename (#1390)", () => {
     expect(fns.onClose).not.toHaveBeenCalled();
   });
 });
-
 
 describe("TabBar 閉じるボタンのキー操作", () => {
   it("× に Enter / Space を送ってもタブ選択に横取りされない (ボタンの click に任せる)", () => {

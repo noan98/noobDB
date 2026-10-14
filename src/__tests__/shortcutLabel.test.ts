@@ -63,6 +63,6 @@ describe("button wiring", () => {
     const editor = queryEditorSource;
     expect(editor).toContain("labelWithShortcut(runTitleBase, runCombo)");
     expect(editor).toContain("onRunInNewTab");
-    expect(tabBarSource).toContain("labelWithShortcut(t(\"tabNew\"), newTabCombo)");
+    expect(tabBarSource).toContain('labelWithShortcut(t("tabNew"), newTabCombo)');
   });
 });

@@ -127,7 +127,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
           for (const w of settled.warnings ?? []) toast.info(w, 8000);
           if (settled.applied && settled.rowsAffected > 0) {
             toast.success(
-              t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: settled.rowsAffected }),
+              t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", {
+                rows: settled.rowsAffected,
+              }),
             );
           } else {
             toast.info(
@@ -148,7 +150,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       const message = (
         <Box>
           <chakra.p m={0}>
-            {t(redo ? "flightRecorderRedoConfirmBody" : "flightRecorderUndoConfirmBody", { table: entry.table })}
+            {t(redo ? "flightRecorderRedoConfirmBody" : "flightRecorderUndoConfirmBody", {
+              table: entry.table,
+            })}
           </chakra.p>
           <CodePreview wrap mt="2" maxH="160px">
             {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
@@ -166,8 +170,7 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       const ok = await confirm({
         title: t(redo ? "flightRecorderRedoConfirmTitle" : "flightRecorderUndoConfirmTitle"),
         message,
-        confirmLabel:
-          preview.conflicts.length > 0 ? t("flightRecorderForceApply") : t("flightRecorderApply"),
+        confirmLabel: preview.conflicts.length > 0 ? t("flightRecorderForceApply") : t("flightRecorderApply"),
         tone: preview.conflicts.length > 0 ? "danger" : "warning",
       });
       if (!ok) return;
@@ -194,7 +197,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       if (outcome.applied) {
         if (outcome.rowsAffected > 0) {
           toast.success(
-            t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: outcome.rowsAffected }),
+            t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", {
+              rows: outcome.rowsAffected,
+            }),
           );
         } else {
           toast.info(t("flightRecorderAlreadyRestored"));
@@ -235,7 +240,9 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   return (
     <Modal
       // no-submit: 閲覧画面 (閉じるのみ)。Undo は行ごとの確認ダイアログを通す
-      onClose={onClose} width="820px">
+      onClose={onClose}
+      width="820px"
+    >
       <ModalHeader onClose={onClose} closeLabel={t("flightRecorderClose")}>
         {t("flightRecorderTitle")}
       </ModalHeader>
@@ -260,12 +267,24 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             <Box />
           )}
           {entries.length > 0 && (
-            <PressableButton type="button" variant="danger" onClick={() => void handleClear()} disabled={clearing}>
+            <PressableButton
+              type="button"
+              variant="danger"
+              onClick={() => void handleClear()}
+              disabled={clearing}
+            >
               {t("flightRecorderClearAction")}
             </PressableButton>
           )}
         </Flex>
-        <Box flex="1" minHeight={0} overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md">
+        <Box
+          flex="1"
+          minHeight={0}
+          overflowY="auto"
+          border="1px solid"
+          borderColor="app.border"
+          borderRadius="md"
+        >
           {error ? (
             <chakra.p m={0} p="3" color="app.textError">
               {error}
@@ -275,7 +294,11 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
               {t("flightRecorderLoading")}
             </chakra.p>
           ) : entries.length === 0 ? (
-            <EmptyState icon="clock" title={t("flightRecorderEmptyTitle")} description={t("flightRecorderEmpty")} />
+            <EmptyState
+              icon="clock"
+              title={t("flightRecorderEmptyTitle")}
+              description={t("flightRecorderEmpty")}
+            />
           ) : (
             <chakra.ul m={0} p={0} listStyleType="none">
               {entries.map((entry) => (

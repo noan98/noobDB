@@ -177,7 +177,13 @@ function startSession(source: HTMLElement, down: PointerEvent, item: TreeDragIte
     }
     const hit = document.elementFromPoint(e.clientX, e.clientY);
     setCurrent(pickDropTarget(targets, hit), e.clientX, e.clientY);
-    publish({ active: true, label: treeDragLabel(phase.item), x: e.clientX, y: e.clientY, overEditor: current !== null });
+    publish({
+      active: true,
+      label: treeDragLabel(phase.item),
+      x: e.clientX,
+      y: e.clientY,
+      overEditor: current !== null,
+    });
   };
 
   const onUp = (e: PointerEvent) => {

@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
-import {
-  insertDefaultHint,
-  insertFunctionChips,
-  stripNonInsertableSeed,
-} from "../components/insertDefaults";
+import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "../components/insertDefaults";
 import { insertFunctionSql } from "../components/sqlDialect";
 
 // #1357: 行追加モーダルの「既定値 / 自動採番」判定と関数値チップ。方言差 (auto_increment /
@@ -108,10 +104,7 @@ describe("insertFunctionSql (dialect catalogue)", () => {
 
 describe("insertFunctionChips", () => {
   it("offers CURRENT_TIMESTAMP and NOW() for datetime columns on MySQL / PostgreSQL", () => {
-    expect(insertFunctionChips("mysql", "DATETIME")).toEqual([
-      { fn: "current_timestamp" },
-      { fn: "now" },
-    ]);
+    expect(insertFunctionChips("mysql", "DATETIME")).toEqual([{ fn: "current_timestamp" }, { fn: "now" }]);
     expect(insertFunctionChips("postgres", "timestamp with time zone")).toEqual([
       { fn: "current_timestamp" },
       { fn: "now" },
@@ -119,9 +112,7 @@ describe("insertFunctionChips", () => {
   });
 
   it("omits NOW() on SQLite datetime columns", () => {
-    expect(insertFunctionChips("sqlite", "DATETIME")).toEqual([
-      { fn: "current_timestamp" },
-    ]);
+    expect(insertFunctionChips("sqlite", "DATETIME")).toEqual([{ fn: "current_timestamp" }]);
   });
 
   it("offers the date and time keywords for date and time columns", () => {
@@ -130,9 +121,7 @@ describe("insertFunctionChips", () => {
   });
 
   it("offers UUID for PostgreSQL uuid columns and MySQL CHAR(36) columns", () => {
-    expect(insertFunctionChips("postgres", "uuid")).toEqual([
-      { fn: "uuid" },
-    ]);
+    expect(insertFunctionChips("postgres", "uuid")).toEqual([{ fn: "uuid" }]);
     expect(insertFunctionChips("mysql", "CHAR(36)")).toEqual([{ fn: "uuid" }]);
     expect(insertFunctionChips("mysql", "VARCHAR(255)")).toEqual([]);
   });
@@ -206,9 +195,9 @@ describe("stripNonInsertableSeed (#1357 row duplication)", () => {
   ];
 
   it("drops auto-increment and generated values from the seed, keeps the rest", () => {
-    expect(
-      stripNonInsertableSeed("mysql", { 0: "42", 1: "x", 2: "keep" }, columns, table),
-    ).toEqual({ 2: "keep" });
+    expect(stripNonInsertableSeed("mysql", { 0: "42", 1: "x", 2: "keep" }, columns, table)).toEqual({
+      2: "keep",
+    });
   });
 
   it("leaves the seed untouched when there is no table metadata", () => {

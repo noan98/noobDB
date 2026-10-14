@@ -67,7 +67,9 @@ describe("TabPaneStore", () => {
     const s = makeStore();
     s.setTabs([{ id: "a", title: "A" }]);
     const same = (x: T[], y: T[]) => x.length === y.length && x.every((v, i) => v === y[i]);
-    const { result } = renderHook(() => useStoreSelector(s, s.getTabs, (tabs) => tabs.filter((x) => x.id === "a"), same));
+    const { result } = renderHook(() =>
+      useStoreSelector(s, s.getTabs, (tabs) => tabs.filter((x) => x.id === "a"), same),
+    );
     const first = result.current;
     act(() => s.setTabs((prev) => [...prev, { id: "b", title: "B" }]));
     expect(result.current).toBe(first);

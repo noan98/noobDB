@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { SqlFileContent, TextEncodingId } from "../tauri";
 
 export const fileCommands = {
-
   /**
    * ドロップされた `.sql` / `.txt` ファイルの内容を読む。フロントが fs API を
    * 直に叩かずバックエンド経由で読む (capabilities を最小に保つ)。サイズ上限を超える

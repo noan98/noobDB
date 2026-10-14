@@ -218,11 +218,7 @@ describe("ListboxSelect の ARIA 結線", () => {
 describe("ListboxSelect の型入力 (value ベースのフォールバック)", () => {
   it("label 未指定なら value をラベル表示・検索の両方に使う", async () => {
     const user = userEvent.setup();
-    const options: ListboxSelectOption[] = [
-      { value: "id" },
-      { value: "name" },
-      { value: "email" },
-    ];
+    const options: ListboxSelectOption[] = [{ value: "id" }, { value: "name" }, { value: "email" }];
     const { onChangeSpy } = renderSelect({ initialValue: "id", options });
     const trigger = screen.getByRole("combobox");
     expect(trigger).toHaveTextContent("id");

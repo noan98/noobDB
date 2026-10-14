@@ -6,7 +6,13 @@ vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
     ...actual,
-    api: { ...actual.api, listTables: vi.fn(), getObjectDefinition: vi.fn(), describeTable: vi.fn(), runLookupQuery: vi.fn() },
+    api: {
+      ...actual.api,
+      listTables: vi.fn(),
+      getObjectDefinition: vi.fn(),
+      describeTable: vi.fn(),
+      runLookupQuery: vi.fn(),
+    },
   };
 });
 
@@ -27,7 +33,14 @@ beforeEach(() => {
 
 const mount = (onConfirm = vi.fn(), onClose = vi.fn(), driver: "sqlite" | "mysql" | "postgres" = "sqlite") =>
   renderWithProviders(
-    <TableCloneModal sessionId="s1" driver={driver} database="main" sourceTable="users" onConfirm={onConfirm} onClose={onClose} />,
+    <TableCloneModal
+      sessionId="s1"
+      driver={driver}
+      database="main"
+      sourceTable="users"
+      onConfirm={onConfirm}
+      onClose={onClose}
+    />,
   );
 
 describe("TableCloneModal (#1398)", () => {
@@ -38,7 +51,9 @@ describe("TableCloneModal (#1398)", () => {
     await waitFor(() => expect(screen.getByLabelText(/users/)).toHaveValue("users_copy"));
     await waitFor(() => expect(screen.getByText(/CREATE TABLE "users_copy"/)).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: t("cloneTableConfirm") }));
-    expect(onConfirm).toHaveBeenCalledWith("users_copy", ['CREATE TABLE "users_copy" (id INTEGER PRIMARY KEY)']);
+    expect(onConfirm).toHaveBeenCalledWith("users_copy", [
+      'CREATE TABLE "users_copy" (id INTEGER PRIMARY KEY)',
+    ]);
   });
 
   it("既存名と衝突すると警告して確定できない", async () => {
@@ -95,7 +110,11 @@ describe("TableCloneModal (#1398)", () => {
     mount(vi.fn(), vi.fn(), "postgres");
     expect(await screen.findByText(/LIKE "main"\."users" INCLUDING ALL/)).toBeInTheDocument();
     expect(screen.getByText(/CREATE SEQUENCE "main"\."users_copy_id_seq"/)).toBeInTheDocument();
-    expect(screen.getByText(/ADD CONSTRAINT "users_copy_boss_fkey" FOREIGN KEY \(boss\) REFERENCES "main"\."users_copy"\(id\)/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /ADD CONSTRAINT "users_copy_boss_fkey" FOREIGN KEY \(boss\) REFERENCES "main"\."users_copy"\(id\)/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(t("cloneTableSharedSequence"))).not.toBeInTheDocument();
   });
 

@@ -25,9 +25,7 @@ export interface ExportNotice {
  * 変換する。行の打ち切りは「全 N 行中 M 行を書いた (K 行は出ていない)」の形で、
  * 何行で切れたかが分かるようにする。欠けが無ければ空配列。
  */
-export function xlsxTruncationNotices(
-  truncation: ExportTruncation | null | undefined,
-): ExportNotice[] {
+export function xlsxTruncationNotices(truncation: ExportTruncation | null | undefined): ExportNotice[] {
   if (!truncation) return [];
   const notices: ExportNotice[] = [];
   if (truncation.droppedRows > 0) {

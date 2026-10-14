@@ -9,9 +9,7 @@ describe("maskLiterals の keepQuotedIdentifiers (#1419)", () => {
   });
 
   it("指定すると引用識別子の中身を残し、区切り記号も残す", () => {
-    expect(maskLiterals('SELECT "Col Name" FROM `t`', "postgres", KEEP)).toBe(
-      'SELECT "Col Name" FROM `t`',
-    );
+    expect(maskLiterals('SELECT "Col Name" FROM `t`', "postgres", KEEP)).toBe('SELECT "Col Name" FROM `t`');
   });
 
   it("指定しても文字列リテラルとコメントは従来どおり潰す", () => {
@@ -52,19 +50,17 @@ describe("maskLiterals の補完向けオプション (#1419 再レビュー)", 
     );
   });
 
-  it("MySQL では \"...\" の中身を keepQuotedIdentifiers でも潰す (` は残す)", () => {
-    expect(maskLiterals('SELECT "a b", `c d` FROM t', "mysql", KEEP)).toBe(
-      'SELECT "   ", `c d` FROM t',
-    );
+  it('MySQL では "..." の中身を keepQuotedIdentifiers でも潰す (` は残す)', () => {
+    expect(maskLiterals('SELECT "a b", `c d` FROM t', "mysql", KEEP)).toBe('SELECT "   ", `c d` FROM t');
   });
 
-  it("PostgreSQL / SQLite では \"...\" の中身を残す", () => {
+  it('PostgreSQL / SQLite では "..." の中身を残す', () => {
     const sql = 'SELECT "a b" FROM t';
     expect(maskLiterals(sql, "postgres", KEEP)).toBe(sql);
     expect(maskLiterals(sql, "sqlite", KEEP)).toBe(sql);
   });
 
-  it("安全網の呼び出し (オプション無し) は MySQL の \"...\" も従来どおり潰す", () => {
+  it('安全網の呼び出し (オプション無し) は MySQL の "..." も従来どおり潰す', () => {
     expect(maskLiterals('SELECT "a b" FROM t', "mysql")).toBe('SELECT "   " FROM t');
   });
 });

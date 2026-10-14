@@ -1,19 +1,15 @@
 import { describe, expect, it } from "vitest";
-import {
-  extractQueryParams,
-  isNumericParam,
-  renderParamValue,
-  substituteQueryParams,
-} from "../queryParams";
+import { extractQueryParams, isNumericParam, renderParamValue, substituteQueryParams } from "../queryParams";
 
 // {{variable}} クエリパラメータの検出と、ドライバ別・型別の安全な展開。
 // SQL インジェクション防止が機能の核なので、エスケープ経路を重点的に検証する。
 
 describe("extractQueryParams", () => {
   it("出現順に一意な変数名を抽出する", () => {
-    expect(
-      extractQueryParams("SELECT * FROM {{tbl}} WHERE id = {{id}} OR ref = {{id}}"),
-    ).toEqual(["tbl", "id"]);
+    expect(extractQueryParams("SELECT * FROM {{tbl}} WHERE id = {{id}} OR ref = {{id}}")).toEqual([
+      "tbl",
+      "id",
+    ]);
   });
 
   it("プレースホルダーが無ければ空配列", () => {
@@ -74,9 +70,7 @@ describe("renderParamValue", () => {
   it("text は改行・タブ・Unicode をそのままリテラルに通す", () => {
     // 改行/タブ/マルチバイトはエスケープ対象ではない。クオート文字でなければ
     // 素通しされ、外側のクオートで安全に閉じ込められる。
-    expect(renderParamValue("postgres", "line1\nline2\tend", "text")).toBe(
-      "'line1\nline2\tend'",
-    );
+    expect(renderParamValue("postgres", "line1\nline2\tend", "text")).toBe("'line1\nline2\tend'");
     expect(renderParamValue("mysql", "café—日本語😀", "text")).toBe("'café—日本語😀'");
     // Unicode に紛れたシングルクオートも確実に二重化される。
     expect(renderParamValue("sqlite", "naïve's", "text")).toBe("'naïve''s'");
@@ -112,12 +106,7 @@ describe("substituteQueryParams", () => {
   });
 
   it("同じ変数の複数出現をすべて置換する", () => {
-    const out = substituteQueryParams(
-      "SELECT {{x}} WHERE a = {{x}}",
-      "postgres",
-      { x: "v" },
-      { x: "text" },
-    );
+    const out = substituteQueryParams("SELECT {{x}} WHERE a = {{x}}", "postgres", { x: "v" }, { x: "text" });
     expect(out).toBe("SELECT 'v' WHERE a = 'v'");
   });
 

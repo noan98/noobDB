@@ -48,7 +48,10 @@ function setup(onReorderProfiles: () => void) {
     // 無くても動く
   }
   // 並べ替えが起きないことを確かめるため、下に別の接続を置いておく。
-  const profiles = [makeProfile({ id: "p-a", name: "Alpha DB" }), makeProfile({ id: "p-b", name: "Beta DB" })];
+  const profiles = [
+    makeProfile({ id: "p-a", name: "Alpha DB" }),
+    makeProfile({ id: "p-b", name: "Beta DB" }),
+  ];
   return renderInBrowser(
     <div style={{ display: "flex", gap: "8px", height: "480px" }}>
       <div style={{ width: "280px" }}>

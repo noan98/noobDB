@@ -59,7 +59,10 @@ function dataCells(container: HTMLElement): HTMLElement[][] {
 }
 /** 直前の `reset()` 以降に描き直された行の添字 (昇順)。 */
 function touchedRows(): number[] {
-  return [...renders.byRow.entries()].filter(([, n]) => n > 0).map(([r]) => r).sort((a, b) => a - b);
+  return [...renders.byRow.entries()]
+    .filter(([, n]) => n > 0)
+    .map(([r]) => r)
+    .sort((a, b) => a - b);
 }
 const reset = () => renders.byRow.clear();
 
@@ -138,12 +141,7 @@ describe("結果グリッドの行単位の memo (#1341)", () => {
       const user = userEvent.setup();
       const onSetCellEdit = vi.fn();
       const { container } = renderWithProviders(
-        <ResultGrid
-          result={result}
-          editable
-          tableColumns={tableColumns}
-          onSetCellEdit={onSetCellEdit}
-        />,
+        <ResultGrid result={result} editable tableColumns={tableColumns} onSetCellEdit={onSetCellEdit} />,
       );
       const cell = dataCells(container)[7][1];
       reset();

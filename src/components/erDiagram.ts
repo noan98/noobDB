@@ -42,10 +42,7 @@ export type ErCardinality = "many-to-one" | "one-to-one";
  * UNIQUE な FK は N:1 に倒れる (安全側の既定)。複合 PK の一部・インデックスだけの列・型情報が無い列は
  * 判定できないため、既定は「多」(N:1、最も一般的な FK) とする。
  */
-export function fkCardinality(opts: {
-  isSolePk: boolean;
-  unique: boolean;
-}): ErCardinality {
+export function fkCardinality(opts: { isSolePk: boolean; unique: boolean }): ErCardinality {
   return opts.isSolePk || opts.unique ? "one-to-one" : "many-to-one";
 }
 
@@ -159,9 +156,7 @@ export interface ErLayoutOptions {
 
 /** Maps the density preset to dagre node/rank separation in px. */
 function separation(density: ErLayoutDensity): { nodesep: number; ranksep: number } {
-  return density === "compact"
-    ? { nodesep: 20, ranksep: 48 }
-    : { nodesep: 40, ranksep: 90 };
+  return density === "compact" ? { nodesep: 20, ranksep: 48 } : { nodesep: 40, ranksep: 90 };
 }
 
 export interface BuildErGraphInput {
@@ -265,12 +260,10 @@ export function buildErGraph(input: BuildErGraphInput): ErGraph {
     // フォーカス: 近い順に上限まで。次数順の切り捨てはかけない。
     const byName = new Map(tables.map((t) => [t.name, t]));
     capped = near.length > MAX_TABLES;
-    kept = near
-      .slice(0, MAX_TABLES)
-      .flatMap((name) => {
-        const t = byName.get(name);
-        return t ? [t] : [];
-      });
+    kept = near.slice(0, MAX_TABLES).flatMap((name) => {
+      const t = byName.get(name);
+      return t ? [t] : [];
+    });
   } else if (tables.length > MAX_TABLES) {
     capped = true;
     kept = [...tables]

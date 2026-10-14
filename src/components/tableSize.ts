@@ -176,10 +176,7 @@ export interface TableStatFilter {
  * 取得に失敗して `null` (不明) の行は、誤って「無い」に含めないよう除外する
  * (不明を「無し」と断定すると誤検出になるため)。
  */
-export function filterTableStats(
-  rows: readonly TableStatRow[],
-  filter: TableStatFilter,
-): TableStatRow[] {
+export function filterTableStats(rows: readonly TableStatRow[], filter: TableStatFilter): TableStatRow[] {
   const q = filter.nameQuery?.trim().toLowerCase() ?? "";
   return rows.filter((r) => {
     if (q && !r.name.toLowerCase().includes(q)) return false;

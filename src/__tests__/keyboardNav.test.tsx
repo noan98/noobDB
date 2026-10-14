@@ -244,9 +244,15 @@ describe("useRovingFocus", () => {
       const { onKeyDown } = useRovingFocus(ref, "[role=option]", { orientation: "vertical" });
       return (
         <ul ref={ref} role="listbox" onKeyDown={onKeyDown}>
-          <li role="option" tabIndex={0}>Apple</li>
-          <li role="option" tabIndex={-1}>Apricot</li>
-          <li role="option" tabIndex={-1}>Banana</li>
+          <li role="option" tabIndex={0}>
+            Apple
+          </li>
+          <li role="option" tabIndex={-1}>
+            Apricot
+          </li>
+          <li role="option" tabIndex={-1}>
+            Banana
+          </li>
         </ul>
       );
     }
@@ -291,9 +297,7 @@ describe("ContextMenu キーボードナビゲーション", () => {
   });
 
   it("開いたとき最初の項目にフォーカスが当たる", async () => {
-    renderWithProviders(
-      <ContextMenu x={100} y={100} items={items} onClose={() => {}} />,
-    );
+    renderWithProviders(<ContextMenu x={100} y={100} items={items} onClose={() => {}} />);
     // PortalはdocumentBodyにレンダリングされる
     await vi.waitFor(() => {
       const first = document.querySelector('[role="menuitem"]');
@@ -306,9 +310,7 @@ describe("ContextMenu キーボードナビゲーション", () => {
   it("Esc を押すと onClose が呼ばれる", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    renderWithProviders(
-      <ContextMenu x={100} y={100} items={items} onClose={onClose} />,
-    );
+    renderWithProviders(<ContextMenu x={100} y={100} items={items} onClose={onClose} />);
 
     // Esc イベントを発火。
     await user.keyboard("{Escape}");
@@ -320,9 +322,7 @@ describe("ContextMenu キーボードナビゲーション", () => {
     const onClose = vi.fn();
     const onSelect = vi.fn();
     const testItems: ContextMenuEntry[] = [{ label: "Run", onSelect }];
-    renderWithProviders(
-      <ContextMenu x={100} y={100} items={testItems} onClose={onClose} />,
-    );
+    renderWithProviders(<ContextMenu x={100} y={100} items={testItems} onClose={onClose} />);
 
     const menuItem = document.querySelector('[role="menuitem"]') as HTMLElement;
     menuItem.focus();
@@ -334,9 +334,7 @@ describe("ContextMenu キーボードナビゲーション", () => {
 
   it("先頭文字ジャンプ (type-ahead) でメニュー項目間を移動できる", async () => {
     const user = userEvent.setup();
-    renderWithProviders(
-      <ContextMenu x={100} y={100} items={items} onClose={() => {}} />,
-    );
+    renderWithProviders(<ContextMenu x={100} y={100} items={items} onClose={() => {}} />);
 
     await vi.waitFor(() => {
       expect(document.querySelector('[role="menuitem"]')).not.toBeNull();
@@ -351,9 +349,7 @@ describe("ContextMenu キーボードナビゲーション", () => {
     const testItems: ContextMenuEntry[] = [
       { label: "Copy value", icon: "copy", shortcut: "Cmd/Ctrl+C", onSelect: vi.fn() },
     ];
-    renderWithProviders(
-      <ContextMenu x={100} y={100} items={testItems} onClose={() => {}} />,
-    );
+    renderWithProviders(<ContextMenu x={100} y={100} items={testItems} onClose={() => {}} />);
 
     const menuItem = await screen.findByRole("menuitem", { name: /Copy value/ });
     expect(menuItem).toHaveTextContent("Cmd/Ctrl+C");

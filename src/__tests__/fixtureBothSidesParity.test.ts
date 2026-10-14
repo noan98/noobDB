@@ -16,10 +16,11 @@ import { describe, expect, it } from "vitest";
 const fixtureModules = import.meta.glob("./fixtures/*.json");
 const fixtureFiles = Object.keys(fixtureModules).map((p) => p.replace("./fixtures/", ""));
 
-const rustModules = import.meta.glob(
-  ["../../src-tauri/src/**/*.rs", "../../src-tauri/tests/**/*.rs"],
-  { eager: true, query: "?raw", import: "default" },
-) as Record<string, string>;
+const rustModules = import.meta.glob(["../../src-tauri/src/**/*.rs", "../../src-tauri/tests/**/*.rs"], {
+  eager: true,
+  query: "?raw",
+  import: "default",
+}) as Record<string, string>;
 
 const tsModules = import.meta.glob(["../**/*.ts", "../**/*.tsx"], {
   eager: true,

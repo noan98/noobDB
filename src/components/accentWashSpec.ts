@@ -14,10 +14,7 @@ import { connectionBandColor, type TitleBarConnection } from "./titleBarContext"
  * 発火せず、切断 (非 null → null) への遷移も「体感させたい新しい環境」が
  * 無いため発火しない。
  */
-export function shouldFireAccentWash(
-  prevKey: string | null,
-  nextKey: string | null,
-): boolean {
+export function shouldFireAccentWash(prevKey: string | null, nextKey: string | null): boolean {
   return prevKey !== nextKey && nextKey !== null;
 }
 
@@ -26,9 +23,7 @@ export function shouldFireAccentWash(
  * (`is_production`) への切替はより強く体感させ、「別の DB を触っている」
  * ことに気づかせる誤操作防止の安全キューとして機能させる。
  */
-export function accentWashOpacity(
-  connection: TitleBarConnection | null | undefined,
-): number {
+export function accentWashOpacity(connection: TitleBarConnection | null | undefined): number {
   return connection?.isProduction ? 0.45 : 0.22;
 }
 
@@ -46,9 +41,7 @@ export interface AccentWashSpec {
  * が `"transparent"` を返す) ときは `null` を返し、ウォッシュを出さないことを
  * 示す。
  */
-export function accentWashSpec(
-  connection: TitleBarConnection | null | undefined,
-): AccentWashSpec | null {
+export function accentWashSpec(connection: TitleBarConnection | null | undefined): AccentWashSpec | null {
   const color = connectionBandColor(connection);
   if (color === "transparent") return null;
   return { color, opacity: accentWashOpacity(connection) };

@@ -46,25 +46,41 @@ describe("resolveSchemaDocScope", () => {
   const fks = [fk("orders", "customers"), fk("order_items", "orders"), fk("order_items", "products")];
 
   it("all は全テーブルをそのまま返す", () => {
-    expect(resolveSchemaDocScope({ allTables: all, selected: [], foreignKeys: fks, mode: "all" })).toEqual(all);
+    expect(resolveSchemaDocScope({ allTables: all, selected: [], foreignKeys: fks, mode: "all" })).toEqual(
+      all,
+    );
   });
 
   it("selected は選択テーブルと参照先を推移的に展開し、元の並び順で返す", () => {
-    const r = resolveSchemaDocScope({ allTables: all, selected: ["order_items"], foreignKeys: fks, mode: "selected" });
+    const r = resolveSchemaDocScope({
+      allTables: all,
+      selected: ["order_items"],
+      foreignKeys: fks,
+      mode: "selected",
+    });
     expect(r).toEqual(["customers", "orders", "order_items", "products"]);
   });
 
   it("参照元 (子) は含めない", () => {
-    const r = resolveSchemaDocScope({ allTables: all, selected: ["customers"], foreignKeys: fks, mode: "selected" });
+    const r = resolveSchemaDocScope({
+      allTables: all,
+      selected: ["customers"],
+      foreignKeys: fks,
+      mode: "selected",
+    });
     expect(r).toEqual(["customers"]);
   });
 
   it("自己参照・循環・存在しない選択名でも止まり、存在しない名前は除く", () => {
     const cyc = [fk("a", "b"), fk("b", "a"), fk("a", "a")];
-    expect(resolveSchemaDocScope({ allTables: ["a", "b"], selected: ["a", "ghost"], foreignKeys: cyc, mode: "selected" })).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(
+      resolveSchemaDocScope({
+        allTables: ["a", "b"],
+        selected: ["a", "ghost"],
+        foreignKeys: cyc,
+        mode: "selected",
+      }),
+    ).toEqual(["a", "b"]);
   });
 
   it("filterForeignKeysInScope はスコープ内で閉じた FK だけ残す", () => {
@@ -86,7 +102,10 @@ describe("selectDocObjects", () => {
     expect(selectDocObjects(objs, ["v2", "orders"]).map((o) => o.name)).toEqual(["v2"]);
   });
   it("件数に上限がある", () => {
-    const many = Array.from({ length: SCHEMA_DOC_MAX_OBJECTS + 5 }, (_, i) => ({ kind: "view", name: `v${i}` }));
+    const many = Array.from({ length: SCHEMA_DOC_MAX_OBJECTS + 5 }, (_, i) => ({
+      kind: "view",
+      name: `v${i}`,
+    }));
     expect(selectDocObjects(many, null)).toHaveLength(SCHEMA_DOC_MAX_OBJECTS);
   });
 });
@@ -124,8 +143,13 @@ describe("コンテキストとプロンプト", () => {
   });
 
   it("デフォルト値は型に存在せず、本文にも出ない", () => {
-    const withDefault = { ...table("t"), columns: [{ name: "c", data_type: "int", nullable: true, key: "", comment: null, default: "SECRET" }] };
-    expect(buildSchemaDocContextText({ tables: [withDefault], foreignKeys: [], objects: [] })).not.toContain("SECRET");
+    const withDefault = {
+      ...table("t"),
+      columns: [{ name: "c", data_type: "int", nullable: true, key: "", comment: null, default: "SECRET" }],
+    };
+    expect(buildSchemaDocContextText({ tables: [withDefault], foreignKeys: [], objects: [] })).not.toContain(
+      "SECRET",
+    );
   });
 
   it("長い定義は切り詰める", () => {
@@ -148,7 +172,13 @@ describe("コンテキストとプロンプト", () => {
     const def =
       "CREATE FUNCTION f() RETURNS int LANGUAGE plpgsql AS $function$\nBEGIN\n  RETURN (SELECT count(*) FROM t WHERE code = 'SECRET-1');\nEND;\n$function$";
     const c: SchemaDocContext = { ...ctx, objects: [{ kind: "function", name: "f", definition: def }] };
-    const sys = buildSchemaDocSystem({ driver: "postgres", database: "a", locale: "en", context: c, maskLiterals: true });
+    const sys = buildSchemaDocSystem({
+      driver: "postgres",
+      database: "a",
+      locale: "en",
+      context: c,
+      maskLiterals: true,
+    });
     expect(sys).toContain("RETURN (SELECT count(*) FROM t WHERE code =");
     expect(sys).toContain("$function$");
     expect(sys).not.toContain("SECRET-1");
@@ -157,8 +187,8 @@ describe("コンテキストとプロンプト", () => {
   it.each([
     ["mysql", "SELECT 'it\\'s $$secret$$ ok'"],
     ["postgres", "SELECT E'it\\'s $q$secret$q$ ok'"],
-    ["sqlite", "SELECT \"$$\", 'secret', \"$$\""],
-    ["postgres", "SELECT \"$$\", 'secret', \"$$\""],
+    ["sqlite", 'SELECT "$$", \'secret\', "$$"'],
+    ["postgres", 'SELECT "$$", \'secret\', "$$"'],
   ])("引用符内の $$ をドル引用と誤認しない (%s): %s", (driver, def) => {
     const c: SchemaDocContext = { ...ctx, objects: [{ kind: "view", name: "v", definition: def }] };
     const sys = buildSchemaDocSystem({ driver, database: "a", locale: "en", context: c, maskLiterals: true });
@@ -175,7 +205,13 @@ describe("コンテキストとプロンプト", () => {
     ["postgres", "PostgreSQL"],
     ["sqlite", "SQLite"],
   ])("%s は方言名・言語・ルールを system に含む", (driver, dialect) => {
-    const sys = buildSchemaDocSystem({ driver, database: "app", locale: "ja", context: ctx, maskLiterals: true });
+    const sys = buildSchemaDocSystem({
+      driver,
+      database: "app",
+      locale: "ja",
+      context: ctx,
+      maskLiterals: true,
+    });
     expect(sys).toContain(dialect);
     expect(sys).toContain("Japanese");
     expect(sys).toContain("Database: app");
@@ -235,13 +271,25 @@ describe("送信サイズ", () => {
 describe("冒頭注記 (フロント側で付与)", () => {
   const at = new Date(2026, 9, 9, 7, 5);
   it("日本語: 生成日時・プロファイル名と DB 名・方言・AI 推定の注記を含む", () => {
-    const h = buildSchemaDocHeader({ generatedAt: at, profileName: "本番DB", database: "shop", driver: "postgres", locale: "ja" });
+    const h = buildSchemaDocHeader({
+      generatedAt: at,
+      profileName: "本番DB",
+      database: "shop",
+      driver: "postgres",
+      locale: "ja",
+    });
     expect(h).toContain("生成日時: 2026-10-09 07:05");
     expect(h).toContain("対象接続: 本番DB / shop (PostgreSQL)");
     expect(h).toContain("AI による推定を含みます");
   });
   it("英語: 注記も英語", () => {
-    const h = buildSchemaDocHeader({ generatedAt: at, profileName: "p", database: "d", driver: "mysql", locale: "en" });
+    const h = buildSchemaDocHeader({
+      generatedAt: at,
+      profileName: "p",
+      database: "d",
+      driver: "mysql",
+      locale: "en",
+    });
     expect(h).toContain("Generated at: 2026-10-09 07:05");
     expect(h).toContain("Connection: p / d (MySQL)");
     expect(h).toContain("AI-generated inferences");

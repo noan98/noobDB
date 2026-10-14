@@ -1,4 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
@@ -298,7 +305,8 @@ function hintBadgeCss(sev: "caution" | "warning"): SystemStyleObject {
     fontWeight: 700,
     minWidth: "14px",
     textAlign: "center",
-    py: "0.5", px: "1",
+    py: "0.5",
+    px: "1",
   };
   const tone = severityTokens(sev === "caution" ? "warning" : "error", 45);
   return { ...base, background: tone.bg, borderColor: tone.border, color: tone.text };
@@ -511,7 +519,9 @@ function NodeRow({
           // 内側の展開ボタン等から bubbling してきたキーは扱わない。
           if (e.target !== e.currentTarget) return;
           const items = Array.from(
-            e.currentTarget.closest<HTMLElement>('[role="tree"]')?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [],
+            e.currentTarget
+              .closest<HTMLElement>('[role="tree"]')
+              ?.querySelectorAll<HTMLElement>('[role="treeitem"]') ?? [],
           );
           const idx = items.indexOf(e.currentTarget);
           const moveTo = (el: HTMLElement | undefined) => {
@@ -670,20 +680,20 @@ function AnalyzeBar({
   return (
     <Box css={toolbarCss}>
       {analyze && (
-      <Tooltip
-        label={t(analyze.supported ? "explainAnalyzeTooltip" : "explainAnalyzeUnsupportedTooltip")}
-        focusableWrapper
-      >
-        <chakra.span fontSize="sm" color="app.textSecondary">
-          <Switch
-            size="sm"
-            checked={analyze.active && analyze.supported}
-            disabled={!analyze.supported}
-            onChange={analyze.onToggle}
-            label={t("explainAnalyzeLabel")}
-          />
-        </chakra.span>
-      </Tooltip>
+        <Tooltip
+          label={t(analyze.supported ? "explainAnalyzeTooltip" : "explainAnalyzeUnsupportedTooltip")}
+          focusableWrapper
+        >
+          <chakra.span fontSize="sm" color="app.textSecondary">
+            <Switch
+              size="sm"
+              checked={analyze.active && analyze.supported}
+              disabled={!analyze.supported}
+              onChange={analyze.onToggle}
+              label={t("explainAnalyzeLabel")}
+            />
+          </chakra.span>
+        </Tooltip>
       )}
       {pinControls && (
         <>
@@ -826,9 +836,7 @@ function ExplainViewerBody({
     );
   }
   if (!raw) {
-    return (
-      <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainEmpty")}</Box>
-    );
+    return <Box {...EXPLAIN_EMPTY_PROPS}>{t("explainEmpty")}</Box>;
   }
   if (error || !root) {
     return (
@@ -935,17 +943,28 @@ function ExplainViewerBody({
           {view === "tree" && (
             <>
               <Tooltip label={t("explainExpandAll")}>
-                <Button size="sm" px="2.5" onClick={() => { markEntered(); setCollapsed(new Set()); }}>
+                <Button
+                  size="sm"
+                  px="2.5"
+                  onClick={() => {
+                    markEntered();
+                    setCollapsed(new Set());
+                  }}
+                >
                   {t("explainExpandAll")}
                 </Button>
               </Tooltip>
               <Tooltip label={t("explainCollapseAll")}>
-                <Button size="sm" px="2.5" onClick={() => {
-                  markEntered();
-                  setCollapsed(new Set(allIds));
-                  // 全て畳むと選択中の子ノードが隠れてタブストップが消えるので、ルートを選び直す (#1529 と同様)。
-                  if (root) setSelectedId(root.id);
-                }}>
+                <Button
+                  size="sm"
+                  px="2.5"
+                  onClick={() => {
+                    markEntered();
+                    setCollapsed(new Set(allIds));
+                    // 全て畳むと選択中の子ノードが隠れてタブストップが消えるので、ルートを選び直す (#1529 と同様)。
+                    if (root) setSelectedId(root.id);
+                  }}
+                >
                   {t("explainCollapseAll")}
                 </Button>
               </Tooltip>
@@ -956,17 +975,19 @@ function ExplainViewerBody({
           <Box flex="1" minHeight={0} position="relative">
             <Suspense
               fallback={
-                <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" color="app.textMuted">
+                <Box
+                  position="absolute"
+                  inset={0}
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  color="app.textMuted"
+                >
                   <Spinner size={18} />
                 </Box>
               }
             >
-              <ExplainGraphView
-                root={root}
-                maxCost={max}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-              />
+              <ExplainGraphView root={root} maxCost={max} selectedId={selectedId} onSelect={setSelectedId} />
             </Suspense>
           </Box>
         ) : (

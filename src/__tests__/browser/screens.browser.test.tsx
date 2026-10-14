@@ -51,18 +51,11 @@ function makeResult(columns: Column[], rows: QueryResult["rows"]): QueryResult {
 describe("主要画面のレンダリング (実ブラウザ)", () => {
   it("接続フォームが描画され、保存ボタンが可視である", async () => {
     const screen = await renderInBrowser(
-      <ConnectionForm
-        initial={null}
-        profiles={[]}
-        onSaved={() => {}}
-        onCancel={() => {}}
-      />,
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
 
     await expect.element(screen.getByText(t("formNewTitle"))).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: t("formSave") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("formSave") })).toBeVisible();
   });
 
   it("結果グリッドが列ヘッダと行を描画する", async () => {
@@ -76,21 +69,15 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
         ["apple", 5],
       ],
     );
-    const screen = await renderInBrowser(
-      <ResultGrid result={result} onChangeView={() => {}} />,
-    );
+    const screen = await renderInBrowser(<ResultGrid result={result} onChangeView={() => {}} />);
 
     // 列ヘッダはソート可能なのでボタンとして描画される。
     await expect.element(screen.getByRole("button", { name: /^name/ })).toBeVisible();
     await expect.element(screen.getByText("banana")).toBeVisible();
     // 表示切替セグメント (グリッド/ピボット/チャート、#975 の Segmented) が
     // 排他ラジオグループとして可視であること。
-    await expect
-      .element(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") }))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("radio", { name: t("gridViewLabel") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") })).toBeVisible();
+    await expect.element(screen.getByRole("radio", { name: t("gridViewLabel") })).toBeVisible();
   });
 
   it("エクスポートの調査バンドル (#745) が持ち出し件数を明示し、機微カラムを伏せ字でプレビューする", async () => {
@@ -114,9 +101,7 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
 
     await screen.getByRole("button", { name: t("exportButton") }).click();
     await screen.getByRole("radio", { name: t("exportFormatBundle") }).click();
-    await expect
-      .element(screen.getByText(t("exportBundleDataWarning", { rows: 2, cols: 2 })))
-      .toBeVisible();
+    await expect.element(screen.getByText(t("exportBundleDataWarning", { rows: 2, cols: 2 }))).toBeVisible();
     // 既定のマスクパターン (email) に一致する列を伏せ字で出すことを明示する。
     await expect
       .element(screen.getByText(t("exportBundleMasked", { count: 1, names: "user_email" })))
@@ -138,24 +123,18 @@ describe("主要画面のレンダリング (実ブラウザ)", () => {
     );
 
     await expect.element(screen.getByText(t("dangerousTitle"))).toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: t("dangerousConfirm") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeVisible();
   });
 
   it("設定画面が描画される", async () => {
     const screen = await renderInBrowser(<SettingsView theme="light" onClose={() => {}} />);
-    await expect.element(
-      screen.getByRole("heading", { name: t("settingsTitle"), exact: true }),
-    ).toBeVisible();
+    await expect
+      .element(screen.getByRole("heading", { name: t("settingsTitle"), exact: true }))
+      .toBeVisible();
     // 密度設定のスライドするセグメント (#975 の Segmented) が排他ラジオグループ
     // として可視であること。
-    await expect
-      .element(screen.getByRole("radiogroup", { name: t("settingsDensity") }))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("radio", { name: t("settingsDensityNormal") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("radiogroup", { name: t("settingsDensity") })).toBeVisible();
+    await expect.element(screen.getByRole("radio", { name: t("settingsDensityNormal") })).toBeVisible();
   });
 
   it("ヘルプ画面が描画される", async () => {
@@ -193,16 +172,12 @@ describe("デザイントークン (App.css) の解決 (#961)", () => {
     expect(root.getPropertyValue("--bg").trim()).not.toBe("");
   });
 
-  it("`data-theme=\"dark\"` で `--bg` トークンがライトテーマと異なる値へ切り替わる", () => {
+  it('`data-theme="dark"` で `--bg` トークンがライトテーマと異なる値へ切り替わる', () => {
     document.documentElement.removeAttribute("data-theme");
-    const lightBg = getComputedStyle(document.documentElement)
-      .getPropertyValue("--bg")
-      .trim();
+    const lightBg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
 
     document.documentElement.setAttribute("data-theme", "dark");
-    const darkBg = getComputedStyle(document.documentElement)
-      .getPropertyValue("--bg")
-      .trim();
+    const darkBg = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
 
     expect(darkBg).not.toBe("");
     expect(darkBg).not.toBe(lightBg);

@@ -85,7 +85,17 @@ describe("Splitter (#478)", () => {
       const sep = screen.getByRole("separator", { name: "panes" });
       const container = sep.parentElement as HTMLElement;
       container.getBoundingClientRect = () =>
-        ({ left: 0, top: 0, width: 1000, height: 600, right: 1000, bottom: 600, x: 0, y: 0, toJSON: () => ({}) }) as DOMRect;
+        ({
+          left: 0,
+          top: 0,
+          width: 1000,
+          height: 600,
+          right: 1000,
+          bottom: 600,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
       fireEvent.pointerDown(sep, { pointerId: 1, clientX: 500, clientY: 10 });
       fireEvent.pointerMove(sep, { pointerId: 1, clientX: 600, clientY: 10 });
       fireEvent.pointerMove(sep, { pointerId: 1, clientX: 700, clientY: 10 });
@@ -107,7 +117,13 @@ describe("Splitter (#478)", () => {
   it("保存済みの配分を復元する", () => {
     localStorage.setItem("test.restore", "0.3000");
     renderWithProviders(
-      <Splitter direction="row" storageKey="test.restore" ariaLabel="panes" first={<div>A</div>} second={<div>B</div>} />,
+      <Splitter
+        direction="row"
+        storageKey="test.restore"
+        ariaLabel="panes"
+        first={<div>A</div>}
+        second={<div>B</div>}
+      />,
     );
     expect(screen.getByRole("separator", { name: "panes" }).getAttribute("aria-valuenow")).toBe("30");
   });

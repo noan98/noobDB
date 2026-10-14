@@ -34,9 +34,7 @@ describe("fkJoinSnippets (#1540)", () => {
 
   it("予約語・大文字を含む名前は ON 側でもクォートする", () => {
     const f = [fk("order", "UserId", "user", "Id")];
-    expect(run("mysql", f, "order", "UserId")).toEqual([
-      "JOIN `shop`.`user` ON `user`.Id = `order`.UserId",
-    ]);
+    expect(run("mysql", f, "order", "UserId")).toEqual(["JOIN `shop`.`user` ON `user`.Id = `order`.UserId"]);
     // PostgreSQL は小文字以外の識別子もクォートする。
     expect(run("postgres", f, "order", "UserId")).toEqual([
       'JOIN "shop"."user" ON "user"."Id" = "order"."UserId"',
@@ -71,15 +69,8 @@ describe("fkJoinSnippets (#1540)", () => {
   });
 
   it("同じ列が複数の FK を持てば参照先ごとに 1 件ずつ、重複は除く", () => {
-    const f = [
-      fk("t", "c", "a", "id", "k1"),
-      fk("t", "c", "b", "id", "k2"),
-      fk("t", "c", "b", "id", "k3"),
-    ];
-    expect(run("sqlite", f, "t", "c")).toEqual([
-      'JOIN "a" ON a.id = t.c',
-      'JOIN "b" ON b.id = t.c',
-    ]);
+    const f = [fk("t", "c", "a", "id", "k1"), fk("t", "c", "b", "id", "k2"), fk("t", "c", "b", "id", "k3")];
+    expect(run("sqlite", f, "t", "c")).toEqual(['JOIN "a" ON a.id = t.c', 'JOIN "b" ON b.id = t.c']);
   });
 
   it("FK でない列・参照列不明・大文字小文字の違い", () => {

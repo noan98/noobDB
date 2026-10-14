@@ -50,9 +50,7 @@ describe("QueryEditor", () => {
 
   it("Ctrl+Alt+Enter でカーソル位置の単一文だけを実行する (#555)", async () => {
     const onRun = vi.fn();
-    renderWithProviders(
-      <QueryEditor onRun={onRun} initialSql={"SELECT 1;\nSELECT 2"} />,
-    );
+    renderWithProviders(<QueryEditor onRun={onRun} initialSql={"SELECT 1;\nSELECT 2"} />);
     const editable = document.querySelector(".cm-content") as HTMLElement;
     expect(editable).toBeTruthy();
     editable.focus();
@@ -77,9 +75,7 @@ describe("QueryEditor", () => {
   it("onPreview を渡すと Preview ボタンがエディタ本文で onPreview を呼ぶ", async () => {
     const user = userEvent.setup();
     const onPreview = vi.fn();
-    renderWithProviders(
-      <QueryEditor onRun={() => {}} onPreview={onPreview} initialSql="DELETE FROM t" />,
-    );
+    renderWithProviders(<QueryEditor onRun={() => {}} onPreview={onPreview} initialSql="DELETE FROM t" />);
 
     await user.click(screen.getByRole("button", { name: t("editorPreview") }));
     expect(onPreview).toHaveBeenCalledWith("DELETE FROM t");
@@ -136,9 +132,7 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
   it("「…」からメニューを開いて副次アクションを実行できる", async () => {
     const user = userEvent.setup();
     const onExplain = vi.fn();
-    renderWithProviders(
-      <QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="SELECT 7" />,
-    );
+    renderWithProviders(<QueryEditor onRun={() => {}} onExplain={onExplain} initialSql="SELECT 7" />);
 
     const more = screen.getByRole("button", { name: t("editorMoreActions") });
     expect(more.getAttribute("aria-expanded")).toBe("false");
@@ -149,9 +143,7 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
 
     expect(onExplain).toHaveBeenCalledWith("SELECT 7");
     // 実行後はメニューが閉じる (ContextMenu の activate は close → onSelect)。
-    await waitFor(() =>
-      expect(screen.queryByRole("menuitem", { name: t("editorExplain") })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: t("editorExplain") })).toBeNull());
   });
 
   it("本文が空のときメニュー項目は無効化される (ツールバーの無効判定を引き継ぐ)", async () => {
@@ -201,7 +193,9 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
       name: new RegExp(`^${escapeRe(t("editorMenuRunAll"))}`),
     });
     // 選択が無いのでコピー/切り取りは無効、カーソル位置の文の実行は出ている。
-    expect(screen.getByRole("menuitem", { name: new RegExp(escapeRe(t("editorMenuRunStatement"))) })).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: new RegExp(escapeRe(t("editorMenuRunStatement"))) }),
+    ).toBeTruthy();
     const copy = document.querySelectorAll<HTMLButtonElement>("[role=menuitem][disabled]");
     expect(Array.from(copy).some((el) => el.textContent?.includes(t("editorMenuCopy")))).toBe(true);
 
@@ -283,7 +277,13 @@ describe("QueryEditor.requestAiSql (#695)", () => {
     const onAiSqlAction = vi.fn();
     const ref = createRef<QueryEditorHandle>();
     renderWithProviders(
-      <QueryEditor ref={ref} onRun={vi.fn()} tabId="tab1" initialSql={initialSql} onAiSqlAction={onAiSqlAction} />,
+      <QueryEditor
+        ref={ref}
+        onRun={vi.fn()}
+        tabId="tab1"
+        initialSql={initialSql}
+        onAiSqlAction={onAiSqlAction}
+      />,
     );
     const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
     if (!view) throw new Error("no view");
@@ -325,7 +325,6 @@ describe("QueryEditor.requestAiSql (#695)", () => {
   });
 });
 
-
 describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿入 (#1414)", () => {
   const originalElementFromPoint = document.elementFromPoint;
   beforeEach(() => {
@@ -350,7 +349,16 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     document.body.appendChild(source);
     const detach = attachTreeDragSource(source, () => item);
     const ev = (type: string, x: number, extra: PointerEventInit = {}) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1, ...extra });
+      new PointerEvent(type, {
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: 1,
+        bubbles: true,
+        clientX: x,
+        clientY: 1,
+        ...extra,
+      });
     source.dispatchEvent(ev("pointerdown", 0));
     window.dispatchEvent(ev("pointermove", 40));
     window.dispatchEvent(ev("pointerup", 40, init));
@@ -386,7 +394,15 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     document.body.appendChild(source);
     const detach = attachTreeDragSource(source, () => ({ kind: "table", database: "d", table: "t" }));
     const ev = (type: string, x: number) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, clientX: x, clientY: 1 });
+      new PointerEvent(type, {
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: 1,
+        bubbles: true,
+        clientX: x,
+        clientY: 1,
+      });
     source.dispatchEvent(ev("pointerdown", 0));
     window.dispatchEvent(ev("pointermove", 40));
     expect(document.querySelector(".cm-tree-drop-caret")).not.toBeNull();

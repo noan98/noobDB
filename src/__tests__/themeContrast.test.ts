@@ -69,7 +69,9 @@ function discoverPresets(): { name: string; vars: Record<string, string>; isHigh
     const name = m[1];
     if (name === "dark") continue; // ベースのダークテーマは別 describe で検証する
     const ownVars = parseVars(
-      new RegExp(`:root\\[data-theme="${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`),
+      new RegExp(
+        `:root\\[data-theme="${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`,
+      ),
     );
     const fallback = name.endsWith("light") ? light : dark;
     out.push({
@@ -106,12 +108,7 @@ function rgbToHex(rgb: string): string {
   return `#${toHex(m[1])}${toHex(m[2])}${toHex(m[3])}`;
 }
 
-function check(
-  vars: Record<string, string>,
-  fgVar: string,
-  bgVar: string,
-  min: number,
-): void {
+function check(vars: Record<string, string>, fgVar: string, bgVar: string, min: number): void {
   const fg = vars[fgVar];
   const bg = vars[bgVar];
   expect(fg, `--${fgVar} must be a hex color`).toBeTruthy();
@@ -383,7 +380,14 @@ describe("WCAG AA contrast for theme presets (#465, #558)", () => {
       }
     });
     it("typed cell + syntax colors meet AA on their surfaces", () => {
-      for (const c of ["cell-number", "cell-bool-true", "cell-date", "cell-json", "cell-binary", "key-accent"]) {
+      for (const c of [
+        "cell-number",
+        "cell-bool-true",
+        "cell-date",
+        "cell-json",
+        "cell-binary",
+        "key-accent",
+      ]) {
         check(vars, c, "bg-elevated", AA_TEXT);
       }
       for (const c of ["syntax-keyword", "syntax-string", "syntax-comment", "syntax-function"]) {
@@ -408,8 +412,15 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
 
   it("agrees with the suffix rule for every known data-theme value", () => {
     const darkValues = [
-      "dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark",
-      "catppuccin-dark", "tokyo-night-dark",
+      "dark",
+      "dracula-dark",
+      "nord-dark",
+      "hc-dark",
+      "cb-dark",
+      "solarized-dark",
+      "one-dark",
+      "catppuccin-dark",
+      "tokyo-night-dark",
     ];
     const lightValues = ["light", "hc-light", "cb-light", "solarized-light", "tokyo-night-light"];
     for (const v of darkValues) expect(isDarkDataTheme(v)).toBe(true);
@@ -434,8 +445,15 @@ describe("data-viz palettes stay dark-theme aware (#1187)", () => {
     // 退行検知: フィルタ条件の変更などで 0 件になっても素通りしないようにする。
     expect(Object.keys(darkBackgrounds)).toEqual(
       expect.arrayContaining([
-        "dark", "dracula-dark", "nord-dark", "hc-dark", "cb-dark", "solarized-dark", "one-dark",
-        "catppuccin-dark", "tokyo-night-dark",
+        "dark",
+        "dracula-dark",
+        "nord-dark",
+        "hc-dark",
+        "cb-dark",
+        "solarized-dark",
+        "one-dark",
+        "catppuccin-dark",
+        "tokyo-night-dark",
       ]),
     );
   });

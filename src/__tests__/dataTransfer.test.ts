@@ -100,7 +100,9 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
         }),
       ).toBe("queryReadsTarget");
       // コメント・文字列リテラル・前方一致の別名は読み取り元ではない
-      expect(validateTransferTarget({ ...same, source: q("SELECT 'users' /* users */ FROM users_old") })).toBeNull();
+      expect(
+        validateTransferTarget({ ...same, source: q("SELECT 'users' /* users */ FROM users_old") }),
+      ).toBeNull();
       // 別接続・別 DB なら問題ない
       expect(
         validateTransferTarget({ ...same, sameProfileAndDatabase: false, source: q("SELECT * FROM users") }),
@@ -110,13 +112,15 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
     it("PostgreSQL は大文字小文字違いを別テーブルとして扱う (#1598)", () => {
       const same = { ...base, sameProfileAndDatabase: true, mode: "replace" as const };
       const src: TransferSource = { kind: "table", database: "app", table: "users" };
-      expect(validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "postgres" })).toBeNull();
-      expect(validateTransferTarget({ ...same, source: src, tableName: "users", targetDriver: "postgres" })).toBe(
-        "sameTable",
-      );
-      expect(validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "mysql" })).toBe(
-        "sameTable",
-      );
+      expect(
+        validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "postgres" }),
+      ).toBeNull();
+      expect(
+        validateTransferTarget({ ...same, source: src, tableName: "users", targetDriver: "postgres" }),
+      ).toBe("sameTable");
+      expect(
+        validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "mysql" }),
+      ).toBe("sameTable");
     });
   });
 

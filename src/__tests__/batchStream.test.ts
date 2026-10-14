@@ -33,9 +33,7 @@ const params = {
 
 describe("api.runSqlBatch / listenBatchStream", () => {
   it("listenBatchStream より前に呼ぶと早期に例外を投げる", () => {
-    expect(() => api.runSqlBatch({ ...params, streamId: "never-listened" })).toThrow(
-      /listenBatchStream/,
-    );
+    expect(() => api.runSqlBatch({ ...params, streamId: "never-listened" })).toThrow(/listenBatchStream/);
   });
 
   it("listen した Channel を onEvent として run_sql_batch へ渡す", async () => {
@@ -80,7 +78,13 @@ describe("api.runSqlBatch / listenBatchStream", () => {
     expect(handlers.onStarted).toHaveBeenCalledWith({ kind: "started", total: 3 });
     expect(handlers.onResults).toHaveBeenCalledTimes(1);
     expect(handlers.onResults.mock.calls[0][0].results[0].sql).toBe("SELECT 1");
-    expect(handlers.onDone).toHaveBeenCalledWith({ kind: "done", ok: 1, errors: 0, skipped: 0, elapsedMs: 4 });
+    expect(handlers.onDone).toHaveBeenCalledWith({
+      kind: "done",
+      ok: 1,
+      errors: 0,
+      skipped: 0,
+      elapsedMs: 4,
+    });
     expect(handlers.onError).toHaveBeenCalledWith({ kind: "error", error: "boom", connectionLost: true });
     expect(handlers.onCancelled).toHaveBeenCalledWith({ kind: "cancelled", deliveredStatements: 2 });
   });

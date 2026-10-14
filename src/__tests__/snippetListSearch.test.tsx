@@ -30,7 +30,13 @@ describe("SnippetList 検索中のフォルダ展開 (#1534)", () => {
   it("閉じたフォルダの中の一致は、検索中だけ強制的に開いて見せる", async () => {
     const user = userEvent.setup();
     renderWithProviders(
-      <SnippetList snippets={SNIPPETS} activeProfile={null} onInsert={vi.fn()} onEdit={vi.fn()} onDelete={vi.fn()} />,
+      <SnippetList
+        snippets={SNIPPETS}
+        activeProfile={null}
+        onInsert={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
     );
     const folder = screen.getByRole("treeitem", { name: /reports/ });
     expect(folder).toHaveAttribute("aria-expanded", "false");

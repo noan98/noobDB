@@ -56,7 +56,8 @@ export function TableOpenQueryModal({
   const loadSchemaRef = useRef(loadSchema);
   useEffect(() => {
     let cancelled = false;
-    loadSchemaRef.current()
+    loadSchemaRef
+      .current()
       .then((s) => {
         if (!cancelled) setSchema(s);
       })

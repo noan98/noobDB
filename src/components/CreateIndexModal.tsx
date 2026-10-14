@@ -140,7 +140,12 @@ export function CreateIndexModal({
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("createTableClose")}
         </Button>
-        <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
+        <PressableButton
+          type="button"
+          variant="primary"
+          disabled={!valid || readOnly}
+          onClick={() => onRun(sql)}
+        >
           {t("createIndexRun")}
         </PressableButton>
       </ModalFooter>

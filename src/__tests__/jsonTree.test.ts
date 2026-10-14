@@ -20,7 +20,8 @@ import {
 /** JSON / JSONB セルのツリービューア (#1026) の純ロジック。 */
 describe("parseJsonLossless / serializeJson", () => {
   it("keeps integers beyond Number.MAX_SAFE_INTEGER verbatim", () => {
-    const text = '{"id":9007199254740993,"big":-18446744073709551615,"f":0.1000000000000000055511151231257827}';
+    const text =
+      '{"id":9007199254740993,"big":-18446744073709551615,"f":0.1000000000000000055511151231257827}';
     const node = parseJsonLossless(text);
     expect(node).not.toBeNull();
     expect(serializeJson(node!)).toBe(text);
@@ -30,7 +31,7 @@ describe("parseJsonLossless / serializeJson", () => {
   });
 
   it("matches JSON.stringify(v, null, 2) layout for safe values", () => {
-    const value = { a: [1, 2, { b: null, c: true }], d: "x\n\"y\"", e: {}, f: [], g: -1.5e3 };
+    const value = { a: [1, 2, { b: null, c: true }], d: 'x\n"y"', e: {}, f: [], g: -1.5e3 };
     const text = JSON.stringify(value);
     expect(formatJsonLossless(text, 2)).toBe(JSON.stringify(value, null, 2));
     expect(formatJsonLossless(JSON.stringify(value, null, 2))).toBe(text);
@@ -41,7 +42,20 @@ describe("parseJsonLossless / serializeJson", () => {
   });
 
   it("rejects invalid JSON", () => {
-    for (const bad of ["", "{", "[1,]", "{a:1}", "01", "1.", "[1] x", "'s'", '"\t"', "{\"a\" 1}", "tru", "NaN"]) {
+    for (const bad of [
+      "",
+      "{",
+      "[1,]",
+      "{a:1}",
+      "01",
+      "1.",
+      "[1] x",
+      "'s'",
+      '"\t"',
+      '{"a" 1}',
+      "tru",
+      "NaN",
+    ]) {
       expect(parseJsonLossless(bad), bad).toBeNull();
     }
   });
@@ -135,7 +149,7 @@ describe("jsonPathSqlExpression", () => {
     );
     expect(jsonPathSqlExpression("mysql", "doc", path, false)).toBe("JSON_EXTRACT(`doc`, '$.a.b[0]')");
     expect(jsonPathSqlExpression("mysql", "doc", ['q"k'], false)).toBe(
-      "JSON_EXTRACT(`doc`, '$.\"q\\\\\"k\"')",
+      'JSON_EXTRACT(`doc`, \'$."q\\\\"k"\')',
     );
   });
   it("SQLite", () => {
@@ -162,9 +176,15 @@ describe("jsonPathSqlPredicate", () => {
   });
 
   it("numbers keep their original text (no rounding)", () => {
-    expect(jsonPathSqlPredicate("postgres", "doc", ["n"], big)).toBe(`("doc" ->> 'n')::numeric = 9007199254740993`);
-    expect(jsonPathSqlPredicate("mysql", "doc", ["n"], big)).toBe("JSON_EXTRACT(`doc`, '$.n') = 9007199254740993");
-    expect(jsonPathSqlPredicate("sqlite", "doc", ["n"], big)).toBe(`json_extract("doc", '$.n') = 9007199254740993`);
+    expect(jsonPathSqlPredicate("postgres", "doc", ["n"], big)).toBe(
+      `("doc" ->> 'n')::numeric = 9007199254740993`,
+    );
+    expect(jsonPathSqlPredicate("mysql", "doc", ["n"], big)).toBe(
+      "JSON_EXTRACT(`doc`, '$.n') = 9007199254740993",
+    );
+    expect(jsonPathSqlPredicate("sqlite", "doc", ["n"], big)).toBe(
+      `json_extract("doc", '$.n') = 9007199254740993`,
+    );
   });
 
   it("booleans (SQLite uses 1/0)", () => {
@@ -173,7 +193,9 @@ describe("jsonPathSqlPredicate", () => {
   });
 
   it("null (MySQL distinguishes JSON null via JSON_TYPE)", () => {
-    expect(jsonPathSqlPredicate("mysql", "doc", ["x"], nul)).toBe("JSON_TYPE(JSON_EXTRACT(`doc`, '$.x')) = 'NULL'");
+    expect(jsonPathSqlPredicate("mysql", "doc", ["x"], nul)).toBe(
+      "JSON_TYPE(JSON_EXTRACT(`doc`, '$.x')) = 'NULL'",
+    );
     expect(jsonPathSqlPredicate("postgres", "doc", ["x"], nul)).toBe(`"doc" ->> 'x' IS NULL`);
   });
 });
@@ -239,7 +261,9 @@ describe("searchJsonTree (遅延パス組み立て: 素朴実装と同一結果)
 });
 
 describe("jsonPathSqlUpdate (#1541)", () => {
-  const doc = parseJsonLossless('{"a":{"b c":[10,{"q\\"x":"it\'s \\\\ ok"}],"big":9007199254740993,"n":null,"t":true}}')!;
+  const doc = parseJsonLossless(
+    '{"a":{"b c":[10,{"q\\"x":"it\'s \\\\ ok"}],"big":9007199254740993,"n":null,"t":true}}',
+  )!;
   const at = (path: (string | number)[]) => nodeAtPath(doc, path)!;
   const W = "`id` = 1";
 
@@ -253,7 +277,9 @@ describe("jsonPathSqlUpdate (#1541)", () => {
   });
 
   it("PostgreSQL: jsonb_set + text[] パス、JSON null は 'null'::jsonb", () => {
-    expect(jsonPathSqlUpdate("postgres", '"app"."t"', "doc", ["a", "b c", 0], at(["a", "b c", 0]), '"id" = 1')).toBe(
+    expect(
+      jsonPathSqlUpdate("postgres", '"app"."t"', "doc", ["a", "b c", 0], at(["a", "b c", 0]), '"id" = 1'),
+    ).toBe(
       `UPDATE "app"."t" SET "doc" = jsonb_set("doc"::jsonb, '{"a","b c","0"}', '10'::jsonb) WHERE "id" = 1;`,
     );
     expect(jsonPathSqlUpdate("postgres", '"t"', "doc", ["a", "n"], at(["a", "n"]), "x")).toContain(
@@ -279,13 +305,20 @@ describe("jsonPathSqlUpdate (#1541)", () => {
     // 悪意あるキー: ' を含んでも文字列リテラルから抜けない
     const evil = parseJsonLossless(`{"k'); DROP TABLE t;--":1}`)!;
     for (const d of ["mysql", "postgres", "sqlite"]) {
-      const sql = jsonPathSqlUpdate(d, "t", "doc", ["k'); DROP TABLE t;--"], nodeAtPath(evil, ["k'); DROP TABLE t;--"])!, "x")!;
+      const sql = jsonPathSqlUpdate(
+        d,
+        "t",
+        "doc",
+        ["k'); DROP TABLE t;--"],
+        nodeAtPath(evil, ["k'); DROP TABLE t;--"])!,
+        "x",
+      )!;
       expect(sql).toContain("k''); DROP TABLE t;--");
       expect(sql).not.toMatch(/[^']'\); DROP/);
     }
   });
 
-  it("SQLite は \" や \\ を含むキーのパスを生成しない (別キーが増えるため)", () => {
+  it('SQLite は " や \\ を含むキーのパスを生成しない (別キーが増えるため)', () => {
     const path = ["a", "b c", 1, 'q"x'];
     expect(jsonPathSqlUpdate("sqlite", '"t"', "doc", path, at(path), "x")).toBeNull();
     expect(jsonPathSqlUpdate("mysql", "`t`", "doc", path, at(path), "x")).not.toBeNull();

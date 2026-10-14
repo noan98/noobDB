@@ -17,21 +17,15 @@ describe("connectionBandColor (#466)", () => {
   });
 
   it("uses the profile color for a normal connection", () => {
-    expect(
-      connectionBandColor({ name: "dev", color: "#22c55e", isProduction: false }),
-    ).toBe("#22c55e");
+    expect(connectionBandColor({ name: "dev", color: "#22c55e", isProduction: false })).toBe("#22c55e");
   });
 
   it("falls back to the workspace accent when no profile color is set", () => {
-    expect(
-      connectionBandColor({ name: "dev", color: null, isProduction: false }),
-    ).toBe("var(--ws-accent)");
+    expect(connectionBandColor({ name: "dev", color: null, isProduction: false })).toBe("var(--ws-accent)");
   });
 
   it("always uses the danger color for production, even with a custom color", () => {
-    expect(
-      connectionBandColor({ name: "prod", color: "#22c55e", isProduction: true }),
-    ).toBe(DANGER);
+    expect(connectionBandColor({ name: "prod", color: "#22c55e", isProduction: true })).toBe(DANGER);
   });
 
   it("uses the warning color while reconnecting, overriding production (#600)", () => {

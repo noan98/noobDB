@@ -31,9 +31,7 @@ const responseSchema = z.object({
 });
 export type ErrorExplainResponse = z.infer<typeof responseSchema>;
 
-export type ParsedErrorExplain =
-  | { ok: true; value: ErrorExplainResponse }
-  | { ok: false; raw: string };
+export type ParsedErrorExplain = { ok: true; value: ErrorExplainResponse } | { ok: false; raw: string };
 
 /** ストリームで結合した本文を JSON として解釈する。失敗時は本文をそのまま返す。 */
 export function parseErrorExplainResponse(text: string): ParsedErrorExplain {
@@ -193,7 +191,10 @@ export function maskErrorMessage(message: string, sql: string): string {
  * 「文末 / 空白 / `;`」のものだけを数える (`user` が `user_list` に一致しないように)。
  */
 export function findSqlRange(text: string, failed: string): { from: number; to: number } | null {
-  const needle = failed.trim().replace(/;+\s*$/, "").trim();
+  const needle = failed
+    .trim()
+    .replace(/;+\s*$/, "")
+    .trim();
   if (needle === "") return null;
   const isBoundary = (ch: string | undefined) => ch === undefined || ch === ";" || /\s/.test(ch);
   let found: { from: number; to: number } | null = null;
@@ -255,11 +256,7 @@ export function buildErrorExplainPrompt(input: ErrorExplainInput): string {
   lines.push("Error message:");
   lines.push(input.maskLiterals ? maskErrorMessage(input.message, input.sql) : input.message);
   lines.push("");
-  lines.push(
-    input.maskLiterals
-      ? "SQL (string literals and comments are blanked):"
-      : "SQL:",
-  );
+  lines.push(input.maskLiterals ? "SQL (string literals and comments are blanked):" : "SQL:");
   lines.push(sqlForAi(input.sql, input.driver, input.maskLiterals));
   if (input.tables.length > 0) {
     lines.push("");

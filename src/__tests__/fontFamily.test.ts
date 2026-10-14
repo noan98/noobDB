@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  monoFontStack,
-  uiFontStack,
-  MONO_FONT_FALLBACK,
-  UI_FONT_FALLBACK,
-} from "../settings";
+import { monoFontStack, uiFontStack, MONO_FONT_FALLBACK, UI_FONT_FALLBACK } from "../settings";
 
 /**
  * フォントファミリ設定のスタック生成ロジック。選んだファミリを共有

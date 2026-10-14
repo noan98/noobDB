@@ -167,9 +167,7 @@ export function OnboardingTour({ onClose }: Props) {
                 exit={variants.slideUp.exit}
                 transition={transitions.crossfade}
               >
-                <Text textStyle="subheading">
-                  {current.title}
-                </Text>
+                <Text textStyle="subheading">{current.title}</Text>
               </motion.div>
             </AnimatePresence>
           </chakra.div>
@@ -275,7 +273,14 @@ export function OnboardingTour({ onClose }: Props) {
           >
             {t("onboardingBack")}
           </Button>
-          <Button ref={nextRef} type="button" variant="primary" size="sm" data-testid="onboarding-next" onClick={handleNext}>
+          <Button
+            ref={nextRef}
+            type="button"
+            variant="primary"
+            size="sm"
+            data-testid="onboarding-next"
+            onClick={handleNext}
+          >
             {isLastStep(state) ? t("onboardingFinish") : t("onboardingNext")}
           </Button>
         </Flex>

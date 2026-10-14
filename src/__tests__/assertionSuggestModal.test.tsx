@@ -76,8 +76,27 @@ beforeEach(() => {
   resetAiKeyStoreForTest();
   listTables.mockResolvedValue(["orders", "users"]);
   describeTable.mockResolvedValue([
-    { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
-    { name: "amount", data_type: "numeric", nullable: true, key: "", default: null, extra: "", referenced_table: null, referenced_column: null, comment: "金額" },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "amount",
+      data_type: "numeric",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+      comment: "金額",
+    },
   ]);
   foreignKeys.mockResolvedValue([]);
   saveAssertion.mockImplementation(async (req) => ({ id: `id_${req.name}`, ...req }));

@@ -73,9 +73,7 @@ describe("serverQuickFilter (table tab / server-side WHERE)", () => {
 
   it("produces valid SQL for the exclusion path (quoted, escaped)", () => {
     const f = serverQuickFilter("o'brien", "ne", false);
-    expect(buildServerFilterClause("postgres", { column: "name", ...f })).toBe(
-      `"name" <> 'o''brien'`,
-    );
+    expect(buildServerFilterClause("postgres", { column: "name", ...f })).toBe(`"name" <> 'o''brien'`);
   });
 
   it("round-trips NULL cells into IS NULL / IS NOT NULL clauses", () => {

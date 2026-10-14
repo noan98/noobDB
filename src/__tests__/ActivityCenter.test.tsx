@@ -63,9 +63,7 @@ describe("ActivityCenter (#912)", () => {
     const { user } = await open();
     await user.click(screen.getByRole("button", { name: /Activity/ }));
     await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: t("activityCenterTitle") }),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).not.toBeInTheDocument(),
     );
   });
 
@@ -75,9 +73,7 @@ describe("ActivityCenter (#912)", () => {
     await user.keyboard("{Escape}");
     // 退出は AnimatePresence 経由なので、DOM から消えるまで待つ。
     await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: t("activityCenterTitle") }),
-      ).not.toBeInTheDocument(),
+      expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).not.toBeInTheDocument(),
     );
   });
 
@@ -179,8 +175,6 @@ describe("ActivityCenter (#912)", () => {
     expect(st.lastReadId).toBeGreaterThanOrEqual(st.entries[0].id);
 
     act(() => toggleActivityCenter());
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).toBeNull(),
-    );
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: t("activityCenterTitle") })).toBeNull());
   });
 });

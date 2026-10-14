@@ -29,10 +29,7 @@ interface Props {
   onClose: () => void;
 }
 
-type LoadState =
-  | { kind: "loading" }
-  | { kind: "error"; message: string }
-  | { kind: "ready" };
+type LoadState = { kind: "loading" } | { kind: "error"; message: string } | { kind: "ready" };
 
 /** 出力対象: DB 全体 / 選択したテーブル。 */
 type ExportScope = "all" | "selected";
@@ -131,9 +128,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
 
   const previewLines = useMemo(() => markdown.split("\n"), [markdown]);
   const previewContent =
-    previewLines.length > PREVIEW_LINES
-      ? previewLines.slice(0, PREVIEW_LINES).join("\n")
-      : markdown;
+    previewLines.length > PREVIEW_LINES ? previewLines.slice(0, PREVIEW_LINES).join("\n") : markdown;
   const previewTruncated = previewLines.length > PREVIEW_LINES;
 
   const filteredTables = useMemo(() => {
@@ -214,12 +209,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
           <>
             <FormSection>
               <FieldLabel as="div">{t("schemaExportScope")}</FieldLabel>
-              <chakra.div
-                role="radiogroup"
-                aria-label={t("schemaExportScope")}
-                display="flex"
-                gap="4"
-              >
+              <chakra.div role="radiogroup" aria-label={t("schemaExportScope")} display="flex" gap="4">
                 {(["all", "selected"] as const).map((sc) => (
                   <chakra.label
                     key={sc}
@@ -389,8 +379,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
                 />
               </chakra.div>
               <CodePreview aria-label={t("exportPreview")} maxH="220px">
-                {previewContent ||
-                  (emptySelection ? t("schemaExportNoSelection") : t("exportNoData"))}
+                {previewContent || (emptySelection ? t("schemaExportNoSelection") : t("exportNoData"))}
               </CodePreview>
               {previewTruncated && (
                 <chakra.div fontSize="xs" color="app.textMuted">
@@ -426,9 +415,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
           </>
         )}
 
-        {status.kind === "error" && (
-          <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>
-        )}
+        {status.kind === "error" && <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>}
       </ModalBody>
 
       <ModalFooter>

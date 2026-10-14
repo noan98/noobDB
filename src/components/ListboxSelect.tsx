@@ -97,10 +97,7 @@ export function ListboxSelect({
   const [highlighted, setHighlighted] = useState<number | null>(null);
   const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
 
-  const selectedIndex = useMemo(
-    () => options.findIndex((o) => o.value === value),
-    [options, value],
-  );
+  const selectedIndex = useMemo(() => options.findIndex((o) => o.value === value), [options, value]);
   const selectedOption = selectedIndex >= 0 ? options[selectedIndex] : undefined;
   const labels = useMemo(() => options.map(labelText), [options]);
 
@@ -147,10 +144,7 @@ export function ListboxSelect({
     if (top + height + MENU_MARGIN > viewportH) {
       top = anchor.top - POPOVER_GAP - height;
     }
-    top = Math.min(
-      Math.max(top, MENU_MARGIN),
-      Math.max(MENU_MARGIN, viewportH - height - MENU_MARGIN),
-    );
+    top = Math.min(Math.max(top, MENU_MARGIN), Math.max(MENU_MARGIN, viewportH - height - MENU_MARGIN));
     const left = Math.min(
       Math.max(anchor.left, MENU_MARGIN),
       Math.max(MENU_MARGIN, viewportW - width - MENU_MARGIN),
@@ -216,8 +210,7 @@ export function ListboxSelect({
     }
   };
 
-  const activeDescendant =
-    open && highlighted !== null ? optionElementId(listboxId, highlighted) : undefined;
+  const activeDescendant = open && highlighted !== null ? optionElementId(listboxId, highlighted) : undefined;
 
   return (
     <>
@@ -253,8 +246,15 @@ export function ListboxSelect({
         _focusVisible={{ outline: "none", borderColor: "app.accent", boxShadow: "var(--focus-ring)" }}
         css={css}
       >
-        <chakra.span flex="1" minW="0" overflow="hidden" whiteSpace="nowrap" textAlign="left" css={{ textOverflow: "ellipsis" }}>
-          {selectedOption ? selectedOption.label ?? selectedOption.value : placeholder}
+        <chakra.span
+          flex="1"
+          minW="0"
+          overflow="hidden"
+          whiteSpace="nowrap"
+          textAlign="left"
+          css={{ textOverflow: "ellipsis" }}
+        >
+          {selectedOption ? (selectedOption.label ?? selectedOption.value) : placeholder}
         </chakra.span>
         <Box flexShrink={0} color="app.textMuted" aria-hidden>
           <Icon name="chevron-down" size={ICON_SIZES.sm} />
@@ -332,7 +332,13 @@ export function ListboxSelect({
                   <Box flexShrink={0} w="14px" opacity={isSelected ? 1 : 0} aria-hidden>
                     <Icon name="check" size={ICON_SIZES.sm} />
                   </Box>
-                  <chakra.span flex="1" minW="0" overflow="hidden" whiteSpace="nowrap" css={{ textOverflow: "ellipsis" }}>
+                  <chakra.span
+                    flex="1"
+                    minW="0"
+                    overflow="hidden"
+                    whiteSpace="nowrap"
+                    css={{ textOverflow: "ellipsis" }}
+                  >
                     {opt.label ?? opt.value}
                   </chakra.span>
                 </chakra.button>

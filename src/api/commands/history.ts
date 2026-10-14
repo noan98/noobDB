@@ -5,18 +5,19 @@ import { parseResponse } from "../schemas";
 import type { HistoryEntry } from "../tauri";
 
 export const historyCommands = {
-
-  listHistory: (params: {
-    profileId?: string | null;
-    limit?: number | null;
-    search?: string | null;
-    /** `"ok"` or `"error"`; omit/`null` for no status filter (#822). */
-    status?: string | null;
-    /** RFC3339 inclusive lower bound on `executed_at` (#822). */
-    from?: string | null;
-    /** RFC3339 inclusive upper bound on `executed_at` (#822). */
-    to?: string | null;
-  } = {}) =>
+  listHistory: (
+    params: {
+      profileId?: string | null;
+      limit?: number | null;
+      search?: string | null;
+      /** `"ok"` or `"error"`; omit/`null` for no status filter (#822). */
+      status?: string | null;
+      /** RFC3339 inclusive lower bound on `executed_at` (#822). */
+      from?: string | null;
+      /** RFC3339 inclusive upper bound on `executed_at` (#822). */
+      to?: string | null;
+    } = {},
+  ) =>
     invoke<HistoryEntry[]>("list_history", {
       profileId: params.profileId ?? null,
       limit: params.limit ?? null,

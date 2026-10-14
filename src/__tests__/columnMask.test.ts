@@ -63,9 +63,7 @@ describe("matchesMaskPattern", () => {
 describe("sanitizeMaskPatterns / parseMaskPatterns", () => {
   it("配列でなければ fallback", () => {
     expect(sanitizeMaskPatterns("email", ["x"])).toEqual(["x"]);
-    expect(sanitizeMaskPatterns(undefined, DEFAULT_MASK_PATTERNS)).toEqual([
-      ...DEFAULT_MASK_PATTERNS,
-    ]);
+    expect(sanitizeMaskPatterns(undefined, DEFAULT_MASK_PATTERNS)).toEqual([...DEFAULT_MASK_PATTERNS]);
   });
 
   it("非文字列・空・長すぎるものを捨て、小文字化して重複を除く", () => {
@@ -91,9 +89,7 @@ describe("isColumnMasked / resolveMaskedColumns", () => {
 
   it("機能オフなら何もマスクしない (上書きがあっても)", () => {
     expect(isColumnMasked("email", { ...base, enabled: false })).toBe(false);
-    expect(
-      isColumnMasked("name", { ...base, enabled: false, overrides: { name: true } }),
-    ).toBe(false);
+    expect(isColumnMasked("name", { ...base, enabled: false, overrides: { name: true } })).toBe(false);
     expect(resolveMaskedColumns(["email"], { ...base, enabled: false })).toBeNull();
   });
 
@@ -186,9 +182,10 @@ describe("gridViewState の列マスク上書き (#1069)", () => {
   });
 
   it("壊れた masks は捨て、他のフィールドは残す", () => {
-    expect(
-      normalizeGridView({ sorting: [{ id: "0", desc: true }], masks: { a: "yes", b: true } }),
-    ).toEqual({ sorting: [{ id: "0", desc: true }], masks: { b: true } });
+    expect(normalizeGridView({ sorting: [{ id: "0", desc: true }], masks: { a: "yes", b: true } })).toEqual({
+      sorting: [{ id: "0", desc: true }],
+      masks: { b: true },
+    });
     expect(normalizeGridView({ masks: ["email"] })).toEqual({});
   });
 });

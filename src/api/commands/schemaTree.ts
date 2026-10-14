@@ -11,8 +11,8 @@ export const schemaTreeCommands = {
    * テーブル (`db::table`) の列・インデックス。
    */
   loadSchemaTree: (sessionId: string, openDbs: string[], openTableKeys: string[]) =>
-    invoke<SchemaTree>("load_schema_tree", { sessionId, openDbs, openTableKeys }).then(
-      (r) => parseResponse(schemas.schemaTree, r, "load_schema_tree"),
+    invoke<SchemaTree>("load_schema_tree", { sessionId, openDbs, openTableKeys }).then((r) =>
+      parseResponse(schemas.schemaTree, r, "load_schema_tree"),
     ),
   /**
    * 全 DB のテーブル一覧を 1 回で取得する (#1263)。各 DB の内容は `listTables` と

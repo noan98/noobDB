@@ -21,13 +21,33 @@ const base: ImpactAnalysisInput = {
       name: "orders",
       estimatedRows: 12000,
       columns: [
-        { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
-        { name: "customer_id", data_type: "int", nullable: false, key: "MUL", referenced_table: "customers", referenced_column: "id" },
+        {
+          name: "id",
+          data_type: "int",
+          nullable: false,
+          key: "PRI",
+          referenced_table: null,
+          referenced_column: null,
+        },
+        {
+          name: "customer_id",
+          data_type: "int",
+          nullable: false,
+          key: "MUL",
+          referenced_table: "customers",
+          referenced_column: "id",
+        },
       ],
     },
   ],
   foreignKeys: [
-    { table: "order_items", column: "order_id", referenced_table: "orders", referenced_column: "id", constraint_name: "fk_items_order" },
+    {
+      table: "order_items",
+      column: "order_id",
+      referenced_table: "orders",
+      referenced_column: "id",
+      constraint_name: "fk_items_order",
+    },
   ],
   preflight: { verb: "update", count: 3, allRows: false },
   isProduction: true,
@@ -65,7 +85,13 @@ describe("AI 影響分析の応答形式 (#694)", () => {
 
   it("形が違う / JSON でない / risk が範囲外なら本文をそのまま返す", () => {
     expect(parseImpactAnalysisResponse("plain")).toEqual({ ok: false, raw: "plain" });
-    const bad = JSON.stringify({ summary: "S", affected_tables: [], cascades: [], risk: "extreme", recommendations: [] });
+    const bad = JSON.stringify({
+      summary: "S",
+      affected_tables: [],
+      cascades: [],
+      risk: "extreme",
+      recommendations: [],
+    });
     expect(parseImpactAnalysisResponse(bad)).toEqual({ ok: false, raw: bad });
   });
 
@@ -78,25 +104,35 @@ describe("AI 影響分析の応答形式 (#694)", () => {
 
 describe("対象テーブルと関連 FK (#694)", () => {
   it("検出結果の対象 (クォート・db 修飾) をテーブル参照にする", () => {
-    expect(findingTableRef({ kind: "drop", target: "`app`.`users`" })).toEqual({ database: "app", table: "users" });
-    expect(findingTableRef({ kind: "truncate", target: "orders" })).toEqual({ database: null, table: "orders" });
+    expect(findingTableRef({ kind: "drop", target: "`app`.`users`" })).toEqual({
+      database: "app",
+      table: "users",
+    });
+    expect(findingTableRef({ kind: "truncate", target: "orders" })).toEqual({
+      database: null,
+      table: "orders",
+    });
     expect(findingTableRef({ kind: "drop", target: null })).toBeNull();
   });
 
   it("DROP / TRUNCATE の対象も SQL 内のテーブルも重複なしで拾う", () => {
-    const refs = impactTableRefs(
-      "TRUNCATE TABLE orders",
-      [{ kind: "truncate", target: "orders" }],
+    const refs = impactTableRefs("TRUNCATE TABLE orders", [{ kind: "truncate", target: "orders" }], "mysql");
+    expect(refs).toEqual([{ database: null, table: "orders" }]);
+    const upd = impactTableRefs(
+      "UPDATE a JOIN b ON a.id=b.id SET a.x=1",
+      [{ kind: "updateNoWhere", target: "a" }],
       "mysql",
     );
-    expect(refs).toEqual([{ database: null, table: "orders" }]);
-    const upd = impactTableRefs("UPDATE a JOIN b ON a.id=b.id SET a.x=1", [{ kind: "updateNoWhere", target: "a" }], "mysql");
     expect(upd.map((r) => r.table)).toEqual(["a", "b"]);
   });
 
   it("対象テーブルを参照する / される FK だけを大文字小文字無視で残し、上限で切る", () => {
     const fk = (table: string, parent: string) => ({
-      table, column: "c", referenced_table: parent, referenced_column: "id", constraint_name: null,
+      table,
+      column: "c",
+      referenced_table: parent,
+      referenced_column: "id",
+      constraint_name: null,
     });
     const out = selectRelatedForeignKeys(
       [fk("Order_Items", "orders"), fk("orders", "customers"), fk("x", "y")],
@@ -132,7 +168,9 @@ describe("プロンプト (#694)", () => {
         {
           ...base.tables[0],
           rows: [["ROW_DATA_SENTINEL"]],
-          columns: [{ ...base.tables[0].columns[0], default: "DEFAULT_SENTINEL", comment: "COMMENT_SENTINEL" }],
+          columns: [
+            { ...base.tables[0].columns[0], default: "DEFAULT_SENTINEL", comment: "COMMENT_SENTINEL" },
+          ],
         },
       ],
     } as unknown as ImpactAnalysisInput;

@@ -443,11 +443,7 @@ export interface Column {
   type_name: string;
 }
 
-export type CellValue =
-  | null
-  | boolean
-  | number
-  | string;
+export type CellValue = null | boolean | number | string;
 
 /** サーバの通知・警告の重大度 (#1165)。`db::types::ServerMessageSeverity` の wire 表現。 */
 export type ServerMessageSeverity = "error" | "warning" | "notice" | "info";
@@ -529,12 +525,7 @@ export interface IndexInfo {
 }
 
 /** 非テーブルのスキーマオブジェクト種別。 */
-export type SchemaObjectKind =
-  | "view"
-  | "materialized_view"
-  | "procedure"
-  | "function"
-  | "trigger";
+export type SchemaObjectKind = "view" | "materialized_view" | "procedure" | "function" | "trigger";
 
 /** 非テーブルのスキーマオブジェクト。 */
 export interface SchemaObject {
@@ -2441,9 +2432,7 @@ export interface PreviewStreamHandlers {
  * unlisten function that detaches all of them. The registration promises are
  * passed already-started, so they still register concurrently.
  */
-async function registerListeners(
-  registrations: Array<Promise<UnlistenFn>>,
-): Promise<UnlistenFn> {
+async function registerListeners(registrations: Array<Promise<UnlistenFn>>): Promise<UnlistenFn> {
   const settled = await Promise.allSettled(registrations);
   const unlisteners: UnlistenFn[] = [];
   for (const r of settled) {
@@ -2626,21 +2615,14 @@ export function broadcastEnvStreamId(runId: string, sessionId: string): string {
  * `api.broadcastCompare({ runId })` の結果を受ける Channel を用意する。先に await してから
  * `broadcastCompare` を呼ぶこと。戻り値でハンドラを外す (以後のメッセージは無視される)。
  */
-export async function listenBroadcast(
-  runId: string,
-  handlers: BroadcastHandlers,
-): Promise<UnlistenFn> {
+export async function listenBroadcast(runId: string, handlers: BroadcastHandlers): Promise<UnlistenFn> {
   const channel = new Channel<unknown>();
   channel.onmessage = (raw) => {
     const msg = raw as RawStreamMessage;
     switch (msg.kind) {
       case "env":
         handlers.onEnv?.(
-          parseChannelMessage<BroadcastEnvMessage>(
-            schemas.broadcastEnvMessage,
-            msg,
-            "broadcastEnvMessage",
-          ),
+          parseChannelMessage<BroadcastEnvMessage>(schemas.broadcastEnvMessage, msg, "broadcastEnvMessage"),
         );
         break;
       case "cancelled":
@@ -3110,10 +3092,7 @@ export async function listenTransferStream(
 }
 
 /** ストリーミングダンプの進捗/完了/エラー/キャンセルイベントを購読する (#686)。 */
-export async function listenDumpStream(
-  streamId: string,
-  handlers: DumpStreamHandlers,
-): Promise<UnlistenFn> {
+export async function listenDumpStream(streamId: string, handlers: DumpStreamHandlers): Promise<UnlistenFn> {
   const filter =
     <T extends { streamId: string }>(
       schema: Parameters<typeof parseResponse>[0],
@@ -3162,11 +3141,7 @@ export async function listenConnectProgress(
   onPhase: (phase: string) => void,
 ): Promise<UnlistenFn> {
   return listen<ConnectPhaseEvent>("connect-progress:phase", (e) => {
-    const payload = parseResponse(
-      schemas.connectPhaseEvent,
-      e.payload,
-      "connect-progress:phase",
-    );
+    const payload = parseResponse(schemas.connectPhaseEvent, e.payload, "connect-progress:phase");
     if (payload.attemptId === attemptId) onPhase(payload.phase);
   });
 }
@@ -3230,7 +3205,13 @@ export async function listenTaskRunEvents(handlers: {
 
 // --- AI 基盤 (#690) ---------------------------------------------------------
 
-export type AiConnectionStatus = "success" | "authError" | "networkError" | "apiError" | "overloaded" | "refused";
+export type AiConnectionStatus =
+  | "success"
+  | "authError"
+  | "networkError"
+  | "apiError"
+  | "overloaded"
+  | "refused";
 
 export interface AiConnectionTestResult {
   status: AiConnectionStatus;
@@ -3306,10 +3287,7 @@ export interface AiStreamHandlers {
  * の前に await すること。戻り値の関数でハンドラを外す。ハンドラへは従来どおり `streamId`
  * 付きのイベントを渡す。
  */
-export async function listenAiStream(
-  streamId: string,
-  handlers: AiStreamHandlers,
-): Promise<UnlistenFn> {
+export async function listenAiStream(streamId: string, handlers: AiStreamHandlers): Promise<UnlistenFn> {
   const channel = new Channel<unknown>();
   channel.onmessage = (raw) => {
     const msg = raw as RawStreamMessage;

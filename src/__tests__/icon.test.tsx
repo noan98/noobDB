@@ -77,9 +77,7 @@ describe("icon lexicon (#489)", () => {
     for (const name of ["mysql", "postgres", "sqlite"] as const) {
       const { container, unmount } = renderWithProviders(<Icon name={name} size={ICON_SIZES.sm} />);
       const svg = container.querySelector("svg");
-      expect(svg?.getAttribute("fill"), `brand icon "${name}" should be filled`).toBe(
-        "currentColor",
-      );
+      expect(svg?.getAttribute("fill"), `brand icon "${name}" should be filled`).toBe("currentColor");
       expect(svg?.querySelector("path")).toBeTruthy();
       expect(svg?.getAttribute("style") ?? "").toContain(`width: ${ICON_SIZES.sm}`);
       unmount();
@@ -88,12 +86,8 @@ describe("icon lexicon (#489)", () => {
 
   it("maps the stroke token onto the rendered stroke width", () => {
     // ストローク幅は Tabler の `stroke` prop (色ではなく線幅) 経由で渡している。
-    const { container, unmount } = renderWithProviders(
-      <Icon name="table" strokeWidth={ICON_STROKE.bold} />,
-    );
-    expect(container.querySelector("svg")?.getAttribute("stroke-width")).toBe(
-      String(ICON_STROKE.bold),
-    );
+    const { container, unmount } = renderWithProviders(<Icon name="table" strokeWidth={ICON_STROKE.bold} />);
+    expect(container.querySelector("svg")?.getAttribute("stroke-width")).toBe(String(ICON_STROKE.bold));
     unmount();
   });
 });

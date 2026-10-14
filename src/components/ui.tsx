@@ -67,10 +67,7 @@ export function Radio(props: Omit<ComponentProps<typeof RadioRoot>, "type">) {
  * - 対象は主要 CTA (primary / danger / warning / success) に限定し、密度の高い
  *   小ボタン群 (グリッドヘッダー操作等) には使わない。
  */
-export function PressableButton({
-  children,
-  ...rest
-}: ComponentProps<typeof Button>) {
+export function PressableButton({ children, ...rest }: ComponentProps<typeof Button>) {
   const disabled = !!rest.disabled;
   return (
     <motion.span

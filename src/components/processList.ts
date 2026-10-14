@@ -61,10 +61,7 @@ export function formatProcessTime(secs: number | null): string {
  * 消えたプロセスの選択を持ち越すと、次の kill が別プロセス (id 再利用) を
  * 巻き込みかねないため、リフレッシュごとに必ず刈り込む。
  */
-export function pruneSelection(
-  selected: ReadonlySet<number>,
-  processes: ProcessInfo[],
-): Set<number> {
+export function pruneSelection(selected: ReadonlySet<number>, processes: ProcessInfo[]): Set<number> {
   const alive = new Set(processes.map((p) => p.id));
   const next = new Set<number>();
   for (const id of selected) {
@@ -254,10 +251,7 @@ export function isProcessFilterActive(f: ProcessFilter): boolean {
  * 一覧を絞り込む (#1538)。描画上限 (`PROCESS_RENDER_LIMIT`) で切る**前**に適用するための
  * 純関数で、501 件目以降のプロセスも条件に合えば先頭側に現れる。条件なしなら入力をそのまま返す。
  */
-export function filterProcesses(
-  rows: readonly ProcessInfo[],
-  filter: ProcessFilter,
-): readonly ProcessInfo[] {
+export function filterProcesses(rows: readonly ProcessInfo[], filter: ProcessFilter): readonly ProcessInfo[] {
   if (!isProcessFilterActive(filter)) return rows;
   const needle = filter.text.trim().toLowerCase();
   return rows.filter((p) => {
@@ -284,10 +278,7 @@ export type ProcessSortKey = "default" | "timeDesc" | "timeAsc" | "id";
  * 昇順・降順どちらでも末尾に置く (長時間クエリ探しで不明が先頭を占めないように)。
  * 同値は id 昇順で安定させる。
  */
-export function sortProcesses(
-  rows: readonly ProcessInfo[],
-  key: ProcessSortKey,
-): readonly ProcessInfo[] {
+export function sortProcesses(rows: readonly ProcessInfo[], key: ProcessSortKey): readonly ProcessInfo[] {
   if (key === "default") return rows;
   const copy = [...rows];
   if (key === "id") return copy.sort((a, b) => a.id - b.id);

@@ -11,7 +11,6 @@ import type {
 } from "../tauri";
 
 export const tasksCommands = {
-
   // --- タスクスケジューラ (#730) ---
 
   listTasks: () =>
@@ -41,18 +40,12 @@ export const tasksCommands = {
       limit: limit ?? null,
     }).then((r) => parseResponse(schemas.taskRunArray, r, "list_task_runs")),
   /** アサーション実行タスクの合否履歴 (新しい順、#1170)。 */
-  listAssertionRuns: (params: {
-    taskId?: string | null;
-    assertionId?: string | null;
-    limit?: number;
-  }) =>
+  listAssertionRuns: (params: { taskId?: string | null; assertionId?: string | null; limit?: number }) =>
     invoke<AssertionRunRecord[]>("list_assertion_runs", {
       taskId: params.taskId ?? null,
       assertionId: params.assertionId ?? null,
       limit: params.limit ?? null,
-    }).then((r) =>
-      parseResponse(schemas.assertionRunRecordArray, r, "list_assertion_runs"),
-    ),
+    }).then((r) => parseResponse(schemas.assertionRunRecordArray, r, "list_assertion_runs")),
   clearTaskRuns: (taskId?: string | null) =>
     invoke<number>("clear_task_runs", { taskId: taskId ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "clear_task_runs"),

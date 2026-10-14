@@ -34,11 +34,7 @@ export const TYPEAHEAD_RESET_MS = 800;
 
 /** 印字可能な 1 文字を型入力バッファへ積む。タイムアウトを超えていれば
  *  新しいバッファとして開始する。 */
-export function appendTypeaheadKey(
-  state: TypeaheadState | null,
-  char: string,
-  now: number,
-): TypeaheadState {
+export function appendTypeaheadKey(state: TypeaheadState | null, char: string, now: number): TypeaheadState {
   if (state && now - state.lastKeyAt <= TYPEAHEAD_RESET_MS) {
     return { query: state.query + char.toLowerCase(), lastKeyAt: now };
   }

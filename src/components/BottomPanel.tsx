@@ -281,10 +281,7 @@ export function BottomPanelStrip({
   onOpen: (tab: BottomPanelTab) => void;
 }) {
   const t = useT();
-  const groupStarts = useMemo(
-    () => bottomPanelGroupStarts(entries.map((e) => e.tab)),
-    [entries],
-  );
+  const groupStarts = useMemo(() => bottomPanelGroupStarts(entries.map((e) => e.tab)), [entries]);
   if (entries.length === 0) return null;
   return (
     <Flex
@@ -402,7 +399,7 @@ export function WorkspaceSplit({
       secondCollapsed={!open && !split}
       second={
         !open && !split ? (
-          collapsed ?? null
+          (collapsed ?? null)
         ) : (
           <AnimatePresence onExitComplete={() => setSplit(false)}>
             {open && (

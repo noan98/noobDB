@@ -10,24 +10,18 @@ import { DropInsertionMarker } from "../components/DropInsertionMarker";
  */
 describe("DropInsertionMarker (#1007)", () => {
   it("renders nothing when not visible", () => {
-    const { container } = renderWithProviders(
-      <DropInsertionMarker orientation="vertical" visible={false} />,
-    );
+    const { container } = renderWithProviders(<DropInsertionMarker orientation="vertical" visible={false} />);
     expect(container.querySelector('[aria-hidden="true"]')).toBeNull();
   });
 
   it("renders an aria-hidden marker when visible (vertical)", () => {
-    const { container } = renderWithProviders(
-      <DropInsertionMarker orientation="vertical" visible />,
-    );
+    const { container } = renderWithProviders(<DropInsertionMarker orientation="vertical" visible />);
     const marker = container.querySelector('[aria-hidden="true"]');
     expect(marker).not.toBeNull();
   });
 
   it("renders an aria-hidden marker when visible (horizontal)", () => {
-    const { container } = renderWithProviders(
-      <DropInsertionMarker orientation="horizontal" visible />,
-    );
+    const { container } = renderWithProviders(<DropInsertionMarker orientation="horizontal" visible />);
     const marker = container.querySelector('[aria-hidden="true"]');
     expect(marker).not.toBeNull();
   });

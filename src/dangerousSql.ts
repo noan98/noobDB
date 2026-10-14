@@ -9,11 +9,7 @@
  * for the statement's own guard (see `hasTopLevelWhere`).
  */
 
-export type DangerKind =
-  | "deleteNoWhere"
-  | "updateNoWhere"
-  | "drop"
-  | "truncate";
+export type DangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
 
 export interface DangerFinding {
   kind: DangerKind;
@@ -102,12 +98,7 @@ const MASK_CACHE_ENTRIES = 8;
 const MASK_CACHE_MAX_SQL_CHARS = 256 * 1024;
 const maskCache = new Map<string, string>();
 
-function maskLiteralsUncached(
-  sql: string,
-  driver?: string,
-  keepIdent = false,
-  keepBrackets = false,
-): string {
+function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false, keepBrackets = false): string {
   const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
@@ -343,10 +334,7 @@ function hasTopLevelWhere(maskedLower: string): boolean {
 
 /** Strips surrounding quoting (`` ` ``, `"`, `[]`) from a parsed identifier. */
 function cleanIdentifier(token: string): string {
-  if (
-    (token.startsWith("`") && token.endsWith("`")) ||
-    (token.startsWith('"') && token.endsWith('"'))
-  ) {
+  if ((token.startsWith("`") && token.endsWith("`")) || (token.startsWith('"') && token.endsWith('"'))) {
     return token.slice(1, -1);
   }
   if (token.startsWith("[") && token.endsWith("]")) {
@@ -362,9 +350,10 @@ function cleanIdentifier(token: string): string {
  * `` `shop`.`orders` `` yields `shop.orders` rather than just `shop`.
  */
 function readTargetIdentifier(rest: string): string | null {
-  const m = /^\s*((?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+)(?:\.(?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+))*\.?)/.exec(
-    rest,
-  );
+  const m =
+    /^\s*((?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+)(?:\.(?:`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+))*\.?)/.exec(
+      rest,
+    );
   if (!m) return null;
   const parts = m[1].match(/`[^`]+`|"[^"]+"|\[[^\]]+\]|[A-Za-z0-9_$]+/g) ?? [];
   const cleaned = parts.map(cleanIdentifier).join(".");
@@ -676,10 +665,7 @@ const SCHEMA_MUTATING_KEYWORDS = [
  */
 export function isSchemaMutatingSql(sql: string, driver?: string): boolean {
   const masked = maskLiterals(sql, driver).toLowerCase();
-  return (
-    SCHEMA_MUTATING_KEYWORDS.some((kw) => containsWord(masked, kw)) ||
-    /\bcomment\s+on\b/.test(masked)
-  );
+  return SCHEMA_MUTATING_KEYWORDS.some((kw) => containsWord(masked, kw)) || /\bcomment\s+on\b/.test(masked);
 }
 
 /**

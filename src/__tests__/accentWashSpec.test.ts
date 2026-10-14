@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  accentWashOpacity,
-  accentWashSpec,
-  shouldFireAccentWash,
-} from "../components/accentWashSpec";
+import { accentWashOpacity, accentWashSpec, shouldFireAccentWash } from "../components/accentWashSpec";
 import { semanticColorVar } from "../semanticColors";
 
 /**

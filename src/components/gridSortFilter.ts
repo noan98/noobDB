@@ -33,7 +33,6 @@ export interface ColumnFilter {
   caseSensitive?: boolean;
 }
 
-
 // Sort: nulls are pushed after non-null values for asc; flipped to top by desc inversion.
 function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): number {
   if (a === null && b === null) return 0;
@@ -41,7 +40,6 @@ function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): 
   if (b === null) return -1;
   return cmp(a, b);
 }
-
 
 /** 数値列の比較 (`Number()` 化。NaN は NULL の手前、NULL は最後)。 */
 export function compareNumericCells(av: CellValue, bv: CellValue): number {

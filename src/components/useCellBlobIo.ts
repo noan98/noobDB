@@ -76,10 +76,8 @@ export function useCellBlobIo({
       const key = blobKeyParts(columns, row, pkIndices ?? [], isBinaryColumn);
       if (!key) return undefined;
 
-      const probe = () =>
-        api.probeCellBlob(config.sessionId, database ?? null, table, col.name, key);
-      const fetchBytes = () =>
-        api.fetchCellBytes(config.sessionId, database ?? null, table, col.name, key);
+      const probe = () => api.probeCellBlob(config.sessionId, database ?? null, table, col.name, key);
+      const fetchBytes = () => api.fetchCellBytes(config.sessionId, database ?? null, table, col.name, key);
 
       const saveToFile = async () => {
         try {
@@ -109,9 +107,7 @@ export function useCellBlobIo({
           const keys: BlobKeyPart[][] = [];
           let noKey = 0;
           for (const r of rowIndices) {
-            const k = rows[r]
-              ? blobKeyParts(columns, rows[r], pkIndices ?? [], isBinaryColumn)
-              : null;
+            const k = rows[r] ? blobKeyParts(columns, rows[r], pkIndices ?? [], isBinaryColumn) : null;
             if (k) keys.push(k);
             else noKey += 1;
           }
@@ -142,9 +138,7 @@ export function useCellBlobIo({
             folder,
           });
           if (res.failed > 0) {
-            toast.error(
-              `${summary} ${t("blobFolderFirstError", { error: res.errors[0]?.error ?? "" })}`,
-            );
+            toast.error(`${summary} ${t("blobFolderFirstError", { error: res.errors[0]?.error ?? "" })}`);
           } else {
             toast.success(summary);
           }

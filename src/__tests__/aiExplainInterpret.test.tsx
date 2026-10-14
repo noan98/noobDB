@@ -53,7 +53,13 @@ function sqliteResult(): QueryResult {
 }
 
 function ui(
-  opts: { readOnly?: boolean; isProduction?: boolean; withAi?: boolean; streaming?: boolean; result?: QueryResult } = {},
+  opts: {
+    readOnly?: boolean;
+    isProduction?: boolean;
+    withAi?: boolean;
+    streaming?: boolean;
+    result?: QueryResult;
+  } = {},
 ) {
   return (
     <ExplainViewer
@@ -225,7 +231,10 @@ describe("AiExplainInterpret (#693)", () => {
     const { rerender } = renderWithProviders(ui());
     await clickInterpret();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
-    const next = { columns: ["id", "parent", "notused", "detail"], rows: [[2, 0, 0, "SEARCH users"]] } as unknown as QueryResult;
+    const next = {
+      columns: ["id", "parent", "notused", "detail"],
+      rows: [[2, 0, 0, "SEARCH users"]],
+    } as unknown as QueryResult;
     rerender(ui({ result: next }));
     await waitFor(() => expect(cancelStream).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(t("explainAiCancel"))).toBeNull();

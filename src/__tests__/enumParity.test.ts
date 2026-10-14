@@ -50,10 +50,7 @@ function stripLineComments(src: string): string {
  */
 function extractRustEnum(rustEnum: string): { rule: RenameRule; variants: string[] } {
   const found: { rule: RenameRule; variants: string[] }[] = [];
-  const re = new RegExp(
-    `((?:#\\[[^\\]]*\\]\\s*)*)pub\\s+enum\\s+${rustEnum}\\s*\\{([\\s\\S]*?)\\n\\}`,
-    "g",
-  );
+  const re = new RegExp(`((?:#\\[[^\\]]*\\]\\s*)*)pub\\s+enum\\s+${rustEnum}\\s*\\{([\\s\\S]*?)\\n\\}`, "g");
   for (const raw of rustSources) {
     const src = stripLineComments(raw);
     let m: RegExpExecArray | null;
@@ -129,27 +126,24 @@ describe("Rust serde enum ⇔ フロント union のバリアント完全性 (#1
     expect(renameVariant("SourceOnly", "kebab-case")).toBe("source-only");
   });
 
-  describe.each(ENUM_PAIRS.filter((p) => !(p.rust in ALLOWLIST)))(
-    "$rust ⇔ $ts",
-    ({ rust, ts }) => {
-      const rustSide = extractRustEnum(rust).variants;
-      const tsSide = extractTsUnion(ts);
+  describe.each(ENUM_PAIRS.filter((p) => !(p.rust in ALLOWLIST)))("$rust ⇔ $ts", ({ rust, ts }) => {
+    const rustSide = extractRustEnum(rust).variants;
+    const tsSide = extractTsUnion(ts);
 
-      it("バリアントが 1 つ以上あり重複しない", () => {
-        expect(rustSide.length).toBeGreaterThan(0);
-        expect(new Set(rustSide).size).toBe(rustSide.length);
-        expect(new Set(tsSide).size).toBe(tsSide.length);
-      });
+    it("バリアントが 1 つ以上あり重複しない", () => {
+      expect(rustSide.length).toBeGreaterThan(0);
+      expect(new Set(rustSide).size).toBe(rustSide.length);
+      expect(new Set(tsSide).size).toBe(tsSide.length);
+    });
 
-      it("Rust にあって TS union に無いバリアントが無い (フロントの欠落)", () => {
-        const missing = rustSide.filter((v) => !tsSide.includes(v));
-        expect(missing, `${ts} に追加が必要`).toEqual([]);
-      });
+    it("Rust にあって TS union に無いバリアントが無い (フロントの欠落)", () => {
+      const missing = rustSide.filter((v) => !tsSide.includes(v));
+      expect(missing, `${ts} に追加が必要`).toEqual([]);
+    });
 
-      it("TS union にあって Rust に無いバリアントが無い (フロントの余剰)", () => {
-        const extra = tsSide.filter((v) => !rustSide.includes(v));
-        expect(extra, `${rust} に存在しない`).toEqual([]);
-      });
-    },
-  );
+    it("TS union にあって Rust に無いバリアントが無い (フロントの余剰)", () => {
+      const extra = tsSide.filter((v) => !rustSide.includes(v));
+      expect(extra, `${rust} に存在しない`).toEqual([]);
+    });
+  });
 });

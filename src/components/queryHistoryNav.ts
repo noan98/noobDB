@@ -65,10 +65,7 @@ export function navigateOlder(
  * ↓ (新しい履歴へ)。未ナビゲーション (`index === -1`) のときは null を返し、通常の
  * カーソル移動に委ねる。最新位置を超えて戻るときは退避していた下書きを復元する。
  */
-export function navigateNewer(
-  history: string[],
-  state: HistoryNavState,
-): HistoryNavResult | null {
+export function navigateNewer(history: string[], state: HistoryNavState): HistoryNavResult | null {
   if (state.index === -1) return null;
 
   const nextIndex = state.index - 1;

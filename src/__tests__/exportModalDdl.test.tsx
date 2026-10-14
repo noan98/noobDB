@@ -73,7 +73,9 @@ describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
     await waitFor(() => expect(api.exportQueryResult).toHaveBeenCalledOnce());
     expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "users");
-    expect(vi.mocked(api.exportQueryResult).mock.calls[0][0].ddlHeader).toBe("CREATE TABLE `users` (`id` int)");
+    expect(vi.mocked(api.exportQueryResult).mock.calls[0][0].ddlHeader).toBe(
+      "CREATE TABLE `users` (`id` int)",
+    );
   });
 
   it("チェックしないときは定義を取得せず ddlHeader も null", async () => {
@@ -107,7 +109,9 @@ describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("exportCopyAll") }));
     await waitFor(() => expect(api.renderExportText).toHaveBeenCalledOnce());
     expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "users");
-    expect(vi.mocked(api.renderExportText).mock.calls[0][0].ddlHeader).toBe("CREATE TABLE `users` (`id` int)");
+    expect(vi.mocked(api.renderExportText).mock.calls[0][0].ddlHeader).toBe(
+      "CREATE TABLE `users` (`id` int)",
+    );
   });
 
   it("プレビューにも定義を先頭に付ける (#1597)", async () => {

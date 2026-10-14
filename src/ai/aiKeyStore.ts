@@ -48,12 +48,20 @@ function subscribe(l: () => void): () => void {
 }
 
 export function useAiKeyPresent(): boolean {
-  return useSyncExternalStore(subscribe, () => hasKey, () => false);
+  return useSyncExternalStore(
+    subscribe,
+    () => hasKey,
+    () => false,
+  );
 }
 
 /** キーの有無が確定済みか。取得前に「未登録」の案内を出さないために使う (#1475)。 */
 export function useAiKeyKnown(): boolean {
-  return useSyncExternalStore(subscribe, () => known, () => false);
+  return useSyncExternalStore(
+    subscribe,
+    () => known,
+    () => false,
+  );
 }
 
 /** テスト用: ストアを初期状態へ戻す。 */

@@ -85,7 +85,11 @@ describe("candidateSql / formatCandidates (#699)", () => {
 describe("プロンプト (#699)", () => {
   it("検索プロンプトに依頼文と候補を含み、システムは言語を切り替える", () => {
     const f = formatCandidates([cand(7, "SELECT sum(x) FROM sales")], false);
-    const p = buildHistorySearchPrompt({ query: " 先週の売上集計 ", candidates: f, now: new Date("2026-02-01T00:00:00Z") });
+    const p = buildHistorySearchPrompt({
+      query: " 先週の売上集計 ",
+      candidates: f,
+      now: new Date("2026-02-01T00:00:00Z"),
+    });
     expect(p).toContain("Request: 先週の売上集計");
     expect(p).toContain("[id=7]");
     expect(p).toContain("2026-02-01T00:00:00.000Z");

@@ -2,11 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { act, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
-import type {
-  WhereUsedMatch,
-  WhereUsedReport,
-  WhereUsedStreamHandlers,
-} from "../api/tauri";
+import type { WhereUsedMatch, WhereUsedReport, WhereUsedStreamHandlers } from "../api/tauri";
 
 /**
  * Where-used パネル (#1027) は Rust の `find_where_used` (#1261) の Channel で結果を受ける。

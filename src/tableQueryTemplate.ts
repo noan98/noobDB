@@ -23,13 +23,7 @@ import { isReadOnlySql, maskLiterals, trimTrailingSeparators } from "./dangerous
 import { quoteIdentFor } from "./components/sqlDialect";
 
 /** テンプレートで使えるプレースホルダ。 */
-export const TABLE_QUERY_PLACEHOLDERS = [
-  "database",
-  "table",
-  "table_name",
-  "limit",
-  "pk",
-] as const;
+export const TABLE_QUERY_PLACEHOLDERS = ["database", "table", "table_name", "limit", "pk"] as const;
 export type TableQueryPlaceholder = (typeof TABLE_QUERY_PLACEHOLDERS)[number];
 
 /** 保存できるテンプレートの最大長 (設定ストアを肥大化させない)。 */
@@ -214,7 +208,16 @@ const CLAUSE_KEYWORDS = new Set([
   "except",
   "for",
 ]);
-const JOIN_KEYWORDS = new Set(["join", "inner", "left", "right", "full", "cross", "natural", "straight_join"]);
+const JOIN_KEYWORDS = new Set([
+  "join",
+  "inner",
+  "left",
+  "right",
+  "full",
+  "cross",
+  "natural",
+  "straight_join",
+]);
 
 interface TemplateShape {
   /** SELECT と FROM の間 (選択リスト) の元テキスト。 */
@@ -465,8 +468,7 @@ export type TableOpenPlan =
 /** テンプレートの各プレースホルダに入れる実際の値。`{pk}` が作れなければ空文字列。 */
 function placeholderValues(ctx: TableOpenContext): Record<TableQueryPlaceholder, string> {
   const q = (s: string) => quoteIdentFor(ctx.driver, s);
-  const tableRef =
-    ctx.driver === "sqlite" ? q(ctx.table) : `${q(ctx.database)}.${q(ctx.table)}`;
+  const tableRef = ctx.driver === "sqlite" ? q(ctx.table) : `${q(ctx.database)}.${q(ctx.table)}`;
   let pk: string | null = null;
   if (ctx.pkColumns.length > 0) pk = ctx.pkColumns.map(q).join(", ");
   else if (ctx.hiddenColumn && (ctx.driver === "sqlite" || ctx.driver === "postgres")) pk = ctx.hiddenColumn;
@@ -525,8 +527,7 @@ export function planTableOpenQuery(template: string | null, ctx: TableOpenContex
     sql = `${expanded.slice(0, shape.limitStart).trimEnd()} LIMIT ${limit} ${expanded.slice(shape.limitStart)}`;
   }
 
-  const singleTable =
-    !shape.hasJoin && isTargetTable(shape.fromSegment, ctx.driver, ctx.database, ctx.table);
+  const singleTable = !shape.hasJoin && isTargetTable(shape.fromSegment, ctx.driver, ctx.database, ctx.table);
   const blocking = ["where", "group", "having", "window", "union", "intersect", "except", "for"];
   const hasBlockingClause = blocking.some((k) => shape.clauses.has(k));
   const editable =
@@ -620,8 +621,7 @@ export function applyTableOpenTemplate(args: {
   if (!args.resolved) return legacy;
   const pkColumns = args.columns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
   const id = args.rowIdentity;
-  const hiddenColumn =
-    id && (id.strategy === "rowid" || id.strategy === "ctid") ? id.hidden_column : null;
+  const hiddenColumn = id && (id.strategy === "rowid" || id.strategy === "ctid") ? id.hidden_column : null;
   const plan = planTableOpenQuery(args.resolved.template, {
     driver: args.driver,
     database: args.database,
@@ -644,9 +644,10 @@ export function applyTableOpenTemplate(args: {
 }
 
 /** 検証エラーを表示用の i18n キー + 差し込み値へ変換する。 */
-export function tableQueryTemplateErrorMessage(
-  err: TableQueryTemplateError,
-): { key: TableQueryTemplateErrorKey; vars?: Record<string, string | number> } {
+export function tableQueryTemplateErrorMessage(err: TableQueryTemplateError): {
+  key: TableQueryTemplateErrorKey;
+  vars?: Record<string, string | number>;
+} {
   switch (err.kind) {
     case "unknownPlaceholder":
       return { key: "tableOpenQueryErrorUnknownPlaceholder", vars: { name: `{${err.name}}` } };

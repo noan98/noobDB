@@ -123,15 +123,7 @@ const NUMERIC_TYPES = new Set([
 const DECIMAL_TYPES = new Set(["DECIMAL", "NEWDECIMAL", "NUMERIC"]);
 const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ"]);
 const TIME_TYPES = new Set(["TIME", "TIMETZ"]);
-const BINARY_TYPES = new Set([
-  "BLOB",
-  "TINYBLOB",
-  "MEDIUMBLOB",
-  "LONGBLOB",
-  "BINARY",
-  "VARBINARY",
-  "BYTEA",
-]);
+const BINARY_TYPES = new Set(["BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB", "BINARY", "VARBINARY", "BYTEA"]);
 
 export function classifyTypeName(typeName: string): CellKind {
   const t = typeName.toUpperCase();

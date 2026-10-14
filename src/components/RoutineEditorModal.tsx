@@ -90,8 +90,7 @@ export function RoutineEditorModal({
   }, [sessionId, database, kind, name, id]);
 
   const built = useMemo(
-    () =>
-      buildApplyRoutineStatements({ driver, database, kind, name, originalDdl: original, ddl: text }),
+    () => buildApplyRoutineStatements({ driver, database, kind, name, originalDdl: original, ddl: text }),
     [driver, database, kind, name, original, text],
   );
   const kindLabel = t(KIND_LABEL_KEYS[kind]);
@@ -181,7 +180,9 @@ export function RoutineEditorModal({
           </FormSection>
           <Callout tone={atomic ? "info" : "warning"}>
             {atomic ? t("routineEditNoteAtomic") : t("routineEditNoteMysql")}
-            {editing && driver === "postgres" && kind !== "trigger" ? ` ${t("routineEditNotePgOverload")}` : ""}
+            {editing && driver === "postgres" && kind !== "trigger"
+              ? ` ${t("routineEditNotePgOverload")}`
+              : ""}
             {driver === "mysql" ? ` ${t("routineEditNoteMysqlDelimiter")}` : ""}
           </Callout>
           {built.ok && (

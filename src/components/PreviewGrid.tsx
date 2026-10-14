@@ -215,12 +215,7 @@ export function PreviewGrid({
     const pkIndices = result.primary_key
       .map((name) => result.columns.findIndex((c) => c.name === name))
       .filter((i) => i >= 0);
-    return computeDiff(
-      result.columns.length,
-      result.before_rows,
-      result.after_rows,
-      pkIndices,
-    );
+    return computeDiff(result.columns.length, result.before_rows, result.after_rows, pkIndices);
   }, [result.columns, result.before_rows, result.after_rows, result.primary_key]);
 
   // The backend captures a `LIMIT` window of the target table for context;
@@ -266,7 +261,8 @@ export function PreviewGrid({
         display="flex"
         alignItems="center"
         gap="2"
-        py="1.5" px="3"
+        py="1.5"
+        px="3"
         fontSize="sm"
         color="var(--preview-banner-text)"
         background="var(--preview-banner-bg)"
@@ -314,12 +310,7 @@ export function PreviewGrid({
             )}
             {onDiscardEdits && (
               <Tooltip label={t("editCancelButtonTitle")}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  px="2.5"
-                  onClick={onDiscardEdits}
-                >
+                <Button variant="secondary" size="sm" px="2.5" onClick={onDiscardEdits}>
                   <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
                 </Button>
               </Tooltip>
@@ -351,7 +342,8 @@ export function PreviewGrid({
         display="flex"
         flexWrap="wrap"
         gap="3.5"
-        py="1.5" px="3"
+        py="1.5"
+        px="3"
         fontSize="sm"
         color="app.textMuted"
         borderBottom="1px solid"
@@ -423,7 +415,8 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                py="1.25" px="2.5"
+                py="1.25"
+                px="2.5"
                 textStyle="overline"
                 bg="app.header"
                 borderBottom="1px solid"
@@ -434,9 +427,7 @@ export function PreviewGrid({
               <Box ref={beforeBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredBeforeRows.length === 0 ? (
                   <Box padding="3.5" color="app.textMuted" fontStyle="italic">
-                    {result.before_rows.length === 0
-                      ? t("previewEmptyBefore")
-                      : t("previewNoAffectedBefore")}
+                    {result.before_rows.length === 0 ? t("previewEmptyBefore") : t("previewNoAffectedBefore")}
                   </Box>
                 ) : (
                   <DataGrid
@@ -459,7 +450,8 @@ export function PreviewGrid({
               overflow="hidden"
             >
               <chakra.header
-                py="1.25" px="2.5"
+                py="1.25"
+                px="2.5"
                 textStyle="overline"
                 color="app.textSuccess"
                 bg="app.header"
@@ -471,9 +463,7 @@ export function PreviewGrid({
               <Box ref={afterBodyRef} flex="1" overflow="auto" bg="app.surface" css={GRID_CSS}>
                 {filteredAfterRows.length === 0 ? (
                   <Box padding="3.5" color="app.textMuted" fontStyle="italic">
-                    {result.after_rows.length === 0
-                      ? t("previewEmptyAfter")
-                      : t("previewNoAffectedAfter")}
+                    {result.after_rows.length === 0 ? t("previewEmptyAfter") : t("previewNoAffectedAfter")}
                   </Box>
                 ) : (
                   <DataGrid

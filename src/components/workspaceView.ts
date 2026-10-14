@@ -92,10 +92,7 @@ export type WorkspaceSurfaceKeyInput = {
  * スキーマ比較 / 結果比較は view 名のまま。フォーム 2 種と通常のワークスペースは
  * 保持の対象外 (フォームは未保存の入力を持つ・ワークスペースは常駐) なので null。
  */
-export function workspaceSurfaceKey(
-  view: WorkspaceViewKey,
-  input: WorkspaceSurfaceKeyInput,
-): string | null {
+export function workspaceSurfaceKey(view: WorkspaceViewKey, input: WorkspaceSurfaceKeyInput): string | null {
   const sid = input.sessionId ?? "";
   switch (view) {
     case "compare":

@@ -43,7 +43,9 @@ describe("CommandPalette 大規模候補 (#1320)", () => {
     fireEvent.keyDown(input, { key: "ArrowDown" });
     fireEvent.keyDown(input, { key: "ArrowDown" });
     expect(screen.getAllByRole("option")[2]).toHaveAttribute("aria-selected", "true");
-    expect(screen.getAllByRole("option").filter((o) => o.getAttribute("aria-selected") === "true")).toHaveLength(1);
+    expect(
+      screen.getAllByRole("option").filter((o) => o.getAttribute("aria-selected") === "true"),
+    ).toHaveLength(1);
     fireEvent.keyDown(input, { key: "Enter" });
     expect(run).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalled();

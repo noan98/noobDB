@@ -41,7 +41,12 @@ const orderCols: TableColumnInfo[] = [
 
 function setup(hints: Record<string, string> = {}) {
   const specs = orderCols.map((c) => inferColumnSpec(c));
-  const context = buildTestDataAiContext(orderCols, specs, hints, resolveUniqueColumns(orderCols, []).columns);
+  const context = buildTestDataAiContext(
+    orderCols,
+    specs,
+    hints,
+    resolveUniqueColumns(orderCols, []).columns,
+  );
   return { specs, context };
 }
 
@@ -56,7 +61,13 @@ describe("buildTestDataAiContext / プロンプト (#698)", () => {
 
   it("プロンプトにデフォルト値・列コメントなどの実データは含まれず、スキーマと件数・ロケール・ヒントだけが入る", () => {
     const { context } = setup({ product_name: "文房具の名前" });
-    const system = buildTestDataSystem({ driver: "mysql", table: "orders", rowCount: 200, locale: "ja", context });
+    const system = buildTestDataSystem({
+      driver: "mysql",
+      table: "orders",
+      rowCount: 200,
+      locale: "ja",
+      context,
+    });
     const prompt = buildTestDataPrompt("orders", 200);
     const all = `${system}\n${prompt}`;
     expect(all).not.toContain("SECRET-DEFAULT");
@@ -93,7 +104,10 @@ describe("buildTestDataAiContext / プロンプト (#698)", () => {
 });
 
 describe("parseTestDataResponse", () => {
-  const valid: TestDataAiResponse = { columns: [{ name: "a", kind: "choices", choices: ["x"], notes: "" }], consistency_rules: [] };
+  const valid: TestDataAiResponse = {
+    columns: [{ name: "a", kind: "choices", choices: ["x"], notes: "" }],
+    consistency_rules: [],
+  };
   it("JSON とコードフェンス付き JSON を受け付ける", () => {
     expect(parseTestDataResponse(JSON.stringify(valid))).toEqual({ ok: true, value: valid });
     expect(parseTestDataResponse("```json\n" + JSON.stringify(valid) + "\n```").ok).toBe(true);
@@ -128,9 +142,16 @@ describe("buildTestDataPlan", () => {
 
   it("JS の安全整数を超える整数候補は採用しない (丸められて別の値が入るため)", () => {
     const cols = [col({ name: "ref_no", data_type: "bigint" })];
-    const ctx = buildTestDataAiContext(cols, cols.map((c) => inferColumnSpec(c)), {}, []);
+    const ctx = buildTestDataAiContext(
+      cols,
+      cols.map((c) => inferColumnSpec(c)),
+      {},
+      [],
+    );
     const big: TestDataAiResponse = {
-      columns: [{ name: "ref_no", kind: "choices", choices: ["9007199254740993", "9007199254740991"], notes: "" }],
+      columns: [
+        { name: "ref_no", kind: "choices", choices: ["9007199254740993", "9007199254740991"], notes: "" },
+      ],
       consistency_rules: [],
     };
     expect(buildTestDataPlan(big, ctx.columns).columns.ref_no.choices).toEqual(["9007199254740991"]);
@@ -171,7 +192,9 @@ describe("buildTestDataPlan", () => {
       ],
       consistency_rules: [],
     };
-    expect(buildTestDataPlan(many, context.columns).columns.product_name.choices).toHaveLength(TEST_DATA_MAX_CHOICES);
+    expect(buildTestDataPlan(many, context.columns).columns.product_name.choices).toHaveLength(
+      TEST_DATA_MAX_CHOICES,
+    );
   });
 });
 
@@ -215,7 +238,10 @@ describe("generateAiRows (#698)", () => {
     const cols = [col({ name: "code", key: "UNI" })];
     const specs = cols.map((c) => inferColumnSpec(c));
     const plan = buildTestDataPlan(
-      { columns: [{ name: "code", kind: "choices", choices: ["A", "B", "C"], notes: "" }], consistency_rules: [] },
+      {
+        columns: [{ name: "code", kind: "choices", choices: ["A", "B", "C"], notes: "" }],
+        consistency_rules: [],
+      },
       buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
     );
     const { rows } = generateAiRows({ specs, plan, uniqueColumns: ["code"], count: 8 }, 3);
@@ -235,7 +261,10 @@ describe("generateAiRows (#698)", () => {
     const cols = [col({ name: "email", data_type: "varchar(20)", key: "UNI" })];
     const specs = cols.map((c) => inferColumnSpec(c));
     const plan = buildTestDataPlan(
-      { columns: [{ name: "email", kind: "choices", choices: ["Taro@ex.com", "taro@ex.com"], notes: "" }], consistency_rules: [] },
+      {
+        columns: [{ name: "email", kind: "choices", choices: ["Taro@ex.com", "taro@ex.com"], notes: "" }],
+        consistency_rules: [],
+      },
       buildTestDataAiContext(cols, specs, {}, ["email"]).columns,
     );
     const { rows } = generateAiRows({ specs, plan, uniqueColumns: ["email"], count: 30 }, 5);
@@ -254,7 +283,8 @@ describe("generateAiRows (#698)", () => {
       { columns: [{ name: "code", kind: "pattern", choices: ["C{n}"], notes: "" }], consistency_rules: [] },
       buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
     );
-    const gen = (seed: number) => generateAiRows({ specs, plan, uniqueColumns: ["code"], count: 3 }, seed).rows;
+    const gen = (seed: number) =>
+      generateAiRows({ specs, plan, uniqueColumns: ["code"], count: 3 }, seed).rows;
     expect(gen(1)).toEqual(gen(1));
     expect(gen(1)).not.toEqual(gen(2));
   });
@@ -270,7 +300,13 @@ describe("候補の検証 (#698 レビュー)", () => {
     col({ name: "at", data_type: "time" }),
     col({ name: "note", data_type: "varchar(10)" }),
   ];
-  const ctx = () => buildTestDataAiContext(cols, cols.map((c) => inferColumnSpec(c)), {}, []).columns;
+  const ctx = () =>
+    buildTestDataAiContext(
+      cols,
+      cols.map((c) => inferColumnSpec(c)),
+      {},
+      [],
+    ).columns;
 
   it("整合ルールの列は除外後に添字がずれない (空要素・不正値の行は全列から落ちる)", () => {
     const plan = buildTestDataPlan(
@@ -323,7 +359,12 @@ describe("候補の検証 (#698 レビュー)", () => {
     const plan = buildTestDataPlan(
       {
         columns: [
-          { name: "created", kind: "choices", choices: ["2024-02-29 10:00:00", "2023-02-29 10:00:00", "2024-01-01", "2024-01-01 24:00:00"], notes: "" },
+          {
+            name: "created",
+            kind: "choices",
+            choices: ["2024-02-29 10:00:00", "2023-02-29 10:00:00", "2024-01-01", "2024-01-01 24:00:00"],
+            notes: "",
+          },
           { name: "birth", kind: "choices", choices: ["2024-13-01", "1999-12-31", "2024-1-1"], notes: "" },
           { name: "at", kind: "pattern", choices: ["10:{n}:00"], notes: "" },
         ],
@@ -340,7 +381,10 @@ describe("候補の検証 (#698 レビュー)", () => {
 
   it("pattern は {n} 展開後の長さが宣言長を超えるものを除く", () => {
     const plan = buildTestDataPlan(
-      { columns: [{ name: "note", kind: "pattern", choices: ["a{n}", "abcdefg{n}"], notes: "" }], consistency_rules: [] },
+      {
+        columns: [{ name: "note", kind: "pattern", choices: ["a{n}", "abcdefg{n}"], notes: "" }],
+        consistency_rules: [],
+      },
       ctx(),
     );
     expect(plan.columns.note.choices).toEqual(["a{n}"]);
@@ -349,7 +393,12 @@ describe("候補の検証 (#698 レビュー)", () => {
 
 describe("resolveUniqueColumns (#698 レビュー)", () => {
   it("PostgreSQL / SQLite の単一列 UNIQUE index を拾い、複合は composite に分ける", () => {
-    const cs = [col({ name: "id", key: "PRI" }), col({ name: "email" }), col({ name: "a" }), col({ name: "b" })];
+    const cs = [
+      col({ name: "id", key: "PRI" }),
+      col({ name: "email" }),
+      col({ name: "a" }),
+      col({ name: "b" }),
+    ];
     const r = resolveUniqueColumns(cs, [
       { columns: ["email"], unique: true, primary: false },
       { columns: ["a", "b"], unique: true, primary: false },
@@ -378,9 +427,18 @@ describe("uniquifyGeneratedRows (#1607)", () => {
     const out = uniquifyGeneratedRows([sp], rows, ["code"]);
     expect(new Set(out.map((r) => String(r[0]).toLowerCase())).size).toBe(3);
     expect(out[0][0]).toBe("ab");
-    const num = inferColumnSpec({ ...{
-      name: "n", data_type: "int", nullable: false, key: "UNI", default: null, extra: "",
-      referenced_table: null, referenced_column: null } });
+    const num = inferColumnSpec({
+      ...{
+        name: "n",
+        data_type: "int",
+        nullable: false,
+        key: "UNI",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      },
+    });
     const big = generateRows([{ ...num, min: 1, max: 3 }], 50, 1);
     const u = uniquifyGeneratedRows([num], big, ["n"]);
     expect(new Set(u.map((r) => r[0])).size).toBe(50);

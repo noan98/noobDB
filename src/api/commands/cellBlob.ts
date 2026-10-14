@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { CellValue, CellBlobProbe, BlobFolderSaveResult } from "../tauri";
 
 export const cellBlobCommands = {
-
   /**
    * 主キーで 1 セルの生バイトを取得する (#1148)。グリッドの表示値ではなくサーバの値を
    * 引き直すので、画像プレビューは常に完全な内容になる。生バイト列をそのまま
@@ -20,8 +19,8 @@ export const cellBlobCommands = {
     column: string,
     key: { column: string; value: CellValue }[],
   ) =>
-    invoke<unknown>("fetch_cell_bytes", { sessionId, database, table, column, key }).then(
-      (r) => parseBinaryResponse(r, "fetch_cell_bytes"),
+    invoke<unknown>("fetch_cell_bytes", { sessionId, database, table, column, key }).then((r) =>
+      parseBinaryResponse(r, "fetch_cell_bytes"),
     ),
 
   /**
@@ -92,7 +91,5 @@ export const cellBlobCommands = {
    * ファイルは reject される。
    */
   readBinaryFile: (path: string) =>
-    invoke<unknown>("read_binary_file", { path }).then((r) =>
-      parseBinaryResponse(r, "read_binary_file"),
-    ),
+    invoke<unknown>("read_binary_file", { path }).then((r) => parseBinaryResponse(r, "read_binary_file")),
 };

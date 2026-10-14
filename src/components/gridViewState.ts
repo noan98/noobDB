@@ -95,10 +95,7 @@ function isColumnFilter(v: unknown): v is ColumnFilter {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
   return (
-    isFilterOp(o.op) &&
-    typeof o.value === "string" &&
-    typeof o.value2 === "string" &&
-    isNullMode(o.nullMode)
+    isFilterOp(o.op) && typeof o.value === "string" && typeof o.value2 === "string" && isNullMode(o.nullMode)
   );
 }
 

@@ -40,25 +40,19 @@ describe("eventToCombo", () => {
   });
 
   it("encodes Enter with modifiers", () => {
-    expect(eventToCombo(key({ key: "Enter", ctrlKey: true, shiftKey: true }))).toBe(
-      "Mod+Shift+Enter",
-    );
+    expect(eventToCombo(key({ key: "Enter", ctrlKey: true, shiftKey: true }))).toBe("Mod+Shift+Enter");
   });
 });
 
 describe("comboMatchesEvent", () => {
   it("matches regardless of token order/case", () => {
     expect(comboMatchesEvent("Mod+Enter", key({ key: "Enter", metaKey: true }))).toBe(true);
-    expect(comboMatchesEvent("shift+mod+f", key({ key: "F", ctrlKey: true, shiftKey: true }))).toBe(
-      true,
-    );
+    expect(comboMatchesEvent("shift+mod+f", key({ key: "F", ctrlKey: true, shiftKey: true }))).toBe(true);
   });
 
   it("does not match when modifiers differ", () => {
     expect(comboMatchesEvent("Mod+Enter", key({ key: "Enter" }))).toBe(false);
-    expect(
-      comboMatchesEvent("Mod+Enter", key({ key: "Enter", metaKey: true, shiftKey: true })),
-    ).toBe(false);
+    expect(comboMatchesEvent("Mod+Enter", key({ key: "Enter", metaKey: true, shiftKey: true }))).toBe(false);
   });
 });
 
@@ -73,17 +67,9 @@ describe("formatCombo", () => {
 describe("splitComboKeys", () => {
   it("splits a formatCombo output into individual keys", () => {
     expect(splitComboKeys(formatCombo("Mod+Enter"))).toEqual(["Cmd/Ctrl", "Enter"]);
-    expect(splitComboKeys(formatCombo("Mod+Shift+Enter"))).toEqual([
-      "Cmd/Ctrl",
-      "Shift",
-      "Enter",
-    ]);
+    expect(splitComboKeys(formatCombo("Mod+Shift+Enter"))).toEqual(["Cmd/Ctrl", "Shift", "Enter"]);
     // "Alt/Option" 表記の "/" は "+" 分割の対象にならず、1 トークンのまま残る。
-    expect(splitComboKeys(formatCombo("Mod+Alt+Enter"))).toEqual([
-      "Cmd/Ctrl",
-      "Alt/Option",
-      "Enter",
-    ]);
+    expect(splitComboKeys(formatCombo("Mod+Alt+Enter"))).toEqual(["Cmd/Ctrl", "Alt/Option", "Enter"]);
   });
 
   it("returns a single-element array for a plain token without '+'", () => {

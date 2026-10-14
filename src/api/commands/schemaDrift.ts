@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { SchemaDriftGeneration, SchemaDriftSummary, SchemaDriftCapture } from "../tauri";
 
 export const schemaDriftCommands = {
-
   // --- スキーマドリフト (#736 / #1260) ---
 
   /**
@@ -34,8 +33,8 @@ export const schemaDriftCommands = {
 
   /** 2 世代間の変化サマリ。どちらかが省略済み / 存在しないときは null。セッション不要。 */
   schemaDriftCompare: (profileId: string, fromId: string, toId: string) =>
-    invoke<SchemaDriftSummary | null>("schema_drift_compare", { profileId, fromId, toId }).then(
-      (r) => parseResponse(schemas.schemaDriftSummaryOrNull, r, "schema_drift_compare"),
+    invoke<SchemaDriftSummary | null>("schema_drift_compare", { profileId, fromId, toId }).then((r) =>
+      parseResponse(schemas.schemaDriftSummaryOrNull, r, "schema_drift_compare"),
     ),
 
   /** 旧 localStorage の世代 (新しい順) をストアへ一度だけ取り込む。取り込んだ件数を返す。 */

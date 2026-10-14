@@ -36,18 +36,14 @@ beforeEach(() => {
 
 describe("QueryInspectorPanel empty state (#847)", () => {
   it("shows the shared EmptyState idle title on the live-tail tab before recording starts", async () => {
-    renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
-    );
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
     await waitFor(() => {
       expect(screen.getByText(t("inspectorTailIdle"))).toBeInTheDocument();
     });
   });
 
   it("shows the shared EmptyState idle title on the statement-stats tab before recording starts", async () => {
-    renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
-    );
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
     await waitFor(() => {
       expect(screen.getByText(t("inspectorTailIdle"))).toBeInTheDocument();
     });
@@ -68,9 +64,7 @@ describe("QueryInspectorPanel error state (#848)", () => {
   it("shows the shared EmptyState title when the support probe fails, and retries on click", async () => {
     vi.mocked(api.queryStatsSupport).mockRejectedValueOnce(new Error("connection refused"));
 
-    renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
-    );
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
 
     await waitFor(() => {
       expect(
@@ -92,9 +86,7 @@ describe("QueryInspectorPanel error state (#848)", () => {
   it("shows a compact shared EmptyState title on a polling failure while recording, and retries on click", async () => {
     vi.mocked(api.sampleLiveQueries).mockRejectedValueOnce(new Error("lost connection"));
 
-    renderWithProviders(
-      <QueryInspectorPanel sessionId="s1" driver="mysql" />,
-    );
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
     await waitFor(() => {
       expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument();
     });
@@ -187,9 +179,7 @@ describe("QueryInspectorPanel backend delta (#1259)", () => {
     fireEvent.click(screen.getByText(t("inspectorStart")));
 
     await waitFor(() => expect(api.startStatementRecording).toHaveBeenCalledWith("s1"));
-    await waitFor(() =>
-      expect(screen.getByText("select * from orders where id = ?")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("select * from orders where id = ?")).toBeInTheDocument());
     expect(api.sampleStatementDelta).toHaveBeenCalledWith(
       "s1",
       expect.objectContaining({ cumulative: false, refresh: true }),

@@ -1,12 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  system,
-  buttonRecipe,
-  inputRecipe,
-  selectRecipe,
-  textareaRecipe,
-  checkboxRecipe,
-} from "../theme";
+import { system, buttonRecipe, inputRecipe, selectRecipe, textareaRecipe, checkboxRecipe } from "../theme";
 
 /**
  * テーマ基盤の回帰テスト。後続の Chakra 移行フェーズはここで定義したトークン
@@ -37,9 +30,7 @@ describe("token bridge resolves to App.css CSS variables", () => {
 
   it("bridges shadows by overriding Chakra's default semantic shadows", () => {
     // Chakra の既定 shadow は semanticToken なので tokens 側では上書きできない。
-    expect(JSON.stringify(system.tokens.getByName("shadows.md")?.value)).toContain(
-      "var(--shadow-md)",
-    );
+    expect(JSON.stringify(system.tokens.getByName("shadows.md")?.value)).toContain("var(--shadow-md)");
   });
 });
 
@@ -54,12 +45,8 @@ describe("dark mode condition targets the data-theme attribute", () => {
 describe("common recipes reference real tokens", () => {
   it("button variants use accent / semantic color tokens", () => {
     const variant = buttonRecipe.variants!.variant;
-    expect(JSON.stringify(system.css(variant.primary))).toContain(
-      "chakra-colors-app-accent",
-    );
-    expect(JSON.stringify(system.css(variant.success))).toContain(
-      "chakra-colors-app-success-bg",
-    );
+    expect(JSON.stringify(system.css(variant.primary))).toContain("chakra-colors-app-accent");
+    expect(JSON.stringify(system.css(variant.success))).toContain("chakra-colors-app-success-bg");
     expect(JSON.stringify(system.css(variant.dangerOutline))).toContain(
       "chakra-colors-app-danger-outline-fg",
     );
@@ -67,15 +54,11 @@ describe("common recipes reference real tokens", () => {
 
   it("input / select / textarea use the bgInput token", () => {
     for (const recipe of [inputRecipe, selectRecipe, textareaRecipe]) {
-      expect(JSON.stringify(system.css(recipe.base))).toContain(
-        "chakra-colors-app-bg-input",
-      );
+      expect(JSON.stringify(system.css(recipe.base))).toContain("chakra-colors-app-bg-input");
     }
   });
 
   it("checkbox tints to the accent token", () => {
-    expect(JSON.stringify(system.css(checkboxRecipe.base))).toContain(
-      "chakra-colors-app-accent",
-    );
+    expect(JSON.stringify(system.css(checkboxRecipe.base))).toContain("chakra-colors-app-accent");
   });
 });

@@ -52,7 +52,6 @@ describe("buildDropViewSql", () => {
     expect(buildDropViewSql("mysql", "shop", "v")).toBe("DROP VIEW `shop`.`v`;");
     expect(buildDropViewSql("sqlite", "main", "v")).toBe('DROP VIEW "v";');
   });
-
 });
 
 describe("extractViewBody", () => {

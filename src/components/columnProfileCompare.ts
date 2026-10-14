@@ -1,10 +1,5 @@
 import type { CellValue, ColumnProfile } from "../api/tauri";
-import {
-  formatPercent,
-  formatProfileCount,
-  profilePercent,
-  profileValueLabel,
-} from "./columnProfile";
+import { formatPercent, formatProfileCount, profilePercent, profileValueLabel } from "./columnProfile";
 
 /**
  * 同じ列の分布を複数接続で並べて比べる (#1539) 純ロジック。移行・同期の検証で
@@ -57,7 +52,11 @@ function valueText(v: CellValue): string {
  */
 export function buildMetricRows(entries: readonly CompareEntry[]): MetricRow[] {
   const base = baselineIndex(entries);
-  const defs: { id: MetricId; text: (p: ColumnProfile) => string; same?: (a: ColumnProfile, b: ColumnProfile) => boolean }[] = [
+  const defs: {
+    id: MetricId;
+    text: (p: ColumnProfile) => string;
+    same?: (a: ColumnProfile, b: ColumnProfile) => boolean;
+  }[] = [
     { id: "type", text: (p) => p.data_type },
     { id: "total", text: (p) => formatProfileCount(p.total_count) },
     { id: "nulls", text: (p) => formatProfileCount(p.null_count) },

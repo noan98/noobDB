@@ -49,12 +49,7 @@ export function LoadingButton({
   const Comp = pressable ? PressableButton : Button;
 
   return (
-    <Comp
-      variant={variant}
-      disabled={loading || disabled}
-      aria-busy={loading ? true : undefined}
-      {...rest}
-    >
+    <Comp variant={variant} disabled={loading || disabled} aria-busy={loading ? true : undefined} {...rest}>
       {loading ? (
         <Flex as="span" display="inline-flex" align="center" gap="1.5">
           {/* solid 背景の上では currentColor ベースで描画して見切れを防ぐ */}

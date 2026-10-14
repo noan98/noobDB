@@ -23,7 +23,13 @@ describe("IdentitySyncBody (#1602)", () => {
 
   it("SQLite (showLower=false) ではスイッチを出さない", () => {
     renderWithProviders(
-      <IdentitySyncBody table="t" column="id" showLower={false} buildSql={() => "S"} onLowerChange={() => {}} />,
+      <IdentitySyncBody
+        table="t"
+        column="id"
+        showLower={false}
+        buildSql={() => "S"}
+        onLowerChange={() => {}}
+      />,
     );
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(screen.queryByText(t("identitySyncLower"))).not.toBeInTheDocument();

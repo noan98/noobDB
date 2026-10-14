@@ -60,12 +60,10 @@ export function SnippetForm({
   const [scopeProfileId, setScopeProfileId] = useState(
     initial?.scope.kind === "profile"
       ? initial.scope.profile_id
-      : activeProfile?.id ?? profiles[0]?.id ?? "",
+      : (activeProfile?.id ?? profiles[0]?.id ?? ""),
   );
   const [scopeGroup, setScopeGroup] = useState(
-    initial?.scope.kind === "group"
-      ? initial.scope.group
-      : activeProfile?.group ?? "",
+    initial?.scope.kind === "group" ? initial.scope.group : (activeProfile?.group ?? ""),
   );
 
   const [error, setError] = useState<string | null>(null);
@@ -193,7 +191,9 @@ export function SnippetForm({
         p="3"
         borderRadius="md"
       >
-        <Heading as="legend" role="subheading" px="1.5">{t("snippetScope")}</Heading>
+        <Heading as="legend" role="subheading" px="1.5">
+          {t("snippetScope")}
+        </Heading>
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
           <Box>
             <chakra.label htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</chakra.label>
@@ -220,7 +220,9 @@ export function SnippetForm({
                   <option value={scopeProfileId}>{t("snippetScopeDeletedProfile")}</option>
                 )}
                 {profiles.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
                 ))}
               </Select>
             </Box>
@@ -271,8 +273,12 @@ export function SnippetForm({
 
       <Box gridColumn="span 2" display="flex" gap="2" alignItems="center">
         <Box flex="1" />
-        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>{t("formCancel")}</Button>
-        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>{t("formSave")}</LoadingButton>
+        <Button type="button" variant="secondary" onClick={onCancel} disabled={saving}>
+          {t("formCancel")}
+        </Button>
+        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave}>
+          {t("formSave")}
+        </LoadingButton>
       </Box>
     </Box>
   );

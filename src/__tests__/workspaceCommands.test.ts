@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import appSource from "../App.tsx?raw";
 import { t } from "../i18n";
-import {
-  workspaceCommandItems,
-  type WorkspaceCommandContext,
-} from "../components/workspaceCommands";
+import { workspaceCommandItems, type WorkspaceCommandContext } from "../components/workspaceCommands";
 
 /**
  * App Shell の操作をコマンドパレットへ出す候補 (#1112)。Sidebar / Bottom Panel /
@@ -41,8 +38,7 @@ function actions() {
   };
 }
 
-const ids = (ctx: WorkspaceCommandContext) =>
-  workspaceCommandItems(ctx, actions(), t).map((i) => i.id);
+const ids = (ctx: WorkspaceCommandContext) => workspaceCommandItems(ctx, actions(), t).map((i) => i.id);
 
 describe("workspaceCommandItems", () => {
   it("接続中は Sidebar / Bottom Panel / 構造の候補がそろう", () => {

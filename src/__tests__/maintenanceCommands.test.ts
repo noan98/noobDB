@@ -25,9 +25,7 @@ describe("tableMaintenanceCommands", () => {
   it("generates PostgreSQL VACUUM / ANALYZE / REINDEX with double-quoted names", () => {
     const kinds = tableMaintenanceCommands("postgres", "public", "users").map((c) => c.kind);
     expect(kinds).toEqual(["vacuumAnalyze", "analyze", "vacuum", "reindex"]);
-    expect(sqlFor("postgres", "public", "users", "vacuumAnalyze")).toBe(
-      'VACUUM (ANALYZE) "public"."users";',
-    );
+    expect(sqlFor("postgres", "public", "users", "vacuumAnalyze")).toBe('VACUUM (ANALYZE) "public"."users";');
     expect(sqlFor("postgres", "public", "users", "vacuum")).toBe('VACUUM "public"."users";');
     expect(sqlFor("postgres", "public", "users", "reindex")).toBe('REINDEX TABLE "public"."users";');
   });

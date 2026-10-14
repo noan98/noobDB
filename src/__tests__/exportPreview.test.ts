@@ -16,19 +16,14 @@ const columns: Column[] = [
 
 const rows: CellValue[][] = [
   [1, "Alice"],
-  [2, "Bob, the \"Builder\""],
+  [2, 'Bob, the "Builder"'],
   [3, null],
 ];
 
 describe("buildCsv", () => {
   it("クオートと \\r\\n 終端で書き出す", () => {
     const out = buildCsv(columns, rows);
-    expect(out).toBe(
-      "id,name\r\n" +
-        "1,Alice\r\n" +
-        '2,"Bob, the ""Builder"""\r\n' +
-        "3,\r\n",
-    );
+    expect(out).toBe("id,name\r\n" + "1,Alice\r\n" + '2,"Bob, the ""Builder"""\r\n' + "3,\r\n");
   });
 
   it("空行でもヘッダは出る", () => {
@@ -65,9 +60,7 @@ describe("buildJson", () => {
   });
 
   it("空 query ではラップしない", () => {
-    expect(buildJson(columns, [[1, "Alice"]], "")).toBe(
-      buildJson(columns, [[1, "Alice"]]),
-    );
+    expect(buildJson(columns, [[1, "Alice"]], "")).toBe(buildJson(columns, [[1, "Alice"]]));
   });
 
   it("キーは UTF-16 コード単位ではなく Unicode コードポイント順でソートされる", () => {
@@ -108,12 +101,7 @@ describe("buildMarkdownTable", () => {
       [1, "Alice"],
       [2, null],
     ]);
-    expect(out).toBe(
-      "| id | name |\n" +
-        "| --- | --- |\n" +
-        "| 1 | Alice |\n" +
-        "| 2 |  |\n",
-    );
+    expect(out).toBe("| id | name |\n" + "| --- | --- |\n" + "| 1 | Alice |\n" + "| 2 |  |\n");
   });
 
   it("パイプと改行をエスケープする", () => {
@@ -144,16 +132,15 @@ describe("buildSqlInsert", () => {
       [1, "Alice"],
       [2, "Bob"],
     ]);
-    expect(out).toBe(
-      "INSERT INTO `users` (`id`, `name`) VALUES\n" +
-        "  (1, 'Alice'),\n" +
-        "  (2, 'Bob');\n",
-    );
+    expect(out).toBe("INSERT INTO `users` (`id`, `name`) VALUES\n" + "  (1, 'Alice'),\n" + "  (2, 'Bob');\n");
   });
 
   it("バッチサイズで複数文に分割する", () => {
     const out = buildSqlInsert("postgres", "t", [{ name: "id", type_name: "INT" }], [[1], [2], [3]], 2);
-    const stmts = out.trim().split(";\n").filter((s) => s.length > 0);
+    const stmts = out
+      .trim()
+      .split(";\n")
+      .filter((s) => s.length > 0);
     expect(stmts.length).toBe(2);
     expect(stmts[0].startsWith('INSERT INTO "t" ("id") VALUES')).toBe(true);
     expect(stmts[1].includes("(3)")).toBe(true);

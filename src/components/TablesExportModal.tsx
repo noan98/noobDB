@@ -279,7 +279,14 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
 
         {format === "sql" && (
           <FormSection>
-            <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="2"
+              cursor="pointer"
+              userSelect="none"
+              fontSize="md"
+            >
               <Checkbox
                 checked={includeDdl}
                 onChange={(e) => setIncludeDdl(e.target.checked)}
@@ -287,15 +294,20 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
               />
               <span>{t("exportSqlIncludeDdl")}</span>
             </chakra.label>
-            <chakra.div textStyle="caption">
-              {t("exportSqlIncludeDdlHint")}
-            </chakra.div>
+            <chakra.div textStyle="caption">{t("exportSqlIncludeDdlHint")}</chakra.div>
           </FormSection>
         )}
 
         <FormSection>
           <FieldLabel as="div">{t("exportMasking")}</FieldLabel>
-          <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
+          <chakra.label
+            display="inline-flex"
+            alignItems="center"
+            gap="2"
+            cursor="pointer"
+            userSelect="none"
+            fontSize="md"
+          >
             <Checkbox
               checked={maskEnabled}
               onChange={(e) => setMaskEnabled(e.target.checked)}

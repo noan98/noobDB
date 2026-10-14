@@ -28,9 +28,7 @@ describe("PressableButton", () => {
   });
 
   it("data-pressable 属性が付与されている (CSS :active 打ち消しに必要)", () => {
-    renderWithProviders(
-      <PressableButton variant="primary">実行</PressableButton>,
-    );
+    renderWithProviders(<PressableButton variant="primary">実行</PressableButton>);
 
     const btn = screen.getByRole("button", { name: "実行" });
     expect(btn).toHaveAttribute("data-pressable", "true");
@@ -55,9 +53,7 @@ describe("PressableButton", () => {
     // Chakra recipe のクラス名は jsdom 環境ではハッシュになるため固定名では検査
     // できないが、variant が内側の Button まで届いていれば variant ごとに異なる
     // recipe クラスが生成される。クラス集合の差分で伝播そのものを検証する。
-    const { rerender } = renderWithProviders(
-      <PressableButton variant="danger">実行</PressableButton>,
-    );
+    const { rerender } = renderWithProviders(<PressableButton variant="danger">実行</PressableButton>);
     const dangerClass = screen.getByRole("button", { name: "実行" }).className;
 
     rerender(<PressableButton variant="success">実行</PressableButton>);

@@ -49,7 +49,9 @@ const modal = () => (
 describe("TablesExportModal (#1594)", () => {
   it("マスク有効で describe の待機中にキャンセルしたら、書き出しを始めない", async () => {
     let resolveDescribe: (v: never) => void = () => {};
-    vi.mocked(api.describeTable).mockImplementation(() => new Promise((res) => (resolveDescribe = res as never)));
+    vi.mocked(api.describeTable).mockImplementation(
+      () => new Promise((res) => (resolveDescribe = res as never)),
+    );
     renderWithProviders(modal());
     fireEvent.click(screen.getByRole("checkbox", { name: t("exportMaskingEnable") }));
     const execute = screen.getByRole("button", { name: t("exportExecute") });

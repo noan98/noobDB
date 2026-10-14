@@ -163,7 +163,11 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   return (
     <Modal
       // no-submit: 検索 UI。Enter が候補の決定を担う
-      open onClose={onClose} width="640px" initialFocusEl={() => inputRef.current}>
+      open
+      onClose={onClose}
+      width="640px"
+      initialFocusEl={() => inputRef.current}
+    >
       <Flex
         align="center"
         gap="2"
@@ -203,7 +207,14 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           css={{ "&::placeholder": { color: "var(--text-muted)" } }}
         />
         {currentDatabase && (
-          <chakra.div display="inline-flex" borderRadius="md" overflow="hidden" borderWidth="1px" borderColor="app.border" flexShrink={0}>
+          <chakra.div
+            display="inline-flex"
+            borderRadius="md"
+            overflow="hidden"
+            borderWidth="1px"
+            borderColor="app.border"
+            flexShrink={0}
+          >
             <ScopeButton active={scope === "current"} onClick={() => setScope("current")}>
               {t("objSearchScopeCurrent")}
             </ScopeButton>
@@ -344,10 +355,14 @@ function ResultRow({ id, entry, active, animateEntrance, onMouseMove, onClick, r
         <chakra.span fontSize="sm" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
           {entry.kind === "column" ? entry.column : entry.table}
         </chakra.span>
-        <chakra.span fontSize="xs" color="app.textMuted" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-          {entry.kind === "column"
-            ? `${entry.database} › ${entry.table}`
-            : entry.database}
+        <chakra.span
+          fontSize="xs"
+          color="app.textMuted"
+          overflow="hidden"
+          textOverflow="ellipsis"
+          whiteSpace="nowrap"
+        >
+          {entry.kind === "column" ? `${entry.database} › ${entry.table}` : entry.database}
         </chakra.span>
       </Flex>
     </MotionRow>

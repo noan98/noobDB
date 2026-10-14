@@ -178,7 +178,10 @@ function buildChildren(obj: Record<string, unknown>, path: string, tr: PlanLabel
   return out;
 }
 
-export function parsePlan(json: string, tr: PlanLabelT = defaultT): { root: PlanNode | null; error: string | null } {
+export function parsePlan(
+  json: string,
+  tr: PlanLabelT = defaultT,
+): { root: PlanNode | null; error: string | null } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -269,9 +272,7 @@ function pgActual(obj: Record<string, unknown>): PlanActual | undefined {
   };
 }
 
-export function parsePostgresPlan(
-  json: string,
-): { root: PlanNode | null; error: string | null } {
+export function parsePostgresPlan(json: string): { root: PlanNode | null; error: string | null } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -299,9 +300,7 @@ export interface SqlitePlanRow {
   detail: string;
 }
 
-export function parseSqlitePlan(
-  rows: SqlitePlanRow[],
-): { root: PlanNode | null; error: string | null } {
+export function parseSqlitePlan(rows: SqlitePlanRow[]): { root: PlanNode | null; error: string | null } {
   const byParent = new Map<number, SqlitePlanRow[]>();
   for (const r of rows) {
     const list = byParent.get(r.parent) ?? [];
@@ -345,8 +344,7 @@ export function parseSqlitePlan(
 // `(never executed)`。ここでは `->` 行を木に組み、cost / rows / actual を取り出す。
 
 const MYSQL_COST_RE = /\(cost=([^\s)]+)\s+rows=([^\s)]+)\)/;
-const MYSQL_ACTUAL_RE =
-  /\(actual time=(\d+(?:\.\d+)?)\.\.([^\s)]+)\s+rows=([^\s)]+)\s+loops=([^\s)]+)\)/;
+const MYSQL_ACTUAL_RE = /\(actual time=(\d+(?:\.\d+)?)\.\.([^\s)]+)\s+rows=([^\s)]+)\s+loops=([^\s)]+)\)/;
 
 /** MySQL の `EXPLAIN ANALYZE` 出力 (テキストツリー) らしいか。JSON との判別に使う。 */
 export function looksLikeMysqlAnalyzeText(raw: string): boolean {
@@ -358,9 +356,7 @@ interface MysqlTextLine {
   text: string;
 }
 
-export function parseMysqlAnalyzeText(
-  raw: string,
-): { root: PlanNode | null; error: string | null } {
+export function parseMysqlAnalyzeText(raw: string): { root: PlanNode | null; error: string | null } {
   const lines: MysqlTextLine[] = [];
   for (const line of raw.split(/\r?\n/)) {
     const m = /^(\s*)->\s?(.*)$/.exec(line);
@@ -491,8 +487,7 @@ export function parseExplainForDriver(
     const { root, error } = parseMysqlAnalyzeText(raw);
     return { raw, root, error };
   }
-  const { root, error } =
-    driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw, tr);
+  const { root, error } = driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw, tr);
   return { raw, root, error };
 }
 
@@ -744,9 +739,7 @@ function costToScore(cost: number | null): { score: number; missing: boolean } {
   if (cost === null) return { score: 0, missing: true };
   if (cost <= COST_FLOOR) return { score: 0, missing: false };
   if (cost >= COST_CEIL) return { score: 100, missing: false };
-  const r =
-    (Math.log10(cost) - Math.log10(COST_FLOOR)) /
-    (Math.log10(COST_CEIL) - Math.log10(COST_FLOOR));
+  const r = (Math.log10(cost) - Math.log10(COST_FLOOR)) / (Math.log10(COST_CEIL) - Math.log10(COST_FLOOR));
   return { score: r * 100, missing: false };
 }
 

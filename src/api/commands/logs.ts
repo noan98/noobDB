@@ -5,10 +5,6 @@ import { parseResponse } from "../schemas";
 import type { LogView } from "../tauri";
 
 export const logsCommands = {
-
-  readLogs: () =>
-    invoke<LogView>("read_logs").then((r) =>
-      parseResponse(schemas.logView, r, "read_logs"),
-    ),
+  readLogs: () => invoke<LogView>("read_logs").then((r) => parseResponse(schemas.logView, r, "read_logs")),
   clearLogs: () => invoke<void>("clear_logs"),
 };

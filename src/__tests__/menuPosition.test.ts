@@ -30,11 +30,7 @@ describe("computeMenuPosition — クリック位置起点 (ルートメニュ�
   });
 
   it("折り返してもなお収まらない場合はビューポート内へクランプする", () => {
-    const pos = computeMenuPosition(
-      { kind: "point", x: 10, y: 10 },
-      { width: 200, height: 900 },
-      viewport,
-    );
+    const pos = computeMenuPosition({ kind: "point", x: 10, y: 10 }, { width: 200, height: 900 }, viewport);
     expect(pos.left).toBe(10);
     // 高さがビューポートを超える場合は上端の余白に張り付く。
     expect(pos.top).toBe(MENU_MARGIN);
@@ -44,11 +40,7 @@ describe("computeMenuPosition — クリック位置起点 (ルートメニュ�
 describe("computeMenuPosition — 親項目起点 (サブメニュー)", () => {
   it("既定では親項目の右側に、先頭項目が親と揃うよう開く", () => {
     expect(
-      computeMenuPosition(
-        { kind: "rect", rect: rect(200, 300) },
-        { width: 220, height: 200 },
-        viewport,
-      ),
+      computeMenuPosition({ kind: "rect", rect: rect(200, 300) }, { width: 220, height: 200 }, viewport),
     ).toEqual({ left: 200 + 180 + SUBMENU_GAP, top: 300 - SUBMENU_OFFSET_Y });
   });
 
@@ -61,11 +53,7 @@ describe("computeMenuPosition — 親項目起点 (サブメニュー)", () => {
 
   it("下端に収まらないときは親項目の下端に揃えて上へ伸ばす", () => {
     const anchor = rect(100, 700);
-    const pos = computeMenuPosition(
-      { kind: "rect", rect: anchor },
-      { width: 220, height: 300 },
-      viewport,
-    );
+    const pos = computeMenuPosition({ kind: "rect", rect: anchor }, { width: 220, height: 300 }, viewport);
     expect(pos.top).toBe(anchor.bottom + SUBMENU_OFFSET_Y - 300);
     expect(pos.top).toBeGreaterThanOrEqual(MENU_MARGIN);
   });

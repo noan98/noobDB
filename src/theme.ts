@@ -1,10 +1,4 @@
-import {
-  createSystem,
-  defaultConfig,
-  defineConfig,
-  defineRecipe,
-  defineTextStyles,
-} from "@chakra-ui/react";
+import { createSystem, defaultConfig, defineConfig, defineRecipe, defineTextStyles } from "@chakra-ui/react";
 
 /**
  * Chakra UI システムの基盤定義。

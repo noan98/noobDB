@@ -104,11 +104,7 @@ describe("sortTableStats", () => {
 
   it("sorts by name case-insensitively", () => {
     const named = [statRow("Zed"), statRow("alpha"), statRow("Beta")];
-    expect(sortTableStats(named, "name", "asc").map((r) => r.name)).toEqual([
-      "alpha",
-      "Beta",
-      "Zed",
-    ]);
+    expect(sortTableStats(named, "name", "asc").map((r) => r.name)).toEqual(["alpha", "Beta", "Zed"]);
   });
 
   it("sorts by structural columns (index/column/fk counts) with nulls last", () => {
@@ -117,16 +113,8 @@ describe("sortTableStats", () => {
       statRow("t2", { columnCount: 5, indexCount: 0, foreignKeyCount: 4 }),
       statRow("t3", { columnCount: null, indexCount: null, foreignKeyCount: 0 }),
     ];
-    expect(sortTableStats(structural, "column_count", "desc").map((r) => r.name)).toEqual([
-      "t2",
-      "t1",
-      "t3",
-    ]);
-    expect(sortTableStats(structural, "index_count", "asc").map((r) => r.name)).toEqual([
-      "t2",
-      "t1",
-      "t3",
-    ]);
+    expect(sortTableStats(structural, "column_count", "desc").map((r) => r.name)).toEqual(["t2", "t1", "t3"]);
+    expect(sortTableStats(structural, "index_count", "asc").map((r) => r.name)).toEqual(["t2", "t1", "t3"]);
     expect(sortTableStats(structural, "foreign_key_count", "desc").map((r) => r.name)).toEqual([
       "t2",
       "t1",
@@ -213,22 +201,17 @@ describe("filterTableStats", () => {
   });
 
   it("keeps only tables with no index, excluding unknown", () => {
-    expect(filterTableStats(rows, { onlyNoIndex: true }).map((r) => r.name)).toEqual([
-      "orders",
-      "logs",
-    ]);
+    expect(filterTableStats(rows, { onlyNoIndex: true }).map((r) => r.name)).toEqual(["orders", "logs"]);
   });
 
   it("keeps only tables with no primary key, excluding unknown", () => {
-    expect(filterTableStats(rows, { onlyNoPrimaryKey: true }).map((r) => r.name)).toEqual([
-      "orders",
-    ]);
+    expect(filterTableStats(rows, { onlyNoPrimaryKey: true }).map((r) => r.name)).toEqual(["orders"]);
   });
 
   it("combines predicates", () => {
-    expect(
-      filterTableStats(rows, { onlyNoIndex: true, onlyNoPrimaryKey: true }).map((r) => r.name),
-    ).toEqual(["orders"]);
+    expect(filterTableStats(rows, { onlyNoIndex: true, onlyNoPrimaryKey: true }).map((r) => r.name)).toEqual([
+      "orders",
+    ]);
   });
 });
 

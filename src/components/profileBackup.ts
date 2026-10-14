@@ -59,9 +59,7 @@ export type PassphraseStrength = "weak" | "fair" | "strong";
 export function passphraseStrength(passphrase: string): PassphraseStrength {
   const len = charCount(passphrase);
   if (len < MIN_BACKUP_PASSPHRASE_LENGTH) return "weak";
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) =>
-    re.test(passphrase),
-  ).length;
+  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((re) => re.test(passphrase)).length;
   if (len >= STRONG_PASSPHRASE_LENGTH || (len >= 12 && classes >= 3)) return "strong";
   if (classes <= 1 && len < 12) return "weak";
   return "fair";

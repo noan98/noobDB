@@ -110,9 +110,7 @@ function valueToCsv(v: CellValue): string {
 export function buildCsv(columns: Column[], rows: CellValue[][]): string {
   let out = columns.map((c) => csvField(c.name)).join(",") + "\r\n";
   for (const row of rows) {
-    const line = columns
-      .map((_, i) => valueToCsv(row[i] ?? null))
-      .join(",");
+    const line = columns.map((_, i) => valueToCsv(row[i] ?? null)).join(",");
     out += line + "\r\n";
   }
   return out;
@@ -182,7 +180,11 @@ function jsonColumnOrder(columns: Column[]): JsonColumnOrder {
   const order = keys.map((key, index) => ({ key, index }));
   // 比較ごとの配列確保を避けるため、ソートキー (コードポイント配列) を事前に 1 回だけ作る。
   const cps = new Map<string, number[]>();
-  for (const { key } of order) cps.set(key, Array.from(key, (ch) => ch.codePointAt(0) ?? 0));
+  for (const { key } of order)
+    cps.set(
+      key,
+      Array.from(key, (ch) => ch.codePointAt(0) ?? 0),
+    );
   order.sort((a, b) => compareCodePointArrays(cps.get(a.key) ?? [], cps.get(b.key) ?? []));
   return order;
 }
@@ -191,11 +193,7 @@ function jsonColumnOrder(columns: Column[]): JsonColumnOrder {
  * pretty JSON。`query` (非空) を渡すと `{ query, rows }` でラップする。
  * `query` < `rows` のため挿入順がそのままソート順 (serde_json と一致) になる。
  */
-export function buildJson(
-  columns: Column[],
-  rows: CellValue[][],
-  query?: string | null,
-): string {
+export function buildJson(columns: Column[], rows: CellValue[][], query?: string | null): string {
   const order = jsonColumnOrder(columns);
   const arr = rows.map((row) => rowToObject(order, row));
   if (query && query.length > 0) {
@@ -222,11 +220,7 @@ export function buildNdjson(columns: Column[], rows: CellValue[][]): string {
  * スキーマエクスポート (`schemaExport.ts`) も同じエスケープを共有する。
  */
 export function mdEscape(s: string): string {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/\|/g, "\\|")
-    .replace(/\r/g, "")
-    .replace(/\n/g, "<br>");
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r/g, "").replace(/\n/g, "<br>");
 }
 
 function valueToMarkdown(v: CellValue): string {
@@ -308,9 +302,7 @@ export function sqlLiteral(driver: string, v: CellValue): string {
   }
   if (typeof v === "number") return Number.isFinite(v) ? formatFloat(v) : "NULL";
   const standardStrings = driver === "postgres" || driver === "sqlite";
-  const escaped = standardStrings
-    ? v.replace(/'/g, "''")
-    : v.replace(/\\/g, "\\\\").replace(/'/g, "''");
+  const escaped = standardStrings ? v.replace(/'/g, "''") : v.replace(/\\/g, "\\\\").replace(/'/g, "''");
   return "'" + escaped + "'";
 }
 
@@ -336,10 +328,7 @@ export function buildSqlInsert(
     const chunk = rows.slice(start, start + size);
     out += `INSERT INTO ${ref} (${cols}) VALUES\n`;
     out += chunk
-      .map(
-        (row) =>
-          "  (" + columns.map((_, i) => sqlLiteral(driver, row[i] ?? null)).join(", ") + ")",
-      )
+      .map((row) => "  (" + columns.map((_, i) => sqlLiteral(driver, row[i] ?? null)).join(", ") + ")")
       .join(",\n");
     out += ";\n";
   }

@@ -42,7 +42,9 @@ describe("buildCreateNamespaceSql", () => {
     expect(buildCreateNamespaceSql("postgres", "database", "app")).toBe('CREATE DATABASE "app";');
     expect(buildCreateNamespaceSql("postgres", "schema", "audit")).toBe('CREATE SCHEMA "audit";');
     // MySQL 専用オプションは PostgreSQL では無視する
-    expect(buildCreateNamespaceSql("postgres", "database", "app", { charset: "utf8" })).toBe('CREATE DATABASE "app";');
+    expect(buildCreateNamespaceSql("postgres", "database", "app", { charset: "utf8" })).toBe(
+      'CREATE DATABASE "app";',
+    );
   });
 
   it("returns null for unsupported combinations and empty names", () => {

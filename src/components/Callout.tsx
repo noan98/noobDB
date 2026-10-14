@@ -36,9 +36,13 @@ export const CALLOUT_ICONS: Record<SemanticRole, IconName> = {
 
 // motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
 // 素通しする (`ConnectionForm` の旧 ResultBanner / `ActivityCenter` と同じパターン)。
-const MotionCallout = chakra(motion.div, {}, {
-  forwardProps: ["initial", "animate", "exit", "transition"],
-});
+const MotionCallout = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["initial", "animate", "exit", "transition"],
+  },
+);
 
 type CalloutProps = Omit<ComponentProps<typeof MotionCallout>, "title"> & {
   tone: SemanticRole;

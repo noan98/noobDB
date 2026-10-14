@@ -27,12 +27,7 @@ import { api } from "../api/tauri";
 describe("ConnectionForm render smoke (#604)", () => {
   it("mounts for a new profile and shows the primary action buttons", () => {
     renderWithProviders(
-      <ConnectionForm
-        initial={null}
-        profiles={[]}
-        onSaved={() => {}}
-        onCancel={() => {}}
-      />,
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
     expect(screen.getByRole("button", { name: t("formSave") })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("formTest") })).toBeInTheDocument();
@@ -42,12 +37,7 @@ describe("ConnectionForm render smoke (#604)", () => {
   it("invokes onCancel when the cancel button is clicked", () => {
     const onCancel = vi.fn();
     renderWithProviders(
-      <ConnectionForm
-        initial={null}
-        profiles={[]}
-        onSaved={() => {}}
-        onCancel={onCancel}
-      />,
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={onCancel} />,
     );
     fireEvent.click(screen.getByRole("button", { name: t("formCancel") }));
     expect(onCancel).toHaveBeenCalledOnce();
@@ -153,9 +143,7 @@ describe("ConnectionForm reveals a stored password (#938)", () => {
     renderForm(saved);
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordReveal") }));
 
-    await waitFor(() =>
-      expect(screen.getByText(t("formPasswordRevealMissing"))).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(t("formPasswordRevealMissing"))).toBeInTheDocument());
   });
 
   it("surfaces a keyring read failure", async () => {
@@ -163,9 +151,7 @@ describe("ConnectionForm reveals a stored password (#938)", () => {
     renderForm(saved);
     fireEvent.click(screen.getByRole("button", { name: t("formPasswordReveal") }));
 
-    await waitFor(() =>
-      expect(screen.getByText(/keyring locked/)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/keyring locked/)).toBeInTheDocument());
   });
 
   it("keeps the plain show/hide toggle (no keyring read) for an unsaved profile", () => {
@@ -316,9 +302,7 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     fireEvent.change(authSelect(), { target: { value: "aws_iam" } });
     expect(screen.queryByLabelText(t("formDbPassword"))).toBeNull();
     // リージョンはエンドポイント名から推定され、TLS の注記が出る。
-    expect(
-      screen.getByText(t("formAwsRegionInferred", { region: "ap-northeast-1" })),
-    ).toBeInTheDocument();
+    expect(screen.getByText(t("formAwsRegionInferred", { region: "ap-northeast-1" }))).toBeInTheDocument();
     expect(screen.getByTestId("aws-iam-tls-note")).toBeInTheDocument();
     // 平文を許すモードは選べず、既定の prefer は require に引き上げられる。
     const tls = screen.getByLabelText(t("formTlsMode")) as HTMLSelectElement;

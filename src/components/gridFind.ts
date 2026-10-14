@@ -42,17 +42,11 @@ export const EMPTY_FIND_RESULT: GridFindResult = { matches: [], invalidRegex: fa
  * クエリ + オプションからセル文字列の判定関数を作る。正規表現が不正なら null。
  * 大小無視の非正規表現検索はクエリ側の小文字化を 1 回で済ませる。
  */
-function buildMatcher(
-  query: string,
-  options: GridFindOptions,
-): ((cellText: string) => boolean) | null {
+function buildMatcher(query: string, options: GridFindOptions): ((cellText: string) => boolean) | null {
   if (options.regex) {
     let re: RegExp;
     try {
-      re = new RegExp(
-        options.wholeCell ? `^(?:${query})$` : query,
-        options.caseSensitive ? "" : "i",
-      );
+      re = new RegExp(options.wholeCell ? `^(?:${query})$` : query, options.caseSensitive ? "" : "i");
     } catch {
       return null;
     }
@@ -136,11 +130,7 @@ export function buildFindKeySet(matches: GridFindMatch[]): Set<string> {
  * 次/前ヒットのインデックスを wrap-around 付きで返す。
  * ヒット 0 件なら null。現在位置が無い (null) 場合は先頭 (dir=1) / 末尾 (dir=-1)。
  */
-export function nextMatchIndex(
-  count: number,
-  current: number | null,
-  dir: 1 | -1,
-): number | null {
+export function nextMatchIndex(count: number, current: number | null, dir: 1 | -1): number | null {
   if (count <= 0) return null;
   if (current == null) return dir > 0 ? 0 : count - 1;
   return (current + dir + count) % count;
@@ -161,9 +151,7 @@ export function stableMatchIndex(
 ): number | null {
   if (matches.length === 0) return null;
   if (prevMatch) {
-    const i = matches.findIndex(
-      (m) => m.rowIdx === prevMatch.rowIdx && m.colIdx === prevMatch.colIdx,
-    );
+    const i = matches.findIndex((m) => m.rowIdx === prevMatch.rowIdx && m.colIdx === prevMatch.colIdx);
     if (i >= 0) return i;
   }
   if (prevIndex == null) return 0;

@@ -16,7 +16,7 @@ import { LoadingButton } from "../components/LoadingButton";
 // たどって取り出す。
 function describedText(trigger: HTMLElement): string | null {
   const id = trigger.getAttribute("aria-describedby");
-  return id ? document.getElementById(id)?.textContent ?? null : null;
+  return id ? (document.getElementById(id)?.textContent ?? null) : null;
 }
 
 describe("Tooltip", () => {

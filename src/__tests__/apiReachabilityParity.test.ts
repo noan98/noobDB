@@ -48,14 +48,9 @@ const reachable = reachableModules([ENTRY], allSources);
  * `api/commands/*.ts`) と `__tests__/` 配下は対象外 (テストが呼んでいるだけの
  * ラッパーは UI から到達できていない)。
  */
-const isConsumer = (path: string) =>
-  !path.startsWith("api/") && !path.startsWith("__tests__/");
-const consumerSources = Object.entries(allSources).filter(([path]) =>
-  isConsumer(path),
-);
-const reachableConsumers = consumerSources.filter(([path]) =>
-  reachable.has(path),
-);
+const isConsumer = (path: string) => !path.startsWith("api/") && !path.startsWith("__tests__/");
+const consumerSources = Object.entries(allSources).filter(([path]) => isConsumer(path));
+const reachableConsumers = consumerSources.filter(([path]) => reachable.has(path));
 
 /**
  * 意図的に UI から呼ばれないラッパーの許可リスト。**空のまま維持するのが理想**で、
@@ -76,10 +71,7 @@ const members = new Set(Object.keys(api));
  * チェーンが改行で折れている書き方も拾えるよう、`api` と `.` の間の空白を許す。
  * 既定では `main.tsx` から到達できるモジュールだけを見る。
  */
-function referencedBy(
-  name: string,
-  sources: [string, string][] = reachableConsumers,
-): string[] {
+function referencedBy(name: string, sources: [string, string][] = reachableConsumers): string[] {
   const re = new RegExp(`\\bapi\\s*\\.\\s*${name}\\b`);
   return sources.filter(([, src]) => re.test(src)).map(([path]) => path);
 }
@@ -113,9 +105,7 @@ describe("API 到達性パリティ (tauri.ts の api メンバ ↔ UI からの
     const detail = unreachable
       .map((name) => {
         const dead = referencedBy(name, consumerSources);
-        return dead.length > 0
-          ? `${name} (到達しないモジュールからのみ参照: ${dead.join(", ")})`
-          : name;
+        return dead.length > 0 ? `${name} (到達しないモジュールからのみ参照: ${dead.join(", ")})` : name;
       })
       .join(", ");
     expect(
@@ -128,10 +118,7 @@ describe("API 到達性パリティ (tauri.ts の api メンバ ↔ UI からの
     const stale = Object.keys(INTENTIONALLY_UNREACHABLE)
       .filter((name) => !members.has(name) || referencedBy(name).length > 0)
       .sort();
-    expect(
-      stale,
-      `不要になった許可リストのエントリ: ${stale.join(", ")}`,
-    ).toEqual([]);
+    expect(stale, `不要になった許可リストのエントリ: ${stale.join(", ")}`).toEqual([]);
   });
 });
 
@@ -163,8 +150,6 @@ describe("モジュール到達性 (main.tsx からの import グラフ, #1421)"
     const stale = Object.keys(INTENTIONALLY_UNREACHABLE_MODULES)
       .filter((path) => !(path in allSources) || reachable.has(path))
       .sort();
-    expect(stale, `不要になった許可リストのエントリ: ${stale.join(", ")}`).toEqual(
-      [],
-    );
+    expect(stale, `不要になった許可リストのエントリ: ${stale.join(", ")}`).toEqual([]);
   });
 });

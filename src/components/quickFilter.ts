@@ -49,10 +49,7 @@ export const QUICK_FILTER_LABEL_MAX = 24;
  * 表示されるため、生の改行はレイアウトを崩すだけで情報にならない)。NULL は
  * 呼び出し側が専用の文言を出すので、ここでは空文字を返す。
  */
-export function quickFilterValueLabel(
-  v: CellValue | undefined,
-  max = QUICK_FILTER_LABEL_MAX,
-): string {
+export function quickFilterValueLabel(v: CellValue | undefined, max = QUICK_FILTER_LABEL_MAX): string {
   if (isNullCell(v)) return "";
   const flat = String(v).replace(/\s+/g, " ").trim();
   if (max <= 1) return flat.length > max ? "…" : flat;

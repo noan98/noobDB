@@ -45,11 +45,7 @@ function qualified(driver: string, database: string, name: string): string {
 }
 
 /** 新規作成テンプレート。名前・型・本体はユーザが書き換える前提のプレースホルダ。 */
-export function buildRoutineTemplate(
-  driver: string,
-  kind: EditableObjectKind,
-  database: string,
-): string {
+export function buildRoutineTemplate(driver: string, kind: EditableObjectKind, database: string): string {
   const q = (name: string) => qualified(driver, database, name);
   if (driver === "postgres") {
     if (kind === "procedure") {
@@ -123,7 +119,7 @@ export function buildRoutineTemplate(
   // sqlite (トリガーのみ)
   return [
     `CREATE TRIGGER ${quoteIdentFor(driver, "new_trigger")}`,
-    "AFTER INSERT ON \"table_name\"",
+    'AFTER INSERT ON "table_name"',
     "FOR EACH ROW",
     "BEGIN",
     "  SELECT 1;",
@@ -225,10 +221,7 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
     // PG のトリガーテンプレートは先頭が補助関数 (`CREATE FUNCTION`) になるので、
     // トリガー種別では「どれかの文が CREATE TRIGGER」であれば許す。
     const ok =
-      kind === "trigger" &&
-      driver === "postgres" &&
-      creates.every(isCreate) &&
-      creates.some(mentionsKind);
+      kind === "trigger" && driver === "postgres" && creates.every(isCreate) && creates.some(mentionsKind);
     if (!ok) return { ok: false, error: "routineEditErrNotCreate", vars: { kind: kindWord } };
   }
 
@@ -237,10 +230,7 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
     // 関数 / プロシージャは CREATE OR REPLACE で置換する。
     creates = creates.map((sql, i) =>
       i === 0
-        ? sql.replace(
-            /^(\s*)CREATE\s+(?!OR\s+REPLACE\b)(FUNCTION|PROCEDURE)\b/i,
-            "$1CREATE OR REPLACE $2",
-          )
+        ? sql.replace(/^(\s*)CREATE\s+(?!OR\s+REPLACE\b)(FUNCTION|PROCEDURE)\b/i, "$1CREATE OR REPLACE $2")
         : sql,
     );
   } else if (name !== null) {

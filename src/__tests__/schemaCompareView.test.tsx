@@ -33,10 +33,7 @@ beforeEach(() => {
  * (接続 / 比較はユーザ操作時のみ)。プロファイル一覧を与えて例外なくマウントでき、
  * タイトルが可視であること・閉じるボタンで `onClose` が呼ばれることを固定する。
  */
-const PROFILES = [
-  makeProfile({ id: "p-a", name: "Alpha" }),
-  makeProfile({ id: "p-b", name: "Beta" }),
-];
+const PROFILES = [makeProfile({ id: "p-a", name: "Alpha" }), makeProfile({ id: "p-b", name: "Beta" })];
 
 describe("SchemaCompareView render smoke (#604)", () => {
   it("mounts with a profile list and shows the compare title", () => {
@@ -109,9 +106,7 @@ describe("SchemaCompareView の非同期整合 (#1599)", () => {
     fireEvent.click(await screen.findByText(t("schemaCompareGenerate")));
     fireEvent.click(await screen.findByText(t("schemaCompareApply", { count: 1 })));
     fireEvent.click(await screen.findByText(t("confirmDefaultOk")));
-    expect(
-      await screen.findByText(t("schemaCompareApplyDone", { count: 1 })),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(t("schemaCompareApplyDone", { count: 1 }))).toBeInTheDocument();
     expect(api.compareSchema).toHaveBeenCalledTimes(2);
     // 一瞬映るだけでなく、再比較が落ち着いた後も残る。
     await new Promise((r) => setTimeout(r, 100));

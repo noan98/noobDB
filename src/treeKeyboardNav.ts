@@ -28,10 +28,7 @@ export interface TreeNavRow {
 }
 
 /** 矢印キーの判定結果。 */
-export type TreeArrowResult =
-  | { type: "toggle" }
-  | { type: "move"; index: number }
-  | null;
+export type TreeArrowResult = { type: "toggle" } | { type: "move"; index: number } | null;
 
 /** ArrowRight の判定 (`index` は `rows`内での現在フォーカス行の位置)。 */
 export function resolveTreeArrowRight(rows: readonly TreeNavRow[], index: number): TreeArrowResult {

@@ -31,7 +31,12 @@ describe("parseDraftInt / clampDraftInt (#1534)", () => {
   });
 });
 
-function Harness({ onCommit, initial = 5, min = 1, max = 100 }: {
+function Harness({
+  onCommit,
+  initial = 5,
+  min = 1,
+  max = 100,
+}: {
   onCommit: (n: number) => void;
   initial?: number;
   min?: number;

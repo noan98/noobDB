@@ -18,7 +18,10 @@ describe("resolveTypedEditor (#1355)", () => {
       control: "native",
       inputType: "datetime-local",
     });
-    expect(resolveTypedEditor("TIMESTAMP(6)", "")).toEqual({ control: "native", inputType: "datetime-local" });
+    expect(resolveTypedEditor("TIMESTAMP(6)", "")).toEqual({
+      control: "native",
+      inputType: "datetime-local",
+    });
     expect(resolveTypedEditor("TIME", "12:30")).toEqual({ control: "native", inputType: "time" });
     expect(resolveTypedEditor("BOOLEAN", "true")).toEqual({ control: "bool" });
     expect(resolveTypedEditor("VARCHAR", "x")).toBeNull();

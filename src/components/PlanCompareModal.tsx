@@ -59,7 +59,7 @@ function Metric({
   /** 増減に良し悪しが無い指標 (ノード数など)。色を付けない。 */
   neutral?: boolean;
 }) {
-  const good = neutral ? null : delta && delta.sign !== 0 ? (delta.sign < 0) === lowerIsBetter : null;
+  const good = neutral ? null : delta && delta.sign !== 0 ? delta.sign < 0 === lowerIsBetter : null;
   return (
     <chakra.tr>
       <chakra.th scope="row" textAlign="left" fontWeight={500} color="app.textSecondary" px="2.5" py="1">
@@ -90,7 +90,15 @@ const VERDICT_KEY: Record<PlanComparisonView["verdict"], I18nKey> = {
   same: "planCompareVerdictSame",
 };
 
-export function PlanCompareModal({ driver, before, after, beforeLabel, beforeAnalyze, afterAnalyze, onClose }: Props) {
+export function PlanCompareModal({
+  driver,
+  before,
+  after,
+  beforeLabel,
+  beforeAnalyze,
+  afterAnalyze,
+  onClose,
+}: Props) {
   const t = useT();
   const view = useMemo<{ cmp: PlanComparisonView; b: PlanSummary; a: PlanSummary } | null>(() => {
     const b = summarizePlanResult(driver, before, t);

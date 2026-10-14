@@ -139,13 +139,7 @@ export function Segmented<T extends string>({ value, options, onChange, ariaLabe
                 aria-hidden
               />
             )}
-            <chakra.span
-              position="relative"
-              zIndex={1}
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-            >
+            <chakra.span position="relative" zIndex={1} display="inline-flex" alignItems="center" gap="1">
               {opt.icon && <Icon name={opt.icon} size={ICON_SIZES.sm} />}
               {opt.label}
             </chakra.span>

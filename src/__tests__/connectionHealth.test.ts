@@ -97,7 +97,9 @@ describe("toHealthProbeResult (health_probe_all の観測値 → 表示状態, #
   });
 
   it("SQLite は接続数を常に N/A にする", () => {
-    expect(toHealthProbeResult({ sessionId: "s1", driver: "sqlite" }, item({ connections: null }))).toMatchObject({
+    expect(
+      toHealthProbeResult({ sessionId: "s1", driver: "sqlite" }, item({ connections: null })),
+    ).toMatchObject({
       status: "up",
       connections: "na",
     });

@@ -4,16 +4,9 @@ import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { ExportColumnMask } from "../../components/exportMasking";
 import type { HandleSortFilterRequest } from "../../components/gridSortFilter";
-import type {
-  Column,
-  CellValue,
-  ExportFormat,
-  ResultFindOutput,
-  ResultColumnStats,
-} from "../tauri";
+import type { Column, CellValue, ExportFormat, ResultFindOutput, ResultColumnStats } from "../tauri";
 
 export const resultCommands = {
-
   /**
    * 結果ハンドル (#1264): ソート・列フィルタ・全体フィルタを適用した**表示順の行インデックス**
    * (元の行位置) を返す。意味論は `ResultGrid` の JS 実装と同じ (ただし文字列の照合順序は

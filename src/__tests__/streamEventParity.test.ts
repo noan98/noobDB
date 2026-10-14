@@ -118,24 +118,17 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
     const missingInBack = [...listened]
       .filter((name) => !emitted.has(name) && !LISTEN_ONLY_ALLOWLIST.includes(name))
       .sort();
-    expect(
-      missingInBack,
-      `Rust 側に emit の無い listen イベント: ${missingInBack.join(", ")}`,
-    ).toEqual([]);
+    expect(missingInBack, `Rust 側に emit の無い listen イベント: ${missingInBack.join(", ")}`).toEqual([]);
   });
 
   it("許可リストに載っているイベントが実際に片側にしか存在しない (許可リストの陳腐化防止)", () => {
     for (const name of EMIT_ONLY_ALLOWLIST) {
       expect(emitted.has(name), `${name} は emit 側に存在しない`).toBe(true);
-      expect(listened.has(name), `${name} は listen 側にも存在する (許可リストから外すこと)`).toBe(
-        false,
-      );
+      expect(listened.has(name), `${name} は listen 側にも存在する (許可リストから外すこと)`).toBe(false);
     }
     for (const name of LISTEN_ONLY_ALLOWLIST) {
       expect(listened.has(name), `${name} は listen 側に存在しない`).toBe(true);
-      expect(emitted.has(name), `${name} は emit 側にも存在する (許可リストから外すこと)`).toBe(
-        false,
-      );
+      expect(emitted.has(name), `${name} は emit 側にも存在する (許可リストから外すこと)`).toBe(false);
     }
   });
 
@@ -158,9 +151,6 @@ describe("ストリーミングイベント名パリティ (Rust emit ↔ tauri.
       if (arg === "event_name") return false;
       return true;
     });
-    expect(
-      offenders,
-      `EV_* 定数でもリテラルでもない emit 第一引数: ${offenders.join(", ")}`,
-    ).toEqual([]);
+    expect(offenders, `EV_* 定数でもリテラルでもない emit 第一引数: ${offenders.join(", ")}`).toEqual([]);
   });
 });
