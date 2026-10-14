@@ -72,9 +72,26 @@ export function limitCandidates<T>(items: readonly T[]): { items: T[]; overflow:
   };
 }
 
+/**
+ * 空白を 1 つに畳む。ただし `--` / `#` を含む行 (行コメントの疑い) の改行は残す。
+ * 改行まで畳むと、コメントの後ろの SQL 全体がコメントとして AI に渡ってしまう。
+ * 文字列リテラル内の `--` でも改行が残るだけで害はない。
+ */
+function foldWhitespace(sql: string): string {
+  let out = "";
+  const lines = sql.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\s+/g, " ").trim();
+    if (line === "") continue;
+    out += line;
+    if (i < lines.length - 1) out += line.includes("--") || line.includes("#") ? "\n" : " ";
+  }
+  return out.trim();
+}
+
 /** SQL の空白を畳み、マスクを適用し、1 件あたりの上限で切り詰める。 */
 export function candidateSql(c: Pick<HistoryCandidate, "sql" | "driver">, mask: boolean): string {
-  const masked = sqlForAi(c.sql, c.driver, mask).replace(/\s+/g, " ").trim();
+  const masked = foldWhitespace(sqlForAi(c.sql, c.driver, mask));
   return masked.length > HISTORY_SEARCH_MAX_SQL_CHARS
     ? `${sliceHead(masked, HISTORY_SEARCH_MAX_SQL_CHARS)}…`
     : masked;

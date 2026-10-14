@@ -220,7 +220,7 @@ export function cleanInlineCompletion(raw: string, before: string): string {
   if (text.trim() === "") return "";
   const lines = text.split("\n");
   if (lines.length > INLINE_MAX_SUGGESTION_LINES) text = lines.slice(0, INLINE_MAX_SUGGESTION_LINES).join("\n");
-  if (text.length > INLINE_MAX_SUGGESTION_CHARS) text = text.slice(0, INLINE_MAX_SUGGESTION_CHARS);
+  if (text.length > INLINE_MAX_SUGGESTION_CHARS) text = sliceHead(text, INLINE_MAX_SUGGESTION_CHARS);
   return text.replace(/\s+$/, "");
 }
 

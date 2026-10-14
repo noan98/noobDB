@@ -67,6 +67,13 @@ describe("appendTypeaheadKey / findTypeaheadIndex", () => {
     expect(findTypeaheadIndex(withDup, "a", 2)).toBe(0);
   });
 
+  it("バッファが伸びたとき、現在位置が条件を満たすならそこに留まる (#1604)", () => {
+    const l = ["ab", "ac", "abc"];
+    expect(findTypeaheadIndex(l, "a", null)).toBe(0);
+    expect(findTypeaheadIndex(l, "ab", 0)).toBe(0);
+    expect(findTypeaheadIndex(l, "abc", 0)).toBe(2);
+  });
+
   it("一致が無ければ null", () => {
     expect(findTypeaheadIndex(labels, "zzz", null)).toBeNull();
   });

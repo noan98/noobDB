@@ -127,4 +127,26 @@ describe("RunRoutineModal (#1003)", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRun).toHaveBeenCalledTimes(1);
   });
+
+  it("複数引数では最後の欄以外の Enter は次の欄へ移るだけで実行しない (#1604)", async () => {
+    getRoutineSignature.mockResolvedValue({
+      kind: "procedure",
+      name: "add_order",
+      parameters: [
+        { name: "id", mode: "in", data_type: "int" },
+        { name: "note", mode: "in", data_type: "varchar(20)" },
+      ],
+      returns_set: false,
+      return_type: null,
+    });
+    const { onRun } = renderModal();
+    const first = await screen.findByLabelText(/^id ·/);
+    const second = screen.getByLabelText(/^note ·/);
+    fireEvent.change(first, { target: { value: "7" } });
+    fireEvent.keyDown(first, { key: "Enter" });
+    expect(onRun).not.toHaveBeenCalled();
+    expect(second).toHaveFocus();
+    fireEvent.keyDown(second, { key: "Enter" });
+    expect(onRun).toHaveBeenCalledTimes(1);
+  });
 });

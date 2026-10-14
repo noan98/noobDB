@@ -122,6 +122,8 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const { request } = props;
   const [state, setState] = useState<State>({ kind: "idle" });
   const [applied, setApplied] = useState<null | "applied" | "closed" | "cancelled">(null);
+  // 「エディタに適用」が例外で失敗したときのメッセージ (再試行できるようボタンは有効のまま)。
+  const [applyError, setApplyError] = useState<string | null>(null);
   const stream = useAiStream({ idPrefix: "ai_sql" });
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [followUp, setFollowUp] = useState("");
@@ -221,6 +223,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
         return;
       }
       setApplied(null);
+      setApplyError(null);
       applyingRef.current = false;
       setState({ kind: "running", assist: kind });
       await stream.start(
@@ -270,6 +273,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
     }
     if (!stream.isMounted()) return abort();
     setApplied(null);
+    setApplyError(null);
     applyingRef.current = false;
     // テーブル定義はベストエフォート。取得できないテーブルは黙って落とす。
     const fetched = await Promise.all(
@@ -343,6 +347,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const applyRewrite = async (s: Extract<State, { kind: "rewrite" }>) => {
     if (!request || applyingRef.current) return;
     applyingRef.current = true;
+    setApplyError(null);
     const giveUp = () => {
       applyingRef.current = false;
       setApplied("cancelled");
@@ -370,8 +375,10 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       setApplied(r);
       // 適用済みの間はボタンを無効にする。取りやめ / タブ消失なら再試行できるようにする。
       if (r !== "applied") applyingRef.current = false;
-    } catch {
+    } catch (e) {
       applyingRef.current = false;
+      setApplied(null);
+      setApplyError(String(e));
     }
   };
 
@@ -443,6 +450,9 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
             void applyRewrite(state);
           }}
         />
+      )}
+      {state.kind === "rewrite" && applyError !== null && (
+        <ErrorNote role="alert">{t("aiSqlApplyError", { message: applyError })}</ErrorNote>
       )}
       <AiUsageNote event={stream.done} />
       {state.kind === "raw" && (
