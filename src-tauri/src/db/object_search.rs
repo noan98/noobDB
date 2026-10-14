@@ -109,6 +109,10 @@ impl ObjectIndex {
         }
         let cmp = |a: &(u32, &IndexEntry), b: &(u32, &IndexEntry)| -> Ordering {
             b.0.cmp(&a.0)
+                // 同点ではシステム DB を利用者 DB の後ろへ回す (#1610)。
+                .then_with(|| {
+                    is_system_database(&a.1.database).cmp(&is_system_database(&b.1.database))
+                })
                 .then_with(|| cmp_utf16(&a.1.database, &b.1.database))
                 .then_with(|| cmp_utf16(&a.1.table, &b.1.table))
                 .then_with(|| {
@@ -134,6 +138,19 @@ impl ObjectIndex {
             })
             .collect()
     }
+}
+
+/// MySQL / PostgreSQL が持つ組み込みのシステム DB (大小無視)。
+fn is_system_database(name: &str) -> bool {
+    [
+        "information_schema",
+        "mysql",
+        "performance_schema",
+        "sys",
+        "pg_catalog",
+    ]
+    .iter()
+    .any(|s| name.eq_ignore_ascii_case(s))
 }
 
 /// 基礎点。一致しなければ 0。`target` / `q` はともに小文字化済み。
@@ -196,6 +213,23 @@ mod tests {
             ("shop", shop.as_slice()),
             ("analytics", analytics.as_slice()),
         ])
+    }
+
+    #[test]
+    fn user_databases_rank_before_system_databases_on_ties() {
+        let t = vec![schema("users", &["id"])];
+        let idx = ObjectIndex::build([
+            ("information_schema", t.as_slice()),
+            ("mysql", t.as_slice()),
+            ("shop", t.as_slice()),
+            ("zeta", t.as_slice()),
+        ]);
+        let dbs: Vec<String> = idx
+            .search("users", 10)
+            .into_iter()
+            .map(|h| h.database)
+            .collect();
+        assert_eq!(dbs, ["shop", "zeta", "information_schema", "mysql"]);
     }
 
     #[test]

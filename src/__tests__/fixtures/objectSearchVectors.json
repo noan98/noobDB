@@ -95,6 +95,18 @@
           "user_id"
         ]
       }
+    ],
+    "information_schema": [
+      {
+        "name": "qjq_tie",
+        "columns": []
+      }
+    ],
+    "zz_user_db": [
+      {
+        "name": "qjq_tie",
+        "columns": []
+      }
     ]
   },
   "cases": [
@@ -751,6 +763,23 @@
       "limit": 200,
       "note": "一致なし",
       "expected": []
+    },
+    {
+      "query": "qjq_tie",
+      "limit": 10,
+      "note": "同点ではシステム DB (information_schema) が利用者 DB (zz_user_db) より後ろに並ぶ (#1610)",
+      "expected": [
+        {
+          "kind": "table",
+          "database": "zz_user_db",
+          "table": "qjq_tie"
+        },
+        {
+          "kind": "table",
+          "database": "information_schema",
+          "table": "qjq_tie"
+        }
+      ]
     }
   ]
 }

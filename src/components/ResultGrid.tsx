@@ -92,6 +92,7 @@ import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
+import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import {
@@ -2273,7 +2274,8 @@ function ColumnFilterMenu({
             onClose();
           }}
         >
-          {t("gridFilterClearColumn")}
+          {/* サーバ側条件が残るときは、ここで消えるのがクライアント条件だけだと明示する (#1610)。 */}
+          {serverFilter ? t("gridFilterClearClientColumn") : t("gridFilterClearColumn")}
         </Button>
         <Tooltip label={t("gridFilterCloseMenu")}>
           <Button variant="ghost" size="sm" aria-label={t("gridFilterCloseMenu")} onClick={onClose}>
@@ -8331,8 +8333,10 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
       );
     }
     return (
-      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
-        {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
+      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface" p="3">
+        <Callout tone="success">
+          {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
+        </Callout>
       </Box>
     );
   }
