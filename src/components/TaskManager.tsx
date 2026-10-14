@@ -851,6 +851,8 @@ function TaskForm({
       // モーダル / 接続フォームと同じく Cmd/Ctrl+Enter で保存する (#1114)。
       onKeyDown={(e) => {
         if (saving) return;
+        // {dialog} (確認ダイアログ) はポータル描画。そこからのキーで再送信しない (#1604)。
+        if (!e.currentTarget.contains(e.target as Node)) return;
         if (!isModalSubmitKey(pickModalKeys(e))) return;
         e.preventDefault();
         void handleSubmit();

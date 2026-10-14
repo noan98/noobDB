@@ -102,6 +102,9 @@ export function Modal({
   const onContentKeyDown = onSubmit
     ? (e: KeyboardEvent<HTMLDivElement>) => {
         if (submitDisabled) return;
+        // ポータルで描画した子 (確認ダイアログなど) のキーは React ツリー上で親へ伝わるが、
+        // DOM 上はこのモーダルの外。外側フォームの送信を再発火させない (#1604)。
+        if (!e.currentTarget.contains(e.target as Node)) return;
         if (!isModalSubmitKey(pickModalKeys(e))) return;
         e.preventDefault();
         onSubmit();
