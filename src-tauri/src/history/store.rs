@@ -423,6 +423,36 @@ async fn get_sql_in(pool: &SqlitePool, id: i64) -> Result<Option<String>> {
     Ok(row.and_then(|r| r.try_get::<String, _>("sql").ok()))
 }
 
+/// 履歴の複数 id の SQL 全文をまとめて返す (`get_history_sqls`)。戻り値は `ids` と同じ順・同じ長さで、
+/// 無い行 (削除済み・上限超過) は `None`。
+pub async fn get_sqls(ids: &[i64]) -> Result<Vec<Option<String>>> {
+    get_sqls_in(pool().await?, ids).await
+}
+
+/// 1 クエリに束ねる id の数。SQLite の変数上限 (既定 32,766) に十分収まる大きさで区切る。
+const GET_SQLS_CHUNK: usize = 500;
+
+async fn get_sqls_in(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<Option<String>>> {
+    let mut found: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    for chunk in ids.chunks(GET_SQLS_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT id, \"sql\" FROM query_history WHERE id IN ({placeholders})");
+        // プレースホルダ "?" の個数だけを組み立てた文字列で、値はすべて bind する。
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for id in chunk {
+            q = q.bind(*id);
+        }
+        for row in q.fetch_all(pool).await? {
+            if let (Ok(id), Ok(text)) =
+                (row.try_get::<i64, _>("id"), row.try_get::<String, _>("sql"))
+            {
+                found.insert(id, text);
+            }
+        }
+    }
+    Ok(ids.iter().map(|id| found.get(id).cloned()).collect())
+}
+
 /// `profile_id` の直近の実行 SQL 全文を新しい順に返す (↑/↓ 履歴ナビ・コマンド
 /// パレット用、#1256)。一覧 (`list`) と違い要約ではなく全文だが、メタデータを
 /// 運ばないぶん軽い。`profile_id` が `None` なら全プロファイル。
@@ -845,6 +875,22 @@ mod tests {
             Some(long.as_str())
         );
         assert_eq!(get_sql_in(&pool, 9999).await.unwrap(), None);
+
+        // まとめて取得: 入力と同じ順・同じ長さで、無い id は None。重複 id も同じ値を返す。
+        let all = list_in(&pool, None, 10, None, None, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<i64> = vec![all[0].id, 9999, old.id, all[0].id];
+        let got = get_sqls_in(&pool, &ids).await.unwrap();
+        assert_eq!(got.len(), 4);
+        assert_eq!(
+            got[0].as_deref(),
+            get_sql_in(&pool, all[0].id).await.unwrap().as_deref()
+        );
+        assert_eq!(got[1], None);
+        assert_eq!(got[2].as_deref(), Some(long.as_str()));
+        assert_eq!(got[3], got[0]);
+        assert!(get_sqls_in(&pool, &[]).await.unwrap().is_empty());
 
         let sqls = list_sqls_in(&pool, Some("p1"), 10).await.unwrap();
         assert_eq!(sqls, vec!["SELECT 2".to_string(), long]);

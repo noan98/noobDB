@@ -6,6 +6,8 @@ import {
   AI_MODEL_IDS,
   AI_TASK_DEFS,
   AI_TASK_KINDS,
+  DEFAULT_AI_MODEL,
+  unsetUsesRecommendedModel,
 } from "../ai/aiModels";
 
 // AI 基盤 (#690) のモデル / エフォート / タスク種別は Rust (`ai/models.rs`) とフロント
@@ -63,6 +65,14 @@ describe("AI 定義の Rust ⇔ フロント パリティ (#690)", () => {
       const model = modelVariant[AI_TASK_DEFS[kind].recommendedModel];
       expect(body).toMatch(new RegExp(`AiTaskKind::${variant}\\s*=>\\s*AiModel::${model}\\b`));
     }
+  });
+
+  it("モデル未設定時の解決規則 (軽量タスクは推奨モデル) が一致する (#1608)", () => {
+    // Rust: 推奨が Opus55 (= フロントの DEFAULT_AI_MODEL) と異なるタスクは、未設定でも推奨で動く。
+    expect(modelsRs).toContain("self.recommended_model() != AiModel::Opus55");
+    expect(DEFAULT_AI_MODEL).toBe("claude-opus-5-5");
+    const light = AI_TASK_KINDS.filter((k) => unsetUsesRecommendedModel(k));
+    expect(light).toEqual(["inlineComplete"]);
   });
 
   it("リクエストは thinking / サンプリング系 / tool_choice を送らず fallbacks を付ける", () => {

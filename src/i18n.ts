@@ -965,6 +965,12 @@ const en = {
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
   errorHintAiOverloaded:
     "The AI service is busy (rate limit or overload). Wait a little and run it again.",
+  errorHintAiAuth:
+    "The AI API key may be missing, invalid or revoked. Check the Anthropic API key under Settings > AI assistant.",
+  errorHintAiPermission:
+    "The API key itself may be valid, but it may not have permission for this model or feature. Check the key's permissions and the model setting under Settings > AI assistant.",
+  errorHintAiNetwork:
+    "Couldn't reach the AI service. Check your network or proxy settings, wait a little and try again.",
   errorHintTimeout:
     "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
   errorHintSsh:
@@ -3644,6 +3650,7 @@ const en = {
   aiSchemaDocFkMissing: "Foreign keys could not be read, so relationships are not included.",
   aiSchemaDocTruncated: "The output hit the length limit and is incomplete. Narrow the scope and generate again.",
   aiSchemaDocTooBig: "The request would be about {kb} KB, over the {limit} KB limit. Narrow the scope to \"Selected tables and what they reference\".",
+  aiSchemaDocNarrowScope: "Narrow the tables",
   aiSchemaDocLargeSchema: "This scope is large: {tables} tables (about {kb} KB). Generation can be slow and costly. Consider \"Selected tables and what they reference\".",
   aiSchemaDocConfirmTitle: "Send the schema to the AI?",
   aiSchemaDocConfirmBody: "This connection is marked as production. Table, column and index names, comments and view/routine definitions will be sent to the Anthropic API.",
@@ -5000,6 +5007,9 @@ const en = {
   aiTaskLockDiagnose: "Lock / long-running query diagnosis",
   aiTaskInlineComplete: "Editor inline completion",
   aiModelFollowDefault: "Follow default model",
+  aiModelFollowRecommended: "Use the recommended model ({model})",
+  aiTaskModelsAllDefault: "All default",
+  aiTaskModelsChanged: "{count} changed",
   aiRecommendedSuffix: "(recommended)",
   aiEffortLow: "Low",
   aiEffortMedium: "Medium",
@@ -5053,7 +5063,9 @@ const en = {
   aiLedgerRow: "{name}: {calls} calls · Input {input} / Output {output} tokens · {cost}",
   aiLedgerByModel: "By model",
   aiLedgerByTask: "By task",
-  aiLedgerByDay: "By day (latest 7)",
+  aiLedgerByDay: "By day (newest first)",
+  aiLedgerDayMore: "Show {count} more days",
+  aiLedgerDayLess: "Show only the latest {count} days",
   aiLedgerUnpriced: "{count} calls used a model without a known price and are excluded from the cost.",
   aiLedgerRefresh: "Refresh",
   aiLedgerLoadFailed: "Could not load the usage history: {error}",
@@ -6086,6 +6098,12 @@ const ja: Dict = {
     "接続が切れたようです。サーバーがアイドル状態のセッションを閉じた (wait_timeout)、またはネットワークや VPN が切断された可能性があります。再接続してから、もう一度クエリを実行してください。",
   errorHintAiOverloaded:
     "AI サービスが混み合っています (レート制限または過負荷)。しばらく待ってからもう一度実行してください。",
+  errorHintAiAuth:
+    "AI の API キーが未設定、無効、または失効している可能性があります。設定の「AI アシスタント」で Anthropic API キーを確認してください。",
+  errorHintAiPermission:
+    "API キー自体は有効でも、このモデルや機能を使う権限が無い可能性があります。設定の「AI アシスタント」でキーの権限とモデル設定を確認してください。",
+  errorHintAiNetwork:
+    "AI サービスに接続できませんでした。ネットワークやプロキシの設定を確認し、しばらく待ってからもう一度お試しください。",
   errorHintTimeout:
     "操作が制限時間を超えたため中断されました。クエリを絞り込む (WHERE / LIMIT を付ける) か、設定でクエリタイムアウトを延ばしてください。",
   errorHintSsh:
@@ -8758,6 +8776,7 @@ const ja: Dict = {
   aiSchemaDocFkMissing: "外部キーを取得できなかったため、関係は含まれません。",
   aiSchemaDocTruncated: "出力上限に達したため、途中までの内容です。対象を絞って再生成してください。",
   aiSchemaDocTooBig: "送信内容が約 {kb} KB となり、上限 {limit} KB を超えます。「選択したテーブルとその参照先」へ対象を絞ってください。",
+  aiSchemaDocNarrowScope: "テーブルを絞る",
   aiSchemaDocLargeSchema: "対象が大きくなっています: {tables} テーブル (約 {kb} KB)。生成に時間とコストがかかる可能性があります。「選択したテーブルとその参照先」への絞り込みを検討してください。",
   aiSchemaDocConfirmTitle: "スキーマを AI に送信しますか?",
   aiSchemaDocConfirmBody: "この接続は本番として設定されています。テーブル・列・インデックスの名前、コメント、ビュー/ルーチンの定義が Anthropic API に送信されます。",
@@ -10112,6 +10131,9 @@ const ja: Dict = {
   aiTaskLockDiagnose: "ロック・長時間クエリの診断",
   aiTaskInlineComplete: "エディタのインライン補完",
   aiModelFollowDefault: "既定モデルに従う",
+  aiModelFollowRecommended: "推奨モデルを使う ({model})",
+  aiTaskModelsAllDefault: "すべて既定のまま",
+  aiTaskModelsChanged: "変更 {count} 件",
   aiRecommendedSuffix: "(推奨)",
   aiEffortLow: "低 (low)",
   aiEffortMedium: "中 (medium)",
@@ -10165,7 +10187,9 @@ const ja: Dict = {
   aiLedgerRow: "{name}: {calls} 回 ・ 入力 {input} / 出力 {output} トークン ・ {cost}",
   aiLedgerByModel: "モデル別",
   aiLedgerByTask: "タスク別",
-  aiLedgerByDay: "日別 (直近 7 日分)",
+  aiLedgerByDay: "日別 (新しい順)",
+  aiLedgerDayMore: "さらに {count} 日分を表示",
+  aiLedgerDayLess: "直近 {count} 日分だけ表示",
   aiLedgerUnpriced: "単価が不明なモデルでの {count} 回分はコストに含めていません。",
   aiLedgerRefresh: "更新",
   aiLedgerLoadFailed: "使用量の履歴を読み込めませんでした: {error}",

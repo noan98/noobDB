@@ -23,8 +23,8 @@ export const RESULT_SUMMARY_MAX_ROWS = 20;
 export const RESULT_SUMMARY_CELL_MAX_CHARS = 80;
 /** 送る列数の上限 (列が極端に多い結果でプロンプトが膨らむのを防ぐ)。 */
 export const RESULT_SUMMARY_MAX_COLUMNS = 60;
-/** 統計の計算に使う行数の上限 (取得済みの行がこれを超えるときは先頭から)。 */
-export const RESULT_SUMMARY_STATS_MAX_ROWS = 50_000;
+/** 統計の計算に使う行数の上限 (取得済みの行がこれを超えるときは先頭から)。クリック直後にメインスレッドで同期計算するため 5,000 行に抑える (#1608)。 */
+export const RESULT_SUMMARY_STATS_MAX_ROWS = 5_000;
 /** 追加 SQL 案の上限件数。 */
 export const RESULT_SUMMARY_MAX_QUERIES = 5;
 

@@ -4,6 +4,9 @@ import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { HistoryEntry } from "../tauri";
 
+/** `invoke` のジェネリックに `(` を含めない (IPC パリティテストの正規表現が読めなくなるため)。 */
+type NullableStrings = Array<string | null>;
+
 export const historyCommands = {
 
   listHistory: (params: {
@@ -29,6 +32,14 @@ export const historyCommands = {
   getHistorySql: (id: number) =>
     invoke<string>("get_history_sql", { id }).then((r) =>
       parseResponse(schemas.stringResponse, r, "get_history_sql"),
+    ),
+  /**
+   * 履歴の複数 id の SQL 全文をまとめて取る。`ids` と同じ順・同じ長さで、削除済みなどで取れない行は
+   * `null` (履歴 AI 検索の候補取得用。1 件ずつ IPC を往復しない)。
+   */
+  getHistorySqls: (ids: number[]) =>
+    invoke<NullableStrings>("get_history_sqls", { ids }).then((r) =>
+      parseResponse(schemas.nullableStringArrayResponse, r, "get_history_sqls"),
     ),
   /** 直近の実行 SQL 全文だけを新しい順に返す (↑/↓ 履歴ナビ・コマンドパレット用、#1256)。 */
   listHistorySql: (params: { profileId?: string | null; limit?: number | null } = {}) =>

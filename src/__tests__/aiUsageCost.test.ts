@@ -87,6 +87,9 @@ describe("AI 使用量の集計と概算コスト (#1540)", () => {
   it("formatUsd は 1 セント未満を 4 桁で出す", () => {
     expect(formatUsd(0)).toBe("$0.00");
     expect(formatUsd(0.00123)).toBe("$0.0012");
+    expect(formatUsd(0.0001)).toBe("$0.0001");
+    expect(formatUsd(0.00009999)).toBe("< $0.0001");
+    expect(formatUsd(0.00003)).toBe("< $0.0001");
     expect(formatUsd(1.234)).toBe("$1.23");
   });
 });

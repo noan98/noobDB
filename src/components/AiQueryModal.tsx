@@ -98,6 +98,14 @@ function withDetails(tables: Nl2SqlTable[], details: ReadonlyMap<string, Nl2SqlC
 
 /** 関連テーブルの手動選択欄に一度に描く行数の上限 (残りは絞り込みで探す)。 */
 const PICKER_MAX_ROWS = 200;
+/** 関連テーブルの自動提案を、入力が止まってから更新するまでの待ち (#1608)。 */
+const SUGGEST_DEBOUNCE_MS = 300;
+
+function sameNameSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
 
 export interface AiQueryModalProps {
   sessionId: string;
@@ -222,14 +230,28 @@ export function AiQueryModal(props: AiQueryModalProps) {
   // 送るテーブル: 閾値以下の DB は全テーブル (固定順でキャッシュが効く)。大きい DB は選択した関連テーブルだけ。
   // 追い質問に送る集合 (最初に送った集合に固定) は `runInner` で決める。
   const focusTable = props.focusTable ?? null;
-  const suggestBasis = request.trim() !== "" ? request : lastSent;
-  const suggested = useMemo(
-    () =>
-      schema.kind === "ready" && schema.large
-        ? new Set(selectRelevantTables(schema.tables, schema.foreignKeys, suggestBasis, focusTable))
-        : null,
-    [schema, suggestBasis, focusTable],
-  );
+  const suggestBasisNow = request.trim() !== "" ? request : lastSent;
+  // 関連テーブルの自動提案は入力が止まってから更新する。1 キーごとに全テーブルの関連度を採点すると
+  // 300 テーブルを超える DB で入力が重くなるため (#1608)。送信の瞬間は `runInner` が最新の依頼文で取り直す。
+  const [suggestBasis, setSuggestBasis] = useState(suggestBasisNow);
+  useEffect(() => {
+    const id = setTimeout(() => setSuggestBasis(suggestBasisNow), SUGGEST_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [suggestBasisNow]);
+  // 提案の集合は中身が同じなら同じ参照を返す。以降の送信内容の要約 (`summary`) と
+  // テーブル選択欄が、選択集合が変わったときだけ再計算・再描画される。
+  const prevSuggestedRef = useRef<ReadonlySet<string> | null>(null);
+  const suggested = useMemo(() => {
+    if (schema.kind !== "ready" || !schema.large) {
+      prevSuggestedRef.current = null;
+      return null;
+    }
+    const next = new Set(selectRelevantTables(schema.tables, schema.foreignKeys, suggestBasis, focusTable));
+    const prev = prevSuggestedRef.current;
+    if (prev && sameNameSet(prev, next)) return prev;
+    prevSuggestedRef.current = next;
+    return next;
+  }, [schema, suggestBasis, focusTable]);
   const selectedNames: ReadonlySet<string> | null = picked ?? suggested;
   // 追い質問の途中 (最初の生成で送った集合が固定されている) は、その集合が実際に送る内容。
   const followingUp = exchanges.length > 0 && lockedNames !== null;
@@ -257,8 +279,13 @@ export function AiQueryModal(props: AiQueryModalProps) {
     });
   const sendsLine = summary ? sendsLineFor(summary) : null;
 
+  // 入力直後 (デバウンス中) に操作されたときは、表示中の古い提案ではなく今の依頼文からの提案を使う。
+  const currentSuggestion = (): ReadonlySet<string> | null =>
+    schema.kind === "ready" && schema.large && suggestBasisNow !== suggestBasis
+      ? new Set(selectRelevantTables(schema.tables, schema.foreignKeys, suggestBasisNow, focusTable))
+      : suggested;
   const togglePick = (name: string, on: boolean) => {
-    const next = new Set(selectedNames ?? []);
+    const next = new Set(picked ?? currentSuggestion() ?? []);
     if (on) next.add(name);
     else next.delete(name);
     setPicked(next);
@@ -337,11 +364,17 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const runInner = async (followUpText?: string) => {
     // 実際に送る内容を、送信確認の表示にもそのまま使う。
     if (schema.kind !== "ready") return;
+    // 手動選択が無く、提案がデバウンス中 (入力直後) なら、送る直前の依頼文で提案を取り直す。
+    const names = picked ?? currentSuggestion();
+    if (followUpText === undefined && schema.large && (names?.size ?? 0) === 0) {
+      stream.release();
+      return;
+    }
     const target =
       followUpText !== undefined && schema.large && lockedNames
         ? restrictSchema(schema.tables, schema.foreignKeys, lockedNames)
-        : schema.large && selectedNames
-          ? restrictSchema(schema.tables, schema.foreignKeys, selectedNames)
+        : schema.large && names
+          ? restrictSchema(schema.tables, schema.foreignKeys, names)
           : schema;
     // 大きい DB は送るテーブルだけ、テーブル単位でキャッシュされる describeTable で型・PK・コメントを取る。
     // 追い質問は取り直さない (送る内容が変わるとプロンプトキャッシュが外れ、最初に確認した内容ともずれる)。

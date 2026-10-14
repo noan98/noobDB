@@ -2,12 +2,14 @@ import { useEffect, useState, type ReactNode } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api, type AiConnectionTestResult } from "../api/tauri";
 import {
+  AI_MODEL_LABELS,
   AI_TASK_DEFS,
   AI_TASK_KINDS,
   effortOptions,
   isAiEffort,
   isAiModelId,
   modelOptions,
+  unsetUsesRecommendedModel,
   type AiEffort,
   type AiTaskKind,
 } from "../ai/aiModels";
@@ -41,6 +43,7 @@ import {
   SettingsToggleLabel,
   SettingsToggleRow,
 } from "./settingsLayout";
+import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Input, Select, Switch } from "./ui";
 import { useToast } from "./Toast";
 
@@ -99,6 +102,8 @@ export function AiSettings() {
   const [hasKey, setHasKey] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
+  // タスク別の詳細 (17 行 x モデル / エフォート) は既定では畳む。日常的に触る項目が埋もれないように。
+  const [taskOpen, setTaskOpen] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<AiConnectionTestResult | null>(null);
   const [testError, setTestError] = useState<string | null>(null);
@@ -204,6 +209,10 @@ export function AiSettings() {
     );
   };
 
+  // 既定のまま使っていないタスクの数 (モデルかエフォートのどちらかを上書きしているもの)。
+  const changedTasks = AI_TASK_KINDS.filter(
+    (kind) => ai.taskModels[kind] !== null || ai.taskEfforts[kind] !== null,
+  ).length;
   const usable = ai.enabled && hasKey;
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
@@ -240,19 +249,12 @@ export function AiSettings() {
         />
       </SettingsToggleRow>
 
-      <SettingsToggleRow>
+      <Flex direction="column" gap="1.5">
         <SettingsLabelWithInfo>
           <SettingsToggleLabel htmlFor="settings-ai-key">{t("aiApiKeyLabel")}</SettingsToggleLabel>
           <SettingsInfo>{t("aiApiKeyHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
-        <Flex align="center" justify="flex-end" gap="2" wrap="wrap">
-          <chakra.span
-            fontSize="sm"
-            fontWeight={500}
-            color={hasKey ? "app.textSuccess" : "app.textMuted"}
-          >
-            {hasKey ? t("aiApiKeyConfigured") : t("aiApiKeyNotConfigured")}
-          </chakra.span>
+        <Flex align="center" gap="2" wrap="wrap">
           <Input
             id="settings-ai-key"
             type="password"
@@ -261,7 +263,13 @@ export function AiSettings() {
             placeholder={t("aiApiKeyPlaceholder")}
             value={keyDraft}
             onChange={(e) => setKeyDraft(e.target.value)}
-            width="auto"
+            onKeyDown={(e) => {
+              // Enter で保存する。IME の変換確定の Enter は除く。
+              if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+              e.preventDefault();
+              if (!keyBusy && keyDraft.trim() !== "") void saveKey();
+            }}
+            flex="1"
             minW="240px"
           />
           <Button
@@ -289,7 +297,14 @@ export function AiSettings() {
             </Button>
           )}
         </Flex>
-      </SettingsToggleRow>
+        <chakra.span
+          fontSize="sm"
+          fontWeight={500}
+          color={hasKey ? "app.textSuccess" : "app.textMuted"}
+        >
+          {hasKey ? t("aiApiKeyConfigured") : t("aiApiKeyNotConfigured")}
+        </chakra.span>
+      </Flex>
 
       <SettingsToggleRow>
         <SettingsLabelWithInfo>
@@ -315,65 +330,93 @@ export function AiSettings() {
       </SettingsToggleRow>
 
       <FormSection>
-        <SettingsLabelWithInfo>
-          <FieldLabel as="div">{t("aiTaskModels")}</FieldLabel>
+        <Flex align="center" gap="2" wrap="wrap">
+          <chakra.button
+            type="button"
+            display="inline-flex"
+            alignItems="center"
+            gap="1"
+            bg="transparent"
+            border="none"
+            p="0"
+            cursor="pointer"
+            color="app.text"
+            aria-expanded={taskOpen}
+            aria-controls="settings-ai-task-models"
+            onClick={() => setTaskOpen((v) => !v)}
+            _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+          >
+            <Icon name={taskOpen ? "chevron-down" : "chevron-right"} size={ICON_SIZES.sm} />
+            <FieldLabel as="span">{t("aiTaskModels")}</FieldLabel>
+          </chakra.button>
           <SettingsInfo>{t("aiTaskModelsHelp")}</SettingsInfo>
-        </SettingsLabelWithInfo>
-        <chakra.div
-          display="grid"
-          gridTemplateColumns="140px minmax(0, 1fr) minmax(0, 1fr)"
-          alignItems="center"
-          gap="2"
-          role="group"
-          aria-label={t("aiTaskModels")}
-        >
-          <chakra.span fontSize="sm" color="app.textMuted">
-            {t("aiColTask")}
+          <chakra.span fontSize="sm" color="app.textMuted" data-testid="ai-task-models-summary">
+            {changedTasks === 0 ? t("aiTaskModelsAllDefault") : t("aiTaskModelsChanged", { count: changedTasks })}
           </chakra.span>
-          <chakra.span fontSize="sm" color="app.textMuted">
-            {t("aiColModel")}
-          </chakra.span>
-          <chakra.span fontSize="sm" color="app.textMuted">
-            {t("aiColEffort")}
-          </chakra.span>
-          {AI_TASK_KINDS.map((kind) => {
-            const effort = ai.taskEfforts[kind] ?? AI_TASK_DEFS[kind].recommendedEffort;
-            return (
-              <TaskRow key={kind} label={t(TASK_LABEL[kind])}>
-                <Select
-                  aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColModel")}`}
-                  value={ai.taskModels[kind] ?? ""}
-                  onChange={(e) =>
-                    setAiTaskModel(kind, isAiModelId(e.target.value) ? e.target.value : null)
-                  }
-                >
-                  <option value="">{t("aiModelFollowDefault")}</option>
-                  {modelOptions(kind, suffix).map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-                <Select
-                  aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColEffort")}`}
-                  value={effort}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!isAiEffort(v)) return;
-                    // 推奨値を選んだら「推奨に従う (null)」として保存する。
-                    setAiTaskEffort(kind, v === AI_TASK_DEFS[kind].recommendedEffort ? null : v);
-                  }}
-                >
-                  {effortOptions(kind, suffix, (eff) => t(EFFORT_LABEL[eff])).map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </Select>
-              </TaskRow>
-            );
-          })}
-        </chakra.div>
+        </Flex>
+        {taskOpen && (
+          <div id="settings-ai-task-models">
+            <chakra.div
+              display="grid"
+              gridTemplateColumns="140px minmax(0, 1fr) minmax(0, 1fr)"
+              alignItems="center"
+              gap="2"
+              role="group"
+              aria-label={t("aiTaskModels")}
+            >
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("aiColTask")}
+              </chakra.span>
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("aiColModel")}
+              </chakra.span>
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("aiColEffort")}
+              </chakra.span>
+              {AI_TASK_KINDS.map((kind) => {
+                const effort = ai.taskEfforts[kind] ?? AI_TASK_DEFS[kind].recommendedEffort;
+                return (
+                  <TaskRow key={kind} label={t(TASK_LABEL[kind])}>
+                    <Select
+                      aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColModel")}`}
+                      value={ai.taskModels[kind] ?? ""}
+                      onChange={(e) =>
+                        setAiTaskModel(kind, isAiModelId(e.target.value) ? e.target.value : null)
+                      }
+                    >
+                      <option value="">
+                        {unsetUsesRecommendedModel(kind)
+                          ? t("aiModelFollowRecommended", { model: AI_MODEL_LABELS[AI_TASK_DEFS[kind].recommendedModel] })
+                          : t("aiModelFollowDefault")}
+                      </option>
+                      {modelOptions(kind, suffix).map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                    <Select
+                      aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColEffort")}`}
+                      value={effort}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (!isAiEffort(v)) return;
+                        // 推奨値を選んだら「推奨に従う (null)」として保存する。
+                        setAiTaskEffort(kind, v === AI_TASK_DEFS[kind].recommendedEffort ? null : v);
+                      }}
+                    >
+                      {effortOptions(kind, suffix, (eff) => t(EFFORT_LABEL[eff])).map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </TaskRow>
+                );
+              })}
+            </chakra.div>
+          </div>
+        )}
       </FormSection>
 
       <FormSection>

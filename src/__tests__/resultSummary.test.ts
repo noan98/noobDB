@@ -8,7 +8,9 @@ import {
   RESULT_SUMMARY_MAX_COLUMNS,
   RESULT_SUMMARY_MAX_QUERIES,
   RESULT_SUMMARY_MAX_ROWS,
+  RESULT_SUMMARY_STATS_MAX_ROWS,
   safeColumnName,
+  summarizeColumns,
   truncateCell,
 } from "../ai/resultSummary";
 
@@ -195,5 +197,20 @@ describe("parseResultSummaryResponse", () => {
   it("壊れた JSON / 形の違う JSON は本文をそのまま返す", () => {
     expect(parseResultSummaryResponse("nope")).toEqual({ ok: false, raw: "nope" });
     expect(parseResultSummaryResponse('{"summary":1}').ok).toBe(false);
+  });
+});
+
+describe("summarizeColumns の統計行数の上限 (#1608)", () => {
+  it("上限を超える結果は先頭 RESULT_SUMMARY_STATS_MAX_ROWS 行だけで集計する", () => {
+    const n = RESULT_SUMMARY_STATS_MAX_ROWS + 10;
+    const many: CellValue[][] = Array.from({ length: n }, (_, i) => [i]);
+    const r = summarizeColumns([{ name: "id", type_name: "INT" }], many);
+    expect(r.statsRows).toBe(RESULT_SUMMARY_STATS_MAX_ROWS);
+    expect(r.columns[0].stats.count).toBe(RESULT_SUMMARY_STATS_MAX_ROWS);
+  });
+
+  it("上限以下ならすべての行を使う", () => {
+    const r = summarizeColumns([{ name: "id", type_name: "INT" }], [[1], [2]]);
+    expect(r.statsRows).toBe(2);
   });
 });

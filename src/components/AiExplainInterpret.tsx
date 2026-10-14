@@ -14,7 +14,7 @@ import {
 import { dialectLabel, extractTableRefs, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
-import { SeverityBadge } from "./AdvisorPanel";
+import { SeverityBadge } from "./severityBadge";
 import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
@@ -124,8 +124,11 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
         const db = resolveTableDatabase(ref, props.database, props.driver);
         if (!db) return null;
         try {
-          const indexes = await api.listIndexes(props.sessionId, db, ref.table);
-          const rowEstimate = await api.tableRowEstimate(props.sessionId, db, ref.table).catch(() => null);
+          // インデックスと行数推定は独立しているので並行して取る (行数推定は失敗しても続ける)。
+          const [indexes, rowEstimate] = await Promise.all([
+            api.listIndexes(props.sessionId, db, ref.table),
+            api.tableRowEstimate(props.sessionId, db, ref.table).catch(() => null),
+          ]);
           return { name: ref.table, rowEstimate, indexes };
         } catch {
           return null;

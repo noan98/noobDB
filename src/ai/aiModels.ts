@@ -97,6 +97,15 @@ export const AI_TASK_DEFS: Record<
   inlineComplete: { recommendedModel: "claude-haiku-5-5", recommendedEffort: "low" },
 };
 
+/**
+ * タスク別モデルが未設定 (`null`) のとき、既定モデルではなく推奨モデルで動くか。推奨が既定と異なる
+ * 軽量タスク (インライン補完は Haiku) は、入力のたびに呼ばれて遅延に直結するため推奨で動かす。
+ * Rust `AiTaskKind::unset_uses_recommended_model` と同じ規則 (#1608、`aiParity.test.ts` が固定)。
+ */
+export function unsetUsesRecommendedModel(kind: AiTaskKind): boolean {
+  return AI_TASK_DEFS[kind].recommendedModel !== DEFAULT_AI_MODEL;
+}
+
 export interface AiSelectOption<V extends string> {
   value: V;
   label: string;

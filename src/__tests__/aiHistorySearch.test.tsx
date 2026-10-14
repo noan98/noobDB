@@ -7,6 +7,7 @@ import { makeProfile } from "./fixtures/componentFixtures";
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
 const getHistorySql = vi.fn();
+const getHistorySqls = vi.fn();
 const listHistory = vi.fn();
 const listProfiles = vi.fn();
 const unlisten = vi.fn();
@@ -26,7 +27,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
-      getHistorySql: (...a: unknown[]) => getHistorySql(...a),
+      getHistorySqls: (...a: unknown[]) => getHistorySqls(...a),
       listProfiles: () => listProfiles(),
       listHistory: (...a: unknown[]) => listHistory(...a),
     },
@@ -98,6 +99,11 @@ beforeEach(() => {
   enable();
   listProfiles.mockResolvedValue([makeProfile({ id: "p1", name: "Main DB" })]);
   listHistory.mockResolvedValue(entries);
+  // 一括取得のモックは、1 件ずつの取得関数 (getHistorySql) を束ねる。取れない行は null。
+  getHistorySqls.mockReset();
+  getHistorySqls.mockImplementation(async (ids: number[]) =>
+    Promise.all(ids.map((id) => getHistorySql(id).then((v: string) => v, () => null))),
+  );
   getHistorySql.mockImplementation(async (id: number) =>
     id === 1 ? "SELECT sum(x) FROM sales WHERE email = 'secret@example.com'" : "SELECT 2",
   );
@@ -147,8 +153,12 @@ describe("AiHistorySearch (#699)", () => {
     });
     await screen.findByText("売上の集計");
     expect(screen.queryByText("存在しない")).toBeNull();
-    const rows = await screen.findAllByRole("button", { name: new RegExp(t("aiHistoryOpen")) });
+    // aria-label を付けない: 名前は本文 (スコア・SQL・理由・日時) で、「開く」は説明 (title) に回す (#1608)。
+    const rows = await screen.findAllByRole("button", { description: t("aiHistoryOpen") });
     expect(rows).toHaveLength(2);
+    expect(rows[0].getAttribute("aria-label")).toBeNull();
+    expect(rows[0].textContent).toContain("売上の集計");
+    expect(rows[0].querySelector("div")).toBeNull();
     fireEvent.click(rows[0]);
     expect(onOpen).toHaveBeenCalledWith(1);
   });
@@ -297,6 +307,8 @@ describe("AiHistorySearch (#699)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("aiHistoryConfirmSend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled(), { timeout: 5000 });
     expect(getHistorySql).toHaveBeenCalledTimes(300);
+    // 1 件ずつではなくバッチ単位 (100 件) で取る: 300 件は 3 回の IPC。
+    expect(getHistorySqls).toHaveBeenCalledTimes(3);
     expect(runAiRequest.mock.calls[0][0].prompt).not.toContain("[id=301]");
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: JSON.stringify({ matches: [{ history_id: "1", relevance: 1, reason: "r" }] }) });
@@ -334,7 +346,7 @@ describe("AiHistorySearch (#699)", () => {
   });
 
   it("SQL 取得バッチの途中で中止したら、以降の取得も送信もしない", async () => {
-    const many = Array.from({ length: 45 }, (_, i) => entry(i + 1));
+    const many = Array.from({ length: 145 }, (_, i) => entry(i + 1));
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => (release = r));
     getHistorySql.mockImplementation(async () => {
@@ -347,7 +359,7 @@ describe("AiHistorySearch (#699)", () => {
     fireEvent.click(await screen.findByRole("button", { name: t("aiHistoryCancel") }));
     await act(async () => release());
     await screen.findByText(t("aiHistoryCancelled"));
-    expect(getHistorySql).toHaveBeenCalledTimes(20);
+    expect(getHistorySqls).toHaveBeenCalledTimes(1);
     expect(runAiRequest).not.toHaveBeenCalled();
   });
 

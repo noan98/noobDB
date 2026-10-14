@@ -1418,6 +1418,7 @@ pub fn run() {
             commands::assertions::run_assertion,
             commands::history::list_history,
             commands::history::get_history_sql,
+            commands::history::get_history_sqls,
             commands::history::list_history_sql,
             commands::history::clear_history,
             commands::history::get_history_retention_days,

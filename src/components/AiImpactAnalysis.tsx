@@ -145,27 +145,33 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
       db: resolveTableDatabase(ref, props.database, props.driver),
     }));
     const dbs = [...new Set(resolved.map((r) => r.db).filter((d): d is string => d !== null))];
-    const perDb = new Map<string, ImpactForeignKey[]>();
-    await Promise.all(
-      dbs.map(async (db) => {
-        perDb.set(db, await api.foreignKeys(props.sessionId, db).catch(() => [] as ImpactForeignKey[]));
-      }),
-    );
-    const fetched = await Promise.all(
-      resolved.map(async ({ ref, db }): Promise<ImpactTable | null> => {
-        if (!db) return null;
-        try {
-          const [columns, estimatedRows] = await Promise.all([
-            api.describeTable(props.sessionId, db, ref.table),
-            // 1 テーブル版 (統計なし・ビュー・SQLite は null)。取れなくても分析は続ける。
-            api.tableRowEstimate(props.sessionId, db, ref.table).catch(() => null),
-          ]);
-          return { name: ref.table, columns, estimatedRows };
-        } catch {
-          return null;
-        }
-      }),
-    );
+    // 外部キー (DB 単位) とテーブル定義・行数推定は互いに依存しないので、並行して取る。
+    const [perDbEntries, fetched] = await Promise.all([
+      Promise.all(
+        dbs.map(
+          async (db): Promise<[string, ImpactForeignKey[]]> => [
+            db,
+            await api.foreignKeys(props.sessionId, db).catch(() => [] as ImpactForeignKey[]),
+          ],
+        ),
+      ),
+      Promise.all(
+        resolved.map(async ({ ref, db }): Promise<ImpactTable | null> => {
+          if (!db) return null;
+          try {
+            const [columns, estimatedRows] = await Promise.all([
+              api.describeTable(props.sessionId, db, ref.table),
+              // 1 テーブル版 (統計なし・ビュー・SQLite は null)。取れなくても分析は続ける。
+              api.tableRowEstimate(props.sessionId, db, ref.table).catch(() => null),
+            ]);
+            return { name: ref.table, columns, estimatedRows };
+          } catch {
+            return null;
+          }
+        }),
+      ),
+    ]);
+    const perDb = new Map<string, ImpactForeignKey[]>(perDbEntries);
     // スキーマ取得中にダイアログが閉じられたら、要求を出さずに終える。
     if (!stream.isMounted()) {
       stream.release();

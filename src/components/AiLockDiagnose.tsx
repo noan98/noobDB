@@ -224,6 +224,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
             ref={buttonRef}
             type="button"
             variant="secondary"
+            size="sm"
             aria-disabled={running || !targets}
             onClick={() => {
               void run();
@@ -238,7 +239,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
           </chakra.span>
         )}
         {running && (
-          <Button type="button" variant="secondary" onClick={stream.cancel}>
+          <Button type="button" variant="secondary" size="sm" onClick={stream.cancel}>
             {t("dangerousAiStop")}
           </Button>
         )}
@@ -246,6 +247,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
           <Button
             type="button"
             variant="secondary"
+            size="sm"
             aria-expanded={open}
             onClick={() => setOpen((v) => !v)}
           >

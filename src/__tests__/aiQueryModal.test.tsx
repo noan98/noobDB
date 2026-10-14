@@ -465,6 +465,31 @@ describe("AiQueryModal (#691)", () => {
       expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true);
     });
 
+    it("関連テーブルの自動提案は入力が止まってから更新し、送信直前には最新の依頼文で取り直す (#1608)", async () => {
+      setDb(bigSchema());
+      renderWithProviders(ui());
+      const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
+      await screen.findByLabelText("orders");
+      fireEvent.change(input, { target: { value: "orders amount" } });
+      // 入力直後はまだ提案に反映されない (1 キーごとの採点を避けるデバウンス)。
+      expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(false);
+      await waitFor(() => expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true));
+    });
+
+    it("デバウンスの待ち中に Cmd+Enter で送っても、最新の依頼文から選んだテーブルを送る (#1608)", async () => {
+      setDb(bigSchema());
+      renderWithProviders(ui());
+      const input = await screen.findByLabelText(t("aiQueryRequestLabel"));
+      await screen.findByLabelText("orders");
+      // 一度確定させてから別の依頼に書き換え、待たずに送る。
+      fireEvent.change(input, { target: { value: "orders amount" } });
+      await waitFor(() => expect((screen.getByLabelText("orders") as HTMLInputElement).checked).toBe(true));
+      fireEvent.change(input, { target: { value: "orders amount please" } });
+      fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+      await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+      expect(runAiRequest.mock.calls[0][0].systemCached).toContain("orders");
+    });
+
     it("選択 0 件では Cmd+Enter でも新規生成が走らない", async () => {
       setDb(bigSchema());
       renderWithProviders(ui());

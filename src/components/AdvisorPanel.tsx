@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEven
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
-import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
+import { api, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { semanticColorToken } from "../semanticColors";
@@ -15,13 +15,13 @@ import {
   reasonTextKey,
   ruleTitleKey,
   severityLabelKey,
-  severityRole,
   sortFindings,
   type AdvisorSort,
   type AdvisorSortKey,
 } from "./advisor";
 import { copyToClipboard } from "./clipboard";
 import { AiAdvisorExplain } from "./AiAdvisorExplain";
+import { SeverityBadge } from "./severityBadge";
 import { CodePreview } from "./modalForm";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -86,28 +86,6 @@ const tdCss: SystemStyleObject = {
   color: "var(--text)",
   verticalAlign: "top",
 };
-
-export function SeverityBadge({ severity }: { severity: HealthFinding["severity"] }) {
-  const t = useT();
-  const role = severityRole(severity);
-  return (
-    <chakra.span
-      display="inline-block"
-      px="2"
-      py="0.5"
-      textStyle="overline"
-      lineHeight={1.4}
-      borderRadius="var(--radius-sm)"
-      whiteSpace="nowrap"
-      bg={semanticColorToken(role, "subtle")}
-      color={semanticColorToken(role, "text")}
-      border="1px solid"
-      borderColor={semanticColorToken(role, "border")}
-    >
-      {t(severityLabelKey(severity))}
-    </chakra.span>
-  );
-}
 
 // 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
 const MotionReveal = chakra(motion.div, {}, {
