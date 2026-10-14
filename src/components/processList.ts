@@ -73,6 +73,33 @@ export function pruneSelection(
   return next;
 }
 
+/** pid 再利用の検知に使う同一性キー (id 以外の、プロセスの生存中は変わらない属性)。 */
+const processIdentity = (p: ProcessInfo) => `${p.user ?? ""}\u0000${p.host ?? ""}\u0000${p.database ?? ""}`;
+
+/**
+ * KILL 確認ダイアログの表示時点のスナップショット (`shown`) と、確定直前に取り直した一覧
+ * (`fresh`) を突き合わせ、まだ同じプロセスだと言える id だけを返す。確認中に対象が終了して
+ * 同じ id (PostgreSQL の pid など) が別接続に再利用されても、無関係な接続を kill しない。
+ * fail-closed: 一覧から消えた id、スナップショットに無かった id、user / host / database が
+ * 変わった id は `dropped` に入れて kill 対象から外す。
+ */
+export function reconcileKillTargets(
+  ids: readonly number[],
+  shown: readonly ProcessInfo[],
+  fresh: readonly ProcessInfo[],
+): { keep: number[]; dropped: number[] } {
+  const before = new Map(shown.map((p) => [p.id, processIdentity(p)]));
+  const after = new Map(fresh.map((p) => [p.id, processIdentity(p)]));
+  const keep: number[] = [];
+  const dropped: number[] = [];
+  for (const id of ids) {
+    const b = before.get(id);
+    if (b !== undefined && b === after.get(id)) keep.push(id);
+    else dropped.push(id);
+  }
+  return { keep, dropped };
+}
+
 /** 待機ツリーを平らに並べた 1 行 (#1417)。 */
 export interface BlockingTreeRow {
   /** 外部ブロッカー (`external`) のときは id 以外が空のスタブ。 */

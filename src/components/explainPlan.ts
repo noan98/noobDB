@@ -247,12 +247,17 @@ function buildPgNode(obj: Record<string, unknown>, path: string): PlanNode {
 function pgActual(obj: Record<string, unknown>): PlanActual | undefined {
   if (!("Actual Rows" in obj) && !("Actual Loops" in obj)) return undefined;
   const hasBuffers = Object.keys(obj).some((k) => k.startsWith("Shared "));
+  const loops = parseNum(obj["Actual Loops"]);
+  // Actual Loops=0 は一度も実行されなかったノード (MySQL の never executed と同じ扱い)。
+  // PostgreSQL は Actual Rows=0 / 時間 0 を返すが、実測 0 ではないので null に正規化し、
+  // 推定乖離ヒントや重さスコアの対象から外す (PlanActual の doc の約束)。
+  const neverExecuted = loops === 0;
   return {
     estRows: parseNum(obj["Plan Rows"]),
-    rows: parseNum(obj["Actual Rows"]),
-    loops: parseNum(obj["Actual Loops"]),
-    startupMs: parseNum(obj["Actual Startup Time"]),
-    totalMs: parseNum(obj["Actual Total Time"]),
+    rows: neverExecuted ? null : parseNum(obj["Actual Rows"]),
+    loops,
+    startupMs: neverExecuted ? null : parseNum(obj["Actual Startup Time"]),
+    totalMs: neverExecuted ? null : parseNum(obj["Actual Total Time"]),
     buffers: hasBuffers
       ? {
           sharedHit: parseNum(obj["Shared Hit Blocks"]),

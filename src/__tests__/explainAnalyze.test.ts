@@ -147,6 +147,35 @@ describe("PostgreSQL EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) のパース", () =
     expect(computeHints(root!.children[1]).some((h) => h.key === "explainHintMisestimate" && h.severity === "caution")).toBe(true);
   });
 
+  it("Actual Loops=0 (未実行) のノードは rows / 時間を null にし、乖離ヒントを出さない", () => {
+    const never = JSON.stringify([
+      {
+        Plan: {
+          "Node Type": "Nested Loop",
+          "Plan Rows": 1,
+          "Actual Rows": 0,
+          "Actual Loops": 1,
+          Plans: [
+            { "Node Type": "Seq Scan", "Plan Rows": 1, "Actual Rows": 0, "Actual Loops": 1 },
+            {
+              "Node Type": "Index Scan",
+              "Plan Rows": 1000,
+              "Actual Rows": 0,
+              "Actual Loops": 0,
+              "Actual Startup Time": 0,
+              "Actual Total Time": 0,
+            },
+          ],
+        },
+      },
+    ]);
+    const { root } = parsePostgresPlan(never);
+    const inner = root!.children[1];
+    expect(inner.actual).toMatchObject({ rows: null, loops: 0, startupMs: null, totalMs: null });
+    expect(nodeMisestimate(inner).level).toBe("");
+    expect(computeHints(inner).some((h) => h.key === "explainHintMisestimate")).toBe(false);
+  });
+
   it("推定 EXPLAIN (Actual 無し) は actual を持たず、ヒントも変わらない", () => {
     const est = JSON.stringify([{ Plan: { "Node Type": "Seq Scan", "Total Cost": 10, "Plan Rows": 5 } }]);
     const { root } = parsePostgresPlan(est);

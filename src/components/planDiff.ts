@@ -176,7 +176,7 @@ export interface PlanComparison {
 export function isFullScanAccess(access: string | null): boolean {
   if (!access) return false;
   if (access === "ALL") return true; // MySQL
-  if (/^seq scan$/i.test(access)) return true; // PostgreSQL
+  if (/^(?:parallel )?seq scan$/i.test(access)) return true; // PostgreSQL (並列プランは Parallel Seq Scan)
   return /^SCAN$/i.test(access); // SQLite (インデックスなしの SCAN)
 }
 

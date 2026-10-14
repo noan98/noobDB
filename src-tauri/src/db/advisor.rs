@@ -406,6 +406,17 @@ fn lower_cols(idx: &IndexInfo) -> Vec<String> {
     idx.columns.iter().map(|c| c.to_lowercase()).collect()
 }
 
+/// インデックスのアクセスメソッドを比較用に正規化する。`method` が無い (SQLite 等) か
+/// `btree` なら `btree`。hash / gin / gist / fulltext / spatial などは btree と別物で、
+/// 先頭列だけの範囲検索・ORDER BY・前方一致を賄えないため、btree と同一視しない。
+fn index_method(idx: &IndexInfo) -> String {
+    idx.method
+        .as_deref()
+        .map(|m| m.trim().to_lowercase())
+        .filter(|m| !m.is_empty())
+        .unwrap_or_else(|| "btree".to_string())
+}
+
 fn rule_duplicate_and_redundant_indexes(
     driver: DriverKind,
     table: &TableMeta,
@@ -429,6 +440,7 @@ fn rule_duplicate_and_redundant_indexes(
             y.name != x.name
                 && y.first_expression_at.is_none()
                 && y.predicate == x.predicate
+                && index_method(y) == index_method(x)
                 && lower_cols(y) == xcols
                 && (y.primary || y.unique || y.name < x.name)
         }) {
@@ -454,6 +466,9 @@ fn rule_duplicate_and_redundant_indexes(
                 && y.first_expression_at.is_none()
                 && (y.predicate.is_none() || y.predicate == x.predicate)
                 && y.columns.len() > x.columns.len()
+                // 先頭列の包含は btree 同士のときだけ成り立つ (複合 hash / GIN は先頭列だけでは引けない)。
+                && index_method(x) == "btree"
+                && index_method(y) == "btree"
                 && lower_cols(y).starts_with(&xcols)
         }) {
             out.push(HealthFinding {
@@ -604,6 +619,9 @@ fn types_compatible(driver: DriverKind, a: &str, b: &str) -> bool {
     if driver == DriverKind::Sqlite {
         return sqlite_affinity(a) == sqlite_affinity(b);
     }
+    if driver == DriverKind::Postgres {
+        return pg_type_family(a) == pg_type_family(b);
+    }
     if base_type_token(a) != base_type_token(b) {
         return false;
     }
@@ -630,6 +648,42 @@ fn sqlite_affinity(t: &str) -> &'static str {
         "REAL"
     } else {
         "NUMERIC"
+    }
+}
+
+/// PostgreSQL の型名を、暗黙変換とインデックスの効きが同じ「型ファミリ」に正規化する。
+/// `information_schema` の型名は `character varying` / `timestamp with time zone` のような
+/// 複数語なので、先頭語だけでは `text` と `varchar(n)` を取り違え、`timestamp` と
+/// `timestamptz` を同一視してしまう。長さ・精度 (`(n)` / `(p,s)`) は無視する。
+fn pg_type_family(t: &str) -> String {
+    let mut stripped = String::new();
+    let mut depth = 0usize;
+    for c in t.to_lowercase().chars() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 => stripped.push(c),
+            _ => {}
+        }
+    }
+    let norm = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+    match norm.as_str() {
+        // text / varchar / char は同じ演算子族 (text_ops / bpchar_ops は相互に索引が効く)。
+        "text" | "character varying" | "varchar" | "character" | "char" | "bpchar" => {
+            "text".to_string()
+        }
+        "timestamp with time zone" | "timestamptz" => "timestamptz".to_string(),
+        "timestamp without time zone" | "timestamp" => "timestamp".to_string(),
+        "time with time zone" | "timetz" => "timetz".to_string(),
+        "time without time zone" | "time" => "time".to_string(),
+        "integer" | "int" | "int4" => "integer".to_string(),
+        "bigint" | "int8" => "bigint".to_string(),
+        "smallint" | "int2" => "smallint".to_string(),
+        "double precision" | "float8" => "double precision".to_string(),
+        "real" | "float4" => "real".to_string(),
+        "numeric" | "decimal" => "numeric".to_string(),
+        "boolean" | "bool" => "boolean".to_string(),
+        _ => norm,
     }
 }
 
@@ -1339,6 +1393,83 @@ mod tests {
     fn partial(mut i: IndexInfo, pred: &str) -> IndexInfo {
         i.predicate = Some(pred.to_string());
         i
+    }
+
+    fn with_method(mut i: IndexInfo, method: &str) -> IndexInfo {
+        i.method = Some(method.to_string());
+        i
+    }
+
+    #[test]
+    fn different_index_methods_are_not_duplicates() {
+        let t = table(
+            "t",
+            vec![col("a", "int", false)],
+            vec![
+                with_method(idx("idx_z", &["a"], false, false), "btree"),
+                with_method(idx("idx_a", &["a"], false, false), "hash"),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert!(findings_for(&report, RuleId::DuplicateIndex).is_empty());
+    }
+
+    #[test]
+    fn same_index_method_is_still_duplicate_and_none_means_btree() {
+        let t = table(
+            "t",
+            vec![col("a", "int", false)],
+            vec![
+                with_method(idx("idx_a", &["a"], false, false), "BTREE"),
+                idx("idx_b", &["a"], false, false),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Mysql, vec![t], vec![]));
+        assert_eq!(findings_for(&report, RuleId::DuplicateIndex).len(), 1);
+    }
+
+    #[test]
+    fn composite_hash_index_does_not_make_a_btree_prefix_redundant() {
+        let t = table(
+            "t",
+            vec![col("a", "int", false), col("b", "int", false)],
+            vec![
+                idx("idx_a", &["a"], false, false),
+                with_method(idx("idx_ab", &["a", "b"], false, false), "gin"),
+            ],
+        );
+        let report = analyze(&input(DriverKind::Postgres, vec![t], vec![]));
+        assert!(findings_for(&report, RuleId::RedundantIndex).is_empty());
+    }
+
+    #[test]
+    fn postgres_text_and_varchar_are_compatible_but_timestamp_and_timestamptz_are_not() {
+        assert!(types_compatible(
+            DriverKind::Postgres,
+            "text",
+            "character varying"
+        ));
+        assert!(types_compatible(
+            DriverKind::Postgres,
+            "character varying(20)",
+            "text"
+        ));
+        assert!(!types_compatible(
+            DriverKind::Postgres,
+            "timestamp without time zone",
+            "timestamp with time zone"
+        ));
+        assert!(types_compatible(
+            DriverKind::Postgres,
+            "timestamp with time zone",
+            "timestamptz"
+        ));
+        assert!(!types_compatible(DriverKind::Postgres, "integer", "bigint"));
+        assert!(types_compatible(
+            DriverKind::Postgres,
+            "numeric(10,2)",
+            "numeric(12,4)"
+        ));
     }
 
     #[test]

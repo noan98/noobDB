@@ -7,6 +7,7 @@ import {
   LOCK_DIAGNOSE_MAX_PROCESSES,
   lockDiagnoseTableRefs,
   parseLockDiagnoseResponse,
+  restrictStopCandidates,
   selectLockDiagnoseTargets,
   toLockDiagnoseProcess,
   type LockDiagnoseInput,
@@ -200,5 +201,22 @@ describe("lockDiagnoseTableRefs / parse (#1478)", () => {
     const bad = parseLockDiagnoseResponse("not json");
     expect(bad).toEqual({ ok: false, raw: "not json" });
     expect(LOCK_DIAGNOSE_FORMAT.schema.required).toContain("stop_candidates");
+  });
+});
+
+describe("restrictStopCandidates", () => {
+  it("AI に渡した待機チェーンに無い session_id の停止候補は捨てる", () => {
+    const value = {
+      summary: "s",
+      waits: [],
+      stop_candidates: [
+        { session_id: 1, impact: "low" as const, reason: "blocker" },
+        { session_id: 123, impact: "high" as const, reason: "hallucinated" },
+      ],
+      prevention: [],
+    };
+    const out = restrictStopCandidates(value, [1, 2]);
+    expect(out.stop_candidates.map((c) => c.session_id)).toEqual([1]);
+    expect(value.stop_candidates).toHaveLength(2);
   });
 });

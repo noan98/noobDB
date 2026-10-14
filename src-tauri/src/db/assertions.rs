@@ -73,6 +73,18 @@ fn bound_literal(driver: DriverKind, raw: &str) -> String {
     }
 }
 
+/// 範囲比較の左辺。SQLite は TEXT 親和性の列に数値リテラルを比べると、リテラル側が文字列化されて
+/// 文字列比較になり ('10' > '5' が偽)、エラーも出ず件数だけ狂う。数値境界のときは列を
+/// `NUMERIC` へ CAST して数値比較を強制する (数値列では恒等)。MySQL は文字列列と数値を数値として
+/// 比較し、PostgreSQL は型不一致をエラーにするので、そのまま比較する。
+fn range_lhs(driver: DriverKind, col: &str, bound: &str) -> String {
+    if driver == DriverKind::Sqlite && is_numeric_literal(bound.trim()) {
+        format!("CAST({col} AS NUMERIC)")
+    } else {
+        col.to_string()
+    }
+}
+
 /// 先頭キーワードが `SELECT` / `WITH` か (前後の空白・開き括弧は許す)。
 fn starts_with_select_or_with(sql: &str) -> bool {
     let body = sql.trim_start().trim_start_matches('(').trim_start();
@@ -83,9 +95,36 @@ fn starts_with_select_or_with(sql: &str) -> bool {
     word.eq_ignore_ascii_case("select") || word.eq_ignore_ascii_case("with")
 }
 
+/// 括弧の数え方の方言差。文字列リテラルの終端を決める規則がドライバで違う。
+#[derive(Clone, Copy)]
+struct QuoteRules {
+    /// MySQL 既定: `'` / `"` の中で `\` が次の 1 文字をエスケープする。
+    backslash_escapes: bool,
+    /// PostgreSQL: `$tag$ ... $tag$` のドル引用。
+    dollar_quotes: bool,
+}
+
+impl QuoteRules {
+    fn for_driver(driver: DriverKind) -> Self {
+        Self {
+            backslash_escapes: driver == DriverKind::Mysql,
+            dollar_quotes: driver == DriverKind::Postgres,
+        }
+    }
+}
+
+/// ドライバが決まらない保存時用: どれかの方言で釣り合っていれば受理する。実行時の
+/// `build_sql` が実際のドライバの規則で再検証するので、ここは緩めでよい
+/// (正しい SQL を方言違いの規則で誤って拒否しないため)。
+fn parens_balanced_any_dialect(sql: &str) -> bool {
+    [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite]
+        .into_iter()
+        .any(|d| parens_balanced(sql, QuoteRules::for_driver(d)))
+}
+
 /// 文字列・識別子クォートとコメントの外で括弧が釣り合っているか。サブクエリの
 /// 閉じ括弧を先取りして包みから抜け出す本文を弾く。コメント内の括弧は読み飛ばす。
-fn parens_balanced(sql: &str) -> bool {
+fn parens_balanced(sql: &str, rules: QuoteRules) -> bool {
     let chars: Vec<char> = sql.chars().collect();
     let mut depth: i64 = 0;
     let mut i = 0;
@@ -95,7 +134,40 @@ fn parens_balanced(sql: &str) -> bool {
             '\'' | '"' | '`' => {
                 i += 1;
                 while i < chars.len() && chars[i] != c {
+                    // MySQL の文字列では `\'` は閉じ引用符ではない (バッククォート識別子は対象外)。
+                    if rules.backslash_escapes && c != '`' && chars[i] == '\\' {
+                        i += 1;
+                    }
                     i += 1;
+                }
+            }
+            '$' if rules.dollar_quotes
+                && !(i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_')) =>
+            {
+                // `$tag$` の開きタグ (tag は空でもよい。`$1` のような位置パラメータは対象外)。
+                let mut j = i + 1;
+                if j < chars.len() && (chars[j].is_alphabetic() || chars[j] == '_') {
+                    while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                        j += 1;
+                    }
+                }
+                if chars.get(j) == Some(&'$') {
+                    let tag: Vec<char> = chars[i..=j].to_vec();
+                    let mut k = j + 1;
+                    let mut closed = false;
+                    while k + tag.len() <= chars.len() {
+                        if chars[k..k + tag.len()] == tag[..] {
+                            closed = true;
+                            break;
+                        }
+                        k += 1;
+                    }
+                    // 閉じが無ければ残りすべてが文字列 (他のクォートの未閉鎖と同じ扱い)。
+                    i = if closed {
+                        k + tag.len() - 1
+                    } else {
+                        chars.len()
+                    };
                 }
             }
             '-' if chars.get(i + 1) == Some(&'-') => {
@@ -193,7 +265,7 @@ pub fn validate(table: &str, rule: &AssertionRule) -> Result<()> {
                     "custom assertion SQL must start with SELECT or WITH",
                 ));
             }
-            if !parens_balanced(sql) {
+            if !parens_balanced_any_dialect(sql) {
                 return Err(invalid("custom assertion SQL has unbalanced parentheses"));
             }
         }
@@ -227,6 +299,12 @@ pub fn build_sql(
     rule: &AssertionRule,
 ) -> Result<AssertionSql> {
     validate(table, rule)?;
+    if let AssertionRule::CustomSql { sql } = rule {
+        // 保存時の検証は方言を問わず緩いので、実行するドライバの引用規則で括弧を再検証する。
+        if !parens_balanced(sql, QuoteRules::for_driver(driver)) {
+            return Err(invalid("custom assertion SQL has unbalanced parentheses"));
+        }
+    }
     let q = |name: &str| quote_ident(driver, name.trim());
     let from = qualified(driver, schema, table.trim());
     let count = count_expr(driver);
@@ -275,10 +353,18 @@ pub fn build_sql(
             let col = q(column);
             let mut outside = Vec::new();
             if let Some(lo) = opt_trimmed(min) {
-                outside.push(format!("{col} < {}", bound_literal(driver, lo)));
+                outside.push(format!(
+                    "{} < {}",
+                    range_lhs(driver, &col, lo),
+                    bound_literal(driver, lo)
+                ));
             }
             if let Some(hi) = opt_trimmed(max) {
-                outside.push(format!("{col} > {}", bound_literal(driver, hi)));
+                outside.push(format!(
+                    "{} > {}",
+                    range_lhs(driver, &col, hi),
+                    bound_literal(driver, hi)
+                ));
             }
             let where_ = format!("{col} IS NOT NULL AND ({})", outside.join(" OR "));
             (
@@ -551,6 +637,61 @@ mod tests {
             sql(DriverKind::Sqlite, None, "t", &rule).check_sql,
             "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"status\" IS NOT NULL AND \"status\" NOT IN ('a''b', 'c\\d')"
         );
+    }
+
+    #[test]
+    fn sqlite_numeric_range_casts_the_column_so_text_columns_compare_numerically() {
+        let rule = AssertionRule::Range {
+            column: s("v"),
+            min: None,
+            max: Some(s("5")),
+        };
+        assert_eq!(
+            sql(DriverKind::Sqlite, None, "t", &rule).check_sql,
+            "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"v\" IS NOT NULL AND (CAST(\"v\" AS NUMERIC) > 5)"
+        );
+        // 日付など数値でない境界は CAST しない。
+        let dates = AssertionRule::Range {
+            column: s("d"),
+            min: Some(s("2024-01-01")),
+            max: None,
+        };
+        assert_eq!(
+            sql(DriverKind::Sqlite, None, "t", &dates).check_sql,
+            "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"d\" IS NOT NULL AND (\"d\" < '2024-01-01')"
+        );
+    }
+
+    #[test]
+    fn parens_follow_the_drivers_quoting_rules() {
+        let mysql = QuoteRules::for_driver(DriverKind::Mysql);
+        let pg = QuoteRules::for_driver(DriverKind::Postgres);
+        let sqlite = QuoteRules::for_driver(DriverKind::Sqlite);
+        // MySQL: \' は閉じ引用符ではない。
+        let bs = r"SELECT * FROM t WHERE note = 'a\'(b'";
+        assert!(parens_balanced(bs, mysql));
+        assert!(!parens_balanced(bs, sqlite));
+        assert!(parens_balanced_any_dialect(bs));
+        // PostgreSQL: ドル引用の中の括弧は数えない。
+        let dollar = "SELECT $$ ( $$, $tag$ ) ' $tag$ FROM t";
+        assert!(parens_balanced(dollar, pg));
+        assert!(!parens_balanced("SELECT $$ ( $$ FROM t", mysql));
+        assert!(parens_balanced("SELECT $$ ( $$ FROM t", pg));
+        // 位置パラメータ $1 はドル引用ではない。
+        assert!(parens_balanced("SELECT ($1 + $2)", pg));
+        // 本当に釣り合っていない SQL はどの方言でも拒否する。
+        assert!(!parens_balanced_any_dialect("SELECT (1"));
+        assert!(!parens_balanced_any_dialect("SELECT 1) UNION (SELECT 2"));
+    }
+
+    #[test]
+    fn build_sql_checks_parens_with_the_target_driver_rules() {
+        let rule = AssertionRule::CustomSql {
+            sql: r"SELECT * FROM t WHERE note = 'a\'(b'".into(),
+        };
+        assert!(validate("t", &rule).is_ok());
+        assert!(build_sql(DriverKind::Mysql, None, "t", &rule).is_ok());
+        assert!(build_sql(DriverKind::Sqlite, None, "t", &rule).is_err());
     }
 
     #[test]
