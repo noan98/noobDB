@@ -4835,3 +4835,30 @@ async fn capture_upsert_is_declined_but_written_once() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// `"` を含むテーブル名があっても schema_overview 全体が失敗しない (#1602)。
+#[tokio::test]
+async fn sqlite_schema_overview_survives_quote_in_table_name() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_quote_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE \"a\"\"b\" (id INTEGER, label TEXT)", None)
+        .await
+        .expect("create quoted table");
+    conn.execute("CREATE TABLE plain (id INTEGER)", None)
+        .await
+        .expect("create plain table");
+    let overview = conn.schema_overview("main").await.expect("overview");
+    assert_eq!(overview.len(), 2);
+    let quoted = overview
+        .iter()
+        .find(|t| t.name == "a\"b")
+        .expect("quoted table listed");
+    assert_eq!(quoted.columns, vec!["id".to_string(), "label".to_string()]);
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}

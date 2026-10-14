@@ -152,6 +152,33 @@ describe("DataSearchModal backend scan (#1261)", () => {
     );
   });
 
+  it("走査後に検索語を書き換えても、ヒットを開く条件は走査時の検索語のまま (#1594)", async () => {
+    const user = userEvent.setup();
+    const onOpenHit = vi.fn();
+    renderModal(onOpenHit);
+    await startScan(user);
+    emit((h) =>
+      h.onTable?.({
+        entry: {
+          status: "hit",
+          table: "orders",
+          columns: [{ name: "note", dataType: "varchar" }],
+          hits: [{ column: "note", count: 3 }],
+        },
+      }),
+    );
+    emit((h) => h.onDone?.());
+    const hit = await screen.findByText("note");
+
+    const input = screen.getByLabelText(t("dataSearchTermLabel"));
+    await user.clear(input);
+    await user.type(input, "other");
+    await user.click(hit);
+    expect(onOpenHit).toHaveBeenCalledTimes(1);
+    expect(onOpenHit.mock.calls[0][0]).toContain("%needle%");
+    expect(onOpenHit.mock.calls[0][0]).not.toContain("other");
+  });
+
   it("cancels the backend stream and shows the finished summary", async () => {
     const user = userEvent.setup();
     renderModal();

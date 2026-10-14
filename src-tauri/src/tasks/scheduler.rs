@@ -137,6 +137,10 @@ where
     tauri::async_runtime::spawn(fut);
 }
 
+/// 同一タスクの実行中に来た予定発火を見送ったことを示す実行履歴の status。
+const RUN_STATUS_SKIPPED: &str = "skipped";
+const SKIPPED_REASON: &str = "skipped: previous run still in progress";
+
 /// 1 回分の tick: 期限が来た有効なタスクをすべて実行に回す。`is_startup` は
 /// アプリ起動直後の最初の tick かどうかで、そのときだけ
 /// `schedule::resolve_startup_next_run` (未起動中に過ぎたスケジュールの追い掛け
@@ -185,6 +189,25 @@ async fn tick(app: &AppHandle, is_startup: bool) -> Result<()> {
             // 並行実行は同じ出力ファイルを壊し、接続を溜める)。
             let Some(guard) = try_acquire_run(&task.id) else {
                 tracing::warn!(task_id = %task.id, name = %task.name, "task scheduler: previous run still in progress; skipping this firing");
+                // 見送った発火も実行履歴に残す (ユーザがスケジュールの動作を判別できるように)。
+                // `last_status` のミラーと task-run イベントは、実行していないので触らない。
+                let at = now.to_rfc3339();
+                let skipped = NewTaskRun {
+                    task_id: task.id.clone(),
+                    started_at: at.clone(),
+                    finished_at: at,
+                    status: RUN_STATUS_SKIPPED.to_string(),
+                    error: Some(SKIPPED_REASON.to_string()),
+                    output_path: None,
+                    rows: None,
+                    bytes: None,
+                    elapsed_ms: 0,
+                    catch_up,
+                    attempts: 1,
+                };
+                if let Err(e) = runs::record_skipped(skipped).await {
+                    tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record skipped run");
+                }
                 continue;
             };
             let app2 = app.clone();
@@ -240,7 +263,9 @@ pub(crate) async fn execute_and_log(
     let started = Utc::now();
     let progress = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     let outcome = executor::run_once(app, &task, &progress).await;
-    record_outcome(app, task, catch_up, started, outcome).await
+    record_outcome(app, task, catch_up, started, outcome)
+        .await
+        .0
 }
 
 /// 実行結果をログへ記録し、タスク定義のミラーを更新し、`task-run:*` を emit する。
@@ -251,7 +276,7 @@ pub(crate) async fn record_outcome(
     catch_up: bool,
     started: DateTime<Utc>,
     outcome: executor::TaskOutcome,
-) -> TaskRunEvent {
+) -> (TaskRunEvent, Option<i64>) {
     let finished = Utc::now();
     let elapsed_ms = (finished - started).num_milliseconds().max(0);
     let status = if outcome.ok { "ok" } else { "error" };
@@ -269,9 +294,15 @@ pub(crate) async fn record_outcome(
         catch_up,
         attempts: i64::from(outcome.attempts.max(1)),
     };
-    if let Err(e) = runs::record(new_run).await {
-        tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record run log");
-    }
+    // 記録した行の id。呼び出し側 (今すぐ実行) は「最新行」ではなくこの行を返す
+    // (見送られた予定発火の skipped 行が新しく割り込んでも取り違えない)。
+    let run_id = match runs::record(new_run).await {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record run log");
+            None
+        }
+    };
     // アサーション実行 (#1170): 1 件ごとの合否をトレンド表示用に蓄積する。
     if let Err(e) = runs::record_assertion_results(
         &task.id,
@@ -308,7 +339,7 @@ pub(crate) async fn record_outcome(
         EV_TASK_RUN_ERROR
     };
     let _ = app.emit(event_name, event.clone());
-    event
+    (event, run_id)
 }
 
 /// タスク定義を読み直し・部分更新・保存し直す共通ヘルパー。タスクが

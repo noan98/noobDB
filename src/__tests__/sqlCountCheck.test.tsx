@@ -61,4 +61,22 @@ describe("SqlCountCheck (#1536)", () => {
     fireEvent.click(screen.getByRole("button"));
     await screen.findByText(new RegExp(t("sqlCheckDuplicateColumn").slice(0, 10)));
   });
+
+  it("古い検証の結果で、後から始めた検証の実行中表示を上書きしない (#1594)", async () => {
+    let resolveA: (v: unknown) => void = () => {};
+    vi.mocked(api.runLookupQuery).mockImplementationOnce(() => new Promise((res) => (resolveA = res)) as never);
+    vi.mocked(api.runLookupQuery).mockImplementationOnce(() => new Promise(() => {}) as never);
+    const { rerender } = renderWithProviders(
+      <SqlCountCheck sessionId="s1" database={null} driver="mysql" sql="SELECT 1" mode="rows" />,
+    );
+    fireEvent.click(screen.getByRole("button"));
+    rerender(<SqlCountCheck sessionId="s1" database={null} driver="mysql" sql="SELECT 2" mode="rows" />);
+    fireEvent.click(screen.getByRole("button"));
+    await screen.findByText(t("sqlCheckRunning"));
+
+    resolveA({ rows: [[3]] });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByText(t("sqlCheckRunning"))).toBeInTheDocument();
+    expect(screen.getByRole("button")).toBeDisabled();
+  });
 });

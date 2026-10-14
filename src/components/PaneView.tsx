@@ -724,6 +724,7 @@ export const PaneView = memo(
                     onRerun={(stopOnError) => {
                       if (tab.batchScript) void actions.runBatchInTab(tab.id, tab.batchScript, stopOnError);
                     }}
+                    onStop={() => void actions.stopTab(tab)}
                     onClose={() => actions.patchTab(tab.id, (tt) => ({ ...tt, batchResults: undefined, batchScript: undefined }))}
                   />
                 ) : tab.showChart && tab.result && !tab.streaming ? (

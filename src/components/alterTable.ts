@@ -494,6 +494,63 @@ const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
 };
 
 /**
+ * 適用後の列名が重複するもの (DROP / リネームで空けた名前の再利用は重複ではない)。
+ * 空でない新規列名・リネーム後の名前・変更なしの既存列名を数える。PostgreSQL は大小を区別し、
+ * MySQL / SQLite は区別しない。重複した名前を (小文字化せず) 返す。
+ */
+export function duplicateColumnNames(
+  driver: string,
+  form: Pick<AlterTableForm, "baseline" | "existing" | "added">,
+): string[] {
+  const norm = (n: string) => (driver === "postgres" ? n : n.toLowerCase());
+  const seen = new Set<string>();
+  const dups: string[] = [];
+  const add = (name: string) => {
+    const k = norm(name);
+    if (seen.has(k)) {
+      if (!dups.some((d) => norm(d) === k)) dups.push(name);
+    } else seen.add(k);
+  };
+  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
+  for (const b of form.baseline) {
+    const e = edits.get(b.name);
+    if (e?.drop) continue;
+    add(e ? e.name.trim() || b.name : b.name);
+  }
+  for (const c of form.added) {
+    const n = c.name.trim();
+    if (n) add(n);
+  }
+  return dups;
+}
+
+/**
+ * リネーム先が、ほかの (DROP しない) 既存列の現在の名前と同じもの。入れ替え (a↔b) や連鎖 (a→b, b→c) は
+ * 安全な実行順を作れないので、UI は実行を止める。DROP する列の名前へのリネームは順序で解決できる
+ * ので含めない。
+ */
+export function renameCollisions(
+  driver: string,
+  form: Pick<AlterTableForm, "baseline" | "existing">,
+): string[] {
+  const norm = (n: string) => (driver === "postgres" ? n : n.toLowerCase());
+  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
+  const keptNames = new Set(
+    form.baseline.filter((b) => !edits.get(b.name)?.drop).map((b) => norm(b.name)),
+  );
+  const out: string[] = [];
+  for (const b of form.baseline) {
+    const e = edits.get(b.name);
+    if (!e || e.drop) continue;
+    const target = e.name.trim() || b.name;
+    if (target !== b.name && keptNames.has(norm(target)) && norm(target) !== norm(b.name)) {
+      out.push(target);
+    }
+  }
+  return out;
+}
+
+/**
  * フォーム入力から `ALTER TABLE` / `CREATE INDEX` 文の配列を組み立てる。順序は
  * ADD → RENAME/MODIFY → DROP → CREATE INDEX
  * (`db/sync.rs` の `SyncKind::order()` と同じ「作ってから壊す」安全な適用順)。
@@ -505,21 +562,52 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   const statements: AlterStatement[] = [];
   const unsupported: UnsupportedChange[] = [];
 
-  for (const col of form.added) {
-    if (!col.name.trim()) continue;
-    statements.push({
-      sql: `ALTER TABLE ${tIdent} ADD COLUMN ${newColumnLine(driver, col)};`,
-      kind: "addColumn",
-      destructive: false,
-    });
+  // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
+  // ADD を先に出すと「列が重複」で失敗する。そのような ADD だけ、名前を空ける文の後ろへ送る。
+  // 「DROP する別の列の名前へのリネーム」(a→b かつ b を DROP) も、DROP の後ろへ回す。
+  const lowerOf = (n: string) => n.toLowerCase();
+  const droppedNames = new Set<string>();
+  for (const e of form.existing) {
+    const b = form.baseline.find((x) => x.name === e.original);
+    if (b && e.drop) droppedNames.add(lowerOf(b.name));
   }
+  const lateOrder = new Map<AlterStatement, number>();
+  // 名前を空ける文の段 (列名 → order)。DROP は 3、リネームは 1 (DROP 先の名前へなら 3.25)。
+  const freedAt = new Map<string, number>();
+  for (const name of droppedNames) freedAt.set(name, STATEMENT_ORDER.dropColumn);
 
   const baselineByName = new Map(form.baseline.map((b) => [b.name, b] as const));
   for (const edit of form.existing) {
     const baseline = baselineByName.get(edit.original);
     if (!baseline) continue;
+    const before = statements.length;
     planExistingColumn(driver, tIdent, baseline, edit, statements, unsupported);
+    if (edit.drop) continue;
+    const target = edit.name.trim() || baseline.name;
+    if (target === baseline.name) continue;
+    const renameOrder = droppedNames.has(lowerOf(target))
+      ? STATEMENT_ORDER.dropColumn + 0.25
+      : STATEMENT_ORDER.renameColumn;
+    if (renameOrder !== STATEMENT_ORDER.renameColumn) {
+      for (const st of statements.slice(before)) lateOrder.set(st, renameOrder);
+    }
+    freedAt.set(lowerOf(baseline.name), renameOrder);
   }
+
+  for (const col of form.added) {
+    const name = col.name.trim();
+    if (!name) continue;
+    const stmt: AlterStatement = {
+      sql: `ALTER TABLE ${tIdent} ADD COLUMN ${newColumnLine(driver, col)};`,
+      kind: "addColumn",
+      destructive: false,
+    };
+    statements.push(stmt);
+    const freed = freedAt.get(lowerOf(name));
+    if (freed !== undefined) lateOrder.set(stmt, freed + 0.5);
+  }
+  // 後ろへ送った ADD を参照しうる FK / CHECK は、DROP より後ろの ADD の後に出す。
+  const maxLate = Math.max(0, ...lateOrder.values());
 
   if (form.tableComment) {
     const sql = tableCommentSql(
@@ -533,7 +621,16 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
 
   planConstraints(driver, tIdent, form, statements, unsupported);
 
-  statements.sort((a, b) => STATEMENT_ORDER[a.kind] - STATEMENT_ORDER[b.kind]);
+  const orderOf = (st: AlterStatement) => {
+    const late = lateOrder.get(st);
+    if (late !== undefined) return late;
+    // DROP の後ろへ送った ADD がある場合、制約の追加はさらにその後ろ (新しい列を参照できるように)。
+    if ((st.kind === "addForeignKey" || st.kind === "addCheck") && maxLate > STATEMENT_ORDER.dropColumn) {
+      return maxLate + 0.25;
+    }
+    return STATEMENT_ORDER[st.kind];
+  };
+  statements.sort((a, b) => orderOf(a) - orderOf(b));
 
   for (const idx of form.indexes) {
     // 不備のある行はここで捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、

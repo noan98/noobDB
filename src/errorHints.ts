@@ -187,6 +187,7 @@ export function hintForKind(kind: string | null | undefined, message = ""): I18n
 const KIND_MESSAGE_KEYS: Record<string, I18nKey> = {
   flightAlreadyUndone: "errorFlightAlreadyUndone",
   flightPrimaryKeyUnresolved: "errorFlightPrimaryKeyUnresolved",
+  viewBaseUnresolved: "errorViewBaseUnresolved",
   flightDriverMismatch: "errorFlightDriverMismatch",
   flightProfileMismatch: "errorFlightProfileMismatch",
 };

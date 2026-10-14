@@ -19,9 +19,11 @@ interface Props {
   running: boolean;
   onRerun: (stopOnError: boolean) => void;
   onClose: () => void;
+  /** 実行中のバッチを止める。 */
+  onStop?: () => void;
 }
 
-export function BatchResultsView({ results, running, onRerun, onClose }: Props) {
+export function BatchResultsView({ results, running, onRerun, onClose, onStop }: Props) {
   const t = useT();
   const [stopOnError, setStopOnError] = useState(true);
   const okCount = results.filter((r) => r.status === "ok").length;
@@ -37,6 +39,11 @@ export function BatchResultsView({ results, running, onRerun, onClose }: Props) 
           {t("batchSummary", { total: results.length, ok: okCount, errors: errCount })}
         </chakra.span>
         {running && <Spinner size={13} />}
+        {running && onStop && (
+          <Button type="button" variant="secondary" size="sm" onClick={onStop} data-testid="batch-stop">
+            {t("gridStopButton")}
+          </Button>
+        )}
         <chakra.span flex="1" />
         <chakra.span fontSize="xs" color="app.textSecondary">
           <Switch

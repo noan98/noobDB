@@ -42,6 +42,15 @@ describe("column type → icon mapping (#474)", () => {
   });
 });
 
+describe("classifyTypeName: PostgreSQL の sqlx 型名 (#1602)", () => {
+  it("INT4 / FLOAT8 / TIMESTAMPTZ / TIMETZ / BYTEA を分類する", () => {
+    for (const t of ["INT2", "INT4", "INT8", "FLOAT4", "FLOAT8"]) expect(classifyTypeName(t)).toBe("number");
+    expect(classifyTypeName("TIMESTAMPTZ")).toBe("date");
+    expect(classifyTypeName("TIMETZ")).toBe("time");
+    expect(classifyTypeName("BYTEA")).toBe("binary");
+  });
+});
+
 describe("classifyTypeName (#748: shared by ResultGrid and dataSearch)", () => {
   it("classifies numeric SQL types", () => {
     expect(classifyTypeName("INT")).toBe("number");

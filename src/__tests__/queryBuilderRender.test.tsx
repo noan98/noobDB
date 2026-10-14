@@ -410,3 +410,18 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
     expect(await screen.findByTestId("qb-and-or-precedence")).toBeInTheDocument();
   });
 });
+
+describe("QueryBuilder 読み込みエラー (#1602)", () => {
+  it("別のテーブルの読み込みに成功したら、前回のエラーバナーを消す", async () => {
+    vi.mocked(api.listTables).mockResolvedValue(["users", "orders"]);
+    vi.mocked(api.describeTable)
+      .mockRejectedValueOnce("describe failed")
+      .mockResolvedValue(COLUMNS);
+    renderWithProviders(
+      <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
+    );
+    await screen.findByText(/describe failed/);
+    fireEvent.change(screen.getByLabelText(t("qbTable")), { target: { value: "orders" } });
+    await waitFor(() => expect(screen.queryByText(/describe failed/)).not.toBeInTheDocument());
+  });
+});

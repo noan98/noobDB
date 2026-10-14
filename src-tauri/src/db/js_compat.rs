@@ -5,7 +5,7 @@
 //! `Intl.Collator`) と**同じ結果**を返さなければならない。この層は値の型変換だけを担い、
 //! 判定ロジックは `result_ops` に置く。
 //!
-//! - [`value_str`]: `String(v)` (NULL と非有限の浮動小数は `None` = JS の `null`)
+//! - [`value_str`]: `String(v)` (NULL は `None` = JS の `null`)
 //! - [`js_to_number`]: `Number(str)` (`NaN` を含む。空文字列は 0)
 //! - [`collation_key`]: `new Intl.Collator(undefined, { numeric: true })` の近似キー
 //!
@@ -69,20 +69,16 @@ pub fn js_number_to_string(x: f64) -> String {
     format!("{sign}{body}")
 }
 
-/// JS の `String(v)` 相当。NULL と非有限の浮動小数 (JSON で `null` になる) は `None`。
+/// JS の `String(v)` 相当。NULL は `None`。
 pub fn value_str(v: &Value) -> Option<Cow<'_, str>> {
     match v {
         Value::Null => None,
         Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
         Value::Int(i) => Some(Cow::Owned(i.to_string())),
         Value::UInt(u) => Some(Cow::Owned(u.to_string())),
-        Value::Float(f) => {
-            if f.is_finite() {
-                Some(Cow::Owned(js_number_to_string(*f)))
-            } else {
-                None
-            }
-        }
+        // 非有限値は IPC で `"NaN"` / `"Infinity"` / `"-Infinity"` の文字列になる
+        // (`Value` の `Serialize`、#1597) ので、フロントの `String(v)` と同じ綴りを返す。
+        Value::Float(f) => Some(Cow::Owned(js_number_to_string(*f))),
         Value::String(s) | Value::Bytes(s) => Some(Cow::Borrowed(s.as_str())),
     }
 }
@@ -127,14 +123,14 @@ pub fn js_to_number(s: &str) -> f64 {
     }
 }
 
-/// JS の `Number(v)` 相当 (セル値から)。NULL と非有限の浮動小数は `None`。
+/// JS の `Number(v)` 相当 (セル値から)。NULL は `None`。非有限の浮動小数は IPC で文字列になる (#1597) ので `Number("NaN")` 等と同じく `NaN` / ±`Infinity`。
 pub fn value_number(v: &Value) -> Option<f64> {
     match v {
         Value::Null => None,
         Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
         Value::Int(i) => Some(*i as f64),
         Value::UInt(u) => Some(*u as f64),
-        Value::Float(f) => f.is_finite().then_some(*f),
+        Value::Float(f) => Some(*f),
         Value::String(s) | Value::Bytes(s) => Some(js_to_number(s)),
     }
 }

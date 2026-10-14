@@ -1445,6 +1445,7 @@ mod tests {
                         method: None,
                         predicate: None,
                         first_expression_at: None,
+                        ..Default::default()
                     }],
                 }],
             )
@@ -1617,6 +1618,7 @@ mod tests {
                     method: None,
                     predicate: None,
                     first_expression_at: None,
+                    ..Default::default()
                 }])
             })
             .await;

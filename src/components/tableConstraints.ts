@@ -50,6 +50,20 @@ export function isCompleteForeignKey(fk: ForeignKeyDef): boolean {
   return fk.refTable.trim() !== "" && cols.length > 0 && cols.length === refs.length;
 }
 
+/**
+ * 何か入力されているのに {@link isCompleteForeignKey} を満たさない FK 行か。生成側はこの行を
+ * 黙って捨てるので、UI は実行を止めて知らせる (全くの空行は「未使用の行」として無視してよい)。
+ */
+export function isPartialForeignKey(fk: ForeignKeyDef): boolean {
+  if (isCompleteForeignKey(fk)) return false;
+  return (
+    fk.name.trim() !== "" ||
+    fk.refTable.trim() !== "" ||
+    fk.columns.some((c) => c.trim()) ||
+    fk.refColumns.some((c) => c.trim())
+  );
+}
+
 /** 生成対象になる CHECK か (式が空でない)。 */
 export function isCompleteCheck(ck: CheckDef): boolean {
   return ck.expression.trim() !== "";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildAlterPlan, type AlterTableForm } from "../components/alterTable";
 import { buildCreateTableSql, type ColumnDef } from "../components/createTable";
-import { emptyForeignKey, type ForeignKeyDef } from "../components/tableConstraints";
+import { emptyForeignKey, isPartialForeignKey, type ForeignKeyDef } from "../components/tableConstraints";
 
 function form(over: Partial<AlterTableForm>): AlterTableForm {
   return { database: "shop", table: "orders", baseline: [], existing: [], added: [], indexes: [], ...over };
@@ -146,5 +146,16 @@ describe("CREATE TABLE: foreign key / CHECK (#1191)", () => {
 
   it("output is unchanged when no constraints are given", () => {
     expect(buildCreateTableSql("sqlite", { table: "t", columns: cols })).not.toContain("CONSTRAINT");
+  });
+});
+
+describe("isPartialForeignKey (#1602)", () => {
+  it("完成した行・全くの空行は対象外、途中まで入力した行だけ true", () => {
+    expect(isPartialForeignKey(fk)).toBe(false);
+    expect(isPartialForeignKey(emptyForeignKey())).toBe(false);
+    expect(isPartialForeignKey({ ...emptyForeignKey(), refTable: "users", columns: ["user_id"] })).toBe(true);
+    expect(isPartialForeignKey({ ...emptyForeignKey(), refColumns: ["id"] })).toBe(true);
+    expect(isPartialForeignKey({ ...fk, refColumns: ["id", "x"] })).toBe(true);
+    expect(isPartialForeignKey({ ...emptyForeignKey(), name: "fk_x" })).toBe(true);
   });
 });

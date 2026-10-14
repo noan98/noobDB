@@ -350,6 +350,7 @@ export function ServerMetricsPanel({
   useEffect(() => {
     setSamples([]);
     setError(null);
+    setUpdatedAt(null);
     // 旧セッションの取得が飛んでいても新セッションの初回取得は必ず走らせる。
     void load(true);
   }, [load]);

@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 /// DB-agnostic value type returned to the frontend as JSON.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Serialize` は手書き ([`impl Serialize for Value`])。`Deserialize` は untagged の derive。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum Value {
     Null,
@@ -12,6 +14,36 @@ pub enum Value {
     String(String),
     /// Hex-encoded for arbitrary BLOBs to keep JSON safe.
     Bytes(String),
+}
+
+/// 浮動小数の文字列表現。有限値は Rust の `to_string()`、非有限値は JS の `String(v)` と
+/// 同じ `NaN` / `Infinity` / `-Infinity`。IPC の JSON ([`Value`] の `Serialize`) と
+/// CSV / Markdown / xlsx のエクスポートで同じ綴りにそろえる (#1597)。
+pub fn float_text(f: f64) -> String {
+    if f.is_nan() {
+        "NaN".to_string()
+    } else if f.is_infinite() {
+        if f > 0.0 { "Infinity" } else { "-Infinity" }.to_string()
+    } else {
+        f.to_string()
+    }
+}
+
+/// 非有限の `Float` は JSON の数値で表せず、serde_json は黙って `null` にする (フロントで
+/// NULL と区別がつかなくなる)。そのため文字列 (`"NaN"` / `"Infinity"` / `"-Infinity"`) で出す。
+/// DECIMAL / NUMERIC の `Infinity` を文字列で返す方針 (postgres.rs) と同じ (#1597)。
+impl Serialize for Value {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Value::Null => serializer.serialize_unit(),
+            Value::Bool(b) => serializer.serialize_bool(*b),
+            Value::Int(i) => serializer.serialize_i64(*i),
+            Value::UInt(u) => serializer.serialize_u64(*u),
+            Value::Float(f) if f.is_finite() => serializer.serialize_f64(*f),
+            Value::Float(f) => serializer.serialize_str(&float_text(*f)),
+            Value::String(s) | Value::Bytes(s) => serializer.serialize_str(s),
+        }
+    }
 }
 
 /// JS の `Number.MAX_SAFE_INTEGER` (2^53 - 1)。
@@ -285,7 +317,7 @@ pub fn normalize_fk_action(action: Option<&str>) -> Option<String> {
 /// in order, and whether it is UNIQUE / the PRIMARY KEY. `method` is the access
 /// method when the engine exposes one (e.g. PostgreSQL `btree`/`gin`, MySQL
 /// `BTREE`/`HASH`); `None` for SQLite, which has no such concept.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct IndexInfo {
     pub name: String,
     pub columns: Vec<String>,
@@ -301,6 +333,18 @@ pub struct IndexInfo {
     /// なる。先頭からこの位置までの実列は FK 被覆の判定に使える。IPC には出さない内部用。
     #[serde(skip)]
     pub first_expression_at: Option<usize>,
+    /// PostgreSQL: キー列の数 (`pg_index.indnkeyatts`)。`columns` はキー列の後ろに
+    /// `INCLUDE` 列が続くので、DDL 再構成でこの位置で区切る。`None` は全列がキー列。
+    /// IPC には出さない内部用。
+    #[serde(skip)]
+    pub key_column_count: Option<usize>,
+    /// PostgreSQL: `columns` と同じ並びの列ごとの並び順指定 (`" DESC"` / `" NULLS FIRST"` など。
+    /// 既定の ASC NULLS LAST は空文字)。空配列は全列が既定。IPC には出さない内部用。
+    #[serde(skip)]
+    pub column_options: Vec<String>,
+    /// PostgreSQL 15+ の `NULLS NOT DISTINCT` な UNIQUE インデックスか。IPC には出さない内部用。
+    #[serde(skip)]
+    pub nulls_not_distinct: bool,
 }
 
 /// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`
@@ -1109,6 +1153,29 @@ mod fk_action_tests {
         assert_eq!(
             normalize_fk_action(Some("SET NULL")).as_deref(),
             Some("SET NULL")
+        );
+    }
+    #[test]
+    fn non_finite_floats_serialize_as_strings_not_null() {
+        // serde_json は非有限の f64 を黙って null にするので、手書き Serialize で文字列にする (#1597)。
+        assert_eq!(
+            serde_json::to_string(&Value::Float(f64::NAN)).unwrap(),
+            "\"NaN\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::Float(f64::INFINITY)).unwrap(),
+            "\"Infinity\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::Float(f64::NEG_INFINITY)).unwrap(),
+            "\"-Infinity\""
+        );
+        assert_eq!(serde_json::to_string(&Value::Float(1.5)).unwrap(), "1.5");
+        assert_eq!(serde_json::to_string(&Value::Null).unwrap(), "null");
+        assert_eq!(serde_json::to_string(&Value::Int(-3)).unwrap(), "-3");
+        assert_eq!(
+            serde_json::to_string(&Value::Bytes("ab".into())).unwrap(),
+            "\"ab\""
         );
     }
 }

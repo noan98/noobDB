@@ -53,6 +53,11 @@ pub struct UndoPlan {
     pub statements: Vec<String>,
     pub conflicts: Vec<UndoConflict>,
     pub warnings: Vec<String>,
+    /// 文が 1 つも要らないのは「目的の状態が既に成立している」から (衝突も警告も無い)。
+    /// 例: INSERT の取り消しで行が既に無い / UPDATE の取り消しで手動で元に戻し済み。
+    /// 呼び出し側は何も実行せずに記録を取り消し済みにしてよい (#1600)。IPC には出さない。
+    #[serde(skip)]
+    pub already_satisfied: bool,
 }
 
 /// Tagged signature identical in spirit to `db::data_diff`'s private
@@ -96,6 +101,18 @@ pub fn build_undo_plan(
     current_rows: &[Vec<Value>],
     force: bool,
 ) -> UndoPlan {
+    build_undo_plan_with_generated(record, current_rows, force, &[])
+}
+
+/// [`build_undo_plan`] に生成列名を渡す版 (#1600)。捕捉は `SELECT *` 相当なので生成列も
+/// `columns` に入るが、生成列は DB が値を計算し INSERT / UPDATE で値を渡すとエラーに
+/// なる。`generated_columns` はその列を逆 SQL から外す。
+pub fn build_undo_plan_with_generated(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+    generated_columns: &[String],
+) -> UndoPlan {
     let pk_idx: Vec<usize> = record
         .primary_key
         .iter()
@@ -106,6 +123,7 @@ pub fn build_undo_plan(
             statements: Vec::new(),
             conflicts: Vec::new(),
             warnings: vec!["主キー列を特定できませんでした".to_string()],
+            already_satisfied: false,
         };
     }
 
@@ -208,6 +226,9 @@ pub fn build_undo_plan(
                             key_unreliable: false,
                         });
                     }
+                    Some(cur) if cur == *before => {
+                        // 同じ内容の行が既に居る (手動で復元済みなど)。目的の状態が成立済み。
+                    }
                     Some(cur) => {
                         // Something already occupies this primary key again —
                         // re-inserting would collide or silently coexist with
@@ -215,15 +236,22 @@ pub fn build_undo_plan(
                         conflicts.push(UndoConflict {
                             key: key.clone(),
                             expected: None,
-                            current: Some(cur),
+                            current: Some(cur.clone()),
                         });
                         if force {
+                            // 同じ主キーへ INSERT すると必ず主キー重複で失敗する。強制適用は
+                            // 居座っている行を削除時の値へ UPDATE で戻す (#1600)。
                             rows.push(RowDiff {
-                                status: RowStatus::SourceOnly,
+                                status: RowStatus::Different,
                                 key,
                                 source: Some(before.clone()),
-                                target: None,
-                                changed_columns: Vec::new(),
+                                target: Some(cur.clone()),
+                                changed_columns: changed_columns(
+                                    &record.columns,
+                                    &pk_idx,
+                                    before,
+                                    &cur,
+                                ),
                                 key_unreliable: false,
                             });
                         }
@@ -268,6 +296,10 @@ pub fn build_undo_plan(
                             key_unreliable: false,
                         });
                     }
+                    Some(cur) if cur == *before => {
+                        // 手動で元に戻し済み: 目的の状態が成立しており、衝突でも要実行でもない
+                        // (衝突扱いにすると、強制しても文が出ず永久に未取り消しのまま残る)。
+                    }
                     Some(cur) => {
                         conflicts.push(UndoConflict {
                             key: key.clone(),
@@ -310,6 +342,7 @@ pub fn build_undo_plan(
                 statements: Vec::new(),
                 conflicts,
                 warnings,
+                already_satisfied: false,
             };
         }
     };
@@ -325,7 +358,7 @@ pub fn build_undo_plan(
         truncated: false,
         source_count: row_count,
         target_count: row_count,
-        generated_columns: Vec::new(),
+        generated_columns: generated_columns.to_vec(),
     };
     // allow_delete=true is intentional and always safe here: a `DELETE`
     // statement is only ever generated for an `Insert`-undo `TargetOnly` row,
@@ -334,10 +367,15 @@ pub fn build_undo_plan(
     let plan = generate_data_sync_sql(&diff, true);
     warnings.extend(plan.warnings);
 
+    let statements: Vec<String> = plan.statements.into_iter().map(|s| s.sql).collect();
+    let captured_any = !record_before.is_empty() || !record_after.is_empty();
+    let already_satisfied =
+        statements.is_empty() && conflicts.is_empty() && warnings.is_empty() && captured_any;
     UndoPlan {
-        statements: plan.statements.into_iter().map(|s| s.sql).collect(),
+        statements,
         conflicts,
         warnings,
+        already_satisfied,
     }
 }
 
@@ -381,7 +419,22 @@ pub fn build_redo_plan(
     current_rows: &[Vec<Value>],
     force: bool,
 ) -> UndoPlan {
-    build_undo_plan(&invert_for_redo(record), current_rows, force)
+    build_redo_plan_with_generated(record, current_rows, force, &[])
+}
+
+/// [`build_redo_plan`] に生成列名を渡す版 (#1600)。
+pub fn build_redo_plan_with_generated(
+    record: &WriteCaptureRecord,
+    current_rows: &[Vec<Value>],
+    force: bool,
+    generated_columns: &[String],
+) -> UndoPlan {
+    build_undo_plan_with_generated(
+        &invert_for_redo(record),
+        current_rows,
+        force,
+        generated_columns,
+    )
 }
 
 /// Non-key column names whose values differ between `before` and `after`, in
@@ -553,8 +606,75 @@ mod tests {
         assert_eq!(without_force.conflicts.len(), 1);
         assert!(without_force.statements.is_empty());
 
+        // #1600: 主キー衝突のまま INSERT すると必ず失敗するので、強制適用は
+        // 居座っている行を削除時の値へ UPDATE で戻す。
         let forced = build_undo_plan(&r, &current, true);
-        assert_eq!(forced.statements.len(), 1);
+        assert_eq!(
+            forced.statements,
+            vec![r#"UPDATE "users" SET "name" = 'alice' WHERE "id" = 1"#]
+        );
+    }
+
+    #[test]
+    fn delete_undo_is_satisfied_when_identical_row_already_restored() {
+        let mut r = record(WriteKind::Delete);
+        r.before_rows = vec![row(1, "alice")];
+        let plan = build_undo_plan(&r, &[row(1, "alice")], false);
+        assert!(plan.conflicts.is_empty());
+        assert!(plan.statements.is_empty());
+        assert!(plan.already_satisfied);
+    }
+
+    #[test]
+    fn insert_undo_with_row_already_gone_is_marked_satisfied() {
+        let mut r = record(WriteKind::Insert);
+        r.after_rows = vec![row(1, "alice")];
+        let plan = build_undo_plan(&r, &[], false);
+        assert!(plan.already_satisfied);
+        // 実行する文があるときは満たされていない。
+        let plan = build_undo_plan(&r, &[row(1, "alice")], false);
+        assert!(!plan.already_satisfied);
+        // 主キー不明は「成立済み」ではない。
+        let mut bad = r.clone();
+        bad.primary_key = vec!["missing".into()];
+        assert!(!build_undo_plan(&bad, &[], false).already_satisfied);
+    }
+
+    #[test]
+    fn update_undo_manually_reverted_is_satisfied_not_a_conflict() {
+        let mut r = record(WriteKind::Update);
+        r.before_rows = vec![row(1, "alice")];
+        r.after_rows = vec![row(1, "alice2")];
+        // 手動で before の値へ戻し済み。
+        let plan = build_undo_plan(&r, &[row(1, "alice")], false);
+        assert!(plan.conflicts.is_empty(), "{:?}", plan.conflicts);
+        assert!(plan.statements.is_empty());
+        assert!(plan.already_satisfied);
+    }
+
+    #[test]
+    fn generated_columns_are_left_out_of_reverse_sql() {
+        let mut r = record(WriteKind::Delete);
+        r.columns = vec!["id".into(), "a".into(), "total".into()];
+        r.column_types = vec!["INTEGER".into(), "INTEGER".into(), "INTEGER".into()];
+        r.before_rows = vec![vec![Value::Int(1), Value::Int(2), Value::Int(4)]];
+        let plan = build_undo_plan_with_generated(&r, &[], false, &["total".to_string()]);
+        assert_eq!(
+            plan.statements,
+            vec![r#"INSERT INTO "users" ("id", "a") VALUES (1, 2)"#]
+        );
+
+        let mut u = record(WriteKind::Update);
+        u.columns = r.columns.clone();
+        u.column_types = r.column_types.clone();
+        u.before_rows = vec![vec![Value::Int(1), Value::Int(2), Value::Int(4)]];
+        u.after_rows = vec![vec![Value::Int(1), Value::Int(3), Value::Int(6)]];
+        let cur = vec![vec![Value::Int(1), Value::Int(3), Value::Int(6)]];
+        let plan = build_undo_plan_with_generated(&u, &cur, false, &["total".to_string()]);
+        assert_eq!(
+            plan.statements,
+            vec![r#"UPDATE "users" SET "a" = 2 WHERE "id" = 1"#]
+        );
     }
 
     #[test]

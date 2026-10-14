@@ -1154,7 +1154,12 @@ const TableNode = memo(function TableNode({
       onKeyDown={onKeyDown}
       aria-selected={view ? undefined : selected}
       data-selected={selected ? "true" : undefined}
-      onClick={(e) => actions.clickTable(e, db, tbl)}
+      onClick={(e) => {
+        // ビューは複数選択の対象外 (選択表示も一括操作も出ない)。修飾キー付きクリックで
+        // 見えない選択キーが入らないようにする。
+        if (view && (e.shiftKey || e.ctrlKey || e.metaKey)) return;
+        actions.clickTable(e, db, tbl);
+      }}
       // 「現在地」表示 (#982): SR には aria-current、視覚には
       // 下の共有 layoutId インジケータ (アクセントスパイン) で
       // 示す。position: relative はインジケータの絶対配置の
@@ -3364,6 +3369,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
   // table-name matches surface without the user expanding each database first.
   // Gated on the active connection being expanded to avoid loading on a plain
   // profile-name filter. Columns stay lazy (loaded on table expand).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: q は本体で参照しないが、一括取得に失敗したあと検索語の変更で再取得するためのトリガーとして意図的に依存へ含めている
   useEffect(() => {
     if (!searching || !sessionId || databases === null || !activeExpanded) return;
     const missing = databases.filter(
@@ -3379,6 +3385,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       .listTablesAll(sid)
       .then((all) => {
         if (sessionIdRef.current !== sid) return;
+        setError(null);
         const byDb = new Map(all.map((d) => [d.database, d.tables]));
         setTables((prev) => {
           const next = { ...prev };
@@ -3392,11 +3399,15 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
           return next;
         });
       })
-      .catch(() => {})
+      .catch((e) => {
+        // 失敗を握りつぶすと読み込み中のまま止まる。エラー帯に出し、検索語を変えたときに
+        // (q が依存に入っているので) 再取得される。
+        if (sessionIdRef.current === sid) setError(String(e));
+      })
       .finally(() => {
         for (const db of missing) tablesInFlightRef.current.delete(db);
       });
-  }, [searching, sessionId, databases, activeExpanded, tables]);
+  }, [searching, q, sessionId, databases, activeExpanded, tables]);
 
   // バックエンドの Schema Cache が各 DB のテーブル一覧を取得した時刻 (#1539)。テーブル一覧が
   // 読み込まれ直すたびに取り直し、DB 行に「キャッシュ取得 HH:MM」を出す。失敗は装飾なので無視する。

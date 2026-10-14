@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
 import {
   buildIdentitySyncSql,
+  mysqlShowCreateTableSql,
+  parseAutoIncrementFromShowCreate,
   findIdentityColumn,
   mysqlMaxValueSql,
   parseMaxValue,
@@ -79,13 +81,53 @@ describe("parseMaxValue", () => {
 
 describe("buildIdentitySyncSql", () => {
   it("PostgreSQL は setval を 1 文で生成する", () => {
-    expect(buildIdentitySyncSql("postgres", "public", "orders", "id")).toBe(
+    expect(buildIdentitySyncSql("postgres", "public", "orders", "id", null, { lower: true })).toBe(
       `SELECT setval(pg_get_serial_sequence('"public"."orders"', 'id'), COALESCE(MAX("id"), 1), MAX("id") IS NOT NULL) FROM "public"."orders";`,
     );
   });
 
+  it("PostgreSQL の既定は現在値を下げない (GREATEST と pg_sequence_last_value)", () => {
+    const sql = buildIdentitySyncSql("postgres", "public", "orders", "id");
+    expect(sql).toContain("GREATEST(COALESCE(MAX(\"id\"), 0), COALESCE(pg_sequence_last_value(");
+    // 未使用シーケンスの下限として開始値 (seqstart) も見る。
+    expect(sql).toContain("SELECT seqstart FROM pg_sequence");
+    expect(sql).toContain("IS NOT NULL) FROM");
+  });
+
+  it("MySQL の既定は現在の AUTO_INCREMENT より下げず、lower なら max+1 にする", () => {
+    // 91〜100 を削除した後: max=90、現在値 101。
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentNext: "101" })).toBe(
+      "ALTER TABLE `d`.`t` AUTO_INCREMENT = 101;",
+    );
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentNext: "101", lower: true })).toBe(
+      "ALTER TABLE `d`.`t` AUTO_INCREMENT = 91;",
+    );
+    // 現在値の方が小さければ max+1 へ進める。
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentNext: "10" })).toBe(
+      "ALTER TABLE `d`.`t` AUTO_INCREMENT = 91;",
+    );
+  });
+
+  it("MySQL は現在値を読めないとき、下げる指定がなければ SQL を作らない", () => {
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentUnknown: true })).toBeNull();
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentUnknown: true, lower: true })).toBe(
+      "ALTER TABLE `d`.`t` AUTO_INCREMENT = 91;",
+    );
+  });
+
+  it("parseAutoIncrementFromShowCreate は表オプションの AUTO_INCREMENT=N を読む", () => {
+    const ddl =
+      "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8mb4";
+    expect(parseAutoIncrementFromShowCreate(ddl)).toBe("101");
+    // 次の値が 1 のときは表オプションが出ない。
+    expect(parseAutoIncrementFromShowCreate("CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB")).toBe("1");
+    expect(parseAutoIncrementFromShowCreate("")).toBeNull();
+    expect(parseAutoIncrementFromShowCreate(undefined)).toBeNull();
+    expect(mysqlShowCreateTableSql("d", "t")).toBe("SHOW CREATE TABLE `d`.`t`");
+  });
+
   it("PostgreSQL は識別子とリテラルのクォートをエスケープする", () => {
-    const sql = buildIdentitySyncSql("postgres", "public", `o'"x`, `i'd`);
+    const sql = buildIdentitySyncSql("postgres", "public", `o'"x`, `i'd`, null, { lower: true });
     expect(sql).toContain(`'"public"."o''""x"'`);
     expect(sql).toContain(`'i''d'`);
     expect(sql).toContain(`MAX("i'd")`);

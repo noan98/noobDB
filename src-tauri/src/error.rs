@@ -89,6 +89,11 @@ pub enum AppError {
     #[error("this operation has already been undone")]
     FlightAlreadyUndone,
 
+    /// MySQL: ビューの基底表を特定できず、MyISAM など非トランザクショナルでないか確認できない
+    /// (#1600)。プレビュー / 書き込み捕捉は ROLLBACK で戻る前提なので、安全側で拒否する。
+    #[error("cannot determine the base tables of the view, so the change cannot be previewed")]
+    ViewBaseUnresolved,
+
     /// フライトレコーダー (#1533): 記録の主キー列が保存済み列に見つからず、Undo の対象行を特定できない。
     #[error("could not identify the primary key columns")]
     FlightPrimaryKeyUnresolved,
@@ -161,6 +166,7 @@ impl AppError {
             AppError::AiOverloaded(m) => AppError::AiOverloaded(m.clone()),
             AppError::FlightAlreadyUndone => AppError::FlightAlreadyUndone,
             AppError::FlightPrimaryKeyUnresolved => AppError::FlightPrimaryKeyUnresolved,
+            AppError::ViewBaseUnresolved => AppError::ViewBaseUnresolved,
             AppError::FlightDriverMismatch => AppError::FlightDriverMismatch,
             AppError::FlightProfileMismatch => AppError::FlightProfileMismatch,
             AppError::Other(m) => AppError::Other(m.clone()),
@@ -204,6 +210,7 @@ impl AppError {
             AppError::AiOverloaded(_) => "aiOverloaded",
             AppError::FlightAlreadyUndone => "flightAlreadyUndone",
             AppError::FlightPrimaryKeyUnresolved => "flightPrimaryKeyUnresolved",
+            AppError::ViewBaseUnresolved => "viewBaseUnresolved",
             AppError::FlightDriverMismatch => "flightDriverMismatch",
             AppError::FlightProfileMismatch => "flightProfileMismatch",
             AppError::Other(_) => "other",

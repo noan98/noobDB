@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAlterPlan,
+  duplicateColumnNames,
+  renameCollisions,
   indexRowProblems,
   type AlterTableForm,
   type ExistingColumnBaseline,
@@ -418,6 +420,35 @@ describe("buildAlterPlan: statement ordering", () => {
   });
 });
 
+describe("buildAlterPlan: 空けた列名の再利用 (#1602)", () => {
+  it("DROP した列と同名の新規列は DROP の後に ADD する", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "status", type: "text" })],
+        existing: [edit({ original: "status", drop: true })],
+        added: [{ name: "Status", type: "TEXT", notNull: false, defaultValue: "" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "addColumn"]);
+  });
+
+  it("リネームで空けた列名の新規列は RENAME の後・DROP の前に ADD する", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "status", type: "text" }), baseline({ name: "old", type: "int" })],
+        existing: [
+          edit({ original: "status", name: "status_old", type: "text" }),
+          edit({ original: "old", drop: true }),
+        ],
+        added: [{ name: "status", type: "text", notNull: false, defaultValue: "" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["renameColumn", "addColumn", "dropColumn"]);
+  });
+});
+
 describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
   it("ADD COLUMN の式 DEFAULT を全方言で文字列化しない", () => {
     const pg = buildAlterPlan(
@@ -505,5 +536,116 @@ describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () 
       form({ added: [{ name: "a", type: "", notNull: false, defaultValue: "007" }] }),
     );
     expect(r.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `a` TEXT DEFAULT '007';");
+  });
+});
+
+describe("duplicateColumnNames (#1602)", () => {
+  const b = [baseline({ name: "status" }), baseline({ name: "other" })];
+  const add = (name: string) => ({ name, type: "TEXT", notNull: false, defaultValue: "" });
+
+  it("DROP / リネームで空けた名前の再利用は重複ではない", () => {
+    expect(
+      duplicateColumnNames("mysql", {
+        baseline: b,
+        existing: [edit({ original: "status", drop: true })],
+        added: [add("status")],
+      }),
+    ).toEqual([]);
+    expect(
+      duplicateColumnNames("mysql", {
+        baseline: b,
+        existing: [edit({ original: "status", name: "status_old" })],
+        added: [add("status")],
+      }),
+    ).toEqual([]);
+  });
+
+  it("既存列と同名の新規列・リネーム先の衝突は重複 (MySQL は大小無視)", () => {
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("STATUS")] })).toEqual(["STATUS"]);
+    expect(
+      duplicateColumnNames("postgres", { baseline: b, existing: [], added: [add("STATUS")] }),
+    ).toEqual([]);
+    expect(
+      duplicateColumnNames("sqlite", {
+        baseline: b,
+        existing: [edit({ original: "other", name: "status" })],
+        added: [],
+      }),
+    ).toEqual(["status"]);
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("x"), add("x")] })).toEqual(["x"]);
+  });
+});
+
+describe("buildAlterPlan: 空けた名前の再利用 (続き, #1602)", () => {
+  const added = { name: "status", type: "TEXT", notNull: false, defaultValue: "" };
+
+  it("DROP の後ろへ送った ADD を参照する FK / CHECK は、その ADD の後に出す", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "status", type: "text" })],
+        existing: [edit({ original: "status", drop: true })],
+        added: [added],
+        addedForeignKeys: [
+          { name: "", columns: ["status"], refTable: "s", refColumns: ["id"], onDelete: "", onUpdate: "" },
+        ],
+        addedChecks: [{ name: "", expression: "status <> ''" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual([
+      "dropColumn",
+      "addColumn",
+      "addForeignKey",
+      "addCheck",
+    ]);
+  });
+
+  it("DROP する列名へのリネーム (a→b, b を DROP) は DROP の後に出す", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "a" }), baseline({ name: "b" })],
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", drop: true })],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "renameColumn"]);
+  });
+
+  it("DROP 先へのリネームで空いた名前を使う ADD は、そのリネームの後に出す", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "status" }), baseline({ name: "b" })],
+        existing: [edit({ original: "status", name: "b" }), edit({ original: "b", drop: true })],
+        added: [added],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "renameColumn", "addColumn"]);
+  });
+});
+
+describe("renameCollisions (#1602)", () => {
+  const b = [baseline({ name: "a" }), baseline({ name: "b" }), baseline({ name: "c" })];
+
+  it("入れ替え・連鎖は衝突、DROP 先へのリネームと大小だけの変更は衝突ではない", () => {
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", name: "a" })],
+      }),
+    ).toEqual(["b", "a"]);
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", name: "x" })],
+      }),
+    ).toEqual(["b"]);
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", drop: true })],
+      }),
+    ).toEqual([]);
+    expect(renameCollisions("mysql", { baseline: b, existing: [edit({ original: "a", name: "A" })] })).toEqual([]);
   });
 });

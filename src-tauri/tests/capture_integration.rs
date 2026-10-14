@@ -595,3 +595,26 @@ async fn my_capture_timeout_rolls_back_and_releases_locks() {
         .await
         .unwrap();
 }
+
+/// プール接続に残った search_path が、database 未指定の文へ漏れない (#1602)。
+#[tokio::test]
+async fn pg_search_path_does_not_leak_to_schema_less_statements() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    c.execute("DROP SCHEMA IF EXISTS sp1602 CASCADE", None)
+        .await
+        .unwrap();
+    c.execute("CREATE SCHEMA sp1602", None).await.unwrap();
+    for _ in 0..8 {
+        c.execute("SELECT 1", Some("sp1602")).await.unwrap();
+        let r = c
+            .execute("SELECT current_schemas(false)::text", None)
+            .await
+            .unwrap();
+        let shown = format!("{:?}", r.rows[0][0]);
+        assert!(!shown.contains("sp1602"), "search_path leaked: {shown}");
+    }
+    c.execute("DROP SCHEMA IF EXISTS sp1602 CASCADE", None)
+        .await
+        .unwrap();
+}

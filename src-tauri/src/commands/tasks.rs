@@ -277,16 +277,19 @@ pub async fn run_task_now(
         )),
         Err(e) => executor::TaskOutcome::err(format!("task execution aborted: {e}")),
     };
-    let event = scheduler::record_outcome(&app, task.clone(), false, started, outcome).await;
-    // 直近の 1 件が今実行したものであるはずなので、それを返す (レースで別の実行が
-    // 割り込んだ場合でもタスク単位で最新のログを返すだけなので実害はない)。
-    let latest = runs::list(Some(&task.id), 1).await?;
-    latest.into_iter().next().ok_or_else(|| {
-        AppError::Other(format!(
-            "run recorded but not found afterwards (status: {})",
-            event.status
-        ))
-    })
+    let (event, run_id) =
+        scheduler::record_outcome(&app, task.clone(), false, started, outcome).await;
+    // 記録した行そのものを返す。「最新の 1 件」だと、手動実行中に見送られた予定発火の
+    // skipped 行 (started_at が新しい) を取り違える。
+    if let Some(id) = run_id {
+        if let Some(run) = runs::get(id).await? {
+            return Ok(run);
+        }
+    }
+    Err(AppError::Other(format!(
+        "run recorded but not found afterwards (status: {})",
+        event.status
+    )))
 }
 
 #[tauri::command]

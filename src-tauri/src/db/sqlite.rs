@@ -299,13 +299,29 @@ impl SqliteConn {
         let is_insert_stmt = trimmed.starts_with("insert") || trimmed.starts_with("replace");
         // 対象表/主キーが無ければ記録できないので、キャプチャ時はスナップショットを省く。
         let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
+        let order_clause = if commit && is_insert_stmt {
+            super::pk_order_clause_desc(&primary_key, quote_ident)
+        } else {
+            super::pk_order_clause(&primary_key, quote_ident)
+        };
+        // ユーザの WHERE を BEFORE へ反映する (MySQL / PostgreSQL と同じ共有ロジック)。
+        // 反映しないと、更新対象が PK 昇順の先頭 N 件の外にあるとき before / after が
+        // 同一になり「変更なし」に見える (#1600)。PK 自体を書き換える UPDATE は旧 PK で
+        // AFTER を取れないので、WHERE も PK アンカーも使わず固定窓で撮り直す。
+        let pk_changed =
+            super::preview::update_assigns_primary_key(sql, super::SqlFlavor::Sqlite, &primary_key);
+        let where_clause = if pk_changed {
+            None
+        } else {
+            super::preview::before_where_clause(sql, super::SqlFlavor::Sqlite, &primary_key)
+        };
         let before_sql = target.as_ref().filter(|_| !skip_snapshots).map(|t| {
-            let order = if commit && is_insert_stmt {
-                super::pk_order_clause_desc(&primary_key, quote_ident)
-            } else {
-                super::pk_order_clause(&primary_key, quote_ident)
-            };
-            format!("SELECT * FROM {}{} LIMIT {}", t, order, row_limit + 1)
+            super::preview::build_snapshot_sql(
+                t,
+                where_clause.as_deref(),
+                &order_clause,
+                Some(row_limit + 1),
+            )
         });
 
         let mut tx = if commit {
@@ -323,6 +339,48 @@ impl SqliteConn {
             None => Vec::new(),
         };
 
+        // AFTER は BEFORE で捕まえた PK で取り直し、行を 1 対 1 で揃える。INSERT は
+        // 新規行が BEFORE に居ないので固定窓、PK 無し / PK 書き換えも固定窓。
+        let pk_indices: Vec<usize> = match (primary_key.is_empty(), before_raw.first()) {
+            (false, Some(first)) => primary_key
+                .iter()
+                .filter_map(|name| {
+                    first
+                        .columns()
+                        .iter()
+                        .position(|c| sqlx::Column::name(c) == name.as_str())
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let after_by_pk_sql: Option<String> = if is_insert_stmt
+            || pk_changed
+            || pk_indices.is_empty()
+            || pk_indices.len() != primary_key.len()
+        {
+            None
+        } else {
+            let fragments: Vec<Vec<String>> = before_raw
+                .iter()
+                .take(row_limit)
+                .map(|r| {
+                    pk_indices
+                        .iter()
+                        .map(|&i| pk_literal(&decode_cell(r, i)))
+                        .collect()
+                })
+                .collect();
+            target.as_ref().and_then(|t| {
+                super::preview::build_after_by_pk_sql(
+                    t,
+                    &primary_key,
+                    &fragments,
+                    &order_clause,
+                    quote_ident,
+                )
+            })
+        };
+
         let (rows_affected, committed_result) = if commit {
             let r = run_sql_on(&mut tx, sql).await?;
             (r.rows_affected, Some(r))
@@ -333,7 +391,7 @@ impl SqliteConn {
             (result.rows_affected(), None)
         };
 
-        let after_raw: Vec<SqliteRow> = match &before_sql {
+        let after_raw: Vec<SqliteRow> = match after_by_pk_sql.as_ref().or(before_sql.as_ref()) {
             Some(q) if commit => fetch_capped_sqlite(&mut tx, q, row_limit + 1)
                 .await
                 .unwrap_or_default(),
@@ -895,16 +953,44 @@ impl SqliteConn {
             .collect()
     }
 
-    pub async fn columns(&self, _db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
-        // PRAGMA can't be bound — quote the identifier manually after rejecting
-        // anything that could break the literal.
+    /// 生成列 (GENERATED ... VIRTUAL / STORED) の列名 (#1600)。`PRAGMA table_info` は
+    /// 生成列を返さないので、`hidden` が 2 (VIRTUAL) / 3 (STORED) の行を
+    /// `table_xinfo` から拾う。
+    pub async fn generated_columns(
+        &self,
+        _database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        // 記録の表名は SQL 上の表記のまま (引用符付きのことがある) なので外す。
+        let table = strip_identifier_quotes(table);
+        let table = table.as_str();
         if table.contains('"') || table.contains('\0') {
+            return Err(AppError::InvalidInput("invalid table name".into()));
+        }
+        let sql = format!("PRAGMA table_xinfo(\"{}\")", table);
+        let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .filter(|r| matches!(r.try_get::<i64, _>("hidden"), Ok(2 | 3)))
+            .filter_map(|r| r.try_get::<String, _>("name").ok())
+            .collect())
+    }
+
+    pub async fn columns(&self, _db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
+        // PRAGMA can't be bound — quote the identifier manually (`"` は `""` に二重化)
+        // after rejecting NUL.
+        if table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
         // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match.
         // Map each local column ("from") to its referenced table and column ("to",
         // which is NULL when the FK targets the parent's primary key implicitly).
-        let fk_sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+        let fk_sql = format!(
+            "PRAGMA foreign_key_list(\"{}\")",
+            table.replace('"', "\"\"")
+        );
         let fk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
             .fetch_all(&self.pool)
             .await?;
@@ -931,11 +1017,11 @@ impl SqliteConn {
         let mut resolved_pks: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
         for ref_table in &implicit_tables {
-            if ref_table.contains('"') || ref_table.contains('\0') {
+            if ref_table.contains('\0') {
                 resolved_pks.insert(ref_table.clone(), None);
                 continue;
             }
-            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table);
+            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table.replace('"', "\"\""));
             let pk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(pk_sql))
                 .fetch_all(&self.pool)
                 .await
@@ -965,7 +1051,7 @@ impl SqliteConn {
             }
         }
 
-        let sql = format!("PRAGMA table_info(\"{}\")", table);
+        let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
             .await?;
@@ -1139,6 +1225,7 @@ impl SqliteConn {
                 } else {
                     None
                 },
+                ..Default::default()
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1196,10 +1283,13 @@ impl SqliteConn {
         let tables = self.tables(db).await?;
         let mut out = Vec::new();
         for table in tables {
-            if table.contains('"') || table.contains('\0') {
+            if table.contains('\0') {
                 continue;
             }
-            let sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+            let sql = format!(
+                "PRAGMA foreign_key_list(\"{}\")",
+                table.replace('"', "\"\"")
+            );
             let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&self.pool)
                 .await?;
@@ -1231,21 +1321,21 @@ impl SqliteConn {
     }
 
     pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
-        // PRAGMA can't bind parameters — reject anything that could break out of
-        // the quoted identifier, then build the statement literally.
-        if table.contains('"') || table.contains('\0') {
+        // PRAGMA can't bind parameters — double any `"` and reject NUL, then build
+        // the statement literally.
+        if table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
         // index_list columns: seq, name, unique, origin, partial.
         // origin = 'pk' for the implicit/auto PRIMARY KEY index.
-        let list_sql = format!("PRAGMA index_list(\"{}\")", table);
+        let list_sql = format!("PRAGMA index_list(\"{}\")", table.replace('"', "\"\""));
         let list_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(list_sql))
             .fetch_all(&self.pool)
             .await?;
         let mut out = Vec::with_capacity(list_rows.len());
         for r in &list_rows {
             let name = r.try_get::<String, _>("name").unwrap_or_default();
-            if name.is_empty() || name.contains('"') || name.contains('\0') {
+            if name.is_empty() || name.contains('\0') {
                 continue;
             }
             let unique = r.try_get::<i64, _>("unique").unwrap_or(0) != 0;
@@ -1255,7 +1345,7 @@ impl SqliteConn {
                 .unwrap_or(false);
             // index_info columns: seqno, cid, name. NULL name = an expression
             // index column; skip those (no plain column name to show).
-            let info_sql = format!("PRAGMA index_info(\"{}\")", name);
+            let info_sql = format!("PRAGMA index_info(\"{}\")", name.replace('"', "\"\""));
             let info_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(info_sql))
                 .fetch_all(&self.pool)
                 .await?;
@@ -1291,6 +1381,7 @@ impl SqliteConn {
                 method: None,
                 predicate,
                 first_expression_at,
+                ..Default::default()
             });
         }
         Ok(out)
@@ -1769,7 +1860,17 @@ pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
             if !next.eq_ignore_ascii_case("from") {
                 return None;
             }
-            iter.next()
+            let table = iter.next()?;
+            // `DELETE FROM t [AS] a WHERE a.id = …` は WHERE が別名を参照し、BEFORE の
+            // `SELECT * FROM t WHERE a.id = …` が成立しない。UPDATE の別名と同様に認識しない。
+            if iter.peek().is_some_and(|t| {
+                !["where", "returning", "order", "limit"]
+                    .iter()
+                    .any(|k| t.eq_ignore_ascii_case(k))
+            }) {
+                return None;
+            }
+            Some(table)
         }
         "insert" | "replace" => {
             // INSERT OR REPLACE INTO ... / REPLACE INTO ...
@@ -1824,10 +1925,10 @@ fn strip_sql_comments(sql: &str) -> String {
 
 async fn fetch_primary_key(pool: &SqlitePool, target: &str) -> Result<Vec<String>> {
     let table = strip_identifier_quotes(target);
-    if table.contains('"') || table.contains('\0') {
+    if table.contains('\0') {
         return Ok(Vec::new());
     }
-    let sql = format!("PRAGMA table_info(\"{}\")", table);
+    let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
     let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
         .fetch_all(pool)
         .await?;
@@ -1946,6 +2047,25 @@ fn strip_identifier_quotes(s: &str) -> String {
         return inner.replace("\"\"", "\"").replace("``", "`");
     }
     s.to_string()
+}
+
+/// AFTER の `IN` 句へ埋める PK 値のリテラル。SQLite は文字列のバックスラッシュ
+/// エスケープが無いので `'` の二重化だけでよい。表現できない値 (NULL・不正な
+/// hex・非有限の浮動小数) は `NULL` — 該当行が AFTER から落ちるだけで済む。
+fn pk_literal(v: &Value) -> String {
+    match v {
+        Value::Null => "NULL".to_string(),
+        Value::Bool(b) => if *b { "1" } else { "0" }.to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::UInt(u) => u.to_string(),
+        Value::Float(f) if f.is_finite() => f.to_string(),
+        Value::Float(_) => "NULL".to_string(),
+        Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+        Value::Bytes(hex) if hex.bytes().all(|b| b.is_ascii_hexdigit()) && hex.len() % 2 == 0 => {
+            format!("X'{hex}'")
+        }
+        Value::Bytes(_) => "NULL".to_string(),
+    }
 }
 
 async fn fetch_capped_sqlite(
@@ -2090,6 +2210,71 @@ mod tests {
         assert!(is_query_shape(
             "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"
         ));
+    }
+
+    /// #1600: SQLite のプレビューはユーザの WHERE を BEFORE / AFTER へ引き継ぐ。
+    /// 引き継がないと、更新対象が PK 昇順の先頭 N 件の外にあるとき両者が同一になる。
+    #[tokio::test]
+    async fn preview_follows_where_clause_outside_the_window() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory pool");
+        sqlx::query("CREATE TABLE t (id INTEGER PRIMARY KEY, flag INTEGER)")
+            .execute(&pool)
+            .await
+            .expect("create table");
+        for i in 1..=50 {
+            sqlx::query("INSERT INTO t (id, flag) VALUES (?, 1)")
+                .bind(i)
+                .execute(&pool)
+                .await
+                .expect("insert");
+        }
+        let conn = SqliteConn {
+            pool,
+            tx: tokio::sync::Mutex::new(None),
+        };
+        // 行上限 5 の窓 (id 1..=5) の外にある id=40 を更新する。
+        let r = conn
+            .preview_execute_with_limit("UPDATE t SET flag = 0 WHERE id = 40", None, 5)
+            .await
+            .expect("preview");
+        assert_eq!(r.rows_affected, 1);
+        assert_eq!(r.before_rows.len(), 1);
+        assert_eq!(r.after_rows.len(), 1);
+        assert_eq!(r.before_rows[0][1], Value::Int(1));
+        assert_eq!(r.after_rows[0][1], Value::Int(0));
+        // DELETE の別名付きでも失敗せず、固定窓へ縮退して動く。
+        let r = conn
+            .preview_execute_with_limit("DELETE FROM t AS a WHERE a.id = 40", None, 5)
+            .await
+            .expect("aliased delete preview");
+        assert_eq!(r.rows_affected, 1);
+    }
+
+    #[test]
+    fn pk_literal_escapes_and_handles_blobs() {
+        assert_eq!(pk_literal(&Value::Int(7)), "7");
+        assert_eq!(pk_literal(&Value::String("a'b".into())), "'a''b'");
+        assert_eq!(pk_literal(&Value::Bytes("00ff".into())), "X'00ff'");
+        assert_eq!(pk_literal(&Value::Bytes("zz".into())), "NULL");
+        assert_eq!(pk_literal(&Value::Float(f64::NAN)), "NULL");
+    }
+
+    #[test]
+    fn delete_with_alias_is_not_recognised() {
+        assert_eq!(
+            extract_target_table("DELETE FROM t AS a WHERE a.id = 1"),
+            None
+        );
+        assert_eq!(extract_target_table("DELETE FROM t a WHERE a.id = 1"), None);
+        assert_eq!(
+            extract_target_table("DELETE FROM t WHERE id = 1"),
+            Some("t".into())
+        );
+        assert_eq!(extract_target_table("DELETE FROM t"), Some("t".into()));
     }
 
     /// #precision: `decode_cell`'s INTEGER path must stay lossless across

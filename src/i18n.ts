@@ -504,6 +504,7 @@ const en = {
   flightRecorderUndoneBadge: "undone",
   errorFlightAlreadyUndone: "This operation has already been undone.",
   errorFlightPrimaryKeyUnresolved: "Could not identify the primary key columns.",
+  errorViewBaseUnresolved: "Cannot preview: the base tables of this view could not be determined (a non-transactional table such as MyISAM would not be rolled back).",
   errorFlightDriverMismatch: "The connected driver differs from the one used when this was recorded.",
   errorFlightProfileMismatch: "The connected profile differs from the one used when this was recorded.",
   flightRecorderUndoAction: "Undo",
@@ -528,6 +529,8 @@ const en = {
   flightRecorderForceApply: "Force apply anyway",
   flightRecorderUndoApplied: "Undone ({rows} row(s) affected).",
   flightRecorderUndoBlocked: "Not applied — review the conflicts and try again.",
+  flightRecorderAlreadyRestored: "The data was already in the target state, so the record was marked as done without running any SQL.",
+  flightRecorderConflictsChanged: "Not applied — new conflicts appeared after the preview. Review them and try again.",
   flightRecorderClearAction: "Clear all",
   flightRecorderClearConfirmProfile: "Delete all captured writes for this connection? This cannot be undone.",
   flightRecorderClearConfirmAll: "Delete ALL captured writes for every connection? This cannot be undone.",
@@ -1591,7 +1594,10 @@ const en = {
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
   exportSqlIncludeDdl: "Include CREATE TABLE statement",
-  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
+  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Also included in the preview and copy.",
+  exportSqlIncludeDdlMasked: "Masked columns no longer match the original types and constraints, so the CREATE TABLE statement is omitted (a comment is written instead).",
+  exportSqlDdlPreviewLoading: "-- Loading CREATE TABLE definition...",
+  exportSqlDdlPreviewError: "-- Could not load the CREATE TABLE definition: {error}",
   exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
   exportSqlIncludeDdlTableMismatch:
     "The definition can only be included when the table name matches the result's source table.",
@@ -1846,6 +1852,8 @@ const en = {
   routineEditReadOnly: "This connection is read-only, so the definition cannot be applied.",
   routineEditNoteAtomic:
     "The old definition is replaced inside a single transaction. If the new definition has an error, the current one stays as it is.",
+  routineEditNotePgOverload:
+    "If you change the name or the argument types, a new function is created and the old definition stays (it is not dropped). Drop it separately if it is no longer needed.",
   routineEditNoteMysql:
     "MySQL cannot roll back DDL. The existing definition is dropped first and then re-created. If the new definition fails, noobDB tries to restore the original automatically.",
   routineEditNoteMysqlDelimiter:
@@ -1923,6 +1931,7 @@ const en = {
   localPanelDropConfirmOk: "Drop",
   localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "A script is still running in this tab. Stop it first.",
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
   batchBackToResult: "Editor result",
@@ -2305,6 +2314,8 @@ const en = {
   createTableRun: "Create",
   createTableToEditor: "Send to editor",
   createTableReadOnly: "This connection is read-only; creation is disabled.",
+  createTableForeignKeyIncomplete:
+    "A foreign key row is incomplete (it needs child columns, a referenced table and the same number of referenced columns). Complete or remove it; incomplete rows are not created.",
   contextMenuCreateTable: "New table...",
   // テーブル保守操作。
   contextMenuCopyTableName: "Copy table name",
@@ -2358,7 +2369,9 @@ const en = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "Sync auto-increment to data...",
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
-  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to the current maximum value. The following statement will run:",
+  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
+  identitySyncCurrentUnknown: "Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on \"lower\" to sync anyway.",
+  identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed:
     "Could not check whether {table} uses AUTOINCREMENT: {error}",
@@ -2429,6 +2442,8 @@ const en = {
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
+  alterTableDuplicateColumn: "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
+  alterTableRenameCollision: "The new name is the current name of another column: {names}. Swapping or chaining renames cannot be applied safely; rename them in separate steps.",
   alterTableReadOnly: "This connection is read-only; editing columns is disabled.",
   alterTableDestructiveTitle: "{count} destructive change(s) included",
   alterTableDestructiveBody: "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
@@ -3676,6 +3691,7 @@ const en = {
   schemaCompareFieldKey: "key",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "foreign key",
+  schemaCompareFieldComment: "comment",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -4704,6 +4720,10 @@ const en = {
     '"{name}" is a production connection and this plan includes {destructive} destructive statement(s). This cannot be undone.',
   sandboxApplyTypedConfirmOk: "Apply anyway",
   sandboxApplyDone: "Applied {count} statement(s) to the original connection.",
+  sandboxApplyBaseAdvanceFailed:
+    "Applied {count} statement(s) to the original connection, but updating the sandbox baseline failed for: {tables}. Do not apply again; reload the differences and review them. ({error})",
+  sandboxCreateFkLoadFailed:
+    "Could not load foreign keys, so related tables will not be added automatically: {error}",
   toastSandboxCreated: 'Sandbox "{name}" created.',
   toastSandboxDiscarded: 'Sandbox "{name}" discarded.',
   toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
@@ -4732,6 +4752,8 @@ const en = {
   taskHistoryClear: "Clear run history",
   taskHistoryClearConfirm: 'Delete all run history for "{name}"? This cannot be undone.',
   taskRunCatchUp: "catch-up",
+  taskRunStatusSkipped: "skipped",
+  taskRunSkippedReason: "Scheduled run skipped: the previous run was still in progress",
   taskRunRows: "{rows} rows",
   taskRunAttempts: "{n} attempts",
   taskRunBytes: "{bytes} bytes",
@@ -5603,6 +5625,7 @@ const ja: Dict = {
   flightRecorderUndoneBadge: "巻き戻し済み",
   errorFlightAlreadyUndone: "この操作は既に元に戻されています",
   errorFlightPrimaryKeyUnresolved: "主キー列を特定できませんでした",
+  errorViewBaseUnresolved: "ビューの基底表を確認できないためプレビューできません (MyISAM など非トランザクショナルな表は ROLLBACK で戻らないため)。",
   errorFlightDriverMismatch: "接続先のドライバが記録時と異なります",
   errorFlightProfileMismatch: "接続先のプロファイルが記録時と異なります",
   flightRecorderUndoAction: "巻き戻す",
@@ -5627,6 +5650,8 @@ const ja: Dict = {
   flightRecorderForceApply: "強制的に上書きして適用",
   flightRecorderUndoApplied: "巻き戻しました ({rows} 行)。",
   flightRecorderUndoBlocked: "適用しませんでした — 競合を確認してから再度お試しください。",
+  flightRecorderAlreadyRestored: "すでに元の状態だったため、SQL は実行せず記録を取り消し済みにしました。",
+  flightRecorderConflictsChanged: "適用しませんでした — プレビューの後に新しい競合が増えました。内容を確認してから再度お試しください。",
   flightRecorderClearAction: "全消去",
   flightRecorderClearConfirmProfile: "この接続のフライトレコードをすべて削除しますか? この操作は取り消せません。",
   flightRecorderClearConfirmAll: "すべての接続のフライトレコードを削除しますか? この操作は取り消せません。",
@@ -6689,7 +6714,10 @@ const ja: Dict = {
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
   exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
-  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
+  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーにも含まれます。",
+  exportSqlIncludeDdlMasked: "マスクした列は元の型・制約と合わなくなるため、CREATE TABLE 文は出力せずコメントに置き換えます。",
+  exportSqlDdlPreviewLoading: "-- CREATE TABLE の定義を取得しています...",
+  exportSqlDdlPreviewError: "-- CREATE TABLE の定義を取得できませんでした: {error}",
   exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
   exportSqlIncludeDdlTableMismatch:
     "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
@@ -6944,6 +6972,8 @@ const ja: Dict = {
   routineEditReadOnly: "この接続は読み取り専用のため、定義を適用できません。",
   routineEditNoteAtomic:
     "旧定義の置換は 1 つのトランザクションで実行されます。新しい定義にエラーがあっても現在の定義はそのまま残ります。",
+  routineEditNotePgOverload:
+    "名前や引数の型を変えると新しい関数が作られ、旧定義は削除されずに残ります (不要なら別途削除してください)。",
   routineEditNoteMysql:
     "MySQL は DDL を巻き戻せません。既存の定義を先に削除してから再作成します。新しい定義が失敗した場合は、元の定義への復元を自動で試みます。",
   routineEditNoteMysqlDelimiter:
@@ -7019,6 +7049,7 @@ const ja: Dict = {
   localPanelDropConfirmOk: "削除",
   localPanelLoading: "読み込み中…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "このタブではスクリプトを実行中です。先に停止してください。",
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
   batchBackToResult: "エディタの結果",
@@ -7401,6 +7432,8 @@ const ja: Dict = {
   createTableRun: "作成",
   createTableToEditor: "エディタへ送る",
   createTableReadOnly: "この接続は読み取り専用のため作成できません。",
+  createTableForeignKeyIncomplete:
+    "入力が途中の外部キー行があります (子列・参照先テーブル・同数の参照列が必要です)。入力を完成させるか行を削除してください。不完全な行は作成されません。",
   contextMenuCreateTable: "テーブルを新規作成",
   // テーブル保守操作。
   contextMenuCopyTableName: "テーブル名をコピー",
@@ -7454,7 +7487,9 @@ const ja: Dict = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "採番を実データに同期",
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
-  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます。次の文を実行します:",
+  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
+  identitySyncCurrentUnknown: "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
+  identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed:
     "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
@@ -7525,6 +7560,8 @@ const ja: Dict = {
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
+  alterTableDuplicateColumn: "適用後に列名が重複します: {names}。どちらかの名前を変えるか削除してください。",
+  alterTableRenameCollision: "リネーム先が別の列の現在の名前と同じです: {names}。列名の入れ替えや連鎖は安全に実行できないので、段階を分けてリネームしてください。",
   alterTableReadOnly: "この接続は読み取り専用のため、列の編集はできません。",
   alterTableDestructiveTitle: "破壊的な変更を {count} 件含みます",
   alterTableDestructiveBody: "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",
@@ -8768,6 +8805,7 @@ const ja: Dict = {
   schemaCompareFieldKey: "キー",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "外部キー",
+  schemaCompareFieldComment: "コメント",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -9795,6 +9833,10 @@ const ja: Dict = {
     "「{name}」は本番接続で、この適用には破壊的なステートメントが {destructive} 件含まれます。元に戻せません。",
   sandboxApplyTypedConfirmOk: "それでも適用する",
   sandboxApplyDone: "{count} 文を元の接続へ適用しました。",
+  sandboxApplyBaseAdvanceFailed:
+    "{count} 文を元の接続へ適用しましたが、サンドボックスの基準 (ベース) の更新に失敗した表があります: {tables}。再適用せず、差分を再読み込みして確認してください。({error})",
+  sandboxCreateFkLoadFailed:
+    "外部キーを取得できなかったため、関連テーブルは自動で追加されません: {error}",
   toastSandboxCreated: "サンドボックス「{name}」を作成しました。",
   toastSandboxDiscarded: "サンドボックス「{name}」を破棄しました。",
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",
@@ -9823,6 +9865,8 @@ const ja: Dict = {
   taskHistoryClear: "実行履歴を消去",
   taskHistoryClearConfirm: "タスク「{name}」の実行履歴をすべて削除しますか? この操作は取り消せません。",
   taskRunCatchUp: "追い掛け実行",
+  taskRunStatusSkipped: "見送り",
+  taskRunSkippedReason: "予定の実行を見送りました (前の実行がまだ終わっていません)",
   taskRunRows: "{rows} 行",
   taskRunAttempts: "{n} 回試行",
   taskRunBytes: "{bytes} バイト",

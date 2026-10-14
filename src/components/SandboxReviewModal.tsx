@@ -315,22 +315,42 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
       // Advance the base for every table whose data diff was actually
       // written back, so the next review doesn't show phantom conflicts for
       // rows that are now in sync (see `sandboxAdvanceBase`'s doc).
+      // 元 DB への書き込みはもう済んでいるので、base 更新が一部の表で失敗しても
+      // 適用ボタンを残さない (同じ文の再適用で INSERT の重複・ALTER の再実行になる)。
+      // 失敗した表を集め、最後に差分を再読込して結果を知らせる。
+      const advanceFailures: { table: string; error: string }[] = [];
       for (const table of sandbox.tables) {
         const st = tables[table];
         if (!st?.diff || st.diff.desired.rows.length === 0) continue;
         const skipKeys = sandboxSkipKeys(st.diff.conflicts, st.resolutions);
-        await api.sandboxAdvanceBase({
-          sandboxId: sandbox.id,
-          sandboxSessionId,
-          table,
-          diffId: st.diff.desired_diff_id,
-          skipKeys,
-          allowDelete,
-        });
+        try {
+          await api.sandboxAdvanceBase({
+            sandboxId: sandbox.id,
+            sandboxSessionId,
+            table,
+            diffId: st.diff.desired_diff_id,
+            skipKeys,
+            allowDelete,
+          });
+        } catch (e) {
+          advanceFailures.push({ table, error: String(e) });
+        }
       }
-      setApplyResult(t("sandboxApplyDone", { count: combined.statements.length }));
+      const count = combined.statements.length;
       setCombined(null);
+      // `loadAll` は結果表示を消すので、先に呼んでから結果を設定する。
       loadAll();
+      if (advanceFailures.length > 0) {
+        setOpError(
+          t("sandboxApplyBaseAdvanceFailed", {
+            count,
+            tables: advanceFailures.map((f) => f.table).join(", "),
+            error: advanceFailures[0].error,
+          }),
+        );
+      } else {
+        setApplyResult(t("sandboxApplyDone", { count }));
+      }
     } catch (e) {
       setOpError(String(e));
     } finally {
