@@ -281,6 +281,8 @@ fn build_fixtures() -> serde_json::Value {
                 notes: vec!["overview_skipped_type".into()],
             },
         ],
+        distinct_approximate: true,
+        notes: vec!["overview_approx_no_stats".into()],
         scans: 1,
     };
     let schema_cache_time = t::SchemaCacheTime {

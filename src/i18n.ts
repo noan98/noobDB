@@ -2140,6 +2140,7 @@ const en = {
   pageSizeLabel: "Per page",
   // スキーマ横断のグローバルオブジェクト検索。
   objSearchPlaceholder: "Search tables and columns across the schema...",
+  objSearchScopeLabel: "Search scope",
   objSearchScopeCurrent: "Current DB",
   objSearchScopeAll: "All DBs",
   objSearchNoResults: "No matching tables or columns",
@@ -2890,6 +2891,7 @@ const en = {
   gridFilterMinPlaceholder: "Min",
   gridFilterMaxPlaceholder: "Max",
   gridFilterClearColumn: "Clear",
+  gridFilterClearClientColumn: "Clear client filter",
   gridCondFormatLabel: "Conditional format",
   gridCondFormatOff: "None",
   gridCondFormatBar: "Data bar",
@@ -2949,7 +2951,7 @@ const en = {
   gridFilteredCount: "Showing {shown} of {total} rows",
   gridClearFilters: "Clear filters",
   gridNoMatches: "No rows match the current filters.",
-  gridResizeColumn: "Drag to resize (or use the left/right arrow keys); double-click to reset",
+  gridResizeColumn: "Drag to resize (or use the left/right arrow keys); double-click to fit the content",
   gridDragColumn: "Drag to reorder column",
   gridMoveColumnLeft: "Move left",
   gridMoveColumnRight: "Move right",
@@ -4626,6 +4628,8 @@ const en = {
     "No planner statistics for this column yet (run ANALYZE); the exact distinct count is shown.",
   profileNoteUnknown: "Part of the profile could not be computed.",
   profileNoteOverviewSkipped: "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
+  profileOverviewNoStats:
+    "No planner statistics for this table yet (run ANALYZE), so DISTINCT is omitted in approximate mode.",
   profileOverviewRun: "All columns overview",
   profileOverviewRerun: "Refresh overview",
   profileOverviewHint:
@@ -7550,6 +7554,7 @@ const ja: Dict = {
   pageSizeLabel: "1 ページ",
   // スキーマ横断のグローバルオブジェクト検索。
   objSearchPlaceholder: "テーブル/カラムをスキーマ横断で検索...",
+  objSearchScopeLabel: "検索範囲",
   objSearchScopeCurrent: "現在の DB",
   objSearchScopeAll: "全 DB",
   objSearchNoResults: "一致するテーブル/カラムがありません",
@@ -8295,6 +8300,7 @@ const ja: Dict = {
   gridFilterMinPlaceholder: "下限",
   gridFilterMaxPlaceholder: "上限",
   gridFilterClearColumn: "クリア",
+  gridFilterClearClientColumn: "クライアント条件をクリア",
   gridCondFormatLabel: "条件付き書式",
   gridCondFormatOff: "なし",
   gridCondFormatBar: "データバー",
@@ -8354,7 +8360,7 @@ const ja: Dict = {
   gridFilteredCount: "{total} 件中 {shown} 件を表示",
   gridClearFilters: "フィルターをクリア",
   gridNoMatches: "条件に一致する行がありません。",
-  gridResizeColumn: "ドラッグでサイズ変更 (左右キーでも変更できます)、ダブルクリックでリセット",
+  gridResizeColumn: "ドラッグでサイズ変更 (左右キーでも変更できます)、ダブルクリックで内容に合わせる",
   gridDragColumn: "ドラッグで列を並び替え",
   gridMoveColumnLeft: "左へ移動",
   gridMoveColumnRight: "右へ移動",
@@ -10019,6 +10025,8 @@ const ja: Dict = {
     "この列の統計情報がまだありません (ANALYZE で収集されます)。正確な DISTINCT 数を表示しています。",
   profileNoteUnknown: "プロファイルの一部を計算できませんでした。",
   profileNoteOverviewSkipped: "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
+  profileOverviewNoStats:
+    "この表の統計情報がまだ無い (ANALYZE で収集) ため、近似モードでは DISTINCT を省略しています。",
   profileOverviewRun: "全列の概要",
   profileOverviewRerun: "概要を更新",
   profileOverviewHint:

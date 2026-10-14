@@ -40,30 +40,28 @@ pub(crate) async fn collect_and_analyze(
 ) -> Result<SchemaHealthReport> {
     let driver = conn.driver_kind();
 
+    // 互いに依存しない 6 本の取得を同時に発行して往復待ちを重ねる (#1609)。
+    // 以前は 1 本ずつ await しており、RTT の高いリモート DB では往復が 6 倍になっていた。
+    // 列とインデックスは DB 全体を 1 問い合わせずつで取得する (#1255)。
+    let (all_tables, objects, columns, indexes, foreign_keys, unused) = tokio::try_join!(
+        conn.tables(database),
+        conn.schema_objects(database),
+        conn.columns_for_database(database),
+        conn.indexes_for_database(database),
+        conn.foreign_keys(database),
+        conn.unused_indexes(database),
+    )?;
     // ベーステーブルのみを対象にする。`tables` はビュー/マテビューも含むため、
     // `schema_objects` の view / materialized_view を引いて除外する。
-    let all_tables = conn.tables(database).await?;
-    let objects = conn.schema_objects(database).await?;
     let view_names: HashSet<String> = objects
         .iter()
         .filter(|o| o.kind == "view" || o.kind == "materialized_view")
         .map(|o| o.name.clone())
         .collect();
-
-    // 列とインデックスは DB 全体を 1 問い合わせずつで取得する (#1255)。以前は
-    // テーブルごとに `columns` / `list_indexes` を 1 往復ずつ呼んでいた。
-    let mut columns_by_table: HashMap<String, Vec<TableColumnInfo>> = conn
-        .columns_for_database(database)
-        .await?
-        .into_iter()
-        .map(|t| (t.name, t.columns))
-        .collect();
-    let mut indexes_by_table: HashMap<String, Vec<IndexInfo>> = conn
-        .indexes_for_database(database)
-        .await?
-        .into_iter()
-        .map(|t| (t.name, t.indexes))
-        .collect();
+    let mut columns_by_table: HashMap<String, Vec<TableColumnInfo>> =
+        columns.into_iter().map(|t| (t.name, t.columns)).collect();
+    let mut indexes_by_table: HashMap<String, Vec<IndexInfo>> =
+        indexes.into_iter().map(|t| (t.name, t.indexes)).collect();
 
     let mut tables = Vec::new();
     for name in all_tables {
@@ -76,9 +74,6 @@ pub(crate) async fn collect_and_analyze(
             name,
         });
     }
-
-    let foreign_keys = conn.foreign_keys(database).await?;
-    let unused = conn.unused_indexes(database).await?;
 
     Ok(analyze(&AdvisorInput {
         driver,

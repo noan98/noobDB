@@ -525,7 +525,9 @@ async fn run_action(
             } else {
                 None
             };
-            let all = match assertions::store::load_all() {
+            let all = match crate::commands::assertions::blocking_store(assertions::store::load_all)
+                .await
+            {
                 Ok(v) => v,
                 Err(e) => return TaskOutcome::err(e.to_string()),
             };

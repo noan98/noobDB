@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::js_compat::js_number_to_string;
 use super::sync::quote_ident;
 use super::types::Value;
 use super::DriverKind;
@@ -230,45 +231,6 @@ fn quote_string(driver: DriverKind, s: &str) -> String {
     format!("'{escaped}'")
 }
 
-/// JS の `Number.prototype.toString()` (10 進) と同じ表記。`f64::to_string` は指数
-/// 表記を使わないため (`1e21` が `1000000000000000000000` になる) 自前で組み立てる。
-pub fn js_number_to_string(x: f64) -> String {
-    if x.is_nan() {
-        return "NaN".to_string();
-    }
-    if x == 0.0 {
-        return "0".to_string();
-    }
-    if x.is_infinite() {
-        return if x > 0.0 { "Infinity" } else { "-Infinity" }.to_string();
-    }
-    let sign = if x < 0.0 { "-" } else { "" };
-    // `{:e}` は最短の有効数字列を `d.ddde±x` 形式で返す。
-    let sci = format!("{:e}", x.abs());
-    let (mantissa, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let exp: i32 = exp.parse().unwrap_or(0);
-    let k = digits.len() as i32;
-    // 値 = 0.digits × 10^n
-    let n = exp + 1;
-    let body = if k <= n && n <= 21 {
-        format!("{digits}{}", "0".repeat((n - k) as usize))
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{digits}", "0".repeat((-n) as usize))
-    } else {
-        let e = n - 1;
-        let e_sign = if e < 0 { "-" } else { "+" };
-        if k == 1 {
-            format!("{digits}e{e_sign}{}", e.abs())
-        } else {
-            format!("{}.{}e{e_sign}{}", &digits[..1], &digits[1..], e.abs())
-        }
-    };
-    format!("{sign}{body}")
-}
-
 /// 1 列ぶんの検索述語 (WHERE の断片) を生成する。走査対象外の型・数値列に対する
 /// 非数値検索語など、意味のない組み合わせは `None` を返す。
 ///
@@ -436,27 +398,6 @@ pub fn parse_scan_row(columns: &[String], row: &[Value]) -> Vec<ColumnHit> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn js_number_formatting_matches_ecmascript() {
-        let cases = [
-            (42.0, "42"),
-            (-2.75, "-2.75"),
-            (1e10, "10000000000"),
-            (7.0, "7"),
-            (1.5, "1.5"),
-            (1e21, "1e+21"),
-            (1e-7, "1e-7"),
-            (0.000001, "0.000001"),
-            (1.5e-7, "1.5e-7"),
-            (123456789012345680000.0, "123456789012345680000"),
-            (1.2345e25, "1.2345e+25"),
-            (-0.0, "0"),
-        ];
-        for (x, want) in cases {
-            assert_eq!(js_number_to_string(x), want, "{x:e}");
-        }
-    }
 
     #[test]
     fn numeric_literal_keeps_64bit_integers_exact_and_rejects_overflow() {

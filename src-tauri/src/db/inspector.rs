@@ -457,10 +457,26 @@ fn stat_key(digest: &str, database: Option<&str>) -> String {
     format!("{digest} {}", database.unwrap_or(""))
 }
 
-fn index_snapshot(stats: &[StatementStat]) -> HashMap<String, StatementStat> {
+/// 差分計算用の索引。差分に要るのは数値フィールドだけなので、SQL 本文 (`fingerprint`) は
+/// 複製せず空文字列にする (本文は `current` と送信済み集合 `sent` で管理する)。
+/// 毎ポーリングで最大 500 行ぶんの本文を複製する無駄を避ける。
+fn index_snapshot_light(stats: &[StatementStat]) -> HashMap<String, StatementStat> {
     stats
         .iter()
-        .map(|s| (stat_key(&s.digest, s.database.as_deref()), s.clone()))
+        .map(|s| {
+            (
+                stat_key(&s.digest, s.database.as_deref()),
+                StatementStat {
+                    digest: s.digest.clone(),
+                    fingerprint: String::new(),
+                    database: s.database.clone(),
+                    calls: s.calls,
+                    total_time_ms: s.total_time_ms,
+                    max_time_ms: s.max_time_ms,
+                    rows: s.rows,
+                },
+            )
+        })
         .collect()
 }
 
@@ -539,7 +555,7 @@ impl InspectorState {
 
     /// 記録開始: スナップショットを baseline / 直前 / 最新にし、送信済み集合を空にする。
     pub fn start(&mut self, snapshot: Vec<StatementStat>, now: Instant) {
-        let indexed = index_snapshot(&snapshot);
+        let indexed = index_snapshot_light(&snapshot);
         self.prev = Some((indexed.clone(), now));
         self.baseline = Some(indexed);
         self.current = snapshot;
@@ -559,7 +575,7 @@ impl InspectorState {
                     .collect();
             }
         }
-        self.prev = Some((index_snapshot(&snapshot), now));
+        self.prev = Some((index_snapshot_light(&snapshot), now));
         self.current = snapshot;
     }
 
@@ -673,7 +689,7 @@ mod tests {
     }
 
     fn delta(base: &[StatementStat], cur: &[StatementStat]) -> Vec<StatDelta> {
-        compute_stat_delta(&index_snapshot(base), cur)
+        compute_stat_delta(&index_snapshot_light(base), cur)
     }
 
     #[test]

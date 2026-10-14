@@ -24,7 +24,7 @@ use super::schema::{fetch_columns_bulk, fetch_indexes_bulk};
 const DB_CONCURRENCY: usize = 4;
 /// 同じ DB の開いているテーブルがこの数以上なら、テーブルごとの問い合わせではなく
 /// DB 単位の一括取得 (#1255) を使う。
-const BULK_THRESHOLD: usize = 4;
+pub(super) const BULK_THRESHOLD: usize = 4;
 
 /// 開いている DB 1 件分のツリー内容。取得に失敗した項目は、従来のフロントの
 /// 挙動に合わせて `None` (= 反映しない) か空配列になる。
@@ -104,10 +104,14 @@ async fn load_tables(
     let conn = &session.conn;
     let cache = &session.schema_cache;
 
-    // DB ごとの件数を数え、多い DB は一括取得に切り替える。
+    // DB ごとの**未キャッシュ**のテーブル数を数え、多い DB だけ一括取得に切り替える
+    // (#1609)。全件キャッシュ済みなら DB 全体の問い合わせは省く。以前はキャッシュ
+    // 済みでも件数だけで一括取得し、一覧の再取得のたびに情報スキーマを全件引いていた。
     let mut per_db: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for (_, db, _) in &wanted {
-        *per_db.entry(db.as_str()).or_default() += 1;
+    for (_, db, table) in &wanted {
+        if !cache.has_table_meta(db, table).await {
+            *per_db.entry(db.as_str()).or_default() += 1;
+        }
     }
     let bulk_dbs: Vec<String> = per_db
         .iter()

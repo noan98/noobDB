@@ -100,7 +100,12 @@ export function isColumnFilterActive(f: ColumnFilter | undefined): f is ColumnFi
   return !!f && (f.nullMode !== "any" || filterHasValue(f));
 }
 
-function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFilter): boolean {
+/**
+ * 値条件 1 件を「セル値 → 真偽」の述語に一度だけコンパイルする (#1610)。
+ * 小文字化したクエリ・整数判定・BigInt 化した境界値・Number 化した境界値は行をまたいで
+ * 変わらないので、行ごとに再計算しない。判定結果は従来の `matchesColumnValue` と同じ。
+ */
+function compileValuePredicate(f: ColumnFilter): (v: Exclude<CellValue, null | undefined>) => boolean {
   switch (f.op) {
     case "contains":
     case "equals":
@@ -108,20 +113,19 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
     case "startsWith":
     case "endsWith": {
       const exact = f.caseSensitive === true && (f.op === "equals" || f.op === "notEquals");
-      const s = exact ? String(v) : String(v).toLowerCase();
       const q = exact ? f.value : f.value.toLowerCase();
-      if (f.op === "contains") return s.includes(q);
-      if (f.op === "equals") return s === q;
-      if (f.op === "notEquals") return s !== q;
-      if (f.op === "startsWith") return s.startsWith(q);
-      return s.endsWith(q);
+      const text = (v: Exclude<CellValue, null | undefined>) => (exact ? String(v) : String(v).toLowerCase());
+      if (f.op === "contains") return (v) => text(v).includes(q);
+      if (f.op === "equals") return (v) => text(v) === q;
+      if (f.op === "notEquals") return (v) => text(v) !== q;
+      if (f.op === "startsWith") return (v) => text(v).startsWith(q);
+      return (v) => text(v).endsWith(q);
     }
     case "eq":
     case "ne":
     case "gt":
     case "lt":
     case "between": {
-      const raw = String(v).trim();
       const a = f.value.trim();
       const b = f.value2.trim();
       // Big integers (e.g. BIGINT ids beyond 2^53) lose precision through
@@ -132,29 +136,51 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
       // already accepts.
       const operands = f.op === "between" ? [a, b] : [a];
       const present = operands.filter((x) => x !== "");
-      if (isIntegerLiteral(raw) && present.length > 0 && present.every(isIntegerLiteral)) {
-        const n = BigInt(raw);
-        if (f.op === "eq") return n === BigInt(a);
-        if (f.op === "ne") return n !== BigInt(a);
-        if (f.op === "gt") return n > BigInt(a);
-        if (f.op === "lt") return n < BigInt(a);
-        // between: an empty bound is treated as open.
-        return (a === "" || n >= BigInt(a)) && (b === "" || n <= BigInt(b));
-      }
-      const n = Number(v);
-      if (Number.isNaN(n)) return false;
+      const allInt = present.length > 0 && present.every(isIntegerLiteral);
+      const abig = allInt && a !== "" ? BigInt(a) : null;
+      // value2 は between のときだけ検証済み。op を切り替えても残るので、他の op では使わない。
+      const bbig = f.op === "between" && allInt && b !== "" ? BigInt(b) : null;
       const an = a === "" ? NaN : Number(a);
-      if (f.op === "eq") return !Number.isNaN(an) && n === an;
-      if (f.op === "ne") return !Number.isNaN(an) && n !== an;
-      if (f.op === "gt") return !Number.isNaN(an) && n > an;
-      if (f.op === "lt") return !Number.isNaN(an) && n < an;
-      // between: an empty bound is treated as open (-∞ / +∞).
       const bn = b === "" ? NaN : Number(b);
       const lo = Number.isNaN(an) ? -Infinity : an;
       const hi = Number.isNaN(bn) ? Infinity : bn;
-      return n >= lo && n <= hi;
+      const op = f.op;
+      return (v) => {
+        if (allInt) {
+          const raw = String(v).trim();
+          if (isIntegerLiteral(raw)) {
+            const n = BigInt(raw);
+            if (op === "eq") return abig !== null && n === abig;
+            if (op === "ne") return abig !== null && n !== abig;
+            if (op === "gt") return abig !== null && n > abig;
+            if (op === "lt") return abig !== null && n < abig;
+            // between: an empty bound is treated as open.
+            return (abig === null || n >= abig) && (bbig === null || n <= bbig);
+          }
+        }
+        const n = Number(v);
+        if (Number.isNaN(n)) return false;
+        if (op === "eq") return !Number.isNaN(an) && n === an;
+        if (op === "ne") return !Number.isNaN(an) && n !== an;
+        if (op === "gt") return !Number.isNaN(an) && n > an;
+        if (op === "lt") return !Number.isNaN(an) && n < an;
+        // between: an empty bound is treated as open (-∞ / +∞).
+        return n >= lo && n <= hi;
+      };
     }
   }
+}
+
+/** フィルタ条件オブジェクト単位でコンパイル済み述語を使い回す (状態更新ごとに新オブジェクトになる)。 */
+const compiledPredicates = new WeakMap<ColumnFilter, (v: Exclude<CellValue, null | undefined>) => boolean>();
+
+function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFilter): boolean {
+  let p = compiledPredicates.get(f);
+  if (!p) {
+    p = compileValuePredicate(f);
+    compiledPredicates.set(f, p);
+  }
+  return p(v);
 }
 
 /** 列フィルタ 1 つをセル値 1 つに適用する (`columnFilter` の本体)。非アクティブは常に通す。 */

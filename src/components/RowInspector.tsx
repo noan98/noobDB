@@ -16,7 +16,7 @@ import { inspectorWidth, rowSlideDirection, type NavDirection } from "./rowInspe
 import { copyToClipboard } from "./clipboard";
 import { formatJsonLossless } from "./jsonTree";
 import { useToast } from "./Toast";
-import { Icon, ICON_SIZES } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
 import { Tooltip } from "./Tooltip";
 import { withComment } from "./schemaComment";
@@ -124,6 +124,50 @@ function tryFormatJson(s: string): string | null {
   const trimmed = s.trim();
   if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return null;
   return formatJsonLossless(trimmed, 2);
+}
+
+/** インスペクタのヘッダ操作に使う 24px のアイコンボタン (Tooltip + aria-label 込み, #1610)。 */
+function InspectorIconButton({
+  label,
+  tooltip,
+  icon,
+  disabled,
+  onClick,
+  ...rest
+}: {
+  label: string;
+  /** ツールチップ文言 (省略時は label)。無効理由を出したいときに渡す。 */
+  tooltip?: string;
+  icon: IconName;
+  disabled?: boolean;
+  onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  "aria-haspopup"?: "menu";
+}) {
+  return (
+    <Tooltip label={tooltip ?? label} focusableWrapper={disabled}>
+      <chakra.button
+        type="button"
+        display="inline-flex"
+        alignItems="center"
+        justifyContent="center"
+        w="24px"
+        h="24px"
+        border="none"
+        bg="transparent"
+        color="app.textMuted"
+        borderRadius="sm"
+        cursor="pointer"
+        _hover={{ bg: "app.hover", color: "app.text" }}
+        _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+        disabled={disabled}
+        onClick={onClick}
+        aria-label={label}
+        {...rest}
+      >
+        <Icon name={icon} size={ICON_SIZES.md} />
+      </chakra.button>
+    </Tooltip>
+  );
 }
 
 const MotionDrawer = chakra(motion.div, {}, { forwardProps: ["transition"] });
@@ -468,122 +512,38 @@ export function RowInspector({
               {t("gridRowInspectorTitle", { row: rowNumber })}
             </chakra.span>
             {canEdit && !editing && (
-              <Tooltip
-                label={edit?.blockedReason ? t(edit.blockedReason) : t("rowInspectorEdit")}
-                focusableWrapper={edit?.blockedReason != null}
-              >
-                <chakra.button
-                  type="button"
-                  display="inline-flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  w="24px"
-                  h="24px"
-                  border="none"
-                  bg="transparent"
-                  color="app.textMuted"
-                  borderRadius="sm"
-                  cursor="pointer"
-                  _hover={{ bg: "app.hover", color: "app.text" }}
-                  _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-                  disabled={edit?.blockedReason != null}
-                  onClick={startEdit}
-                  aria-label={t("rowInspectorEdit")}
-                >
-                  <Icon name="pencil" size={ICON_SIZES.md} />
-                </chakra.button>
-              </Tooltip>
+              <InspectorIconButton
+                label={t("rowInspectorEdit")}
+                tooltip={edit?.blockedReason ? t(edit.blockedReason) : t("rowInspectorEdit")}
+                icon="pencil"
+                disabled={edit?.blockedReason != null}
+                onClick={startEdit}
+              />
             )}
             {rowSql && !editing && (
-              <Tooltip label={t("rowInspectorCopySql")}>
-                <chakra.button
-                  type="button"
-                  display="inline-flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  w="24px"
-                  h="24px"
-                  border="none"
-                  bg="transparent"
-                  color="app.textMuted"
-                  borderRadius="sm"
-                  cursor="pointer"
-                  _hover={{ bg: "app.hover", color: "app.text" }}
-                  aria-haspopup="menu"
-                  onClick={(e) => {
-                    const r = e.currentTarget.getBoundingClientRect();
-                    setSqlMenu({ x: r.left, y: r.bottom + 4 });
-                  }}
-                  aria-label={t("rowInspectorCopySql")}
-                >
-                  <Icon name="insert-sql" size={ICON_SIZES.md} />
-                </chakra.button>
-              </Tooltip>
+              <InspectorIconButton
+                label={t("rowInspectorCopySql")}
+                icon="insert-sql"
+                aria-haspopup="menu"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setSqlMenu({ x: r.left, y: r.bottom + 4 });
+                }}
+              />
             )}
-            <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev || editing}>
-              <chakra.button
-                type="button"
-                display="inline-flex"
-                alignItems="center"
-                justifyContent="center"
-                w="24px"
-                h="24px"
-                border="none"
-                bg="transparent"
-                color="app.textMuted"
-                borderRadius="sm"
-                cursor="pointer"
-                _hover={{ bg: "app.hover", color: "app.text" }}
-                _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-                disabled={!hasPrev || editing}
-                onClick={onPrev}
-                aria-label={t("gridInspectorPrev")}
-              >
-                <Icon name="chevron-left" size={ICON_SIZES.md} />
-              </chakra.button>
-            </Tooltip>
-            <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext || editing}>
-              <chakra.button
-                type="button"
-                display="inline-flex"
-                alignItems="center"
-                justifyContent="center"
-                w="24px"
-                h="24px"
-                border="none"
-                bg="transparent"
-                color="app.textMuted"
-                borderRadius="sm"
-                cursor="pointer"
-                _hover={{ bg: "app.hover", color: "app.text" }}
-                _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-                disabled={!hasNext || editing}
-                onClick={onNext}
-                aria-label={t("gridInspectorNext")}
-              >
-                <Icon name="chevron-right" size={ICON_SIZES.md} />
-              </chakra.button>
-            </Tooltip>
-            <Tooltip label={t("gridInspectorClose")}>
-              <chakra.button
-                type="button"
-                display="inline-flex"
-                alignItems="center"
-                justifyContent="center"
-                w="24px"
-                h="24px"
-                border="none"
-                bg="transparent"
-                color="app.textMuted"
-                borderRadius="sm"
-                cursor="pointer"
-                _hover={{ bg: "app.hover", color: "app.text" }}
-                onClick={onClose}
-                aria-label={t("gridInspectorClose")}
-              >
-                <Icon name="close" size={ICON_SIZES.md} />
-              </chakra.button>
-            </Tooltip>
+            <InspectorIconButton
+              label={t("gridInspectorPrev")}
+              icon="chevron-left"
+              disabled={!hasPrev || editing}
+              onClick={onPrev}
+            />
+            <InspectorIconButton
+              label={t("gridInspectorNext")}
+              icon="chevron-right"
+              disabled={!hasNext || editing}
+              onClick={onNext}
+            />
+            <InspectorIconButton label={t("gridInspectorClose")} icon="close" onClick={onClose} />
           </Box>
 
           {hasRelated && (

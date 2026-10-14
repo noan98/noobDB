@@ -445,7 +445,7 @@ pub async fn incoming_foreign_keys(
     let conn = &session.conn;
     let all = session
         .schema_cache
-        .foreign_keys(&database, || conn.foreign_keys(&database))
+        .foreign_keys_shared(&database, || conn.foreign_keys(&database))
         .await?;
     Ok(filter_incoming_foreign_keys(&all, &table))
 }

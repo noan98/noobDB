@@ -263,7 +263,7 @@ impl ScriptAnalyzer {
 }
 
 /// 先頭の空白を除いて `word` で始まり、直後が単語文字でなければ true (大文字小文字無視)。
-fn starts_with_word(sql: &str, word: &str) -> bool {
+pub(crate) fn starts_with_word(sql: &str, word: &str) -> bool {
     let s = sql.trim_start().as_bytes();
     let w = word.as_bytes();
     s.len() >= w.len()

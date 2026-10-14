@@ -1000,10 +1000,15 @@ impl Runner {
             Ok((r, cut)) => {
                 self.succeeded += 1;
                 self.rows_affected = self.rows_affected.saturating_add(r.rows_affected);
-                if !crate::db::is_read_only_sql_for(self.driver, &stmt.sql) {
+                // mysqldump の大半を占める INSERT は、全文のマスク走査を省いて書き込み・
+                // 非 DDL と決める (解析側 `script_analysis` と同じ早期判定)。
+                let is_insert = crate::db::script_analysis::starts_with_word(&stmt.sql, "insert");
+                if is_insert || !crate::db::is_read_only_sql_for(self.driver, &stmt.sql) {
                     self.wrote = true;
                 }
-                if crate::db::sql_may_change_schema(self.driver, &stmt.sql) {
+                let may_change_schema =
+                    !is_insert && crate::db::sql_may_change_schema(self.driver, &stmt.sql);
+                if may_change_schema {
                     self.schema_changed = true;
                 }
                 if let Some(db) = parse_use_database(self.driver, &stmt.sql) {
@@ -1013,9 +1018,7 @@ impl Runner {
                     self.emit_batch(BatchStatementResult::ok(stmt.sql.clone(), &r).with_cut(cut));
                 }
                 if self.guard.active {
-                    if self.driver == crate::db::DriverKind::Mysql
-                        && crate::db::sql_may_change_schema(self.driver, &stmt.sql)
-                    {
+                    if self.driver == crate::db::DriverKind::Mysql && may_change_schema {
                         // MySQL の DDL は暗黙 COMMIT する: ここまでのトランザクションは確定済み。
                         self.tx_restart_unsafe = true;
                     }
