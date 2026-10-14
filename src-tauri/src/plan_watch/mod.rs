@@ -651,7 +651,11 @@ pub fn is_full_scan_access(access: Option<&str>) -> bool {
     match access {
         None => false,
         Some(a) => {
-            a == "ALL" || a.eq_ignore_ascii_case("seq scan") || a.eq_ignore_ascii_case("SCAN")
+            // PostgreSQL の並列プランでは Node Type が "Parallel Seq Scan" になる (planDiff.ts と同じ)。
+            a == "ALL"
+                || a.eq_ignore_ascii_case("seq scan")
+                || a.eq_ignore_ascii_case("parallel seq scan")
+                || a.eq_ignore_ascii_case("SCAN")
         }
     }
 }
@@ -1011,6 +1015,14 @@ mod tests {
         let c = mysql_ops(&MYSQL_PLAN.replace("1000", "100000"));
         assert_eq!(plan_fingerprint(&a), plan_fingerprint(&b));
         assert_ne!(plan_fingerprint(&a), plan_fingerprint(&c));
+    }
+
+    #[test]
+    fn parallel_seq_scan_counts_as_full_scan() {
+        assert!(is_full_scan_access(Some("Parallel Seq Scan")));
+        assert!(is_full_scan_access(Some("Seq Scan")));
+        assert!(!is_full_scan_access(Some("Parallel Index Scan")));
+        assert!(!is_full_scan_access(None));
     }
 
     #[test]

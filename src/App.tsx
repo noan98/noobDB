@@ -1068,8 +1068,10 @@ function explainTabTitle(sql: string): string {
   return `${base}: ${snippet}`;
 }
 
-function makeExplainTab(sql: string): Tab {
-  return makeTab("explain", explainTabTitle(sql), sql);
+function makeExplainTab(sql: string, database?: string): Tab {
+  const tab = makeTab("explain", explainTabTitle(sql), sql);
+  // 元タブが別 DB を指定していたら引き継ぐ (既定 DB の同名テーブルを EXPLAIN しない)。
+  return database ? { ...tab, database } : tab;
 }
 
 /** ドラッグ&ドロップで受理するファイル種別の判定結果。 */
@@ -5624,10 +5626,12 @@ export default function App() {
       return;
     }
     const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
-    const tab = makeExplainTab(sql);
+    const tab = makeExplainTab(sql, sourceTab.database);
     addTab(tab, owner?.id);
     // 新規 EXPLAIN タブは常に推定モードから始める (実測は EXPLAIN タブのトグルで opt-in)。
-    void runExplainInTab(tab.id, sql, false);
+    // addTab 直後の描画前クロージャ `tabs` からは新タブを引けないため、tab を直接渡して
+    // database (と前回結果なし) を実行側へ確実に伝える。
+    void runExplainInTab(tab.id, sql, false, { tab });
   }, [runExplainInTab, addTab, panesRef]);
 
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので

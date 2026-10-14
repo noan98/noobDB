@@ -18,6 +18,7 @@ import {
   PROCESS_LIVE_FIELDS,
   PROCESS_MIN_SECS_OPTIONS,
   pruneSelection,
+  reconcileKillTargets,
   sortProcesses,
   type ProcessFilter,
   type ProcessSortKey,
@@ -274,6 +275,8 @@ export function ProcessListPanel({
   const killIds = useCallback(async (rawIds: number[], statementOnly = false) => {
     const ids = [...rawIds].sort((a, b) => a - b);
     if (ids.length === 0 || killing) return;
+    // 確認ダイアログを開いた時点の一覧。確定直前に取り直した一覧と突き合わせて pid 再利用を検知する。
+    const shown = processes;
     // 自アプリのプール接続を kill するとこのセッション自体が切断されるため、
     // 選択に含まれている場合は確認文に強い警告を足す (#自己kill による切断)。
     const includesSelf = processes.some((p) => ids.includes(p.id) && p.is_self);
@@ -300,15 +303,37 @@ export function ProcessListPanel({
     if (!ok) return;
     setKilling(true);
     busyRef.current = true;
+    // 確認中に対象が終了して id が別接続へ再利用されていないか、kill 直前に再照合する。
+    // 一覧を取り直せなければ安全側 (kill しない) に倒す。
+    let targetIds = ids;
+    try {
+      const fresh = await api.listProcesses(sessionId);
+      const { keep, dropped } = reconcileKillTargets(ids, shown, fresh);
+      targetIds = keep;
+      if (dropped.length > 0) {
+        toast.info(t("processKillTargetsChanged", { ids: dropped.join(", ") }));
+      }
+    } catch (e) {
+      busyRef.current = false;
+      setKilling(false);
+      toast.error(t("processKillRecheckFailed", { error: String(e) }));
+      return;
+    }
+    if (targetIds.length === 0) {
+      busyRef.current = false;
+      setKilling(false);
+      await load(true);
+      return;
+    }
     // kill より前に始まったポーリングの応答 (kill 前のスナップショット) を無効化する。
     loadSeqRef.current++;
     // バックエンドの 1 コマンドで一括 kill (#1259)。PostgreSQL は 1 文、MySQL は 1 接続上で
     // 順に実行し、失敗があっても残りは続行して件数と最初のエラーを返す。
     let killed = 0;
-    let failed = ids.length;
+    let failed = targetIds.length;
     let firstError: string | null = null;
     try {
-      const res = await api.killProcesses(sessionId, ids, statementOnly);
+      const res = await api.killProcesses(sessionId, targetIds, statementOnly);
       killed = res.killed;
       failed = res.failed;
       firstError = res.first_error;
@@ -324,7 +349,7 @@ export function ProcessListPanel({
       toast.error(
         t(statementOnly ? "processCancelFailed" : "processKillFailed", {
           failed,
-          count: ids.length,
+          count: targetIds.length,
           error: firstError ?? "",
         }),
       );

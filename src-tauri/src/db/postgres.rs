@@ -879,23 +879,63 @@ impl PostgresConn {
             return Ok(out);
         }
         let count = pids.len() as u64;
-        let sql = if statement_only {
+        if statement_only {
             // 自分自身の接続 (pg_backend_pid) は対象から外す。スキップは成功・失敗どちらにも数えない。
-            "SELECT pg_cancel_backend(s.p) FROM ( \
+            let sql = "SELECT pg_cancel_backend(s.p) FROM ( \
                SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
                WHERE p <> pg_backend_pid() ORDER BY ord \
-             ) s"
-        } else {
-            "SELECT pg_terminate_backend(s.p) FROM ( \
-               SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               ORDER BY (p = pg_backend_pid()), ord \
-             ) s"
+             ) s";
+            match sqlx::query(sql).bind(&pids).execute(&self.pool).await {
+                // 自分自身を除いた行数だけ成功として数える (SELECT の rows_affected は返却行数)。
+                Ok(done) => out.killed += done.rows_affected(),
+                Err(e) => out.record_failure(count, AppError::from(e).to_string()),
+            }
+            return Ok(out);
+        }
+
+        // 同じ接続で 2 段階に分ける。自分自身を他の pid と同じ文の中で終了すると、結果を返す前に
+        // 接続が FATAL で切れ、他の pid が既に終了していても全件失敗に見えてしまうため。
+        // 接続を 1 本確保して両段階を同じ接続で実行するので、段階 2 の対象は確実にその接続自身になる。
+        let mut conn = match self.pool.acquire().await {
+            Ok(c) => c,
+            Err(e) => {
+                out.record_failure(count, AppError::from(e).to_string());
+                return Ok(out);
+            }
         };
-        match sqlx::query(sql).bind(&pids).execute(&self.pool).await {
-            // 文のみ停止は自分自身を除いた行数だけ成功として数える (SELECT の rows_affected は返却行数)。
-            Ok(done) if statement_only => out.killed += done.rows_affected(),
-            Ok(_) => out.killed += count,
-            Err(e) => out.record_failure(count, AppError::from(e).to_string()),
+        // 段階 1: この接続自身を除いて終了する。pg_terminate_backend が false を返すのは
+        // 対象がもう居ない (既に終了した) ときで、目的は達しているので従来どおり成功に数える。
+        let others_sql = "SELECT t.p FROM ( \
+               SELECT p, ord FROM unnest($1::int4[]) WITH ORDINALITY AS u(p, ord) \
+               WHERE p <> pg_backend_pid() \
+             ) t CROSS JOIN LATERAL pg_terminate_backend(t.p) ORDER BY t.ord";
+        let rows: Vec<(i32,)> = match sqlx::query_as::<_, (i32,)>(others_sql)
+            .bind(&pids)
+            .fetch_all(&mut *conn)
+            .await
+        {
+            Ok(rows) => rows,
+            Err(e) => {
+                out.record_failure(count, AppError::from(e).to_string());
+                return Ok(out);
+            }
+        };
+        let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        for (pid,) in rows {
+            seen.insert(pid);
+            out.killed += 1;
+        }
+
+        // 段階 2: 段階 1 で除外された pid (= この接続自身) を最後に終了する。接続断のエラーは
+        // 終了が成功した結果なので失敗に数えない。
+        if pids.iter().any(|p| !seen.contains(p)) {
+            let last_sql = "SELECT pg_terminate_backend(p) FROM unnest($1::int4[]) AS t(p) \
+               WHERE p = pg_backend_pid()";
+            match sqlx::query(last_sql).bind(&pids).execute(&mut *conn).await {
+                Ok(_) => out.killed += 1,
+                Err(e) if is_connection_dropped(&e) => out.killed += 1,
+                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+            }
         }
         Ok(out)
     }
@@ -2241,6 +2281,17 @@ impl PostgresConn {
             slow_queries: None,
             lock_waits: None,
         })
+    }
+}
+
+/// 自分自身の `pg_terminate_backend` で接続が切れたときに返るエラーか。終了は成功しているので、
+/// 呼び出し側は失敗に数えない。接続断 (I/O・プール閉鎖) と FATAL 57P01 (admin_shutdown:
+/// 管理者コマンドによる終了) を対象にする。判定できないエラーは false (= 失敗として報告)。
+fn is_connection_dropped(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Io(_) | sqlx::Error::PoolClosed | sqlx::Error::WorkerCrashed => true,
+        sqlx::Error::Database(db) => db.code().as_deref() == Some("57P01"),
+        _ => false,
     }
 }
 
@@ -3629,6 +3680,19 @@ fn statements_unreadable_reason(error_message: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn self_terminate_connection_drop_is_not_counted_as_failure() {
+        let io = sqlx::Error::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "reset",
+        ));
+        assert!(is_connection_dropped(&io));
+        assert!(is_connection_dropped(&sqlx::Error::PoolClosed));
+        // 判定できないエラー (権限不足・タイムアウトなど) は失敗として報告する。
+        assert!(!is_connection_dropped(&sqlx::Error::PoolTimedOut));
+        assert!(!is_connection_dropped(&sqlx::Error::RowNotFound));
+    }
 
     #[test]
     fn statements_probe_error_is_classified() {

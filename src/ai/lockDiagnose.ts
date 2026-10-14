@@ -249,6 +249,19 @@ export type ParsedLockDiagnose =
   | { ok: true; value: LockDiagnoseResponse }
   | { ok: false; raw: string };
 
+/**
+ * AI が返した停止候補のうち、AI に渡した待機チェーン (`allowedIds`) に実在する id だけを残す。
+ * スキーマ検査は `session_id` が数値かどうかしか見ないため、幻覚で別プロセスの id が返ると
+ * 「理由」と無関係な行を「一覧で表示」→ 停止へ進めてしまう。
+ */
+export function restrictStopCandidates(
+  value: LockDiagnoseResponse,
+  allowedIds: readonly number[],
+): LockDiagnoseResponse {
+  const allowed = new Set(allowedIds);
+  return { ...value, stop_candidates: value.stop_candidates.filter((c) => allowed.has(c.session_id)) };
+}
+
 /** ストリームで結合した本文を JSON として解釈する。失敗時は本文をそのまま返す。 */
 export function parseLockDiagnoseResponse(text: string): ParsedLockDiagnose {
   let body = text.trim();

@@ -96,13 +96,23 @@ function diffFlags(original: Flags, edited: Flags, want: boolean): Flags {
  * 結果は `edited` に入れるだけで、実際の GRANT / REVOKE は従来の差分 SQL 生成・確認ダイアログ・
  * 適用の経路に乗る (新しい SQL 生成は無い)。
  */
+/**
+ * テーブル名をキーにする権限マップ。表名が `constructor` / `toString` / `__proto__` など
+ * Object の組み込みプロパティ名と一致しても、プロトタイプチェーンを引かないよう
+ * プロトタイプ無しのオブジェクトにする (`name in map` / `map[name]` が安全になる)。
+ */
+function flagsMap(src: Record<string, Flags> = {}): Record<string, Flags> {
+  return Object.assign(Object.create(null) as Record<string, Flags>, src);
+}
+
 export function mergeCopiedPrivileges(
   original: Record<string, Flags>,
   source: Record<string, Flags>,
 ): Record<string, Flags> {
-  const out: Record<string, Flags> = {};
+  const out = flagsMap();
+  const src = flagsMap(source);
   for (const table of new Set([...Object.keys(original), ...Object.keys(source)])) {
-    out[table] = source[table] ? { ...source[table] } : { ...EMPTY_FLAGS };
+    out[table] = src[table] ? { ...src[table] } : { ...EMPTY_FLAGS };
   }
   return out;
 }
@@ -196,8 +206,8 @@ export function UsersPanel({
   const [selected, setSelected] = useState<DbUserInfo | null>(null);
 
   const [globalRow, setGlobalRow] = useState<TablePrivilegeRow | null>(null);
-  const [original, setOriginal] = useState<Record<string, Flags>>({});
-  const [edited, setEdited] = useState<Record<string, Flags>>({});
+  const [original, setOriginal] = useState<Record<string, Flags>>(flagsMap);
+  const [edited, setEdited] = useState<Record<string, Flags>>(flagsMap);
   const [loadingPrivs, setLoadingPrivs] = useState(false);
   const [privsError, setPrivsError] = useState<string | null>(null);
   const [newTable, setNewTable] = useState("");
@@ -248,20 +258,20 @@ export function UsersPanel({
         if (seq !== privSeq.current) return;
         setGlobalRow(p.global);
         const prefix = database ? `${database}.` : null;
-        const rows: Record<string, Flags> = {};
+        const rows = flagsMap();
         for (const row of p.tables) {
           // DB での絞り込みはサーバ側 (WHERE) で済んでいる。プレフィックスは表示名用。
           if (!prefix || !row.table.startsWith(prefix)) continue;
           rows[row.table.slice(prefix.length)] = flagsFromRow(row);
         }
         setOriginal(rows);
-        setEdited({ ...rows });
+        setEdited(flagsMap(rows));
         setCopied(null);
       } catch (e) {
         if (seq !== privSeq.current) return;
         setPrivsError(String(e));
-        setOriginal({});
-        setEdited({});
+        setOriginal(flagsMap());
+        setEdited(flagsMap());
         setGlobalRow(null);
       } finally {
         if (seq === privSeq.current) setLoadingPrivs(false);
@@ -275,10 +285,15 @@ export function UsersPanel({
       setSelected(u);
       setNewTable("");
       // 前ユーザの未適用の編集を持ち越さない (読み込み中に別ユーザ宛の GRANT/REVOKE が出るのを防ぐ)。
-      setOriginal({});
-      setEdited({});
+      setOriginal(flagsMap());
+      setEdited(flagsMap());
       setCopied(null);
       setGlobalRow(null);
+      // コピー元の選択・パスワード入力欄も前ユーザのものを持ち越さない。
+      setShowCopy(false);
+      setCopySourceKey("");
+      setShowPassword(false);
+      setNewPassword("");
       void loadPrivileges(u);
     },
     [loadPrivileges],
@@ -287,14 +302,14 @@ export function UsersPanel({
   const toggleFlag = useCallback((table: string, flag: keyof Flags) => {
     setEdited((cur) => {
       const row = cur[table] ?? EMPTY_FLAGS;
-      return { ...cur, [table]: { ...row, [flag]: !row[flag] } };
+      return flagsMap({ ...cur, [table]: { ...row, [flag]: !row[flag] } });
     });
   }, []);
 
   const addTableRow = useCallback(() => {
     const name = newTable.trim();
     if (!name || name in edited) return;
-    setEdited((cur) => ({ ...cur, [name]: { ...EMPTY_FLAGS } }));
+    setEdited((cur) => flagsMap({ ...cur, [name]: { ...EMPTY_FLAGS } }));
     setNewTable("");
   }, [newTable, edited]);
 
@@ -323,7 +338,7 @@ export function UsersPanel({
   );
 
   const discardChanges = useCallback(() => {
-    setEdited({ ...original });
+    setEdited(flagsMap(original));
     setCopied(null);
     setNewTable("");
   }, [original]);
@@ -354,6 +369,11 @@ export function UsersPanel({
           <chakra.p margin={0}>
             {t("usersApplyConfirmMessage", { count: statements.length })}
           </chakra.p>
+          {driver === "mysql" && (
+            <Callout tone="warning" role="status" mt="2" data-testid="users-mysql-nonatomic">
+              {t("usersApplyMysqlNonAtomic")}
+            </Callout>
+          )}
           <CodePreview wrap mt="2" maxH="260px">{statements.join(";\n")}</CodePreview>
         </>
       ),
@@ -371,6 +391,11 @@ export function UsersPanel({
       if (privSeq.current === seqBefore) await loadPrivileges(selected);
     } catch (e) {
       toast.error(t("usersApplyFailed", { error: String(e) }));
+      // MySQL の GRANT / REVOKE は暗黙コミットされ、途中失敗でも先行文が残りうる。
+      // 画面を適用前の古い状態のままにせず、サーバの実際の権限を再取得する。
+      if (driver === "mysql" && privSeq.current === seqBefore) {
+        await loadPrivileges(selected);
+      }
     } finally {
       setBusy(false);
     }
@@ -389,7 +414,7 @@ export function UsersPanel({
       // 読み込み中に別ユーザへ切り替わっていたら反映しない。
       if (privSeq.current !== seqBefore) return;
       const prefix = `${database}.`;
-      const rows: Record<string, Flags> = {};
+      const rows = flagsMap();
       for (const row of p.tables) {
         if (!row.table.startsWith(prefix)) continue;
         rows[row.table.slice(prefix.length)] = flagsFromRow(row);
@@ -466,8 +491,8 @@ export function UsersPanel({
       privSeq.current++;
       setLoadingPrivs(false);
       setSelected(null);
-      setOriginal({});
-      setEdited({});
+      setOriginal(flagsMap());
+      setEdited(flagsMap());
       setGlobalRow(null);
       await loadUsers();
     } catch (e) {

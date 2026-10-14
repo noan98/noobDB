@@ -171,6 +171,8 @@ describe("isFullScanAccess / rowsMagnitude", () => {
     expect(isFullScanAccess("ALL")).toBe(true);
     expect(isFullScanAccess("Seq Scan")).toBe(true);
     expect(isFullScanAccess("SCAN")).toBe(true);
+    expect(isFullScanAccess("Parallel Seq Scan")).toBe(true);
+    expect(isFullScanAccess("Parallel Index Scan")).toBe(false);
     expect(isFullScanAccess("ref")).toBe(false);
     expect(isFullScanAccess("Index Scan")).toBe(false);
     expect(isFullScanAccess("SEARCH USING INDEX")).toBe(false);

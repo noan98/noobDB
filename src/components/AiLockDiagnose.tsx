@@ -12,6 +12,7 @@ import {
   lockDiagnoseTableRefs,
   LOCK_DIAGNOSE_FORMAT,
   parseLockDiagnoseResponse,
+  restrictStopCandidates,
   selectLockDiagnoseTargets,
   toLockDiagnoseProcess,
   type LockDiagnoseResponse,
@@ -187,7 +188,16 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
         onDone: ({ parsed }) =>
           setState(
             parsed.ok
-              ? { kind: "done", sends, value: parsed.value }
+              ? {
+                  kind: "done",
+                  sends,
+                  // 停止候補は AI に渡した待機チェーンの id だけに絞る (幻覚で別プロセスの id が
+                  // 返っても、理由と無関係な行を「一覧で表示」→ 停止へ進めさせない)。
+                  value: restrictStopCandidates(
+                    parsed.value,
+                    procs.map((p) => p.id),
+                  ),
+                }
               : { kind: "raw", sends, raw: parsed.raw },
           ),
         onError: (f) => setState({ kind: "error", sends, message: f.message, refused: f.refused }),

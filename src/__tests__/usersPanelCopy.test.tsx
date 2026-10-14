@@ -44,6 +44,13 @@ describe("mergeCopiedPrivileges (#1536)", () => {
     });
   });
 
+  it("Object の組み込みプロパティ名と同じ表名でも、コピー元に無ければ全 OFF (REVOKE 対象) になる", () => {
+    const out = mergeCopiedPrivileges({ constructor: on, toString: on }, { a: on });
+    expect(out.constructor).toEqual(off);
+    expect(out.toString).toEqual(off);
+    expect(out.a).toEqual(on);
+  });
+
   it("コピー元を書き換えない (別オブジェクトを返す)", () => {
     const src = { a: on };
     const out = mergeCopiedPrivileges({}, src);
@@ -77,6 +84,55 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     expect(screen.getByLabelText("orders select")).toBeChecked();
     // 自分だけが持っていたテーブルの権限は外れる (剥奪対象)。
     expect(screen.getByLabelText("old_only select")).not.toBeChecked();
+  });
+
+  it("別ユーザへ切り替えるとコピー元の選択が閉じる", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app"), user("template")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t1");
+    fireEvent.click(screen.getByRole("button", { name: t("usersCopyPrivileges") }));
+    fireEvent.change(screen.getByLabelText(t("usersCopySourceLabel")), { target: { value: "template@@" } });
+    fireEvent.click(screen.getByRole("button", { name: /^template/ }));
+    await waitFor(() => expect(screen.queryByLabelText(t("usersCopySourceLabel"))).not.toBeInTheDocument());
+  });
+
+  it("適用が失敗したら、サーバの実際の権限を再取得する", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.t1 TO app"]);
+    vi.mocked(api.applyPrivilegeSql).mockRejectedValue(new Error("boom"));
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t1");
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersApplyConfirmOk") }));
+    await waitFor(() => expect(api.applyPrivilegeSql).toHaveBeenCalled());
+    await waitFor(() => expect(vi.mocked(api.listUserPrivileges)).toHaveBeenCalledTimes(2));
+  });
+
+  it.each([
+    ["mysql", true],
+    ["postgres", false],
+  ] as const)("適用確認の MySQL 非原子注意: %s -> 表示=%s", async (driver, shown) => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.t1 TO app"]);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver={driver} database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t1");
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    await screen.findByRole("button", { name: t("usersApplyConfirmOk") });
+    expect(screen.queryByText(t("usersApplyMysqlNonAtomic")) !== null).toBe(shown);
   });
 
   it("ユーザが 1 人だけなら権限コピーは無効", async () => {

@@ -3847,6 +3847,9 @@ const en = {
   processKillConfirmOk: "Kill",
   processKillDone: "Killed {count} process(es)",
   processKillFailed: "{failed} of {count} kill(s) failed: {error}",
+  processKillTargetsChanged:
+    "Skipped process(es) (id: {ids}): they ended or were replaced by another connection while the confirmation was open.",
+  processKillRecheckFailed: "Could not re-check the processes, so nothing was killed: {error}",
   processLoadError: "Failed to load processes: {error}",
   processEmpty: "No processes to show.",
   processBlockingTitle: "Blocking chains",
@@ -3975,6 +3978,8 @@ const en = {
   usersApplyChanges: "Apply changes",
   usersApplyConfirmTitle: "Apply privilege changes",
   usersApplyConfirmMessage: "{count} statement(s) will be executed:",
+  usersApplyMysqlNonAtomic:
+    "On MySQL, privilege changes are committed statement by statement, so if one fails partway, only some of them may have been applied.",
   usersApplyConfirmOk: "Apply",
   usersApplyDone: "Privilege changes applied",
   usersApplyFailed: "Failed to apply privilege changes: {error}",
@@ -8956,6 +8961,9 @@ const ja: Dict = {
   processKillConfirmOk: "強制終了",
   processKillDone: "{count} 件のプロセスを強制終了しました",
   processKillFailed: "{count} 件中 {failed} 件の kill に失敗しました: {error}",
+  processKillTargetsChanged:
+    "確認中に終了、または別の接続に置き換わったプロセス (id: {ids}) は対象から外しました。",
+  processKillRecheckFailed: "プロセスの再確認に失敗したため、何も kill しませんでした: {error}",
   processLoadError: "プロセス一覧の取得に失敗しました: {error}",
   processEmpty: "表示するプロセスがありません。",
   processBlockingTitle: "ロック待ちの連鎖",
@@ -9084,6 +9092,8 @@ const ja: Dict = {
   usersApplyChanges: "変更を適用",
   usersApplyConfirmTitle: "権限変更を適用",
   usersApplyConfirmMessage: "以下の {count} 件の SQL 文を実行します:",
+  usersApplyMysqlNonAtomic:
+    "MySQL では権限変更が文ごとに確定するため、途中で失敗すると一部だけ適用されることがあります。",
   usersApplyConfirmOk: "適用",
   usersApplyDone: "権限変更を適用しました",
   usersApplyFailed: "権限変更の適用に失敗しました: {error}",

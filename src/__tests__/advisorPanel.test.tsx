@@ -62,6 +62,37 @@ describe("AdvisorPanel error state (#848)", () => {
   });
 });
 
+describe("AdvisorPanel 再実行の失敗", () => {
+  it("再実行が失敗したら前回の指摘表と書き出しボタンを残さない", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce({
+      driver: "mysql",
+      tables_analyzed: 1,
+      findings: [
+        {
+          rule: "missing_primary_key",
+          severity: "medium",
+          table: "stale_table",
+          columns: [],
+          context: [],
+          statistical: false,
+          fix_ddl: null,
+          fix_ddl_online: null,
+        },
+      ],
+      skipped: [],
+      table_plans: [],
+    });
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    await screen.findByText("stale_table");
+
+    vi.mocked(api.analyzeSchemaHealth).mockRejectedValueOnce(new Error("lost connection"));
+    fireEvent.click(screen.getByText(t("advisorRerun")));
+    await screen.findByText(t("advisorError", { error: "Error: lost connection" }));
+    expect(screen.queryByText("stale_table")).not.toBeInTheDocument();
+  });
+});
+
 describe("AdvisorPanel running skeleton (#1211)", () => {
   it("実行中は findings 表のスケルトンを出し、完了で実データに差し替える", async () => {
     let resolve: (r: Awaited<ReturnType<typeof api.analyzeSchemaHealth>>) => void = () => {};

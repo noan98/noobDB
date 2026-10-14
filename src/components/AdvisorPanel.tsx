@@ -143,6 +143,9 @@ export function AdvisorPanel({
       const r = await api.analyzeSchemaHealth(sessionId, database);
       setReport(r);
     } catch (e) {
+      // 失敗した再実行の下に前回の診断結果が残ると、古い指摘が現在の結果として
+      // 表示・書き出し (CSV / Markdown) されてしまうので破棄する。
+      setReport(null);
       setError(String(e));
     } finally {
       setRunning(false);

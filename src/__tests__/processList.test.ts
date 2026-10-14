@@ -8,6 +8,7 @@ import {
   formatProcessTime,
   isProcessFilterActive,
   pruneSelection,
+  reconcileKillTargets,
   sortProcesses,
 } from "../components/processList";
 
@@ -67,6 +68,24 @@ describe("pruneSelection", () => {
     const selected = new Set([1]);
     pruneSelection(selected, []);
     expect(selected.has(1)).toBe(true);
+  });
+});
+
+describe("reconcileKillTargets (pid 再利用)", () => {
+  it("同じプロセスのままの id だけを残す", () => {
+    const shown = [proc(1), proc(2)];
+    const out = reconcileKillTargets([1, 2], shown, [proc(1), proc(2), proc(3)]);
+    expect(out).toEqual({ keep: [1, 2], dropped: [] });
+  });
+
+  it("確認中に消えた id・別接続に再利用された id は外す", () => {
+    const shown = [proc(1), proc(2, { host: "10.0.0.1:1111" })];
+    const fresh = [proc(2, { host: "10.0.0.9:2222" })];
+    expect(reconcileKillTargets([1, 2], shown, fresh)).toEqual({ keep: [], dropped: [1, 2] });
+  });
+
+  it("確認時点の一覧に無かった id は fail-closed で外す", () => {
+    expect(reconcileKillTargets([9], [proc(1)], [proc(9)])).toEqual({ keep: [], dropped: [9] });
   });
 });
 

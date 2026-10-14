@@ -940,7 +940,12 @@ function ExplainViewerBody({
                 </Button>
               </Tooltip>
               <Tooltip label={t("explainCollapseAll")}>
-                <Button size="sm" px="2.5" onClick={() => { markEntered(); setCollapsed(new Set(allIds)); }}>
+                <Button size="sm" px="2.5" onClick={() => {
+                  markEntered();
+                  setCollapsed(new Set(allIds));
+                  // 全て畳むと選択中の子ノードが隠れてタブストップが消えるので、ルートを選び直す (#1529 と同様)。
+                  if (root) setSelectedId(root.id);
+                }}>
                   {t("explainCollapseAll")}
                 </Button>
               </Tooltip>
