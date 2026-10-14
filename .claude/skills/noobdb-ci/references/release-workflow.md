@@ -59,6 +59,18 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
 `libayatana-appindicator3-dev`) が必要です。
 
+## 権限 (#1633)
+
+- `release.yml` は top-level に `permissions: contents: read` を持つ (他のワークフローと
+  同じ最小既定)。書き込みが要るのは `build` ジョブ (リリースへの成果物添付) だけで、
+  ジョブ側の `permissions: contents: write` で明示する。`changes` ジョブはジョブ側で
+  `contents: read`。新しいジョブを足すときは必要な権限をジョブ側で明示する。
+- `visual-baseline.yml` は checkout を `persist-credentials: false` にし、PAT
+  (`VISUAL_BASELINE_PAT`、無ければ `github.token`) は `Commit updated baselines`
+  ステップの env でだけ受け取る。push の間だけ `git remote set-url` で URL に付け、
+  終わったら (失敗時も trap で) 元に戻す。`pnpm install` / Playwright 実行の時点では
+  `.git/config` に認証情報が無い。`github.ref_name` は env (`REF_NAME`) 経由でシェルに渡す。
+
 ## Windows ビルドの pnpm 前処理の所見 (#1634、未対応)
 
 main push の cache-warm ビルド (run 38585607069 ほか) の実測: `corepack enable` は 1〜2 秒だが、
@@ -68,3 +80,4 @@ main push の cache-warm ビルド (run 38585607069 ほか) の実測: `corepack
 方式で pnpm を使わないため揃える先が無い。pnpm store キャッシュを外したときの
 `pnpm install` の増分は未計測のため、変更は見送り。切り分けるなら、store キャッシュ有り / 無しで
 `Install frontend deps` の時間を比べる (store が D: ドライブにある点にも注意)。
+

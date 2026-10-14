@@ -18,6 +18,11 @@ on:
   schedule:
     - cron: "0 3 * * 1" # 毎週月曜 03:00 UTC
 
+# 既定のトークン権限は読み取りだけにする (#1633)。書き込みが要るジョブは
+# ジョブ側で個別に `contents: write` を明示する (各ジョブが permissions を持つ)。
+permissions:
+  contents: read
+
 # main への push が連続したとき、古い「キャッシュ温め」ビルドを取り消して
 # CI 時間を節約する。タグ (リリース) ビルドは ref ごとにグループが分かれる上
 # cancel-in-progress も false なので、取り消されることはない。
