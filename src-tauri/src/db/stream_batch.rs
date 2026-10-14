@@ -26,8 +26,8 @@ pub const MAX_COALESCED_ROWS: usize = 10_000;
 /// 前回送信からこの時間が経過したら、溜まった分を即送る。
 pub const COALESCE_INTERVAL: Duration = Duration::from_millis(75);
 /// 行ハッシュ重複検出を行う最大行数。超えたら「不明」(`None`) に落とす
-/// (ハッシュ集合が無制限にメモリを食わないように)。
-pub const DUP_TRACK_LIMIT: usize = 1_000_000;
+/// (ハッシュ集合が無制限にメモリを食わないように)。20 万行で集合は約 7MB (#1610)。
+pub const DUP_TRACK_LIMIT: usize = 200_000;
 
 /// 時間基準 + サイズ倍々のバッチ合流器。
 #[derive(Debug)]
