@@ -6,6 +6,7 @@
 // 早めに止めるための判定に徹する。
 
 import type { DriverKind, TransferMode } from "../api/tauri";
+import { maskLiterals } from "../dangerousSql";
 import { tableNameCollides } from "./resultsToTable";
 
 /** 転送元。テーブル全件か、単一の読み取り専用クエリの結果セット。 */
@@ -58,6 +59,25 @@ export interface TransferTargetInput {
   /** 転送元と転送先が同じプロファイル・同じ DB か (同一テーブルへの上書き防止)。 */
   sameProfileAndDatabase: boolean;
   source: TransferSource;
+  /**
+   * 転送先のドライバ。PostgreSQL は引用符付き識別子で大文字小文字を区別する
+   * (`Users` と `users` は別テーブル) ので、同一テーブル判定を厳密比較にする。
+   * 未指定・MySQL・SQLite は大文字小文字を無視して比べる (#1598)。
+   */
+  targetDriver?: DriverKind | null;
+}
+
+/**
+ * クエリが `table` と同名の識別子を含むか (修飾子は見ない)。置き換え (DROP) で
+ * クエリの読み取り元が消えるのを防ぐための保守的な判定で、別スキーマの同名テーブルも
+ * 拒否する。コメント・文字列リテラルの中は無視する (#1598)。
+ */
+export function queryMentionsTable(sql: string, table: string, driver?: DriverKind | null): boolean {
+  const target = table.trim().toLowerCase();
+  if (!target) return false;
+  const masked = maskLiterals(sql, driver ?? undefined, { keepQuotedIdentifiers: true });
+  const tokens = masked.match(/[\p{L}\p{N}_$]+/gu) ?? [];
+  return tokens.some((tok) => tok.toLowerCase() === target);
 }
 
 /**
@@ -66,18 +86,21 @@ export interface TransferTargetInput {
  * - `create` で同名テーブルが既にある → `tableExists` (置き換え/追記をユーザに選ばせる)
  * - `append` / `upsert` で書き込み先が無い → `tableMissing`
  * - 同じ接続・同じ DB の同じテーブルへ `create` / `replace` → `sameTable`
- *   (作り直すとソースそのものを消してしまう)
+ *   (作り直すとソースそのものを消してしまう。クエリ元も、同名のテーブルを読むなら同様)
  */
 export function validateTransferTarget(input: TransferTargetInput): TransferValidationError | null {
   const name = input.tableName.trim();
   if (!name) return "tableEmpty";
-  if (
-    input.sameProfileAndDatabase &&
-    !writesExistingTable(input.mode) &&
-    input.source.kind === "table" &&
-    input.source.table.trim().toLowerCase() === name.toLowerCase()
-  ) {
-    return "sameTable";
+  if (input.sameProfileAndDatabase && !writesExistingTable(input.mode)) {
+    const { source } = input;
+    if (source.kind === "table") {
+      const a = source.table.trim();
+      const same = input.targetDriver === "postgres" ? a === name : a.toLowerCase() === name.toLowerCase();
+      if (same) return "sameTable";
+    } else if (queryMentionsTable(source.sql, name, input.targetDriver)) {
+      // クエリ元でも、転送先と同名のテーブルを読むなら置き換えでソースが消える。
+      return "sameTable";
+    }
   }
   if (input.existingTables) {
     const exists = tableNameCollides(input.existingTables, name);

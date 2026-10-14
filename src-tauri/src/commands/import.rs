@@ -259,8 +259,10 @@ fn parse_csv_preview_reader<R: std::io::Read>(
             break;
         }
         let fields: Vec<String> = rec.iter().map(|s| s.to_string()).collect();
-        if !opts.has_header && headers.is_empty() {
-            headers = (1..=fields.len()).map(|i| format!("column_{i}")).collect();
+        // 先頭レコードより広い行があっても超過列を落とさない (JSON の union / xlsx の
+        // 最大幅と揃える)。見出し行より広い行の余分な列は `column_N` で補う (#1598)。
+        while headers.len() < fields.len() {
+            headers.push(format!("column_{}", headers.len() + 1));
         }
         rows.push(fields);
     }
@@ -332,7 +334,7 @@ fn parse_json_records(
     use serde_json::Value;
     match format {
         ImportFormat::Json => {
-            let value: Value = serde_json::from_str(text).map_err(json_err)?;
+            let value = serde_json::from_str::<JsonDoc>(text).map_err(json_err)?.0;
             match value {
                 Value::Array(items) => items.into_iter().map(json_object).collect(),
                 Value::Object(_) => Ok(vec![json_object(value)?]),
@@ -348,15 +350,79 @@ fn parse_json_records(
                 if trimmed.is_empty() {
                     continue;
                 }
-                let value: Value = serde_json::from_str(trimmed).map_err(|e| {
-                    AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1))
-                })?;
+                let value = serde_json::from_str::<JsonRow>(trimmed)
+                    .map_err(|e| {
+                        AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1))
+                    })?
+                    .0;
                 out.push(json_object(value)?);
             }
             Ok(out)
         }
         // The dispatcher only calls this for JSON/NDJSON.
         ImportFormat::Csv | ImportFormat::Xlsx => Ok(Vec::new()),
+    }
+}
+
+/// JSON の 1 行 (オブジェクト)。トップレベルのフィールドが数値リテラルのとき、f64 を
+/// 経由せず**原文のまま**文字列セルとして保つ (#1598)。`serde_json::Value::Number` は
+/// 小数や 2^64 超の整数を f64 へ丸めてしまい、DECIMAL / BIGINT 列へ黙って違う値が
+/// 入るため。オブジェクト以外はそのまま `Value` で返し、後段の `json_object` が拒否する。
+struct JsonRow(serde_json::Value);
+
+/// JSON ドキュメント全体。トップレベルが配列なら要素ごとに [`JsonRow`] と同じ扱いにする。
+struct JsonDoc(serde_json::Value);
+
+fn preserve_row(
+    raw: &serde_json::value::RawValue,
+) -> std::result::Result<serde_json::Value, serde_json::Error> {
+    if raw.get().trim_start().starts_with('{') {
+        let fields: std::collections::BTreeMap<String, Box<serde_json::value::RawValue>> =
+            serde_json::from_str(raw.get())?;
+        let mut map = serde_json::Map::new();
+        for (key, field) in fields {
+            let text = field.get();
+            let is_number = text
+                .trim_start()
+                .starts_with(|c: char| c == '-' || c.is_ascii_digit());
+            let value = if is_number {
+                serde_json::Value::String(text.trim().to_string())
+            } else {
+                serde_json::from_str(text)?
+            };
+            map.insert(key, value);
+        }
+        Ok(serde_json::Value::Object(map))
+    } else {
+        serde_json::from_str(raw.get())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for JsonRow {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let raw = Box::<serde_json::value::RawValue>::deserialize(d)?;
+        preserve_row(&raw)
+            .map(JsonRow)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for JsonDoc {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let raw = Box::<serde_json::value::RawValue>::deserialize(d)?;
+        if raw.get().trim_start().starts_with('[') {
+            let items: Vec<Box<serde_json::value::RawValue>> =
+                serde_json::from_str(raw.get()).map_err(D::Error::custom)?;
+            let rows = items
+                .iter()
+                .map(|r| preserve_row(r))
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(D::Error::custom)?;
+            Ok(JsonDoc(serde_json::Value::Array(rows)))
+        } else {
+            preserve_row(&raw).map(JsonDoc).map_err(D::Error::custom)
+        }
     }
 }
 
@@ -434,7 +500,7 @@ impl<'de> serde::de::Visitor<'de> for PreviewSeq<'_> {
         self,
         mut seq: A,
     ) -> std::result::Result<(), A::Error> {
-        while let Some(value) = seq.next_element::<serde_json::Value>()? {
+        while let Some(JsonRow(value)) = seq.next_element::<JsonRow>()? {
             match json_object(value) {
                 Ok(map) => self.records.push(map),
                 Err(e) => {
@@ -481,7 +547,9 @@ fn read_json_preview_records<R: std::io::BufRead>(
         }
     };
     if first != Some(b'[') {
-        let value: serde_json::Value = serde_json::from_reader(reader).map_err(json_err)?;
+        let value = serde_json::from_reader::<_, JsonRow>(reader)
+            .map_err(json_err)?
+            .0;
         return match value {
             serde_json::Value::Object(_) => Ok(vec![json_object(value)?]),
             _ => Err(AppError::InvalidInput(
@@ -520,8 +588,9 @@ fn read_ndjson_preview_records<R: std::io::BufRead>(
         if trimmed.is_empty() {
             continue;
         }
-        let value: serde_json::Value = serde_json::from_str(trimmed)
-            .map_err(|e| AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1)))?;
+        let value = serde_json::from_str::<JsonRow>(trimmed)
+            .map_err(|e| AppError::Other(format!("NDJSON parse error on line {}: {e}", i + 1)))?
+            .0;
         out.push(json_object(value)?);
         if out.len() > PREVIEW_ROW_LIMIT {
             break;
@@ -2661,5 +2730,36 @@ mod tests {
         let mapping = [map("a", 0), map("b", 1)];
         let rows = parse_rows(data, &json_opts(ImportFormat::Json, None), &mapping).unwrap();
         assert_eq!(rows, vec![vec![Some("true".into()), Some("false".into())]]);
+    }
+
+    #[test]
+    fn csv_preview_widens_headers_to_widest_row_1598() {
+        let p =
+            parse_preview_reader("1,Alice\n2,Bob,extra\n".as_bytes(), &opts(false, None)).unwrap();
+        assert_eq!(p.headers, vec!["column_1", "column_2", "column_3"]);
+        let p = parse_preview_reader("a,b\n1,2,3\n".as_bytes(), &opts(true, None)).unwrap();
+        assert_eq!(p.headers, vec!["a", "b", "column_3"]);
+    }
+
+    #[test]
+    fn json_numbers_keep_their_literal_text_1598() {
+        let text = r#"[{"amount": 123456789.12345678901, "id": 18446744073709551616123, "n": 7, "s": "x", "o": {"k": 1.5}}]"#;
+        for (format, text) in [
+            (ImportFormat::Json, text.to_string()),
+            (ImportFormat::Ndjson, text[1..text.len() - 1].to_string()),
+        ] {
+            let records = parse_json_records(&text, format).unwrap();
+            let cell = |k: &str| json_value_to_cell(records[0].get(k).unwrap());
+            assert_eq!(cell("amount").as_deref(), Some("123456789.12345678901"));
+            assert_eq!(cell("id").as_deref(), Some("18446744073709551616123"));
+            assert_eq!(cell("n").as_deref(), Some("7"));
+            assert_eq!(cell("s").as_deref(), Some("x"));
+            assert_eq!(cell("o").as_deref(), Some(r#"{"k":1.5}"#));
+        }
+        // プレビュー (ストリーミング経路) も原文のまま。
+        let p =
+            parse_preview_reader(text.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
+        let i = p.headers.iter().position(|h| h == "amount").unwrap();
+        assert_eq!(p.rows[0][i], "123456789.12345678901");
     }
 }

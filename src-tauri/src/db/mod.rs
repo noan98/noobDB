@@ -423,6 +423,17 @@ pub struct ImportOutcome {
     pub skipped: Vec<SkippedRow>,
 }
 
+/// 取り込みの 1 行 / 1 チャンクの失敗が「行データ起因」か。DB がステートメントを
+/// 拒否した (制約違反・型不一致・桁あふれなど) 場合だけ true で、スキップ型の取り込みは
+/// その行を記録して続行する。接続断・プール枯渇・TLS・I/O などの全体障害は false で、
+/// 残りの行も同じ理由で失敗するので取り込みを中断する (#1598)。
+fn is_row_level_import_error(e: &AppError) -> bool {
+    matches!(
+        e,
+        AppError::Sqlx(sqlx::Error::Database(_)) | AppError::InvalidInput(_)
+    )
+}
+
 impl Connection {
     /// The driver backing this connection.
     pub fn driver_kind(&self) -> DriverKind {
@@ -916,6 +927,10 @@ impl Connection {
                 .await
             {
                 Ok(()) => inserted += chunk.len() as u64,
+                // 接続断・プール枯渇・TLS 失敗など行データと無関係な全体障害は、
+                // 行単位の再試行をせず取り込み全体を中断する (#1598)。残り全行を
+                // 1 行ずつ試して大量の SkippedRow を記録することを防ぐ。
+                Err(e) if !is_row_level_import_error(&e) => return Err(e),
                 // A single-row chunk can't be narrowed further, so record it
                 // directly instead of re-issuing the same failing INSERT.
                 Err(e) if chunk.len() == 1 => skipped.push(SkippedRow {
@@ -937,11 +952,14 @@ impl Connection {
                             .await
                         {
                             Ok(()) => inserted += 1,
+                            Err(e) if !is_row_level_import_error(&e) => return Err(e),
                             Err(e) => skipped.push(SkippedRow {
                                 index: start + i,
                                 reason: e.to_string(),
                             }),
                         }
+                        // 行単位の再試行中もキャンセルを確認する (進捗イベント自体は間引かれる)。
+                        on_progress(inserted)?;
                     }
                 }
             }
@@ -3863,6 +3881,21 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_database_rejections_are_row_level_import_errors_1598() {
+        use super::{is_row_level_import_error, AppError};
+        assert!(is_row_level_import_error(&AppError::InvalidInput(
+            "x".into()
+        )));
+        assert!(!is_row_level_import_error(&AppError::Sqlx(
+            sqlx::Error::PoolClosed
+        )));
+        assert!(!is_row_level_import_error(&AppError::Sqlx(
+            sqlx::Error::PoolTimedOut
+        )));
+        assert!(!is_row_level_import_error(&AppError::Timeout(1)));
+    }
+
     #[test]
     fn upsert_inserts_are_recognised() {
         use super::{insert_is_upsert, DriverKind};

@@ -222,6 +222,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     sameProfileAndDatabase:
       !!sourceProfileId && sourceProfileId === profileId && (source.database ?? "") === (database ?? ""),
     source,
+    targetDriver: targetProfile ? toDriverKind(targetProfile.driver) : null,
   });
   const canRun =
     !!targetSession &&
