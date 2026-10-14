@@ -179,6 +179,17 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
   });
   const keys = (input: ExplorerRowsInput) => buildExplorerRows(input).map((r) => r.key);
 
+  it("DB 一覧の読み込み失敗時は、スケルトンではなく失敗の行を出す (#1617)", () => {
+    const loading = buildExplorerRows(base({ databases: null }));
+    expect(loading.map((r) => r.kind)).toEqual(["loading"]);
+    const failed = buildExplorerRows(base({ databases: null, loadFailed: true }));
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({ kind: "empty", message: "loadFailed" });
+    expect(isFocusableExplorerRow(failed[0])).toBe(false);
+    // 一覧が取れていれば loadFailed は無視される
+    expect(keys(base({ loadFailed: true }))).toEqual(["db:db1", "db:db2"]);
+  });
+
   it("閉じている DB の子は配列に入らない", () => {
     expect(keys(base({ tables: { db1: ["a", "b"] } }))).toEqual(["db:db1", "db:db2"]);
   });

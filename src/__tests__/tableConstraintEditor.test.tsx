@@ -32,3 +32,39 @@ describe("TableConstraintEditor 参照列入力", () => {
     }
   });
 });
+
+describe("TableConstraintEditor 列が無いとき (#1617)", () => {
+  it("FK が無くても、追加ボタンが無効な理由を常に出す", () => {
+    renderWithProviders(
+      <TableConstraintEditor
+        foreignKeys={[]}
+        checks={[]}
+        onForeignKeysChange={() => {}}
+        onChecksChange={() => {}}
+        columnNames={[]}
+        tableNames={[]}
+        nextId={() => "x"}
+        idPrefix="t"
+      />,
+    );
+    expect(screen.getByText(t("constraintFkNeedColumns"))).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: new RegExp(t("constraintFkAdd")) }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+  it("列があれば注記は出ない", () => {
+    renderWithProviders(
+      <TableConstraintEditor
+        foreignKeys={[]}
+        checks={[]}
+        onForeignKeysChange={() => {}}
+        onChecksChange={() => {}}
+        columnNames={["a"]}
+        tableNames={[]}
+        nextId={() => "x"}
+        idPrefix="t"
+      />,
+    );
+    expect(screen.queryByText(t("constraintFkNeedColumns"))).toBeNull();
+  });
+});

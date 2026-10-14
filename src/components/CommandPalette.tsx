@@ -127,6 +127,8 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
     const { flat: list, onClose: close, onSelectItem: select } = latest.current;
     const target = list[index]?.item;
     if (!target) return;
+    // 無効な候補 (理由が行に出ている) は何もせず、パレットも開いたままにする。
+    if (target.disabledReason) return;
     // 先に閉じてから実行する。run が確認ダイアログ等を開いてもパレットが残らない。
     close();
     select?.(target);
@@ -367,6 +369,7 @@ const CommandRow = memo(function CommandRow({
       id={`cmdk-item-${item.id}`}
       role="option"
       aria-selected={active}
+      aria-disabled={item.disabledReason ? true : undefined}
       tabIndex={-1}
       onMouseMove={onMouseMove}
       onClick={onClick}
@@ -378,9 +381,9 @@ const CommandRow = memo(function CommandRow({
       px="4"
       py="2"
       border="none"
-      cursor="pointer"
+      cursor={item.disabledReason ? "not-allowed" : "pointer"}
       bg="transparent"
-      color="app.text"
+      color={item.disabledReason ? "app.textMuted" : "app.text"}
       css={{ scrollMarginBlock: "8px" }}
     >
       {/* アクティブ行の背後を滑らせるハイライト (#976)。`bg` を行ごとに切り替える
@@ -424,6 +427,11 @@ const CommandRow = memo(function CommandRow({
               ),
             )}
           </chakra.span>
+          {item.disabledReason && (
+            <chakra.span textStyle="caption" data-testid="cmdk-disabled-reason">
+              {item.disabledReason}
+            </chakra.span>
+          )}
           {item.sublabel && (
             <chakra.span
               fontSize="xs"

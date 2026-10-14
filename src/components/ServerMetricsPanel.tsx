@@ -20,7 +20,9 @@ import {
   type MetricSample,
   type MetricSeriesKey,
 } from "./serverMetrics";
-import { Checkbox, Heading, Select } from "./ui";
+import { Button, Checkbox, Heading, Select } from "./ui";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -397,14 +399,21 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
           <Checkbox
             checked={autoRefresh}
             aria-label={t("autoRefreshAria")}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
+            onChange={(e) => {
+              setAutoRefresh(e.target.checked);
+              // ON に戻したときは次の間隔を待たず、すぐ取得する。
+              if (e.target.checked) void load();
+            }}
           />
           {t("autoRefreshLabel")}
         </chakra.label>
         <Select
           aria-label={t("autoRefreshIntervalAria")}
           value={String(intervalSecs)}
-          onChange={(e) => setIntervalSecs(Number(e.target.value))}
+          onChange={(e) => {
+            setIntervalSecs(Number(e.target.value));
+            if (autoRefresh) void load();
+          }}
           width="auto"
         >
           {intervalOptions.map((s) => (
@@ -415,6 +424,19 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
             </option>
           ))}
         </Select>
+        // 自動更新のたびに loading が切り替わるので、disabled や包み要素の切替でボタンを作り直さない //
+        (キーボードフォーカスが落ちる)。二重実行は load() 側の busyRef が防ぐ。
+        <Tooltip label={t("metricsRefresh")}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label={t("metricsRefresh")}
+            onClick={() => void load()}
+          >
+            <Icon name="refresh" size={ICON_SIZES.md} />
+          </Button>
+        </Tooltip>
         {loading && <Spinner size={14} />}
         {updatedAt && (
           <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">

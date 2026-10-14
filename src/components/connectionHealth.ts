@@ -293,6 +293,31 @@ export function changedHealthSessions(
   return out;
 }
 
+/**
+ * 2 つの結果が表示上まったく同じか (遅延 ms の値まで含めて比較)。同じなら React の state を
+ * 差し替えず、自動更新のたびに表全体が再描画されるのを避ける。
+ */
+export function sameHealthResults(
+  a: ReadonlyMap<string, HealthProbeResult>,
+  b: ReadonlyMap<string, HealthProbeResult>,
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [sid, x] of a) {
+    const y = b.get(sid);
+    if (!y) return false;
+    if (
+      x.status !== y.status ||
+      x.latencyMs !== y.latencyMs ||
+      x.version !== y.version ||
+      x.connections !== y.connections ||
+      (x.tunnelClosed ?? false) !== (y.tunnelClosed ?? false)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** 閉じたセッションの結果を捨てる (id 再利用で古い状態が出ないように)。 */
 export function pruneHealthResults(
   results: ReadonlyMap<string, HealthProbeResult>,
