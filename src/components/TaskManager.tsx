@@ -82,7 +82,8 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   const { confirm, dialog } = useConfirm();
 
   const [tasks, setTasks] = useState<TaskDefinition[]>([]);
-  const [loading, setLoading] = useState(false);
+  // 初回描画で「タスクがありません」を一瞬出さないよう、読み込み中から始める。
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<TaskDefinition | null>(null);
@@ -163,18 +164,20 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
 
   // バックグラウンドスケジューラの発火 (このビューを開いたまま待っているとき) と、
   // 他タブ相当の手動実行のどちらでも一覧/履歴を追従させる。
+  // 履歴の開閉で購読し直さないよう、開いているタスクは ref で参照する。
+  const historyTaskIdRef = useRef<string | null>(null);
+  historyTaskIdRef.current = historyTaskId;
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     let active = true;
+    const refresh = () => {
+      void load();
+      const openId = historyTaskIdRef.current;
+      if (openId) void loadRuns(openId);
+    };
     void listenTaskRunEvents({
-      onDone: () => {
-        void load();
-        if (historyTaskId) void loadRuns(historyTaskId);
-      },
-      onError: () => {
-        void load();
-        if (historyTaskId) void loadRuns(historyTaskId);
-      },
+      onDone: refresh,
+      onError: refresh,
     }).then((un) => {
       if (active) unlisten = un;
       else un();
@@ -183,7 +186,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
       active = false;
       unlisten?.();
     };
-  }, [load, loadRuns, historyTaskId]);
+  }, [load, loadRuns]);
 
   // 相対表示 ("30 min" 等) を分単位で追従させる。取得しなおさず表示だけ更新する。
   useEffect(() => {
@@ -192,11 +195,10 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   }, []);
 
   const toggleHistory = (taskId: string) => {
-    setHistoryTaskId((cur) => {
-      const next = cur === taskId ? null : taskId;
-      if (next) void loadRuns(next);
-      return next;
-    });
+    // 副作用 (取得) は更新関数の外で行う (StrictMode の二重実行で取得が重複しないように)。
+    const next = historyTaskIdRef.current === taskId ? null : taskId;
+    setHistoryTaskId(next);
+    if (next) void loadRuns(next);
   };
 
   const handleToggleEnabled = async (task: TaskDefinition) => {
@@ -493,7 +495,10 @@ function TaskRow({
           {!running && !task.last_status && <chakra.span color="app.textMuted">–</chakra.span>}
         </chakra.div>
         <Flex gap="1.5">
-          <Tooltip label={t("taskRunNow")}>
+          <Tooltip
+            label={runDisabled && !running ? t("taskRunBlockedByOther") : t("taskRunNow")}
+            focusableWrapper={runDisabled && !running}
+          >
             <Button
               type="button"
               onClick={onRunNow}

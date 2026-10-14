@@ -5,6 +5,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { PressableButton } from "./ui";
+import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -133,16 +134,28 @@ export function LocalTablesPanel({
                     {tbl.name}
                   </chakra.span>
                   {onRefetchTable && (
-                    <Tooltip label={t("localPanelRefetchTitle")}>
+                    <Tooltip
+                      label={
+                        refetchingTable !== null && refetchingTable !== tbl.name
+                          ? t("localPanelRefetchBusy")
+                          : t("localPanelRefetchTitle")
+                      }
+                      focusableWrapper={refetchingTable !== null}
+                    >
                       <PressableButton
                         type="button"
                         variant="ghost"
                         size="sm"
                         disabled={refetchingTable !== null}
+                        aria-busy={refetchingTable === tbl.name}
                         aria-label={t("localPanelRefetch", { table: tbl.name })}
                         onClick={() => onRefetchTable(tbl.name)}
                       >
-                        <Icon name="refresh" size={ICON_SIZES.sm} />
+                        {refetchingTable === tbl.name ? (
+                          <Spinner size={14} decorative />
+                        ) : (
+                          <Icon name="refresh" size={ICON_SIZES.sm} />
+                        )}
                       </PressableButton>
                     </Tooltip>
                   )}

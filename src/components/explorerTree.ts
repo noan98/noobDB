@@ -212,7 +212,7 @@ export type ExplorerRow = ExplorerRowBase &
   (
     | { kind: "header"; group: ExplorerHeaderGroup; count: number | null }
     | { kind: "loading" }
-    | { kind: "empty"; message: "databases" | "tables" | "columns" }
+    | { kind: "empty"; message: "databases" | "tables" | "columns" | "loadFailed" }
     | { kind: "quick"; ref: TableRef; variant: "favorite" | "recent" }
     | { kind: "db"; db: string; open: boolean }
     | {
@@ -258,6 +258,8 @@ export interface ExplorerMatchers {
 
 export interface ExplorerRowsInput {
   databases: readonly string[] | null;
+  /** DB 一覧の初回読み込みに失敗した (databases が null のままスケルトンを出し続けないため)。 */
+  loadFailed?: boolean;
   tables: Readonly<Record<string, string[] | undefined>>;
   schemaObjects: Readonly<Record<string, SchemaObject[] | undefined>>;
   tableColumns: Readonly<Record<string, TableColumnInfo[] | undefined>>;
@@ -330,7 +332,9 @@ export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
   quick("recent", input.recent);
 
   const databases = input.databases;
-  if (databases === null) {
+  if (databases === null && input.loadFailed) {
+    rows.push({ key: "ph:databases", depth: 0, parent: "root", kind: "empty", message: "loadFailed" });
+  } else if (databases === null) {
     rows.push({ key: "ph:databases", depth: 0, parent: "root", kind: "loading" });
   } else if (databases.length === 0) {
     rows.push({ key: "ph:databases", depth: 0, parent: "root", kind: "empty", message: "databases" });

@@ -4,6 +4,8 @@
  * `updater.ts` に分離し、ここは副作用なし・Vitest で境界値を固定できる関数だけを
  * 持つ (通知の `queryNotify.ts` ⇔ `notifications.ts` と同じ分離方針)。
  */
+import type { I18nKey } from "./i18n";
+import { formatBytes } from "./components/tableSize";
 import { takeGraphemes } from "./truncateText";
 
 /**
@@ -47,4 +49,20 @@ export function displayVersion(version: string | undefined | null): string {
   if (!version) return "?";
   const v = version.trim().replace(/^v/i, "");
   return v.length > 0 ? v : "?";
+}
+
+/**
+ * ダウンロード進捗トーストの文言。合計サイズが不明 (percent が null) のときは null を返し、
+ * 呼び出し側は最初の不定表示のままにする。
+ */
+export function formatDownloadProgress(
+  p: { percent: number | null; downloadedBytes: number; totalBytes: number | undefined },
+  t: (key: I18nKey, vars?: Record<string, string | number>) => string,
+): string | null {
+  if (p.percent === null || p.totalBytes === undefined) return null;
+  return t("updateDownloadingProgress", {
+    percent: p.percent,
+    downloaded: formatBytes(p.downloadedBytes),
+    total: formatBytes(p.totalBytes),
+  });
 }
