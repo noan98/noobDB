@@ -55,6 +55,8 @@ function escapeRegex(s: string): string {
  * `query` を大小無視・部分一致で検索し、スコア降順 (同点はテーブル優先) に並べた
  * 上位 `limit` 件を返す。空クエリは空配列。
  */
+const SYSTEM_DATABASES = new Set(["information_schema", "mysql", "performance_schema", "sys", "pg_catalog"]);
+
 export function searchObjects(index: ObjectEntry[], query: string, limit = 200): ObjectEntry[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -68,6 +70,10 @@ export function searchObjects(index: ObjectEntry[], query: string, limit = 200):
     // 安定した二次キー: DB → テーブル → カラムのアルファベット順。
     const ai = a.entry;
     const bi = b.entry;
+    // 同点ではシステム DB を利用者 DB の後ろへ回す (#1610)。
+    const as = SYSTEM_DATABASES.has(ai.database.toLowerCase());
+    const bs = SYSTEM_DATABASES.has(bi.database.toLowerCase());
+    if (as !== bs) return as ? 1 : -1;
     if (ai.database !== bi.database) return ai.database < bi.database ? -1 : 1;
     if (ai.table !== bi.table) return ai.table < bi.table ? -1 : 1;
     return (ai.column ?? "") < (bi.column ?? "") ? -1 : (ai.column ?? "") > (bi.column ?? "") ? 1 : 0;

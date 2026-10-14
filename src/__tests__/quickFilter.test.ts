@@ -135,3 +135,13 @@ describe("clientQuickFilter (query result tab / in-memory ColumnFilter)", () => 
     expect(exclude.value).toBe("");
   });
 });
+
+describe("数値フィルタの value2 の扱い", () => {
+  it("between 以外の op では残った非整数の value2 を無視する", () => {
+    for (const value2 of ["1.5", "abc"]) {
+      const f = { op: "eq" as const, value: "1", value2, nullMode: "any" as const };
+      expect(columnFilterPasses(1, f)).toBe(true);
+      expect(columnFilterPasses(2, f)).toBe(false);
+    }
+  });
+});

@@ -11,13 +11,14 @@
 //! 既知の差は文字列ソートの照合順序だけ (`js_compat::collation_key` のドキュメント参照)。
 //! 正規表現検索は JS と Rust で文法・意味が違うため扱わない (フロントは JS のまま)。
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
 use super::js_compat::{
-    collation_key, contains_ci, js_to_number, js_trim, value_number, value_str,
+    collation_key, contains_ci, int_buf, js_to_number, js_trim, value_number, value_str,
 };
 use super::stream_batch::value_to_number;
 use super::types::Value;
@@ -302,25 +303,46 @@ fn prepare_filter(f: &FilterSpec) -> PreparedFilter {
     }
 }
 
+/// 文字列条件 1 件の判定。`q` は (大小無視なら) 小文字化済み。ASCII 同士は確保なしで
+/// 比較し、非 ASCII を含むときだけ `to_lowercase` を通す (#1610)。
+fn text_matches(op: FilterOp, s: &str, q: &str, exact: bool) -> bool {
+    if exact {
+        return match op {
+            FilterOp::Equals => s == q,
+            _ => s != q,
+        };
+    }
+    if s.is_ascii() && q.is_ascii() {
+        let (sb, qb) = (s.as_bytes(), q.as_bytes());
+        return match op {
+            FilterOp::Contains => contains_ci(s, q),
+            FilterOp::Equals => s.eq_ignore_ascii_case(q),
+            FilterOp::NotEquals => !s.eq_ignore_ascii_case(q),
+            FilterOp::StartsWith => sb.len() >= qb.len() && sb[..qb.len()].eq_ignore_ascii_case(qb),
+            _ => sb.len() >= qb.len() && sb[sb.len() - qb.len()..].eq_ignore_ascii_case(qb),
+        };
+    }
+    let s = s.to_lowercase();
+    match op {
+        FilterOp::Contains => s.contains(q),
+        FilterOp::Equals => s == q,
+        FilterOp::NotEquals => s != q,
+        FilterOp::StartsWith => s.starts_with(q),
+        _ => s.ends_with(q),
+    }
+}
+
 /// `matchesColumnValue` (非 NULL セル)。
 fn matches_value(v: &Value, cond: &Prepared) -> bool {
     match cond {
         Prepared::Text { op, q, exact } => {
+            if let Some(ib) = int_buf(v) {
+                return text_matches(*op, ib.as_str(), q, *exact);
+            }
             let Some(s) = value_str(v) else {
                 return false;
             };
-            let s = if *exact {
-                s.to_string()
-            } else {
-                s.to_lowercase()
-            };
-            match op {
-                FilterOp::Contains => s.contains(q.as_str()),
-                FilterOp::Equals => s == *q,
-                FilterOp::NotEquals => s != *q,
-                FilterOp::StartsWith => s.starts_with(q.as_str()),
-                _ => s.ends_with(q.as_str()),
-            }
+            text_matches(*op, &s, q, *exact)
         }
         Prepared::Num {
             op,
@@ -330,8 +352,13 @@ fn matches_value(v: &Value, cond: &Prepared) -> bool {
             bn,
             all_int,
         } => {
-            let Some(text) = value_str(v) else {
-                return false;
+            let ib = int_buf(v);
+            let text = match &ib {
+                Some(b) => Cow::Borrowed(b.as_str()),
+                None => match value_str(v) {
+                    Some(t) => t,
+                    None => return false,
+                },
             };
             let raw = js_trim(&text);
             if *all_int && is_integer_literal(raw) {
@@ -394,8 +421,16 @@ fn passes_filter(f: &PreparedFilter, cell: Option<&Value>) -> bool {
 
 /// `globalIncludesFilter`: どれかのセル (NULL は文字列 "null") が部分一致すれば通す。
 fn passes_global(row: &[Value], col_count: usize, needle_lower: &str) -> bool {
-    (0..col_count).any(|c| match row.get(c).and_then(value_str) {
-        Some(s) => contains_ci(&s, needle_lower),
+    (0..col_count).any(|c| match row.get(c) {
+        Some(v) => {
+            if let Some(ib) = int_buf(v) {
+                return contains_ci(ib.as_str(), needle_lower);
+            }
+            match value_str(v) {
+                Some(s) => contains_ci(&s, needle_lower),
+                None => contains_ci("null", needle_lower),
+            }
+        }
         None => contains_ci("null", needle_lower),
     })
 }

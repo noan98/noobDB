@@ -7,6 +7,7 @@ import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
 import { Modal } from "./Modal";
+import { Segmented } from "./Segmented";
 import { SkeletonSearchRows } from "./Skeleton";
 import { shouldStaggerEntrance } from "./commandPaletteSearch";
 import { staggerContainer, variants } from "../motion";
@@ -207,21 +208,15 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           css={{ "&::placeholder": { color: "var(--text-muted)" } }}
         />
         {currentDatabase && (
-          <chakra.div
-            display="inline-flex"
-            borderRadius="md"
-            overflow="hidden"
-            borderWidth="1px"
-            borderColor="app.border"
-            flexShrink={0}
-          >
-            <ScopeButton active={scope === "current"} onClick={() => setScope("current")}>
-              {t("objSearchScopeCurrent")}
-            </ScopeButton>
-            <ScopeButton active={scope === "all"} onClick={() => setScope("all")}>
-              {t("objSearchScopeAll")}
-            </ScopeButton>
-          </chakra.div>
+          <Segmented<Scope>
+            value={scope}
+            onChange={setScope}
+            ariaLabel={t("objSearchScopeLabel")}
+            options={[
+              { value: "current", label: t("objSearchScopeCurrent") },
+              { value: "all", label: t("objSearchScopeAll") },
+            ]}
+          />
         )}
       </Flex>
 
@@ -279,32 +274,6 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
 
 function entryKey(e: ObjectSearchHit): string {
   return `${e.kind}:${e.database}.${e.table}.${e.column ?? ""}`;
-}
-
-function ScopeButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <chakra.button
-      type="button"
-      onClick={onClick}
-      px="2"
-      py="0.75"
-      fontSize="xs"
-      cursor="pointer"
-      bg={active ? "app.active" : "transparent"}
-      color={active ? "app.text" : "app.textMuted"}
-      _hover={{ bg: "app.rowHover" }}
-    >
-      {children}
-    </chakra.button>
-  );
 }
 
 /** 候補 i の DOM id。入力欄の aria-activedescendant が指す (#1529)。 */
