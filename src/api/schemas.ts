@@ -1469,7 +1469,7 @@ export const scriptDoneEvent = z.object({
   skippedControl: z.number(),
   skippedExcluded: z.number(),
   skippedBeforeStart: z.number(),
-  implicitCommit: z.boolean(),
+  implicitRollback: z.boolean(),
   rowsAffected: z.number(),
   elapsedMs: z.number(),
 });
