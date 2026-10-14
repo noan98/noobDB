@@ -22,6 +22,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       exportQueryResult: vi.fn(),
       getObjectDefinition: vi.fn(),
       renderExportText: vi.fn(),
+      maskExportRows: vi.fn(),
     },
   };
 });
@@ -107,5 +108,46 @@ describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
     await waitFor(() => expect(api.renderExportText).toHaveBeenCalledOnce());
     expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "users");
     expect(vi.mocked(api.renderExportText).mock.calls[0][0].ddlHeader).toBe("CREATE TABLE `users` (`id` int)");
+  });
+
+  it("プレビューにも定義を先頭に付ける (#1597)", async () => {
+    renderModal(true);
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") }));
+    await waitFor(() => expect(document.body.textContent).toContain("CREATE TABLE `users` (`id` int);"));
+    expect(document.body.textContent).toContain("INSERT INTO");
+  });
+
+  it("定義の取得に失敗したらプレビューにその旨を出す (#1597)", async () => {
+    vi.mocked(api.getObjectDefinition).mockRejectedValue(new Error("boom"));
+    renderModal(true);
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") }));
+    await waitFor(() => expect(document.body.textContent).toContain("boom"));
+  });
+
+  it("マスク列があるときはプレビューに省略コメントを出し、定義は取得しない (#1597)", async () => {
+    vi.mocked(api.maskExportRows).mockImplementation(async ({ rows }) => rows.map((r) => [r[0], "MASKED"]));
+    renderWithProviders(
+      <ExportModal
+        columns={[makeColumn("id", "int"), makeColumn("user_email", "varchar")]}
+        rows={[[1, "a@example.com"]]}
+        database="app"
+        table="users"
+        driver="mysql"
+        fullExport={FULL}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportMaskingEnable") }));
+    await waitFor(() => expect(api.maskExportRows).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") }));
+    await waitFor(() => expect(document.body.textContent).toContain("-- CREATE TABLE omitted"));
+    expect(document.body.textContent).toContain(t("exportSqlIncludeDdlMasked"));
+    expect(api.getObjectDefinition).not.toHaveBeenCalled();
   });
 });

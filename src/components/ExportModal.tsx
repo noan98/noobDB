@@ -15,7 +15,7 @@ import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./moda
 import { useToast } from "./Toast";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { buildExportContent, DEFAULT_SQL_BATCH } from "./exportPreview";
+import { buildExportContent, DEFAULT_SQL_BATCH, SQL_DDL_OMITTED_COMMENT } from "./exportPreview";
 import { isResultGoneError } from "./resultHandle";
 import { exportFormatHasTextPreview, xlsxTruncationNotices, type ExportNotice } from "./exportXlsx";
 import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
@@ -252,6 +252,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   // CREATE TABLE を付けてしまう)。
   const ddlTableMatches = sqlTable.trim() !== "" && sqlTable.trim() === (table ?? "").trim();
   const canIncludeDdl = !!fullExport && ddlTableMatches && !!database;
+  // プレビュー用に取得した定義 (#1597)。テーブル名ごとに 1 回取る。
+  const [ddlPreview, setDdlPreview] = useState<
+    { table: string; state: "ok"; text: string } | { table: string; state: "error"; error: string } | null
+  >(null);
   // 選択範囲があればそれを扱う意図が明確なので「選択範囲」を初期選択にする。
   // 次点は、部分結果かつ全件モードが使えるときの「全件」(誤って部分だけ書き出す
   // のを防ぐ)。それ以外は従来どおりグリッドのみ。
@@ -408,6 +412,35 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
     () => ({ driver: sqlDriver, table: sqlTable, sqlBatchSize: sqlBatch }),
     [sqlDriver, sqlTable, sqlBatch],
   );
+  const previewWantsDdl = format === "sql" && sqlIncludeDdl && canIncludeDdl;
+  // マスク列があるときはバックエンドが定義を出さないので取得もしない。
+  const previewFetchesDdl = previewWantsDdl && masks.length === 0;
+  const previewDdlTable = sqlTable.trim();
+  const previewSessionId = fullExport?.sessionId;
+  useEffect(() => {
+    if (!previewFetchesDdl || !previewSessionId || !database) return;
+    let cancelled = false;
+    api
+      .getObjectDefinition(previewSessionId, database, "table", previewDdlTable)
+      .then((text) => {
+        if (!cancelled) setDdlPreview({ table: previewDdlTable, state: "ok", text });
+      })
+      .catch((e) => {
+        if (!cancelled) setDdlPreview({ table: previewDdlTable, state: "error", error: String(e) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [previewFetchesDdl, previewSessionId, database, previewDdlTable]);
+  const ddlPreviewHeader = !previewWantsDdl
+    ? ""
+    : masks.length > 0
+      ? SQL_DDL_OMITTED_COMMENT
+      : ddlPreview && ddlPreview.table === previewDdlTable
+        ? ddlPreview.state === "ok"
+          ? ddlPreview.text.trimEnd().replace(/;?$/, ";") + "\n\n"
+          : t("exportSqlDdlPreviewError", { error: ddlPreview.error }) + "\n\n"
+        : t("exportSqlDdlPreviewLoading") + "\n\n";
   const previewSourceRows =
     masks.length === 0 ? previewRows : currentMasked && "rows" in currentMasked ? currentMasked.rows : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: buildBundleHtmlSync は毎レンダーで作り直される関数なので依存に入れられない。実際に決める値 (bundle 系・scope・locale 等) は下の配列にあり、biome の指摘 (余分) はこの関数経由の間接依存
@@ -418,9 +451,10 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         : format === "bundle"
           ? // バンドルもマスキング (#733) 後の行を使い、表示マスク (#1069) 対象列はさらに伏せ字にする。
             buildBundleHtmlSync(previewSourceRows, new Date(), null, null)
-          : buildExportContent(format, effectiveColumns, previewSourceRows, queryForJson, exportCtx),
+          : ddlPreviewHeader +
+            buildExportContent(format, effectiveColumns, previewSourceRows, queryForJson, exportCtx),
     // buildBundleHtmlSync は下記の依存だけから決まる (毎レンダーで作り直される関数自体は除外)。
-    [format, effectiveColumns, previewSourceRows, queryForJson, exportCtx, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
+    [format, effectiveColumns, previewSourceRows, queryForJson, exportCtx, ddlPreviewHeader, bundleMasked, bundleHost, bundle, elapsedMs, partial, scope, locale],
   );
   const previewMaskError = currentMasked && "error" in currentMasked ? currentMasked.error : null;
   const previewTruncated = effectiveRows.length > PREVIEW_ROWS;
@@ -937,6 +971,11 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
                           ? t("exportSqlIncludeDdlTableMismatch")
                           : t("exportSqlIncludeDdlHint")}
                     </chakra.div>
+                    {previewWantsDdl && masks.length > 0 && (
+                      <chakra.div textStyle="caption" mt="1" color="app.textWarning">
+                        {t("exportSqlIncludeDdlMasked")}
+                      </chakra.div>
+                    )}
                   </chakra.div>
                 )}
               </FormSection>

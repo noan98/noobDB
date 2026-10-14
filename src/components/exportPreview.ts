@@ -254,6 +254,13 @@ export function buildMarkdownTable(columns: Column[], rows: CellValue[][]): stri
   return out;
 }
 
+/**
+ * マスク列があるときに SQL 書き出しが CREATE TABLE の代わりに置くコメント。バックエンド
+ * `export.rs::write_sql_ddl` と同一 (#1597)。
+ */
+export const SQL_DDL_OMITTED_COMMENT =
+  "-- CREATE TABLE omitted: masked columns no longer match the original column types and constraints.\n\n";
+
 /** SQL INSERT 形式で対象テーブル名が空のときに使うプレースホルダ (バックと一致)。 */
 export const DEFAULT_SQL_TABLE = "exported_table";
 /** SQL INSERT で 1 文へまとめる行数の既定上限 (バックと一致)。 */

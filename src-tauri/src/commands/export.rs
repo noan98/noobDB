@@ -238,6 +238,12 @@ fn create_export_temp_file(final_path: &str) -> Result<(PathBuf, std::fs::File)>
                 if let Some(p) = existing_perms {
                     // umask で削られたビットも含めて既存の権限に揃える。失敗しても出力自体は
                     // 続行できるので握りつぶす (権限は付随情報)。
+                    // setuid などは復元しない (下位 9 ビットだけ)。
+                    #[cfg(unix)]
+                    let p = {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::Permissions::from_mode(p.mode() & 0o777)
+                    };
                     let _ = file.set_permissions(p);
                 }
                 return Ok((candidate, file));
