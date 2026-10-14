@@ -149,4 +149,12 @@ describe("ContextMenu の高さ上限", () => {
     expect(menu.style.overflowY).toBe("auto");
     expect(Number.parseFloat(menu.style.maxHeight)).toBeLessThan(window.innerHeight);
   });
+
+  it("メニュー自身のスクロールでは閉じず、外側のスクロールでは閉じる", () => {
+    const { onClose } = renderMenu(Array.from({ length: 60 }, (_, i) => child(`項目${i}`)));
+    fireEvent.scroll(screen.getByRole("menu"));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.scroll(document);
+    expect(onClose).toHaveBeenCalled();
+  });
 });

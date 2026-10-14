@@ -186,7 +186,9 @@ function ConfirmDialog({
         {message}
         {requiresTyped && (
           <FormSection>
-            <FieldLabel htmlFor="confirm-dialog-type-confirm-input">
+            {/* overline の大文字化をここだけ解除する。ラベルに入力すべき対象名が入って
+                おり、大文字で表示すると表示どおりに打っても一致しない (大文字小文字を区別する)。 */}
+            <FieldLabel htmlFor="confirm-dialog-type-confirm-input" textTransform="none">
               {t("typeToConfirmLabel", { target: typedConfirmation })}
             </FieldLabel>
             <Input

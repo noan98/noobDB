@@ -125,12 +125,18 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // メニュー自身 (サブメニューは別 portal なので role=menu の祖先で判定) の
+    // スクロールでは閉じない。項目が多いとパネルがスクロールするため。
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Element && e.target.closest('[role="menu"]')) return;
+      onClose();
+    };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onClose);
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onClose);
     };
   }, [onClose]);
@@ -303,7 +309,17 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
       >
         {entries.map((entry, i) => {
           if (isSeparator(entry)) {
-            return <Box key={`sep-${i}`} role="separator" h="1px" my="1" mx="1.5" bg="app.borderSubtle" />;
+            return (
+              <Box
+                key={`sep-${i}`}
+                role="separator"
+                h="1px"
+                flexShrink={0}
+                my="1"
+                mx="1.5"
+                bg="app.borderSubtle"
+              />
+            );
           }
           const submenu = isSubmenu(entry);
           const expanded = submenu && open?.index === i;
