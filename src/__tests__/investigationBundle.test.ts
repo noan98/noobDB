@@ -139,6 +139,23 @@ describe("extractReferencedTables", () => {
     ]);
   });
 
+  it("EXTRACT / TRIM / SUBSTRING / OVERLAY の FROM をテーブルと誤認しない (#1601)", () => {
+    expect(
+      extractReferencedTables(
+        "SELECT EXTRACT(YEAR FROM created_at) AS y, TRIM(BOTH ' ' FROM name), SUBSTRING(name FROM 1 FOR 3), OVERLAY(a PLACING b FROM 2) FROM orders GROUP BY y",
+        5,
+        "postgres",
+      ),
+    ).toEqual([{ database: null, table: "orders" }]);
+    // 関数の外の FROM / サブクエリ内の FROM は従来どおり拾う。
+    expect(
+      extractReferencedTables("SELECT EXTRACT(DAY FROM d) FROM a JOIN (SELECT 1 FROM b) s ON 1=1"),
+    ).toEqual([
+      { database: null, table: "a" },
+      { database: null, table: "b" },
+    ]);
+  });
+
   it("FROM のカンマ区切りも拾い、重複は除く", () => {
     expect(extractReferencedTables("select * from a x, b as y, a where 1=1")).toEqual([
       { database: null, table: "a" },

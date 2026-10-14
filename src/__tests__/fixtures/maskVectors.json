@@ -128,6 +128,49 @@
       "sql": "SELECT 'a; DROP TABLE t' FROM x",
       "note": "正常に閉じた文字列内のセミコロン+DROP は隠れる (ベースラインの健全性チェック)",
       "masked": "SELECT '               ' FROM x"
+    },
+    {
+      "sql": "SELECT E'\\'' ; DELETE FROM t;",
+      "note": "#1601: PostgreSQL の E'…' では \\' が有効なエスケープ (後続の ; DELETE を文字列に飲まれない)。通常解釈 (SQLite・ドライバ不明) では \\' で閉じ、続く ' が EOF まで文字列を開く",
+      "masked": "SELECT E'                    ",
+      "maskedMysql": "SELECT E'  ' ; DELETE FROM t;",
+      "maskedPostgres": "SELECT E'  ' ; DELETE FROM t;"
+    },
+    {
+      "sql": "UPDATE t SET name = E'O\\'Brien' WHERE id = 1;",
+      "note": "#1601: E'…' 内の \\' で閉じず WHERE が見える (PostgreSQL / MySQL)",
+      "masked": "UPDATE t SET name = E'  'Brien'              ",
+      "maskedMysql": "UPDATE t SET name = E'        ' WHERE id = 1;",
+      "maskedPostgres": "UPDATE t SET name = E'        ' WHERE id = 1;"
+    },
+    {
+      "sql": "SELECT name'\\' ; DELETE FROM t; --'",
+      "note": "#1601: 単語の末尾の e (name) は E 文字列の接頭辞ではない。PostgreSQL では通常のリテラルなので \\' で閉じる",
+      "masked": "SELECT name' ' ; DELETE FROM t;    ",
+      "maskedMysql": "SELECT name'                      '"
+    },
+    {
+      "sql": "SELECT [a'] ; DELETE FROM t;",
+      "note": "#1601: SQLite の [角括弧] 識別子内の ' は文字列を開かない。他ドライバでは [ は普通の文字",
+      "masked": "SELECT [a'                  ",
+      "maskedSqlite": "SELECT [  ] ; DELETE FROM t;"
+    },
+    {
+      "sql": "SELECT [a ; DELETE FROM t;",
+      "note": "#1601: 閉じ ] が無い [ は識別子扱いにせず後続を隠さない (fail-closed)",
+      "masked": "SELECT [a ; DELETE FROM t;"
+    },
+    {
+      "sql": "SELECT x$e'\\' ; DELETE FROM t; --'",
+      "note": "#1601: 識別子 x$e (`$` は識別子の一部) の末尾の e は E 文字列の接頭辞ではない (PostgreSQL でも通常のリテラル)",
+      "masked": "SELECT x$e' ' ; DELETE FROM t;    ",
+      "maskedMysql": "SELECT x$e'                      '"
+    },
+    {
+      "sql": "SELECT ée'\\' ; DELETE FROM t; --'",
+      "note": "#1601: 識別子 ée (非 ASCII も識別子の一部) の末尾の e は E 文字列の接頭辞ではない (PostgreSQL でも通常のリテラル)",
+      "masked": "SELECT ée' ' ; DELETE FROM t;    ",
+      "maskedMysql": "SELECT ée'                      '"
     }
   ]
 }
