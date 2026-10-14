@@ -6,7 +6,7 @@
   "packageManager": "pnpm@10.33.0",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc -p tsconfig.node.json --noEmit && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
@@ -17,7 +17,7 @@
     "knip": "knip",
     "mutants:js": "stryker run",
     "bundle-size": "node scripts/bundle-size.mjs",
-    "test:scripts": "node --test scripts/automerge-hold.test.mjs",
+    "test:scripts": "node --test 'scripts/*.test.mjs'",
     "tauri": "tauri"
   },
   "dependencies": {

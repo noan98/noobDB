@@ -90,7 +90,8 @@ jobs:
       # 「Loaded a configuration file for version 'X', but running version 'Y'」の
       # 設定エラーになる。この事故は v4.37.0 (init のみ)・v4.37.1 (analyze のみ)・
       # v4.37.3 (analyze のみ)・v4.37.4 (init のみ) で繰り返し発生しており、その都度
-      # 3 ステップを同一バージョンへ揃えて復旧している (現在は v4.37.4)。
+      # 3 ステップを同一バージョンへ揃えて復旧している。
+      # (現在の版は Initialize CodeQL の `uses:` の SHA とコメントを参照)
       # **codeql-action は単一リポジトリなので、init / autobuild / analyze は同じ
       # コミット SHA を指す**のが正しい状態。バージョンを上げるときは必ず 3 箇所
       # 同時に更新すること。Dependabot が 1 箇所ずつ別 PR を出して事故が再発するのを

@@ -2532,12 +2532,16 @@ async fn fetch_rows_by_pk_chunks_large_key_lists() {
         .await
         .expect("create table");
 
+    // 1 行ずつ autocommit で入れると fsync が N 回走り Windows で遅い (#1635)。
+    // 複数行 VALUES の 1 文にまとめる (450 行は SQLite の複合 VALUES 上限内)。
     const N: i64 = 450; // > 2 chunks at CHUNK_SIZE=200
-    for id in 1..=N {
-        conn.execute(&format!("INSERT INTO big (id) VALUES ({id})"), None)
-            .await
-            .expect("seed");
-    }
+    let values = (1..=N)
+        .map(|id| format!("({id})"))
+        .collect::<Vec<_>>()
+        .join(",");
+    conn.execute(&format!("INSERT INTO big (id) VALUES {values}"), None)
+        .await
+        .expect("seed");
 
     let keys: Vec<Vec<t::Value>> = (1..=N).map(|id| vec![t::Value::Int(id)]).collect();
     let rows = conn

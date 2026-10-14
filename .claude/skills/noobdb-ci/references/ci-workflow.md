@@ -1,5 +1,12 @@
 # ci.yml (PR / main push のチェック)
 
+- **concurrency**: `cancel-in-progress` は `github.event_name == 'pull_request'` のときだけ
+  true (#1632)。PR の古い run は取り消すが、**main への push の run は取り消さない**
+  (連続 push で途中のコミットの検証が抜け、main の健全性確認とキャッシュ温めが欠けるため)。
+  `cancel-in-progress: false` でも同一グループの「待機中」run は新しい run に置き換えられる
+  (グループには実行中 1 + 待機 1 のみ) ため、push のグループは `github.sha` 単位にして
+  全件を完走させる。PR のグループは従来どおり `github.ref` で、PR と push は互いに取り消し合わない。
+
 - `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
   push トリガは**キャッシュを main スコープへ保存するため**にあります:
   pull_request 実行で保存される rust-cache / sccache / pnpm のキャッシュは PR の
@@ -42,14 +49,13 @@
   チェック名が変わったため)。
 
   **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
-  ため)。`frontend (unit shard N/3)` (`frontend-unit`、`--shard` で 3 並列、各 shard は
+  ため)。`frontend (unit shard 1/4)`〜`(4/4)` (`frontend-unit`、`--shard` で 4 並列。分割数の正は ci.yml の `matrix.shard`)、各 shard は
   `--coverage --coverage.thresholds.lines=0 --reporter=blob` で blob を artifact へ保存) と、
   それを `gh run download` で集めて `vitest run --merge-reports --coverage` で統合し
   カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
   `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
   カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
-  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
-  `frontend (unit shard N/3)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の各ジョブは集約ジョブが `needs.frontend-unit.result` を見て fail
   させるので必須に含めなくてよい)。
 
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
@@ -115,7 +121,13 @@
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL / PostgreSQL に対し
   **計装なしの** nextest (`--lib --test '*'`。テストの無い bin ターゲットはビルドしない) を実行します
-  (PR ブロッキング)。カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
+  (PR ブロッキング)。nextest は `src-tauri/.config/nextest.toml` の
+  `slow-timeout = { period = "20s", terminate-after = 15 }` で、20 秒超のテストに `SLOW` を出し、
+  300 秒で強制終了して失敗扱いにします (#1635。SSH / TLS 待ちのハングがジョブの
+  `timeout-minutes: 45` まで居座るのを防ぐ。観測した最長テストは約 40 秒)。正当に長いテストが
+  増えたら `[[profile.default.overrides]]` で個別に延長します。CI 用の別プロファイルは無く、
+  `rust (test)` / `rust (coverage)` / `rust (windows test)` はすべて default を使います。
+  カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
@@ -187,7 +199,7 @@
   env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
-  フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
@@ -211,11 +223,12 @@
 
 ## `automerge gate (script tests)` ジョブ (#1108)
 
-`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
-`scripts/automerge-hold.mjs` のユニットテスト `scripts/automerge-hold.test.mjs` を
-`node --test` で実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
+`scripts/*.test.mjs` (`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
+`scripts/automerge-hold.mjs` のテストと、定期ジョブの通知スクリプト
+`scripts/upsert-tracking-issue.sh` のテスト (#1633) など) を `node --test` で
+実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
 Node 標準の `node:test` だけを使い依存ゼロなので `pnpm install` はしません。
-`changes` ジョブの `automerge` フィルタ (上記 2 ファイル + `automerge.yml`) か
+`changes` ジョブの `automerge` フィルタ (上記のスクリプトとテスト + `automerge.yml`) か
 `workflow` が true のときだけ走ります。**必須チェックではありません**。
 Vitest (`src/__tests__/`) ではなく `node:test` にしているのは、ワークフローが
 実行時に `node scripts/automerge-hold.mjs` を素の Node で直接呼ぶため
