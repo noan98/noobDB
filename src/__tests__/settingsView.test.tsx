@@ -178,8 +178,9 @@ describe("設定画面の不整合 (#1604)", () => {
     renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
     await waitFor(() => expect(document.getElementById("settings-history-retention")).not.toBeNull());
     const input = document.getElementById("settings-history-retention") as HTMLInputElement;
-    await waitFor(() => expect(screen.getByText("Error: boom")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(t("settingsHistoryRetentionLoadFailed", { error: "Error: boom" }))).toBeInTheDocument());
     expect(input).toBeDisabled();
+    expect(input.value).toBe("");
   });
 
   it("フォントで「カスタム」を選ぶと既定に戻らず入力欄が出る", async () => {

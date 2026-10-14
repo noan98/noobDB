@@ -177,7 +177,13 @@ function FontFamilyControl(props: {
   const [customText, setCustomText] = useState(isPreset || value === null ? "" : (value ?? ""));
   useEffect(() => {
     if (value !== null && !presets.includes(value)) setCustomText(value);
+    // 外からプリセットか既定へ変わったらカスタム選択状態を解く。
+    else setCustomMode(false);
   }, [value, presets]);
+  const customInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (customMode) customInputRef.current?.focus();
+  }, [customMode]);
 
   const previewStack = stack(value) ?? "var(--font-mono)";
 
@@ -225,11 +231,20 @@ function FontFamilyControl(props: {
       {selectValue === FONT_CUSTOM && (
         <Input
           width="auto"
+          ref={customInputRef}
           aria-label={props.customLabel}
           placeholder={props.placeholder}
           value={customText}
           onChange={(e) => setCustomText(e.target.value)}
-          onBlur={() => props.onChange(customText.trim() || null)}
+          onBlur={() => {
+            const text = customText.trim();
+            if (text) props.onChange(text);
+            else {
+              // 空のまま離れたら元の選択表示へ戻す (値がカスタムだった場合のみ既定へ)。
+              setCustomMode(false);
+              if (value !== null && !isPreset) props.onChange(null);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
@@ -695,7 +710,8 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       .catch((e) => {
         if (cancelled) return;
         setHistoryRetentionLoadFailed(true);
-        toast.error(String(e));
+        setHistoryRetentionInput("");
+        toast.error(t("settingsHistoryRetentionLoadFailed", { error: String(e) }));
       })
       .finally(() => {
         if (!cancelled) setHistoryRetentionLoading(false);

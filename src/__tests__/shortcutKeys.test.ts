@@ -163,3 +163,21 @@ describe("名前付きキーの正規化 (ArrowRight / PageDown)", () => {
     expect(comboMatchesEvent("Alt+Arrowright", e)).toBe(true);
   });
 });
+
+describe("+ キーを含むショートカットの表示 (#1604)", () => {
+  it("Mod+Shift++ は + キーを表示に残す", () => {
+    expect(formatCombo("Mod+Shift++")).toBe("Cmd/Ctrl+Shift++");
+    expect(canonicalizeCombo("Mod+Shift++")).toBe("Mod+Shift++");
+    expect(formatCombo("+")).toBe("+");
+  });
+
+  it("splitComboKeys は末尾の + をキーとして返す", () => {
+    expect(splitComboKeys("Cmd/Ctrl+Shift++")).toEqual(["Cmd/Ctrl", "Shift", "+"]);
+    expect(splitComboKeys("Cmd/Ctrl+K")).toEqual(["Cmd/Ctrl", "K"]);
+  });
+
+  it("イベントとの一致判定は変わらない", () => {
+    const e = { key: "+", metaKey: true, ctrlKey: false, altKey: false, shiftKey: true } as KeyboardEvent;
+    expect(comboMatchesEvent("Mod+Shift++", e)).toBe(true);
+  });
+});
