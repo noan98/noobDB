@@ -90,7 +90,7 @@ describe("型別インライン・エディタ (行追加)", () => {
     const select = screen.getByRole("combobox", { name: "flag" });
     await user.selectOptions(select, "true");
     await user.type(screen.getAllByRole("textbox")[1], "null");
-    fireEvent.keyDown(select, { key: "Enter" });
+    fireEvent.keyDown(select, { key: "Enter", ctrlKey: true });
     expect(onConfirm).toHaveBeenCalledWith({ 1: "true", 2: "null" });
   });
 
@@ -103,7 +103,7 @@ describe("型別インライン・エディタ (行追加)", () => {
     const select = screen.getByRole("combobox", { name: "flag" });
     await user.selectOptions(select, "true");
     await user.selectOptions(select, "");
-    fireEvent.keyDown(select, { key: "Enter" });
+    fireEvent.keyDown(select, { key: "Enter", ctrlKey: true });
     expect(onConfirm).toHaveBeenCalledWith({});
   });
 });

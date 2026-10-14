@@ -4,6 +4,7 @@ import { Heading, SelectableCard } from "./ui";
 import { motion, useReducedMotion } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../i18n";
+import { useToast } from "./Toast";
 import { staggerContainer, transitions, variants } from "../motion";
 import { BrandMark } from "../brand";
 import { WelcomeIllustration } from "./illustrations";
@@ -84,7 +85,7 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
         <Text fontWeight="600" color="app.text" fontSize="sm">
           {title}
         </Text>
-        <Text id={descId} color="app.textMuted" fontSize="xs" lineHeight="1.5">
+        <Text id={descId} textStyle="caption" lineHeight="1.5">
           {description}
         </Text>
       </SelectableCard>
@@ -106,17 +107,24 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
   // では同時表示へ明示的にフォールバックする (motion.ts の staggerContainer 参照)。
   const reduced = useReducedMotion() ?? false;
 
+  const toast = useToast();
+
   const handlePickSqlite = async () => {
-    const selected = await open({
-      multiple: false,
-      directory: false,
-      title: t("welcomeOpenSqliteTitle"),
-      filters: [
-        { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
-        { name: t("formAnyFileFilter"), extensions: ["*"] },
-      ],
-    });
-    if (typeof selected === "string") onOpenSqlite(selected);
+    try {
+      const selected = await open({
+        multiple: false,
+        directory: false,
+        title: t("welcomeOpenSqliteTitle"),
+        filters: [
+          { name: t("formSqliteFileFilter"), extensions: ["db", "sqlite", "sqlite3"] },
+          { name: t("formAnyFileFilter"), extensions: ["*"] },
+        ],
+      });
+      if (typeof selected === "string") onOpenSqlite(selected);
+    } catch (e) {
+      // ファイル選択ダイアログの失敗を無言にしない (#1614)。
+      toast.error(t("welcomeOpenSqliteFailed", { error: String(e) }));
+    }
   };
 
   return (

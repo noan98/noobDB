@@ -150,7 +150,14 @@ describe("Zod スキーマ単体 (#391)", () => {
     expect(historyEntry.safeParse({ ...entry, status: 200 }).success).toBe(false);
   });
 
-  it("parseResponse はコマンド名を含むエラーを投げる", () => {
+  it("parseResponse はコマンド名を含む短いエラーを投げ、zod の詳細は混ぜない (#1614)", () => {
     expect(() => parseResponse(queryResult, { columns: [] }, "boom")).toThrow(/boom/);
+    try {
+      parseResponse(queryResult, { columns: [] }, "boom");
+    } catch (e) {
+      const m = String(e);
+      expect(m).not.toMatch(/received|Invalid input|Required/);
+      expect(m.split("\n")).toHaveLength(1);
+    }
   });
 });

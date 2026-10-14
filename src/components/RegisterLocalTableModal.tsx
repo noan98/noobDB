@@ -15,7 +15,8 @@ import { Button, Input, PressableButton } from "./ui";
  * 上限行数超過・件数・「外部送信なし/完全ローカル」・「ここでの更新は接続先に
  * 反映されない」を確認前に明示する。既存ローカルテーブル名との衝突は
  * `SaveAsTableModal` と同じ流儀 (大小無視の即時警告、ただし上書きなので確定
- * ボタンは無効化しない — 意図した上書きもあり得るため)。
+ * ボタンは無効化しない — 意図した上書きもあり得るため。衝突時は「上書きして登録」の
+ * dangerOutline に切り替え、Enter での一発確定は止める)。
  */
 interface Props {
   rowCount: number;
@@ -37,10 +38,13 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
   const submit = () => {
     if (valid) onConfirm(trimmed);
   };
+  // 既存のローカルテーブルを置き換えるときは、Enter / Cmd+Enter の一発確定を止め、
+  // 確定は「上書きして登録」ボタンの明示クリックだけにする (破壊的パターン)。
+  const overwrite = collides && trimmed.length > 0;
 
   return (
     <Modal
-      onSubmit={submit}
+      onSubmit={overwrite ? undefined : submit}
       submitDisabled={!valid}
       width="520px"
       onClose={onClose}
@@ -59,7 +63,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
             onChange={(e) => setName(e.target.value)}
             placeholder={t("localRegisterNamePlaceholder")}
             onKeyDown={(e) => {
-              if (isPlainEnterKey(e)) submit();
+              if (isPlainEnterKey(e) && !overwrite) submit();
             }}
           />
           {trimmed.length > 0 && collides && (
@@ -97,13 +101,27 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
         </Flex>
       </ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onClose}>
-          {t("localRegisterClose")}
-        </Button>
-        <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
-          {t("localRegisterConfirm")}
-        </PressableButton>
+        {overwrite ? (
+          <>
+            <Button type="button" variant="dangerOutline" disabled={!valid} onClick={submit}>
+              {t("localRegisterOverwrite")}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="primary" onClick={onClose}>
+              {t("localRegisterClose")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="secondary" onClick={onClose}>
+              {t("localRegisterClose")}
+            </Button>
+            <PressableButton type="button" variant="primary" disabled={!valid} onClick={submit}>
+              {t("localRegisterConfirm")}
+            </PressableButton>
+          </>
+        )}
       </ModalFooter>
     </Modal>
   );

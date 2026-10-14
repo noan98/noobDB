@@ -2,8 +2,15 @@ import { useMemo, useRef, useState } from "react";
 import { chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
-import { extractQueryParams, isNumericParam, substituteQueryParams, type ParamType } from "../queryParams";
+import {
+  extractQueryParams,
+  findQuotedParams,
+  isNumericParam,
+  substituteQueryParams,
+  type ParamType,
+} from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { Callout } from "./Callout";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton } from "./ui";
 import { Tooltip } from "./Tooltip";
@@ -107,6 +114,10 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
     return null; // text: any value (including empty) is allowed
   };
 
+  // 引用符で囲んだプレースホルダ (数値型は引用符なしで入るので対象外)。
+  const quotedNames = useMemo(() => findQuotedParams(sql, driver), [sql, driver]);
+  const quotedWarnNames = quotedNames.filter((n) => (drafts[n]?.type ?? "text") !== "number");
+
   const hasError = names.some((n) => errorKey(n) !== null);
 
   const values = useMemo(() => {
@@ -209,6 +220,12 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
             );
           })}
         </chakra.div>
+
+        {quotedWarnNames.length > 0 && (
+          <Callout tone="warning">
+            {t("parameterInputQuotedWarning", { names: quotedWarnNames.map((n) => `{{${n}}}`).join(", ") })}
+          </Callout>
+        )}
 
         <FormSection>
           <FieldLabel as="div">{t("parameterInputPreviewLabel")}</FieldLabel>

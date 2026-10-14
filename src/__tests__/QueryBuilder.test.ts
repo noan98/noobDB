@@ -206,6 +206,33 @@ describe("computeBuilderBlockedReason", () => {
     ).toBe("qbValidationNoTable");
   });
 
+  it("blocks SELECT with all-columns off and no column chosen (#1615)", () => {
+    const base = {
+      kind: "SELECT" as const,
+      table: "t",
+      whereEnabled: false,
+      whereConditions: emptyWhere,
+      setPairs: emptyPair,
+      insertPairs: emptyPair,
+    };
+    expect(computeBuilderBlockedReason({ ...base, selectAll: false, selectColumns: [] })).toBe(
+      "qbValidationNoSelectColumns",
+    );
+    expect(computeBuilderBlockedReason({ ...base, selectAll: false, selectColumns: ["id"] })).toBeNull();
+    expect(computeBuilderBlockedReason({ ...base, selectAll: true, selectColumns: [] })).toBeNull();
+    // SELECT 以外には影響しない
+    expect(
+      computeBuilderBlockedReason({
+        ...base,
+        kind: "DELETE",
+        whereEnabled: true,
+        whereConditions: filledWhere,
+        selectAll: false,
+        selectColumns: [],
+      }),
+    ).toBeNull();
+  });
+
   it("blocks INSERT with no filled column/value pair", () => {
     expect(
       computeBuilderBlockedReason({

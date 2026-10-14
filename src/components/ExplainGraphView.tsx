@@ -21,6 +21,7 @@ import "@xyflow/react/dist/style.css";
 import { useReducedMotion } from "motion/react";
 
 import { SEQUENTIAL_RAMPS, rampStops, readableInk, sampleRamp, useIsDarkTheme } from "../colorScale";
+import { useT } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
 import {
   buildPlanGraph,
@@ -93,6 +94,7 @@ const metaCss: SystemStyleObject = {
 
 /** One plan-tree node. Background is the cost heat; text ink adapts to it. */
 function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
+  const t = useT();
   // ダークテーマでは「暗→明」の向きへ切り替える (#1187)。
   const isDark = useIsDarkTheme();
   // コスト → 背景色。ヒートが null (コスト無し) のときは中立の薄色を使う。
@@ -115,14 +117,18 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
         <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
         <chakra.span css={labelCss}>{data.label}</chakra.span>
         <chakra.span css={metaCss} opacity={0.92}>
-          {data.cost !== null && <span>cost {formatNumber(data.cost)}</span>}
+          {data.cost !== null && <span>{t("explainNodeCost", { cost: formatNumber(data.cost) })}</span>}
           {data.actualRows !== null ? (
             <span>
-              {data.rows !== null ? `${formatNumber(data.rows)} → ` : ""}
-              {formatNumber(data.actualRows)} rows
+              {data.rows !== null
+                ? t("explainNodeActualRows", {
+                    est: formatNumber(data.rows),
+                    actual: formatNumber(data.actualRows),
+                  })
+                : t("explainNodeRows", { rows: formatNumber(data.actualRows) })}
             </span>
           ) : (
-            data.rows !== null && <span>{formatNumber(data.rows)} rows</span>
+            data.rows !== null && <span>{t("explainNodeRows", { rows: formatNumber(data.rows) })}</span>
           )}
           {data.actualMs !== null && <span>{formatDurationMs(data.actualMs)}</span>}
           {data.worstHint && data.worstHint !== "info" && (

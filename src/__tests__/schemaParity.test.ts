@@ -209,6 +209,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["schemaDriftCapture", schemas.schemaDriftCapture],
   ["planWatchEntryVariants", schemas.planWatchEntry],
   ["planWatchRefreshResult", schemas.planWatchRefreshResult],
+  ["skippedProfileVariants", schemas.skippedProfile],
   ["dumpToolStatusVariants", schemas.dumpToolStatus],
   ["encryptedProfileExportResult", schemas.encryptedProfileExportResult],
   ["encryptedProfileImportResult", schemas.encryptedProfileImportResult],
