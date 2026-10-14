@@ -382,6 +382,7 @@ const en = {
   schemaDriftOmittedBadge: "too large to store in full",
   schemaDriftCompareFrom: "From",
   schemaDriftCompareTo: "To",
+  schemaDriftTimelineHint: 'Click to set the "To" generation; Shift+click to set "From".',
   schemaDriftLatestOption: "{time} (latest)",
   schemaDriftPickTwo: "Pick two different snapshots to compare.",
   schemaDriftOmittedNote:
@@ -1909,6 +1910,9 @@ const en = {
   cloneTableNameLabel: 'New table name (copy of "{table}")',
   cloneTableNameExists: 'A table named "{table}" already exists.',
   cloneTableIncludeData: "Copy the data too (INSERT INTO ... SELECT)",
+  cloneTableRowEstimate: "Rows to copy: about {rows} (estimate)",
+  cloneTableLargeData:
+    "About {rows} rows will be copied. INSERT ... SELECT may take a long time and hold locks.",
   cloneTableDdlError: "Couldn't read the table definition: {error}",
   cloneTableListError: "Couldn't verify existing table names: {error}",
   cloneTableSkipped: "These statements in the definition were not copied: {statements}",
@@ -2403,6 +2407,8 @@ const en = {
   schemaExportIncludeRelatedHint:
     "Also adds every table reachable from the selection through foreign keys (marked FK below).",
   schemaExportFilterPlaceholder: "Filter tables...",
+  schemaExportSelectVisible: "Select shown",
+  schemaExportClearSelection: "Clear selection",
   schemaExportNoFilterMatch: "No tables match the filter.",
   schemaExportAutoAdded: "Added automatically via foreign keys",
   schemaExportSelectedCount: "{selected} selected → {effective} tables in the output",
@@ -3764,6 +3770,9 @@ const en = {
   broadcastCancelEntry: "Cancel this connection",
   broadcastKeyColumnLabel: "Key column (for row diff)",
   broadcastKeyColumnNone: "None — compare by row hash",
+  broadcastKeyHint: "Pick a key column to highlight changed cells.",
+  broadcastKeyHintCandidate: "Pick a key column to highlight changed cells. Suggested: {column}",
+  broadcastKeyHintUse: "Use {column}",
   broadcastStatusRunning: "Running…",
   broadcastStatusDone: "Done",
   broadcastStatusError: "Error",
@@ -3895,6 +3904,10 @@ const en = {
   schemaCompareGenerating: "Generating...",
   schemaCompareStatementsShown: "Showing {shown} of {total} statements",
   schemaCompareStatementsMore: "Show {count} more",
+  schemaCompareTablesShown: "Showing {shown} of {total} tables",
+  schemaCompareDataProgress: "{rows} rows read",
+  schemaCompareDataCancel: "Cancel comparison",
+  schemaCompareDataCancelled: "The data comparison was cancelled.",
   schemaCompareNoStatements:
     "No statements to apply. Enable destructive changes to generate DROP statements.",
   schemaCompareBackupNote:
@@ -4925,6 +4938,8 @@ const en = {
   sandboxResetConfirmMessage:
     "All rows of {table} in the sandbox are replaced with the base snapshot (the state at creation or at the last write-back). Your edits to this table are lost. Schema changes are not reverted.",
   sandboxResetDone: "Reset {table} ({rows} rows restored).",
+  sandboxReviewSchemaSourceError:
+    "Could not read the current columns from the source database, so schema conflicts were not checked: {error}",
   sandboxReviewSourceError:
     "Could not read the current rows from the original database, so conflicts were not checked: {error}",
   sandboxApplySourceErrorNote:
@@ -5771,6 +5786,7 @@ const ja: Dict = {
   schemaDriftLatestSuffix: "(最新)",
   schemaDriftOmittedBadge: "サイズ超過のため全文は未保存",
   schemaDriftCompareFrom: "比較元",
+  schemaDriftTimelineHint: "クリックで比較先、Shift+クリックで比較元に設定",
   schemaDriftCompareTo: "比較先",
   schemaDriftLatestOption: "{time} (最新)",
   schemaDriftPickTwo: "比較する 2 つの異なるスナップショットを選んでください。",
@@ -7294,6 +7310,9 @@ const ja: Dict = {
   cloneTableNameLabel: "新しいテーブル名 (「{table}」の複製)",
   cloneTableNameExists: "テーブル「{table}」は既に存在します。",
   cloneTableIncludeData: "データも複製する (INSERT INTO ... SELECT)",
+  cloneTableRowEstimate: "複製する行数: 約 {rows} 行 (推定)",
+  cloneTableLargeData:
+    "約 {rows} 行を複製します。INSERT ... SELECT に時間がかかり、ロックを保持する可能性があります。",
   cloneTableDdlError: "テーブル定義を取得できませんでした: {error}",
   cloneTableListError: "既存テーブル名の確認に失敗しました: {error}",
   cloneTableSkipped: "定義内の次の文は複製されません: {statements}",
@@ -7788,6 +7807,8 @@ const ja: Dict = {
   schemaExportIncludeRelatedHint:
     "選択テーブルから外部キーを辿って到達できるテーブルも自動で追加します (一覧に FK と表示)。",
   schemaExportFilterPlaceholder: "テーブルを絞り込み...",
+  schemaExportSelectVisible: "表示中を選択",
+  schemaExportClearSelection: "選択を解除",
   schemaExportNoFilterMatch: "絞り込みに一致するテーブルがありません。",
   schemaExportAutoAdded: "外部キー関連で自動追加",
   schemaExportSelectedCount: "{selected} 件選択 → 出力対象 {effective} テーブル",
@@ -9138,6 +9159,9 @@ const ja: Dict = {
   broadcastCancelEntry: "この接続をキャンセル",
   broadcastKeyColumnLabel: "キー列 (行差分用)",
   broadcastKeyColumnNone: "なし — 行ハッシュで比較",
+  broadcastKeyHint: "キー列を選ぶと変化したセルを強調できます。",
+  broadcastKeyHintCandidate: "キー列を選ぶと変化したセルを強調できます。候補: {column}",
+  broadcastKeyHintUse: "{column} を使う",
   broadcastStatusRunning: "実行中…",
   broadcastStatusDone: "完了",
   broadcastStatusError: "エラー",
@@ -9269,6 +9293,10 @@ const ja: Dict = {
   schemaCompareGenerating: "生成中...",
   schemaCompareStatementsShown: "{total} 件中 {shown} 件を表示中",
   schemaCompareStatementsMore: "さらに {count} 件表示",
+  schemaCompareTablesShown: "{total} 件中 {shown} 件のテーブルを表示中",
+  schemaCompareDataProgress: "{rows} 行を読み込み済み",
+  schemaCompareDataCancel: "比較を中止",
+  schemaCompareDataCancelled: "データ比較を中止しました。",
   schemaCompareNoStatements: "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
   schemaCompareBackupNote:
     "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
@@ -10297,6 +10325,8 @@ const ja: Dict = {
   sandboxResetConfirmMessage:
     "サンドボックス内の {table} の全行を base スナップショット (作成時、または最後に書き戻した時点) の内容に置き換えます。この表への編集は失われます。スキーマ変更は戻りません。",
   sandboxResetDone: "{table} をリセットしました ({rows} 行を復元)。",
+  sandboxReviewSchemaSourceError:
+    "元の DB から現在の列定義を取得できなかったため、スキーマの競合を検出できていません: {error}",
   sandboxReviewSourceError: "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
   sandboxApplySourceErrorNote:
     "競合検出に失敗したテーブル: {tables}。スナップショット以降に元の DB で行われた変更を上書きする可能性があります。",

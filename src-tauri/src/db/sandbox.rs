@@ -29,7 +29,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::data_diff::{coerce_binary_key, key_signature, DataDiff, RowDiff, RowStatus};
-use super::diff::{DiffStatus, SchemaDiff, TableColumns};
+use super::diff::{DiffStatus, SchemaDiff, TableColumns, TableDiff};
 use super::types::{ForeignKey, TableColumnInfo, Value};
 
 /// Table-name prefix reserved for the frozen "base" snapshot mirrored
@@ -334,26 +334,63 @@ pub fn filter_out_keys(diff: &DataDiff, skip_keys: &[Vec<Value>]) -> DataDiff {
 /// aren't auto-resolved row by row like data conflicts): the UI surfaces this
 /// list as a warning before the user applies schema statements.
 pub fn schema_conflict_tables(desired: &SchemaDiff, external: &SchemaDiff) -> Vec<String> {
-    let desired_changed: HashSet<&str> = desired
+    let desired_changed: HashMap<&str, &TableDiff> = desired
         .tables
         .iter()
         .filter(|t| t.status != DiffStatus::Same)
-        .map(|t| t.name.as_str())
+        .map(|t| (t.name.as_str(), t))
         .collect();
     let mut out: Vec<String> = external
         .tables
         .iter()
-        .filter(|t| t.status != DiffStatus::Same && desired_changed.contains(t.name.as_str()))
+        .filter(|t| t.status != DiffStatus::Same)
+        .filter(|t| {
+            desired_changed
+                .get(t.name.as_str())
+                .is_some_and(|d| !schema_converged(d, t))
+        })
         .map(|t| t.name.clone())
         .collect();
     out.sort();
     out
 }
 
+/// 両側が基準から同じ変更をした表か (データ側 `is_converged` と同じ考え方, #1612)。
+/// 列ごとに「状態 + 変更後の定義 (型・NULL 可否・既定値)」が一致するときだけ収束とみなす。
+/// 列差分が空の表や、方言差で型表記が揃わないものは衝突のまま残す (安全側)。
+fn schema_converged(desired: &TableDiff, external: &TableDiff) -> bool {
+    if desired.status != external.status
+        || desired.columns.is_empty()
+        || desired.columns.len() != external.columns.len()
+    {
+        return false;
+    }
+    let same_def = |a: &Option<TableColumnInfo>, b: &Option<TableColumnInfo>| match (a, b) {
+        (None, None) => true,
+        (Some(a), Some(b)) => {
+            a.data_type.eq_ignore_ascii_case(&b.data_type)
+                && a.nullable == b.nullable
+                && a.default == b.default
+        }
+        _ => false,
+    };
+    desired.columns.iter().all(|d| {
+        external
+            .columns
+            .iter()
+            .find(|e| e.name == d.name)
+            .is_some_and(|e| {
+                e.status == d.status
+                    && same_def(&d.source, &e.source)
+                    && same_def(&d.target, &e.target)
+            })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::diff::{ColumnDiff, TableDiff};
+    use crate::db::diff::ColumnDiff;
     use crate::db::DriverKind;
 
     fn fk(table: &str, referenced: &str) -> ForeignKey {
@@ -607,6 +644,52 @@ mod tests {
         assert_eq!(
             schema_conflict_tables(&desired, &external),
             vec!["orders".to_string()]
+        );
+    }
+
+    fn col_info(name: &str, ty: &str) -> TableColumnInfo {
+        TableColumnInfo {
+            name: name.to_string(),
+            data_type: ty.to_string(),
+            nullable: true,
+            key: String::new(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    fn changed_table(name: &str, new_type: &str) -> TableDiff {
+        TableDiff {
+            name: name.to_string(),
+            status: DiffStatus::Different,
+            foreign_keys: vec![],
+            columns: vec![ColumnDiff {
+                name: "qty".into(),
+                status: DiffStatus::Different,
+                source: Some(col_info("qty", new_type)),
+                target: Some(col_info("qty", "int")),
+                changed_fields: vec!["data_type".into()],
+            }],
+        }
+    }
+
+    #[test]
+    fn schema_conflict_tables_skips_tables_both_sides_changed_identically() {
+        // 両側が同じ ALTER を当てた表は収束済みなので衝突にしない (#1612)。
+        let desired = schema_diff(vec![
+            changed_table("same_alter", "bigint"),
+            changed_table("diverged", "bigint"),
+        ]);
+        let external = schema_diff(vec![
+            changed_table("same_alter", "BIGINT"),
+            changed_table("diverged", "text"),
+        ]);
+        assert_eq!(
+            schema_conflict_tables(&desired, &external),
+            vec!["diverged".to_string()]
         );
     }
 

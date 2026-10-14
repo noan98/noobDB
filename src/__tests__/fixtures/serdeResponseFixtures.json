@@ -1906,7 +1906,8 @@
     "external_changed_tables": [
       "users"
     ],
-    "source_checked": true
+    "source_checked": true,
+    "source_error": null
   },
   "sandboxTableDiffResult": {
     "conflicts": [

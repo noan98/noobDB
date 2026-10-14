@@ -1332,6 +1332,41 @@ impl SqliteConn {
         Ok(out)
     }
 
+    /// UPSERT (`ON CONFLICT (キー列)`) の事前検証 (#1612)。部分・式でない UNIQUE / PRIMARY KEY
+    /// (rowid の別名になる `INTEGER PRIMARY KEY` は index_list に出ないので列定義からも拾う) が
+    /// 選択キー列と完全一致するか確かめる。
+    pub(crate) async fn check_upsert_keys(
+        &self,
+        db: &str,
+        table: &str,
+        key_columns: &[String],
+    ) -> Result<()> {
+        let mut uniques: Vec<super::upsert::UniqueKey> = self
+            .list_indexes(db, table)
+            .await?
+            .into_iter()
+            .filter(|i| i.unique && i.predicate.is_none() && i.first_expression_at.is_none())
+            .map(|i| super::upsert::UniqueKey {
+                name: i.name,
+                columns: i.columns,
+            })
+            .collect();
+        let pk: Vec<String> = self
+            .columns(db, table)
+            .await?
+            .into_iter()
+            .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+            .map(|c| c.name)
+            .collect();
+        if !pk.is_empty() {
+            uniques.push(super::upsert::UniqueKey {
+                name: "PRIMARY".into(),
+                columns: pk,
+            });
+        }
+        super::upsert::check_conflict_target_unique(DriverKind::Sqlite, &uniques, key_columns)
+    }
+
     pub async fn list_indexes(&self, _db: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // PRAGMA can't bind parameters — double any `"` and reject NUL, then build
         // the statement literally.

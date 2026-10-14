@@ -28,6 +28,8 @@ export const diffCommands = {
     allRows?: boolean | null;
     /** 比較から外す列 (updated_at など環境ごとに値が違う列, #1539)。 */
     ignoreColumns?: string[] | null;
+    /** 全行比較の進捗 (`listenDataDiffProgress`) と `cancelStream` による中止に使う ID (#1612)。 */
+    streamId?: string | null;
   }) =>
     invoke<DataDiffHandle>("compare_table_data", {
       sourceSessionId: params.sourceSessionId,
@@ -38,5 +40,6 @@ export const diffCommands = {
       limit: params.limit ?? null,
       allRows: params.allRows ?? null,
       ignoreColumns: params.ignoreColumns && params.ignoreColumns.length > 0 ? params.ignoreColumns : null,
+      streamId: params.streamId ?? null,
     }).then((r) => parseResponse(schemas.dataDiffHandle, r, "compare_table_data")),
 };

@@ -180,3 +180,37 @@ describe("SchemaDriftPanel 構造/データへの導線と DDL の紐づけ (#15
     expect(api.schemaDriftCompare).not.toHaveBeenCalled();
   });
 });
+
+describe("SchemaDriftPanel タイムラインの操作 (#1612)", () => {
+  const gens = () => [
+    makeGeneration("g3", "2026-01-03T00:00:00Z"),
+    makeGeneration("g2", "2026-01-02T00:00:00Z"),
+    makeGeneration("g1", "2026-01-01T00:00:00Z"),
+  ];
+
+  it("行のクリックで比較先、Shift+クリックで比較元を設定する", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue({ tables: [] });
+    const profile = makeProfile();
+    const { container } = renderWithProviders(
+      <SchemaDriftPanel
+        profile={profile}
+        generations={gens()}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    // 既定: 比較元 = g2、比較先 = g3 (最新)。
+    await waitFor(() => expect(api.schemaDriftCompare).toHaveBeenCalledWith(profile.id, "g2", "g3"));
+    const items = () =>
+      Array.from(container.ownerDocument.querySelectorAll<HTMLElement>("[data-generation-item]"));
+    expect(items()).toHaveLength(3);
+
+    fireEvent.click(items()[2]);
+    await waitFor(() => expect(api.schemaDriftCompare).toHaveBeenCalledWith(profile.id, "g2", "g1"));
+
+    fireEvent.click(items()[0], { shiftKey: true });
+    await waitFor(() => expect(api.schemaDriftCompare).toHaveBeenCalledWith(profile.id, "g3", "g1"));
+  });
+});

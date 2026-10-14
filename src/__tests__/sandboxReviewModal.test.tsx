@@ -27,6 +27,7 @@ const { SCHEMA_DIFF, TABLE_DIFF } = vi.hoisted(() => ({
     },
     external_changed_tables: [],
     source_checked: true,
+    source_error: null,
   } satisfies SandboxSchemaDiffResult,
   TABLE_DIFF: {
     desired: {
@@ -174,6 +175,26 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
       />,
     );
     expect(await screen.findByText(t("sandboxReviewSourceError", { error: "boom" }))).toBeInTheDocument();
+  });
+
+  it("スキーマ差分も実 DB 側の取得失敗を警告にし、差分自体は表示し続ける (#1612)", async () => {
+    vi.mocked(api.sandboxSchemaDiff).mockResolvedValueOnce({
+      ...SCHEMA_DIFF,
+      source_checked: false,
+      source_error: "schema boom",
+    });
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByText(t("sandboxReviewSchemaSourceError", { error: "schema boom" })),
+    ).toBeInTheDocument();
+    expect(screen.getByText(t("schemaCompareStatusDifferent"))).toBeInTheDocument();
   });
 });
 

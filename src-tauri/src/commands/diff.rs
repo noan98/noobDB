@@ -1,9 +1,12 @@
 //! Schema & data comparison commands.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::commands::progress::ProgressThrottle;
 use crate::db::data_diff::{
     compute_data_diff_ignoring, is_binary_type, is_hex_wire, is_numeric_literal, sql_literal,
     DataDiff, RowDiff,
@@ -13,7 +16,7 @@ use crate::db::sync::quote_ident;
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
 use crate::db::{Connection, DriverKind};
 use crate::error::{AppError, Result};
-use crate::state::AppState;
+use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
 /// Hard cap on rows read per side for a data comparison. Data sync targets
 /// master / configuration tables; bulk tables are out of scope and would make
@@ -423,6 +426,8 @@ async fn keyset_compare(
     pk_idx: &[usize],
     ignore_columns: &[String],
     page_rows: usize,
+    // 1 ページ処理するたびに、これまでに読んだ source の行数を渡す (進捗通知用, #1612)。
+    mut on_page: impl FnMut(usize),
 ) -> Result<KeysetOutcome> {
     let driver = source.driver_kind();
     let pk_types: Vec<String> = pk_idx
@@ -512,6 +517,7 @@ async fn keyset_compare(
 
         out.source_count += src_page.len();
         out.target_count += tgt_window.len();
+        on_page(out.source_count);
         let window_rows =
             compute_data_diff_ignoring(columns, pk_idx, &src_page, &tgt_window, ignore_columns);
         verify_one_sided(
@@ -742,8 +748,12 @@ async fn bounded_compare(
 ) -> Result<BoundedOutcome> {
     let driver = source.0.driver_kind();
     let sql = select_rows_sql(driver, table, columns, primary_key, want + 1);
-    let source_res = source.0.execute(&sql, Some(source.1)).await?;
-    let target_res = target.0.execute(&sql, Some(target.1)).await?;
+    // 両側の SELECT は独立なので同時に走らせる (片側の往復待ちで反対側を待たせない)。
+    let (source_res, target_res) = tokio::join!(
+        source.0.execute(&sql, Some(source.1)),
+        target.0.execute(&sql, Some(target.1)),
+    );
+    let (source_res, target_res) = (source_res?, target_res?);
 
     let source_truncated = source_res.rows.len() > want;
     let target_truncated = target_res.rows.len() > want;
@@ -785,13 +795,120 @@ async fn bounded_compare(
     })
 }
 
+/// 全行比較の進捗イベント名 (#1612)。
+pub(crate) const EV_DATA_DIFF_PROGRESS: &str = "data-diff:progress";
+
+/// `data-diff:progress` のペイロード。`rows` はこれまでに読んだ source の行数。
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DataDiffProgressEvent {
+    pub stream_id: String,
+    pub rows: u64,
+}
+
+/// [`keyset_compare`] を別タスクで走らせ、`stream_id` でストリームとして登録する (#1612)。
+/// ページごとの進捗を `data-diff:progress` で通知し、`cancel_stream` でタスクを中止できる
+/// (中止すると読み取り中のクエリも破棄される)。中止されたときは `InvalidInput` を返す。
+#[allow(clippy::too_many_arguments)]
+async fn keyset_compare_cancellable(
+    app: AppHandle,
+    state: &AppState,
+    stream_id: String,
+    source: (Arc<Session>, String),
+    target: (Arc<Session>, String),
+    table: String,
+    columns: Vec<String>,
+    column_types: Vec<String>,
+    primary_key: Vec<String>,
+    pk_idx: Vec<usize>,
+    ignore_columns: Vec<String>,
+) -> Result<KeysetOutcome> {
+    let counter = Arc::new(AtomicU64::new(0));
+    // register_stream をタスク本体より前に完了させるゲート (転送 / エクスポートと同じ, #685)。
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
+    let task_stream = stream_id.clone();
+    let task_counter = counter.clone();
+    let task_app = app.clone();
+    let handle = tokio::spawn(async move {
+        let Ok(token) = ready_rx.await else {
+            return Err(AppError::InvalidInput(
+                "data comparison was cancelled".into(),
+            ));
+        };
+        let mut throttle = ProgressThrottle::standard();
+        let emit_app = task_app.clone();
+        let emit_id = task_stream.clone();
+        let result = keyset_compare(
+            &source.0.conn,
+            &source.1,
+            &target.0.conn,
+            &target.1,
+            &table,
+            &columns,
+            &column_types,
+            &primary_key,
+            &pk_idx,
+            &ignore_columns,
+            KEYSET_PAGE_ROWS,
+            |rows| {
+                task_counter.store(rows as u64, Ordering::SeqCst);
+                if throttle.ready() {
+                    let _ = emit_app.emit(
+                        EV_DATA_DIFF_PROGRESS,
+                        DataDiffProgressEvent {
+                            stream_id: emit_id.clone(),
+                            rows: rows as u64,
+                        },
+                    );
+                }
+            },
+        )
+        .await;
+        if let Some(state) = task_app.try_state::<AppState>() {
+            state.forget_stream(&task_stream, token).await;
+        }
+        result
+    });
+    let token = state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: counter,
+                // 通知は Channel / 専用イベントで行い、`cancel_stream` は追加のイベントを出さない。
+                kind: StreamKind::Search,
+                on_cancel: None,
+            },
+        )
+        .await;
+    let _ = ready_tx.send(token);
+    match handle.await {
+        Ok(r) => r,
+        Err(e) if e.is_cancelled() => Err(AppError::InvalidInput(
+            "data comparison was cancelled".into(),
+        )),
+        Err(e) => Err(AppError::InvalidInput(format!(
+            "data comparison task failed: {e}"
+        ))),
+    }
+}
+
 /// `compare_table_data` の結果。`diff` は表示用、`diff_id` は Rust 側のストア
 /// (`AppState::data_diffs`) に保持した同じ差分の ID で、SQL 生成 (`generate_data_sync_sql`)
 /// にはこの ID だけを送り返す (#1259)。不要になったら `release_data_diffs` で破棄する。
 #[derive(Debug, serde::Serialize)]
 pub struct DataDiffHandle {
     pub diff_id: String,
-    pub diff: DataDiff,
+    // ストアと同じ Arc を共有する (最大 5 万行の差分を保存と返却で二重に複製しない)。
+    #[serde(serialize_with = "serialize_shared_diff")]
+    pub diff: Arc<DataDiff>,
+}
+
+fn serialize_shared_diff<S: serde::Serializer>(
+    diff: &Arc<DataDiff>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serde::Serialize::serialize(&**diff, serializer)
 }
 
 /// Compares the rows of one `table` between the source and target databases,
@@ -815,6 +932,10 @@ pub async fn compare_table_data(
     // 比較から外す列 (`updated_at` など環境ごとに値が違う列, #1539)。表に無い列名は
     // 打ち間違いの可能性が高いのでエラーにする。
     ignore_columns: Option<Vec<String>>,
+    // 全行比較 (`all_rows`) の進捗イベント (`data-diff:progress`) と `cancel_stream` による
+    // 中止に使う ID (#1612)。省略時は進捗も中止も無い従来動作。
+    stream_id: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<DataDiffHandle> {
     let source = state
@@ -833,7 +954,12 @@ pub async fn compare_table_data(
         ));
     }
 
-    let col_info = source.conn.columns(&source_database, &table).await?;
+    // 列情報の取得は両側とも独立なので同時に走らせる。
+    let (source_cols, target_cols) = tokio::join!(
+        source.conn.columns(&source_database, &table),
+        target.conn.columns(&target_database, &table),
+    );
+    let col_info = source_cols?;
     if col_info.is_empty() {
         return Err(AppError::InvalidInput(format!(
             "table '{table}' has no columns (does it exist on the source?)"
@@ -848,7 +974,7 @@ pub async fn compare_table_data(
     // ターゲット側だけが生成列のこともあるので、両側の和集合を除外する。ターゲットの
     // 列定義を取れなければ (テーブル未作成など) ソース側だけで判定する。
     let mut generated_columns = generated_column_names(&col_info);
-    if let Ok(target_cols) = target.conn.columns(&target_database, &table).await {
+    if let Ok(target_cols) = target_cols {
         for name in generated_column_names(&target_cols) {
             if !generated_columns.contains(&name) {
                 generated_columns.push(name);
@@ -873,20 +999,42 @@ pub async fn compare_table_data(
     let ignore_columns = normalize_ignore_columns(ignore_columns, &columns)?;
 
     if all_rows.unwrap_or(false) {
-        let outcome = keyset_compare(
-            &source.conn,
-            &source_database,
-            &target.conn,
-            &target_database,
-            &table,
-            &columns,
-            &column_types,
-            &primary_key,
-            &pk_idx,
-            &ignore_columns,
-            KEYSET_PAGE_ROWS,
-        )
-        .await?;
+        let outcome = match stream_id.filter(|s| !s.is_empty()) {
+            // 進捗通知と中止ができる経路 (#1612)。
+            Some(stream_id) => {
+                keyset_compare_cancellable(
+                    app,
+                    &state,
+                    stream_id,
+                    (source.clone(), source_database.clone()),
+                    (target.clone(), target_database.clone()),
+                    table.clone(),
+                    columns.clone(),
+                    column_types.clone(),
+                    primary_key.clone(),
+                    pk_idx.clone(),
+                    ignore_columns.clone(),
+                )
+                .await?
+            }
+            None => {
+                keyset_compare(
+                    &source.conn,
+                    &source_database,
+                    &target.conn,
+                    &target_database,
+                    &table,
+                    &columns,
+                    &column_types,
+                    &primary_key,
+                    &pk_idx,
+                    &ignore_columns,
+                    KEYSET_PAGE_ROWS,
+                    |_| {},
+                )
+                .await?
+            }
+        };
         let diff = DataDiff {
             target_driver: driver,
             table,
@@ -899,8 +1047,9 @@ pub async fn compare_table_data(
             target_count: outcome.target_count,
             generated_columns,
         };
+        let diff = Arc::new(diff);
         let diff_id = state.store_data_diff(
-            diff.clone(),
+            Arc::clone(&diff),
             vec![source_session_id.clone(), target_session_id.clone()],
         );
         return Ok(DataDiffHandle { diff_id, diff });
@@ -933,8 +1082,9 @@ pub async fn compare_table_data(
         target_count: outcome.target_count,
         generated_columns,
     };
+    let diff = Arc::new(diff);
     let diff_id = state.store_data_diff(
-        diff.clone(),
+        Arc::clone(&diff),
         vec![source_session_id.clone(), target_session_id.clone()],
     );
     Ok(DataDiffHandle { diff_id, diff })
@@ -1177,6 +1327,7 @@ mod keyset_tests {
                     &[0, 1],
                     &ignore,
                     page,
+                    |_| {},
                 )
                 .await
                 .unwrap()
@@ -1194,6 +1345,27 @@ mod keyset_tests {
             assert_eq!(count(&o, RowStatus::Different), 1, "page={page}"); // (3,1) v
             assert_eq!(count(&o, RowStatus::TargetOnly), 2, "page={page}"); // (4,9) (7,1)
         }
+        // ページごとに「これまでに読んだ source の行数」が単調に増えて通知される (#1612)。
+        let mut seen: Vec<usize> = Vec::new();
+        let o = keyset_compare(
+            &src,
+            "main",
+            &tgt,
+            "main",
+            "t",
+            &columns,
+            &types,
+            &pk,
+            &[0, 1],
+            &s(&["updated_at"]),
+            5,
+            |n| seen.push(n),
+        )
+        .await
+        .unwrap();
+        assert_eq!(o.source_count, 12);
+        assert!(seen.windows(2).all(|w| w[0] < w[1]), "{seen:?}");
+        assert_eq!(seen.last(), Some(&12));
         // 無視列を指定しないと updated_at の差で全ペア行が Different になる (11 行 = 12 - 欠落 1)。
         let o = run(vec![], 4).await;
         assert_eq!(count(&o, RowStatus::Different), 11);
@@ -1230,6 +1402,7 @@ mod keyset_tests {
             &[0],
             &[],
             2,
+            |_| {},
         )
         .await
         .unwrap();
@@ -1252,6 +1425,7 @@ mod keyset_tests {
             &[0],
             &[],
             2,
+            |_| {},
         )
         .await
         .unwrap_err();
@@ -1299,6 +1473,7 @@ mod keyset_tests {
                     &[0],
                     &[],
                     page,
+                    |_| {},
                 )
                 .await
                 .unwrap_err();

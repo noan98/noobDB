@@ -89,13 +89,10 @@ impl EnvRun {
 /// なり、先頭だけの比較を「差分なし」と誤報告する。上限 + 1 行までは取得して、
 /// 打ち切りを差分側が検知できるようにする (設定値が上限より大きいときは設定値のまま)。
 fn effective_broadcast_sql(driver: DriverKind, sql: &str, auto_limit: Option<usize>) -> String {
-    match auto_limit {
-        Some(n) => {
-            let n = n.max(MAX_BROADCAST_COMPARE_ROWS + 1);
-            apply_auto_limit_for(driver, sql, n).unwrap_or_else(|| sql.to_string())
-        }
-        None => sql.to_string(),
-    }
+    // 自動 LIMIT が無効 (`None`) でも比較には先頭 MAX+1 行しか使わないので、LIMIT を付けて
+    // 数百万行を環境数ぶん転送しない (#1612)。既存の LIMIT がある文などは付与されずそのまま。
+    let n = auto_limit.unwrap_or(0).max(MAX_BROADCAST_COMPARE_ROWS + 1);
+    apply_auto_limit_for(driver, sql, n).unwrap_or_else(|| sql.to_string())
 }
 
 async fn run_env(
@@ -388,10 +385,16 @@ mod tests {
         // 設定値が上限より大きいときはそのまま。
         let big = effective_broadcast_sql(DriverKind::Mysql, "SELECT * FROM t", Some(100_000));
         assert!(big.contains("LIMIT 100000"), "{big}");
-        // 自動 LIMIT なしなら SQL は変えない。
+        // 自動 LIMIT が無効でも比較の上限 + 1 行で打ち切る (全件転送しない, #1612)。
+        let none = effective_broadcast_sql(DriverKind::Mysql, "SELECT * FROM t", None);
+        assert!(
+            none.contains(&format!("LIMIT {}", MAX_BROADCAST_COMPARE_ROWS + 1)),
+            "{none}"
+        );
+        // 既存の LIMIT がある文は変えない。
         assert_eq!(
-            effective_broadcast_sql(DriverKind::Mysql, "SELECT 1", None),
-            "SELECT 1"
+            effective_broadcast_sql(DriverKind::Mysql, "SELECT * FROM t LIMIT 3", None),
+            "SELECT * FROM t LIMIT 3"
         );
     }
 }

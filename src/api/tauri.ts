@@ -1485,6 +1485,8 @@ export interface SandboxSchemaDiffResult {
   /** サンドボックス・元 DB の双方でスキーマが変わったテーブル名 (情報提供のみ)。 */
   external_changed_tables: string[];
   source_checked: boolean;
+  /** 元 DB の列取得に失敗した理由。失敗しても `desired` は返る。 */
+  source_error: string | null;
 }
 
 /** Application log contents plus the on-disk file path, for the Settings viewer. */
@@ -3038,6 +3040,20 @@ export async function listenExportStream(
     listen<StreamCancelledEvent>(
       "export-stream:cancelled",
       filter(schemas.streamCancelledEvent, "export-stream:cancelled", handlers.onCancelled),
+    ),
+  ]);
+}
+
+/** 全行データ比較 (#1612) の進捗 (これまでに読んだ source の行数) を購読する。 */
+export async function listenDataDiffProgress(
+  streamId: string,
+  onProgress: (event: { streamId: string; rows: number }) => void,
+): Promise<UnlistenFn> {
+  const filter = streamEventFilter(streamId);
+  return registerListeners([
+    listen<{ streamId: string; rows: number }>(
+      "data-diff:progress",
+      filter(schemas.dataDiffProgressEvent, "data-diff:progress", onProgress),
     ),
   ]);
 }

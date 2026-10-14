@@ -741,6 +741,7 @@ export const sandboxSchemaDiffResult = z.object({
   desired: schemaDiff,
   external_changed_tables: z.array(z.string()),
   source_checked: z.boolean(),
+  source_error: z.string().nullable(),
 });
 
 // スキーマ健全性アドバイザ (#741)。RuleId / Severity はバックの serde 表現
@@ -1751,6 +1752,12 @@ export const exportStreamErrorEvent = z.object({
   /** Rows already written to the output file before the run failed (#685).
    *  Informational only — a failed/cancelled export always discards its
    *  partial output file. */
+  rows: z.number(),
+});
+
+// 全行データ比較 (#1612) の進捗イベント。
+export const dataDiffProgressEvent = z.object({
+  streamId: z.string(),
   rows: z.number(),
 });
 
