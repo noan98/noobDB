@@ -239,6 +239,7 @@ import {
   resolveFooterFn,
   writeStoredFooterState,
 } from "./gridFooter";
+import { setItemWithEviction, touchColumnLayoutLru, touchLayoutLruForKey } from "./columnLayoutStorage";
 import {
   gridViewStateKeyFrom,
   readStoredGridView,
@@ -1523,30 +1524,6 @@ export function rowToPendingInsert(row: CellValue[], columns: Column[] = []): Pe
   return seed;
 }
 
-const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
-const COL_SIZING_MAX_ENTRIES = 50;
-
-function readLruOrder(): string[] {
-  try {
-    const raw = localStorage.getItem(COL_SIZING_LRU_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as string[];
-    }
-  } catch {
-    // ignore
-  }
-  return [];
-}
-
-function writeLruOrder(order: string[]): void {
-  try {
-    localStorage.setItem(COL_SIZING_LRU_KEY, JSON.stringify(order));
-  } catch {
-    // ignore
-  }
-}
-
 export function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
   if (!storageKey) return {};
   try {
@@ -1567,17 +1544,8 @@ export function writeStoredColumnSizing(
 ): void {
   if (!storageKey) return;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(sizing));
-    // LRU: move this key to the front, evict oldest beyond the cap.
-    const order = readLruOrder().filter((k) => k !== storageKey);
-    order.unshift(storageKey);
-    if (order.length > COL_SIZING_MAX_ENTRIES) {
-      const evicted = order.splice(COL_SIZING_MAX_ENTRIES);
-      for (const k of evicted) {
-        try { localStorage.removeItem(k); } catch { /* ignore */ }
-      }
-    }
-    writeLruOrder(order);
+    touchColumnLayoutLru(storageKey);
+    setItemWithEviction(storageKey, JSON.stringify(sizing));
   } catch {
     // ignore
   }
@@ -1631,7 +1599,9 @@ export function writeStoredColumnState(
     if (empty) {
       localStorage.removeItem(storageKey);
     } else {
-      localStorage.setItem(storageKey, JSON.stringify(state));
+      // 列サイズを一度も変えていない形状でも LRU に載せ、無制限に溜まらないようにする。
+      touchLayoutLruForKey(storageKey);
+      setItemWithEviction(storageKey, JSON.stringify(state));
     }
   } catch {
     // ignore
@@ -4584,12 +4554,24 @@ export const DataGrid = memo(function DataGrid({
   const rawHandleId = enableColumnControls && !paginationState ? shouldUseHandleForGrid(rows) : null;
   const [goneHandleId, setGoneHandleId] = useState<string | null>(null);
   const activeHandleId = rawHandleId && rawHandleId !== goneHandleId ? rawHandleId : null;
+  // 全体検索はキー入力ごとにバックエンドの全行走査 (IPC) を起こすので、ハンドル経由のときは
+  // 入力が止まってから送る (Find バーの FIND_DEBOUNCE_MS と同じ方針、#1257)。空にしたときは即時。
+  const [handleGlobalFilter, setHandleGlobalFilter] = useState(globalFilter);
+  useEffect(() => {
+    if (!activeHandleId || !globalFilter) {
+      setHandleGlobalFilter(globalFilter);
+      return;
+    }
+    const id = window.setTimeout(() => setHandleGlobalFilter(globalFilter), FIND_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [globalFilter, activeHandleId]);
+  const effectiveHandleGlobalFilter = activeHandleId ? handleGlobalFilter : globalFilter;
   const handleRequest = useMemo(
     () =>
       activeHandleId
-        ? buildHandleRequest(sorting, columnFilters, globalFilter, columnKinds)
+        ? buildHandleRequest(sorting, columnFilters, effectiveHandleGlobalFilter, columnKinds)
         : null,
-    [activeHandleId, sorting, columnFilters, globalFilter, columnKinds],
+    [activeHandleId, sorting, columnFilters, effectiveHandleGlobalFilter, columnKinds],
   );
   const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
   // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
@@ -4602,8 +4584,8 @@ export const DataGrid = memo(function DataGrid({
   // 順序の要求を出した時点の状態キー。順序が届いたコミットでだけフェードを再生するため、
   // handleOrder に一緒に保存する (非同期の間は前の並びのままなので、状態由来のキーでは早すぎる)。
   const fadeKeys = useMemo(
-    () => rowCrossfadeKeys(sorting, columnFilters, globalFilter),
-    [sorting, columnFilters, globalFilter],
+    () => rowCrossfadeKeys(sorting, columnFilters, effectiveHandleGlobalFilter),
+    [sorting, columnFilters, effectiveHandleGlobalFilter],
   );
   const fadeKeysRef = useRef(fadeKeys);
   fadeKeysRef.current = fadeKeys;

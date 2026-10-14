@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { writeStoredGridView } from "../components/gridViewState";
 import { ResultGrid, rowToPendingInsert, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { resultShapeSizingKey } from "../components/gridViewState";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
@@ -634,6 +635,59 @@ describe("column sizing persistence", () => {
     writeStoredColumnSizing(k51, { "0": 50 });
     expect(readStoredColumnSizing(keys[0])).toEqual({});
     expect(readStoredColumnSizing(k51)).toEqual({ "0": 50 });
+  });
+
+  it("LRU 退避時に同じ形状の colstate / gridview / gridfooter も削除される", () => {
+    const first = 'noobdb.colsizing.v1::db::t0::["col"]';
+    writeStoredColumnSizing(first, { "0": 1 });
+    const companions = [
+      first.replace("noobdb.colsizing.v1", "noobdb.colstate.v1"),
+      first.replace("noobdb.colsizing.v1", "noobdb.gridview.v1"),
+      first.replace("noobdb.colsizing.v1", "noobdb.gridfooter.v1"),
+    ];
+    for (const c of companions) localStorage.setItem(c, "{}");
+    for (let i = 1; i <= 50; i++) {
+      writeStoredColumnSizing(`noobdb.colsizing.v1::db::t${i}::["col"]`, { "0": i });
+    }
+    expect(readStoredColumnSizing(first)).toEqual({});
+    for (const c of companions) expect(localStorage.getItem(c)).toBeNull();
+  });
+
+  it("gridview だけを書く形状も LRU に載り、上限超過で古い形状が退避される", () => {
+    const view = (i: number) => `noobdb.gridview.v1::db::t${i}::["col"]`;
+    const sizing = (i: number) => `noobdb.colsizing.v1::db::t${i}::["col"]`;
+    const state = { sorting: [{ id: "0", desc: true }] };
+    for (let i = 0; i <= 50; i++) writeStoredGridView(view(i), state);
+    expect(localStorage.getItem(view(0))).toBeNull();
+    expect(localStorage.getItem(view(50))).not.toBeNull();
+    expect(localStorage.getItem(sizing(0))).toBeNull();
+  });
+
+  it("容量超過で setItem が失敗しても、古い形状を退避して列幅を保存できる", () => {
+    const old = 'noobdb.colsizing.v1::db::old::["col"]';
+    writeStoredColumnSizing(old, { "0": 1 });
+    const oldState = old.replace("noobdb.colsizing.v1", "noobdb.colstate.v1");
+    localStorage.setItem(oldState, '{"order":["0"]}');
+    const fresh = 'noobdb.colsizing.v1::db::new::["col"]';
+    const realSet = Storage.prototype.setItem;
+    // oldState が残っている間は QuotaExceeded、退避されたら成功する疑似容量。
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+      this: Storage,
+      k: string,
+      v: string,
+    ) {
+      if (k === fresh && localStorage.getItem(oldState) !== null) {
+        throw new DOMException("full", "QuotaExceededError");
+      }
+      realSet.call(this, k, v);
+    });
+    try {
+      writeStoredColumnSizing(fresh, { "0": 9 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readStoredColumnSizing(fresh)).toEqual({ "0": 9 });
+    expect(localStorage.getItem(oldState)).toBeNull();
   });
 
   it("既存キーを再書き込みすると LRU 先頭に移動し、別エントリが削除されない", () => {
