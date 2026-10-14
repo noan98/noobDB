@@ -1439,6 +1439,7 @@ export const importErrorEvent = z.object({
   error: z.string(),
   record: z.number().nullable().default(null),
   line: z.number().nullable().default(null),
+  committed: z.number().nullable().default(null),
 });
 
 // `.sql` スクリプト実行のイベント (#973)。`sql-script:*`。

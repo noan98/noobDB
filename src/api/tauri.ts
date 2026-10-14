@@ -2131,6 +2131,8 @@ export interface ImportErrorEvent {
   /** For an abort-mode failure, the pinpointed record number + CSV line (#687). */
   record: number | null;
   line: number | null;
+  /** 全体障害で中断するまでにコミット済みの行数 (skip モードのみ。無ければ null)。 */
+  committed: number | null;
 }
 
 // 全件ストリーミングエクスポート。

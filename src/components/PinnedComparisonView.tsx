@@ -3,7 +3,7 @@ import { Box, Flex, chakra } from "@chakra-ui/react";
 
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
-import { resultsComparable, type PinnedResult } from "../pinnedCompare";
+import { defaultKeyColumn, resultsComparable, type PinnedResult } from "../pinnedCompare";
 import { semanticColorToken } from "../semanticColors";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
@@ -82,8 +82,11 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
   }, [left, keyColumn]);
 
   const comparable = left && right ? resultsComparable(left, right) : false;
-  // 既定のキー列は左の先頭列。比較不能なら差分は出さない。
-  const effectiveKey = keyColumn ?? left?.columns[0]?.name ?? null;
+  // 既定のキー列は両結果で一意な最初の列 (無ければ先頭列)。比較不能なら差分は出さない。
+  const effectiveKey = useMemo(
+    () => keyColumn ?? (left && right ? defaultKeyColumn(left, right) : (left?.columns[0]?.name ?? null)),
+    [keyColumn, left, right],
+  );
 
   const rightTableColumns = useMemo(
     () => (right && comparable ? syntheticKeyColumns(right, effectiveKey) : undefined),

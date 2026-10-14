@@ -232,7 +232,7 @@ pub async fn export_profiles_encrypted(
         let profiles = entries.len();
         let secret_count = entries.iter().map(|e| e.secrets.count()).sum();
         let file = backup::seal_payload(entries, &passphrase, KdfParams::DEFAULT)?;
-        std::fs::write(&req.path, &file)?;
+        crate::atomic_write::write_atomic(std::path::Path::new(&req.path), &file)?;
         tracing::info!(
             path = %req.path,
             profiles,
