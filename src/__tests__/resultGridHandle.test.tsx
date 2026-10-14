@@ -170,6 +170,27 @@ describe("ResultGrid 結果ハンドル経由のソート (#1264)", () => {
   });
 });
 
+describe("ResultGrid 結果ハンドル経由の全体検索のデバウンス", () => {
+  it("検索欄に連続入力しても、入力が止まってから 1 回だけ result_sort_filter を呼ぶ", async () => {
+    const result = makeBigResult();
+    attachResultHandle(result.rows, "qs_search");
+    vi.mocked(api.resultSortFilter).mockResolvedValue([0]);
+
+    const user = userEvent.setup();
+    renderWithProviders(<ResultGrid result={result} />);
+    await user.type(screen.getByPlaceholderText(t("gridSearchPlaceholder")), "row-");
+
+    await waitFor(() =>
+      expect(api.resultSortFilter).toHaveBeenCalledWith(
+        expect.objectContaining({ resultId: "qs_search", global: "row-" }),
+      ),
+    );
+    // 途中の "r" / "ro" / "row" では送らない。
+    const globals = vi.mocked(api.resultSortFilter).mock.calls.map((c) => c[0].global);
+    expect(globals).toEqual(["row-"]);
+  });
+});
+
 describe("ResultGrid 結果ハンドル経由の結果内検索 (#1264)", () => {
   it("ハンドルがあれば result_find でヒットを受け取り、打ち切り時は総数を示す", async () => {
     const result = makeBigResult();

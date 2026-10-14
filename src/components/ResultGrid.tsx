@@ -1556,23 +1556,67 @@ export function readStoredColumnSizing(storageKey: string | undefined): ColumnSi
   return {};
 }
 
+/** 1 つの結果形状 (列サイジングキー) に紐づく保存キー一式。LRU の退避は一式まとめて消す。 */
+function layoutKeysOf(sizingKey: string): string[] {
+  return [
+    sizingKey,
+    sizingKey.replace("noobdb.colsizing.v1", "noobdb.colstate.v1"),
+    sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridview.v1"),
+    sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridfooter.v1"),
+  ];
+}
+
+function removeLayoutKeys(sizingKey: string): void {
+  for (const k of layoutKeysOf(sizingKey)) {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * 結果形状 `sizingKey` を LRU の先頭へ移し、上限 (`maxEntries`) を超えた古い形状の
+ * 保存キー (colsizing / colstate / gridview / gridfooter) を削除する。書き込みの**前**に
+ * 呼ぶので、容量超過で setItem が失敗する状況でも退避が走る。
+ */
+function touchColumnLayoutLru(sizingKey: string, maxEntries = COL_SIZING_MAX_ENTRIES): void {
+  const order = readLruOrder().filter((k) => k !== sizingKey);
+  order.unshift(sizingKey);
+  if (order.length > maxEntries) {
+    for (const k of order.splice(maxEntries)) removeLayoutKeys(k);
+  }
+  writeLruOrder(order);
+}
+
+/** setItem が容量超過で失敗したとき、古い形状から 1/4 を退避して 1 回だけ再試行する。 */
+function setItemWithEviction(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+    return;
+  } catch {
+    // fall through: 容量超過の可能性。古い形状を退避して再試行する。
+  }
+  try {
+    const order = readLruOrder();
+    const keep = Math.max(1, Math.floor(order.length * 0.75));
+    for (const k of order.splice(keep)) removeLayoutKeys(k);
+    writeLruOrder(order);
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+}
+
 export function writeStoredColumnSizing(
   storageKey: string | undefined,
   sizing: ColumnSizingState,
 ): void {
   if (!storageKey) return;
   try {
-    localStorage.setItem(storageKey, JSON.stringify(sizing));
-    // LRU: move this key to the front, evict oldest beyond the cap.
-    const order = readLruOrder().filter((k) => k !== storageKey);
-    order.unshift(storageKey);
-    if (order.length > COL_SIZING_MAX_ENTRIES) {
-      const evicted = order.splice(COL_SIZING_MAX_ENTRIES);
-      for (const k of evicted) {
-        try { localStorage.removeItem(k); } catch { /* ignore */ }
-      }
-    }
-    writeLruOrder(order);
+    touchColumnLayoutLru(storageKey);
+    setItemWithEviction(storageKey, JSON.stringify(sizing));
   } catch {
     // ignore
   }
@@ -1626,7 +1670,11 @@ export function writeStoredColumnState(
     if (empty) {
       localStorage.removeItem(storageKey);
     } else {
-      localStorage.setItem(storageKey, JSON.stringify(state));
+      // 列サイズを一度も変えていない形状でも LRU に載せ、無制限に溜まらないようにする。
+      if (storageKey.includes("noobdb.colstate.v1")) {
+        touchColumnLayoutLru(storageKey.replace("noobdb.colstate.v1", "noobdb.colsizing.v1"));
+      }
+      setItemWithEviction(storageKey, JSON.stringify(state));
     }
   } catch {
     // ignore
@@ -4575,12 +4623,24 @@ export const DataGrid = memo(function DataGrid({
   const rawHandleId = enableColumnControls && !paginationState ? shouldUseHandleForGrid(rows) : null;
   const [goneHandleId, setGoneHandleId] = useState<string | null>(null);
   const activeHandleId = rawHandleId && rawHandleId !== goneHandleId ? rawHandleId : null;
+  // 全体検索はキー入力ごとにバックエンドの全行走査 (IPC) を起こすので、ハンドル経由のときは
+  // 入力が止まってから送る (Find バーの FIND_DEBOUNCE_MS と同じ方針、#1257)。空にしたときは即時。
+  const [handleGlobalFilter, setHandleGlobalFilter] = useState(globalFilter);
+  useEffect(() => {
+    if (!activeHandleId || !globalFilter) {
+      setHandleGlobalFilter(globalFilter);
+      return;
+    }
+    const id = window.setTimeout(() => setHandleGlobalFilter(globalFilter), FIND_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [globalFilter, activeHandleId]);
+  const effectiveHandleGlobalFilter = activeHandleId ? handleGlobalFilter : globalFilter;
   const handleRequest = useMemo(
     () =>
       activeHandleId
-        ? buildHandleRequest(sorting, columnFilters, globalFilter, columnKinds)
+        ? buildHandleRequest(sorting, columnFilters, effectiveHandleGlobalFilter, columnKinds)
         : null,
-    [activeHandleId, sorting, columnFilters, globalFilter, columnKinds],
+    [activeHandleId, sorting, columnFilters, effectiveHandleGlobalFilter, columnKinds],
   );
   const handleRequestKeyStr = handleRequest ? handleRequestKey(handleRequest) : "";
   // `order` が null のときは「並びも絞り込みも無い」(元の行順そのまま)。
@@ -4593,8 +4653,8 @@ export const DataGrid = memo(function DataGrid({
   // 順序の要求を出した時点の状態キー。順序が届いたコミットでだけフェードを再生するため、
   // handleOrder に一緒に保存する (非同期の間は前の並びのままなので、状態由来のキーでは早すぎる)。
   const fadeKeys = useMemo(
-    () => rowCrossfadeKeys(sorting, columnFilters, globalFilter),
-    [sorting, columnFilters, globalFilter],
+    () => rowCrossfadeKeys(sorting, columnFilters, effectiveHandleGlobalFilter),
+    [sorting, columnFilters, effectiveHandleGlobalFilter],
   );
   const fadeKeysRef = useRef(fadeKeys);
   fadeKeysRef.current = fadeKeys;

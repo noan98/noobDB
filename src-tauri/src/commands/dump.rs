@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -716,18 +716,64 @@ async fn gzip_dump_file(src: PathBuf, dst: std::fs::File) -> Result<u64> {
 /// 整形は任意の可読性向上機能なので、失敗で数時間かけたダンプ全体を捨てたり、置換文字
 /// へ化けさせて内容を壊したりしない。
 async fn format_dump_file(path: String) -> Result<u64> {
-    tokio::task::spawn_blocking(move || -> Result<u64> {
-        let bytes = std::fs::read(&path)?;
-        let Ok(raw) = String::from_utf8(bytes) else {
-            tracing::warn!("dump is not valid UTF-8; skipping SQL formatting");
-            return Ok(std::fs::metadata(&path)?.len());
-        };
-        let formatted = crate::db::format::format_sql(&raw);
-        std::fs::write(&path, formatted.as_bytes())?;
-        Ok(std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0))
+    // spawn_blocking のタスクは future を落としても止まらない。キャンセルで呼び出し側が
+    // 落ちたら (一時ファイルは `PartialFileCleanup` が削除済み) 整形結果を書き戻さない
+    // ようフラグで知らせる。書き戻しは開いたままのハンドルで行うので、削除済みの
+    // パスへ同名ファイルが再作成されることもない。
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let _guard = CancelOnDrop(cancelled.clone());
+    tokio::task::spawn_blocking(move || {
+        format_dump_file_blocking(&path, FORMAT_DUMP_MAX_BYTES, &cancelled)
     })
     .await
     .map_err(|e| AppError::Other(format!("dump format task failed: {e}")))?
+}
+
+/// 整形対象にするダンプの最大サイズ (バイト)。整形は全量を 1 回で処理するため入力と出力の
+/// 2 本分のメモリを同時に持つ。これを超えるダンプは整形を**スキップして元のまま残す**
+/// (整形は任意の可読性向上機能で、巨大ダンプで OOM させる価値はない)。
+const FORMAT_DUMP_MAX_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Drop 時にフラグを立てる (整形タスクの呼び出し側がキャンセルされたことを伝える)。
+struct CancelOnDrop(Arc<AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
+fn format_dump_file_blocking(path: &str, max_bytes: u64, cancelled: &AtomicBool) -> Result<u64> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    // 最初にハンドルを確保する。以後の読み書きはパスではなくこのハンドル経由なので、
+    // 途中でパスが削除されても (Unix では) 削除済みの inode に書くだけで済む。
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        tracing::warn!(
+            "dump is larger than {max_bytes} bytes; skipping SQL formatting to bound memory use"
+        );
+        return Ok(len);
+    }
+    let mut bytes = Vec::with_capacity(len as usize);
+    file.read_to_end(&mut bytes)?;
+    let Ok(raw) = String::from_utf8(bytes) else {
+        tracing::warn!("dump is not valid UTF-8; skipping SQL formatting");
+        return Ok(len);
+    };
+    let formatted = crate::db::format::format_sql(&raw);
+    drop(raw);
+    if cancelled.load(Ordering::SeqCst) {
+        return Err(AppError::Other("dump format cancelled".into()));
+    }
+    file.set_len(0)?;
+    file.seek(SeekFrom::Start(0))?;
+    file.write_all(formatted.as_bytes())?;
+    file.flush()?;
+    Ok(formatted.len() as u64)
 }
 
 /// Run `mysqldump` for `database`, streaming SQL into the already-open `file`
@@ -860,7 +906,9 @@ async fn dump_postgres(
         cmd.arg("--data-only");
     }
     if options.add_drop_table {
-        cmd.arg("--clean");
+        // `--if-exists` が無いと、空の復元先で DROP が「存在しない」エラーになる。
+        // SQLite / MySQL の `DROP TABLE IF EXISTS` と挙動を揃える。
+        cmd.arg("--clean").arg("--if-exists");
     }
     if options.no_owner {
         cmd.arg("--no-owner");
@@ -890,9 +938,10 @@ async fn dump_postgres(
     } else if let Some(schema) = pg_schema {
         cmd.arg("--schema").arg(schema);
     }
-    // AWS IAM auth (#734) requires TLS; the token is only accepted over SSL.
-    if connect_options.aws_iam.is_some() {
-        cmd.env("PGSSLMODE", "require");
+    // 通常接続 (db/postgres.rs の apply_tls) と同じ TLS 設定を pg_dump にも渡す。
+    // 渡さないと pg_dump の既定 (prefer) で検証なしに格下げされる。
+    for (key, value) in pg_tls_env(connect_options) {
+        cmd.env(key, value);
     }
     // Keep the password out of the environment except for the pass-file pointer.
     cmd.env("PGPASSFILE", pgpass.path());
@@ -947,9 +996,21 @@ async fn dump_sqlite(
             None,
         )
         .await?;
+    // 仮想テーブル (FTS / R-Tree) のシャドウテーブルは CREATE VIRTUAL TABLE が再生成する
+    // ので書き出さない (通常表として DROP / CREATE すると索引が壊れる)。
+    let all_tables: Vec<(String, String)> = tables
+        .rows
+        .iter()
+        .filter_map(|r| match (r.first(), r.get(1)) {
+            (Some(Value::String(n)), Some(Value::String(s))) => Some((n.clone(), s.clone())),
+            _ => None,
+        })
+        .collect();
+    let shadow_tables = sqlite_shadow_tables(&all_tables);
     let table_rows: Vec<&Vec<Value>> = tables
         .rows
         .iter()
+        .filter(|row| !matches!(row.first(), Some(Value::String(n)) if shadow_tables.contains(n)))
         .filter(|row| match (&selected, row.first()) {
             (Some(sel), Some(Value::String(n))) => sel.contains(n),
             (Some(_), _) => false,
@@ -1065,7 +1126,7 @@ async fn dump_sqlite(
     if !options.no_create_info {
         let objs = conn
             .execute(
-                "SELECT sql, type, tbl_name FROM sqlite_master \
+                "SELECT sql, type, tbl_name, name FROM sqlite_master \
                  WHERE type IN ('index','trigger','view') AND name NOT LIKE 'sqlite_%' \
                  AND sql IS NOT NULL ORDER BY type, name",
                 None,
@@ -1073,6 +1134,10 @@ async fn dump_sqlite(
             .await?;
         let mut chunk = String::new();
         for row in &objs.rows {
+            // シャドウテーブルに紐づく索引は仮想テーブルが再生成するので出さない。
+            if matches!(row.get(2), Some(Value::String(tbl)) if shadow_tables.contains(tbl)) {
+                continue;
+            }
             if let Some(sel) = &selected {
                 // テーブル指定時は、指定テーブルに紐づく索引 / トリガーだけを書き出す
                 // (ビューは別オブジェクトなので含めない)。
@@ -1086,6 +1151,21 @@ async fn dump_sqlite(
                 }
             }
             if let Some(Value::String(sql)) = row.first() {
+                // ビューは表と違い表の DROP で消えないので、既存 DB への復元で
+                // "already exists" にならないよう個別に DROP する。索引・トリガーは
+                // 親の表の DROP と一緒に消える。
+                if options.add_drop_table {
+                    if let (Some(Value::String(ty)), Some(Value::String(name))) =
+                        (row.get(1), row.get(3))
+                    {
+                        if ty == "view" {
+                            chunk.push_str(&format!(
+                                "DROP VIEW IF EXISTS {};\n",
+                                sqlite_quote_ident(name)
+                            ));
+                        }
+                    }
+                }
                 chunk.push_str(sql);
                 chunk.push_str(";\n");
             }
@@ -1249,6 +1329,116 @@ pub fn cleanup_stale_dump_credential_files() {
     }
 }
 
+/// 空白だけの値を未指定として扱う (`db` 層の `non_empty` と同じ規則)。
+fn non_blank(value: &Option<String>) -> Option<&str> {
+    value.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// 通常接続と同じ規則で TLS モードを決める (AWS IAM は `require` 以上に引き上げ)。
+fn effective_ssl_mode(opts: &DbConnectOptions) -> Option<crate::db::SslMode> {
+    match opts.aws_iam {
+        Some(_) => Some(crate::db::aws_iam::enforce_tls(opts.ssl_mode)),
+        None => opts.ssl_mode,
+    }
+}
+
+/// mysqldump の `[client]` オプションファイルに書く TLS 行 (`ssl-mode` / `ssl-ca` /
+/// `ssl-cert` / `ssl-key`)。モード未指定なら `ssl-mode` は書かず mysqldump の既定に任せる。
+fn mysql_tls_lines(opts: &DbConnectOptions) -> Vec<String> {
+    use crate::db::SslMode;
+    let mut lines = Vec::new();
+    if let Some(mode) = effective_ssl_mode(opts) {
+        let v = match mode {
+            SslMode::Disable => "DISABLED",
+            SslMode::Prefer => "PREFERRED",
+            SslMode::Require => "REQUIRED",
+            SslMode::VerifyCa => "VERIFY_CA",
+            SslMode::VerifyFull => "VERIFY_IDENTITY",
+        };
+        lines.push(format!("ssl-mode={v}"));
+    }
+    for (key, val) in [
+        ("ssl-ca", &opts.ssl_root_cert),
+        ("ssl-cert", &opts.ssl_client_cert),
+        ("ssl-key", &opts.ssl_client_key),
+    ] {
+        if let Some(path) = non_blank(val) {
+            lines.push(format!("{key}={}", my_cnf_quote(path)));
+        }
+    }
+    lines
+}
+
+/// pg_dump に渡す TLS 用の環境変数 (`PGSSLMODE` / `PGSSLROOTCERT` / `PGSSLCERT` /
+/// `PGSSLKEY`)。パスは非秘密 (秘密はパスワードのみで PGPASSFILE 経由)。
+fn pg_tls_env(opts: &DbConnectOptions) -> Vec<(&'static str, String)> {
+    use crate::db::SslMode;
+    let mut env = Vec::new();
+    if let Some(mode) = effective_ssl_mode(opts) {
+        let v = match mode {
+            SslMode::Disable => "disable",
+            SslMode::Prefer => "prefer",
+            SslMode::Require => "require",
+            SslMode::VerifyCa => "verify-ca",
+            SslMode::VerifyFull => "verify-full",
+        };
+        env.push(("PGSSLMODE", v.to_string()));
+    }
+    for (key, val) in [
+        ("PGSSLROOTCERT", &opts.ssl_root_cert),
+        ("PGSSLCERT", &opts.ssl_client_cert),
+        ("PGSSLKEY", &opts.ssl_client_key),
+    ] {
+        if let Some(path) = non_blank(val) {
+            env.push((key, path.to_string()));
+        }
+    }
+    env
+}
+
+/// SQLite の仮想テーブル (FTS / R-Tree) が自動生成するシャドウテーブル名の集合。
+/// `(name, sql)` の全テーブル一覧から、`CREATE VIRTUAL TABLE ... USING <module>` の
+/// モジュールごとの既知サフィックスで導く。シャドウは仮想テーブルの CREATE で再生成
+/// されるので、通常の表として DROP / CREATE / INSERT してはいけない。
+fn sqlite_shadow_tables(tables: &[(String, String)]) -> std::collections::HashSet<String> {
+    let mut shadows = std::collections::HashSet::new();
+    for (name, sql) in tables {
+        let lower = sql.to_ascii_lowercase();
+        let mut words = lower.split_whitespace();
+        if words.next() != Some("create") || words.next() != Some("virtual") {
+            continue;
+        }
+        let Some(pos) = lower.find(" using ") else {
+            continue;
+        };
+        let module: String = lower[pos + 7..]
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        let suffixes: &[&str] = match module.as_str() {
+            "fts3" | "fts4" => &["content", "segments", "segdir", "docsize", "stat"],
+            "fts5" => &["data", "idx", "content", "docsize", "config"],
+            "rtree" | "rtree_i32" | "geopoly" => &["node", "rowid", "parent"],
+            _ => &[],
+        };
+        for suffix in suffixes {
+            shadows.insert(format!("{name}_{suffix}"));
+        }
+    }
+    // 仮想テーブル自身 (CREATE VIRTUAL TABLE) は shadow ではないので、同名が紛れても除く。
+    for (name, sql) in tables {
+        if sql
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("create virtual")
+        {
+            shadows.remove(name);
+        }
+    }
+    shadows
+}
+
 /// A temporary MySQL option file holding connection credentials. Removed from
 /// disk when dropped.
 struct DefaultsFile {
@@ -1283,7 +1473,11 @@ impl DefaultsFile {
             // mysql_clear_password plugin, which is only safe (and only
             // accepted by RDS) over TLS.
             content.push_str("enable-cleartext-plugin\n");
-            content.push_str("ssl-mode=REQUIRED\n");
+        }
+        // 通常接続 (db/mysql.rs の apply_tls) と同じ TLS 設定を mysqldump にも渡す。
+        for line in mysql_tls_lines(opts) {
+            content.push_str(&line);
+            content.push('\n');
         }
 
         #[cfg(unix)]
@@ -1655,6 +1849,113 @@ mod tests {
         assert_eq!(out, body);
         let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_file(&dst);
+    }
+
+    fn test_opts() -> DbConnectOptions {
+        DbConnectOptions {
+            host: "127.0.0.1".into(),
+            port: 3306,
+            user: "root".into(),
+            password: "secret".into(),
+            database: None,
+            driver: DriverKind::Mysql,
+            file_path: None,
+            ssl_mode: None,
+            ssl_root_cert: None,
+            ssl_client_cert: None,
+            ssl_client_key: None,
+            init_sql: None,
+            aws_iam: None,
+        }
+    }
+
+    #[test]
+    fn mysql_tls_lines_pass_mode_and_cert_paths() {
+        use crate::db::SslMode;
+        let mut o = test_opts();
+        assert!(mysql_tls_lines(&o).is_empty());
+        o.ssl_mode = Some(SslMode::VerifyFull);
+        o.ssl_root_cert = Some(" /etc/ca.pem ".into());
+        o.ssl_client_cert = Some("   ".into());
+        o.ssl_client_key = Some("/k.pem".into());
+        assert_eq!(
+            mysql_tls_lines(&o),
+            vec![
+                "ssl-mode=VERIFY_IDENTITY".to_string(),
+                "ssl-ca=\"/etc/ca.pem\"".to_string(),
+                "ssl-key=\"/k.pem\"".to_string(),
+            ]
+        );
+        o.ssl_mode = Some(SslMode::VerifyCa);
+        assert_eq!(mysql_tls_lines(&o)[0], "ssl-mode=VERIFY_CA");
+    }
+
+    #[test]
+    fn pg_tls_env_passes_mode_and_cert_paths() {
+        use crate::db::SslMode;
+        let mut o = test_opts();
+        assert!(pg_tls_env(&o).is_empty());
+        o.ssl_mode = Some(SslMode::VerifyFull);
+        o.ssl_root_cert = Some("/ca.pem".into());
+        o.ssl_client_cert = Some("/c.pem".into());
+        o.ssl_client_key = Some("/k.pem".into());
+        let env = pg_tls_env(&o);
+        assert!(env.contains(&("PGSSLMODE", "verify-full".to_string())));
+        assert!(env.contains(&("PGSSLROOTCERT", "/ca.pem".to_string())));
+        assert!(env.contains(&("PGSSLCERT", "/c.pem".to_string())));
+        assert!(env.contains(&("PGSSLKEY", "/k.pem".to_string())));
+    }
+
+    #[test]
+    fn sqlite_shadow_tables_detects_fts_and_rtree_only() {
+        let t = |n: &str, s: &str| (n.to_string(), s.to_string());
+        let tables = vec![
+            t("notes", "CREATE VIRTUAL TABLE notes USING fts5(body)"),
+            t(
+                "notes_data",
+                "CREATE TABLE 'notes_data'(id INTEGER PRIMARY KEY, block BLOB)",
+            ),
+            t("notes_idx", "CREATE TABLE 'notes_idx'(segid, term, pgno)"),
+            t("notes_archive", "CREATE TABLE notes_archive(id)"),
+            t("geo", "CREATE VIRTUAL TABLE geo USING rtree(id, a, b)"),
+            t(
+                "geo_node",
+                "CREATE TABLE \"geo_node\"(nodeno INTEGER PRIMARY KEY, data)",
+            ),
+        ];
+        let s = sqlite_shadow_tables(&tables);
+        assert!(s.contains("notes_data") && s.contains("notes_idx") && s.contains("geo_node"));
+        assert!(!s.contains("notes_archive"));
+        assert!(!s.contains("notes") && !s.contains("geo"));
+    }
+
+    #[test]
+    fn format_dump_file_skips_oversized_dump() {
+        let path =
+            std::env::temp_dir().join(format!("noobdb_dump_fmt_big_{}.sql", std::process::id()));
+        std::fs::write(&path, "select a,b from t;").unwrap();
+        let flag = AtomicBool::new(false);
+        let n = format_dump_file_blocking(&path.to_string_lossy(), 4, &flag).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "select a,b from t;"
+        );
+        assert_eq!(n, 18);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // キャンセル後に整形が走っても、削除済みのパスへ書き戻さない。
+    #[test]
+    fn format_dump_file_does_not_recreate_deleted_path_when_cancelled() {
+        let path =
+            std::env::temp_dir().join(format!("noobdb_dump_fmt_cancel_{}.sql", std::process::id()));
+        std::fs::write(&path, "select a,b from t;").unwrap();
+        let flag = AtomicBool::new(true);
+        let r = format_dump_file_blocking(&path.to_string_lossy(), u64::MAX, &flag);
+        assert!(r.is_err());
+        // 未キャンセルでも、開いた後にパスが消えたら再作成しない (Unix)。
+        let _ = std::fs::remove_file(&path);
+        assert!(!path.exists());
     }
 
     #[tokio::test]
