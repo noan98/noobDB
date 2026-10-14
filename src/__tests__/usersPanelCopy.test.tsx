@@ -117,6 +117,24 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     await waitFor(() => expect(vi.mocked(api.listUserPrivileges)).toHaveBeenCalledTimes(2));
   });
 
+  it.each([
+    ["mysql", true],
+    ["postgres", false],
+  ] as const)("適用確認の MySQL 非原子注意: %s -> 表示=%s", async (driver, shown) => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.t1 TO app"]);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver={driver} database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("t1");
+    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("usersApplyChanges") }));
+    await screen.findByRole("button", { name: t("usersApplyConfirmOk") });
+    expect(screen.queryByText(t("usersApplyMysqlNonAtomic")) !== null).toBe(shown);
+  });
+
   it("ユーザが 1 人だけなら権限コピーは無効", async () => {
     vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
     vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });

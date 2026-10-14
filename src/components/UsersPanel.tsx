@@ -369,6 +369,11 @@ export function UsersPanel({
           <chakra.p margin={0}>
             {t("usersApplyConfirmMessage", { count: statements.length })}
           </chakra.p>
+          {driver === "mysql" && (
+            <Callout tone="warning" role="status" mt="2" data-testid="users-mysql-nonatomic">
+              {t("usersApplyMysqlNonAtomic")}
+            </Callout>
+          )}
           <CodePreview wrap mt="2" maxH="260px">{statements.join(";\n")}</CodePreview>
         </>
       ),

@@ -3957,6 +3957,8 @@ const en = {
   usersApplyChanges: "Apply changes",
   usersApplyConfirmTitle: "Apply privilege changes",
   usersApplyConfirmMessage: "{count} statement(s) will be executed:",
+  usersApplyMysqlNonAtomic:
+    "On MySQL, privilege changes are committed statement by statement, so if one fails partway, only some of them may have been applied.",
   usersApplyConfirmOk: "Apply",
   usersApplyDone: "Privilege changes applied",
   usersApplyFailed: "Failed to apply privilege changes: {error}",
@@ -9042,6 +9044,8 @@ const ja: Dict = {
   usersApplyChanges: "変更を適用",
   usersApplyConfirmTitle: "権限変更を適用",
   usersApplyConfirmMessage: "以下の {count} 件の SQL 文を実行します:",
+  usersApplyMysqlNonAtomic:
+    "MySQL では権限変更が文ごとに確定するため、途中で失敗すると一部だけ適用されることがあります。",
   usersApplyConfirmOk: "適用",
   usersApplyDone: "権限変更を適用しました",
   usersApplyFailed: "権限変更の適用に失敗しました: {error}",
