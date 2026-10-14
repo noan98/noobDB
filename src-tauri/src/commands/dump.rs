@@ -1120,7 +1120,7 @@ async fn dump_sqlite(
                                 buf.push_str(&vals.join(", "));
                                 buf.push_str(");\n");
                             }
-                            write_chunk(&writer_cb, &counter_cb, &buf)?;
+                            write_chunk_off_worker(&writer_cb, &counter_cb, &buf)?;
                             // 1 表が長くても止まって見えないよう、一定バイトごと (または
                             // 一定時間ごと) に進捗を出す。
                             let bytes = counter_cb.load(Ordering::SeqCst);
@@ -1241,6 +1241,24 @@ fn write_chunk(
     w.write_all(s.as_bytes())?;
     counter.fetch_add(s.len() as u64, Ordering::SeqCst);
     Ok(())
+}
+
+/// 行バッチの書き出し (数十 KiB〜の同期ディスク I/O) 用。マルチスレッドランタイム上では
+/// `block_in_place` でワーカーを他タスクへ明け渡してから書き、同じワーカー上の他の IPC 応答が
+/// 遅れないようにする。`block_in_place` は current_thread ランタイム (単体テストなど) では
+/// panic するので、その場合は従来どおりそのまま書く。
+fn write_chunk_off_worker(
+    writer: &Arc<std::sync::Mutex<std::io::BufWriter<std::fs::File>>>,
+    counter: &Arc<AtomicU64>,
+    s: &str,
+) -> Result<()> {
+    let multi_thread = tokio::runtime::Handle::try_current()
+        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
+    if multi_thread {
+        tokio::task::block_in_place(|| write_chunk(writer, counter, s))
+    } else {
+        write_chunk(writer, counter, s)
+    }
 }
 
 /// Emit a progress event carrying both bytes and processed/total table counts

@@ -2931,6 +2931,23 @@ export async function listenPreviewStream(
 }
 
 /**
+ * グローバル `listen` で受けるストリームイベント (`csv-import:*` など) を `streamId` で
+ * 絞り、スキーマ検証してからハンドラへ渡す共通フィルタ。`listen*Stream` 系が共有する。
+ */
+function streamEventFilter(streamId: string) {
+  return <T extends { streamId: string }>(
+    schema: Parameters<typeof parseResponse>[0],
+    event: string,
+    cb?: (e: T) => void,
+  ) =>
+    (e: { payload: T }) => {
+      if (cb && e.payload.streamId === streamId) {
+        cb(parseResponse(schema, e.payload, event));
+      }
+    };
+}
+
+/**
  * Subscribes to all csv-import events for `streamId`. Returns a function that
  * detaches every listener.
  */
@@ -2938,17 +2955,7 @@ export async function listenImportStream(
   streamId: string,
   handlers: ImportStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
+  const filter = streamEventFilter(streamId);
   return registerListeners([
     listen<ImportStartedEvent>(
       "csv-import:started",
@@ -2984,17 +2991,7 @@ export async function listenScriptStream(
   streamId: string,
   handlers: ScriptStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
+  const filter = streamEventFilter(streamId);
   return registerListeners([
     listen<ScriptProgressEvent>(
       "sql-script:progress",
@@ -3024,17 +3021,7 @@ export async function listenExportStream(
   streamId: string,
   handlers: ExportStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
+  const filter = streamEventFilter(streamId);
   return registerListeners([
     listen<ExportProgressEvent>(
       "export-stream:progress",
@@ -3060,17 +3047,7 @@ export async function listenTransferStream(
   streamId: string,
   handlers: TransferStreamHandlers,
 ): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
+  const filter = streamEventFilter(streamId);
   return registerListeners([
     listen<TransferProgressEvent>(
       "transfer-stream:progress",
@@ -3093,17 +3070,7 @@ export async function listenTransferStream(
 
 /** ストリーミングダンプの進捗/完了/エラー/キャンセルイベントを購読する (#686)。 */
 export async function listenDumpStream(streamId: string, handlers: DumpStreamHandlers): Promise<UnlistenFn> {
-  const filter =
-    <T extends { streamId: string }>(
-      schema: Parameters<typeof parseResponse>[0],
-      event: string,
-      cb?: (e: T) => void,
-    ) =>
-    (e: { payload: T }) => {
-      if (cb && e.payload.streamId === streamId) {
-        cb(parseResponse(schema, e.payload, event));
-      }
-    };
+  const filter = streamEventFilter(streamId);
   return registerListeners([
     listen<DumpProgressEvent>(
       "dump-stream:progress",

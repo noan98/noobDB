@@ -11,21 +11,54 @@ export type TaskT = (key: I18nKey, vars?: Record<string, string | number>) => st
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
+// タスク一覧は行ごとに時差・TZ 表記を引くので、Intl.DateTimeFormat (生成が高い) は
+// timeZone / locale をキーにモジュール内でキャッシュする。
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+const labelFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** キャッシュを捨てる。実行環境の既定タイムゾーンはキャッシュ生成時に固定されるため、テストが `process.env.TZ` を切り替えるときに使う。 */
+export function clearTaskFormatCache(): void {
+  offsetFormatters.clear();
+  labelFormatters.clear();
+}
+
+function cached(
+  cache: Map<string, Intl.DateTimeFormat>,
+  key: string,
+  make: () => Intl.DateTimeFormat,
+): Intl.DateTimeFormat {
+  let f = cache.get(key);
+  if (!f) {
+    f = make();
+    cache.set(key, f);
+  }
+  return f;
+}
+
+function offsetFormatter(timeZone?: string): Intl.DateTimeFormat {
+  return cached(
+    offsetFormatters,
+    timeZone ?? "",
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        hourCycle: "h23",
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        second: "numeric",
+      }),
+  );
+}
+
 /**
  * `at` 時点での `timeZone` (省略時は実行環境のローカル) の UTC からの差 (分、東が正)。
  * DST のある地域では `at` の日付で値が変わるため、日付を必ず明示的に渡す。
  */
 export function tzOffsetMinutes(at: Date, timeZone?: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "numeric",
-    day: "numeric",
-    hour: "numeric",
-    minute: "numeric",
-    second: "numeric",
-  }).formatToParts(at);
+  const parts = offsetFormatter(timeZone).formatToParts(at);
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
   const asUtc = Date.UTC(
     get("year"),
@@ -69,7 +102,11 @@ export function localToUtcClock(hour: number, minute: number, at: Date, timeZone
 /** タイムゾーンの短い表記 ("JST" / "GMT+9" / "EDT")。取れなければ "UTC±hh:mm"。 */
 export function timeZoneLabel(at: Date, locale?: string, timeZone?: string): string {
   try {
-    const name = new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: "short" })
+    const name = cached(
+      labelFormatters,
+      `${locale ?? ""}\u0000${timeZone ?? ""}`,
+      () => new Intl.DateTimeFormat(locale, { timeZone, timeZoneName: "short" }),
+    )
       .formatToParts(at)
       .find((p) => p.type === "timeZoneName")?.value;
     if (name) return name;
