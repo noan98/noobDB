@@ -1016,6 +1016,8 @@ const en = {
   tabsEmptyErDiagram: "ER diagram",
   tabsEmptyCommandPalette: "Command palette",
   notConnectedTitle: "Not connected",
+  profilesLoadFailedTitle: "Could not load connection profiles",
+  profilesLoadFailedRetry: "Retry",
   snippetEmptyTitle: "No snippets yet",
   historyEmptyTitle: "No history yet",
   gridZeroRows: "0 rows",
@@ -3104,6 +3106,7 @@ const en = {
   dropOpenedSqlMulti: "Opened {count} files in new tabs",
   dropReadError: "Could not read {name}: {error}",
   dropCsvNoTable: "Open a table first to import a dropped CSV.",
+  dropSqlNoConnection: "Connect to a database first to open a SQL file.",
   dropCsvMultiOnlyFirst: "Only the first CSV was used; import the rest one at a time.",
   dropUnsupported: "Unsupported file: {name}",
   // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)
@@ -6096,6 +6099,8 @@ const ja: Dict = {
   tabsEmptyErDiagram: "ER 図",
   tabsEmptyCommandPalette: "コマンドパレット",
   notConnectedTitle: "未接続です",
+  profilesLoadFailedTitle: "接続プロファイルを読み込めませんでした",
+  profilesLoadFailedRetry: "再読み込み",
   snippetEmptyTitle: "スニペットがありません",
   historyEmptyTitle: "履歴がありません",
   gridZeroRows: "0 件",
@@ -8177,6 +8182,7 @@ const ja: Dict = {
   dropOpenedSqlMulti: "{count} 個のファイルを新しいタブで開きました",
   dropReadError: "{name} を読み込めませんでした: {error}",
   dropCsvNoTable: "ドロップした CSV を取り込むには、先にテーブルを開いてください。",
+  dropSqlNoConnection: "SQL ファイルを開くには、先にデータベースへ接続してください。",
   dropCsvMultiOnlyFirst: "最初の CSV のみ使用しました。残りは 1 つずつ取り込んでください。",
   dropUnsupported: "対応していないファイルです: {name}",
   // .sql の明示的な「開く」/「名前を付けて保存」(#918。D&D の読み込みロジックを共有)

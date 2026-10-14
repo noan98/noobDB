@@ -108,6 +108,8 @@ const SnippetRow = memo(function SnippetRow({
             // Enter/Space は double-click と同じ「挿入」を実行。ダブルクリック
             // 必須にすると誤発火を避けたい意図だが、キーボードでは明示的な押下
             // なので 1 アクションで挿入する方が ARIA tree の慣習にも合う。
+            // 内側の ★ / ▶ ボタンからバブルしたキーは対象外 (ボタン自身の click に任せる)。
+            if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
               onInsert(s);
@@ -182,6 +184,7 @@ const SnippetRow = memo(function SnippetRow({
                     color={isFavorite ? "app.favorite" : "app.textSecondary"}
                     _hover={{ color: "app.favorite" }}
                     aria-label={isFavorite ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite")}
+                    onDoubleClick={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
                       onToggleFavorite(s);
@@ -205,8 +208,12 @@ const SnippetRow = memo(function SnippetRow({
                     color="app.textSecondary"
                     _hover={{ color: "app.text" }}
                     aria-label={t("snippetMenuRun")}
+                    onDoubleClick={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
+                      // ダブルクリックの 2 回目以降 (detail > 1) は無視し、
+                      // 同じ SQL を 2 タブで 2 回実行しないようにする。
+                      if (e.detail > 1) return;
                       onRun(s);
                     }}
                   >

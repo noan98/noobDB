@@ -225,6 +225,8 @@ export const TabBar = memo(function TabBar({
   const handleTabKeyDown = useCallback(
     (currentId: string) => (e: React.KeyboardEvent<HTMLElement>) => {
       if (e.key === "Enter" || e.key === " ") {
+        // 内側の × ボタンからバブルした場合は、ボタン自身の click (閉じる) に任せる。
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onSelect(currentId);
         return;

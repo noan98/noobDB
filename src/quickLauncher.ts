@@ -98,7 +98,9 @@ export function buildQuickLauncherSections(
   limits: QuickLauncherSectionLimits,
 ): QuickLauncherSection[] {
   const byId = new Map(src.snippets.map((s) => [s.id, s]));
-  const favSnippets = src.snippetQuickAccess.favorites
+  // お気に入りは登録順 (新しいものが末尾) なので、テーブル側と同じく新しい順に並べ替える。
+  const favSnippets = [...src.snippetQuickAccess.favorites]
+    .reverse()
     .map((id) => byId.get(id))
     .filter((s): s is Snippet => s !== undefined)
     .map((snippet): QuickLauncherItem => ({ kind: "snippet", key: `snippet:${snippet.id}`, snippet }));
