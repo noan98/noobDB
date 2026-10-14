@@ -303,8 +303,10 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
         row_count -= deleted as i64;
     }
     // 定常状態 (上限付近) では捕捉のたびに超過→削除が起きる。毎回 VACUUM でファイル全体を
-    // 書き直さないよう、freelist が全ページの一定割合を超えたときだけ回収する。
-    if !freelist_exceeds_threshold(pool).await? {
+    // 書き直さないよう、freelist が全ページの一定割合を超えたときだけ回収する。ただしファイルが
+    // 上限の 1.25 倍を超えたら比率に関係なく回収し、ファイルサイズが上限から離れすぎないようにする。
+    let far_over_cap = approx_size_bytes(pool).await? > max_bytes.saturating_add(max_bytes / 4);
+    if !far_over_cap && !freelist_exceeds_threshold(pool).await? {
         return Ok(());
     }
     if let Err(e) = sqlx::query("VACUUM").execute(pool).await {
