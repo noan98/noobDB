@@ -206,7 +206,7 @@ jobs:
 
       # Biome による静的 lint (#1176) と整形チェック (#1636)。tsc / knip では拾えない握り潰された
       # Promise (noFloatingPromises / noMisusedPromises) と hooks の誤用を止める。`biome check` は
-      # formatter も検査するので、未整形のコードもここで落ちる (直すには `biome format --write src`)。
+      # formatter も検査するので、未整形のコードもここで落ちる (直すには `pnpm exec biome format --write src`)。
       # 新しい必須チェックは増やさず、frontend ジョブ内のステップとして実行する。
       - name: Lint (Biome)
         run: pnpm run lint
