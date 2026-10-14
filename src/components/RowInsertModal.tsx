@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { Column, TableColumnInfo } from "../api/tauri";
@@ -138,12 +138,25 @@ export function RowInsertModal({
     onConfirm(row);
   };
 
+  // Enter は確定ではなく次の欄へ移るだけにする (途中までの行を誤って保留追加しない)。
+  // 確定は Cmd/Ctrl+Enter (Modal の onSubmit) と「追加」ボタンのみ。最後の欄では何もしない。
+  const focusNextField = (e: KeyboardEvent<HTMLElement>) => {
+    if (!isPlainEnterKey(e)) return;
+    e.preventDefault();
+    const root = e.currentTarget.closest("[data-insert-fields]");
+    if (!root) return;
+    const fields = Array.from(root.querySelectorAll<HTMLElement>("[data-insert-field]")).filter(
+      (el) => !(el as HTMLInputElement).disabled,
+    );
+    fields[fields.indexOf(e.currentTarget) + 1]?.focus();
+  };
+
   return (
     <Modal onSubmit={submit} width="560px" onClose={onCancel} initialFocusEl={() => firstRef.current}>
       <ModalHeader onClose={onCancel} closeLabel={t("createTableClose")}>
         {t("rowOpsInsertTitle", { table })}
       </ModalHeader>
-      <ModalBody display="flex" flexDirection="column" gap="2">
+      <ModalBody display="flex" flexDirection="column" gap="2" data-insert-fields>
         <chakra.p fontSize="xs" color="app.textMuted">
           {t("rowOpsInsertHint")}
         </chakra.p>
@@ -212,9 +225,8 @@ export function RowInsertModal({
                     aria-label={c.name}
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (isPlainEnterKey(e)) submit();
-                    }}
+                    data-insert-field
+                    onKeyDown={focusNextField}
                     flex="1"
                   >
                     <option value="">{t("rowOpsInsertDefaultOption")}</option>
@@ -233,9 +245,8 @@ export function RowInsertModal({
                     list={pickerValues.length > 0 ? listId : undefined}
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (isPlainEnterKey(e)) submit();
-                    }}
+                    data-insert-field
+                    onKeyDown={focusNextField}
                     flex="1"
                   />
                 )}

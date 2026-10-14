@@ -40,10 +40,19 @@ export interface ConfirmOptions {
    * does not require or check this text.
    */
   typedConfirmation?: string;
+  /**
+   * 第 3 の選択肢 (破壊的な「破棄」など) のラベル。指定すると `choose()` で使え、左端に
+   * dangerOutline で置かれる。Esc / × / キャンセルは「何も壊さない側」(= cancel) のまま。
+   * 通常の確認 (tone: primary) でのみ有効。
+   */
+  altLabel?: string;
 }
 
+/** `choose()` の結果。cancel は Esc / × / キャンセルボタン。 */
+export type ConfirmChoice = "confirm" | "alt" | "cancel";
+
 interface PendingState extends ConfirmOptions {
-  resolve: (ok: boolean) => void;
+  resolve: (choice: ConfirmChoice) => void;
   seq: number;
 }
 
@@ -63,28 +72,35 @@ interface PendingState extends ConfirmOptions {
  * return <>{children}{dialog}</>;
  * ```
  */
-export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boolean>; dialog: ReactNode } {
+export function useConfirm(): {
+  confirm: (opts: ConfirmOptions) => Promise<boolean>;
+  /** 3 択版。`altLabel` を足した確認で、押された選択肢を返す。 */
+  choose: (opts: ConfirmOptions) => Promise<ConfirmChoice>;
+  dialog: ReactNode;
+} {
   const t = useT();
   const [state, setState] = useState<PendingState | null>(null);
   // 重複呼び出しのキューイングは行わず、後から来た confirm に上書きされる前に
   // 一旦キャンセルとして解決する (= UI ループ的に呼び出し側が困らない)。
-  const lastResolveRef = useRef<((ok: boolean) => void) | null>(null);
+  const lastResolveRef = useRef<((choice: ConfirmChoice) => void) | null>(null);
   // 呼び出しごとの連番。ConfirmDialog の key に使い、続けて別の typedConfirmation
   // で confirm() したとき前回の入力欄の値を持ち越さない (安全網の汚染防止)。
   const seqRef = useRef(0);
 
-  const confirm = useCallback((opts: ConfirmOptions) => {
-    return new Promise<boolean>((resolve) => {
-      if (lastResolveRef.current) lastResolveRef.current(false);
+  const choose = useCallback((opts: ConfirmOptions) => {
+    return new Promise<ConfirmChoice>((resolve) => {
+      if (lastResolveRef.current) lastResolveRef.current("cancel");
       lastResolveRef.current = resolve;
       seqRef.current += 1;
       setState({ ...opts, resolve, seq: seqRef.current });
     });
   }, []);
 
-  const close = useCallback((ok: boolean) => {
+  const confirm = useCallback((opts: ConfirmOptions) => choose(opts).then((c) => c === "confirm"), [choose]);
+
+  const close = useCallback((choice: ConfirmChoice) => {
     setState((cur) => {
-      if (cur) cur.resolve(ok);
+      if (cur) cur.resolve(choice);
       lastResolveRef.current = null;
       return null;
     });
@@ -103,14 +119,16 @@ export function useConfirm(): { confirm: (opts: ConfirmOptions) => Promise<boole
           cancelLabel={state.cancelLabel ?? t("confirmDefaultCancel")}
           tone={state.tone ?? "primary"}
           typedConfirmation={state.typedConfirmation}
-          onConfirm={() => close(true)}
-          onCancel={() => close(false)}
+          altLabel={state.altLabel}
+          onConfirm={() => close("confirm")}
+          onAlt={() => close("alt")}
+          onCancel={() => close("cancel")}
         />
       )}
     </AnimatePresence>
   );
 
-  return { confirm, dialog };
+  return { confirm, choose, dialog };
 }
 
 interface ConfirmDialogProps {
@@ -120,7 +138,9 @@ interface ConfirmDialogProps {
   cancelLabel: string;
   tone: ConfirmTone;
   typedConfirmation?: string;
+  altLabel?: string;
   onConfirm: () => void;
+  onAlt: () => void;
   onCancel: () => void;
 }
 
@@ -131,7 +151,9 @@ function ConfirmDialog({
   cancelLabel,
   tone,
   typedConfirmation,
+  altLabel,
   onConfirm,
+  onAlt,
   onCancel,
 }: ConfirmDialogProps) {
   const t = useT();
@@ -197,6 +219,11 @@ function ConfirmDialog({
           </>
         ) : (
           <>
+            {altLabel && (
+              <Button type="button" variant="dangerOutline" onClick={onAlt}>
+                {altLabel}
+              </Button>
+            )}
             <div style={{ flex: 1 }} />
             <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel}>
               {cancelLabel}

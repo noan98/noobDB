@@ -579,8 +579,10 @@ describe("シナリオ: 明示トランザクションと接続 (実ブラウザ
     await screen.getByRole("button", { name: t("txBegin") }).click();
     await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
 
-    // B へ切替: B は TX を持たないので開始ボタンに戻る。
-    await connectToProfile(screen, /Beta DB/, "betadb");
+    // B へ切替: 未確定の TX があるので警告が出る (#1615)。続行すると B は TX を持たないので開始ボタンに戻る。
+    await screen.getByRole("treeitem", { name: /Beta DB/ }).click();
+    await screen.getByRole("button", { name: t("connSwitchTxAction") }).click();
+    await expect.element(screen.getByRole("treeitem", { name: "betadb", exact: true })).toBeVisible();
     await expect.element(screen.getByRole("button", { name: t("txBegin") })).toBeVisible();
     expect(screen.getByRole("button", { name: t("txCommit") }).query()).toBeNull();
 

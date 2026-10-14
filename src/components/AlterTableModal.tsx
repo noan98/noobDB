@@ -123,6 +123,7 @@ function AlterPrecheckNotice({
     length: "alterPrecheckLength",
     range: "alterPrecheckRange",
     decimal: "alterPrecheckDecimal",
+    scale: "alterPrecheckScale",
     notNull: "alterPrecheckNotNull",
   } as const;
   if (failing.length > 0) {
