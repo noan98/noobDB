@@ -261,7 +261,22 @@ export function resolveWorkspaceToSave(
 ): PersistedWorkspace {
   if (!kept || totalTabs(kept) === 0) return current;
   if (totalTabs(current) === 0) return kept;
-  return { panes: [...current.panes, ...kept.panes], activePane: current.activePane };
+  if (current.panes.length + kept.panes.length <= MAX_PERSISTED_PANES) {
+    return { panes: [...current.panes, ...kept.panes], activePane: current.activePane };
+  }
+  // 画面は最大 2 ペインまでしか描かないので、超える分は最後のペインの末尾にタブとして足す。
+  const lastIdx = current.panes.length - 1;
+  const panes = current.panes.map((pane, i) =>
+    i === lastIdx ? { ...pane, tabs: [...pane.tabs, ...keptTabs(kept)] } : pane,
+  );
+  return { panes, activePane: current.activePane };
+}
+
+/** 画面が描けるペイン数の上限 (分割表示は 2 ペインまで)。 */
+const MAX_PERSISTED_PANES = 2;
+
+function keptTabs(kept: PersistedWorkspace): PersistedTab[] {
+  return kept.panes.flatMap((pane) => pane.tabs);
 }
 
 /**
@@ -272,9 +287,26 @@ export function resolveWorkspaceToSave(
  */
 export function splitKeptFromSaved(saved: PersistedWorkspace, kept: PersistedWorkspace): PersistedWorkspace {
   const n = kept.panes.length;
+  if (n === 0) return saved;
   const tail = saved.panes.slice(saved.panes.length - n);
-  if (n === 0 || tail.length !== n || JSON.stringify(tail) !== JSON.stringify(kept.panes)) return saved;
-  const panes = saved.panes.slice(0, saved.panes.length - n);
+  if (tail.length === n && JSON.stringify(tail) === JSON.stringify(kept.panes)) {
+    const panes = saved.panes.slice(0, saved.panes.length - n);
+    return { panes, activePane: Math.min(saved.activePane, Math.max(0, panes.length - 1)) };
+  }
+  // ペイン数の上限で最後のペインの末尾にタブとして足された場合。
+  const flat = keptTabs(kept);
+  const last = saved.panes[saved.panes.length - 1];
+  if (!last || flat.length === 0 || last.tabs.length < flat.length) return saved;
+  const lastTail = last.tabs.slice(last.tabs.length - flat.length);
+  if (JSON.stringify(lastTail) !== JSON.stringify(flat)) return saved;
+  const rest = last.tabs.slice(0, last.tabs.length - flat.length);
+  const panes =
+    rest.length > 0
+      ? [
+          ...saved.panes.slice(0, -1),
+          { ...last, tabs: rest, activeIndex: Math.min(last.activeIndex, rest.length - 1) },
+        ]
+      : saved.panes.slice(0, -1);
   return { panes, activePane: Math.min(saved.activePane, Math.max(0, panes.length - 1)) };
 }
 

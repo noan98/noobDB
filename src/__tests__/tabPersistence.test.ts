@@ -303,9 +303,22 @@ describe("resolveWorkspaceToSave / splitKeptFromSaved (#1615)", () => {
     const kept = ws(["k1", "k2"], ["k3"]);
     const cur = { ...ws(["new"]), activePane: 0 };
     const merged = resolveWorkspaceToSave(cur, kept);
-    expect(titles(merged)).toEqual([["new"], ["k1", "k2"], ["k3"]]);
+    // 画面は 2 ペインまでなので、超える分は最後のペインの末尾にタブとして足す
+    expect(titles(merged)).toEqual([["new", "k1", "k2", "k3"]]);
     expect(merged.activePane).toBe(0);
     expect(resolveWorkspaceToSave(cur, kept)).toEqual(merged);
+    // 2 ペインに収まるならペインのまま足す
+    expect(titles(resolveWorkspaceToSave(ws(["new"]), ws(["k1"])))).toEqual([["new"], ["k1"]]);
+  });
+
+  it("2 ペインを超える合成でも splitKeptFromSaved でセッションのタブだけに戻る", () => {
+    const kept = ws(["k1"], ["k2"]);
+    const cur = ws(["a"], ["b"]);
+    const saved = resolveWorkspaceToSave(cur, kept);
+    expect(saved.panes.length).toBe(2);
+    expect(titles(splitKeptFromSaved(saved, kept))).toEqual([["a"], ["b"]]);
+    // 保持分だけ (2 ペイン) を保存し直した場合は空に戻る
+    expect(splitKeptFromSaved(kept, kept).panes).toEqual([]);
   });
 
   it("splitKeptFromSaved は足された保持分だけを外す", () => {
