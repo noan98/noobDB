@@ -465,6 +465,8 @@ interface NodeRowProps {
   hintsLabel: string;
   /** 実測バッジの文言 (`est {est} → actual {actual} rows`) を作る。 */
   actualRowsLabel: (est: string, actual: string) => string;
+  /** 推定行数バッジの文言 (`{rows} rows`)。 */
+  nodeRowsLabel: (rows: string) => string;
   neverExecutedLabel: string;
   /** 初回描画で stagger 出現させるノード ID。展開/折りたたみ後は空にして再生しない。 */
   staggerIds: ReadonlySet<string>;
@@ -482,6 +484,7 @@ function NodeRow({
   collapseLabel,
   hintsLabel,
   actualRowsLabel,
+  nodeRowsLabel,
   neverExecutedLabel,
   staggerIds,
 }: NodeRowProps) {
@@ -639,7 +642,9 @@ function NodeRow({
             )
           ) : (
             parseNum(rows) !== null && (
-              <chakra.span css={badgeBaseCss}>{formatNumber(parseNum(rows) as number)} rows</chakra.span>
+              <chakra.span css={badgeBaseCss}>
+                {nodeRowsLabel(formatNumber(parseNum(rows) as number))}
+              </chakra.span>
             )
           )}
         </chakra.span>
@@ -660,6 +665,7 @@ function NodeRow({
             collapseLabel={collapseLabel}
             hintsLabel={hintsLabel}
             actualRowsLabel={actualRowsLabel}
+            nodeRowsLabel={nodeRowsLabel}
             neverExecutedLabel={neverExecutedLabel}
             staggerIds={staggerIds}
           />
@@ -1010,6 +1016,7 @@ function ExplainViewerBody({
               collapseLabel={t("explainCollapseNode")}
               hintsLabel={t("explainHintsTitle")}
               actualRowsLabel={(est, actual) => t("explainActualRows", { est, actual })}
+              nodeRowsLabel={(rows) => t("explainNodeRows", { rows })}
               neverExecutedLabel={t("explainNeverExecuted")}
               staggerIds={staggerIds}
             />

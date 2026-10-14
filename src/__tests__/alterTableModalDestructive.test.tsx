@@ -36,6 +36,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     table_comment: "",
     foreign_keys: [],
     table_names: ["t"],
+    warnings: [],
   };
   return { ...actual, api: { ...actual.api, alterTableContext: vi.fn().mockResolvedValue(ctx) } };
 });

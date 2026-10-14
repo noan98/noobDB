@@ -149,7 +149,7 @@ pub mod __test_api {
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
     pub use crate::commands::connection::ConnectResponse;
     pub use crate::commands::logs::LogView;
-    pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags};
+    pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags, SkippedProfile};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
@@ -1400,6 +1400,8 @@ pub fn run() {
             commands::sandbox::sandbox_advance_base,
             commands::sandbox::sandbox_reset_table,
             commands::profiles::list_profiles,
+            commands::profiles::list_skipped_profiles,
+            commands::profiles::delete_skipped_profile,
             commands::profiles::reveal_profile_secret,
             commands::profiles::save_profile,
             commands::profiles::delete_profile,

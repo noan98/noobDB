@@ -291,3 +291,49 @@ describe("SandboxReviewModal の適用結果 (#1599)", () => {
     );
   });
 });
+
+/** 適用ボタンの並び (#1615): 破壊的な文を含むときは「適用 → spacer → 閉じる」の破壊的パターン。 */
+describe("SandboxReviewModal の適用ボタンの並び (#1615)", () => {
+  const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
+  const changed = {
+    ...TABLE_DIFF,
+    desired: {
+      ...TABLE_DIFF.desired,
+      rows: [{ status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] }],
+    },
+  };
+
+  async function generateWith(destructive: boolean) {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue(changed);
+    vi.mocked(api.generateDataSyncSql).mockResolvedValue({
+      statements: [{ sql: "DELETE FROM users WHERE id = 1", table: "users", kind: "delete", destructive }],
+      warnings: [],
+    } as never);
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    const apply = (await screen.findByText(t("sandboxApplyTitle", { count: 1 }))).closest(
+      "button",
+    ) as HTMLElement;
+    const close = screen.getByText(t("sandboxReviewClose"), { selector: "button" });
+    return { apply, close };
+  }
+
+  it("破壊的な文を含むと適用が閉じるより左に来る", async () => {
+    const { apply, close } = await generateWith(true);
+    expect(apply.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("破壊的でなければ従来どおり閉じるが左、適用が右", async () => {
+    const { apply, close } = await generateWith(false);
+    expect(close.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});

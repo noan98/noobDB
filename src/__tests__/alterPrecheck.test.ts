@@ -25,9 +25,13 @@ describe("parseTypeSpec", () => {
     expect(parseTypeSpec("postgres", "integer").kind).toBe("int");
   });
   it("decimal は整数部の桁数", () => {
-    expect(parseTypeSpec("mysql", "decimal(10,2)")).toEqual({ kind: "decimal", integerDigits: 8 });
-    expect(parseTypeSpec("postgres", "numeric")).toEqual({ kind: "decimal", integerDigits: null });
-    expect(parseTypeSpec("mysql", "decimal")).toEqual({ kind: "decimal", integerDigits: 10 });
+    expect(parseTypeSpec("mysql", "decimal(10,2)")).toEqual({ kind: "decimal", integerDigits: 8, scale: 2 });
+    expect(parseTypeSpec("postgres", "numeric")).toEqual({
+      kind: "decimal",
+      integerDigits: null,
+      scale: null,
+    });
+    expect(parseTypeSpec("mysql", "decimal")).toEqual({ kind: "decimal", integerDigits: 10, scale: 0 });
   });
 });
 
@@ -108,6 +112,34 @@ describe("buildAlterPrechecks", () => {
     expect(
       buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(6,2)")], [edit("p", "decimal(12,2)")]),
     ).toEqual([]);
+  });
+
+  it("小数桁だけを縮小すると丸めで値が変わる行を数える (#1615)", () => {
+    const got = buildAlterPrechecks(
+      "mysql",
+      "d",
+      "t",
+      [base("p", "decimal(10,4)")],
+      [edit("p", "decimal(10,2)")],
+    );
+    expect(got.map((g) => g.kind)).toEqual(["scale"]);
+    expect(got[0].sql).toContain("ROUND(`p`, 2) <> `p`");
+    // 拡大・同じ scale では出さない
+    expect(
+      buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(10,2)")], [edit("p", "decimal(14,4)")]),
+    ).toEqual([]);
+    expect(
+      buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(10,2)")], [edit("p", "decimal(12,2)")]),
+    ).toEqual([]);
+    // PostgreSQL の無制限 numeric → numeric(10,2) も検査する
+    const pg = buildAlterPrechecks(
+      "postgres",
+      "public",
+      "t",
+      [base("p", "numeric")],
+      [edit("p", "numeric(10,2)")],
+    );
+    expect(pg.map((g) => g.kind)).toContain("scale");
   });
 
   it("NOT NULL を付けると NULL 行を数える (型が同じでも)", () => {

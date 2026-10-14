@@ -284,7 +284,7 @@ export function CreateTableModal({
             <span>{t("createTableColName")}</span>
             <span>{t("createTableColType")}</span>
             <span>{t("createTableColNotNull")}</span>
-            <span>PK</span>
+            <span>{t("createTableColPk")}</span>
             <span>{t("createTableColUnique")}</span>
             <span>{t("createTableColAuto")}</span>
             <span>{t("createTableColDefault")}</span>
@@ -318,7 +318,7 @@ export function CreateTableModal({
               <Switch
                 checked={c.primaryKey}
                 onChange={() => setCol(i, { primaryKey: !c.primaryKey })}
-                aria-label={`PK (${i + 1})`}
+                aria-label={`${t("createTableColPk")} (${i + 1})`}
               />
               <Switch
                 checked={c.unique}

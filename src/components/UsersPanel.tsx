@@ -862,12 +862,24 @@ export function UsersPanel({
                   <chakra.p margin={0} textStyle="caption">
                     {t("usersGlobalRowHint")}
                   </chakra.p>
-                  <Flex gap="3" marginTop="1" fontSize="sm">
-                    <span>SELECT: {globalRow.select ? "✓" : "–"}</span>
-                    <span>INSERT: {globalRow.insert ? "✓" : "–"}</span>
-                    <span>UPDATE: {globalRow.update ? "✓" : "–"}</span>
-                    <span>DELETE: {globalRow.delete ? "✓" : "–"}</span>
-                    <span>DDL: {globalRow.ddl ? "✓" : "–"}</span>
+                  <Flex gap="3" marginTop="1" flexWrap="wrap">
+                    {(
+                      [
+                        ["usersColSelect", globalRow.select],
+                        ["usersColInsert", globalRow.insert],
+                        ["usersColUpdate", globalRow.update],
+                        ["usersColDelete", globalRow.delete],
+                        ["usersColDdl", globalRow.ddl],
+                      ] as const
+                    ).map(([key, granted]) => (
+                      <chakra.span
+                        key={key}
+                        textStyle="caption"
+                        color={granted ? "app.textSuccess" : "app.textMuted"}
+                      >
+                        {t(key)}: {granted ? "✓" : "–"}
+                      </chakra.span>
+                    ))}
                   </Flex>
                 </Box>
               )}

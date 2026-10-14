@@ -255,6 +255,14 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     }
   }, [schema, allowDestructive, allowDelete, tables, sandbox.tables]);
 
+  // 破壊的な文を含む、または削除を許可して適用するとき、フッターを破壊的パターンに切り替える。
+  const destructiveApply =
+    !!combined &&
+    combined.statements.length > 0 &&
+    (allowDelete || combined.statements.some((s) => s.destructive));
+  const applyDisabled = !combined || combined.statements.length === 0 || !targetSessionId;
+  const applyLabel = t("sandboxApplyTitle", { count: combined?.statements.length ?? 0 });
+
   const apply = useCallback(async () => {
     if (!combined || combined.statements.length === 0 || !targetSessionId || !targetProfile) return;
     const destructiveCount = combined.statements.filter((s) => s.destructive).length;
@@ -695,19 +703,41 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         >
           {t("sandboxReviewGenerate")}
         </LoadingButton>
-        <div style={{ flex: 1 }} />
-        <Button type="button" variant="secondary" onClick={onClose} disabled={applying}>
-          {t("sandboxReviewClose")}
-        </Button>
-        <LoadingButton
-          pressable
-          variant="primary"
-          loading={applying}
-          onClick={apply}
-          disabled={!combined || combined.statements.length === 0 || !targetSessionId}
-        >
-          {t("sandboxApplyTitle", { count: combined?.statements.length ?? 0 })}
-        </LoadingButton>
+        {/* 破壊的な文 (DROP / DELETE 等) を含む適用は、確認ダイアログと同じ破壊的パターン
+            (適用 = dangerOutline を左、閉じる = primary を右) にする。 */}
+        {destructiveApply ? (
+          <>
+            <LoadingButton
+              pressable
+              variant="dangerOutline"
+              loading={applying}
+              onClick={apply}
+              disabled={applyDisabled}
+            >
+              {applyLabel}
+            </LoadingButton>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="primary" onClick={onClose} disabled={applying}>
+              {t("sandboxReviewClose")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            <Button type="button" variant="secondary" onClick={onClose} disabled={applying}>
+              {t("sandboxReviewClose")}
+            </Button>
+            <LoadingButton
+              pressable
+              variant="primary"
+              loading={applying}
+              onClick={apply}
+              disabled={applyDisabled}
+            >
+              {applyLabel}
+            </LoadingButton>
+          </>
+        )}
       </ModalFooter>
       {confirmDialog}
       {typedConfirmDialog}

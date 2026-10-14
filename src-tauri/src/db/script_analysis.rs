@@ -275,8 +275,31 @@ fn is_word_byte(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 
+/// 事前確認の一覧に出す 1 行表示。dump の文は `-- Table structure ...` のような
+/// 行コメントで始まることが多く、改行を潰すと「コメントが SQL を飲み込んだ」ように
+/// 見えるため、先頭の `--` 行コメントを除いた SQL 本体を見せる (#1614)。全体が
+/// コメントだけなら、そのまま見せる。
 fn preview(sql: &str) -> String {
-    let one_line = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut body = sql;
+    loop {
+        let t = body.trim_start();
+        if !t.starts_with("--") {
+            body = t;
+            break;
+        }
+        match t.find('\n') {
+            Some(i) => body = &t[i + 1..],
+            None => {
+                body = sql;
+                break;
+            }
+        }
+    }
+    // コメントだけの文は本体が空になるので、元の SQL を見せる。
+    if body.trim().is_empty() {
+        body = sql;
+    }
+    let one_line = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > PREVIEW_CHARS {
         let head: String = one_line.chars().take(PREVIEW_CHARS).collect();
         format!("{head}…")
@@ -477,6 +500,19 @@ mod tests {
         assert_eq!(a.dangerous_total as usize, LIST_LIMIT + 50);
         // 危険文の index は head の外でも正しい通し番号。
         assert_eq!(a.dangerous[0].index as usize, HEAD_LIMIT + 500 + 1);
+    }
+
+    #[test]
+    fn preview_skips_leading_line_comments() {
+        assert_eq!(
+            preview("-- Table structure for table t\n-- more\nCREATE TABLE t (id int)"),
+            "CREATE TABLE t (id int)"
+        );
+        // コメントだけなら潰して見せる。
+        assert_eq!(preview("-- only a comment"), "-- only a comment");
+        assert_eq!(preview("-- c\n"), "-- c");
+        // 文中の -- は触らない。
+        assert_eq!(preview("SELECT 1 -- x\n, 2"), "SELECT 1 -- x , 2");
     }
 
     #[test]

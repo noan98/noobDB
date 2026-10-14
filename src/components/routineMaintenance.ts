@@ -252,6 +252,48 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
   return { ok: true, statements };
 }
 
+/** `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(args...)` の名前と引数リストを取り出す。 */
+// 引用なしの名前部分は `.` を含めない (区切りの `.` と取り合うと指数的なバックトラックになる)。
+function parsePgRoutineSignature(ddl: string): { name: string; args: string } | null {
+  const head =
+    /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+((?:"[^"]+"|[^\s(".]+)(?:\s*\.\s*(?:"[^"]+"|[^\s(".]+))*)\s*\(/i.exec(
+      stripLeadingComments(ddl),
+    );
+  if (!head) return null;
+  const rest = stripLeadingComments(ddl).slice(head[0].length);
+  let depth = 1;
+  let end = -1;
+  for (let i = 0; i < rest.length; i++) {
+    const c = rest[i];
+    if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) {
+      end = i;
+      break;
+    }
+  }
+  if (end < 0) return null;
+  const norm = (x: string) => x.replace(/\s+/g, " ").trim().toLowerCase();
+  return { name: norm(head[1]).replace(/"/g, ""), args: norm(rest.slice(0, end)) };
+}
+
+export type PgRoutineEditWarning = "routineEditPgRenamed" | "routineEditPgArgsChanged";
+
+/**
+ * PostgreSQL の関数 / プロシージャ編集で、名前または引数リストが元の定義から変わっていないかを
+ * 見る純関数。PG は `CREATE OR REPLACE` が同名・同引数型の定義しか置換しないので、変わっていると
+ * 旧定義が残ったまま新しい定義が増える (オーバーロード)。変化の種類ごとの警告キーを返す。
+ * どちらかの DDL を解析できないとき (トリガー・構文崩れ) は何も返さない。
+ */
+export function pgRoutineEditWarnings(originalDdl: string, newDdl: string): PgRoutineEditWarning[] {
+  const before = parsePgRoutineSignature(originalDdl);
+  const after = parsePgRoutineSignature(newDdl);
+  if (!before || !after) return [];
+  const out: PgRoutineEditWarning[] = [];
+  if (before.name !== after.name) out.push("routineEditPgRenamed");
+  if (before.args !== after.args) out.push("routineEditPgArgsChanged");
+  return out;
+}
+
 /** MySQL の編集失敗時に元の定義へ戻すための文 (元の DDL を 1 文として)。 */
 export function buildRestoreStatement(driver: string, originalDdl: string): string {
   const base = driver === "mysql" ? stripDelimiterDirectives(originalDdl) : originalDdl;

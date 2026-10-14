@@ -674,6 +674,10 @@ export interface BuilderValidationInput {
   whereConditions: WhereCondition[];
   setPairs: ColumnValuePair[];
   insertPairs: ColumnValuePair[];
+  /** SELECT の「すべての列」。省略時は true (全列) として扱う。 */
+  selectAll?: boolean;
+  /** SELECT で個別に選んだ列。 */
+  selectColumns?: string[];
 }
 
 /**
@@ -687,6 +691,11 @@ export interface BuilderValidationInput {
 export function computeBuilderBlockedReason(input: BuilderValidationInput): I18nKey | null {
   const { kind, table, whereEnabled, whereConditions, setPairs, insertPairs } = input;
   if (!table.trim()) return "qbValidationNoTable";
+  // 「すべての列」を外して 1 列も選ばないと buildSql は `*` にフォールバックする。
+  // 画面は「列が選ばれていません」と出しているので、意図しない全列取得を実行させない。
+  if (kind === "SELECT" && input.selectAll === false && (input.selectColumns?.length ?? 0) === 0) {
+    return "qbValidationNoSelectColumns";
+  }
   if (kind === "INSERT" && insertPairs.filter((p) => p.column).length === 0) {
     return "qbValidationNoInsertValues";
   }
@@ -889,8 +898,18 @@ export function QueryBuilder({
 
   // 改善 2-1: Run / Dry Run のブロック理由 (プレースホルダが残る = 未完成の SQL)。
   const blockedReason = useMemo(
-    () => computeBuilderBlockedReason({ kind, table, whereEnabled, whereConditions, setPairs, insertPairs }),
-    [kind, table, whereEnabled, whereConditions, setPairs, insertPairs],
+    () =>
+      computeBuilderBlockedReason({
+        kind,
+        table,
+        whereEnabled,
+        whereConditions,
+        setPairs,
+        insertPairs,
+        selectAll,
+        selectColumns,
+      }),
+    [kind, table, whereEnabled, whereConditions, setPairs, insertPairs, selectAll, selectColumns],
   );
   // 改善 2-2: LIMIT が有効なのに数値でない (ブロックはしない、インライン警告のみ)。
   const limitInvalid = isLimitInvalid(limitEnabled, limit);
@@ -952,7 +971,8 @@ export function QueryBuilder({
   // まだ無い等) をエディタに置いて手で仕上げるのも正当な使い方。唯一ブロックする
   // のは「テーブル未選択」で、これは `<table>` という無意味なプレースホルダしか
   // 生成できず、挿入先として提示する価値がないため。
-  const insertToEditorDisabled = !table.trim();
+  // 列 0 件の SELECT は `*` にフォールバックして画面の表示と食い違うので、エディタへも入れない。
+  const insertToEditorDisabled = !table.trim() || blockedReason === "qbValidationNoSelectColumns";
   const handleInsertToEditor = useCallback(() => {
     if (!onInsertToEditor || insertToEditorDisabled) return;
     onPersist?.(captureSnapshot());
@@ -1549,13 +1569,16 @@ export function QueryBuilder({
       </ModalBody>
 
       <ModalFooter>
-        <Box flex={1} />
         {onInsertToEditor && (
           // Run/Dry Run より控えめな secondary — 実行はしないため危険度が低い
           // アクションであることを見た目でも示す。Ask Agent / アドバイザの
           // 「エディタに挿入」と同じくアイコンのみ (名前は aria-label とツールチップ)。
           <Tooltip
-            label={insertToEditorDisabled ? t("qbValidationNoTable") : t("qbInsertToEditorTitle")}
+            label={
+              insertToEditorDisabled
+                ? t(blockedReason === "qbValidationNoSelectColumns" ? blockedReason : "qbValidationNoTable")
+                : t("qbInsertToEditorTitle")
+            }
             focusableWrapper={insertToEditorDisabled}
           >
             <Button
@@ -1583,6 +1606,12 @@ export function QueryBuilder({
             </Button>
           </Tooltip>
         )}
+        <Box flex={1} />
+        {/* 補助 → spacer → キャンセル → 主アクション (ui-design-system §7.4)。
+            閉じる操作はヘッダの × / Esc と同じ onClose。 */}
+        <Button type="button" variant="secondary" onClick={onClose}>
+          {t("qbCancel")}
+        </Button>
         {/* 実行はエディタの Run / 他モーダルの Execute と同じ「主要アクション =
             primary (アクセント色)」に統一する。success はセル編集 Apply などの
             DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
@@ -1592,7 +1621,7 @@ export function QueryBuilder({
           }
           focusableWrapper={runDisabled}
         >
-          <Button variant="success" onClick={handleExecute} disabled={runDisabled}>
+          <Button variant="primary" onClick={handleExecute} disabled={runDisabled}>
             <chakra.span display="inline-flex" flexShrink={0} aria-hidden>
               <Icon name="play" size={ICON_SIZES.sm} />
             </chakra.span>

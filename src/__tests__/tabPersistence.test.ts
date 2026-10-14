@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { normalizePersistedWorkspace } from "../tabPersistence";
+import {
+  normalizePersistedWorkspace,
+  resolveWorkspaceToSave,
+  splitKeptFromSaved,
+  type PersistedWorkspace,
+} from "../tabPersistence";
 
 describe("normalizePersistedWorkspace", () => {
   it("wraps a legacy bare tab array into a single pane", () => {
@@ -272,5 +277,75 @@ describe("activePane の補正 (空ペイン除去)", () => {
       activePane: 1,
     });
     expect(ws.activePane).toBe(0);
+  });
+});
+
+describe("resolveWorkspaceToSave / splitKeptFromSaved (#1615)", () => {
+  const tab = (title: string) => ({ kind: "query" as const, title, sql: title });
+  const ws = (...panes: string[][]): PersistedWorkspace => ({
+    panes: panes.map((titles) => ({ tabs: titles.map(tab), activeIndex: 0 })),
+    activePane: 0,
+  });
+  const titles = (w: PersistedWorkspace) => w.panes.map((p) => p.tabs.map((t) => t.title));
+
+  it("保持なしなら現在のワークスペースをそのまま保存する", () => {
+    const cur = ws(["a"]);
+    expect(resolveWorkspaceToSave(cur, undefined)).toBe(cur);
+    expect(resolveWorkspaceToSave(ws(), undefined)).toEqual(ws());
+  });
+
+  it("保持中でタブが 0 件なら保持分をそのまま保存し直す", () => {
+    const kept = ws(["k1"], ["k2"]);
+    expect(resolveWorkspaceToSave(ws(), kept)).toEqual(kept);
+  });
+
+  it("保持分はペイン構造ごと後ろに足され、activePane は現在のまま・繰り返しても重複しない", () => {
+    const kept = ws(["k1", "k2"], ["k3"]);
+    const cur = { ...ws(["new"]), activePane: 0 };
+    const merged = resolveWorkspaceToSave(cur, kept);
+    // 画面は 2 ペインまでなので、超える分は最後のペインの末尾にタブとして足す
+    expect(titles(merged)).toEqual([["new", "k1", "k2", "k3"]]);
+    expect(merged.activePane).toBe(0);
+    expect(resolveWorkspaceToSave(cur, kept)).toEqual(merged);
+    // 2 ペインに収まるならペインのまま足す
+    expect(titles(resolveWorkspaceToSave(ws(["new"]), ws(["k1"])))).toEqual([["new"], ["k1"]]);
+  });
+
+  it("2 ペインを超える合成でも splitKeptFromSaved でセッションのタブだけに戻る", () => {
+    const kept = ws(["k1"], ["k2"]);
+    const cur = ws(["a"], ["b"]);
+    const saved = resolveWorkspaceToSave(cur, kept);
+    expect(saved.panes.length).toBe(2);
+    expect(titles(splitKeptFromSaved(saved, kept))).toEqual([["a"], ["b"]]);
+    // 保持分だけ (2 ペイン) を保存し直した場合は空に戻る
+    expect(splitKeptFromSaved(kept, kept).panes).toEqual([]);
+  });
+
+  it("splitKeptFromSaved は足された保持分だけを外す", () => {
+    const kept = ws(["k1", "k2"], ["k3"]);
+    const saved = resolveWorkspaceToSave(ws(["t1"]), kept);
+    expect(titles(splitKeptFromSaved(saved, kept))).toEqual([["t1"]]);
+    // 保持分だけ (セッションのタブなし) なら空
+    expect(splitKeptFromSaved(kept, kept).panes).toEqual([]);
+    // 末尾が保持分と一致しなければそのまま
+    const other = ws(["x"]);
+    expect(splitKeptFromSaved(other, kept)).toBe(other);
+  });
+
+  it("切替 → 戻る → 新しいタブ → 切断 で T1 と K が両方残る", () => {
+    const K = ws(["k1", "k2"]);
+    // A で T1 を開いて B へ切替: A は [T1, ...K] で保存される
+    const afterSwitch = resolveWorkspaceToSave(ws(["T1"]), K);
+    // A へ戻る: 保持分を外して T1 だけ復元
+    const restored = splitKeptFromSaved(afterSwitch, K);
+    expect(titles(restored)).toEqual([["T1"]]);
+    // T2 を開いて切断 (画面は T1 + T2)
+    const afterDisconnect = resolveWorkspaceToSave(ws(["T1", "T2"]), K);
+    expect(titles(afterDisconnect)).toEqual([
+      ["T1", "T2"],
+      ["k1", "k2"],
+    ]);
+    // タブを全部閉じて切断すると K だけ残る
+    expect(resolveWorkspaceToSave(ws(), K)).toEqual(K);
   });
 });

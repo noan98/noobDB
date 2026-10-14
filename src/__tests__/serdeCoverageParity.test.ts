@@ -69,6 +69,7 @@ const COVERED: Record<string, string> = {
   OpenTableEntry: "openTableEntryVariants",
   OpenTableResult: "openTableResult",
   PlanWatchRefresh: "planWatchRefreshResult",
+  SkippedProfile: "skippedProfileVariants",
   ProcessListItem: "processInfo",
   ProfileWithSecretFlags: "connectionProfile",
   QueryResult: "queryResult",

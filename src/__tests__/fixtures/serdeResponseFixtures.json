@@ -70,6 +70,9 @@
     "table_names": [
       "users",
       "orders"
+    ],
+    "warnings": [
+      "foreign_keys"
     ]
   },
   "assertionOutcome": {
@@ -1507,7 +1510,10 @@
         "snippetId": "snip0001"
       }
     ],
-    "recorded": 3
+    "recorded": 3,
+    "warned": [
+      "slow report"
+    ]
   },
   "previewStreamCancelledMessage": {
     "deliveredRows": 5,
@@ -4450,6 +4456,24 @@
     "name": "max_connections",
     "value": "151"
   },
+  "skippedProfileVariants": [
+    {
+      "driver": null,
+      "id": null,
+      "index": 0,
+      "kind": "unparsable",
+      "name": null,
+      "reason": "invalid type: string \"x\", expected u16"
+    },
+    {
+      "driver": "duckdb",
+      "id": "old00001",
+      "index": 0,
+      "kind": "unsupported_driver",
+      "name": "legacy",
+      "reason": "unsupported driver: duckdb"
+    }
+  ],
   "skippedRule": {
     "reason": "performance_schema_off",
     "rule": "unused_index"
