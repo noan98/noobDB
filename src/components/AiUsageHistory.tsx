@@ -22,6 +22,9 @@ import { Button, Select } from "./ui";
 
 type Range = "month" | "7" | "30" | "all";
 
+/** 日別の表を畳んだときに見せる日数 (最新から)。残りは「さらに N 日を表示」で開く。 */
+const DAY_ROWS_COLLAPSED = 7;
+
 interface Props {
   /** タスク種別 ID の表示名 (未知の ID はそのまま返す)。 */
   taskLabel: (task: string) => string;
@@ -36,6 +39,7 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
   const [records, setRecords] = useState<AiUsageRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<Range>("month");
+  const [allDays, setAllDays] = useState(false);
 
   const load = useCallback(() => {
     api
@@ -150,7 +154,21 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
           <chakra.span textStyle="caption">{t("aiLedgerByTask")}</chakra.span>
           {report.byTask.map((a) => row(taskLabel(a.key), a))}
           <chakra.span textStyle="caption">{t("aiLedgerByDay")}</chakra.span>
-          {report.byDay.slice(0, 7).map((a) => row(a.key, a))}
+          {(allDays ? report.byDay : report.byDay.slice(0, DAY_ROWS_COLLAPSED)).map((a) => row(a.key, a))}
+          {report.byDay.length > DAY_ROWS_COLLAPSED && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              alignSelf="flex-start"
+              aria-expanded={allDays}
+              onClick={() => setAllDays((v) => !v)}
+            >
+              {allDays
+                ? t("aiLedgerDayLess", { count: DAY_ROWS_COLLAPSED })
+                : t("aiLedgerDayMore", { count: report.byDay.length - DAY_ROWS_COLLAPSED })}
+            </Button>
+          )}
         </>
       )}
       {dialog}

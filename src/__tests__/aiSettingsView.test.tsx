@@ -73,8 +73,48 @@ describe("AiSettings (#690)", () => {
     expect(screen.queryByDisplayValue("sk-ant-secret")).toBeNull();
   });
 
+  it("タスク別の設定は既定で畳まれ、見出しに「すべて既定のまま」/「変更 N 件」を出して開くと 17 行を描く (#1608)", async () => {
+    const { rerender } = renderWithProviders(<AiSettings />);
+    const toggle = screen.getByRole("button", { name: new RegExp(t("aiTaskModels")) });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByRole("group", { name: t("aiTaskModels") })).toBeNull();
+    expect(screen.getByTestId("ai-task-models-summary").textContent).toBe(t("aiTaskModelsAllDefault"));
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const group = screen.getByRole("group", { name: t("aiTaskModels") });
+    expect(group.querySelectorAll("select")).toHaveLength(34);
+    // 推奨が既定と異なるインライン補完は「既定に従う」ではなく推奨モデルを使う旨を出す。
+    const inline = screen.getByLabelText(
+      `${t("aiTaskInlineComplete")} - ${t("aiColModel")}`,
+    ) as HTMLSelectElement;
+    expect(inline.options[0].textContent).toBe(t("aiModelFollowRecommended", { model: "Claude Haiku 5.5" }));
+    const generic = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColModel")}`) as HTMLSelectElement;
+    expect(generic.options[0].textContent).toBe(t("aiModelFollowDefault"));
+    fireEvent.change(generic, { target: { value: "claude-haiku-5-5" } });
+    rerender(<AiSettings />);
+    await waitFor(() =>
+      expect(screen.getByTestId("ai-task-models-summary").textContent).toBe(
+        t("aiTaskModelsChanged", { count: 1 }),
+      ),
+    );
+  });
+
+  it("API キー欄は Enter で保存できる (IME 変換中の Enter は保存しない) (#1608)", async () => {
+    renderWithProviders(<AiSettings />);
+    const input = screen.getByLabelText(t("aiApiKeyLabel")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "sk-ant-enter" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(setAiApiKey).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(setAiApiKey).toHaveBeenCalledWith("sk-ant-enter"));
+    await screen.findByText(t("aiApiKeyConfigured"));
+    expect(input.value).toBe("");
+  });
+
   it("モデルのプルダウンに (推奨) が表示され、エフォートは推奨値を選ぶと null で保存される", async () => {
     renderWithProviders(<AiSettings />);
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("aiTaskModels")) }));
     const suffix = t("aiRecommendedSuffix");
     const def = screen.getByLabelText(t("aiDefaultModel")) as HTMLSelectElement;
     const opt = Array.from(def.options).find((o) => o.value === "claude-opus-5-5");

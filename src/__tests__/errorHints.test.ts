@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchErrorHint } from "../errorHints";
+import { aiErrorHintKey, matchErrorHint } from "../errorHints";
 
 describe("matchErrorHint", () => {
   describe("SQL syntax error", () => {
@@ -220,5 +220,25 @@ describe("localizedErrorMessage (#1533)", () => {
     // Object.prototype 上のキー名を kind として拾わない。
     expect(localizedErrorMessage(new BackendError("constructor", "ctor"), t as never)).toBe("ctor");
     expect(localizedErrorMessage(new BackendError("toString", "ts"), t as never)).toBe("ts");
+  });
+});
+
+describe("aiErrorHintKey (#1608)", () => {
+  it("混雑・認証・ネットワークに次の手の案内を返し、それ以外の kind は null", () => {
+    expect(aiErrorHintKey("aiOverloaded", "HTTP 529")).toBe("errorHintAiOverloaded");
+    expect(aiErrorHintKey("aiAuth", "API request was not authorized (HTTP 401, authentication_error)")).toBe(
+      "errorHintAiAuth",
+    );
+    expect(aiErrorHintKey("aiNetwork", "dns")).toBe("errorHintAiNetwork");
+    expect(aiErrorHintKey("aiApi", "x")).toBeNull();
+    expect(aiErrorHintKey("aiRefused", "x")).toBeNull();
+    expect(aiErrorHintKey(null)).toBeNull();
+  });
+
+  it("403 / permission_error は「キーが拒否された」と断定せず権限不足の案内に分ける", () => {
+    expect(aiErrorHintKey("aiAuth", "API request was not authorized (HTTP 403, permission_error): x")).toBe(
+      "errorHintAiPermission",
+    );
+    expect(aiErrorHintKey("aiAuth", "permission_error: no access to model")).toBe("errorHintAiPermission");
   });
 });

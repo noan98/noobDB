@@ -34,7 +34,7 @@ import { useCopyFeedback } from "./useCopyFeedback";
 import { isImeComposing } from "./modalKeys";
 
 /** SQL 全文の取得を同時に走らせる件数。 */
-const FETCH_BATCH = 20;
+const FETCH_BATCH = 100;
 
 type Mode = "search" | "summary";
 
@@ -206,28 +206,29 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
     let failedFetch = 0;
     for (let i = 0; i < limited.length; i += FETCH_BATCH) {
       const batch = limited.slice(i, i + FETCH_BATCH);
-      const got = await Promise.all(
-        batch.map(async (e): Promise<HistoryCandidate | null> => {
-          try {
-            const sql = await api.getHistorySql(e.id);
-            return {
-              id: e.id,
-              sql,
-              executedAt: e.executed_at,
-              status: e.status,
-              connection: connName(e),
-              driver: e.driver,
-              database: e.database,
-            };
-          } catch {
-            return null;
-          }
-        }),
-      );
-      for (const c of got) {
-        if (c) candidates.push(c);
-        else failedFetch += 1;
+      // 1 バッチ 1 回の IPC でまとめて取る (1 件ずつだと最大 300 往復になる)。
+      let sqls: (string | null)[] = [];
+      try {
+        sqls = await api.getHistorySqls(batch.map((e) => e.id));
+      } catch {
+        sqls = [];
       }
+      batch.forEach((e, k) => {
+        const sql = sqls[k];
+        if (typeof sql !== "string") {
+          failedFetch += 1;
+          return;
+        }
+        candidates.push({
+          id: e.id,
+          sql,
+          executedAt: e.executed_at,
+          status: e.status,
+          connection: connName(e),
+          driver: e.driver,
+          database: e.database,
+        });
+      });
       if (!stream.isMounted() || stopRef.current) {
         releaseBusy();
         if (stream.isMounted()) setState({ kind: "cancelled", sends: sendsPre });
@@ -400,23 +401,25 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
                   bg="app.bg"
                   cursor="pointer"
                   _hover={{ bg: "app.hover" }}
-                  aria-label={`${t("aiHistoryOpen")}: ${m.preview}`}
+                  title={t("aiHistoryOpen")}
                   onClick={() => onOpen(m.historyId)}
                 >
-                  <Flex gap="2" align="baseline">
+                  {/* button の中身は phrasing content のみ (div を入れない)。aria-label を付けないので、
+                      スコア・SQL・理由・日時がそのまま読み上げの名前になる。 */}
+                  <chakra.span display="flex" gap="2" alignItems="baseline">
                     <chakra.span color="app.textMuted" fontSize="xs" textStyle="numeric" flexShrink={0}>
                       {t("aiHistoryMatchScore", { score: m.relevance })}
                     </chakra.span>
                     <chakra.span fontFamily="mono" fontSize="xs" truncate>
                       {m.preview}
                     </chakra.span>
-                  </Flex>
-                  <chakra.div color="app.textMuted" fontSize="xs" whiteSpace="pre-wrap">
+                  </chakra.span>
+                  <chakra.span display="block" color="app.textMuted" fontSize="xs" whiteSpace="pre-wrap">
                     {m.reason}
-                  </chakra.div>
-                  <chakra.div color="app.textMuted" fontSize="2xs">
+                  </chakra.span>
+                  <chakra.span display="block" color="app.textMuted" fontSize="2xs">
                     {new Date(m.executedAt).toLocaleString()}
-                  </chakra.div>
+                  </chakra.span>
                 </chakra.button>
               );
             })}

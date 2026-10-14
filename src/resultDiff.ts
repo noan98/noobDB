@@ -49,8 +49,12 @@ export function valuesEqual(a: CellValue, b: CellValue): boolean {
   return String(a) === String(b);
 }
 
-/** 複合 PK でも曖昧にならない安定キー。JSON 配列で join する。 */
-function pkKey(row: CellValue[], pkIndices: number[]): string {
+/** 単一列 PK は値そのものを Map のキーにする (null は undefined と同一視)。 */
+type PkKey = string | number | boolean | null;
+
+/** 複合 PK でも曖昧にならない安定キー。複合のときだけ JSON 配列で join する (#1610)。 */
+function pkKey(row: CellValue[], pkIndices: number[]): PkKey {
+  if (pkIndices.length === 1) return row[pkIndices[0]] ?? null;
   return JSON.stringify(pkIndices.map((i) => row[i] ?? null));
 }
 
@@ -76,7 +80,7 @@ export function diffResultRows(
 
   // 前回行を PK → 行位置で索引する。重複 PK は通常起きないが、起きても後勝ちで
   // 安全側に倒す (誤検出を避ける方向)。
-  const prevByPk = new Map<string, number>();
+  const prevByPk = new Map<PkKey, number>();
   prev.forEach((row, i) => {
     prevByPk.set(pkKey(row, pkIndices), i);
   });

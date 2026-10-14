@@ -704,3 +704,10 @@ export function readOnlyWithHint(
   if (hint && hint.sql === sql) return hint.readOnly;
   return isReadOnlySql(sql, driver);
 }
+
+/**
+ * カーソルがこの 2 文字記号の間に入ると、カーソル位置へ印 (識別子文字など) を差し込んだ文書のマスク結果が
+ * 元と変わる (`-Z-` はコメントにならない等)。印を差し込んで字句を読む補完・インライン補完は、
+ * この位置では何もしない (リテラルの中身が素で残るのを防ぐ)。
+ */
+export const MASK_SPLIT_PAIRS: ReadonlySet<string> = new Set(["--", "/*", "*/", "''", '""', "``"]);

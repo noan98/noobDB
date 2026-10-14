@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import modelsRs from "../../src-tauri/src/ai/models.rs?raw";
 import requestRs from "../../src-tauri/src/ai/request.rs?raw";
-import { AI_EFFORTS, AI_MODEL_IDS, AI_TASK_DEFS, AI_TASK_KINDS } from "../ai/aiModels";
+import {
+  AI_EFFORTS,
+  AI_MODEL_IDS,
+  AI_TASK_DEFS,
+  AI_TASK_KINDS,
+  DEFAULT_AI_MODEL,
+  unsetUsesRecommendedModel,
+} from "../ai/aiModels";
 
 // AI 基盤 (#690) のモデル / エフォート / タスク種別は Rust (`ai/models.rs`) とフロント
 // (`ai/aiModels.ts`) の二重定義。ソースを読んで集合と推奨値の一致を固定する。
@@ -58,6 +65,14 @@ describe("AI 定義の Rust ⇔ フロント パリティ (#690)", () => {
       const model = modelVariant[AI_TASK_DEFS[kind].recommendedModel];
       expect(body).toMatch(new RegExp(`AiTaskKind::${variant}\\s*=>\\s*AiModel::${model}\\b`));
     }
+  });
+
+  it("モデル未設定時の解決規則 (軽量タスクは推奨モデル) が一致する (#1608)", () => {
+    // Rust: 推奨が Opus55 (= フロントの DEFAULT_AI_MODEL) と異なるタスクは、未設定でも推奨で動く。
+    expect(modelsRs).toContain("self.recommended_model() != AiModel::Opus55");
+    expect(DEFAULT_AI_MODEL).toBe("claude-opus-5-5");
+    const light = AI_TASK_KINDS.filter((k) => unsetUsesRecommendedModel(k));
+    expect(light).toEqual(["inlineComplete"]);
   });
 
   it("リクエストは thinking / サンプリング系 / tool_choice を送らず fallbacks を付ける", () => {

@@ -7,9 +7,11 @@ import {
   INLINE_AFTER_MAX_LINES,
   INLINE_BEFORE_MAX_CHARS,
   INLINE_BEFORE_MAX_LINES,
+  INLINE_DOC_MAX_CHARS,
   INLINE_MAX_SUGGESTION_CHARS,
   INLINE_TIMEOUT_MS,
   headWindow,
+  nextWordChunk,
   relevantTables,
   tailWindow,
   shouldShowSuggestion,
@@ -262,5 +264,80 @@ describe("shouldShowSuggestion", () => {
     expect(shouldShowSuggestion({ ...base, docVersionUnchanged: false })).toBe(false);
     expect(shouldShowSuggestion({ ...base, elapsedMs: INLINE_TIMEOUT_MS + 1 })).toBe(false);
     expect(shouldShowSuggestion({ ...base, elapsedMs: INLINE_TIMEOUT_MS })).toBe(true);
+  });
+});
+
+describe("buildInlineRequest: 文書全体のマスクは 1 回の結果から窓を取る (#1608)", () => {
+  it("カーソルの前後にあるリテラルは伏せ、差し込みの 1 文字が送信内容に混ざらない", () => {
+    const doc = "SELECT 'before-secret' FROM users WHERE id = 1 \nAND name = 'after-secret'";
+    const pos = doc.indexOf("\nAND");
+    const r = req(doc, pos);
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("before-secret");
+    expect(r?.prompt).not.toContain("after-secret");
+    // 差し込んだ識別子文字 (Z) が窓に残らない: 後ろ側は改行から始まる。
+    expect(r?.prompt).toContain("<after_cursor>\n\nAND name = ");
+    expect(r?.prompt).toContain("WHERE id = 1 \n</before_cursor>");
+  });
+
+  it("マスク設定がオフでもリテラルの内側なら null (判定は同じ 1 回のマスクで行う)", () => {
+    const doc = "SELECT * FROM users WHERE name = 'ab";
+    expect(req(doc, doc.length, { maskLiterals: false })).toBeNull();
+  });
+});
+
+describe("buildInlineRequest: 文書サイズの上限 (#1608)", () => {
+  it("上限以下なら組み立て、超える文書では全文マスクを避けて null を返す", () => {
+    const stmt = "SELECT id, name FROM users WHERE ";
+    const pad = (n: number) => `/*${" ".repeat(Math.max(0, n - 5))}*/\n`;
+    const within = pad(INLINE_DOC_MAX_CHARS - stmt.length) + stmt;
+    expect(within.length).toBe(INLINE_DOC_MAX_CHARS);
+    expect(req(within)).not.toBeNull();
+    const over = pad(INLINE_DOC_MAX_CHARS - stmt.length + 1) + stmt;
+    expect(over.length).toBe(INLINE_DOC_MAX_CHARS + 1);
+    expect(req(over)).toBeNull();
+  });
+});
+
+describe("nextWordChunk (#1608)", () => {
+  it("先頭の空白を含めて、識別子の連なりまたは記号の連なりを 1 語として切り出す", () => {
+    expect(nextWordChunk("WHERE id = 1")).toBe("WHERE");
+    expect(nextWordChunk(" id = 1")).toBe(" id");
+    expect(nextWordChunk(" = 1")).toBe(" =");
+    expect(nextWordChunk(" 1")).toBe(" 1");
+    expect(nextWordChunk("user_id, name")).toBe("user_id");
+    expect(nextWordChunk("名前 FROM")).toBe("名前");
+    expect(nextWordChunk("(a)")).toBe("(");
+    expect(nextWordChunk("\n  ORDER")).toBe("\n  ORDER");
+  });
+
+  it("空白だけなら全体を返し、空文字は空文字", () => {
+    expect(nextWordChunk("   ")).toBe("   ");
+    expect(nextWordChunk("")).toBe("");
+  });
+});
+
+describe("buildInlineRequest: 2 文字記号の間では出さない (#1608 レビュー)", () => {
+  it("`--` の間にカーソルがあるとき (コメント内の ' で字句がずれるので) null", () => {
+    for (const driver of ["mysql", "postgres"]) {
+      const doc = "SELECT * FROM users WHERE id = 1 -- it's a note\nAND name = 'top-secret'";
+      const pos = doc.indexOf("--") + 1;
+      expect(req(doc, pos, { driver })).toBeNull();
+    }
+  });
+
+  it("`/*` の間にカーソルがあるとき null。リテラルの中身は送られない", () => {
+    for (const driver of ["mysql", "postgres"]) {
+      const doc = "SELECT * FROM users /* it's a note */ WHERE name = 'top-secret'";
+      const pos = doc.indexOf("/*") + 1;
+      expect(req(doc, pos, { driver })).toBeNull();
+    }
+  });
+
+  it("2 文字記号の間でなければ従来どおり出し、後ろのリテラルは伏せる", () => {
+    const doc = "SELECT * FROM users -- it's a note\nWHERE name = 'top-secret'";
+    const r = req(`${doc} AND `);
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("top-secret");
   });
 });

@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useDeferredValue,
   type CSSProperties,
   type DragEvent as ReactDragEvent,
   type FocusEvent as ReactFocusEvent,
@@ -17,6 +18,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { AUTOFIT_SAMPLE_ROWS, computeAutoFitWidth } from "./gridAutoFit";
 import { useKeepAliveActive } from "./KeepAlive";
 import { useStableCallbacks } from "../useStableCallbacks";
 import { createPortal } from "react-dom";
@@ -103,6 +105,7 @@ import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
+import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import {
@@ -2296,7 +2299,8 @@ function ColumnFilterMenu({
             onClose();
           }}
         >
-          {t("gridFilterClearColumn")}
+          {/* サーバ側条件が残るときは、ここで消えるのがクライアント条件だけだと明示する (#1610)。 */}
+          {serverFilter ? t("gridFilterClearClientColumn") : t("gridFilterClearColumn")}
         </Button>
         <Tooltip label={t("gridFilterCloseMenu")}>
           <Button variant="ghost" size="sm" aria-label={t("gridFilterCloseMenu")} onClick={onClose}>
@@ -2835,6 +2839,8 @@ type GridHeaderHandlers = {
     e: React.MouseEvent | React.TouchEvent,
     column: Header<GridFeatures, RowShape, unknown>["column"],
   ) => void;
+  /** 境界のダブルクリック: 表示中の行とヘッダ名の内容幅に列を合わせる (#1610)。 */
+  onAutoFit: (column: Header<GridFeatures, RowShape, unknown>["column"], th: HTMLElement | null) => void;
   /** リサイズハンドルのキーボード操作 (左右キーで幅を delta px 変える, #1529)。 */
   onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => void;
   /** 並び替えグリップのキーボード操作 (左右キーで列を 1 つ動かす, #1529)。 */
@@ -3025,7 +3031,9 @@ const GridHeaderCell = memo(function GridHeaderCell({
             className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
             onMouseDown={(e) => handlers.onStartResize(e, h.column)}
             onTouchStart={(e) => handlers.onStartResize(e, h.column)}
-            onDoubleClick={() => h.column.resetSize()}
+            onDoubleClick={(e) =>
+              handlers.onAutoFit(h.column, (e.currentTarget as HTMLElement).closest("th"))
+            }
             // キーボードで幅を変えられるよう、フォーカス可能な vertical separator にする (#1529)。
             role="separator"
             aria-orientation="vertical"
@@ -5525,6 +5533,29 @@ export const DataGrid = memo(function DataGrid({
       e: React.MouseEvent | React.TouchEvent,
       column: Header<GridFeatures, RowShape, unknown>["column"],
     ) => startColumnResize(e, column),
+    onAutoFit: (column: Header<GridFeatures, RowShape, unknown>["column"], th: HTMLElement | null) => {
+      const ctx = document.createElement("canvas").getContext("2d");
+      const cellEl = gridTableRef.current?.querySelector<HTMLElement>("tbody td") ?? th;
+      if (!ctx || !cellEl) {
+        column.resetSize();
+        return;
+      }
+      const cs = getComputedStyle(cellEl);
+      ctx.font = cs.font || `${cs.fontSize} ${cs.fontFamily}`;
+      const fontPx = Number.parseFloat(cs.fontSize) || 13;
+      const colIdx = Number(column.id);
+      const meta = columns[colIdx];
+      const size = computeAutoFitWidth({
+        headerTexts: [meta?.name ?? "", meta?.type_name ?? ""],
+        values: tableRows.slice(0, AUTOFIT_SAMPLE_ROWS).map((r) => r.getValue(column.id) as CellValue),
+        measure: (text) => ctx.measureText(text).width,
+        // 左右の余白 + ソート/フィルタアイコン分 (フォント拡大設定に追従するよう em 基準)。
+        padding: fontPx * 4,
+        min: column.columnDef.minSize ?? 20,
+        max: column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER,
+      });
+      handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size }));
+    },
     onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => {
       const min = column.columnDef.minSize ?? 20;
       const max = column.columnDef.maxSize ?? Number.MAX_SAFE_INTEGER;
@@ -6144,9 +6175,11 @@ export const DataGrid = memo(function DataGrid({
                     sortDir={sortDir}
                     sortRank={sortDir && multiSort ? h.column.getSortIndex() + 1 : 0}
                     isChangedCol={changedColumns?.[colIdx] ?? false}
-                    colFilterActive={isColumnFilterActive(
-                      h.column.getFilterValue() as ColumnFilter | undefined,
-                    )}
+                    colFilterActive={
+                      isColumnFilterActive(h.column.getFilterValue() as ColumnFilter | undefined) ||
+                      // サーバ側フィルタ (#792) 中の列もヘッダで有効表示する (#1610)。
+                      (serverFilter != null && serverFilter.column === (columns[colIdx]?.name ?? ""))
+                    }
                     pinSide={pinSide}
                     pinOffset={
                       pinSide === "left"
@@ -7597,6 +7630,8 @@ export const ResultGrid = memo(
       setShowExport(true);
     }, []);
     const [search, setSearch] = useState("");
+    // 入力欄は即時の `search`、グリッドへ渡す全体フィルタは遅延値 (大規模結果で毎キーの再フィルタを避ける、#1610)。
+    const deferredSearch = useDeferredValue(search);
     // Interval the toggle will use when switched on. Seeded from the persisted
     // default and from the live cadence so the selector reflects the active poll.
     const [intervalChoice, setIntervalChoice] = useState(
@@ -8234,8 +8269,10 @@ export const ResultGrid = memo(
         );
       }
       return (
-        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
-          {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
+        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface" p="3">
+          <Callout tone="success">
+            {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
+          </Callout>
         </Box>
       );
     }
@@ -9187,7 +9224,7 @@ export const ResultGrid = memo(
             rows={result.rows}
             onMaskConfigChange={setMaskConfig}
             scrollContainerRef={containerRef}
-            globalFilter={search}
+            globalFilter={deferredSearch}
             editable={editableActive}
             editableColumns={editableCols}
             pkIndices={pkIndices}

@@ -1,6 +1,7 @@
 // エディタの AI インライン補完 (#1479) の CodeMirror 拡張。
 // 入力が止まったら続きを AI に問い合わせ、カーソル位置に薄い文字 (ウィジェット) で出す。
-// Tab で確定、Esc・入力・カーソル移動で破棄する。Tab / Esc は提案が出ているときだけ奪う
+// Tab で全文を確定、Ctrl/Cmd+→ で次の 1 語だけ確定、Esc・入力・カーソル移動で破棄する。
+// 問い合わせ中はカーソルの右に小さな点を出す (待っているのか提案が無いのか区別できるように)。Tab / Esc は提案が出ているときだけ奪う
 // (インデントや補完ポップアップの確定はそのまま働く)。
 //
 // ストリーミングに `useAiStream` を使わない理由: あのフックは React コンポーネントの
@@ -30,7 +31,9 @@ import {
   INLINE_AFTER_MAX_CHARS,
   INLINE_BEFORE_MAX_CHARS,
   INLINE_DEBOUNCE_MS,
+  INLINE_DOC_MAX_CHARS,
   INLINE_TIMEOUT_MS,
+  nextWordChunk,
   shouldShowSuggestion,
   sliceInlineWindow,
   type InlineSuggestion,
@@ -79,6 +82,45 @@ export interface InlineCompleteOptions {
 }
 
 const setSuggestionEffect = StateEffect.define<InlineSuggestion | null>();
+/** 問い合わせ中の印を出す位置 (null で消す)。 */
+const setPendingEffect = StateEffect.define<number | null>();
+
+class PendingWidget extends WidgetType {
+  eq(): boolean {
+    return true;
+  }
+  toDOM(): HTMLElement {
+    const el = document.createElement("span");
+    el.className = "cm-inline-pending";
+    el.setAttribute("aria-hidden", "true");
+    el.setAttribute("data-testid", "inline-complete-pending");
+    return el;
+  }
+  ignoreEvent(): boolean {
+    return true;
+  }
+}
+
+const pendingField = StateField.define<{ pos: number | null; deco: DecorationSet }>({
+  create: () => ({ pos: null, deco: Decoration.none }),
+  update(value, tr) {
+    for (const e of tr.effects) {
+      if (e.is(setSuggestionEffect)) return { pos: null, deco: Decoration.none };
+      if (e.is(setPendingEffect)) {
+        const pos = e.value;
+        const sel = tr.state.selection.main;
+        if (pos === null || !sel.empty || sel.head !== pos) return { pos: null, deco: Decoration.none };
+        return {
+          pos,
+          deco: Decoration.set([Decoration.widget({ widget: new PendingWidget(), side: 1 }).range(pos)]),
+        };
+      }
+    }
+    if (value.pos !== null && (tr.docChanged || tr.selection)) return { pos: null, deco: Decoration.none };
+    return value;
+  },
+  provide: (f) => EditorView.decorations.from(f, (v) => v.deco),
+});
 
 class GhostWidget extends WidgetType {
   constructor(readonly text: string) {
@@ -150,6 +192,29 @@ function acceptSuggestion(view: EditorView): boolean {
   return true;
 }
 
+/** 提案の次の 1 語だけを確定する。残りは続けて薄い文字で出す。出ていなければ false (キーを奪わない)。 */
+function acceptSuggestionWord(view: EditorView): boolean {
+  const s = inlineSuggestionOf(view.state);
+  if (!s) return false;
+  if (completionStatus(view.state) === "active") {
+    view.dispatch({ effects: setSuggestionEffect.of(null) });
+    return false;
+  }
+  const chunk = nextWordChunk(s.text);
+  const rest = s.text.slice(chunk.length);
+  const nextPos = s.pos + chunk.length;
+  view.dispatch({
+    changes: { from: s.pos, insert: chunk },
+    selection: { anchor: nextPos },
+    // 残りがあれば、確定後のカーソル位置に出し直す。
+    effects:
+      rest === "" ? setSuggestionEffect.of(null) : setSuggestionEffect.of({ pos: nextPos, text: rest }),
+    userEvent: "inlineSuggest.accept",
+    scrollIntoView: true,
+  });
+  return true;
+}
+
 function dismissSuggestion(view: EditorView): boolean {
   if (!inlineSuggestionOf(view.state)) return false;
   const popupOpen = completionStatus(view.state) === "active";
@@ -176,6 +241,7 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
       private inflight: InFlight | null = null;
       // 入力・カーソル移動のたびに進める。古い応答が新しい状態へ出るのを防ぐ。
       private gen = 0;
+      private destroyed = false;
 
       constructor(private readonly view: EditorView) {
         // 保存済みの state (タブ切替で復元されたもの) に古い提案が残っていたら消す。
@@ -195,6 +261,7 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
       }
 
       destroy(): void {
+        this.destroyed = true;
         this.invalidate();
       }
 
@@ -225,6 +292,8 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
         const state = this.view.state;
         const sel = state.selection.main;
         if (state.selection.ranges.length !== 1 || !sel.empty || completionStatus(state) === "active") return;
+        // 極端に大きい文書は全文を文字列化する前に諦める (マスクが全文に掛かるため)。
+        if (state.doc.length > INLINE_DOC_MAX_CHARS) return;
         const from = Math.max(0, sel.head - INLINE_BEFORE_MAX_CHARS);
         const to = Math.min(state.doc.length, sel.head + INLINE_AFTER_MAX_CHARS);
         const req = buildInlineRequest({
@@ -267,17 +336,29 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
         }
         // 整形に使う「カーソル前の窓」(マスクなし。最終行の重複除去にだけ使い、送らない)。
         const beforeWindow = sliceInlineWindow(state.doc.sliceString(from, to), sel.head - from).before;
-        this.inflight = this.request(req, cfg.settings, (body) => {
-          const text = cleanInlineCompletion(body, beforeWindow);
-          cache.set(req.cacheKey, text);
-          show(text);
-        });
+        // 問い合わせ中の印。結果・失敗・中止のどれでも消す (入力やカーソル移動では field 側が消す)。
+        this.view.dispatch({ effects: setPendingEffect.of(pos) });
+        const clearPending = () => {
+          // 入力・カーソル移動で破棄済み (gen が進んだ) なら、更新中かもしれないので何もしない。
+          if (this.gen === gen && !this.destroyed) this.view.dispatch({ effects: setPendingEffect.of(null) });
+        };
+        this.inflight = this.request(
+          req,
+          cfg.settings,
+          (body) => {
+            const text = cleanInlineCompletion(body, beforeWindow);
+            cache.set(req.cacheKey, text);
+            show(text);
+          },
+          clearPending,
+        );
       }
 
       private request(
         req: { systemCached: string; prompt: string },
         settings: AiSettingsSnapshot,
         onResult: (body: string) => void,
+        onSettled: () => void,
       ): InFlight {
         streamSeq += 1;
         const streamId = `inline_${Date.now().toString(36)}_${streamSeq.toString(36)}`;
@@ -291,6 +372,7 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
           clearTimeout(timeout);
           unlisten?.();
           unlisten = null;
+          onSettled();
         };
         const abort = () => {
           if (finished) return;
@@ -338,11 +420,14 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
 
   return [
     suggestionField,
+    pendingField,
     plugin,
     // 提案があるときだけ Tab / Esc を奪う。なければ false を返して通常のキー処理へ。
     Prec.highest(
       keymap.of([
         { key: "Tab", run: acceptSuggestion },
+        // 次の 1 語だけ確定 (Windows / Linux は Ctrl、macOS は Cmd)。提案が無いときは通常のカーソル移動。
+        { key: "Mod-ArrowRight", run: acceptSuggestionWord },
         { key: "Escape", run: dismissSuggestion },
       ]),
     ),

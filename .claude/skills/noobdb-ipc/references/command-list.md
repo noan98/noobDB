@@ -347,6 +347,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `delete_snippet`
 - `list_history`
 - `get_history_sql`
+- `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)
 - `list_history_sql`
 - `clear_history`
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)

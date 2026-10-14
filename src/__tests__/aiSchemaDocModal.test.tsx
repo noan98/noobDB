@@ -379,13 +379,19 @@ describe("AiSchemaDocModal の中止・安全網 (#696)", () => {
     await screen.findByText(/This scope is large|対象が大きくなっています/);
   });
 
-  it("送信内容が 1 MiB を超えるなら送らずに絞り込みを促す", async () => {
+  it("送信内容が 1 MiB を超えると分かった時点で、生成を無効にして絞り込みを促す (#1608)", async () => {
     describeDatabase.mockResolvedValue([
       { name: "big", columns: [{ ...col("id"), comment: "x".repeat(1_100_000) }] },
+      { name: "small", columns: [col("id")] },
     ]);
     renderWithProviders(ui());
-    await generate();
     await screen.findByText(/1024 KB/);
+    const btn = screen.getByRole("button", { name: t("aiSchemaDocGenerate") }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    // 「テーブルを絞る」で選択モードへ切り替わり、絞り込み欄にフォーカスが移る。
+    fireEvent.click(screen.getByRole("button", { name: t("aiSchemaDocNarrowScope") }));
+    const filter = await screen.findByLabelText(t("aiSchemaDocFilterPlaceholder"));
+    await waitFor(() => expect(document.activeElement).toBe(filter));
     expect(runAiRequest).not.toHaveBeenCalled();
   });
 
@@ -395,9 +401,19 @@ describe("AiSchemaDocModal の中止・安全網 (#696)", () => {
     ]);
     listIndexes.mockClear();
     renderWithProviders(ui());
-    await generate();
     await screen.findByText(/1024 KB/);
     expect(listIndexes).not.toHaveBeenCalled();
+    expect(runAiRequest).not.toHaveBeenCalled();
+  });
+
+  it("テーブル数が多いだけで上限内なら、警告は出しても生成は無効にしない (#1608)", async () => {
+    describeDatabase.mockResolvedValue(
+      Array.from({ length: 301 }, (_, i) => ({ name: `t${i}`, columns: [col("id")] })),
+    );
+    renderWithProviders(ui());
+    await screen.findByText(/This scope is large|対象が大きくなっています/);
+    const btn = screen.getByRole("button", { name: t("aiSchemaDocGenerate") }) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
   });
 
   it("外部キーを取得できないときは関係が含まれない旨を出す", async () => {
