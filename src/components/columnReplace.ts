@@ -140,7 +140,15 @@ function columnReplaceParts(
     const f = quoteString(driver, input.find);
     const r = quoteString(driver, input.replace);
     expr = `REPLACE(${col}, ${f}, ${r})`;
-    cond = driver === "postgres" ? `POSITION(${f} IN ${col}) > 0` : `INSTR(${col}, ${f}) > 0`;
+    if (driver === "postgres") {
+      cond = `POSITION(${f} IN ${col}) > 0`;
+    } else if (driver === "mysql") {
+      // MySQL の INSTR は照合順序 (ci 系) に従って大小を無視するが REPLACE は大小を区別する。
+      // BINARY に落として REPLACE と同じ大小区別の判定にしないと、件数と更新対象がずれる。
+      cond = `INSTR(CAST(${col} AS BINARY), CAST(${f} AS BINARY)) > 0`;
+    } else {
+      cond = `INSTR(${col}, ${f}) > 0`;
+    }
   } else {
     const pattern = quoteString(driver, options.regex ? input.find : escapeRegexLiteral(input.find));
     const repl = quoteString(

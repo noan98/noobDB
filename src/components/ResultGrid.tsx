@@ -2486,8 +2486,9 @@ function ColumnStatsMenu({
   const statsPending = useRemote && remoteStats === null;
 
   // Clamp into the viewport once measured (mirrors ColumnFilterMenu). Re-runs on
-  // `full`/`loadingFull` since the panel grows when the all-rows section appears.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: full / loadingFull / fullError は本体で読まないが、全件セクションの出入りでパネル高さが変わるため再計測の契機として意図的に依存へ入れている
+  // `full`/`loadingFull` since the panel grows when the all-rows section appears,
+  // and on `statsPending` (集計中のスピナー → 統計行で高さが大きく変わる)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: full / loadingFull / fullError / statsPending は本体で読まないが、全件セクションの出入りでパネル高さが変わるため再計測の契機として意図的に依存へ入れている
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el) return;
@@ -2500,7 +2501,7 @@ function ColumnStatsMenu({
     left = Math.min(Math.max(margin, left), window.innerWidth - width - margin);
     top = Math.min(Math.max(margin, top), window.innerHeight - height - margin);
     setPos({ left, top });
-  }, [anchor, full, loadingFull, fullError]);
+  }, [anchor, full, loadingFull, fullError, statsPending]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -4700,6 +4701,37 @@ export const DataGrid = memo(function DataGrid({
       typed: typeable && typeName ? resolveTypedEditor(typeName, value) : null,
     });
   };
+  // インライン編集は編集開始時の表示位置 (rowIdx) で行を指すため、自動リフレッシュで先頭に
+  // 行が挿入されるなど rows の並びが変わると、エディタが別の行へ移って確定時にその行へ
+  // 古い値を書いてしまう。rows が差し替わるたびに、編集中の行を行 identity (`rowEditKey`)
+  // で探し直し、位置が動いていれば追従、無くなっていれば編集を取り消す。
+  // 描画前に反映する (useLayoutEffect) ので、1 フレームでも別の行にエディタが映らない。
+  // 全列一致 (all_columns) など行の同一性が保証されない戦略では、同じ位置の行の内容が
+  // 変わったら取り消す。
+  const editPrevRowsRef = useRef(rows);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 行が差し替わったことを契機に編集中の行を追従/取り消しする (editing / pkIndices は最新値を読むだけ) ため rows のみを依存にする
+  useLayoutEffect(() => {
+    const prevRows = editPrevRowsRef.current;
+    editPrevRowsRef.current = rows;
+    setEditing((cur) => {
+      if (!cur) return cur;
+      const prev = prevRows[cur.rowIdx];
+      if (!prev) return null;
+      const same = rows[cur.rowIdx];
+      if (same === prev) return cur;
+      const pks = pkIndices ?? [];
+      if (rowIdentityStrategy === "all_columns" || rowIdentityStrategy === "none" || pks.length === 0) {
+        const unchanged = !!same && same.length === prev.length && same.every((v, i) => v === prev[i]);
+        return unchanged ? cur : null;
+      }
+      const key = rowEditKey(prev, pks, cur.rowIdx);
+      if (same && rowEditKey(same, pks, cur.rowIdx) === key) return cur;
+      for (let i = 0; i < rows.length; i++) {
+        if (rowEditKey(rows[i] ?? [], pks, i) === key) return { ...cur, rowIdx: i };
+      }
+      return null;
+    });
+  }, [rows]);
   // スマート値ピッカー (#1067): 編集中セルの列について候補を (再) 取得する。
   // FK は入力に応じて前方一致で絞り込み、ENUM / CHECK は初回に 1 度だけ引く。
   const valuePickerListId = useId();
@@ -4846,14 +4878,16 @@ export const DataGrid = memo(function DataGrid({
       cellMaskedNow(rowIdx, colIdx),
       columnMaskCopyPlaceholder,
     );
+  // 範囲コピー / CSV・JSON コピーと同じく、表示中の列だけを表示順に出す
+  // (非表示にした列が TSV に混ざって外部へ出ない)。
   const rowCopyText = (rowIdx: number) =>
-    (rows[rowIdx] ?? []).map((_, ci) => copyTextAt(rowIdx, ci)).join("\t");
+    visibleColIds.map((ci) => copyTextAt(rowIdx, ci)).join("\t");
   const copyCell = (rowIdx: number, colIdx: number) =>
     void runCopy(copyTextAt(rowIdx, colIdx), { rowIndices: [rowIdx], colIndices: [colIdx] });
   const copyRow = (rowIdx: number) =>
     void runCopy(rowCopyText(rowIdx), { rowIndices: [rowIdx], colIndices: visibleColIds });
   const copyRowWithHeaders = (rowIdx: number) =>
-    void runCopy(`${columns.map((c) => c.name).join("\t")}\n${rowCopyText(rowIdx)}`, {
+    void runCopy(`${visibleColIds.map((ci) => columns[ci]?.name ?? "").join("\t")}\n${rowCopyText(rowIdx)}`, {
       rowIndices: [rowIdx],
       colIndices: visibleColIds,
     });
@@ -5559,6 +5593,8 @@ export const DataGrid = memo(function DataGrid({
     const fkMeta = metaByName?.get(columns[colIdx]?.name ?? "");
     if (!fkMeta?.referenced_table || !fkMeta.referenced_column) return null;
     if (cellMaskedNow(rowIdx, colIdx)) return null;
+    // NULL は「参照なし」。`id IS NULL` を開いても無関係な行 / 0 件になるだけなので辿らない。
+    if (isNullCell(rows[rowIdx]?.[colIdx])) return null;
     return {
       refTable: fkMeta.referenced_table,
       sql: buildFkJumpSql({
@@ -6523,7 +6559,14 @@ export const DataGrid = memo(function DataGrid({
                 } else {
                   table
                     .getColumn(String(copyMenu.colIdx))
-                    ?.setFilterValue(clientQuickFilter(value, mode, numeric));
+                    ?.setFilterValue(
+                      clientQuickFilter(
+                        value,
+                        mode,
+                        numeric,
+                        rowSqlDriver === "postgres" || rowSqlDriver === "sqlite",
+                      ),
+                    );
                 }
               };
               return [
@@ -6770,6 +6813,9 @@ export const DataGrid = memo(function DataGrid({
               const grouped = candidates.length >= SUBMENU_THRESHOLD;
               for (const { inc, refColIdx } of candidates) {
                 const value = rows[copyMenu.rowIdx]?.[refColIdx] ?? null;
+                // 参照先キーが NULL の行は、どの子行からも参照されない。FK が NULL の
+                // 無関係な子行を列挙しないよう、逆参照の候補から外す。
+                if (value === null) continue;
                 const sql = buildReverseRefSql({
                   driver,
                   database: rowSqlDatabase,
@@ -7698,7 +7744,9 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
   const effectiveFindQuery = heavyFind ? findQueryDebounced : findQuery;
   // ストリーミング中は行が届くたびにヒット一覧を全件再計算しない (#1257)。クエリ・
   // オプションが変わらない限り直前の結果を保持し、完了 (streaming=false) で再計算する。
-  const lastFindRef = useRef<{ key: string; value: GridFindResult } | null>(null);
+  const lastFindRef = useRef<{ key: string; firstRow: unknown; value: GridFindResult } | null>(
+    null,
+  );
   // 結果ハンドル経由の検索 (#1264)。行数しきい値以上でバックエンドが行を保持している結果は、
   // 正規表現を使わない検索を `result_find` に任せる (ヒットは上限付き)。正規表現は JS と Rust で
   // 文法・意味が違うため常に JS。ストリーミング中・ハンドル破棄済みも JS。
@@ -7769,15 +7817,19 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
       findWholeCell,
       findRegex,
       result.columns.length,
+      result.columns.map((c) => c.name),
     ]);
+    // 別の結果 (別クエリの再実行) に前回のヒット座標を使い回さない。ストリーミングの
+    // バッチ追加では先頭行の参照が変わらないので、先頭行の同一性で同じ結果かを判定する。
+    const firstRow = result.rows[0];
     const prev = lastFindRef.current;
-    if (streaming && prev && prev.key === key) return prev.value;
+    if (streaming && prev && prev.key === key && prev.firstRow === firstRow) return prev.value;
     const value = computeFindMatches(result.rows, result.columns.length, effectiveFindQuery, {
       caseSensitive: findCaseSensitive,
       wholeCell: findWholeCell,
       regex: findRegex,
     });
-    lastFindRef.current = { key, value };
+    lastFindRef.current = { key, firstRow, value };
     return value;
   }, [activeFindHandleId, findOpen, result, effectiveFindQuery, findCaseSensitive, findWholeCell, findRegex, streaming]);
   // 新しい応答が届くまでは直前のヒットを保つ (入力のたびにハイライトが消えない)。

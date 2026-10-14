@@ -266,6 +266,7 @@ mod tests {
                 value: "1".into(),
                 value2: String::new(),
                 null_mode: NullMode::Any,
+                case_sensitive: false,
             }],
             String::new(),
         )

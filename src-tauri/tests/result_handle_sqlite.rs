@@ -135,6 +135,7 @@ async fn retained_rows_answer_sort_filter_find_and_export_like_the_database() {
             value: "NAME99".into(),
             value2: String::new(),
             null_mode: t::NullMode::Any,
+            case_sensitive: false,
         }],
         String::new(),
     )

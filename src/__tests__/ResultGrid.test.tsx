@@ -3,6 +3,7 @@ import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
+import { resultShapeSizingKey } from "../components/gridViewState";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
@@ -1128,6 +1129,39 @@ describe("キーボードセルナビゲーション (#406)", () => {
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name,qty\r\napple,5\r\n"));
   });
 
+  it("行コピー (TSV) は非表示列を含めず、列の並び替えに従う", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    const columns: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "secret", type_name: "TEXT" },
+      { name: "name", type_name: "TEXT" },
+    ];
+    const sizingKey = resultShapeSizingKey(columns, "db", "rowcopy_test") as string;
+    writeStoredColumnState(colStateKeyFrom(sizingKey), {
+      order: ["2", "1", "0"],
+      visibility: { "1": false },
+    });
+    try {
+      const { container } = renderWithProviders(
+        <ResultGrid result={makeResult(columns, [[1, "pw", "bob"]])} database="db" table="rowcopy_test" />,
+      );
+      fireEvent.contextMenu(dataCells(container)[0][0]);
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+        key: "ArrowRight",
+      });
+      await user.click(await screen.findByRole("menuitem", { name: new RegExp(t("gridCopyRowWithHeaders")) }));
+      await waitFor(() => expect(writeText).toHaveBeenCalledWith("name\tid\nbob\t1"));
+    } finally {
+      writeStoredColumnState(colStateKeyFrom(sizingKey), {});
+    }
+  });
+
   it("矩形選択の中で右クリックすると選択範囲の行数で CSV コピーする (#1113)", async () => {
     const user = userEvent.setup();
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -1430,6 +1464,26 @@ describe("ResultGrid 結果内検索 (#644)", () => {
     // 先頭ヒットが現在ヒットとして強調される。
     const current = container.querySelector("td.is-find-current");
     expect(current?.textContent).toBe("banana");
+  });
+
+  it("ストリーミング中に別の結果へ差し替わったら、前の結果のヒットを使い回さない", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<ResultGridHandle>();
+    const first = makeResult(FRUIT_COLUMNS, [
+      ["banana", 2],
+      ["apple", 5],
+    ]);
+    const { container, rerender } = renderWithProviders(<ResultGrid ref={ref} result={first} streaming />);
+    act(() => ref.current!.openFind());
+    await user.type(screen.getByLabelText(t("gridFindInputAria")), "cherry");
+    expect(screen.getByText(t("gridFindNoHits"))).toBeInTheDocument();
+    // 同じ列数の別クエリの結果 (ストリーミング継続中)。検索語は同じだが行が違う。
+    const second = makeResult(FRUIT_COLUMNS, [
+      ["cherry", 9],
+      ["grape", 1],
+    ]);
+    rerender(<ResultGrid ref={ref} result={second} streaming />);
+    expect(container.querySelectorAll("td.is-find-hit")).toHaveLength(1);
   });
 
   it("Enter / Shift+Enter で次 / 前のヒットへ wrap-around で移動する", async () => {
@@ -2252,6 +2306,72 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: t("gridFkJump", { table: "users" }) }));
     expect(onFkJump).toHaveBeenCalledTimes(2);
     expect(onFkJump.mock.calls[1][0]).toBe(iconSql);
+  });
+
+  function dataCells(container: HTMLElement): HTMLElement[][] {
+    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
+      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+  }
+
+  it("編集中に行が先頭へ挿入されても、エディタは元の行に追従する", async () => {
+    const user = userEvent.setup();
+    const cols: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "user_id", type_name: "INT" },
+    ];
+    const base = makeResult(cols, [
+      [1, 10],
+      [2, 20],
+      [3, 30],
+    ]);
+    const el = (r: QueryResult) => (
+      <ResultGrid result={r} tableColumns={meta(null, null)} editable onSetCellEdit={() => {}} />
+    );
+    const { container, rerender } = renderWithProviders(el(base));
+    await user.dblClick(dataCells(container)[2][1]);
+    const input = container.querySelector(".cell-edit-input") as HTMLInputElement;
+    expect(input.value).toBe("30");
+    rerender(
+      el(
+        makeResult(cols, [
+          [0, 5],
+          [1, 10],
+          [2, 20],
+          [3, 30],
+        ]),
+      ),
+    );
+    const moved = container.querySelector(".cell-edit-input") as HTMLInputElement;
+    expect(moved).not.toBeNull();
+    // エディタは id=3 の行 (新しい 4 行目) の user_id セルにある。
+    expect(moved.closest("td")).toBe(dataCells(container)[3][1]);
+  });
+
+  it("編集中の行が消えたら編集を取り消す", async () => {
+    const user = userEvent.setup();
+    const cols: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "user_id", type_name: "INT" },
+    ];
+    const el = (r: QueryResult) => (
+      <ResultGrid result={r} tableColumns={meta(null, null)} editable onSetCellEdit={() => {}} />
+    );
+    const { container, rerender } = renderWithProviders(
+      el(makeResult(cols, [[1, 10], [2, 20]])),
+    );
+    await user.dblClick(dataCells(container)[1][1]);
+    expect(container.querySelector(".cell-edit-input")).not.toBeNull();
+    rerender(el(makeResult(cols, [[1, 10]])));
+    expect(container.querySelector(".cell-edit-input")).toBeNull();
+  });
+
+  it("NULL の FK セルの右クリックには「参照先を開く」を出さない", async () => {
+    const { container } = renderFk();
+    const nullFkCell = container.querySelectorAll("td.col-number")[3] as HTMLElement;
+    fireEvent.contextMenu(nullFkCell);
+    expect(await screen.findByRole("menu")).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: t("gridFkJump", { table: "users" }) })).toBeNull();
   });
 
   it("参照先が解決できない / onFkJump が無いときは出さない", () => {

@@ -703,6 +703,21 @@ describe("buildInsertClipboard", () => {
   });
 });
 
+describe("validateCellInput (整数列への小数)", () => {
+  it("整数型の列は小数・指数表記を弾く", () => {
+    for (const t of ["INT", "BIGINT UNSIGNED", "integer", "int4", "smallint(5)"]) {
+      expect(validateCellInput("2.5", t, true)).toBe("editInvalidInteger");
+      expect(validateCellInput("1e3", t, true)).toBe("editInvalidInteger");
+      expect(validateCellInput("-12", t, true)).toBeNull();
+    }
+  });
+
+  it("小数型の列は小数を通す", () => {
+    expect(validateCellInput("2.5", "DECIMAL(10,2)", true)).toBeNull();
+    expect(validateCellInput("2.5", "DOUBLE", true)).toBeNull();
+  });
+});
+
 describe("validateCellInput", () => {
   it("rejects the NULL keyword on a NOT NULL column", () => {
     expect(validateCellInput("NULL", "VARCHAR", false)).toBe("editInvalidNotNull");
@@ -724,7 +739,8 @@ describe("validateCellInput", () => {
   });
 
   it("checks the value shape per column kind", () => {
-    expect(validateCellInput("12.5", "INT", true)).toBeNull();
+    expect(validateCellInput("12.5", "DECIMAL(10,2)", true)).toBeNull();
+    expect(validateCellInput("12.5", "INT", true)).toBe("editInvalidInteger"); // 整数列への小数は弾く
     expect(validateCellInput("abc", "INT", true)).toBe("editInvalidNumber");
     expect(validateCellInput("2024-03-05", "DATE", true)).toBeNull();
     expect(validateCellInput("2024-03-05 07:08:09", "DATETIME", true)).toBeNull();

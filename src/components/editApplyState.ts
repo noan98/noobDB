@@ -118,3 +118,14 @@ export function tabStateAfterApply<T extends ApplyTabState>(
     ...keepOps,
   };
 }
+
+/**
+ * Apply (`bulk_update_cells`) が期待した件数より少ない行しか書き換えなかった数。
+ * 編集行・削除行・新規行はどれも「1 行 = 1 件」なので、`expected` は操作行の合計。
+ * 3 ドライバとも `rows_affected` は一致した行数 (MySQL は FOUND_ROWS 相当) を返すため、
+ * 値が変わらない更新でも不足とは数えない。0 以下なら不足なし (トリガ等で多い場合も含む)。
+ * 正の値は、別クライアントによる削除・主キー変更などで行が見つからなかったことを示す。
+ */
+export function appliedRowShortfall(expected: number, affected: number): number {
+  return Math.max(0, expected - affected);
+}
