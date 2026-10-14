@@ -176,6 +176,9 @@ function unquoteIdent(text: string): string {
   return text;
 }
 
+/** 括弧内に `FROM` を取る関数構文 (テーブル参照ではない)。 */
+const FROM_SYNTAX_FUNCTIONS: ReadonlySet<string> = new Set(["extract", "trim", "substring", "overlay"]);
+
 /**
  * SQL の `FROM` / `JOIN` 句から参照テーブルをベストエフォートで抽出する
  * (関連テーブルのスキーマ定義を同梱するため)。コメント・文字列リテラル内の語は
@@ -188,9 +191,24 @@ export function extractReferencedTables(sql: string, limit = 5, driver?: string 
   const out: TableReference[] = [];
   const seen = new Set<string>();
   const isName = (t: SqlToken | undefined) => !!t && (t.kind === "word" || t.kind === "ident");
+  // `EXTRACT(YEAR FROM x)` / `TRIM(BOTH ' ' FROM x)` / `SUBSTRING(x FROM 1 FOR 3)` /
+  // `OVERLAY(x PLACING y FROM 1)` の FROM は句ではなく関数の構文。後ろの列名をテーブルと
+  // 誤認しないよう、これらの括弧の直下にある FROM の位置を先に洗い出す。
+  const funcFrom = new Set<number>();
+  const parenIsFromFunc: boolean[] = [];
+  toks.forEach((t, idx) => {
+    if (t.text === "(") {
+      const prev = toks[idx - 1];
+      parenIsFromFunc.push(!!prev && prev.kind === "word" && FROM_SYNTAX_FUNCTIONS.has(prev.text.toLowerCase()));
+    } else if (t.text === ")") {
+      parenIsFromFunc.pop();
+    } else if (t.kind === "word" && t.text.toLowerCase() === "from" && parenIsFromFunc[parenIsFromFunc.length - 1]) {
+      funcFrom.add(idx);
+    }
+  });
   let i = 0;
   while (i < toks.length && out.length < limit) {
-    const w = toks[i].kind === "word" ? toks[i].text.toLowerCase() : "";
+    const w = toks[i].kind === "word" && !funcFrom.has(i) ? toks[i].text.toLowerCase() : "";
     if (w !== "from" && w !== "join") {
       i++;
       continue;

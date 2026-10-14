@@ -149,6 +149,10 @@ pub struct ScriptDoneEvent {
     /// 開始位置 (`startAtStatement`) より前で読み飛ばした文の数 (#1535)。
     #[serde(rename = "skippedBeforeStart")]
     pub skipped_before_start: u64,
+    /// スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わり、ランナーが EOF で
+    /// 確定 (COMMIT) したか。未確定の変更が黙って確定されたことを利用者へ伝える。
+    #[serde(rename = "implicitCommit")]
+    pub implicit_commit: bool,
     #[serde(rename = "rowsAffected")]
     pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
@@ -198,6 +202,7 @@ pub enum ScriptRun {
         skipped_control: u64,
         skipped_excluded: u64,
         skipped_before_start: u64,
+        implicit_commit: bool,
         rows_affected: u64,
         elapsed_ms: u64,
     },
@@ -458,7 +463,11 @@ where
 
     // スクリプトが BEGIN したまま終わった場合も、ランナーが開いたトランザクションは
     // 確定させて閉じる (開いたまま専用接続を握り続けない)。
+    let mut implicit_commit = false;
     if runner.guard.active {
+        // ランナー自身が開いた (wrap_in_transaction) 場合は想定どおりの確定。スクリプトの
+        // BEGIN が未確定のまま終わった場合だけ、利用者へ知らせる。
+        implicit_commit = !runner.options.wrap_in_transaction;
         if let Err(e) = runner.commit().await {
             return Ok(runner.abort_with(format!("commit failed: {e}"), None).await);
         }
@@ -472,6 +481,7 @@ where
         skipped_control: runner.skipped_control,
         skipped_excluded: runner.skipped_excluded,
         skipped_before_start: runner.skipped_before_start,
+        implicit_commit,
         rows_affected: runner.rows_affected,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
@@ -1376,6 +1386,7 @@ async fn spawn_script(
             skipped_control,
             skipped_excluded,
             skipped_before_start,
+            implicit_commit,
             rows_affected,
             elapsed_ms,
         }) => {
@@ -1391,6 +1402,7 @@ async fn spawn_script(
                     skipped_control,
                     skipped_excluded,
                     skipped_before_start,
+                    implicit_commit,
                     rows_affected,
                     elapsed_ms,
                 },
