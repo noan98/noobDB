@@ -258,12 +258,12 @@ jobs:
                     detail: $detail, runUrl: $runUrl}' | node scripts/automerge-notice.mjs)" || {
               echo "::warning::通知コメントの計画に失敗しました。"; rm -rf "$tmp"; return 0; }
             rm -rf "$tmp"
-            action="$(echo "$plan" | jq -r '.action')"
-            body="$(echo "$plan" | jq -r '.body // empty')"
+            action="$(echo "$plan" | jq -r '.action')" || { echo "::warning::通知コメントの計画を読めませんでした。"; return 0; }
+            body="$(echo "$plan" | jq -r '.body // empty')" || { echo "::warning::通知コメントの本文を読めませんでした。"; return 0; }
             case "$action" in
               create) gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" >/dev/null \
                         || echo "::warning::通知コメントの作成に失敗しました。" ;;
-              update) cid="$(echo "$plan" | jq -r '.commentId')"
+              update) cid="$(echo "$plan" | jq -r '.commentId')" || { echo "::warning::通知コメントの ID を読めませんでした。"; return 0; }
                       gh api -X PATCH "repos/$GH_REPO/issues/comments/$cid" -f body="$body" >/dev/null \
                         || echo "::warning::通知コメントの更新に失敗しました。" ;;
             esac
