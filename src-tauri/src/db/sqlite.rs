@@ -537,9 +537,11 @@ impl SqliteConn {
         Ok(inserted)
     }
 
-    /// Auto-commit insert of one chunk (no wrapping transaction). See
-    /// [`Connection::try_insert_chunk`] (#687). A chunk that exceeds SQLite's
-    /// bound-variable limit simply errors, and the caller retries it row by row.
+    /// Insert one chunk atomically in its own transaction. See
+    /// [`Connection::try_insert_chunk`] (#687). When the chunk would exceed SQLite's
+    /// bound-variable limit (32766), it is split into several multi-row INSERTs by
+    /// column count inside that transaction (#1613), so wide tables don't fall back
+    /// to row-by-row retries.
     pub(crate) async fn try_insert_chunk(
         &self,
         _database: Option<&str>,

@@ -282,18 +282,18 @@ impl XlsxSheetWriter {
         // 先頭行の固定・オートフィルタ・列幅 (ヘッダ名の文字数からの上限付き推定)。
         // いずれも行数に依存せず定数メモリモードのまま使える (ヘッダ行は先頭行なので
         // 書き込み済みの行に触れない)。
+        // オートフィルタの範囲は最終行が決まる `save_to` で張る。
         sheet.set_freeze_panes(row + 1, 0).map_err(xlsx_err)?;
-        if let (Some(last), true) = (
-            u16::try_from(columns.len().saturating_sub(1)).ok(),
-            !columns.is_empty(),
-        ) {
-            sheet.autofilter(row, 0, row, last).map_err(xlsx_err)?;
-        }
         for (i, col) in columns.iter().enumerate() {
             let c =
                 u16::try_from(i).map_err(|_| AppError::Other("column index overflow".into()))?;
-            let chars = col.name.chars().count();
-            let width = (chars as f64 * 1.2 + 4.0).clamp(10.0, 40.0);
+            // 全角文字 (非 ASCII) は半角の約 2 文字分の幅で数える。
+            let units: usize = col
+                .name
+                .chars()
+                .map(|ch| if ch.is_ascii() { 1 } else { 2 })
+                .sum();
+            let width = (units as f64 * 1.2 + 4.0).clamp(10.0, 40.0);
             sheet.set_column_width(c, width).map_err(xlsx_err)?;
         }
         self.next_row += 1;
@@ -347,6 +347,18 @@ impl XlsxSheetWriter {
     pub(crate) fn save_to<W: Write + Send>(&mut self, w: W) -> Result<Option<ExportTruncation>> {
         // ヘッダが一度も書かれていない (列イベントが来なかった) 場合も、空シートの
         // 有効な xlsx を出す。
+        // オートフィルタはヘッダ (0 行目) から最終データ行までに張る。`autofilter` は範囲を
+        // 覚えるだけで書き込み済みの行には触れないので、定数メモリモードでも最後に呼べる。
+        let last_col = self
+            .column_count
+            .checked_sub(1)
+            .and_then(|n| u16::try_from(n).ok());
+        if let (Some(last), true) = (last_col, self.next_row > 0) {
+            let sheet = self.workbook.worksheet_from_index(0).map_err(xlsx_err)?;
+            sheet
+                .autofilter(0, 0, self.next_row - 1, last)
+                .map_err(xlsx_err)?;
+        }
         self.workbook.save_to_writer(w).map_err(xlsx_err)?;
         Ok(self.finish_report())
     }
