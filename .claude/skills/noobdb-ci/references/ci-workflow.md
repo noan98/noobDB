@@ -1,5 +1,12 @@
 # ci.yml (PR / main push のチェック)
 
+- **concurrency**: `cancel-in-progress` は `github.event_name == 'pull_request'` のときだけ
+  true (#1632)。PR の古い run は取り消すが、**main への push の run は取り消さない**
+  (連続 push で途中のコミットの検証が抜け、main の健全性確認とキャッシュ温めが欠けるため)。
+  `cancel-in-progress: false` でも同一グループの「待機中」run は新しい run に置き換えられる
+  (グループには実行中 1 + 待機 1 のみ) ため、push のグループは `github.sha` 単位にして
+  全件を完走させる。PR のグループは従来どおり `github.ref` で、PR と push は互いに取り消し合わない。
+
 - `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
   push トリガは**キャッシュを main スコープへ保存するため**にあります:
   pull_request 実行で保存される rust-cache / sccache / pnpm のキャッシュは PR の
@@ -52,16 +59,15 @@
   チェック名が変わったため)。
 
   **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
-  ため)。`frontend (unit shard N/4)` (`frontend-unit`、`--shard` で 4 並列、各 shard は
-  `--reporter=blob` で blob を artifact へ保存。**main への push のときだけ**
+  ため)。`frontend (unit shard 1/4)`〜`(4/4)` (`frontend-unit`、`--shard` で 4 並列。分割数の正は ci.yml の `matrix.shard`。
+  各 shard は `--reporter=blob` で blob を artifact へ保存し、**main への push のときだけ**
   `--coverage --coverage.thresholds.lines=0` を付ける) と、
   それを `gh run download` で集めて `vitest run --merge-reports` で統合し
   (push のときだけ `--coverage` を付けて)
   カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
   `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
   カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
-  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
-  `frontend (unit shard N/4)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の各ジョブは集約ジョブが `needs.frontend-unit.result` を見て fail
   させるので必須に含めなくてよい)。
 
   **PR では単体テストのカバレッジを計装しない (#1634)**: v8 計装は 1 shard あたり約
@@ -213,7 +219,7 @@
   env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
-  フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
