@@ -3679,6 +3679,7 @@ const en = {
   schemaCompareFieldKey: "key",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "foreign key",
+  schemaCompareFieldComment: "comment",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -4702,6 +4703,10 @@ const en = {
     '"{name}" is a production connection and this plan includes {destructive} destructive statement(s). This cannot be undone.',
   sandboxApplyTypedConfirmOk: "Apply anyway",
   sandboxApplyDone: "Applied {count} statement(s) to the original connection.",
+  sandboxApplyBaseAdvanceFailed:
+    "Applied {count} statement(s) to the original connection, but updating the sandbox baseline failed for: {tables}. Do not apply again; reload the differences and review them. ({error})",
+  sandboxCreateFkLoadFailed:
+    "Could not load foreign keys, so related tables will not be added automatically: {error}",
   toastSandboxCreated: 'Sandbox "{name}" created.',
   toastSandboxDiscarded: 'Sandbox "{name}" discarded.',
   toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
@@ -8769,6 +8774,7 @@ const ja: Dict = {
   schemaCompareFieldKey: "キー",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "外部キー",
+  schemaCompareFieldComment: "コメント",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -9791,6 +9797,10 @@ const ja: Dict = {
     "「{name}」は本番接続で、この適用には破壊的なステートメントが {destructive} 件含まれます。元に戻せません。",
   sandboxApplyTypedConfirmOk: "それでも適用する",
   sandboxApplyDone: "{count} 文を元の接続へ適用しました。",
+  sandboxApplyBaseAdvanceFailed:
+    "{count} 文を元の接続へ適用しましたが、サンドボックスの基準 (ベース) の更新に失敗した表があります: {tables}。再適用せず、差分を再読み込みして確認してください。({error})",
+  sandboxCreateFkLoadFailed:
+    "外部キーを取得できなかったため、関連テーブルは自動で追加されません: {error}",
   toastSandboxCreated: "サンドボックス「{name}」を作成しました。",
   toastSandboxDiscarded: "サンドボックス「{name}」を破棄しました。",
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",

@@ -116,10 +116,20 @@ pub async fn compare_schema(
     {
         match target.conn.foreign_keys(&target_database).await {
             Ok(fks) => crate::db::diff::attach_target_foreign_keys(&mut diff, &fks),
-            Err(e) => tracing::warn!(
-                kind = e.kind(),
-                "schema compare: could not load foreign keys of the target"
-            ),
+            Err(e) => {
+                tracing::warn!(
+                    kind = e.kind(),
+                    "schema compare: could not load foreign keys of the target"
+                );
+                // SQLite は DROP TABLE が残る子表の CASCADE を発火させうるが、FK が
+                // 取れないと判定できない。破壊的な計画の警告に出す。
+                if target_driver == crate::db::DriverKind::Sqlite {
+                    diff.warnings.push(
+                        "target の外部キーを取得できなかったため、DROP TABLE が残る表の ON DELETE CASCADE / SET NULL で行を消さないか確認できていません。適用前に外部キーを確認してください"
+                            .to_string(),
+                    );
+                }
+            }
         }
     }
     Ok(diff)
@@ -147,6 +157,11 @@ pub(crate) fn select_rows_sql(
         .collect::<Vec<_>>()
         .join(", ");
     let table = quote_ident(driver, table);
+    // 主キーが無い表 (サンドボックスの取り込みなど) は ORDER BY を省く。全列で並べると、
+    // json など順序演算子の無い型を含む表で SQL エラーになる。
+    if order.is_empty() {
+        return format!("SELECT {cols} FROM {table} LIMIT {limit}");
+    }
     format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}")
 }
 
@@ -580,6 +595,11 @@ mod select_rows_sql_tests {
             select_rows_sql(DriverKind::Mysql, "t", &cols, &pk, 11),
             "SELECT `id`, `v` FROM `t` ORDER BY `id` LIMIT 11"
         );
+        // 主キー無しなら ORDER BY を出さない (json 列などで ORDER BY が失敗するため)。
+        assert_eq!(
+            select_rows_sql(DriverKind::Postgres, "t", &cols, &[], 11),
+            "SELECT \"id\", \"v\" FROM \"t\" LIMIT 11"
+        );
         assert_eq!(
             select_rows_sql(DriverKind::Postgres, "t", &cols, &pk, 11),
             "SELECT \"id\", \"v\" FROM \"t\" ORDER BY \"id\" LIMIT 11"
@@ -690,6 +710,78 @@ fn normalize_ignore_columns(
         out.push(name);
     }
     Ok(out)
+}
+
+/// 上限つき比較 (`all_rows = false`) の結果。
+#[derive(Debug)]
+struct BoundedOutcome {
+    rows: Vec<RowDiff>,
+    source_count: usize,
+    target_count: usize,
+    truncated: bool,
+}
+
+/// 両側を主キー順に先頭 `want` 行ずつ読んで突き合わせる (上限つき比較)。
+///
+/// Rust 側はバイト等価・バイト順で行を対応付けるため、照合順序が絡む主キー (MySQL の ci 照合など)
+/// では、DB 上は同一の主キーが別行に見えて片側限定の DELETE / INSERT が生成されうる。
+/// 全行比較 (keyset) と同じく、片側限定の行が相手側に主キー等価で実在しないかを
+/// `verify_one_sided` で確かめ、実在すれば fail-closed でエラーにする。
+#[allow(clippy::too_many_arguments)]
+async fn bounded_compare(
+    source: (&Connection, &str),
+    target: (&Connection, &str),
+    table: &str,
+    columns: &[String],
+    column_types: &[String],
+    primary_key: &[String],
+    pk_idx: &[usize],
+    ignore_columns: &[String],
+    want: usize,
+) -> Result<BoundedOutcome> {
+    let driver = source.0.driver_kind();
+    let sql = select_rows_sql(driver, table, columns, primary_key, want + 1);
+    let source_res = source.0.execute(&sql, Some(source.1)).await?;
+    let target_res = target.0.execute(&sql, Some(target.1)).await?;
+
+    let source_truncated = source_res.rows.len() > want;
+    let target_truncated = target_res.rows.len() > want;
+    let mut source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
+    let mut target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
+    // 片側だけ切り詰められたとき、もう一方の窓の外の行を「存在しない」と誤判定して
+    // INSERT してしまわないよう、両側を共通の PK 窓に揃える。
+    clamp_to_common_window(
+        &mut source_rows,
+        &mut target_rows,
+        source_truncated,
+        target_truncated,
+        pk_idx,
+    );
+    let source_count = source_rows.len();
+    let target_count = target_rows.len();
+
+    let rows =
+        compute_data_diff_ignoring(columns, pk_idx, &source_rows, &target_rows, ignore_columns);
+    let pk_types: Vec<String> = pk_idx
+        .iter()
+        .map(|&i| column_types.get(i).cloned().unwrap_or_default())
+        .collect();
+    verify_one_sided(
+        source,
+        target,
+        table,
+        primary_key,
+        &pk_types,
+        &rows,
+        &mut std::collections::HashSet::new(),
+    )
+    .await?;
+    Ok(BoundedOutcome {
+        rows,
+        source_count,
+        target_count,
+        truncated: source_truncated || target_truncated,
+    })
 }
 
 /// `compare_table_data` の結果。`diff` は表示用、`diff_id` は Rust 側のストア
@@ -815,35 +907,18 @@ pub async fn compare_table_data(
 
     // Read one extra row to detect (and flag) truncation without exceeding it.
     let want = limit.unwrap_or(DEFAULT_DATA_ROWS).min(MAX_DATA_ROWS);
-    let sql = select_rows_sql(driver, &table, &columns, &primary_key, want + 1);
-
-    let source_res = source.conn.execute(&sql, Some(&source_database)).await?;
-    let target_res = target.conn.execute(&sql, Some(&target_database)).await?;
-
-    let truncated = source_res.rows.len() > want || target_res.rows.len() > want;
-    let source_truncated = source_res.rows.len() > want;
-    let target_truncated = target_res.rows.len() > want;
-    let mut source_rows: Vec<_> = source_res.rows.into_iter().take(want).collect();
-    let mut target_rows: Vec<_> = target_res.rows.into_iter().take(want).collect();
-    // 片側だけ切り詰められたとき、もう一方の窓の外の行を「存在しない」と誤判定して
-    // INSERT してしまわないよう、両側を共通の PK 窓に揃える。
-    clamp_to_common_window(
-        &mut source_rows,
-        &mut target_rows,
-        source_truncated,
-        target_truncated,
-        &pk_idx,
-    );
-    let source_count = source_rows.len();
-    let target_count = target_rows.len();
-
-    let rows = compute_data_diff_ignoring(
+    let outcome = bounded_compare(
+        (&source.conn, &source_database),
+        (&target.conn, &target_database),
+        &table,
         &columns,
+        &column_types,
+        &primary_key,
         &pk_idx,
-        &source_rows,
-        &target_rows,
         &ignore_columns,
-    );
+        want,
+    )
+    .await?;
 
     let diff = DataDiff {
         target_driver: driver,
@@ -851,10 +926,10 @@ pub async fn compare_table_data(
         columns,
         column_types,
         primary_key,
-        rows,
-        truncated,
-        source_count,
-        target_count,
+        rows: outcome.rows,
+        truncated: outcome.truncated,
+        source_count: outcome.source_count,
+        target_count: outcome.target_count,
         generated_columns,
     };
     let diff_id = state.store_data_diff(
@@ -1229,6 +1304,70 @@ mod keyset_tests {
                 assert!(matches!(err, AppError::InvalidInput(_)), "page={page}");
             }
         }
+        let _ = std::fs::remove_file(src_path);
+        let _ = std::fs::remove_file(tgt_path);
+    }
+
+    /// 上限つき比較でも、照合順序で同一の主キーが片側限定行に見えるなら fail-closed。
+    #[tokio::test]
+    async fn bounded_compare_rejects_collation_mismatch() {
+        let (src, src_path) = sqlite_conn("b_src").await;
+        let (tgt, tgt_path) = sqlite_conn("b_tgt").await;
+        src.execute("CREATE TABLE t (k TEXT PRIMARY KEY, v TEXT)", None)
+            .await
+            .unwrap();
+        tgt.execute(
+            "CREATE TABLE t (k TEXT COLLATE NOCASE PRIMARY KEY, v TEXT)",
+            None,
+        )
+        .await
+        .unwrap();
+        src.execute("INSERT INTO t VALUES ('A1','1')", None)
+            .await
+            .unwrap();
+        tgt.execute("INSERT INTO t VALUES ('a1','1')", None)
+            .await
+            .unwrap();
+        let columns = s(&["k", "v"]);
+        let types = s(&["TEXT", "TEXT"]);
+        let pk = s(&["k"]);
+        for (a, b) in [(&src, &tgt), (&tgt, &src)] {
+            let err = bounded_compare(
+                (a, "main"),
+                (b, "main"),
+                "t",
+                &columns,
+                &types,
+                &pk,
+                &[0],
+                &[],
+                1000,
+            )
+            .await
+            .unwrap_err();
+            assert!(matches!(err, AppError::InvalidInput(_)));
+        }
+        // 照合順序が揃っていて本当に片側にしか無い行は従来どおり差分になる。
+        tgt.execute("INSERT INTO t VALUES ('zz','9')", None)
+            .await
+            .unwrap();
+        tgt.execute("DELETE FROM t WHERE k = 'a1'", None)
+            .await
+            .unwrap();
+        let ok = bounded_compare(
+            (&src, "main"),
+            (&tgt, "main"),
+            "t",
+            &columns,
+            &types,
+            &pk,
+            &[0],
+            &[],
+            1000,
+        )
+        .await
+        .unwrap();
+        assert_eq!(ok.rows.len(), 2);
         let _ = std::fs::remove_file(src_path);
         let _ = std::fs::remove_file(tgt_path);
     }

@@ -10,6 +10,7 @@ import {
   isSandboxShadowTableName,
   sandboxFkClosure,
 } from "../sandbox";
+import { Callout } from "./Callout";
 import { LoadingButton } from "./LoadingButton";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -36,6 +37,7 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
   const [tables, setTables] = useState<string[] | null>(null);
   const [fks, setFks] = useState<ForeignKey[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [fkError, setFkError] = useState<string | null>(null);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [includeRelated, setIncludeRelated] = useState(true);
@@ -50,9 +52,17 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
     let cancelled = false;
     void (async () => {
       try {
+        // 外部キーは任意機能 (関連テーブルの自動追加) にしか使わないので、取得に失敗しても
+        // テーブル一覧は出して作成を続けられるようにする。
         const [tbls, foreignKeys] = await Promise.all([
           api.listTables(sessionId, database),
-          api.foreignKeys(sessionId, database),
+          api.foreignKeys(sessionId, database).catch((e: unknown) => {
+            if (!cancelled) {
+              setFkError(String(e));
+              setIncludeRelated(false);
+            }
+            return [] as ForeignKey[];
+          }),
         ]);
         if (cancelled) return;
         setTables(tbls.filter((tbl) => !isSandboxShadowTableName(tbl)));
@@ -148,6 +158,11 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
         </FormSection>
 
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
+        {fkError && (
+          <Callout tone="warning" role="status">
+            {t("sandboxCreateFkLoadFailed", { error: fkError })}
+          </Callout>
+        )}
         {tables === null && !loadError && (
           <chakra.div fontSize="sm" color="app.textSecondary">
             {t("sandboxCreateLoadingTables")}
