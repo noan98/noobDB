@@ -141,7 +141,8 @@ function compileValuePredicate(f: ColumnFilter): (v: Exclude<CellValue, null | u
       const present = operands.filter((x) => x !== "");
       const allInt = present.length > 0 && present.every(isIntegerLiteral);
       const abig = allInt && a !== "" ? BigInt(a) : null;
-      const bbig = allInt && b !== "" ? BigInt(b) : null;
+      // value2 は between のときだけ検証済み。op を切り替えても残るので、他の op では使わない。
+      const bbig = f.op === "between" && allInt && b !== "" ? BigInt(b) : null;
       const an = a === "" ? NaN : Number(a);
       const bn = b === "" ? NaN : Number(b);
       const lo = Number.isNaN(an) ? -Infinity : an;
