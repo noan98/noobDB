@@ -5,12 +5,14 @@
 
 mod ai;
 mod assertions;
+mod atomic_write;
 mod cache;
 mod commands;
 mod db;
 mod error;
 mod flight_recorder;
 mod history;
+mod json_tolerant;
 mod logs;
 mod perf;
 mod plan_watch;

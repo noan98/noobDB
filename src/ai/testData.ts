@@ -493,8 +493,12 @@ function shuffledOrder(n: number, rng: () => number): number[] {
   return order;
 }
 
-/** 衝突回避のサフィックスを付ける。メールアドレスは `@` の前、宣言長を超えないよう基底を切り詰める。 */
-function withSuffix(s: string, k: number, maxLen: number | null): string {
+/**
+ * 衝突回避のサフィックスを付ける。メールアドレスは `@` の前、宣言長を超えないよう基底を切り詰める。
+ * 宣言長が狭く `_k` では頭 1 文字も残らないときは、区切りなしの base36 連番にする。
+ * 連番すら宣言長に収まらなくなったら (候補空間を使い切った) null を返す。
+ */
+function withSuffix(s: string, k: number, maxLen: number | null): string | null {
   const suffix = `_${k}`;
   const at = s.lastIndexOf("@");
   if (at > 0) {
@@ -503,8 +507,11 @@ function withSuffix(s: string, k: number, maxLen: number | null): string {
     if (maxLen !== null) local = local.slice(0, Math.max(1, maxLen - suffix.length - domain.length));
     return `${local}${suffix}${domain}`;
   }
-  const head = maxLen !== null ? s.slice(0, Math.max(1, maxLen - suffix.length)) : s;
-  return `${head}${suffix}`;
+  if (maxLen === null) return `${s}${suffix}`;
+  let tail = suffix;
+  if (tail.length >= maxLen) tail = k.toString(36);
+  if (tail.length > maxLen) return null;
+  return `${s.slice(0, maxLen - tail.length)}${tail}`;
 }
 
 /**
@@ -533,6 +540,8 @@ function makeUniquifier(maxLen: number | null): (v: CellValue) => CellValue {
     }
     for (let k = nextK.get(key) ?? 2; ; k++) {
       const cand = withSuffix(base, k, maxLen);
+      // 宣言長に収まる候補を使い切った: 無理に作らず元の値を返す (DB 側の一意制約エラーとして表面化する)。
+      if (cand === null) return base;
       if (!used.has(norm(cand))) {
         nextK.set(key, k + 1);
         used.add(norm(cand));
@@ -540,6 +549,22 @@ function makeUniquifier(maxLen: number | null): (v: CellValue) => CellValue {
       }
     }
   };
+}
+
+/**
+ * ルールベース生成 (`generateRows`) の結果で、UNIQUE な列だけ重複値を一意化する。
+ * 先頭行から順に処理するため、先頭 N 行は行数を変えても変わらない (プレビューと実投入が一致する)。
+ */
+export function uniquifyGeneratedRows(
+  specs: ColumnGenSpec[],
+  rows: CellValue[][],
+  uniqueColumns: string[],
+): CellValue[][] {
+  const active = activeSpecs(specs);
+  const uniq = new Set(uniqueColumns);
+  const fns = active.map((s) => (uniq.has(s.column) ? makeUniquifier(declaredLength(s.dataType)) : null));
+  if (fns.every((f) => f === null)) return rows;
+  return rows.map((r) => r.map((v, ci) => (fns[ci] ? (fns[ci] as (v: CellValue) => CellValue)(v) : v)));
 }
 
 function aiColumnValues(
@@ -607,7 +632,9 @@ export function generateAiRows(input: AiTableInput, seed: number): AiTableRows {
   active.forEach((spec, ci) => {
     if (colValues[ci]) return;
     const col = generateRows([spec], input.count, deriveSeed(seed, 2000 + ci));
-    colValues[ci] = col.map((r) => r[0]);
+    // UNIQUE 列は AI 経路でもルールベース生成でも一意化する (重複キーで全件ロールバックしないため)。
+    const uniq = unique.has(spec.column) ? makeUniquifier(declaredLength(spec.dataType)) : null;
+    colValues[ci] = col.map((r) => (uniq ? uniq(r[0]) : r[0]));
   });
 
   const rows: CellValue[][] = [];

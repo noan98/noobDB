@@ -388,6 +388,16 @@ pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> Dri
             .tables
             .iter()
             .any(|t| t.columns.iter().any(|c| !c.extra.is_empty()));
+    // PostgreSQL の IDENTITY 列は後から `extra = "IDENTITY"` を出すようになった。旧世代に
+    // IDENTITY を含む `extra` が 1 つも無いときは、両側から IDENTITY を取り除いて比べる
+    // (生成列があって `ignore_extra` にならない DB でも、更新直後に誤ってドリフトさせない)。
+    let strip_identity = prev.driver == DriverKind::Postgres
+        && next.driver == DriverKind::Postgres
+        && !prev.tables.iter().any(|t| {
+            t.columns
+                .iter()
+                .any(|c| c.extra.to_ascii_uppercase().contains("IDENTITY"))
+        });
     let to_columns = |p: &SnapshotPayload| -> Vec<TableColumns> {
         p.tables
             .iter()
@@ -398,7 +408,9 @@ pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> Dri
                     .iter()
                     .map(|c| {
                         let mut c = c.clone();
-                        if ignore_extra {
+                        if ignore_extra
+                            || (strip_identity && c.extra.eq_ignore_ascii_case("IDENTITY"))
+                        {
                             c.extra.clear();
                         }
                         c
@@ -718,6 +730,27 @@ mod tests {
         gen2.extra = "STORED GENERATED".to_string();
         let old2 = mk(DriverKind::Postgres, vec![gen2, col("g", "integer")]);
         let new2 = mk(DriverKind::Postgres, vec![col("h", "integer"), gen]);
+        assert!(!summarize_payloads(&old2, &new2).tables.is_empty());
+    }
+
+    #[test]
+    fn postgres_identity_extra_is_ignored_against_a_snapshot_without_it() {
+        let mut gen = col("g", "integer");
+        gen.extra = "STORED GENERATED".to_string();
+        let mut id_new = col("id", "bigint");
+        id_new.extra = "IDENTITY".to_string();
+        let mk = |cols: Vec<TableColumnInfo>| SnapshotPayload {
+            driver: DriverKind::Postgres,
+            database: "d".to_string(),
+            tables: vec![table("t", cols, vec![])],
+        };
+        // 旧世代は生成列だけ extra を持ち、IDENTITY はまだ出していない。
+        let old = mk(vec![col("id", "bigint"), gen.clone()]);
+        let new = mk(vec![id_new.clone(), gen.clone()]);
+        assert!(summarize_payloads(&old, &new).tables.is_empty());
+        // 旧世代にも IDENTITY があれば通常どおり比較する (IDENTITY が消えたら検出)。
+        let old2 = mk(vec![id_new, gen.clone()]);
+        let new2 = mk(vec![col("id", "bigint"), gen]);
         assert!(!summarize_payloads(&old2, &new2).tables.is_empty());
     }
 }

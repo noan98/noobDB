@@ -138,11 +138,18 @@ impl LogStore {
         // `Access Denied` になる (Unix の ftruncate は append fd でも成功するため
         // OS 差が出る)。代わりに `truncate(true)` で開き直す — 既存ファイルを
         // O_TRUNC で空にするだけなのでパスも inode も変わらず、全 OS で動く。
-        let fresh = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(self.current_path())?;
+        let path = self.current_path();
+        drop(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&path)?,
+        );
+        // 差し替え後のハンドルも `O_APPEND` にする。独自のオフセットを持つ書き込み専用
+        // ハンドルだと、同じ data dir の別インスタンスが追記した後に自分の書き込みが
+        // 先頭から上書きしてしまう。
+        let fresh = open_append(&path)?;
         inner.file = fresh;
         inner.size = 0;
         inner.reopen_pending = false;
@@ -308,6 +315,20 @@ mod tests {
 
         store.write_bytes(b"after\n").unwrap();
         assert_eq!(store.read(), "after\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // clear 後のハンドルは O_APPEND なので、別インスタンスの追記を上書きしない (#1593)。
+    #[test]
+    fn writes_after_clear_do_not_overwrite_foreign_appends() {
+        let dir = scratch_dir("clear_append");
+        let store = LogStore::open(dir.clone()).unwrap();
+        store.write_bytes(b"before\n").unwrap();
+        store.clear().unwrap();
+        let mut other = open_append(&store.current_path()).unwrap();
+        other.write_all(b"foreign-line\n").unwrap();
+        store.write_bytes(b"mine\n").unwrap();
+        assert_eq!(store.read(), "foreign-line\nmine\n");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

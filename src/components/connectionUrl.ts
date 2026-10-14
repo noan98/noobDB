@@ -171,7 +171,21 @@ export function parseConnectionUrl(input: string): ConnectionUrlResult {
     let body = rest.slice(2);
     const hash = body.indexOf("#");
     if (hash >= 0) body = body.slice(0, hash);
-    const queryStart = body.indexOf("?");
+    let queryStart = body.indexOf("?");
+    if (queryStart >= 0) {
+      // パスワードに未エンコードの `?` があると、その後ろの `@host` までがクエリ扱いになり
+      // host / port を誤認する。`?` の前に `@` も `/` も無く、`?` の後ろ (最初の `/` まで) に
+      // `k=v` ではない形で `@` が続くなら、その `?` はパスワードの一部とみなし、`@` より後ろ
+      // の最初の `?` をクエリの開始にする。
+      const before = body.slice(0, queryStart);
+      if (!before.includes("@") && !before.includes("/")) {
+        const seg = body.slice(queryStart + 1).split("/")[0];
+        const segAt = seg.lastIndexOf("@");
+        if (segAt >= 0 && !seg.slice(0, segAt).includes("=")) {
+          queryStart = body.indexOf("?", queryStart + 1 + segAt + 1);
+        }
+      }
+    }
     const query = queryStart >= 0 ? body.slice(queryStart + 1) : "";
     if (queryStart >= 0) body = body.slice(0, queryStart);
     const slash = body.indexOf("/");

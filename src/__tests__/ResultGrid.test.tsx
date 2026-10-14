@@ -3,7 +3,7 @@ import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { writeStoredGridView } from "../components/gridViewState";
-import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
+import { ResultGrid, rowToPendingInsert, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
@@ -2387,5 +2387,17 @@ describe("ペースト超過行を保留の追加行にする (#1539)", () => {
     paste(cell, "apple\ncherry");
     expect(onBulkEdit).toHaveBeenCalledTimes(1);
     expect(screen.queryByText(t("gridPasteInsertTitle"))).toBeNull();
+  });
+});
+
+describe("rowToPendingInsert: BLOB 列は種に入れない (#1607)", () => {
+  it("バイナリ列の 16 進文字列を文字列として複製しない", () => {
+    const cols = [
+      { name: "id", type_name: "INT" },
+      { name: "data", type_name: "BLOB" },
+    ] as never;
+    const seed = rowToPendingInsert([1, "89504e47"], cols);
+    expect(seed[0]).toBe("1");
+    expect(seed[1]).toBeUndefined();
   });
 });
