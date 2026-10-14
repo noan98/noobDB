@@ -505,13 +505,31 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   const statements: AlterStatement[] = [];
   const unsupported: UnsupportedChange[] = [];
 
+  // 同じ ALTER の中で DROP / リネームして空けた列名を、新規列が再利用するときは、
+  // ADD を先に出すと「列が重複」で失敗する。そのような ADD だけ、名前を空ける文の後ろへ送る。
+  const droppedNames = new Set<string>();
+  const renamedAwayNames = new Set<string>();
+  for (const e of form.existing) {
+    const b = form.baseline.find((x) => x.name === e.original);
+    if (!b) continue;
+    const key = b.name.toLowerCase();
+    if (e.drop) droppedNames.add(key);
+    else if ((e.name.trim() || b.name) !== b.name) renamedAwayNames.add(key);
+  }
+  const lateAdds = new Map<AlterStatement, number>();
   for (const col of form.added) {
-    if (!col.name.trim()) continue;
-    statements.push({
+    const name = col.name.trim();
+    if (!name) continue;
+    const stmt: AlterStatement = {
       sql: `ALTER TABLE ${tIdent} ADD COLUMN ${newColumnLine(driver, col)};`,
       kind: "addColumn",
       destructive: false,
-    });
+    };
+    statements.push(stmt);
+    const lower = name.toLowerCase();
+    // DROP 後 (3 の次) / リネーム・変更後 (1 の次)。
+    if (droppedNames.has(lower)) lateAdds.set(stmt, STATEMENT_ORDER.dropColumn + 0.5);
+    else if (renamedAwayNames.has(lower)) lateAdds.set(stmt, STATEMENT_ORDER.renameColumn + 0.5);
   }
 
   const baselineByName = new Map(form.baseline.map((b) => [b.name, b] as const));
@@ -533,7 +551,8 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
 
   planConstraints(driver, tIdent, form, statements, unsupported);
 
-  statements.sort((a, b) => STATEMENT_ORDER[a.kind] - STATEMENT_ORDER[b.kind]);
+  const orderOf = (st: AlterStatement) => lateAdds.get(st) ?? STATEMENT_ORDER[st.kind];
+  statements.sort((a, b) => orderOf(a) - orderOf(b));
 
   for (const idx of form.indexes) {
     // 不備のある行はここで捨てる。UI は `indexRowProblems` で行ごとにエラーを出し、

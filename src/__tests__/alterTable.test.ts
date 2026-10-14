@@ -418,6 +418,35 @@ describe("buildAlterPlan: statement ordering", () => {
   });
 });
 
+describe("buildAlterPlan: 空けた列名の再利用 (#1602)", () => {
+  it("DROP した列と同名の新規列は DROP の後に ADD する", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "status", type: "text" })],
+        existing: [edit({ original: "status", drop: true })],
+        added: [{ name: "Status", type: "TEXT", notNull: false, defaultValue: "" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "addColumn"]);
+  });
+
+  it("リネームで空けた列名の新規列は RENAME の後・DROP の前に ADD する", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "status", type: "text" }), baseline({ name: "old", type: "int" })],
+        existing: [
+          edit({ original: "status", name: "status_old", type: "text" }),
+          edit({ original: "old", drop: true }),
+        ],
+        added: [{ name: "status", type: "text", notNull: false, defaultValue: "" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["renameColumn", "addColumn", "dropColumn"]);
+  });
+});
+
 describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
   it("ADD COLUMN の式 DEFAULT を全方言で文字列化しない", () => {
     const pg = buildAlterPlan(

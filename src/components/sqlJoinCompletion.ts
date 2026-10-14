@@ -47,6 +47,11 @@ const RESERVED = new Set([
   "create", "drop", "alter", "set", "with", "true", "false", "unique", "foreign",
 ]);
 
+/** 予約語として扱う識別子か (クォートしないと構文エラーになりうる)。補完の挿入判定と共有する。 */
+export function isReservedIdent(name: string): boolean {
+  return RESERVED.has(name.toLowerCase());
+}
+
 export function unquote(ident: string): string {
   const q = ident[0];
   if ((q === "`" || q === '"') && ident.length >= 2) {
@@ -63,8 +68,7 @@ function lastPart(ref: string): string {
 
 export function quoteIfNeeded(driver: string, name: string): string {
   const plain = driver === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_]\w*$/;
-  const lower = name.toLowerCase();
-  return plain.test(name) && !RESERVED.has(lower) ? name : quoteIdentFor(driver, name);
+  return plain.test(name) && !isReservedIdent(name) ? name : quoteIdentFor(driver, name);
 }
 
 function parseRefs(masked: string): TableRef[] {

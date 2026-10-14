@@ -2168,15 +2168,22 @@ impl BulkDefinitions {
     }
 }
 
+/// (テーブル名, 列) をテーブルごとにまとめる。並びは初出順。大小無視の照合順序では
+/// `Users` / `users` の行が `ORDINAL_POSITION` で交互に並び、直前と比べる隣接グルーピング
+/// だと同じ表が複数に割れる (オブジェクト検索の索引で重複する) ため、名前で束ねる。
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
     let mut out: Vec<TableSchema> = Vec::new();
+    let mut pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (table, column) in pairs {
-        match out.last_mut() {
-            Some(last) if last.name == table => last.columns.push(column),
-            _ => out.push(TableSchema {
-                name: table,
-                columns: vec![column],
-            }),
+        match pos.get(&table).and_then(|&i| out.get_mut(i)) {
+            Some(entry) => entry.columns.push(column),
+            None => {
+                pos.insert(table.clone(), out.len());
+                out.push(TableSchema {
+                    name: table,
+                    columns: vec![column],
+                });
+            }
         }
     }
     out
@@ -2261,6 +2268,7 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     method: r.method,
                     predicate: r.predicate,
                     first_expression_at: None,
+                    ..Default::default()
                 });
                 i
             }
@@ -3908,6 +3916,22 @@ mod tests {
             referenced_column: None,
             comment: None,
         }
+    }
+
+    #[test]
+    fn group_columns_by_table_merges_non_adjacent_case_variants() {
+        // 大小無視照合で `Users` / `users` の行が交互に並んでも、表ごとに 1 件にまとまる。
+        let grouped = super::group_columns_by_table(vec![
+            ("Users".into(), "id".into()),
+            ("users".into(), "id".into()),
+            ("Users".into(), "name".into()),
+            ("users".into(), "email".into()),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].name, "Users");
+        assert_eq!(grouped[0].columns, ["id", "name"]);
+        assert_eq!(grouped[1].name, "users");
+        assert_eq!(grouped[1].columns, ["id", "email"]);
     }
 
     #[test]

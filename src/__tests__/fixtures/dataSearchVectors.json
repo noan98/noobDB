@@ -118,8 +118,8 @@
     },
     {
       "dataType": "timestamptz",
-      "kind": "string",
-      "target": "text"
+      "kind": "date",
+      "target": "excluded"
     },
     {
       "dataType": "datetime",
@@ -155,6 +155,31 @@
       "dataType": "Double",
       "kind": "number",
       "target": "numeric"
+    },
+    {
+      "dataType": "INT4",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "int8",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "FLOAT8",
+      "kind": "number",
+      "target": "numeric"
+    },
+    {
+      "dataType": "TIMETZ",
+      "kind": "time",
+      "target": "excluded"
+    },
+    {
+      "dataType": "BYTEA",
+      "kind": "binary",
+      "target": "excluded"
     }
   ],
   "predicates": [

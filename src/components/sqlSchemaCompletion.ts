@@ -1,6 +1,7 @@
 import type { Completion } from "@codemirror/autocomplete";
 import type { SQLNamespace } from "@codemirror/lang-sql";
 import type { ForeignKey, TableColumnInfo } from "../api/tauri";
+import { isReservedIdent } from "./sqlJoinCompletion";
 
 /**
  * スキーマ補完 (#1413) の名前空間と情報パネルの内容を作る純ロジック。CodeMirror の
@@ -33,6 +34,8 @@ export interface SchemaNamespaceOptions {
 
 /** `Completion.apply` が必要か (単純な識別子でなければクォートして挿入する)。 */
 function needsQuote(label: string, caseInsensitive: boolean): boolean {
+  // 予約語 (`order` / `user` など) は綴りが単純でもクォートしないと構文エラーになる。
+  if (isReservedIdent(label)) return true;
   return !new RegExp("^[a-z_][a-z_\\d]*$", caseInsensitive ? "i" : "").test(label);
 }
 

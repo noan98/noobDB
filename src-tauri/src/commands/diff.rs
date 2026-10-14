@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use tauri::State;
 
 use crate::db::data_diff::{
-    compute_data_diff_ignoring, is_binary_type, is_numeric_literal, sql_literal, DataDiff, RowDiff,
+    compute_data_diff_ignoring, is_binary_type, is_hex_wire, is_numeric_literal, sql_literal,
+    DataDiff, RowDiff,
 };
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sync::quote_ident;
@@ -156,7 +157,7 @@ pub(crate) fn select_rows_sql(
 /// `Value::String` (16 進) を `Bytes` に戻して `X'..'` / `'\x..'` で書く。
 fn key_literal(driver: DriverKind, column_type: &str, value: &Value) -> String {
     match value {
-        Value::String(s) if is_binary_type(column_type) => {
+        Value::String(s) if is_binary_type(column_type) && is_hex_wire(s) => {
             sql_literal(driver, &Value::Bytes(s.clone()))
         }
         Value::String(s) if is_integer_type(column_type) && is_numeric_literal(s.trim()) => {

@@ -118,12 +118,21 @@ export function RoutineEditorModal({
       const msg = String(e);
       if (editing && !atomic && original) {
         // MySQL: DROP 後に CREATE が失敗すると定義が消えるので、元の定義を戻す。
-        // DROP 自体が失敗していた場合は「既に存在する」で失敗するだけで無害。
-        try {
-          await api.runQuery(sessionId, buildRestoreStatement(driver, original), database);
-          setError(t("routineEditFailedRestored", { error: msg }));
-        } catch {
-          setError(t("routineEditFailedNotRestored", { error: msg }));
+        // DROP 自体が失敗した (権限不足など) だけなら元の定義は無傷なので、先に
+        // 定義が残っているかを確認し、残っていれば復元せず通常の失敗として知らせる。
+        const intact = await api
+          .getObjectDefinition(sessionId, database, kind, name ?? "", id)
+          .then((ddl) => ddl.trim().length > 0)
+          .catch(() => false);
+        if (intact) {
+          setError(t("routineEditFailed", { error: msg }));
+        } else {
+          try {
+            await api.runQuery(sessionId, buildRestoreStatement(driver, original), database);
+            setError(t("routineEditFailedRestored", { error: msg }));
+          } catch {
+            setError(t("routineEditFailedNotRestored", { error: msg }));
+          }
         }
       } else {
         setError(t("routineEditFailed", { error: msg }));
@@ -172,6 +181,7 @@ export function RoutineEditorModal({
           </FormSection>
           <Callout tone={atomic ? "info" : "warning"}>
             {atomic ? t("routineEditNoteAtomic") : t("routineEditNoteMysql")}
+            {editing && driver === "postgres" && kind !== "trigger" ? ` ${t("routineEditNotePgOverload")}` : ""}
             {driver === "mysql" ? ` ${t("routineEditNoteMysqlDelimiter")}` : ""}
           </Callout>
           {built.ok && (

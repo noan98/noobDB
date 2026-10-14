@@ -17,7 +17,7 @@ import { Button, Input, PressableButton, Select, Switch } from "./ui";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
-import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
+import { isCompleteCheck, isCompleteForeignKey, isPartialForeignKey } from "./tableConstraints";
 
 /**
  * CREATE TABLE ウィザード。カラム定義をフォームで組み立て、方言に応じた
@@ -144,7 +144,13 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
   const addCol = () => setColumns((cols) => [...cols, emptyColumn(driver)]);
   const removeCol = (i: number) => setColumns((cols) => cols.filter((_, idx) => idx !== i));
 
-  const valid = table.trim().length > 0 && columns.length > 0 && columns.every((c) => c.name.trim().length > 0);
+  // 途中まで入力した FK 行は SQL 生成で黙って捨てられるので、直すまで実行を止める (#1602)。
+  const hasPartialForeignKey = foreignKeys.some(isPartialForeignKey);
+  const valid =
+    table.trim().length > 0 &&
+    columns.length > 0 &&
+    columns.every((c) => c.name.trim().length > 0) &&
+    !hasPartialForeignKey;
   const sql = useMemo(
     () =>
       valid
@@ -330,6 +336,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
           <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
           <CodePreview minH="60px">{sql || t("createTablePreviewEmpty")}</CodePreview>
         </FormSection>
+        {hasPartialForeignKey && <FieldError>{t("createTableForeignKeyIncomplete")}</FieldError>}
         {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
       </ModalBody>
       <ModalFooter>

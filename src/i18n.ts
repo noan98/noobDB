@@ -1843,6 +1843,8 @@ const en = {
   routineEditReadOnly: "This connection is read-only, so the definition cannot be applied.",
   routineEditNoteAtomic:
     "The old definition is replaced inside a single transaction. If the new definition has an error, the current one stays as it is.",
+  routineEditNotePgOverload:
+    "If you change the name or the argument types, a new function is created and the old definition stays (it is not dropped). Drop it separately if it is no longer needed.",
   routineEditNoteMysql:
     "MySQL cannot roll back DDL. The existing definition is dropped first and then re-created. If the new definition fails, noobDB tries to restore the original automatically.",
   routineEditNoteMysqlDelimiter:
@@ -2298,6 +2300,8 @@ const en = {
   createTableRun: "Create",
   createTableToEditor: "Send to editor",
   createTableReadOnly: "This connection is read-only; creation is disabled.",
+  createTableForeignKeyIncomplete:
+    "A foreign key row is incomplete (it needs child columns, a referenced table and the same number of referenced columns). Complete or remove it; incomplete rows are not created.",
   contextMenuCreateTable: "New table...",
   // テーブル保守操作。
   contextMenuCopyTableName: "Copy table name",
@@ -6928,6 +6932,8 @@ const ja: Dict = {
   routineEditReadOnly: "この接続は読み取り専用のため、定義を適用できません。",
   routineEditNoteAtomic:
     "旧定義の置換は 1 つのトランザクションで実行されます。新しい定義にエラーがあっても現在の定義はそのまま残ります。",
+  routineEditNotePgOverload:
+    "名前や引数の型を変えると新しい関数が作られ、旧定義は削除されずに残ります (不要なら別途削除してください)。",
   routineEditNoteMysql:
     "MySQL は DDL を巻き戻せません。既存の定義を先に削除してから再作成します。新しい定義が失敗した場合は、元の定義への復元を自動で試みます。",
   routineEditNoteMysqlDelimiter:
@@ -7381,6 +7387,8 @@ const ja: Dict = {
   createTableRun: "作成",
   createTableToEditor: "エディタへ送る",
   createTableReadOnly: "この接続は読み取り専用のため作成できません。",
+  createTableForeignKeyIncomplete:
+    "入力が途中の外部キー行があります (子列・参照先テーブル・同数の参照列が必要です)。入力を完成させるか行を削除してください。不完全な行は作成されません。",
   contextMenuCreateTable: "テーブルを新規作成",
   // テーブル保守操作。
   contextMenuCopyTableName: "テーブル名をコピー",

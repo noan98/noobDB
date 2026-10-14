@@ -46,14 +46,16 @@ pub fn classify_type_name(type_name: &str) -> CellKind {
     match t.as_str() {
         "TINYINT" | "SMALLINT" | "MEDIUMINT" | "INT" | "INTEGER" | "BIGINT" | "YEAR" | "FLOAT"
         | "DOUBLE" | "REAL" | "TINYINT UNSIGNED" | "SMALLINT UNSIGNED" | "MEDIUMINT UNSIGNED"
-        | "INT UNSIGNED" | "BIGINT UNSIGNED" => CellKind::Number,
+        | "INT UNSIGNED" | "BIGINT UNSIGNED" | "INT2" | "INT4" | "INT8" | "FLOAT4" | "FLOAT8" => {
+            CellKind::Number
+        }
         "DECIMAL" | "NEWDECIMAL" | "NUMERIC" => CellKind::Decimal,
         "BOOLEAN" | "BOOL" => CellKind::Bool,
-        "DATE" | "DATETIME" | "TIMESTAMP" => CellKind::Date,
-        "TIME" => CellKind::Time,
+        "DATE" | "DATETIME" | "TIMESTAMP" | "TIMESTAMPTZ" => CellKind::Date,
+        "TIME" | "TIMETZ" => CellKind::Time,
         "JSON" | "JSONB" => CellKind::Json,
         "ENUM" | "SET" => CellKind::Enum,
-        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" => {
+        "BLOB" | "TINYBLOB" | "MEDIUMBLOB" | "LONGBLOB" | "BINARY" | "VARBINARY" | "BYTEA" => {
             CellKind::Binary
         }
         _ => CellKind::String,

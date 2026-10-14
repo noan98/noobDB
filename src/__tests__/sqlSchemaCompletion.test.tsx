@@ -88,6 +88,13 @@ describe("buildSchemaNamespace", () => {
     expect(ns["my table"].children[0].apply).toBe("`a b`");
   });
 
+  it("予約語の表名・列名はクォートして apply する (#1602)", () => {
+    const ns = buildSchemaNamespace({ ...base, tables: { user: ["order", "name"] } }) as Record<string, Node>;
+    expect(ns.user.self.apply).toBe("`user`");
+    expect(ns.user.children[0].apply).toBe("`order`");
+    expect(ns.user.children[1].apply).toBeUndefined();
+  });
+
   it("識別子内の引用符文字は二重化して apply する", () => {
     const ns = buildSchemaNamespace({ ...base, tables: { "a`b": ["c`d"] } }) as Record<string, Node>;
     expect(ns["a`b"].self.apply).toBe("`a``b`");

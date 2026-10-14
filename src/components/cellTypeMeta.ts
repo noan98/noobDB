@@ -107,6 +107,12 @@ const NUMERIC_TYPES = new Set([
   "FLOAT",
   "DOUBLE",
   "REAL",
+  // PostgreSQL の結果列は sqlx の `type_info().name()` (INT4 / FLOAT8 など) で来る。
+  "INT2",
+  "INT4",
+  "INT8",
+  "FLOAT4",
+  "FLOAT8",
   "TINYINT UNSIGNED",
   "SMALLINT UNSIGNED",
   "MEDIUMINT UNSIGNED",
@@ -115,8 +121,8 @@ const NUMERIC_TYPES = new Set([
 ]);
 
 const DECIMAL_TYPES = new Set(["DECIMAL", "NEWDECIMAL", "NUMERIC"]);
-const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP"]);
-const TIME_TYPES = new Set(["TIME"]);
+const DATE_TYPES = new Set(["DATE", "DATETIME", "TIMESTAMP", "TIMESTAMPTZ"]);
+const TIME_TYPES = new Set(["TIME", "TIMETZ"]);
 const BINARY_TYPES = new Set([
   "BLOB",
   "TINYBLOB",
@@ -124,6 +130,7 @@ const BINARY_TYPES = new Set([
   "LONGBLOB",
   "BINARY",
   "VARBINARY",
+  "BYTEA",
 ]);
 
 export function classifyTypeName(typeName: string): CellKind {

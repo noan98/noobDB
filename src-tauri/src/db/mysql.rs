@@ -2120,6 +2120,7 @@ impl MySqlConn {
                     method,
                     predicate: None,
                     first_expression_at: None,
+                    ..Default::default()
                 }
             });
             match column {

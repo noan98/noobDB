@@ -896,15 +896,18 @@ impl SqliteConn {
     }
 
     pub async fn columns(&self, _db: &str, table: &str) -> Result<Vec<TableColumnInfo>> {
-        // PRAGMA can't be bound — quote the identifier manually after rejecting
-        // anything that could break the literal.
-        if table.contains('"') || table.contains('\0') {
+        // PRAGMA can't be bound — quote the identifier manually (`"` は `""` に二重化)
+        // after rejecting NUL.
+        if table.contains('\0') {
             return Err(AppError::InvalidInput("invalid table name".into()));
         }
         // PRAGMA foreign_key_list: id, seq, table, from, to, on_update, on_delete, match.
         // Map each local column ("from") to its referenced table and column ("to",
         // which is NULL when the FK targets the parent's primary key implicitly).
-        let fk_sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+        let fk_sql = format!(
+            "PRAGMA foreign_key_list(\"{}\")",
+            table.replace('"', "\"\"")
+        );
         let fk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(fk_sql))
             .fetch_all(&self.pool)
             .await?;
@@ -931,11 +934,11 @@ impl SqliteConn {
         let mut resolved_pks: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
         for ref_table in &implicit_tables {
-            if ref_table.contains('"') || ref_table.contains('\0') {
+            if ref_table.contains('\0') {
                 resolved_pks.insert(ref_table.clone(), None);
                 continue;
             }
-            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table);
+            let pk_sql = format!("PRAGMA table_info(\"{}\")", ref_table.replace('"', "\"\""));
             let pk_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(pk_sql))
                 .fetch_all(&self.pool)
                 .await
@@ -965,7 +968,7 @@ impl SqliteConn {
             }
         }
 
-        let sql = format!("PRAGMA table_info(\"{}\")", table);
+        let sql = format!("PRAGMA table_info(\"{}\")", table.replace('"', "\"\""));
         let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
             .fetch_all(&self.pool)
             .await?;
@@ -1196,10 +1199,13 @@ impl SqliteConn {
         let tables = self.tables(db).await?;
         let mut out = Vec::new();
         for table in tables {
-            if table.contains('"') || table.contains('\0') {
+            if table.contains('\0') {
                 continue;
             }
-            let sql = format!("PRAGMA foreign_key_list(\"{}\")", table);
+            let sql = format!(
+                "PRAGMA foreign_key_list(\"{}\")",
+                table.replace('"', "\"\"")
+            );
             let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .fetch_all(&self.pool)
                 .await?;
@@ -1291,6 +1297,7 @@ impl SqliteConn {
                 method: None,
                 predicate,
                 first_expression_at,
+                ..Default::default()
             });
         }
         Ok(out)
