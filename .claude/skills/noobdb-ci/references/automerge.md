@@ -35,6 +35,27 @@ PR が止まりやすく運用に合わなかったため撤去しました。**
 作成時刻の最小値だけを使う)、利用上限で永久停止しない逃げ道を用意することの 3 点を
 押さえてください。このゲートを撤去するコミットより前の `automerge.yml` (git 履歴) に実装があります。
 
+## マージできなかった理由の通知 (#1632)
+
+判定失敗 (`hold_fail`) とリトライ後のマージ失敗では、PR に
+`<!-- automerge: notice -->` マーカー付きのコメントを **PR 単位で 1 件だけ**
+作成または更新し (再評価で増やさない)、Job Summary に最後の `mergeStateStatus` 等の
+理由を残す。次回マージに成功したら同じコメントを「解消しました (マージ済み)」へ編集する。
+失敗の記録が無い PR には何も書かない。
+
+- 判定 (作成 / 更新 / 何もしない・本文) は `scripts/automerge-notice.mjs` の純関数で、
+  `scripts/automerge-notice.test.mjs` (`pnpm run test:scripts`) が固定している。
+  シェル側 (`post_notice`) は材料を渡して結果を適用するだけで、失敗しても
+  ジョブの結論は変えない (ベストエフォート)。
+- **自己再帰しない**: 本文が `<!-- automerge:` を含むため、`issue_comment` トリガの
+  `if` と `automerge-hold.mjs` の両方で除外される。GITHUB_TOKEN 発のコメントは
+  そもそも別のワークフローを起動しない。既存コメントの探索は bot 投稿に限る
+  (人間がマーカーを真似ても編集対象にならない)。
+- 権限: 既存の `permissions` の `pull-requests: write` / `issues: write` で足りる。
+- Dependabot PR も `automerge.yml` が処理する。`dependabot-auto-merge.yml` は存在しない
+  (GitHub 上に残る同名の休眠ワークフローは過去の PR ブランチ由来の登録の残骸で、
+  main にファイルは無い)。
+
 ## 関連する環境変数 (`automerge.yml` の `env`)
 
 | 変数 | 既定値 | 役割 |

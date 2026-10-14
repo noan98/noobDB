@@ -62,7 +62,7 @@ name: automerge
 #     なり、「依頼より後の push」の判定を誤らせるため。
 #   - **判定ロジックはシェルに埋めず `scripts/automerge-hold.mjs` に置く**。
 #     Actions の実環境では動作確認できないため、純関数にして
-#     `scripts/automerge-hold.test.mjs` (`pnpm run test:scripts`、ci.yml の
+#     `scripts/automerge-hold.test.mjs` (通知コメント側は `automerge-notice.test.mjs`。`pnpm run test:scripts`、ci.yml の
 #     `automerge gate (script tests)` ジョブ) で境界ケースを固定している。
 #     スクリプトは **既定ブランチ (main) から** sparse checkout して実行する
 #     (PR 側のコードは実行しない = 冒頭の方針を維持)。取得・実行に失敗したら
@@ -143,7 +143,8 @@ jobs:
        !contains(github.event.comment.body, '<!-- automerge:') &&
        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association))
     steps:
-      # Step 4b の判定スクリプト (scripts/automerge-hold.mjs) だけを **既定ブランチ
+      # Step 4b の判定スクリプト (scripts/automerge-hold.mjs) と、見送り理由の通知コメントの
+      # 判定スクリプト (scripts/automerge-notice.mjs, #1632) だけを **既定ブランチ
       # から** 取得する。pull_request_review では既定の checkout 対象が PR の merge
       # ref になるため、ref を明示して PR 由来のコードを実行しないようにする。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -152,6 +153,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/automerge-hold.mjs
+            scripts/automerge-notice.mjs
           sparse-checkout-cone-mode: false
 
       - name: Setup Node
@@ -167,6 +169,7 @@ jobs:
           REVIEW_PR: ${{ github.event.pull_request.number }}
           ISSUE_PR: ${{ github.event.issue.number }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
 
@@ -237,11 +240,41 @@ jobs:
           fi
           echo "head ($headSha) の push 観測時刻: ${push_observed_at:-(不明)}"
 
+          # マージできなかった理由を PR に 1 件だけ残す (#1632)。マーカー付きコメントを
+          # PR 単位で作成または更新し、次回マージに成功したら「解消」へ編集する。
+          # 判定は scripts/automerge-notice.mjs (ユニットテスト付き)。ベストエフォート:
+          # ここでの失敗でジョブの結論 (マージしない) は変えない。
+          # コメント数が多いと引数長の上限 (MAX_ARG_STRLEN) に当たるので、配列は
+          # ファイル経由 (--slurpfile / 標準入力) で渡す。
+          # 使い方: post_notice <hold_fail|merge_failed|resolved> [mergeStateStatus] [詳細]
+          post_notice() {
+            local kind="$1" mss_final="${2:-}" detail="${3:-}" tmp plan action cid body
+            tmp="$(mktemp -d)" || { echo "::warning::一時ディレクトリを作れませんでした。"; return 0; }
+            gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq '.[]' | jq -s '.' > "$tmp/comments.json" || {
+              echo "::warning::通知コメントの既存分を取得できませんでした。"; rm -rf "$tmp"; return 0; }
+            plan="$(jq -n --slurpfile comments "$tmp/comments.json" --arg kind "$kind" --arg headSha "${headSha:-}" \
+                  --arg mergeStateStatus "$mss_final" --arg detail "$detail" --arg runUrl "$RUN_URL" \
+                  '{comments: $comments[0], kind: $kind, headSha: $headSha, mergeStateStatus: $mergeStateStatus,
+                    detail: $detail, runUrl: $runUrl}' | node scripts/automerge-notice.mjs)" || {
+              echo "::warning::通知コメントの計画に失敗しました。"; rm -rf "$tmp"; return 0; }
+            rm -rf "$tmp"
+            action="$(echo "$plan" | jq -r '.action')" || { echo "::warning::通知コメントの計画を読めませんでした。"; return 0; }
+            body="$(echo "$plan" | jq -r '.body // empty')" || { echo "::warning::通知コメントの本文を読めませんでした。"; return 0; }
+            case "$action" in
+              create) gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" >/dev/null \
+                        || echo "::warning::通知コメントの作成に失敗しました。" ;;
+              update) cid="$(echo "$plan" | jq -r '.commentId')" || { echo "::warning::通知コメントの ID を読めませんでした。"; return 0; }
+                      gh api -X PATCH "repos/$GH_REPO/issues/comments/$cid" -f body="$body" >/dev/null \
+                        || echo "::warning::通知コメントの更新に失敗しました。" ;;
+            esac
+            return 0
+          }
+
           # 4b. 変更依頼ゲート (#1108)。判定方式とその根拠はファイル冒頭の
           #     「Step 4b の判定方式と、そう決めた理由」を参照。判定ロジックは
           #     scripts/automerge-hold.mjs (ユニットテスト付き) にあり、ここでは
           #     材料 (ラベル・issue comment・レビュー・push 観測時刻) を集めて渡すだけ。
-          #               #     マージ直前 (Step 7) にも同じ判定をやり直すため関数にしてある。
+          #     マージ直前 (Step 7) にも同じ判定をやり直すため関数にしてある。
           #     副作用として pr_comments / pr_reviews を更新する。
           #     **注意**: `if check_hold` の条件部として呼ぶため、関数内では
           #     `set -e` が効かない。取得・判定の失敗で「保留なし」に倒れないよう
@@ -249,6 +282,8 @@ jobs:
           #     hold_fail でジョブごと止める。
           hold_fail() {
             echo "::error title=変更依頼ゲートの判定に失敗しました::$1 安全側でマージしません。"
+            echo "### :x: 変更依頼ゲートの判定に失敗しました: $1" >> "$GITHUB_STEP_SUMMARY"
+            post_notice hold_fail "" "$1"
             exit 1
           }
           check_hold() {
@@ -333,9 +368,10 @@ jobs:
           # 7. mergeStateStatus を見ながらマージする。GitHub の再計算待ちは
           #    指数バックオフ (5,10,20,40,80 秒) で最大 5 回リトライする。
           delay=5
-          merged="false"
+          merged="false"; last_mss=""
           for i in 1 2 3 4 5; do
             mss="$(gh pr view "$PR" --json mergeStateStatus --jq '.mergeStateStatus')"
+            last_mss="$mss"
             echo "mergeStateStatus=$mss (試行 $i/5)"
             case "$mss" in
               CLEAN|UNSTABLE|HAS_HOOKS)
@@ -368,10 +404,20 @@ jobs:
           done
 
           if [ "$merged" != "true" ]; then
-            echo "マージできませんでした。"
+            echo "マージできませんでした (最後の mergeStateStatus=${last_mss:-不明})。"
+            {
+              echo "### :warning: リトライ後もマージできませんでした"
+              echo ""
+              echo "- 対象 PR: #$PR (head \`$headSha\`)"
+              echo "- 最後の mergeStateStatus: \`${last_mss:-不明}\`"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            post_notice merge_failed "$last_mss"
             exit 0
           fi
           echo "PR #$PR をマージしました。"
+          # 過去に「マージできなかった」通知を残していたら、解消済みに編集する。
+          post_notice resolved
 
           # 8. (ベストエフォート) PR 本文のクローズキーワードから Issue を閉じる。
           #    main は既定ブランチなので通常は GitHub が自動クローズするが、
