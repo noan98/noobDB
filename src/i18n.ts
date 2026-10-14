@@ -1931,6 +1931,7 @@ const en = {
   localPanelDropConfirmOk: "Drop",
   localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "A script is still running in this tab. Stop it first.",
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
   batchBackToResult: "Editor result",
@@ -4746,6 +4747,8 @@ const en = {
   taskHistoryClear: "Clear run history",
   taskHistoryClearConfirm: 'Delete all run history for "{name}"? This cannot be undone.',
   taskRunCatchUp: "catch-up",
+  taskRunStatusSkipped: "skipped",
+  taskRunSkippedReason: "Scheduled run skipped: the previous run was still in progress",
   taskRunRows: "{rows} rows",
   taskRunAttempts: "{n} attempts",
   taskRunBytes: "{bytes} bytes",
@@ -7041,6 +7044,7 @@ const ja: Dict = {
   localPanelDropConfirmOk: "削除",
   localPanelLoading: "読み込み中…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "このタブではスクリプトを実行中です。先に停止してください。",
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
   batchBackToResult: "エディタの結果",
@@ -9851,6 +9855,8 @@ const ja: Dict = {
   taskHistoryClear: "実行履歴を消去",
   taskHistoryClearConfirm: "タスク「{name}」の実行履歴をすべて削除しますか? この操作は取り消せません。",
   taskRunCatchUp: "追い掛け実行",
+  taskRunStatusSkipped: "見送り",
+  taskRunSkippedReason: "予定の実行を見送りました (前の実行がまだ終わっていません)",
   taskRunRows: "{rows} 行",
   taskRunAttempts: "{n} 回試行",
   taskRunBytes: "{bytes} バイト",

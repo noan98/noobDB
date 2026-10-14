@@ -307,6 +307,46 @@ async fn record_in_with_cap(pool: &SqlitePool, entry: NewTaskRun, max_rows: i64)
     Ok(id)
 }
 
+/// 同一タスクの予定発火を見送った記録 (`status = "skipped"`) を残す。直前の実行履歴が
+/// すでに skipped なら追加せず `None` を返す (見送りが続いても行が増えて本来の実行行を
+/// 押し出さないようにする)。
+pub async fn record_skipped(entry: NewTaskRun) -> Result<Option<i64>> {
+    record_skipped_in(pool().await?, entry).await
+}
+
+async fn record_skipped_in(pool: &SqlitePool, entry: NewTaskRun) -> Result<Option<i64>> {
+    let latest = list_in(pool, Some(&entry.task_id), 1).await?;
+    if let Some(prev) = latest.first().filter(|r| r.status == entry.status) {
+        // まとめた最新の見送り時刻に更新しておく。
+        sqlx::query("UPDATE task_runs SET finished_at = ? WHERE id = ?")
+            .bind(entry.finished_at)
+            .bind(prev.id)
+            .execute(pool)
+            .await?;
+        return Ok(None);
+    }
+    Ok(Some(
+        record_in_with_cap(pool, entry, MAX_TASK_RUN_ROWS).await?,
+    ))
+}
+
+/// id で実行ログを 1 件取る。
+pub async fn get(id: i64) -> Result<Option<TaskRun>> {
+    get_in(pool().await?, id).await
+}
+
+async fn get_in(pool: &SqlitePool, id: i64) -> Result<Option<TaskRun>> {
+    let row: Option<SqliteRow> = sqlx::query(
+        "SELECT id, task_id, started_at, finished_at, status, error, output_path,
+                \"rows\", bytes, elapsed_ms, catch_up, attempts
+         FROM task_runs WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(row_to_run))
+}
+
 /// 全体の上限を超えても、タスクごとに直近この件数は残す (低頻度タスクの履歴が、
 /// 頻繁に動く別タスクの行で押し出されないようにする)。
 const MIN_RUNS_KEPT_PER_TASK: i64 = 50;
@@ -460,6 +500,35 @@ mod tests {
         assert_eq!(t1_only.len(), 2);
         assert!(t1_only.iter().all(|r| r.task_id == "t1"));
         assert_eq!(t1_only[0].status, "error");
+    }
+
+    /// #1594: 手動実行中に予定発火が見送られて skipped 行が新しく記録されても、
+    /// 手動実行の結果は id で取れる。連続する skipped は 1 行にまとめる。
+    #[tokio::test]
+    async fn get_by_id_ignores_newer_skipped_rows_and_skipped_coalesce() {
+        let pool = temp_pool().await;
+        let manual = record_in_with_cap(&pool, entry("t1", "ok", "2026-01-01T00:00:00Z"), 100)
+            .await
+            .unwrap();
+        let first = record_skipped_in(&pool, entry("t1", "skipped", "2026-01-01T00:00:10Z"))
+            .await
+            .unwrap();
+        assert!(first.is_some());
+        let second = record_skipped_in(&pool, entry("t1", "skipped", "2026-01-01T00:00:20Z"))
+            .await
+            .unwrap();
+        assert!(second.is_none());
+        let skipped = list_in(&pool, Some("t1"), 1).await.unwrap();
+        assert_eq!(skipped[0].finished_at, "2026-01-01T00:00:20Z");
+        assert_eq!(list_in(&pool, Some("t1"), 100).await.unwrap().len(), 2);
+        // 最新行は skipped だが、id 指定なら手動実行の行が返る。
+        assert_eq!(
+            list_in(&pool, Some("t1"), 1).await.unwrap()[0].status,
+            "skipped"
+        );
+        let got = get_in(&pool, manual).await.unwrap().unwrap();
+        assert_eq!(got.status, "ok");
+        assert!(get_in(&pool, 9999).await.unwrap().is_none());
     }
 
     /// #1537: 試行回数が実行ログに残り、`attempts` 列の無い旧 DB も開ける。

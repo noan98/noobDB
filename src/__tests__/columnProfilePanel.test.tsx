@@ -191,3 +191,22 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
     expect(onSelect).toHaveBeenCalledWith("payload");
   });
 });
+
+describe("ColumnProfilePanel 列の解除と走行中の応答 (#1594)", () => {
+  it("集計の走行中に列を外しても、前の列の結果は表示されない", async () => {
+    let resolve: (p: Awaited<ReturnType<typeof api.profileColumn>>) => void = () => {};
+    vi.mocked(api.profileColumn).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const mk = (column: string | null) => (
+      <ColumnProfilePanel sessionId="s1" driver="mysql" target={{ database: "app", table: "orders", column }} onSelectColumn={() => {}} />
+    );
+    const { rerender } = renderWithProviders(mk("a"));
+    await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(1));
+    rerender(mk(null));
+    resolve({
+      data_type: "int", total_count: 10, null_count: 0, distinct_count: 10, distinct_approximate: false,
+      min_value: null, max_value: null, top_values: [], histogram: [], notes: [],
+    } as never);
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText(t("profileTotal"))).not.toBeInTheDocument();
+  });
+});

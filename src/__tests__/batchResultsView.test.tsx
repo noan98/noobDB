@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
 import { t } from "../i18n";
 import { BatchResultsView } from "../components/BatchResultsView";
@@ -37,5 +37,20 @@ describe("BatchResultsView の件数表示 (#1534)", () => {
   it("総数が不明なまま切り詰めたときは「先頭 N 行のみ」と注記する", () => {
     render({ sql: "SELECT id FROM t", status: "ok", columns, rows: [[1], [2]], truncated: true });
     expect(screen.getByText(t("batchRowsTruncated", { shown: 2 }), { exact: false })).toBeInTheDocument();
+  });
+});
+
+describe("BatchResultsView の停止ボタン (#1594)", () => {
+  it("実行中だけ停止ボタンを出し、押すと onStop を呼ぶ", () => {
+    const onStop = vi.fn();
+    const { rerender } = renderWithProviders(
+      <BatchResultsView results={[]} running onRerun={() => {}} onClose={() => {}} onStop={onStop} />,
+    );
+    screen.getByTestId("batch-stop").click();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    rerender(
+      <BatchResultsView results={[]} running={false} onRerun={() => {}} onClose={() => {}} onStop={onStop} />,
+    );
+    expect(screen.queryByTestId("batch-stop")).toBeNull();
   });
 });

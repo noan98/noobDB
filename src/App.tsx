@@ -1,4 +1,5 @@
 import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -2222,6 +2223,8 @@ export default function App() {
   // we can synchronously cancel from anywhere (tab close, disconnect).
   const streamUnlistenRef = useRef<Map<string, UnlistenFn>>(new Map());
   const streamIdRef = useRef<Map<string, string>>(new Map());
+  // タブごとの「今のバッチ実行」の streamId。停止・再実行後に届く古い実行の通知を捨てる判定に使う。
+  const batchStreamRef = useRef<Map<string, string>>(new Map());
   // Wall-clock start of each tab's in-flight run (keyed by tab id). Read on
   // cancel to compute elapsed time for the completion notification (#707),
   // since `tab.result.elapsed_ms` stays 0 until the first row batch arrives.
@@ -4044,6 +4047,11 @@ export default function App() {
       setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
       return;
     }
+    // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
+    if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
+      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+      return;
+    }
     const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
     const outCtx = outputCtxFor(sid);
     await cancelStreamForTab(tabId);
@@ -4761,6 +4769,10 @@ export default function App() {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
+    if (tabsRef.current.find((tt) => tt.id === tabId)?.batchRunning) {
+      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+      return;
+    }
     const tab = tabs.find((tt) => tt.id === tabId);
     // プレビュー中は (下の PreviewGrid 分岐で ResultGrid ごと差し替わるため)
     // paginatable を一時的に無効化するが、プレビュー終了後は元のテーブルタブへ
@@ -5194,12 +5206,20 @@ export default function App() {
     }));
     const results: BatchStatementResult[] = [];
     const streamId = newStreamId(tabId);
+    // 停止ボタン・タブを閉じる・切断のキャンセル (cancelStreamForTab) が届くよう登録する。
+    streamIdRef.current.set(tabId, streamId);
+    beginBatchRun(batchStreamRef.current, tabId, streamId);
+    const isCurrentBatch = () => isCurrentBatchRun(batchStreamRef.current, tabId, streamId);
     let unlisten: UnlistenFn | null = null;
     const finish = () => {
       unlisten?.();
       unlisten = null;
+      if (streamIdRef.current.get(tabId) === streamId) streamIdRef.current.delete(tabId);
     };
     const finishRun = (extra: { error?: string } = {}) => {
+      // 停止後や再実行後に届いた古い実行の終了通知は、今の実行の状態を触らない。
+      if (!isCurrentBatch()) return;
+      endBatchRun(batchStreamRef.current, tabId);
       patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
       const okCount = results.filter((r) => r.status === "ok").length;
       const errCount = results.filter((r) => r.status === "error").length;
@@ -5217,9 +5237,11 @@ export default function App() {
     try {
       unlisten = await listenBatchStream(streamId, {
         onStarted: ({ total }) => {
+          if (!isCurrentBatch()) return;
           setStatus({ kind: "key", key: "statusBatchRunning", vars: { total } });
         },
         onResults: ({ results: incoming }) => {
+          if (!isCurrentBatch()) return;
           for (const r of incoming) {
             recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
             results.push(toBatchResult(r));
@@ -5238,7 +5260,10 @@ export default function App() {
         },
         onCancelled: () => {
           finish();
+          const current = isCurrentBatch();
           finishRun();
+          // 終了表示 (statusBatchDone) で上書きされないよう、finishRun の後に設定する。
+          if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
         },
       });
       await api.runSqlBatch({
@@ -5684,6 +5709,19 @@ export default function App() {
   // flag, and keep whatever rows have already arrived. The backend
   // `cancelStream` tears down the cursor while leaving the connection open.
   const stopTab = useCallback(async (tab: Tab) => {
+    if (tab.batchRunning) {
+      // 複数文のバッチ実行 (runBatchInTab) の停止。バックエンドの取消で実行中の文を
+      // 止め、未コミットのトランザクションは巻き戻される。実行済みの文の結果は残す。
+      const delivered = await cancelStreamForTab(tab.id);
+      // 取り消せたときだけここで表示を戻す (以降の古い通知は無視される)。取り消せなかった
+      // (すでに終わっていた) 場合は、届く終了通知 (onDone / onCancelled) に任せる。
+      if (delivered !== null) {
+        endBatchRun(batchStreamRef.current, tab.id);
+        patchTab(tab.id, (tt) => ({ ...tt, batchRunning: false }));
+        setStatus({ kind: "key", key: "statusQueryCancelled" });
+      }
+      return;
+    }
     if (!tab.streaming) return;
     const wasPreview = tab.previewStreaming;
     // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが

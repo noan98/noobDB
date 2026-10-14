@@ -656,6 +656,9 @@ pub async fn run_column_profile(
                     get(base + 1),
                 )
             }
+            // キャンセル・タイムアウト・接続断・サーバ側の中断は、縮退の再走査をせず
+            // そのまま返す (全体概要の `overview_error_is_retryable` と同じ判定)。
+            Err(e) if !overview_error_is_retryable(&e) => return Err(e),
             Err(_) => {
                 // 型の都合で DISTINCT / MIN / MAX が通らない列 (PostgreSQL の
                 // boolean は MIN/MAX を持たないなど)。

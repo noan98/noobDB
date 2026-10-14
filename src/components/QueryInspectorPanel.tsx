@@ -407,7 +407,10 @@ export function QueryInspectorPanel({
       try {
         await api.startStatementRecording(sessionId);
       } catch (e) {
+        // 基準の取得に失敗したまま記録を始めると、前回記録の基準で差分が出てしまう。
+        // 記録は開始せず、エラーを残す (tick の成功で消されない)。
         setError(String(e));
+        return;
       }
     }
     setBaselineAt(Date.now());

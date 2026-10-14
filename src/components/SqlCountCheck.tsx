@@ -38,6 +38,8 @@ export function SqlCountCheck({
   const t = useT();
   const [state, setState] = useState<{ sql: string; result: SuggestionCheckResult | "running" } | null>(null);
   const aliveRef = useRef(true);
+  // 最後に開始した検証の連番。古い検証の結果で新しい実行中表示を上書きしない。
+  const runSeqRef = useRef(0);
   useEffect(() => {
     aliveRef.current = true;
     return () => {
@@ -50,6 +52,7 @@ export function SqlCountCheck({
 
   const run = async () => {
     const target = sql;
+    const seq = ++runSeqRef.current;
     setState({ sql: target, result: "running" });
     const result = await checkSuggestionSql(
       (countSql) =>
@@ -63,7 +66,7 @@ export function SqlCountCheck({
       target,
       driver,
     );
-    if (aliveRef.current) setState({ sql: target, result });
+    if (aliveRef.current && seq === runSeqRef.current) setState({ sql: target, result });
   };
 
   // 実行後に SQL を編集した場合、その結果は今の SQL のものではない。

@@ -171,7 +171,7 @@ pub async fn run_once(
         }
     }
 
-    let profile = match load_profile(&task.profile_id) {
+    let mut profile = match load_profile(&task.profile_id) {
         Ok(p) => p,
         Err(e) => return TaskOutcome::err(e.to_string()),
     };
@@ -222,6 +222,26 @@ pub async fn run_once(
                                 task_id = %task.id,
                                 error = %load_err,
                                 "task scheduler: failed to re-read the task definition before retrying; continuing"
+                            );
+                        }
+                    }
+                    // 待機中に接続先が修正されたかもしれないので、プロファイルも読み直す。
+                    // プロファイルが削除されていたら中止し、I/O エラーなど一時的な失敗のときは
+                    // 直前の内容で再試行を続ける。
+                    match load_profile(&task.profile_id) {
+                        Ok(p) => profile = p,
+                        Err(AppError::InvalidInput(msg)) => {
+                            let mut outcome = TaskOutcome::err(format!(
+                                "connect retry aborted ({msg}) after {attempts} attempts: {e}"
+                            ));
+                            outcome.attempts = attempts;
+                            return outcome;
+                        }
+                        Err(load_err) => {
+                            tracing::warn!(
+                                task_id = %task.id,
+                                error = %load_err,
+                                "task scheduler: failed to re-read the profile before retrying; continuing with the previous one"
                             );
                         }
                     }
