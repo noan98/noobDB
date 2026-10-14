@@ -56,8 +56,26 @@ fn load_from(path: &Path) -> Result<Vec<Assertion>> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let file: AssertionFile = serde_json::from_str(&content)?;
-    Ok(file.assertions)
+    match serde_json::from_str::<AssertionFile>(&content) {
+        Ok(file) => Ok(file.assertions),
+        Err(e) => {
+            // 壊れたままだと一覧・追加・編集・削除・定期タスクのアサーション実行が
+            // すべて失敗し、画面から復旧できない。`tasks.json` と同じく退避して
+            // 空から再開する (退避先は `assertions.json.corrupt-<UTC>`。内容は失わない)。
+            let backup = path.with_file_name(format!(
+                "{FILE_NAME}.corrupt-{}",
+                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            ));
+            tracing::error!(
+                path = %path.display(),
+                backup = %backup.display(),
+                error = %e,
+                "assertions: assertions.json is corrupt; moving it aside and starting empty"
+            );
+            std::fs::rename(path, &backup)?;
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_from` と対。
@@ -219,6 +237,28 @@ mod tests {
         let path = dir.join(FILE_NAME);
         std::fs::write(&path, "  \n").unwrap();
         assert!(load_from(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 壊れた JSON は退避して空から再開し、その後の追加が成功する。
+    #[test]
+    fn corrupt_file_is_quarantined_and_store_recovers() {
+        let dir = scratch_dir("corrupt");
+        let path = dir.join(FILE_NAME);
+        std::fs::write(&path, "{\"assertions\": [,]}").unwrap();
+        assert!(load_from(&path).unwrap().is_empty());
+        let backups: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(backups[0].path()).unwrap(),
+            "{\"assertions\": [,]}"
+        );
+        upsert_at(&path, sample("aaaaaaaa", "first")).unwrap();
+        assert_eq!(load_from(&path).unwrap().len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

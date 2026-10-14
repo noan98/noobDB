@@ -226,6 +226,17 @@ describe("ConnectionForm connection test feedback (#1006)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("clears the success banner once the connection input is edited (#1593)", async () => {
+    testConnection.mockResolvedValue("ok");
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    await screen.findByText(t("formConnectionOk"));
+    fireEvent.change(screen.getByLabelText(t("formHost")), { target: { value: "other-host" } });
+    await waitFor(() => expect(screen.queryByText(t("formConnectionOk"))).toBeNull());
+  });
+
   it("shows a danger banner with role=alert when the test connection fails", async () => {
     testConnection.mockRejectedValue(new Error("boom"));
     renderWithProviders(
@@ -334,6 +345,16 @@ describe("ConnectionForm AWS IAM authentication (#734)", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(t("formAwsRegionMissing"));
     fireEvent.change(screen.getByLabelText(t("formAwsRegion")), { target: { value: "us-east-1" } });
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("rejects a blank profile name without calling saveProfile (#1593)", async () => {
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByTestId("connection-form-name"), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    expect(await screen.findByText(t("formNameRequired"))).toBeInTheDocument();
+    expect(saveProfile).not.toHaveBeenCalled();
   });
 
   it("restores a saved IAM profile and saves only non-secret IAM settings", async () => {

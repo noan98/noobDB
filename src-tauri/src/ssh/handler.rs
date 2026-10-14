@@ -98,10 +98,18 @@ impl ClientHandler {
         // write (forget / re-trust / migrate) can't drop this appended entry.
         let _guard = super::known_hosts::lock_known_hosts();
         let path = self.known_hosts_path()?;
+        // 手で編集されて末尾改行の無いファイルへ追記すると直前のエントリに連結されて壊れる
+        // ので、必要なら先に改行を足す。
+        let needs_newline = std::fs::read(&path)
+            .map(|b| b.last().is_some_and(|&c| c != b'\n'))
+            .unwrap_or(false);
         let mut f = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)?;
+        if needs_newline {
+            f.write_all(b"\n")?;
+        }
         writeln!(
             f,
             "{}:{} {}",
@@ -199,7 +207,12 @@ impl Handler for ClientHandler {
                     "ssh host key not in known_hosts; trust-on-first-use, remembering {fingerprint}"
                 );
                 if let Err(e) = self.remember(&fingerprint) {
-                    tracing::warn!("failed to persist known_hosts entry: {e}");
+                    // 記録できないまま受理すると、以後も毎回 TOFU 扱いになり鍵変更 (MITM) を
+                    // 検出できない。lookup 失敗側と同じく fail-closed にする。
+                    tracing::warn!(
+                        "failed to persist known_hosts entry: {e}; refusing connection (fail-closed)"
+                    );
+                    return Err(russh::Error::UnknownKey);
                 }
                 Ok(true)
             }
@@ -347,6 +360,45 @@ mod tests {
         assert_eq!(recorded.trim(), format!("ssh.example.com:22 {modern}"));
 
         std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // 末尾改行の無い手編集ファイルへ追記しても直前のエントリを壊さない (#1593)。
+    #[tokio::test]
+    async fn first_use_appends_after_missing_trailing_newline() {
+        let key = PublicKey::from_openssh(KEY_A).unwrap();
+        let modern = key.fingerprint(HashAlg::Sha256).to_string();
+        let path = temp_known_hosts();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "a.example.com:22 SHA256:X").unwrap();
+
+        let mut handler = ClientHandler::with_known_hosts("b.example.com", 22, path.clone());
+        assert!(handler.check_server_key(&key.clone().into()).await.unwrap());
+
+        let recorded = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            recorded,
+            format!("a.example.com:22 SHA256:X\nb.example.com:22 {modern}\n")
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    // 初回鍵を記録できないときは受理せず fail-closed にする (#1593)。
+    // 宛先が存在しないリンクの known_hosts は lookup では未記録 (Ok(None))、追記は失敗する。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn first_use_is_rejected_when_recording_fails() {
+        let key = PublicKey::from_openssh(KEY_A).unwrap();
+        let path = temp_known_hosts();
+        let dir = path.parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(dir.join("missing-dir").join("kh"), &path).unwrap();
+
+        let mut handler = ClientHandler::with_known_hosts("ssh.example.com", 22, path.clone());
+        assert!(matches!(
+            handler.check_server_key(&key.clone().into()).await,
+            Err(russh::Error::UnknownKey)
+        ));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     // H3: known_hosts の全体書き換え (replace_entry が使う write_atomic) は

@@ -723,12 +723,26 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     return ok;
   };
 
+  // 接続テストに成功したときの入力内容。以後に接続先 / 認証 / SSH などが書き換わったら、
+  // 古い成功バナーを消す (テストしていない接続先が検証済みに見えて保存されるのを防ぐ)。
+  const testedSigRef = useRef<string | null>(null);
+  const requestSig = JSON.stringify(buildRequest());
+  useEffect(() => {
+    if (testedSigRef.current !== null && testedSigRef.current !== requestSig) {
+      testedSigRef.current = null;
+      setMessage(null);
+    }
+  }, [requestSig]);
+
   const handleTest = async () => {
     setError(null); setMessage(null);
+    testedSigRef.current = null;
     if (!validatePorts()) return;
     setTesting(true);
     try {
-      await api.testConnection(buildRequest());
+      const req = buildRequest();
+      await api.testConnection(req);
+      testedSigRef.current = JSON.stringify(req);
       setMessage(t("formConnectionOk"));
     } catch (e) {
       setError(String(e));
@@ -739,6 +753,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const handleSave = async () => {
     setError(null); setMessage(null);
+    if (name.trim() === "") {
+      setError(t("formNameRequired"));
+      return;
+    }
     if (!validatePorts()) return;
     setSaving(true);
     try {

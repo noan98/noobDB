@@ -51,6 +51,9 @@ pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
     let mut in_block = false;
     let mut found = false;
     let mut out = ResolvedSshHost::default();
+    // `ProxyJump none` は「踏み台を使わない」の明示で、最初に得た値として後続ブロックの
+    // ProxyJump も打ち消す (値としては `None` のまま)。
+    let mut proxy_decided = false;
     for raw_line in content.lines() {
         let Some((key, rest)) = split_directive(raw_line) else {
             continue;
@@ -63,6 +66,12 @@ pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
             if in_block {
                 found = true;
             }
+            continue;
+        }
+        if key_lower == "match" {
+            // `Match` の条件は評価しない。本体を直前の `Host` ブロックの値として
+            // 取り込まないよう、ブロックを閉じる (OpenSSH は条件に合うときだけ適用する)。
+            in_block = false;
             continue;
         }
         if !in_block {
@@ -78,7 +87,12 @@ pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
             "identityfile" if out.identity_file.is_none() => {
                 out.identity_file = Some(expand_tilde(rest))
             }
-            "proxyjump" if out.proxy_jump.is_none() => out.proxy_jump = Some(rest.to_string()),
+            "proxyjump" if !proxy_decided => {
+                proxy_decided = true;
+                if !rest.eq_ignore_ascii_case("none") {
+                    out.proxy_jump = Some(rest.to_string());
+                }
+            }
             _ => {}
         }
     }
@@ -168,6 +182,26 @@ pub fn parse_proxy_jump(value: &str) -> Option<ProxyJumpTarget> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Match ブロックの中身は直前の Host に紐付けない (#1593)。
+    #[test]
+    fn match_block_body_is_not_attributed_to_previous_host() {
+        let content =
+            "Host prod\n  HostName 10.0.0.5\nMatch host other.example\n  User admin\n  Port 2200\n";
+        let r = resolve_host(content, "prod").unwrap();
+        assert_eq!(r.host_name.as_deref(), Some("10.0.0.5"));
+        assert_eq!(r.user, None);
+        assert_eq!(r.port, None);
+    }
+
+    // ProxyJump none は踏み台なし。後続ブロックの ProxyJump にも上書きされない。
+    #[test]
+    fn proxy_jump_none_means_no_jump_host() {
+        let content =
+            "Host db\n  HostName 10.0.0.9\n  ProxyJump None\nHost db\n  ProxyJump bastion\n";
+        let r = resolve_host(content, "db").unwrap();
+        assert_eq!(r.proxy_jump, None);
+    }
 
     #[test]
     fn resolves_hostname_port_user_and_identity_file() {

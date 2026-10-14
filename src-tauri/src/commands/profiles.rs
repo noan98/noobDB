@@ -228,9 +228,20 @@ pub async fn save_profile(req: SaveProfileRequest) -> Result<ConnectionProfile> 
     result
 }
 
+/// 空・空白のみのプロファイル名は、接続一覧やヘルス表で中身のない行になるので拒否する。
+fn validate_profile_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "profile name must not be empty".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Persists the profile row and any changed secrets. The secret *values* are
 /// never logged — only which secret kind was set or cleared, at debug level.
 fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
+    validate_profile_name(&req.name)?;
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -278,17 +289,28 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
                 .filter(|p| !p.is_empty()),
         }),
     };
-    // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが失敗しても
-    // profiles.json には何も残らず、フォームとストアがずれない。新規プロファイルの
-    // 途中失敗で書けた秘密は孤立させないよう掃除する。
+    // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが途中で失敗しても
+    // それまでに書いた秘密は元の値へ戻し (既存プロファイル)、新規プロファイルなら孤立
+    // させないよう掃除する。profiles.json には何も残らず、フォームとストアがずれない。
     let is_new = !store::load_all()?.iter().any(|p| p.id == id);
-    if let Err(e) = write_profile_secrets(&id, &req_secrets) {
+    let keyring = KeyringAccess;
+    let undo = match write_profile_secrets(&keyring, &id, &req_secrets) {
+        Ok(undo) => undo,
+        Err(e) => {
+            if is_new {
+                let _ = secrets::delete_all(&id);
+            }
+            return Err(e);
+        }
+    };
+    if let Err(e) = store::upsert(profile.clone()) {
+        // 本体の保存に失敗したら、先に書いた秘密も元へ戻す (keyring だけ新しくならない)。
+        restore_secrets(&keyring, &id, undo);
         if is_new {
             let _ = secrets::delete_all(&id);
         }
         return Err(e);
     }
-    store::upsert(profile.clone())?;
     Ok(profile)
 }
 
@@ -302,62 +324,82 @@ struct ProfileSecretUpdates {
     ssh_jump_password: Option<String>,
 }
 
-fn apply_secret(
-    id: &str,
-    kind: &str,
-    value: &Option<String>,
-    set: impl FnOnce(&str, &str) -> Result<()>,
-    delete: impl FnOnce(&str) -> Result<()>,
-) -> Result<()> {
-    match value.as_deref() {
-        None => Ok(()),
-        Some("") => {
-            tracing::debug!(profile_id = %id, secret = kind, "clearing secret");
-            delete(id)
-        }
-        Some(v) => {
-            tracing::debug!(profile_id = %id, secret = kind, "setting secret");
-            set(id, v)
-        }
+/// keyring 読み書きの抽象 (本番は [`KeyringAccess`]、テストは失敗注入できるメモリ実装)。
+trait SecretAccess {
+    fn get(&self, id: &str, kind: &str) -> Result<Option<String>>;
+    fn set(&self, id: &str, kind: &str, value: &str) -> Result<()>;
+    fn delete(&self, id: &str, kind: &str) -> Result<()>;
+}
+
+struct KeyringAccess;
+
+impl SecretAccess for KeyringAccess {
+    fn get(&self, id: &str, kind: &str) -> Result<Option<String>> {
+        secrets::get_kind(id, kind)
+    }
+    fn set(&self, id: &str, kind: &str, value: &str) -> Result<()> {
+        secrets::set_kind(id, kind, value)
+    }
+    fn delete(&self, id: &str, kind: &str) -> Result<()> {
+        secrets::delete_kind(id, kind)
     }
 }
 
-fn write_profile_secrets(id: &str, u: &ProfileSecretUpdates) -> Result<()> {
-    apply_secret(
-        id,
-        "db_password",
-        &u.db_password,
-        secrets::set_db_password,
-        secrets::delete_db_password,
-    )?;
-    apply_secret(
-        id,
-        "ssh_passphrase",
-        &u.ssh_passphrase,
-        secrets::set_ssh_passphrase,
-        secrets::delete_ssh_passphrase,
-    )?;
-    apply_secret(
-        id,
-        "ssh_password",
-        &u.ssh_password,
-        secrets::set_ssh_password,
-        secrets::delete_ssh_password,
-    )?;
-    apply_secret(
-        id,
-        "ssh_passphrase_hop0",
-        &u.ssh_jump_passphrase,
-        secrets::set_ssh_jump_passphrase,
-        secrets::delete_ssh_jump_passphrase,
-    )?;
-    apply_secret(
-        id,
-        "ssh_password_hop0",
-        &u.ssh_jump_password,
-        secrets::set_ssh_jump_password,
-        secrets::delete_ssh_jump_password,
-    )
+/// 書き換える前の値 (kind, 旧値)。`None` は未登録だった。ロールバック専用で、ログには出さない。
+type SecretUndo = Vec<(&'static str, Option<String>)>;
+
+/// 変更指示のある秘密を順に書く。途中で失敗したら、それまでに書いた秘密を元の値へ戻して
+/// エラーを返す。成功時は呼び出し側が後続の失敗 (本体の保存) で戻せるよう undo 情報を返す。
+fn write_profile_secrets(
+    access: &impl SecretAccess,
+    id: &str,
+    u: &ProfileSecretUpdates,
+) -> Result<SecretUndo> {
+    let updates: [(&'static str, &Option<String>); 5] = [
+        ("db_password", &u.db_password),
+        ("ssh_passphrase", &u.ssh_passphrase),
+        ("ssh_password", &u.ssh_password),
+        ("ssh_passphrase_hop0", &u.ssh_jump_passphrase),
+        ("ssh_password_hop0", &u.ssh_jump_password),
+    ];
+    let mut undo: SecretUndo = Vec::new();
+    for (kind, value) in updates {
+        let Some(v) = value.as_deref() else {
+            continue;
+        };
+        let result = (|| -> Result<()> {
+            let prior = access.get(id, kind)?;
+            let applied = if v.is_empty() {
+                tracing::debug!(profile_id = %id, secret = kind, "clearing secret");
+                access.delete(id, kind)
+            } else {
+                tracing::debug!(profile_id = %id, secret = kind, "setting secret");
+                access.set(id, kind, v)
+            };
+            // 書き込み自体が失敗しても部分的に書けた可能性があるので、旧値は先に控える。
+            undo.push((kind, prior));
+            applied
+        })();
+        if let Err(e) = result {
+            restore_secrets(access, id, std::mem::take(&mut undo));
+            return Err(e);
+        }
+    }
+    Ok(undo)
+}
+
+/// `write_profile_secrets` が控えた旧値へ戻す (新しい書き込みと逆順)。戻せなかった kind は
+/// 種別名だけを警告する (値は出さない)。
+fn restore_secrets(access: &impl SecretAccess, id: &str, undo: SecretUndo) {
+    for (kind, prior) in undo.into_iter().rev() {
+        let res = match prior {
+            Some(v) => access.set(id, kind, &v),
+            None => access.delete(id, kind),
+        };
+        if let Err(e) = res {
+            tracing::warn!(profile_id = %id, secret = kind, error = %e, "failed to restore secret after a failed save");
+        }
+    }
 }
 
 /// エクスポートファイルのトップレベル形。`profiles` は `ConnectionProfile`
@@ -515,7 +557,7 @@ fn build_export_json(all: Vec<ConnectionProfile>, ids: Option<Vec<String>>) -> R
 pub async fn export_profiles(path: String, ids: Option<Vec<String>>) -> Result<usize> {
     let all = store::load_all()?;
     let json = build_export_json(all, ids)?;
-    std::fs::write(&path, &json)?;
+    crate::atomic_write::write_atomic(std::path::Path::new(&path), json.as_bytes())?;
     tracing::info!(path = %path, "profiles exported");
     Ok(json.len())
 }
@@ -605,6 +647,10 @@ pub async fn delete_profile(id: String) -> Result<()> {
     if gone {
         if let Err(e) = crate::snippets::store::release_profile_scope(&id) {
             tracing::warn!(profile_id = %id, error = %e, "failed to release snippets scoped to deleted profile");
+        }
+        // テーブル・タイムラプスの行データ (機微データを含みうる) を残さない。ベストエフォート。
+        if let Err(e) = crate::timelapse::store::delete_profile_data(&id).await {
+            tracing::warn!(profile_id = %id, error = %e, "failed to delete timelapse data of deleted profile");
         }
     }
     result
@@ -729,6 +775,111 @@ fn reorder_supported(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    /// 失敗注入できるメモリ keyring。`fail_set_kind` の set だけ失敗させる。
+    #[derive(Default)]
+    struct MemSecrets {
+        map: RefCell<HashMap<String, String>>,
+        fail_set_kind: Option<&'static str>,
+    }
+
+    impl SecretAccess for MemSecrets {
+        fn get(&self, id: &str, kind: &str) -> Result<Option<String>> {
+            Ok(self.map.borrow().get(&format!("{id}/{kind}")).cloned())
+        }
+        fn set(&self, id: &str, kind: &str, value: &str) -> Result<()> {
+            if self.fail_set_kind == Some(kind) {
+                return Err(AppError::Other("keyring write failed".into()));
+            }
+            self.map
+                .borrow_mut()
+                .insert(format!("{id}/{kind}"), value.to_string());
+            Ok(())
+        }
+        fn delete(&self, id: &str, kind: &str) -> Result<()> {
+            self.map.borrow_mut().remove(&format!("{id}/{kind}"));
+            Ok(())
+        }
+    }
+
+    fn updates(db: Option<&str>, pass: Option<&str>) -> ProfileSecretUpdates {
+        ProfileSecretUpdates {
+            db_password: db.map(String::from),
+            ssh_passphrase: pass.map(String::from),
+            ssh_password: None,
+            ssh_jump_passphrase: None,
+            ssh_jump_password: None,
+        }
+    }
+
+    #[test]
+    fn blank_profile_name_is_rejected() {
+        assert!(validate_profile_name("").is_err());
+        assert!(validate_profile_name(" \t ").is_err());
+        assert!(validate_profile_name("prod").is_ok());
+    }
+
+    // 既存プロファイルで db_password 書き込み成功 → ssh_passphrase 失敗のとき、
+    // db_password が旧値へ戻る (#1593)。
+    #[test]
+    fn secret_write_failure_rolls_back_earlier_writes() {
+        let store = MemSecrets {
+            fail_set_kind: Some("ssh_passphrase"),
+            ..Default::default()
+        };
+        store
+            .map
+            .borrow_mut()
+            .insert("p1/db_password".into(), "old".into());
+        let err = write_profile_secrets(&store, "p1", &updates(Some("new"), Some("pp")));
+        assert!(err.is_err());
+        assert_eq!(
+            store.get("p1", "db_password").unwrap().as_deref(),
+            Some("old")
+        );
+        assert_eq!(store.get("p1", "ssh_passphrase").unwrap(), None);
+    }
+
+    // 旧値が無かった秘密は失敗時に削除へ戻る。成功時は undo で本体保存失敗にも戻せる。
+    #[test]
+    fn secret_write_undo_restores_prior_state() {
+        let store = MemSecrets::default();
+        store
+            .map
+            .borrow_mut()
+            .insert("p1/db_password".into(), "old".into());
+        let undo = write_profile_secrets(&store, "p1", &updates(Some("new"), Some("pp"))).unwrap();
+        assert_eq!(
+            store.get("p1", "db_password").unwrap().as_deref(),
+            Some("new")
+        );
+        restore_secrets(&store, "p1", undo);
+        assert_eq!(
+            store.get("p1", "db_password").unwrap().as_deref(),
+            Some("old")
+        );
+        assert_eq!(store.get("p1", "ssh_passphrase").unwrap(), None);
+    }
+
+    // 空文字は削除指示で、失敗時には旧値が復元される。
+    #[test]
+    fn secret_clear_is_restored_on_later_failure() {
+        let store = MemSecrets {
+            fail_set_kind: Some("ssh_passphrase"),
+            ..Default::default()
+        };
+        store
+            .map
+            .borrow_mut()
+            .insert("p1/db_password".into(), "old".into());
+        assert!(write_profile_secrets(&store, "p1", &updates(Some(""), Some("pp"))).is_err());
+        assert_eq!(
+            store.get("p1", "db_password").unwrap().as_deref(),
+            Some("old")
+        );
+    }
 
     fn profile(id: &str, name: &str, driver: &str) -> ConnectionProfile {
         ConnectionProfile {
