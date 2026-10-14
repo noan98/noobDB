@@ -971,7 +971,8 @@ export function QueryBuilder({
   // まだ無い等) をエディタに置いて手で仕上げるのも正当な使い方。唯一ブロックする
   // のは「テーブル未選択」で、これは `<table>` という無意味なプレースホルダしか
   // 生成できず、挿入先として提示する価値がないため。
-  const insertToEditorDisabled = !table.trim();
+  // 列 0 件の SELECT は `*` にフォールバックして画面の表示と食い違うので、エディタへも入れない。
+  const insertToEditorDisabled = !table.trim() || blockedReason === "qbValidationNoSelectColumns";
   const handleInsertToEditor = useCallback(() => {
     if (!onInsertToEditor || insertToEditorDisabled) return;
     onPersist?.(captureSnapshot());
@@ -1573,7 +1574,11 @@ export function QueryBuilder({
           // アクションであることを見た目でも示す。Ask Agent / アドバイザの
           // 「エディタに挿入」と同じくアイコンのみ (名前は aria-label とツールチップ)。
           <Tooltip
-            label={insertToEditorDisabled ? t("qbValidationNoTable") : t("qbInsertToEditorTitle")}
+            label={
+              insertToEditorDisabled
+                ? t(blockedReason === "qbValidationNoSelectColumns" ? blockedReason : "qbValidationNoTable")
+                : t("qbInsertToEditorTitle")
+            }
             focusableWrapper={insertToEditorDisabled}
           >
             <Button

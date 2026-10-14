@@ -9,6 +9,7 @@ describe("RenameTableDialog (#1615)", () => {
   it("確定前に実行される SQL をプレビューする", () => {
     renderWithProviders(
       <RenameTableDialog
+        driver="mysql"
         table="users"
         existingTables={["users"]}
         buildSql={sql}
@@ -26,7 +27,8 @@ describe("RenameTableDialog (#1615)", () => {
     renderWithProviders(
       <RenameTableDialog
         table="users"
-        existingTables={["users", "Orders"]}
+        existingTables={["users", "orders"]}
+        driver="mysql"
         buildSql={sql}
         onConfirm={onConfirm}
         onCancel={() => {}}
@@ -39,10 +41,37 @@ describe("RenameTableDialog (#1615)", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
+  it("大小違いだけの既存名は SQLite では確定不可、MySQL / PostgreSQL では警告のみで確定できる", () => {
+    for (const [driver, allowed] of [
+      ["sqlite", false],
+      ["mysql", true],
+      ["postgres", true],
+    ] as const) {
+      const onConfirm = vi.fn();
+      const { unmount } = renderWithProviders(
+        <RenameTableDialog
+          table="orders_old"
+          existingTables={["orders_old", "Orders"]}
+          driver={driver}
+          buildSql={sql}
+          onConfirm={onConfirm}
+          onCancel={() => {}}
+        />,
+      );
+      const input = screen.getByRole("textbox");
+      fireEvent.change(input, { target: { value: "orders" } });
+      fireEvent.keyDown(input, { key: "Enter" });
+      expect(onConfirm).toHaveBeenCalledTimes(allowed ? 1 : 0);
+      expect(screen.getByRole("alert")).toBeTruthy();
+      unmount();
+    }
+  });
+
   it("大小だけ変える改名は衝突扱いにしない", () => {
     const onConfirm = vi.fn();
     renderWithProviders(
       <RenameTableDialog
+        driver="mysql"
         table="users"
         existingTables={["users"]}
         buildSql={sql}

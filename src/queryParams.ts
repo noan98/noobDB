@@ -1,5 +1,6 @@
 import type { DriverKind } from "./api/tauri";
 import { quoteString } from "./components/cellEdit";
+import { maskLiterals } from "./dangerousSql";
 import { quoteIdentFor } from "./components/sqlDialect";
 
 /**
@@ -56,10 +57,20 @@ export function extractQueryParams(sql: string): string[] {
  * 置換時に自動で引用符が付くため、囲んで書くと `''abc''` のように二重引用になって
  * 構文エラーになる。入力モーダルで事前に注意するための検出 (置換結果は変えない)。
  */
-export function findQuotedParams(sql: string): string[] {
+export function findQuotedParams(sql: string, driver?: string): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
+  // 別の文字列リテラル / コメントの内側にある引用符 (`'a''{{x}}''b'` など) を除くため、
+  // 既存のリテラルマスクで「開き・閉じの引用符が実際にマスク後も残る」ものだけを採用する。
+  // マスクで長さが変わる場合は絞り込まない。
+  const masked = maskLiterals(sql, driver);
+  const aligned = masked.length === sql.length;
   for (const m of sql.matchAll(/(['"`])\{\{(\w+)\}\}\1/g)) {
+    if (aligned) {
+      const start = m.index ?? 0;
+      const end = start + m[0].length - 1;
+      if (masked[start] !== m[1] || masked[end] !== m[1]) continue;
+    }
     if (!seen.has(m[2])) {
       seen.add(m[2]);
       out.push(m[2]);

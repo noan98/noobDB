@@ -125,6 +125,7 @@ describe("IME 変換確定の Enter (#1515)", () => {
     const onConfirm = vi.fn();
     renderWithProviders(
       <RenameTableDialog
+        driver="mysql"
         table="users"
         existingTables={[]}
         buildSql={(n) => `ALTER TABLE users RENAME TO ${n};`}
@@ -145,6 +146,7 @@ describe("IME 変換確定の Enter (#1515)", () => {
     const onConfirm = vi.fn();
     renderWithProviders(
       <RenameTableDialog
+        driver="mysql"
         table="users"
         existingTables={[]}
         buildSql={(n) => `ALTER TABLE users RENAME TO ${n};`}

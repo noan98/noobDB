@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { normalizePersistedWorkspace } from "../tabPersistence";
+import {
+  normalizePersistedWorkspace,
+  resolveWorkspaceToSave,
+  type PersistedWorkspace,
+} from "../tabPersistence";
 
 describe("normalizePersistedWorkspace", () => {
   it("wraps a legacy bare tab array into a single pane", () => {
@@ -272,5 +276,30 @@ describe("activePane の補正 (空ペイン除去)", () => {
       activePane: 1,
     });
     expect(ws.activePane).toBe(0);
+  });
+});
+
+describe("resolveWorkspaceToSave (#1615)", () => {
+  const tab = (title: string) => ({ kind: "query" as const, title, sql: title });
+  const ws = (...titles: string[]): PersistedWorkspace => ({
+    panes: titles.length ? [{ tabs: titles.map(tab), activeIndex: 0 }] : [],
+    activePane: 0,
+  });
+
+  it("保持なしなら現在のワークスペースをそのまま保存する", () => {
+    const cur = ws("a");
+    expect(resolveWorkspaceToSave(cur, undefined)).toBe(cur);
+    expect(resolveWorkspaceToSave(ws(), undefined)).toEqual(ws());
+  });
+
+  it("保持中でタブが空なら保存しない (保持分を残す)", () => {
+    expect(resolveWorkspaceToSave(ws(), ws("kept"))).toBeNull();
+  });
+
+  it("保持中で新しいタブがあれば、保持分を末尾に足して保存する (繰り返しても重複しない)", () => {
+    const kept = ws("k1", "k2");
+    const merged = resolveWorkspaceToSave(ws("new"), kept);
+    expect(merged?.panes[0].tabs.map((t) => t.title)).toEqual(["new", "k1", "k2"]);
+    expect(resolveWorkspaceToSave(ws("new"), kept)).toEqual(merged);
   });
 });

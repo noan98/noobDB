@@ -140,5 +140,9 @@ describe("findQuotedParams (#1615)", () => {
     expect(findQuotedParams("WHERE id = {{id}}")).toEqual([]);
     expect(findQuotedParams("LIKE '%{{q}}%'")).toEqual([]);
     expect(findQuotedParams("x = '{{a}}\"")).toEqual([]);
+    // 別のリテラルの内側 / コメント内の引用符は拾わない
+    expect(findQuotedParams("SELECT 'it''{{a}}''s'")).toEqual([]);
+    expect(findQuotedParams("SELECT 1 -- '{{a}}'")).toEqual([]);
+    expect(findQuotedParams("SELECT '{{a}}'", "mysql")).toEqual(["a"]);
   });
 });

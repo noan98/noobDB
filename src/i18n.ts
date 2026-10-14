@@ -1986,7 +1986,7 @@ const en = {
   routineEditPgRenamed:
     "The name changed, so the old definition is kept and a new one is added. Drop the old one separately if it is no longer needed.",
   routineEditPgArgsChanged:
-    "The arguments changed, so the old definition is kept as an overload and a new one is added. Drop the old one separately if it is no longer needed.",
+    "The argument list changed. If the argument types or count changed, the old definition stays as an overload and a new one is added (name-only or default-only changes replace it). Drop the old one separately if it is no longer needed.",
   routineEditNotePgOverload:
     "If you change the name or the argument types, a new function is created and the old definition stays (it is not dropped). Drop it separately if it is no longer needed.",
   routineEditNoteMysql:
@@ -2550,6 +2550,8 @@ const en = {
   renameTableConfirm: "Rename",
   renameTableExists: 'A table named "{table}" already exists in this schema.',
   renameTableSqlPreview: "SQL to be executed",
+  renameTableCaseOnlyExists:
+    'A table whose name differs from "{table}" only in letter case already exists. It can be renamed, but fails on case-insensitive setups.',
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794)。
   alterTableTitle: "Edit columns: {table}",
   alterTableLoading: "Loading columns...",
@@ -7391,7 +7393,7 @@ const ja: Dict = {
   routineEditPgRenamed:
     "名前を変更したため、旧定義は残ったまま新しい定義が追加されます。不要なら旧定義を別途 DROP してください。",
   routineEditPgArgsChanged:
-    "引数を変更したため、旧定義はオーバーロードとして残り、新しい定義が追加されます。不要なら旧定義を別途 DROP してください。",
+    "引数の記述が変わっています。引数の型や数が変わると旧定義がオーバーロードとして残り、新しい定義が追加されます (引数名や既定値だけの変更なら置換されます)。不要なら旧定義を別途 DROP してください。",
   routineEditNotePgOverload:
     "名前や引数の型を変えると新しい関数が作られ、旧定義は削除されずに残ります (不要なら別途削除してください)。",
   routineEditNoteMysql:
@@ -7954,6 +7956,8 @@ const ja: Dict = {
   renameTableConfirm: "変更",
   renameTableExists: "テーブル「{table}」は同じスキーマに既に存在します。",
   renameTableSqlPreview: "実行される SQL",
+  renameTableCaseOnlyExists:
+    "大小文字だけが違う「{table}」が既に存在します。改名はできますが、大小文字を区別しない環境ではエラーになります。",
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794)。
   alterTableTitle: "列を編集: {table}",
   alterTableLoading: "列情報を読み込み中...",

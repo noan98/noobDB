@@ -247,6 +247,27 @@ export function savePersistedWorkspace(profileId: string, ws: PersistedWorkspace
   }
 }
 
+/**
+ * 保存するワークスペースを決める純関数。復元確認で「今回は開かない」を選んだ接続は、
+ * 保持分 (`kept`) を失わないようにする (#1615):
+ * - 保持なし → `current` をそのまま保存。
+ * - 保持あり・現在のタブなし → `null` (保存しない = 保持分を残す)。
+ * - 保持あり・現在のタブあり → 保持分のタブを最後のペインの末尾へ足して保存
+ *   (何度呼んでも `kept` から作るので重複しない)。
+ */
+export function resolveWorkspaceToSave(
+  current: PersistedWorkspace,
+  kept: PersistedWorkspace | undefined,
+): PersistedWorkspace | null {
+  if (!kept || totalTabs(kept) === 0) return current;
+  if (totalTabs(current) === 0) return null;
+  const keptTabs = kept.panes.flatMap((p) => p.tabs);
+  const panes = current.panes.map((p, i) =>
+    i === current.panes.length - 1 ? { ...p, tabs: [...p.tabs, ...keptTabs] } : p,
+  );
+  return { panes, activePane: current.activePane };
+}
+
 export function clearPersistedTabs(profileId: string): void {
   try {
     localStorage.removeItem(STORAGE_PREFIX + profileId);

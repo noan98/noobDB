@@ -115,7 +115,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
   };
 
   // 引用符で囲んだプレースホルダ (数値型は引用符なしで入るので対象外)。
-  const quotedNames = useMemo(() => findQuotedParams(sql), [sql]);
+  const quotedNames = useMemo(() => findQuotedParams(sql, driver), [sql, driver]);
   const quotedWarnNames = quotedNames.filter((n) => (drafts[n]?.type ?? "text") !== "number");
 
   const hasError = names.some((n) => errorKey(n) !== null);

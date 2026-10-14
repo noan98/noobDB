@@ -462,6 +462,7 @@ import { accentVars, readToneSurface } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
+  resolveWorkspaceToSave,
   savePersistedWorkspace,
   type PersistedTab,
   type PersistedWorkspace,
@@ -3226,7 +3227,7 @@ export default function App() {
 
   // Snapshot the current pane layout (from refs so we don't depend on stale
   // closure copies) into localStorage under the given profile id.
-  const keptSavedTabsRef = useRef<Set<string>>(new Set());
+  const keptSavedTabsRef = useRef<Map<string, PersistedWorkspace>>(new Map());
   const persistTabsForProfile = useCallback(
     (profileId: string) => {
       const curTabs = tabsRef.current;
@@ -3253,11 +3254,10 @@ export default function App() {
           curPanes.findIndex((p) => p.id === activePaneIdRef.current),
         ),
       };
-      // 復元確認で「今回は開かず保持」を選んだ接続は、タブが空の間は保存内容を消さない。
-      // タブを開いて保存し直した時点で通常の動作に戻る。
-      if (ws.panes.length === 0 && keptSavedTabsRef.current.has(profileId)) return;
-      if (ws.panes.length > 0) keptSavedTabsRef.current.delete(profileId);
-      savePersistedWorkspace(profileId, ws);
+      // 復元確認で「今回は開かず保持」を選んだ接続は、保持分を失わないよう保存内容を決める
+      // (タブが空なら保存しない / あれば保持分を末尾に足す)。登録は復元・破棄が確定するまで残す。
+      const toSave = resolveWorkspaceToSave(ws, keptSavedTabsRef.current.get(profileId));
+      if (toSave) savePersistedWorkspace(profileId, toSave);
     },
     [tabSqlStore, panesRef, tabsRef],
   );
@@ -3371,7 +3371,9 @@ export default function App() {
       setSelectedProfile(target.profile);
       const savedWs = loadPersistedWorkspace(target.profile.id);
       const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
-      if (savedCount > 0 && restoreSavedTabsRef.current) {
+      // 「今回は開かない」で保持中の接続は自動復元しない (保持分は保存側で守る)。
+      const keptHere = keptSavedTabsRef.current.has(target.profile.id);
+      if (savedCount > 0 && !keptHere && restoreSavedTabsRef.current) {
         await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
       } else {
         setTabs([]);
@@ -3515,6 +3517,10 @@ export default function App() {
 
         const savedWs = loadPersistedWorkspace(profile.id);
         const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
+        // 確認ダイアログの表示中に beforeunload が空で上書きしないよう、先に保持として登録しておく。
+        // 選択が確定したら (restore / discard) 解除する。
+        if (savedCount > 0 && settings.tabRestoreMode === "ask")
+          keptSavedTabsRef.current.set(profile.id, savedWs);
         const restoreChoice =
           savedCount > 0
             ? await shouldRestoreSavedTabs(settings.tabRestoreMode, async () => {
@@ -3531,13 +3537,12 @@ export default function App() {
                 return c === "confirm" ? "restore" : c === "alt" ? "discard" : "keep";
               })
             : "restore";
+        if (restoreChoice !== "keep") keptSavedTabsRef.current.delete(profile.id);
         if (savedCount > 0 && restoreChoice === "restore" && restoreSavedTabsRef.current) {
           await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
         } else {
           if (savedCount > 0 && restoreChoice === "discard") clearPersistedTabs(profile.id);
-          // 保持を選んだ接続は、タブを 1 つも開かないまま切断・終了しても保存内容を空で
-          // 上書きしない (persistTabsForProfile が参照する)。
-          if (savedCount > 0 && restoreChoice === "keep") keptSavedTabsRef.current.add(profile.id);
+          // 保持を選んだ接続は登録済み (上で set 済み)。persistTabsForProfile が保持分を守る。
           // 接続直後はクエリタブを自動で開かない。空のワークスペース
           // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
           // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
@@ -12303,6 +12308,7 @@ export default function App() {
                 <RenameTableDialog
                   table={renameTarget.table}
                   existingTables={renameExistingTables}
+                  driver={selectedProfile?.driver ?? "mysql"}
                   buildSql={(newName) =>
                     buildRenameTableSql(
                       selectedProfile?.driver ?? "mysql",
