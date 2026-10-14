@@ -182,13 +182,7 @@ interface ModalHeaderProps {
   titleProps?: ComponentProps<typeof Dialog.Title>;
 }
 
-export function ModalHeader({
-  children,
-  onClose,
-  closeLabel,
-  closeDisabled,
-  titleProps,
-}: ModalHeaderProps) {
+export function ModalHeader({ children, onClose, closeLabel, closeDisabled, titleProps }: ModalHeaderProps) {
   return (
     <Dialog.Header
       css={{
@@ -203,11 +197,7 @@ export function ModalHeader({
         bg: "app.toolbar",
       }}
     >
-      <Dialog.Title
-        textStyle="heading"
-        css={{ margin: 0, minWidth: 0 }}
-        {...titleProps}
-      >
+      <Dialog.Title textStyle="heading" css={{ margin: 0, minWidth: 0 }} {...titleProps}>
         {children}
       </Dialog.Title>
       {/* アイコンのみのクローズボタンなので、ラベルは共有 `Tooltip` (#884) で出す。

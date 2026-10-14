@@ -58,7 +58,9 @@ const chain = [
   proc(2, { blocked_by: [1], query_summary: "SELECT * FROM orders FOR UPDATE" }),
 ];
 
-function enable(opts: { sendScope?: "schemaOnly" | "schemaAndSql"; enabled?: boolean; maskLiterals?: boolean } = {}) {
+function enable(
+  opts: { sendScope?: "schemaOnly" | "schemaAndSql"; enabled?: boolean; maskLiterals?: boolean } = {},
+) {
   replaceAllSettings({
     ...DEFAULT_SETTINGS,
     ai: {
@@ -72,15 +74,7 @@ function enable(opts: { sendScope?: "schemaOnly" | "schemaAndSql"; enabled?: boo
 }
 
 function ui(over: Partial<React.ComponentProps<typeof AiLockDiagnose>> = {}) {
-  return (
-    <AiLockDiagnose
-      sessionId="s1"
-      driver="mysql"
-      processes={chain}
-      selectedIds={new Set()}
-      {...over}
-    />
-  );
+  return <AiLockDiagnose sessionId="s1" driver="mysql" processes={chain} selectedIds={new Set()} {...over} />;
 }
 
 const result = JSON.stringify({
@@ -101,7 +95,16 @@ beforeEach(() => {
     ids.includes(1) ? { "1": "UPDATE orders SET note = 'top-secret-note' WHERE id = 5" } : {},
   );
   describeTable.mockResolvedValue([
-    { name: "id", data_type: "int", nullable: false, key: "PRI", default: "DEFAULT_SENTINEL", extra: "", referenced_table: null, referenced_column: null },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: "DEFAULT_SENTINEL",
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
   ]);
   tableRowEstimate.mockResolvedValue(12000);
   handlers = null;
@@ -284,7 +287,9 @@ describe("AiLockDiagnose (#1478)", () => {
         selectedIds: new Set([7]),
       }),
     );
-    expect((await screen.findByTestId("ai-lock-scope")).textContent).toContain(t("lockDiagnoseScopeSelection"));
+    expect((await screen.findByTestId("ai-lock-scope")).textContent).toContain(
+      t("lockDiagnoseScopeSelection"),
+    );
     fireEvent.click(await ask());
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
     expect(runAiRequest.mock.calls[0][0].prompt).toContain("#7");

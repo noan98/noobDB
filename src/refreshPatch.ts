@@ -45,9 +45,7 @@ export function applyRefreshPatch(
   if (patch.unchanged) {
     return {
       rows: prev,
-      diff: buildDiff
-        ? { changedCells: [], addedRows: new Set(), removedCount: 0, hasChanges: false }
-        : null,
+      diff: buildDiff ? { changedCells: [], addedRows: new Set(), removedCount: 0, hasChanges: false } : null,
     };
   }
   const rows: CellValue[][] = new Array<CellValue[]>(patch.totalRows);

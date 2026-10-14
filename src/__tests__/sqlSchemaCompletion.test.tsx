@@ -150,28 +150,43 @@ function keywordOptions(dialect: typeof MySQL): Map<string, Completion> {
 
 describe("keywordCompletionOption", () => {
   it("lang-sql の種別を keyword / datatype / function に寄せ、すべて boost: -1 を保つ", () => {
-    expect(keywordCompletionOption("SELECT", "keyword")).toEqual({ label: "SELECT", type: "keyword", boost: -1 });
+    expect(keywordCompletionOption("SELECT", "keyword")).toEqual({
+      label: "SELECT",
+      type: "keyword",
+      boost: -1,
+    });
     expect(keywordCompletionOption("INT", "type")).toEqual({ label: "INT", type: "datatype", boost: -1 });
-    expect(keywordCompletionOption("COUNT", "keyword")).toEqual({ label: "COUNT", type: "function", boost: -1 });
+    expect(keywordCompletionOption("COUNT", "keyword")).toEqual({
+      label: "COUNT",
+      type: "function",
+      boost: -1,
+    });
     expect(keywordCompletionOption("count", "keyword").type).toBe("function");
-    expect(keywordCompletionOption("QUIT", "variable")).toEqual({ label: "QUIT", type: "keyword", boost: -1 });
+    expect(keywordCompletionOption("QUIT", "variable")).toEqual({
+      label: "QUIT",
+      type: "keyword",
+      boost: -1,
+    });
   });
 
   it.each([
     ["MySQL", MySQL],
     ["PostgreSQL", PostgreSQL],
     ["SQLite", SQLite],
-  ])("%s の実データ: 関数名は function、NULL / TRUE / クライアントコマンドは function にならず、全件 boost: -1", (_n, dialect) => {
-    const opts = keywordOptions(dialect);
-    expect(opts.size).toBeGreaterThan(100);
-    expect(opts.get("COUNT")?.type).toBe("function");
-    expect(opts.get("SELECT")?.type).toBe("keyword");
-    for (const word of ["NULL", "TRUE", "FALSE", "UNKNOWN"]) {
-      expect(opts.get(word)?.type).toBe("keyword");
-    }
-    expect(opts.get("INT")?.type ?? opts.get("INTEGER")?.type).toBe("datatype");
-    for (const o of opts.values()) expect(o.boost).toBe(-1);
-  });
+  ])(
+    "%s の実データ: 関数名は function、NULL / TRUE / クライアントコマンドは function にならず、全件 boost: -1",
+    (_n, dialect) => {
+      const opts = keywordOptions(dialect);
+      expect(opts.size).toBeGreaterThan(100);
+      expect(opts.get("COUNT")?.type).toBe("function");
+      expect(opts.get("SELECT")?.type).toBe("keyword");
+      for (const word of ["NULL", "TRUE", "FALSE", "UNKNOWN"]) {
+        expect(opts.get(word)?.type).toBe("keyword");
+      }
+      expect(opts.get("INT")?.type ?? opts.get("INTEGER")?.type).toBe("datatype");
+      for (const o of opts.values()) expect(o.boost).toBe(-1);
+    },
+  );
 
   it("MySQL のクライアントコマンド (variable) と SQLite のドットコマンドは function にならない", () => {
     expect(keywordOptions(MySQL).get("QUIT")?.type).toBe("keyword");

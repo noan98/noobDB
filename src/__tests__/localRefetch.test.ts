@@ -5,7 +5,9 @@ const conns = [
   { sessionId: "s1", profile: { id: "p-prod", name: "Prod", driver: "postgres" } },
   { sessionId: "s2", profile: { id: "p-dev", name: "Dev", driver: "mysql" } },
 ];
-const meta = (over: Partial<Parameters<typeof planLocalRefetch>[0]> = {}): Parameters<typeof planLocalRefetch>[0] => ({
+const meta = (
+  over: Partial<Parameters<typeof planLocalRefetch>[0]> = {},
+): Parameters<typeof planLocalRefetch>[0] => ({
   source_profile: "Dev",
   source_profile_id: null,
   source_sql: "SELECT * FROM users",
@@ -35,7 +37,11 @@ describe("planLocalRefetch (#1541)", () => {
   });
 
   it("ドライバが記録されていなければ名前だけで探す", () => {
-    expect(planLocalRefetch(meta({ source_driver: null }), conns)).toEqual({ kind: "ok", sessionId: "s2", database: "shop" });
+    expect(planLocalRefetch(meta({ source_driver: null }), conns)).toEqual({
+      kind: "ok",
+      sessionId: "s2",
+      database: "shop",
+    });
   });
 
   it("MySQL / PostgreSQL で実行 DB が未記録なら断る。SQLite は DB 不要 (#1541)", () => {
@@ -52,7 +58,10 @@ describe("planLocalRefetch (#1541)", () => {
     }
     const lite = [{ sessionId: "s3", profile: { id: "p-lite", name: "Lite", driver: "sqlite" } }];
     expect(
-      planLocalRefetch(meta({ source_profile: "Lite", source_driver: "sqlite", source_database: null }), lite),
+      planLocalRefetch(
+        meta({ source_profile: "Lite", source_driver: "sqlite", source_database: null }),
+        lite,
+      ),
     ).toEqual({ kind: "ok", sessionId: "s3", database: null });
   });
 
@@ -74,7 +83,13 @@ describe("planLocalRefetch のプロファイル id 照合 (#1541)", () => {
       { sessionId: "sA", profile: { id: "p-a", name: "Same", driver: "mysql" } },
       { sessionId: "sB", profile: { id: "p-b", name: "Same", driver: "mysql" } },
     ];
-    const m = { source_profile: "Old name", source_profile_id: "p-b", source_sql: "SELECT 1", source_driver: "mysql", source_database: "d" };
+    const m = {
+      source_profile: "Old name",
+      source_profile_id: "p-b",
+      source_sql: "SELECT 1",
+      source_driver: "mysql",
+      source_database: "d",
+    };
     expect(planLocalRefetch(m, dup)).toEqual({ kind: "ok", sessionId: "sB", database: "d" });
     expect(planLocalRefetch({ ...m, source_profile_id: "p-gone" }, dup)).toEqual({
       kind: "noConnection",

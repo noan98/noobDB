@@ -39,7 +39,13 @@ describe("data search golden vectors", () => {
     expect(vectors.predicates.length).toBeGreaterThan(100);
     for (const p of vectors.predicates) {
       expect(
-        buildColumnPredicate(p.driver, p.column, searchKindFor(p.driver, p.dataType), p.term, p.mode as MatchMode),
+        buildColumnPredicate(
+          p.driver,
+          p.column,
+          searchKindFor(p.driver, p.dataType),
+          p.term,
+          p.mode as MatchMode,
+        ),
         `${p.driver} ${p.column} ${p.dataType} ${JSON.stringify(p.term)} ${p.mode}`,
       ).toBe(p.expected);
     }

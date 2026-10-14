@@ -1,11 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
-import {
-  computeScrollEdges,
-  NO_SCROLL_EDGES,
-  sameScrollEdges,
-  type ScrollEdges,
-} from "./scrollEdges";
+import { computeScrollEdges, NO_SCROLL_EDGES, sameScrollEdges, type ScrollEdges } from "./scrollEdges";
 
 /**
  * スクロール端影 (#1073) の共有実装。

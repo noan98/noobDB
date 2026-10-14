@@ -2,12 +2,7 @@ import { chakra, VisuallyHidden } from "@chakra-ui/react";
 
 import { Fragment } from "react";
 
-import {
-  countUpSlotToken,
-  formatCountUpPlainInt,
-  splitCountUpTemplate,
-  useCountUp,
-} from "../useCountUp";
+import { countUpSlotToken, formatCountUpPlainInt, splitCountUpTemplate, useCountUp } from "../useCountUp";
 
 /**
  * 確定した数値のカウントアップ表示 (#977)。`useCountUp` の補間値を視覚的にのみ
@@ -67,10 +62,7 @@ export function CountUpText({
   render: (slots: string[]) => string;
   formatter?: (n: number) => string;
 }) {
-  const segments = splitCountUpTemplate(
-    render(values.map((_, i) => countUpSlotToken(i))),
-    values.length,
-  );
+  const segments = splitCountUpTemplate(render(values.map((_, i) => countUpSlotToken(i))), values.length);
   if (!segments) return <>{render(values.map((v) => formatter(v)))}</>;
   return (
     <>

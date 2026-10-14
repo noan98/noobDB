@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import {
-  PAGE_SIZE_OPTIONS,
-  canGoNext,
-  canGoPrev,
-  pageRange,
-} from "../pagination";
+import { PAGE_SIZE_OPTIONS, canGoNext, canGoPrev, pageRange } from "../pagination";
 import { CountUpText } from "./CountUp";
 import { ICON_SIZES, Icon } from "./Icon";
 import { ListboxSelect } from "./ListboxSelect";
@@ -124,7 +119,10 @@ export function PaginationBar({
         <CountUpText values={[page]} render={([p]) => t("pageLabel", { page: p })} />
         {totalPages != null && (
           <chakra.span color="app.textMuted">
-            <CountUpText values={[Math.max(totalPages, page)]} render={([n]) => t("pageOfTotal", { total: n })} />
+            <CountUpText
+              values={[Math.max(totalPages, page)]}
+              render={([n]) => t("pageOfTotal", { total: n })}
+            />
           </chakra.span>
         )}
         {loading && <Spinner size={12} />}

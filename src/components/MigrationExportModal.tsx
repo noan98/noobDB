@@ -38,10 +38,7 @@ interface Props {
   onClose: () => void;
 }
 
-type DownState =
-  | { kind: "loading" }
-  | { kind: "ready"; plan: SyncPlan }
-  | { kind: "error"; message: string };
+type DownState = { kind: "loading" } | { kind: "ready"; plan: SyncPlan } | { kind: "error"; message: string };
 
 type SaveStatus =
   | { kind: "idle" }
@@ -182,7 +179,7 @@ export function MigrationExportModal({
       const upPath = picked;
       const downPath = await join(
         dir,
-        pairedDownFileName(format, (picked.split(/[\\/]/).pop() ?? picked), fileNames),
+        pairedDownFileName(format, picked.split(/[\\/]/).pop() ?? picked, fileNames),
       );
 
       await api.writeTextFile(upPath, contentUp);
@@ -197,7 +194,14 @@ export function MigrationExportModal({
   };
 
   return (
-    <Modal onSubmit={handleSave} submitDisabled={isSaving || !downReady} width="560px" onClose={onClose} closeOnInteractOutside={!isSaving} closeOnEscape={!isSaving}>
+    <Modal
+      onSubmit={handleSave}
+      submitDisabled={isSaving || !downReady}
+      width="560px"
+      onClose={onClose}
+      closeOnInteractOutside={!isSaving}
+      closeOnEscape={!isSaving}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("schemaCompareClose")} closeDisabled={isSaving}>
         {t("schemaCompareMigrationTitle")}
       </ModalHeader>
@@ -208,9 +212,7 @@ export function MigrationExportModal({
         </chakra.div>
 
         <FormSection>
-          <FieldLabel htmlFor="migration-export-format">
-            {t("schemaCompareMigrationFormat")}
-          </FieldLabel>
+          <FieldLabel htmlFor="migration-export-format">{t("schemaCompareMigrationFormat")}</FieldLabel>
           <Select
             id="migration-export-format"
             value={format}
@@ -241,9 +243,7 @@ export function MigrationExportModal({
 
         <FormSection>
           <FieldLabel as="div">{t("schemaCompareMigrationFiles")}</FieldLabel>
-          <CodePreview wrap>
-            {`up:   ${fileNames.up}\ndown: ${fileNames.down}`}
-          </CodePreview>
+          <CodePreview wrap>{`up:   ${fileNames.up}\ndown: ${fileNames.down}`}</CodePreview>
         </FormSection>
 
         {/* down マイグレーションの取得は非同期 (loading → ready/error) なので、

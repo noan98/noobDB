@@ -197,9 +197,7 @@ describe("RowInsertModal metadata-driven affordances (#1357)", () => {
       />,
     );
     expect(screen.getAllByRole("textbox")[2]).toBeDisabled();
-    expect(screen.getByTestId("insert-default-hint-full")).toHaveTextContent(
-      t("rowOpsInsertGeneratedHint"),
-    );
+    expect(screen.getByTestId("insert-default-hint-full")).toHaveTextContent(t("rowOpsInsertGeneratedHint"));
     expect(screen.queryByTestId("insert-fn-full-uuid")).toBeNull();
   });
 

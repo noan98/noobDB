@@ -1,10 +1,5 @@
 import type { CellValue, QueryResult } from "../api/tauri";
-import {
-  type PlanNode,
-  attrVal,
-  parseExplainForDriver,
-  parseNum,
-} from "./explainPlan";
+import { type PlanNode, attrVal, parseExplainForDriver, parseNum } from "./explainPlan";
 
 /**
  * 実行計画ウォッチ (#743) の純粋ロジック層 — 計画の正規化・同一判定・構造比較。
@@ -103,8 +98,7 @@ function sqliteFields(node: PlanNode): Partial<PlanOp> {
 export function normalizePlan(root: PlanNode | null, driver: string): PlanOp[] {
   const ops: PlanOp[] = [];
   if (!root) return ops;
-  const fieldsFor =
-    driver === "postgres" ? postgresFields : driver === "sqlite" ? sqliteFields : mysqlFields;
+  const fieldsFor = driver === "postgres" ? postgresFields : driver === "sqlite" ? sqliteFields : mysqlFields;
   const walk = (node: PlanNode) => {
     const f = fieldsFor(node);
     ops.push({
@@ -144,13 +138,7 @@ export function planFingerprint(ops: PlanOp[]): string {
   );
 }
 
-export type PlanChangeKind =
-  | "access"
-  | "index"
-  | "join"
-  | "estRows"
-  | "opAdded"
-  | "opRemoved";
+export type PlanChangeKind = "access" | "index" | "join" | "estRows" | "opAdded" | "opRemoved";
 
 export type PlanChangeSeverity = "info" | "warning";
 
@@ -187,7 +175,10 @@ function opDisplayName(op: PlanOp): string {
   return op.object ?? op.kind;
 }
 
-function pairOps(prev: PlanOp[], next: PlanOp[]): {
+function pairOps(
+  prev: PlanOp[],
+  next: PlanOp[],
+): {
   pairs: [PlanOp, PlanOp][];
   removed: PlanOp[];
   added: PlanOp[];
@@ -232,11 +223,7 @@ function pairOps(prev: PlanOp[], next: PlanOp[]): {
  * アクセス方式・使用インデックス・結合方式の変化と、推定行数の `rowFactor` 倍
  * 以上の変化、およびオペレーションの追加/削除。コスト値は見ない。
  */
-export function comparePlans(
-  prev: PlanOp[],
-  next: PlanOp[],
-  opts?: { rowFactor?: number },
-): PlanComparison {
+export function comparePlans(prev: PlanOp[], next: PlanOp[], opts?: { rowFactor?: number }): PlanComparison {
   const rowFactor = Math.max(2, opts?.rowFactor ?? DEFAULT_ROW_FACTOR);
   const changes: PlanChange[] = [];
   const { pairs, removed, added } = pairOps(prev, next);

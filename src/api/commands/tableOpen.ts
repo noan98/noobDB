@@ -10,13 +10,7 @@ export const tableOpenCommands = {
    * 取得する (#1263)。列の取得失敗は reject、行識別・行数推定の失敗は null。
    * `withEstimate` が偽のときは行数推定を取りに行かない。
    */
-  openTable: (
-    sessionId: string,
-    database: string,
-    table: string,
-    limit: number,
-    withEstimate: boolean,
-  ) =>
+  openTable: (sessionId: string, database: string, table: string, limit: number, withEstimate: boolean) =>
     invoke<OpenTableResult>("open_table", {
       sessionId,
       database,

@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { DumpToolName, DumpToolStatus } from "../tauri";
 
 export const dumpToolsCommands = {
-
   /** ダンプ用ツールがこの PC にあるか (無ければ導入方法も) を調べる。 */
   dumpToolStatus: (tool: DumpToolName) =>
     invoke<DumpToolStatus>("dump_tool_status", { tool }).then((r) =>

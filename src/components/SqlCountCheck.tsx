@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api } from "../api/tauri";
-import { buildSuggestionCountSql, checkSuggestionSql, type SuggestionCheckResult } from "../ai/suggestionCheck";
+import {
+  buildSuggestionCountSql,
+  checkSuggestionSql,
+  type SuggestionCheckResult,
+} from "../ai/suggestionCheck";
 import { useT } from "../i18n";
 import { COUNT_PREVIEW_TIMEOUT_SECS } from "../useCountPreviews";
 import { Button } from "./ui";
@@ -74,10 +78,22 @@ export function SqlCountCheck({
   const running = current === "running";
   return (
     <Flex align="center" gap="2" wrap="wrap" data-testid="sql-count-check">
-      <Button type="button" variant="secondary" size="sm" disabled={disabled || running} onClick={() => void run()}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        disabled={disabled || running}
+        onClick={() => void run()}
+      >
         {t(mode === "violations" ? "sqlCheckViolationsButton" : "sqlCheckRowsButton")}
       </Button>
-      <chakra.span role="status" fontSize="sm" color={current && current !== "running" && current.status === "error" ? "app.textError" : "app.textMuted"}>
+      <chakra.span
+        role="status"
+        fontSize="sm"
+        color={
+          current && current !== "running" && current.status === "error" ? "app.textError" : "app.textMuted"
+        }
+      >
         {running
           ? t("sqlCheckRunning")
           : current && current.status === "ok"

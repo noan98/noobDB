@@ -1,14 +1,9 @@
 import { describe, it, expect } from "vitest";
-import {
-  analyzeDangerousSql,
-  isReadOnlySql,
-} from "../dangerousSql";
+import { analyzeDangerousSql, isReadOnlySql } from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
   it("flags DELETE without a top-level WHERE", () => {
-    expect(analyzeDangerousSql("DELETE FROM users")).toEqual([
-      { kind: "deleteNoWhere", target: "users" },
-    ]);
+    expect(analyzeDangerousSql("DELETE FROM users")).toEqual([{ kind: "deleteNoWhere", target: "users" }]);
   });
 
   it("ignores DELETE guarded by a top-level WHERE", () => {
@@ -22,23 +17,19 @@ describe("analyzeDangerousSql", () => {
   });
 
   it("ignores UPDATE guarded by a top-level WHERE", () => {
-    expect(
-      analyzeDangerousSql("UPDATE users SET active = 0 WHERE id = 1"),
-    ).toEqual([]);
+    expect(analyzeDangerousSql("UPDATE users SET active = 0 WHERE id = 1")).toEqual([]);
   });
 
   it("does not treat a WHERE inside a sub-select as the statement's guard", () => {
-    expect(
-      analyzeDangerousSql(
-        "UPDATE t SET c = (SELECT x FROM y WHERE y.id = 1)",
-      ),
-    ).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+    expect(analyzeDangerousSql("UPDATE t SET c = (SELECT x FROM y WHERE y.id = 1)")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
   });
 
   it("does not treat a WHERE inside a string literal as a guard", () => {
-    expect(
-      analyzeDangerousSql("UPDATE t SET note = 'delete where all rows'"),
-    ).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+    expect(analyzeDangerousSql("UPDATE t SET note = 'delete where all rows'")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
   });
 
   it("does not treat a WHERE inside a comment as a guard", () => {
@@ -51,42 +42,28 @@ describe("analyzeDangerousSql", () => {
   });
 
   it("flags DROP and reads the object name past IF EXISTS", () => {
-    expect(analyzeDangerousSql("DROP TABLE foo")).toEqual([
-      { kind: "drop", target: "foo" },
-    ]);
-    expect(analyzeDangerousSql("DROP TABLE IF EXISTS foo")).toEqual([
-      { kind: "drop", target: "foo" },
-    ]);
+    expect(analyzeDangerousSql("DROP TABLE foo")).toEqual([{ kind: "drop", target: "foo" }]);
+    expect(analyzeDangerousSql("DROP TABLE IF EXISTS foo")).toEqual([{ kind: "drop", target: "foo" }]);
   });
 
   it("flags TRUNCATE with and without the optional TABLE keyword", () => {
-    expect(analyzeDangerousSql("TRUNCATE foo")).toEqual([
-      { kind: "truncate", target: "foo" },
-    ]);
-    expect(analyzeDangerousSql("TRUNCATE TABLE foo")).toEqual([
-      { kind: "truncate", target: "foo" },
-    ]);
+    expect(analyzeDangerousSql("TRUNCATE foo")).toEqual([{ kind: "truncate", target: "foo" }]);
+    expect(analyzeDangerousSql("TRUNCATE TABLE foo")).toEqual([{ kind: "truncate", target: "foo" }]);
   });
 
   it("strips quoting from the parsed target identifier", () => {
-    expect(analyzeDangerousSql("DROP TABLE `my table`")).toEqual([
-      { kind: "drop", target: "my table" },
-    ]);
+    expect(analyzeDangerousSql("DROP TABLE `my table`")).toEqual([{ kind: "drop", target: "my table" }]);
     expect(analyzeDangerousSql('DELETE FROM "my tbl"')).toEqual([
       { kind: "deleteNoWhere", target: "my tbl" },
     ]);
   });
 
   it("returns a null target when it cannot be parsed", () => {
-    expect(analyzeDangerousSql("DELETE")).toEqual([
-      { kind: "deleteNoWhere", target: null },
-    ]);
+    expect(analyzeDangerousSql("DELETE")).toEqual([{ kind: "deleteNoWhere", target: null }]);
   });
 
   it("reports one finding per dangerous statement", () => {
-    expect(
-      analyzeDangerousSql("DELETE FROM a; UPDATE b SET x = 1"),
-    ).toEqual([
+    expect(analyzeDangerousSql("DELETE FROM a; UPDATE b SET x = 1")).toEqual([
       { kind: "deleteNoWhere", target: "a" },
       { kind: "updateNoWhere", target: "b" },
     ]);
@@ -99,9 +76,9 @@ describe("analyzeDangerousSql", () => {
   });
 
   it("still detects a dangerous statement preceded by a comment", () => {
-    expect(
-      analyzeDangerousSql("/* cleanup */ DELETE FROM sessions"),
-    ).toEqual([{ kind: "deleteNoWhere", target: "sessions" }]);
+    expect(analyzeDangerousSql("/* cleanup */ DELETE FROM sessions")).toEqual([
+      { kind: "deleteNoWhere", target: "sessions" },
+    ]);
   });
 
   it("does not treat a WHERE inside a dollar-quoted string as a guard", () => {
@@ -110,26 +87,22 @@ describe("analyzeDangerousSql", () => {
     expect(analyzeDangerousSql("UPDATE t SET c = $$ where id = 1 $$")).toEqual([
       { kind: "updateNoWhere", target: "t" },
     ]);
-    expect(
-      analyzeDangerousSql("UPDATE t SET c = $tag$ where id = 1 $tag$"),
-    ).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+    expect(analyzeDangerousSql("UPDATE t SET c = $tag$ where id = 1 $tag$")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
   });
 
   it("does not split statements on a semicolon inside a dollar-quoted string", () => {
-    expect(
-      analyzeDangerousSql("UPDATE t SET c = $$a; b$$ WHERE id = 1"),
-    ).toEqual([]);
+    expect(analyzeDangerousSql("UPDATE t SET c = $$a; b$$ WHERE id = 1")).toEqual([]);
   });
 
   it("does not mistake parameter placeholders or $-identifiers for dollar quotes", () => {
     // `$1 … $1` must not be swallowed as a string: the DELETE stays visible.
-    expect(
-      analyzeDangerousSql("DELETE FROM t; SELECT $1 WHERE x = $1"),
-    ).toEqual([{ kind: "deleteNoWhere", target: "t" }]);
-    // `a$b` is a MySQL-legal identifier, not an opening tag.
-    expect(analyzeDangerousSql("DELETE FROM a$b")).toEqual([
-      { kind: "deleteNoWhere", target: "a$b" },
+    expect(analyzeDangerousSql("DELETE FROM t; SELECT $1 WHERE x = $1")).toEqual([
+      { kind: "deleteNoWhere", target: "t" },
     ]);
+    // `a$b` is a MySQL-legal identifier, not an opening tag.
+    expect(analyzeDangerousSql("DELETE FROM a$b")).toEqual([{ kind: "deleteNoWhere", target: "a$b" }]);
   });
 
   describe("driver-aware backslash escaping (#852, #1004)", () => {
@@ -154,9 +127,7 @@ describe("analyzeDangerousSql", () => {
     });
 
     it("flags updateNoWhere on mysql (the trailing WHERE is masked into the unterminated string)", () => {
-      expect(analyzeDangerousSql(sql, "mysql")).toEqual([
-        { kind: "updateNoWhere", target: "t" },
-      ]);
+      expect(analyzeDangerousSql(sql, "mysql")).toEqual([{ kind: "updateNoWhere", target: "t" }]);
     });
   });
 });
@@ -190,9 +161,7 @@ describe("isReadOnlySql", () => {
 
   it("rejects a write/DDL keyword hiding inside a SELECT-prefixed body", () => {
     // Data-modifying CTE and SELECT ... INTO both begin with allowed keywords.
-    expect(
-      isReadOnlySql("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d"),
-    ).toBe(false);
+    expect(isReadOnlySql("WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d")).toBe(false);
     expect(isReadOnlySql("SELECT * INTO backup FROM t")).toBe(false);
   });
 
@@ -237,17 +206,11 @@ describe("isReadOnlySql", () => {
     // that maskLiterals blanks, so only the function name being on the
     // WRITE_KEYWORDS list catches it. Mirrors backend
     // `is_read_only_sql_masked` (src-tauri/src/db/mod.rs).
-    expect(
-      isReadOnlySql(
-        "SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1') AS r",
-      ),
-    ).toBe(false);
-    expect(
-      isReadOnlySql("SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')"),
-    ).toBe(false);
-    expect(
-      isReadOnlySql("SELECT dblink_exec('dbname=other','DELETE FROM accounts')"),
-    ).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM OPENROWSET('SQLNCLI','Server=x;','UPDATE t SET a=1') AS r")).toBe(
+      false,
+    );
+    expect(isReadOnlySql("SELECT * FROM OPENQUERY(linked_srv, 'DELETE FROM accounts')")).toBe(false);
+    expect(isReadOnlySql("SELECT dblink_exec('dbname=other','DELETE FROM accounts')")).toBe(false);
     expect(isReadOnlySql("SELECT dblink('dbname=other','SELECT 1')")).toBe(false);
     expect(isReadOnlySql("SELECT load_extension('/tmp/evil.so')")).toBe(false);
     // Fail-closed: a column merely named after one of these functions is also
@@ -260,16 +223,10 @@ describe("isReadOnlySql", () => {
     // new enough to satisfy the optional version gate — so it must not be
     // blanked the way a plain `/* ... */` block comment is.
     expect(isReadOnlySql("SELECT /*!50000 * FROM users */ ")).toBe(true);
-    expect(
-      isReadOnlySql("SELECT 1 /*! UNION SELECT password FROM users */"),
-    ).toBe(true);
-    expect(
-      isReadOnlySql("SELECT 1 /*!50000 , (SELECT DELETE FROM users) */"),
-    ).toBe(false);
+    expect(isReadOnlySql("SELECT 1 /*! UNION SELECT password FROM users */")).toBe(true);
+    expect(isReadOnlySql("SELECT 1 /*!50000 , (SELECT DELETE FROM users) */")).toBe(false);
     // An ordinary block comment (no `!`) is unaffected.
-    expect(
-      isReadOnlySql("SELECT 1 /* normal comment with DELETE inside */"),
-    ).toBe(true);
+    expect(isReadOnlySql("SELECT 1 /* normal comment with DELETE inside */")).toBe(true);
   });
 });
 
@@ -330,12 +287,8 @@ describe("readOnlyWithHint (#1256)", () => {
 describe("analyzeDangerousSql: 変異テストで補強した境界ケース", () => {
   it("括弧が閉じたあとのトップレベル WHERE は守りとして認める", () => {
     // 閉じ括弧で depth が戻らないと WHERE を見落とす (depth-- の変異)
-    expect(
-      analyzeDangerousSql("UPDATE t SET c = (SELECT 1) WHERE id = 1"),
-    ).toEqual([]);
-    expect(
-      analyzeDangerousSql("DELETE FROM t WHERE id IN (SELECT 1)"),
-    ).toEqual([]);
+    expect(analyzeDangerousSql("UPDATE t SET c = (SELECT 1) WHERE id = 1")).toEqual([]);
+    expect(analyzeDangerousSql("DELETE FROM t WHERE id IN (SELECT 1)")).toEqual([]);
   });
 
   it("括弧が深くなる前の余分な ) があっても depth が負にならない", () => {
@@ -350,9 +303,7 @@ describe("analyzeDangerousSql: 変異テストで補強した境界ケース", (
     expect(analyzeDangerousSql("UPDATE t SET c = 1 WHEREx")).toEqual([
       { kind: "updateNoWhere", target: "t" },
     ]);
-    expect(analyzeDangerousSql("UPDATE t SET xwhere = 1")).toEqual([
-      { kind: "updateNoWhere", target: "t" },
-    ]);
+    expect(analyzeDangerousSql("UPDATE t SET xwhere = 1")).toEqual([{ kind: "updateNoWhere", target: "t" }]);
   });
 
   it("引用符付きのスキーマ修飾名は修飾名全体を対象にする (#1517)", () => {
@@ -365,54 +316,32 @@ describe("analyzeDangerousSql: 変異テストで補強した境界ケース", (
     expect(analyzeDangerousSql('DELETE FROM public."users"')).toEqual([
       { kind: "deleteNoWhere", target: "public.users" },
     ]);
-    expect(analyzeDangerousSql("TRUNCATE TABLE [dbo].[t]")).toEqual([
-      { kind: "truncate", target: "dbo.t" },
-    ]);
+    expect(analyzeDangerousSql("TRUNCATE TABLE [dbo].[t]")).toEqual([{ kind: "truncate", target: "dbo.t" }]);
   });
 
-  it("対象テーブル名の引用符 (` \" []) を外し、空白の多い構文も解釈する", () => {
+  it('対象テーブル名の引用符 (` " []) を外し、空白の多い構文も解釈する', () => {
     expect(analyzeDangerousSql("DELETE   FROM   `my db`.x")).toEqual([
       { kind: "deleteNoWhere", target: "my db.x" },
     ]);
-    expect(analyzeDangerousSql('DELETE FROM "Users"')).toEqual([
-      { kind: "deleteNoWhere", target: "Users" },
-    ]);
-    expect(analyzeDangerousSql("DELETE FROM [dbo]")).toEqual([
-      { kind: "deleteNoWhere", target: "dbo" },
-    ]);
-    expect(analyzeDangerousSql("UPDATE   `t` SET a = 1")).toEqual([
-      { kind: "updateNoWhere", target: "t" },
-    ]);
-    expect(analyzeDangerousSql("TRUNCATE   TABLE   t")).toEqual([
-      { kind: "truncate", target: "t" },
-    ]);
-    expect(analyzeDangerousSql("TRUNCATE   t")).toEqual([
-      { kind: "truncate", target: "t" },
-    ]);
-    expect(analyzeDangerousSql("DROP   TABLE   IF   EXISTS   t")).toEqual([
-      { kind: "drop", target: "t" },
-    ]);
-    expect(analyzeDangerousSql("DROP   DATABASE   d")).toEqual([
-      { kind: "drop", target: "d" },
-    ]);
+    expect(analyzeDangerousSql('DELETE FROM "Users"')).toEqual([{ kind: "deleteNoWhere", target: "Users" }]);
+    expect(analyzeDangerousSql("DELETE FROM [dbo]")).toEqual([{ kind: "deleteNoWhere", target: "dbo" }]);
+    expect(analyzeDangerousSql("UPDATE   `t` SET a = 1")).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+    expect(analyzeDangerousSql("TRUNCATE   TABLE   t")).toEqual([{ kind: "truncate", target: "t" }]);
+    expect(analyzeDangerousSql("TRUNCATE   t")).toEqual([{ kind: "truncate", target: "t" }]);
+    expect(analyzeDangerousSql("DROP   TABLE   IF   EXISTS   t")).toEqual([{ kind: "drop", target: "t" }]);
+    expect(analyzeDangerousSql("DROP   DATABASE   d")).toEqual([{ kind: "drop", target: "d" }]);
   });
 
   it("対象が読み取れないときは target が null になる", () => {
-    expect(analyzeDangerousSql("DELETE FROM ")).toEqual([
-      { kind: "deleteNoWhere", target: null },
-    ]);
-    expect(analyzeDangerousSql("TRUNCATE ``")).toEqual([
-      { kind: "truncate", target: null },
-    ]);
+    expect(analyzeDangerousSql("DELETE FROM ")).toEqual([{ kind: "deleteNoWhere", target: null }]);
+    expect(analyzeDangerousSql("TRUNCATE ``")).toEqual([{ kind: "truncate", target: null }]);
   });
 
   it("コメント・文字列内の WHERE は守りにならず、target は元のリテラルから取る", () => {
     expect(analyzeDangerousSql("DELETE FROM t -- WHERE id = 1")).toEqual([
       { kind: "deleteNoWhere", target: "t" },
     ]);
-    expect(analyzeDangerousSql("UPDATE t SET c = 'WHERE'")).toEqual([
-      { kind: "updateNoWhere", target: "t" },
-    ]);
+    expect(analyzeDangerousSql("UPDATE t SET c = 'WHERE'")).toEqual([{ kind: "updateNoWhere", target: "t" }]);
   });
 });
 

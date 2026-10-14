@@ -105,9 +105,7 @@ describe("inferColumnSpec", () => {
     expect(s.strategy).toBe("omit");
   });
   it("FK カラムは参照先の既存値からランダム選択", () => {
-    const s = inferColumnSpec(
-      col({ data_type: "int", referenced_table: "users", referenced_column: "id" }),
-    );
+    const s = inferColumnSpec(col({ data_type: "int", referenced_table: "users", referenced_column: "id" }));
     expect(s.strategy).toBe("fkRef");
     expect(s.fkTable).toBe("users");
     expect(s.fkColumn).toBe("id");
@@ -201,11 +199,7 @@ describe("generateRows", () => {
     expect(nulls).toBeLessThan(280);
   });
   it("randomNumber は min..max に収まる (整数)", () => {
-    const rows = generateRows(
-      [spec({ strategy: "randomNumber", kind: "number", min: 5, max: 9 })],
-      200,
-      11,
-    );
+    const rows = generateRows([spec({ strategy: "randomNumber", kind: "number", min: 5, max: 9 })], 200, 11);
     for (const [v] of rows) {
       expect(typeof v).toBe("number");
       expect(v).toBeGreaterThanOrEqual(5);
@@ -250,11 +244,7 @@ describe("generateRows", () => {
     expect(rows.some((r) => r[0] === false)).toBe(true);
   });
   it("choice / fkRef は候補からのみ選び、候補が空なら NULL", () => {
-    const rows = generateRows(
-      [spec({ strategy: "choice", choices: ["a", "b"] })],
-      100,
-      31,
-    );
+    const rows = generateRows([spec({ strategy: "choice", choices: ["a", "b"] })], 100, 31);
     for (const [v] of rows) expect(["a", "b"]).toContain(v);
     const empty = generateRows([spec({ strategy: "fkRef", choices: [] })], 10, 31);
     expect(empty.every((r) => r[0] === null)).toBe(true);

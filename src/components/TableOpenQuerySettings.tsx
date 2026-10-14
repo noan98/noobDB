@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import {
-  removeTableOpenQueryOverride,
-  setTableOpenQueryTemplate,
-  useSettings,
-} from "../settings";
+import { removeTableOpenQueryOverride, setTableOpenQueryTemplate, useSettings } from "../settings";
 import {
   TABLE_QUERY_PLACEHOLDERS,
   tableQueryTemplateErrorMessage,

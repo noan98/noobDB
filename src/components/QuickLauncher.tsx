@@ -118,7 +118,13 @@ export function QuickLauncher({
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const dragRef = useRef<{ pointerId: number; startX: number; startY: number; origin: Point; dragging: boolean } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    origin: Point;
+    dragging: boolean;
+  } | null>(null);
   // 直前のポインタ操作がドラッグだったか (続く click で開閉させない)。
   const suppressClickRef = useRef(false);
 
@@ -366,14 +372,25 @@ export function QuickLauncher({
               />
             ) : (
               visibleSections.map((section) => (
-                <Box key={section.id} role="group" aria-label={t(QUICK_LAUNCHER_SECTION_LABEL[section.id])} py="1">
+                <Box
+                  key={section.id}
+                  role="group"
+                  aria-label={t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
+                  py="1"
+                >
                   <chakra.div textStyle="overline" px="2" py="1">
                     {t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
                   </chakra.div>
                   {section.items.map((item) => {
                     const label = itemLabel(item);
                     return (
-                      <Flex key={item.key} align="center" gap="1" borderRadius="sm" _hover={{ bg: "app.hover" }}>
+                      <Flex
+                        key={item.key}
+                        align="center"
+                        gap="1"
+                        borderRadius="sm"
+                        _hover={{ bg: "app.hover" }}
+                      >
                         <chakra.button
                           type="button"
                           data-launcher-item=""

@@ -187,7 +187,12 @@ describe("splitLabel", () => {
   });
 
   it("splits around multiple ranges", () => {
-    expect(splitLabel("order_id", [[0, 1], [6, 8]])).toEqual([
+    expect(
+      splitLabel("order_id", [
+        [0, 1],
+        [6, 8],
+      ]),
+    ).toEqual([
       { text: "o", highlighted: true },
       { text: "rder_", highlighted: false },
       { text: "id", highlighted: true },
@@ -258,10 +263,7 @@ describe("sanitizeMruIds (#845)", () => {
   });
 
   it("drops non-string and empty-string entries", () => {
-    expect(sanitizeMruIds(["conn:a", 1, null, undefined, {}, "", "table:t"])).toEqual([
-      "conn:a",
-      "table:t",
-    ]);
+    expect(sanitizeMruIds(["conn:a", 1, null, undefined, {}, "", "table:t"])).toEqual(["conn:a", "table:t"]);
   });
 
   it("de-duplicates, keeping only the first (most recent) occurrence", () => {
@@ -385,7 +387,9 @@ describe("limitAndIndexGroups (#1320)", () => {
     for (const g of v.groups) {
       for (const { scored, flatIndex } of g.items) expect(v.flat[flatIndex]).toBe(scored);
     }
-    expect(v.flat.map((x) => x.item.id)).toEqual(v.groups.flatMap((g) => g.items.map((i) => i.scored.item.id)));
+    expect(v.flat.map((x) => x.item.id)).toEqual(
+      v.groups.flatMap((g) => g.items.map((i) => i.scored.item.id)),
+    );
   });
 
   it("MRU グループは空クエリでも絞らない", () => {

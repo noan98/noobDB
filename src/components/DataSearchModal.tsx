@@ -1,12 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
-import {
-  api,
-  listenDataSearchStream,
-  type DataSearchEntry,
-  type ScanColumn,
-} from "../api/tauri";
+import { api, listenDataSearchStream, type DataSearchEntry, type ScanColumn } from "../api/tauri";
 import { useT } from "../i18n";
 import {
   buildColumnJumpSql,
@@ -135,10 +130,7 @@ const HitCard = memo(function HitCard({
   onOpenTable: (entry: HitEntry) => void;
 }) {
   const t = useT();
-  const dataTypes = useMemo(
-    () => new Map(entry.columns.map((c) => [c.name, c.dataType])),
-    [entry.columns],
-  );
+  const dataTypes = useMemo(() => new Map(entry.columns.map((c) => [c.name, c.dataType])), [entry.columns]);
   return (
     <MotionHitCard
       variants={staggered ? variants.staggerItem : undefined}
@@ -528,7 +520,14 @@ export function DataSearchModal({
               <FieldLabel as="div">{t("dataSearchScopeLabel")}</FieldLabel>
               <chakra.div role="radiogroup" aria-label={t("dataSearchScopeLabel")} display="flex" gap="4">
                 {(["all", "selected"] as const).map((sc) => (
-                  <chakra.label key={sc} display="inline-flex" alignItems="center" gap="1.5" cursor="pointer" userSelect="none">
+                  <chakra.label
+                    key={sc}
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1.5"
+                    cursor="pointer"
+                    userSelect="none"
+                  >
                     <Radio
                       name="data-search-scope"
                       value={sc}
@@ -689,7 +688,8 @@ export function DataSearchModal({
                       <chakra.span minW={0} truncate>
                         {entry.reason === "row-threshold" && t("dataSearchSkipReasonThreshold")}
                         {entry.reason === "no-searchable-columns" && t("dataSearchSkipReasonNoColumns")}
-                        {entry.reason === "error" && t("dataSearchSkipReasonError", { error: entry.detail ?? "" })}
+                        {entry.reason === "error" &&
+                          t("dataSearchSkipReasonError", { error: entry.detail ?? "" })}
                       </chakra.span>
                     </chakra.div>
                   ))}

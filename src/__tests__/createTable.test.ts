@@ -166,10 +166,42 @@ describe("columnDefsFromTableInfo (#1540)", () => {
       info({ name: "note", data_type: "text" }),
     ]);
     expect(defs).toEqual([
-      { name: "id", type: "bigint", notNull: true, primaryKey: true, unique: false, autoIncrement: true, defaultValue: "" },
-      { name: "email", type: "varchar(255)", notNull: true, primaryKey: false, unique: true, autoIncrement: false, defaultValue: "" },
-      { name: "status", type: "varchar(16)", notNull: false, primaryKey: false, unique: false, autoIncrement: false, defaultValue: "active" },
-      { name: "note", type: "text", notNull: false, primaryKey: false, unique: false, autoIncrement: false, defaultValue: "" },
+      {
+        name: "id",
+        type: "bigint",
+        notNull: true,
+        primaryKey: true,
+        unique: false,
+        autoIncrement: true,
+        defaultValue: "",
+      },
+      {
+        name: "email",
+        type: "varchar(255)",
+        notNull: true,
+        primaryKey: false,
+        unique: true,
+        autoIncrement: false,
+        defaultValue: "",
+      },
+      {
+        name: "status",
+        type: "varchar(16)",
+        notNull: false,
+        primaryKey: false,
+        unique: false,
+        autoIncrement: false,
+        defaultValue: "active",
+      },
+      {
+        name: "note",
+        type: "text",
+        notNull: false,
+        primaryKey: false,
+        unique: false,
+        autoIncrement: false,
+        defaultValue: "",
+      },
     ]);
   });
 
@@ -180,7 +212,13 @@ describe("columnDefsFromTableInfo (#1540)", () => {
 
   it("PostgreSQL の nextval 既定値は自動採番に写し、元のシーケンス参照を持ち越さない", () => {
     const [id] = columnDefsFromTableInfo([
-      info({ name: "id", data_type: "integer", nullable: false, key: "PRI", default: "nextval('orders_id_seq'::regclass)" }),
+      info({
+        name: "id",
+        data_type: "integer",
+        nullable: false,
+        key: "PRI",
+        default: "nextval('orders_id_seq'::regclass)",
+      }),
     ]);
     expect(id.autoIncrement).toBe(true);
     expect(id.defaultValue).toBe("");
@@ -189,7 +227,12 @@ describe("columnDefsFromTableInfo (#1540)", () => {
   it("生成列は既定値なしの通常列、DEFAULT_GENERATED の既定値は残す", () => {
     const [gen, dg] = columnDefsFromTableInfo([
       info({ name: "total", extra: "STORED GENERATED", default: "price * qty" }),
-      info({ name: "created", data_type: "datetime", extra: "DEFAULT_GENERATED", default: "CURRENT_TIMESTAMP" }),
+      info({
+        name: "created",
+        data_type: "datetime",
+        extra: "DEFAULT_GENERATED",
+        default: "CURRENT_TIMESTAMP",
+      }),
     ]);
     expect(gen.defaultValue).toBe("");
     expect(dg.defaultValue).toBe("CURRENT_TIMESTAMP");

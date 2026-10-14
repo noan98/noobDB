@@ -1,4 +1,23 @@
-import { forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState, useDeferredValue, type CSSProperties, type DragEvent as ReactDragEvent, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useDeferredValue,
+  type CSSProperties,
+  type DragEvent as ReactDragEvent,
+  type FocusEvent as ReactFocusEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { AUTOFIT_SAMPLE_ROWS, computeAutoFitWidth } from "./gridAutoFit";
 import { useKeepAliveActive } from "./KeepAlive";
 import { useStableCallbacks } from "../useStableCallbacks";
@@ -44,13 +63,16 @@ import {
   type Header,
   type Row,
 } from "@tanstack/react-table";
+import { fromTablePinning, pinSideFromTable, tablePinPosition, toTablePinning } from "./gridColumnPinning";
 import {
-  fromTablePinning,
-  pinSideFromTable,
-  tablePinPosition,
-  toTablePinning,
-} from "./gridColumnPinning";
-import { api, type AutoLimitSkip, CellValue, Column, QueryResult, TableColumnInfo, TableRowIdentity } from "../api/tauri";
+  api,
+  type AutoLimitSkip,
+  CellValue,
+  Column,
+  QueryResult,
+  TableColumnInfo,
+  TableRowIdentity,
+} from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -62,11 +84,7 @@ import {
   isContextMenuOpenKey,
   pickContextMenuOpenKeys,
 } from "./contextMenuKeyboard";
-import {
-  AUTO_REFRESH_INTERVAL_OPTIONS,
-  RESULT_GRID_PAGE_SIZE_OPTIONS,
-  useSettings,
-} from "../settings";
+import { AUTO_REFRESH_INTERVAL_OPTIONS, RESULT_GRID_PAGE_SIZE_OPTIONS, useSettings } from "../settings";
 import { CellValueViewer } from "./CellValueViewer";
 import { useCellBlobIo, type BlobIoConfig } from "./useCellBlobIo";
 import { useValuePicker, ValueDatalist, type ValueLookup, type ValuePicker } from "./useValuePicker";
@@ -78,12 +96,7 @@ import { inspectorEditableColumns, inspectorRowEditBlock } from "./rowInspectorE
 import { resolveRelatedEntries } from "../relatedRows";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { useConfirm } from "./ConfirmDialog";
-import {
-  ContextMenu,
-  submenuOrFlat,
-  SUBMENU_THRESHOLD,
-  type ContextMenuEntry,
-} from "./ContextMenu";
+import { ContextMenu, submenuOrFlat, SUBMENU_THRESHOLD, type ContextMenuEntry } from "./ContextMenu";
 import { EmptyState } from "./EmptyState";
 import { ScrollEdgeShadows } from "./ScrollEdgeShadows";
 import { moveColumnId, reorderColumnIds } from "./columnReorderFlip";
@@ -180,11 +193,7 @@ import {
   type ServerSortDirection,
 } from "./serverBrowse";
 import { diffResultRows, rowDiffFor } from "../resultDiff";
-import {
-  buildFkJumpSql,
-  buildReverseRefSql,
-  type IncomingFk,
-} from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -285,7 +294,6 @@ const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
  * `css` オブジェクト + 子孫セレクタを **意図的に維持** する (className 文字列の
  * 同期が不要なよう、対象は素のタグセレクタに限定している)。
  */
-
 
 export const GRID_CSS: SystemStyleObject = {
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
@@ -397,9 +405,10 @@ export const GRID_CSS: SystemStyleObject = {
   "& tbody tr:hover td": { background: "var(--bg-row-hover)" },
   // 矩形範囲選択。アクセント色の薄い塗りで選択範囲を示す。アクティブセルの
   // フォーカスリングはそのまま重ねて表示される。ストライプ/ホバーより優先する。
-  "& tbody td.is-selected-cell, & tbody tr.grid-row-stripe td.is-selected-cell, & tbody tr:hover td.is-selected-cell": {
-    background: "color-mix(in srgb, var(--accent) 22%, var(--bg))",
-  },
+  "& tbody td.is-selected-cell, & tbody tr.grid-row-stripe td.is-selected-cell, & tbody tr:hover td.is-selected-cell":
+    {
+      background: "color-mix(in srgb, var(--accent) 22%, var(--bg))",
+    },
   "& td.row-index, & th.row-index": {
     position: "sticky",
     left: 0,
@@ -491,10 +500,11 @@ export const GRID_CSS: SystemStyleObject = {
     opacity: 0,
     pointerEvents: "none",
   },
-  "& td.is-fk:hover .cell-fk-jump, & td.is-fk.is-active-cell .cell-fk-jump, & td.is-fk .cell-fk-jump:focus-visible": {
-    opacity: 1,
-    pointerEvents: "auto",
-  },
+  "& td.is-fk:hover .cell-fk-jump, & td.is-fk.is-active-cell .cell-fk-jump, & td.is-fk .cell-fk-jump:focus-visible":
+    {
+      opacity: 1,
+      pointerEvents: "auto",
+    },
   "& td.is-fk .cell-fk-jump:hover": {
     background: "color-mix(in srgb, var(--accent) 16%, var(--bg-elevated))",
     borderColor: "var(--accent)",
@@ -981,8 +991,7 @@ export const GRID_CSS: SystemStyleObject = {
   // アクティブセルと区別するため透明度を下げ (--focus-ring-inset より淡い)、
   // 「選択されているが現在のカーソル位置ではない」状態を視覚的に分離する。
   "& tbody td.is-selected-cell:not(.is-active-cell)": {
-    boxShadow:
-      "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
+    boxShadow: "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 45%, transparent)",
   },
   "& td.is-invalid-edit": { boxShadow: `inset 2px 0 0 ${semanticColorVar("danger", "solid")}` },
   "& td.is-invalid-edit.is-pending-edit": {
@@ -1044,10 +1053,9 @@ export const GRID_CSS: SystemStyleObject = {
   // 結果内検索 (Find in Results, #644) のヒットハイライト。行を隠す列フィルタと
   // 違い「読みながら探す」機能なので、選択 (アクセント色) と区別できる警告色系の
   // 塗りにする。ストライプ/ホバーの行背景より優先する。
-  "& tbody td.is-find-hit, & tbody tr.grid-row-stripe td.is-find-hit, & tbody tr:hover td.is-find-hit":
-    {
-      background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 22%, var(--bg))`,
-    },
+  "& tbody td.is-find-hit, & tbody tr.grid-row-stripe td.is-find-hit, & tbody tr:hover td.is-find-hit": {
+    background: `color-mix(in srgb, ${semanticColorVar("warning", "solid")} 22%, var(--bg))`,
+  },
   // 現在ヒット: 濃い塗り + inset リング。ジャンプ時は App.css の
   // @keyframes find-current-pulse で一瞬リングを太らせて着地を示す
   // (reduced-motion では App.css 末尾のメディアクエリで静止化)。
@@ -1458,7 +1466,6 @@ const sortBool: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) =>
 const sortString: SortFn<GridFeatures, RowShape> = (rowA, rowB, columnId) =>
   compareStringCells(rowA.getValue(columnId) as CellValue, rowB.getValue(columnId) as CellValue);
 
-
 function sortingFnForKind(kind: CellKind): SortFn<GridFeatures, RowShape> {
   switch (kind) {
     case "number":
@@ -1540,10 +1547,7 @@ export function readStoredColumnSizing(storageKey: string | undefined): ColumnSi
   return {};
 }
 
-export function writeStoredColumnSizing(
-  storageKey: string | undefined,
-  sizing: ColumnSizingState,
-): void {
+export function writeStoredColumnSizing(storageKey: string | undefined, sizing: ColumnSizingState): void {
   if (!storageKey) return;
   try {
     touchColumnLayoutLru(storageKey);
@@ -1587,17 +1591,15 @@ export function readStoredColumnState(storageKey: string | undefined): Persisted
   return {};
 }
 
-export function writeStoredColumnState(
-  storageKey: string | undefined,
-  state: PersistedColumnState,
-): void {
+export function writeStoredColumnState(storageKey: string | undefined, state: PersistedColumnState): void {
   if (!storageKey) return;
   try {
     // Empty state → remove the entry so a reset truly falls back to defaults.
     const empty =
       (!state.order || state.order.length === 0) &&
       (!state.visibility || Object.keys(state.visibility).length === 0) &&
-      (!state.pinning || ((state.pinning.left?.length ?? 0) === 0 && (state.pinning.right?.length ?? 0) === 0));
+      (!state.pinning ||
+        ((state.pinning.left?.length ?? 0) === 0 && (state.pinning.right?.length ?? 0) === 0));
     if (empty) {
       localStorage.removeItem(storageKey);
     } else {
@@ -1663,7 +1665,6 @@ const globalIncludesFilter: FilterFn<GridFeatures, RowShape> = (row, _columnId, 
   }
   return false;
 };
-
 
 /** Field styling shared by the filter popup's selects/inputs. */
 const FILTER_FIELD_CSS: SystemStyleObject = {
@@ -1808,7 +1809,12 @@ function ColumnFilterMenu({
   const [serverFilterValue, setServerFilterValue] = useState<string>(() => serverFilter?.value ?? "");
   const [serverFilterValue2, setServerFilterValue2] = useState<string>(() => serverFilter?.value2 ?? "");
   const serverFilterNeedsValue = serverFilterOpNeedsValue(serverFilterOp);
-  const serverFilterValid = isServerFilterInputValid(serverFilterOp, serverFilterValue, serverFilterValue2, numeric);
+  const serverFilterValid = isServerFilterInputValid(
+    serverFilterOp,
+    serverFilterValue,
+    serverFilterValue2,
+    numeric,
+  );
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
   // メニューで条件を編集したら、クイックフィルタ由来の大小区別 (`caseSensitive`) は落とす
@@ -2135,7 +2141,14 @@ function ColumnFilterMenu({
       )}
 
       {onToggleMask && (
-        <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1"
+          paddingTop="0.5"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridMaskSectionLabel")}
           </chakra.span>
@@ -2169,8 +2182,20 @@ function ColumnFilterMenu({
         </Box>
       )}
 
-      {(onHideColumn || onShowAllColumns || onResetLayout || onShowStats || onToggleFooter || onMoveColumn) && (
-        <Box display="flex" flexDirection="column" gap="1" paddingTop="0.5" borderTop="1px solid" borderColor="app.borderSubtle">
+      {(onHideColumn ||
+        onShowAllColumns ||
+        onResetLayout ||
+        onShowStats ||
+        onToggleFooter ||
+        onMoveColumn) && (
+        <Box
+          display="flex"
+          flexDirection="column"
+          gap="1"
+          paddingTop="0.5"
+          borderTop="1px solid"
+          borderColor="app.borderSubtle"
+        >
           <chakra.span fontSize="var(--text-xs)" color="app.textMuted" paddingTop="1.5">
             {t("gridColumnsLabel")}
           </chakra.span>
@@ -2325,9 +2350,7 @@ function StatRow({ label, value, title }: { label: string; value: ReactNode; tit
 function fmtStatNum(n: number | null): string {
   if (n === null) return "—";
   if (!Number.isFinite(n)) return String(n);
-  return Number.isInteger(n)
-    ? n.toLocaleString()
-    : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return Number.isInteger(n) ? n.toLocaleString() : n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
 /** 任意のセル値を統計表示用テキストへ (NULL は em ダッシュ)。 */
@@ -2597,51 +2620,51 @@ function ColumnStatsMenu({
           {t("gridStatsLoading")}
         </Box>
       ) : (
-      <Box display="flex" flexDirection="column" gap="1">
-        <StatRow
-          label={t("gridCountLabel")}
-          value={
-            <>
-              <CountUp value={stats.nonNullCount} />
-              {" / "}
-              <CountUp value={stats.count} />
-            </>
-          }
-        />
-        <Box display="flex" flexDirection="column" gap="0.5">
+        <Box display="flex" flexDirection="column" gap="1">
           <StatRow
-            label={t("gridNullLabel")}
+            label={t("gridCountLabel")}
             value={
               <>
-                <CountUp value={stats.nullCount} />
-                {` (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+                <CountUp value={stats.nonNullCount} />
+                {" / "}
+                <CountUp value={stats.count} />
               </>
             }
           />
-          {nullBar}
+          <Box display="flex" flexDirection="column" gap="0.5">
+            <StatRow
+              label={t("gridNullLabel")}
+              value={
+                <>
+                  <CountUp value={stats.nullCount} />
+                  {` (${nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0)}%)`}
+                </>
+              }
+            />
+            {nullBar}
+          </Box>
+          <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
+          {numeric ? (
+            <>
+              <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
+              <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} />
+              <StatRow label={t("gridAvgLabel")} value={fmtStatNum(stats.avg)} />
+              <StatRow label={t("gridSumLabel")} value={fmtStatNum(stats.sum)} />
+            </>
+          ) : (
+            <>
+              <StatRow label={t("gridMinLenLabel")} value={fmtStatNum(stats.minLen)} />
+              <StatRow label={t("gridMaxLenLabel")} value={fmtStatNum(stats.maxLen)} />
+              {stats.mode && (
+                <StatRow
+                  label={t("gridModeLabel")}
+                  value={`${stats.mode.value} (${stats.mode.count})`}
+                  title={stats.mode.value}
+                />
+              )}
+            </>
+          )}
         </Box>
-        <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
-        {numeric ? (
-          <>
-            <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
-            <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} />
-            <StatRow label={t("gridAvgLabel")} value={fmtStatNum(stats.avg)} />
-            <StatRow label={t("gridSumLabel")} value={fmtStatNum(stats.sum)} />
-          </>
-        ) : (
-          <>
-            <StatRow label={t("gridMinLenLabel")} value={fmtStatNum(stats.minLen)} />
-            <StatRow label={t("gridMaxLenLabel")} value={fmtStatNum(stats.maxLen)} />
-            {stats.mode && (
-              <StatRow
-                label={t("gridModeLabel")}
-                value={`${stats.mode.value} (${stats.mode.count})`}
-                title={stats.mode.value}
-              />
-            )}
-          </>
-        )}
-      </Box>
       )}
 
       {onSetFooterFn && (
@@ -2668,7 +2691,8 @@ function ColumnStatsMenu({
               onChange={(e) => onSetFooterFn(e.target.value as FooterAggFn)}
               fontSize="var(--text-xs)"
               fontFamily="inherit"
-              py="0.5" px="1.5"
+              py="0.5"
+              px="1.5"
               border="1px solid var(--border)"
               background="var(--bg-input)"
               color="var(--text)"
@@ -2708,13 +2732,18 @@ function ColumnStatsMenu({
                   </>
                 }
               />
-              <StatRow
-                label={t("gridNullLabel")}
-                value={<CountUp value={full.nullCount} />}
-              />
+              <StatRow label={t("gridNullLabel")} value={<CountUp value={full.nullCount} />} />
               <StatRow label={t("gridDistinctLabel")} value={<CountUp value={full.distinct} />} />
-              <StatRow label={t("gridMinLabel")} value={fmtStatCell(full.min)} title={fmtStatCell(full.min)} />
-              <StatRow label={t("gridMaxLabel")} value={fmtStatCell(full.max)} title={fmtStatCell(full.max)} />
+              <StatRow
+                label={t("gridMinLabel")}
+                value={fmtStatCell(full.min)}
+                title={fmtStatCell(full.min)}
+              />
+              <StatRow
+                label={t("gridMaxLabel")}
+                value={fmtStatCell(full.max)}
+                title={fmtStatCell(full.max)}
+              />
               {numeric && (
                 <>
                   <StatRow label={t("gridAvgLabel")} value={fmtStatNum(full.avg)} />
@@ -2723,12 +2752,7 @@ function ColumnStatsMenu({
               )}
             </>
           ) : (
-            <LoadingButton
-              variant="secondary"
-              size="sm"
-              loading={loadingFull}
-              onClick={() => void runFull()}
-            >
+            <LoadingButton variant="secondary" size="sm" loading={loadingFull} onClick={() => void runFull()}>
               {loadingFull ? t("gridStatsLoading") : t("gridStatsFullButton")}
             </LoadingButton>
           )}
@@ -2816,10 +2840,7 @@ type GridHeaderHandlers = {
     column: Header<GridFeatures, RowShape, unknown>["column"],
   ) => void;
   /** 境界のダブルクリック: 表示中の行とヘッダ名の内容幅に列を合わせる (#1610)。 */
-  onAutoFit: (
-    column: Header<GridFeatures, RowShape, unknown>["column"],
-    th: HTMLElement | null,
-  ) => void;
+  onAutoFit: (column: Header<GridFeatures, RowShape, unknown>["column"], th: HTMLElement | null) => void;
   /** リサイズハンドルのキーボード操作 (左右キーで幅を delta px 変える, #1529)。 */
   onResizeBy: (column: Header<GridFeatures, RowShape, unknown>["column"], delta: number) => void;
   /** 並び替えグリップのキーボード操作 (左右キーで列を 1 つ動かす, #1529)。 */
@@ -2898,11 +2919,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
 }: GridHeaderCellProps) {
   const colIdx = Number(h.column.id);
   const sortTitle =
-    sortDir === "asc"
-      ? t("gridSortDesc")
-      : sortDir === "desc"
-        ? t("gridSortClear")
-        : t("gridSortAsc");
+    sortDir === "asc" ? t("gridSortDesc") : sortDir === "desc" ? t("gridSortClear") : t("gridSortAsc");
   const filterLabel = t("gridFilterAria", { column: colName });
   const pinStyle: CSSProperties = pinSide
     ? {
@@ -2961,10 +2978,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
                   <Icon name="sort-desc" size={ICON_SIZES.sm} />
                 ) : null}
                 {sortRank > 0 && (
-                  <chakra.span
-                    className="th-sort-rank"
-                    aria-label={t("gridSortPriority", { n: sortRank })}
-                  >
+                  <chakra.span className="th-sort-rank" aria-label={t("gridSortPriority", { n: sortRank })}>
                     {sortRank}
                   </chakra.span>
                 )}
@@ -3017,7 +3031,9 @@ const GridHeaderCell = memo(function GridHeaderCell({
             className={`th-resize-handle ${isResizing ? "is-resizing" : ""}`}
             onMouseDown={(e) => handlers.onStartResize(e, h.column)}
             onTouchStart={(e) => handlers.onStartResize(e, h.column)}
-            onDoubleClick={(e) => handlers.onAutoFit(h.column, (e.currentTarget as HTMLElement).closest('th'))}
+            onDoubleClick={(e) =>
+              handlers.onAutoFit(h.column, (e.currentTarget as HTMLElement).closest("th"))
+            }
             // キーボードで幅を変えられるよう、フォーカス可能な vertical separator にする (#1529)。
             role="separator"
             aria-orientation="vertical"
@@ -3061,7 +3077,13 @@ type GridRowHandlers = {
   onCellDoubleClick: (
     rowIdx: number,
     colIdx: number,
-    cell: { masked: boolean; editable: boolean; hasPending: boolean; pendingValue: string | undefined; originalDisplay: string },
+    cell: {
+      masked: boolean;
+      editable: boolean;
+      hasPending: boolean;
+      pendingValue: string | undefined;
+      originalDisplay: string;
+    },
   ) => void;
   onEditChange: (value: string) => void;
   onEditBlur: (originalDisplay: string) => void;
@@ -3226,8 +3248,7 @@ const GridRow = memo(function GridRow({
         ? valuePicker.candidates(columns[colIdx]?.name ?? "")
         : EMPTY_PICKER_VALUES;
     const typedEditor = isEditingHere ? editing!.typed : null;
-    const editError =
-      isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
+    const editError = isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
       hasPending && !isEditingHere && validateEdit ? validateEdit(colIdx, pendingValue) : null;
     // Original display string — used both for the input's
@@ -3363,9 +3384,7 @@ const GridRow = memo(function GridRow({
           <motion.span
             key={pendingValue}
             className={
-              /^null$/i.test(pendingValue.trim())
-                ? "cell-null cell-pending-value"
-                : "cell-pending-value"
+              /^null$/i.test(pendingValue.trim()) ? "cell-null cell-pending-value" : "cell-pending-value"
             }
             initial={variants.slideUp.initial}
             animate={variants.slideUp.animate}
@@ -3422,12 +3441,7 @@ const GridRow = memo(function GridRow({
     if (c) windowCells.push(c);
   }
   return (
-    <tr
-      role="row"
-      className={rowClass || undefined}
-      ref={measureRef}
-      data-index={measureIndex}
-    >
+    <tr role="row" className={rowClass || undefined} ref={measureRef} data-index={measureIndex}>
       <td
         className="row-index"
         // Shift+クリックでブラウザ既定のテキスト選択が走らないようにする。
@@ -3851,13 +3865,8 @@ export const DataGrid = memo(function DataGrid({
   // column filters used to reset on every reopen. They now ride the same
   // per-result-shape key (`gridViewStateKeyFrom` mirrors `colStateKeyFrom`) so
   // "column widths remembered but sort forgotten" no longer feels broken.
-  const gridViewKey = useMemo(
-    () => gridViewStateKeyFrom(columnSizingStorageKey),
-    [columnSizingStorageKey],
-  );
-  const [sorting, setSorting] = useState<SortingState>(
-    () => readStoredGridView(gridViewKey).sorting ?? [],
-  );
+  const gridViewKey = useMemo(() => gridViewStateKeyFrom(columnSizingStorageKey), [columnSizingStorageKey]);
+  const [sorting, setSorting] = useState<SortingState>(() => readStoredGridView(gridViewKey).sorting ?? []);
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>(
     () => readStoredGridView(gridViewKey).filters ?? [],
   );
@@ -3891,10 +3900,7 @@ export const DataGrid = memo(function DataGrid({
   const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (updater) => {
     const next = typeof updater === "function" ? updater(columnFiltersRef.current) : updater;
     setColumnFilters(next);
-    writeStoredGridView(
-      gridViewKey,
-      toPersistedGridView(sortingRef.current, next, maskOverridesRef.current),
-    );
+    writeStoredGridView(gridViewKey, toPersistedGridView(sortingRef.current, next, maskOverridesRef.current));
   };
   // Clear both sort and filters, persisting the reset in one write (avoids the
   // stale-ref hazard of calling the two handlers back to back). Column mask
@@ -3915,7 +3921,11 @@ export const DataGrid = memo(function DataGrid({
   // --- 機微カラムの表示マスク (#1069) ---
   // 実効設定を親 (ResultGrid) へ伝える (調査バンドルが同じマスクで書き出すため)。
   useEffect(() => {
-    onMaskConfigChange?.({ enabled: columnMaskEnabled, patterns: columnMaskPatterns, overrides: maskOverrides });
+    onMaskConfigChange?.({
+      enabled: columnMaskEnabled,
+      patterns: columnMaskPatterns,
+      overrides: maskOverrides,
+    });
   }, [onMaskConfigChange, columnMaskEnabled, columnMaskPatterns, maskOverrides]);
   // 列ごとのマスクフラグ。1 列もマスクされなければ null (セル描画のホットパスは
   // null 判定 1 回で素通りする)。列/設定/上書きが変わったときだけ再計算する。
@@ -3986,18 +3996,14 @@ export const DataGrid = memo(function DataGrid({
     if (name === undefined) return;
     const next = toggleMaskOverride(maskOverridesRef.current, name, columnMaskPatterns, nextMasked);
     setMaskOverrides(next);
-    writeStoredGridView(
-      gridViewKey,
-      toPersistedGridView(sortingRef.current, columnFiltersRef.current, next),
-    );
+    writeStoredGridView(gridViewKey, toPersistedGridView(sortingRef.current, columnFiltersRef.current, next));
     if (!nextMasked) setReveal((r) => (r && r.colIdx === colIdx ? null : r));
   };
   /** 列全体がマスク中 (= マスク対象で、列 reveal されていない) か。 */
   const isColumnMaskedNow = (colIdx: number) =>
     !!maskedCols?.[colIdx] && !(reveal?.kind === "column" && reveal.colIdx === colIdx);
   /** セル 1 つがマスク中か。 */
-  const cellMaskedNow = (rowIdx: number, colIdx: number) =>
-    isCellMasked(maskedCols, reveal, rowIdx, colIdx);
+  const cellMaskedNow = (rowIdx: number, colIdx: number) => isCellMasked(maskedCols, reveal, rowIdx, colIdx);
 
   // Column widths persist per result shape. The ref mirrors the live state so
   // functional updates from TanStack resolve against the latest value without
@@ -4016,8 +4022,7 @@ export const DataGrid = memo(function DataGrid({
   // Persist on resize. Inlined into table options so the latest storage key
   // is captured each render (TanStack re-reads options every render).
   const handleColumnSizingChange: OnChangeFn<ColumnSizingState> = (updater) => {
-    const next =
-      typeof updater === "function" ? updater(columnSizingRef.current) : updater;
+    const next = typeof updater === "function" ? updater(columnSizingRef.current) : updater;
     setColumnSizing(next);
     writeStoredColumnSizing(columnSizingStorageKey, next);
   };
@@ -4037,16 +4042,12 @@ export const DataGrid = memo(function DataGrid({
       col: tableEl?.querySelector<HTMLElement>(`col[data-col-id="${column.id}"]`) ?? null,
       table: tableEl,
       header: (e.currentTarget as HTMLElement).closest("th"),
-      onCommit: (size) =>
-        handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size })),
+      onCommit: (size) => handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size })),
     });
   };
 
   // --- Column order & visibility, persisted per result shape ---
-  const colStateKey = useMemo(
-    () => colStateKeyFrom(columnSizingStorageKey),
-    [columnSizingStorageKey],
-  );
+  const colStateKey = useMemo(() => colStateKeyFrom(columnSizingStorageKey), [columnSizingStorageKey]);
   const [columnOrder, setColumnOrder] = useState<string[]>(
     () => readStoredColumnState(colStateKey).order ?? [],
   );
@@ -4066,12 +4067,10 @@ export const DataGrid = memo(function DataGrid({
   }, [colStateKey]);
 
   // Column pinning lives alongside order/visibility in one persisted blob.
-  const [columnPinning, setColumnPinning] = useState<{ left: string[]; right: string[] }>(
-    () => {
-      const p = readStoredColumnState(colStateKey).pinning;
-      return { left: p?.left ?? [], right: p?.right ?? [] };
-    },
-  );
+  const [columnPinning, setColumnPinning] = useState<{ left: string[]; right: string[] }>(() => {
+    const p = readStoredColumnState(colStateKey).pinning;
+    return { left: p?.left ?? [], right: p?.right ?? [] };
+  });
   const columnPinningRef = useRef(columnPinning);
   columnPinningRef.current = columnPinning;
   // react-table v9 は論理方向 (`start` / `end`) で受け取るので境界でだけ変換する
@@ -4123,10 +4122,7 @@ export const DataGrid = memo(function DataGrid({
   // Footer show/hide + per-column aggregate function live in their own
   // localStorage namespace (`noobdb.gridfooter.v1`), keyed off the same table
   // signature as column layout (`footerStateKeyFrom` mirrors `colStateKeyFrom`).
-  const footerStateKey = useMemo(
-    () => footerStateKeyFrom(columnSizingStorageKey),
-    [columnSizingStorageKey],
-  );
+  const footerStateKey = useMemo(() => footerStateKeyFrom(columnSizingStorageKey), [columnSizingStorageKey]);
   const [footerEnabled, setFooterEnabled] = useState<boolean>(
     () => readStoredFooterState(footerStateKey).enabled ?? false,
   );
@@ -4284,7 +4280,10 @@ export const DataGrid = memo(function DataGrid({
         // 同じく共有 `Tooltip` を直接使ってよい (#884)。
         header: () => (
           <Tooltip
-            label={withComment(fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name, fkInfo?.comment)}
+            label={withComment(
+              fkTable ? t("gridFkColHeader", { table: fkTable }) : c.type_name,
+              fkInfo?.comment,
+            )}
             focusableWrapper
           >
             <span className="th-content">
@@ -4409,9 +4408,7 @@ export const DataGrid = memo(function DataGrid({
             // 表示文字列は "true"/"false" のまま (コピー時は元の値を使う)。
             const cls = richCellRendering ? "cell-bool cell-bool-badge" : "cell-bool";
             return (
-              <span className={`${cls} ${truthy ? "is-true" : "is-false"}`}>
-                {truthy ? "true" : "false"}
-              </span>
+              <span className={`${cls} ${truthy ? "is-true" : "is-false"}`}>{truthy ? "true" : "false"}</span>
             );
           }
           if (effectiveKind === "date" || effectiveKind === "time") {
@@ -4420,9 +4417,7 @@ export const DataGrid = memo(function DataGrid({
             // 編集/エクスポートは元の値 (raw) を使う。time 型や解析不能な値は素の
             // ままにする。
             const formatted =
-              richCellRendering && effectiveKind === "date"
-                ? formatDateTimeDisplay(raw, locale)
-                : null;
+              richCellRendering && effectiveKind === "date" ? formatDateTimeDisplay(raw, locale) : null;
             return formatted !== null ? (
               <span className="cell-date" {...bindCellTooltip(raw)}>
                 {formatted}
@@ -4680,15 +4675,13 @@ export const DataGrid = memo(function DataGrid({
   // local — committed values are lifted via `onSetCellEdit`.
   // `start` / `typed` は編集開始時の値で一度だけ決める (型別エディタ #1355。打鍵の
   // 途中でコントロールが切り替わらないように)。
-  const [editing, setEditing] = useState<
-    {
-      rowIdx: number;
-      colIdx: number;
-      value: string;
-      start: string;
-      typed: TypedEditor | null;
-    } | null
-  >(null);
+  const [editing, setEditing] = useState<{
+    rowIdx: number;
+    colIdx: number;
+    value: string;
+    start: string;
+    typed: TypedEditor | null;
+  } | null>(null);
   const beginEdit = (rowIdx: number, colIdx: number, value: string, typeable = true) => {
     const typeName = columns[colIdx]?.type_name;
     setEditing({
@@ -4769,9 +4762,9 @@ export const DataGrid = memo(function DataGrid({
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
   // column position. `copied` drives a brief confirmation toast.
-  const [copyMenu, setCopyMenu] = useState<
-    { x: number; y: number; rowIdx: number; colIdx: number } | null
-  >(null);
+  const [copyMenu, setCopyMenu] = useState<{ x: number; y: number; rowIdx: number; colIdx: number } | null>(
+    null,
+  );
   const { copied, copy: copyWithFeedback } = useCopyFeedback();
 
   // コピー成功時に対象範囲 (単一セル/行/矩形選択) を一瞬フラッシュさせる
@@ -4798,9 +4791,7 @@ export const DataGrid = memo(function DataGrid({
     clearCopyFlash();
     const range = buildCopyFlashRange(rowIndices, colIndices);
     const keys = collectCopyFlashKeys(cellRefs.current.keys(), range);
-    const els = keys
-      .map((key) => cellRefs.current.get(key))
-      .filter((el): el is HTMLTableCellElement => !!el);
+    const els = keys.map((key) => cellRefs.current.get(key)).filter((el): el is HTMLTableCellElement => !!el);
     if (els.length === 0) return;
     for (const el of els) {
       // クラスを外した直後に付け直すだけでは CSS アニメーションが再始動しないので、
@@ -4821,9 +4812,11 @@ export const DataGrid = memo(function DataGrid({
 
   // Bulk-edit dialog (#596): when open, snapshots the selection rectangle's
   // original row indices and column indices, plus the value being typed.
-  const [bulkEdit, setBulkEdit] = useState<
-    { rowIndices: number[]; colIndices: number[]; value: string } | null
-  >(null);
+  const [bulkEdit, setBulkEdit] = useState<{
+    rowIndices: number[];
+    colIndices: number[];
+    value: string;
+  } | null>(null);
 
   // 列の「検索して置換」ダイアログ (#1242): 対象列の添字。
   const [replaceColIdx, setReplaceColIdx] = useState<number | null>(null);
@@ -4878,8 +4871,7 @@ export const DataGrid = memo(function DataGrid({
     );
   // 範囲コピー / CSV・JSON コピーと同じく、表示中の列だけを表示順に出す
   // (非表示にした列が TSV に混ざって外部へ出ない)。
-  const rowCopyText = (rowIdx: number) =>
-    visibleColIds.map((ci) => copyTextAt(rowIdx, ci)).join("\t");
+  const rowCopyText = (rowIdx: number) => visibleColIds.map((ci) => copyTextAt(rowIdx, ci)).join("\t");
   const copyCell = (rowIdx: number, colIdx: number) =>
     void runCopy(copyTextAt(rowIdx, colIdx), { rowIndices: [rowIdx], colIndices: [colIdx] });
   const copyRow = (rowIdx: number) =>
@@ -4945,12 +4937,7 @@ export const DataGrid = memo(function DataGrid({
     void runCopy(result.sql, { rowIndices, colIndices: visibleColIds });
   };
 
-  const commitEdit = (
-    rowIdx: number,
-    colIdx: number,
-    value: string,
-    originalDisplay: string,
-  ) => {
+  const commitEdit = (rowIdx: number, colIdx: number, value: string, originalDisplay: string) => {
     if (!onSetCellEdit) return;
     // Lift the change under the row's PK-derived identity, not its array
     // index, so it stays bound to this row after pagination grows `rows`.
@@ -4971,11 +4958,7 @@ export const DataGrid = memo(function DataGrid({
   // get the same editability/validity rules and the same result toast.
   // Editability and per-cell type validity are decided by `planBulkCellEdit`;
   // skipped cells (read-only column or invalid value) are surfaced via a toast.
-  const applyValueToCells = (
-    rowIndices: number[],
-    colIndices: number[],
-    value: string,
-  ) => {
+  const applyValueToCells = (rowIndices: number[], colIndices: number[], value: string) => {
     if (!onBulkEdit) return;
     const plan = planBulkCellEdit({
       rows,
@@ -4998,12 +4981,9 @@ export const DataGrid = memo(function DataGrid({
       toast.info(t("gridBulkEditAllUnchanged", { cells: plan.unchanged.length }));
       return;
     }
-    const skipped =
-      plan.skippedReadonly + plan.skippedInvalid + plan.unchanged.length;
+    const skipped = plan.skippedReadonly + plan.skippedInvalid + plan.unchanged.length;
     if (skipped > 0) {
-      toast.info(
-        t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }),
-      );
+      toast.info(t("gridBulkEditAppliedSkipped", { cells: plan.applied.length, skipped }));
     } else {
       toast.success(t("gridBulkEditApplied", { cells: plan.applied.length }));
     }
@@ -5072,9 +5052,7 @@ export const DataGrid = memo(function DataGrid({
    */
   const applyQuickSet = (rowIdx: number, colIdx: number, value: string) => {
     const inSelection =
-      !!selectionRect &&
-      selectionRect.rowIndexSet.has(rowIdx) &&
-      selectionRect.colIdSet.has(colIdx);
+      !!selectionRect && selectionRect.rowIndexSet.has(rowIdx) && selectionRect.colIdSet.has(colIdx);
     if (inSelection && onBulkEdit) {
       applyValueToCells(
         visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
@@ -5203,11 +5181,7 @@ export const DataGrid = memo(function DataGrid({
   // 「CSV / JSON としてコピー」(#1113) の対象。右クリックしたセルが矩形選択に
   // 含まれていれば選択範囲 (表示順)、そうでなければその 1 行の表示中の全列。
   const copyTargetFor = (rowIdx: number, colIdx: number) => {
-    if (
-      selectionRect &&
-      selectionRect.rowIndexSet.has(rowIdx) &&
-      selectionRect.colIdSet.has(colIdx)
-    ) {
+    if (selectionRect && selectionRect.rowIndexSet.has(rowIdx) && selectionRect.colIdSet.has(colIdx)) {
       return {
         rowIndices: visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
         colIndices: visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
@@ -5215,10 +5189,7 @@ export const DataGrid = memo(function DataGrid({
     }
     return { rowIndices: [rowIdx], colIndices: visibleColIds };
   };
-  const copyAsFormat = (
-    format: GridCopyFormat,
-    target: { rowIndices: number[]; colIndices: number[] },
-  ) => {
+  const copyAsFormat = (format: GridCopyFormat, target: { rowIndices: number[]; colIndices: number[] }) => {
     const text = buildGridCopyText(format, {
       columns,
       rows,
@@ -5327,9 +5298,7 @@ export const DataGrid = memo(function DataGrid({
           message: (
             <>
               <p>{t("gridPasteInsertMessage", { rows: rowsToAdd.length, cells: insertPlan.cells })}</p>
-              {skippedCells > 0 && (
-                <p>{t("gridPasteInsertSkipped", { cells: skippedCells })}</p>
-              )}
+              {skippedCells > 0 && <p>{t("gridPasteInsertSkipped", { cells: skippedCells })}</p>}
             </>
           ),
           confirmLabel: t("gridPasteInsertConfirm"),
@@ -5392,8 +5361,7 @@ export const DataGrid = memo(function DataGrid({
   });
   const rowSizeSig = `${density}|${fontSizePx}`;
   const rowHeightRef = useRef<{ sig: string; height: number } | null>(null);
-  const knownRowHeight =
-    rowHeightRef.current?.sig === rowSizeSig ? rowHeightRef.current.height : undefined;
+  const knownRowHeight = rowHeightRef.current?.sig === rowSizeSig ? rowHeightRef.current.height : undefined;
   // 隠れている間に外した行の窓 (非表示の間も DOM に残して再表示で描き直さない, #1341)。
   const windowSnapshotRef = useRef<{
     indices: number[];
@@ -5433,9 +5401,7 @@ export const DataGrid = memo(function DataGrid({
   const virtualItems = virtualize ? rowVirtualizer.getVirtualItems() : [];
   const virtualPaddingTop = virtualItems.length > 0 ? virtualItems[0].start : 0;
   const virtualPaddingBottom =
-    virtualItems.length > 0
-      ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end
-      : 0;
+    virtualItems.length > 0 ? rowVirtualizer.getTotalSize() - virtualItems[virtualItems.length - 1].end : 0;
   // Total column count (row-index + visible data columns + filler) for spacer
   // colSpan. Uses the visible leaf count so hidden columns don't inflate
   // the virtual spacer span.
@@ -5467,8 +5433,7 @@ export const DataGrid = memo(function DataGrid({
   // coordinate space to match. Right-pinned columns don't shift center
   // columns' start (they trail after), but still cover the last
   // `rightDeadZone` px of the viewport visually.
-  const leftDeadZone =
-    ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
+  const leftDeadZone = ROW_INDEX_WIDTH + leftPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
   const rightDeadZone = rightPinnedColumns.reduce((sum, c) => sum + c.getSize(), 0);
   const columnVirtualizer = useVirtualizer({
     enabled: virtualizerEnabled,
@@ -5514,9 +5479,7 @@ export const DataGrid = memo(function DataGrid({
   // 再表示した最初のレンダーで窓が計算できない (ビューポートの寸法が未取得) ときも同じ窓を使う。
   // 全行描画へ落ちると行のツリー位置が変わって、残してあった行を作り直してしまう。
   const hiddenWindow =
-    virtualize && (!virtualizerEnabled || virtualItems.length === 0)
-      ? windowSnapshotRef.current
-      : null;
+    virtualize && (!virtualizerEnabled || virtualItems.length === 0) ? windowSnapshotRef.current : null;
   const colWinFirst = hiddenWindow
     ? hiddenWindow.colFirst
     : columnVirtualItems.length > 0
@@ -5602,9 +5565,7 @@ export const DataGrid = memo(function DataGrid({
     onMoveColumn: (colId: string, dir: -1 | 1) => {
       if (!moveColumnBy(colId, dir)) return;
       requestAnimationFrame(() => {
-        gridTableRef.current
-          ?.querySelector<HTMLElement>(`th[data-col-id="${colId}"] .th-drag-grip`)
-          ?.focus();
+        gridTableRef.current?.querySelector<HTMLElement>(`th[data-col-id="${colId}"] .th-drag-grip`)?.focus();
       });
     },
   });
@@ -5723,10 +5684,7 @@ export const DataGrid = memo(function DataGrid({
         }
       })();
     },
-    onEditKeyDown: (
-      e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>,
-      originalDisplay: string,
-    ) => {
+    onEditKeyDown: (e: ReactKeyboardEvent<HTMLInputElement | HTMLSelectElement>, originalDisplay: string) => {
       if (!editing) return;
       if (e.key === "Tab") {
         e.preventDefault();
@@ -5744,8 +5702,7 @@ export const DataGrid = memo(function DataGrid({
           else navigateCell(eRowIdx, eColIdx);
         } else {
           if (ePos > 0) navigateCell(eRowIdx, visibleColIds[ePos - 1]);
-          else if (vi2 > 0)
-            navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
+          else if (vi2 > 0) navigateCell(visibleRows[vi2 - 1].index, visibleColIds[lastPos] ?? 0);
           else navigateCell(eRowIdx, eColIdx);
         }
       } else if (e.key === "Enter" && !isImeComposing(e)) {
@@ -5755,8 +5712,7 @@ export const DataGrid = memo(function DataGrid({
         commitEdit(eRowIdx, eColIdx, editing.value, originalDisplay);
         setEditing(null);
         const vi2 = visibleRows.findIndex((r) => r.index === eRowIdx);
-        if (vi2 >= 0 && vi2 < visibleRows.length - 1)
-          navigateCell(visibleRows[vi2 + 1].index, eColIdx);
+        if (vi2 >= 0 && vi2 < visibleRows.length - 1) navigateCell(visibleRows[vi2 + 1].index, eColIdx);
         else navigateCell(eRowIdx, eColIdx);
       } else if (e.key === "Escape") {
         e.preventDefault();
@@ -6094,9 +6050,7 @@ export const DataGrid = memo(function DataGrid({
         }
         maskedCols={maskedCols}
         fkCols={fkCols}
-        reveal={
-          reveal && (reveal.kind === "column" || reveal.rowIdx === row.index) ? reveal : null
-        }
+        reveal={reveal && (reveal.kind === "column" || reveal.rowIdx === row.index) ? reveal : null}
         validateEdit={editingHere || pendingForRow ? validateEdit : undefined}
         valuePicker={editingHere ? valuePicker : undefined}
         valuePickerListId={valuePickerListId}
@@ -6130,24 +6084,14 @@ export const DataGrid = memo(function DataGrid({
       {(isFiltered || multiSortActive || serverSort || serverFilter) && (
         <Box className="grid-filter-summary">
           {isFiltered && t("gridFilteredCount", { shown: visibleRows.length, total: totalRows })}
-          {multiSortActive && (
-            <chakra.span>{t("gridSortCount", { n: sorting.length })}</chakra.span>
-          )}
+          {multiSortActive && <chakra.span>{t("gridSortCount", { n: sorting.length })}</chakra.span>}
           {hasColumnFilter && (
-            <chakra.button
-              type="button"
-              className="grid-filter-clear"
-              onClick={clearSortAndFilters}
-            >
+            <chakra.button type="button" className="grid-filter-clear" onClick={clearSortAndFilters}>
               {t("gridClearFilters")}
             </chakra.button>
           )}
           {multiSortActive && (
-            <chakra.button
-              type="button"
-              className="grid-filter-clear"
-              onClick={clearSorting}
-            >
+            <chakra.button type="button" className="grid-filter-clear" onClick={clearSorting}>
               {t("gridClearSort")}
             </chakra.button>
           )}
@@ -6155,7 +6099,9 @@ export const DataGrid = memo(function DataGrid({
             <chakra.span>
               {t("gridServerSortChip", {
                 column: serverSort.column,
-                dir: t(serverSort.direction === "asc" ? "gridServerSortOptionAsc" : "gridServerSortOptionDesc"),
+                dir: t(
+                  serverSort.direction === "asc" ? "gridServerSortOptionAsc" : "gridServerSortOptionDesc",
+                ),
               })}
             </chakra.span>
           )}
@@ -6266,19 +6212,25 @@ export const DataGrid = memo(function DataGrid({
             Array.from({ length: 6 }, (_, i) => (
               <tr key={i} className="grid-skeleton-row" style={{ opacity: 1 - i * 0.14 }} aria-hidden>
                 <td className="row-index" />
-                {columns.length > 0 ? columns.map((_, ci) => (
-                  <td key={ci} className="grid-skeleton-cell">
-                    <div style={{
-                      width: `${SKELETON_WIDTHS[ci % SKELETON_WIDTHS.length]}%`,
-                      animationDelay: `${i * 0.1}s`,
-                    }} />
-                  </td>
-                )) : (
+                {columns.length > 0 ? (
+                  columns.map((_, ci) => (
+                    <td key={ci} className="grid-skeleton-cell">
+                      <div
+                        style={{
+                          width: `${SKELETON_WIDTHS[ci % SKELETON_WIDTHS.length]}%`,
+                          animationDelay: `${i * 0.1}s`,
+                        }}
+                      />
+                    </td>
+                  ))
+                ) : (
                   <td colSpan={1} className="grid-skeleton-cell">
-                    <div style={{
-                      width: `${SKELETON_WIDTHS[i % SKELETON_WIDTHS.length]}%`,
-                      animationDelay: `${i * 0.1}s`,
-                    }} />
+                    <div
+                      style={{
+                        width: `${SKELETON_WIDTHS[i % SKELETON_WIDTHS.length]}%`,
+                        animationDelay: `${i * 0.1}s`,
+                      }}
+                    />
                   </td>
                 )}
                 <td className="col-filler" />
@@ -6292,11 +6244,11 @@ export const DataGrid = memo(function DataGrid({
               </td>
               <td className="col-filler" aria-hidden />
             </tr>
-          ) : virtualize && !virtualizerEnabled && !hiddenWindow ? (
-            // keep-alive で隠れている間は、窓を測れていなければ行を描かない (全行への
-            // フォールバックを避ける, #1309)。
-            null
-          ) : virtualize && (hiddenWindow || virtualItems.length > 0) ? (
+          ) : virtualize &&
+            !virtualizerEnabled &&
+            !hiddenWindow ? // keep-alive で隠れている間は、窓を測れていなければ行を描かない (全行への
+          // フォールバックを避ける, #1309)。
+          null : virtualize && (hiddenWindow || virtualItems.length > 0) ? (
             // `virtualItems.length > 0` gates the virtualized path: when the
             // scroll container has no measured height yet (first render before
             // the ref attaches, or non-layout test environments like jsdom) the
@@ -6378,15 +6330,15 @@ export const DataGrid = memo(function DataGrid({
                             <CountUp value={countTarget} formatter={fmtFooterInt} />
                           </span>
                         ) : (
-                        <motion.span
-                          key={text}
-                          className="grid-footer-val"
-                          initial={{ opacity: 0.35 }}
-                          animate={{ opacity: 1 }}
-                          transition={transitions.crossfade}
-                        >
-                          {text}
-                        </motion.span>
+                          <motion.span
+                            key={text}
+                            className="grid-footer-val"
+                            initial={{ opacity: 0.35 }}
+                            animate={{ opacity: 1 }}
+                            transition={transitions.crossfade}
+                          >
+                            {text}
+                          </motion.span>
                         )}
                       </span>
                     )}
@@ -6461,10 +6413,7 @@ export const DataGrid = memo(function DataGrid({
                         onSelect: () => copyAsFormat("json", target),
                       },
                       {
-                        label:
-                          n > 1
-                            ? t("gridCopyAsMarkdownRows", { count: n })
-                            : t("gridCopyAsMarkdown"),
+                        label: n > 1 ? t("gridCopyAsMarkdownRows", { count: n }) : t("gridCopyAsMarkdown"),
                         onSelect: () => copyAsFormat("markdown", target),
                       },
                     ];
@@ -6489,9 +6438,7 @@ export const DataGrid = memo(function DataGrid({
                           label: t("gridCopyAsInsertRowsCombined", {
                             count: insertRowIndices.length,
                           }),
-                          title: insertMasked
-                            ? maskTitle
-                            : t("gridCopyAsInsertRowsCombinedTitle"),
+                          title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsCombinedTitle"),
                           disabled: insertMasked,
                           onSelect: () => copyRowsAsInsert(insertRowIndices, true),
                         },
@@ -6503,21 +6450,13 @@ export const DataGrid = memo(function DataGrid({
                           label: t("gridCopyAsUpdate"),
                           onSelect: () => copyRowSql(copyMenu.rowIdx, "update"),
                           disabled: !rowSqlHasPk || rowMasked,
-                          title: !rowSqlHasPk
-                            ? t("gridCopyAsSqlNoPk")
-                            : rowMasked
-                              ? maskTitle
-                              : undefined,
+                          title: !rowSqlHasPk ? t("gridCopyAsSqlNoPk") : rowMasked ? maskTitle : undefined,
                         },
                         {
                           label: t("gridCopyAsDelete"),
                           onSelect: () => copyRowSql(copyMenu.rowIdx, "delete"),
                           disabled: !rowSqlHasPk || rowMasked,
-                          title: !rowSqlHasPk
-                            ? t("gridCopyAsSqlNoPk")
-                            : rowMasked
-                              ? maskTitle
-                              : undefined,
+                          title: !rowSqlHasPk ? t("gridCopyAsSqlNoPk") : rowMasked ? maskTitle : undefined,
                         },
                       ]
                     : []),
@@ -6595,17 +6534,13 @@ export const DataGrid = memo(function DataGrid({
               return [
                 { separator: true as const },
                 {
-                  label: nullCell
-                    ? t("gridQuickFilterEqNull")
-                    : t("gridQuickFilterEq", { value: shown }),
+                  label: nullCell ? t("gridQuickFilterEqNull") : t("gridQuickFilterEq", { value: shown }),
                   icon: "filter" as const,
                   title,
                   onSelect: () => apply("eq"),
                 },
                 {
-                  label: nullCell
-                    ? t("gridQuickFilterNeNull")
-                    : t("gridQuickFilterNe", { value: shown }),
+                  label: nullCell ? t("gridQuickFilterNeNull") : t("gridQuickFilterNe", { value: shown }),
                   title,
                   onSelect: () => apply("ne"),
                 },
@@ -6708,9 +6643,7 @@ export const DataGrid = memo(function DataGrid({
                   ? selectionRect.rowIndexSet.size * selectionRect.colIdSet.size
                   : 0;
               const scopeNote =
-                selectedCells > 1
-                  ? t("gridQuickSetSelectionNote", { count: selectedCells })
-                  : null;
+                selectedCells > 1 ? t("gridQuickSetSelectionNote", { count: selectedCells }) : null;
               const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
                 (opt) => {
                   const note = opt.noteKey ? t(opt.noteKey) : null;
@@ -6726,9 +6659,7 @@ export const DataGrid = memo(function DataGrid({
                       const ck = copyMenu.colIdx;
                       // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
                       // 確定した瞬間の時計で組み立て直す。
-                      const value = opt.dynamic
-                        ? resolveDynamicValue(opt.dynamic, new Date())
-                        : opt.value;
+                      const value = opt.dynamic ? resolveDynamicValue(opt.dynamic, new Date()) : opt.value;
                       setCopyMenu(null);
                       applyQuickSet(rk, ck, value);
                     },
@@ -6737,11 +6668,7 @@ export const DataGrid = memo(function DataGrid({
               );
               // 保留中の編集があるセルだけ、その 1 セルぶんを取り消す導線を足す
               // (Undo は編集履歴全体を 1 手戻すので、狙ったセルだけ戻したいとき用)。
-              const rowKey = rowEditKey(
-                rows[copyMenu.rowIdx] ?? [],
-                pkIndices ?? [],
-                copyMenu.rowIdx,
-              );
+              const rowKey = rowEditKey(rows[copyMenu.rowIdx] ?? [], pkIndices ?? [], copyMenu.rowIdx);
               const revert: ContextMenuEntry[] =
                 pendingEdits?.[rowKey]?.[copyMenu.colIdx] !== undefined
                   ? [
@@ -6772,18 +6699,14 @@ export const DataGrid = memo(function DataGrid({
                   { separator: true as const },
                   {
                     label: t("gridBulkEditSelection", {
-                      count:
-                        selectionRect.rowIndexSet.size * selectionRect.colIdSet.size,
+                      count: selectionRect.rowIndexSet.size * selectionRect.colIdSet.size,
                     }),
                     title: t("gridBulkEditSelectionTitle"),
                     onSelect: () => {
                       const rowIndices = visibleRows
                         .slice(selectionRect.r0, selectionRect.r1 + 1)
                         .map((r) => r.index);
-                      const colIndices = visibleColIds.slice(
-                        selectionRect.c0,
-                        selectionRect.c1 + 1,
-                      );
+                      const colIndices = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
                       setCopyMenu(null);
                       setBulkEdit({ rowIndices, colIndices, value: "" });
                     },
@@ -6818,7 +6741,10 @@ export const DataGrid = memo(function DataGrid({
                 items.push({
                   label: t("gridFkJump", { table: fwd.refTable }),
                   title: t("gridFkJumpTitle"),
-                  onSelect: () => { setCopyMenu(null); onFkJump(fwd.sql); },
+                  onSelect: () => {
+                    setCopyMenu(null);
+                    onFkJump(fwd.sql);
+                  },
                 });
               }
 
@@ -6851,15 +6777,17 @@ export const DataGrid = memo(function DataGrid({
                     ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
                     : t("gridFkReverse", { table: inc.table, column: inc.column }),
                   title: t("gridFkReverseTitle"),
-                  onSelect: () => { setCopyMenu(null); onFkJump(sql); },
+                  onSelect: () => {
+                    setCopyMenu(null);
+                    onFkJump(sql);
+                  },
                 });
               }
               items.push(
-                ...submenuOrFlat(
-                  t("gridFkReverseGroup", { count: reverse.length }),
-                  reverse,
-                  { icon: "link", title: t("gridFkReverseTitle") },
-                ),
+                ...submenuOrFlat(t("gridFkReverseGroup", { count: reverse.length }), reverse, {
+                  icon: "link",
+                  title: t("gridFkReverseTitle"),
+                }),
               );
 
               if (items.length === 0) return [];
@@ -6911,9 +6839,7 @@ export const DataGrid = memo(function DataGrid({
               label: t("gridViewFull"),
               // 値ビューアは実値を全文表示するため、マスク中は開かない (#1069)。
               disabled: cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx),
-              title: cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx)
-                ? t("gridMaskedCellBlocked")
-                : undefined,
+              title: cellMaskedNow(copyMenu.rowIdx, copyMenu.colIdx) ? t("gridMaskedCellBlocked") : undefined,
               onSelect: () => setViewer({ rowIdx: copyMenu.rowIdx, colIdx: copyMenu.colIdx }),
             },
             {
@@ -6939,7 +6865,10 @@ export const DataGrid = memo(function DataGrid({
                           icon: "undo" as const,
                           shortcut: formatCombo(effectiveGridBindings.gridUndo),
                           disabled: canUndo === false,
-                          onSelect: () => { setCopyMenu(null); onUndoEdit(); },
+                          onSelect: () => {
+                            setCopyMenu(null);
+                            onUndoEdit();
+                          },
                         },
                       ]
                     : []),
@@ -6950,7 +6879,10 @@ export const DataGrid = memo(function DataGrid({
                           icon: "redo" as const,
                           shortcut: formatCombo(effectiveGridBindings.gridRedo),
                           disabled: canRedo === false,
-                          onSelect: () => { setCopyMenu(null); onRedoEdit(); },
+                          onSelect: () => {
+                            setCopyMenu(null);
+                            onRedoEdit();
+                          },
                         },
                       ]
                     : []),
@@ -6958,25 +6890,30 @@ export const DataGrid = memo(function DataGrid({
               : []),
             // 行の追加・削除。PK が無いテーブルでは削除を無効化 (行を一意に
             // 特定できないため)。新規行追加は PK 有無に依らず可能。
-            ...(onToggleRowDelete || onRequestInsertRow
-              ? [{ separator: true as const }]
-              : []),
+            ...(onToggleRowDelete || onRequestInsertRow ? [{ separator: true as const }] : []),
             ...(onRequestInsertRow
-              ? [{ label: t("gridAddRow"), onSelect: () => { setCopyMenu(null); onRequestInsertRow(); } }]
+              ? [
+                  {
+                    label: t("gridAddRow"),
+                    onSelect: () => {
+                      setCopyMenu(null);
+                      onRequestInsertRow();
+                    },
+                  },
+                ]
               : []),
             ...(onToggleRowDelete
               ? [
                   (() => {
-                    const key = rowEditKey(
-                      rows[copyMenu.rowIdx] ?? [],
-                      pkIndices ?? [],
-                      copyMenu.rowIdx,
-                    );
+                    const key = rowEditKey(rows[copyMenu.rowIdx] ?? [], pkIndices ?? [], copyMenu.rowIdx);
                     const marked = !!pendingDeleteKeys?.has(key);
                     const hasPk = (pkIndices?.length ?? 0) > 0;
                     return {
                       label: marked ? t("gridUnmarkDelete") : t("gridMarkDelete"),
-                      onSelect: () => { setCopyMenu(null); onToggleRowDelete(key); },
+                      onSelect: () => {
+                        setCopyMenu(null);
+                        onToggleRowDelete(key);
+                      },
                       disabled: !hasPk,
                       title: hasPk ? undefined : t("gridCopyAsSqlNoPk"),
                       danger: !marked,
@@ -7014,7 +6951,8 @@ export const DataGrid = memo(function DataGrid({
                 width="100%"
                 fontFamily="var(--font-mono)"
                 fontSize="sm"
-                py="1" px="2"
+                py="1"
+                px="2"
                 border="1px solid var(--border)"
                 background="var(--bg-input)"
                 color="var(--text)"
@@ -7079,14 +7017,8 @@ export const DataGrid = memo(function DataGrid({
           columnName={columns[filterMenu.colIdx]?.name ?? ""}
           kind={columnKinds[filterMenu.colIdx] ?? "string"}
           anchor={filterMenu.anchor}
-          value={
-            table.getColumn(String(filterMenu.colIdx))?.getFilterValue() as
-              | ColumnFilter
-              | undefined
-          }
-          onChange={(next) =>
-            table.getColumn(String(filterMenu.colIdx))?.setFilterValue(next)
-          }
+          value={table.getColumn(String(filterMenu.colIdx))?.getFilterValue() as ColumnFilter | undefined}
+          onChange={(next) => table.getColumn(String(filterMenu.colIdx))?.setFilterValue(next)}
           onClose={() => setFilterMenu(null)}
           formatSupported={isNumericKind(columnKinds[filterMenu.colIdx] ?? "string")}
           formatMode={colFormats[filterMenu.colIdx] ?? "off"}
@@ -7105,15 +7037,15 @@ export const DataGrid = memo(function DataGrid({
               ? () => table.getColumn(String(filterMenu.colIdx))?.toggleVisibility(false)
               : undefined
           }
-          onShowAllColumns={
-            enableColumnControls ? () => table.toggleAllColumnsVisible(true) : undefined
-          }
+          onShowAllColumns={enableColumnControls ? () => table.toggleAllColumnsVisible(true) : undefined}
           onResetLayout={enableColumnControls && hasCustomLayout ? resetColumnLayout : undefined}
           onMoveColumn={
             enableColumnControls
               ? (() => {
                   const id = String(filterMenu.colIdx);
-                  const base = columnOrderRef.current.length ? columnOrderRef.current : columns.map((_, i) => String(i));
+                  const base = columnOrderRef.current.length
+                    ? columnOrderRef.current
+                    : columns.map((_, i) => String(i));
                   const visible = (cid: string) => table.getColumn(cid)?.getIsVisible() ?? true;
                   return {
                     left: moveColumnId(base, id, -1, visible) ? () => moveColumnBy(id, -1) : null,
@@ -7188,51 +7120,51 @@ export const DataGrid = memo(function DataGrid({
           }
         />
       )}
-      {statsMenu && !isColumnMaskedNow(statsMenu.colIdx) && (() => {
-        const colIdx = statsMenu.colIdx;
-        const kind = columnKinds[colIdx] ?? "string";
-        const colName = columns[colIdx]?.name ?? "";
-        const colValues = statsColValues ?? [];
-        // 全件集計は具体的なターゲットテーブルと実行系が揃うときだけ提供する。
-        const statsRequest: FullStatsRequest | undefined =
-          rowSqlTable && onRunStatsQuery
-            ? {
-                driver: rowSqlDriver ?? "mysql",
-                database: rowSqlDatabase ?? null,
-                table: rowSqlTable,
-                column: colName,
-                kind,
+      {statsMenu &&
+        !isColumnMaskedNow(statsMenu.colIdx) &&
+        (() => {
+          const colIdx = statsMenu.colIdx;
+          const kind = columnKinds[colIdx] ?? "string";
+          const colName = columns[colIdx]?.name ?? "";
+          const colValues = statsColValues ?? [];
+          // 全件集計は具体的なターゲットテーブルと実行系が揃うときだけ提供する。
+          const statsRequest: FullStatsRequest | undefined =
+            rowSqlTable && onRunStatsQuery
+              ? {
+                  driver: rowSqlDriver ?? "mysql",
+                  database: rowSqlDatabase ?? null,
+                  table: rowSqlTable,
+                  column: colName,
+                  kind,
+                }
+              : undefined;
+          return (
+            <ColumnStatsMenu
+              key={colIdx}
+              columnName={colName}
+              kind={kind}
+              anchor={statsMenu.anchor}
+              values={colValues}
+              resultId={enableColumnControls ? shouldUseHandleForGrid(rows) : null}
+              colIdx={colIdx}
+              statsRequest={statsRequest}
+              onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
+              onExploreColumn={
+                rowSqlTable && onExploreColumn
+                  ? () =>
+                      onExploreColumn({
+                        database: rowSqlDatabase ?? null,
+                        table: rowSqlTable,
+                        column: colName,
+                      })
+                  : undefined
               }
-            : undefined;
-        return (
-          <ColumnStatsMenu
-            key={colIdx}
-            columnName={colName}
-            kind={kind}
-            anchor={statsMenu.anchor}
-            values={colValues}
-            resultId={enableColumnControls ? shouldUseHandleForGrid(rows) : null}
-            colIdx={colIdx}
-            statsRequest={statsRequest}
-            onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
-            onExploreColumn={
-              rowSqlTable && onExploreColumn
-                ? () =>
-                    onExploreColumn({
-                      database: rowSqlDatabase ?? null,
-                      table: rowSqlTable,
-                      column: colName,
-                    })
-                : undefined
-            }
-            onClose={() => setStatsMenu(null)}
-            footerFn={resolveFooterFn(footerAggs[String(colIdx)], kind)}
-            onSetFooterFn={
-              enableColumnControls ? (fn) => setFooterAgg(String(colIdx), fn) : undefined
-            }
-          />
-        );
-      })()}
+              onClose={() => setStatsMenu(null)}
+              footerFn={resolveFooterFn(footerAggs[String(colIdx)], kind)}
+              onSetFooterFn={enableColumnControls ? (fn) => setFooterAgg(String(colIdx), fn) : undefined}
+            />
+          );
+        })()}
       <AnimatePresence>
         {copied && (
           <motion.div
@@ -7256,7 +7188,8 @@ export const DataGrid = memo(function DataGrid({
             <Box
               role="status"
               aria-live="polite"
-              py="1.5" px="3.5"
+              py="1.5"
+              px="3.5"
               fontSize="sm"
               // 意味色「success」のベタ塗り (#664)。以前は白文字を生の hex で
               // 固定し、背景も `color-mix()` で --status-success を手動で暗く
@@ -7273,123 +7206,137 @@ export const DataGrid = memo(function DataGrid({
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {viewer && !cellMaskedNow(viewer.rowIdx, viewer.colIdx) && (() => {
-          // 大きな TEXT / JSON 値の直接編集 (#556)。インライン編集と同じ条件
-          // (編集可・PK あり・列が編集対象) を満たすときだけ編集モードを許可し、
-          // 保存は既存のセル編集経路 (commitEdit → onSetCellEdit) に合流させる。
-          const vRow = rows[viewer.rowIdx];
-          const vVal = vRow?.[viewer.colIdx] ?? null;
-          const cellEditable =
-            !!editable &&
-            (pkIndices?.length ?? 0) > 0 &&
-            (editableColumns?.[viewer.colIdx] ?? false) &&
-            !!onSetCellEdit;
-          const rowKey = rowEditKey(vRow ?? [], pkIndices ?? [], viewer.rowIdx);
-          const originalDisplay = vVal === null || vVal === undefined ? "" : String(vVal);
+        {viewer &&
+          !cellMaskedNow(viewer.rowIdx, viewer.colIdx) &&
+          (() => {
+            // 大きな TEXT / JSON 値の直接編集 (#556)。インライン編集と同じ条件
+            // (編集可・PK あり・列が編集対象) を満たすときだけ編集モードを許可し、
+            // 保存は既存のセル編集経路 (commitEdit → onSetCellEdit) に合流させる。
+            const vRow = rows[viewer.rowIdx];
+            const vVal = vRow?.[viewer.colIdx] ?? null;
+            const cellEditable =
+              !!editable &&
+              (pkIndices?.length ?? 0) > 0 &&
+              (editableColumns?.[viewer.colIdx] ?? false) &&
+              !!onSetCellEdit;
+            const rowKey = rowEditKey(vRow ?? [], pkIndices ?? [], viewer.rowIdx);
+            const originalDisplay = vVal === null || vVal === undefined ? "" : String(vVal);
+            return (
+              <CellValueViewer
+                columnName={columns[viewer.colIdx]?.name ?? ""}
+                value={vVal}
+                isBinary={columnKinds[viewer.colIdx] === "binary"}
+                blob={blobHandlersFor(viewer.rowIdx, viewer.colIdx)}
+                editable={cellEditable}
+                isJson={columnKinds[viewer.colIdx] === "json"}
+                validate={validateEdit ? (v) => validateEdit(viewer.colIdx, v) : undefined}
+                pendingValue={pendingEdits?.[rowKey]?.[viewer.colIdx] ?? null}
+                onSave={
+                  cellEditable
+                    ? (value) => commitEdit(viewer.rowIdx, viewer.colIdx, value, originalDisplay)
+                    : undefined
+                }
+                onClose={() => setViewer(null)}
+                driver={rowSqlDriver}
+                jsonUpdate={
+                  rowSqlTable &&
+                  columnKinds[viewer.colIdx] === "json" &&
+                  !rowSqlBlockedByMask([viewer.rowIdx])
+                    ? {
+                        tableRef: qualifiedTableRef(
+                          rowSqlDriver ?? "mysql",
+                          rowSqlDatabase ?? "",
+                          rowSqlTable,
+                        ),
+                        where: buildRowWhere(
+                          rowSqlDriver ?? "mysql",
+                          columns,
+                          rows[viewer.rowIdx] ?? [],
+                          pkIndices ?? [],
+                        ),
+                      }
+                    : undefined
+                }
+              />
+            );
+          })()}
+      </AnimatePresence>
+      {inspectorOpen &&
+        activeCell &&
+        rows[activeCell.rowIdx] &&
+        (() => {
+          const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
+          const inspMasked = maskedCols
+            ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
+            : undefined;
+          const inspRowKey = rowEditKey(rows[activeCell.rowIdx] ?? [], pkIndices ?? [], activeCell.rowIdx);
+          const moveTo = (visTarget: number) => {
+            const r = visibleRows[visTarget];
+            if (r) navigateCell(r.index, activeCell.colIdx);
+          };
           return (
-            <CellValueViewer
-              columnName={columns[viewer.colIdx]?.name ?? ""}
-              value={vVal}
-              isBinary={columnKinds[viewer.colIdx] === "binary"}
-              blob={blobHandlersFor(viewer.rowIdx, viewer.colIdx)}
-              editable={cellEditable}
-              isJson={columnKinds[viewer.colIdx] === "json"}
-              validate={validateEdit ? (v) => validateEdit(viewer.colIdx, v) : undefined}
-              pendingValue={pendingEdits?.[rowKey]?.[viewer.colIdx] ?? null}
-              onSave={
-                cellEditable
-                  ? (value) => commitEdit(viewer.rowIdx, viewer.colIdx, value, originalDisplay)
-                  : undefined
-              }
-              onClose={() => setViewer(null)}
-              driver={rowSqlDriver}
-              jsonUpdate={
-                rowSqlTable && columnKinds[viewer.colIdx] === "json" && !rowSqlBlockedByMask([viewer.rowIdx])
+            <RowInspector
+              columns={columns}
+              comments={columnCommentsFor(
+                columns.map((c) => c.name),
+                columnMeta,
+              )}
+              values={rows[activeCell.rowIdx]}
+              maskedColumns={inspMasked}
+              columnKinds={columnKinds}
+              related={
+                onRunRelatedQuery && incomingFks && incomingFks.length > 0
                   ? {
-                      tableRef: qualifiedTableRef(rowSqlDriver ?? "mysql", rowSqlDatabase ?? "", rowSqlTable),
-                      where: buildRowWhere(
-                        rowSqlDriver ?? "mysql",
-                        columns,
-                        rows[viewer.rowIdx] ?? [],
-                        pkIndices ?? [],
+                      entries: resolveRelatedEntries(
+                        incomingFks,
+                        columns.map((c) => c.name),
+                        rows[activeCell.rowIdx],
+                        (ci) => cellMaskedNow(activeCell.rowIdx, ci),
                       ),
+                      driver: rowSqlDriver ?? "mysql",
+                      database: rowSqlDatabase ?? null,
+                      runQuery: onRunRelatedQuery,
+                      onOpenInGrid: onFkJump,
                     }
                   : undefined
               }
+              rowSql={{
+                driver: rowSqlDriver ?? "mysql",
+                database: rowSqlDatabase ?? "",
+                table: rowSqlTable ?? null,
+                pkIndices: pkIndices ?? [],
+                blockedByMask: rowSqlBlockedByMask([activeCell.rowIdx]),
+              }}
+              edit={
+                onApplyRowEdits
+                  ? {
+                      rowKey: inspRowKey,
+                      editableColumns: inspectorEditableColumns({
+                        columnCount: columns.length,
+                        gridEditable: !!editable,
+                        editableColumns,
+                        maskedColumns: inspMasked,
+                      }),
+                      blockedReason: inspectorRowEditBlock({
+                        streaming: rowStreaming,
+                        applying: rowApplying,
+                        pendingDelete: pendingDeleteKeys?.has(inspRowKey) ?? false,
+                        hasPendingEdit: Object.keys(pendingEdits?.[inspRowKey] ?? {}).length > 0,
+                      }),
+                      validate: (ci, raw) => validateEdit?.(ci, raw) ?? null,
+                      onApply: (edits) => onApplyRowEdits(inspRowKey, edits),
+                    }
+                  : undefined
+              }
+              rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
+              hasPrev={inspVis > 0}
+              hasNext={inspVis >= 0 && inspVis < visibleRows.length - 1}
+              onPrev={() => moveTo(inspVis - 1)}
+              onNext={() => moveTo(inspVis + 1)}
+              onClose={() => setInspectorOpen(false)}
             />
           );
         })()}
-      </AnimatePresence>
-      {inspectorOpen && activeCell && rows[activeCell.rowIdx] && (() => {
-        const inspVis = visibleRows.findIndex((r) => r.index === activeCell.rowIdx);
-        const inspMasked = maskedCols
-          ? columns.map((_, ci) => cellMaskedNow(activeCell.rowIdx, ci))
-          : undefined;
-        const inspRowKey = rowEditKey(rows[activeCell.rowIdx] ?? [], pkIndices ?? [], activeCell.rowIdx);
-        const moveTo = (visTarget: number) => {
-          const r = visibleRows[visTarget];
-          if (r) navigateCell(r.index, activeCell.colIdx);
-        };
-        return (
-          <RowInspector
-            columns={columns}
-            comments={columnCommentsFor(columns.map((c) => c.name), columnMeta)}
-            values={rows[activeCell.rowIdx]}
-            maskedColumns={inspMasked}
-            columnKinds={columnKinds}
-            related={
-              onRunRelatedQuery && incomingFks && incomingFks.length > 0
-                ? {
-                    entries: resolveRelatedEntries(
-                      incomingFks,
-                      columns.map((c) => c.name),
-                      rows[activeCell.rowIdx],
-                      (ci) => cellMaskedNow(activeCell.rowIdx, ci),
-                    ),
-                    driver: rowSqlDriver ?? "mysql",
-                    database: rowSqlDatabase ?? null,
-                    runQuery: onRunRelatedQuery,
-                    onOpenInGrid: onFkJump,
-                  }
-                : undefined
-            }
-            rowSql={{
-              driver: rowSqlDriver ?? "mysql",
-              database: rowSqlDatabase ?? "",
-              table: rowSqlTable ?? null,
-              pkIndices: pkIndices ?? [],
-              blockedByMask: rowSqlBlockedByMask([activeCell.rowIdx]),
-            }}
-            edit={
-              onApplyRowEdits
-                ? {
-                    rowKey: inspRowKey,
-                    editableColumns: inspectorEditableColumns({
-                      columnCount: columns.length,
-                      gridEditable: !!editable,
-                      editableColumns,
-                      maskedColumns: inspMasked,
-                    }),
-                    blockedReason: inspectorRowEditBlock({
-                      streaming: rowStreaming,
-                      applying: rowApplying,
-                      pendingDelete: pendingDeleteKeys?.has(inspRowKey) ?? false,
-                      hasPendingEdit: Object.keys(pendingEdits?.[inspRowKey] ?? {}).length > 0,
-                    }),
-                    validate: (ci, raw) => validateEdit?.(ci, raw) ?? null,
-                    onApply: (edits) => onApplyRowEdits(inspRowKey, edits),
-                  }
-                : undefined
-            }
-            rowNumber={inspVis >= 0 ? inspVis + 1 : activeCell.rowIdx + 1}
-            hasPrev={inspVis > 0}
-            hasNext={inspVis >= 0 && inspVis < visibleRows.length - 1}
-            onPrev={() => moveTo(inspVis - 1)}
-            onNext={() => moveTo(inspVis + 1)}
-            onClose={() => setInspectorOpen(false)}
-          />
-        );
-      })()}
       {blurDialog}
       {hoveredCellTooltip && (
         <TooltipBubble label={hoveredCellTooltip.label} anchor={hoveredCellTooltip.rect} />
@@ -7486,9 +7433,7 @@ function StreamingBanner({
         height="8px"
         borderRadius="50%"
         flexShrink={0}
-        background={
-          approaching ? semanticColorVar("danger", "solid") : semanticColorVar("warning", "solid")
-        }
+        background={approaching ? semanticColorVar("danger", "solid") : semanticColorVar("warning", "solid")}
         animation="streaming-pulse 1s ease-in-out infinite"
       />
       <chakra.span flex="1" display="inline-flex" alignItems="center" gap="2" minW={0} overflow="hidden">
@@ -7509,14 +7454,7 @@ function StreamingBanner({
       </chakra.span>
       {onStop && (
         <Tooltip label={t("gridStopButtonTitle")}>
-          <Button
-            variant="warning"
-            size="sm"
-            px="3"
-            py="0.5"
-            whiteSpace="nowrap"
-            onClick={onStop}
-          >
+          <Button variant="warning" size="sm" px="3" py="0.5" whiteSpace="nowrap" onClick={onStop}>
             {t("gridStopButton")}
           </Button>
         </Tooltip>
@@ -7532,10 +7470,7 @@ function StreamingBanner({
  * the others explain which fallback identifies rows so users understand why
  * editing is (still) available.
  */
-function identityHintKeys(
-  strategy: RowIdentityKind,
-  ambiguous: boolean,
-): { label: I18nKey; title: I18nKey } {
+function identityHintKeys(strategy: RowIdentityKind, ambiguous: boolean): { label: I18nKey; title: I18nKey } {
   switch (strategy) {
     case "rowid":
       return { label: "editRowidHint", title: "editRowidHintTitle" };
@@ -7550,327 +7485,336 @@ function identityHintKeys(
   }
 }
 
-export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function ResultGrid({
-  result,
-  streaming,
-  onStopStreaming,
-  loadingMore,
-  canLoadMore,
-  onLoadMore,
-  autoLimitApplied,
-  autoLimitSkip,
-  partialResult,
-  onFetchAllRows,
-  driver,
-  database,
-  table,
-  editable,
-  readOnlyNotice,
-  tableColumns,
-  rowIdentity,
-  blobIo,
-  pendingEdits,
-  canUndo,
-  canRedo,
-  onSetCellEdit,
-  onClearEdits,
-  onUndoEdit,
-  onRedoEdit,
-  onPreviewEdits,
-  onApplyEdits,
-  autoRefreshSecs,
-  autoRefreshAllowed,
-  autoRefreshLastRunAt,
-  onSetAutoRefresh,
-  queryError,
-  onRetry,
-  onFkJump,
-  incomingFks,
-  onRunRelatedQuery,
-  pendingDeleteKeys,
-  onToggleRowDelete,
-  onRequestInsertRow,
-  onDuplicateRow,
-  onPasteInsertRows,
-  onBulkEdit,
-  onReplaceColumn,
-  diffPrevRows,
-  diffComparable,
-  diffHighlightEnabled,
-  onToggleDiffHighlight,
-  onChangeView,
-  onSaveAsTable,
-  onSaveAsView,
-  onRegisterLocalTable,
-  onTransferResult,
-  onSummarizeWithAi,
-  fullExport,
-  bundleContext,
-  lastEditAppliedAt,
-  applyingEdits,
-  onApplyRowEdits,
-  onRunStatsQuery,
-  onLookupQuery,
-  onExploreColumn,
-  maximized,
-  onToggleMaximize,
-  onPinResult,
-  canPinResult,
-  initialScrollTop,
-  onScroll,
-  gridBindings,
-  serverSort,
-  serverFilter,
-  onSetServerSort,
-  onSetServerFilter,
-}: Props, ref) {
-  const t = useT();
-  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
-  // Live range-selection summary lifted from the inner DataGrid (#523).
-  const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
-  const settings = useSettings();
-  const aiAvailable = useAiAvailable();
-  // ストリーミング中の経過時間は StreamingBanner が自前で刻む (ここでは再レンダーしない)。
-  // 開始時刻だけをレンダー中に ref へ控える (streaming が真になった最初のレンダーで確定)。
-  const streamStartRef = useRef<number | null>(null);
-  if (streaming) {
-    if (streamStartRef.current == null) streamStartRef.current = Date.now();
-  } else {
-    streamStartRef.current = null;
-  }
-  const paginateMode = settings.resultGridMode === "paginate";
-  const [pagination, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: settings.resultGridPageSize,
-  });
-  // Sync page size when the setting changes (but preserve the current page index).
-  useEffect(() => {
-    setPagination((p) => ({ ...p, pageSize: settings.resultGridPageSize }));
-  }, [settings.resultGridPageSize]);
-  // Reset to page 0 whenever new results arrive (new query run).
-  const rowCount = result?.rows.length ?? 0;
-  const prevRowCountRef = useRef(rowCount);
-  useEffect(() => {
-    const prev = prevRowCountRef.current;
-    prevRowCountRef.current = rowCount;
-    // A shrink (new query) resets; a grow (load more) keeps the current page.
-    if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [rowCount]);
-  // 確定した結果件数のカウントアップ (#977)。ストリーミング中は行数が絶えず増える
-  // ため、その途中経過をカウントアップさせるとチカチカするだけで逆効果 — なので
-  // `streaming` が真の間は前回の確定値に据え置き、完了した瞬間にだけ新しい値へ
-  // 遷移させる (これにより `useCountUp` 自身の「意味のある差分か」判定にも確定値
-  // 同士の差分だけが渡る)。
-  const [confirmedRowCount, setConfirmedRowCount] = useState(rowCount);
-  useEffect(() => {
-    if (!streaming) setConfirmedRowCount(rowCount);
-  }, [streaming, rowCount]);
-  // 計測 (#1094): クエリ完了後、グリッドが新しい結果セットをコミット (描画) した
-  // タイミングを記録する (Time to Interactive 相当)。既定 OFF なら markGridCommit
-  // は即 no-op。
-  useLayoutEffect(() => {
-    if (!streaming) markGridCommit(rowCount);
-  }, [streaming, rowCount]);
-  const [showExport, setShowExport] = useState(false);
-  // DataGrid が持つ機微カラムマスクの実効設定 (調査バンドルの書き出しに使う)。
-  const [maskConfig, setMaskConfig] = useState<MaskConfig | null>(null);
-  // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
-  // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
-  // ツールバーの通常 Export を開いたときに古い選択が「選択範囲」スコープとして
-  // 残らないようにする。
-  const [selectionExport, setSelectionExport] = useState<{
-    columns: Column[];
-    rows: CellValue[][];
-  } | null>(null);
-  // `DataGrid` は React.memo でラップされている (#1098) ため、ここで毎レンダー
-  // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
-  // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
-  // 空でよい。
-  const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
-    setSelectionExport(data);
-    setShowExport(true);
-  }, []);
-  const [search, setSearch] = useState("");
-  // 入力欄は即時の `search`、グリッドへ渡す全体フィルタは遅延値 (大規模結果で毎キーの再フィルタを避ける、#1610)。
-  const deferredSearch = useDeferredValue(search);
-  // Interval the toggle will use when switched on. Seeded from the persisted
-  // default and from the live cadence so the selector reflects the active poll.
-  const [intervalChoice, setIntervalChoice] = useState(
-    () => autoRefreshSecs ?? settings.autoRefreshDefaultSecs,
-  );
-  useEffect(() => {
-    if (autoRefreshSecs != null) setIntervalChoice(autoRefreshSecs);
-  }, [autoRefreshSecs]);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  // Scroll position capture/restore for tab persistence (#678). `onScrollRef`
-  // keeps the callback fresh without re-binding the listener; `scrollRestoredRef`
-  // ensures the persisted position is applied at most once per mount.
-  const onScrollRef = useRef(onScroll);
-  onScrollRef.current = onScroll;
-  const scrollRestoredRef = useRef(false);
-  // 直近に再生済みの apply-flash タイムスタンプ。タブ切替などで同じ
-  // lastEditAppliedAt を持つ ResultGrid が再マウント/再評価されても、過去の成功時刻で
-  // フラッシュが再発火しないよう単調増加チェックに使う。
-  const lastHandledApplyAtRef = useRef(0);
-
-  // Apply-edit 成功時に containerRef に apply-flash アニメーションを付与する。
-  // lastEditAppliedAt の変化を検知して CSS animation クラスを一時的に追加し、
-  // アニメーション完了後 (0.7s) に除去する。新しいタイムスタンプのときだけ発火させ、
-  // 既に再生済み (タブ復帰時など) の時刻では何もしない。
-  useEffect(() => {
-    if (!lastEditAppliedAt) return;
-    if (lastEditAppliedAt <= lastHandledApplyAtRef.current) return;
-    lastHandledApplyAtRef.current = lastEditAppliedAt;
-    const el = containerRef.current;
-    if (!el) return;
-    el.classList.add("is-apply-flash");
-    const timer = window.setTimeout(() => el.classList.remove("is-apply-flash"), 700);
-    return () => {
-      window.clearTimeout(timer);
-      el.classList.remove("is-apply-flash");
-    };
-  }, [lastEditAppliedAt]);
-
-  // ── 結果内検索 (Find in Results, #644) ──
-  // 取得済み行を横断してヒットセルをハイライトし、Enter/Shift+Enter で前後の
-  // ヒットへジャンプする。列フィルタ (行を隠す) とは独立で、マッチ計算は
-  // `gridFind.ts` の純ロジックに委ねる。
-  const findInputRef = useRef<HTMLInputElement>(null);
-  const [findOpen, setFindOpen] = useState(false);
-  // バーが既に開いているときの Ctrl+F 再押下でも入力へ再フォーカスするための seq。
-  const [findFocusSeq, setFindFocusSeq] = useState(0);
-  const [findQuery, setFindQuery] = useState("");
-  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
-  const [findWholeCell, setFindWholeCell] = useState(false);
-  const [findRegex, setFindRegex] = useState(false);
-  const [findIdx, setFindIdx] = useState<number | null>(null);
-  const [findNav, setFindNav] = useState<GridFindNav | null>(null);
-  const findSeqRef = useRef(0);
-  const findIdxRef = useRef(findIdx);
-  findIdxRef.current = findIdx;
-  // ストリーミング等でヒット一覧が再計算されても現在ヒットのセルを維持するための
-  // スナップショットと、タイピング追従スクロールの重複発行を防ぐ直近キー。
-  const prevFindMatchRef = useRef<GridFindMatch | null>(null);
-  const lastFindAutoNavKeyRef = useRef<string | null>(null);
-
-  // 大きな結果 (FIND_DEBOUNCE_MIN_ROWS 超) ではタイピングごとの全行走査を避けるため、
-  // 入力が止まってから検索する (#1257)。小さな結果は従来どおり即時。
-  const heavyFind = (result?.rows.length ?? 0) > FIND_DEBOUNCE_MIN_ROWS;
-  const [findQueryDebounced, setFindQueryDebounced] = useState(findQuery);
-  useEffect(() => {
-    if (!heavyFind || findQuery === "") {
-      setFindQueryDebounced(findQuery);
-      return;
+export const ResultGrid = memo(
+  forwardRef<ResultGridHandle, Props>(function ResultGrid(
+    {
+      result,
+      streaming,
+      onStopStreaming,
+      loadingMore,
+      canLoadMore,
+      onLoadMore,
+      autoLimitApplied,
+      autoLimitSkip,
+      partialResult,
+      onFetchAllRows,
+      driver,
+      database,
+      table,
+      editable,
+      readOnlyNotice,
+      tableColumns,
+      rowIdentity,
+      blobIo,
+      pendingEdits,
+      canUndo,
+      canRedo,
+      onSetCellEdit,
+      onClearEdits,
+      onUndoEdit,
+      onRedoEdit,
+      onPreviewEdits,
+      onApplyEdits,
+      autoRefreshSecs,
+      autoRefreshAllowed,
+      autoRefreshLastRunAt,
+      onSetAutoRefresh,
+      queryError,
+      onRetry,
+      onFkJump,
+      incomingFks,
+      onRunRelatedQuery,
+      pendingDeleteKeys,
+      onToggleRowDelete,
+      onRequestInsertRow,
+      onDuplicateRow,
+      onPasteInsertRows,
+      onBulkEdit,
+      onReplaceColumn,
+      diffPrevRows,
+      diffComparable,
+      diffHighlightEnabled,
+      onToggleDiffHighlight,
+      onChangeView,
+      onSaveAsTable,
+      onSaveAsView,
+      onRegisterLocalTable,
+      onTransferResult,
+      onSummarizeWithAi,
+      fullExport,
+      bundleContext,
+      lastEditAppliedAt,
+      applyingEdits,
+      onApplyRowEdits,
+      onRunStatsQuery,
+      onLookupQuery,
+      onExploreColumn,
+      maximized,
+      onToggleMaximize,
+      onPinResult,
+      canPinResult,
+      initialScrollTop,
+      onScroll,
+      gridBindings,
+      serverSort,
+      serverFilter,
+      onSetServerSort,
+      onSetServerFilter,
+    }: Props,
+    ref,
+  ) {
+    const t = useT();
+    const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+    // Live range-selection summary lifted from the inner DataGrid (#523).
+    const [selSummary, setSelSummary] = useState<SelectionSummary | null>(null);
+    const settings = useSettings();
+    const aiAvailable = useAiAvailable();
+    // ストリーミング中の経過時間は StreamingBanner が自前で刻む (ここでは再レンダーしない)。
+    // 開始時刻だけをレンダー中に ref へ控える (streaming が真になった最初のレンダーで確定)。
+    const streamStartRef = useRef<number | null>(null);
+    if (streaming) {
+      if (streamStartRef.current == null) streamStartRef.current = Date.now();
+    } else {
+      streamStartRef.current = null;
     }
-    const id = window.setTimeout(() => setFindQueryDebounced(findQuery), FIND_DEBOUNCE_MS);
-    return () => window.clearTimeout(id);
-  }, [findQuery, heavyFind]);
-  const effectiveFindQuery = heavyFind ? findQueryDebounced : findQuery;
-  // ストリーミング中は行が届くたびにヒット一覧を全件再計算しない (#1257)。クエリ・
-  // オプションが変わらない限り直前の結果を保持し、完了 (streaming=false) で再計算する。
-  const lastFindRef = useRef<{ key: string; firstRow: unknown; value: GridFindResult } | null>(
-    null,
-  );
-  // 結果ハンドル経由の検索 (#1264)。行数しきい値以上でバックエンドが行を保持している結果は、
-  // 正規表現を使わない検索を `result_find` に任せる (ヒットは上限付き)。正規表現は JS と Rust で
-  // 文法・意味が違うため常に JS。ストリーミング中・ハンドル破棄済みも JS。
-  const findHandleId = !streaming && !findRegex ? shouldUseHandleForGrid(result?.rows) : null;
-  const [goneFindHandleId, setGoneFindHandleId] = useState<string | null>(null);
-  const activeFindHandleId =
-    findOpen && findHandleId && findHandleId !== goneFindHandleId ? findHandleId : null;
-  const [remoteFind, setRemoteFind] = useState<{
-    key: string;
-    result: GridFindResult;
-    total: number;
-    truncated: boolean;
-  } | null>(null);
-  const remoteFindKey = JSON.stringify([
-    activeFindHandleId,
-    effectiveFindQuery,
-    findCaseSensitive,
-    findWholeCell,
-  ]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 検索条件は remoteFindKey (JSON キー) に畳んである。個別の値を依存に入れると同じ条件で二重に問い合わせてしまう
-  useEffect(() => {
-    if (!activeFindHandleId) {
-      setRemoteFind(null);
-      return;
-    }
-    if (effectiveFindQuery === "") {
-      setRemoteFind({ key: remoteFindKey, result: EMPTY_FIND_RESULT, total: 0, truncated: false });
-      return;
-    }
-    let cancelled = false;
-    api
-      .resultFind({
-        resultId: activeFindHandleId,
-        query: effectiveFindQuery,
-        options: { caseSensitive: findCaseSensitive, wholeCell: findWholeCell },
-        limit: HANDLE_FIND_LIMIT,
-      })
-      .then((out) => {
-        if (cancelled) return;
-        if (out === null) {
-          setGoneFindHandleId(activeFindHandleId);
-          return;
-        }
-        setRemoteFind({
-          key: remoteFindKey,
-          result: {
-            matches: out.hits.map((h) => ({ rowIdx: h.rowIdx, colIdx: h.colIdx })),
-            invalidRegex: false,
-          },
-          total: out.total,
-          truncated: out.truncated,
+    const paginateMode = settings.resultGridMode === "paginate";
+    const [pagination, setPagination] = useState<PaginationState>({
+      pageIndex: 0,
+      pageSize: settings.resultGridPageSize,
+    });
+    // Sync page size when the setting changes (but preserve the current page index).
+    useEffect(() => {
+      setPagination((p) => ({ ...p, pageSize: settings.resultGridPageSize }));
+    }, [settings.resultGridPageSize]);
+    // Reset to page 0 whenever new results arrive (new query run).
+    const rowCount = result?.rows.length ?? 0;
+    const prevRowCountRef = useRef(rowCount);
+    useEffect(() => {
+      const prev = prevRowCountRef.current;
+      prevRowCountRef.current = rowCount;
+      // A shrink (new query) resets; a grow (load more) keeps the current page.
+      if (rowCount < prev) setPagination((p) => ({ ...p, pageIndex: 0 }));
+    }, [rowCount]);
+    // 確定した結果件数のカウントアップ (#977)。ストリーミング中は行数が絶えず増える
+    // ため、その途中経過をカウントアップさせるとチカチカするだけで逆効果 — なので
+    // `streaming` が真の間は前回の確定値に据え置き、完了した瞬間にだけ新しい値へ
+    // 遷移させる (これにより `useCountUp` 自身の「意味のある差分か」判定にも確定値
+    // 同士の差分だけが渡る)。
+    const [confirmedRowCount, setConfirmedRowCount] = useState(rowCount);
+    useEffect(() => {
+      if (!streaming) setConfirmedRowCount(rowCount);
+    }, [streaming, rowCount]);
+    // 計測 (#1094): クエリ完了後、グリッドが新しい結果セットをコミット (描画) した
+    // タイミングを記録する (Time to Interactive 相当)。既定 OFF なら markGridCommit
+    // は即 no-op。
+    useLayoutEffect(() => {
+      if (!streaming) markGridCommit(rowCount);
+    }, [streaming, rowCount]);
+    const [showExport, setShowExport] = useState(false);
+    // DataGrid が持つ機微カラムマスクの実効設定 (調査バンドルの書き出しに使う)。
+    const [maskConfig, setMaskConfig] = useState<MaskConfig | null>(null);
+    // 右クリック「選択範囲をエクスポート」(#917) で `DataGrid` から一度きり渡される
+    // 選択範囲の列/行部分集合。モーダルを閉じたら破棄し、次に (右クリック経由でなく)
+    // ツールバーの通常 Export を開いたときに古い選択が「選択範囲」スコープとして
+    // 残らないようにする。
+    const [selectionExport, setSelectionExport] = useState<{
+      columns: Column[];
+      rows: CellValue[][];
+    } | null>(null);
+    // `DataGrid` は React.memo でラップされている (#1098) ため、ここで毎レンダー
+    // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
+    // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
+    // 空でよい。
+    const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
+      setSelectionExport(data);
+      setShowExport(true);
+    }, []);
+    const [search, setSearch] = useState("");
+    // 入力欄は即時の `search`、グリッドへ渡す全体フィルタは遅延値 (大規模結果で毎キーの再フィルタを避ける、#1610)。
+    const deferredSearch = useDeferredValue(search);
+    // Interval the toggle will use when switched on. Seeded from the persisted
+    // default and from the live cadence so the selector reflects the active poll.
+    const [intervalChoice, setIntervalChoice] = useState(
+      () => autoRefreshSecs ?? settings.autoRefreshDefaultSecs,
+    );
+    useEffect(() => {
+      if (autoRefreshSecs != null) setIntervalChoice(autoRefreshSecs);
+    }, [autoRefreshSecs]);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+    // Scroll position capture/restore for tab persistence (#678). `onScrollRef`
+    // keeps the callback fresh without re-binding the listener; `scrollRestoredRef`
+    // ensures the persisted position is applied at most once per mount.
+    const onScrollRef = useRef(onScroll);
+    onScrollRef.current = onScroll;
+    const scrollRestoredRef = useRef(false);
+    // 直近に再生済みの apply-flash タイムスタンプ。タブ切替などで同じ
+    // lastEditAppliedAt を持つ ResultGrid が再マウント/再評価されても、過去の成功時刻で
+    // フラッシュが再発火しないよう単調増加チェックに使う。
+    const lastHandledApplyAtRef = useRef(0);
+
+    // Apply-edit 成功時に containerRef に apply-flash アニメーションを付与する。
+    // lastEditAppliedAt の変化を検知して CSS animation クラスを一時的に追加し、
+    // アニメーション完了後 (0.7s) に除去する。新しいタイムスタンプのときだけ発火させ、
+    // 既に再生済み (タブ復帰時など) の時刻では何もしない。
+    useEffect(() => {
+      if (!lastEditAppliedAt) return;
+      if (lastEditAppliedAt <= lastHandledApplyAtRef.current) return;
+      lastHandledApplyAtRef.current = lastEditAppliedAt;
+      const el = containerRef.current;
+      if (!el) return;
+      el.classList.add("is-apply-flash");
+      const timer = window.setTimeout(() => el.classList.remove("is-apply-flash"), 700);
+      return () => {
+        window.clearTimeout(timer);
+        el.classList.remove("is-apply-flash");
+      };
+    }, [lastEditAppliedAt]);
+
+    // ── 結果内検索 (Find in Results, #644) ──
+    // 取得済み行を横断してヒットセルをハイライトし、Enter/Shift+Enter で前後の
+    // ヒットへジャンプする。列フィルタ (行を隠す) とは独立で、マッチ計算は
+    // `gridFind.ts` の純ロジックに委ねる。
+    const findInputRef = useRef<HTMLInputElement>(null);
+    const [findOpen, setFindOpen] = useState(false);
+    // バーが既に開いているときの Ctrl+F 再押下でも入力へ再フォーカスするための seq。
+    const [findFocusSeq, setFindFocusSeq] = useState(0);
+    const [findQuery, setFindQuery] = useState("");
+    const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+    const [findWholeCell, setFindWholeCell] = useState(false);
+    const [findRegex, setFindRegex] = useState(false);
+    const [findIdx, setFindIdx] = useState<number | null>(null);
+    const [findNav, setFindNav] = useState<GridFindNav | null>(null);
+    const findSeqRef = useRef(0);
+    const findIdxRef = useRef(findIdx);
+    findIdxRef.current = findIdx;
+    // ストリーミング等でヒット一覧が再計算されても現在ヒットのセルを維持するための
+    // スナップショットと、タイピング追従スクロールの重複発行を防ぐ直近キー。
+    const prevFindMatchRef = useRef<GridFindMatch | null>(null);
+    const lastFindAutoNavKeyRef = useRef<string | null>(null);
+
+    // 大きな結果 (FIND_DEBOUNCE_MIN_ROWS 超) ではタイピングごとの全行走査を避けるため、
+    // 入力が止まってから検索する (#1257)。小さな結果は従来どおり即時。
+    const heavyFind = (result?.rows.length ?? 0) > FIND_DEBOUNCE_MIN_ROWS;
+    const [findQueryDebounced, setFindQueryDebounced] = useState(findQuery);
+    useEffect(() => {
+      if (!heavyFind || findQuery === "") {
+        setFindQueryDebounced(findQuery);
+        return;
+      }
+      const id = window.setTimeout(() => setFindQueryDebounced(findQuery), FIND_DEBOUNCE_MS);
+      return () => window.clearTimeout(id);
+    }, [findQuery, heavyFind]);
+    const effectiveFindQuery = heavyFind ? findQueryDebounced : findQuery;
+    // ストリーミング中は行が届くたびにヒット一覧を全件再計算しない (#1257)。クエリ・
+    // オプションが変わらない限り直前の結果を保持し、完了 (streaming=false) で再計算する。
+    const lastFindRef = useRef<{ key: string; firstRow: unknown; value: GridFindResult } | null>(null);
+    // 結果ハンドル経由の検索 (#1264)。行数しきい値以上でバックエンドが行を保持している結果は、
+    // 正規表現を使わない検索を `result_find` に任せる (ヒットは上限付き)。正規表現は JS と Rust で
+    // 文法・意味が違うため常に JS。ストリーミング中・ハンドル破棄済みも JS。
+    const findHandleId = !streaming && !findRegex ? shouldUseHandleForGrid(result?.rows) : null;
+    const [goneFindHandleId, setGoneFindHandleId] = useState<string | null>(null);
+    const activeFindHandleId =
+      findOpen && findHandleId && findHandleId !== goneFindHandleId ? findHandleId : null;
+    const [remoteFind, setRemoteFind] = useState<{
+      key: string;
+      result: GridFindResult;
+      total: number;
+      truncated: boolean;
+    } | null>(null);
+    const remoteFindKey = JSON.stringify([
+      activeFindHandleId,
+      effectiveFindQuery,
+      findCaseSensitive,
+      findWholeCell,
+    ]);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: 検索条件は remoteFindKey (JSON キー) に畳んである。個別の値を依存に入れると同じ条件で二重に問い合わせてしまう
+    useEffect(() => {
+      if (!activeFindHandleId) {
+        setRemoteFind(null);
+        return;
+      }
+      if (effectiveFindQuery === "") {
+        setRemoteFind({ key: remoteFindKey, result: EMPTY_FIND_RESULT, total: 0, truncated: false });
+        return;
+      }
+      let cancelled = false;
+      api
+        .resultFind({
+          resultId: activeFindHandleId,
+          query: effectiveFindQuery,
+          options: { caseSensitive: findCaseSensitive, wholeCell: findWholeCell },
+          limit: HANDLE_FIND_LIMIT,
+        })
+        .then((out) => {
+          if (cancelled) return;
+          if (out === null) {
+            setGoneFindHandleId(activeFindHandleId);
+            return;
+          }
+          setRemoteFind({
+            key: remoteFindKey,
+            result: {
+              matches: out.hits.map((h) => ({ rowIdx: h.rowIdx, colIdx: h.colIdx })),
+              invalidRegex: false,
+            },
+            total: out.total,
+            truncated: out.truncated,
+          });
+        })
+        .catch(() => {
+          if (!cancelled) setGoneFindHandleId(activeFindHandleId);
         });
-      })
-      .catch(() => {
-        if (!cancelled) setGoneFindHandleId(activeFindHandleId);
+      return () => {
+        cancelled = true;
+      };
+      // remoteFindKey が条件 (ハンドル・クエリ・オプション) をすべて含む。
+    }, [remoteFindKey]);
+    const localFindResult = useMemo<GridFindResult>(() => {
+      if (activeFindHandleId) return EMPTY_FIND_RESULT;
+      if (!findOpen || !result) return EMPTY_FIND_RESULT;
+      const key = JSON.stringify([
+        effectiveFindQuery,
+        findCaseSensitive,
+        findWholeCell,
+        findRegex,
+        result.columns.length,
+        result.columns.map((c) => c.name),
+      ]);
+      // 別の結果 (別クエリの再実行) に前回のヒット座標を使い回さない。ストリーミングの
+      // バッチ追加では先頭行の参照が変わらないので、先頭行の同一性で同じ結果かを判定する。
+      const firstRow = result.rows[0];
+      const prev = lastFindRef.current;
+      if (streaming && prev && prev.key === key && prev.firstRow === firstRow) return prev.value;
+      const value = computeFindMatches(result.rows, result.columns.length, effectiveFindQuery, {
+        caseSensitive: findCaseSensitive,
+        wholeCell: findWholeCell,
+        regex: findRegex,
       });
-    return () => {
-      cancelled = true;
-    };
-    // remoteFindKey が条件 (ハンドル・クエリ・オプション) をすべて含む。
-  }, [remoteFindKey]);
-  const localFindResult = useMemo<GridFindResult>(() => {
-    if (activeFindHandleId) return EMPTY_FIND_RESULT;
-    if (!findOpen || !result) return EMPTY_FIND_RESULT;
-    const key = JSON.stringify([
+      lastFindRef.current = { key, firstRow, value };
+      return value;
+    }, [
+      activeFindHandleId,
+      findOpen,
+      result,
       effectiveFindQuery,
       findCaseSensitive,
       findWholeCell,
       findRegex,
-      result.columns.length,
-      result.columns.map((c) => c.name),
+      streaming,
     ]);
-    // 別の結果 (別クエリの再実行) に前回のヒット座標を使い回さない。ストリーミングの
-    // バッチ追加では先頭行の参照が変わらないので、先頭行の同一性で同じ結果かを判定する。
-    const firstRow = result.rows[0];
-    const prev = lastFindRef.current;
-    if (streaming && prev && prev.key === key && prev.firstRow === firstRow) return prev.value;
-    const value = computeFindMatches(result.rows, result.columns.length, effectiveFindQuery, {
-      caseSensitive: findCaseSensitive,
-      wholeCell: findWholeCell,
-      regex: findRegex,
-    });
-    lastFindRef.current = { key, firstRow, value };
-    return value;
-  }, [activeFindHandleId, findOpen, result, effectiveFindQuery, findCaseSensitive, findWholeCell, findRegex, streaming]);
-  // 新しい応答が届くまでは直前のヒットを保つ (入力のたびにハイライトが消えない)。
-  const findResult = activeFindHandleId ? (remoteFind?.result ?? EMPTY_FIND_RESULT) : localFindResult;
-  // 打ち切られたときの総ヒット数 (ナビゲーションは先頭 HANDLE_FIND_LIMIT 件まで)。
-  const findTotal =
-    activeFindHandleId && remoteFind?.truncated ? remoteFind.total : findResult.matches.length;
-  const findHits = useMemo(
-    () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
-    [findResult],
-  );
-  const findCurrentMatch =
-    findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
+    // 新しい応答が届くまでは直前のヒットを保つ (入力のたびにハイライトが消えない)。
+    const findResult = activeFindHandleId ? (remoteFind?.result ?? EMPTY_FIND_RESULT) : localFindResult;
+    // 打ち切られたときの総ヒット数 (ナビゲーションは先頭 HANDLE_FIND_LIMIT 件まで)。
+    const findTotal =
+      activeFindHandleId && remoteFind?.truncated ? remoteFind.total : findResult.matches.length;
+    const findHits = useMemo(
+      () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
+      [findResult],
+    );
+    const findCurrentMatch = findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
 
-  const emitFindNav = useCallback(
-    (m: GridFindMatch, select: boolean, focusCell: boolean) => {
+    const emitFindNav = useCallback((m: GridFindMatch, select: boolean, focusCell: boolean) => {
       findSeqRef.current += 1;
       setFindNav({
         rowIdx: m.rowIdx,
@@ -7879,198 +7823,200 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
         select,
         focusCell,
       });
-    },
-    [],
-  );
+    }, []);
 
-  // ヒット一覧の再計算 (タイピング / オプション変更 / ストリーミングの行追加) の
-  // たびに現在ヒットを安定化し、指すセルが変わったときだけスクロール追従する
-  // (行追加だけで現在ヒットが不変なら視界を動かさない)。
-  useEffect(() => {
-    const idx = stableMatchIndex(
-      findResult.matches,
-      prevFindMatchRef.current,
-      findIdxRef.current,
+    // ヒット一覧の再計算 (タイピング / オプション変更 / ストリーミングの行追加) の
+    // たびに現在ヒットを安定化し、指すセルが変わったときだけスクロール追従する
+    // (行追加だけで現在ヒットが不変なら視界を動かさない)。
+    useEffect(() => {
+      const idx = stableMatchIndex(findResult.matches, prevFindMatchRef.current, findIdxRef.current);
+      setFindIdx(idx);
+      const m = idx != null ? findResult.matches[idx] : null;
+      prevFindMatchRef.current = m;
+      if (m) {
+        const key = findMatchKey(m);
+        if (lastFindAutoNavKeyRef.current !== key) {
+          lastFindAutoNavKeyRef.current = key;
+          // タイピング追従はスクロールのみ (アクティブセル/フォーカスは動かさない)。
+          emitFindNav(m, false, false);
+        }
+      } else {
+        lastFindAutoNavKeyRef.current = null;
+      }
+    }, [findResult, emitFindNav]);
+
+    // Enter / Shift+Enter (およびバーの ‹ › ボタン): 次/前のヒットへ wrap-around で移動。
+    const findStep = (dir: 1 | -1) => {
+      const next = nextMatchIndex(findResult.matches.length, findIdx, dir);
+      if (next == null) return;
+      const m = findResult.matches[next];
+      setFindIdx(next);
+      prevFindMatchRef.current = m;
+      lastFindAutoNavKeyRef.current = findMatchKey(m);
+      emitFindNav(m, true, false);
+    };
+
+    // Esc / 閉じるボタン: バーを閉じ、現在ヒットのセルへフォーカスを戻す (ヒットが
+    // 無ければグリッドのスクロールコンテナへ)。クエリは保持し、再オープン時に全選択で
+    // すぐ上書きできるようにする (閉じている間はハイライトも消える)。
+    const closeFind = () => {
+      const m = findCurrentMatch;
+      setFindOpen(false);
+      if (m) emitFindNav(m, true, true);
+      else containerRef.current?.focus();
+    };
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        openFind: () => {
+          setFindOpen(true);
+          setFindFocusSeq((n) => n + 1);
+        },
+        focus: () => {
+          containerRef.current?.focus();
+        },
+      }),
+      [],
     );
-    setFindIdx(idx);
-    const m = idx != null ? findResult.matches[idx] : null;
-    prevFindMatchRef.current = m;
-    if (m) {
-      const key = findMatchKey(m);
-      if (lastFindAutoNavKeyRef.current !== key) {
-        lastFindAutoNavKeyRef.current = key;
-        // タイピング追従はスクロールのみ (アクティブセル/フォーカスは動かさない)。
-        emitFindNav(m, false, false);
+    // biome-ignore lint/correctness/useExhaustiveDependencies: findFocusSeq は本体で読まないが、検索バーを開き直したときに入力欄へフォーカス・全選択し直す契機として意図的に依存へ入れている
+    useEffect(() => {
+      if (!findOpen) return;
+      const el = findInputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
       }
-    } else {
-      lastFindAutoNavKeyRef.current = null;
-    }
-  }, [findResult, emitFindNav]);
+    }, [findOpen, findFocusSeq]);
+    // Latest callback in a ref so we don't have to re-attach the scroll
+    // listener every time `onLoadMore` is rebuilt (it changes on every
+    // App.tsx render because of useCallback deps).
+    const onLoadMoreRef = useRef(onLoadMore);
+    useEffect(() => {
+      onLoadMoreRef.current = onLoadMore;
+    }, [onLoadMore]);
 
-  // Enter / Shift+Enter (およびバーの ‹ › ボタン): 次/前のヒットへ wrap-around で移動。
-  const findStep = (dir: 1 | -1) => {
-    const next = nextMatchIndex(findResult.matches.length, findIdx, dir);
-    if (next == null) return;
-    const m = findResult.matches[next];
-    setFindIdx(next);
-    prevFindMatchRef.current = m;
-    lastFindAutoNavKeyRef.current = findMatchKey(m);
-    emitFindNav(m, true, false);
-  };
+    // Trigger another page when scrolled near the bottom. Re-runs each time
+    // `canLoadMore` or `loadingMore` flips, so a completed load can be
+    // immediately followed by another if the user is still pinned to the
+    // end (e.g. the table fits in the viewport and natural scroll never
+    // happens). Disabled in paginate mode — loading is triggered from the
+    // paginator footer instead.
+    // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows.length は本体で読まないが、行が届くたびにしきい値を再判定して続きの読み込みを起こす契機として意図的に依存へ入れている
+    useEffect(() => {
+      if (paginateMode || !canLoadMore || loadingMore) return;
+      const el = containerRef.current;
+      if (!el) return;
+      const trigger = () => {
+        const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (remaining < LOAD_MORE_THRESHOLD_PX) {
+          onLoadMoreRef.current?.();
+        }
+      };
+      trigger();
+      el.addEventListener("scroll", trigger, { passive: true });
+      return () => el.removeEventListener("scroll", trigger);
+    }, [paginateMode, canLoadMore, loadingMore, result?.rows.length]);
 
-  // Esc / 閉じるボタン: バーを閉じ、現在ヒットのセルへフォーカスを戻す (ヒットが
-  // 無ければグリッドのスクロールコンテナへ)。クエリは保持し、再オープン時に全選択で
-  // すぐ上書きできるようにする (閉じている間はハイライトも消える)。
-  const closeFind = () => {
-    const m = findCurrentMatch;
-    setFindOpen(false);
-    if (m) emitFindNav(m, true, true);
-    else containerRef.current?.focus();
-  };
+    // Report the grid's scroll position so table tabs can restore where the user
+    // was (#678). Independent of the load-more listener (which is conditional).
+    // Re-binds only when the container mounts/unmounts (result toggles null ↔ set);
+    // the same DOM node persists across result replacements, so it stays attached.
+    const hasResultForScroll = result != null;
+    // biome-ignore lint/correctness/useExhaustiveDependencies: hasResultForScroll は本体で読まないが、結果の有無でスクロールコンテナが付け外しされるため再バインドの契機として意図的に依存へ入れている
+    useEffect(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      const report = () => {
+        // display:none の間はブラウザが scrollTop を 0 にしてスクロールイベントを出すことがある。
+        // 非アクティブ (keep-alive で隠れている) 間の値は記録しない。
+        if (!keepAliveActiveRef.current) return;
+        lastScrollTopRef.current = el.scrollTop;
+        onScrollRef.current?.(el.scrollTop);
+      };
+      el.addEventListener("scroll", report, { passive: true });
+      return () => el.removeEventListener("scroll", report);
+    }, [hasResultForScroll]);
 
-  useImperativeHandle(ref, () => ({
-    openFind: () => {
-      setFindOpen(true);
-      setFindFocusSeq((n) => n + 1);
-    },
-    focus: () => {
-      containerRef.current?.focus();
-    },
-  }), []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: findFocusSeq は本体で読まないが、検索バーを開き直したときに入力欄へフォーカス・全選択し直す契機として意図的に依存へ入れている
-  useEffect(() => {
-    if (!findOpen) return;
-    const el = findInputRef.current;
-    if (el) {
-      el.focus();
-      el.select();
-    }
-  }, [findOpen, findFocusSeq]);
-  // Latest callback in a ref so we don't have to re-attach the scroll
-  // listener every time `onLoadMore` is rebuilt (it changes on every
-  // App.tsx render because of useCallback deps).
-  const onLoadMoreRef = useRef(onLoadMore);
-  useEffect(() => { onLoadMoreRef.current = onLoadMore; }, [onLoadMore]);
+    // keep-alive (#1309): 隠れていた間に失われたスクロール位置を、再表示した瞬間に戻す。
+    const keepAliveActive = useKeepAliveActive();
+    const keepAliveActiveRef = useRef(keepAliveActive);
+    keepAliveActiveRef.current = keepAliveActive;
+    const lastScrollTopRef = useRef(0);
+    const wasKeepAliveActiveRef = useRef(keepAliveActive);
+    useLayoutEffect(() => {
+      const was = wasKeepAliveActiveRef.current;
+      wasKeepAliveActiveRef.current = keepAliveActive;
+      if (!keepAliveActive || was) return;
+      const el = containerRef.current;
+      if (el && lastScrollTopRef.current > 0) el.scrollTop = lastScrollTopRef.current;
+    }, [keepAliveActive]);
 
-  // Trigger another page when scrolled near the bottom. Re-runs each time
-  // `canLoadMore` or `loadingMore` flips, so a completed load can be
-  // immediately followed by another if the user is still pinned to the
-  // end (e.g. the table fits in the viewport and natural scroll never
-  // happens). Disabled in paginate mode — loading is triggered from the
-  // paginator footer instead.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows.length は本体で読まないが、行が届くたびにしきい値を再判定して続きの読み込みを起こす契機として意図的に依存へ入れている
-  useEffect(() => {
-    if (paginateMode || !canLoadMore || loadingMore) return;
-    const el = containerRef.current;
-    if (!el) return;
-    const trigger = () => {
-      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (remaining < LOAD_MORE_THRESHOLD_PX) {
-        onLoadMoreRef.current?.();
+    // Restore the persisted scroll position once, after rows first populate (#678).
+    // Clamp to the scrollable range so a now-shorter result lands at the end
+    // instead of overscrolling. Applied at most once per mount (`scrollRestoredRef`).
+    useEffect(() => {
+      if (scrollRestoredRef.current) return;
+      if (!initialScrollTop || initialScrollTop <= 0) {
+        scrollRestoredRef.current = true;
+        return;
       }
-    };
-    trigger();
-    el.addEventListener("scroll", trigger, { passive: true });
-    return () => el.removeEventListener("scroll", trigger);
-  }, [paginateMode, canLoadMore, loadingMore, result?.rows.length]);
-
-  // Report the grid's scroll position so table tabs can restore where the user
-  // was (#678). Independent of the load-more listener (which is conditional).
-  // Re-binds only when the container mounts/unmounts (result toggles null ↔ set);
-  // the same DOM node persists across result replacements, so it stays attached.
-  const hasResultForScroll = result != null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: hasResultForScroll は本体で読まないが、結果の有無でスクロールコンテナが付け外しされるため再バインドの契機として意図的に依存へ入れている
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const report = () => {
-      // display:none の間はブラウザが scrollTop を 0 にしてスクロールイベントを出すことがある。
-      // 非アクティブ (keep-alive で隠れている) 間の値は記録しない。
-      if (!keepAliveActiveRef.current) return;
-      lastScrollTopRef.current = el.scrollTop;
-      onScrollRef.current?.(el.scrollTop);
-    };
-    el.addEventListener("scroll", report, { passive: true });
-    return () => el.removeEventListener("scroll", report);
-  }, [hasResultForScroll]);
-
-  // keep-alive (#1309): 隠れていた間に失われたスクロール位置を、再表示した瞬間に戻す。
-  const keepAliveActive = useKeepAliveActive();
-  const keepAliveActiveRef = useRef(keepAliveActive);
-  keepAliveActiveRef.current = keepAliveActive;
-  const lastScrollTopRef = useRef(0);
-  const wasKeepAliveActiveRef = useRef(keepAliveActive);
-  useLayoutEffect(() => {
-    const was = wasKeepAliveActiveRef.current;
-    wasKeepAliveActiveRef.current = keepAliveActive;
-    if (!keepAliveActive || was) return;
-    const el = containerRef.current;
-    if (el && lastScrollTopRef.current > 0) el.scrollTop = lastScrollTopRef.current;
-  }, [keepAliveActive]);
-
-  // Restore the persisted scroll position once, after rows first populate (#678).
-  // Clamp to the scrollable range so a now-shorter result lands at the end
-  // instead of overscrolling. Applied at most once per mount (`scrollRestoredRef`).
-  useEffect(() => {
-    if (scrollRestoredRef.current) return;
-    if (!initialScrollTop || initialScrollTop <= 0) {
+      const el = containerRef.current;
+      if (!el) return;
+      if (streaming) return; // ストリーミング完了前は行の並びが確定しないため復元を待つ
+      if ((result?.rows.length ?? 0) === 0) return; // wait for rows to lay out
+      const max = Math.max(0, el.scrollHeight - el.clientHeight);
+      el.scrollTop = Math.min(initialScrollTop, max);
       scrollRestoredRef.current = true;
-      return;
-    }
-    const el = containerRef.current;
-    if (!el) return;
-    if (streaming) return; // ストリーミング完了前は行の並びが確定しないため復元を待つ
-    if ((result?.rows.length ?? 0) === 0) return; // wait for rows to lay out
-    const max = Math.max(0, el.scrollHeight - el.clientHeight);
-    el.scrollTop = Math.min(initialScrollTop, max);
-    scrollRestoredRef.current = true;
-  }, [initialScrollTop, result?.rows.length, streaming]);
+    }, [initialScrollTop, result?.rows.length, streaming]);
 
-  // Row identity indices and per-column editability are computed once per
-  // render so both the toolbar (gating Preview/Apply) and the grid agree on
-  // which cells are interactive. These hooks must run before any early
-  // return so the hook order stays stable as `result` transitions
-  // null → columns (otherwise React aborts the whole tree on the next
-  // render).
-  const columns = result?.columns;
-  // Resolve row identity regardless of `editable`: a read-only table tab
-  // still wants it for row→SQL generation (UPDATE/DELETE WHERE clause).
-  // Inline editing stays gated on `editable` downstream, so this never makes
-  // cells editable. Prefers a real primary key; falls back to the backend's
-  // rowid/ctid/all-columns strategy (#849) when there's none.
-  const identity = useMemo(
-    () => (columns ? resolveRowIdentity(columns, tableColumns ?? null, rowIdentity ?? null) : { indices: [], strategy: "none" as RowIdentityKind }),
-    [columns, tableColumns, rowIdentity],
-  );
-  const pkIndices = identity.indices;
-  const identityStrategy = identity.strategy;
-  const editableCols = useMemo<boolean[]>(() => {
-    if (!editable || !columns) return columns ? columns.map(() => false) : [];
-    if (pkIndices.length === 0) return columns.map(() => false);
-    // The "all_columns" fallback (#849) has no PK column to protect — every
-    // column is fair game to edit, since the WHERE clause is always rebuilt
-    // from the row's ORIGINAL values (not the pending edit), so editing a
-    // column that also happens to be part of the identity is safe. For the
-    // other strategies, disallow editing the identity column(s) themselves:
-    // a real PK or the rowid/ctid pseudo-column changing in-place would
-    // invalidate the WHERE clause used to identify the row (rowid/ctid also
-    // isn't a real declared column, so editing it wouldn't mean anything).
-    if (identityStrategy === "all_columns") {
-      return columns.map((c) => isEditableColumnType(c.type_name));
-    }
-    const pkSet = new Set(pkIndices);
-    return columns.map((c, i) => !pkSet.has(i) && isEditableColumnType(c.type_name));
-  }, [editable, columns, pkIndices, identityStrategy]);
+    // Row identity indices and per-column editability are computed once per
+    // render so both the toolbar (gating Preview/Apply) and the grid agree on
+    // which cells are interactive. These hooks must run before any early
+    // return so the hook order stays stable as `result` transitions
+    // null → columns (otherwise React aborts the whole tree on the next
+    // render).
+    const columns = result?.columns;
+    // Resolve row identity regardless of `editable`: a read-only table tab
+    // still wants it for row→SQL generation (UPDATE/DELETE WHERE clause).
+    // Inline editing stays gated on `editable` downstream, so this never makes
+    // cells editable. Prefers a real primary key; falls back to the backend's
+    // rowid/ctid/all-columns strategy (#849) when there's none.
+    const identity = useMemo(
+      () =>
+        columns
+          ? resolveRowIdentity(columns, tableColumns ?? null, rowIdentity ?? null)
+          : { indices: [], strategy: "none" as RowIdentityKind },
+      [columns, tableColumns, rowIdentity],
+    );
+    const pkIndices = identity.indices;
+    const identityStrategy = identity.strategy;
+    const editableCols = useMemo<boolean[]>(() => {
+      if (!editable || !columns) return columns ? columns.map(() => false) : [];
+      if (pkIndices.length === 0) return columns.map(() => false);
+      // The "all_columns" fallback (#849) has no PK column to protect — every
+      // column is fair game to edit, since the WHERE clause is always rebuilt
+      // from the row's ORIGINAL values (not the pending edit), so editing a
+      // column that also happens to be part of the identity is safe. For the
+      // other strategies, disallow editing the identity column(s) themselves:
+      // a real PK or the rowid/ctid pseudo-column changing in-place would
+      // invalidate the WHERE clause used to identify the row (rowid/ctid also
+      // isn't a real declared column, so editing it wouldn't mean anything).
+      if (identityStrategy === "all_columns") {
+        return columns.map((c) => isEditableColumnType(c.type_name));
+      }
+      const pkSet = new Set(pkIndices);
+      return columns.map((c, i) => !pkSet.has(i) && isEditableColumnType(c.type_name));
+    }, [editable, columns, pkIndices, identityStrategy]);
 
-  const resultRows = result?.rows;
-  // Whether the currently-loaded rows contain a genuine identity collision
-  // under the "all_columns" fallback (#849) — two rows with identical values
-  // in every column, which a WHERE clause built from that identity can't
-  // tell apart. Best-effort (only sees rows actually fetched into the grid),
-  // but strengthens the toolbar hint and Apply's confirmation wording from a
-  // generic caution to "this data actually has duplicates".
-  const ambiguousIdentity = useMemo(
-    () => {
+    const resultRows = result?.rows;
+    // Whether the currently-loaded rows contain a genuine identity collision
+    // under the "all_columns" fallback (#849) — two rows with identical values
+    // in every column, which a WHERE clause built from that identity can't
+    // tell apart. Best-effort (only sees rows actually fetched into the grid),
+    // but strengthens the toolbar hint and Apply's confirmation wording from a
+    // generic caution to "this data actually has duplicates".
+    const ambiguousIdentity = useMemo(() => {
       if (identityStrategy !== "all_columns" || !resultRows) return false;
       // all_columns の識別は全列なので、ストリームの行ハッシュ重複フラグ (#1257) が
       // そのまま答えになる (追跡上限超えで null のときは JS で走査する)。
@@ -8084,1436 +8030,1416 @@ export const ResultGrid = memo(forwardRef<ResultGridHandle, Props>(function Resu
         return stream.duplicateRows;
       }
       return hasAmbiguousIdentity(resultRows, pkIndices);
-    },
-    [identityStrategy, resultRows, pkIndices, columns?.length],
-  );
+    }, [identityStrategy, resultRows, pkIndices, columns?.length]);
 
-  // Re-run diff (#597): compare the previous snapshot against the current
-  // result and surface changed cells / added rows / removed count. Computed only
-  // when the toggle is on, the two results came from the same query
-  // (`diffComparable`), streaming has settled, a PK is resolvable, and a
-  // snapshot exists — otherwise we fall back to normal rendering (no highlight).
-  const diff = useMemo(() => {
-    if (
-      !diffHighlightEnabled ||
-      !diffComparable ||
-      streaming ||
-      !diffPrevRows ||
-      !resultRows ||
-      !columns ||
-      pkIndices.length === 0
-    ) {
-      return null;
-    }
-    // 自動リフレッシュのパッチ適用などで差分が行配列と一緒に作られていればそれを使う
-    // (全行の突き合わせをやり直さない, #1257)。
-    return rowDiffFor(resultRows) ?? diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
-  }, [
-    diffHighlightEnabled,
-    diffComparable,
-    streaming,
-    diffPrevRows,
-    resultRows,
-    columns,
-    pkIndices,
-  ]);
-
-  // Persist column widths per result shape: same database+table+column set
-  // restores saved widths, a different shape falls back to defaults. The
-  // column signature keeps free-form queries with distinct columns separate.
-  const columnSizingStorageKey = useMemo(
-    () => resultShapeSizingKey(columns, database, table),
-    [columns, database, table],
-  );
-
-  // Client-side type/NOT NULL validation of a pending edit, by result-column
-  // index. Mirrors the literal-building rules in cellEdit so invalid input is
-  // caught before a (wasted) Preview/Apply round-trip. `nullable` defaults to
-  // true when no column metadata is available, keeping validation permissive.
-  // Memoized so the per-cell checks in the grid and the `hasInvalidEdit` scan
-  // below reuse one stable function instead of rebuilding it every render.
-  // The name→metadata map avoids a linear scan per validated cell.
-  const tableColumnsByName = useMemo(
-    () => new Map((tableColumns ?? []).map((c) => [c.name, c])),
-    [tableColumns],
-  );
-  const validateEdit = useCallback(
-    (colIdx: number, value: string): I18nKey | null => {
-      const col = columns?.[colIdx];
-      if (!col) return null;
-      const info = tableColumnsByName.get(col.name) ?? null;
-      return validateCellInput(value, col.type_name, info?.nullable ?? true);
-    },
-    [columns, tableColumnsByName],
-  );
-
-  // True when any pending edit fails validation. Memoized over the edits and
-  // the validator so it isn't recomputed (looping every edited cell) on each
-  // render — only when the edits or validation inputs actually change.
-  const hasInvalidEdit = useMemo(() => {
-    if (!pendingEdits) return false;
-    for (const rowKey of Object.keys(pendingEdits)) {
-      const rowEdits = pendingEdits[rowKey];
-      if (!rowEdits) continue;
-      for (const colKey of Object.keys(rowEdits)) {
-        if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) return true;
+    // Re-run diff (#597): compare the previous snapshot against the current
+    // result and surface changed cells / added rows / removed count. Computed only
+    // when the toggle is on, the two results came from the same query
+    // (`diffComparable`), streaming has settled, a PK is resolvable, and a
+    // snapshot exists — otherwise we fall back to normal rendering (no highlight).
+    const diff = useMemo(() => {
+      if (
+        !diffHighlightEnabled ||
+        !diffComparable ||
+        streaming ||
+        !diffPrevRows ||
+        !resultRows ||
+        !columns ||
+        pkIndices.length === 0
+      ) {
+        return null;
       }
-    }
-    return false;
-  }, [pendingEdits, validateEdit]);
+      // 自動リフレッシュのパッチ適用などで差分が行配列と一緒に作られていればそれを使う
+      // (全行の突き合わせをやり直さない, #1257)。
+      return rowDiffFor(resultRows) ?? diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
+    }, [diffHighlightEnabled, diffComparable, streaming, diffPrevRows, resultRows, columns, pkIndices]);
 
-  // スマート値ピッカー (#1067): 編集可能なテーブルタブでだけ候補取得を有効にする。
-  // フックなので下の早期 return より前で呼ぶ (結果の有無で呼び出し順が変わらないように)。
-  const valuePicker = useValuePicker({
-    driver: driver ?? "mysql",
-    database,
-    table,
-    columns: tableColumns,
-    lookup: !!editable && pkIndices.length > 0 ? onLookupQuery : undefined,
-  });
-
-  // ツールバーの幅適応 (#1270): はみ出す間、副次操作を右から順に「…」メニューへ畳む。
-  // 実測 (scrollWidth / clientWidth) で決めるので、フォント拡大・密度・日本語/英語の
-  // 文言差・編集バーの出入りにも追従する。判定は resultToolbarOverflow.ts (純関数)。
-  // フックなので下の早期 return より前で呼ぶ。
-  // 計測 (getComputedStyle / getBoundingClientRect / scrollWidth は強制リフローを起こす)
-  // は再レンダーのたびには行わない (#1313)。ResizeObserver (ツールバー本体と直下の子) と
-  // 子の増減 (MutationObserver) を rAF で 1 フレーム 1 回に間引いて測り、畳む個数が
-  // 変わったときだけ state を更新する。畳む個数・表示する操作の数が変わった直後だけは
-  // 描画前に同期して測り直し、はみ出しが 1 フレームでも見えないようにする。
-  const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null);
-  const toolbarActionWidthsRef = useRef(new Map<CollapsibleToolbarAction, number>());
-  const [toolbarCollapsed, setToolbarCollapsed] = useState(0);
-  const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null);
-  const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
-  const presentToolbarActions = COLLAPSIBLE_TOOLBAR_ACTIONS.filter(
-    (id) =>
-      (id !== "transfer" || !!onTransferResult) &&
-      (id !== "aiSummary" || (aiAvailable && !!onSummarizeWithAi)) &&
-      (id !== "autoRefresh" || !!onSetAutoRefresh),
-  );
-  const { visible: visibleToolbarActions, collapsed: collapsedToolbarActions } = splitCollapsed(
-    presentToolbarActions,
-    toolbarCollapsed,
-  );
-  // 測定時に最新の値を読むための ref (レンダー中に代入するだけで DOM には触れない)。
-  const toolbarMeasureInputRef = useRef({
-    collapsed: toolbarCollapsed,
-    total: presentToolbarActions.length,
-    nextExpand: collapsedToolbarActions[0] as CollapsibleToolbarAction | undefined,
-  });
-  toolbarMeasureInputRef.current = {
-    collapsed: toolbarCollapsed,
-    total: presentToolbarActions.length,
-    nextExpand: collapsedToolbarActions[0],
-  };
-  const measureToolbar = useCallback(() => {
-    const el = toolbarEl;
-    if (!el) return;
-    const input = toolbarMeasureInputRef.current;
-    // 表示中の操作の幅 (gap 込み) を控える。畳んだ後に「戻せるか」の判断に使う。
-    const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
-    for (const node of Array.from(el.querySelectorAll<HTMLElement>("[data-toolbar-action]"))) {
-      const id = node.dataset.toolbarAction as CollapsibleToolbarAction;
-      toolbarActionWidthsRef.current.set(id, node.getBoundingClientRect().width + gap);
-    }
-    const next = nextCollapsedCount({
-      collapsed: input.collapsed,
-      total: input.total,
-      clientWidth: el.clientWidth,
-      scrollWidth: el.scrollWidth,
-      nextExpandWidth: input.nextExpand
-        ? (toolbarActionWidthsRef.current.get(input.nextExpand) ?? null)
-        : null,
-    });
-    if (next !== input.collapsed) setToolbarCollapsed(next);
-  }, [toolbarEl]);
-  // 内容が変わった直後 (畳む個数・操作の数) だけ、描画前に同期して測る。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: toolbarCollapsed / presentToolbarActions.length は本体で読まないが、畳む個数・操作数が変わった直後に再計測する契機として意図的に依存へ入れている
-  useLayoutEffect(() => {
-    measureToolbar();
-  }, [measureToolbar, toolbarCollapsed, presentToolbarActions.length]);
-  useEffect(() => {
-    const el = toolbarEl;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    let raf = 0;
-    const schedule = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        measureToolbar();
-      });
-    };
-    const ro = new ResizeObserver(schedule);
-    const observeChildren = () => {
-      ro.disconnect();
-      ro.observe(el);
-      for (const child of Array.from(el.children)) ro.observe(child);
-    };
-    observeChildren();
-    // 子の増減 (編集バーの出入りなど) では観測対象を取り直して測る。
-    const mo =
-      typeof MutationObserver === "undefined"
-        ? null
-        : new MutationObserver(() => {
-            observeChildren();
-            schedule();
-          });
-    mo?.observe(el, { childList: true });
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      ro.disconnect();
-      mo?.disconnect();
-    };
-  }, [toolbarEl, measureToolbar]);
-
-  // DataGrid の memo を破らないよう、emptyMessage は依存が変わるときだけ作り直す (#1313)。
-  const resultElapsedMs = result?.elapsed_ms;
-  const locale = useLocale();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: t は locale 変更で文言が変わるモジュール関数 (useT) で、locale を再生成の契機として意図的に依存へ入れている
-  const gridEmptyMessage = useMemo(
-    () =>
-      streaming ? undefined : queryError ? (
-        <EmptyState
-          illustration={errorIllustration(queryError)}
-          icon="warning"
-          title={t("gridQueryError")}
-          description={queryError}
-          action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
-        />
-      ) : (
-        <EmptyState
-          illustration={<NoResultsIllustration />}
-          icon="table"
-          title={t("gridZeroRows")}
-          description={t("gridZeroRowsHint", { ms: resultElapsedMs ?? 0 })}
-        />
-      ),
-    [streaming, queryError, onRetry, resultElapsedMs, locale],
-  );
-
-  if (!result) {
-    return (
-      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
-        {t("resultEmpty")}
-      </Box>
+    // Persist column widths per result shape: same database+table+column set
+    // restores saved widths, a different shape falls back to defaults. The
+    // column signature keeps free-form queries with distinct columns separate.
+    const columnSizingStorageKey = useMemo(
+      () => resultShapeSizingKey(columns, database, table),
+      [columns, database, table],
     );
-  }
-  if (result.columns.length === 0) {
-    if (streaming) {
-      // カラム情報未着のストリーミング中: 共有の結果ペイン骨格 (#1071) を表示して
-      // レイアウトシフトを抑える。columns 受信後は DataGrid が実ヘッダの下に列数ぶんの
-      // 骨格行を出し (#657)、最初の行が届いた時点で実データへ差し替わる。
-      return (
-        <Box
-          display="flex"
-          flexDirection="column"
-          flex="1 1 auto"
-          minHeight={0}
-          minWidth={0}
-          overflow="hidden"
-          bg="app.surface"
-          role="status"
-          aria-label={t("statusRunningQuery")}
-          aria-busy="true"
-          aria-live="polite"
-        >
-          {/* カラム未着の段階でも経過時間・キャンセル導線を出し、「無の時間」を埋める */}
-          <StreamingBanner
-            rows={0}
-            startRef={streamStartRef}
-            hasColumns={false}
-            onStop={onStopStreaming}
-            timeoutSecs={settings.queryTimeoutSecs}
+
+    // Client-side type/NOT NULL validation of a pending edit, by result-column
+    // index. Mirrors the literal-building rules in cellEdit so invalid input is
+    // caught before a (wasted) Preview/Apply round-trip. `nullable` defaults to
+    // true when no column metadata is available, keeping validation permissive.
+    // Memoized so the per-cell checks in the grid and the `hasInvalidEdit` scan
+    // below reuse one stable function instead of rebuilding it every render.
+    // The name→metadata map avoids a linear scan per validated cell.
+    const tableColumnsByName = useMemo(
+      () => new Map((tableColumns ?? []).map((c) => [c.name, c])),
+      [tableColumns],
+    );
+    const validateEdit = useCallback(
+      (colIdx: number, value: string): I18nKey | null => {
+        const col = columns?.[colIdx];
+        if (!col) return null;
+        const info = tableColumnsByName.get(col.name) ?? null;
+        return validateCellInput(value, col.type_name, info?.nullable ?? true);
+      },
+      [columns, tableColumnsByName],
+    );
+
+    // True when any pending edit fails validation. Memoized over the edits and
+    // the validator so it isn't recomputed (looping every edited cell) on each
+    // render — only when the edits or validation inputs actually change.
+    const hasInvalidEdit = useMemo(() => {
+      if (!pendingEdits) return false;
+      for (const rowKey of Object.keys(pendingEdits)) {
+        const rowEdits = pendingEdits[rowKey];
+        if (!rowEdits) continue;
+        for (const colKey of Object.keys(rowEdits)) {
+          if (validateEdit(Number(colKey), rowEdits[Number(colKey)])) return true;
+        }
+      }
+      return false;
+    }, [pendingEdits, validateEdit]);
+
+    // スマート値ピッカー (#1067): 編集可能なテーブルタブでだけ候補取得を有効にする。
+    // フックなので下の早期 return より前で呼ぶ (結果の有無で呼び出し順が変わらないように)。
+    const valuePicker = useValuePicker({
+      driver: driver ?? "mysql",
+      database,
+      table,
+      columns: tableColumns,
+      lookup: !!editable && pkIndices.length > 0 ? onLookupQuery : undefined,
+    });
+
+    // ツールバーの幅適応 (#1270): はみ出す間、副次操作を右から順に「…」メニューへ畳む。
+    // 実測 (scrollWidth / clientWidth) で決めるので、フォント拡大・密度・日本語/英語の
+    // 文言差・編集バーの出入りにも追従する。判定は resultToolbarOverflow.ts (純関数)。
+    // フックなので下の早期 return より前で呼ぶ。
+    // 計測 (getComputedStyle / getBoundingClientRect / scrollWidth は強制リフローを起こす)
+    // は再レンダーのたびには行わない (#1313)。ResizeObserver (ツールバー本体と直下の子) と
+    // 子の増減 (MutationObserver) を rAF で 1 フレーム 1 回に間引いて測り、畳む個数が
+    // 変わったときだけ state を更新する。畳む個数・表示する操作の数が変わった直後だけは
+    // 描画前に同期して測り直し、はみ出しが 1 フレームでも見えないようにする。
+    const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null);
+    const toolbarActionWidthsRef = useRef(new Map<CollapsibleToolbarAction, number>());
+    const [toolbarCollapsed, setToolbarCollapsed] = useState(0);
+    const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null);
+    const overflowBtnRef = useRef<HTMLButtonElement | null>(null);
+    const presentToolbarActions = COLLAPSIBLE_TOOLBAR_ACTIONS.filter(
+      (id) =>
+        (id !== "transfer" || !!onTransferResult) &&
+        (id !== "aiSummary" || (aiAvailable && !!onSummarizeWithAi)) &&
+        (id !== "autoRefresh" || !!onSetAutoRefresh),
+    );
+    const { visible: visibleToolbarActions, collapsed: collapsedToolbarActions } = splitCollapsed(
+      presentToolbarActions,
+      toolbarCollapsed,
+    );
+    // 測定時に最新の値を読むための ref (レンダー中に代入するだけで DOM には触れない)。
+    const toolbarMeasureInputRef = useRef({
+      collapsed: toolbarCollapsed,
+      total: presentToolbarActions.length,
+      nextExpand: collapsedToolbarActions[0] as CollapsibleToolbarAction | undefined,
+    });
+    toolbarMeasureInputRef.current = {
+      collapsed: toolbarCollapsed,
+      total: presentToolbarActions.length,
+      nextExpand: collapsedToolbarActions[0],
+    };
+    const measureToolbar = useCallback(() => {
+      const el = toolbarEl;
+      if (!el) return;
+      const input = toolbarMeasureInputRef.current;
+      // 表示中の操作の幅 (gap 込み) を控える。畳んだ後に「戻せるか」の判断に使う。
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      for (const node of Array.from(el.querySelectorAll<HTMLElement>("[data-toolbar-action]"))) {
+        const id = node.dataset.toolbarAction as CollapsibleToolbarAction;
+        toolbarActionWidthsRef.current.set(id, node.getBoundingClientRect().width + gap);
+      }
+      const next = nextCollapsedCount({
+        collapsed: input.collapsed,
+        total: input.total,
+        clientWidth: el.clientWidth,
+        scrollWidth: el.scrollWidth,
+        nextExpandWidth: input.nextExpand
+          ? (toolbarActionWidthsRef.current.get(input.nextExpand) ?? null)
+          : null,
+      });
+      if (next !== input.collapsed) setToolbarCollapsed(next);
+    }, [toolbarEl]);
+    // 内容が変わった直後 (畳む個数・操作の数) だけ、描画前に同期して測る。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: toolbarCollapsed / presentToolbarActions.length は本体で読まないが、畳む個数・操作数が変わった直後に再計測する契機として意図的に依存へ入れている
+    useLayoutEffect(() => {
+      measureToolbar();
+    }, [measureToolbar, toolbarCollapsed, presentToolbarActions.length]);
+    useEffect(() => {
+      const el = toolbarEl;
+      if (!el || typeof ResizeObserver === "undefined") return;
+      let raf = 0;
+      const schedule = () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = 0;
+          measureToolbar();
+        });
+      };
+      const ro = new ResizeObserver(schedule);
+      const observeChildren = () => {
+        ro.disconnect();
+        ro.observe(el);
+        for (const child of Array.from(el.children)) ro.observe(child);
+      };
+      observeChildren();
+      // 子の増減 (編集バーの出入りなど) では観測対象を取り直して測る。
+      const mo =
+        typeof MutationObserver === "undefined"
+          ? null
+          : new MutationObserver(() => {
+              observeChildren();
+              schedule();
+            });
+      mo?.observe(el, { childList: true });
+      return () => {
+        if (raf) cancelAnimationFrame(raf);
+        ro.disconnect();
+        mo?.disconnect();
+      };
+    }, [toolbarEl, measureToolbar]);
+
+    // DataGrid の memo を破らないよう、emptyMessage は依存が変わるときだけ作り直す (#1313)。
+    const resultElapsedMs = result?.elapsed_ms;
+    const locale = useLocale();
+    // biome-ignore lint/correctness/useExhaustiveDependencies: t は locale 変更で文言が変わるモジュール関数 (useT) で、locale を再生成の契機として意図的に依存へ入れている
+    const gridEmptyMessage = useMemo(
+      () =>
+        streaming ? undefined : queryError ? (
+          <EmptyState
+            illustration={errorIllustration(queryError)}
+            icon="warning"
+            title={t("gridQueryError")}
+            description={queryError}
+            action={onRetry ? { label: t("gridRetry"), onClick: onRetry } : undefined}
           />
-          {/* 列数未知の骨格 (#1071)。副次パネルと同じ SkeletonTableRows +
-              ヘッダ骨格で、App.tsx の Suspense fallback と同一の見た目。 */}
-          <ResultPaneSkeleton columnCount={null} density={settings.density} />
+        ) : (
+          <EmptyState
+            illustration={<NoResultsIllustration />}
+            icon="table"
+            title={t("gridZeroRows")}
+            description={t("gridZeroRowsHint", { ms: resultElapsedMs ?? 0 })}
+          />
+        ),
+      [streaming, queryError, onRetry, resultElapsedMs, locale],
+    );
+
+    if (!result) {
+      return (
+        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
+          {t("resultEmpty")}
         </Box>
       );
     }
-    return (
-      <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface" p="3">
-        <Callout tone="success">
-          {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
-        </Callout>
-      </Box>
-    );
-  }
-  const canExport = !streaming && result.rows.length > 0;
-  // Only surface the badge when the cap was actually binding: a result that
-  // came back shorter than the limit wasn't truncated, so there's nothing to
-  // "fetch all" and an aggregate's single row stays quiet.
-  const showAutoLimitBadge =
-    !streaming &&
-    autoLimitApplied != null &&
-    result.rows.length >= autoLimitApplied;
-
-  // 自動 LIMIT の付与 / 未適用の理由を常に一言で示す (#1534)。上限に達した場合は
-  // 既存の警告バッジが出るので、ここは「付与したが上限未満」と「付けなかった」を担当する。
-  const autoLimitNote: string | null =
-    streaming || result.columns.length === 0
-      ? null
-      : autoLimitApplied != null
-        ? showAutoLimitBadge
-          ? null
-          : t("autoLimitNoteApplied", { limit: autoLimitApplied })
-        : autoLimitSkip === "existingLimit"
-          ? t("autoLimitNoteExistingLimit")
-          : autoLimitSkip === "lockingClause"
-            ? t("autoLimitNoteLockingClause")
-            : autoLimitSkip === "aggregateOnly"
-              ? t("autoLimitNoteAggregateOnly")
-              : null;
-
-  const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
-  const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
-  const hasPendingEdits = editsCount > 0;
-  const editableActive = !!editable && pkIndices.length > 0;
-  const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
-
-  // Preview wraps a single statement; multi-row edits would need a
-  // multi-statement preview path that doesn't exist yet, so the button is
-  // disabled (with a tooltip) until the user trims their edits to one row.
-  const canPreview =
-    hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
-  const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
-
-  // `resultStatusBar` は "{rows} 件 · {ms} ms" 形式の 1 文を `t()` で組み立てるため、
-  // 件数だけをアニメーションさせるには展開済み文字列からプレースホルダの前後を
-  // 逆算して分割する (#977)。テンプレート自体・i18n 実装には触れず、どの言語でも
-  // 動く。
-  const statusBarParts =
-    !streaming && result.elapsed_ms != null && result.columns.length > 0
-      ? splitAroundCountUpToken(
-          t("resultStatusBar", { rows: COUNT_UP_TOKEN, ms: result.elapsed_ms }),
-        )
-      : null;
-
-  // ツールバーの副次操作 (#1270)。ボタン表示と「…」メニューが同じ定義を共有する
-  // (二重実装しない)。無効時の理由は Tooltip / メニューの title に出す。
-  const exportBlockedReason = streaming
-    ? t("exportDisabledStreaming")
-    : !canExport
-      ? t("exportDisabledNoRows")
-      : null;
-  const toolbarButtonActions: Partial<
-    Record<
-      CollapsibleToolbarAction,
-      { label: string; icon: IconName; title: string; disabled: boolean; onSelect: () => void }
-    >
-  > = {
-    saveAsTable: {
-      label: t("saveAsTableButton"),
-      icon: "table",
-      title:
-        exportBlockedReason ??
-        (onSaveAsTable ? t("saveAsTableButtonTitle") : t("saveAsTableDisabledTitle")),
-      disabled: !canExport || !onSaveAsTable,
-      onSelect: () => onSaveAsTable?.(),
-    },
-    saveAsView: {
-      label: t("saveAsViewButton"),
-      icon: "view",
-      title:
-        exportBlockedReason ??
-        (onSaveAsView ? t("saveAsViewButtonTitle") : t("saveAsViewDisabledTitle")),
-      disabled: !canExport || !onSaveAsView,
-      onSelect: () => onSaveAsView?.(),
-    },
-    registerLocal: {
-      label: t("registerLocalTableButton"),
-      icon: "database",
-      title:
-        exportBlockedReason ??
-        (onRegisterLocalTable
-          ? t("registerLocalTableButtonTitle")
-          : t("registerLocalTableDisabledTitle")),
-      disabled: !canExport || !onRegisterLocalTable,
-      onSelect: () => onRegisterLocalTable?.(),
-    },
-    ...(aiAvailable && onSummarizeWithAi
-      ? {
-          aiSummary: {
-            label: t("aiResultSummaryToolbar"),
-            icon: "sparkles" as const,
-            title: exportBlockedReason ?? t("aiResultSummaryToolbarTitle"),
-            disabled: !canExport,
-            onSelect: () => onSummarizeWithAi(),
-          },
-        }
-      : {}),
-    ...(onTransferResult
-      ? {
-          transfer: {
-            label: t("transferResultButton"),
-            icon: "transfer" as const,
-            title: exportBlockedReason ?? t("transferResultButtonTitle"),
-            disabled: !canExport,
-            onSelect: () => onTransferResult(),
-          },
-        }
-      : {}),
-  };
-  const overflowMenuItems: ContextMenuEntry[] = collapsedToolbarActions.flatMap(
-    (id): ContextMenuEntry[] => {
-      if (id === "autoRefresh") {
-        if (!onSetAutoRefresh) return [];
-        return [
-          {
-            label: t("autoRefreshLabel"),
-            title: autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle"),
-            disabled: !autoRefreshAllowed,
-            items: [
-              {
-                label: t("autoRefreshOff"),
-                icon: !autoRefreshOn ? "check" : undefined,
-                onSelect: () => onSetAutoRefresh(null),
-              },
-              ...AUTO_REFRESH_INTERVAL_OPTIONS.map((secs) => ({
-                label:
-                  secs % 60 === 0
-                    ? t("autoRefreshIntervalMins", { mins: secs / 60 })
-                    : t("autoRefreshIntervalSecs", { secs }),
-                icon: autoRefreshOn && autoRefreshSecs === secs ? ("check" as const) : undefined,
-                onSelect: () => {
-                  setIntervalChoice(secs);
-                  onSetAutoRefresh(secs);
-                },
-              })),
-            ],
-          },
-        ];
+    if (result.columns.length === 0) {
+      if (streaming) {
+        // カラム情報未着のストリーミング中: 共有の結果ペイン骨格 (#1071) を表示して
+        // レイアウトシフトを抑える。columns 受信後は DataGrid が実ヘッダの下に列数ぶんの
+        // 骨格行を出し (#657)、最初の行が届いた時点で実データへ差し替わる。
+        return (
+          <Box
+            display="flex"
+            flexDirection="column"
+            flex="1 1 auto"
+            minHeight={0}
+            minWidth={0}
+            overflow="hidden"
+            bg="app.surface"
+            role="status"
+            aria-label={t("statusRunningQuery")}
+            aria-busy="true"
+            aria-live="polite"
+          >
+            {/* カラム未着の段階でも経過時間・キャンセル導線を出し、「無の時間」を埋める */}
+            <StreamingBanner
+              rows={0}
+              startRef={streamStartRef}
+              hasColumns={false}
+              onStop={onStopStreaming}
+              timeoutSecs={settings.queryTimeoutSecs}
+            />
+            {/* 列数未知の骨格 (#1071)。副次パネルと同じ SkeletonTableRows +
+              ヘッダ骨格で、App.tsx の Suspense fallback と同一の見た目。 */}
+            <ResultPaneSkeleton columnCount={null} density={settings.density} />
+          </Box>
+        );
       }
-      const a = toolbarButtonActions[id];
-      return a
-        ? [{ label: a.label, icon: a.icon, title: a.title, disabled: a.disabled, onSelect: a.onSelect }]
-        : [];
-    },
-  );
-
-  return (
-    <Box
-      display="flex"
-      flexDirection="column"
-      flex="1 1 auto"
-      minHeight={0}
-      minWidth={0}
-      overflow="hidden"
-      bg="app.surface"
-      position={streaming ? "relative" : undefined}
-      // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
-      // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
-      className={streaming ? "grid-data-reveal" : undefined}
-      // 実行フェーズを離散モデル (queryRunState) で表し、スタイル/テストの
-      // フックとして公開する (#657)。
-      data-query-phase={deriveQueryPhase({
-        streaming,
-        error: !!queryError,
-        canceled: !!partialResult,
-        hasResult: result.columns.length > 0,
-      })}
-    >
-      {streaming && (
-        <StreamingBanner
-          rows={result.rows.length}
-          startRef={streamStartRef}
-          hasColumns
-          onStop={onStopStreaming}
-          timeoutSecs={settings.queryTimeoutSecs}
-        />
-      )}
-      {showAutoLimitBadge && (
-        <Box
-          role="status"
-          aria-live="polite"
-          display="flex"
-          alignItems="center"
-          gap="2.5"
-          py="1.25" px="2.5"
-          fontSize="sm"
-          color="app.text"
-          borderBottom="1px solid"
-          borderColor="app.borderSubtle"
-          background={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
-        >
-          <chakra.span flex="1">
-            {t("autoLimitApplied", { limit: autoLimitApplied! })}
-          </chakra.span>
-          <Tooltip label={t("autoLimitFetchAllTitle")}>
-            <Button
-              size="sm"
-              px="2.5"
-              whiteSpace="nowrap"
-              onClick={onFetchAllRows}
-            >
-              {t("autoLimitFetchAll")}
-            </Button>
-          </Tooltip>
+      return (
+        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface" p="3">
+          <Callout tone="success">
+            {t("resultExecuted", { rows: result.rows_affected, ms: result.elapsed_ms })}
+          </Callout>
         </Box>
-      )}
+      );
+    }
+    const canExport = !streaming && result.rows.length > 0;
+    // Only surface the badge when the cap was actually binding: a result that
+    // came back shorter than the limit wasn't truncated, so there's nothing to
+    // "fetch all" and an aggregate's single row stays quiet.
+    const showAutoLimitBadge =
+      !streaming && autoLimitApplied != null && result.rows.length >= autoLimitApplied;
+
+    // 自動 LIMIT の付与 / 未適用の理由を常に一言で示す (#1534)。上限に達した場合は
+    // 既存の警告バッジが出るので、ここは「付与したが上限未満」と「付けなかった」を担当する。
+    const autoLimitNote: string | null =
+      streaming || result.columns.length === 0
+        ? null
+        : autoLimitApplied != null
+          ? showAutoLimitBadge
+            ? null
+            : t("autoLimitNoteApplied", { limit: autoLimitApplied })
+          : autoLimitSkip === "existingLimit"
+            ? t("autoLimitNoteExistingLimit")
+            : autoLimitSkip === "lockingClause"
+              ? t("autoLimitNoteLockingClause")
+              : autoLimitSkip === "aggregateOnly"
+                ? t("autoLimitNoteAggregateOnly")
+                : null;
+
+    const editsCount = pendingEdits ? countEditedCells(pendingEdits) : 0;
+    const editedRowCount = pendingEdits ? countEditedRows(pendingEdits) : 0;
+    const hasPendingEdits = editsCount > 0;
+    const editableActive = !!editable && pkIndices.length > 0;
+    const autoRefreshOn = autoRefreshSecs != null && autoRefreshSecs > 0;
+
+    // Preview wraps a single statement; multi-row edits would need a
+    // multi-statement preview path that doesn't exist yet, so the button is
+    // disabled (with a tooltip) until the user trims their edits to one row.
+    const canPreview = hasPendingEdits && editedRowCount === 1 && !streaming && !hasInvalidEdit;
+    const canApply = hasPendingEdits && !streaming && !hasInvalidEdit;
+
+    // `resultStatusBar` は "{rows} 件 · {ms} ms" 形式の 1 文を `t()` で組み立てるため、
+    // 件数だけをアニメーションさせるには展開済み文字列からプレースホルダの前後を
+    // 逆算して分割する (#977)。テンプレート自体・i18n 実装には触れず、どの言語でも
+    // 動く。
+    const statusBarParts =
+      !streaming && result.elapsed_ms != null && result.columns.length > 0
+        ? splitAroundCountUpToken(t("resultStatusBar", { rows: COUNT_UP_TOKEN, ms: result.elapsed_ms }))
+        : null;
+
+    // ツールバーの副次操作 (#1270)。ボタン表示と「…」メニューが同じ定義を共有する
+    // (二重実装しない)。無効時の理由は Tooltip / メニューの title に出す。
+    const exportBlockedReason = streaming
+      ? t("exportDisabledStreaming")
+      : !canExport
+        ? t("exportDisabledNoRows")
+        : null;
+    const toolbarButtonActions: Partial<
+      Record<
+        CollapsibleToolbarAction,
+        { label: string; icon: IconName; title: string; disabled: boolean; onSelect: () => void }
+      >
+    > = {
+      saveAsTable: {
+        label: t("saveAsTableButton"),
+        icon: "table",
+        title:
+          exportBlockedReason ??
+          (onSaveAsTable ? t("saveAsTableButtonTitle") : t("saveAsTableDisabledTitle")),
+        disabled: !canExport || !onSaveAsTable,
+        onSelect: () => onSaveAsTable?.(),
+      },
+      saveAsView: {
+        label: t("saveAsViewButton"),
+        icon: "view",
+        title:
+          exportBlockedReason ?? (onSaveAsView ? t("saveAsViewButtonTitle") : t("saveAsViewDisabledTitle")),
+        disabled: !canExport || !onSaveAsView,
+        onSelect: () => onSaveAsView?.(),
+      },
+      registerLocal: {
+        label: t("registerLocalTableButton"),
+        icon: "database",
+        title:
+          exportBlockedReason ??
+          (onRegisterLocalTable ? t("registerLocalTableButtonTitle") : t("registerLocalTableDisabledTitle")),
+        disabled: !canExport || !onRegisterLocalTable,
+        onSelect: () => onRegisterLocalTable?.(),
+      },
+      ...(aiAvailable && onSummarizeWithAi
+        ? {
+            aiSummary: {
+              label: t("aiResultSummaryToolbar"),
+              icon: "sparkles" as const,
+              title: exportBlockedReason ?? t("aiResultSummaryToolbarTitle"),
+              disabled: !canExport,
+              onSelect: () => onSummarizeWithAi(),
+            },
+          }
+        : {}),
+      ...(onTransferResult
+        ? {
+            transfer: {
+              label: t("transferResultButton"),
+              icon: "transfer" as const,
+              title: exportBlockedReason ?? t("transferResultButtonTitle"),
+              disabled: !canExport,
+              onSelect: () => onTransferResult(),
+            },
+          }
+        : {}),
+    };
+    const overflowMenuItems: ContextMenuEntry[] = collapsedToolbarActions.flatMap(
+      (id): ContextMenuEntry[] => {
+        if (id === "autoRefresh") {
+          if (!onSetAutoRefresh) return [];
+          return [
+            {
+              label: t("autoRefreshLabel"),
+              title: autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle"),
+              disabled: !autoRefreshAllowed,
+              items: [
+                {
+                  label: t("autoRefreshOff"),
+                  icon: !autoRefreshOn ? "check" : undefined,
+                  onSelect: () => onSetAutoRefresh(null),
+                },
+                ...AUTO_REFRESH_INTERVAL_OPTIONS.map((secs) => ({
+                  label:
+                    secs % 60 === 0
+                      ? t("autoRefreshIntervalMins", { mins: secs / 60 })
+                      : t("autoRefreshIntervalSecs", { secs }),
+                  icon: autoRefreshOn && autoRefreshSecs === secs ? ("check" as const) : undefined,
+                  onSelect: () => {
+                    setIntervalChoice(secs);
+                    onSetAutoRefresh(secs);
+                  },
+                })),
+              ],
+            },
+          ];
+        }
+        const a = toolbarButtonActions[id];
+        return a
+          ? [{ label: a.label, icon: a.icon, title: a.title, disabled: a.disabled, onSelect: a.onSelect }]
+          : [];
+      },
+    );
+
+    return (
       <Box
         display="flex"
-        alignItems="center"
-        gap="1.5"
-        py="1" px="2"
-        ref={setToolbarEl}
-        bg="app.toolbar"
-        borderBottom="1px solid"
-        borderColor="app.borderSubtle"
-        flexShrink={0}
-        // 分割ペインが狭いとき、縮まないボタン (ピン/最大化/ピボット/チャート) が
-        // 親の overflow: hidden でクリップされて操作不能になるのを防ぐ。TabBar と
-        // 同じ横スクロール方式で、フォーカス移動時もブラウザが自動で見える位置へ
-        // スクロールする。
-        overflowX="auto"
-        overflowY="hidden"
-        scrollbarWidth="thin"
+        flexDirection="column"
+        flex="1 1 auto"
+        minHeight={0}
+        minWidth={0}
+        overflow="hidden"
+        bg="app.surface"
+        position={streaming ? "relative" : undefined}
+        // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
+        // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
+        className={streaming ? "grid-data-reveal" : undefined}
+        // 実行フェーズを離散モデル (queryRunState) で表し、スタイル/テストの
+        // フックとして公開する (#657)。
+        data-query-phase={deriveQueryPhase({
+          streaming,
+          error: !!queryError,
+          canceled: !!partialResult,
+          hasResult: result.columns.length > 0,
+        })}
       >
-        {/*
+        {streaming && (
+          <StreamingBanner
+            rows={result.rows.length}
+            startRef={streamStartRef}
+            hasColumns
+            onStop={onStopStreaming}
+            timeoutSecs={settings.queryTimeoutSecs}
+          />
+        )}
+        {showAutoLimitBadge && (
+          <Box
+            role="status"
+            aria-live="polite"
+            display="flex"
+            alignItems="center"
+            gap="2.5"
+            py="1.25"
+            px="2.5"
+            fontSize="sm"
+            color="app.text"
+            borderBottom="1px solid"
+            borderColor="app.borderSubtle"
+            background={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
+          >
+            <chakra.span flex="1">{t("autoLimitApplied", { limit: autoLimitApplied! })}</chakra.span>
+            <Tooltip label={t("autoLimitFetchAllTitle")}>
+              <Button size="sm" px="2.5" whiteSpace="nowrap" onClick={onFetchAllRows}>
+                {t("autoLimitFetchAll")}
+              </Button>
+            </Tooltip>
+          </Box>
+        )}
+        <Box
+          display="flex"
+          alignItems="center"
+          gap="1.5"
+          py="1"
+          px="2"
+          ref={setToolbarEl}
+          bg="app.toolbar"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+          flexShrink={0}
+          // 分割ペインが狭いとき、縮まないボタン (ピン/最大化/ピボット/チャート) が
+          // 親の overflow: hidden でクリップされて操作不能になるのを防ぐ。TabBar と
+          // 同じ横スクロール方式で、フォーカス移動時もブラウザが自動で見える位置へ
+          // スクロールする。
+          overflowX="auto"
+          overflowY="hidden"
+          scrollbarWidth="thin"
+        >
+          {/*
           グリッド / ピボット / チャートの表示切替。以前は「ピボット」「チャート」の
           独立ボタンが差分トグルの右隣にあり、戻る導線は各ビュー側だけだったが、
           3 択のセグメントへ寄せて往復を 1 か所にまとめる。ツールバー先頭 (最も
           目に付く位置) に置き、表示条件は Export と同じ (ストリーミング中でなく
           行がある)。
         */}
-        {onChangeView && canExport && (
-          <ResultViewSwitch value="grid" onChange={onChangeView} />
-        )}
-        <Tooltip
-          focusableWrapper={!canExport}
-          label={
-            canExport
-              ? t("exportButtonTitle")
-              : streaming
-                ? t("exportDisabledStreaming")
-                : t("exportDisabledNoRows")
-          }
-        >
-          <Button
-            size="sm"
-            px="1.5"
-            aria-label={t("exportButton")}
-            onClick={() => setShowExport(true)}
-            disabled={!canExport}
-          >
-            <Icon name="download" size={ICON_SIZES.md} />
-          </Button>
-        </Tooltip>
-        {visibleToolbarActions.map((id) => {
-          if (id === "autoRefresh") return null;
-          const a = toolbarButtonActions[id];
-          if (!a) return null;
-          return (
-            <chakra.span
-              key={id}
-              data-toolbar-action={id}
-              display="inline-flex"
-              flexShrink={0}
-            >
-              <Tooltip focusableWrapper={a.disabled} label={a.title}>
-                <Button size="sm" px="2.5" onClick={a.onSelect} disabled={a.disabled}>
-                  <Icon name={a.icon} size={ICON_SIZES.md} /> {a.label}
-                </Button>
-              </Tooltip>
-            </chakra.span>
-          );
-        })}
-        {onSetAutoRefresh && visibleToolbarActions.includes("autoRefresh") && (
-          <Tooltip label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}>
-          <Box
-            data-toolbar-action="autoRefresh"
-            display="inline-flex"
-            alignItems="center"
-            gap="1.5"
-            paddingLeft="0.5"
-            flexShrink={0}
-          >
-            <chakra.label
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              fontSize="xs"
-              whiteSpace="nowrap"
-              color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
-              cursor={autoRefreshAllowed ? "pointer" : "not-allowed"}
-            >
-              <chakra.input
-                type="checkbox"
-                checked={autoRefreshOn}
-                disabled={!autoRefreshAllowed}
-                aria-label={t("autoRefreshAria")}
-                onChange={(e) => onSetAutoRefresh(e.target.checked ? intervalChoice : null)}
-              />
-              {t("autoRefreshLabel")}
-            </chakra.label>
-            <chakra.select
-              aria-label={t("autoRefreshIntervalAria")}
-              value={String(intervalChoice)}
-              disabled={!autoRefreshAllowed}
-              onChange={(e) => {
-                const secs = Number(e.target.value);
-                setIntervalChoice(secs);
-                // Retarget the live timer immediately when already polling.
-                if (autoRefreshOn) onSetAutoRefresh(secs);
-              }}
-              fontSize="xs"
-              fontFamily="inherit"
-              py="0.5" px="1"
-              border="1px solid var(--border)"
-              background="var(--bg-input)"
-              color="var(--text)"
-              borderRadius="var(--radius-sm)"
-            >
-              {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-                <option key={s} value={s}>
-                  {s % 60 === 0
-                    ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                    : t("autoRefreshIntervalSecs", { secs: s })}
-                </option>
-              ))}
-            </chakra.select>
-            {autoRefreshOn && (
-              <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
-                {streaming
-                  ? t("autoRefreshRunning")
-                  : autoRefreshLastRunAt
-                    ? t("autoRefreshUpdatedAt", {
-                        time: new Date(autoRefreshLastRunAt).toLocaleTimeString(),
-                      })
-                    : ""}
-              </chakra.span>
-            )}
-          </Box>
-          </Tooltip>
-        )}
-        {collapsedToolbarActions.length > 0 && (
-          <Tooltip label={t("resultToolbarMoreTitle")}>
-            <Button
-              ref={overflowBtnRef}
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              flexShrink={0}
-              aria-label={t("resultToolbarMoreTitle")}
-              aria-haspopup="menu"
-              aria-expanded={!!overflowMenu}
-              onClick={() => {
-                const r = overflowBtnRef.current?.getBoundingClientRect();
-                if (r) setOverflowMenu({ x: r.left, y: r.bottom + 2 });
-              }}
-            >
-              <Icon name="more" />
-            </Button>
-          </Tooltip>
-        )}
-        {overflowMenu && (
-          <ContextMenu
-            x={overflowMenu.x}
-            y={overflowMenu.y}
-            items={overflowMenuItems}
-            onClose={() => setOverflowMenu(null)}
-          />
-        )}
-        {onToggleDiffHighlight && pkIndices.length > 0 && (
-          <Tooltip label={t("diffHighlightTitle")}>
-          <Box
-            display="inline-flex"
-            alignItems="center"
-            gap="1.5"
-            paddingLeft="0.5"
-          >
-            <chakra.label
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              fontSize="xs"
-              whiteSpace="nowrap"
-              color="app.text"
-              cursor="pointer"
-            >
-              <chakra.input
-                type="checkbox"
-                checked={!!diffHighlightEnabled}
-                aria-label={t("diffHighlightAria")}
-                onChange={onToggleDiffHighlight}
-              />
-              {t("diffHighlightLabel")}
-            </chakra.label>
-            {diff?.hasChanges && (
-              <chakra.span
-                role="status"
-                aria-live="polite"
-                fontSize="xs"
-                color="app.textMuted"
-                whiteSpace="nowrap"
-              >
-                {t("diffHighlightSummary", {
-                  added: diff.addedRows.size,
-                  removed: diff.removedCount,
-                })}
-              </chakra.span>
-            )}
-          </Box>
-          </Tooltip>
-        )}
-        {readOnlyNotice && (
-          <Tooltip label={readOnlyNotice}>
-            <chakra.span
-              tabIndex={0}
-              display="inline-flex"
-              alignItems="center"
-              gap="1"
-              px="1.5"
-              py="0.25"
-              borderRadius="sm"
-              fontSize="2xs"
-              whiteSpace="nowrap"
-              color="app.textMuted"
-              border="1px solid var(--border-subtle)"
-              aria-label={`${t("tableOpenQueryReadOnlyBadge")}: ${readOnlyNotice}`}
-              data-testid="template-readonly-badge"
-            >
-              <Icon name="lock" size={ICON_SIZES.sm} />
-              {t("tableOpenQueryReadOnlyBadge")}
-            </chakra.span>
-          </Tooltip>
-        )}
-        {editable && tableColumns && identityStrategy !== "primary_key" && (
-          <Tooltip label={t(identityHintKeys(identityStrategy, ambiguousIdentity).title)}>
-            <chakra.span
-              fontSize="xs"
-              color={identityStrategy === "all_columns" ? "var(--text-warning)" : "app.textMuted"}
-              fontStyle="italic"
-              paddingLeft="1"
-            >
-              {t(identityHintKeys(identityStrategy, ambiguousIdentity).label)}
-            </chakra.span>
-          </Tooltip>
-        )}
-        <AnimatePresence>
-          {showDiscardConfirm && (
-            <Modal
-              // no-submit: 未保存編集の破棄確認 (破壊的)。キャンセルが既定
-              width="400px"
-              onClose={() => setShowDiscardConfirm(false)}
-              // 破壊的パターン (#1114): 右端のキャンセルに初期フォーカス。
-              initialFocusEl={() => document.getElementById(DISCARD_CANCEL_ID)}
-            >
-              <ModalHeader onClose={() => setShowDiscardConfirm(false)} closeLabel={t("dangerousCancel")}>
-                {t("editDiscardConfirmTitle")}
-              </ModalHeader>
-              <ModalBody>
-                {t("editDiscardConfirmBody", {
-                  cells: String(countEditedCells(pendingEdits ?? {})),
-                  rows: String(countEditedRows(pendingEdits ?? {})),
-                })}
-              </ModalBody>
-              <ModalFooter>
-                {/* 未保存の編集の破棄は取り消せないので「破壊的」パターン (#1114):
-                    実行は左に非強調、右端のキャンセルを primary + 初期フォーカス。 */}
-                <Button
-                  variant="dangerOutline"
-                  size="sm"
-                  onClick={() => {
-                    setShowDiscardConfirm(false);
-                    onClearEdits?.();
-                  }}
-                >
-                  {t("editDiscardConfirmOk")}
-                </Button>
-                <div style={{ flex: 1 }} />
-                <Button
-                  id={DISCARD_CANCEL_ID}
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setShowDiscardConfirm(false)}
-                >
-                  {t("dangerousCancel")}
-                </Button>
-              </ModalFooter>
-            </Modal>
-          )}
-        </AnimatePresence>
-        {selSummary && (
-          <chakra.span
-            marginLeft="auto"
-            display="inline-flex"
-            alignItems="center"
-            gap="2.5"
-            fontSize="xs"
-            color="app.text"
-            whiteSpace="nowrap"
-            fontFamily="mono"
-            textStyle="numeric"
-            aria-live="polite"
-            aria-label={t("gridSelectionAria")}
-            py="0.5"
-            px="2"
-            borderRadius="var(--radius-sm)"
-            background="color-mix(in srgb, var(--accent) 10%, transparent)"
-          >
-            <chakra.span color="app.textMuted">
-              {t("gridSelectionCells", { count: selSummary.count })}
-            </chakra.span>
-            {selSummary.numericCount > 0 ? (
-              <>
-                <span>{t("gridSumLabel")} {fmtStatNum(selSummary.sum)}</span>
-                <span>{t("gridAvgLabel")} {fmtStatNum(selSummary.avg)}</span>
-                <span>{t("gridMinLabel")} {fmtStatNum(selSummary.min)}</span>
-                <span>{t("gridMaxLabel")} {fmtStatNum(selSummary.max)}</span>
-                <chakra.span color="app.textMuted">
-                  {t("gridCountLabel")} {selSummary.numericCount.toLocaleString()}
-                </chakra.span>
-              </>
-            ) : (
-              <chakra.span color="app.textMuted">
-                {t("gridSelectionNonNull", { n: selSummary.nonNullCount })}
-              </chakra.span>
-            )}
-          </chakra.span>
-        )}
-        {statusBarParts && (
-          <chakra.span
-            marginLeft={selSummary ? "4" : "auto"}
-            fontSize="xs"
-            color="app.textMuted"
-            whiteSpace="nowrap"
-            fontFamily="mono"
-            textStyle="numeric"
-            aria-live="polite"
-          >
-            {statusBarParts[0]}
-            <CountUp value={confirmedRowCount} formatter={formatCountUpPlainInt} />
-            {statusBarParts[1]}
-            {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
-              <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
-                <chakra.span color="var(--text-warning)" marginLeft="1.5">
-                  LIMIT {autoLimitApplied}
-                </chakra.span>
-              </Tooltip>
-            )}
-            {autoLimitNote && (
-              <chakra.span
-                color="app.textMuted"
-                ml="1.5"
-                data-testid="auto-limit-note"
-              >
-                {autoLimitNote}
-              </chakra.span>
-            )}
-            {partialResult && (
-              <Tooltip
-                label={t(
-                  partialResult.reason === "cancelled"
-                    ? "partialResultCancelledTitle"
-                    : "partialResultTimeoutTitle",
-                  { rows: partialResult.rows },
-                )}
-              >
-                <chakra.span color="var(--text-warning)" marginLeft="1.5">
-                  {t("partialResultBadge")}
-                </chakra.span>
-              </Tooltip>
-            )}
-          </chakra.span>
-        )}
-        <chakra.input
-          ref={searchInputRef}
-          type="search"
-          marginLeft={selSummary || statusBarParts ? "2" : "auto"}
-          width="220px"
-          py="0.75" px="2"
-          fontSize="sm"
-          fontFamily="inherit"
-          border="1px solid var(--border)"
-          background="var(--bg-input)"
-          color="var(--text)"
-          borderRadius="var(--radius-sm)"
-          _placeholder={{ color: "var(--text-muted)" }}
-          _focus={{
-            outline: "none",
-            borderColor: "var(--accent)",
-            boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
-          }}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              setSearch("");
-              containerRef.current?.focus();
-            }
-          }}
-          placeholder={t("gridSearchPlaceholder")}
-          aria-label={t("gridSearchAria")}
-        />
-        {onPinResult && (
-          <Tooltip label={t("pinResultTitle")} focusableWrapper={!canPinResult}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              marginLeft="1.5"
-              flexShrink={0}
-              onClick={onPinResult}
-              disabled={!canPinResult}
-              aria-label={t("pinResultTitle")}
-            >
-              <Icon name="pin" />
-            </Button>
-          </Tooltip>
-        )}
-        {onToggleMaximize && (
-          <Tooltip label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              marginLeft="1.5"
-              flexShrink={0}
-              onClick={onToggleMaximize}
-              aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
-              aria-pressed={!!maximized}
-            >
-              <Icon name={maximized ? "minimize" : "maximize"} />
-            </Button>
-          </Tooltip>
-        )}
-      </Box>
-      {editableActive && (
-        // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
-        // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
-        // ツールバー (幅が足りないと横スクロール) の中に置くと、狭いウィンドウで
-        // 「適用」「キャンセル」が右端の外へ押し出されて見えなくなるため、
-        // ツールバー直下の独立した行に置き、足りなければ折り返す。
-        <AnimatePresence>
-          {hasPendingEdits && (
-            <motion.div
-              key="edit-review-bar"
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 4 }}
-              transition={transitions.enter}
-              style={{ flexShrink: 0 }}
-            >
-        <Box
-          role="group"
-          aria-label={t("editToolbarAria")}
-          display="flex"
-          alignItems="center"
-          flexWrap="wrap"
-          gap="1.5"
-          py="1" px="2"
-          borderBottom="1px solid var(--border-subtle)"
-          background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
-        >
-          {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
-          <chakra.span
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            minW="18px"
-            height="18px"
-            px="1.5"
-            borderRadius="full"
-            fontSize="2xs"
-            fontWeight={700}
-            lineHeight="1"
-            color="var(--preview-highlight)"
-            background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
-            flexShrink={0}
-            aria-hidden
-          >
-            {editsCount}
-          </chakra.span>
-          <chakra.span
-            fontSize="xs"
-            color="var(--preview-highlight)"
-            fontWeight={500}
-            whiteSpace="nowrap"
-          >
-            {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
-          </chakra.span>
-          {editedRowCount > 1 && !hasInvalidEdit && (
-            // Preview only handles one row at a time; surface that
-            // limitation explicitly so users don't assume Apply has been
-            // dry-run-validated for every edited row.
-            <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
-              <chakra.span
-                role="note"
-                fontSize="xs"
-                color="app.textMuted"
-                fontStyle="italic"
-                whiteSpace="nowrap"
-              >
-                {t("editPreviewMultiRowBanner")}
-              </chakra.span>
-            </Tooltip>
-          )}
-          <Tooltip label={t("editUndoTitle")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onUndoEdit}
-              disabled={!canUndo}
-              aria-label={t("editUndoTitle")}
-            >
-              <Icon name="undo" />
-            </Button>
-          </Tooltip>
-          <Tooltip label={t("editRedoTitle")}>
-            <Button
-              variant="secondary"
-              size="sm"
-              px="1.5"
-              onClick={onRedoEdit}
-              disabled={!canRedo}
-              aria-label={t("editRedoTitle")}
-            >
-              <Icon name="redo" />
-            </Button>
-          </Tooltip>
+          {onChangeView && canExport && <ResultViewSwitch value="grid" onChange={onChangeView} />}
           <Tooltip
-            focusableWrapper={!canPreview}
+            focusableWrapper={!canExport}
             label={
-              hasInvalidEdit
-                ? t("editApplyDisabledInvalid")
-                : editedRowCount > 1
-                  ? t("editPreviewMultiRowTitle")
-                  : streaming
-                    ? t("editDisabledStreaming")
-                    : t("editorPreviewTitle")
-            }
-          >
-            <Button
-              variant="warning"
-              size="sm"
-              px="2.5"
-              onClick={onPreviewEdits}
-              disabled={!canPreview}
-            >
-              <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
-            </Button>
-          </Tooltip>
-          <Tooltip
-            focusableWrapper={!canApply}
-            label={
-              hasInvalidEdit
-                ? t("editApplyDisabledInvalid")
+              canExport
+                ? t("exportButtonTitle")
                 : streaming
-                  ? t("editDisabledStreaming")
-                  : t("editApplyButtonTitle")
+                  ? t("exportDisabledStreaming")
+                  : t("exportDisabledNoRows")
             }
           >
-            <LoadingButton
-              variant="success"
+            <Button
               size="sm"
-              px="2.5"
-              loading={applyingEdits}
-              onClick={onApplyEdits}
-              disabled={!canApply}
+              px="1.5"
+              aria-label={t("exportButton")}
+              onClick={() => setShowExport(true)}
+              disabled={!canExport}
             >
-              <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
-            </LoadingButton>
+              <Icon name="download" size={ICON_SIZES.md} />
+            </Button>
           </Tooltip>
-          <Tooltip label={t("editCancelButtonTitle")}>
-          <Button
-            variant="secondary"
-            size="sm"
-            px="2.5"
-            onClick={() => setShowDiscardConfirm(true)}
-          >
-            <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
-          </Button>
-          </Tooltip>
-        </Box>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      )}
-      <AnimatePresence initial={false}>
-        {findOpen && (
-          <motion.div
-            key="grid-find-bar"
-            initial={variants.slideUp.initial}
-            animate={variants.slideUp.animate}
-            exit={variants.slideUp.exit}
-            transition={transitions.enter}
-          >
-            <Box
-              role="search"
-              aria-label={t("gridFindAria")}
-              display="flex"
-              alignItems="center"
-              flexWrap="wrap"
-              gap="1.5"
-              py="1"
-              px="2"
-              bg="app.toolbar"
-              borderBottom="1px solid"
-              borderColor="app.borderSubtle"
-              flexShrink={0}
+          {visibleToolbarActions.map((id) => {
+            if (id === "autoRefresh") return null;
+            const a = toolbarButtonActions[id];
+            if (!a) return null;
+            return (
+              <chakra.span key={id} data-toolbar-action={id} display="inline-flex" flexShrink={0}>
+                <Tooltip focusableWrapper={a.disabled} label={a.title}>
+                  <Button size="sm" px="2.5" onClick={a.onSelect} disabled={a.disabled}>
+                    <Icon name={a.icon} size={ICON_SIZES.md} /> {a.label}
+                  </Button>
+                </Tooltip>
+              </chakra.span>
+            );
+          })}
+          {onSetAutoRefresh && visibleToolbarActions.includes("autoRefresh") && (
+            <Tooltip
+              label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
             >
-              <chakra.input
-                ref={findInputRef}
-                type="text"
-                width="240px"
-                py="0.75" px="2"
-                fontSize="sm"
-                fontFamily="inherit"
-                border="1px solid var(--border)"
-                background="var(--bg-input)"
-                color="var(--text)"
-                borderRadius="var(--radius-sm)"
-                _placeholder={{ color: "var(--text-muted)" }}
-                _focus={{
-                  outline: "none",
-                  borderColor: "var(--accent)",
-                  boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
-                }}
-                value={findQuery}
-                onChange={(e) => setFindQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !isImeComposing(e)) {
-                    e.preventDefault();
-                    findStep(e.shiftKey ? -1 : 1);
-                  } else if (e.key === "Escape") {
-                    e.preventDefault();
-                    closeFind();
-                  }
-                }}
-                placeholder={t("gridFindPlaceholder")}
-                aria-label={t("gridFindInputAria")}
-              />
-              <Tooltip label={t("gridFindCaseTitle")}>
-                <chakra.button
-                  type="button"
-                  css={FIND_TOGGLE_CSS}
-                  aria-pressed={findCaseSensitive}
-                  onClick={() => setFindCaseSensitive((v) => !v)}
-                  aria-label={t("gridFindCaseTitle")}
-                >
-                  Aa
-                </chakra.button>
-              </Tooltip>
-              <Tooltip label={t("gridFindWholeTitle")}>
-                <chakra.button
-                  type="button"
-                  css={FIND_TOGGLE_CSS}
-                  aria-pressed={findWholeCell}
-                  onClick={() => setFindWholeCell((v) => !v)}
-                  aria-label={t("gridFindWholeTitle")}
-                >
-                  =
-                </chakra.button>
-              </Tooltip>
-              <Tooltip label={t("gridFindRegexTitle")}>
-                <chakra.button
-                  type="button"
-                  css={FIND_TOGGLE_CSS}
-                  aria-pressed={findRegex}
-                  onClick={() => setFindRegex((v) => !v)}
-                  aria-label={t("gridFindRegexTitle")}
-                >
-                  .*
-                </chakra.button>
-              </Tooltip>
-              <chakra.span
-                fontSize="xs"
-                fontFamily="mono"
-                textStyle="numeric"
-                whiteSpace="nowrap"
-                aria-live="polite"
-                color={
-                  findResult.invalidRegex || (effectiveFindQuery !== "" && findResult.matches.length === 0)
-                    ? "var(--text-warning)"
-                    : "app.textMuted"
-                }
+              <Box
+                data-toolbar-action="autoRefresh"
+                display="inline-flex"
+                alignItems="center"
+                gap="1.5"
+                paddingLeft="0.5"
+                flexShrink={0}
               >
-                {findResult.invalidRegex
-                  ? t("gridFindInvalidRegex")
-                  : effectiveFindQuery === ""
-                    ? ""
-                    : findResult.matches.length === 0
-                      ? t("gridFindNoHits")
-                      : findTotal > findResult.matches.length
-                        ? t("gridFindCountTruncated", {
-                            current: (findIdx ?? 0) + 1,
-                            total: findTotal,
-                            limit: findResult.matches.length,
-                          })
-                        : t("gridFindCount", {
-                            current: (findIdx ?? 0) + 1,
-                            total: findResult.matches.length,
-                          })}
-              </chakra.span>
-              <Tooltip label={t("gridFindPrevTitle")} focusableWrapper={findResult.matches.length === 0}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  px="1.5"
-                  disabled={findResult.matches.length === 0}
-                  onClick={() => findStep(-1)}
-                  aria-label={t("gridFindPrevTitle")}
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1"
+                  fontSize="xs"
+                  whiteSpace="nowrap"
+                  color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
+                  cursor={autoRefreshAllowed ? "pointer" : "not-allowed"}
                 >
-                  ‹
-                </Button>
-              </Tooltip>
-              <Tooltip label={t("gridFindNextTitle")} focusableWrapper={findResult.matches.length === 0}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  px="1.5"
-                  disabled={findResult.matches.length === 0}
-                  onClick={() => findStep(1)}
-                  aria-label={t("gridFindNextTitle")}
-                >
-                  ›
-                </Button>
-              </Tooltip>
-              <Tooltip label={t("gridFindCloseTitle")}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  px="1.5"
-                  marginLeft="auto"
-                  onClick={closeFind}
-                  aria-label={t("gridFindCloseTitle")}
-                >
-                  <Icon name="close" />
-                </Button>
-              </Tooltip>
-            </Box>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <Box
-        ref={containerRef}
-        tabIndex={-1}
-        flex="1"
-        overflow="auto"
-        minHeight={0}
-        _focus={{ outline: "none" }}
-        css={GRID_CSS}
-      >
-        <DataGrid
-          columns={result.columns}
-          rows={result.rows}
-          onMaskConfigChange={setMaskConfig}
-          scrollContainerRef={containerRef}
-          globalFilter={deferredSearch}
-          editable={editableActive}
-          editableColumns={editableCols}
-          pkIndices={pkIndices}
-          rowIdentityStrategy={identityStrategy}
-          pendingEdits={pendingEdits}
-          onSetCellEdit={onSetCellEdit}
-          onBulkEdit={editableActive ? onBulkEdit : undefined}
-          onReplaceColumn={editableActive ? onReplaceColumn : undefined}
-          onLookupQuery={editableActive ? onLookupQuery : undefined}
-          changedCells={diff?.changedCells}
-          addedRowIndices={diff?.addedRows}
-          pendingDeleteKeys={pendingDeleteKeys}
-          onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
-          onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
-          onDuplicateRow={editableActive ? onDuplicateRow : undefined}
-          onPasteInsertRows={editableActive ? onPasteInsertRows : undefined}
-          onUndoEdit={onUndoEdit}
-          onRedoEdit={onRedoEdit}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          validateEdit={validateEdit}
-          onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
-          streaming={streaming}
-          applyingEdits={applyingEdits}
-          rowSqlDriver={driver}
-          rowSqlDatabase={database}
-          rowSqlTable={table}
-          blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
-          columnMeta={tableColumns ?? undefined}
-          incomingFks={incomingFks}
-          onRunRelatedQuery={onRunRelatedQuery}
-          onFkJump={onFkJump}
-          columnSizingStorageKey={columnSizingStorageKey}
-          skeleton={!!streaming}
-          onSelectionSummary={setSelSummary}
-          onExportSelection={handleExportSelection}
-          onRunStatsQuery={onRunStatsQuery}
-          valuePicker={editableActive ? valuePicker : undefined}
-          onExploreColumn={onExploreColumn}
-          paginationState={paginateMode ? pagination : undefined}
-          onPaginationChange={paginateMode ? setPagination : undefined}
-          findHits={findHits}
-          findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
-          findNav={findNav}
-          gridBindings={gridBindings}
-          serverSort={serverSort}
-          serverFilter={serverFilter}
-          onSetServerSort={onSetServerSort}
-          onSetServerFilter={onSetServerFilter}
-          emptyMessage={gridEmptyMessage}
-        />
-        {!paginateMode && loadingMore && (
-          <Box
-            role="status"
-            aria-live="polite"
-            position="sticky"
-            bottom={0}
-            display="flex"
-            alignItems="center"
-            justifyContent="center"
-            gap="1.5"
-            py="1.5" px="2.5"
-            fontSize="sm"
-            color="app.textMuted"
-            borderTop="1px solid"
-            borderColor="app.borderSubtle"
-            bg="app.surfaceMuted"
-          >
-            <Spinner size={14} />
-            {t("gridLoadingMore")}
-          </Box>
-        )}
-        {paginateMode && (() => {
-          const totalLoaded = result.rows.length;
-          const { pageIndex, pageSize } = pagination;
-          const pageCount = Math.max(1, Math.ceil(totalLoaded / pageSize));
-          const from = pageIndex * pageSize + 1;
-          const to = Math.min((pageIndex + 1) * pageSize, totalLoaded);
-          const isFirst = pageIndex === 0;
-          const isLast = pageIndex >= pageCount - 1;
-          const navButton = (
-            label: string,
-            title: string,
-            disabled: boolean,
-            onClick: () => void,
-          ) => (
-            <Tooltip label={title} focusableWrapper={disabled}>
-              <chakra.button
-                aria-label={title}
-                disabled={disabled}
-                onClick={onClick}
-                fontSize="xs"
-                px="1.5"
-                py="0.5"
-                border="1px solid var(--border)"
-                borderRadius="var(--radius-sm)"
-                background={disabled ? "transparent" : "var(--bg-input)"}
-                color={disabled ? "var(--text-muted)" : "var(--text)"}
-                cursor={disabled ? "not-allowed" : "pointer"}
-                _hover={disabled ? {} : { background: "var(--bg-muted)" }}
-                whiteSpace="nowrap"
-                lineHeight={1.4}
-              >
-                {label}
-              </chakra.button>
-            </Tooltip>
-          );
-          const handleNext = () => {
-            if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
-            if (!isLast) setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }));
-          };
-          return (
-            <Box
-              role="navigation"
-              aria-label="pagination"
-              display="flex"
-              alignItems="center"
-              flexWrap="wrap"
-              gap="1.5"
-              px="2.5"
-              py="1.25"
-              fontSize="xs"
-              color="app.textMuted"
-              borderTop="1px solid"
-              borderColor="app.borderSubtle"
-              bg="app.toolbar"
-              flexShrink={0}
-            >
-              {navButton("«", t("paginationFirst"), isFirst, () =>
-                setPagination((p) => ({ ...p, pageIndex: 0 }))
-              )}
-              {navButton("‹", t("paginationPrev"), isFirst, () =>
-                setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 }))
-              )}
-              <chakra.span color="app.text" whiteSpace="nowrap">
-                {t("paginationPage", { page: pageIndex + 1, pages: pageCount })}
-              </chakra.span>
-              {navButton("›", t("paginationNext"), isLast && !canLoadMore, handleNext)}
-              {navButton("»", t("paginationLast"), isLast && !canLoadMore, () =>
-                setPagination((p) => ({ ...p, pageIndex: pageCount - 1 }))
-              )}
-              <chakra.span whiteSpace="nowrap">
-                {totalLoaded > 0
-                  ? t("paginationRows", { from, to, total: totalLoaded })
-                  : ""}
-              </chakra.span>
-              {loadingMore && (
-                <Box display="flex" alignItems="center" gap="1">
-                  <Spinner size={12} />
-                  <chakra.span>{t("paginationLoadingMore")}</chakra.span>
-                </Box>
-              )}
-              {!loadingMore && isLast && canLoadMore && (
-                <chakra.span color="app.textMuted" fontStyle="italic">
-                  {t("paginationCanLoadMore")}
-                </chakra.span>
-              )}
-              <chakra.span marginLeft="auto" display="flex" alignItems="center" gap="1" whiteSpace="nowrap">
-                {t("paginationRowsPerPage")}
+                  <chakra.input
+                    type="checkbox"
+                    checked={autoRefreshOn}
+                    disabled={!autoRefreshAllowed}
+                    aria-label={t("autoRefreshAria")}
+                    onChange={(e) => onSetAutoRefresh(e.target.checked ? intervalChoice : null)}
+                  />
+                  {t("autoRefreshLabel")}
+                </chakra.label>
                 <chakra.select
-                  aria-label={t("paginationRowsPerPage")}
-                  value={String(pageSize)}
+                  aria-label={t("autoRefreshIntervalAria")}
+                  value={String(intervalChoice)}
+                  disabled={!autoRefreshAllowed}
                   onChange={(e) => {
-                    const newSize = Number(e.target.value);
-                    setPagination({ pageIndex: 0, pageSize: newSize });
+                    const secs = Number(e.target.value);
+                    setIntervalChoice(secs);
+                    // Retarget the live timer immediately when already polling.
+                    if (autoRefreshOn) onSetAutoRefresh(secs);
                   }}
                   fontSize="xs"
                   fontFamily="inherit"
-                  py="0.25" px="1"
+                  py="0.5"
+                  px="1"
                   border="1px solid var(--border)"
                   background="var(--bg-input)"
                   color="var(--text)"
                   borderRadius="var(--radius-sm)"
                 >
-                  {RESULT_GRID_PAGE_SIZE_OPTIONS.map((s) => (
-                    <option key={s} value={s}>{s}</option>
+                  {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+                    <option key={s} value={s}>
+                      {s % 60 === 0
+                        ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                        : t("autoRefreshIntervalSecs", { secs: s })}
+                    </option>
                   ))}
                 </chakra.select>
+                {autoRefreshOn && (
+                  <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
+                    {streaming
+                      ? t("autoRefreshRunning")
+                      : autoRefreshLastRunAt
+                        ? t("autoRefreshUpdatedAt", {
+                            time: new Date(autoRefreshLastRunAt).toLocaleTimeString(),
+                          })
+                        : ""}
+                  </chakra.span>
+                )}
+              </Box>
+            </Tooltip>
+          )}
+          {collapsedToolbarActions.length > 0 && (
+            <Tooltip label={t("resultToolbarMoreTitle")}>
+              <Button
+                ref={overflowBtnRef}
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                flexShrink={0}
+                aria-label={t("resultToolbarMoreTitle")}
+                aria-haspopup="menu"
+                aria-expanded={!!overflowMenu}
+                onClick={() => {
+                  const r = overflowBtnRef.current?.getBoundingClientRect();
+                  if (r) setOverflowMenu({ x: r.left, y: r.bottom + 2 });
+                }}
+              >
+                <Icon name="more" />
+              </Button>
+            </Tooltip>
+          )}
+          {overflowMenu && (
+            <ContextMenu
+              x={overflowMenu.x}
+              y={overflowMenu.y}
+              items={overflowMenuItems}
+              onClose={() => setOverflowMenu(null)}
+            />
+          )}
+          {onToggleDiffHighlight && pkIndices.length > 0 && (
+            <Tooltip label={t("diffHighlightTitle")}>
+              <Box display="inline-flex" alignItems="center" gap="1.5" paddingLeft="0.5">
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1"
+                  fontSize="xs"
+                  whiteSpace="nowrap"
+                  color="app.text"
+                  cursor="pointer"
+                >
+                  <chakra.input
+                    type="checkbox"
+                    checked={!!diffHighlightEnabled}
+                    aria-label={t("diffHighlightAria")}
+                    onChange={onToggleDiffHighlight}
+                  />
+                  {t("diffHighlightLabel")}
+                </chakra.label>
+                {diff?.hasChanges && (
+                  <chakra.span
+                    role="status"
+                    aria-live="polite"
+                    fontSize="xs"
+                    color="app.textMuted"
+                    whiteSpace="nowrap"
+                  >
+                    {t("diffHighlightSummary", {
+                      added: diff.addedRows.size,
+                      removed: diff.removedCount,
+                    })}
+                  </chakra.span>
+                )}
+              </Box>
+            </Tooltip>
+          )}
+          {readOnlyNotice && (
+            <Tooltip label={readOnlyNotice}>
+              <chakra.span
+                tabIndex={0}
+                display="inline-flex"
+                alignItems="center"
+                gap="1"
+                px="1.5"
+                py="0.25"
+                borderRadius="sm"
+                fontSize="2xs"
+                whiteSpace="nowrap"
+                color="app.textMuted"
+                border="1px solid var(--border-subtle)"
+                aria-label={`${t("tableOpenQueryReadOnlyBadge")}: ${readOnlyNotice}`}
+                data-testid="template-readonly-badge"
+              >
+                <Icon name="lock" size={ICON_SIZES.sm} />
+                {t("tableOpenQueryReadOnlyBadge")}
               </chakra.span>
-            </Box>
-          );
-        })()}
-      </Box>
-      <AnimatePresence>
-        {showExport && (
-          <ExportModal
+            </Tooltip>
+          )}
+          {editable && tableColumns && identityStrategy !== "primary_key" && (
+            <Tooltip label={t(identityHintKeys(identityStrategy, ambiguousIdentity).title)}>
+              <chakra.span
+                fontSize="xs"
+                color={identityStrategy === "all_columns" ? "var(--text-warning)" : "app.textMuted"}
+                fontStyle="italic"
+                paddingLeft="1"
+              >
+                {t(identityHintKeys(identityStrategy, ambiguousIdentity).label)}
+              </chakra.span>
+            </Tooltip>
+          )}
+          <AnimatePresence>
+            {showDiscardConfirm && (
+              <Modal
+                // no-submit: 未保存編集の破棄確認 (破壊的)。キャンセルが既定
+                width="400px"
+                onClose={() => setShowDiscardConfirm(false)}
+                // 破壊的パターン (#1114): 右端のキャンセルに初期フォーカス。
+                initialFocusEl={() => document.getElementById(DISCARD_CANCEL_ID)}
+              >
+                <ModalHeader onClose={() => setShowDiscardConfirm(false)} closeLabel={t("dangerousCancel")}>
+                  {t("editDiscardConfirmTitle")}
+                </ModalHeader>
+                <ModalBody>
+                  {t("editDiscardConfirmBody", {
+                    cells: String(countEditedCells(pendingEdits ?? {})),
+                    rows: String(countEditedRows(pendingEdits ?? {})),
+                  })}
+                </ModalBody>
+                <ModalFooter>
+                  {/* 未保存の編集の破棄は取り消せないので「破壊的」パターン (#1114):
+                    実行は左に非強調、右端のキャンセルを primary + 初期フォーカス。 */}
+                  <Button
+                    variant="dangerOutline"
+                    size="sm"
+                    onClick={() => {
+                      setShowDiscardConfirm(false);
+                      onClearEdits?.();
+                    }}
+                  >
+                    {t("editDiscardConfirmOk")}
+                  </Button>
+                  <div style={{ flex: 1 }} />
+                  <Button
+                    id={DISCARD_CANCEL_ID}
+                    variant="primary"
+                    size="sm"
+                    onClick={() => setShowDiscardConfirm(false)}
+                  >
+                    {t("dangerousCancel")}
+                  </Button>
+                </ModalFooter>
+              </Modal>
+            )}
+          </AnimatePresence>
+          {selSummary && (
+            <chakra.span
+              marginLeft="auto"
+              display="inline-flex"
+              alignItems="center"
+              gap="2.5"
+              fontSize="xs"
+              color="app.text"
+              whiteSpace="nowrap"
+              fontFamily="mono"
+              textStyle="numeric"
+              aria-live="polite"
+              aria-label={t("gridSelectionAria")}
+              py="0.5"
+              px="2"
+              borderRadius="var(--radius-sm)"
+              background="color-mix(in srgb, var(--accent) 10%, transparent)"
+            >
+              <chakra.span color="app.textMuted">
+                {t("gridSelectionCells", { count: selSummary.count })}
+              </chakra.span>
+              {selSummary.numericCount > 0 ? (
+                <>
+                  <span>
+                    {t("gridSumLabel")} {fmtStatNum(selSummary.sum)}
+                  </span>
+                  <span>
+                    {t("gridAvgLabel")} {fmtStatNum(selSummary.avg)}
+                  </span>
+                  <span>
+                    {t("gridMinLabel")} {fmtStatNum(selSummary.min)}
+                  </span>
+                  <span>
+                    {t("gridMaxLabel")} {fmtStatNum(selSummary.max)}
+                  </span>
+                  <chakra.span color="app.textMuted">
+                    {t("gridCountLabel")} {selSummary.numericCount.toLocaleString()}
+                  </chakra.span>
+                </>
+              ) : (
+                <chakra.span color="app.textMuted">
+                  {t("gridSelectionNonNull", { n: selSummary.nonNullCount })}
+                </chakra.span>
+              )}
+            </chakra.span>
+          )}
+          {statusBarParts && (
+            <chakra.span
+              marginLeft={selSummary ? "4" : "auto"}
+              fontSize="xs"
+              color="app.textMuted"
+              whiteSpace="nowrap"
+              fontFamily="mono"
+              textStyle="numeric"
+              aria-live="polite"
+            >
+              {statusBarParts[0]}
+              <CountUp value={confirmedRowCount} formatter={formatCountUpPlainInt} />
+              {statusBarParts[1]}
+              {autoLimitApplied != null && result.rows.length >= autoLimitApplied && (
+                <Tooltip label={t("autoLimitApplied", { limit: autoLimitApplied })}>
+                  <chakra.span color="var(--text-warning)" marginLeft="1.5">
+                    LIMIT {autoLimitApplied}
+                  </chakra.span>
+                </Tooltip>
+              )}
+              {autoLimitNote && (
+                <chakra.span color="app.textMuted" ml="1.5" data-testid="auto-limit-note">
+                  {autoLimitNote}
+                </chakra.span>
+              )}
+              {partialResult && (
+                <Tooltip
+                  label={t(
+                    partialResult.reason === "cancelled"
+                      ? "partialResultCancelledTitle"
+                      : "partialResultTimeoutTitle",
+                    { rows: partialResult.rows },
+                  )}
+                >
+                  <chakra.span color="var(--text-warning)" marginLeft="1.5">
+                    {t("partialResultBadge")}
+                  </chakra.span>
+                </Tooltip>
+              )}
+            </chakra.span>
+          )}
+          <chakra.input
+            ref={searchInputRef}
+            type="search"
+            marginLeft={selSummary || statusBarParts ? "2" : "auto"}
+            width="220px"
+            py="0.75"
+            px="2"
+            fontSize="sm"
+            fontFamily="inherit"
+            border="1px solid var(--border)"
+            background="var(--bg-input)"
+            color="var(--text)"
+            borderRadius="var(--radius-sm)"
+            _placeholder={{ color: "var(--text-muted)" }}
+            _focus={{
+              outline: "none",
+              borderColor: "var(--accent)",
+              boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+            }}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSearch("");
+                containerRef.current?.focus();
+              }
+            }}
+            placeholder={t("gridSearchPlaceholder")}
+            aria-label={t("gridSearchAria")}
+          />
+          {onPinResult && (
+            <Tooltip label={t("pinResultTitle")} focusableWrapper={!canPinResult}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                marginLeft="1.5"
+                flexShrink={0}
+                onClick={onPinResult}
+                disabled={!canPinResult}
+                aria-label={t("pinResultTitle")}
+              >
+                <Icon name="pin" />
+              </Button>
+            </Tooltip>
+          )}
+          {onToggleMaximize && (
+            <Tooltip label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="1.5"
+                marginLeft="1.5"
+                flexShrink={0}
+                onClick={onToggleMaximize}
+                aria-label={maximized ? t("resultRestoreTitle") : t("resultMaximizeTitle")}
+                aria-pressed={!!maximized}
+              >
+                <Icon name={maximized ? "minimize" : "maximize"} />
+              </Button>
+            </Tooltip>
+          )}
+        </Box>
+        {editableActive && (
+          // 未確定変更が 1 件以上のとき、pending 変更レビューバーを Motion で
+          // 出現/退出させる (#659)。reduced-motion は MotionConfig が自動抑制する。
+          // ツールバー (幅が足りないと横スクロール) の中に置くと、狭いウィンドウで
+          // 「適用」「キャンセル」が右端の外へ押し出されて見えなくなるため、
+          // ツールバー直下の独立した行に置き、足りなければ折り返す。
+          <AnimatePresence>
+            {hasPendingEdits && (
+              <motion.div
+                key="edit-review-bar"
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 4 }}
+                transition={transitions.enter}
+                style={{ flexShrink: 0 }}
+              >
+                <Box
+                  role="group"
+                  aria-label={t("editToolbarAria")}
+                  display="flex"
+                  alignItems="center"
+                  flexWrap="wrap"
+                  gap="1.5"
+                  py="1"
+                  px="2"
+                  borderBottom="1px solid var(--border-subtle)"
+                  background="color-mix(in srgb, var(--preview-highlight) 8%, transparent)"
+                >
+                  {/* 件数バッジ: 未確定の編集セル数を丸ピルで示す (#659)。 */}
+                  <chakra.span
+                    display="inline-flex"
+                    alignItems="center"
+                    justifyContent="center"
+                    minW="18px"
+                    height="18px"
+                    px="1.5"
+                    borderRadius="full"
+                    fontSize="2xs"
+                    fontWeight={700}
+                    lineHeight="1"
+                    color="var(--preview-highlight)"
+                    background="color-mix(in srgb, var(--preview-highlight) 20%, transparent)"
+                    flexShrink={0}
+                    aria-hidden
+                  >
+                    {editsCount}
+                  </chakra.span>
+                  <chakra.span
+                    fontSize="xs"
+                    color="var(--preview-highlight)"
+                    fontWeight={500}
+                    whiteSpace="nowrap"
+                  >
+                    {t("editPendingCount", { cells: editsCount, rows: editedRowCount })}
+                  </chakra.span>
+                  {editedRowCount > 1 && !hasInvalidEdit && (
+                    // Preview only handles one row at a time; surface that
+                    // limitation explicitly so users don't assume Apply has been
+                    // dry-run-validated for every edited row.
+                    <Tooltip label={t("editPreviewMultiRowBannerTitle")}>
+                      <chakra.span
+                        role="note"
+                        fontSize="xs"
+                        color="app.textMuted"
+                        fontStyle="italic"
+                        whiteSpace="nowrap"
+                      >
+                        {t("editPreviewMultiRowBanner")}
+                      </chakra.span>
+                    </Tooltip>
+                  )}
+                  <Tooltip label={t("editUndoTitle")}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      px="1.5"
+                      onClick={onUndoEdit}
+                      disabled={!canUndo}
+                      aria-label={t("editUndoTitle")}
+                    >
+                      <Icon name="undo" />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip label={t("editRedoTitle")}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      px="1.5"
+                      onClick={onRedoEdit}
+                      disabled={!canRedo}
+                      aria-label={t("editRedoTitle")}
+                    >
+                      <Icon name="redo" />
+                    </Button>
+                  </Tooltip>
+                  <Tooltip
+                    focusableWrapper={!canPreview}
+                    label={
+                      hasInvalidEdit
+                        ? t("editApplyDisabledInvalid")
+                        : editedRowCount > 1
+                          ? t("editPreviewMultiRowTitle")
+                          : streaming
+                            ? t("editDisabledStreaming")
+                            : t("editorPreviewTitle")
+                    }
+                  >
+                    <Button
+                      variant="warning"
+                      size="sm"
+                      px="2.5"
+                      onClick={onPreviewEdits}
+                      disabled={!canPreview}
+                    >
+                      <Icon name="eye" size={ICON_SIZES.md} /> {t("editPreviewButton")}
+                    </Button>
+                  </Tooltip>
+                  <Tooltip
+                    focusableWrapper={!canApply}
+                    label={
+                      hasInvalidEdit
+                        ? t("editApplyDisabledInvalid")
+                        : streaming
+                          ? t("editDisabledStreaming")
+                          : t("editApplyButtonTitle")
+                    }
+                  >
+                    <LoadingButton
+                      variant="success"
+                      size="sm"
+                      px="2.5"
+                      loading={applyingEdits}
+                      onClick={onApplyEdits}
+                      disabled={!canApply}
+                    >
+                      <Icon name="check" size={ICON_SIZES.md} /> {t("editApplyButton")}
+                    </LoadingButton>
+                  </Tooltip>
+                  <Tooltip label={t("editCancelButtonTitle")}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      px="2.5"
+                      onClick={() => setShowDiscardConfirm(true)}
+                    >
+                      <Icon name="close" size={ICON_SIZES.md} /> {t("editCancelButton")}
+                    </Button>
+                  </Tooltip>
+                </Box>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
+        <AnimatePresence initial={false}>
+          {findOpen && (
+            <motion.div
+              key="grid-find-bar"
+              initial={variants.slideUp.initial}
+              animate={variants.slideUp.animate}
+              exit={variants.slideUp.exit}
+              transition={transitions.enter}
+            >
+              <Box
+                role="search"
+                aria-label={t("gridFindAria")}
+                display="flex"
+                alignItems="center"
+                flexWrap="wrap"
+                gap="1.5"
+                py="1"
+                px="2"
+                bg="app.toolbar"
+                borderBottom="1px solid"
+                borderColor="app.borderSubtle"
+                flexShrink={0}
+              >
+                <chakra.input
+                  ref={findInputRef}
+                  type="text"
+                  width="240px"
+                  py="0.75"
+                  px="2"
+                  fontSize="sm"
+                  fontFamily="inherit"
+                  border="1px solid var(--border)"
+                  background="var(--bg-input)"
+                  color="var(--text)"
+                  borderRadius="var(--radius-sm)"
+                  _placeholder={{ color: "var(--text-muted)" }}
+                  _focus={{
+                    outline: "none",
+                    borderColor: "var(--accent)",
+                    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                  }}
+                  value={findQuery}
+                  onChange={(e) => setFindQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isImeComposing(e)) {
+                      e.preventDefault();
+                      findStep(e.shiftKey ? -1 : 1);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeFind();
+                    }
+                  }}
+                  placeholder={t("gridFindPlaceholder")}
+                  aria-label={t("gridFindInputAria")}
+                />
+                <Tooltip label={t("gridFindCaseTitle")}>
+                  <chakra.button
+                    type="button"
+                    css={FIND_TOGGLE_CSS}
+                    aria-pressed={findCaseSensitive}
+                    onClick={() => setFindCaseSensitive((v) => !v)}
+                    aria-label={t("gridFindCaseTitle")}
+                  >
+                    Aa
+                  </chakra.button>
+                </Tooltip>
+                <Tooltip label={t("gridFindWholeTitle")}>
+                  <chakra.button
+                    type="button"
+                    css={FIND_TOGGLE_CSS}
+                    aria-pressed={findWholeCell}
+                    onClick={() => setFindWholeCell((v) => !v)}
+                    aria-label={t("gridFindWholeTitle")}
+                  >
+                    =
+                  </chakra.button>
+                </Tooltip>
+                <Tooltip label={t("gridFindRegexTitle")}>
+                  <chakra.button
+                    type="button"
+                    css={FIND_TOGGLE_CSS}
+                    aria-pressed={findRegex}
+                    onClick={() => setFindRegex((v) => !v)}
+                    aria-label={t("gridFindRegexTitle")}
+                  >
+                    .*
+                  </chakra.button>
+                </Tooltip>
+                <chakra.span
+                  fontSize="xs"
+                  fontFamily="mono"
+                  textStyle="numeric"
+                  whiteSpace="nowrap"
+                  aria-live="polite"
+                  color={
+                    findResult.invalidRegex || (effectiveFindQuery !== "" && findResult.matches.length === 0)
+                      ? "var(--text-warning)"
+                      : "app.textMuted"
+                  }
+                >
+                  {findResult.invalidRegex
+                    ? t("gridFindInvalidRegex")
+                    : effectiveFindQuery === ""
+                      ? ""
+                      : findResult.matches.length === 0
+                        ? t("gridFindNoHits")
+                        : findTotal > findResult.matches.length
+                          ? t("gridFindCountTruncated", {
+                              current: (findIdx ?? 0) + 1,
+                              total: findTotal,
+                              limit: findResult.matches.length,
+                            })
+                          : t("gridFindCount", {
+                              current: (findIdx ?? 0) + 1,
+                              total: findResult.matches.length,
+                            })}
+                </chakra.span>
+                <Tooltip label={t("gridFindPrevTitle")} focusableWrapper={findResult.matches.length === 0}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    px="1.5"
+                    disabled={findResult.matches.length === 0}
+                    onClick={() => findStep(-1)}
+                    aria-label={t("gridFindPrevTitle")}
+                  >
+                    ‹
+                  </Button>
+                </Tooltip>
+                <Tooltip label={t("gridFindNextTitle")} focusableWrapper={findResult.matches.length === 0}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    px="1.5"
+                    disabled={findResult.matches.length === 0}
+                    onClick={() => findStep(1)}
+                    aria-label={t("gridFindNextTitle")}
+                  >
+                    ›
+                  </Button>
+                </Tooltip>
+                <Tooltip label={t("gridFindCloseTitle")}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    px="1.5"
+                    marginLeft="auto"
+                    onClick={closeFind}
+                    aria-label={t("gridFindCloseTitle")}
+                  >
+                    <Icon name="close" />
+                  </Button>
+                </Tooltip>
+              </Box>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <Box
+          ref={containerRef}
+          tabIndex={-1}
+          flex="1"
+          overflow="auto"
+          minHeight={0}
+          _focus={{ outline: "none" }}
+          css={GRID_CSS}
+        >
+          <DataGrid
             columns={result.columns}
             rows={result.rows}
-            database={database ?? null}
-            table={table ?? null}
-            driver={driver}
-            partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
-            stoppedPartial={!!partialResult}
-            fullExport={fullExport}
-            bundle={bundleContext}
-            elapsedMs={result.elapsed_ms}
-            resultId={resultHandleFor(result.rows)}
-            // DataGrid からまだ届いていないときも、設定のパターンだけでマスクする
-            // (漏らさない側に倒す)。
-            maskConfig={
-              maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns }
-            }
-            selection={selectionExport}
-            onClose={() => {
-              setShowExport(false);
-              setSelectionExport(null);
-            }}
+            onMaskConfigChange={setMaskConfig}
+            scrollContainerRef={containerRef}
+            globalFilter={deferredSearch}
+            editable={editableActive}
+            editableColumns={editableCols}
+            pkIndices={pkIndices}
+            rowIdentityStrategy={identityStrategy}
+            pendingEdits={pendingEdits}
+            onSetCellEdit={onSetCellEdit}
+            onBulkEdit={editableActive ? onBulkEdit : undefined}
+            onReplaceColumn={editableActive ? onReplaceColumn : undefined}
+            onLookupQuery={editableActive ? onLookupQuery : undefined}
+            changedCells={diff?.changedCells}
+            addedRowIndices={diff?.addedRows}
+            pendingDeleteKeys={pendingDeleteKeys}
+            onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
+            onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
+            onDuplicateRow={editableActive ? onDuplicateRow : undefined}
+            onPasteInsertRows={editableActive ? onPasteInsertRows : undefined}
+            onUndoEdit={onUndoEdit}
+            onRedoEdit={onRedoEdit}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            validateEdit={validateEdit}
+            onApplyRowEdits={editableActive ? onApplyRowEdits : undefined}
+            streaming={streaming}
+            applyingEdits={applyingEdits}
+            rowSqlDriver={driver}
+            rowSqlDatabase={database}
+            rowSqlTable={table}
+            blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
+            columnMeta={tableColumns ?? undefined}
+            incomingFks={incomingFks}
+            onRunRelatedQuery={onRunRelatedQuery}
+            onFkJump={onFkJump}
+            columnSizingStorageKey={columnSizingStorageKey}
+            skeleton={!!streaming}
+            onSelectionSummary={setSelSummary}
+            onExportSelection={handleExportSelection}
+            onRunStatsQuery={onRunStatsQuery}
+            valuePicker={editableActive ? valuePicker : undefined}
+            onExploreColumn={onExploreColumn}
+            paginationState={paginateMode ? pagination : undefined}
+            onPaginationChange={paginateMode ? setPagination : undefined}
+            findHits={findHits}
+            findCurrentKey={findCurrentMatch ? findMatchKey(findCurrentMatch) : null}
+            findNav={findNav}
+            gridBindings={gridBindings}
+            serverSort={serverSort}
+            serverFilter={serverFilter}
+            onSetServerSort={onSetServerSort}
+            onSetServerFilter={onSetServerFilter}
+            emptyMessage={gridEmptyMessage}
           />
-        )}
-      </AnimatePresence>
-    </Box>
-  );
-}));
+          {!paginateMode && loadingMore && (
+            <Box
+              role="status"
+              aria-live="polite"
+              position="sticky"
+              bottom={0}
+              display="flex"
+              alignItems="center"
+              justifyContent="center"
+              gap="1.5"
+              py="1.5"
+              px="2.5"
+              fontSize="sm"
+              color="app.textMuted"
+              borderTop="1px solid"
+              borderColor="app.borderSubtle"
+              bg="app.surfaceMuted"
+            >
+              <Spinner size={14} />
+              {t("gridLoadingMore")}
+            </Box>
+          )}
+          {paginateMode &&
+            (() => {
+              const totalLoaded = result.rows.length;
+              const { pageIndex, pageSize } = pagination;
+              const pageCount = Math.max(1, Math.ceil(totalLoaded / pageSize));
+              const from = pageIndex * pageSize + 1;
+              const to = Math.min((pageIndex + 1) * pageSize, totalLoaded);
+              const isFirst = pageIndex === 0;
+              const isLast = pageIndex >= pageCount - 1;
+              const navButton = (label: string, title: string, disabled: boolean, onClick: () => void) => (
+                <Tooltip label={title} focusableWrapper={disabled}>
+                  <chakra.button
+                    aria-label={title}
+                    disabled={disabled}
+                    onClick={onClick}
+                    fontSize="xs"
+                    px="1.5"
+                    py="0.5"
+                    border="1px solid var(--border)"
+                    borderRadius="var(--radius-sm)"
+                    background={disabled ? "transparent" : "var(--bg-input)"}
+                    color={disabled ? "var(--text-muted)" : "var(--text)"}
+                    cursor={disabled ? "not-allowed" : "pointer"}
+                    _hover={disabled ? {} : { background: "var(--bg-muted)" }}
+                    whiteSpace="nowrap"
+                    lineHeight={1.4}
+                  >
+                    {label}
+                  </chakra.button>
+                </Tooltip>
+              );
+              const handleNext = () => {
+                if (isLast && canLoadMore && !loadingMore) onLoadMore?.();
+                if (!isLast) setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }));
+              };
+              return (
+                <Box
+                  role="navigation"
+                  aria-label="pagination"
+                  display="flex"
+                  alignItems="center"
+                  flexWrap="wrap"
+                  gap="1.5"
+                  px="2.5"
+                  py="1.25"
+                  fontSize="xs"
+                  color="app.textMuted"
+                  borderTop="1px solid"
+                  borderColor="app.borderSubtle"
+                  bg="app.toolbar"
+                  flexShrink={0}
+                >
+                  {navButton("«", t("paginationFirst"), isFirst, () =>
+                    setPagination((p) => ({ ...p, pageIndex: 0 })),
+                  )}
+                  {navButton("‹", t("paginationPrev"), isFirst, () =>
+                    setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 })),
+                  )}
+                  <chakra.span color="app.text" whiteSpace="nowrap">
+                    {t("paginationPage", { page: pageIndex + 1, pages: pageCount })}
+                  </chakra.span>
+                  {navButton("›", t("paginationNext"), isLast && !canLoadMore, handleNext)}
+                  {navButton("»", t("paginationLast"), isLast && !canLoadMore, () =>
+                    setPagination((p) => ({ ...p, pageIndex: pageCount - 1 })),
+                  )}
+                  <chakra.span whiteSpace="nowrap">
+                    {totalLoaded > 0 ? t("paginationRows", { from, to, total: totalLoaded }) : ""}
+                  </chakra.span>
+                  {loadingMore && (
+                    <Box display="flex" alignItems="center" gap="1">
+                      <Spinner size={12} />
+                      <chakra.span>{t("paginationLoadingMore")}</chakra.span>
+                    </Box>
+                  )}
+                  {!loadingMore && isLast && canLoadMore && (
+                    <chakra.span color="app.textMuted" fontStyle="italic">
+                      {t("paginationCanLoadMore")}
+                    </chakra.span>
+                  )}
+                  <chakra.span
+                    marginLeft="auto"
+                    display="flex"
+                    alignItems="center"
+                    gap="1"
+                    whiteSpace="nowrap"
+                  >
+                    {t("paginationRowsPerPage")}
+                    <chakra.select
+                      aria-label={t("paginationRowsPerPage")}
+                      value={String(pageSize)}
+                      onChange={(e) => {
+                        const newSize = Number(e.target.value);
+                        setPagination({ pageIndex: 0, pageSize: newSize });
+                      }}
+                      fontSize="xs"
+                      fontFamily="inherit"
+                      py="0.25"
+                      px="1"
+                      border="1px solid var(--border)"
+                      background="var(--bg-input)"
+                      color="var(--text)"
+                      borderRadius="var(--radius-sm)"
+                    >
+                      {RESULT_GRID_PAGE_SIZE_OPTIONS.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </chakra.select>
+                  </chakra.span>
+                </Box>
+              );
+            })()}
+        </Box>
+        <AnimatePresence>
+          {showExport && (
+            <ExportModal
+              columns={result.columns}
+              rows={result.rows}
+              database={database ?? null}
+              table={table ?? null}
+              driver={driver}
+              partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
+              stoppedPartial={!!partialResult}
+              fullExport={fullExport}
+              bundle={bundleContext}
+              elapsedMs={result.elapsed_ms}
+              resultId={resultHandleFor(result.rows)}
+              // DataGrid からまだ届いていないときも、設定のパターンだけでマスクする
+              // (漏らさない側に倒す)。
+              maskConfig={
+                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns }
+              }
+              selection={selectionExport}
+              onClose={() => {
+                setShowExport(false);
+                setSelectionExport(null);
+              }}
+            />
+          )}
+        </AnimatePresence>
+      </Box>
+    );
+  }),
+);

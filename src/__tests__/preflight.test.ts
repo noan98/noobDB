@@ -139,7 +139,7 @@ describe("buildPreflightPlan — 複合クオート + スキーマ修飾 (#1075)
     expect(plan?.countSql).toBe('SELECT COUNT(*) FROM "public"."Users" WHERE "id" = 3');
   });
 
-  it("クオートと裸識別子の混在 (db.\"t\" / `db`.t) も読み切る", () => {
+  it('クオートと裸識別子の混在 (db."t" / `db`.t) も読み切る', () => {
     expect(buildPreflightPlan('UPDATE app."Users" SET a = 1 WHERE id = 2')?.countSql).toBe(
       'SELECT COUNT(*) FROM app."Users" WHERE id = 2',
     );
@@ -175,12 +175,8 @@ describe("buildPreflightPlan — 複合クオート + スキーマ修飾 (#1075)
   });
 
   it("複合クオート + 別名は従来どおり推定不可のまま", () => {
-    expect(buildPreflightPlan("DELETE FROM `db`.`t` AS x WHERE x.id = 1", "mysql")?.countSql).toBe(
-      null,
-    );
-    expect(buildPreflightPlan("UPDATE `db`.`t` x SET x.a = 1 WHERE x.id = 2", "mysql")?.countSql).toBe(
-      null,
-    );
+    expect(buildPreflightPlan("DELETE FROM `db`.`t` AS x WHERE x.id = 1", "mysql")?.countSql).toBe(null);
+    expect(buildPreflightPlan("UPDATE `db`.`t` x SET x.a = 1 WHERE x.id = 2", "mysql")?.countSql).toBe(null);
   });
 
   it("ドットの後にパートが無い打ちかけは推定不可 (先頭パートを採らない)", () => {
@@ -194,9 +190,7 @@ describe("buildPreflightPlan — 複合クオート + スキーマ修飾 (#1075)
   });
 
   it("MSSQL の角括弧修飾は (マスク非対応のため) 推定不可へ縮退する", () => {
-    expect(buildPreflightPlan("UPDATE [db].[dbo].[orders] SET a = 1 WHERE id = 1")?.countSql).toBe(
-      null,
-    );
+    expect(buildPreflightPlan("UPDATE [db].[dbo].[orders] SET a = 1 WHERE id = 1")?.countSql).toBe(null);
   });
 });
 
@@ -226,12 +220,8 @@ describe("buildPreflightPlan — マスク境界 (文字列/コメント内キ�
 
 describe("buildPreflightPlan — サブクエリはトップレベル句を汚さない", () => {
   it("WHERE 内のサブクエリの ORDER BY / FROM を誤検出しない", () => {
-    const plan = buildPreflightPlan(
-      "DELETE FROM t WHERE id IN (SELECT id FROM s ORDER BY id LIMIT 3)",
-    );
-    expect(plan?.countSql).toBe(
-      "SELECT COUNT(*) FROM t WHERE id IN (SELECT id FROM s ORDER BY id LIMIT 3)",
-    );
+    const plan = buildPreflightPlan("DELETE FROM t WHERE id IN (SELECT id FROM s ORDER BY id LIMIT 3)");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM t WHERE id IN (SELECT id FROM s ORDER BY id LIMIT 3)");
   });
 
   it("SET 内のサブクエリは影響行を変えない (WHERE のみで数える)", () => {

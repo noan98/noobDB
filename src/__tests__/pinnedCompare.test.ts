@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { Column } from "../api/tauri";
-import { addPinned, addPinnedWithEvicted, defaultKeyColumn, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
+import {
+  addPinned,
+  addPinnedWithEvicted,
+  defaultKeyColumn,
+  pinToastPlan,
+  resultsComparable,
+  type PinnedResult,
+} from "../pinnedCompare";
 
 function cols(...names: string[]): Column[] {
   return names.map((name) => ({ name, type_name: "text" }));
@@ -21,21 +28,15 @@ function pin(id: string, pinnedAt: number): PinnedResult {
 
 describe("resultsComparable", () => {
   it("is true for identical column names in the same order", () => {
-    expect(
-      resultsComparable({ columns: cols("id", "name") }, { columns: cols("id", "name") }),
-    ).toBe(true);
+    expect(resultsComparable({ columns: cols("id", "name") }, { columns: cols("id", "name") })).toBe(true);
   });
 
   it("is false when column counts differ", () => {
-    expect(
-      resultsComparable({ columns: cols("id") }, { columns: cols("id", "name") }),
-    ).toBe(false);
+    expect(resultsComparable({ columns: cols("id") }, { columns: cols("id", "name") })).toBe(false);
   });
 
   it("is false when names differ or order differs", () => {
-    expect(
-      resultsComparable({ columns: cols("id", "name") }, { columns: cols("name", "id") }),
-    ).toBe(false);
+    expect(resultsComparable({ columns: cols("id", "name") }, { columns: cols("name", "id") })).toBe(false);
   });
 
   it("is false for empty column sets", () => {

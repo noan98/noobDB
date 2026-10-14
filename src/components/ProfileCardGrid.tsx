@@ -4,11 +4,7 @@ import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
 import { staggerContainer, variants } from "../motion";
-import {
-  driverColor,
-  driverIconName,
-  workspaceSpineColor,
-} from "../profileIdentity";
+import { driverColor, driverIconName, workspaceSpineColor } from "../profileIdentity";
 import { Heading, SelectableCard } from "./ui";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { GroupAvatar, ProfileBadges, ProfileColorChip } from "./ProfileBadge";
@@ -17,9 +13,13 @@ import { Spinner } from "./Spinner";
 // Chakra でラップした motion 要素 (WelcomeView / EmptyState と同じパターン)。
 // motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
 // 素通しする。
-const MotionFlex = chakra(motion.div, {}, {
-  forwardProps: ["transition", "initial", "animate", "variants"],
-});
+const MotionFlex = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["transition", "initial", "animate", "variants"],
+  },
+);
 // stagger 入場 (#875) だけを担当する薄いラッパー。カードの見た目・ホバー/押下は
 // `ui.tsx` の `SelectableCard` (`selectableCardRecipe`、#1161) にそのまま任せる。
 //
@@ -35,9 +35,13 @@ const MotionFlex = chakra(motion.div, {}, {
 // 置き、`base.display: "flex"` によりラッパー自身を flex コンテナ化することで、
 // 中の `SelectableCard` (`flex="1"`) がラッパーの幅いっぱい・高さいっぱい
 // (align-items の既定 stretch) に広がる。
-const MotionCardWrap = chakra(motion.div, { base: { display: "flex" } }, {
-  forwardProps: ["variants"],
-});
+const MotionCardWrap = chakra(
+  motion.div,
+  { base: { display: "flex" } },
+  {
+    forwardProps: ["variants"],
+  },
+);
 
 interface Props {
   /** 表示するプロファイル (App の並び順そのまま)。 */

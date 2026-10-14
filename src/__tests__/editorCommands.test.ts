@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import appSource from "../App.tsx?raw";
 import { t } from "../i18n";
-import {
-  editorCommandItems,
-  type EditorCommandContext,
-} from "../components/editorCommands";
+import { editorCommandItems, type EditorCommandContext } from "../components/editorCommands";
 
 /**
  * SQL Editor の実行系・接続切替・アクティビティをコマンドパレットへ出す候補 (#1113)。
@@ -124,7 +121,9 @@ describe("editorCommandItems", () => {
 describe("editorCommandItems: AI にクエリを依頼 (#691)", () => {
   it("AI 利用可・接続中・通常タブのときだけ出て、アクションを呼ぶ", () => {
     const a = actions();
-    const item = editorCommandItems({ ...base, aiAvailable: true }, a, t).find((i) => i.id === "editor:ai-query");
+    const item = editorCommandItems({ ...base, aiAvailable: true }, a, t).find(
+      (i) => i.id === "editor:ai-query",
+    );
     expect(item).toBeTruthy();
     item?.run();
     expect(a.openAiQuery).toHaveBeenCalledTimes(1);

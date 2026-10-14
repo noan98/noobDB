@@ -27,7 +27,10 @@ const highlighter = tagHighlighter([
 ]);
 
 /** トークンの種類から、エディタと同じ配色の CSS 変数を返す。 */
-export const SQL_TOKEN_STYLE: Record<SqlTokenKind, { color: string; fontWeight?: string; fontStyle?: string }> = {
+export const SQL_TOKEN_STYLE: Record<
+  SqlTokenKind,
+  { color: string; fontWeight?: string; fontStyle?: string }
+> = {
   keyword: { color: "var(--syntax-keyword)", fontWeight: "bold" },
   string: { color: "var(--syntax-string)" },
   number: { color: "var(--syntax-number)" },

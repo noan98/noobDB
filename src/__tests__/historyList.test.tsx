@@ -62,12 +62,8 @@ describe("HistoryList render smoke (#604)", () => {
         onOpenInNewTab={() => {}}
       />,
     );
-    expect(
-      screen.getByPlaceholderText(t("historySearchPlaceholder")),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument(),
-    );
+    expect(screen.getByPlaceholderText(t("historySearchPlaceholder"))).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument());
   });
 
   it("mounts without an active profile", async () => {
@@ -80,9 +76,7 @@ describe("HistoryList render smoke (#604)", () => {
         onOpenInNewTab={() => {}}
       />,
     );
-    await waitFor(() =>
-      expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(t("historyEmptyTitle"))).toBeInTheDocument());
   });
 });
 

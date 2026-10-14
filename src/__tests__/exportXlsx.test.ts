@@ -25,9 +25,7 @@ describe("xlsxTruncationNotices", () => {
   it("欠けが無ければ警告なし", () => {
     expect(xlsxTruncationNotices(null)).toEqual([]);
     expect(xlsxTruncationNotices(undefined)).toEqual([]);
-    expect(
-      xlsxTruncationNotices({ writtenRows: 10, droppedRows: 0, truncatedCells: 0 }),
-    ).toEqual([]);
+    expect(xlsxTruncationNotices({ writtenRows: 10, droppedRows: 0, truncatedCells: 0 })).toEqual([]);
   });
 
   it("行の打ち切りは全行数・書いた行数・落とした行数を含む", () => {
@@ -54,10 +52,7 @@ describe("xlsxTruncationNotices", () => {
       droppedRows: 1,
       truncatedCells: 2,
     });
-    expect(notices.map((n) => n.key)).toEqual([
-      "exportXlsxRowsDropped",
-      "exportXlsxCellsTruncated",
-    ]);
+    expect(notices.map((n) => n.key)).toEqual(["exportXlsxRowsDropped", "exportXlsxCellsTruncated"]);
     expect(notices[1].params).toEqual({ cells: 2 });
   });
 });

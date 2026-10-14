@@ -111,9 +111,7 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
       ...TABLE_DIFF,
       desired: {
         ...TABLE_DIFF.desired,
-        rows: [
-          { status: "source_only", key: [1], source: [1], target: null, changed_columns: [] },
-        ],
+        rows: [{ status: "source_only", key: [1], source: [1], target: null, changed_columns: [] }],
       },
     });
     const { unmount } = renderWithProviders(
@@ -127,9 +125,7 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
     const generate = await screen.findByText(t("sandboxReviewGenerate"));
     await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
     fireEvent.click(generate);
-    await waitFor(() =>
-      expect(api.generateDataSyncSql).toHaveBeenCalledWith("diff-users", false, []),
-    );
+    await waitFor(() => expect(api.generateDataSyncSql).toHaveBeenCalledWith("diff-users", false, []));
 
     unmount();
     expect(api.releaseDataDiffs).toHaveBeenCalledWith(["diff-users"]);
@@ -156,9 +152,7 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
     fireEvent.click(generate);
     await screen.findByText(t("schemaCompareNoStatements"));
     fireEvent.click(screen.getByLabelText(t("schemaCompareAllowDelete")));
-    await waitFor(() =>
-      expect(screen.queryByText(t("schemaCompareNoStatements"))).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText(t("schemaCompareNoStatements"))).not.toBeInTheDocument());
   });
 
   it("実 DB 側の取得失敗を警告として表示する", async () => {
@@ -179,9 +173,7 @@ describe("SandboxReviewModal のデータ差分 ID (#1259)", () => {
         onClose={() => {}}
       />,
     );
-    expect(
-      await screen.findByText(t("sandboxReviewSourceError", { error: "boom" })),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(t("sandboxReviewSourceError", { error: "boom" }))).toBeInTheDocument();
   });
 });
 
@@ -191,9 +183,7 @@ describe("SandboxReviewModal の表リセット (#1539)", () => {
     ...TABLE_DIFF,
     desired: {
       ...TABLE_DIFF.desired,
-      rows: [
-        { status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] },
-      ],
+      rows: [{ status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] }],
     },
   };
 
@@ -234,16 +224,16 @@ describe("SandboxReviewModal の適用結果 (#1599)", () => {
     ...TABLE_DIFF,
     desired: {
       ...TABLE_DIFF.desired,
-      rows: [
-        { status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] },
-      ],
+      rows: [{ status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] }],
     },
   };
 
   async function generateAndApply() {
     vi.mocked(api.sandboxTableDiff).mockResolvedValue(changed);
     vi.mocked(api.generateDataSyncSql).mockResolvedValue({
-      statements: [{ sql: "INSERT INTO users VALUES (1)", table: "users", kind: "insert", destructive: false }],
+      statements: [
+        { sql: "INSERT INTO users VALUES (1)", table: "users", kind: "insert", destructive: false },
+      ],
       warnings: [],
     } as never);
     renderWithProviders(

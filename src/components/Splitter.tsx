@@ -49,9 +49,7 @@ export function Splitter({
   ariaLabel,
   secondCollapsed = false,
 }: Props) {
-  const [fraction, setFraction] = useState<number>(() =>
-    readStoredFraction(storageKey, defaultFraction),
-  );
+  const [fraction, setFraction] = useState<number>(() => readStoredFraction(storageKey, defaultFraction));
   const [dragging, setDragging] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
@@ -125,10 +123,7 @@ export function Splitter({
   // Min/max fraction the divider may take, leaving at least `minSize` px on each
   // side. Shared by pointer drag and keyboard nudge so the clamp stays identical.
   // Delegates to the pure `fractionBounds` so the rule is unit-tested in one place.
-  const fractionBounds = useCallback(
-    (total: number) => boundsFor(total, minSize),
-    [minSize],
-  );
+  const fractionBounds = useCallback((total: number) => boundsFor(total, minSize), [minSize]);
 
   // ポインタ位置から比率を求める。ドラッグ中は DOM へ直接反映するだけで state は触らない。
   const updateFromPointer = useCallback(
@@ -233,7 +228,11 @@ export function Splitter({
   const nudge = useCallback(
     (delta: number) => {
       const el = containerRef.current;
-      const total = el ? (direction === "row" ? el.getBoundingClientRect().width : el.getBoundingClientRect().height) : 0;
+      const total = el
+        ? direction === "row"
+          ? el.getBoundingClientRect().width
+          : el.getBoundingClientRect().height
+        : 0;
       const { minF, maxF } = fractionBounds(total);
       commit(clamp(liveFractionRef.current + delta, minF, maxF));
     },
@@ -290,84 +289,84 @@ export function Splitter({
         {first}
       </Box>
       {!secondCollapsed && (
-      <Box
-        ref={separatorRef}
-        flex="0 0 auto"
-        position="relative"
-        zIndex={4}
-        display="flex"
-        alignItems="center"
-        justifyContent="center"
-        userSelect="none"
-        touchAction="none"
-        // Hit area is deliberately wider than the visible line so the divider is
-        // easy to grab; the line itself (the ::before child) stays thin.
-        width={isRow ? "11px" : undefined}
-        height={isRow ? undefined : "11px"}
-        marginX={isRow ? "-3px" : undefined}
-        marginY={isRow ? undefined : "-3px"}
-        cursor={isRow ? "ew-resize" : "ns-resize"}
-        role="separator"
-        tabIndex={0}
-        aria-orientation={isRow ? "vertical" : "horizontal"}
-        aria-label={ariaLabel}
-        aria-valuenow={Math.round(fraction * 100)}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        className="pane-splitter"
-        data-dragging={dragging ? "" : undefined}
-        data-row={isRow ? "" : undefined}
-        css={{
-          // 細い視認ライン (見た目)。ホバー/ドラッグ/フォーカスでアクセント色に。
-          "&::before": {
-            content: '""',
-            position: "absolute",
-            background: "var(--border)",
-            transition: "background var(--dur-fast) var(--ease)",
-            ...(isRow
-              ? { top: 0, bottom: 0, left: "50%", width: "1px", transform: "translateX(-50%)" }
-              : { left: 0, right: 0, top: "50%", height: "1px", transform: "translateY(-50%)" }),
-          },
-          "&:hover::before, &[data-dragging]::before, &:focus-visible::before": {
-            background: "var(--accent)",
-            ...(isRow ? { width: "2px" } : { height: "2px" }),
-          },
-          // つかみどころのグリップ (ドット)。ホバー/フォーカスで出す。
-          "& .pane-splitter-grip": {
-            position: "relative",
-            zIndex: 1,
-            display: "flex",
-            flexDirection: isRow ? "column" : "row",
-            gap: "var(--space-0-75)",
-            opacity: 0,
-            transition: "opacity var(--dur-fast) var(--ease)",
-          },
-          "&:hover .pane-splitter-grip, &[data-dragging] .pane-splitter-grip, &:focus-visible .pane-splitter-grip":
-            { opacity: 0.9 },
-          "& .pane-splitter-grip > span": {
-            width: "3px",
-            height: "3px",
-            borderRadius: "50%",
-            background: "var(--accent)",
-          },
-          "&:focus-visible": {
-            outline: "none",
-            boxShadow: "var(--focus-ring)",
-          },
-        }}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
-        onDoubleClick={onDoubleClick}
-        onKeyDown={onKeyDown}
-      >
-        <Box className="pane-splitter-grip" aria-hidden>
-          <span />
-          <span />
-          <span />
+        <Box
+          ref={separatorRef}
+          flex="0 0 auto"
+          position="relative"
+          zIndex={4}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          userSelect="none"
+          touchAction="none"
+          // Hit area is deliberately wider than the visible line so the divider is
+          // easy to grab; the line itself (the ::before child) stays thin.
+          width={isRow ? "11px" : undefined}
+          height={isRow ? undefined : "11px"}
+          marginX={isRow ? "-3px" : undefined}
+          marginY={isRow ? undefined : "-3px"}
+          cursor={isRow ? "ew-resize" : "ns-resize"}
+          role="separator"
+          tabIndex={0}
+          aria-orientation={isRow ? "vertical" : "horizontal"}
+          aria-label={ariaLabel}
+          aria-valuenow={Math.round(fraction * 100)}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="pane-splitter"
+          data-dragging={dragging ? "" : undefined}
+          data-row={isRow ? "" : undefined}
+          css={{
+            // 細い視認ライン (見た目)。ホバー/ドラッグ/フォーカスでアクセント色に。
+            "&::before": {
+              content: '""',
+              position: "absolute",
+              background: "var(--border)",
+              transition: "background var(--dur-fast) var(--ease)",
+              ...(isRow
+                ? { top: 0, bottom: 0, left: "50%", width: "1px", transform: "translateX(-50%)" }
+                : { left: 0, right: 0, top: "50%", height: "1px", transform: "translateY(-50%)" }),
+            },
+            "&:hover::before, &[data-dragging]::before, &:focus-visible::before": {
+              background: "var(--accent)",
+              ...(isRow ? { width: "2px" } : { height: "2px" }),
+            },
+            // つかみどころのグリップ (ドット)。ホバー/フォーカスで出す。
+            "& .pane-splitter-grip": {
+              position: "relative",
+              zIndex: 1,
+              display: "flex",
+              flexDirection: isRow ? "column" : "row",
+              gap: "var(--space-0-75)",
+              opacity: 0,
+              transition: "opacity var(--dur-fast) var(--ease)",
+            },
+            "&:hover .pane-splitter-grip, &[data-dragging] .pane-splitter-grip, &:focus-visible .pane-splitter-grip":
+              { opacity: 0.9 },
+            "& .pane-splitter-grip > span": {
+              width: "3px",
+              height: "3px",
+              borderRadius: "50%",
+              background: "var(--accent)",
+            },
+            "&:focus-visible": {
+              outline: "none",
+              boxShadow: "var(--focus-ring)",
+            },
+          }}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onDoubleClick={onDoubleClick}
+          onKeyDown={onKeyDown}
+        >
+          <Box className="pane-splitter-grip" aria-hidden>
+            <span />
+            <span />
+            <span />
+          </Box>
         </Box>
-      </Box>
       )}
       <Box
         ref={secondRef}

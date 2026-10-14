@@ -46,12 +46,7 @@ export const ACTIVITY_SEVERITY_ROLE: Record<ActivitySeverity, SemanticRole> = {
 };
 
 /** フィルタ UI が並べる重大度の順 (深刻な方から)。 */
-export const ACTIVITY_SEVERITIES: readonly ActivitySeverity[] = [
-  "error",
-  "warning",
-  "success",
-  "info",
-];
+export const ACTIVITY_SEVERITIES: readonly ActivitySeverity[] = ["error", "warning", "success", "info"];
 
 /**
  * 1 行の文言に収まらない詳細 (アクティビティ一覧で行を展開して表で見せる)。
@@ -109,9 +104,7 @@ export function countUnread(list: readonly ActivityEntry[], lastReadId: number):
 }
 
 /** 重大度ごとの件数 (フィルタチップのバッジ用)。 */
-export function countBySeverity(
-  list: readonly ActivityEntry[],
-): Record<ActivitySeverity, number> {
+export function countBySeverity(list: readonly ActivityEntry[]): Record<ActivitySeverity, number> {
   const out: Record<ActivitySeverity, number> = { info: 0, success: 0, warning: 0, error: 0 };
   for (const e of list) out[e.severity]++;
   return out;
@@ -168,12 +161,14 @@ export function getActivityState(): ActivityState {
  * (バックグラウンド処理の結果など) をしたい場合だけ直接呼ぶ。
  * @public
  */
-export function pushActivity(
-  severity: ActivitySeverity,
-  message: string,
-  detail?: ActivityDetail,
-): void {
-  const entry: ActivityEntry = { id: nextId++, severity, message, at: Date.now(), ...(detail ? { detail } : {}) };
+export function pushActivity(severity: ActivitySeverity, message: string, detail?: ActivityDetail): void {
+  const entry: ActivityEntry = {
+    id: nextId++,
+    severity,
+    message,
+    at: Date.now(),
+    ...(detail ? { detail } : {}),
+  };
   current = { ...current, entries: appendActivity(current.entries, entry) };
   emit();
 }

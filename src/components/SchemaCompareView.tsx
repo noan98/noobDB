@@ -35,9 +35,13 @@ import { DraftNumberInput } from "./DraftNumberInput";
 // スタイルプロップに飲まれないよう forwardProps で素通しする (`ActivityCenter` /
 // `ProfileCardGrid` と同じパターン)。テーブル差分行のアコーディオン開閉
 // (`variants.collapse`) と、展開時のカラム行 stagger フェードインに使う (#1008)。
-const MotionCollapseBox = chakra(motion.div, {}, {
-  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-});
+const MotionCollapseBox = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+  },
+);
 const MotionColumnList = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
 const MotionColumnItem = chakra(motion.li, {}, { forwardProps: ["variants"] });
 
@@ -126,7 +130,8 @@ const tableSummaryCss: SystemStyleObject = {
   alignItems: "center",
   gap: "2.5",
   width: "100%",
-  py: "2", px: "3",
+  py: "2",
+  px: "3",
   userSelect: "none",
   background: "transparent",
   border: "none",
@@ -324,7 +329,8 @@ function statementCss(destructive: boolean): SystemStyleObject {
     border: "1px solid var(--border)",
     borderRadius: "var(--radius-md)",
     background: "var(--bg-elevated)",
-    py: "2", px: "2.5",
+    py: "2",
+    px: "2.5",
   };
   return destructive ? { ...base, borderColor: semanticColorVar("danger", "text") } : base;
 }
@@ -483,29 +489,26 @@ export function SchemaCompareView({
     };
   }, []);
 
-  const ensureSession = useCallback(
-    async (profile: ConnectionProfile): Promise<string> => {
-      const existing = ownedRef.current.get(profile.id);
-      if (existing) return existing;
-      const res = await api.connect({
-        profile_id: profile.id,
-        driver: coerceDriver(profile.driver),
-        host: profile.host,
-        port: profile.port,
-        user: profile.user,
-        password: "",
-        database: profile.database,
-        ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-        file_path: profile.file_path,
-        // Comparison only introspects; force read-only and keep it out of history.
-        read_only: true,
-        skip_history: true,
-      });
-      ownedRef.current.set(profile.id, res.session_id);
-      return res.session_id;
-    },
-    [],
-  );
+  const ensureSession = useCallback(async (profile: ConnectionProfile): Promise<string> => {
+    const existing = ownedRef.current.get(profile.id);
+    if (existing) return existing;
+    const res = await api.connect({
+      profile_id: profile.id,
+      driver: coerceDriver(profile.driver),
+      host: profile.host,
+      port: profile.port,
+      user: profile.user,
+      password: "",
+      database: profile.database,
+      ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+      file_path: profile.file_path,
+      // Comparison only introspects; force read-only and keep it out of history.
+      read_only: true,
+      skip_history: true,
+    });
+    ownedRef.current.set(profile.id, res.session_id);
+    return res.session_id;
+  }, []);
 
   // 各側の接続選択の最新要求番号 (古い応答の破棄用)。
   const selectSeqRef = useRef<Record<Side, number>>({ source: 0, target: 0 });
@@ -574,8 +577,7 @@ export function SchemaCompareView({
     () => profiles.find((p) => p.id === target.profileId)?.driver ?? null,
     [profiles, target.profileId],
   );
-  const driverMismatch =
-    sourceDriver !== null && targetDriver !== null && sourceDriver !== targetDriver;
+  const driverMismatch = sourceDriver !== null && targetDriver !== null && sourceDriver !== targetDriver;
 
   const canCompare =
     !!source.sessionId &&
@@ -586,13 +588,7 @@ export function SchemaCompareView({
     !comparing;
 
   const runCompare = useCallback(async (): Promise<SchemaDiff | null> => {
-    if (
-      !source.sessionId ||
-      !source.database ||
-      !target.sessionId ||
-      !target.database ||
-      driverMismatch
-    ) {
+    if (!source.sessionId || !source.database || !target.sessionId || !target.database || driverMismatch) {
       return null;
     }
     setComparing(true);
@@ -626,8 +622,7 @@ export function SchemaCompareView({
     [diff, hideSame],
   );
 
-  const hasDifferences =
-    counts.different + counts.source_only + counts.target_only > 0;
+  const hasDifferences = counts.different + counts.source_only + counts.target_only > 0;
 
   const generatePlan = useCallback(async () => {
     if (!diff) return;
@@ -662,13 +657,7 @@ export function SchemaCompareView({
   );
 
   const compareData = useCallback(async () => {
-    if (
-      !source.sessionId ||
-      !source.database ||
-      !target.sessionId ||
-      !target.database ||
-      !dataTable
-    ) {
+    if (!source.sessionId || !source.database || !target.sessionId || !target.database || !dataTable) {
       return;
     }
     setDataComparing(true);
@@ -758,14 +747,10 @@ export function SchemaCompareView({
 
   const applyPlan = useCallback(async () => {
     if (!plan || !targetProfile || !target.database) return;
-    const statements = plan.statements
-      .filter((_, i) => selected.has(i))
-      .map((s) => s.sql);
+    const statements = plan.statements.filter((_, i) => selected.has(i)).map((s) => s.sql);
     if (statements.length === 0) return;
 
-    const destructiveCount = plan.statements.filter(
-      (s, i) => selected.has(i) && s.destructive,
-    ).length;
+    const destructiveCount = plan.statements.filter((s, i) => selected.has(i) && s.destructive).length;
     const confirmMsg = t("schemaCompareApplyConfirm", {
       count: statements.length,
       name: targetProfile.name,
@@ -865,14 +850,7 @@ export function SchemaCompareView({
   const selectedCount = selected.size;
 
   return (
-    <Box
-      flex="1"
-      overflowY="auto"
-      py="5" px="6"
-      display="flex"
-      flexDirection="column"
-      gap="4.5"
-    >
+    <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="4.5">
       <chakra.header
         display="flex"
         alignItems="center"
@@ -898,7 +876,9 @@ export function SchemaCompareView({
         </Tooltip>
       </chakra.header>
 
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDesc")}</chakra.p>
+      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+        {t("schemaCompareDesc")}
+      </chakra.p>
 
       {profiles.length === 0 ? (
         <chakra.p css={emptyCss}>{t("schemaCompareNoProfiles")}</chakra.p>
@@ -940,9 +920,7 @@ export function SchemaCompareView({
             />
           </Box>
 
-          {driverMismatch && (
-            <chakra.p css={warningCss}>{t("schemaCompareDriverMismatch")}</chakra.p>
-          )}
+          {driverMismatch && <chakra.p css={warningCss}>{t("schemaCompareDriverMismatch")}</chakra.p>}
 
           <Box css={actionsCss}>
             <PressableButton variant="primary" onClick={runCompare} disabled={!canCompare}>
@@ -960,10 +938,7 @@ export function SchemaCompareView({
                 <StatusChip status="target_only" count={counts.target_only} t={t} />
                 <StatusChip status="same" count={counts.same} t={t} />
                 <chakra.label css={hideSameCss}>
-                  <Checkbox
-                    checked={hideSame}
-                    onChange={(e) => setHideSame(e.target.checked)}
-                  />
+                  <Checkbox checked={hideSame} onChange={(e) => setHideSame(e.target.checked)} />
                   {t("schemaCompareHideSame")}
                 </chakra.label>
               </Box>
@@ -985,7 +960,9 @@ export function SchemaCompareView({
               {hasDifferences && (
                 <Box css={syncCss}>
                   <chakra.h3 css={syncTitleCss}>{t("schemaCompareSyncTitle")}</chakra.h3>
-                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareSyncDesc")}</chakra.p>
+                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+                    {t("schemaCompareSyncDesc")}
+                  </chakra.p>
                   <Box css={syncControlsCss}>
                     <chakra.label css={destructiveCss}>
                       <Checkbox
@@ -1004,7 +981,9 @@ export function SchemaCompareView({
               {comparableTables.length > 0 && (
                 <Box css={syncCss}>
                   <chakra.h3 css={syncTitleCss}>{t("schemaCompareDataTitle")}</chakra.h3>
-                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">{t("schemaCompareDataDesc")}</chakra.p>
+                  <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+                    {t("schemaCompareDataDesc")}
+                  </chakra.p>
                   <Box css={syncControlsCss}>
                     <Select
                       value={dataTable}
@@ -1133,10 +1112,7 @@ export function SchemaCompareView({
                             onClick={() => setStatementLimit((n) => n + SYNC_STATEMENT_PAGE)}
                           >
                             {t("schemaCompareStatementsMore", {
-                              count: Math.min(
-                                SYNC_STATEMENT_PAGE,
-                                plan.statements.length - statementLimit,
-                              ),
+                              count: Math.min(SYNC_STATEMENT_PAGE, plan.statements.length - statementLimit),
                             })}
                           </Button>
                         </Box>
@@ -1172,10 +1148,7 @@ export function SchemaCompareView({
                             : t("schemaCompareApply", { count: selectedCount })}
                         </PressableButton>
                         {planKind === "schema" && (
-                          <Button
-                            type="button"
-                            onClick={() => setMigrationExportOpen(true)}
-                          >
+                          <Button type="button" onClick={() => setMigrationExportOpen(true)}>
                             {t("schemaCompareSaveMigration")}
                           </Button>
                         )}
@@ -1280,9 +1253,7 @@ export const SyncStatementRow = memo(function SyncStatementRow({
     <chakra.li css={statement.destructive ? STATEMENT_CSS.destructive : STATEMENT_CSS.normal}>
       <chakra.label css={statementHeadCss}>
         <Checkbox checked={checked} onChange={() => onToggle(index)} />
-        <chakra.span css={cachedKindCss(statement.kind)}>
-          {syncKindLabel(statement.kind, t)}
-        </chakra.span>
+        <chakra.span css={cachedKindCss(statement.kind)}>{syncKindLabel(statement.kind, t)}</chakra.span>
         {statement.destructive && (
           <chakra.span css={destructiveFlagCss}>{t("schemaCompareDestructiveFlag")}</chakra.span>
         )}
@@ -1319,10 +1290,7 @@ function SidePicker({
   return (
     <Box css={sideCss}>
       <chakra.span css={sideLabelCss}>{label}</chakra.span>
-      <Select
-        value={state.profileId ?? ""}
-        onChange={(e) => onSelectProfile(side, e.target.value)}
-      >
+      <Select value={state.profileId ?? ""} onChange={(e) => onSelectProfile(side, e.target.value)}>
         <option value="">{t("schemaCompareSelectProfile")}</option>
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>
@@ -1349,15 +1317,7 @@ function SidePicker({
   );
 }
 
-function StatusChip({
-  status,
-  count,
-  t,
-}: {
-  status: DiffStatus;
-  count: number;
-  t: ReturnType<typeof useT>;
-}) {
+function StatusChip({ status, count, t }: { status: DiffStatus; count: number; t: ReturnType<typeof useT> }) {
   return (
     <chakra.span css={chipCss(status)}>
       {statusLabel(status, t)}: {count}
@@ -1407,13 +1367,14 @@ export const TableDiffRow = memo(function TableDiffRow({
 
   const header = (
     <>
-      <TreeChevron aria-hidden visibility={expandable ? "visible" : "hidden"}
-        transform={expandable && open ? "rotate(90deg)" : undefined}>
+      <TreeChevron
+        aria-hidden
+        visibility={expandable ? "visible" : "hidden"}
+        transform={expandable && open ? "rotate(90deg)" : undefined}
+      >
         ▸
       </TreeChevron>
-      <chakra.span css={badgeCss(table.status)}>
-        {statusLabel(table.status, t)}
-      </chakra.span>
+      <chakra.span css={badgeCss(table.status)}>{statusLabel(table.status, t)}</chakra.span>
       <chakra.span css={tableNameCss}>{table.name}</chakra.span>
       {expandable && (
         <chakra.span css={colcountCss}>
@@ -1436,9 +1397,7 @@ export const TableDiffRow = memo(function TableDiffRow({
           {header}
         </chakra.button>
       ) : (
-        <chakra.div css={{ ...tableSummaryCss, cursor: "default" }}>
-          {header}
-        </chakra.div>
+        <chakra.div css={{ ...tableSummaryCss, cursor: "default" }}>{header}</chakra.div>
       )}
       <AnimatePresence initial={false}>
         {expandable && open && (
@@ -1489,11 +1448,7 @@ function fieldLabel(field: string, t: ReturnType<typeof useT>): string {
   }
 }
 
-function fieldValue(
-  col: TableColumnInfo | null,
-  field: string,
-  t: ReturnType<typeof useT>,
-): string {
+function fieldValue(col: TableColumnInfo | null, field: string, t: ReturnType<typeof useT>): string {
   if (!col) return "—";
   switch (field) {
     case "data_type":
@@ -1509,9 +1464,7 @@ function fieldValue(
     case "comment":
       return col.comment || "—";
     case "foreign_key":
-      return col.referenced_table
-        ? `${col.referenced_table}(${col.referenced_column ?? "?"})`
-        : "—";
+      return col.referenced_table ? `${col.referenced_table}(${col.referenced_column ?? "?"})` : "—";
     default:
       return "—";
   }
@@ -1526,9 +1479,7 @@ function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof
       variants={motionVariants.staggerItem}
       css={{ ...columnCss, borderLeftColor: statusColors(column.status).color }}
     >
-      <chakra.span css={badgeCss(column.status)}>
-        {statusLabel(column.status, t)}
-      </chakra.span>
+      <chakra.span css={badgeCss(column.status)}>{statusLabel(column.status, t)}</chakra.span>
       <chakra.span css={columnNameCss}>{column.name}</chakra.span>
       {column.status === "different" ? (
         <chakra.span css={changesCss}>

@@ -29,7 +29,16 @@ export type FooterAggFn = "none" | "count" | "distinct" | "nullRate" | "sum" | "
 const ALL_FOOTER_FNS: FooterAggFn[] = ["none", "count", "distinct", "nullRate", "sum", "avg", "min", "max"];
 
 /** 数値列で選べる関数 (既定は先頭寄りが優先度高、UI のセレクタ順にもなる)。 */
-const NUMERIC_FOOTER_FNS: FooterAggFn[] = ["sum", "avg", "min", "max", "count", "distinct", "nullRate", "none"];
+const NUMERIC_FOOTER_FNS: FooterAggFn[] = [
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "count",
+  "distinct",
+  "nullRate",
+  "none",
+];
 
 /** 非数値列で選べる関数 (sum/avg/min/max は無意味なので除外)。 */
 const NON_NUMERIC_FOOTER_FNS: FooterAggFn[] = ["count", "distinct", "nullRate", "none"];

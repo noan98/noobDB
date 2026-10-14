@@ -19,9 +19,9 @@ describe("focus ring tokens (#475)", () => {
 
   it("buttons and form fields use :focus-visible with the shared ring token", () => {
     expect(/button:focus-visible \{[\s\S]*?box-shadow: var\(--focus-ring\)/.test(css)).toBe(true);
-    expect(/input:focus-visible, select:focus-visible \{[\s\S]*?box-shadow: var\(--focus-ring\)/.test(css)).toBe(
-      true,
-    );
+    expect(
+      /input:focus-visible, select:focus-visible \{[\s\S]*?box-shadow: var\(--focus-ring\)/.test(css),
+    ).toBe(true);
   });
 
   it("does not focus-ring form fields on bare :focus (mouse clicks stay quiet)", () => {

@@ -77,9 +77,7 @@ export function GridReplaceModal({
   const columnEditable = editableColumns?.[colIdx] ?? false;
   const columnModeAvailable = !!onApplyColumn && !!table && database !== null;
   const gridModeAvailable = pkIndices.length > 0 && columnEditable;
-  const [mode, setMode] = useState<Mode>(
-    gridModeAvailable || !columnModeAvailable ? "grid" : "column",
-  );
+  const [mode, setMode] = useState<Mode>(gridModeAvailable || !columnModeAvailable ? "grid" : "column");
   const [find, setFind] = useState("");
   const [replace, setReplace] = useState("");
   const [caseSensitive, setCaseSensitive] = useState(false);
@@ -138,10 +136,7 @@ export function GridReplaceModal({
     return built.ok ? built.sql : null;
   }, [columnModeAvailable, col, table, database, driver, find, replace, options, filterActive, serverFilter]);
   const runCount = useMemo(
-    () =>
-      onLookupQuery
-        ? (sql: string) => onLookupQuery(sql, 1)
-        : null,
+    () => (onLookupQuery ? (sql: string) => onLookupQuery(sql, 1) : null),
     [onLookupQuery],
   );
   const countItems = useMemo(() => (countSql ? [{ id: "target", sql: countSql }] : []), [countSql]);
@@ -163,11 +158,18 @@ export function GridReplaceModal({
   };
 
   const skippedParts: string[] = [];
-  if (gridPlan.skippedInvalid > 0) skippedParts.push(t("gridReplaceSkipInvalid", { count: gridPlan.skippedInvalid }));
+  if (gridPlan.skippedInvalid > 0)
+    skippedParts.push(t("gridReplaceSkipInvalid", { count: gridPlan.skippedInvalid }));
   if (gridPlan.unchanged > 0) skippedParts.push(t("gridReplaceSkipUnchanged", { count: gridPlan.unchanged }));
 
   return (
-    <Modal onSubmit={submit} submitDisabled={!canApply} width="600px" onClose={onClose} initialFocusEl={() => findRef.current}>
+    <Modal
+      onSubmit={submit}
+      submitDisabled={!canApply}
+      width="600px"
+      onClose={onClose}
+      initialFocusEl={() => findRef.current}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("gridReplaceClose")}>
         {t("gridReplaceTitle", { column: col?.name ?? "" })}
       </ModalHeader>
@@ -190,7 +192,11 @@ export function GridReplaceModal({
             onChange={(e) => setReplace(e.target.value)}
             fontFamily="mono"
           />
-          {regex && <chakra.span fontSize="xs" color="app.textMuted">{t("gridReplaceRegexHint")}</chakra.span>}
+          {regex && (
+            <chakra.span fontSize="xs" color="app.textMuted">
+              {t("gridReplaceRegexHint")}
+            </chakra.span>
+          )}
         </FormSection>
         <chakra.div display="flex" gap="4" flexWrap="wrap">
           <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
@@ -206,7 +212,13 @@ export function GridReplaceModal({
 
         <FormSection>
           <FieldLabel as="div">{t("gridReplaceScope")}</FieldLabel>
-          <chakra.label display="inline-flex" alignItems="flex-start" gap="2" cursor={gridModeAvailable ? "pointer" : "default"} userSelect="none">
+          <chakra.label
+            display="inline-flex"
+            alignItems="flex-start"
+            gap="2"
+            cursor={gridModeAvailable ? "pointer" : "default"}
+            userSelect="none"
+          >
             <Radio
               name="grid-replace-scope"
               checked={mode === "grid"}
@@ -229,7 +241,13 @@ export function GridReplaceModal({
             </chakra.span>
           </chakra.label>
           {onApplyColumn && (
-            <chakra.label display="inline-flex" alignItems="flex-start" gap="2" cursor={columnModeAvailable ? "pointer" : "default"} userSelect="none">
+            <chakra.label
+              display="inline-flex"
+              alignItems="flex-start"
+              gap="2"
+              cursor={columnModeAvailable ? "pointer" : "default"}
+              userSelect="none"
+            >
               <Radio
                 name="grid-replace-scope"
                 checked={mode === "column"}
@@ -261,12 +279,20 @@ export function GridReplaceModal({
         {mode === "column" && columnModeAvailable && (
           <>
             {serverFilter && (
-              <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none">
+              <chakra.label
+                display="inline-flex"
+                alignItems="center"
+                gap="2"
+                cursor="pointer"
+                userSelect="none"
+              >
                 <Checkbox checked={limitToFilter} onChange={(e) => setLimitToFilter(e.target.checked)} />
                 <span>{t("gridReplaceLimitFilter", { column: serverFilter.column })}</span>
               </chakra.label>
             )}
-            {!textColumn && <FieldError>{t("gridReplaceNotText", { type: col?.type_name ?? "" })}</FieldError>}
+            {!textColumn && (
+              <FieldError>{t("gridReplaceNotText", { type: col?.type_name ?? "" })}</FieldError>
+            )}
             {unsupported && (
               <FieldError>
                 {t(unsupported === "sqliteRegex" ? "gridReplaceSqliteRegex" : "gridReplaceSqliteCase")}

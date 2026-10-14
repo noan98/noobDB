@@ -84,8 +84,15 @@ describe("rangeTableSelection (Shift クリック)", () => {
 
   it("起点から対象までを選ぶ (順方向・逆方向)", () => {
     const start = anchorTableSelection(EMPTY_TABLE_SELECTION, "d", "b");
-    expect(names(rangeTableSelection(start, rows, "d", "d"), "d", ["a", "b", "c", "d", "e"])).toEqual(["b", "c", "d"]);
-    expect(names(rangeTableSelection(start, rows, "d", "a"), "d", ["a", "b", "c", "d", "e"])).toEqual(["a", "b"]);
+    expect(names(rangeTableSelection(start, rows, "d", "d"), "d", ["a", "b", "c", "d", "e"])).toEqual([
+      "b",
+      "c",
+      "d",
+    ]);
+    expect(names(rangeTableSelection(start, rows, "d", "a"), "d", ["a", "b", "c", "d", "e"])).toEqual([
+      "a",
+      "b",
+    ]);
   });
 
   it("起点は動かさず、続けて Shift クリックすると範囲が伸び縮みする", () => {

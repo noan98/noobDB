@@ -34,9 +34,7 @@ beforeEach(() => {
 
 describe("ProcessListPanel render smoke (#604)", () => {
   it("mounts and renders its toolbar", async () => {
-    renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
-    );
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
     await waitFor(() =>
       expect(screen.getByRole("button", { name: t("processRefresh") })).toBeInTheDocument(),
     );
@@ -50,9 +48,7 @@ describe("ProcessListPanel render smoke (#604)", () => {
  */
 describe("ProcessListPanel empty state (#847)", () => {
   it("shows the shared EmptyState (with its title) when there are no processes", async () => {
-    renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
-    );
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
     await waitFor(() => {
       expect(screen.getByText(t("processEmpty"))).toBeInTheDocument();
     });
@@ -115,9 +111,7 @@ describe("ProcessListPanel error state (#848)", () => {
   it("shows the shared EmptyState title on load failure, and retries on click", async () => {
     vi.mocked(api.listProcesses).mockRejectedValueOnce(new Error("connection lost"));
 
-    renderWithProviders(
-      <ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />,
-    );
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
 
     await waitFor(() => {
       expect(
@@ -271,9 +265,7 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 2, blocked_by: [1] }]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly />);
     await screen.findByTestId("blocking-tree");
-    expect(
-      screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 1 }) })).toBeDisabled();
   });
 
   it("一覧外のブロッカーは Kill 不可の根、自アプリ接続はバッジ、循環は別ラベルで出す", async () => {
@@ -284,18 +276,14 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
     ]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByTestId("blocking-tree");
-    expect(
-      screen.getByText(t("processBlockingExternal", { id: 99, count: 1 })),
-    ).toBeInTheDocument();
+    expect(screen.getByText(t("processBlockingExternal", { id: 99, count: 1 }))).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: t("processBlockingKillAria", { id: 99 }) }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(t("processBlockingDeadlock"))).toBeInTheDocument();
     const tree = screen.getByTestId("blocking-tree");
     expect(tree.textContent).toContain(t("processSelfBadge"));
-    expect(
-      screen.getByRole("button", { name: t("processBlockingKillAria", { id: 10 }) }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: t("processBlockingKillAria", { id: 10 }) })).toBeEnabled();
   });
 });
 
@@ -381,9 +369,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     fireEvent.click(screen.getByLabelText(t("processSelectAll")));
     vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
     fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "app" } });
-    fireEvent.click(
-      await screen.findByRole("button", { name: t("processKillSelected", { count: 1 }) }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: t("processKillSelected", { count: 1 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
     // 隠れている id 2 は含めず、見えている id 1 だけを送る。
     await waitFor(() => expect(api.killProcesses).toHaveBeenCalledWith("s1", [1], false));
@@ -420,9 +406,9 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     await waitFor(() => expect(api.listProcesses).toHaveBeenCalledTimes(2));
     await waitFor(() =>
       expect(
-        Array.from(
-          (screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).options,
-        ).some((o) => o.value === "batch"),
+        Array.from((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).options).some(
+          (o) => o.value === "batch",
+        ),
       ).toBe(true),
     );
     expect((screen.getByLabelText(t("processFilterUserAria")) as HTMLSelectElement).value).toBe("batch");
@@ -444,8 +430,6 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     vi.mocked(api.listProcesses).mockResolvedValue([base]);
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly />);
     await screen.findByText("SELECT 1");
-    expect(
-      screen.getByRole("button", { name: t("processCancelSelected", { count: 0 }) }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: t("processCancelSelected", { count: 0 }) })).toBeDisabled();
   });
 });

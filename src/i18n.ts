@@ -43,9 +43,12 @@ const en = {
   activityFooterNote: "Latest {limit} notifications from this session (not saved on exit).",
   activityOpenInPanel: "Open in panel",
   activityEmptyTitle: "No activity yet",
-  activityPanelEmpty: "Notifications and status bar messages (connections, query results, errors) are kept here so you can read them later.",
-  ipcValidationActivity: "Unexpected response from the backend for \"{command}\". The app and its backend may be out of sync.",
-  ipcValidationHint: "Copy this and include it when reporting the problem. It contains no row data or secrets.",
+  activityPanelEmpty:
+    "Notifications and status bar messages (connections, query results, errors) are kept here so you can read them later.",
+  ipcValidationActivity:
+    'Unexpected response from the backend for "{command}". The app and its backend may be out of sync.',
+  ipcValidationHint:
+    "Copy this and include it when reporting the problem. It contains no row data or secrets.",
   ipcValidationCopy: "Copy diagnostics",
   ipcValidationCopied: "Copied",
   activityShowDetail: "Show details",
@@ -77,13 +80,16 @@ const en = {
   outputRerun: "Run again",
   outputRerunHint: "Runs in a new tab on the current connection, through the usual safety checks",
   outputNeedsConnection: "Connect to a database first",
-  outputRerunOtherConnection: "This ran on \"{name}\". Switch to that connection to run it again.",
+  outputRerunOtherConnection: 'This ran on "{name}". Switch to that connection to run it again.',
   outputCopySql: "Copy SQL",
   outputCopied: "SQL copied",
-  outputOpenTruncatedDisabled: "This SQL was shortened to save memory, so it cannot be opened in the editor. Open it again from the history.",
+  outputOpenTruncatedDisabled:
+    "This SQL was shortened to save memory, so it cannot be opened in the editor. Open it again from the history.",
   outputCopyFailed: "Could not copy the SQL to the clipboard",
-  outputCopiedTruncated: "Copied the first {kept} of {total} characters (older entries keep only the beginning)",
-  outputSqlTruncated: "Showing the first {kept} of {total} characters. Older entries keep only the beginning of long SQL to save memory.",
+  outputCopiedTruncated:
+    "Copied the first {kept} of {total} characters (older entries keep only the beginning)",
+  outputSqlTruncated:
+    "Showing the first {kept} of {total} characters. Older entries keep only the beginning of long SQL to save memory.",
   cmdkOutput: "Show output (executed statements)",
   cmdkActivityPanel: "Show activity in the bottom panel",
   statusOpenMessages: "Show history in Activity",
@@ -105,7 +111,8 @@ const en = {
   bottomPanelResizeAria: "Resize the bottom panel",
   bottomPanelStripAria: "Bottom panel shortcuts",
   aiSqlTitle: "AI explain",
-  aiSqlEmpty: "Select SQL in the editor and choose \"Explain this SQL\" or \"Suggest optimizations\" from the right-click menu or the command palette.",
+  aiSqlEmpty:
+    'Select SQL in the editor and choose "Explain this SQL" or "Suggest optimizations" from the right-click menu or the command palette.',
   aiSqlMenuExplain: "Explain this SQL (AI)",
   aiSqlMenuRewrite: "Suggest optimizations (AI)",
   aiSqlCmdExplain: "Explain this SQL (AI)",
@@ -116,21 +123,26 @@ const en = {
   aiSqlSourceAll: "Target SQL (entire editor)",
   aiSqlRunning: "Asking the AI...",
   aiResultSummaryTitle: "AI summary",
-  aiResultSummaryEmpty: "Choose \"AI summary\" in the result toolbar to get trends, outliers and next queries for the result.",
+  aiResultSummaryEmpty:
+    'Choose "AI summary" in the result toolbar to get trends, outliers and next queries for the result.',
   aiResultSummaryToolbar: "AI summary",
   aiResultSummaryToolbarTitle: "Summarize this result with AI: trends, outliers and follow-up queries",
   aiResultSummaryButton: "Summarize",
   aiResultSummarySource: "Result of: {title}",
-  aiResultSummarySends: "Sends: SQL ({sql}), dialect ({dialect}), column names, types and statistics ({columns} columns). {rows}",
+  aiResultSummarySends:
+    "Sends: SQL ({sql}), dialect ({dialect}), column names, types and statistics ({columns} columns). {rows}",
   aiResultSummaryRowsNone: "No cell values.",
   aiResultSummaryRowsSent: "Cell values of the first {count} rows.",
   aiResultSummaryRowsTitle: "Send row data to the AI?",
-  aiResultSummaryRowsBody: "\"Allow sending row data\" is on, so the first rows of this result (cell values, with long cells cut) will be sent to the Anthropic API.",
-  aiResultSummaryProdBody: "This connection is marked as production. The SQL and column statistics of this result will be sent to the Anthropic API.",
+  aiResultSummaryRowsBody:
+    '"Allow sending row data" is on, so the first rows of this result (cell values, with long cells cut) will be sent to the Anthropic API.',
+  aiResultSummaryProdBody:
+    "This connection is marked as production. The SQL and column statistics of this result will be sent to the Anthropic API.",
   aiResultSummaryTrends: "Trends",
   aiResultSummaryAnomalies: "Outliers and things to check",
   aiResultSummaryNext: "What to look at next",
-  aiResultSummaryNextNote: "Suggested read-only queries. Inserting only adds them to the editor; nothing is run.",
+  aiResultSummaryNextNote:
+    "Suggested read-only queries. Inserting only adds them to the editor; nothing is run.",
   aiResultSummaryInsert: "Insert into editor",
   aiResultSummaryInserted: "Inserted into the editor. Not executed yet.",
   aiSqlCancel: "Stop",
@@ -141,9 +153,10 @@ const en = {
   aiSqlTablesSome: "{count} tables",
   aiSqlTablesNone: "none",
   aiSqlScopeTitle: "Send the SQL to the AI?",
-  aiSqlScopeBody: "This needs the SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  aiSqlScopeBody: 'This needs the SQL text, but the send scope is set to "Schema only". Send it this time?',
   aiSqlProdTitle: "Send the SQL to the AI?",
-  aiSqlProdBody: "This connection is marked as production. The SQL and table definitions will be sent to the Anthropic API.",
+  aiSqlProdBody:
+    "This connection is marked as production. The SQL and table definitions will be sent to the Anthropic API.",
   aiSqlConfirmSend: "Send",
   aiSqlError: "AI request failed: {message}",
   aiSqlApplyError: "Could not apply to the editor: {message}. Press Apply again to retry.",
@@ -158,12 +171,16 @@ const en = {
   aiSqlNoChange: "The proposal is identical to the original SQL.",
   aiSqlDiffAdded: "added",
   aiSqlDiffRemoved: "removed",
-  aiSqlRewriteWarning: "This is a suggestion, not a guarantee of equivalence. Check the result (for example with EXPLAIN and a row comparison) before running it.",
-  aiSqlMaskedNote: "String literals were blanked before sending and could not be matched back to your values, so the proposal contains blank literals. Applying it would lose those values.",
-  aiSqlRestoredNote: "String literals were blanked before sending; your original values were put back into the proposal in order of appearance. Check that they are in the right places.",
+  aiSqlRewriteWarning:
+    "This is a suggestion, not a guarantee of equivalence. Check the result (for example with EXPLAIN and a row comparison) before running it.",
+  aiSqlMaskedNote:
+    "String literals were blanked before sending and could not be matched back to your values, so the proposal contains blank literals. Applying it would lose those values.",
+  aiSqlRestoredNote:
+    "String literals were blanked before sending; your original values were put back into the proposal in order of appearance. Check that they are in the right places.",
   aiSqlApplyAnyway: "Apply anyway",
   aiSqlMissingTitle: "Apply SQL with missing values?",
-  aiSqlMissingBody: "The proposal contains blank string literals instead of your values. Applying it will put a SQL with missing values into the editor.",
+  aiSqlMissingBody:
+    "The proposal contains blank string literals instead of your values. Applying it will put a SQL with missing values into the editor.",
   aiSqlStmtTitle: "The number of statements differs",
   aiSqlStmtBody: "The original has {before} statement(s) but the proposal has {after}. Apply it anyway?",
   aiSqlApply: "Apply to editor",
@@ -171,8 +188,10 @@ const en = {
   aiSqlTabClosed: "The tab was closed, so nothing was applied.",
   aiSqlApplyCancelled: "Apply cancelled.",
   aiSqlMovedTitle: "The original SQL has changed",
-  aiSqlMovedRangeBody: "The editor no longer matches the SQL this proposal was based on. Replace the matching statement with the proposal?",
-  aiSqlMovedAllBody: "The editor no longer matches the SQL this proposal was based on, and it could not be located. Replace the entire editor contents with the proposal?",
+  aiSqlMovedRangeBody:
+    "The editor no longer matches the SQL this proposal was based on. Replace the matching statement with the proposal?",
+  aiSqlMovedAllBody:
+    "The editor no longer matches the SQL this proposal was based on, and it could not be located. Replace the entire editor contents with the proposal?",
   aiSqlMovedConfirm: "Replace",
   healthTitle: "Connection health",
   healthDesc:
@@ -201,7 +220,7 @@ const en = {
   healthReconnect: "Reconnect",
   healthReconnected: "Reconnected {name}",
   healthReconnectFailed: "Could not reconnect {name}",
-  toastSshTunnelLost: "The SSH tunnel for \"{name}\" was closed.",
+  toastSshTunnelLost: 'The SSH tunnel for "{name}" was closed.',
   healthSummary: "{up} of {open} up",
   healthSummaryDown: "{count} down",
   healthSummaryTimeout: "{count} timed out",
@@ -232,7 +251,8 @@ const en = {
   historyStatusFilterError: "Errors only",
   historyPeriodFilterLabel: "Filter by period",
   historySpeedFilterLabel: "Sort and filter by execution time",
-  historySpeedFilterHint: "Applies only to the history already loaded (the most recent entries within the current filters)",
+  historySpeedFilterHint:
+    "Applies only to the history already loaded (the most recent entries within the current filters)",
   historySpeedFilterRecent: "Newest",
   historySpeedFilterSlowest: "Slowest first",
   historySpeedFilterSlow: "1 s or more",
@@ -242,7 +262,8 @@ const en = {
   aiHistoryToggle: "AI search",
   aiHistoryToggleHint: "Find history in plain language or generate a work summary (sends SQL to the AI)",
   aiHistoryPanelLabel: "AI history search",
-  aiHistoryScopeHint: "Targets the history matching the filters below (search text, period, status, connection).",
+  aiHistoryScopeHint:
+    "Targets the history matching the filters below (search text, period, status, connection).",
   aiHistoryQueryLabel: "What are you looking for?",
   aiHistoryQueryPlaceholder: "e.g. last week's sales aggregation query",
   aiHistorySearchRun: "Search",
@@ -251,21 +272,25 @@ const en = {
   aiHistoryCancel: "Cancel",
   aiHistoryCancelled: "Cancelled.",
   aiHistoryNoCandidates: "There is no history to send. Adjust the filters.",
-  aiHistoryOverflow: "More than {max} history entries match. Only the newest {max} are used; narrow the period to avoid missing any.",
+  aiHistoryOverflow:
+    "More than {max} history entries match. Only the newest {max} are used; narrow the period to avoid missing any.",
   aiHistoryTruncated: "Some older entries were left out because of the size limit. Narrow the period.",
   aiHistoryConfirmTitle: "Send history SQL to the AI?",
-  aiHistoryConfirmBody: "The SQL text of {count} history entries (period: {period} / connections: {connections} / databases: {databases}) will be sent to the AI provider. SQL: {sql}",
+  aiHistoryConfirmBody:
+    "The SQL text of {count} history entries (period: {period} / connections: {connections} / databases: {databases}) will be sent to the AI provider. SQL: {sql}",
   aiHistoryConfirmSqlMasked: "string literals and comment contents are blanked",
   aiHistoryConfirmSqlRaw: "literals are sent as they are",
-  aiHistoryConfirmScopeOnly: "Your send scope is \"Schema only\", but this feature sends SQL text.",
+  aiHistoryConfirmScopeOnly: 'Your send scope is "Schema only", but this feature sends SQL text.',
   aiHistoryConfirmProduction: "Includes history of production connections.",
-  aiHistoryConfirmProductionUnknown: "Connection info could not be loaded, so production status is unknown. Treating this as including production history.",
+  aiHistoryConfirmProductionUnknown:
+    "Connection info could not be loaded, so production status is unknown. Treating this as including production history.",
   aiHistoryFetchFailed: "{count} entries were left out because their SQL could not be loaded.",
   aiHistoryFetchAllFailed: "Could not load the SQL of any history entry. Please try again.",
   aiHistoryConfirmSend: "Send",
   aiHistoryConnUnknown: "unknown",
   aiHistoryPeriodRange: "{from} - {to}",
-  aiHistorySends: "Sends: SQL, execution time, status and connection name and database name [{databases}] of {count} history entries (SQL: {sql})",
+  aiHistorySends:
+    "Sends: SQL, execution time, status and connection name and database name [{databases}] of {count} history entries (SQL: {sql})",
   aiHistoryNoMatches: "No matching history was found.",
   aiHistoryMatchScore: "Match {score}",
   aiHistoryOpen: "Restore into the editor",
@@ -295,7 +320,7 @@ const en = {
 
   snippetSearchPlaceholder: "Filter snippets...",
   snippetShowAllScopes: "Show all scopes",
-  snippetEmpty: "No snippets yet. Use \"Save snippet\" in the editor, or + above.",
+  snippetEmpty: 'No snippets yet. Use "Save snippet" in the editor, or + above.',
   snippetNoMatches: "No snippets match the filter.",
   snippetFolderNone: "(No folder)",
   snippetInsertHint: "Double-click to insert into the editor",
@@ -316,7 +341,8 @@ const en = {
   planWatchTitle: "Execution plan watch — {name}",
   planWatchClose: "Close",
   planWatchEmptyTitle: "No watched snippets",
-  planWatchEmpty: "Right-click a snippet and choose \"Watch execution plan\" to record EXPLAIN plan generations and detect regressions.",
+  planWatchEmpty:
+    'Right-click a snippet and choose "Watch execution plan" to record EXPLAIN plan generations and detect regressions.',
   planWatchSnippetMissing: "(deleted snippet)",
   planWatchGenerationCount: "{count} generations",
   planWatchNoGenerations: "No plan captured yet. Refresh while connected to record the first generation.",
@@ -326,7 +352,8 @@ const en = {
   planWatchPaneFrom: "From (older)",
   planWatchPaneTo: "To (newer)",
   planWatchNoChanges: "No structural changes between the selected generations.",
-  planWatchSameGeneration: "The source and the target are the same generation, so there is nothing to compare. Pick a different generation.",
+  planWatchSameGeneration:
+    "The source and the target are the same generation, so there is nothing to compare. Pick a different generation.",
   planWatchChangeAccess: "{object}: access method changed {before} → {after}",
   planWatchChangeIndex: "{object}: index changed {before} → {after}",
   planWatchChangeJoin: "{object}: join method changed {before} → {after}",
@@ -337,16 +364,19 @@ const en = {
   planWatchUnwatchHint: "Remove this snippet from the plan watch and delete its stored generations.",
   planWatchRefresh: "Refresh plans",
   planWatchRefreshing: "Refreshing...",
-  planWatchRefreshHint: "Run EXPLAIN for every watched snippet and record a new generation when the plan changed.",
+  planWatchRefreshHint:
+    "Run EXPLAIN for every watched snippet and record a new generation when the plan changed.",
   planWatchNeedConnection: "Connect to this profile to refresh plans.",
-  planWatchLocalOnlyNote: "Plans are stored locally only. EXPLAIN runs are read-only and never recorded to query history.",
+  planWatchLocalOnlyNote:
+    "Plans are stored locally only. EXPLAIN runs are read-only and never recorded to query history.",
   planWatchChangedToast: "Execution plan changed for {count} watched snippet(s)",
   planWatchRefreshFailedToast: "Plan check failed for {name}: {error}",
 
   schemaDriftTitle: "Schema drift timeline — {name}",
   schemaDriftClose: "Close",
   schemaDriftEmptyTitle: "No snapshots yet",
-  schemaDriftEmpty: "Connect to this profile to record the first schema snapshot (enable \"Snapshot schema on connect\" in Settings if it's off).",
+  schemaDriftEmpty:
+    'Connect to this profile to record the first schema snapshot (enable "Snapshot schema on connect" in Settings if it\'s off).',
   schemaDriftGenerationTables: "{count} tables",
   schemaDriftLatestSuffix: "(latest)",
   schemaDriftOmittedBadge: "too large to store in full",
@@ -354,11 +384,13 @@ const en = {
   schemaDriftCompareTo: "To",
   schemaDriftLatestOption: "{time} (latest)",
   schemaDriftPickTwo: "Pick two different snapshots to compare.",
-  schemaDriftOmittedNote: "One of the selected snapshots was too large to store in full and can't be diffed in detail.",
+  schemaDriftOmittedNote:
+    "One of the selected snapshots was too large to store in full and can't be diffed in detail.",
   schemaDriftComparing: "Comparing...",
   schemaDriftRetry: "Retry",
   schemaDriftNoChanges: "No differences between the selected snapshots.",
-  schemaDriftDifferentTarget: "These snapshots are of different targets (database / schema), so they are not compared.",
+  schemaDriftDifferentTarget:
+    "These snapshots are of different targets (database / schema), so they are not compared.",
   schemaDriftTableAddedLabel: "table added",
   schemaDriftTableRemovedLabel: "table removed",
   schemaDriftColAdded: "{count} column(s) added",
@@ -371,7 +403,8 @@ const en = {
   schemaDriftCapturing: "Capturing...",
   schemaDriftCaptureHint: "Capture a schema snapshot for this connection's default database right now.",
   schemaDriftNeedConnection: "Connect to this profile to capture a snapshot.",
-  schemaDriftLocalOnlyNote: "Snapshots are stored locally only. Capturing them is read-only and never recorded to query history.",
+  schemaDriftLocalOnlyNote:
+    "Snapshots are stored locally only. Capturing them is read-only and never recorded to query history.",
   schemaDriftChangedToast: "Schema changed since the last snapshot — {detail}",
   schemaDriftRefreshFailedToast: "Schema drift check failed: {error}",
   schemaDriftToastOpen: "Open timeline",
@@ -414,7 +447,8 @@ const en = {
   settingsSyntaxHighlighting: "Syntax highlighting",
   settingsSyntaxHelp: "Editing colors for the {theme} theme.",
   settingsSyntaxPresetLabel: "Preset",
-  settingsSyntaxPresetHelp: "Apply a preset palette to the {theme} theme. Individual colors can still be tweaked below.",
+  settingsSyntaxPresetHelp:
+    "Apply a preset palette to the {theme} theme. Individual colors can still be tweaked below.",
   settingsSyntaxPresetCustom: "Custom",
   settingsSyntaxPresetDefaultLight: "Default (Light)",
   settingsSyntaxPresetDefaultDark: "Default (Dark)",
@@ -456,29 +490,38 @@ const en = {
   settingsStreaming: "Record streaming",
   settingsStreamingHelp: "Controls how the records panel and the preview before/after panels load rows.",
   settingsDefaultDisplayCount: "Default display count",
-  settingsDefaultDisplayCountHelp: "Number of rows shown immediately. Also used as the LIMIT when opening a table.",
+  settingsDefaultDisplayCountHelp:
+    "Number of rows shown immediately. Also used as the LIMIT when opening a table.",
   settingsStreamPrefetchSize: "Stream prefetch size",
   settingsStreamPrefetchSizeHelp: "Chunk size used when fetching additional rows after the initial batch.",
   settingsAutoLimit: "Auto LIMIT",
-  settingsAutoLimitHelp: "Automatically caps ad-hoc SELECT queries from the editor that have no LIMIT, so a forgotten LIMIT can't stream millions of rows.",
+  settingsAutoLimitHelp:
+    "Automatically caps ad-hoc SELECT queries from the editor that have no LIMIT, so a forgotten LIMIT can't stream millions of rows.",
   settingsAutoLimitEnabled: "Enable auto LIMIT",
-  settingsAutoLimitEnabledHelp: "Append a LIMIT to editor SELECT/WITH queries that don't already have one. A badge lets you fetch all rows in one click.",
+  settingsAutoLimitEnabledHelp:
+    "Append a LIMIT to editor SELECT/WITH queries that don't already have one. A badge lets you fetch all rows in one click.",
   settingsAutoLimitCount: "Auto LIMIT rows",
   settingsAutoLimitCountHelp: "Row cap applied when auto LIMIT kicks in.",
   settingsSqlLint: "SQL syntax check",
-  settingsSqlLintHelp: "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
+  settingsSqlLintHelp:
+    "Underlines likely syntax errors in the editor as you type, before you run — a best-effort editing aid, not a safety check.",
   settingsSqlLintEnabled: "Enable syntax check",
-  settingsSqlLintEnabledHelp: "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
+  settingsSqlLintEnabledHelp:
+    "Flags misspelled keywords (SELEC, FRM, WHER), empty clauses (FROM WHERE), extra commas, GROUP / ORDER without BY, statements that end mid-clause, misordered clauses (e.g. WHERE after ORDER BY), unmatched brackets, and unterminated strings or comments, following the connected driver's dialect. Conservative by design: it prefers missing an error over a false positive.",
 
   settingsPreflightImpact: "Impact-row preflight",
-  settingsPreflightImpactHelp: "For a plain UPDATE/DELETE in the editor, show a badge estimating how many rows it will affect — before you run — so an unexpected magnitude (or a whole-table write) is visible ahead of the confirmation dialog.",
+  settingsPreflightImpactHelp:
+    "For a plain UPDATE/DELETE in the editor, show a badge estimating how many rows it will affect — before you run — so an unexpected magnitude (or a whole-table write) is visible ahead of the confirmation dialog.",
   settingsPreflightImpactEnabled: "Show impact-row badge",
-  settingsPreflightImpactEnabledHelp: "Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show \"can't estimate\", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.",
+  settingsPreflightImpactEnabledHelp:
+    'Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show "can\'t estimate", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.',
 
   settingsPlanWatch: "Execution plan watch",
-  settingsPlanWatchHelp: "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
+  settingsPlanWatchHelp:
+    "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
   settingsPlanWatchOnConnect: "Check watched plans on connect",
-  settingsPlanWatchOnConnectHelp: "When connecting, run EXPLAIN for the profile's watched snippets and record a new generation when the plan changed. Read-only and never written to query history. Turn off to only refresh manually.",
+  settingsPlanWatchOnConnectHelp:
+    "When connecting, run EXPLAIN for the profile's watched snippets and record a new generation when the plan changed. Read-only and never written to query history. Turn off to only refresh manually.",
   settingsFlightRecorder: "DML flight recorder",
   settingsHistory: "Query history",
   settingsHistoryHelp:
@@ -487,31 +530,38 @@ const en = {
   settingsHistoryRetentionDaysHelp:
     "Entries older than this are deleted automatically (also right after you change it). 0 keeps them until the 10,000-row cap evicts them.",
   settingsHistoryRetentionPruned: "Deleted {count} old history entries.",
-  settingsFlightRecorderHelp: "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
+  settingsFlightRecorderHelp:
+    "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   settingsFlightRecorderEnabled: "Capture writes for undo",
-  settingsFlightRecorderEnabledHelp: "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
+  settingsFlightRecorderEnabledHelp:
+    "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
   settingsFlightRecorderRowCap: "Row cap per write",
-  settingsFlightRecorderRowCapHelp: "A write that would affect more rows than this runs normally but is not captured (no undo available for it).",
+  settingsFlightRecorderRowCapHelp:
+    "A write that would affect more rows than this runs normally but is not captured (no undo available for it).",
   settingsFlightRecorderRetentionDays: "Retention period (days)",
-  settingsFlightRecorderRetentionDaysHelp: "Captured images older than this are pruned automatically. 0 keeps them indefinitely (still capped by total row count).",
+  settingsFlightRecorderRetentionDaysHelp:
+    "Captured images older than this are pruned automatically. 0 keeps them indefinitely (still capped by total row count).",
   flightRecorderTitle: "Flight recorder / Undo",
-  flightRecorderIntro: "Best-effort local safety net. Only single-statement INSERT/UPDATE/DELETE are captured; DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
+  flightRecorderIntro:
+    "Best-effort local safety net. Only single-statement INSERT/UPDATE/DELETE are captured; DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   flightRecorderClose: "Close",
   flightRecorderLoading: "Loading…",
   flightRecorderEmptyTitle: "No captured writes yet",
-  flightRecorderEmpty: "Run a single INSERT/UPDATE/DELETE with the flight recorder enabled and it will show up here.",
+  flightRecorderEmpty:
+    "Run a single INSERT/UPDATE/DELETE with the flight recorder enabled and it will show up here.",
   flightRecorderRowsAffected: "{rows} row(s) affected",
   flightRecorderUndoneBadge: "undone",
   errorFlightAlreadyUndone: "This operation has already been undone.",
   errorFlightPrimaryKeyUnresolved: "Could not identify the primary key columns.",
-  errorViewBaseUnresolved: "Cannot preview: the base tables of this view could not be determined (a non-transactional table such as MyISAM would not be rolled back).",
+  errorViewBaseUnresolved:
+    "Cannot preview: the base tables of this view could not be determined (a non-transactional table such as MyISAM would not be rolled back).",
   errorFlightDriverMismatch: "The connected driver differs from the one used when this was recorded.",
   errorFlightProfileMismatch: "The connected profile differs from the one used when this was recorded.",
   flightRecorderUndoAction: "Undo",
   flightRecorderRedoAction: "Redo",
   flightRecorderRedoing: "Redoing…",
   flightRecorderRedoConfirmTitle: "Redo this write?",
-  flightRecorderRedoConfirmBody: "This re-applies the original write to \"{table}\" with the following SQL:",
+  flightRecorderRedoConfirmBody: 'This re-applies the original write to "{table}" with the following SQL:',
   flightRecorderRedoApplied: "Redone ({rows} row(s) affected).",
   flightRecorderNothingToRedo: "Nothing to redo — the data already matches the written state.",
   flightRecorderUndoing: "Undoing…",
@@ -519,7 +569,7 @@ const en = {
   flightRecorderNothingToUndo: "Nothing to undo — the data already matches the desired state.",
   flightRecorderNoStatements: "(no statement — every affected row is already resolved)",
   flightRecorderUndoConfirmTitle: "Undo this write?",
-  flightRecorderUndoConfirmBody: "This runs the following reverse SQL against \"{table}\":",
+  flightRecorderUndoConfirmBody: 'This runs the following reverse SQL against "{table}":',
   flightRecorderConflictsFound: "{count} row(s) have changed since this was captured:",
   flightRecorderConflictKey: "key {key}",
   flightRecorderConflictGone: "row no longer exists",
@@ -529,42 +579,55 @@ const en = {
   flightRecorderForceApply: "Force apply anyway",
   flightRecorderUndoApplied: "Undone ({rows} row(s) affected).",
   flightRecorderUndoBlocked: "Not applied — review the conflicts and try again.",
-  flightRecorderAlreadyRestored: "The data was already in the target state, so the record was marked as done without running any SQL.",
-  flightRecorderConflictsChanged: "Not applied — new conflicts appeared after the preview. Review them and try again.",
+  flightRecorderAlreadyRestored:
+    "The data was already in the target state, so the record was marked as done without running any SQL.",
+  flightRecorderConflictsChanged:
+    "Not applied — new conflicts appeared after the preview. Review them and try again.",
   flightRecorderClearAction: "Clear all",
   flightRecorderClearConfirmProfile: "Delete all captured writes for this connection? This cannot be undone.",
   flightRecorderClearConfirmAll: "Delete ALL captured writes for every connection? This cannot be undone.",
 
   settingsSchemaDrift: "Schema drift timeline",
-  settingsSchemaDriftHelp: "Captures a schema snapshot (tables, columns, indexes) on every connect and stores a local timeline per profile so you can see what changed since last time.",
+  settingsSchemaDriftHelp:
+    "Captures a schema snapshot (tables, columns, indexes) on every connect and stores a local timeline per profile so you can see what changed since last time.",
   settingsSchemaDriftOnConnect: "Snapshot schema on connect",
-  settingsSchemaDriftOnConnectHelp: "When connecting, capture a schema snapshot for the profile's default database and notify if it differs from the previous snapshot. Read-only and never written to query history. Turn off to only browse the stored timeline.",
+  settingsSchemaDriftOnConnectHelp:
+    "When connecting, capture a schema snapshot for the profile's default database and notify if it differs from the previous snapshot. Read-only and never written to query history. Turn off to only browse the stored timeline.",
   settingsSchemaDriftOnDdl: "Snapshot schema after DDL",
-  settingsSchemaDriftOnDdlHelp: "When a DDL statement (CREATE / ALTER / DROP ...) succeeds against the profile's default database, capture a schema snapshot and store the SQL that caused it, so the timeline shows when and by which statement the schema changed. Bursts of DDL are coalesced into one snapshot a few seconds later. Read-only; the SQL is not stored for profiles that skip query history.",
+  settingsSchemaDriftOnDdlHelp:
+    "When a DDL statement (CREATE / ALTER / DROP ...) succeeds against the profile's default database, capture a schema snapshot and store the SQL that caused it, so the timeline shows when and by which statement the schema changed. Bursts of DDL are coalesced into one snapshot a few seconds later. Read-only; the SQL is not stored for profiles that skip query history.",
   settingsSafety: "Safety",
   settingsNotifications: "Notifications",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
-  settingsConfirmProductionConnectHelp: "Show a confirmation dialog when connecting to a profile marked as production.",
+  settingsConfirmProductionConnectHelp:
+    "Show a confirmation dialog when connecting to a profile marked as production.",
   settingsConfirmDangerousQueries: "Confirm before dangerous write queries",
-  settingsConfirmDangerousQueriesHelp: "Show a confirmation dialog before running WHERE-less UPDATE/DELETE, DROP or TRUNCATE. Production profiles always confirm.",
+  settingsConfirmDangerousQueriesHelp:
+    "Show a confirmation dialog before running WHERE-less UPDATE/DELETE, DROP or TRUNCATE. Production profiles always confirm.",
   settingsResultsInNewTab: "Keep results in new tabs",
-  settingsResultsInNewTabHelp: "Run each editor query in a new tab so previous results stay open for comparison. Use Cmd/Ctrl+Shift+Enter for a one-off new-tab run.",
+  settingsResultsInNewTabHelp:
+    "Run each editor query in a new tab so previous results stay open for comparison. Use Cmd/Ctrl+Shift+Enter for a one-off new-tab run.",
   shortcutRunNewTabTitle: "Cmd/Ctrl+Shift+Enter",
   shortcutRunNewTabDesc: "Run the query in a new result tab, keeping the current result.",
   shortcutRunStatementTitle: "Cmd/Ctrl+Alt+Enter",
   shortcutRunStatementDesc:
     "Run only the single statement under the cursor (selection takes priority when present).",
   settingsQueryTimeout: "Query timeout (seconds)",
-  settingsQueryTimeoutHelp: "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
+  settingsQueryTimeoutHelp:
+    "Automatically cancel an editor query that runs longer than this. 0 disables the timeout. The connection stays open when a query is cancelled.",
   settingsQueryTimeoutUnlimited: "No timeout — queries run unbounded",
   settingsConnectTimeout: "Connect timeout (seconds)",
-  settingsConnectTimeoutHelp: "Abort a connection attempt (SSH tunnel + database) that takes longer than this, instead of hanging on an unreachable host. Clamped to 5–300 seconds.",
+  settingsConnectTimeoutHelp:
+    "Abort a connection attempt (SSH tunnel + database) that takes longer than this, instead of hanging on an unreachable host. Clamped to 5–300 seconds.",
   settingsAutoReconnect: "Auto-reconnect dropped connections",
-  settingsAutoReconnectHelp: "When a connection drops (idle timeout, network/VPN loss, SSH tunnel drop), reconnects automatically with the same profile, waiting longer between attempts. A drop during a transaction shows an error instead, so a partial commit can't happen. When off, a manual Reconnect button appears.",
+  settingsAutoReconnectHelp:
+    "When a connection drops (idle timeout, network/VPN loss, SSH tunnel drop), reconnects automatically with the same profile, waiting longer between attempts. A drop during a transaction shows an error instead, so a partial commit can't happen. When off, a manual Reconnect button appears.",
   settingsAutoReconnectMaxRetries: "Max reconnect attempts",
-  settingsAutoReconnectMaxRetriesHelp: "How many times to retry (with growing backoff) before giving up and showing a manual Reconnect button.",
+  settingsAutoReconnectMaxRetriesHelp:
+    "How many times to retry (with growing backoff) before giving up and showing a manual Reconnect button.",
   settingsQueryNotifications: "Notify when a slow query finishes",
-  settingsQueryNotificationsHelp: "Shows an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while the window is in the background. The notification contains only row counts, timing, and the first line of an error — never the SQL or its results. Clicking it brings the window to the front.",
+  settingsQueryNotificationsHelp:
+    "Shows an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while the window is in the background. The notification contains only row counts, timing, and the first line of an error — never the SQL or its results. Clicking it brings the window to the front.",
   settingsQueryNotificationThreshold: "Notify after (seconds)",
   settingsQueryNotificationThresholdHelp: "Only notify for queries that took at least this long to finish.",
   notifyQueryDoneTitle: "Query finished",
@@ -575,16 +638,19 @@ const en = {
   notifyQueryCancelledTitle: "Query cancelled",
   notifyQueryCancelledBody: "The running query was cancelled; rows already loaded are kept.",
   settingsTabPersistence: "Tab persistence",
-  settingsTabPersistenceHelp: "Choose what to do with the tabs that were open when you last disconnected from a profile.",
+  settingsTabPersistenceHelp:
+    "Choose what to do with the tabs that were open when you last disconnected from a profile.",
   settingsTabRestoreMode: "Restore behavior",
   settingsTabRestoreModeAlways: "Always restore",
   settingsTabRestoreModeAsk: "Ask each time",
   settingsTabRestoreModeNever: "Never restore",
   settingsAppearance: "Appearance",
   settingsFontSize: "Font size (px)",
-  settingsFontSizeHelp: "Base font size in pixels. Scales the entire interface, including the SQL editor and result grid. Allowed range: {min}–{max} px (default {default}).",
+  settingsFontSizeHelp:
+    "Base font size in pixels. Scales the entire interface, including the SQL editor and result grid. Allowed range: {min}–{max} px (default {default}).",
   settingsDensity: "Display density",
-  settingsDensityHelp: "Adjusts the result grid's row height and cell padding, independently of the font size.",
+  settingsDensityHelp:
+    "Adjusts the result grid's row height and cell padding, independently of the font size.",
   settingsDensityCompact: "Compact",
   settingsDensityNormal: "Normal",
   settingsDensitySpacious: "Spacious",
@@ -596,7 +662,8 @@ const en = {
   settingsHistoryRetentionLoadFailed: "Could not load the history retention period: {error}",
   settingsFontSample: "The quick brown fox 0123",
   settingsThemePreset: "Theme preset",
-  settingsThemePresetHelp: "Switches the whole color palette. Accent color, density and syntax colors are kept as-is. Dracula, Nord, One Dark and Catppuccin Mocha are dark-only; the other presets follow the light/dark toggle.",
+  settingsThemePresetHelp:
+    "Switches the whole color palette. Accent color, density and syntax colors are kept as-is. Dracula, Nord, One Dark and Catppuccin Mocha are dark-only; the other presets follow the light/dark toggle.",
   themePresetDefault: "Default",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -607,7 +674,8 @@ const en = {
   themePresetHighContrast: "High contrast",
   themePresetColorblind: "Colorblind-safe",
   settingsMotionPreference: "Motion",
-  settingsMotionPreferenceHelp: "Controls how much animation the app shows. \"Follow system\" respects the OS's reduce-motion setting; \"Full\" and \"Reduced\" override the OS setting either way.",
+  settingsMotionPreferenceHelp:
+    'Controls how much animation the app shows. "Follow system" respects the OS\'s reduce-motion setting; "Full" and "Reduced" override the OS setting either way.',
   settingsMotionPreferenceSystem: "Follow system",
   settingsMotionPreferenceFull: "Full",
   settingsMotionPreferenceReduced: "Reduced",
@@ -617,7 +685,8 @@ const en = {
   themePreviewChipText: "Text",
   themePreviewChipKeyword: "Keyword",
   settingsAccentColor: "Accent color",
-  settingsAccentColorHelp: "Tints buttons, selection, focus rings and active tabs. Pick a preset or a custom color; the text on the accent is chosen automatically to keep contrast.",
+  settingsAccentColorHelp:
+    "Tints buttons, selection, focus rings and active tabs. Pick a preset or a custom color; the text on the accent is chosen automatically to keep contrast.",
   settingsAccentCustom: "Custom accent color",
   settingsAccentDefault: "Theme default",
   settingsAccentBlue: "Blue",
@@ -628,7 +697,8 @@ const en = {
   settingsAccentAmber: "Amber",
   settingsAccentRose: "Rose",
   settingsLogs: "Application logs",
-  settingsLogsHelp: "Recent diagnostic logs from the backend. Useful when reporting a problem. Capped at about 1 MB on disk; older lines are discarded automatically.",
+  settingsLogsHelp:
+    "Recent diagnostic logs from the backend. Useful when reporting a problem. Capped at about 1 MB on disk; older lines are discarded automatically.",
   settingsLogsRefresh: "Refresh",
   settingsLogsCopy: "Copy",
   settingsLogsCopied: "Copied",
@@ -673,7 +743,8 @@ const en = {
     "Replace all current app settings with the imported file? Invalid or out-of-range values fall back to defaults automatically.",
   settingsBackupImportSuccess: "Settings imported.",
   settingsBackupImportError: "Settings import failed: {error}",
-  settingsBackupExcludesProfiles: "Connection profiles and secrets are not included (use Export/Import connection profiles for those).",
+  settingsBackupExcludesProfiles:
+    "Connection profiles and secrets are not included (use Export/Import connection profiles for those).",
   settingsBackupResetAll: "Reset all to defaults",
   settingsBackupResetAllTitle: "Reset all settings",
   settingsBackupResetAllConfirm:
@@ -688,11 +759,13 @@ const en = {
   reconnectDetected: "Connection lost — reconnecting...",
   // 明示トランザクション。
   txBegin: "Begin transaction",
-  txBeginHelp: "Start an explicit transaction. Subsequent queries run inside it until you commit or roll back.",
+  txBeginHelp:
+    "Start an explicit transaction. Subsequent queries run inside it until you commit or roll back.",
   txCommit: "Commit",
   txRollback: "Rollback",
   txActiveBadge: "TX",
-  txListBadgeTitle: "This connection holds an uncommitted transaction. Switching away keeps it open; commit or roll back before disconnecting.",
+  txListBadgeTitle:
+    "This connection holds an uncommitted transaction. Switching away keeps it open; commit or roll back before disconnecting.",
   connSwitchTxTitle: "This connection has an open transaction",
   connSwitchTxBody:
     "The current connection still holds an uncommitted transaction. It stays open in the background while you switch, so its changes and row locks remain until you come back and commit or roll back.",
@@ -713,7 +786,8 @@ const en = {
   txRolledBack: "Transaction rolled back",
   savepointButton: "SAVEPOINT",
   savepointButtonN: "SAVEPOINT ({count})",
-  savepointHelp: "Create a SAVEPOINT in this transaction, or roll back to / release an existing one. The list may drift after hand-written control statements or MySQL DDL (implicit commit).",
+  savepointHelp:
+    "Create a SAVEPOINT in this transaction, or roll back to / release an existing one. The list may drift after hand-written control statements or MySQL DDL (implicit commit).",
   txFinishFailedHint: "The transaction has ended. Check on the server whether the commit took effect.",
   txAbortedRolledBack: "The transaction was in an error state, so it was rolled back instead of committed.",
   savepointCreate: "Create SAVEPOINT",
@@ -723,7 +797,8 @@ const en = {
   savepointRolledBack: "Rolled back to SAVEPOINT {name}",
   savepointReleased: "SAVEPOINT {name} released",
   savepointRollbackConfirmTitle: "Roll back to SAVEPOINT?",
-  savepointRollbackConfirmBody: "Changes made after {name} in this transaction will be discarded, and newer SAVEPOINTs are removed.",
+  savepointRollbackConfirmBody:
+    "Changes made after {name} in this transaction will be discarded, and newer SAVEPOINTs are removed.",
   savepointRollbackConfirmAction: "Roll back",
   productionConfirmTitle: "Connect to production?",
   productionConfirmAction: "Connect",
@@ -753,16 +828,20 @@ const en = {
   dangerousAiRunning: "Asking the AI...",
   dangerousAiStop: "Stop",
   dangerousAiCancelled: "Stopped.",
-  dangerousAiSends: "Sends: SQL ({sql}), detected risks, dialect ({dialect}), table definitions / foreign keys / row estimates ({tables}), production flag. No row data is sent.",
+  dangerousAiSends:
+    "Sends: SQL ({sql}), detected risks, dialect ({dialect}), table definitions / foreign keys / row estimates ({tables}), production flag. No row data is sent.",
   dangerousAiSqlMasked: "literals masked",
   dangerousAiSqlRaw: "literals included",
   dangerousAiTablesSome: "{count} tables",
   dangerousAiTablesNone: "none",
-  dangerousAiGuardNote: "AI judgments can be wrong, and the final decision is yours. This is a UX guard like the confirmations, not permission enforcement (only read-only is enforced by the backend).",
+  dangerousAiGuardNote:
+    "AI judgments can be wrong, and the final decision is yours. This is a UX guard like the confirmations, not permission enforcement (only read-only is enforced by the backend).",
   dangerousAiScopeTitle: "Send the SQL to the AI?",
-  dangerousAiScopeBody: "Impact analysis needs the SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  dangerousAiScopeBody:
+    'Impact analysis needs the SQL text, but the send scope is set to "Schema only". Send it this time?',
   dangerousAiProdTitle: "Send the SQL to the AI?",
-  dangerousAiProdBody: "This connection is marked as production. The SQL, detected risks, production flag, table definitions, foreign keys and row estimates will be sent to the Anthropic API.",
+  dangerousAiProdBody:
+    "This connection is marked as production. The SQL, detected risks, production flag, table definitions, foreign keys and row estimates will be sent to the Anthropic API.",
   dangerousAiConfirmSend: "Send",
   dangerousAiResultToggle: "Analysis result",
   dangerousAiRisk: "Risk",
@@ -773,37 +852,47 @@ const en = {
   dangerousAiRows: "Estimated rows",
   dangerousAiCascades: "Cascades",
   dangerousAiRecommendations: "Recommendations",
-  dangerousAiCascadesNote: "ON DELETE / ON UPDATE rules were not retrieved, so these are shown as possibilities.",
+  dangerousAiCascadesNote:
+    "ON DELETE / ON UPDATE rules were not retrieved, so these are shown as possibilities.",
   dangerousAiParseError: "Could not read the AI response as structured data. Raw response:",
   dangerousAiError: "AI request failed: {message}",
   dangerousAiRefused: "The AI declined this request: {message}",
   lockDiagnoseButton: "Ask AI about locks / slow queries",
-  lockDiagnoseNoTarget: "No lock waits or long-running queries to explain. Select processes to ask about them.",
+  lockDiagnoseNoTarget:
+    "No lock waits or long-running queries to explain. Select processes to ask about them.",
   lockDiagnoseTarget: "Target: {scope} ({count})",
   lockDiagnoseScopeSelection: "selected processes and linked waits",
   lockDiagnoseScopeChain: "lock wait chains",
   lockDiagnoseScopeLong: "long-running queries",
-  lockDiagnoseSends: "Sends: wait relations, running times, SQL ({sql}), database names, dialect ({dialect}), table definitions / row estimates ({tables}). No row data, DB user names or client hosts are sent.",
+  lockDiagnoseSends:
+    "Sends: wait relations, running times, SQL ({sql}), database names, dialect ({dialect}), table definitions / row estimates ({tables}). No row data, DB user names or client hosts are sent.",
   lockDiagnoseScopeTitle: "Send the queries to the AI?",
-  lockDiagnoseScopeBody: "Diagnosis needs the running SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  lockDiagnoseScopeBody:
+    'Diagnosis needs the running SQL text, but the send scope is set to "Schema only". Send it this time?',
   lockDiagnoseTablesUnknown: "tables referenced by the queries, up to {max}",
   lockDiagnoseProdTitle: "Send the queries to the AI?",
-  lockDiagnoseProdBody: "This connection is marked as production. The running SQL, wait relations, running times, table definitions and row estimates will be sent to the Anthropic API.",
+  lockDiagnoseProdBody:
+    "This connection is marked as production. The running SQL, wait relations, running times, table definitions and row estimates will be sent to the Anthropic API.",
   lockDiagnoseResultToggle: "Diagnosis result",
   lockDiagnoseWaits: "Who is waiting for what",
   lockDiagnoseStopCandidates: "Sessions that could be stopped (smallest impact first)",
-  lockDiagnoseStopNote: "The AI never kills anything. If you decide to stop one, use \"Show in list\" to select its row, then the stop buttons (with confirmation) in the list.",
+  lockDiagnoseStopNote:
+    'The AI never kills anything. If you decide to stop one, use "Show in list" to select its row, then the stop buttons (with confirmation) in the list.',
   lockDiagnoseImpact: "Impact: {level}",
   lockDiagnoseImpactHigh: "high",
   lockDiagnoseImpactMedium: "medium",
   lockDiagnoseImpactLow: "low",
   lockDiagnosePrevention: "Preventing recurrence",
-  lockDiagnoseGuardNote: "AI judgments can be wrong, and the final decision is yours. Killing a session aborts its running work and rolls back its open transaction.",
+  lockDiagnoseGuardNote:
+    "AI judgments can be wrong, and the final decision is yours. Killing a session aborts its running work and rolls back its open transaction.",
   helpAiImpactTitle: "Dangerous query impact analysis",
   helpAiImpactDesc: "Explains what a destructive statement will affect before you run it.",
-  helpAiImpactStep1: "In the dangerous-query confirmation dialog, press \"Analyze impact with AI\". It never runs automatically.",
-  helpAiImpactStep2: "Sent: the SQL (literals masked by default), the detected risks, the dialect, the production flag, and table definitions, foreign keys and row estimates of the related tables. Row data is never sent.",
-  helpAiImpactNote: "This is a UX guard like the confirmation dialog, not permission enforcement. AI judgments can be wrong; only the read-only setting is enforced by the backend.",
+  helpAiImpactStep1:
+    'In the dangerous-query confirmation dialog, press "Analyze impact with AI". It never runs automatically.',
+  helpAiImpactStep2:
+    "Sent: the SQL (literals masked by default), the detected risks, the dialect, the production flag, and table definitions, foreign keys and row estimates of the related tables. Row data is never sent.",
+  helpAiImpactNote:
+    "This is a UX guard like the confirmation dialog, not permission enforcement. AI judgments can be wrong; only the read-only setting is enforced by the backend.",
   // Shared "type to confirm" gate (#675) used by DangerousQueryDialog,
   // ConfirmDialog (drop/truncate from the connection tree), and
   // SchemaCompareView's production apply confirmation.
@@ -865,18 +954,23 @@ const en = {
   listGroupUngrouped: "(Ungrouped)",
   formGroup: "Group (optional)",
   formGroupPlaceholder: "e.g. Production, Staging, Development",
-  formGroupHelp: "Connections with the same group name are bundled under one collapsible heading in the sidebar.",
+  formGroupHelp:
+    "Connections with the same group name are bundled under one collapsible heading in the sidebar.",
   formDisplay: "Display (optional)",
   formColor: "Highlight color (optional)",
   formColorClear: "Clear",
   formIsProduction: "Mark as production",
-  formIsProductionHelp: "Production-flagged profiles can show a confirmation dialog before connect (controlled in Settings).",
+  formIsProductionHelp:
+    "Production-flagged profiles can show a confirmation dialog before connect (controlled in Settings).",
   formConfirmWrites: "Require approval for data-modifying queries",
-  formConfirmWritesHelp: "On this production connection, show an approval dialog before running any statement that isn't strictly read-only. If read only is enabled, read only takes precedence. This is a UI confirmation to prevent accidents, not a backend-enforced restriction — for hard enforcement use read only or database-side privileges.",
+  formConfirmWritesHelp:
+    "On this production connection, show an approval dialog before running any statement that isn't strictly read-only. If read only is enabled, read only takes precedence. This is a UI confirmation to prevent accidents, not a backend-enforced restriction — for hard enforcement use read only or database-side privileges.",
   formReadOnly: "Read only",
-  formReadOnlyHelp: "Reject any non-read-only SQL on this profile. Only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed; SELECT ... FOR UPDATE is also blocked.",
+  formReadOnlyHelp:
+    "Reject any non-read-only SQL on this profile. Only SELECT / SHOW / DESCRIBE / EXPLAIN / WITH are allowed; SELECT ... FOR UPDATE is also blocked.",
   formSkipHistory: "Don't record query history",
-  formSkipHistoryHelp: "Statements run on this connection are not saved to the query history. Useful when your SQL may embed passwords or other sensitive values.",
+  formSkipHistoryHelp:
+    "Statements run on this connection are not saved to the query history. Useful when your SQL may embed passwords or other sensitive values.",
 
   statusStreaming: "Streaming... {rows} rows loaded ({elapsed})",
   statusStreamingDone: "{rows} rows in {ms} ms",
@@ -908,10 +1002,8 @@ const en = {
   toastProfileDeleted: "Deleted connection “{name}”",
   statusConnecting: "Connecting to {name}...",
   toastConnected: "Connected to {name}",
-  toastTabRestoreMissing:
-    "Table “{table}” was not found and was restored as a query tab.",
-  toastTabRestoreMissingMany:
-    "{count} tables could not be found and were restored as query tabs: {table}.",
+  toastTabRestoreMissing: "Table “{table}” was not found and was restored as a query tab.",
+  toastTabRestoreMissingMany: "{count} tables could not be found and were restored as query tabs: {table}.",
   toastTabRestoreConnectionLost:
     "Could not verify saved table tabs (the connection may have dropped): {table}. They were restored as query tabs.",
   statusConnectionFailed: "Connection failed: {error}",
@@ -920,22 +1012,27 @@ const en = {
   statusRowsIn: "{rows} rows in {ms} ms",
   statusRowsAffected: "{rows} rows affected ({ms} ms)",
   statusQueryError: "Query error: {error}",
-  statusConnectionLost: "The connection may have been lost (idle timeout, network or VPN drop). The session was closed — please reconnect.",
+  statusConnectionLost:
+    "The connection may have been lost (idle timeout, network or VPN drop). The session was closed — please reconnect.",
   statusReconnect: "Reconnect",
   statusReconnectTitle: "Reconnect to {name} with the same settings",
   statusReconnecting: "Reconnecting",
   statusReconnectingAttempt: "Connection lost — reconnecting to {name}... (attempt {attempt}/{max})",
   statusReconnected: "Reconnected to {name}.",
-  statusReconnectGaveUp: "Couldn't reconnect to {name} after {max} attempts. The session was closed — please reconnect manually.",
+  statusReconnectGaveUp:
+    "Couldn't reconnect to {name} after {max} attempts. The session was closed — please reconnect manually.",
   statusReconnectBusy: "Reconnecting — the query will run once the connection is restored.",
-  statusReconnectTx: "The connection dropped during a transaction. To avoid a partial commit it was not auto-reconnected — please reconnect and re-run the transaction.",
+  statusReconnectTx:
+    "The connection dropped during a transaction. To avoid a partial commit it was not auto-reconnected — please reconnect and re-run the transaction.",
   statusDismiss: "Close this message",
   spinnerLoadingAria: "Loading",
   toastRegionAria: "Notifications",
   toastDismissAria: "Dismiss notification",
   statusSeverityCritical: "Critical",
-  statusQueryTimeout: "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
-  statusQueryTimeoutPartial: "Query timed out after {secs}s (stopped after {rows} rows). The connection is still open — raise or disable the timeout in Settings.",
+  statusQueryTimeout:
+    "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
+  statusQueryTimeoutPartial:
+    "Query timed out after {secs}s (stopped after {rows} rows). The connection is still open — raise or disable the timeout in Settings.",
   statusRunningPreview: "Running preview (will roll back)...",
   statusPreviewDone: "Preview: {rows} rows affected ({ms} ms) — rolled back, DB unchanged",
   statusPreviewError: "Preview error: {error}",
@@ -963,8 +1060,7 @@ const en = {
     "Couldn't reach the database server. Check the host and port, that the server is running, and any SSH tunnel or firewall settings.",
   errorHintConnectionLost:
     "The connection seems to have dropped — the server may have closed an idle session (wait_timeout), or the network / VPN went down. Reconnect and run the query again.",
-  errorHintAiOverloaded:
-    "The AI service is busy (rate limit or overload). Wait a little and run it again.",
+  errorHintAiOverloaded: "The AI service is busy (rate limit or overload). Wait a little and run it again.",
   errorHintTimeout:
     "The operation ran past its time limit and was cancelled. Try a narrower query (add WHERE / LIMIT), or raise the query timeout in Settings.",
   errorHintSsh:
@@ -1052,7 +1148,7 @@ const en = {
   formPickDbFileTitle: "Select database file",
   formPickCertTitle: "Select certificate / key file",
   formSqliteFileFilter: "SQLite databases",
-    formCertFileFilter: "Certificates & keys",
+  formCertFileFilter: "Certificates & keys",
   formAnyFileFilter: "All files",
   formTlsLegend: "TLS / SSL",
   formTlsMode: "TLS mode",
@@ -1098,7 +1194,7 @@ const en = {
   formInitSqlLegend: "Session init SQL",
   formInitSqlPlaceholder: "SET search_path TO app, public;\nSET time_zone = '+00:00';",
   formInitSqlPlaceholderSqlite: "PRAGMA foreign_keys = ON;\nPRAGMA busy_timeout = 5000;",
-    formInitSqlHelp:
+  formInitSqlHelp:
     "Run automatically right after each connection is established (on every pooled connection), so results are reproducible without re-running setup in each tab. Separate multiple statements with ';'. Only SET / PRAGMA or read-only statements are allowed — writes and DDL are rejected, and a failure surfaces as a connection error.",
   formConnectionOk: "Connection OK.",
   formInvalidPort: "Enter a port number between 1 and 65535.",
@@ -1112,13 +1208,13 @@ const en = {
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
   formDriverSqlite: "SQLite",
-      formMysqlLegend: "MySQL",
+  formMysqlLegend: "MySQL",
   formPostgresLegend: "PostgreSQL",
   formSqliteLegend: "SQLite",
-    formSqliteFilePath: "Database file",
+  formSqliteFilePath: "Database file",
   formSqliteFilePathPlaceholder: "/path/to/database.db",
   formSqliteFilePathHelp: "Absolute path to a SQLite database file. The file must already exist.",
-          formHost: "Host",
+  formHost: "Host",
   formPort: "Port",
   formUser: "User",
   formDatabase: "Database (optional)",
@@ -1128,8 +1224,7 @@ const en = {
   formPasswordReveal: "Show the saved password",
   formPasswordCopy: "Copy password",
   formPasswordCopied: "Copied",
-  formPasswordRevealNote:
-    "Read from the OS keyring. Hides again automatically after {seconds} seconds.",
+  formPasswordRevealNote: "Read from the OS keyring. Hides again automatically after {seconds} seconds.",
   formPasswordRevealMissing: "No saved password found in the OS keyring.",
   formPasswordRevealFailed: "Could not read the saved password",
   formUseSsh: "Use SSH tunnel",
@@ -1139,7 +1234,8 @@ const en = {
   formSshAuthKey: "Private key",
   formSshAuthAgent: "ssh-agent",
   formSshAuthPassword: "Password",
-  formSshAgentHelp: "Uses the running ssh-agent (SSH_AUTH_SOCK on macOS/Linux, the OpenSSH Authentication Agent service on Windows). Pageant is not supported.",
+  formSshAgentHelp:
+    "Uses the running ssh-agent (SSH_AUTH_SOCK on macOS/Linux, the OpenSSH Authentication Agent service on Windows). Pageant is not supported.",
   formPrivateKeyPath: "Private key path",
   formBrowse: "Browse...",
   formSshPassphrase: "Key passphrase (saved to keyring; leave unchanged to keep the existing one)",
@@ -1162,10 +1258,9 @@ const en = {
   formUrlErrPort: "The port in the URL is not a number between 1 and 65535.",
   formUrlErrMultiHost: "URLs with multiple hosts are not supported.",
   formUrlErrMalformed: "Could not read the URL. Check its format and percent-encoding.",
-  formSshConfigLoaded: "Loaded settings for \"{alias}\" from ~/.ssh/config.",
+  formSshConfigLoaded: 'Loaded settings for "{alias}" from ~/.ssh/config.',
   formUseSshJump: "Use a jump host (bastion)",
-  formSshJumpHelp:
-    "Connects through this bastion first, then to the SSH host above (2 hops total).",
+  formSshJumpHelp: "Connects through this bastion first, then to the SSH host above (2 hops total).",
   formSshJumpHost: "Jump Host",
   formSshJumpUser: "Jump User",
   formSshJumpAuthMethod: "Jump Authentication",
@@ -1182,18 +1277,21 @@ const en = {
   editorRunRunning: "Running...",
   editorRunTitle: "Run the selection (or the whole editor)",
   editorRunNewTab: "Run in new tab",
-  editorRunNewTabTitle: "Run the selection (or the whole editor) in a new result tab, keeping the current result.",
+  editorRunNewTabTitle:
+    "Run the selection (or the whole editor) in a new result tab, keeping the current result.",
   editorRunOnTableTitle: "Runs against `{database}` — selection or whole editor",
   editorPreview: "Dry Run",
   editorPreviewRunning: "Previewing...",
-  editorPreviewTitle: "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
+  editorPreviewTitle:
+    "Dry-run the statement in a transaction and show before/after — changes are rolled back.",
   editorBuilder: "Query Builder",
   editorBuilderTitle: "Build a SELECT/INSERT/UPDATE/DELETE statement from a guided form.",
   editorFormat: "Format",
   editorFormatTitle: "Format the selection (or whole editor) as SQL — Cmd/Ctrl+Shift+F",
   // AI にクエリを依頼 (NL2SQL, #691)。
   editorAiQuery: "Ask Agent",
-  editorAiQueryTitle: "Describe the query you want in words and let the AI draft SQL for this connection. The result is only inserted, never run.",
+  editorAiQueryTitle:
+    "Describe the query you want in words and let the AI draft SQL for this connection. The result is only inserted, never run.",
   cmdkAiQuery: "Ask Agent",
   aiQueryTitle: "Ask Agent",
   aiQueryClose: "Close",
@@ -1201,7 +1299,8 @@ const en = {
   aiQueryRequestPlaceholder: "e.g. Total last month's orders per customer, highest amount first",
   aiQuerySend: "Ask",
   aiQueryNewConversation: "New conversation",
-  aiQueryRequestPlaceholderFocus: "e.g. Only this month's rows, newest first (without a table name, the open table {table} is used)",
+  aiQueryRequestPlaceholderFocus:
+    "e.g. Only this month's rows, newest first (without a table name, the open table {table} is used)",
   aiQueryChatDone: "Proposed a query. See the right side.",
   aiQueryChatDoneWarnings: "Proposed a query with {count} warnings. See the right side.",
   aiQueryChatFailed: "Could not get an answer. See the right side for details.",
@@ -1213,26 +1312,32 @@ const en = {
   aiFollowUpLabel: "Follow-up",
   aiFollowUpPlaceholder: "e.g. Only last month, or sort by amount descending",
   aiFollowUpSend: "Refine",
-  aiFollowUpHint: "Sent together with your previous request and the answer (up to the last {count} exchanges).",
+  aiFollowUpHint:
+    "Sent together with your previous request and the answer (up to the last {count} exchanges).",
   aiQueryRunning: "Generating...",
   aiQueryCancel: "Stop",
   aiQueryCancelled: "Generation was stopped.",
   aiQuerySchemaLoading: "Reading the schema...",
   aiQueryNoDatabase: "No database is selected. Pick a database in the sidebar first.",
   aiQuerySchemaError: "Could not read the schema: {message}",
-  aiQuerySends: "Sends: only the schema of {database} ({tables} tables, {columns} columns, {dialect}). No actual data is sent.",
+  aiQuerySends:
+    "Sends: only the schema of {database} ({tables} tables, {columns} columns, {dialect}). No actual data is sent.",
   aiQuerySendsDefaultDb: "the default database",
-  aiQuerySendsSubset: "Sends: only the related part of the schema of {database} ({tables} of {total} tables, {columns} columns, {dialect}). No actual data is sent.",
-  aiQueryLargeSchema: "This schema is large ({total} tables). Only the related tables ({tables} tables, about {kb} KB) are sent; review the selection below.",
+  aiQuerySendsSubset:
+    "Sends: only the related part of the schema of {database} ({tables} of {total} tables, {columns} columns, {dialect}). No actual data is sent.",
+  aiQueryLargeSchema:
+    "This schema is large ({total} tables). Only the related tables ({tables} tables, about {kb} KB) are sent; review the selection below.",
   aiQueryTablesPickLabel: "Tables to send ({count} selected)",
   aiQueryTablesFilter: "Filter tables by name",
   aiQueryTablesNone: "No table matched your request. Select the tables to send below.",
   aiQueryTablesMore: "{count} more tables. Narrow them down with the filter.",
   aiQueryTablesLocked: "The same {count} tables as the first request are used.",
   aiQueryEmptySchema: "No tables were found in this database, so there is nothing to build a query from.",
-  aiQueryReadOnlyNote: "This connection is read-only, so the AI is told to generate SELECT-style queries only.",
+  aiQueryReadOnlyNote:
+    "This connection is read-only, so the AI is told to generate SELECT-style queries only.",
   aiQueryConfirmTitle: "Send the schema to the AI?",
-  aiQueryConfirmBody: "This connection is marked as production. Your request and the schema information (table/column names, types, keys and comments) will be sent to the Anthropic API.",
+  aiQueryConfirmBody:
+    "This connection is marked as production. Your request and the schema information (table/column names, types, keys and comments) will be sent to the Anthropic API.",
   aiQueryConfirmSend: "Send",
   aiQueryResultSql: "Generated SQL",
   aiQueryExplanation: "Explanation",
@@ -1258,9 +1363,10 @@ const en = {
     "Temporarily allow write statements on this read-only connection for urgent fixes. Enabling requires typing the connection name; the mode turns off on disconnect/reconnect.",
   emergencyModeConfirmTitle: "Enable emergency query mode?",
   emergencyModeConfirmBody:
-    "This connection is read-only. While emergency mode is on, write statements (UPDATE / DELETE / DDL, ...) run against \"{name}\" for real. Each write still asks for confirmation before it runs. The mode is per-session and turns off automatically on disconnect or reconnect.",
+    'This connection is read-only. While emergency mode is on, write statements (UPDATE / DELETE / DDL, ...) run against "{name}" for real. Each write still asks for confirmation before it runs. The mode is per-session and turns off automatically on disconnect or reconnect.',
   emergencyModeEnableButton: "Enable emergency mode",
-  statusEmergencyModeEnabled: "Emergency query mode enabled — write statements are now allowed on this read-only connection.",
+  statusEmergencyModeEnabled:
+    "Emergency query mode enabled — write statements are now allowed on this read-only connection.",
   statusEmergencyModeDisabled: "Emergency query mode disabled — the connection is read-only again.",
   statusEmergencyModeError: "Failed to toggle emergency mode: {error}",
   statusFormatError: "Format failed: {error}",
@@ -1268,8 +1374,7 @@ const en = {
   editorLintUnterminated: "Unterminated string or quoted identifier",
   editorLintUnknownStatement: "Unrecognized statement keyword — possible typo",
   editorLintUnterminatedComment: "Unterminated block comment (/* without */)",
-  editorLintClauseOrder:
-    "Clause out of order — expected WHERE → GROUP BY → HAVING → ORDER BY → LIMIT",
+  editorLintClauseOrder: "Clause out of order — expected WHERE → GROUP BY → HAVING → ORDER BY → LIMIT",
   editorLintKeywordTypo: "Possible typo — did you mean {keyword}?",
   editorLintMissingOperand: "Missing expression or name here — this clause is empty",
   editorLintExtraComma: "Extra comma",
@@ -1352,8 +1457,7 @@ const en = {
   explainAnalyzeLabel: "Measured mode (EXPLAIN ANALYZE)",
   explainAnalyzeTooltip:
     "Actually runs the query and shows real row counts and times next to the estimates. Only read-only queries are allowed, and a confirmation is required.",
-  explainAnalyzeUnsupportedTooltip:
-    "Measured mode is available for PostgreSQL and MySQL 8.0.18+ only.",
+  explainAnalyzeUnsupportedTooltip: "Measured mode is available for PostgreSQL and MySQL 8.0.18+ only.",
   explainAnalyzeBadge: "Measured",
   explainActualRows: "est {est} → actual {actual} rows",
   explainNeverExecuted: "never executed",
@@ -1372,17 +1476,20 @@ const en = {
   explainAiCancelled: "Stopped.",
   explainAiExpand: "Show result",
   explainAiCollapse: "Hide result",
-  explainAiSends: "Sends: execution plan, SQL ({sql}), dialect ({dialect}), indexes and row estimates ({tables}). Values in the SQL are blanked when masking is on, but numbers inside the plan may be sent as-is.",
+  explainAiSends:
+    "Sends: execution plan, SQL ({sql}), dialect ({dialect}), indexes and row estimates ({tables}). Values in the SQL are blanked when masking is on, but numbers inside the plan may be sent as-is.",
   explainAiSqlMasked: "literals masked",
   explainAiSqlRaw: "literals included",
   explainAiTablesOne: "1 table",
   explainAiTablesSome: "{count} tables",
   explainAiTablesNone: "none",
   explainAiConfirmTitle: "Send the execution plan to the AI?",
-  explainAiConfirmBody: "This connection is marked as production. The execution plan, SQL and table index information will be sent to the Anthropic API.",
+  explainAiConfirmBody:
+    "This connection is marked as production. The execution plan, SQL and table index information will be sent to the Anthropic API.",
   explainAiConfirmSend: "Send",
   explainAiScopeTitle: "Send the SQL to the AI?",
-  explainAiScopeBody: "Plan interpretation needs the SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  explainAiScopeBody:
+    'Plan interpretation needs the SQL text, but the send scope is set to "Schema only". Send it this time?',
   explainAiSummary: "Summary",
   explainAiBottlenecks: "Bottlenecks",
   explainAiNoBottlenecks: "No notable bottlenecks.",
@@ -1434,15 +1541,15 @@ const en = {
   qbBoolNull: "NULL",
   qbSetNow: "Set to now",
   qbNotNullWarning: "This column is NOT NULL — NULL will fail when the statement runs.",
-  qbWhereAndOrPrecedence: "AND and OR are mixed without parentheses. SQL evaluates AND first (a OR b AND c = a OR (b AND c)). Group conditions with ( ) to make the intent explicit, especially for UPDATE / DELETE.",
+  qbWhereAndOrPrecedence:
+    "AND and OR are mixed without parentheses. SQL evaluates AND first (a OR b AND c = a OR (b AND c)). Group conditions with ( ) to make the intent explicit, especially for UPDATE / DELETE.",
   qbLimitInvalid: "LIMIT must be a whole number — the clause will be omitted.",
   qbNoWhereBand: "No WHERE clause — every row in the table will be affected.",
   qbValidationNoTable: "Select a table first.",
   qbValidationNoInsertValues: "Fill in at least one column and value to insert.",
   qbValidationNoSetValues: "Fill in at least one column to update.",
   qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
-  qbValidationNoWhereConditions:
-    "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
+  qbValidationNoWhereConditions: "WHERE is enabled but has no conditions — fill one in or disable WHERE.",
   qbOrderBy: "ORDER BY",
   qbAddOrderBy: "Add sort",
   qbNoOrderBy: "No sort order set. Rows are returned in the database's default order.",
@@ -1516,7 +1623,8 @@ const en = {
   editUndoTitle: "Undo last edit (Ctrl+Z)",
   editRedoTitle: "Redo edit (Ctrl+Shift+Z)",
   editDiscardConfirmTitle: "Discard all pending edits?",
-  editDiscardConfirmBody: "This will clear {cells} cell edit(s) across {rows} row(s). You can undo with Ctrl+Z afterwards.",
+  editDiscardConfirmBody:
+    "This will clear {cells} cell edit(s) across {rows} row(s). You can undo with Ctrl+Z afterwards.",
   editDiscardConfirmOk: "Discard",
   editBlurTitle: "Commit edit?",
   editBlurMessage:
@@ -1589,13 +1697,14 @@ const en = {
     "Numbers, booleans and NULL keep their types. Integers/decimals over 15 digits (Excel's precision) are written as text; dates stay as text. At most 1,048,575 data rows.",
   exportXlsxRowsDropped:
     "Excel's row limit (1,048,576 rows including the header) was exceeded: wrote {written} of {total} rows, {dropped} rows were not exported.",
-  exportXlsxCellsTruncated:
-    "{cells} cells exceeded Excel's 32,767-character limit and were truncated.",
+  exportXlsxCellsTruncated: "{cells} cells exceeded Excel's 32,767-character limit and were truncated.",
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
   exportSqlIncludeDdl: "Include CREATE TABLE statement",
-  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Also included in the preview and copy.",
-  exportSqlIncludeDdlMasked: "Masked columns no longer match the original types and constraints, so the CREATE TABLE statement is omitted (a comment is written instead).",
+  exportSqlIncludeDdlHint:
+    "Puts the table definition before the INSERTs so the file restores on its own. Also included in the preview and copy.",
+  exportSqlIncludeDdlMasked:
+    "Masked columns no longer match the original types and constraints, so the CREATE TABLE statement is omitted (a comment is written instead).",
   exportSqlDdlPreviewLoading: "-- Loading CREATE TABLE definition...",
   exportSqlDdlPreviewError: "-- Could not load the CREATE TABLE definition: {error}",
   exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
@@ -1664,8 +1773,7 @@ const en = {
   profileBackupExporting: "Encrypting…",
   profileBackupSaveTitle: "Save encrypted profile backup",
   profileBackupFileFilter: "noobDB encrypted backup",
-  profileBackupExportSuccess:
-    "Exported {profiles} profiles and {secrets} secrets to {path} (encrypted)",
+  profileBackupExportSuccess: "Exported {profiles} profiles and {secrets} secrets to {path} (encrypted)",
   profileBackupExportError: "Encrypted backup export failed: {error}",
   profileBackupImportTitle: "Import encrypted profile backup",
   profileBackupImportNote:
@@ -1675,8 +1783,10 @@ const en = {
     "Imported {imported}, skipped {skipped}, overwritten {overwritten}, invalid {invalid}; restored {secrets} secrets",
   profileBackupImportError: "Encrypted backup import failed: {error}",
   exportRowCount: "{rows} rows will be exported.",
-  exportPartialWarning: "Only the rows currently loaded are exported. To export the full result set, run \"Fetch all rows\" first.",
-  exportPartialWarningStopped: "The query was cancelled or timed out before finishing — only the rows already loaded are exported. Re-run it to get the full result.",
+  exportPartialWarning:
+    'Only the rows currently loaded are exported. To export the full result set, run "Fetch all rows" first.',
+  exportPartialWarningStopped:
+    "The query was cancelled or timed out before finishing — only the rows already loaded are exported. Re-run it to get the full result.",
   // 全件ストリーミングエクスポート。
   exportScope: "What to export",
   exportScopeCurrent: "Current grid only",
@@ -1696,8 +1806,10 @@ const en = {
   // エクスポート時のデータマスキング (#733)。
   exportMasking: "Data masking",
   exportMaskingEnable: "Mask PII columns in the output",
-  exportMaskingHint: "Only the written file is transformed — the database is never modified. Columns whose name matches a saved preset are masked automatically.",
-  exportMaskingHashNote: "Pseudonymization uses HMAC-SHA256 keyed by an app-wide secret salt stored only in the OS keyring, so the same value always becomes the same pseudonym (usable as a join key).",
+  exportMaskingHint:
+    "Only the written file is transformed — the database is never modified. Columns whose name matches a saved preset are masked automatically.",
+  exportMaskingHashNote:
+    "Pseudonymization uses HMAC-SHA256 keyed by an app-wide secret salt stored only in the OS keyring, so the same value always becomes the same pseudonym (usable as a join key).",
   exportMaskingRuleFor: "Masking rule for {column}",
   exportMaskingFixedValueFor: "Replacement value for {column}",
   exportMaskingKeepStartFor: "Characters to keep at the start of {column}",
@@ -1713,7 +1825,7 @@ const en = {
   exportMaskRuleNull: "Set to NULL",
   exportMaskingFromPreset: "preset",
   exportMaskingSavePreset: "Save as the preset for this column name",
-  exportMaskingPresetSaved: "Saved \"{column}\" as a masking preset",
+  exportMaskingPresetSaved: 'Saved "{column}" as a masking preset',
   exportMaskingNoColumns: "No columns will be masked.",
   exportMaskedColumns: "{count} column(s) masked",
   exportMaskingPending: "Applying masking…",
@@ -1757,7 +1869,8 @@ const en = {
   chartNoData: "No data to chart.",
   chartPickY: "Pick at least one Y-axis column.",
   chartAriaRoleDescription: "chart",
-  chartAriaSummary: "Chart: {series} series, {points} points, max {max}, min {min}. Use the left/right arrow keys to read each point.",
+  chartAriaSummary:
+    "Chart: {series} series, {points} points, max {max}, min {min}. Use the left/right arrow keys to read each point.",
   chartSampled: "Showing {shown} sampled points of {total} rows.",
   // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
   // 一言添えないと壊れて見えかねないケース。
@@ -1787,23 +1900,27 @@ const en = {
   // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
   cloneTableClose: "Cancel",
-  cloneTableNameLabel: "New table name (copy of \"{table}\")",
-  cloneTableNameExists: "A table named \"{table}\" already exists.",
+  cloneTableNameLabel: 'New table name (copy of "{table}")',
+  cloneTableNameExists: 'A table named "{table}" already exists.',
   cloneTableIncludeData: "Copy the data too (INSERT INTO ... SELECT)",
   cloneTableDdlError: "Couldn't read the table definition: {error}",
   cloneTableListError: "Couldn't verify existing table names: {error}",
   cloneTableSkipped: "These statements in the definition were not copied: {statements}",
-  cloneTableNotes: "Columns, primary key, indexes, foreign keys and defaults are copied. Names of constraints and indexes are derived from the new table name so they do not collide. PostgreSQL serial columns get their own sequence. Triggers, privileges, PostgreSQL row-level security policies and partitioned parents are not copied.",
+  cloneTableNotes:
+    "Columns, primary key, indexes, foreign keys and defaults are copied. Names of constraints and indexes are derived from the new table name so they do not collide. PostgreSQL serial columns get their own sequence. Triggers, privileges, PostgreSQL row-level security policies and partitioned parents are not copied.",
   cloneTablePreview: "SQL preview",
   cloneTablePreviewLoading: "Reading table metadata...",
   cloneTablePreviewEmpty: "Enter a table name to preview the SQL.",
   cloneTableConfirm: "Duplicate",
-  cloneTableSuccess: "Duplicated \"{source}\" as \"{table}\".",
+  cloneTableSuccess: 'Duplicated "{source}" as "{table}".',
   cloneTableMetaError: "Couldn't read column / foreign key metadata: {error}",
   cloneTableNotTable: "Only tables can be duplicated (this object is a view or another kind).",
-  cloneTableRewriteError: "Refusing to run: the rewritten statements do not all target the new table ({statements}).",
-  cloneTableSharedSequence: "Serial/sequence defaults (nextval) still point at the original table's sequence. Dropping the original table or its sequence will affect the copy.",
-  cloneTablePartialFailure: "Table \"{table}\" was created but copying the data failed (nothing was rolled back on MySQL): {error}",
+  cloneTableRewriteError:
+    "Refusing to run: the rewritten statements do not all target the new table ({statements}).",
+  cloneTableSharedSequence:
+    "Serial/sequence defaults (nextval) still point at the original table's sequence. Dropping the original table or its sequence will affect the copy.",
+  cloneTablePartialFailure:
+    'Table "{table}" was created but copying the data failed (nothing was rolled back on MySQL): {error}',
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   saveAsTableButton: "Save as table",
   saveAsTableButtonTitle: "Save the current result as a new table (CREATE TABLE ... AS SELECT)",
@@ -1813,29 +1930,28 @@ const en = {
   saveAsTableClose: "Close",
   saveAsTableNameLabel: "New table name",
   saveAsTableNamePlaceholder: "new_table",
-  saveAsTableNameExists: "A table named \"{table}\" already exists.",
+  saveAsTableNameExists: 'A table named "{table}" already exists.',
   saveAsTableListError: "Couldn't verify existing table names: {error}",
   saveAsTablePreview: "SQL preview",
   saveAsTablePreviewEmpty: "Enter a table name to preview the SQL.",
   saveAsTableConfirm: "Create table",
-  saveAsTableSuccess: "Created table \"{table}\" from the result set.",
+  saveAsTableSuccess: 'Created table "{table}" from the result set.',
   // 現在のクエリをビューとして保存 / ビュー定義を編集して置換 (#851)。
   saveAsViewButton: "Save as view",
   saveAsViewButtonTitle: "Save the current result as a view (CREATE VIEW ... AS)",
-  saveAsViewDisabledTitle:
-    "Only a single SELECT/WITH query on a writable connection can be saved as a view.",
+  saveAsViewDisabledTitle: "Only a single SELECT/WITH query on a writable connection can be saved as a view.",
   saveAsViewTitle: "Save results as view",
   saveAsViewClose: "Close",
   saveAsViewNameLabel: "View name",
   saveAsViewNamePlaceholder: "new_view",
-  saveAsViewNameReplaceNote: "A view named \"{view}\" already exists and will be replaced.",
+  saveAsViewNameReplaceNote: 'A view named "{view}" already exists and will be replaced.',
   saveAsViewListError: "Couldn't verify existing view names: {error}",
   saveAsViewPreview: "SQL preview",
   saveAsViewPreviewEmpty: "Enter a view name to preview the SQL.",
   saveAsViewConfirm: "Create view",
   saveAsViewReplaceConfirm: "Replace view",
-  saveAsViewSuccess: "Created view \"{view}\" from the result set.",
-  saveAsViewReplaceSuccess: "Replaced view \"{view}\".",
+  saveAsViewSuccess: 'Created view "{view}" from the result set.',
+  saveAsViewReplaceSuccess: 'Replaced view "{view}".',
   contextMenuEditViewDefinition: "Edit definition...",
   routineEditKindProcedure: "procedure",
   routineEditKindFunction: "function",
@@ -1885,15 +2001,13 @@ const en = {
   registerLocalTableButton: "Register locally",
   registerLocalTableButtonTitle:
     "Register this result as a local table, so it can be re-queried or JOINed against other connections' results",
-  registerLocalTableDisabledTitle:
-    "Register this result as a local table (unavailable on this connection).",
+  registerLocalTableDisabledTitle: "Register this result as a local table (unavailable on this connection).",
   localConnectionName: "Local",
   localRegisterTitle: "Register as local table",
   localRegisterClose: "Close",
   localRegisterNameLabel: "Local table name",
   localRegisterNamePlaceholder: "r1",
-  localRegisterNameExists:
-    "A local table named \"{table}\" already exists — registering will overwrite it.",
+  localRegisterNameExists: 'A local table named "{table}" already exists — registering will overwrite it.',
   localRegisterRowCount: "{rows} rows will be registered.",
   localRegisterRowCapExceeded: "Exceeds the {max}-row limit for local registration.",
   localRegisterScopeNote:
@@ -1902,7 +2016,7 @@ const en = {
   localRegisterWriteWarning:
     "This is an independent local copy — edits made here (e.g. UPDATE) never reach the original connection.",
   localRegisterConfirm: "Register",
-  localRegisterSuccess: "Registered {rows} rows as local table \"{table}\".",
+  localRegisterSuccess: 'Registered {rows} rows as local table "{table}".',
   localPanelHint:
     "Register result sets from any connection here to re-query or JOIN them across connections, entirely on your machine. Local tables are volatile by default — they're discarded when the app closes, unless you save them to a file.",
   localPanelOpen: "Open local connection",
@@ -1912,22 +2026,27 @@ const en = {
   localPanelSaveToFileSuccess: "Saved the local database to {path}.",
   localPanelEmptyTitle: "No local tables yet",
   localPanelEmptyDescription:
-    "Use \"Register locally\" on a result grid to bring rows from any connection in here.",
+    'Use "Register locally" on a result grid to bring rows from any connection in here.',
   localPanelRowCount: "{rows} rows",
   localPanelSourceLabel: "from {name}",
   localPanelRefetch: "Refetch {table}",
-  localPanelRefetchTitle: "Run the original SQL again on its source connection and database, and replace this table (the registered row limit still applies; a result cached in the last 30 seconds may be reused)",
-  localRefetchSuccess: "Refetched {rows} rows into \"{table}\".",
-  localRefetchFailed: "Could not refetch \"{table}\": {error}",
-  localRefetchNeedsConnection: "The source connection \"{name}\" is not open. Connect to it, then refetch \"{table}\".",
-  localRefetchNoDatabase: "\"{table}\" was registered before its source database was recorded, so it cannot be refetched safely (it could replace data from a different database). Register it again from the result grid.",
-  localRefetchAmbiguous: "More than one open connection is named \"{name}\", so the source of \"{table}\" is ambiguous. Close the extra connection and try again.",
-  localRefetchNoSource: "\"{table}\" has no recorded source connection, so it cannot be refetched.",
-  localRefetchNotReadOnly: "The SQL behind \"{table}\" is not a plain read-only query, so it is not run again automatically.",
+  localPanelRefetchTitle:
+    "Run the original SQL again on its source connection and database, and replace this table (the registered row limit still applies; a result cached in the last 30 seconds may be reused)",
+  localRefetchSuccess: 'Refetched {rows} rows into "{table}".',
+  localRefetchFailed: 'Could not refetch "{table}": {error}',
+  localRefetchNeedsConnection:
+    'The source connection "{name}" is not open. Connect to it, then refetch "{table}".',
+  localRefetchNoDatabase:
+    '"{table}" was registered before its source database was recorded, so it cannot be refetched safely (it could replace data from a different database). Register it again from the result grid.',
+  localRefetchAmbiguous:
+    'More than one open connection is named "{name}", so the source of "{table}" is ambiguous. Close the extra connection and try again.',
+  localRefetchNoSource: '"{table}" has no recorded source connection, so it cannot be refetched.',
+  localRefetchNotReadOnly:
+    'The SQL behind "{table}" is not a plain read-only query, so it is not run again automatically.',
   localPanelDropTable: "Drop local table",
   localPanelDropConfirmTitle: "Drop local table?",
   localPanelDropConfirmBody:
-    "Drop the local table \"{table}\"? The registered result set is removed and cannot be restored.",
+    'Drop the local table "{table}"? The registered result set is removed and cannot be restored.',
   localPanelDropConfirmOk: "Drop",
   localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
@@ -1945,10 +2064,12 @@ const en = {
   batchRowsTruncatedOfTotal: "First {shown} rows / {total} total",
   batchAffected: "{rows} affected",
 
-  dumpTitle: "Dump database \"{database}\"",
+  dumpTitle: 'Dump database "{database}"',
   dumpClose: "Close",
-  dumpNote: "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
-  dumpNoteNative: "Generates the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
+  dumpNote:
+    "Runs {tool} on this computer for this database (through the SSH tunnel if one is configured). {tool} must be installed on this computer.",
+  dumpNoteNative:
+    "Generates the SQL dump (schema DDL + INSERT statements) directly from this connection. No external client tools are needed.",
   dumpOptionsLabel: "Options",
   dumpOptSingleTransaction: "Single transaction",
   dumpOptSingleTransactionHint: "--single-transaction: consistent InnoDB snapshot without locking tables.",
@@ -1959,7 +2080,8 @@ const en = {
   dumpOptTriggers: "Triggers",
   dumpOptTriggersHint: "Include triggers (off → --skip-triggers).",
   dumpOptAddDropTable: "Add DROP TABLE",
-  dumpOptAddDropTableHint: "--add-drop-table: drop each table before recreating it (off → --skip-add-drop-table).",
+  dumpOptAddDropTableHint:
+    "--add-drop-table: drop each table before recreating it (off → --skip-add-drop-table).",
   dumpOptExtendedInsert: "Bulk INSERT",
   dumpOptExtendedInsertHint: "--extended-insert: pack many rows per INSERT (off → one row per statement).",
   dumpOptCompleteInsert: "Complete INSERT",
@@ -1976,7 +2098,8 @@ const en = {
   dumpOptPgSchemaPlaceholder: "e.g. public",
   dumpOptPgSchemaHint: "pg_dump -n <schema>: restrict to one schema. Leave empty to dump all schemas.",
   dumpOptGzip: "Compress with gzip (.sql.gz)",
-  dumpOptGzipHint: "Compresses the finished dump with gzip and saves it as a .sql.gz file. Saves disk space and transfer size; restore with gunzip or zcat.",
+  dumpOptGzipHint:
+    "Compresses the finished dump with gzip and saves it as a .sql.gz file. Saves disk space and transfer size; restore with gunzip or zcat.",
   dumpOptFormatSql: "Format SQL",
   dumpOptFormatSqlHint:
     "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
@@ -2029,7 +2152,8 @@ const en = {
   dataSearchConfirmTitle: "Scan {count} tables?",
   dataSearchConfirmBody:
     "This runs a read-only query against {count} tables ({rows} total) to look for the value. It may take a while on large databases.",
-  dataSearchProductionConfirm: '"{name}" is a production connection — scanning many tables adds read load to the server. Continue?',
+  dataSearchProductionConfirm:
+    '"{name}" is a production connection — scanning many tables adds read load to the server. Continue?',
   dataSearchProgress: "Scanning {index}/{total} — {table}",
   dataSearchDone: "Done: {hits} tables with hits, {noHits} with no match, {skipped} skipped",
   dataSearchNoHits: "No matches found in the scanned tables.",
@@ -2052,7 +2176,8 @@ const en = {
   dumpSuccess: "Wrote {bytes} bytes to {path}",
   dumpError: "Dump failed: {error}",
   dumpToolMissingTitle: "{tool} was not found on this computer",
-  dumpToolWhere: "The dump runs {tool} on this computer (the one running noobDB) and connects to the database through the SSH tunnel if one is configured. It is installed on this computer only — nothing is installed on the SSH bastion host or the database server.",
+  dumpToolWhere:
+    "The dump runs {tool} on this computer (the one running noobDB) and connects to the database through the SSH tunnel if one is configured. It is installed on this computer only — nothing is installed on the SSH bastion host or the database server.",
   dumpToolLocation: "Install location:",
   dumpToolCommandAuto: "The following command is run:",
   dumpToolCommandManual: "Run the following command in a terminal (administrator rights are required):",
@@ -2074,7 +2199,7 @@ const en = {
   // `.sql` script runner (#973).
   contextMenuRunScript: "Run SQL file...",
   scriptTitle: "Run SQL file",
-  scriptTitleDb: "Run SQL file on \"{database}\"",
+  scriptTitleDb: 'Run SQL file on "{database}"',
   scriptNote:
     "Runs a .sql file statement by statement without loading it all into memory (e.g. restoring a dump). Read-only profiles still reject every write statement.",
   scriptFileLabel: "SQL file",
@@ -2099,9 +2224,12 @@ const en = {
   scriptProgressPercent: "{percent}% of file read",
   scriptDone: "Ran {executed} statements in {secs}s ({rows} rows affected).",
   scriptDonePartial: "Ran {executed} statements: {failed} failed and were skipped.",
-  scriptUnclosedTransactionWarning: "The script has a BEGIN with no matching COMMIT/ROLLBACK. Running it as is will roll back the changes after that BEGIN at the end of the file.",
-  scriptDoneImplicitRollback: "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were rolled back at the end of the file.",
-  scriptDoneSkippedControl: "{count} BEGIN/COMMIT statements in the file were skipped (the runner's transaction was used).",
+  scriptUnclosedTransactionWarning:
+    "The script has a BEGIN with no matching COMMIT/ROLLBACK. Running it as is will roll back the changes after that BEGIN at the end of the file.",
+  scriptDoneImplicitRollback:
+    "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were rolled back at the end of the file.",
+  scriptDoneSkippedControl:
+    "{count} BEGIN/COMMIT statements in the file were skipped (the runner's transaction was used).",
   scriptFailuresLabel: "Failed statements",
   scriptFailuresOmitted: "…and {count} more",
   scriptFailureLine: "line {line}",
@@ -2110,14 +2238,16 @@ const en = {
   scriptRolledBack: "The open transaction was rolled back.",
   scriptCancelled: "Script cancelled. {count} committed statements were kept.",
   scriptProductionConfirmTitle: "Run on a production connection?",
-  scriptProductionConfirmMessage: "This connection is marked as production. Run \"{file}\" against it?",
+  scriptProductionConfirmMessage: 'This connection is marked as production. Run "{file}" against it?',
   scriptProductionConfirmOk: "Run",
   // Script pre-run check (dry run), text encoding, resume (#1535).
   scriptEncodingLabel: "Text encoding",
   scriptEncodingAuto: "Auto-detect",
-  scriptEncodingHint: "Auto-detect tries BOM, UTF-8, then Shift_JIS / EUC-JP. Pick one if text looks garbled.",
+  scriptEncodingHint:
+    "Auto-detect tries BOM, UTF-8, then Shift_JIS / EUC-JP. Pick one if text looks garbled.",
   scriptStartAtLabel: "Start from statement #",
-  scriptStartAtHint: "Statements before this number are not run (BEGIN/COMMIT count). Use the number from an error to resume.",
+  scriptStartAtHint:
+    "Statements before this number are not run (BEGIN/COMMIT count). Use the number from an error to resume.",
   scriptAnalyze: "Check first (dry run)",
   scriptAnalyzing: "Scanning…",
   scriptAnalyzingProgress: "{count} statements scanned",
@@ -2126,12 +2256,14 @@ const en = {
   scriptAnalysisCategories: "Reads {read} · Writes {write} · DDL {ddl} · Transaction control {tx}",
   scriptAnalysisStale: "The file or encoding changed. Check again to refresh.",
   scriptAnalysisDangerTitle: "{count} dangerous statements",
-  scriptAnalysisDangerBody: "These run for real and cannot be undone unless you wrap the script in a transaction.",
+  scriptAnalysisDangerBody:
+    "These run for real and cannot be undone unless you wrap the script in a transaction.",
   scriptDangerDrop: "DROP × {count}",
   scriptDangerTruncate: "TRUNCATE × {count}",
   scriptDangerDeleteNoWhere: "DELETE without WHERE × {count}",
   scriptDangerUpdateNoWhere: "UPDATE without WHERE × {count}",
-  scriptAnalysisDangerOverflow: "Only the first {shown} are listed; the other {rest} cannot be excluded one by one.",
+  scriptAnalysisDangerOverflow:
+    "Only the first {shown} are listed; the other {rest} cannot be excluded one by one.",
   scriptAnalysisBlocked: "{count} statements will be rejected because this connection is read-only.",
   scriptAnalysisTxTitle: "Transaction control ({count})",
   scriptAnalysisTxOverflow: "…and {count} more",
@@ -2155,26 +2287,34 @@ const en = {
   scriptCategoryTx: "transaction control",
   scriptStatementBlocked: "rejected (read-only)",
   scriptDangerConfirmTitle: "Run dangerous statements?",
-  scriptDangerConfirmMessage: "{count} dangerous statements (DROP / TRUNCATE / DELETE or UPDATE without WHERE) will run against this connection. Continue?",
+  scriptDangerConfirmMessage:
+    "{count} dangerous statements (DROP / TRUNCATE / DELETE or UPDATE without WHERE) will run against this connection. Continue?",
   scriptDangerConfirmOk: "Run anyway",
   scriptDoneSkippedExcluded: "{count} statements you excluded were skipped.",
   scriptDoneSkippedBefore: "{count} statements before the start position were skipped.",
   scriptErrorAtIndex: "Stopped at statement #{index} (line {line}): {error}",
   scriptResume: "Resume from this statement",
   scriptResumeSkip: "Skip it and resume",
-  scriptResumeHint: "Statements before #{index} already ran and are not repeated. Session settings (SET …) from the skipped part are not re-applied.",
-  scriptResumeUnavailable: "Resuming is not available because the run was rolled back or wrapped in a transaction; start again from the top.",
+  scriptResumeHint:
+    "Statements before #{index} already ran and are not repeated. Session settings (SET …) from the skipped part are not re-applied.",
+  scriptResumeUnavailable:
+    "Resuming is not available because the run was rolled back or wrapped in a transaction; start again from the top.",
   scriptResumeFromBegin: "Resume from BEGIN (#{index})",
-  scriptResumeFromBeginHint: "The failure happened inside a transaction that started at statement #{begin}, so everything since that BEGIN is discarded (or in an unknown state). Resuming from BEGIN reruns that whole block.",
-  scriptResumeInTransactionUnavailable: "The failure happened inside a transaction, so resuming from the failed statement would leave out the earlier statements of that transaction. Start again from the top.",
-  scriptStartInTransactionWarning: "Statement #{start} is inside the transaction that begins at BEGIN (#{begin}). Starting here skips the statements of that transaction before it, but its COMMIT/ROLLBACK still runs. Start from #{begin} instead unless you mean this.",
-  scriptAnalysisFileChanged: "The file changed after the dry run, so statement numbers may no longer match. The start number is kept — check that it still points at the right statement, then run again.",
+  scriptResumeFromBeginHint:
+    "The failure happened inside a transaction that started at statement #{begin}, so everything since that BEGIN is discarded (or in an unknown state). Resuming from BEGIN reruns that whole block.",
+  scriptResumeInTransactionUnavailable:
+    "The failure happened inside a transaction, so resuming from the failed statement would leave out the earlier statements of that transaction. Start again from the top.",
+  scriptStartInTransactionWarning:
+    "Statement #{start} is inside the transaction that begins at BEGIN (#{begin}). Starting here skips the statements of that transaction before it, but its COMMIT/ROLLBACK still runs. Start from #{begin} instead unless you mean this.",
+  scriptAnalysisFileChanged:
+    "The file changed after the dry run, so statement numbers may no longer match. The start number is kept — check that it still points at the right statement, then run again.",
   scriptAnalysisTxLocked: "BEGIN / COMMIT / ROLLBACK cannot be excluded — they always run.",
   // SQL file encoding for open / save (#1535).
   sqlFileOpenedAs: "Opened {name} ({encoding})",
   sqlFileEncodingOpenTitle: "Open SQL file with a text encoding",
   sqlFileEncodingSaveTitle: "Save SQL file with a text encoding",
-  sqlFileEncodingNote: "Pick the encoding used to read or write the file. Characters that the encoding cannot represent make saving fail instead of being replaced.",
+  sqlFileEncodingNote:
+    "Pick the encoding used to read or write the file. Characters that the encoding cannot represent make saving fail instead of being replaced.",
   sqlFileEncodingLabel: "Text encoding",
   sqlFileEncodingOpen: "Choose file…",
   sqlFileEncodingSave: "Choose destination…",
@@ -2199,7 +2339,7 @@ const en = {
   transferTableMissing: "Table {table} does not exist, so rows cannot be appended.",
   transferSameTable: "The source and target are the same table.",
   transferQueryReadsTarget:
-    "The source query reads the table \"{table}\". Replacing it would drop the data being read.",
+    'The source query reads the table "{table}". Replacing it would drop the data being read.',
   transferModeLabel: "If the table exists",
   transferModeCreate: "Create a new table (fail if it exists)",
   transferModeReplace: "Replace (drop and recreate)",
@@ -2245,7 +2385,7 @@ const en = {
   contextMenuTransferTable: "Copy to another connection...",
 
   // AI 向けスキーマ Markdown エクスポート。
-  schemaExportTitle: "Export schema \"{database}\" for AI",
+  schemaExportTitle: 'Export schema "{database}" for AI',
   schemaExportNote:
     "Generates a Markdown summary of tables, columns and foreign keys. Paste it into an AI chat (Claude, etc.) so it can write SQL against your schema. The output itself is always in English.",
   schemaExportLoading: "Loading column details...",
@@ -2294,10 +2434,14 @@ const en = {
   createTableTemplateHelp:
     "Replaces the columns below with the columns of an existing table (types, primary key, NOT NULL, defaults). Foreign keys, CHECKs and indexes are not copied.",
   createTableTemplateConfirmTitle: "Replace the current columns?",
-  createTableTemplateConfirmBody: "The columns you entered will be replaced with the definition of {table}. Foreign keys and CHECK constraints entered so far are discarded too.",
-  createTableTemplateUserDefined: "These columns use user-defined types (ENUM, domain, extension types) whose names could not be read, so the type is left as USER-DEFINED. Enter the real type before creating: {columns}",
-  createTableTemplateArray: "These array columns have no element type available, so the type is left as ARRAY. Enter the real type (for example text[]) before creating: {columns}",
-  createTableTemplateIdentity: "IDENTITY columns are not detected and are copied as plain columns. If any of these were IDENTITY, turn on auto-increment manually: {columns}",
+  createTableTemplateConfirmBody:
+    "The columns you entered will be replaced with the definition of {table}. Foreign keys and CHECK constraints entered so far are discarded too.",
+  createTableTemplateUserDefined:
+    "These columns use user-defined types (ENUM, domain, extension types) whose names could not be read, so the type is left as USER-DEFINED. Enter the real type before creating: {columns}",
+  createTableTemplateArray:
+    "These array columns have no element type available, so the type is left as ARRAY. Enter the real type (for example text[]) before creating: {columns}",
+  createTableTemplateIdentity:
+    "IDENTITY columns are not detected and are copied as plain columns. If any of these were IDENTITY, turn on auto-increment manually: {columns}",
   createTableTemplateEmpty: "No columns were found for {table}.",
   createTableTemplateError: "Failed to load the table definition: {error}",
   createTableNamePlaceholder: "new_table",
@@ -2342,11 +2486,12 @@ const en = {
     "This permanently removes these {count} tables in {database} and all their data. This cannot be undone. Targets:",
   batchDropConfirmOk: "Drop {count} tables",
   batchDropSuccess: "Dropped {count} tables",
-  batchDropRolledBack: "Could not drop the tables; everything was rolled back and no table was dropped: {error}",
+  batchDropRolledBack:
+    "Could not drop the tables; everything was rolled back and no table was dropped: {error}",
   batchTablesMore: "and {count} more",
   batchExportTitle: "Export {count} tables",
   batchExportNote:
-    "Writes one file per table from \"{database}\" (the whole table, streamed to disk). Files with the same name in the folder are overwritten.",
+    'Writes one file per table from "{database}" (the whole table, streamed to disk). Files with the same name in the folder are overwritten.',
   batchExportDir: "Save to folder",
   batchExportDirPlaceholder: "Path to the output folder",
   batchExportPickDir: "Choose an output folder",
@@ -2357,7 +2502,7 @@ const en = {
   batchExportPartial: "Exported {done} of {count} tables; {failed} failed",
   batchExportFailedItem: "{table}: {error}",
   batchExportError: "Export failed: {error}",
-  dumpTablesTitle: "Dump {count} tables from \"{database}\"",
+  dumpTablesTitle: 'Dump {count} tables from "{database}"',
   dumpTablesScopeTitle: "Only these {count} tables are dumped",
   dumpTablesScopeHint: "Routines and events are not included when tables are specified (MySQL).",
   contextMenuAlterTable: "Edit columns...",
@@ -2370,14 +2515,14 @@ const en = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "Sync auto-increment to data...",
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
-  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
-  identitySyncCurrentUnknown: "Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on \"lower\" to sync anyway.",
+  identitySyncConfirmBody:
+    "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
+  identitySyncCurrentUnknown:
+    'Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on "lower" to sync anyway.',
   identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
-  identitySyncAutoincrementCheckFailed:
-    "Could not check whether {table} uses AUTOINCREMENT: {error}",
-  identitySyncNoAutoincrement:
-    "{table} was not created with AUTOINCREMENT, so there is no sequence to sync",
+  identitySyncAutoincrementCheckFailed: "Could not check whether {table} uses AUTOINCREMENT: {error}",
+  identitySyncNoAutoincrement: "{table} was not created with AUTOINCREMENT, so there is no sequence to sync",
   identitySyncMaxFailed: "Could not read the maximum value of {column}: {error}",
   identitySyncDone: "Synced auto-increment of {table}",
   renameTableTitle: "Rename table",
@@ -2443,11 +2588,14 @@ const en = {
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
-  alterTableDuplicateColumn: "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
-  alterTableRenameCollision: "The new name is the current name of another column: {names}. Swapping or chaining renames cannot be applied safely; rename them in separate steps.",
+  alterTableDuplicateColumn:
+    "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
+  alterTableRenameCollision:
+    "The new name is the current name of another column: {names}. Swapping or chaining renames cannot be applied safely; rename them in separate steps.",
   alterTableReadOnly: "This connection is read-only; editing columns is disabled.",
   alterTableDestructiveTitle: "{count} destructive change(s) included",
-  alterTableDestructiveBody: "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
+  alterTableDestructiveBody:
+    "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
   alterTableConfirmTitle: "Apply these changes to {table}?",
   alterTableConfirmBody: "The following statements will run:",
   alterTableConfirmOk: "Apply",
@@ -2472,14 +2620,18 @@ const en = {
   createNamespaceName: "Name",
   createNamespaceCharset: "Character set",
   createNamespaceCollation: "Collation",
-  createNamespaceCollationInvalid: "Use only letters, digits and underscores for the character set and collation.",
-  createNamespacePgDatabaseHint: "A new PostgreSQL database is not shown in this tree; connect to it with another profile.",
+  createNamespaceCollationInvalid:
+    "Use only letters, digits and underscores for the character set and collation.",
+  createNamespacePgDatabaseHint:
+    "A new PostgreSQL database is not shown in this tree; connect to it with another profile.",
   createNamespacePreviewEmpty: "Enter a name to preview the SQL.",
   createNamespaceRun: "Create",
   createNamespaceSuccess: "Created {kind} {name}.",
-  createNamespaceSuccessPgDatabase: "Created database {name}. Connect to it with another profile to browse it.",
+  createNamespaceSuccessPgDatabase:
+    "Created database {name}. Connect to it with another profile to browse it.",
   dropNamespaceConfirmTitle: "Drop {kind} {name}?",
-  dropNamespaceConfirmBody: "This permanently removes the {kind} {name} and everything in it. This cannot be undone.",
+  dropNamespaceConfirmBody:
+    "This permanently removes the {kind} {name} and everything in it. This cannot be undone.",
   dropNamespaceConfirmOk: "Drop {kind}",
   dropNamespaceSuccess: "Dropped {kind} {name}.",
   contextMenuNamespaceProtectedTitle: "System databases cannot be dropped",
@@ -2533,13 +2685,15 @@ const en = {
   timelapseLoading: "Loading watched tables…",
   timelapseRetry: "Retry",
   timelapseEmptyTitle: "No watched tables yet",
-  timelapseEmptyDescription: "Right-click a table in the schema tree and choose “Watch table (timelapse)” to keep generation snapshots and compare any two. Intended for small master/config tables (up to {limit} rows, primary key required); history of large tables is out of scope.",
+  timelapseEmptyDescription:
+    "Right-click a table in the schema tree and choose “Watch table (timelapse)” to keep generation snapshots and compare any two. Intended for small master/config tables (up to {limit} rows, primary key required); history of large tables is out of scope.",
   timelapseWatchListAria: "Watched tables",
   timelapseGenerationCount: "{count} generations",
   timelapseInactive: "unwatched",
   timelapsePartial: "partial",
   timelapseUnwatch: "Unwatch",
-  timelapseNeedTwo: "At least two different generations are needed to show a diff. A new generation is saved when the table content changes (on connect or “Capture now”).",
+  timelapseNeedTwo:
+    "At least two different generations are needed to show a diff. A new generation is saved when the table content changes (on connect or “Capture now”).",
   timelapseFrom: "Older generation",
   timelapseTo: "Newer generation",
   timelapseLatest: "latest",
@@ -2550,10 +2704,12 @@ const en = {
   timelapseCountAdded: "Added: {count}",
   timelapseCountChanged: "Changed: {count}",
   timelapseCountRemoved: "Removed: {count}",
-  timelapsePartialNote: "A generation is partial (only the first {limit} rows by primary key were captured). Rows beyond that range may show up as added or removed.",
+  timelapsePartialNote:
+    "A generation is partial (only the first {limit} rows by primary key were captured). Rows beyond that range may show up as added or removed.",
   timelapseColumnsAdded: "Columns added (not counted as row changes): {columns}",
   timelapseColumnsRemoved: "Columns removed (not compared): {columns}",
-  timelapseMaskedNote: "Sensitive columns are masked for display only. Snapshots store the actual values locally.",
+  timelapseMaskedNote:
+    "Sensitive columns are masked for display only. Snapshots store the actual values locally.",
   timelapseNoChanges: "No row differences between these generations.",
   timelapseDiffAria: "Row differences between generations",
   timelapseChangeColumn: "Change",
@@ -2561,13 +2717,17 @@ const en = {
   timelapseKindRemoved: "Removed",
   timelapseKindChanged: "Changed",
   timelapseWatchConfirmTitle: "Watch “{table}”?",
-  timelapseWatchScope: "Snapshots are taken on connect and on “Capture now”, and a new generation is kept only when the content changed. Meant for small master/config tables (up to {limit} rows); history of large tables is out of scope.",
+  timelapseWatchScope:
+    "Snapshots are taken on connect and on “Capture now”, and a new generation is kept only when the content changed. Meant for small master/config tables (up to {limit} rows); history of large tables is out of scope.",
   timelapseWatchPk: "The table must have a primary key (used to track rows between generations).",
-  timelapseWatchPrivacy: "Snapshots are a local copy of real data and may contain sensitive values. They are stored only on this device, in the app data directory (table_timelapse.sqlite), and are never sent anywhere. You can delete them when unwatching or from Settings.",
-  timelapseWatchMask: "Sensitive-column masking applies to the display only; stored snapshots are not masked. Snapshots are read-only SELECTs and are not recorded in query history.",
+  timelapseWatchPrivacy:
+    "Snapshots are a local copy of real data and may contain sensitive values. They are stored only on this device, in the app data directory (table_timelapse.sqlite), and are never sent anywhere. You can delete them when unwatching or from Settings.",
+  timelapseWatchMask:
+    "Sensitive-column masking applies to the display only; stored snapshots are not masked. Snapshots are read-only SELECTs and are not recorded in query history.",
   timelapseWatchConfirmOk: "Start watching",
   timelapseOverLimitTitle: "This table has more than {limit} rows",
-  timelapseOverLimitMessage: "Only the first {limit} rows (ordered by primary key) can be recorded. Changes outside that range will not be detected. Record the first {limit} rows anyway?",
+  timelapseOverLimitMessage:
+    "Only the first {limit} rows (ordered by primary key) can be recorded. Changes outside that range will not be detected. Record the first {limit} rows anyway?",
   timelapseOverLimitOk: "Record first {limit} rows",
   timelapseWatchDeclined: "Not watched: the table exceeds {limit} rows.",
   timelapseWatched: "Now watching {table}.",
@@ -2576,20 +2736,25 @@ const en = {
   timelapseUnwatchTitle: "Unwatch “{table}”?",
   timelapseUnwatchMessage: "Automatic snapshots of this table stop.",
   timelapseDeleteDataTitle: "Delete saved generations?",
-  timelapseDeleteDataMessage: "{count} saved generations of {table} remain on this device. Delete them, or keep them to browse later?",
+  timelapseDeleteDataMessage:
+    "{count} saved generations of {table} remain on this device. Delete them, or keep them to browse later?",
   timelapseDeleteDataOk: "Delete data",
   timelapseKeepData: "Keep data",
   timelapseCaptureChangedToast: "Table timelapse: content changed in {tables}",
   timelapseCaptureFailedToast: "Table timelapse: could not snapshot {tables}",
   settingsTimelapse: "Table timelapse",
-  settingsTimelapseHelp: "Keeps generation snapshots of watched tables in a local-only store under the app data directory. Snapshots are real data copies and are never sent anywhere.",
+  settingsTimelapseHelp:
+    "Keeps generation snapshots of watched tables in a local-only store under the app data directory. Snapshots are real data copies and are never sent anywhere.",
   settingsTimelapseOnConnect: "Snapshot watched tables on connect",
-  settingsTimelapseOnConnectHelp: "Runs one read-only SELECT per watched table right after connecting (not recorded in history).",
+  settingsTimelapseOnConnectHelp:
+    "Runs one read-only SELECT per watched table right after connecting (not recorded in history).",
   settingsTimelapseMaxGenerations: "Generations kept per table",
-  settingsTimelapseMaxGenerationsHelp: "Older generations are deleted first. Total storage is also capped at 64 MiB.",
+  settingsTimelapseMaxGenerationsHelp:
+    "Older generations are deleted first. Total storage is also capped at 64 MiB.",
   settingsTimelapseClearAll: "Delete all timelapse data",
   settingsTimelapseClearTitle: "Delete all table timelapse data?",
-  settingsTimelapseClearMessage: "All watches and saved generations for every connection are deleted from this device. This cannot be undone.",
+  settingsTimelapseClearMessage:
+    "All watches and saved generations for every connection are deleted from this device. This cannot be undone.",
   settingsTimelapseCleared: "Deleted {count} saved generations.",
   structureOpenData: "Open data",
   structureReload: "Reload",
@@ -2620,11 +2785,11 @@ const en = {
   cmdkFocusExplorer: "Filter the Database Explorer",
   cmdkTableStructure: "Structure: {table}",
   treeLoading: "Loading...",
-  treeTableTitle: "Click ▸ to expand columns, indexes and foreign keys; double-click to open the data; right-click for structure and more",
+  treeTableTitle:
+    "Click ▸ to expand columns, indexes and foreign keys; double-click to open the data; right-click for structure and more",
   treeToggleColumnsAria: "Expand or collapse columns of {table}",
   treeMoreActionsAria: "More actions",
-  treeRowEstimateTitle:
-    "Approximate row count from engine statistics (no COUNT(*) scan); may be stale",
+  treeRowEstimateTitle: "Approximate row count from engine statistics (no COUNT(*) scan); may be stale",
   colTipType: "Type",
   colTipNullable: "Nullable",
   colTipYes: "Yes",
@@ -2652,11 +2817,14 @@ const en = {
   tabCloseAll: "Close all tabs",
   tabDirty: "Unsaved changes (not yet run, or edits not yet applied)",
   tabCloseDiscardTitle: "Close tab with unapplied edits",
-  tabCloseDiscardBody: "\"{name}\" has edits that have not been applied. Closing the tab discards them, and restoring the closed tab will not bring the edits back.",
-  tabCloseDiscardBodyMany: "{count} of the tabs to close have unapplied edits. Closing them discards the edits, and restoring the closed tabs will not bring the edits back.",
+  tabCloseDiscardBody:
+    '"{name}" has edits that have not been applied. Closing the tab discards them, and restoring the closed tab will not bring the edits back.',
+  tabCloseDiscardBodyMany:
+    "{count} of the tabs to close have unapplied edits. Closing them discards the edits, and restoring the closed tabs will not bring the edits back.",
   tabCloseDiscardAction: "Close and discard",
   connDiscardTitle: "Leave with unapplied edits",
-  connDiscardBody: "{count} tab(s) have unapplied edits. Those unapplied edits are not saved and will be discarded.",
+  connDiscardBody:
+    "{count} tab(s) have unapplied edits. Those unapplied edits are not saved and will be discarded.",
   tabCloseApplying: "Edits are being applied to this tab. Try closing it again once that finishes.",
   toastPendingEditsLost: "The connection was lost, so unapplied edits in {count} tab(s) were discarded.",
   connDiscardAction: "Discard and continue",
@@ -2664,7 +2832,8 @@ const en = {
   connTxOpenBody: "This connection has an uncommitted transaction. Disconnecting rolls back its changes.",
   connTxOpenAction: "Disconnect and roll back",
   toastReconnectTxDiscarded: "Reconnected to {name}, but the open transaction was discarded.",
-  windowCloseTxBody: "{count} connection(s) have an uncommitted transaction. Closing the window rolls back its changes.",
+  windowCloseTxBody:
+    "{count} connection(s) have an uncommitted transaction. Closing the window rolls back its changes.",
   windowCloseTxAction: "Close and roll back",
   tabUntitledQuery: "Query",
   tabExplainTitle: "Explain",
@@ -2828,7 +2997,8 @@ const en = {
   gridFooterAria: "Aggregate footer row",
   gridFooterSelectAria: "Footer aggregate for {column}",
   gridStopButton: "Stop",
-  gridStopButtonTitle: "Stop the running query. Rows already received stay visible and the connection is kept.",
+  gridStopButtonTitle:
+    "Stop the running query. Rows already received stay visible and the connection is kept.",
   // セル右クリックのクイックフィルタ (#914)。
   gridQuickFilterEq: "Filter by this value (= {value})",
   gridMaskColumnIndicator: "Masked column (display only)",
@@ -2923,11 +3093,11 @@ const en = {
   gridUnmarkDelete: "Unmark deletion",
   // 選択範囲のエクスポート/コピー (#917)
   gridExportSelection: "Export {count} selected cells...",
-  gridExportSelectionTitle: "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
+  gridExportSelectionTitle:
+    "Save the selected rectangle to a file or copy it as CSV / JSON / Markdown / etc.",
   // 一括セル編集 (#596)
   gridBulkEditSelection: "Set value for {count} selected cells...",
-  gridBulkEditSelectionTitle:
-    "Apply a single value (or NULL) to every cell in the selection",
+  gridBulkEditSelectionTitle: "Apply a single value (or NULL) to every cell in the selection",
   gridBulkEditTitle: "Set value for selected cells",
   gridBulkEditBody:
     "The value below is applied to all {count} selected cells. Type NULL (uppercase) to clear. Cells whose column is read-only or whose value is invalid for the column type are skipped.",
@@ -2935,13 +3105,13 @@ const en = {
   gridBulkEditSetNull: "Set to NULL",
   gridBulkEditApply: "Set cells",
   gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
-  gridBulkEditAppliedSkipped:
-    "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
+  gridBulkEditAppliedSkipped: "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
   gridBulkEditNoneApplied: "No cells were edited (read-only columns or invalid value)",
   gridBulkEditAllUnchanged: "All {cells} cells already held that value — nothing to edit",
-  gridReplaceMenu: "Find & replace in column \"{column}\"...",
-  gridReplaceMenuTitle: "Replace part of the text in this column, either in the loaded rows or across the whole column",
-  gridReplaceTitle: "Find & replace in \"{column}\"",
+  gridReplaceMenu: 'Find & replace in column "{column}"...',
+  gridReplaceMenuTitle:
+    "Replace part of the text in this column, either in the loaded rows or across the whole column",
+  gridReplaceTitle: 'Find & replace in "{column}"',
   gridReplaceFind: "Find",
   gridReplaceWith: "Replace with",
   gridReplaceRegexHint:
@@ -2951,16 +3121,20 @@ const en = {
   gridReplaceInvalidRegex: "The regular expression is invalid.",
   gridReplaceScope: "Scope",
   gridReplaceScopeGrid: "Loaded rows only",
-  gridReplaceScopeGridHint: "Buffers an edit for each matching cell among the {rows} loaded rows; nothing is written until you Apply.",
+  gridReplaceScopeGridHint:
+    "Buffers an edit for each matching cell among the {rows} loaded rows; nothing is written until you Apply.",
   gridReplaceGridNoPk: "Unavailable: the rows have no primary key, so they cannot be identified safely.",
   gridReplaceGridReadonly: "Unavailable: this column cannot be edited (e.g. BLOB).",
   gridReplaceScopeColumn: "Whole column (UPDATE ... REPLACE)",
-  gridReplaceScopeColumnHint: "Runs a single UPDATE on every row containing the text, including rows not loaded. You confirm before it runs.",
+  gridReplaceScopeColumnHint:
+    "Runs a single UPDATE on every row containing the text, including rows not loaded. You confirm before it runs.",
   gridReplaceNoTable: "Unavailable for this result (needs a table tab).",
-  gridReplaceLimitFilter: "Only rows matching the active filter on \"{column}\"",
+  gridReplaceLimitFilter: 'Only rows matching the active filter on "{column}"',
   gridReplaceNotText: "Whole-column replace only works on text columns (this column is {type}).",
-  gridReplaceSqliteRegex: "SQLite has no built-in regular-expression replace, so whole-column mode cannot use regular expressions.",
-  gridReplaceSqliteCase: "SQLite's REPLACE is case-sensitive, so whole-column mode needs \"Match case\" turned on.",
+  gridReplaceSqliteRegex:
+    "SQLite has no built-in regular-expression replace, so whole-column mode cannot use regular expressions.",
+  gridReplaceSqliteCase:
+    'SQLite\'s REPLACE is case-sensitive, so whole-column mode needs "Match case" turned on.',
   gridReplaceGridSummary: "{hits} matching cell(s); {cells} cell(s) in {rows} row(s) will be edited.",
   gridReplaceSkipInvalid: "{count} skipped (result is invalid for the column type or would become NULL)",
   gridReplaceSkipUnchanged: "{count} unchanged",
@@ -2977,16 +3151,17 @@ const en = {
   gridReplaceClose: "Cancel",
   gridReplaceApplied: "Buffered {cells} cell edit(s) — Apply to commit",
   gridReplaceConfirmTitle: "Replace text across the whole column?",
-  gridReplaceConfirmBody: "This runs one UPDATE on table \"{table}\" that may change many rows. It cannot be undone from here.",
+  gridReplaceConfirmBody:
+    'This runs one UPDATE on table "{table}" that may change many rows. It cannot be undone from here.',
   gridReplaceConfirmDanger: "The statement was flagged as dangerous.",
   gridReplaceConfirmButton: "Run UPDATE",
   statusColumnReplaceApplied: "Replaced text in the column; {rows} rows affected.",
   statusColumnReplaceFailed: "Column replace failed and was rolled back, nothing was changed: {error}",
-  statusColumnReplaceBlockedByEdits: "Apply or discard the pending edits before replacing across a whole column.",
+  statusColumnReplaceBlockedByEdits:
+    "Apply or discard the pending edits before replacing across a whole column.",
   // クリップボード貼り付けによる複数セル一括編集 (#793)
   gridPasteApplied: "Buffered {cells} pasted cell edits — Apply to commit",
-  gridPasteAppliedSkipped:
-    "Buffered {cells} pasted cell edits ({skipped} skipped) — Apply to commit",
+  gridPasteAppliedSkipped: "Buffered {cells} pasted cell edits ({skipped} skipped) — Apply to commit",
   gridPasteNoneApplied:
     "No cells were pasted (read-only columns, invalid values, or the paste extended past the visible rows/columns)",
   gridPasteAllUnchanged: "All {cells} pasted cells already held that value — nothing to edit",
@@ -3012,7 +3187,7 @@ const en = {
     "When the same query is re-run, highlight cells that changed and rows that were added (needs a primary key)",
   diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "Add a new row to {table}",
-  rowOpsInsertHint: "Leave a field empty to use the column default. Type \"null\" for SQL NULL.",
+  rowOpsInsertHint: 'Leave a field empty to use the column default. Type "null" for SQL NULL.',
   rowOpsInsertDefaultOption: "(default)",
   rowOpsInsertAutoHint: "Left empty, the database assigns this column (auto-increment).",
   rowOpsInsertAutoPlaceholder: "auto-increment",
@@ -3021,7 +3196,8 @@ const en = {
   rowOpsInsertFnTitle: "Insert {sql} as an SQL expression, evaluated by the database (not quoted as text)",
   rowOpsInsertFnActive: "Inserted as an expression. Editing the field makes it text.",
   rowOpsInsertEmptyBadge: "Empty string",
-  rowOpsInsertEmptyTitle: "Inserted as an empty string ('') instead of the default value. Typing replaces it; clear it to use the default.",
+  rowOpsInsertEmptyTitle:
+    "Inserted as an empty string ('') instead of the default value. Typing replaces it; clear it to use the default.",
   rowOpsInsertEmptyClear: "Use the default value instead of an empty string",
   rowOpsInsertFnPg13: "gen_random_uuid() requires PostgreSQL 13 or later.",
   rowOpsInsertGeneratedHint: "Generated column: the database computes this value, so it cannot be entered.",
@@ -3030,8 +3206,10 @@ const en = {
   valuePickerEnum: "ENUM",
   valuePickerSet: "SET",
   valuePickerCheck: "CHECK",
-  valuePickerTitleFk: "Suggests existing values of {target} (prefix search, up to {limit}). Free input is still allowed.",
-  valuePickerTitleAllowed: "Suggests the values allowed by the column's type or CHECK constraint. Free input is still allowed.",
+  valuePickerTitleFk:
+    "Suggests existing values of {target} (prefix search, up to {limit}). Free input is still allowed.",
+  valuePickerTitleAllowed:
+    "Suggests the values allowed by the column's type or CHECK constraint. Free input is still allowed.",
   rowOpsBarSummary: "{inserts} to insert, {deletes} to delete",
   rowOpsApply: "Apply rows",
   rowOpsDiscard: "Discard row ops",
@@ -3180,8 +3358,7 @@ const en = {
   importExecute: "Import",
   importStop: "Stop",
   importCancelled: "Import cancelled.",
-  importCancelledPartial:
-    "Import cancelled; {count} already-committed row(s) were kept.",
+  importCancelledPartial: "Import cancelled; {count} already-committed row(s) were kept.",
   // Row-error handling (#687).
   importErrorMode: "On bad row",
   importErrorModeAbort: "Abort (all-or-nothing)",
@@ -3199,7 +3376,8 @@ const en = {
   importSkippedSave: "Save skipped rows",
   importSkippedSaveTitle: "Save skipped rows",
   importSkippedSaved: "Saved {count} skipped rows to {path}.",
-  importSkippedShowing: "Showing the first {shown} of {total} skipped rows. Use Copy or Save for the full list.",
+  importSkippedShowing:
+    "Showing the first {shown} of {total} skipped rows. Use Copy or Save for the full list.",
   // Duplicate-key handling / UPSERT (#972).
   importConflictMode: "On existing key",
   importConflictModeInsert: "Insert only (duplicate = error)",
@@ -3226,8 +3404,8 @@ const en = {
   importNewTableAbortHint:
     "If the load fails in abort mode, the new table is dropped again. Cancelling mid-load leaves the (empty) table.",
   importNewTableNameRequired: "Enter a table name.",
-  importNewTableNameWhitespace: "Names must not start or end with a space: \"{name}\"",
-  importNewTableNameTooLong: "\"{name}\" is longer than {limit} characters allowed by this database.",
+  importNewTableNameWhitespace: 'Names must not start or end with a space: "{name}"',
+  importNewTableNameTooLong: '"{name}" is longer than {limit} characters allowed by this database.',
   importNewTableNoColumns: "Select at least one column to import.",
   importNewTableColumnNameRequired: "Every imported column needs a name.",
   importNewTableDuplicateColumn: "Duplicate column name (case-insensitive): {name}",
@@ -3300,17 +3478,20 @@ const en = {
   testDataAiCancel: "Cancel",
   testDataAiCancelled: "AI generation was cancelled.",
   testDataAiConfirmTitle: "Send the table schema to the AI?",
-  testDataAiConfirmBody: "This connection is marked as production. The table schema will be sent to the AI service.",
+  testDataAiConfirmBody:
+    "This connection is marked as production. The table schema will be sent to the AI service.",
   testDataAiConfirmSend: "Send",
   testDataAiNoTarget: "No column can be generated by the AI (all are auto-generated, references or skipped).",
-  testDataAiNeedPlan: "Click \"Generate with AI\" to create the value lists. You can switch back to rule-based mode at any time.",
+  testDataAiNeedPlan:
+    'Click "Generate with AI" to create the value lists. You can switch back to rule-based mode at any time.',
   testDataAiPlanReady: "AI proposed value lists for {count} columns. Review the preview, then insert.",
   testDataAiParseError: "The AI response was not valid. Try again, or switch to rule-based mode.",
   testDataAiError: "AI generation failed: {message}. You can switch to rule-based mode.",
   testDataAiRefused: "The AI declined the request: {message}",
   testDataAiWarnUnknown: "Ignored columns that are not in the table: {columns}",
   testDataAiWarnUnusable: "No usable values for {columns}; rule-based generation is used for them.",
-  testDataAiWarnMisaligned: "The consistency rule could not be applied to {columns} because the value counts differ.",
+  testDataAiWarnMisaligned:
+    "The consistency rule could not be applied to {columns} because the value counts differ.",
   testDataAiRule: "Consistency: {columns} — {description}",
   testDataAiWarnComposite:
     "Composite unique constraints ({columns}) cannot be guaranteed by generated values; the insert may fail on duplicates.",
@@ -3343,7 +3524,7 @@ const en = {
   helpSectionConnectionDesc: "How noobDB authenticates to the database.",
   helpAwsIamTitle: "AWS IAM authentication (RDS / Aurora)",
   helpAwsIamDesc:
-    "Connect to Amazon RDS / Aurora MySQL or PostgreSQL with an IAM auth token instead of a stored password. Choose \"AWS IAM\" as the authentication method in the connection form. TLS is always required.",
+    'Connect to Amazon RDS / Aurora MySQL or PostgreSQL with an IAM auth token instead of a stored password. Choose "AWS IAM" as the authentication method in the connection form. TLS is always required.',
   helpAwsIamStep1:
     "Enable IAM DB authentication on the instance and create the DB user for IAM (MySQL: IDENTIFIED WITH AWSAuthenticationPlugin AS 'RDS' / PostgreSQL: GRANT rds_iam).",
   helpAwsIamStep2:
@@ -3357,8 +3538,7 @@ const en = {
     "Runs your query inside a transaction and rolls it back, then shows the before/after state of the affected rows. Nothing is committed.",
   helpDryRunStep1: "Type your query in the editor.",
   helpDryRunStep2: 'Press the "Dry Run" button.',
-  helpDryRunStep3:
-    "A preview panel opens at the bottom showing the table before and after.",
+  helpDryRunStep3: "A preview panel opens at the bottom showing the table before and after.",
   helpDryRunNote:
     "Only INSERT/UPDATE/DELETE/REPLACE are supported. DDL such as CREATE/DROP/ALTER commits implicitly and cannot be dry-run.",
 
@@ -3368,7 +3548,7 @@ const en = {
 
   helpFormatTitle: "Format",
   helpFormatDesc:
-    "Reformats the SQL in the editor for readability; only the editor text changes. The dump dialog's \"Format SQL\" option applies the same style (2-space indent, keyword case preserved) to the saved file. It uses a generic formatter, so minor dialect differences may remain.",
+    'Reformats the SQL in the editor for readability; only the editor text changes. The dump dialog\'s "Format SQL" option applies the same style (2-space indent, keyword case preserved) to the saved file. It uses a generic formatter, so minor dialect differences may remain.',
 
   helpSqlLintTitle: "Syntax check",
   helpSqlLintDesc:
@@ -3381,20 +3561,18 @@ const en = {
     "Assembles SQL from a form. It only writes text into the editor—you still need to press Run to execute it.",
 
   helpSnippetTitle: "Save snippet",
-  helpSnippetDesc:
-    "Saves a query locally for reuse. Stored on your machine, not in the database.",
+  helpSnippetDesc: "Saves a query locally for reuse. Stored on your machine, not in the database.",
 
   helpExportTitle: "Export results (CSV/JSON)",
-  helpExportDesc:
-    "Writes the already-fetched result set to a file. A read-only export.",
+  helpExportDesc: "Writes the already-fetched result set to a file. A read-only export.",
   helpProfileBackupTitle: "Encrypted profile backup (move to another PC)",
   helpProfileBackupDesc:
     "Export every connection profile together with its saved passwords / passphrases as one passphrase-encrypted file (Argon2id + AES-256-GCM), and import it on another computer to connect right away.",
   helpProfileBackupStep1:
-    "Open the profile import/export menu in the connection list and choose \"Export encrypted backup\".",
+    'Open the profile import/export menu in the connection list and choose "Export encrypted backup".',
   helpProfileBackupStep2: "Enter a passphrase twice, then choose where to save the .noobdb-backup file.",
   helpProfileBackupStep3:
-    "On the new computer choose \"Import encrypted backup\", enter the same passphrase and pick how to resolve id collisions.",
+    'On the new computer choose "Import encrypted backup", enter the same passphrase and pick how to resolve id collisions.',
   helpProfileBackupNote:
     "Anyone holding the file and the passphrase can read every saved password. A short or guessable passphrase can be brute-forced offline, so use a long one (16+ characters) and store the file like a password. The passphrase is never saved; if you forget it the backup cannot be opened. A wrong passphrase or a modified file is rejected.",
 
@@ -3409,8 +3587,7 @@ const en = {
   helpHistoryDesc: "Browses previously run queries. Read-only reference.",
 
   helpPaginationTitle: "Pagination / scroll fetch",
-  helpPaginationDesc:
-    "Fetches more rows with additional SELECTs as you scroll. Read-only.",
+  helpPaginationDesc: "Fetches more rows with additional SELECTs as you scroll. Read-only.",
   helpSchemaCompareTitle: "Schema compare",
   helpSchemaCompareDesc:
     "Compares two connections' schemas (and table data) side by side and highlights the differences. Open it from the diff icon in the top toolbar.",
@@ -3427,8 +3604,7 @@ const en = {
     "Executes the query as-is. Anything other than SELECT (UPDATE/DELETE/INSERT/DDL) is applied directly to the database.",
 
   helpApplyTitle: "Apply",
-  helpApplyDesc:
-    "Commits your unsaved cell edits as UPDATE statements against the database.",
+  helpApplyDesc: "Commits your unsaved cell edits as UPDATE statements against the database.",
   helpApplyNote: "Currently runs outside a transaction (related: #102).",
 
   helpImportTitle: "CSV import",
@@ -3468,7 +3644,8 @@ const en = {
   shortcutEditorFindTitle: "Cmd/Ctrl+F (in editor)",
   shortcutEditorFindDesc: "Open find & replace inside the SQL editor (when the editor is focused).",
   helpShortcutSearchTitle: "Cmd/Ctrl+F",
-  helpShortcutSearchDesc: "Open the find-in-results bar and highlight matching cells across the fetched rows.",
+  helpShortcutSearchDesc:
+    "Open the find-in-results bar and highlight matching cells across the fetched rows.",
   shortcutFindNavTitle: "Enter / Shift+Enter (in find bar)",
   shortcutFindNavDesc: "Jump to the next / previous match. Esc closes the bar and returns focus to the grid.",
   shortcutGridNavTitle: "Arrow keys / Tab / Home / End / PageUp / PageDown",
@@ -3532,7 +3709,7 @@ const en = {
   appToolsTitle: "Tools: diagnostics, logs, and full-screen tools",
   appToolsNeedsSession: "Available while connected",
   appProcessesUnsupported:
-    "SQLite is single-writer, so there is no process list or blocking chain. If you hit \"database is locked\", see the hint in the error pane.",
+    'SQLite is single-writer, so there is no process list or blocking chain. If you hit "database is locked", see the hint in the error pane.',
   appUsersUnsupported: "Not available for SQLite connections",
   appSchemaCompare: "Compare schemas",
   appErDiagram: "ER diagram",
@@ -3549,7 +3726,7 @@ const en = {
   pinCompareEmptyHint: "Pin a result first (pin button on the result toolbar)",
   pinToastCompare: "Result pinned",
   pinToastNeedOneMore: "Result pinned. Pin one more to compare.",
-  pinToastEvicted: "Result pinned. The limit is {max}, so \"{title}\" was removed.",
+  pinToastEvicted: 'Result pinned. The limit is {max}, so "{title}" was removed.',
   pinToastOpenCompare: "Open comparison",
   pinCompareSelect: "Select a pinned result to show here.",
   pinCompareLeft: "Left",
@@ -3620,10 +3797,10 @@ const en = {
   erDiagramFocusSelected: "Focus on {table}",
   erDiagramFocusSelectedTip:
     "Show only the selected table and the tables reachable through foreign keys within the chosen range.",
-  erDiagramTruncated:
-    "Showing the {shown} most-connected of {total} tables to keep the diagram readable.",
+  erDiagramTruncated: "Showing the {shown} most-connected of {total} tables to keep the diagram readable.",
   erDiagramTruncatedFocusHint: "To see a specific table, use Focus in the toolbar.",
-  erDiagramFocusCapped: "Too many tables in range; showing the nearest {shown}. Narrow the range to see them all.",
+  erDiagramFocusCapped:
+    "Too many tables in range; showing the nearest {shown}. Narrow the range to see them all.",
   erDiagramPk: "Primary key",
   erDiagramFk: "Foreign key",
   erDiagramAiDoc: "Generate docs with AI",
@@ -3641,14 +3818,20 @@ const en = {
   aiSchemaDocReferenced: "referenced",
   aiSchemaDocNoSelection: "Select at least one table.",
   aiSchemaDocSelectedCount: "{selected} selected, {effective} tables including those they reference",
-  aiSchemaDocSends: "Sends: the schema of {database} ({tables} tables, {columns} columns, {fks} foreign keys, {dialect}; about {kb} KB excluding indexes and definitions) plus indexes and view/routine definitions. Row data, sample values and column defaults are not sent.",
-  aiSchemaDocSendsSelected: "Sends: the schema of {database} for the selected scope ({tables} tables, {columns} columns, {fks} foreign keys, {dialect}; about {kb} KB excluding indexes and definitions) plus indexes and definitions of the views in scope. Routine definitions, row data, sample values and column defaults are not sent.",
+  aiSchemaDocSends:
+    "Sends: the schema of {database} ({tables} tables, {columns} columns, {fks} foreign keys, {dialect}; about {kb} KB excluding indexes and definitions) plus indexes and view/routine definitions. Row data, sample values and column defaults are not sent.",
+  aiSchemaDocSendsSelected:
+    "Sends: the schema of {database} for the selected scope ({tables} tables, {columns} columns, {fks} foreign keys, {dialect}; about {kb} KB excluding indexes and definitions) plus indexes and definitions of the views in scope. Routine definitions, row data, sample values and column defaults are not sent.",
   aiSchemaDocFkMissing: "Foreign keys could not be read, so relationships are not included.",
-  aiSchemaDocTruncated: "The output hit the length limit and is incomplete. Narrow the scope and generate again.",
-  aiSchemaDocTooBig: "The request would be about {kb} KB, over the {limit} KB limit. Narrow the scope to \"Selected tables and what they reference\".",
-  aiSchemaDocLargeSchema: "This scope is large: {tables} tables (about {kb} KB). Generation can be slow and costly. Consider \"Selected tables and what they reference\".",
+  aiSchemaDocTruncated:
+    "The output hit the length limit and is incomplete. Narrow the scope and generate again.",
+  aiSchemaDocTooBig:
+    'The request would be about {kb} KB, over the {limit} KB limit. Narrow the scope to "Selected tables and what they reference".',
+  aiSchemaDocLargeSchema:
+    'This scope is large: {tables} tables (about {kb} KB). Generation can be slow and costly. Consider "Selected tables and what they reference".',
   aiSchemaDocConfirmTitle: "Send the schema to the AI?",
-  aiSchemaDocConfirmBody: "This connection is marked as production. Table, column and index names, comments and view/routine definitions will be sent to the Anthropic API.",
+  aiSchemaDocConfirmBody:
+    "This connection is marked as production. Table, column and index names, comments and view/routine definitions will be sent to the Anthropic API.",
   aiSchemaDocConfirmSend: "Send",
   aiSchemaDocGenerate: "Generate",
   aiSchemaDocCollecting: "Collecting indexes and definitions...",
@@ -3713,8 +3896,7 @@ const en = {
   schemaCompareApplying: "Applying...",
   schemaCompareApplyConfirm:
     'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
-  schemaCompareApplyProductionConfirm:
-    '"{name}" is a production connection. Apply schema changes anyway?',
+  schemaCompareApplyProductionConfirm: '"{name}" is a production connection. Apply schema changes anyway?',
   schemaCompareApplyTypedConfirmTitle: "Confirm destructive apply on production",
   schemaCompareApplyTypedConfirmBody:
     '"{name}" is a production connection and this plan includes {destructive} destructive statement(s) (DROP/DELETE). This cannot be undone.',
@@ -3739,7 +3921,8 @@ const en = {
   schemaCompareDataAllRows: "Compare all rows",
   schemaCompareDataIgnore: "Ignore columns",
   schemaCompareDataIgnorePlaceholder: "e.g. updated_at, modified_by",
-  schemaCompareDataTruncatedAll: "The comparison stopped at the safety cap on rows or differences, so the rest was not compared and DELETE is not generated. Narrow the table or compare it in parts.",
+  schemaCompareDataTruncatedAll:
+    "The comparison stopped at the safety cap on rows or differences, so the rest was not compared and DELETE is not generated. Narrow the table or compare it in parts.",
   schemaCompareDataCompare: "Compare data",
   schemaCompareDataComparedTable: "Compared table: {table}",
   schemaCompareDataInserts: "Insert",
@@ -3755,16 +3938,22 @@ const en = {
   aiSyncRiskRunning: "Asking the AI...",
   aiSyncRiskCancel: "Stop",
   aiSyncRiskCancelled: "Stopped.",
-  aiSyncRiskDisclaimer: "AI judgments can be wrong. The final decision is yours. Applying works exactly as before.",
-  aiSyncRiskSendsSchema: "Sends: dialect ({dialect}), {count} statement(s) (SQL: {sql}), schema differences, warnings.",
-  aiSyncRiskSendsSchemaCapped: "Sends: dialect ({dialect}), {shown} of {total} statements (SQL: {sql}; destructive ones first), schema differences, warnings.",
-  aiSyncRiskSendsData: "Sends: dialect ({dialect}), table name, statement kinds, row counts (insert {inserts} / update {updates} / delete {deletes}) and warnings. Cell values and SQL bodies are not sent.",
+  aiSyncRiskDisclaimer:
+    "AI judgments can be wrong. The final decision is yours. Applying works exactly as before.",
+  aiSyncRiskSendsSchema:
+    "Sends: dialect ({dialect}), {count} statement(s) (SQL: {sql}), schema differences, warnings.",
+  aiSyncRiskSendsSchemaCapped:
+    "Sends: dialect ({dialect}), {shown} of {total} statements (SQL: {sql}; destructive ones first), schema differences, warnings.",
+  aiSyncRiskSendsData:
+    "Sends: dialect ({dialect}), table name, statement kinds, row counts (insert {inserts} / update {updates} / delete {deletes}) and warnings. Cell values and SQL bodies are not sent.",
   aiSyncRiskSqlMasked: "literals masked",
   aiSyncRiskSqlRaw: "literals included",
   aiSyncRiskScopeTitle: "Send the sync SQL to the AI?",
-  aiSyncRiskScopeBody: "Risk review needs the SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  aiSyncRiskScopeBody:
+    'Risk review needs the SQL text, but the send scope is set to "Schema only". Send it this time?',
   aiSyncRiskProdTitle: "Send the sync plan to the AI?",
-  aiSyncRiskProdBody: "A connection in this comparison is marked as production. The plan details below will be sent to the Anthropic API.",
+  aiSyncRiskProdBody:
+    "A connection in this comparison is marked as production. The plan details below will be sent to the Anthropic API.",
   aiSyncRiskConfirmSend: "Send",
   aiSyncRiskSummary: "What applying will do",
   aiSyncRiskRecommendation: "Before applying",
@@ -3920,7 +4109,8 @@ const en = {
   usersRetry: "Retry",
   usersLoadError: "Failed to load users: {error}",
   usersEmpty: "No users to show.",
-  usersReadOnlyHint: "This is a read-only session: user/privilege changes are disabled (enforced by the backend).",
+  usersReadOnlyHint:
+    "This is a read-only session: user/privilege changes are disabled (enforced by the backend).",
   usersSelectUserHint: "Select a user or role to view its privileges.",
   usersSuperuserBadge: "SUPERUSER",
   usersNewUser: "New user…",
@@ -3941,9 +4131,12 @@ const en = {
   usersCopyHint:
     "Sets this user's table privileges in {database} to match the source (tables only this user has are revoked). Nothing runs yet — review the changes and the SQL, then press Apply.",
   usersCopySubmit: "Load privileges",
-  usersCopyMysqlNote: "On MySQL only table-level privileges are copied (global, database-level and column privileges, and roles are not).",
-  usersCopyEmptySource: "{name} has no table privileges in {database}. Applying will revoke every privilege this user currently has there.",
-  usersCopyRevokes: "Applying will REVOKE privileges on {count} table(s) that the source does not have. Check the SQL preview before confirming.",
+  usersCopyMysqlNote:
+    "On MySQL only table-level privileges are copied (global, database-level and column privileges, and roles are not).",
+  usersCopyEmptySource:
+    "{name} has no table privileges in {database}. Applying will revoke every privilege this user currently has there.",
+  usersCopyRevokes:
+    "Applying will REVOKE privileges on {count} table(s) that the source does not have. Check the SQL preview before confirming.",
   usersCopyCancel: "Cancel",
   usersCopyLoaded: "Loaded the privileges of {name}. Review the highlighted rows, then press Apply.",
   usersCopyFailed: "Could not read the source's privileges: {error}",
@@ -3965,7 +4158,8 @@ const en = {
     "Server-wide (global) privileges from mysql.user. Shown for reference only — this panel edits per-table privileges within the current database, which is a different scope from a global GRANT ... ON *.*.",
   usersNeedDatabaseHint: "Open a database to view and edit its table-level privileges.",
   usersPrivilegesLoadError: "Failed to load privileges: {error}",
-  usersPrivilegesEmpty: "No table-level grants in the current database. Add a table below to grant privileges.",
+  usersPrivilegesEmpty:
+    "No table-level grants in the current database. Add a table below to grant privileges.",
   usersColTable: "Table",
   usersColSelect: "SELECT",
   usersColInsert: "INSERT",
@@ -4052,9 +4246,9 @@ const en = {
   inspectorMinDurationLabel: "Min duration (ms)",
   inspectorTailCount: "{shown} / {total} events",
   inspectorTailEmpty: "No queries observed yet. Exercise your application against this database.",
-  inspectorTailIdle: "Press \"Start recording\" to begin tailing queries.",
+  inspectorTailIdle: 'Press "Start recording" to begin tailing queries.',
   inspectorStatsEmpty: "No statements executed since recording started.",
-  inspectorStatsIdle: "Press \"Start recording\" to collect statement statistics.",
+  inspectorStatsIdle: 'Press "Start recording" to collect statement statistics.',
   inspectorCumulativeLabel: "Show cumulative totals (since server statistics reset)",
   inspectorBaselineAt: "Delta since {time}",
   inspectorColObserved: "Observed",
@@ -4067,17 +4261,21 @@ const en = {
   inspectorStatsExport: "Export",
   textExportButton: "Export",
   profileCompareOpen: "Compare with other connections...",
-  profileCompareOpenTooltip: "Run the same column profile on other open connections and compare the distributions side by side.",
+  profileCompareOpenTooltip:
+    "Run the same column profile on other open connections and compare the distributions side by side.",
   profileCompareTitle: "Compare column distribution",
-  profileCompareDesc: "Profile {column} on the connections you choose and compare the distributions with this connection. Table and column names are assumed to be the same; the database name can differ.",
+  profileCompareDesc:
+    "Profile {column} on the connections you choose and compare the distributions with this connection. Table and column names are assumed to be the same; the database name can differ.",
   profileCompareBaseline: "baseline",
   profileComparePickerEmpty: "No other connections are open. Connect to the other environment first.",
   profileCompareDatabaseAria: "Database on {name}",
-  profileCompareDatabaseHint: "The input next to each connection is the database that holds the table on that connection.",
+  profileCompareDatabaseHint:
+    "The input next to each connection is the database that holds the table on that connection.",
   profileCompareCancel: "Cancel",
   profileCompareRun: "Compare",
   profileCompareProdTitle: "Include production connections?",
-  profileCompareProdMessage: "Profiling scans the whole table. Production connections included: {names}. Continue?",
+  profileCompareProdMessage:
+    "Profiling scans the whole table. Production connections included: {names}. Continue?",
   profileCompareResultTitle: "Distribution of {column} across connections",
   profileCompareClose: "Close",
   profileCompareBack: "Change connections",
@@ -4087,20 +4285,24 @@ const en = {
   profileCompareTableAria: "Column distribution compared across connections",
   profileCompareNullPct: "NULL rate",
   profileCompareAbsent: "not in top values",
-  profileCompareTopNote: "Top values are compared by share (%), not by count, so tables of different sizes can be compared. \"not in top values\" means the value is outside that connection's top values.",
+  profileCompareTopNote:
+    'Top values are compared by share (%), not by count, so tables of different sizes can be compared. "not in top values" means the value is outside that connection\'s top values.',
   planPin: "Pin plan",
   planPinRepin: "Pinned {at} (re-pin)",
-  planPinTooltip: "Pin the current plan, then change the SQL or add an index and EXPLAIN again to compare the two plans.",
+  planPinTooltip:
+    "Pin the current plan, then change the SQL or add an index and EXPLAIN again to compare the two plans.",
   planPinClear: "Clear the pinned plan",
   planCompareOpen: "Compare with pinned",
   planCompareTooltip: "Compare the pinned plan (before) with the current plan (after) side by side.",
   planCompareDriverMismatch: "The pinned plan came from a different database type and cannot be compared.",
   planCompareTitle: "Compare execution plans",
-  planCompareAnalyzeMismatch: "Only one of the two plans was measured with EXPLAIN ANALYZE, so measured times and some hints are not comparable. Run both in the same mode for a fair comparison.",
+  planCompareAnalyzeMismatch:
+    "Only one of the two plans was measured with EXPLAIN ANALYZE, so measured times and some hints are not comparable. Run both in the same mode for a fair comparison.",
   planCompareClose: "Close",
   planCompareUnparsable: "One of the plans could not be parsed, so they cannot be compared.",
   planCompareVerdictImproved: "The heaviness score dropped from {before} to {after}. The plan looks lighter.",
-  planCompareVerdictRegressed: "The score or warnings got worse (heaviness {before} → {after}). Check the changes below.",
+  planCompareVerdictRegressed:
+    "The score or warnings got worse (heaviness {before} → {after}). Check the changes below.",
   planCompareVerdictSame: "No notable change (heaviness {before} → {after}).",
   planCompareSummaryAria: "Plan comparison summary",
   planCompareColBefore: "Before (pinned)",
@@ -4114,8 +4316,10 @@ const en = {
   planCompareBeforePane: "Before (pinned {at})",
   planCompareAfterPane: "After (current)",
   gridPasteInsertTitle: "Add the extra pasted rows as new rows?",
-  gridPasteInsertMessage: "{rows} pasted row(s) ({cells} cells) go past the last displayed row. They can be added as pending new rows. Nothing is written until you apply the pending changes.",
-  gridPasteInsertSkipped: "{cells} cell(s) that cannot be inserted (generated columns, BLOB columns, invalid values, hidden columns) are left out.",
+  gridPasteInsertMessage:
+    "{rows} pasted row(s) ({cells} cells) go past the last displayed row. They can be added as pending new rows. Nothing is written until you apply the pending changes.",
+  gridPasteInsertSkipped:
+    "{cells} cell(s) that cannot be inserted (generated columns, BLOB columns, invalid values, hidden columns) are left out.",
   gridPasteInsertConfirm: "Add as new rows",
   gridPasteInsertAdded: "Added {rows} pending new row(s)",
   gridPasteInsertDeclined: "Skipped {cells} cell(s) that went past the last displayed row",
@@ -4169,7 +4373,8 @@ const en = {
   whereUsedRun: "Search",
   whereUsedCancel: "Cancel",
   whereUsedProgress: "Reading definitions… {done} / {total}",
-  whereUsedSummary: "{matches} result(s) reference {target} — scanned {objects} definition(s) and {snippets} snippet(s).",
+  whereUsedSummary:
+    "{matches} result(s) reference {target} — scanned {objects} definition(s) and {snippets} snippet(s).",
   whereUsedNone: "No references to {target} were found in {objects} definition(s) and {snippets} snippet(s).",
   whereUsedCancelled: "Search cancelled — the results below are partial.",
   whereUsedUnsupported: "Not scanned on this connection (the driver has none or cannot read them): {kinds}.",
@@ -4238,8 +4443,10 @@ const en = {
   assertRuleRowCount: "Row count",
   assertRuleCustomSql: "Custom SQL",
   assertDescCustomSql: "{table}: {sql}",
-  assertFieldSql: "Violation query (a read-only SELECT that returns violating rows; 0 rows = pass. When joining, return o.* or key columns instead of SELECT * so column names stay unique)",
-  assertFieldSqlPlaceholder: "SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE o.user_id IS NOT NULL AND u.id IS NULL",
+  assertFieldSql:
+    "Violation query (a read-only SELECT that returns violating rows; 0 rows = pass. When joining, return o.* or key columns instead of SELECT * so column names stay unique)",
+  assertFieldSqlPlaceholder:
+    "SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE o.user_id IS NOT NULL AND u.id IS NULL",
   assertErrSql: "Enter a read-only SELECT statement.",
   assertDescNotNull: "{table}.{column} IS NOT NULL",
   assertDescUnique: "{table} ({columns}) is unique",
@@ -4293,15 +4500,18 @@ const en = {
   assertAiButton: "Suggest with AI",
   sqlCheckViolationsButton: "Check violation count",
   sqlCheckRowsButton: "Check with a row count",
-  sqlCheckHint: "Runs the SQL once as a read-only COUNT to catch errors such as unknown columns before you use it.",
+  sqlCheckHint:
+    "Runs the SQL once as a read-only COUNT to catch errors such as unknown columns before you use it.",
   sqlCheckRunning: "Running a read-only COUNT…",
   sqlCheckViolations: "{count} violating row(s) right now.",
   sqlCheckViolationsZero: "0 violating rows — this assertion passes right now.",
   sqlCheckRows: "Runs without errors and returns {count} row(s).",
   sqlCheckError: "Failed to run: {error}",
-  sqlCheckDuplicateColumn: "A column name may be duplicated (a derived table cannot have two columns with the same name). Alias the columns with AS and check again.",
+  sqlCheckDuplicateColumn:
+    "A column name may be duplicated (a derived table cannot have two columns with the same name). Alias the columns with AS and check again.",
   assertAiTitle: "Suggest assertions with AI",
-  assertAiDesc: "Pick a table and the AI proposes data quality checks from its column types, NULLability, keys, foreign keys, names and comments. Tick the ones you want and register them together.",
+  assertAiDesc:
+    "Pick a table and the AI proposes data quality checks from its column types, NULLability, keys, foreign keys, names and comments. Tick the ones you want and register them together.",
   assertAiTable: "Table",
   assertAiTablePlaceholder: "Select a table",
   assertAiTablesError: "Could not load the table list: {error}",
@@ -4309,9 +4519,11 @@ const en = {
   assertAiGenerate: "Generate suggestions",
   assertAiStop: "Stop",
   assertAiClose: "Close",
-  assertAiSends: "Sends: the schema of {table} and its related foreign keys ({columns} columns, {dialect}). Row data is not sent.",
+  assertAiSends:
+    "Sends: the schema of {table} and its related foreign keys ({columns} columns, {dialect}). Row data is not sent.",
   assertAiConfirmTitle: "Send the schema to the AI?",
-  assertAiConfirmProdBody: "This connection is marked as production. The table and column names will be sent to the Anthropic API.",
+  assertAiConfirmProdBody:
+    "This connection is marked as production. The table and column names will be sent to the Anthropic API.",
   assertAiConfirmSend: "Send",
   assertAiRunning: "Thinking about checks for this table…",
   assertAiError: "AI request failed: {message}",
@@ -4321,8 +4533,10 @@ const en = {
   assertAiEmpty: "The AI had no suggestions for this table.",
   assertAiSuggestions: "Suggestions ({count})",
   assertAiSqlLabel: "Check SQL (edit before registering)",
-  assertAiNotReadOnly: "This SQL is not a single read-only statement, so it cannot be registered. Edit it into a SELECT.",
-  assertAiNote: "Suggestions are drafts. Each SQL returns the violating rows; the assertion passes when it returns 0 rows. Review before registering.",
+  assertAiNotReadOnly:
+    "This SQL is not a single read-only statement, so it cannot be registered. Edit it into a SELECT.",
+  assertAiNote:
+    "Suggestions are drafts. Each SQL returns the violating rows; the assertion passes when it returns 0 rows. Review before registering.",
   assertAiPick: "Register “{name}”",
   assertAiRegister: "Register {count} selected",
   assertAiRegistered: "Registered {count} assertion(s)",
@@ -4375,12 +4589,12 @@ const en = {
     "This column type does not support DISTINCT / MIN / MAX on this server, so only counts are shown.",
   profileNoteTopUnavailable: "This column type cannot be grouped, so the most frequent values are not shown.",
   profileNoteHistogramUnavailable: "A histogram could not be computed for this column.",
-  profileNoteApproxUnsupported: "Approximate distinct is not available on this driver; the exact count is shown.",
+  profileNoteApproxUnsupported:
+    "Approximate distinct is not available on this driver; the exact count is shown.",
   profileNoteApproxNoStats:
     "No planner statistics for this column yet (run ANALYZE); the exact distinct count is shown.",
   profileNoteUnknown: "Part of the profile could not be computed.",
-  profileNoteOverviewSkipped:
-    "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
+  profileNoteOverviewSkipped: "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
   profileOverviewRun: "All columns overview",
   profileOverviewRerun: "Refresh overview",
   profileOverviewHint:
@@ -4406,7 +4620,8 @@ const en = {
     "For tables with two or more fixable findings (missing FK indexes, duplicate or redundant indexes), the fixes are combined into as few statements as the database allows. Findings based on usage statistics are not included. Review before running.",
   advisorPlanChanges: "{count} changes",
   advisorFixStandard: "Standard",
-  advisorFixStandardNote: "Simple, but the table may block writes for the whole duration on a large production table.",
+  advisorFixStandardNote:
+    "Simple, but the table may block writes for the whole duration on a large production table.",
   advisorFixOnline: "Online (writes keep flowing)",
   advisorFixOnlineNotePostgres:
     "Uses CONCURRENTLY, so it cannot run inside a transaction block — run it as a single statement outside BEGIN/COMMIT (multi-statement scripts and transaction mode will fail). It takes longer, and if it fails an INVALID index may remain and must be dropped.",
@@ -4423,15 +4638,19 @@ const en = {
   advisorAiRunning: "Asking the AI...",
   advisorAiStop: "Stop",
   advisorAiCancelled: "Stopped.",
-  advisorAiSends: "Sends: this finding, fix DDL ({ddl}), dialect ({dialect}), column / index definitions of {tables} related table(s). No row data is sent.",
+  advisorAiSends:
+    "Sends: this finding, fix DDL ({ddl}), dialect ({dialect}), column / index definitions of {tables} related table(s). No row data is sent.",
   advisorAiDdlMasked: "literals masked",
   advisorAiDdlRaw: "literals included",
   advisorAiDdlNone: "none",
-  advisorAiGuardNote: "AI explanations can be wrong. The AI only explains and never runs SQL; running the fix stays your decision.",
+  advisorAiGuardNote:
+    "AI explanations can be wrong. The AI only explains and never runs SQL; running the fix stays your decision.",
   advisorAiScopeTitle: "Send this finding to the AI?",
-  advisorAiScopeBody: "The send scope is set to \"Schema only\", but explaining a finding needs the finding and its fix DDL. Send them this time?",
+  advisorAiScopeBody:
+    'The send scope is set to "Schema only", but explaining a finding needs the finding and its fix DDL. Send them this time?',
   advisorAiProdTitle: "Send this finding to the AI?",
-  advisorAiProdBody: "This connection is marked as production. The finding, fix DDL and the column / index definitions of related tables will be sent to the Anthropic API.",
+  advisorAiProdBody:
+    "This connection is marked as production. The finding, fix DDL and the column / index definitions of related tables will be sent to the Anthropic API.",
   advisorAiConfirmSend: "Send",
   advisorAiWhy: "Why it is a problem",
   advisorAiConsequence: "If left alone",
@@ -4456,7 +4675,8 @@ const en = {
   advisorRuleSqliteIntegerPkHintTitle: "Non-INTEGER integer primary key",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "Other schema finding",
-  advisorRuleUnknownDesc: "{table}: the backend reported a schema finding this version cannot describe. Update the app to see the details.",
+  advisorRuleUnknownDesc:
+    "{table}: the backend reported a schema finding this version cannot describe. Update the app to see the details.",
   // ルール説明 (パラメータ差し込み)
   advisorRuleFkMissingIndexDesc:
     "{table}({columns}) is a foreign key referencing {ref}, but no index leads with these columns. Joins and cascading deletes on it may be slow.",
@@ -4584,8 +4804,7 @@ const en = {
   settingsColumnMaskCopyPlaceholderHelp:
     "Prevents accidentally pasting a masked value elsewhere. Turn off to copy the real value even while it is masked.",
   settingsAutoRefreshDefault: "Default auto-refresh interval",
-  settingsAutoRefreshDefaultHelp:
-    "Default cadence pre-selected in the result grid's auto-refresh control.",
+  settingsAutoRefreshDefaultHelp: "Default cadence pre-selected in the result grid's auto-refresh control.",
 
   settingsSearchPlaceholder: "Search settings…",
   settingsSearchNoMatch: "No matching settings",
@@ -4741,7 +4960,7 @@ const en = {
   taskLoadError: "Failed to load tasks: {error}",
   taskRetry: "Retry",
   taskEmpty: "No scheduled tasks yet.",
-  taskToggleEnabled: "Enable/disable \"{name}\"",
+  taskToggleEnabled: 'Enable/disable "{name}"',
   taskNextRun: "Next run",
   taskDisabled: "Disabled",
   taskLastOk: "Last run: ok",
@@ -4760,18 +4979,19 @@ const en = {
   taskRunAttempts: "{n} attempts",
   taskRunBytes: "{bytes} bytes",
   taskDeleteConfirmTitle: "Delete task?",
-  taskDeleteConfirmMessage: "Delete the scheduled task \"{name}\"? Its run history will also be removed.",
+  taskDeleteConfirmMessage: 'Delete the scheduled task "{name}"? Its run history will also be removed.',
   taskDeleteConfirmOk: "Delete",
-  taskDeleted: "Deleted task \"{name}\".",
+  taskDeleted: 'Deleted task "{name}".',
   taskRunning: "Running…",
   taskRunProgress: "Running: {progress}",
   taskRunProgressRows: "{count} rows",
   taskRunProgressBytes: "{count} bytes",
   taskRunProgressItems: "{count} done",
   taskRunStop: "Stop",
-  taskRunStopTitle: "Stop this run. A partial output file is removed, and the run is recorded as cancelled in the history.",
-  taskRunOk: "\"{name}\" ran successfully.",
-  taskRunFailed: "\"{name}\" failed: {error}",
+  taskRunStopTitle:
+    "Stop this run. A partial output file is removed, and the run is recorded as cancelled in the history.",
+  taskRunOk: '"{name}" ran successfully.',
+  taskRunFailed: '"{name}" failed: {error}',
   taskRunNotifyTitle: "Scheduled task failed: {name}",
   taskFormName: "Name",
   taskFormProfile: "Connection",
@@ -4815,8 +5035,7 @@ const en = {
   taskFormDatabaseRequired: "Enter a database name.",
   taskFormOutputPath: "Output path",
   taskFormOutputPathPlaceholder: "e.g. sales-{date}.csv",
-  taskFormOutputPathHint:
-    "{date} expands to YYYY-MM-DD and {datetime} to YYYYMMDD-HHMMSS (UTC) at run time.",
+  taskFormOutputPathHint: "{date} expands to YYYY-MM-DD and {datetime} to YYYYMMDD-HHMMSS (UTC) at run time.",
   taskFormOutputPathPreview: "preview: {path}",
   taskFormOutputPathRequired: "Enter an output path.",
   taskFormSchedule: "Schedule",
@@ -4845,13 +5064,12 @@ const en = {
   taskFormProfileRequired: "Choose a connection.",
   taskProductionConfirmTitle: "Schedule a task on a production connection?",
   taskProductionConfirmMessage:
-    "\"{name}\" is marked as a production connection. Scheduled tasks on it will keep running automatically while the app is open — continue?",
+    '"{name}" is marked as a production connection. Scheduled tasks on it will keep running automatically while the app is open — continue?',
   taskProductionConfirmOk: "Continue",
-  taskSaved: "Saved task \"{name}\".",
+  taskSaved: 'Saved task "{name}".',
   taskOutputPathBrowseTitle: "Choose an output file",
   taskSchedulerSettingsLoadError: "Couldn't load the scheduler settings: {error}",
-  taskCatchUpMissed:
-    "Catch up on a schedule missed while the app was closed (runs once on next launch)",
+  taskCatchUpMissed: "Catch up on a schedule missed while the app was closed (runs once on next launch)",
   helpTaskSchedulerTitle: "Scheduled tasks",
   helpTaskSchedulerDesc:
     "Run a saved read-only query export, a database dump, data quality assertions, table timelapse captures or a plan watch refresh automatically on an interval or daily, from the clock icon in the sidebar footer. A task can retry a failed connection a few times with a growing wait (only the connecting step is retried).",
@@ -4860,9 +5078,11 @@ const en = {
   helpFlightRecorderTitle: "DML flight recorder / Undo",
   helpFlightRecorderDesc:
     "Running a single INSERT/UPDATE/DELETE from the editor captures a before/after image of the rows it touched to a local-only file, so you can reverse it later with one click.",
-  helpFlightRecorderStep1: "Turn it on in Settings (on by default) — a row cap and retention period can be tuned there too.",
+  helpFlightRecorderStep1:
+    "Turn it on in Settings (on by default) — a row cap and retention period can be tuned there too.",
   helpFlightRecorderStep2: "Run a single-statement INSERT/UPDATE/DELETE from the editor as usual.",
-  helpFlightRecorderStep3: "Open \"Flight recorder / Undo\" from the history panel's toolbar and click Undo on the entry you want to reverse.",
+  helpFlightRecorderStep3:
+    'Open "Flight recorder / Undo" from the history panel\'s toolbar and click Undo on the entry you want to reverse.',
   helpFlightRecorderNote:
     "Best-effort insurance, not a real backup. Capture can silently fail (an unresolvable target table/primary key, a write affecting more rows than the configured cap) — the write itself always still runs, uncaptured. DDL (DROP/TRUNCATE) is out of scope; only INSERT/UPDATE/DELETE are ever captured, and only the rows the statement itself directly touched — triggers and cascading effects are not recorded. Undo checks whether the live data still matches what was captured and reports a conflict (with the option to force-apply anyway) if another client changed the same rows in the meantime, but it cannot prevent that change from having happened. Undo itself goes through the same read-only guard, confirmation, and history recording as any other write.",
   // --- SQL Editor / Result Grid UX (#1113) ---
@@ -4906,34 +5126,44 @@ const en = {
   resultJsonEmpty: "No rows to show",
   contextMenuConfigureOpenQuery: "Set default query when opened…",
   tableOpenQuerySettingsTitle: "Default query when opening a table",
-  tableOpenQuerySettingsHelp: "The query run when you open a table from the schema tree. Leave empty to keep the built-in SELECT * … LIMIT n. Per-table overrides take precedence over this setting.",
+  tableOpenQuerySettingsHelp:
+    "The query run when you open a table from the schema tree. Leave empty to keep the built-in SELECT * … LIMIT n. Per-table overrides take precedence over this setting.",
   tableOpenQueryGlobalLabel: "Template (all tables)",
-  tableOpenQueryGlobalHelp: "Placeholders: {placeholders}. {table} is the quoted, qualified table name; {pk} expands to the primary key columns (rowid / ctid when there is none). Without a LIMIT, LIMIT {limit} is appended. Templates that don't select the primary key open read-only.",
+  tableOpenQueryGlobalHelp:
+    "Placeholders: {placeholders}. {table} is the quoted, qualified table name; {pk} expands to the primary key columns (rowid / ctid when there is none). Without a LIMIT, LIMIT {limit} is appended. Templates that don't select the primary key open read-only.",
   tableOpenQueryOverridesLabel: "Per-table overrides",
   tableOpenQueryOverridesEmpty: "No per-table overrides yet.",
-  tableOpenQueryOverridesHelp: "Right-click a table in the schema tree and choose “Set default query when opened…” to add one.",
+  tableOpenQueryOverridesHelp:
+    "Right-click a table in the schema tree and choose “Set default query when opened…” to add one.",
   tableOpenQueryOverrideRemove: "Remove override",
   tableOpenQueryOverrideRemoveAria: "Remove the default query override for {table}",
   tableOpenQueryErrorUnknownPlaceholder: "Unknown placeholder {name}.",
   tableOpenQueryErrorMultiple: "Only a single statement is allowed.",
-  tableOpenQueryErrorNotSelect: "Only read-only SELECT statements are allowed (no updates, DDL or locking clauses).",
+  tableOpenQueryErrorNotSelect:
+    "Only read-only SELECT statements are allowed (no updates, DDL or locking clauses).",
   tableOpenQueryErrorTooLong: "The template is too long (max {max} characters).",
-  tableOpenQueryErrorSyntax: "The template is not a valid SELECT (check quotes, parentheses and the FROM clause).",
+  tableOpenQueryErrorSyntax:
+    "The template is not a valid SELECT (check quotes, parentheses and the FROM clause).",
   tableOpenQueryModalTitle: "Default query for {table}",
   tableOpenQueryModalLabel: "Template for this table",
-  tableOpenQueryModalHelp: "Leave empty to use the global template. Placeholders: {database} / {table} / {table_name} / {limit} / {pk}.",
+  tableOpenQueryModalHelp:
+    "Leave empty to use the global template. Placeholders: {database} / {table} / {table_name} / {limit} / {pk}.",
   tableOpenQueryModalPreview: "Preview",
   tableOpenQueryModalPreviewLegacy: "Opens with the built-in SELECT * … LIMIT n.",
-  tableOpenQueryModalReadOnly: "This query doesn't identify rows by primary key (or rowid / ctid), so the table will open read-only.",
-  tableOpenQueryModalOffset: "Paging falls back to LIMIT/OFFSET because the query has its own filter or ordering.",
+  tableOpenQueryModalReadOnly:
+    "This query doesn't identify rows by primary key (or rowid / ctid), so the table will open read-only.",
+  tableOpenQueryModalOffset:
+    "Paging falls back to LIMIT/OFFSET because the query has its own filter or ordering.",
   tableOpenQueryModalRemove: "Remove override",
   tableOpenQueryModalCancel: "Cancel",
   tableOpenQueryModalSave: "Save",
   tableOpenQuerySaved: "Saved the default query for {table}",
   tableOpenQueryRemoved: "Removed the default query override for {table}",
   tableOpenQueryReadOnlyBadge: "Read-only",
-  tableOpenQueryReadOnlyHintGlobal: "Opened with the default query from Settings. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
-  tableOpenQueryReadOnlyHintOverride: "Opened with this table's default query override. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
+  tableOpenQueryReadOnlyHintGlobal:
+    "Opened with the default query from Settings. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
+  tableOpenQueryReadOnlyHintOverride:
+    "Opened with this table's default query override. It doesn't select the primary key (or rowid / ctid), so editing is disabled to avoid changing the wrong rows.",
   quickLauncherTitle: "Quick launcher",
   quickLauncherButtonAria: "Open quick launcher (favorite snippets, recent queries and tables)",
   quickLauncherButtonTooltip: "Quick launcher — drag to move, right-click for options",
@@ -4952,20 +5182,25 @@ const en = {
   quickLauncherResetPositionHelp: "Moves the launcher button back to the bottom-right corner.",
   quickLauncherOpenSettings: "Launcher settings",
   quickLauncherSettingsTitle: "Floating launcher",
-  quickLauncherSettingsHelp: "A button that floats over the SQL workspace and calls up favorite snippets, recent queries and tables from anywhere. Drag it to move it.",
+  quickLauncherSettingsHelp:
+    "A button that floats over the SQL workspace and calls up favorite snippets, recent queries and tables from anywhere. Drag it to move it.",
   quickLauncherSettingsEnabled: "Show the floating launcher",
   quickLauncherSettingsLimits: "Items per section",
-  quickLauncherSettingsLimitsHelp: "Number of items shown in each section ({min}–{max}). The rest is available from “Show more…”.",
+  quickLauncherSettingsLimitsHelp:
+    "Number of items shown in each section ({min}–{max}). The rest is available from “Show more…”.",
   shortcutQuickLauncherTitle: "Cmd/Ctrl+Shift+J",
-  shortcutQuickLauncherDesc: "Open or close the floating launcher (favorite snippets, recent queries and tables).",
+  shortcutQuickLauncherDesc:
+    "Open or close the floating launcher (favorite snippets, recent queries and tables).",
 
   // AI 基盤 (#690)
   aiSettingsTitle: "AI assistant",
-  aiSettingsHelp: "Uses the Anthropic API (Claude). Off by default; nothing is sent until you turn it on and register an API key. Requests always go through the app backend.",
+  aiSettingsHelp:
+    "Uses the Anthropic API (Claude). Off by default; nothing is sent until you turn it on and register an API key. Requests always go through the app backend.",
   aiEnable: "Enable AI features",
   aiEnableHelp: "Schema information etc. is sent to the Anthropic API when you use an AI feature.",
   aiConsentTitle: "Send data to the Anthropic API?",
-  aiConsentBody: "Enabling AI features sends the schema information (table and column names, types, keys and comments) and the prompts you write to the Anthropic API. Row data is not sent unless you allow it below. Models such as Fable 5.1 require 30-day data retention on the provider side. Details are in Help > AI data policy.",
+  aiConsentBody:
+    "Enabling AI features sends the schema information (table and column names, types, keys and comments) and the prompts you write to the Anthropic API. Row data is not sent unless you allow it below. Models such as Fable 5.1 require 30-day data retention on the provider side. Details are in Help > AI data policy.",
   aiConsentConfirm: "Agree and enable",
   aiApiKeyLabel: "Anthropic API key",
   aiApiKeyPlaceholder: "sk-ant-...",
@@ -4980,7 +5215,8 @@ const en = {
   aiDefaultModel: "Default model",
   aiDefaultModelHelp: "Used by every task that has no override below.",
   aiTaskModels: "Model and effort per task",
-  aiTaskModelsHelp: "Override the model or the reasoning effort for a task type. The recommended option is marked.",
+  aiTaskModelsHelp:
+    "Override the model or the reasoning effort for a task type. The recommended option is marked.",
   aiColTask: "Task",
   aiColModel: "Model",
   aiColEffort: "Effort",
@@ -5009,13 +5245,15 @@ const en = {
   aiEffortXhigh: "Extra high",
   aiEffortMax: "Max",
   aiSendScope: "Data scope",
-  aiSendScopeHelp: "Features that need the SQL text, such as error explanation, ask for confirmation before sending.",
+  aiSendScopeHelp:
+    "Features that need the SQL text, such as error explanation, ask for confirmation before sending.",
   aiSendScopeSchemaOnly: "Schema only",
   aiSendScopeSchemaAndSql: "Schema and SQL text",
   aiAllowRowData: "Allow sending row data",
   aiAllowRowDataHelp: "Off by default. When off, cell values are never included in prompts.",
   aiMaskLiterals: "Mask string literals in SQL",
-  aiMaskLiteralsHelp: "On by default. String literals, comments and quoted values in SQL are replaced with blanks before being sent to the AI.",
+  aiMaskLiteralsHelp:
+    "On by default. String literals, comments and quoted values in SQL are replaced with blanks before being sent to the AI.",
   aiSetupHintLabel: "Explain with AI (enable in Settings)",
   aiSetupHintNoKeyLabel: "Register an API key to explain with AI",
   aiSetupHintExplainInterpret: "Interpret the plan with AI (enable in Settings)",
@@ -5025,10 +5263,13 @@ const en = {
   aiSetupHintTooltip: "Opens the AI settings. Nothing is sent until you enable AI and agree.",
   aiSetupHintDismiss: "Don't show again",
   aiHideSetupHint: "Show the AI setup hint while AI is off",
-  aiHideSetupHintHelp: "A small link that points to this screen where AI features are available. Turn off to hide it.",
+  aiHideSetupHintHelp:
+    "A small link that points to this screen where AI features are available. Turn off to hide it.",
   aiInlineComplete: "Inline completion in the SQL editor",
-  aiInlineCompleteHelp: "Off by default. When you pause typing, the text around the cursor (up to 40 lines before, 10 after) and the schema of the tables it mentions are sent to the AI, which suggests a continuation as faint text (Tab to accept, Esc to dismiss). It sends on every pause, so costs add up. It only works when the data scope is \"Schema and SQL text\" and never on production connections. String literals follow the masking setting above. Requests that are cancelled are not counted in the monthly usage.",
-  aiInlineCompleteNeedsScope: "Inline completion is on but does nothing while the data scope is \"Schema only\". Set it to \"Schema and SQL text\" to use it.",
+  aiInlineCompleteHelp:
+    'Off by default. When you pause typing, the text around the cursor (up to 40 lines before, 10 after) and the schema of the tables it mentions are sent to the AI, which suggests a continuation as faint text (Tab to accept, Esc to dismiss). It sends on every pause, so costs add up. It only works when the data scope is "Schema and SQL text" and never on production connections. String literals follow the masking setting above. Requests that are cancelled are not counted in the monthly usage.',
+  aiInlineCompleteNeedsScope:
+    'Inline completion is on but does nothing while the data scope is "Schema only". Set it to "Schema and SQL text" to use it.',
   aiErrorExplainButton: "Explain with AI",
   aiErrorExplainRunning: "Asking the AI...",
   aiErrorExplainCancel: "Stop",
@@ -5044,14 +5285,16 @@ const en = {
   aiUsageCacheRead: "cache read {count}",
   aiUsageFallback: "Switched from {from} to {to}.",
   aiLedgerTitle: "Usage history and estimated cost",
-  aiLedgerHelp: "Daily (JST) token counts per task and responding model, stored on this device in ai_usage.json. Only numbers are kept (never the API key or what was sent). Cancelled or failed calls are not recorded, so totals can be lower than actual use. Cost is a rough estimate from a built-in price table and may differ from your invoice.",
+  aiLedgerHelp:
+    "Daily (JST) token counts per task and responding model, stored on this device in ai_usage.json. Only numbers are kept (never the API key or what was sent). Cancelled or failed calls are not recorded, so totals can be lower than actual use. Cost is a rough estimate from a built-in price table and may differ from your invoice.",
   aiLedgerRange: "Period",
   aiLedgerRangeMonth: "This month (JST)",
   aiLedgerRange7: "Last 7 days",
   aiLedgerRange30: "Last 30 days",
   aiLedgerRangeAll: "All recorded",
   aiLedgerEmpty: "No AI usage recorded in this period.",
-  aiLedgerTotal: "Total: {calls} calls · Input {input} / Output {output} tokens{cache} · Estimated cost {cost}",
+  aiLedgerTotal:
+    "Total: {calls} calls · Input {input} / Output {output} tokens{cache} · Estimated cost {cost}",
   aiLedgerRow: "{name}: {calls} calls · Input {input} / Output {output} tokens · {cost}",
   aiLedgerByModel: "By model",
   aiLedgerByTask: "By task",
@@ -5061,15 +5304,18 @@ const en = {
   aiLedgerLoadFailed: "Could not load the usage history: {error}",
   aiLedgerClear: "Clear history",
   aiLedgerClearConfirmTitle: "Clear the usage history?",
-  aiLedgerClearConfirmBody: "All recorded daily usage will be deleted from this device. This cannot be undone.",
+  aiLedgerClearConfirmBody:
+    "All recorded daily usage will be deleted from this device. This cannot be undone.",
   aiLedgerCleared: "Cleared the usage history.",
-  aiErrorExplainSends: "Sends: error message, SQL ({sql}), dialect ({dialect}), table definitions ({tables}).",
+  aiErrorExplainSends:
+    "Sends: error message, SQL ({sql}), dialect ({dialect}), table definitions ({tables}).",
   aiErrorExplainSqlMasked: "literals masked",
   aiErrorExplainSqlRaw: "literals included",
   aiErrorExplainTablesSome: "{count} tables",
   aiErrorExplainTablesNone: "none",
   aiErrorExplainConfirmTitle: "Send the error to the AI?",
-  aiErrorExplainConfirmBody: "This connection is marked as production. The error message, SQL and table definitions will be sent to the Anthropic API.",
+  aiErrorExplainConfirmBody:
+    "This connection is marked as production. The error message, SQL and table definitions will be sent to the Anthropic API.",
   aiErrorExplainConfirmSend: "Send",
   aiErrorExplainExplanation: "Explanation",
   aiErrorExplainCause: "Cause",
@@ -5078,9 +5324,11 @@ const en = {
   aiErrorExplainApply: "Apply to editor",
   aiErrorExplainApplied: "The suggested SQL was put in the editor. It has not been run.",
   aiErrorExplainScopeTitle: "Send the SQL to the AI?",
-  aiErrorExplainScopeBody: "Error explanation needs the SQL text, but the send scope is set to \"Schema only\". Send it this time?",
+  aiErrorExplainScopeBody:
+    'Error explanation needs the SQL text, but the send scope is set to "Schema only". Send it this time?',
   aiErrorExplainReplaceAllTitle: "Replace the whole editor?",
-  aiErrorExplainReplaceAllBody: "The failed statement could not be uniquely located in the editor. Replace the entire editor contents with the suggested SQL?",
+  aiErrorExplainReplaceAllBody:
+    "The failed statement could not be uniquely located in the editor. Replace the entire editor contents with the suggested SQL?",
   aiErrorExplainReplaceAllConfirm: "Replace all",
   aiErrorExplainTabClosed: "The tab has been closed, so nothing was applied.",
   aiErrorExplainMaskedNote: "Literals were hidden when sending, so check the values in the suggested SQL.",
@@ -5098,7 +5346,8 @@ const en = {
   aiTestRefused: "The model declined the test request: {message}",
   aiTestFailed: "Connection test failed: {error}",
   aiSampleRequest: "Send sample request",
-  aiSampleRequestHelp: "Streams a short reply through the same path later AI features use. A stand-in until real features land.",
+  aiSampleRequestHelp:
+    "Streams a short reply through the same path later AI features use. A stand-in until real features land.",
   aiSamplePrompt: "Say hello in one short sentence.",
   aiSampleCancel: "Cancel",
   aiSampleRefused: "The model declined to respond: {message}",
@@ -5108,16 +5357,23 @@ const en = {
   helpSectionAiDesc: "Optional, off by default. Uses the Anthropic API.",
   helpAiPolicyTitle: "AI data policy",
   helpAiPolicyDesc: "What leaves your machine when AI features are enabled.",
-  helpAiPolicySend: "Sent: the prompt you write, schema information (table / column names, types, keys and comments), and SQL text if the data scope allows it.",
-  helpAiPolicyNotSend: "Not sent: row data (cell values) unless you allow it, passwords, SSH secrets, and the API key of any connection profile.",
-  helpAiPolicyKey: "The Anthropic API key lives only in the OS keyring and is never written to profiles.json or logs. Requests are made by the app backend, not the UI.",
-  helpAiPolicyRetention: "Fable 5.1 requires 30-day data retention on the provider side. Choose another model if that is not acceptable.",
-  helpAiPolicyNote: "Generated SQL, once added, still passes the usual safety nets (read-only guard, confirmations).",
+  helpAiPolicySend:
+    "Sent: the prompt you write, schema information (table / column names, types, keys and comments), and SQL text if the data scope allows it.",
+  helpAiPolicyNotSend:
+    "Not sent: row data (cell values) unless you allow it, passwords, SSH secrets, and the API key of any connection profile.",
+  helpAiPolicyKey:
+    "The Anthropic API key lives only in the OS keyring and is never written to profiles.json or logs. Requests are made by the app backend, not the UI.",
+  helpAiPolicyRetention:
+    "Fable 5.1 requires 30-day data retention on the provider side. Choose another model if that is not acceptable.",
+  helpAiPolicyNote:
+    "Generated SQL, once added, still passes the usual safety nets (read-only guard, confirmations).",
   helpAiPricingTitle: "AI model price guide",
-  helpAiPricingDesc: "Approximate API prices per 1M tokens (input / output). Actual billing follows Anthropic.",
+  helpAiPricingDesc:
+    "Approximate API prices per 1M tokens (input / output). Actual billing follows Anthropic.",
   helpAiPriceOpus: "Claude Opus 5.5: $4 / $20",
   helpAiPriceSonnet: "Claude Sonnet 5.5: $2 / $10",
-  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
+  helpAiPriceHaiku:
+    "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
 };
 
@@ -5166,9 +5422,12 @@ const ja: Dict = {
   activityFooterNote: "このセッションの直近 {limit} 件を保持します (終了時は保存されません)。",
   activityOpenInPanel: "パネルで開く",
   activityEmptyTitle: "アクティビティはまだありません",
-  activityPanelEmpty: "通知とステータスバーのメッセージ (接続・実行結果・エラー) をここに残します。後から読み返せます。",
-  ipcValidationActivity: "バックエンドから「{command}」の想定外の応答がありました。アプリ本体とバックエンドのバージョンが食い違っている可能性があります。",
-  ipcValidationHint: "問題を報告するときにこのテキストをコピーして添えてください。行データや秘密情報は含みません。",
+  activityPanelEmpty:
+    "通知とステータスバーのメッセージ (接続・実行結果・エラー) をここに残します。後から読み返せます。",
+  ipcValidationActivity:
+    "バックエンドから「{command}」の想定外の応答がありました。アプリ本体とバックエンドのバージョンが食い違っている可能性があります。",
+  ipcValidationHint:
+    "問題を報告するときにこのテキストをコピーして添えてください。行データや秘密情報は含みません。",
   ipcValidationCopy: "診断情報をコピー",
   ipcValidationCopied: "コピーしました",
   activityShowDetail: "詳細を表示",
@@ -5200,13 +5459,17 @@ const ja: Dict = {
   outputRerun: "再実行",
   outputRerunHint: "現在の接続で新しいタブに流します (通常の実行と同じ安全確認を通ります)",
   outputNeedsConnection: "先にデータベースへ接続してください",
-  outputRerunOtherConnection: "この文は「{name}」で実行されました。再実行するにはその接続へ切り替えてください。",
+  outputRerunOtherConnection:
+    "この文は「{name}」で実行されました。再実行するにはその接続へ切り替えてください。",
   outputCopySql: "SQL をコピー",
   outputCopied: "SQL をコピーしました",
-  outputOpenTruncatedDisabled: "この SQL はメモリ節約のため途中までしか保持していないので、エディタでは開けません。履歴から開き直してください。",
+  outputOpenTruncatedDisabled:
+    "この SQL はメモリ節約のため途中までしか保持していないので、エディタでは開けません。履歴から開き直してください。",
   outputCopyFailed: "SQL をクリップボードにコピーできませんでした",
-  outputCopiedTruncated: "全 {total} 字のうち先頭 {kept} 字をコピーしました (古い履歴は長い SQL の先頭だけを保持します)",
-  outputSqlTruncated: "全 {total} 字のうち先頭 {kept} 字を表示しています。古い行は長い SQL の先頭だけを保持してメモリを節約します。",
+  outputCopiedTruncated:
+    "全 {total} 字のうち先頭 {kept} 字をコピーしました (古い履歴は長い SQL の先頭だけを保持します)",
+  outputSqlTruncated:
+    "全 {total} 字のうち先頭 {kept} 字を表示しています。古い行は長い SQL の先頭だけを保持してメモリを節約します。",
   cmdkOutput: "出力 (実行ログ) を表示",
   cmdkActivityPanel: "アクティビティをボトムパネルで表示",
   statusOpenMessages: "アクティビティで履歴を表示",
@@ -5228,7 +5491,8 @@ const ja: Dict = {
   bottomPanelResizeAria: "下部パネルの高さを変更",
   bottomPanelStripAria: "下部パネルのショートカット",
   aiSqlTitle: "AI 解説",
-  aiSqlEmpty: "エディタで SQL を選び、右クリックメニューまたはコマンドパレットから「この SQL を解説」「最適化案を提案」を実行してください。",
+  aiSqlEmpty:
+    "エディタで SQL を選び、右クリックメニューまたはコマンドパレットから「この SQL を解説」「最適化案を提案」を実行してください。",
   aiSqlMenuExplain: "この SQL を解説 (AI)",
   aiSqlMenuRewrite: "最適化案を提案 (AI)",
   aiSqlCmdExplain: "この SQL を AI で解説",
@@ -5239,7 +5503,8 @@ const ja: Dict = {
   aiSqlSourceAll: "対象の SQL (エディタ全体)",
   aiSqlRunning: "AI に問い合わせ中...",
   aiResultSummaryTitle: "AI 要約",
-  aiResultSummaryEmpty: "結果ツールバーの「AI で要約」を選ぶと、結果の傾向・外れ値・次に見るべき切り口を表示します。",
+  aiResultSummaryEmpty:
+    "結果ツールバーの「AI で要約」を選ぶと、結果の傾向・外れ値・次に見るべき切り口を表示します。",
   aiResultSummaryToolbar: "AI で要約",
   aiResultSummaryToolbarTitle: "この結果を AI で要約します (傾向・外れ値・追加の SQL 案)",
   aiResultSummaryButton: "要約する",
@@ -5248,8 +5513,10 @@ const ja: Dict = {
   aiResultSummaryRowsNone: "セルの値は送りません。",
   aiResultSummaryRowsSent: "先頭 {count} 行のセルの値を送ります。",
   aiResultSummaryRowsTitle: "行データを AI に送信しますか?",
-  aiResultSummaryRowsBody: "「行データの送信を許可する」がオンのため、この結果の先頭の行 (セルの値。長いセルは切り詰め) を Anthropic API へ送信します。",
-  aiResultSummaryProdBody: "この接続は本番として設定されています。この結果の SQL と列の統計を Anthropic API へ送信します。",
+  aiResultSummaryRowsBody:
+    "「行データの送信を許可する」がオンのため、この結果の先頭の行 (セルの値。長いセルは切り詰め) を Anthropic API へ送信します。",
+  aiResultSummaryProdBody:
+    "この接続は本番として設定されています。この結果の SQL と列の統計を Anthropic API へ送信します。",
   aiResultSummaryTrends: "傾向",
   aiResultSummaryAnomalies: "外れ値・気になる点",
   aiResultSummaryNext: "次に見るべき切り口",
@@ -5264,9 +5531,11 @@ const ja: Dict = {
   aiSqlTablesSome: "{count} 件",
   aiSqlTablesNone: "なし",
   aiSqlScopeTitle: "SQL を AI に送信しますか?",
-  aiSqlScopeBody: "この機能には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
+  aiSqlScopeBody:
+    "この機能には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
   aiSqlProdTitle: "SQL を AI に送信しますか?",
-  aiSqlProdBody: "この接続は本番として設定されています。SQL とテーブル定義が Anthropic の API へ送信されます。",
+  aiSqlProdBody:
+    "この接続は本番として設定されています。SQL とテーブル定義が Anthropic の API へ送信されます。",
   aiSqlConfirmSend: "送信する",
   aiSqlError: "AI への問い合わせに失敗しました: {message}",
   aiSqlApplyError: "エディタへの適用に失敗しました: {message}。もう一度「エディタに適用」を押してください。",
@@ -5281,12 +5550,16 @@ const ja: Dict = {
   aiSqlNoChange: "提案は元の SQL と同じです。",
   aiSqlDiffAdded: "追加",
   aiSqlDiffRemoved: "削除",
-  aiSqlRewriteWarning: "これは提案であり、等価性を保証するものではありません。実行前に EXPLAIN や結果の比較などで確認してください。",
-  aiSqlMaskedNote: "送信前に文字列リテラルを空白にしており、提案中の空白リテラルを元の値に対応付けられませんでした。このまま適用すると値が欠けます。",
-  aiSqlRestoredNote: "送信前に文字列リテラルを空白にしていたため、提案に元の値を出現順で差し戻しました。正しい位置に入っているか確認してください。",
+  aiSqlRewriteWarning:
+    "これは提案であり、等価性を保証するものではありません。実行前に EXPLAIN や結果の比較などで確認してください。",
+  aiSqlMaskedNote:
+    "送信前に文字列リテラルを空白にしており、提案中の空白リテラルを元の値に対応付けられませんでした。このまま適用すると値が欠けます。",
+  aiSqlRestoredNote:
+    "送信前に文字列リテラルを空白にしていたため、提案に元の値を出現順で差し戻しました。正しい位置に入っているか確認してください。",
   aiSqlApplyAnyway: "このまま適用",
   aiSqlMissingTitle: "値が欠けた SQL を適用しますか?",
-  aiSqlMissingBody: "提案には元の値ではなく空白の文字列リテラルが含まれています。適用すると、値が欠けた SQL がエディタに入ります。",
+  aiSqlMissingBody:
+    "提案には元の値ではなく空白の文字列リテラルが含まれています。適用すると、値が欠けた SQL がエディタに入ります。",
   aiSqlStmtTitle: "文の数が異なります",
   aiSqlStmtBody: "元の SQL は {before} 文ですが、提案は {after} 文です。このまま適用しますか?",
   aiSqlApply: "エディタに適用",
@@ -5294,8 +5567,10 @@ const ja: Dict = {
   aiSqlTabClosed: "タブが閉じられたため、適用していません。",
   aiSqlApplyCancelled: "適用を取りやめました。",
   aiSqlMovedTitle: "元の SQL が変更されています",
-  aiSqlMovedRangeBody: "エディタの内容が提案の元にした SQL と一致しません。見つかった同じ文を提案で置き換えますか?",
-  aiSqlMovedAllBody: "エディタの内容が提案の元にした SQL と一致せず、位置も特定できませんでした。エディタ全体を提案で置き換えますか?",
+  aiSqlMovedRangeBody:
+    "エディタの内容が提案の元にした SQL と一致しません。見つかった同じ文を提案で置き換えますか?",
+  aiSqlMovedAllBody:
+    "エディタの内容が提案の元にした SQL と一致せず、位置も特定できませんでした。エディタ全体を提案で置き換えますか?",
   aiSqlMovedConfirm: "置き換える",
   healthTitle: "接続ヘルス",
   healthDesc:
@@ -5374,21 +5649,25 @@ const ja: Dict = {
   aiHistoryCancel: "中止",
   aiHistoryCancelled: "中止しました。",
   aiHistoryNoCandidates: "送信できる履歴がありません。絞り込みを見直してください。",
-  aiHistoryOverflow: "条件に一致する履歴が {max} 件を超えています。新しい {max} 件だけを対象にします。期間で絞り込むと漏れを防げます。",
+  aiHistoryOverflow:
+    "条件に一致する履歴が {max} 件を超えています。新しい {max} 件だけを対象にします。期間で絞り込むと漏れを防げます。",
   aiHistoryTruncated: "文字数の上限のため、古い履歴の一部を対象から外しました。期間で絞り込んでください。",
   aiHistoryConfirmTitle: "履歴の SQL を AI に送信しますか？",
-  aiHistoryConfirmBody: "履歴 {count} 件 (期間: {period} / 接続: {connections} / データベース: {databases}) の SQL 本文を AI プロバイダへ送信します。SQL: {sql}",
+  aiHistoryConfirmBody:
+    "履歴 {count} 件 (期間: {period} / 接続: {connections} / データベース: {databases}) の SQL 本文を AI プロバイダへ送信します。SQL: {sql}",
   aiHistoryConfirmSqlMasked: "文字列リテラルとコメントの中身は伏せます",
   aiHistoryConfirmSqlRaw: "リテラルもそのまま送ります",
   aiHistoryConfirmScopeOnly: "送信範囲の設定は「スキーマ情報のみ」ですが、この機能は SQL 本文を送信します。",
   aiHistoryConfirmProduction: "本番接続の履歴を含みます。",
-  aiHistoryConfirmProductionUnknown: "接続情報を取得できず本番かどうか判定できないため、本番接続の履歴を含むものとして扱います。",
+  aiHistoryConfirmProductionUnknown:
+    "接続情報を取得できず本番かどうか判定できないため、本番接続の履歴を含むものとして扱います。",
   aiHistoryFetchFailed: "{count} 件は SQL 全文を取得できず、対象から外しました。",
   aiHistoryFetchAllFailed: "履歴の SQL 全文を 1 件も取得できませんでした。もう一度お試しください。",
   aiHistoryConfirmSend: "送信する",
   aiHistoryConnUnknown: "不明",
   aiHistoryPeriodRange: "{from} 〜 {to}",
-  aiHistorySends: "送信内容: 履歴 {count} 件の SQL・実行日時・状態・接続名・データベース名 [{databases}] (SQL: {sql})",
+  aiHistorySends:
+    "送信内容: 履歴 {count} 件の SQL・実行日時・状態・接続名・データベース名 [{databases}] (SQL: {sql})",
   aiHistoryNoMatches: "該当する履歴が見つかりませんでした。",
   aiHistoryMatchScore: "適合度 {score}",
   aiHistoryOpen: "エディタに復元",
@@ -5439,7 +5718,8 @@ const ja: Dict = {
   planWatchTitle: "実行計画ウォッチ — {name}",
   planWatchClose: "閉じる",
   planWatchEmptyTitle: "ウォッチ中のスニペットはありません",
-  planWatchEmpty: "スニペットを右クリックして「実行計画をウォッチ」を選ぶと、EXPLAIN 計画の世代を記録してリグレッションを検知できます。",
+  planWatchEmpty:
+    "スニペットを右クリックして「実行計画をウォッチ」を選ぶと、EXPLAIN 計画の世代を記録してリグレッションを検知できます。",
   planWatchSnippetMissing: "(削除されたスニペット)",
   planWatchGenerationCount: "{count} 世代",
   planWatchNoGenerations: "まだ計画が記録されていません。接続中に更新すると最初の世代を記録します。",
@@ -5460,16 +5740,19 @@ const ja: Dict = {
   planWatchUnwatchHint: "このスニペットをウォッチから外し、保存済みの世代を削除します。",
   planWatchRefresh: "計画を更新",
   planWatchRefreshing: "更新中...",
-  planWatchRefreshHint: "ウォッチ中の全スニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。",
+  planWatchRefreshHint:
+    "ウォッチ中の全スニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。",
   planWatchNeedConnection: "計画を更新するにはこのプロファイルに接続してください。",
-  planWatchLocalOnlyNote: "計画はローカルにのみ保存されます。EXPLAIN は読み取り操作のみで、クエリ履歴には記録されません。",
+  planWatchLocalOnlyNote:
+    "計画はローカルにのみ保存されます。EXPLAIN は読み取り操作のみで、クエリ履歴には記録されません。",
   planWatchChangedToast: "{count} 件のウォッチ中スニペットで実行計画が変化しました",
   planWatchRefreshFailedToast: "{name} の計画チェックに失敗: {error}",
 
   schemaDriftTitle: "スキーマドリフト・タイムライン — {name}",
   schemaDriftClose: "閉じる",
   schemaDriftEmptyTitle: "まだスナップショットがありません",
-  schemaDriftEmpty: "このプロファイルに接続すると最初のスキーマスナップショットを記録します (オフの場合は設定の「接続時にスキーマをスナップショット」を有効にしてください)。",
+  schemaDriftEmpty:
+    "このプロファイルに接続すると最初のスキーマスナップショットを記録します (オフの場合は設定の「接続時にスキーマをスナップショット」を有効にしてください)。",
   schemaDriftGenerationTables: "{count} テーブル",
   schemaDriftLatestSuffix: "(最新)",
   schemaDriftOmittedBadge: "サイズ超過のため全文は未保存",
@@ -5477,7 +5760,8 @@ const ja: Dict = {
   schemaDriftCompareTo: "比較先",
   schemaDriftLatestOption: "{time} (最新)",
   schemaDriftPickTwo: "比較する 2 つの異なるスナップショットを選んでください。",
-  schemaDriftOmittedNote: "選択したスナップショットの一方がサイズ超過のため全文を保存できておらず、詳細な差分表示はできません。",
+  schemaDriftOmittedNote:
+    "選択したスナップショットの一方がサイズ超過のため全文を保存できておらず、詳細な差分表示はできません。",
   schemaDriftComparing: "比較中...",
   schemaDriftRetry: "再試行",
   schemaDriftNoChanges: "選択したスナップショット間に差分はありません。",
@@ -5494,7 +5778,8 @@ const ja: Dict = {
   schemaDriftCapturing: "取得中...",
   schemaDriftCaptureHint: "この接続の既定データベースのスキーマスナップショットを今すぐ取得します。",
   schemaDriftNeedConnection: "スナップショットを取得するにはこのプロファイルに接続してください。",
-  schemaDriftLocalOnlyNote: "スナップショットはローカルにのみ保存されます。取得は読み取り操作のみで、クエリ履歴には記録されません。",
+  schemaDriftLocalOnlyNote:
+    "スナップショットはローカルにのみ保存されます。取得は読み取り操作のみで、クエリ履歴には記録されません。",
   schemaDriftChangedToast: "前回のスナップショットからスキーマが変更されています — {detail}",
   schemaDriftRefreshFailedToast: "スキーマドリフトのチェックに失敗: {error}",
   schemaDriftToastOpen: "タイムラインを開く",
@@ -5537,7 +5822,8 @@ const ja: Dict = {
   settingsSyntaxHighlighting: "シンタックスハイライト",
   settingsSyntaxHelp: "{theme}テーマの色を編集しています。",
   settingsSyntaxPresetLabel: "プリセット",
-  settingsSyntaxPresetHelp: "{theme}テーマにプリセットを一括適用します。適用後も下の個別カラーで上書きできます。",
+  settingsSyntaxPresetHelp:
+    "{theme}テーマにプリセットを一括適用します。適用後も下の個別カラーで上書きできます。",
   settingsSyntaxPresetCustom: "カスタム",
   settingsSyntaxPresetDefaultLight: "デフォルト (ライト)",
   settingsSyntaxPresetDefaultDark: "デフォルト (ダーク)",
@@ -5583,25 +5869,33 @@ const ja: Dict = {
   settingsStreamPrefetchSize: "ストリーム読み込み時の事前取得件数",
   settingsStreamPrefetchSizeHelp: "初期分を表示した後、追加で取得する行数のチャンクサイズです。",
   settingsAutoLimit: "自動 LIMIT",
-  settingsAutoLimitHelp: "エディタからの LIMIT 無しの SELECT に自動で LIMIT を付与し、付け忘れによる数百万行のストリーム取得を防ぎます。",
+  settingsAutoLimitHelp:
+    "エディタからの LIMIT 無しの SELECT に自動で LIMIT を付与し、付け忘れによる数百万行のストリーム取得を防ぎます。",
   settingsAutoLimitEnabled: "自動 LIMIT を有効化",
-  settingsAutoLimitEnabledHelp: "LIMIT のないエディタの SELECT / WITH クエリに LIMIT を付与します。バッジからワンクリックで全件取得に切り替えられます。",
+  settingsAutoLimitEnabledHelp:
+    "LIMIT のないエディタの SELECT / WITH クエリに LIMIT を付与します。バッジからワンクリックで全件取得に切り替えられます。",
   settingsAutoLimitCount: "自動 LIMIT 行数",
   settingsAutoLimitCountHelp: "自動 LIMIT が適用されるときの行数の上限です。",
   settingsSqlLint: "SQL 構文チェック",
-  settingsSqlLintHelp: "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
+  settingsSqlLintHelp:
+    "入力中にエディタ上で構文エラーの可能性を下線表示します（実行前に気付けます）。ベストエフォートの編集支援であり、安全性の判定ではありません。",
   settingsSqlLintEnabled: "構文チェックを有効化",
-  settingsSqlLintEnabledHelp: "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
+  settingsSqlLintEnabledHelp:
+    "キーワードのタイポ (SELEC / FRM / WHER など)・中身が空の句 (FROM WHERE など)・余分なカンマ・BY の抜けた GROUP / ORDER・途中で終わった文・句の順序ミス (ORDER BY の後の WHERE など)・括弧の不整合・未終端の文字列やコメントを、接続中ドライバの方言に沿って検出します。誤検出より見逃しを優先する保守的な判定です。",
 
   settingsPreflightImpact: "影響行数プリフライト",
-  settingsPreflightImpactHelp: "エディタの単純な UPDATE / DELETE に対し、実行前に「約 N 行に影響」というバッジを表示します。確認ダイアログより手前で、桁違いの影響やテーブル全行への書き込みに気付けます。",
+  settingsPreflightImpactHelp:
+    "エディタの単純な UPDATE / DELETE に対し、実行前に「約 N 行に影響」というバッジを表示します。確認ダイアログより手前で、桁違いの影響やテーブル全行への書き込みに気付けます。",
   settingsPreflightImpactEnabled: "影響行数バッジを表示",
-  settingsPreflightImpactEnabledHelp: "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
+  settingsPreflightImpactEnabledHelp:
+    "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
 
   settingsPlanWatch: "実行計画ウォッチ",
-  settingsPlanWatchHelp: "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
+  settingsPlanWatchHelp:
+    "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
   settingsPlanWatchOnConnect: "接続時にウォッチ済み計画をチェック",
-  settingsPlanWatchOnConnectHelp: "接続確立時に、そのプロファイルでウォッチ登録済みのスニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると手動更新のみになります。",
+  settingsPlanWatchOnConnectHelp:
+    "接続確立時に、そのプロファイルでウォッチ登録済みのスニペットの EXPLAIN を実行し、計画が変化していれば新しい世代として記録します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると手動更新のみになります。",
   settingsFlightRecorder: "DML フライトレコーダ",
   settingsHistory: "クエリ履歴",
   settingsHistoryHelp:
@@ -5610,24 +5904,31 @@ const ja: Dict = {
   settingsHistoryRetentionDaysHelp:
     "この日数を過ぎた履歴は自動的に削除されます (変更した直後にも削除します)。0 は無期限 (10,000 件の上限を超えた分だけ古い順に消えます)。",
   settingsHistoryRetentionPruned: "古い履歴を {count} 件削除しました。",
-  settingsFlightRecorderHelp: "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
+  settingsFlightRecorderHelp:
+    "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
-  settingsFlightRecorderEnabledHelp: "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
+  settingsFlightRecorderEnabledHelp:
+    "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
   settingsFlightRecorderRowCap: "1 回の書き込みあたりの対象行数上限",
-  settingsFlightRecorderRowCapHelp: "この行数を超える書き込みは通常どおり実行されますが記録はされません (その操作の Undo は使えません)。",
+  settingsFlightRecorderRowCapHelp:
+    "この行数を超える書き込みは通常どおり実行されますが記録はされません (その操作の Undo は使えません)。",
   settingsFlightRecorderRetentionDays: "保持期間 (日数)",
-  settingsFlightRecorderRetentionDaysHelp: "この日数を過ぎた記録は自動的に削除されます。0 は無期限 (総行数の上限は引き続き適用されます)。",
+  settingsFlightRecorderRetentionDaysHelp:
+    "この日数を過ぎた記録は自動的に削除されます。0 は無期限 (総行数の上限は引き続き適用されます)。",
   flightRecorderTitle: "フライトレコーダ / 巻き戻し",
-  flightRecorderIntro: "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE のみ記録対象で、DDL (DROP/TRUNCATE) は対象外。記録から巻き戻しまでの間に他クライアントが加えた変更は検出のみで防止はできません。",
+  flightRecorderIntro:
+    "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE のみ記録対象で、DDL (DROP/TRUNCATE) は対象外。記録から巻き戻しまでの間に他クライアントが加えた変更は検出のみで防止はできません。",
   flightRecorderClose: "閉じる",
   flightRecorderLoading: "読み込み中…",
   flightRecorderEmptyTitle: "記録された書き込みはまだありません",
-  flightRecorderEmpty: "フライトレコーダを有効にした状態で単文の INSERT/UPDATE/DELETE を実行すると、ここに表示されます。",
+  flightRecorderEmpty:
+    "フライトレコーダを有効にした状態で単文の INSERT/UPDATE/DELETE を実行すると、ここに表示されます。",
   flightRecorderRowsAffected: "{rows} 行",
   flightRecorderUndoneBadge: "巻き戻し済み",
   errorFlightAlreadyUndone: "この操作は既に元に戻されています",
   errorFlightPrimaryKeyUnresolved: "主キー列を特定できませんでした",
-  errorViewBaseUnresolved: "ビューの基底表を確認できないためプレビューできません (MyISAM など非トランザクショナルな表は ROLLBACK で戻らないため)。",
+  errorViewBaseUnresolved:
+    "ビューの基底表を確認できないためプレビューできません (MyISAM など非トランザクショナルな表は ROLLBACK で戻らないため)。",
   errorFlightDriverMismatch: "接続先のドライバが記録時と異なります",
   errorFlightProfileMismatch: "接続先のプロファイルが記録時と異なります",
   flightRecorderUndoAction: "巻き戻す",
@@ -5653,41 +5954,53 @@ const ja: Dict = {
   flightRecorderUndoApplied: "巻き戻しました ({rows} 行)。",
   flightRecorderUndoBlocked: "適用しませんでした — 競合を確認してから再度お試しください。",
   flightRecorderAlreadyRestored: "すでに元の状態だったため、SQL は実行せず記録を取り消し済みにしました。",
-  flightRecorderConflictsChanged: "適用しませんでした — プレビューの後に新しい競合が増えました。内容を確認してから再度お試しください。",
+  flightRecorderConflictsChanged:
+    "適用しませんでした — プレビューの後に新しい競合が増えました。内容を確認してから再度お試しください。",
   flightRecorderClearAction: "全消去",
-  flightRecorderClearConfirmProfile: "この接続のフライトレコードをすべて削除しますか? この操作は取り消せません。",
+  flightRecorderClearConfirmProfile:
+    "この接続のフライトレコードをすべて削除しますか? この操作は取り消せません。",
   flightRecorderClearConfirmAll: "すべての接続のフライトレコードを削除しますか? この操作は取り消せません。",
 
   settingsSchemaDrift: "スキーマドリフト・タイムライン",
-  settingsSchemaDriftHelp: "接続のたびにスキーマ (テーブル・列・インデックス) のスナップショットを取得し、プロファイルごとにローカルなタイムラインとして保存します。前回との変更点をすぐに把握できます。",
+  settingsSchemaDriftHelp:
+    "接続のたびにスキーマ (テーブル・列・インデックス) のスナップショットを取得し、プロファイルごとにローカルなタイムラインとして保存します。前回との変更点をすぐに把握できます。",
   settingsSchemaDriftOnConnect: "接続時にスキーマをスナップショット",
-  settingsSchemaDriftOnConnectHelp: "接続確立時に、そのプロファイルの既定データベースのスキーマスナップショットを取得し、前回のスナップショットと異なれば通知します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると保存済みタイムラインの閲覧のみになります。",
+  settingsSchemaDriftOnConnectHelp:
+    "接続確立時に、そのプロファイルの既定データベースのスキーマスナップショットを取得し、前回のスナップショットと異なれば通知します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると保存済みタイムラインの閲覧のみになります。",
   settingsSchemaDriftOnDdl: "DDL 実行後にスキーマをスナップショット",
-  settingsSchemaDriftOnDdlHelp: "プロファイルの既定データベースに対する DDL (CREATE / ALTER / DROP など) が成功したら、スキーマのスナップショットを取得し、そのきっかけになった SQL を一緒に保存します。いつ・どの文でスキーマが変わったかをタイムラインで辿れます。DDL が連続したときは数秒まとめて 1 回だけ取得します。読み取り操作のみで、クエリ履歴を残さない接続では SQL は保存しません。",
+  settingsSchemaDriftOnDdlHelp:
+    "プロファイルの既定データベースに対する DDL (CREATE / ALTER / DROP など) が成功したら、スキーマのスナップショットを取得し、そのきっかけになった SQL を一緒に保存します。いつ・どの文でスキーマが変わったかをタイムラインで辿れます。DDL が連続したときは数秒まとめて 1 回だけ取得します。読み取り操作のみで、クエリ履歴を残さない接続では SQL は保存しません。",
   settingsSafety: "セーフティ",
   settingsNotifications: "通知",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
-  settingsConfirmProductionConnectHelp: "本番環境としてマークされた接続先に接続する前に確認ダイアログを表示します。",
+  settingsConfirmProductionConnectHelp:
+    "本番環境としてマークされた接続先に接続する前に確認ダイアログを表示します。",
   settingsConfirmDangerousQueries: "危険な書き込みクエリの実行前に確認",
-  settingsConfirmDangerousQueriesHelp: "WHERE 句のない UPDATE/DELETE、DROP、TRUNCATE を実行する前に確認ダイアログを表示します。本番環境では設定に関わらず必ず確認します。",
+  settingsConfirmDangerousQueriesHelp:
+    "WHERE 句のない UPDATE/DELETE、DROP、TRUNCATE を実行する前に確認ダイアログを表示します。本番環境では設定に関わらず必ず確認します。",
   settingsResultsInNewTab: "結果を新しいタブで保持",
-  settingsResultsInNewTabHelp: "エディタのクエリを毎回新しいタブで実行し、前の結果を残して見比べられるようにします。一回限りの新タブ実行は Cmd/Ctrl+Shift+Enter。",
+  settingsResultsInNewTabHelp:
+    "エディタのクエリを毎回新しいタブで実行し、前の結果を残して見比べられるようにします。一回限りの新タブ実行は Cmd/Ctrl+Shift+Enter。",
   shortcutRunNewTabTitle: "Cmd/Ctrl+Shift+Enter",
   shortcutRunNewTabDesc: "現在の結果を残したまま、新しい結果タブでクエリを実行します。",
   shortcutRunStatementTitle: "Cmd/Ctrl+Alt+Enter",
-  shortcutRunStatementDesc:
-    "カーソル位置にある単一文だけを実行します (選択範囲があればそちらを優先)。",
+  shortcutRunStatementDesc: "カーソル位置にある単一文だけを実行します (選択範囲があればそちらを優先)。",
   settingsQueryTimeout: "クエリ実行タイムアウト (秒)",
-  settingsQueryTimeoutHelp: "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",
+  settingsQueryTimeoutHelp:
+    "エディタのクエリがこの秒数を超えたら自動的に中断します。0 で無効。中断しても接続は維持されます。",
   settingsQueryTimeoutUnlimited: "無制限 — タイムアウトなしで実行します",
   settingsConnectTimeout: "接続タイムアウト (秒)",
-  settingsConnectTimeoutHelp: "接続確立 (SSH トンネル + データベース) がこの秒数を超えたら中断します。到達不能なホストで固まらないようにします。5〜300 秒にクランプされます。",
+  settingsConnectTimeoutHelp:
+    "接続確立 (SSH トンネル + データベース) がこの秒数を超えたら中断します。到達不能なホストで固まらないようにします。5〜300 秒にクランプされます。",
   settingsAutoReconnect: "接続断からの自動再接続",
-  settingsAutoReconnectHelp: "接続が切れたとき (アイドルタイムアウト・ネットワークや VPN の切断・SSH トンネル断)、同じプロファイルで自動的に再接続します (再試行の間隔は徐々に延びます)。トランザクション中の切断は、中途半端なコミットを防ぐため再接続せずエラーにします。オフの場合は手動の再接続ボタンを表示します。",
+  settingsAutoReconnectHelp:
+    "接続が切れたとき (アイドルタイムアウト・ネットワークや VPN の切断・SSH トンネル断)、同じプロファイルで自動的に再接続します (再試行の間隔は徐々に延びます)。トランザクション中の切断は、中途半端なコミットを防ぐため再接続せずエラーにします。オフの場合は手動の再接続ボタンを表示します。",
   settingsAutoReconnectMaxRetries: "最大再接続回数",
-  settingsAutoReconnectMaxRetriesHelp: "諦めて手動の再接続ボタンを表示するまでに、（待機を伸ばしながら）何回まで再試行するか。",
+  settingsAutoReconnectMaxRetriesHelp:
+    "諦めて手動の再接続ボタンを表示するまでに、（待機を伸ばしながら）何回まで再試行するか。",
   settingsQueryNotifications: "時間のかかったクエリ完了時に通知",
-  settingsQueryNotificationsHelp: "ウィンドウが背面にあるときにクエリが完了 (成功・エラー・キャンセル・タイムアウト) すると、OS のデスクトップ通知を表示します。通知に含まれるのは件数・経過時間・エラーの先頭 1 行のみで、SQL 本文や結果データは含みません。クリックするとウィンドウを前面に表示します。",
+  settingsQueryNotificationsHelp:
+    "ウィンドウが背面にあるときにクエリが完了 (成功・エラー・キャンセル・タイムアウト) すると、OS のデスクトップ通知を表示します。通知に含まれるのは件数・経過時間・エラーの先頭 1 行のみで、SQL 本文や結果データは含みません。クリックするとウィンドウを前面に表示します。",
   settingsQueryNotificationThreshold: "通知するまでの経過時間 (秒)",
   settingsQueryNotificationThresholdHelp: "この秒数以上かかったクエリの完了時のみ通知します。",
   notifyQueryDoneTitle: "クエリが完了しました",
@@ -5698,14 +6011,16 @@ const ja: Dict = {
   notifyQueryCancelledTitle: "クエリをキャンセルしました",
   notifyQueryCancelledBody: "実行中のクエリをキャンセルしました。取得済みの行は保持されます。",
   settingsTabPersistence: "タブの永続化",
-  settingsTabPersistenceHelp: "切断時に開いていたタブを、次回同じ接続先につないだときにどう扱うかを選択します。",
+  settingsTabPersistenceHelp:
+    "切断時に開いていたタブを、次回同じ接続先につないだときにどう扱うかを選択します。",
   settingsTabRestoreMode: "復元方法",
   settingsTabRestoreModeAlways: "常に復元する",
   settingsTabRestoreModeAsk: "都度確認する",
   settingsTabRestoreModeNever: "復元しない",
   settingsAppearance: "表示",
   settingsFontSize: "フォントサイズ (px)",
-  settingsFontSizeHelp: "基準フォントサイズ (ピクセル単位)。SQL エディタや結果グリッドを含む UI 全体を拡大・縮小します。指定可能範囲: {min}〜{max} px (既定 {default})。",
+  settingsFontSizeHelp:
+    "基準フォントサイズ (ピクセル単位)。SQL エディタや結果グリッドを含む UI 全体を拡大・縮小します。指定可能範囲: {min}〜{max} px (既定 {default})。",
   settingsDensity: "表示密度",
   settingsDensityHelp: "結果グリッドの行の高さとセル余白を、フォントサイズとは独立して調整します。",
   settingsDensityCompact: "コンパクト",
@@ -5719,7 +6034,8 @@ const ja: Dict = {
   settingsHistoryRetentionLoadFailed: "履歴保持期間を読み込めませんでした: {error}",
   settingsFontSample: "あいう The quick fox 0123",
   settingsThemePreset: "テーマプリセット",
-  settingsThemePresetHelp: "配色全体を切り替えます。アクセント色・表示密度・シンタックス配色はそのまま維持されます。Dracula / Nord / One Dark / Catppuccin Mocha はダーク専用で、その他のプリセットはライト/ダーク切替に追従します。",
+  settingsThemePresetHelp:
+    "配色全体を切り替えます。アクセント色・表示密度・シンタックス配色はそのまま維持されます。Dracula / Nord / One Dark / Catppuccin Mocha はダーク専用で、その他のプリセットはライト/ダーク切替に追従します。",
   themePresetDefault: "デフォルト",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -5730,7 +6046,8 @@ const ja: Dict = {
   themePresetHighContrast: "高コントラスト",
   themePresetColorblind: "色覚多様性対応",
   settingsMotionPreference: "モーション量",
-  settingsMotionPreferenceHelp: "アプリのアニメーション量を制御します。「システムに従う」は OS の「動きを減らす」設定に追従し、「フル」「控えめ」は OS 設定に関わらずどちらか一方に強制します。",
+  settingsMotionPreferenceHelp:
+    "アプリのアニメーション量を制御します。「システムに従う」は OS の「動きを減らす」設定に追従し、「フル」「控えめ」は OS 設定に関わらずどちらか一方に強制します。",
   settingsMotionPreferenceSystem: "システムに従う",
   settingsMotionPreferenceFull: "フル",
   settingsMotionPreferenceReduced: "控えめ",
@@ -5740,7 +6057,8 @@ const ja: Dict = {
   themePreviewChipText: "テキスト",
   themePreviewChipKeyword: "キーワード",
   settingsAccentColor: "アクセントカラー",
-  settingsAccentColorHelp: "ボタン・選択・フォーカスリング・アクティブタブの色に反映されます。プリセットまたは任意の色を選べます。アクセント上の文字色はコントラストを保つよう自動で決まります。",
+  settingsAccentColorHelp:
+    "ボタン・選択・フォーカスリング・アクティブタブの色に反映されます。プリセットまたは任意の色を選べます。アクセント上の文字色はコントラストを保つよう自動で決まります。",
   settingsAccentCustom: "カスタムアクセントカラー",
   settingsAccentDefault: "テーマ既定",
   settingsAccentBlue: "ブルー",
@@ -5751,7 +6069,8 @@ const ja: Dict = {
   settingsAccentAmber: "アンバー",
   settingsAccentRose: "ローズ",
   settingsLogs: "アプリケーションログ",
-  settingsLogsHelp: "バックエンドの診断ログ（最近のもの）です。不具合を報告するときに役立ちます。ディスク上で約 1MB に制限され、古い行は自動的に破棄されます。",
+  settingsLogsHelp:
+    "バックエンドの診断ログ（最近のもの）です。不具合を報告するときに役立ちます。ディスク上で約 1MB に制限され、古い行は自動的に破棄されます。",
   settingsLogsRefresh: "更新",
   settingsLogsCopy: "コピー",
   settingsLogsCopied: "コピーしました",
@@ -5812,11 +6131,13 @@ const ja: Dict = {
   reconnectDetected: "接続が切れました — 再接続しています...",
   // 明示トランザクション。
   txBegin: "トランザクション開始",
-  txBeginHelp: "明示トランザクションを開始します。以降のクエリは確定/破棄するまでこのトランザクション内で実行されます。",
+  txBeginHelp:
+    "明示トランザクションを開始します。以降のクエリは確定/破棄するまでこのトランザクション内で実行されます。",
   txCommit: "コミット",
   txRollback: "ロールバック",
   txActiveBadge: "TX",
-  txListBadgeTitle: "この接続は未確定のトランザクションを保持しています。切り替えても開いたままです。切断する前に確定または破棄してください。",
+  txListBadgeTitle:
+    "この接続は未確定のトランザクションを保持しています。切り替えても開いたままです。切断する前に確定または破棄してください。",
   connSwitchTxTitle: "この接続には未確定のトランザクションがあります",
   connSwitchTxBody:
     "現在の接続は未確定のトランザクションを保持しています。切り替えてもバックグラウンドで開いたままになり、戻って確定または破棄するまで変更と行ロックが残ります。",
@@ -5837,7 +6158,8 @@ const ja: Dict = {
   txRolledBack: "トランザクションをロールバックしました",
   savepointButton: "SAVEPOINT",
   savepointButtonN: "SAVEPOINT ({count})",
-  savepointHelp: "このトランザクションに SAVEPOINT を作成、または既存の SAVEPOINT へロールバック / 解放します。手書きの制御文や MySQL の DDL (暗黙コミット) の後は、一覧が実際の状態とずれることがあります。",
+  savepointHelp:
+    "このトランザクションに SAVEPOINT を作成、または既存の SAVEPOINT へロールバック / 解放します。手書きの制御文や MySQL の DDL (暗黙コミット) の後は、一覧が実際の状態とずれることがあります。",
   txFinishFailedHint: "トランザクションは終了しました。コミットの成否はサーバ側で確認してください。",
   txAbortedRolledBack: "トランザクションはエラー状態のため、コミットされずロールバックされました。",
   savepointCreate: "SAVEPOINT を作成",
@@ -5847,7 +6169,8 @@ const ja: Dict = {
   savepointRolledBack: "SAVEPOINT {name} までロールバックしました",
   savepointReleased: "SAVEPOINT {name} を解放しました",
   savepointRollbackConfirmTitle: "SAVEPOINT へロールバックしますか?",
-  savepointRollbackConfirmBody: "このトランザクション内で {name} より後に行った変更が破棄され、より新しい SAVEPOINT も消えます。",
+  savepointRollbackConfirmBody:
+    "このトランザクション内で {name} より後に行った変更が破棄され、より新しい SAVEPOINT も消えます。",
   savepointRollbackConfirmAction: "ロールバック",
   productionConfirmTitle: "本番接続の確認",
   productionConfirmAction: "接続する",
@@ -5856,8 +6179,7 @@ const ja: Dict = {
   confirmDefaultCancel: "キャンセル",
   dangerousTitle: "危険なクエリの確認",
   dangerousIntro: "このクエリはデータを破壊・変更する可能性があります:",
-  dangerousWriteApprovalIntro:
-    "このクエリはデータを変更します。この本番接続で実行することを承認しますか？",
+  dangerousWriteApprovalIntro: "このクエリはデータを変更します。この本番接続で実行することを承認しますか？",
   dangerousProductionNote: "この接続は本番環境としてマークされています。",
   dangerousKindDeleteNoWhere: "WHERE 句のない DELETE（全行を削除します）",
   dangerousKindUpdateNoWhere: "WHERE 句のない UPDATE（全行を更新します）",
@@ -5877,16 +6199,20 @@ const ja: Dict = {
   dangerousAiRunning: "AI に問い合わせ中...",
   dangerousAiStop: "中止",
   dangerousAiCancelled: "中止しました。",
-  dangerousAiSends: "送信内容: SQL ({sql})・検出理由・方言 ({dialect})・テーブル定義 / 外部キー / 行数推定 ({tables})・本番接続かどうか。行データは送りません。",
+  dangerousAiSends:
+    "送信内容: SQL ({sql})・検出理由・方言 ({dialect})・テーブル定義 / 外部キー / 行数推定 ({tables})・本番接続かどうか。行データは送りません。",
   dangerousAiSqlMasked: "リテラルをマスク",
   dangerousAiSqlRaw: "リテラルを含む",
   dangerousAiTablesSome: "{count} 件",
   dangerousAiTablesNone: "なし",
-  dangerousAiGuardNote: "AI の判定は誤ることがあり、最終判断はあなたです。これは確認ダイアログと同じ UX ガードであり、権限の強制ではありません (バックエンドが強制するのは読み取り専用のみ)。",
+  dangerousAiGuardNote:
+    "AI の判定は誤ることがあり、最終判断はあなたです。これは確認ダイアログと同じ UX ガードであり、権限の強制ではありません (バックエンドが強制するのは読み取り専用のみ)。",
   dangerousAiScopeTitle: "SQL を AI に送信しますか?",
-  dangerousAiScopeBody: "影響分析には SQL 本文が必要ですが、送信範囲が「スキーマ情報のみ」に設定されています。今回だけ送信しますか?",
+  dangerousAiScopeBody:
+    "影響分析には SQL 本文が必要ですが、送信範囲が「スキーマ情報のみ」に設定されています。今回だけ送信しますか?",
   dangerousAiProdTitle: "SQL を AI に送信しますか?",
-  dangerousAiProdBody: "この接続は本番として設定されています。SQL・検出理由・本番フラグ・テーブル定義・外部キー・行数推定が Anthropic の API へ送信されます。",
+  dangerousAiProdBody:
+    "この接続は本番として設定されています。SQL・検出理由・本番フラグ・テーブル定義・外部キー・行数推定が Anthropic の API へ送信されます。",
   dangerousAiConfirmSend: "送信する",
   dangerousAiResultToggle: "分析結果",
   dangerousAiRisk: "リスク",
@@ -5897,37 +6223,47 @@ const ja: Dict = {
   dangerousAiRows: "推定行数",
   dangerousAiCascades: "連鎖",
   dangerousAiRecommendations: "推奨事項",
-  dangerousAiCascadesNote: "削除 / 更新時の規則 (ON DELETE / ON UPDATE) は未取得のため、可能性として表示しています。",
+  dangerousAiCascadesNote:
+    "削除 / 更新時の規則 (ON DELETE / ON UPDATE) は未取得のため、可能性として表示しています。",
   dangerousAiParseError: "AI の応答を構造化データとして読み取れませんでした。応答本文:",
   dangerousAiError: "AI への問い合わせに失敗しました: {message}",
   dangerousAiRefused: "AI がこの依頼を辞退しました: {message}",
   lockDiagnoseButton: "ロック待ち / 長時間クエリを AI に聞く",
-  lockDiagnoseNoTarget: "解説できるロック待ちや長時間クエリがありません。プロセスを選ぶとそのプロセスについて聞けます。",
+  lockDiagnoseNoTarget:
+    "解説できるロック待ちや長時間クエリがありません。プロセスを選ぶとそのプロセスについて聞けます。",
   lockDiagnoseTarget: "対象: {scope} ({count} 件)",
   lockDiagnoseScopeSelection: "選択中のプロセスと待機関係でつながるもの",
   lockDiagnoseScopeChain: "ロック待ちの連鎖",
   lockDiagnoseScopeLong: "長時間実行中のクエリ",
-  lockDiagnoseSends: "送信内容: 待機関係・実行時間・SQL ({sql})・データベース名・方言 ({dialect})・テーブル定義 / 行数推定 ({tables})。行データ・DB ユーザ名・接続元ホストは送りません。",
+  lockDiagnoseSends:
+    "送信内容: 待機関係・実行時間・SQL ({sql})・データベース名・方言 ({dialect})・テーブル定義 / 行数推定 ({tables})。行データ・DB ユーザ名・接続元ホストは送りません。",
   lockDiagnoseScopeTitle: "クエリを AI に送信しますか?",
-  lockDiagnoseScopeBody: "診断には実行中の SQL 本文が必要ですが、送信範囲が「スキーマ情報のみ」に設定されています。今回だけ送信しますか?",
+  lockDiagnoseScopeBody:
+    "診断には実行中の SQL 本文が必要ですが、送信範囲が「スキーマ情報のみ」に設定されています。今回だけ送信しますか?",
   lockDiagnoseTablesUnknown: "クエリが参照するテーブル (最大 {max} 件)",
   lockDiagnoseProdTitle: "クエリを AI に送信しますか?",
-  lockDiagnoseProdBody: "この接続は本番として設定されています。実行中の SQL・待機関係・実行時間・テーブル定義・行数推定が Anthropic の API へ送信されます。",
+  lockDiagnoseProdBody:
+    "この接続は本番として設定されています。実行中の SQL・待機関係・実行時間・テーブル定義・行数推定が Anthropic の API へ送信されます。",
   lockDiagnoseResultToggle: "診断結果",
   lockDiagnoseWaits: "誰が何を待っているか",
   lockDiagnoseStopCandidates: "止める候補 (影響が小さい順)",
-  lockDiagnoseStopNote: "AI は何も強制終了しません。止めると決めた場合は、「一覧で表示」で該当行を選び、一覧の停止ボタン (確認つき) を使ってください。",
+  lockDiagnoseStopNote:
+    "AI は何も強制終了しません。止めると決めた場合は、「一覧で表示」で該当行を選び、一覧の停止ボタン (確認つき) を使ってください。",
   lockDiagnoseImpact: "影響: {level}",
   lockDiagnoseImpactHigh: "大",
   lockDiagnoseImpactMedium: "中",
   lockDiagnoseImpactLow: "小",
   lockDiagnosePrevention: "再発防止策",
-  lockDiagnoseGuardNote: "AI の判断は誤ることがあり、最終判断はあなたです。強制終了すると実行中の処理は中断され、開いているトランザクションはロールバックされます。",
+  lockDiagnoseGuardNote:
+    "AI の判断は誤ることがあり、最終判断はあなたです。強制終了すると実行中の処理は中断され、開いているトランザクションはロールバックされます。",
   helpAiImpactTitle: "危険クエリの影響分析",
   helpAiImpactDesc: "破壊的な文を実行する前に、何に影響するかを説明します。",
-  helpAiImpactStep1: "危険クエリの確認ダイアログで「影響を AI で分析」を押すと実行します。自動では送信しません。",
-  helpAiImpactStep2: "送信するのは SQL (既定ではリテラルをマスク)・検出理由・方言・本番接続かどうか・関連テーブルの定義 / 外部キー / 行数推定です。行データは送りません。",
-  helpAiImpactNote: "これは確認ダイアログと同じ UX ガードであり、権限の強制ではありません。AI の判定は誤ることがあります。バックエンドが強制するのは読み取り専用設定のみです。",
+  helpAiImpactStep1:
+    "危険クエリの確認ダイアログで「影響を AI で分析」を押すと実行します。自動では送信しません。",
+  helpAiImpactStep2:
+    "送信するのは SQL (既定ではリテラルをマスク)・検出理由・方言・本番接続かどうか・関連テーブルの定義 / 外部キー / 行数推定です。行データは送りません。",
+  helpAiImpactNote:
+    "これは確認ダイアログと同じ UX ガードであり、権限の強制ではありません。AI の判定は誤ることがあります。バックエンドが強制するのは読み取り専用設定のみです。",
   // DangerousQueryDialog・ConfirmDialog (ツリーからの DROP/TRUNCATE)・
   // SchemaCompareView の本番適用確認で共有する「タイプして確認」ゲート (#675)。
   typeToConfirmLabel: "続行するには次のテキストを入力してください: {target}",
@@ -5988,25 +6324,30 @@ const ja: Dict = {
   listGroupUngrouped: "(未分類)",
   formGroup: "グループ (任意)",
   formGroupPlaceholder: "例: Production, Staging, Development",
-  formGroupHelp: "同じグループ名を指定した接続先は、サイドバーで折りたたみ可能な 1 つの見出しの下にまとまります。",
+  formGroupHelp:
+    "同じグループ名を指定した接続先は、サイドバーで折りたたみ可能な 1 つの見出しの下にまとまります。",
   formDisplay: "表示設定 (任意)",
   formColor: "ハイライト色 (任意)",
   formColorClear: "クリア",
   formIsProduction: "本番環境としてマーク",
   formIsProductionHelp: "本番マークされた接続先は、接続前に確認ダイアログを表示できます（設定で制御）。",
   formConfirmWrites: "データの変更を伴うクエリ実行はユーザーに承認を求める",
-  formConfirmWritesHelp: "この本番接続では、読み取り専用でない文を実行する前に承認ダイアログを表示します。読み取り専用が有効な場合は読み取り専用が優先されます。これは誤操作防止のための UI 上の確認であり、バックエンドで強制される制限ではありません。確実に書き込みを禁止するには読み取り専用や DB 側の権限設定を併用してください。",
+  formConfirmWritesHelp:
+    "この本番接続では、読み取り専用でない文を実行する前に承認ダイアログを表示します。読み取り専用が有効な場合は読み取り専用が優先されます。これは誤操作防止のための UI 上の確認であり、バックエンドで強制される制限ではありません。確実に書き込みを禁止するには読み取り専用や DB 側の権限設定を併用してください。",
   formReadOnly: "読み取り専用",
-  formReadOnlyHelp: "このプロファイルでは書き込み系の SQL を一律で拒否します。許可されるのは SELECT / SHOW / DESCRIBE / EXPLAIN / WITH のみで、SELECT ... FOR UPDATE もブロックされます。",
+  formReadOnlyHelp:
+    "このプロファイルでは書き込み系の SQL を一律で拒否します。許可されるのは SELECT / SHOW / DESCRIBE / EXPLAIN / WITH のみで、SELECT ... FOR UPDATE もブロックされます。",
   formSkipHistory: "クエリ履歴を記録しない",
-  formSkipHistoryHelp: "この接続で実行した文をクエリ履歴に保存しません。SQL にパスワード等の機密情報が含まれる可能性がある場合に有用です。",
+  formSkipHistoryHelp:
+    "この接続で実行した文をクエリ履歴に保存しません。SQL にパスワード等の機密情報が含まれる可能性がある場合に有用です。",
 
   statusStreaming: "ストリーミング中... {rows} 件取得 ({elapsed})",
   statusStreamingDone: "{rows} 件取得 ({ms} ms)",
   statusRunningElapsed: "クエリを実行中... ({elapsed})",
   statusTimeoutApproaching: "まもなくタイムアウト (残り {secs} 秒)",
   statusQueryCancelled: "クエリをキャンセルしました — 取得済みの行はそのまま保持されます。",
-  statusQueryCancelledPartial: "{rows} 行取得した時点でキャンセルしました — 取得済みの行はそのまま保持されます。",
+  statusQueryCancelledPartial:
+    "{rows} 行取得した時点でキャンセルしました — 取得済みの行はそのまま保持されます。",
   statusLoadingMore: "追加レコードを読み込み中... ({rows} 件取得済み)",
   statusPreviewStreaming: "プレビューをストリーミング中... ({ms} ms)",
   gridLoadingMore: "追加レコードを読み込み中...",
@@ -6031,10 +6372,8 @@ const ja: Dict = {
   toastProfileDeleted: "接続「{name}」を削除しました",
   statusConnecting: "{name} に接続中...",
   toastConnected: "{name} に接続しました",
-  toastTabRestoreMissing:
-    "テーブル「{table}」が見つかりません。クエリタブとして復元しました。",
-  toastTabRestoreMissingMany:
-    "{count} 件のテーブルが見つからず、クエリタブとして復元しました: {table}。",
+  toastTabRestoreMissing: "テーブル「{table}」が見つかりません。クエリタブとして復元しました。",
+  toastTabRestoreMissingMany: "{count} 件のテーブルが見つからず、クエリタブとして復元しました: {table}。",
   toastTabRestoreConnectionLost:
     "保存済みのテーブルタブを確認できませんでした（接続が切れた可能性があります）: {table}。クエリタブとして復元しました。",
   statusConnectionFailed: "接続に失敗しました: {error}",
@@ -6043,22 +6382,27 @@ const ja: Dict = {
   statusRowsIn: "{rows} 件取得 ({ms} ms)",
   statusRowsAffected: "影響行数 {rows} 件 ({ms} ms)",
   statusQueryError: "クエリエラー: {error}",
-  statusConnectionLost: "接続が切れた可能性があります（アイドルタイムアウト、ネットワークや VPN の切断など）。セッションを閉じました。再接続してください。",
+  statusConnectionLost:
+    "接続が切れた可能性があります（アイドルタイムアウト、ネットワークや VPN の切断など）。セッションを閉じました。再接続してください。",
   statusReconnect: "再接続",
   statusReconnectTitle: "同じ設定で {name} に再接続します",
   statusReconnecting: "再接続中",
   statusReconnectingAttempt: "接続が切れました — {name} に再接続しています…（{attempt}/{max} 回目）",
   statusReconnected: "{name} に再接続しました。",
-  statusReconnectGaveUp: "{name} への再接続を {max} 回試みましたが失敗しました。セッションを閉じました。手動で再接続してください。",
+  statusReconnectGaveUp:
+    "{name} への再接続を {max} 回試みましたが失敗しました。セッションを閉じました。手動で再接続してください。",
   statusReconnectBusy: "再接続中です。接続が回復したらクエリを実行します。",
-  statusReconnectTx: "トランザクション中に接続が切れました。中途半端なコミットを避けるため自動再接続しません。再接続してトランザクションをやり直してください。",
+  statusReconnectTx:
+    "トランザクション中に接続が切れました。中途半端なコミットを避けるため自動再接続しません。再接続してトランザクションをやり直してください。",
   statusDismiss: "このメッセージを閉じる",
   spinnerLoadingAria: "読み込み中",
   toastRegionAria: "通知",
   toastDismissAria: "通知を閉じる",
   statusSeverityCritical: "重大",
-  statusQueryTimeout: "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
-  statusQueryTimeoutPartial: "クエリが {secs} 秒でタイムアウトし、{rows} 行取得した時点で停止しました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
+  statusQueryTimeout:
+    "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
+  statusQueryTimeoutPartial:
+    "クエリが {secs} 秒でタイムアウトし、{rows} 行取得した時点で停止しました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
   statusRunningPreview: "プレビュー実行中 (ロールバックされます)...",
   statusPreviewDone: "プレビュー: 影響行数 {rows} 件 ({ms} ms) — ロールバック済み、DBは変更されていません",
   statusPreviewError: "プレビューエラー: {error}",
@@ -6240,7 +6584,8 @@ const ja: Dict = {
   formSqliteLegend: "SQLite",
   formSqliteFilePath: "データベースファイル",
   formSqliteFilePathPlaceholder: "/path/to/database.db",
-  formSqliteFilePathHelp: "SQLite データベースファイルへの絶対パス。ファイルは既に存在している必要があります。",
+  formSqliteFilePathHelp:
+    "SQLite データベースファイルへの絶対パス。ファイルは既に存在している必要があります。",
   formHost: "ホスト",
   formPort: "ポート",
   formUser: "ユーザー",
@@ -6251,8 +6596,7 @@ const ja: Dict = {
   formPasswordReveal: "保存済みパスワードを表示",
   formPasswordCopy: "パスワードをコピー",
   formPasswordCopied: "コピーしました",
-  formPasswordRevealNote:
-    "OS キーリングから読み出しました。{seconds} 秒後に自動で非表示に戻ります。",
+  formPasswordRevealNote: "OS キーリングから読み出しました。{seconds} 秒後に自動で非表示に戻ります。",
   formPasswordRevealMissing: "OS キーリングに保存済みパスワードが見つかりません。",
   formPasswordRevealFailed: "保存済みパスワードを読み取れませんでした",
   formUseSsh: "SSHトンネルを使用",
@@ -6262,7 +6606,8 @@ const ja: Dict = {
   formSshAuthKey: "秘密鍵",
   formSshAuthAgent: "ssh-agent",
   formSshAuthPassword: "パスワード",
-  formSshAgentHelp: "起動中の ssh-agent を利用します (macOS/Linux は SSH_AUTH_SOCK、Windows は OpenSSH Authentication Agent サービス)。Pageant には対応していません。",
+  formSshAgentHelp:
+    "起動中の ssh-agent を利用します (macOS/Linux は SSH_AUTH_SOCK、Windows は OpenSSH Authentication Agent サービス)。Pageant には対応していません。",
   formPrivateKeyPath: "秘密鍵のパス",
   formBrowse: "参照...",
   formSshPassphrase: "鍵パスフレーズ (キーリングに保存。変更しなければ既存のまま)",
@@ -6270,7 +6615,7 @@ const ja: Dict = {
   formSshLoadFromConfig: "~/.ssh/config から読み込む",
   formSshLoadFromConfigHelp:
     "上の欄に ~/.ssh/config のエイリアスを入力してこれをクリックすると、HostName / Port / User / IdentityFile (ProxyJump があればジャンプホストも) を自動入力します。値は一度だけコピーされ、保存後に設定ファイルを再参照することはありません。",
-  formSshConfigNoMatch: "~/.ssh/config に \"Host {alias}\" のエントリが見つかりませんでした。",
+  formSshConfigNoMatch: '~/.ssh/config に "Host {alias}" のエントリが見つかりませんでした。',
   formUrlImport: "接続 URL から取り込む",
   formUrlImportPlaceholder: "mysql://user:password@host:3306/db?sslmode=require",
   formUrlImportButton: "取り込む",
@@ -6285,7 +6630,7 @@ const ja: Dict = {
   formUrlErrPort: "URL のポートが 1〜65535 の数値ではありません。",
   formUrlErrMultiHost: "複数ホストの URL には対応していません。",
   formUrlErrMalformed: "URL を読み取れませんでした。形式と % エンコードを確認してください。",
-  formSshConfigLoaded: "~/.ssh/config から \"{alias}\" の設定を読み込みました。",
+  formSshConfigLoaded: '~/.ssh/config から "{alias}" の設定を読み込みました。',
   formUseSshJump: "踏み台 (ジャンプホスト) を使用",
   formSshJumpHelp: "この踏み台を経由してから上記の SSH ホストへ接続します (計2ホップ)。",
   formSshJumpHost: "ジャンプホスト",
@@ -6315,7 +6660,8 @@ const ja: Dict = {
   editorFormatTitle: "選択範囲（または全体）の SQL を整形します — Cmd/Ctrl+Shift+F",
   // AI にクエリを依頼 (NL2SQL, #691)。
   editorAiQuery: "Ask Agent",
-  editorAiQueryTitle: "欲しい結果を文章で伝えると、この接続の方言に合わせた SQL を AI が下書きします。結果は挿入されるだけで、実行はされません。",
+  editorAiQueryTitle:
+    "欲しい結果を文章で伝えると、この接続の方言に合わせた SQL を AI が下書きします。結果は挿入されるだけで、実行はされません。",
   cmdkAiQuery: "Ask Agent",
   aiQueryTitle: "Ask Agent",
   aiQueryClose: "閉じる",
@@ -6323,7 +6669,8 @@ const ja: Dict = {
   aiQueryRequestPlaceholder: "例: 先月の注文を顧客ごとに集計して金額の大きい順に",
   aiQuerySend: "送信",
   aiQueryNewConversation: "新しい会話",
-  aiQueryRequestPlaceholderFocus: "例: 今月分だけを新しい順に (テーブル名を書かなければ、開いているテーブル {table} が対象)",
+  aiQueryRequestPlaceholderFocus:
+    "例: 今月分だけを新しい順に (テーブル名を書かなければ、開いているテーブル {table} が対象)",
   aiQueryChatDone: "クエリを提案しました。右側で確認できます。",
   aiQueryChatDoneWarnings: "クエリを提案しました (注意点 {count} 件)。右側で確認できます。",
   aiQueryChatFailed: "回答を取得できませんでした。詳しくは右側を確認してください。",
@@ -6342,19 +6689,24 @@ const ja: Dict = {
   aiQuerySchemaLoading: "スキーマを読み込み中...",
   aiQueryNoDatabase: "データベースが選択されていません。先にサイドバーで選んでください。",
   aiQuerySchemaError: "スキーマを取得できませんでした: {message}",
-  aiQuerySends: "送信内容: {database} のスキーマ (テーブル {tables} 件・カラム {columns} 件・{dialect}) のみ。実データは送信しません。",
+  aiQuerySends:
+    "送信内容: {database} のスキーマ (テーブル {tables} 件・カラム {columns} 件・{dialect}) のみ。実データは送信しません。",
   aiQuerySendsDefaultDb: "既定のデータベース",
-  aiQuerySendsSubset: "送信内容: {database} のスキーマのうち関連する部分 (テーブル {total} 件中 {tables} 件・カラム {columns} 件・{dialect}) のみ。実データは送信しません。",
-  aiQueryLargeSchema: "スキーマが大きい (テーブル {total} 件) ため、関連するテーブル {tables} 件 (約 {kb} KB) だけを送ります。下の選択を確認してください。",
+  aiQuerySendsSubset:
+    "送信内容: {database} のスキーマのうち関連する部分 (テーブル {total} 件中 {tables} 件・カラム {columns} 件・{dialect}) のみ。実データは送信しません。",
+  aiQueryLargeSchema:
+    "スキーマが大きい (テーブル {total} 件) ため、関連するテーブル {tables} 件 (約 {kb} KB) だけを送ります。下の選択を確認してください。",
   aiQueryTablesPickLabel: "送信するテーブル ({count} 件選択中)",
   aiQueryTablesFilter: "テーブル名で絞り込み",
   aiQueryTablesNone: "依頼文に一致するテーブルがありませんでした。送るテーブルを下から選んでください。",
   aiQueryTablesMore: "ほか {count} 件。絞り込みで探してください。",
   aiQueryTablesLocked: "最初の依頼と同じ {count} テーブルを使います。",
   aiQueryEmptySchema: "このデータベースにはテーブルが見つからないため、クエリを作れません。",
-  aiQueryReadOnlyNote: "この接続は読み取り専用なので、AI には SELECT 系のクエリだけを生成するよう指示します。",
+  aiQueryReadOnlyNote:
+    "この接続は読み取り専用なので、AI には SELECT 系のクエリだけを生成するよう指示します。",
   aiQueryConfirmTitle: "スキーマを AI に送信しますか?",
-  aiQueryConfirmBody: "この接続は本番として設定されています。依頼文とスキーマ情報 (テーブル名・列名・型・キー・コメント) が Anthropic の API へ送信されます。",
+  aiQueryConfirmBody:
+    "この接続は本番として設定されています。依頼文とスキーマ情報 (テーブル名・列名・型・キー・コメント) が Anthropic の API へ送信されます。",
   aiQueryConfirmSend: "送信する",
   aiQueryResultSql: "生成された SQL",
   aiQueryExplanation: "説明",
@@ -6382,7 +6734,8 @@ const ja: Dict = {
   emergencyModeConfirmBody:
     "この接続は読み取り専用です。緊急モードが有効な間は、書き込み文 (UPDATE / DELETE / DDL など) が「{name}」に対して実際に実行されます。書き込みの実行時には毎回確認ダイアログが表示されます。モードはこのセッション限りで、切断・再接続すると自動的にオフに戻ります。",
   emergencyModeEnableButton: "緊急モードを有効化",
-  statusEmergencyModeEnabled: "緊急クエリ実行モードを有効化しました — この読み取り専用接続で書き込み文を実行できます。",
+  statusEmergencyModeEnabled:
+    "緊急クエリ実行モードを有効化しました — この読み取り専用接続で書き込み文を実行できます。",
   statusEmergencyModeDisabled: "緊急クエリ実行モードを無効化しました — 接続は再び読み取り専用です。",
   statusEmergencyModeError: "緊急モードの切替に失敗しました: {error}",
   statusFormatError: "整形に失敗しました: {error}",
@@ -6390,8 +6743,7 @@ const ja: Dict = {
   editorLintUnterminated: "文字列または引用符付き識別子が閉じられていません",
   editorLintUnknownStatement: "文の先頭キーワードを認識できません (タイポの可能性)",
   editorLintUnterminatedComment: "ブロックコメント (/* ... */) が閉じられていません",
-  editorLintClauseOrder:
-    "句の順序が不正です — WHERE → GROUP BY → HAVING → ORDER BY → LIMIT の順に置きます",
+  editorLintClauseOrder: "句の順序が不正です — WHERE → GROUP BY → HAVING → ORDER BY → LIMIT の順に置きます",
   editorLintKeywordTypo: "打ち間違いの可能性があります — {keyword} ではありませんか？",
   editorLintMissingOperand: "ここに式や名前が必要です (句の中身が空です)",
   editorLintExtraComma: "余分なカンマがあります",
@@ -6474,8 +6826,7 @@ const ja: Dict = {
   explainAnalyzeLabel: "実測モード (EXPLAIN ANALYZE)",
   explainAnalyzeTooltip:
     "クエリを実際に実行し、推定と並べて実測の行数・時間を表示します。読み取り専用のクエリのみ実行でき、実行前に確認が入ります。",
-  explainAnalyzeUnsupportedTooltip:
-    "実測モードは PostgreSQL と MySQL 8.0.18 以降でのみ利用できます。",
+  explainAnalyzeUnsupportedTooltip: "実測モードは PostgreSQL と MySQL 8.0.18 以降でのみ利用できます。",
   explainAnalyzeBadge: "実測",
   explainActualRows: "推定 {est} → 実測 {actual} 行",
   explainNeverExecuted: "実行されず",
@@ -6494,17 +6845,20 @@ const ja: Dict = {
   explainAiCancelled: "中止しました。",
   explainAiExpand: "結果を表示",
   explainAiCollapse: "結果を隠す",
-  explainAiSends: "送信内容: 実行計画・SQL ({sql})・方言 ({dialect})・インデックスと行数推定 ({tables})。SQL 中の値は伏せますが、計画に含まれる数値はそのまま送られることがあります。",
+  explainAiSends:
+    "送信内容: 実行計画・SQL ({sql})・方言 ({dialect})・インデックスと行数推定 ({tables})。SQL 中の値は伏せますが、計画に含まれる数値はそのまま送られることがあります。",
   explainAiSqlMasked: "リテラルをマスク",
   explainAiSqlRaw: "リテラルを含む",
   explainAiTablesOne: "1 件",
   explainAiTablesSome: "{count} 件",
   explainAiTablesNone: "なし",
   explainAiConfirmTitle: "実行計画を AI に送信しますか?",
-  explainAiConfirmBody: "この接続は本番として設定されています。実行計画・SQL・テーブルのインデックス情報が Anthropic の API へ送信されます。",
+  explainAiConfirmBody:
+    "この接続は本番として設定されています。実行計画・SQL・テーブルのインデックス情報が Anthropic の API へ送信されます。",
   explainAiConfirmSend: "送信する",
   explainAiScopeTitle: "SQL を AI に送信しますか?",
-  explainAiScopeBody: "実行計画の解釈には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
+  explainAiScopeBody:
+    "実行計画の解釈には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
   explainAiSummary: "概要",
   explainAiBottlenecks: "ボトルネック",
   explainAiNoBottlenecks: "目立ったボトルネックはありません。",
@@ -6556,7 +6910,8 @@ const ja: Dict = {
   qbBoolNull: "NULL",
   qbSetNow: "現在日時をセット",
   qbNotNullWarning: "この列は NOT NULL です。NULL のまま実行すると失敗します。",
-  qbWhereAndOrPrecedence: "括弧なしで AND と OR が混在しています。SQL は AND を先に評価します (a OR b AND c は a OR (b AND c))。意図を明確にするため ( ) でグループ化してください (特に UPDATE / DELETE)。",
+  qbWhereAndOrPrecedence:
+    "括弧なしで AND と OR が混在しています。SQL は AND を先に評価します (a OR b AND c は a OR (b AND c))。意図を明確にするため ( ) でグループ化してください (特に UPDATE / DELETE)。",
   qbLimitInvalid: "LIMIT は整数で指定してください。句は省略されます。",
   qbNoWhereBand: "WHERE 句がありません。テーブルの全行が対象になります。",
   qbValidationNoTable: "先にテーブルを選択してください。",
@@ -6602,7 +6957,8 @@ const ja: Dict = {
   editApplyConfirmBody: "本番データベースに {count} 件の変更を適用しようとしています。続行しますか？",
   editCancelButton: "破棄",
   editCancelButtonTitle: "未保存の編集をすべて破棄します。",
-  editPreviewMultiRowTitle: "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
+  editPreviewMultiRowTitle:
+    "Preview は 1 行ずつのみ対応しています。他の行の編集を破棄するとボタンが有効になります。",
   editPreviewMultiRowBanner: "Preview 未対応 (複数行)",
   editPreviewMultiRowBannerTitle:
     "Preview のドライランは 1 行のみ対応しています。Apply は編集した全行を 1 つのトランザクションで実行しますが、行ごとの Preview はできません。",
@@ -6650,7 +7006,8 @@ const ja: Dict = {
   statusAppliedEditsShortfall:
     "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。再読込して現在の状態を確認してください。",
   statusApplyEditsError: "適用に失敗しました: {error}",
-  statusApplyEditsPartial: "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
+  statusApplyEditsPartial:
+    "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 
   exportButton: "Export",
   exportButtonTitle: "現在の結果セットを CSV または JSON でエクスポートします",
@@ -6711,21 +7068,21 @@ const ja: Dict = {
     "数値・真偽・NULL は型を保って出力します。Excel の精度 (15 桁) を超える整数・小数は文字列セルで、日時は文字列のまま出力します。データ行は最大 1,048,575 行です。",
   exportXlsxRowsDropped:
     "Excel の行数上限 (ヘッダ込み 1,048,576 行) を超えたため、{total} 行中 {written} 行だけを書き出しました ({dropped} 行は出力されていません)。",
-  exportXlsxCellsTruncated:
-    "Excel のセル文字数上限 (32,767 文字) を超えた {cells} セルを切り詰めました。",
+  exportXlsxCellsTruncated: "Excel のセル文字数上限 (32,767 文字) を超えた {cells} セルを切り詰めました。",
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
   exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
-  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーにも含まれます。",
-  exportSqlIncludeDdlMasked: "マスクした列は元の型・制約と合わなくなるため、CREATE TABLE 文は出力せずコメントに置き換えます。",
+  exportSqlIncludeDdlHint:
+    "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーにも含まれます。",
+  exportSqlIncludeDdlMasked:
+    "マスクした列は元の型・制約と合わなくなるため、CREATE TABLE 文は出力せずコメントに置き換えます。",
   exportSqlDdlPreviewLoading: "-- CREATE TABLE の定義を取得しています...",
   exportSqlDdlPreviewError: "-- CREATE TABLE の定義を取得できませんでした: {error}",
   exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
   exportSqlIncludeDdlTableMismatch:
     "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
   exportSqlBatch: "1 文あたり行数",
-  exportSqlHint:
-    "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",
+  exportSqlHint: "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",
   imageExportButton: "画像を書き出し",
   imageExportPng: "PNG で保存",
   imageExportSvg: "SVG で保存",
@@ -6797,8 +7154,10 @@ const ja: Dict = {
     "インポート {imported} 件 / スキップ {skipped} 件 / 上書き {overwritten} 件 / 無効 {invalid} 件、秘密 {secrets} 件を復元しました",
   profileBackupImportError: "暗号化バックアップの読み込みに失敗しました: {error}",
   exportRowCount: "{rows} 行をエクスポートします。",
-  exportPartialWarning: "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
-  exportPartialWarningStopped: "クエリはキャンセルまたはタイムアウトにより途中で停止しました — 現在読み込み済みの行のみが対象です。全件を取得するにはクエリを再実行してください。",
+  exportPartialWarning:
+    "現在読み込み済みの行のみが対象です。全件をエクスポートするには、先に「全件取得」を実行してください。",
+  exportPartialWarningStopped:
+    "クエリはキャンセルまたはタイムアウトにより途中で停止しました — 現在読み込み済みの行のみが対象です。全件を取得するにはクエリを再実行してください。",
   // 全件ストリーミングエクスポート。
   exportScope: "エクスポート対象",
   exportScopeCurrent: "現在のグリッドのみ",
@@ -6818,8 +7177,10 @@ const ja: Dict = {
   // エクスポート時のデータマスキング (#733)。
   exportMasking: "データマスキング",
   exportMaskingEnable: "出力の PII 列をマスクする",
-  exportMaskingHint: "書き出すファイルの中身だけを変換し、DB は一切変更しません。列名が保存済みプリセットに一致する列は自動でマスクされます。",
-  exportMaskingHashNote: "仮名化は OS キーリングにのみ保存されたアプリ共通の秘密ソルトを鍵にした HMAC-SHA256 です。同じ値は常に同じ仮名になるため、結合キーとして使えます。",
+  exportMaskingHint:
+    "書き出すファイルの中身だけを変換し、DB は一切変更しません。列名が保存済みプリセットに一致する列は自動でマスクされます。",
+  exportMaskingHashNote:
+    "仮名化は OS キーリングにのみ保存されたアプリ共通の秘密ソルトを鍵にした HMAC-SHA256 です。同じ値は常に同じ仮名になるため、結合キーとして使えます。",
   exportMaskingRuleFor: "{column} のマスキングルール",
   exportMaskingFixedValueFor: "{column} の置換値",
   exportMaskingKeepStartFor: "{column} の先頭に残す文字数",
@@ -6879,7 +7240,8 @@ const ja: Dict = {
   chartNoData: "チャート化するデータがありません。",
   chartPickY: "Y 軸の列を 1 つ以上選んでください。",
   chartAriaRoleDescription: "チャート",
-  chartAriaSummary: "チャート: {series} 系列、{points} 点、最大 {max}、最小 {min}。左右キーで各点の値を読み上げます。",
+  chartAriaSummary:
+    "チャート: {series} 系列、{points} 点、最大 {max}、最小 {min}。左右キーで各点の値を読み上げます。",
   chartSampled: "{total} 行から {shown} 点をサンプリングして表示しています。",
   // 退化データの注記 (#646): チャート自体は描画できるが、見た目の理由を
   // 一言添えないと壊れて見えかねないケース。
@@ -6915,7 +7277,8 @@ const ja: Dict = {
   cloneTableDdlError: "テーブル定義を取得できませんでした: {error}",
   cloneTableListError: "既存テーブル名の確認に失敗しました: {error}",
   cloneTableSkipped: "定義内の次の文は複製されません: {statements}",
-  cloneTableNotes: "列・主キー・インデックス・外部キー・既定値を複製します。制約名とインデックス名は新しいテーブル名から付け直し、衝突を避けます。PostgreSQL の serial 列は専用のシーケンスを作り直します。トリガー・権限、PostgreSQL の RLS ポリシー・パーティション親は複製されません。",
+  cloneTableNotes:
+    "列・主キー・インデックス・外部キー・既定値を複製します。制約名とインデックス名は新しいテーブル名から付け直し、衝突を避けます。PostgreSQL の serial 列は専用のシーケンスを作り直します。トリガー・権限、PostgreSQL の RLS ポリシー・パーティション親は複製されません。",
   cloneTablePreview: "SQL プレビュー",
   cloneTablePreviewLoading: "テーブルのメタデータを読み込み中...",
   cloneTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
@@ -6923,9 +7286,12 @@ const ja: Dict = {
   cloneTableSuccess: "「{source}」を「{table}」として複製しました。",
   cloneTableMetaError: "列・外部キーのメタデータを取得できませんでした: {error}",
   cloneTableNotTable: "テーブル以外 (ビューなど) は複製できません。",
-  cloneTableRewriteError: "書き換え後の文が新しいテーブル以外を対象にしているため実行しません ({statements})。",
-  cloneTableSharedSequence: "serial / シーケンスの既定値 (nextval) は元テーブルのシーケンスを共有したままです。元のテーブルやシーケンスを削除すると複製にも影響します。",
-  cloneTablePartialFailure: "テーブル「{table}」は作成済みですが、後続の文 (データ複製など) が失敗しました (MySQL ではロールバックされません): {error}",
+  cloneTableRewriteError:
+    "書き換え後の文が新しいテーブル以外を対象にしているため実行しません ({statements})。",
+  cloneTableSharedSequence:
+    "serial / シーケンスの既定値 (nextval) は元テーブルのシーケンスを共有したままです。元のテーブルやシーケンスを削除すると複製にも影響します。",
+  cloneTablePartialFailure:
+    "テーブル「{table}」は作成済みですが、後続の文 (データ複製など) が失敗しました (MySQL ではロールバックされません): {error}",
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   saveAsTableButton: "テーブルへ保存",
   saveAsTableButtonTitle: "現在の結果を新規テーブルとして保存します (CREATE TABLE ... AS SELECT)",
@@ -7007,7 +7373,8 @@ const ja: Dict = {
   registerLocalTableButton: "ローカルに登録",
   registerLocalTableButtonTitle:
     "この結果をローカルテーブルとして登録します。他の接続の結果と横断で再クエリ・JOIN できます",
-  registerLocalTableDisabledTitle: "この結果をローカルテーブルとして登録します (この接続では利用できません)。",
+  registerLocalTableDisabledTitle:
+    "この結果をローカルテーブルとして登録します (この接続では利用できません)。",
   localConnectionName: "ローカル",
   localRegisterTitle: "ローカルテーブルとして登録",
   localRegisterClose: "閉じる",
@@ -7031,19 +7398,23 @@ const ja: Dict = {
   localPanelSaveToFileTitle: "ローカル DB を独立したファイルとして保存します (永続化)",
   localPanelSaveToFileSuccess: "ローカル DB を {path} に保存しました。",
   localPanelEmptyTitle: "登録済みのローカルテーブルはありません",
-  localPanelEmptyDescription:
-    "結果グリッドの「ローカルに登録」から、任意の接続の行をここへ取り込めます。",
+  localPanelEmptyDescription: "結果グリッドの「ローカルに登録」から、任意の接続の行をここへ取り込めます。",
   localPanelRowCount: "{rows} 行",
   localPanelSourceLabel: "由来: {name}",
   localPanelRefetch: "{table} を再取得",
-  localPanelRefetchTitle: "元の SQL を元の接続・DB で流し直し、このテーブルを置き換えます (登録できる行数の上限は変わりません。直近 30 秒以内の同じ結果はキャッシュが使われることがあります)",
+  localPanelRefetchTitle:
+    "元の SQL を元の接続・DB で流し直し、このテーブルを置き換えます (登録できる行数の上限は変わりません。直近 30 秒以内の同じ結果はキャッシュが使われることがあります)",
   localRefetchSuccess: "{rows} 行を「{table}」へ再取得しました。",
   localRefetchFailed: "「{table}」を再取得できませんでした: {error}",
-  localRefetchNeedsConnection: "元の接続「{name}」が開いていません。先に接続してから「{table}」を再取得してください。",
-  localRefetchNoDatabase: "「{table}」は元の DB を記録する前に登録されたため、別の DB の同名テーブルで置き換えてしまうおそれがあり再取得できません。結果グリッドから登録し直してください。",
-  localRefetchAmbiguous: "「{name}」という名前の接続が複数開いているため、「{table}」の元の接続を特定できません。余分な接続を閉じてから再実行してください。",
+  localRefetchNeedsConnection:
+    "元の接続「{name}」が開いていません。先に接続してから「{table}」を再取得してください。",
+  localRefetchNoDatabase:
+    "「{table}」は元の DB を記録する前に登録されたため、別の DB の同名テーブルで置き換えてしまうおそれがあり再取得できません。結果グリッドから登録し直してください。",
+  localRefetchAmbiguous:
+    "「{name}」という名前の接続が複数開いているため、「{table}」の元の接続を特定できません。余分な接続を閉じてから再実行してください。",
   localRefetchNoSource: "「{table}」には元の接続の記録がないため再取得できません。",
-  localRefetchNotReadOnly: "「{table}」の元の SQL は読み取り専用のクエリではないため、自動では再実行しません。",
+  localRefetchNotReadOnly:
+    "「{table}」の元の SQL は読み取り専用のクエリではないため、自動では再実行しません。",
   localPanelDropTable: "ローカルテーブルを削除",
   localPanelDropConfirmTitle: "ローカルテーブルを削除しますか？",
   localPanelDropConfirmBody:
@@ -7067,11 +7438,14 @@ const ja: Dict = {
 
   dumpTitle: "データベース「{database}」のダンプ",
   dumpClose: "閉じる",
-  dumpNote: "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
-  dumpNoteNative: "この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
+  dumpNote:
+    "このデータベースに対して、この PC 上で {tool} を実行します (設定があれば SSH トンネル経由で接続)。この PC に {tool} がインストールされている必要があります。",
+  dumpNoteNative:
+    "この接続から SQL ダンプ (スキーマの DDL + INSERT 文) を直接生成します。外部のクライアントツールは不要です。",
   dumpOptionsLabel: "オプション",
   dumpOptSingleTransaction: "単一トランザクション",
-  dumpOptSingleTransactionHint: "--single-transaction: テーブルをロックせずに InnoDB の一貫したスナップショットを取得します。",
+  dumpOptSingleTransactionHint:
+    "--single-transaction: テーブルをロックせずに InnoDB の一貫したスナップショットを取得します。",
   dumpOptRoutines: "ストアドプロシージャ・関数",
   dumpOptRoutinesHint: "--routines: ストアドプロシージャと関数を含めます。",
   dumpOptEvents: "イベント",
@@ -7079,9 +7453,11 @@ const ja: Dict = {
   dumpOptTriggers: "トリガー",
   dumpOptTriggersHint: "トリガーを含めます (オフ → --skip-triggers)。",
   dumpOptAddDropTable: "DROP TABLE を付与",
-  dumpOptAddDropTableHint: "--add-drop-table: 各テーブルを再作成する前に削除します (オフ → --skip-add-drop-table)。",
+  dumpOptAddDropTableHint:
+    "--add-drop-table: 各テーブルを再作成する前に削除します (オフ → --skip-add-drop-table)。",
   dumpOptExtendedInsert: "一括 INSERT",
-  dumpOptExtendedInsertHint: "--extended-insert: 1 つの INSERT に複数行をまとめます (オフ → 1 行ごとに 1 文)。",
+  dumpOptExtendedInsertHint:
+    "--extended-insert: 1 つの INSERT に複数行をまとめます (オフ → 1 行ごとに 1 文)。",
   dumpOptCompleteInsert: "完全な INSERT",
   dumpOptCompleteInsertHint: "--complete-insert: すべての INSERT にカラム名を書き出します。",
   dumpOptNoData: "スキーマのみ",
@@ -7096,7 +7472,8 @@ const ja: Dict = {
   dumpOptPgSchemaPlaceholder: "例: public",
   dumpOptPgSchemaHint: "pg_dump -n <スキーマ>: 1 つのスキーマに限定します。空欄で全スキーマをダンプします。",
   dumpOptGzip: "gzip で圧縮 (.sql.gz)",
-  dumpOptGzipHint: "完成したダンプを gzip 圧縮し、.sql.gz として保存します。ディスクと転送量を減らせます (復元は gunzip / zcat)。進捗のバイト数は圧縮前、完了時のサイズは圧縮後です。",
+  dumpOptGzipHint:
+    "完成したダンプを gzip 圧縮し、.sql.gz として保存します。ディスクと転送量を減らせます (復元は gunzip / zcat)。進捗のバイト数は圧縮前、完了時のサイズは圧縮後です。",
   dumpOptFormatSql: "SQL を整形",
   dumpOptFormatSqlHint:
     "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",
@@ -7149,7 +7526,8 @@ const ja: Dict = {
   dataSearchConfirmTitle: "{count} テーブルをスキャンしますか?",
   dataSearchConfirmBody:
     "{count} テーブル (合計 {rows}) に対して読み取り専用のクエリを実行し、値を検索します。DB が大きい場合は時間がかかることがあります。",
-  dataSearchProductionConfirm: "「{name}」は本番接続です。多数のテーブルを走査するとサーバへの読み取り負荷が増えます。続行しますか?",
+  dataSearchProductionConfirm:
+    "「{name}」は本番接続です。多数のテーブルを走査するとサーバへの読み取り負荷が増えます。続行しますか?",
   dataSearchProgress: "{index}/{total} 走査中 — {table}",
   dataSearchDone: "完了: {hits} テーブルでヒット、{noHits} テーブルはヒットなし、{skipped} 件スキップ",
   dataSearchNoHits: "走査したテーブルに一致する値はありませんでした。",
@@ -7172,7 +7550,8 @@ const ja: Dict = {
   dumpSuccess: "{path} に {bytes} バイトを書き出しました",
   dumpError: "ダンプに失敗しました: {error}",
   dumpToolMissingTitle: "この PC に {tool} が見つかりません",
-  dumpToolWhere: "ダンプは noobDB を実行しているこの PC 上で {tool} を起動し、(設定があれば SSH トンネル経由で) データベースに接続します。インストール先はこの PC だけで、SSH の踏み台サーバやデータベースサーバには何もインストールしません。",
+  dumpToolWhere:
+    "ダンプは noobDB を実行しているこの PC 上で {tool} を起動し、(設定があれば SSH トンネル経由で) データベースに接続します。インストール先はこの PC だけで、SSH の踏み台サーバやデータベースサーバには何もインストールしません。",
   dumpToolLocation: "インストール先:",
   dumpToolCommandAuto: "次のコマンドを実行します:",
   dumpToolCommandManual: "ターミナルで次のコマンドを実行してください (管理者権限が必要です):",
@@ -7219,9 +7598,12 @@ const ja: Dict = {
   scriptProgressPercent: "ファイルの {percent}% を読み込み済み",
   scriptDone: "{executed} 文を {secs} 秒で実行しました ({rows} 行に影響)。",
   scriptDonePartial: "{executed} 文を実行しました。{failed} 件が失敗しスキップされました。",
-  scriptUnclosedTransactionWarning: "このスクリプトには、対応する COMMIT / ROLLBACK のない BEGIN があります。このまま実行すると、ファイルの末尾で BEGIN 以降の変更が取り消され (ROLLBACK) ます。",
-  scriptDoneImplicitRollback: "スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わったため、ファイルの末尾で BEGIN 以降の変更を取り消し (ROLLBACK) ました。",
-  scriptDoneSkippedControl: "ファイル内の BEGIN/COMMIT {count} 文は読み飛ばしました (ランナーのトランザクションを使用)。",
+  scriptUnclosedTransactionWarning:
+    "このスクリプトには、対応する COMMIT / ROLLBACK のない BEGIN があります。このまま実行すると、ファイルの末尾で BEGIN 以降の変更が取り消され (ROLLBACK) ます。",
+  scriptDoneImplicitRollback:
+    "スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わったため、ファイルの末尾で BEGIN 以降の変更を取り消し (ROLLBACK) ました。",
+  scriptDoneSkippedControl:
+    "ファイル内の BEGIN/COMMIT {count} 文は読み飛ばしました (ランナーのトランザクションを使用)。",
   scriptFailuresLabel: "失敗した文",
   scriptFailuresOmitted: "…ほか {count} 件",
   scriptFailureLine: "{line} 行目",
@@ -7237,7 +7619,8 @@ const ja: Dict = {
   scriptEncodingAuto: "自動判定",
   scriptEncodingHint: "自動判定は BOM → UTF-8 → Shift_JIS / EUC-JP の順。文字化けするときは手動で選びます。",
   scriptStartAtLabel: "開始文番号",
-  scriptStartAtHint: "この番号より前の文は実行しません (BEGIN/COMMIT も数えます)。エラー表示の番号で再開できます。",
+  scriptStartAtHint:
+    "この番号より前の文は実行しません (BEGIN/COMMIT も数えます)。エラー表示の番号で再開できます。",
   scriptAnalyze: "事前確認 (ドライラン)",
   scriptAnalyzing: "走査中…",
   scriptAnalyzingProgress: "{count} 文を走査済み",
@@ -7251,7 +7634,8 @@ const ja: Dict = {
   scriptDangerTruncate: "TRUNCATE × {count}",
   scriptDangerDeleteNoWhere: "WHERE なしの DELETE × {count}",
   scriptDangerUpdateNoWhere: "WHERE なしの UPDATE × {count}",
-  scriptAnalysisDangerOverflow: "先頭の {shown} 件のみ一覧に表示します。残り {rest} 件は個別に除外できません。",
+  scriptAnalysisDangerOverflow:
+    "先頭の {shown} 件のみ一覧に表示します。残り {rest} 件は個別に除外できません。",
   scriptAnalysisBlocked: "この接続は読み取り専用のため、{count} 文が拒否されます。",
   scriptAnalysisTxTitle: "トランザクション制御 ({count})",
   scriptAnalysisTxOverflow: "…ほか {count} 件",
@@ -7275,26 +7659,34 @@ const ja: Dict = {
   scriptCategoryTx: "トランザクション制御",
   scriptStatementBlocked: "拒否 (読み取り専用)",
   scriptDangerConfirmTitle: "危険な文を実行しますか？",
-  scriptDangerConfirmMessage: "DROP / TRUNCATE / WHERE なしの DELETE・UPDATE など {count} 件の危険な文がこの接続で実行されます。続行しますか？",
+  scriptDangerConfirmMessage:
+    "DROP / TRUNCATE / WHERE なしの DELETE・UPDATE など {count} 件の危険な文がこの接続で実行されます。続行しますか？",
   scriptDangerConfirmOk: "それでも実行する",
   scriptDoneSkippedExcluded: "除外した {count} 文は実行せずに読み飛ばしました。",
   scriptDoneSkippedBefore: "開始位置より前の {count} 文は読み飛ばしました。",
   scriptErrorAtIndex: "{index} 番目の文 ({line} 行目) で停止しました: {error}",
   scriptResume: "この文から再開",
   scriptResumeSkip: "この文を飛ばして再開",
-  scriptResumeHint: "{index} 番目より前の文は実行済みなので繰り返しません。読み飛ばした部分のセッション設定 (SET …) は再適用されません。",
-  scriptResumeUnavailable: "ロールバックされた、またはトランザクションで包んで実行したため再開できません。最初からやり直してください。",
+  scriptResumeHint:
+    "{index} 番目より前の文は実行済みなので繰り返しません。読み飛ばした部分のセッション設定 (SET …) は再適用されません。",
+  scriptResumeUnavailable:
+    "ロールバックされた、またはトランザクションで包んで実行したため再開できません。最初からやり直してください。",
   scriptResumeFromBegin: "BEGIN ({index} 番目) から再開",
-  scriptResumeFromBeginHint: "失敗はトランザクションの中で起きました (開始は {begin} 番目)。その BEGIN 以降の文は取り消されている (または状態が不明) ので、BEGIN からそのブロック全体をやり直します。",
-  scriptResumeInTransactionUnavailable: "トランザクションの途中で失敗したため、失敗した文からだと同じトランザクションの前半が欠けてしまい再開できません。最初からやり直してください。",
-  scriptStartInTransactionWarning: "{start} 番目は {begin} 番目の BEGIN から始まるトランザクションの途中です。ここから始めると前半の文は実行されないまま COMMIT / ROLLBACK だけが実行されます。意図しない場合は {begin} 番目から始めてください。",
-  scriptAnalysisFileChanged: "事前確認のあとでファイルが変わったため、文番号がずれている可能性があります。開始文番号は残してあります。ずれていないか確認して、もう一度実行してください。",
+  scriptResumeFromBeginHint:
+    "失敗はトランザクションの中で起きました (開始は {begin} 番目)。その BEGIN 以降の文は取り消されている (または状態が不明) ので、BEGIN からそのブロック全体をやり直します。",
+  scriptResumeInTransactionUnavailable:
+    "トランザクションの途中で失敗したため、失敗した文からだと同じトランザクションの前半が欠けてしまい再開できません。最初からやり直してください。",
+  scriptStartInTransactionWarning:
+    "{start} 番目は {begin} 番目の BEGIN から始まるトランザクションの途中です。ここから始めると前半の文は実行されないまま COMMIT / ROLLBACK だけが実行されます。意図しない場合は {begin} 番目から始めてください。",
+  scriptAnalysisFileChanged:
+    "事前確認のあとでファイルが変わったため、文番号がずれている可能性があります。開始文番号は残してあります。ずれていないか確認して、もう一度実行してください。",
   scriptAnalysisTxLocked: "BEGIN / COMMIT / ROLLBACK は除外できません (常に実行されます)。",
   // SQL ファイルを開く・保存するときの文字コード (#1535)。
   sqlFileOpenedAs: "{name} を開きました ({encoding})",
   sqlFileEncodingOpenTitle: "文字コードを指定して SQL ファイルを開く",
   sqlFileEncodingSaveTitle: "文字コードを指定して SQL ファイルを保存",
-  sqlFileEncodingNote: "ファイルの読み書きに使う文字コードを選びます。その文字コードで表せない文字があるときは、置換せず保存を失敗させます。",
+  sqlFileEncodingNote:
+    "ファイルの読み書きに使う文字コードを選びます。その文字コードで表せない文字があるときは、置換せず保存を失敗させます。",
   sqlFileEncodingLabel: "文字コード",
   sqlFileEncodingOpen: "ファイルを選ぶ…",
   sqlFileEncodingSave: "保存先を選ぶ…",
@@ -7336,8 +7728,7 @@ const ja: Dict = {
     "行を特定する列名をカンマ区切りで指定します。転送先で一意キー (主キーなど) に含まれている必要があります (PostgreSQL / SQLite は必須)。",
   transferModeCreateHint:
     "列の型はコピー先のデータベースに合わせて変換します。失敗・キャンセル時は作成途中のテーブルを削除します。",
-  transferModeAppendHint:
-    "列は名前で対応付けます。失敗・キャンセルまでに書き込んだ行はテーブルに残ります。",
+  transferModeAppendHint: "列は名前で対応付けます。失敗・キャンセルまでに書き込んだ行はテーブルに残ります。",
   transferLossyTitle: "コピー先で値や型が変わる列があります",
   transferLossyDecimalClamped:
     "{column} ({source}): コピー先の小数の上限を超えるため、{target} に丸められます。",
@@ -7414,10 +7805,14 @@ const ja: Dict = {
   createTableTemplateHelp:
     "既存テーブルの列定義 (型・主キー・NOT NULL・既定値) で下の列を置き換えます。外部キー・CHECK・インデックスは引き継ぎません。",
   createTableTemplateConfirmTitle: "現在の列を置き換えますか?",
-  createTableTemplateConfirmBody: "入力済みの列を {table} の定義で置き換えます。入力済みの外部キー・CHECK 制約も破棄されます。",
-  createTableTemplateUserDefined: "次の列はユーザー定義型 (ENUM・ドメイン・拡張型など) で型名を取得できず、型が USER-DEFINED のままです。作成前に実際の型を入力してください: {columns}",
-  createTableTemplateArray: "次の配列型の列は要素型を取得できず、型が ARRAY のままです。作成前に実際の型 (例: text[]) を入力してください: {columns}",
-  createTableTemplateIdentity: "IDENTITY 列は検出できず通常の列として写されます。次の列が IDENTITY だった場合は「自動採番」を手動でオンにしてください: {columns}",
+  createTableTemplateConfirmBody:
+    "入力済みの列を {table} の定義で置き換えます。入力済みの外部キー・CHECK 制約も破棄されます。",
+  createTableTemplateUserDefined:
+    "次の列はユーザー定義型 (ENUM・ドメイン・拡張型など) で型名を取得できず、型が USER-DEFINED のままです。作成前に実際の型を入力してください: {columns}",
+  createTableTemplateArray:
+    "次の配列型の列は要素型を取得できず、型が ARRAY のままです。作成前に実際の型 (例: text[]) を入力してください: {columns}",
+  createTableTemplateIdentity:
+    "IDENTITY 列は検出できず通常の列として写されます。次の列が IDENTITY だった場合は「自動採番」を手動でオンにしてください: {columns}",
   createTableTemplateEmpty: "{table} の列が見つかりませんでした。",
   createTableTemplateError: "テーブル定義の読み込みに失敗しました: {error}",
   createTableNamePlaceholder: "new_table",
@@ -7462,7 +7857,8 @@ const ja: Dict = {
     "{database} の次の {count} テーブルとそのデータをすべて完全に削除します。この操作は取り消せません。対象:",
   batchDropConfirmOk: "{count} 件を DROP TABLE",
   batchDropSuccess: "{count} 件のテーブルを DROP しました",
-  batchDropRolledBack: "テーブルを DROP できませんでした。すべてロールバックされ、どのテーブルも削除されていません: {error}",
+  batchDropRolledBack:
+    "テーブルを DROP できませんでした。すべてロールバックされ、どのテーブルも削除されていません: {error}",
   batchTablesMore: "ほか {count} 件",
   batchExportTitle: "{count} テーブルのエクスポート",
   batchExportNote:
@@ -7490,14 +7886,14 @@ const ja: Dict = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "採番を実データに同期",
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
-  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
-  identitySyncCurrentUnknown: "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
+  identitySyncConfirmBody:
+    "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
+  identitySyncCurrentUnknown:
+    "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
   identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
-  identitySyncAutoincrementCheckFailed:
-    "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
-  identitySyncNoAutoincrement:
-    "{table} は AUTOINCREMENT で作られていないため、同期できる採番値がありません",
+  identitySyncAutoincrementCheckFailed: "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
+  identitySyncNoAutoincrement: "{table} は AUTOINCREMENT で作られていないため、同期できる採番値がありません",
   identitySyncMaxFailed: "{column} の最大値を取得できませんでした: {error}",
   identitySyncDone: "{table} の採番を同期しました",
   renameTableTitle: "テーブル名を変更",
@@ -7564,10 +7960,12 @@ const ja: Dict = {
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
   alterTableDuplicateColumn: "適用後に列名が重複します: {names}。どちらかの名前を変えるか削除してください。",
-  alterTableRenameCollision: "リネーム先が別の列の現在の名前と同じです: {names}。列名の入れ替えや連鎖は安全に実行できないので、段階を分けてリネームしてください。",
+  alterTableRenameCollision:
+    "リネーム先が別の列の現在の名前と同じです: {names}。列名の入れ替えや連鎖は安全に実行できないので、段階を分けてリネームしてください。",
   alterTableReadOnly: "この接続は読み取り専用のため、列の編集はできません。",
   alterTableDestructiveTitle: "破壊的な変更を {count} 件含みます",
-  alterTableDestructiveBody: "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",
+  alterTableDestructiveBody:
+    "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",
   alterTableConfirmTitle: "{table} にこの変更を適用しますか?",
   alterTableConfirmBody: "以下の文が実行されます:",
   alterTableConfirmOk: "適用",
@@ -7593,11 +7991,13 @@ const ja: Dict = {
   createNamespaceCharset: "文字セット",
   createNamespaceCollation: "照合順序",
   createNamespaceCollationInvalid: "文字セットと照合順序には英数字とアンダースコアだけを使えます。",
-  createNamespacePgDatabaseHint: "作成した PostgreSQL のデータベースはこのツリーには表示されません。別のプロファイルで接続してください。",
+  createNamespacePgDatabaseHint:
+    "作成した PostgreSQL のデータベースはこのツリーには表示されません。別のプロファイルで接続してください。",
   createNamespacePreviewEmpty: "名前を入力すると SQL がプレビューされます。",
   createNamespaceRun: "作成",
   createNamespaceSuccess: "{kind} {name} を作成しました。",
-  createNamespaceSuccessPgDatabase: "データベース {name} を作成しました。参照するには別のプロファイルで接続してください。",
+  createNamespaceSuccessPgDatabase:
+    "データベース {name} を作成しました。参照するには別のプロファイルで接続してください。",
   dropNamespaceConfirmTitle: "{kind} {name} を削除しますか?",
   dropNamespaceConfirmBody: "{kind} {name} とその中身をすべて完全に削除します。この操作は取り消せません。",
   dropNamespaceConfirmOk: "{kind}を削除",
@@ -7653,13 +8053,15 @@ const ja: Dict = {
   timelapseLoading: "ウォッチ中のテーブルを読み込んでいます…",
   timelapseRetry: "再試行",
   timelapseEmptyTitle: "ウォッチ中のテーブルはありません",
-  timelapseEmptyDescription: "スキーマツリーでテーブルを右クリックし「テーブルをウォッチ (タイムラプス)」を選ぶと、世代スナップショットを保存して任意の 2 世代を比較できます。対象はマスターデータ級の小さなテーブル (最大 {limit} 行・主キー必須) で、大きなテーブルの履歴管理は対象外です。",
+  timelapseEmptyDescription:
+    "スキーマツリーでテーブルを右クリックし「テーブルをウォッチ (タイムラプス)」を選ぶと、世代スナップショットを保存して任意の 2 世代を比較できます。対象はマスターデータ級の小さなテーブル (最大 {limit} 行・主キー必須) で、大きなテーブルの履歴管理は対象外です。",
   timelapseWatchListAria: "ウォッチ中のテーブル",
   timelapseGenerationCount: "{count} 世代",
   timelapseInactive: "解除済み",
   timelapsePartial: "部分取得",
   timelapseUnwatch: "ウォッチ解除",
-  timelapseNeedTwo: "差分の表示には異なる 2 世代が必要です。テーブルの内容が変わったとき (接続時または「今すぐ取得」) に新しい世代が保存されます。",
+  timelapseNeedTwo:
+    "差分の表示には異なる 2 世代が必要です。テーブルの内容が変わったとき (接続時または「今すぐ取得」) に新しい世代が保存されます。",
   timelapseFrom: "古い世代",
   timelapseTo: "新しい世代",
   timelapseLatest: "最新",
@@ -7670,10 +8072,12 @@ const ja: Dict = {
   timelapseCountAdded: "追加: {count}",
   timelapseCountChanged: "変更: {count}",
   timelapseCountRemoved: "削除: {count}",
-  timelapsePartialNote: "部分取得の世代が含まれます (主キー順の先頭 {limit} 行のみ)。範囲外の行は追加・削除として表示されることがあります。",
+  timelapsePartialNote:
+    "部分取得の世代が含まれます (主キー順の先頭 {limit} 行のみ)。範囲外の行は追加・削除として表示されることがあります。",
   timelapseColumnsAdded: "追加された列 (行の変更には数えません): {columns}",
   timelapseColumnsRemoved: "削除された列 (比較対象外): {columns}",
-  timelapseMaskedNote: "機微カラムは表示上だけ伏せ字にしています。スナップショットには実値がローカル保存されています。",
+  timelapseMaskedNote:
+    "機微カラムは表示上だけ伏せ字にしています。スナップショットには実値がローカル保存されています。",
   timelapseNoChanges: "この 2 世代の間に行の差分はありません。",
   timelapseDiffAria: "世代間の行差分",
   timelapseChangeColumn: "変化",
@@ -7681,13 +8085,17 @@ const ja: Dict = {
   timelapseKindRemoved: "削除",
   timelapseKindChanged: "変更",
   timelapseWatchConfirmTitle: "「{table}」をウォッチしますか?",
-  timelapseWatchScope: "接続時と「今すぐ取得」でスナップショットを取り、内容が変わったときだけ新しい世代として保存します。対象はマスターデータ・設定値などの小さなテーブル (最大 {limit} 行) で、大きなテーブルの履歴管理は対象外です。",
+  timelapseWatchScope:
+    "接続時と「今すぐ取得」でスナップショットを取り、内容が変わったときだけ新しい世代として保存します。対象はマスターデータ・設定値などの小さなテーブル (最大 {limit} 行) で、大きなテーブルの履歴管理は対象外です。",
   timelapseWatchPk: "主キーのあるテーブルに限ります (世代間で行を追跡するために使います)。",
-  timelapseWatchPrivacy: "スナップショットは実データのローカルコピーで、機微なデータを含む可能性があります。保存先はこの端末のアプリデータディレクトリ (table_timelapse.sqlite) のみで、外部へは一切送信しません。ウォッチ解除時や設定画面から削除できます。",
-  timelapseWatchMask: "機微カラムのマスクは表示だけに適用され、保存データはマスクされません。取得は読み取り専用の SELECT で、クエリ履歴にも記録しません。",
+  timelapseWatchPrivacy:
+    "スナップショットは実データのローカルコピーで、機微なデータを含む可能性があります。保存先はこの端末のアプリデータディレクトリ (table_timelapse.sqlite) のみで、外部へは一切送信しません。ウォッチ解除時や設定画面から削除できます。",
+  timelapseWatchMask:
+    "機微カラムのマスクは表示だけに適用され、保存データはマスクされません。取得は読み取り専用の SELECT で、クエリ履歴にも記録しません。",
   timelapseWatchConfirmOk: "ウォッチを開始",
   timelapseOverLimitTitle: "このテーブルは {limit} 行を超えています",
-  timelapseOverLimitMessage: "記録できるのは主キー順の先頭 {limit} 行だけです。範囲外の変更は検出できません。先頭 {limit} 行だけを記録しますか?",
+  timelapseOverLimitMessage:
+    "記録できるのは主キー順の先頭 {limit} 行だけです。範囲外の変更は検出できません。先頭 {limit} 行だけを記録しますか?",
   timelapseOverLimitOk: "先頭 {limit} 行を記録",
   timelapseWatchDeclined: "{limit} 行を超えるためウォッチしませんでした。",
   timelapseWatched: "{table} のウォッチを開始しました。",
@@ -7696,20 +8104,24 @@ const ja: Dict = {
   timelapseUnwatchTitle: "「{table}」のウォッチを解除しますか?",
   timelapseUnwatchMessage: "このテーブルの自動スナップショットを停止します。",
   timelapseDeleteDataTitle: "保存済みの世代を削除しますか?",
-  timelapseDeleteDataMessage: "{table} の保存済み世代が {count} 件この端末に残っています。削除しますか? 残しておくと後から閲覧できます。",
+  timelapseDeleteDataMessage:
+    "{table} の保存済み世代が {count} 件この端末に残っています。削除しますか? 残しておくと後から閲覧できます。",
   timelapseDeleteDataOk: "データを削除",
   timelapseKeepData: "データを残す",
   timelapseCaptureChangedToast: "テーブル・タイムラプス: 内容が変化しました — {tables}",
   timelapseCaptureFailedToast: "テーブル・タイムラプス: スナップショットを取得できませんでした — {tables}",
   settingsTimelapse: "テーブル・タイムラプス",
-  settingsTimelapseHelp: "ウォッチ登録したテーブルの世代スナップショットを、アプリデータディレクトリ配下のローカル専用ストアに保存します。スナップショットは実データのコピーで、外部へは送信しません。",
+  settingsTimelapseHelp:
+    "ウォッチ登録したテーブルの世代スナップショットを、アプリデータディレクトリ配下のローカル専用ストアに保存します。スナップショットは実データのコピーで、外部へは送信しません。",
   settingsTimelapseOnConnect: "接続時にウォッチ中のテーブルを取得",
-  settingsTimelapseOnConnectHelp: "接続直後に、ウォッチ中のテーブルごとに読み取り専用の SELECT を 1 回実行します (履歴には記録しません)。",
+  settingsTimelapseOnConnectHelp:
+    "接続直後に、ウォッチ中のテーブルごとに読み取り専用の SELECT を 1 回実行します (履歴には記録しません)。",
   settingsTimelapseMaxGenerations: "テーブルごとの保持世代数",
   settingsTimelapseMaxGenerationsHelp: "古い世代から削除します。全体の保存量も 64 MiB で頭打ちになります。",
   settingsTimelapseClearAll: "タイムラプスのデータをすべて削除",
   settingsTimelapseClearTitle: "テーブル・タイムラプスのデータをすべて削除しますか?",
-  settingsTimelapseClearMessage: "すべての接続のウォッチ登録と保存済み世代をこの端末から削除します。元に戻せません。",
+  settingsTimelapseClearMessage:
+    "すべての接続のウォッチ登録と保存済み世代をこの端末から削除します。元に戻せません。",
   settingsTimelapseCleared: "保存済みの世代を {count} 件削除しました。",
   structureOpenData: "データを開く",
   structureReload: "再読み込み",
@@ -7740,11 +8152,11 @@ const ja: Dict = {
   cmdkFocusExplorer: "Database Explorer を絞り込む",
   cmdkTableStructure: "構造: {table}",
   treeLoading: "読み込み中...",
-  treeTableTitle: "▸ クリックで列・インデックス・外部キーを展開、ダブルクリックでデータを開く、右クリックで構造などの操作",
+  treeTableTitle:
+    "▸ クリックで列・インデックス・外部キーを展開、ダブルクリックでデータを開く、右クリックで構造などの操作",
   treeToggleColumnsAria: "{table} のカラム一覧を開閉",
   treeMoreActionsAria: "その他の操作",
-  treeRowEstimateTitle:
-    "統計情報に基づく概算レコード数 (COUNT(*) は実行していません)。古い可能性があります",
+  treeRowEstimateTitle: "統計情報に基づく概算レコード数 (COUNT(*) は実行していません)。古い可能性があります",
   colTipType: "型",
   colTipNullable: "NULL 可否",
   colTipYes: "可",
@@ -7759,7 +8171,8 @@ const ja: Dict = {
   colTipComment: "コメント",
   alterTableTableComment: "テーブルコメント",
   alterTableCommentPlaceholder: "このテーブルの用途・中身の説明",
-  alterTableCommentUnsupported: "SQLite はテーブル / カラムのコメント機能を持たないため、表示・編集できません。",
+  alterTableCommentUnsupported:
+    "SQLite はテーブル / カラムのコメント機能を持たないため、表示・編集できません。",
   alterTableColComment: "コメント",
   alterTableColCommentAria: "カラム {column} のコメント",
   colPkTitle: "主キー",
@@ -7772,19 +8185,24 @@ const ja: Dict = {
   tabCloseAll: "すべてのタブを閉じる",
   tabDirty: "未実行の変更、または Apply していない編集があります",
   tabCloseDiscardTitle: "未確定の編集があるタブを閉じる",
-  tabCloseDiscardBody: "「{name}」には Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
-  tabCloseDiscardBodyMany: "閉じるタブのうち {count} 個に Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
+  tabCloseDiscardBody:
+    "「{name}」には Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
+  tabCloseDiscardBodyMany:
+    "閉じるタブのうち {count} 個に Apply していない編集があります。閉じると編集内容は破棄され、閉じたタブを復元しても編集内容は戻りません。",
   tabCloseDiscardAction: "破棄して閉じる",
   connDiscardTitle: "未確定の編集があります",
-  connDiscardBody: "Apply していない編集を持つタブが {count} 個あります。Apply していない編集内容は保存されず破棄されます。",
+  connDiscardBody:
+    "Apply していない編集を持つタブが {count} 個あります。Apply していない編集内容は保存されず破棄されます。",
   tabCloseApplying: "このタブは編集を適用中です。完了してからもう一度閉じてください。",
   toastPendingEditsLost: "接続が切れたため、{count} 個のタブの Apply していない編集が破棄されました。",
   connDiscardAction: "破棄して続行",
   connTxOpenTitle: "トランザクションが開いたままです",
-  connTxOpenBody: "この接続には COMMIT していないトランザクションがあります。切断すると変更はロールバックされます。",
+  connTxOpenBody:
+    "この接続には COMMIT していないトランザクションがあります。切断すると変更はロールバックされます。",
   connTxOpenAction: "切断してロールバック",
   toastReconnectTxDiscarded: "{name} へ再接続しましたが、開いていたトランザクションは破棄されました。",
-  windowCloseTxBody: "COMMIT していないトランザクションを持つ接続が {count} 件あります。ウィンドウを閉じると変更はロールバックされます。",
+  windowCloseTxBody:
+    "COMMIT していないトランザクションを持つ接続が {count} 件あります。ウィンドウを閉じると変更はロールバックされます。",
   windowCloseTxAction: "閉じてロールバック",
   tabUntitledQuery: "クエリ",
   tabExplainTitle: "実行計画",
@@ -7970,8 +8388,7 @@ const ja: Dict = {
   gridQuickFilterNeNull: "NULL を除外する (IS NOT NULL)",
   gridQuickFilterTitleServer:
     "サーバ側の WHERE として全件に適用します。値の除外では NULL の行も落ちます (SQL の三値論理)。",
-  gridQuickFilterTitleClient:
-    "このグリッドに取得済みの行を絞り込みます。値の除外では NULL の行も落ちます。",
+  gridQuickFilterTitleClient: "このグリッドに取得済みの行を絞り込みます。値の除外では NULL の行も落ちます。",
   gridCopyCell: "値をコピー",
   // 右クリックメニューの階層化 (#1018)
   gridCopyGroup: "コピー",
@@ -8012,7 +8429,8 @@ const ja: Dict = {
   rowInspectorEditHasErrors: "エラーのある欄を直すと適用できます",
   rowInspectorEditBlockedStreaming: "行の読み込みが終わると編集できます。",
   rowInspectorEditBlockedDelete: "この行は削除予定のため編集できません。",
-  rowInspectorEditBlockedPending: "この行には未適用のグリッド編集があります。先に適用または破棄してください。",
+  rowInspectorEditBlockedPending:
+    "この行には未適用のグリッド編集があります。先に適用または破棄してください。",
   rowInspectorEditBlockedApplying: "適用が終わると編集できます。",
   rowInspectorEditStale: "行が更新されたので編集し直してください。",
   inspectorTabsAria: "インスペクタの表示",
@@ -8051,8 +8469,7 @@ const ja: Dict = {
   gridBulkEditSetNull: "NULL にする",
   gridBulkEditApply: "セルに設定",
   gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
-  gridBulkEditAppliedSkipped:
-    "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
+  gridBulkEditAppliedSkipped: "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
   gridBulkEditNoneApplied: "編集されたセルはありません (編集不可列または不正な値)",
   gridBulkEditAllUnchanged: "選択した {cells} セルはすべてすでにその値です — 変更はありません",
   gridReplaceMenu: "列「{column}」で検索して置換",
@@ -8067,16 +8484,19 @@ const ja: Dict = {
   gridReplaceInvalidRegex: "正規表現が不正です。",
   gridReplaceScope: "範囲",
   gridReplaceScopeGrid: "取得済みの行のみ",
-  gridReplaceScopeGridHint: "取得済みの {rows} 行のうちヒットしたセルを保留編集にします。Apply するまで書き込まれません。",
+  gridReplaceScopeGridHint:
+    "取得済みの {rows} 行のうちヒットしたセルを保留編集にします。Apply するまで書き込まれません。",
   gridReplaceGridNoPk: "使えません: 主キーが無く、行を安全に特定できません。",
   gridReplaceGridReadonly: "使えません: この列は編集できません (BLOB など)。",
   gridReplaceScopeColumn: "列全体 (UPDATE ... REPLACE)",
-  gridReplaceScopeColumnHint: "未取得の行を含め、その文字列を含む全行に 1 回の UPDATE を実行します。実行前に確認します。",
+  gridReplaceScopeColumnHint:
+    "未取得の行を含め、その文字列を含む全行に 1 回の UPDATE を実行します。実行前に確認します。",
   gridReplaceNoTable: "この結果では使えません (テーブルタブが必要です)。",
   gridReplaceLimitFilter: "「{column}」に適用中のフィルタに一致する行だけを対象にする",
   gridReplaceNotText: "列全体の置換は文字列型の列でのみ使えます (この列は {type})。",
   gridReplaceSqliteRegex: "SQLite には正規表現置換が無いため、列全体モードでは正規表現を使えません。",
-  gridReplaceSqliteCase: "SQLite の REPLACE は大文字小文字を区別するため、列全体モードでは「大文字小文字を区別」をオンにしてください。",
+  gridReplaceSqliteCase:
+    "SQLite の REPLACE は大文字小文字を区別するため、列全体モードでは「大文字小文字を区別」をオンにしてください。",
   gridReplaceGridSummary: "ヒット {hits} セル。{rows} 行の {cells} セルを編集します。",
   gridReplaceSkipInvalid: "{count} 件スキップ (置換結果が列型に不正、または NULL になるため)",
   gridReplaceSkipUnchanged: "{count} 件は変化なし",
@@ -8093,7 +8513,8 @@ const ja: Dict = {
   gridReplaceClose: "キャンセル",
   gridReplaceApplied: "{cells} セルの編集を保留しました — Apply で確定します",
   gridReplaceConfirmTitle: "列全体の文字列を置換しますか？",
-  gridReplaceConfirmBody: "テーブル「{table}」に対して、多数の行を変更しうる UPDATE を 1 回実行します。ここから取り消すことはできません。",
+  gridReplaceConfirmBody:
+    "テーブル「{table}」に対して、多数の行を変更しうる UPDATE を 1 回実行します。ここから取り消すことはできません。",
   gridReplaceConfirmDanger: "この文は危険なクエリとして検出されています。",
   gridReplaceConfirmButton: "UPDATE を実行",
   statusColumnReplaceApplied: "列の文字列を置換しました ({rows} 行に影響)。",
@@ -8128,7 +8549,7 @@ const ja: Dict = {
     "同じクエリを再実行したとき、変化したセルと追加された行をハイライトします (主キーが必要)",
   diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "{table} に新規行を追加",
-  rowOpsInsertHint: "空欄の列は既定値を使います。SQL の NULL にするには \"null\" と入力します。",
+  rowOpsInsertHint: '空欄の列は既定値を使います。SQL の NULL にするには "null" と入力します。',
   rowOpsInsertDefaultOption: "(既定値)",
   rowOpsInsertAutoHint: "空欄のままなら DB が自動採番します。",
   rowOpsInsertAutoPlaceholder: "自動採番",
@@ -8137,7 +8558,8 @@ const ja: Dict = {
   rowOpsInsertFnTitle: "{sql} を式として挿入し、DB 側で評価します (文字列として引用しません)",
   rowOpsInsertFnActive: "式として挿入されます。入力欄を編集すると文字列になります。",
   rowOpsInsertEmptyBadge: "空文字",
-  rowOpsInsertEmptyTitle: "既定値ではなく空文字 ('') として挿入されます。入力すると置き換わり、× で既定値に戻ります。",
+  rowOpsInsertEmptyTitle:
+    "既定値ではなく空文字 ('') として挿入されます。入力すると置き換わり、× で既定値に戻ります。",
   rowOpsInsertEmptyClear: "空文字をやめて既定値に戻す",
   rowOpsInsertFnPg13: "gen_random_uuid() は PostgreSQL 13 以降で使えます。",
   rowOpsInsertGeneratedHint: "生成列のため入力できません。DB が値を計算します。",
@@ -8166,7 +8588,8 @@ const ja: Dict = {
     "ファイル名は各行の主キーから付けます。NULL と 16 MiB を超える値は飛ばし、既存のファイルは上書きしません。",
   blobFolderPickTitle: "BLOB を保存するフォルダを選択",
   blobFolderNoKeys: "選択した行はどれも主キーで特定できないため、保存しませんでした。",
-  blobFolderSaved: "{saved} 件 ({size}) を {folder} に保存しました。スキップ {skipped} 件・失敗 {failed} 件。",
+  blobFolderSaved:
+    "{saved} 件 ({size}) を {folder} に保存しました。スキップ {skipped} 件・失敗 {failed} 件。",
   blobFolderFirstError: "最初のエラー: {error}",
   blobLoading: "バイナリ値を読み込み中…",
   blobKindUnknown: "種別不明",
@@ -8296,8 +8719,7 @@ const ja: Dict = {
   importExecute: "インポート",
   importStop: "中止",
   importCancelled: "インポートを中止しました。",
-  importCancelledPartial:
-    "インポートを中止しました。コミット済みの {count} 行は保持されています。",
+  importCancelledPartial: "インポートを中止しました。コミット済みの {count} 行は保持されています。",
   // 行エラーの扱い (#687)。
   importErrorMode: "不良行の扱い",
   importErrorModeAbort: "中断 (all-or-nothing)",
@@ -8315,7 +8737,8 @@ const ja: Dict = {
   importSkippedSave: "スキップ行を保存",
   importSkippedSaveTitle: "スキップ行を保存",
   importSkippedSaved: "スキップ行 {count} 件を {path} に保存しました。",
-  importSkippedShowing: "スキップ行 {total} 件のうち先頭 {shown} 件を表示しています。全件はコピーまたは保存で取得できます。",
+  importSkippedShowing:
+    "スキップ行 {total} 件のうち先頭 {shown} 件を表示しています。全件はコピーまたは保存で取得できます。",
   // 既存キーの扱い / UPSERT (#972)。
   importConflictMode: "既存キーの扱い",
   importConflictModeInsert: "INSERT のみ (重複はエラー)",
@@ -8416,7 +8839,8 @@ const ja: Dict = {
   testDataAiCancel: "中止",
   testDataAiCancelled: "AI 生成を中止しました。",
   testDataAiConfirmTitle: "テーブル定義を AI に送信しますか?",
-  testDataAiConfirmBody: "この接続は本番として設定されています。テーブルのスキーマを AI サービスへ送信します。",
+  testDataAiConfirmBody:
+    "この接続は本番として設定されています。テーブルのスキーマを AI サービスへ送信します。",
   testDataAiConfirmSend: "送信する",
   testDataAiNoTarget: "AI で生成できる列がありません (すべて自動採番・参照・対象外です)。",
   testDataAiNeedPlan: "「AI で生成」を押すと値の候補を作ります。いつでもルールベースに戻せます。",
@@ -8473,8 +8897,7 @@ const ja: Dict = {
     "クエリをトランザクション内で試し実行し、ロールバックします。影響を受ける行の実行前後 (Before/After) を表示します。DB には何もコミットされません。",
   helpDryRunStep1: "エディタにクエリを入力します。",
   helpDryRunStep2: "「Dry Run」ボタンを実行します。",
-  helpDryRunStep3:
-    "画面下部に Preview パネルが表示され、テーブルの実行前後の状態を確認できます。",
+  helpDryRunStep3: "画面下部に Preview パネルが表示され、テーブルの実行前後の状態を確認できます。",
   helpDryRunNote:
     "対象は INSERT/UPDATE/DELETE/REPLACE のみです。CREATE/DROP/ALTER などの DDL は暗黙コミットのため Dry Run できません。",
 
@@ -8497,12 +8920,10 @@ const ja: Dict = {
     "フォームから SQL を組み立てます。エディタにテキストを書き込むだけで、実行するには別途 Run が必要です。",
 
   helpSnippetTitle: "スニペット保存",
-  helpSnippetDesc:
-    "クエリをローカルに保存して再利用できます。データベースではなく端末上に保存されます。",
+  helpSnippetDesc: "クエリをローカルに保存して再利用できます。データベースではなく端末上に保存されます。",
 
   helpExportTitle: "結果のエクスポート (CSV/JSON)",
-  helpExportDesc:
-    "取得済みの結果セットをファイルに書き出します。読み取りのみのエクスポートです。",
+  helpExportDesc: "取得済みの結果セットをファイルに書き出します。読み取りのみのエクスポートです。",
   helpProfileBackupTitle: "プロファイルの暗号化バックアップ (PC 移行)",
   helpProfileBackupDesc:
     "全接続プロファイルを保存済みのパスワード / パスフレーズごと、パスフレーズで暗号化した 1 ファイル (Argon2id + AES-256-GCM) に書き出し、別の PC で読み込めばそのまま接続できます。",
@@ -8525,8 +8946,7 @@ const ja: Dict = {
   helpHistoryDesc: "過去に実行したクエリを参照します。読み取りのみです。",
 
   helpPaginationTitle: "ページネーション / スクロール取得",
-  helpPaginationDesc:
-    "スクロールに応じて追加の SELECT で行を取得します。読み取りのみです。",
+  helpPaginationDesc: "スクロールに応じて追加の SELECT で行を取得します。読み取りのみです。",
   helpSchemaCompareTitle: "スキーマ比較",
   helpSchemaCompareDesc:
     "2 つの接続のスキーマ (およびテーブルデータ) を並べて比較し、差分を表示します。上部ツールバーの差分アイコンから開けます。",
@@ -8543,8 +8963,7 @@ const ja: Dict = {
     "クエリをそのまま実行します。SELECT 以外 (UPDATE/DELETE/INSERT/DDL) はそのまま DB に反映されます。",
 
   helpApplyTitle: "適用 (Apply)",
-  helpApplyDesc:
-    "未保存のセル編集を UPDATE 文としてデータベースに実行・反映します。",
+  helpApplyDesc: "未保存のセル編集を UPDATE 文としてデータベースに実行・反映します。",
   helpApplyNote: "現状はトランザクション外で実行されます (関連: #102)。",
 
   helpImportTitle: "CSV インポート",
@@ -8602,7 +9021,8 @@ const ja: Dict = {
   shortcutGridInspectorTitle: "Alt/Option+Enter",
   shortcutGridInspectorDesc: "アクティブ行の行インスペクタを開閉します。",
   shortcutContextMenuTitle: "Shift+F10 / メニューキー",
-  shortcutContextMenuDesc: "アクティブセル、またはフォーカス中のサイドバーのツリー行の右クリックメニューを開きます。",
+  shortcutContextMenuDesc:
+    "アクティブセル、またはフォーカス中のサイドバーのツリー行の右クリックメニューを開きます。",
   shortcutEditUndoTitle: "Cmd/Ctrl+Z",
   shortcutEditUndoDesc: "直前の未適用インラインセル編集を Undo します (Apply 前)。",
   shortcutMaximizeResultTitle: "Cmd/Ctrl+Shift+M",
@@ -8657,7 +9077,8 @@ const ja: Dict = {
   appObjectSearch: "オブジェクト検索 (テーブル / カラム)…",
   cmdkActionTasks: "タスクスケジューラを開く",
   appSchemaDriftUnsupported: "既定データベースを選択して接続してください",
-  appDataSearchNeedsDatabase: "データベースを選んだクエリタブを開くか、既定データベースを指定して接続してください",
+  appDataSearchNeedsDatabase:
+    "データベースを選んだクエリタブを開くか、既定データベースを指定して接続してください",
   appPinCompare: "ピン留め結果を比較 ({count})",
   pinResultTitle: "この結果を比較用にピン留め",
   pinCompareTitle: "ピン留め結果の比較",
@@ -8734,16 +9155,17 @@ const ja: Dict = {
   erDiagramFocusHops: "範囲",
   erDiagramFocusHopsN: "{n} ホップ",
   erDiagramFocusSelected: "{table} にフォーカス",
-  erDiagramFocusSelectedTip:
-    "選択したテーブルと、外部キーを選んだ範囲まで辿れるテーブルだけを表示します。",
+  erDiagramFocusSelectedTip: "選択したテーブルと、外部キーを選んだ範囲まで辿れるテーブルだけを表示します。",
   erDiagramTruncated:
     "図を見やすく保つため、{total} 件のうち関連の多い {shown} 件のテーブルを表示しています。",
   erDiagramTruncatedFocusHint: "見たいテーブルがあるときはツールバーの「フォーカス」を使ってください。",
-  erDiagramFocusCapped: "範囲内のテーブルが多いため、近い {shown} 件を表示しています。範囲を狭めると全体を見られます。",
+  erDiagramFocusCapped:
+    "範囲内のテーブルが多いため、近い {shown} 件を表示しています。範囲を狭めると全体を見られます。",
   erDiagramPk: "主キー",
   erDiagramFk: "外部キー",
   erDiagramAiDoc: "AI でドキュメント生成",
-  erDiagramAiDocTooltip: "スキーマドキュメント (Markdown) を AI で生成します (選択中のテーブル、なければ全体)",
+  erDiagramAiDocTooltip:
+    "スキーマドキュメント (Markdown) を AI で生成します (選択中のテーブル、なければ全体)",
   cmdkActionAiSchemaDoc: "AI でスキーマドキュメントを生成",
   aiSchemaDocTitle: "スキーマドキュメント ({database})",
   aiSchemaDocClose: "閉じる",
@@ -8757,14 +9179,19 @@ const ja: Dict = {
   aiSchemaDocReferenced: "参照先",
   aiSchemaDocNoSelection: "テーブルを 1 つ以上選んでください。",
   aiSchemaDocSelectedCount: "{selected} 件選択 (参照先を含めて {effective} テーブル)",
-  aiSchemaDocSends: "送信内容: {database} のスキーマ (テーブル {tables} 件・列 {columns} 件・外部キー {fks} 件、{dialect}。インデックスと定義を除いて約 {kb} KB) とインデックス・ビュー/ルーチンの定義。行データ・サンプル値・列のデフォルト値は送りません。",
-  aiSchemaDocSendsSelected: "送信内容: {database} の選択範囲のスキーマ (テーブル {tables} 件・列 {columns} 件・外部キー {fks} 件、{dialect}。インデックスと定義を除いて約 {kb} KB) とインデックス、範囲内のビューの定義。ルーチンの定義・行データ・サンプル値・列のデフォルト値は送りません。",
+  aiSchemaDocSends:
+    "送信内容: {database} のスキーマ (テーブル {tables} 件・列 {columns} 件・外部キー {fks} 件、{dialect}。インデックスと定義を除いて約 {kb} KB) とインデックス・ビュー/ルーチンの定義。行データ・サンプル値・列のデフォルト値は送りません。",
+  aiSchemaDocSendsSelected:
+    "送信内容: {database} の選択範囲のスキーマ (テーブル {tables} 件・列 {columns} 件・外部キー {fks} 件、{dialect}。インデックスと定義を除いて約 {kb} KB) とインデックス、範囲内のビューの定義。ルーチンの定義・行データ・サンプル値・列のデフォルト値は送りません。",
   aiSchemaDocFkMissing: "外部キーを取得できなかったため、関係は含まれません。",
   aiSchemaDocTruncated: "出力上限に達したため、途中までの内容です。対象を絞って再生成してください。",
-  aiSchemaDocTooBig: "送信内容が約 {kb} KB となり、上限 {limit} KB を超えます。「選択したテーブルとその参照先」へ対象を絞ってください。",
-  aiSchemaDocLargeSchema: "対象が大きくなっています: {tables} テーブル (約 {kb} KB)。生成に時間とコストがかかる可能性があります。「選択したテーブルとその参照先」への絞り込みを検討してください。",
+  aiSchemaDocTooBig:
+    "送信内容が約 {kb} KB となり、上限 {limit} KB を超えます。「選択したテーブルとその参照先」へ対象を絞ってください。",
+  aiSchemaDocLargeSchema:
+    "対象が大きくなっています: {tables} テーブル (約 {kb} KB)。生成に時間とコストがかかる可能性があります。「選択したテーブルとその参照先」への絞り込みを検討してください。",
   aiSchemaDocConfirmTitle: "スキーマを AI に送信しますか?",
-  aiSchemaDocConfirmBody: "この接続は本番として設定されています。テーブル・列・インデックスの名前、コメント、ビュー/ルーチンの定義が Anthropic API に送信されます。",
+  aiSchemaDocConfirmBody:
+    "この接続は本番として設定されています。テーブル・列・インデックスの名前、コメント、ビュー/ルーチンの定義が Anthropic API に送信されます。",
   aiSchemaDocConfirmSend: "送信",
   aiSchemaDocGenerate: "生成",
   aiSchemaDocCollecting: "インデックスと定義を収集中...",
@@ -8821,16 +9248,14 @@ const ja: Dict = {
   schemaCompareGenerating: "生成中...",
   schemaCompareStatementsShown: "{total} 件中 {shown} 件を表示中",
   schemaCompareStatementsMore: "さらに {count} 件表示",
-  schemaCompareNoStatements:
-    "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
+  schemaCompareNoStatements: "適用する文がありません。DROP を生成するには破壊的変更を許可してください。",
   schemaCompareBackupNote:
     "適用前にターゲットのバックアップを取得してください。DDL は常に元に戻せるとは限らず、MySQL では各文が暗黙にコミットされ (ロールバック不可) です。",
   schemaCompareApply: "{count} 文をターゲットへ適用",
   schemaCompareApplying: "適用中...",
   schemaCompareApplyConfirm:
     "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
-  schemaCompareApplyProductionConfirm:
-    "「{name}」は本番接続です。スキーマ変更を適用しますか?",
+  schemaCompareApplyProductionConfirm: "「{name}」は本番接続です。スキーマ変更を適用しますか?",
   schemaCompareApplyTypedConfirmTitle: "本番への破壊的な適用の確認",
   schemaCompareApplyTypedConfirmBody:
     "「{name}」は本番接続で、この適用計画には破壊的な文 (DROP/DELETE) が {destructive} 件含まれています。元に戻すことはできません。",
@@ -8855,7 +9280,8 @@ const ja: Dict = {
   schemaCompareDataAllRows: "全行を比較する",
   schemaCompareDataIgnore: "除外列",
   schemaCompareDataIgnorePlaceholder: "例: updated_at, modified_by",
-  schemaCompareDataTruncatedAll: "行数または差分数の安全上限で比較を止めたため、残りは未比較で、削除 (DELETE) は生成しません。対象を絞るか分けて比較してください。",
+  schemaCompareDataTruncatedAll:
+    "行数または差分数の安全上限で比較を止めたため、残りは未比較で、削除 (DELETE) は生成しません。対象を絞るか分けて比較してください。",
   schemaCompareDataCompare: "データを比較",
   schemaCompareDataComparedTable: "比較したテーブル: {table}",
   schemaCompareDataInserts: "追加",
@@ -8871,16 +9297,21 @@ const ja: Dict = {
   aiSyncRiskRunning: "AI に問い合わせ中...",
   aiSyncRiskCancel: "中止",
   aiSyncRiskCancelled: "中止しました。",
-  aiSyncRiskDisclaimer: "AI の判定は誤ることがあります。最終判断はあなたが行ってください。適用の動作はこれまでと変わりません。",
+  aiSyncRiskDisclaimer:
+    "AI の判定は誤ることがあります。最終判断はあなたが行ってください。適用の動作はこれまでと変わりません。",
   aiSyncRiskSendsSchema: "送信内容: 方言 ({dialect})・SQL {count} 文 ({sql})・スキーマ差分・警告。",
-  aiSyncRiskSendsSchemaCapped: "送信内容: 方言 ({dialect})・SQL {total} 文中 {shown} 文 ({sql}、破壊的な文を優先)・スキーマ差分・警告。",
-  aiSyncRiskSendsData: "送信内容: 方言 ({dialect})・テーブル名・文の種別・行数 (挿入 {inserts} / 更新 {updates} / 削除 {deletes})・警告。セル値と SQL 本文は送りません。",
+  aiSyncRiskSendsSchemaCapped:
+    "送信内容: 方言 ({dialect})・SQL {total} 文中 {shown} 文 ({sql}、破壊的な文を優先)・スキーマ差分・警告。",
+  aiSyncRiskSendsData:
+    "送信内容: 方言 ({dialect})・テーブル名・文の種別・行数 (挿入 {inserts} / 更新 {updates} / 削除 {deletes})・警告。セル値と SQL 本文は送りません。",
   aiSyncRiskSqlMasked: "リテラルをマスク",
   aiSyncRiskSqlRaw: "リテラルを含む",
   aiSyncRiskScopeTitle: "同期 SQL を AI に送信しますか？",
-  aiSyncRiskScopeBody: "リスクの要約には SQL 本文が必要ですが、送信範囲は「スキーマ情報のみ」です。今回だけ送信しますか？",
+  aiSyncRiskScopeBody:
+    "リスクの要約には SQL 本文が必要ですが、送信範囲は「スキーマ情報のみ」です。今回だけ送信しますか？",
   aiSyncRiskProdTitle: "同期プランを AI に送信しますか？",
-  aiSyncRiskProdBody: "この比較には本番として登録された接続が含まれます。下記の内容を Anthropic API に送信します。",
+  aiSyncRiskProdBody:
+    "この比較には本番として登録された接続が含まれます。下記の内容を Anthropic API に送信します。",
   aiSyncRiskConfirmSend: "送信",
   aiSyncRiskSummary: "適用すると起きること",
   aiSyncRiskRecommendation: "適用前に確認すること",
@@ -9036,7 +9467,8 @@ const ja: Dict = {
   usersRetry: "再試行",
   usersLoadError: "ユーザ一覧の取得に失敗しました: {error}",
   usersEmpty: "表示するユーザがありません。",
-  usersReadOnlyHint: "読み取り専用セッションのため、ユーザ / 権限の変更は無効です (バックエンドで強制されます)。",
+  usersReadOnlyHint:
+    "読み取り専用セッションのため、ユーザ / 権限の変更は無効です (バックエンドで強制されます)。",
   usersSelectUserHint: "ユーザ/ロールを選択すると権限を表示します。",
   usersSuperuserBadge: "SUPERUSER",
   usersNewUser: "新規ユーザ…",
@@ -9057,9 +9489,12 @@ const ja: Dict = {
   usersCopyHint:
     "このユーザの {database} のテーブル権限をコピー元に揃えます (このユーザだけが持つテーブルの権限は剥奪対象になります)。この時点では何も実行されません。変更内容と SQL を確認してから「変更を適用」を押してください。",
   usersCopySubmit: "権限を読み込む",
-  usersCopyMysqlNote: "MySQL ではテーブル単位の権限だけがコピー対象です (グローバル / DB 単位 / 列の権限とロールはコピーされません)。",
-  usersCopyEmptySource: "{name} には {database} のテーブル権限がありません。適用すると、このユーザが今そこで持つ権限をすべて剥奪します。",
-  usersCopyRevokes: "適用すると、コピー元が持たない {count} 個のテーブルの権限を REVOKE します。確認画面の SQL を確かめてから実行してください。",
+  usersCopyMysqlNote:
+    "MySQL ではテーブル単位の権限だけがコピー対象です (グローバル / DB 単位 / 列の権限とロールはコピーされません)。",
+  usersCopyEmptySource:
+    "{name} には {database} のテーブル権限がありません。適用すると、このユーザが今そこで持つ権限をすべて剥奪します。",
+  usersCopyRevokes:
+    "適用すると、コピー元が持たない {count} 個のテーブルの権限を REVOKE します。確認画面の SQL を確かめてから実行してください。",
   usersCopyCancel: "キャンセル",
   usersCopyLoaded: "{name} の権限を読み込みました。強調された行を確認して「変更を適用」を押してください。",
   usersCopyFailed: "コピー元の権限を読み込めませんでした: {error}",
@@ -9081,7 +9516,8 @@ const ja: Dict = {
     "mysql.user のサーバ全体 (グローバル) 権限です。参照専用 — このパネルが編集するのは選択中データベース内のテーブル単位権限で、GRANT ... ON *.* によるグローバル権限とはスコープが異なります。",
   usersNeedDatabaseHint: "テーブル単位の権限を表示・編集するには、データベースを開いてください。",
   usersPrivilegesLoadError: "権限の取得に失敗しました: {error}",
-  usersPrivilegesEmpty: "選択中データベースにテーブル単位の GRANT がありません。下のフォームからテーブルを追加して権限を付与できます。",
+  usersPrivilegesEmpty:
+    "選択中データベースにテーブル単位の GRANT がありません。下のフォームからテーブルを追加して権限を付与できます。",
   usersColTable: "テーブル",
   usersColSelect: "SELECT",
   usersColInsert: "INSERT",
@@ -9186,7 +9622,8 @@ const ja: Dict = {
   profileCompareOpen: "他の接続と比較...",
   profileCompareOpenTooltip: "開いている他の接続で同じ列を集計し、分布を並べて比較します。",
   profileCompareTitle: "列の分布を比較",
-  profileCompareDesc: "選んだ接続で {column} を集計し、この接続との分布を比較します。テーブル名と列名は同じ前提で、データベース名は接続ごとに変えられます。",
+  profileCompareDesc:
+    "選んだ接続で {column} を集計し、この接続との分布を比較します。テーブル名と列名は同じ前提で、データベース名は接続ごとに変えられます。",
   profileCompareBaseline: "基準",
   profileComparePickerEmpty: "他に開いている接続がありません。比較したい環境に先に接続してください。",
   profileCompareDatabaseAria: "{name} のデータベース",
@@ -9204,20 +9641,24 @@ const ja: Dict = {
   profileCompareTableAria: "接続間の列分布の比較",
   profileCompareNullPct: "NULL 率",
   profileCompareAbsent: "上位に無し",
-  profileCompareTopNote: "上位の値は件数ではなく構成比 (%) で比べるので、行数の違う表どうしでも比較できます。「上位に無し」は、その接続の上位の値に入っていないという意味です。",
+  profileCompareTopNote:
+    "上位の値は件数ではなく構成比 (%) で比べるので、行数の違う表どうしでも比較できます。「上位に無し」は、その接続の上位の値に入っていないという意味です。",
   planPin: "計画を固定",
   planPinRepin: "{at} に固定中 (固定し直す)",
-  planPinTooltip: "いまの計画を固定します。SQL を直す・インデックスを足すなどして EXPLAIN をやり直すと、固定した計画と見比べられます。",
+  planPinTooltip:
+    "いまの計画を固定します。SQL を直す・インデックスを足すなどして EXPLAIN をやり直すと、固定した計画と見比べられます。",
   planPinClear: "固定した計画を解除",
   planCompareOpen: "固定と比較",
   planCompareTooltip: "固定した計画 (変更前) と現在の計画 (変更後) を並べて比較します。",
   planCompareDriverMismatch: "固定した計画は別の種類の DB のものなので、比較できません。",
   planCompareTitle: "実行計画の比較",
-  planCompareAnalyzeMismatch: "片方だけ EXPLAIN ANALYZE (実測) で取得した計画なので、実測時間や一部のヒントは比べられません。同じモードで取り直すと公平に比較できます。",
+  planCompareAnalyzeMismatch:
+    "片方だけ EXPLAIN ANALYZE (実測) で取得した計画なので、実測時間や一部のヒントは比べられません。同じモードで取り直すと公平に比較できます。",
   planCompareClose: "閉じる",
   planCompareUnparsable: "どちらかの計画を解析できないため、比較できません。",
   planCompareVerdictImproved: "重さスコアが {before} から {after} に下がりました。計画は軽くなっています。",
-  planCompareVerdictRegressed: "スコアまたは警告が悪化しています (重さ {before} → {after})。下の変化を確認してください。",
+  planCompareVerdictRegressed:
+    "スコアまたは警告が悪化しています (重さ {before} → {after})。下の変化を確認してください。",
   planCompareVerdictSame: "目立った変化はありません (重さ {before} → {after})。",
   planCompareSummaryAria: "実行計画の比較サマリ",
   planCompareColBefore: "変更前 (固定)",
@@ -9231,8 +9672,10 @@ const ja: Dict = {
   planCompareBeforePane: "変更前 (固定 {at})",
   planCompareAfterPane: "変更後 (現在)",
   gridPasteInsertTitle: "はみ出した貼り付け行を新規行として追加しますか?",
-  gridPasteInsertMessage: "貼り付けた行のうち {rows} 行 ({cells} セル) が表示中の最終行を超えています。保留の新規行として追加できます。保留中の変更を反映するまで DB には書き込まれません。",
-  gridPasteInsertSkipped: "入れられないセル ({cells} 件: 生成列・BLOB 列・不正な値・表示外の列) は除いています。",
+  gridPasteInsertMessage:
+    "貼り付けた行のうち {rows} 行 ({cells} セル) が表示中の最終行を超えています。保留の新規行として追加できます。保留中の変更を反映するまで DB には書き込まれません。",
+  gridPasteInsertSkipped:
+    "入れられないセル ({cells} 件: 生成列・BLOB 列・不正な値・表示外の列) は除いています。",
   gridPasteInsertConfirm: "新規行として追加",
   gridPasteInsertAdded: "保留の新規行を {rows} 行追加しました",
   gridPasteInsertDeclined: "表示行を超えた {cells} セルは反映していません",
@@ -9286,8 +9729,10 @@ const ja: Dict = {
   whereUsedRun: "検索",
   whereUsedCancel: "キャンセル",
   whereUsedProgress: "定義を取得中… {done} / {total}",
-  whereUsedSummary: "{target} を参照しているもの: {matches} 件 (定義 {objects} 件・スニペット {snippets} 件を走査)",
-  whereUsedNone: "{target} への参照は見つかりませんでした (定義 {objects} 件・スニペット {snippets} 件を走査)。",
+  whereUsedSummary:
+    "{target} を参照しているもの: {matches} 件 (定義 {objects} 件・スニペット {snippets} 件を走査)",
+  whereUsedNone:
+    "{target} への参照は見つかりませんでした (定義 {objects} 件・スニペット {snippets} 件を走査)。",
   whereUsedCancelled: "検索をキャンセルしました。以下は途中までの結果です。",
   whereUsedUnsupported: "この接続では走査しない種別 (ドライバに存在しない / 取得できない): {kinds}",
   whereUsedDynamicNote: "動的 SQL の文字列 (EXECUTE '…' など) の中の名前は検出できません。",
@@ -9327,7 +9772,8 @@ const ja: Dict = {
   assertLoading: "アサーションを読み込んでいます…",
   assertRetry: "再試行",
   assertEmptyTitle: "この接続のアサーションはまだありません",
-  assertEmptyDesc: "「email は NULL にならない」「status は active / banned のどれか」のようなルールを追加してください。",
+  assertEmptyDesc:
+    "「email は NULL にならない」「status は active / banned のどれか」のようなルールを追加してください。",
   assertColStatus: "状態",
   assertColName: "名前",
   assertColRule: "ルール",
@@ -9355,8 +9801,10 @@ const ja: Dict = {
   assertRuleRowCount: "行数",
   assertRuleCustomSql: "カスタム SQL",
   assertDescCustomSql: "{table}: {sql}",
-  assertFieldSql: "違反行クエリ (違反行を返す読み取り専用の SELECT。0 行なら成功。結合するときは SELECT * ではなく o.* か主キー列を返し、列名を重複させない)",
-  assertFieldSqlPlaceholder: "SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE o.user_id IS NOT NULL AND u.id IS NULL",
+  assertFieldSql:
+    "違反行クエリ (違反行を返す読み取り専用の SELECT。0 行なら成功。結合するときは SELECT * ではなく o.* か主キー列を返し、列名を重複させない)",
+  assertFieldSqlPlaceholder:
+    "SELECT o.* FROM orders o LEFT JOIN users u ON u.id = o.user_id WHERE o.user_id IS NOT NULL AND u.id IS NULL",
   assertErrSql: "読み取り専用の SELECT 文を入力してください。",
   assertDescNotNull: "{table}.{column} IS NOT NULL",
   assertDescUnique: "{table} ({columns}) が一意",
@@ -9410,15 +9858,18 @@ const ja: Dict = {
   assertAiButton: "AI に候補を出してもらう",
   sqlCheckViolationsButton: "違反件数を確認",
   sqlCheckRowsButton: "件数で検証",
-  sqlCheckHint: "この SQL を読み取り専用の COUNT で 1 回実行し、存在しない列名などのエラーを使う前に確認します。",
+  sqlCheckHint:
+    "この SQL を読み取り専用の COUNT で 1 回実行し、存在しない列名などのエラーを使う前に確認します。",
   sqlCheckRunning: "読み取り専用の COUNT を実行しています…",
   sqlCheckViolations: "現在 {count} 行が違反しています。",
   sqlCheckViolationsZero: "違反は 0 件です — このアサーションは現時点で合格します。",
   sqlCheckRows: "エラーなく実行でき、{count} 行を返します。",
   sqlCheckError: "実行に失敗しました: {error}",
-  sqlCheckDuplicateColumn: "列名が重複している可能性があります (派生表では同名の列を並べられません)。列に別名 (AS) を付けて再度確認してください。",
+  sqlCheckDuplicateColumn:
+    "列名が重複している可能性があります (派生表では同名の列を並べられません)。列に別名 (AS) を付けて再度確認してください。",
   assertAiTitle: "AI でアサーション候補を提案",
-  assertAiDesc: "テーブルを選ぶと、列の型・NULL 可否・キー・外部キー・列名・コメントからデータ品質チェックの候補を AI が提案します。登録したいものにチェックを付けて一括登録できます。",
+  assertAiDesc:
+    "テーブルを選ぶと、列の型・NULL 可否・キー・外部キー・列名・コメントからデータ品質チェックの候補を AI が提案します。登録したいものにチェックを付けて一括登録できます。",
   assertAiTable: "テーブル",
   assertAiTablePlaceholder: "テーブルを選択",
   assertAiTablesError: "テーブル一覧を取得できませんでした: {error}",
@@ -9426,9 +9877,11 @@ const ja: Dict = {
   assertAiGenerate: "候補を生成",
   assertAiStop: "中止",
   assertAiClose: "閉じる",
-  assertAiSends: "送信内容: {table} のスキーマと関連する外部キー (列 {columns} 件・{dialect})。行データは送りません。",
+  assertAiSends:
+    "送信内容: {table} のスキーマと関連する外部キー (列 {columns} 件・{dialect})。行データは送りません。",
   assertAiConfirmTitle: "スキーマを AI に送信しますか?",
-  assertAiConfirmProdBody: "この接続は本番として設定されています。テーブル名・列名が Anthropic の API へ送信されます。",
+  assertAiConfirmProdBody:
+    "この接続は本番として設定されています。テーブル名・列名が Anthropic の API へ送信されます。",
   assertAiConfirmSend: "送信する",
   assertAiRunning: "このテーブルのチェックを考えています…",
   assertAiError: "AI のリクエストに失敗しました: {message}",
@@ -9438,8 +9891,10 @@ const ja: Dict = {
   assertAiEmpty: "このテーブルに対する候補はありませんでした。",
   assertAiSuggestions: "候補 ({count} 件)",
   assertAiSqlLabel: "チェック SQL (登録前に編集できます)",
-  assertAiNotReadOnly: "この SQL は読み取り専用の単一文ではないため登録できません。SELECT に修正してください。",
-  assertAiNote: "候補は下書きです。各 SQL は違反行を返し、0 行なら成功になります。内容を確認してから登録してください。",
+  assertAiNotReadOnly:
+    "この SQL は読み取り専用の単一文ではないため登録できません。SELECT に修正してください。",
+  assertAiNote:
+    "候補は下書きです。各 SQL は違反行を返し、0 行なら成功になります。内容を確認してから登録してください。",
   assertAiPick: "「{name}」を登録する",
   assertAiRegister: "選択した {count} 件を登録",
   assertAiRegistered: "{count} 件のアサーションを登録しました",
@@ -9496,8 +9951,7 @@ const ja: Dict = {
   profileNoteApproxNoStats:
     "この列の統計情報がまだありません (ANALYZE で収集されます)。正確な DISTINCT 数を表示しています。",
   profileNoteUnknown: "プロファイルの一部を計算できませんでした。",
-  profileNoteOverviewSkipped:
-    "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
+  profileNoteOverviewSkipped: "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
   profileOverviewRun: "全列の概要",
   profileOverviewRerun: "概要を更新",
   profileOverviewHint:
@@ -9523,7 +9977,8 @@ const ja: Dict = {
     "機械的に直せる指摘 (FK のインデックス欠落・重複 / 冗長インデックス) が 2 件以上あるテーブルについて、DB が許す範囲でなるべく少ない文にまとめています。利用統計に基づく指摘は含みません。実行前に内容を確認してください。",
   advisorPlanChanges: "{count} 件の変更",
   advisorFixStandard: "通常版",
-  advisorFixStandardNote: "シンプルですが、大きな本番テーブルでは実行中ずっと書き込みが止まることがあります。",
+  advisorFixStandardNote:
+    "シンプルですが、大きな本番テーブルでは実行中ずっと書き込みが止まることがあります。",
   advisorFixOnline: "オンライン版 (書き込みを止めにくい)",
   advisorFixOnlineNotePostgres:
     "CONCURRENTLY を使うため、トランザクションブロックの中では実行できません。BEGIN/COMMIT の外で、1 文だけで実行してください (複数文のスクリプトやトランザクションモードでは失敗します)。時間は長くかかり、失敗すると無効 (INVALID) なインデックスが残るので DROP が必要です。",
@@ -9540,15 +9995,19 @@ const ja: Dict = {
   advisorAiRunning: "AI に問い合わせ中...",
   advisorAiStop: "中止",
   advisorAiCancelled: "中止しました。",
-  advisorAiSends: "送信内容: この指摘・修正 DDL ({ddl})・方言 ({dialect})・関連 {tables} テーブルの列 / インデックス定義。行データは送りません。",
+  advisorAiSends:
+    "送信内容: この指摘・修正 DDL ({ddl})・方言 ({dialect})・関連 {tables} テーブルの列 / インデックス定義。行データは送りません。",
   advisorAiDdlMasked: "リテラルをマスク",
   advisorAiDdlRaw: "リテラルを含む",
   advisorAiDdlNone: "なし",
-  advisorAiGuardNote: "AI の説明は誤ることがあります。AI は説明するだけで SQL は実行しません。修正を実行するかはあなたが判断します。",
+  advisorAiGuardNote:
+    "AI の説明は誤ることがあります。AI は説明するだけで SQL は実行しません。修正を実行するかはあなたが判断します。",
   advisorAiScopeTitle: "この指摘を AI に送信しますか?",
-  advisorAiScopeBody: "送信範囲が「スキーマ情報のみ」に設定されていますが、解説には指摘の内容と修正 DDL が必要です。今回だけ送信しますか?",
+  advisorAiScopeBody:
+    "送信範囲が「スキーマ情報のみ」に設定されていますが、解説には指摘の内容と修正 DDL が必要です。今回だけ送信しますか?",
   advisorAiProdTitle: "この指摘を AI に送信しますか?",
-  advisorAiProdBody: "この接続は本番として設定されています。指摘の内容・修正 DDL・関連テーブルの列 / インデックス定義が Anthropic の API へ送信されます。",
+  advisorAiProdBody:
+    "この接続は本番として設定されています。指摘の内容・修正 DDL・関連テーブルの列 / インデックス定義が Anthropic の API へ送信されます。",
   advisorAiConfirmSend: "送信する",
   advisorAiWhy: "なぜ問題か",
   advisorAiConsequence: "放置するとどうなるか",
@@ -9573,7 +10032,8 @@ const ja: Dict = {
   advisorRuleSqliteIntegerPkHintTitle: "INTEGER でない整数 PK",
   // 未知のルール ID (バックエンドだけ新ルールを足したドリフト時) の汎用フォールバック
   advisorRuleUnknownTitle: "その他のスキーマ指摘",
-  advisorRuleUnknownDesc: "{table}: このバージョンでは説明できないスキーマ指摘がバックエンドから返されました。詳細はアプリを更新すると確認できます。",
+  advisorRuleUnknownDesc:
+    "{table}: このバージョンでは説明できないスキーマ指摘がバックエンドから返されました。詳細はアプリを更新すると確認できます。",
   // ルール説明 (パラメータ差し込み)
   advisorRuleFkMissingIndexDesc:
     "{table}({columns}) は {ref} を参照する外部キーですが、この列を先頭に持つインデックスがありません。JOIN やカスケード削除が遅くなる可能性があります。",
@@ -9701,8 +10161,7 @@ const ja: Dict = {
   settingsColumnMaskCopyPlaceholderHelp:
     "伏せ字の値を誤って別の場所へ貼り付けないようにします。オフにすると、マスク中でも実値をコピーします。",
   settingsAutoRefreshDefault: "自動更新の既定間隔",
-  settingsAutoRefreshDefaultHelp:
-    "結果グリッドの自動更新コントロールで既定選択される間隔。",
+  settingsAutoRefreshDefaultHelp: "結果グリッドの自動更新コントロールで既定選択される間隔。",
 
   settingsSearchPlaceholder: "設定を検索…",
   settingsSearchNoMatch: "一致する設定がありません",
@@ -9761,9 +10220,11 @@ const ja: Dict = {
   onboardingStepConnectDesc:
     "サイドバー (またはウェルカム画面) から MySQL・PostgreSQL・SQLite の接続を追加して始めましょう。",
   onboardingStepQueryTitle: "クエリを実行する",
-  onboardingStepQueryDesc: "クエリタブを開いて SQL を書いて実行します。結果は到着ごとに段階的に表示されます。",
+  onboardingStepQueryDesc:
+    "クエリタブを開いて SQL を書いて実行します。結果は到着ごとに段階的に表示されます。",
   onboardingStepEditTitle: "結果をその場で編集する",
-  onboardingStepEditDesc: "結果グリッドのセルをダブルクリックすると編集でき、そのまま実際の更新として適用できます。",
+  onboardingStepEditDesc:
+    "結果グリッドのセルをダブルクリックすると編集でき、そのまま実際の更新として適用できます。",
   onboardingStepMoreTitle: "スニペット・履歴など",
   onboardingStepMoreDesc:
     "よく使うクエリはスニペットとして保存でき、過去の実行は履歴から見返せます。困ったときは ? キーでショートカット一覧を開けます。",
@@ -9813,8 +10274,7 @@ const ja: Dict = {
   sandboxResetConfirmMessage:
     "サンドボックス内の {table} の全行を base スナップショット (作成時、または最後に書き戻した時点) の内容に置き換えます。この表への編集は失われます。スキーマ変更は戻りません。",
   sandboxResetDone: "{table} をリセットしました ({rows} 行を復元)。",
-  sandboxReviewSourceError:
-    "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
+  sandboxReviewSourceError: "元の DB から現在の行を取得できなかったため、競合を検出できていません: {error}",
   sandboxApplySourceErrorNote:
     "競合検出に失敗したテーブル: {tables}。スナップショット以降に元の DB で行われた変更を上書きする可能性があります。",
   sandboxReviewConflictsUnchecked: "競合チェックは未実施です (上で対象接続を選ぶと同時変更を検出できます)。",
@@ -9839,8 +10299,7 @@ const ja: Dict = {
   sandboxApplyDone: "{count} 文を元の接続へ適用しました。",
   sandboxApplyBaseAdvanceFailed:
     "{count} 文を元の接続へ適用しましたが、サンドボックスの基準 (ベース) の更新に失敗した表があります: {tables}。再適用せず、差分を再読み込みして確認してください。({error})",
-  sandboxCreateFkLoadFailed:
-    "外部キーを取得できなかったため、関連テーブルは自動で追加されません: {error}",
+  sandboxCreateFkLoadFailed: "外部キーを取得できなかったため、関連テーブルは自動で追加されません: {error}",
   toastSandboxCreated: "サンドボックス「{name}」を作成しました。",
   toastSandboxDiscarded: "サンドボックス「{name}」を破棄しました。",
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",
@@ -9884,7 +10343,8 @@ const ja: Dict = {
   taskRunProgressBytes: "{count} バイト",
   taskRunProgressItems: "{count} 件完了",
   taskRunStop: "中断",
-  taskRunStopTitle: "この実行を中断します。書きかけの出力ファイルは削除され、履歴には中断として記録されます。",
+  taskRunStopTitle:
+    "この実行を中断します。書きかけの出力ファイルは削除され、履歴には中断として記録されます。",
   taskRunOk: "「{name}」が正常に完了しました。",
   taskRunFailed: "「{name}」が失敗しました: {error}",
   taskRunNotifyTitle: "タスクが失敗しました: {name}",
@@ -9976,7 +10436,8 @@ const ja: Dict = {
     "エディタから単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージをローカル専用ファイルへ退避します。あとからワンクリックで巻き戻せます。",
   helpFlightRecorderStep1: "設定でオンにする (既定オン) — 行数上限・保持期間もそこで調整できます。",
   helpFlightRecorderStep2: "エディタからいつもどおり単文の INSERT/UPDATE/DELETE を実行します。",
-  helpFlightRecorderStep3: "履歴パネルのツールバーから「フライトレコーダ / 巻き戻し」を開き、戻したい操作の「巻き戻す」を押します。",
+  helpFlightRecorderStep3:
+    "履歴パネルのツールバーから「フライトレコーダ / 巻き戻し」を開き、戻したい操作の「巻き戻す」を押します。",
   helpFlightRecorderNote:
     "ベストエフォートの保険であり、本物のバックアップの代わりにはなりません。対象テーブル/主キーが特定できない・設定した行数上限を超える書き込みなどでは記録に静かに失敗することがあります (その場合も書き込み自体は必ず実行され、記録なしになるだけです)。DDL (DROP/TRUNCATE) は対象外で、記録されるのは INSERT/UPDATE/DELETE のみ、かつその文が直接触れた行だけです — トリガーや連鎖的な副作用は記録されません。巻き戻し時には現在のデータが記録時と一致するか検査し、記録後に他クライアントが同じ行を変更していれば競合として報告します (強制上書きも選べますが、変更が起きたこと自体は防げません)。巻き戻し自体は他の書き込みと同じ読み取り専用ガード・確認・履歴記録を経由します。",
   // --- SQL Editor / Result Grid UX (#1113) ---
@@ -10020,34 +10481,43 @@ const ja: Dict = {
   resultJsonEmpty: "表示する行がありません",
   contextMenuConfigureOpenQuery: "開いたときのデフォルトクエリを設定",
   tableOpenQuerySettingsTitle: "テーブルを開いたときのデフォルトクエリ",
-  tableOpenQuerySettingsHelp: "スキーマツリーからテーブルを開いたときに実行するクエリです。空欄なら従来の SELECT * … LIMIT n で開きます。テーブル別の上書きがあればそちらを優先します。",
+  tableOpenQuerySettingsHelp:
+    "スキーマツリーからテーブルを開いたときに実行するクエリです。空欄なら従来の SELECT * … LIMIT n で開きます。テーブル別の上書きがあればそちらを優先します。",
   tableOpenQueryGlobalLabel: "テンプレート (全テーブル共通)",
-  tableOpenQueryGlobalHelp: "使えるプレースホルダ: {placeholders}。{table} はクォート済みの修飾テーブル名、{pk} は主キー列 (主キーが無ければ rowid / ctid) に展開します。LIMIT が無ければ LIMIT {limit} を付け足します。主キーを選択しないテンプレートは読み取り専用で開きます。",
+  tableOpenQueryGlobalHelp:
+    "使えるプレースホルダ: {placeholders}。{table} はクォート済みの修飾テーブル名、{pk} は主キー列 (主キーが無ければ rowid / ctid) に展開します。LIMIT が無ければ LIMIT {limit} を付け足します。主キーを選択しないテンプレートは読み取り専用で開きます。",
   tableOpenQueryOverridesLabel: "テーブル別の上書き",
   tableOpenQueryOverridesEmpty: "テーブル別の上書きはまだありません。",
-  tableOpenQueryOverridesHelp: "スキーマツリーでテーブルを右クリックし「開いたときのデフォルトクエリを設定」から追加できます。",
+  tableOpenQueryOverridesHelp:
+    "スキーマツリーでテーブルを右クリックし「開いたときのデフォルトクエリを設定」から追加できます。",
   tableOpenQueryOverrideRemove: "上書きを削除",
   tableOpenQueryOverrideRemoveAria: "{table} のデフォルトクエリの上書きを削除",
   tableOpenQueryErrorUnknownPlaceholder: "未知のプレースホルダ {name} があります。",
   tableOpenQueryErrorMultiple: "1 つの文だけを指定できます。",
   tableOpenQueryErrorNotSelect: "読み取り専用の SELECT 文だけを指定できます (更新系・DDL・ロック句は不可)。",
   tableOpenQueryErrorTooLong: "テンプレートが長すぎます (最大 {max} 文字)。",
-  tableOpenQueryErrorSyntax: "SELECT 文として成立していません (引用符・括弧の対応と FROM 句を確認してください)。",
+  tableOpenQueryErrorSyntax:
+    "SELECT 文として成立していません (引用符・括弧の対応と FROM 句を確認してください)。",
   tableOpenQueryModalTitle: "{table} のデフォルトクエリ",
   tableOpenQueryModalLabel: "このテーブル用のテンプレート",
-  tableOpenQueryModalHelp: "空欄にすると全体設定のテンプレートを使います。プレースホルダ: {database} / {table} / {table_name} / {limit} / {pk}。",
+  tableOpenQueryModalHelp:
+    "空欄にすると全体設定のテンプレートを使います。プレースホルダ: {database} / {table} / {table_name} / {limit} / {pk}。",
   tableOpenQueryModalPreview: "プレビュー",
   tableOpenQueryModalPreviewLegacy: "従来の SELECT * … LIMIT n で開きます。",
-  tableOpenQueryModalReadOnly: "このクエリは主キー (または rowid / ctid) で行を特定できないため、テーブルは読み取り専用で開きます。",
-  tableOpenQueryModalOffset: "クエリが独自の絞り込みや並び順を持つため、ページ送りは LIMIT/OFFSET 方式になります。",
+  tableOpenQueryModalReadOnly:
+    "このクエリは主キー (または rowid / ctid) で行を特定できないため、テーブルは読み取り専用で開きます。",
+  tableOpenQueryModalOffset:
+    "クエリが独自の絞り込みや並び順を持つため、ページ送りは LIMIT/OFFSET 方式になります。",
   tableOpenQueryModalRemove: "上書きを削除",
   tableOpenQueryModalCancel: "キャンセル",
   tableOpenQueryModalSave: "保存",
   tableOpenQuerySaved: "{table} のデフォルトクエリを保存しました",
   tableOpenQueryRemoved: "{table} のデフォルトクエリの上書きを削除しました",
   tableOpenQueryReadOnlyBadge: "読み取り専用",
-  tableOpenQueryReadOnlyHintGlobal: "設定のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",
-  tableOpenQueryReadOnlyHintOverride: "このテーブル用のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",
+  tableOpenQueryReadOnlyHintGlobal:
+    "設定のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",
+  tableOpenQueryReadOnlyHintOverride:
+    "このテーブル用のデフォルトクエリで開きました。主キー (または rowid / ctid) を選択していないため、誤った行を書き換えないよう編集を無効にしています。",
   quickLauncherTitle: "クイックランチャー",
   quickLauncherButtonAria: "クイックランチャーを開く (お気に入りスニペット・最近のクエリ・テーブル)",
   quickLauncherButtonTooltip: "クイックランチャー — ドラッグで移動、右クリックでオプション",
@@ -10066,20 +10536,25 @@ const ja: Dict = {
   quickLauncherResetPositionHelp: "ランチャーのボタンを右下の初期位置に戻します。",
   quickLauncherOpenSettings: "ランチャーの設定",
   quickLauncherSettingsTitle: "フローティング・ランチャー",
-  quickLauncherSettingsHelp: "SQL ワークスペースの上に常駐し、お気に入りスニペット・最近のクエリ・テーブルをどこからでも呼び出せるボタンです。ドラッグで移動できます。",
+  quickLauncherSettingsHelp:
+    "SQL ワークスペースの上に常駐し、お気に入りスニペット・最近のクエリ・テーブルをどこからでも呼び出せるボタンです。ドラッグで移動できます。",
   quickLauncherSettingsEnabled: "フローティング・ランチャーを表示する",
   quickLauncherSettingsLimits: "各セクションの表示件数",
-  quickLauncherSettingsLimitsHelp: "各セクションに表示する件数 ({min}〜{max})。溢れた分は「もっと見る…」から既存の一覧で確認できます。",
+  quickLauncherSettingsLimitsHelp:
+    "各セクションに表示する件数 ({min}〜{max})。溢れた分は「もっと見る…」から既存の一覧で確認できます。",
   shortcutQuickLauncherTitle: "Cmd/Ctrl+Shift+J",
-  shortcutQuickLauncherDesc: "フローティング・ランチャー (お気に入りスニペット・最近のクエリ・テーブル) を開閉します。",
+  shortcutQuickLauncherDesc:
+    "フローティング・ランチャー (お気に入りスニペット・最近のクエリ・テーブル) を開閉します。",
 
   // AI 基盤 (#690)
   aiSettingsTitle: "AI アシスタント",
-  aiSettingsHelp: "Anthropic API (Claude) を使います。既定はオフで、有効化して API キーを登録するまで何も送信されません。通信は常にアプリのバックエンドを経由します。",
+  aiSettingsHelp:
+    "Anthropic API (Claude) を使います。既定はオフで、有効化して API キーを登録するまで何も送信されません。通信は常にアプリのバックエンドを経由します。",
   aiEnable: "AI 機能を有効にする",
   aiEnableHelp: "AI 機能を使うと、スキーマ情報などが Anthropic の API へ送信されます。",
   aiConsentTitle: "Anthropic の API へデータを送信しますか?",
-  aiConsentBody: "AI 機能を有効にすると、スキーマ情報 (テーブル名・カラム名・型・キー・コメント) と入力したプロンプトが Anthropic の API へ送信されます。行データは、下の設定で許可しない限り送信されません。Fable 5.1 などは提供元で 30 日間のデータ保持が必要です。詳細はヘルプの「AI データ送信ポリシー」を参照してください。",
+  aiConsentBody:
+    "AI 機能を有効にすると、スキーマ情報 (テーブル名・カラム名・型・キー・コメント) と入力したプロンプトが Anthropic の API へ送信されます。行データは、下の設定で許可しない限り送信されません。Fable 5.1 などは提供元で 30 日間のデータ保持が必要です。詳細はヘルプの「AI データ送信ポリシー」を参照してください。",
   aiConsentConfirm: "同意して有効にする",
   aiApiKeyLabel: "Anthropic API キー",
   aiApiKeyPlaceholder: "sk-ant-...",
@@ -10129,7 +10604,8 @@ const ja: Dict = {
   aiAllowRowData: "行データの送信を許可する",
   aiAllowRowDataHelp: "既定はオフです。オフの間、セルの値はプロンプトに含まれません。",
   aiMaskLiterals: "SQL 内の文字列リテラルをマスクして送る",
-  aiMaskLiteralsHelp: "既定はオンです。SQL 中の文字列リテラル・コメント・引用値を空白に置き換えてから AI へ送ります。",
+  aiMaskLiteralsHelp:
+    "既定はオンです。SQL 中の文字列リテラル・コメント・引用値を空白に置き換えてから AI へ送ります。",
   aiSetupHintLabel: "AI で解説 (設定で有効化)",
   aiSetupHintNoKeyLabel: "API キーを登録すると AI で解説できます",
   aiSetupHintExplainInterpret: "実行計画を AI で解釈 (設定で有効化)",
@@ -10141,8 +10617,10 @@ const ja: Dict = {
   aiHideSetupHint: "AI が無効のとき案内リンクを表示する",
   aiHideSetupHintHelp: "AI 機能が使える画面に出る小さな案内リンクです。オフにすると表示しません。",
   aiInlineComplete: "SQL エディタのインライン補完",
-  aiInlineCompleteHelp: "既定はオフです。入力が止まるたびに、カーソル前後の SQL (前 40 行・後 10 行まで) とそこに出てくるテーブルのスキーマを AI へ送り、続きを薄い文字で提案します (Tab で確定、Esc で破棄)。入力が止まるたびに送信するため料金が増えます。データ範囲が「スキーマと SQL 本文」のときだけ動作し、本番接続では動作しません。文字列リテラルは上のマスク設定に従います。中止された要求は今月の使用量に含まれません。",
-  aiInlineCompleteNeedsScope: "インライン補完はオンですが、データ範囲が「スキーマのみ」の間は動作しません。使うには「スキーマと SQL 本文」にしてください。",
+  aiInlineCompleteHelp:
+    "既定はオフです。入力が止まるたびに、カーソル前後の SQL (前 40 行・後 10 行まで) とそこに出てくるテーブルのスキーマを AI へ送り、続きを薄い文字で提案します (Tab で確定、Esc で破棄)。入力が止まるたびに送信するため料金が増えます。データ範囲が「スキーマと SQL 本文」のときだけ動作し、本番接続では動作しません。文字列リテラルは上のマスク設定に従います。中止された要求は今月の使用量に含まれません。",
+  aiInlineCompleteNeedsScope:
+    "インライン補完はオンですが、データ範囲が「スキーマのみ」の間は動作しません。使うには「スキーマと SQL 本文」にしてください。",
   aiErrorExplainButton: "AI に解説してもらう",
   aiErrorExplainRunning: "AI に問い合わせ中...",
   aiErrorExplainCancel: "中止",
@@ -10158,7 +10636,8 @@ const ja: Dict = {
   aiUsageCacheRead: "キャッシュ読み取り {count}",
   aiUsageFallback: "{from} から {to} に切り替わりました。",
   aiLedgerTitle: "使用量の履歴と概算コスト",
-  aiLedgerHelp: "タスク種別 × 応答したモデルごとの日次 (JST) トークン数を、この端末の ai_usage.json に保存します。保存するのは数値だけです (API キーや送信内容は含みません)。中断・エラーになった呼び出しは記録されないため、実際より少なくなることがあります。コストは内蔵の単価表による概算で、実際の請求額とは異なることがあります。",
+  aiLedgerHelp:
+    "タスク種別 × 応答したモデルごとの日次 (JST) トークン数を、この端末の ai_usage.json に保存します。保存するのは数値だけです (API キーや送信内容は含みません)。中断・エラーになった呼び出しは記録されないため、実際より少なくなることがあります。コストは内蔵の単価表による概算で、実際の請求額とは異なることがあります。",
   aiLedgerRange: "期間",
   aiLedgerRangeMonth: "今月 (JST)",
   aiLedgerRange7: "直近 7 日",
@@ -10183,7 +10662,8 @@ const ja: Dict = {
   aiErrorExplainTablesSome: "{count} 件",
   aiErrorExplainTablesNone: "なし",
   aiErrorExplainConfirmTitle: "エラーを AI に送信しますか?",
-  aiErrorExplainConfirmBody: "この接続は本番として設定されています。エラー文・SQL・テーブル定義が Anthropic の API へ送信されます。",
+  aiErrorExplainConfirmBody:
+    "この接続は本番として設定されています。エラー文・SQL・テーブル定義が Anthropic の API へ送信されます。",
   aiErrorExplainConfirmSend: "送信する",
   aiErrorExplainExplanation: "解説",
   aiErrorExplainCause: "原因",
@@ -10192,9 +10672,11 @@ const ja: Dict = {
   aiErrorExplainApply: "エディタに反映",
   aiErrorExplainApplied: "修正 SQL 案をエディタに反映しました。まだ実行していません。",
   aiErrorExplainScopeTitle: "SQL を AI に送信しますか?",
-  aiErrorExplainScopeBody: "エラー解説には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
+  aiErrorExplainScopeBody:
+    "エラー解説には SQL 本文の送信が必要です。送信範囲の設定は「スキーマ情報のみ」です。今回は送信しますか?",
   aiErrorExplainReplaceAllTitle: "エディタ全体を置き換えますか?",
-  aiErrorExplainReplaceAllBody: "失敗した文をエディタ内で一意に特定できませんでした。エディタの内容全体を修正 SQL 案で置き換えますか?",
+  aiErrorExplainReplaceAllBody:
+    "失敗した文をエディタ内で一意に特定できませんでした。エディタの内容全体を修正 SQL 案で置き換えますか?",
   aiErrorExplainReplaceAllConfirm: "全文を置き換える",
   aiErrorExplainTabClosed: "タブが閉じられているため反映できませんでした。",
   aiErrorExplainMaskedNote: "リテラルは伏せて送信したため、値を確認してください。",
@@ -10212,7 +10694,8 @@ const ja: Dict = {
   aiTestRefused: "モデルが接続テストの要求を拒否しました: {message}",
   aiTestFailed: "接続テストに失敗しました: {error}",
   aiSampleRequest: "サンプル要求を送る",
-  aiSampleRequestHelp: "後続の AI 機能と同じ経路で短い応答をストリーミング受信します。実機能が入るまでのつなぎです。",
+  aiSampleRequestHelp:
+    "後続の AI 機能と同じ経路で短い応答をストリーミング受信します。実機能が入るまでのつなぎです。",
   aiSamplePrompt: "一文で短くあいさつしてください。",
   aiSampleCancel: "中止",
   aiSampleRefused: "モデルが応答を拒否しました: {message}",
@@ -10222,16 +10705,22 @@ const ja: Dict = {
   helpSectionAiDesc: "任意の機能で、既定はオフです。Anthropic の API を使います。",
   helpAiPolicyTitle: "AI データ送信ポリシー",
   helpAiPolicyDesc: "AI 機能を有効にしたとき、手元から出る情報の範囲です。",
-  helpAiPolicySend: "送る: 入力したプロンプト、スキーマ情報 (テーブル名・カラム名・型・キー・コメント)、データ範囲が許す場合は SQL 文。",
+  helpAiPolicySend:
+    "送る: 入力したプロンプト、スキーマ情報 (テーブル名・カラム名・型・キー・コメント)、データ範囲が許す場合は SQL 文。",
   helpAiPolicyNotSend: "送らない: 許可しない限り行データ (セルの値)、接続のパスワード、SSH の秘密情報。",
-  helpAiPolicyKey: "Anthropic の API キーは OS の keyring にだけ置き、profiles.json やログには書きません。通信は UI ではなくアプリのバックエンドが行います。",
-  helpAiPolicyRetention: "Fable 5.1 は提供元で 30 日間のデータ保持が必要です。許容できない場合は別のモデルを選んでください。",
-  helpAiPolicyNote: "今後 AI が生成した SQL も、従来の安全網 (読み取り専用ガード・確認ダイアログ) を通ります。",
+  helpAiPolicyKey:
+    "Anthropic の API キーは OS の keyring にだけ置き、profiles.json やログには書きません。通信は UI ではなくアプリのバックエンドが行います。",
+  helpAiPolicyRetention:
+    "Fable 5.1 は提供元で 30 日間のデータ保持が必要です。許容できない場合は別のモデルを選んでください。",
+  helpAiPolicyNote:
+    "今後 AI が生成した SQL も、従来の安全網 (読み取り専用ガード・確認ダイアログ) を通ります。",
   helpAiPricingTitle: "AI モデルの価格の目安",
-  helpAiPricingDesc: "100 万トークンあたりの API 価格の目安 (入力 / 出力) です。実際の請求は Anthropic に従います。",
+  helpAiPricingDesc:
+    "100 万トークンあたりの API 価格の目安 (入力 / 出力) です。実際の請求は Anthropic に従います。",
   helpAiPriceOpus: "Claude Opus 5.5: $4 / $20",
   helpAiPriceSonnet: "Claude Sonnet 5.5: $2 / $10",
-  helpAiPriceHaiku: "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
+  helpAiPriceHaiku:
+    "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
 };
 

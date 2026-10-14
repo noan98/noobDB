@@ -281,9 +281,7 @@ function Result({
       {value.next_queries.length > 0 && (
         <Flex direction="column" gap="2">
           <FieldLabel as="div">{t("aiResultSummaryNext")}</FieldLabel>
-          <chakra.span textStyle="caption">
-            {t("aiResultSummaryNextNote")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("aiResultSummaryNextNote")}</chakra.span>
           {value.next_queries.map((q, i) => (
             <Flex key={`${i}-${q.title}`} direction="column" gap="1" data-testid="ai-result-summary-query">
               <chakra.span fontWeight="semibold">{q.title}</chakra.span>

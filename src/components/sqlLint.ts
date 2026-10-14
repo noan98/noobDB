@@ -73,21 +73,68 @@ const QUOTE_CHARS = new Set(["'", '"', "`"]);
  */
 const STATEMENT_START_EXTRA = new Set([
   // トランザクション / セッション系
-  "abort", "savepoint", "release", "discard", "checkpoint",
+  "abort",
+  "savepoint",
+  "release",
+  "discard",
+  "checkpoint",
   // メンテナンス / ユーティリティ系
-  "vacuum", "analyze", "analyse", "reindex", "cluster", "optimize", "repair",
-  "checksum", "flush", "reset", "purge", "kill", "backup", "restore",
+  "vacuum",
+  "analyze",
+  "analyse",
+  "reindex",
+  "cluster",
+  "optimize",
+  "repair",
+  "checksum",
+  "flush",
+  "reset",
+  "purge",
+  "kill",
+  "backup",
+  "restore",
   // PostgreSQL
-  "copy", "listen", "unlisten", "notify", "merge", "comment", "refresh",
-  "reassign", "security", "declare", "fetch", "move", "close", "import",
+  "copy",
+  "listen",
+  "unlisten",
+  "notify",
+  "merge",
+  "comment",
+  "refresh",
+  "reassign",
+  "security",
+  "declare",
+  "fetch",
+  "move",
+  "close",
+  "import",
   // MySQL
-  "handler", "load", "install", "uninstall", "change", "stop", "start", "xa",
-  "help", "source", "do",
+  "handler",
+  "load",
+  "install",
+  "uninstall",
+  "change",
+  "stop",
+  "start",
+  "xa",
+  "help",
+  "source",
+  "do",
   // SQLite
-  "pragma", "attach", "detach",
+  "pragma",
+  "attach",
+  "detach",
   // プリペアド / その他
-  "prepare", "execute", "deallocate", "call", "values", "table", "replace",
-  "grant", "revoke", "deny",
+  "prepare",
+  "execute",
+  "deallocate",
+  "call",
+  "values",
+  "table",
+  "replace",
+  "grant",
+  "revoke",
+  "deny",
 ]);
 
 /** 文頭タイポ判定の対象にする「素の単語」トークンか (プレースホルダ等を除外)。 */
@@ -252,11 +299,7 @@ export function diagnosticsFromTree(
  * - 報告対象は完全予約語のみ (`CLAUSE_TRIGGER`)。`offset` のような非予約語は
  *   列名と区別できないため順序判定に一切使わない (保守側)。
  */
-function collectClauseOrderIssues(
-  tree: Tree,
-  doc: string,
-  messages: SqlLintMessages,
-): Diagnostic[] {
+function collectClauseOrderIssues(tree: Tree, doc: string, messages: SqlLintMessages): Diagnostic[] {
   const out: Diagnostic[] = [];
   for (let stmt = tree.topNode.firstChild; stmt; stmt = stmt.nextSibling) {
     if (stmt.type.name !== "Statement") continue;
@@ -302,20 +345,13 @@ function collectClauseOrderIssues(
  * - 打ちかけ (先頭単語の後にまだ何も無い) は flag しない。`(SELECT ...)` や
  *   `{{param}}` のような単語以外で始まる文、引用符付き識別子も対象外 (保守側)。
  */
-function collectUnknownStatementStarts(
-  tree: Tree,
-  doc: string,
-  messages: SqlLintMessages,
-): Diagnostic[] {
+function collectUnknownStatementStarts(tree: Tree, doc: string, messages: SqlLintMessages): Diagnostic[] {
   const out: Diagnostic[] = [];
   for (let stmt = tree.topNode.firstChild; stmt; stmt = stmt.nextSibling) {
     if (stmt.type.name !== "Statement") continue;
     // 先頭の (文内に取り込まれた) コメントは読み飛ばす。
     let first = stmt.firstChild;
-    while (
-      first &&
-      (first.type.name === "LineComment" || first.type.name === "BlockComment")
-    ) {
+    while (first && (first.type.name === "LineComment" || first.type.name === "BlockComment")) {
       first = first.nextSibling;
     }
     if (!first || first.type.name !== "Identifier") continue;
@@ -324,10 +360,7 @@ function collectUnknownStatementStarts(
     if (STATEMENT_START_EXTRA.has(word.toLowerCase())) continue;
     // 先頭トークンの後に続きが無ければ「まだ打ちかけ」とみなして報告しない。
     let next = first.nextSibling;
-    while (
-      next &&
-      (next.type.name === "LineComment" || next.type.name === "BlockComment")
-    ) {
+    while (next && (next.type.name === "LineComment" || next.type.name === "BlockComment")) {
       next = next.nextSibling;
     }
     if (!next) continue;
@@ -367,12 +400,60 @@ const DML_START = new Set(["select", "with", "insert", "update", "delete", "repl
  * ならない。これ以外の `Keyword` トークン (PostgreSQL の `id` など) は名前とみなす。
  */
 const RESERVED = new Set([
-  "select", "from", "where", "group", "order", "by", "having", "limit", "offset",
-  "join", "inner", "left", "right", "full", "outer", "cross", "natural", "on", "using",
-  "and", "or", "not", "as", "union", "intersect", "except", "all", "distinct",
-  "insert", "into", "values", "update", "set", "delete", "with", "case", "when",
-  "then", "else", "end", "in", "is", "like", "between", "exists", "null", "true",
-  "false", "asc", "desc", "returning", "for", "window", "fetch",
+  "select",
+  "from",
+  "where",
+  "group",
+  "order",
+  "by",
+  "having",
+  "limit",
+  "offset",
+  "join",
+  "inner",
+  "left",
+  "right",
+  "full",
+  "outer",
+  "cross",
+  "natural",
+  "on",
+  "using",
+  "and",
+  "or",
+  "not",
+  "as",
+  "union",
+  "intersect",
+  "except",
+  "all",
+  "distinct",
+  "insert",
+  "into",
+  "values",
+  "update",
+  "set",
+  "delete",
+  "with",
+  "case",
+  "when",
+  "then",
+  "else",
+  "end",
+  "in",
+  "is",
+  "like",
+  "between",
+  "exists",
+  "null",
+  "true",
+  "false",
+  "asc",
+  "desc",
+  "returning",
+  "for",
+  "window",
+  "fetch",
 ]);
 
 /** 直後に式・名前が必要な語 (小文字)。直後に `CLAUSE_FOLLOWER` が来たら空の句。 */
@@ -393,7 +474,18 @@ const NO_COMMA_AFTER = new Set(["select", "by", "set"]);
  * `DEFAULT VALUES` があるため `select` / `values` は含めない。
  */
 const DANGLING_END = new Set([
-  "from", "where", "and", "or", "set", "by", "having", "join", "on", "limit", "group", "order",
+  "from",
+  "where",
+  "and",
+  "or",
+  "set",
+  "by",
+  "having",
+  "join",
+  "on",
+  "limit",
+  "group",
+  "order",
 ]);
 
 /** タイポ判定の候補にする句キーワード (小文字)。 */
@@ -410,7 +502,11 @@ const UNION_NEXT = new Set(["select", "all"]);
 
 /** 名前・値として扱うトークン種別。 */
 const NAME_LIKE_TYPES = new Set([
-  "Identifier", "QuotedIdentifier", "CompositeIdentifier", "Number", "String",
+  "Identifier",
+  "QuotedIdentifier",
+  "CompositeIdentifier",
+  "Number",
+  "String",
 ]);
 
 /** キーワード系のトークン種別 (方言表により語が振り分けられる)。 */
@@ -501,11 +597,7 @@ function collectTokenPatternIssues(
   cursor: number | undefined,
 ): Diagnostic[] {
   const out: Diagnostic[] = [];
-  const push = (
-    tok: Tok,
-    message: string,
-    severity: Diagnostic["severity"] = "error",
-  ) => {
+  const push = (tok: Tok, message: string, severity: Diagnostic["severity"] = "error") => {
     out.push({ from: tok.from, to: tok.to, severity, message, source: "sql-syntax" });
   };
 
@@ -554,10 +646,7 @@ function collectTokenPatternIssues(
       }
 
       // 空の句: `FROM WHERE` / `SET WHERE` / `id = AND` / `JOIN ON`。
-      if (
-        (isReserved(tok, NEEDS_OPERAND) || isBinaryOperator(tok)) &&
-        isReserved(next, CLAUSE_FOLLOWER)
-      ) {
+      if ((isReserved(tok, NEEDS_OPERAND) || isBinaryOperator(tok)) && isReserved(next, CLAUSE_FOLLOWER)) {
         push(tok, messages.missingOperand);
         continue;
       }
@@ -598,9 +687,7 @@ function collectTokenPatternIssues(
  * 1 件へ)。入力は from 昇順とは限らないのでソートしてから畳む。gap が 1 以下の
  * (間に空白 1 文字程度しかない) 範囲も同一の崩れとみなして結合する。
  */
-function mergeErrorRanges(
-  ranges: Array<{ from: number; to: number }>,
-): Array<{ from: number; to: number }> {
+function mergeErrorRanges(ranges: Array<{ from: number; to: number }>): Array<{ from: number; to: number }> {
   if (ranges.length === 0) return [];
   const sorted = [...ranges].sort((a, b) => a.from - b.from || a.to - b.to);
   const out: Array<{ from: number; to: number }> = [];

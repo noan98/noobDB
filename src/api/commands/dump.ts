@@ -3,7 +3,6 @@ import { invoke } from "../invoke";
 import type { DumpOptions } from "../tauri";
 
 export const dumpCommands = {
-
   /**
    * Start a streaming, cancelable database dump (#686). Returns once the dump
    * has been kicked off; progress + completion arrive via `dump-stream:*` events

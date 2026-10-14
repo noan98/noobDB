@@ -79,9 +79,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
 
   const [tables, setTables] = useState<Record<string, TableState>>({});
 
-  const [combined, setCombined] = useState<{ statements: SyncStatement[]; warnings: string[] } | null>(
-    null,
-  );
+  const [combined, setCombined] = useState<{ statements: SyncStatement[]; warnings: string[] } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [applying, setApplying] = useState(false);
   const [applyResult, setApplyResult] = useState<string | null>(null);
@@ -146,7 +144,12 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         if (gen !== loadGenRef.current) return;
         setTables((prev) => ({
           ...prev,
-          [table]: { diff: null, loading: false, error: String(e), resolutions: prev[table]?.resolutions ?? {} },
+          [table]: {
+            diff: null,
+            loading: false,
+            error: String(e),
+            resolutions: prev[table]?.resolutions ?? {},
+          },
         }));
       }
     },
@@ -221,7 +224,8 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
   }, [tables]);
 
   const loading =
-    schemaLoading || Object.values(tables).some((st) => st.loading) ||
+    schemaLoading ||
+    Object.values(tables).some((st) => st.loading) ||
     Object.keys(tables).length < sandbox.tables.length;
 
   const generate = useCallback(async () => {
@@ -356,12 +360,28 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     } finally {
       setApplying(false);
     }
-  }, [combined, targetSessionId, targetProfile, sandbox, tables, allowDelete, sandboxSessionId, confirm, confirmTyped, t, loadAll]);
+  }, [
+    combined,
+    targetSessionId,
+    targetProfile,
+    sandbox,
+    tables,
+    allowDelete,
+    sandboxSessionId,
+    confirm,
+    confirmTyped,
+    t,
+    loadAll,
+  ]);
 
   return (
     <Modal
       // no-submit: 本番への変更適用。差分の確認を飛ばしてキーで適用させない
-      width="720px" onClose={onClose} closeOnInteractOutside={!applying} closeOnEscape={!applying}>
+      width="720px"
+      onClose={onClose}
+      closeOnInteractOutside={!applying}
+      closeOnEscape={!applying}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("sandboxReviewClose")} closeDisabled={applying}>
         {t("sandboxReviewTitle", { name: sandbox.name })}
       </ModalHeader>
@@ -400,7 +420,11 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
           )}
         </chakra.div>
 
-        {loading && <chakra.div fontSize="sm" color="app.textSecondary">{t("sandboxReviewLoading")}</chakra.div>}
+        {loading && (
+          <chakra.div fontSize="sm" color="app.textSecondary">
+            {t("sandboxReviewLoading")}
+          </chakra.div>
+        )}
         {schemaError && <ErrorNote>{schemaError}</ErrorNote>}
 
         {schema && schema.desired.tables.some((tb) => tb.status !== "same") && (
@@ -410,7 +434,16 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                 (semanticColors 経由、#664) を `SchemaCompareView` と共有し、状態色を
                 二重管理しない (#1008)。左端の 3px スパインも同ビューのテーブル/
                 カラム差分行と同じ手法。 */}
-            <chakra.ul mt="1" mx="0" mb="0" paddingLeft="0" listStyleType="none" display="flex" flexDirection="column" gap="1">
+            <chakra.ul
+              mt="1"
+              mx="0"
+              mb="0"
+              paddingLeft="0"
+              listStyleType="none"
+              display="flex"
+              flexDirection="column"
+              gap="1"
+            >
               {schema.desired.tables
                 .filter((tb) => tb.status !== "same")
                 .map((tb) => {
@@ -434,7 +467,14 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                   );
                 })}
             </chakra.ul>
-            <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" mt="1.5" cursor="pointer">
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="1.5"
+              fontSize="sm"
+              mt="1.5"
+              cursor="pointer"
+            >
               <Checkbox
                 checked={allowDestructive}
                 onChange={(e) => {
@@ -458,24 +498,33 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         {sandbox.tables.map((table) => {
           const st = tables[table];
           if (!st || st.loading) return null;
-          if (st.error) return <ErrorNote key={table}>{table}: {st.error}</ErrorNote>;
+          if (st.error)
+            return (
+              <ErrorNote key={table}>
+                {table}: {st.error}
+              </ErrorNote>
+            );
           if (!st.diff) return null;
           const counts = { source_only: 0, target_only: 0, different: 0 };
           for (const r of st.diff.desired.rows) counts[r.status] += 1;
           const hasChanges = st.diff.desired.rows.length > 0;
           if (!hasChanges && st.diff.conflicts.length === 0) return null;
           return (
-            <chakra.div
-              key={table}
-              border="1px solid"
-              borderColor="app.border"
-              borderRadius="md"
-              p="2.5"
-            >
-              <chakra.div display="flex" alignItems="center" gap="2" fontFamily="mono" fontSize="sm" fontWeight={600}>
+            <chakra.div key={table} border="1px solid" borderColor="app.border" borderRadius="md" p="2.5">
+              <chakra.div
+                display="flex"
+                alignItems="center"
+                gap="2"
+                fontFamily="mono"
+                fontSize="sm"
+                fontWeight={600}
+              >
                 {table}
                 <div style={{ flex: 1 }} />
-                <Tooltip label={t("sandboxResetTableHint")} focusableWrapper={applying || resettingTable !== null}>
+                <Tooltip
+                  label={t("sandboxResetTableHint")}
+                  focusableWrapper={applying || resettingTable !== null}
+                >
                   <Button
                     type="button"
                     size="sm"
@@ -489,8 +538,8 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               </chakra.div>
               {hasChanges && (
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
-                  {t("schemaCompareDataInserts")}: {counts.source_only} / {t("schemaCompareDataUpdates")}: {counts.different} /{" "}
-                  {t("schemaCompareDataDeletes")}: {counts.target_only}
+                  {t("schemaCompareDataInserts")}: {counts.source_only} / {t("schemaCompareDataUpdates")}:{" "}
+                  {counts.different} / {t("schemaCompareDataDeletes")}: {counts.target_only}
                   {st.diff.desired.truncated && ` (${t("sandboxReviewTruncated")})`}
                 </chakra.div>
               )}
@@ -524,7 +573,9 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                         <chakra.code>{c.key.map((v) => String(v)).join(", ")}</chakra.code>
                         <chakra.span color="app.textMuted">
                           {t("sandboxReviewExternalValue")}:{" "}
-                          {c.external_row ? c.external_row.map((v) => String(v)).join(", ") : t("sandboxReviewExternalDeleted")}
+                          {c.external_row
+                            ? c.external_row.map((v) => String(v)).join(", ")
+                            : t("sandboxReviewExternalDeleted")}
                         </chakra.span>
                         <chakra.label display="inline-flex" alignItems="center" gap="1" cursor="pointer">
                           <Radio
@@ -552,7 +603,9 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
         })}
 
         {!loading &&
-          Object.values(tables).every((st) => !st.diff || (st.diff.desired.rows.length === 0 && st.diff.conflicts.length === 0)) &&
+          Object.values(tables).every(
+            (st) => !st.diff || (st.diff.desired.rows.length === 0 && st.diff.conflicts.length === 0),
+          ) &&
           schema &&
           !schema.desired.tables.some((tb) => tb.status !== "same") && (
             <chakra.div fontSize="sm" color="app.textMuted">
@@ -591,9 +644,18 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               {t("sandboxReviewGeneratedTitle", { count: combined.statements.length })}
             </chakra.strong>
             {combined.statements.length === 0 ? (
-              <chakra.span fontSize="sm" color="app.textMuted">{t("schemaCompareNoStatements")}</chakra.span>
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("schemaCompareNoStatements")}
+              </chakra.span>
             ) : (
-              <chakra.div maxH="220px" overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md" p="2">
+              <chakra.div
+                maxH="220px"
+                overflowY="auto"
+                border="1px solid"
+                borderColor="app.border"
+                borderRadius="md"
+                p="2"
+              >
                 {combined.statements.map((s, i) => (
                   <chakra.code
                     key={i}

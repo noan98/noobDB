@@ -196,8 +196,7 @@ export function AiSettings() {
         settings: toAiSnapshot(ai),
       },
       {
-        onDone: ({ event: e }) =>
-          setSample({ kind: "done", fallback: e.fallbackUsed }),
+        onDone: ({ event: e }) => setSample({ kind: "done", fallback: e.fallbackUsed }),
         onError: (f) => setSample({ kind: "error", message: f.message, refused: f.refused }),
         onCancelled: () => setSample({ kind: "cancelled" }),
       },
@@ -211,9 +210,7 @@ export function AiSettings() {
   return (
     <Flex direction="column" gap="2">
       <SettingsToggleRow>
-        <SettingsToggleLabel htmlFor="settings-ai-enabled">
-          {t("aiEnable")}
-        </SettingsToggleLabel>
+        <SettingsToggleLabel htmlFor="settings-ai-enabled">{t("aiEnable")}</SettingsToggleLabel>
         <Switch
           id="settings-ai-enabled"
           checked={ai.enabled}
@@ -228,9 +225,7 @@ export function AiSettings() {
 
       <SettingsToggleRow>
         <SettingsLabelWithInfo>
-          <SettingsToggleLabel htmlFor="settings-ai-setup-hint">
-            {t("aiHideSetupHint")}
-          </SettingsToggleLabel>
+          <SettingsToggleLabel htmlFor="settings-ai-setup-hint">{t("aiHideSetupHint")}</SettingsToggleLabel>
           <SettingsInfo>{t("aiHideSetupHintHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
         <Switch
@@ -246,11 +241,7 @@ export function AiSettings() {
           <SettingsInfo>{t("aiApiKeyHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
         <Flex align="center" justify="flex-end" gap="2" wrap="wrap">
-          <chakra.span
-            fontSize="sm"
-            fontWeight={500}
-            color={hasKey ? "app.textSuccess" : "app.textMuted"}
-          >
+          <chakra.span fontSize="sm" fontWeight={500} color={hasKey ? "app.textSuccess" : "app.textMuted"}>
             {hasKey ? t("aiApiKeyConfigured") : t("aiApiKeyNotConfigured")}
           </chakra.span>
           <Input
@@ -293,9 +284,7 @@ export function AiSettings() {
 
       <SettingsToggleRow>
         <SettingsLabelWithInfo>
-          <SettingsToggleLabel htmlFor="settings-ai-default-model">
-            {t("aiDefaultModel")}
-          </SettingsToggleLabel>
+          <SettingsToggleLabel htmlFor="settings-ai-default-model">{t("aiDefaultModel")}</SettingsToggleLabel>
           <SettingsInfo>{t("aiDefaultModelHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
         <Select
@@ -343,9 +332,7 @@ export function AiSettings() {
                 <Select
                   aria-label={`${t(TASK_LABEL[kind])} - ${t("aiColModel")}`}
                   value={ai.taskModels[kind] ?? ""}
-                  onChange={(e) =>
-                    setAiTaskModel(kind, isAiModelId(e.target.value) ? e.target.value : null)
-                  }
+                  onChange={(e) => setAiTaskModel(kind, isAiModelId(e.target.value) ? e.target.value : null)}
                 >
                   <option value="">{t("aiModelFollowDefault")}</option>
                   {modelOptions(kind, suffix).map((o) => (
@@ -379,9 +366,7 @@ export function AiSettings() {
       <FormSection>
         <SettingsToggleRow>
           <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-ai-send-scope">
-              {t("aiSendScope")}
-            </SettingsToggleLabel>
+            <SettingsToggleLabel htmlFor="settings-ai-send-scope">{t("aiSendScope")}</SettingsToggleLabel>
             <SettingsInfo>{t("aiSendScopeHelp")}</SettingsInfo>
           </SettingsLabelWithInfo>
           <Select
@@ -407,11 +392,7 @@ export function AiSettings() {
             </SettingsToggleLabel>
             <SettingsInfo>{t("aiAllowRowDataHelp")}</SettingsInfo>
           </SettingsLabelWithInfo>
-          <Switch
-            id="settings-ai-allow-row-data"
-            checked={ai.allowRowData}
-            onChange={setAiAllowRowData}
-          />
+          <Switch id="settings-ai-allow-row-data" checked={ai.allowRowData} onChange={setAiAllowRowData} />
         </SettingsToggleRow>
         <SettingsToggleRow>
           <SettingsLabelWithInfo>
@@ -420,11 +401,7 @@ export function AiSettings() {
             </SettingsToggleLabel>
             <SettingsInfo>{t("aiMaskLiteralsHelp")}</SettingsInfo>
           </SettingsLabelWithInfo>
-          <Switch
-            id="settings-ai-mask-literals"
-            checked={ai.maskLiterals}
-            onChange={setAiMaskLiterals}
-          />
+          <Switch id="settings-ai-mask-literals" checked={ai.maskLiterals} onChange={setAiMaskLiterals} />
         </SettingsToggleRow>
         <SettingsToggleRow>
           <SettingsLabelWithInfo>
@@ -520,9 +497,7 @@ export function AiSettings() {
       )}
       <AiUsageHistory
         taskLabel={(task) =>
-          (AI_TASK_KINDS as readonly string[]).includes(task)
-            ? t(TASK_LABEL[task as AiTaskKind])
-            : task
+          (AI_TASK_KINDS as readonly string[]).includes(task) ? t(TASK_LABEL[task as AiTaskKind]) : task
         }
         reloadKey={`${sample.kind}:${testResult ? 1 : 0}`}
       />

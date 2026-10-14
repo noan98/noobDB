@@ -96,9 +96,7 @@ describe("inferColumnType", () => {
     expect(inferColumnType(["1", "3000000000"], "postgres")).toBe("bigint");
     expect(inferColumnType(["1", "1.5"], "postgres")).toBe("decimal");
     expect(inferColumnType(["1.5", "1e3"], "postgres")).toBe("double");
-    expect(inferColumnType(["9223372036854775807", "9223372036854775808"], "postgres")).toBe(
-      "decimal",
-    );
+    expect(inferColumnType(["9223372036854775807", "9223372036854775808"], "postgres")).toBe("decimal");
   });
 
   it("日付と日時が混ざれば日時、型が合わなければ文字列", () => {
@@ -122,8 +120,18 @@ describe("inferColumnType", () => {
 
   it("空文字は NULL トークン次第: NULL 化しなければ数値列が文字列になる", () => {
     const raw = ["1", "", "2"];
-    expect(inferColumnType(raw.map((v) => applyNullToken(v, "")), "postgres")).toBe("integer");
-    expect(inferColumnType(raw.map((v) => applyNullToken(v, null)), "postgres")).toBe("text");
+    expect(
+      inferColumnType(
+        raw.map((v) => applyNullToken(v, "")),
+        "postgres",
+      ),
+    ).toBe("integer");
+    expect(
+      inferColumnType(
+        raw.map((v) => applyNullToken(v, null)),
+        "postgres",
+      ),
+    ).toBe("text");
     expect(applyNullToken("NULL", "NULL")).toBeNull();
     expect(applyNullToken("null", "NULL")).toBe("null");
   });
@@ -146,11 +154,7 @@ describe("proposeColumnNames", () => {
   });
 
   it("予約語や記号入りの名前はそのまま (クォートはバックエンドが行う)", () => {
-    expect(proposeColumnNames(["select", "order date", 'a"b'])).toEqual([
-      "select",
-      "order date",
-      'a"b',
-    ]);
+    expect(proposeColumnNames(["select", "order date", 'a"b'])).toEqual(["select", "order date", 'a"b']);
   });
 });
 
@@ -306,16 +310,39 @@ describe("mergeColumnDrafts", () => {
 
 describe("xlsx のエラー値 (#1532)", () => {
   it("エラートークンを判定し、プレビュー内の件数を数える", () => {
-    for (const t of ["#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!", "#SPILL!", "#CALC!", "#GETTING_DATA"]) {
+    for (const t of [
+      "#DIV/0!",
+      "#N/A",
+      "#NAME?",
+      "#NULL!",
+      "#NUM!",
+      "#REF!",
+      "#VALUE!",
+      "#SPILL!",
+      "#CALC!",
+      "#GETTING_DATA",
+    ]) {
       expect(isExcelErrorToken(t)).toBe(true);
     }
     expect(isExcelErrorToken("#hashtag")).toBe(false);
     expect(isExcelErrorToken("42")).toBe(false);
-    expect(countExcelErrors([["1", "#N/A"], ["#REF!", "x"]])).toBe(2);
+    expect(
+      countExcelErrors([
+        ["1", "#N/A"],
+        ["#REF!", "x"],
+      ]),
+    ).toBe(2);
   });
 
   it("エラーセルを含む数値列は数値のまま推論し、ヘッダのエラーは column_N にする", () => {
-    const preview = { headers: ["#N/A", "price"], rows: [["1", "#DIV/0!"], ["2", "3"], ["#N/A", "4"]] };
+    const preview = {
+      headers: ["#N/A", "price"],
+      rows: [
+        ["1", "#DIV/0!"],
+        ["2", "3"],
+        ["#N/A", "4"],
+      ],
+    };
     const drafts = buildColumnDrafts(preview, "", "postgres", true, true);
     expect(drafts[0].name).toBe("column_1");
     expect(drafts[0].type).toBe("integer");

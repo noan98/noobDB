@@ -40,11 +40,7 @@ describe("buildErGraph", () => {
       foreignKeys: [],
     });
     expect(graph.nodes.map((n) => n.id)).toEqual(["authors", "books"]);
-    expect(graph.nodes[1].data.columns.map((c) => c.name)).toEqual([
-      "id",
-      "author_id",
-      "title",
-    ]);
+    expect(graph.nodes[1].data.columns.map((c) => c.name)).toEqual(["id", "author_id", "title"]);
     expect(graph.totalTables).toBe(2);
     expect(graph.edges).toEqual([]);
   });
@@ -141,9 +137,7 @@ describe("buildErGraph", () => {
       columns: ["id"],
     }));
     // Give t0 a high degree so it is guaranteed to survive the cap.
-    const foreignKeys: ForeignKey[] = Array.from({ length: 5 }, (_, i) =>
-      fk(`t${i + 1}`, "id", "t0", "id"),
-    );
+    const foreignKeys: ForeignKey[] = Array.from({ length: 5 }, (_, i) => fk(`t${i + 1}`, "id", "t0", "id"));
     const graph = buildErGraph({ tables, foreignKeys });
     expect(graph.nodes).toHaveLength(MAX_TABLES);
     expect(graph.totalTables).toBe(MAX_TABLES + 10);
@@ -156,9 +150,7 @@ describe("buildErGraph", () => {
       columns: ["id"],
     }));
     // An isolated FK between two low-degree tables likely to be culled.
-    const foreignKeys: ForeignKey[] = [
-      fk(`t${MAX_TABLES + 1}`, "id", `t${MAX_TABLES}`, "id"),
-    ];
+    const foreignKeys: ForeignKey[] = [fk(`t${MAX_TABLES + 1}`, "id", `t${MAX_TABLES}`, "id")];
     const graph = buildErGraph({ tables, foreignKeys });
     const ids = new Set(graph.nodes.map((n) => n.id));
     for (const e of graph.edges) {

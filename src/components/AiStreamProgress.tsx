@@ -24,7 +24,12 @@ export interface AiStreamProgressProps {
  * 届いている文章 (構造化出力は `fields` の文字列フィールドだけ) を少しずつ見せる。
  * 中止ボタンなどは呼び出し側が横に並べる。
  */
-export function AiStreamProgress({ stream, fields, previewText = true, waitingLabel }: AiStreamProgressProps) {
+export function AiStreamProgress({
+  stream,
+  fields,
+  previewText = true,
+  waitingLabel,
+}: AiStreamProgressProps) {
   const t = useT();
   const { text, elapsedSec, retrying } = stream;
   const preview = !previewText ? "" : fields ? partialJsonPreview(text, fields) : text;

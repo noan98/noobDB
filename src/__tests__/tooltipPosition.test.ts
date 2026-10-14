@@ -7,7 +7,9 @@ import { computeTooltipPosition, type TooltipRect } from "../components/tooltipP
 // 一本化したもので、ここでの境界固定がそのままどちらの利用側にも効く。
 const viewport = { width: 1000, height: 800 };
 
-function rect(partial: Partial<TooltipRect> & { top: number; left: number; width: number; height: number }): TooltipRect {
+function rect(
+  partial: Partial<TooltipRect> & { top: number; left: number; width: number; height: number },
+): TooltipRect {
   const { top, left, width, height } = partial;
   return { top, left, width, height, right: left + width, bottom: top + height };
 }
@@ -88,7 +90,10 @@ describe("computeTooltipPosition", () => {
     const below = rect({ top: 60, left: 860, width: 100, height: 30 });
     const size = { width: 60, height: 28 };
     const overlaps = (p: { left: number; top: number }) =>
-      p.left < below.right && p.left + size.width > below.left && p.top < below.bottom && p.top + size.height > below.top;
+      p.left < below.right &&
+      p.left + size.width > below.left &&
+      p.top < below.bottom &&
+      p.top + size.height > below.top;
 
     // top だと上に収まらず下へフリップし、直下のボタンと重なる (既知の挙動)。
     expect(overlaps(computeTooltipPosition(close, size, "top", 8, viewport))).toBe(true);

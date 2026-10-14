@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isMissingSavepointError, afterRelease, afterRollbackTo, isValidSavepointName, pushSavepoint, savepointName } from "../savepoints";
+import {
+  isMissingSavepointError,
+  afterRelease,
+  afterRollbackTo,
+  isValidSavepointName,
+  pushSavepoint,
+  savepointName,
+} from "../savepoints";
 
 describe("savepoints", () => {
   it("generates valid names", () => {
@@ -33,7 +40,9 @@ describe("savepoints", () => {
 
   it("detects missing-savepoint errors", () => {
     expect(isMissingSavepointError("ERROR 1305 (42000): SAVEPOINT sp_1 does not exist")).toBe(true);
-    expect(isMissingSavepointError('error returned from database: savepoint "sp_1" does not exist')).toBe(true);
+    expect(isMissingSavepointError('error returned from database: savepoint "sp_1" does not exist')).toBe(
+      true,
+    );
     expect(isMissingSavepointError("no such savepoint: sp_1")).toBe(true);
     expect(isMissingSavepointError("syntax error")).toBe(false);
   });

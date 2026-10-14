@@ -71,7 +71,14 @@ describe("プロンプト", () => {
     {
       name: "users",
       columns: [
-        { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+        {
+          name: "id",
+          data_type: "int",
+          nullable: false,
+          key: "PRI",
+          referenced_table: null,
+          referenced_column: null,
+        },
       ],
     },
   ];
@@ -157,17 +164,33 @@ describe("diffLines", () => {
 describe("適用範囲", () => {
   it("起動時の範囲に元の SQL が残っていれば exact", () => {
     const doc = "SELECT 1;\nSELECT 2;";
-    expect(locateApplyTarget(doc, "SELECT 2", { from: 10, to: 18 })).toEqual({ from: 10, to: 18, exact: true });
+    expect(locateApplyTarget(doc, "SELECT 2", { from: 10, to: 18 })).toEqual({
+      from: 10,
+      to: 18,
+      exact: true,
+    });
     expect(locateApplyTarget("SELECT 1", "SELECT 1", null)).toEqual({ from: 0, to: 8, exact: true });
   });
 
   it("範囲がずれたら一意に見つかる位置、無ければ全文 (どちらも要確認)", () => {
     const moved = "-- c\nSELECT 2;";
-    expect(locateApplyTarget(moved, "SELECT 2", { from: 10, to: 18 })).toEqual({ from: 5, to: 13, exact: false });
-    expect(locateApplyTarget("edited", "SELECT 2", { from: 0, to: 8 })).toEqual({ from: 0, to: 6, exact: false });
+    expect(locateApplyTarget(moved, "SELECT 2", { from: 10, to: 18 })).toEqual({
+      from: 5,
+      to: 13,
+      exact: false,
+    });
+    expect(locateApplyTarget("edited", "SELECT 2", { from: 0, to: 8 })).toEqual({
+      from: 0,
+      to: 6,
+      exact: false,
+    });
     // 重複していれば特定できず全文
     const dup = "SELECT 2; SELECT 2;";
-    expect(locateApplyTarget(dup, "SELECT 2", { from: 100, to: 108 })).toEqual({ from: 0, to: dup.length, exact: false });
+    expect(locateApplyTarget(dup, "SELECT 2", { from: 100, to: 108 })).toEqual({
+      from: 0,
+      to: dup.length,
+      exact: false,
+    });
   });
 
   it("末尾の ; は元の範囲に含まれていたときだけ残す", () => {
@@ -228,7 +251,7 @@ describe("restoreMaskedLiterals", () => {
   it.each([
     ["created_at >= 'A' AND updated_at >= 'B'", "updated_at >= '' AND created_at >= ''"],
     ["`a` = 'A' AND `b` = 'B'", "`b` = '' AND `a` = ''"],
-    ['"a" = \'A\' AND "b" = \'B\'', '"b" = \'\' AND "a" = \'\''],
+    ["\"a\" = 'A' AND \"b\" = 'B'", "\"b\" = '' AND \"a\" = ''"],
     ["u.status = 'A' AND o.status = 'B'", "o.status = '' AND u.status = ''"],
     ["lower(a) = 'A' AND lower(b) = 'B'", "lower(b) = '' AND lower(a) = ''"],
     ["x IN ('A') AND y IN ('B')", "y IN ('') AND x IN ('')"],
@@ -246,7 +269,7 @@ describe("restoreMaskedLiterals", () => {
   });
 
   it("コメント・二重引用符内の引用符はリテラルに数えない", () => {
-    expect(restoreMaskedLiterals('SELECT "it\'s", \'a\' /* \'z\' */', "SELECT \" \", ' '")).toEqual({
+    expect(restoreMaskedLiterals("SELECT \"it's\", 'a' /* 'z' */", "SELECT \" \", ' '")).toEqual({
       sql: "SELECT \" \", 'a'",
       status: "restored",
     });

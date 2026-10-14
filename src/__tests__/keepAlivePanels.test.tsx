@@ -37,13 +37,7 @@ const TABS: BottomPanelTab[] = ["inspector", "processes"];
 
 function Shell({ tab }: { tab: BottomPanelTab }) {
   return (
-    <BottomPanel
-      tab={tab}
-      tabs={TABS}
-      label={(k) => k}
-      onSelect={() => {}}
-      onClose={() => {}}
-    >
+    <BottomPanel tab={tab} tabs={TABS} label={(k) => k} onSelect={() => {}} onClose={() => {}}>
       {tab === "inspector" ? (
         <QueryInspectorPanel sessionId="s1" driver="mysql" />
       ) : (
@@ -104,8 +98,6 @@ describe("ボトムパネルの keep-alive (#1311)", () => {
     expect(vi.mocked(api.listProcesses).mock.calls.length).toBe(hidden);
 
     view.rerender(<Shell tab="processes" />);
-    await waitFor(() =>
-      expect(vi.mocked(api.listProcesses).mock.calls.length).toBeGreaterThan(hidden),
-    );
+    await waitFor(() => expect(vi.mocked(api.listProcesses).mock.calls.length).toBeGreaterThan(hidden));
   });
 });

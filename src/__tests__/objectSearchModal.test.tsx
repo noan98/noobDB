@@ -35,12 +35,7 @@ beforeEach(() => {
 describe("ObjectSearchModal empty state (#847)", () => {
   it("shows the hint EmptyState title before the user types anything", async () => {
     renderWithProviders(
-      <ObjectSearchModal
-        sessionId="s1"
-        currentDatabase="testdb"
-        onOpenTable={() => {}}
-        onClose={() => {}}
-      />,
+      <ObjectSearchModal sessionId="s1" currentDatabase="testdb" onOpenTable={() => {}} onClose={() => {}} />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("objSearchHint"))).toBeInTheDocument();
@@ -49,12 +44,7 @@ describe("ObjectSearchModal empty state (#847)", () => {
 
   it("shows the no-results EmptyState title once a query matches nothing", async () => {
     renderWithProviders(
-      <ObjectSearchModal
-        sessionId="s1"
-        currentDatabase="testdb"
-        onOpenTable={() => {}}
-        onClose={() => {}}
-      />,
+      <ObjectSearchModal sessionId="s1" currentDatabase="testdb" onOpenTable={() => {}} onClose={() => {}} />,
     );
     await waitFor(() => {
       expect(screen.getByText(t("objSearchHint"))).toBeInTheDocument();
@@ -73,12 +63,7 @@ describe("ObjectSearchModal empty state (#847)", () => {
 describe("ObjectSearchModal skeleton + stagger (#1212)", () => {
   const renderModal = () =>
     renderWithProviders(
-      <ObjectSearchModal
-        sessionId="s1"
-        currentDatabase="testdb"
-        onOpenTable={() => {}}
-        onClose={() => {}}
-      />,
+      <ObjectSearchModal sessionId="s1" currentDatabase="testdb" onOpenTable={() => {}} onClose={() => {}} />,
     );
 
   it("shows result-shaped skeleton rows while scanning, then swaps them for results", async () => {

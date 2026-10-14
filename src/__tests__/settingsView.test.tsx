@@ -42,9 +42,7 @@ beforeEach(() => {
 describe("SettingsView render smoke (#604)", () => {
   it("mounts as a dialog and shows the settings title", async () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
-    await waitFor(() =>
-      expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument());
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
@@ -52,9 +50,9 @@ describe("SettingsView render smoke (#604)", () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} initialSection="settings-sec-ai" />);
     const nav = await screen.findByRole("navigation", { name: t("settingsTitle") });
     await waitFor(() =>
-      expect(within(nav).getByText(t("aiSettingsTitle")).closest("button")?.getAttribute("aria-current")).toBe(
-        "true",
-      ),
+      expect(
+        within(nav).getByText(t("aiSettingsTitle")).closest("button")?.getAttribute("aria-current"),
+      ).toBe("true"),
     );
   });
 
@@ -79,24 +77,18 @@ describe("SettingsView render smoke (#604)", () => {
   // ことを固定する。
   it("renders the density and motion-preference settings as sliding-pill radiogroups", async () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
-    await waitFor(() =>
-      expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument());
 
     const density = screen.getByRole("radiogroup", { name: t("settingsDensity") });
     expect(density).toBeInTheDocument();
-    expect(
-      screen.getByRole("radio", { name: t("settingsDensityNormal") }).getAttribute(
-        "aria-checked",
-      ),
-    ).toBe("true");
+    expect(screen.getByRole("radio", { name: t("settingsDensityNormal") }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
 
     const motion = screen.getByRole("radiogroup", { name: t("settingsMotionPreference") });
     expect(motion).toBeInTheDocument();
     expect(
-      screen
-        .getByRole("radio", { name: t("settingsMotionPreferenceSystem") })
-        .getAttribute("aria-checked"),
+      screen.getByRole("radio", { name: t("settingsMotionPreferenceSystem") }).getAttribute("aria-checked"),
     ).toBe("true");
   });
 });
@@ -178,7 +170,11 @@ describe("設定画面の不整合 (#1604)", () => {
     renderWithProviders(<SettingsView theme="dark" onClose={() => {}} />);
     await waitFor(() => expect(document.getElementById("settings-history-retention")).not.toBeNull());
     const input = document.getElementById("settings-history-retention") as HTMLInputElement;
-    await waitFor(() => expect(screen.getByText(t("settingsHistoryRetentionLoadFailed", { error: "Error: boom" }))).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByText(t("settingsHistoryRetentionLoadFailed", { error: "Error: boom" })),
+      ).toBeInTheDocument(),
+    );
     expect(input).toBeDisabled();
     expect(input.value).toBe("");
   });
@@ -190,6 +186,8 @@ describe("設定画面の不整合 (#1604)", () => {
     const select = document.getElementById("settings-mono-font") as HTMLSelectElement;
     fireEvent.change(select, { target: { value: "__custom__" } });
     expect(select.value).toBe("__custom__");
-    expect(document.querySelectorAll(`input[placeholder="${t("settingsFontCustomPlaceholder")}"]`).length).toBe(1);
+    expect(
+      document.querySelectorAll(`input[placeholder="${t("settingsFontCustomPlaceholder")}"]`).length,
+    ).toBe(1);
   });
 });

@@ -26,7 +26,9 @@ describe("parseResponse の検証失敗の記録 (#1536)", () => {
   });
 
   it("失敗時はコマンド名と失敗パスをアクティビティへ記録し、エラーも投げ続ける", () => {
-    expect(() => parseResponse(z.object({ a: z.number() }), { a: "x" }, "list_things")).toThrow(/list_things/);
+    expect(() => parseResponse(z.object({ a: z.number() }), { a: "x" }, "list_things")).toThrow(
+      /list_things/,
+    );
     const [entry] = getActivityState().entries;
     expect(entry.severity).toBe("error");
     expect(entry.message).toContain("list_things");
@@ -46,12 +48,17 @@ describe("parseResponse の検証失敗の記録 (#1536)", () => {
 
 describe("診断テキスト", () => {
   it("コマンド名・失敗パス・バージョンを含み、行データは含まない", () => {
-    const text = buildIpcDiagnosticText({ command: "list_things", issues: ["rows.0.id: Expected number"], at: 0 }, "1.2.3");
+    const text = buildIpcDiagnosticText(
+      { command: "list_things", issues: ["rows.0.id: Expected number"], at: 0 },
+      "1.2.3",
+    );
     expect(text).toContain("app version: 1.2.3");
     expect(text).toContain("command: list_things");
     expect(text).toContain("rows.0.id: Expected number");
     expect(text).toContain("1970-01-01T00:00:00.000Z");
-    expect(buildIpcDiagnosticText({ command: "c", issues: [], at: 0 }, null)).toContain("app version: unknown");
+    expect(buildIpcDiagnosticText({ command: "c", issues: [], at: 0 }, null)).toContain(
+      "app version: unknown",
+    );
   });
 });
 
@@ -60,7 +67,9 @@ describe("ActivityDetailView: ipcValidation", () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
     renderWithProviders(
-      <ActivityDetailView detail={{ kind: "ipcValidation", command: "list_things", issues: ["a: bad"], at: 0 }} />,
+      <ActivityDetailView
+        detail={{ kind: "ipcValidation", command: "list_things", issues: ["a: bad"], at: 0 }}
+      />,
     );
     await screen.findByText(/app version: 1\.2\.3/);
     await act(async () => {

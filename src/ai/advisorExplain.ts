@@ -38,9 +38,7 @@ const responseSchema = z.object({
 });
 export type AdvisorExplainResponse = z.infer<typeof responseSchema>;
 
-export type ParsedAdvisorExplain =
-  | { ok: true; value: AdvisorExplainResponse }
-  | { ok: false; raw: string };
+export type ParsedAdvisorExplain = { ok: true; value: AdvisorExplainResponse } | { ok: false; raw: string };
 
 /** ストリームで結合した本文を JSON として解釈する。失敗時は本文をそのまま返す。 */
 export function parseAdvisorExplainResponse(text: string): ParsedAdvisorExplain {
@@ -79,7 +77,8 @@ export function advisorRelatedTables(finding: HealthFinding): string[] {
   const out: string[] = [finding.table];
   let ref: string | undefined;
   if (finding.rule === "fk_missing_index") ref = finding.context[0];
-  else if (finding.rule === "fk_type_mismatch") ref = finding.context[1]?.slice(0, Math.max(0, finding.context[1].lastIndexOf(".")));
+  else if (finding.rule === "fk_type_mismatch")
+    ref = finding.context[1]?.slice(0, Math.max(0, finding.context[1].lastIndexOf(".")));
   if (ref && !out.some((n) => n.toLowerCase() === ref.toLowerCase())) out.push(ref);
   return out.slice(0, ERROR_EXPLAIN_MAX_TABLES);
 }
@@ -156,7 +155,9 @@ export function buildAdvisorExplainPrompt(input: AdvisorExplainInput): string {
       }
       for (const ix of t.indexes) {
         const flags = [ix.primary ? "primary" : "", ix.unique ? "unique" : ""].filter(Boolean);
-        lines.push(`    index ${ix.name} (${ix.columns.join(", ")})${flags.length ? ` [${flags.join(", ")}]` : ""}`);
+        lines.push(
+          `    index ${ix.name} (${ix.columns.join(", ")})${flags.length ? ` [${flags.join(", ")}]` : ""}`,
+        );
       }
     }
   }

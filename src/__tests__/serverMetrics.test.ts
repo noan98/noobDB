@@ -88,10 +88,7 @@ describe("deriveSeries", () => {
   });
 
   it("reset したカウンタ区間のレートは null になる", () => {
-    const samples = [
-      sample(1000, { questions: 5000 }),
-      sample(2000, { questions: 10 }),
-    ];
+    const samples = [sample(1000, { questions: 5000 }), sample(2000, { questions: 10 })];
     const points = deriveSeries(samples);
     expect(points[1].queryRate).toBeNull();
   });
@@ -116,10 +113,7 @@ describe("extractSeries / hasSeriesData", () => {
   });
 
   it("1 点でもデータがあれば true", () => {
-    const points = deriveSeries([
-      sample(1000, { connections: 3 }),
-      sample(2000, { connections: 4 }),
-    ]);
+    const points = deriveSeries([sample(1000, { connections: 3 }), sample(2000, { connections: 4 })]);
     expect(hasSeriesData(points, ["connections"])).toBe(true);
   });
 });

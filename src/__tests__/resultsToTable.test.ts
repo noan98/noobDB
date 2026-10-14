@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildCreateTableAsSql,
-  isCtasEligibleSql,
-  tableNameCollides,
-} from "../components/resultsToTable";
+import { buildCreateTableAsSql, isCtasEligibleSql, tableNameCollides } from "../components/resultsToTable";
 
 describe("isCtasEligibleSql", () => {
   it("accepts a plain SELECT", () => {
@@ -12,9 +8,7 @@ describe("isCtasEligibleSql", () => {
   });
 
   it("accepts a WITH ... SELECT (CTE)", () => {
-    expect(
-      isCtasEligibleSql("WITH recent AS (SELECT * FROM orders) SELECT * FROM recent"),
-    ).toBe(true);
+    expect(isCtasEligibleSql("WITH recent AS (SELECT * FROM orders) SELECT * FROM recent")).toBe(true);
   });
 
   it("tolerates a single trailing semicolon and surrounding whitespace", () => {
@@ -70,15 +64,11 @@ describe("buildCreateTableAsSql", () => {
   });
 
   it("omits the qualifier when database is null", () => {
-    expect(buildCreateTableAsSql("mysql", null, "t", "SELECT 1")).toBe(
-      "CREATE TABLE `t` AS\nSELECT 1;",
-    );
+    expect(buildCreateTableAsSql("mysql", null, "t", "SELECT 1")).toBe("CREATE TABLE `t` AS\nSELECT 1;");
   });
 
   it("strips a trailing semicolon from the source query instead of doubling it", () => {
-    expect(buildCreateTableAsSql("mysql", null, "t", "SELECT 1;\n")).toBe(
-      "CREATE TABLE `t` AS\nSELECT 1;",
-    );
+    expect(buildCreateTableAsSql("mysql", null, "t", "SELECT 1;\n")).toBe("CREATE TABLE `t` AS\nSELECT 1;");
   });
 
   it("escapes embedded quotes in the new table name", () => {

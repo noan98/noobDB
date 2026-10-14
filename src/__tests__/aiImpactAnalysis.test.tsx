@@ -53,7 +53,12 @@ function ui(opts: { isProduction?: boolean; withContext?: boolean } = {}) {
       aiContext={
         opts.withContext === false
           ? null
-          : { sessionId: "s1", driver: "mysql", database: "app", sql: "UPDATE orders SET note = 'top-secret-note'" }
+          : {
+              sessionId: "s1",
+              driver: "mysql",
+              database: "app",
+              sql: "UPDATE orders SET note = 'top-secret-note'",
+            }
       }
       onConfirm={onConfirm}
       onCancel={onCancel}
@@ -74,10 +79,25 @@ beforeEach(() => {
   vi.clearAllMocks();
   hasAiApiKey.mockResolvedValue(true);
   describeTable.mockResolvedValue([
-    { name: "id", data_type: "int", nullable: false, key: "PRI", default: "DEFAULT_SENTINEL", extra: "", referenced_table: null, referenced_column: null },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: "DEFAULT_SENTINEL",
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
   ]);
   foreignKeys.mockResolvedValue([
-    { table: "order_items", column: "order_id", referenced_table: "orders", referenced_column: "id", constraint_name: "fk_items" },
+    {
+      table: "order_items",
+      column: "order_id",
+      referenced_table: "orders",
+      referenced_column: "id",
+      constraint_name: "fk_items",
+    },
   ]);
   tableRowEstimate.mockResolvedValue(12000);
   handlers = null;
@@ -167,7 +187,11 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
 
   it("スキーマ取得中にアンマウントすると要求を出さない", async () => {
     let release: (v: unknown[]) => void = () => {};
-    describeTable.mockReturnValue(new Promise((r) => { release = r; }));
+    describeTable.mockReturnValue(
+      new Promise((r) => {
+        release = r;
+      }),
+    );
     const { unmount } = renderWithProviders(ui());
     fireEvent.click(await analyze());
     await waitFor(() => expect(describeTable).toHaveBeenCalled());
@@ -214,7 +238,9 @@ describe("DangerousQueryDialog の AI 影響分析 (#694)", () => {
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     const stop = await screen.findByRole("button", { name: t("dangerousAiStop") });
     const run = screen.getByRole("button", { name: t("dangerousConfirm") }) as HTMLButtonElement;
-    const cancelBtn = last(screen.getAllByRole("button", { name: t("dangerousCancel") })) as HTMLButtonElement;
+    const cancelBtn = last(
+      screen.getAllByRole("button", { name: t("dangerousCancel") }),
+    ) as HTMLButtonElement;
     expect(run.disabled).toBe(false);
     expect(cancelBtn.disabled).toBe(false);
     fireEvent.click(stop);

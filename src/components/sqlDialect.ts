@@ -52,13 +52,7 @@ export function qualifiedTableName(driver: string, database: string, table: stri
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }
 
-
-const MYSQL_SYSTEM_DATABASES = new Set([
-  "information_schema",
-  "performance_schema",
-  "mysql",
-  "sys",
-]);
+const MYSQL_SYSTEM_DATABASES = new Set(["information_schema", "performance_schema", "mysql", "sys"]);
 
 /**
  * Whether an entry from `listDatabases` is an internal namespace that should

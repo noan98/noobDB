@@ -97,7 +97,13 @@ export function RunRoutineModal({
   });
 
   return (
-    <Modal onSubmit={run} submitDisabled={!canRun} width="640px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
+    <Modal
+      onSubmit={run}
+      submitDisabled={!canRun}
+      width="640px"
+      onClose={onCancel}
+      initialFocusEl={() => firstInputRef.current}
+    >
       <ModalHeader onClose={onCancel} closeLabel={t("runRoutineCancel")}>
         {title}
       </ModalHeader>
@@ -148,9 +154,7 @@ export function RunRoutineModal({
                       if (isPlainEnterKey(e)) {
                         e.preventDefault();
                         // 後ろに入力できる引数が残っていれば次の欄へ移る。最後の欄でだけ実行する。
-                        const next = args
-                          .slice(argIdx + 1)
-                          .find((q) => routineParamTakesInput(q));
+                        const next = args.slice(argIdx + 1).find((q) => routineParamTakesInput(q));
                         if (next) {
                           document
                             .getElementById(`run-routine-param-${signature.parameters.indexOf(next)}`)

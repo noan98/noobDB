@@ -14,11 +14,7 @@ import { quoteIdentFor } from "./components/sqlDialect";
  * 修飾子を持たず、`database` が空のときも修飾しない (既存のジャンプ SQL 生成と
  * 同じ判定)。DB 全体検索 (`dataSearch.ts`、#748) のジャンプ SQL 生成とも共有する。
  */
-export function qualifiedTable(
-  driver: string,
-  database: string | null | undefined,
-  table: string,
-): string {
+export function qualifiedTable(driver: string, database: string | null | undefined, table: string): string {
   if (driver === "sqlite" || !database) return quoteIdentFor(driver, table);
   return `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`;
 }

@@ -72,12 +72,8 @@ describe("computeFindMatches", () => {
 
   it("数値・真偽値セルは実値の文字列表現で一致する", () => {
     const rows: CellValue[][] = [[123, true]];
-    expect(computeFindMatches(rows, 2, "23", OPTS).matches).toEqual([
-      { rowIdx: 0, colIdx: 0 },
-    ]);
-    expect(computeFindMatches(rows, 2, "true", OPTS).matches).toEqual([
-      { rowIdx: 0, colIdx: 1 },
-    ]);
+    expect(computeFindMatches(rows, 2, "23", OPTS).matches).toEqual([{ rowIdx: 0, colIdx: 0 }]);
+    expect(computeFindMatches(rows, 2, "true", OPTS).matches).toEqual([{ rowIdx: 0, colIdx: 1 }]);
   });
 
   it("正規表現モードでパターン一致する", () => {
@@ -182,12 +178,7 @@ describe("findMatchKey / buildFindKeySet", () => {
 });
 
 describe("computeColumnMatchRows (#1257)", () => {
-  const rows = [
-    ["apple", "Red", null],
-    ["banana", "yellow", "red"],
-    ["cherry", "RED", 7],
-    ["short"],
-  ];
+  const rows = [["apple", "Red", null], ["banana", "yellow", "red"], ["cherry", "RED", 7], ["short"]];
   const opts = { caseSensitive: false, wholeCell: false, regex: false };
 
   it("computeFindMatches の該当列だけの結果と一致する", () => {

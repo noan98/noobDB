@@ -219,9 +219,7 @@ describe("スキーマツリーの再レンダー削減 (#1314)", () => {
     await waitFor(() => expect(screen.queryByRole("treeitem", { name: "tbl1" })).not.toBeInTheDocument());
     expect(screen.getByRole("treeitem", { name: "tbl2" })).toBeInTheDocument();
     // どの行も止まり先になっていない状態にはならない (Tab でツリーに入れる)。
-    const stops = screen
-      .getAllByRole("treeitem")
-      .filter((el) => el.getAttribute("tabindex") === "0");
+    const stops = screen.getAllByRole("treeitem").filter((el) => el.getAttribute("tabindex") === "0");
     expect(stops).toHaveLength(1);
   });
 
@@ -235,9 +233,7 @@ describe("スキーマツリーの再レンダー削減 (#1314)", () => {
     fireEvent.click(screen.getByRole("treeitem", { name: "db1" }));
     await waitFor(() => expect(screen.queryByRole("treeitem", { name: "tbl1" })).not.toBeInTheDocument());
     await waitFor(() => {
-      const stops = screen
-        .getAllByRole("treeitem")
-        .filter((el) => el.getAttribute("tabindex") === "0");
+      const stops = screen.getAllByRole("treeitem").filter((el) => el.getAttribute("tabindex") === "0");
       expect(stops).toHaveLength(1);
     });
   });

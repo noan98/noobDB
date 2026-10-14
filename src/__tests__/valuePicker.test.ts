@@ -32,15 +32,13 @@ describe("buildFkCandidatesSql (#1067)", () => {
   it("MySQL: backtick-quoted, qualified, DISTINCT + NOT NULL + LIMIT", () => {
     expect(
       buildFkCandidatesSql({ driver: "mysql", database: "shop", refTable: "users", refColumn: "id" }),
-    ).toBe(
-      "SELECT DISTINCT `id` FROM `shop`.`users` WHERE `id` IS NOT NULL ORDER BY `id` LIMIT 50",
-    );
+    ).toBe("SELECT DISTINCT `id` FROM `shop`.`users` WHERE `id` IS NOT NULL ORDER BY `id` LIMIT 50");
   });
 
   it("SQLite ignores the synthetic database label", () => {
-    expect(
-      buildFkCandidatesSql({ driver: "sqlite", database: "main", refTable: "t", refColumn: "c" }),
-    ).toBe('SELECT DISTINCT "c" FROM "t" WHERE "c" IS NOT NULL ORDER BY "c" LIMIT 50');
+    expect(buildFkCandidatesSql({ driver: "sqlite", database: "main", refTable: "t", refColumn: "c" })).toBe(
+      'SELECT DISTINCT "c" FROM "t" WHERE "c" IS NOT NULL ORDER BY "c" LIMIT 50',
+    );
   });
 
   it("prefix search escapes LIKE wildcards and quotes per dialect", () => {
@@ -68,9 +66,13 @@ describe("buildFkCandidatesSql (#1067)", () => {
     expect(buildFkCandidatesSql({ ...base, driver: "postgres", textColumn: true })).toContain(
       `WHERE "code" IS NOT NULL AND "code" LIKE 'ab%' ESCAPE`,
     );
-    expect(buildFkCandidatesSql({ ...base, driver: "sqlite", textColumn: true })).toContain(`"code" LIKE 'ab%'`);
+    expect(buildFkCandidatesSql({ ...base, driver: "sqlite", textColumn: true })).toContain(
+      `"code" LIKE 'ab%'`,
+    );
     expect(buildFkCandidatesSql({ ...base, driver: "sqlite", textColumn: true })).not.toContain("CAST");
-    expect(buildFkCandidatesSql({ ...base, driver: "mysql", textColumn: true })).toContain("CAST(`code` AS CHAR) LIKE");
+    expect(buildFkCandidatesSql({ ...base, driver: "mysql", textColumn: true })).toContain(
+      "CAST(`code` AS CHAR) LIKE",
+    );
     // 文字列型と分からない列は従来どおり CAST。
     expect(buildFkCandidatesSql({ ...base, driver: "postgres" })).toContain(`CAST("code" AS TEXT) LIKE`);
   });
@@ -79,7 +81,21 @@ describe("buildFkCandidatesSql (#1067)", () => {
     for (const t of ["varchar(20)", "character varying", "TEXT", "char(3)", "longtext"]) {
       expect(isTextDataType(t)).toBe(true);
     }
-    for (const t of ["int", "bigint", "uuid", "datetime", "enum('a','b')", "", null, "citext", "text[]", "varchar(10)[]", "character varying[]", "ARRAY", "_text"]) {
+    for (const t of [
+      "int",
+      "bigint",
+      "uuid",
+      "datetime",
+      "enum('a','b')",
+      "",
+      null,
+      "citext",
+      "text[]",
+      "varchar(10)[]",
+      "character varying[]",
+      "ARRAY",
+      "_text",
+    ]) {
       expect(isTextDataType(t)).toBe(false);
     }
   });
@@ -91,9 +107,7 @@ describe("buildFkCandidatesSql (#1067)", () => {
       refColumn: "i d",
       limit: 0,
     });
-    expect(sql).toBe(
-      'SELECT DISTINCT "i d" FROM "we""ird" WHERE "i d" IS NOT NULL ORDER BY "i d" LIMIT 1',
-    );
+    expect(sql).toBe('SELECT DISTINCT "i d" FROM "we""ird" WHERE "i d" IS NOT NULL ORDER BY "i d" LIMIT 1');
   });
 
   it("is always classified read-only (backend lookup guard would reject otherwise)", () => {
@@ -174,9 +188,7 @@ describe("allowedValuesFromCheck (#1067)", () => {
     expect(
       allowedValuesFromCheck(
         "postgres",
-        [
-          "CHECK (((kind)::text = ANY ((ARRAY['a'::character varying, 'b''c'::character varying])::text[])))",
-        ],
+        ["CHECK (((kind)::text = ANY ((ARRAY['a'::character varying, 'b''c'::character varying])::text[])))"],
         "kind",
       ),
     ).toEqual(["a", "b'c"]);
@@ -219,11 +231,16 @@ describe("allowedValuesFromCheck (#1067)", () => {
   });
 
   it("OR は IN を囲むグループにあるときだけ候補を無効にする (#1527)", () => {
-    expect(allowedValuesFromCheck("postgres", ["CHECK (((status IN ('a','b')) OR qty > 0))"], "status")).toBeNull();
-    expect(allowedValuesFromCheck("postgres", ["CHECK ((status IN ('a','b') AND (qty > 0 OR qty < -5)))"], "status")).toEqual([
-      "a",
-      "b",
-    ]);
+    expect(
+      allowedValuesFromCheck("postgres", ["CHECK (((status IN ('a','b')) OR qty > 0))"], "status"),
+    ).toBeNull();
+    expect(
+      allowedValuesFromCheck(
+        "postgres",
+        ["CHECK ((status IN ('a','b') AND (qty > 0 OR qty < -5)))"],
+        "status",
+      ),
+    ).toEqual(["a", "b"]);
   });
 
   it("does not turn non-enumerations into candidates", () => {

@@ -90,7 +90,11 @@ function subscribe(l: () => void): () => void {
 
 /** 飛行中の layoutId (無ければ null)。 */
 export function useTabOpenFlight(): string | null {
-  return useSyncExternalStore(subscribe, () => current, () => null);
+  return useSyncExternalStore(
+    subscribe,
+    () => current,
+    () => null,
+  );
 }
 
 /**
@@ -99,7 +103,11 @@ export function useTabOpenFlight(): string | null {
  */
 export function useTabOpenFlightFor(database: string, table: string): string | null {
   const id = tabOpenFlightId(database, table);
-  return useSyncExternalStore(subscribe, () => (current === id ? id : null), () => null);
+  return useSyncExternalStore(
+    subscribe,
+    () => (current === id ? id : null),
+    () => null,
+  );
 }
 
 /** テスト用: 状態を初期化する。 */

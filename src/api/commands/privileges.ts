@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { DriverKind, DbUserInfo, UserPrivileges, PrivilegeChange } from "../tauri";
 
 export const privilegesCommands = {
-
   // --- ユーザ / 権限管理 (#732) ---------------------------------------------
   //
   // Diff/Sync (`generateSyncSql` → `applySyncSql`) と同じ「生成とプレビュー →
@@ -23,12 +22,7 @@ export const privilegesCommands = {
   /** 指定ユーザ/ロールの CRUD+DDL 権限マトリクスを取得する。読み取りのみ。`database`
    *  (MySQL: DB 名 / PostgreSQL: スキーマ名) を渡すと、テーブル別の行をサーバ側で絞る
    *  (global 行は常に返る, #1259)。 */
-  listUserPrivileges: (
-    sessionId: string,
-    user: string,
-    host?: string | null,
-    database?: string | null,
-  ) =>
+  listUserPrivileges: (sessionId: string, user: string, host?: string | null, database?: string | null) =>
     invoke<UserPrivileges>("list_user_privileges", {
       sessionId,
       user,
@@ -52,12 +46,7 @@ export const privilegesCommands = {
   /** `ALTER USER ... IDENTIFIED BY` / `ALTER ROLE ... PASSWORD` の SQL を生成する
    *  (純粋)。生成された SQL 文字列自体にパスワードが埋め込まれる点に注意 —
    *  呼び出し側はこれをログや履歴に残してはいけない。 */
-  generateAlterPasswordSql: (
-    driver: DriverKind,
-    name: string,
-    host: string | null,
-    password: string,
-  ) =>
+  generateAlterPasswordSql: (driver: DriverKind, name: string, host: string | null, password: string) =>
     invoke<string>("generate_alter_password_sql", { driver, name, host, password }).then((r) =>
       parseResponse(schemas.stringResponse, r, "generate_alter_password_sql"),
     ),
@@ -83,11 +72,7 @@ export const privilegesCommands = {
    * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード
    * (read_only セッション拒否・空文拒否) を持ち、クエリ履歴には一切記録しない。
    */
-  applyPrivilegeSql: (params: {
-    sessionId: string;
-    database?: string | null;
-    statements: string[];
-  }) =>
+  applyPrivilegeSql: (params: { sessionId: string; database?: string | null; statements: string[] }) =>
     invoke<number>("apply_privilege_sql", {
       sessionId: params.sessionId,
       database: params.database ?? null,

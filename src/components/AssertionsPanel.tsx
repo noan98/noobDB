@@ -368,8 +368,7 @@ export function AssertionsPanel({
             {visible.map((a) => {
               const state = states.get(a.id);
               const desc = describeRule(a);
-              const outcome =
-                state?.status === "passed" || state?.status === "failed" ? state.outcome : null;
+              const outcome = state?.status === "passed" || state?.status === "failed" ? state.outcome : null;
               const result = outcome ? observedText(a.rule, outcome) : null;
               return (
                 <chakra.tr key={a.id} data-assertion-id={a.id}>

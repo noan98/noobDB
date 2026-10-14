@@ -155,10 +155,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     };
   }, [sessionId, database]);
 
-  const allNames = useMemo(
-    () => (loaded.kind === "ready" ? loaded.tables.map((x) => x.name) : []),
-    [loaded],
-  );
+  const allNames = useMemo(() => (loaded.kind === "ready" ? loaded.tables.map((x) => x.name) : []), [loaded]);
   const scopeNames = useMemo(
     () =>
       loaded.kind === "ready"
@@ -191,7 +188,10 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   );
   const summary = useMemo(
     () =>
-      summarizeSchemaDocSend({ tables: scopedTables, foreignKeys: scopedFks, objects: [] }, pendingObjectCount),
+      summarizeSchemaDocSend(
+        { tables: scopedTables, foreignKeys: scopedFks, objects: [] },
+        pendingObjectCount,
+      ),
     [scopedTables, scopedFks, pendingObjectCount],
   );
   const filteredNames = useMemo(() => {
@@ -274,7 +274,8 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     });
     const targets = selectDocObjects(ready.objects, mode === "all" ? null : scopeNames);
     const objects = await mapLimited(targets, limit, async (o) => {
-      if (collectAbortRef.current || !stream.isMounted()) return { kind: o.kind, name: o.name, definition: null };
+      if (collectAbortRef.current || !stream.isMounted())
+        return { kind: o.kind, name: o.name, definition: null };
       const definition = await api
         .getObjectDefinition(sessionId, database, o.kind, o.name, o.id)
         .catch(() => null);
@@ -297,7 +298,13 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
       driver: props.driver,
       locale,
     });
-    const system = buildSchemaDocSystem({ driver: props.driver, database, locale, context, maskLiterals: ai.maskLiterals });
+    const system = buildSchemaDocSystem({
+      driver: props.driver,
+      database,
+      locale,
+      context,
+      maskLiterals: ai.maskLiterals,
+    });
     const prompt = buildSchemaDocPrompt(locale);
     // 実際に送るバイト数。バックエンドの上限を超えるなら送らずに絞り込みを促す。
     const sentBytes = utf8Bytes(system) + utf8Bytes(prompt);
@@ -476,7 +483,10 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
                   <chakra.span fontSize="xs" color="app.textMuted">
                     {emptySelection
                       ? t("aiSchemaDocNoSelection")
-                      : t("aiSchemaDocSelectedCount", { selected: selected.size, effective: scopeNames.length })}
+                      : t("aiSchemaDocSelectedCount", {
+                          selected: selected.size,
+                          effective: scopeNames.length,
+                        })}
                   </chakra.span>
                 </>
               )}

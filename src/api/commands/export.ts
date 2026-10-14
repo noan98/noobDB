@@ -6,7 +6,6 @@ import type { ExportColumnMask } from "../../components/exportMasking";
 import type { Column, CellValue, ExportFormat, ExportResult } from "../tauri";
 
 export const exportCommands = {
-
   exportQueryResult: (params: {
     path: string;
     format: ExportFormat;

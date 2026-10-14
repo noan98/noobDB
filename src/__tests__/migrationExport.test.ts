@@ -142,9 +142,7 @@ describe("renderMigrationStatements", () => {
       { sql: "CREATE TABLE t (id INT)", table: "t", kind: "create_table", destructive: false },
       { sql: "ALTER TABLE t ADD COLUMN c INT", table: "t", kind: "add_column", destructive: false },
     ]);
-    expect(sql).toBe(
-      "CREATE TABLE t (id INT);\n\nALTER TABLE t ADD COLUMN c INT;",
-    );
+    expect(sql).toBe("CREATE TABLE t (id INT);\n\nALTER TABLE t ADD COLUMN c INT;");
   });
 
   it("renders a placeholder comment when there are no statements", () => {
@@ -172,9 +170,7 @@ describe("renderMigrationWarnings", () => {
 describe("buildMigrationFile", () => {
   it("combines header, statements and warnings into one file with a trailing newline", () => {
     const plan: SyncPlan = {
-      statements: [
-        { sql: "CREATE TABLE t (id INT)", table: "t", kind: "create_table", destructive: false },
-      ],
+      statements: [{ sql: "CREATE TABLE t (id INT)", table: "t", kind: "create_table", destructive: false }],
       warnings: ["sqlite cannot alter columns in place: t.c"],
     };
     const header = "-- header line";
@@ -203,9 +199,7 @@ describe("pairedDownFileName (#1532)", () => {
 
   it("改名された up 名は命名規則に沿って down 名へ写す", () => {
     expect(pairedDownFileName("flyway", "V2__custom.sql", names("flyway"))).toBe("U2__custom.sql");
-    expect(pairedDownFileName("golang-migrate", "7_x.up.sql", names("golang-migrate"))).toBe(
-      "7_x.down.sql",
-    );
+    expect(pairedDownFileName("golang-migrate", "7_x.up.sql", names("golang-migrate"))).toBe("7_x.down.sql");
   });
 
   it("規則に合わない改名でも up と同名にならない", () => {

@@ -196,4 +196,3 @@ export function quickSetOptions(input: {
   }
   return options;
 }
-

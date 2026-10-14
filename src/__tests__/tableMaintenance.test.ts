@@ -34,9 +34,7 @@ describe("buildRenameTableSql", () => {
     expect(buildRenameTableSql("postgres", "public", "old", "new")).toBe(
       'ALTER TABLE "public"."old" RENAME TO "new";',
     );
-    expect(buildRenameTableSql("sqlite", "main", "old", "new")).toBe(
-      'ALTER TABLE "old" RENAME TO "new";',
-    );
+    expect(buildRenameTableSql("sqlite", "main", "old", "new")).toBe('ALTER TABLE "old" RENAME TO "new";');
   });
 
   it("escapes embedded quotes in identifiers", () => {
@@ -54,9 +52,7 @@ describe("buildCreateIndexSql (#850)", () => {
     expect(buildCreateIndexSql("postgres", "public", "orders", ["user_id", "status"])).toBe(
       'CREATE INDEX "idx_orders_user_id_status" ON "public"."orders" ("user_id", "status");',
     );
-    expect(buildCreateIndexSql("sqlite", "main", "t", ["a"])).toBe(
-      'CREATE INDEX "idx_t_a" ON "t" ("a");',
-    );
+    expect(buildCreateIndexSql("sqlite", "main", "t", ["a"])).toBe('CREATE INDEX "idx_t_a" ON "t" ("a");');
   });
 
   it("uses CREATE UNIQUE INDEX when unique is set", () => {
@@ -66,9 +62,9 @@ describe("buildCreateIndexSql (#850)", () => {
   });
 
   it("uses an explicit index name when given, sanitizing non-alphanumeric characters", () => {
-    expect(
-      buildCreateIndexSql("postgres", "public", "orders", ["user_id"], { name: "my-idx!" }),
-    ).toBe('CREATE INDEX "my_idx_" ON "public"."orders" ("user_id");');
+    expect(buildCreateIndexSql("postgres", "public", "orders", ["user_id"], { name: "my-idx!" })).toBe(
+      'CREATE INDEX "my_idx_" ON "public"."orders" ("user_id");',
+    );
   });
 
   it("trims and drops empty column entries", () => {
@@ -95,8 +91,12 @@ describe("buildDropIndexSql (#850)", () => {
 
 describe("buildDropTablesSql (#1399)", () => {
   it("MySQL / PostgreSQL は 1 文にまとめる", () => {
-    expect(buildDropTablesSql("mysql", "shop", ["a", "b`c"])).toEqual(["DROP TABLE `shop`.`a`, `shop`.`b``c`;"]);
-    expect(buildDropTablesSql("postgres", "public", ["a", "B"])).toEqual(['DROP TABLE "public"."a", "public"."B";']);
+    expect(buildDropTablesSql("mysql", "shop", ["a", "b`c"])).toEqual([
+      "DROP TABLE `shop`.`a`, `shop`.`b``c`;",
+    ]);
+    expect(buildDropTablesSql("postgres", "public", ["a", "B"])).toEqual([
+      'DROP TABLE "public"."a", "public"."B";',
+    ]);
   });
 
   it("SQLite はテーブルごとの文", () => {

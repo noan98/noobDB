@@ -182,7 +182,14 @@ function setup() {
     );
   }
   const view = renderWithProviders(<Host />);
-  return { store, renders, base, view, rerenderHost: () => act(() => bump()), setEnv: (e: PaneEnv) => act(() => setEnv(e)) };
+  return {
+    store,
+    renders,
+    base,
+    view,
+    rerenderHost: () => act(() => bump()),
+    setEnv: (e: PaneEnv) => act(() => setEnv(e)),
+  };
 }
 
 // jsdom には ResizeObserver が無い (TabBar が使う)。何もしないスタブを入れ、終わったら戻す。
@@ -203,7 +210,8 @@ afterAll(() => {
 
 describe("PaneView の再レンダー境界 (#1318)", () => {
   it("TabBar / QueryEditor / ResultGrid は memo 化されている", async () => {
-    const { TabBar: RealTabBar } = await vi.importActual<typeof import("../components/TabBar")>("../components/TabBar");
+    const { TabBar: RealTabBar } =
+      await vi.importActual<typeof import("../components/TabBar")>("../components/TabBar");
     for (const c of [RealTabBar, QueryEditor, ResultGrid]) {
       expect((c as unknown as { $$typeof: symbol }).$$typeof).toBe(Symbol.for("react.memo"));
     }
@@ -254,20 +262,23 @@ describe("PaneView の再レンダー境界 (#1318)", () => {
   it.each([
     ["showChart", "chart"],
     ["showPivot", "pivot"],
-  ] as const)("同じ表示モード (%s) のタブ同士を切り替えると、ビューが作り直される (#1323)", async (flag, kind) => {
-    const { store } = setup();
-    await waitFor(() => expect(screen.getAllByRole("tab").length).toBe(3));
-    const result = { columns: [], rows: [] } as never;
-    act(() =>
-      store.setTabs((prev) =>
-        prev.map((x) => (x.id === "a1" || x.id === "a2" ? { ...x, [flag]: true, result } : x)),
-      ),
-    );
-    await waitFor(() => expect(screen.getByText(`${kind}-stub`)).toBeTruthy());
-    const before = viewMounts[kind];
-    act(() => store.setPanes((prev) => prev.map((p) => (p.id === "pa" ? { ...p, activeTabId: "a2" } : p))));
-    await waitFor(() => expect(viewMounts[kind]).toBeGreaterThan(before));
-  });
+  ] as const)(
+    "同じ表示モード (%s) のタブ同士を切り替えると、ビューが作り直される (#1323)",
+    async (flag, kind) => {
+      const { store } = setup();
+      await waitFor(() => expect(screen.getAllByRole("tab").length).toBe(3));
+      const result = { columns: [], rows: [] } as never;
+      act(() =>
+        store.setTabs((prev) =>
+          prev.map((x) => (x.id === "a1" || x.id === "a2" ? { ...x, [flag]: true, result } : x)),
+        ),
+      );
+      await waitFor(() => expect(screen.getByText(`${kind}-stub`)).toBeTruthy());
+      const before = viewMounts[kind];
+      act(() => store.setPanes((prev) => prev.map((p) => (p.id === "pa" ? { ...p, activeTabId: "a2" } : p))));
+      await waitFor(() => expect(viewMounts[kind]).toBeGreaterThan(before));
+    },
+  );
 
   it("env の値 (接続など) が変わったら、全ペインが再レンダーされる", async () => {
     const { renders, base: baseEnv, setEnv } = setup();

@@ -21,9 +21,7 @@ describe("shouldNotifyQueryCompletion (#707)", () => {
   });
 
   it("notifies exactly at the threshold boundary", () => {
-    expect(shouldNotifyQueryCompletion({ ...base, elapsedMs: 10_000, thresholdSecs: 10 })).toBe(
-      true,
-    );
+    expect(shouldNotifyQueryCompletion({ ...base, elapsedMs: 10_000, thresholdSecs: 10 })).toBe(true);
   });
 
   it("treats a zero threshold as always eligible once unfocused", () => {
@@ -36,17 +34,13 @@ describe("shouldNotifyQueryCompletion (#707)", () => {
 
   it("rejects NaN/Infinity inputs defensively", () => {
     expect(shouldNotifyQueryCompletion({ ...base, elapsedMs: Number.NaN })).toBe(false);
-    expect(shouldNotifyQueryCompletion({ ...base, thresholdSecs: Number.POSITIVE_INFINITY })).toBe(
-      false,
-    );
+    expect(shouldNotifyQueryCompletion({ ...base, thresholdSecs: Number.POSITIVE_INFINITY })).toBe(false);
   });
 });
 
 describe("firstLineForNotification (#707)", () => {
   it("returns the whole string when short and single-line", () => {
-    expect(firstLineForNotification("syntax error near SELECT")).toBe(
-      "syntax error near SELECT",
-    );
+    expect(firstLineForNotification("syntax error near SELECT")).toBe("syntax error near SELECT");
   });
 
   it("keeps only the first line of a multi-line error", () => {

@@ -229,7 +229,13 @@ function MetricChart({
             );
           })}
           {/* 時間軸ラベル (両端)。 */}
-          <text x={PAD.left} y={CHART_H - 8} textAnchor="start" style={{ fontSize: "var(--text-2xs)" }} fill="var(--text-muted)">
+          <text
+            x={PAD.left}
+            y={CHART_H - 8}
+            textAnchor="start"
+            style={{ fontSize: "var(--text-2xs)" }}
+            fill="var(--text-muted)"
+          >
             {timeLabel(t0)}
           </text>
           <text
@@ -300,13 +306,7 @@ function MetricChartSkeleton({ def }: { def: ChartDef }) {
   );
 }
 
-export function ServerMetricsPanel({
-  sessionId,
-  driver,
-}: {
-  sessionId: string;
-  driver: DriverKind;
-}) {
+export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; driver: DriverKind }) {
   const t = useT();
   const settings = useSettings();
 
@@ -322,29 +322,32 @@ export function ServerMetricsPanel({
   const loadSeqRef = useRef(0);
   const windowMs = DEFAULT_METRICS_WINDOW_SECS * 1000;
 
-  const load = useCallback(async (force = false) => {
-    if (busyRef.current && !force) return;
-    const seq = ++loadSeqRef.current;
-    busyRef.current = true;
-    setLoading(true);
-    try {
-      const m = await api.serverMetrics(sessionId);
-      if (seq !== loadSeqRef.current) return;
-      // 受信時刻でスタンプしてリングバッファへ (差分レートの分母に使う)。
-      const at = Date.now();
-      setSamples((cur) => pushSample(cur, { atMs: at, metrics: m }, windowMs));
-      setError(null);
-      setUpdatedAt(new Date(at));
-    } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      setError(String(e));
-    } finally {
-      if (seq === loadSeqRef.current) {
-        busyRef.current = false;
-        setLoading(false);
+  const load = useCallback(
+    async (force = false) => {
+      if (busyRef.current && !force) return;
+      const seq = ++loadSeqRef.current;
+      busyRef.current = true;
+      setLoading(true);
+      try {
+        const m = await api.serverMetrics(sessionId);
+        if (seq !== loadSeqRef.current) return;
+        // 受信時刻でスタンプしてリングバッファへ (差分レートの分母に使う)。
+        const at = Date.now();
+        setSamples((cur) => pushSample(cur, { atMs: at, metrics: m }, windowMs));
+        setError(null);
+        setUpdatedAt(new Date(at));
+      } catch (e) {
+        if (seq !== loadSeqRef.current) return;
+        setError(String(e));
+      } finally {
+        if (seq === loadSeqRef.current) {
+          busyRef.current = false;
+          setLoading(false);
+        }
       }
-    }
-  }, [sessionId, windowMs]);
+    },
+    [sessionId, windowMs],
+  );
 
   // 初回ロード + セッション切替時のリセット。
   useEffect(() => {

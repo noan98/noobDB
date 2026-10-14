@@ -31,7 +31,10 @@ describe("React Flow クロムのテーマ統合", () => {
     expect(block).toMatch(/--xy-edge-stroke-selected:\s*var\(--accent\)/);
   });
 
-  it.each(["components/ERDiagramView.tsx", "components/ExplainGraphView.tsx"])("%s は colorMode を渡す", (f) => {
-    expect(SOURCES[f]).toMatch(/colorMode=\{isDark \? "dark" : "light"\}/);
-  });
+  it.each(["components/ERDiagramView.tsx", "components/ExplainGraphView.tsx"])(
+    "%s は colorMode を渡す",
+    (f) => {
+      expect(SOURCES[f]).toMatch(/colorMode=\{isDark \? "dark" : "light"\}/);
+    },
+  );
 });

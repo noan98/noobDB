@@ -50,7 +50,7 @@ describe("textStyle numeric (#1072)", () => {
     expect(hasTabularNums(visible as Element)).toBe(true);
   });
 
-  it("style prop の textStyle=\"numeric\" が tabular-nums を出力する", () => {
+  it('style prop の textStyle="numeric" が tabular-nums を出力する', () => {
     const { container } = renderWithProviders(
       <chakra.span data-testid="n" textStyle="numeric">
         42
@@ -60,7 +60,7 @@ describe("textStyle numeric (#1072)", () => {
     expect(hasTabularNums(el)).toBe(true);
   });
 
-  it("css オブジェクト内の textStyle: \"numeric\" (tdCss などの形) も tabular-nums を出力する", () => {
+  it('css オブジェクト内の textStyle: "numeric" (tdCss などの形) も tabular-nums を出力する', () => {
     const { container } = renderWithProviders(
       <chakra.span data-testid="n" css={{ textStyle: "numeric", fontWeight: 600 }}>
         42

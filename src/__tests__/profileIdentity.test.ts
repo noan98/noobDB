@@ -24,10 +24,7 @@ describe("profileBadgeKinds (#663)", () => {
   });
 
   it("returns production first, then readOnly, when both are set", () => {
-    expect(profileBadgeKinds({ is_production: true, read_only: true })).toEqual([
-      "production",
-      "readOnly",
-    ]);
+    expect(profileBadgeKinds({ is_production: true, read_only: true })).toEqual(["production", "readOnly"]);
   });
 
   it("returns just the one flag that is set", () => {

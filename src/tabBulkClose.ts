@@ -13,11 +13,7 @@ export type BulkCloseMode = "others" | "right" | "all";
  * `paneTabIds` (ペイン内の並び順) から、`targetId` を基点に閉じるべきタブ id を返す。
  * `targetId` がペインに無いときは安全側で空配列を返す。入力は破壊しない。
  */
-export function tabsToClose(
-  paneTabIds: readonly string[],
-  targetId: string,
-  mode: BulkCloseMode,
-): string[] {
+export function tabsToClose(paneTabIds: readonly string[], targetId: string, mode: BulkCloseMode): string[] {
   const idx = paneTabIds.indexOf(targetId);
   if (idx < 0) return [];
   switch (mode) {

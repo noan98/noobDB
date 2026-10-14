@@ -77,18 +77,13 @@ export function buildRelatedRowsSql(p: RelatedRowsSqlParams): string | null {
  * 「グリッドで開く」用の SQL (上限なし。グリッド側の自動 LIMIT / ページングに
  * 任せる)。キー値が NULL なら null。
  */
-export function buildRelatedOpenSql(
-  p: Omit<RelatedRowsSqlParams, "limit">,
-): string | null {
+export function buildRelatedOpenSql(p: Omit<RelatedRowsSqlParams, "limit">): string | null {
   if (p.value === null || p.value === undefined) return null;
   return buildReverseRefSql(p);
 }
 
 /** 上限 + 1 件で取った行を、表示分と「続きあり」に分ける。 */
-export function splitRelatedRows<T>(
-  rows: readonly T[],
-  limit: number,
-): { rows: T[]; hasMore: boolean } {
+export function splitRelatedRows<T>(rows: readonly T[], limit: number): { rows: T[]; hasMore: boolean } {
   const n = clampRelatedLimit(limit);
   return { rows: rows.slice(0, n), hasMore: rows.length > n };
 }

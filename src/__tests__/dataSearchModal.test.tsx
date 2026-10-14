@@ -27,9 +27,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       listTables: vi.fn().mockResolvedValue(["orders"]),
-      tableRowEstimates: vi.fn().mockResolvedValue([
-        { name: "orders", estimate: 10 },
-      ] as TableRowEstimate[]),
+      tableRowEstimates: vi.fn().mockResolvedValue([{ name: "orders", estimate: 10 }] as TableRowEstimate[]),
       dataSearchStream: vi.fn().mockResolvedValue(undefined),
       cancelStream: vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 }),
     },

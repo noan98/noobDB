@@ -97,7 +97,14 @@ describe("buildLockDiagnosePrompt (#1478)", () => {
         name: "orders",
         estimatedRows: 12000,
         columns: [
-          { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+          {
+            name: "id",
+            data_type: "int",
+            nullable: false,
+            key: "PRI",
+            referenced_table: null,
+            referenced_column: null,
+          },
         ],
       },
     ],
@@ -137,7 +144,10 @@ describe("buildLockDiagnosePrompt (#1478)", () => {
       ...base,
       driver: "postgres",
       processes: [
-        toLockDiagnoseProcess(proc(3, { command: "idle in transaction", time_secs: 40 }), "UPDATE orders SET a = 1"),
+        toLockDiagnoseProcess(
+          proc(3, { command: "idle in transaction", time_secs: 40 }),
+          "UPDATE orders SET a = 1",
+        ),
         toLockDiagnoseProcess(proc(4, { command: "active", time_secs: 7 }), "SELECT 1"),
       ],
     });
@@ -183,9 +193,9 @@ describe("lockDiagnoseTableRefs / parse (#1478)", () => {
       { database: "public", table: "orders" },
       { database: "audit", table: "logs" },
     ]);
-    expect(lockDiagnoseTableRefs([mine], "postgres", { connectedDatabase: "appdb", schema: "sales" })).toEqual([
-      { database: "sales", table: "orders" },
-    ]);
+    expect(
+      lockDiagnoseTableRefs([mine], "postgres", { connectedDatabase: "appdb", schema: "sales" }),
+    ).toEqual([{ database: "sales", table: "orders" }]);
   });
 
   it("応答を構造化 JSON として読み、壊れていれば生の本文を返す", () => {

@@ -67,9 +67,20 @@ beforeEach(() => {
   hasAiApiKey.mockResolvedValue(true);
   setAiKeyPresent(true);
   describeTable.mockResolvedValue([
-    { name: "id", data_type: "int", nullable: false, key: "PRI", default: "DEFAULT_SENTINEL", extra: "", referenced_table: null, referenced_column: null },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: "DEFAULT_SENTINEL",
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
   ]);
-  listIndexes.mockResolvedValue([{ name: "idx_note", columns: ["note"], unique: false, primary: false, method: null }]);
+  listIndexes.mockResolvedValue([
+    { name: "idx_note", columns: ["note"], unique: false, primary: false, method: null },
+  ]);
   analyzeSchemaHealth.mockResolvedValue({
     driver: "mysql",
     tables_analyzed: 1,

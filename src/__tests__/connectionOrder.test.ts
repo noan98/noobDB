@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  applyGroupOrder,
-  applySubsequenceOrder,
-  moveItemBy,
-  reorderIfPermutation,
-} from "../connectionOrder";
+import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 
 describe("reorderIfPermutation", () => {
   it("accepts a valid permutation and returns the proposed order", () => {

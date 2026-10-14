@@ -17,12 +17,7 @@ import type { DriverKind, SyncPlan, SyncStatement } from "../api/tauri";
 export type MigrationFormat = "flyway" | "golang-migrate" | "sqlx" | "generic";
 
 /** UI のフォーマット選択肢 (表示順)。 */
-export const MIGRATION_FORMATS: readonly MigrationFormat[] = [
-  "flyway",
-  "golang-migrate",
-  "sqlx",
-  "generic",
-];
+export const MIGRATION_FORMATS: readonly MigrationFormat[] = ["flyway", "golang-migrate", "sqlx", "generic"];
 
 /**
  * 名前を英数字と `_` のみへサニタイズする。それ以外の文字 (空白・記号・非 ASCII

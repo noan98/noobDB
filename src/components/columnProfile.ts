@@ -38,7 +38,10 @@ export function formatProfileCount(c: ProfileCount | null | undefined): string {
 }
 
 /** 百分率 (0〜100)。分母が 0 のときは null (「0 行中の 0%」を出さない)。 */
-export function profilePercent(part: ProfileCount | null | undefined, whole: ProfileCount | null | undefined): number | null {
+export function profilePercent(
+  part: ProfileCount | null | undefined,
+  whole: ProfileCount | null | undefined,
+): number | null {
   const w = profileCountValue(whole);
   if (w <= 0) return null;
   return (profileCountValue(part) / w) * 100;

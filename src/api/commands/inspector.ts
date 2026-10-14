@@ -18,8 +18,7 @@ export const inspectorCommands = {
   /** ステートメント統計の記録を開始する (#1259)。現在の digest 累積スナップショットを
    *  Rust 側のセッション状態に baseline として保持し、本文の送信済み集合も空にする。
    *  サーバ側カウンタはリセットしない (権限不要)。読み取り SELECT のみ。 */
-  startStatementRecording: (sessionId: string) =>
-    invoke<void>("start_statement_recording", { sessionId }),
+  startStatementRecording: (sessionId: string) => invoke<void>("start_statement_recording", { sessionId }),
   /**
    * 記録開始 (baseline) からの digest 差分 (calls > 0 の行、総時間降順) を取得する (#1259)。
    * 差分の引き算と N+1 目安 (直近ポーリング間隔の実行レート) は Rust 側で行う。

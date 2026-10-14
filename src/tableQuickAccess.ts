@@ -55,7 +55,10 @@ export function normalizeQuickAccess(parsed: unknown): QuickAccessState {
     ? dedupe(o.favorites.filter(isValidRef).map((r) => ({ database: r.database, table: r.table })))
     : [];
   const recent = Array.isArray(o.recent)
-    ? dedupe(o.recent.filter(isValidRef).map((r) => ({ database: r.database, table: r.table }))).slice(0, MAX_RECENT)
+    ? dedupe(o.recent.filter(isValidRef).map((r) => ({ database: r.database, table: r.table }))).slice(
+        0,
+        MAX_RECENT,
+      )
     : [];
   return { favorites, recent };
 }

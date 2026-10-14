@@ -184,7 +184,7 @@ export function buildExplainInterpretSystem(locale: "ja" | "en", driver: string)
     "Answer only with the JSON object described by the schema.",
     "summary: what the plan does and how heavy it is, in plain words.",
     "bottlenecks: the problematic plan nodes (full scans, large intermediate results, poor join order, filesort/temp tables). node names the plan step; severity is high, medium or low. An empty array when the plan is fine.",
-    "suggestions: concrete improvements. kind \"ddl\" = a CREATE INDEX style statement, kind \"rewrite\" = a rewritten query. Each sql is a single complete statement valid for the given dialect; rationale explains the expected effect and any cost (write overhead, size).",
+    'suggestions: concrete improvements. kind "ddl" = a CREATE INDEX style statement, kind "rewrite" = a rewritten query. Each sql is a single complete statement valid for the given dialect; rationale explains the expected effect and any cost (write overhead, size).',
     "Take the existing indexes and row estimates into account and do not propose an index that already exists.",
     "Literal values in the SQL and plan may be blanked out for privacy; never invent data values.",
   ].join("\n");
@@ -211,8 +211,12 @@ export function buildExplainInterpretPrompt(input: ExplainInterpretInput): strin
         continue;
       }
       for (const ix of t.indexes) {
-        const flags = [ix.primary ? "primary" : "", ix.unique ? "unique" : "", ix.method ?? ""].filter(Boolean);
-        lines.push(`    index ${ix.name} (${ix.columns.join(", ")})${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}`);
+        const flags = [ix.primary ? "primary" : "", ix.unique ? "unique" : "", ix.method ?? ""].filter(
+          Boolean,
+        );
+        lines.push(
+          `    index ${ix.name} (${ix.columns.join(", ")})${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}`,
+        );
       }
     }
   }

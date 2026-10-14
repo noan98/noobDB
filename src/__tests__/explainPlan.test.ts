@@ -99,9 +99,7 @@ describe("computeHints (regression after extraction)", () => {
     const root = singleTable(50, { access_type: "ALL" });
     const table = root.children[0];
     const hints = computeHints(table);
-    expect(hints.some((h) => h.severity === "warning" && h.key === "explainHintFullScan")).toBe(
-      true,
-    );
+    expect(hints.some((h) => h.severity === "warning" && h.key === "explainHintFullScan")).toBe(true);
   });
 
   it("treats a covering index as a positive info hint", () => {
@@ -124,7 +122,11 @@ describe("補助ラベルの翻訳 (#1533)", () => {
   it("翻訳関数が返した語がラベルになる", () => {
     const { root } = parsePlan(
       raw,
-      tr({ explainKindQueryBlock: "クエリブロック", explainKindNestedLoop: "ネステッドループ", explainKindTableNamed: "テーブル: {name}" }) as never,
+      tr({
+        explainKindQueryBlock: "クエリブロック",
+        explainKindNestedLoop: "ネステッドループ",
+        explainKindTableNamed: "テーブル: {name}",
+      }) as never,
     );
     expect(root?.label).toBe("クエリブロック");
     expect(root?.children[0].label).toBe("ネステッドループ");

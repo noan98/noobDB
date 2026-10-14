@@ -79,12 +79,12 @@ describe("結果グリッドの再レンダー抑制 (#1313)", () => {
     renderWithProviders(<Harness />);
     const original = HTMLElement.prototype.getBoundingClientRect;
     let toolbarReads = 0;
-    const spy = vi
-      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-      .mockImplementation(function (this: HTMLElement) {
-        if (this.dataset.toolbarAction) toolbarReads += 1;
-        return original.call(this);
-      });
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.dataset.toolbarAction) toolbarReads += 1;
+      return original.call(this);
+    });
     for (let i = 0; i < 5; i++) fireEvent.click(screen.getByText(new RegExp(`rerender:${i}`)));
     spy.mockRestore();
     expect(toolbarReads).toBe(0);

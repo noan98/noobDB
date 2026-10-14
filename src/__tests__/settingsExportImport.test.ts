@@ -80,9 +80,7 @@ describe("deserializeSettingsImport (#679)", () => {
         .autoUpdateCheckEnabled,
     ).toBe(false);
     // Missing or non-boolean values fall back to the default (on).
-    expect(
-      deserializeSettingsImport(JSON.stringify({ settings: {} })).autoUpdateCheckEnabled,
-    ).toBe(true);
+    expect(deserializeSettingsImport(JSON.stringify({ settings: {} })).autoUpdateCheckEnabled).toBe(true);
     expect(
       deserializeSettingsImport(JSON.stringify({ settings: { autoUpdateCheckEnabled: "no" } }))
         .autoUpdateCheckEnabled,
@@ -138,7 +136,14 @@ describe("deserializeSettingsImport の AI 同意 (#1603)", () => {
     const mod = await import("../settings");
     const evil = JSON.stringify({
       settings: {
-        ai: { maskLiterals: false, enabled: true, consentGiven: true, allowRowData: true, sendScope: "schemaAndSql", inlineComplete: true },
+        ai: {
+          maskLiterals: false,
+          enabled: true,
+          consentGiven: true,
+          allowRowData: true,
+          sendScope: "schemaAndSql",
+          inlineComplete: true,
+        },
       },
     });
     const restored = mod.deserializeSettingsImport(evil);

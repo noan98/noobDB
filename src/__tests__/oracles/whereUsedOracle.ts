@@ -237,7 +237,12 @@ function tokenizeChains(text: string, driver: string | undefined): IdentChain[] 
   while (i < n) {
     const c = text[i];
     // 変数・バインド・位置パラメータ・数値は識別子として扱わず語ごと読み飛ばす。
-    if (c === "@" || (c === ":" && text[i + 1] !== ":" && text[i - 1] !== ":") || c === "$" || /[0-9]/.test(c)) {
+    if (
+      c === "@" ||
+      (c === ":" && text[i + 1] !== ":" && text[i - 1] !== ":") ||
+      c === "$" ||
+      /[0-9]/.test(c)
+    ) {
       let j = i + 1;
       while (j < n && (text[j] === "@" || WORD.test(text[j]))) j++;
       i = j;
@@ -286,14 +291,78 @@ function tokenizeChains(text: string, driver: string | undefined): IdentChain[] 
 
 /** テーブル名の直後に来ても別名ではない語。 */
 const ALIAS_STOPWORDS = new Set([
-  "as", "on", "using", "where", "join", "inner", "left", "right", "full", "outer", "cross",
-  "natural", "lateral", "set", "values", "select", "from", "group", "order", "having",
-  "limit", "offset", "fetch", "union", "intersect", "except", "returning", "window",
-  "for", "when", "then", "else", "end", "begin", "before", "after", "instead", "of",
-  "each", "row", "execute", "with", "into", "default", "and", "or", "not", "is", "in",
-  "partition", "tablesample", "straight_join", "force", "use", "ignore", "loop",
-  "declare", "if", "return", "returns", "language", "referencing", "update", "insert",
-  "delete", "by", "asc", "desc", "nulls", "window", "procedure", "function",
+  "as",
+  "on",
+  "using",
+  "where",
+  "join",
+  "inner",
+  "left",
+  "right",
+  "full",
+  "outer",
+  "cross",
+  "natural",
+  "lateral",
+  "set",
+  "values",
+  "select",
+  "from",
+  "group",
+  "order",
+  "having",
+  "limit",
+  "offset",
+  "fetch",
+  "union",
+  "intersect",
+  "except",
+  "returning",
+  "window",
+  "for",
+  "when",
+  "then",
+  "else",
+  "end",
+  "begin",
+  "before",
+  "after",
+  "instead",
+  "of",
+  "each",
+  "row",
+  "execute",
+  "with",
+  "into",
+  "default",
+  "and",
+  "or",
+  "not",
+  "is",
+  "in",
+  "partition",
+  "tablesample",
+  "straight_join",
+  "force",
+  "use",
+  "ignore",
+  "loop",
+  "declare",
+  "if",
+  "return",
+  "returns",
+  "language",
+  "referencing",
+  "update",
+  "insert",
+  "delete",
+  "by",
+  "asc",
+  "desc",
+  "nulls",
+  "window",
+  "procedure",
+  "function",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -308,11 +377,7 @@ function eq(a: string, b: string): boolean {
  * 定義本文 (元の SQL) から対象への参照位置を返す。オフセットは `sql` 上の位置。
  * テーブル検索ではテーブル参照、列検索では列参照を返す。
  */
-export function findReferences(
-  sql: string,
-  target: WhereUsedTarget,
-  driver?: string,
-): ReferenceHit[] {
+export function findReferences(sql: string, target: WhereUsedTarget, driver?: string): ReferenceHit[] {
   const text = prepareForReferenceScan(sql, driver);
   const chains = tokenizeChains(text, driver);
   const qualifiers = tableQualifiers(driver ?? "", target.database);
@@ -430,4 +495,3 @@ export function analyzeDefinition(
     lines: toReferenceLines(sql, hits),
   };
 }
-

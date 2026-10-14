@@ -22,16 +22,16 @@ const label = (tab: BottomPanelTab) =>
   tab === "output"
     ? t("outputTitle")
     : tab === "activity"
-        ? t("activityCenterTitle")
-        : tab === "advisor"
-    ? t("advisorTitle")
-    : tab === "inspector"
-      ? t("inspectorTitle")
-      : tab === "whereUsed"
-        ? t("whereUsedTitle")
-      : tab === "health"
-        ? t("healthTitle")
-        : t("processTitle");
+      ? t("activityCenterTitle")
+      : tab === "advisor"
+        ? t("advisorTitle")
+        : tab === "inspector"
+          ? t("inspectorTitle")
+          : tab === "whereUsed"
+            ? t("whereUsedTitle")
+            : tab === "health"
+              ? t("healthTitle")
+              : t("processTitle");
 
 function renderShell(overrides: Partial<Parameters<typeof BottomPanel>[0]> = {}) {
   const props = {
@@ -229,9 +229,7 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
     // フォーカス起因の吹き出しはキーボード移動のときだけ開く (Tab で到達した想定)。
     fireEvent.keyDown(window, { key: "Tab" });
     fireEvent.focus(screen.getByRole("button", { name: t("processTitle") }));
-    await waitFor(() =>
-      expect(screen.getByRole("tooltip")).toHaveTextContent(t("appToolsNeedsSession")),
-    );
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(t("appToolsNeedsSession")));
   });
 
   it("無効理由の生成にはタブも渡す (SQLite のプロセス/インスペクタで文言を分けるため)", async () => {
@@ -257,7 +255,10 @@ describe("BottomPanelStrip (折りたたみ時のパネルバー)", () => {
     );
     expect(screen.getByTestId("strip")).toBeInTheDocument();
     view.rerender(
-      <WorkspaceSplit bottom={<div data-testid="bottom">bottom</div>} collapsed={<div data-testid="strip">strip</div>}>
+      <WorkspaceSplit
+        bottom={<div data-testid="bottom">bottom</div>}
+        collapsed={<div data-testid="strip">strip</div>}
+      >
         <div data-testid="workspace">workspace</div>
       </WorkspaceSplit>,
     );

@@ -61,7 +61,8 @@ function tokenize(sql: string, driver: string): Token[] {
       // バックスラッシュが文字列エスケープなのは MySQL と PostgreSQL の E'...' だけ。
       // SQLite / PostgreSQL の通常文字列では `'\'` で文字列が閉じる。
       const backslashEscapes =
-        driver === "mysql" || (driver === "postgres" && /[eE]/.test(sql[i - 1] ?? "") && !/\w/.test(sql[i - 2] ?? ""));
+        driver === "mysql" ||
+        (driver === "postgres" && /[eE]/.test(sql[i - 1] ?? "") && !/\w/.test(sql[i - 2] ?? ""));
       let j = i + 1;
       while (j < n) {
         if (sql[j] === "\\" && c === "'" && backslashEscapes) {
@@ -117,9 +118,7 @@ function splitStatements(tokens: Token[]): Token[][] {
     }
   }
   stmts.push(cur);
-  return stmts
-    .map(trimWs)
-    .filter((s) => s.length > 0);
+  return stmts.map(trimWs).filter((s) => s.length > 0);
 }
 
 function trimWs(tokens: Token[]): Token[] {
@@ -247,10 +246,7 @@ export interface CloneOptions {
 const stripTrailingSemicolon = (s: string) => s.replace(/\s*;+\s*$/, "");
 
 /** `REFERENCES` の参照先が複製元テーブル自身か。別 DB/スキーマの同名テーブルは自己参照ではない。 */
-function isSelfReference(
-  o: CloneOptions,
-  ref: { last: string; qualifier: string | null },
-): boolean {
+function isSelfReference(o: CloneOptions, ref: { last: string; qualifier: string | null }): boolean {
   const ci = o.driver !== "postgres";
   const eq = (a: string, b: string) => (ci ? a.toLowerCase() === b.toLowerCase() : a === b);
   if (!eq(ref.last, o.sourceTable)) return false;
@@ -259,11 +255,7 @@ function isSelfReference(
 }
 
 /** CREATE TABLE 文を書き換える。 */
-function rewriteCreateTable(
-  tokens: Token[],
-  o: CloneOptions,
-  used: Set<string>,
-): Token[] | null {
+function rewriteCreateTable(tokens: Token[], o: CloneOptions, used: Set<string>): Token[] | null {
   let i = nextSig(tokens, 0);
   if (i < 0 || tokens[i].text.toUpperCase() !== "CREATE") return null;
   i = nextSig(tokens, i + 1);
@@ -280,10 +272,7 @@ function rewriteCreateTable(
   const nm = readQualifiedName(tokens, i);
   if (!nm) return null;
   const newName = qualified(o.driver, o.database, o.newTable);
-  const out: Token[] = [
-    ...tokens.slice(0, nm.start),
-    { kind: "word", text: newName },
-  ];
+  const out: Token[] = [...tokens.slice(0, nm.start), { kind: "word", text: newName }];
   const sameTable = (ref: { last: string; qualifier: string | null }) => isSelfReference(o, ref);
 
   let depth = 0;
@@ -340,11 +329,7 @@ function rewriteCreateTable(
 }
 
 /** CREATE [UNIQUE] INDEX 文を書き換える。 */
-function rewriteCreateIndex(
-  tokens: Token[],
-  o: CloneOptions,
-  used: Set<string>,
-): Token[] | null {
+function rewriteCreateIndex(tokens: Token[], o: CloneOptions, used: Set<string>): Token[] | null {
   let i = nextSig(tokens, 0);
   if (i < 0 || tokens[i].text.toUpperCase() !== "CREATE") return null;
   i = nextSig(tokens, i + 1);
@@ -369,10 +354,7 @@ function rewriteCreateIndex(
   const indexName =
     o.driver === "mysql"
       ? quoteIdentFor(o.driver, idx.last)
-      : quoteIdentFor(
-          o.driver,
-          cloneObjectName(o.driver, idx.last, o.sourceTable, o.newTable, used),
-        );
+      : quoteIdentFor(o.driver, cloneObjectName(o.driver, idx.last, o.sourceTable, o.newTable, used));
   // PostgreSQL のインデックスは対象テーブルと同じスキーマに作られる (名前は修飾しない)。
   return [
     ...tokens.slice(0, idx.start),
@@ -383,7 +365,11 @@ function rewriteCreateIndex(
   ];
 }
 
-const render = (tokens: Token[]) => tokens.map((t) => t.text).join("").trim();
+const render = (tokens: Token[]) =>
+  tokens
+    .map((t) => t.text)
+    .join("")
+    .trim();
 
 /** `REFERENCES` が複製元自身を指していたら新テーブルに付け替えたトークン列を返す。 */
 function retargetSelfReferences(tokens: Token[], o: CloneOptions, newName: string): Token[] {
@@ -422,10 +408,7 @@ function pgForeignKeyAlters(o: CloneOptions, used: Set<string>): string[] {
  * する (INSERT ... SELECT の行順で親より先に子が入ると 1452 で失敗するため)。`FOREIGN_KEY_CHECKS`
  * は触らない。`tokens` は既に新名向けに書き換え済みで、自己参照は新テーブルを指している。
  */
-function detachSelfForeignKeys(
-  tokens: Token[],
-  o: CloneOptions,
-): { tokens: Token[]; alters: string[] } {
+function detachSelfForeignKeys(tokens: Token[], o: CloneOptions): { tokens: Token[]; alters: string[] } {
   const open = tokens.findIndex((t) => t.kind === "punct" && t.text === "(");
   if (open < 0) return { tokens, alters: [] };
   const segs: Token[][] = [];
@@ -581,7 +564,9 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
   const oldName = qualified(o.driver, o.database, o.sourceTable);
   // 複製先が元と同名 (衝突チェックをすり抜けた入力) だと元テーブルを操作する文になるので弾く。
   const sameName =
-    o.driver === "postgres" ? o.newTable === o.sourceTable : o.newTable.toLowerCase() === o.sourceTable.toLowerCase();
+    o.driver === "postgres"
+      ? o.newTable === o.sourceTable
+      : o.newTable.toLowerCase() === o.sourceTable.toLowerCase();
   if (sameName) return { ...empty, errors: [`same table name: ${o.newTable}`] };
   const head: string[] = [];
   const afterData: string[] = [];
@@ -660,9 +645,7 @@ export function buildCloneStatements(o: CloneOptions): CloneResult {
 export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
   const tokens = tokenize(sql, o.driver);
   const first = tokens.find((t) => t.kind === "word")?.text.toUpperCase();
-  const lits = tokens
-    .filter((t) => t.kind === "string")
-    .map((t) => t.text.slice(1, -1).replace(/''/g, "'"));
+  const lits = tokens.filter((t) => t.kind === "string").map((t) => t.text.slice(1, -1).replace(/''/g, "'"));
   const isSource = (name: string) => {
     const nm = readQualifiedName(tokenize(name, o.driver), 0);
     return !!nm && nm.last.toLowerCase() === o.sourceTable.toLowerCase();
@@ -684,7 +667,8 @@ export function violatesLiteralRules(sql: string, o: CloneOptions): boolean {
 }
 
 function buildInsertSelect(o: CloneOptions, newName: string, oldName: string): string {
-  const cols = o.columns && o.columns.length > 0 ? o.columns.map((c) => quoteIdentFor(o.driver, c)).join(", ") : null;
+  const cols =
+    o.columns && o.columns.length > 0 ? o.columns.map((c) => quoteIdentFor(o.driver, c)).join(", ") : null;
   // PostgreSQL の GENERATED ALWAYS AS IDENTITY は OVERRIDING SYSTEM VALUE が無いと値を入れられない
   // (identity 列が無くても構文上は許される)。
   const override = o.driver === "postgres" && cols ? " OVERRIDING SYSTEM VALUE" : "";

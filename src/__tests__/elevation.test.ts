@@ -25,9 +25,7 @@ describe("z-index scale ordering (#500)", () => {
     const order = ["base", "sticky", "raised", "sidebar", "modal", "dropdown", "popover", "toast"];
     const values = order.map(zVar);
     for (let i = 1; i < values.length; i++) {
-      expect(values[i], `--z-${order[i]} must exceed --z-${order[i - 1]}`).toBeGreaterThan(
-        values[i - 1],
-      );
+      expect(values[i], `--z-${order[i]} must exceed --z-${order[i - 1]}`).toBeGreaterThan(values[i - 1]);
     }
   });
 

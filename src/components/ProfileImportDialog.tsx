@@ -104,13 +104,14 @@ export function ProfileImportDialog({ onConfirm, onCancel, encrypted = false, er
             </FormSection>
           </chakra.form>
         )}
-        {encrypted && error && <ErrorNote mb="3" role="alert">{error}</ErrorNote>}
+        {encrypted && error && (
+          <ErrorNote mb="3" role="alert">
+            {error}
+          </ErrorNote>
+        )}
         <chakra.div display="flex" flexDirection="column" gap="2">
           {options.map((o) => (
-            <Option
-              key={o.value}
-              borderColor={strategy === o.value ? "app.accent" : "app.border"}
-            >
+            <Option key={o.value} borderColor={strategy === o.value ? "app.accent" : "app.border"}>
               <Radio
                 name="profile-import-strategy"
                 checked={strategy === o.value}
@@ -118,9 +119,7 @@ export function ProfileImportDialog({ onConfirm, onCancel, encrypted = false, er
                 mt="0.75"
               />
               <chakra.span display="flex" flexDirection="column">
-                <chakra.span textStyle="subheading">
-                  {o.label}
-                </chakra.span>
+                <chakra.span textStyle="subheading">{o.label}</chakra.span>
                 <chakra.span fontSize="xs" color="app.textMuted">
                   {o.desc}
                 </chakra.span>
@@ -134,12 +133,7 @@ export function ProfileImportDialog({ onConfirm, onCancel, encrypted = false, er
         <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel} disabled={busy}>
           {t("confirmDefaultCancel")}
         </Button>
-        <PressableButton
-          type="button"
-          variant="primary"
-          disabled={!canSubmit}
-          onClick={() => void submit()}
-        >
+        <PressableButton type="button" variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
           {busy ? t("profileBackupImporting") : t("profileImportConfirm")}
         </PressableButton>
       </ModalFooter>

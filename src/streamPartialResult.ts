@@ -24,18 +24,12 @@ export interface PartialResult {
  * many rows the grid had already accumulated from `:rows` batches, so the
  * status message always shows *some* count instead of guessing 0.
  */
-export function resolveCancelledRows(
-  deliveredRows: number | null,
-  fallbackRows: number,
-): number {
+export function resolveCancelledRows(deliveredRows: number | null, fallbackRows: number): number {
   return deliveredRows ?? fallbackRows;
 }
 
 /** Builds the `partialResult` tab field for a user-driven cancel (#685). */
-export function cancelledPartialResult(
-  deliveredRows: number | null,
-  fallbackRows: number,
-): PartialResult {
+export function cancelledPartialResult(deliveredRows: number | null, fallbackRows: number): PartialResult {
   return { reason: "cancelled", rows: resolveCancelledRows(deliveredRows, fallbackRows) };
 }
 

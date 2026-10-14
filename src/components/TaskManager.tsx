@@ -73,13 +73,7 @@ const EXPORT_FORMAT_LABEL_KEYS: Record<ExportFormat, I18nKey> = {
  * フォーム・実行履歴・手動即時実行を 1 画面にまとめる。`SettingsView` と同じ
  * `Modal` ベースの全体レイアウトに乗せる。
  */
-export function TaskManager({
-  profiles,
-  onClose,
-}: {
-  profiles: ConnectionProfile[];
-  onClose: () => void;
-}) {
+export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile[]; onClose: () => void }) {
   const t = useT();
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
@@ -148,18 +142,21 @@ export function TaskManager({
 
   // 履歴取得の連番。タスクを切り替えた後に届く古い応答は捨てる。
   const runsSeqRef = useRef(0);
-  const loadRuns = useCallback(async (taskId: string) => {
-    const seq = ++runsSeqRef.current;
-    setRunsLoading(true);
-    try {
-      const rows = await api.listTaskRuns(taskId, 50);
-      if (seq === runsSeqRef.current) setRuns(rows);
-    } catch (e) {
-      if (seq === runsSeqRef.current) toast.error(String(e));
-    } finally {
-      if (seq === runsSeqRef.current) setRunsLoading(false);
-    }
-  }, [toast]);
+  const loadRuns = useCallback(
+    async (taskId: string) => {
+      const seq = ++runsSeqRef.current;
+      setRunsLoading(true);
+      try {
+        const rows = await api.listTaskRuns(taskId, 50);
+        if (seq === runsSeqRef.current) setRuns(rows);
+      } catch (e) {
+        if (seq === runsSeqRef.current) toast.error(String(e));
+      } finally {
+        if (seq === runsSeqRef.current) setRunsLoading(false);
+      }
+    },
+    [toast],
+  );
 
   // バックグラウンドスケジューラの発火 (このビューを開いたまま待っているとき) と、
   // 他タブ相当の手動実行のどちらでも一覧/履歴を追従させる。
@@ -287,7 +284,9 @@ export function TaskManager({
     <>
       <Modal
         // no-submit: 一覧 + 行内フォーム。フォームは自身の Cmd/Ctrl+Enter で保存する
-        onClose={onClose} width="880px">
+        onClose={onClose}
+        width="880px"
+      >
         <ModalHeader onClose={onClose} closeLabel={t("taskManagerClose")}>
           {t("taskManagerTitle")}
         </ModalHeader>
@@ -353,7 +352,9 @@ export function TaskManager({
                   icon="clock"
                   title={t("taskEmpty")}
                   // プロファイルが無いと作成できない (ヘッダの「新規タスク」も無効) ため CTA は出さない
-                  action={profiles.length > 0 ? { label: t("taskCreate"), onClick: openCreateForm } : undefined}
+                  action={
+                    profiles.length > 0 ? { label: t("taskCreate"), onClick: openCreateForm } : undefined
+                  }
                 />
               ) : (
                 <chakra.div display="flex" flexDirection="column" gap="2">
@@ -395,7 +396,11 @@ export function TaskManager({
 /** 進捗の件数を単位つきの文字列にする (行数 / バイト / 件)。 */
 function formatTaskProgress(p: TaskRunProgressEvent, t: ReturnType<typeof useT>): string {
   const key: I18nKey =
-    p.unit === "rows" ? "taskRunProgressRows" : p.unit === "bytes" ? "taskRunProgressBytes" : "taskRunProgressItems";
+    p.unit === "rows"
+      ? "taskRunProgressRows"
+      : p.unit === "bytes"
+        ? "taskRunProgressBytes"
+        : "taskRunProgressItems";
   return t(key, { count: p.count.toLocaleString() });
 }
 
@@ -442,13 +447,21 @@ function TaskRow({
   return (
     <chakra.div border="1px solid" borderColor="app.border" borderRadius="md" overflow="hidden">
       <Flex align="center" gap="3" px="3" py="2.5" flexWrap="wrap">
-        <Switch checked={task.enabled} onChange={onToggleEnabled} aria-label={t("taskToggleEnabled", { name: task.name })} />
+        <Switch
+          checked={task.enabled}
+          onChange={onToggleEnabled}
+          aria-label={t("taskToggleEnabled", { name: task.name })}
+        />
         <chakra.div flex="1" minW="180px">
           <chakra.div fontWeight={600} color="app.text">
             {task.name}
           </chakra.div>
           <chakra.div fontSize="xs" color="app.textMuted">
-            {profileName} · {summarizeAction(task.action, t)} · {summarizeSchedule(task.schedule, t, { now: task.next_run_at ? new Date(task.next_run_at) : now, locale })}
+            {profileName} · {summarizeAction(task.action, t)} ·{" "}
+            {summarizeSchedule(task.schedule, t, {
+              now: task.next_run_at ? new Date(task.next_run_at) : now,
+              locale,
+            })}
           </chakra.div>
         </chakra.div>
         <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right" textStyle="numeric">
@@ -463,7 +476,9 @@ function TaskRow({
         <chakra.div fontSize="xs" minW="70px" textAlign="right">
           {running && (
             <chakra.span color="app.textMuted" data-testid="task-run-progress">
-              {progress ? t("taskRunProgress", { progress: formatTaskProgress(progress, t) }) : t("taskRunning")}
+              {progress
+                ? t("taskRunProgress", { progress: formatTaskProgress(progress, t) })
+                : t("taskRunning")}
             </chakra.span>
           )}
           {!running && task.last_status === "ok" && (
@@ -476,7 +491,12 @@ function TaskRow({
         </chakra.div>
         <Flex gap="1.5">
           <Tooltip label={t("taskRunNow")}>
-            <Button type="button" onClick={onRunNow} disabled={runDisabled || running} aria-label={t("taskRunNow")}>
+            <Button
+              type="button"
+              onClick={onRunNow}
+              disabled={runDisabled || running}
+              aria-label={t("taskRunNow")}
+            >
               {running ? <Spinner size={14} decorative /> : <Icon name="query" size={ICON_SIZES.sm} />}
             </Button>
           </Tooltip>
@@ -511,7 +531,14 @@ function TaskRow({
         </Flex>
       </Flex>
       {expanded && (
-        <chakra.div id={`task-history-${task.id}`} borderTop="1px solid" borderColor="app.border" bg="app.toolbar" px="3" py="2.5">
+        <chakra.div
+          id={`task-history-${task.id}`}
+          borderTop="1px solid"
+          borderColor="app.border"
+          bg="app.toolbar"
+          px="3"
+          py="2.5"
+        >
           {runsLoading ? (
             <Spinner size={14} />
           ) : runs.length === 0 ? (
@@ -536,19 +563,35 @@ function TaskRow({
                   fontSize="xs"
                   fontFamily="var(--font-mono)"
                   textStyle="numeric"
-                  color={r.status === "ok" || r.status === "skipped" ? "app.textMuted" : semanticColorToken("danger", "text")}
+                  color={
+                    r.status === "ok" || r.status === "skipped"
+                      ? "app.textMuted"
+                      : semanticColorToken("danger", "text")
+                  }
                 >
                   <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
-                  <chakra.span minW="50px">{r.status === "skipped" ? t("taskRunStatusSkipped") : r.status}</chakra.span>
+                  <chakra.span minW="50px">
+                    {r.status === "skipped" ? t("taskRunStatusSkipped") : r.status}
+                  </chakra.span>
                   {r.catch_up && <chakra.span>({t("taskRunCatchUp")})</chakra.span>}
                   {r.attempts > 1 && <chakra.span>({t("taskRunAttempts", { n: r.attempts })})</chakra.span>}
-                  {r.output_path && <chakra.span flex="1" wordBreak="break-all">{r.output_path}</chakra.span>}
+                  {r.output_path && (
+                    <chakra.span flex="1" wordBreak="break-all">
+                      {r.output_path}
+                    </chakra.span>
+                  )}
                   {r.rows != null && <chakra.span>{t("taskRunRows", { rows: r.rows })}</chakra.span>}
                   {r.bytes != null && <chakra.span>{t("taskRunBytes", { bytes: r.bytes })}</chakra.span>}
                   {r.status === "skipped" ? (
-                    <chakra.span flex="1" wordBreak="break-all">{t("taskRunSkippedReason")}</chakra.span>
+                    <chakra.span flex="1" wordBreak="break-all">
+                      {t("taskRunSkippedReason")}
+                    </chakra.span>
                   ) : (
-                    r.error && <chakra.span flex="1" wordBreak="break-all">{r.error}</chakra.span>
+                    r.error && (
+                      <chakra.span flex="1" wordBreak="break-all">
+                        {r.error}
+                      </chakra.span>
+                    )
                   )}
                 </chakra.div>
               ))}
@@ -597,7 +640,13 @@ function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey
             <chakra.span minW="160px" flex="1" color="app.text" wordBreak="break-all">
               {tr.name}
             </chakra.span>
-            <Flex gap="0.5" role="img" aria-label={tr.dots.map((d) => (d ? t("taskAssertionPass") : t("taskAssertionFail"))).join(", ")}>
+            <Flex
+              gap="0.5"
+              role="img"
+              aria-label={tr.dots
+                .map((d) => (d ? t("taskAssertionPass") : t("taskAssertionFail")))
+                .join(", ")}
+            >
               {tr.dots.map((passed, i) => (
                 <chakra.span
                   key={i}
@@ -651,7 +700,7 @@ function TaskForm({
   const [sql, setSql] = useState(task?.action.kind === "export_query" ? task.action.sql : "");
   const [database, setDatabase] = useState(
     task?.action.kind === "export_query" || task?.action.kind === "run_assertions"
-      ? task.action.database ?? ""
+      ? (task.action.database ?? "")
       : task?.action.kind === "dump"
         ? task.action.database
         : "",
@@ -660,10 +709,12 @@ function TaskForm({
     task?.action.kind === "export_query" ? task.action.format : "csv",
   );
   const [sqlTable, setSqlTable] = useState(
-    task?.action.kind === "export_query" ? task.action.sql_table ?? "" : "",
+    task?.action.kind === "export_query" ? (task.action.sql_table ?? "") : "",
   );
   const [sqlBatchSize, setSqlBatchSize] = useState(
-    task?.action.kind === "export_query" && task.action.sql_batch_size ? String(task.action.sql_batch_size) : "",
+    task?.action.kind === "export_query" && task.action.sql_batch_size
+      ? String(task.action.sql_batch_size)
+      : "",
   );
   const [outputPath, setOutputPath] = useState(
     task && (task.action.kind === "export_query" || task.action.kind === "dump")
@@ -692,7 +743,10 @@ function TaskForm({
     task?.action.kind === "run_assertions" ? task.action.assertion_ids : [],
   );
   useEffect(() => {
-    void api.listAssertions().then(setAssertions).catch(() => setAssertions([]));
+    void api
+      .listAssertions()
+      .then(setAssertions)
+      .catch(() => setAssertions([]));
   }, []);
   const [dumpOptions, setDumpOptions] = useState<DumpOptions>(
     task?.action.kind === "dump" ? task.action.options : DEFAULT_DUMP_OPTIONS,
@@ -734,7 +788,20 @@ function TaskForm({
   const preview = outputPath ? previewOutputPath(outputPath, new Date()) : "";
 
   const browseOutputPath = async () => {
-    const ext = actionKind === "dump" ? "sql" : format === "json" ? "json" : format === "ndjson" ? "ndjson" : format === "markdown" ? "md" : format === "sql" ? "sql" : format === "xlsx" ? "xlsx" : "csv";
+    const ext =
+      actionKind === "dump"
+        ? "sql"
+        : format === "json"
+          ? "json"
+          : format === "ndjson"
+            ? "ndjson"
+            : format === "markdown"
+              ? "md"
+              : format === "sql"
+                ? "sql"
+                : format === "xlsx"
+                  ? "xlsx"
+                  : "csv";
     const picked = await saveFileDialog({
       title: t("taskOutputPathBrowseTitle"),
       defaultPath: `${name || "task"}.${ext}`,
@@ -918,7 +985,11 @@ function TaskForm({
           </FormSection>
           <FormSection>
             <FieldLabel htmlFor="task-format">{t("exportFormat")}</FieldLabel>
-            <Select id="task-format" value={format} onChange={(e) => setFormat(e.target.value as ExportFormat)}>
+            <Select
+              id="task-format"
+              value={format}
+              onChange={(e) => setFormat(e.target.value as ExportFormat)}
+            >
               {EXPORT_FORMATS.map((f) => (
                 <option key={f} value={f}>
                   {t(EXPORT_FORMAT_LABEL_KEYS[f])}
@@ -951,7 +1022,9 @@ function TaskForm({
             {t("taskFormTimelapseHint")}
           </chakra.p>
           <FormSection>
-            <FieldLabel htmlFor="task-timelapse-generations">{t("taskFormTimelapseMaxGenerations")}</FieldLabel>
+            <FieldLabel htmlFor="task-timelapse-generations">
+              {t("taskFormTimelapseMaxGenerations")}
+            </FieldLabel>
             <Input
               id="task-timelapse-generations"
               type="number"
@@ -993,7 +1066,14 @@ function TaskForm({
               ) : (
                 <chakra.div display="flex" flexDirection="column" gap="1" marginTop="1.5">
                   {assertions.map((a) => (
-                    <chakra.label key={a.id} display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
+                    <chakra.label
+                      key={a.id}
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1.5"
+                      fontSize="sm"
+                      color="app.textSecondary"
+                    >
                       <Checkbox
                         checked={assertionIds.includes(a.id)}
                         onChange={(e) =>
@@ -1040,7 +1120,14 @@ function TaskForm({
                   ["noCreateInfo", "dumpOptNoCreateInfo"],
                 ] as const
               ).map(([key, labelKey]) => (
-                <chakra.label key={key} display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
+                <chakra.label
+                  key={key}
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1.5"
+                  fontSize="sm"
+                  color="app.textSecondary"
+                >
                   <Checkbox
                     checked={dumpOptions[key]}
                     onChange={(e) => setDumpOptions((cur) => ({ ...cur, [key]: e.target.checked }))}
@@ -1054,24 +1141,24 @@ function TaskForm({
       )}
 
       {needsOutputPath && (
-      <FormSection>
-        <FieldLabel htmlFor="task-output-path">{t("taskFormOutputPath")}</FieldLabel>
-        <PathRow>
-          <Input
-            id="task-output-path"
-            value={outputPath}
-            onChange={(e) => setOutputPath(e.target.value)}
-            placeholder={t("taskFormOutputPathPlaceholder")}
-          />
-          <Button type="button" onClick={() => void browseOutputPath()}>
-            {t("dumpBrowse")}
-          </Button>
-        </PathRow>
-        <chakra.p margin={0} marginTop="1" fontSize="xs" color="app.textMuted">
-          {t("taskFormOutputPathHint")}
-          {preview && preview !== outputPath && <> — {t("taskFormOutputPathPreview", { path: preview })}</>}
-        </chakra.p>
-      </FormSection>
+        <FormSection>
+          <FieldLabel htmlFor="task-output-path">{t("taskFormOutputPath")}</FieldLabel>
+          <PathRow>
+            <Input
+              id="task-output-path"
+              value={outputPath}
+              onChange={(e) => setOutputPath(e.target.value)}
+              placeholder={t("taskFormOutputPathPlaceholder")}
+            />
+            <Button type="button" onClick={() => void browseOutputPath()}>
+              {t("dumpBrowse")}
+            </Button>
+          </PathRow>
+          <chakra.p margin={0} marginTop="1" fontSize="xs" color="app.textMuted">
+            {t("taskFormOutputPathHint")}
+            {preview && preview !== outputPath && <> — {t("taskFormOutputPathPreview", { path: preview })}</>}
+          </chakra.p>
+        </FormSection>
       )}
 
       <FormSection>

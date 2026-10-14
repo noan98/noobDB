@@ -81,8 +81,6 @@ describe("buildBlockingTree (#1417)", () => {
 
   it("根に繋がる循環外の待機者も循環とは別に扱える", () => {
     // 1 <-> 2 の循環と、そこにぶら下がる 3
-    expect(shape([proc(1, [2]), proc(2, [1]), proc(3, [2])]).map((r) => r[0])).toEqual([
-      1, 2, 1, 3,
-    ]);
+    expect(shape([proc(1, [2]), proc(2, [1]), proc(3, [2])]).map((r) => r[0])).toEqual([1, 2, 1, 3]);
   });
 });

@@ -151,9 +151,7 @@ describe("buildColumnStatsSql (#524)", () => {
       column: "ts_ns",
       kind: "number",
     });
-    expect(sql).toContain(
-      'CASE WHEN COUNT("ts_ns") = 0 THEN NULL ELSE TOTAL("ts_ns") END AS sum_value',
-    );
+    expect(sql).toContain('CASE WHEN COUNT("ts_ns") = 0 THEN NULL ELSE TOTAL("ts_ns") END AS sum_value');
     expect(sql).not.toContain("SUM(");
   });
 
@@ -246,7 +244,10 @@ describe("nullRatePercentOf / columnNullRates (#911)", () => {
   it("agrees with columnStats on the same values", () => {
     const values: CellValue[] = [1, null, 3, null, null];
     const viaStats = nullRatePercentOf(columnStats(values, "number"));
-    const viaRows = columnNullRates(values.map((v) => [v]), 1)[0];
+    const viaRows = columnNullRates(
+      values.map((v) => [v]),
+      1,
+    )[0];
     expect(viaRows).toBe(viaStats);
     expect(viaRows).toBe(60);
   });

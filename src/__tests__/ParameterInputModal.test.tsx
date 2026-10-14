@@ -41,10 +41,7 @@ describe("ParameterInputModal", () => {
 
     await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
 
-    expect(onSubmit).toHaveBeenCalledWith(
-      { tbl: "users", id: "42" },
-      { tbl: "identifier", id: "number" },
-    );
+    expect(onSubmit).toHaveBeenCalledWith({ tbl: "users", id: "42" }, { tbl: "identifier", id: "number" });
   });
 
   it("数値型に非数値を入れると実行を無効化しエラーを出す", async () => {
@@ -58,10 +55,7 @@ describe("ParameterInputModal", () => {
       screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "id" })),
       "number",
     );
-    await user.type(
-      screen.getByLabelText(t("parameterInputValueLabelFor", { name: "id" })),
-      "abc",
-    );
+    await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "id" })), "abc");
 
     expect(screen.getByText(t("parameterInputErrNumber"))).toBeInTheDocument();
     const run = screen.getByRole("button", { name: t("parameterInputRun") });
@@ -73,18 +67,10 @@ describe("ParameterInputModal", () => {
   it("展開後の SQL プレビューにエスケープ結果を表示する", async () => {
     const user = userEvent.setup();
     renderWithProviders(
-      <ParameterInputModal
-        sql="SELECT {{name}}"
-        driver="mysql"
-        onSubmit={() => {}}
-        onCancel={() => {}}
-      />,
+      <ParameterInputModal sql="SELECT {{name}}" driver="mysql" onSubmit={() => {}} onCancel={() => {}} />,
     );
     // シングルクオートを含む値が二重化されてプレビューに反映される。
-    await user.type(
-      screen.getByLabelText(t("parameterInputValueLabelFor", { name: "name" })),
-      "O'Brien",
-    );
+    await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "name" })), "O'Brien");
     expect(screen.getByText("SELECT 'O''Brien'")).toBeInTheDocument();
   });
 
@@ -96,12 +82,8 @@ describe("ParameterInputModal", () => {
     renderWithProviders(
       <ParameterInputModal sql={SQL} driver="mysql" onSubmit={() => {}} onCancel={() => {}} />,
     );
-    expect(
-      screen.getByLabelText(t("parameterInputValueLabelFor", { name: "tbl" })),
-    ).toHaveValue("");
-    expect(
-      screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" })),
-    ).toHaveValue("identifier");
+    expect(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "tbl" }))).toHaveValue("");
+    expect(screen.getByLabelText(t("parameterInputTypeLabelFor", { name: "tbl" }))).toHaveValue("identifier");
   });
 
   it("実行しても入力値を localStorage に平文で残さない", async () => {
@@ -114,10 +96,7 @@ describe("ParameterInputModal", () => {
         onCancel={() => {}}
       />,
     );
-    await user.type(
-      screen.getByLabelText(t("parameterInputValueLabelFor", { name: "pw" })),
-      "s3cret-value",
-    );
+    await user.type(screen.getByLabelText(t("parameterInputValueLabelFor", { name: "pw" })), "s3cret-value");
     await user.click(screen.getByRole("button", { name: t("parameterInputRun") }));
     expect(localStorage.getItem("noobdb.queryparams.v1") ?? "").not.toContain("s3cret-value");
   });

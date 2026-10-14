@@ -33,7 +33,6 @@ export interface ColumnFilter {
   caseSensitive?: boolean;
 }
 
-
 // Sort: nulls are pushed after non-null values for asc; flipped to top by desc inversion.
 function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): number {
   if (a === null && b === null) return 0;
@@ -41,7 +40,6 @@ function cmpNullable<T>(a: T | null, b: T | null, cmp: (a: T, b: T) => number): 
   if (b === null) return -1;
   return cmp(a, b);
 }
-
 
 /** 数値列の比較 (`Number()` 化。NaN は NULL の手前、NULL は最後)。 */
 export function compareNumericCells(av: CellValue, bv: CellValue): number {
@@ -116,8 +114,7 @@ function compileValuePredicate(f: ColumnFilter): (v: Exclude<CellValue, null | u
     case "endsWith": {
       const exact = f.caseSensitive === true && (f.op === "equals" || f.op === "notEquals");
       const q = exact ? f.value : f.value.toLowerCase();
-      const text = (v: Exclude<CellValue, null | undefined>) =>
-        exact ? String(v) : String(v).toLowerCase();
+      const text = (v: Exclude<CellValue, null | undefined>) => (exact ? String(v) : String(v).toLowerCase());
       if (f.op === "contains") return (v) => text(v).includes(q);
       if (f.op === "equals") return (v) => text(v) === q;
       if (f.op === "notEquals") return (v) => text(v) !== q;
@@ -175,10 +172,7 @@ function compileValuePredicate(f: ColumnFilter): (v: Exclude<CellValue, null | u
 }
 
 /** フィルタ条件オブジェクト単位でコンパイル済み述語を使い回す (状態更新ごとに新オブジェクトになる)。 */
-const compiledPredicates = new WeakMap<
-  ColumnFilter,
-  (v: Exclude<CellValue, null | undefined>) => boolean
->();
+const compiledPredicates = new WeakMap<ColumnFilter, (v: Exclude<CellValue, null | undefined>) => boolean>();
 
 function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFilter): boolean {
   let p = compiledPredicates.get(f);

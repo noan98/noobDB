@@ -10,28 +10,14 @@ import { t } from "../i18n";
  */
 describe("DumpModal render smoke (#604)", () => {
   it("mounts as a dialog and shows the dump title with the database name", () => {
-    renderWithProviders(
-      <DumpModal
-        sessionId="s1"
-        database="appdb"
-        driver="mysql"
-        onClose={() => {}}
-      />,
-    );
+    renderWithProviders(<DumpModal sessionId="s1" database="appdb" driver="mysql" onClose={() => {}} />);
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(t("dumpTitle", { database: "appdb" }))).toBeInTheDocument();
   });
 
   it("invokes onClose when the close control is activated", () => {
     const onClose = vi.fn();
-    renderWithProviders(
-      <DumpModal
-        sessionId="s1"
-        database="appdb"
-        driver="mysql"
-        onClose={onClose}
-      />,
-    );
+    renderWithProviders(<DumpModal sessionId="s1" database="appdb" driver="mysql" onClose={onClose} />);
     fireEvent.click(screen.getByRole("button", { name: t("dumpClose") }));
     expect(onClose).toHaveBeenCalledOnce();
   });
@@ -39,9 +25,7 @@ describe("DumpModal render smoke (#604)", () => {
   // SQLite はライブ接続から直接生成する (外部ツール不要) ので、外部ツール前提の
   // 注記ではなくネイティブ用の注記と、適用できるオプションを表示する。
   it("shows native-dump note and options for sqlite", () => {
-    renderWithProviders(
-      <DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />,
-    );
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
     expect(screen.getByText(t("dumpNoteNative"))).toBeInTheDocument();
     expect(screen.queryByText(t("dumpNote"))).not.toBeInTheDocument();
     expect(screen.getByText(t("dumpOptNoData"))).toBeInTheDocument();
@@ -53,9 +37,7 @@ describe("DumpModal render smoke (#604)", () => {
 
   // gzip (#1539): 全ドライバで選べ、切り替えると保存先の拡張子が .sql ⇔ .sql.gz に追従する。
   it("gzip toggle swaps the save path extension between .sql and .sql.gz", () => {
-    renderWithProviders(
-      <DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />,
-    );
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
     const pathInput = screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement;
     expect(pathInput.value.endsWith(".sql")).toBe(true);
     const gzip = screen.getByRole("switch", { name: t("dumpOptGzip") });

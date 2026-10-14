@@ -93,9 +93,7 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
             {t("profileBackupExportNote", { count: profileCount })}
           </chakra.p>
           <FormSection>
-            <FieldLabel htmlFor="profile-backup-passphrase">
-              {t("profileBackupPassphrase")}
-            </FieldLabel>
+            <FieldLabel htmlFor="profile-backup-passphrase">{t("profileBackupPassphrase")}</FieldLabel>
             <PassphraseInput
               id="profile-backup-passphrase"
               ref={firstRef}

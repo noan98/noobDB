@@ -15,11 +15,7 @@ import { t } from "../i18n";
 describe("WelcomeView (#599)", () => {
   it("renders the welcome heading and all three primary action cards", () => {
     const { getByText, getByRole } = renderWithProviders(
-      <WelcomeView
-        onCreateConnection={() => {}}
-        onOpenSqlite={() => {}}
-        onStartTour={() => {}}
-      />,
+      <WelcomeView onCreateConnection={() => {}} onOpenSqlite={() => {}} onStartTour={() => {}} />,
     );
     expect(getByText(t("welcomeTitle"))).toBeTruthy();
     expect(getByRole("button", { name: t("welcomeCreateConnectionTitle") })).toBeTruthy();
@@ -30,11 +26,7 @@ describe("WelcomeView (#599)", () => {
   it("invokes onCreateConnection when the connection card is activated", () => {
     const onCreateConnection = vi.fn();
     const { getByRole } = renderWithProviders(
-      <WelcomeView
-        onCreateConnection={onCreateConnection}
-        onOpenSqlite={() => {}}
-        onStartTour={() => {}}
-      />,
+      <WelcomeView onCreateConnection={onCreateConnection} onOpenSqlite={() => {}} onStartTour={() => {}} />,
     );
     fireEvent.click(getByRole("button", { name: t("welcomeCreateConnectionTitle") }));
     expect(onCreateConnection).toHaveBeenCalledOnce();
@@ -43,11 +35,7 @@ describe("WelcomeView (#599)", () => {
   it("invokes onStartTour when the tour card is activated", () => {
     const onStartTour = vi.fn();
     const { getByRole } = renderWithProviders(
-      <WelcomeView
-        onCreateConnection={() => {}}
-        onOpenSqlite={() => {}}
-        onStartTour={onStartTour}
-      />,
+      <WelcomeView onCreateConnection={() => {}} onOpenSqlite={() => {}} onStartTour={onStartTour} />,
     );
     fireEvent.click(getByRole("button", { name: t("welcomeStartTourTitle") }));
     expect(onStartTour).toHaveBeenCalledOnce();

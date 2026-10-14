@@ -74,18 +74,10 @@ describe("density tokens", () => {
 
   it("makes control vertical padding follow the density axis (not horizontal)", () => {
     // 縦余白は密度軸に追従し、横余白は font-scale のみ (密度で詰めない)。
-    expect(root).toMatch(
-      /--control-sm-py:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/,
-    );
-    expect(root).toMatch(
-      /--field-py:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/,
-    );
-    expect(root).not.toMatch(
-      /--control-px:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/,
-    );
-    expect(root).not.toMatch(
-      /--field-px:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/,
-    );
+    expect(root).toMatch(/--control-sm-py:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/);
+    expect(root).toMatch(/--field-py:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/);
+    expect(root).not.toMatch(/--control-px:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/);
+    expect(root).not.toMatch(/--field-px:\s*calc\([^;]*var\(--density-control-scale\)[^;]*\);/);
   });
 });
 

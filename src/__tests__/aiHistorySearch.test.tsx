@@ -71,7 +71,13 @@ function enable(opts: { sendScope?: "schemaOnly" | "schemaAndSql"; enabled?: boo
 const onOpen = vi.fn();
 const entries = [entry(1, { sql_preview: "SELECT sum(x) FROM sales" }), entry(2)];
 
-const FILTERS: HistoryFilterParams = { profileId: "p1", search: "sales", status: "ok", from: "2026-01-01T00:00:00Z", to: null };
+const FILTERS: HistoryFilterParams = {
+  profileId: "p1",
+  search: "sales",
+  status: "ok",
+  from: "2026-01-01T00:00:00Z",
+  to: null,
+};
 
 function ui(list: HistoryEntry[] = entries) {
   listHistory.mockResolvedValue(list);
@@ -299,7 +305,10 @@ describe("AiHistorySearch (#699)", () => {
     expect(getHistorySql).toHaveBeenCalledTimes(300);
     expect(runAiRequest.mock.calls[0][0].prompt).not.toContain("[id=301]");
     act(() => {
-      handlers?.onDelta?.({ streamId: "x", text: JSON.stringify({ matches: [{ history_id: "1", relevance: 1, reason: "r" }] }) });
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({ matches: [{ history_id: "1", relevance: 1, reason: "r" }] }),
+      });
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("r");
@@ -374,11 +383,16 @@ describe("AiHistorySearch (#699)", () => {
     await confirmSend();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     act(() => {
-      handlers?.onDelta?.({ streamId: "x", text: JSON.stringify({ matches: [{ history_id: "1", relevance: 50, reason: "keep" }] }) });
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({ matches: [{ history_id: "1", relevance: 50, reason: "keep" }] }),
+      });
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("keep");
-    rerender(<AiHistorySearch filters={{ ...FILTERS, search: null }} periodLabel="All time" onOpen={onOpen} />);
+    rerender(
+      <AiHistorySearch filters={{ ...FILTERS, search: null }} periodLabel="All time" onOpen={onOpen} />,
+    );
     expect(screen.getByText("keep")).toBeTruthy();
     expect(screen.getByText("SELECT sum(x) FROM sales")).toBeTruthy();
   });

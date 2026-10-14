@@ -8,7 +8,13 @@ import { t } from "../i18n";
 const columns = [{ name: "url", type_name: "varchar(255)" }] as unknown as Column[];
 
 function result(n: number): QueryResult {
-  return { columns: [], rows: [[n]], rows_affected: 0, elapsed_ms: 1, server_messages: [] } as unknown as QueryResult;
+  return {
+    columns: [],
+    rows: [[n]],
+    rows_affected: 0,
+    elapsed_ms: 1,
+    server_messages: [],
+  } as unknown as QueryResult;
 }
 
 beforeEach(() => vi.useFakeTimers());
@@ -45,8 +51,12 @@ describe("GridReplaceModal: 列全体モードの対象行数 (#1536)", () => {
       await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS + 10);
     });
     expect(lookup).toHaveBeenCalledTimes(1);
-    expect(lookup.mock.calls[0][0]).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE REGEXP_LIKE(`url`, 'http://', 'i')");
-    expect(screen.getByTestId("grid-replace-count")).toHaveTextContent(t("gridReplaceColumnCount", { count: "42" }));
+    expect(lookup.mock.calls[0][0]).toBe(
+      "SELECT COUNT(*) FROM `app`.`users` WHERE REGEXP_LIKE(`url`, 'http://', 'i')",
+    );
+    expect(screen.getByTestId("grid-replace-count")).toHaveTextContent(
+      t("gridReplaceColumnCount", { count: "42" }),
+    );
   });
 
   it("onLookupQuery が無ければ件数は出さない", async () => {

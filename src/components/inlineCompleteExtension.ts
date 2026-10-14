@@ -182,7 +182,8 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
         // 構築中は dispatch できないので次のマイクロタスクで。
         if (inlineSuggestionOf(view.state)) {
           queueMicrotask(() => {
-            if (inlineSuggestionOf(this.view.state)) this.view.dispatch({ effects: setSuggestionEffect.of(null) });
+            if (inlineSuggestionOf(this.view.state))
+              this.view.dispatch({ effects: setSuggestionEffect.of(null) });
           });
         }
       }

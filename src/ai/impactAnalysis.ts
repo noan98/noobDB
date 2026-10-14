@@ -63,18 +63,14 @@ export const IMPACT_ANALYSIS_FORMAT = {
 
 const responseSchema = z.object({
   summary: z.string(),
-  affected_tables: z.array(
-    z.object({ table: z.string(), estimated_rows: z.string(), reason: z.string() }),
-  ),
+  affected_tables: z.array(z.object({ table: z.string(), estimated_rows: z.string(), reason: z.string() })),
   cascades: z.array(z.object({ from: z.string(), to: z.string(), via: z.string() })),
   risk: z.enum(IMPACT_RISKS),
   recommendations: z.array(z.string()),
 });
 export type ImpactAnalysisResponse = z.infer<typeof responseSchema>;
 
-export type ParsedImpactAnalysis =
-  | { ok: true; value: ImpactAnalysisResponse }
-  | { ok: false; raw: string };
+export type ParsedImpactAnalysis = { ok: true; value: ImpactAnalysisResponse } | { ok: false; raw: string };
 
 /** ストリームで結合した本文を JSON として解釈する。失敗時は本文をそのまま返す。 */
 export function parseImpactAnalysisResponse(text: string): ParsedImpactAnalysis {
@@ -106,7 +102,10 @@ function unquoteIdent(ident: string): string {
 export function findingTableRef(finding: DangerFinding): TableRef | null {
   if (!finding.target) return null;
   // `a.b` の区切り。クォート内のドットまでは扱わない (ベストエフォート)。
-  const parts = finding.target.split(".").map(unquoteIdent).filter((p) => p !== "");
+  const parts = finding.target
+    .split(".")
+    .map(unquoteIdent)
+    .filter((p) => p !== "");
   if (parts.length === 0) return null;
   const table = parts[parts.length - 1];
   const database = parts.length > 1 ? parts[parts.length - 2] : null;
@@ -117,11 +116,7 @@ export function findingTableRef(finding: DangerFinding): TableRef | null {
  * 分析対象のテーブル参照。検出結果の対象 (DROP / TRUNCATE も拾える) を先頭に、
  * SQL から抽出したテーブルを重複なしで足す。上限は `ERROR_EXPLAIN_MAX_TABLES`。
  */
-export function impactTableRefs(
-  sql: string,
-  findings: DangerFinding[],
-  driver: string,
-): TableRef[] {
+export function impactTableRefs(sql: string, findings: DangerFinding[], driver: string): TableRef[] {
   const seen = new Set<string>();
   const out: TableRef[] = [];
   const add = (ref: TableRef | null) => {
@@ -145,10 +140,7 @@ export interface ImpactForeignKey {
 }
 
 /** 対象テーブルが参照する / 参照される FK だけに絞る (大文字小文字は無視)。 */
-export function selectRelatedForeignKeys(
-  fks: ImpactForeignKey[],
-  tableNames: string[],
-): ImpactForeignKey[] {
+export function selectRelatedForeignKeys(fks: ImpactForeignKey[], tableNames: string[]): ImpactForeignKey[] {
   const names = new Set(tableNames.map((n) => n.toLowerCase()));
   return fks
     .filter((fk) => names.has(fk.table.toLowerCase()) || names.has(fk.referenced_table.toLowerCase()))
@@ -197,7 +189,7 @@ export function buildImpactAnalysisSystem(locale: "ja" | "en"): string {
     `Write all text fields in ${lang}.`,
     "Answer only with the JSON object described by the schema.",
     "summary: what the statement will do and how far it reaches, in plain words.",
-    "affected_tables: each table that is changed or lost; estimated_rows is a short human-readable estimate (e.g. \"all ~12,000 rows\", \"unknown\"); reason explains why.",
+    'affected_tables: each table that is changed or lost; estimated_rows is a short human-readable estimate (e.g. "all ~12,000 rows", "unknown"); reason explains why.',
     "cascades: effects that may propagate through foreign keys (from -> to, via = constraint or column); use an empty array when none are indicated by the given schema.",
     "ON DELETE / ON UPDATE rules are NOT provided. Describe cascades only as possibilities that depend on the rule (CASCADE / SET NULL / RESTRICT), and recommend checking the rule.",
     "risk: high (data loss / whole table / irreversible), medium, or low.",
@@ -228,9 +220,7 @@ export function buildImpactAnalysisPrompt(input: ImpactAnalysisInput): string {
     lines.push(`Preflight: ${parts.join(", ")}`);
   }
   lines.push("");
-  lines.push(
-    input.maskLiterals ? "SQL (string literals and comments are blanked):" : "SQL:",
-  );
+  lines.push(input.maskLiterals ? "SQL (string literals and comments are blanked):" : "SQL:");
   lines.push(sqlForAi(input.sql, input.driver, input.maskLiterals));
   if (input.tables.length > 0) {
     lines.push("");
@@ -249,7 +239,9 @@ export function buildImpactAnalysisPrompt(input: ImpactAnalysisInput): string {
   }
   if (input.foreignKeys.length > 0) {
     lines.push("");
-    lines.push("Foreign keys touching these tables (child.column -> parent.column) (referential actions unknown):");
+    lines.push(
+      "Foreign keys touching these tables (child.column -> parent.column) (referential actions unknown):",
+    );
     for (const fk of input.foreignKeys) {
       lines.push(
         `- ${fk.table}.${fk.column} -> ${fk.referenced_table}.${fk.referenced_column ?? "?"}${

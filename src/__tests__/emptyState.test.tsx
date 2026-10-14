@@ -26,12 +26,7 @@ describe("EmptyState onboarding (#450)", () => {
 
   it("falls back to the small icon badge in compact layout (no illustration)", () => {
     const { container } = renderWithProviders(
-      <EmptyState
-        compact
-        illustration={<WelcomeIllustration />}
-        icon="table"
-        title="No rows"
-      />,
+      <EmptyState compact illustration={<WelcomeIllustration />} icon="table" title="No rows" />,
     );
     // compact ではイラストを出さず、アイコンバッジ (svg) のみ。少なくとも 1 つの svg。
     expect(container.querySelectorAll("svg").length).toBeGreaterThanOrEqual(1);
@@ -40,9 +35,7 @@ describe("EmptyState onboarding (#450)", () => {
 
 describe("EmptyState secondaryActions (#1271)", () => {
   it("renders secondary buttons with shortcut hints and fires handlers", async () => {
-    const { buildTabsEmptyActions, TABS_EMPTY_ACTIONS } = await import(
-      "../components/tabsEmptyActions"
-    );
+    const { buildTabsEmptyActions, TABS_EMPTY_ACTIONS } = await import("../components/tabsEmptyActions");
     const { fireEvent } = await import("@testing-library/react");
     const calls: string[] = [];
     const items = buildTabsEmptyActions(

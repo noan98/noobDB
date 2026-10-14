@@ -183,10 +183,7 @@ describe("ComboSelect の選択", () => {
 
     await user.keyboard("{ArrowUp}");
     let options = screen.getAllByRole("option");
-    expect(input).toHaveAttribute(
-      "aria-activedescendant",
-      options[OPTIONS.length - 1].id,
-    );
+    expect(input).toHaveAttribute("aria-activedescendant", options[OPTIONS.length - 1].id);
 
     // 末尾からさらに 1 つ進めると先頭へループする。
     await user.keyboard("{ArrowDown}");
@@ -277,9 +274,17 @@ describe("ComboSelect の位置追従 (#1534)", () => {
   it("開いている間に祖先がスクロールされると、入力欄の新しい位置へ追従する", async () => {
     const user = userEvent.setup();
     let anchorTop = 100;
-    vi.spyOn(HTMLInputElement.prototype, "getBoundingClientRect").mockImplementation(
-      () => ({ left: 20, right: 220, top: anchorTop, bottom: anchorTop + 30, width: 200, height: 30, x: 20, y: anchorTop, toJSON: () => ({}) }),
-    );
+    vi.spyOn(HTMLInputElement.prototype, "getBoundingClientRect").mockImplementation(() => ({
+      left: 20,
+      right: 220,
+      top: anchorTop,
+      bottom: anchorTop + 30,
+      width: 200,
+      height: 30,
+      x: 20,
+      y: anchorTop,
+      toJSON: () => ({}),
+    }));
     renderCombo();
     await user.click(screen.getByRole("combobox"));
     const listbox = screen.getByRole("listbox");

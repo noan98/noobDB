@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges, type DirtyTabLike } from "../tabDirty";
+import {
+  closeGuard,
+  hasPendingChanges,
+  isTabDirty,
+  tabsWithPendingChanges,
+  type DirtyTabLike,
+} from "../tabDirty";
 
 const base = (over: Partial<DirtyTabLike> = {}): DirtyTabLike => ({
   kind: "table",
@@ -54,7 +60,10 @@ describe("tabsWithPendingChanges", () => {
 });
 
 describe("closeGuard", () => {
-  const mk = (id: string, over: Partial<DirtyTabLike> & { applyingEdits?: boolean } = {}) => ({ id, ...base(over) });
+  const mk = (id: string, over: Partial<DirtyTabLike> & { applyingEdits?: boolean } = {}) => ({
+    id,
+    ...base(over),
+  });
 
   it("未確定編集が無ければ ok", () => {
     expect(closeGuard([mk("a"), mk("b")], ["a", "b"])).toEqual({ kind: "ok" });

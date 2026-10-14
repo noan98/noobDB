@@ -14,44 +14,26 @@ describe("splitSqlStatements", () => {
   });
 
   it("does not split on a semicolon inside a string literal", () => {
-    expect(splitSqlStatements("SELECT ';' AS s; SELECT 2")).toEqual([
-      "SELECT ';' AS s",
-      "SELECT 2",
-    ]);
+    expect(splitSqlStatements("SELECT ';' AS s; SELECT 2")).toEqual(["SELECT ';' AS s", "SELECT 2"]);
   });
 
   it("handles doubled-quote escapes inside strings", () => {
-    expect(splitSqlStatements("SELECT 'a;''b'; SELECT 2")).toEqual([
-      "SELECT 'a;''b'",
-      "SELECT 2",
-    ]);
+    expect(splitSqlStatements("SELECT 'a;''b'; SELECT 2")).toEqual(["SELECT 'a;''b'", "SELECT 2"]);
   });
 
   it("ignores semicolons in identifiers and backticks", () => {
-    expect(splitSqlStatements('SELECT "a;b"; SELECT `c;d`')).toEqual([
-      'SELECT "a;b"',
-      "SELECT `c;d`",
-    ]);
+    expect(splitSqlStatements('SELECT "a;b"; SELECT `c;d`')).toEqual(['SELECT "a;b"', "SELECT `c;d`"]);
   });
 
   it("ignores semicolons inside line and block comments", () => {
-    expect(splitSqlStatements("SELECT 1 -- a; b\n; SELECT 2")).toEqual([
-      "SELECT 1 -- a; b",
-      "SELECT 2",
-    ]);
-    expect(splitSqlStatements("SELECT 1 /* x; y */; SELECT 2")).toEqual([
-      "SELECT 1 /* x; y */",
-      "SELECT 2",
-    ]);
+    expect(splitSqlStatements("SELECT 1 -- a; b\n; SELECT 2")).toEqual(["SELECT 1 -- a; b", "SELECT 2"]);
+    expect(splitSqlStatements("SELECT 1 /* x; y */; SELECT 2")).toEqual(["SELECT 1 /* x; y */", "SELECT 2"]);
   });
 
   it("treats `#` as a line comment, matching dangerousSql.ts's maskLiterals (#J3)", () => {
     // A `;` after `#` is inside the (now-recognized) comment, so it is not a
     // statement boundary.
-    expect(splitSqlStatements("SELECT 1 # a; b\n; SELECT 2")).toEqual([
-      "SELECT 1 # a; b",
-      "SELECT 2",
-    ]);
+    expect(splitSqlStatements("SELECT 1 # a; b\n; SELECT 2")).toEqual(["SELECT 1 # a; b", "SELECT 2"]);
     // Regression: this is the exact input from #J3 — PostgreSQL's `#>>`
     // operator followed by a stacked DELETE. Before the fix, `splitSqlStatements`
     // did not treat `#` as a comment, so it saw two statements here
@@ -60,9 +42,9 @@ describe("splitSqlStatements", () => {
     // saw one statement with the DELETE masked away as "comment" text — the
     // mismatch meant the dangerous-write confirmation could be skipped. Both
     // now agree it is a single statement.
-    expect(
-      splitSqlStatements("SELECT data #>> '{a}' FROM t; DELETE FROM t"),
-    ).toEqual(["SELECT data #>> '{a}' FROM t; DELETE FROM t"]);
+    expect(splitSqlStatements("SELECT data #>> '{a}' FROM t; DELETE FROM t")).toEqual([
+      "SELECT data #>> '{a}' FROM t; DELETE FROM t",
+    ]);
   });
 
   it("drops a trailing `#`-comment-only fragment", () => {
@@ -70,8 +52,7 @@ describe("splitSqlStatements", () => {
   });
 
   it("keeps a dollar-quoted function body as a single statement", () => {
-    const sql =
-      "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()";
+    const sql = "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql; SELECT f()";
     expect(splitSqlStatements(sql)).toEqual([
       "CREATE FUNCTION f() RETURNS int AS $$ BEGIN; RETURN 1; END; $$ LANGUAGE plpgsql",
       "SELECT f()",
@@ -86,19 +67,13 @@ describe("splitSqlStatements", () => {
   it("does not mistake parameter placeholders for dollar-quote tags", () => {
     // `$1$ ... $1$` のような数字始まりタグは PostgreSQL では無効 ($1 はパラメータ)。
     // 文字列とみなして 2 文目を飲み込まないこと。
-    expect(splitSqlStatements("SELECT $1; SELECT $1")).toEqual([
-      "SELECT $1",
-      "SELECT $1",
-    ]);
+    expect(splitSqlStatements("SELECT $1; SELECT $1")).toEqual(["SELECT $1", "SELECT $1"]);
   });
 
   it("does not treat `$` inside an identifier as a dollar-quote opener", () => {
     // MySQL は識別子に `$` を許す。`a$tag$` ... `b$tag$` で挟まれた `;` を
     // ドル引用の内側と誤認して分割を失わないこと。
-    expect(splitSqlStatements("SELECT a$tag$; SELECT b$tag$")).toEqual([
-      "SELECT a$tag$",
-      "SELECT b$tag$",
-    ]);
+    expect(splitSqlStatements("SELECT a$tag$; SELECT b$tag$")).toEqual(["SELECT a$tag$", "SELECT b$tag$"]);
   });
 
   it("returns the whole input when there is a single statement", () => {
@@ -126,10 +101,7 @@ describe("splitSqlStatements — driver-aware backslash escaping (#852, #1004)",
   it.each(["postgres", "sqlite"])(
     "splits into two statements on %s (backslash is not an escape)",
     (driver) => {
-      expect(splitSqlStatements(sql, driver)).toEqual([
-        "SELECT '\\' AS x",
-        "DROP TABLE t",
-      ]);
+      expect(splitSqlStatements(sql, driver)).toEqual(["SELECT '\\' AS x", "DROP TABLE t"]);
     },
   );
 
@@ -261,7 +233,13 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
   const cols = [{ name: "id", type_name: "INTEGER" }];
 
   it("結果セットを返した文は columns / rows をそのまま結果ビューへ渡す", () => {
-    const wire = { sql: "SELECT id FROM t", status: "ok" as const, columns: cols, rows: [[1], [2]], elapsedMs: 3 };
+    const wire = {
+      sql: "SELECT id FROM t",
+      status: "ok" as const,
+      columns: cols,
+      rows: [[1], [2]],
+      elapsedMs: 3,
+    };
     expect(toBatchResult(wire)).toEqual({
       sql: "SELECT id FROM t",
       status: "ok",
@@ -282,7 +260,12 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
 
   it("columns の無い成功は影響行数の結果", () => {
     const wire = { sql: "DELETE FROM t", status: "ok" as const, rowsAffected: 4, elapsedMs: 1 };
-    expect(toBatchResult(wire)).toMatchObject({ status: "ok", rowsAffected: 4, columns: undefined, rows: undefined });
+    expect(toBatchResult(wire)).toMatchObject({
+      status: "ok",
+      rowsAffected: 4,
+      columns: undefined,
+      rows: undefined,
+    });
     expect(toBatchOutputInput(wire)).toMatchObject({ outcome: "affected", rows: 4 });
     // rowsAffected が無くても 0 件として扱う。
     expect(toBatchResult({ sql: "SELECT 1 WHERE 0", status: "ok" })).toMatchObject({ rowsAffected: 0 });
@@ -300,7 +283,13 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
     });
     expect(cut).toMatchObject({ truncated: true, totalRows: 10000 });
     // 0 行の SELECT も列見出し付きの結果セットとして扱い、影響行数にはしない。
-    const empty = toBatchResult({ sql: "SELECT id FROM t WHERE 0", status: "ok", columns, rows: [], totalRows: 0 });
+    const empty = toBatchResult({
+      sql: "SELECT id FROM t WHERE 0",
+      status: "ok",
+      columns,
+      rows: [],
+      totalRows: 0,
+    });
     expect(empty).toMatchObject({ columns, rows: [], totalRows: 0, rowsAffected: undefined });
     expect(empty.truncated).toBeUndefined();
   });
@@ -326,6 +315,9 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
       error: "boom",
     });
     expect(toBatchResult({ sql: "Y", status: "skipped" })).toEqual({ sql: "Y", status: "skipped" });
-    expect(toBatchOutputInput({ sql: "Y", status: "skipped" })).toMatchObject({ outcome: "skipped", rows: null });
+    expect(toBatchOutputInput({ sql: "Y", status: "skipped" })).toMatchObject({
+      outcome: "skipped",
+      rows: null,
+    });
   });
 });

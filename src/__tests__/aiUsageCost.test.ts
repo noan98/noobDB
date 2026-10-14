@@ -55,11 +55,7 @@ describe("AI 使用量の集計と概算コスト (#1540)", () => {
     ]);
     expect(report.total.calls).toBe(10);
     expect(report.total.unpricedCalls).toBe(4);
-    expect(report.byModel.map((a) => a.key)).toEqual([
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
-      "legacy-model",
-    ]);
+    expect(report.byModel.map((a) => a.key)).toEqual(["claude-opus-5-5", "claude-haiku-5-5", "legacy-model"]);
     expect(report.byTask.map((a) => a.key)).toEqual(["nl2sql", "generic"]);
     expect(report.byDay.map((a) => a.key)).toEqual(["2026-10-12", "2026-10-11"]);
   });

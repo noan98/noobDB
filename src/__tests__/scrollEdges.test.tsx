@@ -21,9 +21,12 @@ const base: ScrollMetrics = {
 
 describe("computeScrollEdges (#1073)", () => {
   it("はみ出していなければどの端にも影を出さない", () => {
-    expect(
-      computeScrollEdges({ ...base, scrollWidth: 400, scrollHeight: 300 }),
-    ).toEqual({ start: false, end: false, top: false, bottom: false });
+    expect(computeScrollEdges({ ...base, scrollWidth: 400, scrollHeight: 300 })).toEqual({
+      start: false,
+      end: false,
+      top: false,
+      bottom: false,
+    });
   });
 
   it("左端にいるときは右 (end) のみ", () => {
@@ -66,9 +69,10 @@ describe("computeScrollEdges (#1073)", () => {
       start: true,
       end: true,
     });
-    expect(
-      computeScrollEdges(m, { insetStart: 200, insetEnd: 100, minVisibleWidth: 100 }),
-    ).toMatchObject({ start: false, end: false });
+    expect(computeScrollEdges(m, { insetStart: 200, insetEnd: 100, minVisibleWidth: 100 })).toMatchObject({
+      start: false,
+      end: false,
+    });
   });
 
   it("不正な option 値は既定値として扱う", () => {
