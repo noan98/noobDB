@@ -157,7 +157,7 @@ describe("App.tsx の結線 (#1311)", () => {
 
   it("Suspense は KeepAlive の内側 (サーフェス単位) に置く", () => {
     expect(appSource).toMatch(
-      /<KeepAlive[\s\S]{0,500}?>\s*<Suspense fallback=\{<PaneEmpty><Spinner size=\{20\} \/><\/PaneEmpty>\}>\s*\{showCompare \? \(/,
+      /<KeepAlive[\s\S]{0,500}?>\s*<Suspense\s+fallback=\{\s*<PaneEmpty>\s*<Spinner size=\{20\} \/>\s*<\/PaneEmpty>\s*\}\s*>\s*\{showCompare \? \(/,
     );
   });
 
