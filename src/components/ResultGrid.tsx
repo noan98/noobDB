@@ -149,6 +149,7 @@ import {
   countEditedRows,
   editIsNoop,
   hasAmbiguousIdentity,
+  isBinaryColumnType,
   isEditableColumnType,
   resolveRowIdentity,
   rowEditKey,
@@ -1507,10 +1508,14 @@ function cellToText(v: CellValue): string {
  * 流用する。NULL/undefined の列だけキー自体を省く (フォーム上は空欄のまま = 未設定)。
  * 元の値が空文字 ('') の列は NULL と区別し、空文字のまま種に入れる (#1526)。
  */
-function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
+export function rowToPendingInsert(row: CellValue[], columns: Column[] = []): PendingInsertRow {
   const seed: PendingInsertRow = {};
   row.forEach((v, i) => {
     if (v === null || v === undefined) return;
+    // BLOB/BINARY/BYTEA は 16 進文字列で届く。そのまま種にすると文字列として
+    // INSERT され静かに壊れるため、種に入れず空欄 (既定値/NULL) にする。
+    const typeName = columns[i]?.type_name;
+    if (typeName && isBinaryColumnType(typeName)) return;
     const text = cellToText(v);
     // 空文字は素の "" (= 空欄 = 既定値) と区別して明示値にする (#1526)。
     seed[i] = text === "" ? { empty: true } : text;
@@ -6607,7 +6612,7 @@ export const DataGrid = memo(function DataGrid({
                     onSelect: () => {
                       const row = rows[copyMenu.rowIdx];
                       setCopyMenu(null);
-                      if (row) onDuplicateRow(rowToPendingInsert(row));
+                      if (row) onDuplicateRow(rowToPendingInsert(row, columns));
                     },
                   },
                 ]

@@ -449,7 +449,7 @@ import { reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
-import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
+import { buildPageSql, canGoNext, canGoPrev, clampPage, effectiveTotalPages } from "./pagination";
 import {
   buildKeysetPageSql,
   keysetMoveFor,
@@ -1098,9 +1098,10 @@ function classifyDroppedFile(path: string): DroppedKind {
  */
 type DragFeedback = { accept: boolean; kind: "sql" | "csv" | "mixed" | "reject" };
 
-function dragFeedbackFor(paths: string[]): DragFeedback {
+function dragFeedbackFor(paths: string[], connected: boolean): DragFeedback {
   const kinds = new Set(paths.map(classifyDroppedFile));
-  const hasSql = kinds.has("sql");
+  // 未接続では .sql を開けない (handleFilesDropped が拒否する) ので受理表示にしない。
+  const hasSql = connected && kinds.has("sql");
   const hasCsv = kinds.has("csv");
   if (!hasSql && !hasCsv) return { accept: false, kind: "reject" };
   if (hasSql && hasCsv) return { accept: true, kind: "mixed" };
@@ -1580,6 +1581,8 @@ export default function App() {
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
+  // 直近のプロファイル読込が失敗したか。失敗時に空配列をウェルカム (初回起動) と取り違えない。
+  const [profilesLoadError, setProfilesLoadError] = useState<string | null>(null);
   // サンドボックス (壊せる砂場、#747) の一覧。`ConnectionList` の通常プロファイル
   // ツリーとは独立した専用セクション (`SandboxSection`) に描画する — 詳細は
   // `sandbox.ts` の `sandboxToProfile` のコメントを参照。
@@ -2532,7 +2535,9 @@ export default function App() {
     try {
       const list = await api.listProfiles();
       setProfiles(list);
+      setProfilesLoadError(null);
     } catch (e) {
+      setProfilesLoadError(String(e));
       setStatus({ kind: "key", key: "statusFailedLoadProfiles", vars: { error: String(e) }, error: true });
     }
   }, []);
@@ -3226,7 +3231,7 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
-  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean }) => {
+  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean; skipPersist?: boolean }) => {
     if (target.sessionId === sessionId) return;
     if (!(await confirmDiscardPendingEdits())) return;
     // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
@@ -3243,7 +3248,8 @@ export default function App() {
     reconnectAbortRef.current = true;
     reconnectingRef.current = false;
     // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
-    if (selectedProfile) persistTabsForProfile(selectedProfile.id);
+    // 切断経路 (handleDisconnect) は退避済みでタブが空なので、空で上書きしない。
+    if (selectedProfile && !opts?.skipPersist) persistTabsForProfile(selectedProfile.id);
     await closeAllTabs();
     // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
     // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
@@ -3558,7 +3564,7 @@ export default function App() {
     const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
     if (remaining.length > 0) {
       // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
-      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true });
+      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true, skipPersist: true });
     } else {
       setStatus({ kind: "key", key: "appDisconnected" });
     }
@@ -4478,6 +4484,10 @@ export default function App() {
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
   // always calls the current closure without being torn down on every render.
   const runQueryInTabRef = useRef(runQueryInTab);
+  const goToPageInTabRef = useRef<
+    ((tabId: string, page: number, size?: number, browse?: { force?: boolean }) => Promise<void>) | null
+  >(null);
+  const focusExplorerRef = useRef<(() => void) | null>(null);
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -4529,6 +4539,13 @@ export default function App() {
         // リセットするため、ここでスキップしないと編集中のセルと Undo/Redo 履歴が
         // 黙って破棄されてしまう (#F1)。
         if (hasPendingChanges(tt)) return;
+        // ページ送り / サーバ側ソート・フィルタ適用中は lastExecutedSql (1 ページ目の
+        // 元 SQL) と表示が食い違う。再実行すると 1 ページ目に戻ってしまうので別経路で取り直す。
+        if (tt.kind === "table" && ((tt.page ?? 1) > 1 || tt.serverSort || tt.serverFilter)) {
+          // 現在のページ / ソート / フィルタのまま取り直す (1 ページ目へ戻さない)。
+          void goToPageInTabRef.current?.(tabId, tt.page ?? 1, undefined, { force: true });
+          return;
+        }
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
@@ -5005,7 +5022,9 @@ export default function App() {
     const nextSort = browseOverride && "sort" in browseOverride ? browseOverride.sort ?? null : tab.serverSort ?? null;
     const nextFilter = browseOverride && "filter" in browseOverride ? browseOverride.filter ?? null : tab.serverFilter ?? null;
     const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
-    const total = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
+    const estimatedTotal = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
+    // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
+    const total = effectiveTotalPages(estimatedTotal, tab.page ?? 1, (tab.result?.rows.length ?? 0) >= pageSize);
     const target = clampPage(page, total);
     if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
     const driver = selectedProfile?.driver ?? "mysql";
@@ -5112,6 +5131,7 @@ export default function App() {
       });
     }
   }, [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq]);
+  goToPageInTabRef.current = goToPageInTab;
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
@@ -7981,7 +8001,11 @@ export default function App() {
     // .sql / .txt → 新規クエリタブ。
     let openedSql = 0;
     let lastEncoding: TextEncodingId = "utf-8";
-    for (const p of sqlPaths) {
+    // 未接続ではタブが描画されず、接続時に作り直されて消えるので開かず明示的に拒否する。
+    if (sqlPaths.length > 0 && !sessionIdRef.current) {
+      toast.error(translate("dropSqlNoConnection"));
+    }
+    for (const p of sessionIdRef.current ? sqlPaths : []) {
       try {
         // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
         // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
@@ -8036,6 +8060,11 @@ export default function App() {
    * 新しい IPC/読み込み経路は増やさない。ダイアログでキャンセルされたら何もしない。
    */
   const handleOpenSqlFile = useCallback(async (encoding: TextEncodingId | null = null) => {
+    // 未接続ではタブが描画されないので、ダイアログを開く前に拒否する。
+    if (!sessionIdRef.current) {
+      toast.error(translate("dropSqlNoConnection"));
+      return;
+    }
     try {
       const picked = await openFileDialog({
         multiple: true,
@@ -8091,7 +8120,7 @@ export default function App() {
         const un = await webview.onDragDropEvent((event) => {
           const payload = event.payload;
           if (payload.type === "enter") {
-            setDragFeedback(dragFeedbackFor(payload.paths));
+            setDragFeedback(dragFeedbackFor(payload.paths, !!sessionIdRef.current));
           } else if (payload.type === "leave") {
             setDragFeedback(null);
           } else if (payload.type === "drop") {
@@ -8639,8 +8668,7 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       if (comboMatchesEvent(bindingsRef.current.sidebarFilter, e)) {
         e.preventDefault();
-        setSidebarTab("connections");
-        requestAnimationFrame(() => connectionListRef.current?.focusFilter());
+        focusExplorerRef.current?.();
       }
     };
     window.addEventListener("keydown", handler);
@@ -8915,6 +8943,7 @@ export default function App() {
       requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
     );
   }, []);
+  focusExplorerRef.current = focusExplorer;
 
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
@@ -10506,6 +10535,18 @@ export default function App() {
                   secondCollapsed={panes.length < 2}
                 />
               )
+            ) : profiles.length === 0 && profilesLoadError ? (
+              // 読込失敗: 既存ユーザに初回用ウェルカムを見せない。
+              <Flex direction="column" flex="1" overflow="hidden">
+                <PaneEmpty>
+                  <EmptyState
+                    icon="database"
+                    title={t("profilesLoadFailedTitle")}
+                    description={profilesLoadError}
+                    action={{ label: t("profilesLoadFailedRetry"), onClick: () => void refreshProfiles() }}
+                  />
+                </PaneEmpty>
+              </Flex>
             ) : profiles.length === 0 ? (
               // 初回起動ウェルカム画面 (#599): プロファイルが 1 件も無い新規
               // ユーザには、単一 CTA の EmptyState の代わりに主要導線を並べた

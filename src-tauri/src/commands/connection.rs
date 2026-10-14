@@ -329,6 +329,10 @@ async fn run_cancelable<T: Send + 'static>(
     }
 }
 
+/// `ping_session` の応答待ち上限。プールの `acquire_timeout` (15 秒) より長くして、長いクエリで
+/// プールが埋まっているだけの接続を切断扱いにしない。
+const PING_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Connection health check. Returns `true` when the session's connection
 /// answers a lightweight `SELECT 1`, `false` when it is dead (sleep / dropped
 /// tunnel), and `Err` only when the session id is unknown. The frontend polls
@@ -339,7 +343,13 @@ pub async fn ping_session(session_id: String, state: State<'_, AppState>) -> Res
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    let alive = session.conn.health_check().await.is_ok();
+    // 無応答の接続 (スリープ復帰後のトンネルなど) で OS の再送タイムアウトまで戻らないと、
+    // フロントの focus 確認が詰まり続ける。`health_probe_all` と同じく時間制限を付け、
+    // タイムアウトは切断扱い (false) にする。
+    let alive = matches!(
+        tokio::time::timeout(PING_TIMEOUT, session.conn.health_check()).await,
+        Ok(Ok(_))
+    );
     if !alive {
         tracing::info!(session_id = %session_id, "health check failed; connection appears dead");
     }
@@ -563,14 +573,23 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
     // a now-unreachable host can't hang indefinitely (mirrors `connect`'s
     // guardrail). The old session is not disturbed while this runs.
     let secs = DEFAULT_CONNECT_TIMEOUT_SECS;
+    // 止まった段階 (トンネル接続 / SSH 認証 / DB 接続) を記録し、タイムアウト時にその値を
+    // 返す。常に db_connecting と報告すると、踏み台で止まっていても DB 側の問題に見える。
+    let phase = Mutex::new(if old.reconnect_ssh.is_some() {
+        ConnectPhase::TunnelConnecting
+    } else {
+        ConnectPhase::DbConnecting
+    });
     let (tunnel, opts, conn) =
-        match tokio::time::timeout(Duration::from_secs(secs), reopen_transport(&old)).await {
+        match tokio::time::timeout(Duration::from_secs(secs), reopen_transport(&old, &phase)).await
+        {
             Ok(res) => res?,
             Err(_) => {
+                let stuck = *phase.lock().unwrap_or_else(|e| e.into_inner());
                 return Err(AppError::ConnectTimeout {
-                    phase: ConnectPhase::DbConnecting.label().to_string(),
+                    phase: stuck.label().to_string(),
                     secs,
-                })
+                });
             }
         };
 
@@ -620,7 +639,9 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
 /// touch `AppState`.
 async fn reopen_transport(
     old: &Session,
+    phase: &Mutex<ConnectPhase>,
 ) -> Result<(Option<SshTunnel>, DbConnectOptions, Connection)> {
+    let set_phase = |p: ConnectPhase| *phase.lock().unwrap_or_else(|e| e.into_inner()) = p;
     let mut opts = old.connect_options.clone();
     let tunnel = if let Some(ssh) = &old.reconnect_ssh {
         // Re-resolve SSH secrets from the keyring (no new plaintext retention).
@@ -652,7 +673,14 @@ async fn reopen_transport(
                 }
             }
         }
-        let t = SshTunnel::open(&cfg).await?;
+        let t = SshTunnel::open_with_progress(&cfg, |p| {
+            set_phase(match p {
+                SshPhase::Connecting => ConnectPhase::TunnelConnecting,
+                SshPhase::Authenticating => ConnectPhase::TunnelAuthenticating,
+            });
+        })
+        .await?;
+        set_phase(ConnectPhase::DbConnecting);
         // The stored options point at the old (now-dead) tunnel's local port;
         // redirect them at the freshly-bound one.
         opts.host = "127.0.0.1".to_string();

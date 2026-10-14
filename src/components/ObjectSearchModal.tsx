@@ -11,6 +11,7 @@ import { SkeletonSearchRows } from "./Skeleton";
 import { shouldStaggerEntrance } from "./commandPaletteSearch";
 import { staggerContainer, variants } from "../motion";
 import { ErrorNote } from "./modalForm";
+import { isImeComposing } from "./modalKeys";
 
 /**
  * スキーマ横断のグローバルオブジェクト検索。テーブル名・カラム名を全 DB (またはカレント DB)
@@ -54,6 +55,8 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   // 最後に発行した要求の番号。古い応答 (追い越された要求) は捨てる。
   const requestSeq = useRef(0);
+  // results が対応している (query, scope)。入力が先へ進んだ後の古い結果で Enter が開かないようにする。
+  const [resultsFor, setResultsFor] = useState<string | null>(null);
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -73,6 +76,8 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
 
   // 検索要求。空クエリは結果が空のまま索引だけを作らせる (ウォームアップ) ので即時に、
   // 入力があるときはデバウンスして問い合わせる。
+  const searchKey = `${JSON.stringify(searchScope)}\u0000${query}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: searchKey は sessionId 以外の依存 (searchScope / query) から導出した値で、run 内でのみ使う
   useEffect(() => {
     const run = () => {
       const seq = ++requestSeq.current;
@@ -82,6 +87,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         .then((hits) => {
           if (!mounted.current || requestSeq.current !== seq) return;
           setResults(hits);
+          setResultsFor(searchKey);
           setError(null);
         })
         .catch((e) => {
@@ -144,7 +150,11 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         }
         break;
       case "Enter":
+        // IME 変換確定の Enter では開かない (#1515 と同じ)。
+        if (isImeComposing(e)) break;
         e.preventDefault();
+        // 入力中の語に対応する結果が届くまでは開かない (古い結果の先頭を開かない)。
+        if (resultsFor !== searchKey) break;
         openAt(activeIndex);
         break;
     }

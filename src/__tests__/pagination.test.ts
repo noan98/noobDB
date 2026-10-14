@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildPageSql,
   canGoNext,
+  effectiveTotalPages,
   canGoPrev,
   clampPage,
   estimatedTotalPages,
@@ -52,7 +53,11 @@ describe("clampPage", () => {
 describe("canGoNext", () => {
   it("uses total pages when known", () => {
     expect(canGoNext(2, 3, 0, 100)).toBe(true);
-    expect(canGoNext(3, 3, 100, 100)).toBe(false);
+    expect(canGoNext(3, 3, 42, 100)).toBe(false);
+  });
+
+  it("keeps next enabled on a full page at the estimated last page (estimate may undercount)", () => {
+    expect(canGoNext(3, 3, 100, 100)).toBe(true);
   });
 
   it("falls back to a full page meaning there may be more", () => {
@@ -76,5 +81,19 @@ describe("pageRange", () => {
 
   it("returns a zero range for an empty page", () => {
     expect(pageRange(2, 100, 0)).toEqual({ from: 0, to: 0 });
+  });
+});
+
+describe("effectiveTotalPages", () => {
+  it("推定が null なら null", () => {
+    expect(effectiveTotalPages(null, 3, true)).toBeNull();
+  });
+  it("推定を超えて表示中のページへ force で取り直しても戻されない", () => {
+    expect(clampPage(7, effectiveTotalPages(6, 7, false))).toBe(7);
+  });
+  it("満杯なら推定の最終ページから 1 ページ先まで進める", () => {
+    expect(clampPage(7, effectiveTotalPages(6, 6, true))).toBe(7);
+    expect(clampPage(8, effectiveTotalPages(6, 6, true))).toBe(7);
+    expect(clampPage(7, effectiveTotalPages(6, 6, false))).toBe(6);
   });
 });

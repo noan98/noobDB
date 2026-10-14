@@ -125,11 +125,15 @@ fn read_records(path: &Path) -> Result<Vec<AiUsageRecord>> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(path)?;
-    if content.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    match serde_json::from_str::<UsageFile>(&content) {
+    let bytes = std::fs::read(path)?;
+    // UTF-8 として読めない台帳 (別エンコーディングで保存し直された等) も、JSON が壊れている
+    // のと同じく退避して空から始める。読み込みエラーのままだと記録も表示も恒久的に失敗する。
+    let parsed = match std::str::from_utf8(&bytes) {
+        Ok(content) if content.trim().is_empty() => return Ok(Vec::new()),
+        Ok(content) => serde_json::from_str::<UsageFile>(content).map_err(|e| e.to_string()),
+        Err(e) => Err(e.to_string()),
+    };
+    match parsed {
         Ok(file) => Ok(file.records),
         Err(e) => {
             // 壊れた台帳は読めないままだと記録も表示も恒久的に失敗するので、`.bak` へ退避して
@@ -262,6 +266,29 @@ mod tests {
         assert!(read_records(&path).unwrap().is_empty());
         std::fs::write(&path, "  ").unwrap();
         assert!(read_records(&path).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // UTF-8 として不正なバイト列 (Shift_JIS 保存など) も退避して空から再開する (#1593)。
+    #[test]
+    fn non_utf8_ledger_is_moved_to_bak() {
+        let dir = std::env::temp_dir().join(format!("noobdb-ai-usage-sjis-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ai_usage.json");
+        let sjis = [0x82u8, 0xA0, 0xFF, 0xFE];
+        std::fs::write(&path, sjis).unwrap();
+        assert!(read_records(&path).unwrap().is_empty());
+        assert!(!path.exists());
+        let bak = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("ai_usage.json.bak.")
+            })
+            .expect("bak file");
+        assert_eq!(std::fs::read(bak.path()).unwrap(), sjis);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

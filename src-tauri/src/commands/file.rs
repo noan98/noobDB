@@ -57,8 +57,15 @@ async fn write_bytes_checked(path: &str, data: &[u8]) -> Result<u64> {
             MAX_WRITE_FILE_BYTES
         )));
     }
-    tokio::fs::write(path, data).await?;
-    Ok(data.len() as u64)
+    // 保存先を直接開いて書くと、途中失敗で既存ファイルが切り詰められる。一時ファイル経由で
+    // 置き換える (#1593)。同期 I/O なので blocking スレッドへ逃がす。
+    let path = std::path::PathBuf::from(path);
+    let len = data.len() as u64;
+    let data = data.to_vec();
+    tokio::task::spawn_blocking(move || crate::atomic_write::write_atomic(&path, &data))
+        .await
+        .map_err(|e| AppError::Other(format!("write task failed: {e}")))??;
+    Ok(len)
 }
 
 /// フロントで生成したバイト列 (チャート/ER 図の PNG・SVG など) を、ユーザが保存

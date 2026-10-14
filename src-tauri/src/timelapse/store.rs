@@ -176,6 +176,12 @@ pub async fn clear_all() -> Result<u64> {
     clear_all_in(pool().await?).await
 }
 
+/// プロファイル削除時に、そのプロファイルのウォッチと世代 (行データの実値) をすべて消す
+/// (#1593)。削除した世代数を返す。
+pub async fn delete_profile_data(profile_id: &str) -> Result<u64> {
+    delete_profile_data_in(pool().await?, profile_id).await
+}
+
 // ── 本体 (プール注入) ──
 
 async fn upsert_watch_in(
@@ -424,6 +430,24 @@ async fn unwatch_in(pool: &SqlitePool, watch_id: i64, delete_data: bool) -> Resu
     Ok(())
 }
 
+async fn delete_profile_data_in(pool: &SqlitePool, profile_id: &str) -> Result<u64> {
+    let n = sqlx::query(
+        "DELETE FROM generation WHERE watch_id IN (SELECT id FROM watch WHERE profile_id = ?)",
+    )
+    .bind(profile_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    sqlx::query("DELETE FROM watch WHERE profile_id = ?")
+        .bind(profile_id)
+        .execute(pool)
+        .await?;
+    if n > 0 {
+        vacuum(pool).await;
+    }
+    Ok(n)
+}
+
 /// 全ウォッチ・全世代を削除する (設定画面の一括削除)。削除した世代数を返す。
 async fn clear_all_in(pool: &SqlitePool) -> Result<u64> {
     let n = sqlx::query("DELETE FROM generation")
@@ -533,6 +557,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(latest_a.snapshot.rows[0][1], Value::Int(3));
+    }
+
+    // プロファイル削除時は、そのプロファイルの行データだけが消え、他は残る (#1593)。
+    #[tokio::test]
+    async fn delete_profile_data_removes_only_that_profile() {
+        let pool = temp_pool().await;
+        let a = upsert_watch_in(&pool, "p", "sqlite", "main", "a", false)
+            .await
+            .unwrap();
+        let b = upsert_watch_in(&pool, "q", "sqlite", "main", "a", false)
+            .await
+            .unwrap();
+        record(&pool, a, &snap(1), 10).await;
+        record(&pool, b, &snap(1), 10).await;
+        assert_eq!(delete_profile_data_in(&pool, "p").await.unwrap(), 1);
+        assert!(list_watches_in(&pool, "p").await.unwrap().is_empty());
+        let q = list_watches_in(&pool, "q").await.unwrap();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].generations.len(), 1);
     }
 
     #[tokio::test]

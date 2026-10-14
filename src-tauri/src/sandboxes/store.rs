@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use directories::ProjectDirs;
-use serde::{Deserialize, Serialize};
 
 use super::SandboxRecord;
 use crate::error::{AppError, Result};
@@ -11,15 +10,6 @@ use crate::error::{AppError, Result};
 const QUALIFIER: &str = "";
 const ORG: &str = "";
 const APP: &str = "noobDB";
-
-/// On-disk shape: `{ "sandboxes": [...] }`. Same wrapping convention as
-/// `snippets::store::SnippetFile` / `profiles::store` — keeps room for future
-/// top-level metadata without a format migration.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct SandboxFile {
-    #[serde(default)]
-    sandboxes: Vec<SandboxRecord>,
-}
 
 /// `sandboxes.json` への read-modify-write を直列化するロック。
 /// `profiles::store::STORE_LOCK` / `ssh::known_hosts::KNOWN_HOSTS_LOCK` と同じ
@@ -63,18 +53,27 @@ fn load_all_locked() -> Result<Vec<SandboxRecord>> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let file: SandboxFile = serde_json::from_str(&content)?;
-    Ok(file.sandboxes)
+    if crate::json_tolerant::quarantine_if_unexpected_shape(&path, &content, "sandboxes")? {
+        return Ok(Vec::new());
+    }
+    // 1 件が解釈できなくても残りは読む。解釈できなかった要素は保存時に書き戻す。
+    Ok(crate::json_tolerant::parse_items::<SandboxRecord>(&content, "sandboxes")?.0)
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対。
 fn save_all_locked(sandboxes: &[SandboxRecord]) -> Result<()> {
-    let path = sandboxes_path()?;
-    let file = SandboxFile {
-        sandboxes: sandboxes.to_vec(),
-    };
-    let content = serde_json::to_string_pretty(&file)?;
-    write_atomic(&path, content.as_bytes())?;
+    save_all_at(&sandboxes_path()?, sandboxes)
+}
+
+fn save_all_at(path: &std::path::Path, sandboxes: &[SandboxRecord]) -> Result<()> {
+    // 解釈できなかった既存要素を消さずに書き戻す (ID が重なるものは新しい方を優先)。
+    let ids: Vec<&str> = sandboxes.iter().map(|s| s.id.as_str()).collect();
+    let raw = std::fs::read_to_string(path)
+        .map(|c| crate::json_tolerant::unparsable_raw::<SandboxRecord>(&c, "sandboxes", &ids))
+        .unwrap_or_default();
+    let value = crate::json_tolerant::build_with_raw("sandboxes", sandboxes, raw)?;
+    let content = serde_json::to_string_pretty(&value)?;
+    write_atomic(path, content.as_bytes())?;
     Ok(())
 }
 
@@ -262,13 +261,39 @@ mod tests {
         // compose them.
         let path = dir.join("sandboxes.json");
         let all = vec![sample("aaaaaaaa"), sample("bbbbbbbb")];
-        let content = serde_json::to_string_pretty(&SandboxFile { sandboxes: all }).unwrap();
-        write_atomic(&path, content.as_bytes()).unwrap();
+        save_all_at(&path, &all).unwrap();
 
-        let loaded: SandboxFile =
+        let (loaded, raw) = crate::json_tolerant::parse_items::<SandboxRecord>(
+            &std::fs::read_to_string(&path).unwrap(),
+            "sandboxes",
+        )
+        .unwrap();
+        assert!(raw.is_empty());
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].id, "aaaaaaaa");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // 1 件の不正な要素があっても残りが読め、保存しても不正な要素は消えない (#1593)。
+    #[test]
+    fn unparsable_entry_is_skipped_on_load_and_kept_on_save() {
+        let dir = scratch_dir("tolerant");
+        let path = dir.join("sandboxes.json");
+        let good = serde_json::to_value(sample("aaaaaaaa")).unwrap();
+        let bad = serde_json::json!({"id": "zzzzzzzz", "source_driver": "oracle"});
+        let body = serde_json::json!({ "sandboxes": [bad.clone(), good] });
+        std::fs::write(&path, body.to_string()).unwrap();
+
+        let (loaded, _) = crate::json_tolerant::parse_items::<SandboxRecord>(
+            &std::fs::read_to_string(&path).unwrap(),
+            "sandboxes",
+        )
+        .unwrap();
+        assert_eq!(loaded.len(), 1);
+        save_all_at(&path, &[]).unwrap();
+        let after: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(loaded.sandboxes.len(), 2);
-        assert_eq!(loaded.sandboxes[0].id, "aaaaaaaa");
+        assert_eq!(after["sandboxes"], serde_json::json!([bad]));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
