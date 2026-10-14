@@ -359,7 +359,11 @@ pub fn schema_conflict_tables(desired: &SchemaDiff, external: &SchemaDiff) -> Ve
 /// 列ごとに「状態 + 変更後の定義 (型・NULL 可否・既定値)」が一致するときだけ収束とみなす。
 /// 列差分が空の表や、方言差で型表記が揃わないものは衝突のまま残す (安全側)。
 fn schema_converged(desired: &TableDiff, external: &TableDiff) -> bool {
-    if desired.status != external.status
+    // 表も全列も `Different` (型・NULL 可否・既定値の変更) のときだけ収束にする。両側が同じ列を
+    // ADD / DROP した場合は、書き戻すと重複 ADD COLUMN / 存在しない DROP COLUMN で失敗するので
+    // 衝突のまま残す (データ側 `is_converged` の方針に合わせる)。
+    if desired.status != DiffStatus::Different
+        || external.status != DiffStatus::Different
         || desired.columns.is_empty()
         || desired.columns.len() != external.columns.len()
     {
@@ -375,15 +379,16 @@ fn schema_converged(desired: &TableDiff, external: &TableDiff) -> bool {
         _ => false,
     };
     desired.columns.iter().all(|d| {
-        external
-            .columns
-            .iter()
-            .find(|e| e.name == d.name)
-            .is_some_and(|e| {
-                e.status == d.status
-                    && same_def(&d.source, &e.source)
-                    && same_def(&d.target, &e.target)
-            })
+        d.status == DiffStatus::Different
+            && external
+                .columns
+                .iter()
+                .find(|e| e.name == d.name)
+                .is_some_and(|e| {
+                    e.status == d.status
+                        && same_def(&d.source, &e.source)
+                        && same_def(&d.target, &e.target)
+                })
     })
 }
 
@@ -691,6 +696,36 @@ mod tests {
             schema_conflict_tables(&desired, &external),
             vec!["diverged".to_string()]
         );
+    }
+
+    #[test]
+    fn schema_conflict_tables_keeps_identical_add_or_drop_as_conflict() {
+        let one_sided = |name: &str, status: DiffStatus| {
+            let (source, target) = match status {
+                DiffStatus::SourceOnly => (Some(col_info("qty", "int")), None),
+                _ => (None, Some(col_info("qty", "int"))),
+            };
+            TableDiff {
+                name: name.to_string(),
+                status: DiffStatus::Different,
+                foreign_keys: vec![],
+                columns: vec![ColumnDiff {
+                    name: "qty".into(),
+                    status,
+                    source,
+                    target,
+                    changed_fields: vec![],
+                }],
+            }
+        };
+        for st in [DiffStatus::SourceOnly, DiffStatus::TargetOnly] {
+            let desired = schema_diff(vec![one_sided("t", st)]);
+            let external = schema_diff(vec![one_sided("t", st)]);
+            assert_eq!(
+                schema_conflict_tables(&desired, &external),
+                vec!["t".to_string()]
+            );
+        }
     }
 
     #[test]

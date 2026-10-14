@@ -344,8 +344,19 @@ pub fn check_conflict_target_unique(
     uniques: &[UniqueKey],
     key_columns: &[String],
 ) -> Result<()> {
+    // SQLite の列名は大文字小文字を区別しない (PostgreSQL は区別する)。
+    let fold = driver == DriverKind::Sqlite;
+    let eq = |a: &String, b: &String| {
+        if fold {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    };
     let same_set = |a: &[String], b: &[String]| {
-        a.len() == b.len() && a.iter().all(|c| b.contains(c)) && b.iter().all(|c| a.contains(c))
+        a.len() == b.len()
+            && a.iter().all(|c| b.iter().any(|d| eq(c, d)))
+            && b.iter().all(|c| a.iter().any(|d| eq(c, d)))
     };
     if uniques.iter().any(|u| same_set(&u.columns, key_columns)) {
         return Ok(());
@@ -482,6 +493,15 @@ mod tests {
             .unwrap_or_default();
         assert!(msg.contains("PostgreSQL") && msg.contains("name"), "{msg}");
         assert!(check_conflict_target_unique(DriverKind::Sqlite, &[], &cols(&["a"])).is_err());
+        // SQLite だけ列名の大文字小文字を無視する。
+        let lower = vec![UniqueKey {
+            name: "pk".into(),
+            columns: cols(&["id"]),
+        }];
+        assert!(check_conflict_target_unique(DriverKind::Sqlite, &lower, &cols(&["ID"])).is_ok());
+        assert!(
+            check_conflict_target_unique(DriverKind::Postgres, &lower, &cols(&["ID"])).is_err()
+        );
     }
 
     #[test]

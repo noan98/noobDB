@@ -605,9 +605,12 @@ function EntryCard({
           {statusLabel(t, entry.status)}
         </Flex>
         <chakra.span fontSize="xs" color="app.textMuted">
-          {entry.totalRows > entry.rows.length
-            ? t("broadcastRowsShown", { rows: entry.totalRows, shown: entry.rows.length })
-            : t("broadcastRowCount", { rows: entry.totalRows || entry.rows.length })}
+          {entry.totalRows === MAX_BROADCAST_COMPARE_ROWS + 1
+            ? // 取得は上限 + 1 行で打ち切るので、実際の総数は不明 (「以上」と表示する, #1612)。
+              t("broadcastRowsAtLeast", { rows: MAX_BROADCAST_COMPARE_ROWS, shown: entry.rows.length })
+            : entry.totalRows > entry.rows.length
+              ? t("broadcastRowsShown", { rows: entry.totalRows, shown: entry.rows.length })
+              : t("broadcastRowCount", { rows: entry.totalRows || entry.rows.length })}
         </chakra.span>
         <chakra.span flex="1" />
         {entry.status === "running" && (

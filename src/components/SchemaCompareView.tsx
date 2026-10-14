@@ -471,6 +471,8 @@ export function SchemaCompareView({
   // 全行比較の進捗 (これまでに読んだ行数) と中止 (#1612)。
   const [dataProgressRows, setDataProgressRows] = useState<number | null>(null);
   const dataStreamIdRef = useRef<string | null>(null);
+  // 比較開始時に全行比較だったか (比較中にチェックを外しても中止ボタンを残す)。
+  const [dataCancellable, setDataCancellable] = useState(false);
   const dataCancelledRef = useRef(false);
   const [allowDelete, setAllowDelete] = useState(false);
 
@@ -702,6 +704,7 @@ export function SchemaCompareView({
     // 全行比較だけ、進捗の購読と中止のための stream id を渡す。
     const streamId = dataAllRows ? makeDataDiffStreamId() : null;
     dataStreamIdRef.current = streamId;
+    setDataCancellable(streamId !== null);
     let unlisten: UnlistenFn | null = null;
     try {
       if (streamId) {
@@ -736,10 +739,20 @@ export function SchemaCompareView({
     } finally {
       unlisten?.();
       dataStreamIdRef.current = null;
+      setDataCancellable(false);
       setDataProgressRows(null);
       setDataComparing(false);
     }
   }, [t, source, target, dataTable, dataLimit, dataAllRows, dataIgnore, releaseHeldDiff]);
+
+  // 画面を閉じたら、実行中の全行比較の問い合わせも止める。
+  useEffect(
+    () => () => {
+      const streamId = dataStreamIdRef.current;
+      if (streamId) void api.cancelStream(streamId).catch(() => {});
+    },
+    [],
+  );
 
   const cancelDataCompare = useCallback(() => {
     const streamId = dataStreamIdRef.current;
@@ -1103,7 +1116,7 @@ export function SchemaCompareView({
                     <Button onClick={compareData} disabled={!dataTable || dataComparing}>
                       {dataComparing ? t("schemaCompareComparing") : t("schemaCompareDataCompare")}
                     </Button>
-                    {dataComparing && dataAllRows && (
+                    {dataComparing && dataCancellable && (
                       <>
                         <chakra.span textStyle="caption">
                           {t("schemaCompareDataProgress", { rows: (dataProgressRows ?? 0).toLocaleString() })}

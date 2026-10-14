@@ -2005,7 +2005,7 @@ impl PostgresConn {
                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
                LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
                WHERE t.relname = $2 AND n.nspname = COALESCE($1, current_schema())
-                 AND ix.indisunique AND ix.indpred IS NULL AND ix.indisvalid
+                 AND ix.indisunique AND ix.indpred IS NULL AND ix.indisvalid AND ix.indimmediate
                  AND k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
                ORDER BY i.relname, k.ord"#,
         )
