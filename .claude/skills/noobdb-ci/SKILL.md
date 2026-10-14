@@ -42,6 +42,6 @@ description: noobDB の CI が落ちたとき、GitHub Actions ワークフロ�
 - **push 観測時刻に git の committer date を使わない** — 変更依頼ゲートの「依頼より
   後の push で解除」の判定が壊れます (`references/automerge.md`)。
 - **automerge の変更依頼ゲート (#1108) の判定を `automerge.yml` のシェルに書かない**
-  — `scripts/automerge-hold.mjs` の純関数に置き、`scripts/automerge-hold.test.mjs`
+  — `scripts/automerge-hold.mjs` (通知コメントは `scripts/automerge-notice.mjs`) の純関数に置き、`scripts/automerge-hold.test.mjs`
   に境界ケースを足す (`pnpm run test:scripts`)。判定失敗は fail-closed
   (`references/automerge.md`)。

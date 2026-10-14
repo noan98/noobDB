@@ -1,5 +1,10 @@
 # ci.yml (PR / main push のチェック)
 
+- **concurrency**: `cancel-in-progress` は `github.event_name == 'pull_request'` のときだけ
+  true (#1632)。PR の古い run は取り消すが、**main への push の run は取り消さない**
+  (連続 push で途中のコミットの検証が抜け、main の健全性確認とキャッシュ温めが欠けるため)。
+  グループは `ci-<workflow>-<ref>` なので、PR と main push が互いに取り消し合うことはない。
+
 - `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
   push トリガは**キャッシュを main スコープへ保存するため**にあります:
   pull_request 実行で保存される rust-cache / sccache / pnpm のキャッシュは PR の

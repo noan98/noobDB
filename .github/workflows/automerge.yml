@@ -152,6 +152,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/automerge-hold.mjs
+            scripts/automerge-notice.mjs
           sparse-checkout-cone-mode: false
 
       - name: Setup Node
@@ -167,6 +168,7 @@ jobs:
           REVIEW_PR: ${{ github.event.pull_request.number }}
           ISSUE_PR: ${{ github.event.issue.number }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
 
@@ -247,8 +249,36 @@ jobs:
           #     `set -e` が効かない。取得・判定の失敗で「保留なし」に倒れないよう
           #     (= fail-open でマージしないよう)、各コマンドの失敗を明示的に
           #     hold_fail でジョブごと止める。
+          # マージできなかった理由を PR に 1 件だけ残す (#1632)。マーカー付きコメントを
+          # PR 単位で作成または更新し、次回マージに成功したら「解消」へ編集する。
+          # 判定は scripts/automerge-notice.mjs (ユニットテスト付き)。ベストエフォート:
+          # ここでの失敗でジョブの結論 (マージしない) は変えない。
+          # 使い方: post_notice <hold_fail|merge_failed|resolved> [mergeStateStatus] [詳細]
+          post_notice() {
+            local kind="$1" mss_final="${2:-}" detail="${3:-}" comments plan action cid body
+            comments="$(gh api "repos/$GH_REPO/issues/$PR/comments" --paginate --jq '.[]' | jq -s '.')" || {
+              echo "::warning::通知コメントの既存分を取得できませんでした。"; return 0; }
+            plan="$(jq -n --argjson comments "$comments" --arg kind "$kind" --arg headSha "${headSha:-}" \
+                  --arg mergeStateStatus "$mss_final" --arg detail "$detail" --arg runUrl "$RUN_URL" \
+                  '{comments: $comments, kind: $kind, headSha: $headSha, mergeStateStatus: $mergeStateStatus,
+                    detail: $detail, runUrl: $runUrl}' | node scripts/automerge-notice.mjs)" || {
+              echo "::warning::通知コメントの計画に失敗しました。"; return 0; }
+            action="$(echo "$plan" | jq -r '.action')"
+            body="$(echo "$plan" | jq -r '.body // empty')"
+            case "$action" in
+              create) gh api "repos/$GH_REPO/issues/$PR/comments" -f body="$body" >/dev/null \
+                        || echo "::warning::通知コメントの作成に失敗しました。" ;;
+              update) cid="$(echo "$plan" | jq -r '.commentId')"
+                      gh api -X PATCH "repos/$GH_REPO/issues/comments/$cid" -f body="$body" >/dev/null \
+                        || echo "::warning::通知コメントの更新に失敗しました。" ;;
+            esac
+            return 0
+          }
+
           hold_fail() {
             echo "::error title=変更依頼ゲートの判定に失敗しました::$1 安全側でマージしません。"
+            echo "### :x: 変更依頼ゲートの判定に失敗しました: $1" >> "$GITHUB_STEP_SUMMARY"
+            post_notice hold_fail "" "$1"
             exit 1
           }
           check_hold() {
@@ -333,9 +363,10 @@ jobs:
           # 7. mergeStateStatus を見ながらマージする。GitHub の再計算待ちは
           #    指数バックオフ (5,10,20,40,80 秒) で最大 5 回リトライする。
           delay=5
-          merged="false"
+          merged="false"; last_mss=""
           for i in 1 2 3 4 5; do
             mss="$(gh pr view "$PR" --json mergeStateStatus --jq '.mergeStateStatus')"
+            last_mss="$mss"
             echo "mergeStateStatus=$mss (試行 $i/5)"
             case "$mss" in
               CLEAN|UNSTABLE|HAS_HOOKS)
@@ -368,10 +399,20 @@ jobs:
           done
 
           if [ "$merged" != "true" ]; then
-            echo "マージできませんでした。"
+            echo "マージできませんでした (最後の mergeStateStatus=${last_mss:-不明})。"
+            {
+              echo "### :warning: リトライ後もマージできませんでした"
+              echo ""
+              echo "- 対象 PR: #$PR (head \`$headSha\`)"
+              echo "- 最後の mergeStateStatus: \`${last_mss:-不明}\`"
+              echo ""
+            } >> "$GITHUB_STEP_SUMMARY"
+            post_notice merge_failed "$last_mss"
             exit 0
           fi
           echo "PR #$PR をマージしました。"
+          # 過去に「マージできなかった」通知を残していたら、解消済みに編集する。
+          post_notice resolved
 
           # 8. (ベストエフォート) PR 本文のクローズキーワードから Issue を閉じる。
           #    main は既定ブランチなので通常は GitHub が自動クローズするが、

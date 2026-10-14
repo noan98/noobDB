@@ -12,9 +12,11 @@ on:
   push:
     branches: [main]
 
+# PR の古い run だけ取り消す。main への push は取り消さない (連続 push で
+# 途中のコミットの検証が抜けるのを防ぐ。#1632)。
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -106,6 +108,8 @@ jobs:
             automerge:
               - 'scripts/automerge-hold.mjs'
               - 'scripts/automerge-hold.test.mjs'
+              - 'scripts/automerge-notice.mjs'
+              - 'scripts/automerge-notice.test.mjs'
               - '.github/workflows/automerge.yml'
 
   # フロントエンドの typecheck/build/lint/単体テストと、実ブラウザでの描画/
