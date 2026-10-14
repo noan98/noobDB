@@ -44,6 +44,12 @@ struct VectorCase {
     /// 非依存の入口だけが行コメント扱いにする (#1517)。
     #[serde(rename = "maskedNoHash", default)]
     masked_no_hash: Option<String>,
+    /// PostgreSQL だけの期待値 (`E'…'` のバックスラッシュエスケープ、#1601)。省略時は標準解釈。
+    #[serde(rename = "maskedPostgres", default)]
+    masked_postgres: Option<String>,
+    /// SQLite だけの期待値 (`[角括弧]` 識別子、#1601)。省略時は標準解釈。
+    #[serde(rename = "maskedSqlite", default)]
+    masked_sqlite: Option<String>,
 }
 
 /// 標準的な文字列リテラル解釈を採るドライバ (= `masked` がそのまま期待値)。
@@ -94,11 +100,17 @@ fn mask_golden_matches_shared_vectors() {
             ));
         }
         for driver in STANDARD_DRIVERS {
+            let expected = match driver {
+                t::DriverKind::Postgres => case.masked_postgres.as_deref(),
+                t::DriverKind::Sqlite => case.masked_sqlite.as_deref(),
+                t::DriverKind::Mysql => None,
+            }
+            .unwrap_or(standard_expected);
             let actual = t::mask_for_driver(driver, &case.sql);
-            if actual != standard_expected {
+            if actual != expected {
                 failures.push(format!(
                     "  - {:?} (note: {}) [{driver:?}]: expected {:?}, got {:?}",
-                    case.sql, case.note, standard_expected, actual
+                    case.sql, case.note, expected, actual
                 ));
             }
         }

@@ -169,8 +169,28 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
         }
       }
     }
+    if (c === "[" && driver === "sqlite") {
+      // SQLite の角括弧識別子 `[name]` (エスケープ構文なし)。閉じ `]` が無い `[` は
+      // 識別子扱いにしない (後続を飲み込まない = fail-closed)。バックエンドの
+      // `mask_for_analysis_impl` と同じ規則。
+      const close = sql.indexOf("]", i + 1);
+      if (close !== -1) {
+        if (!keepIdent) blank(i + 1, close);
+        i = close + 1;
+        continue;
+      }
+    }
     if (c === "'" || c === '"' || c === "`") {
       const quote = c;
+      // PostgreSQL の E'…' (エスケープ文字列) だけは `\` がエスケープ。直前が単独の E/e の
+      // ときに限る。バックエンドの `mask_for_analysis_impl` と同じ規則。
+      const escapes =
+        backslashEscapes ||
+        (driver === "postgres" &&
+          quote === "'" &&
+          i >= 1 &&
+          (sql[i - 1] === "e" || sql[i - 1] === "E") &&
+          (i === 1 || !isWordChar(sql[i - 2])));
       let j = i + 1;
       let closed = false;
       while (j < n) {
@@ -190,7 +210,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
         // #988): a backslash as the very last character of the input has
         // nothing left to escape, so it falls through to the plain
         // `j++` below instead of consuming a character past the end.
-        if (backslashEscapes && sql[j] === "\\" && quote !== "`" && j + 1 < n) {
+        if (escapes && sql[j] === "\\" && quote !== "`" && j + 1 < n) {
           j += 2;
           continue;
         }

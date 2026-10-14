@@ -85,6 +85,13 @@
 読み取り専用ガードは副作用のある関数 (`pg_terminate_backend` / `nextval` / `setval` /
 `lo_*` など) も拒否する。`set_config` はセッション初期化で使うため対象外。
 
+**ドライバ別の字句の例外 (#1601)。** PostgreSQL の `E'…'` (直前が単独の E/e) だけは `\` が
+エスケープ、SQLite の `[角括弧]` 識別子は本文を空白化する (閉じ `]` が無ければ識別子扱いにしない)。
+`mask_for_driver` / `maskLiterals(sql, driver)` / `ScriptSplitter` / プレビューの句切り出しが共通で従う。
+ドライバ不明の入口は従来どおり (E 文字列・角括弧は特別扱いしない)。Where-used だけは角括弧識別子を
+読む必要があるので `mask_for_driver_keeping_brackets` を使う。ベクタは `maskedPostgres` / `maskedSqlite` /
+`statementsPostgres` で固定。
+
 **マスクの前提を崩す設定は入口で塞ぎます。** `driver_backslash_escapes` は
 「MySQL では `\` がエスケープ文字」という静的な前提を置くため、セッション初期化 SQL
 (`is_session_init_sql`) が `SET sql_mode = 'NO_BACKSLASH_ESCAPES'` を通すとマスクと実

@@ -2358,6 +2358,8 @@ export interface ScriptDoneEvent {
   skippedExcluded: number;
   /** 開始位置より前で読み飛ばした文の数 (#1535)。 */
   skippedBeforeStart: number;
+  /** BEGIN したまま終わったスクリプトを EOF でランナーが COMMIT したか。 */
+  implicitCommit: boolean;
   rowsAffected: number;
   elapsedMs: number;
 }

@@ -38,7 +38,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::object_search::is_js_space;
-use super::{mask_for_driver, DriverKind};
+use super::{mask_for_driver_keeping_brackets, DriverKind};
 
 /// 検索対象。`column` が `None` ならテーブル (またはビュー) そのものへの参照を探す。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,13 +174,13 @@ fn from_units(u: &[u16]) -> String {
 // マスク (maskLiterals の再利用)
 // ---------------------------------------------------------------------------
 
-/// `mask_for_driver` (Rust 側の安全網と同じマスク) を UTF-16 コードユニット列へ展開する。
+/// `mask_for_driver_keeping_brackets` (安全網と同じマスク。ただし SQLite の角括弧識別子は読める状態で残す) を UTF-16 コードユニット列へ展開する。
 /// マスクは「同じ文字のまま」か「空白 1 文字」のどちらかだけを返すので、空白化された
 /// 文字が補助平面の文字なら 2 ユニットの空白にして、JS の `maskLiterals` の出力と
 /// 長さ・位置を一致させる。
 fn mask_units(sql: &str, driver: DriverKind) -> Vec<u16> {
     let src: Vec<char> = sql.chars().collect();
-    let masked = mask_for_driver(driver, &src);
+    let masked = mask_for_driver_keeping_brackets(driver, &src);
     let mut out = Vec::with_capacity(sql.len());
     for (s, m) in src.iter().zip(masked.iter()) {
         if s == m {

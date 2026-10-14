@@ -633,6 +633,11 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
           {t("scriptDoneSkippedBefore", { count: event.skippedBeforeStart.toLocaleString() })}
         </chakra.div>
       )}
+      {event.implicitCommit && (
+        <Callout tone="warning" role="status">
+          {t("scriptDoneImplicitCommit")}
+        </Callout>
+      )}
       {event.failures.length > 0 && (
         <chakra.div display="flex" flexDirection="column" gap="1">
           <FieldLabel as="div">{t("scriptFailuresLabel")}</FieldLabel>

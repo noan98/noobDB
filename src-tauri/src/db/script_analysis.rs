@@ -233,7 +233,9 @@ impl ScriptAnalyzer {
         if starts_with_word(sql, "insert") {
             return (StatementCategory::Write, None, self.enforce_read_only, None);
         }
-        if let Some((ctl, _)) = classify_tx_statement(self.driver, sql) {
+        // 解釈できないモード語を含む開始文 (`BEGIN ISOLATION LEVEL FOO`) は実行時に
+        // エラーで止まるので、正常な制御文として数えず通常の文として分類する。
+        if let Some((ctl, Ok(_))) = classify_tx_statement(self.driver, sql) {
             let kind = match ctl {
                 TxControl::Begin => "begin",
                 TxControl::Commit => "commit",
@@ -413,6 +415,16 @@ mod tests {
         );
         assert_eq!(a.blocked_total, 0);
         assert_eq!(a.head.len(), 7);
+    }
+
+    #[test]
+    fn unparsable_begin_is_not_counted_as_tx_control_1601() {
+        // 解釈できないモード語の開始文は実行時にエラーで止まる。正常な制御文として数えない。
+        let a = analyze("BEGIN ISOLATION LEVEL FOO;", false);
+        assert_eq!(a.categories.tx_control, 0);
+        assert_eq!(a.tx_control_total, 0);
+        let ok = analyze("BEGIN ISOLATION LEVEL SERIALIZABLE;", false);
+        assert_eq!(ok.categories.tx_control, 1);
     }
 
     #[test]

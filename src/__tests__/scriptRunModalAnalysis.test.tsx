@@ -105,6 +105,7 @@ beforeEach(() => {
       skippedControl: 0,
       skippedExcluded: 0,
       skippedBeforeStart: 0,
+      implicitCommit: false,
       rowsAffected: 0,
       elapsedMs: 1,
     });

@@ -53,7 +53,8 @@ enum ScanState {
     Normal,
     LineComment,
     BlockComment,
-    Quoted(u8),
+    /// (引用符, バックスラッシュがエスケープか)
+    Quoted(u8, bool),
     Dollar(Vec<u8>),
 }
 
@@ -66,6 +67,8 @@ pub const MAX_SCRIPT_STATEMENT_BYTES: usize = 64 * 1024 * 1024;
 /// した文を返す。入力の終わりで [`finish`](Self::finish) を呼ぶと残りを返す。
 pub struct ScriptSplitter {
     mysql: bool,
+    /// PostgreSQL か (`E'…'` の `\` エスケープ判定用)。
+    postgres: bool,
     /// 現在の (まだ閉じていない) 文のテキスト。
     buf: String,
     /// `buf` 内の走査カーソル (バイト位置)。バックスラッシュエスケープで次チャンクの
@@ -92,6 +95,7 @@ impl ScriptSplitter {
     pub fn with_limit(driver: DriverKind, max_statement_bytes: usize) -> Self {
         Self {
             mysql: driver == DriverKind::Mysql,
+            postgres: driver == DriverKind::Postgres,
             buf: String::new(),
             pos: 0,
             state: ScanState::Normal,
@@ -155,7 +159,15 @@ impl ScriptSplitter {
                         continue;
                     }
                     if c == b'\'' || c == b'"' || c == b'`' {
-                        self.state = ScanState::Quoted(c);
+                        // バックスラッシュがエスケープになるのは MySQL の '…' / "…" と、
+                        // PostgreSQL の E'…' (直前が単独の E/e) だけ。
+                        let escapes = (self.mysql && c != b'`')
+                            || (self.postgres
+                                && c == b'\''
+                                && self.pos >= 1
+                                && matches!(bytes[self.pos - 1], b'e' | b'E')
+                                && (self.pos == 1 || !is_word_byte(bytes[self.pos - 2])));
+                        self.state = ScanState::Quoted(c, escapes);
                         self.pos += 1;
                         continue;
                     }
@@ -209,9 +221,9 @@ impl ScriptSplitter {
                         return;
                     }
                 },
-                ScanState::Quoted(q) => {
+                ScanState::Quoted(q, escapes) => {
                     let q = *q;
-                    let backslash = self.mysql && q == b'\'';
+                    let backslash = *escapes;
                     let mut j = self.pos;
                     let mut closed = false;
                     while j < len {
@@ -487,7 +499,11 @@ pub fn classify_tx_statement(
             Some((TxControl::Begin, parse_tx_modes(driver, &rest[1..])))
         }
         "commit" => plain(only(&["work", "transaction", "tran"]), TxControl::Commit),
-        "end" => plain(only(&["work", "transaction"]), TxControl::Commit),
+        // `END` は COMMIT の同義語だが PostgreSQL / SQLite の構文。MySQL では
+        // 単独の `END` は構文エラーなので、制御文に読み替えずサーバへ流してエラーで止める。
+        "end" if driver != DriverKind::Mysql => {
+            plain(only(&["work", "transaction"]), TxControl::Commit)
+        }
         "rollback" => plain(only(&["work", "transaction", "tran"]), TxControl::Rollback),
         _ => None,
     }
@@ -552,7 +568,10 @@ pub fn parse_use_database(driver: DriverKind, sql: &str) -> Option<String> {
     if driver != DriverKind::Mysql {
         return None;
     }
-    let body = sql
+    // 先頭・末尾のコメント (`/* … */` / `-- …` / `# …`) は読み飛ばす
+    // (`USE shop /* 本番 */;` を取りこぼすと後続文が旧 DB に戻される)。
+    let cleaned = strip_use_comments(sql);
+    let body = cleaned
         .trim()
         .trim_end_matches(|c: char| c == ';' || c.is_whitespace());
     let mut it = body.splitn(2, char::is_whitespace);
@@ -573,6 +592,53 @@ pub fn parse_use_database(driver: DriverKind, sql: &str) -> Option<String> {
         return None;
     }
     Some(unquoted.to_string())
+}
+
+/// `USE` 文の解析用に、引用符の外にあるコメントを空白 1 つに置き換える
+/// (MySQL: `-- ` / `#` 行コメントと `/* */`)。引用符の中身はそのまま残す。
+fn strip_use_comments(sql: &str) -> String {
+    let c: Vec<char> = sql.chars().collect();
+    let n = c.len();
+    let mut out = String::with_capacity(sql.len());
+    let mut i = 0;
+    while i < n {
+        let ch = c[i];
+        let dash = ch == '-'
+            && i + 1 < n
+            && c[i + 1] == '-'
+            && (i + 2 >= n || c[i + 2].is_whitespace() || c[i + 2].is_control());
+        if dash || ch == '#' {
+            while i < n && c[i] != '\n' {
+                i += 1;
+            }
+            out.push(' ');
+            continue;
+        }
+        if ch == '/' && i + 1 < n && c[i + 1] == '*' {
+            i += 2;
+            while i < n && !(c[i] == '*' && i + 1 < n && c[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(n);
+            out.push(' ');
+            continue;
+        }
+        if ch == '`' || ch == '"' {
+            out.push(ch);
+            i += 1;
+            while i < n {
+                out.push(c[i]);
+                i += 1;
+                if c[i - 1] == ch {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+        i += 1;
+    }
+    out
 }
 
 fn is_quoted(s: &str) -> bool {
@@ -799,5 +865,86 @@ mod tests {
         );
         assert_eq!(parse_use_database(DriverKind::Postgres, "USE shop"), None);
         assert_eq!(parse_use_database(DriverKind::Mysql, "USER x"), None);
+    }
+
+    #[test]
+    fn use_database_ignores_comments_1601() {
+        let d = DriverKind::Mysql;
+        for sql in [
+            "USE shop /* 本番 */",
+            "USE shop /* a */;",
+            "USE shop -- 本番",
+            "USE shop # note",
+            "/* x */ USE shop",
+            "USE `shop` /* c */ ;",
+        ] {
+            assert_eq!(parse_use_database(d, sql), Some("shop".into()), "{sql}");
+        }
+        // 引用符の中の `--` / `/*` は名前の一部。
+        assert_eq!(
+            parse_use_database(d, "USE `a--b/*c*/`"),
+            Some("a--b/*c*/".into())
+        );
+        assert_eq!(parse_use_database(d, "USE shop other"), None);
+    }
+
+    #[test]
+    fn end_is_not_commit_on_mysql_1601() {
+        assert_eq!(classify_tx_control(DriverKind::Mysql, "END"), None);
+        assert_eq!(
+            classify_tx_control(DriverKind::Postgres, "END"),
+            Some(TxControl::Commit)
+        );
+        assert_eq!(
+            classify_tx_control(DriverKind::Sqlite, "END TRANSACTION"),
+            Some(TxControl::Commit)
+        );
+    }
+
+    #[test]
+    fn mysql_double_quote_backslash_escape_1601() {
+        let sql = r#"INSERT INTO t VALUES ("a\"b; c"); SELECT 1;"#;
+        assert_eq!(
+            sqls(split_script(DriverKind::Mysql, sql)),
+            vec![r#"INSERT INTO t VALUES ("a\"b; c")"#, "SELECT 1"]
+        );
+        assert_chunk_invariant(DriverKind::Mysql, sql);
+        // PostgreSQL では "…" は識別子で `\` はただの文字。
+        assert_eq!(
+            sqls(split_script(
+                DriverKind::Postgres,
+                r#"SELECT "a\"; SELECT 2;"#
+            ))
+            .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn postgres_e_string_backslash_escape_1601() {
+        let sql = r"INSERT INTO t VALUES (E'it\'s; ok'); SELECT 1;";
+        assert_eq!(
+            sqls(split_script(DriverKind::Postgres, sql)),
+            vec![r"INSERT INTO t VALUES (E'it\'s; ok')", "SELECT 1"]
+        );
+        assert_chunk_invariant(DriverKind::Postgres, sql);
+        // 通常の '…' では `\` はただの文字なので `'a\'` で閉じる。
+        assert_eq!(
+            sqls(split_script(
+                DriverKind::Postgres,
+                r"SELECT 'a\'; SELECT 2;"
+            ))
+            .len(),
+            2
+        );
+        // 単語の一部の e は E 文字列の接頭辞ではない。
+        assert_eq!(
+            sqls(split_script(
+                DriverKind::Postgres,
+                r"SELECT name'a\'; SELECT 2;"
+            ))
+            .len(),
+            2
+        );
     }
 }
