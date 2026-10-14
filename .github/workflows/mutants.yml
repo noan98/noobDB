@@ -44,14 +44,17 @@ env:
 
 jobs:
   mutants:
-    name: cargo-mutants (安全網関数)
-    outputs:
-      exit_code: ${{ steps.mutants.outputs.exit_code }}
-      score: ${{ steps.summary.outputs.score }}
-      survived: ${{ steps.summary.outputs.survived }}
+    name: cargo-mutants (安全網関数 ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # フル実行は数十分かかるが、ハング時にデフォルト 6 時間ランナーを占有し続ける
-    # のを防ぐため余裕を持った上限を付ける (正常時は影響なし)。
+    # --in-place は 1 ランナーで変異を 1 つずつしか試せない (並列 --jobs と併用不可)。
+    # 1 変異 ≒ ビルド 53 秒 + テスト 19 秒で、全 132 件を 1 ジョブで回すと 120 分の
+    # 上限を超えて打ち切られた (2026-10-15 JST、#1633)。そこで --shard で 4 ランナーに
+    # 分ける (1 シャード 約 45 分)。list_only は一覧を出すだけなので 1 ジョブで足りる。
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.list_only && '[1]' || '[1, 2, 3, 4]') }}
+    # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ上限 (正常時は影響なし)。
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -112,10 +115,9 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       # 変異テスト本体: 安全網関数群に限定して実行 (対象は mutants.toml が定める)。
-      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない (終了コードは下の
-      # Run cargo-mutants ステップで step output に残し、exit 0 で終える)。
-      # mutants.out/ をアーティファクトとして保存し、Job Summary にサマリを出す。
-      # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の通知ジョブ用, #1395)。
+      # --no-shuffle で再現性を確保し、失敗しても CI を落とさない。
+      # 終了コードは mutants.out/shard-exit-code に書き、mutants.out/ ごとシャード別の
+      # アーティファクトに保存する。集計と Job Summary は後段の summary ジョブが行う。
       # cargo-mutants は 0=全捕捉 / 2=生存変異あり / 3=タイムアウトあり / 4=baseline 失敗
       # など。いずれも本ステップは exit 0 で終える (CI は落とさない)。
       # --in-place: cargo-mutants は既定で src-tauri (cargo ワークスペース) だけを
@@ -136,25 +138,75 @@ jobs:
           cargo mutants \
             --in-place \
             --no-shuffle \
+            --shard "${SHARD}/4" \
             2>&1 | tee mutants-output.txt
-          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+          code=${PIPESTATUS[0]}
+          mkdir -p mutants.out
+          echo "$code" > mutants.out/shard-exit-code
+          cp mutants-output.txt mutants.out/
           exit 0
+        env:
+          SHARD: ${{ matrix.shard }}
+
+      - name: Upload mutants.out artifact
+        if: '!inputs.list_only && always()'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-out-${{ matrix.shard }}
+          path: src-tauri/mutants.out/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 4 シャードの outcomes.json を合算して Job Summary と通知用の値を出す。
+  # シャードがタイムアウト等で結果を残せなかった場合は exit_code=missing として
+  # 実行失敗扱いにする (一部シャードだけのスコアで「成功」と通知しないため)。
+  summary:
+    name: 変異テストの集計
+    needs: mutants
+    if: always() && !inputs.list_only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      exit_code: ${{ steps.summary.outputs.exit_code }}
+      score: ${{ steps.summary.outputs.score }}
+      survived: ${{ steps.summary.outputs.survived }}
+    steps:
+      # 全シャードが結果を残せなかった場合も集計 (= 実行失敗の通知) まで進める。
+      - name: Download shard results
+        continue-on-error: true
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: mutants-out-*
+          path: shards
 
       - name: Mutation test summary
         id: summary
-        if: '!inputs.list_only'
-        working-directory: src-tauri
         run: |
           echo '### Mutation test results (安全網関数)' >> "$GITHUB_STEP_SUMMARY"
           echo '' >> "$GITHUB_STEP_SUMMARY"
-          if [ -f mutants.out/outcomes.json ]; then
+          # シャードの終了コードを 1 つにまとめる。4 シャードすべての結果が揃い、
+          # どれも 0 / 2 / 3 のときだけ実行成功で、値は最大値 (2 や 3 を優先)。
+          # 欠けたシャード・それ以外のコードがあれば、それを通知に残す。
+          exit_code=""
+          for k in 1 2 3 4; do
+            f="shards/mutants-out-$k/shard-exit-code"
+            c=$(cat "$f" 2>/dev/null || echo missing)
+            case "$c" in
+              0|2|3) case "$exit_code" in ""|0|2|3) [ -z "$exit_code" ] || [ "$c" -gt "$exit_code" ] && exit_code=$c ;; esac ;;
+              *) exit_code="shard$k:$c" ;;
+            esac
+          done
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          if ls shards/*/outcomes.json >/dev/null 2>&1; then
             # outcomes.json の summary 実キー (CaughtMutant / MissedMutant / Unviable /
             # Timeout / Success) で集計する。生存変異 (MISSED) を先頭に強調し、
             # fail はさせない (可視化のみ)。
             python3 - << 'PYEOF' >> "$GITHUB_STEP_SUMMARY"
           import json, os, pathlib, collections
-          data = json.loads(pathlib.Path("mutants.out/outcomes.json").read_text())
-          counts = collections.Counter(o.get("summary") for o in data.get("outcomes", []))
+          counts = collections.Counter()
+          for f in sorted(pathlib.Path("shards").glob("*/outcomes.json")):
+              data = json.loads(f.read_text())
+              counts.update(o.get("summary") for o in data.get("outcomes", []))
           # baseline (無変異のテスト実行) は summary == "Success" で、変異ではない。
           # 変異の母数は baseline を除いた総数。
           caught = counts.get("CaughtMutant", 0)
@@ -170,7 +222,7 @@ jobs:
               with open(out, "a") as fh:
                   fh.write(f"score={score}\nsurvived={missed}\n")
           if missed:
-              print(f"> :warning: **生存変異 (MISSED): {missed} 件** — テストが捕捉できていない変異があります。`mutants.out/missed.txt` を確認し、`db::tests` に境界ケースを追記してください。")
+              print(f"> :warning: **生存変異 (MISSED): {missed} 件** — テストが捕捉できていない変異があります。アーティファクト `mutants-out-*` の `missed.txt` を確認し、`db::tests` に境界ケースを追記してください。")
           else:
               print("> :white_check_mark: **生存変異 (MISSED): 0 件**")
           print("")
@@ -189,21 +241,14 @@ jobs:
           PYEOF
           else
             echo '変異テスト結果ファイルが見つかりませんでした。' >> "$GITHUB_STEP_SUMMARY"
-            if [ -f mutants-output.txt ]; then
+            for f in shards/*/mutants-output.txt; do
+              [ -f "$f" ] || continue
+              echo "#### $f" >> "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"
-              tail -50 mutants-output.txt >> "$GITHUB_STEP_SUMMARY"
+              tail -50 "$f" >> "$GITHUB_STEP_SUMMARY"
               echo '```' >> "$GITHUB_STEP_SUMMARY"
-            fi
+            done
           fi
-
-      - name: Upload mutants.out artifact
-        if: '!inputs.list_only && always()'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mutants-out
-          path: src-tauri/mutants.out/
-          if-no-files-found: ignore
-          retention-days: 14
 
   # 結果の通知 (#1395)。手動実行の可視化専用で見に行かなければ腐るため、トラッキング
   # Issue (ラベル ci:mutants) に結果を残す。生存変異は毎回「ある」のが普通でノイズに
@@ -215,8 +260,8 @@ jobs:
   # `issues: write` は本ジョブにだけ付与。list_only 実行と既定ブランチ以外の実行では通知しない。
   notify:
     name: 結果の通知 (トラッキング Issue)
-    needs: mutants
-    if: always() && !inputs.list_only && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure')
+    needs: [mutants, summary]
+    if: always() && !inputs.list_only && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (needs.mutants.result == 'success' || needs.mutants.result == 'failure') && needs.summary.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -234,9 +279,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           M_RESULT: ${{ needs.mutants.result }}
-          M_EXIT: ${{ needs.mutants.outputs.exit_code }}
-          M_SCORE: ${{ needs.mutants.outputs.score }}
-          M_SURVIVED: ${{ needs.mutants.outputs.survived }}
+          M_EXIT: ${{ needs.summary.outputs.exit_code }}
+          M_SCORE: ${{ needs.summary.outputs.score }}
+          M_SURVIVED: ${{ needs.summary.outputs.survived }}
           TRACK_LABEL: ci:mutants
           # 生存変異の潰しはテスト追記で 1〜数日。安全網 (読み取り専用ガード) の強化なので恩恵は大きい。
           TRACK_EXTRA_LABELS: cost:Mid,benefit:4
@@ -255,7 +300,7 @@ jobs:
               echo "cargo-mutants (安全網関数) で生存変異が検出されたため自動作成されたトラッキング Issue です。"
               echo ""
               echo "- 生存変異 (MISSED): **${M_SURVIVED} 件** / 変異スコア: **${M_SCORE}**"
-              echo "- 詳細は実行ページの Job Summary と Artifacts (\`mutants-out\`, \`missed.txt\`) を確認し、\`db::tests\` に境界ケースを追記してください。"
+              echo "- 詳細は実行ページの Job Summary と Artifacts (\`mutants-out-*\` の \`missed.txt\`) を確認し、\`db::tests\` に境界ケースを追記してください。"
               key="survived=${M_SURVIVED};score=${M_SCORE}"
             else
               echo "cargo-mutants の実行が失敗した (結果ファイルが得られなかった) ため自動作成されたトラッキング Issue です。"
