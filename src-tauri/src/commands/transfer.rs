@@ -211,12 +211,25 @@ pub(crate) async fn prepare_transfer(
     if request.source_session_id == request.target_session_id
         && !request.mode.writes_existing_table()
     {
+        let same_db = request.source_database.as_deref().unwrap_or("")
+            == request.target_database.as_deref().unwrap_or("");
         if let Some(t) = request.source_table.as_deref() {
-            let same_db = request.source_database.as_deref().unwrap_or("")
-                == request.target_database.as_deref().unwrap_or("");
-            if same_db && t.trim().eq_ignore_ascii_case(request.target_table.trim()) {
+            if same_db && is_same_table_name(target.conn.driver_kind(), t, &request.target_table) {
                 return Err(AppError::InvalidInput(
                     "source and target are the same table".into(),
+                ));
+            }
+        } else if request.source_sql.is_some() {
+            // クエリ元でも、転送先と同名のテーブルを読むなら置き換え (DROP) でソースが
+            // 消える。クエリは `shop.users` のように別 DB を修飾して読めるので、DB の一致は
+            // 見ず (同一セッションだけで判定し)、同名の識別子があれば拒否する (#1598)。
+            if crate::db::where_used::mentions_table_name(
+                &source_sql,
+                request.target_table.trim(),
+                source_driver,
+            ) {
+                return Err(AppError::InvalidInput(
+                    "source query reads the target table".into(),
                 ));
             }
         }
@@ -229,6 +242,18 @@ pub(crate) async fn prepare_transfer(
         source_sql,
         request,
     })
+}
+
+/// 同一テーブル名か。PostgreSQL は引用符付き識別子で大文字小文字を区別する
+/// (`Users` と `users` は別テーブル) ので厳密比較し、MySQL / SQLite は
+/// 大文字小文字を無視した比較にする (#1598)。
+fn is_same_table_name(driver: DriverKind, a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if driver == DriverKind::Postgres {
+        a == b
+    } else {
+        a.eq_ignore_ascii_case(b)
+    }
 }
 
 /// タスク破棄 (= キャンセル) 時に読み出しタスクも止めるためのガード。
@@ -964,4 +989,17 @@ pub async fn transfer_data(
         .await;
     let _ = ready_tx.send(token);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn same_table_name_is_case_sensitive_only_on_postgres_1598() {
+        assert!(is_same_table_name(DriverKind::Mysql, "Users", " users "));
+        assert!(is_same_table_name(DriverKind::Sqlite, "Users", "users"));
+        assert!(!is_same_table_name(DriverKind::Postgres, "Users", "users"));
+        assert!(is_same_table_name(DriverKind::Postgres, "users", "users"));
+    }
 }

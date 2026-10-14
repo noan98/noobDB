@@ -432,3 +432,33 @@ describe("ImportModal skipped rows (#1258)", () => {
     expect(api.saveImportSkippedRows).not.toHaveBeenCalled();
   });
 });
+
+describe("ImportModal re-run guard for an existing table (#1598)", () => {
+  it("disables the execute button after a successful import of the same file", async () => {
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    const execute = await screen.findByRole("button", { name: t("importExecute") });
+    await waitFor(() => expect(execute).toBeEnabled());
+    fireEvent.click(execute);
+    await waitFor(() => expect(listenImportStream).toHaveBeenCalled());
+    const handlers = vi.mocked(listenImportStream).mock.calls[0][1];
+    await act(async () => {
+      handlers.onDone?.({ streamId: "x", inserted: 10, elapsedMs: 5, skipped: [], skippedTotal: 0 });
+    });
+    // 同じファイルのままの再実行 (行の重複挿入) はできない。
+    await waitFor(() => expect(screen.getByRole("button", { name: t("importExecute") })).toBeDisabled());
+    // パスを編集すれば再び実行できる。
+    fireEvent.change(screen.getByLabelText(t("importFile")), { target: { value: "/tmp/users2.csv" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: t("importExecute") })).toBeEnabled());
+  });
+});
