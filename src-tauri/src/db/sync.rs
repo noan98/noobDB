@@ -209,7 +209,15 @@ fn sqlite_kept_tables(driver: DriverKind, diff: &SchemaDiff) -> HashMap<String, 
             if !survives {
                 continue;
             }
-            for fk in t.foreign_keys.iter().filter(|fk| cascades(fk)) {
+            // 残る既存の表は CASCADE / SET 系だけを見る (NO ACTION は従来どおり)。DROP を
+            // 省いた表の行は残るので、その祖先は NO ACTION でも落とすと FK エラーで計画全体が
+            // 失敗する。祖先も残して警告に回す。
+            let any_action = t.status == DiffStatus::TargetOnly;
+            for fk in t
+                .foreign_keys
+                .iter()
+                .filter(|fk| any_action || cascades(fk))
+            {
                 let parent = fk.referenced_table.to_ascii_lowercase();
                 if target_only.contains(&parent) && !kept.contains_key(&parent) {
                     kept.insert(parent, t.name.clone());
@@ -1854,7 +1862,8 @@ mod tests {
         assert_eq!(drops(&plan), vec!["unrelated"], "{:?}", plan.statements);
         assert!(plan.warnings.iter().any(|w| w.contains("grandparent")));
         assert!(plan.warnings.iter().any(|w| w.contains("parent")));
-        // NO ACTION の祖先は従来どおり落とす。
+        // 残る表から NO ACTION で直接参照される表は従来どおり落とす。DROP を省いた parent が
+        // NO ACTION で参照する祖先 gp は、落とすと FK エラーになるので残して警告する。
         let d = diff(
             DriverKind::Sqlite,
             vec![
@@ -1867,7 +1876,19 @@ mod tests {
                 ),
             ],
         );
-        assert_eq!(drops(&generate_sync_sql(&d, true)), vec!["gp"]);
+        assert!(drops(&generate_sync_sql(&d, true)).is_empty());
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![
+                tdiff(
+                    "child",
+                    DiffStatus::Same,
+                    vec![fk_to("parent", "NO ACTION")],
+                ),
+                tdiff("parent", DiffStatus::TargetOnly, vec![]),
+            ],
+        );
+        assert_eq!(drops(&generate_sync_sql(&d, true)), vec!["parent"]);
     }
 
     #[test]

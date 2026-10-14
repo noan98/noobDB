@@ -1899,7 +1899,8 @@
           "status": "different"
         }
       ],
-      "target_driver": "postgres"
+      "target_driver": "postgres",
+      "warnings": []
     },
     "external_changed_tables": [
       "users"
@@ -2029,7 +2030,8 @@
         "status": "different"
       }
     ],
-    "target_driver": "postgres"
+    "target_driver": "postgres",
+    "warnings": []
   },
   "schemaDiffVariants": [
     {
@@ -2528,7 +2530,10 @@
           "status": "same"
         }
       ],
-      "target_driver": "postgres"
+      "target_driver": "postgres",
+      "warnings": [
+        "target の外部キーを取得できませんでした"
+      ]
     },
     {
       "source_driver": "postgres",
@@ -3026,7 +3031,8 @@
           "status": "same"
         }
       ],
-      "target_driver": "sqlite"
+      "target_driver": "sqlite",
+      "warnings": []
     },
     {
       "source_driver": "sqlite",
@@ -3524,7 +3530,8 @@
           "status": "same"
         }
       ],
-      "target_driver": "mysql"
+      "target_driver": "mysql",
+      "warnings": []
     }
   ],
   "schemaDriftCapture": {

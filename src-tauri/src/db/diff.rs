@@ -181,8 +181,8 @@ pub struct SchemaDiff {
     pub target_driver: DriverKind,
     pub tables: Vec<TableDiff>,
     /// 比較時に集めきれなかった情報の注意 (例: SQLite で target の外部キー取得に失敗)。
-    /// 同期計画の警告にそのまま載せる。空なら JSON に出さない。
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// 同期計画の警告にそのまま載せる。
+    #[serde(default)]
     pub warnings: Vec<String>,
 }
 

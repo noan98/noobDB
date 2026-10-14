@@ -35,6 +35,7 @@ function stmt(sql: string, kind: SyncStatement["kind"], destructive = false, tab
 const DIFF: SchemaDiff = {
   source_driver: "mysql",
   target_driver: "mysql",
+  warnings: [],
   tables: [
     { name: "same_tbl", status: "same", columns: [] },
     {

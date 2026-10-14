@@ -19,6 +19,7 @@ const { SCHEMA_DIFF, TABLE_DIFF } = vi.hoisted(() => ({
     desired: {
       source_driver: "sqlite",
       target_driver: "sqlite",
+      warnings: [],
       tables: [
         { name: "users", status: "different", columns: [] },
         { name: "orders", status: "same", columns: [] },

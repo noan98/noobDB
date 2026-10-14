@@ -1126,7 +1126,7 @@ export interface SchemaDiff {
   target_driver: DriverKind;
   tables: TableDiff[];
   /** 比較時の注意 (例: SQLite で target の外部キー取得に失敗)。同期計画の警告に載る。 */
-  warnings?: string[];
+  warnings: string[];
 }
 
 /**
