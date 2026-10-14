@@ -536,16 +536,20 @@ function TaskRow({
                   fontSize="xs"
                   fontFamily="var(--font-mono)"
                   textStyle="numeric"
-                  color={r.status === "ok" ? "app.textMuted" : semanticColorToken("danger", "text")}
+                  color={r.status === "ok" || r.status === "skipped" ? "app.textMuted" : semanticColorToken("danger", "text")}
                 >
                   <chakra.span minW="170px">{new Date(r.started_at).toLocaleString()}</chakra.span>
-                  <chakra.span minW="50px">{r.status}</chakra.span>
+                  <chakra.span minW="50px">{r.status === "skipped" ? t("taskRunStatusSkipped") : r.status}</chakra.span>
                   {r.catch_up && <chakra.span>({t("taskRunCatchUp")})</chakra.span>}
                   {r.attempts > 1 && <chakra.span>({t("taskRunAttempts", { n: r.attempts })})</chakra.span>}
                   {r.output_path && <chakra.span flex="1" wordBreak="break-all">{r.output_path}</chakra.span>}
                   {r.rows != null && <chakra.span>{t("taskRunRows", { rows: r.rows })}</chakra.span>}
                   {r.bytes != null && <chakra.span>{t("taskRunBytes", { bytes: r.bytes })}</chakra.span>}
-                  {r.error && <chakra.span flex="1" wordBreak="break-all">{r.error}</chakra.span>}
+                  {r.status === "skipped" ? (
+                    <chakra.span flex="1" wordBreak="break-all">{t("taskRunSkippedReason")}</chakra.span>
+                  ) : (
+                    r.error && <chakra.span flex="1" wordBreak="break-all">{r.error}</chakra.span>
+                  )}
                 </chakra.div>
               ))}
             </chakra.div>

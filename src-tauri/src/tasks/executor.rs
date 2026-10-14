@@ -226,9 +226,17 @@ pub async fn run_once(
                         }
                     }
                     // 待機中に接続先が修正されたかもしれないので、プロファイルも読み直す。
-                    // 読み直せなかったときは直前の内容で再試行を続ける。
+                    // プロファイルが削除されていたら中止し、I/O エラーなど一時的な失敗のときは
+                    // 直前の内容で再試行を続ける。
                     match load_profile(&task.profile_id) {
                         Ok(p) => profile = p,
+                        Err(AppError::InvalidInput(msg)) => {
+                            let mut outcome = TaskOutcome::err(format!(
+                                "connect retry aborted ({msg}) after {attempts} attempts: {e}"
+                            ));
+                            outcome.attempts = attempts;
+                            return outcome;
+                        }
                         Err(load_err) => {
                             tracing::warn!(
                                 task_id = %task.id,

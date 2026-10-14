@@ -163,6 +163,11 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
           masks,
           includeDdl: format === "sql" && includeDdl,
         });
+        // 起動の IPC を待つ間にキャンセルされると、その時点では取消が空振りしうる。
+        // 戻ってきた時点で登録済みなので、もう一度取消を送る。
+        if (cancelledRef.current || disposedRef.current) {
+          await api.cancelStream(streamId).catch(() => undefined);
+        }
       }
     } catch (e) {
       settle({ ok: false, error: String(e) });

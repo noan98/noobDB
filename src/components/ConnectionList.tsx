@@ -3385,6 +3385,7 @@ export const ConnectionList = memo(forwardRef<ConnectionListHandle, Props>(funct
       .listTablesAll(sid)
       .then((all) => {
         if (sessionIdRef.current !== sid) return;
+        setError(null);
         const byDb = new Map(all.map((d) => [d.database, d.tables]));
         setTables((prev) => {
           const next = { ...prev };

@@ -840,4 +840,22 @@ describe("スキーマツリーの IPC 集約 (#1263)", () => {
     await screen.findByRole("treeitem", { name: "tbl2" });
     expect(api.listTablesAll).toHaveBeenCalledTimes(1);
   });
+
+  it("検索用の一括取得が失敗したらエラーを出し、検索語を変えると再取得してエラーを消す (#1594)", async () => {
+    vi.mocked(api.listTablesAll).mockClear();
+    vi.mocked(api.listTablesAll).mockRejectedValueOnce(new Error("list tables timed out"));
+    const profile = makeProfile({ id: "p-1594", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={[profile]} activeProfileId="p-1594" sessionId="s-fail" />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    const input = screen.getByPlaceholderText(t("listSearchPlaceholder"));
+    fireEvent.change(input, { target: { value: "tb" } });
+    await screen.findByText(/list tables timed out/);
+
+    fireEvent.change(input, { target: { value: "tbl2" } });
+    await screen.findByRole("treeitem", { name: "tbl2" });
+    expect(api.listTablesAll).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText(/list tables timed out/)).toBeNull();
+  });
 });

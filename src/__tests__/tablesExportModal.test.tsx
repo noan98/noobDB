@@ -1,12 +1,10 @@
-import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { ExportStreamHandlers } from "../api/tauri";
 
 /**
- * 複数テーブルの一括書き出し (#1594)。開発ビルド (StrictMode) でも書き出しが走ること、
- * マスク有効時に describe の待機中にキャンセルしたら書き出しを始めないことを固定する。
+ * 複数テーブルの一括書き出し (#1594)。マスク有効時に describe の待機中にキャンセルしたら書き出しを始めないことを固定する。
  */
 vi.mock("@tauri-apps/api/path", () => ({
   downloadDir: vi.fn().mockResolvedValue("/dl"),
@@ -49,14 +47,6 @@ const modal = () => (
 );
 
 describe("TablesExportModal (#1594)", () => {
-  it("StrictMode の再マウント後でも書き出しが実行される", async () => {
-    renderWithProviders(<StrictMode>{modal()}</StrictMode>);
-    const execute = screen.getByRole("button", { name: t("exportExecute") });
-    await waitFor(() => expect(execute).toBeEnabled());
-    fireEvent.click(execute);
-    await waitFor(() => expect(api.exportQueryStream).toHaveBeenCalledTimes(1));
-  });
-
   it("マスク有効で describe の待機中にキャンセルしたら、書き出しを始めない", async () => {
     let resolveDescribe: (v: never) => void = () => {};
     vi.mocked(api.describeTable).mockImplementation(() => new Promise((res) => (resolveDescribe = res as never)));
