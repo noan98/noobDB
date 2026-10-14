@@ -56,6 +56,19 @@ export function canGoNext(
   return full;
 }
 
+/**
+ * ページ移動のクランプに使う総ページ数。推定 (統計由来) は実数より小さいことがあるので、
+ * 現在ページ (推定を超えて表示中でもよい) を下限にし、満杯なら 1 ページ先まで許す。
+ */
+export function effectiveTotalPages(
+  estimated: number | null,
+  currentPage: number,
+  currentPageFull: boolean,
+): number | null {
+  if (estimated == null) return null;
+  return Math.max(estimated, currentPage + (currentPageFull ? 1 : 0));
+}
+
 /** 「前ページへ戻れるか」。1 ページ目より大きいかどうか。 */
 export function canGoPrev(page: number): boolean {
   return page > 1;

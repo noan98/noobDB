@@ -449,7 +449,7 @@ import { reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
-import { buildPageSql, canGoNext, canGoPrev, clampPage } from "./pagination";
+import { buildPageSql, canGoNext, canGoPrev, clampPage, effectiveTotalPages } from "./pagination";
 import {
   buildKeysetPageSql,
   keysetMoveFor,
@@ -1098,9 +1098,10 @@ function classifyDroppedFile(path: string): DroppedKind {
  */
 type DragFeedback = { accept: boolean; kind: "sql" | "csv" | "mixed" | "reject" };
 
-function dragFeedbackFor(paths: string[]): DragFeedback {
+function dragFeedbackFor(paths: string[], connected: boolean): DragFeedback {
   const kinds = new Set(paths.map(classifyDroppedFile));
-  const hasSql = kinds.has("sql");
+  // 未接続では .sql を開けない (handleFilesDropped が拒否する) ので受理表示にしない。
+  const hasSql = connected && kinds.has("sql");
   const hasCsv = kinds.has("csv");
   if (!hasSql && !hasCsv) return { accept: false, kind: "reject" };
   if (hasSql && hasCsv) return { accept: true, kind: "mixed" };
@@ -4483,6 +4484,10 @@ export default function App() {
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
   // always calls the current closure without being torn down on every render.
   const runQueryInTabRef = useRef(runQueryInTab);
+  const goToPageInTabRef = useRef<
+    ((tabId: string, page: number, size?: number, browse?: { force?: boolean }) => Promise<void>) | null
+  >(null);
+  const focusExplorerRef = useRef<(() => void) | null>(null);
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
@@ -4535,8 +4540,12 @@ export default function App() {
         // 黙って破棄されてしまう (#F1)。
         if (hasPendingChanges(tt)) return;
         // ページ送り / サーバ側ソート・フィルタ適用中は lastExecutedSql (1 ページ目の
-        // 元 SQL) と表示が食い違う。再実行すると 1 ページ目に戻ってしまうので見送る。
-        if (tt.kind === "table" && ((tt.page ?? 1) > 1 || tt.serverSort || tt.serverFilter)) return;
+        // 元 SQL) と表示が食い違う。再実行すると 1 ページ目に戻ってしまうので別経路で取り直す。
+        if (tt.kind === "table" && ((tt.page ?? 1) > 1 || tt.serverSort || tt.serverFilter)) {
+          // 現在のページ / ソート / フィルタのまま取り直す (1 ページ目へ戻さない)。
+          void goToPageInTabRef.current?.(tabId, tt.page ?? 1, undefined, { force: true });
+          return;
+        }
         const sql = tt.lastExecutedSql;
         // Defence in depth: never poll a non-read-only statement (the backend
         // enforces this too via the auto-refresh guard).
@@ -5014,12 +5023,8 @@ export default function App() {
     const nextFilter = browseOverride && "filter" in browseOverride ? browseOverride.filter ?? null : tab.serverFilter ?? null;
     const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
     const estimatedTotal = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
-    // 推定の総ページ数は実数より小さいことがある。現在ページが満杯なら 1 ページ先までは進める。
-    const curPage = tab.page ?? 1;
-    const total =
-      estimatedTotal != null && estimatedTotal <= curPage && (tab.result?.rows.length ?? 0) >= pageSize
-        ? curPage + 1
-        : estimatedTotal;
+    // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
+    const total = effectiveTotalPages(estimatedTotal, tab.page ?? 1, (tab.result?.rows.length ?? 0) >= pageSize);
     const target = clampPage(page, total);
     if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
     const driver = selectedProfile?.driver ?? "mysql";
@@ -5126,6 +5131,7 @@ export default function App() {
       });
     }
   }, [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq]);
+  goToPageInTabRef.current = goToPageInTab;
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
@@ -8043,6 +8049,11 @@ export default function App() {
    * 新しい IPC/読み込み経路は増やさない。ダイアログでキャンセルされたら何もしない。
    */
   const handleOpenSqlFile = useCallback(async (encoding: TextEncodingId | null = null) => {
+    // 未接続ではタブが描画されないので、ダイアログを開く前に拒否する。
+    if (!sessionIdRef.current) {
+      toast.error(translate("dropSqlNoConnection"));
+      return;
+    }
     try {
       const picked = await openFileDialog({
         multiple: true,
@@ -8098,7 +8109,7 @@ export default function App() {
         const un = await webview.onDragDropEvent((event) => {
           const payload = event.payload;
           if (payload.type === "enter") {
-            setDragFeedback(dragFeedbackFor(payload.paths));
+            setDragFeedback(dragFeedbackFor(payload.paths, !!sessionIdRef.current));
           } else if (payload.type === "leave") {
             setDragFeedback(null);
           } else if (payload.type === "drop") {
@@ -8646,13 +8657,7 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       if (comboMatchesEvent(bindingsRef.current.sidebarFilter, e)) {
         e.preventDefault();
-        // 折りたたみ中のサイドバーは inert でフォーカスできないので先に開く (focusExplorer と同じ)。
-        if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
-        else setSidebarUserCollapsed(false);
-        setSidebarTab("connections");
-        requestAnimationFrame(() =>
-          requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
-        );
+        focusExplorerRef.current?.();
       }
     };
     window.addEventListener("keydown", handler);
@@ -8927,6 +8932,7 @@ export default function App() {
       requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
     );
   }, []);
+  focusExplorerRef.current = focusExplorer;
 
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
