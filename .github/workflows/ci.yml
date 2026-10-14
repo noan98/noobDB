@@ -107,6 +107,9 @@ jobs:
               - 'scripts/automerge-hold.mjs'
               - 'scripts/automerge-hold.test.mjs'
               - '.github/workflows/automerge.yml'
+              # #1633: トラッキング Issue upsert スクリプトとそのテストも同じジョブで回す。
+              - 'scripts/upsert-tracking-issue.sh'
+              - 'scripts/upsert-tracking-issue.test.mjs'
 
   # フロントエンドの typecheck/build/lint/単体テストと、実ブラウザでの描画/
   # ビジュアル回帰テストを 1 ジョブに統合している (#908)。旧来は `frontend` と
@@ -584,8 +587,10 @@ jobs:
         with:
           node-version: 22
 
-      - name: automerge-hold unit tests (node --test)
-        run: node --test scripts/automerge-hold.test.mjs
+      # `package.json` の `test:scripts` と同じ集合 (automerge-hold + #1633 の
+      # upsert-tracking-issue.sh)。pnpm install 不要なので node を直接呼ぶ。
+      - name: script unit tests (node --test)
+        run: node --test scripts/automerge-hold.test.mjs scripts/upsert-tracking-issue.test.mjs
 
   rust-fmt:
     name: rust (fmt)
