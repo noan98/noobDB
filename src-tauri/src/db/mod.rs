@@ -3094,7 +3094,13 @@ pub fn is_session_init_sql_for(driver: DriverKind, sql: &str) -> bool {
 fn is_session_init_sql_impl(driver: Option<DriverKind>, sql: &str) -> bool {
     let orig: Vec<char> = sql.chars().collect();
     let hash_comment = driver.map_or(true, driver_hash_comment);
-    let masked = mask_for_analysis_impl(&orig, false, hash_comment, KeepIdents::None);
+    let masked = mask_for_analysis_impl(
+        &orig,
+        false,
+        hash_comment,
+        KeepIdents::None,
+        driver.map_or(MaskExtras::NONE, driver_mask_extras),
+    );
     let idents = mask_keeping_identifiers(driver, &orig);
     let masked_lower: Vec<char> = masked.iter().map(|c| c.to_ascii_lowercase()).collect();
     let n = masked_lower.len();
@@ -3232,7 +3238,7 @@ fn sets_no_backslash_escapes_mode(orig_segment: &str) -> bool {
 /// golden (`tests/mask_golden.rs`, #988).
 pub(crate) fn mask_for_analysis_conservative(src: &[char]) -> Vec<char> {
     // ドライバ不明の `#` は従来どおりコメント扱い (MySQL の `# …` に追従)。
-    mask_for_analysis_impl(src, false, true, KeepIdents::None)
+    mask_for_analysis_impl(src, false, true, KeepIdents::None, MaskExtras::NONE)
 }
 
 /// Which quoted-identifier bodies [`mask_for_analysis_impl`] leaves readable.
@@ -3263,7 +3269,8 @@ fn mask_keeping_identifiers(driver: Option<DriverKind>, src: &[char]) -> Vec<cha
         ),
         None => (false, true, KeepIdents::All),
     };
-    mask_for_analysis_impl(src, backslash, hash, keep)
+    let extras = driver.map_or(MaskExtras::NONE, driver_mask_extras);
+    mask_for_analysis_impl(src, backslash, hash, keep, extras)
 }
 
 /// True when `driver` treats `#` as a line comment opener. Only MySQL/MariaDB
@@ -3275,6 +3282,29 @@ fn driver_hash_comment(driver: DriverKind) -> bool {
     match driver {
         DriverKind::Mysql => true,
         DriverKind::Postgres | DriverKind::Sqlite => false,
+    }
+}
+
+/// Driver-specific lexical extras for the analysis mask beyond the
+/// backslash / `#` rules: PostgreSQL `E'…'` escape strings and SQLite
+/// `[bracket]` identifiers.
+#[derive(Clone, Copy)]
+struct MaskExtras {
+    e_strings: bool,
+    bracket_idents: bool,
+}
+
+impl MaskExtras {
+    const NONE: Self = Self {
+        e_strings: false,
+        bracket_idents: false,
+    };
+}
+
+fn driver_mask_extras(driver: DriverKind) -> MaskExtras {
+    MaskExtras {
+        e_strings: driver == DriverKind::Postgres,
+        bracket_idents: driver == DriverKind::Sqlite,
     }
 }
 
@@ -3496,6 +3526,23 @@ pub(crate) fn mask_for_driver(driver: DriverKind, src: &[char]) -> Vec<char> {
         driver_backslash_escapes(driver),
         driver_hash_comment(driver),
         KeepIdents::None,
+        driver_mask_extras(driver),
+    )
+}
+
+/// [`mask_for_driver`] without the SQLite `[bracket]` identifier rule. Where-used
+/// scanning has to read bracket-quoted identifiers (`[orders]`), whereas the
+/// safety gates blank their bodies (#1601).
+pub(crate) fn mask_for_driver_keeping_brackets(driver: DriverKind, src: &[char]) -> Vec<char> {
+    mask_for_analysis_impl(
+        src,
+        driver_backslash_escapes(driver),
+        driver_hash_comment(driver),
+        KeepIdents::None,
+        MaskExtras {
+            bracket_idents: false,
+            ..driver_mask_extras(driver)
+        },
     )
 }
 
@@ -3508,6 +3555,7 @@ fn mask_for_analysis_impl(
     backslash_escapes: bool,
     hash_comment: bool,
     keep: KeepIdents,
+    extras: MaskExtras,
 ) -> Vec<char> {
     let mut out: Vec<char> = Vec::with_capacity(src.len());
     let n = src.len();
@@ -3593,16 +3641,39 @@ fn mask_for_analysis_impl(
                 }
             }
         }
+        // SQLite bracket identifier `[…]` (no escape syntax). Only treated as
+        // one when a closing `]` exists; an unterminated `[` stays literal so
+        // nothing after it is swallowed (fail-closed).
+        if c == '[' && extras.bracket_idents {
+            if let Some(off) = src[i + 1..].iter().position(|&d| d == ']') {
+                let keep_body = keep != KeepIdents::None;
+                out.push('[');
+                for &d in &src[i + 1..i + 1 + off] {
+                    out.push(if d == '\n' || keep_body { d } else { ' ' });
+                }
+                out.push(']');
+                i += off + 2;
+                continue;
+            }
+        }
         // Quoted literal / identifier: '…' "…" `…`.
         if c == '\'' || c == '"' || c == '`' {
             let quote = c;
+            // PostgreSQL `E'…'` escape string: backslash escapes apply even
+            // though ordinary `'…'` literals read `\` as a plain character.
+            let escapes = backslash_escapes
+                || (extras.e_strings
+                    && quote == '\''
+                    && i >= 1
+                    && matches!(src[i - 1], 'e' | 'E')
+                    && (i == 1 || !is_pg_ident_char(src[i - 2])));
             out.push(c);
             i += 1;
             while i < n {
                 let d = src[i];
                 // Backslash escape (MySQL string literals only; skipped
                 // entirely under the conservative/non-MySQL reading).
-                if backslash_escapes && d == '\\' && quote != '`' && i + 1 < n {
+                if escapes && d == '\\' && quote != '`' && i + 1 < n {
                     out.push(' ');
                     out.push(' ');
                     i += 2;
@@ -3730,7 +3801,8 @@ pub(crate) fn strip_sql_comments(sql: &str, flavor: SqlFlavor) -> String {
         // in MySQL strings).
         if c == '\'' || c == '"' || c == '`' {
             let quote = c;
-            let backslash_escapes = flavor == SqlFlavor::MySql && quote != '`';
+            let backslash_escapes = (flavor == SqlFlavor::MySql && quote != '`')
+                || is_pg_e_string_open(flavor, &src, i);
             out.push(c);
             i += 1;
             while i < n {
@@ -3782,6 +3854,29 @@ fn find_dollar_tag(src: &[char], from: usize, tag: &[char]) -> Option<usize> {
     let n = src.len();
     let m = tag.len();
     (from..n.checked_sub(m)? + 1).find(|&k| src[k..k + m] == *tag)
+}
+
+/// True when the `'` at `src[i]` opens a PostgreSQL `E'…'` escape string
+/// (an `E`/`e` not itself part of a longer word), in which `\` escapes.
+fn is_pg_e_string_open(flavor: SqlFlavor, src: &[char], i: usize) -> bool {
+    flavor == SqlFlavor::Postgres
+        && src[i] == '\''
+        && i >= 1
+        && matches!(src[i - 1], 'e' | 'E')
+        && (i == 1 || !is_pg_ident_char(src[i - 2]))
+}
+
+/// PostgreSQL の識別子の 2 文字目以降に使える文字 (ASCII 英数字・`_`・`$`・非 ASCII)。
+/// `E'…'` の接頭辞判定で「直前が識別子の一部か」を見るのに使う。`x$e'…'` や `ée'…'` の
+/// `e` は識別子の末尾であって E 文字列の接頭辞ではない。TS の `isPgIdentChar`、
+/// `script.rs` / `preview.rs` の同等判定と同じ規則。
+pub(crate) fn is_pg_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()
+}
+
+/// [`is_pg_ident_char`] のバイト版 (UTF-8 の継続・先頭バイトは 0x80 以上)。
+pub(crate) fn is_pg_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
 }
 
 fn is_word_char(c: char) -> bool {
@@ -4283,6 +4378,39 @@ mod tests {
     /// the `; DELETE …` behind it stayed hidden inside an apparently-open
     /// string literal. PostgreSQL / SQLite close the literal
     /// at that quote and would really run the stacked write.
+    #[test]
+    fn postgres_e_string_escape_does_not_hide_stacked_write_1601() {
+        // E'…' では `\'` がエスケープなので、2 文目の DELETE が文字列に飲まれない。
+        let pg = DriverKind::Postgres;
+        assert!(!is_read_only_sql_for(pg, r"SELECT E'\'' ; DELETE FROM t;"));
+        assert!(is_read_only_sql_for(pg, r"SELECT E'a\'b; DELETE FROM t'"));
+        // 通常の '…' は `\` がただの文字 (従来どおり)。
+        assert!(!is_read_only_sql_for(
+            pg,
+            r"SELECT '\' ; DELETE FROM t; --'"
+        ));
+        // 単語末尾の e は接頭辞ではない。
+        assert!(!is_read_only_sql_for(
+            pg,
+            r"SELECT name'\' ; DELETE FROM t; --'"
+        ));
+        // MySQL / SQLite の判定は変わらない。
+        assert!(is_read_only_sql_for(
+            DriverKind::Mysql,
+            r"SELECT 'a\'b; DELETE FROM t'"
+        ));
+    }
+
+    #[test]
+    fn sqlite_bracket_identifier_does_not_hide_stacked_write_1601() {
+        let lite = DriverKind::Sqlite;
+        assert!(!is_read_only_sql_for(lite, "SELECT [a'] ; DELETE FROM t;"));
+        // 閉じ `]` が無い `[` は識別子扱いにしない (後続を飲み込まない)。
+        assert!(!is_read_only_sql_for(lite, "SELECT [a ; DELETE FROM t;"));
+        // 括弧内の本文は隠れる。
+        assert!(is_read_only_sql_for(lite, "SELECT [delete me] FROM t"));
+    }
+
     #[test]
     fn read_only_rejects_backslash_masked_stacked_write_on_standard_dialects() {
         const PAYLOADS: [&str; 3] = [

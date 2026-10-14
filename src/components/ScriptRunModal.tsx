@@ -357,6 +357,9 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       ? startInsideTransaction(analysis.event.analysis, parseStartAt(startAtText))
       : null;
 
+  // ラップしない実行で BEGIN が閉じないまま終わると、EOF でランナーが黙って COMMIT する。
+  const unclosedTx = analysisFresh && !!analysis && !options.wrapInTransaction && analysis.event.analysis.unclosedTransaction;
+
   return (
     <Modal onSubmit={() => handleRun()} submitDisabled={busy || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!busy} closeOnEscape={!busy}>
       <ModalHeader onClose={onClose} closeLabel={t("scriptClose")} closeDisabled={busy}>
@@ -421,6 +424,13 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
           <chakra.div color="app.textMuted" textStyle="caption" lineHeight="snug" flexBasis="100%">
             {t("scriptEncodingHint")} {t("scriptStartAtHint")}
           </chakra.div>
+          {unclosedTx && (
+            <chakra.div flexBasis="100%">
+              <Callout tone="warning" role="status">
+                {t("scriptUnclosedTransactionWarning")}
+              </Callout>
+            </chakra.div>
+          )}
           {startTxBegin != null && (
             <chakra.div flexBasis="100%">
               <Callout tone="warning" role="status">
@@ -632,6 +642,11 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
         <chakra.div color="app.textMuted" textStyle="caption">
           {t("scriptDoneSkippedBefore", { count: event.skippedBeforeStart.toLocaleString() })}
         </chakra.div>
+      )}
+      {event.implicitCommit && (
+        <Callout tone="warning" role="status">
+          {t("scriptDoneImplicitCommit")}
+        </Callout>
       )}
       {event.failures.length > 0 && (
         <chakra.div display="flex" flexDirection="column" gap="1">
