@@ -9,6 +9,7 @@ import {
   isServerlessDriver,
   latencyLevel,
   pruneHealthResults,
+  sameHealthResults,
   summarizeHealth,
   toHealthProbeResult,
   type HealthProbeItemLike,
@@ -300,5 +301,25 @@ describe("tunnelClosed の伝播 (#1537)", () => {
     expect(rows[0].tunnelClosed).toBe(true);
     const prev = new Map<string, HealthProbeResult>([["s1", base]]);
     expect(changedHealthSessions(prev, results).has("s1")).toBe(true);
+  });
+});
+
+describe("sameHealthResults (#1617)", () => {
+  const r = (over: Partial<HealthProbeResult> = {}): HealthProbeResult => ({
+    status: "up",
+    latencyMs: 12,
+    version: "8.0",
+    connections: 3,
+    ...over,
+  });
+  it("表示がまったく同じなら true (遅延 ms の違いは false)", () => {
+    expect(sameHealthResults(new Map([["a", r()]]), new Map([["a", r()]]))).toBe(true);
+    expect(sameHealthResults(new Map([["a", r()]]), new Map([["a", r({ latencyMs: 13 })]]))).toBe(false);
+    expect(sameHealthResults(new Map([["a", r()]]), new Map([["a", r({ connections: 4 })]]))).toBe(false);
+  });
+  it("件数やキーが違えば false、tunnelClosed の未指定と false は同じ", () => {
+    expect(sameHealthResults(new Map([["a", r()]]), new Map())).toBe(false);
+    expect(sameHealthResults(new Map([["a", r()]]), new Map([["b", r()]]))).toBe(false);
+    expect(sameHealthResults(new Map([["a", r()]]), new Map([["a", r({ tunnelClosed: false })]]))).toBe(true);
   });
 });

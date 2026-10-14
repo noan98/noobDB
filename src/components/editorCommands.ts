@@ -7,7 +7,8 @@
  * 渡された関数 (アクティブなエディタのハンドル経由でツールバーと同じ経路) が担い、
  * ここは可用条件とラベル・検索語だけを決める。副作用なし。
  *
- * - 実行系は「接続中」かつ「エディタを持つタブがある」ときだけ出す。
+ * - 実行系は「エディタを持つタブがある」ときに出す。未接続なら無効 (`disabledReason`) として残す。
+ *   AI 系は接続中かつ AI 利用可のときだけ出す。
  * - 整形はエディタ内で完結するので接続を要求しない。
  * - EXPLAIN タブではエディタの主要アクションが既に EXPLAIN なので「EXPLAIN」を
  *   重ねて出さない (エディタの右クリックメニューと同じ判断)。
@@ -60,62 +61,65 @@ export function editorCommandItems(
   const items: CommandItem[] = [];
 
   if (ctx.hasEditor) {
-    if (ctx.sessionId) {
+    // 未接続でも実行系は候補に残し、グレー表示 + 理由で「接続が必要」と分かるようにする。
+    const needsConnection = ctx.sessionId ? undefined : t("cmdkNeedsConnection");
+    items.push({
+      id: "editor:run",
+      group: "navigation",
+      label: ctx.explainTab ? t("cmdkExplainRun") : t("cmdkRunQuery"),
+      icon: ctx.explainTab ? "explain" : "query",
+      keywords: "run execute query sql 実行 クエリ",
+      shortcut: ctx.shortcuts.run,
+      disabledReason: needsConnection,
+      run: () => actions.runAll(),
+    });
+    if (!ctx.explainTab) {
       items.push({
-        id: "editor:run",
+        id: "editor:run-selected",
         group: "navigation",
-        label: ctx.explainTab ? t("cmdkExplainRun") : t("cmdkRunQuery"),
-        icon: ctx.explainTab ? "explain" : "query",
-        keywords: "run execute query sql 実行 クエリ",
-        shortcut: ctx.shortcuts.run,
-        run: () => actions.runAll(),
+        label: t("cmdkRunSelected"),
+        icon: "query",
+        keywords: "run selected selection statement cursor 選択 実行 カーソル 文",
+        shortcut: ctx.shortcuts.runStatement,
+        disabledReason: needsConnection,
+        run: () => actions.runStatement(),
       });
-      if (!ctx.explainTab) {
+      if (ctx.aiAvailable && ctx.sessionId) {
         items.push({
-          id: "editor:run-selected",
+          id: "editor:ai-query",
           group: "navigation",
-          label: t("cmdkRunSelected"),
-          icon: "query",
-          keywords: "run selected selection statement cursor 選択 実行 カーソル 文",
-          shortcut: ctx.shortcuts.runStatement,
-          run: () => actions.runStatement(),
+          label: t("cmdkAiQuery"),
+          icon: "sparkles",
+          keywords: "ai nl2sql natural language generate query sql 自然言語 生成 クエリ 依頼 AI",
+          run: () => actions.openAiQuery(),
         });
-        if (ctx.aiAvailable) {
-          items.push({
-            id: "editor:ai-query",
-            group: "navigation",
-            label: t("cmdkAiQuery"),
-            icon: "sparkles",
-            keywords: "ai nl2sql natural language generate query sql 自然言語 生成 クエリ 依頼 AI",
-            run: () => actions.openAiQuery(),
-          });
-          items.push({
-            id: "editor:ai-sql-explain",
-            group: "navigation",
-            label: t("aiSqlCmdExplain"),
-            icon: "sparkles",
-            keywords: "ai explain sql selection cte subquery window 解説 説明 選択 AI",
-            run: () => actions.aiSql("explain"),
-          });
-          items.push({
-            id: "editor:ai-sql-rewrite",
-            group: "navigation",
-            label: t("aiSqlCmdRewrite"),
-            icon: "sparkles",
-            keywords: "ai optimize rewrite performance sql selection 最適化 リライト 高速化 提案 AI",
-            run: () => actions.aiSql("rewrite"),
-          });
-        }
         items.push({
-          id: "editor:explain",
+          id: "editor:ai-sql-explain",
           group: "navigation",
-          label: t("cmdkExplainQuery"),
-          icon: "explain",
-          keywords: "explain plan query 実行計画 プラン",
-          shortcut: ctx.shortcuts.explain,
-          run: () => actions.explain(),
+          label: t("aiSqlCmdExplain"),
+          icon: "sparkles",
+          keywords: "ai explain sql selection cte subquery window 解説 説明 選択 AI",
+          run: () => actions.aiSql("explain"),
+        });
+        items.push({
+          id: "editor:ai-sql-rewrite",
+          group: "navigation",
+          label: t("aiSqlCmdRewrite"),
+          icon: "sparkles",
+          keywords: "ai optimize rewrite performance sql selection 最適化 リライト 高速化 提案 AI",
+          run: () => actions.aiSql("rewrite"),
         });
       }
+      items.push({
+        id: "editor:explain",
+        group: "navigation",
+        label: t("cmdkExplainQuery"),
+        icon: "explain",
+        keywords: "explain plan query 実行計画 プラン",
+        shortcut: ctx.shortcuts.explain,
+        disabledReason: needsConnection,
+        run: () => actions.explain(),
+      });
     }
     items.push({
       id: "editor:format",

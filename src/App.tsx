@@ -10085,7 +10085,9 @@ export default function App() {
         id: `history:${i}`,
         group: "history",
         label: singleLine(sql),
-        keywords: sql,
+        // 全文は部分列一致にするとほぼ全件ヒットするため、先頭だけを「含む」一致の対象にする。
+        keywords: sql.slice(0, 300),
+        keywordsContainsOnly: true,
         icon: "clock",
         run: () => handleRestoreHistory(sql),
       });
@@ -11730,7 +11732,10 @@ export default function App() {
                     alignItems="center"
                     flexShrink="0"
                     color={toneColor}
-                    css={{ "&:empty": { display: "none" }, "& .icon-svg": { width: "14px", height: "14px" } }}
+                    css={{
+                      "&:empty": { display: "none" },
+                      "& .icon-svg": { width: ICON_SIZES.sm, height: ICON_SIZES.sm },
+                    }}
                   >
                     <StatusBarIcon
                       kind={
@@ -11825,14 +11830,13 @@ export default function App() {
                         variant="danger"
                         size="sm"
                         flexShrink="0"
-                        css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
                         onClick={() => handleConnect(reconnectProfile)}
                         disabled={connectingId === reconnectProfile.id}
                       >
                         {connectingId === reconnectProfile.id ? (
                           <Spinner size={12} decorative />
                         ) : (
-                          <Icon name="refresh" />
+                          <Icon name="refresh" size={ICON_SIZES.sm} />
                         )}
                         {t("statusReconnect")}
                       </Button>
@@ -11852,23 +11856,15 @@ export default function App() {
                         {t(connectPhaseI18nKey(connectAttempt.phase))}
                       </chakra.span>
                       <Tooltip label={t("connectCancel")}>
-                        <chakra.button
+                        <Button
                           type="button"
+                          variant="secondary"
+                          size="sm"
                           flexShrink="0"
-                          px="2.5"
-                          py="0.75"
-                          fontSize="xs"
-                          fontWeight={500}
-                          border="1px solid"
-                          borderColor="app.border"
-                          borderRadius="sm"
-                          bg="transparent"
-                          cursor="pointer"
-                          css={{ "&:hover": { background: "var(--bg-muted)" } }}
                           onClick={handleCancelConnect}
                         >
                           {t("connectCancel")}
-                        </chakra.button>
+                        </Button>
                       </Tooltip>
                     </>
                   )}
@@ -11888,29 +11884,17 @@ export default function App() {
                   </IconButton>
                   {isDismissible && (
                     <Tooltip label={t("statusDismiss")}>
-                      <chakra.button
+                      <IconButton
                         type="button"
+                        variant="ghost"
+                        size="sm"
                         flexShrink="0"
-                        display="inline-flex"
-                        alignItems="center"
-                        justifyContent="center"
-                        w="20px"
-                        h="20px"
-                        p="0"
-                        border="none"
-                        bg="transparent"
                         color="currentColor"
-                        borderRadius="sm"
-                        lineHeight="1"
-                        cursor="pointer"
-                        opacity={0.7}
-                        _hover={{ opacity: 1, bg: "app.hover" }}
-                        css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
                         onClick={() => setStatusDismissed(true)}
                         aria-label={t("statusDismiss")}
                       >
-                        <Icon name="close" />
-                      </chakra.button>
+                        <Icon name="close" size={ICON_SIZES.sm} />
+                      </IconButton>
                     </Tooltip>
                   )}
                 </Flex>

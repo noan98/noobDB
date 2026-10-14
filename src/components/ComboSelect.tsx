@@ -314,6 +314,8 @@ export function ComboSelect({
         }}
       />
       {open &&
+        // 候補が無く文言も指定されていなければ、空のポップオーバーは出さない (自由入力の欄で邪魔になる)。
+        (filtered.length > 0 || !!emptyText) &&
         createPortal(
           <MotionListbox
             ref={listboxRef}

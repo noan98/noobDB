@@ -132,3 +132,20 @@ describe("ServerMetricsPanel 更新時刻のリセット (#1594)", () => {
     expect(screen.queryByText(/^(更新|Updated)/)).not.toBeInTheDocument();
   });
 });
+
+describe("ServerMetricsPanel 手動の再取得 (#1617)", () => {
+  it("再取得ボタンで即時に取り直し、自動更新を ON に戻したときも即時取得する", async () => {
+    renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("metricsRefresh") })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: t("metricsRefresh") }));
+    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(2));
+
+    const auto = screen.getByLabelText(t("autoRefreshAria"));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("metricsRefresh") })).toBeEnabled());
+    fireEvent.click(auto); // OFF
+    expect(api.serverMetrics).toHaveBeenCalledTimes(2);
+    fireEvent.click(auto); // ON
+    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(3));
+  });
+});
