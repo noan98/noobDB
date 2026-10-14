@@ -212,7 +212,7 @@ export function columnDefsFromTableInfo(columns: readonly TableColumnInfo[]): Co
     const extra = c.extra.toLowerCase();
     const def = (c.default ?? "").trim();
     const serial = /^nextval\(/i.test(def);
-    const autoIncrement = extra.includes("auto_increment") || serial;
+    const autoIncrement = extra.includes("auto_increment") || extra.includes("identity") || serial;
     const generated = extra.replace("default_generated", "").includes("generated");
     const primaryKey = c.key.toUpperCase() === "PRI";
     return {

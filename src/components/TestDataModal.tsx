@@ -17,6 +17,7 @@ import {
   resolveUniqueColumns,
   type TestDataAiPlan,
   type UniqueColumnInfo,
+  uniquifyGeneratedRows,
 } from "../ai/testData";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { useLocale, useT, type I18nKey } from "../i18n";
@@ -215,8 +216,12 @@ export function TestDataModal({
   const previewRows = useMemo(() => {
     if (aiMode) return aiDataset ? aiDataset.rows.slice(0, AI_PREVIEW_ROWS) : [];
     if (!specs || insertColumns.length === 0) return [];
-    return generateRows(specs, Math.min(PREVIEW_ROWS, Math.max(rowCount, 1)), seed);
-  }, [aiMode, aiDataset, specs, insertColumns.length, rowCount, seed]);
+    return uniquifyGeneratedRows(
+      specs,
+      generateRows(specs, Math.min(PREVIEW_ROWS, Math.max(rowCount, 1)), seed),
+      uniqueInfo.columns,
+    );
+  }, [aiMode, aiDataset, specs, insertColumns.length, rowCount, seed, uniqueInfo]);
 
   const fkEmptyColumns = useMemo(
     () => (specs ?? []).filter((s) => s.strategy === "fkRef" && s.choices.length === 0),
@@ -322,7 +327,9 @@ export function TestDataModal({
     }
     setRunning(true);
     try {
-      const rows = aiMode && aiDataset ? aiDataset.rows : generateRows(specs, rowCount, seed);
+      const rows = aiMode && aiDataset
+        ? aiDataset.rows
+        : uniquifyGeneratedRows(specs, generateRows(specs, rowCount, seed), uniqueInfo.columns);
       // 生成行を Rust の `insert_generated_rows` (`Connection::import_rows`、1 トランザクション)
       // へそのまま渡す。100 行ずつのリテラル INSERT 文を JS で組み立てて送る経路は廃止 (#1259)。
       const result = await api.insertGeneratedRows({

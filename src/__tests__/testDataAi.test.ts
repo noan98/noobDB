@@ -359,3 +359,30 @@ describe("resolveUniqueColumns (#698 レビュー)", () => {
     expect(r.composite).toEqual([["a", "b"]]);
   });
 });
+
+describe("uniquifyGeneratedRows (#1607)", () => {
+  it("UNIQUE 列の重複を解消し、先頭行は変えない", async () => {
+    const { uniquifyGeneratedRows } = await import("../ai/testData");
+    const { generateRows } = await import("../components/testDataGen");
+    const sp = inferColumnSpec({
+      name: "code",
+      data_type: "char(2)",
+      nullable: false,
+      key: "UNI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    });
+    const rows = [["ab"], ["ab"], ["ab"]];
+    const out = uniquifyGeneratedRows([sp], rows, ["code"]);
+    expect(new Set(out.map((r) => String(r[0]).toLowerCase())).size).toBe(3);
+    expect(out[0][0]).toBe("ab");
+    const num = inferColumnSpec({ ...{
+      name: "n", data_type: "int", nullable: false, key: "UNI", default: null, extra: "",
+      referenced_table: null, referenced_column: null } });
+    const big = generateRows([{ ...num, min: 1, max: 3 }], 50, 1);
+    const u = uniquifyGeneratedRows([num], big, ["n"]);
+    expect(new Set(u.map((r) => r[0])).size).toBe(50);
+  });
+});

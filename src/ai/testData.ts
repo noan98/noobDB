@@ -542,6 +542,22 @@ function makeUniquifier(maxLen: number | null): (v: CellValue) => CellValue {
   };
 }
 
+/**
+ * ルールベース生成 (`generateRows`) の結果で、UNIQUE な列だけ重複値を一意化する。
+ * 先頭行から順に処理するため、先頭 N 行は行数を変えても変わらない (プレビューと実投入が一致する)。
+ */
+export function uniquifyGeneratedRows(
+  specs: ColumnGenSpec[],
+  rows: CellValue[][],
+  uniqueColumns: string[],
+): CellValue[][] {
+  const active = activeSpecs(specs);
+  const uniq = new Set(uniqueColumns);
+  const fns = active.map((s) => (uniq.has(s.column) ? makeUniquifier(declaredLength(s.dataType)) : null));
+  if (fns.every((f) => f === null)) return rows;
+  return rows.map((r) => r.map((v, ci) => (fns[ci] ? (fns[ci] as (v: CellValue) => CellValue)(v) : v)));
+}
+
 function aiColumnValues(
   spec: ColumnGenSpec,
   plan: AiColumnPlan,
@@ -607,7 +623,9 @@ export function generateAiRows(input: AiTableInput, seed: number): AiTableRows {
   active.forEach((spec, ci) => {
     if (colValues[ci]) return;
     const col = generateRows([spec], input.count, deriveSeed(seed, 2000 + ci));
-    colValues[ci] = col.map((r) => r[0]);
+    // UNIQUE 列は AI 経路でもルールベース生成でも一意化する (重複キーで全件ロールバックしないため)。
+    const uniq = unique.has(spec.column) ? makeUniquifier(declaredLength(spec.dataType)) : null;
+    colValues[ci] = col.map((r) => (uniq ? uniq(r[0]) : r[0]));
   });
 
   const rows: CellValue[][] = [];

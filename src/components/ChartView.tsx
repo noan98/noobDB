@@ -499,7 +499,10 @@ export function CartesianChart({
 }) {
   const t = useT();
   // ホバー中のバンド (X インデックス)。値を読み取るためのガイド/ツールチップに使う。
-  const [hover, setHover] = useState<number | null>(null);
+  const [hoverRaw, setHover] = useState<number | null>(null);
+  // モデル差し替えでラベル数が減ると保持中の index が範囲外になる。範囲外は無効扱いにする
+  // (HoverTooltip が undefined.length で落ちるのを防ぐ)。
+  const hover = hoverRaw != null && hoverRaw < model.labels.length ? hoverRaw : null;
   // キーボード操作で読み上げる文言 (#1529)。マウスのホバーでは更新しない (読み上げが騒がしくなる)。
   const [announce, setAnnounce] = useState("");
   // グラデ/クリップの id。チャートが同時に複数描画されても衝突しないよう useId 由来にする
@@ -985,9 +988,15 @@ function noticeText(notice: ChartNotice, model: ChartModel, t: ReturnType<typeof
   }
 }
 
-function formatTick(v: number): string {
+export function formatTick(v: number): string {
   if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1)}k`;
-  return Number.isInteger(v) ? String(v) : v.toFixed(1);
+  if (Number.isInteger(v)) return String(v);
+  // 0.01 刻みなどの小さい目盛りが「0.0」に潰れないよう、値を表せる最小の小数桁 (最大 6) で整形する。
+  for (let d = 1; d <= 6; d++) {
+    const text = v.toFixed(d);
+    if (Math.abs(Number(text) - v) < Math.abs(v) * 1e-9 + 1e-12) return text;
+  }
+  return v.toFixed(6);
 }
 
 /** ツールチップ/凡例向けの値整形。整数は桁区切り、小数は最大 3 桁。 */

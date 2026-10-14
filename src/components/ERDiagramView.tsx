@@ -61,6 +61,30 @@ const ER_EXPORT_PADDING = 40;
 const ER_EXPORT_MAX_DIM = 8000;
 
 /**
+ * 全景エクスポートの出力サイズと変換を求める。内容が `ER_EXPORT_MAX_DIM` を超えるときは
+ * 切り捨てずに縮小 (scale < 1) して全体を収める。
+ */
+export function erExportGeometry(bounds: { x: number; y: number; width: number; height: number }): {
+  width: number;
+  height: number;
+  tx: number;
+  ty: number;
+  scale: number;
+} {
+  const pad = ER_EXPORT_PADDING;
+  const fullW = Math.max(1, bounds.width + pad * 2);
+  const fullH = Math.max(1, bounds.height + pad * 2);
+  const scale = Math.min(1, ER_EXPORT_MAX_DIM / fullW, ER_EXPORT_MAX_DIM / fullH);
+  return {
+    width: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullW * scale))),
+    height: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullH * scale))),
+    tx: (-bounds.x + pad) * scale,
+    ty: (-bounds.y + pad) * scale,
+    scale,
+  };
+}
+
+/**
  * ER diagram: renders the connected database's tables and their
  * foreign-key relationships as a draggable, zoomable graph. Data comes from two
  * bulk calls — `schema_overview` (tables + columns) and `foreign_keys` (edges)
@@ -378,15 +402,11 @@ function ERDiagramInner({
       throw new Error("diagram is not rendered");
     }
     const bounds = getNodesBounds(nodes);
-    const pad = ER_EXPORT_PADDING;
-    const width = Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(bounds.width + pad * 2)));
-    const height = Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(bounds.height + pad * 2)));
-    const tx = -bounds.x + pad;
-    const ty = -bounds.y + pad;
+    const { width, height, tx, ty, scale } = erExportGeometry(bounds);
     const style: Partial<CSSStyleDeclaration> = {
       width: `${width}px`,
       height: `${height}px`,
-      transform: `translate(${tx}px, ${ty}px) scale(1)`,
+      transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
     };
     return { viewport, width, height, style };
   }, [nodes]);
@@ -422,13 +442,15 @@ function ERDiagramInner({
     // 変えずに同じ一覧取得をやり直したいだけ。
   }, [sessionId, initialDatabase, retryAttempt]);
 
-  const handleOpen = useCallback(
-    (db: string, table: string) => {
-      onOpenTable(db, table);
-      onClose();
-    },
-    [onOpenTable, onClose],
-  );
+  // onOpenTable / onClose は親の再レンダーごとに新しい関数になりうる。依存に入れると
+  // レイアウト effect が再実行されて手動配置・ズームが初期化されるため、ref 経由で
+  // 最新の関数を呼び、handleOpen 自体は安定させる。
+  const openHandlersRef = useRef({ onOpenTable, onClose });
+  openHandlersRef.current = { onOpenTable, onClose };
+  const handleOpen = useCallback((db: string, table: string) => {
+    openHandlersRef.current.onOpenTable(db, table);
+    openHandlersRef.current.onClose();
+  }, []);
 
   // Fetch + build the graph for the chosen database. Layout (positions) is a
   // separate effect so direction/density changes re-layout without refetching.
