@@ -115,14 +115,13 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   }, [query, scope]);
 
   // ホバー由来の activeIndex 変化では scrollIntoView を呼ばない (端の行にホバーするとリストが動いて連鎖するため)。
-  const hoverMoved = useRef(false);
+  const hoverIndex = useRef<number | null>(null);
   const activeIndexRef = useRef(activeIndex);
   activeIndexRef.current = activeIndex;
   useEffect(() => {
-    if (hoverMoved.current) {
-      hoverMoved.current = false;
-      return;
-    }
+    const hovered = hoverIndex.current;
+    hoverIndex.current = null;
+    if (hovered !== null && hovered === activeIndex) return;
     const active = results[activeIndex];
     if (!active) return;
     itemRefs.current.get(entryKey(active))?.scrollIntoView({ block: "nearest" });
@@ -141,7 +140,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
   const onRowOpen = useCallback((i: number) => openAtRef.current(i), []);
   const onRowHover = useCallback((i: number) => {
     if (i === activeIndexRef.current) return;
-    hoverMoved.current = true;
+    hoverIndex.current = i;
     setActiveIndex(i);
   }, []);
   const setItemRef = useCallback((key: string, el: HTMLButtonElement | null) => {

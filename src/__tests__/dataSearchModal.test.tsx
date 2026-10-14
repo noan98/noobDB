@@ -230,3 +230,20 @@ describe("DataSearchModal skeleton (#1212)", () => {
     expect(screen.queryAllByTestId("search-skeleton-row")).toHaveLength(0);
   });
 });
+
+describe("DataSearchModal の選択テーブル一覧の上限 (#1616)", () => {
+  it("200 件までしか描画せず、「さらに表示」で広げ、絞り込みの入力で先頭へ戻る", async () => {
+    const tables = Array.from({ length: 230 }, (_, i) => `tbl_${String(i).padStart(3, "0")}`);
+    vi.mocked(api.listTables).mockResolvedValueOnce(tables);
+    vi.mocked(api.tableRowEstimates).mockResolvedValueOnce([]);
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByLabelText(t("dataSearchScopeSelected")));
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(200);
+    await user.click(screen.getByRole("button", { name: t("dataSearchShowMoreTables", { remaining: 30 }) }));
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(230);
+    await user.type(screen.getByPlaceholderText(t("dataSearchFilterPlaceholder")), "tbl_0");
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(100));
+    expect(screen.queryByRole("button", { name: /^(さらに表示|Show more)/ })).toBeNull();
+  });
+});

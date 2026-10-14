@@ -348,7 +348,7 @@ const SettingsColorInput = chakra("input", {
  * (永続化 + 全購読者の再描画) は 1 フレームに 1 回へ間引き、ピッカーを閉じた (blur) /
  * アンマウントしたときに最後の値を必ず確定する。表示中の値はローカルのドラフトで追従する。
  */
-function ThrottledColorInput({
+export function ThrottledColorInput({
   value,
   onCommit,
   ...rest

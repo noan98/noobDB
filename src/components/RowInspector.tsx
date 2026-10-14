@@ -248,8 +248,6 @@ export function RowInspector({
       : null;
   const changedCount = edited ? Object.keys(edited.edits).length : 0;
   const hasErrors = edited ? Object.keys(edited.errors).length > 0 : false;
-  // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
-  // 送らず、編集し直してもらう。
   // 全列の表示用文字列 (JSON 整形込み) は行の値が変わったときだけ作る。編集中の 1 キーごとに
   // 数百列ぶんの JSON パース・整形を回さない。
   const displays = useMemo(
@@ -263,6 +261,8 @@ export function RowInspector({
       }),
     [values, columnKinds],
   );
+  // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
+  // 送らず、編集し直してもらう。
   const stale = editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
   const canApply =
     !!edit &&

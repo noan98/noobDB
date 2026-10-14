@@ -59,7 +59,6 @@ interface MenuState {
   items: ContextMenuEntry[];
 }
 
-/** True when `snippet` should be offered while connected to `profile`. */
 const TOOLTIP_MAX_LINES = 6;
 const TOOLTIP_MAX_CHARS = 300;
 
@@ -75,6 +74,7 @@ export function snippetTooltipPreview(sql: string): string {
   return cut ? `${out}…` : out;
 }
 
+/** True when `snippet` should be offered while connected to `profile`. */
 export function scopeMatches(snippet: Pick<Snippet, "scope">, profile: ConnectionProfile | null): boolean {
   const s = snippet.scope;
   if (s.kind === "any") return true;
