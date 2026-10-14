@@ -251,22 +251,68 @@ jobs:
       # (詳細は rust (clippy) の System deps 直前のコメントを参照)。
       # dry-run は未導入パッケージがあると exit 1 を返すので `|| true` で受け、
       # 「  <pkg>」形式の行だけを拾う。
+      #
+      # この列挙 (apt-get update + dry-run、実測 12〜26 秒) は毎回同じ結果になるため、
+      # 結果のパッケージ一覧を actions/cache に保存して使い回す。ヒット時は apt-get
+      # update も dry-run も省く。キーは pnpm-lock.yaml (= Playwright のバージョン) +
+      # ランナー OS + ISO 週。ISO 週を入れるのは、ランナーイメージが週次で更新されて
+      # 「事前導入済みのパッケージ」が変わると一覧も変わりうるため、最長 1 週間で
+      # 一覧を取り直すため。空の一覧は保存しない (空キャッシュ汚染の再発防止)。
+      - name: Playwright deps cache key (ISO week)
+        id: pw-week
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright system deps list
+        id: pw-deps-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/noobdb-playwright-deps
+          key: ${{ runner.os }}-playwright-deps-${{ hashFiles('pnpm-lock.yaml') }}-${{ steps.pw-week.outputs.week }}
+
       - name: List Playwright system deps (#1244)
         id: pw-deps
+        env:
+          DEPS_CACHE_HIT: ${{ steps.pw-deps-cache.outputs.cache-hit }}
         run: |
-          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
-          sudo apt-get update
-          PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
-          echo "Playwright system deps: ${PKGS:-<none>}"
+          LIST_FILE="$HOME/.cache/noobdb-playwright-deps/packages.txt"
+          if [ "$DEPS_CACHE_HIT" = "true" ] && [ -s "$LIST_FILE" ]; then
+            PKGS=$(cat "$LIST_FILE")
+            echo "Playwright system deps (cache hit): ${PKGS}"
+          else
+            printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+            sudo apt-get update
+            PKGS=$(pnpm exec playwright install-deps --dry-run chromium | sed -n 's/^  \([a-z0-9][a-z0-9.+-]*\)$/\1/p' | tr '\n' ' ')
+            echo "Playwright system deps: ${PKGS:-<none>}"
+            if [ -n "$PKGS" ]; then
+              mkdir -p "$(dirname "$LIST_FILE")"
+              echo "$PKGS" > "$LIST_FILE"
+            fi
+          fi
           echo "packages=${PKGS}" >> "$GITHUB_OUTPUT"
 
+      # キャッシュヒット時は apt-get update を省くため、ランナーイメージの古い apt
+      # インデックスで cache-apt-pkgs-action がキャッシュミス→クリーンインストールに
+      # 回ると 404 で落ちうる。その場合だけ、ミラー差し替え + update + 直接 install の
+      # フォールバックで救う (成功時・ミス時は従来どおり何もしない)。
       - name: Playwright system deps (apt cache)
+        id: pw-apt
         if: steps.pw-deps.outputs.packages != ''
+        continue-on-error: true
         uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
         with:
           packages: ${{ steps.pw-deps.outputs.packages }}
           # rust ジョブと同じく、空キャッシュ汚染時にキーを進めて無効化するための版。
           version: playwright-1
+
+      - name: Playwright system deps (fallback install)
+        if: steps.pw-apt.outcome == 'failure'
+        env:
+          PKGS: ${{ steps.pw-deps.outputs.packages }}
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+          # shellcheck disable=SC2086
+          sudo apt-get install -y --no-install-recommends $PKGS
 
       # Playwright の Chromium を導入する。システム依存は上の apt キャッシュ
       # ステップで導入済みなので `--with-deps` は付けない (毎回の apt-get install を
@@ -323,9 +369,10 @@ jobs:
   # 以前は `frontend` ジョブの 1 ステップ (`pnpm test --coverage`) で、実測約 4 分 15 秒
   # (ジョブ全体の約 3/4) を占めていた。ファイル数 (約 320) が多くワーカー単位で
   # jsdom の起動と import が支配的なため、`--shard` で 4 ランナーに分けて壁時計を縮める。
-  # 各 shard はカバレッジ付きで走らせ、結果を blob として保存する。閾値の判定は
-  # 全 shard を統合した値でしか意味を持たないので、ここでは 0 にして下の
-  # `frontend (unit tests)` ジョブで統合してから強制する。
+  # 各 shard は main への push のときだけカバレッジ付きで走らせ (PR では計装コストを
+  # 省く)、結果を blob として保存する。閾値の判定は全 shard を統合した値でしか
+  # 意味を持たないので、ここでは 0 にして下の `frontend (unit tests)` ジョブで
+  # 統合してから (push のときだけ) 強制する。
   frontend-unit:
     name: frontend (unit shard ${{ matrix.shard }}/4)
     needs: changes
@@ -370,14 +417,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Unit tests (Vitest, shard ${{ matrix.shard }}/4)
-        run: >-
-          pnpm vitest run
-          --shard=${{ matrix.shard }}/4
-          --coverage
-          --coverage.thresholds.lines=0
-          --reporter=blob
-          --reporter=dot
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+        # v8 カバレッジの計装は 1 shard あたり約 27 秒 (約 22%) の上乗せになるため、
+        # main への push のときだけ付ける (#1420 の rust (coverage) と同じ運用)。
+        # PR では計装なしで blob だけ作り、閾値の強制は main push で行う。
+        run: |
+          ARGS=(--shard="${{ matrix.shard }}/4" --reporter=blob --reporter=dot --outputFile="vitest-reports/blob-${{ matrix.shard }}.json")
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            ARGS+=(--coverage --coverage.thresholds.lines=0)
+          fi
+          pnpm vitest run "${ARGS[@]}"
 
       - name: Upload Vitest blob
         if: always()
@@ -452,9 +500,17 @@ jobs:
           find vitest-reports-dl -name 'blob-*.json' -exec mv {} vitest-reports/ \;
           ls -l vitest-reports
 
-      # blob を統合し、`vite.config.ts` の閾値 (lines) を超えているか判定する。
+      # blob を統合する。main への push のときだけ `--coverage` を付けて、
+      # `vite.config.ts` の閾値 (lines) を超えているか判定する (shard 側の計装も
+      # push 限定。PR では blob の統合と合否判定のみで、カバレッジ閾値は見えない)。
+      # このジョブ自体は PR でも必ず走って合否を返す (必須チェック)。
       - name: Merge reports + coverage threshold
-        run: pnpm vitest run --merge-reports=vitest-reports --coverage
+        run: |
+          ARGS=(--merge-reports=vitest-reports)
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            ARGS+=(--coverage)
+          fi
+          pnpm vitest run "${ARGS[@]}"
 
   # 言語横断のパリティ/ゴールデンテスト専用の軽量ジョブ (#853)。
   #
