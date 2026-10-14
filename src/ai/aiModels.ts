@@ -3,7 +3,7 @@
 // Rust 側 `src-tauri/src/ai/models.rs` との二重定義。集合と推奨値の一致は
 // `__tests__/aiParity.test.ts` が Rust ソースを読んで固定する。モデル ID を IPC の
 // 呼び出し側が直接渡す経路は作らない (「タスク種別 + 設定スナップショット」を渡し、
-// `taskModels[kind] ?? defaultModel` の解決はバックエンドが行う)。ここは UI の選択肢と
+// `taskModels[kind] ?? (軽量タスクは推奨モデル、それ以外は defaultModel)` の解決はバックエンドが行う)。ここは UI の選択肢と
 // 設定の検証だけを持つ。
 
 export const AI_MODEL_IDS = [

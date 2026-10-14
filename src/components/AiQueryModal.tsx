@@ -301,8 +301,11 @@ export function AiQueryModal(props: AiQueryModalProps) {
   const emptySchema = schema.kind === "ready" && schema.tables.length === 0;
   // 大きい DB は送るテーブルが 1 件以上ないと生成できない (一致が無ければ手動で選んでもらう)。
   const noPick = schema.kind === "ready" && schema.large && (selectedNames?.size ?? 0) === 0;
-  const canGenerate =
-    !!database && schema.kind === "ready" && !emptySchema && !noPick && trimmed !== "" && !running;
+  // 送れるかの判定から「送るテーブルの有無」(noPick) を除いたもの。提案はデバウンス中は古いことがあるので、
+  // 入力直後の Cmd+Enter では `runInner` が最新の依頼文で取り直して判定する (#1608)。
+  const canGenerateBase =
+    !!database && schema.kind === "ready" && !emptySchema && trimmed !== "" && !running;
+  const canGenerate = canGenerateBase && !noPick;
   const canFollowUp =
     !!database && schema.kind === "ready" && exchanges.length > 0 && trimmed !== "" && !running;
   // 入力欄は 1 つ。最初の回答が返った後は、同じ欄からの送信を追い質問として扱う。
@@ -327,7 +330,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
     const promptText = followUpText ?? trimmed;
     if (schema.kind !== "ready" || promptText === "") return;
     // 新規生成は送るテーブルが無いと走らせない (選択 0 件の大きい DB で Cmd+Enter されたとき)。
-    if (followUpText === undefined && !canGenerate) return;
+    if (followUpText === undefined && !canGenerateBase) return;
     // 二重実行 (連打・Cmd+Enter の連続) で 2 本のストリームが走らないよう、同期的に弾く。
     if (!stream.acquire()) return;
     try {

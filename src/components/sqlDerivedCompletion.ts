@@ -1,4 +1,4 @@
-import { maskLiterals, type MaskOptions } from "../dangerousSql";
+import { MASK_SPLIT_PAIRS, maskLiterals, type MaskOptions } from "../dangerousSql";
 import { quoteIfNeeded, unquote } from "./sqlJoinCompletion";
 
 /**
@@ -159,9 +159,6 @@ const CURSOR_SENTINEL = "\u0001";
  * その文自体が上限を超えるなら補完しない (#1608)。上限以下の文書は従来どおり全文で正確に読む。
  */
 export const DERIVED_COMPLETION_MAX_CHARS = 64 * 1024;
-
-/** カーソルがこの 2 文字記号の間に入ると、印でマスクの結果が変わるので補完しない。 */
-const SPLIT_PAIRS = new Set(["--", "/*", "*/", "''", '""', "``"]);
 
 /**
  * マスク前の安価な早期 return (直前 400 文字だけを見る)。補完の文脈になりうるか:
@@ -400,7 +397,7 @@ export function derivedCompletions(opts: {
   // 2 文字記号 (コメント開始・終了、空文字・空識別子) の間や `$` 引用の途中では印を入れると
   // 記号の意味が変わるため、安全側に倒して補完しない。
   const splitPair = pos > 0 ? text.slice(pos - 1, pos + 1) : "";
-  if (SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
+  if (MASK_SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;

@@ -3,7 +3,7 @@
 // `components/inlineCompleteExtension.ts` が持つ。
 // 行データは扱わない。送るのはカーソル前後の SQL と、そこに出てくるテーブルのスキーマだけ。
 
-import { maskLiterals } from "../dangerousSql";
+import { MASK_SPLIT_PAIRS, maskLiterals } from "../dangerousSql";
 import { dialectLabel, needsSendScopeConfirm } from "./errorExplain";
 import { sliceHead, sliceTail } from "./textSlice";
 
@@ -164,6 +164,8 @@ function maskWithProbe(doc: string, pos: number, driver: string): { masked: stri
 export function buildInlineRequest(input: InlineContextInput): InlineRequestParts | null {
   if (input.doc.length > INLINE_DOC_MAX_CHARS) return null;
   const pos = Math.max(0, Math.min(input.pos, input.doc.length));
+  // 2 文字記号 (`--` `/*` など) の間では、差し込んだ印で字句が変わりマスクが崩れるので出さない。
+  if (pos > 0 && MASK_SPLIT_PAIRS.has(input.doc.slice(pos - 1, pos + 1))) return null;
   const rawBefore = tailWindow(input.doc.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
   const rawAfter = headWindow(
     input.doc.slice(pos, pos + INLINE_AFTER_MAX_CHARS),

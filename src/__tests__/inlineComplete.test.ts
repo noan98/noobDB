@@ -297,3 +297,28 @@ describe("nextWordChunk (#1608)", () => {
     expect(nextWordChunk("")).toBe("");
   });
 });
+
+describe("buildInlineRequest: 2 文字記号の間では出さない (#1608 レビュー)", () => {
+  it("`--` の間にカーソルがあるとき (コメント内の ' で字句がずれるので) null", () => {
+    for (const driver of ["mysql", "postgres"]) {
+      const doc = "SELECT * FROM users WHERE id = 1 -- it's a note\nAND name = 'top-secret'";
+      const pos = doc.indexOf("--") + 1;
+      expect(req(doc, pos, { driver })).toBeNull();
+    }
+  });
+
+  it("`/*` の間にカーソルがあるとき null。リテラルの中身は送られない", () => {
+    for (const driver of ["mysql", "postgres"]) {
+      const doc = "SELECT * FROM users /* it's a note */ WHERE name = 'top-secret'";
+      const pos = doc.indexOf("/*") + 1;
+      expect(req(doc, pos, { driver })).toBeNull();
+    }
+  });
+
+  it("2 文字記号の間でなければ従来どおり出し、後ろのリテラルは伏せる", () => {
+    const doc = "SELECT * FROM users -- it's a note\nWHERE name = 'top-secret'";
+    const r = req(`${doc} AND `);
+    expect(r).not.toBeNull();
+    expect(r?.prompt).not.toContain("top-secret");
+  });
+});
