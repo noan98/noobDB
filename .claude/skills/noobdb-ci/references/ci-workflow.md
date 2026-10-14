@@ -1,5 +1,12 @@
 # ci.yml (PR / main push のチェック)
 
+- **concurrency**: `cancel-in-progress` は `github.event_name == 'pull_request'` のときだけ
+  true (#1632)。PR の古い run は取り消すが、**main への push の run は取り消さない**
+  (連続 push で途中のコミットの検証が抜け、main の健全性確認とキャッシュ温めが欠けるため)。
+  `cancel-in-progress: false` でも同一グループの「待機中」run は新しい run に置き換えられる
+  (グループには実行中 1 + 待機 1 のみ) ため、push のグループは `github.sha` 単位にして
+  全件を完走させる。PR のグループは従来どおり `github.ref` で、PR と push は互いに取り消し合わない。
+
 - `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
   push トリガは**キャッシュを main スコープへ保存するため**にあります:
   pull_request 実行で保存される rust-cache / sccache / pnpm のキャッシュは PR の
@@ -18,8 +25,8 @@
   依存プリバンドルも別個にコールドスタートしていた重複 — Rust ジョブ側の同型の
   重複を解消した #796 の横展開対象 — を統合で解消しました。詳細な判断根拠は
   `ci.yml` の `frontend` ジョブ直前のコメントを参照)。ジョブ本体は
-  `pnpm run build` に続けて `pnpm run lint` (Biome。#1176。新しい必須
-  チェックは増やさずこのジョブ内のステップ)、
+  `pnpm run build` に続けて `pnpm run lint` (Biome の lint + 整形チェック =
+  `biome check`。#1176 / #1636。新しい必須チェックは増やさずこのジョブ内のステップ)、
   `pnpm run bundle-size` (バンドルサイズ計測 → Job Summary。#443)、`pnpm run knip`
   (未使用エクスポート/到達不能コード検出。#470)、さらに `pnpm exec playwright install` +
   `pnpm test:browser` (Vitest ブラウザモード。#306) を順に実行します。
@@ -35,22 +42,47 @@
   パターンでキー付けします)。
   Playwright の OS 依存 (apt: 共有ライブラリ・フォント・xvfb) は `playwright
   install-deps --dry-run chromium` の出力からパッケージ一覧を動的に取り、rust ジョブと
-  同じ `cache-apt-pkgs-action` でキャッシュします (`--with-deps` は付けない, #1244)。`paths-filter` は `package-lock.json` ではなく
+  同じ `cache-apt-pkgs-action` でキャッシュします (`--with-deps` は付けない, #1244)。
+  この dry-run による一覧の算出も `actions/cache` に保存し (キーは `pnpm-lock.yaml`
+  ハッシュ + OS + ISO 週。週を入れるのはランナーイメージの事前導入パッケージが変わりうる
+  ため)、ヒット時は dry-run だけを省きます (#1634)。`apt-get update` は常に実行します
+  (`cache-apt-pkgs-action` のキー算出が apt インデックスに依存するため)。
+  `cache-apt-pkgs-action` が失敗、または空キャッシュを静かに復元したとき
+  (`all-package-version-list` が空) だけ、警告を出して直接 install するフォールバックが走ります。
+  rust (clippy) / (test) の `apt-get update` (各約 6 秒) は**省けません**: action は
+  キャッシュキーの算出にもランナーの apt インデックスを使い、インデックスが古いと
+  キーがずれてクリーンインストールに回り 404 になる (2026-07-23 の事例) ため、ヒット
+  有無が action の内部でしか分からない現状では事前の update を外せません。`paths-filter` は `package-lock.json` ではなく
   `pnpm-lock.yaml` を監視します。**旧チェック名 `frontend (typecheck + build)` /
   `frontend (browser render + visual)` を必須チェックに指定していた場合は、新しい
   `frontend (build + browser tests)` へ設定し直してください** (#908 のジョブ統合で
   チェック名が変わったため)。
 
   **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
-  ため)。`frontend (unit shard N/3)` (`frontend-unit`、`--shard` で 3 並列、各 shard は
-  `--coverage --coverage.thresholds.lines=0 --reporter=blob` で blob を artifact へ保存) と、
-  それを `gh run download` で集めて `vitest run --merge-reports --coverage` で統合し
+  ため)。`frontend (unit shard 1/4)`〜`(4/4)` (`frontend-unit`、`--shard` で 4 並列。分割数の正は ci.yml の `matrix.shard`。
+  各 shard は `--reporter=blob` で blob を artifact へ保存し、**main への push のときだけ**
+  `--coverage --coverage.thresholds.lines=0` を付ける) と、
+  それを `gh run download` で集めて `vitest run --merge-reports` で統合し
+  (push のときだけ `--coverage` を付けて)
   カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
   `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
   カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
-  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
-  `frontend (unit shard N/3)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の各ジョブは集約ジョブが `needs.frontend-unit.result` を見て fail
   させるので必須に含めなくてよい)。
+
+  **PR では単体テストのカバレッジを計装しない (#1634)**: v8 計装は 1 shard あたり約
+  27 秒 (約 22%) の上乗せになるため、#1420 の `rust (coverage)` と同じく main push 限定に
+  しました。集約ジョブ `frontend (unit tests)` は PR でも必ず走って合否を返します
+  (blob の統合のみ)。**トレードオフ: PR 上ではフロントのカバレッジ閾値の割れが見えず、
+  マージ後の main の実行で初めて検出されます。** 閾値割れを PR で見たいときは、手元で
+  `pnpm test --coverage` を実行してください。
+  なお shard の割当は Vitest の `BaseSequencer.shard` が**ファイルパスの sha1 順**で
+  決めるため、Vitest のキャッシュ (実行時間) では割当は変わらず、実行時間ベースの分割には
+  カスタム sequencer + 実行時間データの保守が要ります。フロント単体の連鎖 (約 200 秒) は
+  `rust (windows test)` (約 260〜360 秒) より短くクリティカルパスではないため見送っています。
+  ブラウザテスト (約 120 秒) の shard 分割も同じ理由で見送りです。いずれも Windows 側が
+  縮んでフロントがクリティカルパスになったら再検討してください (必須チェック名
+  `frontend (build + browser tests)` は変えないこと)。
 
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
   インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
@@ -115,7 +147,13 @@
   として型チェックを内包するので別途 `cargo check` は走らせません)、`rust (test)`
   が MySQL / PostgreSQL に対し
   **計装なしの** nextest (`--lib --test '*'`。テストの無い bin ターゲットはビルドしない) を実行します
-  (PR ブロッキング)。カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
+  (PR ブロッキング)。nextest は `src-tauri/.config/nextest.toml` の
+  `slow-timeout = { period = "20s", terminate-after = 15 }` で、20 秒超のテストに `SLOW` を出し、
+  300 秒で強制終了して失敗扱いにします (#1635。SSH / TLS 待ちのハングがジョブの
+  `timeout-minutes: 45` まで居座るのを防ぐ。観測した最長テストは約 40 秒)。正当に長いテストが
+  増えたら `[[profile.default.overrides]]` で個別に延長します。CI 用の別プロファイルは無く、
+  `rust (test)` / `rust (coverage)` / `rust (windows test)` はすべて default を使います。
+  カバレッジ計装は別ジョブ `rust (coverage)` に分離しています
   (#1153。下記)。起動条件は通常の
   `rust==true` に加え、上述の `crosslang` フィルタ (`src/__tests__/fixtures/**`)
   も OR で見ています (#853。フィクスチャのみの変更でも言語横断ゴールデンテストを
@@ -187,7 +225,7 @@
   env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
-  フロントの単体テストは `--shard` の 4 分割です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
@@ -211,11 +249,12 @@
 
 ## `automerge gate (script tests)` ジョブ (#1108)
 
-`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
-`scripts/automerge-hold.mjs` のユニットテスト `scripts/automerge-hold.test.mjs` を
-`node --test` で実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
+`scripts/*.test.mjs` (`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
+`scripts/automerge-hold.mjs` のテストと、定期ジョブの通知スクリプト
+`scripts/upsert-tracking-issue.sh` のテスト (#1633) など) を `node --test` で
+実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
 Node 標準の `node:test` だけを使い依存ゼロなので `pnpm install` はしません。
-`changes` ジョブの `automerge` フィルタ (上記 2 ファイル + `automerge.yml`) か
+`changes` ジョブの `automerge` フィルタ (上記のスクリプトとテスト + `automerge.yml`) か
 `workflow` が true のときだけ走ります。**必須チェックではありません**。
 Vitest (`src/__tests__/`) ではなく `node:test` にしているのは、ワークフローが
 実行時に `node scripts/automerge-hold.mjs` を素の Node で直接呼ぶため
