@@ -506,21 +506,53 @@ fn json_keys(columns: &[Column]) -> Vec<String> {
     keys
 }
 
-/// Build a JSON object for one row, keyed by column name. Shared by the
-/// in-memory `write_json` and the streaming export sink.
-///
-/// `keys` は [`json_keys`] で作った列ごとのキー (同名列は `id_2` のように接尾辞付き)。
-fn row_to_json_object(keys: &[String], row: &[Value]) -> serde_json::Value {
-    use serde_json::{Map, Value as J};
-    let mut obj = Map::with_capacity(keys.len());
-    for (i, key) in keys.iter().enumerate() {
-        let jv = match row.get(i).unwrap_or(&Value::Null) {
-            Value::Bytes(hex) => J::String(format!("0x{}", hex)),
-            v => serde_json::to_value(v).unwrap_or(J::Null),
-        };
-        obj.insert(key.clone(), jv);
+/// JSON / NDJSON の行オブジェクトを書くための列キー一式。[`json_keys`] のキーに加え、
+/// 出力順 (キーの辞書順) を 1 回だけ計算して持つ。`serde_json::Map` は既定 (`BTreeMap`)
+/// でキー昇順に出力されるため、借用で直接シリアライズする [`RowJson`] も同じ順に出して
+/// バイト列を一致させる。
+struct JsonKeySet {
+    keys: Vec<String>,
+    /// `keys` の添字をキー昇順に並べたもの。
+    order: Vec<usize>,
+}
+
+impl JsonKeySet {
+    fn new(columns: &[Column]) -> Self {
+        let keys = json_keys(columns);
+        let mut order: Vec<usize> = (0..keys.len()).collect();
+        order.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
+        Self { keys, order }
     }
-    J::Object(obj)
+
+    fn row<'a>(&'a self, row: &'a [Value]) -> RowJson<'a> {
+        RowJson { set: self, row }
+    }
+}
+
+/// 1 行を JSON オブジェクトとして借用のまま直接シリアライズする (キー文字列の複製や
+/// 中間の `Value` 木を作らない)。BLOB は `0x…` の文字列、それ以外は [`Value`] の
+/// `Serialize` に従う。行が列数より短いときは `null` で補う。
+struct RowJson<'a> {
+    set: &'a JsonKeySet,
+    row: &'a [Value],
+}
+
+impl serde::Serialize for RowJson<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(self.set.order.len()))?;
+        for &i in &self.set.order {
+            let key = &self.set.keys[i];
+            match self.row.get(i).unwrap_or(&Value::Null) {
+                Value::Bytes(hex) => map.serialize_entry(key, &format!("0x{hex}"))?,
+                v => map.serialize_entry(key, v)?,
+            }
+        }
+        map.end()
+    }
 }
 
 /// Pretty JSON of the result set, serialized directly to the writer.
@@ -545,11 +577,11 @@ fn write_json<W: Write>(
     if let Some(q) = query.filter(|q| !q.is_empty()) {
         // 行オブジェクトを材料化してラッパオブジェクトとして整形出力する。
         // 在グリッドのエクスポートは既に全行をメモリに持つため材料化で問題ない。
-        let keys = json_keys(columns);
-        let rows_json: Vec<serde_json::Value> = rows
+        let keys = JsonKeySet::new(columns);
+        let rows_json = rows
             .iter()
-            .map(|row| row_to_json_object(&keys, row))
-            .collect();
+            .map(|row| serde_json::to_value(keys.row(row)))
+            .collect::<std::result::Result<Vec<serde_json::Value>, _>>()?;
         let wrapper = serde_json::json!({ "query": q, "rows": rows_json });
         serde_json::to_writer_pretty(w, &wrapper)?;
         return Ok(());
@@ -557,9 +589,9 @@ fn write_json<W: Write>(
 
     let mut ser = serde_json::Serializer::pretty(w);
     let mut seq = ser.serialize_seq(Some(rows.len()))?;
-    let keys = json_keys(columns);
+    let keys = JsonKeySet::new(columns);
     for row in rows {
-        seq.serialize_element(&row_to_json_object(&keys, row))?;
+        seq.serialize_element(&keys.row(row))?;
     }
     seq.end()?;
     Ok(())
@@ -568,13 +600,16 @@ fn write_json<W: Write>(
 /// NDJSON (改行区切り JSON): 各行を 1 つの JSON オブジェクトとして 1 行ずつ書き、
 /// 各行を `\n` で終端する。JSON 配列のような先頭/末尾の括弧・行間カンマは無い。
 /// 値のエンコード (BLOB の 16 進・NULL・数値) は `write_json` と共有する
-/// `row_to_json_object` を使うため JSON 配列経路と一致する。空結果なら何も書かない。
+/// `RowJson` を使うため JSON 配列経路と一致する。空結果なら何も書かない。
 fn write_ndjson<W: Write>(w: &mut W, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
-    let keys = json_keys(columns);
+    write_ndjson_rows(w, &JsonKeySet::new(columns), rows)
+}
+
+/// [`write_ndjson`] の本体。ストリーミング経路は `on_columns` で作ったキー一式を渡し、
+/// バッチごとの再計算を避ける。
+fn write_ndjson_rows<W: Write>(w: &mut W, keys: &JsonKeySet, rows: &[Vec<Value>]) -> Result<()> {
     for row in rows {
-        let obj = row_to_json_object(&keys, row);
-        let s = serde_json::to_string(&obj)?;
-        w.write_all(s.as_bytes())?;
+        serde_json::to_writer(&mut *w, &keys.row(row))?;
         w.write_all(b"\n")?;
     }
     Ok(())
@@ -759,7 +794,9 @@ struct StreamExportSink {
     format: ExportFormat,
     columns: Vec<Column>,
     /// JSON / NDJSON のオブジェクトキー ([`json_keys`])。`on_columns` で確定する。
-    json_keys: Vec<String>,
+    json_keys: JsonKeySet,
+    /// xlsx の行書き込みに渡す列定義 (マスク列は文字列型)。`on_columns` で 1 回だけ確定する。
+    xlsx_columns: Vec<Column>,
     json_count: usize,
     /// JSON 形式のとき出力に同梱する実行クエリ。`Some(non-empty)` のときは配列
     /// ではなく `{ "query": ..., "rows": [...] }` でラップする。
@@ -814,7 +851,8 @@ impl StreamExportSink {
             writer: BufWriter::new(file),
             format,
             columns: Vec::new(),
-            json_keys: Vec::new(),
+            json_keys: JsonKeySet::new(&[]),
+            xlsx_columns: Vec::new(),
             json_count: 0,
             json_query,
             sql_opts,
@@ -826,7 +864,10 @@ impl StreamExportSink {
 
     fn on_columns(&mut self, columns: Vec<Column>) -> Result<()> {
         self.mask_plan = self.mask_spec.as_ref().map(|s| s.plan(&columns));
-        self.json_keys = json_keys(&columns);
+        self.json_keys = JsonKeySet::new(&columns);
+        if matches!(self.format, ExportFormat::Xlsx) {
+            self.xlsx_columns = mask_columns(self.mask_plan.as_ref(), &columns).into_owned();
+        }
         self.columns = columns;
         match self.format {
             ExportFormat::Csv => write_csv_header(&mut self.writer, &self.columns)?,
@@ -879,19 +920,16 @@ impl StreamExportSink {
                 for row in rows {
                     self.writer
                         .write_all(if self.json_count == 0 { first } else { rest })?;
-                    let obj = row_to_json_object(&self.json_keys, row);
-                    let s = serde_json::to_string(&obj)?;
-                    self.writer.write_all(s.as_bytes())?;
+                    serde_json::to_writer(&mut self.writer, &self.json_keys.row(row))?;
                     self.json_count += 1;
                 }
             }
             // 1 行 1 オブジェクト + `\n`。in-memory の write_ndjson と同じ書式。
-            ExportFormat::Ndjson => write_ndjson(&mut self.writer, &self.columns, rows)?,
+            ExportFormat::Ndjson => write_ndjson_rows(&mut self.writer, &self.json_keys, rows)?,
             // 行数上限を超えた行は書かずに数えるだけ (返り値は読んだ行数のまま)。
             // マスク列は文字列として扱わせる (在グリッド経路の `write_export_to` と同じ)。
             ExportFormat::Xlsx => {
-                let columns = mask_columns(self.mask_plan.as_ref(), &self.columns);
-                xlsx_sheet(&mut self.xlsx)?.write_rows(&columns, rows)?
+                xlsx_sheet(&mut self.xlsx)?.write_rows(&self.xlsx_columns, rows)?
             }
         }
         Ok(rows.len())

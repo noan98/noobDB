@@ -45,6 +45,8 @@ const en = {
   activityEmptyTitle: "No activity yet",
   activityPanelEmpty:
     "Notifications and status bar messages (connections, query results, errors) are kept here so you can read them later.",
+  ipcValidationError:
+    'The response to "{command}" was not in the expected format. The app and its backend may be out of sync (details are in the activity log).',
   ipcValidationActivity:
     'Unexpected response from the backend for "{command}". The app and its backend may be out of sync.',
   ipcValidationHint:
@@ -235,6 +237,9 @@ const en = {
   historyEmpty: "No history yet. Run a query to start recording.",
   historyNoMatches: "No history matches the current filters.",
   historyClear: "Clear history",
+  historyClearAllIgnoringFilter: "Clear all history (ignores filters)",
+  historyClearFilteredNote:
+    "Filters are active, but this deletes the entire history, not just the {shown} entries shown.",
   historyClearConfirmProfile: 'Delete all query history for "{name}"?',
   historyClearConfirmAll: "Delete ALL query history for every connection?",
   historyRestoreHint: "Click to restore into the editor",
@@ -370,6 +375,7 @@ const en = {
   planWatchLocalOnlyNote:
     "Plans are stored locally only. EXPLAIN runs are read-only and never recorded to query history.",
   planWatchChangedToast: "Execution plan changed for {count} watched snippet(s)",
+  planWatchRegressedToast: "Execution plan regressed (e.g. full scan): {names}",
   planWatchRefreshFailedToast: "Plan check failed for {name}: {error}",
 
   schemaDriftTitle: "Schema drift timeline — {name}",
@@ -751,10 +757,12 @@ const en = {
     "Reset every app setting — appearance, safety, streaming, keybindings and all other sections — back to its default value? This cannot be undone.",
   settingsBackupResetAllSuccess: "All settings were reset to defaults.",
   settingsBackupResetAllHelp: "Resets every section on this screen, including keybinding overrides.",
-  tabRestoreConfirm: "Restore {count} tabs from your last session?",
+  tabRestoreConfirm:
+    'Restore {count} tabs from your last session? "Not now" keeps them saved for next time; "Discard" deletes them.',
   tabRestoreConfirmTitle: "Restore tabs",
   tabRestoreConfirmRestore: "Restore",
   tabRestoreConfirmDiscard: "Discard",
+  tabRestoreConfirmKeep: "Not now",
   productionConfirm: '"{name}" is marked as production. Connect anyway?',
   reconnectDetected: "Connection lost — reconnecting...",
   // 明示トランザクション。
@@ -933,7 +941,9 @@ const en = {
   parameterInputValuePlaceholder: "Value",
   parameterInputPreviewLabel: "Resulting SQL",
   parameterInputEscapeNote:
-    "Text and identifier values are quoted and escaped to prevent SQL injection; numbers are inserted as-is.",
+    "Text and identifier values are quoted and escaped to prevent SQL injection; numbers are inserted as-is. Quotes are added automatically, so do not wrap the placeholder in quotes.",
+  parameterInputQuotedWarning:
+    "{names} is wrapped in quotes in the SQL. Quotes are added automatically, so the result will be double-quoted and cause a syntax error. Remove the quotes around the placeholder.",
   parameterInputRun: "Run",
   parameterInputCancel: "Cancel",
   parameterInputErrNumber: "Enter a number",
@@ -1154,6 +1164,17 @@ const en = {
   formPickDbFileTitle: "Select database file",
   formPickCertTitle: "Select certificate / key file",
   formSqliteFileFilter: "SQLite databases",
+  skippedProfilesTitle: "{count} connection entries could not be loaded",
+  skippedProfilesHint:
+    "These entries in profiles.json could not be read (hand-edited, or written by a newer version), so they are hidden from the list. They are kept in the file until you delete them here.",
+  skippedProfileUnnamed: "(unnamed)",
+  skippedProfileDelete: "Delete",
+  skippedProfileDeleteTitle: "Delete unreadable entry",
+  skippedProfileDeleteBody: 'Delete "{name}" from profiles.json? This cannot be undone.',
+  skippedProfileDeleted: 'Deleted "{name}".',
+  skippedProfileDeleteFailed: "Could not delete the entry: {error}",
+  skippedProfilesMore: "and {count} more",
+  welcomeOpenSqliteFailed: "Could not open the file picker: {error}",
   formCertFileFilter: "Certificates & keys",
   formAnyFileFilter: "All files",
   formTlsLegend: "TLS / SSL",
@@ -1404,6 +1425,11 @@ const en = {
   explainLoading: "Analyzing query plan...",
   explainParseError: "Could not parse the EXPLAIN output: {error}",
   explainTotalCost: "Query cost: {cost}",
+  explainQueryPlanRoot: "QUERY PLAN",
+  explainUnexpectedShape: "unexpected plan shape",
+  explainNodeCost: "cost {cost}",
+  explainNodeRows: "{rows} rows",
+  explainNodeActualRows: "{est} → {actual} rows",
   explainKindQueryBlock: "Query block",
   explainKindNestedLoop: "Nested loop",
   explainKindOrdering: "Ordering",
@@ -1552,6 +1578,8 @@ const en = {
   qbLimitInvalid: "LIMIT must be a whole number — the clause will be omitted.",
   qbNoWhereBand: "No WHERE clause — every row in the table will be affected.",
   qbValidationNoTable: "Select a table first.",
+  qbValidationNoSelectColumns: "Select at least one column, or turn on all columns.",
+  qbCancel: "Cancel",
   qbValidationNoInsertValues: "Fill in at least one column and value to insert.",
   qbValidationNoSetValues: "Fill in at least one column to update.",
   qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
@@ -1974,6 +2002,10 @@ const en = {
   routineEditReadOnly: "This connection is read-only, so the definition cannot be applied.",
   routineEditNoteAtomic:
     "The old definition is replaced inside a single transaction. If the new definition has an error, the current one stays as it is.",
+  routineEditPgRenamed:
+    "The name changed, so the old definition is kept and a new one is added. Drop the old one separately if it is no longer needed.",
+  routineEditPgArgsChanged:
+    "The argument list changed. If the argument types or count changed, the old definition stays as an overload and a new one is added (name-only or default-only changes replace it). Drop the old one separately if it is no longer needed.",
   routineEditNotePgOverload:
     "If you change the name or the argument types, a new function is created and the old definition stays (it is not dropped). Drop it separately if it is no longer needed.",
   routineEditNoteMysql:
@@ -2022,6 +2054,7 @@ const en = {
   localRegisterWriteWarning:
     "This is an independent local copy — edits made here (e.g. UPDATE) never reach the original connection.",
   localRegisterConfirm: "Register",
+  localRegisterOverwrite: "Overwrite and register",
   localRegisterSuccess: 'Registered {rows} rows as local table "{table}".',
   localPanelHint:
     "Register result sets from any connection here to re-query or JOIN them across connections, entirely on your machine. Local tables are volatile by default — they're discarded when the app closes, unless you save them to a file.",
@@ -2455,6 +2488,7 @@ const en = {
   createTableColNamePlaceholder: "column",
   createTableColType: "Type",
   createTableColNotNull: "Not null",
+  createTableColPk: "PK",
   createTableColUnique: "Unique",
   createTableColAuto: "Auto",
   createTableColDefault: "Default",
@@ -2534,10 +2568,19 @@ const en = {
   renameTableTitle: "Rename table",
   renameTableLabel: "New name for {table}",
   renameTableConfirm: "Rename",
+  renameTableExists: 'A table named "{table}" already exists in this schema.',
+  renameTableSqlPreview: "SQL to be executed",
+  renameTableCaseOnlyExists:
+    'A table whose name differs from "{table}" only in letter case already exists. It can be renamed, but fails on case-insensitive setups.',
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794)。
   alterTableTitle: "Edit columns: {table}",
   alterTableLoading: "Loading columns...",
   alterTableLoadError: "Failed to load columns: {error}",
+  alterTableContextIncomplete:
+    "Could not load some information ({items}), so what is shown may be incomplete. Existing foreign keys or comments may not appear here.",
+  alterTableCtxItemComments: "table comment",
+  alterTableCtxItemForeignKeys: "foreign keys",
+  alterTableCtxItemTables: "table list",
   alterTableExistingSection: "Existing columns",
   alterTableMysqlExtraNote:
     "Renaming or changing a column's type/NOT NULL/DEFAULT preserves AUTO_INCREMENT and ON UPDATE, but not character set/collation, COMMENT, or generated-column expressions (this dialog doesn't read those).",
@@ -2587,6 +2630,7 @@ const en = {
   alterPrecheckLength: "{count} row(s) are longer than the new length",
   alterPrecheckRange: "{count} row(s) are outside the new numeric range",
   alterPrecheckDecimal: "{count} row(s) have too many integer digits for the new precision",
+  alterPrecheckScale: "{count} row(s) would be silently rounded by the smaller number of decimal places",
   alterPrecheckNotNull: "{count} row(s) are NULL",
   alterPrecheckRunning: "Checking whether existing data fits…",
   alterPrecheckError: "Could not check existing data: {error}",
@@ -2825,6 +2869,10 @@ const en = {
   tabCloseOthers: "Close other tabs",
   tabCloseRight: "Close tabs to the right",
   tabCloseAll: "Close all tabs",
+  tabCloseAllInPane: "Close all tabs in this pane",
+  cellViewerDiscardTitle: "Discard unsaved edits",
+  cellViewerDiscardBody: "This cell has edits that have not been saved. Closing the viewer discards them.",
+  cellViewerDiscardConfirm: "Discard",
   tabDirty: "Unsaved changes (not yet run, or edits not yet applied)",
   tabCloseDiscardTitle: "Close tab with unapplied edits",
   tabCloseDiscardBody:
@@ -3198,7 +3246,8 @@ const en = {
     "When the same query is re-run, highlight cells that changed and rows that were added (needs a primary key)",
   diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "Add a new row to {table}",
-  rowOpsInsertHint: 'Leave a field empty to use the column default. Type "null" for SQL NULL.',
+  rowOpsInsertHint:
+    'Leave a field empty to use the column default. Type "null" for SQL NULL. Enter moves to the next field; Ctrl/Cmd+Enter adds the row.',
   rowOpsInsertDefaultOption: "(default)",
   rowOpsInsertAutoHint: "Left empty, the database assigns this column (auto-increment).",
   rowOpsInsertAutoPlaceholder: "auto-increment",
@@ -3250,6 +3299,7 @@ const en = {
   blobFetchFailed: "Could not read the binary value: {error}",
   blobLoadPickTitle: "Choose a file to store in the cell",
   blobLoadFailed: "Could not load the file into the cell: {error}",
+  blobTooLarge: "The file ({size}) is too large to load into a cell. The limit is {max}.",
   blobLoadConfirmTitle: "Replace the BLOB?",
   blobLoadConfirmBody:
     "Overwrite column {column} with the contents of {size} from the chosen file? An UPDATE runs immediately and cannot be undone from here.",
@@ -4607,6 +4657,8 @@ const en = {
     "No planner statistics for this column yet (run ANALYZE); the exact distinct count is shown.",
   profileNoteUnknown: "Part of the profile could not be computed.",
   profileNoteOverviewSkipped: "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
+  profileOverviewNoStats:
+    "No planner statistics for this table yet (run ANALYZE), so DISTINCT is omitted in approximate mode.",
   profileOverviewRun: "All columns overview",
   profileOverviewRerun: "Refresh overview",
   profileOverviewHint:
@@ -5441,6 +5493,8 @@ const ja: Dict = {
   activityEmptyTitle: "アクティビティはまだありません",
   activityPanelEmpty:
     "通知とステータスバーのメッセージ (接続・実行結果・エラー) をここに残します。後から読み返せます。",
+  ipcValidationError:
+    "「{command}」の応答が想定した形式と一致しませんでした。アプリ本体とバックエンドのバージョンが食い違っている可能性があります (詳細はアクティビティを参照)。",
   ipcValidationActivity:
     "バックエンドから「{command}」の想定外の応答がありました。アプリ本体とバックエンドのバージョンが食い違っている可能性があります。",
   ipcValidationHint:
@@ -5631,6 +5685,8 @@ const ja: Dict = {
   historyEmpty: "履歴はまだありません。クエリを実行すると記録されます。",
   historyNoMatches: "条件に一致する履歴がありません。",
   historyClear: "履歴をクリア",
+  historyClearAllIgnoringFilter: "絞り込みを無視して全履歴をクリア",
+  historyClearFilteredNote: "絞り込み中ですが、削除されるのは表示中の {shown} 件だけではなく、履歴全体です。",
   historyClearConfirmProfile: "「{name}」のクエリ履歴をすべて削除しますか？",
   historyClearConfirmAll: "すべての接続のクエリ履歴を削除しますか？",
   historyRestoreHint: "クリックでエディタに復元",
@@ -5763,6 +5819,7 @@ const ja: Dict = {
   planWatchLocalOnlyNote:
     "計画はローカルにのみ保存されます。EXPLAIN は読み取り操作のみで、クエリ履歴には記録されません。",
   planWatchChangedToast: "{count} 件のウォッチ中スニペットで実行計画が変化しました",
+  planWatchRegressedToast: "実行計画が退行しました (フルスキャンなど): {names}",
   planWatchRefreshFailedToast: "{name} の計画チェックに失敗: {error}",
 
   schemaDriftTitle: "スキーマドリフト・タイムライン — {name}",
@@ -6140,10 +6197,12 @@ const ja: Dict = {
     "外観・安全性・ストリーミング・キーバインドを含む、この画面のすべての設定項目を既定値に戻しますか？ この操作は取り消せません。",
   settingsBackupResetAllSuccess: "すべての設定を既定値に戻しました。",
   settingsBackupResetAllHelp: "キーバインドの上書きを含む、この画面の全セクションをリセットします。",
-  tabRestoreConfirm: "前回開いていた {count} 個のタブを復元しますか？",
+  tabRestoreConfirm:
+    "前回開いていた {count} 個のタブを復元しますか？「今回は開かない」なら保存内容は次回のために残り、「破棄する」と削除されます。",
   tabRestoreConfirmTitle: "タブを復元",
   tabRestoreConfirmRestore: "復元する",
   tabRestoreConfirmDiscard: "破棄する",
+  tabRestoreConfirmKeep: "今回は開かない",
   productionConfirm: "「{name}」は本番環境としてマークされています。本当に接続しますか？",
   reconnectDetected: "接続が切れました — 再接続しています...",
   // 明示トランザクション。
@@ -6320,7 +6379,9 @@ const ja: Dict = {
   parameterInputValuePlaceholder: "値",
   parameterInputPreviewLabel: "展開後の SQL",
   parameterInputEscapeNote:
-    "テキスト・識別子の値はクオートとエスケープで SQL インジェクションを防ぎます。数値はそのまま挿入されます。",
+    "テキスト・識別子の値はクオートとエスケープで SQL インジェクションを防ぎます。数値はそのまま挿入されます。引用符は自動で付くため、プレースホルダを引用符で囲まないでください。",
+  parameterInputQuotedWarning:
+    "{names} が SQL 内で引用符に囲まれています。引用符は自動で付くため、置換後に二重引用となり構文エラーになります。プレースホルダの前後の引用符を外してください。",
   parameterInputRun: "実行",
   parameterInputCancel: "キャンセル",
   parameterInputErrNumber: "数値を入力してください",
@@ -6542,6 +6603,17 @@ const ja: Dict = {
   formPickDbFileTitle: "データベースファイルを選択",
   formPickCertTitle: "証明書 / 鍵ファイルを選択",
   formSqliteFileFilter: "SQLite データベース",
+  skippedProfilesTitle: "{count} 件の接続エントリを読み込めませんでした",
+  skippedProfilesHint:
+    "profiles.json のこれらのエントリは解釈できない (手編集・新しい版が書いたものなど) ため、一覧に表示されません。ここで削除するまでファイルには残ります。",
+  skippedProfileUnnamed: "(名前なし)",
+  skippedProfileDelete: "削除",
+  skippedProfileDeleteTitle: "読み込めないエントリの削除",
+  skippedProfileDeleteBody: "「{name}」を profiles.json から削除しますか? 元に戻せません。",
+  skippedProfileDeleted: "「{name}」を削除しました。",
+  skippedProfileDeleteFailed: "エントリを削除できませんでした: {error}",
+  skippedProfilesMore: "ほか {count} 件",
+  welcomeOpenSqliteFailed: "ファイル選択ダイアログを開けませんでした: {error}",
   formCertFileFilter: "証明書・鍵",
   formAnyFileFilter: "すべてのファイル",
   formTlsLegend: "TLS / SSL",
@@ -6790,6 +6862,11 @@ const ja: Dict = {
   explainLoading: "実行計画を解析中...",
   explainParseError: "EXPLAIN の出力を解析できませんでした: {error}",
   explainTotalCost: "クエリコスト: {cost}",
+  explainQueryPlanRoot: "クエリプラン",
+  explainUnexpectedShape: "プランの形式が想定と異なります",
+  explainNodeCost: "コスト {cost}",
+  explainNodeRows: "{rows} 行",
+  explainNodeActualRows: "{est} → {actual} 行",
   explainKindQueryBlock: "クエリブロック",
   explainKindNestedLoop: "ネステッドループ",
   explainKindOrdering: "ソート",
@@ -6938,6 +7015,8 @@ const ja: Dict = {
   qbLimitInvalid: "LIMIT は整数で指定してください。句は省略されます。",
   qbNoWhereBand: "WHERE 句がありません。テーブルの全行が対象になります。",
   qbValidationNoTable: "先にテーブルを選択してください。",
+  qbValidationNoSelectColumns: "列を 1 つ以上選ぶか、「すべての列」をオンにしてください。",
+  qbCancel: "キャンセル",
   qbValidationNoInsertValues: "挿入する列と値を少なくとも 1 つ入力してください。",
   qbValidationNoSetValues: "更新する列を少なくとも 1 つ入力してください。",
   qbValidationNoInValues: "IN 条件に値がありません。値を入力するか条件を削除してください。",
@@ -7363,6 +7442,10 @@ const ja: Dict = {
   routineEditReadOnly: "この接続は読み取り専用のため、定義を適用できません。",
   routineEditNoteAtomic:
     "旧定義の置換は 1 つのトランザクションで実行されます。新しい定義にエラーがあっても現在の定義はそのまま残ります。",
+  routineEditPgRenamed:
+    "名前を変更したため、旧定義は残ったまま新しい定義が追加されます。不要なら旧定義を別途 DROP してください。",
+  routineEditPgArgsChanged:
+    "引数の記述が変わっています。引数の型や数が変わると旧定義がオーバーロードとして残り、新しい定義が追加されます (引数名や既定値だけの変更なら置換されます)。不要なら旧定義を別途 DROP してください。",
   routineEditNotePgOverload:
     "名前や引数の型を変えると新しい関数が作られ、旧定義は削除されずに残ります (不要なら別途削除してください)。",
   routineEditNoteMysql:
@@ -7412,6 +7495,7 @@ const ja: Dict = {
   localRegisterWriteWarning:
     "独立したローカルコピーです — ここでの UPDATE 等の変更は、元の接続先には一切反映されません。",
   localRegisterConfirm: "登録",
+  localRegisterOverwrite: "上書きして登録",
   localRegisterSuccess: "{rows} 行をローカルテーブル「{table}」として登録しました。",
   localPanelHint:
     "任意の接続の結果セットをここへ登録すると、接続をまたいで再クエリ・JOIN できます。すべてこの端末内だけで完結します。ローカルテーブルは既定で揮発し (アプリ終了で破棄)、ファイルに保存すると永続化できます。",
@@ -7843,6 +7927,7 @@ const ja: Dict = {
   createTableColNamePlaceholder: "列名",
   createTableColType: "型",
   createTableColNotNull: "NOT NULL",
+  createTableColPk: "主キー",
   createTableColUnique: "UNIQUE",
   createTableColAuto: "自動採番",
   createTableColDefault: "デフォルト",
@@ -7922,10 +8007,19 @@ const ja: Dict = {
   renameTableTitle: "テーブル名を変更",
   renameTableLabel: "{table} の新しい名前",
   renameTableConfirm: "変更",
+  renameTableExists: "テーブル「{table}」は同じスキーマに既に存在します。",
+  renameTableSqlPreview: "実行される SQL",
+  renameTableCaseOnlyExists:
+    "大小文字だけが違う「{table}」が既に存在します。改名はできますが、大小文字を区別しない環境ではエラーになります。",
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794)。
   alterTableTitle: "列を編集: {table}",
   alterTableLoading: "列情報を読み込み中...",
   alterTableLoadError: "列情報の読み込みに失敗しました: {error}",
+  alterTableContextIncomplete:
+    "一部の情報 ({items}) を取得できなかったため、表示が不完全です。既存の外部キーやコメントがここに出ていない可能性があります。",
+  alterTableCtxItemComments: "テーブルコメント",
+  alterTableCtxItemForeignKeys: "外部キー",
+  alterTableCtxItemTables: "テーブル一覧",
   alterTableExistingSection: "既存の列",
   alterTableMysqlExtraNote:
     "列のリネームや型・NOT NULL・DEFAULT の変更では AUTO_INCREMENT や ON UPDATE は保持されますが、文字セット・照合順序・COMMENT・生成列の式 (このダイアログでは取得していません) は保持されません。",
@@ -7975,6 +8069,7 @@ const ja: Dict = {
   alterPrecheckLength: "{count} 行が新しい長さを超えています",
   alterPrecheckRange: "{count} 行が新しい数値範囲に収まりません",
   alterPrecheckDecimal: "{count} 行が新しい精度の整数部の桁数を超えています",
+  alterPrecheckScale: "{count} 行が小数桁の縮小で丸められます (値が変わります)",
   alterPrecheckNotNull: "{count} 行が NULL です",
   alterPrecheckRunning: "既存データが収まるか検査しています…",
   alterPrecheckError: "既存データの検査に失敗しました: {error}",
@@ -8210,6 +8305,10 @@ const ja: Dict = {
   tabCloseOthers: "他のタブを閉じる",
   tabCloseRight: "右側のタブを閉じる",
   tabCloseAll: "すべてのタブを閉じる",
+  tabCloseAllInPane: "このペインのタブをすべて閉じる",
+  cellViewerDiscardTitle: "未保存の編集を破棄",
+  cellViewerDiscardBody: "このセルには保存していない編集があります。閉じると編集内容は破棄されます。",
+  cellViewerDiscardConfirm: "破棄する",
   tabDirty: "未実行の変更、または Apply していない編集があります",
   tabCloseDiscardTitle: "未確定の編集があるタブを閉じる",
   tabCloseDiscardBody:
@@ -8577,7 +8676,8 @@ const ja: Dict = {
     "同じクエリを再実行したとき、変化したセルと追加された行をハイライトします (主キーが必要)",
   diffHighlightSummary: "+{added} / -{removed}",
   rowOpsInsertTitle: "{table} に新規行を追加",
-  rowOpsInsertHint: '空欄の列は既定値を使います。SQL の NULL にするには "null" と入力します。',
+  rowOpsInsertHint:
+    '空欄の列は既定値を使います。SQL の NULL にするには "null" と入力します。Enter で次の欄へ移動し、Ctrl/Cmd+Enter で行を追加します。',
   rowOpsInsertDefaultOption: "(既定値)",
   rowOpsInsertAutoHint: "空欄のままなら DB が自動採番します。",
   rowOpsInsertAutoPlaceholder: "自動採番",
@@ -8628,6 +8728,7 @@ const ja: Dict = {
   blobFetchFailed: "バイナリ値を取得できませんでした: {error}",
   blobLoadPickTitle: "セルに格納するファイルを選択",
   blobLoadFailed: "ファイルをセルへ読み込めませんでした: {error}",
+  blobTooLarge: "ファイル ({size}) が大きすぎてセルへ読み込めません。上限は {max} です。",
   blobLoadConfirmTitle: "BLOB を置き換えますか?",
   blobLoadConfirmBody:
     "列 {column} を、選択したファイルの内容 ({size}) で上書きします。UPDATE を今すぐ実行し、ここから元には戻せません。",
@@ -9981,6 +10082,8 @@ const ja: Dict = {
     "この列の統計情報がまだありません (ANALYZE で収集されます)。正確な DISTINCT 数を表示しています。",
   profileNoteUnknown: "プロファイルの一部を計算できませんでした。",
   profileNoteOverviewSkipped: "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
+  profileOverviewNoStats:
+    "この表の統計情報がまだ無い (ANALYZE で収集) ため、近似モードでは DISTINCT を省略しています。",
   profileOverviewRun: "全列の概要",
   profileOverviewRerun: "概要を更新",
   profileOverviewHint:

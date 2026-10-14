@@ -1199,7 +1199,9 @@ impl SqliteConn {
         // 式インデックスの列は name が NULL なので列としては積まない。
         let rows: Vec<SqliteRow> = sqlx::query(
             "SELECT m.name, il.name, il.\"unique\", il.origin, ii.name, il.partial,
-                    (SELECT x.sql FROM sqlite_master x WHERE x.type = 'index' AND x.name = il.name)
+                    CASE WHEN il.partial THEN
+                        (SELECT x.sql FROM sqlite_master x WHERE x.type = 'index' AND x.name = il.name)
+                    END
              FROM sqlite_master m
              JOIN pragma_index_list(m.name) il
              LEFT JOIN pragma_index_info(il.name) ii
@@ -1292,43 +1294,53 @@ impl SqliteConn {
         // groups the columns of one composite key, which we fold into a stable
         // synthetic constraint name (`<table>:<id>`). `to` is NULL when the FK
         // implicitly targets the parent's primary key.
+        // #1609: 表ごとの PRAGMA 発行 (N+1) をやめ、`pragma_foreign_key_list` を
+        // `sqlite_master` と結合した 1 本の SQL で全表分を取る。表名に `"` を含んでも
+        // 識別子を組み立てないので失敗しない。表の並びは従来どおり `tables()` の順に
+        // 揃え (安定ソート)、同じ表の中の行順は PRAGMA の返す順のまま保つ。
         let tables = self.tables(db).await?;
+        let order: std::collections::HashMap<&str, usize> = tables
+            .iter()
+            .enumerate()
+            .map(|(i, t)| (t.as_str(), i))
+            .collect();
+        let rows: Vec<SqliteRow> = sqlx::query(
+            "SELECT m.name AS tbl, f.\"from\" AS \"from\", f.\"table\" AS \"table\", \
+                    f.\"to\" AS \"to\", f.id AS id, f.on_update AS on_update, \
+                    f.on_delete AS on_delete
+               FROM sqlite_master m
+               JOIN pragma_foreign_key_list(m.name) f
+              WHERE m.type = 'table'
+                AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
+        )
+        .fetch_all(&self.pool)
+        .await?;
         let mut out = Vec::new();
-        for table in tables {
-            if table.contains('\0') {
+        for r in rows {
+            let table = r.try_get::<String, _>("tbl").unwrap_or_default();
+            let column = r.try_get::<String, _>("from").unwrap_or_default();
+            if column.is_empty() || !order.contains_key(table.as_str()) {
                 continue;
             }
-            let sql = format!(
-                "PRAGMA foreign_key_list(\"{}\")",
-                table.replace('"', "\"\"")
-            );
-            let rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(sql))
-                .fetch_all(&self.pool)
-                .await?;
-            for r in rows {
-                let column = r.try_get::<String, _>("from").unwrap_or_default();
-                if column.is_empty() {
-                    continue;
-                }
-                let referenced_table = r.try_get::<String, _>("table").unwrap_or_default();
-                let referenced_column = r.try_get::<Option<String>, _>("to").ok().flatten();
-                let id = r.try_get::<i64, _>("id").ok();
-                out.push(ForeignKey {
-                    table: table.clone(),
-                    column,
-                    referenced_table,
-                    referenced_column,
-                    constraint_name: id.map(|i| format!("{}:{}", table, i)),
-                    // foreign_key_list の on_delete / on_update。NO ACTION (既定) は None。
-                    on_delete: super::types::normalize_fk_action(
-                        r.try_get::<String, _>("on_delete").ok().as_deref(),
-                    ),
-                    on_update: super::types::normalize_fk_action(
-                        r.try_get::<String, _>("on_update").ok().as_deref(),
-                    ),
-                });
-            }
+            let referenced_table = r.try_get::<String, _>("table").unwrap_or_default();
+            let referenced_column = r.try_get::<Option<String>, _>("to").ok().flatten();
+            let id = r.try_get::<i64, _>("id").ok();
+            out.push(ForeignKey {
+                constraint_name: id.map(|i| format!("{}:{}", table, i)),
+                table,
+                column,
+                referenced_table,
+                referenced_column,
+                // foreign_key_list の on_delete / on_update。NO ACTION (既定) は None。
+                on_delete: super::types::normalize_fk_action(
+                    r.try_get::<String, _>("on_delete").ok().as_deref(),
+                ),
+                on_update: super::types::normalize_fk_action(
+                    r.try_get::<String, _>("on_update").ok().as_deref(),
+                ),
+            });
         }
+        out.sort_by_key(|fk| order.get(fk.table.as_str()).copied().unwrap_or(usize::MAX));
         Ok(out)
     }
 
@@ -1496,17 +1508,19 @@ impl SqliteConn {
     }
 
     pub async fn schema_overview(&self, db: &str) -> Result<Vec<TableSchema>> {
-        // SQLite has no single information_schema query for every column, but
-        // the database is a local file so per-table PRAGMA lookups are cheap.
+        // #1609: 表ごとに `columns()` (PRAGMA 2〜4 回 + 接続取り直し) を呼ぶ N+1 をやめ、
+        // `columns_for_database` の一括取得から組み立てる。列が取れない表 (仮想表など) は
+        // 従来どおり空の列一覧で残す。
         let tables = self.tables(db).await?;
+        let mut by_table: std::collections::HashMap<String, Vec<String>> = self
+            .columns_for_database(db)
+            .await?
+            .into_iter()
+            .map(|t| (t.name, t.columns.into_iter().map(|c| c.name).collect()))
+            .collect();
         let mut out = Vec::with_capacity(tables.len());
         for table in tables {
-            let columns = self
-                .columns(db, &table)
-                .await?
-                .into_iter()
-                .map(|c| c.name)
-                .collect();
+            let columns = by_table.remove(&table).unwrap_or_default();
             out.push(TableSchema {
                 name: table,
                 columns,

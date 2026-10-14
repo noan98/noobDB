@@ -189,10 +189,9 @@ impl MaskSpec {
                     .map(|m| m.rule.clone())
             })
             .collect();
-        MaskPlan {
-            rules,
-            salt: self.salt.clone(),
-        }
+        // 鍵パッドの処理 (HMAC の鍵設定) はプランにつき 1 回だけ行い、セルごとには clone する。
+        let mac = keyed_mac(&self.salt);
+        MaskPlan { rules, mac }
     }
 }
 
@@ -205,7 +204,8 @@ pub fn needs_salt(masks: &[ColumnMask]) -> bool {
 #[derive(Debug, Clone)]
 pub struct MaskPlan {
     rules: Vec<Option<MaskRule>>,
-    salt: Vec<u8>,
+    /// 鍵設定済みの HMAC (ソルトが無いときは `None`)。セルごとに clone して使う。
+    mac: Option<Hmac<Sha256>>,
 }
 
 impl MaskPlan {
@@ -219,7 +219,11 @@ impl MaskPlan {
         row.iter()
             .enumerate()
             .map(|(i, v)| match self.rules.get(i).and_then(|r| r.as_ref()) {
-                Some(rule) => mask_value(rule, v, &self.salt),
+                Some(MaskRule::Hash { length }) if !matches!(v, Value::Null) => Value::String(
+                    pseudonymize_with(self.mac.as_ref(), &source_text(v), *length),
+                ),
+                // ソルト不要のルールには空ソルトで十分 (`hash` は上の腕で処理済み)。
+                Some(rule) => mask_value(rule, v, &[]),
                 None => v.clone(),
             })
             .collect()
@@ -330,17 +334,30 @@ pub fn partial_mask(s: &str, keep_start: usize, keep_end: usize) -> String {
 /// HMAC-SHA256(`salt`, `s`) の小文字 16 進の先頭 `length` 文字。`length` は
 /// `[MIN_HASH_LENGTH, MAX_HASH_LENGTH]` に収める。
 pub fn pseudonymize(s: &str, salt: &[u8], length: usize) -> String {
+    pseudonymize_with(keyed_mac(salt).as_ref(), s, length)
+}
+
+/// 鍵設定済みの HMAC-SHA256 を作る。`new_from_slice` は任意長の鍵を受け付けるので
+/// 失敗しないが、`unwrap` を避けて `Option` で返す。
+fn keyed_mac(salt: &[u8]) -> Option<Hmac<Sha256>> {
+    <Hmac<Sha256> as KeyInit>::new_from_slice(salt).ok()
+}
+
+/// [`pseudonymize`] の本体。鍵設定済みの `mac` を clone して使うので、大量セルでも
+/// 鍵パッド処理は呼び出し側が 1 回だけ行えばよい。出力は `pseudonymize` と同一。
+fn pseudonymize_with(mac: Option<&Hmac<Sha256>>, s: &str, length: usize) -> String {
     let length = length.clamp(MIN_HASH_LENGTH, MAX_HASH_LENGTH);
     // HMAC は任意長の鍵を受け付ける (ブロック長超はハッシュ、未満はゼロ詰め) ので
     // `new_from_slice` が失敗することは無いが、unwrap を避けて素の SHA-256 相当へは
     // 縮退させずに空鍵の HMAC を使う (MaskSpec が空ソルトの hash を事前に拒否する
     // ため、ここに到達するのは不変条件が破れたときだけ)。
-    let digest = match <Hmac<Sha256> as KeyInit>::new_from_slice(salt) {
-        Ok(mut mac) => {
+    let digest = match mac {
+        Some(mac) => {
+            let mut mac = mac.clone();
             mac.update(s.as_bytes());
             mac.finalize().into_bytes().to_vec()
         }
-        Err(_) => Vec::new(),
+        None => Vec::new(),
     };
     let mut hex = HEXLOWER.encode(&digest);
     hex.truncate(length);

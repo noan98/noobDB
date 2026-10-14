@@ -3250,7 +3250,7 @@ async fn sqlite_profile_table_overview_single_scan() {
     let state = t::AppState::default();
     let sid = state.insert(session).await;
 
-    let o = t::profile_table_inner(&state, &sid, "main", "ov_t", true)
+    let o = t::profile_table_inner(&state, &sid, "main", "ov_t", true, false)
         .await
         .expect("overview");
     assert_eq!(o.scans, 1, "全列が 1 本の SELECT で取れること");
@@ -3271,7 +3271,7 @@ async fn sqlite_profile_table_overview_single_scan() {
     assert_eq!(id.distinct_count, Some(t::Value::UInt(4)));
 
     // DISTINCT を求めない指定。
-    let no_distinct = t::profile_table_inner(&state, &sid, "main", "ov_t", false)
+    let no_distinct = t::profile_table_inner(&state, &sid, "main", "ov_t", false, false)
         .await
         .expect("overview without distinct");
     assert!(no_distinct
@@ -3280,12 +3280,12 @@ async fn sqlite_profile_table_overview_single_scan() {
         .all(|c| c.distinct_count.is_none()));
 
     assert!(
-        t::profile_table_inner(&state, &sid, "main", "no_such_table", true)
+        t::profile_table_inner(&state, &sid, "main", "no_such_table", true, false)
             .await
             .is_err()
     );
     assert!(matches!(
-        t::profile_table_inner(&state, "nope", "main", "ov_t", true).await,
+        t::profile_table_inner(&state, "nope", "main", "ov_t", true, false).await,
         Err(t::AppError::SessionNotFound(_))
     ));
     let _ = std::fs::remove_file(&path);
@@ -4836,6 +4836,82 @@ async fn capture_upsert_is_declined_but_written_once() {
         .expect("capture");
     assert_eq!(res.rows_affected, 1);
     assert!(!cap.capturable);
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// 相関サブクエリを partial の行だけに絞った (#1609) あとも、部分インデックスの述語は
+/// 取れ、通常のインデックスには述語が付かない。
+#[tokio::test]
+async fn sqlite_indexes_for_database_keeps_partial_predicate() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_partidx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute(
+        "CREATE TABLE pi (id INTEGER PRIMARY KEY, a INTEGER, b INTEGER)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("CREATE INDEX pi_plain ON pi (a)", None)
+        .await
+        .expect("plain index");
+    conn.execute("CREATE INDEX pi_part ON pi (b) WHERE b > 0", None)
+        .await
+        .expect("partial index");
+    let all = conn.indexes_for_database("main").await.expect("indexes");
+    let pi = all.iter().find(|t| t.name == "pi").expect("table pi");
+    let plain = pi
+        .indexes
+        .iter()
+        .find(|i| i.name == "pi_plain")
+        .expect("plain");
+    let part = pi
+        .indexes
+        .iter()
+        .find(|i| i.name == "pi_part")
+        .expect("part");
+    assert_eq!(plain.predicate, None);
+    assert_eq!(part.predicate.as_deref(), Some("b > 0"));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// `"` を含む表名の外部キーも、1 本の SQL での一括取得 (#1609) で取りこぼさず、
+/// 表の並びは `tables()` の順のまま返す。
+#[tokio::test]
+async fn sqlite_foreign_keys_bulk_handles_quote_in_table_name() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_fkquote_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE parent (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create parent");
+    conn.execute(
+        "CREATE TABLE \"a\"\"b\" (id INTEGER, p INTEGER REFERENCES parent(id) ON DELETE CASCADE)",
+        None,
+    )
+    .await
+    .expect("create quoted child");
+    conn.execute(
+        "CREATE TABLE zz (id INTEGER, p INTEGER REFERENCES parent(id))",
+        None,
+    )
+    .await
+    .expect("create zz");
+    let fks = conn.foreign_keys("main").await.expect("foreign_keys");
+    let tables: Vec<&str> = fks.iter().map(|f| f.table.as_str()).collect();
+    assert_eq!(tables, ["a\"b", "zz"]);
+    assert_eq!(fks[0].on_delete.as_deref(), Some("CASCADE"));
+    assert_eq!(fks[0].referenced_table, "parent");
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

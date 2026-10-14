@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { parsePlan, scorePlan, computeHints, type PlanNode } from "../components/explainPlan";
+import {
+  parsePlan,
+  parsePostgresPlan,
+  parseSqlitePlan,
+  scorePlan,
+  computeHints,
+  type PlanNode,
+} from "../components/explainPlan";
 
 /** Build a plan tree from a MySQL EXPLAIN-FORMAT-JSON-like object. */
 function plan(obj: Record<string, unknown>): PlanNode {
@@ -135,5 +142,27 @@ describe("補助ラベルの翻訳 (#1533)", () => {
   it("既定は現在ロケール (英語) のラベル", () => {
     const { root } = parsePlan(raw);
     expect(root?.label).toBe("Query block");
+  });
+});
+
+describe("根ノード名とエラー文の翻訳 (#1614)", () => {
+  const tr = (key: string) =>
+    key === "explainQueryPlanRoot"
+      ? "クエリプラン"
+      : key === "explainUnexpectedShape"
+        ? "形式が違います"
+        : key;
+  it("SQLite の複数トップ行の合成ルートは翻訳関数で解決する", () => {
+    const rows = [
+      { id: 1, parent: 0, detail: "SCAN a" },
+      { id: 2, parent: 0, detail: "SCAN b" },
+    ];
+    expect(parseSqlitePlan(rows, tr as never).root?.label).toBe("クエリプラン");
+    expect(parseSqlitePlan(rows).root?.label).toBe("QUERY PLAN");
+  });
+  it("想定外の形はロケールに従う文言のエラーになる", () => {
+    expect(parsePlan("42", tr as never).error).toBe("形式が違います");
+    expect(parsePostgresPlan("42", tr as never).error).toBe("形式が違います");
+    expect(parsePlan("42").error).toBe("unexpected plan shape");
   });
 });

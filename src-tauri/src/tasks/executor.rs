@@ -525,7 +525,9 @@ async fn run_action(
             } else {
                 None
             };
-            let all = match assertions::store::load_all() {
+            let all = match crate::commands::assertions::blocking_store(assertions::store::load_all)
+                .await
+            {
                 Ok(v) => v,
                 Err(e) => return TaskOutcome::err(e.to_string()),
             };
@@ -607,7 +609,7 @@ async fn run_action(
             }
         }
         TaskAction::TimelapseCapture { max_generations } => {
-            match timelapse::capture_all(&session, *max_generations).await {
+            match timelapse::capture_all(&session, *max_generations, Some(progress)).await {
                 Ok(outcomes) => {
                     progress.store(outcomes.len() as u64, Ordering::SeqCst);
                     let error = summarize_timelapse_failures(&outcomes);
@@ -627,7 +629,7 @@ async fn run_action(
         }
         TaskAction::RefreshPlanWatch { snippet_ids } => {
             let only = (!snippet_ids.is_empty()).then_some(snippet_ids.as_slice());
-            match plan_watch::refresh_plans(&session, &profile.id, only).await {
+            match plan_watch::refresh_plans(&session, &profile.id, only, Some(progress)).await {
                 Ok(res) => {
                     let error = summarize_plan_watch(&res);
                     TaskOutcome {

@@ -1468,6 +1468,52 @@
         "payload": ""
       },
       "changes": []
+    },
+    {
+      "name": "postgres index scan to parallel seq scan",
+      "prev": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Index Scan\",\"Relation Name\":\"t\",\"Index Name\":\"t_idx\",\"Plan Rows\":100}}]"
+      },
+      "next": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Parallel Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":100}}]"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "warning",
+          "path": "plan",
+          "object": "t",
+          "before": "Index Scan",
+          "after": "Parallel Seq Scan"
+        }
+      ]
+    },
+    {
+      "name": "postgres seq scan to parallel seq scan stays info",
+      "prev": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":100}}]"
+      },
+      "next": {
+        "driver": "postgres",
+        "payloadKind": "json",
+        "payload": "[{\"Plan\":{\"Node Type\":\"Parallel Seq Scan\",\"Relation Name\":\"t\",\"Plan Rows\":100}}]"
+      },
+      "changes": [
+        {
+          "kind": "access",
+          "severity": "info",
+          "path": "plan",
+          "object": "t",
+          "before": "Seq Scan",
+          "after": "Parallel Seq Scan"
+        }
+      ]
     }
   ]
 }

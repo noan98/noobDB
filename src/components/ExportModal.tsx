@@ -41,6 +41,8 @@ import {
 
 /** プレビュー欄に表示する最大行数 (コピーは全行が対象)。 */
 const PREVIEW_ROWS = 50;
+/** マスク済みプレビュー取得 (IPC) のデバウンス (ms)。固定値入力の 1 文字ごとの往復を避ける。 */
+const MASK_PREVIEW_DEBOUNCE_MS = 200;
 
 /**
  * マスキング (#733) 有効時のプレビュー行。変換はバックエンド (`mask_export_rows`) で
@@ -406,16 +408,21 @@ export function ExportModal({
   useEffect(() => {
     if (masks.length === 0) return;
     let cancelled = false;
-    api.maskExportRows({ columns: effectiveColumns, rows: previewRows, masks }).then(
-      (out) => {
-        if (!cancelled) setMaskedPreview({ masks, source: previewRows, rows: out });
-      },
-      (e) => {
-        if (!cancelled) setMaskedPreview({ masks, source: previewRows, error: String(e) });
-      },
-    );
+    // 固定値の入力は 1 文字ごとに masks が変わるので、入力が止まってから IPC を 1 回だけ送る。
+    // 待っている間は currentMasked が null のまま (生の値は見せない)。
+    const timer = setTimeout(() => {
+      api.maskExportRows({ columns: effectiveColumns, rows: previewRows, masks }).then(
+        (out) => {
+          if (!cancelled) setMaskedPreview({ masks, source: previewRows, rows: out });
+        },
+        (e) => {
+          if (!cancelled) setMaskedPreview({ masks, source: previewRows, error: String(e) });
+        },
+      );
+    }, MASK_PREVIEW_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [masks, effectiveColumns, previewRows]);
   // 現在の入力に対する結果だけを使う。マスキング有効中に結果が無い (未着・古い) 間は

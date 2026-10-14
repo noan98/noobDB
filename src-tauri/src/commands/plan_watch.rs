@@ -39,9 +39,8 @@ pub struct PlanWatchRefresh {
     pub changed: usize,
     pub errors: Vec<PlanWatchRefreshError>,
     /// 前世代から**警告 (Warning)** 相当の変化 (フルスキャンへの退行・推定行数の桁違いの増加
-    /// など) があったスニペットの名前 (#1537)。定期実行タスクがこれだけを通知する。IPC では
-    /// 返さない (画面は従来どおり `changed` を使う)。
-    #[serde(skip)]
+    /// など) があったスニペットの名前 (#1537)。定期実行タスクがこれだけを通知する。画面も
+    /// 退行があるときだけトーストを警告トーンにし、名前を出す (#1614)。
     pub warned: Vec<String>,
 }
 
@@ -71,7 +70,7 @@ pub async fn plan_watch_refresh(
         .get(&session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
-    refresh_plans(&session, &profile_id, snippet_ids.as_deref()).await
+    refresh_plans(&session, &profile_id, snippet_ids.as_deref(), None).await
 }
 
 /// `plan_watch_refresh` の本体。スケジューラのタスク (`TaskAction::RefreshPlanWatch`、
@@ -80,6 +79,7 @@ pub(crate) async fn refresh_plans(
     session: &Session,
     profile_id: &str,
     snippet_ids: Option<&[String]>,
+    progress: Option<&std::sync::atomic::AtomicU64>,
 ) -> Result<PlanWatchRefresh> {
     let driver = session.conn.driver_kind();
     let driver_name = driver.as_str();
@@ -93,7 +93,14 @@ pub(crate) async fn refresh_plans(
         return Ok(out);
     }
     let snippets = snippet_store::load_all()?;
+    let mut done: u64 = 0;
     for id in targets {
+        // 対象 1 件ごとに進捗を進める。途中の `continue` でも数えるよう先頭で加算する
+        // (タスクの「今すぐ実行」の進捗表示用、#1614)。
+        if let Some(p) = progress {
+            p.store(done, std::sync::atomic::Ordering::SeqCst);
+        }
+        done += 1;
         let Some(snippet) = snippets.iter().find(|s| s.id == id) else {
             continue;
         };
@@ -156,6 +163,9 @@ pub(crate) async fn refresh_plans(
                 out.warned.push(snippet.name.clone());
             }
         }
+    }
+    if let Some(p) = progress {
+        p.store(done, std::sync::atomic::Ordering::SeqCst);
     }
     Ok(out)
 }

@@ -207,7 +207,8 @@ export function countProblems(list: readonly OutputEntry[]): number {
 export function sqlHeadline(sql: string, max = 160): string {
   const flat = sql.replace(/\s+/g, " ").trim();
   if (flat.length <= max) return flat;
-  return `${flat.slice(0, Math.max(0, max - 1))}…`;
+  // 絵文字などサロゲートペアの途中で切ると、孤立した上位サロゲートが文字化けして出る。
+  return `${headChars(flat, Math.max(0, max - 1))}…`;
 }
 
 /**

@@ -29,12 +29,21 @@ export const profileCommands = {
   /**
    * 表の全列の概要 (#1539)。件数 / NULL 数 / DISTINCT / MIN・MAX を 1 回の走査で
    * まとめて取る (read_only でも可)。上位値・ヒストグラムは `profileColumn` で遅延取得。
+   * `approximate` は PostgreSQL で DISTINCT を統計情報 (`pg_stats`) から近似し、全列の
+   * `COUNT(DISTINCT)` を避ける (#1609。他ドライバは正確値)。
    */
-  profileTable: (sessionId: string, database: string, table: string, includeDistinct: boolean) =>
+  profileTable: (
+    sessionId: string,
+    database: string,
+    table: string,
+    includeDistinct: boolean,
+    approximate = false,
+  ) =>
     invoke<TableProfileOverview>("profile_table", {
       sessionId,
       database,
       table,
       includeDistinct,
+      approximate,
     }).then((r) => parseResponse(schemas.tableProfileOverview, r, "profile_table")),
 };

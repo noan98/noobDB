@@ -244,6 +244,20 @@ async fn used_bytes(pool: &SqlitePool) -> Result<u64> {
     Ok((page_count - freelist_count).max(0) as u64 * page_size.max(0) as u64)
 }
 
+/// `VACUUM` を走らせる freelist 比率の閾値 (freelist_count / page_count)。
+const VACUUM_FREELIST_RATIO: f64 = 0.25;
+
+/// freelist が全ページの [`VACUUM_FREELIST_RATIO`] を超えているか。
+async fn freelist_exceeds_threshold(pool: &SqlitePool) -> Result<bool> {
+    let page_count: i64 = sqlx::query_scalar("PRAGMA page_count")
+        .fetch_one(pool)
+        .await?;
+    let freelist_count: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+        .fetch_one(pool)
+        .await?;
+    Ok(page_count > 0 && (freelist_count as f64) / (page_count as f64) > VACUUM_FREELIST_RATIO)
+}
+
 /// Evicts the oldest rows in small batches until the database's estimated
 /// on-disk size is back under `max_bytes`, then reclaims the freed space with
 /// `VACUUM` (a plain `DELETE` only frees pages for reuse *within* the file;
@@ -263,15 +277,16 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
     // testing) wipe every row in one shot instead of trimming incrementally.
     // Always leaves at least the single newest row behind — even a lone
     // oversized capture stays queryable — rather than evicting down to zero.
+    // 件数は退避前に 1 回だけ数え、以降は削除件数で減算する (1 行ごとの COUNT(*) を避ける)。
+    let mut row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM write_capture")
+        .fetch_one(pool)
+        .await?;
     loop {
         // 削除済みページは freelist に残りファイルサイズは縮まないため、
         // 実使用量 (freelist を除く) で判定する。
         if used_bytes(pool).await? <= max_bytes {
             break;
         }
-        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM write_capture")
-            .fetch_one(pool)
-            .await?;
         if row_count <= 1 {
             break;
         }
@@ -285,6 +300,14 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
         if deleted == 0 {
             break;
         }
+        row_count -= deleted as i64;
+    }
+    // 定常状態 (上限付近) では捕捉のたびに超過→削除が起きる。毎回 VACUUM でファイル全体を
+    // 書き直さないよう、freelist が全ページの一定割合を超えたときだけ回収する。ただしファイルが
+    // 上限の 1.25 倍を超えたら比率に関係なく回収し、ファイルサイズが上限から離れすぎないようにする。
+    let far_over_cap = approx_size_bytes(pool).await? > max_bytes.saturating_add(max_bytes / 4);
+    if !far_over_cap && !freelist_exceeds_threshold(pool).await? {
+        return Ok(());
     }
     if let Err(e) = sqlx::query("VACUUM").execute(pool).await {
         tracing::warn!(error = %e, "flight recorder: VACUUM after byte-cap eviction failed");

@@ -181,6 +181,13 @@ describe("outputLog", () => {
     expect(long.endsWith("…")).toBe(true);
   });
 
+  it("SQL の見出しはサロゲートペアの途中で切らない (#1614)", () => {
+    // 「😀」は 2 コード単位。max=4 だと先頭 3 単位 (a + 😀 の前半...) ではなく手前で切る。
+    const out = sqlHeadline("ab😀cdef", 4);
+    expect(out).toBe("ab…");
+    expect(/[\ud800-\udbff](?![\udc00-\udfff])/.test(out)).toBe(false);
+  });
+
   it("要約は結末ごとの i18n キー。エラーは 1 行目だけ", () => {
     expect(outputSummary(out(1, "rows", { rows: 3, elapsedMs: 7 }))).toEqual({
       key: "outputSummaryRows",
