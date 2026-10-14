@@ -60,6 +60,21 @@ interface MenuState {
 }
 
 /** True when `snippet` should be offered while connected to `profile`. */
+const TOOLTIP_MAX_LINES = 6;
+const TOOLTIP_MAX_CHARS = 300;
+
+/** ツールチップ用に SQL の先頭だけを切り出す (6 行 / 300 字まで。省略時は「…」)。 */
+export function snippetTooltipPreview(sql: string): string {
+  const lines = sql.split("\n");
+  let out = lines.slice(0, TOOLTIP_MAX_LINES).join("\n");
+  let cut = lines.length > TOOLTIP_MAX_LINES;
+  if (out.length > TOOLTIP_MAX_CHARS) {
+    out = out.slice(0, TOOLTIP_MAX_CHARS);
+    cut = true;
+  }
+  return cut ? `${out}…` : out;
+}
+
 export function scopeMatches(snippet: Pick<Snippet, "scope">, profile: ConnectionProfile | null): boolean {
   const s = snippet.scope;
   if (s.kind === "any") return true;
@@ -98,7 +113,7 @@ const SnippetRow = memo(function SnippetRow({
   const hasRowActions = canRun || canFavorite;
   return (
     <MotionTreeNode {...variants.fade} transition={transitions.crossfade}>
-      <Tooltip label={`${t("snippetInsertHint")}\n\n${s.sql}`}>
+      <Tooltip label={`${t("snippetInsertHint")}\n\n${snippetTooltipPreview(s.sql)}`}>
         <TreeRow
           position="relative"
           role="treeitem"

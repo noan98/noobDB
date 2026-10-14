@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -249,6 +250,19 @@ export function RowInspector({
   const hasErrors = edited ? Object.keys(edited.errors).length > 0 : false;
   // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
   // 送らず、編集し直してもらう。
+  // 全列の表示用文字列 (JSON 整形込み) は行の値が変わったときだけ作る。編集中の 1 キーごとに
+  // 数百列ぶんの JSON パース・整形を回さない。
+  const displays = useMemo(
+    () =>
+      values.map((v, i) => {
+        const isNull = v === null || v === undefined;
+        const isBinary = columnKinds[i] === "binary";
+        const raw = isNull ? "" : isBinary ? `0x${String(v)}` : String(v);
+        const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
+        return { raw, display: json ?? raw };
+      }),
+    [values, columnKinds],
+  );
   const stale = editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
   const canApply =
     !!edit &&
@@ -613,10 +627,7 @@ export function RowInspector({
                     columns.map((col, i) => {
                       const v = values[i] ?? null;
                       const isNull = v === null || v === undefined;
-                      const isBinary = columnKinds[i] === "binary";
-                      const raw = isNull ? "" : isBinary ? `0x${String(v)}` : String(v);
-                      const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
-                      const display = json ?? raw;
+                      const { raw, display } = displays[i] ?? { raw: "", display: "" };
                       const masked = !!maskedColumns?.[i];
                       const comment = comments?.[i] ?? null;
                       if (editing && edit?.editableColumns[i]) {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
+import userEvent from "@testing-library/user-event";
 import { t } from "../i18n";
 import { BatchResultsView } from "../components/BatchResultsView";
 import type { BatchStatementResult } from "../sqlScript";
@@ -52,5 +53,21 @@ describe("BatchResultsView の停止ボタン (#1594)", () => {
       <BatchResultsView results={[]} running={false} onRerun={() => {}} onClose={() => {}} onStop={onStop} />,
     );
     expect(screen.queryByTestId("batch-stop")).toBeNull();
+  });
+});
+
+describe("BatchResultsView の行数上限 (#1616)", () => {
+  it("100 行を超える SELECT は先頭 100 行だけ描画し、「さらに表示」で広げる", async () => {
+    const rows = Array.from({ length: 250 }, (_, i) => [i]);
+    render({ sql: "SELECT id FROM t", status: "ok", columns, rows, totalRows: 250 });
+    expect(screen.getAllByRole("row")).toHaveLength(101); // ヘッダ + 100
+    const more = screen.getByRole("button", { name: t("batchShowMore", { n: 100, remaining: 150 }) });
+    await userEvent.click(more);
+    expect(await screen.findAllByRole("row")).toHaveLength(201);
+  });
+
+  it("100 行以下なら「さらに表示」は出ない", () => {
+    render({ sql: "SELECT id FROM t", status: "ok", columns, rows: [[1], [2]], totalRows: 2 });
+    expect(screen.queryByRole("button", { name: /さらに|more rows/ })).toBeNull();
   });
 });

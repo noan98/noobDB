@@ -1,6 +1,6 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ObjectSearchHit, type ObjectSearchScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
@@ -114,7 +114,15 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
     setActiveIndex(0);
   }, [query, scope]);
 
+  // ホバー由来の activeIndex 変化では scrollIntoView を呼ばない (端の行にホバーするとリストが動いて連鎖するため)。
+  const hoverMoved = useRef(false);
+  const activeIndexRef = useRef(activeIndex);
+  activeIndexRef.current = activeIndex;
   useEffect(() => {
+    if (hoverMoved.current) {
+      hoverMoved.current = false;
+      return;
+    }
     const active = results[activeIndex];
     if (!active) return;
     itemRefs.current.get(entryKey(active))?.scrollIntoView({ block: "nearest" });
@@ -126,6 +134,20 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
     onClose();
     onOpenTable(entry.database, entry.table);
   };
+
+  // 行 (memo) へ渡す安定ハンドラ。最新の openAt は ref 経由で呼ぶ。
+  const openAtRef = useRef(openAt);
+  openAtRef.current = openAt;
+  const onRowOpen = useCallback((i: number) => openAtRef.current(i), []);
+  const onRowHover = useCallback((i: number) => {
+    if (i === activeIndexRef.current) return;
+    hoverMoved.current = true;
+    setActiveIndex(i);
+  }, []);
+  const setItemRef = useCallback((key: string, el: HTMLButtonElement | null) => {
+    if (el) itemRefs.current.set(key, el);
+    else itemRefs.current.delete(key);
+  }, []);
 
   const move = (delta: number) => {
     if (results.length === 0) return;
@@ -252,18 +274,15 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
           results.map((entry, i) => (
             <ResultRow
               key={entryKey(entry)}
+              index={i}
               id={objectSearchOptionId(i)}
-              ref={(el) => {
-                if (el) itemRefs.current.set(entryKey(entry), el);
-                else itemRefs.current.delete(entryKey(entry));
-              }}
+              itemKey={entryKey(entry)}
+              setItemRef={setItemRef}
               entry={entry}
               animateEntrance={shouldStaggerEntrance(i)}
               active={i === activeIndex}
-              onMouseMove={() => {
-                if (i !== activeIndex) setActiveIndex(i);
-              }}
-              onClick={() => openAt(i)}
+              onHover={onRowHover}
+              onOpen={onRowOpen}
             />
           ))
         )}
@@ -287,23 +306,35 @@ interface RowProps {
   active: boolean;
   /** 先頭 `MAX_STAGGER_ITEMS` 件だけ stagger 出現させる (CommandPalette と同じ上限ガード)。 */
   animateEntrance: boolean;
-  onMouseMove: () => void;
-  onClick: () => void;
-  ref?: (el: HTMLButtonElement | null) => void;
+  index: number;
+  itemKey: string;
+  setItemRef: (key: string, el: HTMLButtonElement | null) => void;
+  onHover: (index: number) => void;
+  onOpen: (index: number) => void;
 }
 
-function ResultRow({ id, entry, active, animateEntrance, onMouseMove, onClick, ref }: RowProps) {
+const ResultRow = memo(function ResultRow({
+  id,
+  entry,
+  active,
+  animateEntrance,
+  index,
+  itemKey,
+  setItemRef,
+  onHover,
+  onOpen,
+}: RowProps) {
   return (
     <MotionRow
-      ref={ref}
+      ref={(el: HTMLButtonElement | null) => setItemRef(itemKey, el)}
       id={id}
       type="button"
       role="option"
       variants={animateEntrance ? variants.staggerItem : undefined}
       aria-selected={active}
       tabIndex={-1}
-      onMouseMove={onMouseMove}
-      onClick={onClick}
+      onMouseMove={() => onHover(index)}
+      onClick={() => onOpen(index)}
       display="flex"
       alignItems="center"
       gap="2"
@@ -336,4 +367,4 @@ function ResultRow({ id, entry, active, animateEntrance, onMouseMove, onClick, r
       </Flex>
     </MotionRow>
   );
-}
+});
