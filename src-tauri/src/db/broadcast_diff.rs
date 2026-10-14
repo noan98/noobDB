@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::data_diff::key_signature;
-use super::types::{Column, Value};
+use super::types::{float_text, Column, Value};
 
 /// 比較する最大行数 (フロントの `MAX_BROADCAST_COMPARE_ROWS` と同じ意味・値)。
 pub const MAX_BROADCAST_COMPARE_ROWS: usize = 5000;
@@ -73,14 +73,14 @@ impl BroadcastDiff {
 }
 
 /// セル値の文字列表現 (JS の `String(v)` と等価な同一性を持つ)。NULL は `None`。
-/// 非有限の浮動小数は JSON で `null` になる (= フロントでは NULL) ので `None`。
+/// 非有限の浮動小数は IPC で文字列 (`NaN` 等) になる (#1597) ので文字列として比べる。
 fn cell_text(v: &Value) -> Option<Cow<'_, str>> {
     match v {
         Value::Null => None,
         Value::Bool(b) => Some(Cow::Borrowed(if *b { "true" } else { "false" })),
         Value::Int(i) => Some(Cow::Owned(i.to_string())),
         Value::UInt(u) => Some(Cow::Owned(u.to_string())),
-        Value::Float(f) if !f.is_finite() => None,
+        Value::Float(f) if !f.is_finite() => Some(Cow::Owned(float_text(*f))),
         Value::Float(f) => Some(if *f == 0.0 {
             Cow::Borrowed("0")
         } else {

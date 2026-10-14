@@ -68,6 +68,8 @@ export const resultCommands = {
     driver?: string | null;
     batchSize?: number | null;
     masks?: ExportColumnMask[] | null;
+    /** SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (ファイル出力の `ddlHeader` と同じ)。 */
+    ddlHeader?: string | null;
   }) =>
     invoke<string>("render_export_text", {
       req: {
@@ -80,6 +82,7 @@ export const resultCommands = {
         driver: params.driver ?? null,
         batchSize: params.batchSize ?? null,
         masks: params.masks && params.masks.length > 0 ? params.masks : null,
+        ddlHeader: params.ddlHeader ?? null,
       },
     }).then((r) => parseResponse(schemas.stringResponse, r, "render_export_text")),
 };

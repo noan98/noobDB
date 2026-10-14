@@ -46,7 +46,7 @@ use std::io::Write;
 use rust_xlsxwriter::{Format, Workbook, XlsxError};
 use serde::Serialize;
 
-use crate::db::types::{Column, Value};
+use crate::db::types::{float_text, Column, Value};
 use crate::error::{AppError, Result};
 
 /// xlsx 1 シートの最大行数 (ヘッダ行を含む)。
@@ -110,9 +110,9 @@ pub(crate) fn xlsx_cell<'a>(value: &'a Value, column: Option<&Column>) -> XlsxCe
             if f.is_finite() {
                 XlsxCell::Number(*f)
             } else {
-                // CSV と同じ表記 (`NaN` / `inf` / `-inf`) の文字列にする。数値セルに
+                // CSV と同じ表記 (`NaN` / `Infinity` / `-Infinity`) の文字列にする。数値セルに
                 // 入れると Excel では #NUM! になり元の値が分からなくなる。
-                XlsxCell::Text(Cow::Owned(f.to_string()))
+                XlsxCell::Text(Cow::Owned(float_text(*f)))
             }
         }
         // 空文字列は xlsx に置けない (書いても空セルになる) ので、明示的に空セルとする。
@@ -437,10 +437,13 @@ mod tests {
             XlsxCell::Number(tricky)
         );
         assert_eq!(xlsx_cell(&Value::Float(f64::NAN), None), text("NaN"));
-        assert_eq!(xlsx_cell(&Value::Float(f64::INFINITY), None), text("inf"));
+        assert_eq!(
+            xlsx_cell(&Value::Float(f64::INFINITY), None),
+            text("Infinity")
+        );
         assert_eq!(
             xlsx_cell(&Value::Float(f64::NEG_INFINITY), None),
-            text("-inf")
+            text("-Infinity")
         );
     }
 

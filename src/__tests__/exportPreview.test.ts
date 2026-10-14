@@ -253,3 +253,21 @@ describe("JSON / NDJSON のキー順 (最適化前と同一出力)", () => {
     expect(buildNdjson(c, [[1, 2, 3]])).toBe('{"a":2,"b":1,"c":3}\n');
   });
 });
+
+describe("__proto__ という名前の列 (#1597)", () => {
+  it("JSON / NDJSON のキーとして値が残る", () => {
+    const cols: Column[] = [
+      { name: "__proto__", type_name: "INT" },
+      { name: "id", type_name: "INT" },
+    ];
+    const data: CellValue[][] = [
+      [1, 2],
+      [null, 3],
+    ];
+    expect(JSON.parse(buildJson(cols, data))).toEqual([
+      { id: 2, ["__proto__"]: 1 },
+      { id: 3, ["__proto__"]: null },
+    ]);
+    expect(buildNdjson(cols, data)).toBe('{"__proto__":1,"id":2}\n{"__proto__":null,"id":3}\n');
+  });
+});
