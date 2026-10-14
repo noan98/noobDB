@@ -147,8 +147,7 @@ const SKIPPED_REASON: &str = "skipped: previous run still in progress";
 /// 判定) を通す。以降の通常 tick は保存済みの `next_run_at` をそのまま比較する
 /// (`save_task` / `set_task_enabled` が有効化のたびに正しい値を書いている前提)。
 async fn tick(app: &AppHandle, is_startup: bool) -> Result<()> {
-    let settings = store::load_settings()?;
-    let tasks = store::load_all()?;
+    let (settings, tasks) = store::load_settings_and_tasks()?;
     let now = Utc::now();
 
     for task in tasks {

@@ -707,7 +707,7 @@ pub struct SchemaCache {
     columns: KeyedCache<TableKey, Vec<TableColumnInfo>>,
     row_identity: KeyedCache<TableKey, TableRowIdentity>,
     schema_overview: KeyedCache<String, Vec<TableSchema>>,
-    foreign_keys: KeyedCache<String, Vec<ForeignKey>>,
+    foreign_keys: KeyedCache<String, std::sync::Arc<Vec<ForeignKey>>>,
     schema_objects: KeyedCache<String, Vec<SchemaObject>>,
     list_indexes: KeyedCache<TableKey, Vec<IndexInfo>>,
     /// グローバルオブジェクト検索 (#1261) の索引。`object_index_all` は全 DB 分を
@@ -848,6 +848,25 @@ impl SchemaCache {
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<Vec<ForeignKey>>>,
     {
+        Ok(self
+            .foreign_keys_shared(database, fetch)
+            .await?
+            .as_ref()
+            .clone())
+    }
+
+    /// [`SchemaCache::foreign_keys`] の共有版 (#1609)。キャッシュ命中のたびに DB 全体の
+    /// `Vec` を複製せず、`Arc` の参照カウントだけを増やして返す。表単位に絞り込む
+    /// だけの呼び出し (逆参照の取得など) はこちらを使う。
+    pub async fn foreign_keys_shared<F, Fut>(
+        &self,
+        database: &str,
+        fetch: F,
+    ) -> Result<std::sync::Arc<Vec<ForeignKey>>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<Vec<ForeignKey>>>,
+    {
         self.foreign_keys
             .get_or_fetch(
                 database.to_string(),
@@ -855,7 +874,7 @@ impl SchemaCache {
                 self.max_entries_per_kind,
                 &self.generation,
                 always_cacheable,
-                fetch,
+                || async { fetch().await.map(std::sync::Arc::new) },
             )
             .await
     }
@@ -949,6 +968,20 @@ impl SchemaCache {
     /// `invalidate_all()` が走っていたら、その一括結果はキャッシュに書かれない。
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
+    }
+
+    /// そのテーブルの列が TTL 内でキャッシュ済みか (#1609)。取得は起こさない。
+    pub async fn has_columns(&self, database: &str, table: &str) -> bool {
+        let key = (database.to_string(), table.to_string());
+        self.columns.lookup(&key, self.ttl).await.is_some()
+    }
+
+    /// そのテーブルの列とインデックスが、どちらも TTL 内でキャッシュ済みか (#1609)。
+    /// 取得は起こさない読み取り専用の確認で、一括取得に切り替えるべきかの判断に使う。
+    pub async fn has_table_meta(&self, database: &str, table: &str) -> bool {
+        let key = (database.to_string(), table.to_string());
+        self.columns.lookup(&key, self.ttl).await.is_some()
+            && self.list_indexes.lookup(&key, self.ttl).await.is_some()
     }
 
     /// 一括取得した列メタデータで、テーブル単位の `columns` エントリを埋める

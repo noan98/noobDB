@@ -205,8 +205,24 @@ pub(crate) async fn create_sandbox_inner(
     // CREATE TABLE DDL and the SELECT column list).
     let mut table_cols: Vec<(String, Vec<TableColumnInfo>)> =
         Vec::with_capacity(effective_tables.len());
+    // 表が多いときは表ごとの往復 (N 回) ではなく DB 単位の一括取得 1 回にする (#1609、
+    // #1255 と同じ方式・同じ閾値)。一括取得に失敗したときだけ表ごとの取得へ戻る。
+    let mut bulk_cols: Option<std::collections::HashMap<String, Vec<TableColumnInfo>>> =
+        if effective_tables.len() >= super::schema_tree::BULK_THRESHOLD {
+            source
+                .conn
+                .columns_for_database(&db)
+                .await
+                .ok()
+                .map(|all| all.into_iter().map(|t| (t.name, t.columns)).collect())
+        } else {
+            None
+        };
     for t in &effective_tables {
-        let cols = source.conn.columns(&db, t).await?;
+        let cols = match bulk_cols.as_mut().and_then(|m| m.remove(t)) {
+            Some(cols) => cols,
+            None => source.conn.columns(&db, t).await?,
+        };
         if cols.is_empty() {
             return Err(AppError::InvalidInput(format!(
                 "table '{t}' has no columns (does it exist on the source?)"
@@ -324,20 +340,23 @@ pub(crate) async fn create_sandbox_inner(
         {
             return Err(fail(conn, &file_path, e).await);
         }
-        let shadow = shadow_table_name(&t.name);
-        if let Err(e) = conn
-            .import_rows(
-                None,
-                &shadow,
-                &t.columns,
-                &cells,
-                IMPORT_BATCH_SIZE,
-                &ImportConflict::insert_only(),
-                |_| Ok(()),
-            )
-            .await
-        {
-            return Err(fail(conn, &file_path, e).await);
+        // shadow (ベース) は live と同じ内容なので、元データを再バインドして取り込まず、
+        // SQLite 内の INSERT ... SELECT で複製する (#1609)。
+        if !t.columns.is_empty() {
+            let col_list = t
+                .columns
+                .iter()
+                .map(|c| quote_ident(DriverKind::Sqlite, c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let copy_sql = format!(
+                "INSERT INTO {} ({col_list}) SELECT {col_list} FROM {}",
+                quote_ident(DriverKind::Sqlite, &shadow_table_name(&t.name)),
+                quote_ident(DriverKind::Sqlite, &t.name),
+            );
+            if let Err(e) = conn.execute_transaction(&[copy_sql], None).await {
+                return Err(fail(conn, &file_path, e).await);
+            }
         }
     }
 
@@ -697,18 +716,26 @@ pub(crate) async fn sandbox_schema_diff_inner(
     let record = find_record(&sandbox_id)?;
     let sandbox = get_sandbox_session(state, &record, &sandbox_session_id).await?;
 
+    // サンドボックス (SQLite) 側の列は、表ごとの PRAGMA (live / shadow で 2N 回) ではなく
+    // `columns_for_database` の 1 回で全表分を取り、名前で振り分ける (#1609)。
+    // 一括結果に無い表 (削除済みなど) は `columns()` と同じく空の列として扱う。
+    let mut local: std::collections::HashMap<String, Vec<TableColumnInfo>> = sandbox
+        .conn
+        .columns_for_database("")
+        .await?
+        .into_iter()
+        .map(|t| (t.name, t.columns))
+        .collect();
     let mut live_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
     let mut base_tables: Vec<TableColumns> = Vec::with_capacity(record.tables.len());
     for t in &record.tables {
-        let cols = sandbox.conn.columns("", t).await?;
         live_tables.push(TableColumns {
             name: t.clone(),
-            columns: cols,
+            columns: local.get(t).cloned().unwrap_or_default(),
         });
-        let base_cols = sandbox.conn.columns("", &shadow_table_name(t)).await?;
         base_tables.push(TableColumns {
             name: t.clone(),
-            columns: base_cols,
+            columns: local.remove(&shadow_table_name(t)).unwrap_or_default(),
         });
     }
     let desired = compute_schema_diff(

@@ -4626,6 +4626,8 @@ const en = {
     "No planner statistics for this column yet (run ANALYZE); the exact distinct count is shown.",
   profileNoteUnknown: "Part of the profile could not be computed.",
   profileNoteOverviewSkipped: "MIN / MAX / DISTINCT are skipped for this column type (counts only).",
+  profileOverviewNoStats:
+    "No planner statistics for this table yet (run ANALYZE), so DISTINCT is omitted in approximate mode.",
   profileOverviewRun: "All columns overview",
   profileOverviewRerun: "Refresh overview",
   profileOverviewHint:
@@ -10018,6 +10020,8 @@ const ja: Dict = {
     "この列の統計情報がまだありません (ANALYZE で収集されます)。正確な DISTINCT 数を表示しています。",
   profileNoteUnknown: "プロファイルの一部を計算できませんでした。",
   profileNoteOverviewSkipped: "この列の型では MIN / MAX / DISTINCT を省略しています (件数のみ)。",
+  profileOverviewNoStats:
+    "この表の統計情報がまだ無い (ANALYZE で収集) ため、近似モードでは DISTINCT を省略しています。",
   profileOverviewRun: "全列の概要",
   profileOverviewRerun: "概要を更新",
   profileOverviewHint:
