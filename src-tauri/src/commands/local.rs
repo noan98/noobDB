@@ -557,7 +557,51 @@ pub async fn save_local_database_inner(
         return Err(AppError::InvalidInput("save path must not be empty".into()));
     }
     let session = get_local_session(state, session_id).await?;
-    session.conn.vacuum_into(path).await
+    // `VACUUM INTO` は出力先が既に存在すると失敗する。保存ダイアログで上書きを確認済みの
+    // 同名ファイルへも保存できるよう、同じディレクトリの一時ファイルへ書いてから置き換える
+    // (途中で失敗しても既存ファイルは壊れない)。
+    let target = std::path::Path::new(path);
+    // 現在開いている SQLite セッション (ファイルから開いたローカル DB / プロファイル) の
+    // ファイルそのものへ上書きすると、使用中のファイルを差し替えてしまうので拒否する。
+    // 判定は正規化パスの一致のみ (ハードリンク等の別名までは見ない)。
+    if let Some(open_path) = session.connect_options.file_path.as_deref() {
+        let same = match (
+            std::fs::canonicalize(open_path),
+            std::fs::canonicalize(target),
+        ) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if same {
+            return Err(AppError::InvalidInput(
+                "cannot save over the database file that is currently open".into(),
+            ));
+        }
+    }
+    let mut tmp_name = target
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| "noobdb-local".into());
+    static SAVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    tmp_name.push(format!(
+        ".noobdb-save-{}-{}.tmp",
+        std::process::id(),
+        SAVE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let tmp = target.with_file_name(tmp_name);
+    let _ = std::fs::remove_file(&tmp);
+    let tmp_str = tmp
+        .to_str()
+        .ok_or_else(|| AppError::InvalidInput("save path is not valid UTF-8".into()))?;
+    if let Err(e) = session.conn.vacuum_into(tmp_str).await {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, target) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.into());
+    }
+    Ok(())
 }
 
 /// エポックミリ秒。フロントの `Date.now()` と同じ単位に揃え、`LocalTableMeta.

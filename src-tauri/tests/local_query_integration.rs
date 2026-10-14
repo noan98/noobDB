@@ -386,6 +386,11 @@ async fn saves_a_standalone_snapshot_file() {
     assert!(matches!(&res.rows[0][0], t::Value::Int(42)));
     saved_conn.close().await;
 
+    // 同じパスへの再保存 (上書き) も成功する (#1593)。
+    t::save_local_database_inner(&state, &local_id, save_path.to_str().expect("utf8 path"))
+        .await
+        .expect("overwrite existing saved file");
+
     let _ = std::fs::remove_file(&save_path);
 }
 
