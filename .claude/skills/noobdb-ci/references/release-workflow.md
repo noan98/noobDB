@@ -71,3 +71,13 @@ Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
   終わったら (失敗時も trap で) 元に戻す。`pnpm install` / Playwright 実行の時点では
   `.git/config` に認証情報が無い。`github.ref_name` は env (`REF_NAME`) 経由でシェルに渡す。
 
+## Windows ビルドの pnpm 前処理の所見 (#1634、未対応)
+
+main push の cache-warm ビルド (run 38585607069 ほか) の実測: `corepack enable` は 1〜2 秒だが、
+直後の `pnpm store path` が 9〜17 秒かかる (corepack の shim が初回呼び出しで pnpm 10.33.0 を
+ダウンロードするため)。`Cache pnpm store` の復元は約 130MB で 19〜20 秒 (ダウンロードは約 3 秒、
+残りは Windows でのファイル展開)、Post も約 13〜14 秒。ci.yml の Windows ジョブは dist スタブ
+方式で pnpm を使わないため揃える先が無い。pnpm store キャッシュを外したときの
+`pnpm install` の増分は未計測のため、変更は見送り。切り分けるなら、store キャッシュ有り / 無しで
+`Install frontend deps` の時間を比べる (store が D: ドライブにある点にも注意)。
+

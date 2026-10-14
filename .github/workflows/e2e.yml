@@ -107,21 +107,28 @@ jobs:
           workspaces: "src-tauri -> target"
           key: e2e-linux
 
-      # apt は 1 回の update + install にまとめる (起動回数を減らして短縮)。
-      # webkit2gtk-driver / xvfb は E2E 実行時に必要 (tauri-driver が WebKitWebDriver を呼ぶ)。
-      - name: linker ツール・Tauri システム依存・WebDriver をインストール
+      # apt は cache-apt-pkgs-action でキャッシュする (mutants.yml / ci.yml の rust ジョブと
+      # 同じ SHA・パッケージ集合。毎回の apt-get update + install は約 37 秒かかっていた)。
+      # Tauri のシステム依存・clang + mold は mutants.yml の列挙と揃え、E2E 固有の
+      # webkit2gtk-driver / xvfb (tauri-driver が WebKitWebDriver を呼ぶ) を足している。
+      # cache-apt-pkgs-action は内部で実際には apt update をしないため、キャッシュミス時に
+      # ランナーイメージの古いインデックスで 404 になる (mutants.yml の初回実行で
+      # libsoup3 が 404 → mold が入らず全滅した)。ci.yml の rust ジョブと同じく、ミラーを
+      # 本家に差し替えて update してから渡す。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            clang mold \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libsoup-3.0-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            libayatana-appindicator3-dev \
-            webkit2gtk-driver \
-            xvfb
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
+      # E2E は WebKitWebDriver / WebKitWebProcess を実際に動かす。キャッシュ復元では
+      # postinst / トリガ (ldconfig・gdk-pixbuf loaders・glib schemas) が走らないため、
+      # execute_install_scripts で復元後に実行する。
+      - name: linker ツール・Tauri システム依存・WebDriver をインストール
+        uses: awalsh128/cache-apt-pkgs-action@553a35bb8ebd9fcabcb1c9451aa4c98e1b4ca8a9 # v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libxdo-dev libayatana-appindicator3-dev build-essential curl wget file libssl-dev clang mold webkit2gtk-driver xvfb
+          version: tauri-2-e2e
+          execute_install_scripts: true
 
       # ────────────────────────────────────────────────────────────────────
       # 3. tauri-driver をインストール (バイナリをキャッシュして毎回のビルドを避ける)

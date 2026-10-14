@@ -75,7 +75,7 @@ export default defineConfig({
     // 追従させる。
     // 当面は branch/function/per-file ではなく lines 全体のみで運用する (誤検出回避)。
     // 閾値は `--coverage` 有効時のみ評価され、素の `pnpm test` は従来どおり高速に
-    // 動く (CI は `--coverage` 付きで実行)。
+    // 動く (CI は main への push のみ `--coverage` 付きで実行)。
     coverage: {
       provider: "v8",
       include: ["src/**/*.{ts,tsx}"],
