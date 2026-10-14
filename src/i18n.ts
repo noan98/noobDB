@@ -2663,6 +2663,10 @@ const en = {
   createIndexNamePlaceholder: "(auto-generated if empty)",
   createIndexColumns: "Columns",
   createIndexPreviewEmpty: "Select at least one column to preview the SQL.",
+  createIndexOrderAria: "Index column position {n}",
+  createIndexMoveEarlier: "Move {column} earlier",
+  createIndexMoveLater: "Move {column} later",
+  createIndexLeadingColumn: "Leading column: {column} (queries match from the leftmost column)",
   createIndexRun: "Create index",
   createIndexSuccess: "Created the index.",
   // データベース / スキーマの新規作成・削除 (#1190)。
@@ -3163,7 +3167,8 @@ const en = {
   gridBulkEditBody:
     "The value below is applied to all {count} selected cells. Type NULL (uppercase) to clear. Cells whose column is read-only or whose value is invalid for the column type are skipped.",
   gridBulkEditPlaceholder: "Value to apply (or NULL)",
-  gridBulkEditSetNull: "Set to NULL",
+  gridBulkEditValueLabel: "Value",
+  gridBulkEditSetNull: 'Set to SQL NULL (no value; not an empty string or the text "NULL")',
   gridBulkEditApply: "Set cells",
   gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
   gridBulkEditAppliedSkipped: "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
@@ -8106,6 +8111,10 @@ const ja: Dict = {
   createIndexNamePlaceholder: "(空欄なら自動生成)",
   createIndexColumns: "対象列",
   createIndexPreviewEmpty: "列を 1 つ以上選択すると SQL がプレビューされます。",
+  createIndexOrderAria: "インデックスの {n} 番目の列",
+  createIndexMoveEarlier: "{column} を前へ移動",
+  createIndexMoveLater: "{column} を後ろへ移動",
+  createIndexLeadingColumn: "先頭列: {column} (検索は左端の列から順に一致します)",
   createIndexRun: "インデックスを作成",
   createIndexSuccess: "インデックスを作成しました。",
   // データベース / スキーマの新規作成・削除 (#1190)。
@@ -8600,7 +8609,8 @@ const ja: Dict = {
   gridBulkEditBody:
     "下の値を選択した {count} セルすべてに適用します。NULL (大文字) でクリアします。列が編集不可、または値が列型に対して不正なセルはスキップします。",
   gridBulkEditPlaceholder: "適用する値 (または NULL)",
-  gridBulkEditSetNull: "NULL にする",
+  gridBulkEditValueLabel: "設定する値",
+  gridBulkEditSetNull: 'NULL にする (値なし。空文字や文字列の "NULL" とは別)',
   gridBulkEditApply: "セルに設定",
   gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
   gridBulkEditAppliedSkipped: "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",

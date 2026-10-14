@@ -2,10 +2,11 @@ import { useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import type { TextEncodingId } from "../api/tauri";
 import { useT } from "../i18n";
-import { parseTextEncodingId, TEXT_ENCODING_OPTIONS } from "../sqlFileIO";
+import { parseTextEncodingId } from "../sqlFileIO";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldLabel, FormSection } from "./modalForm";
-import { Button, PressableButton, Select } from "./ui";
+import { TextEncodingSelect } from "./TextEncodingSelect";
+import { Button, PressableButton } from "./ui";
 
 interface Props {
   /** `open` は読み込み (自動判定を含む)、`save` は保存。 */
@@ -38,14 +39,12 @@ export function SqlFileEncodingModal({ mode, initial, onConfirm, onClose }: Prop
         </chakra.div>
         <FormSection>
           <FieldLabel htmlFor="sql-file-encoding">{t("sqlFileEncodingLabel")}</FieldLabel>
-          <Select id="sql-file-encoding" value={value} onChange={(e) => setValue(e.target.value)}>
-            {mode === "open" && <option value="">{t("scriptEncodingAuto")}</option>}
-            {TEXT_ENCODING_OPTIONS.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          <TextEncodingSelect
+            id="sql-file-encoding"
+            allowAuto={mode === "open"}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+          />
         </FormSection>
       </ModalBody>
       <ModalFooter>

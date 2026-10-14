@@ -239,6 +239,19 @@ fn install_plan(
                 one_click: brew.is_some(),
             })
         }
+        // 公式配布 (EDB インストーラ) からの手動導入を案内する。winget の
+        // PostgreSQL パッケージはサーバ一式でクライアント専用が無いため one_click にしない。
+        (DumpTool::PgDump, "windows") => Some(DumpToolInstallPlan {
+            manager: "manual".into(),
+            command: "https://www.postgresql.org/download/windows/".into(),
+            location: program_files
+                .join("PostgreSQL")
+                .join("<version>")
+                .join("bin")
+                .display()
+                .to_string(),
+            one_click: false,
+        }),
         (DumpTool::PgDump, "linux") => Some(DumpToolInstallPlan {
             manager: "manual".into(),
             command: "sudo apt install postgresql-client".into(),
@@ -472,7 +485,12 @@ mod tests {
         let plan = install_plan(DumpTool::Mysqldump, "linux", None, false, Path::new("/")).unwrap();
         assert_eq!(plan.manager, "manual");
         assert!(!plan.one_click);
-        assert!(install_plan(DumpTool::PgDump, "windows", None, true, Path::new("/")).is_none());
+        // Windows の pg_dump は公式配布ページの手動案内になる (自動導入はしない)。
+        let win_pg = install_plan(DumpTool::PgDump, "windows", None, true, Path::new("/")).unwrap();
+        assert_eq!(win_pg.manager, "manual");
+        assert!(!win_pg.one_click);
+        assert!(win_pg.command.starts_with("https://"));
+        assert!(win_pg.location.contains("PostgreSQL"));
     }
 
     #[test]

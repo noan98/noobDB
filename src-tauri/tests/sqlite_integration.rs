@@ -4942,3 +4942,57 @@ async fn sqlite_schema_overview_survives_quote_in_table_name() {
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }
+
+/// 列数が多い表 (500 行 x 70 列 = 35000 変数 > 32766) でも、スキップモードの
+/// チャンクが上限で失敗して 1 行ずつの再試行にならず、全行が挿入される。
+#[tokio::test]
+async fn sqlite_skip_import_wide_table_splits_statements_within_chunk() {
+    let mut p = std::env::temp_dir();
+    p.push(format!(
+        "noobdb_sqlite_wide_import_{}.db",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let ncols = 70usize;
+    let columns: Vec<String> = (0..ncols).map(|i| format!("c{i}")).collect();
+    let defs = columns
+        .iter()
+        .map(|c| format!("{c} INTEGER"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    conn.execute(&format!("CREATE TABLE wide ({defs})"), None)
+        .await
+        .expect("create");
+
+    let rows: Vec<Vec<Option<String>>> = (0..500)
+        .map(|r| {
+            (0..ncols)
+                .map(|c| Some((r * ncols + c).to_string()))
+                .collect()
+        })
+        .collect();
+    let outcome = conn
+        .import_rows_skipping(
+            None,
+            "wide",
+            &columns,
+            &rows,
+            500,
+            &t::ImportConflict::insert_only(),
+            |_| Ok(()),
+        )
+        .await
+        .expect("skip import");
+    assert_eq!(outcome.inserted, 500);
+    assert!(outcome.skipped.is_empty());
+    let count = conn
+        .execute("SELECT COUNT(*) FROM wide", None)
+        .await
+        .expect("count");
+    assert!(matches!(&count.rows[0][0], t::Value::Int(500)));
+    let _ = std::fs::remove_file(&p);
+}

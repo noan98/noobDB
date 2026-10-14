@@ -785,8 +785,9 @@ impl Connection {
         }
     }
 
-    /// Insert one chunk of `rows` as a single auto-committed multi-row INSERT
-    /// (no wrapping cross-chunk transaction), erroring atomically. The resilient
+    /// Insert one chunk of `rows` atomically (no wrapping cross-chunk transaction;
+    /// SQLite splits a chunk over the bound-variable limit into several INSERTs inside
+    /// one per-chunk transaction, #1613), erroring atomically. The resilient
     /// skip-mode import (`import_rows_skipping`) uses this: a chunk that commits
     /// stays committed, and a chunk that fails is retried row by row (#687).
     pub(crate) async fn try_insert_chunk(

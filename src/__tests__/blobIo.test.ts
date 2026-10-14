@@ -20,6 +20,9 @@ describe("blobFileName / formatBlobSize", () => {
     expect(blobFileName("avatar", "png")).toBe("avatar.png");
     expect(blobFileName("a/b c", null)).toBe("a_b_c.bin");
     expect(blobFileName("///", null)).toBe("blob.bin");
+    // 非 ASCII の列名は残し、Windows の禁止文字だけ落とす。
+    expect(blobFileName("写真", "png")).toBe("写真.png");
+    expect(blobFileName("写真:<1>", "png")).toBe("写真_1.png");
   });
   it("サイズを 1024 進で表記する", () => {
     expect(formatBlobSize(10)).toBe("10 B");
