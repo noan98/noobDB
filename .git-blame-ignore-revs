@@ -1,4 +1,0 @@
-# git blame から除外する整形のみのコミット (#1636)。
-# 有効化: git config blame.ignoreRevsFile .git-blame-ignore-revs
-# biome format --write src による一括整形
-8bfa3efe3c4cf09ce4bab114587fd565e7c5e33c
