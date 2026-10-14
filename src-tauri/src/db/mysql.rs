@@ -2180,10 +2180,7 @@ impl MySqlConn {
             )))
             .fetch_one(&self.pool)
             .await?;
-            let ddl = row
-                .try_get::<String, _>("Create Table")
-                .or_else(|_| row.try_get::<String, _>("Create View"))
-                .unwrap_or_default();
+            let ddl = show_create_text(&row, &["Create Table", "Create View"])?;
             return Ok(super::table_ddl::join_native_statements([ddl]));
         }
         let (stmt, col) = match kind {
@@ -2209,7 +2206,7 @@ impl MySqlConn {
         let row: MySqlRow = sqlx::query(sqlx::AssertSqlSafe(stmt))
             .fetch_one(&self.pool)
             .await?;
-        Ok(row.try_get::<String, _>(col).unwrap_or_default())
+        show_create_text(&row, &[col])
     }
 
     pub async fn list_indexes(&self, db: &str, table: &str) -> Result<Vec<IndexInfo>> {
@@ -2802,6 +2799,32 @@ async fn apply_use_database_on(
 // code works across MySQL 8 and MariaDB.
 /// information_schema の文字列列を読む。サーバ/照合順序によって VARCHAR でも
 /// VARBINARY でも返りうるため、String で読めなければバイト列として UTF-8 解釈する。
+/// `SHOW CREATE ...` の結果行から DDL 本文を読む。`names` の列を順に試し、文字列で
+/// 読めなければ UTF-8 のバイト列として読み直す。どれも読めないときは空文字列に
+/// せずエラーとして返す (空の定義と取得失敗を区別する、#1614)。
+fn show_create_text(row: &MySqlRow, names: &[&str]) -> Result<String> {
+    let mut last: Option<AppError> = None;
+    for name in names {
+        // 権限不足のユーザでは定義本文の列が NULL になる (SELECT + EXECUTE のみの
+        // SHOW CREATE PROCEDURE など)。従来どおり空の定義として扱い、失敗にはしない。
+        match row.try_get::<Option<String>, _>(*name) {
+            Ok(s) => return Ok(s.unwrap_or_default()),
+            Err(first) => match row.try_get::<Option<Vec<u8>>, _>(*name) {
+                Ok(bytes) => match String::from_utf8(bytes.unwrap_or_default()) {
+                    Ok(s) => return Ok(s),
+                    Err(e) => {
+                        last = Some(AppError::Other(format!(
+                            "定義の文字コードを解釈できません: {e}"
+                        )))
+                    }
+                },
+                Err(_) => last = Some(AppError::from(first)),
+            },
+        }
+    }
+    Err(last.unwrap_or_else(|| AppError::Other("定義の列が見つかりません".into())))
+}
+
 fn text_or_bytes(row: &MySqlRow, i: usize) -> Result<String> {
     match row.try_get::<String, _>(i) {
         Ok(s) => Ok(s),
@@ -2956,16 +2979,23 @@ async fn fetch_warnings(conn: &mut sqlx::MySqlConnection) -> Vec<ServerMessage> 
         return Vec::new();
     }
     match sqlx::raw_sql("SHOW WARNINGS").fetch_all(&mut *conn).await {
-        Ok(rows) => rows
-            .iter()
-            .take(super::server_messages::MAX_SERVER_MESSAGES)
-            .filter_map(|r| {
-                let level: String = r.try_get(0).ok()?;
-                let message: String = r.try_get(2).ok()?;
-                let code: Option<u32> = r.try_get(1).ok();
-                Some(warning_to_message(&level, code, &message))
-            })
-            .collect(),
+        Ok(rows) => {
+            let cap = super::server_messages::MAX_SERVER_MESSAGES;
+            let mut out: Vec<ServerMessage> = rows
+                .iter()
+                .take(cap)
+                .filter_map(|r| {
+                    let level: String = r.try_get(0).ok()?;
+                    let message: String = r.try_get(2).ok()?;
+                    let code: Option<u32> = r.try_get(1).ok();
+                    Some(warning_to_message(&level, code, &message))
+                })
+                .collect();
+            if rows.len() > cap {
+                out.push(super::server_messages::omitted_message(rows.len() - cap));
+            }
+            out
+        }
         Err(_) => Vec::new(),
     }
 }

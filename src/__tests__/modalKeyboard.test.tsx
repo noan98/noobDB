@@ -123,7 +123,16 @@ describe("IME 変換確定の Enter (#1515)", () => {
 
   it("RenameTableDialog は変換確定の Enter で確定せず、通常の Enter で確定する", () => {
     const onConfirm = vi.fn();
-    renderWithProviders(<RenameTableDialog table="users" onConfirm={onConfirm} onCancel={() => {}} />);
+    renderWithProviders(
+      <RenameTableDialog
+        driver="mysql"
+        table="users"
+        existingTables={[]}
+        buildSql={(n) => `ALTER TABLE users RENAME TO ${n};`}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
     const input = screen.getByRole("textbox");
     fireEvent.change(input, { target: { value: "ゆーざー" } });
     fireEvent.keyDown(input, { key: "Enter", isComposing: true });
@@ -135,7 +144,16 @@ describe("IME 変換確定の Enter (#1515)", () => {
 
   it("RenameTableDialog で Ctrl+Enter を押しても onConfirm は 1 回だけ", () => {
     const onConfirm = vi.fn();
-    renderWithProviders(<RenameTableDialog table="users" onConfirm={onConfirm} onCancel={() => {}} />);
+    renderWithProviders(
+      <RenameTableDialog
+        driver="mysql"
+        table="users"
+        existingTables={[]}
+        buildSql={(n) => `ALTER TABLE users RENAME TO ${n};`}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
     const input = screen.getByRole("textbox");
     fireEvent.change(input, { target: { value: "people" } });
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });

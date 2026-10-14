@@ -98,6 +98,97 @@ fn unparsable_raw(path: &std::path::Path, known: &[ConnectionProfile]) -> Vec<se
     }
 }
 
+/// 読み飛ばされた (解釈できない) `profiles.json` の 1 要素の要約 (#1614)。UI が「n 件を
+/// 読み込めませんでした」と出すためのもので、**秘密は含めない** (id・表示名・ドライバ・
+/// 理由だけ。`profiles.json` に秘密は無いが、他のフィールドの値は返さない)。
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+pub struct SkippedEntry {
+    /// 解釈できなかった要素の並び順 (ファイル先頭から数えた 0 始まり)。`delete_skipped`
+    /// の指定に使う。
+    pub index: usize,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub driver: Option<String>,
+    /// `serde` のエラー文 (長いものは切り詰める)。
+    pub reason: String,
+}
+
+/// 理由文の最大文字数。
+const SKIPPED_REASON_MAX_CHARS: usize = 200;
+
+fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key).and_then(|x| x.as_str()).map(str::to_owned)
+}
+
+/// `values` のうち `ConnectionProfile` として解釈できない要素を、要約つきで返す。
+fn skipped_entries(values: &[serde_json::Value]) -> Vec<SkippedEntry> {
+    values
+        .iter()
+        .filter_map(|v| {
+            serde_json::from_value::<ConnectionProfile>(v.clone())
+                .err()
+                .map(|e| (v, e))
+        })
+        .enumerate()
+        .map(|(index, (v, e))| SkippedEntry {
+            index,
+            id: str_field(v, "id"),
+            name: str_field(v, "name"),
+            driver: str_field(v, "driver"),
+            reason: e
+                .to_string()
+                .chars()
+                .take(SKIPPED_REASON_MAX_CHARS)
+                .collect(),
+        })
+        .collect()
+}
+
+/// 読み飛ばされた要素の一覧。ファイルが無い / 空 / 配列として壊れているときは空
+/// (後者は `load_all` が別途エラーにする)。
+pub fn list_skipped() -> Result<Vec<SkippedEntry>> {
+    let _guard = lock_store();
+    let path = profiles_path()?;
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    match serde_json::from_str::<Vec<serde_json::Value>>(&content) {
+        Ok(values) => Ok(skipped_entries(&values)),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// 読み飛ばされた要素のうち `index` 番目を `profiles.json` から取り除く。UI で選べない
+/// ので、ファイルを手で直さずに消せるようにする。一覧を取った後にファイルが変わって
+/// いた場合に別の要素を消さないよう、`id` (一覧で見えていたもの) が一致しなければ
+/// 拒否する。
+pub fn delete_skipped(index: usize, id: Option<&str>) -> Result<()> {
+    let _guard = lock_store();
+    let path = profiles_path()?;
+    let content = std::fs::read_to_string(&path)?;
+    let mut values: Vec<serde_json::Value> = serde_json::from_str(&content)?;
+    let position = values
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| serde_json::from_value::<ConnectionProfile>((*v).clone()).is_err())
+        .nth(index)
+        .map(|(pos, _)| pos);
+    let Some(pos) = position else {
+        return Err(AppError::InvalidInput(
+            "skipped profile entry not found (the file may have changed)".into(),
+        ));
+    };
+    if str_field(&values[pos], "id").as_deref() != id {
+        return Err(AppError::InvalidInput(
+            "skipped profile entry changed since it was listed".into(),
+        ));
+    }
+    values.remove(pos);
+    let content = serde_json::to_string_pretty(&values)?;
+    write_atomic(&path, content.as_bytes())?;
+    Ok(())
+}
+
 /// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対で、複合操作から
 /// 呼ぶための内部版。
 fn save_all_locked(profiles: &[ConnectionProfile]) -> Result<()> {
@@ -239,6 +330,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn skipped_entries_summarize_unparsable_values_without_other_fields() {
+        let values: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+              {"id":"ok1","name":"fine","driver":"sqlite","host":"","port":0,"user":"","database":"x"},
+              {"id":"bad1","name":"broken","driver":"mysql","port":"not a number","secret":"s3cret"},
+              {"name":"no id"},
+              42
+            ]"#,
+        )
+        .unwrap();
+        let got = skipped_entries(&values);
+        // 解釈できる要素 (1 件目が実際に解釈できるかは型次第なので、壊れた 3 件を検査する)。
+        let bad: Vec<_> = got
+            .iter()
+            .filter(|e| e.id.as_deref() != Some("ok1"))
+            .collect();
+        assert!(bad.len() >= 3);
+        let first = bad
+            .iter()
+            .find(|e| e.id.as_deref() == Some("bad1"))
+            .unwrap();
+        assert_eq!(first.name.as_deref(), Some("broken"));
+        assert_eq!(first.driver.as_deref(), Some("mysql"));
+        assert!(!first.reason.is_empty());
+        assert!(!format!("{got:?}").contains("s3cret"));
+        // index は 0 始まりの連番。
+        for (i, e) in got.iter().enumerate() {
+            assert_eq!(e.index, i);
+        }
     }
 
     // 同一プロセス内で `write_atomic` を並行に呼んでも、一時ファイル名が衝突して

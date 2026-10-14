@@ -247,6 +247,69 @@ export function savePersistedWorkspace(profileId: string, ws: PersistedWorkspace
   }
 }
 
+/**
+ * 保存するワークスペースを決める純関数。復元確認で「今回は開かない」を選んだ接続は、
+ * 保持分 (`kept`) を失わないようにする (#1615):
+ * - 保持なし → `current` をそのまま保存。
+ * - 保持あり・現在のタブなし → `kept` をそのまま保存し直す (セッション中に閉じたタブを残さない)。
+ * - 保持あり・現在のタブあり → 保持分をペイン構造ごと `current.panes` の後ろに足す
+ *   (`activePane` は現在のまま)。何度呼んでも `kept` から作るので重複しない。
+ */
+export function resolveWorkspaceToSave(
+  current: PersistedWorkspace,
+  kept: PersistedWorkspace | undefined,
+): PersistedWorkspace {
+  if (!kept || totalTabs(kept) === 0) return current;
+  if (totalTabs(current) === 0) return kept;
+  if (current.panes.length + kept.panes.length <= MAX_PERSISTED_PANES) {
+    return { panes: [...current.panes, ...kept.panes], activePane: current.activePane };
+  }
+  // 画面は最大 2 ペインまでしか描かないので、超える分は最後のペインの末尾にタブとして足す。
+  const lastIdx = current.panes.length - 1;
+  const panes = current.panes.map((pane, i) =>
+    i === lastIdx ? { ...pane, tabs: [...pane.tabs, ...keptTabs(kept)] } : pane,
+  );
+  return { panes, activePane: current.activePane };
+}
+
+/** 画面が描けるペイン数の上限 (分割表示は 2 ペインまで)。 */
+const MAX_PERSISTED_PANES = 2;
+
+function keptTabs(kept: PersistedWorkspace): PersistedTab[] {
+  return kept.panes.flatMap((pane) => pane.tabs);
+}
+
+/**
+ * `resolveWorkspaceToSave` が足した保持分を保存済みワークスペースから外し、セッション中に開いた
+ * タブだけを返す。保持中の接続へ戻ったとき、保持分は復元せずに (ダイアログで選ぶまで保持のまま)
+ * そのセッションのタブだけを復元するために使う。末尾のペインが保持分と一致しなければ
+ * (保持分が足されていない) そのまま返す。
+ */
+export function splitKeptFromSaved(saved: PersistedWorkspace, kept: PersistedWorkspace): PersistedWorkspace {
+  const n = kept.panes.length;
+  if (n === 0) return saved;
+  const tail = saved.panes.slice(saved.panes.length - n);
+  if (tail.length === n && JSON.stringify(tail) === JSON.stringify(kept.panes)) {
+    const panes = saved.panes.slice(0, saved.panes.length - n);
+    return { panes, activePane: Math.min(saved.activePane, Math.max(0, panes.length - 1)) };
+  }
+  // ペイン数の上限で最後のペインの末尾にタブとして足された場合。
+  const flat = keptTabs(kept);
+  const last = saved.panes[saved.panes.length - 1];
+  if (!last || flat.length === 0 || last.tabs.length < flat.length) return saved;
+  const lastTail = last.tabs.slice(last.tabs.length - flat.length);
+  if (JSON.stringify(lastTail) !== JSON.stringify(flat)) return saved;
+  const rest = last.tabs.slice(0, last.tabs.length - flat.length);
+  const panes =
+    rest.length > 0
+      ? [
+          ...saved.panes.slice(0, -1),
+          { ...last, tabs: rest, activeIndex: Math.min(last.activeIndex, rest.length - 1) },
+        ]
+      : saved.panes.slice(0, -1);
+  return { panes, activePane: Math.min(saved.activePane, Math.max(0, panes.length - 1)) };
+}
+
 export function clearPersistedTabs(profileId: string): void {
   try {
     localStorage.removeItem(STORAGE_PREFIX + profileId);

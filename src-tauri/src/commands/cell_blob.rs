@@ -32,6 +32,8 @@ pub struct CellKeyPart {
 /// 単一セルを主キーで引く `SELECT` を組み立てる (純関数)。キーが空・列名が空・
 /// 主キー値が NULL/Bytes のときは拒否する (誤った行を引かないための保守的な検査)。
 /// 行数の検証のため `LIMIT 2` を付ける。
+/// (本体取得は `build_cell_probe_body_select` に統合したので、今はテストの基準にだけ使う。)
+#[cfg(test)]
 fn build_cell_select(
     driver: DriverKind,
     database: Option<&str>,
@@ -116,6 +118,33 @@ fn build_cell_probe_select(
     })
 }
 
+/// probe (サイズ + 先頭 16 進) に加え、**サイズが上限以下のときだけ**本体も 1 文で返す
+/// `SELECT` (純関数、#1609)。上限超過の判定はサーバ側の `CASE` で行うので、巨大な値は
+/// 転送されず本体の列が NULL になる。probe → 本体の 2 往復を 1 往復にするために使う。
+fn build_cell_probe_body_select(
+    driver: DriverKind,
+    database: Option<&str>,
+    table: &str,
+    column: &str,
+    key: &[CellKeyPart],
+) -> Result<String> {
+    let max = MAX_CELL_BLOB_BYTES;
+    build_cell_query(driver, database, table, column, key, |col| match driver {
+        DriverKind::Mysql => format!(
+            "OCTET_LENGTH({col}), HEX(SUBSTRING({col}, 1, {PROBE_HEAD_BYTES})), \
+             CASE WHEN OCTET_LENGTH({col}) <= {max} THEN {col} END"
+        ),
+        DriverKind::Postgres => format!(
+            "octet_length({col}), encode(substring({col} from 1 for {PROBE_HEAD_BYTES}), 'hex'), \
+             CASE WHEN octet_length({col}) <= {max} THEN {col} END"
+        ),
+        DriverKind::Sqlite => format!(
+            "LENGTH(CAST({col} AS BLOB)), HEX(SUBSTR(CAST({col} AS BLOB), 1, {PROBE_HEAD_BYTES})), \
+             CASE WHEN LENGTH(CAST({col} AS BLOB)) <= {max} THEN {col} END"
+        ),
+    })
+}
+
 /// マジックバイトから推定した BLOB の種別。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct BlobKind {
@@ -169,10 +198,21 @@ pub struct CellBlobProbe {
 }
 
 /// probe の結果行 (サイズ, 先頭の 16 進) を解釈する。NULL は `None`。
-fn interpret_probe_row(mut row: Vec<Value>) -> Result<Option<CellBlobProbe>> {
+fn interpret_probe_row(row: Vec<Value>) -> Result<Option<CellBlobProbe>> {
+    interpret_probe_body_row(row).map(|r| r.map(|(probe, _)| probe))
+}
+
+/// probe + 本体の結果行 (サイズ, 先頭の 16 進, 本体) を解釈する (#1609)。本体の列が
+/// 無い probe 専用の行 (2 列) では本体は `Value::Null` として返す。
+fn interpret_probe_body_row(mut row: Vec<Value>) -> Result<Option<(CellBlobProbe, Value)>> {
     if row.len() < 2 {
         return Err(AppError::InvalidInput("unexpected probe result".into()));
     }
+    let body = if row.len() > 2 {
+        row.swap_remove(2)
+    } else {
+        Value::Null
+    };
     let head_cell = row.swap_remove(1);
     let size_cell = row.swap_remove(0);
     let size = match size_cell {
@@ -197,12 +237,15 @@ fn interpret_probe_row(mut row: Vec<Value>) -> Result<Option<CellBlobProbe>> {
     };
     let head = decode_hex(&head_hex).unwrap_or_default();
     let kind = detect_blob_kind(&head);
-    Ok(Some(CellBlobProbe {
-        size,
-        mime: kind.as_ref().map(|k| k.mime.to_string()),
-        ext: kind.as_ref().map(|k| k.ext.to_string()),
-        image: kind.as_ref().is_some_and(|k| k.image),
-    }))
+    Ok(Some((
+        CellBlobProbe {
+            size,
+            mime: kind.as_ref().map(|k| k.mime.to_string()),
+            ext: kind.as_ref().map(|k| k.ext.to_string()),
+            image: kind.as_ref().is_some_and(|k| k.image),
+        },
+        body,
+    )))
 }
 
 /// 大文字・小文字どちらの 16 進文字列もバイト列へ戻す。不正なら `None`。
@@ -263,34 +306,33 @@ pub(crate) async fn fetch_cell_blob(
     column: &str,
     key: &[CellKeyPart],
 ) -> Result<Option<Vec<u8>>> {
-    // 本体を取り込む前にサイズだけ先に問い合わせ、上限超過なら SELECT を発行しない
-    // (数百 MB 〜 GB の BLOB を全量転送・16 進化してから拒否していた #1530)。
-    // probe は OCTET_LENGTH / LENGTH と先頭 16 バイトだけを返す軽い問い合わせ。
-    match probe_blob(session, database, table, column, key).await? {
-        None => return Ok(None),
-        Some(p) if p.size > MAX_CELL_BLOB_BYTES as u64 => {
-            return Err(AppError::InvalidInput(format!(
+    // サイズ確認と本体取得を 1 往復で行う (#1609)。上限超過の判定はサーバ側の
+    // `CASE` が行い、巨大な BLOB は全量転送・16 進化されない (#1530)。
+    match fetch_probe_and_body(session, database, table, column, key).await? {
+        None => Ok(None),
+        Some((p, _)) if p.size > MAX_CELL_BLOB_BYTES as u64 => {
+            Err(AppError::InvalidInput(format!(
                 "value too large ({} bytes, limit {} bytes)",
                 p.size, MAX_CELL_BLOB_BYTES
-            )));
+            )))
         }
-        Some(_) => {}
+        Some((_, body)) => Ok(body),
     }
-    fetch_cell_body(session, database, table, column, key).await
 }
 
-/// probe 済み (サイズ確認済み) のセルの本体を取得してデコードする。`fetch_cell_blob` と
-/// フォルダ一括保存 (`save_cells_to_folder`、probe を種別判定にも使うので二重に打たない)
-/// が共有する。
-async fn fetch_cell_body(
+/// probe (サイズ + 種別) と、上限以下なら本体を 1 文で取得する (#1609)。NULL セルは
+/// `None`。サイズが上限を超えるときは本体を転送せず `(probe, None)`。該当行が 1 行に
+/// 定まらないとき・非バイナリ列のときはエラー。`fetch_cell_blob` とフォルダ一括保存
+/// (`save_cells_to_folder`) が共有する。
+async fn fetch_probe_and_body(
     session: &Session,
     database: Option<&str>,
     table: &str,
     column: &str,
     key: &[CellKeyPart],
-) -> Result<Option<Vec<u8>>> {
+) -> Result<Option<(CellBlobProbe, Option<Vec<u8>>)>> {
     let driver = session.conn.driver_kind();
-    let sql = build_cell_select(driver, database, table, column, key)?;
+    let sql = build_cell_probe_body_select(driver, database, table, column, key)?;
     let result = session.conn.execute(&sql, database).await?;
     if result.rows.len() != 1 {
         return Err(AppError::InvalidInput(format!(
@@ -298,12 +340,22 @@ async fn fetch_cell_body(
             result.rows.len()
         )));
     }
-    let cell = result
-        .rows
-        .into_iter()
-        .next()
-        .and_then(|r| r.into_iter().next())
-        .unwrap_or(Value::Null);
+    let Some(row) = result.rows.into_iter().next() else {
+        return Ok(None);
+    };
+    let Some((probe, cell)) = interpret_probe_body_row(row)? else {
+        return Ok(None);
+    };
+    if probe.size > MAX_CELL_BLOB_BYTES as u64 {
+        return Ok(Some((probe, None)));
+    }
+    let body = decode_body_cell(cell)?;
+    Ok(Some((probe, body)))
+}
+
+/// 本体のセル (16 進の `Value::Bytes`) をバイト列へ戻す。NULL は `None`、
+/// 非バイナリ列はエラー。
+fn decode_body_cell(cell: Value) -> Result<Option<Vec<u8>>> {
     match cell {
         Value::Null => Ok(None),
         Value::Bytes(hex) => {
@@ -584,24 +636,15 @@ pub(crate) async fn save_cells_to_folder_inner(
         }
     };
     for (i, key) in keys.iter().enumerate() {
-        let probe = match probe_blob(session, database, table, column, key).await {
-            Ok(Some(p)) => p,
-            Ok(None) => {
-                result.skipped_null += 1;
+        // probe と本体を 1 往復で取る (#1609)。1 行あたり 2 往復だったものを 1 往復にする。
+        let (probe, bytes) = match fetch_probe_and_body(session, database, table, column, key).await
+        {
+            Ok(Some((p, _))) if p.size > MAX_CELL_BLOB_BYTES as u64 => {
+                result.skipped_too_large += 1;
                 continue;
             }
-            Err(e) => {
-                report(&mut result, i, e.to_string());
-                continue;
-            }
-        };
-        if probe.size > MAX_CELL_BLOB_BYTES as u64 {
-            result.skipped_too_large += 1;
-            continue;
-        }
-        let bytes = match fetch_cell_body(session, database, table, column, key).await {
-            Ok(Some(b)) => b,
-            Ok(None) => {
+            Ok(Some((p, Some(b)))) => (p, b),
+            Ok(Some((_, None))) | Ok(None) => {
                 result.skipped_null += 1;
                 continue;
             }
@@ -690,6 +733,59 @@ mod tests {
         assert_eq!(
             build_cell_select(DriverKind::Sqlite, Some("main"), "files", "data", &k).unwrap(),
             "SELECT \"data\" FROM \"files\" WHERE \"id\" = 7 LIMIT 2"
+        );
+    }
+
+    #[test]
+    fn probe_body_select_gates_the_body_on_size_per_driver() {
+        let k = [key("id", Value::Int(7))];
+        let max = MAX_CELL_BLOB_BYTES;
+        let my = build_cell_probe_body_select(DriverKind::Mysql, Some("app"), "files", "data", &k)
+            .unwrap();
+        assert!(my.starts_with("SELECT OCTET_LENGTH(`data`), HEX(SUBSTRING(`data`, 1, 16)), "));
+        assert!(my.contains(&format!(
+            "CASE WHEN OCTET_LENGTH(`data`) <= {max} THEN `data` END"
+        )));
+        assert!(my.ends_with("FROM `app`.`files` WHERE `id` = 7 LIMIT 2"));
+        let pg =
+            build_cell_probe_body_select(DriverKind::Postgres, None, "files", "data", &k).unwrap();
+        assert!(pg.contains(&format!(
+            "CASE WHEN octet_length(\"data\") <= {max} THEN \"data\" END"
+        )));
+        let lite =
+            build_cell_probe_body_select(DriverKind::Sqlite, None, "files", "data", &k).unwrap();
+        assert!(lite.contains(&format!(
+            "CASE WHEN LENGTH(CAST(\"data\" AS BLOB)) <= {max} THEN \"data\" END"
+        )));
+        // キー検査は probe / 本体取得と共通。
+        assert!(build_cell_probe_body_select(DriverKind::Mysql, None, "t", "c", &[]).is_err());
+    }
+
+    #[test]
+    fn probe_body_row_carries_the_body_cell() {
+        let (probe, body) = interpret_probe_body_row(vec![
+            Value::Int(3),
+            Value::String("89504E47".into()),
+            Value::Bytes("010203".into()),
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(probe.size, 3);
+        assert_eq!(decode_body_cell(body).unwrap(), Some(vec![1, 2, 3]));
+        // 上限超過の行はサーバ側の CASE で本体が NULL になる。
+        let (_, body) = interpret_probe_body_row(vec![
+            Value::Int(MAX_CELL_BLOB_BYTES as i64 + 1),
+            Value::Null,
+            Value::Null,
+        ])
+        .unwrap()
+        .unwrap();
+        assert_eq!(decode_body_cell(body).unwrap(), None);
+        // NULL セル。
+        assert!(
+            interpret_probe_body_row(vec![Value::Null, Value::Null, Value::Null])
+                .unwrap()
+                .is_none()
         );
     }
 

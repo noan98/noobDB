@@ -45,6 +45,9 @@ import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 
+/** 接続リトライの間隔入力の上限 (秒)。バックエンドの `MAX_RETRY_DELAY_SECS` (15 分) と揃える。 */
+const MAX_RETRY_INTERVAL_SECS = 15 * 60;
+
 const DEFAULT_DUMP_OPTIONS: DumpOptions = {
   singleTransaction: true,
   routines: true,
@@ -911,7 +914,10 @@ function TaskForm({
         enabled,
         connect_retry: {
           max_retries: Math.max(0, Math.floor(Number(connectRetries) || 0)),
-          interval_secs: Math.max(1, Math.floor(Number(connectRetryInterval) || 30)),
+          interval_secs: Math.min(
+            MAX_RETRY_INTERVAL_SECS,
+            Math.max(1, Math.floor(Number(connectRetryInterval) || 30)),
+          ),
         },
       });
       toast.success(t("taskSaved", { name: name.trim() }));
@@ -1236,7 +1242,7 @@ function TaskForm({
             <Input
               type="number"
               min={5}
-              max={3600}
+              max={MAX_RETRY_INTERVAL_SECS}
               width="90px"
               aria-label={t("taskFormConnectRetryInterval")}
               value={connectRetryInterval}

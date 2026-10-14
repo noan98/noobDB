@@ -1168,6 +1168,26 @@ impl Connection {
         }
     }
 
+    /// 1 表分の外部キー (#1609)。PostgreSQL は `conrelid` で絞った専用クエリ、
+    /// MySQL / SQLite は DB 全体の取得から表で絞る (どちらも 1 回の取得で足りる)。
+    pub async fn foreign_keys_for_table(&self, db: &str, table: &str) -> Result<Vec<ForeignKey>> {
+        match self {
+            Connection::Postgres(c) => c.foreign_keys_for_table(db, table).await,
+            Connection::MySql(c) => Ok(c
+                .foreign_keys(db)
+                .await?
+                .into_iter()
+                .filter(|f| f.table == table)
+                .collect()),
+            Connection::Sqlite(c) => Ok(c
+                .foreign_keys(db)
+                .await?
+                .into_iter()
+                .filter(|f| f.table == table)
+                .collect()),
+        }
+    }
+
     /// Non-table schema objects in `db`: views, materialized views,
     /// routines (procedures/functions), and triggers. Dispatches per driver to
     /// `information_schema` / `pg_catalog` / `sqlite_master`. Kinds the driver
@@ -1224,12 +1244,7 @@ impl Connection {
             )));
         }
         let indexes = self.list_indexes(db, table).await?;
-        let fks: Vec<ForeignKey> = self
-            .foreign_keys(db)
-            .await?
-            .into_iter()
-            .filter(|f| f.table == table)
-            .collect();
+        let fks = self.foreign_keys_for_table(db, table).await?;
         let driver = self.driver_kind();
         Ok(table_ddl::synthesize_create_table(
             driver,
@@ -1548,8 +1563,9 @@ impl Connection {
         db: &str,
         table: &str,
         include_distinct: bool,
+        approximate: bool,
     ) -> Result<profile::TableProfileOverview> {
-        profile::run_table_overview(self, db, table, include_distinct).await
+        profile::run_table_overview(self, db, table, include_distinct, approximate).await
     }
 
     pub async fn close(&self) {

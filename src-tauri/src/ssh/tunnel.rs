@@ -65,6 +65,9 @@ pub struct SshJumpConfig {
 const INITIAL_ACCEPT_BACKOFF: Duration = Duration::from_millis(50);
 const MAX_ACCEPT_BACKOFF: Duration = Duration::from_secs(1);
 
+/// トンネル中継の片方向バッファ (tokio 既定は 8KiB)。
+const TUNNEL_COPY_BUF_BYTES: usize = 64 * 1024;
+
 /// 連続 accept エラー時のバックオフを次の値へ進める純関数 (指数バックオフ、上限
 /// あり)。ソケット I/O を含まないのでユニットテストできる。
 fn next_accept_backoff(current: Duration) -> Duration {
@@ -383,9 +386,17 @@ impl SshTunnel {
                             }
                         };
 
+                        // DB 通信は小さな往復が多いので Nagle を切り、ダンプなど大きな転送向けに
+                        // 既定 (8KiB) より大きいバッファで中継する。
+                        let _ = socket.set_nodelay(true);
                         let mut stream = channel.into_stream();
-                        if let Err(e) =
-                            tokio::io::copy_bidirectional(&mut socket, &mut stream).await
+                        if let Err(e) = tokio::io::copy_bidirectional_with_sizes(
+                            &mut socket,
+                            &mut stream,
+                            TUNNEL_COPY_BUF_BYTES,
+                            TUNNEL_COPY_BUF_BYTES,
+                        )
+                        .await
                         {
                             tracing::debug!("tunnel copy ended: {e}");
                         }

@@ -151,6 +151,7 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
+import { SkippedProfilesNotice } from "./components/SkippedProfilesNotice";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
@@ -195,6 +196,7 @@ import {
   type TxIsolation,
 } from "./txOptions";
 import { useConfirm } from "./components/ConfirmDialog";
+import { CodePreview } from "./components/modalForm";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
 import {
@@ -461,6 +463,8 @@ import { accentVars, readToneSurface } from "./accent";
 import {
   clearPersistedTabs,
   loadPersistedWorkspace,
+  resolveWorkspaceToSave,
+  splitKeptFromSaved,
   savePersistedWorkspace,
   type PersistedTab,
   type PersistedWorkspace,
@@ -1161,15 +1165,16 @@ function toPersistedTab(
 
 /**
  * Restore-tabs ゲート。`mode === "ask"` のときだけ呼び出し側から渡された
- * `askUser()` (Promise<boolean>) で確認する。同期的な `window.confirm` を
+ * `askUser()` で確認する。結果は復元 (restore) / 明示的な破棄 (discard) /
+ * 今回は開かず保存内容を残す (keep: Esc・×・キャンセル) の 3 択 (#1615)。同期的な `window.confirm` を
  * 排除するため Promise を返す形にしている。
  */
 async function shouldRestoreSavedTabs(
   mode: TabRestoreMode,
-  askUser: () => Promise<boolean>,
-): Promise<boolean> {
-  if (mode === "always") return true;
-  if (mode === "never") return false;
+  askUser: () => Promise<"restore" | "discard" | "keep">,
+): Promise<"restore" | "discard" | "keep"> {
+  if (mode === "always") return "restore";
+  if (mode === "never") return "discard";
   return askUser();
 }
 /** パレットが閉じている間の `commandItems` (毎回新しい配列を作らない, #1257)。 */
@@ -1239,7 +1244,7 @@ export default function App() {
   const openFullViewRef = useRef<(view: "compareResults") => void>(() => {});
   // テーマに追従するカスタム確認ダイアログ。`window.confirm()` の代替で、
   // `await confirm({...})` の形で同期感覚で呼べる。
-  const { confirm, dialog: confirmDialogElement } = useConfirm();
+  const { confirm, choose, dialog: confirmDialogElement } = useConfirm();
   // 未確定の編集の破棄確認 (#1391) を表示している間は true。タブ系のグローバル
   // ショートカット (Cmd+W / Ctrl+Tab / Cmd+Shift+T …) を無視して、確認の二重起動や
   // 確認中のタブ操作を防ぐ。
@@ -1944,6 +1949,8 @@ export default function App() {
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
+  // 名前変更ダイアログの衝突検出用に、対象スキーマの既存テーブル名を取得する。
+  const [renameExistingTables, setRenameExistingTables] = useState<string[]>([]);
   const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
   // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
   const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(
@@ -2922,9 +2929,14 @@ export default function App() {
           // 見た目は info のままだが、アクティビティセンター (#912) には
           // 「警告」として残す — 実行計画の変化は後から拾い直したい種類の
           // イベントで、重大度で絞り込めると見つけやすい。
+          // フルスキャンへの退行など警告相当の変化があるときだけトーンも警告にして、
+          // スニペット名を本文に出す (#1614)。軽微な変化は従来どおり info。
+          const regressed = res.warned.length > 0;
           toast.notify({
-            message: translate("planWatchChangedToast", { count: res.changed }),
-            tone: "info",
+            message: regressed
+              ? translate("planWatchRegressedToast", { names: res.warned.join(", ") })
+              : translate("planWatchChangedToast", { count: res.changed }),
+            tone: regressed ? "warning" : "info",
             severity: "warning",
           });
         }
@@ -3222,6 +3234,7 @@ export default function App() {
 
   // Snapshot the current pane layout (from refs so we don't depend on stale
   // closure copies) into localStorage under the given profile id.
+  const keptSavedTabsRef = useRef<Map<string, PersistedWorkspace>>(new Map());
   const persistTabsForProfile = useCallback(
     (profileId: string) => {
       const curTabs = tabsRef.current;
@@ -3248,7 +3261,9 @@ export default function App() {
           curPanes.findIndex((p) => p.id === activePaneIdRef.current),
         ),
       };
-      savePersistedWorkspace(profileId, ws);
+      // 復元確認で「今回は開かず保持」を選んだ接続は、保持分を失わないよう保存内容を決める
+      // (タブが空なら保存しない / あれば保持分を末尾に足す)。登録は復元・破棄が確定するまで残す。
+      savePersistedWorkspace(profileId, resolveWorkspaceToSave(ws, keptSavedTabsRef.current.get(profileId)));
     },
     [tabSqlStore, panesRef, tabsRef],
   );
@@ -3319,20 +3334,25 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
+  // 未確定の明示 TX を持つ接続から別の接続へ移る前の共通警告 (#1536 / #1615)。TX は背景で開いたまま
+  // 残り、ロックと未コミットの変更が保持される。既存接続への切替と、未接続プロファイルへの新規接続の
+  // 両方がこの 1 か所を通る。続行してよければ true。
+  const confirmLeaveOpenTransaction = useCallback(async (): Promise<boolean> => {
+    if (!sessionId || !txActiveRef.current) return true;
+    return confirmDiscard({
+      title: translate("connSwitchTxTitle"),
+      message: translate("connSwitchTxBody"),
+      confirmLabel: translate("connSwitchTxAction"),
+      tone: "warning",
+    });
+  }, [sessionId, confirmDiscard]);
+
   const switchToOpenConnection = useCallback(
     async (target: OpenConnection, opts?: { skipTxWarning?: boolean; skipPersist?: boolean }) => {
       if (target.sessionId === sessionId) return;
       if (!(await confirmDiscardPendingEdits())) return;
       // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
-      if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
-        const ok = await confirmDiscard({
-          title: translate("connSwitchTxTitle"),
-          message: translate("connSwitchTxBody"),
-          confirmLabel: translate("connSwitchTxAction"),
-          tone: "warning",
-        });
-        if (!ok) return;
-      }
+      if (!opts?.skipTxWarning && !(await confirmLeaveOpenTransaction())) return;
       // 進行中の自動再接続ループは手動切替で中断する。
       reconnectAbortRef.current = true;
       reconnectingRef.current = false;
@@ -3355,7 +3375,11 @@ export default function App() {
       setConnectionStatus("connected");
       setSessionId(target.sessionId);
       setSelectedProfile(target.profile);
-      const savedWs = loadPersistedWorkspace(target.profile.id);
+      // 「今回は開かない」で保持中の接続は、保存時に足した保持分を外し、そのセッション中に
+      // 開いたタブだけを復元する (保持分は保存側が守り続ける)。
+      const keptHere = keptSavedTabsRef.current.get(target.profile.id);
+      const loadedWs = loadPersistedWorkspace(target.profile.id);
+      const savedWs = keptHere ? splitKeptFromSaved(loadedWs, keptHere) : loadedWs;
       const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
       if (savedCount > 0 && restoreSavedTabsRef.current) {
         await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
@@ -3376,7 +3400,7 @@ export default function App() {
       setPanes,
       setTabs,
       confirmDiscardPendingEdits,
-      confirmDiscard,
+      confirmLeaveOpenTransaction,
     ],
   );
 
@@ -3443,6 +3467,8 @@ export default function App() {
       }
       // 別接続へ張り替えると現在のタブはすべて閉じる。未確定の編集があれば先に確認する。
       if (sessionId && !(await confirmDiscardPendingEdits())) return;
+      // 未確定の TX を持つ接続から離れるときは、既存接続への切替と同じ警告を出す (#1615)。
+      if (!(await confirmLeaveOpenTransaction())) return;
       // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
       reconnectAbortRef.current = true;
       reconnectingRef.current = false;
@@ -3499,21 +3525,32 @@ export default function App() {
 
         const savedWs = loadPersistedWorkspace(profile.id);
         const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
-        const restore =
-          savedCount > 0 &&
-          (await shouldRestoreSavedTabs(settings.tabRestoreMode, () =>
-            confirm({
-              title: translate("tabRestoreConfirmTitle"),
-              message: translate("tabRestoreConfirm", { count: savedCount }),
-              confirmLabel: translate("tabRestoreConfirmRestore"),
-              cancelLabel: translate("tabRestoreConfirmDiscard"),
-              tone: "primary",
-            }),
-          ));
-        if (restore && restoreSavedTabsRef.current) {
+        // 確認ダイアログの表示中に beforeunload が空で上書きしないよう、先に保持として登録しておく。
+        // 選択が確定したら (restore / discard) 解除する。
+        if (savedCount > 0 && settings.tabRestoreMode === "ask")
+          keptSavedTabsRef.current.set(profile.id, savedWs);
+        const restoreChoice =
+          savedCount > 0
+            ? await shouldRestoreSavedTabs(settings.tabRestoreMode, async () => {
+                // Esc / × / キャンセルは「今回は開かず保持」。保存済みワークスペースを消すのは
+                // 「破棄する」を明示したときだけ (未送信の SQL 下書きを誤操作で失わない)。
+                const c = await choose({
+                  title: translate("tabRestoreConfirmTitle"),
+                  message: translate("tabRestoreConfirm", { count: savedCount }),
+                  confirmLabel: translate("tabRestoreConfirmRestore"),
+                  cancelLabel: translate("tabRestoreConfirmKeep"),
+                  altLabel: translate("tabRestoreConfirmDiscard"),
+                  tone: "primary",
+                });
+                return c === "confirm" ? "restore" : c === "alt" ? "discard" : "keep";
+              })
+            : "restore";
+        if (restoreChoice !== "keep") keptSavedTabsRef.current.delete(profile.id);
+        if (savedCount > 0 && restoreChoice === "restore" && restoreSavedTabsRef.current) {
           await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
         } else {
-          if (savedCount > 0 && !restore) clearPersistedTabs(profile.id);
+          if (savedCount > 0 && restoreChoice === "discard") clearPersistedTabs(profile.id);
+          // 保持を選んだ接続は登録済み (上で set 済み)。persistTabsForProfile が保持分を守る。
           // 接続直後はクエリタブを自動で開かない。空のワークスペース
           // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
           // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
@@ -3571,6 +3608,7 @@ export default function App() {
       persistTabsForProfile,
       switchToOpenConnection,
       confirmDiscardPendingEdits,
+      confirmLeaveOpenTransaction,
       upsertOpenConnection,
       ensureLocalSession,
       settings.connectTimeoutSecs,
@@ -3585,6 +3623,7 @@ export default function App() {
       captureTimelapse,
       toast,
       confirm,
+      choose,
       setPanes,
       setTabs,
     ],
@@ -6813,10 +6852,17 @@ export default function App() {
       const isProduction = selectedProfile?.is_production ?? false;
       const ok = await confirm({
         title: translate("gridReplaceConfirmTitle"),
-        message:
-          translate("gridReplaceConfirmBody", { table: tab.table }) +
-          (findings.length > 0 ? `\n${translate("gridReplaceConfirmDanger")}` : "") +
-          `\n\n${sql}`,
+        message: (
+          <>
+            <chakra.p m={0} mb="3" whiteSpace="pre-line">
+              {translate("gridReplaceConfirmBody", { table: tab.table }) +
+                (findings.length > 0 ? `\n${translate("gridReplaceConfirmDanger")}` : "")}
+            </chakra.p>
+            <CodePreview wrap maxH="40vh">
+              {sql}
+            </CodePreview>
+          </>
+        ),
         confirmLabel: translate("gridReplaceConfirmButton"),
         tone: "danger",
         typedConfirmation: isProduction ? resolveTypedConfirmTarget([tab.table]) : undefined,
@@ -7424,6 +7470,23 @@ export default function App() {
     ],
   );
 
+  useEffect(() => {
+    setRenameExistingTables([]);
+    if (!renameTarget || !sessionId) return;
+    let cancelled = false;
+    api
+      .listTables(sessionId, renameTarget.database)
+      .then((names) => {
+        if (!cancelled) setRenameExistingTables(names);
+      })
+      .catch(() => {
+        // 取得できないときは衝突検出なしで続行する (DB 側のエラーが最終防衛線)。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [renameTarget, sessionId]);
+
   const handleRenameTableSubmit = useCallback(
     async (newName: string) => {
       const target = renameTarget;
@@ -7521,15 +7584,9 @@ export default function App() {
             {translate("alterTableConfirmBody")}
             <br />
             <br />
-            <chakra.code
-              display="block"
-              fontFamily="var(--font-mono)"
-              fontSize="sm"
-              whiteSpace="pre-wrap"
-              wordBreak="break-all"
-            >
+            <CodePreview wrap maxH="40vh">
               {sqls.join("\n")}
-            </chakra.code>
+            </CodePreview>
           </>,
         ),
         confirmLabel: translate("alterTableConfirmOk"),
@@ -7967,15 +8024,9 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: table })}
             <br />
             <br />
-            <chakra.code
-              display="block"
-              fontFamily="var(--font-mono)"
-              fontSize="sm"
-              whiteSpace="pre-wrap"
-              wordBreak="break-all"
-            >
+            <CodePreview wrap maxH="40vh">
               {command.sql}
-            </chakra.code>
+            </CodePreview>
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -8102,15 +8153,9 @@ export default function App() {
             {translate("maintenanceConfirmBody", { target: database })}
             <br />
             <br />
-            <chakra.code
-              display="block"
-              fontFamily="var(--font-mono)"
-              fontSize="sm"
-              whiteSpace="pre-wrap"
-              wordBreak="break-all"
-            >
+            <CodePreview wrap maxH="40vh">
               {command.sql}
-            </chakra.code>
+            </CodePreview>
           </>,
         ),
         confirmLabel: translate("maintenanceConfirmOk"),
@@ -10816,6 +10861,7 @@ export default function App() {
                 display: sidebarTab === "connections" ? "flex" : "none",
               }}
             >
+              <SkippedProfilesNotice refreshKey={profiles} onChanged={() => void refreshProfiles()} />
               <ConnectionList
                 ref={connectionListRef}
                 profiles={visibleProfiles}
@@ -12254,6 +12300,16 @@ export default function App() {
               <Suspense fallback={null}>
                 <RenameTableDialog
                   table={renameTarget.table}
+                  existingTables={renameExistingTables}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  buildSql={(newName) =>
+                    buildRenameTableSql(
+                      selectedProfile?.driver ?? "mysql",
+                      renameTarget.database,
+                      renameTarget.table,
+                      newName,
+                    )
+                  }
                   onConfirm={handleRenameTableSubmit}
                   onCancel={() => setRenameTarget(null)}
                 />
@@ -12546,7 +12602,8 @@ export default function App() {
                 danger: true,
               },
               {
-                label: t("tabCloseAll"),
+                // 分割表示中は基点タブのペインだけが対象 (tabBulkClose)。ラベルもそれに合わせる。
+                label: panes.length > 1 ? t("tabCloseAllInPane") : t("tabCloseAll"),
                 onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
                 danger: true,
               },

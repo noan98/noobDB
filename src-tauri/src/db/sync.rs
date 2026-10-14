@@ -640,7 +640,8 @@ fn modify_column(
                 .any(|f| f == "key" || f == "foreign_key")
             {
                 warnings.push(format!(
-                    "{}.{}: key / foreign-key changes are not auto-generated; adjust constraints manually.",
+                    "{}.{}: キー / 外部キーの差分は自動生成の対象外です。制約は手動で \
+                     ALTER TABLE ... ADD/DROP {{PRIMARY KEY|CONSTRAINT}} を実行して調整してください。",
                     table, src.name
                 ));
             }
@@ -654,7 +655,8 @@ fn modify_column(
         }
         DriverKind::Sqlite => {
             warnings.push(format!(
-                "{}.{}: SQLite cannot alter a column in place; recreate the table to change it.",
+                "{}.{}: SQLite は既存の列を ALTER で変更できません。テーブルを作り直して反映してください \
+                 (新定義で CREATE TABLE → INSERT ... SELECT でデータ移行 → DROP TABLE → RENAME)。",
                 table, src.name
             ));
         }
@@ -1120,7 +1122,7 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         assert!(plan.statements.is_empty());
         assert_eq!(plan.warnings.len(), 1);
-        assert!(plan.warnings[0].contains("key"));
+        assert!(plan.warnings[0].contains("キー"));
     }
 
     #[test]
@@ -1153,7 +1155,7 @@ mod tests {
             .iter()
             .any(|s| s.kind == SyncKind::AlterColumn));
         assert_eq!(plan.warnings.len(), 1);
-        assert!(plan.warnings[0].contains("SQLite cannot alter"));
+        assert!(plan.warnings[0].contains("SQLite は既存の列を ALTER で変更できません"));
     }
 
     #[test]

@@ -88,3 +88,57 @@ describe("useConfirm / ConfirmDialog 型確認ゲート (#675)", () => {
     expect(onResult).toHaveBeenCalledWith(false);
   });
 });
+
+// #1615: 3 択 (choose)。Esc / × / キャンセルは「破棄」を選ばない側 (cancel) になる。
+function ChoiceHarness({ onResult }: { onResult: (c: string) => void }) {
+  const { choose, dialog } = useConfirm();
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() =>
+          choose({
+            title: "Restore",
+            message: "Restore tabs?",
+            confirmLabel: "Restore",
+            cancelLabel: "Not now",
+            altLabel: "Discard",
+            tone: "primary",
+          }).then(onResult)
+        }
+      >
+        open
+      </button>
+      {dialog}
+    </>
+  );
+}
+
+describe("useConfirm.choose (#1615)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  it.each([
+    ["Restore", "confirm"],
+    ["Discard", "alt"],
+    ["Not now", "cancel"],
+  ])("%s を押すと %s を返す", async (label, expected) => {
+    const onResult = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<ChoiceHarness onResult={onResult} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await user.click((await screen.findAllByRole("button", { name: label })).at(-1) as HTMLElement);
+    expect(onResult).toHaveBeenCalledWith(expected);
+  });
+
+  it("Esc は cancel (破棄にならない)", async () => {
+    const onResult = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(<ChoiceHarness onResult={onResult} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    await screen.findByRole("button", { name: "Discard" });
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(onResult).toHaveBeenCalledWith("cancel"));
+  });
+});

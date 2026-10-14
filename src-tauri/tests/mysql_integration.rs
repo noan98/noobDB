@@ -1663,6 +1663,61 @@ async fn mysql_routine_signature_when_env_set() {
     conn.close().await;
 }
 
+/// 権限不足のユーザ (SELECT + EXECUTE のみ) では SHOW CREATE PROCEDURE の定義本文の列が
+/// NULL になる。これは失敗ではなく従来どおり「空の定義」として返す (#1614)。
+#[tokio::test]
+async fn mysql_object_definition_null_body_for_limited_user_is_empty() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts.database.clone().expect("test db in url");
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_nd_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP USER IF EXISTS 'noobdb_nd_lim'@'%'").await;
+    t::mysql_exec_text(&opts, "CREATE PROCEDURE noobdb_nd_proc() SELECT 1")
+        .await
+        .expect("create procedure");
+    t::mysql_exec_text(
+        &opts,
+        "CREATE USER 'noobdb_nd_lim'@'%' IDENTIFIED BY 'limpw'",
+    )
+    .await
+    .expect("create user");
+    t::mysql_exec_text(
+        &opts,
+        &format!("GRANT SELECT, EXECUTE ON `{db}`.* TO 'noobdb_nd_lim'@'%'"),
+    )
+    .await
+    .expect("grant");
+
+    let mut lim = opts.clone();
+    lim.user = "noobdb_nd_lim".into();
+    lim.password = "limpw".into();
+    let conn = t::connect(&lim).await.expect("connect as limited user");
+    // root なら本文が読める。権限を絞ったユーザでは NULL (空) でもエラーにならない。
+    let def = conn
+        .object_definition(&db, "procedure", "noobdb_nd_proc", None)
+        .await;
+    assert_eq!(
+        def.as_deref().ok(),
+        Some(""),
+        "NULL の定義本文は空として返す: {def:?}"
+    );
+    conn.close().await;
+
+    let root = t::connect(&opts).await.expect("connect as root");
+    let full = root
+        .object_definition(&db, "procedure", "noobdb_nd_proc", None)
+        .await
+        .expect("root definition");
+    assert!(full.to_uppercase().contains("PROCEDURE"), "{full}");
+    root.close().await;
+
+    let _ = t::mysql_exec_text(&opts, "DROP PROCEDURE IF EXISTS noobdb_nd_proc").await;
+    let _ = t::mysql_exec_text(&opts, "DROP USER IF EXISTS 'noobdb_nd_lim'@'%'").await;
+}
+
 /// データ品質アサーション (#742): 6 種の初期ルールを read-only セッションで実行し、
 /// 違反件数と pass/fail を実データで確かめる (SQLite 版と同じシナリオ)。
 #[tokio::test]
@@ -3054,7 +3109,7 @@ async fn mysql_table_overview_single_scan() {
     .await
     .expect("insert");
     let o = conn
-        .table_profile(&db, "noobdb_my_overview", true)
+        .table_profile(&db, "noobdb_my_overview", true, false)
         .await
         .expect("overview");
     assert_eq!(o.scans, 1);

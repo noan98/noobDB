@@ -154,7 +154,7 @@ export function ColumnProfilePanel({
     setOverviewRunning(true);
     setOverviewError(null);
     try {
-      const o = await api.profileTable(sessionId, database, table, true);
+      const o = await api.profileTable(sessionId, database, table, true, approximate);
       if (seq === overviewSeq.current) setOverview(o);
     } catch (e) {
       if (seq === overviewSeq.current) {
@@ -325,6 +325,16 @@ export function ColumnProfilePanel({
               scans: overview.scans,
             })}
           </chakra.div>
+          {overview.notes.includes("overview_approx_no_stats") && (
+            <chakra.div
+              textStyle="caption"
+              color="app.textMuted"
+              marginBottom="1"
+              data-testid="profile-overview-nostats"
+            >
+              {t("profileOverviewNoStats")}
+            </chakra.div>
+          )}
           <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
             <chakra.thead>
               <chakra.tr>
@@ -337,7 +347,13 @@ export function ColumnProfilePanel({
                   {t("profileNulls")}
                 </chakra.th>
                 <chakra.th css={thCss} textAlign="right">
-                  {t("profileDistinct")}
+                  {overview.distinct_approximate ? (
+                    <Tooltip label={t("profileApproxMark")}>
+                      <chakra.span>{t("profileDistinct")} ≈</chakra.span>
+                    </Tooltip>
+                  ) : (
+                    t("profileDistinct")
+                  )}
                 </chakra.th>
                 <chakra.th css={thCss}>{t("profileMin")}</chakra.th>
                 <chakra.th css={thCss}>{t("profileMax")}</chakra.th>

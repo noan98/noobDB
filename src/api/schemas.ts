@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { recordIpcValidationFailure } from "./ipcDiagnostics";
 import { z } from "zod";
 
@@ -335,6 +336,8 @@ export const tableProfileOverview = z.object({
       notes: z.array(z.string()),
     }),
   ),
+  distinct_approximate: z.boolean(),
+  notes: z.array(z.string()),
   scans: z.number(),
 });
 
@@ -912,6 +915,7 @@ export const alterTableContext = z.object({
   table_comment: z.string(),
   foreign_keys: z.array(foreignKey),
   table_names: z.array(z.string()),
+  warnings: z.array(z.string()),
 });
 
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。Rust の
@@ -1811,10 +1815,16 @@ export function parseResponse<T>(schema: z.ZodType, value: T, command: string): 
     const path = issue.path.length > 0 ? issue.path.join(".") : "(root)";
     return `${path}: ${issue.message}`;
   });
-  const summary = issueLines.join("; ");
   // 失敗経路だけ: 本番の利用者にもアクティビティ経由で原因を伝えられるよう記録する (#1536)。
   recordIpcValidationFailure(command, issueLines);
-  throw new Error(`IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`);
+  // 利用者に見せる文言は短い一文だけ (zod の英語メッセージや内部パスはアクティビティの
+  // 診断テキスト側に残す。#1614)。
+  throw new Error(ipcValidationErrorMessage(command));
+}
+
+/** IPC レスポンスの形式不一致を利用者に伝える短い一文 (ロケール追従)。 */
+export function ipcValidationErrorMessage(command: string): string {
+  return t("ipcValidationError", { command });
 }
 
 // --- スキーマドリフト (#736 / #1260) --------------------------------------
@@ -1898,6 +1908,17 @@ export const planWatchEntry = z.object({
 });
 export const planWatchEntryArray = z.array(planWatchEntry);
 
+/** 一覧に出ないプロファイルの要約 (`list_skipped_profiles`、#1614)。 */
+export const skippedProfile = z.object({
+  kind: z.enum(["unparsable", "unsupported_driver"]),
+  index: z.number(),
+  id: z.string().nullable(),
+  name: z.string().nullable(),
+  driver: z.string().nullable(),
+  reason: z.string(),
+});
+export const skippedProfileArray = z.array(skippedProfile);
+
 export const planWatchRefreshResult = z.object({
   recorded: z.number(),
   changed: z.number(),
@@ -1908,4 +1929,5 @@ export const planWatchRefreshResult = z.object({
       error: z.string(),
     }),
   ),
+  warned: z.array(z.string()),
 });

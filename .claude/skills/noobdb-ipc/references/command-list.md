@@ -255,7 +255,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
 
 `profile_table` (#1539。表の全列の件数 / NULL 数 / DISTINCT / MIN・MAX を 1 回の走査で一括取得。
-上位値・ヒストグラムは含まず `profile_column` で列ごとに遅延取得)
+上位値・ヒストグラムは含まず `profile_column` で列ごとに遅延取得。`approximate` で PostgreSQL の
+DISTINCT を `pg_stats` から近似、#1609)
 
 ## テーブル・タイムラプス (`commands/timelapse.rs`)
 
@@ -327,6 +328,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 ## プロファイル (`commands/profiles.rs`)
 
 - `list_profiles`
+- `list_skipped_profiles` (一覧に出ないプロファイルの要約。解釈できない要素と対応外ドライバ。秘密は含めない、#1614)
+- `delete_skipped_profile` (解釈できず読み飛ばされた要素を `profiles.json` から削除、#1614)
 - `reveal_profile_secret`
 - `save_profile`
 - `delete_profile`

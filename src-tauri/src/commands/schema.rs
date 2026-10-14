@@ -334,13 +334,17 @@ pub struct AlterTableContext {
     pub foreign_keys: Vec<ForeignKey>,
     /// DB 内のテーブル名一覧 (FK の参照先候補)。
     pub table_names: Vec<String>,
+    /// 取得に失敗して空で続行した付随情報の種別 (`"comments"` / `"foreign_keys"` /
+    /// `"table_names"`)。文言はフロントが i18n で組み立てる (#1614)。
+    pub warnings: Vec<String>,
 }
 
 /// `AlterTableModal` が開くときに必要な情報を 1 回で返す (#1255)。以前は
 /// `describe_table` + DB 全体のテーブルコメント + DB 全体の FK + テーブル一覧を
 /// フロントが 4 本呼び、JS で 1 テーブル分を抜き出していた。列の取得失敗は
 /// エラーとして返し、コメント・FK・テーブル一覧は付随情報なので取得に失敗しても
-/// 空で続行する (従来のフロントの挙動と同じ)。
+/// 空で続行する (従来のフロントの挙動と同じ)。ただし失敗は握りつぶさず `warnings`
+/// に種別を載せ、ダイアログが「表示が不完全」と出せるようにする (#1614)。
 #[tauri::command]
 pub async fn alter_table_context(
     session_id: String,
@@ -363,9 +367,11 @@ pub async fn alter_table_context(
             .columns(&database, &table, || conn.columns(&database, &table)),
         async {
             if supports_comments {
-                conn.table_comments(&database).await.unwrap_or_default()
+                conn.table_comments(&database).await.map_err(|e| {
+                    tracing::warn!(error = %e, "テーブルコメントの取得に失敗");
+                })
             } else {
-                Vec::new()
+                Ok(Vec::new())
             }
         },
         async {
@@ -374,9 +380,11 @@ pub async fn alter_table_context(
                     .schema_cache
                     .foreign_keys(&database, || conn.foreign_keys(&database))
                     .await
-                    .unwrap_or_default()
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, "外部キーの取得に失敗");
+                    })
             } else {
-                Vec::new()
+                Ok(Vec::new())
             }
         },
         async {
@@ -384,9 +392,24 @@ pub async fn alter_table_context(
                 .schema_cache
                 .tables(&database, || conn.tables(&database))
                 .await
-                .unwrap_or_default()
+                .map_err(|e| {
+                    tracing::warn!(error = %e, "テーブル一覧の取得に失敗");
+                })
         },
     );
+    let mut warnings = Vec::new();
+    if comments.is_err() {
+        warnings.push("comments".to_string());
+    }
+    if foreign_keys.is_err() {
+        warnings.push("foreign_keys".to_string());
+    }
+    if table_names.is_err() {
+        warnings.push("table_names".to_string());
+    }
+    let comments = comments.unwrap_or_default();
+    let foreign_keys = foreign_keys.unwrap_or_default();
+    let table_names = table_names.unwrap_or_default();
     let table_comment = comments
         .into_iter()
         .find(|c| c.name == table)
@@ -400,6 +423,7 @@ pub async fn alter_table_context(
             .filter(|f| f.table == table)
             .collect(),
         table_names,
+        warnings,
     })
 }
 
@@ -421,7 +445,7 @@ pub async fn incoming_foreign_keys(
     let conn = &session.conn;
     let all = session
         .schema_cache
-        .foreign_keys(&database, || conn.foreign_keys(&database))
+        .foreign_keys_shared(&database, || conn.foreign_keys(&database))
         .await?;
     Ok(filter_incoming_foreign_keys(&all, &table))
 }

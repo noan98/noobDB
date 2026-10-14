@@ -12,6 +12,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { Button, Switch } from "./ui";
+import { useConfirm } from "./ConfirmDialog";
 import { Segmented } from "./Segmented";
 import { FieldError } from "./modalForm";
 import type { CellBlobHandlers } from "./useCellBlobIo";
@@ -130,7 +131,24 @@ export function CellValueViewer({
   const seedText = hasPending && !pendingIsNull ? pendingValue! : ((isJson ? formattedJson : null) ?? raw);
   const [editing, setEditing] = useState(canEdit && hasPending);
   const [draft, setDraft] = useState(seedText);
-  const [nullDraft, setNullDraft] = useState(pendingIsNull || (hasPending ? false : isNull));
+  const initialNullDraft = pendingIsNull || (hasPending ? false : isNull);
+  const [nullDraft, setNullDraft] = useState(initialNullDraft);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  // 編集中に本文または NULL 指定が開いた時点から変わっていれば未保存の変更あり。
+  const dirty = editing && (draft !== seedText || nullDraft !== initialNullDraft);
+  // Esc / × / キャンセルの共通経路。未保存の変更があるときだけ破棄の確認を挟む。
+  const requestClose = async () => {
+    if (dirty) {
+      const ok = await confirm({
+        title: t("cellViewerDiscardTitle"),
+        message: t("cellViewerDiscardBody"),
+        confirmLabel: t("cellViewerDiscardConfirm"),
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    onClose();
+  };
 
   const { copied, copy } = useCopyFeedback();
 
@@ -215,13 +233,13 @@ export function CellValueViewer({
   return (
     <Modal
       width="820px"
-      onClose={onClose}
+      onClose={() => void requestClose()}
       // 編集中だけ Cmd/Ctrl+Enter で保存 (#1114)。閲覧中は確定操作が無い。
       onSubmit={editing ? handleSave : undefined}
       submitDisabled={!!validationError}
     >
       <ModalHeader
-        onClose={onClose}
+        onClose={() => void requestClose()}
         closeLabel={t("cellViewerClose")}
         titleProps={{
           title: columnName,
@@ -359,7 +377,7 @@ export function CellValueViewer({
               </>
             )}
             <chakra.div flex="1" />
-            <Button type="button" variant="secondary" onClick={onClose}>
+            <Button type="button" variant="secondary" onClick={() => void requestClose()}>
               {t("cellViewerCancel")}
             </Button>
             <Button type="button" variant="primary" onClick={handleSave} disabled={!!validationError}>
@@ -434,6 +452,7 @@ export function CellValueViewer({
           </>
         )}
       </ModalFooter>
+      {confirmDialog}
     </Modal>
   );
 }

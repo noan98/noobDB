@@ -50,9 +50,21 @@ pub struct AssertionOutcome {
     pub elapsed_ms: u64,
 }
 
+/// 同期ファイル I/O (`std::fs` + `std::sync::Mutex`) のストア操作を blocking スレッドへ
+/// 逃がす。Tokio のワーカーを塞がない (使用量台帳 `ai/usage.rs` と同じ方針)。
+pub(crate) async fn blocking_store<T, F>(f: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn list_assertions() -> Result<Vec<Assertion>> {
-    store::load_all()
+    blocking_store(store::load_all).await
 }
 
 #[tauri::command]
@@ -76,13 +88,14 @@ pub async fn save_assertion(req: SaveAssertionRequest) -> Result<Assertion> {
         table: req.table.trim().to_string(),
         rule: req.rule,
     };
-    store::upsert(assertion.clone())?;
+    let to_save = assertion.clone();
+    blocking_store(move || store::upsert(to_save)).await?;
     Ok(assertion)
 }
 
 #[tauri::command]
 pub async fn delete_assertion(id: String) -> Result<()> {
-    store::delete(&id)
+    blocking_store(move || store::delete(&id)).await
 }
 
 /// 編集フォーム用: 保存前のルールを `driver` 方言の SQL に変換して返す
@@ -105,7 +118,8 @@ pub async fn run_assertion(
     query_timeout_secs: Option<u64>,
     state: State<'_, AppState>,
 ) -> Result<AssertionOutcome> {
-    let assertion = store::get(&id)?;
+    let id_for_get = id.clone();
+    let assertion = blocking_store(move || store::get(&id_for_get)).await?;
     run_assertion_with(
         state.inner(),
         &session_id,

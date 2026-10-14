@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
+import { clearTaskFormatCache } from "../taskFormat";
 import userEvent from "@testing-library/user-event";
 import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
@@ -259,10 +260,12 @@ describe("TaskForm 日次スケジュールの保存 (#1533)", () => {
   beforeAll(() => {
     // UTC 以外の環境でも変換が効くことを確かめるため JST に固定する。
     process.env.TZ = "Asia/Tokyo";
+    clearTaskFormatCache();
   });
   afterAll(() => {
     if (prevTz === undefined) delete process.env.TZ;
     else process.env.TZ = prevTz;
+    clearTaskFormatCache();
   });
 
   it("ローカル時刻で入力した日次時刻が UTC に変換されて saveTask に渡る", async () => {

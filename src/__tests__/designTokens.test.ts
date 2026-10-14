@@ -305,7 +305,6 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/TaskManager.tsx", 7],
     ["../components/TestDataModal.tsx", 5],
     ["../components/UsersPanel.tsx", 1],
-    ["../components/WelcomeView.tsx", 1],
     ["../components/WhereUsedPanel.tsx", 1],
   ]);
 

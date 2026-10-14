@@ -47,7 +47,7 @@ const INT_ALIASES: Record<string, string> = {
 export type TypeSpec =
   | { kind: "string"; length: number | null }
   | { kind: "int"; range: NumericRange }
-  | { kind: "decimal"; integerDigits: number | null }
+  | { kind: "decimal"; integerDigits: number | null; scale: number | null }
   | { kind: "float" }
   | { kind: "other" };
 
@@ -96,16 +96,20 @@ export function parseTypeSpec(driver: string, raw: string): TypeSpec {
     const p = args.length > 0 ? Number(args[0]) : NaN;
     const s = args.length > 1 ? Number(args[1]) : 0;
     if (Number.isInteger(p) && Number.isInteger(s))
-      return { kind: "decimal", integerDigits: Math.max(p - s, 0) };
+      return { kind: "decimal", integerDigits: Math.max(p - s, 0), scale: s };
     // 引数なし: MySQL は DECIMAL(10,0)、PostgreSQL は精度無制限。
-    return { kind: "decimal", integerDigits: driver === "mysql" ? 10 : null };
+    return {
+      kind: "decimal",
+      integerDigits: driver === "mysql" ? 10 : null,
+      scale: driver === "mysql" ? 0 : null,
+    };
   }
   if (["float", "double", "double precision", "real", "float4", "float8"].includes(name))
     return { kind: "float" };
   return { kind: "other" };
 }
 
-export type PrecheckKind = "length" | "range" | "decimal" | "notNull";
+export type PrecheckKind = "length" | "range" | "decimal" | "scale" | "notNull";
 
 /** 事前検査 1 件。`sql` は「収まらない行数」を返す `SELECT COUNT(*)`。 */
 export interface AlterPrecheck {
@@ -212,6 +216,26 @@ export function buildAlterPrechecks(
           sql: count(`ABS(${col}) >= 1${"0".repeat(newSpec.integerDigits)}`),
         });
       }
+    }
+
+    // 小数桁だけの縮小 (decimal(10,4) → decimal(10,2) など) は、MySQL / PostgreSQL とも値を
+    // 無言で丸める。丸めると値が変わる行数を数える。旧型が無制限 numeric (scale=null) なら
+    // 新しい scale 以下に収まる保証がないので同様に検査する。float 由来は丸め誤差で
+    // 偽陽性が出るため対象外。
+    if (
+      oldSpec.kind === "decimal" &&
+      newSpec.kind === "decimal" &&
+      newSpec.scale !== null &&
+      (oldSpec.scale === null || oldSpec.scale > newSpec.scale)
+    ) {
+      out.push({
+        id: `scale:${edit.original}`,
+        kind: "scale",
+        column: edit.original,
+        from: base.type,
+        to: edit.type,
+        sql: count(`${col} IS NOT NULL AND ROUND(${col}, ${newSpec.scale}) <> ${col}`),
+      });
     }
   }
   return out;
