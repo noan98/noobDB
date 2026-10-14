@@ -318,9 +318,12 @@ fn decimal_sql(driver: DriverKind, precision: Option<u32>, scale: Option<u32>) -
     match (precision, scale) {
         (Some(p), s) if p > 0 => {
             let p = p.min(max_p);
-            // MySQL のスケール上限は 30。
-            let max_s = if driver == DriverKind::Mysql { 30 } else { p };
-            let s = s.unwrap_or(0).min(p).min(max_s);
+            // MySQL のスケール上限は 30 で、s <= p が必須。PostgreSQL は NUMERIC(3,5) の
+            // ように s > p も正当な定義 (上限 1000) なので p に丸めない (#1598)。
+            let s = match driver {
+                DriverKind::Mysql => s.unwrap_or(0).min(p).min(30),
+                _ => s.unwrap_or(0).min(1000),
+            };
             format!("{}({p},{s})", decimal_keyword(driver))
         }
         _ => match driver {
@@ -440,6 +443,16 @@ pub fn value_to_cell(driver: DriverKind, ty: &TransferType, value: &Value) -> Op
         let text = value_to_cell_inner(driver, ty, value)?;
         return Some(text.bytes().map(|b| format!("{b:02x}")).collect());
     }
+    // PostgreSQL の bytea は文字列をエスケープ形式 (`\\` や `\x41`) として解釈してしまう
+    // ので、バイト列以外は同じく `\x` + hex で渡して値を保つ (#1598)。
+    if *ty == TransferType::Binary
+        && driver == DriverKind::Postgres
+        && !matches!(value, Value::Bytes(_) | Value::Null)
+    {
+        let text = value_to_cell_inner(driver, ty, value)?;
+        let hex: String = text.bytes().map(|b| format!("{b:02x}")).collect();
+        return Some(format!("\\x{hex}"));
+    }
     value_to_cell_inner(driver, ty, value)
 }
 
@@ -474,6 +487,28 @@ fn value_to_cell_inner(driver: DriverKind, ty: &TransferType, value: &Value) -> 
         // 真偽値列へ 0 / 1 以外の整数 (SQLite は型を強制しない。BIT(n) も該当) が来ても
         // `true` へ黙って丸めない。そのままの数値テキストで渡し、ターゲットが保持できれば
         // 値を保ち (MySQL / SQLite)、できなければ (PostgreSQL の BOOLEAN) 行エラーにする。
+        // MySQL の BIT(n) は 16 進文字列 (`Bytes`)、PostgreSQL の bit(n) は `'10101010'` の
+        // ビット列で届く。そのまま渡すと MySQL では `'0a'` が 0 になり、PostgreSQL の
+        // BOOLEAN は構文エラーになるので、整数値に直して渡す (#1598)。
+        Value::Bytes(hex) if *ty == TransferType::Boolean => {
+            Some(match u64::from_str_radix(hex, 16) {
+                Ok(n) if n <= 1 => bool_text(n == 1),
+                Ok(n) => n.to_string(),
+                Err(_) => hex.clone(),
+            })
+        }
+        Value::String(s)
+            if *ty == TransferType::Boolean
+                && s.len() > 1
+                && s.len() <= 64
+                && s.bytes().all(|b| b == b'0' || b == b'1') =>
+        {
+            Some(match u64::from_str_radix(s, 2) {
+                Ok(n) if n <= 1 => bool_text(n == 1),
+                Ok(n) => n.to_string(),
+                Err(_) => s.clone(),
+            })
+        }
         Value::Int(n) if *ty == TransferType::Boolean && (*n == 0 || *n == 1) => {
             Some(bool_text(*n == 1))
         }
@@ -527,7 +562,7 @@ pub fn lossy_conversions(driver: DriverKind, columns: &[TransferColumn]) -> Vec<
             TransferType::Decimal { precision, scale } => {
                 let (max_p, max_s) = match driver {
                     DriverKind::Mysql => (65, 30),
-                    DriverKind::Postgres => (1000, u32::MAX),
+                    DriverKind::Postgres => (1000, 1000),
                     DriverKind::Sqlite => (0, 0),
                 };
                 if driver == DriverKind::Sqlite {
@@ -541,7 +576,13 @@ pub fn lossy_conversions(driver: DriverKind, columns: &[TransferColumn]) -> Vec<
                     } else {
                         None
                     }
-                } else if precision.is_some_and(|p| p > max_p) || scale.is_some_and(|s| s > max_s) {
+                } else if precision.is_some_and(|p| p > max_p)
+                    || scale.is_some_and(|s| s > max_s)
+                    // MySQL の DECIMAL は s <= p が必須なので、PostgreSQL の NUMERIC(3,5) の
+                    // ような定義は p に丸められる (#1598)。
+                    || (driver == DriverKind::Mysql
+                        && matches!((precision, scale), (Some(p), Some(s)) if s > p))
+                {
                     Some(LossyKind::DecimalClamped)
                 } else {
                     None
@@ -937,7 +978,8 @@ mod tests {
         );
         assert_eq!(
             value_to_cell(DriverKind::Postgres, &bin, &Value::String("AB".into())).as_deref(),
-            Some("AB")
+            // bytea のエスケープ形式として解釈されないよう `\x` + hex で渡す (#1598)
+            Some("\\x4142")
         );
         // バイナリでない列に入るバイト列は hex テキストのまま
         assert_eq!(
@@ -1037,5 +1079,71 @@ mod tests {
         assert!(TransferMode::Upsert.writes_existing_table());
         assert!(TransferMode::Append.writes_existing_table());
         assert!(!TransferMode::Replace.writes_existing_table());
+    }
+
+    #[test]
+    fn postgres_numeric_scale_above_precision_is_kept_1598() {
+        let d = |driver, p, s| decimal_sql(driver, Some(p), Some(s));
+        assert_eq!(d(DriverKind::Postgres, 3, 5), "NUMERIC(3,5)");
+        // MySQL は s <= p が必須なので p に丸め、警告する。
+        assert_eq!(d(DriverKind::Mysql, 3, 5), "DECIMAL(3,3)");
+        let cols = vec![TransferColumn {
+            name: "a".into(),
+            ty: TransferType::Decimal {
+                precision: Some(3),
+                scale: Some(5),
+            },
+            source_type: "NUMERIC(3,5)".into(),
+        }];
+        assert!(lossy_conversions(DriverKind::Postgres, &cols).is_empty());
+        assert_eq!(lossy_conversions(DriverKind::Mysql, &cols).len(), 1);
+    }
+
+    #[test]
+    fn bit_values_become_integers_for_boolean_columns_1598() {
+        let b = TransferType::Boolean;
+        let bytes = |h: &str| Value::Bytes(h.into());
+        assert_eq!(
+            value_to_cell(DriverKind::Mysql, &b, &bytes("0a")).as_deref(),
+            Some("10")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Sqlite, &b, &bytes("01")).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &b, &bytes("01")).as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &b, &bytes("00")).as_deref(),
+            Some("false")
+        );
+        let s = |t: &str| Value::String(t.into());
+        assert_eq!(
+            value_to_cell(DriverKind::Mysql, &b, &s("10101010")).as_deref(),
+            Some("170")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &b, &s("1")).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &b, &s("true")).as_deref(),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn postgres_bytea_gets_hex_for_non_bytes_1598() {
+        let bin = TransferType::Binary;
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &bin, &Value::String("a\\\\b".into())).as_deref(),
+            Some("\\x615c5c62")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &bin, &Value::Bytes("41".into())).as_deref(),
+            Some("\\x41")
+        );
     }
 }

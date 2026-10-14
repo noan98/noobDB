@@ -423,6 +423,40 @@ pub struct ImportOutcome {
     pub skipped: Vec<SkippedRow>,
 }
 
+/// 取り込みの 1 行 / 1 チャンクの失敗が「行データ起因」か。DB がステートメントを
+/// 拒否した (制約違反・型不一致・桁あふれなど) 場合だけ true で、スキップ型の取り込みは
+/// その行を記録して続行する。接続断・プール枯渇・TLS・I/O などの全体障害は false で、
+/// 残りの行も同じ理由で失敗するので取り込みを中断する (#1598)。
+fn is_row_level_import_error(e: &AppError) -> bool {
+    match e {
+        AppError::Sqlx(sqlx::Error::Database(db)) => {
+            let mysql_no = db
+                .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+                .map(|m| m.number());
+            !is_fatal_db_rejection(db.code().as_deref(), mysql_no, db.message())
+        }
+        AppError::InvalidInput(_) => true,
+        _ => false,
+    }
+}
+
+/// DB がステートメントを拒否した理由が行データではなく**全体障害** (テーブル消失・
+/// 権限不足・列消失・読み取り専用・スキーマ消失) か。残りの行も同じ理由で失敗するので、
+/// 行単位で再試行せず取り込みを中断する (#1598)。
+/// - PostgreSQL: SQLSTATE 42P01 / 42501 / 42703 / 3F000 / 25006
+/// - MySQL: エラー番号 1146 / 1142 / 1044 / 1054 / 1290 / 1036
+/// - SQLite: メッセージの "no such table" / "readonly"
+fn is_fatal_db_rejection(code: Option<&str>, mysql_number: Option<u16>, message: &str) -> bool {
+    if matches!(code, Some("42P01" | "42501" | "42703" | "3F000" | "25006")) {
+        return true;
+    }
+    if matches!(mysql_number, Some(1146 | 1142 | 1044 | 1054 | 1290 | 1036)) {
+        return true;
+    }
+    let m = message.to_ascii_lowercase();
+    m.contains("no such table") || m.contains("readonly database")
+}
+
 impl Connection {
     /// The driver backing this connection.
     pub fn driver_kind(&self) -> DriverKind {
@@ -916,6 +950,15 @@ impl Connection {
                 .await
             {
                 Ok(()) => inserted += chunk.len() as u64,
+                // 接続断・プール枯渇・TLS 失敗など行データと無関係な全体障害は、
+                // 行単位の再試行をせず取り込み全体を中断する (#1598)。残り全行を
+                // 1 行ずつ試して大量の SkippedRow を記録することを防ぐ。
+                Err(e) if !is_row_level_import_error(&e) => {
+                    // 中断前にコミット済みの件数を呼び出し側へ渡す (キャンセル時と同様に
+                    // キャッシュ無効化・履歴・エラー文へ反映するため)。
+                    let _ = on_progress(inserted);
+                    return Err(e);
+                }
                 // A single-row chunk can't be narrowed further, so record it
                 // directly instead of re-issuing the same failing INSERT.
                 Err(e) if chunk.len() == 1 => skipped.push(SkippedRow {
@@ -937,11 +980,18 @@ impl Connection {
                             .await
                         {
                             Ok(()) => inserted += 1,
+                            Err(e) if !is_row_level_import_error(&e) => {
+                                let _ = on_progress(inserted);
+                                return Err(e);
+                            }
                             Err(e) => skipped.push(SkippedRow {
                                 index: start + i,
                                 reason: e.to_string(),
                             }),
                         }
+                        // 行単位の再試行中も `committed` の件数を最新に保つ (キャンセルは abort で効く。
+                        // 進捗イベント自体は呼び出し側で間引かれる)。
+                        on_progress(inserted)?;
                     }
                 }
             }
@@ -3863,6 +3913,56 @@ fn is_aggregate_expr(item: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_database_rejections_are_row_level_import_errors_1598() {
+        use super::{is_fatal_db_rejection, is_row_level_import_error, AppError};
+        assert!(is_fatal_db_rejection(
+            Some("42P01"),
+            None,
+            "relation does not exist"
+        ));
+        assert!(is_fatal_db_rejection(
+            Some("42501"),
+            None,
+            "permission denied"
+        ));
+        assert!(is_fatal_db_rejection(Some("3F000"), None, ""));
+        assert!(is_fatal_db_rejection(
+            Some("42S02"),
+            Some(1146),
+            "Table doesn't exist"
+        ));
+        assert!(is_fatal_db_rejection(None, Some(1142), ""));
+        assert!(is_fatal_db_rejection(None, None, "no such table: t"));
+        assert!(is_fatal_db_rejection(
+            None,
+            None,
+            "attempt to write a readonly database"
+        ));
+        // 行データ起因 (一意制約・NOT NULL・型・桁あふれ) は行単位で続行する。
+        assert!(!is_fatal_db_rejection(Some("23505"), None, "duplicate key"));
+        assert!(!is_fatal_db_rejection(
+            Some("22001"),
+            Some(1406),
+            "Data too long"
+        ));
+        assert!(!is_fatal_db_rejection(
+            None,
+            None,
+            "UNIQUE constraint failed: t.id"
+        ));
+        assert!(is_row_level_import_error(&AppError::InvalidInput(
+            "x".into()
+        )));
+        assert!(!is_row_level_import_error(&AppError::Sqlx(
+            sqlx::Error::PoolClosed
+        )));
+        assert!(!is_row_level_import_error(&AppError::Sqlx(
+            sqlx::Error::PoolTimedOut
+        )));
+        assert!(!is_row_level_import_error(&AppError::Timeout(1)));
+    }
+
     #[test]
     fn upsert_inserts_are_recognised() {
         use super::{insert_is_upsert, DriverKind};
