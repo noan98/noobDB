@@ -26,6 +26,32 @@ export interface PinnedResult {
 export const MAX_PINNED = 6;
 
 /**
+ * 行差分の既定キー列を選ぶ。両方の結果で「全行の値が非 NULL かつ重複なし」の最初の列。
+ * 一意でない列をキーにすると重複キーの行が同じ前回行とペアリングされ、同一データでも
+ * 変更・削除が出てしまう。一意な列が無ければ先頭列 (ユーザーが手動で選び直す前提)。
+ */
+export function defaultKeyColumn(
+  left: { columns: Column[]; rows: CellValue[][] },
+  right: { rows: CellValue[][] },
+): string | null {
+  const unique = (rows: CellValue[][], idx: number): boolean => {
+    const seen = new Set<string>();
+    for (const r of rows) {
+      const v = r[idx];
+      if (v === null || v === undefined) return false;
+      const k = String(v);
+      if (seen.has(k)) return false;
+      seen.add(k);
+    }
+    return true;
+  };
+  for (let i = 0; i < left.columns.length; i++) {
+    if (unique(left.rows, i) && unique(right.rows, i)) return left.columns[i].name;
+  }
+  return left.columns[0]?.name ?? null;
+}
+
+/**
  * 2 つの結果が行差分を取れる「同一カラム構成」か。列数とすべての列名 (順序込み) が
  * 一致するときだけ true。空 (列なし) は比較不能として false。
  */

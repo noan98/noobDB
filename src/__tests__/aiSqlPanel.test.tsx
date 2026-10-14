@@ -269,6 +269,15 @@ describe("AiSqlPanel (#695)", () => {
     await screen.findByText(t("aiSqlError", { message: "boom" }));
   });
 
+  it("エディタへの適用が例外を投げたらエラーを出し、再試行できる (#1603)", async () => {
+    renderWithProviders(ui(req({ kind: "rewrite" })));
+    await finish(rewriteJson);
+    onApply.mockRejectedValueOnce(new Error("tab gone"));
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
+    await screen.findByText(t("aiSqlApplyError", { message: "Error: tab gone" }));
+    expect((screen.getByRole("button", { name: t("aiSqlApply") }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("アンマウント時に実行中のストリームを cancelStream する", async () => {
     const { unmount } = renderWithProviders(ui(req()));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());

@@ -216,3 +216,10 @@ describe("stripNonInsertableSeed (#1357 row duplication)", () => {
     expect(stripNonInsertableSeed("mysql", seed, columns, [])).toEqual(seed);
   });
 });
+
+describe("insertDefaultHint: PostgreSQL IDENTITY (#1607)", () => {
+  it("extra=IDENTITY を自動採番として扱い、複製の種から除く", () => {
+    const id = meta({ name: "id", data_type: "bigint", key: "PRI", extra: "IDENTITY" });
+    expect(insertDefaultHint("postgres", id, [id])).toEqual({ kind: "auto" });
+  });
+});

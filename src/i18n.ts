@@ -146,6 +146,7 @@ const en = {
   aiSqlProdBody: "This connection is marked as production. The SQL and table definitions will be sent to the Anthropic API.",
   aiSqlConfirmSend: "Send",
   aiSqlError: "AI request failed: {message}",
+  aiSqlApplyError: "Could not apply to the editor: {message}. Press Apply again to retry.",
   aiSqlRefused: "The AI declined to answer: {message}",
   aiSqlParseError: "Could not read the structured response. Showing the raw text.",
   aiSqlOverview: "Overview",
@@ -589,6 +590,7 @@ const en = {
   settingsFontDefault: "System default",
   settingsFontCustom: "Custom…",
   settingsFontCustomPlaceholder: "e.g. JetBrains Mono",
+  settingsHistoryRetentionLoadFailed: "Could not load the history retention period: {error}",
   settingsFontSample: "The quick brown fox 0123",
   settingsThemePreset: "Theme preset",
   settingsThemePresetHelp: "Switches the whole color palette. Accent color, density and syntax colors are kept as-is. Dracula, Nord, One Dark and Catppuccin Mocha are dark-only; the other presets follow the light/dark toggle.",
@@ -1102,6 +1104,7 @@ const en = {
   formNewTitle: "New Connection",
   formName: "Name",
   formNamePlaceholder: "My DB",
+  formNameRequired: "Enter a connection name.",
   formDriver: "Driver",
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
@@ -1500,6 +1503,7 @@ const en = {
     "This table has no primary key, and some of the loaded rows have identical values in every column. {count} statement(s) will run, and a statement targeting a duplicated row will affect all of its duplicates at once. Continue?",
   editApplyDisabledInvalid: "Fix the highlighted invalid edits before applying.",
   editInvalidNumber: "Enter a number (or NULL).",
+  editInvalidInteger: "Enter a whole number (or NULL). This column is an integer type.",
   editInvalidDate: "Enter a date like 2024-01-31 (or NULL).",
   editInvalidDateTime: "Enter a date-time like 2024-01-31 12:00:00 (or NULL).",
   editInvalidTime: "Enter a time like 12:00:00 (or NULL).",
@@ -1518,6 +1522,8 @@ const en = {
   editBlurDiscard: "Discard",
   statusApplyingEdits: "Applying {count} update(s)...",
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
+  statusAppliedEditsShortfall:
+    "Applied, but only {rows} of {count} row(s) were affected. Some rows were not found (they may have been changed or deleted elsewhere) and were not written. Reload the data to check the current state.",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
@@ -1770,7 +1776,7 @@ const en = {
     "Aggregated over the {count} fetched rows (in memory). Send the GROUP BY SQL to the editor to re-aggregate the full source query on the server.",
   pivotSendSql: "Send GROUP BY SQL",
   pivotTruncated:
-    "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted.",
+    "Truncated to the first {rows} row groups / {cols} column groups; the rest were omitted from the table (totals still include them).",
   pivotNoData: "No data to pivot.",
   // テーブル複製 (#1398)。
   cloneTableTitle: "Duplicate table",
@@ -2182,6 +2188,8 @@ const en = {
   transferTableExists: "Table {table} already exists. Choose “Replace” or “Append”.",
   transferTableMissing: "Table {table} does not exist, so rows cannot be appended.",
   transferSameTable: "The source and target are the same table.",
+  transferQueryReadsTarget:
+    "The source query reads the table \"{table}\". Replacing it would drop the data being read.",
   transferModeLabel: "If the table exists",
   transferModeCreate: "Create a new table (fail if it exists)",
   transferModeReplace: "Replace (drop and recreate)",
@@ -3165,6 +3173,7 @@ const en = {
     "Rows the database rejects are skipped and reported at the end. Not all-or-nothing — good rows are committed.",
   importErrorAtRecord: "{error} (failed at record {record})",
   importErrorAtRecordLine: "{error} (failed at record {record}, line {line})",
+  importErrorCommitted: "{error} ({committed} rows were already committed)",
   importSkippedSummary: "Imported {inserted} rows; skipped {skipped}.",
   importSkippedRow: "record {record}: {reason}",
   importSkippedRowLine: "record {record} (line {line}): {reason}",
@@ -5231,6 +5240,7 @@ const ja: Dict = {
   aiSqlProdBody: "この接続は本番として設定されています。SQL とテーブル定義が Anthropic の API へ送信されます。",
   aiSqlConfirmSend: "送信する",
   aiSqlError: "AI への問い合わせに失敗しました: {message}",
+  aiSqlApplyError: "エディタへの適用に失敗しました: {message}。もう一度「エディタに適用」を押してください。",
   aiSqlRefused: "AI が回答を拒否しました: {message}",
   aiSqlParseError: "構造化された応答として読み取れませんでした。本文をそのまま表示します。",
   aiSqlOverview: "概要",
@@ -5674,6 +5684,7 @@ const ja: Dict = {
   settingsFontDefault: "システム既定",
   settingsFontCustom: "カスタム…",
   settingsFontCustomPlaceholder: "例: JetBrains Mono",
+  settingsHistoryRetentionLoadFailed: "履歴保持期間を読み込めませんでした: {error}",
   settingsFontSample: "あいう The quick fox 0123",
   settingsThemePreset: "テーマプリセット",
   settingsThemePresetHelp: "配色全体を切り替えます。アクセント色・表示密度・シンタックス配色はそのまま維持されます。Dracula / Nord / One Dark / Catppuccin Mocha はダーク専用で、その他のプリセットはライト/ダーク切替に追従します。",
@@ -6187,6 +6198,7 @@ const ja: Dict = {
   formNewTitle: "新規接続",
   formName: "名前",
   formNamePlaceholder: "例: My DB",
+  formNameRequired: "接続名を入力してください。",
   formDriver: "ドライバ",
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
@@ -6584,6 +6596,7 @@ const ja: Dict = {
     "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。{count} 件の文を実行しますが、重複行を対象とした文はその重複すべてに影響します。続行しますか？",
   editApplyDisabledInvalid: "不正な入力を修正してから適用してください。",
   editInvalidNumber: "数値を入力してください（または NULL）。",
+  editInvalidInteger: "整数を入力してください（または NULL）。この列は整数型です。",
   editInvalidDate: "日付を入力してください（例: 2024-01-31、または NULL）。",
   editInvalidDateTime: "日時を入力してください（例: 2024-01-31 12:00:00、または NULL）。",
   editInvalidTime: "時刻を入力してください（例: 12:00:00、または NULL）。",
@@ -6602,6 +6615,8 @@ const ja: Dict = {
   editBlurDiscard: "破棄",
   statusApplyingEdits: "{count} 件の UPDATE を適用中...",
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
+  statusAppliedEditsShortfall:
+    "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。再読込して現在の状態を確認してください。",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial: "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 
@@ -6854,7 +6869,7 @@ const ja: Dict = {
     "取得済みの {count} 行を在メモリで集計しています。ソースクエリ全体を DB 側で集計し直すには GROUP BY SQL をエディタへ送ってください。",
   pivotSendSql: "GROUP BY SQL を送る",
   pivotTruncated:
-    "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは省略)。",
+    "先頭の {rows} 行グループ / {cols} 列グループのみ表示しています (残りは表から省略しますが、総計には含まれます)。",
   pivotNoData: "ピボットするデータがありません。",
   // テーブル複製 (#1398)。
   cloneTableTitle: "テーブルを複製",
@@ -7264,6 +7279,8 @@ const ja: Dict = {
   transferTableExists: "テーブル {table} は既に存在します。「置き換え」か「追記」を選んでください。",
   transferTableMissing: "テーブル {table} が存在しないため追記できません。",
   transferSameTable: "コピー元とコピー先が同じテーブルです。",
+  transferQueryReadsTarget:
+    "クエリが転送先テーブル「{table}」を参照しています。置き換えると読み取り元が消えます。",
   transferModeLabel: "テーブルが既にある場合",
   transferModeCreate: "新規作成 (既にあれば失敗)",
   transferModeReplace: "置き換え (削除して作り直す)",
@@ -8243,6 +8260,7 @@ const ja: Dict = {
     "データベースが拒否した行はスキップし、最後に一覧報告します。all-or-nothing ではなく、正常な行はコミットされます。",
   importErrorAtRecord: "{error} (レコード {record} で失敗)",
   importErrorAtRecordLine: "{error} (レコード {record}, 行 {line} で失敗)",
+  importErrorCommitted: "{error} ({committed} 行はコミット済み)",
   importSkippedSummary: "{inserted} 行をインポート、{skipped} 行をスキップしました。",
   importSkippedRow: "レコード {record}: {reason}",
   importSkippedRowLine: "レコード {record} (行 {line}): {reason}",

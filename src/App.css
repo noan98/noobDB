@@ -2149,13 +2149,14 @@ html, body, #root {
 }
 /* CodeMirror 既定の文字グリフ (::after) は止める。 */
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon::after { content: none; }
-.cm-tooltip-autocomplete .cm-completionIcon-table,
-.cm-tooltip-autocomplete .cm-completionIcon-database { color: var(--db-accent); }
-.cm-tooltip-autocomplete .cm-completionIcon-columns { color: var(--text-secondary); }
-.cm-tooltip-autocomplete .cm-completionIcon-link { color: var(--accent); }
-.cm-tooltip-autocomplete .cm-completionIcon-routine { color: var(--syntax-function); }
-.cm-tooltip-autocomplete .cm-completionIcon-braces,
-.cm-tooltip-autocomplete .cm-completionIcon-hash { color: var(--text-muted); }
+/* 詳細度は上の基底ルール (0,3,0) より高くする (0,4,0)。同じ・低いと色分けが負ける。 */
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-table,
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-database { color: var(--db-accent); }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-columns { color: var(--text-secondary); }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-link { color: var(--accent); }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-routine { color: var(--syntax-function); }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-braces,
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-hash { color: var(--text-muted); }
 
 /* 列候補の情報パネル (#1413)。補完ポップアップ本体と同じ面・縁・影で揃える。 */
 .cm-tooltip.cm-completionInfo {

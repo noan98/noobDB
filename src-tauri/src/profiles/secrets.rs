@@ -57,10 +57,6 @@ fn has_secret(profile_id: &str, kind: &str) -> bool {
     matches!(get_secret(profile_id, kind), Ok(Some(_)))
 }
 
-pub fn set_db_password(profile_id: &str, password: &str) -> Result<()> {
-    set_secret(profile_id, "db_password", password)
-}
-
 pub fn get_db_password(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "db_password")
 }
@@ -73,10 +69,6 @@ pub fn delete_db_password(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "db_password")
 }
 
-pub fn set_ssh_passphrase(profile_id: &str, passphrase: &str) -> Result<()> {
-    set_secret(profile_id, "ssh_passphrase", passphrase)
-}
-
 pub fn get_ssh_passphrase(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "ssh_passphrase")
 }
@@ -87,10 +79,6 @@ pub fn has_ssh_passphrase(profile_id: &str) -> bool {
 
 pub fn delete_ssh_passphrase(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "ssh_passphrase")
-}
-
-pub fn set_ssh_password(profile_id: &str, password: &str) -> Result<()> {
-    set_secret(profile_id, "ssh_password", password)
 }
 
 pub fn get_ssh_password(profile_id: &str) -> Result<Option<String>> {
@@ -109,10 +97,6 @@ pub fn delete_ssh_password(profile_id: &str) -> Result<()> {
 /// alongside — never collide with — the main SSH hop's `ssh_passphrase` /
 /// `ssh_password` entries above, which keep their pre-#708 kind names for
 /// backward compatibility with profiles saved before multi-hop existed.
-pub fn set_ssh_jump_passphrase(profile_id: &str, passphrase: &str) -> Result<()> {
-    set_secret(profile_id, "ssh_passphrase_hop0", passphrase)
-}
-
 pub fn get_ssh_jump_passphrase(profile_id: &str) -> Result<Option<String>> {
     get_secret(profile_id, "ssh_passphrase_hop0")
 }
@@ -123,10 +107,6 @@ pub fn has_ssh_jump_passphrase(profile_id: &str) -> bool {
 
 pub fn delete_ssh_jump_passphrase(profile_id: &str) -> Result<()> {
     delete_secret(profile_id, "ssh_passphrase_hop0")
-}
-
-pub fn set_ssh_jump_password(profile_id: &str, password: &str) -> Result<()> {
-    set_secret(profile_id, "ssh_password_hop0", password)
 }
 
 pub fn get_ssh_jump_password(profile_id: &str) -> Result<Option<String>> {

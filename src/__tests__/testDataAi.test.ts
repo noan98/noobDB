@@ -40,7 +40,7 @@ const orderCols: TableColumnInfo[] = [
 ];
 
 function setup(hints: Record<string, string> = {}) {
-  const specs = orderCols.map(inferColumnSpec);
+  const specs = orderCols.map((c) => inferColumnSpec(c));
   const context = buildTestDataAiContext(orderCols, specs, hints, resolveUniqueColumns(orderCols, []).columns);
   return { specs, context };
 }
@@ -128,7 +128,7 @@ describe("buildTestDataPlan", () => {
 
   it("JS の安全整数を超える整数候補は採用しない (丸められて別の値が入るため)", () => {
     const cols = [col({ name: "ref_no", data_type: "bigint" })];
-    const ctx = buildTestDataAiContext(cols, cols.map(inferColumnSpec), {}, []);
+    const ctx = buildTestDataAiContext(cols, cols.map((c) => inferColumnSpec(c)), {}, []);
     const big: TestDataAiResponse = {
       columns: [{ name: "ref_no", kind: "choices", choices: ["9007199254740993", "9007199254740991"], notes: "" }],
       consistency_rules: [],
@@ -213,7 +213,7 @@ describe("generateAiRows (#698)", () => {
 
   it("候補が少ない UNIQUE 文字列列は連番サフィックスで一意化する", () => {
     const cols = [col({ name: "code", key: "UNI" })];
-    const specs = cols.map(inferColumnSpec);
+    const specs = cols.map((c) => inferColumnSpec(c));
     const plan = buildTestDataPlan(
       { columns: [{ name: "code", kind: "choices", choices: ["A", "B", "C"], notes: "" }], consistency_rules: [] },
       buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
@@ -233,7 +233,7 @@ describe("generateAiRows (#698)", () => {
 
   it("UNIQUE 文字列は宣言長を超えず、メールは @ の前にサフィックスが入り、大小違いも衝突とみなす", () => {
     const cols = [col({ name: "email", data_type: "varchar(20)", key: "UNI" })];
-    const specs = cols.map(inferColumnSpec);
+    const specs = cols.map((c) => inferColumnSpec(c));
     const plan = buildTestDataPlan(
       { columns: [{ name: "email", kind: "choices", choices: ["Taro@ex.com", "taro@ex.com"], notes: "" }], consistency_rules: [] },
       buildTestDataAiContext(cols, specs, {}, ["email"]).columns,
@@ -249,7 +249,7 @@ describe("generateAiRows (#698)", () => {
 
   it("{n} の開始値はシードで変わるが、同じシードなら同じ", () => {
     const cols = [col({ name: "code", key: "UNI" })];
-    const specs = cols.map(inferColumnSpec);
+    const specs = cols.map((c) => inferColumnSpec(c));
     const plan = buildTestDataPlan(
       { columns: [{ name: "code", kind: "pattern", choices: ["C{n}"], notes: "" }], consistency_rules: [] },
       buildTestDataAiContext(cols, specs, {}, ["code"]).columns,
@@ -270,7 +270,7 @@ describe("候補の検証 (#698 レビュー)", () => {
     col({ name: "at", data_type: "time" }),
     col({ name: "note", data_type: "varchar(10)" }),
   ];
-  const ctx = () => buildTestDataAiContext(cols, cols.map(inferColumnSpec), {}, []).columns;
+  const ctx = () => buildTestDataAiContext(cols, cols.map((c) => inferColumnSpec(c)), {}, []).columns;
 
   it("整合ルールの列は除外後に添字がずれない (空要素・不正値の行は全列から落ちる)", () => {
     const plan = buildTestDataPlan(
@@ -357,5 +357,50 @@ describe("resolveUniqueColumns (#698 レビュー)", () => {
     ]);
     expect(r.columns).toEqual(["id", "email"]);
     expect(r.composite).toEqual([["a", "b"]]);
+  });
+});
+
+describe("uniquifyGeneratedRows (#1607)", () => {
+  it("UNIQUE 列の重複を解消し、先頭行は変えない", async () => {
+    const { uniquifyGeneratedRows } = await import("../ai/testData");
+    const { generateRows } = await import("../components/testDataGen");
+    const sp = inferColumnSpec({
+      name: "code",
+      data_type: "char(2)",
+      nullable: false,
+      key: "UNI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    });
+    const rows = [["ab"], ["ab"], ["ab"]];
+    const out = uniquifyGeneratedRows([sp], rows, ["code"]);
+    expect(new Set(out.map((r) => String(r[0]).toLowerCase())).size).toBe(3);
+    expect(out[0][0]).toBe("ab");
+    const num = inferColumnSpec({ ...{
+      name: "n", data_type: "int", nullable: false, key: "UNI", default: null, extra: "",
+      referenced_table: null, referenced_column: null } });
+    const big = generateRows([{ ...num, min: 1, max: 3 }], 50, 1);
+    const u = uniquifyGeneratedRows([num], big, ["n"]);
+    expect(new Set(u.map((r) => r[0])).size).toBe(50);
+  });
+
+  it("CHAR(2) UNIQUE でも宣言長を超えず、使い切ったら重複のまま返す", async () => {
+    const { uniquifyGeneratedRows } = await import("../ai/testData");
+    const sp = inferColumnSpec({
+      name: "code",
+      data_type: "char(2)",
+      nullable: false,
+      key: "UNI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    });
+    const rows = Array.from({ length: 30 }, () => ["ab"]);
+    const out = uniquifyGeneratedRows([sp], rows, ["code"]);
+    for (const r of out) expect(String(r[0]).length).toBeLessThanOrEqual(2);
+    expect(new Set(out.map((r) => String(r[0]).toLowerCase())).size).toBeGreaterThan(10);
   });
 });

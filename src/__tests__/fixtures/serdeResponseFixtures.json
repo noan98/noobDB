@@ -1337,6 +1337,7 @@
     "streamId": "strm0003"
   },
   "importErrorEvent": {
+    "committed": 12,
     "error": "NOT NULL constraint failed",
     "line": 4,
     "record": 3,

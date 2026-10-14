@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Column } from "../api/tauri";
 import { rowEditKey, type PendingEdits } from "../components/cellEdit";
-import { tabStateAfterApply, type ApplyTabState } from "../components/editApplyState";
+import { appliedRowShortfall, tabStateAfterApply, type ApplyTabState } from "../components/editApplyState";
 
 // 一括適用成功後のタブ状態遷移 (#1394 で行スコープを追加)。全体適用の従来挙動が変わらないこと
 // と、行スコープ適用で他の保留 (他行の編集・削除予定・新規行・履歴) が残ることを固定する。
@@ -160,5 +160,16 @@ describe("tabStateAfterApply: 行スコープ適用 (行インスペクタ #1394
     expect(out.pendingDeletes).toEqual([key3]);
     expect(out.pendingInserts).toEqual([{ 1: "dave" }]);
     expect(out.editUndoStack).toEqual(tt.editUndoStack);
+  });
+});
+
+describe("appliedRowShortfall", () => {
+  it("期待より少ない分だけ返す", () => {
+    expect(appliedRowShortfall(3, 0)).toBe(3);
+    expect(appliedRowShortfall(3, 2)).toBe(1);
+  });
+  it("一致または多い場合は 0", () => {
+    expect(appliedRowShortfall(3, 3)).toBe(0);
+    expect(appliedRowShortfall(3, 5)).toBe(0);
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
@@ -20,6 +20,7 @@ import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
+import { useAiKeyPresent } from "../ai/aiKeyStore";
 import { AiSetupHint } from "./AiSetupHint";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
@@ -62,26 +63,11 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
   const locale = useLocale();
   const ai = useSettings().ai;
   const { confirm, dialog } = useConfirm();
-  const [hasKey, setHasKey] = useState(false);
+  const hasKey = useAiKeyPresent();
   const [state, setState] = useState<State>({ kind: "idle" });
   const [collapsed, setCollapsed] = useState(false);
   const [inserted, setInserted] = useState<ReadonlySet<number>>(new Set());
   const stream = useAiStream({ idPrefix: "ai_explain" });
-
-  useEffect(() => {
-    let alive = true;
-    api
-      .hasAiApiKey()
-      .then((v) => {
-        if (alive) setHasKey(v);
-      })
-      .catch(() => {
-        /* 取得できなければ非表示のまま */
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   const tableRefs = useMemo(() => extractTableRefs(props.sql, props.driver), [props.sql, props.driver]);
   const sendsLine = (tableCount: number) =>

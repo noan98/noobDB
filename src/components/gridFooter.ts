@@ -1,4 +1,5 @@
 import type { CellValue } from "../api/tauri";
+import { setItemWithEviction, touchLayoutLruForKey } from "./columnLayoutStorage";
 import type { CellKind } from "./cellTypeMeta";
 import { integerCountUpTarget } from "../useCountUp";
 import { columnStats, isNumericStatsKind, nullRatePercentOf, type ColumnStats } from "./gridStats";
@@ -179,7 +180,8 @@ export function writeStoredFooterState(key: string | undefined, state: Persisted
     if (!state.enabled && !hasAggs) {
       localStorage.removeItem(key);
     } else {
-      localStorage.setItem(key, JSON.stringify(state));
+      touchLayoutLruForKey(key);
+      setItemWithEviction(key, JSON.stringify(state));
     }
   } catch {
     // ignore (private mode, quota)

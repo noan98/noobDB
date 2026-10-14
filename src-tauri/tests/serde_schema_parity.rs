@@ -748,6 +748,7 @@ fn build_fixtures() -> serde_json::Value {
         error: "NOT NULL constraint failed".into(),
         record: Some(3),
         line: Some(4),
+        committed: Some(12),
     };
 
     // `.sql` スクリプト実行 (#973) の `sql-script:*` ペイロード。

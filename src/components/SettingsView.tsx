@@ -171,11 +171,19 @@ function FontFamilyControl(props: {
 }) {
   const { value, presets, stack } = props;
   const isPreset = value !== null && presets.includes(value);
-  const selectValue = value === null ? FONT_DEFAULT : isPreset ? value : FONT_CUSTOM;
+  // 「カスタム」を選んだ直後は値がまだ空 (null) でも入力欄を出すため、選択状態を別に持つ。
+  const [customMode, setCustomMode] = useState(false);
+  const selectValue = customMode || (value !== null && !isPreset) ? FONT_CUSTOM : value === null ? FONT_DEFAULT : (value as string);
   const [customText, setCustomText] = useState(isPreset || value === null ? "" : (value ?? ""));
   useEffect(() => {
     if (value !== null && !presets.includes(value)) setCustomText(value);
+    // 外からプリセットか既定へ変わったらカスタム選択状態を解く。
+    else setCustomMode(false);
   }, [value, presets]);
+  const customInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (customMode) customInputRef.current?.focus();
+  }, [customMode]);
 
   const previewStack = stack(value) ?? "var(--font-mono)";
 
@@ -203,9 +211,13 @@ function FontFamilyControl(props: {
         value={selectValue}
         onChange={(e) => {
           const v = e.target.value;
+          setCustomMode(v === FONT_CUSTOM);
           if (v === FONT_DEFAULT) props.onChange(null);
-          else if (v === FONT_CUSTOM) props.onChange(customText.trim() || null);
-          else props.onChange(v);
+          else if (v === FONT_CUSTOM) {
+            // 入力済みのカスタム値があれば適用。空なら入力欄だけ出し、値は入力後に確定する。
+            const text = customText.trim();
+            if (text) props.onChange(text);
+          } else props.onChange(v);
         }}
       >
         <option value={FONT_DEFAULT}>{props.defaultLabel}</option>
@@ -219,11 +231,20 @@ function FontFamilyControl(props: {
       {selectValue === FONT_CUSTOM && (
         <Input
           width="auto"
+          ref={customInputRef}
           aria-label={props.customLabel}
           placeholder={props.placeholder}
           value={customText}
           onChange={(e) => setCustomText(e.target.value)}
-          onBlur={() => props.onChange(customText.trim() || null)}
+          onBlur={() => {
+            const text = customText.trim();
+            if (text) props.onChange(text);
+            else {
+              // 空のまま離れたら元の選択表示へ戻す (値がカスタムだった場合のみ既定へ)。
+              setCustomMode(false);
+              if (value !== null && !isPreset) props.onChange(null);
+            }
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
@@ -556,6 +577,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
+  { id: "settings-sec-schema-drift", titleKey: "settingsSchemaDrift" },
   { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
   { id: "settings-sec-flight-recorder", titleKey: "settingsFlightRecorder" },
   { id: "settings-sec-history", titleKey: "settingsHistory" },
@@ -673,6 +695,9 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const [historyRetentionInput, setHistoryRetentionInput] = useState("0");
   const [historyRetentionSaved, setHistoryRetentionSaved] = useState(0);
   const [historyRetentionLoading, setHistoryRetentionLoading] = useState(true);
+  // 取得に失敗したら欄を無効のままにする (初期値 "0" = 無期限と誤認させず、誤って上書きもさせない)。
+  const [historyRetentionLoadFailed, setHistoryRetentionLoadFailed] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: マウント時に 1 回だけ読む (toast は安定参照ではない)
   useEffect(() => {
     let cancelled = false;
     api
@@ -682,7 +707,12 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
         setHistoryRetentionSaved(d);
         setHistoryRetentionInput(String(d));
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (cancelled) return;
+        setHistoryRetentionLoadFailed(true);
+        setHistoryRetentionInput("");
+        toast.error(t("settingsHistoryRetentionLoadFailed", { error: String(e) }));
+      })
       .finally(() => {
         if (!cancelled) setHistoryRetentionLoading(false);
       });
@@ -1524,7 +1554,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
             step={1}
             value={historyRetentionInput}
             placeholder="0"
-            disabled={historyRetentionLoading}
+            disabled={historyRetentionLoading || historyRetentionLoadFailed}
             onChange={(e) => setHistoryRetentionInput(e.target.value)}
             onBlur={commitHistoryRetention}
             onKeyDown={(e) => {

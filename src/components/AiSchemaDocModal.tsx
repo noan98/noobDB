@@ -181,9 +181,18 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     () => (loaded.kind === "ready" ? filterForeignKeysInScope(loaded.foreignKeys, scopeNames) : []),
     [loaded, scopeNames],
   );
+  // 定義は送信直前に取得するので、取得予定の件数ぶんを上限見積もりで上乗せする。
+  const pendingObjectCount = useMemo(
+    () =>
+      loaded.kind === "ready"
+        ? selectDocObjects(loaded.objects, mode === "all" ? null : scopeNames).length
+        : 0,
+    [loaded, mode, scopeNames],
+  );
   const summary = useMemo(
-    () => summarizeSchemaDocSend({ tables: scopedTables, foreignKeys: scopedFks, objects: [] }),
-    [scopedTables, scopedFks],
+    () =>
+      summarizeSchemaDocSend({ tables: scopedTables, foreignKeys: scopedFks, objects: [] }, pendingObjectCount),
+    [scopedTables, scopedFks, pendingObjectCount],
   );
   const filteredNames = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -236,9 +245,10 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const runInner = async (ready: Extract<Loaded, { kind: "ready" }>) => {
     // 表・列・FK だけで送信上限を超えると分かっているなら、インデックスや定義を (件数ぶんの IPC で)
     // 取得する前に止める。文字数は UTF-8 バイト数以下なので、これで超えるなら必ず超える。
-    if (summary.approxChars > SCHEMA_DOC_MAX_PROMPT_BYTES) {
+    // 定義の上乗せぶん (上限見積もり) は含めない: 実際は収まる DB を止めないよう、下限値で判定する。
+    if (summary.baseChars > SCHEMA_DOC_MAX_PROMPT_BYTES) {
       stream.release();
-      setState({ kind: "tooBig", kb: approxKb(summary.approxChars) });
+      setState({ kind: "tooBig", kb: approxKb(summary.baseChars) });
       return;
     }
     if (props.isProduction) {

@@ -25,6 +25,12 @@ export interface ColumnFilter {
   /** Upper bound for `between`; ignored by every other operator. */
   value2: string;
   nullMode: FilterNullMode;
+  /**
+   * `equals` / `notEquals` を大小区別で比較する (省略時は従来どおり大小無視)。結果タブの
+   * 「この値を除外/一致」が、PostgreSQL・SQLite のテーブルタブ (`=` / `<>` は大小区別)
+   * と同じ行集合になるようにするためのもの。
+   */
+  caseSensitive?: boolean;
 }
 
 
@@ -103,8 +109,9 @@ function matchesColumnValue(v: Exclude<CellValue, null | undefined>, f: ColumnFi
     case "notEquals":
     case "startsWith":
     case "endsWith": {
-      const s = String(v).toLowerCase();
-      const q = f.value.toLowerCase();
+      const exact = f.caseSensitive === true && (f.op === "equals" || f.op === "notEquals");
+      const s = exact ? String(v) : String(v).toLowerCase();
+      const q = exact ? f.value : f.value.toLowerCase();
       if (f.op === "contains") return s.includes(q);
       if (f.op === "equals") return s === q;
       if (f.op === "notEquals") return s !== q;
@@ -190,6 +197,8 @@ export interface HandleFilterSpec {
   value: string;
   value2: string;
   nullMode: FilterNullMode;
+  /** `equals` / `notEquals` を大小区別で比較する (`ColumnFilter.caseSensitive` と同じ)。 */
+  caseSensitive?: boolean;
 }
 
 /** `result_sort_filter` の条件。 */
@@ -234,7 +243,14 @@ export function buildHandleRequest(
     if (!Number.isInteger(col) || col < 0 || col >= kinds.length) continue;
     const v = f.value as ColumnFilter | undefined;
     if (!isColumnFilterActive(v)) continue;
-    filters.push({ col, op: v.op, value: v.value, value2: v.value2, nullMode: v.nullMode });
+    filters.push({
+      col,
+      op: v.op,
+      value: v.value,
+      value2: v.value2,
+      nullMode: v.nullMode,
+      ...(v.caseSensitive ? { caseSensitive: true } : {}),
+    });
   }
   return { sort, filters, global: globalFilter ?? "" };
 }

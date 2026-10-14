@@ -39,7 +39,7 @@ function sqlOf(input: ColumnReplaceSqlInput): string {
 describe("buildColumnReplaceSql: 通常置換 (3 ドライバ)", () => {
   it("MySQL は REPLACE + INSTR で絞り込む", () => {
     expect(sqlOf(base())).toBe(
-      "UPDATE `app`.`users` SET `url` = REPLACE(`url`, 'http://', 'https://') WHERE INSTR(`url`, 'http://') > 0;",
+      "UPDATE `app`.`users` SET `url` = REPLACE(`url`, 'http://', 'https://') WHERE CAST(REPLACE(`url`, 'http://', 'https://') AS BINARY) <> CAST(`url` AS BINARY);",
     );
   });
   it("PostgreSQL は REPLACE + POSITION", () => {
@@ -70,9 +70,9 @@ describe("buildColumnReplaceSql: 通常置換 (3 ドライバ)", () => {
   });
   it("extraWhere は括弧で包んで AND 連結する", () => {
     expect(sqlOf(base({ extraWhere: "`id` > 5" }))).toContain(
-      "WHERE (`id` > 5) AND INSTR(`url`, 'http://') > 0;",
+      "WHERE (`id` > 5) AND CAST(REPLACE(`url`, 'http://', 'https://') AS BINARY) <> CAST(`url` AS BINARY);",
     );
-    expect(sqlOf(base({ extraWhere: "   " }))).toContain("WHERE INSTR(");
+    expect(sqlOf(base({ extraWhere: "   " }))).toContain("WHERE CAST(REPLACE(");
   });
 });
 
@@ -83,7 +83,7 @@ describe("buildColumnReplaceCountSql (#1536)", () => {
     return r.sql;
   };
   it("UPDATE と同じ WHERE 句で COUNT(*) を数える (3 ドライバ)", () => {
-    expect(countOf(base())).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE INSTR(`url`, 'http://') > 0");
+    expect(countOf(base())).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE CAST(REPLACE(`url`, 'http://', 'https://') AS BINARY) <> CAST(`url` AS BINARY)");
     expect(countOf(base({ driver: "postgres" }))).toBe(
       'SELECT COUNT(*) FROM "app"."users" WHERE POSITION(\'http://\' IN "url") > 0',
     );

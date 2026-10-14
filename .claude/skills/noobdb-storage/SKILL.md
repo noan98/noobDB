@@ -34,6 +34,11 @@ Tauri の `#[tauri::command] async fn` は同一プロセス内で**並行実行
 **新しい read-modify-write を足すときは内部の `*_locked` 版を呼んでください** —
 公開関数を呼ぶと同一 Mutex の再取得でデッドロックします。
 
+### 書き込み・破損対策の使い分け (#1593)
+
+- ユーザが選んだパスへ書き出すファイル (SQL 保存・バイナリ保存・プロファイル書き出し) は `atomic_write::write_atomic` (一時ファイル → `rename`。既存のパーミッションと symlink を維持)。アプリのデータディレクトリ内の JSON ストアは各ストアの `write_atomic`。
+- `{ "<key>": [...] }` 形式のストア (snippets / sandboxes) は `json_tolerant::parse_items` / `unparsable_raw` / `build_with_raw` で 1 件の不正を読み飛ばして書き戻す。トップレベルの形が違うときは `quarantine_if_unexpected_shape`、JSON 破損は `corrupt_backup_path` で `.corrupt-*` へ退避して空から再開する (assertions / tasks も同じ)。
+
 ## AI 使用量台帳 (`ai_usage.json`, #1540)
 
 - `ai/usage.rs` が持つ JSON ストア (data_dir)。日 (JST) × タスク種別 × モデルの**トークン数と回数だけ**を
