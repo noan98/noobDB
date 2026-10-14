@@ -448,3 +448,21 @@ describe("# は MySQL だけ行コメント (#1517)", () => {
     expect(isReadOnlySql(sql, "postgres")).toBe(false);
   });
 });
+
+describe("ドライバ別リテラル (#1601)", () => {
+  it("PostgreSQL の E'…' 内の \\' で閉じず、後続の DELETE を見逃さない", () => {
+    const sql = "SELECT E'\\'' ; DELETE FROM t;";
+    expect(analyzeDangerousSql(sql, "postgres").map((d) => d.kind)).toEqual(["deleteNoWhere"]);
+    expect(isReadOnlySql(sql, "postgres")).toBe(false);
+  });
+
+  it("E'…' 内の \\' で WHERE を見失って updateNoWhere と誤判定しない", () => {
+    expect(analyzeDangerousSql("UPDATE t SET name = E'O\\'Brien' WHERE id = 1;", "postgres")).toEqual([]);
+  });
+
+  it("SQLite の [角括弧] 識別子内の ' が後続の DELETE を隠さない", () => {
+    const sql = "SELECT [a'] ; DELETE FROM t;";
+    expect(analyzeDangerousSql(sql, "sqlite").map((d) => d.kind)).toEqual(["deleteNoWhere"]);
+    expect(isReadOnlySql(sql, "sqlite")).toBe(false);
+  });
+});

@@ -184,6 +184,9 @@ export function ImportModal({
   // 新規テーブル作成付きの取り込みが成功した後は、同じ名前で再実行しても
   // 「既に存在する」エラーになるだけなので実行ボタンを止める。
   const [created, setCreated] = useState(false);
+  // 既存テーブルへ取り込み済みのファイルパス。同じファイルのまま再実行すると行が重複するので、
+  // ファイルを選び直す / パスを編集するまで実行ボタンを無効にする (#1598)。
+  const [importedPath, setImportedPath] = useState<string | null>(null);
   const [format, setFormat] = useState<ImportFormat>(
     initialPath ? formatFromPath(initialPath) : "csv",
   );
@@ -431,6 +434,7 @@ export function ImportModal({
     });
     if (typeof selected === "string" && selected) {
       setPath(selected);
+      setImportedPath(null);
       // Auto-select the format from the extension; the user can still override.
       setFormat(formatFromPath(selected));
       setSheet("");
@@ -476,12 +480,14 @@ export function ImportModal({
     effectiveMapping.length > 0 &&
     quoteValid &&
     conflictError === null &&
-    (!createNew || (newTable !== null && newTableError === null && !created));
+    (!createNew || (newTable !== null && newTableError === null && !created)) &&
+    (createNew || importedPath !== path);
 
   const handleImport = async () => {
     if (!canImport) return;
     const importTable = targetTable;
     const creating = createNew;
+    const importPath = path;
     const streamId = newStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "importing", inserted: 0, total: 0 });
@@ -505,6 +511,7 @@ export function ImportModal({
           toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
           setStatus({ kind: "idle" });
         }
+        if (!creating) setImportedPath(importPath);
         if (creating) {
           setCreated(true);
           toast.success(t("importNewTableCreated", { table: importTable }));
@@ -521,7 +528,9 @@ export function ImportModal({
             ? e.line != null
               ? t("importErrorAtRecordLine", { error: e.error, record: e.record, line: e.line })
               : t("importErrorAtRecord", { error: e.error, record: e.record })
-            : e.error;
+            : e.committed
+              ? t("importErrorCommitted", { error: e.error, committed: e.committed })
+              : e.error;
         setStatus({ kind: "error", message });
         toast.error(message);
         if (unlistenRef.current) {

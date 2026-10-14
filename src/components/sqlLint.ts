@@ -261,9 +261,14 @@ function collectClauseOrderIssues(
   for (let stmt = tree.topNode.firstChild; stmt; stmt = stmt.nextSibling) {
     if (stmt.type.name !== "Statement") continue;
     let maxRank = 0;
+    let prevWord = "";
     for (let child = stmt.firstChild; child; child = child.nextSibling) {
       if (child.type.name !== "Keyword") continue;
       const word = doc.slice(child.from, child.to).toLowerCase();
+      const afterWithin = prevWord === "within";
+      prevWord = word;
+      // `WITHIN GROUP (ORDER BY …)` の GROUP は GROUP BY 句ではない。
+      if (word === "group" && afterWithin) continue;
       if (CLAUSE_RESET.has(word)) {
         maxRank = 0;
         continue;
