@@ -106,6 +106,11 @@ function formatFromPath(path: string): ImportFormat {
   return "csv";
 }
 
+// .tsv はタブ区切りで読む。それ以外は既定のカンマ (ユーザが後から選び直せる)。
+function delimiterFromPath(path: string): DelimiterChoice {
+  return path.toLowerCase().endsWith(".tsv") ? "\t" : ",";
+}
+
 function newStreamId(): string {
   return `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -165,7 +170,9 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
   const [importedPath, setImportedPath] = useState<string | null>(null);
   const [format, setFormat] = useState<ImportFormat>(initialPath ? formatFromPath(initialPath) : "csv");
   const [encoding, setEncoding] = useState("utf-8");
-  const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
+  const [delimiter, setDelimiter] = useState<DelimiterChoice>(() =>
+    initialPath ? delimiterFromPath(initialPath) : ",",
+  );
   const [quote, setQuote] = useState('"');
   const [hasHeader, setHasHeader] = useState(true);
   // xlsx のシート名 (#1171)。空 = 先頭シート。ファイル・形式を変えたら選び直す。
@@ -183,6 +190,9 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [mapping, setMapping] = useState<Record<string, number | null>>({});
+  // 列マッピングを手で変更したか。変更済みなら、プレビューの再読込 (区切り文字や
+  // エンコーディングの変更) で自動割り当てに戻さず、手動の指定を保つ。ファイルを選び直したら解除。
+  const mappingEditedRef = useRef(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -292,7 +302,20 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
           setPreview(p);
           // JSON/NDJSON always expose named fields, so map by name regardless of
           // the (CSV-only) header toggle.
-          if (tableColumns) setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
+          if (tableColumns) {
+            const auto = autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true);
+            setMapping((prev) => {
+              if (!mappingEditedRef.current) return auto;
+              // 手動の指定は、割り当て先の列がまだ存在する範囲で保つ。
+              const kept: Record<string, number | null> = {};
+              for (const c of tableColumns) {
+                const old = prev[c.name];
+                kept[c.name] =
+                  old === null || (old !== undefined && old < p.headers.length) ? old : auto[c.name];
+              }
+              return kept;
+            });
+          }
         })
         .catch((e) => {
           if (!cancelled) {
@@ -408,6 +431,8 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
       setImportedPath(null);
       // Auto-select the format from the extension; the user can still override.
       setFormat(formatFromPath(selected));
+      setDelimiter(delimiterFromPath(selected));
+      mappingEditedRef.current = false;
       setSheet("");
       setStatus({ kind: "idle" });
     }
@@ -935,12 +960,13 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                     flex="1"
                     minW={0}
                     value={mapping[col.name] ?? ""}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      mappingEditedRef.current = true;
                       setMapping((prev) => ({
                         ...prev,
                         [col.name]: e.target.value === "" ? null : Number(e.target.value),
-                      }))
-                    }
+                      }));
+                    }}
                     disabled={importing}
                     aria-label={t("importMappingAria", { column: col.name })}
                   >

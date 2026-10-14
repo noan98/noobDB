@@ -78,13 +78,17 @@ describe("editorCommandItems", () => {
     expect(byId.get("editor:format")?.shortcut).toBe("Ctrl+Shift+F");
   });
 
-  it("未接続なら実行系は出さないが、整形 (エディタ内で完結) とアクティビティは出す", () => {
-    const got = ids({ ...base, sessionId: null });
-    expect(got).not.toContain("editor:run");
-    expect(got).not.toContain("editor:run-selected");
-    expect(got).not.toContain("editor:explain");
-    expect(got).toContain("editor:format");
-    expect(got).toContain("nav:toggle-activity");
+  it("未接続なら実行系は無効 (理由つき) で残し、整形とアクティビティは通常どおり出す", () => {
+    const items = editorCommandItems({ ...base, sessionId: null }, actions(), t);
+    const byId = new Map(items.map((i) => [i.id, i]));
+    for (const id of ["editor:run", "editor:run-selected", "editor:explain"]) {
+      expect(byId.get(id)?.disabledReason).toBeTruthy();
+    }
+    expect(byId.get("editor:format")?.disabledReason).toBeUndefined();
+    expect(byId.get("nav:toggle-activity")).toBeDefined();
+    // 接続中は理由が付かない
+    const connected = editorCommandItems(base, actions(), t);
+    expect(connected.find((i) => i.id === "editor:run")?.disabledReason).toBeUndefined();
   });
 
   it("エディタを持つタブが無ければエディタ系を出さない", () => {

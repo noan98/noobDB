@@ -26,7 +26,7 @@
  * `onChange` を呼ばない — 入力中のテキストは内部 `draft` state にだけ反映し、
  * blur 時に確定されていなければ直前の `value` へ巻き戻す。
  */
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -97,6 +97,100 @@ function badgeToneCss(tone: "accent" | "muted" | "warning" = "muted"): SystemSty
   }
   return { background: "var(--bg-hover)", color: "var(--text-muted)" };
 }
+
+interface ComboRowProps {
+  opt: ComboSelectOption;
+  index: number;
+  listboxId: string;
+  isHighlighted: boolean;
+  isSelected: boolean;
+  cssHover: boolean;
+  optionRefs: React.MutableRefObject<Map<number, HTMLButtonElement>>;
+  onHover: (i: number) => void;
+  onSelect: (opt: ComboSelectOption) => void;
+}
+
+/** 候補 1 行。ハイライトが動いた行だけ再描画されるよう memo 化する (CommandPalette の CommandRow と同じ手法)。 */
+const ComboRow = memo(function ComboRow({
+  opt,
+  index,
+  listboxId,
+  isHighlighted,
+  isSelected,
+  cssHover,
+  optionRefs,
+  onHover,
+  onSelect,
+}: ComboRowProps) {
+  const setRef = useCallback(
+    (el: HTMLButtonElement | null) => {
+      if (el) optionRefs.current.set(index, el);
+      else optionRefs.current.delete(index);
+    },
+    [optionRefs, index],
+  );
+  return (
+    <chakra.button
+      ref={setRef}
+      id={optionElementId(listboxId, index)}
+      role="option"
+      aria-selected={isSelected}
+      type="button"
+      display="flex"
+      alignItems="center"
+      gap="2"
+      width="100%"
+      textAlign="left"
+      bg={isHighlighted ? "var(--bg-hover)" : "transparent"}
+      border="none"
+      px="2.5"
+      py="1.5"
+      fontSize="var(--text-md)"
+      color="var(--text)"
+      cursor="pointer"
+      borderRadius="var(--radius-sm)"
+      transitionProperty="background"
+      transitionDuration="var(--dur-fast)"
+      transitionTimingFunction="var(--ease)"
+      // 候補が多いときは hover を CSS に任せ、行を通過するたびの state 更新
+      // (= 全候補の再レンダー) を避ける (#1321)。
+      _hover={cssHover ? { bg: "var(--bg-hover)" } : undefined}
+      onMouseEnter={cssHover ? undefined : () => onHover(index)}
+      onClick={() => onSelect(opt)}
+    >
+      <Box flexShrink={0} w="14px" opacity={isSelected ? 1 : 0} aria-hidden>
+        <Icon name="check" size={ICON_SIZES.sm} />
+      </Box>
+      <chakra.span flex="1" minW="0" overflow="hidden" whiteSpace="nowrap" css={{ textOverflow: "ellipsis" }}>
+        {opt.value}
+      </chakra.span>
+      {opt.badges?.map((b, bi) => (
+        <chakra.span
+          key={`${b.label}-${bi}`}
+          flexShrink={0}
+          fontSize="var(--text-xs)"
+          px="1.5"
+          py="0.5"
+          borderRadius="var(--radius-pill)"
+          css={badgeToneCss(b.tone)}
+        >
+          {b.label}
+        </chakra.span>
+      ))}
+      {opt.detail && (
+        <chakra.span
+          flexShrink={0}
+          ml="2"
+          fontSize="var(--text-xs)"
+          color="var(--text-muted)"
+          fontFamily="var(--font-mono)"
+        >
+          {opt.detail}
+        </chakra.span>
+      )}
+    </chakra.button>
+  );
+});
 
 export function ComboSelect({
   value,
@@ -235,6 +329,11 @@ export function ComboSelect({
     inputRef.current?.focus();
   };
 
+  // 行 (memo) へ渡す安定参照。最新の selectOption を ref 経由で呼ぶ。
+  const selectOptionRef = useRef(selectOption);
+  selectOptionRef.current = selectOption;
+  const selectOptionStable = useCallback((opt: ComboSelectOption) => selectOptionRef.current(opt), []);
+
   const closeAndMaybeRevert = () => {
     setOpen(false);
     setExpanded(false);
@@ -250,7 +349,7 @@ export function ComboSelect({
         ref={inputRef}
         id={inputId}
         role="combobox"
-        aria-expanded={open}
+        aria-expanded={open && (filtered.length > 0 || !!emptyText)}
         aria-controls={listboxId}
         aria-autocomplete="list"
         aria-activedescendant={
@@ -314,6 +413,8 @@ export function ComboSelect({
         }}
       />
       {open &&
+        // 候補が無く文言も指定されていなければ、空のポップオーバーは出さない (自由入力の欄で邪魔になる)。
+        (filtered.length > 0 || !!emptyText) &&
         createPortal(
           <MotionListbox
             ref={listboxRef}
@@ -350,82 +451,20 @@ export function ComboSelect({
                 {emptyText}
               </Box>
             ) : (
-              filtered.map((opt, i) => {
-                const cssHover = filtered.length > COMBO_CSS_HOVER_THRESHOLD;
-                const isHighlighted = highlighted === i;
-                const isSelected = opt.value === value;
-                return (
-                  <chakra.button
-                    key={`${opt.value}::${i}`}
-                    ref={(el: HTMLButtonElement | null) => {
-                      if (el) optionRefs.current.set(i, el);
-                      else optionRefs.current.delete(i);
-                    }}
-                    id={optionElementId(listboxId, i)}
-                    role="option"
-                    aria-selected={isSelected}
-                    type="button"
-                    display="flex"
-                    alignItems="center"
-                    gap="2"
-                    width="100%"
-                    textAlign="left"
-                    bg={isHighlighted ? "var(--bg-hover)" : "transparent"}
-                    border="none"
-                    px="2.5"
-                    py="1.5"
-                    fontSize="var(--text-md)"
-                    color="var(--text)"
-                    cursor="pointer"
-                    borderRadius="var(--radius-sm)"
-                    transitionProperty="background"
-                    transitionDuration="var(--dur-fast)"
-                    transitionTimingFunction="var(--ease)"
-                    // 候補が多いときは hover を CSS に任せ、行を通過するたびの state 更新
-                    // (= 全候補の再レンダー) を避ける (#1321)。
-                    _hover={cssHover ? { bg: "var(--bg-hover)" } : undefined}
-                    onMouseEnter={cssHover ? undefined : () => setHighlighted(i)}
-                    onClick={() => selectOption(opt)}
-                  >
-                    <Box flexShrink={0} w="14px" opacity={isSelected ? 1 : 0} aria-hidden>
-                      <Icon name="check" size={ICON_SIZES.sm} />
-                    </Box>
-                    <chakra.span
-                      flex="1"
-                      minW="0"
-                      overflow="hidden"
-                      whiteSpace="nowrap"
-                      css={{ textOverflow: "ellipsis" }}
-                    >
-                      {opt.value}
-                    </chakra.span>
-                    {opt.badges?.map((b, bi) => (
-                      <chakra.span
-                        key={`${b.label}-${bi}`}
-                        flexShrink={0}
-                        fontSize="var(--text-xs)"
-                        px="1.5"
-                        py="0.5"
-                        borderRadius="var(--radius-pill)"
-                        css={badgeToneCss(b.tone)}
-                      >
-                        {b.label}
-                      </chakra.span>
-                    ))}
-                    {opt.detail && (
-                      <chakra.span
-                        flexShrink={0}
-                        ml="2"
-                        fontSize="var(--text-xs)"
-                        color="var(--text-muted)"
-                        fontFamily="var(--font-mono)"
-                      >
-                        {opt.detail}
-                      </chakra.span>
-                    )}
-                  </chakra.button>
-                );
-              })
+              filtered.map((opt, i) => (
+                <ComboRow
+                  key={`${opt.value}::${i}`}
+                  opt={opt}
+                  index={i}
+                  listboxId={listboxId}
+                  isHighlighted={highlighted === i}
+                  isSelected={opt.value === value}
+                  cssHover={filtered.length > COMBO_CSS_HOVER_THRESHOLD}
+                  optionRefs={optionRefs}
+                  onHover={setHighlighted}
+                  onSelect={selectOptionStable}
+                />
+              ))
             )}
             {hiddenCount > 0 && (
               <chakra.button

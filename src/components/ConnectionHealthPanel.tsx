@@ -9,6 +9,7 @@ import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import {
   buildHealthRows,
   changedHealthSessions,
+  sameHealthResults,
   HEALTH_PROBE_TIMEOUT_MS,
   toHealthProbeResult,
   healthStatusRole,
@@ -93,6 +94,24 @@ const STATUS_LABEL: Record<HealthStatus, I18nKey> = {
   notConnected: "healthStatusNotConnected",
 };
 
+/** 「更新: 時刻」だけを再描画する小さな部品。setter を親の ref へ登録する。 */
+function HealthUpdatedAt({ setterRef }: { setterRef: { current: ((d: Date) => void) | null } }) {
+  const t = useT();
+  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  useEffect(() => {
+    setterRef.current = setUpdatedAt;
+    return () => {
+      setterRef.current = null;
+    };
+  }, [setterRef]);
+  if (!updatedAt) return null;
+  return (
+    <chakra.span fontSize="xs" color="app.textMuted">
+      {t("healthUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
+    </chakra.span>
+  );
+}
+
 export function ConnectionHealthPanel({
   connections,
   profiles,
@@ -112,7 +131,8 @@ export function ConnectionHealthPanel({
   // キーボードで操作中のボタンからフォーカスが落ちる, #1529)。
   const [flash, setFlash] = useState<Map<string, number>>(() => new Map());
   const [loading, setLoading] = useState(false);
-  const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  // 更新時刻は小さな子コンポーネントだけが持ち、毎回の更新でパネル全体を再描画しない。
+  const updatedAtSetterRef = useRef<((d: Date) => void) | null>(null);
   const [includeSaved, setIncludeSaved] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [intervalSecs, setIntervalSecs] = useState<number>(() =>
@@ -159,8 +179,10 @@ export function ConnectionHealthPanel({
         next.set(target.sessionId, toHealthProbeResult(target, bySession.get(target.sessionId)));
       });
       const changed = changedHealthSessions(resultsRef.current, next);
+      const unchanged = sameHealthResults(resultsRef.current, next);
       resultsRef.current = next;
-      setResults(next);
+      // 表示が何も変わらないときは state を差し替えない (表全体の再描画を避ける)。
+      if (!unchanged) setResults(next);
       if (changed.size > 0) {
         setFlash((cur) => {
           const m = new Map(cur);
@@ -168,7 +190,7 @@ export function ConnectionHealthPanel({
           return m;
         });
       }
-      setUpdatedAt(new Date());
+      updatedAtSetterRef.current?.(new Date());
     } finally {
       busyRef.current = false;
       setLoading(false);
@@ -288,11 +310,7 @@ export function ConnectionHealthPanel({
           {t("healthIncludeSaved")}
         </chakra.label>
         {loading && <Spinner size={14} />}
-        {updatedAt && (
-          <chakra.span fontSize="xs" color="app.textMuted">
-            {t("healthUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
-          </chakra.span>
-        )}
+        <HealthUpdatedAt setterRef={updatedAtSetterRef} />
       </Flex>
 
       {summary.open > 0 && (

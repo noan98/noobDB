@@ -11,7 +11,7 @@ import type { useConfirm } from "./ConfirmDialog";
 import type { useToast } from "./Toast";
 import type { useT } from "../i18n";
 import { dismissUpdate, installUpdateAndRestart, type AvailableUpdate } from "../updater";
-import { displayVersion, truncateReleaseNotes } from "../updaterFormat";
+import { displayVersion, formatDownloadProgress, truncateReleaseNotes } from "../updaterFormat";
 
 type Translate = ReturnType<typeof useT>;
 type ToastApi = ReturnType<typeof useToast>;
@@ -84,7 +84,14 @@ export async function confirmAndInstallUpdate(
   // と「失敗」が並んで残らないようにする (#1534)。
   const progressId = toast.info(t("updateDownloadingStarted"), 0);
   try {
-    await installUpdateAndRestart(update);
+    let lastText = "";
+    await installUpdateAndRestart(update, (progress) => {
+      // 合計サイズが不明 (percent が null) の間は従来の不定表示のまま。
+      const text = formatDownloadProgress(progress, t);
+      if (text === null || text === lastText) return;
+      lastText = text;
+      toast.update(progressId, text);
+    });
   } catch (e) {
     toast.dismiss(progressId);
     toast.error(t("updateFailed", { error: e instanceof Error ? e.message : String(e) }));

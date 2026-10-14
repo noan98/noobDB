@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DeterminateProgressBar } from "./StreamProgressBar";
 import { chakra } from "@chakra-ui/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
@@ -240,7 +241,14 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
           {t("batchExportNote", { database })}
         </chakra.div>
-        <chakra.div fontSize="sm" color="app.text" wordBreak="break-all" data-testid="batch-export-tables">
+        <chakra.div
+          fontSize="sm"
+          color="app.text"
+          wordBreak="break-all"
+          maxH="6rem"
+          overflowY="auto"
+          data-testid="batch-export-tables"
+        >
           {tables.join(", ")}
         </chakra.div>
 
@@ -340,13 +348,16 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
         </FormSection>
 
         {status.kind === "running" && (
-          <chakra.div fontSize="sm" color="app.text" role="status" fontWeight={500}>
-            {t("batchExportProgress", {
-              index: status.index + 1,
-              count: tables.length,
-              table: status.table,
-              rows: status.rows,
-            })}
+          <chakra.div display="flex" flexDirection="column" gap="1.5">
+            <DeterminateProgressBar value={tables.length > 0 ? status.index / tables.length : 0} />
+            <chakra.div fontSize="sm" color="app.text" role="status" fontWeight={500}>
+              {t("batchExportProgress", {
+                index: status.index + 1,
+                count: tables.length,
+                table: status.table,
+                rows: status.rows,
+              })}
+            </chakra.div>
           </chakra.div>
         )}
         {status.kind === "error" && (

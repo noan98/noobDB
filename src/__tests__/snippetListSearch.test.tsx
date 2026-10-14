@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen, fireEvent } from "./testUtils";
 import { t } from "../i18n";
 import type { Snippet } from "../api/tauri";
-import { SnippetList } from "../components/SnippetList";
+import { SnippetList, snippetTooltipPreview } from "../components/SnippetList";
 
 const snippet = (over: Partial<Snippet>): Snippet => ({
   id: "s1",
@@ -99,5 +99,18 @@ describe("SnippetList 行アクション (#1595)", () => {
     screen.getByRole("treeitem", { name: /report query/ }).focus();
     await user.keyboard("{Enter}");
     expect(fns.onInsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("snippetTooltipPreview (#1616)", () => {
+  it("短い SQL はそのまま返す", () => {
+    expect(snippetTooltipPreview("SELECT 1")).toBe("SELECT 1");
+  });
+  it("7 行以上は先頭 6 行 + 「…」", () => {
+    const sql = Array.from({ length: 10 }, (_, i) => `l${i}`).join("\n");
+    expect(snippetTooltipPreview(sql)).toBe("l0\nl1\nl2\nl3\nl4\nl5…");
+  });
+  it("300 字を超える 1 行は 300 字で切って「…」", () => {
+    expect(snippetTooltipPreview("x".repeat(500))).toBe(`${"x".repeat(300)}…`);
   });
 });

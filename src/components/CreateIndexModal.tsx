@@ -5,6 +5,7 @@ import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
 import { buildCreateIndexSql } from "./tableMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 
 /**
@@ -75,6 +76,17 @@ export function CreateIndexModal({
   const toggleColumn = (col: string) =>
     setSelected((cols) => (cols.includes(col) ? cols.filter((c) => c !== col) : [...cols, col]));
 
+  // 複合インデックスの列順 (先頭列が最左一致の基準) を入れ替える。
+  const moveSelected = (col: string, dir: -1 | 1) =>
+    setSelected((cols) => {
+      const i = cols.indexOf(col);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= cols.length) return cols;
+      const next = [...cols];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+
   const valid = selected.length > 0;
   const sql = useMemo(
     () => (valid ? buildCreateIndexSql(driver, database, table, selected, { name, unique }) : ""),
@@ -120,13 +132,57 @@ export function CreateIndexModal({
                   <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
                     <Checkbox checked={selected.includes(col)} onChange={() => toggleColumn(col)} />
                     {col}
+                    {selected.includes(col) && (
+                      <chakra.span
+                        data-testid={`create-index-order-${col}`}
+                        textStyle="caption"
+                        aria-label={t("createIndexOrderAria", { n: selected.indexOf(col) + 1 })}
+                      >
+                        {selected.indexOf(col) + 1}
+                      </chakra.span>
+                    )}
                   </chakra.label>
                 ))}
               </Flex>
+              {selected.length > 1 && (
+                <Flex gap="2" wrap="wrap" align="center" data-testid="create-index-order">
+                  {selected.map((col, i) => (
+                    <Flex key={col} align="center" gap="1" fontSize="sm">
+                      <chakra.span color="app.textMuted">{i + 1}.</chakra.span>
+                      {col}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={i === 0}
+                        aria-label={t("createIndexMoveEarlier", { column: col })}
+                        onClick={() => moveSelected(col, -1)}
+                      >
+                        <Icon name="chevron-left" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        disabled={i === selected.length - 1}
+                        aria-label={t("createIndexMoveLater", { column: col })}
+                        onClick={() => moveSelected(col, 1)}
+                      >
+                        <Icon name="chevron-right" />
+                      </Button>
+                    </Flex>
+                  ))}
+                </Flex>
+              )}
             </FormSection>
             <FormSection>
               <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
               <CodePreview minH="48px">{sql || t("createIndexPreviewEmpty")}</CodePreview>
+              {valid && (
+                <chakra.span textStyle="caption" data-testid="create-index-leading">
+                  {t("createIndexLeadingColumn", { column: selected[0] })}
+                </chakra.span>
+              )}
             </FormSection>
             {readOnly && <FieldError>{t("createTableReadOnly")}</FieldError>}
           </>

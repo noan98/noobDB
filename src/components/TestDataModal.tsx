@@ -404,15 +404,11 @@ export function TestDataModal({
           </chakra.div>
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="testdata-seed">{t("testDataSeed")}</FieldLabel>
-            <Input
+            <DraftNumberInput
               id="testdata-seed"
-              type="number"
               css={{ width: "160px" }}
-              value={String(seed)}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                if (Number.isFinite(n)) setSeed(Math.floor(n));
-              }}
+              value={seed}
+              onCommit={setSeed}
               disabled={running}
             />
           </chakra.div>

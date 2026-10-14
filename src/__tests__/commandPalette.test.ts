@@ -446,3 +446,26 @@ describe("閉じたタブの復元項目 (#1353)", () => {
     expect(isMruRecordable({ id: "nav:new-tab", group: "navigation" })).toBe(true);
   });
 });
+
+describe("scoreItem: keywordsContainsOnly (#1617)", () => {
+  const history = (sql: string): CommandItem => ({
+    id: "h",
+    group: "history",
+    label: "SELECT ...",
+    keywords: sql,
+    keywordsContainsOnly: true,
+    run: noop,
+  });
+  it("本文は部分列ではなく部分文字列でだけ一致する", () => {
+    // "sfw" は select * from where の部分列だが、連続した部分文字列ではない
+    const item = history("select * from users where id = 1");
+    expect(scoreItem(item, "sfw")).toBeNull();
+    expect(scoreItem(item, "users")).not.toBeNull();
+  });
+  it("本文一致はラベル一致より低スコア", () => {
+    const body = scoreItem(history("select * from users"), "users")!;
+    const label = scoreItem({ id: "x", group: "tables", label: "users", run: noop }, "users")!;
+    expect(body.score).toBeLessThan(label.score);
+    expect(body.ranges).toEqual([]);
+  });
+});

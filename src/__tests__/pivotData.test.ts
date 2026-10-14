@@ -43,6 +43,21 @@ describe("defaultPivotConfig", () => {
     expect(cfg).toEqual({ rowField: 0, colField: 1, valueField: null, agg: "count" });
   });
 
+  it("numeric-only result: value column differs from row axis", () => {
+    const c = cols("id", "age");
+    const rows: CellValue[][] = [
+      [1, 30],
+      [2, 40],
+    ];
+    expect(defaultPivotConfig(c, rows)).toEqual({ rowField: 0, colField: null, valueField: 1, agg: "sum" });
+  });
+
+  it("single numeric column falls back to COUNT(*)", () => {
+    const c = cols("id");
+    const cfg = defaultPivotConfig(c, [[1], [2]]);
+    expect(cfg).toEqual({ rowField: 0, colField: null, valueField: null, agg: "count" });
+  });
+
   it("returns null for no columns", () => {
     expect(defaultPivotConfig([], [])).toBeNull();
   });
