@@ -69,6 +69,48 @@ pub fn js_number_to_string(x: f64) -> String {
     format!("{sign}{body}")
 }
 
+/// 整数を 10 進文字列にするための固定長バッファ (ヒープ確保なし)。
+/// 結果ハンドルのフィルタ・検索は全行 x 全列で数値セルを文字列化するため、
+/// `to_string()` の `String` 確保を避ける (#1610)。
+pub struct IntBuf {
+    buf: [u8; 40],
+    start: usize,
+}
+
+impl IntBuf {
+    pub fn new(neg: bool, mut mag: u128) -> Self {
+        let mut buf = [0u8; 40];
+        let mut i = buf.len();
+        loop {
+            i -= 1;
+            buf[i] = b'0' + (mag % 10) as u8;
+            mag /= 10;
+            if mag == 0 {
+                break;
+            }
+        }
+        if neg {
+            i -= 1;
+            buf[i] = b'-';
+        }
+        Self { buf, start: i }
+    }
+
+    pub fn as_str(&self) -> &str {
+        // 書き込んだのは ASCII の数字と '-' だけ。万一不正でも空文字に倒す。
+        std::str::from_utf8(&self.buf[self.start..]).unwrap_or("")
+    }
+}
+
+/// `Int` / `UInt` セルを確保なしで文字列化する。それ以外は `None`。
+pub fn int_buf(v: &Value) -> Option<IntBuf> {
+    match v {
+        Value::Int(i) => Some(IntBuf::new(*i < 0, i.unsigned_abs() as u128)),
+        Value::UInt(u) => Some(IntBuf::new(false, *u as u128)),
+        _ => None,
+    }
+}
+
 /// JS の `String(v)` 相当。NULL は `None`。
 pub fn value_str(v: &Value) -> Option<Cow<'_, str>> {
     match v {
@@ -308,6 +350,19 @@ pub fn collation_key(s: &str) -> Box<[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn int_buf_matches_to_string() {
+        for i in [0i64, 1, -1, 9, 10, -10, i64::MAX, i64::MIN, 1234567890123] {
+            let b = int_buf(&Value::Int(i)).expect("int");
+            assert_eq!(b.as_str(), i.to_string());
+        }
+        for u in [0u64, 7, u64::MAX] {
+            let b = int_buf(&Value::UInt(u)).expect("uint");
+            assert_eq!(b.as_str(), u.to_string());
+        }
+        assert!(int_buf(&Value::Null).is_none());
+    }
 
     #[test]
     fn number_to_string_matches_ecmascript() {

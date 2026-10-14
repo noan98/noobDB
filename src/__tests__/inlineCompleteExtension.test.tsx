@@ -68,8 +68,8 @@ async function flush() {
   await vi.advanceTimersByTimeAsync(0);
 }
 
-function key(view: EditorView, k: string): boolean {
-  const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+function key(view: EditorView, k: string, mods: { ctrlKey?: boolean; metaKey?: boolean } = {}): boolean {
+  const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...mods });
   return runScopeHandlers(view, ev, "editor");
 }
 
@@ -117,6 +117,57 @@ describe("AI インライン補完の CodeMirror 拡張", () => {
     expect(inlineSuggestionOf(h.view.state)).toBeNull();
     await vi.advanceTimersByTimeAsync(2000);
     expect(h.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("問い合わせ中はカーソルの右に印を出し、提案が届く・失敗する・入力が続くと消える (#1608)", async () => {
+    const h = setup();
+    const pending = () => h.view.dom.querySelector(".cm-inline-pending");
+    type(h.view, "SELECT * FROM users ");
+    expect(pending()).toBeNull();
+    await vi.advanceTimersByTimeAsync(700);
+    expect(h.run).toHaveBeenCalledTimes(1);
+    expect(pending()).not.toBeNull();
+    await respond(h, "WHERE id = 1");
+    expect(pending()).toBeNull();
+    expect(h.view.dom.querySelector(".cm-inline-suggest")).not.toBeNull();
+    // 失敗しても印は消える (提案は出ない)。
+    type(h.view, "x");
+    await vi.advanceTimersByTimeAsync(700);
+    expect(pending()).not.toBeNull();
+    h.handlers[1].onError?.({ streamId: "x", error: "boom", kind: "aiApi" } as never);
+    await flush();
+    expect(pending()).toBeNull();
+    // 入力が続けば消える。
+    type(h.view, "y");
+    await vi.advanceTimersByTimeAsync(700);
+    expect(pending()).not.toBeNull();
+    type(h.view, "z");
+    expect(pending()).toBeNull();
+  });
+
+  it("Ctrl/Cmd+→ で次の 1 語だけ確定し、残りは続けて提案として出す (#1608)", async () => {
+    const h = setup();
+    type(h.view, "SELECT * FROM users ");
+    await vi.advanceTimersByTimeAsync(700);
+    await respond(h, "WHERE id = 1");
+    expect(key(h.view, "ArrowRight", { ctrlKey: true })).toBe(true);
+    expect(h.view.state.doc.toString()).toBe("SELECT * FROM users WHERE");
+    expect(inlineSuggestionOf(h.view.state)).toEqual({ pos: 25, text: " id = 1" });
+    expect(key(h.view, "ArrowRight", { ctrlKey: true })).toBe(true);
+    expect(h.view.state.doc.toString()).toBe("SELECT * FROM users WHERE id");
+    // 全部確定すると提案は消え、確定は次の問い合わせを起こさない。
+    key(h.view, "ArrowRight", { ctrlKey: true });
+    key(h.view, "ArrowRight", { ctrlKey: true });
+    key(h.view, "ArrowRight", { ctrlKey: true });
+    expect(h.view.state.doc.toString()).toBe("SELECT * FROM users WHERE id = 1");
+    expect(inlineSuggestionOf(h.view.state)).toBeNull();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(h.run).toHaveBeenCalledTimes(1);
+  });
+
+  it("提案がないときは Ctrl/Cmd+→ を奪わない (通常のカーソル移動)", () => {
+    const h = setup();
+    expect(key(h.view, "ArrowRight", { ctrlKey: true })).toBe(false);
   });
 
   it("提案がないときは Tab / Esc を奪わない", () => {

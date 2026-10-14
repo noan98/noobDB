@@ -99,6 +99,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const stream = useAiStream({ idPrefix: "ai_schemadoc" });
   // 定義の収集中 (まだストリームが無い間) に中止されたか。ストリーム開始後の中止はフックが扱う。
   const collectAbortRef = useRef(false);
+  const filterRef = useRef<HTMLInputElement>(null);
 
   const { sessionId, database } = props;
 
@@ -213,7 +214,12 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
 
   const busy = state.kind === "collecting" || state.kind === "running";
   const emptySelection = mode === "selected" && selected.size === 0;
-  const canGenerate = loaded.kind === "ready" && summary.tableCount > 0 && !emptySelection && !busy;
+  // 表・列・FK だけで送信上限を超えると分かっている (定義を足せばさらに増えるので必ず超える) 状態。
+  // 押しても「大きすぎる」エラーになるだけなので、生成を無効にして絞り込みを促す (#1608)。
+  // `level === "tooLarge"` はテーブル数による警告で、小さなテーブルばかりなら収まるため無効化の根拠にしない。
+  const overLimit = loaded.kind === "ready" && summary.baseChars > SCHEMA_DOC_MAX_PROMPT_BYTES;
+  const canGenerate =
+    loaded.kind === "ready" && summary.tableCount > 0 && !emptySelection && !busy && !overLimit;
 
   const toggleTable = (name: string) => {
     setSelected((prev) => {
@@ -420,6 +426,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
                 <>
                   <Input
                     type="text"
+                    ref={filterRef}
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
                     placeholder={t("aiSchemaDocFilterPlaceholder")}
@@ -502,7 +509,33 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
               {t("aiSchemaDocFkMissing")}
             </Callout>
           )}
-          {summary.level === "tooLarge" && (
+          {overLimit && (
+            <Callout tone="danger" role="alert">
+              <Flex direction="column" gap="1.5" align="flex-start">
+                <span>
+                  {t("aiSchemaDocTooBig", {
+                    kb: approxKb(summary.baseChars),
+                    limit: SCHEMA_DOC_MAX_PROMPT_BYTES / 1024,
+                  })}
+                </span>
+                {mode === "all" && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      setMode("selected");
+                      // 絞り込み欄は「選択したテーブル」モードで現れるので、描画後にフォーカスする。
+                      setTimeout(() => filterRef.current?.focus(), 0);
+                    }}
+                  >
+                    {t("aiSchemaDocNarrowScope")}
+                  </Button>
+                )}
+              </Flex>
+            </Callout>
+          )}
+          {summary.level === "tooLarge" && !overLimit && (
             <Callout tone="warning" role="status">
               {t("aiSchemaDocLargeSchema", { tables: summary.tableCount, kb: approxKb(summary.approxChars) })}
             </Callout>

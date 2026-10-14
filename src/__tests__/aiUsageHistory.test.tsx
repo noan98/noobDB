@@ -72,6 +72,32 @@ describe("AiUsageHistory (#1540)", () => {
     await screen.findAllByText(/7 /);
   });
 
+  it("日別は最新 7 日だけ表示し、残りは「さらに N 日分を表示」で開いて畳める (#1608)", async () => {
+    // 2000 年の 10 日分 (全期間で見る)。
+    const days = Array.from({ length: 10 }, (_, i) => ({
+      ...record,
+      day: `2000-01-${String(i + 1).padStart(2, "0")}`,
+      calls: 1,
+    }));
+    getAiUsageHistory.mockResolvedValue(days);
+    renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    await screen.findByText(t("aiLedgerEmpty"));
+    fireEvent.change(screen.getByLabelText(t("aiLedgerRange")), { target: { value: "all" } });
+    await screen.findByText(/2000-01-10: 1 /);
+    expect(screen.queryByText(/2000-01-01: 1 /)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("aiLedgerDayMore", { count: 3 }) }));
+    expect(screen.getByText(/2000-01-01: 1 /)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("aiLedgerDayLess", { count: 7 }) }));
+    expect(screen.queryByText(/2000-01-01: 1 /)).toBeNull();
+  });
+
+  it("日別が 7 日以下なら展開ボタンを出さない (#1608)", async () => {
+    getAiUsageHistory.mockResolvedValue([record]);
+    renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    await screen.findAllByText(/\$4\.00/);
+    expect(screen.queryByRole("button", { name: /さらに|Show \d+ more/ })).toBeNull();
+  });
+
   it("読み込みに失敗したらエラーを表示する", async () => {
     getAiUsageHistory.mockRejectedValue(new Error("boom"));
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);

@@ -51,6 +51,13 @@ pub async fn get_history_sql(id: i64) -> Result<String> {
         .ok_or_else(|| AppError::InvalidInput(format!("history entry {id} no longer exists")))
 }
 
+/// 履歴の複数 id の SQL 全文をまとめて返す。戻り値は `ids` と同じ順・同じ長さで、削除済みなどで
+/// 取れなかった行は `null`。履歴 AI 検索の候補取得が 1 件ずつ IPC を往復しないための一括版。
+#[tauri::command]
+pub async fn get_history_sqls(ids: Vec<i64>) -> Result<Vec<Option<String>>> {
+    store::get_sqls(&ids).await
+}
+
 /// `profile_id` の直近の実行 SQL 全文だけを新しい順に返す (#1256)。エディタの ↑/↓
 /// 履歴ナビとコマンドパレット向けで、`list_history` のようなメタデータは運ばない。
 #[tauri::command]

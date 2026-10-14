@@ -2553,3 +2553,17 @@ td.is-find-current::after {
   white-space: pre;
   pointer-events: none;
 }
+
+/* 問い合わせ中を示す控えめな点 (#1608)。カーソルの右に出し、提案が届く・失敗する・入力が続くと消える。
+   大きさは文字サイズ基準 (em) なのでフォント拡大設定に追従する。 */
+.cm-editor .cm-inline-pending {
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  margin-inline-start: 0.2em;
+  border-radius: 50%;
+  background: var(--text-muted);
+  vertical-align: middle;
+  pointer-events: none;
+  animation: streaming-pulse 1.2s ease-in-out infinite;
+}

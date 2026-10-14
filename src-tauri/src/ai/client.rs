@@ -224,7 +224,7 @@ fn error_from_status(status: u16, body: &[u8]) -> AppError {
             }
         )),
         401 | 403 => AppError::AiAuth(format!(
-            "API key was rejected (HTTP {status}, {etype}){}",
+            "API request was not authorized (HTTP {status}, {etype}){}",
             if message.is_empty() {
                 String::new()
             } else {
