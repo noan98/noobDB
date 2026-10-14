@@ -42,14 +42,13 @@
   チェック名が変わったため)。
 
   **Vitest 単体テストは別ジョブに分割** (実測 約 4 分 15 秒がフロントの大半を占めていた
-  ため)。`frontend (unit shard N/M)` (`frontend-unit`、`--shard` で並列実行 (分割数は下の「フロントの単体テスト」の記述を参照)、各 shard は
+  ため)。`frontend (unit shard 1/4)`〜`(4/4)` (`frontend-unit`、`--shard` で 4 並列。分割数の正は ci.yml の `matrix.shard`)、各 shard は
   `--coverage --coverage.thresholds.lines=0 --reporter=blob` で blob を artifact へ保存) と、
   それを `gh run download` で集めて `vitest run --merge-reports --coverage` で統合し
   カバレッジ閾値 (`vite.config.ts` の `thresholds.lines`) を強制する
   `frontend (unit tests)` (`frontend-unit-merge`) の 2 段です。**単体テストの合否と
   カバレッジ閾値のゲートは `frontend (unit tests)` が担う**ので、必須チェックには
-  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の
-  `frontend (unit shard N/M)` は集約ジョブが `needs.frontend-unit.result` を見て fail
+  `frontend (build + browser tests)` に加えてこれも指定してください (shard 側の各ジョブは集約ジョブが `needs.frontend-unit.result` を見て fail
   させるので必須に含めなくてよい)。
 
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
@@ -187,7 +186,7 @@
   env ゲートで 0 件実行になる external を対象から外し、`--test golden --test integration
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
-  フロントの単体テストは `--shard` の 4 分割です (チェック名は `frontend (unit shard N/4)`、分割数の正は ci.yml の `matrix.shard`。`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
