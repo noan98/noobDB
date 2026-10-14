@@ -44,16 +44,17 @@ env:
 
 jobs:
   mutants:
-    name: cargo-mutants (安全網関数 ${{ matrix.shard }}/4)
+    name: cargo-mutants (安全網関数 shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     # --in-place は 1 ランナーで変異を 1 つずつしか試せない (並列 --jobs と併用不可)。
     # 1 変異 ≒ ビルド 53 秒 + テスト 19 秒で、全 132 件を 1 ジョブで回すと 120 分の
     # 上限を超えて打ち切られた (2026-10-15 JST、#1633)。そこで --shard で 4 ランナーに
-    # 分ける (1 シャード 約 45 分)。list_only は一覧を出すだけなので 1 ジョブで足りる。
+    # 分ける (1 シャード 約 30 分)。--shard の k は 0 始まり (0/4〜3/4)。
+    # list_only は一覧を出すだけなので 1 ジョブで足りる。
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.list_only && '[1]' || '[1, 2, 3, 4]') }}
+        shard: ${{ fromJSON(inputs.list_only && '[0]' || '[0, 1, 2, 3]') }}
     # ハング時にデフォルト 6 時間ランナーを占有し続けるのを防ぐ上限 (正常時は影響なし)。
     timeout-minutes: 120
     steps:
@@ -188,7 +189,7 @@ jobs:
           # どれも 0 / 2 / 3 のときだけ実行成功で、値は最大値 (2 や 3 を優先)。
           # 欠けたシャード・それ以外のコードがあれば、それを通知に残す。
           exit_code=""
-          for k in 1 2 3 4; do
+          for k in 0 1 2 3; do
             f="shards/mutants-out-$k/shard-exit-code"
             c=$(cat "$f" 2>/dev/null || echo missing)
             case "$c" in
