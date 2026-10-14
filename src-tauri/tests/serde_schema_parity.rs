@@ -526,6 +526,7 @@ fn build_fixtures() -> serde_json::Value {
         source_driver: DriverKind::Mysql,
         target_driver: DriverKind::Postgres,
         tables: vec![table_diff],
+        warnings: Vec::new(),
     };
 
     let sync_statement = SyncStatement {
@@ -1084,6 +1085,11 @@ fn build_fixtures() -> serde_json::Value {
                         .collect(),
                 })
                 .collect(),
+            warnings: if i == 0 {
+                vec!["target の外部キーを取得できませんでした".to_string()]
+            } else {
+                Vec::new()
+            },
         })
         .collect();
 

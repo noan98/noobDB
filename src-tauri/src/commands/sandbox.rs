@@ -39,7 +39,8 @@ use crate::db::data_diff::{compute_data_diff, sql_literal, DataDiff, RowStatus};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sandbox::{
     clamp_row_limit, detect_conflicts, filter_out_keys, fk_closure, is_shadow_table_name,
-    row_to_cells, schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
+    normalize_columns_for_sqlite_base, normalize_decimal_cells, row_to_cells,
+    schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
 };
 use crate::db::sync::{generate_sync_sql, quote_ident};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
@@ -225,22 +226,22 @@ pub(crate) async fn create_sandbox_inner(
     let mut fetched: Vec<FetchedTable> = Vec::with_capacity(table_cols.len());
     for (t, cols) in &table_cols {
         let col_names: Vec<String> = cols.iter().map(|c| c.name.clone()).collect();
-        // Order by the primary key when there is one (stable, cheap); a
-        // table without one falls back to ordering by every column so
-        // `select_rows_sql` never gets an empty `ORDER BY` list. Determinism
-        // doesn't matter much here (rows are read once, at creation time) —
-        // this is only about producing valid, reasonably efficient SQL.
-        let pk_cols: Vec<String> = cols
+        // Order by the primary key when there is one (stable, cheap). A table
+        // without one is read unordered: rows are read once at creation time so
+        // determinism is not needed, and ordering by every column fails for
+        // types without an ordering operator (PostgreSQL `json`, ...).
+        let order_cols: Vec<String> = cols
             .iter()
             .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
             .map(|c| c.name.clone())
             .collect();
-        let order_cols = if pk_cols.is_empty() {
-            &col_names
-        } else {
-            &pk_cols
-        };
-        let sql = select_rows_sql(source_driver, t, &col_names, order_cols, limit as usize + 1);
+        let sql = select_rows_sql(
+            source_driver,
+            t,
+            &col_names,
+            &order_cols,
+            limit as usize + 1,
+        );
         let res = source.conn.execute(&sql, Some(&db)).await?;
         let truncated = res.rows.len() > limit as usize;
         let rows: Vec<_> = res.rows.into_iter().take(limit as usize).collect();
@@ -615,7 +616,11 @@ pub(crate) async fn sandbox_table_diff_inner(
             if let Ok(current_res) = fetched {
                 source_owner = Some(source_session_id.clone());
                 let current_rows: Vec<_> = current_res.rows.into_iter().take(want).collect();
-                let external_rows = compute_data_diff(&columns, &pk_idx, &current_rows, &base_rows);
+                // 元 DB の DECIMAL (文字列) とサンドボックスから読み戻したベース (REAL) は
+                // 型が違うので、DECIMAL / NUMERIC 列を数値にそろえてから比べる。
+                let current_cmp = normalize_decimal_cells(&column_types, &current_rows);
+                let base_cmp = normalize_decimal_cells(&column_types, &base_rows);
+                let external_rows = compute_data_diff(&columns, &pk_idx, &current_cmp, &base_cmp);
                 let external = DataDiff {
                     target_driver: record.source_driver,
                     table: table.clone(),
@@ -752,6 +757,8 @@ pub(crate) async fn sandbox_schema_diff_inner(
                     }
                 }
             }
+            // SQLite のベースが持たない extra / 外部キー / コメントは比較から外す。
+            normalize_columns_for_sqlite_base(&mut current_tables);
             let external = compute_schema_diff(
                 record.source_driver,
                 record.source_driver,

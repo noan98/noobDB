@@ -318,6 +318,7 @@ async fn render_export_text_matches_shared_vectors() {
                         driver: Some(driver),
                         batch_size: Some(case.sql.batch_size),
                         masks: None,
+                        ddl_header: None,
                     },
                 )
                 .await

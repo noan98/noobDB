@@ -1591,7 +1591,10 @@ const en = {
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
   exportSqlIncludeDdl: "Include CREATE TABLE statement",
-  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
+  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Also included in the preview and copy.",
+  exportSqlIncludeDdlMasked: "Masked columns no longer match the original types and constraints, so the CREATE TABLE statement is omitted (a comment is written instead).",
+  exportSqlDdlPreviewLoading: "-- Loading CREATE TABLE definition...",
+  exportSqlDdlPreviewError: "-- Could not load the CREATE TABLE definition: {error}",
   exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
   exportSqlIncludeDdlTableMismatch:
     "The definition can only be included when the table name matches the result's source table.",
@@ -3677,6 +3680,7 @@ const en = {
   schemaCompareFieldKey: "key",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "foreign key",
+  schemaCompareFieldComment: "comment",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -4700,6 +4704,10 @@ const en = {
     '"{name}" is a production connection and this plan includes {destructive} destructive statement(s). This cannot be undone.',
   sandboxApplyTypedConfirmOk: "Apply anyway",
   sandboxApplyDone: "Applied {count} statement(s) to the original connection.",
+  sandboxApplyBaseAdvanceFailed:
+    "Applied {count} statement(s) to the original connection, but updating the sandbox baseline failed for: {tables}. Do not apply again; reload the differences and review them. ({error})",
+  sandboxCreateFkLoadFailed:
+    "Could not load foreign keys, so related tables will not be added automatically: {error}",
   toastSandboxCreated: 'Sandbox "{name}" created.',
   toastSandboxDiscarded: 'Sandbox "{name}" discarded.',
   toastSandboxNotOpen: 'Open sandbox "{name}" first to review its changes.',
@@ -6687,7 +6695,10 @@ const ja: Dict = {
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
   exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
-  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
+  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーにも含まれます。",
+  exportSqlIncludeDdlMasked: "マスクした列は元の型・制約と合わなくなるため、CREATE TABLE 文は出力せずコメントに置き換えます。",
+  exportSqlDdlPreviewLoading: "-- CREATE TABLE の定義を取得しています...",
+  exportSqlDdlPreviewError: "-- CREATE TABLE の定義を取得できませんでした: {error}",
   exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
   exportSqlIncludeDdlTableMismatch:
     "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
@@ -8767,6 +8778,7 @@ const ja: Dict = {
   schemaCompareFieldKey: "キー",
   schemaCompareFieldExtra: "extra",
   schemaCompareFieldForeignKey: "外部キー",
+  schemaCompareFieldComment: "コメント",
   schemaCompareYes: "YES",
   schemaCompareNo: "NO",
 
@@ -9789,6 +9801,10 @@ const ja: Dict = {
     "「{name}」は本番接続で、この適用には破壊的なステートメントが {destructive} 件含まれます。元に戻せません。",
   sandboxApplyTypedConfirmOk: "それでも適用する",
   sandboxApplyDone: "{count} 文を元の接続へ適用しました。",
+  sandboxApplyBaseAdvanceFailed:
+    "{count} 文を元の接続へ適用しましたが、サンドボックスの基準 (ベース) の更新に失敗した表があります: {tables}。再適用せず、差分を再読み込みして確認してください。({error})",
+  sandboxCreateFkLoadFailed:
+    "外部キーを取得できなかったため、関連テーブルは自動で追加されません: {error}",
   toastSandboxCreated: "サンドボックス「{name}」を作成しました。",
   toastSandboxDiscarded: "サンドボックス「{name}」を破棄しました。",
   toastSandboxNotOpen: "サンドボックス「{name}」を開いてから変更を確認してください。",

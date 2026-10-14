@@ -442,6 +442,9 @@ export function SchemaCompareView({
   const [dataComparing, setDataComparing] = useState(false);
   const [allowDelete, setAllowDelete] = useState(false);
 
+  // 適用直後の再比較で得た差分。この差分への切り替えでは適用成功の表示を残す。
+  const keepApplyResultForDiffRef = useRef<SchemaDiff | null>(null);
+
   // バックエンドが保持している差分を解放する。比較のやり直し・失敗・画面を閉じたときに呼ぶ。
   const releaseHeldDiff = useCallback(() => {
     const id = heldDiffIdRef.current;
@@ -453,13 +456,13 @@ export function SchemaCompareView({
 
   // Any change to the schema diff invalidates a previously generated plan and
   // any in-flight data comparison (the connections / databases changed).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: diff は本体では使わず、スキーマ差分が変わったら計画・データ比較を無効化するためのトリガー
   useEffect(() => {
     setPlan(null);
     setPlanKind(null);
     setSelected(new Set());
     setSyncError(null);
-    setApplyResult(null);
+    // 適用直後の再比較で得た差分では、適用成功の表示を消さない (#1599)。
+    if (!diff || diff !== keepApplyResultForDiffRef.current) setApplyResult(null);
     setDataDiff(null);
     setDataDiffId(null);
     releaseHeldDiff();
@@ -504,9 +507,15 @@ export function SchemaCompareView({
     [],
   );
 
+  // 各側の接続選択の最新要求番号 (古い応答の破棄用)。
+  const selectSeqRef = useRef<Record<Side, number>>({ source: 0, target: 0 });
+
   const selectProfile = useCallback(
     async (side: Side, profileId: string) => {
       const setSide = side === "source" ? setSource : setTarget;
+      // この要求が最新か (遅れて届いた古い接続結果で選択を巻き戻さない)。
+      const seq = (selectSeqRef.current[side] += 1);
+      const isCurrent = () => selectSeqRef.current[side] === seq;
       setDiff(null);
       setCompareError(null);
       if (!profileId) {
@@ -526,6 +535,7 @@ export function SchemaCompareView({
           profile.database && databases.includes(profile.database)
             ? profile.database
             : (databases[0] ?? null);
+        if (!isCurrent()) return;
         setSide({
           profileId,
           sessionId,
@@ -535,6 +545,7 @@ export function SchemaCompareView({
           error: null,
         });
       } catch (e) {
+        if (!isCurrent()) return;
         setSide({ ...EMPTY_SIDE, profileId, error: String(e) });
       }
     },
@@ -574,7 +585,7 @@ export function SchemaCompareView({
     !driverMismatch &&
     !comparing;
 
-  const runCompare = useCallback(async () => {
+  const runCompare = useCallback(async (): Promise<SchemaDiff | null> => {
     if (
       !source.sessionId ||
       !source.database ||
@@ -582,7 +593,7 @@ export function SchemaCompareView({
       !target.database ||
       driverMismatch
     ) {
-      return;
+      return null;
     }
     setComparing(true);
     setCompareError(null);
@@ -595,8 +606,10 @@ export function SchemaCompareView({
         targetDatabase: target.database,
       });
       setDiff(result);
+      return result;
     } catch (e) {
       setCompareError(String(e));
+      return null;
     } finally {
       setComparing(false);
     }
@@ -817,14 +830,16 @@ export function SchemaCompareView({
         database: target.database,
         statements,
       });
-      setApplyResult(t("schemaCompareApplyDone", { count: statements.length }));
+      const doneMessage = t("schemaCompareApplyDone", { count: statements.length });
       // Refresh whichever comparison produced this plan so the view reflects
-      // the post-apply state.
+      // the post-apply state. 再比較は適用結果の表示を消すので、終わってから設定する。
       if (planKind === "data") {
         await compareData();
       } else {
-        await runCompare();
+        const fresh = await runCompare();
+        keepApplyResultForDiffRef.current = fresh;
       }
+      setApplyResult(doneMessage);
     } catch (e) {
       setSyncError(String(e));
     } finally {
@@ -1465,6 +1480,8 @@ function fieldLabel(field: string, t: ReturnType<typeof useT>): string {
       return t("schemaCompareFieldKey");
     case "extra":
       return t("schemaCompareFieldExtra");
+    case "comment":
+      return t("schemaCompareFieldComment");
     case "foreign_key":
       return t("schemaCompareFieldForeignKey");
     default:
@@ -1489,6 +1506,8 @@ function fieldValue(
       return col.key || "—";
     case "extra":
       return col.extra || "—";
+    case "comment":
+      return col.comment || "—";
     case "foreign_key":
       return col.referenced_table
         ? `${col.referenced_table}(${col.referenced_column ?? "?"})`
