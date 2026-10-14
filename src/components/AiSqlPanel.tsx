@@ -377,6 +377,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       if (r !== "applied") applyingRef.current = false;
     } catch (e) {
       applyingRef.current = false;
+      setApplied(null);
       setApplyError(String(e));
     }
   };

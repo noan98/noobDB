@@ -245,9 +245,10 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const runInner = async (ready: Extract<Loaded, { kind: "ready" }>) => {
     // 表・列・FK だけで送信上限を超えると分かっているなら、インデックスや定義を (件数ぶんの IPC で)
     // 取得する前に止める。文字数は UTF-8 バイト数以下なので、これで超えるなら必ず超える。
-    if (summary.approxChars > SCHEMA_DOC_MAX_PROMPT_BYTES) {
+    // 定義の上乗せぶん (上限見積もり) は含めない: 実際は収まる DB を止めないよう、下限値で判定する。
+    if (summary.baseChars > SCHEMA_DOC_MAX_PROMPT_BYTES) {
       stream.release();
-      setState({ kind: "tooBig", kb: approxKb(summary.approxChars) });
+      setState({ kind: "tooBig", kb: approxKb(summary.baseChars) });
       return;
     }
     if (props.isProduction) {

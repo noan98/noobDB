@@ -1243,6 +1243,7 @@ export function deserializeSettingsImport(raw: string): Settings {
     ai: {
       ...next.ai,
       enabled: current.ai.enabled,
+      maskLiterals: current.ai.maskLiterals,
       consentGiven: current.ai.consentGiven,
       allowRowData: current.ai.allowRowData,
       sendScope: current.ai.sendScope,

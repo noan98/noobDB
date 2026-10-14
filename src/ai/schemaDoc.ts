@@ -303,8 +303,10 @@ export interface SchemaDocSendSummary {
   tableCount: number;
   columnCount: number;
   fkCount: number;
-  /** 送る本文の概算サイズ (文字数)。 */
+  /** 送る本文の概算の上限 (文字数)。定義の取得予定ぶんは 1 件あたりの上限で上乗せしてある。表示用。 */
   approxChars: number;
+  /** 定義を含まない本文の文字数 (下限値)。これだけで送信上限を超えるかの中止判定に使う。 */
+  baseChars: number;
   /** `large` は並列度を抑える領域、`tooLarge` は警告を出して絞り込みを促す領域。 */
   level: SchemaDocSendLevel;
 }
@@ -313,17 +315,17 @@ export interface SchemaDocSendSummary {
  * 送信前にモーダルへ見せる、件数と送信サイズの目安。
  * ビュー / ルーチンの定義は送信直前に取得するため、`ctx.objects` には載らない。
  * `pendingObjectCount` (定義を取得して送る予定の件数) ぶんは、1 件あたりの上限文字数で上乗せした
- * 上限見積もりにする (実際の送信量より小さく見せない)。
+ * 概算の上限にする (実際の送信量より小さく見せない)。
  */
 export function summarizeSchemaDocSend(ctx: SchemaDocContext, pendingObjectCount = 0): SchemaDocSendSummary {
   const tableCount = ctx.tables.length;
+  const baseChars = buildSchemaDocContextText(ctx).length;
   return {
     tableCount,
+    baseChars,
     columnCount: ctx.tables.reduce((n, t) => n + t.columns.length, 0),
     fkCount: ctx.foreignKeys.length,
-    approxChars:
-      buildSchemaDocContextText(ctx).length +
-      Math.max(0, pendingObjectCount) * SCHEMA_DOC_DEFINITION_MAX_CHARS,
+    approxChars: baseChars + Math.max(0, pendingObjectCount) * SCHEMA_DOC_DEFINITION_MAX_CHARS,
     level:
       tableCount > SCHEMA_DOC_WARN_TABLES
         ? "tooLarge"

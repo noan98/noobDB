@@ -138,10 +138,11 @@ describe("deserializeSettingsImport の AI 同意 (#1603)", () => {
     const mod = await import("../settings");
     const evil = JSON.stringify({
       settings: {
-        ai: { enabled: true, consentGiven: true, allowRowData: true, sendScope: "schemaAndSql", inlineComplete: true },
+        ai: { maskLiterals: false, enabled: true, consentGiven: true, allowRowData: true, sendScope: "schemaAndSql", inlineComplete: true },
       },
     });
     const restored = mod.deserializeSettingsImport(evil);
+    expect(restored.ai.maskLiterals).toBe(true);
     expect(restored.ai.enabled).toBe(false);
     expect(restored.ai.consentGiven).toBe(false);
     expect(restored.ai.allowRowData).toBe(false);

@@ -60,6 +60,7 @@ describe("テーブル名抽出", () => {
     ).toEqual(["orders", "users"]);
     expect(tables("ALTER TABLE a ADD FOREIGN KEY (x) REFERENCES b(id) ON UPDATE NO ACTION")).toEqual(["a", "b"]);
     expect(tables("CREATE TABLE IF NOT EXISTS t (id INT)")).toEqual(["t"]);
+    expect(tables("ALTER TABLE IF EXISTS ONLY a ADD FOREIGN KEY (x) REFERENCES b(id)")).toEqual(["a", "b"]);
   });
   it("FROM / JOIN / UPDATE / INSERT INTO / DELETE FROM を拾う", () => {
     expect(extractTableRefs("SELECT * FROM a JOIN b ON a.id = b.id", "mysql").map((r) => r.table)).toEqual([

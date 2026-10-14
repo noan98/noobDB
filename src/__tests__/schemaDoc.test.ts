@@ -219,7 +219,10 @@ describe("送信サイズ", () => {
   });
   it("取得予定のビュー・ルーチン定義ぶんを上限見積もりで上乗せする (#1603)", () => {
     const base = summarizeSchemaDocSend(mk(3)).approxChars;
-    expect(summarizeSchemaDocSend(mk(3), 2).approxChars).toBe(base + 2 * SCHEMA_DOC_DEFINITION_MAX_CHARS);
+    const s = summarizeSchemaDocSend(mk(3), 2);
+    expect(s.approxChars).toBe(base + 2 * SCHEMA_DOC_DEFINITION_MAX_CHARS);
+    // 中止判定用の baseChars は定義の上乗せを含まない。
+    expect(s.baseChars).toBe(base);
   });
   it("100 超は large、300 超は tooLarge", () => {
     expect(summarizeSchemaDocSend(mk(100)).level).toBe("ok");
