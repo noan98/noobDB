@@ -5,12 +5,12 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useLocale, useT } from "../i18n";
-import { semanticColorVar } from "../semanticColors";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, Radio } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
+import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { CopyButton } from "./CopyButton";
@@ -874,20 +874,9 @@ export function ExportModal({
           </chakra.div>
         )}
         {partial && (scope === "current" || (isBundle && scope === "full")) && (
-          <chakra.div
-            role="status"
-            py="2"
-            px="2.5"
-            border="1px solid"
-            borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
-            bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
-            color="app.text"
-            borderRadius="md"
-            fontSize="sm"
-            lineHeight={1.5}
-          >
+          <Callout tone="warning" role="status">
             {stoppedPartial ? t("exportPartialWarningStopped") : t("exportPartialWarning")}
-          </chakra.div>
+          </Callout>
         )}
         <FormSection>
           <FieldLabel as="div">{t("exportFormat")}</FieldLabel>
@@ -1035,35 +1024,25 @@ export function ExportModal({
           <FormSection>
             <FieldLabel as="div">{t("exportBundleOptions")}</FieldLabel>
             {/* 保存前にデータの持ち出しを件数付きで明示する (#745)。 */}
-            <chakra.div
-              role="note"
-              data-testid="export-bundle-warning"
-              py="2"
-              px="2.5"
-              border="1px solid"
-              borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
-              bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
-              color="app.text"
-              borderRadius="md"
-              fontSize="sm"
-              lineHeight={1.5}
-              display="flex"
-              flexDirection="column"
-              gap="1"
-            >
-              <chakra.span>
-                {t("exportBundleDataWarning", { rows: effectiveRows.length, cols: effectiveColumns.length })}
-              </chakra.span>
-              <chakra.span>
-                {bundleMaskedNames.length > 0
-                  ? t("exportBundleMasked", {
-                      count: bundleMaskedNames.length,
-                      names: bundleMaskedNames.join(", "),
-                    })
-                  : t("exportBundleNoMasked")}
-              </chakra.span>
-              <chakra.span color="app.textMuted">{t("exportBundleNoSecrets")}</chakra.span>
-            </chakra.div>
+            <Callout tone="warning" role="note" data-testid="export-bundle-warning">
+              <chakra.div display="flex" flexDirection="column" gap="1">
+                <chakra.span>
+                  {t("exportBundleDataWarning", {
+                    rows: effectiveRows.length,
+                    cols: effectiveColumns.length,
+                  })}
+                </chakra.span>
+                <chakra.span>
+                  {bundleMaskedNames.length > 0
+                    ? t("exportBundleMasked", {
+                        count: bundleMaskedNames.length,
+                        names: bundleMaskedNames.join(", "),
+                      })
+                    : t("exportBundleNoMasked")}
+                </chakra.span>
+                <chakra.span color="app.textMuted">{t("exportBundleNoSecrets")}</chakra.span>
+              </chakra.div>
+            </Callout>
             <chakra.div display="flex" flexDirection="column" gap="1.5">
               <chakra.label
                 display="inline-flex"
@@ -1224,25 +1203,13 @@ export function ExportModal({
         </FormSection>
 
         {notices.length > 0 && (
-          <chakra.div
-            role="status"
-            py="2"
-            px="2.5"
-            border="1px solid"
-            borderColor={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 50%, var(--border))`}
-            bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 14%, var(--bg-muted))`}
-            color="app.text"
-            borderRadius="md"
-            fontSize="sm"
-            lineHeight={1.5}
-            display="flex"
-            flexDirection="column"
-            gap="1"
-          >
-            {notices.map((n) => (
-              <span key={n.key}>{t(n.key, n.params)}</span>
-            ))}
-          </chakra.div>
+          <Callout tone="warning" role="status">
+            <chakra.div display="flex" flexDirection="column" gap="1">
+              {notices.map((n) => (
+                <span key={n.key}>{t(n.key, n.params)}</span>
+              ))}
+            </chakra.div>
+          </Callout>
         )}
         {status.kind === "error" && <ErrorNote>{t("exportError", { error: status.message })}</ErrorNote>}
       </ModalBody>

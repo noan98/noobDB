@@ -4,7 +4,7 @@ import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { Button, Heading, Input, Select, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
-import { ErrorNote } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 
 interface Props {
@@ -66,7 +66,9 @@ export function SnippetForm({
     initial?.scope.kind === "group" ? initial.scope.group : (activeProfile?.group ?? ""),
   );
 
+  // 入力不足は該当フィールドの FieldError に出す。保存 (IPC) の失敗だけ下部の ErrorNote。
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; sql?: string; scope?: string }>({});
   const [saving, setSaving] = useState(false);
 
   const buildScope = (): SnippetScope => {
@@ -77,22 +79,13 @@ export function SnippetForm({
 
   const handleSave = async () => {
     setError(null);
-    if (!name.trim()) {
-      setError(t("snippetErrorNameRequired"));
-      return;
-    }
-    if (!sql.trim()) {
-      setError(t("snippetErrorSqlRequired"));
-      return;
-    }
-    if (scopeKind === "profile" && !scopeProfileId) {
-      setError(t("snippetErrorScopeProfile"));
-      return;
-    }
-    if (scopeKind === "group" && !scopeGroup.trim()) {
-      setError(t("snippetErrorScopeGroup"));
-      return;
-    }
+    const errors: { name?: string; sql?: string; scope?: string } = {};
+    if (!name.trim()) errors.name = t("snippetErrorNameRequired");
+    if (!sql.trim()) errors.sql = t("snippetErrorSqlRequired");
+    if (scopeKind === "profile" && !scopeProfileId) errors.scope = t("snippetErrorScopeProfile");
+    if (scopeKind === "group" && !scopeGroup.trim()) errors.scope = t("snippetErrorScopeGroup");
+    setFieldErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     setSaving(true);
     try {
       await api.saveSnippet({
@@ -136,17 +129,19 @@ export function SnippetForm({
       </Heading>
 
       <Box gridColumn="span 2">
-        <chakra.label htmlFor={`${fid}-name`}>{t("snippetName")}</chakra.label>
+        <FieldLabel htmlFor={`${fid}-name`}>{t("snippetName")}</FieldLabel>
         <Input
           id={`${fid}-name`}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder={t("snippetNamePlaceholder")}
+          aria-invalid={fieldErrors.name ? true : undefined}
         />
+        {fieldErrors.name && <FieldError>{fieldErrors.name}</FieldError>}
       </Box>
 
       <Box>
-        <chakra.label htmlFor={`${fid}-folder`}>{t("snippetFolder")}</chakra.label>
+        <FieldLabel htmlFor={`${fid}-folder`}>{t("snippetFolder")}</FieldLabel>
         <Input
           id={`${fid}-folder`}
           value={folder}
@@ -162,7 +157,7 @@ export function SnippetForm({
       </Box>
 
       <Box>
-        <chakra.label htmlFor={`${fid}-driver`}>{t("snippetDriver")}</chakra.label>
+        <FieldLabel htmlFor={`${fid}-driver`}>{t("snippetDriver")}</FieldLabel>
         <Select id={`${fid}-driver`} value={driver} onChange={(e) => setDriver(e.target.value)}>
           <option value="">{t("snippetDriverAny")}</option>
           <option value="mysql">{t("formDriverMysql")}</option>
@@ -172,7 +167,7 @@ export function SnippetForm({
       </Box>
 
       <Box gridColumn="span 2">
-        <chakra.label htmlFor={`${fid}-tags`}>{t("snippetTags")}</chakra.label>
+        <FieldLabel htmlFor={`${fid}-tags`}>{t("snippetTags")}</FieldLabel>
         <Input
           id={`${fid}-tags`}
           value={tags}
@@ -196,7 +191,7 @@ export function SnippetForm({
         </Heading>
         <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3">
           <Box>
-            <chakra.label htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</chakra.label>
+            <FieldLabel htmlFor={`${fid}-scope-kind`}>{t("snippetScopeKind")}</FieldLabel>
             <Select
               id={`${fid}-scope-kind`}
               value={scopeKind}
@@ -209,7 +204,7 @@ export function SnippetForm({
           </Box>
           {scopeKind === "profile" && (
             <Box>
-              <chakra.label htmlFor={`${fid}-scope-profile`}>{t("snippetScopeProfileLabel")}</chakra.label>
+              <FieldLabel htmlFor={`${fid}-scope-profile`}>{t("snippetScopeProfileLabel")}</FieldLabel>
               <Select
                 id={`${fid}-scope-profile`}
                 value={scopeProfileId}
@@ -229,7 +224,7 @@ export function SnippetForm({
           )}
           {scopeKind === "group" && (
             <Box>
-              <chakra.label htmlFor={`${fid}-scope-group`}>{t("snippetScopeGroupLabel")}</chakra.label>
+              <FieldLabel htmlFor={`${fid}-scope-group`}>{t("snippetScopeGroupLabel")}</FieldLabel>
               <Input
                 id={`${fid}-scope-group`}
                 value={scopeGroup}
@@ -245,13 +240,14 @@ export function SnippetForm({
             </Box>
           )}
         </Box>
+        {fieldErrors.scope && <FieldError>{fieldErrors.scope}</FieldError>}
         <chakra.p color="app.textMuted" fontSize="xs" mt="2" mx="0" mb="0">
           {t("snippetScopeHelp")}
         </chakra.p>
       </chakra.fieldset>
 
       <Box gridColumn="span 2">
-        <chakra.label htmlFor={`${fid}-sql`}>{t("snippetSql")}</chakra.label>
+        <FieldLabel htmlFor={`${fid}-sql`}>{t("snippetSql")}</FieldLabel>
         <Textarea
           id={`${fid}-sql`}
           fontFamily="mono"
@@ -261,7 +257,9 @@ export function SnippetForm({
           placeholder={t("snippetSqlPlaceholder")}
           spellCheck={false}
           rows={10}
+          aria-invalid={fieldErrors.sql ? true : undefined}
         />
+        {fieldErrors.sql && <FieldError>{fieldErrors.sql}</FieldError>}
       </Box>
 
       {/* 保存を止める持続的なエラーは ErrorNote (#1114)。 */}

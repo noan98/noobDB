@@ -13,6 +13,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { Button, Checkbox, Input, Radio, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -589,13 +590,12 @@ export function DataSearchModal({
 
             <FormSection>
               <FieldLabel htmlFor="data-search-threshold">{t("dataSearchThresholdLabel")}</FieldLabel>
-              <Input
+              <DraftNumberInput
                 id="data-search-threshold"
-                type="number"
                 min={0}
                 step={1000}
                 value={threshold}
-                onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
+                onCommit={setThreshold}
                 disabled={scanning}
                 maxW="160px"
               />

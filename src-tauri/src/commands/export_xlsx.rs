@@ -279,6 +279,23 @@ impl XlsxSheetWriter {
                 .write_string_with_format(row, c, text.as_ref(), &self.header_format)
                 .map_err(xlsx_err)?;
         }
+        // 先頭行の固定・オートフィルタ・列幅 (ヘッダ名の文字数からの上限付き推定)。
+        // いずれも行数に依存せず定数メモリモードのまま使える (ヘッダ行は先頭行なので
+        // 書き込み済みの行に触れない)。
+        sheet.set_freeze_panes(row + 1, 0).map_err(xlsx_err)?;
+        if let (Some(last), true) = (
+            u16::try_from(columns.len().saturating_sub(1)).ok(),
+            !columns.is_empty(),
+        ) {
+            sheet.autofilter(row, 0, row, last).map_err(xlsx_err)?;
+        }
+        for (i, col) in columns.iter().enumerate() {
+            let c =
+                u16::try_from(i).map_err(|_| AppError::Other("column index overflow".into()))?;
+            let chars = col.name.chars().count();
+            let width = (chars as f64 * 1.2 + 4.0).clamp(10.0, 40.0);
+            sheet.set_column_width(c, width).map_err(xlsx_err)?;
+        }
         self.next_row += 1;
         Ok(())
     }

@@ -33,7 +33,8 @@ import {
   toggleScriptOption,
   type ScriptToggleKey,
 } from "../scriptRun";
-import { parseTextEncodingId, TEXT_ENCODING_OPTIONS } from "../sqlFileIO";
+import { parseTextEncodingId } from "../sqlFileIO";
+import { TextEncodingSelect } from "./TextEncodingSelect";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { LoadingButton } from "./LoadingButton";
@@ -42,7 +43,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { ScriptAnalysisPanel } from "./ScriptAnalysisPanel";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useToast } from "./Toast";
-import { Button, Input, Select, Switch } from "./ui";
+import { Button, Input, Switch } from "./ui";
 
 /** 事前確認の結果と、それを取ったときの入力 (ファイル + 文字コード) のキー。 */
 interface AnalysisResult {
@@ -407,22 +408,16 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
         <FormSection flexDirection="row" flexWrap="wrap" gap="4" alignItems="flex-start">
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="script-encoding">{t("scriptEncodingLabel")}</FieldLabel>
-            <Select
+            <TextEncodingSelect
               id="script-encoding"
+              allowAuto
               minW="160px"
               value={options.encoding ?? ""}
               onChange={(e) =>
                 setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(e.target.value) }))
               }
               disabled={busy}
-            >
-              <option value="">{t("scriptEncodingAuto")}</option>
-              {TEXT_ENCODING_OPTIONS.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
+            />
           </chakra.div>
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <FieldLabel htmlFor="script-start-at">{t("scriptStartAtLabel")}</FieldLabel>
