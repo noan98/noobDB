@@ -54,7 +54,7 @@ pub struct ColumnDiff {
     /// The target-side definition, when the column exists there.
     pub target: Option<TableColumnInfo>,
     /// For `Different`, the attribute names that differ
-    /// (`data_type` / `nullable` / `default` / `key` / `extra` /
+    /// (`data_type` / `nullable` / `default` / `key` / `extra` / `comment` /
     /// `foreign_key`). Empty for every other status.
     pub changed_fields: Vec<String>,
 }
@@ -111,6 +111,37 @@ pub fn attach_source_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
 /// マイグレーション) で `DROP TABLE` を子 → 親の順に並べるために使う。
 pub fn attach_target_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
     attach_foreign_keys(diff, fks, DiffStatus::TargetOnly);
+    // 残る表 (Same / Different) のうち、target のみの表を参照する FK も載せる。
+    // SQLite は FK 有効時の DROP TABLE が暗黙の DELETE を実行し、残る子表の
+    // ON DELETE CASCADE / SET NULL を発火させるため、同期側が検知できるようにする。
+    let target_only: std::collections::HashSet<String> = diff
+        .tables
+        .iter()
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+        .map(|t| t.name.clone())
+        .collect();
+    let referencing: Vec<ForeignKey> = fks
+        .iter()
+        .filter(|f| target_only.contains(&f.referenced_table))
+        .cloned()
+        .collect();
+    for table in diff
+        .tables
+        .iter_mut()
+        .filter(|t| matches!(t.status, DiffStatus::Same | DiffStatus::Different))
+    {
+        table.foreign_keys = super::table_ddl::group_foreign_keys(&table.name, &referencing)
+            .into_iter()
+            .map(|g| DiffForeignKey {
+                name: g.name.map(str::to_string),
+                columns: g.columns.iter().map(|c| c.to_string()).collect(),
+                referenced_table: g.referenced_table.to_string(),
+                referenced_columns: Vec::new(),
+                on_delete: g.on_delete.map(str::to_string),
+                on_update: g.on_update.map(str::to_string),
+            })
+            .collect();
+    }
 }
 
 fn attach_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey], status: DiffStatus) {
@@ -314,6 +345,13 @@ fn changed_fields(s: &TableColumnInfo, t: &TableColumnInfo) -> Vec<String> {
     }
     if !s.extra.eq_ignore_ascii_case(&t.extra) {
         fields.push("extra".to_string());
+    }
+    // 列コメント。ドライバ間で「無い」の表現が揺れる (None / 空文字) ので空は同一視する。
+    fn norm(c: &Option<String>) -> Option<&str> {
+        c.as_deref().filter(|c| !c.trim().is_empty())
+    }
+    if norm(&s.comment) != norm(&t.comment) {
+        fields.push("comment".to_string());
     }
     if !opt_eq_ignore_case(&s.referenced_table, &t.referenced_table)
         || !opt_eq_ignore_case(&s.referenced_column, &t.referenced_column)
@@ -543,5 +581,47 @@ mod tests {
         let t = vec![table("t", vec![col("name", "character varying(50)")])];
         let d = diff(&s, &t);
         assert_eq!(d.tables[0].status, DiffStatus::Same);
+    }
+
+    #[test]
+    fn column_comment_difference_is_detected_but_empty_equals_none() {
+        let mut s = col("name", "text");
+        s.comment = Some("ユーザ名".to_string());
+        let t = col("name", "text");
+        let d = diff(
+            &[table("u", vec![s.clone()])],
+            &[table("u", vec![t.clone()])],
+        );
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        assert_eq!(d.tables[0].columns[0].changed_fields, vec!["comment"]);
+
+        let mut empty = t;
+        empty.comment = Some(String::new());
+        let same = diff(
+            &[table("u", vec![col("name", "text")])],
+            &[table("u", vec![empty])],
+        );
+        assert_eq!(same.tables[0].status, DiffStatus::Same);
+    }
+
+    #[test]
+    fn target_fks_attach_to_remaining_tables_referencing_target_only() {
+        let t = |n: &str| table(n, vec![col("id", "int")]);
+        let mut d = diff(&[t("child")], &[t("child"), t("parent"), t("other")]);
+        let mk = |table: &str, to: &str| ForeignKey {
+            table: table.to_string(),
+            column: "pid".to_string(),
+            referenced_table: to.to_string(),
+            referenced_column: Some("id".to_string()),
+            constraint_name: Some("fk".to_string()),
+            on_delete: Some("CASCADE".to_string()),
+            on_update: None,
+        };
+        attach_target_foreign_keys(&mut d, &[mk("child", "parent"), mk("child", "child")]);
+        let child = d.tables.iter().find(|t| t.name == "child").unwrap();
+        assert_eq!(child.status, DiffStatus::Same);
+        assert_eq!(child.foreign_keys.len(), 1);
+        assert_eq!(child.foreign_keys[0].referenced_table, "parent");
+        assert_eq!(child.foreign_keys[0].on_delete.as_deref(), Some("CASCADE"));
     }
 }

@@ -123,6 +123,13 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
             }
             DiffStatus::TargetOnly => {
                 if allow_destructive {
+                    if let Some(child) = sqlite_cascading_referrer(driver, diff, &table.name) {
+                        warnings.push(format!(
+                            "表 {} は残る表 {} から ON DELETE CASCADE / SET NULL 付きの外部キーで参照されています。SQLite の DROP TABLE は暗黙の DELETE で {} の行を消す・書き換えるため、DROP TABLE を出力しません (先に外部キーを外してください)",
+                            table.name, child, child
+                        ));
+                        continue;
+                    }
                     statements.push(SyncStatement {
                         sql: format!("DROP TABLE {}", quote_ident(driver, &table.name)),
                         table: table.name.clone(),
@@ -159,6 +166,33 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         statements,
         warnings,
     }
+}
+
+/// SQLite で `table` (target のみの表) を `DROP TABLE` すると、残る表 (Same / Different)
+/// の ON DELETE CASCADE / SET NULL / SET DEFAULT が暗黙の DELETE で発火して行を
+/// 黙って消す・書き換える。そのような表があれば最初の 1 つの名前を返す。
+/// MySQL / PostgreSQL は参照中の表の DROP がエラーになるので対象外。
+fn sqlite_cascading_referrer<'a>(
+    driver: DriverKind,
+    diff: &'a SchemaDiff,
+    table: &str,
+) -> Option<&'a str> {
+    if driver != DriverKind::Sqlite {
+        return None;
+    }
+    diff.tables
+        .iter()
+        .filter(|t| matches!(t.status, DiffStatus::Same | DiffStatus::Different))
+        .find(|t| {
+            t.foreign_keys.iter().any(|fk| {
+                fk.referenced_table == table
+                    && fk.on_delete.as_deref().is_some_and(|a| {
+                        let a = a.trim().to_ascii_uppercase();
+                        a == "CASCADE" || a.starts_with("SET")
+                    })
+            })
+        })
+        .map(|t| t.name.as_str())
 }
 
 /// `DROP TABLE` の順位 (小さいほど先)。target のみの表同士の外部キーを見て、
@@ -554,6 +588,17 @@ fn modify_column(
             }
             // PK / FK reshaping on an existing column needs constraint juggling
             // we don't attempt; flag it so the user handles it deliberately.
+            if changed_fields.iter().any(|f| f == "comment") {
+                let value = match src.comment.as_deref().filter(|c| !c.trim().is_empty()) {
+                    Some(c) => format!("'{}'", c.replace('\'', "''")),
+                    None => "NULL".to_string(),
+                };
+                statements.push(pg_alter(
+                    table,
+                    format!("COMMENT ON COLUMN {tident}.{cident} IS {value}"),
+                ));
+                emitted = true;
+            }
             if changed_fields
                 .iter()
                 .any(|f| f == "key" || f == "foreign_key")
@@ -1615,5 +1660,123 @@ mod tests {
             "{:?}",
             plan.warnings
         );
+    }
+
+    fn same_child_referencing(parent: &str, on_delete: Option<&str>) -> TableDiff {
+        let mut f = fk("fk_p", &["pid"], parent, &["id"]);
+        f.on_delete = on_delete.map(str::to_string);
+        TableDiff {
+            name: "child".to_string(),
+            status: DiffStatus::Same,
+            foreign_keys: vec![f],
+            columns: vec![],
+        }
+    }
+
+    fn target_only_parent() -> TableDiff {
+        TableDiff {
+            name: "parent".to_string(),
+            status: DiffStatus::TargetOnly,
+            foreign_keys: vec![],
+            columns: vec![cdiff("id", DiffStatus::TargetOnly, None, &[])],
+        }
+    }
+
+    #[test]
+    fn sqlite_drop_table_skipped_when_remaining_child_cascades() {
+        for action in ["CASCADE", "SET NULL", "SET DEFAULT"] {
+            let d = diff(
+                DriverKind::Sqlite,
+                vec![
+                    same_child_referencing("parent", Some(action)),
+                    target_only_parent(),
+                ],
+            );
+            let plan = generate_sync_sql(&d, true);
+            assert!(
+                plan.statements
+                    .iter()
+                    .all(|s| s.kind != SyncKind::DropTable),
+                "{action}: {:?}",
+                plan.statements
+            );
+            assert!(
+                plan.warnings
+                    .iter()
+                    .any(|w| w.contains("parent") && w.contains("child")),
+                "{action}: {:?}",
+                plan.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn drop_table_kept_when_no_cascading_remaining_child() {
+        // NO ACTION の子、または MySQL / PostgreSQL (参照中の DROP はエラーで止まる) は従来どおり。
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![
+                same_child_referencing("parent", Some("NO ACTION")),
+                target_only_parent(),
+            ],
+        );
+        assert_eq!(generate_sync_sql(&d, true).statements.len(), 1);
+        for driver in [DriverKind::Mysql, DriverKind::Postgres] {
+            let d = diff(
+                driver,
+                vec![
+                    same_child_referencing("parent", Some("CASCADE")),
+                    target_only_parent(),
+                ],
+            );
+            assert_eq!(
+                generate_sync_sql(&d, true).statements.len(),
+                1,
+                "{driver:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn postgres_comment_only_change_emits_comment_on_column() {
+        let mut src = col("name", "text");
+        src.comment = Some("ユーザ's名".to_string());
+        let table = TableDiff {
+            name: "users".to_string(),
+            status: DiffStatus::Different,
+            foreign_keys: vec![],
+            columns: vec![cdiff(
+                "name",
+                DiffStatus::Different,
+                Some(src),
+                &["comment"],
+            )],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
+        assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
+        assert_eq!(
+            plan.statements[0].sql,
+            "COMMENT ON COLUMN \"users\".\"name\" IS 'ユーザ''s名'"
+        );
+    }
+
+    #[test]
+    fn mysql_comment_only_change_emits_modify_column_with_comment() {
+        let mut src = col("name", "varchar(10)");
+        src.comment = Some("名前".to_string());
+        let table = TableDiff {
+            name: "users".to_string(),
+            status: DiffStatus::Different,
+            foreign_keys: vec![],
+            columns: vec![cdiff(
+                "name",
+                DiffStatus::Different,
+                Some(src),
+                &["comment"],
+            )],
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
+        assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
+        assert!(plan.statements[0].sql.contains("COMMENT '名前'"));
     }
 }

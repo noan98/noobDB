@@ -152,6 +152,60 @@ pub struct SandboxConflict {
     pub external_row: Option<Vec<Value>>,
 }
 
+/// DECIMAL / NUMERIC 系の列型か。サンドボックスの SQLite では NUMERIC アフィニティの列になり、
+/// 文字列 `"10.50"` が REAL 10.5 (整数値なら INTEGER) へ変換されて読み戻される。
+fn is_decimal_type(data_type: &str) -> bool {
+    let t = data_type.to_ascii_lowercase();
+    t.contains("decimal") || t.contains("numeric")
+}
+
+/// 実 DB (MySQL の DECIMAL は `Value::String("10.50")`) とサンドボックス (SQLite から
+/// 読み戻した `Float` / `Int`) で値の型が往復で変わる DECIMAL / NUMERIC 列を、比較用に
+/// `Value::Float` へそろえた行を返す。そろえないと `values_equal` が型違いで不一致になり、
+/// 元 DB で未変更の行まで「外部でも変更」の衝突として提示される。
+/// 比較専用の正規化で、書き戻し SQL に使う行には適用しない。
+pub fn normalize_decimal_cells(column_types: &[String], rows: &[Vec<Value>]) -> Vec<Vec<Value>> {
+    let decimal: Vec<bool> = column_types.iter().map(|t| is_decimal_type(t)).collect();
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    if !decimal.get(i).copied().unwrap_or(false) {
+                        return v.clone();
+                    }
+                    match v {
+                        Value::Int(n) => Value::Float(*n as f64),
+                        Value::UInt(n) => Value::Float(*n as f64),
+                        Value::String(s) => s
+                            .trim()
+                            .parse::<f64>()
+                            .ok()
+                            .filter(|f| f.is_finite())
+                            .map_or_else(|| v.clone(), Value::Float),
+                        _ => v.clone(),
+                    }
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// 元 DB の列定義を、サンドボックスのベース (SQLite を再 introspect したもの) と比べられる
+/// 形にそろえる。SQLite のベースは `extra` (auto_increment など)・外部キー・列コメントを
+/// 持たない (作成時に落とす) ので、元 DB 側のそれらを残すと、元 DB で何も変わっていなくても
+/// `Different` になり「外部でも変更された表」の誤警告が出る。
+pub fn normalize_columns_for_sqlite_base(tables: &mut [TableColumns]) {
+    for table in tables {
+        for col in &mut table.columns {
+            col.extra = String::new();
+            col.referenced_table = None;
+            col.referenced_column = None;
+            col.comment = None;
+        }
+    }
+}
+
 /// Finds every row that both `desired` (sandbox vs. frozen base) and
 /// `external` (current real database vs. the *same* frozen base) touch —
 /// i.e. both sides changed the same row independently since the snapshot.
@@ -171,7 +225,7 @@ pub fn detect_conflicts(desired: &DataDiff, external: &DataDiff) -> Vec<SandboxC
             let sig = key_signature(&d.key);
             external_by_key
                 .get(&sig)
-                .filter(|e| !is_converged(d, e))
+                .filter(|e| !is_converged(d, e, &desired.column_types))
                 .map(|e| SandboxConflict {
                     key: d.key.clone(),
                     desired_status: d.status,
@@ -189,14 +243,19 @@ pub fn detect_conflicts(desired: &DataDiff, external: &DataDiff) -> Vec<SandboxC
 ///
 /// 両側が同じ行を**追加**した場合は外さない: 書き戻しの INSERT が既存キーと重複して
 /// 失敗するので、利用者が「スキップ」を選べる衝突として残す。
-fn is_converged(desired: &RowDiff, external: &RowDiff) -> bool {
+fn is_converged(desired: &RowDiff, external: &RowDiff, column_types: &[String]) -> bool {
     if desired.status != external.status {
         return false;
     }
     match desired.status {
         RowStatus::TargetOnly => true,
         RowStatus::Different => match (&desired.source, &external.source) {
-            (Some(a), Some(b)) => a == b,
+            (Some(a), Some(b)) => {
+                // DECIMAL 列は型が往復で変わる (Float と String) ので正規化して比べる。
+                let a = normalize_decimal_cells(column_types, std::slice::from_ref(a));
+                let b = normalize_decimal_cells(column_types, std::slice::from_ref(b));
+                a == b
+            }
             _ => false,
         },
         _ => false,
@@ -522,5 +581,64 @@ mod tests {
         let desired = schema_diff(vec![table_diff("orders", DiffStatus::Different)]);
         let external = schema_diff(vec![table_diff("customers", DiffStatus::Different)]);
         assert!(schema_conflict_tables(&desired, &external).is_empty());
+    }
+
+    #[test]
+    fn normalize_decimal_cells_unifies_string_int_and_float() {
+        let types = vec!["int".to_string(), "decimal(10,2)".to_string()];
+        let rows = vec![
+            vec![Value::Int(1), Value::String("10.50".into())],
+            vec![Value::Int(2), Value::Float(10.5)],
+            vec![Value::Int(3), Value::Int(10)],
+            vec![Value::Int(4), Value::String("n/a".into())],
+            vec![Value::Int(5), Value::Null],
+        ];
+        let n = normalize_decimal_cells(&types, &rows);
+        assert_eq!(n[0], vec![Value::Int(1), Value::Float(10.5)]);
+        assert_eq!(n[1][1], n[0][1]);
+        assert_eq!(n[2][1], Value::Float(10.0));
+        // 数値に読めない値・NULL・非 DECIMAL 列はそのまま。
+        assert_eq!(n[3][1], Value::String("n/a".into()));
+        assert_eq!(n[4][1], Value::Null);
+        assert_eq!(n[0][0], Value::Int(1));
+    }
+
+    #[test]
+    fn decimal_rows_changed_to_the_same_value_converge_across_representations() {
+        let mut desired = data_diff(vec![row_diff(RowStatus::Different, 1, Some(0), Some(0))]);
+        let mut external = desired.clone();
+        desired.column_types = vec!["int".to_string(), "decimal(10,2)".to_string()];
+        desired.rows[0].source = Some(vec![Value::Int(1), Value::Float(10.5)]);
+        external.rows[0].source = Some(vec![Value::Int(1), Value::String("10.50".into())]);
+        assert!(detect_conflicts(&desired, &external).is_empty());
+    }
+
+    #[test]
+    fn external_schema_compare_ignores_extra_fk_and_comment_missing_from_sqlite_base() {
+        use super::super::diff::compute_schema_diff;
+        let col = |extra: &str, fk: Option<&str>, comment: Option<&str>| TableColumnInfo {
+            name: "id".to_string(),
+            data_type: "int".to_string(),
+            nullable: false,
+            key: "PRI".to_string(),
+            default: None,
+            extra: extra.to_string(),
+            referenced_table: fk.map(str::to_string),
+            referenced_column: fk.map(|_| "id".to_string()),
+            comment: comment.map(str::to_string),
+        };
+        let mut current = vec![TableColumns {
+            name: "t".to_string(),
+            columns: vec![col("auto_increment", Some("p"), Some("c"))],
+        }];
+        let base = vec![TableColumns {
+            name: "t".to_string(),
+            columns: vec![col("", None, None)],
+        }];
+        let before = compute_schema_diff(DriverKind::Mysql, DriverKind::Mysql, &current, &base);
+        assert_eq!(before.tables[0].status, DiffStatus::Different);
+        normalize_columns_for_sqlite_base(&mut current);
+        let after = compute_schema_diff(DriverKind::Mysql, DriverKind::Mysql, &current, &base);
+        assert_eq!(after.tables[0].status, DiffStatus::Same);
     }
 }

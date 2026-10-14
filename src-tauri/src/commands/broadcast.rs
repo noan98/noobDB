@@ -29,6 +29,7 @@ use crate::db::broadcast_diff::{
     compare_environments, resolve_key_indices, BroadcastDiff, EnvSide, MAX_BROADCAST_COMPARE_ROWS,
 };
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
+use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
@@ -83,18 +84,27 @@ impl EnvRun {
     }
 }
 
+/// 自動 LIMIT を付けた実行 SQL。比較の上限 (`MAX_BROADCAST_COMPARE_ROWS`) より小さい
+/// 設定値 (既定 1000) をそのまま使うと、総行数が上限を超えず `truncated` が常に false に
+/// なり、先頭だけの比較を「差分なし」と誤報告する。上限 + 1 行までは取得して、
+/// 打ち切りを差分側が検知できるようにする (設定値が上限より大きいときは設定値のまま)。
+fn effective_broadcast_sql(driver: DriverKind, sql: &str, auto_limit: Option<usize>) -> String {
+    match auto_limit {
+        Some(n) => {
+            let n = n.max(MAX_BROADCAST_COMPARE_ROWS + 1);
+            apply_auto_limit_for(driver, sql, n).unwrap_or_else(|| sql.to_string())
+        }
+        None => sql.to_string(),
+    }
+}
+
 async fn run_env(
     session: Arc<Session>,
     sql: String,
     auto_limit: Option<usize>,
     query_timeout_secs: Option<u64>,
 ) -> EnvRun {
-    let effective_sql = match auto_limit {
-        Some(n) => {
-            apply_auto_limit_for(session.conn.driver_kind(), &sql, n).unwrap_or_else(|| sql.clone())
-        }
-        None => sql.clone(),
-    };
+    let effective_sql = effective_broadcast_sql(session.conn.driver_kind(), &sql, auto_limit);
     let mut columns: Vec<Column> = Vec::new();
     let mut rows: Vec<Vec<Value>> = Vec::new();
     let exec = session.conn.execute_stream(
@@ -361,4 +371,27 @@ async fn coordinate(
         return;
     }
     let _ = on_event.send(BroadcastMessage::Done {});
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_limit_is_raised_above_compare_cap_so_truncation_is_detectable() {
+        // 既定の自動 LIMIT 1000 のままだと total が上限 (5000) を超えず truncated が立たない。
+        let sql = effective_broadcast_sql(DriverKind::Mysql, "SELECT * FROM orders", Some(1000));
+        assert!(
+            sql.contains(&format!("LIMIT {}", MAX_BROADCAST_COMPARE_ROWS + 1)),
+            "{sql}"
+        );
+        // 設定値が上限より大きいときはそのまま。
+        let big = effective_broadcast_sql(DriverKind::Mysql, "SELECT * FROM t", Some(100_000));
+        assert!(big.contains("LIMIT 100000"), "{big}");
+        // 自動 LIMIT なしなら SQL は変えない。
+        assert_eq!(
+            effective_broadcast_sql(DriverKind::Mysql, "SELECT 1", None),
+            "SELECT 1"
+        );
+    }
 }

@@ -58,6 +58,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
       generateDataSyncSql: vi.fn().mockResolvedValue({ statements: [], warnings: [] }),
       releaseDataDiffs: vi.fn().mockResolvedValue(undefined),
       sandboxResetTable: vi.fn().mockResolvedValue({ restored_rows: 3 }),
+      applySyncSql: vi.fn().mockResolvedValue(1),
+      sandboxAdvanceBase: vi.fn().mockResolvedValue(undefined),
     },
   };
 });
@@ -221,5 +223,59 @@ describe("SandboxReviewModal の表リセット (#1539)", () => {
     fireEvent.click(await screen.findByText(t("confirmDefaultCancel")));
     await new Promise((r) => setTimeout(r, 50));
     expect(api.sandboxResetTable).not.toHaveBeenCalled();
+  });
+});
+
+/** 適用後の結果表示と base 更新の部分失敗 (#1599)。 */
+describe("SandboxReviewModal の適用結果 (#1599)", () => {
+  const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
+  const changed = {
+    ...TABLE_DIFF,
+    desired: {
+      ...TABLE_DIFF.desired,
+      rows: [
+        { status: "source_only" as const, key: [1], source: [1], target: null, changed_columns: [] },
+      ],
+    },
+  };
+
+  async function generateAndApply() {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue(changed);
+    vi.mocked(api.generateDataSyncSql).mockResolvedValue({
+      statements: [{ sql: "INSERT INTO users VALUES (1)", table: "users", kind: "insert", destructive: false }],
+      warnings: [],
+    } as never);
+    renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    fireEvent.click(await screen.findByText(t("sandboxApplyTitle", { count: 1 })));
+    fireEvent.click(await screen.findByText(t("confirmDefaultOk")));
+  }
+
+  it("適用成功の文言が再読込で消えずに表示される", async () => {
+    await generateAndApply();
+    expect(await screen.findByText(t("sandboxApplyDone", { count: 1 }))).toBeInTheDocument();
+    expect(api.sandboxAdvanceBase).toHaveBeenCalled();
+  });
+
+  it("base 更新が失敗しても適用ボタンを残さず、再適用させない", async () => {
+    vi.mocked(api.sandboxAdvanceBase).mockRejectedValueOnce(new Error("disk full"));
+    await generateAndApply();
+    expect(
+      await screen.findByText(
+        t("sandboxApplyBaseAdvanceFailed", { count: 1, tables: "users", error: "Error: disk full" }),
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByText(t("sandboxApplyTitle", { count: 1 }))).not.toBeInTheDocument(),
+    );
   });
 });
