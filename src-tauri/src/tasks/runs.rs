@@ -113,6 +113,13 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
     )
     .execute(pool)
     .await?;
+    // #1609: task_id 単位の参照 (直近失敗・一覧・削除) を全件スキャンにしない。
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_assertion_runs_task_time
+            ON assertion_runs(task_id, run_started_at DESC)",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

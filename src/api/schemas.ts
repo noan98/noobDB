@@ -335,6 +335,8 @@ export const tableProfileOverview = z.object({
       notes: z.array(z.string()),
     }),
   ),
+  distinct_approximate: z.boolean(),
+  notes: z.array(z.string()),
   scans: z.number(),
 });
 
