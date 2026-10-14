@@ -4075,15 +4075,17 @@ export const ConnectionList = memo(
                 borderWidth="0"
                 borderBottomWidth="1px"
                 action={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={t("listErrorDismiss")}
-                    onClick={() => setError(null)}
-                  >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </Button>
+                  <Tooltip label={t("listErrorDismiss")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("listErrorDismiss")}
+                      onClick={() => setError(null)}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </Button>
+                  </Tooltip>
                 }
               >
                 {error}

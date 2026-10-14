@@ -424,14 +424,15 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
             </option>
           ))}
         </Select>
-        <Tooltip label={t("metricsRefresh")} focusableWrapper={loading}>
+        // 自動更新のたびに loading が切り替わるので、disabled や包み要素の切替でボタンを作り直さない //
+        (キーボードフォーカスが落ちる)。二重実行は load() 側の busyRef が防ぐ。
+        <Tooltip label={t("metricsRefresh")}>
           <Button
             type="button"
             variant="ghost"
             size="sm"
             aria-label={t("metricsRefresh")}
             onClick={() => void load()}
-            disabled={loading}
           >
             <Icon name="refresh" size={ICON_SIZES.md} />
           </Button>

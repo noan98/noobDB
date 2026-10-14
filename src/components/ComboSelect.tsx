@@ -250,7 +250,7 @@ export function ComboSelect({
         ref={inputRef}
         id={inputId}
         role="combobox"
-        aria-expanded={open}
+        aria-expanded={open && (filtered.length > 0 || !!emptyText)}
         aria-controls={listboxId}
         aria-autocomplete="list"
         aria-activedescendant={
