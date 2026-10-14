@@ -1100,3 +1100,47 @@ async fn failed_commit_does_not_offer_restart_from_begin() {
         other => panic!("expected Failed, got {other:?}"),
     }
 }
+
+/// BEGIN したまま COMMIT / ROLLBACK なしで終わったスクリプトは、EOF で BEGIN 以降を
+/// 取り消し (ROLLBACK)、`implicit_rollback` で知らせる。BEGIN より前の文は残る (#1601)。
+#[tokio::test]
+async fn unclosed_begin_is_rolled_back_at_eof() {
+    let (mut fx, session) = setup("unclosed_begin", false).await;
+    let path = write_script(
+        &mut fx,
+        "unclosed_begin",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1);\nBEGIN;\nINSERT INTO t VALUES (2);\nINSERT INTO t VALUES (3);",
+    );
+    match run(&session, &path, opts(false, false)).await {
+        t::ScriptRun::Done {
+            implicit_rollback, ..
+        } => assert!(implicit_rollback),
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 1);
+    // 接続はトランザクション外に戻っており、続けて書き込める。
+    session
+        .conn
+        .execute("INSERT INTO t VALUES (4)", None)
+        .await
+        .expect("insert after rollback");
+    assert_eq!(count(&session, "t").await, 2);
+}
+
+/// 全体を包む wrap_in_transaction は従来どおり EOF で確定し、取り消しの通知は出さない。
+#[tokio::test]
+async fn wrapped_script_still_commits_at_eof() {
+    let (mut fx, session) = setup("wrapped_commit", false).await;
+    let path = write_script(
+        &mut fx,
+        "wrapped_commit",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1);",
+    );
+    match run(&session, &path, opts(false, true)).await {
+        t::ScriptRun::Done {
+            implicit_rollback, ..
+        } => assert!(!implicit_rollback),
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 1);
+}

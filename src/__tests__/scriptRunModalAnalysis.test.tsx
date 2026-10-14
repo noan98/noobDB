@@ -106,7 +106,7 @@ beforeEach(() => {
       skippedControl: 0,
       skippedExcluded: 0,
       skippedBeforeStart: 0,
-      implicitCommit: false,
+      implicitRollback: false,
       rowsAffected: 0,
       elapsedMs: 1,
     });
@@ -177,14 +177,14 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
         skippedControl: 0,
         skippedExcluded: 0,
         skippedBeforeStart: 0,
-        implicitCommit: true,
+        implicitRollback: true,
         rowsAffected: 1,
         elapsedMs: 1,
       });
     };
     setup();
     fireEvent.click(screen.getByText(t("scriptExecute")));
-    expect(await screen.findByText(t("scriptDoneImplicitCommit"), {}, { timeout: 3000 })).toBeTruthy();
+    expect(await screen.findByText(t("scriptDoneImplicitRollback"), {}, { timeout: 3000 })).toBeTruthy();
   });
 });
 

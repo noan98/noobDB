@@ -150,9 +150,9 @@ pub struct ScriptDoneEvent {
     #[serde(rename = "skippedBeforeStart")]
     pub skipped_before_start: u64,
     /// スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わり、ランナーが EOF で
-    /// 確定 (COMMIT) したか。未確定の変更が黙って確定されたことを利用者へ伝える。
-    #[serde(rename = "implicitCommit")]
-    pub implicit_commit: bool,
+    /// 取り消した (ROLLBACK) か。BEGIN 以降の変更が残っていないことを利用者へ伝える。
+    #[serde(rename = "implicitRollback")]
+    pub implicit_rollback: bool,
     #[serde(rename = "rowsAffected")]
     pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
@@ -202,7 +202,7 @@ pub enum ScriptRun {
         skipped_control: u64,
         skipped_excluded: u64,
         skipped_before_start: u64,
-        implicit_commit: bool,
+        implicit_rollback: bool,
         rows_affected: u64,
         elapsed_ms: u64,
     },
@@ -461,15 +461,26 @@ where
         last_emit = Instant::now();
     }
 
-    // スクリプトが BEGIN したまま終わった場合も、ランナーが開いたトランザクションは
-    // 確定させて閉じる (開いたまま専用接続を握り続けない)。
-    let mut implicit_commit = false;
+    // 開いたままのトランザクションは EOF で閉じる (開いたまま専用接続を握り続けない)。
+    // ランナー自身が開いた (wrap_in_transaction) 場合は想定どおり確定する。スクリプトの
+    // BEGIN が COMMIT / ROLLBACK なしで終わった場合は、書き忘れの可能性が高いので安全側に
+    // 倒して取り消し (ROLLBACK)、利用者へ知らせる (#1601)。
+    let mut implicit_rollback = false;
     if runner.guard.active {
-        // ランナー自身が開いた (wrap_in_transaction) 場合は想定どおりの確定。スクリプトの
-        // BEGIN が未確定のまま終わった場合だけ、利用者へ知らせる。
-        implicit_commit = !runner.options.wrap_in_transaction;
-        if let Err(e) = runner.commit().await {
-            return Ok(runner.abort_with(format!("commit failed: {e}"), None).await);
+        if runner.options.wrap_in_transaction {
+            if let Err(e) = runner.commit().await {
+                return Ok(runner.abort_with(format!("commit failed: {e}"), None).await);
+            }
+        } else {
+            if let Err(e) = runner.rollback_unclosed().await {
+                return Ok(runner
+                    .abort_with(
+                        format!("rollback of the unclosed transaction failed: {e}"),
+                        None,
+                    )
+                    .await);
+            }
+            implicit_rollback = true;
         }
     }
     runner.invalidate_caches().await;
@@ -481,7 +492,7 @@ where
         skipped_control: runner.skipped_control,
         skipped_excluded: runner.skipped_excluded,
         skipped_before_start: runner.skipped_before_start,
-        implicit_commit,
+        implicit_rollback,
         rows_affected: runner.rows_affected,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
@@ -1035,6 +1046,15 @@ impl Runner {
         Ok(())
     }
 
+    /// スクリプトの BEGIN が閉じられないまま EOF に達したときに取り消す。取り消した文は
+    /// 確定済みの件数 (`committed`) に数えない。
+    async fn rollback_unclosed(&mut self) -> Result<()> {
+        self.guard.active = false;
+        self.pending_in_tx = 0;
+        self.tx_begin_index = None;
+        self.session.conn.finish_transaction(false).await
+    }
+
     async fn on_failure(&mut self, stmt: &ScriptStatement, e: AppError) -> Option<ScriptRun> {
         self.failed_count += 1;
         if self.batch.is_some() {
@@ -1386,7 +1406,7 @@ async fn spawn_script(
             skipped_control,
             skipped_excluded,
             skipped_before_start,
-            implicit_commit,
+            implicit_rollback,
             rows_affected,
             elapsed_ms,
         }) => {
@@ -1402,7 +1422,7 @@ async fn spawn_script(
                     skipped_control,
                     skipped_excluded,
                     skipped_before_start,
-                    implicit_commit,
+                    implicit_rollback,
                     rows_affected,
                     elapsed_ms,
                 },

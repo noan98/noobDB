@@ -4397,7 +4397,7 @@
         "sql": "INSERT INTO t VALUES (1)"
       }
     ],
-    "implicitCommit": true,
+    "implicitRollback": true,
     "rowsAffected": 57,
     "skippedBeforeStart": 10,
     "skippedControl": 2,

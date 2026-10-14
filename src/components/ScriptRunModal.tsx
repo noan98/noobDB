@@ -643,9 +643,9 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
           {t("scriptDoneSkippedBefore", { count: event.skippedBeforeStart.toLocaleString() })}
         </chakra.div>
       )}
-      {event.implicitCommit && (
+      {event.implicitRollback && (
         <Callout tone="warning" role="status">
-          {t("scriptDoneImplicitCommit")}
+          {t("scriptDoneImplicitRollback")}
         </Callout>
       )}
       {event.failures.length > 0 && (
