@@ -407,6 +407,8 @@
 
   --accent: #2563eb;
   --accent-hover: #1d4ed8;
+  /* 一致箇所の強調帯。accent 色に追従する (テーマごとの上書きは不要)。 */
+  --accent-highlight: color-mix(in srgb, var(--accent) 35%, transparent);
   --accent-text: #ffffff;
   /* 調和トーン (#790)。カスタムアクセント未選択時は --bg-active / --bg-active-strong
      (このテーマ・プリセットの固定値) をそのまま指す。App.tsx はカスタムアクセント
@@ -458,6 +460,8 @@
   --preview-banner-border: #fcd34d;
   --preview-banner-text: #78350f;
   --preview-banner-dot: #d97706;
+  /* 保存中ドットの光輪。dot 色に追従するので各テーマでの上書きは不要。 */
+  --preview-banner-dot-ring: color-mix(in srgb, var(--preview-banner-dot) 25%, transparent);
 
   color-scheme: light;
   font-family: var(--font-sans);
@@ -1977,7 +1981,7 @@ html, body, #root {
       box-shadow var(--dur-fast) var(--ease),
       transform var(--dur-fast) var(--ease);
   }
-  button:hover { background: var(--bg-hover); }
+  button:not(:disabled):hover { background: var(--bg-hover); }
   button:active:not(:disabled) { transform: translateY(1px); }
   button:disabled { opacity: 0.5; cursor: not-allowed; }
   button:focus-visible {
@@ -1985,7 +1989,8 @@ html, body, #root {
     box-shadow: var(--focus-ring);
   }
 
-  input, select {
+  /* チェックボックス / ラジオはネイティブ描画を壊さないよう除外 (ui.tsx の Checkbox / Radio が担う)。 */
+  input:not([type="checkbox"]):not([type="radio"]), select {
     font: inherit;
     /* 密度対応のフィールド/コントロールトークン (#327, #620)。縦は --control-py で
        ボタンと高さを揃え、横は --field-px (8px 相当)。 */
@@ -2022,7 +2027,7 @@ html, body, #root {
     line-height: var(--leading-snug);
     letter-spacing: var(--tracking-wide);
     color: var(--text-secondary);
-    margin-bottom: 2px;
+    margin-bottom: var(--space-0-5);
   }
 }
 
@@ -2110,11 +2115,11 @@ html, body, #root {
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul {
   font-family: inherit;
-  max-height: 220px;
+  max-height: calc(220px * var(--font-scale));
   padding: var(--space-1);
 }
 .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-  padding: 3px 10px;
+  padding: var(--space-0-75) var(--space-2-5);
   border-radius: var(--radius-sm);
   transition: background var(--dur-fast) var(--ease),
     color var(--dur-fast) var(--ease),
@@ -2197,14 +2202,14 @@ html, body, #root {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  padding: 9px 10px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2-5);
   font-size: var(--text-sm);
 }
 .cm-editor .cm-panel.cm-search label {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   color: var(--text-muted);
   font-size: var(--text-xs);
 }
@@ -2213,22 +2218,22 @@ html, body, #root {
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: var(--space-7);
+  padding: var(--space-1) var(--space-2);
   font-size: var(--text-sm);
 }
-.cm-editor .cm-panel.cm-search .cm-textfield:focus {
+.cm-editor .cm-panel.cm-search .cm-textfield:focus-visible {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+  box-shadow: var(--focus-ring);
 }
 .cm-editor .cm-panel.cm-search .cm-button {
   background: var(--bg-elevated);
   color: var(--text);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  min-height: 28px;
-  padding: 4px 10px;
+  min-height: var(--space-7);
+  padding: var(--space-1) var(--space-2-5);
   font-size: var(--text-sm);
   background-image: none;
   cursor: pointer;
@@ -2376,7 +2381,7 @@ td.is-find-current::after {
 }
 
 .grid-data-reveal {
-  animation: grid-data-reveal var(--dur-base, 180ms) var(--ease-out, ease-out);
+  animation: grid-data-reveal var(--dur-med, 200ms) var(--ease-out, ease-out);
 }
 
 /* `tree-row-enter`: スキーマツリーで展開操作により増えた行 (#1315) のフェードイン。
@@ -2388,7 +2393,7 @@ td.is-find-current::after {
 }
 
 .tree-row-enter {
-  animation: tree-row-enter var(--dur-base, 180ms) var(--ease-out, ease-out);
+  animation: tree-row-enter var(--dur-med, 200ms) var(--ease-out, ease-out);
 }
 
 /* ---------- Reduced motion ----------

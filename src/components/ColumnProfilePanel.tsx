@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex } from "@chakra-ui/react";
+import { tableTdCss, tableThCss } from "./tableCellStyles";
 import { motion } from "motion/react";
 
 import {
@@ -54,23 +55,8 @@ import { transitions, variants } from "../motion";
  *   欠落させない (アドバイザの `skipped` と同じ方針)。
  */
 
-const thCss: SystemStyleObject = {
-  position: "sticky",
-  top: 0,
-  background: "var(--bg-muted)",
-  borderBottom: "1px solid var(--border)",
-  padding: "var(--space-1) var(--space-2)",
-  textAlign: "left",
-  textStyle: "overline",
-  color: "var(--text-secondary)",
-  whiteSpace: "nowrap",
-};
-const tdCss: SystemStyleObject = {
-  borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "var(--space-1) var(--space-2)",
-  fontSize: "var(--text-sm)",
-  color: "var(--text)",
-};
+const thCss = tableThCss(true);
+const tdCss = tableTdCss(true);
 
 // 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
 const MotionReveal = chakra(

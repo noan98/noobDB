@@ -82,8 +82,8 @@ export const SkeletonRow = chakra("div", {
   base: {
     ...shimmerContainerCss,
     height: "22px",
-    mx: "4px",
-    my: "3px",
+    mx: "1",
+    my: "0.75",
     borderRadius: "var(--radius-sm)",
     "&::after": shimmerAfterCss,
   },

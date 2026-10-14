@@ -395,7 +395,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       </Flex>
 
       {dbAggStatus !== "off" && (
-        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
+        <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {dbAggStatus === "pending"
             ? t("chartAggInDbPending")
             : dbAggStatus === "ok"
@@ -405,7 +405,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       )}
 
       {model.sampledFrom != null && (
-        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
+        <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {t("chartSampled", { shown: model.labels.length, total: model.sampledFrom })}
         </chakra.div>
       )}
@@ -414,7 +414,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           一言添えないと不安になりうるケース (点 1 つ・全値同一・非数値の 0 読み替え)。
           サンプリング注記と同じ控えめなトーン (app.textMuted) で揃える。 */}
       {notices.length > 0 && (
-        <chakra.div px="3" py="1" fontSize="xs" color="app.textMuted" flex="none">
+        <chakra.div px="3" py="1" textStyle="caption" flex="none">
           {notices.map((n) => noticeText(n, model, t)).join("  ")}
         </chakra.div>
       )}
@@ -469,9 +469,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <Flex align="center" gap="1.5">
-      <chakra.span color="app.textMuted" fontSize="xs">
-        {label}
-      </chakra.span>
+      <chakra.span textStyle="caption">{label}</chakra.span>
       {children}
     </Flex>
   );

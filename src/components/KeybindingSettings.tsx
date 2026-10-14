@@ -48,7 +48,7 @@ const RowLabel = chakra("span", {
 const ComboKbd = chakra("kbd", {
   base: {
     px: "1.5",
-    py: "1px",
+    py: "0.25",
     borderRadius: "sm",
     borderWidth: "1px",
     borderColor: "app.border",

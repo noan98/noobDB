@@ -29,7 +29,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
-import { Button, Heading } from "./ui";
+import { Button, Checkbox, Heading } from "./ui";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -309,7 +309,7 @@ export function TableStatisticsPanel({
           color="app.text"
           cursor="pointer"
         >
-          <input type="checkbox" checked={onlyNoIndex} onChange={(e) => setOnlyNoIndex(e.target.checked)} />
+          <Checkbox checked={onlyNoIndex} onChange={(e) => setOnlyNoIndex(e.target.checked)} />
           {t("sizeFilterNoIndex")}
         </chakra.label>
         <chakra.label
@@ -320,11 +320,7 @@ export function TableStatisticsPanel({
           color="app.text"
           cursor="pointer"
         >
-          <input
-            type="checkbox"
-            checked={onlyNoPrimaryKey}
-            onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)}
-          />
+          <Checkbox checked={onlyNoPrimaryKey} onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)} />
           {t("sizeFilterNoPk")}
         </chakra.label>
         {rows.length > 0 && (

@@ -205,12 +205,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   return (
     <>
       {text.slice(0, idx)}
-      <chakra.mark
-        bg="color-mix(in srgb, var(--accent) 35%, transparent)"
-        color="inherit"
-        borderRadius="xs"
-        px="0.25"
-      >
+      <chakra.mark bg="app.accentHighlight" color="inherit" borderRadius="xs" px="0.25">
         {text.slice(idx, idx + query.length)}
       </chakra.mark>
       {text.slice(idx + query.length)}
@@ -269,7 +264,7 @@ const TreeEmpty = chakra("div", {
     pt: "1",
     pb: "1",
     pr: "2.5",
-    pl: "22px",
+    pl: "5.5",
     fontSize: "xs",
     color: "app.textMuted",
     fontStyle: "italic",

@@ -119,7 +119,7 @@ export function buildRoutineTemplate(driver: string, kind: EditableObjectKind, d
   // sqlite (トリガーのみ)
   return [
     `CREATE TRIGGER ${quoteIdentFor(driver, "new_trigger")}`,
-    'AFTER INSERT ON "table_name"',
+    `AFTER INSERT ON ${quoteIdentFor(driver, "table_name")}`,
     "FOR EACH ROW",
     "BEGIN",
     "  SELECT 1;",

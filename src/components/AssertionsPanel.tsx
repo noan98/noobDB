@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
-import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
+import { tableTdCss, tableThCss } from "./tableCellStyles";
 
 import {
   api,
@@ -54,25 +55,8 @@ import { useToast } from "./Toast";
  *   ものだけを出す (`scopeMatches` を共有)。
  */
 
-const thCss: SystemStyleObject = {
-  position: "sticky",
-  top: 0,
-  zIndex: 1,
-  background: "var(--bg-muted)",
-  borderBottom: "1px solid var(--border)",
-  padding: "var(--space-1-5) var(--space-2-5)",
-  textAlign: "left",
-  textStyle: "overline",
-  color: "var(--text-secondary)",
-  whiteSpace: "nowrap",
-};
-const tdCss: SystemStyleObject = {
-  borderBottom: "1px solid var(--border-subtle, var(--border))",
-  padding: "var(--space-2) var(--space-2-5)",
-  fontSize: "var(--text-sm)",
-  color: "var(--text)",
-  verticalAlign: "top",
-};
+const thCss = tableThCss();
+const tdCss = tableTdCss();
 
 function statusRole(state: AssertionRunState | undefined): SemanticRole | null {
   switch (state?.status) {

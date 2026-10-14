@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { CodePreview } from "./modalForm";
 import { PressableButton } from "./ui";
 import { Tooltip } from "./Tooltip";
 
@@ -176,18 +177,16 @@ export function LocalTablesPanel({
                     {t("localPanelSourceLabel", { name: tbl.source_profile })}
                   </chakra.span>
                 )}
-                <chakra.pre
-                  fontFamily="mono"
-                  fontSize="xs"
-                  color="app.textMuted"
-                  whiteSpace="pre-wrap"
-                  wordBreak="break-all"
-                  m="0"
+                <CodePreview
+                  wrap
                   maxH="4.5em"
                   overflow="hidden"
+                  fontSize="xs"
+                  color="app.textMuted"
+                  wordBreak="break-all"
                 >
                   {tbl.source_sql}
-                </chakra.pre>
+                </CodePreview>
               </chakra.li>
             ))}
           </chakra.ul>

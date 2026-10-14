@@ -471,12 +471,7 @@ function WhereUsedMatchRow({
               {l.clippedStart && "…"}
               {splitHighlightSegments(l.text, l.ranges).map((seg, i) =>
                 seg.hit ? (
-                  <chakra.mark
-                    key={i}
-                    bg="color-mix(in srgb, var(--accent) 35%, transparent)"
-                    color="inherit"
-                    borderRadius="xs"
-                  >
+                  <chakra.mark key={i} bg="app.accentHighlight" color="inherit" borderRadius="xs">
                     {seg.text}
                   </chakra.mark>
                 ) : (

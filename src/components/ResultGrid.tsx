@@ -691,7 +691,7 @@ export const GRID_CSS: SystemStyleObject = {
     fontSize: "var(--text-3xs)",
     fontWeight: 700,
     lineHeight: 1,
-    color: "var(--bg)",
+    color: "var(--accent-text)",
     background: "var(--accent)",
     borderRadius: "var(--radius-pill)",
   },
@@ -8853,7 +8853,7 @@ export const ResultGrid = memo(
             _focus={{
               outline: "none",
               borderColor: "var(--accent)",
-              boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+              boxShadow: "var(--focus-ring)",
             }}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -9092,7 +9092,7 @@ export const ResultGrid = memo(
                   _focus={{
                     outline: "none",
                     borderColor: "var(--accent)",
-                    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
+                    boxShadow: "var(--focus-ring)",
                   }}
                   value={findQuery}
                   onChange={(e) => setFindQuery(e.target.value)}

@@ -158,6 +158,7 @@ const config = defineConfig({
           // アクセント (接続ごとに動的に変わる)
           accent: { value: "var(--accent)" },
           accentHover: { value: "var(--accent-hover)" },
+          accentHighlight: { value: "var(--accent-highlight)" },
           accentText: { value: "var(--accent-text)" },
           // ベタ塗り (app.*.solid / app.status.*) の**上**に載せる前景色 (#1111)。
           // ライト系テーマでは白、ダーク系テーマでは暗色になる。バッジ・チップ・
@@ -769,7 +770,7 @@ export const selectableCardRecipe = defineRecipe({
     // 選択状態 (ThemePresetCard)。アクセント色の枠線 + inset リングで示す。
     "&[aria-pressed=true]": {
       borderColor: "app.accent",
-      boxShadow: "inset 0 0 0 1px var(--accent)",
+      boxShadow: "inset 0 0 0 1px var(--accent), var(--elevation-raised)",
     },
     _focusVisible: { outline: "none", boxShadow: focusRing },
     _disabled: { opacity: 0.6, cursor: "default" },
