@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig(async () => ({
+export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: {
@@ -57,7 +57,7 @@ export default defineConfig(async () => ({
     ],
     // カバレッジ計測。
     //
-    // `all: true` と `include: src/**` により、テストから一度も実行されない
+    // `include: src/**` の指定により、テストから一度も実行されない
     // ファイルも 0% として表に現れるようにし、テストの空白地帯を可視化する。
     // 除外するのはテスト自身・型宣言・エントリポイント (main.tsx) など、
     // ユニットテストで意味のある計測ができないものに限る。
@@ -67,7 +67,7 @@ export default defineConfig(async () => ({
     // (lines: 64 は実測 約 68% − 約 4pt のベースライン)。引き上げは行うが
     // 下げないのが原則 (新規コードが無テストでも通る余地を狭め、退行を検出する)。
     //
-    // 注意: v8 provider + `all: true` は「どのテストからも import されない」
+    // 注意: v8 provider は「どのテストからも import されない」
     // ソースを計装しないため (0 行として 100% 計上され分母から漏れる)、未テストの
     // UI コンポーネントにレンダリングテストを足す (#604) と、それらが計装対象に
     // 入って**未到達行が分母に加わり実測パーセントが下がる**ことがある。これは
@@ -78,7 +78,6 @@ export default defineConfig(async () => ({
     // 動く (CI は `--coverage` 付きで実行)。
     coverage: {
       provider: "v8",
-      all: true,
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/**/*.d.ts",
@@ -88,4 +87,4 @@ export default defineConfig(async () => ({
       thresholds: { lines: 64 },
     },
   },
-}));
+});

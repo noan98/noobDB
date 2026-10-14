@@ -12,9 +12,13 @@ on:
   push:
     branches: [main]
 
+# PR の古い run だけ取り消す。main への push は取り消さない (連続 push で
+# 途中のコミットの検証が抜けるのを防ぐ。#1632)。cancel-in-progress: false でも
+# 同一グループの「待機中」run は新しい run に取り消されるため、push はグループを
+# SHA 単位にして全件を完走させる。
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -106,6 +110,8 @@ jobs:
             automerge:
               - 'scripts/automerge-hold.mjs'
               - 'scripts/automerge-hold.test.mjs'
+              - 'scripts/automerge-notice.mjs'
+              - 'scripts/automerge-notice.test.mjs'
               - '.github/workflows/automerge.yml'
 
   # フロントエンドの typecheck/build/lint/単体テストと、実ブラウザでの描画/
@@ -584,8 +590,8 @@ jobs:
         with:
           node-version: 22
 
-      - name: automerge-hold unit tests (node --test)
-        run: node --test scripts/automerge-hold.test.mjs
+      - name: automerge-hold / automerge-notice unit tests (node --test)
+        run: node --test scripts/automerge-hold.test.mjs scripts/automerge-notice.test.mjs
 
   rust-fmt:
     name: rust (fmt)
