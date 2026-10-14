@@ -144,8 +144,10 @@ function columnReplaceParts(
       cond = `POSITION(${f} IN ${col}) > 0`;
     } else if (driver === "mysql") {
       // MySQL の INSTR は照合順序 (ci 系) に従って大小を無視するが REPLACE は大小を区別する。
-      // BINARY に落として REPLACE と同じ大小区別の判定にしないと、件数と更新対象がずれる。
-      cond = `INSTR(CAST(${col} AS BINARY), CAST(${f} AS BINARY)) > 0`;
+      // 検索語を CAST で別途バイト列化すると列と接続の文字コードが違うとき (latin1 / cp932 列 ×
+      // utf8mb4 接続) 一致せず誤判定するため、SET と同じ REPLACE の結果が実際に変わる行を
+      // 対象にする (バイト比較なので値が変わらない行は UPDATE にも件数にも入らない)。
+      cond = `CAST(${expr} AS BINARY) <> CAST(${col} AS BINARY)`;
     } else {
       cond = `INSTR(${col}, ${f}) > 0`;
     }

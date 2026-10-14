@@ -1518,7 +1518,7 @@ const en = {
   statusApplyingEdits: "Applying {count} update(s)...",
   statusAppliedEdits: "Applied {count} update(s); {rows} rows affected.",
   statusAppliedEditsShortfall:
-    "Applied, but only {rows} of {count} row(s) were affected. Some rows were not found (they may have been changed or deleted elsewhere) and were not written.",
+    "Applied, but only {rows} of {count} row(s) were affected. Some rows were not found (they may have been changed or deleted elsewhere) and were not written. Reload the data to check the current state.",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
@@ -6600,7 +6600,7 @@ const ja: Dict = {
   statusApplyingEdits: "{count} 件の UPDATE を適用中...",
   statusAppliedEdits: "{count} 件の UPDATE を適用しました ({rows} 行に影響)。",
   statusAppliedEditsShortfall:
-    "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。",
+    "適用しましたが、{count} 行のうち {rows} 行にしか反映されていません。一部の行が見つからず (他で変更・削除された可能性があります)、書き込まれていません。再読込して現在の状態を確認してください。",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial: "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",
 

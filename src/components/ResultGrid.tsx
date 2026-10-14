@@ -1834,7 +1834,10 @@ function ColumnFilterMenu({
   const serverFilterValid = isServerFilterInputValid(serverFilterOp, serverFilterValue, serverFilterValue2, numeric);
 
   // Commit the draft up to the table, clearing it when it no longer narrows.
-  const apply = (next: ColumnFilter) => {
+  // メニューで条件を編集したら、クイックフィルタ由来の大小区別 (`caseSensitive`) は落とす
+  // (メニュー上に表示がなく、編集後も隠れたまま効き続けるのを避ける)。
+  const apply = (edited: ColumnFilter) => {
+    const { caseSensitive: _dropped, ...next } = edited;
     setDraft(next);
     onChange(isColumnFilterActive(next) ? next : undefined);
   };
