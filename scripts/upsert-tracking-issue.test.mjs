@@ -6,7 +6,7 @@
 // Windows には bash 前提のスクリプトのため、Windows ランナーでは走らせない。
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
@@ -37,7 +37,7 @@ function run(env, { withBody = true } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "upsert-test-"));
   try {
     const bin = join(dir, "bin");
-    spawnSync("mkdir", ["-p", bin]);
+    mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, "gh"), FAKE_GH);
     chmodSync(join(bin, "gh"), 0o755);
     const log = join(dir, "gh.log");
@@ -134,6 +134,7 @@ describe("upsert-tracking-issue.sh: problem", () => {
       FAKE_EXISTING: "42",
       FAKE_ISSUE_BODY: "x\n<!-- tracking-key: surv=3 -->",
     });
+    assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(writes(r.calls), []);
   });
 
@@ -197,7 +198,7 @@ describe("upsert-tracking-issue.sh: 入力検証", () => {
     assert.equal(run({ TRACK_STATE: "bogus" }).status, 2);
   });
   it("TRACK_LABEL / TRACK_STATE が無ければ失敗する", () => {
-    assert.notEqual(run({ TRACK_LABEL: "" , TRACK_STATE: "ok" }).status, 0);
+    assert.notEqual(run({ TRACK_LABEL: "", TRACK_STATE: "ok" }).status, 0);
     assert.notEqual(run({}).status, 0);
   });
 });

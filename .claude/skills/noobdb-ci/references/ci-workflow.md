@@ -211,11 +211,12 @@
 
 ## `automerge gate (script tests)` ジョブ (#1108)
 
-`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
-`scripts/automerge-hold.mjs` のユニットテスト `scripts/automerge-hold.test.mjs` を
-`node --test` で実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
+`scripts/*.test.mjs` (`automerge.yml` の変更依頼ゲート (Step 4b) の判定ロジック
+`scripts/automerge-hold.mjs` のテストと、定期ジョブの通知スクリプト
+`scripts/upsert-tracking-issue.sh` のテスト (#1633) など) を `node --test` で
+実行する軽量ジョブです (ローカルでは `pnpm run test:scripts`)。
 Node 標準の `node:test` だけを使い依存ゼロなので `pnpm install` はしません。
-`changes` ジョブの `automerge` フィルタ (上記 2 ファイル + `automerge.yml`) か
+`changes` ジョブの `automerge` フィルタ (上記のスクリプトとテスト + `automerge.yml`) か
 `workflow` が true のときだけ走ります。**必須チェックではありません**。
 Vitest (`src/__tests__/`) ではなく `node:test` にしているのは、ワークフローが
 実行時に `node scripts/automerge-hold.mjs` を素の Node で直接呼ぶため
