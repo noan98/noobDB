@@ -97,32 +97,35 @@ fn unit(c: char) -> u16 {
 }
 
 /// JS の `/[\p{L}\p{N}]/u` を 1 コードユニットに当てた結果。サロゲート単体は
+/// BMP の全コードユニットについて `regex` が一致するかを表にしたもの。
+/// 正規表現を 1 文字ずつ呼ぶと、日本語の多い定義文で文字数に比例して遅くなるため、
+/// 初回に 65536 エントリを一度だけ判定して引く (#1610)。
+fn bmp_table(pattern: &str, fallback: fn(char) -> bool) -> Vec<bool> {
+    let re = Regex::new(pattern).ok();
+    (0..=u16::MAX)
+        .map(|u| {
+            let Some(c) = char::from_u32(u32::from(u)) else {
+                return false;
+            };
+            match &re {
+                Some(re) => {
+                    let mut buf = [0u8; 4];
+                    re.is_match(c.encode_utf8(&mut buf))
+                }
+                None => fallback(c),
+            }
+        })
+        .collect()
+}
+
+/// JS の `/[\p{L}\p{N}]/u` を 1 コードユニットに当てた結果。サロゲート単体は
 /// 文字ではないので偽 (補助平面の文字は 2 ユニットに割れて識別子を切る — 旧実装と同じ)。
 fn is_letter_or_number_unit(u: u16) -> bool {
     if u < 128 {
         return (u as u8).is_ascii_alphanumeric();
     }
-    let Some(c) = char::from_u32(u32::from(u)) else {
-        return false;
-    };
-    match letter_number_regex() {
-        Some(re) => {
-            let mut buf = [0u8; 4];
-            re.is_match(c.encode_utf8(&mut buf))
-        }
-        None => c.is_alphanumeric(),
-    }
-}
-
-fn letter_number_regex() -> Option<&'static Regex> {
-    static RE: OnceLock<Option<Regex>> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^[\p{L}\p{N}]$").ok())
-        .as_ref()
-}
-
-fn letter_regex() -> Option<&'static Regex> {
-    static RE: OnceLock<Option<Regex>> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^\p{L}$").ok()).as_ref()
+    static T: OnceLock<Vec<bool>> = OnceLock::new();
+    T.get_or_init(|| bmp_table(r"^[\p{L}\p{N}]$", char::is_alphanumeric))[usize::from(u)]
 }
 
 /// `/[\p{L}\p{N}_$]/u`
@@ -138,16 +141,8 @@ fn is_word_start(u: u16) -> bool {
     if u < 128 {
         return (u as u8).is_ascii_alphabetic();
     }
-    let Some(c) = char::from_u32(u32::from(u)) else {
-        return false;
-    };
-    match letter_regex() {
-        Some(re) => {
-            let mut buf = [0u8; 4];
-            re.is_match(c.encode_utf8(&mut buf))
-        }
-        None => c.is_alphabetic(),
-    }
+    static T: OnceLock<Vec<bool>> = OnceLock::new();
+    T.get_or_init(|| bmp_table(r"^\p{L}$", char::is_alphabetic))[usize::from(u)]
 }
 
 fn is_space_unit(u: u16) -> bool {

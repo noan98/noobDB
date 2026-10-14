@@ -159,34 +159,10 @@ fn has_word_boundary_match(target: &str, q: &str) -> bool {
     })
 }
 
-/// JS の `\s` / `String.prototype.trim` が空白とみなす文字 (WhiteSpace + LineTerminator)。
-/// Rust の `char::is_whitespace` とは NEL (U+0085) と BOM (U+FEFF) が異なる。
-pub(crate) fn is_js_space(c: char) -> bool {
-    matches!(
-        c,
-        '\u{9}'
-            | '\u{A}'
-            | '\u{B}'
-            | '\u{C}'
-            | '\u{D}'
-            | '\u{20}'
-            | '\u{A0}'
-            | '\u{1680}'
-            | '\u{2000}'
-            ..='\u{200A}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{202F}'
-                | '\u{205F}'
-                | '\u{3000}'
-                | '\u{FEFF}'
-    )
-}
-
-/// JS の `String.prototype.trim` 相当。
-pub(crate) fn js_trim(s: &str) -> &str {
-    s.trim_matches(is_js_space)
-}
+/// JS の `\s` / `String.prototype.trim` が空白とみなす文字と `trim` は js_compat / stream_batch の
+/// 定義に一本化している (#1610)。
+pub(crate) use super::js_compat::js_trim;
+pub(crate) use super::stream_batch::is_js_whitespace as is_js_space;
 
 /// JS の `<` / `>` による文字列比較 (UTF-16 コードユニット順) と同じ順序。
 /// UTF-8 のバイト順 (= コードポイント順) とは、サロゲート領域より上の BMP 文字と

@@ -20,6 +20,13 @@ import { z } from "zod";
  *   返す (実行時ガードに徹し、コンパイル時の公開 API 形状は変えない)。
  */
 
+/** 外側が配列であることだけ確認する軽量スキーマ (#1610)。`z.array(z.unknown())` は要素数ぶん
+ *  子スキーマを呼んで新しい配列を作るため、大きな結果では O(N) の走査・複製が残る。
+ *  `z.custom` は判定 1 回で元の参照をそのまま返す。 */
+function lightArray() {
+  return z.custom<unknown[]>((v) => Array.isArray(v), { message: "Expected array" });
+}
+
 /** `Value` のワイヤフォーマット。`#[serde(untagged)]` なので素のプリミティブ。
  *  BLOB は 16 進文字列 (`Value::Bytes`) として string に乗る (CLAUDE.md 参照)。 */
 export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]);
@@ -28,7 +35,7 @@ export const cellValue = z.union([z.null(), z.boolean(), z.number(), z.string()]
 export const cellRows = z.array(z.array(cellValue));
 
 /** `cellRows` の軽量版 (#1257): 外側の配列だけ検証する。 */
-export const cellRowsLite = z.array(z.unknown());
+export const cellRowsLite = lightArray();
 
 export const column = z.object({
   name: z.string(),
@@ -54,7 +61,7 @@ export const queryResult = z.object({
  *  検証しない (ストリーム用 `queryStreamRowsMessageLite` と同じ方式)。数十万セルを
  *  zod が再帰的に走査・複製するコストを避ける。列・件数・メッセージは従来どおり検証する。 */
 export const queryResultLite = queryResult.extend({
-  rows: z.array(z.unknown()),
+  rows: lightArray(),
 });
 
 export const tableColumnInfo = z.object({
@@ -628,7 +635,7 @@ export const dataDiff = z.object({
 
 /** `dataDiff` の軽量版 (#1257): `rows` (RowDiff の配列) は外側の構造だけ検証する。 */
 export const dataDiffLite = dataDiff.extend({
-  rows: z.array(z.unknown()),
+  rows: lightArray(),
 });
 
 /** `compare_table_data` の戻り値: 表示用の差分 + バックエンド保持の差分 ID (#1259)。 */
@@ -1016,7 +1023,7 @@ export const queryStreamColumnsMessage = z.object({
  *  存在チェックに留める)。 */
 export const queryStreamRowsMessageLite = z.object({
   kind: z.literal("rows"),
-  rows: z.array(z.unknown()),
+  rows: lightArray(),
   /** その送信分までの累積逐次統計 (#1257)。古いバックエンドは送らない。 */
   stats: streamStatsSnapshot.nullable().optional(),
 });
@@ -1028,7 +1035,7 @@ const queryStreamPatchRun = z.object({
   from: z.number().optional(),
   count: z.number().optional(),
   prev: z.array(z.number().nullable()).optional(),
-  rows: z.array(z.unknown()).optional(),
+  rows: lightArray().optional(),
 });
 
 /** 前回結果との差分だけを運ぶパッチ (#1257)。`refreshDiff` 付きの自動リフレッシュで、
@@ -1095,7 +1102,7 @@ export const broadcastEnvMessage = z.object({
   sessionId: z.string(),
   status: z.enum(["done", "error"]),
   columns: z.array(column),
-  rows: z.array(z.unknown()),
+  rows: lightArray(),
   totalRows: z.number(),
   elapsedMs: z.number(),
   error: z.string().nullable(),
@@ -1229,7 +1236,7 @@ export const batchStatementResult = z.object({
   sql: z.string(),
   status: z.enum(["ok", "error", "skipped"]),
   columns: z.array(column).optional(),
-  rows: z.array(z.unknown()).optional(),
+  rows: lightArray().optional(),
   rowsAffected: z.number().optional(),
   elapsedMs: z.number().optional(),
   error: z.string().optional(),
@@ -1283,7 +1290,7 @@ export const previewStreamMetaMessage = z.object({
  *  緩いスキーマで両方受ける (旧 `streamRowsEventLite` と同じ考え方)。 */
 export const previewStreamRowsMessageLite = z.object({
   kind: z.enum(["beforeRows", "afterRows"]),
-  rows: z.array(z.unknown()),
+  rows: lightArray(),
 });
 
 export const previewStreamDoneMessage = z.object({ kind: z.literal("done") });
