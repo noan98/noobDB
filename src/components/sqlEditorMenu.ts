@@ -104,6 +104,7 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
     entries.push({
       action: "runStatement",
       labelKey: "editorMenuRunStatement",
+      icon: "play",
       shortcutId: "runStatement",
       disabled: execBlocked,
       disabledReasonKey: execReason,
@@ -162,6 +163,7 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
   entries.push({
     action: "toggleComment",
     labelKey: "editorMenuToggleComment",
+    icon: "comment",
     disabled: false,
   });
 
@@ -170,6 +172,7 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
   entries.push({
     action: "cut",
     labelKey: "editorMenuCut",
+    icon: "cut",
     disabled: !ctx.hasSelection,
     disabledReasonKey: ctx.hasSelection ? undefined : "editorMenuNeedsSelection",
   });
@@ -183,6 +186,7 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
   entries.push({
     action: "selectAll",
     labelKey: "editorMenuSelectAll",
+    icon: "select-all",
     disabled: !ctx.hasContent,
   });
 

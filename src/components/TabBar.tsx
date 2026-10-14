@@ -1,11 +1,12 @@
 import { forwardRef, memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Box, chakra, Input } from "@chakra-ui/react";
+import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
+import { Input } from "./ui";
 import { labelWithShortcut } from "../shortcutLabel";
 import { DropInsertionMarker } from "./DropInsertionMarker";
 import { FlightIcon } from "./FlightIcon";
@@ -736,11 +737,24 @@ export const TabBar = memo(function TabBar({
                   boxShadow="lg"
                   overflow="hidden"
                   role="menu"
+                  // ↑↓ でフィルタ欄と各タブ項目の間を循環移動する (Enter は項目ボタンの
+                  // 既定動作で選択、Escape は document 側のリスナで閉じてボタンへ戻す)。
+                  onKeyDown={(e) => {
+                    if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || isImeComposing(e)) return;
+                    const stops = Array.from(
+                      e.currentTarget.querySelectorAll<HTMLElement>("input, [role=menuitem]"),
+                    );
+                    if (stops.length === 0) return;
+                    e.preventDefault();
+                    const idx = stops.indexOf(document.activeElement as HTMLElement);
+                    const n = stops.length;
+                    const next = e.key === "ArrowDown" ? (idx + 1) % n : idx <= 0 ? n - 1 : idx - 1;
+                    stops[next]?.focus();
+                  }}
                 >
                   <Box p="1.5" borderBottom="1px solid" borderColor="app.border">
                     <Input
                       autoFocus
-                      size="sm"
                       value={listFilter}
                       onChange={(e) => setListFilter(e.target.value)}
                       placeholder={t("tabListFilter")}

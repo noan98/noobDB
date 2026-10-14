@@ -397,6 +397,8 @@ function normalizeKeyText(s: string): string {
 /**
  * ショートカット一覧を検索語で絞り込む (チートシート #1540)。表示名 (説明) の部分一致、または
  * 表示中のキー表記の部分一致 (`ctrl+k` / `Ctrl K` / `⌘K` など、空白と `+` は無視) で残す。
+ * ただし 1 文字のクエリは、キー表記ではキー名そのものへの完全一致だけを対象にする
+ * (`e` が Enter / Option に当たらない)。
  * 元の並び (= カテゴリ表示順の基になる定義順) は変えない。空クエリは全件 (新しい配列)。
  */
 export function filterShortcuts<T>(
@@ -411,6 +413,17 @@ export function filterShortcuts<T>(
   return items.filter((item) => {
     const { label, keys } = textsOf(item);
     if (label.toLowerCase().includes(q)) return true;
+    // 1 文字のクエリは Enter / Option などの部分文字列に広く当たってしまうので、
+    // キー表記側ではキー名そのもの (`+` / 空白区切りの 1 キー) への完全一致に限る。
+    if ([...qRaw].length === 1) {
+      return (
+        keys
+          .toLowerCase()
+          .split(/[\s+]+/)
+          // `⌘K` のような修飾記号の連結表記も、記号を除いたキー名で判定する。
+          .some((token) => token.replace(/^[⌘⌃⌥⇧]+/, "") === qRaw)
+      );
+    }
     // 正規化後の一致に加え、元の表記 (空白と + を除き小文字化) への部分一致も残す。
     // 入力途中の `ctr` などは正規化すると `mod` にならず外れるため。
     return (

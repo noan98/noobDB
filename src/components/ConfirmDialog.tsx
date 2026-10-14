@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { typedConfirmMatches } from "../typeToConfirm";
+import { FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
 
@@ -185,10 +185,12 @@ function ConfirmDialog({
       <ModalBody display="flex" flexDirection="column" gap="3">
         {message}
         {requiresTyped && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <chakra.label htmlFor="confirm-dialog-type-confirm-input" textStyle="subheading">
+          <FormSection>
+            {/* overline の大文字化をここだけ解除する。ラベルに入力すべき対象名が入って
+                おり、大文字で表示すると表示どおりに打っても一致しない (大文字小文字を区別する)。 */}
+            <FieldLabel htmlFor="confirm-dialog-type-confirm-input" textTransform="none">
               {t("typeToConfirmLabel", { target: typedConfirmation })}
-            </chakra.label>
+            </FieldLabel>
             <Input
               id="confirm-dialog-type-confirm-input"
               ref={typedInputRef}
@@ -198,7 +200,7 @@ function ConfirmDialog({
               autoComplete="off"
               spellCheck={false}
             />
-          </chakra.div>
+          </FormSection>
         )}
       </ModalBody>
       <ModalFooter>

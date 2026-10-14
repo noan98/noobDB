@@ -8,7 +8,7 @@ import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { Kbd } from "./Kbd";
-import { computeMenuPosition, type MenuAnchor, type MenuRect } from "./menuPosition";
+import { computeMenuPosition, MENU_MARGIN, type MenuAnchor, type MenuRect } from "./menuPosition";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -125,12 +125,18 @@ export function ContextMenu({ x, y, items, onClose }: Props) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
+    // メニュー自身 (サブメニューは別 portal なので data-context-menu の祖先で判定) の
+    // スクロールでは閉じない。項目が多いとパネルがスクロールするため。
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Element && e.target.closest("[data-context-menu]")) return;
+      onClose();
+    };
     window.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("scroll", onScroll, true);
     window.addEventListener("resize", onClose);
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onClose);
     };
   }, [onClose]);
@@ -291,14 +297,30 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
           left: pos?.left ?? (anchor.kind === "point" ? anchor.x : anchor.rect.right),
           top: pos?.top ?? (anchor.kind === "point" ? anchor.y : anchor.rect.top),
           visibility: pos ? "visible" : "hidden",
+          // 項目が画面高を超えても下側へ到達できるよう、高さをビューポート内に収めて
+          // スクロールさせる (クランプは top を余白へ固定するだけで、はみ出た分は
+          // 操作できなくなる)。roving focus の focus() が選択項目を可視域へ運ぶ。
+          maxHeight: window.innerHeight - 2 * MENU_MARGIN,
+          overflowY: "auto",
         }}
         role="menu"
+        data-context-menu=""
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
         {entries.map((entry, i) => {
           if (isSeparator(entry)) {
-            return <Box key={`sep-${i}`} role="separator" h="1px" my="1" mx="1.5" bg="app.borderSubtle" />;
+            return (
+              <Box
+                key={`sep-${i}`}
+                role="separator"
+                h="1px"
+                flexShrink={0}
+                my="1"
+                mx="1.5"
+                bg="app.borderSubtle"
+              />
+            );
           }
           const submenu = isSubmenu(entry);
           const expanded = submenu && open?.index === i;

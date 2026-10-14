@@ -961,6 +961,9 @@ function ProcessQueryCell({
       flash={flash}
       onMouseEnter={onHover}
       onMouseLeave={cancelHover}
+      // 要約の付くセルはキーボードでもフォーカスできるようにし、フォーカスで全文
+      // ツールチップの表示と取得 (onFocus) が実際に動くようにする。
+      tabIndex={p.query_summary ? 0 : undefined}
       onFocus={fetchFull}
     >
       {summary}

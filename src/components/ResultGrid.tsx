@@ -2690,14 +2690,9 @@ function ColumnStatsMenu({
               aria-label={t("gridFooterSelectAria", { column: columnName })}
               value={footerFn ?? defaultFooterFn(kind)}
               onChange={(e) => onSetFooterFn(e.target.value as FooterAggFn)}
-              fontSize="var(--text-xs)"
-              fontFamily="inherit"
-              py="0.5"
-              px="1.5"
-              border="1px solid var(--border)"
-              background="var(--bg-input)"
-              color="var(--text)"
-              borderRadius="var(--radius-sm)"
+              // 列フィルタのフィールドと同じ見た目 (文字サイズ・余白・枠・フォーカスリング)。
+              // ラベルと横並びなので幅だけ内容に合わせる。
+              css={{ ...FILTER_FIELD_CSS, width: "auto", fontFamily: "inherit" }}
             >
               {availableFooterFns(kind).map((fn) => (
                 <option key={fn} value={fn}>

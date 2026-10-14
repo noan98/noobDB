@@ -2032,6 +2032,23 @@ html, body, #root {
   }
 }
 
+/* Windows ハイコントラスト (forced-colors) では box-shadow が無効化され、
+   outline: none のままだとフォーカス位置を示すものが消える。forced-colors の
+   ときだけ outline を復活させる。Chakra recipe (`@layer recipes`) の
+   `_focusVisible: { outline: none }` より確実に勝たせるため、あえてレイヤー外
+   (unlayered) に置く。通常時の見た目は変えない。 */
+@media (forced-colors: active) {
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible,
+  [role="button"]:focus-visible {
+    outline: var(--focus-ring-width) solid Highlight;
+    outline-offset: var(--focus-ring-width);
+  }
+}
+
 /* ---------- CodeMirror 6 ----------
    CM6 が内部的に生成する DOM (className ベース) をテーマトークンへ寄せる。
    CM6 自身の機能なので Chakra 化できず、ここに残し続ける必要がある。 */

@@ -226,11 +226,16 @@ export function ComboSelect({
 
   const displayValue = freeSolo ? value : draft;
 
+  // 絞り込み語。利用者が打鍵したときだけ入る (null = 打鍵していない)。フォーカスや
+  // ArrowDown で開いた直後は、値が入っていても全候補を出す (選択済みは aria-selected
+  // とチェックで示す)。
+  const [query, setQuery] = useState<string | null>(null);
+
   const matches = useMemo(() => {
-    const needle = displayValue.trim().toLowerCase();
+    const needle = (query ?? "").trim().toLowerCase();
     if (!needle) return options;
     return options.filter((o) => o.value.toLowerCase().includes(needle));
-  }, [options, displayValue]);
+  }, [options, query]);
   // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す
   // (畳むのは入力の onChange と閉じる処理の中で行う)。
   const [expanded, setExpanded] = useState(false);
@@ -324,6 +329,7 @@ export function ComboSelect({
     if (!freeSolo) setDraft(opt.value);
     onChange(opt.value);
     setOpen(false);
+    setQuery(null);
     setExpanded(false);
     setHighlighted(null);
     inputRef.current?.focus();
@@ -336,6 +342,7 @@ export function ComboSelect({
 
   const closeAndMaybeRevert = () => {
     setOpen(false);
+    setQuery(null);
     setExpanded(false);
     setHighlighted(null);
     if (!freeSolo) setDraft(value);
@@ -365,6 +372,7 @@ export function ComboSelect({
         onFocus={() => setOpen(true)}
         onChange={(e) => {
           commitText(e.target.value);
+          setQuery(e.target.value);
           setOpen(true);
           setExpanded(false);
           setHighlighted(null);
@@ -406,6 +414,7 @@ export function ComboSelect({
             if (open) {
               e.preventDefault();
               setOpen(false);
+              setQuery(null);
               setHighlighted(null);
             }
           }

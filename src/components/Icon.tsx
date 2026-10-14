@@ -46,6 +46,7 @@ import {
   IconLock,
   IconMathFunction,
   IconMaximize,
+  IconMessageCode,
   IconMinimize,
   IconMoon,
   IconPin,
@@ -60,6 +61,8 @@ import {
   IconShieldExclamation,
   IconSortAscending,
   IconSortDescending,
+  IconScissors,
+  IconSelectAll,
   IconSend,
   IconSparkles,
   IconStar,
@@ -230,6 +233,9 @@ export type IconName =
   | "info"
   | "alert-circle"
   | "play"
+  | "cut"
+  | "select-all"
+  | "comment"
   | "format"
   | "more"
   | "send"
@@ -382,6 +388,10 @@ const GLYPHS: Record<Exclude<IconName, BrandIconName>, TablerIcon> = {
   // 実行 (再生): Run ボタンの塗り三角。塗り glyph だが `star-filled` と同様、
   // fill/stroke の切り替えはコンポーネント側が持つのでここでは通常通り登録する。
   play: IconPlayerPlayFilled,
+  // 切り取り / 全選択 / コメント切替 (SQL エディタの右クリックメニュー)。
+  cut: IconScissors,
+  "select-all": IconSelectAll,
+  comment: IconMessageCode,
   // 整形 (フォーマット): 長さの異なる行 = 整形されたコード行。
   format: IconAlignLeft,
   // もっと見る (オーバーフローメニュー): 横並びの三点リーダー。

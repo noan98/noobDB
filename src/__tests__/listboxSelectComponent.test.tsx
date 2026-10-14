@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { act } from "@testing-library/react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "./testUtils";
 import { ListboxSelect, type ListboxSelectOption } from "../components/ListboxSelect";
@@ -225,5 +226,35 @@ describe("ListboxSelect の型入力 (value ベースのフォールバック)",
     trigger.focus();
     await user.keyboard("e");
     expect(onChangeSpy).toHaveBeenCalledWith("email");
+  });
+});
+
+describe("ListboxSelect の位置追従", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("開いている間に祖先がスクロールされると、トリガーの新しい位置へ追従する", async () => {
+    const user = userEvent.setup();
+    let anchorTop = 100;
+    vi.spyOn(HTMLButtonElement.prototype, "getBoundingClientRect").mockImplementation(() => ({
+      left: 20,
+      right: 220,
+      top: anchorTop,
+      bottom: anchorTop + 30,
+      width: 200,
+      height: 30,
+      x: 20,
+      y: anchorTop,
+      toJSON: () => ({}),
+    }));
+    renderSelect();
+    await user.click(screen.getByRole("combobox"));
+    const listbox = screen.getByRole("listbox");
+    const before = listbox.style.top;
+
+    anchorTop = 300;
+    act(() => {
+      document.body.dispatchEvent(new Event("scroll", { bubbles: false }));
+    });
+    expect(listbox.style.top).not.toBe(before);
   });
 });

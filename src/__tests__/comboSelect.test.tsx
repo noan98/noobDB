@@ -139,6 +139,15 @@ describe("ComboSelect のフィルタリング", () => {
     expect(screen.getAllByRole("option")).toHaveLength(OPTIONS.length);
   });
 
+  it("値が入った状態でフォーカスしても全候補を出し、選択済みは aria-selected で示す", async () => {
+    const user = userEvent.setup();
+    renderCombo({ initialValue: "id" });
+    await user.click(screen.getByRole("combobox"));
+    const options = screen.getAllByRole("option");
+    expect(options).toHaveLength(OPTIONS.length);
+    expect(options.filter((o) => o.getAttribute("aria-selected") === "true")).toHaveLength(1);
+  });
+
   it("候補が 0 件のとき emptyText を表示する", async () => {
     const user = userEvent.setup();
     renderCombo();
