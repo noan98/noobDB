@@ -32,10 +32,7 @@ const OVERFLOW_EPSILON = 1;
 const EXPAND_MARGIN = 8;
 
 /** 表示中の操作 (ツールバー順) を、残す分と畳む分に分ける。畳むのは末尾から `count` 個。 */
-export function splitCollapsed<T>(
-  present: readonly T[],
-  count: number,
-): { visible: T[]; collapsed: T[] } {
+export function splitCollapsed<T>(present: readonly T[], count: number): { visible: T[]; collapsed: T[] } {
   const n = Math.max(0, Math.min(present.length, Math.floor(count)));
   const cut = present.length - n;
   return { visible: present.slice(0, cut), collapsed: present.slice(cut) };
@@ -67,11 +64,7 @@ export function nextCollapsedCount(m: OverflowMeasure): number {
   if (overflow > OVERFLOW_EPSILON) {
     return Math.min(m.total, m.collapsed + 1);
   }
-  if (
-    m.collapsed > 0 &&
-    m.nextExpandWidth != null &&
-    -overflow >= m.nextExpandWidth + EXPAND_MARGIN
-  ) {
+  if (m.collapsed > 0 && m.nextExpandWidth != null && -overflow >= m.nextExpandWidth + EXPAND_MARGIN) {
     return m.collapsed - 1;
   }
   return m.collapsed;

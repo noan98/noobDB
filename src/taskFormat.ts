@@ -27,7 +27,14 @@ export function tzOffsetMinutes(at: Date, timeZone?: string): number {
     second: "numeric",
   }).formatToParts(at);
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
-  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+  const asUtc = Date.UTC(
+    get("year"),
+    get("month") - 1,
+    get("day"),
+    get("hour"),
+    get("minute"),
+    get("second"),
+  );
   return Math.round((asUtc - Math.floor(at.getTime() / 1000) * 1000) / 60000);
 }
 
@@ -164,9 +171,9 @@ export function previewOutputPath(template: string, now: Date): string {
 
 /** タスク一覧のソート順: 有効なタスクを先に、その中では次回実行が近い順。
  *  無効なタスクは末尾にまとめ、名前順にする (混ざると探しにくいため)。 */
-export function sortTasksForDisplay<
-  T extends { enabled: boolean; next_run_at: string | null; name: string },
->(tasks: T[]): T[] {
+export function sortTasksForDisplay<T extends { enabled: boolean; next_run_at: string | null; name: string }>(
+  tasks: T[],
+): T[] {
   const enabled = tasks.filter((t) => t.enabled);
   const disabled = tasks.filter((t) => !t.enabled);
   enabled.sort((a, b) => {
@@ -207,7 +214,7 @@ export function buildAssertionTrends(
   }>,
   maxDots = 20,
 ): AssertionTrend[] {
-  const byId = new Map<string, typeof records[number][]>();
+  const byId = new Map<string, (typeof records)[number][]>();
   for (const r of records) {
     const list = byId.get(r.assertion_id) ?? [];
     if (list.length < maxDots) list.push(r);

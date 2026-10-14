@@ -62,18 +62,27 @@ export function parseTypeSpec(driver: string, raw: string): TypeSpec {
   const m = /^([a-z][a-z0-9 ]*?)\s*(?:\(([^)]*)\))?\s*(unsigned)?(?:\s+zerofill)?$/.exec(t);
   if (!m) return { kind: "other" };
   const name = m[1].trim();
-  const args = (m[2] ?? "").split(",").map((a) => a.trim()).filter((a) => a.length > 0);
+  const args = (m[2] ?? "")
+    .split(",")
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
   const unsigned = m[3] === "unsigned";
 
   if (name === "varchar" || name === "character varying" || name === "char" || name === "character") {
     const n = args.length > 0 ? Number(args[0]) : NaN;
     // PostgreSQL の `character` / `char` は長さ省略で 1。`character varying` の省略は無制限。
     if (Number.isInteger(n) && n > 0) return { kind: "string", length: n };
-    if (driver === "postgres" && (name === "char" || name === "character")) return { kind: "string", length: 1 };
+    if (driver === "postgres" && (name === "char" || name === "character"))
+      return { kind: "string", length: 1 };
     return { kind: "string", length: name.includes("var") ? null : 1 };
   }
   if (["text", "tinytext", "mediumtext", "longtext"].includes(name)) {
-    const lengths: Record<string, number | null> = { tinytext: 255, text: 65535, mediumtext: 16777215, longtext: null };
+    const lengths: Record<string, number | null> = {
+      tinytext: 255,
+      text: 65535,
+      mediumtext: 16777215,
+      longtext: null,
+    };
     return { kind: "string", length: driver === "postgres" ? null : (lengths[name] ?? null) };
   }
   const intName = INT_ALIASES[name];
@@ -86,11 +95,13 @@ export function parseTypeSpec(driver: string, raw: string): TypeSpec {
   if (name === "decimal" || name === "numeric" || name === "dec") {
     const p = args.length > 0 ? Number(args[0]) : NaN;
     const s = args.length > 1 ? Number(args[1]) : 0;
-    if (Number.isInteger(p) && Number.isInteger(s)) return { kind: "decimal", integerDigits: Math.max(p - s, 0) };
+    if (Number.isInteger(p) && Number.isInteger(s))
+      return { kind: "decimal", integerDigits: Math.max(p - s, 0) };
     // 引数なし: MySQL は DECIMAL(10,0)、PostgreSQL は精度無制限。
     return { kind: "decimal", integerDigits: driver === "mysql" ? 10 : null };
   }
-  if (["float", "double", "double precision", "real", "float4", "float8"].includes(name)) return { kind: "float" };
+  if (["float", "double", "double precision", "real", "float4", "float8"].includes(name))
+    return { kind: "float" };
   return { kind: "other" };
 }
 
@@ -112,7 +123,9 @@ function intDigitsOfRange(r: NumericRange): number {
 }
 
 function qualified(driver: string, database: string | null, table: string): string {
-  return database ? `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}` : quoteIdentFor(driver, table);
+  return database
+    ? `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`
+    : quoteIdentFor(driver, table);
 }
 
 /**

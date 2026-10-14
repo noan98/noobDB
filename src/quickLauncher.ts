@@ -115,11 +115,13 @@ export function buildQuickLauncherSections(
     queries.push({ kind: "query", key: `query:${queries.length}`, sql });
   }
 
-  const tableItem = (prefix: string) => (ref: TableRef): QuickLauncherItem => ({
-    kind: "table",
-    key: `${prefix}:${ref.database}\u0000${ref.table}`,
-    ref,
-  });
+  const tableItem =
+    (prefix: string) =>
+    (ref: TableRef): QuickLauncherItem => ({
+      kind: "table",
+      key: `${prefix}:${ref.database}\u0000${ref.table}`,
+      ref,
+    });
   // お気に入りは登録順 (新しいものが末尾) なので、新しい順に並べ替えて見せる。
   const favTables = [...src.tableQuickAccess.favorites].reverse().map(tableItem("fav"));
   const recentTables = src.tableQuickAccess.recent.map(tableItem("recent"));
@@ -337,7 +339,9 @@ export function computeLauncherPopoverPosition(
   const above = centerY > viewport.height / 2;
   const alignEnd = centerX > viewport.width / 2;
   let left = alignEnd ? button.left + button.width - popover.width : button.left;
-  let top = above ? button.top - LAUNCHER_POPOVER_GAP - popover.height : button.top + button.height + LAUNCHER_POPOVER_GAP;
+  let top = above
+    ? button.top - LAUNCHER_POPOVER_GAP - popover.height
+    : button.top + button.height + LAUNCHER_POPOVER_GAP;
   left = Math.min(Math.max(margin, left), Math.max(margin, viewport.width - margin - popover.width));
   top = Math.min(Math.max(margin, top), Math.max(margin, viewport.height - margin - popover.height));
   return { left, top, above, alignEnd };

@@ -23,10 +23,8 @@ export const connectionCommands = {
       timeoutSecs: timeoutSecs ?? null,
     }).then((r) => parseResponse(schemas.connectResult, r, "connect")),
   /** Cancel an in-flight connect / test-connection attempt by its id (#684). */
-  cancelConnect: (attemptId: string) =>
-    invoke<boolean>("cancel_connect", { attemptId }),
-  disconnect: (sessionId: string) =>
-    invoke<void>("disconnect", { sessionId }),
+  cancelConnect: (attemptId: string) => invoke<boolean>("cancel_connect", { attemptId }),
+  disconnect: (sessionId: string) => invoke<void>("disconnect", { sessionId }),
   /**
    * 切断されたセッションをその場で張り直す (#712)。同じ `sessionId` のまま SSH
    * トンネルを再構築し、`connect_options` から新しい接続を確立してセッションを
@@ -55,7 +53,7 @@ export const connectionCommands = {
    * セッション単位でキャッシュされ、`refreshVersion` で取り直す。読み取り専用。
    */
   healthProbeAll: (sessionIds: string[], timeoutMs: number, refreshVersion = false) =>
-    invoke<HealthProbeItem[]>("health_probe_all", { sessionIds, timeoutMs, refreshVersion }).then(
-      (r) => parseResponse(schemas.healthProbeItemArray, r, "health_probe_all"),
+    invoke<HealthProbeItem[]>("health_probe_all", { sessionIds, timeoutMs, refreshVersion }).then((r) =>
+      parseResponse(schemas.healthProbeItemArray, r, "health_probe_all"),
     ),
 };

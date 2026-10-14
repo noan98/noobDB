@@ -135,9 +135,7 @@ export function BroadcastModal({
 }: BroadcastModalProps) {
   const t = useT();
   const [step, setStep] = useState<"select" | "running">("select");
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(candidates.map((c) => c.sessionId)),
-  );
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(candidates.map((c) => c.sessionId)));
   const [entries, setEntries] = useState<Entry[]>([]);
   const [keyColumn, setKeyColumn] = useState<string>("");
   const entriesRef = useRef<Entry[]>([]);
@@ -180,11 +178,7 @@ export function BroadcastModal({
   const patchEntry = (sessionId: string, patch: Partial<Entry> | ((e: Entry) => Entry)) => {
     setEntries((prev) =>
       prev.map((e) =>
-        e.sessionId === sessionId
-          ? typeof patch === "function"
-            ? patch(e)
-            : { ...e, ...patch }
-          : e,
+        e.sessionId === sessionId ? (typeof patch === "function" ? patch(e) : { ...e, ...patch }) : e,
       ),
     );
   };
@@ -227,8 +221,7 @@ export function BroadcastModal({
             diff: rep.diff,
           }),
         )(),
-      onCancelled: ({ sessionId }) =>
-        live(() => patchEntry(sessionId, { status: "cancelled" }))(),
+      onCancelled: ({ sessionId }) => live(() => patchEntry(sessionId, { status: "cancelled" }))(),
     });
     unlistenRef.current = unlisten;
 
@@ -241,17 +234,13 @@ export function BroadcastModal({
         targetSessionIds: rest.map((c) => c.sessionId),
         autoLimit,
         queryTimeoutSecs,
-        tablePkColumns: (tableColumns ?? [])
-          .filter((c) => c.key.toUpperCase() === "PRI")
-          .map((c) => c.name),
+        tablePkColumns: (tableColumns ?? []).filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name),
         userKeyColumn: userKeyColumn || null,
       });
     } catch (e) {
       live(() =>
         setEntries((prev) =>
-          prev.map((en) =>
-            en.status === "running" ? { ...en, status: "error", error: String(e) } : en,
-          ),
+          prev.map((en) => (en.status === "running" ? { ...en, status: "error", error: String(e) } : en)),
         ),
       )();
     }
@@ -271,10 +260,7 @@ export function BroadcastModal({
       if (!ok) return;
     }
 
-    const targets: Candidate[] = [
-      { sessionId: baselineSessionId, profile: baselineProfile },
-      ...chosen,
-    ];
+    const targets: Candidate[] = [{ sessionId: baselineSessionId, profile: baselineProfile }, ...chosen];
     await startRun(targets, keyColumn);
   };
 
@@ -318,7 +304,8 @@ export function BroadcastModal({
     return [];
   }, [baseline, tableColumns, keyColumn]);
   const pkNames = useMemo(
-    () => new Set(baseline ? pkIndices.map((i) => baseline.columns[i]?.name).filter(Boolean) as string[] : []),
+    () =>
+      new Set(baseline ? (pkIndices.map((i) => baseline.columns[i]?.name).filter(Boolean) as string[]) : []),
     [baseline, pkIndices],
   );
 
@@ -373,12 +360,7 @@ export function BroadcastModal({
           <Button type="button" variant="secondary" onClick={handleClose}>
             {t("broadcastPickerCancel")}
           </Button>
-          <LoadingButton
-            type="button"
-            variant="primary"
-            onClick={handleRun}
-            disabled={selected.size === 0}
-          >
+          <LoadingButton type="button" variant="primary" onClick={handleRun} disabled={selected.size === 0}>
             {t("broadcastPickerRun")}
           </LoadingButton>
         </ModalFooter>
@@ -389,7 +371,9 @@ export function BroadcastModal({
   return (
     <Modal
       // no-submit: 結果の閲覧画面で、確定する主アクションが無い (閉じるのみ)
-      onClose={handleClose} width="min(1120px, 95vw)">
+      onClose={handleClose}
+      width="min(1120px, 95vw)"
+    >
       <ModalHeader onClose={handleClose} closeLabel={t("broadcastClose")}>
         {t("broadcastResultsTitle")}
       </ModalHeader>
@@ -399,15 +383,19 @@ export function BroadcastModal({
             {t("broadcastPickerReadOnlyNotice")}
           </chakra.span>
           {baseline && baseline.columns.length > 0 && (
-            <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="2"
+              fontSize="sm"
+              color="app.textMuted"
+            >
               {t("broadcastKeyColumnLabel")}
               <Select
                 value={keyColumn}
                 onChange={(e) => handleKeyColumnChange(e.target.value)}
                 minWidth="180px"
-                disabled={
-                  !!tableColumns && resolvePkIndices(baseline.columns, tableColumns).length > 0
-                }
+                disabled={!!tableColumns && resolvePkIndices(baseline.columns, tableColumns).length > 0}
               >
                 <option value="">{t("broadcastKeyColumnNone")}</option>
                 {baseline.columns.map((c) => (
@@ -517,10 +505,7 @@ function EntryCard({
   // 行配列に紐づける。`ResultGrid` は紐づいた差分があれば全行の突き合わせ
   // (`diffResultRows`) をやり直さない。
   const rowDiff = useMemo(
-    () =>
-      diff && diff.mode === "pk"
-        ? diffToRowDiff(diff, entry.rows.length, entry.columns.length)
-        : null,
+    () => (diff && diff.mode === "pk" ? diffToRowDiff(diff, entry.rows.length, entry.columns.length) : null),
     [diff, entry.rows.length, entry.columns.length],
   );
   // 行配列への紐づけは WeakMap への冪等な登録なので、描画中に行っても安全
@@ -596,7 +581,7 @@ function EntryCard({
           streaming={entry.status === "running"}
           driver={driver}
           tableColumns={tableColumnsForGrid}
-          diffPrevRows={tableColumnsForGrid ? baseline?.rows ?? null : null}
+          diffPrevRows={tableColumnsForGrid ? (baseline?.rows ?? null) : null}
           diffComparable={!!tableColumnsForGrid}
           diffHighlightEnabled={!!tableColumnsForGrid}
         />

@@ -50,7 +50,10 @@ describe("ALTER TABLE: add foreign key / CHECK (#1191)", () => {
     const p = buildAlterPlan(
       "postgres",
       form({
-        addedForeignKeys: [{ ...fk, refColumns: [] }, { ...fk, refTable: " " }],
+        addedForeignKeys: [
+          { ...fk, refColumns: [] },
+          { ...fk, refTable: " " },
+        ],
         addedChecks: [{ name: "x", expression: "  " }],
       }),
     );
@@ -85,9 +88,7 @@ describe("ALTER TABLE: drop foreign key / CHECK (#1191)", () => {
       form({
         database: "public",
         baseline: [{ name: "u", type: "int", notNull: false, defaultValue: "", extra: "" }],
-        existing: [
-          { original: "u", drop: true, name: "u", type: "int", notNull: false, defaultValue: "" },
-        ],
+        existing: [{ original: "u", drop: true, name: "u", type: "int", notNull: false, defaultValue: "" }],
         droppedForeignKeys: ["fk1"],
         addedChecks: [{ name: "c", expression: "1 = 1" }],
       }),
@@ -115,14 +116,36 @@ describe("SQLite: ALTER constraints are unsupported (#1191)", () => {
 
 describe("CREATE TABLE: foreign key / CHECK (#1191)", () => {
   const cols: ColumnDef[] = [
-    { name: "id", type: "INTEGER", notNull: true, primaryKey: true, unique: false, autoIncrement: false, defaultValue: "" },
-    { name: "user_id", type: "INTEGER", notNull: false, primaryKey: false, unique: false, autoIncrement: false, defaultValue: "" },
+    {
+      name: "id",
+      type: "INTEGER",
+      notNull: true,
+      primaryKey: true,
+      unique: false,
+      autoIncrement: false,
+      defaultValue: "",
+    },
+    {
+      name: "user_id",
+      type: "INTEGER",
+      notNull: false,
+      primaryKey: false,
+      unique: false,
+      autoIncrement: false,
+      defaultValue: "",
+    },
   ];
   const checks = [{ name: "ck", expression: "user_id > 0" }];
 
   it("mysql", () => {
     expect(
-      buildCreateTableSql("mysql", { database: "shop", table: "orders", columns: cols, foreignKeys: [fk], checks }),
+      buildCreateTableSql("mysql", {
+        database: "shop",
+        table: "orders",
+        columns: cols,
+        foreignKeys: [fk],
+        checks,
+      }),
     ).toBe(
       "CREATE TABLE `shop`.`orders` (\n  `id` INTEGER NOT NULL,\n  `user_id` INTEGER,\n  PRIMARY KEY (`id`),\n  CONSTRAINT `fk_orders_user` FOREIGN KEY (`user_id`) REFERENCES `shop`.`users` (`id`) ON DELETE CASCADE ON UPDATE SET NULL,\n  CONSTRAINT `ck` CHECK (user_id > 0)\n);",
     );
@@ -130,7 +153,13 @@ describe("CREATE TABLE: foreign key / CHECK (#1191)", () => {
 
   it("postgres", () => {
     expect(
-      buildCreateTableSql("postgres", { database: "public", table: "orders", columns: cols, foreignKeys: [{ ...fk, onUpdate: "" }], checks }),
+      buildCreateTableSql("postgres", {
+        database: "public",
+        table: "orders",
+        columns: cols,
+        foreignKeys: [{ ...fk, onUpdate: "" }],
+        checks,
+      }),
     ).toContain(
       '  CONSTRAINT "fk_orders_user" FOREIGN KEY ("user_id") REFERENCES "public"."users" ("id") ON DELETE CASCADE,\n  CONSTRAINT "ck" CHECK (user_id > 0)\n);',
     );
@@ -138,7 +167,13 @@ describe("CREATE TABLE: foreign key / CHECK (#1191)", () => {
 
   it("sqlite does not qualify the referenced table", () => {
     expect(
-      buildCreateTableSql("sqlite", { database: "main", table: "orders", columns: cols, foreignKeys: [fk], checks }),
+      buildCreateTableSql("sqlite", {
+        database: "main",
+        table: "orders",
+        columns: cols,
+        foreignKeys: [fk],
+        checks,
+      }),
     ).toContain(
       '  CONSTRAINT "fk_orders_user" FOREIGN KEY ("user_id") REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE SET NULL,\n  CONSTRAINT "ck" CHECK (user_id > 0)\n);',
     );

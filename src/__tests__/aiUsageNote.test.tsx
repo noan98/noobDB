@@ -33,7 +33,12 @@ describe("AiUsageNote (#1474)", () => {
         event={ev({
           model: "claude-sonnet-5-5",
           fallbackUsed: true,
-          usage: { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 500 },
+          usage: {
+            inputTokens: 100,
+            outputTokens: 50,
+            cacheReadInputTokens: 2000,
+            cacheCreationInputTokens: 500,
+          },
         })}
       />,
     );

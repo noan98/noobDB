@@ -92,7 +92,10 @@ describe("スキーマの送信サマリ", () => {
     const small = summarizeSchemaSend(base.tables, base.foreignKeys);
     expect(small).toMatchObject({ tableCount: 2, columnCount: 6, large: false });
     expect(small.approxChars).toBe(buildSchemaText(base.tables, base.foreignKeys).length);
-    const many = Array.from({ length: NL2SQL_LARGE_SCHEMA_TABLES + 1 }, (_, i) => ({ name: `t${i}`, columns: [{ name: "id" }] }));
+    const many = Array.from({ length: NL2SQL_LARGE_SCHEMA_TABLES + 1 }, (_, i) => ({
+      name: `t${i}`,
+      columns: [{ name: "id" }],
+    }));
     expect(summarizeSchemaSend(many, []).large).toBe(true);
     expect(summarizeSchemaSend(many.slice(0, NL2SQL_LARGE_SCHEMA_TABLES), []).large).toBe(false);
   });
@@ -140,7 +143,7 @@ describe("buildNl2SqlSystemParts (#1473)", () => {
   it("方言・規則・スキーマは固定部分に入り、可変部分は空", () => {
     const { cached, variable } = buildNl2SqlSystemParts(base);
     expect(cached).toContain("MySQL");
-    expect(cached).toContain("- orders \"注文\"(id bigint PK");
+    expect(cached).toContain('- orders "注文"(id bigint PK');
     expect(variable).toBe("");
   });
 
@@ -180,9 +183,12 @@ describe("buildSchemaText の列メタデータ (#1472)", () => {
   });
 
   it("コメントが無い (SQLite) 列は型だけで、長いコメントは切り詰める", () => {
-    expect(buildSchemaText([{ name: "t", columns: [{ name: "a", type: "text", nullable: false, comment: null }] }], [])).toBe(
-      "- t(a text)",
-    );
+    expect(
+      buildSchemaText(
+        [{ name: "t", columns: [{ name: "a", type: "text", nullable: false, comment: null }] }],
+        [],
+      ),
+    ).toBe("- t(a text)");
     const long = buildSchemaText([{ name: "t", columns: [{ name: "a", comment: "x".repeat(200) }] }], []);
     expect(long.length).toBeLessThan(120);
     expect(long).toContain("…");
@@ -197,7 +203,15 @@ describe("buildSchemaText の列メタデータ (#1472)", () => {
   it("型は小文字化せず (enum のリテラル値を変えない)、enum / set は長めに残す。識別子の改行は空白にする", () => {
     const longEnum = `enum(${Array.from({ length: 12 }, (_, i) => `'Value${i}'`).join(",")})`;
     const text = buildSchemaText(
-      [{ name: "t\nx", columns: [{ name: "a\nb", type: longEnum }, { name: "c", type: `varchar(${"9".repeat(60)})` }] }],
+      [
+        {
+          name: "t\nx",
+          columns: [
+            { name: "a\nb", type: longEnum },
+            { name: "c", type: `varchar(${"9".repeat(60)})` },
+          ],
+        },
+      ],
       [],
     );
     expect(text).toContain("'Value0'");
@@ -244,13 +258,20 @@ describe("関連テーブルの選択 (#1472)", () => {
   it("一致が無いときは空 (手動選択を促す)。結果はスキーマ上の並び順", () => {
     expect(selectRelevantTables(tables, fks, "あいうえお")).toEqual([]);
     expect(selectRelevantTables(tables, fks, "")).toEqual([]);
-    expect(selectRelevantTables(tables, fks, "products title")).toEqual(["orders", "order_items", "products"]);
+    expect(selectRelevantTables(tables, fks, "products title")).toEqual([
+      "orders",
+      "order_items",
+      "products",
+    ]);
   });
 
   it("開いているテーブルは依頼文に一致しなくても入る (存在しない名前は無視)", () => {
     expect(selectRelevantTables(tables, fks, "あいうえお", "audit_log")).toEqual(["audit_log"]);
     expect(selectRelevantTables(tables, fks, "", "audit_log")).toEqual(["audit_log"]);
-    expect(selectRelevantTables(tables, fks, "ユーザーマスタの一覧", "audit_log")).toEqual(["audit_log", "m_user"]);
+    expect(selectRelevantTables(tables, fks, "ユーザーマスタの一覧", "audit_log")).toEqual([
+      "audit_log",
+      "m_user",
+    ]);
     expect(selectRelevantTables(tables, fks, "あいうえお", "nope")).toEqual([]);
   });
 
@@ -270,7 +291,13 @@ describe("関連テーブルの選択 (#1472)", () => {
     const kw = extractKeywords("注文の件数を出したい");
     expect(kw).toEqual(["注文", "件数"]);
     for (const bad of ["した", "たい", "の件", "出し", "数を"]) expect(kw).not.toContain(bad);
-    expect(extractKeywords("退会したユーザーを一覧にしたい")).toEqual(["退会", "ユー", "ーザ", "ザー", "一覧"]);
+    expect(extractKeywords("退会したユーザーを一覧にしたい")).toEqual([
+      "退会",
+      "ユー",
+      "ーザ",
+      "ザー",
+      "一覧",
+    ]);
   });
 
   it("列コメントに「した」を含むテーブルが 50 件あっても、本命の m_user が選ばれる", () => {

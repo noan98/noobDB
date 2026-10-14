@@ -2,12 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
-import {
-  extractQueryParams,
-  isNumericParam,
-  substituteQueryParams,
-  type ParamType,
-} from "../queryParams";
+import { extractQueryParams, isNumericParam, substituteQueryParams, type ParamType } from "../queryParams";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton } from "./ui";
@@ -141,7 +136,13 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
   };
 
   return (
-    <Modal onSubmit={submit} submitDisabled={hasError} width="600px" onClose={onCancel} initialFocusEl={() => firstInputRef.current}>
+    <Modal
+      onSubmit={submit}
+      submitDisabled={hasError}
+      width="600px"
+      onClose={onCancel}
+      initialFocusEl={() => firstInputRef.current}
+    >
       <ModalHeader onClose={onCancel} closeLabel={t("parameterInputCancel")}>
         {t("parameterInputTitle")}
       </ModalHeader>

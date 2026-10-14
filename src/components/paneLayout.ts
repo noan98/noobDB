@@ -16,10 +16,7 @@ export function clamp(v: number, lo: number, hi: number): number {
  * 残す。コンテナが狭すぎて両側に `minSize` を確保できない場合は 0..1 の全域を
  * 許可する (ドラッグでの行き詰まりを避ける)。total が非正のときも全域を返す。
  */
-export function fractionBounds(
-  total: number,
-  minSize: number,
-): { minF: number; maxF: number } {
+export function fractionBounds(total: number, minSize: number): { minF: number; maxF: number } {
   if (!(total > 2 * minSize)) return { minF: 0, maxF: 1 };
   return { minF: minSize / total, maxF: 1 - minSize / total };
 }

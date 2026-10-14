@@ -168,23 +168,19 @@ export function RowInsertModal({
           const hint = meta && tableColumns ? insertDefaultHint(driver, meta, tableColumns) : null;
           // 生成列は値を入れられないので入力欄を無効化し、関数チップも出さない。
           const generated = hint?.kind === "generated";
-          const chips = generated
-            ? []
-            : insertFunctionChips(driver, c.type_name, meta?.data_type);
-          const hintText =
-            emptyStr
-              ? null
-              : hint?.kind === "auto"
+          const chips = generated ? [] : insertFunctionChips(driver, c.type_name, meta?.data_type);
+          const hintText = emptyStr
+            ? null
+            : hint?.kind === "auto"
               ? t("rowOpsInsertAutoHint")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultHint", { expr: hint.expr })
                 : hint?.kind === "generated"
                   ? t("rowOpsInsertGeneratedHint")
                   : null;
-          const placeholder =
-            emptyStr
-              ? undefined
-              : hint?.kind === "auto"
+          const placeholder = emptyStr
+            ? undefined
+            : hint?.kind === "auto"
               ? t("rowOpsInsertAutoPlaceholder")
               : hint?.kind === "default"
                 ? t("rowOpsInsertDefaultPlaceholder", { expr: hint.expr })
@@ -307,12 +303,7 @@ export function RowInsertModal({
                 )}
               </Flex>
               {(hintText !== null || chips.length > 0) && (
-                <Flex
-                  align="center"
-                  wrap="wrap"
-                  gap="2.5"
-                  data-testid={`insert-affordance-${c.name}`}
-                >
+                <Flex align="center" wrap="wrap" gap="2.5" data-testid={`insert-affordance-${c.name}`}>
                   {/* 入力欄の位置 (ラベル幅ぶん) を空けて、説明と関数チップを入力欄の下に揃える。 */}
                   <chakra.span minW="160px" flexShrink={0} aria-hidden="true" />
                   {hintText !== null && (

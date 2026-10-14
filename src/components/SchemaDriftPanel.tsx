@@ -121,7 +121,9 @@ export function SchemaDriftPanel({
   return (
     <Modal
       // no-submit: 一覧の閲覧画面で、確定する主アクションが無い
-      onClose={onClose} width="980px">
+      onClose={onClose}
+      width="980px"
+    >
       <ModalHeader onClose={onClose} closeLabel={t("schemaDriftClose")}>
         {t("schemaDriftTitle", { name: profile.name })}
       </ModalHeader>
@@ -183,7 +185,13 @@ export function SchemaDriftPanel({
             {/* 右: 世代選択 + 差分リスト */}
             <Flex flex="1" minWidth={0} direction="column" gap="2.5">
               <Flex gap="2.5" align="center" wrap="wrap">
-                <chakra.label fontSize="sm" color="app.textSecondary" display="flex" alignItems="center" gap="1.5">
+                <chakra.label
+                  fontSize="sm"
+                  color="app.textSecondary"
+                  display="flex"
+                  alignItems="center"
+                  gap="1.5"
+                >
                   {t("schemaDriftCompareFrom")}
                   <Select value={genA?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
                     {gens.map((g, i) => (
@@ -198,7 +206,13 @@ export function SchemaDriftPanel({
                 <chakra.span color="app.textMuted" aria-hidden>
                   →
                 </chakra.span>
-                <chakra.label fontSize="sm" color="app.textSecondary" display="flex" alignItems="center" gap="1.5">
+                <chakra.label
+                  fontSize="sm"
+                  color="app.textSecondary"
+                  display="flex"
+                  alignItems="center"
+                  gap="1.5"
+                >
                   {t("schemaDriftCompareTo")}
                   <Select value={genB?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
                     {gens.map((g, i) => (
@@ -212,7 +226,16 @@ export function SchemaDriftPanel({
                 </chakra.label>
               </Flex>
 
-              <Box flex="1" minHeight={0} overflowY="auto" border="1px solid" borderColor="app.border" borderRadius="md" px="3" py="2">
+              <Box
+                flex="1"
+                minHeight={0}
+                overflowY="auto"
+                border="1px solid"
+                borderColor="app.border"
+                borderRadius="md"
+                px="3"
+                py="2"
+              >
                 {!genA || !genB || genA.id === genB.id ? (
                   <chakra.p m={0} textStyle="body" color="app.textMuted">
                     {t("schemaDriftPickTwo")}
@@ -264,17 +287,31 @@ export function SchemaDriftPanel({
                       } else if (c.tableStatus === "removed") {
                         fragments.push(t("schemaDriftTableRemovedLabel"));
                       } else {
-                        if (c.columnsAdded > 0) fragments.push(t("schemaDriftColAdded", { count: c.columnsAdded }));
-                        if (c.columnsRemoved > 0) fragments.push(t("schemaDriftColRemoved", { count: c.columnsRemoved }));
-                        if (c.columnsChanged > 0) fragments.push(t("schemaDriftColChanged", { count: c.columnsChanged }));
-                        if (c.indexesAdded > 0) fragments.push(t("schemaDriftIdxAdded", { count: c.indexesAdded }));
-                        if (c.indexesRemoved > 0) fragments.push(t("schemaDriftIdxRemoved", { count: c.indexesRemoved }));
-                        if (c.indexesChanged > 0) fragments.push(t("schemaDriftIdxChanged", { count: c.indexesChanged }));
+                        if (c.columnsAdded > 0)
+                          fragments.push(t("schemaDriftColAdded", { count: c.columnsAdded }));
+                        if (c.columnsRemoved > 0)
+                          fragments.push(t("schemaDriftColRemoved", { count: c.columnsRemoved }));
+                        if (c.columnsChanged > 0)
+                          fragments.push(t("schemaDriftColChanged", { count: c.columnsChanged }));
+                        if (c.indexesAdded > 0)
+                          fragments.push(t("schemaDriftIdxAdded", { count: c.indexesAdded }));
+                        if (c.indexesRemoved > 0)
+                          fragments.push(t("schemaDriftIdxRemoved", { count: c.indexesRemoved }));
+                        if (c.indexesChanged > 0)
+                          fragments.push(t("schemaDriftIdxChanged", { count: c.indexesChanged }));
                       }
                       // 削除されたテーブルは開けない。比較先の世代のデータベースで開く (#1537)。
                       const canOpen = c.tableStatus !== "removed" && !!genB;
                       return (
-                        <chakra.li key={c.table} fontSize="sm" color="app.text" display="flex" alignItems="center" gap="2" flexWrap="wrap">
+                        <chakra.li
+                          key={c.table}
+                          fontSize="sm"
+                          color="app.text"
+                          display="flex"
+                          alignItems="center"
+                          gap="2"
+                          flexWrap="wrap"
+                        >
                           <chakra.span flex="1" minWidth={0}>
                             <chakra.span fontWeight={600}>{c.table}</chakra.span>
                             {": "}
@@ -334,7 +371,8 @@ export function SchemaDriftPanel({
           focusableWrapper={!canCapture || capturing}
         >
           <Button variant="secondary" disabled={!canCapture || capturing} onClick={onCapture}>
-            <Icon name="refresh" size={ICON_SIZES.sm} /> {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
+            <Icon name="refresh" size={ICON_SIZES.sm} />{" "}
+            {capturing ? t("schemaDriftCapturing") : t("schemaDriftCaptureNow")}
           </Button>
         </Tooltip>
         <Button variant="primary" onClick={onClose}>

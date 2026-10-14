@@ -110,7 +110,10 @@ const pendingField = StateField.define<{ pos: number | null; deco: DecorationSet
         const pos = e.value;
         const sel = tr.state.selection.main;
         if (pos === null || !sel.empty || sel.head !== pos) return { pos: null, deco: Decoration.none };
-        return { pos, deco: Decoration.set([Decoration.widget({ widget: new PendingWidget(), side: 1 }).range(pos)]) };
+        return {
+          pos,
+          deco: Decoration.set([Decoration.widget({ widget: new PendingWidget(), side: 1 }).range(pos)]),
+        };
       }
     }
     if (value.pos !== null && (tr.docChanged || tr.selection)) return { pos: null, deco: Decoration.none };
@@ -204,7 +207,8 @@ function acceptSuggestionWord(view: EditorView): boolean {
     changes: { from: s.pos, insert: chunk },
     selection: { anchor: nextPos },
     // 残りがあれば、確定後のカーソル位置に出し直す。
-    effects: rest === "" ? setSuggestionEffect.of(null) : setSuggestionEffect.of({ pos: nextPos, text: rest }),
+    effects:
+      rest === "" ? setSuggestionEffect.of(null) : setSuggestionEffect.of({ pos: nextPos, text: rest }),
     userEvent: "inlineSuggest.accept",
     scrollIntoView: true,
   });
@@ -244,7 +248,8 @@ export function inlineCompleteExtension(options: InlineCompleteOptions): Extensi
         // 構築中は dispatch できないので次のマイクロタスクで。
         if (inlineSuggestionOf(view.state)) {
           queueMicrotask(() => {
-            if (inlineSuggestionOf(this.view.state)) this.view.dispatch({ effects: setSuggestionEffect.of(null) });
+            if (inlineSuggestionOf(this.view.state))
+              this.view.dispatch({ effects: setSuggestionEffect.of(null) });
           });
         }
       }

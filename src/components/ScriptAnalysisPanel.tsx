@@ -65,8 +65,7 @@ export function ScriptAnalysisPanel({
   const a: ScriptAnalysis = event.analysis;
   const kinds = dangerKindCounts(a);
   const dangerUnlisted = Math.max(0, a.dangerousTotal - a.dangerous.length);
-  const allDangerousExcluded =
-    a.dangerous.length > 0 && a.dangerous.every((d) => excluded.has(d.index));
+  const allDangerousExcluded = a.dangerous.length > 0 && a.dangerous.every((d) => excluded.has(d.index));
   const txShown = a.txControls.slice(0, TX_MARKS_SHOWN);
 
   return (
@@ -166,7 +165,10 @@ export function ScriptAnalysisPanel({
             {txShown.map((m) => `${m.kind.toUpperCase()} #${m.index}`).join(", ")}
           </chakra.span>
           {a.txControlTotal > txShown.length && (
-            <> {t("scriptAnalysisTxOverflow", { count: (a.txControlTotal - txShown.length).toLocaleString() })}</>
+            <>
+              {" "}
+              {t("scriptAnalysisTxOverflow", { count: (a.txControlTotal - txShown.length).toLocaleString() })}
+            </>
           )}
           <chakra.div>{t("scriptAnalysisTxLocked")}</chakra.div>
         </chakra.div>
@@ -260,8 +262,12 @@ function StatementList({
               <chakra.span color="app.textMuted" textStyle="caption" display="flex" flexWrap="wrap" gap="2">
                 <span>{t("scriptStatementLine", { index: s.index, line: s.line })}</span>
                 <span>{t(CATEGORY_LABELS[s.category])}</span>
-                {s.danger && <chakra.span color="app.textError">{t(DANGER_KIND_LABELS[s.danger])}</chakra.span>}
-                {s.blocked && <chakra.span color="app.textWarning">{t("scriptStatementBlocked")}</chakra.span>}
+                {s.danger && (
+                  <chakra.span color="app.textError">{t(DANGER_KIND_LABELS[s.danger])}</chakra.span>
+                )}
+                {s.blocked && (
+                  <chakra.span color="app.textWarning">{t("scriptStatementBlocked")}</chakra.span>
+                )}
                 {skipped && <span>{t("scriptAnalysisSkip")}</span>}
               </chakra.span>
             </chakra.span>

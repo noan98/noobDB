@@ -88,9 +88,13 @@ const tdCss: SystemStyleObject = {
 };
 
 // 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
-const MotionReveal = chakra(motion.div, {}, {
-  forwardProps: ["initial", "animate", "transition"],
-});
+const MotionReveal = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["initial", "animate", "transition"],
+  },
+);
 
 export function AdvisorPanel({
   sessionId,
@@ -163,11 +167,10 @@ export function AdvisorPanel({
   // th はネイティブに columnheader ロールを持つので role は上書きしない。
   const headerProps = (key: AdvisorSortKey) => ({
     tabIndex: 0,
-    "aria-sort": (sort.key === key
-      ? sort.dir === "asc"
-        ? "ascending"
-        : "descending"
-      : "none") as "ascending" | "descending" | "none",
+    "aria-sort": (sort.key === key ? (sort.dir === "asc" ? "ascending" : "descending") : "none") as
+      | "ascending"
+      | "descending"
+      | "none",
     onClick: () => setSort((cur) => nextAdvisorSort(cur, key)),
     onKeyDown: (e: ReactKeyboardEvent) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -215,9 +218,7 @@ export function AdvisorPanel({
         return t(d.key, d.params);
       },
     });
-    return kind === "csv"
-      ? tableToCsv(table.header, table.rows)
-      : tableToMarkdown(table.header, table.rows);
+    return kind === "csv" ? tableToCsv(table.header, table.rows) : tableToMarkdown(table.header, table.rows);
   };
 
   const copyFix = useCallback(
@@ -233,246 +234,242 @@ export function AdvisorPanel({
     // 説明・実行ボタンは固定し、表だけをスクロールさせる。スクロール領域に上余白が
     // あると sticky ヘッダの上を行が透けて流れ、ヘッダが浮いて見えていた。
     <Box flex="1" minH={0} display="flex" flexDirection="column">
-    <Box flexShrink={0} pt="3.5" pb="3" px="4" display="flex" flexDirection="column" gap="3">
-      <chakra.p margin={0} fontSize="sm" color="app.textMuted">
-        {t("advisorDesc")}
-      </chakra.p>
+      <Box flexShrink={0} pt="3.5" pb="3" px="4" display="flex" flexDirection="column" gap="3">
+        <chakra.p margin={0} fontSize="sm" color="app.textMuted">
+          {t("advisorDesc")}
+        </chakra.p>
 
-      <Flex align="center" gap="3" flexWrap="wrap">
-        <Button type="button" variant="primary" onClick={run} disabled={running}>
-          <Icon name="refresh" size={ICON_SIZES.sm} />
-          <chakra.span marginLeft="1.5">
-            {report ? t("advisorRerun") : t("advisorRun")}
-          </chakra.span>
-        </Button>
-        {report && !running && report.findings.length > 0 && (
-          <TextExportButton
-            filenameBase={`schema-health-${database}`}
-            formats={[
-              { id: "csv", label: "CSV", build: () => buildExport("csv") },
-              { id: "markdown", label: "Markdown", build: () => buildExport("markdown") },
-            ]}
+        <Flex align="center" gap="3" flexWrap="wrap">
+          <Button type="button" variant="primary" onClick={run} disabled={running}>
+            <Icon name="refresh" size={ICON_SIZES.sm} />
+            <chakra.span marginLeft="1.5">{report ? t("advisorRerun") : t("advisorRun")}</chakra.span>
+          </Button>
+          {report && !running && report.findings.length > 0 && (
+            <TextExportButton
+              filenameBase={`schema-health-${database}`}
+              formats={[
+                { id: "csv", label: "CSV", build: () => buildExport("csv") },
+                { id: "markdown", label: "Markdown", build: () => buildExport("markdown") },
+              ]}
+            />
+          )}
+          {running && (
+            <Flex align="center" gap="2">
+              <Spinner size={14} />
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("advisorRunning")}
+              </chakra.span>
+            </Flex>
+          )}
+          {report && !running && (
+            <chakra.span fontSize="sm" color="app.textMuted">
+              {report.findings.length === 0
+                ? t("advisorNoFindings", { tables: String(report.tables_analyzed) })
+                : t("advisorSummary", {
+                    findings: String(report.findings.length),
+                    tables: String(report.tables_analyzed),
+                  })}
+            </chakra.span>
+          )}
+        </Flex>
+      </Box>
+
+      <Box flex="1" minH={0} overflowY="auto" px="4" pb="3.5" display="flex" flexDirection="column" gap="3.5">
+        {error && (
+          // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
+          // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
+          <EmptyState
+            illustration={errorIllustration(error)}
+            icon="warning"
+            title={t("advisorError", { error })}
+            action={{ label: t("advisorRetry"), onClick: () => void run() }}
           />
         )}
-        {running && (
-          <Flex align="center" gap="2">
-            <Spinner size={14} />
-            <chakra.span fontSize="sm" color="app.textMuted">
-              {t("advisorRunning")}
-            </chakra.span>
-          </Flex>
-        )}
-        {report && !running && (
-          <chakra.span fontSize="sm" color="app.textMuted">
-            {report.findings.length === 0
-              ? t("advisorNoFindings", { tables: String(report.tables_analyzed) })
-              : t("advisorSummary", {
-                  findings: String(report.findings.length),
-                  tables: String(report.tables_analyzed),
-                })}
-          </chakra.span>
-        )}
-      </Flex>
-    </Box>
 
-    <Box flex="1" minH={0} overflowY="auto" px="4" pb="3.5" display="flex" flexDirection="column" gap="3.5">
-      {error && (
-        // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
-        // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
-        <EmptyState
-          illustration={errorIllustration(error)}
-          icon="warning"
-          title={t("advisorError", { error })}
-          action={{ label: t("advisorRetry"), onClick: () => void run() }}
-        />
-      )}
-
-      {report && !running && report.skipped.length > 0 && (
-        <Box
-          borderRadius="var(--radius-sm)"
-          border="1px solid"
-          borderColor={semanticColorToken("warning", "border")}
-          bg={semanticColorToken("warning", "subtle")}
-          color={semanticColorToken("warning", "text")}
-          px="3"
-          py="2.5"
-        >
-          <chakra.div textStyle="subheading" marginBottom="1">
-            {t("advisorSkippedTitle")}
-          </chakra.div>
-          {report.skipped.map((s) => (
-            <chakra.div key={`${s.rule}-${s.reason}`} fontSize="sm" lineHeight={1.5}>
-              {t("advisorSkippedRule", {
-                rule: t(ruleTitleKey(s.rule)),
-                reason: t(reasonTextKey(s.reason)),
-              })}
+        {report && !running && report.skipped.length > 0 && (
+          <Box
+            borderRadius="var(--radius-sm)"
+            border="1px solid"
+            borderColor={semanticColorToken("warning", "border")}
+            bg={semanticColorToken("warning", "subtle")}
+            color={semanticColorToken("warning", "text")}
+            px="3"
+            py="2.5"
+          >
+            <chakra.div textStyle="subheading" marginBottom="1">
+              {t("advisorSkippedTitle")}
             </chakra.div>
-          ))}
-        </Box>
-      )}
-
-      {running && (
-        // 実行中は結果 (findings 表) の形を模したシマーを出し、完了時の
-        // レイアウトジャンプを抑える (#1211)。待機の告知は上の status が担う。
-        <chakra.table width="100%" style={{ borderCollapse: "collapse" }} aria-hidden>
-          <chakra.thead>
-            <chakra.tr>
-              <chakra.th css={thCss}>{t("advisorColSeverity")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColRule")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColTarget")}</chakra.th>
-              <chakra.th css={thCss}>{t("advisorColDetail")}</chakra.th>
-            </chakra.tr>
-          </chakra.thead>
-          <chakra.tbody>
-            <SkeletonTableRows columns={4} rows={5} />
-          </chakra.tbody>
-        </chakra.table>
-      )}
-
-      {report && !running && report.table_plans.length > 0 && (
-        // テーブル単位のまとめ DDL (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。
-        <Box
-          borderRadius="var(--radius-sm)"
-          border="1px solid"
-          borderColor="app.border"
-          px="3"
-          py="2.5"
-          data-testid="advisor-table-plans"
-        >
-          <Flex align="center" gap="3" flexWrap="wrap">
-            <chakra.div textStyle="subheading">{t("advisorPlansTitle")}</chakra.div>
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                insertFix(
-                  report.table_plans.map((p) => `-- ${p.table}\n${p.ddl}`).join("\n\n"),
-                )
-              }
-            >
-              <Icon name="insert-sql" size={ICON_SIZES.sm} />
-              <chakra.span marginLeft="1.5">{t("advisorPlansInsertAll")}</chakra.span>
-            </Button>
-          </Flex>
-          <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
-            {t("advisorPlansNote")}
-          </chakra.div>
-          {report.table_plans.map((p) => (
-            <Box key={p.table} marginTop="2.5">
-              <chakra.div fontFamily="var(--font-mono)" fontWeight={600}>
-                {p.table}{" "}
-                <chakra.span textStyle="caption">
-                  {t("advisorPlanChanges", { count: String(p.change_count) })}
-                </chakra.span>
+            {report.skipped.map((s) => (
+              <chakra.div key={`${s.rule}-${s.reason}`} fontSize="sm" lineHeight={1.5}>
+                {t("advisorSkippedRule", {
+                  rule: t(ruleTitleKey(s.rule)),
+                  reason: t(reasonTextKey(s.reason)),
+                })}
               </chakra.div>
-              <FixDdlBlock
-                ddl={p.ddl}
-                label={p.ddl_online ? t("advisorFixStandard") : null}
-                note={p.ddl_online ? t("advisorFixStandardNote") : null}
-                onInsert={insertFix}
-                onCopy={copyFix}
-              />
-              {p.ddl_online && (
+            ))}
+          </Box>
+        )}
+
+        {running && (
+          // 実行中は結果 (findings 表) の形を模したシマーを出し、完了時の
+          // レイアウトジャンプを抑える (#1211)。待機の告知は上の status が担う。
+          <chakra.table width="100%" style={{ borderCollapse: "collapse" }} aria-hidden>
+            <chakra.thead>
+              <chakra.tr>
+                <chakra.th css={thCss}>{t("advisorColSeverity")}</chakra.th>
+                <chakra.th css={thCss}>{t("advisorColRule")}</chakra.th>
+                <chakra.th css={thCss}>{t("advisorColTarget")}</chakra.th>
+                <chakra.th css={thCss}>{t("advisorColDetail")}</chakra.th>
+              </chakra.tr>
+            </chakra.thead>
+            <chakra.tbody>
+              <SkeletonTableRows columns={4} rows={5} />
+            </chakra.tbody>
+          </chakra.table>
+        )}
+
+        {report && !running && report.table_plans.length > 0 && (
+          // テーブル単位のまとめ DDL (#1540)。2 件以上の機械的に直せる指摘があるテーブルだけ。
+          <Box
+            borderRadius="var(--radius-sm)"
+            border="1px solid"
+            borderColor="app.border"
+            px="3"
+            py="2.5"
+            data-testid="advisor-table-plans"
+          >
+            <Flex align="center" gap="3" flexWrap="wrap">
+              <chakra.div textStyle="subheading">{t("advisorPlansTitle")}</chakra.div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  insertFix(report.table_plans.map((p) => `-- ${p.table}\n${p.ddl}`).join("\n\n"))
+                }
+              >
+                <Icon name="insert-sql" size={ICON_SIZES.sm} />
+                <chakra.span marginLeft="1.5">{t("advisorPlansInsertAll")}</chakra.span>
+              </Button>
+            </Flex>
+            <chakra.div fontSize="var(--text-xs)" color="app.textMuted" marginTop="1" lineHeight={1.5}>
+              {t("advisorPlansNote")}
+            </chakra.div>
+            {report.table_plans.map((p) => (
+              <Box key={p.table} marginTop="2.5">
+                <chakra.div fontFamily="var(--font-mono)" fontWeight={600}>
+                  {p.table}{" "}
+                  <chakra.span textStyle="caption">
+                    {t("advisorPlanChanges", { count: String(p.change_count) })}
+                  </chakra.span>
+                </chakra.div>
                 <FixDdlBlock
-                  ddl={p.ddl_online}
-                  label={t("advisorFixOnline")}
-                  note={
-                    report.driver === "postgres"
-                      ? t("advisorFixOnlineNotePostgres")
-                      : t("advisorFixOnlineNoteMysql")
-                  }
+                  ddl={p.ddl}
+                  label={p.ddl_online ? t("advisorFixStandard") : null}
+                  note={p.ddl_online ? t("advisorFixStandardNote") : null}
                   onInsert={insertFix}
                   onCopy={copyFix}
                 />
-              )}
-            </Box>
-          ))}
-        </Box>
-      )}
+                {p.ddl_online && (
+                  <FixDdlBlock
+                    ddl={p.ddl_online}
+                    label={t("advisorFixOnline")}
+                    note={
+                      report.driver === "postgres"
+                        ? t("advisorFixOnlineNotePostgres")
+                        : t("advisorFixOnlineNoteMysql")
+                    }
+                    onInsert={insertFix}
+                    onCopy={copyFix}
+                  />
+                )}
+              </Box>
+            ))}
+          </Box>
+        )}
 
-      {report && !running && report.findings.length > 0 && (
-        <MotionReveal
-          initial={variants.fade.initial}
-          animate={variants.fade.animate}
-          transition={transitions.enter}
-        >
-        <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
-          <chakra.thead>
-            <chakra.tr>
-              {sortableTh("severity", t("advisorColSeverity"))}
-              {sortableTh("rule", t("advisorColRule"))}
-              {sortableTh("target", t("advisorColTarget"))}
-              {sortableTh("detail", t("advisorColDetail"))}
-            </chakra.tr>
-          </chakra.thead>
-          <chakra.tbody>
-            {findings.map((f, i) => {
-              const desc = findingDescription(f);
-              return (
-                <chakra.tr key={rowKeys[i]}>
-                  <chakra.td css={tdCss}>
-                    <SeverityBadge severity={f.severity} />
-                  </chakra.td>
-                  <chakra.td css={tdCss} fontWeight={600} whiteSpace="nowrap">
-                    {t(ruleTitleKey(f.rule))}
-                  </chakra.td>
-                  <chakra.td css={tdCss} fontFamily="var(--font-mono)">
-                    {findingTarget(f)}
-                  </chakra.td>
-                  <chakra.td css={tdCss}>
-                    <chakra.div lineHeight={1.5} color="app.textMuted">
-                      {t(desc.key, desc.params)}
-                    </chakra.div>
-                    {f.statistical && (
-                      <chakra.div
-                        marginTop="1.5"
-                        fontSize="var(--text-xs)"
-                        color={semanticColorToken("warning", "text")}
-                      >
-                        {t("advisorStatisticalNote")}
-                      </chakra.div>
-                    )}
-                    {f.fix_ddl && (
-                      <FixDdlBlock
-                        ddl={f.fix_ddl}
-                        label={f.fix_ddl_online ? t("advisorFixStandard") : null}
-                        note={f.fix_ddl_online ? t("advisorFixStandardNote") : null}
-                        onInsert={insertFix}
-                        onCopy={copyFix}
-                      />
-                    )}
-                    {f.fix_ddl_online && (
-                      <FixDdlBlock
-                        ddl={f.fix_ddl_online}
-                        label={t("advisorFixOnline")}
-                        note={
-                          report?.driver === "postgres"
-                            ? t("advisorFixOnlineNotePostgres")
-                            : t("advisorFixOnlineNoteMysql")
-                        }
-                        onInsert={insertFix}
-                        onCopy={copyFix}
-                      />
-                    )}
-                    {aiAvailable && report && (
-                      <AiAdvisorExplain
-                        sessionId={sessionId}
-                        driver={report.driver}
-                        database={database}
-                        finding={f}
-                        isProduction={isProduction}
-                      />
-                    )}
-                  </chakra.td>
+        {report && !running && report.findings.length > 0 && (
+          <MotionReveal
+            initial={variants.fade.initial}
+            animate={variants.fade.animate}
+            transition={transitions.enter}
+          >
+            <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+              <chakra.thead>
+                <chakra.tr>
+                  {sortableTh("severity", t("advisorColSeverity"))}
+                  {sortableTh("rule", t("advisorColRule"))}
+                  {sortableTh("target", t("advisorColTarget"))}
+                  {sortableTh("detail", t("advisorColDetail"))}
                 </chakra.tr>
-              );
-            })}
-          </chakra.tbody>
-        </chakra.table>
-        </MotionReveal>
-      )}
-    </Box>
+              </chakra.thead>
+              <chakra.tbody>
+                {findings.map((f, i) => {
+                  const desc = findingDescription(f);
+                  return (
+                    <chakra.tr key={rowKeys[i]}>
+                      <chakra.td css={tdCss}>
+                        <SeverityBadge severity={f.severity} />
+                      </chakra.td>
+                      <chakra.td css={tdCss} fontWeight={600} whiteSpace="nowrap">
+                        {t(ruleTitleKey(f.rule))}
+                      </chakra.td>
+                      <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                        {findingTarget(f)}
+                      </chakra.td>
+                      <chakra.td css={tdCss}>
+                        <chakra.div lineHeight={1.5} color="app.textMuted">
+                          {t(desc.key, desc.params)}
+                        </chakra.div>
+                        {f.statistical && (
+                          <chakra.div
+                            marginTop="1.5"
+                            fontSize="var(--text-xs)"
+                            color={semanticColorToken("warning", "text")}
+                          >
+                            {t("advisorStatisticalNote")}
+                          </chakra.div>
+                        )}
+                        {f.fix_ddl && (
+                          <FixDdlBlock
+                            ddl={f.fix_ddl}
+                            label={f.fix_ddl_online ? t("advisorFixStandard") : null}
+                            note={f.fix_ddl_online ? t("advisorFixStandardNote") : null}
+                            onInsert={insertFix}
+                            onCopy={copyFix}
+                          />
+                        )}
+                        {f.fix_ddl_online && (
+                          <FixDdlBlock
+                            ddl={f.fix_ddl_online}
+                            label={t("advisorFixOnline")}
+                            note={
+                              report?.driver === "postgres"
+                                ? t("advisorFixOnlineNotePostgres")
+                                : t("advisorFixOnlineNoteMysql")
+                            }
+                            onInsert={insertFix}
+                            onCopy={copyFix}
+                          />
+                        )}
+                        {aiAvailable && report && (
+                          <AiAdvisorExplain
+                            sessionId={sessionId}
+                            driver={report.driver}
+                            database={database}
+                            finding={f}
+                            isProduction={isProduction}
+                          />
+                        )}
+                      </chakra.td>
+                    </chakra.tr>
+                  );
+                })}
+              </chakra.tbody>
+            </chakra.table>
+          </MotionReveal>
+        )}
+      </Box>
     </Box>
   );
 }

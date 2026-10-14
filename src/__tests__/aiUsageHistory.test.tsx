@@ -74,7 +74,11 @@ describe("AiUsageHistory (#1540)", () => {
 
   it("日別は最新 7 日だけ表示し、残りは「さらに N 日分を表示」で開いて畳める (#1608)", async () => {
     // 2000 年の 10 日分 (全期間で見る)。
-    const days = Array.from({ length: 10 }, (_, i) => ({ ...record, day: `2000-01-${String(i + 1).padStart(2, "0")}`, calls: 1 }));
+    const days = Array.from({ length: 10 }, (_, i) => ({
+      ...record,
+      day: `2000-01-${String(i + 1).padStart(2, "0")}`,
+      calls: 1,
+    }));
     getAiUsageHistory.mockResolvedValue(days);
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
     await screen.findByText(t("aiLedgerEmpty"));

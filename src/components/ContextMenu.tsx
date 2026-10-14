@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -306,16 +298,7 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
       >
         {entries.map((entry, i) => {
           if (isSeparator(entry)) {
-            return (
-              <Box
-                key={`sep-${i}`}
-                role="separator"
-                h="1px"
-                my="1"
-                mx="1.5"
-                bg="app.borderSubtle"
-              />
-            );
+            return <Box key={`sep-${i}`} role="separator" h="1px" my="1" mx="1.5" bg="app.borderSubtle" />;
           }
           const submenu = isSubmenu(entry);
           const expanded = submenu && open?.index === i;

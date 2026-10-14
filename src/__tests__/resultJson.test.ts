@@ -20,9 +20,7 @@ describe("resultToJson", () => {
     const rows: CellValue[][] = [["9007199254740993", '{"a":[1,2]}', "x"]];
     const { root, shown, total, truncated } = resultToJson(columns, rows);
     expect({ shown, total, truncated }).toEqual({ shown: 1, total: 1, truncated: false });
-    expect(serializeJson(root)).toBe(
-      '[{"id":"9007199254740993","doc":{"a":[1,2]},"secret":"x"}]',
-    );
+    expect(serializeJson(root)).toBe('[{"id":"9007199254740993","doc":{"a":[1,2]},"secret":"x"}]');
   });
 
   it("JSON 列でも壊れた JSON は文字列のまま、非 JSON 列の JSON 風文字列は展開しない", () => {

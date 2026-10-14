@@ -235,9 +235,7 @@ export const LOCK_DIAGNOSE_FORMAT = {
 
 const responseSchema = z.object({
   summary: z.string(),
-  waits: z.array(
-    z.object({ session_id: z.number(), waiting_for: z.array(z.number()), detail: z.string() }),
-  ),
+  waits: z.array(z.object({ session_id: z.number(), waiting_for: z.array(z.number()), detail: z.string() })),
   stop_candidates: z.array(
     z.object({ session_id: z.number(), impact: z.enum(IMPACT_RISKS), reason: z.string() }),
   ),
@@ -245,9 +243,7 @@ const responseSchema = z.object({
 });
 export type LockDiagnoseResponse = z.infer<typeof responseSchema>;
 
-export type ParsedLockDiagnose =
-  | { ok: true; value: LockDiagnoseResponse }
-  | { ok: false; raw: string };
+export type ParsedLockDiagnose = { ok: true; value: LockDiagnoseResponse } | { ok: false; raw: string };
 
 /**
  * AI が返した停止候補のうち、AI に渡した待機チェーン (`allowedIds`) に実在する id だけを残す。
@@ -327,9 +323,7 @@ export function buildLockDiagnosePrompt(input: LockDiagnoseInput): string {
     ].filter(Boolean);
     lines.push(`- #${p.id} (${meta.join(", ")})`);
     if (p.query) {
-      lines.push(
-        input.maskLiterals ? "  SQL (string literals and comments are blanked):" : "  SQL:",
-      );
+      lines.push(input.maskLiterals ? "  SQL (string literals and comments are blanked):" : "  SQL:");
       for (const l of sqlForAi(p.query, input.driver, input.maskLiterals).split("\n")) {
         lines.push(`    ${l}`);
       }

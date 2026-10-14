@@ -95,11 +95,19 @@ beforeEach(() => {
     { name: "v_sales", columns: [col("id")] },
   ]);
   foreignKeys.mockResolvedValue([
-    { table: "orders", column: "customer_id", referenced_table: "customers", referenced_column: "id", constraint_name: null },
+    {
+      table: "orders",
+      column: "customer_id",
+      referenced_table: "customers",
+      referenced_column: "id",
+      constraint_name: null,
+    },
   ]);
   listSchemaObjects.mockResolvedValue([{ kind: "view", name: "v_sales", id: null }]);
   listTableComments.mockResolvedValue([]);
-  listIndexes.mockResolvedValue([{ name: "PRIMARY", columns: ["id"], unique: true, primary: true, method: "BTREE" }]);
+  listIndexes.mockResolvedValue([
+    { name: "PRIMARY", columns: ["id"], unique: true, primary: true, method: "BTREE" },
+  ]);
   getObjectDefinition.mockResolvedValue("SELECT 1 AS id");
   writeTextFile.mockResolvedValue(10);
   enable();
@@ -151,7 +159,9 @@ describe("AiSchemaDocModal (#696)", () => {
       handlers?.onDelta?.({ streamId: "x", text: "\n\n本文" });
       handlers?.onDone?.({} as never);
     });
-    await waitFor(() => expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toContain("AI-generated inferences"));
+    await waitFor(() =>
+      expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toContain("AI-generated inferences"),
+    );
     const shown = screen.getByLabelText(t("aiSchemaDocResult")).textContent ?? "";
     expect(shown).toContain("Connection: 本番DB / shop (PostgreSQL)");
     expect(shown.indexOf("Generated at")).toBeLessThan(shown.indexOf("# 店舗"));
@@ -164,7 +174,9 @@ describe("AiSchemaDocModal (#696)", () => {
     await generate();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     // 完了前は押せない。
-    expect((screen.getByRole("button", { name: t("aiSchemaDocCopy") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: t("aiSchemaDocCopy") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: "# T" });
       handlers?.onDone?.({} as never);
@@ -212,7 +224,7 @@ describe("AiSchemaDocModal (#696)", () => {
     renderWithProviders(ui());
     const radio = await screen.findByLabelText(t("aiSchemaDocScopeSelected"));
     fireEvent.click(radio);
-    const btn = screen.getByRole("button", { name: t("aiSchemaDocGenerate" )}) as HTMLButtonElement;
+    const btn = screen.getByRole("button", { name: t("aiSchemaDocGenerate") }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(screen.getByText(t("aiSchemaDocNoSelection"))).toBeTruthy();
   });

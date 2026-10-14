@@ -27,8 +27,6 @@ describe("collectDropImpacts", () => {
   });
 
   it("全ての子が対象内なら空", () => {
-    expect(
-      collectDropImpacts({ a: [fk("b", "a_id")], b: [fk("a", "b_id")] }, ["a", "b"]),
-    ).toEqual([]);
+    expect(collectDropImpacts({ a: [fk("b", "a_id")], b: [fk("a", "b_id")] }, ["a", "b"])).toEqual([]);
   });
 });

@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  cancelledPartialResult,
-  resolveCancelledRows,
-  timeoutPartialResult,
-} from "../streamPartialResult";
+import { cancelledPartialResult, resolveCancelledRows, timeoutPartialResult } from "../streamPartialResult";
 
 describe("resolveCancelledRows", () => {
   it("prefers the backend-reported delivered row count when present", () => {

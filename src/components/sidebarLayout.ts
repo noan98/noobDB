@@ -39,11 +39,7 @@ export function parseSidebarWidth(raw: unknown): number {
  * `null` (呼び出し側は既定動作を妨げない)。`Splitter` と同じ割り当て:
  * ← / → で縮小 / 拡大 (Shift で大きく)、Home / End で最小 / 最大、Enter で既定。
  */
-export function sidebarWidthForKey(
-  current: number,
-  key: string,
-  shiftKey = false,
-): number | null {
+export function sidebarWidthForKey(current: number, key: string, shiftKey = false): number | null {
   const step = shiftKey ? SIDEBAR_KEY_STEP_LARGE : SIDEBAR_KEY_STEP;
   switch (key) {
     case "ArrowLeft":

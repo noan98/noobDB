@@ -74,28 +74,26 @@ export type AiTaskKind = (typeof AI_TASK_KINDS)[number];
  * タスク種別を足すときは、`AI_TASK_KINDS` と Rust の `AiTaskKind` / `recommended_*` と
  * 一緒にここへ登録する (Record なので登録漏れは型エラーになる)。
  */
-export const AI_TASK_DEFS: Record<
-  AiTaskKind,
-  { recommendedModel: AiModelId; recommendedEffort: AiEffort }
-> = {
-  connectionTest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
-  generic: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  errorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
-  nl2sql: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  explainInterpret: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  impactAnalysis: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  sqlExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  sqlRewrite: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  schemaDoc: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  syncRisk: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  testData: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  historySearch: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
-  advisorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  resultSummary: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  assertionSuggest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
-  lockDiagnose: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
-  inlineComplete: { recommendedModel: "claude-haiku-5-5", recommendedEffort: "low" },
-};
+export const AI_TASK_DEFS: Record<AiTaskKind, { recommendedModel: AiModelId; recommendedEffort: AiEffort }> =
+  {
+    connectionTest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
+    generic: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    errorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
+    nl2sql: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    explainInterpret: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    impactAnalysis: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    sqlExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    sqlRewrite: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    schemaDoc: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    syncRisk: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    testData: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    historySearch: { recommendedModel: "claude-opus-5-5", recommendedEffort: "low" },
+    advisorExplain: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    resultSummary: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    assertionSuggest: { recommendedModel: "claude-opus-5-5", recommendedEffort: "medium" },
+    lockDiagnose: { recommendedModel: "claude-opus-5-5", recommendedEffort: "high" },
+    inlineComplete: { recommendedModel: "claude-haiku-5-5", recommendedEffort: "low" },
+  };
 
 /**
  * タスク別モデルが未設定 (`null`) のとき、既定モデルではなく推奨モデルで動くか。推奨が既定と異なる

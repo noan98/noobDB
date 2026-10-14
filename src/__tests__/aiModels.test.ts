@@ -8,11 +8,7 @@ import {
   effortOptions,
   modelOptions,
 } from "../ai/aiModels";
-import {
-  DEFAULT_AI_SETTINGS,
-  sanitizeAiSettings,
-  toAiSnapshot,
-} from "../ai/aiSettings";
+import { DEFAULT_AI_SETTINGS, sanitizeAiSettings, toAiSnapshot } from "../ai/aiSettings";
 import { connectionTestView } from "../ai/connectionTest";
 import { normalizeSettings } from "../settings";
 
@@ -115,7 +111,9 @@ describe("AI 設定の正規化 (#690)", () => {
 describe("接続テスト結果の表示 (#690)", () => {
   const base = { model: null, elapsedMs: 5 };
   it("認証 / ネットワーク / 成功 / その他を区別する", () => {
-    expect(connectionTestView({ ...base, status: "success", message: "ok", model: "m" }).tone).toBe("success");
+    expect(connectionTestView({ ...base, status: "success", message: "ok", model: "m" }).tone).toBe(
+      "success",
+    );
     expect(connectionTestView({ ...base, status: "authError", message: "x" })).toMatchObject({
       tone: "danger",
       key: "aiTestAuthError",

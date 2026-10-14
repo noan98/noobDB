@@ -23,11 +23,7 @@ export const syncCommands = {
     }).then((r) => parseResponse(schemas.syncPlan, r, "generate_data_sync_sql")),
   /** バックエンドが保持している `DataDiff` を破棄する (比較のやり直し・画面を閉じたとき)。 */
   releaseDataDiffs: (diffIds: string[]) => invoke<void>("release_data_diffs", { diffIds }),
-  applySyncSql: (params: {
-    sessionId: string;
-    database?: string | null;
-    statements: string[];
-  }) =>
+  applySyncSql: (params: { sessionId: string; database?: string | null; statements: string[] }) =>
     invoke<number>("apply_sync_sql", {
       sessionId: params.sessionId,
       database: params.database ?? null,

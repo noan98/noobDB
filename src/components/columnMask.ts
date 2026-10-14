@@ -139,10 +139,7 @@ export function isColumnMasked(columnName: string, config: MaskConfig): boolean 
  * 描画側が「マスク無し」を 1 回の null 判定で素通りできるようにする (列仮想化された
  * セル描画のホットパスに余計な配列参照を足さないため)。
  */
-export function resolveMaskedColumns(
-  columnNames: readonly string[],
-  config: MaskConfig,
-): boolean[] | null {
+export function resolveMaskedColumns(columnNames: readonly string[], config: MaskConfig): boolean[] | null {
   if (!config.enabled) return null;
   let any = false;
   const flags = columnNames.map((n) => {
@@ -183,11 +180,7 @@ export function revealExpiry(now: number = Date.now()): number {
 }
 
 /** セルが reveal 中か。 */
-export function isCellRevealed(
-  reveal: RevealTarget | null,
-  rowIdx: number,
-  colIdx: number,
-): boolean {
+export function isCellRevealed(reveal: RevealTarget | null, rowIdx: number, colIdx: number): boolean {
   if (!reveal || reveal.colIdx !== colIdx) return false;
   return reveal.kind === "column" || reveal.rowIdx === rowIdx;
 }
@@ -221,10 +214,6 @@ export function rowHasMaskedCell(
  * コピー用テキスト。マスク中かつ設定でプレースホルダコピーが有効なら伏せ字、
  * そうでなければ実値のテキスト (`realText`)。
  */
-export function maskedCopyText(
-  realText: string,
-  cellMasked: boolean,
-  copyPlaceholder: boolean,
-): string {
+export function maskedCopyText(realText: string, cellMasked: boolean, copyPlaceholder: boolean): string {
   return cellMasked && copyPlaceholder ? MASK_PLACEHOLDER : realText;
 }

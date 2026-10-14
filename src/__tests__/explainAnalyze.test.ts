@@ -20,7 +20,12 @@ import {
 import type { QueryResult } from "../api/tauri";
 
 function cellResult(text: string): QueryResult {
-  return { columns: [{ name: "EXPLAIN", type_name: "TEXT" }], rows: [[text]], rows_affected: 0, elapsed_ms: 0 } as unknown as QueryResult;
+  return {
+    columns: [{ name: "EXPLAIN", type_name: "TEXT" }],
+    rows: [[text]],
+    rows_affected: 0,
+    elapsed_ms: 0,
+  } as unknown as QueryResult;
 }
 
 describe("実測モードのプレフィックスと対応ドライバ (#1164)", () => {
@@ -139,12 +144,18 @@ describe("PostgreSQL EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) のパース", () =
     const { root } = parsePostgresPlan(json);
     // 10 → 5000 (500 倍): hot
     expect(nodeMisestimate(root!).level).toBe("hot");
-    expect(computeHints(root!).some((h) => h.key === "explainHintMisestimate" && h.severity === "warning")).toBe(true);
+    expect(
+      computeHints(root!).some((h) => h.key === "explainHintMisestimate" && h.severity === "warning"),
+    ).toBe(true);
     // 100 → 100: 乖離なし
     expect(nodeMisestimate(root!.children[0]).level).toBe("");
     // 1 → 50 (50 倍): warm
     expect(nodeMisestimate(root!.children[1]).level).toBe("warm");
-    expect(computeHints(root!.children[1]).some((h) => h.key === "explainHintMisestimate" && h.severity === "caution")).toBe(true);
+    expect(
+      computeHints(root!.children[1]).some(
+        (h) => h.key === "explainHintMisestimate" && h.severity === "caution",
+      ),
+    ).toBe(true);
   });
 
   it("Actual Loops=0 (未実行) のノードは rows / 時間を null にし、乖離ヒントを出さない", () => {

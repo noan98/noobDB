@@ -56,7 +56,9 @@ describe("resultHandle", () => {
   });
 
   it("isResultGoneError はバックエンドの破棄済みエラーだけを見分ける", () => {
-    expect(isResultGoneError(new BackendError("invalidInput", "invalid input: result handle gone: qs_1"))).toBe(true);
+    expect(
+      isResultGoneError(new BackendError("invalidInput", "invalid input: result handle gone: qs_1")),
+    ).toBe(true);
     expect(isResultGoneError(new Error("result handle gone"))).toBe(true);
     expect(isResultGoneError("result handle gone: x")).toBe(true);
     expect(isResultGoneError(new BackendError("io", "disk full"))).toBe(false);

@@ -33,14 +33,26 @@ import { setAiKeyPresent } from "../ai/aiKeyStore";
 import type { SyncPlan } from "../api/tauri";
 
 const PLAN_B: SyncPlan = {
-  statements: [{ sql: "ALTER TABLE other ADD COLUMN z int", table: "other", kind: "add_column", destructive: false }],
+  statements: [
+    { sql: "ALTER TABLE other ADD COLUMN z int", table: "other", kind: "add_column", destructive: false },
+  ],
   warnings: [],
 };
 
 const DML_PLAN: SyncPlan = {
   statements: [
-    { sql: "INSERT INTO `users` (`id`,`email`) VALUES (1,'alice@example.com')", table: "users", kind: "insert_row", destructive: false },
-    { sql: "UPDATE `users` SET `email`='bob@example.com' WHERE `id`=2", table: "users", kind: "update_row", destructive: false },
+    {
+      sql: "INSERT INTO `users` (`id`,`email`) VALUES (1,'alice@example.com')",
+      table: "users",
+      kind: "insert_row",
+      destructive: false,
+    },
+    {
+      sql: "UPDATE `users` SET `email`='bob@example.com' WHERE `id`=2",
+      table: "users",
+      kind: "update_row",
+      destructive: false,
+    },
   ],
   warnings: [],
 };
@@ -87,7 +99,14 @@ function Harness({
       />
       <ul>
         {plan.statements.map((s, i) => (
-          <SyncStatementRow key={i} index={i} statement={s} checked onToggle={() => {}} risks={risks?.get(i)} />
+          <SyncStatementRow
+            key={i}
+            index={i}
+            statement={s}
+            checked
+            onToggle={() => {}}
+            risks={risks?.get(i)}
+          />
         ))}
       </ul>
     </div>
@@ -147,7 +166,10 @@ describe("AiSyncRisk (#697)", () => {
     await click();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     act(() => {
-      handlers?.onDelta?.({ streamId: "x", text: JSON.stringify({ summary: "S", risk_items: [], recommendation: "R" }) });
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({ summary: "S", risk_items: [], recommendation: "R" }),
+      });
       handlers?.onDone?.({} as never);
     });
     await screen.findByText("S");
@@ -231,7 +253,9 @@ describe("AiSyncRisk (#697)", () => {
     expect(screen.queryByText("Adds a column and drops a table")).toBeNull();
     expect(screen.queryAllByTestId("ai-sync-risk-badge").length).toBe(0);
     // idle に戻っていてボタンが押せる。
-    expect((screen.getByRole("button", { name: t("aiSyncRiskButton") }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: t("aiSyncRiskButton") }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
     expect(screen.queryByText(t("aiSyncRiskRunning"))).toBeNull();
   });
 

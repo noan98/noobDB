@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  displayVersion,
-  downloadProgressPercent,
-  truncateReleaseNotes,
-} from "../updaterFormat";
+import { displayVersion, downloadProgressPercent, truncateReleaseNotes } from "../updaterFormat";
 
 describe("downloadProgressPercent (#705)", () => {
   it("computes a rounded percentage", () => {

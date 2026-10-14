@@ -35,12 +35,8 @@ export const TYPE_TO_CONFIRM_FALLBACK = "CONFIRM";
  *   couldn't be parsed) -> `TYPE_TO_CONFIRM_FALLBACK`, so the gate always has
  *   something concrete to ask for instead of silently skipping itself.
  */
-export function resolveTypedConfirmTarget(
-  names: ReadonlyArray<string | null | undefined>,
-): string {
-  const distinct = new Set(
-    names.map((n) => n?.trim()).filter((n): n is string => !!n && n.length > 0),
-  );
+export function resolveTypedConfirmTarget(names: ReadonlyArray<string | null | undefined>): string {
+  const distinct = new Set(names.map((n) => n?.trim()).filter((n): n is string => !!n && n.length > 0));
   return distinct.size === 1 ? [...distinct][0] : TYPE_TO_CONFIRM_FALLBACK;
 }
 

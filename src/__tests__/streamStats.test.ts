@@ -16,7 +16,10 @@ function statsOf(rows: CellValue[][]): StreamStatsSnapshot {
     nullCounts,
     numMin: cols.map((c) => c?.min ?? null),
     numMax: cols.map((c) => c?.max ?? null),
-    duplicateRows: hasAmbiguousIdentity(rows, Array.from({ length: w }, (_, i) => i)),
+    duplicateRows: hasAmbiguousIdentity(
+      rows,
+      Array.from({ length: w }, (_, i) => i),
+    ),
   };
 }
 

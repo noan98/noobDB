@@ -40,14 +40,7 @@ export function escapeHtml(s: string): string {
 // SQL の字句分割 (シンタックスハイライトと参照テーブル抽出で共有)
 // ---------------------------------------------------------------------------
 
-export type SqlTokenKind =
-  | "comment"
-  | "string"
-  | "ident"
-  | "number"
-  | "word"
-  | "space"
-  | "punct";
+export type SqlTokenKind = "comment" | "string" | "ident" | "number" | "word" | "space" | "punct";
 
 export interface SqlToken {
   kind: SqlTokenKind;
@@ -169,7 +162,10 @@ function unquoteIdent(text: string): string {
     const first = text[0];
     const last = text[text.length - 1];
     if ((first === '"' && last === '"') || (first === "`" && last === "`")) {
-      return text.slice(1, -1).split(first + first).join(first);
+      return text
+        .slice(1, -1)
+        .split(first + first)
+        .join(first);
     }
     if (first === "[" && last === "]") return text.slice(1, -1).split("]]").join("]");
   }
@@ -199,10 +195,16 @@ export function extractReferencedTables(sql: string, limit = 5, driver?: string 
   toks.forEach((t, idx) => {
     if (t.text === "(") {
       const prev = toks[idx - 1];
-      parenIsFromFunc.push(!!prev && prev.kind === "word" && FROM_SYNTAX_FUNCTIONS.has(prev.text.toLowerCase()));
+      parenIsFromFunc.push(
+        !!prev && prev.kind === "word" && FROM_SYNTAX_FUNCTIONS.has(prev.text.toLowerCase()),
+      );
     } else if (t.text === ")") {
       parenIsFromFunc.pop();
-    } else if (t.kind === "word" && t.text.toLowerCase() === "from" && parenIsFromFunc[parenIsFromFunc.length - 1]) {
+    } else if (
+      t.kind === "word" &&
+      t.text.toLowerCase() === "from" &&
+      parenIsFromFunc[parenIsFromFunc.length - 1]
+    ) {
       funcFrom.add(idx);
     }
   });
@@ -482,7 +484,14 @@ function renderSchema(schema: BundleSchemaTable[], labels: BundleLabels): string
         .join("");
       return (
         `${title}<div class="scroll"><table class="grid"><thead><tr>` +
-        [labels.colName, labels.colType, labels.colNullable, labels.colKey, labels.colDefault, labels.colExtra]
+        [
+          labels.colName,
+          labels.colType,
+          labels.colNullable,
+          labels.colKey,
+          labels.colDefault,
+          labels.colExtra,
+        ]
           .map((h) => `<th scope="col">${escapeHtml(h)}</th>`)
           .join("") +
         `</tr></thead><tbody>${rows}</tbody></table></div>`
@@ -604,9 +613,7 @@ export function buildInvestigationBundleHtml(input: BundleInput): string {
   sections.push(
     `<section><h2>${escapeHtml(labels.sectionMeta)}</h2><table class="meta"><tbody>${metaRows.join(
       "",
-    )}</tbody></table>${
-      meta.partial ? `<p class="notice">${escapeHtml(labels.partial)}</p>` : ""
-    }${
+    )}</tbody></table>${meta.partial ? `<p class="notice">${escapeHtml(labels.partial)}</p>` : ""}${
       maskedNames.length > 0
         ? `<p class="muted">${escapeHtml(labels.masked)}: ${maskedNames.map(escapeHtml).join(", ")}</p>`
         : ""
@@ -625,7 +632,9 @@ export function buildInvestigationBundleHtml(input: BundleInput): string {
     )}</p>${renderResultTable(columns, rows, maskedColumns, labels, true)}</section>`,
   );
   if (schema && schema.length > 0) {
-    sections.push(`<section><h2>${escapeHtml(labels.sectionSchema)}</h2>${renderSchema(schema, labels)}</section>`);
+    sections.push(
+      `<section><h2>${escapeHtml(labels.sectionSchema)}</h2>${renderSchema(schema, labels)}</section>`,
+    );
   }
   if (plan) {
     sections.push(`<section><h2>${escapeHtml(labels.sectionPlan)}</h2>${renderPlan(plan, labels)}</section>`);

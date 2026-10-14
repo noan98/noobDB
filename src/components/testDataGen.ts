@@ -85,18 +85,19 @@ export function classifyDataType(dataType: string, driver?: string): CellKind {
   const t = dataType.trim().toLowerCase();
   if (t.startsWith("enum") || t.startsWith("set")) return "enum";
   if (t.startsWith("bool") || t === "tinyint(1)") return "bool";
-  if (
-    t.includes("blob") ||
-    t.startsWith("binary") ||
-    t.startsWith("varbinary") ||
-    t === "bytea"
-  ) {
+  if (t.includes("blob") || t.startsWith("binary") || t.startsWith("varbinary") || t === "bytea") {
     return "binary";
   }
   if (t.startsWith("json")) return "json";
   if (t.includes("timestamp") || t.includes("datetime") || t.startsWith("date")) return "date";
   if (t.startsWith("time")) return "time";
-  if (t.startsWith("decimal") || t.startsWith("numeric") || t.startsWith("real") || t.includes("double") || t.startsWith("float")) {
+  if (
+    t.startsWith("decimal") ||
+    t.startsWith("numeric") ||
+    t.startsWith("real") ||
+    t.includes("double") ||
+    t.startsWith("float")
+  ) {
     return "decimal";
   }
   if (
@@ -215,7 +216,11 @@ export function inferColumnSpec(col: TableColumnInfo, driver?: string): ColumnGe
   // interval は文字列として有効な値 (`1 day`) を固定で入れる。ランダム文字列だと投入に失敗する。
   if (lower.startsWith("interval")) return { ...base, strategy: "fixed", fixedValue: "1 day" };
   // 文字列では表せない型 (幾何型・ネットワークアドレス・全文検索型など) は DB 既定値/NULL に任せる。
-  if (/^(point|line|lseg|box|path|polygon|circle|geometry|geography|linestring|multi\w+|geometrycollection|inet|cidr|macaddr8?|tsvector|tsquery|bit|varbit|money|xml)\b/.test(lower)) {
+  if (
+    /^(point|line|lseg|box|path|polygon|circle|geometry|geography|linestring|multi\w+|geometrycollection|inet|cidr|macaddr8?|tsvector|tsquery|bit|varbit|money|xml)\b/.test(
+      lower,
+    )
+  ) {
     return { ...base, strategy: "omit" };
   }
   switch (kind) {

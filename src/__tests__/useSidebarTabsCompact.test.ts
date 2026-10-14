@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  requiredSidebarTabsWidth,
-  shouldCompactSidebarTabs,
-} from "../components/useSidebarTabsCompact";
+import { requiredSidebarTabsWidth, shouldCompactSidebarTabs } from "../components/useSidebarTabsCompact";
 
 describe("サイドバータブのアイコンのみ表示の判定", () => {
   const tab = (labelWidth: number) => ({ paddingX: 16, iconWidth: 13, gap: 6, labelWidth });

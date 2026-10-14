@@ -11,7 +11,12 @@ import {
   type ExplainInterpretResponse,
   type ExplainInterpretTable,
 } from "../ai/explainInterpret";
-import { dialectLabel, extractTableRefs, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
+import {
+  dialectLabel,
+  extractTableRefs,
+  needsSendScopeConfirm,
+  resolveTableDatabase,
+} from "../ai/errorExplain";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { SeverityBadge } from "./severityBadge";

@@ -2,11 +2,9 @@ import { describe, it, expect } from "vitest";
 import { DERIVED_COMPLETION_MAX_CHARS, derivedCompletions } from "../components/sqlDerivedCompletion";
 
 /** カーソルは文末 (= 入力直後) に置く。 */
-const run = (text: string, driver = "mysql") =>
-  derivedCompletions({ driver, text, pos: text.length });
+const run = (text: string, driver = "mysql") => derivedCompletions({ driver, text, pos: text.length });
 
-const labels = (text: string, driver = "mysql") =>
-  run(text, driver)?.options.map((o) => o.label) ?? null;
+const labels = (text: string, driver = "mysql") => run(text, driver)?.options.map((o) => o.label) ?? null;
 
 describe("derivedCompletions: CTE", () => {
   it("SELECT 句で CTE 名と、その列の修飾子付き候補を出す", () => {
@@ -34,8 +32,7 @@ describe("derivedCompletions: CTE", () => {
   });
 
   it("FROM / JOIN の位置では CTE 名だけを出す (列は出さない)", () => {
-    const text =
-      "WITH x AS (SELECT a FROM t), y AS (SELECT b FROM u) SELECT * FROM ";
+    const text = "WITH x AS (SELECT a FROM t), y AS (SELECT b FROM u) SELECT * FROM ";
     expect(labels(text)).toEqual(["x", "y"]);
     const joined = `${text}x JOIN `;
     expect(labels(joined)).toEqual(["x", "y"]);
@@ -131,8 +128,7 @@ describe("derivedCompletions: FROM (subquery) の別名", () => {
   });
 
   it("兄弟のサブクエリの中で定義された別名は見せない", () => {
-    const text =
-      "SELECT * FROM t WHERE x IN (SELECT a FROM (SELECT a FROM u) s) AND s.";
+    const text = "SELECT * FROM t WHERE x IN (SELECT a FROM (SELECT a FROM u) s) AND s.";
     expect(labels(text)).toBeNull();
   });
 
@@ -208,16 +204,14 @@ describe("derivedCompletions: 括弧の中の文脈 (関数・式)", () => {
   });
 
   it("式の括弧の中でも句 (WHERE) の文脈で列を出す", () => {
-    expect(labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE (x.")).toEqual([
-      "x.a",
-      "x.b",
-    ]);
+    expect(labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE (x.")).toEqual(["x.a", "x.b"]);
   });
 
   it("IN リストの途中でも外側の WHERE の文脈で列を出す", () => {
-    expect(
-      labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE x.a IN (1, x."),
-    ).toEqual(["x.a", "x.b"]);
+    expect(labels("WITH x AS (SELECT a, b FROM t) SELECT * FROM t WHERE x.a IN (1, x.")).toEqual([
+      "x.a",
+      "x.b",
+    ]);
   });
 
   it("関数引数の中の派生表の別名を出す", () => {
@@ -312,9 +306,7 @@ describe("derivedCompletions: UNION 等の枝をまたがない (#1419)", () => 
   });
 
   it("同じ枝の派生表は出す", () => {
-    expect(
-      labels("SELECT a FROM u UNION SELECT * FROM (SELECT b FROM t) d WHERE d."),
-    ).toEqual(["d.b"]);
+    expect(labels("SELECT a FROM u UNION SELECT * FROM (SELECT b FROM t) d WHERE d.")).toEqual(["d.b"]);
   });
 
   it("CTE は WITH が全枝に効くので、どの枝でも出す", () => {
@@ -332,12 +324,12 @@ describe("derivedCompletions: UNION 等の枝をまたがない (#1419)", () => 
 });
 
 describe("derivedCompletions: 方言の引用と大きな入力 (#1419 再レビュー)", () => {
-  it("MySQL の \"...\" は文字列なので、中の FROM (...) e は派生表として見ない", () => {
+  it('MySQL の "..." は文字列なので、中の FROM (...) e は派生表として見ない', () => {
     const text = 'SELECT * FROM t WHERE note = "FROM (SELECT z FROM q) e" AND e.';
     expect(labels(text, "mysql")).toBeNull();
   });
 
-  it("PostgreSQL / SQLite の \"...\" は識別子のまま (修飾子として使える)", () => {
+  it('PostgreSQL / SQLite の "..." は識別子のまま (修飾子として使える)', () => {
     const text = 'SELECT * FROM (SELECT z FROM q) e WHERE "e".';
     expect(labels(text, "postgres")).toEqual(['"e".z']);
     expect(labels(text, "sqlite")).toEqual(['"e".z']);
@@ -363,8 +355,8 @@ describe("derivedCompletions: 方言の引用と大きな入力 (#1419 再レビ
   });
 });
 
-describe("derivedCompletions: MySQL の \"…\" と空白名・境界 (#1419 再レビュー)", () => {
-  it("MySQL では \"abc\" (文字列扱い) を列名にせず、空白の名前を出さない", () => {
+describe('derivedCompletions: MySQL の "…" と空白名・境界 (#1419 再レビュー)', () => {
+  it('MySQL では "abc" (文字列扱い) を列名にせず、空白の名前を出さない', () => {
     const text = 'WITH x AS (SELECT "abc", b FROM t) SELECT x.';
     expect(labels(text, "mysql")).toEqual(["x.b"]);
   });
@@ -378,11 +370,8 @@ describe("derivedCompletions: MySQL の \"…\" と空白名・境界 (#1419 再
     expect(labels('SELECT "abc" n, a AS "m" FROM t ORDER BY ', "mysql")).toEqual(["n"]);
   });
 
-  it("PostgreSQL の \"abc\" は従来どおり名前として出る", () => {
-    expect(labels('WITH x AS (SELECT "abc", b FROM t) SELECT x.', "postgres")).toEqual([
-      'x.abc',
-      "x.b",
-    ]);
+  it('PostgreSQL の "abc" は従来どおり名前として出る', () => {
+    expect(labels('WITH x AS (SELECT "abc", b FROM t) SELECT x.', "postgres")).toEqual(["x.abc", "x.b"]);
   });
 
   it("2 文字記号 (-- など) の間に立つカーソルでは補完しない", () => {
@@ -393,7 +382,7 @@ describe("derivedCompletions: MySQL の \"…\" と空白名・境界 (#1419 再
 
   it("$ の直前では補完しない", () => {
     const text = "WITH x AS (SELECT a FROM t) SELECT $$x.$$";
-    const pos = text.indexOf("$$x") ;
+    const pos = text.indexOf("$$x");
     expect(derivedCompletions({ driver: "postgres", text, pos })).toBeNull();
   });
 

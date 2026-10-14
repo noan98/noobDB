@@ -48,9 +48,7 @@ describe("IPC ランタイム型検証 (#391)", () => {
 
   it("必須フィールドが欠落していると reject する", async () => {
     mockInvoke.mockResolvedValueOnce({ columns: [], rows: [] });
-    await expect(api.runQueryTransaction("s", ["select 1"])).rejects.toThrow(
-      /run_query_transaction/,
-    );
+    await expect(api.runQueryTransaction("s", ["select 1"])).rejects.toThrow(/run_query_transaction/);
   });
 
   it("配列レスポンスの要素が壊れていると reject する", async () => {
@@ -94,9 +92,7 @@ describe("Zod スキーマ単体 (#391)", () => {
     };
     expect(queryStreamDoneMessage.safeParse(done).success).toBe(true);
     // バックエンドの判定値 (#1256) が欠けたメッセージは受け付けない。
-    expect(
-      queryStreamDoneMessage.safeParse({ ...done, readOnly: undefined }).success,
-    ).toBe(false);
+    expect(queryStreamDoneMessage.safeParse({ ...done, readOnly: undefined }).success).toBe(false);
     expect(
       queryStreamDoneMessage.safeParse({
         ...done,
@@ -108,9 +104,7 @@ describe("Zod スキーマ単体 (#391)", () => {
   it("queryResult は正常/異常を正しく判定する", () => {
     expect(queryResult.safeParse(VALID_QUERY_RESULT).success).toBe(true);
     expect(queryResult.safeParse({ columns: [] }).success).toBe(false);
-    expect(
-      queryResult.safeParse({ ...VALID_QUERY_RESULT, elapsed_ms: "3" }).success,
-    ).toBe(false);
+    expect(queryResult.safeParse({ ...VALID_QUERY_RESULT, elapsed_ms: "3" }).success).toBe(false);
   });
 
   it("connectionProfile は has_* オプショナルフラグを許容する", () => {
@@ -132,13 +126,9 @@ describe("Zod スキーマ単体 (#391)", () => {
       file_path: null,
     };
     expect(connectionProfile.safeParse(base).success).toBe(true);
-    expect(
-      connectionProfile.safeParse({ ...base, has_db_password: true }).success,
-    ).toBe(true);
+    expect(connectionProfile.safeParse({ ...base, has_db_password: true }).success).toBe(true);
     // port が文字列だと不正
-    expect(connectionProfile.safeParse({ ...base, port: "3306" }).success).toBe(
-      false,
-    );
+    expect(connectionProfile.safeParse({ ...base, port: "3306" }).success).toBe(false);
   });
 
   it("historyEntry は nullable な数値フィールドを許容する", () => {
@@ -161,8 +151,6 @@ describe("Zod スキーマ単体 (#391)", () => {
   });
 
   it("parseResponse はコマンド名を含むエラーを投げる", () => {
-    expect(() =>
-      parseResponse(queryResult, { columns: [] }, "boom"),
-    ).toThrow(/boom/);
+    expect(() => parseResponse(queryResult, { columns: [] }, "boom")).toThrow(/boom/);
   });
 });

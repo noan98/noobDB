@@ -199,9 +199,7 @@ export interface HistorySearchMatch {
   reason: string;
 }
 
-export type ParsedHistorySearch =
-  | { ok: true; matches: HistorySearchMatch[] }
-  | { ok: false; raw: string };
+export type ParsedHistorySearch = { ok: true; matches: HistorySearchMatch[] } | { ok: false; raw: string };
 
 /**
  * ストリームで結合した本文を検証してランク付けする。`allowedIds` (プロンプトに載せた候補)

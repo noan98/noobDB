@@ -41,10 +41,7 @@ export function isCellInCopyFlashRange(
  * うち、コピー対象範囲に含まれるものだけを返す。可視セルのみを走査するため、
  * 選択範囲がどれだけ大きくても実際に DOM に存在する分だけ処理する。
  */
-export function collectCopyFlashKeys(
-  cellKeys: Iterable<string>,
-  range: CopyFlashRange,
-): string[] {
+export function collectCopyFlashKeys(cellKeys: Iterable<string>, range: CopyFlashRange): string[] {
   const out: string[] = [];
   for (const key of cellKeys) {
     const sep = key.indexOf(":");

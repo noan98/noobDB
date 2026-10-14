@@ -17,11 +17,7 @@ import { createPortal } from "react-dom";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { transitions, variants } from "../motion";
-import {
-  computeTooltipPosition,
-  type TooltipPlacement,
-  type TooltipRect,
-} from "./tooltipPosition";
+import { computeTooltipPosition, type TooltipPlacement, type TooltipRect } from "./tooltipPosition";
 
 export type { TooltipPlacement };
 
@@ -370,50 +366,50 @@ export function Tooltip({
       {trigger}
       {portalMounted &&
         createPortal(
-        <AnimatePresence
-          onExitComplete={() => {
-            // 退場中に再び開かれた場合は残す (open は閉じている間だけ false)。
-            if (!openRef.current) setPortalMounted(false);
-          }}
-        >
-          {open && (
-            <MotionBox
-              ref={bubbleRef}
-              id={id}
-              role="tooltip"
-              position="fixed"
-              zIndex="popover"
-              maxWidth={maxWidth}
-              bg="app.surface"
-              border="1px solid"
-              borderColor="app.borderStrong"
-              borderRadius="md"
-              boxShadow="md"
-              py="1"
-              px="2.5"
-              fontSize="sm"
-              color="app.text"
-              // native title は改行をそのまま表示していたので、複数行ラベル
-              // (`ヒント\n\nSQL` 形式など) が 1 行に潰れないよう pre-wrap で受ける。
-              // 最大幅は据え置きなので、長い行は従来どおり折り返す (#884)。
-              whiteSpace="pre-wrap"
-              pointerEvents="none"
-              style={{
-                left: `${pos ? pos.left : 0}px`,
-                top: `${pos ? pos.top : 0}px`,
-                visibility: pos ? "visible" : "hidden",
-              }}
-              initial={variants.fadeScale.initial}
-              animate={variants.fadeScale.animate}
-              exit={variants.fadeScale.exit}
-              transition={transitions.enter}
-            >
-              {label}
-            </MotionBox>
-          )}
-        </AnimatePresence>,
-        document.body,
-      )}
+          <AnimatePresence
+            onExitComplete={() => {
+              // 退場中に再び開かれた場合は残す (open は閉じている間だけ false)。
+              if (!openRef.current) setPortalMounted(false);
+            }}
+          >
+            {open && (
+              <MotionBox
+                ref={bubbleRef}
+                id={id}
+                role="tooltip"
+                position="fixed"
+                zIndex="popover"
+                maxWidth={maxWidth}
+                bg="app.surface"
+                border="1px solid"
+                borderColor="app.borderStrong"
+                borderRadius="md"
+                boxShadow="md"
+                py="1"
+                px="2.5"
+                fontSize="sm"
+                color="app.text"
+                // native title は改行をそのまま表示していたので、複数行ラベル
+                // (`ヒント\n\nSQL` 形式など) が 1 行に潰れないよう pre-wrap で受ける。
+                // 最大幅は据え置きなので、長い行は従来どおり折り返す (#884)。
+                whiteSpace="pre-wrap"
+                pointerEvents="none"
+                style={{
+                  left: `${pos ? pos.left : 0}px`,
+                  top: `${pos ? pos.top : 0}px`,
+                  visibility: pos ? "visible" : "hidden",
+                }}
+                initial={variants.fadeScale.initial}
+                animate={variants.fadeScale.animate}
+                exit={variants.fadeScale.exit}
+                transition={transitions.enter}
+              >
+                {label}
+              </MotionBox>
+            )}
+          </AnimatePresence>,
+          document.body,
+        )}
     </>
   );
 }

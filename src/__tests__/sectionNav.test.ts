@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  filterSectionsByTitle,
-  isEmptyQuery,
-  matchesQuery,
-  pickActiveSection,
-} from "../sectionNav";
+import { filterSectionsByTitle, isEmptyQuery, matchesQuery, pickActiveSection } from "../sectionNav";
 import { filterHelpSections } from "../helpSearch";
 
 describe("sectionNav", () => {
@@ -68,9 +63,7 @@ describe("filterHelpSections (#1273)", () => {
     expect(byTitle).toHaveLength(1);
     expect(byTitle[0].features.map((f) => f.title)).toEqual(["Dry run"]);
     expect(filterHelpSections(sections, "BUTTON", textsOf)[0].features[0].title).toBe("Dry run");
-    expect(filterHelpSections(sections, "sql-formatter", textsOf)[0].features[0].title).toBe(
-      "Format",
-    );
+    expect(filterHelpSections(sections, "sql-formatter", textsOf)[0].features[0].title).toBe("Format");
     expect(filterHelpSections(sections, "blocks", textsOf)[0].header).toBe("Guards");
   });
 

@@ -3,14 +3,7 @@ import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
-import {
-  api,
-  ConnectionProfile,
-  DriverKind,
-  ProfileSecretKind,
-  SshAuthMethod,
-  SslMode,
-} from "../api/tauri";
+import { api, ConnectionProfile, DriverKind, ProfileSecretKind, SshAuthMethod, SslMode } from "../api/tauri";
 import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
@@ -30,11 +23,7 @@ import {
 } from "./awsIam";
 import { parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
-import {
-  COLOR_INPUT_FALLBACK,
-  DEFAULT_PRODUCTION_COLOR,
-  PROFILE_COLOR_PRESETS,
-} from "../profileIdentity";
+import { COLOR_INPUT_FALLBACK, DEFAULT_PRODUCTION_COLOR, PROFILE_COLOR_PRESETS } from "../profileIdentity";
 
 // Bullet glyphs shown (read-only) to stand in for a secret that is already
 // saved in the OS keyring. The real value is not part of the profile payload,
@@ -79,14 +68,7 @@ interface PasswordInputProps {
  * only in this component's state — it is dropped on re-mask, on unmount, and
  * automatically after {@link REVEAL_TIMEOUT_MS}.
  */
-function PasswordInput({
-  value,
-  onChange,
-  hasStored,
-  profileId,
-  secretKind,
-  id,
-}: PasswordInputProps) {
+function PasswordInput({ value, onChange, hasStored, profileId, secretKind, id }: PasswordInputProps) {
   const t = useT();
   const [show, setShow] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -258,20 +240,25 @@ interface Props {
   onCancel: () => void;
 }
 
-
 function defaultPortFor(driver: DriverKind): number {
   switch (driver) {
-    case "mysql": return 3306;
-    case "postgres": return 5432;
-    case "sqlite": return 0;
+    case "mysql":
+      return 3306;
+    case "postgres":
+      return 5432;
+    case "sqlite":
+      return 0;
   }
 }
 
 function defaultUserFor(driver: DriverKind): string {
   switch (driver) {
-    case "mysql": return "root";
-    case "postgres": return "postgres";
-    case "sqlite": return "";
+    case "mysql":
+      return "root";
+    case "postgres":
+      return "postgres";
+    case "sqlite":
+      return "";
   }
 }
 
@@ -393,9 +380,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // DB auth method (#734): classic password, or AWS RDS IAM auth. IAM stores
   // only the region and the AWS profile *name*; the backend reads the AWS keys
   // from the environment / ~/.aws/credentials at connect time.
-  const [authMethod, setAuthMethod] = useState<DbAuthMethod>(
-    initial?.aws_iam ? "aws_iam" : "password",
-  );
+  const [authMethod, setAuthMethod] = useState<DbAuthMethod>(initial?.aws_iam ? "aws_iam" : "password");
   const [awsRegion, setAwsRegion] = useState(initial?.aws_iam?.region ?? "");
   const [awsProfile, setAwsProfile] = useState(initial?.aws_iam?.profile ?? "");
 
@@ -514,9 +499,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     // the directory of an already-entered path).
     let defaultPath: string | undefined;
     try {
-      defaultPath = sshKeyPath.trim()
-        ? await dirname(sshKeyPath)
-        : await join(await homeDir(), ".ssh");
+      defaultPath = sshKeyPath.trim() ? await dirname(sshKeyPath) : await join(await homeDir(), ".ssh");
     } catch {
       defaultPath = undefined;
     }
@@ -738,7 +721,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   }, [requestSig]);
 
   const handleTest = async () => {
-    setError(null); setMessage(null);
+    setError(null);
+    setMessage(null);
     testedSigRef.current = null;
     if (!validatePorts()) return;
     setTesting(true);
@@ -758,7 +742,8 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   };
 
   const handleSave = async () => {
-    setError(null); setMessage(null);
+    setError(null);
+    setMessage(null);
     if (name.trim() === "") {
       setError(t("formNameRequired"));
       return;
@@ -773,25 +758,26 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         host: isFileBacked ? "" : host,
         port: isFileBacked ? 0 : Number(port),
         user: isFileBacked ? "" : user,
-        database: isFileBacked ? null : (database || null),
-        ssh: !isFileBacked && useSsh
-          ? {
-              host: sshHost,
-              port: Number(sshPort),
-              user: sshUser,
-              auth_method: sshAuthMethod,
-              private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
-              jump: useSshJump
-                ? {
-                    host: sshJumpHost,
-                    port: Number(sshJumpPort),
-                    user: sshJumpUser,
-                    auth_method: sshJumpAuthMethod,
-                    private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
-                  }
-                : null,
-            }
-          : null,
+        database: isFileBacked ? null : database || null,
+        ssh:
+          !isFileBacked && useSsh
+            ? {
+                host: sshHost,
+                port: Number(sshPort),
+                user: sshUser,
+                auth_method: sshAuthMethod,
+                private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+                jump: useSshJump
+                  ? {
+                      host: sshJumpHost,
+                      port: Number(sshJumpPort),
+                      user: sshJumpUser,
+                      auth_method: sshJumpAuthMethod,
+                      private_key_path: sshJumpAuthMethod === "key" ? sshJumpKeyPath : "",
+                    }
+                  : null,
+              }
+            : null,
         db_password: isFileBacked || iamActive || password === "" ? undefined : password,
         ssh_passphrase:
           !isFileBacked && useSsh && sshAuthMethod === "key" && sshPassphrase !== ""
@@ -815,15 +801,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         confirm_writes: confirmWrites,
         read_only: readOnly,
         skip_history: skipHistory,
-        file_path: isFileBacked ? (filePath || null) : null,
+        file_path: isFileBacked ? filePath || null : null,
         // SQLite is file-backed and never negotiates TLS; persist null so a
         // driver switch can't leave stale TLS settings on the profile.
         // IAM で引き上げた値ではなく利用者が選んだ値を保存する (IAM を後で外したときに
         // 元の選択を失わないため)。接続時のバックエンドが IAM では TLS を強制する。
         ssl_mode: isFileBacked ? null : sslMode,
-        ssl_root_cert: isFileBacked ? null : (sslRootCert.trim() || null),
-        ssl_client_cert: isFileBacked ? null : (sslClientCert.trim() || null),
-        ssl_client_key: isFileBacked ? null : (sslClientKey.trim() || null),
+        ssl_root_cert: isFileBacked ? null : sslRootCert.trim() || null,
+        ssl_client_cert: isFileBacked ? null : sslClientCert.trim() || null,
+        ssl_client_key: isFileBacked ? null : sslClientKey.trim() || null,
         // Init SQL applies to all drivers (SQLite via PRAGMA).
         init_sql: initSql.trim() || null,
         // AWS IAM auth (#734): region + AWS profile name only (no AWS keys).
@@ -906,7 +892,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
       <Box gridColumn="span 2">
         <label htmlFor={`${fid}-name`}>{t("formName")}</label>
-        <Input id={`${fid}-name`} data-testid="connection-form-name" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("formNamePlaceholder")} />
+        <Input
+          id={`${fid}-name`}
+          data-testid="connection-form-name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={t("formNamePlaceholder")}
+        />
       </Box>
 
       <Box gridColumn="span 2">
@@ -936,7 +928,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 onChange={(e) => setFilePath(e.target.value)}
                 placeholder={t("formSqliteFilePathPlaceholder")}
               />
-              <Button type="button" onClick={pickDbFile}>{t("formBrowse")}</Button>
+              <Button type="button" onClick={pickDbFile}>
+                {t("formBrowse")}
+              </Button>
             </Flex>
             <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
               {t("formSqliteFilePathHelp")}
@@ -945,9 +939,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         </Fieldset>
       ) : (
         <Fieldset>
-          <Legend>
-            {driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}
-          </Legend>
+          <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
               <label htmlFor={`${fid}-host`}>{t("formHost")}</label>
@@ -1255,7 +1247,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 <Box>
                   <label htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</label>
                   <Flex gap="2" align="end">
-                    <Input id={`${fid}-ssh-host`} value={sshHost} onChange={(e) => setSshHost(e.target.value)} />
+                    <Input
+                      id={`${fid}-ssh-host`}
+                      value={sshHost}
+                      onChange={(e) => setSshHost(e.target.value)}
+                    />
                     <Tooltip label={t("formSshLoadFromConfigHelp")}>
                       <LoadingButton
                         type="button"
@@ -1309,8 +1305,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   <Box mt="2">
                     <label htmlFor={`${fid}-ssh-key-path`}>{t("formPrivateKeyPath")}</label>
                     <Flex gap="2" align="end">
-                      <Input id={`${fid}-ssh-key-path`} value={sshKeyPath} onChange={(e) => setSshKeyPath(e.target.value)} placeholder="C:\\Users\\you\\.ssh\\id_ed25519" />
-                      <Button type="button" onClick={pickKeyFile}>{t("formBrowse")}</Button>
+                      <Input
+                        id={`${fid}-ssh-key-path`}
+                        value={sshKeyPath}
+                        onChange={(e) => setSshKeyPath(e.target.value)}
+                        placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
+                      />
+                      <Button type="button" onClick={pickKeyFile}>
+                        {t("formBrowse")}
+                      </Button>
                     </Flex>
                   </Box>
                   <Box mt="2">
@@ -1347,7 +1350,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
               <Box mt="3" pt="3" borderTop="1px solid" borderColor="app.border">
                 <Flex display="inline-flex" align="center" gap="1.5" fontSize="sm">
-                  <Switch checked={useSshJump} onChange={setUseSshJump} size="sm" label={t("formUseSshJump")} />
+                  <Switch
+                    checked={useSshJump}
+                    onChange={setUseSshJump}
+                    size="sm"
+                    label={t("formUseSshJump")}
+                  />
                 </Flex>
                 <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
                   {t("formSshJumpHelp")}
@@ -1414,7 +1422,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                               onChange={(e) => setSshJumpKeyPath(e.target.value)}
                               placeholder="C:\\Users\\you\\.ssh\\id_ed25519"
                             />
-                            <Button type="button" onClick={pickJumpKeyFile}>{t("formBrowse")}</Button>
+                            <Button type="button" onClick={pickJumpKeyFile}>
+                              {t("formBrowse")}
+                            </Button>
                           </Flex>
                         </Box>
                         <Box mt="2">
@@ -1475,10 +1485,18 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Fieldset>
 
       <AnimatePresence initial={false}>
-        {message && <ResultBanner key="test-message" tone="success">{message}</ResultBanner>}
+        {message && (
+          <ResultBanner key="test-message" tone="success">
+            {message}
+          </ResultBanner>
+        )}
       </AnimatePresence>
       <AnimatePresence initial={false}>
-        {error && <ResultBanner key="test-error" tone="danger">{error}</ResultBanner>}
+        {error && (
+          <ResultBanner key="test-error" tone="danger">
+            {error}
+          </ResultBanner>
+        )}
       </AnimatePresence>
 
       {/* フッター配置はモーダルの通常パターン (#1114) と同じ: 補助操作 (接続テスト)
@@ -1491,7 +1509,15 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Button type="button" variant="secondary" onClick={onCancel} disabled={saving || testing}>
           {t("formCancel")}
         </Button>
-        <LoadingButton pressable type="button" variant="primary" loading={saving} onClick={handleSave} disabled={testing} data-testid="connection-form-save">
+        <LoadingButton
+          pressable
+          type="button"
+          variant="primary"
+          loading={saving}
+          onClick={handleSave}
+          disabled={testing}
+          data-testid="connection-form-save"
+        >
           {t("formSave")}
         </LoadingButton>
       </Flex>

@@ -10,16 +10,14 @@ import { illustrationForError, type ErrorIllustrationKind } from "../errorHints"
 describe("illustrationForError", () => {
   describe("connectionFailed: 接続失敗系のエラー", () => {
     it("Connection refused → connectionFailed", () => {
-      const result: ErrorIllustrationKind = illustrationForError(
-        "Connection refused (os error 111)",
-      );
+      const result: ErrorIllustrationKind = illustrationForError("Connection refused (os error 111)");
       expect(result).toBe("connectionFailed");
     });
 
     it("cannot connect → connectionFailed", () => {
-      expect(
-        illustrationForError("Can't connect to MySQL server on 'localhost' (111)"),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("Can't connect to MySQL server on 'localhost' (111)")).toBe(
+        "connectionFailed",
+      );
     });
 
     it("server has gone away → connectionFailed", () => {
@@ -27,35 +25,27 @@ describe("illustrationForError", () => {
     });
 
     it("lost connection → connectionFailed", () => {
-      expect(
-        illustrationForError("Lost connection to MySQL server during query"),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("Lost connection to MySQL server during query")).toBe("connectionFailed");
     });
 
     it("broken pipe → connectionFailed", () => {
-      expect(
-        illustrationForError("Error reading result set's header: broken pipe"),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("Error reading result set's header: broken pipe")).toBe("connectionFailed");
     });
 
     it("server closed the connection → connectionFailed", () => {
-      expect(
-        illustrationForError("server closed the connection unexpectedly"),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("server closed the connection unexpectedly")).toBe("connectionFailed");
     });
 
     it("terminating connection → connectionFailed", () => {
-      expect(
-        illustrationForError("FATAL: terminating connection due to administrator command"),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("FATAL: terminating connection due to administrator command")).toBe(
+        "connectionFailed",
+      );
     });
 
     it("error communicating with database → connectionFailed", () => {
-      expect(
-        illustrationForError(
-          "error communicating with database: Connection reset by peer",
-        ),
-      ).toBe("connectionFailed");
+      expect(illustrationForError("error communicating with database: Connection reset by peer")).toBe(
+        "connectionFailed",
+      );
     });
 
     it("connection timed out → connectionFailed (接続失敗が timeout より優先)", () => {
@@ -68,9 +58,7 @@ describe("illustrationForError", () => {
 
   describe("timeout: タイムアウト系のエラー", () => {
     it("timed out → timeout", () => {
-      expect(
-        illustrationForError("Query timed out after 30s and was cancelled."),
-      ).toBe("timeout");
+      expect(illustrationForError("Query timed out after 30s and was cancelled.")).toBe("timeout");
     });
 
     it("timeout (小文字) → timeout", () => {
@@ -84,11 +72,9 @@ describe("illustrationForError", () => {
 
   describe("permissionDenied: 権限不足 / 認証失敗", () => {
     it("Access denied → permissionDenied", () => {
-      expect(
-        illustrationForError(
-          "Access denied for user 'root'@'localhost' (using password: YES)",
-        ),
-      ).toBe("permissionDenied");
+      expect(illustrationForError("Access denied for user 'root'@'localhost' (using password: YES)")).toBe(
+        "permissionDenied",
+      );
     });
 
     it("authentication failed → permissionDenied", () => {
@@ -96,29 +82,23 @@ describe("illustrationForError", () => {
     });
 
     it("password authentication failed → permissionDenied", () => {
-      expect(
-        illustrationForError('password authentication failed for user "admin"'),
-      ).toBe("permissionDenied");
+      expect(illustrationForError('password authentication failed for user "admin"')).toBe(
+        "permissionDenied",
+      );
     });
 
     it("permission denied → permissionDenied", () => {
-      expect(illustrationForError("permission denied for table users")).toBe(
-        "permissionDenied",
-      );
+      expect(illustrationForError("permission denied for table users")).toBe("permissionDenied");
     });
 
     it("insufficient privilege → permissionDenied", () => {
-      expect(illustrationForError("insufficient privilege to execute this command")).toBe(
-        "permissionDenied",
-      );
+      expect(illustrationForError("insufficient privilege to execute this command")).toBe("permissionDenied");
     });
   });
 
   describe("schemaLoadFailed: スキーマ系エラー", () => {
     it("Unknown column → schemaLoadFailed", () => {
-      expect(
-        illustrationForError("Unknown column 'foo' in 'field list'"),
-      ).toBe("schemaLoadFailed");
+      expect(illustrationForError("Unknown column 'foo' in 'field list'")).toBe("schemaLoadFailed");
     });
 
     it("no such column → schemaLoadFailed", () => {
@@ -134,15 +114,11 @@ describe("illustrationForError", () => {
     });
 
     it("database does not exist → schemaLoadFailed", () => {
-      expect(illustrationForError('database "mydb" does not exist')).toBe(
-        "schemaLoadFailed",
-      );
+      expect(illustrationForError('database "mydb" does not exist')).toBe("schemaLoadFailed");
     });
 
     it("Table doesn't exist → schemaLoadFailed", () => {
-      expect(
-        illustrationForError("Table 'mydb.users' doesn't exist"),
-      ).toBe("schemaLoadFailed");
+      expect(illustrationForError("Table 'mydb.users' doesn't exist")).toBe("schemaLoadFailed");
     });
 
     it("no such table → schemaLoadFailed", () => {
@@ -150,39 +126,29 @@ describe("illustrationForError", () => {
     });
 
     it("relation does not exist → schemaLoadFailed", () => {
-      expect(
-        illustrationForError('relation "users" does not exist'),
-      ).toBe("schemaLoadFailed");
+      expect(illustrationForError('relation "users" does not exist')).toBe("schemaLoadFailed");
     });
   });
 
   describe("queryFailed: その他のクエリエラー (フォールバック)", () => {
     it("SQL syntax error → queryFailed", () => {
-      expect(
-        illustrationForError(
-          "You have an error in your SQL syntax; check the manual",
-        ),
-      ).toBe("queryFailed");
+      expect(illustrationForError("You have an error in your SQL syntax; check the manual")).toBe(
+        "queryFailed",
+      );
     });
 
     it("duplicate entry → queryFailed", () => {
-      expect(
-        illustrationForError("Duplicate entry '123' for key 'PRIMARY'"),
-      ).toBe("queryFailed");
+      expect(illustrationForError("Duplicate entry '123' for key 'PRIMARY'")).toBe("queryFailed");
     });
 
     it("foreign key constraint → queryFailed", () => {
-      expect(
-        illustrationForError(
-          "Cannot add or update a child row: a foreign key constraint fails",
-        ),
-      ).toBe("queryFailed");
+      expect(illustrationForError("Cannot add or update a child row: a foreign key constraint fails")).toBe(
+        "queryFailed",
+      );
     });
 
     it("全く関係ないエラー → queryFailed", () => {
-      expect(illustrationForError("some completely unrecognized error message")).toBe(
-        "queryFailed",
-      );
+      expect(illustrationForError("some completely unrecognized error message")).toBe("queryFailed");
     });
 
     it("空文字 → queryFailed", () => {

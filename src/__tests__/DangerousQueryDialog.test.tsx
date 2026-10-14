@@ -31,9 +31,7 @@ describe("DangerousQueryDialog", () => {
 
     expect(screen.getByText(t("dangerousTitle"))).toBeInTheDocument();
     expect(screen.getByText(t("dangerousKindDeleteNoWhere"))).toBeInTheDocument();
-    expect(
-      screen.getByText(t("dangerousTargetTable", { target: "users" })),
-    ).toBeInTheDocument();
+    expect(screen.getByText(t("dangerousTargetTable", { target: "users" }))).toBeInTheDocument();
   });
 
   it("「実行する」を押すと onConfirm が呼ばれ onCancel は呼ばれない", async () => {

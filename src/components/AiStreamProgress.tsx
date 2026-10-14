@@ -41,7 +41,12 @@ function useElapsedSec(startedAt: number | null | undefined): number {
   return sec;
 }
 
-export function AiStreamProgress({ stream, fields, previewText = true, waitingLabel }: AiStreamProgressProps) {
+export function AiStreamProgress({
+  stream,
+  fields,
+  previewText = true,
+  waitingLabel,
+}: AiStreamProgressProps) {
   const t = useT();
   const { text, retrying, startedAt } = stream;
   const elapsedSec = useElapsedSec(startedAt);

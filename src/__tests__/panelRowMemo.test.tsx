@@ -2,13 +2,7 @@ import { useCallback, useState } from "react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
-import type {
-  ProcessInfo,
-  StatementDeltaRow,
-  Snippet,
-  SyncStatement,
-  TableStatistic,
-} from "../api/tauri";
+import type { ProcessInfo, StatementDeltaRow, Snippet, SyncStatement, TableStatistic } from "../api/tauri";
 
 /**
  * 件数の多いパネルの行描画 (#1321)。「1 行の操作が全行の再レンダーにならない」ことを、
@@ -116,7 +110,13 @@ describe("ライブテール / 集計の行 (#1321)", () => {
                 />
               ))}
               {rows.map((r) => (
-                <StatRow key={r.digest} row={r} fingerprint={r.fingerprint ?? ""} nPlusOneWindowMs={1000} onCopy={onCopy} />
+                <StatRow
+                  key={r.digest}
+                  row={r}
+                  fingerprint={r.fingerprint ?? ""}
+                  nPlusOneWindowMs={1000}
+                  onCopy={onCopy}
+                />
               ))}
             </tbody>
           </table>

@@ -74,11 +74,24 @@ describe("ColumnProfilePanel running skeleton (#1211)", () => {
 describe("ColumnProfilePanel 列切替の debounce", () => {
   it("素早く列を切り替えても、最後の列の集計だけを発行する", async () => {
     vi.mocked(api.profileColumn).mockResolvedValue({
-      data_type: "int", total_count: 1, null_count: 0, distinct_count: 1, distinct_approximate: false,
-      min_value: null, max_value: null, top_values: [], histogram: [], notes: [],
+      data_type: "int",
+      total_count: 1,
+      null_count: 0,
+      distinct_count: 1,
+      distinct_approximate: false,
+      min_value: null,
+      max_value: null,
+      top_values: [],
+      histogram: [],
+      notes: [],
     } as never);
     const mk = (column: string) => (
-      <ColumnProfilePanel sessionId="s1" driver="mysql" target={{ database: "app", table: "orders", column }} onSelectColumn={() => {}} />
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column }}
+        onSelectColumn={() => {}}
+      />
     );
     const { rerender } = renderWithProviders(mk("a"));
     rerender(mk("b"));
@@ -91,11 +104,24 @@ describe("ColumnProfilePanel 列切替の debounce", () => {
 describe("ColumnProfilePanel 手動実行", () => {
   it("debounce 待ちの間に再実行ボタンを押しても、集計は 1 回だけ", async () => {
     vi.mocked(api.profileColumn).mockResolvedValue({
-      data_type: "int", total_count: 1, null_count: 0, distinct_count: 1, distinct_approximate: false,
-      min_value: null, max_value: null, top_values: [], histogram: [], notes: [],
+      data_type: "int",
+      total_count: 1,
+      null_count: 0,
+      distinct_count: 1,
+      distinct_approximate: false,
+      min_value: null,
+      max_value: null,
+      top_values: [],
+      histogram: [],
+      notes: [],
     } as never);
     renderWithProviders(
-      <ColumnProfilePanel sessionId="s1" driver="mysql" target={{ database: "app", table: "orders", column: "id" }} onSelectColumn={() => {}} />,
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column: "id" }}
+        onSelectColumn={() => {}}
+      />,
     );
     const btn = await screen.findByRole("button", { name: new RegExp(t("profileRun")) });
     btn.click();
@@ -185,7 +211,9 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
     fireEvent.click(await screen.findByText(t("profileOverviewRun")));
     await screen.findByTestId("profile-overview");
     expect(api.profileTable).toHaveBeenCalledWith("s1", "app", "orders", true);
-    expect(screen.getByText(t("profileOverviewSummary", { rows: "4", columns: 2, scans: 1 }))).toBeInTheDocument();
+    expect(
+      screen.getByText(t("profileOverviewSummary", { rows: "4", columns: 2, scans: 1 })),
+    ).toBeInTheDocument();
     expect(screen.getAllByText(t("profileOverviewSkippedMark"))).toHaveLength(2);
     fireEvent.click(screen.getByRole("button", { name: t("profileOverviewSelect", { column: "payload" }) }));
     expect(onSelect).toHaveBeenCalledWith("payload");
@@ -195,16 +223,33 @@ describe("ColumnProfilePanel all-columns overview (#1539)", () => {
 describe("ColumnProfilePanel 列の解除と走行中の応答 (#1594)", () => {
   it("集計の走行中に列を外しても、前の列の結果は表示されない", async () => {
     let resolve: (p: Awaited<ReturnType<typeof api.profileColumn>>) => void = () => {};
-    vi.mocked(api.profileColumn).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    vi.mocked(api.profileColumn).mockReturnValueOnce(
+      new Promise((r) => {
+        resolve = r;
+      }),
+    );
     const mk = (column: string | null) => (
-      <ColumnProfilePanel sessionId="s1" driver="mysql" target={{ database: "app", table: "orders", column }} onSelectColumn={() => {}} />
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column }}
+        onSelectColumn={() => {}}
+      />
     );
     const { rerender } = renderWithProviders(mk("a"));
     await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(1));
     rerender(mk(null));
     resolve({
-      data_type: "int", total_count: 10, null_count: 0, distinct_count: 10, distinct_approximate: false,
-      min_value: null, max_value: null, top_values: [], histogram: [], notes: [],
+      data_type: "int",
+      total_count: 10,
+      null_count: 0,
+      distinct_count: 10,
+      distinct_approximate: false,
+      min_value: null,
+      max_value: null,
+      top_values: [],
+      histogram: [],
+      notes: [],
     } as never);
     await new Promise((r) => setTimeout(r, 30));
     expect(screen.queryByText(t("profileTotal"))).not.toBeInTheDocument();

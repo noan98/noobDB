@@ -15,7 +15,12 @@ const config: InlineCompleteConfig = {
   maskLiterals: true,
   tables: [{ name: "users", columns: ["id", "name"] }],
   database: "app",
-  settings: toAiSnapshot({ ...DEFAULT_AI_SETTINGS, enabled: true, inlineComplete: true, sendScope: "schemaAndSql" }),
+  settings: toAiSnapshot({
+    ...DEFAULT_AI_SETTINGS,
+    enabled: true,
+    inlineComplete: true,
+    sendScope: "schemaAndSql",
+  }),
 };
 
 interface Harness {
@@ -266,7 +271,9 @@ describe("AI インライン補完の CodeMirror 拡張", () => {
   it("複数カーソルでは出さない", async () => {
     const h = setup();
     type(h.view, "SELECT * FROM users ");
-    h.view.dispatch({ selection: EditorSelection.create([EditorSelection.cursor(20), EditorSelection.cursor(3)], 0) });
+    h.view.dispatch({
+      selection: EditorSelection.create([EditorSelection.cursor(20), EditorSelection.cursor(3)], 0),
+    });
     await vi.advanceTimersByTimeAsync(5000);
     expect(h.run).not.toHaveBeenCalled();
   });

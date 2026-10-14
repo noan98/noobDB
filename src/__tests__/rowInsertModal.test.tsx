@@ -13,12 +13,7 @@ import { buildInsertStatements } from "../components/cellEdit";
 describe("RowInsertModal render smoke (#604)", () => {
   it("mounts as a dialog with an add-row action for the given columns", () => {
     renderWithProviders(
-      <RowInsertModal
-        table="users"
-        columns={SAMPLE_COLUMNS}
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />,
+      <RowInsertModal table="users" columns={SAMPLE_COLUMNS} onConfirm={() => {}} onCancel={() => {}} />,
     );
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByText(t("rowOpsInsertAdd"))).toBeInTheDocument();
@@ -27,12 +22,7 @@ describe("RowInsertModal render smoke (#604)", () => {
   it("invokes onCancel when the close control is activated", () => {
     const onCancel = vi.fn();
     renderWithProviders(
-      <RowInsertModal
-        table="users"
-        columns={SAMPLE_COLUMNS}
-        onConfirm={() => {}}
-        onCancel={onCancel}
-      />,
+      <RowInsertModal table="users" columns={SAMPLE_COLUMNS} onConfirm={() => {}} onCancel={onCancel} />,
     );
     // ヘッダとフッタの両方に「閉じる」ボタンがあるため、先頭 (ヘッダ) を叩く。
     fireEvent.click(screen.getAllByRole("button", { name: t("createTableClose") })[0]);
@@ -67,12 +57,7 @@ describe("RowInsertModal initialValues (#820)", () => {
 
   it("opens with empty inputs when initialValues is omitted", () => {
     renderWithProviders(
-      <RowInsertModal
-        table="users"
-        columns={SAMPLE_COLUMNS}
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />,
+      <RowInsertModal table="users" columns={SAMPLE_COLUMNS} onConfirm={() => {}} onCancel={() => {}} />,
     );
     for (const input of screen.getAllByRole("textbox")) {
       expect((input as HTMLInputElement).value).toBe("");

@@ -180,9 +180,7 @@ describe("TableTimelapsePanel (#739)", () => {
     expect(screen.queryByText(t("timelapseCountAdded", { count: 1 }))).not.toBeInTheDocument();
 
     resolveDiff(genDiff());
-    await waitFor(() =>
-      expect(screen.getByText(t("timelapseCountAdded", { count: 1 }))).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(t("timelapseCountAdded", { count: 1 }))).toBeInTheDocument());
   });
 
   /** ペアを変えたら、取得が終わるまで直前のペアの差分を新しい結果として見せない (#1534)。 */

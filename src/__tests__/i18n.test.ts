@@ -66,16 +66,12 @@ describe("i18n キー整合性 (ja ↔ en)", () => {
       const detail = mismatches
         .map((m) => {
           const parts: string[] = [];
-          if (m.enOnly.length > 0)
-            parts.push(`en only: {${m.enOnly.join("}, {")}}`);
-          if (m.jaOnly.length > 0)
-            parts.push(`ja only: {${m.jaOnly.join("}, {")}}`);
+          if (m.enOnly.length > 0) parts.push(`en only: {${m.enOnly.join("}, {")}}`);
+          if (m.jaOnly.length > 0) parts.push(`ja only: {${m.jaOnly.join("}, {")}}`);
           return `  ${m.key}: ${parts.join(" / ")}`;
         })
         .join("\n");
-      expect.fail(
-        `Placeholder mismatch in ${mismatches.length} key(s):\n${detail}`,
-      );
+      expect.fail(`Placeholder mismatch in ${mismatches.length} key(s):\n${detail}`);
     }
   });
 });
@@ -181,17 +177,13 @@ describe("i18n キー参照の静的走査 (#665)", () => {
 
   it("許可リストの各キーは辞書に実在する (陳腐化検出)", () => {
     const stale = [...KNOWN_ORPHAN_KEYS].filter((k) => !keys.has(k)).sort();
-    expect(stale, `辞書から既に削除された許可リスト項目: ${stale.join(", ")}`).toEqual(
-      [],
-    );
+    expect(stale, `辞書から既に削除された許可リスト項目: ${stale.join(", ")}`).toEqual([]);
   });
 
   it("許可リスト外に新規の孤立キー (どこからも参照されないキー) が無い", () => {
     const referenced = collectReferencedKeys(keys);
     const orphans = [...keys].filter((k) => !referenced.has(k));
-    const unexpected = orphans
-      .filter((k) => !KNOWN_ORPHAN_KEYS.has(k as I18nKey))
-      .sort();
+    const unexpected = orphans.filter((k) => !KNOWN_ORPHAN_KEYS.has(k as I18nKey)).sort();
     expect(
       unexpected,
       `新規の孤立キー (KNOWN_ORPHAN_KEYS に追記するか、参照漏れを直す): ${unexpected.join(", ")}`,
@@ -201,9 +193,8 @@ describe("i18n キー参照の静的走査 (#665)", () => {
   it("t(...) の呼び出しがすべて辞書に実在するキーを参照している", () => {
     const attempted = collectAttemptedTKeys();
     const undefinedRefs = [...attempted].filter((k) => !keys.has(k)).sort();
-    expect(
-      undefinedRefs,
-      `辞書に存在しないキーへの参照 (typo の疑い): ${undefinedRefs.join(", ")}`,
-    ).toEqual([]);
+    expect(undefinedRefs, `辞書に存在しないキーへの参照 (typo の疑い): ${undefinedRefs.join(", ")}`).toEqual(
+      [],
+    );
   });
 });

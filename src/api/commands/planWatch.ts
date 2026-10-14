@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { PlanWatchEntry, PlanWatchRefreshResult } from "../tauri";
 
 export const planWatchCommands = {
-
   // --- 実行計画ウォッチ (#743 / #1260) ---
 
   /** プロファイルのウォッチ一覧 (世代つき)。セッション不要。 */

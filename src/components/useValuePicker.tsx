@@ -93,10 +93,7 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   }, []);
 
   const allowed = fetchedAllowed ?? typeAllowed;
-  const metaByName = useMemo(
-    () => new Map((columns ?? []).map((c) => [c.name, c])),
-    [columns],
-  );
+  const metaByName = useMemo(() => new Map((columns ?? []).map((c) => [c.name, c])), [columns]);
 
   const kindOf = useCallback(
     (column: string): PickerKind | null =>

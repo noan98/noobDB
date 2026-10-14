@@ -22,11 +22,7 @@ import { progressRatio } from "./progressRatio";
 import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
 import { Button, Input } from "./ui";
-import {
-  sortWhereUsedMatches,
-  splitHighlightSegments,
-  unsupportedWhereUsedKinds,
-} from "./whereUsed";
+import { sortWhereUsedMatches, splitHighlightSegments, unsupportedWhereUsedKinds } from "./whereUsed";
 
 /**
  * オブジェクト依存検索 / 影響分析 (#1027) のボトムパネル。
@@ -414,7 +410,13 @@ function WhereUsedMatchRow({
       py="2"
     >
       <Flex align="center" gap="2" flexWrap="wrap">
-        <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textSecondary">
+        <chakra.span
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          fontSize="xs"
+          color="app.textSecondary"
+        >
           <Icon name={KIND_ICON[match.kind]} size={ICON_SIZES.sm} />
           {t(KIND_LABEL[match.kind])}
         </chakra.span>

@@ -172,10 +172,7 @@ export function ComboSelect({
       // 画面下端に近ければ上側へフリップする。
       top = anchor.top - POPOVER_GAP - height;
     }
-    top = Math.min(
-      Math.max(top, MENU_MARGIN),
-      Math.max(MENU_MARGIN, viewportH - height - MENU_MARGIN),
-    );
+    top = Math.min(Math.max(top, MENU_MARGIN), Math.max(MENU_MARGIN, viewportH - height - MENU_MARGIN));
     const left = Math.min(
       Math.max(anchor.left, MENU_MARGIN),
       Math.max(MENU_MARGIN, viewportW - anchor.width - MENU_MARGIN),
@@ -245,8 +242,7 @@ export function ComboSelect({
     if (!freeSolo) setDraft(value);
   };
 
-  const activeOption =
-    open && highlighted !== null ? filtered[highlighted] : undefined;
+  const activeOption = open && highlighted !== null ? filtered[highlighted] : undefined;
 
   return (
     <>

@@ -181,7 +181,11 @@ export function markGridCommit(rowCount: number): void {
 
   const gridPerfNow = nowMs();
   safeMark(markName(streamId, "grid-commit"));
-  safeMeasure(markName(streamId, "grid-render"), markName(streamId, "done"), markName(streamId, "grid-commit"));
+  safeMeasure(
+    markName(streamId, "grid-render"),
+    markName(streamId, "done"),
+    markName(streamId, "grid-commit"),
+  );
   safeMeasure(markName(streamId, "tti"), markName(streamId, "start"), markName(streamId, "grid-commit"));
 
   const metric: QueryPerfMetric = {

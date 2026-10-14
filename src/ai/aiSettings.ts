@@ -56,10 +56,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   inlineComplete: false,
 };
 
-function sanitizeRecord<V>(
-  input: unknown,
-  valid: (v: unknown) => v is V,
-): Record<AiTaskKind, V | null> {
+function sanitizeRecord<V>(input: unknown, valid: (v: unknown) => v is V): Record<AiTaskKind, V | null> {
   const src = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const out = nullRecord<V>();
   for (const k of AI_TASK_KINDS) {

@@ -83,9 +83,7 @@ describe("joinCompletions: JOIN の相手テーブル", () => {
     const fks = [fk("a", "to", "b", "end", "c"), fk("a", "value", "b", "id", "d")];
     const o = run("SELECT * FROM a JOIN ", "mysql", fks)?.options.map((x) => x.apply);
     expect(o).toEqual(["b ON b.`end` = a.`to`", "b ON b.id = a.value"]);
-    expect(run("SELECT * FROM a JOIN ", "postgres", fks)?.options[1]?.apply).toBe(
-      "b ON b.id = a.value",
-    );
+    expect(run("SELECT * FROM a JOIN ", "postgres", fks)?.options[1]?.apply).toBe("b ON b.id = a.value");
   });
 
   it("方言ごとにクォートする (予約語・大文字)", () => {
@@ -130,9 +128,9 @@ describe("joinCompletions: 対象外", () => {
   it("文字列内・前の文は無視する", () => {
     expect(run("SELECT 'FROM orders JOIN ")).toBeNull();
     expect(run("SELECT * FROM orders; SELECT 1 JOIN ")).toBeNull();
-    expect(
-      run("SELECT * FROM orders -- x\n; SELECT * FROM customers JOIN ")?.options[0]?.apply,
-    ).toBe("orders ON orders.customer_id = customers.id");
+    expect(run("SELECT * FROM orders -- x\n; SELECT * FROM customers JOIN ")?.options[0]?.apply).toBe(
+      "orders ON orders.customer_id = customers.id",
+    );
   });
   it("FK が無ければ null", () => {
     expect(run("SELECT * FROM orders JOIN ", "mysql", [])).toBeNull();

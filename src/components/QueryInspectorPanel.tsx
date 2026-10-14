@@ -119,23 +119,23 @@ function SortTh({
       aria-sort={active === "asc" ? "ascending" : active === "desc" ? "descending" : "none"}
     >
       <Tooltip label={tooltip}>
-      <chakra.button
-        type="button"
-        onClick={() => onSort(sortKey)}
-        display="inline-flex"
-        alignItems="center"
-        gap="1"
-        textStyle="overline"
-        color="inherit"
-        cursor="pointer"
-        background="transparent"
-        border="none"
-        padding="0"
-        _hover={{ color: "app.text" }}
-      >
-        {children}
-        <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
-      </chakra.button>
+        <chakra.button
+          type="button"
+          onClick={() => onSort(sortKey)}
+          display="inline-flex"
+          alignItems="center"
+          gap="1"
+          textStyle="overline"
+          color="inherit"
+          cursor="pointer"
+          background="transparent"
+          border="none"
+          padding="0"
+          _hover={{ color: "app.text" }}
+        >
+          {children}
+          <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
+        </chakra.button>
       </Tooltip>
     </chakra.th>
   );
@@ -191,9 +191,7 @@ export const TailRow = memo(function TailRow({
           </Tooltip>
         )}
       </chakra.td>
-      <chakra.td css={tdCss}>
-        {[e.user, e.application || e.host].filter(Boolean).join("@") || "–"}
-      </chakra.td>
+      <chakra.td css={tdCss}>{[e.user, e.application || e.host].filter(Boolean).join("@") || "–"}</chakra.td>
       <chakra.td css={tdCss}>{e.database ?? "–"}</chakra.td>
       <chakra.td css={numTdCss}>{formatMs(e.duration_ms)}</chakra.td>
       {showRowsExamined && <chakra.td css={numTdCss}>{e.rows_examined ?? "–"}</chakra.td>}
@@ -252,9 +250,7 @@ export const StatRow = memo(function StatRow({
         <chakra.td css={queryTdCss}>
           {oneLine(fingerprint)}
           {r.n_plus_one && (
-            <NPlusOneBadge
-              title={t("inspectorNPlusOneRateExplain", { windowMs: nPlusOneWindowMs })}
-            />
+            <NPlusOneBadge title={t("inspectorNPlusOneRateExplain", { windowMs: nPlusOneWindowMs })} />
           )}
         </chakra.td>
       </Tooltip>
@@ -275,13 +271,7 @@ export const StatRow = memo(function StatRow({
   );
 });
 
-export function QueryInspectorPanel({
-  sessionId,
-  driver,
-}: {
-  sessionId: string;
-  driver: string;
-}) {
+export function QueryInspectorPanel({ sessionId, driver }: { sessionId: string; driver: string }) {
   const t = useT();
   const toast = useToast();
   const settings = useSettings();
@@ -454,10 +444,7 @@ export function QueryInspectorPanel({
     [tail, filterText, minDurationMs],
   );
 
-  const maskedCount = useMemo(
-    () => tail.filter((e) => isPrivilegeMasked(e.query)).length,
-    [tail],
-  );
+  const maskedCount = useMemo(() => tail.filter((e) => isPrivilegeMasked(e.query)).length, [tail]);
 
   // 「累積値を表示」の切替: サーバへは問い合わせず、バックエンドが前回取得分を
   // baseline 無視/有りで再計算して返す。
@@ -488,23 +475,16 @@ export function QueryInspectorPanel({
     [toast, t],
   );
 
-  const onStatSort = useCallback(
-    (key: StatSortKey) => setStatSort((cur) => nextStatSort(cur, key)),
-    [],
-  );
+  const onStatSort = useCallback((key: StatSortKey) => setStatSort((cur) => nextStatSort(cur, key)), []);
 
-  const reasonText = (code: string | null) =>
-    code == null ? null : t(supportReasonI18nKey(code));
+  const reasonText = (code: string | null) => (code == null ? null : t(supportReasonI18nKey(code)));
 
   const fingerprintOf = (r: StatementDeltaRow) =>
     fingerprintCache.current.get(`${r.digest} ${r.database ?? ""}`) ?? "";
 
   // fingerprintCache は ref なので、deltaRows の更新に合わせて再計算する。
   // biome-ignore lint/correctness/useExhaustiveDependencies: fingerprintOf は ref を読むだけ
-  const sortedRows = useMemo(
-    () => sortStatRows(deltaRows, statSort, fingerprintOf),
-    [deltaRows, statSort],
-  );
+  const sortedRows = useMemo(() => sortStatRows(deltaRows, statSort, fingerprintOf), [deltaRows, statSort]);
   const statExportFormats = [
     { id: "csv" as const, label: "CSV", build: () => buildStatText("csv") },
     { id: "tsv" as const, label: "TSV", build: () => buildStatText("tsv") },
@@ -520,14 +500,11 @@ export function QueryInspectorPanel({
       nPlusOne: "N+1",
       fingerprint: t("inspectorColFingerprint"),
     });
-    return kind === "csv"
-      ? tableToCsv(table.header, table.rows)
-      : tableToTsv(table.header, table.rows);
+    return kind === "csv" ? tableToCsv(table.header, table.rows) : tableToTsv(table.header, table.rows);
   }
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
-
       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
         {t("inspectorDesc")}
       </chakra.p>
@@ -585,9 +562,7 @@ export function QueryInspectorPanel({
               </Button>
             ) : (
               <Tooltip
-                label={
-                  !support.live_tail && !support.statements ? t("inspectorUnavailable") : undefined
-                }
+                label={!support.live_tail && !support.statements ? t("inspectorUnavailable") : undefined}
                 focusableWrapper={!support.live_tail && !support.statements}
               >
                 <Button
@@ -702,7 +677,13 @@ export function QueryInspectorPanel({
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
                 />
-                <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1.5"
+                  fontSize="sm"
+                  color="app.textSecondary"
+                >
                   {t("inspectorMinDurationLabel")}
                   <Input
                     type="number"
@@ -772,7 +753,13 @@ export function QueryInspectorPanel({
           {tab === "stats" && support.statements && (
             <>
               <Flex align="center" gap="3" flexWrap="wrap">
-                <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
+                <chakra.label
+                  display="inline-flex"
+                  alignItems="center"
+                  gap="1.5"
+                  fontSize="sm"
+                  color="app.textSecondary"
+                >
                   <Checkbox
                     checked={showCumulative}
                     aria-label={t("inspectorCumulativeLabel")}
@@ -824,9 +811,7 @@ export function QueryInspectorPanel({
                           {t("inspectorColMaxTime")}
                         </SortTh>
                         <SortTh sortKey="rows" sort={statSort} onSort={onStatSort}>
-                          {driver === "mysql"
-                            ? t("inspectorColRowsExamined")
-                            : t("inspectorColRows")}
+                          {driver === "mysql" ? t("inspectorColRowsExamined") : t("inspectorColRows")}
                         </SortTh>
                         <SortTh sortKey="db" sort={statSort} onSort={onStatSort}>
                           {t("inspectorColDb")}

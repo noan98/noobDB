@@ -2,7 +2,12 @@ import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "../components/Modal";
-import { isImeComposing, isModalSubmitKey, isPlainEnterKey, type ModalKeyEventLike } from "../components/modalKeys";
+import {
+  isImeComposing,
+  isModalSubmitKey,
+  isPlainEnterKey,
+  type ModalKeyEventLike,
+} from "../components/modalKeys";
 import { RenameTableDialog } from "../components/RenameTableDialog";
 
 /**
@@ -98,7 +103,10 @@ describe("Modal の Cmd/Ctrl+Enter", () => {
 });
 
 describe("IME 変換確定の Enter (#1515)", () => {
-  const ev = (key: string, nativeEvent: { isComposing?: boolean; keyCode?: number }) => ({ key, nativeEvent });
+  const ev = (key: string, nativeEvent: { isComposing?: boolean; keyCode?: number }) => ({
+    key,
+    nativeEvent,
+  });
 
   it("isComposing / keyCode 229 を変換中と判定する", () => {
     expect(isImeComposing(ev("Enter", { isComposing: true }))).toBe(true);

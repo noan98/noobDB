@@ -23,9 +23,9 @@ describe("deriveQueryPhase", () => {
   });
 
   it("prioritises error over every other flag", () => {
-    expect(
-      deriveQueryPhase({ error: true, streaming: true, connecting: true, hasResult: true }),
-    ).toBe("error");
+    expect(deriveQueryPhase({ error: true, streaming: true, connecting: true, hasResult: true })).toBe(
+      "error",
+    );
   });
 
   it("prioritises connecting over streaming", () => {

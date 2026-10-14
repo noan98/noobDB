@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  TYPE_TO_CONFIRM_FALLBACK,
-  resolveTypedConfirmTarget,
-  typedConfirmMatches,
-} from "../typeToConfirm";
+import { TYPE_TO_CONFIRM_FALLBACK, resolveTypedConfirmTarget, typedConfirmMatches } from "../typeToConfirm";
 
 // #675: 本番接続での不可逆操作 (DROP/TRUNCATE/同期適用) に追加した
 // 「タイプして確認」ゲートの純ロジック。対象名解決とタイプ一致判定を

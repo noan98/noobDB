@@ -45,7 +45,9 @@ export function cellToJsonNode(value: CellValue, jsonColumn: boolean): JsonNode 
   if (typeof value === "boolean") return { kind: "boolean", value };
   if (typeof value === "number") {
     // NaN / Infinity は JSON の数値として表せないので文字列で見せる。
-    return Number.isFinite(value) ? { kind: "number", raw: String(value) } : { kind: "string", value: String(value) };
+    return Number.isFinite(value)
+      ? { kind: "number", raw: String(value) }
+      : { kind: "string", value: String(value) };
   }
   if (jsonColumn) {
     const parsed = parseJsonLossless(value);

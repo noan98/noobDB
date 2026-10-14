@@ -12,69 +12,49 @@ describe("matchErrorHint", () => {
     });
 
     it("PostgreSQL: syntax error at or near", () => {
-      expect(matchErrorHint('ERROR: syntax error at or near "SELET"')).toBe(
-        "errorHintSyntax",
-      );
+      expect(matchErrorHint('ERROR: syntax error at or near "SELET"')).toBe("errorHintSyntax");
     });
 
     it("SQLite: near X: syntax error", () => {
-      expect(matchErrorHint('near "SELET": syntax error')).toBe(
-        "errorHintSyntax",
-      );
+      expect(matchErrorHint('near "SELET": syntax error')).toBe("errorHintSyntax");
     });
   });
 
   describe("unknown column", () => {
     it("MySQL: Unknown column", () => {
-      expect(
-        matchErrorHint("Unknown column 'foo' in 'field list'"),
-      ).toBe("errorHintUnknownColumn");
+      expect(matchErrorHint("Unknown column 'foo' in 'field list'")).toBe("errorHintUnknownColumn");
     });
 
     it("PostgreSQL: column does not exist", () => {
-      expect(matchErrorHint('column "bar" does not exist')).toBe(
-        "errorHintUnknownColumn",
-      );
+      expect(matchErrorHint('column "bar" does not exist')).toBe("errorHintUnknownColumn");
     });
 
     it("SQLite: no such column", () => {
-      expect(matchErrorHint("no such column: baz")).toBe(
-        "errorHintUnknownColumn",
-      );
+      expect(matchErrorHint("no such column: baz")).toBe("errorHintUnknownColumn");
     });
   });
 
   describe("unknown database", () => {
     it("MySQL: Unknown database", () => {
-      expect(matchErrorHint("Unknown database 'mydb'")).toBe(
-        "errorHintUnknownDatabase",
-      );
+      expect(matchErrorHint("Unknown database 'mydb'")).toBe("errorHintUnknownDatabase");
     });
 
     it("PostgreSQL: database does not exist", () => {
-      expect(matchErrorHint('database "mydb" does not exist')).toBe(
-        "errorHintUnknownDatabase",
-      );
+      expect(matchErrorHint('database "mydb" does not exist')).toBe("errorHintUnknownDatabase");
     });
   });
 
   describe("table not exist", () => {
     it("MySQL: Table doesn't exist", () => {
-      expect(matchErrorHint("Table 'mydb.users' doesn't exist")).toBe(
-        "errorHintTableNotExist",
-      );
+      expect(matchErrorHint("Table 'mydb.users' doesn't exist")).toBe("errorHintTableNotExist");
     });
 
     it("PostgreSQL: relation does not exist", () => {
-      expect(matchErrorHint('relation "users" does not exist')).toBe(
-        "errorHintTableNotExist",
-      );
+      expect(matchErrorHint('relation "users" does not exist')).toBe("errorHintTableNotExist");
     });
 
     it("SQLite: no such table", () => {
-      expect(matchErrorHint("no such table: users")).toBe(
-        "errorHintTableNotExist",
-      );
+      expect(matchErrorHint("no such table: users")).toBe("errorHintTableNotExist");
     });
   });
 
@@ -98,145 +78,111 @@ describe("matchErrorHint", () => {
 
   describe("duplicate key", () => {
     it("MySQL: Duplicate entry", () => {
-      expect(
-        matchErrorHint("Duplicate entry '123' for key 'PRIMARY'"),
-      ).toBe("errorHintDuplicate");
+      expect(matchErrorHint("Duplicate entry '123' for key 'PRIMARY'")).toBe("errorHintDuplicate");
     });
 
     it("PostgreSQL: duplicate key value", () => {
-      expect(
-        matchErrorHint(
-          'duplicate key value violates unique constraint "users_pkey"',
-        ),
-      ).toBe("errorHintDuplicate");
+      expect(matchErrorHint('duplicate key value violates unique constraint "users_pkey"')).toBe(
+        "errorHintDuplicate",
+      );
     });
 
     it("SQLite: UNIQUE constraint failed", () => {
-      expect(matchErrorHint("UNIQUE constraint failed: users.email")).toBe(
-        "errorHintDuplicate",
-      );
+      expect(matchErrorHint("UNIQUE constraint failed: users.email")).toBe("errorHintDuplicate");
     });
   });
 
   describe("access denied", () => {
     it("MySQL: Access denied", () => {
-      expect(
-        matchErrorHint(
-          "Access denied for user 'root'@'localhost' (using password: YES)",
-        ),
-      ).toBe("errorHintAccessDenied");
+      expect(matchErrorHint("Access denied for user 'root'@'localhost' (using password: YES)")).toBe(
+        "errorHintAccessDenied",
+      );
     });
 
     it("PostgreSQL: password authentication failed", () => {
-      expect(
-        matchErrorHint('password authentication failed for user "admin"'),
-      ).toBe("errorHintAccessDenied");
+      expect(matchErrorHint('password authentication failed for user "admin"')).toBe("errorHintAccessDenied");
     });
 
     it("generic: authentication failed", () => {
-      expect(matchErrorHint("authentication failed")).toBe(
-        "errorHintAccessDenied",
-      );
+      expect(matchErrorHint("authentication failed")).toBe("errorHintAccessDenied");
     });
   });
 
   describe("connection dropped mid-session (errorHintConnectionLost)", () => {
     it("MySQL: server has gone away", () => {
-      expect(matchErrorHint("MySQL server has gone away")).toBe(
-        "errorHintConnectionLost",
-      );
+      expect(matchErrorHint("MySQL server has gone away")).toBe("errorHintConnectionLost");
     });
 
     it("MySQL: Lost connection during query", () => {
-      expect(
-        matchErrorHint("Lost connection to MySQL server during query"),
-      ).toBe("errorHintConnectionLost");
+      expect(matchErrorHint("Lost connection to MySQL server during query")).toBe("errorHintConnectionLost");
     });
 
     it("broken pipe", () => {
-      expect(
-        matchErrorHint("Error reading result set's header: broken pipe"),
-      ).toBe("errorHintConnectionLost");
-    });
-
-    it("connection was killed", () => {
-      expect(matchErrorHint("connection was killed")).toBe(
+      expect(matchErrorHint("Error reading result set's header: broken pipe")).toBe(
         "errorHintConnectionLost",
       );
     });
 
+    it("connection was killed", () => {
+      expect(matchErrorHint("connection was killed")).toBe("errorHintConnectionLost");
+    });
+
     it("PostgreSQL: server closed the connection", () => {
-      expect(
-        matchErrorHint("server closed the connection unexpectedly"),
-      ).toBe("errorHintConnectionLost");
+      expect(matchErrorHint("server closed the connection unexpectedly")).toBe("errorHintConnectionLost");
     });
 
     it("PostgreSQL: terminating connection", () => {
-      expect(
-        matchErrorHint(
-          "FATAL: terminating connection due to administrator command",
-        ),
-      ).toBe("errorHintConnectionLost");
+      expect(matchErrorHint("FATAL: terminating connection due to administrator command")).toBe(
+        "errorHintConnectionLost",
+      );
     });
 
     it("sqlx: error communicating with database", () => {
-      expect(
-        matchErrorHint(
-          "error communicating with database: Connection reset by peer",
-        ),
-      ).toBe("errorHintConnectionLost");
+      expect(matchErrorHint("error communicating with database: Connection reset by peer")).toBe(
+        "errorHintConnectionLost",
+      );
     });
   });
 
   describe("order: connectionLost must precede generic connection error", () => {
     it("'terminating connection' is not misidentified as generic connection error", () => {
-      expect(
-        matchErrorHint("FATAL: terminating connection due to idle timeout"),
-      ).toBe("errorHintConnectionLost");
-    });
-
-    it("'server has gone away' is not matched by the generic connection pattern", () => {
-      expect(matchErrorHint("server has gone away")).toBe(
+      expect(matchErrorHint("FATAL: terminating connection due to idle timeout")).toBe(
         "errorHintConnectionLost",
       );
     });
 
+    it("'server has gone away' is not matched by the generic connection pattern", () => {
+      expect(matchErrorHint("server has gone away")).toBe("errorHintConnectionLost");
+    });
+
     it("'error communicating with database' with 'connection' in the tail is connectionLost", () => {
-      expect(
-        matchErrorHint("error communicating with database: connection reset"),
-      ).toBe("errorHintConnectionLost");
+      expect(matchErrorHint("error communicating with database: connection reset")).toBe(
+        "errorHintConnectionLost",
+      );
     });
   });
 
   describe("generic connection failure (errorHintConnection)", () => {
     it("connection refused", () => {
-      expect(matchErrorHint("Connection refused (os error 111)")).toBe(
-        "errorHintConnection",
-      );
+      expect(matchErrorHint("Connection refused (os error 111)")).toBe("errorHintConnection");
     });
 
     it("can't connect to server", () => {
-      expect(
-        matchErrorHint("Can't connect to MySQL server on 'localhost' (111)"),
-      ).toBe("errorHintConnection");
+      expect(matchErrorHint("Can't connect to MySQL server on 'localhost' (111)")).toBe(
+        "errorHintConnection",
+      );
     });
 
     it("cannot connect", () => {
-      expect(matchErrorHint("cannot connect to host db.example.com:5432")).toBe(
-        "errorHintConnection",
-      );
+      expect(matchErrorHint("cannot connect to host db.example.com:5432")).toBe("errorHintConnection");
     });
 
     it("connection timed out", () => {
-      expect(matchErrorHint("connection timed out")).toBe(
-        "errorHintConnection",
-      );
+      expect(matchErrorHint("connection timed out")).toBe("errorHintConnection");
     });
 
     it("connection reset (no 'communicating with database' prefix)", () => {
-      expect(matchErrorHint("connection reset by peer")).toBe(
-        "errorHintConnection",
-      );
+      expect(matchErrorHint("connection reset by peer")).toBe("errorHintConnection");
     });
   });
 

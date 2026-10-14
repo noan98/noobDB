@@ -64,13 +64,11 @@ describe("エクスポート書式ゴールデン (フロント buildExportConte
     for (const format of FORMATS) {
       const expected = c.frontendExpected?.[format] ?? c.expected[format];
       it(`${c.name} / ${format}: ${c.note}`, () => {
-        const actual = buildExportContent(
-          format as ExportFormat,
-          c.columns,
-          rows,
-          c.query,
-          { driver: c.sql.driver, table: c.sql.table, sqlBatchSize: c.sql.batchSize },
-        );
+        const actual = buildExportContent(format as ExportFormat, c.columns, rows, c.query, {
+          driver: c.sql.driver,
+          table: c.sql.table,
+          sqlBatchSize: c.sql.batchSize,
+        });
         expect(actual).toBe(expected);
       });
     }

@@ -55,7 +55,12 @@ function ui(isProduction = false) {
   );
 }
 
-const result = JSON.stringify({ explanation: "E", cause: "C", suggestedSql: "SELECT name FROM users", notes: ["N"] });
+const result = JSON.stringify({
+  explanation: "E",
+  cause: "C",
+  suggestedSql: "SELECT name FROM users",
+  notes: ["N"],
+});
 
 beforeEach(() => {
   cleanup();

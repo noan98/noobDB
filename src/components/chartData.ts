@@ -266,11 +266,7 @@ function cellLabel(v: CellValue): string {
  * 設定からチャートモデルを組み立てる。集計が none ならそのまま行を点として扱い
  * (上限超過時はサンプリング)、sum/avg/count なら X 値でグループ化する。
  */
-export function buildChartModel(
-  columns: Column[],
-  rows: CellValue[][],
-  config: ChartConfig,
-): ChartModel {
+export function buildChartModel(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
   const { xCol, yCols, aggregation } = config;
   const yNames = yCols.map((c) => columns[c]?.name ?? `col${c}`);
 
@@ -408,12 +404,7 @@ const SQLITE_DATE_SAMPLE_ROWS = 200;
  * - SQLite: 型が実質ないため、取得済みの非 NULL 値の 80% 以上 (先頭 200 行) が
  *   `YYYY-MM-DD` で始まる日付表記のときだけ。
  */
-export function canTimeBucket(
-  driver: string,
-  columns: Column[],
-  rows: CellValue[][],
-  xCol: number,
-): boolean {
+export function canTimeBucket(driver: string, columns: Column[], rows: CellValue[][], xCol: number): boolean {
   const col = columns[xCol];
   if (!col) return false;
   if (driver === "sqlite") {
@@ -705,7 +696,14 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
   const seen = new Set<number>();
   const yCols: number[] = [];
   for (const y of yColsRaw) {
-    if (typeof y === "number" && Number.isInteger(y) && y >= 0 && y < columns.length && y !== xCol && !seen.has(y)) {
+    if (
+      typeof y === "number" &&
+      Number.isInteger(y) &&
+      y >= 0 &&
+      y < columns.length &&
+      y !== xCol &&
+      !seen.has(y)
+    ) {
       seen.add(y);
       yCols.push(y);
     }
@@ -727,7 +725,15 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
       ? { timeBucket: o.timeBucket as TimeBucket }
       : {};
 
-  return { type: type as ChartType, xCol, yCols, aggregation: aggregation as Aggregation, palette, ...donut, ...timeBucket };
+  return {
+    type: type as ChartType,
+    xCol,
+    yCols,
+    aggregation: aggregation as Aggregation,
+    palette,
+    ...donut,
+    ...timeBucket,
+  };
 }
 
 /**
@@ -831,7 +837,10 @@ export function chartSummary(
     return { series: model.series.length, points, min: null, max: null };
   }
   // 円グラフは負値を 0 として描くので要約も合わせる (先頭系列のみ)。
-  const src = type === "pie" ? (model.series[0]?.values ?? []).filter((v) => Number.isFinite(v)).map((v) => Math.max(0, v)) : values;
+  const src =
+    type === "pie"
+      ? (model.series[0]?.values ?? []).filter((v) => Number.isFinite(v)).map((v) => Math.max(0, v))
+      : values;
   return {
     series: type === "pie" ? 1 : model.series.length,
     points,

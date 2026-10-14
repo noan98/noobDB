@@ -103,11 +103,7 @@ describe("mergeLiveTail", () => {
 
   it("既出キーは再追加せず、running → 完了の遷移だけを反映する", () => {
     const first = mergeLiveTail([], [live({ key: "a", running: true, duration_ms: 10 })], 1000);
-    const second = mergeLiveTail(
-      first,
-      [live({ key: "a", running: false, duration_ms: 42 })],
-      2000,
-    );
+    const second = mergeLiveTail(first, [live({ key: "a", running: false, duration_ms: 42 })], 2000);
     expect(second).toHaveLength(1);
     expect(second[0]).toMatchObject({ running: false, duration_ms: 42 });
     // 観測時刻は初回のまま (N+1 の窓判定がポーリングでズレない)。
@@ -150,9 +146,7 @@ describe("filterLiveTail", () => {
   });
 
   it("所要時間の下限で絞る (不明値は隠す)", () => {
-    expect(filterLiveTail(entries, { text: "", minDurationMs: 100 }).map((e) => e.key)).toEqual([
-      "b",
-    ]);
+    expect(filterLiveTail(entries, { text: "", minDurationMs: 100 }).map((e) => e.key)).toEqual(["b"]);
     const unknown: LiveTailEntry[] = [
       { ...live({ key: "u", duration_ms: null }), observedAtMs: 0, fingerprint: "f" },
     ];
@@ -163,15 +157,11 @@ describe("filterLiveTail", () => {
 describe("supportReasonI18nKey", () => {
   it("既知の理由コードを i18n キーにマップし、未知は汎用へフォールバックする", () => {
     expect(supportReasonI18nKey("unsupported_driver")).toBe("inspectorReasonUnsupportedDriver");
-    expect(supportReasonI18nKey("performance_schema_off")).toBe(
-      "inspectorReasonPerformanceSchemaOff",
-    );
+    expect(supportReasonI18nKey("performance_schema_off")).toBe("inspectorReasonPerformanceSchemaOff");
     expect(supportReasonI18nKey("statements_consumer_off")).toBe("inspectorReasonConsumerOff");
     expect(supportReasonI18nKey("statements_digest_off")).toBe("inspectorReasonDigestOff");
     expect(supportReasonI18nKey("pg_stat_statements_missing")).toBe("inspectorReasonPgssMissing");
-    expect(supportReasonI18nKey("pg_stat_statements_not_preloaded")).toBe(
-      "inspectorReasonPgssNotPreloaded",
-    );
+    expect(supportReasonI18nKey("pg_stat_statements_not_preloaded")).toBe("inspectorReasonPgssNotPreloaded");
     expect(supportReasonI18nKey("stats_unreadable")).toBe("inspectorReasonUnreadable");
     expect(supportReasonI18nKey("some_future_code")).toBe("inspectorReasonUnknown");
   });

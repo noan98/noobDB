@@ -47,16 +47,10 @@ function isStringPair(v: unknown): v is { column: string; value: string } {
   return typeof o.column === "string" && typeof o.value === "string";
 }
 
-function isWhereCondition(
-  v: unknown,
-): v is { column: string; operator: string; value: string } {
+function isWhereCondition(v: unknown): v is { column: string; operator: string; value: string } {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
-  return (
-    typeof o.column === "string" &&
-    typeof o.operator === "string" &&
-    typeof o.value === "string"
-  );
+  return typeof o.column === "string" && typeof o.operator === "string" && typeof o.value === "string";
 }
 
 function isStringArray(v: unknown): v is string[] {
@@ -181,9 +175,7 @@ function totalTabs(ws: PersistedWorkspace): number {
 }
 
 function sanitizeTabs(raw: unknown[]): PersistedTab[] {
-  return raw
-    .map(sanitizeTab)
-    .filter((t): t is PersistedTab => t != null);
+  return raw.map(sanitizeTab).filter((t): t is PersistedTab => t != null);
 }
 
 /**
@@ -214,8 +206,7 @@ export function normalizePersistedWorkspace(parsed: unknown): PersistedWorkspace
           typeof p.activeIndex === "number" && Number.isFinite(p.activeIndex)
             ? Math.trunc(p.activeIndex)
             : NaN;
-        const activeIndex =
-          truncatedIndex >= 0 && truncatedIndex < tabs.length ? truncatedIndex : 0;
+        const activeIndex = truncatedIndex >= 0 && truncatedIndex < tabs.length ? truncatedIndex : 0;
         return { pane: { tabs, activeIndex }, origIndex };
       })
       .filter((e) => e.pane.tabs.length > 0);

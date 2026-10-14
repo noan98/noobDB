@@ -90,7 +90,15 @@ export function OutputPanel({
           description={entries.length === 0 ? t("outputEmpty") : undefined}
         />
       ) : (
-        <chakra.ul listStyleType="none" m={0} p={0} flex="1" minH={0} overflowY="auto" aria-label={t("outputListAria")}>
+        <chakra.ul
+          listStyleType="none"
+          m={0}
+          p={0}
+          flex="1"
+          minH={0}
+          overflowY="auto"
+          aria-label={t("outputListAria")}
+        >
           {shown.map((e) => (
             <OutputRow
               key={e.id}
@@ -172,7 +180,13 @@ function OutputRow({
           boxShadow: "inset var(--focus-ring)",
         }}
       >
-        <chakra.span display="inline-flex" flexShrink={0} mt="0.5" color={semanticColorToken(role, "text")} aria-hidden>
+        <chakra.span
+          display="inline-flex"
+          flexShrink={0}
+          mt="0.5"
+          color={semanticColorToken(role, "text")}
+          aria-hidden
+        >
           <Icon name={problem ? "warning" : "check"} size={ICON_SIZES.sm} />
         </chakra.span>
         <chakra.span flexShrink={0} fontSize="xs" color="app.textMuted" textStyle="numeric" mt="0.25">
@@ -193,7 +207,9 @@ function OutputRow({
             color={problem ? semanticColorToken(role, "text") : "app.textMuted"}
             wordBreak="break-word"
           >
-            <VisuallyHidden>{t(problem ? "activitySeverityError" : "activitySeveritySuccess")}: </VisuallyHidden>
+            <VisuallyHidden>
+              {t(problem ? "activitySeverityError" : "activitySeveritySuccess")}:{" "}
+            </VisuallyHidden>
             {t(summary.key, summary.vars)}
             {worstServer && (
               <chakra.span color={semanticColorToken(SERVER_SEVERITY_ROLE[worstServer], "text")} ml="2">
@@ -210,7 +226,9 @@ function OutputRow({
       </chakra.button>
       {expanded && (
         <Flex id={detailsId} direction="column" gap="2" px="2.5" pb="2.5" pl="8">
-          <CodePreview wrap maxH="200px">{entry.sql}</CodePreview>
+          <CodePreview wrap maxH="200px">
+            {entry.sql}
+          </CodePreview>
           {truncated && (
             <chakra.span textStyle="caption">
               {t("outputSqlTruncated", { kept: entry.sql.length, total: entry.sqlLength })}
@@ -227,7 +245,13 @@ function OutputRow({
               aria-label={t("outputServerMessagesAria")}
             >
               {serverMessages.map((m, i) => (
-                <chakra.li key={i} fontFamily="mono" fontSize="sm" wordBreak="break-word" whiteSpace="pre-wrap">
+                <chakra.li
+                  key={i}
+                  fontFamily="mono"
+                  fontSize="sm"
+                  wordBreak="break-word"
+                  whiteSpace="pre-wrap"
+                >
                   <chakra.span
                     color={semanticColorToken(SERVER_SEVERITY_ROLE[m.severity], "text")}
                     fontWeight="semibold"
@@ -247,7 +271,10 @@ function OutputRow({
           )}
           <Flex gap="2">
             {/* 切り詰めた断片を開くと、欠けた DML をそのまま実行できてしまうので無効にする。 */}
-            <Tooltip label={truncated ? t("outputOpenTruncatedDisabled") : undefined} focusableWrapper={truncated}>
+            <Tooltip
+              label={truncated ? t("outputOpenTruncatedDisabled") : undefined}
+              focusableWrapper={truncated}
+            >
               <Button
                 type="button"
                 size="sm"
@@ -298,7 +325,9 @@ function OutputRow({
                   if (!(await copyToClipboard(entry.sql))) {
                     toast.error(t("outputCopyFailed"));
                   } else if (truncated) {
-                    toast.info(t("outputCopiedTruncated", { kept: entry.sql.length, total: entry.sqlLength }));
+                    toast.info(
+                      t("outputCopiedTruncated", { kept: entry.sql.length, total: entry.sqlLength }),
+                    );
                   } else {
                     toast.success(t("outputCopied"));
                   }

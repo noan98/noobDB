@@ -82,7 +82,9 @@ describe("値とラベル", () => {
   });
 
   it("対象ラベルは SQLite ではデータベースを省く", () => {
-    expect(profileTargetLabel("mysql", { database: "app", table: "users", column: "age" })).toBe("app.users.age");
+    expect(profileTargetLabel("mysql", { database: "app", table: "users", column: "age" })).toBe(
+      "app.users.age",
+    );
     expect(profileTargetLabel("sqlite", { database: "main", table: "users", column: null })).toBe("users");
   });
 });

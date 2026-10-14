@@ -14,9 +14,7 @@ describe("ResultViewSwitch", () => {
   it("renders the four views as an exclusive radio group", () => {
     renderWithProviders(<ResultViewSwitch value="grid" onChange={() => {}} />);
 
-    expect(
-      screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") }),
-    ).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: t("resultViewSwitchAria") })).toBeTruthy();
     const radios = screen.getAllByRole("radio");
     expect(radios.map((r) => r.textContent)).toEqual([
       t("gridViewLabel"),
@@ -29,12 +27,10 @@ describe("ResultViewSwitch", () => {
   it("marks the current view as checked and the others as not", () => {
     renderWithProviders(<ResultViewSwitch value="chart" onChange={() => {}} />);
 
-    expect(
-      screen.getByRole("radio", { name: t("chartShow") }).getAttribute("aria-checked"),
-    ).toBe("true");
-    expect(
-      screen.getByRole("radio", { name: t("gridViewLabel") }).getAttribute("aria-checked"),
-    ).toBe("false");
+    expect(screen.getByRole("radio", { name: t("chartShow") }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: t("gridViewLabel") }).getAttribute("aria-checked")).toBe(
+      "false",
+    );
   });
 
   it("reports the picked view, and stays silent when the current one is picked", () => {
@@ -52,9 +48,7 @@ describe("ResultViewSwitch", () => {
   it("keeps the group a single tab stop (roving focus on the selected item)", () => {
     renderWithProviders(<ResultViewSwitch value="pivot" onChange={() => {}} />);
 
-    const tabIndexes = screen
-      .getAllByRole("radio")
-      .map((r) => r.getAttribute("tabindex"));
+    const tabIndexes = screen.getAllByRole("radio").map((r) => r.getAttribute("tabindex"));
     expect(tabIndexes).toEqual(["-1", "0", "-1", "-1"]);
   });
 

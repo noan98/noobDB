@@ -118,10 +118,7 @@ describe("normalizePlan (mysql)", () => {
   });
 
   it("marks the nested_loop wrapper as a join op and hash join via join buffer", () => {
-    const ops = opsFor(
-      "mysql",
-      mysqlResult(mysqlPlanJson({ ordersJoinBuffer: "hash join" })),
-    );
+    const ops = opsFor("mysql", mysqlResult(mysqlPlanJson({ ordersJoinBuffer: "hash join" })));
     expect(ops.some((o) => o.kind === "nested_loop" && o.join === "nested loop")).toBe(true);
     const orders = ops.find((o) => o.object === "orders")!;
     expect(orders.join).toBe("hash join");
@@ -200,10 +197,7 @@ describe("planFingerprint", () => {
 
   it("changes when the access method changes", () => {
     const a = opsFor("mysql", mysqlResult(mysqlPlanJson()));
-    const b = opsFor(
-      "mysql",
-      mysqlResult(mysqlPlanJson({ usersAccess: "ALL", usersKey: null })),
-    );
+    const b = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersAccess: "ALL", usersKey: null })));
     expect(planFingerprint(a)).not.toBe(planFingerprint(b));
   });
 
@@ -226,10 +220,7 @@ describe("comparePlans", () => {
 
   it("flags index → full scan as a warning access change", () => {
     const prev = opsFor("mysql", mysqlResult(mysqlPlanJson()));
-    const next = opsFor(
-      "mysql",
-      mysqlResult(mysqlPlanJson({ usersAccess: "ALL", usersKey: null })),
-    );
+    const next = opsFor("mysql", mysqlResult(mysqlPlanJson({ usersAccess: "ALL", usersKey: null })));
     const cmp = comparePlans(prev, next);
     const change = cmp.changes.find((c) => c.kind === "access")!;
     expect(change.object).toBe("users");
@@ -273,10 +264,7 @@ describe("comparePlans", () => {
   });
 
   it("reports added / removed operations", () => {
-    const prev = opsFor(
-      "sqlite",
-      sqliteResult([[2, 0, 0, "SEARCH orders USING INDEX ix_user (user_id=?)"]]),
-    );
+    const prev = opsFor("sqlite", sqliteResult([[2, 0, 0, "SEARCH orders USING INDEX ix_user (user_id=?)"]]));
     const next = opsFor(
       "sqlite",
       sqliteResult([

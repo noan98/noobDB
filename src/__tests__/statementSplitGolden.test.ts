@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isMultiStatement, splitSqlStatementRanges, splitSqlStatements, statementAtOffset } from "../sqlScript";
+import {
+  isMultiStatement,
+  splitSqlStatementRanges,
+  splitSqlStatements,
+  statementAtOffset,
+} from "../sqlScript";
 import vectors from "./fixtures/statementSplitVectors.json";
 
 // 文境界 (トップレベルの `;` による文分割) のフロント/バック整合性ゴールデン
@@ -70,8 +75,7 @@ describe("文境界ゴールデン (フロント splitSqlStatements)", () => {
   for (const c of cases) {
     it(`${c.note} — ${JSON.stringify(c.sql)}`, () => {
       expectSplit(c.sql, undefined, c.statements);
-      for (const driver of STANDARD_DRIVERS)
-        expectSplit(c.sql, driver, c.statementsStandard ?? c.statements);
+      for (const driver of STANDARD_DRIVERS) expectSplit(c.sql, driver, c.statementsStandard ?? c.statements);
       expectSplit(c.sql, "mysql", c.statementsMysql ?? c.statements);
     });
   }

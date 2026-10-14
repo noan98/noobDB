@@ -82,7 +82,9 @@ describe("スキーマ行リストの位置計測 (#1342)", () => {
     const countOwn = () => {
       if ((new Error().stack ?? "").includes("components/ConnectionList.tsx")) own += 1;
     };
-    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const spy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
       countOwn();
       return orig.call(this);
     });
@@ -101,7 +103,12 @@ describe("スキーマ行リストの位置計測 (#1342)", () => {
       // タブ切替で「現在地」(アクティブなテーブル) が変わる。描画済みの行へ移す
       // (窓の外の行は新しくマウントされ、その行の高さの実測は別の話)。
       const shown = document.querySelector<HTMLElement>("[data-tree-key^='tbl:db1::']")!.dataset.treeKey!;
-      view.rerender(<ConnectionList {...baseProps} activeTable={{ database: "db1", table: shown.replace("tbl:db1::", "") }} />);
+      view.rerender(
+        <ConnectionList
+          {...baseProps}
+          activeTable={{ database: "db1", table: shown.replace("tbl:db1::", "") }}
+        />,
+      );
       expect(own).toBe(0);
     } finally {
       spy.mockRestore();

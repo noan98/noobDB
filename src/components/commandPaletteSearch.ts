@@ -19,13 +19,7 @@ export type CommandGroup = "mru" | "navigation" | "connections" | "tables" | "sn
 
 /** グループの表示順 (上から下)。空のグループは描画時に省かれる。`mru` は含まない
  *  (常に他グループより前、`groupCommands` が個別に prepend する)。 */
-export const GROUP_ORDER: CommandGroup[] = [
-  "navigation",
-  "connections",
-  "tables",
-  "snippets",
-  "history",
-];
+export const GROUP_ORDER: CommandGroup[] = ["navigation", "connections", "tables", "snippets", "history"];
 
 /**
  * 選択された候補を MRU (永続化される「最近使った項目」) に記録してよいか。履歴 (`history:${index}`)
@@ -227,11 +221,7 @@ function buildMruGroup(items: CommandItem[], mruIds: string[]): GroupedCommands 
  * からは除外する (置き換え表示。重複表示ではない)。検索中 (query 非空) は MRU を
  * 適用せず、通常の絞り込み結果だけを返す。
  */
-export function groupCommands(
-  items: CommandItem[],
-  query: string,
-  mruIds: string[] = [],
-): GroupedCommands[] {
+export function groupCommands(items: CommandItem[], query: string, mruIds: string[] = []): GroupedCommands[] {
   const mruIdSet = query === "" && mruIds.length > 0 ? new Set(mruIds) : null;
   const byGroup = new Map<CommandGroup, ScoredItem[]>();
   for (const item of items) {
@@ -269,10 +259,7 @@ export const EMPTY_QUERY_GROUP_LIMIT = 8;
 export const SEARCH_RESULT_LIMIT = 60;
 
 /** 空クエリでも件数を絞らないグループ (件数が少なく、常に見えてほしい入口)。 */
-const UNLIMITED_WHEN_EMPTY: ReadonlySet<CommandGroup> = new Set<CommandGroup>([
-  "mru",
-  "navigation",
-]);
+const UNLIMITED_WHEN_EMPTY: ReadonlySet<CommandGroup> = new Set<CommandGroup>(["mru", "navigation"]);
 
 /** 表示用に index を付けた候補。`flatIndex` は表示順 (キーボードナビの添字)。 */
 export interface IndexedItem {

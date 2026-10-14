@@ -34,19 +34,21 @@ describe("writeTextFile", () => {
   it("文字列のまま path / content を送る", async () => {
     mockInvoke.mockResolvedValue(12);
     await expect(api.writeTextFile("/tmp/a.sql", "SELECT 'あ';")).resolves.toBe(12);
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "write_text_file",
-      { path: "/tmp/a.sql", content: "SELECT 'あ';", encoding: null },
-    );
+    expect(mockInvoke).toHaveBeenCalledWith("write_text_file", {
+      path: "/tmp/a.sql",
+      content: "SELECT 'あ';",
+      encoding: null,
+    });
   });
 
   it("文字コードを指定すると encoding を送る (#1535)", async () => {
     mockInvoke.mockResolvedValue(8);
     await api.writeTextFile("/tmp/a.sql", "SELECT 1;", "shift_jis");
-    expect(mockInvoke).toHaveBeenCalledWith(
-      "write_text_file",
-      { path: "/tmp/a.sql", content: "SELECT 1;", encoding: "shift_jis" },
-    );
+    expect(mockInvoke).toHaveBeenCalledWith("write_text_file", {
+      path: "/tmp/a.sql",
+      content: "SELECT 1;",
+      encoding: "shift_jis",
+    });
   });
 });
 

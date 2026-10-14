@@ -219,9 +219,15 @@ export function timelapseRowsToTable(
   const out: CellValue[][] = [];
   for (const r of rows) {
     const key = formatKey(r.key);
-    const columns = r.kind === "changed" ? r.changedColumns : Object.keys((r.after ?? r.before) ?? {});
+    const columns = r.kind === "changed" ? r.changedColumns : Object.keys(r.after ?? r.before ?? {});
     for (const column of columns) {
-      out.push([kindLabels?.[r.kind] ?? r.kind, key, column, r.before?.[column] ?? null, r.after?.[column] ?? null]);
+      out.push([
+        kindLabels?.[r.kind] ?? r.kind,
+        key,
+        column,
+        r.before?.[column] ?? null,
+        r.after?.[column] ?? null,
+      ]);
     }
   }
   return { header: [...header], rows: out };
@@ -234,10 +240,7 @@ export interface TimelapseExportMeta {
 }
 
 /** JSON (2 スペース字下げ)。行モデルをそのまま入れ、世代の取得時刻とテーブル名を添える。 */
-export function timelapseRowsToJson(
-  rows: readonly TimelapseExportRow[],
-  meta: TimelapseExportMeta,
-): string {
+export function timelapseRowsToJson(rows: readonly TimelapseExportRow[], meta: TimelapseExportMeta): string {
   return JSON.stringify(
     {
       table: meta.table,

@@ -84,4 +84,3 @@ export function sortIndexes(indexes: readonly IndexInfo[]): IndexInfo[] {
 export function structureTargetLabel(driver: string, target: StructureTarget): string {
   return driver === "sqlite" || !target.database ? target.table : `${target.database}.${target.table}`;
 }
-

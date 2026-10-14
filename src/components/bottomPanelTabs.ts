@@ -248,8 +248,7 @@ export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripE
     if (BOTTOM_PANEL_TAB_GROUP[tab] === "reference") continue;
     // SQLite はサーバ統計を持たず、プロセス一覧 / クエリ統計を取れない (#732 / #746)。
     // 開けはするが中身が非対応表示になるだけなので、バーでは無効にして理由を示す。
-    const sqliteUnsupported =
-      ctx.driver === "sqlite" && (tab === "processes" || tab === "inspector");
+    const sqliteUnsupported = ctx.driver === "sqlite" && (tab === "processes" || tab === "inspector");
     if (available.has(tab) && !sqliteUnsupported) {
       out.push({ tab, enabled: true, reason: null });
       continue;

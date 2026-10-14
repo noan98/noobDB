@@ -282,16 +282,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const tone = opts.tone ?? "info";
       // Errors linger longer than confirmations so they can be read; toasts with
       // an action (e.g. Undo, #676) also linger so the user has time to click.
-      const duration =
-        opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
+      const duration = opts.duration ?? (opts.action ? 8000 : tone === "error" ? 6000 : 3500);
       // 自動消滅で失われないよう、同じ内容をアクティビティセンター (#912) へ
       // 残す。記録の入口をここ 1 か所にすることで、通知を出す側は従来どおり
       // toast を呼ぶだけで履歴に載る。
       pushActivity(opts.severity ?? TONE_SEVERITY[tone], opts.message, opts.detail);
-      setToasts((cur) => [
-        ...cur,
-        { id, message: opts.message, tone, action: opts.action, duration },
-      ]);
+      setToasts((cur) => [...cur, { id, message: opts.message, tone, action: opts.action, duration }]);
       if (duration > 0) {
         armTimer(id, duration);
       }

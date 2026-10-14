@@ -162,11 +162,7 @@ export const PrivilegeRow = memo(function PrivilegeRow({
   const rowDirty = !flagsEqual(originalFlags, flags);
   return (
     <tr>
-      <chakra.td
-        css={tdCss}
-        fontFamily="var(--font-mono)"
-        color={rowDirty ? "var(--accent)" : undefined}
-      >
+      <chakra.td css={tdCss} fontFamily="var(--font-mono)" color={rowDirty ? "var(--accent)" : undefined}>
         {table}
       </chakra.td>
       {PRIVILEGE_FLAGS.map((flag) => (
@@ -319,10 +315,7 @@ export function UsersPanel({
   );
 
   const dirty = useMemo(
-    () =>
-      rowKeys.some(
-        (k) => !flagsEqual(original[k] ?? EMPTY_FLAGS, edited[k] ?? EMPTY_FLAGS),
-      ),
+    () => rowKeys.some((k) => !flagsEqual(original[k] ?? EMPTY_FLAGS, edited[k] ?? EMPTY_FLAGS)),
     [rowKeys, original, edited],
   );
 
@@ -366,15 +359,15 @@ export function UsersPanel({
       title: t("usersApplyConfirmTitle"),
       message: (
         <>
-          <chakra.p margin={0}>
-            {t("usersApplyConfirmMessage", { count: statements.length })}
-          </chakra.p>
+          <chakra.p margin={0}>{t("usersApplyConfirmMessage", { count: statements.length })}</chakra.p>
           {driver === "mysql" && (
             <Callout tone="warning" role="status" mt="2" data-testid="users-mysql-nonatomic">
               {t("usersApplyMysqlNonAtomic")}
             </Callout>
           )}
-          <CodePreview wrap mt="2" maxH="260px">{statements.join(";\n")}</CodePreview>
+          <CodePreview wrap mt="2" maxH="260px">
+            {statements.join(";\n")}
+          </CodePreview>
         </>
       ),
       confirmLabel: t("usersApplyConfirmOk"),
@@ -443,7 +436,9 @@ export function UsersPanel({
       message: (
         <>
           <chakra.p margin={0}>{t("usersCreateConfirmMessage")}</chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
+          <CodePreview wrap mt="2" maxH="260px">
+            {sql}
+          </CodePreview>
         </>
       ),
       confirmLabel: t("usersCreateConfirmOk"),
@@ -473,10 +468,10 @@ export function UsersPanel({
       title: t("usersDropConfirmTitle"),
       message: (
         <>
-          <chakra.p margin={0}>
-            {t("usersDropConfirmMessage", { name: selected.name })}
-          </chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
+          <chakra.p margin={0}>{t("usersDropConfirmMessage", { name: selected.name })}</chakra.p>
+          <CodePreview wrap mt="2" maxH="260px">
+            {sql}
+          </CodePreview>
         </>
       ),
       confirmLabel: t("usersDropConfirmOk"),
@@ -504,20 +499,15 @@ export function UsersPanel({
 
   const submitPasswordChange = useCallback(async () => {
     if (!selected || !newPassword) return;
-    const sql = await api.generateAlterPasswordSql(
-      driver,
-      selected.name,
-      selected.host,
-      newPassword,
-    );
+    const sql = await api.generateAlterPasswordSql(driver, selected.name, selected.host, newPassword);
     const ok = await confirm({
       title: t("usersPasswordConfirmTitle"),
       message: (
         <>
-          <chakra.p margin={0}>
-            {t("usersPasswordConfirmMessage", { name: selected.name })}
-          </chakra.p>
-          <CodePreview wrap mt="2" maxH="260px">{sql}</CodePreview>
+          <chakra.p margin={0}>{t("usersPasswordConfirmMessage", { name: selected.name })}</chakra.p>
+          <CodePreview wrap mt="2" maxH="260px">
+            {sql}
+          </CodePreview>
         </>
       ),
       confirmLabel: t("usersPasswordConfirmOk"),
@@ -601,7 +591,10 @@ export function UsersPanel({
                 <Icon name="refresh" size={ICON_SIZES.md} />
               </Button>
             </Tooltip>
-            <Tooltip label={readOnly ? t("usersReadOnlyHint") : t("usersNewUser")} focusableWrapper={readOnly}>
+            <Tooltip
+              label={readOnly ? t("usersReadOnlyHint") : t("usersNewUser")}
+              focusableWrapper={readOnly}
+            >
               <Button
                 type="button"
                 variant="ghost"
@@ -617,7 +610,13 @@ export function UsersPanel({
           </Flex>
 
           {showCreate && (
-            <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)" }}>
+            <FormSection
+              css={{
+                border: "1px solid var(--border)",
+                borderRadius: "var(--radius-sm)",
+                padding: "var(--space-2)",
+              }}
+            >
               <FieldLabel htmlFor="users-create-name">{t("usersCreateNameLabel")}</FieldLabel>
               <Input
                 id="users-create-name"
@@ -669,7 +668,14 @@ export function UsersPanel({
           ) : users.length === 0 && !loadingUsers ? (
             <EmptyState compact illustration={<NoResultsIllustration />} icon="key" title={t("usersEmpty")} />
           ) : (
-            <chakra.ul listStyleType="none" margin={0} padding={0} display="flex" flexDirection="column" gap="1">
+            <chakra.ul
+              listStyleType="none"
+              margin={0}
+              padding={0}
+              display="flex"
+              flexDirection="column"
+              gap="1"
+            >
               {loadingUsers && users.length === 0 ? (
                 <Spinner size={16} />
               ) : (
@@ -682,7 +688,8 @@ export function UsersPanel({
                         onClick={() => selectUser(u)}
                         width="100%"
                         textAlign="left"
-                        py="1.5" px="2"
+                        py="1.5"
+                        px="2"
                         borderRadius="var(--radius-sm)"
                         background={isSelected ? "var(--bg-selected, var(--bg-muted))" : "transparent"}
                         border="1px solid"
@@ -761,7 +768,14 @@ export function UsersPanel({
               </Flex>
 
               {showCopy && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
+                <FormSection
+                  css={{
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "var(--space-2)",
+                    maxWidth: "40ch",
+                  }}
+                >
                   <FieldLabel htmlFor="users-copy-source">{t("usersCopySourceLabel")}</FieldLabel>
                   <Select
                     id="users-copy-source"
@@ -811,7 +825,14 @@ export function UsersPanel({
               )}
 
               {showPassword && (
-                <FormSection css={{ border: "1px solid var(--border)", borderRadius: "var(--radius-sm)", padding: "var(--space-2)", maxWidth: "40ch" }}>
+                <FormSection
+                  css={{
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-sm)",
+                    padding: "var(--space-2)",
+                    maxWidth: "40ch",
+                  }}
+                >
                   <FieldLabel htmlFor="users-new-password">{t("usersPasswordLabel")}</FieldLabel>
                   <Input
                     id="users-new-password"
@@ -926,7 +947,10 @@ export function UsersPanel({
                         {t("usersDiscardChanges")}
                       </Button>
                     )}
-                    <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+                    <Tooltip
+                      label={readOnly ? t("usersReadOnlyHint") : undefined}
+                      focusableWrapper={readOnly}
+                    >
                       <Button
                         type="button"
                         variant="primary"

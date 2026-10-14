@@ -125,8 +125,7 @@ const NUMERIC_INPUT_RE = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 const DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
 // 末尾のタイムゾーン (`Z` / `+09` / `+09:00` / `+0900`、直前の空白可) は PostgreSQL の
 // timestamptz が受理する入力なので許す。最終判断は DB に任せる方針。
-const DATETIME_RE =
-  /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}(:?\d{2})?)?$/i;
+const DATETIME_RE = /^\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(:\d{2})?(\.\d+)?\s*(Z|[+-]\d{2}(:?\d{2})?)?$/i;
 // PostgreSQL の boolean 入力で有効な表記 (MySQL / SQLite の BOOL でも 0/1 は通る)。
 const BOOLEAN_TRUE = new Set(["true", "t", "yes", "y", "on", "1"]);
 const BOOLEAN_FALSE = new Set(["false", "f", "no", "n", "off", "0"]);
@@ -171,11 +170,7 @@ function errorKeyForKind(kind: EditTypeKind): I18nKey | null {
  * String-like columns are never rejected here — including an empty box, which
  * means the empty string `''` rather than NULL.
  */
-export function validateCellInput(
-  raw: string,
-  typeName: string,
-  nullable: boolean,
-): I18nKey | null {
+export function validateCellInput(raw: string, typeName: string, nullable: boolean): I18nKey | null {
   const trimmed = raw.trim();
   const kind = classifyEditType(typeName);
   if (/^null$/i.test(trimmed)) {
@@ -222,14 +217,9 @@ export function validateCellInput(
  * missing from the result (e.g. a SELECT that projected only some
  * columns) — without a complete PK we cannot build a safe WHERE clause.
  */
-export function resolvePkIndices(
-  columns: Column[],
-  tableColumns: TableColumnInfo[] | null,
-): number[] {
+export function resolvePkIndices(columns: Column[], tableColumns: TableColumnInfo[] | null): number[] {
   if (!tableColumns) return [];
-  const pkNames = tableColumns
-    .filter((c) => c.key.toUpperCase() === "PRI")
-    .map((c) => c.name);
+  const pkNames = tableColumns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
   if (pkNames.length === 0) return [];
   const indices: number[] = [];
   for (const name of pkNames) {
@@ -310,11 +300,7 @@ function encodePkPart(v: CellValue): string {
  * is only offered once a primary key resolves, so the fallback is effectively
  * unused for real edits; it just keeps the function total.
  */
-export function rowEditKey(
-  row: CellValue[],
-  pkIndices: number[],
-  fallbackIndex: number,
-): string {
+export function rowEditKey(row: CellValue[], pkIndices: number[], fallbackIndex: number): string {
   if (pkIndices.length === 0) return "i" + fallbackIndex;
   // Length-prefix each encoded part so a composite key is unambiguous: two
   // different value tuples can never serialize to the same string regardless
@@ -607,12 +593,8 @@ export function buildUpdateStatements(input: BuildUpdateInput): string[] {
       );
     }
     if (setParts.length === 0) continue;
-    const whereParts = input.pkIndices.map((i) =>
-      whereEqualsClause(input.driver, input.columns[i], row[i]),
-    );
-    stmts.push(
-      `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
-    );
+    const whereParts = input.pkIndices.map((i) => whereEqualsClause(input.driver, input.columns[i], row[i]));
+    stmts.push(`UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`);
   }
   return stmts;
 }
@@ -757,9 +739,7 @@ export function isInsertFunctionValue(v: PendingInsertValue | undefined): v is I
 }
 
 /** 空文字を明示した値か。 */
-export function isInsertEmptyStringValue(
-  v: PendingInsertValue | undefined,
-): v is InsertEmptyStringValue {
+export function isInsertEmptyStringValue(v: PendingInsertValue | undefined): v is InsertEmptyStringValue {
   return typeof v === "object" && v !== null && "empty" in v;
 }
 
@@ -848,9 +828,7 @@ export function buildDeleteStatements(input: {
     const key = rowEditKey(row, input.pkIndices, rowIdx);
     if (!input.deleteKeys.has(key) || emitted.has(key)) continue;
     emitted.add(key);
-    const whereParts = input.pkIndices.map((i) =>
-      whereEqualsClause(input.driver, input.columns[i], row[i]),
-    );
+    const whereParts = input.pkIndices.map((i) => whereEqualsClause(input.driver, input.columns[i], row[i]));
     stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
   }
   return stmts;
@@ -908,12 +886,7 @@ export interface BuildRowSqlInput {
   pkIndices: number[];
 }
 
-function rowWhereParts(
-  driver: string,
-  columns: Column[],
-  row: CellValue[],
-  pkIndices: number[],
-): string[] {
+function rowWhereParts(driver: string, columns: Column[], row: CellValue[], pkIndices: number[]): string[] {
   return pkIndices.map((i) => {
     const v = row[i];
     const quoted = quoteIdentFor(driver, columns[i].name);
@@ -972,16 +945,12 @@ export function buildRowSql(input: BuildRowSqlInput, kind: RowSqlKind): string[]
     } else if (kind === "update") {
       const setParts = columns
         .map((c, i) =>
-          pkSet.has(i)
-            ? null
-            : `${quoteIdentFor(driver, c.name)} = ${rowValueLiteral(driver, row[i], c)}`,
+          pkSet.has(i) ? null : `${quoteIdentFor(driver, c.name)} = ${rowValueLiteral(driver, row[i], c)}`,
         )
         .filter((s): s is string => s !== null);
       // Every column is part of the PK — there is nothing to SET.
       if (setParts.length === 0) continue;
-      stmts.push(
-        `UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`,
-      );
+      stmts.push(`UPDATE ${ref} SET ${setParts.join(", ")} WHERE ${whereParts.join(" AND ")};`);
     } else {
       stmts.push(`DELETE FROM ${ref} WHERE ${whereParts.join(" AND ")};`);
     }
@@ -1047,10 +1016,7 @@ export function buildInsertClipboard(
     return { sql: "", tableResolved };
   }
   if (!combineValues) {
-    const stmts = buildRowSql(
-      { driver, database, table, columns, rows: validRows, pkIndices: [] },
-      "insert",
-    );
+    const stmts = buildRowSql({ driver, database, table, columns, rows: validRows, pkIndices: [] }, "insert");
     return { sql: stmts.join("\n"), tableResolved };
   }
   const ref = qualifiedTableRef(driver, database, table);

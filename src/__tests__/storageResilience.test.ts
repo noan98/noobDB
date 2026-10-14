@@ -17,11 +17,7 @@ import {
   readCollapsedSnippetFolders,
   writeCollapsedSnippetFolders,
 } from "../components/snippetFolders";
-import {
-  normalizeGridView,
-  readStoredGridView,
-  writeStoredGridView,
-} from "../components/gridViewState";
+import { normalizeGridView, readStoredGridView, writeStoredGridView } from "../components/gridViewState";
 
 const EMPTY_WORKSPACE: PersistedWorkspace = { panes: [], activePane: 0 };
 
@@ -138,10 +134,7 @@ describe("loadPersistedWorkspace (タブ永続化の破損耐性)", () => {
   });
 
   it("旧形式 (タブのフラット配列) を 1 ペインとして復元する", () => {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify([{ kind: "query", title: "Q1", sql: "SELECT 1" }]),
-    );
+    localStorage.setItem(KEY, JSON.stringify([{ kind: "query", title: "Q1", sql: "SELECT 1" }]));
     const ws = loadPersistedWorkspace("profile-1");
     expect(ws.panes).toHaveLength(1);
     expect(ws.panes[0].tabs).toHaveLength(1);
@@ -214,10 +207,7 @@ describe("loadSnippetQuickAccess (スニペットお気に入り/最近実行 #8
   });
 
   it("型不一致のエントリを捨てて妥当な ID だけ残す", () => {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({ favorites: ["abc12345", 1, null], recent: "not-an-array" }),
-    );
+    localStorage.setItem(KEY, JSON.stringify({ favorites: ["abc12345", 1, null], recent: "not-an-array" }));
     const state = loadSnippetQuickAccess();
     expect(state.favorites).toEqual(["abc12345"]);
     expect(state.recent).toEqual([]);
@@ -250,7 +240,11 @@ describe("normalizeGridView (グリッドのソート・列フィルタ #677 の
 
   it("未知の演算子・型不一致のフィルタ/ソートを捨てる", () => {
     const parsed = {
-      sorting: [{ id: "1", desc: "yes" }, { id: 2, desc: true }, { id: "3", desc: false }],
+      sorting: [
+        { id: "1", desc: "yes" },
+        { id: 2, desc: true },
+        { id: "3", desc: false },
+      ],
       filters: [
         { id: "0", value: { op: "bogus", value: "x", value2: "", nullMode: "any" } },
         { id: "1", value: { op: "eq", value: "5", value2: "", nullMode: "wrong" } },
@@ -259,9 +253,7 @@ describe("normalizeGridView (グリッドのソート・列フィルタ #677 の
     };
     const out = normalizeGridView(parsed);
     expect(out.sorting).toEqual([{ id: "3", desc: false }]);
-    expect(out.filters).toEqual([
-      { id: "2", value: { op: "gt", value: "3", value2: "", nullMode: "only" } },
-    ]);
+    expect(out.filters).toEqual([{ id: "2", value: { op: "gt", value: "3", value2: "", nullMode: "only" } }]);
   });
 
   it("空の配列になったフィールドは省く", () => {
@@ -269,7 +261,7 @@ describe("normalizeGridView (グリッドのソート・列フィルタ #677 の
   });
 
   it("readStoredGridView は壊れた JSON でも例外を投げず空を返す", () => {
-    const KEY = "noobdb.gridview.v1::db::t::[\"a\"]";
+    const KEY = 'noobdb.gridview.v1::db::t::["a"]';
     localStorage.setItem(KEY, "{broken");
     let out!: ReturnType<typeof readStoredGridView>;
     expect(() => {
@@ -279,7 +271,7 @@ describe("normalizeGridView (グリッドのソート・列フィルタ #677 の
   });
 
   it("書き込み→読み戻しのラウンドトリップ (実質デフォルトはキー削除)", () => {
-    const KEY = "noobdb.gridview.v1::db::t::[\"a\"]";
+    const KEY = 'noobdb.gridview.v1::db::t::["a"]';
     writeStoredGridView(KEY, { sorting: [{ id: "0", desc: true }] });
     expect(readStoredGridView(KEY)).toEqual({ sorting: [{ id: "0", desc: true }] });
     writeStoredGridView(KEY, {});
@@ -379,10 +371,7 @@ describe("PersistedTab の忠実度フィールド (#678) の後方互換・破�
   });
 
   it("新フィールドが無い旧タブもそのまま読める (後方互換)", () => {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify([{ kind: "query", title: "Q", sql: "SELECT 1" }]),
-    );
+    localStorage.setItem(KEY, JSON.stringify([{ kind: "query", title: "Q", sql: "SELECT 1" }]));
     const tab = loadPersistedWorkspace("profile-1").panes[0].tabs[0];
     expect(tab.sql).toBe("SELECT 1");
     expect(tab.selection).toBeUndefined();

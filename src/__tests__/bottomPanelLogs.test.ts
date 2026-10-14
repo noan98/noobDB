@@ -62,7 +62,9 @@ describe("statusLogClass (メッセージ履歴に残すかどうか)", () => {
 
   it("結果のメッセージは重大度付きで残す (critical は error に畳む)", () => {
     expect(statusLogClass({ kind: "key", key: "statusStreamingDone" }, "done")?.severity).toBe("success");
-    expect(statusLogClass({ kind: "key", key: "statusQueryError", error: true }, "boom")?.severity).toBe("error");
+    expect(statusLogClass({ kind: "key", key: "statusQueryError", error: true }, "boom")?.severity).toBe(
+      "error",
+    );
     expect(statusLogClass({ kind: "key", key: "statusConnectionLost" }, "lost")?.severity).toBe("error");
     expect(statusLogClass({ kind: "key", key: "statusQueryTimeout" }, "slow")?.severity).toBe("warning");
     expect(statusLogClass({ kind: "literal", text: "hello" }, "hello")?.severity).toBe("info");
@@ -70,8 +72,14 @@ describe("statusLogClass (メッセージ履歴に残すかどうか)", () => {
 
   it("成功はキー単位、エラーは本文単位で同一視する", () => {
     // 自動リフレッシュの「取得完了」は件数・時間が毎回違っても同じ行に畳む。
-    const a = statusLogClass({ kind: "key", key: "statusStreamingDone", vars: { rows: 1, ms: 2 } }, "1 rows 2 ms");
-    const b = statusLogClass({ kind: "key", key: "statusStreamingDone", vars: { rows: 5, ms: 9 } }, "5 rows 9 ms");
+    const a = statusLogClass(
+      { kind: "key", key: "statusStreamingDone", vars: { rows: 1, ms: 2 } },
+      "1 rows 2 ms",
+    );
+    const b = statusLogClass(
+      { kind: "key", key: "statusStreamingDone", vars: { rows: 5, ms: 9 } },
+      "5 rows 9 ms",
+    );
     expect(a?.dedupeKey).toBe(b?.dedupeKey);
     // 同じキーでもエラー本文が違えば別の出来事。
     const e1 = statusLogClass({ kind: "key", key: "statusQueryError", error: true }, "syntax error at 1");
@@ -125,7 +133,11 @@ describe("appendMessage", () => {
 });
 
 describe("outputLog", () => {
-  const out = (id: number, outcome: OutputEntry["outcome"], extra: Partial<OutputEntry> = {}): OutputEntry => ({
+  const out = (
+    id: number,
+    outcome: OutputEntry["outcome"],
+    extra: Partial<OutputEntry> = {},
+  ): OutputEntry => ({
     id,
     at: id,
     sql: `select ${id}`,
@@ -183,7 +195,6 @@ describe("outputLog", () => {
       vars: { error: "line one" },
     });
   });
-
 });
 
 describe("worstServerSeverity (サーバ側メッセージ, #1165)", () => {

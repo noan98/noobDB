@@ -4,7 +4,6 @@ import { batchStreamChannels } from "../streamChannels";
 import type { ScriptOptions, TextEncodingId } from "../tauri";
 
 export const scriptCommands = {
-
   /**
    * `.sql` スクリプトファイルを文単位でストリーミング実行する (#973)。ファイルは
    * バックエンドが 64 KiB ずつ読むので全体をメモリに載せない。進捗・完了・エラーは

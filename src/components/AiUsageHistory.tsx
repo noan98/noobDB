@@ -56,15 +56,12 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
     load();
   }, [load, reloadKey]);
 
-  const report = useMemo(
-    () => {
-      const now = new Date();
-      const since =
-        range === "all" ? undefined : range === "month" ? monthStartKey(now) : sinceDayKey(now, Number(range));
-      return buildUsageReport(records, since);
-    },
-    [records, range],
-  );
+  const report = useMemo(() => {
+    const now = new Date();
+    const since =
+      range === "all" ? undefined : range === "month" ? monthStartKey(now) : sinceDayKey(now, Number(range));
+    return buildUsageReport(records, since);
+  }, [records, range]);
   const { total } = report;
   const cache = cacheUsageSuffix(
     t,
@@ -152,17 +149,11 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
               {t("aiLedgerUnpriced", { count: total.unpricedCalls })}
             </chakra.span>
           )}
-          <chakra.span textStyle="caption">
-            {t("aiLedgerByModel")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("aiLedgerByModel")}</chakra.span>
           {report.byModel.map((a) => row(modelLabel(a.key), a))}
-          <chakra.span textStyle="caption">
-            {t("aiLedgerByTask")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("aiLedgerByTask")}</chakra.span>
           {report.byTask.map((a) => row(taskLabel(a.key), a))}
-          <chakra.span textStyle="caption">
-            {t("aiLedgerByDay")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("aiLedgerByDay")}</chakra.span>
           {(allDays ? report.byDay : report.byDay.slice(0, DAY_ROWS_COLLAPSED)).map((a) => row(a.key, a))}
           {report.byDay.length > DAY_ROWS_COLLAPSED && (
             <Button

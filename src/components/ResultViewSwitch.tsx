@@ -69,12 +69,7 @@ export function ResultViewSwitch({ value, onChange }: Props) {
   }));
 
   const segmented = (
-    <Segmented
-      value={value}
-      options={options}
-      onChange={onChange}
-      ariaLabel={t("resultViewSwitchAria")}
-    />
+    <Segmented value={value} options={options} onChange={onChange} ariaLabel={t("resultViewSwitchAria")} />
   );
   if (!onExplain) return segmented;
   return (

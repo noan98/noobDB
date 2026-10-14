@@ -25,9 +25,7 @@ const intersects = (a: DOMRect, b: DOMRect) =>
 
 describe("タスクスケジューラ (実ブラウザ)", () => {
   it("閉じるボタンのツールチップが「新規タスク」ボタンに重ならない", async () => {
-    const screen = await renderInBrowser(
-      <TaskManager profiles={[makeProfile()]} onClose={() => {}} />,
-    );
+    const screen = await renderInBrowser(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
     const close = screen.getByRole("button", { name: t("taskManagerClose") });
     await expect.element(close).toBeVisible();
     await close.hover();
@@ -38,8 +36,8 @@ describe("タスクスケジューラ (実ブラウザ)", () => {
     const tooltip = document.querySelector('[role="tooltip"]') as HTMLElement;
     const tipRect = tooltip.getBoundingClientRect();
 
-    const newButtons = Array.from(document.querySelectorAll("button")).filter(
-      (b) => b.textContent?.includes(t("taskCreate")),
+    const newButtons = Array.from(document.querySelectorAll("button")).filter((b) =>
+      b.textContent?.includes(t("taskCreate")),
     );
     expect(newButtons.length).toBeGreaterThan(0);
     for (const b of newButtons) {

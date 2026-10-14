@@ -20,10 +20,7 @@ import { classifyEditType, type InsertFunctionValue, type PendingInsertRow } fro
 import { insertFunctionSql, type InsertFunctionId } from "./sqlDialect";
 
 /** 空欄のときに DB がどう値を決めるか、または入力できないことの説明。 */
-export type InsertDefaultHint =
-  | { kind: "auto" }
-  | { kind: "default"; expr: string }
-  | { kind: "generated" };
+export type InsertDefaultHint = { kind: "auto" } | { kind: "default"; expr: string } | { kind: "generated" };
 
 /**
  * 列の既定値の出どころを判定する。生成列が最優先 (値を入れるとエラーになる)、次に自動採番

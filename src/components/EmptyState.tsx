@@ -121,25 +121,22 @@ export function EmptyState({
           </Flex>
         )
       )}
-      <Text
-        fontWeight="600"
-        color="app.text"
-        fontSize={compact ? "sm" : "md"}
-      >
+      <Text fontWeight="600" color="app.text" fontSize={compact ? "sm" : "md"}>
         {title}
       </Text>
       {description && (
-        <Text
-          color="app.textMuted"
-          fontSize="sm"
-          lineHeight="1.5"
-          maxW={compact ? "none" : "34ch"}
-        >
+        <Text color="app.textMuted" fontSize="sm" lineHeight="1.5" maxW={compact ? "none" : "34ch"}>
           {description}
         </Text>
       )}
       {action && (
-        <PressableButton type="button" variant="primary" onClick={action.onClick} mt="1" data-testid={action.testId}>
+        <PressableButton
+          type="button"
+          variant="primary"
+          onClick={action.onClick}
+          mt="1"
+          data-testid={action.testId}
+        >
           {action.label}
         </PressableButton>
       )}

@@ -86,7 +86,9 @@ beforeEach(() => {
 
 /** 概要 (schemaOverview)・一括詳細 (describeDatabase)・テーブル単位 (describeTable) を同じ内容で用意する。 */
 function setDb(tables: ReturnType<typeof table>[]) {
-  schemaOverview.mockResolvedValue(tables.map((x) => ({ name: x.name, columns: x.columns.map((c) => c.name) })));
+  schemaOverview.mockResolvedValue(
+    tables.map((x) => ({ name: x.name, columns: x.columns.map((c) => c.name) })),
+  );
   describeDatabase.mockResolvedValue(tables);
   describeTable.mockImplementation(async (_s: string, _d: string, name: string) => {
     return tables.find((x) => x.name === name)?.columns ?? [];
@@ -183,13 +185,22 @@ describe("AiQueryModal (#691)", () => {
     renderWithProviders(ui());
     await generate();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
-    const oneLine = JSON.stringify({ sql: "select id, amount from orders where amount > 10 order by id", explanation: "", warnings: [], tables_used: [] });
+    const oneLine = JSON.stringify({
+      sql: "select id, amount from orders where amount > 10 order by id",
+      explanation: "",
+      warnings: [],
+      tables_used: [],
+    });
     act(() => {
       handlers?.onDelta?.({ streamId: "x", text: oneLine });
       handlers?.onDone?.({} as never);
     });
-    const shown = await screen.findByText((_, el) => el?.tagName === "PRE" && (el.textContent ?? "").includes("orders"));
-    expect(shown.textContent).toBe(format("select id, amount from orders where amount > 10 order by id", { language: "postgresql" }));
+    const shown = await screen.findByText(
+      (_, el) => el?.tagName === "PRE" && (el.textContent ?? "").includes("orders"),
+    );
+    expect(shown.textContent).toBe(
+      format("select id, amount from orders where amount > 10 order by id", { language: "postgresql" }),
+    );
     expect(shown.textContent?.split("\n").length).toBeGreaterThan(3);
     // キーワードはエディタと同じ配色変数で色分けする。
     expect(shown.querySelector("span")?.getAttribute("style")).toContain("var(--syntax-keyword)");
@@ -225,11 +236,18 @@ describe("AiQueryModal (#691)", () => {
       handlers?.onDone?.({} as never);
     });
     await findSql("SELECT 2");
-    fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "金額の多い順に" } });
+    fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), {
+      target: { value: "金額の多い順に" },
+    });
     fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(3));
     const third = runAiRequest.mock.calls[2][0];
-    expect(third.history.map((m: { role: string }) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(third.history.map((m: { role: string }) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
     expect(third.history[3].content).toBe(result2);
   });
 
@@ -249,7 +267,9 @@ describe("AiQueryModal (#691)", () => {
     // 送った依頼はチャット欄に残り、入力欄は空に戻って追い質問用の案内になる。
     expect(screen.getByTestId("ai-query-log-user").textContent).toBe("注文を集計して");
     expect(screen.getByTestId("ai-query-log-agent")).toBeTruthy();
-    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(t("aiFollowUpPlaceholder"));
+    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(
+      t("aiFollowUpPlaceholder"),
+    );
   });
 
   it("読み取り専用ならプロンプトに SELECT 制約が入る", async () => {
@@ -380,7 +400,9 @@ describe("AiQueryModal (#691)", () => {
     view.rerender(ui({ database: "other" }));
     await waitFor(() => expect(screen.queryByTestId("ai-query-log-user")).toBeNull());
     // 追い質問ではなく最初の依頼の入力に戻る。
-    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(t("aiQueryRequestPlaceholder"));
+    expect(screen.getByLabelText(t("aiQueryRequestLabel")).getAttribute("placeholder")).toBe(
+      t("aiQueryRequestPlaceholder"),
+    );
   });
 
   it("テーブルが多いスキーマは送信前に件数を見せる", async () => {
@@ -424,7 +446,9 @@ describe("AiQueryModal (#691)", () => {
       await findSql("SELECT 1");
       // 追い質問の途中は選択欄を出さず、送るスキーマは最初の集合のまま。
       expect(screen.queryByTestId("ai-query-tables")).toBeNull();
-      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "絞って" } });
+      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), {
+        target: { value: "絞って" },
+      });
       fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
       await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
       expect(runAiRequest.mock.calls[1][0].systemCached).toBe(first.systemCached);
@@ -447,7 +471,9 @@ describe("AiQueryModal (#691)", () => {
     it("DB を切り替えると、固定した集合と手動選択がリセットされる", async () => {
       setDb(bigSchema());
       const view = renderWithProviders(ui());
-      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), { target: { value: "orders amount" } });
+      fireEvent.change(await screen.findByLabelText(t("aiQueryRequestLabel")), {
+        target: { value: "orders amount" },
+      });
       // 手動で 1 件足してから送る (この選択は DB 切り替えで消えるべきもの)。
       fireEvent.click(await screen.findByLabelText("misc_5"));
       fireEvent.click(screen.getByRole("button", { name: t("aiQuerySend") }));
@@ -457,7 +483,9 @@ describe("AiQueryModal (#691)", () => {
         handlers?.onDone?.({} as never);
       });
       await screen.findByTestId("ai-query-log-agent");
-      expect(screen.getByTestId("ai-query-sends").textContent).toContain(t("aiQueryTablesLocked", { count: 2 }));
+      expect(screen.getByTestId("ai-query-sends").textContent).toContain(
+        t("aiQueryTablesLocked", { count: 2 }),
+      );
       view.rerender(ui({ database: "other" }));
       await waitFor(() => expect(screen.queryByTestId("ai-query-log-agent")).toBeNull());
       // 手動選択 (misc_5) も消え、依頼文からの自動提案に戻る。

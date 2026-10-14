@@ -5,7 +5,11 @@ describe("sqlHighlightSegments", () => {
   it("連結すると元の SQL に戻り、改行も保つ", () => {
     const sql = "SELECT\n  id, 'a' -- c\nFROM t\nWHERE n = 1";
     for (const driver of ["mysql", "postgres", "sqlite"]) {
-      expect(sqlHighlightSegments(sql, driver).map((s) => s.text).join("")).toBe(sql);
+      expect(
+        sqlHighlightSegments(sql, driver)
+          .map((s) => s.text)
+          .join(""),
+      ).toBe(sql);
     }
   });
 

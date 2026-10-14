@@ -136,23 +136,17 @@ describe("RowInspector の関連タブ (#1028)", () => {
     fireEvent.click(screen.getByRole("radio", { name: t("inspectorTabRelated", { count: 2 }) }));
     fireEvent.click(screen.getByRole("button", { name: /orders\.user_id/ }));
 
-    expect(
-      await screen.findByText(t("relatedRowsCountMore", { count: RELATED_ROWS_PAGE })),
-    ).toBeTruthy();
+    expect(await screen.findByText(t("relatedRowsCountMore", { count: RELATED_ROWS_PAGE }))).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: t("relatedRowsLoadMore") }));
     await waitFor(() =>
       expect(runQuery).toHaveBeenLastCalledWith(
         expect.stringMatching(new RegExp(`LIMIT ${RELATED_ROWS_PAGE * 2 + 1}$`)),
       ),
     );
-    expect(
-      await screen.findByText(t("relatedRowsCount", { count: RELATED_ROWS_PAGE + 3 })),
-    ).toBeTruthy();
+    expect(await screen.findByText(t("relatedRowsCount", { count: RELATED_ROWS_PAGE + 3 }))).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: t("relatedRowsOpen") }));
-    expect(onOpenInGrid).toHaveBeenCalledWith(
-      "SELECT * FROM `shop`.`orders` WHERE `user_id` = 42",
-    );
+    expect(onOpenInGrid).toHaveBeenCalledWith("SELECT * FROM `shop`.`orders` WHERE `user_id` = 42");
   });
 
   it("キー列がマスク中の関連は展開できず、クエリも投げない", () => {

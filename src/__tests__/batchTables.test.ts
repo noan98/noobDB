@@ -45,7 +45,9 @@ describe("batchExportFileName", () => {
 
 describe("batchExportFileName: 上書き回避と予約名", () => {
   it("日時を付けて既存ファイルを上書きしない", () => {
-    expect(batchExportFileName("users", "csv", new Set(), "20260101_090000")).toBe("users_20260101_090000.csv");
+    expect(batchExportFileName("users", "csv", new Set(), "20260101_090000")).toBe(
+      "users_20260101_090000.csv",
+    );
     expect(batchTimestamp(new Date(2026, 0, 2, 3, 4, 5))).toBe("20260102_030405");
   });
 

@@ -327,9 +327,10 @@ export function TestDataModal({
     }
     setRunning(true);
     try {
-      const rows = aiMode && aiDataset
-        ? aiDataset.rows
-        : uniquifyGeneratedRows(specs, generateRows(specs, rowCount, seed), uniqueInfo.columns);
+      const rows =
+        aiMode && aiDataset
+          ? aiDataset.rows
+          : uniquifyGeneratedRows(specs, generateRows(specs, rowCount, seed), uniqueInfo.columns);
       // 生成行を Rust の `insert_generated_rows` (`Connection::import_rows`、1 トランザクション)
       // へそのまま渡す。100 行ずつのリテラル INSERT 文を JS で組み立てて送る経路は廃止 (#1259)。
       const result = await api.insertGeneratedRows({
@@ -350,12 +351,7 @@ export function TestDataModal({
   };
 
   const insertDisabled =
-    running ||
-    aiRunning ||
-    !specs ||
-    !rowCountValid ||
-    insertColumns.length === 0 ||
-    (aiMode && !aiDataset);
+    running || aiRunning || !specs || !rowCountValid || insertColumns.length === 0 || (aiMode && !aiDataset);
 
   return (
     <Modal
@@ -425,9 +421,7 @@ export function TestDataModal({
           </Button>
         </FormSection>
 
-        {!rowCountValid && (
-          <ErrorNote>{t("testDataRowCountInvalid", { max: MAX_ROWS })}</ErrorNote>
-        )}
+        {!rowCountValid && <ErrorNote>{t("testDataRowCountInvalid", { max: MAX_ROWS })}</ErrorNote>}
         {loadError && <ErrorNote>{loadError}</ErrorNote>}
         {!specs && !loadError && (
           <chakra.div display="inline-flex" alignItems="center" gap="1.5" color="app.textMuted">
@@ -528,7 +522,13 @@ export function TestDataModal({
                     </>
                   )}
                   {spec.nullable && spec.strategy !== "omit" && (
-                    <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                    <chakra.label
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      fontSize="xs"
+                      color="app.textMuted"
+                    >
                       {t("testDataNullRate")}
                       <DraftNumberInput
                         min={0}
@@ -664,9 +664,7 @@ export function TestDataModal({
           </chakra.div>
         )}
 
-        {specs && insertColumns.length === 0 && (
-          <ErrorNote>{t("testDataNoColumns")}</ErrorNote>
-        )}
+        {specs && insertColumns.length === 0 && <ErrorNote>{t("testDataNoColumns")}</ErrorNote>}
 
         {specs && previewRows.length > 0 && (
           <FormSection>
@@ -709,11 +707,7 @@ export function TestDataModal({
                     <tr key={ri}>
                       {row.map((v, ci) => (
                         <td key={ci}>
-                          {v === null ? (
-                            <chakra.span color="app.textMuted">NULL</chakra.span>
-                          ) : (
-                            String(v)
-                          )}
+                          {v === null ? <chakra.span color="app.textMuted">NULL</chakra.span> : String(v)}
                         </td>
                       ))}
                     </tr>
@@ -725,7 +719,14 @@ export function TestDataModal({
         )}
 
         {running && (
-          <chakra.div role="status" aria-live="polite" display="inline-flex" alignItems="center" gap="1.5" color="app.textMuted">
+          <chakra.div
+            role="status"
+            aria-live="polite"
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            color="app.textMuted"
+          >
             <Spinner size={13} />
             {t("testDataRunningStatus", { count: rowCount })}
           </chakra.div>
@@ -735,7 +736,12 @@ export function TestDataModal({
 
       <ModalFooter>
         {aiMode && (
-          <Button type="button" variant="secondary" onClick={() => void generateWithAi()} disabled={!canAiGenerate}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void generateWithAi()}
+            disabled={!canAiGenerate}
+          >
             {plan ? t("testDataAiRegenerate") : t("testDataAiGenerate")}
           </Button>
         )}

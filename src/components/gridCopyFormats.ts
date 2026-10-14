@@ -34,9 +34,7 @@ export interface GridCopyInput {
 
 /** 対象範囲を (列, 値行列) へ切り出す。マスク規則をここで適用する。 */
 export function sliceForCopy(input: GridCopyInput): { columns: Column[]; rows: CellValue[][] } {
-  const columns = input.colIndices
-    .map((ci) => input.columns[ci])
-    .filter((c): c is Column => !!c);
+  const columns = input.colIndices.map((ci) => input.columns[ci]).filter((c): c is Column => !!c);
   const validCols = input.colIndices.filter((ci) => !!input.columns[ci]);
   const rows: CellValue[][] = [];
   for (const ri of input.rowIndices) {

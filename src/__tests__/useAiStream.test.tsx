@@ -489,7 +489,10 @@ describe("AiStreamProgress (#1470)", () => {
     });
     expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/5/);
     rerender(
-      <AiStreamProgress stream={{ text: '{"explanation":"途中の文章', startedAt }} fields={["explanation"]} />,
+      <AiStreamProgress
+        stream={{ text: '{"explanation":"途中の文章', startedAt }}
+        fields={["explanation"]}
+      />,
     );
     expect(screen.getByTestId("ai-stream-preview").textContent).toBe("途中の文章");
     rerender(<AiStreamProgress stream={{ text: '{"explanation":"x', startedAt }} previewText={false} />);

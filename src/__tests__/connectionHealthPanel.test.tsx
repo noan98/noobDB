@@ -52,7 +52,14 @@ beforeEach(() => {
   vi.mocked(api.healthProbeAll).mockImplementation(async (ids) =>
     ids.map((sid) =>
       sid === "dead"
-        ? { session_id: sid, status: "down" as const, latency_ms: null, version: null, connections: null, tunnel_alive: null }
+        ? {
+            session_id: sid,
+            status: "down" as const,
+            latency_ms: null,
+            version: null,
+            connections: null,
+            tunnel_alive: null,
+          }
         : {
             session_id: sid,
             status: "up" as const,
@@ -179,7 +186,14 @@ describe("ConnectionHealthPanel (#1068)", () => {
     expect(screen.queryByText(t("healthEmpty"))).not.toBeInTheDocument();
 
     resolveProbe([
-      { session_id: "s-m", status: "up", latency_ms: 5, version: "8.0.36", connections: 7, tunnel_alive: null },
+      {
+        session_id: "s-m",
+        status: "up",
+        latency_ms: 5,
+        version: "8.0.36",
+        connections: 7,
+        tunnel_alive: null,
+      },
     ]);
     await waitFor(() => expect(within(row).getByText(t("healthStatusUp"))).toBeInTheDocument());
   });

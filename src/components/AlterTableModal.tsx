@@ -175,7 +175,16 @@ function emptyIndex(): IndexDef {
   return { name: "", columns: [], unique: false };
 }
 
-export function AlterTableModal({ sessionId, driver, database, table, readOnly, onRun, onSendToEditor, onClose }: Props) {
+export function AlterTableModal({
+  sessionId,
+  driver,
+  database,
+  table,
+  readOnly,
+  onRun,
+  onSendToEditor,
+  onClose,
+}: Props) {
   const t = useT();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -261,14 +270,11 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
 
   const setAddedAt = (i: number, patch: Partial<NewColumn>) =>
     setAdded((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addNewColumn = () =>
-    setAdded((rows) => [...rows, { id: nextRowId(), ...emptyNewColumn(driver) }]);
+  const addNewColumn = () => setAdded((rows) => [...rows, { id: nextRowId(), ...emptyNewColumn(driver) }]);
   const removeNewColumn = (i: number) => setAdded((rows) => rows.filter((_, idx) => idx !== i));
 
   const setIndexAt = (i: number, patch: Partial<IndexDef>) =>
-    setIndexes((rows) =>
-      rows.map((r, idx) => (idx === i ? { ...r, ...patch, touched: true } : r)),
-    );
+    setIndexes((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch, touched: true } : r)));
   const addIndex = () => setIndexes((rows) => [...rows, { id: nextRowId(), ...emptyIndex() }]);
   const removeIndex = (i: number) => setIndexes((rows) => rows.filter((_, idx) => idx !== i));
   const toggleIndexColumn = (i: number, col: string) =>
@@ -307,7 +313,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         baseline,
         existing,
         // id は React key 専用のローカル state なので、純ロジックへ渡す前に取り除く。
-        added: added.map((r) => ({ name: r.name, type: r.type, notNull: r.notNull, defaultValue: r.defaultValue })),
+        added: added.map((r) => ({
+          name: r.name,
+          type: r.type,
+          notNull: r.notNull,
+          defaultValue: r.defaultValue,
+        })),
         indexes: effectiveIndexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
         tableComment,
         // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
@@ -316,7 +327,20 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
         droppedForeignKeys: droppedFks,
         droppedChecks: droppedChecks.map((c) => c.name),
       }),
-    [driver, database, table, baseline, existing, added, effectiveIndexes, tableComment, addedFks, addedChecks, droppedFks, droppedChecks],
+    [
+      driver,
+      database,
+      table,
+      baseline,
+      existing,
+      added,
+      effectiveIndexes,
+      tableComment,
+      addedFks,
+      addedChecks,
+      droppedFks,
+      droppedChecks,
+    ],
   );
   const statements = plan.statements;
   const unsupported = plan.unsupported;
@@ -354,7 +378,13 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   );
   const runCount = useCallback(
     (sql: string) =>
-      api.runLookupQuery({ sessionId, sql, database, queryTimeoutSecs: COUNT_PREVIEW_TIMEOUT_SECS, rowCap: 1 }),
+      api.runLookupQuery({
+        sessionId,
+        sql,
+        database,
+        queryTimeoutSecs: COUNT_PREVIEW_TIMEOUT_SECS,
+        rowCap: 1,
+      }),
     [sessionId, database],
   );
   const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
@@ -388,7 +418,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               exit={variants.fade.exit}
               transition={transitions.crossfade}
             >
-              <chakra.span fontSize="sm" color="app.textMuted">{t("alterTableLoading")}</chakra.span>
+              <chakra.span fontSize="sm" color="app.textMuted">
+                {t("alterTableLoading")}
+              </chakra.span>
             </motion.div>
           )}
           {!loading && loadError && (
@@ -411,373 +443,402 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               transition={transitions.crossfade}
               style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
-            <FormSection>
-              <FieldLabel htmlFor="alter-table-comment">{t("alterTableTableComment")}</FieldLabel>
-              <Input
-                id="alter-table-comment"
-                value={tableComment.after}
-                onChange={(e) => setTableComment((c) => ({ ...c, after: e.target.value }))}
-                placeholder={commentsSupported ? t("alterTableCommentPlaceholder") : undefined}
-                disabled={!commentsSupported}
-              />
-              {!commentsSupported && (
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("alterTableCommentUnsupported")}
-                </chakra.span>
-              )}
-            </FormSection>
+              <FormSection>
+                <FieldLabel htmlFor="alter-table-comment">{t("alterTableTableComment")}</FieldLabel>
+                <Input
+                  id="alter-table-comment"
+                  value={tableComment.after}
+                  onChange={(e) => setTableComment((c) => ({ ...c, after: e.target.value }))}
+                  placeholder={commentsSupported ? t("alterTableCommentPlaceholder") : undefined}
+                  disabled={!commentsSupported}
+                />
+                {!commentsSupported && (
+                  <chakra.span fontSize="xs" color="app.textMuted">
+                    {t("alterTableCommentUnsupported")}
+                  </chakra.span>
+                )}
+              </FormSection>
 
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <FieldLabel as="div">{t("alterTableExistingSection")}</FieldLabel>
-              {driver === "mysql" && (
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("alterTableMysqlExtraNote")}
-                </chakra.span>
-              )}
-              <chakra.div
-                display="grid"
-                gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
-                gap="1.5"
-                textStyle="overline"
-                px="0.5"
-              >
-                <span>{t("createTableColName")}</span>
-                <span>{t("alterTableNewName")}</span>
-                <span>{t("createTableColType")}</span>
-                <span>{t("createTableColNotNull")}</span>
-                <span />
-                <span>{t("createTableColDefault")}</span>
-                <span>{t("alterTableColComment")}</span>
-                <span />
-              </chakra.div>
-              {existing.map((row, i) => (
+              <chakra.div display="flex" flexDirection="column" gap="1.5">
+                <FieldLabel as="div">{t("alterTableExistingSection")}</FieldLabel>
+                {driver === "mysql" && (
+                  <chakra.span fontSize="xs" color="app.textMuted">
+                    {t("alterTableMysqlExtraNote")}
+                  </chakra.span>
+                )}
                 <chakra.div
-                  key={row.original}
                   display="grid"
                   gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
                   gap="1.5"
-                  alignItems="center"
-                  opacity={row.drop ? 0.5 : 1}
+                  textStyle="overline"
+                  px="0.5"
                 >
-                  <Tooltip label={row.original}>
-                    <chakra.span fontSize="sm" fontFamily="mono" color="app.text" minW="0" truncate>
-                      {row.original}
-                    </chakra.span>
-                  </Tooltip>
-                  <Input
-                    value={row.name}
-                    onChange={(e) => setExistingAt(i, { name: e.target.value })}
-                    disabled={row.drop}
-                    aria-label={`${t("alterTableNewName")}: ${row.original}`}
-                  />
-                  <Input
-                    value={row.type}
-                    onChange={(e) => setExistingAt(i, { type: e.target.value })}
-                    disabled={row.drop}
-                    aria-label={`${t("createTableColType")}: ${row.original}`}
-                  />
-                  <Switch
-                    checked={row.notNull}
-                    onChange={() => setExistingAt(i, { notNull: !row.notNull })}
-                    disabled={row.drop}
-                    aria-label={t("alterTableNotNullAria", { column: row.original })}
-                  />
+                  <span>{t("createTableColName")}</span>
+                  <span>{t("alterTableNewName")}</span>
+                  <span>{t("createTableColType")}</span>
+                  <span>{t("createTableColNotNull")}</span>
                   <span />
-                  <Input
-                    value={row.defaultValue}
-                    onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
-                    placeholder={t("createTableColDefault")}
-                    disabled={row.drop}
-                    aria-label={`${t("createTableColDefault")}: ${row.original}`}
-                  />
-                  <Input
-                    value={row.comment ?? ""}
-                    onChange={(e) => setExistingAt(i, { comment: e.target.value })}
-                    placeholder={commentsSupported ? t("alterTableColComment") : undefined}
-                    disabled={row.drop || !commentsSupported}
-                    aria-label={t("alterTableColCommentAria", { column: row.original })}
-                  />
-                  <Tooltip label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}>
-                    <chakra.button
-                      type="button"
-                      onClick={() => toggleDrop(i)}
-                      aria-label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}
-                      color={row.drop ? "app.textError" : "app.textMuted"}
-                      _hover={{ color: "app.textError" }}
-                      px="1"
-                    >
-                      <Icon name={row.drop ? "undo" : "close"} />
-                    </chakra.button>
-                  </Tooltip>
+                  <span>{t("createTableColDefault")}</span>
+                  <span>{t("alterTableColComment")}</span>
+                  <span />
                 </chakra.div>
-              ))}
-            </chakra.div>
-
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <FieldLabel as="div">{t("alterTableAddedSection")}</FieldLabel>
-              {added.map((c, i) => (
-                <chakra.div
-                  key={c.id}
-                  display="grid"
-                  gridTemplateColumns="1.3fr 1.3fr auto 1.2fr auto"
-                  gap="1.5"
-                  alignItems="center"
-                >
-                  <Input
-                    value={c.name}
-                    onChange={(e) => setAddedAt(i, { name: e.target.value })}
-                    placeholder={t("createTableColNamePlaceholder")}
-                    aria-label={`${t("createTableColName")} (${i + 1})`}
-                  />
-                  <Input
-                    value={c.type}
-                    onChange={(e) => setAddedAt(i, { type: e.target.value })}
-                    aria-label={`${t("createTableColType")} (${i + 1})`}
-                  />
-                  <Switch
-                    checked={c.notNull}
-                    onChange={() => setAddedAt(i, { notNull: !c.notNull })}
-                    aria-label={t("alterTableNotNullNewAria", { n: i + 1 })}
-                  />
-                  <Input
-                    value={c.defaultValue}
-                    onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
-                    placeholder={t("createTableColDefault")}
-                    aria-label={`${t("createTableColDefault")} (${i + 1})`}
-                  />
-                  <chakra.button
-                    type="button"
-                    onClick={() => removeNewColumn(i)}
-                    aria-label={t("createTableRemoveCol")}
-                    color="app.textMuted"
-                    _hover={{ color: "app.textError" }}
-                    px="1"
+                {existing.map((row, i) => (
+                  <chakra.div
+                    key={row.original}
+                    display="grid"
+                    gridTemplateColumns="1.1fr 1.1fr 1.3fr auto auto 1.2fr 1.2fr auto"
+                    gap="1.5"
+                    alignItems="center"
+                    opacity={row.drop ? 0.5 : 1}
                   >
-                    <Icon name="close" />
-                  </chakra.button>
-                </chakra.div>
-              ))}
-              <Flex>
-                <Button type="button" variant="secondary" size="sm" onClick={addNewColumn}>
-                  <Icon name="plus" /> {t("createTableAddCol")}
-                </Button>
-              </Flex>
-            </chakra.div>
-
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
-              {indexes.map((idx, i) => {
-                const problems =
-                  idx.touched || runAttempted ? indexRowProblems(effectiveIndexes[i]) : null;
-                return (
-                <chakra.div
-                  key={idx.id}
-                  display="flex"
-                  flexDirection="column"
-                  gap="1.5"
-                  p="2"
-                  borderWidth="1px"
-                  borderColor="app.border"
-                  borderRadius="lg"
-                >
-                  <Flex gap="1.5" align="center">
+                    <Tooltip label={row.original}>
+                      <chakra.span fontSize="sm" fontFamily="mono" color="app.text" minW="0" truncate>
+                        {row.original}
+                      </chakra.span>
+                    </Tooltip>
                     <Input
-                      value={idx.name}
-                      onChange={(e) => setIndexAt(i, { name: e.target.value })}
-                      onBlur={() => touchIndex(i)}
-                      placeholder={t("alterTableIndexNamePlaceholder")}
-                      aria-label={t("alterTableIndexNamePlaceholder")}
-                      flex="1"
+                      value={row.name}
+                      onChange={(e) => setExistingAt(i, { name: e.target.value })}
+                      disabled={row.drop}
+                      aria-label={`${t("alterTableNewName")}: ${row.original}`}
+                    />
+                    <Input
+                      value={row.type}
+                      onChange={(e) => setExistingAt(i, { type: e.target.value })}
+                      disabled={row.drop}
+                      aria-label={`${t("createTableColType")}: ${row.original}`}
                     />
                     <Switch
-                      checked={idx.unique}
-                      onChange={() => setIndexAt(i, { unique: !idx.unique })}
-                      label={t("createTableColUnique")}
+                      checked={row.notNull}
+                      onChange={() => setExistingAt(i, { notNull: !row.notNull })}
+                      disabled={row.drop}
+                      aria-label={t("alterTableNotNullAria", { column: row.original })}
                     />
-                    <chakra.button
-                      type="button"
-                      onClick={() => removeIndex(i)}
-                      aria-label={t("alterTableRemoveIndex")}
-                      color="app.textMuted"
-                      _hover={{ color: "app.textError" }}
-                      px="1"
-                    >
-                      <Icon name="close" />
-                    </chakra.button>
-                  </Flex>
-                  {problems?.missingName && <FieldError>{t("alterTableIndexNameRequired")}</FieldError>}
-                  <Flex gap="3" wrap="wrap">
-                    {availableColumns.length === 0 && (
-                      <chakra.span fontSize="xs" color="app.textMuted">
-                        {t("treeNoColumns")}
-                      </chakra.span>
-                    )}
-                    {availableColumns.map((col) => (
-                      <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
-                        <Checkbox
-                          checked={effectiveIndexes[i].columns.includes(col)}
-                          onChange={() => toggleIndexColumn(i, col)}
-                        />
-                        {col}
-                      </chakra.label>
-                    ))}
-                  </Flex>
-                  {problems?.missingColumns && availableColumns.length > 0 && (
-                    <FieldError>{t("alterTableIndexColumnsRequired")}</FieldError>
-                  )}
-                </chakra.div>
-                );
-              })}
-              <Flex>
-                <Button type="button" variant="secondary" size="sm" onClick={addIndex} disabled={availableColumns.length === 0}>
-                  <Icon name="plus" /> {t("alterTableAddIndex")}
-                </Button>
-              </Flex>
-            </chakra.div>
+                    <span />
+                    <Input
+                      value={row.defaultValue}
+                      onChange={(e) => setExistingAt(i, { defaultValue: e.target.value })}
+                      placeholder={t("createTableColDefault")}
+                      disabled={row.drop}
+                      aria-label={`${t("createTableColDefault")}: ${row.original}`}
+                    />
+                    <Input
+                      value={row.comment ?? ""}
+                      onChange={(e) => setExistingAt(i, { comment: e.target.value })}
+                      placeholder={commentsSupported ? t("alterTableColComment") : undefined}
+                      disabled={row.drop || !commentsSupported}
+                      aria-label={t("alterTableColCommentAria", { column: row.original })}
+                    />
+                    <Tooltip label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}>
+                      <chakra.button
+                        type="button"
+                        onClick={() => toggleDrop(i)}
+                        aria-label={row.drop ? t("alterTableKeep") : t("alterTableDrop")}
+                        color={row.drop ? "app.textError" : "app.textMuted"}
+                        _hover={{ color: "app.textError" }}
+                        px="1"
+                      >
+                        <Icon name={row.drop ? "undo" : "close"} />
+                      </chakra.button>
+                    </Tooltip>
+                  </chakra.div>
+                ))}
+              </chakra.div>
 
-            <chakra.div display="flex" flexDirection="column" gap="1.5">
-              <FieldLabel as="div">{t("alterTableConstraintsSection")}</FieldLabel>
-              {existingFks.length > 0 && (
-                <chakra.div display="flex" flexDirection="column" gap="1">
-                  <chakra.span fontSize="xs" color="app.textMuted">
-                    {t("alterTableExistingFks")}
-                  </chakra.span>
-                  {existingFks.map((fk, i) => {
-                    const dropped = fk.name !== null && droppedFks.includes(fk.name);
-                    return (
-                      <Flex key={fk.name ?? `unnamed-${i}`} gap="1.5" align="center" opacity={dropped ? 0.5 : 1}>
-                        <chakra.span fontSize="sm" fontFamily="mono" color="app.text" flex="1">
-                          {fk.name ? `${fk.name}: ` : ""}
-                          {t("alterTableFkTarget", {
-                            columns: fk.columns.join(", "),
-                            table: fk.refTable,
-                            refColumns: fk.refColumns.join(", "),
-                          })}
-                        </chakra.span>
-                        {fk.name === null ? (
-                          <chakra.span fontSize="xs" color="app.textMuted">
-                            {t("alterTableFkUnnamed")}
-                          </chakra.span>
-                        ) : (
-                          <Switch
-                            checked={dropped}
-                            disabled={!constraintsSupported}
-                            onChange={() => {
-                              const name = fk.name;
-                              if (name === null) return;
-                              setDroppedFks((cur) =>
-                                cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
-                              );
-                            }}
-                            aria-label={t("alterTableDropFk", { name: fk.name })}
-                          />
-                        )}
-                      </Flex>
-                    );
-                  })}
-                </chakra.div>
-              )}
-              <TableConstraintEditor
-                idPrefix="alter-table"
-                foreignKeys={addedFks}
-                checks={addedChecks}
-                onForeignKeysChange={setAddedFks}
-                onChecksChange={setAddedChecks}
-                columnNames={availableColumns}
-                tableNames={tableNames}
-                nextId={nextRowId}
-                disabled={!constraintsSupported}
-                disabledNote={t("alterTableConstraintSqliteNote")}
-              />
               <chakra.div display="flex" flexDirection="column" gap="1.5">
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("alterTableDropCheckSection")}
-                </chakra.span>
-                {droppedChecks.map((c, i) => (
-                  <Flex key={c.id} gap="1.5" align="center">
+                <FieldLabel as="div">{t("alterTableAddedSection")}</FieldLabel>
+                {added.map((c, i) => (
+                  <chakra.div
+                    key={c.id}
+                    display="grid"
+                    gridTemplateColumns="1.3fr 1.3fr auto 1.2fr auto"
+                    gap="1.5"
+                    alignItems="center"
+                  >
                     <Input
                       value={c.name}
-                      onChange={(e) =>
-                        setDroppedChecks((rows) =>
-                          rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)),
-                        )
-                      }
-                      placeholder={t("alterTableDropCheckPlaceholder")}
-                      aria-label={t("alterTableDropCheckPlaceholder")}
-                      flex="1"
+                      onChange={(e) => setAddedAt(i, { name: e.target.value })}
+                      placeholder={t("createTableColNamePlaceholder")}
+                      aria-label={`${t("createTableColName")} (${i + 1})`}
+                    />
+                    <Input
+                      value={c.type}
+                      onChange={(e) => setAddedAt(i, { type: e.target.value })}
+                      aria-label={`${t("createTableColType")} (${i + 1})`}
+                    />
+                    <Switch
+                      checked={c.notNull}
+                      onChange={() => setAddedAt(i, { notNull: !c.notNull })}
+                      aria-label={t("alterTableNotNullNewAria", { n: i + 1 })}
+                    />
+                    <Input
+                      value={c.defaultValue}
+                      onChange={(e) => setAddedAt(i, { defaultValue: e.target.value })}
+                      placeholder={t("createTableColDefault")}
+                      aria-label={`${t("createTableColDefault")} (${i + 1})`}
                     />
                     <chakra.button
                       type="button"
-                      onClick={() => setDroppedChecks((rows) => rows.filter((_, idx) => idx !== i))}
-                      aria-label={t("alterTableDropCheckRemove")}
+                      onClick={() => removeNewColumn(i)}
+                      aria-label={t("createTableRemoveCol")}
                       color="app.textMuted"
                       _hover={{ color: "app.textError" }}
                       px="1"
                     >
                       <Icon name="close" />
                     </chakra.button>
-                  </Flex>
+                  </chakra.div>
                 ))}
+                <Flex>
+                  <Button type="button" variant="secondary" size="sm" onClick={addNewColumn}>
+                    <Icon name="plus" /> {t("createTableAddCol")}
+                  </Button>
+                </Flex>
+              </chakra.div>
+
+              <chakra.div display="flex" flexDirection="column" gap="1.5">
+                <FieldLabel as="div">{t("indexesLabel")}</FieldLabel>
+                {indexes.map((idx, i) => {
+                  const problems = idx.touched || runAttempted ? indexRowProblems(effectiveIndexes[i]) : null;
+                  return (
+                    <chakra.div
+                      key={idx.id}
+                      display="flex"
+                      flexDirection="column"
+                      gap="1.5"
+                      p="2"
+                      borderWidth="1px"
+                      borderColor="app.border"
+                      borderRadius="lg"
+                    >
+                      <Flex gap="1.5" align="center">
+                        <Input
+                          value={idx.name}
+                          onChange={(e) => setIndexAt(i, { name: e.target.value })}
+                          onBlur={() => touchIndex(i)}
+                          placeholder={t("alterTableIndexNamePlaceholder")}
+                          aria-label={t("alterTableIndexNamePlaceholder")}
+                          flex="1"
+                        />
+                        <Switch
+                          checked={idx.unique}
+                          onChange={() => setIndexAt(i, { unique: !idx.unique })}
+                          label={t("createTableColUnique")}
+                        />
+                        <chakra.button
+                          type="button"
+                          onClick={() => removeIndex(i)}
+                          aria-label={t("alterTableRemoveIndex")}
+                          color="app.textMuted"
+                          _hover={{ color: "app.textError" }}
+                          px="1"
+                        >
+                          <Icon name="close" />
+                        </chakra.button>
+                      </Flex>
+                      {problems?.missingName && <FieldError>{t("alterTableIndexNameRequired")}</FieldError>}
+                      <Flex gap="3" wrap="wrap">
+                        {availableColumns.length === 0 && (
+                          <chakra.span fontSize="xs" color="app.textMuted">
+                            {t("treeNoColumns")}
+                          </chakra.span>
+                        )}
+                        {availableColumns.map((col) => (
+                          <chakra.label key={col} display="flex" alignItems="center" gap="1" fontSize="sm">
+                            <Checkbox
+                              checked={effectiveIndexes[i].columns.includes(col)}
+                              onChange={() => toggleIndexColumn(i, col)}
+                            />
+                            {col}
+                          </chakra.label>
+                        ))}
+                      </Flex>
+                      {problems?.missingColumns && availableColumns.length > 0 && (
+                        <FieldError>{t("alterTableIndexColumnsRequired")}</FieldError>
+                      )}
+                    </chakra.div>
+                  );
+                })}
                 <Flex>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
-                    disabled={!constraintsSupported}
-                    onClick={() => setDroppedChecks((rows) => [...rows, { id: nextRowId(), name: "" }])}
+                    onClick={addIndex}
+                    disabled={availableColumns.length === 0}
                   >
-                    <Icon name="plus" /> {t("alterTableDropCheckAdd")}
+                    <Icon name="plus" /> {t("alterTableAddIndex")}
                   </Button>
                 </Flex>
               </chakra.div>
-            </chakra.div>
 
-            {unsupported.length > 0 && (
-              <chakra.div display="flex" flexDirection="column" gap="1" p="2" borderWidth="1px" borderColor="app.border" borderRadius="lg">
-                <Flex align="center" gap="1.5" color="app.textSecondary" fontSize="sm" fontWeight="600">
-                  <Icon name="warning" />
-                  {t("alterTableUnsupportedTitle")}
-                </Flex>
-                {unsupported.map((u: UnsupportedChange, i) => (
-                  <chakra.span key={`${u.reason}-${u.column}-${i}`} fontSize="xs" color="app.textMuted">
-                    {u.reason === "sqliteConstraintAlter"
-                      ? t("alterTableUnsupportedConstraintSqlite", { column: u.column })
-                      : t("alterTableUnsupportedSqlite", { column: u.column })}
+              <chakra.div display="flex" flexDirection="column" gap="1.5">
+                <FieldLabel as="div">{t("alterTableConstraintsSection")}</FieldLabel>
+                {existingFks.length > 0 && (
+                  <chakra.div display="flex" flexDirection="column" gap="1">
+                    <chakra.span fontSize="xs" color="app.textMuted">
+                      {t("alterTableExistingFks")}
+                    </chakra.span>
+                    {existingFks.map((fk, i) => {
+                      const dropped = fk.name !== null && droppedFks.includes(fk.name);
+                      return (
+                        <Flex
+                          key={fk.name ?? `unnamed-${i}`}
+                          gap="1.5"
+                          align="center"
+                          opacity={dropped ? 0.5 : 1}
+                        >
+                          <chakra.span fontSize="sm" fontFamily="mono" color="app.text" flex="1">
+                            {fk.name ? `${fk.name}: ` : ""}
+                            {t("alterTableFkTarget", {
+                              columns: fk.columns.join(", "),
+                              table: fk.refTable,
+                              refColumns: fk.refColumns.join(", "),
+                            })}
+                          </chakra.span>
+                          {fk.name === null ? (
+                            <chakra.span fontSize="xs" color="app.textMuted">
+                              {t("alterTableFkUnnamed")}
+                            </chakra.span>
+                          ) : (
+                            <Switch
+                              checked={dropped}
+                              disabled={!constraintsSupported}
+                              onChange={() => {
+                                const name = fk.name;
+                                if (name === null) return;
+                                setDroppedFks((cur) =>
+                                  cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name],
+                                );
+                              }}
+                              aria-label={t("alterTableDropFk", { name: fk.name })}
+                            />
+                          )}
+                        </Flex>
+                      );
+                    })}
+                  </chakra.div>
+                )}
+                <TableConstraintEditor
+                  idPrefix="alter-table"
+                  foreignKeys={addedFks}
+                  checks={addedChecks}
+                  onForeignKeysChange={setAddedFks}
+                  onChecksChange={setAddedChecks}
+                  columnNames={availableColumns}
+                  tableNames={tableNames}
+                  nextId={nextRowId}
+                  disabled={!constraintsSupported}
+                  disabledNote={t("alterTableConstraintSqliteNote")}
+                />
+                <chakra.div display="flex" flexDirection="column" gap="1.5">
+                  <chakra.span fontSize="xs" color="app.textMuted">
+                    {t("alterTableDropCheckSection")}
                   </chakra.span>
-                ))}
+                  {droppedChecks.map((c, i) => (
+                    <Flex key={c.id} gap="1.5" align="center">
+                      <Input
+                        value={c.name}
+                        onChange={(e) =>
+                          setDroppedChecks((rows) =>
+                            rows.map((r, idx) => (idx === i ? { ...r, name: e.target.value } : r)),
+                          )
+                        }
+                        placeholder={t("alterTableDropCheckPlaceholder")}
+                        aria-label={t("alterTableDropCheckPlaceholder")}
+                        flex="1"
+                      />
+                      <chakra.button
+                        type="button"
+                        onClick={() => setDroppedChecks((rows) => rows.filter((_, idx) => idx !== i))}
+                        aria-label={t("alterTableDropCheckRemove")}
+                        color="app.textMuted"
+                        _hover={{ color: "app.textError" }}
+                        px="1"
+                      >
+                        <Icon name="close" />
+                      </chakra.button>
+                    </Flex>
+                  ))}
+                  <Flex>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={!constraintsSupported}
+                      onClick={() => setDroppedChecks((rows) => [...rows, { id: nextRowId(), name: "" }])}
+                    >
+                      <Icon name="plus" /> {t("alterTableDropCheckAdd")}
+                    </Button>
+                  </Flex>
+                </chakra.div>
               </chakra.div>
-            )}
 
-            {hasDestructive && (
-              <Callout tone="warning" role="status" title={t("alterTableDestructiveTitle", { count: destructiveStatements.length })}>
-                <chakra.div display="flex" flexDirection="column" gap="0.5">
-                  <span>{t("alterTableDestructiveBody")}</span>
-                  {destructiveStatements.map((s, i) => (
-                    <chakra.code key={`${i}-${s.sql}`} fontFamily="mono" fontSize="xs" wordBreak="break-all">
-                      {s.sql}
-                    </chakra.code>
+              {unsupported.length > 0 && (
+                <chakra.div
+                  display="flex"
+                  flexDirection="column"
+                  gap="1"
+                  p="2"
+                  borderWidth="1px"
+                  borderColor="app.border"
+                  borderRadius="lg"
+                >
+                  <Flex align="center" gap="1.5" color="app.textSecondary" fontSize="sm" fontWeight="600">
+                    <Icon name="warning" />
+                    {t("alterTableUnsupportedTitle")}
+                  </Flex>
+                  {unsupported.map((u: UnsupportedChange, i) => (
+                    <chakra.span key={`${u.reason}-${u.column}-${i}`} fontSize="xs" color="app.textMuted">
+                      {u.reason === "sqliteConstraintAlter"
+                        ? t("alterTableUnsupportedConstraintSqlite", { column: u.column })
+                        : t("alterTableUnsupportedSqlite", { column: u.column })}
+                    </chakra.span>
                   ))}
                 </chakra.div>
-              </Callout>
-            )}
+              )}
 
-            <FormSection>
-              <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
-              <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
-            </FormSection>
-            <AlterPrecheckNotice prechecks={prechecks} counts={precheckCounts} />
-            {hasIncompleteIndex && (
-              <Callout tone="warning">
-                {t("alterTableIndexIncompleteBlocked")}
-              </Callout>
-            )}
-            {duplicateNames.length > 0 && (
-              <FieldError>{t("alterTableDuplicateColumn", { names: duplicateNames.join(", ") })}</FieldError>
-            )}
-            {collisionNames.length > 0 && (
-              <FieldError>{t("alterTableRenameCollision", { names: collisionNames.join(", ") })}</FieldError>
-            )}
-            {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
+              {hasDestructive && (
+                <Callout
+                  tone="warning"
+                  role="status"
+                  title={t("alterTableDestructiveTitle", { count: destructiveStatements.length })}
+                >
+                  <chakra.div display="flex" flexDirection="column" gap="0.5">
+                    <span>{t("alterTableDestructiveBody")}</span>
+                    {destructiveStatements.map((s, i) => (
+                      <chakra.code
+                        key={`${i}-${s.sql}`}
+                        fontFamily="mono"
+                        fontSize="xs"
+                        wordBreak="break-all"
+                      >
+                        {s.sql}
+                      </chakra.code>
+                    ))}
+                  </chakra.div>
+                </Callout>
+              )}
+
+              <FormSection>
+                <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
+                <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
+              </FormSection>
+              <AlterPrecheckNotice prechecks={prechecks} counts={precheckCounts} />
+              {hasIncompleteIndex && (
+                <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>
+              )}
+              {duplicateNames.length > 0 && (
+                <FieldError>
+                  {t("alterTableDuplicateColumn", { names: duplicateNames.join(", ") })}
+                </FieldError>
+              )}
+              {collisionNames.length > 0 && (
+                <FieldError>
+                  {t("alterTableRenameCollision", { names: collisionNames.join(", ") })}
+                </FieldError>
+              )}
+              {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>
           )}
         </AnimatePresence>
@@ -793,12 +854,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             >
               {t("createTableToEditor")}
             </Button>
-            <Button
-              type="button"
-              variant="dangerOutline"
-              disabled={!valid || readOnly}
-              onClick={tryRun}
-            >
+            <Button type="button" variant="dangerOutline" disabled={!valid || readOnly} onClick={tryRun}>
               {t("alterTableRun")}
             </Button>
             <div style={{ flex: 1 }} />
@@ -820,12 +876,7 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             <Button type="button" variant="secondary" onClick={onClose}>
               {t("createTableClose")}
             </Button>
-            <PressableButton
-              type="button"
-              variant="primary"
-              disabled={!valid || readOnly}
-              onClick={tryRun}
-            >
+            <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={tryRun}>
               {t("alterTableRun")}
             </PressableButton>
           </>

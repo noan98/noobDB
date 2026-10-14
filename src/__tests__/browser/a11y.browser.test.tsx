@@ -130,13 +130,9 @@ async function runAxe(screen: string): Promise<axe.Result[]> {
   // 駆動のアニメーションには効かないため、フェード途中 (半透明) で axe を実行
   // すると color-contrast がブレンド中の色で誤判定される。ダイアログが完全に
   // 表示される (opacity 1) まで待ってから検査する。
-  const dialog = document.querySelector(
-    '[data-scope="dialog"][data-part="content"]',
-  );
+  const dialog = document.querySelector('[data-scope="dialog"][data-part="content"]');
   if (dialog) {
-    await expect
-      .poll(() => getComputedStyle(dialog).opacity, { timeout: 5_000 })
-      .toBe("1");
+    await expect.poll(() => getComputedStyle(dialog).opacity, { timeout: 5_000 }).toBe("1");
   }
   // ダイアログの初期フォーカス (Modal の `initialFocusEl`、例: 設定画面の閉じる
   // ボタン) は `Tooltip` (#884) の focus トリガーを即座に発火させ、「Close」の
@@ -172,13 +168,9 @@ async function runAxe(screen: string): Promise<axe.Result[]> {
     .map((v) => {
       // ベースライン照合は違反ノード単位: 許可済みセレクタに一致するノード
       // だけを取り除き、残ったノード (= 新規違反) があれば fail 対象に残す。
-      const targets = allowed
-        .filter((b) => b.ruleId === v.id)
-        .flatMap((b) => b.targets);
+      const targets = allowed.filter((b) => b.ruleId === v.id).flatMap((b) => b.targets);
       if (targets.length === 0) return v;
-      const nodes = v.nodes.filter(
-        (n) => !targets.some((sel) => n.target.join(" ").includes(sel)),
-      );
+      const nodes = v.nodes.filter((n) => !targets.some((sel) => n.target.join(" ").includes(sel)));
       return { ...v, nodes };
     })
     .filter((v) => v.nodes.length > 0);
@@ -190,9 +182,7 @@ function formatViolations(violations: axe.Result[]): string {
     .map(
       (v) =>
         `[${v.impact}] ${v.id}: ${v.help}\n` +
-        v.nodes
-          .map((n) => `    ${n.target.join(" ")} — ${n.failureSummary ?? ""}`)
-          .join("\n"),
+        v.nodes.map((n) => `    ${n.target.join(" ")} — ${n.failureSummary ?? ""}`).join("\n"),
     )
     .join("\n");
 }
@@ -211,16 +201,9 @@ describe("アクセシビリティ自動検査 (axe-core / 実ブラウザ)", ()
 
   it("接続フォームに新規の critical/serious 違反がない", async () => {
     const screen = await renderInBrowser(
-      <ConnectionForm
-        initial={null}
-        profiles={[]}
-        onSaved={() => {}}
-        onCancel={() => {}}
-      />,
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
     );
-    await expect
-      .element(screen.getByRole("button", { name: t("formSave") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("formSave") })).toBeVisible();
 
     const violations = await runAxe("connection-form");
     expect(violations, formatViolations(violations)).toEqual([]);
@@ -254,21 +237,17 @@ describe("アクセシビリティ自動検査 (axe-core / 実ブラウザ)", ()
         onCancel={() => {}}
       />,
     );
-    await expect
-      .element(screen.getByRole("button", { name: t("dangerousConfirm") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("dangerousConfirm") })).toBeVisible();
 
     const violations = await runAxe("dangerous-query-dialog");
     expect(violations, formatViolations(violations)).toEqual([]);
   });
 
   it("設定画面に新規の critical/serious 違反がない", async () => {
-    const screen = await renderInBrowser(
-      <SettingsView theme="light" onClose={() => {}} />,
-    );
-    await expect.element(
-      screen.getByRole("heading", { name: t("settingsTitle"), exact: true }),
-    ).toBeVisible();
+    const screen = await renderInBrowser(<SettingsView theme="light" onClose={() => {}} />);
+    await expect
+      .element(screen.getByRole("heading", { name: t("settingsTitle"), exact: true }))
+      .toBeVisible();
 
     const violations = await runAxe("settings");
     expect(violations, formatViolations(violations)).toEqual([]);
