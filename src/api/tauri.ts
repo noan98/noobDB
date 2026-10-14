@@ -2321,6 +2321,8 @@ export interface ScriptAnalysis {
   txControls: { index: number; line: number; kind: "begin" | "commit" | "rollback" }[];
   headLimit: number;
   listLimit: number;
+  /** BEGIN したまま COMMIT / ROLLBACK なしで終わるスクリプトか。 */
+  unclosedTransaction: boolean;
 }
 
 export interface ScriptAnalyzedEvent {
@@ -2362,6 +2364,8 @@ export interface ScriptDoneEvent {
   skippedExcluded: number;
   /** 開始位置より前で読み飛ばした文の数 (#1535)。 */
   skippedBeforeStart: number;
+  /** BEGIN したまま終わったスクリプトを EOF でランナーが COMMIT したか。 */
+  implicitCommit: boolean;
   rowsAffected: number;
   elapsedMs: number;
 }

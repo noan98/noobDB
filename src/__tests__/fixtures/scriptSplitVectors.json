@@ -186,6 +186,34 @@
         "CREATE TABLE t(x int)",
         "COMMIT"
       ]
+    },
+    {
+      "sql": "INSERT INTO t VALUES (\"a\\\"b; c\"); SELECT 1",
+      "note": "#1601: MySQL は \"…\" 内の \\\" もエスケープ。他方言では \"…\" は識別子で \\ はただの文字",
+      "statements": [
+        "INSERT INTO t VALUES (\"a\\\"b",
+        "c\"); SELECT 1"
+      ],
+      "statementsMysql": [
+        "INSERT INTO t VALUES (\"a\\\"b; c\")",
+        "SELECT 1"
+      ]
+    },
+    {
+      "sql": "INSERT INTO t VALUES (E'it\\'s; ok'); SELECT 1",
+      "note": "#1601: PostgreSQL の E'…' 内の \\' はエスケープ (MySQL も同じ)。SQLite では通常のリテラルなので \\' で閉じる",
+      "statements": [
+        "INSERT INTO t VALUES (E'it\\'s",
+        "ok'); SELECT 1"
+      ],
+      "statementsMysql": [
+        "INSERT INTO t VALUES (E'it\\'s; ok')",
+        "SELECT 1"
+      ],
+      "statementsPostgres": [
+        "INSERT INTO t VALUES (E'it\\'s; ok')",
+        "SELECT 1"
+      ]
     }
   ]
 }

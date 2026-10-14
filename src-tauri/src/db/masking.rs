@@ -288,7 +288,9 @@ fn source_text(v: &Value) -> Cow<'_, str> {
         Value::Bool(b) => Cow::Owned(b.to_string()),
         Value::Int(i) => Cow::Owned(i.to_string()),
         Value::UInt(u) => Cow::Owned(u.to_string()),
-        Value::Float(f) => Cow::Owned(f.to_string()),
+        // JS の `String(v)` 表記にそろえる (指数域 `1e-7`、`-0.0` は `0`)。結果グリッドの
+        // フィルタ (`js_compat::value_str`) や同値の他列と同じ仮名になる (#1597)。
+        Value::Float(f) => Cow::Owned(crate::db::js_compat::js_number_to_string(*f)),
         Value::String(s) | Value::Bytes(s) => Cow::Borrowed(s.as_str()),
     }
 }

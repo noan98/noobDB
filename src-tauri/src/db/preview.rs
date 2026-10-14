@@ -189,9 +189,15 @@ pub(crate) fn update_set_segment(sql: &str, flavor: SqlFlavor) -> Option<String>
     after_set.get(..end).map(str::to_string)
 }
 
+/// `cur` の末尾が単独の `E` / `e` (PostgreSQL のエスケープ文字列の接頭辞) か。
+fn ends_with_pg_e_prefix(cur: &str) -> bool {
+    let mut it = cur.chars().rev();
+    matches!(it.next(), Some('e' | 'E')) && !it.next().is_some_and(super::is_pg_ident_char)
+}
+
 /// 文字列リテラル・引用付き識別子・括弧の外にある `sep` で `text` を分割する。
 fn split_top_level(text: &str, sep: char, flavor: SqlFlavor) -> Vec<String> {
-    let backslash_escapes = flavor == SqlFlavor::MySql;
+    let mut backslash_escapes = flavor == SqlFlavor::MySql;
     let mut parts = Vec::new();
     let mut cur = String::new();
     let mut depth: i32 = 0;
@@ -217,6 +223,9 @@ fn split_top_level(text: &str, sep: char, flavor: SqlFlavor) -> Vec<String> {
         }
         match c {
             '\'' | '"' | '`' => {
+                // PostgreSQL の `E'…'` だけは `\` がエスケープになる。
+                backslash_escapes = flavor == SqlFlavor::MySql
+                    || (flavor == SqlFlavor::Postgres && c == '\'' && ends_with_pg_e_prefix(&cur));
                 quote = Some(c);
                 cur.push(c);
             }
@@ -358,7 +367,8 @@ fn find_top_level_keyword(
     // バックスラッシュを文字列のエスケープと見なすのは MySQL だけ (#852 と
     // 同じ方針)。ドル引用は PostgreSQL だけ、バックティック識別子は
     // PostgreSQL 以外。
-    let backslash_escapes = flavor == SqlFlavor::MySql;
+    let mysql_escapes = flavor == SqlFlavor::MySql;
+    let mut backslash_escapes = mysql_escapes;
     let dollar_quotes = flavor == SqlFlavor::Postgres;
     let backtick_quotes = flavor != SqlFlavor::Postgres;
     let mut depth: i32 = 0;
@@ -399,8 +409,19 @@ fn find_top_level_keyword(
             }
         } else {
             match c {
-                b'\'' => in_single = true,
-                b'"' => in_double = true,
+                b'\'' => {
+                    in_single = true;
+                    // PostgreSQL の `E'…'` は `\` がエスケープ (直前が単独の E/e)。
+                    backslash_escapes = mysql_escapes
+                        || (flavor == SqlFlavor::Postgres
+                            && i >= 1
+                            && matches!(bytes[i - 1], b'e' | b'E')
+                            && (i == 1 || !super::is_pg_ident_byte(bytes[i - 2])));
+                }
+                b'"' => {
+                    in_double = true;
+                    backslash_escapes = mysql_escapes;
+                }
                 b'`' if backtick_quotes => in_backtick = true,
                 b'(' => depth += 1,
                 b')' if depth > 0 => {
@@ -627,6 +648,28 @@ mod tests {
         assert_eq!(
             extract_where_and_after(r"UPDATE t SET x = 'a\' WHERE b = 1", SqlFlavor::Postgres),
             Some("WHERE b = 1".into())
+        );
+    }
+
+    #[test]
+    fn postgres_e_string_backslash_is_an_escape() {
+        // E'…' では `\'` が有効なエスケープなので、リテラル内の where は拾わず
+        // 末尾の本物の WHERE を切り出す (#1601)。
+        assert_eq!(
+            extract_where_and_after(
+                r"UPDATE msg SET body = E'it\'s where' WHERE id = 3",
+                SqlFlavor::Postgres
+            ),
+            Some("WHERE id = 3".into())
+        );
+        // 単語の一部である e (name'..) は E 文字列ではない。
+        assert_eq!(
+            extract_where_and_after(r"UPDATE t SET x = 'a\' WHERE b = 1", SqlFlavor::Postgres),
+            Some("WHERE b = 1".into())
+        );
+        assert_eq!(
+            split_top_level(r"E'a\',b', c", ',', SqlFlavor::Postgres),
+            vec![r"E'a\',b'".to_string(), " c".to_string()]
         );
     }
 

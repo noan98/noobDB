@@ -776,6 +776,7 @@ fn build_fixtures() -> serde_json::Value {
         skipped_control: 2,
         skipped_excluded: 3,
         skipped_before_start: 10,
+        implicit_commit: true,
         rows_affected: 57,
         elapsed_ms: 900,
     };

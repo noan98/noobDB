@@ -368,11 +368,10 @@ fn matches_value(v: &Value, cond: &Prepared) -> bool {
     }
 }
 
-/// `columnFilter` (1 フィルタ × 1 セル)。`cell` が `None` / `Some(Null)` / 非有限浮動小数は NULL。
+/// `columnFilter` (1 フィルタ × 1 セル)。`cell` が `None` / `Some(Null)` は NULL (非有限浮動小数は IPC で文字列になるので NULL ではない、#1597)。
 fn passes_filter(f: &PreparedFilter, cell: Option<&Value>) -> bool {
     let is_null = match cell {
         None | Some(Value::Null) => true,
-        Some(Value::Float(x)) => !x.is_finite(),
         Some(_) => false,
     };
     if f.null_mode == NullMode::Only {

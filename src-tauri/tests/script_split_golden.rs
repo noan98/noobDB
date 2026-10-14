@@ -29,6 +29,9 @@ struct VectorCase {
     statements: Vec<String>,
     #[serde(rename = "statementsMysql", default)]
     statements_mysql: Option<Vec<String>>,
+    /// PostgreSQL だけの期待値 (`E'…'` のバックスラッシュエスケープ、#1601)。
+    #[serde(rename = "statementsPostgres", default)]
+    statements_postgres: Option<Vec<String>>,
 }
 
 #[test]
@@ -39,11 +42,12 @@ fn script_split_matches_shared_vectors() {
     for name in &vectors.drivers {
         let driver = t::DriverKind::parse(name).expect("known driver name");
         for case in &vectors.cases {
-            let expected = if driver == t::DriverKind::Mysql {
-                case.statements_mysql.as_ref().unwrap_or(&case.statements)
-            } else {
-                &case.statements
-            };
+            let expected = match driver {
+                t::DriverKind::Mysql => case.statements_mysql.as_ref(),
+                t::DriverKind::Postgres => case.statements_postgres.as_ref(),
+                t::DriverKind::Sqlite => None,
+            }
+            .unwrap_or(&case.statements);
             assert_eq!(
                 &t::split_script(driver, &case.sql),
                 expected,
