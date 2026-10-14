@@ -1990,7 +1990,8 @@ html, body, #root {
   }
 
   /* チェックボックス / ラジオはネイティブ描画を壊さないよう除外 (ui.tsx の Checkbox / Radio が担う)。 */
-  input:not([type="checkbox"]):not([type="radio"]), select {
+  /* :where() で詳細度を (0,0,1) のままにし、下の :focus-visible / [aria-invalid] の枠線を負けさせない。 */
+  input:where(:not([type="checkbox"]):not([type="radio"])), select {
     font: inherit;
     /* 密度対応のフィールド/コントロールトークン (#327, #620)。縦は --control-py で
        ボタンと高さを揃え、横は --field-px (8px 相当)。 */

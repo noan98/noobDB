@@ -192,7 +192,8 @@ export function LocalTablesPanel({
                 )}
                 <CodePreview
                   wrap
-                  maxH="4.5em"
+                  // CodePreview の上下 padding の分を足し、本文 3 行ぶんを見せる。
+                  maxH="calc(4.5em + 2 * var(--space-2-5))"
                   overflow="hidden"
                   fontSize="xs"
                   color="app.textMuted"

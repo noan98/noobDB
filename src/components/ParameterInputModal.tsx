@@ -170,6 +170,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                   >{`{{${name}}}`}</chakra.code>
                 </Tooltip>
                 <Select
+                  fontSize="sm"
                   value={d?.type ?? "text"}
                   aria-label={t("parameterInputTypeLabelFor", { name })}
                   onChange={(e) => setDraft(name, { type: e.target.value as ParamType })}
@@ -184,6 +185,7 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                   <Input
                     ref={idx === 0 ? firstInputRef : undefined}
                     fontFamily="mono"
+                    fontSize="sm"
                     type="text"
                     inputMode={d?.type === "number" ? "decimal" : undefined}
                     value={d?.value ?? ""}
