@@ -62,10 +62,7 @@ fn load_from(path: &Path) -> Result<Vec<Assertion>> {
             // 壊れたままだと一覧・追加・編集・削除・定期タスクのアサーション実行が
             // すべて失敗し、画面から復旧できない。`tasks.json` と同じく退避して
             // 空から再開する (退避先は `assertions.json.corrupt-<UTC>`。内容は失わない)。
-            let backup = path.with_file_name(format!(
-                "{FILE_NAME}.corrupt-{}",
-                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
+            let backup = crate::json_tolerant::corrupt_backup_path(path);
             tracing::error!(
                 path = %path.display(),
                 backup = %backup.display(),

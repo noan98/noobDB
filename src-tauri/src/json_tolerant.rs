@@ -63,3 +63,79 @@ pub(crate) fn build_with_raw<T: serde::Serialize>(
     }
     Ok(value)
 }
+
+/// 壊れたストアの退避先 `<name>.corrupt-<UTC秒>-<連番>`。同じ秒に複数回退避しても既存の
+/// 退避を上書きしない (存在しない名前が見つかるまで連番を進める)。
+pub(crate) fn corrupt_backup_path(path: &std::path::Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "store.json".to_string());
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+    let mut n = 0u32;
+    loop {
+        let candidate = path.with_file_name(format!("{name}.corrupt-{ts}-{n}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// JSON としては正しいが、トップレベルがオブジェクトでない / `key` が配列でない場合に、
+/// ファイルを `corrupt_backup_path` へ退避して `true` を返す。呼び出し側は空として扱う
+/// (放置すると次の保存が元の内容を退避なしで上書きする)。
+pub(crate) fn quarantine_if_unexpected_shape(
+    path: &std::path::Path,
+    content: &str,
+    key: &str,
+) -> Result<bool> {
+    let Ok(value) = serde_json::from_str::<Value>(content) else {
+        return Ok(false);
+    };
+    if value.is_object() && value.get(key).map_or(true, Value::is_array) {
+        return Ok(false);
+    }
+    let backup = corrupt_backup_path(path);
+    tracing::error!(
+        path = %path.display(),
+        backup = %backup.display(),
+        "store has an unexpected shape; moving it aside and starting empty"
+    );
+    std::fs::rename(path, &backup)?;
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unexpected_shapes_are_quarantined() {
+        let dir = std::env::temp_dir().join(format!("noobdb_jt_shape_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (i, body) in ["[1]", r#"{"k": {"a": 1}}"#].into_iter().enumerate() {
+            let p = dir.join(format!("f{i}.json"));
+            std::fs::write(&p, body).unwrap();
+            assert!(quarantine_if_unexpected_shape(&p, body, "k").unwrap());
+            assert!(!p.exists());
+        }
+        let ok = dir.join("ok.json");
+        std::fs::write(&ok, r#"{"k": []}"#).unwrap();
+        assert!(!quarantine_if_unexpected_shape(&ok, r#"{"k": []}"#, "k").unwrap());
+        assert!(ok.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_backup_path_never_reuses_an_existing_name() {
+        let dir = std::env::temp_dir().join(format!("noobdb_jt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let base = dir.join("x.json");
+        let a = corrupt_backup_path(&base);
+        std::fs::write(&a, "1").unwrap();
+        let b = corrupt_backup_path(&base);
+        assert_ne!(a, b);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

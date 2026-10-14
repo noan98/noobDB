@@ -45,6 +45,9 @@ fn load_all_locked() -> Result<Vec<Snippet>> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
+    if crate::json_tolerant::quarantine_if_unexpected_shape(&path, &content, "snippets")? {
+        return Ok(Vec::new());
+    }
     // 1 件が解釈できなくても残りは読む。解釈できなかった要素は保存時に書き戻す。
     Ok(crate::json_tolerant::parse_items::<Snippet>(&content, "snippets")?.0)
 }

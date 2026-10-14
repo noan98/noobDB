@@ -13,7 +13,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     // シンボリックリンクなら実体を対象にする (無ければ指定パスのまま新規作成)。
-    let target: PathBuf = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let target: PathBuf = std::fs::canonicalize(path).unwrap_or_else(|_| {
+        // リンク先が存在しない symlink は canonicalize できない。リンク自体を置き換えず、
+        // `read_link` で解決したリンク先へ新規作成する。
+        match std::fs::read_link(path) {
+            Ok(link) if link.is_absolute() => link,
+            Ok(link) => path.parent().unwrap_or_else(|| Path::new(".")).join(link),
+            Err(_) => path.to_path_buf(),
+        }
+    });
     let dir = target.parent().unwrap_or_else(|| Path::new("."));
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -35,7 +43,9 @@ pub(crate) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let written = f.write_all(content).and_then(|()| f.sync_all()).map(|()| {
         // 既存ファイルのパーミッションを引き継ぐ (失敗しても保存自体は続ける)。
         if let Ok(meta) = std::fs::metadata(&target) {
-            if meta.is_file() {
+            // 読み取り専用のパーミッションは引き継がない (Windows では一時ファイルの
+            // rename / 後始末が拒否され、残骸が残りうる)。
+            if meta.is_file() && !meta.permissions().readonly() {
                 let _ = f.set_permissions(meta.permissions());
             }
         }
@@ -88,6 +98,22 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp."))
             .count();
         assert_eq!(temps, 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_is_resolved_not_replaced() {
+        let dir = scratch("dangling");
+        let real = dir.join("real.txt");
+        let link = dir.join("link.txt");
+        std::os::unix::fs::symlink("real.txt", &link).unwrap();
+        write_atomic(&link, b"x").unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(std::fs::read_to_string(&real).unwrap(), "x");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

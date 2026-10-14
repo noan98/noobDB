@@ -727,6 +727,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // 古い成功バナーを消す (テストしていない接続先が検証済みに見えて保存されるのを防ぐ)。
   const testedSigRef = useRef<string | null>(null);
   const requestSig = JSON.stringify(buildRequest());
+  // 非同期の完了後に「現在の」入力を読むため、毎レンダーで最新の関数を保持する。
+  const buildRequestRef = useRef(buildRequest);
+  buildRequestRef.current = buildRequest;
   useEffect(() => {
     if (testedSigRef.current !== null && testedSigRef.current !== requestSig) {
       testedSigRef.current = null;
@@ -742,8 +745,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     try {
       const req = buildRequest();
       await api.testConnection(req);
-      testedSigRef.current = JSON.stringify(req);
-      setMessage(t("formConnectionOk"));
+      // await 中に入力が変わっていたら、古い結果のバナーは出さない。
+      if (JSON.stringify(buildRequestRef.current()) === JSON.stringify(req)) {
+        testedSigRef.current = JSON.stringify(req);
+        setMessage(t("formConnectionOk"));
+      }
     } catch (e) {
       setError(String(e));
     } finally {

@@ -329,8 +329,9 @@ async fn run_cancelable<T: Send + 'static>(
     }
 }
 
-/// `ping_session` の応答待ち上限。
-const PING_TIMEOUT: Duration = Duration::from_secs(8);
+/// `ping_session` の応答待ち上限。プールの `acquire_timeout` (15 秒) より長くして、長いクエリで
+/// プールが埋まっているだけの接続を切断扱いにしない。
+const PING_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Connection health check. Returns `true` when the session's connection
 /// answers a lightweight `SELECT 1`, `false` when it is dead (sleep / dropped

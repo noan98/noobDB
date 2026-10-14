@@ -69,10 +69,7 @@ fn load_file_at(path: &std::path::Path) -> Result<TaskFile> {
         Err(e) => {
             // JSON として読めない: 放置すると tick の読み込みも保存もすべて失敗し、全タスクが
             // 止まって復旧手段が無くなる。壊れたファイルを退避して空として扱う。
-            let backup = path.with_file_name(format!(
-                "tasks.json.corrupt-{}",
-                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-            ));
+            let backup = corrupt_backup_path(&path);
             tracing::error!(
                 path = %path.display(),
                 backup = %backup.display(),
@@ -117,10 +114,7 @@ fn load_file_at(path: &std::path::Path) -> Result<TaskFile> {
 }
 
 fn corrupt_backup_path(path: &std::path::Path) -> std::path::PathBuf {
-    path.with_file_name(format!(
-        "tasks.json.corrupt-{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-    ))
+    crate::json_tolerant::corrupt_backup_path(path)
 }
 
 /// 要素単位の寛容パース。解釈できないタスクは警告して読み飛ばし、生の JSON を第 2 戻り値で

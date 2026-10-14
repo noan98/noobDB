@@ -561,11 +561,33 @@ pub async fn save_local_database_inner(
     // 同名ファイルへも保存できるよう、同じディレクトリの一時ファイルへ書いてから置き換える
     // (途中で失敗しても既存ファイルは壊れない)。
     let target = std::path::Path::new(path);
+    // 現在開いている SQLite セッション (ファイルから開いたローカル DB / プロファイル) の
+    // ファイルそのものへ上書きすると、使用中のファイルを差し替えてしまうので拒否する。
+    // 判定は正規化パスの一致のみ (ハードリンク等の別名までは見ない)。
+    if let Some(open_path) = session.connect_options.file_path.as_deref() {
+        let same = match (
+            std::fs::canonicalize(open_path),
+            std::fs::canonicalize(target),
+        ) {
+            (Ok(a), Ok(b)) => a == b,
+            _ => false,
+        };
+        if same {
+            return Err(AppError::InvalidInput(
+                "cannot save over the database file that is currently open".into(),
+            ));
+        }
+    }
     let mut tmp_name = target
         .file_name()
         .map(|n| n.to_os_string())
         .unwrap_or_else(|| "noobdb-local".into());
-    tmp_name.push(format!(".noobdb-save-{}.tmp", std::process::id()));
+    static SAVE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    tmp_name.push(format!(
+        ".noobdb-save-{}-{}.tmp",
+        std::process::id(),
+        SAVE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     let tmp = target.with_file_name(tmp_name);
     let _ = std::fs::remove_file(&tmp);
     let tmp_str = tmp
