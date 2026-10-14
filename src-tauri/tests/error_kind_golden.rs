@@ -80,6 +80,7 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
         }
         "FlightAlreadyUndone" => AppError::FlightAlreadyUndone,
         "FlightPrimaryKeyUnresolved" => AppError::FlightPrimaryKeyUnresolved,
+        "ViewBaseUnresolved" => AppError::ViewBaseUnresolved,
         "FlightDriverMismatch" => AppError::FlightDriverMismatch,
         "FlightProfileMismatch" => AppError::FlightProfileMismatch,
         other => panic!(

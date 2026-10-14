@@ -26,7 +26,7 @@ use crate::db::types::{QueryResult, Value};
 use crate::db::{DriverKind, WriteKind, DEFAULT_CAPTURE_ROW_CAP};
 use crate::error::{AppError, Result};
 use crate::flight_recorder::undo::{
-    build_redo_plan, build_undo_plan, invert_for_redo, UndoConflict,
+    build_redo_plan_with_generated, build_undo_plan_with_generated, invert_for_redo, UndoConflict,
 };
 use crate::flight_recorder::{persist_capture, store as flight_store, WriteCaptureSummary};
 use crate::state::AppState;
@@ -266,6 +266,21 @@ async fn apply_flight_plan(
     let (plan, record) = plan_flight(state, &session_id, id, force, redo).await?;
 
     if plan.statements.is_empty() {
+        // 実行する文は無いが、目的の状態が既に成立している (行が既に無い・手動で戻し済み)
+        // ときは、記録を取り消し済み / やり直し済みにする。放置すると記録が永久に
+        // 未取り消しのまま残り、押しても何も起きない Undo が並び続ける (#1600)。
+        if plan.already_satisfied && plan.conflicts.is_empty() {
+            let mut warnings = plan.warnings;
+            if let Some(w) = mark_flight_state(id, redo).await {
+                warnings.push(w);
+            }
+            return Ok(UndoOutcome {
+                applied: true,
+                rows_affected: 0,
+                conflicts: plan.conflicts,
+                warnings,
+            });
+        }
         return Ok(UndoOutcome {
             applied: false,
             rows_affected: 0,
@@ -290,20 +305,40 @@ async fn apply_flight_plan(
     )
     .await?;
 
-    if redo {
-        if let Err(e) = flight_store::mark_redone(id).await {
-            tracing::warn!(error = %e, capture_id = id, "failed to mark flight recorder capture as redone");
-        }
-    } else if let Err(e) = flight_store::mark_undone(id).await {
-        tracing::warn!(error = %e, capture_id = id, "failed to mark flight recorder capture as undone");
+    // 逆 SQL は適用済みなので、記録の状態を保存できなくても失敗にはしない
+    // (DB は元に戻っている)。ただし黙って成功扱いにせず、警告として利用者へ返す (#1600)。
+    let mut warnings = plan.warnings;
+    if let Some(w) = mark_flight_state(id, redo).await {
+        warnings.push(w);
     }
 
     Ok(UndoOutcome {
         applied: true,
         rows_affected: result.rows_affected,
         conflicts: plan.conflicts,
-        warnings: plan.warnings,
+        warnings,
     })
+}
+
+/// 取り消し (`redo` なら やり直し) 済みの状態を記録ストアへ保存する。失敗したら
+/// 利用者に見せる警告文を返す (ログにも残す)。
+async fn mark_flight_state(id: i64, redo: bool) -> Option<String> {
+    let result = if redo {
+        flight_store::mark_redone(id).await
+    } else {
+        flight_store::mark_undone(id).await
+    };
+    match result {
+        Ok(()) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, capture_id = id, redo, "failed to update flight recorder capture state");
+            Some(if redo {
+                "やり直しは適用しましたが、記録の状態を保存できませんでした (記録は取り消し済みのまま残ります)".to_string()
+            } else {
+                "取り消しは適用しましたが、記録の状態を保存できませんでした (記録は未取り消しのまま残ります。再度取り消さないでください)".to_string()
+            })
+        }
+    }
 }
 
 /// Shared core of [`preview_undo`] / [`undo_flight_record`]: loads the
@@ -404,10 +439,17 @@ async fn plan_flight(
         )
         .await?;
 
+    // 捕捉は `SELECT *` 相当なので生成列も `columns` に入る。生成列は INSERT / UPDATE で
+    // 値を渡せないので逆 SQL から外す (#1600)。列情報を取れなくても取り消し自体は続ける。
+    let generated_columns = session
+        .conn
+        .generated_columns(record.database.as_deref(), &record.table)
+        .await
+        .unwrap_or_default();
     let plan = if redo {
-        build_redo_plan(&record, &current_rows, force)
+        build_redo_plan_with_generated(&record, &current_rows, force, &generated_columns)
     } else {
-        build_undo_plan(&record, &current_rows, force)
+        build_undo_plan_with_generated(&record, &current_rows, force, &generated_columns)
     };
     Ok((plan, record))
 }

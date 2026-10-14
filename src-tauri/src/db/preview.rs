@@ -81,7 +81,8 @@ pub(crate) fn before_where_clause(
     // 側だけは解決できてしまい、食い違いにも気付きにくい)。
     let cleaned = super::strip_sql_comments(sql, flavor);
     let head = cleaned.trim_start().to_ascii_lowercase();
-    let is_postgres = flavor == SqlFlavor::Postgres;
+    // `UPDATE … FROM` / `RETURNING` は MySQL 以外 (PostgreSQL / SQLite 3.33+/3.35+) にある。
+    let is_postgres = flavor != SqlFlavor::MySql;
     // 先頭に置く "where" が「見つけたい句」、それ以降は「これが先に出たら
     // WHERE の再利用をやめる」失格キーワード。
     let keywords: &[&str] = if head.starts_with("update") {
@@ -330,7 +331,7 @@ pub(crate) fn build_after_by_pk_sql(
 /// `None`。
 fn clause_tail(cleaned: &str, pos: usize, flavor: SqlFlavor) -> Option<String> {
     let mut tail = cleaned.get(pos..)?;
-    if flavor == SqlFlavor::Postgres {
+    if flavor != SqlFlavor::MySql {
         if let Some((ret, _)) = find_top_level_keyword(tail, &["returning"], flavor) {
             tail = tail.get(..ret)?;
         }

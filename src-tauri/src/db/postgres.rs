@@ -1320,6 +1320,27 @@ impl PostgresConn {
         Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
     }
 
+    /// 生成列 (`GENERATED ALWAYS AS (...) STORED`) の列名 (#1600)。`database` は
+    /// スキーマ名で、`None` なら接続の現在のスキーマ。
+    pub async fn generated_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        let schema = database.filter(|d| !d.is_empty());
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT column_name::text FROM information_schema.columns \
+             WHERE table_schema = COALESCE($1, current_schema()) AND table_name = $2 \
+               AND is_generated = 'ALWAYS' \
+             ORDER BY ordinal_position",
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
+    }
+
     /// `schema` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。
     /// [`PgConn::columns`] の `table_name = $2` 条件を外し、PK / FK の副問い合わせを
     /// (テーブル名, 列名) で結合し直しただけなので、列ごとの値・並び
@@ -3166,6 +3187,15 @@ pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
             if maybe.eq_ignore_ascii_case("only") {
                 maybe = iter.next()?;
             }
+            // `DELETE FROM t [AS] a WHERE a.id = …` は WHERE が別名を参照し、
+            // `SELECT * FROM t WHERE a.id = …` の BEFORE が成立しないので認識しない。
+            if iter.peek().is_some_and(|t| {
+                !["where", "using", "returning"]
+                    .iter()
+                    .any(|k| t.eq_ignore_ascii_case(k))
+            }) {
+                return None;
+            }
             Some(maybe)
         }
         "insert" => {
@@ -3698,6 +3728,19 @@ mod tests {
         );
         assert_eq!(
             extract_target_table("DELETE FROM ONLY orders"),
+            Some("orders".into())
+        );
+        // #1600: 別名付き DELETE は WHERE が別名を参照するので認識しない。
+        assert_eq!(
+            extract_target_table("DELETE FROM orders AS o WHERE o.status = 'x'"),
+            None
+        );
+        assert_eq!(
+            extract_target_table("DELETE FROM orders o WHERE o.id = 1"),
+            None
+        );
+        assert_eq!(
+            extract_target_table("DELETE FROM orders RETURNING id"),
             Some("orders".into())
         );
     }
