@@ -1,3 +1,4 @@
+import { columnFilterPasses } from "../components/gridSortFilter";
 import { describe, expect, it } from "vitest";
 import {
   clientQuickFilter,
@@ -84,6 +85,25 @@ describe("serverQuickFilter (table tab / server-side WHERE)", () => {
     expect(
       buildServerFilterClause("sqlite", { column: "note", ...serverQuickFilter(null, "ne", false) }),
     ).toBe(`"note" IS NOT NULL`);
+  });
+});
+
+describe("clientQuickFilter の大小区別", () => {
+  it("caseSensitive 指定で文字列の等値は大小区別になる", () => {
+    const f = clientQuickFilter("Tokyo", "ne", false, true);
+    expect(f.caseSensitive).toBe(true);
+    // 数値列には付かない
+    expect(clientQuickFilter(1, "eq", true, true).caseSensitive).toBeUndefined();
+    // 指定なしは従来どおり
+    expect(clientQuickFilter("Tokyo", "ne", false).caseSensitive).toBeUndefined();
+  });
+
+  it("columnFilterPasses は caseSensitive の notEquals で大小違いの行を残す", () => {
+    const f = clientQuickFilter("Tokyo", "ne", false, true);
+    expect(columnFilterPasses("tokyo", f)).toBe(true);
+    expect(columnFilterPasses("Tokyo", f)).toBe(false);
+    const insensitive = clientQuickFilter("Tokyo", "ne", false);
+    expect(columnFilterPasses("tokyo", insensitive)).toBe(false);
   });
 });
 

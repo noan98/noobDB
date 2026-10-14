@@ -34,6 +34,19 @@ describe("parseConnectionUrl: ネットワーク DB (#1540)", () => {
     expect(v.database).toBe("my db");
   });
 
+  it("パスワード中の未エンコードの ? でも host / port を誤認しない (#1593)", () => {
+    const v = parsed("mysql://root:12?3@db/app");
+    expect(v.user).toBe("root");
+    expect(v.password).toBe("12?3");
+    expect(v.host).toBe("db");
+    expect(v.port).toBeUndefined();
+    expect(v.database).toBe("app");
+    // 通常のクエリ (値に @ を含む) は従来どおりクエリとして扱う。
+    const w = parsed("postgres://h/d?user=a@b");
+    expect(w.host).toBe("h");
+    expect(w.user).toBe("a@b");
+  });
+
   it("パスワード中の未エンコードの @ は最後の @ で区切る", () => {
     const v = parsed("mysql://u:p@ss@host/db");
     expect(v.user).toBe("u");

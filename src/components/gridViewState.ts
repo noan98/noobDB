@@ -1,4 +1,5 @@
 import type { ColumnFiltersState, SortingState } from "@tanstack/react-table";
+import { setItemWithEviction, touchLayoutLruForKey } from "./columnLayoutStorage";
 import type { ColumnFilter, FilterNullMode, FilterOp } from "./ResultGrid";
 
 /**
@@ -192,7 +193,8 @@ export function writeStoredGridView(key: string | undefined, state: PersistedGri
       if (hasSorting) out.sorting = state.sorting;
       if (hasFilters) out.filters = state.filters;
       if (hasMasks) out.masks = state.masks;
-      localStorage.setItem(key, JSON.stringify(out));
+      touchLayoutLruForKey(key);
+      setItemWithEviction(key, JSON.stringify(out));
     }
   } catch {
     // ignore (private mode, quota)

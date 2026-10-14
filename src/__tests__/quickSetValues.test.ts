@@ -71,6 +71,15 @@ describe("quickSetOptions", () => {
     expect(ids(col("a", "TIMESTAMP(3)"))).toEqual(["null", "now"]);
   });
 
+  it("空文字を受け付けない型 (uuid / json / inet など) には空文字を出さない", () => {
+    for (const t of ["uuid", "JSON", "jsonb", "inet", "xml", "integer[]", "geometry"]) {
+      expect(ids(col("a", t))).toEqual(["null"]);
+    }
+    for (const t of ["TEXT", "character varying(20)", "LONGTEXT", "citext", ""]) {
+      expect(ids(col("a", t))).toContain("empty");
+    }
+  });
+
   // BIT はドライバで意味が変わる唯一の型。MySQL/SQLite では真偽型そのもの
   // (`literalFromInput` が 1/0 へ落とす) だが、PostgreSQL では
   // ビット列 ('10110000') なので true/false も空文字も不正なリテラルになる。

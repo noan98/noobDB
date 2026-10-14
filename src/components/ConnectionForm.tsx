@@ -723,13 +723,33 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     return ok;
   };
 
+  // 接続テストに成功したときの入力内容。以後に接続先 / 認証 / SSH などが書き換わったら、
+  // 古い成功バナーを消す (テストしていない接続先が検証済みに見えて保存されるのを防ぐ)。
+  const testedSigRef = useRef<string | null>(null);
+  const requestSig = JSON.stringify(buildRequest());
+  // 非同期の完了後に「現在の」入力を読むため、毎レンダーで最新の関数を保持する。
+  const buildRequestRef = useRef(buildRequest);
+  buildRequestRef.current = buildRequest;
+  useEffect(() => {
+    if (testedSigRef.current !== null && testedSigRef.current !== requestSig) {
+      testedSigRef.current = null;
+      setMessage(null);
+    }
+  }, [requestSig]);
+
   const handleTest = async () => {
     setError(null); setMessage(null);
+    testedSigRef.current = null;
     if (!validatePorts()) return;
     setTesting(true);
     try {
-      await api.testConnection(buildRequest());
-      setMessage(t("formConnectionOk"));
+      const req = buildRequest();
+      await api.testConnection(req);
+      // await 中に入力が変わっていたら、古い結果のバナーは出さない。
+      if (JSON.stringify(buildRequestRef.current()) === JSON.stringify(req)) {
+        testedSigRef.current = JSON.stringify(req);
+        setMessage(t("formConnectionOk"));
+      }
     } catch (e) {
       setError(String(e));
     } finally {
@@ -739,6 +759,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
   const handleSave = async () => {
     setError(null); setMessage(null);
+    if (name.trim() === "") {
+      setError(t("formNameRequired"));
+      return;
+    }
     if (!validatePorts()) return;
     setSaving(true);
     try {

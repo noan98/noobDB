@@ -251,7 +251,14 @@
       "filters": [{"col": 1, "op": "contains", "value": "", "value2": "", "nullMode": "only"}],
       "sort": [],
       "expected": [1]
-    }
+    },
+    {"name": "filter_equals_case_sensitive", "note": "caseSensitive:true の equals は大小区別 (NULL は不一致)。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "Tokyo", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0]},
+    {"name": "filter_not_equals_case_sensitive", "note": "caseSensitive:true の notEquals は大小違いの行を残す (NULL は値条件にマッチしない)。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "notEquals", "value": "Tokyo", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [1, 2, 4, 5]},
+    {"name": "filter_equals_case_insensitive_default", "note": "caseSensitive 省略の equals は従来どおり大小無視。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "Tokyo", "value2": "", "nullMode": "any"}], "sort": [], "expected": [0, 1, 2]},
+    {"name": "filter_contains_ignores_case_sensitive_flag", "note": "caseSensitive が付いても contains は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "contains", "value": "TOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
+    {"name": "filter_starts_with_ignores_case_sensitive_flag", "note": "caseSensitive が付いても startsWith は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "startsWith", "value": "tOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
+    {"name": "filter_equals_case_sensitive_non_ascii", "note": "非 ASCII (Ä/ä) も caseSensitive の equals は大小区別。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "Ärger", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [4]},
+    {"name": "filter_equals_insensitive_non_ascii", "note": "非 ASCII (Ä/ä) は大小無視の equals で両方一致。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "ÄRGER", "value2": "", "nullMode": "any"}], "sort": [], "expected": [4, 5]}
   ],
   "find": [
     {

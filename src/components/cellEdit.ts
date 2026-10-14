@@ -94,6 +94,33 @@ export function classifyEditType(typeName: string): EditTypeKind {
   return "other";
 }
 
+const INTEGER_TYPES = new Set([
+  "TINYINT",
+  "SMALLINT",
+  "MEDIUMINT",
+  "INT",
+  "INTEGER",
+  "BIGINT",
+  "YEAR",
+  "SERIAL",
+  "BIGSERIAL",
+  "SMALLSERIAL",
+  "INT2",
+  "INT4",
+  "INT8",
+]);
+
+/** 整数型の列か (`UNSIGNED` / `ZEROFILL` / `(n)` 修飾は無視)。小数入力を弾く判定に使う。 */
+export function isIntegerColumnType(typeName: string): boolean {
+  const base = typeName
+    .toUpperCase()
+    .replace(/\(.*$/, "")
+    .replace(/\s+(UNSIGNED|ZEROFILL)\b/g, "")
+    .trim();
+  return INTEGER_TYPES.has(base);
+}
+
+const INTEGER_INPUT_RE = /^-?\d+$/;
 const NUMERIC_INPUT_RE = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
 const DATE_RE = /^\d{4}-\d{1,2}-\d{1,2}$/;
 // 末尾のタイムゾーン (`Z` / `+09` / `+09:00` / `+0900`、直前の空白可) は PostgreSQL の
@@ -168,6 +195,12 @@ export function validateCellInput(
   }
   switch (kind) {
     case "number":
+      // 整数列への小数は DB 側で丸められる (SQLite は REAL のまま保持) 一方、グリッドは
+      // 入力値をそのまま表示してしまうため、書き込む前に弾く。
+      if (isIntegerColumnType(typeName)) {
+        if (INTEGER_INPUT_RE.test(trimmed)) return null;
+        return NUMERIC_INPUT_RE.test(trimmed) ? "editInvalidInteger" : "editInvalidNumber";
+      }
       return NUMERIC_INPUT_RE.test(trimmed) ? null : "editInvalidNumber";
     case "date":
       return DATE_RE.test(trimmed) ? null : "editInvalidDate";

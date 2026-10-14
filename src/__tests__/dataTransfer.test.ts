@@ -75,10 +75,48 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
       expect(validateTransferTarget({ ...same, mode: "create" })).toBe("sameTable");
       // 追記は自己コピー (行の複製) として許す
       expect(validateTransferTarget({ ...same, mode: "append" })).toBeNull();
-      // クエリ結果の転送は対象外
+      // クエリ元は、同名のテーブルを読まない限り対象外
       expect(
         validateTransferTarget({ ...same, mode: "replace", source: querySource, tableName: "orders" }),
       ).toBeNull();
+    });
+
+    it("クエリ元が転送先と同名のテーブルを読むなら置き換えを拒否 (#1598)", () => {
+      const q = (sql: string): TransferSource => ({ kind: "query", database: "app", sql });
+      const same = { ...base, sameProfileAndDatabase: true, tableName: "users", mode: "replace" as const };
+      expect(validateTransferTarget({ ...same, source: q("SELECT * FROM users WHERE active = 1") })).toBe(
+        "queryReadsTarget",
+      );
+      expect(validateTransferTarget({ ...same, source: q("SELECT * FROM `app`.`Users`") })).toBe(
+        "queryReadsTarget",
+      );
+      // 別 DB を修飾して読むクエリは、転送先 DB が違っても (同じプロファイルなら) 拒否
+      expect(
+        validateTransferTarget({
+          ...same,
+          sameProfileAndDatabase: false,
+          sameProfile: true,
+          source: q("SELECT * FROM shop.users"),
+        }),
+      ).toBe("queryReadsTarget");
+      // コメント・文字列リテラル・前方一致の別名は読み取り元ではない
+      expect(validateTransferTarget({ ...same, source: q("SELECT 'users' /* users */ FROM users_old") })).toBeNull();
+      // 別接続・別 DB なら問題ない
+      expect(
+        validateTransferTarget({ ...same, sameProfileAndDatabase: false, source: q("SELECT * FROM users") }),
+      ).toBeNull();
+    });
+
+    it("PostgreSQL は大文字小文字違いを別テーブルとして扱う (#1598)", () => {
+      const same = { ...base, sameProfileAndDatabase: true, mode: "replace" as const };
+      const src: TransferSource = { kind: "table", database: "app", table: "users" };
+      expect(validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "postgres" })).toBeNull();
+      expect(validateTransferTarget({ ...same, source: src, tableName: "users", targetDriver: "postgres" })).toBe(
+        "sameTable",
+      );
+      expect(validateTransferTarget({ ...same, source: src, tableName: "Users", targetDriver: "mysql" })).toBe(
+        "sameTable",
+      );
     });
   });
 

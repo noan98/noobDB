@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Column } from "../api/tauri";
-import { addPinned, addPinnedWithEvicted, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
+import { addPinned, addPinnedWithEvicted, defaultKeyColumn, pinToastPlan, resultsComparable, type PinnedResult } from "../pinnedCompare";
 
 function cols(...names: string[]): Column[] {
   return names.map((name) => ({ name, type_name: "text" }));
@@ -86,5 +86,35 @@ describe("pinToastPlan (#1277)", () => {
     for (const n of [2, 6]) {
       expect(pinToastPlan(n)).toEqual({ messageKey: "pinToastCompare", showOpenAction: true });
     }
+  });
+});
+
+describe("defaultKeyColumn", () => {
+  it("先頭列が非一意なら、両側で一意な次の列を選ぶ", () => {
+    const rows = [
+      ["open", 1],
+      ["open", 2],
+    ];
+    expect(defaultKeyColumn({ columns: cols("status", "id"), rows }, { rows })).toBe("id");
+  });
+
+  it("右側で重複する列は選ばない", () => {
+    const left = [
+      ["a", 1],
+      ["b", 2],
+    ];
+    const right = [
+      ["a", 1],
+      ["a", 2],
+    ];
+    expect(defaultKeyColumn({ columns: cols("k", "id"), rows: left }, { rows: right })).toBe("id");
+  });
+
+  it("一意な列が無ければ先頭列", () => {
+    const rows = [
+      ["x", null],
+      ["x", null],
+    ];
+    expect(defaultKeyColumn({ columns: cols("a", "b"), rows }, { rows })).toBe("a");
   });
 });
