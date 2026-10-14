@@ -108,9 +108,14 @@ export function buildUsageReport(records: readonly AiUsageRecord[], sinceDay?: s
   };
 }
 
-/** USD の表示 (概算なので桁は控えめ。1 セント未満は有効桁が残るよう 4 桁)。 */
+/**
+ * USD の表示 (概算なので桁は控えめ。1 セント未満は有効桁が残るよう 4 桁)。
+ * 0 より大きいのに 4 桁でも 0 に丸まる値 (インライン補完 1 回分など) は "< $0.0001" とし、
+ * 「利用はあるが無料に見える」ことを避ける (#1608)。
+ */
 export function formatUsd(v: number): string {
   if (v <= 0) return "$0.00";
+  if (v < 0.0001) return "< $0.0001";
   if (v < 0.01) return `$${v.toFixed(4)}`;
   return `$${v.toFixed(2)}`;
 }

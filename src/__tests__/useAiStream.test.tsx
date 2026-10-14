@@ -358,7 +358,7 @@ describe("useAiStream (#1470)", () => {
       result.current.acquire();
     });
     expect(result.current.text).toBe("");
-    expect(result.current.elapsedSec).toBe(0);
+    expect(result.current.startedAt).toBeNull();
     expect(result.current.done).toBeNull();
   });
 
@@ -461,42 +461,41 @@ describe("useAiStream (#1470)", () => {
     expect(cancelStream).toHaveBeenCalledWith(id);
   });
 
-  it("受信中は経過秒数が進み、完了すると止まる", async () => {
-    vi.useFakeTimers();
+  it("受信中だけ startedAt を持ち、完了すると null に戻る (経過秒数は hook では進めない)", async () => {
     const { result } = renderHook(() => useAiStream({ idPrefix: "t" }));
+    expect(result.current.startedAt).toBeNull();
     result.current.acquire();
     await act(async () => {
       await result.current.start(request, handlers());
     });
-    expect(result.current.elapsedSec).toBe(0);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3100);
-    });
-    expect(result.current.elapsedSec).toBe(3);
+    expect(typeof result.current.startedAt).toBe("number");
     act(() => wire?.onDone?.(doneEvent));
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3000);
-    });
-    expect(result.current.elapsedSec).toBe(3);
+    expect(result.current.startedAt).toBeNull();
   });
 });
 
 describe("AiStreamProgress (#1470)", () => {
   it("応答開始前は待機文言と経過秒数、届いたら「受信中」と文字数、構造化出力は指定フィールドだけ見せる", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:10Z"));
+    const startedAt = Date.now() - 2000;
     const { rerender } = renderWithProviders(
-      <AiStreamProgress stream={{ text: "", elapsedSec: 2 }} fields={["explanation"]} />,
+      <AiStreamProgress stream={{ text: "", startedAt }} fields={["explanation"]} />,
     );
     expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/2/);
     expect(screen.queryByTestId("ai-stream-preview")).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/5/);
     rerender(
       <AiStreamProgress
-        stream={{ text: '{"explanation":"途中の文章', elapsedSec: 5 }}
+        stream={{ text: '{"explanation":"途中の文章', startedAt }}
         fields={["explanation"]}
       />,
     );
     expect(screen.getByTestId("ai-stream-preview").textContent).toBe("途中の文章");
-    expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/5/);
-    rerender(<AiStreamProgress stream={{ text: '{"explanation":"x', elapsedSec: 5 }} previewText={false} />);
+    rerender(<AiStreamProgress stream={{ text: '{"explanation":"x', startedAt }} previewText={false} />);
     expect(screen.queryByTestId("ai-stream-preview")).toBeNull();
   });
 });

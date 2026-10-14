@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { derivedCompletions } from "../components/sqlDerivedCompletion";
+import { DERIVED_COMPLETION_MAX_CHARS, derivedCompletions } from "../components/sqlDerivedCompletion";
 
 /** カーソルは文末 (= 入力直後) に置く。 */
 const run = (text: string, driver = "mysql") => derivedCompletions({ driver, text, pos: text.length });
@@ -341,10 +341,10 @@ describe("derivedCompletions: 方言の引用と大きな入力 (#1419 再レビ
     expect(derivedCompletions({ driver: "mysql", text, pos })).toBeNull();
   });
 
-  it("大きな 1 文 (約 1MB) でも例外なく、CTE の列を出す", () => {
+  it("大きな 1 文 (約 1MB) でも例外なく処理する (1 文が上限を超えるので補完は出さない、#1608)", () => {
     const text = `WITH x AS (SELECT a, b FROM t) SELECT ${"a, ".repeat(300000)}x.`;
     expect(text.length).toBeGreaterThan(900_000);
-    expect(labels(text)).toEqual(["x.a", "x.b"]);
+    expect(labels(text)).toBeNull();
   });
 
   it("大きな文書 (約 1MB、多数の文) の末尾でも例外なく補完する", () => {
@@ -392,5 +392,35 @@ describe('derivedCompletions: MySQL の "…" と空白名・境界 (#1419 再�
     const got = labels(text) ?? [];
     expect(got).toContain("x.a");
     expect(got).toContain("x");
+  });
+});
+
+describe("derivedCompletions: 文書サイズの上限 (#1608)", () => {
+  const head = "WITH x AS (SELECT a, b FROM t) SELECT ";
+  // 先頭のコメントで文字数だけ稼ぐ (補完の結果には影響しない)。
+  const pad = (n: number) => `/*${" ".repeat(Math.max(0, n - 4))}*/`;
+
+  it("上限以下の文書は全文で読む (上限ちょうどでも補完する)", () => {
+    const within = pad(DERIVED_COMPLETION_MAX_CHARS - head.length) + head;
+    expect(within.length).toBe(DERIVED_COMPLETION_MAX_CHARS);
+    expect(run(within)?.options.map((o) => o.label)).toEqual(["x", "x.a", "x.b"]);
+  });
+
+  it("上限を超える文書は、カーソルのある文だけを切り出して読み、from は元の文書の位置で返す", () => {
+    const earlier = `${pad(DERIVED_COMPLETION_MAX_CHARS)};\nSELECT 1;\n`;
+    const text = `${earlier}${head}`;
+    expect(text.length).toBeGreaterThan(DERIVED_COMPLETION_MAX_CHARS);
+    const r = run(text);
+    expect(r?.from).toBe(text.length);
+    expect(r?.options.map((o) => o.label)).toEqual(["x", "x.a", "x.b"]);
+    // 後ろに別の文が続いていても、カーソルの文だけを見る。
+    const later = derivedCompletions({ driver: "mysql", text: `${text};\nSELECT 2;`, pos: text.length });
+    expect(later?.options.map((o) => o.label)).toEqual(["x", "x.a", "x.b"]);
+  });
+
+  it("カーソルの文そのものが上限を超えるなら補完しない", () => {
+    const over = `${pad(DERIVED_COMPLETION_MAX_CHARS - head.length + 1)}${head}`;
+    expect(over.length).toBe(DERIVED_COMPLETION_MAX_CHARS + 1);
+    expect(run(over)).toBeNull();
   });
 });

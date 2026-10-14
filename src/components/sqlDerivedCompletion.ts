@@ -1,4 +1,4 @@
-import { maskLiterals, type MaskOptions } from "../dangerousSql";
+import { MASK_SPLIT_PAIRS, maskLiterals, type MaskOptions } from "../dangerousSql";
 import { quoteIfNeeded, unquote } from "./sqlJoinCompletion";
 
 /**
@@ -207,8 +207,12 @@ const MASK_OPTIONS: MaskOptions = { keepQuotedIdentifiers: true, cache: false };
  */
 const CURSOR_SENTINEL = "\u0001";
 
-/** カーソルがこの 2 文字記号の間に入ると、印でマスクの結果が変わるので補完しない。 */
-const SPLIT_PAIRS = new Set(["--", "/*", "*/", "''", '""', "``"]);
+/**
+ * 全文をそのままマスクして読む上限の文字数 (プリフライトの `PREFLIGHT_MAX_CHARS`, #1256 と同じ 64KiB)。
+ * 毎打鍵で全文を走査するため、これを超える文書は「カーソルのある文」だけを切り出して読み、
+ * その文自体が上限を超えるなら補完しない (#1608)。上限以下の文書は従来どおり全文で正確に読む。
+ */
+export const DERIVED_COMPLETION_MAX_CHARS = 64 * 1024;
 
 /**
  * マスク前の安価な早期 return (直前 400 文字だけを見る)。補完の文脈になりうるか:
@@ -347,9 +351,8 @@ function parseCtes(s: string, cursor: number): Source[] {
  * `FROM (SELECT ...) [AS] d [(cols)]` / `JOIN (SELECT ...) d` を読む。
  * 別名が無いもの・本体が SELECT で始まらないものは対象外。
  */
-function parseDerived(s: string, cursor: number, tokenEnd: number): Source[] {
+function parseDerived(s: string, cursor: number, tokenEnd: number, cur: readonly number[]): Source[] {
   const out: Source[] = [];
-  const cur = openGroups(s, cursor);
   const aliasRe = new RegExp(`\\s*(?:AS\\s+)?(${IDENT})(?:\\s*\\(([^()]*)\\))?`, "iy");
   for (const m of s.matchAll(/\b(?:FROM|JOIN)\s*\(/gi)) {
     const kw = m.index ?? 0;
@@ -428,10 +431,20 @@ export function derivedCompletions(opts: {
 }): DerivedCompletion | null {
   const { driver, text } = opts;
   const pos = Math.max(0, Math.min(opts.pos, text.length));
+  if (text.length > DERIVED_COMPLETION_MAX_CHARS) {
+    // 大きな文書: `;` でカーソルのある文だけを切り出して読む。文字列 / コメント中の `;` では
+    // 切り口がずれうるが、候補が出ない・ずれる程度で済む (補完は送信も実行もしない)。
+    const start = pos > 0 ? text.lastIndexOf(";", pos - 1) + 1 : 0;
+    const semi = text.indexOf(";", pos);
+    const end = semi < 0 ? text.length : semi;
+    if (end - start > DERIVED_COMPLETION_MAX_CHARS) return null;
+    const r = derivedCompletions({ driver, text: text.slice(start, end), pos: pos - start });
+    return r ? { ...r, from: r.from + start } : null;
+  }
   // 2 文字記号 (コメント開始・終了、空文字・空識別子) の間や `$` 引用の途中では印を入れると
   // 記号の意味が変わるため、安全側に倒して補完しない。
   const splitPair = pos > 0 ? text.slice(pos - 1, pos + 1) : "";
-  if (SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
+  if (MASK_SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;
@@ -503,7 +516,7 @@ export function derivedCompletions(opts: {
   }
   if (mode === null) return null;
 
-  const sources: Source[] = [...parseCtes(s, cursor), ...parseDerived(s, cursor, tokenEnd)];
+  const sources: Source[] = [...parseCtes(s, cursor), ...parseDerived(s, cursor, tokenEnd, owners)];
   const qa = (name: string) => quoteIfNeeded(driver, name);
 
   if (qualRaw !== null) {

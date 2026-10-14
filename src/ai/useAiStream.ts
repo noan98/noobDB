@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { api, listenAiStream, type AiDoneEvent } from "../api/tauri";
+import { aiErrorHintKey } from "../errorHints";
 import { t } from "../i18n";
 
 /** `run_ai_request` に渡す引数 (ストリーム ID はフックが採番する)。 */
@@ -80,8 +81,12 @@ export interface UseAiStream {
   running: boolean;
   /** 受信済みの本文 (構造化出力のときは途中までの JSON)。 */
   text: string;
-  /** 開始からの経過秒数 (受信中のみ進む)。 */
-  elapsedSec: number;
+  /**
+   * 受信を始めた時刻 (`Date.now()`、受信中以外は null)。経過秒数は毎秒変わるので hook では
+   * 持たず、`AiStreamProgress` がこの値から自前のタイマーで数える (hook を使う画面全体が
+   * 毎秒再描画されないようにするため)。
+   */
+  startedAt: number | null;
   /** 混雑で自動再試行を待っている間だけ非 null。本文が届き始めると null に戻る。 */
   retrying: AiRetryState | null;
   /** 直近の完了イベント。次の `start` で消える。 */
@@ -98,7 +103,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
   const { idPrefix } = options;
   const [running, setRunning] = useState(false);
   const [text, setText] = useState("");
-  const [elapsedSec, setElapsedSec] = useState(0);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
   const [retrying, setRetrying] = useState<AiRetryState | null>(null);
   const [done, setDone] = useState<AiDoneEvent | null>(null);
   const busyRef = useRef(false);
@@ -126,6 +131,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     busyRef.current = false;
     if (mountedRef.current) {
       setRunning(false);
+      setStartedAt(null);
       setRetrying(null);
     }
     return true;
@@ -142,15 +148,6 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     };
   }, [cancelRemote]);
 
-  // 受信中だけ経過秒数を進める。
-  useEffect(() => {
-    if (!running) return;
-    const tick = () => setElapsedSec(Math.floor((Date.now() - startedAtRef.current) / 1000));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [running]);
-
   const acquire = useCallback(() => {
     if (busyRef.current) return false;
     busyRef.current = true;
@@ -159,7 +156,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     abortRef.current = false;
     // 前回の本文 / 経過秒数 / 完了イベントを持ち越さない (準備中に古い内容が「受信中」に出ない)。
     setText("");
-    setElapsedSec(0);
+    setStartedAt(null);
     setRetrying(null);
     setDone(null);
     return true;
@@ -187,6 +184,7 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
     streamRef.current = null;
     busyRef.current = false;
     setRunning(false);
+    setStartedAt(null);
     setDone(null);
     setRetrying(null);
   }, [cancelRemote]);
@@ -214,13 +212,15 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       };
       setText("");
       setDone(null);
-      setElapsedSec(0);
+      setStartedAt(startedAtRef.current);
       setRunning(true);
       const fail = (message: string, kind: string) => {
         if (!stopListener(streamId)) return;
         settleText();
-        // 混雑 (429/529) は英語の技術メッセージだけだと次の手が分からないので案内を足す (#1534)。
-        const shown = kind === "aiOverloaded" ? `${message}\n${t("errorHintAiOverloaded")}` : message;
+        // 混雑 (429/529)・認証・ネットワークは英語の技術メッセージだけだと次の手が分からないので
+        // 案内を足す (#1534 / #1608)。
+        const hintKey = aiErrorHintKey(kind, message);
+        const shown = hintKey ? `${message}\n${t(hintKey)}` : message;
         handlers.onError({ message: shown, kind, refused: kind === "aiRefused" });
       };
       try {
@@ -290,10 +290,10 @@ export function useAiStream(options: UseAiStreamOptions): UseAiStream {
       reset,
       running,
       text,
-      elapsedSec,
+      startedAt,
       retrying,
       done,
     }),
-    [acquire, release, isMounted, start, cancel, reset, running, text, elapsedSec, retrying, done],
+    [acquire, release, isMounted, start, cancel, reset, running, text, startedAt, retrying, done],
   );
 }

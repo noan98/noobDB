@@ -181,6 +181,27 @@ export function hintForKind(kind: string | null | undefined, message = ""): I18n
 }
 
 /**
+ * AI 呼び出しのエラー (`aiOverloaded` / `aiAuth` / `aiNetwork`) に添える次の手の案内 (#1608)。
+ * 英語の技術メッセージ (HTTP ステータスや API の種別) は残したまま、その下に日本語で足す。
+ * `hintForKind` に入れないのは、DB 側のエラー表示と共有するゴールデンベクタ
+ * (`errorKindVectors.json`) で AI の kind を「ヒント対象外」に固定しているため。
+ * 403 の `permission_error` は「キーは有効だがこのモデルの権限が無い」ことがあるので、
+ * 「キーが拒否された」と断定せず別の文言にする。
+ */
+export function aiErrorHintKey(kind: string | null | undefined, message = ""): I18nKey | null {
+  switch (kind) {
+    case "aiOverloaded":
+      return "errorHintAiOverloaded";
+    case "aiAuth":
+      return /permission_error|HTTP 403/i.test(message) ? "errorHintAiPermission" : "errorHintAiAuth";
+    case "aiNetwork":
+      return "errorHintAiNetwork";
+    default:
+      return null;
+  }
+}
+
+/**
  * バックエンドが英語の既定文しか持たないエラーを、`kind` から画面言語の文言へ置き換えるための
  * 対応表 (#1533)。ここに無い kind は `message` をそのまま表示する。
  */

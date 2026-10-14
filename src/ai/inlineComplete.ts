@@ -3,7 +3,7 @@
 // `components/inlineCompleteExtension.ts` が持つ。
 // 行データは扱わない。送るのはカーソル前後の SQL と、そこに出てくるテーブルのスキーマだけ。
 
-import { maskLiterals } from "../dangerousSql";
+import { MASK_SPLIT_PAIRS, maskLiterals } from "../dangerousSql";
 import { dialectLabel, needsSendScopeConfirm } from "./errorExplain";
 import { sliceHead, sliceTail } from "./textSlice";
 
@@ -24,6 +24,14 @@ export const INLINE_BEFORE_MAX_LINES = 40;
 export const INLINE_BEFORE_MAX_CHARS = 4096;
 /** カーソル後に送る上限 (行数 / 文字数)。 */
 export const INLINE_AFTER_MAX_LINES = 10;
+/**
+ * インライン補完を出す文書の最大文字数 (プリフライトの `PREFLIGHT_MAX_CHARS`, #1256 と同じ 64KiB)。
+ * リテラルのマスクは字句状態のため文頭から全文に掛けるので、極端に大きいスクリプトでは打鍵のたびの
+ * 補完が文書サイズに比例して重くなる。窓だけを切り出すと字句状態が反転してリテラルの中身が素で送られうる
+ * ため、安全側に倒して上限を超える文書では補完しない (#1608)。
+ */
+export const INLINE_DOC_MAX_CHARS = 64 * 1024;
+/** カーソル後に送る上限 (文字数)。 */
 export const INLINE_AFTER_MAX_CHARS = 1024;
 /** スキーマとして送るテーブル数 / 1 テーブルあたりの列数の上限。 */
 export const INLINE_MAX_TABLES = 8;
@@ -130,17 +138,19 @@ export function relevantTables(text: string, tables: InlineTable[]): InlineTable
 }
 
 /**
- * カーソルが文字列リテラル / コメントの内側か。文書全体のカーソル位置に識別子文字を差し込んでマスクし、
- * それが空白に潰されるかで判定する (マスク設定・カーソル直前の空白に依らない)。
+ * カーソル位置に識別子文字 (`Z`) を 1 文字差し込んだ文書全体をマスクして返す。差し込みは 1 文字なので
+ * 長さ以外は変わらず、`pos` の位置がマスクで空白に潰れていればカーソルは文字列リテラル / コメントの
+ * 内側 (マスク設定・カーソル直前の空白に依らない判定)。マスク設定がオンのときの送信用の窓も同じ結果から
+ * 取る (`pos` の `Z` を除いた前後) ので、文書全体のマスクは 1 リクエストにつき 1 回で済む (#1608)。
  * 文書全体を見るのは、PostgreSQL のドル引用 (`$$…$$`) が閉じタグが見つかったときだけ
  * 文字列として扱われるため (文頭〜カーソルだけだと閉じタグが見えず「外側」と誤判定する)。
  */
-function insideLiteralOrComment(doc: string, pos: number, driver: string): boolean {
-  const probe = maskLiterals(`${doc.slice(0, pos)}Z${doc.slice(pos)}`, driver, {
+function maskWithProbe(doc: string, pos: number, driver: string): { masked: string; inside: boolean } {
+  const masked = maskLiterals(`${doc.slice(0, pos)}Z${doc.slice(pos)}`, driver, {
     keepQuotedIdentifiers: true,
     cache: false,
   });
-  return probe[pos] === " ";
+  return { masked, inside: masked[pos] === " " };
 }
 
 /**
@@ -152,7 +162,10 @@ function insideLiteralOrComment(doc: string, pos: number, driver: string): boole
  * ドル引用 (`$$…$$`) が文字列と認識されず中身が素で送られる。
  */
 export function buildInlineRequest(input: InlineContextInput): InlineRequestParts | null {
+  if (input.doc.length > INLINE_DOC_MAX_CHARS) return null;
   const pos = Math.max(0, Math.min(input.pos, input.doc.length));
+  // 2 文字記号 (`--` `/*` など) の間では、差し込んだ印で字句が変わりマスクが崩れるので出さない。
+  if (pos > 0 && MASK_SPLIT_PAIRS.has(input.doc.slice(pos - 1, pos + 1))) return null;
   const rawBefore = tailWindow(input.doc.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
   const rawAfter = headWindow(
     input.doc.slice(pos, pos + INLINE_AFTER_MAX_CHARS),
@@ -163,17 +176,15 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
   // 単語の途中 (直後が識別子文字) では続きを出さない。
   if (/^[\w$\u0080-\uffff]/.test(rawAfter)) return null;
   // リテラル / コメントの中身への補完は無意味。マスク設定がオフでも出さない。
-  if (insideLiteralOrComment(input.doc, pos, input.driver)) return null;
+  const probe = maskWithProbe(input.doc, pos, input.driver);
+  if (probe.inside) return null;
 
   let before = rawBefore;
   let after = rawAfter;
   if (input.maskLiterals) {
-    const maskedAll = maskLiterals(input.doc, input.driver, {
-      keepQuotedIdentifiers: true,
-      cache: false,
-    });
-    before = tailWindow(maskedAll.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
-    after = headWindow(maskedAll.slice(pos), INLINE_AFTER_MAX_LINES, INLINE_AFTER_MAX_CHARS);
+    // `pos` の `Z` は差し込んだ分なので、後ろ側からは 1 文字飛ばす。
+    before = tailWindow(probe.masked.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
+    after = headWindow(probe.masked.slice(pos + 1), INLINE_AFTER_MAX_LINES, INLINE_AFTER_MAX_CHARS);
   }
   const masked = before + after;
 
@@ -200,6 +211,16 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
     "</after_cursor>",
   ].join("\n");
   return { systemCached, prompt, cacheKey: `${input.driver}\u0000${systemCached}\u0000${prompt}` };
+}
+
+/**
+ * 提案の先頭から「次の 1 語ぶん」を切り出す (単語単位の部分確定用、#1608)。
+ * 先頭の空白を含め、識別子 (英数字・`_`・`$`・非 ASCII) の連なり、またはそれ以外の記号の連なりを 1 まとまりとする。
+ * 空でない提案には必ず 1 文字以上を返す (空白だけなら全体)。
+ */
+export function nextWordChunk(text: string): string {
+  const m = /^\s*(?:[\w$\u0080-\uffff]+|[^\w$\u0080-\uffff\s]+)/.exec(text);
+  return m ? m[0] : text;
 }
 
 /**

@@ -815,6 +815,7 @@ export const numberResponse = z.number();
 export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
+export const nullableStringArrayResponse = z.array(z.string().nullable());
 /** GRANT/REVOKE 生成コマンド用。選択された権限が無いときは `null`。 */
 export const nullableStringResponse = z.string().nullable();
 

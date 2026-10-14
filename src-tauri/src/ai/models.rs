@@ -144,10 +144,8 @@ impl AiTaskKind {
         AiTaskKind::InlineComplete,
     ];
 
-    /// このタスク種別の推奨モデル (設定で上書きされない場合の目安。UI の「(推奨)」表示用)。
-    // 推奨モデルの表の単一ソース。UI の「(推奨)」表示はフロント `AI_TASK_DEFS` が持ち、
-    // `aiParity.test.ts` / 下のテストで一致を固定するため、本体からは呼ばれない。
-    #[allow(dead_code)]
+    /// このタスク種別の推奨モデル。UI の「(推奨)」表示 (フロント `AI_TASK_DEFS`、
+    /// `aiParity.test.ts` で一致を固定) の元で、軽量タスクはモデル未設定のときの解決先にもなる。
     pub fn recommended_model(self) -> AiModel {
         match self {
             AiTaskKind::ConnectionTest => AiModel::Opus55,
@@ -210,14 +208,29 @@ pub struct AiSettingsSnapshot {
     pub task_efforts: HashMap<AiTaskKind, Option<AiEffort>>,
 }
 
-/// `taskModels[kind] ?? defaultModel`。
+impl AiTaskKind {
+    /// タスク別モデルが未設定のとき、既定モデルではなく推奨モデルを使うか。
+    /// 推奨が既定 (Opus) と異なる軽量タスク (インライン補完) は、入力のたびに呼ばれて遅延に
+    /// 直結するため、未設定のままでも推奨の軽量モデルで動かす (#1608)。
+    pub fn unset_uses_recommended_model(self) -> bool {
+        self.recommended_model() != AiModel::Opus55
+    }
+}
+
+/// `taskModels[kind] ??` (軽量タスクは推奨モデル、それ以外は `defaultModel`)。
 pub fn resolve_model(kind: AiTaskKind, settings: &AiSettingsSnapshot) -> AiModel {
     settings
         .task_models
         .get(&kind)
         .copied()
         .flatten()
-        .unwrap_or(settings.default_model)
+        .unwrap_or_else(|| {
+            if kind.unset_uses_recommended_model() {
+                kind.recommended_model()
+            } else {
+                settings.default_model
+            }
+        })
 }
 
 /// `taskEfforts[kind] ?? 推奨エフォート`。
@@ -251,6 +264,29 @@ mod tests {
         assert_eq!(resolve_model(AiTaskKind::Generic, &s), AiModel::Opus55);
         s.default_model = AiModel::Sonnet55;
         assert_eq!(resolve_model(AiTaskKind::Generic, &s), AiModel::Sonnet55);
+    }
+
+    #[test]
+    fn inline_complete_uses_recommended_model_when_unset() {
+        // 既定が Opus でも、未設定 (null / キー欠落) のインライン補完は推奨の Haiku で動く。
+        let mut s = snapshot();
+        assert_eq!(
+            resolve_model(AiTaskKind::InlineComplete, &s),
+            AiModel::Haiku55
+        );
+        s.task_models.insert(AiTaskKind::InlineComplete, None);
+        s.default_model = AiModel::Sonnet55;
+        assert_eq!(
+            resolve_model(AiTaskKind::InlineComplete, &s),
+            AiModel::Haiku55
+        );
+        // 明示指定は常に優先する。
+        s.task_models
+            .insert(AiTaskKind::InlineComplete, Some(AiModel::Opus55));
+        assert_eq!(
+            resolve_model(AiTaskKind::InlineComplete, &s),
+            AiModel::Opus55
+        );
     }
 
     #[test]
