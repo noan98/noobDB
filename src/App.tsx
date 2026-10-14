@@ -4044,6 +4044,11 @@ export default function App() {
       setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
       return;
     }
+    // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
+    if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
+      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+      return;
+    }
     const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
     const outCtx = outputCtxFor(sid);
     await cancelStreamForTab(tabId);
@@ -4761,6 +4766,10 @@ export default function App() {
       setStatus({ kind: "key", key: "statusNotConnected", error: true });
       return;
     }
+    if (tabsRef.current.find((tt) => tt.id === tabId)?.batchRunning) {
+      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+      return;
+    }
     const tab = tabs.find((tt) => tt.id === tabId);
     // プレビュー中は (下の PreviewGrid 分岐で ResultGrid ごと差し替わるため)
     // paginatable を一時的に無効化するが、プレビュー終了後は元のテーブルタブへ
@@ -5225,6 +5234,7 @@ export default function App() {
     try {
       unlisten = await listenBatchStream(streamId, {
         onStarted: ({ total }) => {
+          if (!isCurrentBatch()) return;
           setStatus({ kind: "key", key: "statusBatchRunning", vars: { total } });
         },
         onResults: ({ results: incoming }) => {
@@ -5247,8 +5257,10 @@ export default function App() {
         },
         onCancelled: () => {
           finish();
-          if (isCurrentBatch()) setStatus({ kind: "key", key: "statusQueryCancelled" });
+          const current = isCurrentBatch();
           finishRun();
+          // 終了表示 (statusBatchDone) で上書きされないよう、finishRun の後に設定する。
+          if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
         },
       });
       await api.runSqlBatch({

@@ -1923,6 +1923,7 @@ const en = {
   localPanelDropConfirmOk: "Drop",
   localPanelLoading: "Loading…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "A script is still running in this tab. Stop it first.",
   statusBatchRunning: "Running script ({total} statements)...",
   statusBatchDone: "Script done: {ok} ok, {errors} error(s) of {total}",
   batchBackToResult: "Editor result",
@@ -7011,6 +7012,7 @@ const ja: Dict = {
   localPanelDropConfirmOk: "削除",
   localPanelLoading: "読み込み中…",
   // SQL スクリプトのバッチ実行。
+  statusBatchBusy: "このタブではスクリプトを実行中です。先に停止してください。",
   statusBatchRunning: "スクリプトを実行中 ({total} 文)...",
   statusBatchDone: "スクリプト完了: {total} 文中 成功 {ok} / エラー {errors}",
   batchBackToResult: "エディタの結果",

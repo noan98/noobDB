@@ -316,7 +316,13 @@ pub async fn record_skipped(entry: NewTaskRun) -> Result<Option<i64>> {
 
 async fn record_skipped_in(pool: &SqlitePool, entry: NewTaskRun) -> Result<Option<i64>> {
     let latest = list_in(pool, Some(&entry.task_id), 1).await?;
-    if latest.first().is_some_and(|r| r.status == entry.status) {
+    if let Some(prev) = latest.first().filter(|r| r.status == entry.status) {
+        // まとめた最新の見送り時刻に更新しておく。
+        sqlx::query("UPDATE task_runs SET finished_at = ? WHERE id = ?")
+            .bind(entry.finished_at)
+            .bind(prev.id)
+            .execute(pool)
+            .await?;
         return Ok(None);
     }
     Ok(Some(
@@ -512,6 +518,8 @@ mod tests {
             .await
             .unwrap();
         assert!(second.is_none());
+        let skipped = list_in(&pool, Some("t1"), 1).await.unwrap();
+        assert_eq!(skipped[0].finished_at, "2026-01-01T00:00:20Z");
         assert_eq!(list_in(&pool, Some("t1"), 100).await.unwrap().len(), 2);
         // 最新行は skipped だが、id 指定なら手動実行の行が返る。
         assert_eq!(
