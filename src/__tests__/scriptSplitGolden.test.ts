@@ -15,6 +15,8 @@ interface VectorCase {
   note: string;
   statements: string[];
   statementsMysql?: string[];
+  /** PostgreSQL だけの期待値 (`E'…'` のバックスラッシュエスケープ、#1601)。 */
+  statementsPostgres?: string[];
 }
 
 const cases = vectors.cases as VectorCase[];
@@ -27,7 +29,9 @@ describe("scriptSplitVectors.json (フロント splitSqlStatements)", () => {
   for (const driver of vectors.drivers) {
     for (const c of cases) {
       it(`${driver}: ${c.note}`, () => {
-        const expected = driver === "mysql" ? (c.statementsMysql ?? c.statements) : c.statements;
+        const own =
+          driver === "mysql" ? c.statementsMysql : driver === "postgres" ? c.statementsPostgres : undefined;
+        const expected = own ?? c.statements;
         expect(splitSqlStatements(c.sql, driver)).toEqual(expected);
       });
     }

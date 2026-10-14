@@ -1337,6 +1337,7 @@
     "streamId": "strm0003"
   },
   "importErrorEvent": {
+    "committed": 12,
     "error": "NOT NULL constraint failed",
     "line": 4,
     "record": 3,
@@ -4365,7 +4366,8 @@
           "kind": "rollback",
           "line": 9
         }
-      ]
+      ],
+      "unclosedTransaction": false
     },
     "elapsedMs": 12,
     "encoding": "shift_jis",
@@ -4388,6 +4390,7 @@
         "sql": "INSERT INTO t VALUES (1)"
       }
     ],
+    "implicitCommit": true,
     "rowsAffected": 57,
     "skippedBeforeStart": 10,
     "skippedControl": 2,

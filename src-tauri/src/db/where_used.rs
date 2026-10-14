@@ -38,7 +38,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use super::object_search::is_js_space;
-use super::{mask_for_driver, DriverKind};
+use super::{mask_for_driver_keeping_brackets, DriverKind};
 
 /// 検索対象。`column` が `None` ならテーブル (またはビュー) そのものへの参照を探す。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,13 +174,13 @@ fn from_units(u: &[u16]) -> String {
 // マスク (maskLiterals の再利用)
 // ---------------------------------------------------------------------------
 
-/// `mask_for_driver` (Rust 側の安全網と同じマスク) を UTF-16 コードユニット列へ展開する。
+/// `mask_for_driver_keeping_brackets` (安全網と同じマスク。ただし SQLite の角括弧識別子は読める状態で残す) を UTF-16 コードユニット列へ展開する。
 /// マスクは「同じ文字のまま」か「空白 1 文字」のどちらかだけを返すので、空白化された
 /// 文字が補助平面の文字なら 2 ユニットの空白にして、JS の `maskLiterals` の出力と
 /// 長さ・位置を一致させる。
 fn mask_units(sql: &str, driver: DriverKind) -> Vec<u16> {
     let src: Vec<char> = sql.chars().collect();
-    let masked = mask_for_driver(driver, &src);
+    let masked = mask_for_driver_keeping_brackets(driver, &src);
     let mut out = Vec::with_capacity(sql.len());
     for (s, m) in src.iter().zip(masked.iter()) {
         if s == m {
@@ -739,6 +739,18 @@ fn to_reference_lines_units(sql: &[u16], hits: &[ReferenceHit]) -> Vec<Reference
     out
 }
 
+/// 本文のどこかに、修飾子の有無を問わず `table` と同名の識別子があるか。
+///
+/// 転送で「クエリが読むテーブルを置き換えで DROP してしまう」ことを防ぐ用途 (#1598)。
+/// スキーマ / DB の修飾子が転送先と一致するかは判定せず、同名ならすべて参照とみなす
+/// (見落としてソースを消すより、別スキーマの同名テーブルを誤って拒否する方が安全)。
+pub fn mentions_table_name(sql: &str, table: &str, driver: DriverKind) -> bool {
+    let text = prepare_units(&to_units(sql), driver);
+    tokenize_chains(&text, driver)
+        .iter()
+        .any(|chain| chain.parts.iter().any(|p| eq(&p.name, table)))
+}
+
 /// 1 つの定義本文を解析する。参照が無ければ `None`。
 pub fn analyze_definition(
     sql: &str,
@@ -878,5 +890,24 @@ mod tests {
         assert_eq!(hits.len(), 1);
         let units = to_units(sql);
         assert_eq!(from_units(&units[hits[0].start..hits[0].end]), "orders");
+    }
+
+    #[test]
+    fn mentions_table_name_ignores_qualifier_comments_and_literals_1598() {
+        let m = |sql: &str, d| mentions_table_name(sql, "users", d);
+        assert!(m("SELECT * FROM users WHERE active = 1", DriverKind::Mysql));
+        assert!(m("SELECT * FROM `app`.`Users`", DriverKind::Mysql));
+        assert!(m(
+            "SELECT * FROM other.users u JOIN t ON t.id = u.id",
+            DriverKind::Postgres
+        ));
+        // 別 DB を修飾して読むクエリも同名なら参照とみなす (転送先 DB と違っても DROP で消える)。
+        assert!(m("SELECT * FROM shop.users", DriverKind::Mysql));
+        assert!(m("SELECT * FROM \"shop\".\"users\"", DriverKind::Postgres));
+        assert!(!m("SELECT * FROM users_archive", DriverKind::Mysql));
+        assert!(!m(
+            "SELECT 'users' /* users */ -- users\n FROM t",
+            DriverKind::Mysql
+        ));
     }
 }

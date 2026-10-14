@@ -114,6 +114,7 @@ describe("事前確認 (ドライラン) の補助 (#1535)", () => {
     txControls: [],
     headLimit: 300,
     listLimit: 200,
+    unclosedTransaction: false,
   };
 
   it("開始文番号の入力は 0 以上の整数だけを受け付ける", () => {

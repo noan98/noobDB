@@ -160,6 +160,20 @@ describe("computeSqlDiagnostics — 文の先頭キーワードのタイポ", ()
   });
 });
 
+describe("computeSqlDiagnostics — WITHIN GROUP (#1601)", () => {
+  it("WITHIN GROUP の後の WHERE に句順序の警告を出さない", () => {
+    expect(
+      diags("SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY y) FROM t WHERE a = 1", PostgreSQL),
+    ).toEqual([]);
+  });
+
+  it("本物の GROUP BY の後の WHERE は従来どおり警告する", () => {
+    expect(diags("SELECT a FROM t GROUP BY a WHERE a = 1", PostgreSQL).map((x) => x.message)).toEqual([
+      MSG.clauseOrder,
+    ]);
+  });
+});
+
 describe("computeSqlDiagnostics — 句の順序ミス", () => {
   it("flags WHERE after ORDER BY", () => {
     const d = diags("SELECT * FROM users ORDER BY name WHERE id = 1");
