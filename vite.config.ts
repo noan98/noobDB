@@ -24,7 +24,7 @@ export default defineConfig(async () => ({
     // `*.test.ts` を node 環境で走らせ、jsdom の起動コスト (全体の大半) を避ける。
     projects: [
       {
-        extends: true,
+        extends: true as const,
         test: {
           name: "dom",
           environment: "jsdom",
@@ -32,7 +32,7 @@ export default defineConfig(async () => ({
         },
       },
       {
-        extends: true,
+        extends: true as const,
         test: {
           name: "node",
           environment: "node",
@@ -77,7 +77,7 @@ export default defineConfig(async () => ({
     // 閾値は `--coverage` 有効時のみ評価され、素の `pnpm test` は従来どおり高速に
     // 動く (CI は `--coverage` 付きで実行)。
     coverage: {
-      provider: "v8",
+      provider: "v8" as const,
       all: true,
       include: ["src/**/*.{ts,tsx}"],
       exclude: [
