@@ -361,21 +361,28 @@ export function QueryInspectorPanel({ sessionId, driver }: { sessionId: string; 
     if (busyRef.current || !support) return;
     busyRef.current = true;
     try {
-      if (support.live_tail) {
-        const sample = await api.sampleLiveQueries(sessionId);
-        const now = Date.now();
-        setTail((cur) => mergeLiveTail(cur, sample, now));
-      }
-      if (support.statements) {
-        const requested = cumulativeRef.current;
-        const rows = await api.sampleStatementDelta(sessionId, {
-          cumulative: requested,
-          refresh: true,
-          nPlusOneMinCount: nPlusOneOpts.minCount,
-          nPlusOneWindowMs: nPlusOneOpts.windowMs,
-        });
-        applyDeltaRows(rows, requested);
-      }
+      // ライブテールと digest スナップショットは独立なので同時に発行する (#1609)。
+      // 片方の失敗がもう片方の反映を妨げないよう、個別に try して反映する。
+      const requested = cumulativeRef.current;
+      const tailTask = support.live_tail
+        ? api.sampleLiveQueries(sessionId).then((sample) => {
+            const now = Date.now();
+            setTail((cur) => mergeLiveTail(cur, sample, now));
+          })
+        : Promise.resolve();
+      const deltaTask = support.statements
+        ? api
+            .sampleStatementDelta(sessionId, {
+              cumulative: requested,
+              refresh: true,
+              nPlusOneMinCount: nPlusOneOpts.minCount,
+              nPlusOneWindowMs: nPlusOneOpts.windowMs,
+            })
+            .then((rows) => applyDeltaRows(rows, requested))
+        : Promise.resolve();
+      const results = await Promise.allSettled([tailTask, deltaTask]);
+      const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+      if (failed) throw failed.reason;
       setError(null);
       setSampledAt(new Date());
     } catch (e) {

@@ -3054,7 +3054,7 @@ async fn mysql_table_overview_single_scan() {
     .await
     .expect("insert");
     let o = conn
-        .table_profile(&db, "noobdb_my_overview", true)
+        .table_profile(&db, "noobdb_my_overview", true, false)
         .await
         .expect("overview");
     assert_eq!(o.scans, 1);
