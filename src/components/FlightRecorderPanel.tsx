@@ -116,6 +116,16 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
         ? await api.previewRedo(sessionId, entry.id)
         : await api.previewUndo(sessionId, entry.id);
       if (preview.statements.length === 0 && preview.conflicts.length === 0) {
+        // 目的の状態が既に成立している (行が既に無い・手動で戻し済みなど)。警告が無ければ
+        // 適用 API を呼んで記録を取り消し済み / やり直し済みにする。そうしないと記録が
+        // 永久に未取り消しのまま残り、押すたびに同じ通知が出るだけになる (#1600)。
+        if (preview.warnings.length === 0) {
+          const settled = redo
+            ? await api.redoFlightRecord(sessionId, entry.id, false)
+            : await api.undoFlightRecord(sessionId, entry.id, false);
+          if (settled.applied) setReloadKey((k) => k + 1);
+          for (const w of settled.warnings ?? []) toast.info(w, 8000);
+        }
         toast.info(t(redo ? "flightRecorderNothingToRedo" : "flightRecorderNothingToUndo"));
         return;
       }
@@ -147,12 +157,27 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
       if (!ok) return;
 
       const force = preview.conflicts.length > 0;
+      if (force) {
+        // 強制適用はバックエンドが適用時に計画を組み直し、競合行をすべて上書きする。確認
+        // ダイアログを開いている間に増えた競合は一度も表示されていないので、適用の直前に
+        // もう一度プレビューを取り、表示済みでない競合が現れていたら中止する (#1600)。
+        const fresh = redo
+          ? await api.previewRedo(sessionId, entry.id)
+          : await api.previewUndo(sessionId, entry.id);
+        const shown = new Set(preview.conflicts.map((c) => JSON.stringify(c.key)));
+        if (fresh.conflicts.some((c) => !shown.has(JSON.stringify(c.key)))) {
+          toast.error(t("flightRecorderConflictsChanged"));
+          return;
+        }
+      }
       const outcome = redo
         ? await api.redoFlightRecord(sessionId, entry.id, force)
         : await api.undoFlightRecord(sessionId, entry.id, force);
       if (outcome.applied) {
         toast.success(t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: outcome.rowsAffected }));
         setReloadKey((k) => k + 1);
+        // 逆 SQL は適用済みだが記録の状態を保存できなかった等の警告を利用者へ伝える (#1600)。
+        for (const w of outcome.warnings ?? []) toast.info(w, 8000);
       } else {
         toast.error(t("flightRecorderUndoBlocked"));
       }

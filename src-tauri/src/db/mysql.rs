@@ -886,30 +886,65 @@ impl MySqlConn {
     /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
     /// not. The resilient-import probe/retry strategies rely on rollback, so they
     /// must not run against a non-transactional table (#687 review follow-up).
-    /// Returns `true` for an unknown table/engine (e.g. a view has a NULL engine)
-    /// since InnoDB is the overwhelming default; callers treat a query error the
-    /// same way.
+    /// Returns `true` for an unknown table (no row), since InnoDB is the
+    /// overwhelming default. A **view** has a NULL engine, so its base tables
+    /// (resolved through `VIEW_TABLE_USAGE`, nested views included) are checked
+    /// instead: a write through a view onto a MyISAM base table is not rolled
+    /// back either (#1600). A query error is returned as `Err`.
     pub(crate) async fn table_is_transactional(
         &self,
         database: Option<&str>,
         table: &str,
     ) -> Result<bool> {
         let database = database.filter(|d| !d.is_empty());
-        let row: Option<(Option<String>,)> = sqlx::query_as(
-            "SELECT ENGINE FROM information_schema.TABLES \
+        let row: Option<(String, String, Option<String>)> = sqlx::query_as(
+            "SELECT TABLE_SCHEMA, TABLE_TYPE, ENGINE FROM information_schema.TABLES \
              WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? LIMIT 1",
         )
         .bind(database)
         .bind(table)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(match row.and_then(|(engine,)| engine) {
-            Some(engine) => matches!(
-                engine.to_ascii_lowercase().as_str(),
-                "innodb" | "ndb" | "ndbcluster"
-            ),
-            None => true,
-        })
+        let Some((schema, table_type, engine)) = row else {
+            return Ok(true);
+        };
+        if !table_type.eq_ignore_ascii_case("VIEW") {
+            return Ok(engine_is_transactional(engine.as_deref()));
+        }
+        // ビュー: 基底表 (入れ子のビューは辿る) の ENGINE をすべて確認する。
+        let mut pending: Vec<(String, String)> = vec![(schema, table.to_string())];
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        while let Some((view_schema, view_name)) = pending.pop() {
+            if !seen.insert((view_schema.clone(), view_name.clone())) {
+                continue;
+            }
+            // 循環や過度な入れ子で暴走しないよう、確認できなければ安全側 (Err)。
+            if seen.len() > 32 {
+                return Err(AppError::InvalidInput(
+                    "view dependency chain is too deep to inspect".into(),
+                ));
+            }
+            let bases: Vec<(String, String, String, Option<String>)> = sqlx::query_as(
+                "SELECT u.TABLE_SCHEMA, u.TABLE_NAME, t.TABLE_TYPE, t.ENGINE \
+                 FROM information_schema.VIEW_TABLE_USAGE u \
+                 LEFT JOIN information_schema.TABLES t \
+                   ON t.TABLE_SCHEMA = u.TABLE_SCHEMA AND t.TABLE_NAME = u.TABLE_NAME \
+                 WHERE u.VIEW_SCHEMA = ? AND u.VIEW_NAME = ?",
+            )
+            .bind(&view_schema)
+            .bind(&view_name)
+            .fetch_all(&self.pool)
+            .await?;
+            for (base_schema, base_name, base_type, base_engine) in bases {
+                if base_type.eq_ignore_ascii_case("VIEW") {
+                    pending.push((base_schema, base_name));
+                } else if !engine_is_transactional(base_engine.as_deref()) {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     /// 書き込み文 `sql` の対象表が非トランザクショナル (MyISAM 等) か。
@@ -921,7 +956,7 @@ impl MySqlConn {
         database: Option<&str>,
         sql: &str,
     ) -> bool {
-        let Some(target) = extract_target_table(sql) else {
+        let Some((target, _)) = extract_target_table_with_alias(sql) else {
             return false;
         };
         let (schema, table) = split_table_ref(&target);
@@ -951,7 +986,9 @@ impl MySqlConn {
         if !self
             .table_is_transactional(database, table)
             .await
-            .unwrap_or(true)
+            // 照会に失敗したときは確認できないので非トランザクショナル扱い (probe を
+            // 飛ばす安全側)。`write_target_is_non_transactional` と向きを揃える。
+            .unwrap_or(false)
         {
             return Ok(None);
         }
@@ -1750,6 +1787,29 @@ impl MySqlConn {
         .await?;
 
         Ok(rows.iter().map(|r| column_info_from_row(r, 0)).collect())
+    }
+
+    /// 生成列 (STORED / VIRTUAL / PERSISTENT GENERATED) の列名 (#1600)。
+    /// `TableColumnInfo::is_generated` と同じ判定を `EXTRA` で行う。
+    pub async fn generated_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        let database = database.filter(|d| !d.is_empty());
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT COLUMN_NAME FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = COALESCE(?, DATABASE()) AND TABLE_NAME = ? \
+               AND (UPPER(EXTRA) LIKE '%STORED GENERATED%' \
+                 OR UPPER(EXTRA) LIKE '%VIRTUAL GENERATED%' \
+                 OR UPPER(EXTRA) LIKE '%PERSISTENT GENERATED%') \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(database)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|(n,)| n).collect())
     }
 
     /// `db` の全テーブルの列を 1 回の問い合わせで取得する (#1255)。SQL は
@@ -3019,12 +3079,38 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
     decode_string_or_bytes(row, i)
 }
 
+/// `information_schema.TABLES.ENGINE` がロールバック可能なエンジンか。
+/// NULL / 不明 (表が見つからない等) は InnoDB 想定で `true`。
+fn engine_is_transactional(engine: Option<&str>) -> bool {
+    match engine {
+        Some(e) => matches!(
+            e.to_ascii_lowercase().as_str(),
+            "innodb" | "ndb" | "ndbcluster"
+        ),
+        None => true,
+    }
+}
+
 /// Best-effort extraction of the target table from a mutation statement.
 /// Returns `None` for shapes we don't confidently recognise (multi-table
 /// UPDATE/DELETE, embedded subqueries, etc.) — callers fall back to a
 /// snapshot-less preview in that case. The returned string is taken verbatim
 /// from the user's SQL so quoting/qualification is preserved.
 pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
+    match extract_target_table_with_alias(sql) {
+        // `DELETE FROM t AS a WHERE a.id = …` は WHERE が別名を参照しており、
+        // `SELECT * FROM t WHERE a.id = …` の BEFORE スナップショットが成立しない。
+        // UPDATE の別名 (直後が SET でない) と同様に「認識しない形」として扱う。
+        Some((_, true)) => None,
+        Some((table, false)) => Some(table),
+        None => None,
+    }
+}
+
+/// [`extract_target_table`] の本体。`(対象表, DELETE の表名の直後に別名がある)`
+/// を返す。別名付きでも対象表自体は判るので、非トランザクショナル判定
+/// ([`MySqlConn::write_target_is_non_transactional`]) ではこちらを使う。
+fn extract_target_table_with_alias(sql: &str) -> Option<(String, bool)> {
     let tokens = tokenize_sql(sql);
     let mut iter = tokens.into_iter().peekable();
     let first = iter.next()?;
@@ -3037,7 +3123,7 @@ pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
             if !iter.peek().is_some_and(|t| t.eq_ignore_ascii_case("set")) {
                 return None;
             }
-            Some(table)
+            Some((table, false))
         }
         "delete" => {
             skip_modifiers(&mut iter, &["low_priority", "quick", "ignore"]);
@@ -3047,7 +3133,13 @@ pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
             if !next.eq_ignore_ascii_case("from") {
                 return None;
             }
-            iter.next()
+            let table = iter.next()?;
+            let has_alias = iter.peek().is_some_and(|t| {
+                !["where", "order", "limit", "partition"]
+                    .iter()
+                    .any(|k| t.eq_ignore_ascii_case(k))
+            });
+            Some((table, has_alias))
         }
         "insert" | "replace" => {
             skip_modifiers(
@@ -3058,7 +3150,7 @@ pub(crate) fn extract_target_table(sql: &str) -> Option<String> {
             if next.eq_ignore_ascii_case("into") {
                 next = iter.next()?;
             }
-            Some(next)
+            Some((next, false))
         }
         _ => None,
     }
@@ -3974,6 +4066,40 @@ mod tests {
             extract_target_table("DELETE LOW_PRIORITY IGNORE FROM orders"),
             Some("orders".into())
         );
+    }
+
+    /// #1600: 別名付き DELETE は WHERE が別名を参照するので認識しない
+    /// (BEFORE スナップショットの再利用で未知の別名エラーになるため)。
+    /// ただし非トランザクショナル判定用には対象表が引ける。
+    #[test]
+    fn delete_with_alias_is_not_recognised_but_target_is_resolvable() {
+        for sql in [
+            "DELETE FROM orders AS o WHERE o.status = 'x'",
+            "DELETE FROM orders o WHERE o.status = 'x'",
+        ] {
+            assert_eq!(extract_target_table(sql), None, "{sql}");
+            assert_eq!(
+                extract_target_table_with_alias(sql),
+                Some(("orders".into(), true)),
+                "{sql}"
+            );
+        }
+        assert_eq!(
+            extract_target_table("DELETE FROM orders ORDER BY id LIMIT 3"),
+            Some("orders".into())
+        );
+        assert_eq!(
+            extract_target_table("DELETE FROM orders"),
+            Some("orders".into())
+        );
+    }
+
+    #[test]
+    fn engine_transactionality() {
+        assert!(engine_is_transactional(Some("InnoDB")));
+        assert!(engine_is_transactional(None));
+        assert!(!engine_is_transactional(Some("MyISAM")));
+        assert!(!engine_is_transactional(Some("MEMORY")));
     }
 
     #[test]

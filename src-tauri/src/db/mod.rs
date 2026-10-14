@@ -991,6 +991,22 @@ impl Connection {
         }
     }
 
+    /// `table` の生成列 (DB が値を計算し、INSERT / UPDATE で値を渡せない列) の名前。
+    /// フライトレコーダーの取り消しが、`SELECT *` で捕捉した行から生成列を外すのに使う
+    /// (#1600)。`database` が `None` のときは接続の既定 DB / スキーマ。
+    /// SQLite は `PRAGMA table_info` が生成列を返さないので `table_xinfo` を見る。
+    pub async fn generated_columns(
+        &self,
+        database: Option<&str>,
+        table: &str,
+    ) -> Result<Vec<String>> {
+        match self {
+            Connection::MySql(c) => c.generated_columns(database, table).await,
+            Connection::Postgres(c) => c.generated_columns(database, table).await,
+            Connection::Sqlite(c) => c.generated_columns(database, table).await,
+        }
+    }
+
     /// `db` の全テーブル (とビュー) の列メタデータを 1 回の問い合わせで取得する
     /// (#1255)。単一テーブル版 [`Connection::columns`] と同じ型・値・列順で、
     /// テーブルごとの N+1 往復を避けたい経路 (スキーマ比較・アドバイザ・

@@ -155,3 +155,56 @@ describe("FlightRecorderPanel Undo / Redo (#1536)", () => {
     await waitFor(() => expect(redoFlightRecord).toHaveBeenCalledWith("s1", 1, true));
   });
 });
+
+/**
+ * #1600: 目的の状態が既に成立している取り消しは適用 API を呼んで記録を取り消し済みにし、
+ * 強制適用は確認後に増えた競合があれば中止する。
+ */
+describe("FlightRecorderPanel 取り消しの整合 (#1600)", () => {
+  it("文も競合も無い (既に成立) ときは undoFlightRecord を呼んで記録を取り消し済みにする", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue([ENTRY]);
+    previewUndo.mockResolvedValue({ statements: [], conflicts: [], warnings: [] });
+    undoFlightRecord.mockResolvedValue({ applied: true, rowsAffected: 0, conflicts: [], warnings: [] });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderUndoAction") }));
+
+    await waitFor(() => expect(undoFlightRecord).toHaveBeenCalledWith("s1", 1, false));
+    // 確認ダイアログは出さない。
+    expect(screen.queryByRole("button", { name: t("flightRecorderApply") })).not.toBeInTheDocument();
+  });
+
+  it("警告があるときは適用 API を呼ばない (主キー不明などで取り消し済みにしない)", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue([ENTRY]);
+    previewUndo.mockResolvedValue({ statements: [], conflicts: [], warnings: ["主キー列を特定できませんでした"] });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderUndoAction") }));
+    await waitFor(() => expect(previewUndo).toHaveBeenCalled());
+    expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+
+  it("確認後に表示されていない競合が増えたら強制適用せず中止する", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue([ENTRY]);
+    const conflictA = { key: [1], expected: [], current: null };
+    const conflictB = { key: [2], expected: [], current: null };
+    previewUndo
+      .mockResolvedValueOnce({ statements: ["UPDATE users SET name = 'a' WHERE id = 1"], conflicts: [conflictA], warnings: [] })
+      .mockResolvedValueOnce({
+        statements: ["UPDATE users SET name = 'a' WHERE id = 1"],
+        conflicts: [conflictA, conflictB],
+        warnings: [],
+      });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderUndoAction") }));
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("flightRecorderForceApply") }));
+
+    await waitFor(() => expect(previewUndo).toHaveBeenCalledTimes(2));
+    expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+});
