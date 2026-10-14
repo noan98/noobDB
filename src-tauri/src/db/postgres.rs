@@ -946,8 +946,11 @@ impl PostgresConn {
     pub async fn list_db_users(&self) -> Result<Vec<DbUserInfo>> {
         let rows: Vec<PgRow> = sqlx::query(
             "SELECT rolname, rolsuper, rolcreatedb, rolcreaterole, rolcanlogin, \
-             rolreplication, rolbypassrls \
-             FROM pg_catalog.pg_roles ORDER BY rolname",
+             rolreplication, rolbypassrls, \
+             COALESCE(ARRAY(SELECT r2.rolname::text FROM pg_catalog.pg_auth_members m \
+                 JOIN pg_catalog.pg_roles r2 ON m.roleid = r2.oid \
+                 WHERE m.member = r.oid ORDER BY r2.rolname), ARRAY[]::text[]) \
+             FROM pg_catalog.pg_roles r ORDER BY r.rolname",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -979,19 +982,9 @@ impl PostgresConn {
             if bypassrls {
                 attributes.push("BYPASSRLS".to_string());
             }
-            // Membership is a second round trip per role; the roster is
-            // server accounts (not app data), so this N+1 pattern stays
-            // cheap in practice.
-            let member_of: Vec<String> = sqlx::query_scalar(
-                "SELECT r2.rolname FROM pg_auth_members m \
-                 JOIN pg_roles r1 ON m.member = r1.oid \
-                 JOIN pg_roles r2 ON m.roleid = r2.oid \
-                 WHERE r1.rolname = $1 ORDER BY r2.rolname",
-            )
-            .bind(&name)
-            .fetch_all(&self.pool)
-            .await
-            .unwrap_or_default();
+            // 所属ロールは同じ問い合わせの相関 ARRAY で取る (#1609)。ロールごとの
+            // 追加往復 (N+1) と、失敗の握りつぶしをやめた。
+            let member_of: Vec<String> = r.try_get(7)?;
             users.push(DbUserInfo {
                 name,
                 host: None,
@@ -1564,16 +1557,21 @@ impl PostgresConn {
     /// partitioned parents (`p` — no storage of their own; `ctid` lives on
     /// the child partitions) don't, so those fall back to `all_columns`.
     pub async fn row_identity(&self, schema: &str, table: &str) -> Result<TableRowIdentity> {
-        let cols = self.columns(schema, table).await?;
-        if let Some(identity) = super::row_identity_pk_or_none(&cols) {
-            return Ok(identity);
-        }
+        // #1609: PK の有無と relkind だけが要るので、列メタデータ全体
+        // (`columns()`: FK・コメント・生成列の相関副問い合わせ付き) は取らず、
+        // カタログ 1 本の問い合わせで済ませる (従来は重い列取得 + relkind の 2 往復)。
+        //
         // `pg_class.relkind` は text ではなく内部型 `"char"` (1 バイト、OID 18) で、
         // sqlx はこれを String へデコードできない。`::text` へ明示的にキャストして
-        // おかないと `try_get::<String, _>` が必ず失敗し、下の `unwrap_or_default()`
-        // が空文字を返して通常のヒープテーブルまで `all_columns` に落ちてしまう。
+        // おかないと `try_get::<String, _>` が必ず失敗し、通常のヒープテーブルまで
+        // `all_columns` に落ちてしまう。
         let row: Option<PgRow> = sqlx::query(
-            r#"SELECT c.relkind::text AS relkind
+            r#"SELECT c.relkind::text AS relkind,
+                      EXISTS (SELECT 1 FROM pg_catalog.pg_index i
+                               WHERE i.indrelid = c.oid AND i.indisprimary) AS has_pk,
+                      EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a
+                               WHERE a.attrelid = c.oid AND a.attnum > 0
+                                 AND NOT a.attisdropped) AS has_columns
                FROM pg_catalog.pg_class c
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                WHERE n.nspname = $1 AND c.relname = $2"#,
@@ -1582,14 +1580,31 @@ impl PostgresConn {
         .bind(table)
         .fetch_optional(&self.pool)
         .await?;
-        if let Some(r) = row {
-            let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
-            if relkind == "r" {
-                return Ok(TableRowIdentity {
-                    strategy: "ctid".into(),
-                    hidden_column: Some("ctid".into()),
-                });
-            }
+        let Some(r) = row else {
+            // 表が見つからない (列が 1 つも取れない) ときは従来どおり "none"。
+            return Ok(TableRowIdentity {
+                strategy: "none".into(),
+                hidden_column: None,
+            });
+        };
+        if r.try_get::<bool, _>("has_pk").unwrap_or(false) {
+            return Ok(TableRowIdentity {
+                strategy: "primary_key".into(),
+                hidden_column: None,
+            });
+        }
+        if !r.try_get::<bool, _>("has_columns").unwrap_or(false) {
+            return Ok(TableRowIdentity {
+                strategy: "none".into(),
+                hidden_column: None,
+            });
+        }
+        let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
+        if relkind == "r" {
+            return Ok(TableRowIdentity {
+                strategy: "ctid".into(),
+                hidden_column: Some("ctid".into()),
+            });
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
@@ -1598,6 +1613,24 @@ impl PostgresConn {
     }
 
     pub async fn foreign_keys(&self, schema: &str) -> Result<Vec<ForeignKey>> {
+        self.foreign_keys_filtered(schema, None).await
+    }
+
+    /// 1 表分の外部キーだけを pg_constraint の `conrelid` で絞って取得する (#1609)。
+    /// DDL の再構成が DB 全体の FK を取ってから 1 表に絞っていたのを置き換える。
+    pub async fn foreign_keys_for_table(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<ForeignKey>> {
+        self.foreign_keys_filtered(schema, Some(table)).await
+    }
+
+    async fn foreign_keys_filtered(
+        &self,
+        schema: &str,
+        table: Option<&str>,
+    ) -> Result<Vec<ForeignKey>> {
         // pg_constraint の conkey / confkey を位置ごとに unnest して、参照元と参照先の
         // 列を正しく対応付ける。information_schema.constraint_column_usage は列の
         // 位置情報を持たず、制約名だけで結合すると複合 FK の列が総当たりになり、
@@ -1627,9 +1660,11 @@ impl PostgresConn {
                          WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
                   AND fcl.relnamespace = cl.relnamespace
                  AND n.nspname = $1
+                 AND ($2::text IS NULL OR cl.relname::text = $2::text)
                ORDER BY cl.relname, con.conname, k.ord"#,
         )
         .bind(schema)
+        .bind(table)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows

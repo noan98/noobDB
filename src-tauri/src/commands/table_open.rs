@@ -18,6 +18,8 @@ use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 
+use super::schema::fetch_columns_bulk;
+
 /// 行数推定は装飾的な付随情報。最初の行が出るまでの時間を延ばさないよう、
 /// 列の取得より極端に遅いときは待たずに `None` で返す。
 const ESTIMATE_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -165,6 +167,24 @@ pub(crate) async fn open_tables_inner(
     tables: Vec<(String, String)>,
     limit: u64,
 ) -> Vec<OpenTableEntry> {
+    // #1609: 同じ DB の未キャッシュのテーブルが多いときは、テーブルごとの `columns`
+    // 問い合わせ (N 件) ではなく DB 単位の一括取得 1 回で列キャッシュを埋める。
+    // `load_schema_tree` と同じ閾値・同じ関数を使う。一括取得の失敗は無視して
+    // テーブルごとの経路へ落とす (結果は従来と同じ)。
+    let mut misses: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (database, table) in &tables {
+        if !session.schema_cache.has_columns(database, table).await {
+            *misses.entry(database.as_str()).or_default() += 1;
+        }
+    }
+    let bulk_dbs: Vec<String> = misses
+        .into_iter()
+        .filter(|(_, n)| *n >= super::schema_tree::BULK_THRESHOLD)
+        .map(|(db, _)| db.to_string())
+        .collect();
+    for db in &bulk_dbs {
+        let _ = fetch_columns_bulk(session, db).await;
+    }
     let stream = stream::iter(tables)
         .map(|(database, table)| async move {
             match open_table_inner(session, &database, &table, limit, false).await {

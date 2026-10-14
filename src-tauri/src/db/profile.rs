@@ -294,6 +294,19 @@ pub fn build_pg_distinct_estimate_sql(schema: &str, table: &str, column: &str) -
     )
 }
 
+/// 表の全列分の `pg_stats.n_distinct` を 1 本で読む SQL (#1609)。列名とともに返す。
+/// 継承 / パーティション親では `inherited` が false と true の 2 行が出うるので、
+/// `inherited DESC` で並べ、呼び出し側が後勝ちで格納して本体の統計を優先する。
+pub fn build_pg_table_distinct_estimates_sql(schema: &str, table: &str) -> String {
+    let lit = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    format!(
+        "SELECT attname::text, n_distinct FROM pg_stats \
+         WHERE schemaname = {} AND tablename = {} ORDER BY inherited DESC",
+        lit(schema),
+        lit(table)
+    )
+}
+
 /// `n_distinct` と総行数から DISTINCT 数の推定値を求める。
 pub fn pg_distinct_estimate(n_distinct: f64, total_rows: u64) -> Option<u64> {
     if !n_distinct.is_finite() || n_distinct == 0.0 {
@@ -438,12 +451,24 @@ pub struct ColumnOverview {
     pub notes: Vec<String>,
 }
 
+impl ColumnOverview {
+    /// `non_null_count` を数値で読む (読めなければ 0)。
+    fn non_null_count_u64(&self) -> u64 {
+        value_as_u64(&self.non_null_count).unwrap_or(0)
+    }
+}
+
 /// 表全体の概要。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TableProfileOverview {
     pub table: String,
     pub total_count: Value,
     pub columns: Vec<ColumnOverview>,
+    /// `distinct_count` が統計情報からの近似値か (#1609)。PostgreSQL で近似が
+    /// 要求され、実際に統計から埋めた列があるときだけ真。統計の無い列の DISTINCT は
+    /// `None` のまま (正確値への縮退はしない)。
+    #[serde(default)]
+    pub distinct_approximate: bool,
     /// 集計に使った SELECT の本数 (正常時は 列数 / [`OVERVIEW_CHUNK_COLUMNS`] の切り上げ。
     /// 失敗して列ごとに縮退した分も数える)。
     pub scans: u32,
@@ -785,11 +810,18 @@ pub async fn run_table_overview(
     database: &str,
     table: &str,
     include_distinct: bool,
+    approximate: bool,
 ) -> Result<TableProfileOverview> {
     if table.trim().is_empty() {
         return Err(AppError::InvalidInput("table is required".into()));
     }
     let driver = conn.driver_kind();
+    // PostgreSQL で近似が求められたら、集計 SELECT から全列の `COUNT(DISTINCT)` を外し、
+    // DISTINCT は `pg_stats.n_distinct` から埋める (#1609)。他ドライバは近似を持たない
+    // ので正確値のまま (列プロファイルと違い、概要には縮退理由の note 欄を使わない:
+    // note があると UI が MIN/MAX を「—」に差し替えてしまうため)。
+    let pg_approx = approximate && include_distinct && driver == DriverKind::Postgres;
+    let agg_distinct = include_distinct && !pg_approx;
     let infos = conn.columns(database, table).await?;
     if infos.is_empty() {
         return Err(AppError::InvalidInput(format!(
@@ -802,7 +834,7 @@ pub async fn run_table_overview(
             (
                 c.name.as_str(),
                 c.data_type.as_str(),
-                overview_aggs(driver, &c.data_type, include_distinct),
+                overview_aggs(driver, &c.data_type, agg_distinct),
             )
         })
         .collect();
@@ -824,7 +856,7 @@ pub async fn run_table_overview(
                 let row = res.rows.into_iter().next().unwrap_or_default();
                 let (t, mut part) = read_overview_row(&row, chunk);
                 total.get_or_insert(t);
-                mark_skipped(&mut part, chunk, include_distinct);
+                mark_skipped(&mut part, chunk, agg_distinct);
                 columns.extend(part);
             }
             // キャンセル・タイムアウト・接続断は列ごとに再試行しても同じ結果になる (しかも
@@ -841,7 +873,7 @@ pub async fn run_table_overview(
                             let row = res.rows.into_iter().next().unwrap_or_default();
                             let (t, mut part) = read_overview_row(&row, std::slice::from_ref(one));
                             total.get_or_insert(t);
-                            mark_skipped(&mut part, std::slice::from_ref(one), include_distinct);
+                            mark_skipped(&mut part, std::slice::from_ref(one), agg_distinct);
                             columns.extend(part);
                             continue;
                         }
@@ -878,10 +910,58 @@ pub async fn run_table_overview(
             }
         }
     }
+    let total = total.unwrap_or(0);
+    let mut distinct_approximate = false;
+    if pg_approx {
+        // 失敗しても概要全体は返す (DISTINCT が「—」になるだけ)。
+        let estimates: std::collections::HashMap<String, f64> = conn
+            .execute(
+                &build_pg_table_distinct_estimates_sql(database, table),
+                None,
+            )
+            .await
+            .map(|r| {
+                r.rows
+                    .iter()
+                    .filter_map(|row| {
+                        let name = match row.first()? {
+                            Value::String(s) => s.clone(),
+                            _ => return None,
+                        };
+                        Some((name, value_as_f64(row.get(1)?)?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (c, info) in columns.iter_mut().zip(&infos) {
+            // DISTINCT を取れない型 (json など) は、従来どおり外す。
+            if !overview_aggs(driver, &info.data_type, true).distinct {
+                continue;
+            }
+            let non_null = c.non_null_count_u64();
+            let est = estimates
+                .get(&c.column)
+                .and_then(|nd| pg_distinct_estimate(*nd, total));
+            if let Some(est) = est {
+                // 推定値が非 NULL 件数を超えることはない。
+                c.distinct_count = Some(Value::from_u64_lossless(est.min(non_null)));
+                distinct_approximate = true;
+            }
+        }
+        // 型の都合で DISTINCT を外した列の注記 (`mark_skipped` は近似時に付けない)。
+        for (c, info) in columns.iter_mut().zip(&infos) {
+            if !overview_aggs(driver, &info.data_type, true).distinct
+                && !c.notes.iter().any(|n| n == NOTE_OVERVIEW_SKIPPED)
+            {
+                c.notes.push(NOTE_OVERVIEW_SKIPPED.to_string());
+            }
+        }
+    }
     Ok(TableProfileOverview {
         table: table.to_string(),
-        total_count: Value::from_u64_lossless(total.unwrap_or(0)),
+        total_count: Value::from_u64_lossless(total),
         columns,
+        distinct_approximate,
         scans,
     })
 }

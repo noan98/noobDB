@@ -2601,7 +2601,7 @@ async fn postgres_table_overview_single_scan() {
     .await
     .expect("insert");
     let o = conn
-        .table_profile("public", "noobdb_pg_overview", true)
+        .table_profile("public", "noobdb_pg_overview", true, false)
         .await
         .expect("overview");
     assert_eq!(o.scans, 1);
@@ -2615,6 +2615,38 @@ async fn postgres_table_overview_single_scan() {
         !by("j").notes.is_empty(),
         "json は MIN/MAX を外した理由が付く"
     );
+    assert!(
+        !o.distinct_approximate,
+        "正確モードでは近似マークを付けない"
+    );
+    // #1609: 近似モードは COUNT(DISTINCT) を外し、ANALYZE 済みの pg_stats から埋める。
+    conn.execute("ANALYZE public.noobdb_pg_overview", None)
+        .await
+        .expect("analyze");
+    let approx = conn
+        .table_profile("public", "noobdb_pg_overview", true, true)
+        .await
+        .expect("approximate overview");
+    assert_eq!(approx.total_count, t::Value::UInt(3));
+    assert!(approx.distinct_approximate);
+    let aby = |n: &str| {
+        approx
+            .columns
+            .iter()
+            .find(|c| c.column == n)
+            .expect("column")
+    };
+    // n_distinct 由来の推定値でも、非 NULL 件数 (tag は 2) を超えない。
+    let tag_distinct = match &aby("tag").distinct_count {
+        Some(t::Value::UInt(n)) => *n,
+        other => panic!("tag の近似 DISTINCT が数値でない: {other:?}"),
+    };
+    assert!((1..=2).contains(&tag_distinct));
+    // json は DISTINCT を取れない型なので、近似でも外れて理由が付く。
+    assert_eq!(aby("j").distinct_count, None);
+    assert!(!aby("j").notes.is_empty());
+    // MIN/MAX は近似モードでも集計 SELECT が返す。
+    assert_ne!(aby("score").min_value, t::Value::Null);
     conn.execute("DROP TABLE IF EXISTS public.noobdb_pg_overview", None)
         .await
         .expect("cleanup");

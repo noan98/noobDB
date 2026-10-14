@@ -218,26 +218,34 @@ async fn list_watches_in(pool: &SqlitePool, profile_id: &str) -> Result<Vec<Tabl
     .bind(profile_id)
     .fetch_all(pool)
     .await?;
-    let mut out = Vec::with_capacity(rows.len());
-    for r in rows {
-        let id: i64 = r.try_get("id")?;
-        let gens = sqlx::query(
-            "SELECT id, captured_at, row_count, truncated, bytes
-               FROM generation WHERE watch_id = ? ORDER BY id DESC",
-        )
-        .bind(id)
-        .fetch_all(pool)
-        .await?;
-        let mut generations = Vec::with_capacity(gens.len());
-        for g in gens {
-            generations.push(GenerationMeta {
+    // 世代のメタは 1 本の問い合わせで取り、watch ごとに束ねる (N+1 の解消, #1609)。
+    let gens = sqlx::query(
+        "SELECT watch_id, id, captured_at, row_count, truncated, bytes
+           FROM generation
+          WHERE watch_id IN (SELECT id FROM watch WHERE profile_id = ?)
+          ORDER BY watch_id, id DESC",
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await?;
+    let mut by_watch: std::collections::HashMap<i64, Vec<GenerationMeta>> =
+        std::collections::HashMap::new();
+    for g in gens {
+        by_watch
+            .entry(g.try_get("watch_id")?)
+            .or_default()
+            .push(GenerationMeta {
                 id: g.try_get("id")?,
                 captured_at: g.try_get("captured_at")?,
                 row_count: g.try_get::<i64, _>("row_count")?.max(0) as usize,
                 truncated: g.try_get("truncated")?,
                 bytes: g.try_get::<i64, _>("bytes")?.max(0) as u64,
             });
-        }
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let id: i64 = r.try_get("id")?;
+        let generations = by_watch.remove(&id).unwrap_or_default();
         out.push(TableWatch {
             id,
             profile_id: r.try_get("profile_id")?,

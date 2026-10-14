@@ -4638,6 +4638,7 @@
         "null_count": 60
       }
     ],
+    "distinct_approximate": true,
     "scans": 1,
     "table": "orders",
     "total_count": 100

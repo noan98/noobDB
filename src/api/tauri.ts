@@ -1066,6 +1066,8 @@ export interface TableProfileOverview {
   table: string;
   total_count: ProfileCount;
   columns: ColumnOverview[];
+  /** `distinct_count` が統計情報からの近似値か (PostgreSQL で近似を要求したとき)。 */
+  distinct_approximate: boolean;
   scans: number;
 }
 
