@@ -974,6 +974,9 @@ pub struct ImportErrorEvent {
     /// (and its CSV file line), when it could be pinpointed (#687).
     pub record: Option<u64>,
     pub line: Option<u64>,
+    /// 全体障害で中断するまでにコミット済みの行数 (skip モードのみ。0 / 無しは None)。
+    /// UI が「N 行はコミット済み」を翻訳して付ける (#1598)。
+    pub committed: Option<u64>,
 }
 
 /// Outcome of the DB-execution phase of an import (#687). Setup failures (file
@@ -1253,11 +1256,16 @@ async fn spawn_import(
         mapping,
         batch_size,
         create_table,
-        committed,
+        committed.clone(),
         created_flag,
     )
     .await;
     cancel_cleanup.disarm();
+    // skip モードで全体障害により中断した場合も、それまでのチャンクは自動コミット済み。
+    let committed_before_error = match &result {
+        Err(_) => committed.load(std::sync::atomic::Ordering::SeqCst),
+        _ => 0,
+    };
 
     // Query Result Cache (#1097): インポートはバルク書き込みなので、対象
     // テーブルの行が実際に増えていた場合 (skip モードの部分成功も含む) は
@@ -1266,6 +1274,9 @@ async fn spawn_import(
         if *inserted > 0 {
             session.query_cache.invalidate_all().await;
         }
+    }
+    if committed_before_error > 0 {
+        session.query_cache.invalidate_all().await;
     }
 
     // A CSV import is a bulk write; record it to history like the edit-Apply
@@ -1304,7 +1315,7 @@ async fn spawn_import(
                 &session,
                 summary,
                 summary_db.as_deref(),
-                None,
+                (committed_before_error > 0).then_some(committed_before_error as i64),
                 None,
                 Some(e.to_string()),
             )
@@ -1366,6 +1377,7 @@ async fn spawn_import(
                     error: message,
                     record,
                     line,
+                    committed: None,
                 },
             ) {
                 tracing::warn!(stream_id = %stream_id, error = %emit_err, "failed to emit import error event");
@@ -1380,6 +1392,7 @@ async fn spawn_import(
                     error: e.to_string(),
                     record: None,
                     line: None,
+                    committed: (committed_before_error > 0).then_some(committed_before_error),
                 },
             ) {
                 tracing::warn!(

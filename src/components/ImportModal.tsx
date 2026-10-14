@@ -528,7 +528,9 @@ export function ImportModal({
             ? e.line != null
               ? t("importErrorAtRecordLine", { error: e.error, record: e.record, line: e.line })
               : t("importErrorAtRecord", { error: e.error, record: e.record })
-            : e.error;
+            : e.committed
+              ? t("importErrorCommitted", { error: e.error, committed: e.committed })
+              : e.error;
         setStatus({ kind: "error", message });
         toast.error(message);
         if (unlistenRef.current) {

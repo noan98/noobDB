@@ -219,9 +219,10 @@ pub(crate) async fn prepare_transfer(
                     "source and target are the same table".into(),
                 ));
             }
-        } else if same_db && request.source_sql.is_some() {
+        } else if request.source_sql.is_some() {
             // クエリ元でも、転送先と同名のテーブルを読むなら置き換え (DROP) でソースが
-            // 消える。修飾子の一致までは見ず、同名の識別子があれば拒否する (#1598)。
+            // 消える。クエリは `shop.users` のように別 DB を修飾して読めるので、DB の一致は
+            // 見ず (同一セッションだけで判定し)、同名の識別子があれば拒否する (#1598)。
             if crate::db::where_used::mentions_table_name(
                 &source_sql,
                 request.target_table.trim(),

@@ -901,6 +901,9 @@ mod tests {
             "SELECT * FROM other.users u JOIN t ON t.id = u.id",
             DriverKind::Postgres
         ));
+        // 別 DB を修飾して読むクエリも同名なら参照とみなす (転送先 DB と違っても DROP で消える)。
+        assert!(m("SELECT * FROM shop.users", DriverKind::Mysql));
+        assert!(m("SELECT * FROM \"shop\".\"users\"", DriverKind::Postgres));
         assert!(!m("SELECT * FROM users_archive", DriverKind::Mysql));
         assert!(!m(
             "SELECT 'users' /* users */ -- users\n FROM t",

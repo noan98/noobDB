@@ -49,7 +49,8 @@ export type TransferValidationError =
   | "tableEmpty"
   | "tableExists"
   | "tableMissing"
-  | "sameTable";
+  | "sameTable"
+  | "queryReadsTarget";
 
 export interface TransferTargetInput {
   tableName: string;
@@ -58,6 +59,12 @@ export interface TransferTargetInput {
   existingTables: string[] | null;
   /** 転送元と転送先が同じプロファイル・同じ DB か (同一テーブルへの上書き防止)。 */
   sameProfileAndDatabase: boolean;
+  /**
+   * 転送元と転送先が同じプロファイルか。クエリ元は `shop.users` のように別 DB を修飾して
+   * 読めるので DB の一致は見ず、プロファイルの一致だけで判定する。未指定なら
+   * `sameProfileAndDatabase` を使う (#1598)。
+   */
+  sameProfile?: boolean;
   source: TransferSource;
   /**
    * 転送先のドライバ。PostgreSQL は引用符付き識別子で大文字小文字を区別する
@@ -91,15 +98,20 @@ export function queryMentionsTable(sql: string, table: string, driver?: DriverKi
 export function validateTransferTarget(input: TransferTargetInput): TransferValidationError | null {
   const name = input.tableName.trim();
   if (!name) return "tableEmpty";
-  if (input.sameProfileAndDatabase && !writesExistingTable(input.mode)) {
+  if (!writesExistingTable(input.mode)) {
     const { source } = input;
     if (source.kind === "table") {
-      const a = source.table.trim();
-      const same = input.targetDriver === "postgres" ? a === name : a.toLowerCase() === name.toLowerCase();
-      if (same) return "sameTable";
-    } else if (queryMentionsTable(source.sql, name, input.targetDriver)) {
+      if (input.sameProfileAndDatabase) {
+        const a = source.table.trim();
+        const same = input.targetDriver === "postgres" ? a === name : a.toLowerCase() === name.toLowerCase();
+        if (same) return "sameTable";
+      }
+    } else if (
+      (input.sameProfile ?? input.sameProfileAndDatabase) &&
+      queryMentionsTable(source.sql, name, input.targetDriver)
+    ) {
       // クエリ元でも、転送先と同名のテーブルを読むなら置き換えでソースが消える。
-      return "sameTable";
+      return "queryReadsTarget";
     }
   }
   if (input.existingTables) {

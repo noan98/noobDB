@@ -221,6 +221,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     existingTables,
     sameProfileAndDatabase:
       !!sourceProfileId && sourceProfileId === profileId && (source.database ?? "") === (database ?? ""),
+    sameProfile: !!sourceProfileId && sourceProfileId === profileId,
     source,
     targetDriver: targetProfile ? toDriverKind(targetProfile.driver) : null,
   });
@@ -346,7 +347,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         ? t("transferTableMissing", { table: tableName.trim() })
         : validation === "sameTable"
           ? t("transferSameTable")
-          : null;
+          : validation === "queryReadsTarget"
+            ? t("transferQueryReadsTarget", { table: tableName.trim() })
+            : null;
 
   return (
     <Modal

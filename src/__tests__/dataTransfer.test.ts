@@ -85,9 +85,20 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
       const q = (sql: string): TransferSource => ({ kind: "query", database: "app", sql });
       const same = { ...base, sameProfileAndDatabase: true, tableName: "users", mode: "replace" as const };
       expect(validateTransferTarget({ ...same, source: q("SELECT * FROM users WHERE active = 1") })).toBe(
-        "sameTable",
+        "queryReadsTarget",
       );
-      expect(validateTransferTarget({ ...same, source: q("SELECT * FROM `app`.`Users`") })).toBe("sameTable");
+      expect(validateTransferTarget({ ...same, source: q("SELECT * FROM `app`.`Users`") })).toBe(
+        "queryReadsTarget",
+      );
+      // 別 DB を修飾して読むクエリは、転送先 DB が違っても (同じプロファイルなら) 拒否
+      expect(
+        validateTransferTarget({
+          ...same,
+          sameProfileAndDatabase: false,
+          sameProfile: true,
+          source: q("SELECT * FROM shop.users"),
+        }),
+      ).toBe("queryReadsTarget");
       // コメント・文字列リテラル・前方一致の別名は読み取り元ではない
       expect(validateTransferTarget({ ...same, source: q("SELECT 'users' /* users */ FROM users_old") })).toBeNull();
       // 別接続・別 DB なら問題ない

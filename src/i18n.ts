@@ -2182,6 +2182,8 @@ const en = {
   transferTableExists: "Table {table} already exists. Choose “Replace” or “Append”.",
   transferTableMissing: "Table {table} does not exist, so rows cannot be appended.",
   transferSameTable: "The source and target are the same table.",
+  transferQueryReadsTarget:
+    "The source query reads the table \"{table}\". Replacing it would drop the data being read.",
   transferModeLabel: "If the table exists",
   transferModeCreate: "Create a new table (fail if it exists)",
   transferModeReplace: "Replace (drop and recreate)",
@@ -3165,6 +3167,7 @@ const en = {
     "Rows the database rejects are skipped and reported at the end. Not all-or-nothing — good rows are committed.",
   importErrorAtRecord: "{error} (failed at record {record})",
   importErrorAtRecordLine: "{error} (failed at record {record}, line {line})",
+  importErrorCommitted: "{error} ({committed} rows were already committed)",
   importSkippedSummary: "Imported {inserted} rows; skipped {skipped}.",
   importSkippedRow: "record {record}: {reason}",
   importSkippedRowLine: "record {record} (line {line}): {reason}",
@@ -7264,6 +7267,8 @@ const ja: Dict = {
   transferTableExists: "テーブル {table} は既に存在します。「置き換え」か「追記」を選んでください。",
   transferTableMissing: "テーブル {table} が存在しないため追記できません。",
   transferSameTable: "コピー元とコピー先が同じテーブルです。",
+  transferQueryReadsTarget:
+    "クエリが転送先テーブル「{table}」を参照しています。置き換えると読み取り元が消えます。",
   transferModeLabel: "テーブルが既にある場合",
   transferModeCreate: "新規作成 (既にあれば失敗)",
   transferModeReplace: "置き換え (削除して作り直す)",
@@ -8243,6 +8248,7 @@ const ja: Dict = {
     "データベースが拒否した行はスキップし、最後に一覧報告します。all-or-nothing ではなく、正常な行はコミットされます。",
   importErrorAtRecord: "{error} (レコード {record} で失敗)",
   importErrorAtRecordLine: "{error} (レコード {record}, 行 {line} で失敗)",
+  importErrorCommitted: "{error} ({committed} 行はコミット済み)",
   importSkippedSummary: "{inserted} 行をインポート、{skipped} 行をスキップしました。",
   importSkippedRow: "レコード {record}: {reason}",
   importSkippedRowLine: "レコード {record} (行 {line}): {reason}",
