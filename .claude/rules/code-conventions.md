@@ -25,9 +25,12 @@ unwrap/expect/panic を本体コードに入れると CI が自動で fail** し
 panic/unwrap が妥当かの日本語根拠コメント**を必ず付けてください。
 
 フロントエンドは `tsc` (`pnpm run build` 経由) で型チェックされ、さらに
-**Biome (`biome.json`)** が `pnpm run lint` (= `biome lint src`) で CI の
-frontend ジョブ内のステップとして走ります (#1176)。ルールは高シグナルなものだけで、
-スタイル系・整形は入れません (formatter は無効)。
+**Biome (`biome.json`)** が `pnpm run lint` (= `biome check src`) で CI の
+frontend ジョブ内のステップとして走ります (#1176)。lint ルールは高シグナルなものだけで
+スタイル系は入れません。整形は Biome formatter (スペース 2 / 行幅 110 / それ以外は既定) で
+統一し、`pnpm run lint` が未整形を検出して落とします (#1636)。直すには
+`pnpm exec biome format --write src`。整形だけの大規模コミットは `.git-blame-ignore-revs`
+に登録してあります (`git config blame.ignoreRevsFile .git-blame-ignore-revs` で blame に反映)。
 
 - `nursery/noFloatingPromises` (error): await 忘れの IPC 呼び出しは握り潰された失敗に
   なる。意図的な fire-and-forget は `void` で明示する (失敗が呼び出し先の try/catch で

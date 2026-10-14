@@ -94,7 +94,7 @@ pnpm dev               # vite 開発サーバ (http://localhost:1420)
 pnpm run build         # tsc 型チェック + vite ビルド
 pnpm test              # Vitest ユニットテスト (jsdom)
 pnpm test:browser      # Vitest ブラウザモード (Playwright + Chromium)
-pnpm run lint          # Biome (noFloatingPromises / hooks ルール)
+pnpm run lint          # Biome (noFloatingPromises / hooks ルール + 整形チェック。直すには pnpm exec biome format --write src)
 pnpm run knip          # 未使用エクスポート/依存/到達不能コード検出
 pnpm tauri dev         # アプリ全体を起動
 ```
