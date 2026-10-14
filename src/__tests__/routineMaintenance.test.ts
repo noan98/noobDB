@@ -4,6 +4,7 @@ import {
   buildRestoreStatement,
   buildRoutineTemplate,
   extractPgTriggerTable,
+  pgRoutineEditWarnings,
   routineApplyIsAtomic,
   stripDelimiterDirectives,
   supportsRoutineEditing,
@@ -249,5 +250,30 @@ describe("buildRoutineTemplate", () => {
         expect(r.ok, `${driver}/${kind}`).toBe(true);
       }
     }
+  });
+});
+
+describe("pgRoutineEditWarnings (#1615)", () => {
+  const orig =
+    "CREATE OR REPLACE FUNCTION public.add(a integer, b integer)\n RETURNS integer AS $$ SELECT a + b $$ LANGUAGE sql;";
+  it("名前・引数が同じなら警告なし (本体だけの変更)", () => {
+    expect(pgRoutineEditWarnings(orig, orig.replace("a + b", "b + a"))).toEqual([]);
+    expect(pgRoutineEditWarnings(orig, orig.replace("CREATE OR REPLACE", "create"))).toEqual([]);
+  });
+  it("名前変更と引数変更をそれぞれ検出する", () => {
+    expect(pgRoutineEditWarnings(orig, orig.replace("public.add", "public.add2"))).toEqual([
+      "routineEditPgRenamed",
+    ]);
+    expect(pgRoutineEditWarnings(orig, orig.replace("b integer", "b bigint"))).toEqual([
+      "routineEditPgArgsChanged",
+    ]);
+    expect(
+      pgRoutineEditWarnings(orig, orig.replace("public.add", "public.sum").replace("b integer", "b bigint")),
+    ).toEqual(["routineEditPgRenamed", "routineEditPgArgsChanged"]);
+  });
+  it("引数内の括弧 (numeric(10,2)) を含んでも解析でき、解析不能なら警告なし", () => {
+    const a = "CREATE FUNCTION f(x numeric(10,2)) RETURNS int AS $$ select 1 $$ LANGUAGE sql";
+    expect(pgRoutineEditWarnings(a, a.replace("10,2", "10,4"))).toEqual(["routineEditPgArgsChanged"]);
+    expect(pgRoutineEditWarnings(a, "not ddl")).toEqual([]);
   });
 });

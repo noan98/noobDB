@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { extractQueryParams, isNumericParam, renderParamValue, substituteQueryParams } from "../queryParams";
+import {
+  extractQueryParams,
+  findQuotedParams,
+  isNumericParam,
+  renderParamValue,
+  substituteQueryParams,
+} from "../queryParams";
 
 // {{variable}} クエリパラメータの検出と、ドライバ別・型別の安全な展開。
 // SQL インジェクション防止が機能の核なので、エスケープ経路を重点的に検証する。
@@ -118,5 +124,21 @@ describe("substituteQueryParams", () => {
   it("型未指定の変数は text として扱う", () => {
     const out = substituteQueryParams("SELECT {{a}}", "mysql", { a: "hi" }, {});
     expect(out).toBe("SELECT 'hi'");
+  });
+});
+
+describe("findQuotedParams (#1615)", () => {
+  it("引用符で直接囲まれたプレースホルダだけを初出順で返す", () => {
+    expect(findQuotedParams("WHERE a = '{{a}}' AND b = {{b}} AND c = \"{{c}}\" AND a2 = '{{a}}'")).toEqual([
+      "a",
+      "c",
+    ]);
+    expect(findQuotedParams("SELECT `{{col}}` FROM t")).toEqual(["col"]);
+  });
+
+  it("囲んでいない・文字列の途中・閉じ引用符が違うものは対象外", () => {
+    expect(findQuotedParams("WHERE id = {{id}}")).toEqual([]);
+    expect(findQuotedParams("LIKE '%{{q}}%'")).toEqual([]);
+    expect(findQuotedParams("x = '{{a}}\"")).toEqual([]);
   });
 });

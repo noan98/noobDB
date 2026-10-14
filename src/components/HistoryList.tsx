@@ -399,9 +399,20 @@ export const HistoryList = memo(function HistoryList({
     const msg = scopeId
       ? t("historyClearConfirmProfile", { name: activeProfile?.name ?? "" })
       : t("historyClearConfirmAll");
+    // 絞り込み中でも削除範囲は履歴全体 (clear_history は条件を取らない)。取り違えを防ぐため、
+    // 確認文に「絞り込みに関係なく全件」であることと表示中の件数を明記する (#1615)。
     const ok = await confirm({
       title: t("historyClear"),
-      message: msg,
+      message: hasActiveFilter ? (
+        <>
+          <chakra.p m={0}>{msg}</chakra.p>
+          <chakra.p m={0} color="app.textWarning">
+            {t("historyClearFilteredNote", { shown: shownEntries.length })}
+          </chakra.p>
+        </>
+      ) : (
+        msg
+      ),
       confirmLabel: t("historyClear"),
       tone: "danger",
     });
@@ -505,7 +516,7 @@ export const HistoryList = memo(function HistoryList({
         </PressableButton>
         {entries.length > 0 && (
           <PressableButton type="button" variant="danger" onClick={handleClear}>
-            {t("historyClear")}
+            {hasActiveFilter ? t("historyClearAllIgnoringFilter") : t("historyClear")}
           </PressableButton>
         )}
       </TreeSearch>

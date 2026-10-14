@@ -51,6 +51,24 @@ export function extractQueryParams(sql: string): string[] {
 }
 
 /**
+ * `'{{name}}'` / `"{{name}}"` / `` `{{name}}` `` のように、プレースホルダが引用符で
+ * 直接囲まれているパラメータ名を返す (初出順・重複なし)。text / identifier の値は
+ * 置換時に自動で引用符が付くため、囲んで書くと `''abc''` のように二重引用になって
+ * 構文エラーになる。入力モーダルで事前に注意するための検出 (置換結果は変えない)。
+ */
+export function findQuotedParams(sql: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const m of sql.matchAll(/(['"`])\{\{(\w+)\}\}\1/g)) {
+    if (!seen.has(m[2])) {
+      seen.add(m[2]);
+      out.push(m[2]);
+    }
+  }
+  return out;
+}
+
+/**
  * Render one parameter value into safe SQL for its type. **Every branch is
  * injection-safe regardless of input**: `text` and `identifier` go through the
  * driver-aware quoting helpers (which double the relevant quote char), and a

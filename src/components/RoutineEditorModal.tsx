@@ -3,6 +3,7 @@ import { api, type DriverKind } from "../api/tauri";
 import { useT } from "../i18n";
 import {
   buildApplyRoutineStatements,
+  pgRoutineEditWarnings,
   buildRestoreStatement,
   buildRoutineTemplate,
   routineApplyIsAtomic,
@@ -92,6 +93,14 @@ export function RoutineEditorModal({
   const built = useMemo(
     () => buildApplyRoutineStatements({ driver, database, kind, name, originalDdl: original, ddl: text }),
     [driver, database, kind, name, original, text],
+  );
+  // PG は名前・引数型が変わると旧定義が残る (置換ではなくオーバーロード追加になる)。
+  const pgWarnings = useMemo(
+    () =>
+      editing && driver === "postgres" && kind !== "trigger" && original
+        ? pgRoutineEditWarnings(original, text)
+        : [],
+    [editing, driver, kind, original, text],
   );
   const kindLabel = t(KIND_LABEL_KEYS[kind]);
   const atomic = routineApplyIsAtomic(driver);
@@ -185,6 +194,7 @@ export function RoutineEditorModal({
               : ""}
             {driver === "mysql" ? ` ${t("routineEditNoteMysqlDelimiter")}` : ""}
           </Callout>
+          {pgWarnings.length > 0 && <Callout tone="warning">{pgWarnings.map((k) => t(k)).join(" ")}</Callout>}
           {built.ok && (
             <FormSection>
               <FieldLabel as="div">{t("routineEditPreviewLabel")}</FieldLabel>
