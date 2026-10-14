@@ -192,11 +192,6 @@ impl ImportConflict {
     }
 }
 
-/// 整数型・数値型のキー列の比較用に、数値テキストを正規形へ直す。前後の空白・
-/// 先頭の `+`・先頭の 0・小数部末尾の 0 を落とし、`-0` は `0` にする
-/// (`'1'` / `'01'` / `' 1'` / `'1.0'` が同じキーになる)。f64 を通さず文字列のまま
-/// 処理するので 64bit 整数・高精度 NUMERIC も丸まらない。`1e3` や `NaN` など
-/// 単純な 10 進表記でない値は元のテキストのまま返す。
 /// キー比較の前に正規化する PostgreSQL 型の種別 (`collapse_duplicate_keys` 用)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyKind {
@@ -245,6 +240,11 @@ fn normalize_bool_key(raw: &str) -> Cow<'_, str> {
     }
 }
 
+/// 整数型・数値型のキー列の比較用に、数値テキストを正規形へ直す。前後の空白・
+/// 先頭の `+`・先頭の 0・小数部末尾の 0 を落とし、`-0` は `0` にする
+/// (`'1'` / `'01'` / `' 1'` / `'1.0'` が同じキーになる)。f64 を通さず文字列のまま
+/// 処理するので 64bit 整数・高精度 NUMERIC も丸まらない。`1e3` や `NaN` など
+/// 単純な 10 進表記でない値は元のテキストのまま返す。
 pub fn normalize_numeric_key(raw: &str) -> Cow<'_, str> {
     let t = raw.trim();
     let (neg, body) = match t.as_bytes().first() {

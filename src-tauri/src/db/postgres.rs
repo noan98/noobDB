@@ -1430,12 +1430,7 @@ impl PostgresConn {
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
                  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-                 k.ord               AS ord,
-                 -- キー列数 (PG11+ の INCLUDE 列はこの後ろ)。古い版には列が無いので jsonb 経由で読む。
-                 COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
-                 -- indoption: bit0 = DESC, bit1 = NULLS FIRST。
-                 COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
-                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
+                 k.ord               AS ord
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1878,7 +1873,12 @@ impl PostgresConn {
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
                  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-                 k.ord               AS ord
+                 k.ord               AS ord,
+                 -- キー列数 (PG11+ の INCLUDE 列はこの後ろ)。古い版には列が無いので jsonb 経由で読む。
+                 COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
+                 -- indoption: bit0 = DESC, bit1 = NULLS FIRST。
+                 COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -2424,6 +2424,9 @@ async fn apply_search_path_on(
     let Some(s) = schema else {
         // スキーマ未指定: プール接続に前の文の search_path が残っていたら既定値へ戻す。
         // 戻さないと、どの接続が返るかで別スキーマの同名表を読み書きしてしまう。
+        // 注意: 戻す先は「接続確立直後 (セッション初期化 SQL 適用後) の search_path」。スキーマ未選択の
+        // タブで利用者が実行した `SET search_path` も、次のスキーマ未指定の文の前に既定値へ戻る
+        // (プール接続は文ごとに別になりうるため、元から保持は保証されない挙動を決定的にした)。
         if state.dirty.load(std::sync::atomic::Ordering::Relaxed) {
             if let Some(default) = state.default.get() {
                 sqlx::query("SELECT set_config('search_path', $1, false)")

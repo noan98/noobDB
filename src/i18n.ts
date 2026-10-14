@@ -2356,6 +2356,7 @@ const en = {
   contextMenuSyncIdentity: "Sync auto-increment to data...",
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
   identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
+  identitySyncCurrentUnknown: "Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on \"lower\" to sync anyway.",
   identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed:
@@ -2428,6 +2429,7 @@ const en = {
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
   alterTableDuplicateColumn: "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
+  alterTableRenameCollision: "The new name is the current name of another column: {names}. Swapping or chaining renames cannot be applied safely; rename them in separate steps.",
   alterTableReadOnly: "This connection is read-only; editing columns is disabled.",
   alterTableDestructiveTitle: "{count} destructive change(s) included",
   alterTableDestructiveBody: "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
@@ -7445,6 +7447,7 @@ const ja: Dict = {
   contextMenuSyncIdentity: "採番を実データに同期",
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
   identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
+  identitySyncCurrentUnknown: "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
   identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed:
@@ -7517,6 +7520,7 @@ const ja: Dict = {
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
   alterTableDuplicateColumn: "適用後に列名が重複します: {names}。どちらかの名前を変えるか削除してください。",
+  alterTableRenameCollision: "リネーム先が別の列の現在の名前と同じです: {names}。列名の入れ替えや連鎖は安全に実行できないので、段階を分けてリネームしてください。",
   alterTableReadOnly: "この接続は読み取り専用のため、列の編集はできません。",
   alterTableDestructiveTitle: "破壊的な変更を {count} 件含みます",
   alterTableDestructiveBody: "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",

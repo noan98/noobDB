@@ -12,6 +12,7 @@ import {
   type ExistingColumnEdit,
   type IndexDef,
   duplicateColumnNames,
+  renameCollisions,
   indexRowProblems,
   type NewColumn,
   type UnsupportedChange,
@@ -329,7 +330,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
     () => duplicateColumnNames(driver, { baseline, existing, added }),
     [driver, baseline, existing, added],
   );
-  const valid = statements.length > 0 && duplicateNames.length === 0;
+  // 入れ替え (a↔b)・連鎖 (a→b, b→c) のリネームは安全な実行順を作れないので止める。
+  const collisionNames = useMemo(
+    () => renameCollisions(driver, { baseline, existing }),
+    [driver, baseline, existing],
+  );
+  const valid = statements.length > 0 && duplicateNames.length === 0 && collisionNames.length === 0;
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
   const tryRun = () => {
     if (hasIncompleteIndex) {
@@ -767,6 +773,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
             )}
             {duplicateNames.length > 0 && (
               <FieldError>{t("alterTableDuplicateColumn", { names: duplicateNames.join(", ") })}</FieldError>
+            )}
+            {collisionNames.length > 0 && (
+              <FieldError>{t("alterTableRenameCollision", { names: collisionNames.join(", ") })}</FieldError>
             )}
             {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>

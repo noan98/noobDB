@@ -100,7 +100,8 @@ import {
   sqliteHasAutoincrementSql,
   findIdentityColumn,
   mysqlMaxValueSql,
-  mysqlAutoIncrementSql,
+  mysqlShowCreateTableSql,
+  parseAutoIncrementFromShowCreate,
 } from "./components/identitySync";
 import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
@@ -7403,6 +7404,7 @@ export default function App() {
         }
         let maxValue: string | null = null;
         let currentNext: string | null = null;
+        let currentUnknown = false;
         if (driver === "sqlite") {
           // sqlite_sequence は AUTOINCREMENT の表が 1 つも無い DB には存在せず、
           // AUTOINCREMENT でない表は行を持たない。同期できない表は SQL を出さずに知らせる。
@@ -7437,21 +7439,21 @@ export default function App() {
           try {
             const res = await api.runLookupQuery({
               sessionId,
-              sql: mysqlAutoIncrementSql(database, table),
+              sql: mysqlShowCreateTableSql(database, table),
               database,
             });
-            const cell = res.rows[0]?.[0] ?? null;
-            currentNext = cell === null ? null : String(cell);
+            // SHOW CREATE TABLE の結果は (表名, DDL) の 2 列。
+            currentNext = parseAutoIncrementFromShowCreate(res.rows[0]?.[1]);
           } catch {
-            // 現在値を読めないときは「下げない」を保証できないが、同期自体は続ける
-            // (「下げる」を選んだ場合と同じ結果になる)。
             currentNext = null;
           }
+          currentUnknown = currentNext === null;
         }
         let lower = false;
         const sqlFor = (l: boolean) =>
-          buildIdentitySyncSql(driver, database, table, column, maxValue, { lower: l, currentNext });
-        const sql = sqlFor(false);
+          buildIdentitySyncSql(driver, database, table, column, maxValue, { lower: l, currentNext, currentUnknown });
+        // 現在値を読めない MySQL は「下げる」を選ばない限り SQL が作れない。ダイアログで理由を示す。
+        const sql = sqlFor(false) ?? (currentUnknown ? sqlFor(true) : null);
         if (!sql) {
           toast.error(translate("identitySyncMaxFailed", { column, error: String(maxValue) }));
           return;
@@ -7463,6 +7465,8 @@ export default function App() {
               table={table}
               column={column}
               buildSql={sqlFor}
+              showLower={driver !== "sqlite"}
+              unavailable={currentUnknown ? translate("identitySyncCurrentUnknown", { table }) : null}
               onLowerChange={(l) => {
                 lower = l;
               }}
@@ -7471,7 +7475,11 @@ export default function App() {
           confirmLabel: translate("maintenanceConfirmOk"),
         });
         if (!ok) return;
-        const runSql = sqlFor(lower) ?? sql;
+        const runSql = sqlFor(lower);
+        if (!runSql) {
+          toast.error(translate("identitySyncCurrentUnknown", { table }));
+          return;
+        }
         const success = await runMaintenanceDdl(runSql, database);
         if (success) toast.success(translate("identitySyncDone", { table }));
       } catch (e) {

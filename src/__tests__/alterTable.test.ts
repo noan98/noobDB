@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAlterPlan,
   duplicateColumnNames,
+  renameCollisions,
   indexRowProblems,
   type AlterTableForm,
   type ExistingColumnBaseline,
@@ -572,5 +573,79 @@ describe("duplicateColumnNames (#1602)", () => {
       }),
     ).toEqual(["status"]);
     expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("x"), add("x")] })).toEqual(["x"]);
+  });
+});
+
+describe("buildAlterPlan: 空けた名前の再利用 (続き, #1602)", () => {
+  const added = { name: "status", type: "TEXT", notNull: false, defaultValue: "" };
+
+  it("DROP の後ろへ送った ADD を参照する FK / CHECK は、その ADD の後に出す", () => {
+    const plan = buildAlterPlan(
+      "mysql",
+      form({
+        baseline: [baseline({ name: "status", type: "text" })],
+        existing: [edit({ original: "status", drop: true })],
+        added: [added],
+        addedForeignKeys: [
+          { name: "", columns: ["status"], refTable: "s", refColumns: ["id"], onDelete: "", onUpdate: "" },
+        ],
+        addedChecks: [{ name: "", expression: "status <> ''" }],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual([
+      "dropColumn",
+      "addColumn",
+      "addForeignKey",
+      "addCheck",
+    ]);
+  });
+
+  it("DROP する列名へのリネーム (a→b, b を DROP) は DROP の後に出す", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "a" }), baseline({ name: "b" })],
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", drop: true })],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "renameColumn"]);
+  });
+
+  it("DROP 先へのリネームで空いた名前を使う ADD は、そのリネームの後に出す", () => {
+    const plan = buildAlterPlan(
+      "postgres",
+      form({
+        baseline: [baseline({ name: "status" }), baseline({ name: "b" })],
+        existing: [edit({ original: "status", name: "b" }), edit({ original: "b", drop: true })],
+        added: [added],
+      }),
+    );
+    expect(plan.statements.map((s) => s.kind)).toEqual(["dropColumn", "renameColumn", "addColumn"]);
+  });
+});
+
+describe("renameCollisions (#1602)", () => {
+  const b = [baseline({ name: "a" }), baseline({ name: "b" }), baseline({ name: "c" })];
+
+  it("入れ替え・連鎖は衝突、DROP 先へのリネームと大小だけの変更は衝突ではない", () => {
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", name: "a" })],
+      }),
+    ).toEqual(["b", "a"]);
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", name: "x" })],
+      }),
+    ).toEqual(["b"]);
+    expect(
+      renameCollisions("mysql", {
+        baseline: b,
+        existing: [edit({ original: "a", name: "b" }), edit({ original: "b", drop: true })],
+      }),
+    ).toEqual([]);
+    expect(renameCollisions("mysql", { baseline: b, existing: [edit({ original: "a", name: "A" })] })).toEqual([]);
   });
 });

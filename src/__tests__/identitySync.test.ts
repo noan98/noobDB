@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { TableColumnInfo } from "../api/tauri";
 import {
   buildIdentitySyncSql,
-  mysqlAutoIncrementSql,
+  mysqlShowCreateTableSql,
+  parseAutoIncrementFromShowCreate,
   findIdentityColumn,
   mysqlMaxValueSql,
   parseMaxValue,
@@ -88,7 +89,9 @@ describe("buildIdentitySyncSql", () => {
   it("PostgreSQL の既定は現在値を下げない (GREATEST と pg_sequence_last_value)", () => {
     const sql = buildIdentitySyncSql("postgres", "public", "orders", "id");
     expect(sql).toContain("GREATEST(COALESCE(MAX(\"id\"), 0), COALESCE(pg_sequence_last_value(");
-    expect(sql).toContain("IS NOT NULL OR pg_sequence_last_value(");
+    // 未使用シーケンスの下限として開始値 (seqstart) も見る。
+    expect(sql).toContain("SELECT seqstart FROM pg_sequence");
+    expect(sql).toContain("IS NOT NULL) FROM");
   });
 
   it("MySQL の既定は現在の AUTO_INCREMENT より下げず、lower なら max+1 にする", () => {
@@ -105,11 +108,22 @@ describe("buildIdentitySyncSql", () => {
     );
   });
 
-  it("mysqlAutoIncrementSql は information_schema から読む", () => {
-    expect(mysqlAutoIncrementSql("sh'op", "t")).toBe(
-      "SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'sh''op' AND TABLE_NAME = 't'",
+  it("MySQL は現在値を読めないとき、下げる指定がなければ SQL を作らない", () => {
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentUnknown: true })).toBeNull();
+    expect(buildIdentitySyncSql("mysql", "d", "t", "id", "90", { currentUnknown: true, lower: true })).toBe(
+      "ALTER TABLE `d`.`t` AUTO_INCREMENT = 91;",
     );
-    expect(mysqlAutoIncrementSql(null, "t")).toContain("TABLE_SCHEMA = DATABASE()");
+  });
+
+  it("parseAutoIncrementFromShowCreate は表オプションの AUTO_INCREMENT=N を読む", () => {
+    const ddl =
+      "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8mb4";
+    expect(parseAutoIncrementFromShowCreate(ddl)).toBe("101");
+    // 次の値が 1 のときは表オプションが出ない。
+    expect(parseAutoIncrementFromShowCreate("CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB")).toBe("1");
+    expect(parseAutoIncrementFromShowCreate("")).toBeNull();
+    expect(parseAutoIncrementFromShowCreate(undefined)).toBeNull();
+    expect(mysqlShowCreateTableSql("d", "t")).toBe("SHOW CREATE TABLE `d`.`t`");
   });
 
   it("PostgreSQL は識別子とリテラルのクォートをエスケープする", () => {
