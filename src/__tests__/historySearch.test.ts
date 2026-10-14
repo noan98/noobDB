@@ -39,6 +39,16 @@ describe("candidateSql / formatCandidates (#699)", () => {
     expect(f.text).toContain("conn=Prod");
   });
 
+  it("行コメントの改行は畳まず、後続の SQL をコメントに飲み込ませない (#1603)", () => {
+    const sql = "SELECT id -- 注文ID\nFROM orders WHERE status = 'paid'";
+    const out = candidateSql({ sql, driver: "mysql" }, false);
+    expect(out).toBe("SELECT id -- 注文ID\nFROM orders WHERE status = 'paid'");
+    const masked = candidateSql({ sql, driver: "mysql" }, true);
+    expect(masked).toContain("FROM orders");
+    expect(masked).not.toContain("注文ID");
+    expect(candidateSql({ sql: "SELECT 1\n  FROM   t", driver: "mysql" }, false)).toBe("SELECT 1 FROM t");
+  });
+
   it("1 件あたりの文字数上限で切り詰める", () => {
     const long = `SELECT ${"a, ".repeat(2000)} FROM t`;
     const out = candidateSql({ sql: long, driver: "mysql" }, false);

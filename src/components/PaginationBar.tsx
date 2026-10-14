@@ -124,7 +124,7 @@ export function PaginationBar({
         <CountUpText values={[page]} render={([p]) => t("pageLabel", { page: p })} />
         {totalPages != null && (
           <chakra.span color="app.textMuted">
-            <CountUpText values={[totalPages]} render={([n]) => t("pageOfTotal", { total: n })} />
+            <CountUpText values={[Math.max(totalPages, page)]} render={([n]) => t("pageOfTotal", { total: n })} />
           </chakra.span>
         )}
         {loading && <Spinner size={12} />}

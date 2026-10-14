@@ -4,6 +4,7 @@
  * `updater.ts` に分離し、ここは副作用なし・Vitest で境界値を固定できる関数だけを
  * 持つ (通知の `queryNotify.ts` ⇔ `notifications.ts` と同じ分離方針)。
  */
+import { takeGraphemes } from "./truncateText";
 
 /**
  * ダウンロード進捗をパーセント (0〜100 の整数) に変換する。合計サイズが不明
@@ -30,11 +31,11 @@ export function truncateReleaseNotes(body: string | undefined, maxLen = 600): st
   if (!body) return "";
   const trimmed = body.trim();
   if (trimmed.length <= maxLen) return trimmed;
-  // コードポイント単位で数える: UTF-16 のコード単位で切ると、絵文字などのサロゲート
-  // ペアの途中で割れて末尾に孤立したサロゲート (置換文字) が残る (#1534)。
-  const points = Array.from(trimmed);
-  if (points.length <= maxLen) return trimmed;
-  return `${points.slice(0, maxLen).join("")}…`;
+  // 書記素クラスタ単位で切る: コード単位 (#1534) やコードポイント単位だと、サロゲートペアや
+  // 旗絵文字・ZWJ 列の途中で割れて末尾に孤立した文字が残る (#1604)。
+  const head = takeGraphemes(trimmed, maxLen);
+  if (head === null) return trimmed;
+  return `${head}…`;
 }
 
 /**

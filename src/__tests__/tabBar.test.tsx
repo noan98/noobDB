@@ -166,3 +166,18 @@ describe("TabBar rename (#1390)", () => {
   });
 });
 
+
+describe("TabBar 閉じるボタンのキー操作", () => {
+  it("× に Enter / Space を送ってもタブ選択に横取りされない (ボタンの click に任せる)", () => {
+    const onSelect = vi.fn();
+    renderWithProviders(
+      <TabBar tabs={TABS} activeTabId="t1" onSelect={onSelect} onClose={() => {}} onNew={() => {}} />,
+    );
+    const closeButtons = screen.getAllByRole("button", { name: t("tabClose") });
+    for (const key of ["Enter", " "]) {
+      const notPrevented = fireEvent.keyDown(closeButtons[1], { key });
+      expect(notPrevented).toBe(true);
+    }
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+});

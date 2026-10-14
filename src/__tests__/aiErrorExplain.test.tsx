@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
+import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
 
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
@@ -58,6 +59,7 @@ const result = JSON.stringify({ explanation: "E", cause: "C", suggestedSql: "SEL
 
 beforeEach(() => {
   cleanup();
+  resetAiKeyStoreForTest();
   vi.clearAllMocks();
   hasAiApiKey.mockResolvedValue(true);
   handlers = null;
@@ -77,6 +79,17 @@ describe("AiErrorExplain (#692)", () => {
     await act(async () => {});
     expect(container.querySelector("[data-testid=ai-error-explain]")).toBeNull();
     expect(container.querySelector("[data-testid=ai-setup-hint]")).not.toBeNull();
+  });
+
+  it("設定画面でキーを保存 / 削除すると、再マウントなしで表示が追従する (#1603)", async () => {
+    hasAiApiKey.mockResolvedValue(false);
+    const { container } = renderWithProviders(ui());
+    await act(async () => {});
+    expect(container.querySelector("[data-testid=ai-error-explain]")).toBeNull();
+    act(() => setAiKeyPresent(true));
+    expect(container.querySelector("[data-testid=ai-error-explain]")).not.toBeNull();
+    act(() => setAiKeyPresent(false));
+    expect(container.querySelector("[data-testid=ai-error-explain]")).toBeNull();
   });
 
   it("二重クリックしても要求は 1 本だけ", async () => {

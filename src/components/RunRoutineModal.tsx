@@ -147,7 +147,17 @@ export function RunRoutineModal({
                     onKeyDown={(e) => {
                       if (isPlainEnterKey(e)) {
                         e.preventDefault();
-                        run();
+                        // 後ろに入力できる引数が残っていれば次の欄へ移る。最後の欄でだけ実行する。
+                        const next = args
+                          .slice(argIdx + 1)
+                          .find((q) => routineParamTakesInput(q));
+                        if (next) {
+                          document
+                            .getElementById(`run-routine-param-${signature.parameters.indexOf(next)}`)
+                            ?.focus();
+                        } else {
+                          run();
+                        }
                       }
                     }}
                   />

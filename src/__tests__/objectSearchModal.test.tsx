@@ -197,3 +197,38 @@ describe("ObjectSearchModal combobox a11y (#1529)", () => {
     expect(input).toHaveAttribute("aria-activedescendant", option.id);
   });
 });
+
+describe("ObjectSearchModal Enter 判定 (#1604)", () => {
+  const setup = () => {
+    const onOpenTable = vi.fn();
+    renderWithProviders(
+      <ObjectSearchModal
+        sessionId="s1"
+        currentDatabase="testdb"
+        onOpenTable={onOpenTable}
+        onClose={() => {}}
+      />,
+    );
+    return { onOpenTable, input: screen.getByPlaceholderText(t("objSearchPlaceholder")) };
+  };
+
+  it("IME 変換確定の Enter ではテーブルを開かない", async () => {
+    const { onOpenTable, input } = setup();
+    fireEvent.change(input, { target: { value: "users" } });
+    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(onOpenTable).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTable).toHaveBeenCalledWith("testdb", "users");
+  });
+
+  it("入力が結果より先へ進んだ間 (古い結果) の Enter では開かない", async () => {
+    const { onOpenTable, input } = setup();
+    fireEvent.change(input, { target: { value: "users" } });
+    await waitFor(() => expect(screen.getByText("users")).toBeInTheDocument());
+    // 追記した直後は users の結果が残っているが、対応するのは前の語。
+    fireEvent.change(input, { target: { value: "usersx" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTable).not.toHaveBeenCalled();
+  });
+});

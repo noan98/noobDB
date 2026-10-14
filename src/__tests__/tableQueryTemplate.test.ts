@@ -146,6 +146,15 @@ describe("planTableOpenQuery", () => {
     });
   });
 
+  it("末尾の行コメント / ブロックコメントがあっても LIMIT が有効なまま付く", () => {
+    const line = planTableOpenQuery("SELECT * FROM {table} -- 全件", mysql());
+    expect(line).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` LIMIT 100", editable: true, keyset: true });
+    const block = planTableOpenQuery("SELECT * FROM {table} /* all */", mysql());
+    expect(block).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` LIMIT 100", editable: true });
+    const ordered = planTableOpenQuery("SELECT * FROM {table} ORDER BY {pk} -- newest", mysql());
+    expect(ordered).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` ORDER BY `id` LIMIT 100", keyset: true });
+  });
+
   it("3 ドライバで {table} の修飾とクォートが揃う", () => {
     const t = "SELECT * FROM {table}";
     const pg = planTableOpenQuery(t, mysql({ driver: "postgres", database: "public" }));
