@@ -295,6 +295,10 @@ fn preview(sql: &str) -> String {
             }
         }
     }
+    // コメントだけの文は本体が空になるので、元の SQL を見せる。
+    if body.trim().is_empty() {
+        body = sql;
+    }
     let one_line = body.split_whitespace().collect::<Vec<_>>().join(" ");
     if one_line.chars().count() > PREVIEW_CHARS {
         let head: String = one_line.chars().take(PREVIEW_CHARS).collect();
@@ -506,6 +510,7 @@ mod tests {
         );
         // コメントだけなら潰して見せる。
         assert_eq!(preview("-- only a comment"), "-- only a comment");
+        assert_eq!(preview("-- c\n"), "-- c");
         // 文中の -- は触らない。
         assert_eq!(preview("SELECT 1 -- x\n, 2"), "SELECT 1 -- x , 2");
     }

@@ -2805,10 +2805,12 @@ async fn apply_use_database_on(
 fn show_create_text(row: &MySqlRow, names: &[&str]) -> Result<String> {
     let mut last: Option<AppError> = None;
     for name in names {
-        match row.try_get::<String, _>(*name) {
-            Ok(s) => return Ok(s),
-            Err(first) => match row.try_get::<Vec<u8>, _>(*name) {
-                Ok(bytes) => match String::from_utf8(bytes) {
+        // 権限不足のユーザでは定義本文の列が NULL になる (SELECT + EXECUTE のみの
+        // SHOW CREATE PROCEDURE など)。従来どおり空の定義として扱い、失敗にはしない。
+        match row.try_get::<Option<String>, _>(*name) {
+            Ok(s) => return Ok(s.unwrap_or_default()),
+            Err(first) => match row.try_get::<Option<Vec<u8>>, _>(*name) {
+                Ok(bytes) => match String::from_utf8(bytes.unwrap_or_default()) {
                     Ok(s) => return Ok(s),
                     Err(e) => {
                         last = Some(AppError::Other(format!(

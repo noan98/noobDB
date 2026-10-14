@@ -655,8 +655,8 @@ fn modify_column(
         }
         DriverKind::Sqlite => {
             warnings.push(format!(
-                "{}.{}: SQLite は既存の列を ALTER で変更できません。テーブルを作り直して反映して \
-                 ください (新定義で CREATE TABLE → INSERT ... SELECT でデータ移行 → DROP TABLE → RENAME)。",
+                "{}.{}: SQLite は既存の列を ALTER で変更できません。テーブルを作り直して反映してください \
+                 (新定義で CREATE TABLE → INSERT ... SELECT でデータ移行 → DROP TABLE → RENAME)。",
                 table, src.name
             ));
         }
