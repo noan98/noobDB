@@ -57,6 +57,16 @@ jobs:
         with:
           persist-credentials: false
 
+      # ランナーの apt インデックスが古いと、cache-apt-pkgs-action のクリーン
+      # インストールが削除済みの .deb を参照して 404 で失敗し、mold が入らないまま
+      # 先へ進んでしまう (2026-10-15 JST の初回手動実行で libsoup3 が 404 になり、
+      # `-fuse-ld=mold` のリンクで cargo-mutants が全滅した。#1633)。ci.yml と同じく
+      # ミラーを本家に差し替えてから apt-get update でリストを最新化する。
+      - name: Use canonical apt archive + refresh indexes (stale runner lists cause 404)
+        run: |
+          printf 'http://archive.ubuntu.com/ubuntu\tpriority:1\n' | sudo tee /etc/apt/apt-mirrors.txt
+          sudo apt-get update
+
       # clang + mold はビルド高速化用 (src-tauri/.cargo/config.toml の Linux 設定)。
       # Tauri のシステム依存は tauri-build の build.rs で必要。
       - name: System deps (Tauri 2 prerequisites)

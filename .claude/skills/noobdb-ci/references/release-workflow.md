@@ -58,3 +58,16 @@
 Linux CI では Tauri 2 のシステムパッケージ (`libwebkit2gtk-4.1-dev`,
 `libgtk-3-dev`, `libsoup-3.0-dev`, `librsvg2-dev`, `libxdo-dev`,
 `libayatana-appindicator3-dev`) が必要です。
+
+## 権限 (#1633)
+
+- `release.yml` は top-level に `permissions: contents: read` を持つ (他のワークフローと
+  同じ最小既定)。書き込みが要るのは `build` ジョブ (リリースへの成果物添付) だけで、
+  ジョブ側の `permissions: contents: write` で明示する。`changes` ジョブはジョブ側で
+  `contents: read`。新しいジョブを足すときは必要な権限をジョブ側で明示する。
+- `visual-baseline.yml` は checkout を `persist-credentials: false` にし、PAT
+  (`VISUAL_BASELINE_PAT`、無ければ `github.token`) は `Commit updated baselines`
+  ステップの env でだけ受け取る。push の間だけ `git remote set-url` で URL に付け、
+  終わったら (失敗時も trap で) 元に戻す。`pnpm install` / Playwright 実行の時点では
+  `.git/config` に認証情報が無い。`github.ref_name` は env (`REF_NAME`) 経由でシェルに渡す。
+
