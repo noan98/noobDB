@@ -3,7 +3,9 @@
 - **concurrency**: `cancel-in-progress` は `github.event_name == 'pull_request'` のときだけ
   true (#1632)。PR の古い run は取り消すが、**main への push の run は取り消さない**
   (連続 push で途中のコミットの検証が抜け、main の健全性確認とキャッシュ温めが欠けるため)。
-  グループは `ci-<workflow>-<ref>` なので、PR と main push が互いに取り消し合うことはない。
+  `cancel-in-progress: false` でも同一グループの「待機中」run は新しい run に置き換えられる
+  (グループには実行中 1 + 待機 1 のみ) ため、push のグループは `github.sha` 単位にして
+  全件を完走させる。PR のグループは従来どおり `github.ref` で、PR と push は互いに取り消し合わない。
 
 - `.github/workflows/ci.yml` — `main` への PR と `main` への push で起動。
   push トリガは**キャッシュを main スコープへ保存するため**にあります:
