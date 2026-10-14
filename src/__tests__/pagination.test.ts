@@ -52,7 +52,11 @@ describe("clampPage", () => {
 describe("canGoNext", () => {
   it("uses total pages when known", () => {
     expect(canGoNext(2, 3, 0, 100)).toBe(true);
-    expect(canGoNext(3, 3, 100, 100)).toBe(false);
+    expect(canGoNext(3, 3, 42, 100)).toBe(false);
+  });
+
+  it("keeps next enabled on a full page at the estimated last page (estimate may undercount)", () => {
+    expect(canGoNext(3, 3, 100, 100)).toBe(true);
   });
 
   it("falls back to a full page meaning there may be more", () => {

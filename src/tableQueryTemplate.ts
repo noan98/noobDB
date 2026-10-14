@@ -502,7 +502,13 @@ export function planTableOpenQuery(template: string | null, ctx: TableOpenContex
   if (validateTableQueryTemplate(template, ctx.driver)) return { kind: "legacy" };
   const values = placeholderValues(ctx);
   if (values.pk === "" && templateUsesPlaceholder(template, "pk", ctx.driver)) return { kind: "legacy" };
-  const expanded = trimTrailingSeparators(substitute(template, values, ctx.driver)).trim();
+  const substituted = trimTrailingSeparators(substitute(template, values, ctx.driver)).trim();
+  // 末尾の `-- ...` / `/* ... */` コメントは取り除く。残すと ` LIMIT n` の連結がコメント内に
+  // 入って上限が無効になり、FROM 句の正規化も壊れる (バックエンドの apply_auto_limit は
+  // 末尾コメントの手前へ挿入する)。マスク結果ではコメントが空白になるので、最後の
+  // 非空白位置までがコード部分。
+  const codeEnd = maskLiterals(substituted, ctx.driver).trimEnd().length;
+  const expanded = trimTrailingSeparators(substituted.slice(0, codeEnd)).trim();
   // 展開後の識別子 (クォート済みテーブル名など) で壊れていないかを再確認する。
   if (checkExpanded(expanded, ctx.driver)) return { kind: "legacy" };
   const shape = analyzeShape(expanded, ctx.driver);

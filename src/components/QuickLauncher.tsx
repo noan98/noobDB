@@ -179,7 +179,8 @@ export function QuickLauncher({
     if (!d || d.pointerId !== e.pointerId) return;
     dragRef.current = null;
     if (d.dragging) {
-      suppressClickRef.current = true;
+      // pointercancel の後は click が発火せず、フラグが残って次のクリックを食うので立てない。
+      if (e.type !== "pointercancel") suppressClickRef.current = true;
       commitPoint(
         clampLauncherPoint(
           { left: d.origin.left + (e.clientX - d.startX), top: d.origin.top + (e.clientY - d.startY) },

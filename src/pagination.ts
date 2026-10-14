@@ -39,7 +39,7 @@ export function clampPage(page: number, totalPages: number | null): number {
 }
 
 /**
- * 「次ページへ進めるか」を判定する。総ページ数が分かっていればそれで判断し、不明なら
+ * 「次ページへ進めるか」を判定する。総ページ数が分かっていればそれ (推定が小さい場合に備え、満杯なら続行可) で判断し、不明なら
  * 「直近のページがちょうど pageSize 件返ってきた = まだ続きがありそう」で判断する
  * (apply_auto_limit と同じく保守的: 満杯でなければ最終ページとみなす)。
  */
@@ -49,8 +49,11 @@ export function canGoNext(
   lastPageRowCount: number,
   pageSize: number,
 ): boolean {
-  if (totalPages != null) return page < totalPages;
-  return lastPageRowCount >= Math.max(1, Math.floor(pageSize));
+  const full = lastPageRowCount >= Math.max(1, Math.floor(pageSize));
+  // 総ページ数は統計由来の推定 (InnoDB の TABLE_ROWS 等) で実数より小さいことがある。
+  // 推定の最終ページでも満杯なら続きがありうるので、次へは止めない。
+  if (totalPages != null) return page < totalPages || full;
+  return full;
 }
 
 /** 「前ページへ戻れるか」。1 ページ目より大きいかどうか。 */
