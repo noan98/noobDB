@@ -502,6 +502,12 @@ export function CartesianChart({
   const [hoverRaw, setHover] = useState<number | null>(null);
   // モデル差し替えでラベル数が減ると保持中の index が範囲外になる。範囲外は無効扱いにする
   // (HoverTooltip が undefined.length で落ちるのを防ぐ)。
+  // model が差し替わったら保持中の index は捨てる (別ラベルを指す誤ったツールチップを防ぐ)。
+  const prevModelRef = useRef(model);
+  if (prevModelRef.current !== model) {
+    prevModelRef.current = model;
+    if (hoverRaw !== null) setHover(null);
+  }
   const hover = hoverRaw != null && hoverRaw < model.labels.length ? hoverRaw : null;
   // キーボード操作で読み上げる文言 (#1529)。マウスのホバーでは更新しない (読み上げが騒がしくなる)。
   const [announce, setAnnounce] = useState("");

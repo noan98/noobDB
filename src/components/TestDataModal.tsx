@@ -166,7 +166,7 @@ export function TestDataModal({
           setCols(described);
           setUniqueInfo(resolveUniqueColumns(described, indexes));
         }
-        const inferred = described.map(inferColumnSpec);
+        const inferred = described.map((c) => inferColumnSpec(c, driver));
         const withFk = await Promise.all(
           inferred.map(async (spec) => {
             if (spec.strategy !== "fkRef" || !spec.fkTable || !spec.fkColumn) return spec;

@@ -202,7 +202,7 @@ function columnLine(driver: string, col: ColumnDef, opts: { sqliteAutoPk: boolea
  *
  * 型名は方言のまま (`data_type` を逐語) 渡すので、同じドライバの接続なら追加変換なしで
  * 使える。主キー (`PRI`)・単一列 UNIQUE (`UNI`)・NOT NULL・既定値を引き継ぐ。
- * - 自動採番 (MySQL `auto_increment` / PostgreSQL の `nextval(...)` 既定値) は
+ * - 自動採番 (MySQL `auto_increment` / PostgreSQL の `nextval(...)` 既定値 / `IDENTITY`) は
  *   `autoIncrement` に写し、既定値は空にする (`nextval` は元テーブルのシーケンスを指すため)。
  * - 生成列 (`GENERATED`、`DEFAULT_GENERATED` を除く) は式が取れないので既定値なしの通常列として写す。
  * - 外部キー・CHECK・インデックスは引き継がない (必要なら制約エディタで足す)。
