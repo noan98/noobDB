@@ -1594,7 +1594,10 @@ const en = {
   exportSqlTable: "Target table",
   exportSqlTablePlaceholder: "Table name for INSERT",
   exportSqlIncludeDdl: "Include CREATE TABLE statement",
-  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Not included in the preview or copy.",
+  exportSqlIncludeDdlHint: "Puts the table definition before the INSERTs so the file restores on its own. Also included in the preview and copy.",
+  exportSqlIncludeDdlMasked: "Masked columns no longer match the original types and constraints, so the CREATE TABLE statement is omitted (a comment is written instead).",
+  exportSqlDdlPreviewLoading: "-- Loading CREATE TABLE definition...",
+  exportSqlDdlPreviewError: "-- Could not load the CREATE TABLE definition: {error}",
   exportSqlIncludeDdlNeedsTable: "Enter a target table name to include its definition.",
   exportSqlIncludeDdlTableMismatch:
     "The definition can only be included when the table name matches the result's source table.",
@@ -6690,7 +6693,10 @@ const ja: Dict = {
   exportSqlTable: "対象テーブル",
   exportSqlTablePlaceholder: "INSERT 先のテーブル名",
   exportSqlIncludeDdl: "CREATE TABLE 文を先頭に含める",
-  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーには含まれません。",
+  exportSqlIncludeDdlHint: "表定義を INSERT の前に出力し、このファイル単体で復元できるようにします。プレビュー・コピーにも含まれます。",
+  exportSqlIncludeDdlMasked: "マスクした列は元の型・制約と合わなくなるため、CREATE TABLE 文は出力せずコメントに置き換えます。",
+  exportSqlDdlPreviewLoading: "-- CREATE TABLE の定義を取得しています...",
+  exportSqlDdlPreviewError: "-- CREATE TABLE の定義を取得できませんでした: {error}",
   exportSqlIncludeDdlNeedsTable: "表定義を含めるには対象テーブル名を入力してください。",
   exportSqlIncludeDdlTableMismatch:
     "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",

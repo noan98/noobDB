@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
-use super::types::Value;
+use super::types::{float_text, Value};
 
 /// 合流バッチの最大行数 (倍々で伸びる上限)。
 pub const MAX_COALESCED_ROWS: usize = 10_000;
@@ -156,8 +156,6 @@ impl StreamStats {
             for (i, v) in row.iter().enumerate() {
                 match v {
                     Value::Null => self.null_counts[i] += 1,
-                    // serde_json は非有限の浮動小数を null にする (= JS 側では null)。
-                    Value::Float(f) if !f.is_finite() => self.null_counts[i] += 1,
                     other => {
                         if let Some(n) = value_to_number(other) {
                             let lo = &mut self.num_min[i];
@@ -345,7 +343,13 @@ impl Hasher for FastHasher {
 fn hash_value<H: Hasher>(v: &Value, h: &mut H) {
     match v {
         Value::Null => 0u8.hash(h),
-        Value::Float(f) if !f.is_finite() => 0u8.hash(h),
+        // 非有限値は IPC で文字列 (`"NaN"` 等) になる (#1597) ので、`String(v)` と同じ扱い。
+        Value::Float(f) if !f.is_finite() => {
+            let s = float_text(*f);
+            3u8.hash(h);
+            s.len().hash(h);
+            s.hash(h);
+        }
         Value::Bool(b) => {
             1u8.hash(h);
             b.hash(h);
@@ -528,5 +532,23 @@ mod tests {
         assert_eq!(snap.row_count, 0);
         assert!(snap.null_counts.is_empty());
         assert_eq!(snap.duplicate_rows, Some(false));
+    }
+
+    #[test]
+    fn nan_is_not_null_for_counts_and_duplicate_detection() {
+        // NaN は IPC で文字列 "NaN" になる (#1597)。NULL とは別物として数え、ハッシュも分ける。
+        let mut s = StreamStats::new();
+        s.observe(&[vec![Value::Float(f64::NAN)], vec![Value::Null]]);
+        let snap = s.snapshot();
+        assert_eq!(snap.null_counts, vec![1]);
+        assert_eq!(snap.duplicate_rows, Some(false));
+        assert_ne!(
+            hash_values([Value::Float(f64::NAN)].iter()),
+            hash_values([Value::Null].iter())
+        );
+        assert_eq!(
+            hash_values([Value::Float(f64::INFINITY)].iter()),
+            hash_values([Value::String("Infinity".into())].iter())
+        );
     }
 }
