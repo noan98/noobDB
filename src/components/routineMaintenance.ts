@@ -253,9 +253,10 @@ export function buildApplyRoutineStatements(input: ApplyRoutineInput): ApplyRout
 }
 
 /** `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(args...)` の名前と引数リストを取り出す。 */
+// 引用なしの名前部分は `.` を含めない (区切りの `.` と取り合うと指数的なバックトラックになる)。
 function parsePgRoutineSignature(ddl: string): { name: string; args: string } | null {
   const head =
-    /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+((?:"[^"]+"|[^\s("]+)(?:\s*\.\s*(?:"[^"]+"|[^\s("]+))*)\s*\(/i.exec(
+    /^CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+((?:"[^"]+"|[^\s(".]+)(?:\s*\.\s*(?:"[^"]+"|[^\s(".]+))*)\s*\(/i.exec(
       stripLeadingComments(ddl),
     );
   if (!head) return null;

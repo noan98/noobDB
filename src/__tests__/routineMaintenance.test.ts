@@ -276,4 +276,12 @@ describe("pgRoutineEditWarnings (#1615)", () => {
     expect(pgRoutineEditWarnings(a, a.replace("10,2", "10,4"))).toEqual(["routineEditPgArgsChanged"]);
     expect(pgRoutineEditWarnings(a, "not ddl")).toEqual([]);
   });
+  it("スキーマ修飾名 (引用符内の . を含む) を解析でき、`!.` の繰り返しでも即座に終わる", () => {
+    const q = 'CREATE FUNCTION "my.s" . "f"(a int) RETURNS int AS $$ select 1 $$ LANGUAGE sql';
+    expect(pgRoutineEditWarnings(q, q.replace('"f"', '"g"'))).toEqual(["routineEditPgRenamed"]);
+    const evil = `create\tfunction\t${"!.".repeat(20000)}`;
+    const t0 = performance.now();
+    expect(pgRoutineEditWarnings(evil, evil)).toEqual([]);
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
 });
