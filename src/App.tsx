@@ -100,7 +100,10 @@ import {
   sqliteHasAutoincrementSql,
   findIdentityColumn,
   mysqlMaxValueSql,
+  mysqlShowCreateTableSql,
+  parseAutoIncrementFromShowCreate,
 } from "./components/identitySync";
+import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
 import { treeItemInsertText } from "./components/treeDragInsert";
@@ -7411,6 +7414,8 @@ export default function App() {
           return;
         }
         let maxValue: string | null = null;
+        let currentNext: string | null = null;
+        let currentUnknown = false;
         if (driver === "sqlite") {
           // sqlite_sequence は AUTOINCREMENT の表が 1 つも無い DB には存在せず、
           // AUTOINCREMENT でない表は行を持たない。同期できない表は SQL を出さずに知らせる。
@@ -7442,8 +7447,24 @@ export default function App() {
             toast.error(translate("identitySyncMaxFailed", { column, error: String(e) }));
             return;
           }
+          try {
+            const res = await api.runLookupQuery({
+              sessionId,
+              sql: mysqlShowCreateTableSql(database, table),
+              database,
+            });
+            // SHOW CREATE TABLE の結果は (表名, DDL) の 2 列。
+            currentNext = parseAutoIncrementFromShowCreate(res.rows[0]?.[1]);
+          } catch {
+            currentNext = null;
+          }
+          currentUnknown = currentNext === null;
         }
-        const sql = buildIdentitySyncSql(driver, database, table, column, maxValue);
+        let lower = false;
+        const sqlFor = (l: boolean) =>
+          buildIdentitySyncSql(driver, database, table, column, maxValue, { lower: l, currentNext, currentUnknown });
+        // 現在値を読めない MySQL は「下げる」を選ばない限り SQL が作れない。ダイアログで理由を示す。
+        const sql = sqlFor(false) ?? (currentUnknown ? sqlFor(true) : null);
         if (!sql) {
           toast.error(translate("identitySyncMaxFailed", { column, error: String(maxValue) }));
           return;
@@ -7451,25 +7472,26 @@ export default function App() {
         const ok = await confirm({
           title: translate("identitySyncConfirmTitle", { table }),
           message: maintenanceMessage(
-            <>
-              {translate("identitySyncConfirmBody", { table, column })}
-              <br />
-              <br />
-              <chakra.code
-                display="block"
-                fontFamily="var(--font-mono)"
-                fontSize="sm"
-                whiteSpace="pre-wrap"
-                wordBreak="break-all"
-              >
-                {sql}
-              </chakra.code>
-            </>,
+            <IdentitySyncBody
+              table={table}
+              column={column}
+              buildSql={sqlFor}
+              showLower={driver !== "sqlite"}
+              unavailable={currentUnknown ? translate("identitySyncCurrentUnknown", { table }) : null}
+              onLowerChange={(l) => {
+                lower = l;
+              }}
+            />,
           ),
           confirmLabel: translate("maintenanceConfirmOk"),
         });
         if (!ok) return;
-        const success = await runMaintenanceDdl(sql, database);
+        const runSql = sqlFor(lower);
+        if (!runSql) {
+          toast.error(translate("identitySyncCurrentUnknown", { table }));
+          return;
+        }
+        const success = await runMaintenanceDdl(runSql, database);
         if (success) toast.success(translate("identitySyncDone", { table }));
       } catch (e) {
         toast.error(translate("statusQueryError", { error: String(e) }));

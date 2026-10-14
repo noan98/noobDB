@@ -114,14 +114,15 @@ impl ImportConflict {
     ///
     /// 重複が無ければ (大半のケース) 複製せず借用のまま返す。キーの比較は
     /// ファイル上のテキスト完全一致 (`NULL` 同士は同一視しない — SQL の一意性と同じ)。
-    /// ただし `numeric_columns` に含まれる (整数型・数値型の) キー列は、`'1'` / `'01'` /
-    /// `' 1'` / `'+1'` を同じキーとして扱えるよう [`normalize_numeric_key`] で正規化して
-    /// から比較する (DB 側では同じ値で、畳まないと "cannot affect row a second time")。
+    /// ただし `normalized_columns` に含まれるキー列は、DB 側で同値になる表記ゆれ
+    /// (数値の `'1'` / `'01'` / `' 1'` / `'+1'`、UUID の大文字小文字・ハイフン・波括弧、
+    /// boolean の `t` / `true` / `1` など) を同じキーとして扱えるよう [`KeyKind::normalize`]
+    /// で正規化してから比較する (畳まないと "cannot affect row a second time")。
     pub fn collapse_duplicate_keys<'a>(
         &self,
         columns: &[String],
         rows: &'a [Vec<Option<String>>],
-        numeric_columns: &[String],
+        normalized_columns: &[(String, KeyKind)],
     ) -> Cow<'a, [Vec<Option<String>>]> {
         if !self.is_upsert() || rows.len() < 2 {
             return Cow::Borrowed(rows);
@@ -130,12 +131,14 @@ impl ImportConflict {
         if idx.is_empty() {
             return Cow::Borrowed(rows);
         }
-        let numeric: Vec<bool> = idx
+        let kinds: Vec<Option<KeyKind>> = idx
             .iter()
             .map(|&ci| {
-                columns
-                    .get(ci)
-                    .is_some_and(|c| numeric_columns.iter().any(|n| n == c))
+                let name = columns.get(ci)?;
+                normalized_columns
+                    .iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, k)| *k)
             })
             .collect();
         // キー → 採用する行番号。
@@ -147,8 +150,10 @@ impl ImportConflict {
             let mut has_null = false;
             for (k, &ci) in idx.iter().enumerate() {
                 match row.get(ci).and_then(|c| c.as_deref()) {
-                    Some(v) if numeric[k] => key.push(normalize_numeric_key(v)),
-                    Some(v) => key.push(Cow::Borrowed(v)),
+                    Some(v) => match kinds[k] {
+                        Some(kind) => key.push(kind.normalize(v)),
+                        None => key.push(Cow::Borrowed(v)),
+                    },
                     None => {
                         has_null = true;
                         break;
@@ -184,6 +189,54 @@ impl ImportConflict {
                 .map(|(r, _)| r.clone())
                 .collect(),
         )
+    }
+}
+
+/// キー比較の前に正規化する PostgreSQL 型の種別 (`collapse_duplicate_keys` 用)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyKind {
+    /// 整数型・数値型 (`typcategory = 'N'`、money を除く)。
+    Numeric,
+    /// `uuid`。
+    Uuid,
+    /// `boolean`。
+    Bool,
+}
+
+impl KeyKind {
+    /// 同じ値になる表記を同じ文字列にそろえる。解釈できない値は元のまま返す。
+    pub fn normalize(self, raw: &str) -> Cow<'_, str> {
+        match self {
+            KeyKind::Numeric => normalize_numeric_key(raw),
+            KeyKind::Uuid => normalize_uuid_key(raw),
+            KeyKind::Bool => normalize_bool_key(raw),
+        }
+    }
+}
+
+/// UUID を小文字・ハイフン無し 32 桁にそろえる (PostgreSQL は大文字小文字・波括弧・
+/// ハイフンの有無を許す)。32 桁の 16 進にならなければ元のまま。
+fn normalize_uuid_key(raw: &str) -> Cow<'_, str> {
+    let t = raw.trim();
+    let t = t
+        .strip_prefix('{')
+        .and_then(|x| x.strip_suffix('}'))
+        .unwrap_or(t);
+    let compact: String = t.chars().filter(|c| *c != '-').collect();
+    if compact.len() == 32 && compact.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Cow::Owned(compact.to_ascii_lowercase())
+    } else {
+        Cow::Borrowed(raw)
+    }
+}
+
+/// boolean の入力表記 (`t`/`true`/`yes`/`on`/`y`/`1` と `f`/`false`/`no`/`off`/`n`/`0`、
+/// 大文字小文字・前後空白無視) を `t` / `f` にそろえる。それ以外は元のまま。
+fn normalize_bool_key(raw: &str) -> Cow<'_, str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "t" | "true" | "yes" | "y" | "on" | "1" => Cow::Borrowed("t"),
+        "f" | "false" | "no" | "n" | "off" | "0" => Cow::Borrowed("f"),
+        _ => Cow::Borrowed(raw),
     }
 }
 
@@ -627,7 +680,7 @@ mod tests {
             row(&[Some("01"), Some("b")]),
             row(&[Some(" 1"), Some("c")]),
         ];
-        let num = cols(&["id"]);
+        let num = [("id".to_string(), KeyKind::Numeric)];
         let up = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &num);
         assert_eq!(up.as_ref(), &[row(&[Some(" 1"), Some("c")])]);
         let sk = conflict(ConflictMode::Skip, &["id"]).collapse_duplicate_keys(&c, &rows, &num);
@@ -635,6 +688,27 @@ mod tests {
         // 数値列でなければ従来どおりテキスト完全一致 (畳まない)。
         let none = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &[]);
         assert!(matches!(none, Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn collapse_normalizes_uuid_and_bool_keys() {
+        let c = cols(&["id", "v"]);
+        let rows = vec![
+            row(&[Some("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11"), Some("a")]),
+            row(&[Some("{a0eebc999c0b4ef8bb6d6bb9bd380a11}"), Some("b")]),
+        ];
+        let kinds = [("id".to_string(), KeyKind::Uuid)];
+        let up = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &kinds);
+        assert_eq!(up.len(), 1);
+        assert_eq!(up[0][1].as_deref(), Some("b"));
+        // 型情報が無ければ従来どおり畳まない。
+        let none = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(&c, &rows, &[]);
+        assert!(matches!(none, Cow::Borrowed(_)));
+        // 32 桁の 16 進にならない値は元のまま (別キー)。
+        assert_eq!(KeyKind::Uuid.normalize("not-a-uuid"), "not-a-uuid");
+        assert_eq!(KeyKind::Bool.normalize("TRUE"), "t");
+        assert_eq!(KeyKind::Bool.normalize(" 0 "), "f");
+        assert_eq!(KeyKind::Bool.normalize("maybe"), "maybe");
     }
 
     #[test]
@@ -647,7 +721,7 @@ mod tests {
         let out = conflict(ConflictMode::Update, &["id"]).collapse_duplicate_keys(
             &c,
             &rows,
-            &cols(&["id"]),
+            &[("id".to_string(), KeyKind::Numeric)],
         );
         assert!(matches!(out, Cow::Borrowed(_)));
     }

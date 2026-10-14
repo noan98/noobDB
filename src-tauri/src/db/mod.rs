@@ -2218,15 +2218,22 @@ impl BulkDefinitions {
     }
 }
 
+/// (テーブル名, 列) をテーブルごとにまとめる。並びは初出順。大小無視の照合順序では
+/// `Users` / `users` の行が `ORDINAL_POSITION` で交互に並び、直前と比べる隣接グルーピング
+/// だと同じ表が複数に割れる (オブジェクト検索の索引で重複する) ため、名前で束ねる。
 pub(crate) fn group_columns_by_table(pairs: Vec<(String, String)>) -> Vec<TableSchema> {
     let mut out: Vec<TableSchema> = Vec::new();
+    let mut pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for (table, column) in pairs {
-        match out.last_mut() {
-            Some(last) if last.name == table => last.columns.push(column),
-            _ => out.push(TableSchema {
-                name: table,
-                columns: vec![column],
-            }),
+        match pos.get(&table).and_then(|&i| out.get_mut(i)) {
+            Some(entry) => entry.columns.push(column),
+            None => {
+                pos.insert(table.clone(), out.len());
+                out.push(TableSchema {
+                    name: table,
+                    columns: vec![column],
+                });
+            }
         }
     }
     out
@@ -2258,6 +2265,7 @@ pub(crate) fn group_columns_full(rows: Vec<(String, TableColumnInfo)>) -> Vec<di
 }
 
 /// `indexes_for_database` の (インデックス, 列) 1 行分の生データ (#1255)。
+#[derive(Default)]
 pub(crate) struct IndexRow {
     pub table: String,
     pub name: String,
@@ -2268,6 +2276,13 @@ pub(crate) struct IndexRow {
     pub method: Option<String>,
     /// 部分インデックスの述語 (無ければ `None`)。
     pub predicate: Option<String>,
+    /// キー列数 (PostgreSQL の INCLUDE 列はこの後ろ)。他ドライバは `None`。
+    pub key_column_count: Option<usize>,
+    /// この列の並び順の指定 (PostgreSQL の `" DESC"` など)。`Some` のときだけ
+    /// `IndexInfo::column_options` に積む (単一テーブル版 `list_indexes` と揃える)。
+    pub column_option: Option<String>,
+    /// PostgreSQL 15+ の `NULLS NOT DISTINCT`。
+    pub nulls_not_distinct: bool,
 }
 
 /// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
@@ -2311,13 +2326,21 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     method: r.method,
                     predicate: r.predicate,
                     first_expression_at: None,
+                    key_column_count: r.key_column_count,
+                    nulls_not_distinct: r.nulls_not_distinct,
+                    ..Default::default()
                 });
                 i
             }
         };
         if let Some(index) = entry.indexes.get_mut(ii) {
             match r.column {
-                Some(col) => index.columns.push(col),
+                Some(col) => {
+                    index.columns.push(col);
+                    if let Some(option) = r.column_option {
+                        index.column_options.push(option);
+                    }
+                }
                 None => {
                     index.first_expression_at.get_or_insert(index.columns.len());
                 }
@@ -4106,6 +4129,22 @@ mod tests {
     }
 
     #[test]
+    fn group_columns_by_table_merges_non_adjacent_case_variants() {
+        // 大小無視照合で `Users` / `users` の行が交互に並んでも、表ごとに 1 件にまとまる。
+        let grouped = super::group_columns_by_table(vec![
+            ("Users".into(), "id".into()),
+            ("users".into(), "id".into()),
+            ("Users".into(), "name".into()),
+            ("users".into(), "email".into()),
+        ]);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].name, "Users");
+        assert_eq!(grouped[0].columns, ["id", "name"]);
+        assert_eq!(grouped[1].name, "users");
+        assert_eq!(grouped[1].columns, ["id", "email"]);
+    }
+
+    #[test]
     fn group_columns_full_groups_by_table_in_first_seen_order() {
         let grouped = super::group_columns_full(vec![
             ("b".into(), test_col("x")),
@@ -4129,6 +4168,7 @@ mod tests {
             primary: name == "PRIMARY",
             method: None,
             predicate: None,
+            ..Default::default()
         }
     }
 

@@ -317,7 +317,7 @@ pub fn normalize_fk_action(action: Option<&str>) -> Option<String> {
 /// in order, and whether it is UNIQUE / the PRIMARY KEY. `method` is the access
 /// method when the engine exposes one (e.g. PostgreSQL `btree`/`gin`, MySQL
 /// `BTREE`/`HASH`); `None` for SQLite, which has no such concept.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct IndexInfo {
     pub name: String,
     pub columns: Vec<String>,
@@ -333,6 +333,18 @@ pub struct IndexInfo {
     /// なる。先頭からこの位置までの実列は FK 被覆の判定に使える。IPC には出さない内部用。
     #[serde(skip)]
     pub first_expression_at: Option<usize>,
+    /// PostgreSQL: キー列の数 (`pg_index.indnkeyatts`)。`columns` はキー列の後ろに
+    /// `INCLUDE` 列が続くので、DDL 再構成でこの位置で区切る。`None` は全列がキー列。
+    /// IPC には出さない内部用。
+    #[serde(skip)]
+    pub key_column_count: Option<usize>,
+    /// PostgreSQL: `columns` と同じ並びの列ごとの並び順指定 (`" DESC"` / `" NULLS FIRST"` など。
+    /// 既定の ASC NULLS LAST は空文字)。空配列は全列が既定。IPC には出さない内部用。
+    #[serde(skip)]
+    pub column_options: Vec<String>,
+    /// PostgreSQL 15+ の `NULLS NOT DISTINCT` な UNIQUE インデックスか。IPC には出さない内部用。
+    #[serde(skip)]
+    pub nulls_not_distinct: bool,
 }
 
 /// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`

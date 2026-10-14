@@ -146,7 +146,25 @@ fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<
     if idx.primary || idx.columns.is_empty() || idx.first_expression_at.is_some() {
         return None;
     }
-    let cols: Vec<String> = idx.columns.iter().map(|c| quote_ident(driver, c)).collect();
+    // PostgreSQL の INCLUDE 列はキー列ではない。キー列として出すと UNIQUE の対象が
+    // 広がり制約の意味が変わるので、`INCLUDE (...)` に分けて出す。並び順 (DESC /
+    // NULLS FIRST) もキー列ごとに残す。
+    let key_len = idx
+        .key_column_count
+        .unwrap_or(idx.columns.len())
+        .min(idx.columns.len());
+    let cols: Vec<String> = idx.columns[..key_len]
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            format!(
+                "{}{}",
+                quote_ident(driver, c),
+                idx.column_options.get(i).map(String::as_str).unwrap_or("")
+            )
+        })
+        .collect();
+    let include = &idx.columns[key_len..];
     let unique = if idx.unique { "UNIQUE " } else { "" };
     let method = idx.method.as_deref().unwrap_or("");
     let mut sql = match driver {
@@ -164,6 +182,13 @@ fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<
             cols.join(", ")
         ),
     };
+    if !include.is_empty() {
+        let inc: Vec<String> = include.iter().map(|c| quote_ident(driver, c)).collect();
+        sql.push_str(&format!(" INCLUDE ({})", inc.join(", ")));
+    }
+    if idx.nulls_not_distinct && idx.unique {
+        sql.push_str(" NULLS NOT DISTINCT");
+    }
     if let Some(pred) = idx.predicate.as_deref().filter(|p| !p.trim().is_empty()) {
         sql.push_str(&format!(" WHERE {pred}"));
     }
@@ -282,6 +307,7 @@ mod tests {
             method: method.map(str::to_string),
             predicate: None,
             first_expression_at: None,
+            ..Default::default()
         }
     }
 
@@ -411,6 +437,20 @@ mod tests {
         assert!(ddl.contains(
             "FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\") ON DELETE CASCADE ON UPDATE SET NULL"
         ));
+    }
+
+    #[test]
+    fn include_columns_sort_order_and_nulls_not_distinct_are_kept() {
+        let mut i = idx("u", &["a", "b", "c"], true, false, Some("btree"));
+        i.key_column_count = Some(1);
+        i.column_options = vec![" DESC NULLS LAST".into(), String::new(), String::new()];
+        i.nulls_not_distinct = true;
+        assert_eq!(
+            render_index(DriverKind::Postgres, "\"public\".\"t\"", &i).as_deref(),
+            Some(
+                "CREATE UNIQUE INDEX \"u\" ON \"public\".\"t\" (\"a\" DESC NULLS LAST) INCLUDE (\"b\", \"c\") NULLS NOT DISTINCT"
+            )
+        );
     }
 
     #[test]

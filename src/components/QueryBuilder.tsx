@@ -792,9 +792,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   useEffect(() => {
     if (!database) {
       setTables([]);
+      setLoadingTables(false);
       return;
     }
     let cancelled = false;
+    // 前回の読み込みエラーは、新しい読み込みを始めた時点で消す (成功後も残り続けないように)。
+    setLoadError(null);
     setLoadingTables(true);
     api.listTables(sessionId, database)
       .then((list) => {
@@ -810,9 +813,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   useEffect(() => {
     if (!database || !table) {
       setTableColumns([]);
+      // 進行中の describeTable は cleanup で cancelled になり finally が走らないので、ここで戻す。
+      setLoadingColumns(false);
       return;
     }
     let cancelled = false;
+    setLoadError(null);
     setLoadingColumns(true);
     api.describeTable(sessionId, database, table)
       .then((cols) => { if (!cancelled) setTableColumns(cols); })

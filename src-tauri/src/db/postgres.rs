@@ -17,7 +17,7 @@ use super::types::{
     TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
     UserPrivileges, Value,
 };
-use super::upsert::{conflict_clause, ImportConflict};
+use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
 use crate::error::{AppError, Result};
 
@@ -33,6 +33,19 @@ pub struct PostgresConn {
     /// AWS IAM 認証 (#734) 時、プールの新規接続用トークンを定期的に作り直す
     /// タスク。ドロップで停止する。パスワード認証では `None`。
     _iam_refresh: Option<super::aws_iam::TokenRefreshGuard>,
+    /// プール接続に残る search_path の後始末用状態 (database 未指定の文が、前に使った
+    /// タブのスキーマで名前解決されるのを防ぐ)。
+    search_path: std::sync::Arc<SearchPathState>,
+}
+
+/// `apply_search_path_on` が使う状態。
+#[derive(Default)]
+struct SearchPathState {
+    /// 接続確立直後 (セッション初期化 SQL 適用後) の search_path。`database` 未指定の
+    /// 文では、スキーマ指定で書き換えた接続をこの値へ戻す。
+    default: std::sync::OnceLock<String>,
+    /// 一度でもスキーマを指定して `SET search_path` したか。
+    dirty: std::sync::atomic::AtomicBool,
 }
 
 /// 接続オプション (プールが新しい物理接続を張るときに使う) を組み立てる。
@@ -65,17 +78,29 @@ impl PostgresConn {
             .min_connections(0)
             .max_connections(5)
             .acquire_timeout(std::time::Duration::from_secs(15));
-        if let Some(sql) = init_sql_of(opts) {
-            // Run the session-init SQL on every physical connection the pool opens.
-            pool_opts = pool_opts.after_connect(move |conn, _meta| {
-                let sql = sql.clone();
-                Box::pin(async move {
+        let search_path = std::sync::Arc::new(SearchPathState::default());
+        let init_sql = init_sql_of(opts);
+        let sp_state = search_path.clone();
+        // 新しい物理接続ごとに、セッション初期化 SQL を流し、その結果の search_path を
+        // 「既定値」として控える (スキーマ指定の文で書き換えた接続を戻す先)。
+        pool_opts = pool_opts.after_connect(move |conn, _meta| {
+            let sql = init_sql.clone();
+            let sp_state = sp_state.clone();
+            Box::pin(async move {
+                if let Some(sql) = sql {
                     sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql)))
                         .await?;
-                    Ok(())
-                })
-            });
-        }
+                }
+                if sp_state.default.get().is_none() {
+                    let current: String =
+                        sqlx::query_scalar("SELECT current_setting('search_path')")
+                            .fetch_one(&mut *conn)
+                            .await?;
+                    let _ = sp_state.default.set(current);
+                }
+                Ok(())
+            })
+        });
         let pool = pool_opts.connect_with(connect).await.map_err(|e| {
             tracing::error!(
                 host = %opts.host,
@@ -104,6 +129,7 @@ impl PostgresConn {
             pool,
             tx: tokio::sync::Mutex::new(None),
             _iam_refresh: iam_refresh,
+            search_path,
         })
     }
 
@@ -113,7 +139,7 @@ impl PostgresConn {
 
     pub async fn execute(&self, sql: &str, database: Option<&str>) -> Result<QueryResult> {
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         // NOTICE / WARNING を捕捉して結果へ載せる (#1165)。
         let (result, messages) = capture(run_sql_on(&mut conn, sql)).await;
         Ok(result?.with_server_messages(messages))
@@ -129,7 +155,7 @@ impl PostgresConn {
             ));
         }
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         // SQL は TxOptions が enum から組み立てた固定語彙のみ (#1166)。
         let begin = opts.postgres_begin_sql();
         sqlx::query(sqlx::AssertSqlSafe(begin))
@@ -233,7 +259,7 @@ impl PostgresConn {
         let is_query = is_query_shape(sql) || is_call_shape(sql);
 
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
 
         if !is_query {
             let result = sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -382,7 +408,7 @@ impl PostgresConn {
         // トランザクションは `'static` (接続を所有) にして、呼び出し側へ開いたまま返せる
         // ようにする (#1536)。search_path もこのトランザクションの接続に設定する。
         let mut tx = self.pool.begin().await?;
-        apply_search_path_on(&mut tx, database).await?;
+        apply_search_path_on(&mut tx, database, &self.search_path).await?;
 
         let is_insert_stmt = trimmed.starts_with("insert");
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
@@ -647,7 +673,7 @@ impl PostgresConn {
         let batch = batch_size.clamp(1, 1000);
 
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         sqlx::Executor::execute(
             &mut *conn,
             sqlx::raw_sql("SET standard_conforming_strings = on"),
@@ -682,7 +708,7 @@ impl PostgresConn {
             return Ok(());
         }
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         sqlx::Executor::execute(
             &mut *conn,
             sqlx::raw_sql("SET standard_conforming_strings = on"),
@@ -707,7 +733,7 @@ impl PostgresConn {
         conflict: &ImportConflict,
     ) -> Result<Option<(usize, String)>> {
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         sqlx::Executor::execute(
             &mut *conn,
             sqlx::raw_sql("SET standard_conforming_strings = on"),
@@ -750,7 +776,7 @@ impl PostgresConn {
             return Ok(0);
         }
         let mut conn = self.pool.acquire().await?;
-        apply_search_path(&mut conn, database).await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
         let mut tx = conn.begin().await?;
         let mut affected: u64 = 0;
         for sql in statements {
@@ -1404,7 +1430,11 @@ impl PostgresConn {
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
                  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-                 k.ord               AS ord
+                 k.ord               AS ord,
+                 -- 以下 3 列は list_indexes と同じ (INCLUDE / DESC / NULLS NOT DISTINCT)。
+                 COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
+                 COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1428,6 +1458,14 @@ impl PostgresConn {
                 primary: r.try_get::<bool, _>("is_primary").unwrap_or(false),
                 method: r.try_get::<Option<String>, _>("method").ok().flatten(),
                 predicate: r.try_get::<Option<String>, _>("predicate").ok().flatten(),
+                key_column_count: r
+                    .try_get::<i32, _>("key_count")
+                    .ok()
+                    .and_then(|n| usize::try_from(n).ok()),
+                column_option: Some(pg_index_column_option(
+                    r.try_get::<i32, _>("col_option").unwrap_or(0),
+                )),
+                nulls_not_distinct: r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1847,7 +1885,12 @@ impl PostgresConn {
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
                  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-                 k.ord               AS ord
+                 k.ord               AS ord,
+                 -- キー列数 (PG11+ の INCLUDE 列はこの後ろ)。古い版には列が無いので jsonb 経由で読む。
+                 COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
+                 -- indoption: bit0 = DESC, bit1 = NULLS FIRST。
+                 COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1875,6 +1918,12 @@ impl PostgresConn {
             let primary = r.try_get::<bool, _>("is_primary").unwrap_or(false);
             let method = r.try_get::<Option<String>, _>("method").ok().flatten();
             let predicate = r.try_get::<Option<String>, _>("predicate").ok().flatten();
+            let key_count = r
+                .try_get::<i32, _>("key_count")
+                .ok()
+                .and_then(|n| usize::try_from(n).ok());
+            let col_option = r.try_get::<i32, _>("col_option").unwrap_or(0);
+            let nulls_not_distinct = r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false);
             let entry = by_name.entry(name.clone()).or_insert_with(|| {
                 order.push(name.clone());
                 IndexInfo {
@@ -1885,12 +1934,20 @@ impl PostgresConn {
                     method,
                     predicate,
                     first_expression_at: None,
+                    key_column_count: key_count,
+                    nulls_not_distinct,
+                    ..Default::default()
                 }
             });
             // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
             // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
             match column {
-                Some(col) => entry.columns.push(col),
+                Some(col) => {
+                    entry.columns.push(col);
+                    entry
+                        .column_options
+                        .push(pg_index_column_option(col_option));
+                }
                 None => {
                     entry.first_expression_at.get_or_insert(entry.columns.len());
                 }
@@ -2348,24 +2405,59 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// `pg_index.indoption` の 1 列ぶん (bit0 = DESC, bit1 = NULLS FIRST) を、
+/// `CREATE INDEX` の列指定に続ける接尾辞にする。既定 (ASC NULLS LAST /
+/// DESC NULLS FIRST) は空文字。
+fn pg_index_column_option(option: i32) -> String {
+    let desc = option & 1 != 0;
+    let nulls_first = option & 2 != 0;
+    match (desc, nulls_first) {
+        (false, false) => String::new(),
+        (true, true) => " DESC".to_string(),
+        (false, true) => " NULLS FIRST".to_string(),
+        (true, false) => " DESC NULLS LAST".to_string(),
+    }
+}
+
 async fn apply_search_path(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>,
     schema: Option<&str>,
+    state: &SearchPathState,
 ) -> Result<()> {
-    apply_search_path_on(conn, schema).await
+    apply_search_path_on(conn, schema, state).await
 }
 
-async fn apply_search_path_on(conn: &mut sqlx::PgConnection, schema: Option<&str>) -> Result<()> {
-    let Some(s) = schema else { return Ok(()) };
-    if s.is_empty() {
+async fn apply_search_path_on(
+    conn: &mut sqlx::PgConnection,
+    schema: Option<&str>,
+    state: &SearchPathState,
+) -> Result<()> {
+    let schema = schema.filter(|s| !s.is_empty());
+    let Some(s) = schema else {
+        // スキーマ未指定: プール接続に前の文の search_path が残っていたら既定値へ戻す。
+        // 戻さないと、どの接続が返るかで別スキーマの同名表を読み書きしてしまう。
+        // 注意: 戻す先は「接続確立直後 (セッション初期化 SQL 適用後) の search_path」。スキーマ未選択の
+        // タブで利用者が実行した `SET search_path` も、次のスキーマ未指定の文の前に既定値へ戻る
+        // (プール接続は文ごとに別になりうるため、元から保持は保証されない挙動を決定的にした)。
+        if state.dirty.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(default) = state.default.get() {
+                sqlx::query("SELECT set_config('search_path', $1, false)")
+                    .bind(default)
+                    .execute(&mut *conn)
+                    .await?;
+            }
+        }
         return Ok(());
-    }
+    };
     if s.contains('"') || s.contains('\\') || s.contains('\0') {
         return Err(AppError::InvalidInput("invalid schema name".into()));
     }
     // Quote the identifier to handle mixed-case / reserved-word schema names.
     let sql = format!("SET search_path TO \"{}\"", s);
     sqlx::Executor::execute(&mut *conn, sqlx::raw_sql(sqlx::AssertSqlSafe(sql))).await?;
+    state
+        .dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     Ok(())
 }
 
@@ -3253,30 +3345,46 @@ fn build_pg_insert(table: &str, columns: &[String], rows: &[Vec<Option<String>>]
     sql
 }
 
-/// UPSERT のキー列のうち、整数型・数値型 (`pg_type.typcategory = 'N'`、money を除く)
-/// の列名を返す。`collapse_duplicate_keys` が `'1'` / `'01'` を同じキーとして畳むのに
-/// 使う。UPSERT でないとき・照会に失敗したときは空 (従来どおりテキスト比較)。
+/// UPSERT のキー列のうち、表記ゆれを正規化できる型 (整数型・数値型 =
+/// `pg_type.typcategory = 'N'` (money を除く) / `uuid` / `boolean`) の列名と種別を返す。
+/// `collapse_duplicate_keys` が `'1'` と `'01'`、`UUID` の大文字小文字違いなどを同じ
+/// キーとして畳むのに使う。UPSERT でないとき・照会に失敗したときは空 (従来どおりテキスト比較)。
 async fn numeric_key_columns(
     conn: &mut sqlx::PgConnection,
     table: &str,
     conflict: &ImportConflict,
-) -> Vec<String> {
+) -> Vec<(String, KeyKind)> {
     if !conflict.is_upsert() {
         return Vec::new();
     }
-    let rows: std::result::Result<Vec<(String,)>, _> = sqlx::query_as(
-        "SELECT a.attname::text FROM pg_attribute a \
+    let rows: std::result::Result<Vec<(String, String)>, _> = sqlx::query_as(
+        "SELECT a.attname::text, \
+                CASE WHEN bt.typname = 'uuid' THEN 'uuid' \
+                     WHEN bt.typname = 'bool' THEN 'bool' ELSE 'numeric' END \
+         FROM pg_attribute a \
          JOIN pg_type t ON t.oid = a.atttypid \
          JOIN pg_type bt ON bt.oid = CASE WHEN t.typtype = 'd' THEN t.typbasetype ELSE t.oid END \
          WHERE a.attrelid = to_regclass($1) AND a.attnum > 0 AND NOT a.attisdropped \
-           AND bt.typcategory = 'N' AND bt.typname <> 'money' AND a.attname::text = ANY($2)",
+           AND ((bt.typcategory = 'N' AND bt.typname <> 'money') OR bt.typname IN ('uuid', 'bool')) \
+           AND a.attname::text = ANY($2)",
     )
     .bind(pg_quote_ident(table))
     .bind(conflict.key_columns.clone())
     .fetch_all(&mut *conn)
     .await;
-    rows.map(|r| r.into_iter().map(|(c,)| c).collect())
-        .unwrap_or_default()
+    rows.map(|r| {
+        r.into_iter()
+            .map(|(c, k)| {
+                let kind = match k.as_str() {
+                    "uuid" => KeyKind::Uuid,
+                    "bool" => KeyKind::Bool,
+                    _ => KeyKind::Numeric,
+                };
+                (c, kind)
+            })
+            .collect()
+    })
+    .unwrap_or_default()
 }
 
 /// [`build_pg_insert`] に競合句 (#972) を付けたもの。UPSERT モードでは
@@ -3287,7 +3395,7 @@ fn build_pg_upsert(
     columns: &[String],
     rows: &[Vec<Option<String>>],
     conflict: &ImportConflict,
-    numeric_columns: &[String],
+    numeric_columns: &[(String, KeyKind)],
 ) -> String {
     let rows = conflict.collapse_duplicate_keys(columns, rows, numeric_columns);
     let mut sql = build_pg_insert(table, columns, &rows);

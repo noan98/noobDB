@@ -89,14 +89,23 @@ export function buildIdentitySyncSql(
   table: string,
   column: string,
   maxValue?: string | null,
+  opts: IdentitySyncOptions = {},
 ): string | null {
   const name = qualified(driver, database, table);
   const col = quoteIdentFor(driver, column);
   if (driver === "postgres") {
-    const seqTarget = sqlString(name);
+    const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
+    if (opts.lower) {
+      return `SELECT setval(${seq}, COALESCE(MAX(${col}), 1), MAX(${col}) IS NOT NULL) FROM ${name};`;
+    }
+    // 既定は採番値を下げない: 現在値 (`pg_sequence_last_value`。未使用なら NULL)・実データの最大値・
+    // シーケンスの開始値 (`pg_sequence.seqstart`。未使用のシーケンスの下限) の最大へ進める。
+    // 次の採番が開始値より手前にならないよう、`is_called` は最大値が開始値以上か、使用済みのときだけ立てる。
+    const last = `pg_sequence_last_value(${seq}::regclass)`;
+    const start = `COALESCE((SELECT seqstart FROM pg_sequence WHERE seqrelid = ${seq}::regclass), 1)`;
     return (
-      `SELECT setval(pg_get_serial_sequence(${seqTarget}, ${sqlString(column)}), ` +
-      `COALESCE(MAX(${col}), 1), MAX(${col}) IS NOT NULL) FROM ${name};`
+      `SELECT setval(${seq}, GREATEST(COALESCE(MAX(${col}), 0), COALESCE(${last}, 0), ${start}), ` +
+      `COALESCE(MAX(${col}), 0) >= ${start} OR ${last} IS NOT NULL) FROM ${name};`
     );
   }
   if (driver === "sqlite") {
@@ -109,6 +118,42 @@ export function buildIdentitySyncSql(
   }
   const max = parseMaxValue(maxValue);
   if (max === null) return null;
-  const next = BigInt(max) < 0n ? 1n : BigInt(max) + 1n;
+  // 現在値が読めなかったときは、黙って下げないために「下げる」を選ばない限り SQL を作らない。
+  if (!opts.lower && opts.currentUnknown) return null;
+  let next = BigInt(max) < 0n ? 1n : BigInt(max) + 1n;
+  if (!opts.lower) {
+    const cur = parseMaxValue(opts.currentNext);
+    // 現在の AUTO_INCREMENT の方が大きければそれを保つ (下げない)。
+    if (cur !== null && opts.currentNext != null && BigInt(cur) > next) next = BigInt(cur);
+  }
   return `ALTER TABLE ${name} AUTO_INCREMENT = ${next.toString()};`;
+}
+
+/** 採番同期の挙動オプション。 */
+export interface IdentitySyncOptions {
+  /** true なら現在値より小さくなっても実データの最大値 + 1 にそろえる (従来の挙動)。既定は下げない。 */
+  lower?: boolean;
+  /** MySQL: 現在の AUTO_INCREMENT (`mysqlShowCreateTableSql` の結果を `parseAutoIncrementFromShowCreate` で読んだもの)。取得できなければ未指定。 */
+  currentNext?: string | null;
+  /** MySQL: 現在の AUTO_INCREMENT を読めなかった。`lower` でなければ SQL を作らない (`null`)。 */
+  currentUnknown?: boolean;
+}
+
+/** MySQL 用: 現在の AUTO_INCREMENT を読むための文 (`run_lookup_query` で実行する)。 */
+export function mysqlShowCreateTableSql(database: string | null, table: string): string {
+  return `SHOW CREATE TABLE ${qualified("mysql", database, table)}`;
+}
+
+/**
+ * `SHOW CREATE TABLE` の DDL から、表オプションの `AUTO_INCREMENT=N` (= 次に採番される値) を取り出す。
+ * `information_schema.TABLES.AUTO_INCREMENT` は統計キャッシュで古いことがあるため、エンジンが返す
+ * こちらを使う。次の値が 1 のとき MySQL はこのオプションを出さないので `"1"` を返す。
+ * DDL が空・非文字列なら `null` (読めなかった)。
+ */
+export function parseAutoIncrementFromShowCreate(ddl: unknown): string | null {
+  if (typeof ddl !== "string" || ddl.trim() === "") return null;
+  // 列定義の `AUTO_INCREMENT` (値なし) とは区別し、`=` つきの最後の出現 (表オプション) を採る。
+  const all = [...ddl.matchAll(/\bAUTO_INCREMENT\s*=\s*(\d+)/gi)];
+  const last = all[all.length - 1];
+  return last ? last[1] : "1";
 }

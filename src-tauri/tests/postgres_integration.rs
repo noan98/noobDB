@@ -2806,3 +2806,38 @@ async fn postgres_save_cells_to_folder() {
         .await
         .expect("cleanup");
 }
+
+/// INCLUDE 列・DESC・NULLS NOT DISTINCT が再構成 DDL に残る (#1602)。
+/// `list_indexes` の SELECT が追加列を返していることの確認を兼ねる。
+#[tokio::test]
+async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS ddl1602", None)
+        .await
+        .expect("drop");
+    conn.execute("CREATE TABLE ddl1602 (a int, b int)", None)
+        .await
+        .expect("create");
+    conn.execute(
+        "CREATE UNIQUE INDEX ddl1602_u ON ddl1602 (a DESC) INCLUDE (b)",
+        None,
+    )
+    .await
+    .expect("index");
+    let ddl = conn
+        .object_definition("public", "table", "ddl1602", None)
+        .await
+        .expect("ddl");
+    conn.execute("DROP TABLE IF EXISTS ddl1602", None)
+        .await
+        .ok();
+    assert!(
+        ddl.contains("(\"a\" DESC) INCLUDE (\"b\")"),
+        "unexpected DDL: {ddl}"
+    );
+}

@@ -1822,6 +1822,7 @@ impl MySqlConn {
                     method: r.try_get::<Option<String>, _>(4).ok().flatten(),
                     predicate: None,
                     name,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -2120,6 +2121,7 @@ impl MySqlConn {
                     method,
                     predicate: None,
                     first_expression_at: None,
+                    ..Default::default()
                 }
             });
             match column {

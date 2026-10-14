@@ -1849,6 +1849,8 @@ const en = {
   routineEditReadOnly: "This connection is read-only, so the definition cannot be applied.",
   routineEditNoteAtomic:
     "The old definition is replaced inside a single transaction. If the new definition has an error, the current one stays as it is.",
+  routineEditNotePgOverload:
+    "If you change the name or the argument types, a new function is created and the old definition stays (it is not dropped). Drop it separately if it is no longer needed.",
   routineEditNoteMysql:
     "MySQL cannot roll back DDL. The existing definition is dropped first and then re-created. If the new definition fails, noobDB tries to restore the original automatically.",
   routineEditNoteMysqlDelimiter:
@@ -2308,6 +2310,8 @@ const en = {
   createTableRun: "Create",
   createTableToEditor: "Send to editor",
   createTableReadOnly: "This connection is read-only; creation is disabled.",
+  createTableForeignKeyIncomplete:
+    "A foreign key row is incomplete (it needs child columns, a referenced table and the same number of referenced columns). Complete or remove it; incomplete rows are not created.",
   contextMenuCreateTable: "New table...",
   // テーブル保守操作。
   contextMenuCopyTableName: "Copy table name",
@@ -2361,7 +2365,9 @@ const en = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "Sync auto-increment to data...",
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
-  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to the current maximum value. The following statement will run:",
+  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
+  identitySyncCurrentUnknown: "Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on \"lower\" to sync anyway.",
+  identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed:
     "Could not check whether {table} uses AUTOINCREMENT: {error}",
@@ -2432,6 +2438,8 @@ const en = {
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
+  alterTableDuplicateColumn: "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
+  alterTableRenameCollision: "The new name is the current name of another column: {names}. Swapping or chaining renames cannot be applied safely; rename them in separate steps.",
   alterTableReadOnly: "This connection is read-only; editing columns is disabled.",
   alterTableDestructiveTitle: "{count} destructive change(s) included",
   alterTableDestructiveBody: "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
@@ -6950,6 +6958,8 @@ const ja: Dict = {
   routineEditReadOnly: "この接続は読み取り専用のため、定義を適用できません。",
   routineEditNoteAtomic:
     "旧定義の置換は 1 つのトランザクションで実行されます。新しい定義にエラーがあっても現在の定義はそのまま残ります。",
+  routineEditNotePgOverload:
+    "名前や引数の型を変えると新しい関数が作られ、旧定義は削除されずに残ります (不要なら別途削除してください)。",
   routineEditNoteMysql:
     "MySQL は DDL を巻き戻せません。既存の定義を先に削除してから再作成します。新しい定義が失敗した場合は、元の定義への復元を自動で試みます。",
   routineEditNoteMysqlDelimiter:
@@ -7407,6 +7417,8 @@ const ja: Dict = {
   createTableRun: "作成",
   createTableToEditor: "エディタへ送る",
   createTableReadOnly: "この接続は読み取り専用のため作成できません。",
+  createTableForeignKeyIncomplete:
+    "入力が途中の外部キー行があります (子列・参照先テーブル・同数の参照列が必要です)。入力を完成させるか行を削除してください。不完全な行は作成されません。",
   contextMenuCreateTable: "テーブルを新規作成",
   // テーブル保守操作。
   contextMenuCopyTableName: "テーブル名をコピー",
@@ -7460,7 +7472,9 @@ const ja: Dict = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "採番を実データに同期",
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
-  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます。次の文を実行します:",
+  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
+  identitySyncCurrentUnknown: "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
+  identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed:
     "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
@@ -7531,6 +7545,8 @@ const ja: Dict = {
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
+  alterTableDuplicateColumn: "適用後に列名が重複します: {names}。どちらかの名前を変えるか削除してください。",
+  alterTableRenameCollision: "リネーム先が別の列の現在の名前と同じです: {names}。列名の入れ替えや連鎖は安全に実行できないので、段階を分けてリネームしてください。",
   alterTableReadOnly: "この接続は読み取り専用のため、列の編集はできません。",
   alterTableDestructiveTitle: "破壊的な変更を {count} 件含みます",
   alterTableDestructiveBody: "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",

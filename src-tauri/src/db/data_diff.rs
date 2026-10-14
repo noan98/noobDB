@@ -427,6 +427,14 @@ fn has_case_insensitive_key_collision(rows: &[RowDiff]) -> bool {
         .any(|r| source_only_lower.contains(&lower_key(&r.key)))
 }
 
+/// `Value::Bytes` の 16 進ワイヤ表現として妥当か (偶数桁の 16 進数字のみ)。
+/// SQLite は動的型付けで `VARBINARY` 列にも TEXT を格納でき、その文字列を無検証で
+/// `X'..'` に埋め込むと別バイト列になる・引用符で構文が壊れる/注入されるため、
+/// 16 進として妥当なものだけを `Bytes` に戻す。
+pub(crate) fn is_hex_wire(s: &str) -> bool {
+    s.len() % 2 == 0 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// True if `type_name` (a driver column type, e.g. `varbinary(255)`,
 /// `BYTEA`, `blob`) holds binary data rather than text. Used to restore
 /// `Value::Bytes` for values that came back as `Value::String` after an IPC
@@ -442,7 +450,9 @@ pub(crate) fn is_binary_type(type_name: &str) -> bool {
 /// `Value::Null`) passes through unchanged.
 fn coerce_binary_value(type_name: Option<&str>, value: &Value) -> Value {
     match (type_name, value) {
-        (Some(t), Value::String(hex)) if is_binary_type(t) => Value::Bytes(hex.clone()),
+        (Some(t), Value::String(hex)) if is_binary_type(t) && is_hex_wire(hex) => {
+            Value::Bytes(hex.clone())
+        }
         _ => value.clone(),
     }
 }
@@ -534,7 +544,7 @@ impl<'a> ColumnIndex<'a> {
             .copied()
             .unwrap_or(false);
         match value {
-            Value::String(hex) if is_binary => Value::Bytes(hex.clone()),
+            Value::String(hex) if is_binary && is_hex_wire(hex) => Value::Bytes(hex.clone()),
             _ => value.clone(),
         }
     }
@@ -545,7 +555,9 @@ impl<'a> ColumnIndex<'a> {
             .iter()
             .enumerate()
             .map(|(i, value)| match value {
-                Value::String(hex) if self.binary.get(i).copied().unwrap_or(false) => {
+                Value::String(hex)
+                    if self.binary.get(i).copied().unwrap_or(false) && is_hex_wire(hex) =>
+                {
                     Value::Bytes(hex.clone())
                 }
                 _ => value.clone(),
@@ -683,6 +695,9 @@ pub(crate) fn sql_literal(driver: DriverKind, value: &Value) -> String {
             }
         }
         Value::String(s) => quote_string(driver, s),
+        // 16 進として不正な `Bytes` (到達しないはずだが、引用符の閉じ込みによる注入を
+        // 防ぐ最後の砦) は文字列リテラルとして安全に出力する。
+        Value::Bytes(hex) if !is_hex_wire(hex) => quote_string(driver, hex),
         Value::Bytes(hex) => match driver {
             DriverKind::Mysql | DriverKind::Sqlite => format!("X'{hex}'"),
             // PostgreSQL bytea hex format: a single `\x` prefix followed by
@@ -1136,6 +1151,36 @@ mod tests {
             .iter()
             .any(|s| s.kind == SyncKind::DeleteRow));
         assert!(plan.warnings.is_empty());
+    }
+
+    #[test]
+    fn non_hex_text_in_binary_column_is_not_turned_into_bytes_literal() {
+        // SQLite は VARBINARY 列にも TEXT を格納できる。16 進として不正な値を
+        // `X'..'` に埋め込むと構文エラー/注入になるため、文字列のまま出力する。
+        let t = Some("VARBINARY(16)");
+        assert_eq!(
+            coerce_binary_value(t, &Value::String("O'Brien".into())),
+            Value::String("O'Brien".into())
+        );
+        assert_eq!(
+            coerce_binary_value(t, &Value::String("abc".into())),
+            Value::String("abc".into())
+        );
+        assert_eq!(
+            coerce_binary_value(t, &Value::String("ab12".into())),
+            Value::Bytes("ab12".into())
+        );
+        assert_eq!(
+            sql_literal(DriverKind::Sqlite, &Value::Bytes("O'Brien".into())),
+            "'O''Brien'"
+        );
+        let cols = vec!["b".to_string()];
+        let types = vec!["VARBINARY(16)".to_string()];
+        let idx = ColumnIndex::new(&cols, &types);
+        assert_eq!(
+            idx.coerce_values(&[Value::String("O'Brien".into())]),
+            vec![Value::String("O'Brien".into())]
+        );
     }
 
     #[test]
