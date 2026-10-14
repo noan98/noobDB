@@ -95,6 +95,8 @@ describe("ExportModal データマスキング (#733)", () => {
     enableMasking();
     const preview = screen.getByLabelText(t("exportPreview"));
     expect(preview.textContent).toBe(t("exportMaskingPending"));
+    // IPC はデバウンス後に送られる (固定値入力の 1 文字ごとの往復を避ける)。
+    await waitFor(() => expect(api.maskExportRows).toHaveBeenCalled());
     resolve([
       [1, "X", "hello"],
       [2, "X", null],

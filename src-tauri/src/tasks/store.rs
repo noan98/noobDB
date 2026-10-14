@@ -261,6 +261,14 @@ pub fn delete(id: &str) -> Result<()> {
     save_file_locked(&file)
 }
 
+/// 設定とタスクを 1 回の読み込みで返す (tick が 20 秒ごとに `load_settings` と
+/// `load_all` で tasks.json を 2 回読んで parse するのを避ける)。
+pub fn load_settings_and_tasks() -> Result<(SchedulerSettings, Vec<TaskDefinition>)> {
+    let _guard = lock_store();
+    let file = load_file_locked()?;
+    Ok((file.settings, file.tasks))
+}
+
 pub fn load_settings() -> Result<SchedulerSettings> {
     let _guard = lock_store();
     Ok(load_file_locked()?.settings)

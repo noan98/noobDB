@@ -460,6 +460,23 @@ pub fn classify_tx_statement(
     sql: &str,
 ) -> Option<(TxControl, Result<crate::db::tx_options::TxOptions, String>)> {
     use crate::db::tx_options::TxOptions;
+    // 先頭語がトランザクション制御語でなければ、全文のマスク走査 (数 MB の INSERT でも
+    // 文字配列化される) を省いて None を返す。先頭が英字のときだけ判定し、コメント・
+    // 引用符で始まる文は従来どおりマスク後に判定する。
+    let trimmed = sql.trim_start();
+    if trimmed.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        let word_len = trimmed
+            .bytes()
+            .take_while(|b| b.is_ascii_alphabetic())
+            .count();
+        let word = &trimmed[..word_len];
+        let is_tx_word = ["begin", "start", "commit", "end", "rollback"]
+            .iter()
+            .any(|w| word.eq_ignore_ascii_case(w));
+        if !is_tx_word {
+            return None;
+        }
+    }
     let orig: Vec<char> = sql.chars().collect();
     let masked: String = super::mask_for_driver(driver, &orig).into_iter().collect();
     let lower = masked.to_ascii_lowercase();
