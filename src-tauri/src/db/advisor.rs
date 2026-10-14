@@ -668,10 +668,10 @@ fn pg_type_family(t: &str) -> String {
     }
     let norm = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
     match norm.as_str() {
-        // text / varchar / char は同じ演算子族 (text_ops / bpchar_ops は相互に索引が効く)。
-        "text" | "character varying" | "varchar" | "character" | "char" | "bpchar" => {
-            "text".to_string()
-        }
+        // text / varchar は同じ演算子族 (text_ops) で相互に索引が効く。
+        "text" | "character varying" | "varchar" => "text".to_string(),
+        // char(n) (bpchar) は別の演算子族 (bpchar_ops) で、text と比べると索引が効かない。
+        "character" | "char" | "bpchar" => "bpchar".to_string(),
         "timestamp with time zone" | "timestamptz" => "timestamptz".to_string(),
         "timestamp without time zone" | "timestamp" => "timestamp".to_string(),
         "time with time zone" | "timetz" => "timetz".to_string(),
@@ -1463,6 +1463,16 @@ mod tests {
             DriverKind::Postgres,
             "timestamp with time zone",
             "timestamptz"
+        ));
+        assert!(types_compatible(
+            DriverKind::Postgres,
+            "text",
+            "character varying(20)"
+        ));
+        assert!(!types_compatible(
+            DriverKind::Postgres,
+            "text",
+            "character(5)"
         ));
         assert!(!types_compatible(DriverKind::Postgres, "integer", "bigint"));
         assert!(types_compatible(

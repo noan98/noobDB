@@ -191,6 +191,8 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
               ? {
                   kind: "done",
                   sends,
+                  // 停止候補は AI に渡した待機チェーンの id だけに絞る (幻覚で別プロセスの id が
+                  // 返っても、理由と無関係な行を「一覧で表示」→ 停止へ進めさせない)。
                   value: restrictStopCandidates(
                     parsed.value,
                     procs.map((p) => p.id),

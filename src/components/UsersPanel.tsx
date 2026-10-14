@@ -393,7 +393,7 @@ export function UsersPanel({
       toast.error(t("usersApplyFailed", { error: String(e) }));
       // MySQL の GRANT / REVOKE は暗黙コミットされ、途中失敗でも先行文が残りうる。
       // 画面を適用前の古い状態のままにせず、サーバの実際の権限を再取得する。
-      if (privSeq.current === seqBefore) {
+      if (driver === "mysql" && privSeq.current === seqBefore) {
         await loadPrivileges(selected);
       }
     } finally {

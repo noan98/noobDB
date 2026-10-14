@@ -867,50 +867,51 @@ impl PostgresConn {
             return Ok(out);
         }
 
-        // 段階 1: この文を実行した接続自身を除いて終了する。自分自身を同じ文の中で終了すると、
-        // 結果を返す前に接続が FATAL で切れ、他の pid が既に終了していても全件失敗に見えてしまう。
-        let others_sql = "SELECT t.p, pg_terminate_backend(t.p) \
-               FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               WHERE t.p <> pg_backend_pid() ORDER BY t.ord";
-        let terminated: Vec<i32> = match sqlx::query_as::<_, (i32, bool)>(others_sql)
-            .bind(&pids)
-            .fetch_all(&self.pool)
-            .await
-        {
-            Ok(rows) => rows.into_iter().map(|(p, _)| p).collect(),
+        // 同じ接続で 2 段階に分ける。自分自身を他の pid と同じ文の中で終了すると、結果を返す前に
+        // 接続が FATAL で切れ、他の pid が既に終了していても全件失敗に見えてしまうため。
+        // 接続を 1 本確保して両段階を同じ接続で実行するので、段階 2 の対象は確実にその接続自身になる。
+        let mut conn = match self.pool.acquire().await {
+            Ok(c) => c,
             Err(e) => {
                 out.record_failure(count, AppError::from(e).to_string());
                 return Ok(out);
             }
         };
-        out.killed += terminated.len() as u64;
-
-        // 段階 2: 段階 1 の接続が自分自身だった pid (= まだ終了していないもの) を最後に終了する。
-        // 段階 2 が別のプール接続で走るなら、その接続が対象に入っていれば自分自身の終了になり、
-        // 接続断のエラーが返るのは想定どおり (終了は成功している) なので失敗に数えない。
-        let done: std::collections::HashSet<i32> = terminated.into_iter().collect();
-        let mut remaining: Vec<i32> = Vec::new();
-        for pid in &pids {
-            if !done.contains(pid) && !remaining.contains(pid) {
-                remaining.push(*pid);
-            }
-        }
-        if remaining.is_empty() {
-            return Ok(out);
-        }
-        let last_sql = "SELECT pg_terminate_backend(s.p) FROM ( \
-               SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               ORDER BY (p = pg_backend_pid()), ord \
-             ) s";
-        let remaining_count = remaining.len() as u64;
-        match sqlx::query(last_sql)
-            .bind(&remaining)
-            .execute(&self.pool)
+        // 段階 1: この接続自身を除いて終了する。戻りの bool (pg_terminate_backend の結果) で成否を数える。
+        let others_sql = "SELECT t.p, pg_terminate_backend(t.p) \
+               FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
+               WHERE t.p <> pg_backend_pid() ORDER BY t.ord";
+        let rows: Vec<(i32, bool)> = match sqlx::query_as::<_, (i32, bool)>(others_sql)
+            .bind(&pids)
+            .fetch_all(&mut *conn)
             .await
         {
-            Ok(_) => out.killed += remaining_count,
-            Err(e) if is_connection_dropped(&e) => out.killed += remaining_count,
-            Err(e) => out.record_failure(remaining_count, AppError::from(e).to_string()),
+            Ok(rows) => rows,
+            Err(e) => {
+                out.record_failure(count, AppError::from(e).to_string());
+                return Ok(out);
+            }
+        };
+        let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
+        for (pid, ok) in rows {
+            seen.insert(pid);
+            if ok {
+                out.killed += 1;
+            } else {
+                out.record_failure(1, format!("pg_terminate_backend({pid}) returned false"));
+            }
+        }
+
+        // 段階 2: 段階 1 で除外された pid (= この接続自身) を最後に終了する。接続断のエラーは
+        // 終了が成功した結果なので失敗に数えない。
+        if pids.iter().any(|p| !seen.contains(p)) {
+            let last_sql = "SELECT pg_terminate_backend(p) FROM unnest($1::int4[]) AS t(p) \
+               WHERE p = pg_backend_pid()";
+            match sqlx::query(last_sql).bind(&pids).execute(&mut *conn).await {
+                Ok(_) => out.killed += 1,
+                Err(e) if is_connection_dropped(&e) => out.killed += 1,
+                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+            }
         }
         Ok(out)
     }
@@ -2207,8 +2208,6 @@ impl PostgresConn {
     }
 }
 
-/// `columns` / `columns_for_database` 共通の列メタデータ行の読み取り。`off` は
-/// 先頭の `column_name` の列位置 (全テーブル版は先頭にテーブル名が付くので 1)。
 /// 自分自身の `pg_terminate_backend` で接続が切れたときに返るエラーか。終了は成功しているので、
 /// 呼び出し側は失敗に数えない。接続断 (I/O・プール閉鎖) と FATAL 57P01 (admin_shutdown:
 /// 管理者コマンドによる終了) を対象にする。判定できないエラーは false (= 失敗として報告)。
@@ -2220,6 +2219,8 @@ fn is_connection_dropped(e: &sqlx::Error) -> bool {
     }
 }
 
+/// `columns` / `columns_for_database` 共通の列メタデータ行の読み取り。`off` は
+/// 先頭の `column_name` の列位置 (全テーブル版は先頭にテーブル名が付くので 1)。
 fn column_info_from_row(r: &PgRow, off: usize) -> TableColumnInfo {
     let base_type = r.try_get::<String, _>(off + 1).unwrap_or_default();
     let char_len = r.try_get::<Option<i32>, _>(off + 8).ok().flatten();

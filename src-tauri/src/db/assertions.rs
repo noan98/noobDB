@@ -73,15 +73,26 @@ fn bound_literal(driver: DriverKind, raw: &str) -> String {
     }
 }
 
-/// 範囲比較の左辺。SQLite は TEXT 親和性の列に数値リテラルを比べると、リテラル側が文字列化されて
-/// 文字列比較になり ('10' > '5' が偽)、エラーも出ず件数だけ狂う。数値境界のときは列を
-/// `NUMERIC` へ CAST して数値比較を強制する (数値列では恒等)。MySQL は文字列列と数値を数値として
-/// 比較し、PostgreSQL は型不一致をエラーにするので、そのまま比較する。
-fn range_lhs(driver: DriverKind, col: &str, bound: &str) -> String {
+/// 範囲比較の違反条件 (`op` は `<` か `>`)。SQLite は TEXT 親和性の列に数値リテラルを比べると、
+/// リテラル側が文字列化されて文字列比較になり ('10' > '5' が偽)、エラーも出ず件数だけ狂う。
+/// 数値境界のときは値の型で分けて数値比較を強制する:
+/// - `integer` / `real` はそのまま比べる。
+/// - `text` は数値の書式 (符号は先頭のみ・小数点は高々 1 つ・指数なし) に合うものだけ CAST して比べる。
+/// - 書式に合わない text (`'abc'` / `'12abc'`) と blob は、比較できないので違反として数える。
+///
+/// MySQL は文字列列と数値を数値として比較し、PostgreSQL は型不一致をエラーにするので、そのまま比較する。
+fn range_violation(driver: DriverKind, col: &str, op: &str, bound: &str) -> String {
+    let lit = bound_literal(driver, bound);
     if driver == DriverKind::Sqlite && is_numeric_literal(bound.trim()) {
-        format!("CAST({col} AS NUMERIC)")
+        let numeric = format!(
+            "CASE WHEN typeof({col}) IN ('integer', 'real') THEN {col} \
+             WHEN typeof({col}) = 'text' AND {col} NOT GLOB '*[^0-9.+-]*' AND {col} GLOB '*[0-9]*' \
+             AND {col} NOT GLOB '*[0-9.][+-]*' AND {col} NOT GLOB '*[+-][+-]*' \
+             AND {col} NOT GLOB '*.*.*' THEN CAST({col} AS NUMERIC) END"
+        );
+        format!("({numeric} IS NULL OR {numeric} {op} {lit})")
     } else {
-        col.to_string()
+        format!("{col} {op} {lit}")
     }
 }
 
@@ -353,18 +364,10 @@ pub fn build_sql(
             let col = q(column);
             let mut outside = Vec::new();
             if let Some(lo) = opt_trimmed(min) {
-                outside.push(format!(
-                    "{} < {}",
-                    range_lhs(driver, &col, lo),
-                    bound_literal(driver, lo)
-                ));
+                outside.push(range_violation(driver, &col, "<", lo));
             }
             if let Some(hi) = opt_trimmed(max) {
-                outside.push(format!(
-                    "{} > {}",
-                    range_lhs(driver, &col, hi),
-                    bound_literal(driver, hi)
-                ));
+                outside.push(range_violation(driver, &col, ">", hi));
             }
             let where_ = format!("{col} IS NOT NULL AND ({})", outside.join(" OR "));
             (
@@ -640,17 +643,7 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_numeric_range_casts_the_column_so_text_columns_compare_numerically() {
-        let rule = AssertionRule::Range {
-            column: s("v"),
-            min: None,
-            max: Some(s("5")),
-        };
-        assert_eq!(
-            sql(DriverKind::Sqlite, None, "t", &rule).check_sql,
-            "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"v\" IS NOT NULL AND (CAST(\"v\" AS NUMERIC) > 5)"
-        );
-        // 日付など数値でない境界は CAST しない。
+    fn sqlite_non_numeric_bound_is_not_wrapped() {
         let dates = AssertionRule::Range {
             column: s("d"),
             min: Some(s("2024-01-01")),
@@ -660,6 +653,61 @@ mod tests {
             sql(DriverKind::Sqlite, None, "t", &dates).check_sql,
             "SELECT COUNT(*) AS observed FROM \"t\" WHERE \"d\" IS NOT NULL AND (\"d\" < '2024-01-01')"
         );
+    }
+
+    /// SQLite の実エンジンで、型の混在した列に対する範囲チェックの違反件数を固定する。
+    #[tokio::test]
+    async fn sqlite_numeric_range_counts_non_numeric_values_as_violations() {
+        use sqlx::Connection;
+        let mut conn = sqlx::SqliteConnection::connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite connection");
+        // 親和性なし (BLOB) の列にして、挿入した値の型をそのまま残す。
+        sqlx::query("CREATE TABLE t (v)")
+            .execute(&mut conn)
+            .await
+            .expect("create table");
+        for lit in [
+            "1", "'abc'", "'12abc'", "'7'", "'10'", "3.5", "NULL", "x'00'",
+        ] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "INSERT INTO t (v) VALUES ({lit})"
+            )))
+            .execute(&mut conn)
+            .await
+            .expect("insert");
+        }
+        let count = |rule: AssertionRule| {
+            let check = sql(DriverKind::Sqlite, None, "t", &rule).check_sql;
+            async move { check }
+        };
+        let max5 = count(AssertionRule::Range {
+            column: s("v"),
+            min: None,
+            max: Some(s("5")),
+        })
+        .await;
+        let observed: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(max5))
+            .fetch_one(&mut conn)
+            .await
+            .expect("count");
+        // 違反: 'abc' / '12abc' (数値でない text) / x'00' (blob) / '10' (text を数値の 10 として > 5)。
+        // 適合: 1 / 3.5 / '7' は数値の 7 として比較するので違反 (> 5)。NULL は対象外。
+        // → 違反は 'abc', '12abc', '7', '10', x'00' の 5 件。
+        assert_eq!(observed, 5);
+
+        let max8 = count(AssertionRule::Range {
+            column: s("v"),
+            min: None,
+            max: Some(s("8")),
+        })
+        .await;
+        let observed: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(max8))
+            .fetch_one(&mut conn)
+            .await
+            .expect("count");
+        // '7' は数値の 7 として 8 以下なので適合。'10' は違反。→ 'abc', '12abc', '10', x'00' の 4 件。
+        assert_eq!(observed, 4);
     }
 
     #[test]
