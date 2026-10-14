@@ -439,7 +439,10 @@ impl MySqlConn {
 
         // MyISAM などの非トランザクショナル表では ROLLBACK しても変更が戻らず、
         // 「ドライラン」のつもりが実際に書き込んでしまう。プレビューは拒否する。
-        if self.write_target_is_non_transactional(database, sql).await {
+        if self
+            .write_target_is_non_transactional(database, sql)
+            .await?
+        {
             return Err(AppError::InvalidInput(
                 "preview is not available for non-transactional tables (e.g. MyISAM): the change would not be rolled back".into(),
             ));
@@ -965,10 +968,13 @@ impl MySqlConn {
                     .map(|(s, n, t, e)| (s, n, t.unwrap_or_default(), e))
                     .collect()
             });
-        if let Ok(rows) = &usage {
-            // 種別が分からない行 (TABLES に見えない) があるときは信用せず定義解析へ。
-            if !rows.is_empty() && rows.iter().all(|(_, _, t, _)| !t.is_empty()) {
-                return usage;
+        // 照会に成功し 1 件以上返ったら、その結果だけで判断する。種別が空の行 (TABLES に
+        // 見えない基底表) があれば確認できないので拒否。定義の解析へ回すのは、照会の
+        // 失敗時と 0 件のときだけ (解析は見えない参照を無視するため、見えない MyISAM を
+        // 見落とす)。
+        if let Ok(rows) = usage {
+            if let Some(rows) = classify_usage_rows(rows)? {
+                return Ok(rows);
             }
         }
         let definition: Option<(Option<String>,)> = sqlx::query_as(
@@ -1007,24 +1013,28 @@ impl MySqlConn {
     /// 書き込み文 `sql` の対象表が非トランザクショナル (MyISAM 等) か。
     /// ロールバックで戻らないため、ドライラン / フライトレコーダーの捕捉
     /// (どちらも「いったん実行して ROLLBACK」前提) を避ける判定に使う。
-    /// 対象表を特定できない・照会に失敗した場合は `false` (InnoDB 想定で従来動作)。
+    /// 対象表を特定できない場合は `Ok(false)` (InnoDB 想定で従来動作)。照会に失敗した
+    /// 場合は確認できないので `Ok(true)` (安全側)。ビューの基底表を特定できない場合は
+    /// `Err(ViewBaseUnresolved)` を返し、プレビューは専用のエラーとして利用者へ伝える
+    /// (書き込みの捕捉は `Err` でも辞退でよい)。
     pub(crate) async fn write_target_is_non_transactional(
         &self,
         database: Option<&str>,
         sql: &str,
-    ) -> bool {
+    ) -> Result<bool> {
         let Some((target, _)) = extract_target_table_with_alias(sql) else {
-            return false;
+            return Ok(false);
         };
         let (schema, table) = split_table_ref(&target);
         let db = schema.as_deref().or(database);
         // 照会そのものが失敗した (権限不足など) ときは、ロールバックできるか
         // 確認できないので非トランザクショナル扱いにして安全側に倒す。表が
         // 見つからない (行なし) 場合は `table_is_transactional` が true を返す。
-        !self
-            .table_is_transactional(db, &table)
-            .await
-            .unwrap_or(false)
+        match self.table_is_transactional(db, &table).await {
+            Ok(transactional) => Ok(!transactional),
+            Err(e @ AppError::ViewBaseUnresolved) => Err(e),
+            Err(_) => Ok(true),
+        }
     }
 
     /// Row-by-row probe inside a rolled-back transaction to find the first
@@ -3136,6 +3146,18 @@ fn decode_cell_unchecked(row: &MySqlRow, i: usize) -> Value {
     decode_string_or_bytes(row, i)
 }
 
+/// `VIEW_TABLE_USAGE` の結果の扱い。`Ok(None)` は 0 件 (定義の解析で補う)、`Err` は
+/// 種別が空の行 (権限がなく TABLES に見えない基底表) を含む → 確認できないので拒否。
+fn classify_usage_rows(rows: Vec<ViewBase>) -> Result<Option<Vec<ViewBase>>> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    if rows.iter().any(|(_, _, t, _)| t.is_empty()) {
+        return Err(AppError::ViewBaseUnresolved);
+    }
+    Ok(Some(rows))
+}
+
 /// ビューの基底表 1 件: `(スキーマ, 名前, TABLE_TYPE, ENGINE)`。
 type ViewBase = (String, String, String, Option<String>);
 
@@ -4241,6 +4263,26 @@ mod tests {
         assert!(view_definition_table_refs("select 1").is_empty());
         // 閉じていないバッククォートでも panic しない。
         assert!(view_definition_table_refs("select `d`.`t").is_empty());
+    }
+
+    #[test]
+    fn usage_rows_with_invisible_base_are_rejected() {
+        let row = |t: &str, e: Option<&str>| {
+            (
+                "d".to_string(),
+                "x".to_string(),
+                t.to_string(),
+                e.map(String::from),
+            )
+        };
+        assert!(matches!(classify_usage_rows(vec![]), Ok(None)));
+        // 見える InnoDB + 見えない (種別が空) 表 → 拒否。
+        assert!(matches!(
+            classify_usage_rows(vec![row("BASE TABLE", Some("InnoDB")), row("", None)]),
+            Err(AppError::ViewBaseUnresolved)
+        ));
+        let ok = classify_usage_rows(vec![row("BASE TABLE", Some("InnoDB"))]);
+        assert!(matches!(ok, Ok(Some(ref r)) if r.len() == 1));
     }
 
     #[test]

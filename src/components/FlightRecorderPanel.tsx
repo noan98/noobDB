@@ -125,15 +125,21 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             : await api.undoFlightRecord(sessionId, entry.id, false);
           if (settled.applied) setReloadKey((k) => k + 1);
           for (const w of settled.warnings ?? []) toast.info(w, 8000);
-          toast.info(
-            t(
-              settled.applied
-                ? "flightRecorderAlreadyRestored"
-                : redo
-                  ? "flightRecorderNothingToRedo"
-                  : "flightRecorderNothingToUndo",
-            ),
-          );
+          if (settled.applied && settled.rowsAffected > 0) {
+            toast.success(
+              t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", { rows: settled.rowsAffected }),
+            );
+          } else {
+            toast.info(
+              t(
+                settled.applied
+                  ? "flightRecorderAlreadyRestored"
+                  : redo
+                    ? "flightRecorderNothingToRedo"
+                    : "flightRecorderNothingToUndo",
+              ),
+            );
+          }
           return;
         }
         toast.info(t(redo ? "flightRecorderNothingToRedo" : "flightRecorderNothingToUndo"));

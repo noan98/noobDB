@@ -930,8 +930,8 @@ impl Connection {
         // duplicate) them. Force single-row inserts there: a one-row INSERT is
         // atomic even on MyISAM, so a failure affects only that row and the
         // single-row fast-path records it without any retry. (#687 review
-        // follow-up.) A query error defaults to transactional (InnoDB is the
-        // overwhelming default), preserving the batched happy path.
+        // follow-up.) A query error defaults to non-transactional (the safe side,
+        // matching `write_target_is_non_transactional`): rows go in one by one.
         let transactional = self
             .table_is_transactional(database, table)
             .await
@@ -1610,7 +1610,11 @@ impl Connection {
         // 保証がなく、スナップショットの一貫性も得られない。捕捉は辞退し、書き込みだけを
         // 1 回実行する。
         if let Connection::MySql(c) = self {
-            if c.write_target_is_non_transactional(database, sql).await {
+            // 判定できない (ビューの基底表が不明) 場合も、安全側で記録を辞退する。
+            if c.write_target_is_non_transactional(database, sql)
+                .await
+                .unwrap_or(true)
+            {
                 return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
                     kind,
                     "非トランザクショナル表 (MyISAM 等) のため記録できません",
