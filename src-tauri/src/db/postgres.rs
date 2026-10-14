@@ -1430,7 +1430,11 @@ impl PostgresConn {
                  ix.indisprimary     AS is_primary,
                  am.amname           AS method,
                  pg_get_expr(ix.indpred, ix.indrelid) AS predicate,
-                 k.ord               AS ord
+                 k.ord               AS ord,
+                 -- 以下 3 列は list_indexes と同じ (INCLUDE / DESC / NULLS NOT DISTINCT)。
+                 COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
+                 COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1454,6 +1458,14 @@ impl PostgresConn {
                 primary: r.try_get::<bool, _>("is_primary").unwrap_or(false),
                 method: r.try_get::<Option<String>, _>("method").ok().flatten(),
                 predicate: r.try_get::<Option<String>, _>("predicate").ok().flatten(),
+                key_column_count: r
+                    .try_get::<i32, _>("key_count")
+                    .ok()
+                    .and_then(|n| usize::try_from(n).ok()),
+                column_option: Some(pg_index_column_option(
+                    r.try_get::<i32, _>("col_option").unwrap_or(0),
+                )),
+                nulls_not_distinct: r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))

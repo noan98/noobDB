@@ -1142,6 +1142,7 @@ impl SqliteConn {
                 } else {
                     None
                 },
+                ..Default::default()
             })
             .collect();
         Ok(super::group_index_rows(index_rows))

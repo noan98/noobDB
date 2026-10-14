@@ -1822,6 +1822,7 @@ impl MySqlConn {
                     method: r.try_get::<Option<String>, _>(4).ok().flatten(),
                     predicate: None,
                     name,
+                    ..Default::default()
                 }
             })
             .collect();
