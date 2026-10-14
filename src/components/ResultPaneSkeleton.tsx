@@ -32,7 +32,14 @@ export function ResultPaneSkeleton({
   const columns = resultSkeletonColumns(columnCount);
   const rows = resultSkeletonRows(density);
   return (
-    <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="hidden" aria-hidden className="result-pane-skeleton">
+    <Box
+      flex="1 1 auto"
+      minHeight={0}
+      minWidth={0}
+      overflow="hidden"
+      aria-hidden
+      className="result-pane-skeleton"
+    >
       <chakra.table width="100%" css={tableCss}>
         <thead>
           <tr>

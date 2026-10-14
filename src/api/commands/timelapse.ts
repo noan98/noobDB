@@ -10,7 +10,6 @@ import type {
 } from "../tauri";
 
 export const timelapseCommands = {
-
   // --- テーブル・タイムラプス (#739) ---
   // スナップショットはアプリデータディレクトリ配下のローカル専用ストア
   // (`table_timelapse.sqlite`) にのみ保存される。取得は読み取り専用の単一 SELECT で、

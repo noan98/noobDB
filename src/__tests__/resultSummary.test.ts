@@ -48,7 +48,9 @@ describe("buildResultSummaryPrompt (#1476)", () => {
 
   it("allowRowData オフ: SQL のリテラルはマスク設定に従う", () => {
     const sql = "SELECT * FROM t WHERE email = 'alice@secret.example'";
-    expect(buildResultSummaryPrompt({ ...base, sql, allowRowData: false })).not.toContain("alice@secret.example");
+    expect(buildResultSummaryPrompt({ ...base, sql, allowRowData: false })).not.toContain(
+      "alice@secret.example",
+    );
     expect(buildResultSummaryPrompt({ ...base, sql, allowRowData: false, maskLiterals: false })).toContain(
       "alice@secret.example",
     );
@@ -127,7 +129,12 @@ describe("列名・長さからの値の漏れ (#1476)", () => {
 
   it("オフでは長さ範囲は文字列列で、非 NULL 2 件以上かつ異なり数 2 以上のときだけ送る", () => {
     const mk = (r: CellValue[][], type = "VARCHAR") =>
-      buildResultSummaryPrompt({ ...base, columns: [{ name: "c", type_name: type }], rows: r, allowRowData: false });
+      buildResultSummaryPrompt({
+        ...base,
+        columns: [{ name: "c", type_name: type }],
+        rows: r,
+        allowRowData: false,
+      });
     expect(mk([["ab"], ["abcd"]])).toContain("length=2..4");
     expect(mk([["ab"]])).not.toContain("length=");
     expect(mk([["ab"], ["ab"]])).not.toContain("length=");

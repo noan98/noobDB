@@ -2,11 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
-import {
-  THEME_PREVIEW_CHIP_ORDER,
-  themePreviewColors,
-  themePreviewGradient,
-} from "../themePresetPreview";
+import { THEME_PREVIEW_CHIP_ORDER, themePreviewColors, themePreviewGradient } from "../themePresetPreview";
 import { useT, type I18nKey } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -173,7 +169,12 @@ function FontFamilyControl(props: {
   const isPreset = value !== null && presets.includes(value);
   // 「カスタム」を選んだ直後は値がまだ空 (null) でも入力欄を出すため、選択状態を別に持つ。
   const [customMode, setCustomMode] = useState(false);
-  const selectValue = customMode || (value !== null && !isPreset) ? FONT_CUSTOM : value === null ? FONT_DEFAULT : (value as string);
+  const selectValue =
+    customMode || (value !== null && !isPreset)
+      ? FONT_CUSTOM
+      : value === null
+        ? FONT_DEFAULT
+        : (value as string);
   const [customText, setCustomText] = useState(isPreset || value === null ? "" : (value ?? ""));
   useEffect(() => {
     if (value !== null && !presets.includes(value)) setCustomText(value);
@@ -522,10 +523,7 @@ const THEME_PRESET_LABEL_KEYS: Record<ThemePreset, Parameters<ReturnType<typeof 
   colorblind: "themePresetColorblind",
 };
 
-const MOTION_PREFERENCE_LABEL_KEYS: Record<
-  MotionPreference,
-  Parameters<ReturnType<typeof useT>>[0]
-> = {
+const MOTION_PREFERENCE_LABEL_KEYS: Record<MotionPreference, Parameters<ReturnType<typeof useT>>[0]> = {
   system: "settingsMotionPreferenceSystem",
   full: "settingsMotionPreferenceFull",
   reduced: "settingsMotionPreferenceReduced",
@@ -663,9 +661,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const [autoLimitInput, setAutoLimitInput] = useState(String(settings.autoLimitCount));
   const [timeoutInput, setTimeoutInput] = useState(String(settings.queryTimeoutSecs));
   // 機微カラムマスクのパターン (#1069)。入力中は素の文字列で持ち、blur/Enter で確定。
-  const [maskPatternsInput, setMaskPatternsInput] = useState(
-    formatMaskPatterns(settings.columnMaskPatterns),
-  );
+  const [maskPatternsInput, setMaskPatternsInput] = useState(formatMaskPatterns(settings.columnMaskPatterns));
   useEffect(() => {
     setMaskPatternsInput(formatMaskPatterns(settings.columnMaskPatterns));
   }, [settings.columnMaskPatterns]);
@@ -674,9 +670,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     setColumnMaskPatterns(next);
     setMaskPatternsInput(formatMaskPatterns(next));
   };
-  const [connectTimeoutInput, setConnectTimeoutInput] = useState(
-    String(settings.connectTimeoutSecs),
-  );
+  const [connectTimeoutInput, setConnectTimeoutInput] = useState(String(settings.connectTimeoutSecs));
   const [reconnectRetriesInput, setReconnectRetriesInput] = useState(
     String(settings.autoReconnectMaxRetries),
   );
@@ -684,9 +678,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const [notifyThresholdInput, setNotifyThresholdInput] = useState(
     String(settings.queryNotificationThresholdSecs),
   );
-  const [flightRowCapInput, setFlightRowCapInput] = useState(
-    String(settings.flightRecorderRowCap),
-  );
+  const [flightRowCapInput, setFlightRowCapInput] = useState(String(settings.flightRecorderRowCap));
   const [flightRetentionInput, setFlightRetentionInput] = useState(
     String(settings.flightRecorderRetentionDays),
   );
@@ -720,9 +712,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       cancelled = true;
     };
   }, []);
-  const [timelapseGenInput, setTimelapseGenInput] = useState(
-    String(settings.timelapseMaxGenerations),
-  );
+  const [timelapseGenInput, setTimelapseGenInput] = useState(String(settings.timelapseMaxGenerations));
   useEffect(
     () => setTimelapseGenInput(String(settings.timelapseMaxGenerations)),
     [settings.timelapseMaxGenerations],
@@ -731,10 +721,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   useEffect(() => setPrefetchInput(String(settings.streamPrefetchSize)), [settings.streamPrefetchSize]);
   useEffect(() => setAutoLimitInput(String(settings.autoLimitCount)), [settings.autoLimitCount]);
   useEffect(() => setTimeoutInput(String(settings.queryTimeoutSecs)), [settings.queryTimeoutSecs]);
-  useEffect(
-    () => setConnectTimeoutInput(String(settings.connectTimeoutSecs)),
-    [settings.connectTimeoutSecs],
-  );
+  useEffect(() => setConnectTimeoutInput(String(settings.connectTimeoutSecs)), [settings.connectTimeoutSecs]);
   useEffect(
     () => setReconnectRetriesInput(String(settings.autoReconnectMaxRetries)),
     [settings.autoReconnectMaxRetries],
@@ -790,11 +777,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   };
   const commitFlightRowCap = () => {
     const n = Number.parseInt(flightRowCapInput, 10);
-    if (
-      Number.isSafeInteger(n) &&
-      n >= MIN_FLIGHT_RECORDER_ROW_CAP &&
-      n <= MAX_FLIGHT_RECORDER_ROW_CAP
-    ) {
+    if (Number.isSafeInteger(n) && n >= MIN_FLIGHT_RECORDER_ROW_CAP && n <= MAX_FLIGHT_RECORDER_ROW_CAP) {
       setFlightRecorderRowCap(n);
     }
     setFlightRowCapInput(String(getSettings().flightRecorderRowCap));
@@ -830,15 +813,17 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
         });
     }
     // 入力欄は保存済みの値へ戻す (不正な入力は破棄、保存成功時は直後に同じ値になる)。
-    setHistoryRetentionInput(String(Number.isSafeInteger(n) && n >= 0 && n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS ? n : historyRetentionSaved));
+    setHistoryRetentionInput(
+      String(
+        Number.isSafeInteger(n) && n >= 0 && n <= MAX_FLIGHT_RECORDER_RETENTION_DAYS
+          ? n
+          : historyRetentionSaved,
+      ),
+    );
   };
   const commitTimelapseGenerations = () => {
     const n = Number.parseInt(timelapseGenInput, 10);
-    if (
-      Number.isSafeInteger(n) &&
-      n >= MIN_TIMELAPSE_MAX_GENERATIONS &&
-      n <= MAX_TIMELAPSE_MAX_GENERATIONS
-    ) {
+    if (Number.isSafeInteger(n) && n >= MIN_TIMELAPSE_MAX_GENERATIONS && n <= MAX_TIMELAPSE_MAX_GENERATIONS) {
       setTimelapseMaxGenerations(n);
     }
     setTimelapseGenInput(String(getSettings().timelapseMaxGenerations));
@@ -999,1158 +984,1155 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
 
   return (
     <>
-    <Modal
-      // no-submit: 設定は変更と同時に反映され、確定操作が無い
-      onClose={onClose} width="1120px">
-      <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
-        {t("settingsTitle")}
-      </ModalHeader>
-      <ModalBody onScroll={handleModalBodyScroll}>
-        <chakra.div display="flex" gap="4" alignItems="flex-start">
-        <SettingsNavAside aria-label={t("settingsNavAria")}>
-          <Input
-            value={navQuery}
-            onChange={(e) => setNavQuery(e.target.value)}
-            placeholder={t("settingsSearchPlaceholder")}
-            aria-label={t("settingsSearchPlaceholder")}
-          />
-          {filteredSections.length === 0 ? (
-            <SettingsNavEmpty>{t("settingsSearchNoMatch")}</SettingsNavEmpty>
-          ) : (
-            <SettingsNavList role="navigation" aria-label={t("settingsTitle")}>
-              {filteredSections.map((sec) => (
-                <SettingsNavButton
-                  key={sec.id}
-                  type="button"
-                  aria-current={activeSection === sec.id}
-                  onClick={() => handleNavClick(sec.id)}
-                >
-                  {t(sec.titleKey)}
-                </SettingsNavButton>
-              ))}
-            </SettingsNavList>
-          )}
-        </SettingsNavAside>
-        <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
-      <SettingsSection id="settings-sec-language" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <chakra.h3>{t("settingsLanguage")}</chakra.h3>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel as="span">{t("settingsLanguage")}</SettingsToggleLabel>
-            <SettingsInfo>{t("settingsLanguageHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <LanguageSwitcher />
-        </SettingsToggleRow>
-      </SettingsSection>
+      <Modal
+        // no-submit: 設定は変更と同時に反映され、確定操作が無い
+        onClose={onClose}
+        width="1120px"
+      >
+        <ModalHeader onClose={onClose} closeLabel={t("settingsClose")}>
+          {t("settingsTitle")}
+        </ModalHeader>
+        <ModalBody onScroll={handleModalBodyScroll}>
+          <chakra.div display="flex" gap="4" alignItems="flex-start">
+            <SettingsNavAside aria-label={t("settingsNavAria")}>
+              <Input
+                value={navQuery}
+                onChange={(e) => setNavQuery(e.target.value)}
+                placeholder={t("settingsSearchPlaceholder")}
+                aria-label={t("settingsSearchPlaceholder")}
+              />
+              {filteredSections.length === 0 ? (
+                <SettingsNavEmpty>{t("settingsSearchNoMatch")}</SettingsNavEmpty>
+              ) : (
+                <SettingsNavList role="navigation" aria-label={t("settingsTitle")}>
+                  {filteredSections.map((sec) => (
+                    <SettingsNavButton
+                      key={sec.id}
+                      type="button"
+                      aria-current={activeSection === sec.id}
+                      onClick={() => handleNavClick(sec.id)}
+                    >
+                      {t(sec.titleKey)}
+                    </SettingsNavButton>
+                  ))}
+                </SettingsNavList>
+              )}
+            </SettingsNavAside>
+            <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
+              <SettingsSection id="settings-sec-language" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <chakra.h3>{t("settingsLanguage")}</chakra.h3>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsLanguage")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsLanguageHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <LanguageSwitcher />
+                </SettingsToggleRow>
+              </SettingsSection>
 
-      <SettingsSection id="settings-sec-appearance" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <chakra.h3>{t("settingsAppearance")}</chakra.h3>
-          <SettingsReset onClick={resetAppearanceDefaults}>
-            {t("settingsReset")}
-          </SettingsReset>
-        </SettingsSectionHeader>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
-            <SettingsInfo>
-              {t("settingsFontSizeHelp", {
-                min: MIN_FONT_SIZE_PX,
-                max: MAX_FONT_SIZE_PX,
-                default: DEFAULT_FONT_SIZE_PX,
-              })}
-            </SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-font-size"
-            type="number"
-            min={MIN_FONT_SIZE_PX}
-            max={MAX_FONT_SIZE_PX}
-            step={1}
-            value={fontSizeInput}
-            placeholder={String(DEFAULT_FONT_SIZE_PX)}
-            onChange={(e) => setFontSizeInput(e.target.value)}
-            onBlur={commitFontSize}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
-            <SettingsInfo>{t("settingsDensityHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Segmented
-            value={settings.density}
-            options={DENSITY_ORDER.map((d) => ({ value: d, label: t(DENSITY_LABEL_KEYS[d]) }))}
-            onChange={setDensity}
-            ariaLabel={t("settingsDensity")}
-          />
-        </SettingsToggleRow>
-
-        <FontFamilyControl
-          id="settings-mono-font"
-          label={t("settingsMonoFont")}
-          value={settings.monoFontFamily}
-          presets={MONO_FONT_PRESETS}
-          defaultLabel={t("settingsFontDefault")}
-          customLabel={t("settingsFontCustom")}
-          placeholder={t("settingsFontCustomPlaceholder")}
-          sample="SELECT 0 != 1; -- il1 O0"
-          stack={monoFontStack}
-          onChange={setMonoFontFamily}
-        />
-        <FontFamilyControl
-          id="settings-ui-font"
-          label={t("settingsUiFont")}
-          value={settings.uiFontFamily}
-          presets={UI_FONT_PRESETS}
-          defaultLabel={t("settingsFontDefault")}
-          customLabel={t("settingsFontCustom")}
-          placeholder={t("settingsFontCustomPlaceholder")}
-          sample={t("settingsFontSample")}
-          stack={uiFontStack}
-          onChange={setUiFontFamily}
-        />
-
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
-            <SettingsInfo>{t("settingsThemePresetHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
-            {THEME_PRESET_ORDER.map((p) => {
-              const selected = settings.themePreset === p;
-              const colors = themePreviewColors(p, toggleTheme);
-              const chipTitle = THEME_PREVIEW_CHIP_ORDER.map((chip) =>
-                t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
-              ).join(" / ");
-              return (
-                // ツールチップはスウォッチ帯ではなくカード (ボタン) 側に付ける —
-                // 帯は `aria-hidden` なので `aria-describedby` が支援技術へ届かず、
-                // フォーカスも受け取れないため (#884)。
-                <Tooltip key={p} label={chipTitle}>
-                  <ThemePresetCard
-                    type="button"
-                    size="compact"
-                    width="92px"
-                    aria-pressed={selected}
-                    onClick={() => setThemePreset(p as ThemePreset)}
-                  >
-                    <ThemePresetSwatchStrip
-                      aria-hidden="true"
-                      style={{ background: themePreviewGradient(colors) }}
-                    />
-                    <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
-                  </ThemePresetCard>
-                </Tooltip>
-              );
-            })}
-          </ThemePresetRow>
-        </SettingsToggleRow>
-
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
-            <SettingsInfo>{t("settingsAccentColorHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsSwatchRow role="group" aria-label={t("settingsAccentColor")}>
-            {ACCENT_PRESETS.map((p) => {
-              const selected =
-                p.hex === null
-                  ? settings.accentColor === null
-                  : settings.accentColor?.toLowerCase() === p.hex.toLowerCase();
-              return (
-                <Tooltip key={p.key} label={t(ACCENT_LABEL_KEYS[p.key])}>
-                  <SettingsSwatch
-                    type="button"
-                    aria-pressed={selected}
-                    aria-label={t(ACCENT_LABEL_KEYS[p.key])}
-                    data-default={p.hex === null ? "" : undefined}
-                    style={p.hex ? { background: p.hex } : undefined}
-                    onClick={() => setAccentColor(p.hex)}
+              <SettingsSection id="settings-sec-appearance" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <chakra.h3>{t("settingsAppearance")}</chakra.h3>
+                  <SettingsReset onClick={resetAppearanceDefaults}>{t("settingsReset")}</SettingsReset>
+                </SettingsSectionHeader>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
+                    <SettingsInfo>
+                      {t("settingsFontSizeHelp", {
+                        min: MIN_FONT_SIZE_PX,
+                        max: MAX_FONT_SIZE_PX,
+                        default: DEFAULT_FONT_SIZE_PX,
+                      })}
+                    </SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-font-size"
+                    type="number"
+                    min={MIN_FONT_SIZE_PX}
+                    max={MAX_FONT_SIZE_PX}
+                    step={1}
+                    value={fontSizeInput}
+                    placeholder={String(DEFAULT_FONT_SIZE_PX)}
+                    onChange={(e) => setFontSizeInput(e.target.value)}
+                    onBlur={commitFontSize}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
                   />
-                </Tooltip>
-              );
-            })}
-            <Tooltip label={t("settingsAccentCustom")}>
-              <SettingsColorInput
-                type="color"
-                aria-label={t("settingsAccentCustom")}
-                value={settings.accentColor ?? ACCENT_INPUT_FALLBACK}
-                onChange={(e) => setAccentColor(e.target.value)}
-              />
-            </Tooltip>
-          </SettingsSwatchRow>
-        </SettingsToggleRow>
+                </SettingsNumberRow>
 
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
-            <SettingsInfo>{t("settingsMotionPreferenceHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Segmented
-            value={settings.motionPreference}
-            options={MOTION_PREFERENCE_ORDER.map((m) => ({
-              value: m,
-              label: t(MOTION_PREFERENCE_LABEL_KEYS[m]),
-            }))}
-            onChange={setMotionPreference}
-            ariaLabel={t("settingsMotionPreference")}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsDensity")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsDensityHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Segmented
+                    value={settings.density}
+                    options={DENSITY_ORDER.map((d) => ({ value: d, label: t(DENSITY_LABEL_KEYS[d]) }))}
+                    onChange={setDensity}
+                    ariaLabel={t("settingsDensity")}
+                  />
+                </SettingsToggleRow>
 
-      <SettingsSection id="settings-sec-streaming" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsStreaming")}</chakra.h3>
-            <SettingsInfo>{t("settingsStreamingHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsReset onClick={resetStreamingDefaults}>
-            {t("settingsReset")}
-          </SettingsReset>
-        </SettingsSectionHeader>
-
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-default-display">
-              {t("settingsDefaultDisplayCount")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsDefaultDisplayCountHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-default-display"
-            type="number"
-            min={1}
-            step={10}
-            value={displayInput}
-            placeholder={String(DEFAULT_DISPLAY_COUNT)}
-            onChange={(e) => setDisplayInput(e.target.value)}
-            onBlur={commitDisplay}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-stream-prefetch">
-              {t("settingsStreamPrefetchSize")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsStreamPrefetchSizeHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-stream-prefetch"
-            type="number"
-            min={1}
-            step={10}
-            value={prefetchInput}
-            placeholder={String(DEFAULT_STREAM_PREFETCH_SIZE)}
-            onChange={(e) => setPrefetchInput(e.target.value)}
-            onBlur={commitPrefetch}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-table-open-query" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("tableOpenQuerySettingsTitle")}</chakra.h3>
-            <SettingsInfo>{t("tableOpenQuerySettingsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <TableOpenQuerySettings />
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-auto-limit" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
-            <SettingsInfo>{t("settingsAutoLimitHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-auto-limit">
-              {t("settingsAutoLimitEnabled")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsAutoLimitEnabledHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-auto-limit"
-            checked={settings.autoLimitEnabled}
-            onChange={setAutoLimitEnabled}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-auto-limit-count">
-              {t("settingsAutoLimitCount")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsAutoLimitCountHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-auto-limit-count"
-            type="number"
-            min={1}
-            step={100}
-            value={autoLimitInput}
-            placeholder={String(DEFAULT_AUTO_LIMIT_COUNT)}
-            disabled={!settings.autoLimitEnabled}
-            onChange={(e) => setAutoLimitInput(e.target.value)}
-            onBlur={commitAutoLimit}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-sql-lint" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
-            <SettingsInfo>{t("settingsSqlLintHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-sql-lint">
-              {t("settingsSqlLintEnabled")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsSqlLintEnabledHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-sql-lint"
-            checked={settings.sqlLintEnabled}
-            onChange={setSqlLintEnabled}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-preflight-impact" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsPreflightImpact")}</chakra.h3>
-            <SettingsInfo>{t("settingsPreflightImpactHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-preflight-impact">
-              {t("settingsPreflightImpactEnabled")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsPreflightImpactEnabledHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-preflight-impact"
-            checked={settings.preflightImpactEnabled}
-            onChange={setPreflightImpactEnabled}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-plan-watch" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
-            <SettingsInfo>{t("settingsPlanWatchHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-plan-watch-on-connect">
-              {t("settingsPlanWatchOnConnect")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsPlanWatchOnConnectHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-plan-watch-on-connect"
-            checked={settings.planWatchOnConnect}
-            onChange={setPlanWatchOnConnect}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-schema-drift" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
-            <SettingsInfo>{t("settingsSchemaDriftHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
-              {t("settingsSchemaDriftOnConnect")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsSchemaDriftOnConnectHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-schema-drift-on-connect"
-            checked={settings.schemaDriftOnConnect}
-            onChange={setSchemaDriftOnConnect}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-schema-drift-on-ddl">
-              {t("settingsSchemaDriftOnDdl")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsSchemaDriftOnDdlHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-schema-drift-on-ddl"
-            checked={settings.schemaDriftOnDdl}
-            onChange={setSchemaDriftOnDdl}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-timelapse" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsTimelapse")}</chakra.h3>
-            <SettingsInfo>{t("settingsTimelapseHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          {/* 全削除は取り消せないので危険色 (dangerOutline) にする。 */}
-          <Button type="button" variant="dangerOutline" size="sm" onClick={() => void clearTimelapse()}>
-            {t("settingsTimelapseClearAll")}
-          </Button>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-timelapse-on-connect">
-              {t("settingsTimelapseOnConnect")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsTimelapseOnConnectHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-timelapse-on-connect"
-            checked={settings.timelapseOnConnect}
-            onChange={setTimelapseOnConnect}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-timelapse-max-generations">
-              {t("settingsTimelapseMaxGenerations")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsTimelapseMaxGenerationsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-timelapse-max-generations"
-            type="number"
-            min={MIN_TIMELAPSE_MAX_GENERATIONS}
-            max={MAX_TIMELAPSE_MAX_GENERATIONS}
-            step={1}
-            value={timelapseGenInput}
-            placeholder={String(DEFAULT_TIMELAPSE_MAX_GENERATIONS)}
-            onChange={(e) => setTimelapseGenInput(e.target.value)}
-            onBlur={commitTimelapseGenerations}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
-            <SettingsInfo>{t("settingsFlightRecorderHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
-              {t("settingsFlightRecorderEnabled")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsFlightRecorderEnabledHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-flight-recorder-enabled"
-            checked={settings.flightRecorderEnabled}
-            onChange={setFlightRecorderEnabled}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-flight-recorder-row-cap">
-              {t("settingsFlightRecorderRowCap")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsFlightRecorderRowCapHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-flight-recorder-row-cap"
-            type="number"
-            min={MIN_FLIGHT_RECORDER_ROW_CAP}
-            max={MAX_FLIGHT_RECORDER_ROW_CAP}
-            step={100}
-            value={flightRowCapInput}
-            placeholder={String(DEFAULT_FLIGHT_RECORDER_ROW_CAP)}
-            disabled={!settings.flightRecorderEnabled}
-            onChange={(e) => setFlightRowCapInput(e.target.value)}
-            onBlur={commitFlightRowCap}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-flight-recorder-retention">
-              {t("settingsFlightRecorderRetentionDays")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsFlightRecorderRetentionDaysHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-flight-recorder-retention"
-            type="number"
-            min={MIN_FLIGHT_RECORDER_RETENTION_DAYS}
-            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
-            step={1}
-            value={flightRetentionInput}
-            placeholder={String(DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS)}
-            disabled={!settings.flightRecorderEnabled}
-            onChange={(e) => setFlightRetentionInput(e.target.value)}
-            onBlur={commitFlightRetention}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-history" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsHistory")}</chakra.h3>
-            <SettingsInfo>{t("settingsHistoryHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-history-retention">
-              {t("settingsHistoryRetentionDays")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsHistoryRetentionDaysHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-history-retention"
-            type="number"
-            min={0}
-            max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
-            step={1}
-            value={historyRetentionInput}
-            placeholder="0"
-            disabled={historyRetentionLoading || historyRetentionLoadFailed}
-            onChange={(e) => setHistoryRetentionInput(e.target.value)}
-            onBlur={commitHistoryRetention}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-result-grid" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-result-grid-mode">
-              {t("settingsResultGridMode")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsResultGridModeHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Select
-            id="settings-result-grid-mode"
-            width="auto"
-            value={settings.resultGridMode}
-            onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
-          >
-            <option value="scroll">{t("settingsResultGridModeScroll")}</option>
-            <option value="paginate">{t("settingsResultGridModePaginate")}</option>
-          </Select>
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-page-size">
-              {t("settingsResultGridPageSize")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsResultGridPageSizeHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Select
-            id="settings-page-size"
-            value={String(settings.resultGridPageSize)}
-            disabled={settings.resultGridMode !== "paginate"}
-            onChange={(e) => setResultGridPageSize(Number(e.target.value))}
-          >
-            {RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </Select>
-        </SettingsNumberRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-auto-refresh-default">
-              {t("settingsAutoRefreshDefault")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsAutoRefreshDefaultHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Select
-            id="settings-auto-refresh-default"
-            value={String(settings.autoRefreshDefaultSecs)}
-            onChange={(e) => setAutoRefreshDefaultSecs(Number(e.target.value))}
-          >
-            {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s % 60 === 0
-                  ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                  : t("autoRefreshIntervalSecs", { secs: s })}
-              </option>
-            ))}
-          </Select>
-        </SettingsNumberRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
-              {t("settingsCellEditOnBlur")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsCellEditOnBlurHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-cell-edit-on-blur"
-            checked={settings.cellEditOnBlur === "confirm"}
-            onChange={(checked) => setCellEditOnBlur(checked ? "confirm" : "commit")}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-rich-cell-rendering">
-              {t("settingsRichCellRendering")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsRichCellRenderingHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-rich-cell-rendering"
-            checked={settings.richCellRendering}
-            onChange={setRichCellRendering}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-column-null-bars">
-              {t("settingsColumnNullBars")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsColumnNullBarsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-column-null-bars"
-            checked={settings.columnNullBars}
-            onChange={setColumnNullBars}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-quick-launcher" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("quickLauncherSettingsTitle")}</chakra.h3>
-            <SettingsInfo>{t("quickLauncherSettingsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <QuickLauncherSettings />
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-ai" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("aiSettingsTitle")}</chakra.h3>
-            <SettingsInfo>{t("aiSettingsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <AiSettings />
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-safety" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <chakra.h3>{t("settingsSafety")}</chakra.h3>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-confirm-prod">
-              {t("settingsConfirmProductionConnect")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsConfirmProductionConnectHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-confirm-prod"
-            checked={settings.confirmProductionConnect}
-            onChange={setConfirmProductionConnect}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
-              {t("settingsConfirmDangerousQueries")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsConfirmDangerousQueriesHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-confirm-dangerous"
-            checked={settings.confirmDangerousQueries}
-            onChange={setConfirmDangerousQueries}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-column-mask">
-              {t("settingsColumnMask")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsColumnMaskHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-column-mask"
-            checked={settings.columnMaskEnabled}
-            onChange={setColumnMaskEnabled}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-column-mask-patterns">
-              {t("settingsColumnMaskPatterns")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsColumnMaskPatternsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-column-mask-patterns"
-            flex="1"
-            minW="200px"
-            value={maskPatternsInput}
-            disabled={!settings.columnMaskEnabled}
-            onChange={(e) => setMaskPatternsInput(e.target.value)}
-            onBlur={commitMaskPatterns}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-          <SettingsReset
-            disabled={!settings.columnMaskEnabled}
-            onClick={() => setColumnMaskPatterns(DEFAULT_MASK_PATTERNS)}
-          >
-            {t("settingsColumnMaskPatternsReset")}
-          </SettingsReset>
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-column-mask-copy">
-              {t("settingsColumnMaskCopyPlaceholder")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsColumnMaskCopyPlaceholderHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-column-mask-copy"
-            checked={settings.columnMaskCopyPlaceholder}
-            disabled={!settings.columnMaskEnabled}
-            onChange={setColumnMaskCopyPlaceholder}
-          />
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-results-new-tab">
-              {t("settingsResultsInNewTab")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsResultsInNewTabHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-results-new-tab"
-            checked={settings.resultsInNewTab}
-            onChange={setResultsInNewTab}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-query-timeout">
-              {t("settingsQueryTimeout")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsQueryTimeoutHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsTimeoutAux>
-            {Number.parseInt(timeoutInput, 10) === 0 && (
-              <SettingsUnlimitedBadge>
-                {t("settingsQueryTimeoutUnlimited")}
-              </SettingsUnlimitedBadge>
-            )}
-          </SettingsTimeoutAux>
-          <Input
-            id="settings-query-timeout"
-            type="number"
-            min={0}
-            step={5}
-            value={timeoutInput}
-            placeholder={String(DEFAULT_QUERY_TIMEOUT_SECS)}
-            onChange={(e) => setTimeoutInput(e.target.value)}
-            onBlur={commitTimeout}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-connect-timeout">
-              {t("settingsConnectTimeout")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsConnectTimeoutHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-connect-timeout"
-            type="number"
-            min={5}
-            max={300}
-            step={5}
-            value={connectTimeoutInput}
-            placeholder={String(DEFAULT_CONNECT_TIMEOUT_SECS)}
-            onChange={(e) => setConnectTimeoutInput(e.target.value)}
-            onBlur={commitConnectTimeout}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-auto-reconnect">
-              {t("settingsAutoReconnect")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsAutoReconnectHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-auto-reconnect"
-            checked={settings.autoReconnectEnabled}
-            onChange={setAutoReconnectEnabled}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-auto-reconnect-retries">
-              {t("settingsAutoReconnectMaxRetries")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsAutoReconnectMaxRetriesHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-auto-reconnect-retries"
-            type="number"
-            min={MIN_AUTO_RECONNECT_RETRIES}
-            max={MAX_AUTO_RECONNECT_RETRIES}
-            step={1}
-            value={reconnectRetriesInput}
-            placeholder={String(DEFAULT_AUTO_RECONNECT_MAX_RETRIES)}
-            disabled={!settings.autoReconnectEnabled}
-            onChange={(e) => setReconnectRetriesInput(e.target.value)}
-            onBlur={commitReconnectRetries}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-notifications" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <chakra.h3>{t("settingsNotifications")}</chakra.h3>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-query-notifications">
-              {t("settingsQueryNotifications")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsQueryNotificationsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-query-notifications"
-            checked={settings.queryNotificationsEnabled}
-            onChange={setQueryNotificationsEnabled}
-          />
-        </SettingsToggleRow>
-        <SettingsNumberRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-query-notification-threshold">
-              {t("settingsQueryNotificationThreshold")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsQueryNotificationThresholdHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Input
-            id="settings-query-notification-threshold"
-            type="number"
-            min={MIN_QUERY_NOTIFICATION_THRESHOLD_SECS}
-            max={MAX_QUERY_NOTIFICATION_THRESHOLD_SECS}
-            step={1}
-            value={notifyThresholdInput}
-            placeholder={String(DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS)}
-            disabled={!settings.queryNotificationsEnabled}
-            onChange={(e) => setNotifyThresholdInput(e.target.value)}
-            onBlur={commitNotifyThreshold}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-        </SettingsNumberRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-tab-persistence" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
-            <SettingsInfo>{t("settingsTabPersistenceHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <chakra.label htmlFor="settings-tab-restore-mode">
-            {t("settingsTabRestoreMode")}
-          </chakra.label>
-          <Select
-            id="settings-tab-restore-mode"
-            width="auto"
-            value={settings.tabRestoreMode}
-            onChange={(e) => setTabRestoreMode(e.target.value as TabRestoreMode)}
-          >
-            <option value="always">{t("settingsTabRestoreModeAlways")}</option>
-            <option value="ask">{t("settingsTabRestoreModeAsk")}</option>
-            <option value="never">{t("settingsTabRestoreModeNever")}</option>
-          </Select>
-        </SettingsToggleRow>
-      </SettingsSection>
-
-      <SettingsSection id="settings-sec-syntax-highlighting" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
-            <SettingsInfo>{t("settingsSyntaxHelp", { theme: themeLabel })}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsReset onClick={() => resetSyntaxColors(theme)}>
-            {t("settingsReset")}
-          </SettingsReset>
-        </SettingsSectionHeader>
-
-        <SettingsPresetRow>
-          <SettingsLabelWithInfo>
-            <chakra.label htmlFor="settings-syntax-preset">
-              {t("settingsSyntaxPresetLabel")}
-            </chakra.label>
-            <SettingsInfo>{t("settingsSyntaxPresetHelp", { theme: themeLabel })}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <chakra.select
-            id="settings-syntax-preset"
-            fontSize="md"
-            borderRadius="sm"
-            value={detectSyntaxPreset(colors) ?? ""}
-            onChange={(e) => {
-              const v = e.target.value as SyntaxPresetKey | "";
-              if (v) applySyntaxPreset(v, theme);
-            }}
-          >
-            {detectSyntaxPreset(colors) === null && (
-              <option value="">{t("settingsSyntaxPresetCustom")}</option>
-            )}
-            {SYNTAX_PRESET_ORDER.map((p) => (
-              <option key={p} value={p}>
-                {t(PRESET_LABEL_KEYS[p])}
-              </option>
-            ))}
-          </chakra.select>
-        </SettingsPresetRow>
-
-        <SettingsColorGrid>
-          {FIELDS.map((f) => (
-            <SettingsColorRow key={f.key}>
-              <chakra.label htmlFor={`syntax-${f.key}`}>{t(f.labelKey)}</chakra.label>
-              <SettingsColorControls>
-                <SettingsColorInput
-                  id={`syntax-${f.key}`}
-                  type="color"
-                  value={colors[f.key]}
-                  onChange={(e) => setSyntaxColor(theme, f.key, e.target.value)}
+                <FontFamilyControl
+                  id="settings-mono-font"
+                  label={t("settingsMonoFont")}
+                  value={settings.monoFontFamily}
+                  presets={MONO_FONT_PRESETS}
+                  defaultLabel={t("settingsFontDefault")}
+                  customLabel={t("settingsFontCustom")}
+                  placeholder={t("settingsFontCustomPlaceholder")}
+                  sample="SELECT 0 != 1; -- il1 O0"
+                  stack={monoFontStack}
+                  onChange={setMonoFontFamily}
                 />
-                <SettingsColorHex>{colors[f.key]}</SettingsColorHex>
-                <SettingsColorSample style={{ color: colors[f.key] }}>
-                  {t(f.sampleKey)}
-                </SettingsColorSample>
-              </SettingsColorControls>
-            </SettingsColorRow>
-          ))}
-        </SettingsColorGrid>
-      </SettingsSection>
+                <FontFamilyControl
+                  id="settings-ui-font"
+                  label={t("settingsUiFont")}
+                  value={settings.uiFontFamily}
+                  presets={UI_FONT_PRESETS}
+                  defaultLabel={t("settingsFontDefault")}
+                  customLabel={t("settingsFontCustom")}
+                  placeholder={t("settingsFontCustomPlaceholder")}
+                  sample={t("settingsFontSample")}
+                  stack={uiFontStack}
+                  onChange={setUiFontFamily}
+                />
 
-      <SettingsSection id="settings-sec-preview-highlight" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
-            <SettingsInfo>{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsReset onClick={() => resetPreviewHighlight(theme)}>
-            {t("settingsReset")}
-          </SettingsReset>
-        </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsThemePresetHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
+                    {THEME_PRESET_ORDER.map((p) => {
+                      const selected = settings.themePreset === p;
+                      const colors = themePreviewColors(p, toggleTheme);
+                      const chipTitle = THEME_PREVIEW_CHIP_ORDER.map((chip) =>
+                        t(THEME_PREVIEW_CHIP_LABEL_KEYS[chip]),
+                      ).join(" / ");
+                      return (
+                        // ツールチップはスウォッチ帯ではなくカード (ボタン) 側に付ける —
+                        // 帯は `aria-hidden` なので `aria-describedby` が支援技術へ届かず、
+                        // フォーカスも受け取れないため (#884)。
+                        <Tooltip key={p} label={chipTitle}>
+                          <ThemePresetCard
+                            type="button"
+                            size="compact"
+                            width="92px"
+                            aria-pressed={selected}
+                            onClick={() => setThemePreset(p as ThemePreset)}
+                          >
+                            <ThemePresetSwatchStrip
+                              aria-hidden="true"
+                              style={{ background: themePreviewGradient(colors) }}
+                            />
+                            <ThemePresetCardLabel>{t(THEME_PRESET_LABEL_KEYS[p])}</ThemePresetCardLabel>
+                          </ThemePresetCard>
+                        </Tooltip>
+                      );
+                    })}
+                  </ThemePresetRow>
+                </SettingsToggleRow>
 
-        <SettingsColorGrid>
-          <SettingsColorRow>
-            <chakra.label htmlFor="preview-highlight">{t("settingsPreviewHighlightLabel")}</chakra.label>
-            <SettingsColorControls>
-              <SettingsColorInput
-                id="preview-highlight"
-                type="color"
-                value={previewHighlight}
-                onChange={(e) => setPreviewHighlight(theme, e.target.value)}
-              />
-              <SettingsColorHex>{previewHighlight}</SettingsColorHex>
-              <SettingsColorSample
-                px="2.5"
-                py="1"
-                borderRadius="sm"
-                color="app.text"
-                style={{
-                  background: `color-mix(in srgb, ${previewHighlight} 22%, transparent)`,
-                  boxShadow: `inset 2px 0 0 ${previewHighlight}`,
-                }}
-              >
-                {t("settingsPreviewHighlightSample")}
-              </SettingsColorSample>
-            </SettingsColorControls>
-          </SettingsColorRow>
-        </SettingsColorGrid>
-      </SettingsSection>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsAccentColorHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsSwatchRow role="group" aria-label={t("settingsAccentColor")}>
+                    {ACCENT_PRESETS.map((p) => {
+                      const selected =
+                        p.hex === null
+                          ? settings.accentColor === null
+                          : settings.accentColor?.toLowerCase() === p.hex.toLowerCase();
+                      return (
+                        <Tooltip key={p.key} label={t(ACCENT_LABEL_KEYS[p.key])}>
+                          <SettingsSwatch
+                            type="button"
+                            aria-pressed={selected}
+                            aria-label={t(ACCENT_LABEL_KEYS[p.key])}
+                            data-default={p.hex === null ? "" : undefined}
+                            style={p.hex ? { background: p.hex } : undefined}
+                            onClick={() => setAccentColor(p.hex)}
+                          />
+                        </Tooltip>
+                      );
+                    })}
+                    <Tooltip label={t("settingsAccentCustom")}>
+                      <SettingsColorInput
+                        type="color"
+                        aria-label={t("settingsAccentCustom")}
+                        value={settings.accentColor ?? ACCENT_INPUT_FALLBACK}
+                        onChange={(e) => setAccentColor(e.target.value)}
+                      />
+                    </Tooltip>
+                  </SettingsSwatchRow>
+                </SettingsToggleRow>
 
-      <chakra.div id="settings-sec-keybindings" scrollMarginTop="8px">
-        <KeybindingSettings />
-      </chakra.div>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsMotionPreference")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsMotionPreferenceHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Segmented
+                    value={settings.motionPreference}
+                    options={MOTION_PREFERENCE_ORDER.map((m) => ({
+                      value: m,
+                      label: t(MOTION_PREFERENCE_LABEL_KEYS[m]),
+                    }))}
+                    onChange={setMotionPreference}
+                    ariaLabel={t("settingsMotionPreference")}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
 
-      <SettingsSection id="settings-sec-logs" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsLogs")}</chakra.h3>
-            <SettingsInfo>{t("settingsLogsHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <SettingsLogsActions>
-            <Tooltip label={t("settingsLogsRefresh")} focusableWrapper={logLoading}>
-              <SettingsLogsIconButton
-                type="button"
-                onClick={loadLogs}
-                disabled={logLoading}
-                aria-label={t("settingsLogsRefresh")}
-              >
-                <Icon name="refresh" size={ICON_SIZES.md} />
-              </SettingsLogsIconButton>
-            </Tooltip>
-            <Tooltip label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")} focusableWrapper={!logText}>
-              <SettingsLogsIconButton
-                type="button"
-                onClick={copyLogs}
-                disabled={!logText}
-                aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
-              >
-                <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
-              </SettingsLogsIconButton>
-            </Tooltip>
-            <Button type="button" variant="dangerOutline" size="sm" onClick={clearLogs} disabled={!logText}>
-              {t("settingsLogsClear")}
-            </Button>
-          </SettingsLogsActions>
-        </SettingsSectionHeader>
-        <SettingsLogsView
-          readOnly
-          wrap="off"
-          value={logText}
-          placeholder={t("settingsLogsEmpty")}
-        />
-        {logPath && (
-          <SettingsLogsPath>
-            {t("settingsLogsPath", { path: logPath })}
-          </SettingsLogsPath>
-        )}
-      </SettingsSection>
+              <SettingsSection id="settings-sec-streaming" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsStreaming")}</chakra.h3>
+                    <SettingsInfo>{t("settingsStreamingHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsReset onClick={resetStreamingDefaults}>{t("settingsReset")}</SettingsReset>
+                </SettingsSectionHeader>
 
-      <chakra.div id="settings-sec-knownhosts" scrollMarginTop="8px">
-        <KnownHostsPanel />
-      </chakra.div>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-default-display">
+                      {t("settingsDefaultDisplayCount")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsDefaultDisplayCountHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-default-display"
+                    type="number"
+                    min={1}
+                    step={10}
+                    value={displayInput}
+                    placeholder={String(DEFAULT_DISPLAY_COUNT)}
+                    onChange={(e) => setDisplayInput(e.target.value)}
+                    onBlur={commitDisplay}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
 
-      <SettingsSection id="settings-sec-updates" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsUpdates")}</chakra.h3>
-            <SettingsInfo>{t("settingsUpdatesHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <chakra.span>
-            {t("settingsCurrentVersion", {
-              version: appVersion ?? t("settingsVersionUnknown"),
-            })}
-          </chakra.span>
-          <SettingsReset
-            type="button"
-            onClick={handleCheckForUpdates}
-            disabled={checkingUpdate}
-          >
-            {checkingUpdate ? t("settingsCheckingForUpdates") : t("settingsCheckForUpdates")}
-          </SettingsReset>
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <SettingsLabelWithInfo>
-            <SettingsToggleLabel htmlFor="settings-auto-update-check">
-              {t("settingsAutoUpdateCheck")}
-            </SettingsToggleLabel>
-            <SettingsInfo>{t("settingsAutoUpdateCheckHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-          <Switch
-            id="settings-auto-update-check"
-            checked={settings.autoUpdateCheckEnabled}
-            onChange={setAutoUpdateCheckEnabled}
-          />
-        </SettingsToggleRow>
-      </SettingsSection>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-stream-prefetch">
+                      {t("settingsStreamPrefetchSize")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsStreamPrefetchSizeHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-stream-prefetch"
+                    type="number"
+                    min={1}
+                    step={10}
+                    value={prefetchInput}
+                    placeholder={String(DEFAULT_STREAM_PREFETCH_SIZE)}
+                    onChange={(e) => setPrefetchInput(e.target.value)}
+                    onBlur={commitPrefetch}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
 
-      <SettingsSection id="settings-sec-backup" scrollMarginTop="8px">
-        <SettingsSectionHeader>
-          <SettingsLabelWithInfo>
-            <chakra.h3>{t("settingsBackup")}</chakra.h3>
-            <SettingsInfo>{t("settingsBackupHelp")}</SettingsInfo>
-          </SettingsLabelWithInfo>
-        </SettingsSectionHeader>
-        <SettingsToggleRow>
-          <SettingsReset type="button" onClick={handleExportSettings}>
-            {t("settingsBackupExport")}
-          </SettingsReset>
-          <SettingsReset type="button" onClick={handleImportSettings}>
-            {t("settingsBackupImport")}
-          </SettingsReset>
-          <SettingsInfo>{t("settingsBackupExcludesProfiles")}</SettingsInfo>
-        </SettingsToggleRow>
-        <SettingsToggleRow>
-          <Button type="button" variant="dangerOutline" size="sm" onClick={handleResetAllSettings}>
-            {t("settingsBackupResetAll")}
-          </Button>
-          <SettingsInfo>{t("settingsBackupResetAllHelp")}</SettingsInfo>
-        </SettingsToggleRow>
-      </SettingsSection>
-        </chakra.div>
-        </chakra.div>
-      </ModalBody>
-    </Modal>
-    {confirmDialog}
+              <SettingsSection id="settings-sec-table-open-query" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("tableOpenQuerySettingsTitle")}</chakra.h3>
+                    <SettingsInfo>{t("tableOpenQuerySettingsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <TableOpenQuerySettings />
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-auto-limit" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsAutoLimit")}</chakra.h3>
+                    <SettingsInfo>{t("settingsAutoLimitHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-auto-limit">
+                      {t("settingsAutoLimitEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsAutoLimitEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-auto-limit"
+                    checked={settings.autoLimitEnabled}
+                    onChange={setAutoLimitEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-auto-limit-count">
+                      {t("settingsAutoLimitCount")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsAutoLimitCountHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-auto-limit-count"
+                    type="number"
+                    min={1}
+                    step={100}
+                    value={autoLimitInput}
+                    placeholder={String(DEFAULT_AUTO_LIMIT_COUNT)}
+                    disabled={!settings.autoLimitEnabled}
+                    onChange={(e) => setAutoLimitInput(e.target.value)}
+                    onBlur={commitAutoLimit}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-sql-lint" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsSqlLint")}</chakra.h3>
+                    <SettingsInfo>{t("settingsSqlLintHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-sql-lint">
+                      {t("settingsSqlLintEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsSqlLintEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-sql-lint"
+                    checked={settings.sqlLintEnabled}
+                    onChange={setSqlLintEnabled}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-preflight-impact" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsPreflightImpact")}</chakra.h3>
+                    <SettingsInfo>{t("settingsPreflightImpactHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-preflight-impact">
+                      {t("settingsPreflightImpactEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsPreflightImpactEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-preflight-impact"
+                    checked={settings.preflightImpactEnabled}
+                    onChange={setPreflightImpactEnabled}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-plan-watch" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsPlanWatch")}</chakra.h3>
+                    <SettingsInfo>{t("settingsPlanWatchHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-plan-watch-on-connect">
+                      {t("settingsPlanWatchOnConnect")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsPlanWatchOnConnectHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-plan-watch-on-connect"
+                    checked={settings.planWatchOnConnect}
+                    onChange={setPlanWatchOnConnect}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-schema-drift" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsSchemaDrift")}</chakra.h3>
+                    <SettingsInfo>{t("settingsSchemaDriftHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-schema-drift-on-connect">
+                      {t("settingsSchemaDriftOnConnect")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsSchemaDriftOnConnectHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-schema-drift-on-connect"
+                    checked={settings.schemaDriftOnConnect}
+                    onChange={setSchemaDriftOnConnect}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-schema-drift-on-ddl">
+                      {t("settingsSchemaDriftOnDdl")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsSchemaDriftOnDdlHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-schema-drift-on-ddl"
+                    checked={settings.schemaDriftOnDdl}
+                    onChange={setSchemaDriftOnDdl}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-timelapse" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsTimelapse")}</chakra.h3>
+                    <SettingsInfo>{t("settingsTimelapseHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  {/* 全削除は取り消せないので危険色 (dangerOutline) にする。 */}
+                  <Button
+                    type="button"
+                    variant="dangerOutline"
+                    size="sm"
+                    onClick={() => void clearTimelapse()}
+                  >
+                    {t("settingsTimelapseClearAll")}
+                  </Button>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-timelapse-on-connect">
+                      {t("settingsTimelapseOnConnect")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsTimelapseOnConnectHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-timelapse-on-connect"
+                    checked={settings.timelapseOnConnect}
+                    onChange={setTimelapseOnConnect}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-timelapse-max-generations">
+                      {t("settingsTimelapseMaxGenerations")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsTimelapseMaxGenerationsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-timelapse-max-generations"
+                    type="number"
+                    min={MIN_TIMELAPSE_MAX_GENERATIONS}
+                    max={MAX_TIMELAPSE_MAX_GENERATIONS}
+                    step={1}
+                    value={timelapseGenInput}
+                    placeholder={String(DEFAULT_TIMELAPSE_MAX_GENERATIONS)}
+                    onChange={(e) => setTimelapseGenInput(e.target.value)}
+                    onBlur={commitTimelapseGenerations}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-flight-recorder" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsFlightRecorder")}</chakra.h3>
+                    <SettingsInfo>{t("settingsFlightRecorderHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-flight-recorder-enabled">
+                      {t("settingsFlightRecorderEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsFlightRecorderEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-flight-recorder-enabled"
+                    checked={settings.flightRecorderEnabled}
+                    onChange={setFlightRecorderEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-flight-recorder-row-cap">
+                      {t("settingsFlightRecorderRowCap")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsFlightRecorderRowCapHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-flight-recorder-row-cap"
+                    type="number"
+                    min={MIN_FLIGHT_RECORDER_ROW_CAP}
+                    max={MAX_FLIGHT_RECORDER_ROW_CAP}
+                    step={100}
+                    value={flightRowCapInput}
+                    placeholder={String(DEFAULT_FLIGHT_RECORDER_ROW_CAP)}
+                    disabled={!settings.flightRecorderEnabled}
+                    onChange={(e) => setFlightRowCapInput(e.target.value)}
+                    onBlur={commitFlightRowCap}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-flight-recorder-retention">
+                      {t("settingsFlightRecorderRetentionDays")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsFlightRecorderRetentionDaysHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-flight-recorder-retention"
+                    type="number"
+                    min={MIN_FLIGHT_RECORDER_RETENTION_DAYS}
+                    max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
+                    step={1}
+                    value={flightRetentionInput}
+                    placeholder={String(DEFAULT_FLIGHT_RECORDER_RETENTION_DAYS)}
+                    disabled={!settings.flightRecorderEnabled}
+                    onChange={(e) => setFlightRetentionInput(e.target.value)}
+                    onBlur={commitFlightRetention}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-history" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsHistory")}</chakra.h3>
+                    <SettingsInfo>{t("settingsHistoryHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-history-retention">
+                      {t("settingsHistoryRetentionDays")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsHistoryRetentionDaysHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-history-retention"
+                    type="number"
+                    min={0}
+                    max={MAX_FLIGHT_RECORDER_RETENTION_DAYS}
+                    step={1}
+                    value={historyRetentionInput}
+                    placeholder="0"
+                    disabled={historyRetentionLoading || historyRetentionLoadFailed}
+                    onChange={(e) => setHistoryRetentionInput(e.target.value)}
+                    onBlur={commitHistoryRetention}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-result-grid" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <chakra.h3>{t("settingsResultGridMode")}</chakra.h3>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-result-grid-mode">
+                      {t("settingsResultGridMode")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsResultGridModeHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Select
+                    id="settings-result-grid-mode"
+                    width="auto"
+                    value={settings.resultGridMode}
+                    onChange={(e) => setResultGridMode(e.target.value as ResultGridMode)}
+                  >
+                    <option value="scroll">{t("settingsResultGridModeScroll")}</option>
+                    <option value="paginate">{t("settingsResultGridModePaginate")}</option>
+                  </Select>
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-page-size">
+                      {t("settingsResultGridPageSize")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsResultGridPageSizeHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Select
+                    id="settings-page-size"
+                    value={String(settings.resultGridPageSize)}
+                    disabled={settings.resultGridMode !== "paginate"}
+                    onChange={(e) => setResultGridPageSize(Number(e.target.value))}
+                  >
+                    {RESULT_GRID_PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </Select>
+                </SettingsNumberRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-auto-refresh-default">
+                      {t("settingsAutoRefreshDefault")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsAutoRefreshDefaultHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Select
+                    id="settings-auto-refresh-default"
+                    value={String(settings.autoRefreshDefaultSecs)}
+                    onChange={(e) => setAutoRefreshDefaultSecs(Number(e.target.value))}
+                  >
+                    {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s % 60 === 0
+                          ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                          : t("autoRefreshIntervalSecs", { secs: s })}
+                      </option>
+                    ))}
+                  </Select>
+                </SettingsNumberRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-cell-edit-on-blur">
+                      {t("settingsCellEditOnBlur")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsCellEditOnBlurHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-cell-edit-on-blur"
+                    checked={settings.cellEditOnBlur === "confirm"}
+                    onChange={(checked) => setCellEditOnBlur(checked ? "confirm" : "commit")}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-rich-cell-rendering">
+                      {t("settingsRichCellRendering")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsRichCellRenderingHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-rich-cell-rendering"
+                    checked={settings.richCellRendering}
+                    onChange={setRichCellRendering}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-column-null-bars">
+                      {t("settingsColumnNullBars")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsColumnNullBarsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-column-null-bars"
+                    checked={settings.columnNullBars}
+                    onChange={setColumnNullBars}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-quick-launcher" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("quickLauncherSettingsTitle")}</chakra.h3>
+                    <SettingsInfo>{t("quickLauncherSettingsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <QuickLauncherSettings />
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-ai" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("aiSettingsTitle")}</chakra.h3>
+                    <SettingsInfo>{t("aiSettingsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <AiSettings />
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-safety" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <chakra.h3>{t("settingsSafety")}</chakra.h3>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-confirm-prod">
+                      {t("settingsConfirmProductionConnect")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsConfirmProductionConnectHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-confirm-prod"
+                    checked={settings.confirmProductionConnect}
+                    onChange={setConfirmProductionConnect}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-confirm-dangerous">
+                      {t("settingsConfirmDangerousQueries")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsConfirmDangerousQueriesHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-confirm-dangerous"
+                    checked={settings.confirmDangerousQueries}
+                    onChange={setConfirmDangerousQueries}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-column-mask">
+                      {t("settingsColumnMask")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsColumnMaskHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-column-mask"
+                    checked={settings.columnMaskEnabled}
+                    onChange={setColumnMaskEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-column-mask-patterns">
+                      {t("settingsColumnMaskPatterns")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsColumnMaskPatternsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-column-mask-patterns"
+                    flex="1"
+                    minW="200px"
+                    value={maskPatternsInput}
+                    disabled={!settings.columnMaskEnabled}
+                    onChange={(e) => setMaskPatternsInput(e.target.value)}
+                    onBlur={commitMaskPatterns}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                  <SettingsReset
+                    disabled={!settings.columnMaskEnabled}
+                    onClick={() => setColumnMaskPatterns(DEFAULT_MASK_PATTERNS)}
+                  >
+                    {t("settingsColumnMaskPatternsReset")}
+                  </SettingsReset>
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-column-mask-copy">
+                      {t("settingsColumnMaskCopyPlaceholder")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsColumnMaskCopyPlaceholderHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-column-mask-copy"
+                    checked={settings.columnMaskCopyPlaceholder}
+                    disabled={!settings.columnMaskEnabled}
+                    onChange={setColumnMaskCopyPlaceholder}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-results-new-tab">
+                      {t("settingsResultsInNewTab")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsResultsInNewTabHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-results-new-tab"
+                    checked={settings.resultsInNewTab}
+                    onChange={setResultsInNewTab}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-query-timeout">{t("settingsQueryTimeout")}</chakra.label>
+                    <SettingsInfo>{t("settingsQueryTimeoutHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsTimeoutAux>
+                    {Number.parseInt(timeoutInput, 10) === 0 && (
+                      <SettingsUnlimitedBadge>{t("settingsQueryTimeoutUnlimited")}</SettingsUnlimitedBadge>
+                    )}
+                  </SettingsTimeoutAux>
+                  <Input
+                    id="settings-query-timeout"
+                    type="number"
+                    min={0}
+                    step={5}
+                    value={timeoutInput}
+                    placeholder={String(DEFAULT_QUERY_TIMEOUT_SECS)}
+                    onChange={(e) => setTimeoutInput(e.target.value)}
+                    onBlur={commitTimeout}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-connect-timeout">
+                      {t("settingsConnectTimeout")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsConnectTimeoutHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-connect-timeout"
+                    type="number"
+                    min={5}
+                    max={300}
+                    step={5}
+                    value={connectTimeoutInput}
+                    placeholder={String(DEFAULT_CONNECT_TIMEOUT_SECS)}
+                    onChange={(e) => setConnectTimeoutInput(e.target.value)}
+                    onBlur={commitConnectTimeout}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-auto-reconnect">
+                      {t("settingsAutoReconnect")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsAutoReconnectHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-auto-reconnect"
+                    checked={settings.autoReconnectEnabled}
+                    onChange={setAutoReconnectEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-auto-reconnect-retries">
+                      {t("settingsAutoReconnectMaxRetries")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsAutoReconnectMaxRetriesHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-auto-reconnect-retries"
+                    type="number"
+                    min={MIN_AUTO_RECONNECT_RETRIES}
+                    max={MAX_AUTO_RECONNECT_RETRIES}
+                    step={1}
+                    value={reconnectRetriesInput}
+                    placeholder={String(DEFAULT_AUTO_RECONNECT_MAX_RETRIES)}
+                    disabled={!settings.autoReconnectEnabled}
+                    onChange={(e) => setReconnectRetriesInput(e.target.value)}
+                    onBlur={commitReconnectRetries}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-notifications" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <chakra.h3>{t("settingsNotifications")}</chakra.h3>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-query-notifications">
+                      {t("settingsQueryNotifications")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsQueryNotificationsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-query-notifications"
+                    checked={settings.queryNotificationsEnabled}
+                    onChange={setQueryNotificationsEnabled}
+                  />
+                </SettingsToggleRow>
+                <SettingsNumberRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-query-notification-threshold">
+                      {t("settingsQueryNotificationThreshold")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsQueryNotificationThresholdHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Input
+                    id="settings-query-notification-threshold"
+                    type="number"
+                    min={MIN_QUERY_NOTIFICATION_THRESHOLD_SECS}
+                    max={MAX_QUERY_NOTIFICATION_THRESHOLD_SECS}
+                    step={1}
+                    value={notifyThresholdInput}
+                    placeholder={String(DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS)}
+                    disabled={!settings.queryNotificationsEnabled}
+                    onChange={(e) => setNotifyThresholdInput(e.target.value)}
+                    onBlur={commitNotifyThreshold}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                  />
+                </SettingsNumberRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-tab-persistence" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsTabPersistence")}</chakra.h3>
+                    <SettingsInfo>{t("settingsTabPersistenceHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <chakra.label htmlFor="settings-tab-restore-mode">
+                    {t("settingsTabRestoreMode")}
+                  </chakra.label>
+                  <Select
+                    id="settings-tab-restore-mode"
+                    width="auto"
+                    value={settings.tabRestoreMode}
+                    onChange={(e) => setTabRestoreMode(e.target.value as TabRestoreMode)}
+                  >
+                    <option value="always">{t("settingsTabRestoreModeAlways")}</option>
+                    <option value="ask">{t("settingsTabRestoreModeAsk")}</option>
+                    <option value="never">{t("settingsTabRestoreModeNever")}</option>
+                  </Select>
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-syntax-highlighting" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsSyntaxHighlighting")}</chakra.h3>
+                    <SettingsInfo>{t("settingsSyntaxHelp", { theme: themeLabel })}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsReset onClick={() => resetSyntaxColors(theme)}>{t("settingsReset")}</SettingsReset>
+                </SettingsSectionHeader>
+
+                <SettingsPresetRow>
+                  <SettingsLabelWithInfo>
+                    <chakra.label htmlFor="settings-syntax-preset">
+                      {t("settingsSyntaxPresetLabel")}
+                    </chakra.label>
+                    <SettingsInfo>{t("settingsSyntaxPresetHelp", { theme: themeLabel })}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <chakra.select
+                    id="settings-syntax-preset"
+                    fontSize="md"
+                    borderRadius="sm"
+                    value={detectSyntaxPreset(colors) ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value as SyntaxPresetKey | "";
+                      if (v) applySyntaxPreset(v, theme);
+                    }}
+                  >
+                    {detectSyntaxPreset(colors) === null && (
+                      <option value="">{t("settingsSyntaxPresetCustom")}</option>
+                    )}
+                    {SYNTAX_PRESET_ORDER.map((p) => (
+                      <option key={p} value={p}>
+                        {t(PRESET_LABEL_KEYS[p])}
+                      </option>
+                    ))}
+                  </chakra.select>
+                </SettingsPresetRow>
+
+                <SettingsColorGrid>
+                  {FIELDS.map((f) => (
+                    <SettingsColorRow key={f.key}>
+                      <chakra.label htmlFor={`syntax-${f.key}`}>{t(f.labelKey)}</chakra.label>
+                      <SettingsColorControls>
+                        <SettingsColorInput
+                          id={`syntax-${f.key}`}
+                          type="color"
+                          value={colors[f.key]}
+                          onChange={(e) => setSyntaxColor(theme, f.key, e.target.value)}
+                        />
+                        <SettingsColorHex>{colors[f.key]}</SettingsColorHex>
+                        <SettingsColorSample style={{ color: colors[f.key] }}>
+                          {t(f.sampleKey)}
+                        </SettingsColorSample>
+                      </SettingsColorControls>
+                    </SettingsColorRow>
+                  ))}
+                </SettingsColorGrid>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-preview-highlight" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsPreviewHighlight")}</chakra.h3>
+                    <SettingsInfo>{t("settingsPreviewHighlightHelp", { theme: themeLabel })}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsReset onClick={() => resetPreviewHighlight(theme)}>
+                    {t("settingsReset")}
+                  </SettingsReset>
+                </SettingsSectionHeader>
+
+                <SettingsColorGrid>
+                  <SettingsColorRow>
+                    <chakra.label htmlFor="preview-highlight">
+                      {t("settingsPreviewHighlightLabel")}
+                    </chakra.label>
+                    <SettingsColorControls>
+                      <SettingsColorInput
+                        id="preview-highlight"
+                        type="color"
+                        value={previewHighlight}
+                        onChange={(e) => setPreviewHighlight(theme, e.target.value)}
+                      />
+                      <SettingsColorHex>{previewHighlight}</SettingsColorHex>
+                      <SettingsColorSample
+                        px="2.5"
+                        py="1"
+                        borderRadius="sm"
+                        color="app.text"
+                        style={{
+                          background: `color-mix(in srgb, ${previewHighlight} 22%, transparent)`,
+                          boxShadow: `inset 2px 0 0 ${previewHighlight}`,
+                        }}
+                      >
+                        {t("settingsPreviewHighlightSample")}
+                      </SettingsColorSample>
+                    </SettingsColorControls>
+                  </SettingsColorRow>
+                </SettingsColorGrid>
+              </SettingsSection>
+
+              <chakra.div id="settings-sec-keybindings" scrollMarginTop="8px">
+                <KeybindingSettings />
+              </chakra.div>
+
+              <SettingsSection id="settings-sec-logs" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsLogs")}</chakra.h3>
+                    <SettingsInfo>{t("settingsLogsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsLogsActions>
+                    <Tooltip label={t("settingsLogsRefresh")} focusableWrapper={logLoading}>
+                      <SettingsLogsIconButton
+                        type="button"
+                        onClick={loadLogs}
+                        disabled={logLoading}
+                        aria-label={t("settingsLogsRefresh")}
+                      >
+                        <Icon name="refresh" size={ICON_SIZES.md} />
+                      </SettingsLogsIconButton>
+                    </Tooltip>
+                    <Tooltip
+                      label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+                      focusableWrapper={!logText}
+                    >
+                      <SettingsLogsIconButton
+                        type="button"
+                        onClick={copyLogs}
+                        disabled={!logText}
+                        aria-label={logCopied ? t("settingsLogsCopied") : t("settingsLogsCopy")}
+                      >
+                        <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
+                      </SettingsLogsIconButton>
+                    </Tooltip>
+                    <Button
+                      type="button"
+                      variant="dangerOutline"
+                      size="sm"
+                      onClick={clearLogs}
+                      disabled={!logText}
+                    >
+                      {t("settingsLogsClear")}
+                    </Button>
+                  </SettingsLogsActions>
+                </SettingsSectionHeader>
+                <SettingsLogsView readOnly wrap="off" value={logText} placeholder={t("settingsLogsEmpty")} />
+                {logPath && <SettingsLogsPath>{t("settingsLogsPath", { path: logPath })}</SettingsLogsPath>}
+              </SettingsSection>
+
+              <chakra.div id="settings-sec-knownhosts" scrollMarginTop="8px">
+                <KnownHostsPanel />
+              </chakra.div>
+
+              <SettingsSection id="settings-sec-updates" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsUpdates")}</chakra.h3>
+                    <SettingsInfo>{t("settingsUpdatesHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <chakra.span>
+                    {t("settingsCurrentVersion", {
+                      version: appVersion ?? t("settingsVersionUnknown"),
+                    })}
+                  </chakra.span>
+                  <SettingsReset type="button" onClick={handleCheckForUpdates} disabled={checkingUpdate}>
+                    {checkingUpdate ? t("settingsCheckingForUpdates") : t("settingsCheckForUpdates")}
+                  </SettingsReset>
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-auto-update-check">
+                      {t("settingsAutoUpdateCheck")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsAutoUpdateCheckHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-auto-update-check"
+                    checked={settings.autoUpdateCheckEnabled}
+                    onChange={setAutoUpdateCheckEnabled}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-backup" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsBackup")}</chakra.h3>
+                    <SettingsInfo>{t("settingsBackupHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsReset type="button" onClick={handleExportSettings}>
+                    {t("settingsBackupExport")}
+                  </SettingsReset>
+                  <SettingsReset type="button" onClick={handleImportSettings}>
+                    {t("settingsBackupImport")}
+                  </SettingsReset>
+                  <SettingsInfo>{t("settingsBackupExcludesProfiles")}</SettingsInfo>
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <Button type="button" variant="dangerOutline" size="sm" onClick={handleResetAllSettings}>
+                    {t("settingsBackupResetAll")}
+                  </Button>
+                  <SettingsInfo>{t("settingsBackupResetAllHelp")}</SettingsInfo>
+                </SettingsToggleRow>
+              </SettingsSection>
+            </chakra.div>
+          </chakra.div>
+        </ModalBody>
+      </Modal>
+      {confirmDialog}
     </>
   );
 }

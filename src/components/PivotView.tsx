@@ -102,7 +102,8 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
   // `!tab.streaming` 条件)、useState の初期化関数だけで再実行時の復元が完結する。
   const persistKey = useMemo(() => pivotConfigKeyFrom(sourceSql), [sourceSql]);
   const [config, setConfigState] = useState<PivotConfig | null>(
-    () => readStoredPivotConfig(persistKey, result.columns) ?? defaultPivotConfig(result.columns, result.rows),
+    () =>
+      readStoredPivotConfig(persistKey, result.columns) ?? defaultPivotConfig(result.columns, result.rows),
   );
   const setConfig = (next: PivotConfig) => {
     setConfigState(next);
@@ -147,17 +148,18 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
     // (チャートへ直接移れるようにし、往復の導線をビューの状態に依らず一定にする)。
     return (
       <Flex direction="column" h="100%" minH={0} minW={0}>
-        <Flex
-          align="center"
-          px="3"
-          py="2"
-          flex="none"
-          borderBottomWidth="1px"
-          borderBottomColor="app.border"
-        >
+        <Flex align="center" px="3" py="2" flex="none" borderBottomWidth="1px" borderBottomColor="app.border">
           <ResultViewSwitch value="pivot" onChange={onChangeView} />
         </Flex>
-        <Flex flex="1" minH={0} direction="column" align="center" justify="center" gap="3" color="app.textMuted">
+        <Flex
+          flex="1"
+          minH={0}
+          direction="column"
+          align="center"
+          justify="center"
+          gap="3"
+          color="app.textMuted"
+        >
           <Icon name="table" size={ICON_SIZES.xl} />
           <chakra.span>{t("pivotNoData")}</chakra.span>
           <Button type="button" variant="secondary" onClick={() => onChangeView("grid")}>
@@ -182,8 +184,7 @@ export function PivotView({ result, driver, sourceSql, onSendToEditor, onChangeV
 
   const setRowField = (rowField: number) => setConfig({ ...config, rowField });
   const setColField = (v: string) => setConfig({ ...config, colField: v === "" ? null : Number(v) });
-  const setValueField = (v: string) =>
-    setConfig({ ...config, valueField: v === "" ? null : Number(v) });
+  const setValueField = (v: string) => setConfig({ ...config, valueField: v === "" ? null : Number(v) });
   const setAgg = (agg: PivotAgg) => {
     // count 以外は値列が必須。未選択のまま切り替えると全セルが空になるため、
     // 最初の数値列を自動選択する (数値列が無ければ据え置き)。

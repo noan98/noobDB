@@ -16,11 +16,19 @@ describe("SqlCountCheck (#1536)", () => {
   it("押したときだけ COUNT を実行し、違反件数を表示する", async () => {
     vi.mocked(api.runLookupQuery).mockResolvedValue({ rows: [[7]] } as never);
     renderWithProviders(
-      <SqlCountCheck sessionId="s1" database="db" driver="mysql" sql="SELECT * FROM t WHERE a < 0" mode="violations" />,
+      <SqlCountCheck
+        sessionId="s1"
+        database="db"
+        driver="mysql"
+        sql="SELECT * FROM t WHERE a < 0"
+        mode="violations"
+      />,
     );
     expect(api.runLookupQuery).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: t("sqlCheckViolationsButton") }));
-    await waitFor(() => expect(screen.getByText(t("sqlCheckViolations", { count: "7" }))).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText(t("sqlCheckViolations", { count: "7" }))).toBeInTheDocument(),
+    );
     expect(vi.mocked(api.runLookupQuery).mock.calls[0][0]).toMatchObject({
       sessionId: "s1",
       database: "db",
@@ -38,7 +46,9 @@ describe("SqlCountCheck (#1536)", () => {
 
     vi.mocked(api.runLookupQuery).mockRejectedValueOnce(new Error('column "nope" does not exist'));
     // SQL が変わると前の結果は捨てられる。
-    rerender(<SqlCountCheck sessionId="s1" database={null} driver="postgres" sql="SELECT nope" mode="violations" />);
+    rerender(
+      <SqlCountCheck sessionId="s1" database={null} driver="postgres" sql="SELECT nope" mode="violations" />,
+    );
     expect(screen.queryByText(t("sqlCheckViolationsZero"))).toBeNull();
     fireEvent.click(screen.getByRole("button"));
     await screen.findByText(/does not exist/);
@@ -56,7 +66,13 @@ describe("SqlCountCheck (#1536)", () => {
       new Error("error returned from database: 1060 (42S21): Duplicate column name 'id'"),
     );
     renderWithProviders(
-      <SqlCountCheck sessionId="s1" database="db" driver="mysql" sql="SELECT a.id, b.id FROM a JOIN b" mode="rows" />,
+      <SqlCountCheck
+        sessionId="s1"
+        database="db"
+        driver="mysql"
+        sql="SELECT a.id, b.id FROM a JOIN b"
+        mode="rows"
+      />,
     );
     fireEvent.click(screen.getByRole("button"));
     await screen.findByText(new RegExp(t("sqlCheckDuplicateColumn").slice(0, 10)));
@@ -64,7 +80,9 @@ describe("SqlCountCheck (#1536)", () => {
 
   it("古い検証の結果で、後から始めた検証の実行中表示を上書きしない (#1594)", async () => {
     let resolveA: (v: unknown) => void = () => {};
-    vi.mocked(api.runLookupQuery).mockImplementationOnce(() => new Promise((res) => (resolveA = res)) as never);
+    vi.mocked(api.runLookupQuery).mockImplementationOnce(
+      () => new Promise((res) => (resolveA = res)) as never,
+    );
     vi.mocked(api.runLookupQuery).mockImplementationOnce(() => new Promise(() => {}) as never);
     const { rerender } = renderWithProviders(
       <SqlCountCheck sessionId="s1" database={null} driver="mysql" sql="SELECT 1" mode="rows" />,

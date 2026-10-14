@@ -84,7 +84,13 @@ describe("OutputPanel", () => {
     const onInsertSql = vi.fn();
     const onRunSql = vi.fn();
     const { unmount } = renderWithProviders(
-      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun={false} currentConnectionId="p-local" />,
+      <OutputPanel
+        onOpenSql={vi.fn()}
+        onInsertSql={onInsertSql}
+        onRunSql={onRunSql}
+        canRun={false}
+        currentConnectionId="p-local"
+      />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     // 未接続でも挿入は使える (再実行だけ接続が要る)。
@@ -92,7 +98,13 @@ describe("OutputPanel", () => {
     expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();
     unmount();
     renderWithProviders(
-      <OutputPanel onOpenSql={vi.fn()} onInsertSql={onInsertSql} onRunSql={onRunSql} canRun currentConnectionId="p-local" />,
+      <OutputPanel
+        onOpenSql={vi.fn()}
+        onInsertSql={onInsertSql}
+        onRunSql={onRunSql}
+        canRun
+        currentConnectionId="p-local"
+      />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     fireEvent.click(screen.getByRole("button", { name: t("outputInsertInEditor") }));
@@ -105,7 +117,13 @@ describe("OutputPanel", () => {
     run({ sql: "delete from t", outcome: "affected", rows: 1, connection: "local", connectionId: "p-prod" });
     const onRunSql = vi.fn();
     renderWithProviders(
-      <OutputPanel onOpenSql={vi.fn()} onInsertSql={vi.fn()} onRunSql={onRunSql} canRun currentConnectionId="p-local" />,
+      <OutputPanel
+        onOpenSql={vi.fn()}
+        onInsertSql={vi.fn()}
+        onRunSql={onRunSql}
+        canRun
+        currentConnectionId="p-local"
+      />,
     );
     fireEvent.click(screen.getByRole("button", { expanded: false }));
     expect(screen.getByRole("button", { name: t("outputRerun") })).toBeDisabled();

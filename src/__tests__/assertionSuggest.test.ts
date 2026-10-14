@@ -17,7 +17,14 @@ const input: AssertionSuggestInput = {
   table: "orders",
   locale: "ja",
   columns: [
-    { name: "id", data_type: "bigint", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+    {
+      name: "id",
+      data_type: "bigint",
+      nullable: false,
+      key: "PRI",
+      referenced_table: null,
+      referenced_column: null,
+    },
     {
       name: "email",
       data_type: "text",
@@ -28,7 +35,14 @@ const input: AssertionSuggestInput = {
       referenced_column: null,
       comment: "連絡先\nメール",
     },
-    { name: "user_id", data_type: "int", nullable: true, key: "MUL", referenced_table: "users", referenced_column: "id" },
+    {
+      name: "user_id",
+      data_type: "int",
+      nullable: true,
+      key: "MUL",
+      referenced_table: "users",
+      referenced_column: "id",
+    },
   ],
   foreignKeys: [{ table: "orders", column: "user_id", referenced_table: "users", referenced_column: "id" }],
 };
@@ -56,7 +70,9 @@ describe("buildAssertionSuggestSystemParts (#1477)", () => {
       ["postgres", "PostgreSQL"],
       ["sqlite", "SQLite"],
     ] as const) {
-      expect(buildAssertionSuggestSystemParts({ ...input, driver }).cached).toContain(`Target dialect: ${label}`);
+      expect(buildAssertionSuggestSystemParts({ ...input, driver }).cached).toContain(
+        `Target dialect: ${label}`,
+      );
     }
   });
 

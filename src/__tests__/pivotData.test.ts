@@ -176,7 +176,7 @@ describe("buildPivotModel のセルキー衝突", () => {
 });
 
 describe("buildPivotModel の NULL と上限超過", () => {
-  it("NULL グループと文字列 \"(null)\" を別の行にする", () => {
+  it('NULL グループと文字列 "(null)" を別の行にする', () => {
     const rows: CellValue[][] = [
       [null, 1],
       ["(null)", 10],
@@ -345,11 +345,15 @@ describe("sanitizePivotConfig (#909, corruption resistance)", () => {
   });
 
   it("rejects an unknown aggregation", () => {
-    expect(sanitizePivotConfig({ rowField: 0, colField: null, valueField: 2, agg: "median" }, COLUMNS)).toBeNull();
+    expect(
+      sanitizePivotConfig({ rowField: 0, colField: null, valueField: 2, agg: "median" }, COLUMNS),
+    ).toBeNull();
   });
 
   it("falls back to null when rowField is out of range (column set changed)", () => {
-    expect(sanitizePivotConfig({ rowField: 9, colField: null, valueField: 2, agg: "sum" }, COLUMNS)).toBeNull();
+    expect(
+      sanitizePivotConfig({ rowField: 9, colField: null, valueField: 2, agg: "sum" }, COLUMNS),
+    ).toBeNull();
   });
 
   it("degrades an out-of-range colField to null rather than rejecting the whole config", () => {
@@ -363,7 +367,9 @@ describe("sanitizePivotConfig (#909, corruption resistance)", () => {
   });
 
   it("falls back to null when a non-count aggregation loses its value field", () => {
-    expect(sanitizePivotConfig({ rowField: 0, colField: null, valueField: 9, agg: "sum" }, COLUMNS)).toBeNull();
+    expect(
+      sanitizePivotConfig({ rowField: 0, colField: null, valueField: 9, agg: "sum" }, COLUMNS),
+    ).toBeNull();
   });
 
   it("allows a null value field for count", () => {

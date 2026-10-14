@@ -56,11 +56,7 @@ export function pushSample(
  *   負のレートを出すより「その区間は不明」とするほうが誤解が少ない (#746 の
  *   digest 差分と同じ reset ガード方針)。
  */
-export function counterRate(
-  prev: number | null,
-  cur: number | null,
-  dtMs: number,
-): number | null {
+export function counterRate(prev: number | null, cur: number | null, dtMs: number): number | null {
   if (prev == null || cur == null) return null;
   if (!(dtMs > 0)) return null;
   if (cur < prev) return null;
@@ -103,16 +99,8 @@ export function deriveSeries(samples: readonly MetricSample[]): MetricPoint[] {
       idleInTransaction: cur.metrics.idle_in_transaction,
       lockWaiting: cur.metrics.lock_waiting,
       queryRate: counterRate(prev?.metrics.questions ?? null, cur.metrics.questions, dtMs),
-      slowQueryRate: counterRate(
-        prev?.metrics.slow_queries ?? null,
-        cur.metrics.slow_queries,
-        dtMs,
-      ),
-      lockWaitRate: counterRate(
-        prev?.metrics.lock_waits ?? null,
-        cur.metrics.lock_waits,
-        dtMs,
-      ),
+      slowQueryRate: counterRate(prev?.metrics.slow_queries ?? null, cur.metrics.slow_queries, dtMs),
+      lockWaitRate: counterRate(prev?.metrics.lock_waits ?? null, cur.metrics.lock_waits, dtMs),
     });
   }
   return out;
@@ -139,10 +127,7 @@ export interface MetricSeriesPoint {
  * (エンジンが報告しない・レート未算出) は落とすので、そのドライバで取得できない
  * 系列は自然に空配列になる (SQLite/権限不足の degrade をここで吸収する)。
  */
-export function extractSeries(
-  points: readonly MetricPoint[],
-  key: MetricSeriesKey,
-): MetricSeriesPoint[] {
+export function extractSeries(points: readonly MetricPoint[], key: MetricSeriesKey): MetricSeriesPoint[] {
   const out: MetricSeriesPoint[] = [];
   for (const p of points) {
     const v = p[key];
@@ -152,10 +137,7 @@ export function extractSeries(
 }
 
 /** いずれかのキーに 1 点でも描画可能なデータがあるか (空状態の判定)。 */
-export function hasSeriesData(
-  points: readonly MetricPoint[],
-  keys: readonly MetricSeriesKey[],
-): boolean {
+export function hasSeriesData(points: readonly MetricPoint[], keys: readonly MetricSeriesKey[]): boolean {
   return keys.some((k) => points.some((p) => p[k] != null && Number.isFinite(p[k] as number)));
 }
 

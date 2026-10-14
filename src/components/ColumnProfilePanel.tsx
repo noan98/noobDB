@@ -73,13 +73,16 @@ const tdCss: SystemStyleObject = {
 };
 
 // 結果の差し替えはフェードで出す (reduced-motion は MotionConfig が即時化する)。
-const MotionReveal = chakra(motion.div, {}, {
-  forwardProps: ["initial", "animate", "transition"],
-});
+const MotionReveal = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["initial", "animate", "transition"],
+  },
+);
 
 // 件数は number ならカウントアップ、2^53 超の文字列は丸めず文字列のまま出す (#1238)。
-const countTile = (c: ProfileCount | null | undefined) =>
-  integerCountUpTarget(c) ?? formatProfileCount(c);
+const countTile = (c: ProfileCount | null | undefined) => integerCountUpTarget(c) ?? formatProfileCount(c);
 // 補間中の小数は四捨五入してから整形する (CountUp 既定と同じ)。
 const formatCount = (n: number) => formatProfileCount(Math.round(n));
 
@@ -247,9 +250,7 @@ export function ColumnProfilePanel({
             aria-label={t("profileColumnLabel")}
           >
             {!column && <option value="">{t("profileSelectColumn")}</option>}
-            {column && !columns?.some((c) => c.name === column) && (
-              <option value={column}>{column}</option>
-            )}
+            {column && !columns?.some((c) => c.name === column) && <option value={column}>{column}</option>}
             {(columns ?? []).map((c) => (
               <option key={c.name} value={c.name}>
                 {c.name} ({c.data_type})
@@ -263,13 +264,7 @@ export function ColumnProfilePanel({
             {t("profileApproximate")}
           </chakra.label>
         </Tooltip>
-        <Button
-          type="button"
-          variant="primary"
-          size="sm"
-          onClick={runNow}
-          disabled={!column || running}
-        >
+        <Button type="button" variant="primary" size="sm" onClick={runNow} disabled={!column || running}>
           <Icon name="refresh" size={ICON_SIZES.sm} />
           <chakra.span marginLeft="1.5">{profile ? t("profileRerun") : t("profileRun")}</chakra.span>
         </Button>
@@ -335,9 +330,15 @@ export function ColumnProfilePanel({
               <chakra.tr>
                 <chakra.th css={thCss}>{t("profileColumnLabel")}</chakra.th>
                 <chakra.th css={thCss}>{t("profileType")}</chakra.th>
-                <chakra.th css={thCss} textAlign="right">{t("profileOverviewNonNull")}</chakra.th>
-                <chakra.th css={thCss} textAlign="right">{t("profileNulls")}</chakra.th>
-                <chakra.th css={thCss} textAlign="right">{t("profileDistinct")}</chakra.th>
+                <chakra.th css={thCss} textAlign="right">
+                  {t("profileOverviewNonNull")}
+                </chakra.th>
+                <chakra.th css={thCss} textAlign="right">
+                  {t("profileNulls")}
+                </chakra.th>
+                <chakra.th css={thCss} textAlign="right">
+                  {t("profileDistinct")}
+                </chakra.th>
                 <chakra.th css={thCss}>{t("profileMin")}</chakra.th>
                 <chakra.th css={thCss}>{t("profileMax")}</chakra.th>
               </chakra.tr>
@@ -366,7 +367,9 @@ export function ColumnProfilePanel({
                         {c.column}
                       </chakra.button>
                     </chakra.td>
-                    <chakra.td css={tdCss} color="app.textMuted">{c.data_type}</chakra.td>
+                    <chakra.td css={tdCss} color="app.textMuted">
+                      {c.data_type}
+                    </chakra.td>
                     <chakra.td css={tdCss} textAlign="right" fontFamily="var(--font-mono)">
                       {formatProfileCount(c.non_null_count)}
                     </chakra.td>
@@ -517,14 +520,23 @@ export function ColumnProfilePanel({
               {profile.top_values.length > 0 && (
                 <Box flex="1" minW="240px" maxH="260px" overflowY="auto">
                   <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
-                    <chakra.caption textAlign="left" textStyle="overline" color="app.textMuted" paddingBottom="1">
+                    <chakra.caption
+                      textAlign="left"
+                      textStyle="overline"
+                      color="app.textMuted"
+                      paddingBottom="1"
+                    >
                       {t("profileTopValues")}
                     </chakra.caption>
                     <chakra.thead>
                       <chakra.tr>
                         <chakra.th css={thCss}>{t("profileValue")}</chakra.th>
-                        <chakra.th css={thCss} textAlign="right">{t("profileCount")}</chakra.th>
-                        <chakra.th css={thCss} textAlign="right">{t("profileShare")}</chakra.th>
+                        <chakra.th css={thCss} textAlign="right">
+                          {t("profileCount")}
+                        </chakra.th>
+                        <chakra.th css={thCss} textAlign="right">
+                          {t("profileShare")}
+                        </chakra.th>
                       </chakra.tr>
                     </chakra.thead>
                     <chakra.tbody>

@@ -80,7 +80,12 @@ export function LocalTablesPanel({
           {t("localPanelHint")}
         </chakra.span>
         <Flex gap="1.5">
-          <PressableButton type="button" variant={isActive ? "secondary" : "primary"} size="sm" onClick={onOpenLocal}>
+          <PressableButton
+            type="button"
+            variant={isActive ? "secondary" : "primary"}
+            size="sm"
+            onClick={onOpenLocal}
+          >
             <Icon name="database" size={ICON_SIZES.sm} />{" "}
             {isActive ? t("localPanelSwitchedIn") : t("localPanelOpen")}
           </PressableButton>
@@ -116,7 +121,15 @@ export function LocalTablesPanel({
               >
                 <Flex align="center" gap="1.5">
                   <Icon name="table" size={ICON_SIZES.sm} />
-                  <chakra.span fontWeight={600} fontSize="sm" color="app.text" flex="1" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                  <chakra.span
+                    fontWeight={600}
+                    fontSize="sm"
+                    color="app.text"
+                    flex="1"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                  >
                     {tbl.name}
                   </chakra.span>
                   {onRefetchTable && (
@@ -153,7 +166,13 @@ export function LocalTablesPanel({
                   {formatFetchedAt(tbl.fetched_at_ms)}
                 </chakra.span>
                 {tbl.source_profile && (
-                  <chakra.span fontSize="xs" color="app.textMuted" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                  <chakra.span
+                    fontSize="xs"
+                    color="app.textMuted"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                  >
                     {t("localPanelSourceLabel", { name: tbl.source_profile })}
                   </chakra.span>
                 )}

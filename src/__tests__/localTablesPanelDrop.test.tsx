@@ -77,11 +77,15 @@ describe("LocalTablesPanel 再取得ボタン (#1541)", () => {
         onSaveToFile={() => {}}
       />,
     );
-    expect(screen.getByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) }),
+    ).toBeDisabled();
   });
 
   it("onRefetchTable が無ければ出さない", () => {
     renderPanel();
-    expect(screen.queryByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: t("localPanelRefetch", { table: "orders_copy" }) }),
+    ).toBeNull();
   });
 });

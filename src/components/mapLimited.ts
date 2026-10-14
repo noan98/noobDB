@@ -3,11 +3,7 @@
  * 同時に大量へ開かないための共有ユーティリティ (ER 図とスキーマエクスポートが使う)。
  * 結果の順序は `items` と一致する。
  */
-export async function mapLimited<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
+export async function mapLimited<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const out: R[] = new Array(items.length);
   let next = 0;
   // 1 件でも失敗したら残りの項目は開始しない。Promise.all は最初の reject で返るが、

@@ -72,7 +72,9 @@ describe("ExplainViewer の待機表示 (#1236)", () => {
     );
     const before = getAllByRole("treeitem").length;
     expect(before).toBeGreaterThanOrEqual(3);
-    const caret = getAllByLabelText(/.+/).find((el) => el.tagName === "BUTTON" && el.getAttribute("aria-label"));
+    const caret = getAllByLabelText(/.+/).find(
+      (el) => el.tagName === "BUTTON" && el.getAttribute("aria-label"),
+    );
     if (caret) fireEvent.click(caret);
     expect(getAllByRole("treeitem").length).toBeGreaterThan(0);
   });
@@ -80,12 +82,12 @@ describe("ExplainViewer の待機表示 (#1236)", () => {
 
 describe("ExplainViewer のキーボード操作 (#1529)", () => {
   it("選択中の行だけが Tab で届き、矢印キーで選択とフォーカスが動く", () => {
-    const { getAllByRole } = renderWithProviders(
-      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
-    );
+    const { getAllByRole } = renderWithProviders(<ExplainViewer result={sqliteResult()} driver="sqlite" />);
     const items = () => getAllByRole("treeitem");
     // ルートが選択済みで、roving tabindex の唯一のタブストップ。
-    expect(items().map((el) => el.getAttribute("tabindex"))).toEqual(["0", "-1", "-1", "-1"].slice(0, items().length));
+    expect(items().map((el) => el.getAttribute("tabindex"))).toEqual(
+      ["0", "-1", "-1", "-1"].slice(0, items().length),
+    );
     const root = items()[0];
     root.focus();
     fireEvent.keyDown(root, { key: "ArrowDown" });
@@ -100,9 +102,7 @@ describe("ExplainViewer のキーボード操作 (#1529)", () => {
   });
 
   it("Enter / Space は行を選択し、← → は展開・折りたたみと親子の移動を行う", () => {
-    const { getAllByRole } = renderWithProviders(
-      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
-    );
+    const { getAllByRole } = renderWithProviders(<ExplainViewer result={sqliteResult()} driver="sqlite" />);
     const items = () => getAllByRole("treeitem");
     const root = items()[0];
     expect(root).toHaveAttribute("aria-expanded", "true");
@@ -127,9 +127,7 @@ describe("ExplainViewer のキーボード操作 (#1529)", () => {
 
 describe("ExplainViewer の祖先の折りたたみ (#1529)", () => {
   it("選択中ノードの祖先を折りたたむと、その親が選択され直す", () => {
-    const { getAllByRole } = renderWithProviders(
-      <ExplainViewer result={sqliteResult()} driver="sqlite" />,
-    );
+    const { getAllByRole } = renderWithProviders(<ExplainViewer result={sqliteResult()} driver="sqlite" />);
     const items = () => getAllByRole("treeitem");
     // 子を選択してから、ルートの展開ボタンで折りたたむ。
     fireEvent.click(items()[1]);

@@ -395,7 +395,14 @@ function pushObjects(rows: ExplorerRow[], db: string, dbKey: string, objects: re
   for (const kind of OBJECT_GROUP_ORDER) {
     const items = objects.filter((o) => o.kind === kind);
     if (items.length === 0) continue;
-    rows.push({ key: `hdr:obj:${db}:${kind}`, depth: 1, parent: dbKey, kind: "header", group: kind, count: null });
+    rows.push({
+      key: `hdr:obj:${db}:${kind}`,
+      depth: 1,
+      parent: dbKey,
+      kind: "header",
+      group: kind,
+      count: null,
+    });
     for (const o of items) {
       rows.push({
         key: `so:${db}:${kind}:${o.name}:${o.id ?? ""}`,
@@ -449,7 +456,14 @@ function pushTable(
   } else {
     // 列だけのテーブルで「列」見出しを出すのは冗長なので、他のグループと並ぶときだけ。
     if (showAllCols && ((indexes?.length ?? 0) > 0 || fks.length > 0)) {
-      rows.push({ key: `hdr:cols:${key}`, depth: 2, parent: rowKey, kind: "header", group: "columns", count: null });
+      rows.push({
+        key: `hdr:cols:${key}`,
+        depth: 2,
+        parent: rowKey,
+        kind: "header",
+        group: "columns",
+        count: null,
+      });
     }
     for (const col of cols) {
       if (!showAllCols && !col.name.toLowerCase().includes(q)) continue;
@@ -457,13 +471,27 @@ function pushTable(
     }
   }
   if (showAllCols && indexes && indexes.length > 0) {
-    rows.push({ key: `hdr:idx:${key}`, depth: 2, parent: rowKey, kind: "header", group: "indexes", count: null });
+    rows.push({
+      key: `hdr:idx:${key}`,
+      depth: 2,
+      parent: rowKey,
+      kind: "header",
+      group: "indexes",
+      count: null,
+    });
     for (const idx of indexes) {
       rows.push({ key: `idx:${key}:${idx.name}`, depth: 2, parent: rowKey, kind: "index", db, tbl, idx });
     }
   }
   if (showAllCols && fks.length > 0) {
-    rows.push({ key: `hdr:fk:${key}`, depth: 2, parent: rowKey, kind: "header", group: "foreignKeys", count: null });
+    rows.push({
+      key: `hdr:fk:${key}`,
+      depth: 2,
+      parent: rowKey,
+      kind: "header",
+      group: "foreignKeys",
+      count: null,
+    });
     for (const fk of fks) {
       rows.push({ key: `fk:${key}:${fk.column}`, depth: 2, parent: rowKey, kind: "foreignKey", db, tbl, fk });
     }
@@ -621,7 +649,9 @@ export function extendTableSelection(
   const target = rows[next];
   if (!target || !isSelectableTableRow(target) || target.db !== db) return null;
   const base =
-    sel.db === db && sel.anchor !== null ? sel : { db, keys: new Set([tableKey(db, tbl)]), anchor: tableKey(db, tbl) };
+    sel.db === db && sel.anchor !== null
+      ? sel
+      : { db, keys: new Set([tableKey(db, tbl)]), anchor: tableKey(db, tbl) };
   return {
     selection: rangeTableSelection(base, rows, db, target.tbl),
     focusKey: target.key,
@@ -640,7 +670,9 @@ export function pruneTableSelection(
   const keys = [...sel.keys].filter((k) => present.has(k));
   const anchor = sel.anchor !== null && present.has(sel.anchor) ? sel.anchor : null;
   if (keys.length === sel.keys.size && anchor === sel.anchor) return sel;
-  return keys.length === 0 && anchor === null ? EMPTY_TABLE_SELECTION : { db: sel.db, keys: new Set(keys), anchor };
+  return keys.length === 0 && anchor === null
+    ? EMPTY_TABLE_SELECTION
+    : { db: sel.db, keys: new Set(keys), anchor };
 }
 
 /** 選択中のテーブル名を、データベース内の並び (`dbTables`) の順で返す。 */

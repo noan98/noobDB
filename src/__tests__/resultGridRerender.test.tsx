@@ -72,7 +72,9 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
           </button>
           <Profiler
             id="grid"
-            onRender={(_id, _phase, actualDuration) => { durations.push(actualDuration); }}
+            onRender={(_id, _phase, actualDuration) => {
+              durations.push(actualDuration);
+            }}
           >
             <DataGrid columns={columns} rows={rowsForGrid} />
           </Profiler>
@@ -116,10 +118,7 @@ describe("Result Grid の再レンダリング削減 (#1098)", () => {
     // 列フィルタ/条件付き書式メニューを開き、データバー表示を有効にする。
     await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
     const dialog = screen.getByRole("dialog");
-    await user.selectOptions(
-      within(dialog).getByRole("combobox", { name: t("gridCondFormatLabel") }),
-      "bar",
-    );
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: t("gridCondFormatLabel") }), "bar");
     // メニューを閉じる (グリッド本体をクリック)。
     await user.click(document.body);
 

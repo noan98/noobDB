@@ -21,11 +21,7 @@ export type StatusBarIconKind = "running" | "success" | "warning" | null;
 /** 高頻度更新向けの短尺 transition (新しい値は作らず durations.fast を使う)。 */
 const STATUS_TRANSITION = { duration: durations.fast } as const;
 
-const MotionSpan = chakra(
-  motion.span,
-  {},
-  { forwardProps: ["transition", "initial", "animate", "exit"] },
-);
+const MotionSpan = chakra(motion.span, {}, { forwardProps: ["transition", "initial", "animate", "exit"] });
 
 /** running(Spinner) / success(check) / warning をクロスフェードするアイコン。 */
 export function StatusBarIcon({ kind }: { kind: StatusBarIconKind }) {

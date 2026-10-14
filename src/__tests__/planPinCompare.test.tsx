@@ -60,11 +60,27 @@ describe("EXPLAIN 計画の固定と比較 (#1539)", () => {
 
   it("片方だけ実測 (ANALYZE) のときは注意を出し、同じモードなら出さない", async () => {
     const { rerender } = renderWithProviders(
-      <PlanCompareModal driver="mysql" before={scan} after={indexed} beforeLabel="10:00" beforeAnalyze={false} afterAnalyze onClose={() => {}} />,
+      <PlanCompareModal
+        driver="mysql"
+        before={scan}
+        after={indexed}
+        beforeLabel="10:00"
+        beforeAnalyze={false}
+        afterAnalyze
+        onClose={() => {}}
+      />,
     );
     expect(await screen.findByText(t("planCompareAnalyzeMismatch"))).toBeInTheDocument();
     rerender(
-      <PlanCompareModal driver="mysql" before={scan} after={indexed} beforeLabel="10:00" beforeAnalyze afterAnalyze onClose={() => {}} />,
+      <PlanCompareModal
+        driver="mysql"
+        before={scan}
+        after={indexed}
+        beforeLabel="10:00"
+        beforeAnalyze
+        afterAnalyze
+        onClose={() => {}}
+      />,
     );
     expect(screen.queryByText(t("planCompareAnalyzeMismatch"))).toBeNull();
   });

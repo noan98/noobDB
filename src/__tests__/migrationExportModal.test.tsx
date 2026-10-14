@@ -41,16 +41,12 @@ const generateSyncSql = api.generateSyncSql as ReturnType<typeof vi.fn>;
 const writeTextFile = api.writeTextFile as ReturnType<typeof vi.fn>;
 
 const UP_PLAN: SyncPlan = {
-  statements: [
-    { sql: "CREATE TABLE t (id INT)", table: "t", kind: "create_table", destructive: false },
-  ],
+  statements: [{ sql: "CREATE TABLE t (id INT)", table: "t", kind: "create_table", destructive: false }],
   warnings: [],
 };
 
 const DOWN_PLAN: SyncPlan = {
-  statements: [
-    { sql: "DROP TABLE t", table: "t", kind: "drop_table", destructive: true },
-  ],
+  statements: [{ sql: "DROP TABLE t", table: "t", kind: "drop_table", destructive: true }],
   warnings: ["sqlite cannot alter columns in place: t.c"],
 };
 

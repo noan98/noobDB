@@ -129,8 +129,7 @@ $$`;
     expect(r.ok && r.statements[0].startsWith("CREATE OR REPLACE PROCEDURE")).toBe(true);
   });
   it("trigger edit is DROP ... ON table + CREATE", () => {
-    const orig =
-      'CREATE TRIGGER trg BEFORE INSERT ON public.orders FOR EACH ROW EXECUTE FUNCTION f()';
+    const orig = "CREATE TRIGGER trg BEFORE INSERT ON public.orders FOR EACH ROW EXECUTE FUNCTION f()";
     const r = buildApplyRoutineStatements({
       driver: "postgres",
       database: "public",
@@ -171,7 +170,9 @@ $$`;
   });
   it("extracts quoted table names", () => {
     expect(
-      extractPgTriggerTable('CREATE TRIGGER "my trg" AFTER DELETE ON "Sales"."Order Items" FOR EACH ROW EXECUTE FUNCTION f()'),
+      extractPgTriggerTable(
+        'CREATE TRIGGER "my trg" AFTER DELETE ON "Sales"."Order Items" FOR EACH ROW EXECUTE FUNCTION f()',
+      ),
     ).toBe('"Sales"."Order Items"');
   });
 });
@@ -200,7 +201,14 @@ END`;
 describe("validation", () => {
   it("rejects empty text and non-CREATE text", () => {
     expect(
-      buildApplyRoutineStatements({ driver: "mysql", database: "d", kind: "procedure", name: null, originalDdl: null, ddl: "  \n" }),
+      buildApplyRoutineStatements({
+        driver: "mysql",
+        database: "d",
+        kind: "procedure",
+        name: null,
+        originalDdl: null,
+        ddl: "  \n",
+      }),
     ).toEqual({ ok: false, error: "routineEditErrEmpty" });
     const r = buildApplyRoutineStatements({
       driver: "mysql",

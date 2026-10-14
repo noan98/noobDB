@@ -1,4 +1,11 @@
-import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
 import { api } from "../api/tauri";
@@ -111,7 +118,9 @@ const TableStatRowView = memo(function TableStatRowView({
       <chakra.td css={numTdCss}>{formatRowCount(r.row_estimate)}</chakra.td>
       <chakra.td css={numTdCss}>{formatCount(r.columnCount)}</chakra.td>
       <chakra.td css={numTdCss}>{formatCount(r.indexCount)}</chakra.td>
-      <chakra.td css={centerTdCss}>{r.hasPrimaryKey == null ? "—" : r.hasPrimaryKey ? t("sizePkYes") : t("sizePkNo")}</chakra.td>
+      <chakra.td css={centerTdCss}>
+        {r.hasPrimaryKey == null ? "—" : r.hasPrimaryKey ? t("sizePkYes") : t("sizePkNo")}
+      </chakra.td>
       <chakra.td css={numTdCss}>{formatCount(r.foreignKeyCount)}</chakra.td>
       <chakra.td css={numTdCss}>{formatBytes(r.data_bytes)}</chakra.td>
       <chakra.td css={numTdCss}>{formatBytes(r.index_bytes)}</chakra.td>
@@ -184,21 +193,18 @@ export function TableStatisticsPanel({
     void load();
   }, [load]);
 
-  const onSort = useCallback(
-    (key: TableStatSortKey) => {
-      setSortKey((curKey) => {
-        if (curKey === key) {
-          // 同じ列の再クリックで方向トグル。
-          setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-          return curKey;
-        }
-        // 新しい列: 名前は昇順、数値列は降順 (大きいものを上に) が直感的。
-        setSortDir(key === "name" ? "asc" : "desc");
-        return key;
-      });
-    },
-    [],
-  );
+  const onSort = useCallback((key: TableStatSortKey) => {
+    setSortKey((curKey) => {
+      if (curKey === key) {
+        // 同じ列の再クリックで方向トグル。
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        return curKey;
+      }
+      // 新しい列: 名前は昇順、数値列は降順 (大きいものを上に) が直感的。
+      setSortDir(key === "name" ? "asc" : "desc");
+      return key;
+    });
+  }, []);
 
   // 親が毎回新しい onOpenTable を渡しても行 (memo) が再レンダーされないよう、ref 経由の安定関数にする (#1321)。
   const onOpenTableRef = useRef(onOpenTable);
@@ -211,8 +217,7 @@ export function TableStatisticsPanel({
   // データバーは合計サイズ列に対して、絞り込み前の一覧中の最大値を基準にスケールする
   // (フィルタで最大が消えてもバーの物差しが揺れないように)。
   const maxTotal = rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0);
-  const arrow = (key: TableStatSortKey) =>
-    sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+  const arrow = (key: TableStatSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   // 現在のソート状態を支援技術へ伝える aria-sort 値。
   const ariaSort = (key: TableStatSortKey): "ascending" | "descending" | "none" =>
     sortKey === key ? (sortDir === "asc" ? "ascending" : "descending") : "none";
@@ -244,7 +249,9 @@ export function TableStatisticsPanel({
         borderColor="app.border"
         paddingBottom="2.5"
       >
-        <Heading>{t("sizeTitle")} — {database}</Heading>
+        <Heading>
+          {t("sizeTitle")} — {database}
+        </Heading>
         <Tooltip label={t("sizeClose")}>
           <Button
             minWidth="28px"
@@ -294,12 +301,30 @@ export function TableStatisticsPanel({
             minWidth: "180px",
           }}
         />
-        <chakra.label display="flex" alignItems="center" gap="1.5" fontSize="sm" color="app.text" cursor="pointer">
+        <chakra.label
+          display="flex"
+          alignItems="center"
+          gap="1.5"
+          fontSize="sm"
+          color="app.text"
+          cursor="pointer"
+        >
           <input type="checkbox" checked={onlyNoIndex} onChange={(e) => setOnlyNoIndex(e.target.checked)} />
           {t("sizeFilterNoIndex")}
         </chakra.label>
-        <chakra.label display="flex" alignItems="center" gap="1.5" fontSize="sm" color="app.text" cursor="pointer">
-          <input type="checkbox" checked={onlyNoPrimaryKey} onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)} />
+        <chakra.label
+          display="flex"
+          alignItems="center"
+          gap="1.5"
+          fontSize="sm"
+          color="app.text"
+          cursor="pointer"
+        >
+          <input
+            type="checkbox"
+            checked={onlyNoPrimaryKey}
+            onChange={(e) => setOnlyNoPrimaryKey(e.target.checked)}
+          />
           {t("sizeFilterNoPk")}
         </chakra.label>
         {rows.length > 0 && (
@@ -321,11 +346,7 @@ export function TableStatisticsPanel({
       ) : rows.length === 0 && !loading ? (
         // データベースにテーブルが 1 件もない (フィルタ無関係の真の空):
         // ResultGrid の「0 行」空状態と同じリッチなイラストで表現する (#847)。
-        <EmptyState
-          illustration={<NoResultsIllustration />}
-          icon="table"
-          title={t("sizeEmpty")}
-        />
+        <EmptyState illustration={<NoResultsIllustration />} icon="table" title={t("sizeEmpty")} />
       ) : sorted.length === 0 && !loading ? (
         // 名前フィルタ/チェックボックス絞り込みで 0 件になったケース:
         // 「検索一致なし」の軽量アイコンを compact で使う (#847)。
@@ -390,23 +411,23 @@ export function TableStatisticsPanel({
               )}
             </tbody>
             {!(loading && rows.length === 0) && (
-            <tfoot>
-              <tr>
-                <chakra.td css={{ ...tfootTdCss, textAlign: "left" }}>
-                  {t("sizeTotalsLabel", { count: totals.tableCount })}
-                </chakra.td>
-                <chakra.td css={tfootTdCss}>
-                  <CountUp value={totals.rowEstimate} formatter={formatRowCount} />
-                </chakra.td>
-                <chakra.td css={tfootTdCss} />
-                <chakra.td css={tfootTdCss} />
-                <chakra.td css={tfootTdCss} />
-                <chakra.td css={tfootTdCss} />
-                <chakra.td css={tfootTdCss}>{formatBytes(totals.dataBytes)}</chakra.td>
-                <chakra.td css={tfootTdCss}>{formatBytes(totals.indexBytes)}</chakra.td>
-                <chakra.td css={tfootTdCss}>{formatBytes(totals.totalBytes)}</chakra.td>
-              </tr>
-            </tfoot>
+              <tfoot>
+                <tr>
+                  <chakra.td css={{ ...tfootTdCss, textAlign: "left" }}>
+                    {t("sizeTotalsLabel", { count: totals.tableCount })}
+                  </chakra.td>
+                  <chakra.td css={tfootTdCss}>
+                    <CountUp value={totals.rowEstimate} formatter={formatRowCount} />
+                  </chakra.td>
+                  <chakra.td css={tfootTdCss} />
+                  <chakra.td css={tfootTdCss} />
+                  <chakra.td css={tfootTdCss} />
+                  <chakra.td css={tfootTdCss} />
+                  <chakra.td css={tfootTdCss}>{formatBytes(totals.dataBytes)}</chakra.td>
+                  <chakra.td css={tfootTdCss}>{formatBytes(totals.indexBytes)}</chakra.td>
+                  <chakra.td css={tfootTdCss}>{formatBytes(totals.totalBytes)}</chakra.td>
+                </tr>
+              </tfoot>
             )}
           </chakra.table>
         </Box>

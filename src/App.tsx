@@ -1,4 +1,19 @@
-import { forwardRef, lazy, startTransition, Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type ReactNode } from "react";
+import {
+  forwardRef,
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
@@ -45,7 +60,18 @@ import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
 // Pure helper (not the lazy dialog) so the re-trust flow can pin the approved
 // fingerprint without pulling the dialog component into the main bundle (#682).
 import { parseHostKeyFingerprints } from "./components/hostKeyFingerprints";
-import { buildDeleteStatements, buildInsertStatements, buildBlobUpdateStatement, buildUpdateGroups, buildUpdateStatements, hasAmbiguousIdentity, isBinaryColumnType, resolveRowIdentity, type PendingEdits, type PendingInsertRow } from "./components/cellEdit";
+import {
+  buildDeleteStatements,
+  buildInsertStatements,
+  buildBlobUpdateStatement,
+  buildUpdateGroups,
+  buildUpdateStatements,
+  hasAmbiguousIdentity,
+  isBinaryColumnType,
+  resolveRowIdentity,
+  type PendingEdits,
+  type PendingInsertRow,
+} from "./components/cellEdit";
 import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
@@ -68,7 +94,13 @@ import {
 } from "./closedTabs";
 import { closeGuard, hasPendingChanges, isTabDirty, tabsWithPendingChanges } from "./tabDirty";
 import { TabPaneStore } from "./tabPaneStore";
-import { PaneView, PaneEmpty, tableTotalPagesEstimate, incomingFkCacheKey, type PaneEnv } from "./components/PaneView";
+import {
+  PaneView,
+  PaneEmpty,
+  tableTotalPagesEstimate,
+  incomingFkCacheKey,
+  type PaneEnv,
+} from "./components/PaneView";
 import { useKeyedStable } from "./useKeyedStable";
 import { copyToClipboard } from "./components/clipboard";
 import { joinTableNames, type TableNameSeparator } from "./components/explorerTree";
@@ -165,7 +197,13 @@ import {
 import { useConfirm } from "./components/ConfirmDialog";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
-import { afterRelease, afterRollbackTo, isMissingSavepointError, pushSavepoint, savepointName } from "./savepoints";
+import {
+  afterRelease,
+  afterRollbackTo,
+  isMissingSavepointError,
+  pushSavepoint,
+  savepointName,
+} from "./savepoints";
 import { isMruRecordable, singleLine, type CommandItem } from "./components/commandPaletteSearch";
 
 // Heavy or rarely-immediately-needed views are code-split so the initial
@@ -175,12 +213,8 @@ import { isMruRecordable, singleLine, type CommandItem } from "./components/comm
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
 );
-const SnippetForm = lazy(() =>
-  import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })),
-);
-const ImportModal = lazy(() =>
-  import("./components/ImportModal").then((m) => ({ default: m.ImportModal })),
-);
+const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
+const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
 const DataTransferModal = lazy(() =>
   import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
@@ -199,9 +233,7 @@ const SqlFileEncodingModal = lazy(() =>
 const ScriptRunModal = lazy(() =>
   import("./components/ScriptRunModal").then((m) => ({ default: m.ScriptRunModal })),
 );
-const DumpModal = lazy(() =>
-  import("./components/DumpModal").then((m) => ({ default: m.DumpModal })),
-);
+const DumpModal = lazy(() => import("./components/DumpModal").then((m) => ({ default: m.DumpModal })));
 const TablesExportModal = lazy(() =>
   import("./components/TablesExportModal").then((m) => ({ default: m.TablesExportModal })),
 );
@@ -261,15 +293,11 @@ const HostKeyMismatchDialog = lazy(() =>
 const RowInsertModal = lazy(() =>
   import("./components/RowInsertModal").then((m) => ({ default: m.RowInsertModal })),
 );
-const HelpView = lazy(() =>
-  import("./components/HelpView").then((m) => ({ default: m.HelpView })),
-);
+const HelpView = lazy(() => import("./components/HelpView").then((m) => ({ default: m.HelpView })));
 const SettingsView = lazy(() =>
   import("./components/SettingsView").then((m) => ({ default: m.SettingsView })),
 );
-const TaskManager = lazy(() =>
-  import("./components/TaskManager").then((m) => ({ default: m.TaskManager })),
-);
+const TaskManager = lazy(() => import("./components/TaskManager").then((m) => ({ default: m.TaskManager })));
 const SchemaCompareView = lazy(() =>
   import("./components/SchemaCompareView").then((m) => ({ default: m.SchemaCompareView })),
 );
@@ -285,9 +313,7 @@ const ProcessListPanel = lazy(() =>
 const ConnectionHealthPanel = lazy(() =>
   import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
 );
-const UsersPanel = lazy(() =>
-  import("./components/UsersPanel").then((m) => ({ default: m.UsersPanel })),
-);
+const UsersPanel = lazy(() => import("./components/UsersPanel").then((m) => ({ default: m.UsersPanel })));
 const TableStatisticsPanel = lazy(() =>
   import("./components/TableStatisticsPanel").then((m) => ({ default: m.TableStatisticsPanel })),
 );
@@ -316,9 +342,7 @@ const WhereUsedPanel = lazy(() =>
   import("./components/WhereUsedPanel").then((m) => ({ default: m.WhereUsedPanel })),
 );
 // SQL の AI 解説 / 最適化案 (#695)。ボトムパネルを開くまで読み込まない。
-const AiSqlPanel = lazy(() =>
-  import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })),
-);
+const AiSqlPanel = lazy(() => import("./components/AiSqlPanel").then((m) => ({ default: m.AiSqlPanel })));
 // 結果グリッドの AI 要約 (#1476)。ボトムパネルを開くまで読み込まない。
 const AiResultSummaryPanel = lazy(() =>
   import("./components/AiResultSummaryPanel").then((m) => ({ default: m.AiResultSummaryPanel })),
@@ -360,11 +384,7 @@ import {
 } from "./reconnect";
 import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
-import {
-  isAppWindowFocused,
-  registerNotificationClickFocus,
-  sendQueryNotification,
-} from "./notifications";
+import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
 import { checkForAppUpdate } from "./updater";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
 import {
@@ -390,11 +410,7 @@ import {
   workspaceSurfaceKey,
   workspaceViewKey,
 } from "./components/workspaceView";
-import {
-  hasOpenNestedLayer,
-  isEditableElement,
-  resolveWorkspaceEscape,
-} from "./components/workspaceEscape";
+import { hasOpenNestedLayer, isEditableElement, resolveWorkspaceEscape } from "./components/workspaceEscape";
 import { WorkspaceSurface } from "./components/WorkspaceSurface";
 import { BottomPanel, BottomPanelStrip, WorkspaceSplit } from "./components/BottomPanel";
 import { KeepAlive } from "./components/KeepAlive";
@@ -461,12 +477,7 @@ import {
   resolveKeysetPlan,
   reverseRowsForPrev,
 } from "./keysetPagination";
-import {
-  isMultiStatement,
-  type BatchStatementResult,
-  toBatchOutputInput,
-  toBatchResult,
-} from "./sqlScript";
+import { isMultiStatement, type BatchStatementResult, toBatchOutputInput, toBatchResult } from "./sqlScript";
 import {
   EMPTY_QUICK_ACCESS,
   loadQuickAccess,
@@ -537,8 +548,7 @@ const SIDEBAR_EXPAND_BUTTON_SIZE = "28px";
  * 以前は合計値の `46px` を直書きしていた。トークン式にすることで、フォント拡大
  * 設定でボタンの余白が広がってもヘッダのテキストが重ならない。
  */
-const SIDEBAR_EXPAND_CLEARANCE =
-  `calc(var(--space-2) + ${SIDEBAR_EXPAND_BUTTON_SIZE} + var(--space-2-5))`;
+const SIDEBAR_EXPAND_CLEARANCE = `calc(var(--space-2) + ${SIDEBAR_EXPAND_BUTTON_SIZE} + var(--space-2-5))`;
 // Below this window width the sidebar auto-collapses to give the main area room;
 // the user can still open it on demand (it then overlays the editor, see CSS).
 const NARROW_BREAKPOINT = 760;
@@ -984,7 +994,11 @@ function makeConnectAttemptId(): string {
  *  labels fall back to the generic "connecting" text. */
 function connectPhaseI18nKey(
   phase: string,
-): "connectPhasePreparing" | "connectPhaseTunnelConnecting" | "connectPhaseTunnelAuthenticating" | "connectPhaseDbConnecting" {
+):
+  | "connectPhasePreparing"
+  | "connectPhaseTunnelConnecting"
+  | "connectPhaseTunnelAuthenticating"
+  | "connectPhaseDbConnecting" {
   switch (phase) {
     case "tunnel_connecting":
       return "connectPhaseTunnelConnecting";
@@ -1053,7 +1067,11 @@ function makeTab(kind: TabKind, title: string, sql: string): Tab {
 }
 
 /** 出力ログへ記録する接続の情報 (実行開始時に確定する, #1541)。 */
-type OutputCtx = { connectionId: string | null; connectionName: string | null; defaultDatabase: string | null };
+type OutputCtx = {
+  connectionId: string | null;
+  connectionName: string | null;
+  defaultDatabase: string | null;
+};
 
 function makeQueryTab(): Tab {
   // 新規クエリタブは空のエディタで開く。
@@ -1157,11 +1175,9 @@ async function shouldRestoreSavedTabs(
 /** パレットが閉じている間の `commandItems` (毎回新しい配列を作らない, #1257)。 */
 const EMPTY_COMMAND_ITEMS: CommandItem[] = [];
 
-
 function emptyResult(columns: Column[]): QueryResult {
   return { columns, rows: [], rows_affected: 0, elapsed_ms: 0 };
 }
-
 
 function emptyPreview(): PreviewResult {
   return {
@@ -1230,14 +1246,17 @@ export default function App() {
   // 確認が重なる (前の確認が false で解決されて finally が後から走る) 場合に
   // 早く下りないよう、真偽値ではなく表示中の件数で持つ。
   const discardConfirmBusyRef = useRef(0);
-  const confirmDiscard = useCallback(async (opts: Parameters<typeof confirm>[0]) => {
-    discardConfirmBusyRef.current += 1;
-    try {
-      return await confirm(opts);
-    } finally {
-      discardConfirmBusyRef.current -= 1;
-    }
-  }, [confirm]);
+  const confirmDiscard = useCallback(
+    async (opts: Parameters<typeof confirm>[0]) => {
+      discardConfirmBusyRef.current += 1;
+      try {
+        return await confirm(opts);
+      } finally {
+        discardConfirmBusyRef.current -= 1;
+      }
+    },
+    [confirm],
+  );
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const settings = useSettings();
   // AI にクエリを依頼する入口 (パレット項目) を出してよいか (#691)。
@@ -1329,9 +1348,10 @@ export default function App() {
   // マウントする — 対象接続の選択 → 実行 → 結果比較まで一貫してその内部で行う。
   // 列の分布を複数接続で比べるモーダル (#1539)。非 null の間だけマウントする。
   const [profileCompare, setProfileCompare] = useState<{ approximate: boolean } | null>(null);
-  const [broadcastRequest, setBroadcastRequest] = useState<
-    { sql: string; tableColumns: TableColumnInfo[] | null } | null
-  >(null);
+  const [broadcastRequest, setBroadcastRequest] = useState<{
+    sql: string;
+    tableColumns: TableColumnInfo[] | null;
+  } | null>(null);
   /**
    * ボトムパネル (#1112) で開いているタブ。null = 閉じている。
    *
@@ -1612,7 +1632,9 @@ export default function App() {
   const sidebarTablistRef = useRef<HTMLDivElement>(null);
   const sidebarTabsCompact = useSidebarTabsCompact(
     sidebarTablistRef,
-    [t("sidebarTabConnections"), t("sidebarTabSnippets"), t("sidebarTabHistory"), t("sidebarTabLocal")].join("\n"),
+    [t("sidebarTabConnections"), t("sidebarTabSnippets"), t("sidebarTabHistory"), t("sidebarTabLocal")].join(
+      "\n",
+    ),
   );
   // ローピング tabindex 用に各サイドバータブのボタン要素を保持する。矢印キーで
   // フォーカスを物理的に移動させるために必要 (`setState` だけでは tabIndex は
@@ -1653,8 +1675,8 @@ export default function App() {
   // お気に入り (ピン留め) / 最近実行したスニペット (#877)。スニペットは接続を
   // 跨いで再利用されることが多いため、テーブルのクイックアクセスと異なりプロファイル
   // 単位ではなくグローバルに 1 つだけ持つ (`snippetQuickAccess.ts` 参照)。
-  const [snippetQuickAccess, setSnippetQuickAccess] = useState<SnippetQuickAccessState>(
-    () => loadSnippetQuickAccess(),
+  const [snippetQuickAccess, setSnippetQuickAccess] = useState<SnippetQuickAccessState>(() =>
+    loadSnippetQuickAccess(),
   );
   const [historyReloadKey, setHistoryReloadKey] = useState(0);
   // 直近の実行クエリ (最新が先頭、連続重複は畳む)。QueryEditor の ↑/↓ 履歴
@@ -1714,10 +1736,7 @@ export default function App() {
     }
     return fn;
   }, []);
-  const activeEditor = useCallback(
-    () => editorRefs.current.get(activePaneIdRef.current ?? "") ?? null,
-    [],
-  );
+  const activeEditor = useCallback(() => editorRefs.current.get(activePaneIdRef.current ?? "") ?? null, []);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
@@ -1727,9 +1746,7 @@ export default function App() {
   // 接続先名タイプ確認 → `api.setEmergencyMode` を経由する。バックエンドは
   // 切断・再接続でフラグを必ずオフに戻すため、こちらも同じタイミングで
   // エントリを落として同期を保つ (`clearEmergencyFor` 参照)。
-  const [emergencySessions, setEmergencySessions] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
+  const [emergencySessions, setEmergencySessions] = useState<ReadonlySet<string>>(() => new Set());
   // 対象セッションの緊急モード UI 状態を破棄する。切断・接続断・再接続成功
   // (バックエンド側でフラグがオフに戻る) の後始末から呼ぶ。存在しない id には no-op。
   const clearEmergencyFor = useCallback((sid: string | null) => {
@@ -1743,16 +1760,15 @@ export default function App() {
   }, []);
   // Set when a connect fails with an SSH host-key mismatch (#682): drives the
   // recovery dialog that lets the user forget the stale key and reconnect.
-  const [hostKeyMismatch, setHostKeyMismatch] = useState<
-    { profile: ConnectionProfile; message: string } | null
-  >(null);
+  const [hostKeyMismatch, setHostKeyMismatch] = useState<{
+    profile: ConnectionProfile;
+    message: string;
+  } | null>(null);
   const [reTrustingHostKey, setReTrustingHostKey] = useState(false);
   // The in-flight connection attempt's id + current phase (#684). Set while a
   // connect is running so the footer can show which phase it's in and offer a
   // cancel button; cleared when the attempt settles.
-  const [connectAttempt, setConnectAttempt] = useState<
-    { id: string; phase: string } | null
-  >(null);
+  const [connectAttempt, setConnectAttempt] = useState<{ id: string; phase: string } | null>(null);
   // 同時に開いている接続のレジストリ (#複数同時接続)。別プロファイルへ接続しても
   // 既存セッションを切断せず背景で生かしておき、クリックで即座に切り替えられる
   // ようにする。各エントリは生存中のバックエンドセッション 1 本に対応する。
@@ -1760,12 +1776,11 @@ export default function App() {
   type OpenConnection = { sessionId: string; profile: ConnectionProfile };
   const [openConnections, setOpenConnections] = useState<OpenConnection[]>([]);
   const openConnectionsRef = useRef<OpenConnection[]>([]);
-  useEffect(() => { openConnectionsRef.current = openConnections; }, [openConnections]);
+  useEffect(() => {
+    openConnectionsRef.current = openConnections;
+  }, [openConnections]);
   // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
-  const openProfileIds = useMemo(
-    () => new Set(openConnections.map((c) => c.profile.id)),
-    [openConnections],
-  );
+  const openProfileIds = useMemo(() => new Set(openConnections.map((c) => c.profile.id)), [openConnections]);
   // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
   const upsertOpenConnection = useCallback((sid: string, profile: ConnectionProfile) => {
     setOpenConnections((prev) => [
@@ -1780,7 +1795,9 @@ export default function App() {
   // 新規クエリは明示的に弾く。`connected` 以外への遷移は自動再接続オーケストレータが司る。
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connected");
   const connectionStatusRef = useRef<ConnectionStatus>("connected");
-  useEffect(() => { connectionStatusRef.current = connectionStatus; }, [connectionStatus]);
+  useEffect(() => {
+    connectionStatusRef.current = connectionStatus;
+  }, [connectionStatus]);
   // 自動再接続ループの二重起動防止と、手動操作 (接続/切断) でループを中断するフラグ。
   const reconnectingRef = useRef(false);
   const reconnectAbortRef = useRef(false);
@@ -1808,13 +1825,29 @@ export default function App() {
   // keyboard handlers and the persist helper can read committed state without
   // re-subscribing on every change.
   // ストアは同期的に更新されるので、ref より新しい (commit を待たない) 値を返す。
-  const panesRef = useMemo(() => ({ get current() { return tabPaneStore.getPanes(); } }), [tabPaneStore]);
+  const panesRef = useMemo(
+    () => ({
+      get current() {
+        return tabPaneStore.getPanes();
+      },
+    }),
+    [tabPaneStore],
+  );
   // Tabs ref kept in sync so streaming callbacks below can read the latest
   // committed tab state without re-creating themselves on every batch.
-  const tabsRef = useMemo(() => ({ get current() { return tabPaneStore.getTabs(); } }), [tabPaneStore]);
+  const tabsRef = useMemo(
+    () => ({
+      get current() {
+        return tabPaneStore.getTabs();
+      },
+    }),
+    [tabPaneStore],
+  );
   // (tabsRef は依存配列からも参照するため、使用箇所より前のここで定義する)
   const activePaneIdRef = useRef<string | null>(activePaneId);
-  useEffect(() => { activePaneIdRef.current = activePaneId; }, [activePaneId]);
+  useEffect(() => {
+    activePaneIdRef.current = activePaneId;
+  }, [activePaneId]);
   // 新規タブ・タブ切替・接続直後のエディタ自動フォーカス (#816) が、モーダル/オーバー
   // レイ表示中にフォーカスを奪わないためのガード。F6 巡回 / Esc 復元ハンドラが使う
   // 判定集合と揃える (これらの状態の間はタブワークスペース自体が描画されないか、
@@ -1827,9 +1860,20 @@ export default function App() {
   const cheatSheetOpenRef = useRef(false);
   useEffect(() => {
     blockingOverlayOpenRef.current =
-      showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd ||
-      showUsers || showServerInfo || showSizes || showSnippetForm ||
-      showCommandPalette || showObjectSearch || showDataSearch;
+      showForm ||
+      showSettings ||
+      showTasks ||
+      showHelp ||
+      showCompare ||
+      showCompareResults ||
+      showErd ||
+      showUsers ||
+      showServerInfo ||
+      showSizes ||
+      showSnippetForm ||
+      showCommandPalette ||
+      showObjectSearch ||
+      showDataSearch;
     cheatSheetOpenRef.current = showCheatSheet;
     overlayOpenRef.current = blockingOverlayOpenRef.current || showCheatSheet;
   });
@@ -1840,21 +1884,24 @@ export default function App() {
   // フォーカストラップ (keyboardNav.ts) の状態には触れない — こちらは
   // フォーカスを直接移すだけの単発処理。
   const renamingTabIdRef = useRef<string | null>(null);
-  const focusEditorIfQueryTab = useCallback((paneId: string | null, tabKind: TabKind | undefined) => {
-    if (!paneId || tabKind !== "query") return;
-    requestAnimationFrame(() => {
-      if (overlayOpenRef.current) return;
-      // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
-      // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
-      // リネーム中のタブが blur を経ずに消えた (接続切替等) 場合に ID が残っても
-      // 自動フォーカスが止まり続けないよう、まだ存在するタブだけを見る。
-      const renaming = renamingTabIdRef.current;
-      if (renaming && tabsRef.current.some((t) => t.id === renaming)) return;
-      const ae = document.activeElement;
-      if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
-      editorRefs.current.get(paneId)?.focus();
-    });
-  }, [tabsRef]);
+  const focusEditorIfQueryTab = useCallback(
+    (paneId: string | null, tabKind: TabKind | undefined) => {
+      if (!paneId || tabKind !== "query") return;
+      requestAnimationFrame(() => {
+        if (overlayOpenRef.current) return;
+        // タブ名のインライン編集中 (ダブルクリックの 1 回目の選択で予約された rAF が
+        // 後から走る場合を含む) は、エディタへフォーカスを奪って blur 確定させない (#1390)。
+        // リネーム中のタブが blur を経ずに消えた (接続切替等) 場合に ID が残っても
+        // 自動フォーカスが止まり続けないよう、まだ存在するタブだけを見る。
+        const renaming = renamingTabIdRef.current;
+        if (renaming && tabsRef.current.some((t) => t.id === renaming)) return;
+        const ae = document.activeElement;
+        if (ae instanceof HTMLInputElement && ae.closest('[role="tab"]')) return;
+        editorRefs.current.get(paneId)?.focus();
+      });
+    },
+    [tabsRef],
+  );
   // Right-click target for the tab move/close menu (viewport coords).
   const [tabMenu, setTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
   // サイドバーヘッダの「プロファイル転送」ボタン直下に出すインポート/エクスポート
@@ -1892,26 +1939,32 @@ export default function App() {
   // 暗号化バックアップ (#710): 書き出しのパスフレーズダイアログの開閉と、読み込む
   // ファイルのパス + 直前の復号エラー (パスフレーズ誤りなら開いたまま再入力させる)。
   const [backupExportOpen, setBackupExportOpen] = useState(false);
-  const [backupImport, setBackupImport] = useState<{ path: string; error: string | null } | null>(
-    null,
-  );
+  const [backupImport, setBackupImport] = useState<{ path: string; error: string | null } | null>(null);
   // CREATE TABLE ウィザード: 対象データベース。null で閉じる。
   const [createTableDb, setCreateTableDb] = useState<string | null>(null);
   // テーブル名変更: 対象。null で閉じる。
   const [renameTarget, setRenameTarget] = useState<{ database: string; table: string } | null>(null);
   const [cloneTarget, setCloneTarget] = useState<{ database: string; table: string } | null>(null);
   // スキーマツリーで複数選択したテーブルの一括エクスポート / ダンプ (#1399): 対象。null で閉じる。
-  const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
-  const [dumpTablesTarget, setDumpTablesTarget] = useState<{ database: string; tables: string[] } | null>(null);
+  const [exportTablesTarget, setExportTablesTarget] = useState<{ database: string; tables: string[] } | null>(
+    null,
+  );
+  const [dumpTablesTarget, setDumpTablesTarget] = useState<{ database: string; tables: string[] } | null>(
+    null,
+  );
   // 列編集ダイアログ (ALTER TABLE、#794): 対象。null で閉じる。
   const [alterTableTarget, setAlterTableTarget] = useState<{ database: string; table: string } | null>(null);
   // インデックス作成の軽量モーダル (#850): 対象。null で閉じる。
   const [createNamespaceOpen, setCreateNamespaceOpen] = useState(false);
-  const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(null);
+  const [createIndexTarget, setCreateIndexTarget] = useState<{ database: string; table: string } | null>(
+    null,
+  );
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
-  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(null);
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(
+    null,
+  );
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
   // `initialName` は「定義を編集」タブから開いたときのみセットされ (`editingViewName`)、
   // モーダルの名前欄の初期値になる。
@@ -1926,7 +1979,9 @@ export default function App() {
   // 接続) が変わっても/null になってもリセットしない。
   const [localSessionId, setLocalSessionId] = useState<string | null>(null);
   const localSessionIdRef = useRef<string | null>(null);
-  useEffect(() => { localSessionIdRef.current = localSessionId; }, [localSessionId]);
+  useEffect(() => {
+    localSessionIdRef.current = localSessionId;
+  }, [localSessionId]);
   const [localTables, setLocalTables] = useState<LocalTableMeta[]>([]);
   const [localTablesLoading, setLocalTablesLoading] = useState(false);
   // 結果グリッドの「ローカルに登録」モーダル: 対象。null で閉じる。
@@ -1965,16 +2020,16 @@ export default function App() {
   // search_path 扱いでプロファイルの DB 名のため、再実行に使えず null を記録する。
   const txDatabaseRef = useRef<string | null>(null);
   const txActiveRef = useRef(false);
-  useEffect(() => { txActiveRef.current = txActive; }, [txActive]);
+  useEffect(() => {
+    txActiveRef.current = txActive;
+  }, [txActive]);
   // 明示トランザクション内の SAVEPOINT スタック (#1418)。TX の開始/終了で空にする。
   const [savepoints, setSavepoints] = useState<readonly string[]>([]);
   const savepointCounterRef = useRef(0);
   // トランザクション状態は接続ごとに持つ。接続の切替は背景セッションを生かしたまま
   // 差し替えるだけでサーバ側の TX は続くので、切替元の状態を捨てると戻ったときに
   // COMMIT / ROLLBACK の操作が消える。切断・喪失したセッションのぶんだけ捨てる。
-  const txBySessionRef = useRef(
-    new Map<string, { savepoints: readonly string[]; counter: number }>(),
-  );
+  const txBySessionRef = useRef(new Map<string, { savepoints: readonly string[]; counter: number }>());
   // 現在の txActive / savepoints がどのセッションのものか (保存先のキー)。
   const txOwnerRef = useRef<string | null>(null);
   // 背景接続の TX 状態 (ref) が変わったことを接続一覧のバッジへ伝える再描画トリガ (#1536)。
@@ -1998,17 +2053,14 @@ export default function App() {
   );
   // await の後で「操作した接続」がまだ表示中とは限らない。表示中でなければ保存先
   // (txBySessionRef) だけを更新し、state (別の接続のぶん) には触らない。
-  const updateSavepointsFor = useCallback(
-    (sid: string, fn: (s: readonly string[]) => readonly string[]) => {
-      if (txOwnerRef.current === sid) {
-        setSavepoints(fn);
-        return;
-      }
-      const saved = txBySessionRef.current.get(sid);
-      if (saved) txBySessionRef.current.set(sid, { ...saved, savepoints: fn(saved.savepoints) });
-    },
-    [],
-  );
+  const updateSavepointsFor = useCallback((sid: string, fn: (s: readonly string[]) => readonly string[]) => {
+    if (txOwnerRef.current === sid) {
+      setSavepoints(fn);
+      return;
+    }
+    const saved = txBySessionRef.current.get(sid);
+    if (saved) txBySessionRef.current.set(sid, { ...saved, savepoints: fn(saved.savepoints) });
+  }, []);
   const resetTxFor = useCallback((sid: string) => {
     if (txOwnerRef.current === sid) {
       setSavepoints([]);
@@ -2113,14 +2165,13 @@ export default function App() {
     [panes, activePaneId],
   );
   const activeTabId = activePane?.activeTabId ?? null;
-  const activeTab = useMemo(
-    () => tabs.find((tt) => tt.id === activeTabId) ?? null,
-    [tabs, activeTabId],
-  );
+  const activeTab = useMemo(() => tabs.find((tt) => tt.id === activeTabId) ?? null, [tabs, activeTabId]);
   // ドラッグ&ドロップのイベント購読を毎タブ切替で貼り直さずに済むよう、
   // アクティブタブを ref でも参照できるようにする (ドロップ時の最新値読み取り用)。
   const activeTabRef = useRef<Tab | null>(activeTab);
-  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => {
+    activeTabRef.current = activeTab;
+  }, [activeTab]);
 
   // スキーマツリーの「現在地」表示 (#982) 用に、アクティブタブが開いている
   // (db, table) だけを取り出す。table タブでも database/table が未確定な
@@ -2133,9 +2184,7 @@ export default function App() {
   const activeTreeTableName = activeTab && activeTab.kind === "table" ? activeTab.table : null;
   const activeTreeTable = useMemo(
     () =>
-      activeTreeDb && activeTreeTableName
-        ? { database: activeTreeDb, table: activeTreeTableName }
-        : null,
+      activeTreeDb && activeTreeTableName ? { database: activeTreeDb, table: activeTreeTableName } : null,
     [activeTreeDb, activeTreeTableName],
   );
 
@@ -2143,7 +2192,9 @@ export default function App() {
   // 依存する (#852)。自動リフレッシュの tick やブロードキャスト要求は deps を
   // 増やさず ref 経由で最新のプロファイルを読む (activeTabRef と同じ理由)。
   const selectedProfileRef = useRef<ConnectionProfile | null>(selectedProfile);
-  useEffect(() => { selectedProfileRef.current = selectedProfile; }, [selectedProfile]);
+  useEffect(() => {
+    selectedProfileRef.current = selectedProfile;
+  }, [selectedProfile]);
 
   // The active tab of every pane, in pane order. Drives per-pane schema
   // prefetch and lets effects react to either pane changing tabs.
@@ -2173,44 +2224,47 @@ export default function App() {
   // 緊急クエリ実行モードの切替。有効化は「接続先名をタイプして合意」ゲート
   // (#675 の typed-confirm と同じパターン) を通ってからバックエンドのフラグを
   // 立てる。無効化は即時 (安全側へ倒す操作に確認は要らない)。
-  const handleToggleEmergencyMode = useCallback(async (next: boolean) => {
-    const sid = sessionId;
-    if (!sid || !selectedProfile) return;
-    if (next) {
-      // 接続先名が空のプロファイル (通常あり得ない) でも合意ゲートが自壊しない
-      // よう、共有フォールバック語へ倒す。
-      const name = resolveTypedConfirmTarget([selectedProfile.name]);
-      const ok = await confirm({
-        title: translate("emergencyModeConfirmTitle"),
-        message: translate("emergencyModeConfirmBody", { name }),
-        confirmLabel: translate("emergencyModeEnableButton"),
-        tone: "danger",
-        typedConfirmation: name,
+  const handleToggleEmergencyMode = useCallback(
+    async (next: boolean) => {
+      const sid = sessionId;
+      if (!sid || !selectedProfile) return;
+      if (next) {
+        // 接続先名が空のプロファイル (通常あり得ない) でも合意ゲートが自壊しない
+        // よう、共有フォールバック語へ倒す。
+        const name = resolveTypedConfirmTarget([selectedProfile.name]);
+        const ok = await confirm({
+          title: translate("emergencyModeConfirmTitle"),
+          message: translate("emergencyModeConfirmBody", { name }),
+          confirmLabel: translate("emergencyModeEnableButton"),
+          tone: "danger",
+          typedConfirmation: name,
+        });
+        if (!ok) return;
+      }
+      try {
+        await api.setEmergencyMode(sid, next);
+      } catch (e) {
+        setStatus({
+          kind: "key",
+          key: "statusEmergencyModeError",
+          vars: { error: String(e) },
+          error: true,
+        });
+        return;
+      }
+      setEmergencySessions((cur) => {
+        const nextSet = new Set(cur);
+        if (next) nextSet.add(sid);
+        else nextSet.delete(sid);
+        return nextSet;
       });
-      if (!ok) return;
-    }
-    try {
-      await api.setEmergencyMode(sid, next);
-    } catch (e) {
       setStatus({
         kind: "key",
-        key: "statusEmergencyModeError",
-        vars: { error: String(e) },
-        error: true,
+        key: next ? "statusEmergencyModeEnabled" : "statusEmergencyModeDisabled",
       });
-      return;
-    }
-    setEmergencySessions((cur) => {
-      const nextSet = new Set(cur);
-      if (next) nextSet.add(sid);
-      else nextSet.delete(sid);
-      return nextSet;
-    });
-    setStatus({
-      kind: "key",
-      key: next ? "statusEmergencyModeEnabled" : "statusEmergencyModeDisabled",
-    });
-  }, [sessionId, selectedProfile, confirm]);
+    },
+    [sessionId, selectedProfile, confirm],
+  );
   // Per-pane autocomplete snapshot lookup against the shared cache.
   const schemaForDatabase = useCallback(
     (database: string | null | undefined): TableSchema[] | null => {
@@ -2239,8 +2293,7 @@ export default function App() {
   // restoreSavedTabs is declared after runQueryInTab; the ref breaks the
   // ordering cycle so handleConnect (declared above) can still call it.
   const restoreSavedTabsRef = useRef<
-    | ((sid: string, profile: ConnectionProfile, ws: PersistedWorkspace) => Promise<void>)
-    | null
+    ((sid: string, profile: ConnectionProfile, ws: PersistedWorkspace) => Promise<void>) | null
   >(null);
 
   // タブごとの SQL 本文の最新値 (#1316)。打鍵ごとに `setTabs` すると App 全体が再レンダー
@@ -2262,23 +2315,17 @@ export default function App() {
     closedTabsRef.current = next;
     setClosedTabs(next);
   }, []);
-  const getTabSql = useCallback(
-    (tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql),
-    [tabSqlStore],
-  );
+  const getTabSql = useCallback((tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql), [tabSqlStore]);
   // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
   const [dirtyTick, bumpDirty] = useReducer((n: number) => n + 1, 0);
   const tabsForDirtyRef = useRef<Tab[]>([]);
   const dirtyWatcher = useMemo(
     () =>
-      new TabDirtyWatcher(
-        (id) => {
-          const tt = tabsForDirtyRef.current.find((x) => x.id === id);
-          if (!tt) return undefined;
-          return isTabDirty(tt, tabSqlStore.resolve(tt.id, tt.sql));
-        },
-        bumpDirty,
-      ),
+      new TabDirtyWatcher((id) => {
+        const tt = tabsForDirtyRef.current.find((x) => x.id === id);
+        if (!tt) return undefined;
+        return isTabDirty(tt, tabSqlStore.resolve(tt.id, tt.sql));
+      }, bumpDirty),
     [tabSqlStore],
   );
   useEffect(() => () => dirtyWatcher.dispose(), [dirtyWatcher]);
@@ -2290,15 +2337,21 @@ export default function App() {
     [tabSqlStore, dirtyWatcher],
   );
 
-  const updateTab = useCallback((id: string, patch: Partial<Tab>) => {
-    // `sql` をプログラムから書き換えるときは、エディタ側の最新値より新しい指定なので破棄する。
-    if ("sql" in patch) tabSqlStore.delete(id);
-    setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
-  }, [tabSqlStore, setTabs]);
+  const updateTab = useCallback(
+    (id: string, patch: Partial<Tab>) => {
+      // `sql` をプログラムから書き換えるときは、エディタ側の最新値より新しい指定なので破棄する。
+      if ("sql" in patch) tabSqlStore.delete(id);
+      setTabs((prev) => prev.map((tt) => (tt.id === id ? { ...tt, ...patch } : tt)));
+    },
+    [tabSqlStore, setTabs],
+  );
 
-  const patchTab = useCallback((id: string, patcher: (tab: Tab) => Tab) => {
-    setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
-  }, [setTabs]);
+  const patchTab = useCallback(
+    (id: string, patcher: (tab: Tab) => Tab) => {
+      setTabs((prev) => prev.map((tt) => (tt.id === id ? patcher(tt) : tt)));
+    },
+    [setTabs],
+  );
 
   /**
    * 結果パネルの表示 (グリッド / ピボット / チャート) を切り替える。3 択は排他な
@@ -2399,39 +2452,48 @@ export default function App() {
   }, []);
 
   // Activate a tab within a specific pane and focus that pane.
-  const selectTab = useCallback((paneId: string, tabId: string) => {
-    setActivePaneId(paneId);
-    setPanes((prev) => prev.map((p) => (p.id === paneId ? { ...p, activeTabId: tabId } : p)));
-    // 切り替え先がクエリタブならエディタへ自動フォーカスする (#816)。table/explain
-    // タブへの切替では発火しない。
-    focusEditorIfQueryTab(paneId, tabsRef.current.find((t) => t.id === tabId)?.kind);
-  }, [focusEditorIfQueryTab, setPanes, tabsRef]);
+  const selectTab = useCallback(
+    (paneId: string, tabId: string) => {
+      setActivePaneId(paneId);
+      setPanes((prev) => prev.map((p) => (p.id === paneId ? { ...p, activeTabId: tabId } : p)));
+      // 切り替え先がクエリタブならエディタへ自動フォーカスする (#816)。table/explain
+      // タブへの切替では発火しない。
+      focusEditorIfQueryTab(paneId, tabsRef.current.find((t) => t.id === tabId)?.kind);
+    },
+    [focusEditorIfQueryTab, setPanes, tabsRef],
+  );
 
   // Append a freshly built tab to a pane (the focused pane by default) and make
   // it active there. Used by every "open in a new tab" entry point.
-  const addTab = useCallback((tab: Tab, paneId?: string) => {
-    setTabs((prev) => [...prev, tab]);
-    setPanes((prev) => {
-      if (prev.length === 0) {
-        return [{ id: newPaneId(), tabIds: [tab.id], activeTabId: tab.id }];
-      }
-      const target = paneId ?? activePaneIdRef.current ?? prev[0].id;
-      const exists = prev.some((p) => p.id === target);
-      const targetId = exists ? target : prev[0].id;
-      return prev.map((p) =>
-        p.id === targetId ? { ...p, tabIds: [...p.tabIds, tab.id], activeTabId: tab.id } : p,
-      );
-    });
-    if (paneId) setActivePaneId(paneId);
-  }, [setPanes, setTabs]);
+  const addTab = useCallback(
+    (tab: Tab, paneId?: string) => {
+      setTabs((prev) => [...prev, tab]);
+      setPanes((prev) => {
+        if (prev.length === 0) {
+          return [{ id: newPaneId(), tabIds: [tab.id], activeTabId: tab.id }];
+        }
+        const target = paneId ?? activePaneIdRef.current ?? prev[0].id;
+        const exists = prev.some((p) => p.id === target);
+        const targetId = exists ? target : prev[0].id;
+        return prev.map((p) =>
+          p.id === targetId ? { ...p, tabIds: [...p.tabIds, tab.id], activeTabId: tab.id } : p,
+        );
+      });
+      if (paneId) setActivePaneId(paneId);
+    },
+    [setPanes, setTabs],
+  );
 
   // Activate an already-open tab wherever it lives, focusing its pane.
-  const activateTab = useCallback((tabId: string) => {
-    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-    if (!owner) return;
-    setActivePaneId(owner.id);
-    setPanes((prev) => prev.map((p) => (p.id === owner.id ? { ...p, activeTabId: tabId } : p)));
-  }, [setPanes, panesRef]);
+  const activateTab = useCallback(
+    (tabId: string) => {
+      const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+      if (!owner) return;
+      setActivePaneId(owner.id);
+      setPanes((prev) => prev.map((p) => (p.id === owner.id ? { ...p, activeTabId: tabId } : p)));
+    },
+    [setPanes, panesRef],
+  );
 
   // Open a second pane on demand. If the source pane has more than one tab the
   // active tab is moved into the new pane; otherwise a fresh query tab is
@@ -2448,9 +2510,7 @@ export default function App() {
       const remaining = source.tabIds.filter((id) => id !== moved);
       const nextActive = remaining[idx] ?? remaining[idx - 1] ?? remaining[0] ?? null;
       setPanes([
-        ...prev.map((p) =>
-          p.id === source.id ? { ...p, tabIds: remaining, activeTabId: nextActive } : p,
-        ),
+        ...prev.map((p) => (p.id === source.id ? { ...p, tabIds: remaining, activeTabId: nextActive } : p)),
         { id: newPid, tabIds: [moved], activeTabId: moved },
       ]);
     } else {
@@ -2463,77 +2523,86 @@ export default function App() {
 
   // Close a pane, merging its open tabs (and their live streams) into the other
   // pane rather than discarding them. Only meaningful when two panes exist.
-  const closePane = useCallback((paneId: string) => {
-    const prev = panesRef.current;
-    if (prev.length <= 1) return;
-    const closing = prev.find((p) => p.id === paneId);
-    const other = prev.find((p) => p.id !== paneId);
-    if (!closing || !other) return;
-    setPanes(
-      prev
-        .filter((p) => p.id !== paneId)
-        .map((p) =>
-          p.id === other.id
-            ? {
-                ...p,
-                tabIds: [...p.tabIds, ...closing.tabIds],
-                activeTabId: p.activeTabId ?? closing.activeTabId,
-              }
-            : p,
-        ),
-    );
-    setActivePaneId(other.id);
-  }, [setPanes, panesRef]);
+  const closePane = useCallback(
+    (paneId: string) => {
+      const prev = panesRef.current;
+      if (prev.length <= 1) return;
+      const closing = prev.find((p) => p.id === paneId);
+      const other = prev.find((p) => p.id !== paneId);
+      if (!closing || !other) return;
+      setPanes(
+        prev
+          .filter((p) => p.id !== paneId)
+          .map((p) =>
+            p.id === other.id
+              ? {
+                  ...p,
+                  tabIds: [...p.tabIds, ...closing.tabIds],
+                  activeTabId: p.activeTabId ?? closing.activeTabId,
+                }
+              : p,
+          ),
+      );
+      setActivePaneId(other.id);
+    },
+    [setPanes, panesRef],
+  );
 
   // Move a single tab to the other pane (creating it if needed). A source pane
   // emptied by the move is dropped, collapsing back to a single pane.
-  const moveTabToOtherPane = useCallback((tabId: string) => {
-    const prev = panesRef.current;
-    const source = prev.find((p) => p.tabIds.includes(tabId));
-    if (!source) return;
-    const idx = source.tabIds.indexOf(tabId);
-    const remaining = source.tabIds.filter((id) => id !== tabId);
-    const sourceActive =
-      source.activeTabId === tabId ? remaining[idx] ?? remaining[idx - 1] ?? null : source.activeTabId;
-    if (prev.length >= 2) {
-      const target = prev.find((p) => p.id !== source.id)!;
-      let next = prev.map((p) => {
-        if (p.id === source.id) return { ...p, tabIds: remaining, activeTabId: sourceActive };
-        if (p.id === target.id) return { ...p, tabIds: [...p.tabIds, tabId], activeTabId: tabId };
-        return p;
-      });
-      if (remaining.length === 0) next = next.filter((p) => p.id !== source.id);
-      setPanes(next);
-      setActivePaneId(target.id);
-    } else {
-      if (remaining.length === 0) return;
-      const newPid = newPaneId();
-      setPanes([
-        ...prev.map((p) =>
-          p.id === source.id ? { ...p, tabIds: remaining, activeTabId: sourceActive } : p,
-        ),
-        { id: newPid, tabIds: [tabId], activeTabId: tabId },
-      ]);
-      setActivePaneId(newPid);
-    }
-  }, [setPanes, panesRef]);
+  const moveTabToOtherPane = useCallback(
+    (tabId: string) => {
+      const prev = panesRef.current;
+      const source = prev.find((p) => p.tabIds.includes(tabId));
+      if (!source) return;
+      const idx = source.tabIds.indexOf(tabId);
+      const remaining = source.tabIds.filter((id) => id !== tabId);
+      const sourceActive =
+        source.activeTabId === tabId ? (remaining[idx] ?? remaining[idx - 1] ?? null) : source.activeTabId;
+      if (prev.length >= 2) {
+        const target = prev.find((p) => p.id !== source.id)!;
+        let next = prev.map((p) => {
+          if (p.id === source.id) return { ...p, tabIds: remaining, activeTabId: sourceActive };
+          if (p.id === target.id) return { ...p, tabIds: [...p.tabIds, tabId], activeTabId: tabId };
+          return p;
+        });
+        if (remaining.length === 0) next = next.filter((p) => p.id !== source.id);
+        setPanes(next);
+        setActivePaneId(target.id);
+      } else {
+        if (remaining.length === 0) return;
+        const newPid = newPaneId();
+        setPanes([
+          ...prev.map((p) =>
+            p.id === source.id ? { ...p, tabIds: remaining, activeTabId: sourceActive } : p,
+          ),
+          { id: newPid, tabIds: [tabId], activeTabId: tabId },
+        ]);
+        setActivePaneId(newPid);
+      }
+    },
+    [setPanes, panesRef],
+  );
 
   // Reorder tabs within a pane via drag/keyboard. `orderedIds` is the
   // pane's full tab-id list in its new order; we only accept a permutation of
   // the pane's current ids so a stale callback can't smuggle in foreign tabs.
   // Persistence is order-aware already (persistTabsForProfile maps tabIds in
   // order), so the new order is saved on the next flush.
-  const reorderTabsInPane = useCallback((paneId: string, orderedIds: string[]) => {
-    setPanes((prev) =>
-      prev.map((p) => {
-        if (p.id !== paneId) return p;
-        // Accept only a true permutation of this pane's ids so a stale callback
-        // can't smuggle in foreign tabs or drop one (see tabReorder.ts).
-        const validated = reorderIfPermutation(p.tabIds, orderedIds);
-        return validated ? { ...p, tabIds: validated } : p;
-      }),
-    );
-  }, [setPanes]);
+  const reorderTabsInPane = useCallback(
+    (paneId: string, orderedIds: string[]) => {
+      setPanes((prev) =>
+        prev.map((p) => {
+          if (p.id !== paneId) return p;
+          // Accept only a true permutation of this pane's ids so a stale callback
+          // can't smuggle in foreign tabs or drop one (see tabReorder.ts).
+          const validated = reorderIfPermutation(p.tabIds, orderedIds);
+          return validated ? { ...p, tabIds: validated } : p;
+        }),
+      );
+    },
+    [setPanes],
+  );
 
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
@@ -3097,26 +3166,32 @@ export default function App() {
   }, [sessionId, selectedProfile, captureSchemaSnapshot]);
 
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
-  const recordRecentTableOpen = useCallback((database: string, table: string) => {
-    const id = selectedProfile?.id;
-    if (!id) return;
-    setQuickAccess((prev) => {
-      const next = recordRecentTable(prev, { database, table });
-      saveQuickAccess(id, next);
-      return next;
-    });
-  }, [selectedProfile?.id]);
+  const recordRecentTableOpen = useCallback(
+    (database: string, table: string) => {
+      const id = selectedProfile?.id;
+      if (!id) return;
+      setQuickAccess((prev) => {
+        const next = recordRecentTable(prev, { database, table });
+        saveQuickAccess(id, next);
+        return next;
+      });
+    },
+    [selectedProfile?.id],
+  );
 
   // お気に入りのトグル (登録/解除)。永続化も行う。
-  const handleToggleFavorite = useCallback((database: string, table: string) => {
-    const id = selectedProfile?.id;
-    if (!id) return;
-    setQuickAccess((prev) => {
-      const next = toggleFavoriteTable(prev, { database, table });
-      saveQuickAccess(id, next);
-      return next;
-    });
-  }, [selectedProfile?.id]);
+  const handleToggleFavorite = useCallback(
+    (database: string, table: string) => {
+      const id = selectedProfile?.id;
+      if (!id) return;
+      setQuickAccess((prev) => {
+        const next = toggleFavoriteTable(prev, { database, table });
+        saveQuickAccess(id, next);
+        return next;
+      });
+    },
+    [selectedProfile?.id],
+  );
 
   // スニペットのお気に入り (ピン留め) トグル (#877)。接続の有無に関わらず常に
   // 使える (ローカル永続化のみで DB には触れない)。
@@ -3147,30 +3222,36 @@ export default function App() {
 
   // Snapshot the current pane layout (from refs so we don't depend on stale
   // closure copies) into localStorage under the given profile id.
-  const persistTabsForProfile = useCallback((profileId: string) => {
-    const curTabs = tabsRef.current;
-    const curPanes = panesRef.current;
-    const ws: PersistedWorkspace = {
-      panes: curPanes
-        .map((p) => {
-          const paneTabs = p.tabIds
-            .map((id) => curTabs.find((tt) => tt.id === id))
-            .filter((tt): tt is Tab => tt != null)
-            .map((tt) =>
-              toPersistedTab(
-                tabSqlStore.withLatest(tt),
-                editorSelectionRef.current.get(tt.id),
-                gridScrollRef.current.get(tt.id),
-              ),
-            );
-          const activeIndex = Math.max(0, p.tabIds.indexOf(p.activeTabId ?? ""));
-          return { tabs: paneTabs, activeIndex: Math.min(activeIndex, Math.max(0, paneTabs.length - 1)) };
-        })
-        .filter((p) => p.tabs.length > 0),
-      activePane: Math.max(0, curPanes.findIndex((p) => p.id === activePaneIdRef.current)),
-    };
-    savePersistedWorkspace(profileId, ws);
-  }, [tabSqlStore, panesRef, tabsRef]);
+  const persistTabsForProfile = useCallback(
+    (profileId: string) => {
+      const curTabs = tabsRef.current;
+      const curPanes = panesRef.current;
+      const ws: PersistedWorkspace = {
+        panes: curPanes
+          .map((p) => {
+            const paneTabs = p.tabIds
+              .map((id) => curTabs.find((tt) => tt.id === id))
+              .filter((tt): tt is Tab => tt != null)
+              .map((tt) =>
+                toPersistedTab(
+                  tabSqlStore.withLatest(tt),
+                  editorSelectionRef.current.get(tt.id),
+                  gridScrollRef.current.get(tt.id),
+                ),
+              );
+            const activeIndex = Math.max(0, p.tabIds.indexOf(p.activeTabId ?? ""));
+            return { tabs: paneTabs, activeIndex: Math.min(activeIndex, Math.max(0, paneTabs.length - 1)) };
+          })
+          .filter((p) => p.tabs.length > 0),
+        activePane: Math.max(
+          0,
+          curPanes.findIndex((p) => p.id === activePaneIdRef.current),
+        ),
+      };
+      savePersistedWorkspace(profileId, ws);
+    },
+    [tabSqlStore, panesRef, tabsRef],
+  );
 
   // Flushing on `beforeunload` lands the current state in localStorage as the
   // window tears down, so in-session tab updates (builder snapshots, SQL edits)
@@ -3183,7 +3264,6 @@ export default function App() {
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
   }, [selectedProfile?.id, persistTabsForProfile]);
-
 
   const closeAllTabs = useCallback(async () => {
     // Cancel any in-flight streams before tearing down tabs.
@@ -3239,53 +3319,66 @@ export default function App() {
   // バックエンドセッションへアクティブを差し替えるだけ。現在のタブを退避してから
   // 切替先の保存済みワークスペースを復元する。スキーマツリーは ConnectionList が
   // sessionId prop の変化を検知して自動で再ロードする。
-  const switchToOpenConnection = useCallback(async (target: OpenConnection, opts?: { skipTxWarning?: boolean; skipPersist?: boolean }) => {
-    if (target.sessionId === sessionId) return;
-    if (!(await confirmDiscardPendingEdits())) return;
-    // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
-    if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
-      const ok = await confirmDiscard({
-        title: translate("connSwitchTxTitle"),
-        message: translate("connSwitchTxBody"),
-        confirmLabel: translate("connSwitchTxAction"),
-        tone: "warning",
-      });
-      if (!ok) return;
-    }
-    // 進行中の自動再接続ループは手動切替で中断する。
-    reconnectAbortRef.current = true;
-    reconnectingRef.current = false;
-    // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
-    // 切断経路 (handleDisconnect) は退避済みでタブが空なので、空で上書きしない。
-    if (selectedProfile && !opts?.skipPersist) persistTabsForProfile(selectedProfile.id);
-    await closeAllTabs();
-    // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
-    // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
-    // AlterTableModal (#794) も database/table を旧セッション基準で保持したまま
-    // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
-    setImportTarget(null);
-    setDumpTarget(null);
-    setDumpTablesTarget(null);
-    setExportTablesTarget(null);
-    setScriptTarget(null);
-    setSchemaExportTarget(null);
-    setErrorProfileId(null);
-    setAlterTableTarget(null);
-    setConnectionStatus("connected");
-    setSessionId(target.sessionId);
-    setSelectedProfile(target.profile);
-    const savedWs = loadPersistedWorkspace(target.profile.id);
-    const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
-    if (savedCount > 0 && restoreSavedTabsRef.current) {
-      await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
-    } else {
-      setTabs([]);
-      setPanes([]);
-      setActivePaneId(null);
-    }
-    setStatus({ kind: "idle" });
-    toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, toast, setPanes, setTabs, confirmDiscardPendingEdits, confirmDiscard]);
+  const switchToOpenConnection = useCallback(
+    async (target: OpenConnection, opts?: { skipTxWarning?: boolean; skipPersist?: boolean }) => {
+      if (target.sessionId === sessionId) return;
+      if (!(await confirmDiscardPendingEdits())) return;
+      // 未確定の TX を持つ接続から離れる前に知らせる (#1536)。TX は背景で開いたまま残る。
+      if (!opts?.skipTxWarning && sessionId && txActiveRef.current) {
+        const ok = await confirmDiscard({
+          title: translate("connSwitchTxTitle"),
+          message: translate("connSwitchTxBody"),
+          confirmLabel: translate("connSwitchTxAction"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
+      // 進行中の自動再接続ループは手動切替で中断する。
+      reconnectAbortRef.current = true;
+      reconnectingRef.current = false;
+      // 現在の接続のタブを退避してから片付ける (背景セッションは生かしたまま)。
+      // 切断経路 (handleDisconnect) は退避済みでタブが空なので、空で上書きしない。
+      if (selectedProfile && !opts?.skipPersist) persistTabsForProfile(selectedProfile.id);
+      await closeAllTabs();
+      // 旧セッションの DB 名を持ったまま各モーダルが新しい sessionId で開き続けない
+      // よう、切替時も handleDisconnect / tearDownLostSession と同じく閉じる。
+      // AlterTableModal (#794) も database/table を旧セッション基準で保持したまま
+      // 別接続へ ALTER が飛ぶ事故を防ぐため同様に閉じる。
+      setImportTarget(null);
+      setDumpTarget(null);
+      setDumpTablesTarget(null);
+      setExportTablesTarget(null);
+      setScriptTarget(null);
+      setSchemaExportTarget(null);
+      setErrorProfileId(null);
+      setAlterTableTarget(null);
+      setConnectionStatus("connected");
+      setSessionId(target.sessionId);
+      setSelectedProfile(target.profile);
+      const savedWs = loadPersistedWorkspace(target.profile.id);
+      const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
+      if (savedCount > 0 && restoreSavedTabsRef.current) {
+        await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
+      } else {
+        setTabs([]);
+        setPanes([]);
+        setActivePaneId(null);
+      }
+      setStatus({ kind: "idle" });
+      toast.success(translate("toastSwitchedConnection", { name: target.profile.name }));
+    },
+    [
+      sessionId,
+      selectedProfile,
+      closeAllTabs,
+      persistTabsForProfile,
+      toast,
+      setPanes,
+      setTabs,
+      confirmDiscardPendingEdits,
+      confirmDiscard,
+    ],
+  );
 
   // ローカル横断クエリ (#740): ローカルセッションを (無ければ) 作成して id を返す。
   // 既にあれば再利用する。`handleConnect` がこれを参照するため、その定義より前に
@@ -3310,181 +3403,192 @@ export default function App() {
     return id;
   }, []);
 
-  const handleConnect = useCallback(async (profile: ConnectionProfile) => {
-    // 既にアクティブな接続なら何もしない (誤クリックで張り直さない)。
-    if (sessionId && selectedProfile?.id === profile.id) return;
-    // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
-    const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
-    if (alreadyOpen) {
-      await switchToOpenConnection(alreadyOpen);
-      return;
-    }
-    if (profile.is_production && settings.confirmProductionConnect) {
-      const ok = await confirm({
-        title: translate("productionConfirmTitle"),
-        message: (
-          <Flex direction="column" gap="2" color="app.text" alignItems="center">
-            <ProductionWarningIllustration size={80} />
-            <Flex align="center" gap="2">
-              {/* ここは「まだ接続していないプロファイル」の確認ダイアログなので、
+  const handleConnect = useCallback(
+    async (profile: ConnectionProfile) => {
+      // 既にアクティブな接続なら何もしない (誤クリックで張り直さない)。
+      if (sessionId && selectedProfile?.id === profile.id) return;
+      // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
+      const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
+      if (alreadyOpen) {
+        await switchToOpenConnection(alreadyOpen);
+        return;
+      }
+      if (profile.is_production && settings.confirmProductionConnect) {
+        const ok = await confirm({
+          title: translate("productionConfirmTitle"),
+          message: (
+            <Flex direction="column" gap="2" color="app.text" alignItems="center">
+              <ProductionWarningIllustration size={80} />
+              <Flex align="center" gap="2">
+                {/* ここは「まだ接続していないプロファイル」の確認ダイアログなので、
                   色未設定時に現在のワークスペースアクセントへフォールバックする
                   ProfileColorChip の既定挙動は使わず、色があるときだけ表示する
                   (#663: チップ/バッジの見た目自体は ConnectionList / TitleBar と共有)。 */}
-              {profile.color && <ProfileColorChip color={profile.color} size={14} />}
-              <chakra.span fontWeight={600} fontSize="md">{profile.name}</chakra.span>
-              <ProductionBadge />
+                {profile.color && <ProfileColorChip color={profile.color} size={14} />}
+                <chakra.span fontWeight={600} fontSize="md">
+                  {profile.name}
+                </chakra.span>
+                <ProductionBadge />
+              </Flex>
+              <chakra.span>{translate("productionConfirm", { name: profile.name })}</chakra.span>
+              <chakra.span color="app.textMuted" fontSize="sm">
+                {translate("productionConfirmHint")}
+              </chakra.span>
             </Flex>
-            <chakra.span>{translate("productionConfirm", { name: profile.name })}</chakra.span>
-            <chakra.span color="app.textMuted" fontSize="sm">
-              {translate("productionConfirmHint")}
-            </chakra.span>
-          </Flex>
-        ),
-        confirmLabel: translate("productionConfirmAction"),
-        tone: "warning",
-      });
-      if (!ok) return;
-    }
-    // 別接続へ張り替えると現在のタブはすべて閉じる。未確定の編集があれば先に確認する。
-    if (sessionId && !(await confirmDiscardPendingEdits())) return;
-    // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
-    reconnectAbortRef.current = true;
-    reconnectingRef.current = false;
-    setConnectingId(profile.id);
-    setErrorProfileId(null);
-    setConnectionStatus("connected");
-    setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
-    if (sessionId) {
-      // 別プロファイルへ接続するときは現在の接続を切断せず背景で生かしたまま残す
-      // (#複数同時接続)。タブだけ退避し、レジストリのエントリはそのまま保持する。
-      if (selectedProfile) persistTabsForProfile(selectedProfile.id);
-      setSessionId(null);
-      await closeAllTabs();
-    }
-    // Fresh attempt id so we can subscribe to phase progress and cancel this
-    // specific attempt (#684).
-    const attemptId = makeConnectAttemptId();
-    setConnectAttempt({ id: attemptId, phase: "preparing" });
-    const unlistenProgress = await listenConnectProgress(attemptId, (phase) =>
-      setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase } : prev)),
-    ).catch(() => undefined);
-    try {
-      const driver: DriverKind =
-        profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
-          ? profile.driver
-          : "mysql";
-      // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
-      // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
-      // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
-      // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
-      const res = isLocalProfile(profile)
-        ? { session_id: await ensureLocalSession() }
-        : await api.connect(
-            {
-              profile_id: profile.id,
-              driver,
-              host: profile.host,
-              port: profile.port,
-              user: profile.user,
-              password: "",
-              database: profile.database,
-              ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-              file_path: profile.file_path,
-              read_only: profile.read_only,
-              skip_history: profile.skip_history,
-            },
-            attemptId,
-            settings.connectTimeoutSecs,
-          );
-      setSessionId(res.session_id);
-      setSelectedProfile(profile);
-      // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
-      upsertOpenConnection(res.session_id, profile);
+          ),
+          confirmLabel: translate("productionConfirmAction"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
+      // 別接続へ張り替えると現在のタブはすべて閉じる。未確定の編集があれば先に確認する。
+      if (sessionId && !(await confirmDiscardPendingEdits())) return;
+      // 手動接続は進行中の自動再接続ループより優先する: ループを中断させる。
+      reconnectAbortRef.current = true;
+      reconnectingRef.current = false;
+      setConnectingId(profile.id);
+      setErrorProfileId(null);
+      setConnectionStatus("connected");
+      setStatus({ kind: "key", key: "statusConnecting", vars: { name: profile.name } });
+      if (sessionId) {
+        // 別プロファイルへ接続するときは現在の接続を切断せず背景で生かしたまま残す
+        // (#複数同時接続)。タブだけ退避し、レジストリのエントリはそのまま保持する。
+        if (selectedProfile) persistTabsForProfile(selectedProfile.id);
+        setSessionId(null);
+        await closeAllTabs();
+      }
+      // Fresh attempt id so we can subscribe to phase progress and cancel this
+      // specific attempt (#684).
+      const attemptId = makeConnectAttemptId();
+      setConnectAttempt({ id: attemptId, phase: "preparing" });
+      const unlistenProgress = await listenConnectProgress(attemptId, (phase) =>
+        setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase } : prev)),
+      ).catch(() => undefined);
+      try {
+        const driver: DriverKind =
+          profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
+            ? profile.driver
+            : "mysql";
+        // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
+        // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
+        // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
+        // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
+        const res = isLocalProfile(profile)
+          ? { session_id: await ensureLocalSession() }
+          : await api.connect(
+              {
+                profile_id: profile.id,
+                driver,
+                host: profile.host,
+                port: profile.port,
+                user: profile.user,
+                password: "",
+                database: profile.database,
+                ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
+                file_path: profile.file_path,
+                read_only: profile.read_only,
+                skip_history: profile.skip_history,
+              },
+              attemptId,
+              settings.connectTimeoutSecs,
+            );
+        setSessionId(res.session_id);
+        setSelectedProfile(profile);
+        // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
+        upsertOpenConnection(res.session_id, profile);
 
-      const savedWs = loadPersistedWorkspace(profile.id);
-      const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
-      const restore =
-        savedCount > 0 &&
-        (await shouldRestoreSavedTabs(settings.tabRestoreMode, () =>
-          confirm({
-            title: translate("tabRestoreConfirmTitle"),
-            message: translate("tabRestoreConfirm", { count: savedCount }),
-            confirmLabel: translate("tabRestoreConfirmRestore"),
-            cancelLabel: translate("tabRestoreConfirmDiscard"),
-            tone: "primary",
-          }),
-        ));
-      if (restore && restoreSavedTabsRef.current) {
-        await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
-      } else {
-        if (savedCount > 0 && !restore) clearPersistedTabs(profile.id);
-        // 接続直後はクエリタブを自動で開かない。空のワークスペース
-        // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
-        // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
-        setTabs([]);
-        setPanes([]);
-        setActivePaneId(null);
+        const savedWs = loadPersistedWorkspace(profile.id);
+        const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
+        const restore =
+          savedCount > 0 &&
+          (await shouldRestoreSavedTabs(settings.tabRestoreMode, () =>
+            confirm({
+              title: translate("tabRestoreConfirmTitle"),
+              message: translate("tabRestoreConfirm", { count: savedCount }),
+              confirmLabel: translate("tabRestoreConfirmRestore"),
+              cancelLabel: translate("tabRestoreConfirmDiscard"),
+              tone: "primary",
+            }),
+          ));
+        if (restore && restoreSavedTabsRef.current) {
+          await restoreSavedTabsRef.current(res.session_id, profile, savedWs);
+        } else {
+          if (savedCount > 0 && !restore) clearPersistedTabs(profile.id);
+          // 接続直後はクエリタブを自動で開かない。空のワークスペース
+          // (panes.length === 0) は EmptyState (「新規クエリ」ボタン付き) が
+          // 表示されるため、ユーザが必要なときだけ明示的にタブを開ける。
+          setTabs([]);
+          setPanes([]);
+          setActivePaneId(null);
+        }
+        setStatus({ kind: "idle" });
+        toast.success(translate("toastConnected", { name: profile.name }));
+        // 実行計画ウォッチ (#743): 設定が有効なら、ウォッチ登録済みスニペットの
+        // EXPLAIN を背景で取得して世代記録・変化検知を行う (接続をブロックしない)。
+        if (settings.planWatchOnConnect) {
+          void refreshPlanWatches(res.session_id, profile);
+        }
+        // スキーマドリフト・タイムライン (#736): 設定が有効なら、接続確立直後に
+        // スキーマスナップショットを背景で取得し、前回接続時からの変化を検知する
+        // (接続をブロックしない)。
+        if (settings.schemaDriftOnConnect) {
+          void captureSchemaSnapshot(res.session_id, profile);
+        }
+        // テーブル・タイムラプス (#739): ウォッチ中のテーブルのスナップショットを
+        // 背景で取得する (接続をブロックしない)。
+        if (settings.timelapseOnConnect) {
+          void captureTimelapse(res.session_id, settings.timelapseMaxGenerations);
+        }
+      } catch (e) {
+        // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
+        // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
+        // 実際には非アクティブな旧接続を「接続中」として描画し続けてしまう (#F6)。
+        setSelectedProfile(null);
+        setErrorProfileId(profile.id);
+        const kind = errorKindOf(e);
+        setStatus({
+          kind: "key",
+          key: "statusConnectionFailed",
+          vars: { error: String(e) },
+          error: true,
+          errorKind: kind,
+        });
+        // An SSH host-key mismatch is recoverable in-app: offer the re-trust
+        // dialog instead of leaving the user to hand-edit known_hosts (#682).
+        if (kind === "sshHostKeyMismatch" && profile.ssh) {
+          setHostKeyMismatch({ profile, message: String(e) });
+        }
+      } finally {
+        setConnectingId(null);
+        setConnectAttempt(null);
+        unlistenProgress?.();
       }
-      setStatus({ kind: "idle" });
-      toast.success(translate("toastConnected", { name: profile.name }));
-      // 実行計画ウォッチ (#743): 設定が有効なら、ウォッチ登録済みスニペットの
-      // EXPLAIN を背景で取得して世代記録・変化検知を行う (接続をブロックしない)。
-      if (settings.planWatchOnConnect) {
-        void refreshPlanWatches(res.session_id, profile);
-      }
-      // スキーマドリフト・タイムライン (#736): 設定が有効なら、接続確立直後に
-      // スキーマスナップショットを背景で取得し、前回接続時からの変化を検知する
-      // (接続をブロックしない)。
-      if (settings.schemaDriftOnConnect) {
-        void captureSchemaSnapshot(res.session_id, profile);
-      }
-      // テーブル・タイムラプス (#739): ウォッチ中のテーブルのスナップショットを
-      // 背景で取得する (接続をブロックしない)。
-      if (settings.timelapseOnConnect) {
-        void captureTimelapse(res.session_id, settings.timelapseMaxGenerations);
-      }
-    } catch (e) {
-      // 接続失敗時は表示状態を実態 (未接続) に合わせる。sessionId は既に null に
-      // なっているが selectedProfile を旧プロファイルのままにすると、ヘッダが
-      // 実際には非アクティブな旧接続を「接続中」として描画し続けてしまう (#F6)。
-      setSelectedProfile(null);
-      setErrorProfileId(profile.id);
-      const kind = errorKindOf(e);
-      setStatus({ kind: "key", key: "statusConnectionFailed", vars: { error: String(e) }, error: true, errorKind: kind });
-      // An SSH host-key mismatch is recoverable in-app: offer the re-trust
-      // dialog instead of leaving the user to hand-edit known_hosts (#682).
-      if (kind === "sshHostKeyMismatch" && profile.ssh) {
-        setHostKeyMismatch({ profile, message: String(e) });
-      }
-    } finally {
-      setConnectingId(null);
-      setConnectAttempt(null);
-      unlistenProgress?.();
-    }
-  }, [
-    sessionId,
-    selectedProfile,
-    closeAllTabs,
-    persistTabsForProfile,
-    switchToOpenConnection,
-    confirmDiscardPendingEdits,
-    upsertOpenConnection,
-    ensureLocalSession,
-    settings.connectTimeoutSecs,
-    settings.confirmProductionConnect,
-    settings.tabRestoreMode,
-    settings.planWatchOnConnect,
-    refreshPlanWatches,
-    settings.schemaDriftOnConnect,
-    captureSchemaSnapshot,
-    settings.timelapseOnConnect,
-    settings.timelapseMaxGenerations,
-    captureTimelapse,
-    toast,
-    confirm,
-    setPanes,
-    setTabs,
-  ]);
+    },
+    [
+      sessionId,
+      selectedProfile,
+      closeAllTabs,
+      persistTabsForProfile,
+      switchToOpenConnection,
+      confirmDiscardPendingEdits,
+      upsertOpenConnection,
+      ensureLocalSession,
+      settings.connectTimeoutSecs,
+      settings.confirmProductionConnect,
+      settings.tabRestoreMode,
+      settings.planWatchOnConnect,
+      refreshPlanWatches,
+      settings.schemaDriftOnConnect,
+      captureSchemaSnapshot,
+      settings.timelapseOnConnect,
+      settings.timelapseMaxGenerations,
+      captureTimelapse,
+      toast,
+      confirm,
+      setPanes,
+      setTabs,
+    ],
+  );
 
   // Host-key mismatch recovery (#682): pin the fingerprint the user approved in
   // the dialog, then reconnect. Pinning (rather than a plain forget + TOFU) means
@@ -3537,71 +3641,102 @@ export default function App() {
 
   // 戻り値は「切断できたか」。未確定の編集の確認でキャンセルされたら false
   // (呼び出し側は後続の破壊的処理を中断する)。`force` は確認済みの呼び出し用。
-  const handleDisconnect = useCallback(async (opts?: { force?: boolean }): Promise<boolean> => {
-    if (!sessionId) return true;
-    if (!opts?.force && !(await confirmDiscardPendingEdits())) return false;
-    if (!opts?.force && !(await confirmDiscardOpenTransactions([sessionId], "disconnect"))) return false;
-    // 明示切断は進行中の自動再接続ループを中断させる。
-    reconnectAbortRef.current = true;
-    reconnectingRef.current = false;
-    setConnectionStatus("connected");
-    // Persist before tearing down — closeAllTabs clears the in-memory list.
-    if (selectedProfile) persistTabsForProfile(selectedProfile.id);
-    await closeAllTabs();
-    // アクティブな接続をレジストリから外す (#複数同時接続)。
-    const closingId = selectedProfile?.id ?? null;
-    if (closingId) removeOpenConnection(closingId);
-    try {
-      await api.disconnect(sessionId);
-    } catch (e) {
-      console.warn(e);
-    }
-    clearEmergencyFor(sessionId);
-    forgetClosedTabs(sessionId);
-    forgetTxState(sessionId);
-    setSessionId(null);
-    setSelectedProfile(null);
-    setImportTarget(null);
-    setDumpTarget(null);
-    setDumpTablesTarget(null);
-    setExportTablesTarget(null);
-    setScriptTarget(null);
-    setSchemaExportTarget(null);
-    // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
-    // 残っていなければ未接続状態へ。
-    const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
-    if (remaining.length > 0) {
-      // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
-      await switchToOpenConnection(remaining[remaining.length - 1], { skipTxWarning: true, skipPersist: true });
-    } else {
-      setStatus({ kind: "key", key: "appDisconnected" });
-    }
-    return true;
-  }, [sessionId, selectedProfile, closeAllTabs, persistTabsForProfile, removeOpenConnection, switchToOpenConnection, clearEmergencyFor, forgetClosedTabs, forgetTxState, confirmDiscardPendingEdits, confirmDiscardOpenTransactions]);
+  const handleDisconnect = useCallback(
+    async (opts?: { force?: boolean }): Promise<boolean> => {
+      if (!sessionId) return true;
+      if (!opts?.force && !(await confirmDiscardPendingEdits())) return false;
+      if (!opts?.force && !(await confirmDiscardOpenTransactions([sessionId], "disconnect"))) return false;
+      // 明示切断は進行中の自動再接続ループを中断させる。
+      reconnectAbortRef.current = true;
+      reconnectingRef.current = false;
+      setConnectionStatus("connected");
+      // Persist before tearing down — closeAllTabs clears the in-memory list.
+      if (selectedProfile) persistTabsForProfile(selectedProfile.id);
+      await closeAllTabs();
+      // アクティブな接続をレジストリから外す (#複数同時接続)。
+      const closingId = selectedProfile?.id ?? null;
+      if (closingId) removeOpenConnection(closingId);
+      try {
+        await api.disconnect(sessionId);
+      } catch (e) {
+        console.warn(e);
+      }
+      clearEmergencyFor(sessionId);
+      forgetClosedTabs(sessionId);
+      forgetTxState(sessionId);
+      setSessionId(null);
+      setSelectedProfile(null);
+      setImportTarget(null);
+      setDumpTarget(null);
+      setDumpTablesTarget(null);
+      setExportTablesTarget(null);
+      setScriptTarget(null);
+      setSchemaExportTarget(null);
+      // 他に開いている接続が残っていれば、そのうち最後に開いたものへ切り替える。
+      // 残っていなければ未接続状態へ。
+      const remaining = openConnectionsRef.current.filter((c) => c.profile.id !== closingId);
+      if (remaining.length > 0) {
+        // 閉じた接続の TX は上の確認で破棄済み。残る接続への自動切替では警告しない。
+        await switchToOpenConnection(remaining[remaining.length - 1], {
+          skipTxWarning: true,
+          skipPersist: true,
+        });
+      } else {
+        setStatus({ kind: "key", key: "appDisconnected" });
+      }
+      return true;
+    },
+    [
+      sessionId,
+      selectedProfile,
+      closeAllTabs,
+      persistTabsForProfile,
+      removeOpenConnection,
+      switchToOpenConnection,
+      clearEmergencyFor,
+      forgetClosedTabs,
+      forgetTxState,
+      confirmDiscardPendingEdits,
+      confirmDiscardOpenTransactions,
+    ],
+  );
 
   // 特定の接続 (背景またはアクティブ) を再接続せずに閉じる (#複数同時接続)。
   // 背景接続ならアクティブなワークスペースには触れずバックエンドセッションだけ
   // 落とす。アクティブ接続を閉じる場合は handleDisconnect と同じ後始末を行う。
-  const handleDisconnectProfile = useCallback(async (profileId: string, opts?: { force?: boolean }): Promise<boolean> => {
-    const entry = openConnectionsRef.current.find((c) => c.profile.id === profileId);
-    if (!entry) return true;
-    if (entry.profile.id === selectedProfile?.id) {
-      return handleDisconnect(opts);
-    }
-    // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
-    if (!opts?.force && !(await confirmDiscardOpenTransactions([entry.sessionId], "disconnect"))) return false;
-    removeOpenConnection(profileId);
-    try {
-      await api.disconnect(entry.sessionId);
-    } catch (e) {
-      console.warn(e);
-    }
-    clearEmergencyFor(entry.sessionId);
-    forgetClosedTabs(entry.sessionId);
-    forgetTxState(entry.sessionId);
-    toast.info(translate("toastDisconnected", { name: entry.profile.name }));
-    return true;
-  }, [selectedProfile?.id, handleDisconnect, removeOpenConnection, toast, clearEmergencyFor, forgetClosedTabs, forgetTxState, confirmDiscardOpenTransactions]);
+  const handleDisconnectProfile = useCallback(
+    async (profileId: string, opts?: { force?: boolean }): Promise<boolean> => {
+      const entry = openConnectionsRef.current.find((c) => c.profile.id === profileId);
+      if (!entry) return true;
+      if (entry.profile.id === selectedProfile?.id) {
+        return handleDisconnect(opts);
+      }
+      // 背景接続: タブは退避済みなので、セッションを落としてレジストリから外すだけ。
+      if (!opts?.force && !(await confirmDiscardOpenTransactions([entry.sessionId], "disconnect")))
+        return false;
+      removeOpenConnection(profileId);
+      try {
+        await api.disconnect(entry.sessionId);
+      } catch (e) {
+        console.warn(e);
+      }
+      clearEmergencyFor(entry.sessionId);
+      forgetClosedTabs(entry.sessionId);
+      forgetTxState(entry.sessionId);
+      toast.info(translate("toastDisconnected", { name: entry.profile.name }));
+      return true;
+    },
+    [
+      selectedProfile?.id,
+      handleDisconnect,
+      removeOpenConnection,
+      toast,
+      clearEmergencyFor,
+      forgetClosedTabs,
+      forgetTxState,
+      confirmDiscardOpenTransactions,
+    ],
+  );
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
   // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
@@ -3648,9 +3783,7 @@ export default function App() {
   // (バックグラウンド接続にも無い) サンドボックスでは先に開かせる。
   const handleReviewSandbox = useCallback(
     (record: SandboxRecord) => {
-      const open = openConnectionsRef.current.find(
-        (c) => c.profile.id === sandboxProfileId(record.id),
-      );
+      const open = openConnectionsRef.current.find((c) => c.profile.id === sandboxProfileId(record.id));
       if (!open) {
         toast.error(translate("toastSandboxNotOpen", { name: record.name }));
         return;
@@ -3670,10 +3803,14 @@ export default function App() {
   // (無効設定・トランザクション中・リトライ上限到達) ときの共通後始末。
   // `inTransaction` のときは「中途半端なコミットを避けて再接続しなかった」旨を示す。
   const tearDownLostSession = useCallback(
-    async (profile: ConnectionProfile | null, oldSessionId: string | null, opts?: {
-      inTransaction?: boolean;
-      gaveUpAfter?: number;
-    }) => {
+    async (
+      profile: ConnectionProfile | null,
+      oldSessionId: string | null,
+      opts?: {
+        inTransaction?: boolean;
+        gaveUpAfter?: number;
+      },
+    ) => {
       const lostProfileId = profile?.id ?? null;
       // 接続が切れた後に確認しても意味がないので止めないが、失われる未 Apply の
       // 編集の件数は知らせる (#1391)。
@@ -3684,7 +3821,11 @@ export default function App() {
       // 死んだ接続をレジストリから外す (#複数同時接続)。
       if (lostProfileId) removeOpenConnection(lostProfileId);
       if (oldSessionId) {
-        try { await api.disconnect(oldSessionId); } catch (e) { console.warn(e); }
+        try {
+          await api.disconnect(oldSessionId);
+        } catch (e) {
+          console.warn(e);
+        }
       }
       clearEmergencyFor(oldSessionId);
       forgetClosedTabs(oldSessionId);
@@ -3712,7 +3853,16 @@ export default function App() {
         setStatus({ kind: "key", key: "statusConnectionLost", error: true });
       }
     },
-    [closeAllTabs, persistTabsForProfile, removeOpenConnection, clearEmergencyFor, forgetClosedTabs, forgetTxState, tabsRef, toast],
+    [
+      closeAllTabs,
+      persistTabsForProfile,
+      removeOpenConnection,
+      clearEmergencyFor,
+      forgetClosedTabs,
+      forgetTxState,
+      tabsRef,
+      toast,
+    ],
   );
 
   // 指数バックオフで自動再接続を試みるループ (#712)。切れたセッションを **同じ
@@ -3732,7 +3882,9 @@ export default function App() {
       reconnectRunRef.current += 1;
       const myRun = reconnectRunRef.current;
       const superseded = () => reconnectRunRef.current !== myRun;
-      const bail = () => { if (!superseded()) reconnectingRef.current = false; };
+      const bail = () => {
+        if (!superseded()) reconnectingRef.current = false;
+      };
       setConnectionStatus("reconnecting");
       // 再接続が最終的に失敗して手動フォールバックへ倒れてもタブが失われないよう
       // 先に退避しておく (成功パスではタブはそのまま生き続けるので保険)。旧セッション
@@ -3741,14 +3893,20 @@ export default function App() {
       persistTabsForProfile(profile.id);
 
       for (let attempt = 0; attempt < maxRetries; attempt++) {
-        if (superseded() || reconnectAbortRef.current) { bail(); return; }
+        if (superseded() || reconnectAbortRef.current) {
+          bail();
+          return;
+        }
         setStatus({
           kind: "key",
           key: "statusReconnectingAttempt",
           vars: { name: profile.name, attempt: attempt + 1, max: maxRetries },
         });
         await new Promise((resolve) => setTimeout(resolve, backoffDelayMs(attempt)));
-        if (superseded() || reconnectAbortRef.current) { bail(); return; }
+        if (superseded() || reconnectAbortRef.current) {
+          bail();
+          return;
+        }
         try {
           // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
           await api.reconnect(oldSessionId);
@@ -3764,7 +3922,10 @@ export default function App() {
           // await 中にユーザが別接続へ切り替えていたら UI は触らずに抜ける。
           // バックエンドのセッションは張り直し済みで、背景接続として有効なまま
           // (切り替え先の表示を上書きしない)。
-          if (superseded() || reconnectAbortRef.current) { bail(); return; }
+          if (superseded() || reconnectAbortRef.current) {
+            bail();
+            return;
+          }
           // 成功: セッションはその場で復活。タブ・グリッドはそのまま。バックエンドは
           // 再接続でセッションを差し替え、緊急クエリ実行モードをオフに戻すため、
           // UI ミラーも同期して外す (同じ session id が生き続けるので明示的に必要)。
@@ -3782,7 +3943,10 @@ export default function App() {
       }
       // 上限到達: 諦めて手動再接続 UI へ (タブは退避済み → 復元される)。旧セッション
       // はまだ生きている (張り直せなかっただけ) ので id を渡して確実に後始末する。
-      if (superseded() || reconnectAbortRef.current) { bail(); return; }
+      if (superseded() || reconnectAbortRef.current) {
+        bail();
+        return;
+      }
       reconnectingRef.current = false;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
@@ -3837,7 +4001,8 @@ export default function App() {
       // SELECT へ追加する再実行はしない — 主キー付きテーブルと同じ描画
       // タイミングで済ませ、rowid/ctid が必要なテーブルは次の再実行/ページ
       // 送りで自然と編集可能になる。
-      api.openTable(sessionId, database, table, 1, false)
+      api
+        .openTable(sessionId, database, table, 1, false)
         .then((r) => {
           if (cancelled) return;
           updateTab(id, {
@@ -3846,9 +4011,13 @@ export default function App() {
             rowIdentity: r.row_identity,
           });
         })
-        .catch(() => { /* ignore */ });
+        .catch(() => {
+          /* ignore */
+        });
     }
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, paneActiveTabs, updateTab]);
 
   // Fetch the reverse foreign keys (FKs pointing at the table) for each active
@@ -3864,12 +4033,17 @@ export default function App() {
       if (key in incomingFkCache || fkInFlightRef.current.has(key)) continue;
       fkInFlightRef.current.add(key);
       const epoch = fkEpochRef.current;
-      api.incomingForeignKeys(sessionId, tt.database, tt.table)
+      api
+        .incomingForeignKeys(sessionId, tt.database, tt.table)
         .then((fks) => {
           if (fkEpochRef.current === epoch) setIncomingFkCache((prev) => ({ ...prev, [key]: fks }));
         })
-        .catch(() => { /* ignore: reverse FK nav is best-effort */ })
-        .finally(() => { if (fkEpochRef.current === epoch) fkInFlightRef.current.delete(key); });
+        .catch(() => {
+          /* ignore: reverse FK nav is best-effort */
+        })
+        .finally(() => {
+          if (fkEpochRef.current === epoch) fkInFlightRef.current.delete(key);
+        });
     }
   }, [sessionId, paneActiveTabs, incomingFkCache]);
 
@@ -3896,13 +4070,19 @@ export default function App() {
       schemaInFlightRef.current.add(key);
       const epoch = prefetchEpochRef.current;
       const gen = schemaGenRef.current.get(key) ?? 0;
-      const current = () => prefetchEpochRef.current === epoch && (schemaGenRef.current.get(key) ?? 0) === gen;
-      api.schemaOverview(sessionId, database)
+      const current = () =>
+        prefetchEpochRef.current === epoch && (schemaGenRef.current.get(key) ?? 0) === gen;
+      api
+        .schemaOverview(sessionId, database)
         .then((schema) => {
           if (current()) setSchemaCache((prev) => ({ ...prev, [key]: schema }));
         })
-        .catch(() => { /* autocomplete is best-effort; ignore failures */ })
-        .finally(() => { if (current()) schemaInFlightRef.current.delete(key); });
+        .catch(() => {
+          /* autocomplete is best-effort; ignore failures */
+        })
+        .finally(() => {
+          if (current()) schemaInFlightRef.current.delete(key);
+        });
     }
   }, [sessionId, editorDatabases, schemaCache]);
 
@@ -3934,7 +4114,9 @@ export default function App() {
     [sessionId],
   );
 
-  useEffect(() => { tabsForDirtyRef.current = tabs; }, [tabs]);
+  useEffect(() => {
+    tabsForDirtyRef.current = tabs;
+  }, [tabs]);
 
   // 長時間クエリ完了時の OS 通知 (#707)。実行開始からの経過時間が設定の閾値以上
   // かつウィンドウが非フォーカスのときだけ発火する (判定は queryNotify.ts の
@@ -4024,474 +4206,499 @@ export default function App() {
     [],
   );
 
-  const runQueryInTab = useCallback(async (
-    tabId: string,
-    sql: string,
-    paginatableBase: string | null = null,
-    autoLimit: number | null = null,
-    autoRefresh: boolean = false,
-    // 呼び出し側が「この描画のクロージャより新しい」接続とタブを確定済みのときに渡す。
-    // 接続の切替直後 (`restoreSavedTabs`) や `addTab` 直後の初回実行では、まだ再描画
-    // されていないためクロージャの `sessionId` / `tabs` が古い — 特に切替元の
-    // セッション (例: ローカル横断クエリの SQLite) へクエリが飛び、切替先のテーブルが
-    // "no such table" になる事故があった。渡されたものをクロージャより優先する。
-    // `forceReadOnly` は EXPLAIN 実測モード (#1164) 用: バックエンドにも読み取り専用を
-    // 強制させる (プロファイルの read_only に関わらず、書き込み文は拒否される)。
-    override?: { sessionId?: string; tab?: Tab; forceReadOnly?: boolean },
-  ) => {
-    const sid = override?.sessionId ?? sessionId;
-    if (!sid) {
-      setStatus({ kind: "key", key: "statusNotConnected", error: true });
-      return;
-    }
-    // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
-    if (connectionStatusRef.current === "reconnecting") {
-      setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
-      return;
-    }
-    // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
-    if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
-      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
-      return;
-    }
-    const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
-    const outCtx = outputCtxFor(sid);
-    await cancelStreamForTab(tabId);
-
-    const timeoutSecs = settings.queryTimeoutSecs;
-    const streamId = newStreamId(tabId);
-    streamIdRef.current.set(tabId, streamId);
-    const startedAt = Date.now();
-    runStartRef.current.set(tabId, startedAt);
-    markQueryStart(streamId); // 計測 (#1094): 既定 OFF なら即 no-op
-    let perfColumnCount = 0; // 計測 (#1094): onColumns で更新し、onDone に渡す
-    setStatus({ kind: "key", key: "statusRunningQuery" });
-    // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
-    // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
-    const prevRowsSnapshot = tab?.result?.rows ?? null;
-    const prevSqlSnapshot = tab?.lastExecutedSql ?? null;
-    // 自動リフレッシュの差分パッチ (#1257): 前回結果が手元にあり、同じ SQL で、行識別
-    // (主キー等) が解決できるなら、バックエンドに前回結果との差分だけを返してもらう。
-    // 比較元のスナップショット ID は前回の行配列に紐づいているので、編集適用などで
-    // 行配列が入れ替わっていれば null (= 全行ストリームで取り直す)。
-    let refreshDiff: { key: string; pkIndices: number[]; prevSnapshotId: number | null } | null = null;
-    if (autoRefresh && tab?.result && !tab.streaming && prevSqlSnapshot === sql) {
-      const { indices } = resolveRowIdentity(
-        tab.result.columns,
-        tab.tableColumns ?? null,
-        tab.rowIdentity ?? null,
-      );
-      if (indices.length > 0) {
-        refreshDiff = {
-          key: tabId,
-          pkIndices: indices,
-          prevSnapshotId: snapshotIdFor(tab.result.rows),
-        };
+  const runQueryInTab = useCallback(
+    async (
+      tabId: string,
+      sql: string,
+      paginatableBase: string | null = null,
+      autoLimit: number | null = null,
+      autoRefresh: boolean = false,
+      // 呼び出し側が「この描画のクロージャより新しい」接続とタブを確定済みのときに渡す。
+      // 接続の切替直後 (`restoreSavedTabs`) や `addTab` 直後の初回実行では、まだ再描画
+      // されていないためクロージャの `sessionId` / `tabs` が古い — 特に切替元の
+      // セッション (例: ローカル横断クエリの SQLite) へクエリが飛び、切替先のテーブルが
+      // "no such table" になる事故があった。渡されたものをクロージャより優先する。
+      // `forceReadOnly` は EXPLAIN 実測モード (#1164) 用: バックエンドにも読み取り専用を
+      // 強制させる (プロファイルの read_only に関わらず、書き込み文は拒否される)。
+      override?: { sessionId?: string; tab?: Tab; forceReadOnly?: boolean },
+    ) => {
+      const sid = override?.sessionId ?? sessionId;
+      if (!sid) {
+        setStatus({ kind: "key", key: "statusNotConnected", error: true });
+        return;
       }
-    }
-    // パッチで更新できる見込みのときは、前回の結果を消さずに残す (パッチの適用元になる)。
-    const keepPrevResult = refreshDiff?.prevSnapshotId != null;
-    // クエリタブの自動命名 (#1390): 実行時にだけ SQL 先頭行から付ける。手動リネーム済みは
-    // 上書きしない。直前のリネームを取りこぼさないよう最新の tabsRef を優先して判定する。
-    const titleSource = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
-    const autoTitle = titleSource
-      ? autoTitleOnRun(titleSource, sql, translate("tabUntitledQuery"))
-      : null;
-    updateTab(tabId, {
-      ...(autoTitle !== null ? { title: autoTitle } : {}),
-      lastExecutedSql: sql,
-      ...(keepPrevResult ? {} : { result: emptyResult([]) }),
-      preview: null,
-      prevResultRows: prevRowsSnapshot,
-      prevResultSql: prevSqlSnapshot,
-      streaming: true,
-      paginatable: paginatableBase,
-      autoLimitApplied: null,
-      autoLimitSkip: null,
-      autoLimitSql: autoLimit !== null ? sql : null,
-      loadingMore: false,
-      canLoadMore: false,
-      queryError: null,
-      partialResult: null,
-      // Drop any in-flight cell edits: their row indices reference the
-      // previous result set and would no longer line up with the new rows.
-      pendingEdits: {},
-      editUndoStack: [],
-      editRedoStack: [],
-      // A manual run of a non-read-only statement turns auto-refresh off so the
-      // toggle never lingers "on" while silently skipping ticks. Read-only
-      // manual re-runs keep polling, now targeting the new SQL.
-      ...(!autoRefresh && !isReadOnlySql(sql, selectedProfile?.driver)
-        ? { autoRefreshSecs: null }
-        : {}),
-    });
+      // 自動再接続中は接続が無効。キューイングはせず明示的に弾く (#600)。
+      if (connectionStatusRef.current === "reconnecting") {
+        setStatus({ kind: "key", key: "statusReconnectBusy", error: true });
+        return;
+      }
+      // バッチ実行中のタブで単文を始めると、cancelStreamForTab がバッチを黙って取り消してしまう。
+      if ((override?.tab ?? tabsRef.current.find((tt) => tt.id === tabId))?.batchRunning) {
+        setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+        return;
+      }
+      const tab = override?.tab ?? tabs.find((tt) => tt.id === tabId);
+      const outCtx = outputCtxFor(sid);
+      await cancelStreamForTab(tabId);
 
-    // 行バッチは貯めて 1 回にまとめて反映する (#1317)。見えているタブでも反映は
-    // 一定間隔に 1 回、`startTransition` で低優先にしてスクロール・入力を妨げない。
-    // 見えていないタブは貯めるだけ (表示された時点で `resume` が反映する)。
-    const isTabVisible = () => panesRef.current.some((p) => p.activeTabId === tabId);
-    const flusher = createStreamRowFlusher({
-      isVisible: isTabVisible,
-      apply: ({ chunks, stats, urgent }) => {
-        const commit = () => {
+      const timeoutSecs = settings.queryTimeoutSecs;
+      const streamId = newStreamId(tabId);
+      streamIdRef.current.set(tabId, streamId);
+      const startedAt = Date.now();
+      runStartRef.current.set(tabId, startedAt);
+      markQueryStart(streamId); // 計測 (#1094): 既定 OFF なら即 no-op
+      let perfColumnCount = 0; // 計測 (#1094): onColumns で更新し、onDone に渡す
+      setStatus({ kind: "key", key: "statusRunningQuery" });
+      // 結果差分ハイライト (#597): 直前の結果行とその SQL を退避しておき、同一クエリの
+      // 再実行 (prevResultSql === 今回 sql) のときだけ ResultGrid 側で差分計算に使う。
+      const prevRowsSnapshot = tab?.result?.rows ?? null;
+      const prevSqlSnapshot = tab?.lastExecutedSql ?? null;
+      // 自動リフレッシュの差分パッチ (#1257): 前回結果が手元にあり、同じ SQL で、行識別
+      // (主キー等) が解決できるなら、バックエンドに前回結果との差分だけを返してもらう。
+      // 比較元のスナップショット ID は前回の行配列に紐づいているので、編集適用などで
+      // 行配列が入れ替わっていれば null (= 全行ストリームで取り直す)。
+      let refreshDiff: { key: string; pkIndices: number[]; prevSnapshotId: number | null } | null = null;
+      if (autoRefresh && tab?.result && !tab.streaming && prevSqlSnapshot === sql) {
+        const { indices } = resolveRowIdentity(
+          tab.result.columns,
+          tab.tableColumns ?? null,
+          tab.rowIdentity ?? null,
+        );
+        if (indices.length > 0) {
+          refreshDiff = {
+            key: tabId,
+            pkIndices: indices,
+            prevSnapshotId: snapshotIdFor(tab.result.rows),
+          };
+        }
+      }
+      // パッチで更新できる見込みのときは、前回の結果を消さずに残す (パッチの適用元になる)。
+      const keepPrevResult = refreshDiff?.prevSnapshotId != null;
+      // クエリタブの自動命名 (#1390): 実行時にだけ SQL 先頭行から付ける。手動リネーム済みは
+      // 上書きしない。直前のリネームを取りこぼさないよう最新の tabsRef を優先して判定する。
+      const titleSource = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+      const autoTitle = titleSource ? autoTitleOnRun(titleSource, sql, translate("tabUntitledQuery")) : null;
+      updateTab(tabId, {
+        ...(autoTitle !== null ? { title: autoTitle } : {}),
+        lastExecutedSql: sql,
+        ...(keepPrevResult ? {} : { result: emptyResult([]) }),
+        preview: null,
+        prevResultRows: prevRowsSnapshot,
+        prevResultSql: prevSqlSnapshot,
+        streaming: true,
+        paginatable: paginatableBase,
+        autoLimitApplied: null,
+        autoLimitSkip: null,
+        autoLimitSql: autoLimit !== null ? sql : null,
+        loadingMore: false,
+        canLoadMore: false,
+        queryError: null,
+        partialResult: null,
+        // Drop any in-flight cell edits: their row indices reference the
+        // previous result set and would no longer line up with the new rows.
+        pendingEdits: {},
+        editUndoStack: [],
+        editRedoStack: [],
+        // A manual run of a non-read-only statement turns auto-refresh off so the
+        // toggle never lingers "on" while silently skipping ticks. Read-only
+        // manual re-runs keep polling, now targeting the new SQL.
+        ...(!autoRefresh && !isReadOnlySql(sql, selectedProfile?.driver) ? { autoRefreshSecs: null } : {}),
+      });
+
+      // 行バッチは貯めて 1 回にまとめて反映する (#1317)。見えているタブでも反映は
+      // 一定間隔に 1 回、`startTransition` で低優先にしてスクロール・入力を妨げない。
+      // 見えていないタブは貯めるだけ (表示された時点で `resume` が反映する)。
+      const isTabVisible = () => panesRef.current.some((p) => p.activeTabId === tabId);
+      const flusher = createStreamRowFlusher({
+        isVisible: isTabVisible,
+        apply: ({ chunks, stats, urgent }) => {
+          const commit = () => {
+            patchTab(tabId, (tt) => {
+              if (!tt.result) return tt;
+              // `concat` はスプレッド (`[...a, ...b]`) と違い引数展開のスタックを使わず、
+              // 貯めたチャンクを 1 回のコピーで結合できる (#1257, #1317)。
+              const nextRows = tt.result.rows.concat(...(chunks as CellValue[][][]));
+              // バックエンドが逐次更新した列統計を新しい行配列に紐づける。
+              attachStreamStats(nextRows, stats);
+              return {
+                ...tt,
+                result: {
+                  ...tt.result,
+                  rows: nextRows,
+                  rows_affected: nextRows.length,
+                  elapsed_ms: Date.now() - startedAt,
+                },
+              };
+            });
+            // 進捗表示は見えているタブだけ更新する (バックグラウンドのストリームが
+            // ステータスバーを書き換えて App を再レンダーしない)。
+            if (isTabVisible()) {
+              setStatus((prev) => {
+                // Only override the "running" / "streaming" status — avoid clobbering
+                // an error a user is reading.
+                if (prev.kind === "key" && prev.error) return prev;
+                return {
+                  kind: "key",
+                  key: "statusStreaming",
+                  vars: { rows: flusher.receivedRows(), elapsed: formatElapsed(Date.now() - startedAt) },
+                };
+              });
+            }
+          };
+          if (urgent) commit();
+          else startTransition(commit);
+        },
+      });
+
+      const finalize = () => {
+        if (streamFlushersRef.current.get(tabId) === flusher) {
+          streamFlushersRef.current.delete(tabId);
+        }
+        const un = streamUnlistenRef.current.get(tabId);
+        if (un) {
+          un();
+          streamUnlistenRef.current.delete(tabId);
+        }
+        streamIdRef.current.delete(tabId);
+      };
+
+      const unlisten = await listenQueryStream(streamId, {
+        onColumns: ({ columns }) => {
+          perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
+          flusher.discard();
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
+          }));
+        },
+        onRows: ({ rows, stats }) => {
+          markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
+          flusher.push(rows as CellValue[][], stats);
+        },
+        onPatch: (patch) => {
+          markFirstRow(streamId);
+          flusher.flushNow();
           patchTab(tabId, (tt) => {
             if (!tt.result) return tt;
-            // `concat` はスプレッド (`[...a, ...b]`) と違い引数展開のスタックを使わず、
-            // 貯めたチャンクを 1 回のコピーで結合できる (#1257, #1317)。
-            const nextRows = tt.result.rows.concat(...(chunks as CellValue[][][]));
-            // バックエンドが逐次更新した列統計を新しい行配列に紐づける。
-            attachStreamStats(nextRows, stats);
+            const applied = applyRefreshPatch(
+              tt.result.rows,
+              patch,
+              tt.result.columns.length,
+              tt.diffHighlight ?? false,
+            );
+            // 差分は行配列と一緒に作ってあるので、グリッドは全行を突き合わせ直さない。
+            if (applied.diff) attachRowDiff(applied.rows, applied.diff);
+            if (applied.rows === tt.result.rows) return tt;
             return {
               ...tt,
               result: {
                 ...tt.result,
-                rows: nextRows,
-                rows_affected: nextRows.length,
+                rows: applied.rows,
+                rows_affected: applied.rows.length,
                 elapsed_ms: Date.now() - startedAt,
               },
             };
           });
-          // 進捗表示は見えているタブだけ更新する (バックグラウンドのストリームが
-          // ステータスバーを書き換えて App を再レンダーしない)。
-          if (isTabVisible()) {
-            setStatus((prev) => {
-              // Only override the "running" / "streaming" status — avoid clobbering
-              // an error a user is reading.
-              if (prev.kind === "key" && prev.error) return prev;
-              return {
-                kind: "key",
-                key: "statusStreaming",
-                vars: { rows: flusher.receivedRows(), elapsed: formatElapsed(Date.now() - startedAt) },
-              };
-            });
-          }
-        };
-        if (urgent) commit();
-        else startTransition(commit);
-      },
-    });
-
-    const finalize = () => {
-      if (streamFlushersRef.current.get(tabId) === flusher) {
-        streamFlushersRef.current.delete(tabId);
-      }
-      const un = streamUnlistenRef.current.get(tabId);
-      if (un) {
-        un();
-        streamUnlistenRef.current.delete(tabId);
-      }
-      streamIdRef.current.delete(tabId);
-    };
-
-    const unlisten = await listenQueryStream(streamId, {
-      onColumns: ({ columns }) => {
-        perfColumnCount = columns.length; // 計測 (#1094): onDone 時点の列数として使う
-        flusher.discard();
-        patchTab(tabId, (tt) => ({
-          ...tt,
-          result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
-        }));
-      },
-      onRows: ({ rows, stats }) => {
-        markFirstRow(streamId); // 計測 (#1094): Time to First Row (2 回目以降は no-op)
-        flusher.push(rows as CellValue[][], stats);
-      },
-      onPatch: (patch) => {
-        markFirstRow(streamId);
-        flusher.flushNow();
-        patchTab(tabId, (tt) => {
-          if (!tt.result) return tt;
-          const applied = applyRefreshPatch(
-            tt.result.rows,
-            patch,
-            tt.result.columns.length,
-            tt.diffHighlight ?? false,
-          );
-          // 差分は行配列と一緒に作ってあるので、グリッドは全行を突き合わせ直さない。
-          if (applied.diff) attachRowDiff(applied.rows, applied.diff);
-          if (applied.rows === tt.result.rows) return tt;
-          return {
-            ...tt,
-            result: {
-              ...tt.result,
-              rows: applied.rows,
-              rows_affected: applied.rows.length,
-              elapsed_ms: Date.now() - startedAt,
-            },
-          };
-        });
-      },
-      onDone: ({ totalRows, rowsAffected, elapsedMs, hasColumns, appliedAutoLimit, autoLimitSkip, serverMessages, readOnly, schemaMayChange, stats, snapshotId, resultId }) => {
-        // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
-        markQueryDone(streamId, {
-          rows: hasColumns ? totalRows : rowsAffected,
-          columns: perfColumnCount,
+        },
+        onDone: ({
+          totalRows,
+          rowsAffected,
           elapsedMs,
-        });
-        flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
-        patchTab(tabId, (tt) => {
-          if (!hasColumns) {
+          hasColumns,
+          appliedAutoLimit,
+          autoLimitSkip,
+          serverMessages,
+          readOnly,
+          schemaMayChange,
+          stats,
+          snapshotId,
+          resultId,
+        }) => {
+          // 計測 (#1094): クエリ開始 → done 受信までをフロント視点で記録。
+          markQueryDone(streamId, {
+            rows: hasColumns ? totalRows : rowsAffected,
+            columns: perfColumnCount,
+            elapsedMs,
+          });
+          flusher.flushNow(); // 貯めていた行を先に反映してから完了状態へ進める (#1317)
+          patchTab(tabId, (tt) => {
+            if (!hasColumns) {
+              return {
+                ...tt,
+                result: {
+                  columns: [],
+                  rows: [],
+                  rows_affected: rowsAffected,
+                  elapsed_ms: elapsedMs,
+                  server_messages: serverMessages,
+                },
+                lastRunReadOnly: { sql, readOnly },
+                lastRunAt: Date.now(),
+                streaming: false,
+                canLoadMore: false,
+                autoLimitApplied: null,
+                autoLimitSkip: null,
+              };
+            }
+            // Optimistically enable scroll-triggered pagination for table-shaped
+            // tabs. The first `loadMore` request will turn this off when it sees
+            // a short page, so we don't need to compare totalRows against the
+            // exact LIMIT here.
+            // 最終統計 (全行観測済み) を行配列に紐づけ直す (#1257)。
+            if (tt.result) {
+              attachStreamStats(tt.result.rows, stats);
+              // 次回の再実行で差分パッチを使うための比較元 ID (#1257)。
+              attachSnapshotId(tt.result.rows, snapshotId);
+              // バックエンドが保持した結果のハンドル (#1264)。行数が一致するときだけ紐づける。
+              if (resultId && tt.result.rows.length === totalRows) {
+                attachResultHandle(tt.result.rows, resultId);
+              }
+            }
             return {
               ...tt,
-              result: { columns: [], rows: [], rows_affected: rowsAffected, elapsed_ms: elapsedMs, server_messages: serverMessages },
+              result: tt.result
+                ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
+                : tt.result,
               lastRunReadOnly: { sql, readOnly },
               lastRunAt: Date.now(),
               streaming: false,
-              canLoadMore: false,
-              autoLimitApplied: null,
-              autoLimitSkip: null,
+              canLoadMore: tt.paginatable !== null,
+              autoLimitApplied: appliedAutoLimit,
+              autoLimitSkip: autoLimitSkip ?? null,
+              ...(autoRefresh ? { autoRefreshLastRunAt: Date.now() } : {}),
             };
+          });
+          // 結果ハンドル (#1264): 置き換わった前回のハンドルを解放し、新しい ID を記録する。
+          // 保持されなかった (null) なら前回のものも捨てる (行配列はもう別物)。
+          {
+            const held = resultHandleByTabRef.current;
+            const prevId = held.get(tabId);
+            if (resultId && hasColumns) held.set(tabId, resultId);
+            else held.delete(tabId);
+            if (prevId && prevId !== resultId) releaseResultHandle(prevId);
           }
-          // Optimistically enable scroll-triggered pagination for table-shaped
-          // tabs. The first `loadMore` request will turn this off when it sees
-          // a short page, so we don't need to compare totalRows against the
-          // exact LIMIT here.
-          // 最終統計 (全行観測済み) を行配列に紐づけ直す (#1257)。
-          if (tt.result) {
-            attachStreamStats(tt.result.rows, stats);
-            // 次回の再実行で差分パッチを使うための比較元 ID (#1257)。
-            attachSnapshotId(tt.result.rows, snapshotId);
-            // バックエンドが保持した結果のハンドル (#1264)。行数が一致するときだけ紐づける。
-            if (resultId && tt.result.rows.length === totalRows) {
-              attachResultHandle(tt.result.rows, resultId);
-            }
-          }
-          return {
-            ...tt,
-            result: tt.result
-              ? { ...tt.result, elapsed_ms: elapsedMs, rows_affected: totalRows }
-              : tt.result,
-            lastRunReadOnly: { sql, readOnly },
-            lastRunAt: Date.now(),
-            streaming: false,
-            canLoadMore: tt.paginatable !== null,
-            autoLimitApplied: appliedAutoLimit,
-            autoLimitSkip: autoLimitSkip ?? null,
-            ...(autoRefresh ? { autoRefreshLastRunAt: Date.now() } : {}),
-          };
-        });
-        // 結果ハンドル (#1264): 置き換わった前回のハンドルを解放し、新しい ID を記録する。
-        // 保持されなかった (null) なら前回のものも捨てる (行配列はもう別物)。
-        {
-          const held = resultHandleByTabRef.current;
-          const prevId = held.get(tabId);
-          if (resultId && hasColumns) held.set(tabId, resultId);
-          else held.delete(tabId);
-          if (prevId && prevId !== resultId) releaseResultHandle(prevId);
-        }
-        if (hasColumns) {
-          setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: totalRows, ms: elapsedMs } });
-        } else {
-          setStatus({ kind: "key", key: "statusRowsAffected", vars: { rows: rowsAffected, ms: elapsedMs } });
-        }
-        // 自動リフレッシュの tick はユーザが実行した文ではないので出力に積まない。
-        if (!autoRefresh) {
-          recordOutput(
-            {
-              sql,
-              outcome: hasColumns ? "rows" : "affected",
-              rows: hasColumns ? totalRows : rowsAffected,
-              elapsedMs,
-              error: null,
-              serverMessages,
-            },
-            tab?.database,
-            outCtx,
-          );
-        }
-        // A new entry was just written to history; refresh the panel. Auto-refresh
-        // ticks never write history, so they skip the (otherwise per-tick) reload.
-        if (!autoRefresh) {
-          setHistoryReloadKey((k) => k + 1);
-          pushQueryHistory(sql);
-        }
-        // DDL may have added/renamed tables or columns — refresh autocomplete
-        // for the database this statement ran against (the executing tab's, or
-        // the profile default when the tab pins no database), leaving other
-        // panes' cached schemas untouched.
-        // バックエンドが実行後に返した判定値を使う (JS でマスクし直さない、#1256)。
-        if (schemaMayChange) {
-          invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
-          // DDL 成功時のスキーマドリフト自動取得 (#1537)。
-          noteSchemaDdl(sql, tab?.database);
-        }
-        finalize();
-        // Auto-refresh ticks fire this same onDone every cadence — notifying on
-        // every tick while the window is unfocused would be spam, not a useful
-        // nudge, so only long-running *manual* runs are eligible (#707).
-        if (!autoRefresh) {
-          void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
-        }
-        // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
-        // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
-        // キーマップ経由の実行 (= 完了直前までエディタにフォーカスがあった) の
-        // ときだけ発火し、ツールバーのボタンクリックでの実行では奪わない。
-        // 自動リフレッシュの tick・結果セットの無い DML・完了時点で既に別タブへ
-        // 切り替わっている場合は対象外。F6 巡回 (paneFocusCursorRef) やフォーカス
-        // トラップ (keyboardNav.ts) の状態には触れない一度きりの focus() 呼び出し
-        // なので干渉しない。
-        if (!autoRefresh && hasColumns) {
-          const focusedInEditor = !!(document.activeElement as HTMLElement | null)?.closest(".cm-editor");
-          if (focusedInEditor) {
-            requestAnimationFrame(() => {
-              if (overlayOpenRef.current) return;
-              const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-              if (owner && owner.activeTabId === tabId) {
-                resultGridRefs.current.get(owner.id)?.focus();
-              }
+          if (hasColumns) {
+            setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: totalRows, ms: elapsedMs } });
+          } else {
+            setStatus({
+              kind: "key",
+              key: "statusRowsAffected",
+              vars: { rows: rowsAffected, ms: elapsedMs },
             });
           }
-        }
-      },
-      onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
+          // 自動リフレッシュの tick はユーザが実行した文ではないので出力に積まない。
+          if (!autoRefresh) {
+            recordOutput(
+              {
+                sql,
+                outcome: hasColumns ? "rows" : "affected",
+                rows: hasColumns ? totalRows : rowsAffected,
+                elapsedMs,
+                error: null,
+                serverMessages,
+              },
+              tab?.database,
+              outCtx,
+            );
+          }
+          // A new entry was just written to history; refresh the panel. Auto-refresh
+          // ticks never write history, so they skip the (otherwise per-tick) reload.
+          if (!autoRefresh) {
+            setHistoryReloadKey((k) => k + 1);
+            pushQueryHistory(sql);
+          }
+          // DDL may have added/renamed tables or columns — refresh autocomplete
+          // for the database this statement ran against (the executing tab's, or
+          // the profile default when the tab pins no database), leaving other
+          // panes' cached schemas untouched.
+          // バックエンドが実行後に返した判定値を使う (JS でマスクし直さない、#1256)。
+          if (schemaMayChange) {
+            invalidateSchemaCache(tab?.database ?? selectedProfile?.database ?? null);
+            // DDL 成功時のスキーマドリフト自動取得 (#1537)。
+            noteSchemaDdl(sql, tab?.database);
+          }
+          finalize();
+          // Auto-refresh ticks fire this same onDone every cadence — notifying on
+          // every tick while the window is unfocused would be spam, not a useful
+          // nudge, so only long-running *manual* runs are eligible (#707).
+          if (!autoRefresh) {
+            void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
+          }
+          // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
+          // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
+          // キーマップ経由の実行 (= 完了直前までエディタにフォーカスがあった) の
+          // ときだけ発火し、ツールバーのボタンクリックでの実行では奪わない。
+          // 自動リフレッシュの tick・結果セットの無い DML・完了時点で既に別タブへ
+          // 切り替わっている場合は対象外。F6 巡回 (paneFocusCursorRef) やフォーカス
+          // トラップ (keyboardNav.ts) の状態には触れない一度きりの focus() 呼び出し
+          // なので干渉しない。
+          if (!autoRefresh && hasColumns) {
+            const focusedInEditor = !!(document.activeElement as HTMLElement | null)?.closest(".cm-editor");
+            if (focusedInEditor) {
+              requestAnimationFrame(() => {
+                if (overlayOpenRef.current) return;
+                const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+                if (owner && owner.activeTabId === tabId) {
+                  resultGridRefs.current.get(owner.id)?.focus();
+                }
+              });
+            }
+          }
+        },
+        onError: ({ error, timedOut, connectionLost, deliveredRows }) => {
+          flusher.flushNow();
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            streaming: false,
+            queryError: connectionLost ? null : (error ?? "Unknown error"),
+            // タイムアウトは取得済みの行を残したまま止まる — 部分結果である旨を
+            // グリッドのバッジ/エクスポート確認に伝える (#685)。
+            ...(timedOut ? { partialResult: timeoutPartialResult(deliveredRows) } : {}),
+          }));
+          setHistoryReloadKey((k) => k + 1);
+          // バックエンドは失敗した実行も履歴に記録するので、ナビ用の列にも足す。
+          if (!autoRefresh) pushQueryHistory(sql);
+          finalize();
+          if (!autoRefresh) {
+            recordOutput(
+              {
+                sql,
+                outcome: timedOut ? "timeout" : "error",
+                rows: timedOut ? deliveredRows : null,
+                elapsedMs: Date.now() - startedAt,
+                error: error ?? null,
+              },
+              tab?.database,
+              outCtx,
+            );
+          }
+          if (!autoRefresh && !connectionLost) {
+            void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
+          }
+          // A dropped connection leaves the session unusable: tear it down and
+          // prompt a reconnect rather than showing the raw transport error.
+          if (connectionLost) {
+            void handleConnectionLostRef.current();
+            return;
+          }
+          if (timedOut) {
+            setStatus({
+              kind: "key",
+              key: "statusQueryTimeoutPartial",
+              vars: { secs: timeoutSecs, rows: deliveredRows },
+              error: true,
+            });
+          } else {
+            setStatus({
+              kind: "key",
+              key: "statusQueryError",
+              vars: { error },
+              error: true,
+              aiContext: { tabId, sql, database: tab?.database ?? null },
+            });
+          }
+        },
+      });
+      // While the listener was being attached (await above), a newer run on this
+      // tab may have cancelled this stream and registered its own id. Registering
+      // our unlisten now would overwrite (and leak) the newer one, and starting
+      // the backend stream would race two writers patching the same tab — so
+      // detach and bail instead.
+      if (streamIdRef.current.get(tabId) !== streamId) {
+        unlisten();
+        flusher.discard();
+        return;
+      }
+      streamUnlistenRef.current.set(tabId, unlisten);
+      streamFlushersRef.current.set(tabId, flusher);
+
+      try {
+        await api.runQueryStream({
+          sessionId: sid,
+          streamId,
+          sql,
+          database: tab?.database ?? null,
+          initialBatch: settings.defaultDisplayCount,
+          chunkSize: settings.streamPrefetchSize,
+          autoLimit,
+          queryTimeoutSecs: timeoutSecs,
+          autoRefresh,
+          forceReadOnly: override?.forceReadOnly ?? false,
+          // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
+          // 自動リフレッシュ (常に読み取り専用) は対象外。
+          capture:
+            settings.flightRecorderEnabled &&
+            !autoRefresh &&
+            isSingleCapturableStatement(sql, selectedProfile?.driver),
+          captureRowCap: settings.flightRecorderRowCap,
+          captureRetentionDays: settings.flightRecorderRetentionDays,
+          refreshDiff,
+          // 大きな結果はバックエンドにも上限付きで保持し、ソート・フィルタ・検索・
+          // エクスポートを行の往復なしで行う (#1264)。
+          retainResult: true,
+        });
+      } catch (e) {
         flusher.flushNow();
-        patchTab(tabId, (tt) => ({
-          ...tt,
-          streaming: false,
-          queryError: connectionLost ? null : (error ?? "Unknown error"),
-          // タイムアウトは取得済みの行を残したまま止まる — 部分結果である旨を
-          // グリッドのバッジ/エクスポート確認に伝える (#685)。
-          ...(timedOut ? { partialResult: timeoutPartialResult(deliveredRows) } : {}),
-        }));
-        setHistoryReloadKey((k) => k + 1);
-        // バックエンドは失敗した実行も履歴に記録するので、ナビ用の列にも足す。
-        if (!autoRefresh) pushQueryHistory(sql);
-        finalize();
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+        setStatus({
+          kind: "key",
+          key: "statusQueryError",
+          vars: { error: String(e) },
+          error: true,
+          errorKind: errorKindOf(e),
+          aiContext: { tabId, sql, database: tab?.database ?? null },
+        });
         if (!autoRefresh) {
           recordOutput(
-            {
-              sql,
-              outcome: timedOut ? "timeout" : "error",
-              rows: timedOut ? deliveredRows : null,
-              elapsedMs: Date.now() - startedAt,
-              error: error ?? null,
-            },
+            { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
             tab?.database,
             outCtx,
           );
         }
-        if (!autoRefresh && !connectionLost) {
-          void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
-        }
-        // A dropped connection leaves the session unusable: tear it down and
-        // prompt a reconnect rather than showing the raw transport error.
-        if (connectionLost) {
-          void handleConnectionLostRef.current();
-          return;
-        }
-        if (timedOut) {
-          setStatus({
-            kind: "key",
-            key: "statusQueryTimeoutPartial",
-            vars: { secs: timeoutSecs, rows: deliveredRows },
-            error: true,
-          });
-        } else {
-          setStatus({
-            kind: "key",
-            key: "statusQueryError",
-            vars: { error },
-            error: true,
-            aiContext: { tabId, sql, database: tab?.database ?? null },
-          });
-        }
-      },
-    });
-    // While the listener was being attached (await above), a newer run on this
-    // tab may have cancelled this stream and registered its own id. Registering
-    // our unlisten now would overwrite (and leak) the newer one, and starting
-    // the backend stream would race two writers patching the same tab — so
-    // detach and bail instead.
-    if (streamIdRef.current.get(tabId) !== streamId) {
-      unlisten();
-      flusher.discard();
-      return;
-    }
-    streamUnlistenRef.current.set(tabId, unlisten);
-    streamFlushersRef.current.set(tabId, flusher);
-
-    try {
-      await api.runQueryStream({
-        sessionId: sid,
-        streamId,
-        sql,
-        database: tab?.database ?? null,
-        initialBatch: settings.defaultDisplayCount,
-        chunkSize: settings.streamPrefetchSize,
-        autoLimit,
-        queryTimeoutSecs: timeoutSecs,
-        autoRefresh,
-        forceReadOnly: override?.forceReadOnly ?? false,
-        // DML フライトレコーダ (#735): 単文の INSERT/UPDATE/DELETE のみ対象。
-        // 自動リフレッシュ (常に読み取り専用) は対象外。
-        capture:
-          settings.flightRecorderEnabled &&
-          !autoRefresh &&
-          isSingleCapturableStatement(sql, selectedProfile?.driver),
-        captureRowCap: settings.flightRecorderRowCap,
-        captureRetentionDays: settings.flightRecorderRetentionDays,
-        refreshDiff,
-        // 大きな結果はバックエンドにも上限付きで保持し、ソート・フィルタ・検索・
-        // エクスポートを行の往復なしで行う (#1264)。
-        retainResult: true,
-      });
-    } catch (e) {
-      flusher.flushNow();
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({
-        kind: "key",
-        key: "statusQueryError",
-        vars: { error: String(e) },
-        error: true,
-        errorKind: errorKindOf(e),
-        aiContext: { tabId, sql, database: tab?.database ?? null },
-      });
-      if (!autoRefresh) {
-        recordOutput(
-          { sql, outcome: "error", rows: null, elapsedMs: Date.now() - startedAt, error: String(e) },
-          tab?.database,
-          outCtx,
-        );
+        finalize();
       }
-      finalize();
-    }
-  }, [
-    sessionId,
-    tabs,
-    updateTab,
-    patchTab,
-    cancelStreamForTab,
-    releaseResultHandle,
-    invalidateSchemaCache,
-    noteSchemaDdl,
-    notifyQueryOutcome,
-    pushQueryHistory,
-    settings.flightRecorderEnabled,
-    settings.flightRecorderRowCap,
-    settings.flightRecorderRetentionDays,
-    selectedProfile?.database,
-    // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
-    selectedProfile?.driver,
-    recordOutput,
-    outputCtxFor,
-    settings.defaultDisplayCount,
-    settings.streamPrefetchSize,
-    settings.queryTimeoutSecs,
-    panesRef,
-    tabsRef,
-  ]);
+    },
+    [
+      sessionId,
+      tabs,
+      updateTab,
+      patchTab,
+      cancelStreamForTab,
+      releaseResultHandle,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      notifyQueryOutcome,
+      pushQueryHistory,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
+      selectedProfile?.database,
+      // 読み取り専用判定の文字列エスケープ規則がドライバ依存になったため (#852)。
+      selectedProfile?.driver,
+      recordOutput,
+      outputCtxFor,
+      settings.defaultDisplayCount,
+      settings.streamPrefetchSize,
+      settings.queryTimeoutSecs,
+      panesRef,
+      tabsRef,
+    ],
+  );
 
   // 環境横断ブロードキャスト実行 (#738): クエリエディタの「複数の接続で実行」から
   // 呼ばれる。書き込み文はここで即座に拒否する (バックエンドの `forceReadOnly` は
   // 二重の安全網)。対象接続の選択・本番確認・実行は `BroadcastModal` 側に任せ、
   // ここでは要求を受け取ってモーダルを開くだけ。
-  const requestBroadcast = useCallback((sql: string, tab: Tab | null) => {
-    if (!isReadOnlySql(sql, selectedProfileRef.current?.driver)) {
-      toast.error(translate("broadcastBlockedToast"));
-      return;
-    }
-    setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
-  }, [toast]);
+  const requestBroadcast = useCallback(
+    (sql: string, tab: Tab | null) => {
+      if (!isReadOnlySql(sql, selectedProfileRef.current?.driver)) {
+        toast.error(translate("broadcastBlockedToast"));
+        return;
+      }
+      setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
+    },
+    [toast],
+  );
 
   // ---- Auto-refresh (scheduled re-execution) -------------------------------
   // Latest `runQueryInTab` / `sessionId` kept in refs so a long-lived timer
@@ -4503,24 +4710,27 @@ export default function App() {
   const focusExplorerRef = useRef<(() => void) | null>(null);
   runQueryInTabRef.current = runQueryInTab;
   const sessionIdRef = useRef(sessionId);
-  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
   ddlCaptureTargetRef.current = sessionId && selectedProfile ? { sessionId, profile: selectedProfile } : null;
   // 接続ヘルスチェックの同時実行を防ぐフラグ。
   const healthCheckBusyRef = useRef(false);
 
   // Toggle auto-refresh for a tab: `secs` enables polling at that cadence (also
   // remembered as the global default), `null` turns it off.
-  const setAutoRefreshForTab = useCallback((tabId: string, secs: number | null) => {
-    if (secs !== null) setAutoRefreshDefaultSecs(secs);
-    updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null });
-  }, [updateTab]);
+  const setAutoRefreshForTab = useCallback(
+    (tabId: string, secs: number | null) => {
+      if (secs !== null) setAutoRefreshDefaultSecs(secs);
+      updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null });
+    },
+    [updateTab],
+  );
 
   // Reconcile live timers with each tab's cadence. Keyed on a compact signature
   // of just (tabId, secs) pairs so streamed row batches — which mutate `tabs`
   // constantly — don't tear down and recreate the intervals.
-  const autoRefreshSignature = tabs
-    .map((tt) => `${tt.id}:${tt.autoRefreshSecs ?? 0}`)
-    .join("|");
+  const autoRefreshSignature = tabs.map((tt) => `${tt.id}:${tt.autoRefreshSecs ?? 0}`).join("|");
   // biome-ignore lint/correctness/useExhaustiveDependencies: autoRefreshSignature は (tabId, secs) の組が変わったときだけタイマーを張り直すためのトリガー。本体は tabsRef から直接読む
   useEffect(() => {
     const timers = autoRefreshTimers.current;
@@ -4570,10 +4780,13 @@ export default function App() {
   }, [autoRefreshSignature]);
 
   // Clear every timer on unmount so intervals don't outlive the component.
-  useEffect(() => () => {
-    for (const handle of autoRefreshTimers.current.values()) clearInterval(handle);
-    autoRefreshTimers.current.clear();
-  }, []);
+  useEffect(
+    () => () => {
+      for (const handle of autoRefreshTimers.current.values()) clearInterval(handle);
+      autoRefreshTimers.current.clear();
+    },
+    [],
+  );
 
   // Build fresh Tab objects from a saved workspace and replace the live layout.
   // Table tabs are verified via describeTable; entries pointing at tables that
@@ -4670,9 +4883,13 @@ export default function App() {
             // but record why so we can tell the user.
             const msg = String(e);
             const reason: "missing" | "connection" | "other" =
-              /table .* does(?:n't| not) exist|no such table|relation .* does not exist|unknown table/i.test(msg)
+              /table .* does(?:n't| not) exist|no such table|relation .* does not exist|unknown table/i.test(
+                msg,
+              )
                 ? "missing"
-                : /server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database|connection refused|connection reset|connection timed out|not connected/i.test(msg)
+                : /server has gone away|lost connection|broken pipe|connection was killed|server closed the connection|terminating connection|error communicating with database|connection refused|connection reset|connection timed out|not connected/i.test(
+                      msg,
+                    )
                   ? "connection"
                   : "other";
             restoreFailures.push({ table: s.table, reason });
@@ -4730,10 +4947,7 @@ export default function App() {
       setActivePaneId(activePane.id);
       // 接続直後にタブを復元した結果、アクティブなタブがクエリタブならエディタへ
       // 自動フォーカスする (#816)。table/explain タブが復元先だと発火しない。
-      focusEditorIfQueryTab(
-        activePane.id,
-        allTabs.find((tt) => tt.id === activePane.activeTabId)?.kind,
-      );
+      focusEditorIfQueryTab(activePane.id, allTabs.find((tt) => tt.id === activePane.activeTabId)?.kind);
       // Re-run the initial table query for restored table tabs so the user
       // immediately sees data instead of an empty grid.
       for (const tab of allTabs) {
@@ -4753,179 +4967,189 @@ export default function App() {
           : restoreFailures.length === 1
             ? "toastTabRestoreMissing"
             : "toastTabRestoreMissingMany";
-        toast.info(
-          translate(key, { table: names, count: restoreFailures.length }),
-          6000,
-        );
+        toast.info(translate(key, { table: names, count: restoreFailures.length }), 6000);
       }
     },
-    [runQueryInTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, toast, focusEditorIfQueryTab, getTabSql, setPanes, setTabs],
+    [
+      runQueryInTab,
+      settings.defaultDisplayCount,
+      settings.tableOpenQueryTemplate,
+      settings.tableOpenQueryOverrides,
+      toast,
+      focusEditorIfQueryTab,
+      getTabSql,
+      setPanes,
+      setTabs,
+    ],
   );
 
   useEffect(() => {
     restoreSavedTabsRef.current = restoreSavedTabs;
   }, [restoreSavedTabs]);
 
-  const previewQueryInTab = useCallback(async (tabId: string, sql: string) => {
-    if (!sessionId) {
-      setStatus({ kind: "key", key: "statusNotConnected", error: true });
-      return;
-    }
-    if (tabsRef.current.find((tt) => tt.id === tabId)?.batchRunning) {
-      setStatus({ kind: "key", key: "statusBatchBusy", error: true });
-      return;
-    }
-    const tab = tabs.find((tt) => tt.id === tabId);
-    // プレビュー中は (下の PreviewGrid 分岐で ResultGrid ごと差し替わるため)
-    // paginatable を一時的に無効化するが、プレビュー終了後は元のテーブルタブへ
-    // 戻れるよう必ず復元する (#F3)。復元しないと PaginationBar・全件エクスポート・
-    // Retry・INSERT 後の再取得が恒久的に機能停止する。
-    const previousPaginatable = tab?.paginatable ?? null;
-    await cancelStreamForTab(tabId);
-
-    const streamId = newStreamId(tabId);
-    streamIdRef.current.set(tabId, streamId);
-    const startedAt = Date.now();
-    setStatus({ kind: "key", key: "statusRunningPreview" });
-    const rowLimit = settings.defaultDisplayCount;
-    // Preview is non-destructive — keep the previous `result` and any
-    // pending cell edits intact so the user can come back and Apply
-    // them after sanity-checking the diff. (Earlier versions cleared
-    // `result` here, which made the post-preview Apply path unable to
-    // locate the row to update.)
-    updateTab(tabId, {
-      preview: emptyPreview(),
-      streaming: true,
-      previewStreaming: true,
-      previewRowLimit: rowLimit,
-      paginatable: null,
-      previewPrevPaginatable: previousPaginatable,
-      loadingMore: false,
-      canLoadMore: false,
-    });
-
-    const finalize = () => {
-      const un = streamUnlistenRef.current.get(tabId);
-      if (un) {
-        un();
-        streamUnlistenRef.current.delete(tabId);
+  const previewQueryInTab = useCallback(
+    async (tabId: string, sql: string) => {
+      if (!sessionId) {
+        setStatus({ kind: "key", key: "statusNotConnected", error: true });
+        return;
       }
-      streamIdRef.current.delete(tabId);
-    };
+      if (tabsRef.current.find((tt) => tt.id === tabId)?.batchRunning) {
+        setStatus({ kind: "key", key: "statusBatchBusy", error: true });
+        return;
+      }
+      const tab = tabs.find((tt) => tt.id === tabId);
+      // プレビュー中は (下の PreviewGrid 分岐で ResultGrid ごと差し替わるため)
+      // paginatable を一時的に無効化するが、プレビュー終了後は元のテーブルタブへ
+      // 戻れるよう必ず復元する (#F3)。復元しないと PaginationBar・全件エクスポート・
+      // Retry・INSERT 後の再取得が恒久的に機能停止する。
+      const previousPaginatable = tab?.paginatable ?? null;
+      await cancelStreamForTab(tabId);
 
-    const unlisten = await listenPreviewStream(streamId, {
-      onMeta: ({ targetTable, columns, primaryKey, rowsAffected, elapsedMs, truncated }) => {
-        patchTab(tabId, (tt) => ({
-          ...tt,
-          preview: {
-            target_table: targetTable,
-            columns,
-            primary_key: primaryKey,
-            before_rows: [],
-            after_rows: [],
-            rows_affected: rowsAffected,
-            elapsed_ms: elapsedMs,
-            truncated,
-          },
-        }));
-      },
-      onBeforeRows: ({ rows }) => {
-        patchTab(tabId, (tt) => {
-          if (!tt.preview) return tt;
-          return {
-            ...tt,
-            preview: { ...tt.preview, before_rows: tt.preview.before_rows.concat(rows as CellValue[][]) },
-          };
-        });
-        setStatus((prev) => {
-          if (prev.kind === "key" && prev.error) return prev;
-          return { kind: "key", key: "statusPreviewStreaming", vars: { ms: Date.now() - startedAt } };
-        });
-      },
-      onAfterRows: ({ rows }) => {
-        patchTab(tabId, (tt) => {
-          if (!tt.preview) return tt;
-          return {
-            ...tt,
-            preview: { ...tt.preview, after_rows: tt.preview.after_rows.concat(rows as CellValue[][]) },
-          };
-        });
-      },
-      onDone: () => {
-        patchTab(tabId, (tt) => ({
-          ...tt,
-          streaming: false,
-          previewStreaming: false,
-          paginatable: previousPaginatable,
-          previewPrevPaginatable: undefined,
-        }));
-        const tt = tabsRef.current.find((x) => x.id === tabId);
-        const rowsAffected = tt?.preview?.rows_affected ?? 0;
-        const elapsedMs = tt?.preview?.elapsed_ms ?? Date.now() - startedAt;
-        setStatus({
-          kind: "key",
-          key: "statusPreviewDone",
-          vars: { rows: rowsAffected, ms: elapsedMs },
-        });
-        finalize();
-      },
-      onError: ({ error, connectionLost }) => {
-        patchTab(tabId, (tt) => ({
-          ...tt,
-          streaming: false,
-          previewStreaming: false,
-          paginatable: previousPaginatable,
-          previewPrevPaginatable: undefined,
-        }));
-        finalize();
-        if (connectionLost) {
-          void handleConnectionLostRef.current();
-          return;
-        }
-        setStatus({ kind: "key", key: "statusPreviewError", vars: { error }, error: true });
-      },
-    });
-    // Same stale-stream guard as runQueryInTab: a newer run/preview on this
-    // tab may have superseded this stream while the listener attached.
-    if (streamIdRef.current.get(tabId) !== streamId) {
-      unlisten();
-      return;
-    }
-    streamUnlistenRef.current.set(tabId, unlisten);
-
-    try {
-      await api.previewQueryStream({
-        sessionId,
-        streamId,
-        sql,
-        database: tab?.database ?? null,
-        rowLimit,
-        chunkSize: settings.streamPrefetchSize,
-        // runQueryInTab (通常実行) と同じ設定値を渡す (#I2)。
-        queryTimeoutSecs: settings.queryTimeoutSecs,
+      const streamId = newStreamId(tabId);
+      streamIdRef.current.set(tabId, streamId);
+      const startedAt = Date.now();
+      setStatus({ kind: "key", key: "statusRunningPreview" });
+      const rowLimit = settings.defaultDisplayCount;
+      // Preview is non-destructive — keep the previous `result` and any
+      // pending cell edits intact so the user can come back and Apply
+      // them after sanity-checking the diff. (Earlier versions cleared
+      // `result` here, which made the post-preview Apply path unable to
+      // locate the row to update.)
+      updateTab(tabId, {
+        preview: emptyPreview(),
+        streaming: true,
+        previewStreaming: true,
+        previewRowLimit: rowLimit,
+        paginatable: null,
+        previewPrevPaginatable: previousPaginatable,
+        loadingMore: false,
+        canLoadMore: false,
       });
-    } catch (e) {
-      patchTab(tabId, (tt) => ({
-        ...tt,
-        streaming: false,
-        previewStreaming: false,
-        paginatable: previousPaginatable,
-        previewPrevPaginatable: undefined,
-      }));
-      setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
-      finalize();
-    }
-  }, [
-    sessionId,
-    tabs,
-    updateTab,
-    patchTab,
-    cancelStreamForTab,
-    settings.defaultDisplayCount,
-    settings.streamPrefetchSize,
-    settings.queryTimeoutSecs,
-    tabsRef,
-  ]);
+
+      const finalize = () => {
+        const un = streamUnlistenRef.current.get(tabId);
+        if (un) {
+          un();
+          streamUnlistenRef.current.delete(tabId);
+        }
+        streamIdRef.current.delete(tabId);
+      };
+
+      const unlisten = await listenPreviewStream(streamId, {
+        onMeta: ({ targetTable, columns, primaryKey, rowsAffected, elapsedMs, truncated }) => {
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            preview: {
+              target_table: targetTable,
+              columns,
+              primary_key: primaryKey,
+              before_rows: [],
+              after_rows: [],
+              rows_affected: rowsAffected,
+              elapsed_ms: elapsedMs,
+              truncated,
+            },
+          }));
+        },
+        onBeforeRows: ({ rows }) => {
+          patchTab(tabId, (tt) => {
+            if (!tt.preview) return tt;
+            return {
+              ...tt,
+              preview: { ...tt.preview, before_rows: tt.preview.before_rows.concat(rows as CellValue[][]) },
+            };
+          });
+          setStatus((prev) => {
+            if (prev.kind === "key" && prev.error) return prev;
+            return { kind: "key", key: "statusPreviewStreaming", vars: { ms: Date.now() - startedAt } };
+          });
+        },
+        onAfterRows: ({ rows }) => {
+          patchTab(tabId, (tt) => {
+            if (!tt.preview) return tt;
+            return {
+              ...tt,
+              preview: { ...tt.preview, after_rows: tt.preview.after_rows.concat(rows as CellValue[][]) },
+            };
+          });
+        },
+        onDone: () => {
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            streaming: false,
+            previewStreaming: false,
+            paginatable: previousPaginatable,
+            previewPrevPaginatable: undefined,
+          }));
+          const tt = tabsRef.current.find((x) => x.id === tabId);
+          const rowsAffected = tt?.preview?.rows_affected ?? 0;
+          const elapsedMs = tt?.preview?.elapsed_ms ?? Date.now() - startedAt;
+          setStatus({
+            kind: "key",
+            key: "statusPreviewDone",
+            vars: { rows: rowsAffected, ms: elapsedMs },
+          });
+          finalize();
+        },
+        onError: ({ error, connectionLost }) => {
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            streaming: false,
+            previewStreaming: false,
+            paginatable: previousPaginatable,
+            previewPrevPaginatable: undefined,
+          }));
+          finalize();
+          if (connectionLost) {
+            void handleConnectionLostRef.current();
+            return;
+          }
+          setStatus({ kind: "key", key: "statusPreviewError", vars: { error }, error: true });
+        },
+      });
+      // Same stale-stream guard as runQueryInTab: a newer run/preview on this
+      // tab may have superseded this stream while the listener attached.
+      if (streamIdRef.current.get(tabId) !== streamId) {
+        unlisten();
+        return;
+      }
+      streamUnlistenRef.current.set(tabId, unlisten);
+
+      try {
+        await api.previewQueryStream({
+          sessionId,
+          streamId,
+          sql,
+          database: tab?.database ?? null,
+          rowLimit,
+          chunkSize: settings.streamPrefetchSize,
+          // runQueryInTab (通常実行) と同じ設定値を渡す (#I2)。
+          queryTimeoutSecs: settings.queryTimeoutSecs,
+        });
+      } catch (e) {
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          previewStreaming: false,
+          paginatable: previousPaginatable,
+          previewPrevPaginatable: undefined,
+        }));
+        setStatus({ kind: "key", key: "statusPreviewError", vars: { error: String(e) }, error: true });
+        finalize();
+      }
+    },
+    [
+      sessionId,
+      tabs,
+      updateTab,
+      patchTab,
+      cancelStreamForTab,
+      settings.defaultDisplayCount,
+      settings.streamPrefetchSize,
+      settings.queryTimeoutSecs,
+      tabsRef,
+    ],
+  );
 
   // loadMore / ページ送りの要求トークン (タブ ID → 連番)。自分が最新の要求のときだけ
   // 結果の反映と loadingMore の解除を行い、古い応答が新しい要求の状態を壊さないようにする。
@@ -4935,82 +5159,78 @@ export default function App() {
     pageReqRef.current.set(tabId, n);
     return n;
   }, []);
-  const loadMoreInTab = useCallback(async (tabId: string) => {
-    if (!sessionId) return;
-    const tab = tabsRef.current.find((tt) => tt.id === tabId);
-    if (
-      !tab ||
-      !tab.paginatable ||
-      !tab.canLoadMore ||
-      tab.loadingMore ||
-      tab.streaming ||
-      !tab.result
-    ) {
-      return;
-    }
-    const offset = tab.result.rows.length;
-    const chunkSize = Math.max(1, settings.streamPrefetchSize);
-    const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
-    // Buffered inline edits survive pagination because they are keyed by each
-    // row's primary key (`rowEditKey`) rather than its array index. Appending a
-    // page leaves existing rows in place, and even if a query without a stable
-    // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
-    // the edit still targets the correct row.
-    const reqToken = nextPageReq(tabId);
-    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
-    setStatus({
-      kind: "key",
-      key: "statusLoadingMore",
-      vars: { rows: offset },
-    });
-    try {
-      const more = await api.runQuery(sessionId, sql, tab.database ?? null);
-      patchTab(tabId, (tt) => {
-        if (pageReqRef.current.get(tabId) !== reqToken) return tt;
-        // 待機中に同じタブで別クエリが実行された場合 (結果の差し替え・ストリーミング
-        // 開始・SQL/ページング元の変化) は、古い SQL の続きを混ぜずに破棄する。
-        if (
-          !tt.result ||
-          tt.result !== tab.result ||
-          tt.streaming ||
-          tt.paginatable !== tab.paginatable ||
-          tt.lastExecutedSql !== tab.lastExecutedSql
-        ) {
-          return { ...tt, loadingMore: false };
-        }
-        const nextRows = tt.result.rows.concat(more.rows);
-        return {
-          ...tt,
-          result: {
-            ...tt.result,
-            rows: nextRows,
-            rows_affected: nextRows.length,
-          },
-          loadingMore: false,
-          canLoadMore: more.rows.length >= chunkSize,
-          // load-more は結果行を伸ばすが SQL の再実行ではない。差分スナップショット
-          // (#597) を無効化し、伸びた行が「追加」として誤ハイライトされるのを防ぐ。
-          prevResultRows: null,
-          prevResultSql: null,
-        };
-      });
+  const loadMoreInTab = useCallback(
+    async (tabId: string) => {
+      if (!sessionId) return;
+      const tab = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab || !tab.paginatable || !tab.canLoadMore || tab.loadingMore || tab.streaming || !tab.result) {
+        return;
+      }
+      const offset = tab.result.rows.length;
+      const chunkSize = Math.max(1, settings.streamPrefetchSize);
+      const sql = `${tab.paginatable} LIMIT ${chunkSize} OFFSET ${offset}`;
+      // Buffered inline edits survive pagination because they are keyed by each
+      // row's primary key (`rowEditKey`) rather than its array index. Appending a
+      // page leaves existing rows in place, and even if a query without a stable
+      // ORDER BY re-surfaces a row already shown, its PK identity is unchanged so
+      // the edit still targets the correct row.
+      const reqToken = nextPageReq(tabId);
+      patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
       setStatus({
         kind: "key",
-        key: "statusStreamingDone",
-        vars: { rows: offset + more.rows.length, ms: tab.result.elapsed_ms },
+        key: "statusLoadingMore",
+        vars: { rows: offset },
       });
-    } catch (e) {
-      patchTab(tabId, (tt) =>
-        pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
-      );
-      setStatus({
-        kind: "key",
-        key: "statusQueryError",
-        vars: { error: String(e) },
-        error: true,
-      });
-    }
-  }, [sessionId, settings.streamPrefetchSize, patchTab, tabsRef, nextPageReq]);
+      try {
+        const more = await api.runQuery(sessionId, sql, tab.database ?? null);
+        patchTab(tabId, (tt) => {
+          if (pageReqRef.current.get(tabId) !== reqToken) return tt;
+          // 待機中に同じタブで別クエリが実行された場合 (結果の差し替え・ストリーミング
+          // 開始・SQL/ページング元の変化) は、古い SQL の続きを混ぜずに破棄する。
+          if (
+            !tt.result ||
+            tt.result !== tab.result ||
+            tt.streaming ||
+            tt.paginatable !== tab.paginatable ||
+            tt.lastExecutedSql !== tab.lastExecutedSql
+          ) {
+            return { ...tt, loadingMore: false };
+          }
+          const nextRows = tt.result.rows.concat(more.rows);
+          return {
+            ...tt,
+            result: {
+              ...tt.result,
+              rows: nextRows,
+              rows_affected: nextRows.length,
+            },
+            loadingMore: false,
+            canLoadMore: more.rows.length >= chunkSize,
+            // load-more は結果行を伸ばすが SQL の再実行ではない。差分スナップショット
+            // (#597) を無効化し、伸びた行が「追加」として誤ハイライトされるのを防ぐ。
+            prevResultRows: null,
+            prevResultSql: null,
+          };
+        });
+        setStatus({
+          kind: "key",
+          key: "statusStreamingDone",
+          vars: { rows: offset + more.rows.length, ms: tab.result.elapsed_ms },
+        });
+      } catch (e) {
+        patchTab(tabId, (tt) =>
+          pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
+        );
+        setStatus({
+          kind: "key",
+          key: "statusQueryError",
+          vars: { error: String(e) },
+          error: true,
+        });
+      }
+    },
+    [sessionId, settings.streamPrefetchSize, patchTab, tabsRef, nextPageReq],
+  );
 
   // ページネーション: table タブの `paginatable` base SQL から N ページ目を
   // 取得して結果を**置き換える** (loadMore は追記、こちらはページ送り)。ページング用の
@@ -5019,160 +5239,177 @@ export default function App() {
   // 通常のページ送り (undefined) は現在の `tab.serverSort`/`serverFilter` を使い回すが、
   // 適用/解除の瞬間は「ページ番号は変わらず 1 のまま」でも再フェッチが要るため、
   // `force` で target===現在ページの早期リターンを無効化する。
-  const goToPageInTab = useCallback(async (
-    tabId: string,
-    page: number,
-    sizeOverride?: number,
-    browseOverride?: { sort?: ServerSort | null; filter?: ServerFilter | null; force?: boolean },
-  ) => {
-    if (!sessionId) return;
-    const tab = tabsRef.current.find((tt) => tt.id === tabId);
-    if (
-      !tab ||
-      tab.kind !== "table" ||
-      !tab.paginatable ||
-      tab.streaming ||
-      tab.loadingMore
-    ) {
-      return;
-    }
-    const nextSort = browseOverride && "sort" in browseOverride ? browseOverride.sort ?? null : tab.serverSort ?? null;
-    const nextFilter = browseOverride && "filter" in browseOverride ? browseOverride.filter ?? null : tab.serverFilter ?? null;
-    const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
-    const estimatedTotal = tableTotalPagesEstimate({ serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal }, pageSize);
-    // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
-    const total = effectiveTotalPages(estimatedTotal, tab.page ?? 1, (tab.result?.rows.length ?? 0) >= pageSize);
-    const target = clampPage(page, total);
-    if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const effectiveBase = applyServerBrowse(
-      tab.paginatable,
-      driver,
-      nextFilter,
-      nextSort,
-      tab.openTemplate?.wrapBrowse ?? false,
-    );
-    const sql = buildPageSql(effectiveBase, pageSize, target);
-    // キーセット (#1150): 隣接ページへの送りは現在ページの先頭/末尾行のキーから取り直す。
-    // 使えない (主キー無し・NULL 可能キー・ジャンプ等) 場合は null で従来の OFFSET。
-    const keysetMove = keysetMoveFor(
-      tab.page ?? 1,
-      target,
-      !!browseOverride?.force,
-      pageSize !== (tab.pageSize ?? tab.previewRowLimit),
-    );
-    // デフォルトクエリ (#1253) がキーセットの条件 (主キー昇順のみ等) を満たさない
-    // タブは、常に LIMIT/OFFSET で送る。
-    const keysetAllowed = !tab.openTemplate || tab.openTemplate.keyset;
-    const keysetPlan =
-      keysetMove && keysetAllowed && tab.result
-        ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns)
-        : null;
-    const keysetAnchor =
-      keysetMove && keysetPlan && tab.result
-        ? readKeysetAnchor(
-            keysetPlan,
-            tab.result.columns,
-            keysetMove === "next" ? tab.result.rows[tab.result.rows.length - 1] : tab.result.rows[0],
-          )
-        : null;
-    const reqToken = nextPageReq(tabId);
-    patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
-    try {
-      let keysetRes: QueryResult | null = null;
-      if (keysetMove && keysetPlan && keysetAnchor) {
-        const keysetSql = buildKeysetPageSql(
-          tab.paginatable,
-          driver,
-          nextFilter,
-          keysetPlan,
-          keysetAnchor,
-          keysetMove,
-          pageSize,
-        );
-        const kres = await api.runQuery(sessionId, keysetSql, tab.database ?? null);
-        // 空 (行が消えて末尾を越えた等) なら OFFSET に任せる。
-        if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
+  const goToPageInTab = useCallback(
+    async (
+      tabId: string,
+      page: number,
+      sizeOverride?: number,
+      browseOverride?: { sort?: ServerSort | null; filter?: ServerFilter | null; force?: boolean },
+    ) => {
+      if (!sessionId) return;
+      const tab = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab || tab.kind !== "table" || !tab.paginatable || tab.streaming || tab.loadingMore) {
+        return;
       }
-      const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
-      patchTab(tabId, (tt) => {
-        if (pageReqRef.current.get(tabId) !== reqToken) return tt;
-        // 待機中に同じタブで別クエリが実行された場合は、古いページで結果を
-        // 上書きしない (loadMore と同じ判定)。
-        if (
-          tt.result !== tab.result ||
-          tt.streaming ||
-          tt.paginatable !== tab.paginatable ||
-          tt.lastExecutedSql !== tab.lastExecutedSql
-        ) {
-          return { ...tt, loadingMore: false };
-        }
-        return {
-        ...tt,
-        result: res,
-        // ページ送りは完全な新ページへの置換なので、前回のキャンセル/タイム
-        // アウト由来の部分結果バッジ (#685) はここでクリアする。
-        partialResult: null,
-        page: target,
+      const nextSort =
+        browseOverride && "sort" in browseOverride ? (browseOverride.sort ?? null) : (tab.serverSort ?? null);
+      const nextFilter =
+        browseOverride && "filter" in browseOverride
+          ? (browseOverride.filter ?? null)
+          : (tab.serverFilter ?? null);
+      const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
+      const estimatedTotal = tableTotalPagesEstimate(
+        { serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal },
         pageSize,
-        serverSort: nextSort,
-        serverFilter: nextFilter,
-        loadingMore: false,
-        // ページングは置換なので、無限スクロールの load-more は無効化する。
-        canLoadMore: false,
-        // ページ送りは別ページへの置換であり SQL の再実行ではない。差分
-        // スナップショット (#597) を無効化し、旧ページとの誤比較を防ぐ。
-        prevResultRows: null,
-        prevResultSql: null,
-        // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。
-        pendingEdits: {},
-        editUndoStack: [],
-        editRedoStack: [],
-        preview: null,
-        };
-      });
-      setStatus({
-        kind: "key",
-        key: "statusStreamingDone",
-        vars: { rows: res.rows.length, ms: res.elapsed_ms },
-      });
-    } catch (e) {
-      patchTab(tabId, (tt) =>
-        pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
       );
-      setStatus({
-        kind: "key",
-        key: "statusQueryError",
-        vars: { error: String(e) },
-        error: true,
-      });
-    }
-  }, [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq]);
+      // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
+      const total = effectiveTotalPages(
+        estimatedTotal,
+        tab.page ?? 1,
+        (tab.result?.rows.length ?? 0) >= pageSize,
+      );
+      const target = clampPage(page, total);
+      if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const effectiveBase = applyServerBrowse(
+        tab.paginatable,
+        driver,
+        nextFilter,
+        nextSort,
+        tab.openTemplate?.wrapBrowse ?? false,
+      );
+      const sql = buildPageSql(effectiveBase, pageSize, target);
+      // キーセット (#1150): 隣接ページへの送りは現在ページの先頭/末尾行のキーから取り直す。
+      // 使えない (主キー無し・NULL 可能キー・ジャンプ等) 場合は null で従来の OFFSET。
+      const keysetMove = keysetMoveFor(
+        tab.page ?? 1,
+        target,
+        !!browseOverride?.force,
+        pageSize !== (tab.pageSize ?? tab.previewRowLimit),
+      );
+      // デフォルトクエリ (#1253) がキーセットの条件 (主キー昇順のみ等) を満たさない
+      // タブは、常に LIMIT/OFFSET で送る。
+      const keysetAllowed = !tab.openTemplate || tab.openTemplate.keyset;
+      const keysetPlan =
+        keysetMove && keysetAllowed && tab.result
+          ? resolveKeysetPlan(tab.tableColumns, nextSort, tab.result.columns)
+          : null;
+      const keysetAnchor =
+        keysetMove && keysetPlan && tab.result
+          ? readKeysetAnchor(
+              keysetPlan,
+              tab.result.columns,
+              keysetMove === "next" ? tab.result.rows[tab.result.rows.length - 1] : tab.result.rows[0],
+            )
+          : null;
+      const reqToken = nextPageReq(tabId);
+      patchTab(tabId, (tt) => ({ ...tt, loadingMore: true }));
+      try {
+        let keysetRes: QueryResult | null = null;
+        if (keysetMove && keysetPlan && keysetAnchor) {
+          const keysetSql = buildKeysetPageSql(
+            tab.paginatable,
+            driver,
+            nextFilter,
+            keysetPlan,
+            keysetAnchor,
+            keysetMove,
+            pageSize,
+          );
+          const kres = await api.runQuery(sessionId, keysetSql, tab.database ?? null);
+          // 空 (行が消えて末尾を越えた等) なら OFFSET に任せる。
+          if (kres.rows.length > 0) keysetRes = { ...kres, rows: reverseRowsForPrev(kres.rows, keysetMove) };
+        }
+        const res = keysetRes ?? (await api.runQuery(sessionId, sql, tab.database ?? null));
+        patchTab(tabId, (tt) => {
+          if (pageReqRef.current.get(tabId) !== reqToken) return tt;
+          // 待機中に同じタブで別クエリが実行された場合は、古いページで結果を
+          // 上書きしない (loadMore と同じ判定)。
+          if (
+            tt.result !== tab.result ||
+            tt.streaming ||
+            tt.paginatable !== tab.paginatable ||
+            tt.lastExecutedSql !== tab.lastExecutedSql
+          ) {
+            return { ...tt, loadingMore: false };
+          }
+          return {
+            ...tt,
+            result: res,
+            // ページ送りは完全な新ページへの置換なので、前回のキャンセル/タイム
+            // アウト由来の部分結果バッジ (#685) はここでクリアする。
+            partialResult: null,
+            page: target,
+            pageSize,
+            serverSort: nextSort,
+            serverFilter: nextFilter,
+            loadingMore: false,
+            // ページングは置換なので、無限スクロールの load-more は無効化する。
+            canLoadMore: false,
+            // ページ送りは別ページへの置換であり SQL の再実行ではない。差分
+            // スナップショット (#597) を無効化し、旧ページとの誤比較を防ぐ。
+            prevResultRows: null,
+            prevResultSql: null,
+            // 別ページに切り替えたら旧ページ由来の保留編集は孤立するため破棄する。
+            pendingEdits: {},
+            editUndoStack: [],
+            editRedoStack: [],
+            preview: null,
+          };
+        });
+        setStatus({
+          kind: "key",
+          key: "statusStreamingDone",
+          vars: { rows: res.rows.length, ms: res.elapsed_ms },
+        });
+      } catch (e) {
+        patchTab(tabId, (tt) =>
+          pageReqRef.current.get(tabId) === reqToken ? { ...tt, loadingMore: false } : tt,
+        );
+        setStatus({
+          kind: "key",
+          key: "statusQueryError",
+          vars: { error: String(e) },
+          error: true,
+        });
+      }
+    },
+    [sessionId, patchTab, selectedProfile?.driver, tabsRef, nextPageReq],
+  );
   goToPageInTabRef.current = goToPageInTab;
 
   // ページサイズを変更し、1 ページ目から取り直す。状態反映のレースを避けるため、
   // 新サイズを goToPageInTab に直接渡す。
-  const setPageSizeInTab = useCallback((tabId: string, size: number) => {
-    void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
-  }, [goToPageInTab]);
+  const setPageSizeInTab = useCallback(
+    (tabId: string, size: number) => {
+      void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
+    },
+    [goToPageInTab],
+  );
 
   // サーバ側ソート (#792): ヘッダーメニューから列の昇順/降順/解除を選ぶと、1 ページ目
   // から再フェッチする。単一列のみ (複数列 ORDER BY は最小セットの対象外)。
-  const setServerSortInTab = useCallback((tabId: string, column: string, direction: ServerSortDirection | null) => {
-    const next: ServerSort | null = direction ? { column, direction } : null;
-    void goToPageInTab(tabId, 1, undefined, { sort: next, force: true });
-  }, [goToPageInTab]);
+  const setServerSortInTab = useCallback(
+    (tabId: string, column: string, direction: ServerSortDirection | null) => {
+      const next: ServerSort | null = direction ? { column, direction } : null;
+      void goToPageInTab(tabId, 1, undefined, { sort: next, force: true });
+    },
+    [goToPageInTab],
+  );
 
   // サーバ側フィルタ (#792): ヘッダーメニューから条件を適用/解除すると、1 ページ目
   // から再フェッチする。単一条件のみ (複数条件の AND/OR は最小セットの対象外)。
-  const setServerFilterInTab = useCallback((
-    tabId: string,
-    column: string,
-    filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
-  ) => {
-    const next: ServerFilter | null = filter ? { column, ...filter } : null;
-    void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
-  }, [goToPageInTab]);
+  const setServerFilterInTab = useCallback(
+    (
+      tabId: string,
+      column: string,
+      filter: { op: ServerFilterOp; value: string; value2?: string; numeric: boolean } | null,
+    ) => {
+      const next: ServerFilter | null = filter ? { column, ...filter } : null;
+      void goToPageInTab(tabId, 1, undefined, { filter: next, force: true });
+    },
+    [goToPageInTab],
+  );
 
   // SQL スクリプト (複数文) のバッチ実行 (#1256)。文の分割・実行・SELECT のプレビュー
   // 行 (200 件) での取得打ち切りはバックエンドの `run_sql_batch` が行い、各文の結果
@@ -5185,169 +5422,183 @@ export default function App() {
   // effect 経由で更新されるため直後は新タブを見つけられない。その場合はメモリ上の Tab を
   // 直接渡してレース (無実行化) を避ける。同一タブの再実行では渡さず、tabsRef の最新
   // フラグで再入ガードを効かせる。
-  const runBatchInTab = useCallback(async (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => {
-    if (!sessionId) return;
-    const tab = tabOverride ?? tabsRef.current.find((tt) => tt.id === tabId);
-    if (!tab) return;
-    // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
-    if (tab.batchRunning || tab.streaming) return;
-    // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
-    const db = tab.database ?? null;
-    const outCtx = outputCtxFor(sessionId);
-    patchTab(tabId, (tt) => ({
-      ...tt,
-      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
-      batchRunning: true,
-      batchScript: sql,
-      batchResults: [],
-      showChart: false,
-      showPivot: false,
-      showJson: false,
-      preview: null,
-      queryError: null,
-    }));
-    const results: BatchStatementResult[] = [];
-    const streamId = newStreamId(tabId);
-    // 停止ボタン・タブを閉じる・切断のキャンセル (cancelStreamForTab) が届くよう登録する。
-    streamIdRef.current.set(tabId, streamId);
-    beginBatchRun(batchStreamRef.current, tabId, streamId);
-    const isCurrentBatch = () => isCurrentBatchRun(batchStreamRef.current, tabId, streamId);
-    let unlisten: UnlistenFn | null = null;
-    const finish = () => {
-      unlisten?.();
-      unlisten = null;
-      if (streamIdRef.current.get(tabId) === streamId) streamIdRef.current.delete(tabId);
-    };
-    const finishRun = (extra: { error?: string } = {}) => {
-      // 停止後や再実行後に届いた古い実行の終了通知は、今の実行の状態を触らない。
-      if (!isCurrentBatch()) return;
-      endBatchRun(batchStreamRef.current, tabId);
-      patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
-      const okCount = results.filter((r) => r.status === "ok").length;
-      const errCount = results.filter((r) => r.status === "error").length;
-      if (extra.error !== undefined) {
-        setStatus({ kind: "key", key: "statusQueryError", vars: { error: extra.error }, error: true });
-      } else {
-        setStatus({
-          kind: "key",
-          key: "statusBatchDone",
-          vars: { ok: okCount, errors: errCount, total: results.length },
-          error: errCount > 0,
+  const runBatchInTab = useCallback(
+    async (tabId: string, sql: string, stopOnError: boolean, tabOverride?: Tab) => {
+      if (!sessionId) return;
+      const tab = tabOverride ?? tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab) return;
+      // 再入ガード: 実行中の二重起動を防ぎ、DML の重複実行を避ける。
+      if (tab.batchRunning || tab.streaming) return;
+      // 単文実行と同じく、実行 DB はタブの database のみ (PG ではプロファイルの DB 名は実 DB でありスキーマではない)。
+      const db = tab.database ?? null;
+      const outCtx = outputCtxFor(sessionId);
+      patchTab(tabId, (tt) => ({
+        ...tt,
+        title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
+        batchRunning: true,
+        batchScript: sql,
+        batchResults: [],
+        showChart: false,
+        showPivot: false,
+        showJson: false,
+        preview: null,
+        queryError: null,
+      }));
+      const results: BatchStatementResult[] = [];
+      const streamId = newStreamId(tabId);
+      // 停止ボタン・タブを閉じる・切断のキャンセル (cancelStreamForTab) が届くよう登録する。
+      streamIdRef.current.set(tabId, streamId);
+      beginBatchRun(batchStreamRef.current, tabId, streamId);
+      const isCurrentBatch = () => isCurrentBatchRun(batchStreamRef.current, tabId, streamId);
+      let unlisten: UnlistenFn | null = null;
+      const finish = () => {
+        unlisten?.();
+        unlisten = null;
+        if (streamIdRef.current.get(tabId) === streamId) streamIdRef.current.delete(tabId);
+      };
+      const finishRun = (extra: { error?: string } = {}) => {
+        // 停止後や再実行後に届いた古い実行の終了通知は、今の実行の状態を触らない。
+        if (!isCurrentBatch()) return;
+        endBatchRun(batchStreamRef.current, tabId);
+        patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
+        const okCount = results.filter((r) => r.status === "ok").length;
+        const errCount = results.filter((r) => r.status === "error").length;
+        if (extra.error !== undefined) {
+          setStatus({ kind: "key", key: "statusQueryError", vars: { error: extra.error }, error: true });
+        } else {
+          setStatus({
+            kind: "key",
+            key: "statusBatchDone",
+            vars: { ok: okCount, errors: errCount, total: results.length },
+            error: errCount > 0,
+          });
+        }
+      };
+      try {
+        unlisten = await listenBatchStream(streamId, {
+          onStarted: ({ total }) => {
+            if (!isCurrentBatch()) return;
+            setStatus({ kind: "key", key: "statusBatchRunning", vars: { total } });
+          },
+          onResults: ({ results: incoming }) => {
+            if (!isCurrentBatch()) return;
+            for (const r of incoming) {
+              recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
+              results.push(toBatchResult(r));
+            }
+            // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
+            patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
+          },
+          onDone: () => {
+            finish();
+            finishRun();
+          },
+          onError: ({ error, connectionLost }) => {
+            finish();
+            finishRun({ error });
+            if (connectionLost) void handleConnectionLostRef.current();
+          },
+          onCancelled: () => {
+            finish();
+            const current = isCurrentBatch();
+            finishRun();
+            // 終了表示 (statusBatchDone) で上書きされないよう、finishRun の後に設定する。
+            if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
+          },
         });
+        await api.runSqlBatch({
+          sessionId,
+          streamId,
+          database: db,
+          sql,
+          stopOnError,
+          previewRows: BATCH_PREVIEW_ROWS,
+        });
+      } catch (e) {
+        finish();
+        finishRun({ error: String(e) });
       }
-    };
-    try {
-      unlisten = await listenBatchStream(streamId, {
-        onStarted: ({ total }) => {
-          if (!isCurrentBatch()) return;
-          setStatus({ kind: "key", key: "statusBatchRunning", vars: { total } });
-        },
-        onResults: ({ results: incoming }) => {
-          if (!isCurrentBatch()) return;
-          for (const r of incoming) {
-            recordOutput(toBatchOutputInput(r), tab.database ?? null, outCtx);
-            results.push(toBatchResult(r));
-          }
-          // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
-          patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
-        },
-        onDone: () => {
-          finish();
-          finishRun();
-        },
-        onError: ({ error, connectionLost }) => {
-          finish();
-          finishRun({ error });
-          if (connectionLost) void handleConnectionLostRef.current();
-        },
-        onCancelled: () => {
-          finish();
-          const current = isCurrentBatch();
-          finishRun();
-          // 終了表示 (statusBatchDone) で上書きされないよう、finishRun の後に設定する。
-          if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
-        },
-      });
-      await api.runSqlBatch({
-        sessionId,
-        streamId,
-        database: db,
-        sql,
-        stopOnError,
-        previewRows: BATCH_PREVIEW_ROWS,
-      });
-    } catch (e) {
-      finish();
-      finishRun({ error: String(e) });
-    }
-  }, [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor]);
+    },
+    [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor],
+  );
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
   // LIMIT. Pane content binds this to its own active tab so each pane runs
   // independently.
   // 明示トランザクション内で 1 文を実行し、結果をタブへ反映する (非ストリーム)。
-  const runTxInTab = useCallback(async (tabId: string, sql: string) => {
-    if (!sessionId) return;
-    const outCtx = outputCtxFor(sessionId);
-    patchTab(tabId, (tt) => ({
-      ...tt,
-      title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
-      streaming: true,
-      queryError: null,
-      showChart: false,
-      showPivot: false,
-      showJson: false,
-      batchResults: undefined,
-      preview: null,
-      // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
-      pendingEdits: {},
-      editUndoStack: [],
-      editRedoStack: [],
-    }));
-    try {
-      const res = await api.runInTransaction(sessionId, sql);
+  const runTxInTab = useCallback(
+    async (tabId: string, sql: string) => {
+      if (!sessionId) return;
+      const outCtx = outputCtxFor(sessionId);
       patchTab(tabId, (tt) => ({
         ...tt,
-        streaming: false,
-        result: res,
-        lastExecutedSql: sql,
-        paginatable: null,
-        canLoadMore: false,
-        autoLimitApplied: null,
-        autoLimitSkip: null,
-        autoLimitSql: null,
+        title: autoTitleOnRun(tt, sql, translate("tabUntitledQuery")) ?? tt.title,
+        streaming: true,
+        queryError: null,
+        showChart: false,
+        showPivot: false,
+        showJson: false,
+        batchResults: undefined,
+        preview: null,
+        // 結果を置き換えるので、旧結果由来の保留編集は破棄して整合を保つ。
+        pendingEdits: {},
+        editUndoStack: [],
+        editRedoStack: [],
       }));
-      setStatus({ kind: "key", key: "statusStreamingDone", vars: { rows: res.rows.length, ms: res.elapsed_ms } });
-      const isSelect = res.columns.length > 0;
-      recordOutput(
-        {
-          sql,
-          outcome: isSelect ? "rows" : "affected",
-          rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
-          elapsedMs: res.elapsed_ms,
-          error: null,
-          serverMessages: res.server_messages,
-        },
-        txDatabaseRef.current,
-        outCtx,
-      );
-    } catch (e) {
-      patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
-      setStatus({
-        kind: "key",
-        key: "statusQueryError",
-        vars: { error: String(e) },
-        error: true,
-        errorKind: errorKindOf(e),
-        aiContext: { tabId, sql, database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null },
-      });
-      recordOutput(
-        { sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) },
-        txDatabaseRef.current,
-        outCtx,
-      );
-    }
-  }, [sessionId, patchTab, recordOutput, outputCtxFor, tabsRef]);
+      try {
+        const res = await api.runInTransaction(sessionId, sql);
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          streaming: false,
+          result: res,
+          lastExecutedSql: sql,
+          paginatable: null,
+          canLoadMore: false,
+          autoLimitApplied: null,
+          autoLimitSkip: null,
+          autoLimitSql: null,
+        }));
+        setStatus({
+          kind: "key",
+          key: "statusStreamingDone",
+          vars: { rows: res.rows.length, ms: res.elapsed_ms },
+        });
+        const isSelect = res.columns.length > 0;
+        recordOutput(
+          {
+            sql,
+            outcome: isSelect ? "rows" : "affected",
+            rows: isSelect ? res.rows.length : Number(res.rows_affected ?? 0),
+            elapsedMs: res.elapsed_ms,
+            error: null,
+            serverMessages: res.server_messages,
+          },
+          txDatabaseRef.current,
+          outCtx,
+        );
+      } catch (e) {
+        patchTab(tabId, (tt) => ({ ...tt, streaming: false, queryError: String(e) }));
+        setStatus({
+          kind: "key",
+          key: "statusQueryError",
+          vars: { error: String(e) },
+          error: true,
+          errorKind: errorKindOf(e),
+          aiContext: {
+            tabId,
+            sql,
+            database: tabsRef.current.find((tt) => tt.id === tabId)?.database ?? null,
+          },
+        });
+        recordOutput(
+          { sql, outcome: "error", rows: null, elapsedMs: null, error: String(e) },
+          txDatabaseRef.current,
+          outCtx,
+        );
+      }
+    },
+    [sessionId, patchTab, recordOutput, outputCtxFor, tabsRef],
+  );
 
   // トランザクション制御。開始/確定/破棄。
   const handleBeginTransaction = useCallback(async () => {
@@ -5395,202 +5646,226 @@ export default function App() {
     }
   }, [sessionId, toast, updateSavepointsFor]);
 
-  const handleRollbackToSavepoint = useCallback(async (name: string) => {
-    if (!sessionId) return;
-    // 書き込み承認 (requireWriteApproval) と同じ条件 (本番 + confirm_writes、読み取り専用を除く)
-    // のときだけ確認する。UI レベルの誤操作防止のみ。
-    if (selectedProfile?.is_production && selectedProfile?.confirm_writes && !selectedProfile?.read_only) {
-      const ok = await confirm({
-        title: translate("savepointRollbackConfirmTitle"),
-        message: translate("savepointRollbackConfirmBody", { name }),
-        confirmLabel: translate("savepointRollbackConfirmAction"),
-        tone: "danger",
-      });
-      if (!ok) return;
-    }
-    try {
-      await api.rollbackToSavepoint(sessionId, name);
-      updateSavepointsFor(sessionId, (s) => afterRollbackTo(s, name));
-      toast.success(translate("savepointRolledBack", { name }));
-    } catch (e) {
-      // DB 側に既に無い SAVEPOINT なら、その名前とそれより新しいものを一覧から外す。
-      if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
-      toast.error(String(e));
-    }
-  }, [sessionId, selectedProfile?.is_production, selectedProfile?.confirm_writes, selectedProfile?.read_only, confirm, toast, updateSavepointsFor]);
+  const handleRollbackToSavepoint = useCallback(
+    async (name: string) => {
+      if (!sessionId) return;
+      // 書き込み承認 (requireWriteApproval) と同じ条件 (本番 + confirm_writes、読み取り専用を除く)
+      // のときだけ確認する。UI レベルの誤操作防止のみ。
+      if (selectedProfile?.is_production && selectedProfile?.confirm_writes && !selectedProfile?.read_only) {
+        const ok = await confirm({
+          title: translate("savepointRollbackConfirmTitle"),
+          message: translate("savepointRollbackConfirmBody", { name }),
+          confirmLabel: translate("savepointRollbackConfirmAction"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      try {
+        await api.rollbackToSavepoint(sessionId, name);
+        updateSavepointsFor(sessionId, (s) => afterRollbackTo(s, name));
+        toast.success(translate("savepointRolledBack", { name }));
+      } catch (e) {
+        // DB 側に既に無い SAVEPOINT なら、その名前とそれより新しいものを一覧から外す。
+        if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
+        toast.error(String(e));
+      }
+    },
+    [
+      sessionId,
+      selectedProfile?.is_production,
+      selectedProfile?.confirm_writes,
+      selectedProfile?.read_only,
+      confirm,
+      toast,
+      updateSavepointsFor,
+    ],
+  );
 
-  const handleReleaseSavepoint = useCallback(async (name: string) => {
-    if (!sessionId) return;
-    try {
-      await api.releaseSavepoint(sessionId, name);
-      updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
-      toast.success(translate("savepointReleased", { name }));
-    } catch (e) {
-      if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
-      toast.error(String(e));
-    }
-  }, [sessionId, toast, updateSavepointsFor]);
+  const handleReleaseSavepoint = useCallback(
+    async (name: string) => {
+      if (!sessionId) return;
+      try {
+        await api.releaseSavepoint(sessionId, name);
+        updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
+        toast.success(translate("savepointReleased", { name }));
+      } catch (e) {
+        if (isMissingSavepointError(String(e))) updateSavepointsFor(sessionId, (s) => afterRelease(s, name));
+        toast.error(String(e));
+      }
+    },
+    [sessionId, toast, updateSavepointsFor],
+  );
 
-  const handleFinishTransaction = useCallback(async (commit: boolean) => {
-    if (!sessionId) return;
-    try {
-      await api.finishTransaction(sessionId, commit);
-      resetTxFor(sessionId);
-      toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
-    } catch (e) {
-      // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
-      resetTxFor(sessionId);
-      toast.error(
-        String(e).includes("25P02")
-          ? translate("txAbortedRolledBack")
-          : `${String(e)} ${translate("txFinishFailedHint")}`,
-      );
-    }
-  }, [sessionId, toast, resetTxFor]);
+  const handleFinishTransaction = useCallback(
+    async (commit: boolean) => {
+      if (!sessionId) return;
+      try {
+        await api.finishTransaction(sessionId, commit);
+        resetTxFor(sessionId);
+        toast.success(commit ? translate("txCommitted") : translate("txRolledBack"));
+      } catch (e) {
+        // バックエンドは失敗時もトランザクションを終了扱いにする (接続は破棄/ロールバック済み)。
+        resetTxFor(sessionId);
+        toast.error(
+          String(e).includes("25P02")
+            ? translate("txAbortedRolledBack")
+            : `${String(e)} ${translate("txFinishFailedHint")}`,
+        );
+      }
+    },
+    [sessionId, toast, resetTxFor],
+  );
 
   // EXPLAIN タブの実行を 1 か所に集約する (#1164)。推定モードは従来どおり
   // `explainPrefixFor` のプレフィックスで走らせる。実測モード (analyze) は SQL を
   // 実際に実行するので、(1) 読み取り専用と判定できない SQL は実行しない
   // (`buildExplainAnalyzeSql`)、(2) 実行前に明示確認、(3) バックエンドにも
   // `forceReadOnly` で読み取り専用を強制させる、の 3 段で守る。
-  const runExplainInTab = useCallback(async (
-    tabId: string,
-    sql: string,
-    analyze: boolean,
-    override?: { sessionId?: string; tab?: Tab },
-  ) => {
-    const driver = selectedProfile?.driver;
-    if (!analyze) {
-      updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
-      void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
-      return;
-    }
-    const built = buildExplainAnalyzeSql(driver, sql);
-    if (!built.ok) {
-      if (built.reason === "notReadOnly") toast.error(translate("explainAnalyzeBlockedToast"));
-      else if (built.reason === "unsupported") toast.error(translate("explainAnalyzeUnsupportedToast"));
-      return;
-    }
-    const ok = await confirm({
-      title: translate("explainAnalyzeConfirmTitle"),
-      message: translate("explainAnalyzeConfirmBody"),
-      confirmLabel: translate("explainAnalyzeConfirmRun"),
-      tone: "warning",
-    });
-    if (!ok) return;
-    updateTab(tabId, { explainAnalyze: true, explainSourceSql: sql });
-    void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
-  }, [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm]);
-
-  const runInTabWithGate = useCallback((tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
-    // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
-    // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
-    // it never trips the destructive-query gate or auto LIMIT.
-    if (tab.kind === "explain") {
-      void runExplainInTab(tab.id, sql, !!tab.explainAnalyze);
-      return;
-    }
-    // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
-    // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
-    // ターゲットタブに対して行う。
-    let target = tab;
-    // `fresh`: 呼び出し側が直前に addTab したばかりのタブ (tabsRef 未反映) を渡す
-    // とき。バッチ実行がメモリ上の target を直接使うようにする (#1003)。
-    let openedInNewTab = opts?.fresh ?? false;
-    if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
-      const newTab: Tab = {
-        ...makeQueryTab(),
-        sql,
-        lastExecutedSql: sql,
-        title: deriveResultTabTitle(sql),
-      };
-      addTab(newTab);
-      target = newTab;
-      openedInNewTab = true;
-    }
-    // Auto LIMIT only guards free-form editor queries; table tabs carry their
-    // own LIMIT. Writes pass through here too but the backend parser leaves
-    // them untouched.
-    const autoLimit =
-      target.kind === "query" && settings.autoLimitEnabled ? settings.autoLimitCount : null;
-    const isProduction = selectedProfile?.is_production ?? false;
-    const sessionReadOnly = selectedProfile?.read_only ?? false;
-    // Production connections may opt into approving every data-modifying
-    // statement. Read-only takes precedence: those sessions reject writes
-    // outright on the backend, so there is nothing to approve here.
-    const requireWriteApproval =
-      isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
-    // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
-    // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
-    // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
-    const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
-    const findings =
-      isProduction || settings.confirmDangerousQueries
-        ? analyzeDangerousSql(sql, selectedProfile?.driver)
-        : [];
-    // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
-    // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
-    const needsWriteApproval =
-      (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql, selectedProfile?.driver);
-    if (findings.length > 0 || needsWriteApproval) {
-      // Irreversible DROP/TRUNCATE on a production connection gets the
-      // stronger "type the target name to confirm" gate (#675); everything
-      // else (non-production, or DELETE/UPDATE-without-WHERE findings) keeps
-      // the existing one-click confirmation.
-      const destructiveTargets = findings
-        .filter((f) => f.kind === "drop" || f.kind === "truncate")
-        .map((f) => f.target);
-      const typedConfirmTarget =
-        isProduction && destructiveTargets.length > 0
-          ? resolveTypedConfirmTarget(destructiveTargets)
-          : null;
-      // プリフライト (#737) の件数を引き継ぐ。実行対象 SQL と一致し COUNT 確定
-      // (`ready`) の結果だけを採用する (未確定・別テキスト・推定不可では出さない)。
-      const pf = preflightRef.current.get(tab.id);
-      const impact: PreflightImpact | null =
-        pf && pf.sql === sql && pf.status === "ready"
-          ? { verb: pf.plan.verb, count: pf.count, allRows: pf.plan.allRows }
-          : null;
-      setPendingDangerous({
-        tabId: target.id,
-        sql,
-        findings,
-        isProduction,
-        writeApproval: needsWriteApproval,
-        autoLimit,
-        batch,
-        typedConfirmTarget,
-        impact,
+  const runExplainInTab = useCallback(
+    async (tabId: string, sql: string, analyze: boolean, override?: { sessionId?: string; tab?: Tab }) => {
+      const driver = selectedProfile?.driver;
+      if (!analyze) {
+        updateTab(tabId, { explainAnalyze: false, explainSourceSql: sql });
+        void runQueryInTab(tabId, `${explainPrefixFor(driver)}${sql}`, null, null, false, override);
+        return;
+      }
+      const built = buildExplainAnalyzeSql(driver, sql);
+      if (!built.ok) {
+        if (built.reason === "notReadOnly") toast.error(translate("explainAnalyzeBlockedToast"));
+        else if (built.reason === "unsupported") toast.error(translate("explainAnalyzeUnsupportedToast"));
+        return;
+      }
+      const ok = await confirm({
+        title: translate("explainAnalyzeConfirmTitle"),
+        message: translate("explainAnalyzeConfirmBody"),
+        confirmLabel: translate("explainAnalyzeConfirmRun"),
+        tone: "warning",
       });
-      return;
-    }
-    if (batch) {
-      // 新タブ直後は tabsRef に未反映なので、メモリ上の target を直接渡す。
-      void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
-      return;
-    }
-    // 明示トランザクション中は同一接続で実行する経路に振り分ける。
-    if (txActiveRef.current && target.kind === "query") {
-      void runTxInTab(target.id, sql);
-      return;
-    }
-    void runQueryInTab(target.id, sql, null, autoLimit, false, openedInNewTab ? { tab: target } : undefined);
-  }, [
-    runQueryInTab,
-    runExplainInTab,
-    runBatchInTab,
-    runTxInTab,
-    addTab,
-    selectedProfile?.is_production,
-    selectedProfile?.confirm_writes,
-    selectedProfile?.read_only,
-    settings.confirmDangerousQueries,
-    settings.autoLimitEnabled,
-    settings.autoLimitCount,
-    settings.resultsInNewTab,
-    selectedProfile?.driver,
-    emergencyMode,
-  ]);
+      if (!ok) return;
+      updateTab(tabId, { explainAnalyze: true, explainSourceSql: sql });
+      void runQueryInTab(tabId, built.sql, null, null, false, { ...override, forceReadOnly: true });
+    },
+    [selectedProfile?.driver, runQueryInTab, updateTab, toast, confirm],
+  );
+
+  const runInTabWithGate = useCallback(
+    (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
+      // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
+      // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
+      // it never trips the destructive-query gate or auto LIMIT.
+      if (tab.kind === "explain") {
+        void runExplainInTab(tab.id, sql, !!tab.explainAnalyze);
+        return;
+      }
+      // 複数結果タブ: 設定 `resultsInNewTab` または明示指定のとき、結果を上書き
+      // せず SQL を複製した新しいタブで実行して前の結果を残す。以降のゲート/実行はこの
+      // ターゲットタブに対して行う。
+      let target = tab;
+      // `fresh`: 呼び出し側が直前に addTab したばかりのタブ (tabsRef 未反映) を渡す
+      // とき。バッチ実行がメモリ上の target を直接使うようにする (#1003)。
+      let openedInNewTab = opts?.fresh ?? false;
+      if (tab.kind === "query" && (opts?.newTab ?? settings.resultsInNewTab)) {
+        const newTab: Tab = {
+          ...makeQueryTab(),
+          sql,
+          lastExecutedSql: sql,
+          title: deriveResultTabTitle(sql),
+        };
+        addTab(newTab);
+        target = newTab;
+        openedInNewTab = true;
+      }
+      // Auto LIMIT only guards free-form editor queries; table tabs carry their
+      // own LIMIT. Writes pass through here too but the backend parser leaves
+      // them untouched.
+      const autoLimit = target.kind === "query" && settings.autoLimitEnabled ? settings.autoLimitCount : null;
+      const isProduction = selectedProfile?.is_production ?? false;
+      const sessionReadOnly = selectedProfile?.read_only ?? false;
+      // Production connections may opt into approving every data-modifying
+      // statement. Read-only takes precedence: those sessions reject writes
+      // outright on the backend, so there is nothing to approve here.
+      const requireWriteApproval =
+        isProduction && (selectedProfile?.confirm_writes ?? false) && !sessionReadOnly;
+      // 複数文スクリプトはバッチ実行に振り分ける。auto LIMIT は付けない。
+      // 文分割・危険判定・読み取り専用判定 (下の isReadOnlySql) は同じ driver を参照
+      // し、1 回の実行ゲート内でマスク解釈が食い違わないようにする (#852、#1004)。
+      const batch = target.kind === "query" && isMultiStatement(sql, selectedProfile?.driver);
+      const findings =
+        isProduction || settings.confirmDangerousQueries
+          ? analyzeDangerousSql(sql, selectedProfile?.driver)
+          : [];
+      // 緊急クエリ実行モード中の書き込みは、本番の confirm_writes と同じく毎回
+      // 確認を要求する (read-only と明示した接続への書き込みは常に例外的な操作)。
+      const needsWriteApproval =
+        (requireWriteApproval || emergencyMode) && !isReadOnlySql(sql, selectedProfile?.driver);
+      if (findings.length > 0 || needsWriteApproval) {
+        // Irreversible DROP/TRUNCATE on a production connection gets the
+        // stronger "type the target name to confirm" gate (#675); everything
+        // else (non-production, or DELETE/UPDATE-without-WHERE findings) keeps
+        // the existing one-click confirmation.
+        const destructiveTargets = findings
+          .filter((f) => f.kind === "drop" || f.kind === "truncate")
+          .map((f) => f.target);
+        const typedConfirmTarget =
+          isProduction && destructiveTargets.length > 0
+            ? resolveTypedConfirmTarget(destructiveTargets)
+            : null;
+        // プリフライト (#737) の件数を引き継ぐ。実行対象 SQL と一致し COUNT 確定
+        // (`ready`) の結果だけを採用する (未確定・別テキスト・推定不可では出さない)。
+        const pf = preflightRef.current.get(tab.id);
+        const impact: PreflightImpact | null =
+          pf && pf.sql === sql && pf.status === "ready"
+            ? { verb: pf.plan.verb, count: pf.count, allRows: pf.plan.allRows }
+            : null;
+        setPendingDangerous({
+          tabId: target.id,
+          sql,
+          findings,
+          isProduction,
+          writeApproval: needsWriteApproval,
+          autoLimit,
+          batch,
+          typedConfirmTarget,
+          impact,
+        });
+        return;
+      }
+      if (batch) {
+        // 新タブ直後は tabsRef に未反映なので、メモリ上の target を直接渡す。
+        void runBatchInTab(target.id, sql, true, openedInNewTab ? target : undefined);
+        return;
+      }
+      // 明示トランザクション中は同一接続で実行する経路に振り分ける。
+      if (txActiveRef.current && target.kind === "query") {
+        void runTxInTab(target.id, sql);
+        return;
+      }
+      void runQueryInTab(
+        target.id,
+        sql,
+        null,
+        autoLimit,
+        false,
+        openedInNewTab ? { tab: target } : undefined,
+      );
+    },
+    [
+      runQueryInTab,
+      runExplainInTab,
+      runBatchInTab,
+      runTxInTab,
+      addTab,
+      selectedProfile?.is_production,
+      selectedProfile?.confirm_writes,
+      selectedProfile?.read_only,
+      settings.confirmDangerousQueries,
+      settings.autoLimitEnabled,
+      settings.autoLimitCount,
+      settings.resultsInNewTab,
+      selectedProfile?.driver,
+      emergencyMode,
+    ],
+  );
 
   const handleConfirmDangerous = useCallback(() => {
     if (!pendingDangerous) return;
@@ -5613,62 +5888,71 @@ export default function App() {
 
   // Badge action: re-run the auto-limited query without the cap so the user
   // sees the full result set.
-  const fetchAllForTab = useCallback((tab: Tab) => {
-    if (tab.autoLimitSql === null) return;
-    void runQueryInTab(tab.id, tab.autoLimitSql, null, null);
-  }, [runQueryInTab]);
+  const fetchAllForTab = useCallback(
+    (tab: Tab) => {
+      if (tab.autoLimitSql === null) return;
+      void runQueryInTab(tab.id, tab.autoLimitSql, null, null);
+    },
+    [runQueryInTab],
+  );
 
-  const explainForTab = useCallback((sourceTab: Tab, sql: string) => {
-    // Re-explain in place when already on an explain tab; otherwise open a
-    // dedicated explain tab in the same pane so the source is left untouched.
-    if (sourceTab.kind === "explain") {
-      void runExplainInTab(sourceTab.id, sql, !!sourceTab.explainAnalyze);
-      return;
-    }
-    const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
-    const tab = makeExplainTab(sql, sourceTab.database);
-    addTab(tab, owner?.id);
-    // 新規 EXPLAIN タブは常に推定モードから始める (実測は EXPLAIN タブのトグルで opt-in)。
-    // addTab 直後の描画前クロージャ `tabs` からは新タブを引けないため、tab を直接渡して
-    // database (と前回結果なし) を実行側へ確実に伝える。
-    void runExplainInTab(tab.id, sql, false, { tab });
-  }, [runExplainInTab, addTab, panesRef]);
+  const explainForTab = useCallback(
+    (sourceTab: Tab, sql: string) => {
+      // Re-explain in place when already on an explain tab; otherwise open a
+      // dedicated explain tab in the same pane so the source is left untouched.
+      if (sourceTab.kind === "explain") {
+        void runExplainInTab(sourceTab.id, sql, !!sourceTab.explainAnalyze);
+        return;
+      }
+      const owner = panesRef.current.find((p) => p.tabIds.includes(sourceTab.id));
+      const tab = makeExplainTab(sql, sourceTab.database);
+      addTab(tab, owner?.id);
+      // 新規 EXPLAIN タブは常に推定モードから始める (実測は EXPLAIN タブのトグルで opt-in)。
+      // addTab 直後の描画前クロージャ `tabs` からは新タブを引けないため、tab を直接渡して
+      // database (と前回結果なし) を実行側へ確実に伝える。
+      void runExplainInTab(tab.id, sql, false, { tab });
+    },
+    [runExplainInTab, addTab, panesRef],
+  );
 
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
-  const pinCurrentResult = useCallback((tab: Tab) => {
-    if (!tab.result) return;
-    const item: PinnedResult = {
-      id: `pin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      title: tab.title || deriveResultTabTitle(tab.lastExecutedSql) || "result",
-      sql: tab.lastExecutedSql,
-      columns: tab.result.columns,
-      rows: tab.result.rows,
-      rowsAffected: tab.result.rows_affected,
-      elapsedMs: tab.result.elapsed_ms,
-      pinnedAt: Date.now(),
-    };
-    const { list: next, evicted } = addPinnedWithEvicted(pinnedResults, item);
-    setPinnedResults(next);
-    // ピン直後に比較ビューへ誘導する (#1277)。2 件未満は比較できないので案内のみ。
-    const plan = pinToastPlan(next.length);
-    toast.notify({
-      // 上限で外れた結果があれば、どれが消えたかを明示する (#1532)。
-      message:
-        evicted.length > 0
-          ? translate("pinToastEvicted", {
-              max: MAX_PINNED,
-              title: evicted.map((e) => e.title).join(", "),
-            })
-          : translate(plan.messageKey),
-      ...(plan.showOpenAction && {
-        action: {
-          label: translate("pinToastOpenCompare"),
-          onAction: () => openFullViewRef.current("compareResults"),
-        },
-      }),
-    });
-  }, [pinnedResults, toast]);
+  const pinCurrentResult = useCallback(
+    (tab: Tab) => {
+      if (!tab.result) return;
+      const item: PinnedResult = {
+        id: `pin-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title: tab.title || deriveResultTabTitle(tab.lastExecutedSql) || "result",
+        sql: tab.lastExecutedSql,
+        columns: tab.result.columns,
+        rows: tab.result.rows,
+        rowsAffected: tab.result.rows_affected,
+        elapsedMs: tab.result.elapsed_ms,
+        pinnedAt: Date.now(),
+      };
+      const { list: next, evicted } = addPinnedWithEvicted(pinnedResults, item);
+      setPinnedResults(next);
+      // ピン直後に比較ビューへ誘導する (#1277)。2 件未満は比較できないので案内のみ。
+      const plan = pinToastPlan(next.length);
+      toast.notify({
+        // 上限で外れた結果があれば、どれが消えたかを明示する (#1532)。
+        message:
+          evicted.length > 0
+            ? translate("pinToastEvicted", {
+                max: MAX_PINNED,
+                title: evicted.map((e) => e.title).join(", "),
+              })
+            : translate(plan.messageKey),
+        ...(plan.showOpenAction && {
+          action: {
+            label: translate("pinToastOpenCompare"),
+            onAction: () => openFullViewRef.current("compareResults"),
+          },
+        }),
+      });
+    },
+    [pinnedResults, toast],
+  );
 
   // Run the resolved SQL through whichever action the user triggered. Used both
   // directly (no parameters) and after the parameter modal substitutes values.
@@ -5712,75 +5996,80 @@ export default function App() {
   // User-driven stop: cancel the tab's in-flight stream, drop the streaming
   // flag, and keep whatever rows have already arrived. The backend
   // `cancelStream` tears down the cursor while leaving the connection open.
-  const stopTab = useCallback(async (tab: Tab) => {
-    if (tab.batchRunning) {
-      // 複数文のバッチ実行 (runBatchInTab) の停止。バックエンドの取消で実行中の文を
-      // 止め、未コミットのトランザクションは巻き戻される。実行済みの文の結果は残す。
-      const delivered = await cancelStreamForTab(tab.id);
-      // 取り消せたときだけここで表示を戻す (以降の古い通知は無視される)。取り消せなかった
-      // (すでに終わっていた) 場合は、届く終了通知 (onDone / onCancelled) に任せる。
-      if (delivered !== null) {
-        endBatchRun(batchStreamRef.current, tab.id);
-        patchTab(tab.id, (tt) => ({ ...tt, batchRunning: false }));
-        setStatus({ kind: "key", key: "statusQueryCancelled" });
+  const stopTab = useCallback(
+    async (tab: Tab) => {
+      if (tab.batchRunning) {
+        // 複数文のバッチ実行 (runBatchInTab) の停止。バックエンドの取消で実行中の文を
+        // 止め、未コミットのトランザクションは巻き戻される。実行済みの文の結果は残す。
+        const delivered = await cancelStreamForTab(tab.id);
+        // 取り消せたときだけここで表示を戻す (以降の古い通知は無視される)。取り消せなかった
+        // (すでに終わっていた) 場合は、届く終了通知 (onDone / onCancelled) に任せる。
+        if (delivered !== null) {
+          endBatchRun(batchStreamRef.current, tab.id);
+          patchTab(tab.id, (tt) => ({ ...tt, batchRunning: false }));
+          setStatus({ kind: "key", key: "statusQueryCancelled" });
+        }
+        return;
       }
-      return;
-    }
-    if (!tab.streaming) return;
-    const wasPreview = tab.previewStreaming;
-    // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが
-    // 既に終わっていた場合 (null) は、フロント側に貯まっている行数へフォール
-    // バックする (resolveCancelledRows) — メッセージは常に何らかの行数を出す。
-    const deliveredRows = await cancelStreamForTab(tab.id);
-    const partial = cancelledPartialResult(deliveredRows, tab.result?.rows.length ?? 0);
-    const rows = partial.rows;
-    patchTab(tab.id, (tt) => ({
-      ...tt,
-      streaming: false,
-      previewStreaming: false,
-      // プレビューは別グリッド (before/after) で完結し、部分結果バッジの対象外。
-      ...(wasPreview ? {} : { partialResult: partial }),
-      // プレビューをキャンセルした場合、previewQueryInTab の onDone/onError は
-      // (リスナーが既に detach 済みのため) 発火しない。退避しておいた
-      // paginatable をここで復元する (#F3)。プレビューでなければ
-      // previewPrevPaginatable は undefined なのでノーオペ。
-      ...(tt.previewPrevPaginatable !== undefined
-        ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
-        : null),
-    }));
-    setStatus(
-      wasPreview
-        ? { kind: "key", key: "statusQueryCancelled" }
-        : { kind: "key", key: "statusQueryCancelledPartial", vars: { rows } },
-    );
-    // Preview (dry-run) cancellations aren't the "long-running editor query"
-    // this notification is meant for (#707) — only notify for a real query run.
-    if (!wasPreview) {
-      // 行がまだ届いていない長時間クエリの停止でも経過時間を正しく出すため、
-      // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
-      const started = runStartRef.current.get(tab.id);
-      const elapsedMs =
-        started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
-      void notifyQueryOutcome("cancelled", elapsedMs);
-      if (tab.lastExecutedSql) {
-        recordOutput(
-          { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
-          tab.database,
-          outputCtxFor(sessionId),
-        );
+      if (!tab.streaming) return;
+      const wasPreview = tab.previewStreaming;
+      // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが
+      // 既に終わっていた場合 (null) は、フロント側に貯まっている行数へフォール
+      // バックする (resolveCancelledRows) — メッセージは常に何らかの行数を出す。
+      const deliveredRows = await cancelStreamForTab(tab.id);
+      const partial = cancelledPartialResult(deliveredRows, tab.result?.rows.length ?? 0);
+      const rows = partial.rows;
+      patchTab(tab.id, (tt) => ({
+        ...tt,
+        streaming: false,
+        previewStreaming: false,
+        // プレビューは別グリッド (before/after) で完結し、部分結果バッジの対象外。
+        ...(wasPreview ? {} : { partialResult: partial }),
+        // プレビューをキャンセルした場合、previewQueryInTab の onDone/onError は
+        // (リスナーが既に detach 済みのため) 発火しない。退避しておいた
+        // paginatable をここで復元する (#F3)。プレビューでなければ
+        // previewPrevPaginatable は undefined なのでノーオペ。
+        ...(tt.previewPrevPaginatable !== undefined
+          ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
+          : null),
+      }));
+      setStatus(
+        wasPreview
+          ? { kind: "key", key: "statusQueryCancelled" }
+          : { kind: "key", key: "statusQueryCancelledPartial", vars: { rows } },
+      );
+      // Preview (dry-run) cancellations aren't the "long-running editor query"
+      // this notification is meant for (#707) — only notify for a real query run.
+      if (!wasPreview) {
+        // 行がまだ届いていない長時間クエリの停止でも経過時間を正しく出すため、
+        // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
+        const started = runStartRef.current.get(tab.id);
+        const elapsedMs = started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
+        void notifyQueryOutcome("cancelled", elapsedMs);
+        if (tab.lastExecutedSql) {
+          recordOutput(
+            { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
+            tab.database,
+            outputCtxFor(sessionId),
+          );
+        }
       }
-    }
-  }, [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput, outputCtxFor, sessionId]);
+    },
+    [cancelStreamForTab, patchTab, notifyQueryOutcome, recordOutput, outputCtxFor, sessionId],
+  );
 
   // Insert a snippet into the focused pane's editor, or open a fresh query tab
   // holding the snippet when there is no active tab yet.
-  const handleInsertSnippet = useCallback((snippet: Snippet) => {
-    if (activeTab) {
-      activeEditor()?.insertText(snippet.sql);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql: snippet.sql, lastExecutedSql: snippet.sql });
-    }
-  }, [activeTab, sessionId, activeEditor, addTab]);
+  const handleInsertSnippet = useCallback(
+    (snippet: Snippet) => {
+      if (activeTab) {
+        activeEditor()?.insertText(snippet.sql);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql: snippet.sql, lastExecutedSql: snippet.sql });
+      }
+    },
+    [activeTab, sessionId, activeEditor, addTab],
+  );
 
   // 保存済みスニペットのワンクリック実行 (#877)。専用の新しいクエリタブへ SQL を
   // 流し込み、通常のエディタ実行 (`dispatchEditorAction` の "run") と全く同じ
@@ -5789,44 +6078,53 @@ export default function App() {
   // 通し、実行経路を二重実装しない。`newTab: false` は「このスニペット専用に
   // 作った新タブをそのまま使う」指定で、`settings.resultsInNewTab` が有効でも
   // さらにもう 1 枚タブを開かせない。
-  const handleRunSnippet = useCallback((snippet: Snippet) => {
-    if (!sessionId) return;
-    const tab: Tab = {
-      ...makeQueryTab(),
-      sql: snippet.sql,
-      lastExecutedSql: snippet.sql,
-      title: snippet.name,
-      titleManual: true,
-    };
-    addTab(tab);
-    runInTabWithGate(tab, snippet.sql, { newTab: false });
-    recordSnippetRunUsage(snippet.id);
-  }, [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage]);
+  const handleRunSnippet = useCallback(
+    (snippet: Snippet) => {
+      if (!sessionId) return;
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql: snippet.sql,
+        lastExecutedSql: snippet.sql,
+        title: snippet.name,
+        titleManual: true,
+      };
+      addTab(tab);
+      runInTabWithGate(tab, snippet.sql, { newTab: false });
+      recordSnippetRunUsage(snippet.id);
+    },
+    [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage],
+  );
 
   // Insert an advisor's fix DDL (#741) into the focused query/explain editor,
   // or a fresh query tab. Executing it still goes through the existing safety
   // nets (read-only rejection, dangerous-query confirmation). The panel stays
   // open so several fixes can be inserted in a row; each insert appends a
   // trailing newline so consecutive statements don't run together.
-  const handleInsertAdvisorSql = useCallback((sql: string) => {
-    const text = sql.endsWith("\n") ? sql : `${sql}\n`;
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.insertText(text);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
-    }
-  }, [activeTab, sessionId, activeEditor, addTab]);
+  const handleInsertAdvisorSql = useCallback(
+    (sql: string) => {
+      const text = sql.endsWith("\n") ? sql : `${sql}\n`;
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(text);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
+      }
+    },
+    [activeTab, sessionId, activeEditor, addTab],
+  );
 
   // Restore a history entry's SQL into the focused pane's query/explain editor
   // when there is one, otherwise into a fresh query tab so we don't clobber a
   // table tab's auto-generated SELECT.
-  const handleRestoreHistory = useCallback((sql: string) => {
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.setText(sql);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
-    }
-  }, [activeTab, sessionId, activeEditor, addTab]);
+  const handleRestoreHistory = useCallback(
+    (sql: string) => {
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.setText(sql);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
+      }
+    },
+    [activeTab, sessionId, activeEditor, addTab],
+  );
 
   // AI の修正 SQL 案 (#692) を、失敗したタブのエディタへ反映する。実行はしない。
   // 表示中ならエディタ (CodeMirror) へ dispatch して undo 履歴に載せ、裏のタブなら
@@ -5881,17 +6179,20 @@ export default function App() {
 
   // 「この SQL を解説」「最適化案を提案」(#695): 選択範囲 (無ければ全文) と方言・DB をパネルへ渡し、
   // ボトムパネルの AI 解説タブを開く。送信はパネルが (必要な確認のあとで) 自動で行う。
-  const handleAiSqlAction = useCallback((action: AiSqlEditorAction) => {
-    const tab = tabsRef.current.find((tt) => tt.id === action.tabId);
-    aiSqlSeqRef.current += 1;
-    setAiSqlRequest({
-      id: aiSqlSeqRef.current,
-      ...action,
-      database: tab?.database ?? selectedProfile?.database ?? null,
-      autoRun: true,
-    });
-    setBottomPanelTab("aiSql");
-  }, [tabsRef, selectedProfile?.database]);
+  const handleAiSqlAction = useCallback(
+    (action: AiSqlEditorAction) => {
+      const tab = tabsRef.current.find((tt) => tt.id === action.tabId);
+      aiSqlSeqRef.current += 1;
+      setAiSqlRequest({
+        id: aiSqlSeqRef.current,
+        ...action,
+        database: tab?.database ?? selectedProfile?.database ?? null,
+        autoRun: true,
+      });
+      setBottomPanelTab("aiSql");
+    },
+    [tabsRef, selectedProfile?.database],
+  );
 
   // 別の接続へ切り替わったら、前の接続の依頼 (タブ ID・SQL) は捨てる。
   // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId の変化だけをトリガーにしたい
@@ -5902,24 +6203,28 @@ export default function App() {
 
   // 結果グリッドの「AI で要約」(#1476): そのタブの結果 (列・取得済み行) と実行した SQL をパネルへ渡し、
   // ボトムパネルの AI 要約タブを開く。送信はパネルが (必要な確認のあとで) 自動で行う。
-  const handleAiResultSummary = useCallback((tab: Tab) => {
-    if (!tab.result) return;
-    aiResultSummarySeqRef.current += 1;
-    setAiResultSummaryRequest({
-      id: aiResultSummarySeqRef.current,
-      tabId: tab.id,
-      tabTitle: tab.title,
-      sql: tab.lastExecutedSql,
-      database: tab.database ?? selectedProfile?.database ?? null,
-      columns: tab.result.columns,
-      // プロンプトに必要な分 (統計用の上限) だけ持つ。先頭行はその先頭に含まれる。
-      rows: tab.result.rows.length > RESULT_SUMMARY_STATS_MAX_ROWS
-        ? tab.result.rows.slice(0, RESULT_SUMMARY_STATS_MAX_ROWS)
-        : tab.result.rows,
-      autoRun: true,
-    });
-    setBottomPanelTab("aiResultSummary");
-  }, [selectedProfile?.database]);
+  const handleAiResultSummary = useCallback(
+    (tab: Tab) => {
+      if (!tab.result) return;
+      aiResultSummarySeqRef.current += 1;
+      setAiResultSummaryRequest({
+        id: aiResultSummarySeqRef.current,
+        tabId: tab.id,
+        tabTitle: tab.title,
+        sql: tab.lastExecutedSql,
+        database: tab.database ?? selectedProfile?.database ?? null,
+        columns: tab.result.columns,
+        // プロンプトに必要な分 (統計用の上限) だけ持つ。先頭行はその先頭に含まれる。
+        rows:
+          tab.result.rows.length > RESULT_SUMMARY_STATS_MAX_ROWS
+            ? tab.result.rows.slice(0, RESULT_SUMMARY_STATS_MAX_ROWS)
+            : tab.result.rows,
+        autoRun: true,
+      });
+      setBottomPanelTab("aiResultSummary");
+    },
+    [selectedProfile?.database],
+  );
 
   // 要約の追加 SQL 案 (#1476) を依頼元のエディタの末尾へ挿入する。実行はしない。表示中のタブは
   // CodeMirror へ dispatch して undo 履歴に載せ、裏のタブは `tab.sql` を書き換える。
@@ -5952,7 +6257,9 @@ export default function App() {
       const locate = () => {
         const tab = tabsRef.current.find((tt) => tt.id === req.tabId);
         if (!tab) return null;
-        const pane = panesRef.current.find((p) => p.activeTabId === req.tabId && p.tabIds.includes(req.tabId));
+        const pane = panesRef.current.find(
+          (p) => p.activeTabId === req.tabId && p.tabIds.includes(req.tabId),
+        );
         const editor = pane ? editorRefs.current.get(pane.id) : undefined;
         const visible = pane !== undefined;
         const current = visible ? (editor ? editor.getText() : "") : tabSqlStore.resolve(tab.id, tab.sql);
@@ -5996,38 +6303,55 @@ export default function App() {
   );
 
   // Always open history SQL in a fresh query tab, never overwriting the editor.
-  const handleOpenHistoryInNewTab = useCallback((sql: string) => {
-    addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
-  }, [addTab]);
+  const handleOpenHistoryInNewTab = useCallback(
+    (sql: string) => {
+      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
+    },
+    [addTab],
+  );
 
   // フローティング・ランチャー (#1254) から最近のクエリをエディタへ挿入する。
   // フォーカス中のクエリ/EXPLAIN エディタのカーソル位置へ、無ければ新しいクエリタブへ。
-  const handleLauncherInsertSql = useCallback((sql: string) => {
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.insertText(sql);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
-    }
-  }, [activeTab, sessionId, activeEditor, addTab]);
+  const handleLauncherInsertSql = useCallback(
+    (sql: string) => {
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(sql);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
+      }
+    },
+    [activeTab, sessionId, activeEditor, addTab],
+  );
 
   // ランチャーから最近のクエリを実行する。スニペットのワンクリック実行 (#877) と同じく
   // 新しいクエリタブを作り、通常のエディタ実行と同じ `runInTabWithGate` に委ねる
   // (危険クエリ確認・読み取り専用ガード・本番書き込み承認・自動 LIMIT をそのまま通す)。
-  const handleLauncherRunSql = useCallback((sql: string) => {
-    if (!sessionId) return;
-    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false });
-  }, [sessionId, addTab, runInTabWithGate]);
+  const handleLauncherRunSql = useCallback(
+    (sql: string) => {
+      if (!sessionId) return;
+      const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
+      addTab(tab);
+      runInTabWithGate(tab, sql, { newTab: false });
+    },
+    [sessionId, addTab, runInTabWithGate],
+  );
 
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
-  const handleOutputRunSql = useCallback((sql: string, execDatabase: string | null) => {
-    if (!sessionId) return;
-    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql, ...(execDatabase ? { database: execDatabase } : {}) };
-    addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
-  }, [sessionId, addTab, runInTabWithGate]);
+  const handleOutputRunSql = useCallback(
+    (sql: string, execDatabase: string | null) => {
+      if (!sessionId) return;
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        ...(execDatabase ? { database: execDatabase } : {}),
+      };
+      addTab(tab);
+      runInTabWithGate(tab, sql, { newTab: false, fresh: true });
+    },
+    [sessionId, addTab, runInTabWithGate],
+  );
 
   // ランチャーの「もっと見る」: 対応する既存の一覧 (スニペット / 履歴 / スキーマツリー)
   // をサイドバーに出す。
@@ -6056,8 +6380,11 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -6069,53 +6396,59 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
 
-  const handleDeleteSnippet = useCallback(async (snippet: Snippet) => {
-    const id = snippet.id;
-    const ok = await runWithErrorStatus(async () => {
-      await api.deleteSnippet(id);
-      await refreshSnippets();
-      // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データは Rust 側
-      // (`delete_snippet`) が全プロファイルのストアから連鎖削除する (#1260)。表示だけ
-      // アクティブプロファイルの最新状態へ読み直す。
-      await reloadActivePlanWatch();
-      // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
-      // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
-      setSnippetQuickAccess((prev) => {
-        const next = forgetSnippetQuickAccess(prev, id);
-        if (next !== prev) saveSnippetQuickAccess(next);
-        return next;
-      });
-    }, "statusFailedDeleteSnippet");
-    if (!ok) return;
-    // Undo (#676): snippets have no secrets, so restoring with the original id
-    // via save_snippet fully re-creates it (plan-watch is per-user, not restored).
-    toast.notify({
-      message: translate("toastSnippetDeleted", { name: snippet.name }),
-      action: {
-        label: translate("toastUndo"),
-        onAction: () => {
-          void runWithErrorStatus(async () => {
-            await api.saveSnippet({
-              id: snippet.id,
-              name: snippet.name,
-              folder: snippet.folder,
-              tags: snippet.tags,
-              sql: snippet.sql,
-              driver: snippet.driver,
-              scope: snippet.scope,
-            });
-            await refreshSnippets();
-          }, "statusFailedSaveSnippet");
+  const handleDeleteSnippet = useCallback(
+    async (snippet: Snippet) => {
+      const id = snippet.id;
+      const ok = await runWithErrorStatus(async () => {
+        await api.deleteSnippet(id);
+        await refreshSnippets();
+        // 実行計画ウォッチ (#743): 削除したスニペットのウォッチと世代データは Rust 側
+        // (`delete_snippet`) が全プロファイルのストアから連鎖削除する (#1260)。表示だけ
+        // アクティブプロファイルの最新状態へ読み直す。
+        await reloadActivePlanWatch();
+        // クイックアクセス (#877): 削除したスニペットをお気に入り/最近実行から
+        // 取り除く (実行計画ウォッチと同じく、Undo で元に戻ってもここは復元しない)。
+        setSnippetQuickAccess((prev) => {
+          const next = forgetSnippetQuickAccess(prev, id);
+          if (next !== prev) saveSnippetQuickAccess(next);
+          return next;
+        });
+      }, "statusFailedDeleteSnippet");
+      if (!ok) return;
+      // Undo (#676): snippets have no secrets, so restoring with the original id
+      // via save_snippet fully re-creates it (plan-watch is per-user, not restored).
+      toast.notify({
+        message: translate("toastSnippetDeleted", { name: snippet.name }),
+        action: {
+          label: translate("toastUndo"),
+          onAction: () => {
+            void runWithErrorStatus(async () => {
+              await api.saveSnippet({
+                id: snippet.id,
+                name: snippet.name,
+                folder: snippet.folder,
+                tags: snippet.tags,
+                sql: snippet.sql,
+                driver: snippet.driver,
+                scope: snippet.scope,
+              });
+              await refreshSnippets();
+            }, "statusFailedSaveSnippet");
+          },
         },
-      },
-    });
-  }, [runWithErrorStatus, refreshSnippets, reloadActivePlanWatch, toast]);
+      });
+    },
+    [runWithErrorStatus, refreshSnippets, reloadActivePlanWatch, toast],
+  );
 
   const setCellEditForTab = useCallback(
     (tabId: string, rowKey: string, colIdx: number, value: string | null) => {
@@ -6175,84 +6508,99 @@ export default function App() {
     [patchTab],
   );
 
-  const clearEditsForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => {
-      if (Object.keys(tt.pendingEdits).length === 0) return tt;
-      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-      return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [] };
-    });
-  }, [patchTab]);
+  const clearEditsForTab = useCallback(
+    (tabId: string) => {
+      patchTab(tabId, (tt) => {
+        if (Object.keys(tt.pendingEdits).length === 0) return tt;
+        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: {}, editUndoStack: undoStack, editRedoStack: [] };
+      });
+    },
+    [patchTab],
+  );
 
   // Discard from inside the preview pane: clear the edits AND dismiss the
   // preview view (otherwise the user is stuck on a preview of edits that
   // no longer exist). Also cancels any in-flight preview stream so a
   // late-arriving onMeta event doesn't re-populate `preview` after we've
   // cleared it.
-  const discardEditsAndPreviewForTab = useCallback((tabId: string) => {
-    void cancelStreamForTab(tabId);
-    patchTab(tabId, (tt) => {
-      const undoStack =
-        Object.keys(tt.pendingEdits).length > 0
-          ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
-          : (tt.editUndoStack ?? []);
-      // ストリーミング中に破棄した場合、previewQueryInTab の onDone/onError は
-      // (リスナー detach 済みのため) 発火せず paginatable を復元できない。退避値
-      // が残っていればここで復元する (#F3)。
-      const paginatableRestore =
-        tt.previewPrevPaginatable !== undefined
-          ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
-          : null;
-      return {
-        ...tt,
-        pendingEdits: {},
-        editUndoStack: undoStack,
-        editRedoStack: [],
-        preview: null,
-        ...paginatableRestore,
-      };
-    });
-  }, [patchTab, cancelStreamForTab]);
+  const discardEditsAndPreviewForTab = useCallback(
+    (tabId: string) => {
+      void cancelStreamForTab(tabId);
+      patchTab(tabId, (tt) => {
+        const undoStack =
+          Object.keys(tt.pendingEdits).length > 0
+            ? [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT)
+            : (tt.editUndoStack ?? []);
+        // ストリーミング中に破棄した場合、previewQueryInTab の onDone/onError は
+        // (リスナー detach 済みのため) 発火せず paginatable を復元できない。退避値
+        // が残っていればここで復元する (#F3)。
+        const paginatableRestore =
+          tt.previewPrevPaginatable !== undefined
+            ? { paginatable: tt.previewPrevPaginatable, previewPrevPaginatable: undefined }
+            : null;
+        return {
+          ...tt,
+          pendingEdits: {},
+          editUndoStack: undoStack,
+          editRedoStack: [],
+          preview: null,
+          ...paginatableRestore,
+        };
+      });
+    },
+    [patchTab, cancelStreamForTab],
+  );
 
-  const undoCellEditForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => {
-      const stack = tt.editUndoStack ?? [];
-      if (stack.length === 0) return tt;
-      const prev = stack[stack.length - 1];
-      const redoStack = [...(tt.editRedoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-      return { ...tt, pendingEdits: prev, editUndoStack: stack.slice(0, -1), editRedoStack: redoStack };
-    });
-  }, [patchTab]);
+  const undoCellEditForTab = useCallback(
+    (tabId: string) => {
+      patchTab(tabId, (tt) => {
+        const stack = tt.editUndoStack ?? [];
+        if (stack.length === 0) return tt;
+        const prev = stack[stack.length - 1];
+        const redoStack = [...(tt.editRedoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: prev, editUndoStack: stack.slice(0, -1), editRedoStack: redoStack };
+      });
+    },
+    [patchTab],
+  );
 
-  const redoCellEditForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => {
-      const stack = tt.editRedoStack ?? [];
-      if (stack.length === 0) return tt;
-      const next = stack[stack.length - 1];
-      const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
-      return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: stack.slice(0, -1) };
-    });
-  }, [patchTab]);
+  const redoCellEditForTab = useCallback(
+    (tabId: string) => {
+      patchTab(tabId, (tt) => {
+        const stack = tt.editRedoStack ?? [];
+        if (stack.length === 0) return tt;
+        const next = stack[stack.length - 1];
+        const undoStack = [...(tt.editUndoStack ?? []), tt.pendingEdits].slice(-EDIT_UNDO_LIMIT);
+        return { ...tt, pendingEdits: next, editUndoStack: undoStack, editRedoStack: stack.slice(0, -1) };
+      });
+    },
+    [patchTab],
+  );
 
-  const previewEditsForTab = useCallback((tab: Tab) => {
-    if (!sessionId) return;
-    const { result, tableColumns, database, table, pendingEdits, rowIdentity } = tab;
-    if (!result || !tableColumns || !database || !table) return;
-    const { indices: pkIndices } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
-    const stmts = buildUpdateStatements({
-      driver: selectedProfile?.driver ?? "mysql",
-      database,
-      table,
-      columns: result.columns,
-      rows: result.rows,
-      pkIndices,
-      edits: pendingEdits,
-    });
-    if (stmts.length === 0) return;
-    // Preview only handles one statement at a time; we surface the first
-    // edited row so the user can sanity-check shape. Multi-row callers gate
-    // the button so this branch is single-row in practice.
-    void previewQueryInTab(tab.id, stmts[0]);
-  }, [sessionId, previewQueryInTab, selectedProfile?.driver]);
+  const previewEditsForTab = useCallback(
+    (tab: Tab) => {
+      if (!sessionId) return;
+      const { result, tableColumns, database, table, pendingEdits, rowIdentity } = tab;
+      if (!result || !tableColumns || !database || !table) return;
+      const { indices: pkIndices } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
+      const stmts = buildUpdateStatements({
+        driver: selectedProfile?.driver ?? "mysql",
+        database,
+        table,
+        columns: result.columns,
+        rows: result.rows,
+        pkIndices,
+        edits: pendingEdits,
+      });
+      if (stmts.length === 0) return;
+      // Preview only handles one statement at a time; we surface the first
+      // edited row so the user can sanity-check shape. Multi-row callers gate
+      // the button so this branch is single-row in practice.
+      void previewQueryInTab(tab.id, stmts[0]);
+    },
+    [sessionId, previewQueryInTab, selectedProfile?.driver],
+  );
 
   /**
    * 保留中の編集を一括適用する。`rowScope` (rowEditKey → 列 → 生の入力値) を渡すと、
@@ -6260,174 +6608,192 @@ export default function App() {
    * (行インスペクタからの適用、#1394)。戻り値は適用が完了したか (確認で止めた・
    * 失敗した・送るものが無いときは false)。
    */
-  const applyEditsForTab = useCallback(async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
-    if (!sessionId) return false;
-    const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
-    if (!result || !tableColumns || !database || !table) return false;
-    const scoped = rowScope !== undefined;
-    const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
-    // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
-    const pendingDeletes = scoped ? [] : (tab.pendingDeletes ?? []);
-    const pendingInserts = scoped ? [] : (tab.pendingInserts ?? []);
-    const { indices: pkIndices, strategy: identityStrategy } = resolveRowIdentity(
-      result.columns,
-      tableColumns,
-      rowIdentity,
-    );
-    const driver = selectedProfile?.driver ?? "mysql";
-    // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
-    // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。セル編集は同じ
-    // (列, 値) ごとにまとめた構造化入力で Rust (`bulk_update_cells`) へ渡し、`UPDATE … WHERE
-    // pk IN (…)` のチャンク化とリテラル化はバックエンドが担う (#1259)。
-    const { groups: updateGroups, rowCount: updateRowCount } = buildUpdateGroups({
-      driver, database, table, columns: result.columns, rows: result.rows, pkIndices, edits: pendingEdits,
-    });
-    const deletes = buildDeleteStatements({
-      driver, database, table, columns: result.columns, rows: result.rows, pkIndices,
-      deleteKeys: new Set(pendingDeletes),
-    });
-    const inserts = buildInsertStatements({
-      driver, database, table, columns: result.columns, inserts: pendingInserts,
-    });
-    const extraStatements = [...deletes, ...inserts];
-    // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
-    const opCount = updateRowCount + extraStatements.length;
-    if (opCount === 0) return false;
-    // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
-    // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
-    // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
-    // ことを検出できればより強い文言、そうでなければ一般的な注意文言を出す。
-    if ((updateRowCount > 0 || deletes.length > 0) && identityStrategy === "all_columns") {
-      const ambiguous = hasAmbiguousIdentity(result.rows, pkIndices);
-      const ok = await confirm({
-        title: translate("editAllColumnsConfirmTitle"),
-        message: translate(
-          ambiguous ? "editAllColumnsConfirmBodyAmbiguous" : "editAllColumnsConfirmBody",
-          { count: updateRowCount + deletes.length },
-        ),
-        confirmLabel: translate("editApplyButton"),
-        tone: "warning",
-      });
-      if (!ok) return false;
-    }
-    // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
-    // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
-    // read-only は編集面自体が無効なので到達しないが、保険で条件に含める。
-    const needsWriteApproval =
-      (selectedProfile?.is_production ?? false) &&
-      (selectedProfile?.confirm_writes ?? false) &&
-      !readOnly;
-    if (needsWriteApproval) {
-      const ok = await confirm({
-        title: translate("editApplyConfirmTitle"),
-        message: translate("editApplyConfirmBody", { count: opCount }),
-        confirmLabel: translate("editApplyButton"),
-        tone: "warning",
-      });
-      if (!ok) return false;
-    }
-    const tabId = tab.id;
-    patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
-    setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
-    // All statements run in a single backend transaction: either every
-    // UPDATE commits or, on any failure, the whole batch rolls back so the
-    // table is never left in a half-applied state.
-    let totalAffected = 0;
-    let failure: string | null = null;
-    try {
-      const res = await api.bulkUpdateCells({
-        sessionId,
+  const applyEditsForTab = useCallback(
+    async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
+      if (!sessionId) return false;
+      const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
+      if (!result || !tableColumns || !database || !table) return false;
+      const scoped = rowScope !== undefined;
+      const pendingEdits: PendingEdits = scoped ? rowScope : tab.pendingEdits;
+      // 行スコープの適用では削除予定・新規行は送らず、保留のまま残す。
+      const pendingDeletes = scoped ? [] : (tab.pendingDeletes ?? []);
+      const pendingInserts = scoped ? [] : (tab.pendingInserts ?? []);
+      const { indices: pkIndices, strategy: identityStrategy } = resolveRowIdentity(
+        result.columns,
+        tableColumns,
+        rowIdentity,
+      );
+      const driver = selectedProfile?.driver ?? "mysql";
+      // 1 トランザクションに UPDATE (セル編集) + DELETE (削除予定行) + INSERT (新規行) を
+      // まとめる。all-or-nothing なので一部失敗で全体がロールバックする。セル編集は同じ
+      // (列, 値) ごとにまとめた構造化入力で Rust (`bulk_update_cells`) へ渡し、`UPDATE … WHERE
+      // pk IN (…)` のチャンク化とリテラル化はバックエンドが担う (#1259)。
+      const { groups: updateGroups, rowCount: updateRowCount } = buildUpdateGroups({
+        driver,
         database,
         table,
-        pkColumns: pkIndices.map((i) => result.columns[i].name),
-        groups: updateGroups,
-        extraStatements,
-        pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
+        columns: result.columns,
+        rows: result.rows,
+        pkIndices,
+        edits: pendingEdits,
       });
-      totalAffected = Number(res.rows_affected ?? 0);
-    } catch (e) {
-      failure = String(e);
-    }
-    patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
-    if (failure) {
-      // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
-      // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで
-      // 1 ページ目を取り直して編集を破棄していた)。
+      const deletes = buildDeleteStatements({
+        driver,
+        database,
+        table,
+        columns: result.columns,
+        rows: result.rows,
+        pkIndices,
+        deleteKeys: new Set(pendingDeletes),
+      });
+      const inserts = buildInsertStatements({
+        driver,
+        database,
+        table,
+        columns: result.columns,
+        inserts: pendingInserts,
+      });
+      const extraStatements = [...deletes, ...inserts];
+      // 行ごとの操作数 (編集行 + 削除 + 新規)。確認文とステータスの件数表示に使う。
+      const opCount = updateRowCount + extraStatements.length;
+      if (opCount === 0) return false;
+      // 主キーが無く全列一致で行を識別しているとき (#849) は一意性を保証できない
+      // ため、Apply 前に必ず警告する — 本番/confirm_writes の設定に関わらず、常に
+      // このテーブル特有の安全網として機能する。表示中の行に実際に重複がある
+      // ことを検出できればより強い文言、そうでなければ一般的な注意文言を出す。
+      if ((updateRowCount > 0 || deletes.length > 0) && identityStrategy === "all_columns") {
+        const ambiguous = hasAmbiguousIdentity(result.rows, pkIndices);
+        const ok = await confirm({
+          title: translate("editAllColumnsConfirmTitle"),
+          message: translate(ambiguous ? "editAllColumnsConfirmBodyAmbiguous" : "editAllColumnsConfirmBody", {
+            count: updateRowCount + deletes.length,
+          }),
+          confirmLabel: translate("editApplyButton"),
+          tone: "warning",
+        });
+        if (!ok) return false;
+      }
+      // 本番接続で書き込み承認 (confirm_writes) が有効なときは、通常のクエリ実行
+      // ゲートと同じく、インライン編集の一括 Apply にも確認を要求する (#659)。
+      // read-only は編集面自体が無効なので到達しないが、保険で条件に含める。
+      const needsWriteApproval =
+        (selectedProfile?.is_production ?? false) && (selectedProfile?.confirm_writes ?? false) && !readOnly;
+      if (needsWriteApproval) {
+        const ok = await confirm({
+          title: translate("editApplyConfirmTitle"),
+          message: translate("editApplyConfirmBody", { count: opCount }),
+          confirmLabel: translate("editApplyButton"),
+          tone: "warning",
+        });
+        if (!ok) return false;
+      }
+      const tabId = tab.id;
+      patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
+      setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
+      // All statements run in a single backend transaction: either every
+      // UPDATE commits or, on any failure, the whole batch rolls back so the
+      // table is never left in a half-applied state.
+      let totalAffected = 0;
+      let failure: string | null = null;
+      try {
+        const res = await api.bulkUpdateCells({
+          sessionId,
+          database,
+          table,
+          pkColumns: pkIndices.map((i) => result.columns[i].name),
+          groups: updateGroups,
+          extraStatements,
+          pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
+        });
+        totalAffected = Number(res.rows_affected ?? 0);
+      } catch (e) {
+        failure = String(e);
+      }
+      patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
+      if (failure) {
+        // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
+        // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで
+        // 1 ページ目を取り直して編集を破棄していた)。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsPartial",
+          vars: { total: opCount, error: failure },
+          error: true,
+        });
+        return false;
+      }
+      // 成功時はコミット済みの変更を、取得済みの結果行へその場で反映する。これにより
+      // 編集セルが新しい値を表示し、ユーザのスクロール/ページ位置も保たれる。以前は
+      // 常に 1 ページ目 (`LIMIT 既定件数`) を取り直していたため、2 ページ目以降や
+      // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
+      // 編集対象の行が消えたり編集前の値に見えたりしていた。
+      const hasInserts = pendingInserts.length > 0;
+      if (hasInserts && paginatable) {
+        // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
+        // ここだけは再取得して反映する。
+        const limit = Math.max(1, settings.defaultDisplayCount);
+        // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+        // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
+        // だけ残るのを防ぐ)。
+        // Apply 中に追加された削除予定・新規行は未送信なので残す。
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
+          pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
+          serverSort: null,
+          serverFilter: null,
+        }));
+        void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
+      } else {
+        patchTab(tabId, (tt) => {
+          // Apply 実行中 (await 中) に追加/上書きされた編集は DB へ送信されていない
+          // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
+          // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
+          // のまま保持する (#F2)。
+          // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
+          return {
+            ...tabStateAfterApply(tt, {
+              pkIndices,
+              sent: pendingEdits,
+              scoped,
+              sentDeletes: pendingDeletes,
+              sentInserts: pendingInserts,
+            }),
+            preview: null,
+          };
+        });
+      }
+      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
+      // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
+      // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
+      if (appliedRowShortfall(opCount, totalAffected) > 0) {
+        setStatus({
+          kind: "key",
+          key: "statusAppliedEditsShortfall",
+          vars: { rows: totalAffected, count: opCount },
+          error: true,
+        });
+        return true;
+      }
       setStatus({
         kind: "key",
-        key: "statusApplyEditsPartial",
-        vars: { total: opCount, error: failure },
-        error: true,
-      });
-      return false;
-    }
-    // 成功時はコミット済みの変更を、取得済みの結果行へその場で反映する。これにより
-    // 編集セルが新しい値を表示し、ユーザのスクロール/ページ位置も保たれる。以前は
-    // 常に 1 ページ目 (`LIMIT 既定件数`) を取り直していたため、2 ページ目以降や
-    // 「さらに読み込む」で表示した行を編集すると、Apply 後に表示が先頭ページへ戻り、
-    // 編集対象の行が消えたり編集前の値に見えたりしていた。
-    const hasInserts = pendingInserts.length > 0;
-    if (hasInserts && paginatable) {
-      // 新規行はサーバが採番する PK (AUTO_INCREMENT など) を取り込む必要があるため、
-      // ここだけは再取得して反映する。
-      const limit = Math.max(1, settings.defaultDisplayCount);
-      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
-      // サーバ側ソート/フィルタの表示 (#792) も解除しておく (SQL 未適用のままバッジ
-      // だけ残るのを防ぐ)。
-      // Apply 中に追加された削除予定・新規行は未送信なので残す。
-      patchTab(tabId, (tt) => ({
-        ...tt,
-        pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
-        pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
-        serverSort: null,
-        serverFilter: null,
-      }));
-      void runQueryInTab(tabId, `${paginatable} LIMIT ${limit}`, paginatable);
-    } else {
-      patchTab(tabId, (tt) => {
-        // Apply 実行中 (await 中) に追加/上書きされた編集は DB へ送信されていない
-        // ため、送信済みスナップショット (`pendingEdits`、この関数冒頭で捕捉) だけを
-        // グリッドへ反映し pendingEdits から取り除く。それ以外の新規編集は pending
-        // のまま保持する (#F2)。
-        // 状態遷移は純関数 `tabStateAfterApply` (editApplyState.ts) に任せる。
-        return { ...tabStateAfterApply(tt, {
-            pkIndices,
-            sent: pendingEdits,
-            scoped,
-            sentDeletes: pendingDeletes,
-            sentInserts: pendingInserts,
-          }), preview: null };
-      });
-    }
-    patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
-    // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
-    // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
-    if (appliedRowShortfall(opCount, totalAffected) > 0) {
-      setStatus({
-        kind: "key",
-        key: "statusAppliedEditsShortfall",
+        key: "statusAppliedEdits",
         vars: { rows: totalAffected, count: opCount },
-        error: true,
       });
       return true;
-    }
-    setStatus({
-      kind: "key",
-      key: "statusAppliedEdits",
-      vars: { rows: totalAffected, count: opCount },
-    });
-    return true;
-  }, [
-    sessionId,
-    patchTab,
-    runQueryInTab,
-    settings.defaultDisplayCount,
-    selectedProfile?.driver,
-    selectedProfile?.is_production,
-    selectedProfile?.confirm_writes,
-    readOnly,
-    confirm,
-  ]);
+    },
+    [
+      sessionId,
+      patchTab,
+      runQueryInTab,
+      settings.defaultDisplayCount,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      selectedProfile?.confirm_writes,
+      readOnly,
+      confirm,
+    ],
+  );
 
   // 列全体の「検索して置換」(#1242)。`GridReplaceModal` が組み立てた
   // `UPDATE ... SET c = REPLACE(c, ...) WHERE ...` を、実行前に必ず確認して 1 トランザクション
@@ -6487,17 +6853,20 @@ export default function App() {
       if (!result || !tableColumns || !database || !table) return false;
       const row = result.rows[rowIdx];
       if (!row) return false;
-      const { indices: pkIndices, strategy } = resolveRowIdentity(
-        result.columns,
-        tableColumns,
-        rowIdentity,
-      );
+      const { indices: pkIndices, strategy } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
       // 実の主キーで行を特定できるときだけ (rowid / ctid / 全列一致では誤った行を
       // 書き換えうる)。
       if (strategy !== "primary_key") return false;
       const driver = selectedProfile?.driver ?? "mysql";
       const stmt = buildBlobUpdateStatement({
-        driver, database, table, columns: result.columns, row, pkIndices, colIdx, hex,
+        driver,
+        database,
+        table,
+        columns: result.columns,
+        row,
+        pkIndices,
+        colIdx,
+        hex,
       });
       if (!stmt) return false;
       const size = formatBlobSize(hex.length / 2);
@@ -6535,13 +6904,16 @@ export default function App() {
   );
 
   // 行を削除予定にトグルする。
-  const toggleRowDeleteForTab = useCallback((tabId: string, rowKey: string) => {
-    patchTab(tabId, (tt) => {
-      const cur = tt.pendingDeletes ?? [];
-      const next = cur.includes(rowKey) ? cur.filter((k) => k !== rowKey) : [...cur, rowKey];
-      return { ...tt, pendingDeletes: next };
-    });
-  }, [patchTab]);
+  const toggleRowDeleteForTab = useCallback(
+    (tabId: string, rowKey: string) => {
+      patchTab(tabId, (tt) => {
+        const cur = tt.pendingDeletes ?? [];
+        const next = cur.includes(rowKey) ? cur.filter((k) => k !== rowKey) : [...cur, rowKey];
+        return { ...tt, pendingDeletes: next };
+      });
+    },
+    [patchTab],
+  );
 
   // 新規行追加モーダルを開く (空欄から)。
   const requestInsertRowForTab = useCallback((tabId: string) => {
@@ -6556,120 +6928,145 @@ export default function App() {
   }, []);
 
   // モーダルで確定した新規行を保留に追加する。
-  const addInsertRowForTab = useCallback((tabId: string, row: PendingInsertRow) => {
-    setRowInsertTabId(null);
-    setRowInsertSeed(null);
-    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
-  }, [patchTab]);
+  const addInsertRowForTab = useCallback(
+    (tabId: string, row: PendingInsertRow) => {
+      setRowInsertTabId(null);
+      setRowInsertSeed(null);
+      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+    },
+    [patchTab],
+  );
 
   // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
   // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
-  const addInsertRowsForTab = useCallback((tabId: string, rows: PendingInsertRow[]) => {
-    if (rows.length === 0) return;
-    patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
-  }, [patchTab]);
+  const addInsertRowsForTab = useCallback(
+    (tabId: string, rows: PendingInsertRow[]) => {
+      if (rows.length === 0) return;
+      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), ...rows] }));
+    },
+    [patchTab],
+  );
 
   // 行操作 (追加/削除) の保留を破棄する。
-  const discardRowOpsForTab = useCallback((tabId: string) => {
-    patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
-  }, [patchTab]);
+  const discardRowOpsForTab = useCallback(
+    (tabId: string) => {
+      patchTab(tabId, (tt) => ({ ...tt, pendingDeletes: [], pendingInserts: [] }));
+    },
+    [patchTab],
+  );
 
   // open_table の応答待ち中の (database, table)。タブがまだ state に無い間の再実行で
   // 同じテーブルのタブが二重に開かないようにする (tabOpenFlightId と同じキー)。
   const openingTablesRef = useRef<Set<string>>(new Set());
-  const handleOpenTable = useCallback((database: string, table: string) => {
-    recordRecentTableOpen(database, table);
-    const existing = tabs.find(
-      (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
-    );
-    // サイドバー行のダブルクリックが始めた飛行 (#1415)。タブを作らない経路では即解除する。
-    const flightId = tabOpenFlightId(database, table);
-    if (existing) {
-      endTabOpenFlight(flightId, true);
-      activateTab(existing.id);
-      return;
-    }
-    if (!sessionId) {
-      endTabOpenFlight(flightId, true);
-      return;
-    }
-    // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-    const openKey = `${sessionId}\u0000${flightId}`;
-    if (openingTablesRef.current.has(openKey)) return;
-    openingTablesRef.current.add(openKey);
-    const limit = Math.max(1, settings.defaultDisplayCount);
-    const driver = selectedProfile?.driver ?? "mysql";
-    void (async () => {
-      // 事前にスキーマ (主キー有無) と、無い場合の行識別フォールバック
-      // (rowid/ctid、#849)、初回 SELECT、行数推定を `open_table` 1 回で解決してから
-      // タブを作る — 後から付け足すと 1 ページ目を編集不能なまま表示し、その後
-      // こっそり再実行する体験になってしまうため (#1263 で往復を 1 回に集約)。
-      // 失敗時は従来どおりのプレーンな SELECT * にフォールバックし、実行自体の
-      // エラーはグリッド側 (queryError) に委ねる。
-      let base: string;
-      let sql: string;
-      let tableColumns: TableColumnInfo[] = [];
-      let rowIdentity: TableRowIdentity | null = null;
-      let openTemplate: TableOpenTemplateState | null = null;
-      try {
-        const r = await api.openTable(sessionId, database, table, limit, false);
-        tableColumns = r.columns;
-        rowIdentity = r.row_identity;
-        // デフォルトクエリのテンプレート (#1253): テーブル別の上書き > 全体 > 従来。
-        // 展開・検証に失敗したら従来の base / sql のまま開く。
-        ({ base, sql, openTemplate } = applyTableOpenTemplate({
-          resolved: resolveTableOpenTemplate(
-            settings.tableOpenQueryTemplate,
-            settings.tableOpenQueryOverrides,
-            selectedProfile?.id,
+  const handleOpenTable = useCallback(
+    (database: string, table: string) => {
+      recordRecentTableOpen(database, table);
+      const existing = tabs.find(
+        (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+      );
+      // サイドバー行のダブルクリックが始めた飛行 (#1415)。タブを作らない経路では即解除する。
+      const flightId = tabOpenFlightId(database, table);
+      if (existing) {
+        endTabOpenFlight(flightId, true);
+        activateTab(existing.id);
+        return;
+      }
+      if (!sessionId) {
+        endTabOpenFlight(flightId, true);
+        return;
+      }
+      // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
+      const openKey = `${sessionId}\u0000${flightId}`;
+      if (openingTablesRef.current.has(openKey)) return;
+      openingTablesRef.current.add(openKey);
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const driver = selectedProfile?.driver ?? "mysql";
+      void (async () => {
+        // 事前にスキーマ (主キー有無) と、無い場合の行識別フォールバック
+        // (rowid/ctid、#849)、初回 SELECT、行数推定を `open_table` 1 回で解決してから
+        // タブを作る — 後から付け足すと 1 ページ目を編集不能なまま表示し、その後
+        // こっそり再実行する体験になってしまうため (#1263 で往復を 1 回に集約)。
+        // 失敗時は従来どおりのプレーンな SELECT * にフォールバックし、実行自体の
+        // エラーはグリッド側 (queryError) に委ねる。
+        let base: string;
+        let sql: string;
+        let tableColumns: TableColumnInfo[] = [];
+        let rowIdentity: TableRowIdentity | null = null;
+        let openTemplate: TableOpenTemplateState | null = null;
+        try {
+          const r = await api.openTable(sessionId, database, table, limit, false);
+          tableColumns = r.columns;
+          rowIdentity = r.row_identity;
+          // デフォルトクエリのテンプレート (#1253): テーブル別の上書き > 全体 > 従来。
+          // 展開・検証に失敗したら従来の base / sql のまま開く。
+          ({ base, sql, openTemplate } = applyTableOpenTemplate({
+            resolved: resolveTableOpenTemplate(
+              settings.tableOpenQueryTemplate,
+              settings.tableOpenQueryOverrides,
+              selectedProfile?.id,
+              database,
+              table,
+            ),
+            driver,
             database,
             table,
-          ),
-          driver,
+            limit,
+            columns: r.columns,
+            rowIdentity: r.row_identity,
+            legacyBase: r.base,
+            legacySql: r.sql,
+          }));
+        } catch {
+          base = qualifiedTableSql(driver, database, table);
+          sql = `${base} LIMIT ${limit}`;
+        }
+        const tab: Tab = {
+          ...makeTab("table", table, sql),
           database,
           table,
-          limit,
-          columns: r.columns,
-          rowIdentity: r.row_identity,
-          legacyBase: r.base,
-          legacySql: r.sql,
-        }));
-      } catch {
-        base = qualifiedTableSql(driver, database, table);
-        sql = `${base} LIMIT ${limit}`;
-      }
-      const tab: Tab = {
-        ...makeTab("table", table, sql),
-        database,
-        table,
-        schemaTable: { database, name: table, columns: tableColumns.map((c) => c.name) },
-        tableColumns,
-        rowIdentity,
-        openTemplate,
-        previewRowLimit: limit,
-        paginatable: base,
-        page: 1,
-        pageSize: limit,
-        rowEstimateTotal: null,
-      };
-      addTab(tab);
-      endTabOpenFlight(flightId);
-      // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
-      // タブ自体と開いた時点のセッションを明示的に渡す。
-      void runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
-      // ストリーム開始を待たせないよう、ページネーションの総ページ数目安に使う
-      // 行数推定は 1 テーブル分を並行・非同期で取得して後から反映する
-      // (ベストエフォート。到着順に関わらず該当タブの値を更新するだけ)。
-      void api
-        .tableRowEstimate(sessionId, database, table)
-        .then((est) => {
-          if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
-        })
-        .catch(() => {});
-    })().finally(() => {
-      openingTablesRef.current.delete(openKey);
-    });
-  }, [tabs, runQueryInTab, addTab, activateTab, settings.defaultDisplayCount, settings.tableOpenQueryTemplate, settings.tableOpenQueryOverrides, selectedProfile?.driver, selectedProfile?.id, recordRecentTableOpen, sessionId, patchTab]);
+          schemaTable: { database, name: table, columns: tableColumns.map((c) => c.name) },
+          tableColumns,
+          rowIdentity,
+          openTemplate,
+          previewRowLimit: limit,
+          paginatable: base,
+          page: 1,
+          pageSize: limit,
+          rowEstimateTotal: null,
+        };
+        addTab(tab);
+        endTabOpenFlight(flightId);
+        // 追加直後はクロージャの `tabs` にまだ載っていない (database が落ちる) ため、
+        // タブ自体と開いた時点のセッションを明示的に渡す。
+        void runQueryInTab(tab.id, sql, base, null, false, { sessionId, tab });
+        // ストリーム開始を待たせないよう、ページネーションの総ページ数目安に使う
+        // 行数推定は 1 テーブル分を並行・非同期で取得して後から反映する
+        // (ベストエフォート。到着順に関わらず該当タブの値を更新するだけ)。
+        void api
+          .tableRowEstimate(sessionId, database, table)
+          .then((est) => {
+            if (est != null) patchTab(tab.id, (tt) => ({ ...tt, rowEstimateTotal: est }));
+          })
+          .catch(() => {});
+      })().finally(() => {
+        openingTablesRef.current.delete(openKey);
+      });
+    },
+    [
+      tabs,
+      runQueryInTab,
+      addTab,
+      activateTab,
+      settings.defaultDisplayCount,
+      settings.tableOpenQueryTemplate,
+      settings.tableOpenQueryOverrides,
+      selectedProfile?.driver,
+      selectedProfile?.id,
+      recordRecentTableOpen,
+      sessionId,
+      patchTab,
+    ],
+  );
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -6706,56 +7103,71 @@ export default function App() {
 
   // Open a fresh query tab holding `sql` and run it immediately. Shared by the
   // schema-tree table context-menu actions (run SELECT, show definition).
-  const openAndRunQuery = useCallback((sql: string, title?: string) => {
-    if (!sessionId) return;
-    const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
-    if (title) {
-      tab.title = title;
-      tab.titleManual = true;
-    }
-    addTab(tab);
-    void runQueryInTab(tab.id, sql);
-  }, [sessionId, runQueryInTab, addTab]);
+  const openAndRunQuery = useCallback(
+    (sql: string, title?: string) => {
+      if (!sessionId) return;
+      const tab: Tab = { ...makeQueryTab(), sql, lastExecutedSql: sql };
+      if (title) {
+        tab.title = title;
+        tab.titleManual = true;
+      }
+      addTab(tab);
+      void runQueryInTab(tab.id, sql);
+    },
+    [sessionId, runQueryInTab, addTab],
+  );
 
   // SQL を実行せずに新しいクエリタブのエディタへ流し込む (「エディタへ送る」)。
-  const openQueryInEditor = useCallback((sql: string, title?: string, database?: string) => {
-    const tab: Tab = { ...makeQueryTab(), sql };
-    if (title) {
-      tab.title = title;
-      tab.titleManual = true;
-    }
-    if (database) tab.database = database;
-    addTab(tab);
-  }, [addTab]);
+  const openQueryInEditor = useCallback(
+    (sql: string, title?: string, database?: string) => {
+      const tab: Tab = { ...makeQueryTab(), sql };
+      if (title) {
+        tab.title = title;
+        tab.titleManual = true;
+      }
+      if (database) tab.database = database;
+      addTab(tab);
+    },
+    [addTab],
+  );
 
   // データ品質アサーション (#742) の fail から違反行クエリを開く。**実行はしない**
   // (生成 SQL を見てから利用者が実行する)。検証と同じデータベースに向けるため、
   // アクティブタブ → プロファイル既定の順で解決したものをタブに持たせる。
   const assertionDatabase = activeTab?.database ?? selectedProfile?.database;
-  const handleOpenAssertionSql = useCallback((sql: string, title: string) => {
-    const tab: Tab = { ...makeQueryTab(), sql, title, titleManual: true };
-    if (assertionDatabase) tab.database = assertionDatabase;
-    addTab(tab);
-  }, [addTab, assertionDatabase]);
+  const handleOpenAssertionSql = useCallback(
+    (sql: string, title: string) => {
+      const tab: Tab = { ...makeQueryTab(), sql, title, titleManual: true };
+      if (assertionDatabase) tab.database = assertionDatabase;
+      addTab(tab);
+    },
+    [addTab, assertionDatabase],
+  );
 
   // AI が生成した SQL (#691) を新しいクエリタブで開く。**実行はしない**。生成時にスキーマを
   // 読んだデータベースを `tab.database` に載せ、別 DB の同名テーブルを叩かないようにする。
-  const handleOpenAiSql = useCallback((sql: string, database: string | null) => {
-    const tab: Tab = { ...makeQueryTab(), sql };
-    if (database) tab.database = database;
-    addTab(tab);
-  }, [addTab]);
+  const handleOpenAiSql = useCallback(
+    (sql: string, database: string | null) => {
+      const tab: Tab = { ...makeQueryTab(), sql };
+      if (database) tab.database = database;
+      addTab(tab);
+    },
+    [addTab],
+  );
 
   // スキーマオブジェクトの定義 DDL を取得して読み取り用のクエリタブに表示する。
-  const handleOpenObjectDefinition = useCallback(async (database: string, kind: string, name: string, id: string | null) => {
-    if (!sessionId) return;
-    try {
-      const ddl = await api.getObjectDefinition(sessionId, database, kind, name, id);
-      openQueryInEditor(ddl, name);
-    } catch (e) {
-      toast.error(translate("objDefinitionError", { error: String(e) }));
-    }
-  }, [sessionId, openQueryInEditor, toast]);
+  const handleOpenObjectDefinition = useCallback(
+    async (database: string, kind: string, name: string, id: string | null) => {
+      if (!sessionId) return;
+      try {
+        const ddl = await api.getObjectDefinition(sessionId, database, kind, name, id);
+        openQueryInEditor(ddl, name);
+      } catch (e) {
+        toast.error(translate("objDefinitionError", { error: String(e) }));
+      }
+    },
+    [sessionId, openQueryInEditor, toast],
+  );
 
   // ストアドプロシージャ / 関数の実行 (#1003): 右クリック「実行...」でフォームを開き、
   // 生成した呼び出し SQL を新しいクエリタブで **通常の実行ゲート** (`runInTabWithGate`
@@ -6785,27 +7197,33 @@ export default function App() {
     [sessionId],
   );
 
-  const handleRoutineRun = useCallback((sql: string) => {
-    const target = routineTarget;
-    setRoutineTarget(null);
-    if (!target || !sessionId) return;
-    const tab: Tab = {
-      ...makeQueryTab(),
-      sql,
-      lastExecutedSql: sql,
-      title: target.name,
-      titleManual: true,
-      database: target.database,
-    };
-    addTab(tab);
-    runInTabWithGate(tab, sql, { newTab: false, fresh: true });
-  }, [routineTarget, sessionId, addTab, runInTabWithGate]);
+  const handleRoutineRun = useCallback(
+    (sql: string) => {
+      const target = routineTarget;
+      setRoutineTarget(null);
+      if (!target || !sessionId) return;
+      const tab: Tab = {
+        ...makeQueryTab(),
+        sql,
+        lastExecutedSql: sql,
+        title: target.name,
+        titleManual: true,
+        database: target.database,
+      };
+      addTab(tab);
+      runInTabWithGate(tab, sql, { newTab: false, fresh: true });
+    },
+    [routineTarget, sessionId, addTab, runInTabWithGate],
+  );
 
-  const handleRoutineToEditor = useCallback((sql: string) => {
-    const target = routineTarget;
-    setRoutineTarget(null);
-    openQueryInEditor(sql, target?.name);
-  }, [routineTarget, openQueryInEditor]);
+  const handleRoutineToEditor = useCallback(
+    (sql: string) => {
+      const target = routineTarget;
+      setRoutineTarget(null);
+      openQueryInEditor(sql, target?.name);
+    },
+    [routineTarget, openQueryInEditor],
+  );
 
   // ビュー定義の編集 (#851): 選択したビューの DDL を取得し、`CREATE VIEW` の
   // 外殻を剥がした本文だけを新しいクエリタブへ展開する。タブに `editingViewName`
@@ -6814,216 +7232,270 @@ export default function App() {
   // (SQLite は DROP+CREATE) による置換保存になる (`handleSaveAsViewConfirm`)。
   // DDL 取得自体は読み取りのみなので read_only セッションでも実行できる —
   // 実際の保存 (書き込み) は別のボタン操作で `!readOnly` によりガードされる。
-  const handleEditViewDefinition = useCallback(async (database: string, name: string) => {
-    if (!sessionId) return;
-    try {
-      const ddl = await api.getObjectDefinition(sessionId, database, "view", name, null);
-      const tab: Tab = {
-        ...makeQueryTab(),
-        sql: extractViewBody(ddl),
-        title: name,
-        titleManual: true,
-        database,
-        editingViewName: name,
-      };
-      addTab(tab);
-    } catch (e) {
-      toast.error(translate("objDefinitionError", { error: String(e) }));
-    }
-  }, [sessionId, addTab, toast]);
+  const handleEditViewDefinition = useCallback(
+    async (database: string, name: string) => {
+      if (!sessionId) return;
+      try {
+        const ddl = await api.getObjectDefinition(sessionId, database, "view", name, null);
+        const tab: Tab = {
+          ...makeQueryTab(),
+          sql: extractViewBody(ddl),
+          title: name,
+          titleManual: true,
+          database,
+          editingViewName: name,
+        };
+        addTab(tab);
+      } catch (e) {
+        toast.error(translate("objDefinitionError", { error: String(e) }));
+      }
+    },
+    [sessionId, addTab, toast],
+  );
 
   // CREATE TABLE ウィザードの実行: DDL を新しいクエリタブで実行し、閉じる。
-  const handleCreateTableRun = useCallback((sql: string) => {
-    setCreateTableDb(null);
-    openAndRunQuery(sql);
-  }, [openAndRunQuery]);
+  const handleCreateTableRun = useCallback(
+    (sql: string) => {
+      setCreateTableDb(null);
+      openAndRunQuery(sql);
+    },
+    [openAndRunQuery],
+  );
 
-  const handleCreateTableToEditor = useCallback((sql: string) => {
-    setCreateTableDb(null);
-    openQueryInEditor(sql);
-  }, [openQueryInEditor]);
+  const handleCreateTableToEditor = useCallback(
+    (sql: string) => {
+      setCreateTableDb(null);
+      openQueryInEditor(sql);
+    },
+    [openQueryInEditor],
+  );
 
   // テーブル保守操作: DDL を実行し、スキーマキャッシュとツリーを更新する。
   // `table` を渡すと (CREATE / DROP INDEX など対象が 1 テーブルと分かる DDL)、そのテーブルの
   // バックエンドキャッシュだけを捨てて再読込する (#1539)。
-  const runMaintenanceDdl = useCallback(async (sql: string, database: string, table?: string): Promise<boolean> => {
-    if (!sessionId) return false;
-    try {
-      await api.runQuery(sessionId, sql, database);
-      invalidateSchemaCache(database);
-      noteSchemaDdl(sql, database);
-      connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
-      return true;
-    } catch (e) {
-      toast.error(translate("statusQueryError", { error: String(e) }));
-      return false;
-    }
-  }, [sessionId, invalidateSchemaCache, noteSchemaDdl, toast]);
+  const runMaintenanceDdl = useCallback(
+    async (sql: string, database: string, table?: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      try {
+        await api.runQuery(sessionId, sql, database);
+        invalidateSchemaCache(database);
+        noteSchemaDdl(sql, database);
+        connectionListRef.current?.refreshSchema(table ? { database, table } : undefined);
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
 
-  const handleCopyTableName = useCallback(async (table: string) => {
-    if (await copyToClipboard(table)) {
-      toast.success(translate("tableNameCopied", { table }));
-    }
-  }, [toast]);
+  const handleCopyTableName = useCallback(
+    async (table: string) => {
+      if (await copyToClipboard(table)) {
+        toast.success(translate("tableNameCopied", { table }));
+      }
+    },
+    [toast],
+  );
 
   // 破壊的操作の確認メッセージ。本番接続では追加警告を添える。
-  const maintenanceMessage = useCallback((body: ReactNode): ReactNode => {
-    if (selectedProfile?.is_production) {
-      return (
-        <>
-          {body}
-          <br />
-          <br />
-          <strong>{translate("maintenanceProductionWarning")}</strong>
-        </>
-      );
-    }
-    return body;
-  }, [selectedProfile?.is_production]);
+  const maintenanceMessage = useCallback(
+    (body: ReactNode): ReactNode => {
+      if (selectedProfile?.is_production) {
+        return (
+          <>
+            {body}
+            <br />
+            <br />
+            <strong>{translate("maintenanceProductionWarning")}</strong>
+          </>
+        );
+      }
+      return body;
+    },
+    [selectedProfile?.is_production],
+  );
 
-  const handleTruncateTable = useCallback(async (database: string, table: string) => {
-    // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
-    // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
-    const ok = await confirm({
-      title: translate("truncateConfirmTitle", { table }),
-      message: maintenanceMessage(translate("truncateConfirmBody", { table })),
-      confirmLabel: translate("truncateConfirmOk"),
-      tone: "danger",
-      typedConfirmation: selectedProfile?.is_production ? table : undefined,
-    });
-    if (!ok) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl]);
+  const handleTruncateTable = useCallback(
+    async (database: string, table: string) => {
+      // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
+      // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
+      const ok = await confirm({
+        title: translate("truncateConfirmTitle", { table }),
+        message: maintenanceMessage(translate("truncateConfirmBody", { table })),
+        confirmLabel: translate("truncateConfirmOk"),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? table : undefined,
+      });
+      if (!ok) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
+    },
+    [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl],
+  );
 
   // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
   // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
   // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
-  const loadDropImpacts = useCallback(async (database: string, tables: string[]): Promise<DropImpact[]> => {
-    if (!sessionId) return [];
-    const entries = await Promise.all(
-      tables.map(async (tbl): Promise<[string, IncomingFk[]]> => {
-        try {
-          return [tbl, await api.incomingForeignKeys(sessionId, database, tbl)];
-        } catch {
-          return [tbl, []];
-        }
-      }),
-    );
-    return collectDropImpacts(Object.fromEntries(entries), tables);
-  }, [sessionId]);
+  const loadDropImpacts = useCallback(
+    async (database: string, tables: string[]): Promise<DropImpact[]> => {
+      if (!sessionId) return [];
+      const entries = await Promise.all(
+        tables.map(async (tbl): Promise<[string, IncomingFk[]]> => {
+          try {
+            return [tbl, await api.incomingForeignKeys(sessionId, database, tbl)];
+          } catch {
+            return [tbl, []];
+          }
+        }),
+      );
+      return collectDropImpacts(Object.fromEntries(entries), tables);
+    },
+    [sessionId],
+  );
 
-  const handleDropTable = useCallback(async (database: string, table: string) => {
-    // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
-    const impacts = await loadDropImpacts(database, [table]);
-    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
-    const ok = await confirm({
-      title: translate("dropConfirmTitle", { table }),
-      message: maintenanceMessage(
-        <>
-          {translate("dropConfirmBody", { table })}
-          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
-        </>,
-      ),
-      confirmLabel: translate("dropConfirmOk"),
-      tone: "danger",
-      typedConfirmation: selectedProfile?.is_production ? table : undefined,
-    });
-    if (!ok) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const success = await runMaintenanceDdl(buildDropTableSql(driver, database, table), database);
-    if (success) {
-      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
-      tabsRef.current
-        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    }
-  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+  const handleDropTable = useCallback(
+    async (database: string, table: string) => {
+      // 不可逆 (DROP) × 本番接続では同様にタイプ入力の強確認ゲートを追加する (#675)。
+      const impacts = await loadDropImpacts(database, [table]);
+      const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
+      const ok = await confirm({
+        title: translate("dropConfirmTitle", { table }),
+        message: maintenanceMessage(
+          <>
+            {translate("dropConfirmBody", { table })}
+            <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+          </>,
+        ),
+        confirmLabel: translate("dropConfirmOk"),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? table : undefined,
+      });
+      if (!ok) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const success = await runMaintenanceDdl(buildDropTableSql(driver, database, table), database);
+      if (success) {
+        // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+        tabsRef.current
+          .filter((tt) => tt.kind === "table" && tt.database === database && tt.table === table)
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      loadDropImpacts,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      runMaintenanceDdl,
+      tabsRef,
+    ],
+  );
 
   // ビューの DROP (#851)。確認導線・実行経路は `handleDropTable` をそのまま流用する
   // (Issue の方針: 「削除は既存の DROP 確認導線を流用」)。
-  const handleDropView = useCallback(async (database: string, name: string) => {
-    const ok = await confirm({
-      title: translate("dropViewConfirmTitle", { view: name }),
-      message: maintenanceMessage(translate("dropViewConfirmBody", { view: name })),
-      confirmLabel: translate("dropViewConfirmOk"),
-      tone: "danger",
-      typedConfirmation: selectedProfile?.is_production ? name : undefined,
-    });
-    if (!ok) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const success = await runMaintenanceDdl(buildDropViewSql(driver, database, name), database);
-    if (success) {
-      // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
-      tabsRef.current
-        .filter((tt) => tt.editingViewName === name && tt.database === database)
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, tabsRef]);
+  const handleDropView = useCallback(
+    async (database: string, name: string) => {
+      const ok = await confirm({
+        title: translate("dropViewConfirmTitle", { view: name }),
+        message: maintenanceMessage(translate("dropViewConfirmBody", { view: name })),
+        confirmLabel: translate("dropViewConfirmOk"),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? name : undefined,
+      });
+      if (!ok) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const success = await runMaintenanceDdl(buildDropViewSql(driver, database, name), database);
+      if (success) {
+        // 定義を編集中だった同名ビューのタブは整合性が取れなくなるので閉じる。
+        tabsRef.current
+          .filter((tt) => tt.editingViewName === name && tt.database === database)
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      runMaintenanceDdl,
+      tabsRef,
+    ],
+  );
 
-  const handleRenameTableSubmit = useCallback(async (newName: string) => {
-    const target = renameTarget;
-    setRenameTarget(null);
-    const trimmedName = newName.trim();
-    if (!target || !trimmedName || trimmedName === target.table) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const success = await runMaintenanceDdl(
-      buildRenameTableSql(driver, target.database, target.table, trimmedName),
-      target.database,
-    );
-    if (success) {
-      // 開いている対象テーブルのタブは旧名のままなので閉じる (新名で開き直せる)。
-      tabsRef.current
-        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    }
-  }, [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef]);
+  const handleRenameTableSubmit = useCallback(
+    async (newName: string) => {
+      const target = renameTarget;
+      setRenameTarget(null);
+      const trimmedName = newName.trim();
+      if (!target || !trimmedName || trimmedName === target.table) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const success = await runMaintenanceDdl(
+        buildRenameTableSql(driver, target.database, target.table, trimmedName),
+        target.database,
+      );
+      if (success) {
+        // 開いている対象テーブルのタブは旧名のままなので閉じる (新名で開き直せる)。
+        tabsRef.current
+          .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      }
+    },
+    [renameTarget, selectedProfile?.driver, runMaintenanceDdl, tabsRef],
+  );
 
   // テーブル複製 (#1398)。モーダルは確定と同時に閉じ (RenameTableDialog と同じ流儀)、
   // 生成済みの文 (CREATE TABLE → CREATE INDEX → 任意で INSERT ... SELECT) を既存の
   // `run_query_transaction` (read_only ガード付き) で流す。新しい書き込み経路は増やさない。
-  const handleCloneTableConfirm = useCallback((newName: string, statements: string[]) => {
-    const target = cloneTarget;
-    setCloneTarget(null);
-    if (!target || !sessionId) return;
-    void (async () => {
-      try {
-        await api.runQueryTransaction(sessionId, statements, target.database);
-        invalidateSchemaCache(target.database);
-        noteSchemaDdl(statements.join(";\n"), target.database);
-        connectionListRef.current?.refreshSchema();
-        toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
-      } catch (e) {
-        // MySQL は CREATE TABLE が暗黙コミットされるので、後続の文が失敗しても空の複製が残りうる。
-        // 失敗時もツリーを再読込し、作成済みかどうかを一覧で確かめて通知を出し分ける
-        // (補償 DROP は自動では行わない)。
-        invalidateSchemaCache(target.database);
-        connectionListRef.current?.refreshSchema();
-        const driver = selectedProfile?.driver ?? "mysql";
-        let after: string[] | null = null;
-        if (driver === "mysql" && statements.length > 1) {
-          try {
-            after = await api.listTables(sessionId, target.database);
-          } catch {
-            after = null;
+  const handleCloneTableConfirm = useCallback(
+    (newName: string, statements: string[]) => {
+      const target = cloneTarget;
+      setCloneTarget(null);
+      if (!target || !sessionId) return;
+      void (async () => {
+        try {
+          await api.runQueryTransaction(sessionId, statements, target.database);
+          invalidateSchemaCache(target.database);
+          noteSchemaDdl(statements.join(";\n"), target.database);
+          connectionListRef.current?.refreshSchema();
+          toast.success(translate("cloneTableSuccess", { source: target.table, table: newName }));
+        } catch (e) {
+          // MySQL は CREATE TABLE が暗黙コミットされるので、後続の文が失敗しても空の複製が残りうる。
+          // 失敗時もツリーを再読込し、作成済みかどうかを一覧で確かめて通知を出し分ける
+          // (補償 DROP は自動では行わない)。
+          invalidateSchemaCache(target.database);
+          connectionListRef.current?.refreshSchema();
+          const driver = selectedProfile?.driver ?? "mysql";
+          let after: string[] | null = null;
+          if (driver === "mysql" && statements.length > 1) {
+            try {
+              after = await api.listTables(sessionId, target.database);
+            } catch {
+              after = null;
+            }
           }
+          toast.error(
+            isPartialCloneFailure(driver, statements.length, after, newName)
+              ? translate("cloneTablePartialFailure", { table: newName, error: String(e) })
+              : translate("statusQueryError", { error: String(e) }),
+          );
         }
-        toast.error(
-          isPartialCloneFailure(driver, statements.length, after, newName)
-            ? translate("cloneTablePartialFailure", { table: newName, error: String(e) })
-            : translate("statusQueryError", { error: String(e) }),
-        );
-      }
-    })();
-  }, [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast]);
+      })();
+    },
+    [cloneTarget, sessionId, selectedProfile?.driver, invalidateSchemaCache, noteSchemaDdl, toast],
+  );
 
   // 列編集ダイアログ (ALTER TABLE ADD/MODIFY/DROP/RENAME COLUMN・CREATE INDEX、#794) の
   // 「エディタへ転送」: モーダルを閉じて生成済み SQL をクエリタブへ渡すだけ
   // (CreateTableModal の `onSendToEditor` と同じ流儀)。
-  const handleAlterTableToEditor = useCallback((sql: string) => {
-    setAlterTableTarget(null);
-    openQueryInEditor(sql);
-  }, [openQueryInEditor]);
+  const handleAlterTableToEditor = useCallback(
+    (sql: string) => {
+      setAlterTableTarget(null);
+      openQueryInEditor(sql);
+    },
+    [openQueryInEditor],
+  );
 
   // 列編集ダイアログの適用: 生成された複数の ALTER TABLE / CREATE INDEX 文をまとめて
   // 確認ダイアログでプレビューし、承認後に `run_query_transaction` (単一トランザクション。
@@ -7036,169 +7508,220 @@ export default function App() {
   // 無効化しているが、IPC 自体もバックエンドの read_only ガードで拒否される。
   // モーダルは実行成功後にのみ閉じる — 失敗時 (SQL エラー等) は開いたままにして
   // ユーザが編集内容を失わずに調整・再実行できるようにする。
-  const handleAlterTableRun = useCallback(async (statements: AlterStatement[]) => {
-    const target = alterTableTarget;
-    if (!target || !sessionId || statements.length === 0) return;
-    const destructive = statements.some((s) => s.destructive);
-    const sqls = statements.map((s) => s.sql);
-    const ok = await confirm({
-      title: translate("alterTableConfirmTitle", { table: target.table }),
-      message: maintenanceMessage(
-        <>
-          {translate("alterTableConfirmBody")}
-          <br />
-          <br />
-          <chakra.code
-            display="block"
-            fontFamily="var(--font-mono)"
-            fontSize="sm"
-            whiteSpace="pre-wrap"
-            wordBreak="break-all"
-          >
-            {sqls.join("\n")}
-          </chakra.code>
-        </>,
-      ),
-      confirmLabel: translate("alterTableConfirmOk"),
-      tone: destructive ? "danger" : "primary",
-      typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
-    });
-    if (!ok) return;
-    try {
-      await api.runQueryTransaction(sessionId, sqls, target.database);
-      invalidateSchemaCache(target.database);
-      noteSchemaDdl(sqls.join(";\n"), target.database);
-      // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
-      connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
-      toast.success(translate("alterTableSuccess", { table: target.table }));
-      setAlterTableTarget(null);
-      // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
-      // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
-      tabsRef.current
-        .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    } catch (e) {
-      toast.error(translate("statusQueryError", { error: String(e) }));
-    }
-  }, [alterTableTarget, sessionId, confirm, maintenanceMessage, selectedProfile?.is_production, toast, invalidateSchemaCache, noteSchemaDdl, tabsRef]);
+  const handleAlterTableRun = useCallback(
+    async (statements: AlterStatement[]) => {
+      const target = alterTableTarget;
+      if (!target || !sessionId || statements.length === 0) return;
+      const destructive = statements.some((s) => s.destructive);
+      const sqls = statements.map((s) => s.sql);
+      const ok = await confirm({
+        title: translate("alterTableConfirmTitle", { table: target.table }),
+        message: maintenanceMessage(
+          <>
+            {translate("alterTableConfirmBody")}
+            <br />
+            <br />
+            <chakra.code
+              display="block"
+              fontFamily="var(--font-mono)"
+              fontSize="sm"
+              whiteSpace="pre-wrap"
+              wordBreak="break-all"
+            >
+              {sqls.join("\n")}
+            </chakra.code>
+          </>,
+        ),
+        confirmLabel: translate("alterTableConfirmOk"),
+        tone: destructive ? "danger" : "primary",
+        typedConfirmation: destructive && selectedProfile?.is_production ? target.table : undefined,
+      });
+      if (!ok) return;
+      try {
+        await api.runQueryTransaction(sessionId, sqls, target.database);
+        invalidateSchemaCache(target.database);
+        noteSchemaDdl(sqls.join(";\n"), target.database);
+        // 対象テーブルが分かっているので、そのテーブルのバックエンドキャッシュだけを捨てて再読込する (#1539)。
+        connectionListRef.current?.refreshSchema({ database: target.database, table: target.table });
+        toast.success(translate("alterTableSuccess", { table: target.table }));
+        setAlterTableTarget(null);
+        // リネーム/DROP された可能性があるので、開いている対象テーブルのタブは閉じて
+        // 新しい定義で開き直せるようにする (handleRenameTableSubmit/handleDropTable と同じ方針)。
+        tabsRef.current
+          .filter((tt) => tt.kind === "table" && tt.database === target.database && tt.table === target.table)
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+      }
+    },
+    [
+      alterTableTarget,
+      sessionId,
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.is_production,
+      toast,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      tabsRef,
+    ],
+  );
 
   // データベース / スキーマの新規作成 (#1190)。PostgreSQL の CREATE DATABASE は
   // トランザクション内で実行できないので、`run_query_transaction` ではなく単文の
   // `api.runQuery` (トランザクション無し) で流す。read_only はバックエンドが拒否する。
   // 対象 DB を持たない文なので `database` は null。成功したらツリーを再取得する。
-  const runNamespaceDdl = useCallback(async (sql: string): Promise<boolean> => {
-    if (!sessionId) return false;
-    try {
-      await api.runQuery(sessionId, sql, null);
-      invalidateSchemaCache();
-      connectionListRef.current?.refreshSchema();
-      return true;
-    } catch (e) {
-      toast.error(translate("statusQueryError", { error: String(e) }));
-      return false;
-    }
-  }, [sessionId, invalidateSchemaCache, toast]);
+  const runNamespaceDdl = useCallback(
+    async (sql: string): Promise<boolean> => {
+      if (!sessionId) return false;
+      try {
+        await api.runQuery(sessionId, sql, null);
+        invalidateSchemaCache();
+        connectionListRef.current?.refreshSchema();
+        return true;
+      } catch (e) {
+        toast.error(translate("statusQueryError", { error: String(e) }));
+        return false;
+      }
+    },
+    [sessionId, invalidateSchemaCache, toast],
+  );
 
   const namespaceKindLabel = useCallback(
-    (kind: NamespaceKind) =>
-      translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema"),
+    (kind: NamespaceKind) => translate(kind === "database" ? "namespaceKindDatabase" : "namespaceKindSchema"),
     [],
   );
 
-  const handleCreateNamespaceRun = useCallback(async (sql: string, kind: NamespaceKind, name: string) => {
-    const success = await runNamespaceDdl(sql);
-    if (!success) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    // PostgreSQL の新しい DATABASE はこの接続のツリー (= スキーマ一覧) に現れない。
-    toast.success(
-      driver === "postgres" && kind === "database"
-        ? translate("createNamespaceSuccessPgDatabase", { name })
-        : translate("createNamespaceSuccess", { kind: namespaceKindLabel(kind), name }),
-    );
-    setCreateNamespaceOpen(false);
-  }, [runNamespaceDdl, selectedProfile?.driver, toast, namespaceKindLabel]);
+  const handleCreateNamespaceRun = useCallback(
+    async (sql: string, kind: NamespaceKind, name: string) => {
+      const success = await runNamespaceDdl(sql);
+      if (!success) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      // PostgreSQL の新しい DATABASE はこの接続のツリー (= スキーマ一覧) に現れない。
+      toast.success(
+        driver === "postgres" && kind === "database"
+          ? translate("createNamespaceSuccessPgDatabase", { name })
+          : translate("createNamespaceSuccess", { kind: namespaceKindLabel(kind), name }),
+      );
+      setCreateNamespaceOpen(false);
+    },
+    [runNamespaceDdl, selectedProfile?.driver, toast, namespaceKindLabel],
+  );
 
-  const handleCreateNamespaceToEditor = useCallback((sql: string) => {
-    setCreateNamespaceOpen(false);
-    openQueryInEditor(sql);
-  }, [openQueryInEditor]);
+  const handleCreateNamespaceToEditor = useCallback(
+    (sql: string) => {
+      setCreateNamespaceOpen(false);
+      openQueryInEditor(sql);
+    },
+    [openQueryInEditor],
+  );
 
   // ツリーのノード (MySQL = データベース / PostgreSQL = スキーマ) の DROP (#1190)。
   // 不可逆なので本番かどうかに関わらず名前のタイプ入力確認 (typedConfirmation) を要求する。
-  const handleDropNamespace = useCallback(async (name: string) => {
-    const driver = selectedProfile?.driver ?? "mysql";
-    const kind = treeNamespaceKind(driver);
-    if (!kind) return;
-    const sql = buildDropNamespaceSql(driver, kind, name);
-    if (!sql) return;
-    const kindLabel = namespaceKindLabel(kind);
-    const ok = await confirm({
-      title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
-      message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
-      confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
-      tone: "danger",
-      typedConfirmation: name,
-    });
-    if (!ok) return;
-    const success = await runNamespaceDdl(sql);
-    if (success) {
-      toast.success(translate("dropNamespaceSuccess", { kind: kindLabel, name }));
-      // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
-      tabsRef.current
-        .filter((tt) => tt.kind === "table" && tt.database === name)
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    }
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, runNamespaceDdl, toast, namespaceKindLabel, tabsRef]);
+  const handleDropNamespace = useCallback(
+    async (name: string) => {
+      const driver = selectedProfile?.driver ?? "mysql";
+      const kind = treeNamespaceKind(driver);
+      if (!kind) return;
+      const sql = buildDropNamespaceSql(driver, kind, name);
+      if (!sql) return;
+      const kindLabel = namespaceKindLabel(kind);
+      const ok = await confirm({
+        title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
+        message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
+        confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
+        tone: "danger",
+        typedConfirmation: name,
+      });
+      if (!ok) return;
+      const success = await runNamespaceDdl(sql);
+      if (success) {
+        toast.success(translate("dropNamespaceSuccess", { kind: kindLabel, name }));
+        // 削除したノード配下のテーブルタブは整合性が取れなくなるので閉じる。
+        tabsRef.current
+          .filter((tt) => tt.kind === "table" && tt.database === name)
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      runNamespaceDdl,
+      toast,
+      namespaceKindLabel,
+      tabsRef,
+    ],
+  );
 
   // インデックス作成の軽量モーダル (#850) の実行: 非破壊操作なので CreateTableModal と
   // 同じく確認ダイアログなしで直接実行する (destructive な DROP INDEX とは異なる)。
-  const handleCreateIndexRun = useCallback(async (sql: string) => {
-    const target = createIndexTarget;
-    if (!target) return;
-    const success = await runMaintenanceDdl(sql, target.database, target.table);
-    if (success) {
-      toast.success(translate("createIndexSuccess"));
-      setCreateIndexTarget(null);
-    }
-  }, [createIndexTarget, runMaintenanceDdl, toast]);
+  const handleCreateIndexRun = useCallback(
+    async (sql: string) => {
+      const target = createIndexTarget;
+      if (!target) return;
+      const success = await runMaintenanceDdl(sql, target.database, target.table);
+      if (success) {
+        toast.success(translate("createIndexSuccess"));
+        setCreateIndexTarget(null);
+      }
+    },
+    [createIndexTarget, runMaintenanceDdl, toast],
+  );
 
-  const handleCreateIndexToEditor = useCallback((sql: string) => {
-    setCreateIndexTarget(null);
-    openQueryInEditor(sql);
-  }, [openQueryInEditor]);
+  const handleCreateIndexToEditor = useCallback(
+    (sql: string) => {
+      setCreateIndexTarget(null);
+      openQueryInEditor(sql);
+    },
+    [openQueryInEditor],
+  );
 
   // インデックスノード右クリックからの DROP INDEX (#850)。TRUNCATE/DROP TABLE と
   // 同じく不可逆 × 本番接続ではタイプ入力の強確認ゲート (#675) を追加する。
   // PK インデックスは `ConnectionList` 側で常に無効化しているのでここには来ない。
-  const handleDropIndex = useCallback(async (database: string, table: string, indexName: string) => {
-    const driver = selectedProfile?.driver ?? "mysql";
-    const sql = buildDropIndexSql(driver, database, table, indexName);
-    const ok = await confirm({
-      title: translate("dropIndexConfirmTitle", { index: indexName }),
-      message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
-      confirmLabel: translate("dropIndexConfirmOk"),
-      tone: "danger",
-      typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
-    });
-    if (!ok) return;
-    const success = await runMaintenanceDdl(sql, database, table);
-    if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
-  }, [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl, toast]);
+  const handleDropIndex = useCallback(
+    async (database: string, table: string, indexName: string) => {
+      const driver = selectedProfile?.driver ?? "mysql";
+      const sql = buildDropIndexSql(driver, database, table, indexName);
+      const ok = await confirm({
+        title: translate("dropIndexConfirmTitle", { index: indexName }),
+        message: maintenanceMessage(translate("dropIndexConfirmBody", { index: indexName, table })),
+        confirmLabel: translate("dropIndexConfirmOk"),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? indexName : undefined,
+      });
+      if (!ok) return;
+      const success = await runMaintenanceDdl(sql, database, table);
+      if (success) toast.success(translate("dropIndexSuccess", { index: indexName }));
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      runMaintenanceDdl,
+      toast,
+    ],
+  );
 
   // 実行結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821)。
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
-  const handleSaveAsTableConfirm = useCallback((newName: string) => {
-    const req = saveAsTableRequest;
-    setSaveAsTableRequest(null);
-    if (!req) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
-    void (async () => {
-      const success = await runMaintenanceDdl(ddl, req.database);
-      if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
-    })();
-  }, [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast]);
+  const handleSaveAsTableConfirm = useCallback(
+    (newName: string) => {
+      const req = saveAsTableRequest;
+      setSaveAsTableRequest(null);
+      if (!req) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+      void (async () => {
+        const success = await runMaintenanceDdl(ddl, req.database);
+        if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+      })();
+    },
+    [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast],
+  );
 
   // 現在のクエリをビューとして保存 / 既存ビュー定義の編集を保存 (#851)。
   //
@@ -7209,36 +7732,39 @@ export default function App() {
   // (`handleAlterTableRun` と同じ複数文パターン)。モーダルは確定と同時に閉じ
   // (`SaveAsTableModal` と同じ流儀)、実行・スキーマキャッシュ更新・成功トーストは
   // 非同期に行う。
-  const handleSaveAsViewConfirm = useCallback((newName: string, replace: boolean) => {
-    const req = saveAsViewRequest;
-    setSaveAsViewRequest(null);
-    if (!req || !sessionId) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    void (async () => {
-      try {
-        if (replace) {
-          await api.runQueryTransaction(
-            sessionId,
-            buildReplaceViewSql(driver, req.database, newName, req.sql),
-            req.database,
+  const handleSaveAsViewConfirm = useCallback(
+    (newName: string, replace: boolean) => {
+      const req = saveAsViewRequest;
+      setSaveAsViewRequest(null);
+      if (!req || !sessionId) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      void (async () => {
+        try {
+          if (replace) {
+            await api.runQueryTransaction(
+              sessionId,
+              buildReplaceViewSql(driver, req.database, newName, req.sql),
+              req.database,
+            );
+          } else {
+            await api.runQuery(
+              sessionId,
+              buildCreateViewSql(driver, req.database, newName, req.sql),
+              req.database,
+            );
+          }
+          invalidateSchemaCache(req.database);
+          connectionListRef.current?.refreshSchema();
+          toast.success(
+            translate(replace ? "saveAsViewReplaceSuccess" : "saveAsViewSuccess", { view: newName }),
           );
-        } else {
-          await api.runQuery(
-            sessionId,
-            buildCreateViewSql(driver, req.database, newName, req.sql),
-            req.database,
-          );
+        } catch (e) {
+          toast.error(translate("statusQueryError", { error: String(e) }));
         }
-        invalidateSchemaCache(req.database);
-        connectionListRef.current?.refreshSchema();
-        toast.success(
-          translate(replace ? "saveAsViewReplaceSuccess" : "saveAsViewSuccess", { view: newName }),
-        );
-      } catch (e) {
-        toast.error(translate("statusQueryError", { error: String(e) }));
-      }
-    })();
-  }, [saveAsViewRequest, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast]);
+      })();
+    },
+    [saveAsViewRequest, sessionId, selectedProfile?.driver, invalidateSchemaCache, toast],
+  );
 
   // ローカル横断クエリ (#740) ――――――――――――――――――――――――――――――――
   //
@@ -7248,140 +7774,160 @@ export default function App() {
   // だけがこのセクション固有の処理。`ensureLocalSession` 自体は `handleConnect` が
   // 参照するため、それより前で定義している。
 
-  const refreshLocalTables = useCallback(async (sid: string) => {
-    setLocalTablesLoading(true);
-    try {
-      const tables = await api.listLocalTables(sid);
-      setLocalTables(tables);
-    } catch (e) {
-      toast.error(String(e));
-    } finally {
-      setLocalTablesLoading(false);
-    }
-  }, [toast]);
+  const refreshLocalTables = useCallback(
+    async (sid: string) => {
+      setLocalTablesLoading(true);
+      try {
+        const tables = await api.listLocalTables(sid);
+        setLocalTables(tables);
+      } catch (e) {
+        toast.error(String(e));
+      } finally {
+        setLocalTablesLoading(false);
+      }
+    },
+    [toast],
+  );
 
   // 結果グリッドの「ローカルに登録」ボタン: 名前を確認するモーダルを開く。
   // `tabDatabase` は結果の持ち主のタブの database (PaneView が渡す)。MySQL / PostgreSQL では
   // タブの database のみを記録し (PG ではスキーマ名)、既定のまま実行したものは "" で記録する。
   // プロファイルの既定 DB へはフォールバックしない (再取得で search_path を壊すため)。
-  const handleRegisterLocalTable = useCallback((result: QueryResult, sourceSql: string, tabDatabase: string | null) => {
-    const database = selectedProfile && selectedProfile.driver !== "sqlite" ? (tabDatabase ?? "") : null;
-    setRegisterLocalRequest({ columns: result.columns, rows: result.rows, sourceSql, sourceDatabase: database });
-  }, [selectedProfile]);
+  const handleRegisterLocalTable = useCallback(
+    (result: QueryResult, sourceSql: string, tabDatabase: string | null) => {
+      const database = selectedProfile && selectedProfile.driver !== "sqlite" ? (tabDatabase ?? "") : null;
+      setRegisterLocalRequest({
+        columns: result.columns,
+        rows: result.rows,
+        sourceSql,
+        sourceDatabase: database,
+      });
+    },
+    [selectedProfile],
+  );
 
-  const handleConfirmRegisterLocalTable = useCallback((tableName: string) => {
-    const req = registerLocalRequest;
-    setRegisterLocalRequest(null);
-    if (!req) return;
-    void (async () => {
-      try {
-        const sid = await ensureLocalSession();
-        // 結果ハンドル (#1264) があれば行を送らずバックエンド保持の行を取り込む。破棄済み
-        // (`result handle gone`) なら行を送る従来の経路で再試行する。
-        const handleId = resultHandleFor(req.rows);
-        const register = (useHandle: boolean) =>
-          api.registerLocalTable({
-            sessionId: sid,
-            tableName,
-            columns: req.columns,
-            rows: useHandle ? [] : req.rows,
-            resultId: useHandle ? handleId : null,
-            sourceProfile: selectedProfile?.name ?? null,
-            sourceProfileId: selectedProfile?.id ?? null,
-            sourceSql: req.sourceSql,
-            sourceDriver: selectedProfile?.driver ?? null,
-            sourceDatabase: req.sourceDatabase,
-          });
-        if (handleId) {
-          try {
-            await register(true);
-          } catch (e) {
-            if (!isResultGoneError(e)) throw e;
+  const handleConfirmRegisterLocalTable = useCallback(
+    (tableName: string) => {
+      const req = registerLocalRequest;
+      setRegisterLocalRequest(null);
+      if (!req) return;
+      void (async () => {
+        try {
+          const sid = await ensureLocalSession();
+          // 結果ハンドル (#1264) があれば行を送らずバックエンド保持の行を取り込む。破棄済み
+          // (`result handle gone`) なら行を送る従来の経路で再試行する。
+          const handleId = resultHandleFor(req.rows);
+          const register = (useHandle: boolean) =>
+            api.registerLocalTable({
+              sessionId: sid,
+              tableName,
+              columns: req.columns,
+              rows: useHandle ? [] : req.rows,
+              resultId: useHandle ? handleId : null,
+              sourceProfile: selectedProfile?.name ?? null,
+              sourceProfileId: selectedProfile?.id ?? null,
+              sourceSql: req.sourceSql,
+              sourceDriver: selectedProfile?.driver ?? null,
+              sourceDatabase: req.sourceDatabase,
+            });
+          if (handleId) {
+            try {
+              await register(true);
+            } catch (e) {
+              if (!isResultGoneError(e)) throw e;
+              await register(false);
+            }
+          } else {
             await register(false);
           }
-        } else {
-          await register(false);
+          await refreshLocalTables(sid);
+          toast.success(translate("localRegisterSuccess", { rows: req.rows.length, table: tableName }));
+        } catch (e) {
+          toast.error(String(e));
         }
-        await refreshLocalTables(sid);
-        toast.success(translate("localRegisterSuccess", { rows: req.rows.length, table: tableName }));
-      } catch (e) {
-        toast.error(String(e));
-      }
-    })();
-  }, [registerLocalRequest, ensureLocalSession, refreshLocalTables, selectedProfile, toast]);
+      })();
+    },
+    [registerLocalRequest, ensureLocalSession, refreshLocalTables, selectedProfile, toast],
+  );
 
   // サイドバー「ローカル」パネルの「ローカル接続を開く」/「ローカルに切替」。
   const handleOpenLocalConnection = useCallback(() => {
     void handleConnect(makeLocalProfile(translate("localConnectionName")));
   }, [handleConnect]);
 
-  const handleDropLocalTable = useCallback((tableName: string) => {
-    const sid = localSessionIdRef.current;
-    if (!sid) return;
-    void (async () => {
-      try {
-        await api.dropLocalTable(sid, tableName);
-        await refreshLocalTables(sid);
-      } catch (e) {
-        toast.error(String(e));
-      }
-    })();
-  }, [refreshLocalTables, toast]);
+  const handleDropLocalTable = useCallback(
+    (tableName: string) => {
+      const sid = localSessionIdRef.current;
+      if (!sid) return;
+      void (async () => {
+        try {
+          await api.dropLocalTable(sid, tableName);
+          await refreshLocalTables(sid);
+        } catch (e) {
+          toast.error(String(e));
+        }
+      })();
+    },
+    [refreshLocalTables, toast],
+  );
 
   // ローカルテーブルの再取得 (#1541)。可否判定は `planLocalRefetch` (純ロジック)。元の接続が
   // 閉じていれば案内のみ (自動接続しない)。実行は読み取り専用の SQL に限り、取得できてから
   // 同名のテーブルへ置き換える (取得に失敗したら既存のテーブルはそのまま)。
   const [refetchingLocalTable, setRefetchingLocalTable] = useState<string | null>(null);
-  const handleRefetchLocalTable = useCallback((tableName: string) => {
-    const sid = localSessionIdRef.current;
-    const meta = localTables.find((m) => m.name === tableName);
-    if (!sid || !meta) return;
-    const plan = planLocalRefetch(meta, openConnectionsRef.current);
-    if (plan.kind === "notReadOnly") {
-      toast.info(translate("localRefetchNotReadOnly", { table: tableName }));
-      return;
-    }
-    if (plan.kind === "noDatabase") {
-      toast.info(translate("localRefetchNoDatabase", { table: tableName }));
-      return;
-    }
-    if (plan.kind === "ambiguous") {
-      toast.info(translate("localRefetchAmbiguous", { table: tableName, name: plan.profileName }));
-      return;
-    }
-    if (plan.kind === "noConnection") {
-      toast.info(
-        plan.profileName === null
-          ? translate("localRefetchNoSource", { table: tableName })
-          : translate("localRefetchNeedsConnection", { table: tableName, name: plan.profileName }),
-      );
-      return;
-    }
-    setRefetchingLocalTable(tableName);
-    void (async () => {
-      try {
-        const result = await api.runQuery(plan.sessionId, meta.source_sql, plan.database);
-        await api.registerLocalTable({
-          sessionId: sid,
-          tableName,
-          columns: result.columns,
-          rows: result.rows,
-          resultId: null,
-          sourceProfile: meta.source_profile,
-          sourceProfileId: meta.source_profile_id,
-          sourceSql: meta.source_sql,
-          sourceDriver: meta.source_driver,
-          sourceDatabase: meta.source_database,
-        });
-        await refreshLocalTables(sid);
-        toast.success(translate("localRefetchSuccess", { rows: result.rows.length, table: tableName }));
-      } catch (e) {
-        toast.error(translate("localRefetchFailed", { table: tableName, error: String(e) }));
-      } finally {
-        setRefetchingLocalTable(null);
+  const handleRefetchLocalTable = useCallback(
+    (tableName: string) => {
+      const sid = localSessionIdRef.current;
+      const meta = localTables.find((m) => m.name === tableName);
+      if (!sid || !meta) return;
+      const plan = planLocalRefetch(meta, openConnectionsRef.current);
+      if (plan.kind === "notReadOnly") {
+        toast.info(translate("localRefetchNotReadOnly", { table: tableName }));
+        return;
       }
-    })();
-  }, [localTables, refreshLocalTables, toast]);
+      if (plan.kind === "noDatabase") {
+        toast.info(translate("localRefetchNoDatabase", { table: tableName }));
+        return;
+      }
+      if (plan.kind === "ambiguous") {
+        toast.info(translate("localRefetchAmbiguous", { table: tableName, name: plan.profileName }));
+        return;
+      }
+      if (plan.kind === "noConnection") {
+        toast.info(
+          plan.profileName === null
+            ? translate("localRefetchNoSource", { table: tableName })
+            : translate("localRefetchNeedsConnection", { table: tableName, name: plan.profileName }),
+        );
+        return;
+      }
+      setRefetchingLocalTable(tableName);
+      void (async () => {
+        try {
+          const result = await api.runQuery(plan.sessionId, meta.source_sql, plan.database);
+          await api.registerLocalTable({
+            sessionId: sid,
+            tableName,
+            columns: result.columns,
+            rows: result.rows,
+            resultId: null,
+            sourceProfile: meta.source_profile,
+            sourceProfileId: meta.source_profile_id,
+            sourceSql: meta.source_sql,
+            sourceDriver: meta.source_driver,
+            sourceDatabase: meta.source_database,
+          });
+          await refreshLocalTables(sid);
+          toast.success(translate("localRefetchSuccess", { rows: result.rows.length, table: tableName }));
+        } catch (e) {
+          toast.error(translate("localRefetchFailed", { table: tableName, error: String(e) }));
+        } finally {
+          setRefetchingLocalTable(null);
+        }
+      })();
+    },
+    [localTables, refreshLocalTables, toast],
+  );
 
   const handleSaveLocalDatabase = useCallback(() => {
     const sid = localSessionIdRef.current;
@@ -7504,7 +8050,11 @@ export default function App() {
         }
         let lower = false;
         const sqlFor = (l: boolean) =>
-          buildIdentitySyncSql(driver, database, table, column, maxValue, { lower: l, currentNext, currentUnknown });
+          buildIdentitySyncSql(driver, database, table, column, maxValue, {
+            lower: l,
+            currentNext,
+            currentUnknown,
+          });
         // 現在値を読めない MySQL は「下げる」を選ばない限り SQL が作れない。ダイアログで理由を示す。
         const sql = sqlFor(false) ?? (currentUnknown ? sqlFor(true) : null);
         if (!sql) {
@@ -7579,131 +8129,163 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
     setShowServerInfo(false);
     setShowSnippetForm(false);
     setSizesTarget(database);
   }, []);
 
-  const handleRunTableSelect = useCallback((database: string, table: string) => {
-    const limit = Math.max(1, settings.defaultDisplayCount);
-    const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
-    openAndRunQuery(`${base} LIMIT ${limit}`, table);
-  }, [openAndRunQuery, settings.defaultDisplayCount, selectedProfile?.driver]);
+  const handleRunTableSelect = useCallback(
+    (database: string, table: string) => {
+      const limit = Math.max(1, settings.defaultDisplayCount);
+      const base = qualifiedTableSql(selectedProfile?.driver ?? "mysql", database, table);
+      openAndRunQuery(`${base} LIMIT ${limit}`, table);
+    },
+    [openAndRunQuery, settings.defaultDisplayCount, selectedProfile?.driver],
+  );
 
   // Insert SELECT * into the focused pane's editor, or open a fresh query tab
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
-  const handleInsertTableSelect = useCallback((database: string, table: string) => {
-    const sql = treeItemInsertText(selectedProfile?.driver ?? "mysql", { kind: "table", database, table });
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.insertText(sql);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
-    }
-  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
+  const handleInsertTableSelect = useCallback(
+    (database: string, table: string) => {
+      const sql = treeItemInsertText(selectedProfile?.driver ?? "mysql", { kind: "table", database, table });
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(sql);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql, lastExecutedSql: sql });
+      }
+    },
+    [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab],
+  );
 
   // 列名 / 表.列 をエディタへ挿入 (#1352)。テーブル側 (handleInsertTableSelect) と同じ経路で、
   // エディタを持たないタブでは新しいクエリタブに入れて開く。
-  const handleInsertColumn = useCallback((database: string, table: string, column: string, qualified: boolean) => {
-    const text = treeItemInsertText(
-      selectedProfile?.driver ?? "mysql",
-      { kind: "column", database, table, column },
-      qualified,
-    );
-    if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-      activeEditor()?.insertText(text);
-    } else if (sessionId) {
-      addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
-    }
-  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab]);
+  const handleInsertColumn = useCallback(
+    (database: string, table: string, column: string, qualified: boolean) => {
+      const text = treeItemInsertText(
+        selectedProfile?.driver ?? "mysql",
+        { kind: "column", database, table, column },
+        qualified,
+      );
+      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+        activeEditor()?.insertText(text);
+      } else if (sessionId) {
+        addTab({ ...makeQueryTab(), sql: text, lastExecutedSql: text });
+      }
+    },
+    [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab],
+  );
 
   // FK 列から `JOIN 参照先 ON ...` の雛形を挿入 (#1540)。FK 一覧はバックエンドがキャッシュする
   // DB 単位の読み取り (JOIN 補完と同じ `foreign_keys`) で、書き込み経路は通らない。
-  const handleInsertFkJoin = useCallback(async (database: string, table: string, column: string) => {
-    if (!sessionId) return;
-    try {
-      const fks = await api.foreignKeys(sessionId, database);
-      const driver = selectedProfile?.driver ?? "mysql";
-      const [snippet] = fkJoinSnippets({ driver, database, table, column, fks });
-      if (!snippet) {
-        toast.error(translate("fkJoinUnavailable", { table, column }));
-        return;
+  const handleInsertFkJoin = useCallback(
+    async (database: string, table: string, column: string) => {
+      if (!sessionId) return;
+      try {
+        const fks = await api.foreignKeys(sessionId, database);
+        const driver = selectedProfile?.driver ?? "mysql";
+        const [snippet] = fkJoinSnippets({ driver, database, table, column, fks });
+        if (!snippet) {
+          toast.error(translate("fkJoinUnavailable", { table, column }));
+          return;
+        }
+        if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
+          activeEditor()?.insertText(snippet.text);
+        } else {
+          addTab({ ...makeQueryTab(), sql: snippet.text, lastExecutedSql: snippet.text });
+        }
+      } catch (e) {
+        toast.error(String(e));
       }
-      if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
-        activeEditor()?.insertText(snippet.text);
-      } else {
-        addTab({ ...makeQueryTab(), sql: snippet.text, lastExecutedSql: snippet.text });
-      }
-    } catch (e) {
-      toast.error(String(e));
-    }
-  }, [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab, toast]);
+    },
+    [activeTab, sessionId, selectedProfile?.driver, activeEditor, addTab, toast],
+  );
 
-  const handleCopyColumnName = useCallback(async (column: string) => {
-    if (await copyToClipboard(column)) {
-      toast.success(translate("columnNameCopied", { column }));
-    }
-  }, [toast]);
+  const handleCopyColumnName = useCallback(
+    async (column: string) => {
+      if (await copyToClipboard(column)) {
+        toast.success(translate("columnNameCopied", { column }));
+      }
+    },
+    [toast],
+  );
 
   // テーブルの CREATE TABLE DDL の表示 / コピー (#1001)。全ドライバで
   // `get_object_definition` (kind = "table") を使う — MySQL/SQLite は
   // ネイティブ DDL、PostgreSQL はカタログから再構成した DDL。純粋な読み取り
   // なので read_only セッションでも動く (`is_read_only_sql` の経路を通らない)。
-  const handleShowCreateTable = useCallback((database: string, table: string) => {
-    void handleOpenObjectDefinition(database, TABLE_DDL_KIND, table, null);
-  }, [handleOpenObjectDefinition]);
+  const handleShowCreateTable = useCallback(
+    (database: string, table: string) => {
+      void handleOpenObjectDefinition(database, TABLE_DDL_KIND, table, null);
+    },
+    [handleOpenObjectDefinition],
+  );
 
-  const handleCopyTableDdl = useCallback(async (database: string, table: string) => {
-    if (!sessionId) return;
-    try {
-      const ddl = await api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null);
-      if (await copyToClipboard(ddl)) {
-        toast.success(translate("tableDdlCopied", { table }));
+  const handleCopyTableDdl = useCallback(
+    async (database: string, table: string) => {
+      if (!sessionId) return;
+      try {
+        const ddl = await api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null);
+        if (await copyToClipboard(ddl)) {
+          toast.success(translate("tableDdlCopied", { table }));
+        }
+      } catch (e) {
+        toast.error(translate("objDefinitionError", { error: String(e) }));
       }
-    } catch (e) {
-      toast.error(translate("objDefinitionError", { error: String(e) }));
-    }
-  }, [sessionId, toast]);
+    },
+    [sessionId, toast],
+  );
 
   // 複数選択したテーブルの一括 DDL 取得 (#1399)。単一の `handleShowCreateTable` /
   // `handleCopyTableDdl` と同じ `get_object_definition` (kind = "table", 読み取りのみ) を
   // テーブルの数だけ呼ぶ。一部の取得に失敗しても取れた分は使い、失敗したテーブルをトーストで知らせる。
-  const fetchTablesDdl = useCallback(async (database: string, tables: string[]) => {
-    if (!sessionId) return null;
-    const settled = await Promise.allSettled(
-      tables.map((table) => api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)),
-    );
-    const entries: { table: string; ddl: string }[] = [];
-    const failed: string[] = [];
-    settled.forEach((r, i) => {
-      const table = tables[i] as string;
-      if (r.status === "fulfilled") entries.push({ table, ddl: r.value });
-      else failed.push(table);
-    });
-    if (failed.length > 0) {
-      toast.error(translate("batchDdlFailed", { count: failed.length, tables: failed.join(", ") }));
-    }
-    return entries.length > 0 ? entries : null;
-  }, [sessionId, toast]);
+  const fetchTablesDdl = useCallback(
+    async (database: string, tables: string[]) => {
+      if (!sessionId) return null;
+      const settled = await Promise.allSettled(
+        tables.map((table) => api.getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)),
+      );
+      const entries: { table: string; ddl: string }[] = [];
+      const failed: string[] = [];
+      settled.forEach((r, i) => {
+        const table = tables[i] as string;
+        if (r.status === "fulfilled") entries.push({ table, ddl: r.value });
+        else failed.push(table);
+      });
+      if (failed.length > 0) {
+        toast.error(translate("batchDdlFailed", { count: failed.length, tables: failed.join(", ") }));
+      }
+      return entries.length > 0 ? entries : null;
+    },
+    [sessionId, toast],
+  );
 
-  const handleShowCreateTables = useCallback(async (database: string, tables: string[]) => {
-    const entries = await fetchTablesDdl(database, tables);
-    if (!entries) return;
-    openQueryInEditor(
-      joinTableDdls(entries),
-      translate("batchDdlTabTitle", { count: entries.length }),
-      database,
-    );
-  }, [fetchTablesDdl, openQueryInEditor]);
+  const handleShowCreateTables = useCallback(
+    async (database: string, tables: string[]) => {
+      const entries = await fetchTablesDdl(database, tables);
+      if (!entries) return;
+      openQueryInEditor(
+        joinTableDdls(entries),
+        translate("batchDdlTabTitle", { count: entries.length }),
+        database,
+      );
+    },
+    [fetchTablesDdl, openQueryInEditor],
+  );
 
-  const handleCopyTablesDdl = useCallback(async (database: string, tables: string[]) => {
-    const entries = await fetchTablesDdl(database, tables);
-    if (!entries) return;
-    if (await copyToClipboard(joinTableDdls(entries))) {
-      toast.success(translate("batchDdlCopied", { count: entries.length }));
-    }
-  }, [fetchTablesDdl, toast]);
+  const handleCopyTablesDdl = useCallback(
+    async (database: string, tables: string[]) => {
+      const entries = await fetchTablesDdl(database, tables);
+      if (!entries) return;
+      if (await copyToClipboard(joinTableDdls(entries))) {
+        toast.success(translate("batchDdlCopied", { count: entries.length }));
+      }
+    },
+    [fetchTablesDdl, toast],
+  );
 
   // 複数選択したテーブル名だけのコピー (#1541)。DB には触れない。
   const handleCopyTableNames = useCallback(
@@ -7723,87 +8305,104 @@ export default function App() {
   // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を流す
   // (MySQL / PostgreSQL は 1 文、SQLite は 1 トランザクションで全件成功か全件失敗)。read_only は
   // メニュー無効化に加え、バックエンドのガードが拒否する。
-  const handleDropTables = useCallback(async (database: string, tables: string[]) => {
-    if (tables.length === 0) return;
-    // DROP されずに残る子テーブルからの FK 参照を警告に添える (#1536)。
-    const impacts = await loadDropImpacts(database, tables);
-    const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
-    // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
-    const production = Boolean(selectedProfile?.is_production);
-    const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
-    const body: ReactNode = production ? (
-      <>
-        {translate("batchDropConfirmBodyList", { count: tables.length, database })}
-        <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-drop-table-list">
-          {tables.map((tbl) => (
-            <Box as="li" key={tbl} wordBreak="break-all">
-              {tbl}
-            </Box>
-          ))}
-        </Box>
-      </>
-    ) : (
-      translate("batchDropConfirmBody", { count: tables.length, database, tables: names })
-    );
-    const ok = await confirm({
-      title: translate("batchDropConfirmTitle", { count: tables.length }),
-      message: maintenanceMessage(
+  const handleDropTables = useCallback(
+    async (database: string, tables: string[]) => {
+      if (tables.length === 0) return;
+      // DROP されずに残る子テーブルからの FK 参照を警告に添える (#1536)。
+      const impacts = await loadDropImpacts(database, tables);
+      const sqlite = (selectedProfile?.driver ?? "mysql") === "sqlite";
+      // 本番接続では畳まずに全件をスクロール可能な一覧で見せる (見えていないテーブルを落とさせない)。
+      const production = Boolean(selectedProfile?.is_production);
+      const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+      const body: ReactNode = production ? (
         <>
-          {body}
-          <DropReferencedBy impacts={impacts} sqlite={sqlite} />
-        </>,
-      ),
-      confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
-      tone: "danger",
-      typedConfirmation: selectedProfile?.is_production ? database : undefined,
-    });
-    if (!ok || !sessionId) return;
-    const driver = selectedProfile?.driver ?? "mysql";
-    const statements = buildDropTablesSql(driver, database, tables);
-    // SQLite は複数形の DROP が無いので、`PRAGMA defer_foreign_keys=ON` + 全 DROP を 1 トランザクション
-    // (`run_query_transaction`、文ごとに read_only ガード) で流す。FK チェックは COMMIT まで遅延するため
-    // 親子の順序に依存せず、循環 FK も通る。選択外の子に行が残っていれば COMMIT で失敗して全件ロールバック
-    // される (全件成功か全件失敗)。MySQL / PostgreSQL は `DROP TABLE a, b` の 1 文。
-    let failed = false;
-    try {
-      if (driver === "sqlite") {
-        await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
-      } else {
-        for (const sql of statements) await api.runQuery(sessionId, sql, database);
-      }
-    } catch (e) {
-      failed = true;
-      toast.error(
-        translate(driver === "sqlite" ? "batchDropRolledBack" : "statusQueryError", { error: String(e) }),
+          {translate("batchDropConfirmBodyList", { count: tables.length, database })}
+          <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-drop-table-list">
+            {tables.map((tbl) => (
+              <Box as="li" key={tbl} wordBreak="break-all">
+                {tbl}
+              </Box>
+            ))}
+          </Box>
+        </>
+      ) : (
+        translate("batchDropConfirmBody", { count: tables.length, database, tables: names })
       );
-    }
-    // 失敗しても念のためツリーは読み直す。
-    invalidateSchemaCache(database);
-    // 一部だけ落ちた可能性もあるので失敗時も取得する (内容が同じなら世代は増えない)。
-    noteSchemaDdl(statements.join(";\n"), database);
-    connectionListRef.current?.refreshSchema();
-    let dropped: string[] = failed ? [] : tables;
-    if (failed) {
-      // MySQL の `DROP TABLE a, b` は途中失敗でも存在した分は落とす。読み直した一覧から消えた
-      // テーブルだけ「落ちた」とみなしてタブを閉じる (一覧が取れなければ何もしない)。
+      const ok = await confirm({
+        title: translate("batchDropConfirmTitle", { count: tables.length }),
+        message: maintenanceMessage(
+          <>
+            {body}
+            <DropReferencedBy impacts={impacts} sqlite={sqlite} />
+          </>,
+        ),
+        confirmLabel: translate("batchDropConfirmOk", { count: tables.length }),
+        tone: "danger",
+        typedConfirmation: selectedProfile?.is_production ? database : undefined,
+      });
+      if (!ok || !sessionId) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const statements = buildDropTablesSql(driver, database, tables);
+      // SQLite は複数形の DROP が無いので、`PRAGMA defer_foreign_keys=ON` + 全 DROP を 1 トランザクション
+      // (`run_query_transaction`、文ごとに read_only ガード) で流す。FK チェックは COMMIT まで遅延するため
+      // 親子の順序に依存せず、循環 FK も通る。選択外の子に行が残っていれば COMMIT で失敗して全件ロールバック
+      // される (全件成功か全件失敗)。MySQL / PostgreSQL は `DROP TABLE a, b` の 1 文。
+      let failed = false;
       try {
-        const remaining = new Set(await api.listTables(sessionId, database));
-        dropped = tables.filter((tbl) => !remaining.has(tbl));
-      } catch {
-        dropped = [];
+        if (driver === "sqlite") {
+          await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
+        } else {
+          for (const sql of statements) await api.runQuery(sessionId, sql, database);
+        }
+      } catch (e) {
+        failed = true;
+        toast.error(
+          translate(driver === "sqlite" ? "batchDropRolledBack" : "statusQueryError", { error: String(e) }),
+        );
       }
-    }
-    if (dropped.length > 0) {
-      // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
-      const gone = new Set(dropped);
-      tabsRef.current
-        .filter((tt) => tt.kind === "table" && tt.database === database && tt.table !== undefined && gone.has(tt.table))
-        .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
-    }
-    if (!failed) {
-      toast.success(translate("batchDropSuccess", { count: dropped.length }));
-    }
-  }, [confirm, maintenanceMessage, loadDropImpacts, selectedProfile?.driver, selectedProfile?.is_production, sessionId, invalidateSchemaCache, noteSchemaDdl, toast, tabsRef]);
+      // 失敗しても念のためツリーは読み直す。
+      invalidateSchemaCache(database);
+      // 一部だけ落ちた可能性もあるので失敗時も取得する (内容が同じなら世代は増えない)。
+      noteSchemaDdl(statements.join(";\n"), database);
+      connectionListRef.current?.refreshSchema();
+      let dropped: string[] = failed ? [] : tables;
+      if (failed) {
+        // MySQL の `DROP TABLE a, b` は途中失敗でも存在した分は落とす。読み直した一覧から消えた
+        // テーブルだけ「落ちた」とみなしてタブを閉じる (一覧が取れなければ何もしない)。
+        try {
+          const remaining = new Set(await api.listTables(sessionId, database));
+          dropped = tables.filter((tbl) => !remaining.has(tbl));
+        } catch {
+          dropped = [];
+        }
+      }
+      if (dropped.length > 0) {
+        // 開いている対象テーブルのタブは整合性が取れなくなるので閉じる。
+        const gone = new Set(dropped);
+        tabsRef.current
+          .filter(
+            (tt) =>
+              tt.kind === "table" && tt.database === database && tt.table !== undefined && gone.has(tt.table),
+          )
+          .forEach((tt) => handleCloseTabRef.current(tt.id, { record: false }));
+      }
+      if (!failed) {
+        toast.success(translate("batchDropSuccess", { count: dropped.length }));
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      loadDropImpacts,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      sessionId,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+      tabsRef,
+    ],
+  );
 
   // 接続リスト (ConnectionList) のフォーム系コールバックは memo 化した子へ安定参照
   // で渡すため useCallback で固定する。依存は useState セッター (安定) と
@@ -7813,8 +8412,11 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowSnippetForm(false);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
@@ -7825,90 +8427,105 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
-  const handleDuplicateProfile = useCallback((p: ConnectionProfile) => {
-    // Open the form pre-filled with the source profile's non-secret settings as
-    // a brand-new entry: blank id forces save_profile to mint a fresh id, and
-    // secrets (password/passphrase) are never carried over from the keyring.
-    setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
-    setShowSnippetForm(false);
-    setShowSettings(false);
-    setShowHelp(false);
-    setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
-    setShowForm(true);
-    setFormInstanceId((n) => n + 1);
-  }, [t]);
+  const handleDuplicateProfile = useCallback(
+    (p: ConnectionProfile) => {
+      // Open the form pre-filled with the source profile's non-secret settings as
+      // a brand-new entry: blank id forces save_profile to mint a fresh id, and
+      // secrets (password/passphrase) are never carried over from the keyring.
+      setEditing({ ...p, id: "", name: `${p.name}${t("listDuplicateSuffix")}` });
+      setShowSnippetForm(false);
+      setShowSettings(false);
+      setShowHelp(false);
+      setShowCompare(false);
+      setShowErd(false);
+      setShowUsers(false);
+      setShowCompareResults(false);
+      setShowServerInfo(false);
+      setSizesTarget(null);
+      setShowForm(true);
+      setFormInstanceId((n) => n + 1);
+    },
+    [t],
+  );
   // Actually perform the deferred backend delete once the Undo window lapses.
-  const finalizeProfileDelete = useCallback(async (id: string) => {
-    pendingProfileDeleteTimers.current.delete(id);
-    await runWithErrorStatus(async () => {
-      // 削除確定前に、対象プロファイルのライブ接続 (アクティブ/背景いずれも) を
-      // 必ず切断する。接続を張ったまま keyring の資格情報だけ消すと、設定は
-      // 消えたのにセッションだけ生き残る孤立接続になってしまうため
-      // (CodeRabbit レビュー対応)。`handleDisconnectProfile` は対象が未接続なら
-      // 何もしない (no-op) ので、常時呼んでよい。Undo 済み (finalize 自体が
-      // キャンセル) の場合はここに到達しないので、切断は起きない。
-      // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
-      // Undo 満了後の無関係なタイミングで再確認しない (force)。
-      await handleDisconnectProfile(id, { force: true });
-      await api.deleteProfile(id);
-      await refreshProfiles();
-      // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
-      // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
-      pruneCommandPaletteMru((mruId) => mruId !== `conn:${id}`);
-    }, "statusFailedDeleteProfile");
-    setPendingDeleteProfileIds((cur) => {
-      if (!cur.has(id)) return cur;
-      const next = new Set(cur);
-      next.delete(id);
-      return next;
-    });
-  }, [runWithErrorStatus, refreshProfiles, handleDisconnectProfile]);
+  const finalizeProfileDelete = useCallback(
+    async (id: string) => {
+      pendingProfileDeleteTimers.current.delete(id);
+      await runWithErrorStatus(async () => {
+        // 削除確定前に、対象プロファイルのライブ接続 (アクティブ/背景いずれも) を
+        // 必ず切断する。接続を張ったまま keyring の資格情報だけ消すと、設定は
+        // 消えたのにセッションだけ生き残る孤立接続になってしまうため
+        // (CodeRabbit レビュー対応)。`handleDisconnectProfile` は対象が未接続なら
+        // 何もしない (no-op) ので、常時呼んでよい。Undo 済み (finalize 自体が
+        // キャンセル) の場合はここに到達しないので、切断は起きない。
+        // 未確定の編集の確認は削除操作時 (handleDeleteProfile) に済ませてあるので、
+        // Undo 満了後の無関係なタイミングで再確認しない (force)。
+        await handleDisconnectProfile(id, { force: true });
+        await api.deleteProfile(id);
+        await refreshProfiles();
+        // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
+        // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
+        pruneCommandPaletteMru((mruId) => mruId !== `conn:${id}`);
+      }, "statusFailedDeleteProfile");
+      setPendingDeleteProfileIds((cur) => {
+        if (!cur.has(id)) return cur;
+        const next = new Set(cur);
+        next.delete(id);
+        return next;
+      });
+    },
+    [runWithErrorStatus, refreshProfiles, handleDisconnectProfile],
+  );
 
-  const handleDeleteProfile = useCallback(async (profile: ConnectionProfile) => {
-    const id = profile.id;
-    // Ignore a repeat delete of an already-pending profile.
-    if (pendingProfileDeleteTimers.current.has(id)) return;
-    // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
-    // キャンセルならプロファイルを隠さず何もしない (#1391)。
-    if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
-    if (pendingProfileDeleteTimers.current.has(id)) return;
-    // Hide from the sidebar right away, but defer the irreversible backend delete
-    // (which wipes keyring secrets) so Undo can cancel it (#676).
-    setPendingDeleteProfileIds((cur) => new Set(cur).add(id));
-    const timer = setTimeout(() => {
-      void finalizeProfileDelete(id);
-    }, PROFILE_DELETE_UNDO_MS);
-    pendingProfileDeleteTimers.current.set(id, timer);
-    toast.notify({
-      message: translate("toastProfileDeleted", { name: profile.name }),
-      // finalize タイマーが動き出す前にトーストが消えるよう、わずかに短くする
-      // (#676 レビュー対応: トースト表示中に finalize が走る競合を避ける)。
-      duration: PROFILE_DELETE_UNDO_MS - 500,
-      action: {
-        label: translate("toastUndo"),
-        onAction: () => {
-          const pending = pendingProfileDeleteTimers.current.get(id);
-          if (pending) {
-            clearTimeout(pending);
-            pendingProfileDeleteTimers.current.delete(id);
-          }
-          setPendingDeleteProfileIds((cur) => {
-            if (!cur.has(id)) return cur;
-            const next = new Set(cur);
-            next.delete(id);
-            return next;
-          });
+  const handleDeleteProfile = useCallback(
+    async (profile: ConnectionProfile) => {
+      const id = profile.id;
+      // Ignore a repeat delete of an already-pending profile.
+      if (pendingProfileDeleteTimers.current.has(id)) return;
+      // アクティブ接続の削除は切断を伴いタブを閉じる。未確定の編集があればここで確認し、
+      // キャンセルならプロファイルを隠さず何もしない (#1391)。
+      if (id === selectedProfile?.id && !(await confirmDiscardPendingEdits())) return;
+      if (pendingProfileDeleteTimers.current.has(id)) return;
+      // Hide from the sidebar right away, but defer the irreversible backend delete
+      // (which wipes keyring secrets) so Undo can cancel it (#676).
+      setPendingDeleteProfileIds((cur) => new Set(cur).add(id));
+      const timer = setTimeout(() => {
+        void finalizeProfileDelete(id);
+      }, PROFILE_DELETE_UNDO_MS);
+      pendingProfileDeleteTimers.current.set(id, timer);
+      toast.notify({
+        message: translate("toastProfileDeleted", { name: profile.name }),
+        // finalize タイマーが動き出す前にトーストが消えるよう、わずかに短くする
+        // (#676 レビュー対応: トースト表示中に finalize が走る競合を避ける)。
+        duration: PROFILE_DELETE_UNDO_MS - 500,
+        action: {
+          label: translate("toastUndo"),
+          onAction: () => {
+            const pending = pendingProfileDeleteTimers.current.get(id);
+            if (pending) {
+              clearTimeout(pending);
+              pendingProfileDeleteTimers.current.delete(id);
+            }
+            setPendingDeleteProfileIds((cur) => {
+              if (!cur.has(id)) return cur;
+              const next = new Set(cur);
+              next.delete(id);
+              return next;
+            });
+          },
         },
-      },
-    });
-  }, [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits]);
+      });
+    },
+    [finalizeProfileDelete, toast, selectedProfile?.id, confirmDiscardPendingEdits],
+  );
 
   // 接続リストのドラッグ/キーボード並べ替え (#786)。`ConnectionList` は
   // `visibleProfiles` (Undo 待ちの削除中プロファイルを除いた表示用の部分集合) を
@@ -7922,9 +8539,7 @@ export default function App() {
       const embedded = applySubsequenceOrder(currentIds, orderedVisibleIds);
       if (embedded === currentIds) return;
       const byId = new Map(profiles.map((p) => [p.id, p]));
-      const reordered = embedded
-        .map((id) => byId.get(id))
-        .filter((p): p is ConnectionProfile => !!p);
+      const reordered = embedded.map((id) => byId.get(id)).filter((p): p is ConnectionProfile => !!p);
       setProfiles(reordered);
       void runWithErrorStatus(() => api.reorderProfiles(embedded), "statusFailedReorderProfiles").then(
         (ok) => {
@@ -7948,9 +8563,10 @@ export default function App() {
 
   // Profiles shown in the sidebar: hide those in the delete Undo window (#676).
   const visibleProfiles = useMemo(
-    () => (pendingDeleteProfileIds.size === 0
-      ? profiles
-      : profiles.filter((p) => !pendingDeleteProfileIds.has(p.id))),
+    () =>
+      pendingDeleteProfileIds.size === 0
+        ? profiles
+        : profiles.filter((p) => !pendingDeleteProfileIds.has(p.id)),
     [profiles, pendingDeleteProfileIds],
   );
 
@@ -7980,8 +8596,11 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
@@ -7994,8 +8613,11 @@ export default function App() {
     setShowSettings(false);
     setShowHelp(false);
     setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
+    setShowErd(false);
+    setShowUsers(false);
+    setShowCompareResults(false);
+    setShowServerInfo(false);
+    setSizesTarget(null);
     setShowForm(false);
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
@@ -8013,40 +8635,49 @@ export default function App() {
 
   // After a CSV import, refresh the matching open table tab so the new rows
   // show up without the user reopening the table.
-  const handleImported = useCallback((database: string, table: string) => {
-    const tab = tabsRef.current.find(
-      (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
-    );
-    if (tab && tab.paginatable) {
-      const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
-      void runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
-      // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
-      // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
-      // 未適用なのに「適用中」バッジが残るのを防ぐ。
-      patchTab(tab.id, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
-    }
-  }, [runQueryInTab, settings.defaultDisplayCount, patchTab, tabsRef]);
+  const handleImported = useCallback(
+    (database: string, table: string) => {
+      const tab = tabsRef.current.find(
+        (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+      );
+      if (tab && tab.paginatable) {
+        const limit = Math.max(1, tab.previewRowLimit || settings.defaultDisplayCount);
+        void runQueryInTab(tab.id, `${tab.paginatable} LIMIT ${limit}`, tab.paginatable);
+        // 生の base SQL (WHERE/ORDER BY なし) で 1 ページ目に戻すため、アクティブな
+        // サーバ側ソート/フィルタの表示 (#792) を state 側でも解除しておく — SQL は
+        // 未適用なのに「適用中」バッジが残るのを防ぐ。
+        patchTab(tab.id, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
+      }
+    },
+    [runQueryInTab, settings.defaultDisplayCount, patchTab, tabsRef],
+  );
 
   // 追加直後のクエリタブが属するペインのエディタへ自動フォーカスする (#816)。addTab は既存
   // ペインが 0 件のとき新規ペイン ID を内部 (setPanes 更新関数) で生成するため、呼び出し側の
   // paneId は使わず、実際にタブを収めたペインを tabIds から逆引きする (activateTab と同じ手法)。
   // panesRef は setPanes 後の useEffect で更新されるため (commit と同期の callback ref ではない)、
   // 1 フレームだと未反映のことがあり、二重 requestAnimationFrame で effect の反映を待ってから読む。
-  const focusEditorOfTab = useCallback((tabId: string) => {
-    requestAnimationFrame(() => {
+  const focusEditorOfTab = useCallback(
+    (tabId: string) => {
       requestAnimationFrame(() => {
-        if (overlayOpenRef.current) return;
-        const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-        if (owner) editorRefs.current.get(owner.id)?.focus();
+        requestAnimationFrame(() => {
+          if (overlayOpenRef.current) return;
+          const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+          if (owner) editorRefs.current.get(owner.id)?.focus();
+        });
       });
-    });
-  }, [panesRef]);
+    },
+    [panesRef],
+  );
 
-  const handleNewTab = useCallback((paneId?: string) => {
-    const tab = makeQueryTab();
-    addTab(tab, paneId);
-    focusEditorOfTab(tab.id);
-  }, [addTab, focusEditorOfTab]);
+  const handleNewTab = useCallback(
+    (paneId?: string) => {
+      const tab = makeQueryTab();
+      addTab(tab, paneId);
+      focusEditorOfTab(tab.id);
+    },
+    [addTab, focusEditorOfTab],
+  );
 
   /**
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
@@ -8056,93 +8687,102 @@ export default function App() {
    * - 非対応拡張子 … トーストで明示的に拒否する。
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
-  const handleFilesDropped = useCallback(async (paths: string[], sqlEncoding: TextEncodingId | null = null) => {
-    if (paths.length === 0) return;
-    const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
-    const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
-    const unsupported = paths.filter((p) => classifyDroppedFile(p) === "unsupported");
+  const handleFilesDropped = useCallback(
+    async (paths: string[], sqlEncoding: TextEncodingId | null = null) => {
+      if (paths.length === 0) return;
+      const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
+      const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
+      const unsupported = paths.filter((p) => classifyDroppedFile(p) === "unsupported");
 
-    // .sql / .txt → 新規クエリタブ。
-    let openedSql = 0;
-    let lastEncoding: TextEncodingId = "utf-8";
-    // 未接続ではタブが描画されず、接続時に作り直されて消えるので開かず明示的に拒否する。
-    if (sqlPaths.length > 0 && !sessionIdRef.current) {
-      toast.error(translate("dropSqlNoConnection"));
-    }
-    for (const p of sessionIdRef.current ? sqlPaths : []) {
-      try {
-        // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
-        // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
-        const { content, encoding } = await api.readSqlFile(p, sqlEncoding);
-        addTab({
-          ...makeQueryTab(),
-          title: fileBaseName(p),
-          titleManual: true,
-          sql: content,
-          lastExecutedSql: content,
-          fileEncoding: encoding,
-        });
-        openedSql += 1;
-        lastEncoding = encoding;
-      } catch (e) {
-        toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
+      // .sql / .txt → 新規クエリタブ。
+      let openedSql = 0;
+      let lastEncoding: TextEncodingId = "utf-8";
+      // 未接続ではタブが描画されず、接続時に作り直されて消えるので開かず明示的に拒否する。
+      if (sqlPaths.length > 0 && !sessionIdRef.current) {
+        toast.error(translate("dropSqlNoConnection"));
       }
-    }
-    if (openedSql === 1 && sqlPaths.length === 1) {
-      toast.success(
-        lastEncoding === "utf-8"
-          ? translate("dropOpenedSql", { name: fileBaseName(sqlPaths[0]) })
-          : translate("sqlFileOpenedAs", { name: fileBaseName(sqlPaths[0]), encoding: textEncodingLabel(lastEncoding) }),
-      );
-    } else if (openedSql > 1) {
-      toast.success(translate("dropOpenedSqlMulti", { count: openedSql }));
-    }
-
-    // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
-    if (csvPaths.length > 0) {
-      const tab = activeTabRef.current;
-      if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
-        toast.error(translate("dropCsvNoTable"));
-      } else {
-        if (csvPaths.length > 1) {
-          toast.info(translate("dropCsvMultiOnlyFirst"));
+      for (const p of sessionIdRef.current ? sqlPaths : []) {
+        try {
+          // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
+          // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
+          const { content, encoding } = await api.readSqlFile(p, sqlEncoding);
+          addTab({
+            ...makeQueryTab(),
+            title: fileBaseName(p),
+            titleManual: true,
+            sql: content,
+            lastExecutedSql: content,
+            fileEncoding: encoding,
+          });
+          openedSql += 1;
+          lastEncoding = encoding;
+        } catch (e) {
+          toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
         }
-        setImportInitialPath(csvPaths[0]);
-        setImportTarget({ database: tab.database, table: tab.table });
       }
-    }
+      if (openedSql === 1 && sqlPaths.length === 1) {
+        toast.success(
+          lastEncoding === "utf-8"
+            ? translate("dropOpenedSql", { name: fileBaseName(sqlPaths[0]) })
+            : translate("sqlFileOpenedAs", {
+                name: fileBaseName(sqlPaths[0]),
+                encoding: textEncodingLabel(lastEncoding),
+              }),
+        );
+      } else if (openedSql > 1) {
+        toast.success(translate("dropOpenedSqlMulti", { count: openedSql }));
+      }
 
-    // 非対応ファイル。
-    if (unsupported.length > 0) {
-      toast.error(translate("dropUnsupported", { name: fileBaseName(unsupported[0]) }));
-    }
-  }, [addTab, toast]);
+      // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
+      if (csvPaths.length > 0) {
+        const tab = activeTabRef.current;
+        if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
+          toast.error(translate("dropCsvNoTable"));
+        } else {
+          if (csvPaths.length > 1) {
+            toast.info(translate("dropCsvMultiOnlyFirst"));
+          }
+          setImportInitialPath(csvPaths[0]);
+          setImportTarget({ database: tab.database, table: tab.table });
+        }
+      }
+
+      // 非対応ファイル。
+      if (unsupported.length > 0) {
+        toast.error(translate("dropUnsupported", { name: fileBaseName(unsupported[0]) }));
+      }
+    },
+    [addTab, toast],
+  );
 
   /**
    * コマンドパレット / エディタツールバーからの「SQL ファイルを開く」(#918)。
    * ドラッグ&ドロップ (`handleFilesDropped`) と読み込みロジックを完全に共有し、
    * 新しい IPC/読み込み経路は増やさない。ダイアログでキャンセルされたら何もしない。
    */
-  const handleOpenSqlFile = useCallback(async (encoding: TextEncodingId | null = null) => {
-    // 未接続ではタブが描画されないので、ダイアログを開く前に拒否する。
-    if (!sessionIdRef.current) {
-      toast.error(translate("dropSqlNoConnection"));
-      return;
-    }
-    try {
-      const picked = await openFileDialog({
-        multiple: true,
-        title: translate("openSqlFileTitle"),
-        filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
-      });
-      if (!picked) return;
-      const paths = Array.isArray(picked) ? picked : [picked];
-      if (paths.length === 0) return;
-      await handleFilesDropped(paths, encoding);
-    } catch (e) {
-      toast.error(translate("openSqlFileError", { error: String(e) }));
-    }
-  }, [handleFilesDropped, toast]);
+  const handleOpenSqlFile = useCallback(
+    async (encoding: TextEncodingId | null = null) => {
+      // 未接続ではタブが描画されないので、ダイアログを開く前に拒否する。
+      if (!sessionIdRef.current) {
+        toast.error(translate("dropSqlNoConnection"));
+        return;
+      }
+      try {
+        const picked = await openFileDialog({
+          multiple: true,
+          title: translate("openSqlFileTitle"),
+          filters: [{ name: "SQL", extensions: ["sql", "txt"] }],
+        });
+        if (!picked) return;
+        const paths = Array.isArray(picked) ? picked : [picked];
+        if (paths.length === 0) return;
+        await handleFilesDropped(paths, encoding);
+      } catch (e) {
+        toast.error(translate("openSqlFileError", { error: String(e) }));
+      }
+    },
+    [handleFilesDropped, toast],
+  );
 
   /**
    * コマンドパレット / エディタツールバーからの「名前を付けて保存」(#918)。現在の
@@ -8150,25 +8790,28 @@ export default function App() {
    * capabilities を増やさない経路。#1258 で文字列のまま渡す専用 IPC にした) で
    * ディスクへ書き出す。
    */
-  const handleSaveSqlFile = useCallback(async (encodingOverride: TextEncodingId | null = null) => {
-    const tab = activeTabRef.current;
-    if (!tab) return;
-    // 開いたときの文字コード (または指定) で書き戻す。表せない文字があれば保存は失敗する (#1535)。
-    const encoding = encodingOverride ?? tab.fileEncoding ?? "utf-8";
-    try {
-      const dest = await saveFileDialog({
-        defaultPath: sqlSaveFileName(tab.title),
-        title: translate("saveSqlFileTitle"),
-        filters: [{ name: "SQL", extensions: ["sql"] }],
-      });
-      if (typeof dest !== "string" || !dest) return;
-      await api.writeTextFile(dest, getTabSql(tab), encoding);
-      updateTab(tab.id, { fileEncoding: encoding });
-      toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
-    } catch (e) {
-      toast.error(translate("saveSqlFileError", { error: String(e) }));
-    }
-  }, [toast, getTabSql, updateTab]);
+  const handleSaveSqlFile = useCallback(
+    async (encodingOverride: TextEncodingId | null = null) => {
+      const tab = activeTabRef.current;
+      if (!tab) return;
+      // 開いたときの文字コード (または指定) で書き戻す。表せない文字があれば保存は失敗する (#1535)。
+      const encoding = encodingOverride ?? tab.fileEncoding ?? "utf-8";
+      try {
+        const dest = await saveFileDialog({
+          defaultPath: sqlSaveFileName(tab.title),
+          title: translate("saveSqlFileTitle"),
+          filters: [{ name: "SQL", extensions: ["sql"] }],
+        });
+        if (typeof dest !== "string" || !dest) return;
+        await api.writeTextFile(dest, getTabSql(tab), encoding);
+        updateTab(tab.id, { fileEncoding: encoding });
+        toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
+      } catch (e) {
+        toast.error(translate("saveSqlFileError", { error: String(e) }));
+      }
+    },
+    [toast, getTabSql, updateTab],
+  );
 
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
@@ -8209,92 +8852,97 @@ export default function App() {
   // into a single pane.
   // `opts.record === false` は DROP / RENAME / ALTER 後の自動クローズなど、ユーザの操作ではない
   // クローズ用 (#1353)。対象のテーブルはもう存在しない / 名前が変わっているので、復元履歴には残さない。
-  const handleCloseTab = useCallback((id: string, opts?: { record?: boolean }) => {
-    void cancelStreamForTab(id);
-    // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
-    gridScrollRef.current.delete(id);
-    preflightRef.current.delete(id);
-    clearExplainPin(id);
-    // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
-    // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
-    // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
-    // 復元しない (snapshotClosedTab が table タブでは本文を使わない)。
-    // 未接続 (sessionId が無い) ときは積まない。スコープ "" の履歴は切断時の破棄
-    // (forgetClosedTabs) で消せず、残り続けるため。
-    const closeScope = sessionIdRef.current;
-    const closing =
-      opts?.record === false || !closeScope
-        ? undefined
-        : tabsRef.current.find((tt) => tt.id === id);
-    if (closing && closeScope) {
-      closedTabSeqRef.current += 1;
-      const snap = snapshotClosedTab(
-        closing,
-        tabSqlStore.resolve(closing.id, closing.sql),
-        {
-          id: `closed-${Date.now()}-${closedTabSeqRef.current}`,
-          scope: closeScope,
-          closedAt: Date.now(),
-        },
-        editorSelectionRef.current.get(id),
-      );
-      if (snap) {
-        closedTabsRef.current = pushClosedTab(closedTabsRef.current, snap);
-        setClosedTabs(closedTabsRef.current);
+  const handleCloseTab = useCallback(
+    (id: string, opts?: { record?: boolean }) => {
+      void cancelStreamForTab(id);
+      // タブを閉じたら ref マップからも削除し、tabId キーのエントリが蓄積し続けるのを防ぐ。
+      gridScrollRef.current.delete(id);
+      preflightRef.current.delete(id);
+      clearExplainPin(id);
+      // 破棄する直前に復元用スナップショットを積む (#1353)。一括クローズ・Cmd+W・中クリック・
+      // Delete のどの経路もここを通る。本文は tabSqlStore の最新値 (未反映の編集を含む)。
+      // table タブの復元は (database, table) で開き直すだけで、そのタブで編集していた SQL は
+      // 復元しない (snapshotClosedTab が table タブでは本文を使わない)。
+      // 未接続 (sessionId が無い) ときは積まない。スコープ "" の履歴は切断時の破棄
+      // (forgetClosedTabs) で消せず、残り続けるため。
+      const closeScope = sessionIdRef.current;
+      const closing =
+        opts?.record === false || !closeScope ? undefined : tabsRef.current.find((tt) => tt.id === id);
+      if (closing && closeScope) {
+        closedTabSeqRef.current += 1;
+        const snap = snapshotClosedTab(
+          closing,
+          tabSqlStore.resolve(closing.id, closing.sql),
+          {
+            id: `closed-${Date.now()}-${closedTabSeqRef.current}`,
+            scope: closeScope,
+            closedAt: Date.now(),
+          },
+          editorSelectionRef.current.get(id),
+        );
+        if (snap) {
+          closedTabsRef.current = pushClosedTab(closedTabsRef.current, snap);
+          setClosedTabs(closedTabsRef.current);
+        }
       }
-    }
-    editorSelectionRef.current.delete(id);
-    tabSqlStore.delete(id);
-    dirtyWatcher.forget(id);
-    const prevPanes = panesRef.current;
-    let removedPaneId: string | null = null;
-    let next = prevPanes.map((p) => {
-      if (!p.tabIds.includes(id)) return p;
-      const idx = p.tabIds.indexOf(id);
-      const tabIds = p.tabIds.filter((t) => t !== id);
-      const activeTabIdNext =
-        p.activeTabId === id ? tabIds[idx] ?? tabIds[idx - 1] ?? null : p.activeTabId;
-      return { ...p, tabIds, activeTabId: activeTabIdNext };
-    });
-    if (next.length > 1) {
-      const empty = next.find((p) => p.tabIds.length === 0);
-      if (empty) {
-        removedPaneId = empty.id;
-        next = next.filter((p) => p.tabIds.length > 0);
+      editorSelectionRef.current.delete(id);
+      tabSqlStore.delete(id);
+      dirtyWatcher.forget(id);
+      const prevPanes = panesRef.current;
+      let removedPaneId: string | null = null;
+      let next = prevPanes.map((p) => {
+        if (!p.tabIds.includes(id)) return p;
+        const idx = p.tabIds.indexOf(id);
+        const tabIds = p.tabIds.filter((t) => t !== id);
+        const activeTabIdNext =
+          p.activeTabId === id ? (tabIds[idx] ?? tabIds[idx - 1] ?? null) : p.activeTabId;
+        return { ...p, tabIds, activeTabId: activeTabIdNext };
+      });
+      if (next.length > 1) {
+        const empty = next.find((p) => p.tabIds.length === 0);
+        if (empty) {
+          removedPaneId = empty.id;
+          next = next.filter((p) => p.tabIds.length > 0);
+        }
       }
-    }
-    setTabs((prev) => prev.filter((tt) => tt.id !== id));
-    setPanes(next);
-    if (removedPaneId && activePaneIdRef.current === removedPaneId) {
-      setActivePaneId(next[0]?.id ?? null);
-    }
-  }, [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef, tabsRef]);
+      setTabs((prev) => prev.filter((tt) => tt.id !== id));
+      setPanes(next);
+      if (removedPaneId && activePaneIdRef.current === removedPaneId) {
+        setActivePaneId(next[0]?.id ?? null);
+      }
+    },
+    [cancelStreamForTab, tabSqlStore, dirtyWatcher, setTabs, setPanes, panesRef, tabsRef],
+  );
 
   // 閉じたタブの復元 (#1353)。`id` 省略時は現在の接続で最後に閉じたタブ。復元先は現在
   // アクティブなペイン。table タブは通常の開き方 (handleOpenTable)、それ以外は SQL 本文と
   // 接続先 DB から再構築する (結果・セル編集は復元しない)。
-  const reopenClosedTab = useCallback((id?: string) => {
-    const { entry, rest } = takeClosedTab(closedTabsRef.current, sessionIdRef.current ?? "", id);
-    if (!entry) return;
-    closedTabsRef.current = rest;
-    setClosedTabs(rest);
-    if (entry.kind === "table" && entry.database && entry.table) {
-      handleOpenTableRef.current(entry.database, entry.table);
-      return;
-    }
-    const base = entry.kind === "explain"
-      ? makeTab("explain", entry.title, entry.sql)
-      : makeTab("query", entry.title, entry.sql);
-    const restored: Tab = {
-      ...base,
-      titleManual: entry.kind === "query" && entry.titleManual === true,
-      database: entry.database,
-      builderSnapshot: entry.builderSnapshot ?? null,
-      selection: entry.selection,
-    };
-    addTab(restored);
-    if (restored.kind === "query") focusEditorOfTab(restored.id);
-  }, [addTab, focusEditorOfTab]);
+  const reopenClosedTab = useCallback(
+    (id?: string) => {
+      const { entry, rest } = takeClosedTab(closedTabsRef.current, sessionIdRef.current ?? "", id);
+      if (!entry) return;
+      closedTabsRef.current = rest;
+      setClosedTabs(rest);
+      if (entry.kind === "table" && entry.database && entry.table) {
+        handleOpenTableRef.current(entry.database, entry.table);
+        return;
+      }
+      const base =
+        entry.kind === "explain"
+          ? makeTab("explain", entry.title, entry.sql)
+          : makeTab("query", entry.title, entry.sql);
+      const restored: Tab = {
+        ...base,
+        titleManual: entry.kind === "query" && entry.titleManual === true,
+        database: entry.database,
+        builderSnapshot: entry.builderSnapshot ?? null,
+        selection: entry.selection,
+      };
+      addTab(restored);
+      if (restored.kind === "query") focusEditorOfTab(restored.id);
+    },
+    [addTab, focusEditorOfTab],
+  );
   const reopenClosedTabRef = useRef(reopenClosedTab);
   reopenClosedTabRef.current = reopenClosedTab;
   const handleOpenTableRef = useRef<(database: string, table: string) => void>(() => {});
@@ -8305,75 +8953,87 @@ export default function App() {
   // 取らずに中断する (履歴に残ると復元時に重複する)。閉じたタブの復元は編集内容を戻さない
   // ので文言で伝える。DROP などで自動的に閉じる経路 (`record: false`) は確認不要なので
   // `handleCloseTab` を直接使う。
-  const requestCloseTab = useCallback(async (id: string) => {
-    const guard = closeGuard(tabsRef.current, [id]);
-    if (guard.kind === "applying") {
-      toast.info(translate("tabCloseApplying"));
-      return;
-    }
-    if (guard.kind === "confirm") {
-      const tab = guard.pending[0];
-      const ok = await confirmDiscard({
-        title: translate("tabCloseDiscardTitle"),
-        message: translate("tabCloseDiscardBody", { name: tab.title || tab.table || "" }),
-        confirmLabel: translate("tabCloseDiscardAction"),
-        tone: "danger",
-      });
-      if (!ok) return;
-    }
-    handleCloseTab(id);
-  }, [confirmDiscard, tabsRef, handleCloseTab, toast]);
+  const requestCloseTab = useCallback(
+    async (id: string) => {
+      const guard = closeGuard(tabsRef.current, [id]);
+      if (guard.kind === "applying") {
+        toast.info(translate("tabCloseApplying"));
+        return;
+      }
+      if (guard.kind === "confirm") {
+        const tab = guard.pending[0];
+        const ok = await confirmDiscard({
+          title: translate("tabCloseDiscardTitle"),
+          message: translate("tabCloseDiscardBody", { name: tab.title || tab.table || "" }),
+          confirmLabel: translate("tabCloseDiscardAction"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      handleCloseTab(id);
+    },
+    [confirmDiscard, tabsRef, handleCloseTab, toast],
+  );
 
   // 一括クローズ版 (#1354 の closeTabsBulk が経由する)。対象に未確定の編集を持つタブが
   // あれば 1 回だけまとめて確認し、キャンセルなら何も閉じない (全か無か)。
   // 各タブには既存の `handleCloseTab` を適用する (ストリーム中断・ref 掃除・ペイン畳み込みと
   // 閉じたタブ履歴の記録を 1 件ずつの × と同じ経路に通す)。
-  const requestCloseTabs = useCallback(async (ids: readonly string[]) => {
-    const guard = closeGuard(tabsRef.current, ids);
-    if (guard.kind === "applying") {
-      toast.info(translate("tabCloseApplying"));
-      return;
-    }
-    if (guard.kind === "confirm") {
-      const ok = await confirmDiscard({
-        title: translate("tabCloseDiscardTitle"),
-        message: translate("tabCloseDiscardBodyMany", { count: guard.pending.length }),
-        confirmLabel: translate("tabCloseDiscardAction"),
-        tone: "danger",
-      });
-      if (!ok) return;
-    }
-    // 右端から閉じる: 履歴は新しい順なので、Cmd+Shift+T を連続で押すと左のタブから順に戻り、
-    // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。履歴の上限
-    // (MAX_CLOSED_TABS) を超えて閉じた場合は、先に閉じた右端側のタブから捨てられる。
-    for (const id of [...ids].reverse()) handleCloseTab(id);
-  }, [confirmDiscard, tabsRef, handleCloseTab, toast]);
+  const requestCloseTabs = useCallback(
+    async (ids: readonly string[]) => {
+      const guard = closeGuard(tabsRef.current, ids);
+      if (guard.kind === "applying") {
+        toast.info(translate("tabCloseApplying"));
+        return;
+      }
+      if (guard.kind === "confirm") {
+        const ok = await confirmDiscard({
+          title: translate("tabCloseDiscardTitle"),
+          message: translate("tabCloseDiscardBodyMany", { count: guard.pending.length }),
+          confirmLabel: translate("tabCloseDiscardAction"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      // 右端から閉じる: 履歴は新しい順なので、Cmd+Shift+T を連続で押すと左のタブから順に戻り、
+      // 末尾へ追加される復元タブの並びが元の並びと一致する (#1353)。履歴の上限
+      // (MAX_CLOSED_TABS) を超えて閉じた場合は、先に閉じた右端側のタブから捨てられる。
+      for (const id of [...ids].reverse()) handleCloseTab(id);
+    },
+    [confirmDiscard, tabsRef, handleCloseTab, toast],
+  );
 
   // タブの一括クローズ (#1354)。対象は基点タブが属するペイン内のタブ (tabBulkClose.ts)。
-  const closeTabsBulk = useCallback((tabId: string, mode: BulkCloseMode) => {
-    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-    if (!owner) return;
-    void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode));
-  }, [panesRef, requestCloseTabs]);
+  const closeTabsBulk = useCallback(
+    (tabId: string, mode: BulkCloseMode) => {
+      const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+      if (!owner) return;
+      void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode));
+    },
+    [panesRef, requestCloseTabs],
+  );
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
   // 結果を引き継がないため、table / explain も含め常にクエリタブとして SQL (未実行の編集中
   // 本文を含む) と接続先 DB をコピーする (判定は duplicateTabSpec)。
-  const duplicateTab = useCallback((tabId: string) => {
-    const src = tabsRef.current.find((tt) => tt.id === tabId);
-    if (!src) return;
-    const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
-    const spec = duplicateTabSpec(src, tabSqlStore.resolve(src.id, src.sql));
-    const copy: Tab = {
-      ...makeQueryTab(),
-      title: spec.title ?? translate("tabUntitledQuery"),
-      titleManual: spec.titleManual,
-      sql: spec.sql,
-      lastExecutedSql: spec.lastExecutedSql,
-      database: spec.database,
-    };
-    addTab(copy, owner?.id);
-  }, [tabsRef, panesRef, tabSqlStore, addTab]);
+  const duplicateTab = useCallback(
+    (tabId: string) => {
+      const src = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!src) return;
+      const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
+      const spec = duplicateTabSpec(src, tabSqlStore.resolve(src.id, src.sql));
+      const copy: Tab = {
+        ...makeQueryTab(),
+        title: spec.title ?? translate("tabUntitledQuery"),
+        titleManual: spec.titleManual,
+        sql: spec.sql,
+        lastExecutedSql: spec.lastExecutedSql,
+        database: spec.database,
+      };
+      addTab(copy, owner?.id);
+    },
+    [tabsRef, panesRef, tabSqlStore, addTab],
+  );
 
   // タブのリネーム (#1390)。編集中のタブ ID を持ち、TabBar のインライン編集を制御する。
   // 確定は `applyRename` が空文字 (自動命名へ戻す) / 変更なしを判定する。
@@ -8381,18 +9041,21 @@ export default function App() {
   renamingTabIdRef.current = renamingTabId;
   const requestRenameTab = useCallback((id: string) => setRenamingTabId(id), []);
   const cancelRenameTab = useCallback(() => setRenamingTabId(null), []);
-  const renameTab = useCallback((id: string, input: string) => {
-    setRenamingTabId(null);
-    const src = tabsRef.current.find((tt) => tt.id === id);
-    if (!src) return;
-    const result = applyRename(
-      src,
-      input,
-      tabSqlStore.resolve(src.id, src.sql),
-      translate("tabUntitledQuery"),
-    );
-    if (result) updateTab(id, result);
-  }, [tabSqlStore, tabsRef, updateTab]);
+  const renameTab = useCallback(
+    (id: string, input: string) => {
+      setRenamingTabId(null);
+      const src = tabsRef.current.find((tt) => tt.id === id);
+      if (!src) return;
+      const result = applyRename(
+        src,
+        input,
+        tabSqlStore.resolve(src.id, src.sql),
+        translate("tabUntitledQuery"),
+      );
+      if (result) updateTab(id, result);
+    },
+    [tabSqlStore, tabsRef, updateTab],
+  );
 
   // Latest handlers held in a ref so the global keydown listener below can
   // call them without re-attaching on every tab change.
@@ -8407,7 +9070,25 @@ export default function App() {
   // fire while the editor has focus. These are gated to the tabbed view so
   // they never fire over the Help/Settings/Form panels.
   useEffect(() => {
-    if (!sessionId || showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes || showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet) return;
+    if (
+      !sessionId ||
+      showForm ||
+      showSettings ||
+      showTasks ||
+      showHelp ||
+      showCompare ||
+      showCompareResults ||
+      showErd ||
+      showUsers ||
+      showServerInfo ||
+      showSizes ||
+      showSnippetForm ||
+      showCommandPalette ||
+      showObjectSearch ||
+      showDataSearch ||
+      showCheatSheet
+    )
+      return;
     const focusedPane = () =>
       panesRef.current.find((p) => p.id === activePaneIdRef.current) ?? panesRef.current[0] ?? null;
     const handler = (e: KeyboardEvent) => {
@@ -8552,7 +9233,29 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [sessionId, showForm, showSettings, showTasks, showHelp, showCompare, showCompareResults, showErd, showUsers, showServerInfo, showSizes, showSnippetForm, showCommandPalette, showObjectSearch, showDataSearch, showCheatSheet, handleNewTab, selectTab, goToPageInTab, panesRef, tabsRef]);
+  }, [
+    sessionId,
+    showForm,
+    showSettings,
+    showTasks,
+    showHelp,
+    showCompare,
+    showCompareResults,
+    showErd,
+    showUsers,
+    showServerInfo,
+    showSizes,
+    showSnippetForm,
+    showCommandPalette,
+    showObjectSearch,
+    showDataSearch,
+    showCheatSheet,
+    handleNewTab,
+    selectTab,
+    goToPageInTab,
+    panesRef,
+    tabsRef,
+  ]);
 
   // Cmd/Ctrl+K でコマンドパレットを開閉する。接続前でも (接続切替・設定/ヘルプ
   // 遷移のため) 使えるよう、上の workspace ショートカットと違い常時有効にする。
@@ -8606,8 +9309,21 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod || e.altKey || e.key.toLowerCase() !== "z") return;
       if (
-        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet
+        showForm ||
+        showSettings ||
+        showTasks ||
+        showHelp ||
+        showCompare ||
+        showCompareResults ||
+        showErd ||
+        showUsers ||
+        showServerInfo ||
+        showSizes ||
+        showSnippetForm ||
+        showCommandPalette ||
+        showObjectSearch ||
+        showDataSearch ||
+        showCheatSheet
       ) {
         return;
       }
@@ -8782,8 +9498,21 @@ export default function App() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const overlayOpen =
-        showForm || showSettings || showTasks || showHelp || showCompare || showCompareResults || showErd || showUsers || showServerInfo || showSizes ||
-        showSnippetForm || showCommandPalette || showObjectSearch || showDataSearch || showCheatSheet;
+        showForm ||
+        showSettings ||
+        showTasks ||
+        showHelp ||
+        showCompare ||
+        showCompareResults ||
+        showErd ||
+        showUsers ||
+        showServerInfo ||
+        showSizes ||
+        showSnippetForm ||
+        showCommandPalette ||
+        showObjectSearch ||
+        showDataSearch ||
+        showCheatSheet;
       if (comboMatchesEvent(bindingsRef.current.maximizeResult, e)) {
         if (overlayOpen || !sessionIdRef.current) return;
         e.preventDefault();
@@ -8856,29 +9585,46 @@ export default function App() {
   // コマンドパレットの候補。接続プロファイル・現在接続のテーブル (キャッシュ済み
   // スキーマ由来)・スニペット・直近履歴・画面遷移を 1 リストに束ねる。各 `run` は
   // パレット側で実行直後にパレットを閉じる。
-  const openFullView = useCallback((view: "settings" | "tasks" | "help" | "compare" | "erDiagram" | "users" | "serverInfo" | "compareResults" | "newConnection") => {
-    setEditing(null);
-    setShowForm(false);
-    setShowSettings(false);
-    setShowTasks(false);
-    setShowHelp(false);
-    setShowCompare(false);
-    setShowErd(false); setShowUsers(false); setShowCompareResults(false);
-    setShowServerInfo(false); setSizesTarget(null);
-    setShowSnippetForm(false);
-    if (view === "settings") setShowSettings(true);
-    else if (view === "tasks") setShowTasks(true);
-    else if (view === "help") setShowHelp(true);
-    else if (view === "compare") setShowCompare(true);
-    else if (view === "erDiagram") setShowErd(true);
-    else if (view === "users") setShowUsers(true);
-    else if (view === "serverInfo") setShowServerInfo(true);
-    else if (view === "compareResults") setShowCompareResults(true);
-    else if (view === "newConnection") {
-      setShowForm(true);
-      setFormInstanceId((n) => n + 1);
-    }
-  }, []);
+  const openFullView = useCallback(
+    (
+      view:
+        | "settings"
+        | "tasks"
+        | "help"
+        | "compare"
+        | "erDiagram"
+        | "users"
+        | "serverInfo"
+        | "compareResults"
+        | "newConnection",
+    ) => {
+      setEditing(null);
+      setShowForm(false);
+      setShowSettings(false);
+      setShowTasks(false);
+      setShowHelp(false);
+      setShowCompare(false);
+      setShowErd(false);
+      setShowUsers(false);
+      setShowCompareResults(false);
+      setShowServerInfo(false);
+      setSizesTarget(null);
+      setShowSnippetForm(false);
+      if (view === "settings") setShowSettings(true);
+      else if (view === "tasks") setShowTasks(true);
+      else if (view === "help") setShowHelp(true);
+      else if (view === "compare") setShowCompare(true);
+      else if (view === "erDiagram") setShowErd(true);
+      else if (view === "users") setShowUsers(true);
+      else if (view === "serverInfo") setShowServerInfo(true);
+      else if (view === "compareResults") setShowCompareResults(true);
+      else if (view === "newConnection") {
+        setShowForm(true);
+        setFormInstanceId((n) => n + 1);
+      }
+    },
+    [],
+  );
   openFullViewRef.current = openFullView;
 
   // AI の案内リンク (AiSetupHint) から AI 設定を開く (#1475)。通常の設定オープンでは
@@ -9003,9 +9749,7 @@ export default function App() {
     if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
     else setSidebarUserCollapsed(false);
     setSidebarTab("connections");
-    requestAnimationFrame(() =>
-      requestAnimationFrame(() => connectionListRef.current?.focusFilter()),
-    );
+    requestAnimationFrame(() => requestAnimationFrame(() => connectionListRef.current?.focusFilter()));
   }, []);
   focusExplorerRef.current = focusExplorer;
 
@@ -9271,7 +10015,7 @@ export default function App() {
     for (const profile of visibleProfiles) {
       const isSqlite = profile.driver === "sqlite";
       const sublabel = isSqlite
-        ? profile.file_path ?? ""
+        ? (profile.file_path ?? "")
         : `${profile.user}@${profile.host}:${profile.port}${profile.database ? ` · ${profile.database}` : ""}`;
       const badges: string[] = [profile.driver.toUpperCase()];
       if (profile.is_production) badges.push(t("listProduction"));
@@ -9404,7 +10148,11 @@ export default function App() {
   useEffect(() => {
     return () => {
       for (const un of streamUnlistenRef.current.values()) {
-        try { un(); } catch { /* ignore */ }
+        try {
+          un();
+        } catch {
+          /* ignore */
+        }
       }
       streamUnlistenRef.current.clear();
       streamIdRef.current.clear();
@@ -9415,8 +10163,7 @@ export default function App() {
     status.kind === "idle" ? "" : status.kind === "literal" ? status.text : t(status.key, status.vars);
   // フッター文言の差し替えアニメーション (#1213) の単位。i18n キーで識別し、
   // 同じメッセージの数値 (取得行数・経過時間) の更新では再生しない。
-  const statusMessageKey =
-    status.kind === "idle" ? "" : status.kind === "literal" ? status.text : status.key;
+  const statusMessageKey = status.kind === "idle" ? "" : status.kind === "literal" ? status.text : status.key;
 
   // Bottom Panel「アクティビティ」タブ (#1114。旧「メッセージ」タブを統合) へステータスの履歴を積む。フッターは
   // 最新 1 件しか見せないため、上書きされて消えたエラー文を後から読めるようにする。
@@ -9444,10 +10191,7 @@ export default function App() {
   // is active. Lets the footer surface a "Reconnect" button so recovery
   // doesn't require hunting for the profile in the sidebar again.
   const reconnectProfile = useMemo(
-    () =>
-      !sessionId && errorProfileId
-        ? profiles.find((p) => p.id === errorProfileId) ?? null
-        : null,
+    () => (!sessionId && errorProfileId ? (profiles.find((p) => p.id === errorProfileId) ?? null) : null),
     [sessionId, errorProfileId, profiles],
   );
 
@@ -9484,17 +10228,67 @@ export default function App() {
   // ペインの描画 (`PaneView`) へ渡す App 由来のハンドラ。参照が固定された束なので、
   // 呼び出し側の関数が毎レンダー作り直されても `PaneView` の memo は破られない (#1318)。
   const paneActions = useStableCallbacks({
-    applyEditsForTab, cancelRenameTab, clearEditsForTab, closePane, discardEditsAndPreviewForTab, discardRowOpsForTab,
-    explainForTab, fetchAllForTab, focusPane, goToPageInTab, handleCloseTab: requestCloseTab, handleEditorDocChange,
-    handleAiSqlAction, handleAiResultSummary, handleExploreColumns, handleNewTab, handleOpenAiSql, handleOpenSqlFile, handleRegisterLocalTable,
-    handleSaveSnippetFromEditor, handleSaveSqlFile, handleToggleEmergencyMode, loadMoreInTab,
-    openAndRunQuery, openQueryInEditor, openTabMenu, patchTab, pinCurrentResult, previewEditsForTab,
-    redoCellEditForTab, renameTab, reorderTabsInPane, requestRenameTab, replaceColumnForTab, requestBroadcast,
-    addInsertRowsForTab, requestDuplicateRowForTab, requestInsertRowForTab, resolveParamsThen, runBatchInTab,
-    runExplainInTab, runInTabWithGate, runQueryInTab, selectTab, setAutoRefreshForTab,
-    setBulkCellEditsForTab, setCellEditForTab, setLayoutMode, setPageSizeInTab, setResultView,
-    setSaveAsTableRequest, setSaveAsViewRequest, setServerFilterInTab, setServerSortInTab, setStatus,
-    setTransferSource, splitPane, stopTab, toggleRowDeleteForTab, undoCellEditForTab, updateTab,
+    applyEditsForTab,
+    cancelRenameTab,
+    clearEditsForTab,
+    closePane,
+    discardEditsAndPreviewForTab,
+    discardRowOpsForTab,
+    explainForTab,
+    fetchAllForTab,
+    focusPane,
+    goToPageInTab,
+    handleCloseTab: requestCloseTab,
+    handleEditorDocChange,
+    handleAiSqlAction,
+    handleAiResultSummary,
+    handleExploreColumns,
+    handleNewTab,
+    handleOpenAiSql,
+    handleOpenSqlFile,
+    handleRegisterLocalTable,
+    handleSaveSnippetFromEditor,
+    handleSaveSqlFile,
+    handleToggleEmergencyMode,
+    loadMoreInTab,
+    openAndRunQuery,
+    openQueryInEditor,
+    openTabMenu,
+    patchTab,
+    pinCurrentResult,
+    previewEditsForTab,
+    redoCellEditForTab,
+    renameTab,
+    reorderTabsInPane,
+    requestRenameTab,
+    replaceColumnForTab,
+    requestBroadcast,
+    addInsertRowsForTab,
+    requestDuplicateRowForTab,
+    requestInsertRowForTab,
+    resolveParamsThen,
+    runBatchInTab,
+    runExplainInTab,
+    runInTabWithGate,
+    runQueryInTab,
+    selectTab,
+    setAutoRefreshForTab,
+    setBulkCellEditsForTab,
+    setCellEditForTab,
+    setLayoutMode,
+    setPageSizeInTab,
+    setResultView,
+    setSaveAsTableRequest,
+    setSaveAsViewRequest,
+    setServerFilterInTab,
+    setServerSortInTab,
+    setStatus,
+    setTransferSource,
+    splitPane,
+    stopTab,
+    toggleRowDeleteForTab,
+    undoCellEditForTab,
+    updateTab,
     writeBlobForTab,
     openSnippetsFromEmpty: () => {
       if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
@@ -9591,8 +10385,7 @@ export default function App() {
   });
   // フローティング・ランチャー (#1254) は SQL エディタのある画面 (接続中の通常
   // ワークスペース) にだけ出す。ER 図などの全画面サーフェスや未接続時は隠す。
-  const quickLauncherVisible =
-    settings.quickLauncherEnabled && !!sessionId && workspaceView === "workspace";
+  const quickLauncherVisible = settings.quickLauncherEnabled && !!sessionId && workspaceView === "workspace";
   useEffect(() => {
     quickLauncherVisibleRef.current = quickLauncherVisible;
     if (!quickLauncherVisible) setQuickLauncherOpen(false);
@@ -9635,28 +10428,28 @@ export default function App() {
     tab === "output"
       ? t("outputTitle")
       : tab === "activity"
-          ? t("activityCenterTitle")
-          : tab === "advisor"
-      ? t("advisorTitle")
-      : tab === "inspector"
-        ? t("inspectorTitle")
-        : tab === "whereUsed"
-          ? t("whereUsedTitle")
-          : tab === "assertions"
-            ? t("assertTitle")
-          : tab === "health"
-            ? t("healthTitle")
-            : tab === "profile"
-              ? t("profileTitle")
-              : tab === "structure"
-                ? t("structureTitle")
-                : tab === "timelapse"
-                  ? t("timelapseTitle")
-                  : tab === "aiSql"
-                    ? t("aiSqlTitle")
-                    : tab === "aiResultSummary"
-                      ? t("aiResultSummaryTitle")
-                      : t("processTitle");
+        ? t("activityCenterTitle")
+        : tab === "advisor"
+          ? t("advisorTitle")
+          : tab === "inspector"
+            ? t("inspectorTitle")
+            : tab === "whereUsed"
+              ? t("whereUsedTitle")
+              : tab === "assertions"
+                ? t("assertTitle")
+                : tab === "health"
+                  ? t("healthTitle")
+                  : tab === "profile"
+                    ? t("profileTitle")
+                    : tab === "structure"
+                      ? t("structureTitle")
+                      : tab === "timelapse"
+                        ? t("timelapseTitle")
+                        : tab === "aiSql"
+                          ? t("aiSqlTitle")
+                          : tab === "aiResultSummary"
+                            ? t("aiResultSummaryTitle")
+                            : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -9744,13 +10537,13 @@ export default function App() {
       <TitleBar
         connection={titleBarConnection}
         onOpenActivityPanel={() => setBottomPanelTab("activity")}
-        onBeforeClose={() => confirmDiscardOpenTransactions([...txBySessionRef.current.keys()], "closeWindow")}
+        onBeforeClose={() =>
+          confirmDiscardOpenTransactions([...txBySessionRef.current.keys()], "closeWindow")
+        }
       />
       <Grid
         templateColumns={
-          sidebarCollapsed || (narrow && narrowSidebarOpen)
-            ? "0px 1fr"
-            : "var(--sidebar-width, 300px) 1fr"
+          sidebarCollapsed || (narrow && narrowSidebarOpen) ? "0px 1fr" : "var(--sidebar-width, 300px) 1fr"
         }
         flex="1"
         minH={0}
@@ -9761,422 +10554,445 @@ export default function App() {
         // (aside) 側の transform / opacity だけで表す。
         style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
       >
-      <Flex
-        as="aside"
-        gridColumn="1"
-        direction="column"
-        overflow="hidden"
-        position="relative"
-        borderRightWidth="1px"
-        borderRightColor="app.border"
-        bg="app.surface"
-        // 開閉は transform (translateX) + opacity だけで描く (#873 / #1322)。
-        // 幅は常にサイドバー幅へ固定し、折りたたみ中はトラックが 0 でもはみ出した
-        // まま左へスライドアウトする (合成のみ、再レイアウトなし)。完全に隠れた後は
-        // visibility で描画から外す。展開後は transform: none に戻り、fixed 子孫の
-        // 包含ブロックにならない。幅は #1312 の `--sidebar-width` (リサイズ中は
-        // SidebarResizeHandle が DOM へ直接書く) をそのまま参照する。
-        width="var(--sidebar-width, 300px)"
-        zIndex={sidebarCollapsed ? 40 : undefined}
-        opacity={sidebarCollapsed ? 0 : 1}
-        visibility={sidebarCollapsed ? "hidden" : "visible"}
-        transform={sidebarCollapsed ? "translateX(-100%)" : "none"}
-        pointerEvents={sidebarCollapsed ? "none" : undefined}
-        transition={
-          sidebarResizing
-            ? undefined
-            : sidebarCollapsed
-              ? "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease), visibility 0s linear var(--dur-med)"
-              : "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease)"
-        }
-        css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
-        // 折りたたみ中は不可視 (幅 0 + opacity 0) でも DOM 上はフォーカス可能な
-        // ままなので、inert で配下のコントロールをタブ順から除外する (#873
-        // レビュー対応)。展開時は undefined で従来のフォーカス挙動を維持。
-        inert={sidebarCollapsed || undefined}
-        {...(narrow && narrowSidebarOpen
-          ? {
-              position: "absolute" as const,
-              top: 0,
-              bottom: 0,
-              left: 0,
-              width: "var(--sidebar-width, 300px)",
-              zIndex: 40,
-              boxShadow: "md",
-            }
-          : {})}
-      >
-        {/* サイドバー左端のカラースパイン (#791)。「今どの接続で作業しているか」を
+        <Flex
+          as="aside"
+          gridColumn="1"
+          direction="column"
+          overflow="hidden"
+          position="relative"
+          borderRightWidth="1px"
+          borderRightColor="app.border"
+          bg="app.surface"
+          // 開閉は transform (translateX) + opacity だけで描く (#873 / #1322)。
+          // 幅は常にサイドバー幅へ固定し、折りたたみ中はトラックが 0 でもはみ出した
+          // まま左へスライドアウトする (合成のみ、再レイアウトなし)。完全に隠れた後は
+          // visibility で描画から外す。展開後は transform: none に戻り、fixed 子孫の
+          // 包含ブロックにならない。幅は #1312 の `--sidebar-width` (リサイズ中は
+          // SidebarResizeHandle が DOM へ直接書く) をそのまま参照する。
+          width="var(--sidebar-width, 300px)"
+          zIndex={sidebarCollapsed ? 40 : undefined}
+          opacity={sidebarCollapsed ? 0 : 1}
+          visibility={sidebarCollapsed ? "hidden" : "visible"}
+          transform={sidebarCollapsed ? "translateX(-100%)" : "none"}
+          pointerEvents={sidebarCollapsed ? "none" : undefined}
+          transition={
+            sidebarResizing
+              ? undefined
+              : sidebarCollapsed
+                ? "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease), visibility 0s linear var(--dur-med)"
+                : "transform var(--dur-med) var(--ease), opacity var(--dur-med) var(--ease)"
+          }
+          css={{ "& > *": { width: "var(--sidebar-width, 300px)" } }}
+          // 折りたたみ中は不可視 (幅 0 + opacity 0) でも DOM 上はフォーカス可能な
+          // ままなので、inert で配下のコントロールをタブ順から除外する (#873
+          // レビュー対応)。展開時は undefined で従来のフォーカス挙動を維持。
+          inert={sidebarCollapsed || undefined}
+          {...(narrow && narrowSidebarOpen
+            ? {
+                position: "absolute" as const,
+                top: 0,
+                bottom: 0,
+                left: 0,
+                width: "var(--sidebar-width, 300px)",
+                zIndex: 40,
+                boxShadow: "md",
+              }
+            : {})}
+        >
+          {/* サイドバー左端のカラースパイン (#791)。「今どの接続で作業しているか」を
             サイドバー全体で常に示すワークスペース・アイデンティティ。色の決定は
             `workspaceSpineColor` に一元化 (本番は常に危険色で上書き)。key を
             プロファイル id にして接続確立/切替のたびに `transitions.enter` で
             軽く定着させ、色が変わったことに気付きやすくする。reduced-motion は
             ルートの MotionConfig が自動で即時化する。 */}
-        <AnimatePresence mode="wait">
-          {sessionId && selectedProfile && (
-            <motion.div
-              key={selectedProfile.id}
-              aria-hidden
-              initial={{ opacity: 0, scaleY: 0.6 }}
-              animate={{ opacity: 1, scaleY: 1 }}
-              exit={{ opacity: 0, scaleY: 0.6 }}
-              transition={transitions.enter}
-              style={{
-                position: "absolute",
-                top: 0,
-                bottom: 0,
-                left: 0,
-                width: selectedProfile.is_production ? "4px" : "3px",
-                background: workspaceSpineColor(selectedProfile),
-                transformOrigin: "top",
-                pointerEvents: "none",
-                zIndex: 1,
-              }}
-            />
-          )}
-        </AnimatePresence>
-        <Flex
-          as="header"
-          px="3"
-          py="2.5"
-          borderBottomWidth="1px"
-          borderBottomColor="app.border"
-          fontWeight={600}
-          justify="space-between"
-          align="center"
-          gap="2"
-        >
-          <IconButton
-            flexShrink="0"
-            onClick={toggleSidebar}
-            title={shortcutTooltip(t("sidebarCollapse"), shortcutBindings, "toggleSidebar")}
-            aria-label={t("sidebarCollapse")}
+          <AnimatePresence mode="wait">
+            {sessionId && selectedProfile && (
+              <motion.div
+                key={selectedProfile.id}
+                aria-hidden
+                initial={{ opacity: 0, scaleY: 0.6 }}
+                animate={{ opacity: 1, scaleY: 1 }}
+                exit={{ opacity: 0, scaleY: 0.6 }}
+                transition={transitions.enter}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  width: selectedProfile.is_production ? "4px" : "3px",
+                  background: workspaceSpineColor(selectedProfile),
+                  transformOrigin: "top",
+                  pointerEvents: "none",
+                  zIndex: 1,
+                }}
+              />
+            )}
+          </AnimatePresence>
+          <Flex
+            as="header"
+            px="3"
+            py="2.5"
+            borderBottomWidth="1px"
+            borderBottomColor="app.border"
+            fontWeight={600}
+            justify="space-between"
+            align="center"
+            gap="2"
           >
-            <Icon name="chevron-left" />
-          </IconButton>
-          <chakra.span
-            flex="1"
-            fontSize="md"
-            letterSpacing="wide"
-            color="app.text"
-            overflow="hidden"
-            textOverflow="ellipsis"
-            whiteSpace="nowrap"
-          >
-            {sidebarTab === "snippets"
-              ? t("appSnippets")
-              : sidebarTab === "history"
-                ? t("appHistory")
-                : sidebarTab === "local"
-                  ? t("appLocal")
-                  : t("appConnections")}
-          </chakra.span>
-          <Flex gap="1" align="center">
-            {/* コマンドパレットの常設入口 (#1265)。Cmd/Ctrl+K を知らなくても辿れる。
+            <IconButton
+              flexShrink="0"
+              onClick={toggleSidebar}
+              title={shortcutTooltip(t("sidebarCollapse"), shortcutBindings, "toggleSidebar")}
+              aria-label={t("sidebarCollapse")}
+            >
+              <Icon name="chevron-left" />
+            </IconButton>
+            <chakra.span
+              flex="1"
+              fontSize="md"
+              letterSpacing="wide"
+              color="app.text"
+              overflow="hidden"
+              textOverflow="ellipsis"
+              whiteSpace="nowrap"
+            >
+              {sidebarTab === "snippets"
+                ? t("appSnippets")
+                : sidebarTab === "history"
+                  ? t("appHistory")
+                  : sidebarTab === "local"
+                    ? t("appLocal")
+                    : t("appConnections")}
+            </chakra.span>
+            <Flex gap="1" align="center">
+              {/* コマンドパレットの常設入口 (#1265)。Cmd/Ctrl+K を知らなくても辿れる。
                 接続前でも開ける (パレットは常時有効) ので disabled にしない。 */}
-            <IconButton
-              onClick={() => setShowCommandPalette(true)}
-              title={shortcutTooltip(t("appCommandPalette"), shortcutBindings, "commandPalette")}
-              aria-label={t("appCommandPalette")}
-            >
-              <Icon name="search" />
-            </IconButton>
-            <IconButton
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                setToolsMenu({ x: rect.left, y: rect.bottom + 4 });
-              }}
-              title={t("appToolsTitle")}
-              aria-label={t("appTools")}
-              aria-haspopup="menu"
-            >
-              <Icon name="tools" />
-            </IconButton>
-            {sidebarTab === "snippets" ? (
               <IconButton
-                onClick={handleOpenSnippetForm}
-                title={t("appNewSnippet")}
-                aria-label={t("appNewSnippet")}
+                onClick={() => setShowCommandPalette(true)}
+                title={shortcutTooltip(t("appCommandPalette"), shortcutBindings, "commandPalette")}
+                aria-label={t("appCommandPalette")}
               >
-                <Icon name="plus" />
+                <Icon name="search" />
               </IconButton>
-            ) : sidebarTab === "connections" ? (
-              <>
+              <IconButton
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setToolsMenu({ x: rect.left, y: rect.bottom + 4 });
+                }}
+                title={t("appToolsTitle")}
+                aria-label={t("appTools")}
+                aria-haspopup="menu"
+              >
+                <Icon name="tools" />
+              </IconButton>
+              {sidebarTab === "snippets" ? (
                 <IconButton
-                  onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    setProfileTransferMenu({ x: rect.left, y: rect.bottom + 4 });
-                  }}
-                  title={t("profileTransferAria")}
-                  aria-label={t("profileTransferAria")}
-                  aria-haspopup="menu"
-                >
-                  <Icon name="transfer" />
-                </IconButton>
-                <IconButton
-                  onClick={() => { setEditing(null); setShowSettings(false); setShowHelp(false); setShowCompare(false); setShowErd(false); setShowUsers(false); setShowCompareResults(false); setShowServerInfo(false); setSizesTarget(null); setShowSnippetForm(false); setShowForm(true); setFormInstanceId((n) => n + 1); }}
-                  title={t("appNew")}
-                  aria-label={t("appNew")}
+                  onClick={handleOpenSnippetForm}
+                  title={t("appNewSnippet")}
+                  aria-label={t("appNewSnippet")}
                 >
                   <Icon name="plus" />
                 </IconButton>
-              </>
-            ) : null}
+              ) : sidebarTab === "connections" ? (
+                <>
+                  <IconButton
+                    onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      setProfileTransferMenu({ x: rect.left, y: rect.bottom + 4 });
+                    }}
+                    title={t("profileTransferAria")}
+                    aria-label={t("profileTransferAria")}
+                    aria-haspopup="menu"
+                  >
+                    <Icon name="transfer" />
+                  </IconButton>
+                  <IconButton
+                    onClick={() => {
+                      setEditing(null);
+                      setShowSettings(false);
+                      setShowHelp(false);
+                      setShowCompare(false);
+                      setShowErd(false);
+                      setShowUsers(false);
+                      setShowCompareResults(false);
+                      setShowServerInfo(false);
+                      setSizesTarget(null);
+                      setShowSnippetForm(false);
+                      setShowForm(true);
+                      setFormInstanceId((n) => n + 1);
+                    }}
+                    title={t("appNew")}
+                    aria-label={t("appNew")}
+                  >
+                    <Icon name="plus" />
+                  </IconButton>
+                </>
+              ) : null}
+            </Flex>
           </Flex>
-        </Flex>
-        <Flex
-          borderBottomWidth="1px"
-          borderBottomColor="app.border"
-          // ラベル付きで収まらない幅ではアイコンだけになる。それでも足りない極端なフォント拡大時の
-          // 逃げとして、折り返さず横スクロールにしておく (ボトムパネルのタブ列と同じ方式, #1283)。
-          overflowX="auto"
-          ref={sidebarTablistRef}
-          role="tablist"
-          aria-label={t("sidebarTablistAria")}
-        >
-          {/* アクティブ下線のスプリングが端のタブで行き過ぎる (オーバーシュート) と、その数 px が
+          <Flex
+            borderBottomWidth="1px"
+            borderBottomColor="app.border"
+            // ラベル付きで収まらない幅ではアイコンだけになる。それでも足りない極端なフォント拡大時の
+            // 逃げとして、折り返さず横スクロールにしておく (ボトムパネルのタブ列と同じ方式, #1283)。
+            overflowX="auto"
+            ref={sidebarTablistRef}
+            role="tablist"
+            aria-label={t("sidebarTablistAria")}
+          >
+            {/* アクティブ下線のスプリングが端のタブで行き過ぎる (オーバーシュート) と、その数 px が
               スクロール可能な範囲に数えられ、タブ切替のたびに一瞬スクロールバーが出ていた。
               タブを overflow: clip の枠に入れ、行き過ぎた分は枠で切り落とす (スクロール量に
               数えさせない)。枠はタブ列の内容幅まで伸びるので、狭い幅での横スクロールはそのまま。 */}
-          <Flex flex="1 0 auto" overflow="clip">
-            <SidebarTabButton
-              ref={(el) => { sidebarTabRefs.current.connections = el; }}
-              tabKey="connections"
-              active={sidebarTab === "connections"}
-              onActivate={() => setSidebarTab("connections")}
-              onKeyDown={handleSidebarTabKeyDown("connections")}
-              label={t("sidebarTabConnections")}
-              compact={sidebarTabsCompact}
-            />
-            <SidebarTabButton
-              ref={(el) => { sidebarTabRefs.current.snippets = el; }}
-              tabKey="snippets"
-              active={sidebarTab === "snippets"}
-              onActivate={() => setSidebarTab("snippets")}
-              onKeyDown={handleSidebarTabKeyDown("snippets")}
-              label={t("sidebarTabSnippets")}
-              compact={sidebarTabsCompact}
-            />
-            <SidebarTabButton
-              ref={(el) => { sidebarTabRefs.current.history = el; }}
-              tabKey="history"
-              active={sidebarTab === "history"}
-              onActivate={() => setSidebarTab("history")}
-              onKeyDown={handleSidebarTabKeyDown("history")}
-              label={t("sidebarTabHistory")}
-              compact={sidebarTabsCompact}
-            />
-            <SidebarTabButton
-              ref={(el) => { sidebarTabRefs.current.local = el; }}
-              tabKey="local"
-              active={sidebarTab === "local"}
-              onActivate={() => setSidebarTab("local")}
-              onKeyDown={handleSidebarTabKeyDown("local")}
-              label={t("sidebarTabLocal")}
-              compact={sidebarTabsCompact}
-            />
+            <Flex flex="1 0 auto" overflow="clip">
+              <SidebarTabButton
+                ref={(el) => {
+                  sidebarTabRefs.current.connections = el;
+                }}
+                tabKey="connections"
+                active={sidebarTab === "connections"}
+                onActivate={() => setSidebarTab("connections")}
+                onKeyDown={handleSidebarTabKeyDown("connections")}
+                label={t("sidebarTabConnections")}
+                compact={sidebarTabsCompact}
+              />
+              <SidebarTabButton
+                ref={(el) => {
+                  sidebarTabRefs.current.snippets = el;
+                }}
+                tabKey="snippets"
+                active={sidebarTab === "snippets"}
+                onActivate={() => setSidebarTab("snippets")}
+                onKeyDown={handleSidebarTabKeyDown("snippets")}
+                label={t("sidebarTabSnippets")}
+                compact={sidebarTabsCompact}
+              />
+              <SidebarTabButton
+                ref={(el) => {
+                  sidebarTabRefs.current.history = el;
+                }}
+                tabKey="history"
+                active={sidebarTab === "history"}
+                onActivate={() => setSidebarTab("history")}
+                onKeyDown={handleSidebarTabKeyDown("history")}
+                label={t("sidebarTabHistory")}
+                compact={sidebarTabsCompact}
+              />
+              <SidebarTabButton
+                ref={(el) => {
+                  sidebarTabRefs.current.local = el;
+                }}
+                tabKey="local"
+                active={sidebarTab === "local"}
+                onActivate={() => setSidebarTab("local")}
+                onKeyDown={handleSidebarTabKeyDown("local")}
+                label={t("sidebarTabLocal")}
+                compact={sidebarTabsCompact}
+              />
+            </Flex>
           </Flex>
-        </Flex>
-        <Box
-          role="tabpanel"
-          id={sidebarPanelId(sidebarTab)}
-          aria-labelledby={sidebarTabId(sidebarTab)}
-          display="flex"
-          flexDirection="column"
-          flex="1"
-          overflow="hidden"
-        >
-          {/* サイドバーのタブは中身を破棄せず保持する (#1311)。
+          <Box
+            role="tabpanel"
+            id={sidebarPanelId(sidebarTab)}
+            aria-labelledby={sidebarTabId(sidebarTab)}
+            display="flex"
+            flexDirection="column"
+            flex="1"
+            overflow="hidden"
+          >
+            {/* サイドバーのタブは中身を破棄せず保持する (#1311)。
               - ConnectionList は常に最新の props が要り (ref 経由の操作もある)、離れると
                 ツリーの再取得 (`loadSchemaTree`) が走るため、別枠で常駐させ非表示にするだけ。
               - ほかの 3 タブは `KeepAlive` で遅延マウント + 保持。タブは 4 つで有限なので
                 保持数の上限はその数 (= 全タブを保持できる)。
               非表示は hidden + inert (フォーカス・読み上げから外す)。 */}
-          <div
-            hidden={sidebarTab !== "connections"}
-            inert={sidebarTab !== "connections" || undefined}
-            style={{
-              ...SIDEBAR_TABPANEL_FILL_STYLE,
-              display: sidebarTab === "connections" ? "flex" : "none",
-            }}
+            <div
+              hidden={sidebarTab !== "connections"}
+              inert={sidebarTab !== "connections" || undefined}
+              style={{
+                ...SIDEBAR_TABPANEL_FILL_STYLE,
+                display: sidebarTab === "connections" ? "flex" : "none",
+              }}
+            >
+              <ConnectionList
+                ref={connectionListRef}
+                profiles={visibleProfiles}
+                activeProfileId={selectedProfile?.id ?? null}
+                activeTable={activeTreeTable}
+                sessionId={sessionId}
+                connectingId={connectingId}
+                errorProfileId={errorProfileId}
+                openProfileIds={openProfileIds}
+                txProfileIds={txProfileIds}
+                {...connectionListHandlers}
+                selectLimit={Math.max(1, settings.defaultDisplayCount)}
+                favorites={quickAccess.favorites}
+                recent={quickAccess.recent}
+                sandboxes={sandboxes}
+              />
+            </div>
+            <KeepAlive
+              activeKey={sidebarTab === "connections" ? null : sidebarTab}
+              limit={SIDEBAR_TABS_KEEP_ALIVE_LIMIT}
+            >
+              {sidebarTab === "snippets" ? (
+                <SnippetList
+                  snippets={snippets}
+                  activeProfile={selectedProfile}
+                  onInsert={handleInsertSnippet}
+                  onEdit={handleEditSnippet}
+                  onDelete={handleDeleteSnippet}
+                  onCreate={handleOpenSnippetForm}
+                  watchedPlanIds={watchedPlanIdList}
+                  onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
+                  onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
+                  favoriteIds={snippetQuickAccess.favorites}
+                  onToggleFavorite={handleToggleSnippetFavorite}
+                  onRun={sessionId ? handleRunSnippet : undefined}
+                />
+              ) : sidebarTab === "history" ? (
+                <HistoryList
+                  activeProfile={selectedProfile}
+                  sessionId={sessionId}
+                  reloadKey={historyReloadKey}
+                  onRestore={handleRestoreHistory}
+                  onOpenInNewTab={handleOpenHistoryInNewTab}
+                  onSaveAsSnippet={handleSaveSnippetFromEditor}
+                  onNewQuery={sessionId ? handleNewTab : undefined}
+                />
+              ) : (
+                <LocalTablesPanel
+                  hasSession={!!localSessionId}
+                  isActive={!!sessionId && selectedProfile?.id === LOCAL_PROFILE_ID}
+                  tables={localTables}
+                  loading={localTablesLoading}
+                  onOpenLocal={handleOpenLocalConnection}
+                  onDropTable={handleDropLocalTable}
+                  onRefetchTable={handleRefetchLocalTable}
+                  refetchingTable={refetchingLocalTable}
+                  onSaveToFile={handleSaveLocalDatabase}
+                />
+              )}
+            </KeepAlive>
+          </Box>
+          {/* グローバル操作 (テーマ / ヘルプ / 設定) のフッタ。接続先一覧とは無関係な
+            操作のため、過密になったヘッダから下部へ退避 (VSCode の下部ギアと同配置)。 */}
+          <Flex
+            as="footer"
+            px="3"
+            py="1.5"
+            borderTopWidth="1px"
+            borderTopColor="app.border"
+            gap="1"
+            align="center"
           >
-          <ConnectionList
-            ref={connectionListRef}
-            profiles={visibleProfiles}
-            activeProfileId={selectedProfile?.id ?? null}
-            activeTable={activeTreeTable}
-            sessionId={sessionId}
-            connectingId={connectingId}
-            errorProfileId={errorProfileId}
-            openProfileIds={openProfileIds}
-            txProfileIds={txProfileIds}
-            {...connectionListHandlers}
-            selectLimit={Math.max(1, settings.defaultDisplayCount)}
-            favorites={quickAccess.favorites}
-            recent={quickAccess.recent}
-            sandboxes={sandboxes}
-          />
-          </div>
-          <KeepAlive
-            activeKey={sidebarTab === "connections" ? null : sidebarTab}
-            limit={SIDEBAR_TABS_KEEP_ALIVE_LIMIT}
-          >
-          {sidebarTab === "snippets" ? (
-          <SnippetList
-            snippets={snippets}
-            activeProfile={selectedProfile}
-            onInsert={handleInsertSnippet}
-            onEdit={handleEditSnippet}
-            onDelete={handleDeleteSnippet}
-            onCreate={handleOpenSnippetForm}
-            watchedPlanIds={watchedPlanIdList}
-            onTogglePlanWatch={selectedProfile ? handleTogglePlanWatch : undefined}
-            onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
-            favoriteIds={snippetQuickAccess.favorites}
-            onToggleFavorite={handleToggleSnippetFavorite}
-            onRun={sessionId ? handleRunSnippet : undefined}
-          />
-        ) : sidebarTab === "history" ? (
-          <HistoryList
-            activeProfile={selectedProfile}
-            sessionId={sessionId}
-            reloadKey={historyReloadKey}
-            onRestore={handleRestoreHistory}
-            onOpenInNewTab={handleOpenHistoryInNewTab}
-            onSaveAsSnippet={handleSaveSnippetFromEditor}
-            onNewQuery={sessionId ? handleNewTab : undefined}
-          />
-        ) : (
-          <LocalTablesPanel
-            hasSession={!!localSessionId}
-            isActive={!!sessionId && selectedProfile?.id === LOCAL_PROFILE_ID}
-            tables={localTables}
-            loading={localTablesLoading}
-            onOpenLocal={handleOpenLocalConnection}
-            onDropTable={handleDropLocalTable}
-            onRefetchTable={handleRefetchLocalTable}
-            refetchingTable={refetchingLocalTable}
-            onSaveToFile={handleSaveLocalDatabase}
+            <IconButton
+              onClick={toggleTheme}
+              title={shortcutTooltip(
+                theme === "dark" ? t("appThemeToLight") : t("appThemeToDark"),
+                shortcutBindings,
+                "toggleTheme",
+              )}
+              aria-label={t("appThemeToggle")}
+            >
+              <Icon name={theme === "dark" ? "sun" : "moon"} />
+            </IconButton>
+            <IconButton
+              onClick={() => openFullView("tasks")}
+              title={t("appTasksTitle")}
+              aria-label={t("appTasks")}
+            >
+              <Icon name="clock" />
+            </IconButton>
+            <IconButton
+              onClick={() => openFullView("help")}
+              title={shortcutTooltip(t("appHelp"), shortcutBindings, "openHelp")}
+              aria-label={t("appHelp")}
+            >
+              <Icon name="help" />
+            </IconButton>
+            <IconButton
+              onClick={() => openFullView("settings")}
+              title={shortcutTooltip(t("appSettings"), shortcutBindings, "openSettings")}
+              aria-label={t("appSettings")}
+            >
+              <Icon name="settings" />
+            </IconButton>
+          </Flex>
+        </Flex>
+
+        {!sidebarCollapsed && (
+          <SidebarResizeHandle
+            width={sidebarWidth}
+            onWidthChange={setSidebarWidth}
+            resizing={sidebarResizing}
+            onResizingChange={setSidebarResizing}
+            ariaLabel={t("sidebarResizeAria")}
           />
         )}
-          </KeepAlive>
-        </Box>
-        {/* グローバル操作 (テーマ / ヘルプ / 設定) のフッタ。接続先一覧とは無関係な
-            操作のため、過密になったヘッダから下部へ退避 (VSCode の下部ギアと同配置)。 */}
-        <Flex
-          as="footer"
-          px="3"
-          py="1.5"
-          borderTopWidth="1px"
-          borderTopColor="app.border"
-          gap="1"
-          align="center"
-        >
-          <IconButton
-            onClick={toggleTheme}
-            title={shortcutTooltip(theme === "dark" ? t("appThemeToLight") : t("appThemeToDark"), shortcutBindings, "toggleTheme")}
-            aria-label={t("appThemeToggle")}
-          >
-            <Icon name={theme === "dark" ? "sun" : "moon"} />
-          </IconButton>
-          <IconButton
-            onClick={() => openFullView("tasks")}
-            title={t("appTasksTitle")}
-            aria-label={t("appTasks")}
-          >
-            <Icon name="clock" />
-          </IconButton>
-          <IconButton
-            onClick={() => openFullView("help")}
-            title={shortcutTooltip(t("appHelp"), shortcutBindings, "openHelp")}
-            aria-label={t("appHelp")}
-          >
-            <Icon name="help" />
-          </IconButton>
-          <IconButton
-            onClick={() => openFullView("settings")}
-            title={shortcutTooltip(t("appSettings"), shortcutBindings, "openSettings")}
-            aria-label={t("appSettings")}
-          >
-            <Icon name="settings" />
-          </IconButton>
-        </Flex>
-      </Flex>
 
-      {!sidebarCollapsed && (
-        <SidebarResizeHandle
-          width={sidebarWidth}
-          onWidthChange={setSidebarWidth}
-          resizing={sidebarResizing}
-          onResizingChange={setSidebarResizing}
-          ariaLabel={t("sidebarResizeAria")}
-        />
-      )}
-
-      {/* 折りたたみ時の展開ボタン。サイドバーの width トランジション (#873) と
+        {/* 折りたたみ時の展開ボタン。サイドバーの width トランジション (#873) と
           呼応して fadeScale で出入りさせ、即時のパチッとした切替を避ける。 */}
-      <AnimatePresence>
-      {sidebarCollapsed && (
-        <motion.div
-          key="sidebar-expand"
-          initial={variants.fadeScale.initial}
-          animate={variants.fadeScale.animate}
-          exit={variants.fadeScale.exit}
-          transition={transitions.enter}
-          style={{ position: "absolute", top: "9px", left: "var(--space-2)", zIndex: 46 }}
+        <AnimatePresence>
+          {sidebarCollapsed && (
+            <motion.div
+              key="sidebar-expand"
+              initial={variants.fadeScale.initial}
+              animate={variants.fadeScale.animate}
+              exit={variants.fadeScale.exit}
+              transition={transitions.enter}
+              style={{ position: "absolute", top: "9px", left: "var(--space-2)", zIndex: 46 }}
+            >
+              <Tooltip label={shortcutTooltip(t("sidebarExpand"), shortcutBindings, "toggleSidebar")}>
+                <chakra.button
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  width={SIDEBAR_EXPAND_BUTTON_SIZE}
+                  height={SIDEBAR_EXPAND_BUTTON_SIZE}
+                  p="0"
+                  borderWidth="1px"
+                  borderStyle="solid"
+                  borderColor="app.border"
+                  borderRadius="md"
+                  bg="app.surface"
+                  color="app.textSecondary"
+                  cursor="pointer"
+                  boxShadow="sm"
+                  _hover={{ color: "app.text", bg: "app.hover" }}
+                  onClick={toggleSidebar}
+                  aria-label={t("sidebarExpand")}
+                >
+                  <Icon name="chevron-right" />
+                </chakra.button>
+              </Tooltip>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {narrow && narrowSidebarOpen && (
+          <Box
+            position="absolute"
+            inset={0}
+            zIndex={30}
+            bg="var(--overlay)"
+            onClick={() => setNarrowSidebarOpen(false)}
+            aria-hidden
+          />
+        )}
+
+        <Flex
+          as="main"
+          gridColumn="2"
+          direction="column"
+          overflow="hidden"
+          bg="app.bg"
+          minW={0}
+          style={
+            selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
+          }
         >
-        <Tooltip label={shortcutTooltip(t("sidebarExpand"), shortcutBindings, "toggleSidebar")}>
-          <chakra.button
-            display="inline-flex"
-            alignItems="center"
-            justifyContent="center"
-            width={SIDEBAR_EXPAND_BUTTON_SIZE}
-            height={SIDEBAR_EXPAND_BUTTON_SIZE}
-            p="0"
-            borderWidth="1px"
-            borderStyle="solid"
-            borderColor="app.border"
-            borderRadius="md"
-            bg="app.surface"
-            color="app.textSecondary"
-            cursor="pointer"
-            boxShadow="sm"
-            _hover={{ color: "app.text", bg: "app.hover" }}
-            onClick={toggleSidebar}
-            aria-label={t("sidebarExpand")}
-          >
-            <Icon name="chevron-right" />
-          </chakra.button>
-        </Tooltip>
-        </motion.div>
-      )}
-      </AnimatePresence>
-
-      {narrow && narrowSidebarOpen && (
-        <Box
-          position="absolute"
-          inset={0}
-          zIndex={30}
-          bg="var(--overlay)"
-          onClick={() => setNarrowSidebarOpen(false)}
-          aria-hidden
-        />
-      )}
-
-      <Flex
-        as="main"
-        gridColumn="2"
-        direction="column"
-        overflow="hidden"
-        bg="app.bg"
-        minW={0}
-        style={
-          selectedProfile?.color
-            ? ({ "--ws-accent": selectedProfile.color } as CSSProperties)
-            : undefined
-        }
-      >
-        {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
+          {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
             `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
             `transitions.enter` を流用する (尺を二重定義しない)。
             `initial={false}` で初回描画のフェードインは抑える (起動直後に
@@ -10189,182 +11005,186 @@ export default function App() {
             バックへ差し替わり、退出アニメーションが途中で消える。ビュー単位の
             境界にしておけば、新ビューのロード待ちは新ビュー側のスピナーに
             閉じ込められ、旧ビューの退出は最後まで再生される。 */}
-        {/* ワークスペース (全画面サーフェス) とボトムパネルの縦分割 (#1112)。
+          {/* ワークスペース (全画面サーフェス) とボトムパネルの縦分割 (#1112)。
             アドバイザ / クエリインスペクタ / プロセスモニタは以前この下の
             チェーンに並ぶ全画面サーフェスで、開くと SQL エディタと結果が画面から
             消えていた。3 つとも「SQL を書きながら参照する」情報なのでここへ移し、
             ワークスペースと同時に見られるようにした。閉じているときは
             `WorkspaceSplit` が分割そのものを作らず素通しする。 */}
-        <WorkspaceSplit
-          collapsed={
-            <BottomPanelStrip
-              entries={bottomPanelStripEntries}
-              label={bottomPanelLabel}
-              reasonLabel={bottomPanelReasonLabel}
-              onOpen={setBottomPanelTab}
-            />
-          }
-          bottom={
-            activeBottomPanelTab ? (
-              <BottomPanel
-                tab={activeBottomPanelTab}
-                tabs={bottomPanelTabs}
+          <WorkspaceSplit
+            collapsed={
+              <BottomPanelStrip
+                entries={bottomPanelStripEntries}
                 label={bottomPanelLabel}
-                onSelect={setBottomPanelTab}
-                onClose={() => setBottomPanelTab(null)}
-                resetKey={sessionId}
-              >
-                <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                  {activeBottomPanelTab === "output" ? (
-                    // ログ系 3 タブ (#1114) は接続に依存しないので sessionId の
-                    // ガードより前で描く。出力の SQL は新しいタブで開き、今の
-                    // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
-                    <OutputPanel
-                      onOpenSql={handleOpenHistoryInNewTab}
-                      onInsertSql={handleLauncherInsertSql}
-                      onRunSql={handleOutputRunSql}
-                      canRun={sessionId !== null}
-                      currentConnectionId={selectedProfile?.id ?? null}
-                    />
-                  ) : activeBottomPanelTab === "activity" ? (
-                    <ActivityLogPanel />
-                  ) : activeBottomPanelTab === "health" ? (
-                    // 接続横断のヘルスダッシュボード (#1068)。未接続プロファイルへは
-                    // 自動で接続せず、行の「接続」は通常の handleConnect を通す。
-                    <ConnectionHealthPanel
-                      connections={openConnections}
-                      profiles={visibleProfiles}
-                      activeSessionId={sessionId}
-                      defaultIntervalSecs={settings.autoRefreshDefaultSecs}
-                      connectingProfileId={connectingId}
-                      onOpenProfile={(p) => void handleConnect(p)}
-                      onReconnected={(sid) => {
-                        clearEmergencyFor(sid);
-                        // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
-                        if (txBySessionRef.current.has(sid)) {
-                          resetTxFor(sid);
-                          const name = openConnections.find((c) => c.sessionId === sid)?.profile.name ?? "";
-                          toast.notify({
-                            message: translate("toastReconnectTxDiscarded", { name }),
-                            tone: "info",
-                            severity: "warning",
-                          });
-                        }
-                      }}
-                    />
-                  ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
-                    <ProcessListPanel
-                      sessionId={sessionId}
-                      driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-                      readOnly={selectedProfile?.read_only ?? false}
-                      isProduction={selectedProfile?.is_production ?? false}
-                      schema={activeTab?.database ?? selectedProfile?.database ?? null}
-                    />
-                  ) : activeBottomPanelTab === "profile" ? (
-                    profileTarget ? (
-                      <ColumnProfilePanel
+                reasonLabel={bottomPanelReasonLabel}
+                onOpen={setBottomPanelTab}
+              />
+            }
+            bottom={
+              activeBottomPanelTab ? (
+                <BottomPanel
+                  tab={activeBottomPanelTab}
+                  tabs={bottomPanelTabs}
+                  label={bottomPanelLabel}
+                  onSelect={setBottomPanelTab}
+                  onClose={() => setBottomPanelTab(null)}
+                  resetKey={sessionId}
+                >
+                  <Suspense
+                    fallback={
+                      <PaneEmpty>
+                        <Spinner size={20} />
+                      </PaneEmpty>
+                    }
+                  >
+                    {activeBottomPanelTab === "output" ? (
+                      // ログ系 3 タブ (#1114) は接続に依存しないので sessionId の
+                      // ガードより前で描く。出力の SQL は新しいタブで開き、今の
+                      // エディタを上書きしない (履歴の「新しいタブで開く」と同じ)。
+                      <OutputPanel
+                        onOpenSql={handleOpenHistoryInNewTab}
+                        onInsertSql={handleLauncherInsertSql}
+                        onRunSql={handleOutputRunSql}
+                        canRun={sessionId !== null}
+                        currentConnectionId={selectedProfile?.id ?? null}
+                      />
+                    ) : activeBottomPanelTab === "activity" ? (
+                      <ActivityLogPanel />
+                    ) : activeBottomPanelTab === "health" ? (
+                      // 接続横断のヘルスダッシュボード (#1068)。未接続プロファイルへは
+                      // 自動で接続せず、行の「接続」は通常の handleConnect を通す。
+                      <ConnectionHealthPanel
+                        connections={openConnections}
+                        profiles={visibleProfiles}
+                        activeSessionId={sessionId}
+                        defaultIntervalSecs={settings.autoRefreshDefaultSecs}
+                        connectingProfileId={connectingId}
+                        onOpenProfile={(p) => void handleConnect(p)}
+                        onReconnected={(sid) => {
+                          clearEmergencyFor(sid);
+                          // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
+                          if (txBySessionRef.current.has(sid)) {
+                            resetTxFor(sid);
+                            const name = openConnections.find((c) => c.sessionId === sid)?.profile.name ?? "";
+                            toast.notify({
+                              message: translate("toastReconnectTxDiscarded", { name }),
+                              tone: "info",
+                              severity: "warning",
+                            });
+                          }
+                        }}
+                      />
+                    ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
+                      <ProcessListPanel
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        readOnly={selectedProfile?.read_only ?? false}
+                        isProduction={selectedProfile?.is_production ?? false}
+                        schema={activeTab?.database ?? selectedProfile?.database ?? null}
+                      />
+                    ) : activeBottomPanelTab === "profile" ? (
+                      profileTarget ? (
+                        <ColumnProfilePanel
+                          sessionId={sessionId}
+                          driver={selectedProfile?.driver ?? "mysql"}
+                          target={profileTarget}
+                          onSelectColumn={(column) =>
+                            setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
+                          }
+                          onCompare={(approximate) => setProfileCompare({ approximate })}
+                        />
+                      ) : null
+                    ) : activeBottomPanelTab === "structure" ? (
+                      structureTarget ? (
+                        <TableStructurePanel
+                          sessionId={sessionId}
+                          driver={selectedProfile?.driver ?? "mysql"}
+                          target={structureTarget}
+                          onOpenData={handleOpenTable}
+                          onSelectTable={setStructureTarget}
+                        />
+                      ) : null
+                    ) : activeBottomPanelTab === "timelapse" ? (
+                      selectedProfile ? (
+                        <TableTimelapsePanel
+                          key={selectedProfile.id}
+                          sessionId={sessionId}
+                          profileId={selectedProfile.id}
+                          maxGenerations={settings.timelapseMaxGenerations}
+                          watchRequest={timelapseRequest}
+                          onRequestConsumed={() => setTimelapseRequest(null)}
+                          refreshKey={timelapseRefreshKey}
+                        />
+                      ) : null
+                    ) : activeBottomPanelTab === "inspector" ? (
+                      <QueryInspectorPanel
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
-                        target={profileTarget}
-                        onSelectColumn={(column) =>
-                          setProfileTarget((cur) => (cur ? { ...cur, column } : cur))
-                        }
-                        onCompare={(approximate) => setProfileCompare({ approximate })}
                       />
-                    ) : null
-                  ) : activeBottomPanelTab === "structure" ? (
-                    structureTarget ? (
-                      <TableStructurePanel
+                    ) : activeBottomPanelTab === "whereUsed" ? (
+                      <WhereUsedPanel
+                        key={sessionId}
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
-                        target={structureTarget}
-                        onOpenData={handleOpenTable}
-                        onSelectTable={setStructureTarget}
+                        defaultDatabase={bottomPanelCtx.advisorDatabase ?? ""}
+                        request={whereUsedRequest}
+                        onRequestConsumed={() =>
+                          setWhereUsedRequest((r) => (r ? { ...r, autoRun: false } : r))
+                        }
+                        onOpenObject={(database, kind, name, id) =>
+                          void handleOpenObjectDefinition(database, kind, name, id)
+                        }
+                        onOpenSnippet={(id) => {
+                          const snip = snippets.find((s) => s.id === id);
+                          if (snip) openQueryInEditor(snip.sql, snip.name);
+                        }}
                       />
-                    ) : null
-                  ) : activeBottomPanelTab === "timelapse" ? (
-                    selectedProfile ? (
-                      <TableTimelapsePanel
-                        key={selectedProfile.id}
+                    ) : activeBottomPanelTab === "aiSql" ? (
+                      <AiSqlPanel
+                        key={`${sessionId}:${aiSqlRequest?.id ?? 0}`}
                         sessionId={sessionId}
-                        profileId={selectedProfile.id}
-                        maxGenerations={settings.timelapseMaxGenerations}
-                        watchRequest={timelapseRequest}
-                        onRequestConsumed={() => setTimelapseRequest(null)}
-                        refreshKey={timelapseRefreshKey}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        isProduction={selectedProfile?.is_production ?? false}
+                        request={aiSqlRequest}
+                        onRequestConsumed={() => setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))}
+                        onApply={handleApplyAiSqlRewrite}
                       />
-                    ) : null
-                  ) : activeBottomPanelTab === "inspector" ? (
-                    <QueryInspectorPanel
-                      sessionId={sessionId}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                    />
-                  ) : activeBottomPanelTab === "whereUsed" ? (
-                    <WhereUsedPanel
-                      key={sessionId}
-                      sessionId={sessionId}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      defaultDatabase={bottomPanelCtx.advisorDatabase ?? ""}
-                      request={whereUsedRequest}
-                      onRequestConsumed={() =>
-                        setWhereUsedRequest((r) => (r ? { ...r, autoRun: false } : r))
-                      }
-                      onOpenObject={(database, kind, name, id) =>
-                        void handleOpenObjectDefinition(database, kind, name, id)
-                      }
-                      onOpenSnippet={(id) => {
-                        const snip = snippets.find((s) => s.id === id);
-                        if (snip) openQueryInEditor(snip.sql, snip.name);
-                      }}
-                    />
-                  ) : activeBottomPanelTab === "aiSql" ? (
-                    <AiSqlPanel
-                      key={`${sessionId}:${aiSqlRequest?.id ?? 0}`}
-                      sessionId={sessionId}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      isProduction={selectedProfile?.is_production ?? false}
-                      request={aiSqlRequest}
-                      onRequestConsumed={() =>
-                        setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))
-                      }
-                      onApply={handleApplyAiSqlRewrite}
-                    />
-                  ) : activeBottomPanelTab === "aiResultSummary" ? (
-                    <AiResultSummaryPanel
-                      key={`${sessionId}:${aiResultSummaryRequest?.id ?? 0}`}
-                      driver={selectedProfile?.driver ?? "mysql"}
-                      isProduction={selectedProfile?.is_production ?? false}
-                      request={aiResultSummaryRequest}
-                      onRequestConsumed={() =>
-                        setAiResultSummaryRequest((r) => (r ? { ...r, autoRun: false } : r))
-                      }
-                      onInsert={handleInsertAiResultSummarySql}
-                    />
-                  ) : activeBottomPanelTab === "assertions" ? (
-                    <AssertionsPanel
-                      key={sessionId}
-                      sessionId={sessionId}
-                      driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-                      profile={selectedProfile ?? null}
-                      database={bottomPanelCtx.advisorDatabase}
-                      queryTimeoutSecs={settings.queryTimeoutSecs}
-                      onOpenSql={handleOpenAssertionSql}
-                    />
-                  ) : bottomPanelCtx.advisorDatabase ? (
-                    <AdvisorPanel
-                      key={`${sessionId}:${bottomPanelCtx.advisorDatabase}`}
-                      sessionId={sessionId}
-                      database={bottomPanelCtx.advisorDatabase}
-                      isProduction={selectedProfile?.is_production ?? false}
-                      onInsertSql={handleInsertAdvisorSql}
-                    />
-                  ) : null}
-                </Suspense>
-              </BottomPanel>
-            ) : null
-          }
-        >
-        {/* 全画面サーフェスは常駐するワークスペース (エディタとグリッド) の**上に重ねる**
+                    ) : activeBottomPanelTab === "aiResultSummary" ? (
+                      <AiResultSummaryPanel
+                        key={`${sessionId}:${aiResultSummaryRequest?.id ?? 0}`}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        isProduction={selectedProfile?.is_production ?? false}
+                        request={aiResultSummaryRequest}
+                        onRequestConsumed={() =>
+                          setAiResultSummaryRequest((r) => (r ? { ...r, autoRun: false } : r))
+                        }
+                        onInsert={handleInsertAiResultSummarySql}
+                      />
+                    ) : activeBottomPanelTab === "assertions" ? (
+                      <AssertionsPanel
+                        key={sessionId}
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        profile={selectedProfile ?? null}
+                        database={bottomPanelCtx.advisorDatabase}
+                        queryTimeoutSecs={settings.queryTimeoutSecs}
+                        onOpenSql={handleOpenAssertionSql}
+                      />
+                    ) : bottomPanelCtx.advisorDatabase ? (
+                      <AdvisorPanel
+                        key={`${sessionId}:${bottomPanelCtx.advisorDatabase}`}
+                        sessionId={sessionId}
+                        database={bottomPanelCtx.advisorDatabase}
+                        isProduction={selectedProfile?.is_production ?? false}
+                        onInsertSql={handleInsertAdvisorSql}
+                      />
+                    ) : null}
+                  </Suspense>
+                </BottomPanel>
+              ) : null
+            }
+          >
+            {/* 全画面サーフェスは常駐するワークスペース (エディタとグリッド) の**上に重ねる**
             (#1311)。以前は三項チェーンで置き換えていたため、ER 図などを開くたびに
             エディタと結果グリッドが破棄され、閉じると作り直されていた。ワークスペースは
             `<main>` の下に残し、サーフェスが出ている間は `visibility: hidden` + `inert` で
@@ -10372,1471 +11192,1552 @@ export default function App() {
             を保つ)。切替は退場を待たない (`mode="wait"` をやめた)。
             ボトムパネルとその折りたたみバーは `WorkspaceSplit` の別ペインなので、
             サーフェスの表示中も隠れない (#1280)。 */}
-        <Box position="relative" flex="1" minH={0} minW={0} display="flex" flexDirection="column" overflow="hidden">
-        <div
-          inert={workspaceView !== "workspace" || undefined}
-          aria-hidden={workspaceView !== "workspace" || undefined}
-          style={{
-            flex: 1,
-            minHeight: 0,
-            minWidth: 0,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            visibility: workspaceView === "workspace" ? "visible" : "hidden",
-            // サーフェスが出ていく間 (フェードイン中) は下のワークスペースを残し、
-            // 戻るときは即座に見せる (閉じるサーフェスを消す前に空白を挟まない)。
-            transition: "visibility 0s linear",
-            transitionDelay: workspaceView === "workspace" ? "0s" : "var(--dur-med)",
-          }}
-        >
-        <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-          <>
-            <Flex
-              align="center"
-              gap="3"
-              pl={sidebarCollapsed ? SIDEBAR_EXPAND_CLEARANCE : "3.5"}
-              pr="3.5"
-              py="2"
-              borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
-              borderBottomColor={
-                selectedProfile?.is_production ? semanticColorToken("danger", "solid") : "app.border"
-              }
-              minH="42px"
-              // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
-              // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
-              // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
-              bg={
-                selectedProfile?.is_production
-                  ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 16%, var(--bg-elevated))`
-                  : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
-              }
-              // padding-left はサイドバー折りたたみ (#873) でクリアランス ↔ 通常余白に
-              // 変わるため、トラック幅の補間と同じ時間で滑らかに追従させる。
-              transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease), padding-left var(--dur-med) var(--ease)"
-              css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
+            <Box
+              position="relative"
+              flex="1"
+              minH={0}
+              minW={0}
+              display="flex"
+              flexDirection="column"
+              overflow="hidden"
             >
-              <Flex align="center" gap="2" overflow="hidden">
-                {selectedProfile ? (
+              <div
+                inert={workspaceView !== "workspace" || undefined}
+                aria-hidden={workspaceView !== "workspace" || undefined}
+                style={{
+                  flex: 1,
+                  minHeight: 0,
+                  minWidth: 0,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  visibility: workspaceView === "workspace" ? "visible" : "hidden",
+                  // サーフェスが出ていく間 (フェードイン中) は下のワークスペースを残し、
+                  // 戻るときは即座に見せる (閉じるサーフェスを消す前に空白を挟まない)。
+                  transition: "visibility 0s linear",
+                  transitionDelay: workspaceView === "workspace" ? "0s" : "var(--dur-med)",
+                }}
+              >
+                <Suspense
+                  fallback={
+                    <PaneEmpty>
+                      <Spinner size={20} />
+                    </PaneEmpty>
+                  }
+                >
                   <>
-                    <StatusDot variant="connected" />
-                    <chakra.span fontWeight={600} fontSize="md">{selectedProfile.name}</chakra.span>
-                    {selectedProfile.is_production && (
-                      <Tooltip label={t("listProductionTitle")} focusableWrapper>
-                        <chakra.span
-                          display="inline-flex"
-                          alignItems="center"
-                          gap="1"
-                          textStyle="overline"
-                          fontWeight={700}
-                          px="2"
-                          py="0.5"
-                          borderRadius="pill"
-                          bg="app.status.error"
-                          color="app.onSolid"
-                          borderWidth="1px"
-                          borderStyle="solid"
-                          borderColor="app.status.error"
-                          flexShrink={0}
-                        >
-                          <Icon name="warning" size={ICON_SIZES.sm} />
-                          {t("listProduction")}
-                        </chakra.span>
-                      </Tooltip>
-                    )}
-                    {selectedProfile.read_only && (
-                      <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
-                        <chakra.span
-                          display="inline-flex"
-                          alignItems="center"
-                          gap="1"
-                          textStyle="overline"
-                          fontWeight={700}
-                          px="2"
-                          py="0.5"
-                          borderRadius="pill"
-                          bg={semanticColorToken("info", "subtle")}
-                          color="app.text"
-                          borderWidth="1px"
-                          borderStyle="solid"
-                          borderColor="app.borderStrong"
-                          flexShrink={0}
-                        >
-                          <Icon name="key" size={ICON_SIZES.sm} />
-                          {t("listReadOnly")}
-                        </chakra.span>
-                      </Tooltip>
-                    )}
-                    <chakra.span
-                      color="app.textMuted"
-                      fontSize="sm"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
+                    <Flex
+                      align="center"
+                      gap="3"
+                      pl={sidebarCollapsed ? SIDEBAR_EXPAND_CLEARANCE : "3.5"}
+                      pr="3.5"
+                      py="2"
+                      borderBottomWidth={selectedProfile?.is_production ? "2px" : "1px"}
+                      borderBottomColor={
+                        selectedProfile?.is_production ? semanticColorToken("danger", "solid") : "app.border"
+                      }
+                      minH="42px"
+                      // 本番接続は `--ws-accent` (プロファイルのカスタム色) ではなく常に危険色
+                      // トークンで塗る。カスタム色に紛れて「本番らしさ」が薄まるのを防ぐため
+                      // (#791)。非本番は従来どおり控えめなワークスペースアクセントの色付け。
+                      bg={
+                        selectedProfile?.is_production
+                          ? `color-mix(in srgb, ${semanticColorVar("danger", "solid")} 16%, var(--bg-elevated))`
+                          : "color-mix(in srgb, var(--ws-accent) 4%, var(--bg-elevated))"
+                      }
+                      // padding-left はサイドバー折りたたみ (#873) でクリアランス ↔ 通常余白に
+                      // 変わるため、トラック幅の補間と同じ時間で滑らかに追従させる。
+                      transition="background var(--dur-med) var(--ease), border-color var(--dur-med) var(--ease), padding-left var(--dur-med) var(--ease)"
+                      css={{ "@media (max-width: 760px)": { flexWrap: "wrap", rowGap: "1" } }}
                     >
-                      {selectedProfile.driver === "sqlite"
-                        ? selectedProfile.file_path ?? ""
-                        : `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}${selectedProfile.database ? `/${selectedProfile.database}` : ""}`}
-                    </chakra.span>
-                  </>
-                ) : null /* 未接続の表記はステータスバーに 1 か所だけ出す (#1276) */}
-              </Flex>
-              <Box flex="1" />
-              {sessionId && (
-                <Flex align="center" gap="2" mr="2.5">
-                  {txActive ? (
-                    <>
-                      <Tooltip label={t("txActiveHelp")} focusableWrapper>
-                        <chakra.span
-                          fontSize="2xs"
-                          fontWeight={700}
-                          letterSpacing="wider"
-                          px="1.5"
-                          py="0.5"
-                          borderRadius="sm"
-                          bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
-                          color="var(--text-warning)"
-                        >
-                          {t("txActiveBadge")}
-                        </chakra.span>
-                      </Tooltip>
-                      <SavepointControl
-                        stack={savepoints}
-                        onCreate={() => void handleCreateSavepoint()}
-                        onRollbackTo={(n) => void handleRollbackToSavepoint(n)}
-                        onRelease={(n) => void handleReleaseSavepoint(n)}
-                      />
-                      <Button variant="success" size="sm" onClick={() => handleFinishTransaction(true)}>
-                        {t("txCommit")}
-                      </Button>
-                      <Button variant="warning" size="sm" onClick={() => handleFinishTransaction(false)}>
-                        {t("txRollback")}
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Tooltip
-                        label={
-                          supportsTxOptions(selectedProfile?.driver)
-                            ? isolationIsAliasedOn(selectedProfile?.driver, txIsolation as TxIsolation)
-                              ? t("txIsolationAliasedHelp")
-                              : t("txIsolationLabel")
-                            : t("txOptionsUnsupported")
+                      <Flex align="center" gap="2" overflow="hidden">
+                        {
+                          selectedProfile ? (
+                            <>
+                              <StatusDot variant="connected" />
+                              <chakra.span fontWeight={600} fontSize="md">
+                                {selectedProfile.name}
+                              </chakra.span>
+                              {selectedProfile.is_production && (
+                                <Tooltip label={t("listProductionTitle")} focusableWrapper>
+                                  <chakra.span
+                                    display="inline-flex"
+                                    alignItems="center"
+                                    gap="1"
+                                    textStyle="overline"
+                                    fontWeight={700}
+                                    px="2"
+                                    py="0.5"
+                                    borderRadius="pill"
+                                    bg="app.status.error"
+                                    color="app.onSolid"
+                                    borderWidth="1px"
+                                    borderStyle="solid"
+                                    borderColor="app.status.error"
+                                    flexShrink={0}
+                                  >
+                                    <Icon name="warning" size={ICON_SIZES.sm} />
+                                    {t("listProduction")}
+                                  </chakra.span>
+                                </Tooltip>
+                              )}
+                              {selectedProfile.read_only && (
+                                <Tooltip label={t("listReadOnlyTitle")} focusableWrapper>
+                                  <chakra.span
+                                    display="inline-flex"
+                                    alignItems="center"
+                                    gap="1"
+                                    textStyle="overline"
+                                    fontWeight={700}
+                                    px="2"
+                                    py="0.5"
+                                    borderRadius="pill"
+                                    bg={semanticColorToken("info", "subtle")}
+                                    color="app.text"
+                                    borderWidth="1px"
+                                    borderStyle="solid"
+                                    borderColor="app.borderStrong"
+                                    flexShrink={0}
+                                  >
+                                    <Icon name="key" size={ICON_SIZES.sm} />
+                                    {t("listReadOnly")}
+                                  </chakra.span>
+                                </Tooltip>
+                              )}
+                              <chakra.span
+                                color="app.textMuted"
+                                fontSize="sm"
+                                overflow="hidden"
+                                textOverflow="ellipsis"
+                                whiteSpace="nowrap"
+                              >
+                                {selectedProfile.driver === "sqlite"
+                                  ? (selectedProfile.file_path ?? "")
+                                  : `${selectedProfile.user}@${selectedProfile.host}:${selectedProfile.port}${selectedProfile.database ? `/${selectedProfile.database}` : ""}`}
+                              </chakra.span>
+                            </>
+                          ) : null /* 未接続の表記はステータスバーに 1 か所だけ出す (#1276) */
                         }
-                        focusableWrapper
-                      >
-                        <Box minW="36">
-                          <ListboxSelect
-                            value={txIsolation}
-                            ariaLabel={t("txIsolationLabel")}
-                            disabled={!supportsTxOptions(selectedProfile?.driver)}
-                            onChange={setTxIsolation}
-                            options={[
-                              { value: TX_ISOLATION_DEFAULT, label: t("txIsolationDefault") },
-                              { value: "read-committed", label: t("txIsolationReadCommitted") },
-                              { value: "repeatable-read", label: t("txIsolationRepeatableRead") },
-                              { value: "serializable", label: t("txIsolationSerializable") },
-                              { value: "read-uncommitted", label: t("txIsolationReadUncommitted") },
-                            ]}
-                          />
-                        </Box>
-                      </Tooltip>
-                      <Tooltip
-                        label={supportsTxOptions(selectedProfile?.driver) ? t("txReadOnlyHelp") : t("txOptionsUnsupported")}
-                        focusableWrapper
-                      >
-                        <Box>
-                          <Switch
-                            checked={supportsTxOptions(selectedProfile?.driver) && txReadOnly}
-                            onChange={setTxReadOnly}
-                            disabled={!supportsTxOptions(selectedProfile?.driver)}
-                            label={t("txReadOnly")}
-                          />
-                        </Box>
-                      </Tooltip>
-                      <Tooltip label={t("txBeginHelp")}>
-                        <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
-                          {t("txBegin")}
+                      </Flex>
+                      <Box flex="1" />
+                      {sessionId && (
+                        <Flex align="center" gap="2" mr="2.5">
+                          {txActive ? (
+                            <>
+                              <Tooltip label={t("txActiveHelp")} focusableWrapper>
+                                <chakra.span
+                                  fontSize="2xs"
+                                  fontWeight={700}
+                                  letterSpacing="wider"
+                                  px="1.5"
+                                  py="0.5"
+                                  borderRadius="sm"
+                                  bg={`color-mix(in srgb, ${semanticColorVar("warning", "solid")} 18%, transparent)`}
+                                  color="var(--text-warning)"
+                                >
+                                  {t("txActiveBadge")}
+                                </chakra.span>
+                              </Tooltip>
+                              <SavepointControl
+                                stack={savepoints}
+                                onCreate={() => void handleCreateSavepoint()}
+                                onRollbackTo={(n) => void handleRollbackToSavepoint(n)}
+                                onRelease={(n) => void handleReleaseSavepoint(n)}
+                              />
+                              <Button
+                                variant="success"
+                                size="sm"
+                                onClick={() => handleFinishTransaction(true)}
+                              >
+                                {t("txCommit")}
+                              </Button>
+                              <Button
+                                variant="warning"
+                                size="sm"
+                                onClick={() => handleFinishTransaction(false)}
+                              >
+                                {t("txRollback")}
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Tooltip
+                                label={
+                                  supportsTxOptions(selectedProfile?.driver)
+                                    ? isolationIsAliasedOn(
+                                        selectedProfile?.driver,
+                                        txIsolation as TxIsolation,
+                                      )
+                                      ? t("txIsolationAliasedHelp")
+                                      : t("txIsolationLabel")
+                                    : t("txOptionsUnsupported")
+                                }
+                                focusableWrapper
+                              >
+                                <Box minW="36">
+                                  <ListboxSelect
+                                    value={txIsolation}
+                                    ariaLabel={t("txIsolationLabel")}
+                                    disabled={!supportsTxOptions(selectedProfile?.driver)}
+                                    onChange={setTxIsolation}
+                                    options={[
+                                      { value: TX_ISOLATION_DEFAULT, label: t("txIsolationDefault") },
+                                      { value: "read-committed", label: t("txIsolationReadCommitted") },
+                                      { value: "repeatable-read", label: t("txIsolationRepeatableRead") },
+                                      { value: "serializable", label: t("txIsolationSerializable") },
+                                      { value: "read-uncommitted", label: t("txIsolationReadUncommitted") },
+                                    ]}
+                                  />
+                                </Box>
+                              </Tooltip>
+                              <Tooltip
+                                label={
+                                  supportsTxOptions(selectedProfile?.driver)
+                                    ? t("txReadOnlyHelp")
+                                    : t("txOptionsUnsupported")
+                                }
+                                focusableWrapper
+                              >
+                                <Box>
+                                  <Switch
+                                    checked={supportsTxOptions(selectedProfile?.driver) && txReadOnly}
+                                    onChange={setTxReadOnly}
+                                    disabled={!supportsTxOptions(selectedProfile?.driver)}
+                                    label={t("txReadOnly")}
+                                  />
+                                </Box>
+                              </Tooltip>
+                              <Tooltip label={t("txBeginHelp")}>
+                                <Button variant="secondary" size="sm" onClick={handleBeginTransaction}>
+                                  {t("txBegin")}
+                                </Button>
+                              </Tooltip>
+                            </>
+                          )}
+                        </Flex>
+                      )}
+                      {sessionId && (
+                        <Button variant="dangerOutline" size="sm" onClick={() => void handleDisconnect()}>
+                          <Icon name="unplug" size={ICON_SIZES.md} />
+                          {t("appDisconnect")}
                         </Button>
-                      </Tooltip>
-                    </>
-                  )}
-                </Flex>
-              )}
-              {sessionId && (
-                <Button variant="dangerOutline" size="sm" onClick={() => void handleDisconnect()}>
-                  <Icon name="unplug" size={ICON_SIZES.md} />
-                  {t("appDisconnect")}
-                </Button>
-              )}
-            </Flex>
+                      )}
+                    </Flex>
 
-            {sessionId ? (
-              panes.length === 0 ? (
-                <Flex direction="column" flex="1" overflow="hidden">
-                  <PaneEmpty>
-                    <EmptyState
-                      icon="query"
-                      title={t("tabsEmptyTitle")}
-                      description={t("tabsEmpty")}
-                      action={{ label: t("tabsNewQuery"), onClick: () => handleNewTab(), testId: "new-query-empty" }}
-                      secondaryActions={tabsEmptySecondaryActions}
-                    />
-                  </PaneEmpty>
-                </Flex>
-              ) : (
-                // ペイン数が 1 / 2 で木構造を変えない (#1310): 分割 / 解除のたびに
-                // Splitter ごと出し入れすると、残る方のペイン (エディタと結果グリッド)
-                // も再マウントされる。1 枚のときは 2 枚目を畳んだ Splitter にする。
-                <Splitter
-                  direction="row"
-                  storageKey="noobdb.split.panes"
-                  defaultFraction={0.5}
-                  minSize={220}
-                  ariaLabel={t("splitterPanesAria")}
-                  first={renderPane(panes[0])}
-                  second={panes.length > 1 ? renderPane(panes[1]) : null}
-                  secondCollapsed={panes.length < 2}
-                />
-              )
-            ) : profiles.length === 0 && profilesLoadError ? (
-              // 読込失敗: 既存ユーザに初回用ウェルカムを見せない。
-              <Flex direction="column" flex="1" overflow="hidden">
-                <PaneEmpty>
-                  <EmptyState
-                    icon="database"
-                    title={t("profilesLoadFailedTitle")}
-                    description={profilesLoadError}
-                    action={{ label: t("profilesLoadFailedRetry"), onClick: () => void refreshProfiles() }}
-                  />
-                </PaneEmpty>
-              </Flex>
-            ) : profiles.length === 0 ? (
-              // 初回起動ウェルカム画面 (#599): プロファイルが 1 件も無い新規
-              // ユーザには、単一 CTA の EmptyState の代わりに主要導線を並べた
-              // WelcomeView を出す。1 件以上あれば従来どおりの未接続表示のまま。
-              <Flex direction="column" flex="1" overflow="hidden">
-                <WelcomeView
-                  onCreateConnection={handleOpenCreateForm}
-                  onOpenSqlite={handleWelcomeOpenSqlite}
-                  onStartTour={handleStartTour}
-                />
-              </Flex>
-            ) : visibleProfiles.length === 0 ? (
-              // プロファイルはあるが全件が削除 Undo 待ちで非表示、という稀な
-              // 状態では従来どおりの未接続表示に留める。
-              <Flex direction="column" flex="1" overflow="hidden">
-                <PaneEmpty>
-                  <EmptyState
-                    illustration={<DisconnectedIllustration />}
-                    icon="database"
-                    title={t("notConnectedTitle")}
-                    description={t("editorHintDisabled")}
-                  />
-                </PaneEmpty>
-              </Flex>
-            ) : (
-              // プロファイルがあるが未接続の空状態 (#874): 素の EmptyState の
-              // 代わりに、どこへ繋ぐかを一目で選べるプロファイルカードを並べる。
-              // カードは「入口」、サイドバーのツリーは常用ナビとして共存する。
-              <Flex direction="column" flex="1" overflow="hidden">
-                <ProfileCardGrid
-                  profiles={visibleProfiles}
-                  connectingId={connectingId}
-                  onConnect={(p) => void handleConnect(p)}
-                  onCreate={handleOpenCreateForm}
-                />
-              </Flex>
-            )}
-          </>
-        </Suspense>
-        </div>
-        {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
+                    {sessionId ? (
+                      panes.length === 0 ? (
+                        <Flex direction="column" flex="1" overflow="hidden">
+                          <PaneEmpty>
+                            <EmptyState
+                              icon="query"
+                              title={t("tabsEmptyTitle")}
+                              description={t("tabsEmpty")}
+                              action={{
+                                label: t("tabsNewQuery"),
+                                onClick: () => handleNewTab(),
+                                testId: "new-query-empty",
+                              }}
+                              secondaryActions={tabsEmptySecondaryActions}
+                            />
+                          </PaneEmpty>
+                        </Flex>
+                      ) : (
+                        // ペイン数が 1 / 2 で木構造を変えない (#1310): 分割 / 解除のたびに
+                        // Splitter ごと出し入れすると、残る方のペイン (エディタと結果グリッド)
+                        // も再マウントされる。1 枚のときは 2 枚目を畳んだ Splitter にする。
+                        <Splitter
+                          direction="row"
+                          storageKey="noobdb.split.panes"
+                          defaultFraction={0.5}
+                          minSize={220}
+                          ariaLabel={t("splitterPanesAria")}
+                          first={renderPane(panes[0])}
+                          second={panes.length > 1 ? renderPane(panes[1]) : null}
+                          secondCollapsed={panes.length < 2}
+                        />
+                      )
+                    ) : profiles.length === 0 && profilesLoadError ? (
+                      // 読込失敗: 既存ユーザに初回用ウェルカムを見せない。
+                      <Flex direction="column" flex="1" overflow="hidden">
+                        <PaneEmpty>
+                          <EmptyState
+                            icon="database"
+                            title={t("profilesLoadFailedTitle")}
+                            description={profilesLoadError}
+                            action={{
+                              label: t("profilesLoadFailedRetry"),
+                              onClick: () => void refreshProfiles(),
+                            }}
+                          />
+                        </PaneEmpty>
+                      </Flex>
+                    ) : profiles.length === 0 ? (
+                      // 初回起動ウェルカム画面 (#599): プロファイルが 1 件も無い新規
+                      // ユーザには、単一 CTA の EmptyState の代わりに主要導線を並べた
+                      // WelcomeView を出す。1 件以上あれば従来どおりの未接続表示のまま。
+                      <Flex direction="column" flex="1" overflow="hidden">
+                        <WelcomeView
+                          onCreateConnection={handleOpenCreateForm}
+                          onOpenSqlite={handleWelcomeOpenSqlite}
+                          onStartTour={handleStartTour}
+                        />
+                      </Flex>
+                    ) : visibleProfiles.length === 0 ? (
+                      // プロファイルはあるが全件が削除 Undo 待ちで非表示、という稀な
+                      // 状態では従来どおりの未接続表示に留める。
+                      <Flex direction="column" flex="1" overflow="hidden">
+                        <PaneEmpty>
+                          <EmptyState
+                            illustration={<DisconnectedIllustration />}
+                            icon="database"
+                            title={t("notConnectedTitle")}
+                            description={t("editorHintDisabled")}
+                          />
+                        </PaneEmpty>
+                      </Flex>
+                    ) : (
+                      // プロファイルがあるが未接続の空状態 (#874): 素の EmptyState の
+                      // 代わりに、どこへ繋ぐかを一目で選べるプロファイルカードを並べる。
+                      // カードは「入口」、サイドバーのツリーは常用ナビとして共存する。
+                      <Flex direction="column" flex="1" overflow="hidden">
+                        <ProfileCardGrid
+                          profiles={visibleProfiles}
+                          connectingId={connectingId}
+                          onConnect={(p) => void handleConnect(p)}
+                          onCreate={handleOpenCreateForm}
+                        />
+                      </Flex>
+                    )}
+                  </>
+                </Suspense>
+              </div>
+              {/* Escape で閉じる全画面サーフェスは `WorkspaceSurface` で包む (#1070)。
             開いたらコンテナへフォーカスを移し、閉じたら開く前の要素へ戻す。
             `onClose` は戻るボタンと同じ関数を渡す (導線を 1 つに揃える)。
             フォーム 2 種は未保存入力の破棄を避けるため Escape 対象外。 */}
-        {/* 一度開いたサーフェスは非表示で保持し (遅延マウント + keep-alive)、スキーマ比較の
+              {/* 一度開いたサーフェスは非表示で保持し (遅延マウント + keep-alive)、スキーマ比較の
             結果や ER 図の描画を、ほかの画面へ移っても失わない。キーに接続 / 対象 DB を
             含めるので、接続や対象が変われば別インスタンスになる。保持数は
             `WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT` で、古いものから捨てる。
             **Suspense は KeepAlive の内側 (アイテム単位)** に置く: 外側 1 つだと、遅延
             ロード中に保持している他のサーフェスまでフォールバックに差し替わる。 */}
-        <KeepAlive
-          activeKey={workspaceSurfaceKey(workspaceView, {
-            sessionId,
-            database: activeTab?.database ?? selectedProfile?.database ?? null,
-            sizesTarget,
-          })}
-          limit={WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT}
-          rootStyle={{ position: "absolute", inset: 0 }}
-          itemStyle={{ background: "var(--bg)" }}
-        >
-        <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-        {showCompare ? (
-          <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
-            <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
-          </WorkspaceSurface>
-        ) : showErd && sessionId ? (
-          <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
-            <ERDiagramView
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
-              onOpenTable={handleOpenTable}
-              onGenerateDoc={
-                aiAvailable ? (database, tables) => setSchemaDocTarget({ database, tables }) : undefined
-              }
-              onClose={() => setShowErd(false)}
-            />
-          </WorkspaceSurface>
-        ) : showUsers && sessionId ? (
-          <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
-            <UsersPanel
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={activeTab?.database ?? selectedProfile?.database ?? null}
-              readOnly={selectedProfile?.read_only ?? false}
-              onClose={() => setShowUsers(false)}
-            />
-          </WorkspaceSurface>
-        ) : showServerInfo && sessionId ? (
-          <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
-            <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
-          </WorkspaceSurface>
-        ) : showSizes && sizesTarget && sessionId ? (
-          <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
-            <TableStatisticsPanel
-              sessionId={sessionId}
-              database={sizesTarget}
-              onOpenTable={(table) => {
-                const db = sizesTarget;
-                setSizesTarget(null);
-                handleOpenTable(db, table);
-              }}
-              onClose={() => setSizesTarget(null)}
-            />
-          </WorkspaceSurface>
-        ) : showCompareResults ? (
-          <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
-            <PinnedComparisonView
-              pinned={pinnedResults}
-              driver={selectedProfile?.driver ?? "mysql"}
-              onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
-              onClear={() => setPinnedResults([])}
-              onClose={() => setShowCompareResults(false)}
-            />
-          </WorkspaceSurface>
-        ) : null}
-        </Suspense>
-        </KeepAlive>
-        {/* フォームは未保存の入力を持つので保持しない (閉じたら破棄)。サーフェスと同じく
-            ワークスペースの上に重ね、退場は待たない。 */}
-        <AnimatePresence initial={false}>
-          {(workspaceView === "form" || workspaceView === "snippetForm") && (
-            <motion.div
-              key={workspaceView}
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              transition={transitions.enter}
-              style={{
-                position: "absolute",
-                inset: 0,
-                display: "flex",
-                flexDirection: "column",
-                overflow: "hidden",
-                background: "var(--bg)",
-              }}
-            >
-              <Suspense fallback={<PaneEmpty><Spinner size={20} /></PaneEmpty>}>
-                {workspaceView === "form" ? (
-          <ConnectionForm
-            key={formInstanceId}
-            initial={editing}
-            profiles={profiles}
-            onSaved={async () => {
-              setShowForm(false);
-              setEditing(null);
-              await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
-            }}
-            onCancel={() => { setShowForm(false); setEditing(null); }}
-          />
-                ) : (
-          <SnippetForm
-            key={formInstanceId}
-            initial={editingSnippet}
-            snippets={snippets}
-            profiles={profiles}
-            activeProfile={selectedProfile}
-            initialSql={snippetFormSql}
-            onSaved={async () => {
-              setShowSnippetForm(false);
-              setEditingSnippet(null);
-              setSnippetFormSql("");
-              setSidebarTab("snippets");
-              await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
-            }}
-            onCancel={() => { setShowSnippetForm(false); setEditingSnippet(null); setSnippetFormSql(""); }}
-          />
-                )}
-              </Suspense>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        </Box>
-        </WorkspaceSplit>
-
-        {/* 読み上げ専用の常設領域 (#1529)。メッセージの種類が変わったときだけ更新する。 */}
-        <StatusAnnouncer
-          text={statusDismissed ? "" : statusText}
-          messageKey={statusDismissed ? "" : statusMessageKey}
-          assertive={statusTone(status) === "error" || statusTone(status) === "critical"}
-        />
-        {!statusDismissed && status.kind !== "idle" && (() => {
-          const tone = statusTone(status);
-          // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
-          // warning は黄系。どちらも閉じる導線を出す。
-          const isCritical = tone === "critical";
-          const isError = tone === "error" || isCritical;
-          const isWarning = tone === "warning";
-          const isDismissible = isError || isWarning;
-          // 重大度の配色は Toast / Badge と同じ意味色トークン体系
-          // (semanticColors.ts、#664) を単一ソースにする (#876)。`text` 段階は
-          // 全テーマプリセットで通常背景基準の AA を満たすことが
-          // themeContrast.test.ts で固定済み。running のみ「処理中」の
-          // アクセント色で、意味色ファミリーの外に置く (Toast と同方針)。
-          const toneColor =
-            tone === "running"
-              ? "app.accent"
-              : tone === "success"
-                ? semanticColorToken("success", "text")
-                : isError
-                  ? semanticColorToken("danger", "text")
-                  : isWarning
-                    ? semanticColorToken("warning", "text")
-                    : undefined;
-          return (
-            <Flex
-              align="center"
-              gap="2"
-              px="3.5"
-              py="1.25"
-              bg={
-                isError
-                  ? semanticColorToken("danger", "subtle")
-                  : isWarning
-                    ? semanticColorToken("warning", "subtle")
-                    : "app.surfaceMuted"
-              }
-              borderTopWidth="1px"
-              borderTopColor="app.border"
-              borderLeftWidth="3px"
-              borderLeftStyle="solid"
-              borderLeftColor={toneColor ?? "transparent"}
-              fontSize="sm"
-              color={
-                isError
-                  ? semanticColorToken("danger", "text")
-                  : isWarning
-                    ? semanticColorToken("warning", "text")
-                    : "app.textSecondary"
-              }
-            >
-              <chakra.span
-                aria-hidden
-                display="inline-flex"
-                alignItems="center"
-                flexShrink="0"
-                color={toneColor}
-                css={{ "&:empty": { display: "none" }, "& .icon-svg": { width: "14px", height: "14px" } }}
+              <KeepAlive
+                activeKey={workspaceSurfaceKey(workspaceView, {
+                  sessionId,
+                  database: activeTab?.database ?? selectedProfile?.database ?? null,
+                  sizesTarget,
+                })}
+                limit={WORKSPACE_SURFACE_KEEP_ALIVE_LIMIT}
+                rootStyle={{ position: "absolute", inset: 0 }}
+                itemStyle={{ background: "var(--bg)" }}
               >
-                <StatusBarIcon
-                  kind={
-                    tone === "running" ? "running" : tone === "success" ? "success" : isError || isWarning ? "warning" : null
+                <Suspense
+                  fallback={
+                    <PaneEmpty>
+                      <Spinner size={20} />
+                    </PaneEmpty>
                   }
-                />
-              </chakra.span>
-              {isCritical && (
-                // 「重大」バッジは ProfileBadge の本番バッジと同じ danger ベタ塗り
-                // トークン (前景色の AA はトークン側で保証) で描き、独自の
-                // `#fff` 直書きを持たない (#876)。
-                <chakra.span
-                  flexShrink="0"
-                  textStyle="overline"
-                  fontWeight={700}
-                  px="1.75"
-                  py="0.5"
-                  borderRadius="sm"
-                  bg="app.dangerBg"
-                  color="app.dangerFg"
                 >
-                  {t("statusSeverityCritical")}
-                </chakra.span>
-              )}
-              <Box flex="1" minW="0">
-                {statusHintKey ? (
-                  // ヒントは初心者向けの一般的な言い回しだけだと具体性に欠けるため、
-                  // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に
-                  // 併記する。閉じる操作はステータスバー右端の X に一本化し、ここには
-                  // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
-                  <Flex direction="column" gap="0.75">
-                    <Flex align="baseline" gap="1.5">
-                      {/* text 色を地・subtle 色を文字にした反転チップ。コントラスト
+                  {showCompare ? (
+                    <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
+                      <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+                    </WorkspaceSurface>
+                  ) : showErd && sessionId ? (
+                    <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>
+                      <ERDiagramView
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
+                        onOpenTable={handleOpenTable}
+                        onGenerateDoc={
+                          aiAvailable
+                            ? (database, tables) => setSchemaDocTarget({ database, tables })
+                            : undefined
+                        }
+                        onClose={() => setShowErd(false)}
+                      />
+                    </WorkspaceSurface>
+                  ) : showUsers && sessionId ? (
+                    <WorkspaceSurface view="users" onClose={() => setShowUsers(false)}>
+                      <UsersPanel
+                        sessionId={sessionId}
+                        driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                        database={activeTab?.database ?? selectedProfile?.database ?? null}
+                        readOnly={selectedProfile?.read_only ?? false}
+                        onClose={() => setShowUsers(false)}
+                      />
+                    </WorkspaceSurface>
+                  ) : showServerInfo && sessionId ? (
+                    <WorkspaceSurface view="serverInfo" onClose={() => setShowServerInfo(false)}>
+                      <ServerInfoPanel sessionId={sessionId} onClose={() => setShowServerInfo(false)} />
+                    </WorkspaceSurface>
+                  ) : showSizes && sizesTarget && sessionId ? (
+                    <WorkspaceSurface view="sizes" onClose={() => setSizesTarget(null)}>
+                      <TableStatisticsPanel
+                        sessionId={sessionId}
+                        database={sizesTarget}
+                        onOpenTable={(table) => {
+                          const db = sizesTarget;
+                          setSizesTarget(null);
+                          handleOpenTable(db, table);
+                        }}
+                        onClose={() => setSizesTarget(null)}
+                      />
+                    </WorkspaceSurface>
+                  ) : showCompareResults ? (
+                    <WorkspaceSurface view="compareResults" onClose={() => setShowCompareResults(false)}>
+                      <PinnedComparisonView
+                        pinned={pinnedResults}
+                        driver={selectedProfile?.driver ?? "mysql"}
+                        onUnpin={(id) => setPinnedResults((prev) => prev.filter((p) => p.id !== id))}
+                        onClear={() => setPinnedResults([])}
+                        onClose={() => setShowCompareResults(false)}
+                      />
+                    </WorkspaceSurface>
+                  ) : null}
+                </Suspense>
+              </KeepAlive>
+              {/* フォームは未保存の入力を持つので保持しない (閉じたら破棄)。サーフェスと同じく
+            ワークスペースの上に重ね、退場は待たない。 */}
+              <AnimatePresence initial={false}>
+                {(workspaceView === "form" || workspaceView === "snippetForm") && (
+                  <motion.div
+                    key={workspaceView}
+                    initial={variants.fade.initial}
+                    animate={variants.fade.animate}
+                    transition={transitions.enter}
+                    style={{
+                      position: "absolute",
+                      inset: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                      background: "var(--bg)",
+                    }}
+                  >
+                    <Suspense
+                      fallback={
+                        <PaneEmpty>
+                          <Spinner size={20} />
+                        </PaneEmpty>
+                      }
+                    >
+                      {workspaceView === "form" ? (
+                        <ConnectionForm
+                          key={formInstanceId}
+                          initial={editing}
+                          profiles={profiles}
+                          onSaved={async () => {
+                            setShowForm(false);
+                            setEditing(null);
+                            await runWithErrorStatus(refreshProfiles, "statusFailedLoadProfiles");
+                          }}
+                          onCancel={() => {
+                            setShowForm(false);
+                            setEditing(null);
+                          }}
+                        />
+                      ) : (
+                        <SnippetForm
+                          key={formInstanceId}
+                          initial={editingSnippet}
+                          snippets={snippets}
+                          profiles={profiles}
+                          activeProfile={selectedProfile}
+                          initialSql={snippetFormSql}
+                          onSaved={async () => {
+                            setShowSnippetForm(false);
+                            setEditingSnippet(null);
+                            setSnippetFormSql("");
+                            setSidebarTab("snippets");
+                            await runWithErrorStatus(refreshSnippets, "statusFailedLoadSnippets");
+                          }}
+                          onCancel={() => {
+                            setShowSnippetForm(false);
+                            setEditingSnippet(null);
+                            setSnippetFormSql("");
+                          }}
+                        />
+                      )}
+                    </Suspense>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </Box>
+          </WorkspaceSplit>
+
+          {/* 読み上げ専用の常設領域 (#1529)。メッセージの種類が変わったときだけ更新する。 */}
+          <StatusAnnouncer
+            text={statusDismissed ? "" : statusText}
+            messageKey={statusDismissed ? "" : statusMessageKey}
+            assertive={statusTone(status) === "error" || statusTone(status) === "critical"}
+          />
+          {!statusDismissed &&
+            status.kind !== "idle" &&
+            (() => {
+              const tone = statusTone(status);
+              // critical は error と同じ赤系で描き、加えて「重大」バッジで際立たせる。
+              // warning は黄系。どちらも閉じる導線を出す。
+              const isCritical = tone === "critical";
+              const isError = tone === "error" || isCritical;
+              const isWarning = tone === "warning";
+              const isDismissible = isError || isWarning;
+              // 重大度の配色は Toast / Badge と同じ意味色トークン体系
+              // (semanticColors.ts、#664) を単一ソースにする (#876)。`text` 段階は
+              // 全テーマプリセットで通常背景基準の AA を満たすことが
+              // themeContrast.test.ts で固定済み。running のみ「処理中」の
+              // アクセント色で、意味色ファミリーの外に置く (Toast と同方針)。
+              const toneColor =
+                tone === "running"
+                  ? "app.accent"
+                  : tone === "success"
+                    ? semanticColorToken("success", "text")
+                    : isError
+                      ? semanticColorToken("danger", "text")
+                      : isWarning
+                        ? semanticColorToken("warning", "text")
+                        : undefined;
+              return (
+                <Flex
+                  align="center"
+                  gap="2"
+                  px="3.5"
+                  py="1.25"
+                  bg={
+                    isError
+                      ? semanticColorToken("danger", "subtle")
+                      : isWarning
+                        ? semanticColorToken("warning", "subtle")
+                        : "app.surfaceMuted"
+                  }
+                  borderTopWidth="1px"
+                  borderTopColor="app.border"
+                  borderLeftWidth="3px"
+                  borderLeftStyle="solid"
+                  borderLeftColor={toneColor ?? "transparent"}
+                  fontSize="sm"
+                  color={
+                    isError
+                      ? semanticColorToken("danger", "text")
+                      : isWarning
+                        ? semanticColorToken("warning", "text")
+                        : "app.textSecondary"
+                  }
+                >
+                  <chakra.span
+                    aria-hidden
+                    display="inline-flex"
+                    alignItems="center"
+                    flexShrink="0"
+                    color={toneColor}
+                    css={{ "&:empty": { display: "none" }, "& .icon-svg": { width: "14px", height: "14px" } }}
+                  >
+                    <StatusBarIcon
+                      kind={
+                        tone === "running"
+                          ? "running"
+                          : tone === "success"
+                            ? "success"
+                            : isError || isWarning
+                              ? "warning"
+                              : null
+                      }
+                    />
+                  </chakra.span>
+                  {isCritical && (
+                    // 「重大」バッジは ProfileBadge の本番バッジと同じ danger ベタ塗り
+                    // トークン (前景色の AA はトークン側で保証) で描き、独自の
+                    // `#fff` 直書きを持たない (#876)。
+                    <chakra.span
+                      flexShrink="0"
+                      textStyle="overline"
+                      fontWeight={700}
+                      px="1.75"
+                      py="0.5"
+                      borderRadius="sm"
+                      bg="app.dangerBg"
+                      color="app.dangerFg"
+                    >
+                      {t("statusSeverityCritical")}
+                    </chakra.span>
+                  )}
+                  <Box flex="1" minW="0">
+                    {statusHintKey ? (
+                      // ヒントは初心者向けの一般的な言い回しだけだと具体性に欠けるため、
+                      // 実際のエラー本文 (シンタックスエラーの箇所など具体的な値) を常に
+                      // 併記する。閉じる操作はステータスバー右端の X に一本化し、ここには
+                      // 個別の閉じるボタンを置かない (閉じるボタンの二重表示を避ける)。
+                      <Flex direction="column" gap="0.75">
+                        <Flex align="baseline" gap="1.5">
+                          {/* text 色を地・subtle 色を文字にした反転チップ。コントラスト
                           比は前景/背景の入替に対して対称なので、themeContrast.test.ts
                           の error-text on error-subtle 検証 (base + 全プリセット) が
                           このペアの AA も同時に保証する。 */}
-                      <chakra.span
-                        flex="none"
-                        fontWeight={600}
-                        fontSize="xs"
-                        px="1.5"
-                        py="0.25"
-                        borderRadius="sm"
-                        bg={semanticColorToken("danger", "text")}
-                        color={semanticColorToken("danger", "subtle")}
-                      >
-                        {t("errorHintLabel")}
-                      </chakra.span>
-                      <chakra.span flex="1" minW="0" lineHeight="1.45">{t(statusHintKey)}</chakra.span>
-                    </Flex>
-                    <chakra.span
-                      display="block"
-                      maxH="88px"
-                      overflow="auto"
-                      whiteSpace="pre-wrap"
-                      wordBreak="break-word"
-                      fontFamily="var(--font-mono)"
-                      fontSize="xs"
-                      opacity={0.9}
+                          <chakra.span
+                            flex="none"
+                            fontWeight={600}
+                            fontSize="xs"
+                            px="1.5"
+                            py="0.25"
+                            borderRadius="sm"
+                            bg={semanticColorToken("danger", "text")}
+                            color={semanticColorToken("danger", "subtle")}
+                          >
+                            {t("errorHintLabel")}
+                          </chakra.span>
+                          <chakra.span flex="1" minW="0" lineHeight="1.45">
+                            {t(statusHintKey)}
+                          </chakra.span>
+                        </Flex>
+                        <chakra.span
+                          display="block"
+                          maxH="88px"
+                          overflow="auto"
+                          whiteSpace="pre-wrap"
+                          wordBreak="break-word"
+                          fontFamily="var(--font-mono)"
+                          fontSize="xs"
+                          opacity={0.9}
+                        >
+                          {statusText}
+                        </chakra.span>
+                      </Flex>
+                    ) : (
+                      // 単一行ステータスは折り返さず省略記号で詰め、全文は共有
+                      // Tooltip (#884) で確認できるようにする。フッターが複数行に
+                      // 伸びてレイアウトが崩れるのを防ぐ。
+                      <Tooltip label={statusText} focusableWrapper>
+                        <chakra.span display="block" overflow="hidden">
+                          <StatusBarText text={statusText} messageKey={statusMessageKey} />
+                        </chakra.span>
+                      </Tooltip>
+                    )}
+                  </Box>
+                  {reconnectProfile && isError && (
+                    // 再接続ボタンは独自の `#fff` + `--status-error` 直書きをやめ、
+                    // 共通 Button の danger バリアント (theme.ts。hover 色も
+                    // `app.dangerBgHover` トークンで一元管理) へ収斂する (#876)。
+                    <Tooltip
+                      label={t("statusReconnectTitle", { name: reconnectProfile.name })}
+                      focusableWrapper={connectingId === reconnectProfile.id}
                     >
-                      {statusText}
-                    </chakra.span>
-                  </Flex>
-                ) : (
-                  // 単一行ステータスは折り返さず省略記号で詰め、全文は共有
-                  // Tooltip (#884) で確認できるようにする。フッターが複数行に
-                  // 伸びてレイアウトが崩れるのを防ぐ。
-                  <Tooltip label={statusText} focusableWrapper>
-                    <chakra.span display="block" overflow="hidden">
-                      <StatusBarText text={statusText} messageKey={statusMessageKey} />
-                    </chakra.span>
-                  </Tooltip>
-                )}
-              </Box>
-              {reconnectProfile && isError && (
-                // 再接続ボタンは独自の `#fff` + `--status-error` 直書きをやめ、
-                // 共通 Button の danger バリアント (theme.ts。hover 色も
-                // `app.dangerBgHover` トークンで一元管理) へ収斂する (#876)。
-                <Tooltip
-                  label={t("statusReconnectTitle", { name: reconnectProfile.name })}
-                  focusableWrapper={connectingId === reconnectProfile.id}
-                >
-                  <Button
-                    variant="danger"
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        flexShrink="0"
+                        css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
+                        onClick={() => handleConnect(reconnectProfile)}
+                        disabled={connectingId === reconnectProfile.id}
+                      >
+                        {connectingId === reconnectProfile.id ? (
+                          <Spinner size={12} decorative />
+                        ) : (
+                          <Icon name="refresh" />
+                        )}
+                        {t("statusReconnect")}
+                      </Button>
+                    </Tooltip>
+                  )}
+                  {connectAttempt && (
+                    <>
+                      <chakra.span
+                        flexShrink="0"
+                        fontSize="xs"
+                        opacity={0.85}
+                        display="inline-flex"
+                        alignItems="center"
+                        gap="1.25"
+                      >
+                        <Spinner size={12} decorative />
+                        {t(connectPhaseI18nKey(connectAttempt.phase))}
+                      </chakra.span>
+                      <Tooltip label={t("connectCancel")}>
+                        <chakra.button
+                          type="button"
+                          flexShrink="0"
+                          px="2.5"
+                          py="0.75"
+                          fontSize="xs"
+                          fontWeight={500}
+                          border="1px solid"
+                          borderColor="app.border"
+                          borderRadius="sm"
+                          bg="transparent"
+                          cursor="pointer"
+                          css={{ "&:hover": { background: "var(--bg-muted)" } }}
+                          onClick={handleCancelConnect}
+                        >
+                          {t("connectCancel")}
+                        </chakra.button>
+                      </Tooltip>
+                    </>
+                  )}
+                  {/* フッターは最新 1 件だけ。過去のメッセージは Bottom Panel の
+                  「アクティビティ」タブで読み返せる (#1114)。 */}
+                  <IconButton
+                    type="button"
+                    variant="ghost"
                     size="sm"
                     flexShrink="0"
-                    css={{ "& .icon-svg": { width: "13px", height: "13px" } }}
-                    onClick={() => handleConnect(reconnectProfile)}
-                    disabled={connectingId === reconnectProfile.id}
+                    color="currentColor"
+                    title={t("statusOpenMessages")}
+                    aria-label={t("statusOpenMessages")}
+                    onClick={() => setBottomPanelTab("activity")}
                   >
-                    {connectingId === reconnectProfile.id ? (
-                      <Spinner size={12} decorative />
-                    ) : (
-                      <Icon name="refresh" />
-                    )}
-                    {t("statusReconnect")}
-                  </Button>
-                </Tooltip>
-              )}
-              {connectAttempt && (
-                <>
-                  <chakra.span
-                    flexShrink="0"
-                    fontSize="xs"
-                    opacity={0.85}
-                    display="inline-flex"
-                    alignItems="center"
-                    gap="1.25"
-                  >
-                    <Spinner size={12} decorative />
-                    {t(connectPhaseI18nKey(connectAttempt.phase))}
-                  </chakra.span>
-                  <Tooltip label={t("connectCancel")}>
-                    <chakra.button
-                      type="button"
-                      flexShrink="0"
-                      px="2.5"
-                      py="0.75"
-                      fontSize="xs"
-                      fontWeight={500}
-                      border="1px solid"
-                      borderColor="app.border"
-                      borderRadius="sm"
-                      bg="transparent"
-                      cursor="pointer"
-                      css={{ "&:hover": { background: "var(--bg-muted)" } }}
-                      onClick={handleCancelConnect}
-                    >
-                      {t("connectCancel")}
-                    </chakra.button>
-                  </Tooltip>
-                </>
-              )}
-              {/* フッターは最新 1 件だけ。過去のメッセージは Bottom Panel の
-                  「アクティビティ」タブで読み返せる (#1114)。 */}
-              <IconButton
-                type="button"
-                variant="ghost"
-                size="sm"
-                flexShrink="0"
-                color="currentColor"
-                title={t("statusOpenMessages")}
-                aria-label={t("statusOpenMessages")}
-                onClick={() => setBottomPanelTab("activity")}
-              >
-                <Icon name="list" size={ICON_SIZES.sm} />
-              </IconButton>
-              {isDismissible && (
-                <Tooltip label={t("statusDismiss")}>
-                <chakra.button
-                  type="button"
-                  flexShrink="0"
-                  display="inline-flex"
-                  alignItems="center"
-                  justifyContent="center"
-                  w="20px"
-                  h="20px"
-                  p="0"
-                  border="none"
-                  bg="transparent"
-                  color="currentColor"
-                  borderRadius="sm"
-                  lineHeight="1"
-                  cursor="pointer"
-                  opacity={0.7}
-                  _hover={{ opacity: 1, bg: "app.hover" }}
-                  css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
-                  onClick={() => setStatusDismissed(true)}
-                  aria-label={t("statusDismiss")}
-                >
-                  <Icon name="close" />
-                </chakra.button>
-                </Tooltip>
-              )}
-            </Flex>
-          );
-        })()}
-        {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時は解説ボタン、無効時は設定への案内リンクが出る。 */}
-        {!statusDismissed &&
-          status.kind !== "idle" &&
-          status.error &&
-          status.aiContext &&
-          sessionId &&
-          selectedProfile && (
-            <AiErrorExplain
-              key={`${status.aiContext.tabId}\u0000${status.aiContext.sql}\u0000${status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}`}
-              sessionId={sessionId}
-              driver={selectedProfile.driver}
-              isProduction={selectedProfile.is_production ?? false}
-              errorKind={status.errorKind ?? null}
-              message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
-              sql={status.aiContext.sql}
-              database={status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null}
-              onApply={(suggestedSql) =>
-                handleApplyAiSql(status.aiContext?.tabId ?? "", status.aiContext?.sql ?? "", suggestedSql)
-              }
-            />
-          )}
-      </Flex>
-
-      <Suspense fallback={null}>
-      {/* 各モーダルは `AnimatePresence` で包み、閉じる際の exit を再生させてから
-          アンマウントさせる (Modal.tsx の開閉アニメ前提)。 */}
-      <AnimatePresence>
-        {importTarget && sessionId && (
-          <ImportModal
-            sessionId={sessionId}
-            database={importTarget.database}
-            table={importTarget.table}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            initialPath={importInitialPath ?? undefined}
-            onClose={() => {
-              setImportTarget(null);
-              setImportInitialPath(null);
-            }}
-            onImported={(table, created) => {
-              if (created) {
-                // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新し、
-                // 取り込んだテーブルを開く (#985)。
-                invalidateSchemaCache(importTarget.database);
-                connectionListRef.current?.refreshSchema();
-                handleOpenTable(importTarget.database, table);
-              } else {
-                handleImported(importTarget.database, table);
-              }
-            }}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {openQueryTarget && sessionId && selectedProfile && (
-          <TableOpenQueryModal
-            driver={selectedProfile.driver}
-            database={openQueryTarget.database}
-            table={openQueryTarget.table}
-            limit={Math.max(1, settings.defaultDisplayCount)}
-            initialTemplate={
-              findTableOpenQueryOverride(
-                settings.tableOpenQueryOverrides,
-                selectedProfile.id,
-                openQueryTarget.database,
-                openQueryTarget.table,
-              )?.template ?? ""
-            }
-            globalTemplate={settings.tableOpenQueryTemplate}
-            loadSchema={() =>
-              api
-                .openTable(sessionId, openQueryTarget.database, openQueryTarget.table, 1, false)
-                .then((r) => ({ columns: r.columns, rowIdentity: r.row_identity }))
-            }
-            onSave={(template) => {
-              const ok = setTableOpenQueryOverride({
-                profileId: selectedProfile.id,
-                profileName: selectedProfile.name,
-                database: openQueryTarget.database,
-                table: openQueryTarget.table,
-                template,
-              });
-              if (!ok) return;
-              setOpenQueryTarget(null);
-              toast.success(
-                t(template.trim() ? "tableOpenQuerySaved" : "tableOpenQueryRemoved", {
-                  table: openQueryTarget.table,
-                }),
+                    <Icon name="list" size={ICON_SIZES.sm} />
+                  </IconButton>
+                  {isDismissible && (
+                    <Tooltip label={t("statusDismiss")}>
+                      <chakra.button
+                        type="button"
+                        flexShrink="0"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        w="20px"
+                        h="20px"
+                        p="0"
+                        border="none"
+                        bg="transparent"
+                        color="currentColor"
+                        borderRadius="sm"
+                        lineHeight="1"
+                        cursor="pointer"
+                        opacity={0.7}
+                        _hover={{ opacity: 1, bg: "app.hover" }}
+                        css={{ "& .icon-svg": { width: "14px", height: "14px" } }}
+                        onClick={() => setStatusDismissed(true)}
+                        aria-label={t("statusDismiss")}
+                      >
+                        <Icon name="close" />
+                      </chakra.button>
+                    </Tooltip>
+                  )}
+                </Flex>
               );
-            }}
-            onClose={() => setOpenQueryTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {testDataTarget && sessionId && (
-          <TestDataModal
-            sessionId={sessionId}
-            database={testDataTarget.database}
-            table={testDataTarget.table}
-            driver={selectedProfile?.driver ?? "mysql"}
-            isProduction={selectedProfile?.is_production ?? false}
-            onClose={() => setTestDataTarget(null)}
-            onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {planWatchOpen && selectedProfile && (
-          <PlanWatchPanel
-            profile={selectedProfile}
-            snippets={snippets}
-            state={planWatch}
-            refreshing={planWatchRefreshing}
-            canRefresh={sessionId !== null}
-            onRefresh={handleRefreshPlanWatch}
-            onUnwatch={handleUnwatchPlan}
-            onClose={() => setPlanWatchOpen(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {schemaDriftOpen && selectedProfile && (
-          <SchemaDriftPanel
-            profile={selectedProfile}
-            generations={schemaDrift}
-            canCapture={sessionId !== null}
-            capturing={schemaDriftCapturing}
-            onCapture={handleCaptureSchemaDrift}
-            onClose={() => setSchemaDriftOpen(false)}
-            onOpenStructure={sessionId ? handleOpenStructure : undefined}
-            onOpenData={sessionId ? handleOpenTable : undefined}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {dumpTarget && sessionId && (
-          <DumpModal
-            sessionId={sessionId}
-            database={dumpTarget}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            onClose={() => setDumpTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {dumpTablesTarget && sessionId && (
-          <DumpModal
-            sessionId={sessionId}
-            database={dumpTablesTarget.database}
-            tables={dumpTablesTarget.tables}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            onClose={() => setDumpTablesTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {exportTablesTarget && sessionId && (
-          <Suspense fallback={null}>
-            <TablesExportModal
-              sessionId={sessionId}
-              driver={selectedProfile?.driver ?? "mysql"}
-              database={exportTablesTarget.database}
-              tables={exportTablesTarget.tables}
-              onClose={() => setExportTablesTarget(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {sqlEncodingDialog && (
-          <Suspense fallback={null}>
-            <SqlFileEncodingModal
-              mode={sqlEncodingDialog.mode}
-              initial={activeTabRef.current?.fileEncoding}
-              onConfirm={(encoding) => {
-                const mode = sqlEncodingDialog.mode;
-                setSqlEncodingDialog(null);
-                if (mode === "open") void handleOpenSqlFile(encoding);
-                else void handleSaveSqlFile(encoding);
-              }}
-              onClose={() => setSqlEncodingDialog(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {scriptTarget && sessionId && (
-          <ScriptRunModal
-            key={scriptTarget}
-            sessionId={sessionId}
-            database={scriptTarget}
-            isProduction={selectedProfile?.is_production ?? false}
-            onClose={() => setScriptTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {schemaDocTarget && sessionId && aiAvailable && (
-          <AiSchemaDocModal
-            key={schemaDocTarget.database}
-            sessionId={sessionId}
-            driver={selectedProfile?.driver ?? "mysql"}
-            database={schemaDocTarget.database}
-            profileName={selectedProfile?.name ?? ""}
-            isProduction={selectedProfile?.is_production ?? false}
-            initialTables={schemaDocTarget.tables}
-            onClose={() => setSchemaDocTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {schemaExportTarget && sessionId && (
-          <SchemaExportModal
-            key={schemaExportTarget}
-            sessionId={sessionId}
-            database={schemaExportTarget}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            onClose={() => setSchemaExportTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {sandboxCreateTarget && sessionId && selectedProfile && (
-          <SandboxCreateModal
-            key={sandboxCreateTarget.database}
-            sessionId={sessionId}
-            database={sandboxCreateTarget.database}
-            defaultName={`${selectedProfile.name} / ${sandboxCreateTarget.database}`}
-            onClose={() => setSandboxCreateTarget(null)}
-            onCreated={handleSandboxCreated}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {sandboxReviewTarget && (
-          <SandboxReviewModal
-            key={sandboxReviewTarget.id}
-            sandbox={sandboxReviewTarget}
-            sandboxSessionId={
-              openConnections.find((c) => c.profile.id === sandboxProfileId(sandboxReviewTarget.id))
-                ?.sessionId ?? ""
-            }
-            openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
-            onClose={() => setSandboxReviewTarget(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {broadcastRequest && sessionId && selectedProfile && (
-          <BroadcastModal
-            sql={broadcastRequest.sql}
-            driver={selectedProfile.driver}
-            baselineSessionId={sessionId}
-            baselineProfile={selectedProfile}
-            candidates={openConnections.filter(
-              (c) =>
-                c.sessionId !== sessionId &&
-                c.profile.driver === selectedProfile.driver &&
-                !isSandboxProfileId(c.profile.id),
-            )}
-            tableColumns={broadcastRequest.tableColumns}
-            autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
-            queryTimeoutSecs={settings.queryTimeoutSecs}
-            confirm={confirm}
-            onClose={() => setBroadcastRequest(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
-          <Suspense fallback={null}>
-            <ColumnProfileCompareModal
-              baseline={{ sessionId, profile: selectedProfile }}
-              candidates={openConnections.filter(
-                (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
-              )}
-              driver={selectedProfile.driver}
-              target={{ ...profileTarget, column: profileTarget.column }}
-              approximate={profileCompare.approximate}
-              confirm={confirm}
-              onClose={() => setProfileCompare(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {importProfilesPath && (
-          <ProfileImportDialog
-            onConfirm={handleImportProfilesConfirm}
-            onCancel={() => setImportProfilesPath(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {backupImport && (
-          <ProfileImportDialog
-            encrypted
-            error={backupImport.error}
-            onConfirm={handleBackupImportConfirm}
-            onCancel={() => setBackupImport(null)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {backupExportOpen && (
-          <ProfileBackupExportDialog
-            profileCount={profiles.length}
-            onConfirm={handleBackupExportConfirm}
-            onCancel={() => setBackupExportOpen(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {createTableDb !== null && sessionId && (
-          <Suspense fallback={null}>
-            <CreateTableModal
-              sessionId={sessionId ?? undefined}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={createTableDb || null}
-              readOnly={readOnly}
-              onRun={handleCreateTableRun}
-              onSendToEditor={handleCreateTableToEditor}
-              onClose={() => setCreateTableDb(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {renameTarget && (
-          <Suspense fallback={null}>
-            <RenameTableDialog
-              table={renameTarget.table}
-              onConfirm={handleRenameTableSubmit}
-              onCancel={() => setRenameTarget(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {cloneTarget && sessionId && (
-          <Suspense fallback={null}>
-            <TableCloneModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={cloneTarget.database}
-              sourceTable={cloneTarget.table}
-              onConfirm={handleCloneTableConfirm}
-              onClose={() => setCloneTarget(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {alterTableTarget && sessionId && (
-          <Suspense fallback={null}>
-            <AlterTableModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={alterTableTarget.database}
-              table={alterTableTarget.table}
-              readOnly={readOnly}
-              onRun={handleAlterTableRun}
-              onSendToEditor={handleAlterTableToEditor}
-              onClose={() => setAlterTableTarget(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {createNamespaceOpen && sessionId && (
-          <Suspense fallback={null}>
-            <CreateNamespaceModal
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              readOnly={readOnly}
-              initialKind={treeNamespaceKind(selectedProfile?.driver ?? "mysql")}
-              onRun={handleCreateNamespaceRun}
-              onSendToEditor={handleCreateNamespaceToEditor}
-              onClose={() => setCreateNamespaceOpen(false)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {createIndexTarget && sessionId && (
-          <Suspense fallback={null}>
-            <CreateIndexModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={createIndexTarget.database}
-              table={createIndexTarget.table}
-              readOnly={readOnly}
-              onRun={handleCreateIndexRun}
-              onSendToEditor={handleCreateIndexToEditor}
-              onClose={() => setCreateIndexTarget(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {transferSource && sessionId && (
-          <Suspense fallback={null}>
-            <DataTransferModal
-              sourceSessionId={sessionId}
-              sourceProfileId={selectedProfile?.id ?? null}
-              source={transferSource}
-              profiles={profiles}
-              onClose={() => setTransferSource(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {saveAsTableRequest && sessionId && (
-          <Suspense fallback={null}>
-            <SaveAsTableModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={saveAsTableRequest.database}
-              sourceSql={saveAsTableRequest.sql}
-              onConfirm={handleSaveAsTableConfirm}
-              onClose={() => setSaveAsTableRequest(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {saveAsViewRequest && sessionId && (
-          <Suspense fallback={null}>
-            <SaveAsViewModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={saveAsViewRequest.database}
-              sourceSql={saveAsViewRequest.sql}
-              initialName={saveAsViewRequest.initialName}
-              onConfirm={handleSaveAsViewConfirm}
-              onClose={() => setSaveAsViewRequest(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {routineEditor && sessionId && (
-          <Suspense fallback={null}>
-            <RoutineEditorModal
-              sessionId={sessionId}
-              driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-              database={routineEditor.database}
-              kind={routineEditor.kind}
-              name={routineEditor.name}
-              id={routineEditor.id}
-              readOnly={readOnly}
-              onApplied={(created) => {
-                const kindLabel = translate(
-                  routineEditor.kind === "procedure"
-                    ? "routineEditKindProcedure"
-                    : routineEditor.kind === "function"
-                      ? "routineEditKindFunction"
-                      : "routineEditKindTrigger",
-                );
-                invalidateSchemaCache(routineEditor.database);
-                connectionListRef.current?.refreshSchema();
-                toast.success(translate(created ? "routineEditCreated" : "routineEditApplied", { kind: kindLabel }));
-                setRoutineEditor(null);
-              }}
-              onClose={() => setRoutineEditor(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {registerLocalRequest && (
-          <Suspense fallback={null}>
-            <RegisterLocalTableModal
-              rowCount={registerLocalRequest.rows.length}
-              existingTables={localTables.map((tbl) => tbl.name)}
-              onConfirm={handleConfirmRegisterLocalTable}
-              onClose={() => setRegisterLocalRequest(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {hostKeyMismatch && (
-          <Suspense fallback={null}>
-            <HostKeyMismatchDialog
-              profile={hostKeyMismatch.profile}
-              message={hostKeyMismatch.message}
-              busy={reTrustingHostKey}
-              onReTrust={handleReTrustHostKey}
-              onCancel={() => setHostKeyMismatch(null)}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {(() => {
-          const insTab = rowInsertTabId ? tabs.find((tt) => tt.id === rowInsertTabId) : null;
-          if (!insTab || !insTab.result || !insTab.table) return null;
-          return (
-            <Suspense fallback={null}>
-              <RowInsertModal
-                table={insTab.table}
-                columns={insTab.result.columns}
-                initialValues={rowInsertSeed ?? undefined}
-                driver={selectedProfile?.driver ?? "mysql"}
-                database={insTab.database ?? selectedProfile?.database ?? null}
-                tableColumns={insTab.tableColumns}
-                lookup={sessionId ? lookupForSession(sessionId) : undefined}
-                onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
-                onCancel={() => { setRowInsertTabId(null); setRowInsertSeed(null); }}
+            })()}
+          {/* AI によるエラー解説 (#692)。静的ヒントの有無に関わらず、AI 有効時は解説ボタン、無効時は設定への案内リンクが出る。 */}
+          {!statusDismissed &&
+            status.kind !== "idle" &&
+            status.error &&
+            status.aiContext &&
+            sessionId &&
+            selectedProfile && (
+              <AiErrorExplain
+                key={`${status.aiContext.tabId}\u0000${status.aiContext.sql}\u0000${status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}`}
+                sessionId={sessionId}
+                driver={selectedProfile.driver}
+                isProduction={selectedProfile.is_production ?? false}
+                errorKind={status.errorKind ?? null}
+                message={status.kind === "literal" ? status.text : String(status.vars?.error ?? "")}
+                sql={status.aiContext.sql}
+                database={
+                  status.aiContext.database ?? activeTab?.database ?? selectedProfile.database ?? null
+                }
+                onApply={(suggestedSql) =>
+                  handleApplyAiSql(status.aiContext?.tabId ?? "", status.aiContext?.sql ?? "", suggestedSql)
+                }
               />
-            </Suspense>
-          );
-        })()}
-      </AnimatePresence>
+            )}
+        </Flex>
 
-      <AnimatePresence>
-        {pendingParams && (
-          <ParameterInputModal
-            sql={pendingParams.sql}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            onSubmit={handleParamsSubmit}
-            onCancel={handleParamsCancel}
-          />
-        )}
-        {routineTarget && sessionId && (
-          <RunRoutineModal
-            sessionId={sessionId}
-            driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
-            database={routineTarget.database}
-            kind={routineTarget.kind}
-            name={routineTarget.name}
-            id={routineTarget.id}
-            txActive={txActive}
-            onRun={handleRoutineRun}
-            onSendToEditor={handleRoutineToEditor}
-            onCancel={() => setRoutineTarget(null)}
-          />
-        )}
-        {pendingDangerous && (
-          <DangerousQueryDialog
-            findings={pendingDangerous.findings}
-            isProduction={pendingDangerous.isProduction}
-            writeApproval={pendingDangerous.writeApproval}
-            typedConfirmTarget={pendingDangerous.typedConfirmTarget}
-            impact={pendingDangerous.impact}
-            aiContext={
-              sessionId && selectedProfile
-                ? {
-                    sessionId,
-                    driver: selectedProfile.driver,
-                    database:
-                      tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
-                      selectedProfile.database ??
-                      null,
-                    sql: pendingDangerous.sql,
+        <Suspense fallback={null}>
+          {/* 各モーダルは `AnimatePresence` で包み、閉じる際の exit を再生させてから
+          アンマウントさせる (Modal.tsx の開閉アニメ前提)。 */}
+          <AnimatePresence>
+            {importTarget && sessionId && (
+              <ImportModal
+                sessionId={sessionId}
+                database={importTarget.database}
+                table={importTarget.table}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                initialPath={importInitialPath ?? undefined}
+                onClose={() => {
+                  setImportTarget(null);
+                  setImportInitialPath(null);
+                }}
+                onImported={(table, created) => {
+                  if (created) {
+                    // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新し、
+                    // 取り込んだテーブルを開く (#985)。
+                    invalidateSchemaCache(importTarget.database);
+                    connectionListRef.current?.refreshSchema();
+                    handleOpenTable(importTarget.database, table);
+                  } else {
+                    handleImported(importTarget.database, table);
                   }
-                : null
-            }
-            onConfirm={handleConfirmDangerous}
-            onCancel={handleCancelDangerous}
+                }}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {openQueryTarget && sessionId && selectedProfile && (
+              <TableOpenQueryModal
+                driver={selectedProfile.driver}
+                database={openQueryTarget.database}
+                table={openQueryTarget.table}
+                limit={Math.max(1, settings.defaultDisplayCount)}
+                initialTemplate={
+                  findTableOpenQueryOverride(
+                    settings.tableOpenQueryOverrides,
+                    selectedProfile.id,
+                    openQueryTarget.database,
+                    openQueryTarget.table,
+                  )?.template ?? ""
+                }
+                globalTemplate={settings.tableOpenQueryTemplate}
+                loadSchema={() =>
+                  api
+                    .openTable(sessionId, openQueryTarget.database, openQueryTarget.table, 1, false)
+                    .then((r) => ({ columns: r.columns, rowIdentity: r.row_identity }))
+                }
+                onSave={(template) => {
+                  const ok = setTableOpenQueryOverride({
+                    profileId: selectedProfile.id,
+                    profileName: selectedProfile.name,
+                    database: openQueryTarget.database,
+                    table: openQueryTarget.table,
+                    template,
+                  });
+                  if (!ok) return;
+                  setOpenQueryTarget(null);
+                  toast.success(
+                    t(template.trim() ? "tableOpenQuerySaved" : "tableOpenQueryRemoved", {
+                      table: openQueryTarget.table,
+                    }),
+                  );
+                }}
+                onClose={() => setOpenQueryTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {testDataTarget && sessionId && (
+              <TestDataModal
+                sessionId={sessionId}
+                database={testDataTarget.database}
+                table={testDataTarget.table}
+                driver={selectedProfile?.driver ?? "mysql"}
+                isProduction={selectedProfile?.is_production ?? false}
+                onClose={() => setTestDataTarget(null)}
+                onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {planWatchOpen && selectedProfile && (
+              <PlanWatchPanel
+                profile={selectedProfile}
+                snippets={snippets}
+                state={planWatch}
+                refreshing={planWatchRefreshing}
+                canRefresh={sessionId !== null}
+                onRefresh={handleRefreshPlanWatch}
+                onUnwatch={handleUnwatchPlan}
+                onClose={() => setPlanWatchOpen(false)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {schemaDriftOpen && selectedProfile && (
+              <SchemaDriftPanel
+                profile={selectedProfile}
+                generations={schemaDrift}
+                canCapture={sessionId !== null}
+                capturing={schemaDriftCapturing}
+                onCapture={handleCaptureSchemaDrift}
+                onClose={() => setSchemaDriftOpen(false)}
+                onOpenStructure={sessionId ? handleOpenStructure : undefined}
+                onOpenData={sessionId ? handleOpenTable : undefined}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {dumpTarget && sessionId && (
+              <DumpModal
+                sessionId={sessionId}
+                database={dumpTarget}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                onClose={() => setDumpTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {dumpTablesTarget && sessionId && (
+              <DumpModal
+                sessionId={sessionId}
+                database={dumpTablesTarget.database}
+                tables={dumpTablesTarget.tables}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                onClose={() => setDumpTablesTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {exportTablesTarget && sessionId && (
+              <Suspense fallback={null}>
+                <TablesExportModal
+                  sessionId={sessionId}
+                  driver={selectedProfile?.driver ?? "mysql"}
+                  database={exportTablesTarget.database}
+                  tables={exportTablesTarget.tables}
+                  onClose={() => setExportTablesTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {sqlEncodingDialog && (
+              <Suspense fallback={null}>
+                <SqlFileEncodingModal
+                  mode={sqlEncodingDialog.mode}
+                  initial={activeTabRef.current?.fileEncoding}
+                  onConfirm={(encoding) => {
+                    const mode = sqlEncodingDialog.mode;
+                    setSqlEncodingDialog(null);
+                    if (mode === "open") void handleOpenSqlFile(encoding);
+                    else void handleSaveSqlFile(encoding);
+                  }}
+                  onClose={() => setSqlEncodingDialog(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {scriptTarget && sessionId && (
+              <ScriptRunModal
+                key={scriptTarget}
+                sessionId={sessionId}
+                database={scriptTarget}
+                isProduction={selectedProfile?.is_production ?? false}
+                onClose={() => setScriptTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {schemaDocTarget && sessionId && aiAvailable && (
+              <AiSchemaDocModal
+                key={schemaDocTarget.database}
+                sessionId={sessionId}
+                driver={selectedProfile?.driver ?? "mysql"}
+                database={schemaDocTarget.database}
+                profileName={selectedProfile?.name ?? ""}
+                isProduction={selectedProfile?.is_production ?? false}
+                initialTables={schemaDocTarget.tables}
+                onClose={() => setSchemaDocTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {schemaExportTarget && sessionId && (
+              <SchemaExportModal
+                key={schemaExportTarget}
+                sessionId={sessionId}
+                database={schemaExportTarget}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                onClose={() => setSchemaExportTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {sandboxCreateTarget && sessionId && selectedProfile && (
+              <SandboxCreateModal
+                key={sandboxCreateTarget.database}
+                sessionId={sessionId}
+                database={sandboxCreateTarget.database}
+                defaultName={`${selectedProfile.name} / ${sandboxCreateTarget.database}`}
+                onClose={() => setSandboxCreateTarget(null)}
+                onCreated={handleSandboxCreated}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {sandboxReviewTarget && (
+              <SandboxReviewModal
+                key={sandboxReviewTarget.id}
+                sandbox={sandboxReviewTarget}
+                sandboxSessionId={
+                  openConnections.find((c) => c.profile.id === sandboxProfileId(sandboxReviewTarget.id))
+                    ?.sessionId ?? ""
+                }
+                openConnections={openConnections.filter((c) => !isSandboxProfileId(c.profile.id))}
+                onClose={() => setSandboxReviewTarget(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {broadcastRequest && sessionId && selectedProfile && (
+              <BroadcastModal
+                sql={broadcastRequest.sql}
+                driver={selectedProfile.driver}
+                baselineSessionId={sessionId}
+                baselineProfile={selectedProfile}
+                candidates={openConnections.filter(
+                  (c) =>
+                    c.sessionId !== sessionId &&
+                    c.profile.driver === selectedProfile.driver &&
+                    !isSandboxProfileId(c.profile.id),
+                )}
+                tableColumns={broadcastRequest.tableColumns}
+                autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
+                queryTimeoutSecs={settings.queryTimeoutSecs}
+                confirm={confirm}
+                onClose={() => setBroadcastRequest(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {profileCompare && sessionId && selectedProfile && profileTarget?.column && (
+              <Suspense fallback={null}>
+                <ColumnProfileCompareModal
+                  baseline={{ sessionId, profile: selectedProfile }}
+                  candidates={openConnections.filter(
+                    (c) => c.sessionId !== sessionId && !isSandboxProfileId(c.profile.id),
+                  )}
+                  driver={selectedProfile.driver}
+                  target={{ ...profileTarget, column: profileTarget.column }}
+                  approximate={profileCompare.approximate}
+                  confirm={confirm}
+                  onClose={() => setProfileCompare(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {importProfilesPath && (
+              <ProfileImportDialog
+                onConfirm={handleImportProfilesConfirm}
+                onCancel={() => setImportProfilesPath(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {backupImport && (
+              <ProfileImportDialog
+                encrypted
+                error={backupImport.error}
+                onConfirm={handleBackupImportConfirm}
+                onCancel={() => setBackupImport(null)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {backupExportOpen && (
+              <ProfileBackupExportDialog
+                profileCount={profiles.length}
+                onConfirm={handleBackupExportConfirm}
+                onCancel={() => setBackupExportOpen(false)}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {createTableDb !== null && sessionId && (
+              <Suspense fallback={null}>
+                <CreateTableModal
+                  sessionId={sessionId ?? undefined}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={createTableDb || null}
+                  readOnly={readOnly}
+                  onRun={handleCreateTableRun}
+                  onSendToEditor={handleCreateTableToEditor}
+                  onClose={() => setCreateTableDb(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {renameTarget && (
+              <Suspense fallback={null}>
+                <RenameTableDialog
+                  table={renameTarget.table}
+                  onConfirm={handleRenameTableSubmit}
+                  onCancel={() => setRenameTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {cloneTarget && sessionId && (
+              <Suspense fallback={null}>
+                <TableCloneModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={cloneTarget.database}
+                  sourceTable={cloneTarget.table}
+                  onConfirm={handleCloneTableConfirm}
+                  onClose={() => setCloneTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {alterTableTarget && sessionId && (
+              <Suspense fallback={null}>
+                <AlterTableModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={alterTableTarget.database}
+                  table={alterTableTarget.table}
+                  readOnly={readOnly}
+                  onRun={handleAlterTableRun}
+                  onSendToEditor={handleAlterTableToEditor}
+                  onClose={() => setAlterTableTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {createNamespaceOpen && sessionId && (
+              <Suspense fallback={null}>
+                <CreateNamespaceModal
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  readOnly={readOnly}
+                  initialKind={treeNamespaceKind(selectedProfile?.driver ?? "mysql")}
+                  onRun={handleCreateNamespaceRun}
+                  onSendToEditor={handleCreateNamespaceToEditor}
+                  onClose={() => setCreateNamespaceOpen(false)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {createIndexTarget && sessionId && (
+              <Suspense fallback={null}>
+                <CreateIndexModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={createIndexTarget.database}
+                  table={createIndexTarget.table}
+                  readOnly={readOnly}
+                  onRun={handleCreateIndexRun}
+                  onSendToEditor={handleCreateIndexToEditor}
+                  onClose={() => setCreateIndexTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {transferSource && sessionId && (
+              <Suspense fallback={null}>
+                <DataTransferModal
+                  sourceSessionId={sessionId}
+                  sourceProfileId={selectedProfile?.id ?? null}
+                  source={transferSource}
+                  profiles={profiles}
+                  onClose={() => setTransferSource(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {saveAsTableRequest && sessionId && (
+              <Suspense fallback={null}>
+                <SaveAsTableModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={saveAsTableRequest.database}
+                  sourceSql={saveAsTableRequest.sql}
+                  onConfirm={handleSaveAsTableConfirm}
+                  onClose={() => setSaveAsTableRequest(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {saveAsViewRequest && sessionId && (
+              <Suspense fallback={null}>
+                <SaveAsViewModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={saveAsViewRequest.database}
+                  sourceSql={saveAsViewRequest.sql}
+                  initialName={saveAsViewRequest.initialName}
+                  onConfirm={handleSaveAsViewConfirm}
+                  onClose={() => setSaveAsViewRequest(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {routineEditor && sessionId && (
+              <Suspense fallback={null}>
+                <RoutineEditorModal
+                  sessionId={sessionId}
+                  driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                  database={routineEditor.database}
+                  kind={routineEditor.kind}
+                  name={routineEditor.name}
+                  id={routineEditor.id}
+                  readOnly={readOnly}
+                  onApplied={(created) => {
+                    const kindLabel = translate(
+                      routineEditor.kind === "procedure"
+                        ? "routineEditKindProcedure"
+                        : routineEditor.kind === "function"
+                          ? "routineEditKindFunction"
+                          : "routineEditKindTrigger",
+                    );
+                    invalidateSchemaCache(routineEditor.database);
+                    connectionListRef.current?.refreshSchema();
+                    toast.success(
+                      translate(created ? "routineEditCreated" : "routineEditApplied", { kind: kindLabel }),
+                    );
+                    setRoutineEditor(null);
+                  }}
+                  onClose={() => setRoutineEditor(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {registerLocalRequest && (
+              <Suspense fallback={null}>
+                <RegisterLocalTableModal
+                  rowCount={registerLocalRequest.rows.length}
+                  existingTables={localTables.map((tbl) => tbl.name)}
+                  onConfirm={handleConfirmRegisterLocalTable}
+                  onClose={() => setRegisterLocalRequest(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {hostKeyMismatch && (
+              <Suspense fallback={null}>
+                <HostKeyMismatchDialog
+                  profile={hostKeyMismatch.profile}
+                  message={hostKeyMismatch.message}
+                  busy={reTrustingHostKey}
+                  onReTrust={handleReTrustHostKey}
+                  onCancel={() => setHostKeyMismatch(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {(() => {
+              const insTab = rowInsertTabId ? tabs.find((tt) => tt.id === rowInsertTabId) : null;
+              if (!insTab || !insTab.result || !insTab.table) return null;
+              return (
+                <Suspense fallback={null}>
+                  <RowInsertModal
+                    table={insTab.table}
+                    columns={insTab.result.columns}
+                    initialValues={rowInsertSeed ?? undefined}
+                    driver={selectedProfile?.driver ?? "mysql"}
+                    database={insTab.database ?? selectedProfile?.database ?? null}
+                    tableColumns={insTab.tableColumns}
+                    lookup={sessionId ? lookupForSession(sessionId) : undefined}
+                    onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
+                    onCancel={() => {
+                      setRowInsertTabId(null);
+                      setRowInsertSeed(null);
+                    }}
+                  />
+                </Suspense>
+              );
+            })()}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {pendingParams && (
+              <ParameterInputModal
+                sql={pendingParams.sql}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                onSubmit={handleParamsSubmit}
+                onCancel={handleParamsCancel}
+              />
+            )}
+            {routineTarget && sessionId && (
+              <RunRoutineModal
+                sessionId={sessionId}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                database={routineTarget.database}
+                kind={routineTarget.kind}
+                name={routineTarget.name}
+                id={routineTarget.id}
+                txActive={txActive}
+                onRun={handleRoutineRun}
+                onSendToEditor={handleRoutineToEditor}
+                onCancel={() => setRoutineTarget(null)}
+              />
+            )}
+            {pendingDangerous && (
+              <DangerousQueryDialog
+                findings={pendingDangerous.findings}
+                isProduction={pendingDangerous.isProduction}
+                writeApproval={pendingDangerous.writeApproval}
+                typedConfirmTarget={pendingDangerous.typedConfirmTarget}
+                impact={pendingDangerous.impact}
+                aiContext={
+                  sessionId && selectedProfile
+                    ? {
+                        sessionId,
+                        driver: selectedProfile.driver,
+                        database:
+                          tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
+                          selectedProfile.database ??
+                          null,
+                        sql: pendingDangerous.sql,
+                      }
+                    : null
+                }
+                onConfirm={handleConfirmDangerous}
+                onCancel={handleCancelDangerous}
+              />
+            )}
+          </AnimatePresence>
+        </Suspense>
+
+        {tabMenu &&
+          (() => {
+            const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
+            // Moving is only possible when it won't leave a single pane empty.
+            const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
+            const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+            const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
+            const items: ContextMenuEntry[] = [
+              // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
+              ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
+                ? [{ label: t("tabRename"), onSelect: () => requestRenameTab(tabMenu.tabId) }]
+                : []),
+              {
+                label: t("tabMoveOtherPane"),
+                onSelect: () => moveTabToOtherPane(tabMenu.tabId),
+                disabled: !canMove,
+                title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
+              },
+              {
+                label: t("tabDuplicate"),
+                onSelect: () => duplicateTab(tabMenu.tabId),
+              },
+              { separator: true },
+              {
+                label: t("tabCloseOthers"),
+                onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
+                disabled: !hasOthers,
+              },
+              {
+                label: t("tabCloseRight"),
+                onSelect: () => closeTabsBulk(tabMenu.tabId, "right"),
+                disabled: !hasRight,
+              },
+              { separator: true },
+              {
+                label: t("tabClose"),
+                icon: "close",
+                shortcut: formatCombo(shortcutBindings.closeTab),
+                onSelect: () => void requestCloseTab(tabMenu.tabId),
+                danger: true,
+              },
+              {
+                label: t("tabCloseAll"),
+                onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
+                danger: true,
+              },
+            ];
+            return <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />;
+          })()}
+
+        {profileTransferMenu && (
+          <ContextMenu
+            x={profileTransferMenu.x}
+            y={profileTransferMenu.y}
+            items={[
+              { label: t("profileImportAria"), onSelect: () => void handleImportProfilesPick() },
+              { label: t("profileExportAria"), onSelect: () => void handleExportProfiles() },
+              { label: t("profileBackupImportAria"), onSelect: () => void handleBackupImportPick() },
+              { label: t("profileBackupExportAria"), onSelect: handleBackupExportPick },
+            ]}
+            onClose={() => setProfileTransferMenu(null)}
           />
         )}
-      </AnimatePresence>
-      </Suspense>
 
-      {tabMenu && (() => {
-        const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
-        // Moving is only possible when it won't leave a single pane empty.
-        const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
-        const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
-        const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
-        const items: ContextMenuEntry[] = [
-          // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
-          ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
-            ? [{ label: t("tabRename"), onSelect: () => requestRenameTab(tabMenu.tabId) }]
-            : []),
-          {
-            label: t("tabMoveOtherPane"),
-            onSelect: () => moveTabToOtherPane(tabMenu.tabId),
-            disabled: !canMove,
-            title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
-          },
-          {
-            label: t("tabDuplicate"),
-            onSelect: () => duplicateTab(tabMenu.tabId),
-          },
-          { separator: true },
-          {
-            label: t("tabCloseOthers"),
-            onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
-            disabled: !hasOthers,
-          },
-          {
-            label: t("tabCloseRight"),
-            onSelect: () => closeTabsBulk(tabMenu.tabId, "right"),
-            disabled: !hasRight,
-          },
-          { separator: true },
-          {
-            label: t("tabClose"),
-            icon: "close",
-            shortcut: formatCombo(shortcutBindings.closeTab),
-            onSelect: () => void requestCloseTab(tabMenu.tabId),
-            danger: true,
-          },
-          {
-            label: t("tabCloseAll"),
-            onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
-            danger: true,
-          },
-        ];
-        return (
-          <ContextMenu x={tabMenu.x} y={tabMenu.y} items={items} onClose={() => setTabMenu(null)} />
-        );
-      })()}
-
-      {profileTransferMenu && (
-        <ContextMenu
-          x={profileTransferMenu.x}
-          y={profileTransferMenu.y}
-          items={[
-            { label: t("profileImportAria"), onSelect: () => void handleImportProfilesPick() },
-            { label: t("profileExportAria"), onSelect: () => void handleExportProfiles() },
-            { label: t("profileBackupImportAria"), onSelect: () => void handleBackupImportPick() },
-            { label: t("profileBackupExportAria"), onSelect: handleBackupExportPick },
-          ]}
-          onClose={() => setProfileTransferMenu(null)}
-        />
-      )}
-
-      {toolsMenu && (
-        <ContextMenu
-          x={toolsMenu.x}
-          y={toolsMenu.y}
-          // 用途グループごとに区切る (ボトムパネルのタブ順と同じ語彙):
-          // 診断 (中核機能を先頭に) → ログ → スキーマ / 運用の全画面ツール。
-          // 以前は 17 項目がフラットに並び、プロセスモニタなどの入口が埋もれていた。
-          items={[
-            {
-              label: t("appProcesses"),
-              icon: "server",
-              onSelect: () => toggleBottomPanel("processes"),
-              disabled: !sessionId || selectedProfile?.driver === "sqlite",
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite"
-                  ? t("appProcessesUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("appQueryInspector"),
-              icon: "explain",
-              onSelect: () => toggleBottomPanel("inspector"),
-              // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
-              disabled: !sessionId || selectedProfile?.driver === "sqlite",
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite"
-                  ? t("appQueryInspectorUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("appAdvisor"),
-              icon: "warning",
-              onSelect: () => toggleBottomPanel("advisor"),
-              // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
-              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : !(activeTab?.database ?? selectedProfile?.database)
-                  ? t("appAdvisorUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("healthTitle"),
-              icon: "server",
-              onSelect: () => toggleBottomPanel("health"),
-              disabled: openConnections.length === 0,
-              title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("appAssertions"),
-              icon: "check",
-              onSelect: () => toggleBottomPanel("assertions"),
-              // 全ドライバ対応。検証 DB は未決定ならセッション既定で動くので接続だけを要求する。
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            { separator: true },
-            // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
-            { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
-            { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
-            { separator: true },
-            // 検索系 (#1266 / #1267)。パレット (workspaceCommands) と同じ開ける条件。
-            {
-              label: t("appObjectSearch"),
-              icon: "search",
-              onSelect: () => setShowObjectSearch(true),
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-              shortcut: formatCombo(shortcutBindings.objectSearch),
-            },
-            {
-              label: t("cmdkActionDataSearch"),
-              icon: "search",
-              onSelect: () => setShowDataSearch(true),
-              disabled: !sessionId || !paletteDatabase,
-              title: !sessionId ? t("appToolsNeedsSession") : !paletteDatabase ? t("appDataSearchNeedsDatabase") : undefined,
-            },
-            { separator: true },
-            { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
-            {
-              label: t("appErDiagram"),
-              onSelect: () => openFullView("erDiagram"),
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("appUsers"),
-              onSelect: () => openFullView("users"),
-              // ユーザ概念を持たない SQLite には導線を出さない (#732。
-              // list_db_users がハードエラーを返す駆動でエラートーストになるのを
-              // 避ける)。
-              disabled: !sessionId || selectedProfile?.driver === "sqlite",
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : selectedProfile?.driver === "sqlite"
-                  ? t("appUsersUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("serverInfoMenuLabel"),
-              onSelect: () => openFullView("serverInfo"),
-              disabled: !sessionId,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("sizeMenuLabel"),
-              onSelect: () => {
-                const db = activeTab?.database ?? selectedProfile?.database ?? null;
-                if (db) handleShowDatabaseSizes(db);
+        {toolsMenu && (
+          <ContextMenu
+            x={toolsMenu.x}
+            y={toolsMenu.y}
+            // 用途グループごとに区切る (ボトムパネルのタブ順と同じ語彙):
+            // 診断 (中核機能を先頭に) → ログ → スキーマ / 運用の全画面ツール。
+            // 以前は 17 項目がフラットに並び、プロセスモニタなどの入口が埋もれていた。
+            items={[
+              {
+                label: t("appProcesses"),
+                icon: "server",
+                onSelect: () => toggleBottomPanel("processes"),
+                disabled: !sessionId || selectedProfile?.driver === "sqlite",
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : selectedProfile?.driver === "sqlite"
+                    ? t("appProcessesUnsupported")
+                    : undefined,
               },
-              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("appSchemaExportMenu"),
-              onSelect: () => {
-                const db = activeTab?.database ?? selectedProfile?.database ?? null;
-                if (db) setSchemaExportTarget(db);
+              {
+                label: t("appQueryInspector"),
+                icon: "explain",
+                onSelect: () => toggleBottomPanel("inspector"),
+                // SQLite はサーバ統計を持たず非対応のため導線を出さない (#746)。
+                disabled: !sessionId || selectedProfile?.driver === "sqlite",
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : selectedProfile?.driver === "sqlite"
+                    ? t("appQueryInspectorUnsupported")
+                    : undefined,
               },
-              disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("settingsTimelapse"),
-              onSelect: () => toggleBottomPanel("timelapse"),
-              disabled: !sessionId || !selectedProfile,
-              title: !sessionId ? t("appToolsNeedsSession") : undefined,
-            },
-            {
-              label: t("appSchemaDrift"),
-              onSelect: handleOpenSchemaDrift,
-              disabled: !sessionId || !selectedProfile?.database,
-              title: !sessionId
-                ? t("appToolsNeedsSession")
-                : !selectedProfile?.database
-                  ? t("appSchemaDriftUnsupported")
-                  : undefined,
-            },
-            {
-              label: t("appPinCompare", { count: pinnedResults.length }),
-              onSelect: () => openFullView("compareResults"),
-              disabled: pinnedResults.length === 0,
-              title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
-            },
-          ]}
-          onClose={() => setToolsMenu(null)}
-        />
-      )}
+              {
+                label: t("appAdvisor"),
+                icon: "warning",
+                onSelect: () => toggleBottomPanel("advisor"),
+                // 全ドライバ対応 (SQLite も方言ルールあり)。DB コンテキストが必要。
+                disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : !(activeTab?.database ?? selectedProfile?.database)
+                    ? t("appAdvisorUnsupported")
+                    : undefined,
+              },
+              {
+                label: t("healthTitle"),
+                icon: "server",
+                onSelect: () => toggleBottomPanel("health"),
+                disabled: openConnections.length === 0,
+                title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("appAssertions"),
+                icon: "check",
+                onSelect: () => toggleBottomPanel("assertions"),
+                // 全ドライバ対応。検証 DB は未決定ならセッション既定で動くので接続だけを要求する。
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              { separator: true },
+              // ログ系のボトムパネル (#1114)。接続に関係なく開ける。
+              { label: t("outputTitle"), onSelect: () => toggleBottomPanel("output") },
+              { label: t("activityCenterTitle"), onSelect: () => toggleBottomPanel("activity") },
+              { separator: true },
+              // 検索系 (#1266 / #1267)。パレット (workspaceCommands) と同じ開ける条件。
+              {
+                label: t("appObjectSearch"),
+                icon: "search",
+                onSelect: () => setShowObjectSearch(true),
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+                shortcut: formatCombo(shortcutBindings.objectSearch),
+              },
+              {
+                label: t("cmdkActionDataSearch"),
+                icon: "search",
+                onSelect: () => setShowDataSearch(true),
+                disabled: !sessionId || !paletteDatabase,
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : !paletteDatabase
+                    ? t("appDataSearchNeedsDatabase")
+                    : undefined,
+              },
+              { separator: true },
+              { label: t("appSchemaCompare"), onSelect: () => openFullView("compare") },
+              {
+                label: t("appErDiagram"),
+                onSelect: () => openFullView("erDiagram"),
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("appUsers"),
+                onSelect: () => openFullView("users"),
+                // ユーザ概念を持たない SQLite には導線を出さない (#732。
+                // list_db_users がハードエラーを返す駆動でエラートーストになるのを
+                // 避ける)。
+                disabled: !sessionId || selectedProfile?.driver === "sqlite",
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : selectedProfile?.driver === "sqlite"
+                    ? t("appUsersUnsupported")
+                    : undefined,
+              },
+              {
+                label: t("serverInfoMenuLabel"),
+                onSelect: () => openFullView("serverInfo"),
+                disabled: !sessionId,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("sizeMenuLabel"),
+                onSelect: () => {
+                  const db = activeTab?.database ?? selectedProfile?.database ?? null;
+                  if (db) handleShowDatabaseSizes(db);
+                },
+                disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("appSchemaExportMenu"),
+                onSelect: () => {
+                  const db = activeTab?.database ?? selectedProfile?.database ?? null;
+                  if (db) setSchemaExportTarget(db);
+                },
+                disabled: !sessionId || !(activeTab?.database ?? selectedProfile?.database),
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("settingsTimelapse"),
+                onSelect: () => toggleBottomPanel("timelapse"),
+                disabled: !sessionId || !selectedProfile,
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("appSchemaDrift"),
+                onSelect: handleOpenSchemaDrift,
+                disabled: !sessionId || !selectedProfile?.database,
+                title: !sessionId
+                  ? t("appToolsNeedsSession")
+                  : !selectedProfile?.database
+                    ? t("appSchemaDriftUnsupported")
+                    : undefined,
+              },
+              {
+                label: t("appPinCompare", { count: pinnedResults.length }),
+                onSelect: () => openFullView("compareResults"),
+                disabled: pinnedResults.length === 0,
+                title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
+              },
+            ]}
+            onClose={() => setToolsMenu(null)}
+          />
+        )}
       </Grid>
       {quickLauncherVisible && (
         <QuickLauncher
@@ -11911,9 +12812,7 @@ export default function App() {
           )}
         </AnimatePresence>
         <AnimatePresence>
-          {showTasks && (
-            <TaskManager profiles={profiles} onClose={() => setShowTasks(false)} />
-          )}
+          {showTasks && <TaskManager profiles={profiles} onClose={() => setShowTasks(false)} />}
         </AnimatePresence>
         <AnimatePresence>
           {showHelp && (
@@ -11977,9 +12876,7 @@ export default function App() {
             >
               <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />
               <chakra.span fontSize="lg" fontWeight={600}>
-                {dragFeedback.accept
-                  ? t("dropOverlayTitle")
-                  : t("dropOverlayReject")}
+                {dragFeedback.accept ? t("dropOverlayTitle") : t("dropOverlayReject")}
               </chakra.span>
               {dragFeedback.accept && (
                 <chakra.span fontSize="sm" color="app.textMuted" textAlign="center">

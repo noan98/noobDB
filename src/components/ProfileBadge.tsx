@@ -167,10 +167,7 @@ export function TxBadge({
  * read-only とは意味論的に独立 (両立しうる) なため `ProfileBadges` には含めず、
  * 呼び出し側 (`ConnectionList` / `TitleBar`) が個別に描画する。
  */
-export function SandboxBadge({
-  compact,
-  ...rest
-}: ProfileBadgeStyleProps & HTMLChakraProps<"span">) {
+export function SandboxBadge({ compact, ...rest }: ProfileBadgeStyleProps & HTMLChakraProps<"span">) {
   const t = useT();
   return (
     <MotionSpan

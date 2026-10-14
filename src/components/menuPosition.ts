@@ -24,9 +24,7 @@ export interface MenuSize {
  * メニューパネルの起点。ルートメニューはクリック位置 (`point`)、サブメニューは
  * それを開いた親項目の矩形 (`rect`) を起点にする。
  */
-export type MenuAnchor =
-  | { kind: "point"; x: number; y: number }
-  | { kind: "rect"; rect: MenuRect };
+export type MenuAnchor = { kind: "point"; x: number; y: number } | { kind: "rect"; rect: MenuRect };
 
 /** ビューポート端に残す余白。 */
 export const MENU_MARGIN = 6;

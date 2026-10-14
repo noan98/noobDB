@@ -22,12 +22,7 @@ const ctx = self as unknown as {
 function isTrustedRequest(e: MessageEvent<unknown>): e is MessageEvent<SqlFormatRequest> {
   if (e.origin !== "" && e.origin !== ctx.location.origin) return false;
   const d = e.data as Partial<SqlFormatRequest> | null;
-  return (
-    !!d &&
-    typeof d.id === "number" &&
-    typeof d.text === "string" &&
-    typeof d.language === "string"
-  );
+  return !!d && typeof d.id === "number" && typeof d.text === "string" && typeof d.language === "string";
 }
 
 function run(text: string, language: SqlFormatLanguage): string {

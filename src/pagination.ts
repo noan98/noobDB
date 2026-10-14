@@ -22,10 +22,7 @@ export function buildPageSql(base: string, pageSize: number, page: number): stri
 /**
  * 行数推定から総ページ数の目安を返す。推定が不明 (null/非有限/0 以下) なら null。
  */
-export function estimatedTotalPages(
-  rowEstimate: number | null | undefined,
-  pageSize: number,
-): number | null {
+export function estimatedTotalPages(rowEstimate: number | null | undefined, pageSize: number): number | null {
   if (rowEstimate == null || !Number.isFinite(rowEstimate) || rowEstimate <= 0) return null;
   const size = Math.max(1, Math.floor(pageSize));
   return Math.max(1, Math.ceil(rowEstimate / size));
@@ -75,11 +72,7 @@ export function canGoPrev(page: number): boolean {
 }
 
 /** このページの先頭・末尾の行番号 (1 始まり) を返す。表示用。 */
-export function pageRange(
-  page: number,
-  pageSize: number,
-  rowsOnPage: number,
-): { from: number; to: number } {
+export function pageRange(page: number, pageSize: number, rowsOnPage: number): { from: number; to: number } {
   const size = Math.max(1, Math.floor(pageSize));
   const p = Math.max(1, Math.floor(page));
   if (rowsOnPage <= 0) return { from: 0, to: 0 };

@@ -108,9 +108,9 @@ describe("buildServerFilterClause", () => {
     expect(
       buildServerFilterClause("mysql", { column: "name", op: "ne", value: "alice", numeric: false }),
     ).toBe("`name` <> 'alice'");
-    expect(
-      buildServerFilterClause("postgres", { column: "id", op: "ne", value: "42", numeric: true }),
-    ).toBe('"id" <> 42');
+    expect(buildServerFilterClause("postgres", { column: "id", op: "ne", value: "42", numeric: true })).toBe(
+      '"id" <> 42',
+    );
   });
 
   it("ne: 数値カラムでも非数値リテラルはクオートしてフォールバックする", () => {
@@ -122,12 +122,13 @@ describe("buildServerFilterClause", () => {
 
 describe("比較・範囲・IN 演算子 (#1149)", () => {
   const drivers = ["mysql", "postgres", "sqlite"] as const;
-  const mk = (
-    op: ServerFilter["op"],
-    value: string,
-    numeric: boolean,
-    value2?: string,
-  ): ServerFilter => ({ column: "price", op, value, value2, numeric });
+  const mk = (op: ServerFilter["op"], value: string, numeric: boolean, value2?: string): ServerFilter => ({
+    column: "price",
+    op,
+    value,
+    value2,
+    numeric,
+  });
 
   it("gt / gte / lt / lte: 数値カラムは裸の数値、全方言で識別子だけ異なる", () => {
     const cases = [
@@ -204,9 +205,12 @@ describe("比較・範囲・IN 演算子 (#1149)", () => {
     expect(applyServerBrowse("SELECT * FROM t", "mysql", mk("between", "1", true, "5"), null)).toBe(
       "SELECT * FROM t WHERE `price` BETWEEN 1 AND 5",
     );
-    expect(applyServerBrowse("SELECT * FROM t", "sqlite", mk("in", "1,2", true), { column: "id", direction: "asc" })).toBe(
-      'SELECT * FROM t WHERE "price" IN (1, 2) ORDER BY "id" ASC',
-    );
+    expect(
+      applyServerBrowse("SELECT * FROM t", "sqlite", mk("in", "1,2", true), {
+        column: "id",
+        direction: "asc",
+      }),
+    ).toBe('SELECT * FROM t WHERE "price" IN (1, 2) ORDER BY "id" ASC');
   });
 
   it("splitInValues / isServerFilterInputValid / serverFilterOpNeedsValue", () => {
@@ -249,16 +253,14 @@ describe("applyServerBrowse", () => {
 
   it("sort のみ: ORDER BY を付与する", () => {
     const s: ServerSort = { column: "id", direction: "desc" };
-    expect(applyServerBrowse(base, "mysql", null, s)).toBe(
-      "SELECT * FROM `db`.`users` ORDER BY `id` DESC",
-    );
+    expect(applyServerBrowse(base, "mysql", null, s)).toBe("SELECT * FROM `db`.`users` ORDER BY `id` DESC");
   });
 
   it("filter + sort: WHERE の後に ORDER BY が続く (LIMIT/OFFSET は buildPageSql が別途付与)", () => {
     const f: ServerFilter = { column: "status", op: "eq", value: "active", numeric: false };
     const s: ServerSort = { column: "id", direction: "asc" };
     expect(applyServerBrowse(base, "postgres", f, s)).toBe(
-      "SELECT * FROM `db`.`users` WHERE \"status\" = 'active' ORDER BY \"id\" ASC",
+      'SELECT * FROM `db`.`users` WHERE "status" = \'active\' ORDER BY "id" ASC',
     );
   });
 });

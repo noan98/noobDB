@@ -62,10 +62,7 @@ export function isSnippetFavorite(state: SnippetQuickAccessState, id: string): b
  * お気に入り (ピン留め) を切り替える (純粋: 新しい状態を返す)。未登録なら末尾に
  * 追加し、登録済みなら除去する。`recent` には触れない。
  */
-export function toggleSnippetFavorite(
-  state: SnippetQuickAccessState,
-  id: string,
-): SnippetQuickAccessState {
+export function toggleSnippetFavorite(state: SnippetQuickAccessState, id: string): SnippetQuickAccessState {
   if (isSnippetFavorite(state, id)) {
     return { ...state, favorites: state.favorites.filter((f) => f !== id) };
   }
@@ -77,10 +74,7 @@ export function toggleSnippetFavorite(
  * 状態を返す)。既存の同一エントリは先頭へ繰り上げ、上限を超えた古いものは
  * 切り捨てる (LRU)。`favorites` には触れない。
  */
-export function recordSnippetRun(
-  state: SnippetQuickAccessState,
-  id: string,
-): SnippetQuickAccessState {
+export function recordSnippetRun(state: SnippetQuickAccessState, id: string): SnippetQuickAccessState {
   const rest = state.recent.filter((r) => r !== id);
   return { ...state, recent: [id, ...rest].slice(0, MAX_RECENT_SNIPPETS) };
 }

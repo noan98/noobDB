@@ -254,13 +254,7 @@ const MotionCollapse = chakra(
  * フェードすることで、ブラウザのレイアウト/リフローを起こさず (合成のみで)
  * 軽量に開閉する。隣接項目はアニメーションせず即座に詰まる。
  */
-export function TreeCollapse({
-  open,
-  children,
-}: {
-  open: boolean;
-  children: ReactNode;
-}) {
+export function TreeCollapse({ open, children }: { open: boolean; children: ReactNode }) {
   return (
     <AnimatePresence initial={false}>
       {open && (

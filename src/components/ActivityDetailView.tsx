@@ -52,7 +52,13 @@ function IpcValidationDetail({ detail }: { detail: Extract<ActivityDetail, { kin
       <CodePreview wrap maxH="160px">
         {text}
       </CodePreview>
-      <Button type="button" size="sm" variant="secondary" alignSelf="flex-start" onClick={() => void copy(text)}>
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        alignSelf="flex-start"
+        onClick={() => void copy(text)}
+      >
         {copied ? t("ipcValidationCopied") : t("ipcValidationCopy")}
       </Button>
     </chakra.div>
@@ -127,14 +133,50 @@ function SchemaDriftDetailTable({ tables }: { tables: readonly SchemaDriftTableC
             {c.tableStatus === "changed" ? (
               <>
                 <chakra.td css={tdCss}>
-                  <NameList sign="+" role="success" label={t("activityDriftAdded")} names={c.addedColumns} count={c.columnsAdded} />
-                  <NameList sign="−" role="danger" label={t("activityDriftRemoved")} names={c.removedColumns} count={c.columnsRemoved} />
-                  <NameList sign="~" role="warning" label={t("activityDriftChanged")} names={c.changedColumns} count={c.columnsChanged} />
+                  <NameList
+                    sign="+"
+                    role="success"
+                    label={t("activityDriftAdded")}
+                    names={c.addedColumns}
+                    count={c.columnsAdded}
+                  />
+                  <NameList
+                    sign="−"
+                    role="danger"
+                    label={t("activityDriftRemoved")}
+                    names={c.removedColumns}
+                    count={c.columnsRemoved}
+                  />
+                  <NameList
+                    sign="~"
+                    role="warning"
+                    label={t("activityDriftChanged")}
+                    names={c.changedColumns}
+                    count={c.columnsChanged}
+                  />
                 </chakra.td>
                 <chakra.td css={tdCss}>
-                  <NameList sign="+" role="success" label={t("activityDriftAdded")} names={c.addedIndexes} count={c.indexesAdded} />
-                  <NameList sign="−" role="danger" label={t("activityDriftRemoved")} names={c.removedIndexes} count={c.indexesRemoved} />
-                  <NameList sign="~" role="warning" label={t("activityDriftChanged")} names={c.changedIndexes} count={c.indexesChanged} />
+                  <NameList
+                    sign="+"
+                    role="success"
+                    label={t("activityDriftAdded")}
+                    names={c.addedIndexes}
+                    count={c.indexesAdded}
+                  />
+                  <NameList
+                    sign="−"
+                    role="danger"
+                    label={t("activityDriftRemoved")}
+                    names={c.removedIndexes}
+                    count={c.indexesRemoved}
+                  />
+                  <NameList
+                    sign="~"
+                    role="warning"
+                    label={t("activityDriftChanged")}
+                    names={c.changedIndexes}
+                    count={c.indexesChanged}
+                  />
                 </chakra.td>
               </>
             ) : (
@@ -143,7 +185,9 @@ function SchemaDriftDetailTable({ tables }: { tables: readonly SchemaDriftTableC
                 colSpan={2}
                 color={semanticColorToken(c.tableStatus === "added" ? "success" : "danger", "text")}
               >
-                {c.tableStatus === "added" ? t("schemaDriftTableAddedLabel") : t("schemaDriftTableRemovedLabel")}
+                {c.tableStatus === "added"
+                  ? t("schemaDriftTableAddedLabel")
+                  : t("schemaDriftTableRemovedLabel")}
               </chakra.td>
             )}
           </chakra.tr>

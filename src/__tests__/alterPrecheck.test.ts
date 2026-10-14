@@ -33,25 +33,55 @@ describe("parseTypeSpec", () => {
 
 describe("buildAlterPrechecks", () => {
   it("VARCHAR を縮めると長さ超過の件数を数える SQL を返す", () => {
-    const got = buildAlterPrechecks("mysql", "app", "users", [base("name", "varchar(255)")], [edit("name", "varchar(50)")]);
+    const got = buildAlterPrechecks(
+      "mysql",
+      "app",
+      "users",
+      [base("name", "varchar(255)")],
+      [edit("name", "varchar(50)")],
+    );
     expect(got).toHaveLength(1);
     expect(got[0].kind).toBe("length");
     expect(got[0].sql).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE CHAR_LENGTH(`name`) > 50");
   });
 
   it("型が同じ・拡大・削除予定の列は検査しない", () => {
-    expect(buildAlterPrechecks("mysql", "app", "t", [base("a", "varchar(50)")], [edit("a", "varchar(255)")])).toEqual([]);
-    expect(buildAlterPrechecks("mysql", "app", "t", [base("a", "varchar(50)")], [edit("a", "VARCHAR(50)")])).toEqual([]);
-    expect(buildAlterPrechecks("mysql", "app", "t", [base("a", "varchar(255)")], [edit("a", "varchar(5)", false, true)])).toEqual([]);
+    expect(
+      buildAlterPrechecks("mysql", "app", "t", [base("a", "varchar(50)")], [edit("a", "varchar(255)")]),
+    ).toEqual([]);
+    expect(
+      buildAlterPrechecks("mysql", "app", "t", [base("a", "varchar(50)")], [edit("a", "VARCHAR(50)")]),
+    ).toEqual([]);
+    expect(
+      buildAlterPrechecks(
+        "mysql",
+        "app",
+        "t",
+        [base("a", "varchar(255)")],
+        [edit("a", "varchar(5)", false, true)],
+      ),
+    ).toEqual([]);
   });
 
   it("TEXT / 無制限から長さ指定へ縮めるのも検査する", () => {
-    const got = buildAlterPrechecks("postgres", "public", "t", [base("a", "text")], [edit("a", "varchar(10)")]);
+    const got = buildAlterPrechecks(
+      "postgres",
+      "public",
+      "t",
+      [base("a", "text")],
+      [edit("a", "varchar(10)")],
+    );
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE CHAR_LENGTH("a") > 10');
   });
 
   it("INT → SMALLINT は範囲外の件数を数える", () => {
-    const got = buildAlterPrechecks("postgres", "public", "t", [base("n", "integer")], [edit("n", "smallint")]);
+    const got = buildAlterPrechecks(
+      "postgres",
+      "public",
+      "t",
+      [base("n", "integer")],
+      [edit("n", "smallint")],
+    );
     expect(got[0].kind).toBe("range");
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE "n" < -32768 OR "n" > 32767');
   });
@@ -66,21 +96,37 @@ describe("buildAlterPrechecks", () => {
   });
 
   it("DECIMAL の整数部が縮むと上限超過を数える", () => {
-    const got = buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(12,2)")], [edit("p", "decimal(6,2)")]);
+    const got = buildAlterPrechecks(
+      "mysql",
+      "d",
+      "t",
+      [base("p", "decimal(12,2)")],
+      [edit("p", "decimal(6,2)")],
+    );
     expect(got[0].kind).toBe("decimal");
     expect(got[0].sql).toContain("ABS(`p`) >= 10000");
-    expect(buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(6,2)")], [edit("p", "decimal(12,2)")])).toEqual([]);
+    expect(
+      buildAlterPrechecks("mysql", "d", "t", [base("p", "decimal(6,2)")], [edit("p", "decimal(12,2)")]),
+    ).toEqual([]);
   });
 
   it("NOT NULL を付けると NULL 行を数える (型が同じでも)", () => {
-    const got = buildAlterPrechecks("postgres", "public", "t", [base("a", "text")], [edit("a", "text", true)]);
+    const got = buildAlterPrechecks(
+      "postgres",
+      "public",
+      "t",
+      [base("a", "text")],
+      [edit("a", "text", true)],
+    );
     expect(got).toHaveLength(1);
     expect(got[0].kind).toBe("notNull");
     expect(got[0].sql).toBe('SELECT COUNT(*) FROM "public"."t" WHERE "a" IS NULL');
   });
 
   it("SQLite は対象外", () => {
-    expect(buildAlterPrechecks("sqlite", null, "t", [base("a", "varchar(255)")], [edit("a", "varchar(5)")])).toEqual([]);
+    expect(
+      buildAlterPrechecks("sqlite", null, "t", [base("a", "varchar(255)")], [edit("a", "varchar(5)")]),
+    ).toEqual([]);
   });
 
   it("リネームしても元の列名で数える", () => {

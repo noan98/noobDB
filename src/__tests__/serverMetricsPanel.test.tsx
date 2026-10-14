@@ -83,7 +83,12 @@ describe("ServerMetricsPanel session switch", () => {
       lock_waits: null,
     };
     vi.mocked(api.serverMetrics)
-      .mockImplementationOnce(() => new Promise<ServerMetrics>((r) => { resolveOld = r; }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ServerMetrics>((r) => {
+            resolveOld = r;
+          }),
+      )
       .mockResolvedValue(empty);
 
     const { rerender } = renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);

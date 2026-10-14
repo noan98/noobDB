@@ -72,9 +72,7 @@ const OPTIONAL_COLUMNS: {
 ];
 
 function buildColumnsTable(columns: TableColumnInfo[]): string {
-  const optional = OPTIONAL_COLUMNS.filter((oc) =>
-    columns.some((c) => oc.value(c) !== ""),
-  );
+  const optional = OPTIONAL_COLUMNS.filter((oc) => columns.some((c) => oc.value(c) !== ""));
   const headers = ["Column", "Type", "Nullable", ...optional.map((oc) => oc.header)];
   let out = "| " + headers.join(" | ") + " |\n";
   out += "|" + " --- |".repeat(headers.length) + "\n";
@@ -155,10 +153,7 @@ export function buildSchemaMarkdown(input: SchemaExportInput): string {
     // テーブルコメントは見出し直下に添える (#1540)。改行は <br> に畳んで 1 行に保つ。
     const tableComment = table.comment?.trim();
     if (tableComment) out += `${mdEscape(tableComment)}\n\n`;
-    out +=
-      table.columns === null
-        ? "_column details unavailable_\n"
-        : buildColumnsTable(table.columns);
+    out += table.columns === null ? "_column details unavailable_\n" : buildColumnsTable(table.columns);
     const fks = fkByTable.get(table.name);
     if (fks && fks.length > 0) {
       out += "\nForeign keys:\n";

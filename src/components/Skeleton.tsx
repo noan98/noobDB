@@ -53,8 +53,7 @@ export const shimmerAfterCss = {
   content: '""',
   position: "absolute",
   inset: 0,
-  background:
-    "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
+  background: "linear-gradient(90deg, transparent, var(--bg-elevated), transparent)",
   animation: "skeleton-shimmer var(--dur-shimmer) ease-in-out infinite",
   animationDelay: "inherit",
 } as const;
@@ -169,7 +168,9 @@ export function SkeletonSearchRows({ rows = 5 }: { rows?: number }) {
               animationDelay: `${ri * 0.035}s`,
             }}
           />
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", flex: 1, minWidth: 0 }}>
+          <div
+            style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)", flex: 1, minWidth: 0 }}
+          >
             <Skeleton
               style={{
                 height: "var(--space-3)",

@@ -185,15 +185,13 @@ describe("computeSqlDiagnostics — 句の順序ミス", () => {
   });
 
   it("flags WHERE after LIMIT and GROUP BY after ORDER BY", () => {
-    expect(
-      diags("SELECT * FROM users LIMIT 10 WHERE id = 1").map((x) => x.message),
-    ).toEqual([MSG.clauseOrder]);
-    expect(
-      diags("SELECT * FROM users ORDER BY name GROUP BY dept").map((x) => x.message),
-    ).toEqual([MSG.clauseOrder]);
-    expect(
-      diags("SELECT * FROM t ORDER BY a HAVING x = 1").map((x) => x.message),
-    ).toEqual([MSG.clauseOrder]);
+    expect(diags("SELECT * FROM users LIMIT 10 WHERE id = 1").map((x) => x.message)).toEqual([
+      MSG.clauseOrder,
+    ]);
+    expect(diags("SELECT * FROM users ORDER BY name GROUP BY dept").map((x) => x.message)).toEqual([
+      MSG.clauseOrder,
+    ]);
+    expect(diags("SELECT * FROM t ORDER BY a HAVING x = 1").map((x) => x.message)).toEqual([MSG.clauseOrder]);
   });
 
   it("accepts the canonical clause order in every dialect", () => {
@@ -205,34 +203,20 @@ describe("computeSqlDiagnostics — 句の順序ミス", () => {
   });
 
   it("does not flag clauses inside subqueries or window functions", () => {
+    expect(diags("SELECT * FROM (SELECT * FROM t ORDER BY y) s WHERE s.a = 1")).toEqual([]);
     expect(
-      diags(
-        "SELECT * FROM (SELECT * FROM t ORDER BY y) s WHERE s.a = 1",
-      ),
+      computeSqlDiagnostics("SELECT rank() OVER (ORDER BY score) FROM players WHERE active", PostgreSQL, MSG),
     ).toEqual([]);
-    expect(
-      computeSqlDiagnostics(
-        "SELECT rank() OVER (ORDER BY score) FROM players WHERE active",
-        PostgreSQL,
-        MSG,
-      ),
-    ).toEqual([]);
-    expect(
-      diags("SELECT * FROM t WHERE a IN (SELECT b FROM u ORDER BY c) ORDER BY a"),
-    ).toEqual([]);
+    expect(diags("SELECT * FROM t WHERE a IN (SELECT b FROM u ORDER BY c) ORDER BY a")).toEqual([]);
   });
 
   it("resets tracking across set operations and INSERT ... SELECT", () => {
-    expect(
-      diags("SELECT * FROM a ORDER BY x LIMIT 1 UNION SELECT * FROM b WHERE y = 1"),
-    ).toEqual([]);
+    expect(diags("SELECT * FROM a ORDER BY x LIMIT 1 UNION SELECT * FROM b WHERE y = 1")).toEqual([]);
     expect(diags("INSERT INTO t SELECT * FROM u WHERE x = 1 ORDER BY x")).toEqual([]);
   });
 
   it("tracks statements independently in a multi-statement script", () => {
-    const d = diags(
-      "SELECT * FROM a ORDER BY x; SELECT * FROM b ORDER BY y WHERE z = 1",
-    );
+    const d = diags("SELECT * FROM a ORDER BY x; SELECT * FROM b ORDER BY y WHERE z = 1");
     expect(d.length).toBe(1);
     expect(d[0].message).toBe(MSG.clauseOrder);
   });
@@ -246,9 +230,7 @@ describe("computeSqlDiagnostics — 句の順序ミス", () => {
     // MySQL では offset は列名に使える非予約語。順序判定に使わないので誤検出しない。
     expect(diags("SELECT offset FROM t WHERE id = 1")).toEqual([]);
     // PostgreSQL は OFFSET ... LIMIT ... の順も受理する。
-    expect(
-      computeSqlDiagnostics("SELECT * FROM t OFFSET 5 LIMIT 10", PostgreSQL, MSG),
-    ).toEqual([]);
+    expect(computeSqlDiagnostics("SELECT * FROM t OFFSET 5 LIMIT 10", PostgreSQL, MSG)).toEqual([]);
   });
 });
 

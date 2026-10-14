@@ -21,9 +21,7 @@ describe("Tooltip の遅延 Portal (実ブラウザ)", () => {
     await trigger.hover();
     await expect.poll(tooltipExists, { timeout: 3_000 }).toBe(true);
     const el = trigger.element();
-    expect(el.getAttribute("aria-describedby")).toBe(
-      document.querySelector('[role="tooltip"]')?.id,
-    );
+    expect(el.getAttribute("aria-describedby")).toBe(document.querySelector('[role="tooltip"]')?.id);
 
     // マウスを外すと aria-describedby は即外れ、退場後に吹き出しが DOM から消える。
     await screen.getByRole("button", { name: "trigger" }).unhover();

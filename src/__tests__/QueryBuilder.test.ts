@@ -134,9 +134,7 @@ describe("quoteValueForColumn", () => {
 
   it("quotes a date/time value as a plain string literal", () => {
     const info = makeColumnInfo({ data_type: "datetime" });
-    expect(quoteValueForColumn("mysql", "2024-01-01 12:00:00", info)).toBe(
-      "'2024-01-01 12:00:00'",
-    );
+    expect(quoteValueForColumn("mysql", "2024-01-01 12:00:00", info)).toBe("'2024-01-01 12:00:00'");
   });
 
   it("doubles backslashes for MySQL string columns only, matching quoteValue", () => {
@@ -378,7 +376,6 @@ describe("buildSql — ORDER BY", () => {
       "SELECT * FROM `db`.`users` ORDER BY `name` ASC;",
     );
   });
-
 });
 
 describe("INSERT の空欄は DEFAULT (#1527)", () => {
@@ -395,7 +392,9 @@ describe("INSERT の空欄は DEFAULT (#1527)", () => {
       { column: "note", value: "x" },
     ];
     expect(insert("mysql", pairs)).toBe("INSERT INTO `db`.`t` (`status`, `note`) VALUES (DEFAULT, 'x');");
-    expect(insert("postgres", pairs)).toBe('INSERT INTO "db"."t" ("status", "note") VALUES (DEFAULT, \'x\');');
+    expect(insert("postgres", pairs)).toBe(
+      'INSERT INTO "db"."t" ("status", "note") VALUES (DEFAULT, \'x\');',
+    );
   });
 
   it("SQLite は VALUES に DEFAULT を書けないので列ごと省く", () => {
@@ -403,12 +402,14 @@ describe("INSERT の空欄は DEFAULT (#1527)", () => {
       { column: "status", value: "" },
       { column: "note", value: "x" },
     ];
-    expect(insert("sqlite", pairs)).toBe("INSERT INTO \"t\" (\"note\") VALUES ('x');");
+    expect(insert("sqlite", pairs)).toBe('INSERT INTO "t" ("note") VALUES (\'x\');');
     expect(insert("sqlite", [{ column: "status", value: "" }])).toBe('INSERT INTO "t" DEFAULT VALUES;');
   });
 
   it("既定値の無い列の空欄は従来どおり空文字", () => {
-    expect(insert("mysql", [{ column: "note", value: "" }])).toBe("INSERT INTO `db`.`t` (`note`) VALUES ('');");
+    expect(insert("mysql", [{ column: "note", value: "" }])).toBe(
+      "INSERT INTO `db`.`t` (`note`) VALUES ('');",
+    );
   });
 });
 
@@ -422,21 +423,28 @@ describe("IN の値が空なら Run をブロックする (#1527)", () => {
   };
   it("空・区切りのみはブロック、値があれば通す", () => {
     expect(
-      computeBuilderBlockedReason({ ...base, whereConditions: [{ column: "id", operator: "IN", value: " , " }] }),
+      computeBuilderBlockedReason({
+        ...base,
+        whereConditions: [{ column: "id", operator: "IN", value: " , " }],
+      }),
     ).toBe("qbValidationNoInValues");
     expect(
-      computeBuilderBlockedReason({ ...base, whereConditions: [{ column: "id", operator: "in", value: "1,2" }] }),
+      computeBuilderBlockedReason({
+        ...base,
+        whereConditions: [{ column: "id", operator: "in", value: "1,2" }],
+      }),
     ).toBeNull();
   });
 });
 
 // WHERE の OR / 括弧グループ (#1540)。既存の AND のみの出力が変わらないことを固定する。
 describe("buildSql — WHERE の AND / OR とグループ", () => {
-  const cond = (
-    column: string,
-    value: string,
-    extra: Partial<WhereCondition> = {},
-  ): WhereCondition => ({ column, operator: "=", value, ...extra });
+  const cond = (column: string, value: string, extra: Partial<WhereCondition> = {}): WhereCondition => ({
+    column,
+    operator: "=",
+    value,
+    ...extra,
+  });
   const where = (conds: WhereCondition[], driver = "mysql") =>
     buildSelectSql(driver, { whereEnabled: true, whereConditions: conds });
 
@@ -493,9 +501,9 @@ describe("buildSql — WHERE の AND / OR とグループ", () => {
   });
 
   it("先頭条件の connector / groupWithPrevious は無視する", () => {
-    expect(
-      where([cond("a", "1", { connector: "OR", groupWithPrevious: true }), cond("b", "2")]),
-    ).toBe("SELECT * FROM `db`.`users` WHERE `a` = 1 AND `b` = 2;");
+    expect(where([cond("a", "1", { connector: "OR", groupWithPrevious: true }), cond("b", "2")])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `a` = 1 AND `b` = 2;",
+    );
   });
 
   it("空の列の条件は取り除かれるが、グループは空行を落とす前の並びで確定する", () => {
@@ -514,9 +522,7 @@ describe("buildSql — WHERE の AND / OR とグループ", () => {
       { column: "a", operator: "IN", value: "1, 2" },
       { column: "b", operator: "IS NULL", value: "", connector: "OR" },
     ];
-    expect(where(conds, "postgres")).toBe(
-      'SELECT * FROM "db"."users" WHERE "a" IN (1, 2) OR "b" IS NULL;',
-    );
+    expect(where(conds, "postgres")).toBe('SELECT * FROM "db"."users" WHERE "a" IN (1, 2) OR "b" IS NULL;');
     expect(buildSelectSql("sqlite", { whereEnabled: true, whereConditions: conds, database: "" })).toBe(
       'SELECT * FROM "users" WHERE "a" IN (1, 2) OR "b" IS NULL;',
     );
@@ -524,9 +530,20 @@ describe("buildSql — WHERE の AND / OR とグループ", () => {
 
   it("UPDATE / DELETE でも OR / グループが効く", () => {
     const sql = buildSql(
-      "mysql", [], "DELETE", "db", "users", [], true, true,
+      "mysql",
+      [],
+      "DELETE",
+      "db",
+      "users",
+      [],
+      true,
+      true,
       [cond("a", "1"), cond("b", "2", { connector: "OR" }), cond("c", "3", { connector: "AND" })],
-      [], false, "", [], [],
+      [],
+      false,
+      "",
+      [],
+      [],
     );
     expect(sql).toBe("DELETE FROM `db`.`users` WHERE `a` = 1 OR `b` = 2 AND `c` = 3;");
   });
@@ -546,7 +563,11 @@ describe("WHERE のグループ: 空行と削除", () => {
   it("空行を挟んでも、グループ化した行は独立グループの結合子を保つ (AND が OR に化けない)", () => {
     // a / (空) / c(OR, グループ化) → 空行がグループ先頭なので c は空行のグループに属し、
     // a とは空行の connector (AND) で結ばれる。
-    const sql = where([cond("a"), cond("", { connector: "AND" }), cond("c", { connector: "OR", groupWithPrevious: true })]);
+    const sql = where([
+      cond("a"),
+      cond("", { connector: "AND" }),
+      cond("c", { connector: "OR", groupWithPrevious: true }),
+    ]);
     expect(sql).toContain("WHERE `a` = 1 AND `c` = 1");
     expect(sql).not.toContain(" OR ");
   });
@@ -562,9 +583,9 @@ describe("WHERE のグループ: 空行と削除", () => {
   });
 
   it("グループ全体が空ならそのグループは出さない", () => {
-    expect(where([cond("a"), cond("", { connector: "OR" }), cond("", { groupWithPrevious: true })])).toContain(
-      "WHERE `a` = 1",
-    );
+    expect(
+      where([cond("a"), cond("", { connector: "OR" }), cond("", { groupWithPrevious: true })]),
+    ).toContain("WHERE `a` = 1");
   });
 
   it("グループ先頭を消すと次の行が昇格し、消した行の connector を引き継ぐ (A AND (B OR C) から B を削除)", () => {
@@ -608,7 +629,11 @@ describe("hasAmbiguousAndOr", () => {
     expect(hasAmbiguousAndOr([c("a"), c("b"), c("c")])).toBe(false);
     expect(hasAmbiguousAndOr([c("a"), c("b", { connector: "OR" }), c("c", { connector: "OR" })])).toBe(false);
     expect(
-      hasAmbiguousAndOr([c("a"), c("b", { connector: "AND" }), c("c", { connector: "OR", groupWithPrevious: true })]),
+      hasAmbiguousAndOr([
+        c("a"),
+        c("b", { connector: "AND" }),
+        c("c", { connector: "OR", groupWithPrevious: true }),
+      ]),
     ).toBe(false);
   });
   it("単一グループ (括弧が付かない) の中身の AND/OR 混在も警告する: a / b(OR,グループ) / c(AND,グループ)", () => {

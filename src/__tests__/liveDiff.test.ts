@@ -56,12 +56,7 @@ describe("diffLiveRows (#1022)", () => {
   });
 
   it("新規行・消えた行は含めない (行の enter / exit が担当)", () => {
-    const d = diffLiveRows(
-      [{ id: 1, v: "a", n: 0 }],
-      [{ id: 2, v: "x", n: 1 }],
-      key,
-      FIELDS,
-    );
+    const d = diffLiveRows([{ id: 1, v: "a", n: 0 }], [{ id: 2, v: "x", n: 1 }], key, FIELDS);
     expect(d.size).toBe(0);
   });
 
@@ -73,8 +68,14 @@ describe("diffLiveRows (#1022)", () => {
 
   it("ID が重複したら先勝ちで比較する", () => {
     const d = diffLiveRows(
-      [{ id: 1, v: "a", n: 0 }, { id: 1, v: "zzz", n: 0 }],
-      [{ id: 1, v: "a", n: 0 }, { id: 1, v: "other", n: 0 }],
+      [
+        { id: 1, v: "a", n: 0 },
+        { id: 1, v: "zzz", n: 0 },
+      ],
+      [
+        { id: 1, v: "a", n: 0 },
+        { id: 1, v: "other", n: 0 },
+      ],
       key,
       FIELDS,
     );
@@ -84,7 +85,10 @@ describe("diffLiveRows (#1022)", () => {
 
 describe("uniqueByKey (#1022)", () => {
   it("重複が無ければ同じ参照を返す (再描画を誘発しない)", () => {
-    const rows = [{ id: 1, v: "a", n: 0 }, { id: 2, v: "b", n: 0 }];
+    const rows = [
+      { id: 1, v: "a", n: 0 },
+      { id: 2, v: "b", n: 0 },
+    ];
     expect(uniqueByKey(rows, key)).toBe(rows);
   });
 
@@ -128,9 +132,9 @@ describe("PROCESS_LIVE_FIELDS (#1022)", () => {
   });
 
   it("null ⇔ undefined の揺れは変化とみなさない", () => {
-    expect(
-      processDiff(proc(1, { state: null }), proc(1, { state: undefined as unknown as null })),
-    ).toEqual([]);
+    expect(processDiff(proc(1, { state: null }), proc(1, { state: undefined as unknown as null }))).toEqual(
+      [],
+    );
   });
 
   it("経過時間の単調な増加はフラッシュしない (CountUp が担当)", () => {
@@ -170,10 +174,7 @@ function watchDiff(prev: WatchedRowSnapshot, next: WatchedRowSnapshot): boolean 
 describe("PLAN_WATCH_LIVE_FIELDS (#1022)", () => {
   it("新しい世代が先頭に記録されたら変化とみなす", () => {
     expect(
-      watchDiff(
-        { id: "s1", generations: [gen("g1")] },
-        { id: "s1", generations: [gen("g2"), gen("g1")] },
-      ),
+      watchDiff({ id: "s1", generations: [gen("g1")] }, { id: "s1", generations: [gen("g2"), gen("g1")] }),
     ).toBe(true);
   });
 

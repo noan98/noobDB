@@ -134,9 +134,9 @@ describe("tableChildGroups", () => {
 
   it("インデックスか外部キーと並ぶときは見出しを出す", () => {
     expect(tableChildGroups([col("id")], [pk]).showColumnsHeader).toBe(true);
-    expect(
-      tableChildGroups([col("u", { referenced_table: "users" })], undefined).showColumnsHeader,
-    ).toBe(true);
+    expect(tableChildGroups([col("u", { referenced_table: "users" })], undefined).showColumnsHeader).toBe(
+      true,
+    );
   });
 
   it("インデックス未取得 (undefined) は空として扱う", () => {
@@ -200,7 +200,9 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
         expandedDbs: { db1: true },
         expandedTables: { "db1::a": true },
         tables: { db1: ["a"] },
-        tableColumns: { "db1::a": [col("id"), col("ref", { referenced_table: "b", referenced_column: "id" })] },
+        tableColumns: {
+          "db1::a": [col("id"), col("ref", { referenced_table: "b", referenced_column: "id" })],
+        },
         tableIndexes: { "db1::a": [idx("PRIMARY", ["id"], { primary: true })] },
       }),
     );
@@ -234,7 +236,9 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
   it("未取得はローディング行、取得済みで空なら空表示の行になる", () => {
     const loading = buildExplorerRows(base({ databases: ["db1"], expandedDbs: { db1: true } }));
     expect(loading.map((r) => r.kind)).toEqual(["db", "loading"]);
-    const empty = buildExplorerRows(base({ databases: ["db1"], expandedDbs: { db1: true }, tables: { db1: [] } }));
+    const empty = buildExplorerRows(
+      base({ databases: ["db1"], expandedDbs: { db1: true }, tables: { db1: [] } }),
+    );
     expect(empty.map((r) => r.kind)).toEqual(["db", "empty"]);
     const colsLoading = buildExplorerRows(
       base({
@@ -361,7 +365,12 @@ describe("buildExplorerRows: 見えている行のフラット配列 (#1315)", (
           matchers: matchers(["db1"], ["db1::users"], []),
         }),
       );
-      expect(rows.map((r) => r.key)).toEqual(["db:db1", "tbl:db1::users", "col:db1::users:id", "col:db1::users:email"]);
+      expect(rows.map((r) => r.key)).toEqual([
+        "db:db1",
+        "tbl:db1::users",
+        "col:db1::users:id",
+        "col:db1::users:email",
+      ]);
     });
 
     it("絞り込み中はルーチン / トリガーの行を出さない", () => {
@@ -475,16 +484,19 @@ describe("buildExplorerRows: クイックアクセスから削除済みテーブ
       keys(
         input({
           tables: { db1: ["a"] },
-          favorites: [{ database: "db1", table: "gone" }, { database: "db1", table: "a" }],
+          favorites: [
+            { database: "db1", table: "gone" },
+            { database: "db1", table: "a" },
+          ],
           recent: [{ database: "dropped", table: "t" }],
         }),
       ),
     ).toEqual(["hdr:favorites", "qa:favorite:db1::a", "db:db1"]);
   });
   it("未取得・空の一覧は不明として残す", () => {
-    expect(
-      keys(input({ tables: { db1: [] }, favorites: [{ database: "db1", table: "a" }] })),
-    ).toContain("qa:favorite:db1::a");
+    expect(keys(input({ tables: { db1: [] }, favorites: [{ database: "db1", table: "a" }] }))).toContain(
+      "qa:favorite:db1::a",
+    );
     expect(keys(input({ favorites: [{ database: "db1", table: "a" }] }))).toContain("qa:favorite:db1::a");
   });
 });

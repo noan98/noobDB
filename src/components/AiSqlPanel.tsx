@@ -383,9 +383,7 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   };
 
   if (!request) {
-    return (
-      <EmptyState compact icon="sparkles" title={t("aiSqlTitle")} description={t("aiSqlEmpty")} />
-    );
+    return <EmptyState compact icon="sparkles" title={t("aiSqlTitle")} description={t("aiSqlEmpty")} />;
   }
   const running = state.kind === "running";
   // 追い質問は、会話があり、記録時と同じ送信方針のときだけ出す (方針が変わったら履歴を使い回さない)。
@@ -410,10 +408,22 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
       data-testid="ai-sql-panel"
     >
       <Flex align="center" gap="2" wrap="wrap">
-        <Button type="button" variant="secondary" size="sm" disabled={running} onClick={() => void run("explain")}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={running}
+          onClick={() => void run("explain")}
+        >
           {t("aiSqlExplainButton")}
         </Button>
-        <Button type="button" variant="secondary" size="sm" disabled={running} onClick={() => void run("rewrite")}>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={running}
+          onClick={() => void run("rewrite")}
+        >
           {t("aiSqlRewriteButton")}
         </Button>
         {running && (
@@ -541,7 +551,13 @@ function ExplainResult({ value }: { value: SqlExplainResponse }) {
       {value.steps.length > 0 && (
         <Flex direction="column" gap="1">
           <FieldLabel as="div">{t("aiSqlSteps")}</FieldLabel>
-          <chakra.ol margin="0" paddingInlineStart="var(--space-5)" display="flex" flexDirection="column" gap="1.5">
+          <chakra.ol
+            margin="0"
+            paddingInlineStart="var(--space-5)"
+            display="flex"
+            flexDirection="column"
+            gap="1.5"
+          >
             {value.steps.map((s, i) => (
               <li key={`${i}-${s.title}`}>
                 <chakra.div fontWeight="semibold">{s.title}</chakra.div>
@@ -584,16 +600,11 @@ function DiffView({ lines }: { lines: readonly DiffLine[] }) {
       overflow="auto"
     >
       {lines.map((l, i) => (
-        <chakra.div
-          key={i}
-          display="flex"
-          gap="2"
-          px="2.5"
-          bg={DIFF_BG[l.type]}
-          data-diff={l.type}
-        >
+        <chakra.div key={i} display="flex" gap="2" px="2.5" bg={DIFF_BG[l.type]} data-diff={l.type}>
           <chakra.span
-            aria-label={l.type === "add" ? t("aiSqlDiffAdded") : l.type === "del" ? t("aiSqlDiffRemoved") : undefined}
+            aria-label={
+              l.type === "add" ? t("aiSqlDiffAdded") : l.type === "del" ? t("aiSqlDiffRemoved") : undefined
+            }
             color="app.textMuted"
             userSelect="none"
           >
@@ -652,7 +663,13 @@ function RewriteResult({
         )}
       </Flex>
       <Flex align="center" gap="2" wrap="wrap">
-        <Button type="button" variant="primary" size="sm" disabled={!changed || applied === "applied"} onClick={onApply}>
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={!changed || applied === "applied"}
+          onClick={onApply}
+        >
           {t("aiSqlApply")}
         </Button>
         {applied === "applied" && (
@@ -674,7 +691,13 @@ function RewriteResult({
       {value.changes.length > 0 && (
         <Flex direction="column" gap="1">
           <FieldLabel as="div">{t("aiSqlChanges")}</FieldLabel>
-          <chakra.ul margin="0" paddingInlineStart="var(--space-5)" display="flex" flexDirection="column" gap="1">
+          <chakra.ul
+            margin="0"
+            paddingInlineStart="var(--space-5)"
+            display="flex"
+            flexDirection="column"
+            gap="1"
+          >
             {value.changes.map((c, i) => (
               <li key={`${i}-${c.what}`}>
                 <chakra.span fontWeight="semibold">{c.what}</chakra.span>

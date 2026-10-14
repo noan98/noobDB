@@ -10,8 +10,9 @@ interface GraphemeSegmenter {
 
 function makeSegmenter(): GraphemeSegmenter | null {
   // lib が ES2020 のため Intl.Segmenter の型が無い。実行環境に無ければ null (コードポイント単位で代替)。
-  const Seg = (Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => GraphemeSegmenter })
-    .Segmenter;
+  const Seg = (
+    Intl as unknown as { Segmenter?: new (l?: string, o?: { granularity: string }) => GraphemeSegmenter }
+  ).Segmenter;
   try {
     return Seg ? new Seg(undefined, { granularity: "grapheme" }) : null;
   } catch {

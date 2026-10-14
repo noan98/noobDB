@@ -51,9 +51,13 @@ interface Props {
   onOpenInGrid?: (sql: string) => void;
 }
 
-const MotionCollapse = chakra(motion.div, {}, {
-  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-});
+const MotionCollapse = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+  },
+);
 
 const INSTANT = { duration: 0 } as const;
 
@@ -71,9 +75,7 @@ export function RelatedRowsPanel({ entries, driver, database, runQuery, onOpenIn
 
   return (
     <Box display="flex" flexDirection="column" gap="1.5">
-      <chakra.div textStyle="caption">
-        {t("relatedRowsHint")}
-      </chakra.div>
+      <chakra.div textStyle="caption">{t("relatedRowsHint")}</chakra.div>
       {entries.map((entry) => (
         <RelatedSection
           key={entry.key}
@@ -307,9 +309,7 @@ function RelatedRowsBody({
         </ErrorNote>
       )}
       {split && split.rows.length === 0 && (
-        <chakra.div textStyle="caption">
-          {t("relatedRowsEmpty")}
-        </chakra.div>
+        <chakra.div textStyle="caption">{t("relatedRowsEmpty")}</chakra.div>
       )}
       {split && split.rows.length > 0 && (
         <Box overflow="auto" maxH="260px" css={{ scrollbarWidth: "thin" }}>
@@ -401,9 +401,7 @@ function RelatedRowsBody({
         </Box>
       )}
       {split?.hasMore && next === null && (
-        <chakra.div textStyle="caption">
-          {t("relatedRowsCapReached", { count: RELATED_ROWS_MAX })}
-        </chakra.div>
+        <chakra.div textStyle="caption">{t("relatedRowsCapReached", { count: RELATED_ROWS_MAX })}</chakra.div>
       )}
     </Box>
   );

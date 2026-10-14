@@ -183,11 +183,7 @@ export function rampStops(ramp: ColorRamp, isDark: boolean): string[] {
 
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
 /** [0,1] へクランプ。NaN / 非有限は 0 に倒す (NULL/非数値の安全側)。 */

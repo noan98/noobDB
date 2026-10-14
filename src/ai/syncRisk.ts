@@ -97,7 +97,10 @@ export function finalizeRiskItems(
   missingText: string,
 ): SyncRiskItem[] {
   const valid = items.filter(
-    (it) => Number.isInteger(it.statement_index) && it.statement_index >= 0 && it.statement_index < statements.length,
+    (it) =>
+      Number.isInteger(it.statement_index) &&
+      it.statement_index >= 0 &&
+      it.statement_index < statements.length,
   );
   const covered = new Set(valid.map((it) => it.statement_index));
   const out = [...valid];
@@ -152,7 +155,9 @@ export function summarizeSchemaDiff(diff: SchemaDiff): string[] {
         lines.push(`        ${columnLine("source", c.source)}`);
         lines.push(`        ${columnLine("target", c.target)}`);
       } else {
-        lines.push(`        ${columnLine(c.status === "target_only" ? "target" : "source", c.status === "target_only" ? c.target : c.source)}`);
+        lines.push(
+          `        ${columnLine(c.status === "target_only" ? "target" : "source", c.status === "target_only" ? c.target : c.source)}`,
+        );
       }
     }
   }
@@ -274,7 +279,11 @@ export function buildSyncRiskPrompt(input: SyncRiskInput): string {
     } else {
       const sql = sqlForAi(statement.sql, input.targetDriver, input.maskLiterals);
       lines.push(head);
-      lines.push(sql.length > SYNC_RISK_MAX_SQL_CHARS ? `${sliceHead(sql, SYNC_RISK_MAX_SQL_CHARS)} ...(truncated)` : sql);
+      lines.push(
+        sql.length > SYNC_RISK_MAX_SQL_CHARS
+          ? `${sliceHead(sql, SYNC_RISK_MAX_SQL_CHARS)} ...(truncated)`
+          : sql,
+      );
     }
   }
   if (input.warnings.length > 0) {

@@ -56,8 +56,7 @@ describe("runAiRequest / listenAiStream", () => {
     };
     await listenAiStream("ai2", handlers);
     await api.runAiRequest({ ...request, streamId: "ai2" });
-    const channel = (mockInvoke.mock.calls[0][1] as { onEvent: InstanceType<typeof FakeChannel> })
-      .onEvent;
+    const channel = (mockInvoke.mock.calls[0][1] as { onEvent: InstanceType<typeof FakeChannel> }).onEvent;
 
     channel.onmessage({ kind: "delta", text: "hi" });
     expect(handlers.onDelta).toHaveBeenCalledWith({ streamId: "ai2", text: "hi" });
@@ -111,8 +110,7 @@ describe("runAiRequest / listenAiStream", () => {
     const onDelta = vi.fn();
     const unlisten = await listenAiStream("ai3", { onDelta });
     await api.runAiRequest({ ...request, streamId: "ai3" });
-    const channel = (mockInvoke.mock.calls[0][1] as { onEvent: InstanceType<typeof FakeChannel> })
-      .onEvent;
+    const channel = (mockInvoke.mock.calls[0][1] as { onEvent: InstanceType<typeof FakeChannel> }).onEvent;
     unlisten();
     channel.onmessage({ kind: "delta", text: "late" });
     expect(onDelta).not.toHaveBeenCalled();

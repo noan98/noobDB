@@ -23,20 +23,8 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
-import {
-  CodePreview,
-  ErrorNote,
-  FieldError,
-  FieldLabel,
-  FormSection,
-  PathRow,
-} from "./modalForm";
-import {
-  defaultKeyColumns,
-  pruneKeyColumns,
-  toggleKeyColumn,
-  validateConflictKeys,
-} from "./importConflict";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { defaultKeyColumns, pruneKeyColumns, toggleKeyColumn, validateConflictKeys } from "./importConflict";
 import {
   buildColumnDrafts,
   countExcelErrors,
@@ -143,9 +131,7 @@ function autoMap(
   headers: string[],
   hasHeader: boolean,
 ): Record<string, number | null> {
-  const byName = tableCols.map((c) =>
-    headers.findIndex((h) => norm(h) === norm(c.name)),
-  );
+  const byName = tableCols.map((c) => headers.findIndex((h) => norm(h) === norm(c.name)));
   const anyName = byName.some((i) => i >= 0);
   const m: Record<string, number | null> = {};
   tableCols.forEach((c, i) => {
@@ -158,24 +144,14 @@ function autoMap(
   return m;
 }
 
-export function ImportModal({
-  sessionId,
-  database,
-  table,
-  driver,
-  onClose,
-  onImported,
-  initialPath,
-}: Props) {
+export function ImportModal({ sessionId, database, table, driver, onClose, onImported, initialPath }: Props) {
   const t = useT();
   const toast = useToast();
   const [path, setPath] = useState(initialPath ?? "");
   // ファイルから新規テーブルを作成するモード (#985)。対象テーブルが無い
   // (DB のコンテキストメニューから開いた) ときは常にこのモード。
   const [createNew, setCreateNew] = useState(table === null);
-  const [newTableName, setNewTableName] = useState(() =>
-    initialPath ? suggestTableName(initialPath) : "",
-  );
+  const [newTableName, setNewTableName] = useState(() => (initialPath ? suggestTableName(initialPath) : ""));
   // ユーザがテーブル名を編集したら、ファイルを選び直しても上書きしない。
   const [tableNameEdited, setTableNameEdited] = useState(false);
   const [drafts, setDrafts] = useState<NewColumnDraft[] | null>(null);
@@ -187,9 +163,7 @@ export function ImportModal({
   // 既存テーブルへ取り込み済みのファイルパス。同じファイルのまま再実行すると行が重複するので、
   // ファイルを選び直す / パスを編集するまで実行ボタンを無効にする (#1598)。
   const [importedPath, setImportedPath] = useState<string | null>(null);
-  const [format, setFormat] = useState<ImportFormat>(
-    initialPath ? formatFromPath(initialPath) : "csv",
-  );
+  const [format, setFormat] = useState<ImportFormat>(initialPath ? formatFromPath(initialPath) : "csv");
   const [encoding, setEncoding] = useState("utf-8");
   const [delimiter, setDelimiter] = useState<DelimiterChoice>(",");
   const [quote, setQuote] = useState('"');
@@ -318,8 +292,7 @@ export function ImportModal({
           setPreview(p);
           // JSON/NDJSON always expose named fields, so map by name regardless of
           // the (CSV-only) header toggle.
-          if (tableColumns)
-            setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
+          if (tableColumns) setMapping(autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true));
         })
         .catch((e) => {
           if (!cancelled) {
@@ -358,10 +331,7 @@ export function ImportModal({
 
   const newTableError: NewTableError =
     createNew && drafts ? validateNewTable(driver, newTableName, drafts) : null;
-  const newTable = useMemo(
-    () => (createNew && drafts ? newTableRequest(drafts) : null),
-    [createNew, drafts],
-  );
+  const newTable = useMemo(() => (createNew && drafts ? newTableRequest(drafts) : null), [createNew, drafts]);
 
   // 実行される CREATE TABLE をバックエンドの生成関数から取ってきて見せる
   // (プレビュー = 実際に流れる DDL)。検証エラーがある間は取りに行かない。
@@ -390,9 +360,7 @@ export function ImportModal({
   }, [createNew, newTable, newTableError, driver, newTableName]);
 
   const updateDraft = useCallback((index: number, patch: Partial<NewColumnDraft>) => {
-    setDrafts((prev) =>
-      prev ? prev.map((d, i) => (i === index ? { ...d, ...patch } : d)) : prev,
-    );
+    setDrafts((prev) => (prev ? prev.map((d, i) => (i === index ? { ...d, ...patch } : d)) : prev));
   }, []);
 
   const newTableErrorText = (err: NewTableError): string | null => {
@@ -426,7 +394,10 @@ export function ImportModal({
       multiple: false,
       title: t("importPickFileTitle"),
       filters: [
-        { name: t("importFileFilterData"), extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl", "xlsx"] },
+        {
+          name: t("importFileFilterData"),
+          extensions: ["csv", "tsv", "txt", "json", "ndjson", "jsonl", "xlsx"],
+        },
         { name: "CSV", extensions: ["csv", "tsv", "txt"] },
         { name: "JSON / NDJSON", extensions: ["json", "ndjson", "jsonl"] },
         { name: "Excel", extensions: ["xlsx"] },
@@ -495,8 +466,7 @@ export function ImportModal({
     if (unlistenRef.current) unlistenRef.current();
     const unlisten = await listenImportStream(streamId, {
       onStarted: (e) => setStatus({ kind: "importing", inserted: 0, total: e.total }),
-      onProgress: (e) =>
-        setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
+      onProgress: (e) => setStatus({ kind: "importing", inserted: e.inserted, total: e.total }),
       onDone: (e) => {
         if (unlistenRef.current) {
           unlistenRef.current();
@@ -575,10 +545,7 @@ export function ImportModal({
   // 先頭の一部しか持たない。行の書式は表示と同じ i18n 文言をテンプレートとして渡す。
   const copySkipped = useCallback(async () => {
     try {
-      const text = await api.getImportSkippedText(
-        t("importSkippedRow"),
-        t("importSkippedRowLine"),
-      );
+      const text = await api.getImportSkippedText(t("importSkippedRow"), t("importSkippedRowLine"));
       if (await copyToClipboard(text)) toast.success(t("importSkippedCopied"));
     } catch (e) {
       toast.error(String(e));
@@ -593,11 +560,7 @@ export function ImportModal({
         filters: [{ name: "Text", extensions: ["txt"] }],
       });
       if (typeof dest !== "string" || !dest) return;
-      const count = await api.saveImportSkippedRows(
-        dest,
-        t("importSkippedRow"),
-        t("importSkippedRowLine"),
-      );
+      const count = await api.saveImportSkippedRows(dest, t("importSkippedRow"), t("importSkippedRowLine"));
       toast.success(t("importSkippedSaved", { count, path: dest }));
     } catch (e) {
       toast.error(String(e));
@@ -623,10 +586,7 @@ export function ImportModal({
     }
     setStatus({
       kind: "error",
-      message:
-        committed > 0
-          ? t("importCancelledPartial", { count: committed })
-          : t("importCancelled"),
+      message: committed > 0 ? t("importCancelledPartial", { count: committed }) : t("importCancelled"),
     });
   };
 
@@ -741,22 +701,22 @@ export function ImportModal({
           )}
 
           {!isXlsx && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
-            <Select
-              id="import-encoding"
-              minW="140px"
-              value={encoding}
-              onChange={(e) => setEncoding(e.target.value)}
-              disabled={importing}
-            >
-              {ENCODINGS.map((enc) => (
-                <option key={enc} value={enc}>
-                  {enc}
-                </option>
-              ))}
-            </Select>
-          </chakra.div>
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel htmlFor="import-encoding">{t("importEncoding")}</FieldLabel>
+              <Select
+                id="import-encoding"
+                minW="140px"
+                value={encoding}
+                onChange={(e) => setEncoding(e.target.value)}
+                disabled={importing}
+              >
+                {ENCODINGS.map((enc) => (
+                  <option key={enc} value={enc}>
+                    {enc}
+                  </option>
+                ))}
+              </Select>
+            </chakra.div>
           )}
 
           {isCsv && (
@@ -843,20 +803,20 @@ export function ImportModal({
           </chakra.div>
 
           {!createNew && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <FieldLabel htmlFor="import-conflict-mode">{t("importConflictMode")}</FieldLabel>
-            <Select
-              id="import-conflict-mode"
-              minW="150px"
-              value={conflictMode}
-              onChange={(e) => setConflictMode(e.target.value as ImportConflictMode)}
-              disabled={importing}
-            >
-              <option value="insert">{t("importConflictModeInsert")}</option>
-              <option value="skip">{t("importConflictModeSkip")}</option>
-              <option value="update">{t("importConflictModeUpdate")}</option>
-            </Select>
-          </chakra.div>
+            <chakra.div display="flex" flexDirection="column" gap="1.5">
+              <FieldLabel htmlFor="import-conflict-mode">{t("importConflictMode")}</FieldLabel>
+              <Select
+                id="import-conflict-mode"
+                minW="150px"
+                value={conflictMode}
+                onChange={(e) => setConflictMode(e.target.value as ImportConflictMode)}
+                disabled={importing}
+              >
+                <option value="insert">{t("importConflictModeInsert")}</option>
+                <option value="skip">{t("importConflictModeSkip")}</option>
+                <option value="update">{t("importConflictModeUpdate")}</option>
+              </Select>
+            </chakra.div>
           )}
         </FormSection>
 
@@ -893,11 +853,7 @@ export function ImportModal({
         {createNew && preview && drafts && (
           <FormSection>
             <FieldLabel as="div">{t("importNewTableColumns")}</FieldLabel>
-            <chakra.div
-              display="grid"
-              gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))"
-              gap="2"
-            >
+            <chakra.div display="grid" gridTemplateColumns="repeat(auto-fill, minmax(300px, 1fr))" gap="2">
               {drafts.map((d, i) => (
                 <chakra.div key={d.csvIndex} display="flex" alignItems="center" gap="1.5">
                   <Checkbox
@@ -969,18 +925,9 @@ export function ImportModal({
         {!createNew && preview && tableColumns && (
           <FormSection>
             <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
-            <chakra.div
-              display="grid"
-              gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))"
-              gap="2"
-            >
+            <chakra.div display="grid" gridTemplateColumns="repeat(auto-fill, minmax(280px, 1fr))" gap="2">
               {tableColumns.map((col) => (
-                <chakra.div
-                  display="flex"
-                  alignItems="center"
-                  gap="2"
-                  key={col.name}
-                >
+                <chakra.div display="flex" alignItems="center" gap="2" key={col.name}>
                   <Tooltip label={col.data_type}>
                     <chakra.span
                       flex="0 0 40%"
@@ -993,11 +940,7 @@ export function ImportModal({
                       {col.name}
                       {col.key === "PRI" && (
                         <Tooltip label={t("colPkTitle")}>
-                          <chakra.span
-                            fontSize="xs"
-                            ml="1"
-                            color="app.cell.date"
-                          >
+                          <chakra.span fontSize="xs" ml="1" color="app.cell.date">
                             <Icon name="key" />
                           </chakra.span>
                         </Tooltip>
@@ -1050,9 +993,7 @@ export function ImportModal({
                 >
                   <Checkbox
                     checked={effectiveKeyColumns.includes(col)}
-                    onChange={() =>
-                      setKeyColumns(toggleKeyColumn(effectiveKeyColumns, col, mappedColumns))
-                    }
+                    onChange={() => setKeyColumns(toggleKeyColumn(effectiveKeyColumns, col, mappedColumns))}
                     disabled={importing}
                   />
                   {col}
@@ -1062,12 +1003,8 @@ export function ImportModal({
             <chakra.div fontSize="xs" color="app.textMuted">
               {t("importConflictKeysHint")}
             </chakra.div>
-            {conflictError === "keysRequired" && (
-              <FieldError>{t("importConflictKeysRequired")}</FieldError>
-            )}
-            {conflictError === "keyNotMapped" && (
-              <FieldError>{t("importConflictKeyNotMapped")}</FieldError>
-            )}
+            {conflictError === "keysRequired" && <FieldError>{t("importConflictKeysRequired")}</FieldError>}
+            {conflictError === "keyNotMapped" && <FieldError>{t("importConflictKeyNotMapped")}</FieldError>}
           </FormSection>
         )}
 
@@ -1100,7 +1037,8 @@ export function ImportModal({
                 css={{
                   "& th, & td": {
                     border: "1px solid var(--border)",
-                    py: "1", px: "2",
+                    py: "1",
+                    px: "2",
                     textAlign: "left",
                     whiteSpace: "nowrap",
                     maxWidth: "240px",
@@ -1132,13 +1070,7 @@ export function ImportModal({
         )}
 
         {status.kind === "importing" && (
-          <chakra.div
-            role="status"
-            aria-live="polite"
-            display="flex"
-            flexDirection="column"
-            gap="1.5"
-          >
+          <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="1.5">
             <DeterminateProgressBar value={percent / 100} />
             <chakra.div fontSize="sm" color="app.textMuted">
               {t("importProgress", { inserted: status.inserted, total: status.total })}
@@ -1147,12 +1079,7 @@ export function ImportModal({
         )}
         {status.kind === "done" && (
           <chakra.div display="flex" flexDirection="column" gap="2">
-            <chakra.div
-              display="flex"
-              alignItems="center"
-              justifyContent="space-between"
-              gap="3"
-            >
+            <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="3">
               <chakra.span fontSize="sm" fontWeight={500}>
                 {t("importSkippedSummary", {
                   inserted: status.inserted,
@@ -1160,20 +1087,10 @@ export function ImportModal({
                 })}
               </chakra.span>
               <chakra.div display="flex" gap="2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void saveSkipped()}
-                >
+                <Button type="button" variant="secondary" size="sm" onClick={() => void saveSkipped()}>
                   {t("importSkippedSave")}
                 </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void copySkipped()}
-                >
+                <Button type="button" variant="secondary" size="sm" onClick={() => void copySkipped()}>
                   {t("importSkippedCopy")}
                 </Button>
               </chakra.div>
@@ -1217,9 +1134,13 @@ export function ImportModal({
       <ModalFooter>
         <div style={{ flex: 1 }} />
         {importing ? (
-          <PressableButton type="button" variant="warning" onClick={handleCancelImport}>{t("importStop")}</PressableButton>
+          <PressableButton type="button" variant="warning" onClick={handleCancelImport}>
+            {t("importStop")}
+          </PressableButton>
         ) : (
-          <Button type="button" variant="secondary" onClick={onClose}>{t("importClose")}</Button>
+          <Button type="button" variant="secondary" onClick={onClose}>
+            {t("importClose")}
+          </Button>
         )}
         <LoadingButton
           pressable

@@ -73,7 +73,11 @@ describe("resolveKeysetPlan", () => {
     expect(resolveKeysetPlan([col("id", "bytea", "PRI")], null, cols(["id"]))).toBeNull();
     expect(resolveKeysetPlan(table, { column: "name", direction: "asc" }, rc)).not.toBeNull();
     expect(
-      resolveKeysetPlan([col("id", "int", "PRI"), col("j", "jsonb")], { column: "j", direction: "asc" }, cols(["id", "j"])),
+      resolveKeysetPlan(
+        [col("id", "int", "PRI"), col("j", "jsonb")],
+        { column: "j", direction: "asc" },
+        cols(["id", "j"]),
+      ),
     ).toBeNull();
   });
 });

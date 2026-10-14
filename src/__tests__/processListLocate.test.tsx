@@ -83,7 +83,10 @@ describe("ProcessListPanel AI 停止候補との連動 (#1538)", () => {
   });
 
   it("再取得で対象が一覧から消えたら強調を外す (pid 再利用で別行が強調されない)", async () => {
-    vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, id: 1 }, { ...base, id: 3 }]);
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1 },
+      { ...base, id: 3 },
+    ]);
     const { container } = renderWithProviders(
       <ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />,
     );
@@ -95,7 +98,10 @@ describe("ProcessListPanel AI 停止候補との連動 (#1538)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
     await waitFor(() => expect(container.querySelector("[data-highlighted]")).toBeNull());
     // 同じ id が再び現れても強調は戻らない。
-    vi.mocked(api.listProcesses).mockResolvedValue([{ ...base, id: 1 }, { ...base, id: 3 }]);
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, id: 1 },
+      { ...base, id: 3 },
+    ]);
     fireEvent.click(screen.getByRole("button", { name: t("processRefresh") }));
     await waitFor(() => expect(container.querySelector("#process-row-s1-3")).not.toBeNull());
     expect(container.querySelector("[data-highlighted]")).toBeNull();

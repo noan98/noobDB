@@ -85,9 +85,7 @@ describe("findReferences (テーブル)", () => {
   it("スキーマ修飾は対象スキーマのときだけ採用する", () => {
     expect(hitTexts("SELECT * FROM app.orders", table("orders"), "mysql")).toEqual(["orders"]);
     expect(hitTexts("SELECT * FROM other.orders", table("orders"), "mysql")).toEqual([]);
-    expect(hitTexts('SELECT * FROM "app"."orders"', table("orders"), "postgres")).toEqual([
-      '"orders"',
-    ]);
+    expect(hitTexts('SELECT * FROM "app"."orders"', table("orders"), "postgres")).toEqual(['"orders"']);
     expect(hitTexts("SELECT * FROM main.orders", table("orders", "main"), "sqlite")).toEqual(["orders"]);
   });
 
@@ -125,7 +123,9 @@ describe("findReferences (列)", () => {
   });
 
   it("スキーマ修飾された別テーブルの同名列は除外する", () => {
-    expect(hitTexts("SELECT app.customers.status FROM app.customers", col("orders", "status"), "postgres")).toEqual([]);
+    expect(
+      hitTexts("SELECT app.customers.status FROM app.customers", col("orders", "status"), "postgres"),
+    ).toEqual([]);
     expect(hitTexts("SELECT other.orders.status FROM t", col("orders", "status"), "postgres")).toEqual([]);
   });
 
@@ -143,7 +143,9 @@ describe("findReferences (列)", () => {
   });
 
   it("部分一致しない", () => {
-    expect(hitTexts("SELECT status_code, order_status FROM orders", col("orders", "status"), "postgres")).toEqual([]);
+    expect(
+      hitTexts("SELECT status_code, order_status FROM orders", col("orders", "status"), "postgres"),
+    ).toEqual([]);
   });
 });
 
@@ -154,7 +156,13 @@ describe("splitHighlightSegments", () => {
       { text: "orders", hit: true },
       { text: " o", hit: false },
     ]);
-    expect(splitHighlightSegments("abcdef", [[3, 9], [0, 2], [1, 4]])).toEqual([
+    expect(
+      splitHighlightSegments("abcdef", [
+        [3, 9],
+        [0, 2],
+        [1, 4],
+      ]),
+    ).toEqual([
       { text: "ab", hit: true },
       { text: "cd", hit: true },
       { text: "ef", hit: true },

@@ -62,8 +62,7 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
 
   const ruleResult = draftToRule(draft);
   const requestResult = draftToRequest(draft, profile);
-  const fieldError: AssertionDraftError | null =
-    showErrors && !requestResult.ok ? requestResult.error : null;
+  const fieldError: AssertionDraftError | null = showErrors && !requestResult.ok ? requestResult.error : null;
 
   // ルールが組み立てられるときだけ、バックエンドの生成器でプレビューを取る。
   const ruleKey = ruleResult.ok

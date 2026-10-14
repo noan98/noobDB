@@ -483,11 +483,16 @@ describe("useAiStream (#1470)", () => {
 
 describe("AiStreamProgress (#1470)", () => {
   it("応答開始前は待機文言と経過秒数、届いたら「受信中」と文字数、構造化出力は指定フィールドだけ見せる", () => {
-    const { rerender } = renderWithProviders(<AiStreamProgress stream={{ text: "", elapsedSec: 2 }} fields={["explanation"]} />);
+    const { rerender } = renderWithProviders(
+      <AiStreamProgress stream={{ text: "", elapsedSec: 2 }} fields={["explanation"]} />,
+    );
     expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/2/);
     expect(screen.queryByTestId("ai-stream-preview")).toBeNull();
     rerender(
-      <AiStreamProgress stream={{ text: '{"explanation":"途中の文章', elapsedSec: 5 }} fields={["explanation"]} />,
+      <AiStreamProgress
+        stream={{ text: '{"explanation":"途中の文章', elapsedSec: 5 }}
+        fields={["explanation"]}
+      />,
     );
     expect(screen.getByTestId("ai-stream-preview").textContent).toBe("途中の文章");
     expect(screen.getByTestId("ai-stream-elapsed").textContent).toMatch(/5/);

@@ -11,7 +11,6 @@ import type {
 } from "../tauri";
 
 export const profilesCommands = {
-
   listProfiles: () =>
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>
       parseResponse(schemas.connectionProfileArray, r, "list_profiles"),

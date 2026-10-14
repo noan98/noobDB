@@ -20,7 +20,9 @@ const key1 = rowEditKey(ROWS[0], PK, 0);
 const key2 = rowEditKey(ROWS[1], PK, 1);
 const key3 = rowEditKey(ROWS[2], PK, 2);
 
-type TestTab = ApplyTabState & { result: { columns: Column[]; rows: typeof ROWS; rows_affected: number } | null };
+type TestTab = ApplyTabState & {
+  result: { columns: Column[]; rows: typeof ROWS; rows_affected: number } | null;
+};
 
 function baseTab(over: Partial<TestTab> = {}): TestTab {
   const pendingEdits: PendingEdits = {

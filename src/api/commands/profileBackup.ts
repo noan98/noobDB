@@ -17,9 +17,7 @@ export const profileBackupCommands = {
   exportProfilesEncrypted: (path: string, passphrase: string, ids?: string[]) =>
     invoke<EncryptedProfileExportResult>("export_profiles_encrypted", {
       req: { path, passphrase, ids: ids ?? null },
-    }).then((r) =>
-      parseResponse(schemas.encryptedProfileExportResult, r, "export_profiles_encrypted"),
-    ),
+    }).then((r) => parseResponse(schemas.encryptedProfileExportResult, r, "export_profiles_encrypted")),
   /**
    * `exportProfilesEncrypted` で作った暗号化バックアップをパスフレーズで開封して
    * 取り込む (#710)。ID 衝突は平文インポートと同じ `strategy` で解決し、秘密は
@@ -29,7 +27,5 @@ export const profileBackupCommands = {
   importProfilesEncrypted: (path: string, passphrase: string, strategy: ProfileImportStrategy) =>
     invoke<EncryptedProfileImportResult>("import_profiles_encrypted", {
       req: { path, passphrase, strategy },
-    }).then((r) =>
-      parseResponse(schemas.encryptedProfileImportResult, r, "import_profiles_encrypted"),
-    ),
+    }).then((r) => parseResponse(schemas.encryptedProfileImportResult, r, "import_profiles_encrypted")),
 };

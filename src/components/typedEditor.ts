@@ -16,9 +16,7 @@ import { resolveBoolTruthy } from "./cellTypeMeta";
 
 export type NativeInputType = "date" | "datetime-local" | "time";
 
-export type TypedEditor =
-  | { control: "native"; inputType: NativeInputType }
-  | { control: "bool" };
+export type TypedEditor = { control: "native"; inputType: NativeInputType } | { control: "bool" };
 
 // 小数秒を持つ値と月日 00 (MySQL のゼロ日付) は、ネイティブ入力で往復すると値が
 // 変わるので対象外 (テキスト入力にフォールバックして値を保つ)。
@@ -46,9 +44,7 @@ export function resolveTypedEditor(typeName: string, start: string): TypedEditor
   const inputType: NativeInputType | null =
     kind === "date" ? "date" : kind === "datetime" ? "datetime-local" : kind === "time" ? "time" : null;
   if (inputType === null) return null;
-  return isBlank(start) || NATIVE_RE[inputType].test(start.trim())
-    ? { control: "native", inputType }
-    : null;
+  return isBlank(start) || NATIVE_RE[inputType].test(start.trim()) ? { control: "native", inputType } : null;
 }
 
 /** DB 文字列 → ネイティブ入力の value (`datetime-local` は空白を `T` に)。 */

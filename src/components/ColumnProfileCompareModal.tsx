@@ -61,7 +61,15 @@ const METRIC_LABEL: Record<MetricId, I18nKey> = {
 const diffBg = semanticColorToken("warning", "subtle");
 const diffFg = semanticColorToken("warning", "text");
 
-function ConnHeader({ c, isBaseline, database }: { c: CompareCandidate; isBaseline: boolean; database: string }) {
+function ConnHeader({
+  c,
+  isBaseline,
+  database,
+}: {
+  c: CompareCandidate;
+  isBaseline: boolean;
+  database: string;
+}) {
   const t = useT();
   return (
     <chakra.th textAlign="left" px="2.5" py="1.5" verticalAlign="bottom" minW="160px">
@@ -208,7 +216,9 @@ export function ColumnProfileCompareModal({
               </Flex>
             ))
           )}
-          {candidates.length > 0 && <chakra.p textStyle="caption">{t("profileCompareDatabaseHint")}</chakra.p>}
+          {candidates.length > 0 && (
+            <chakra.p textStyle="caption">{t("profileCompareDatabaseHint")}</chakra.p>
+          )}
         </ModalBody>
         <ModalFooter>
           <chakra.span flex="1" />
@@ -256,19 +266,36 @@ export function ColumnProfileCompareModal({
             ),
         )}
         <chakra.div overflowX="auto">
-          <chakra.table style={{ borderCollapse: "collapse" }} width="100%" aria-label={t("profileCompareTableAria")}>
+          <chakra.table
+            style={{ borderCollapse: "collapse" }}
+            width="100%"
+            aria-label={t("profileCompareTableAria")}
+          >
             <thead>
               <chakra.tr borderBottom="1px solid" borderColor="app.border">
                 <chakra.th />
                 {targets.map((c, i) => (
-                  <ConnHeader key={c.sessionId} c={c} isBaseline={i === baseHeaderIdx} database={i === 0 ? target.database : dbOf(c)} />
+                  <ConnHeader
+                    key={c.sessionId}
+                    c={c}
+                    isBaseline={i === baseHeaderIdx}
+                    database={i === 0 ? target.database : dbOf(c)}
+                  />
                 ))}
               </chakra.tr>
             </thead>
             <tbody>
               {metricRows.map((row) => (
                 <chakra.tr key={row.id} borderBottom="1px solid" borderColor="app.borderSubtle">
-                  <chakra.th scope="row" textAlign="left" fontWeight={500} color="app.textSecondary" px="2.5" py="1.5" fontSize="sm">
+                  <chakra.th
+                    scope="row"
+                    textAlign="left"
+                    fontWeight={500}
+                    color="app.textSecondary"
+                    px="2.5"
+                    py="1.5"
+                    fontSize="sm"
+                  >
                     {t(METRIC_LABEL[row.id])}
                   </chakra.th>
                   {row.cells.map((cell, i) => (
@@ -288,46 +315,58 @@ export function ColumnProfileCompareModal({
               ))}
               {topRows.length > 0 && (
                 <chakra.tr>
-                  <chakra.th colSpan={targets.length + 1} textAlign="left" textStyle="overline" color="app.textMuted" px="2.5" pt="3" pb="1">
+                  <chakra.th
+                    colSpan={targets.length + 1}
+                    textAlign="left"
+                    textStyle="overline"
+                    color="app.textMuted"
+                    px="2.5"
+                    pt="3"
+                    pb="1"
+                  >
                     {t("profileTopValues")}
                   </chakra.th>
                 </chakra.tr>
               )}
               {topRows.map((row) => (
-                  <chakra.tr key={row.key} borderBottom="1px solid" borderColor="app.borderSubtle">
-                    <chakra.th
-                      scope="row"
-                      textAlign="left"
-                      fontWeight={500}
-                      fontFamily="var(--font-mono)"
-                      fontSize="sm"
-                      px="2.5"
-                      py="1.5"
-                      maxW="240px"
-                      overflow="hidden"
-                      textOverflow="ellipsis"
-                      whiteSpace="nowrap"
-                      color={row.isNull ? "app.textMuted" : "app.text"}
-                    >
-                      {row.label}
-                    </chakra.th>
-                    {row.cells.map((cell, i) => {
-                      const differs = topValueCellDiffers(row, i, entries);
-                      return (
-                        <chakra.td
-                          key={entries[i]?.id ?? i}
-                          px="2.5"
-                          py="1.5"
-                          fontSize="sm"
-                          fontFamily="var(--font-mono)"
-                          bg={differs ? diffBg : undefined}
-                          color={differs ? diffFg : undefined}
-                        >
-                          {cell ? `${cell.count} (${formatPercent(cell.share)})` : entries[i]?.profile ? t("profileCompareAbsent") : "—"}
-                        </chakra.td>
-                      );
-                    })}
-                  </chakra.tr>
+                <chakra.tr key={row.key} borderBottom="1px solid" borderColor="app.borderSubtle">
+                  <chakra.th
+                    scope="row"
+                    textAlign="left"
+                    fontWeight={500}
+                    fontFamily="var(--font-mono)"
+                    fontSize="sm"
+                    px="2.5"
+                    py="1.5"
+                    maxW="240px"
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                    color={row.isNull ? "app.textMuted" : "app.text"}
+                  >
+                    {row.label}
+                  </chakra.th>
+                  {row.cells.map((cell, i) => {
+                    const differs = topValueCellDiffers(row, i, entries);
+                    return (
+                      <chakra.td
+                        key={entries[i]?.id ?? i}
+                        px="2.5"
+                        py="1.5"
+                        fontSize="sm"
+                        fontFamily="var(--font-mono)"
+                        bg={differs ? diffBg : undefined}
+                        color={differs ? diffFg : undefined}
+                      >
+                        {cell
+                          ? `${cell.count} (${formatPercent(cell.share)})`
+                          : entries[i]?.profile
+                            ? t("profileCompareAbsent")
+                            : "—"}
+                      </chakra.td>
+                    );
+                  })}
+                </chakra.tr>
               ))}
             </tbody>
           </chakra.table>

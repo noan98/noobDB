@@ -2,11 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, act, fireEvent } from "./testUtils";
 import { WorkspaceSurface } from "../components/WorkspaceSurface";
-import {
-  KeepAlive,
-  useKeepAliveActive,
-  useRefreshOnReactivate,
-} from "../components/KeepAlive";
+import { KeepAlive, useKeepAliveActive, useRefreshOnReactivate } from "../components/KeepAlive";
 
 /**
  * keep-alive の器 (#1311)。サイドバー / ボトムパネル / 全画面サーフェスの切替が
@@ -25,7 +21,12 @@ function Probe({ name, onMount }: { name: string; onMount: (n: string) => void }
   );
 }
 
-function Host({ tab, limit = 4, resetKey, onMount }: {
+function Host({
+  tab,
+  limit = 4,
+  resetKey,
+  onMount,
+}: {
   tab: string | null;
   limit?: number;
   resetKey?: string | null;

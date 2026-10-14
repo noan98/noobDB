@@ -13,11 +13,7 @@ import {
 // 走査 SQL の生成・しきい値判定・結果行のパースは Rust へ移植済み (#1261)。ここでは移植前の
 // TS 実装 (オラクル) の振る舞いを固定し、共有ゴールデン (dataSearchGolden.test.ts) の
 // 期待値の出所を守る。
-import {
-  buildTableScanSql,
-  parseScanRow,
-  shouldSkipTableForScan,
-} from "./oracles/dataSearchOracle";
+import { buildTableScanSql, parseScanRow, shouldSkipTableForScan } from "./oracles/dataSearchOracle";
 
 describe("searchTargetForKind / searchTargetForDataType (#748)", () => {
   it("classifies text-like kinds as text", () => {
@@ -73,9 +69,7 @@ describe("escapeLikeWildcards", () => {
 
 describe("buildColumnPredicate", () => {
   it("builds an equality predicate for exact mode (text column)", () => {
-    expect(buildColumnPredicate("mysql", "name", "string", "Alice", "exact")).toBe(
-      "`name` = 'Alice'",
-    );
+    expect(buildColumnPredicate("mysql", "name", "string", "Alice", "exact")).toBe("`name` = 'Alice'");
   });
 
   it("builds a contains LIKE predicate with an explicit ESCAPE clause", () => {
@@ -86,7 +80,7 @@ describe("buildColumnPredicate", () => {
 
   it("builds a prefix LIKE predicate", () => {
     expect(buildColumnPredicate("postgres", "name", "string", "ali", "prefix")).toBe(
-      '"name" LIKE \'ali%\' ESCAPE \'\\\'',
+      "\"name\" LIKE 'ali%' ESCAPE '\\'",
     );
   });
 
@@ -112,12 +106,8 @@ describe("buildColumnPredicate", () => {
   });
 
   it("does not double backslashes for postgres/sqlite string literals", () => {
-    expect(buildColumnPredicate("postgres", "name", "string", "a\\b", "exact")).toBe(
-      "\"name\" = 'a\\b'",
-    );
-    expect(buildColumnPredicate("sqlite", "name", "string", "a\\b", "exact")).toBe(
-      '"name" = \'a\\b\'',
-    );
+    expect(buildColumnPredicate("postgres", "name", "string", "a\\b", "exact")).toBe("\"name\" = 'a\\b'");
+    expect(buildColumnPredicate("sqlite", "name", "string", "a\\b", "exact")).toBe("\"name\" = 'a\\b'");
   });
 });
 
@@ -155,15 +145,13 @@ describe("buildTableScanSql", () => {
 
 describe("buildColumnJumpSql", () => {
   it("builds a single-column filtered SELECT for the clicked hit", () => {
-    expect(
-      buildColumnJumpSql("mysql", "shop", "users", "name", "VARCHAR", "ali", "contains"),
-    ).toBe("SELECT * FROM `shop`.`users` WHERE `name` LIKE '%ali%' ESCAPE '\\\\'");
+    expect(buildColumnJumpSql("mysql", "shop", "users", "name", "VARCHAR", "ali", "contains")).toBe(
+      "SELECT * FROM `shop`.`users` WHERE `name` LIKE '%ali%' ESCAPE '\\\\'",
+    );
   });
 
   it("returns null when the column/term combination doesn't qualify", () => {
-    expect(
-      buildColumnJumpSql("mysql", "shop", "users", "age", "INT", "abc", "exact"),
-    ).toBeNull();
+    expect(buildColumnJumpSql("mysql", "shop", "users", "age", "INT", "abc", "exact")).toBeNull();
   });
 });
 
@@ -175,17 +163,13 @@ describe("buildTableJumpSql", () => {
   ];
 
   it("ORs together the predicates for every hit column", () => {
-    expect(
-      buildTableJumpSql("mysql", "shop", "users", columns, ["name", "email"], "ali", "contains"),
-    ).toBe(
+    expect(buildTableJumpSql("mysql", "shop", "users", columns, ["name", "email"], "ali", "contains")).toBe(
       "SELECT * FROM `shop`.`users` WHERE (`name` LIKE '%ali%' ESCAPE '\\\\' OR `email` LIKE '%ali%' ESCAPE '\\\\')",
     );
   });
 
   it("returns null when hitColumns doesn't intersect any searchable column", () => {
-    expect(
-      buildTableJumpSql("mysql", "shop", "users", columns, ["age"], "abc", "contains"),
-    ).toBeNull();
+    expect(buildTableJumpSql("mysql", "shop", "users", columns, ["age"], "abc", "contains")).toBeNull();
   });
 });
 
@@ -195,9 +179,7 @@ describe("shouldSkipTableForScan", () => {
   });
 
   it("does not skip tables at or under the threshold", () => {
-    expect(shouldSkipTableForScan(DEFAULT_SCAN_ROW_THRESHOLD, DEFAULT_SCAN_ROW_THRESHOLD)).toBe(
-      false,
-    );
+    expect(shouldSkipTableForScan(DEFAULT_SCAN_ROW_THRESHOLD, DEFAULT_SCAN_ROW_THRESHOLD)).toBe(false);
     expect(shouldSkipTableForScan(10, DEFAULT_SCAN_ROW_THRESHOLD)).toBe(false);
   });
 

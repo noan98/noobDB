@@ -85,10 +85,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   const deferredQuery = useDeferredValue(query);
   const [expanded, setExpanded] = useState(false);
 
-  const grouped = useMemo(
-    () => groupCommands(items, deferredQuery, mruIds),
-    [items, deferredQuery, mruIds],
-  );
+  const grouped = useMemo(() => groupCommands(items, deferredQuery, mruIds), [items, deferredQuery, mruIds]);
   // 件数上限と表示順 index の事前計算。行ごとの flat.indexOf (O(n^2)) を持たない。
   const {
     groups: visibleGroups,
@@ -196,7 +193,11 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
   return (
     <Modal
       // no-submit: 検索 UI。Enter が候補の決定を担う
-      open onClose={onClose} width="620px" initialFocusEl={() => inputRef.current}>
+      open
+      onClose={onClose}
+      width="620px"
+      initialFocusEl={() => inputRef.current}
+    >
       <Flex
         align="center"
         gap="2"
@@ -218,9 +219,7 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
           role="combobox"
           aria-expanded={flat.length > 0}
           aria-controls="command-palette-list"
-          aria-activedescendant={
-            flat[activeIndex] ? `cmdk-item-${flat[activeIndex].item.id}` : undefined
-          }
+          aria-activedescendant={flat[activeIndex] ? `cmdk-item-${flat[activeIndex].item.id}` : undefined}
           autoComplete="off"
           spellCheck={false}
           flex="1"
@@ -356,10 +355,7 @@ const CommandRow = memo(function CommandRow({
 }: CommandRowProps) {
   const { item, ranges } = scored;
   const labelSegments = useMemo(() => splitLabel(item.label, ranges), [item.label, ranges]);
-  const ref = useCallback(
-    (el: HTMLButtonElement | null) => registerRef(item.id, el),
-    [registerRef, item.id],
-  );
+  const ref = useCallback((el: HTMLButtonElement | null) => registerRef(item.id, el), [registerRef, item.id]);
   const onMouseMove = useCallback(() => {
     if (!active) onActivate(index);
   }, [active, onActivate, index]);

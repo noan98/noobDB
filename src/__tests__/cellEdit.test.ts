@@ -79,35 +79,24 @@ describe("resolvePkIndices", () => {
   });
 
   it("returns [] when there is no primary key", () => {
-    expect(resolvePkIndices(columns, [tcol("id", ""), tcol("name", "")])).toEqual(
-      [],
-    );
+    expect(resolvePkIndices(columns, [tcol("id", ""), tcol("name", "")])).toEqual([]);
   });
 
   it("resolves a single primary key to its result index", () => {
-    expect(
-      resolvePkIndices(columns, [tcol("id", "PRI"), tcol("name", "")]),
-    ).toEqual([0]);
+    expect(resolvePkIndices(columns, [tcol("id", "PRI"), tcol("name", "")])).toEqual([0]);
   });
 
   it("returns [] when a PK column is missing from the result", () => {
-    expect(resolvePkIndices([col("name", "VARCHAR")], [tcol("id", "PRI")])).toEqual(
-      [],
-    );
+    expect(resolvePkIndices([col("name", "VARCHAR")], [tcol("id", "PRI")])).toEqual([]);
   });
 
   it("resolves a composite PK in primary-key order", () => {
     const cols = [col("a", "INT"), col("b", "INT"), col("c", "INT")];
-    expect(
-      resolvePkIndices(cols, [tcol("c", "PRI"), tcol("a", "PRI")]),
-    ).toEqual([2, 0]);
+    expect(resolvePkIndices(cols, [tcol("c", "PRI"), tcol("a", "PRI")])).toEqual([2, 0]);
   });
 });
 
-function rowIdentity(
-  strategy: string,
-  hidden_column: string | null = null,
-): TableRowIdentity {
+function rowIdentity(strategy: string, hidden_column: string | null = null): TableRowIdentity {
   return { strategy, hidden_column };
 }
 
@@ -130,19 +119,16 @@ describe("resolveRowIdentity", () => {
   it("resolves a rowid pseudo-column by name", () => {
     const withRowid = [col("id", "INT"), col("name", "VARCHAR"), col("rowid", "INTEGER")];
     expect(
-      resolveRowIdentity(
-        withRowid,
-        [tcol("id", ""), tcol("name", "")],
-        rowIdentity("rowid", "rowid"),
-      ),
+      resolveRowIdentity(withRowid, [tcol("id", ""), tcol("name", "")], rowIdentity("rowid", "rowid")),
     ).toEqual({ indices: [2], strategy: "rowid" });
   });
 
   it("resolves a ctid pseudo-column by name", () => {
     const withCtid = [col("id", "INT"), col("ctid", "tid")];
-    expect(
-      resolveRowIdentity(withCtid, [tcol("id", "")], rowIdentity("ctid", "ctid")),
-    ).toEqual({ indices: [1], strategy: "ctid" });
+    expect(resolveRowIdentity(withCtid, [tcol("id", "")], rowIdentity("ctid", "ctid"))).toEqual({
+      indices: [1],
+      strategy: "ctid",
+    });
   });
 
   it("falls back to none when the rowid/ctid column is missing from the result", () => {
@@ -166,27 +152,60 @@ describe("resolveRowIdentity", () => {
   });
 
   it("returns none for an unrecognized strategy", () => {
-    expect(
-      resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], rowIdentity("none")),
-    ).toEqual({ indices: [], strategy: "none" });
+    expect(resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], rowIdentity("none"))).toEqual({
+      indices: [],
+      strategy: "none",
+    });
   });
 });
 
 describe("hasAmbiguousIdentity", () => {
   it("returns false when identity indices are empty", () => {
-    expect(hasAmbiguousIdentity([[1, "a"], [1, "a"]], [])).toBe(false);
+    expect(
+      hasAmbiguousIdentity(
+        [
+          [1, "a"],
+          [1, "a"],
+        ],
+        [],
+      ),
+    ).toBe(false);
   });
 
   it("returns false when every row has a distinct identity", () => {
-    expect(hasAmbiguousIdentity([[1, "a"], [2, "a"]], [0])).toBe(false);
+    expect(
+      hasAmbiguousIdentity(
+        [
+          [1, "a"],
+          [2, "a"],
+        ],
+        [0],
+      ),
+    ).toBe(false);
   });
 
   it("returns true when two rows share the same identity (all-columns duplicate)", () => {
-    expect(hasAmbiguousIdentity([[1, "a"], [1, "a"]], [0, 1])).toBe(true);
+    expect(
+      hasAmbiguousIdentity(
+        [
+          [1, "a"],
+          [1, "a"],
+        ],
+        [0, 1],
+      ),
+    ).toBe(true);
   });
 
   it("treats NULL consistently across duplicate rows", () => {
-    expect(hasAmbiguousIdentity([[null, "a"], [null, "a"]], [0, 1])).toBe(true);
+    expect(
+      hasAmbiguousIdentity(
+        [
+          [null, "a"],
+          [null, "a"],
+        ],
+        [0, 1],
+      ),
+    ).toBe(true);
   });
 });
 
@@ -212,9 +231,7 @@ describe("rowEditKey", () => {
 
   it("keeps composite keys unambiguous regardless of value contents", () => {
     // Without length-prefixing, ["as","b"] and ["a","sb"] could collide.
-    expect(rowEditKey(["as", "b"], [0, 1], 0)).not.toBe(
-      rowEditKey(["a", "sb"], [0, 1], 0),
-    );
+    expect(rowEditKey(["as", "b"], [0, 1], 0)).not.toBe(rowEditKey(["a", "sb"], [0, 1], 0));
   });
 
   it("falls back to a position key (distinct from any PK key) without a PK", () => {
@@ -245,27 +262,27 @@ describe("buildUpdateStatements", () => {
   });
 
   it("builds a quoted, qualified UPDATE for MySQL", () => {
-    expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "new" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'new' WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "new" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = 'new' WHERE `id` = 1;",
+    ]);
   });
 
   it("emits numeric input for numeric columns unquoted", () => {
-    expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "5" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `id` = 5 WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "5" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `id` = 5 WHERE `id` = 1;",
+    ]);
   });
 
   it("treats the NULL keyword as SQL NULL", () => {
-    expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "null" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = NULL WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "null" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = NULL WHERE `id` = 1;",
+    ]);
   });
 
   it("uses the original PK value in WHERE even when the PK is edited", () => {
-    expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "99" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `id` = 99 WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 0: "99" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `id` = 99 WHERE `id` = 1;",
+    ]);
   });
 
   it("keeps targeting the right row by PK after rows are appended (loadMore)", () => {
@@ -280,9 +297,7 @@ describe("buildUpdateStatements", () => {
       [4, "page2-b"],
     ];
     expect(
-      buildUpdateStatements(
-        baseInput({ rows: rowsAfterLoadMore, edits: { [k(2)]: { 1: "edited" } } }),
-      ),
+      buildUpdateStatements(baseInput({ rows: rowsAfterLoadMore, edits: { [k(2)]: { 1: "edited" } } })),
     ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'edited' WHERE `id` = 2;"]);
   });
 
@@ -293,11 +308,9 @@ describe("buildUpdateStatements", () => {
       [2, "foo"],
       [1, "old"],
     ];
-    expect(
-      buildUpdateStatements(
-        baseInput({ rows: reordered, edits: { [k(1)]: { 1: "x" } } }),
-      ),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ rows: reordered, edits: { [k(1)]: { 1: "x" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;",
+    ]);
   });
 
   it("emits a re-surfaced row only once", () => {
@@ -308,64 +321,50 @@ describe("buildUpdateStatements", () => {
       [2, "foo"],
       [1, "old-again"],
     ];
-    expect(
-      buildUpdateStatements(
-        baseInput({ rows: withDup, edits: { [k(1)]: { 1: "x" } } }),
-      ),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ rows: withDup, edits: { [k(1)]: { 1: "x" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;",
+    ]);
   });
 
   it("quotes identifiers and qualifies for Postgres", () => {
-    expect(
-      buildUpdateStatements(
-        baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "new" } } }),
-      ),
-    ).toEqual(['UPDATE "db"."tbl" SET "name" = \'new\' WHERE "id" = 1;']);
+    expect(buildUpdateStatements(baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "new" } } }))).toEqual(
+      ['UPDATE "db"."tbl" SET "name" = \'new\' WHERE "id" = 1;'],
+    );
   });
 
   it("omits the database prefix for SQLite", () => {
-    expect(
-      buildUpdateStatements(
-        baseInput({ driver: "sqlite", edits: { [k(1)]: { 1: "new" } } }),
-      ),
-    ).toEqual(['UPDATE "tbl" SET "name" = \'new\' WHERE "id" = 1;']);
+    expect(buildUpdateStatements(baseInput({ driver: "sqlite", edits: { [k(1)]: { 1: "new" } } }))).toEqual([
+      'UPDATE "tbl" SET "name" = \'new\' WHERE "id" = 1;',
+    ]);
   });
 
   it("doubles single quotes in string literals", () => {
-    expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "O'Brien" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'O''Brien' WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "O'Brien" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = 'O''Brien' WHERE `id` = 1;",
+    ]);
   });
 
   it("escapes backslashes for MySQL but not Postgres", () => {
+    expect(buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "a\\b" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `name` = 'a\\\\b' WHERE `id` = 1;",
+    ]);
     expect(
-      buildUpdateStatements(baseInput({ edits: { [k(1)]: { 1: "a\\b" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `name` = 'a\\\\b' WHERE `id` = 1;"]);
-    expect(
-      buildUpdateStatements(
-        baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "a\\b" } } }),
-      ),
+      buildUpdateStatements(baseInput({ driver: "postgres", edits: { [k(1)]: { 1: "a\\b" } } })),
     ).toEqual(['UPDATE "db"."tbl" SET "name" = \'a\\b\' WHERE "id" = 1;']);
   });
 
   it("maps boolean columns to TRUE/FALSE", () => {
     const columns = [col("id", "INT"), col("flag", "BOOLEAN")];
-    expect(
-      buildUpdateStatements(
-        baseInput({ columns, edits: { [k(1)]: { 1: "true" } } }),
-      ),
-    ).toEqual(["UPDATE `db`.`tbl` SET `flag` = TRUE WHERE `id` = 1;"]);
-    expect(
-      buildUpdateStatements(baseInput({ columns, edits: { [k(1)]: { 1: "0" } } })),
-    ).toEqual(["UPDATE `db`.`tbl` SET `flag` = FALSE WHERE `id` = 1;"]);
+    expect(buildUpdateStatements(baseInput({ columns, edits: { [k(1)]: { 1: "true" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `flag` = TRUE WHERE `id` = 1;",
+    ]);
+    expect(buildUpdateStatements(baseInput({ columns, edits: { [k(1)]: { 1: "0" } } }))).toEqual([
+      "UPDATE `db`.`tbl` SET `flag` = FALSE WHERE `id` = 1;",
+    ]);
   });
 
   it("emits one statement per edited row in row (top-to-bottom) order", () => {
-    expect(
-      buildUpdateStatements(
-        baseInput({ edits: { [k(2)]: { 1: "y" }, [k(1)]: { 1: "x" } } }),
-      ),
-    ).toEqual([
+    expect(buildUpdateStatements(baseInput({ edits: { [k(2)]: { 1: "y" }, [k(1)]: { 1: "x" } } }))).toEqual([
       "UPDATE `db`.`tbl` SET `name` = 'x' WHERE `id` = 1;",
       "UPDATE `db`.`tbl` SET `name` = 'y' WHERE `id` = 2;",
     ]);
@@ -423,7 +422,12 @@ describe("単精度 float 列の行識別 WHERE (#1534)", () => {
     expect(sqls[0]).not.toContain('"a" = 0.1');
 
     const my = buildRowSql(
-      { ...baseRowSql({}), columns: [col("f", "FLOAT"), col("n", "INT")], rows: [[-2.5, 3]], pkIndices: [0, 1] },
+      {
+        ...baseRowSql({}),
+        columns: [col("f", "FLOAT"), col("n", "INT")],
+        rows: [[-2.5, 3]],
+        pkIndices: [0, 1],
+      },
       "delete",
     );
     expect(my[0]).toContain("ABS(`f` - (-2.5)) <= ABS((-2.5)) * 0.000001");
@@ -477,12 +481,10 @@ describe("buildRowSql", () => {
 
     it("renders NULL, booleans and escaped strings", () => {
       const columns = [col("id", "INT"), col("flag", "BOOLEAN"), col("note", "VARCHAR")];
-      expect(
-        buildRowSql(baseRowSql({ columns, rows: [[1, true, null]] }), "insert"),
-      ).toEqual(["INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL);"]);
-      expect(
-        buildRowSql(baseRowSql({ columns, rows: [[2, false, "O'Brien"]] }), "insert"),
-      ).toEqual([
+      expect(buildRowSql(baseRowSql({ columns, rows: [[1, true, null]] }), "insert")).toEqual([
+        "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (1, TRUE, NULL);",
+      ]);
+      expect(buildRowSql(baseRowSql({ columns, rows: [[2, false, "O'Brien"]] }), "insert")).toEqual([
         "INSERT INTO `db`.`tbl` (`id`, `flag`, `note`) VALUES (2, FALSE, 'O''Brien');",
       ]);
     });
@@ -491,12 +493,7 @@ describe("buildRowSql", () => {
       // BIGINT beyond 2^53 arrives as a string to avoid precision loss; it must
       // still emit as a bare numeral, not a quoted string.
       const columns = [col("id", "BIGINT"), col("amount", "DECIMAL")];
-      expect(
-        buildRowSql(
-          baseRowSql({ columns, rows: [["9007199254740993", "12.50"]] }),
-          "insert",
-        ),
-      ).toEqual([
+      expect(buildRowSql(baseRowSql({ columns, rows: [["9007199254740993", "12.50"]] }), "insert")).toEqual([
         "INSERT INTO `db`.`tbl` (`id`, `amount`) VALUES (9007199254740993, 12.50);",
       ]);
     });
@@ -507,25 +504,33 @@ describe("buildRowSql", () => {
       expect(buildRowSql(baseRowSql({ columns, rows }), "insert")).toEqual([
         "INSERT INTO `db`.`tbl` (`id`, `data`) VALUES (1, 0xdeadbeef);",
       ]);
-      expect(
-        buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert"),
-      ).toEqual(['INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');']);
-      expect(
-        buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert"),
-      ).toEqual(['INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');']);
+      expect(buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert")).toEqual([
+        'INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');',
+      ]);
+      expect(buildRowSql(baseRowSql({ driver: "sqlite", columns, rows }), "insert")).toEqual([
+        'INSERT INTO "tbl" ("id", "data") VALUES (1, X\'deadbeef\');',
+      ]);
     });
 
     it("treats PostgreSQL BYTEA as a BLOB-family column (regression: #修正4)", () => {
       const columns = [col("id", "INT"), col("data", "BYTEA")];
       const rows: CellValue[][] = [[1, "deadbeef"]];
-      expect(
-        buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert"),
-      ).toEqual(['INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');']);
+      expect(buildRowSql(baseRowSql({ driver: "postgres", columns, rows }), "insert")).toEqual([
+        'INSERT INTO "db"."tbl" ("id", "data") VALUES (1, \'\\xdeadbeef\');',
+      ]);
     });
 
     it("emits one statement per row", () => {
       expect(
-        buildRowSql(baseRowSql({ rows: [[1, "a"], [2, "b"]] }), "insert"),
+        buildRowSql(
+          baseRowSql({
+            rows: [
+              [1, "a"],
+              [2, "b"],
+            ],
+          }),
+          "insert",
+        ),
       ).toEqual([
         "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (1, 'a');",
         "INSERT INTO `db`.`tbl` (`id`, `name`) VALUES (2, 'b');",
@@ -551,30 +556,22 @@ describe("buildRowSql", () => {
 
     it("ANDs a composite primary key in the WHERE clause", () => {
       const columns = [col("a", "INT"), col("b", "INT"), col("v", "VARCHAR")];
-      expect(
-        buildRowSql(
-          baseRowSql({ columns, rows: [[1, 2, "x"]], pkIndices: [0, 1] }),
-          "update",
-        ),
-      ).toEqual(["UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` = 1 AND `b` = 2;"]);
+      expect(buildRowSql(baseRowSql({ columns, rows: [[1, 2, "x"]], pkIndices: [0, 1] }), "update")).toEqual([
+        "UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` = 1 AND `b` = 2;",
+      ]);
     });
 
     it("uses IS NULL in the WHERE clause for a NULL identity value (#849 all_columns fallback)", () => {
       const columns = [col("a", "INT"), col("b", "VARCHAR"), col("v", "VARCHAR")];
       expect(
-        buildRowSql(
-          baseRowSql({ columns, rows: [[null, "k", "x"]], pkIndices: [0, 1] }),
-          "update",
-        ),
+        buildRowSql(baseRowSql({ columns, rows: [[null, "k", "x"]], pkIndices: [0, 1] }), "update"),
       ).toEqual(["UPDATE `db`.`tbl` SET `v` = 'x' WHERE `a` IS NULL AND `b` = 'k';"]);
     });
   });
 
   describe("DELETE", () => {
     it("keys WHERE on the PK", () => {
-      expect(buildRowSql(baseRowSql({}), "delete")).toEqual([
-        "DELETE FROM `db`.`tbl` WHERE `id` = 1;",
-      ]);
+      expect(buildRowSql(baseRowSql({}), "delete")).toEqual(["DELETE FROM `db`.`tbl` WHERE `id` = 1;"]);
     });
 
     it("returns [] without a resolvable primary key", () => {
@@ -598,9 +595,7 @@ describe("buildRowSql", () => {
   });
 
   it("returns [] when there are no columns", () => {
-    expect(buildRowSql(baseRowSql({ columns: [], rows: [[]], pkIndices: [] }), "insert")).toEqual(
-      [],
-    );
+    expect(buildRowSql(baseRowSql({ columns: [], rows: [[]], pkIndices: [] }), "insert")).toEqual([]);
   });
 });
 
@@ -659,9 +654,7 @@ describe("buildInsertClipboard", () => {
       { driver: "mysql", database: "db", table: "tbl", columns: blobCols, rows: blobRows },
       true,
     );
-    expect(result.sql).toBe(
-      "INSERT INTO `db`.`tbl` (`id`, `data`) VALUES (1, 0xdeadbeef), (2, '');",
-    );
+    expect(result.sql).toBe("INSERT INTO `db`.`tbl` (`id`, `data`) VALUES (1, 0xdeadbeef), (2, '');");
   });
 
   it("keeps precision-preserving numeric strings unquoted in combined mode", () => {
@@ -671,23 +664,15 @@ describe("buildInsertClipboard", () => {
       { driver: "postgres", database: "db", table: "tbl", columns: numCols, rows: numRows },
       true,
     );
-    expect(result.sql).toBe(
-      'INSERT INTO "db"."tbl" ("id", "amount") VALUES (9007199254740993, 12.50);',
-    );
+    expect(result.sql).toBe('INSERT INTO "db"."tbl" ("id", "amount") VALUES (9007199254740993, 12.50);');
   });
 
   it("returns an empty string when there are no rows or no columns", () => {
     expect(
-      buildInsertClipboard(
-        { driver: "mysql", database: "db", table: "tbl", columns, rows: [] },
-        true,
-      ).sql,
+      buildInsertClipboard({ driver: "mysql", database: "db", table: "tbl", columns, rows: [] }, true).sql,
     ).toBe("");
     expect(
-      buildInsertClipboard(
-        { driver: "mysql", database: "db", table: "tbl", columns: [], rows },
-        true,
-      ).sql,
+      buildInsertClipboard({ driver: "mysql", database: "db", table: "tbl", columns: [], rows }, true).sql,
     ).toBe("");
   });
 
@@ -777,9 +762,7 @@ describe("buildInsertStatements", () => {
       columns,
       inserts: [{ 1: "Alice", 2: "true" }],
     });
-    expect(stmts).toEqual([
-      "INSERT INTO `shop`.`users` (`name`, `active`) VALUES ('Alice', TRUE);",
-    ]);
+    expect(stmts).toEqual(["INSERT INTO `shop`.`users` (`name`, `active`) VALUES ('Alice', TRUE);"]);
   });
 
   it("coerces null and numbers, and skips empty rows", () => {
@@ -839,10 +822,7 @@ describe("buildInsertStatements", () => {
       database: "shop",
       table: "events",
       columns: [col("id", "INT"), col("at", "DATETIME"), col("note", "VARCHAR")],
-      inserts: [
-        { 1: { fn: "now" }, 2: "NOW()" },
-        { 1: { fn: "current_timestamp" } },
-      ],
+      inserts: [{ 1: { fn: "now" }, 2: "NOW()" }, { 1: { fn: "current_timestamp" } }],
     });
     expect(stmts).toEqual([
       "INSERT INTO `shop`.`events` (`at`, `note`) VALUES (NOW(), 'NOW()');",
@@ -881,15 +861,9 @@ describe("buildInsertStatements", () => {
       database: "main",
       table: "t",
       columns: [col("id", "INTEGER"), col("at", "TEXT"), col("name", "TEXT")],
-      inserts: [
-        { 1: { fn: "now" }, 2: "a" },
-        { 2: "b" },
-        { 0: { fn: "uuid" } },
-      ],
+      inserts: [{ 1: { fn: "now" }, 2: "a" }, { 2: "b" }, { 0: { fn: "uuid" } }],
     });
-    expect(stmts).toEqual([
-      'INSERT INTO "t" ("name") VALUES (\'b\');',
-    ]);
+    expect(stmts).toEqual(['INSERT INTO "t" ("name") VALUES (\'b\');']);
   });
 });
 
@@ -921,10 +895,26 @@ describe("buildDeleteStatements", () => {
 
   it("returns empty without a PK or marks", () => {
     expect(
-      buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices: [], deleteKeys: new Set(["x"]) }),
+      buildDeleteStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        rows,
+        pkIndices: [],
+        deleteKeys: new Set(["x"]),
+      }),
     ).toEqual([]);
     expect(
-      buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns, rows, pkIndices, deleteKeys: new Set() }),
+      buildDeleteStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns,
+        rows,
+        pkIndices,
+        deleteKeys: new Set(),
+      }),
     ).toEqual([]);
   });
 
@@ -1200,7 +1190,15 @@ describe("数値判定の境界 (インジェクション隣接のリテラル�
       const rows: CellValue[][] = [["00123"]];
       const deleteKeys = new Set([rowEditKey(rows[0], [0], 0)]);
       expect(
-        buildDeleteStatements({ driver: "mysql", database: "d", table: "t", columns: cols, rows, pkIndices: [0], deleteKeys }),
+        buildDeleteStatements({
+          driver: "mysql",
+          database: "d",
+          table: "t",
+          columns: cols,
+          rows,
+          pkIndices: [0],
+          deleteKeys,
+        }),
       ).toEqual(["DELETE FROM `d`.`t` WHERE `code` = '00123';"]);
     });
   });
@@ -1210,7 +1208,18 @@ describe("rowEditKey / 行識別の衝突回避", () => {
   const key = (v: CellValue) => rowEditKey([v], [0], 0);
 
   it("型タグで値域が分かれる", () => {
-    const keys = [key(1), key("1"), key(null), key(""), key(true), key("true"), key(false), key("false"), key(0), key("0")];
+    const keys = [
+      key(1),
+      key("1"),
+      key(null),
+      key(""),
+      key(true),
+      key("true"),
+      key(false),
+      key("false"),
+      key(0),
+      key("0"),
+    ];
     expect(new Set(keys).size).toBe(keys.length);
     expect(key(undefined as unknown as CellValue)).toBe(key(null));
   });
@@ -1231,8 +1240,13 @@ describe("rowEditKey / 行識別の衝突回避", () => {
   it("buildDeleteStatements: PK が無ければ deleteKeys があっても何も出さない", () => {
     expect(
       buildDeleteStatements({
-        driver: "mysql", database: "d", table: "t", columns: [col("a", "INT")],
-        rows: [[1]], pkIndices: [], deleteKeys: new Set(["i0"]),
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns: [col("a", "INT")],
+        rows: [[1]],
+        pkIndices: [],
+        deleteKeys: new Set(["i0"]),
       }),
     ).toEqual([]);
   });
@@ -1290,7 +1304,9 @@ describe("数値形式の受理 (小数部・指数部の部品ごと)", () => {
     for (const v of valid) {
       expect(literalFromInput("mysql", v, intCol)).toBe(v);
       expect(setValueFromInput(v, intCol)).toEqual({ kind: "number", text: v });
-      expect(cellValueFromInput(v, intCol)).toBe(Number.isSafeInteger(Number(v)) || !Number.isInteger(Number(v)) ? Number(v) : v);
+      expect(cellValueFromInput(v, intCol)).toBe(
+        Number.isSafeInteger(Number(v)) || !Number.isInteger(Number(v)) ? Number(v) : v,
+      );
     }
     for (const v of invalid) {
       expect(literalFromInput("mysql", v, intCol)).toBe(`'${v}'`);
@@ -1363,8 +1379,8 @@ describe("all_columns 同定の WHERE で BLOB 列を扱う", () => {
 
   it.each([
     ["mysql", "`data` = 0xdeadbeef"],
-    ["sqlite", '"data" = X\'deadbeef\''],
-    ["postgres", '"data" = \'\\xdeadbeef\''],
+    ["sqlite", "\"data\" = X'deadbeef'"],
+    ["postgres", "\"data\" = '\\xdeadbeef'"],
   ])("%s: UPDATE の WHERE が 16 進文字列ではなくバイナリリテラルになる", (driver, expected) => {
     const stmts = buildUpdateStatements({
       driver,

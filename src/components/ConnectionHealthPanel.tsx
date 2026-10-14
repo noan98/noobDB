@@ -129,58 +129,55 @@ export function ConnectionHealthPanel({
   const connectionsRef = useRef(connections);
   connectionsRef.current = connections;
 
-  const runChecks = useCallback(
-    async (opts: { refetchVersion?: boolean } = {}) => {
-      if (busyRef.current) {
-        rerunRef.current = true;
-        return;
-      }
-      busyRef.current = true;
-      setLoading(true);
-      try {
-        const targets = connectionsRef.current.map((c) => ({
-          sessionId: c.sessionId,
-          driver: c.profile.driver,
-        }));
-        // IPC 自体の失敗 (エラー文面は接続先情報を含みうるので捨てる) は、項目なし =
-        // 全件 down として扱う (従来の ping 失敗と同じ見え方)。
-        const items = await api
-          .healthProbeAll(
-            targets.map((target) => target.sessionId),
-            HEALTH_PROBE_TIMEOUT_MS,
-            opts.refetchVersion === true,
-          )
-          .catch(() => []);
-        const bySession = new Map(items.map((item) => [item.session_id, item]));
-        const next = pruneHealthResults(
-          resultsRef.current,
-          connectionsRef.current.map((c) => c.sessionId),
-        );
-        targets.forEach((target) => {
-          next.set(target.sessionId, toHealthProbeResult(target, bySession.get(target.sessionId)));
+  const runChecks = useCallback(async (opts: { refetchVersion?: boolean } = {}) => {
+    if (busyRef.current) {
+      rerunRef.current = true;
+      return;
+    }
+    busyRef.current = true;
+    setLoading(true);
+    try {
+      const targets = connectionsRef.current.map((c) => ({
+        sessionId: c.sessionId,
+        driver: c.profile.driver,
+      }));
+      // IPC 自体の失敗 (エラー文面は接続先情報を含みうるので捨てる) は、項目なし =
+      // 全件 down として扱う (従来の ping 失敗と同じ見え方)。
+      const items = await api
+        .healthProbeAll(
+          targets.map((target) => target.sessionId),
+          HEALTH_PROBE_TIMEOUT_MS,
+          opts.refetchVersion === true,
+        )
+        .catch(() => []);
+      const bySession = new Map(items.map((item) => [item.session_id, item]));
+      const next = pruneHealthResults(
+        resultsRef.current,
+        connectionsRef.current.map((c) => c.sessionId),
+      );
+      targets.forEach((target) => {
+        next.set(target.sessionId, toHealthProbeResult(target, bySession.get(target.sessionId)));
+      });
+      const changed = changedHealthSessions(resultsRef.current, next);
+      resultsRef.current = next;
+      setResults(next);
+      if (changed.size > 0) {
+        setFlash((cur) => {
+          const m = new Map(cur);
+          for (const sid of changed) m.set(sid, (m.get(sid) ?? 0) + 1);
+          return m;
         });
-        const changed = changedHealthSessions(resultsRef.current, next);
-        resultsRef.current = next;
-        setResults(next);
-        if (changed.size > 0) {
-          setFlash((cur) => {
-            const m = new Map(cur);
-            for (const sid of changed) m.set(sid, (m.get(sid) ?? 0) + 1);
-            return m;
-          });
-        }
-        setUpdatedAt(new Date());
-      } finally {
-        busyRef.current = false;
-        setLoading(false);
       }
-      if (rerunRef.current) {
-        rerunRef.current = false;
-        void runChecksRef.current();
-      }
-    },
-    [],
-  );
+      setUpdatedAt(new Date());
+    } finally {
+      busyRef.current = false;
+      setLoading(false);
+    }
+    if (rerunRef.current) {
+      rerunRef.current = false;
+      void runChecksRef.current();
+    }
+  }, []);
 
   const runChecksRef = useRef(runChecks);
   runChecksRef.current = runChecks;
@@ -342,87 +339,89 @@ export function ConnectionHealthPanel({
                 <SkeletonTableRows columns={6} />
               ) : (
                 rows.map((row) => {
-                const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
-                const profile = profileById.get(row.profileId);
-                return (
-                  <chakra.tr
-                    key={`${row.profileId}:${row.sessionId ?? "-"}`}
-                    data-testid={`health-row-${row.profileId}`}
-                    css={gen > 0 ? { "& > td": { position: "relative" } } : undefined}
-                    className={gen > 0 ? (gen % 2 === 0 ? "flash-row flash-row-alt" : "flash-row") : undefined}
-                  >
-                    <chakra.td css={tdCss}>
-                      <Flex direction="column" gap="0.5">
-                        <Flex align="center" gap="1.5">
-                          <chakra.span fontWeight={600}>{row.name}</chakra.span>
-                          {row.isActive && <Badge>{t("healthActive")}</Badge>}
-                          {row.isProduction && <Badge tone="danger">{t("listProduction")}</Badge>}
-                          {row.readOnly && <Badge>{t("healthReadOnly")}</Badge>}
+                  const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
+                  const profile = profileById.get(row.profileId);
+                  return (
+                    <chakra.tr
+                      key={`${row.profileId}:${row.sessionId ?? "-"}`}
+                      data-testid={`health-row-${row.profileId}`}
+                      css={gen > 0 ? { "& > td": { position: "relative" } } : undefined}
+                      className={
+                        gen > 0 ? (gen % 2 === 0 ? "flash-row flash-row-alt" : "flash-row") : undefined
+                      }
+                    >
+                      <chakra.td css={tdCss}>
+                        <Flex direction="column" gap="0.5">
+                          <Flex align="center" gap="1.5">
+                            <chakra.span fontWeight={600}>{row.name}</chakra.span>
+                            {row.isActive && <Badge>{t("healthActive")}</Badge>}
+                            {row.isProduction && <Badge tone="danger">{t("listProduction")}</Badge>}
+                            {row.readOnly && <Badge>{t("healthReadOnly")}</Badge>}
+                          </Flex>
+                          <chakra.span fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
+                            {row.driver.toUpperCase()}
+                            {row.target ? ` · ${row.target}` : ""}
+                          </chakra.span>
                         </Flex>
-                        <chakra.span fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
-                          {row.driver.toUpperCase()}
-                          {row.target ? ` · ${row.target}` : ""}
-                        </chakra.span>
-                      </Flex>
-                    </chakra.td>
-                    <chakra.td css={tdCss}>
-                      <StatusCell
-                        status={row.status}
-                        label={t(STATUS_LABEL[row.status])}
-                        note={row.tunnelClosed ? t("healthTunnelClosed") : undefined}
-                      />
-                    </chakra.td>
-                    <chakra.td css={monoTdCss}>
-                      <LatencyCell ms={row.latencyMs} label={(ms) => t("healthLatencyMs", { ms })} />
-                    </chakra.td>
-                    <chakra.td css={monoTdCss}>{row.version ?? "–"}</chakra.td>
-                    <chakra.td css={monoTdCss}>
-                      {row.connections === "na" ? (
-                        <Tooltip label={t("healthNaHint")} focusableWrapper>
-                          <chakra.span color="app.textMuted">{t("healthNa")}</chakra.span>
-                        </Tooltip>
-                      ) : (
-                        (row.connections ?? "–")
-                      )}
-                    </chakra.td>
-                    <chakra.td css={tdCss}>
-                      <Flex gap="1.5">
-                        {row.sessionId && (row.status === "down" || row.status === "timeout") && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="primary"
-                            disabled={reconnecting.has(row.sessionId)}
-                            onClick={() => void reconnect(row)}
-                          >
-                            <Icon name="refresh" size={ICON_SIZES.sm} /> {t("healthReconnect")}
-                          </Button>
+                      </chakra.td>
+                      <chakra.td css={tdCss}>
+                        <StatusCell
+                          status={row.status}
+                          label={t(STATUS_LABEL[row.status])}
+                          note={row.tunnelClosed ? t("healthTunnelClosed") : undefined}
+                        />
+                      </chakra.td>
+                      <chakra.td css={monoTdCss}>
+                        <LatencyCell ms={row.latencyMs} label={(ms) => t("healthLatencyMs", { ms })} />
+                      </chakra.td>
+                      <chakra.td css={monoTdCss}>{row.version ?? "–"}</chakra.td>
+                      <chakra.td css={monoTdCss}>
+                        {row.connections === "na" ? (
+                          <Tooltip label={t("healthNaHint")} focusableWrapper>
+                            <chakra.span color="app.textMuted">{t("healthNa")}</chakra.span>
+                          </Tooltip>
+                        ) : (
+                          (row.connections ?? "–")
                         )}
-                        {row.sessionId && !row.isActive && profile && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={connectingProfileId !== null}
-                            onClick={() => onOpenProfile(profile)}
-                          >
-                            {t("healthSwitch")}
-                          </Button>
-                        )}
-                        {!row.sessionId && profile && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            disabled={connectingProfileId !== null}
-                            onClick={() => onOpenProfile(profile)}
-                          >
-                            <Icon name="link" size={ICON_SIZES.sm} /> {t("healthConnect")}
-                          </Button>
-                        )}
-                      </Flex>
-                    </chakra.td>
-                  </chakra.tr>
-                );
-              })
+                      </chakra.td>
+                      <chakra.td css={tdCss}>
+                        <Flex gap="1.5">
+                          {row.sessionId && (row.status === "down" || row.status === "timeout") && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="primary"
+                              disabled={reconnecting.has(row.sessionId)}
+                              onClick={() => void reconnect(row)}
+                            >
+                              <Icon name="refresh" size={ICON_SIZES.sm} /> {t("healthReconnect")}
+                            </Button>
+                          )}
+                          {row.sessionId && !row.isActive && profile && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={connectingProfileId !== null}
+                              onClick={() => onOpenProfile(profile)}
+                            >
+                              {t("healthSwitch")}
+                            </Button>
+                          )}
+                          {!row.sessionId && profile && (
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={connectingProfileId !== null}
+                              onClick={() => onOpenProfile(profile)}
+                            >
+                              <Icon name="link" size={ICON_SIZES.sm} /> {t("healthConnect")}
+                            </Button>
+                          )}
+                        </Flex>
+                      </chakra.td>
+                    </chakra.tr>
+                  );
+                })
               )}
             </tbody>
           </chakra.table>

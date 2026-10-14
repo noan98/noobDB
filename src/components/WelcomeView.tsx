@@ -25,9 +25,13 @@ const MotionRow = chakra(motion.div, {}, { forwardProps: ["variants", "initial",
 // ホバー/押下担当の要素 (`SelectableCard`) を分離している。`base.display: "flex"`
 // でラッパー自身を flex コンテナ化し、中の `SelectableCard` (`flex="1"`) が
 // ラッパーいっぱいに広がるようにする。
-const MotionCardWrap = chakra(motion.div, { base: { display: "flex" } }, {
-  forwardProps: ["variants"],
-});
+const MotionCardWrap = chakra(
+  motion.div,
+  { base: { display: "flex" } },
+  {
+    forwardProps: ["variants"],
+  },
+);
 
 interface Props {
   /** 「接続を追加」— 空の接続フォームを開く (ConnectionList の onCreate と同じ)。 */
@@ -155,9 +159,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
             width="calc(34px * var(--font-scale))"
             height="calc(34px * var(--font-scale))"
           />
-          <Heading role="display">
-            {t("welcomeTitle")}
-          </Heading>
+          <Heading role="display">{t("welcomeTitle")}</Heading>
         </Flex>
         {/* 見出し下のブランドグラデーションの短い罫線 (#1216、hc-* では none) */}
         <chakra.div

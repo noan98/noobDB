@@ -98,7 +98,9 @@ describe("migrateLegacySchemaDrift", () => {
 
   it("imports the normalized generations (newest first) and removes the key", async () => {
     const storage = new MemoryStorage({
-      [key]: JSON.stringify({ generations: [legacyGen({ id: "new" }), legacyGen({ id: "old" }), { bogus: 1 }] }),
+      [key]: JSON.stringify({
+        generations: [legacyGen({ id: "new" }), legacyGen({ id: "old" }), { bogus: 1 }],
+      }),
     });
     const importLegacy = vi.fn().mockResolvedValue(2);
     await migrateLegacySchemaDrift("p1", importLegacy, storage);

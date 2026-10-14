@@ -212,11 +212,14 @@ export const TabBar = memo(function TabBar({
   // リネーム確定 / 取消のあと、キーボード操作を続けられるようタブへフォーカスを戻す。
   // blur (他所をクリック) で確定したときは、フォーカスを奪い返さない: 戻すと直後の
   // Backspace / Delete でタブが閉じる事故になる。Enter / Esc のときだけ戻す。
-  const endRename = useCallback((id: string, name: string | null, reason: RenameEnd) => {
-    if (name === null) onRenameCancel?.();
-    else onRename?.(id, name);
-    if (reason !== "blur") requestAnimationFrame(() => tabRefs.current.get(id)?.focus());
-  }, [onRename, onRenameCancel]);
+  const endRename = useCallback(
+    (id: string, name: string | null, reason: RenameEnd) => {
+      if (name === null) onRenameCancel?.();
+      else onRename?.(id, name);
+      if (reason !== "blur") requestAnimationFrame(() => tabRefs.current.get(id)?.focus());
+    },
+    [onRename, onRenameCancel],
+  );
 
   /** ArrowLeft/Right/Home/End でフォーカスとアクティブタブを同時に移動する。
    *  Enter/Space は role="tab" の div 要素では既定で click が走らないため、
@@ -249,7 +252,12 @@ export const TabBar = memo(function TabBar({
       if (idx < 0) return;
       // Cmd/Ctrl+Shift+←/→ moves the focused tab itself (accessible reorder,
       // mirroring the drag affordance). Guarded on `onReorder` being wired.
-      if (onReorder && (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      if (
+        onReorder &&
+        (e.metaKey || e.ctrlKey) &&
+        e.shiftKey &&
+        (e.key === "ArrowLeft" || e.key === "ArrowRight")
+      ) {
         const dir = e.key === "ArrowRight" ? 1 : -1;
         const order = tabs.map((tt) => tt.id);
         const moved = moveTabBy(order, currentId, dir);
@@ -448,9 +456,7 @@ export const TabBar = memo(function TabBar({
           {tabs.map((tab) => {
             const isActive = tab.id === activeTabId;
             const title =
-              tab.kind === "table" && tab.database && tab.table
-                ? `${tab.database}.${tab.table}`
-                : tab.title;
+              tab.kind === "table" && tab.database && tab.table ? `${tab.database}.${tab.table}` : tab.title;
             return (
               <MotionTab
                 key={tab.id}
@@ -567,7 +573,9 @@ export const TabBar = memo(function TabBar({
                         : null
                     }
                   >
-                    <Icon name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"} />
+                    <Icon
+                      name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"}
+                    />
                   </FlightIcon>
                 </chakra.span>
                 {renamingTabId === tab.id && tab.kind === "query" ? (
@@ -773,10 +781,24 @@ export const TabBar = memo(function TabBar({
                               setListFilter("");
                             }}
                           >
-                            <chakra.span flexShrink={0} color={isActive ? "var(--ws-accent)" : "app.textMuted"} aria-hidden>
-                              <Icon name={tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"} size={ICON_SIZES.md} />
+                            <chakra.span
+                              flexShrink={0}
+                              color={isActive ? "var(--ws-accent)" : "app.textMuted"}
+                              aria-hidden
+                            >
+                              <Icon
+                                name={
+                                  tt.kind === "table" ? "table" : tt.kind === "explain" ? "explain" : "query"
+                                }
+                                size={ICON_SIZES.md}
+                              />
                             </chakra.span>
-                            <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" flex="1">
+                            <chakra.span
+                              overflow="hidden"
+                              textOverflow="ellipsis"
+                              whiteSpace="nowrap"
+                              flex="1"
+                            >
                               {tt.title}
                               {sub && (
                                 <chakra.span ml="1.5" fontSize="2xs" color="app.textMuted">

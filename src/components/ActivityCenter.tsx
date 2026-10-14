@@ -63,9 +63,13 @@ const STAGGER_CAP = 20;
 // motion 用 props は Chakra のスタイルプロップに飲まれないよう forwardProps で
 // 素通しする (`WelcomeView` / `ProfileCardGrid` と同じパターン)。
 const MotionUl = chakra(motion.ul, {}, { forwardProps: ["variants", "initial", "animate"] });
-const MotionBadge = chakra(motion.span, {}, {
-  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-});
+const MotionBadge = chakra(
+  motion.span,
+  {},
+  {
+    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+  },
+);
 
 function ActivityPanel({
   anchor,
@@ -279,13 +283,7 @@ function ActivityPanel({
             aria-label={t("activityListAria")}
           >
             {shown.map((e, i) => (
-              <SeverityLogRow
-                key={e.id}
-                entry={e}
-                now={now}
-                animated={i < STAGGER_CAP}
-                time="relative"
-              />
+              <SeverityLogRow key={e.id} entry={e} now={now} animated={i < STAGGER_CAP} time="relative" />
             ))}
           </MotionUl>
         )}

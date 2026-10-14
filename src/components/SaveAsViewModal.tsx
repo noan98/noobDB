@@ -90,7 +90,13 @@ export function SaveAsViewModal({
   };
 
   return (
-    <Modal onSubmit={submit} submitDisabled={!valid} width="560px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal
+      onSubmit={submit}
+      submitDisabled={!valid}
+      width="560px"
+      onClose={onClose}
+      initialFocusEl={() => inputRef.current}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("saveAsViewClose")}>
         {t("saveAsViewTitle")}
       </ModalHeader>

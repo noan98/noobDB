@@ -13,7 +13,11 @@ const TITLE_MAX = 28;
  * 複数結果タブ (新規タブで実行) と、クエリタブの自動命名で共通に使う。
  */
 export function deriveResultTabTitle(sql: string, untitled: string): string {
-  const firstLine = sql.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  const firstLine =
+    sql
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.length > 0) ?? "";
   if (!firstLine) return untitled;
   // コードポイント単位で数える (UTF-16 の slice だとサロゲートペアを割る)。
   const chars = Array.from(firstLine);

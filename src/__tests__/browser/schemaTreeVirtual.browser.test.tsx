@@ -177,9 +177,7 @@ test("フォーカス中の行は、窓の外までスクロールしてもア�
   const row = rowElement("tbl:appdb::t0001")!;
   row.focus();
   scroller().scrollTop = scroller().scrollHeight;
-  await expect
-    .poll(() => treeItems().some((el) => treeKeyOf(el) === `tbl:appdb::${LAST_TABLE}`))
-    .toBe(true);
+  await expect.poll(() => treeItems().some((el) => treeKeyOf(el) === `tbl:appdb::${LAST_TABLE}`)).toBe(true);
   await nextFrame();
   expect(row.isConnected).toBe(true);
   expect(document.activeElement).toBe(row);
@@ -211,7 +209,12 @@ test("→ でテーブルを開くと列の行が続き、← で閉じる", asy
 const OVERSCAN = 12;
 const GROUP_A = "A-grp";
 
-const mkProfile = (id: string, group: string | null): ConnectionProfile => ({ ...PROFILE, id, name: id, group });
+const mkProfile = (id: string, group: string | null): ConnectionProfile => ({
+  ...PROFILE,
+  id,
+  name: id,
+  group,
+});
 // A-grp (上) に 4 つ、B-grp (下) にアクティブなプロファイル。A-grp の開閉でリストの位置が動く。
 const GROUPED_PROFILES = [
   mkProfile("a1", GROUP_A),
@@ -275,7 +278,9 @@ async function rowsAboveViewport() {
 
 async function expectWindowAligned() {
   // 測り直しは ResizeObserver / rAF 経由なので、落ち着くまで待ってから測る。
-  await expect.poll(async () => Math.abs((await rowsAboveViewport()) - OVERSCAN), { timeout: 3000 }).toBeLessThanOrEqual(2);
+  await expect
+    .poll(async () => Math.abs((await rowsAboveViewport()) - OVERSCAN), { timeout: 3000 })
+    .toBeLessThanOrEqual(2);
 }
 
 const toggleGroup = async (name: string) => {
@@ -300,7 +305,9 @@ test("上のグループを閉じて開いても、窓の位置がずれない",
   // 本当にリストが動いている (動かなければ、この試験は位置の追従を検証できない)。
   scroller().scrollTop = 0;
   await nextFrame();
-  expect(before - scroller().querySelector("[data-tree-key='db:appdb']")!.getBoundingClientRect().top).toBeGreaterThan(60);
+  expect(
+    before - scroller().querySelector("[data-tree-key='db:appdb']")!.getBoundingClientRect().top,
+  ).toBeGreaterThan(60);
   await expectWindowAligned();
   await toggleGroup(GROUP_A); // 開く
   await expectWindowAligned();
@@ -316,11 +323,17 @@ test("アクティブなプロファイルを閉じて開き直しても、窓�
 
 test("クイックアクセス (お気に入り) の件数が増減しても、窓の位置がずれない", async () => {
   await renderControlled(GROUPED_PROFILES);
-  setFavoritesExternally(Array.from({ length: 5 }, (_, i) => ({ database: "appdb", table: `t${String(i + 1).padStart(4, "0")}` })));
-  await expect.poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:"))).toBe(true);
+  setFavoritesExternally(
+    Array.from({ length: 5 }, (_, i) => ({ database: "appdb", table: `t${String(i + 1).padStart(4, "0")}` })),
+  );
+  await expect
+    .poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:")))
+    .toBe(true);
   await expectWindowAligned();
   setFavoritesExternally([]);
-  await expect.poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:"))).toBe(false);
+  await expect
+    .poll(() => treeItems().some((el) => el.dataset.treeKey?.startsWith("qa:favorite:")))
+    .toBe(false);
   await expectWindowAligned();
 });
 

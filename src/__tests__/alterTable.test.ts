@@ -80,9 +80,7 @@ describe("buildAlterPlan: rename / modify — MySQL", () => {
     );
     expect(plan.statements).toHaveLength(1);
     expect(plan.statements[0]).toMatchObject({ kind: "renameColumn", destructive: false });
-    expect(plan.statements[0].sql).toBe(
-      "ALTER TABLE `shop`.`users` RENAME COLUMN `old_name` TO `new_name`;",
-    );
+    expect(plan.statements[0].sql).toBe("ALTER TABLE `shop`.`users` RENAME COLUMN `old_name` TO `new_name`;");
   });
 
   it("uses CHANGE COLUMN with a full definition when type/null/default change", () => {
@@ -159,7 +157,9 @@ describe("buildAlterPlan: rename / modify — MySQL", () => {
     const plan = buildAlterPlan(
       "mysql",
       form({
-        baseline: [baseline({ name: "id", type: "int", notNull: true, defaultValue: "", extra: "auto_increment" })],
+        baseline: [
+          baseline({ name: "id", type: "int", notNull: true, defaultValue: "", extra: "auto_increment" }),
+        ],
         existing: [edit({ original: "id", name: "id", type: "bigint", notNull: true, defaultValue: "" })],
       }),
     );
@@ -174,11 +174,14 @@ describe("buildAlterPlan: rename / modify — MySQL", () => {
       "mysql",
       form({
         baseline: [
-          baseline({ name: "created", type: "timestamp", notNull: false, extra: "on update CURRENT_TIMESTAMP" }),
+          baseline({
+            name: "created",
+            type: "timestamp",
+            notNull: false,
+            extra: "on update CURRENT_TIMESTAMP",
+          }),
         ],
-        existing: [
-          edit({ original: "created", name: "created_at", type: "timestamp", notNull: true }),
-        ],
+        existing: [edit({ original: "created", name: "created_at", type: "timestamp", notNull: true })],
       }),
     );
     expect(plan.statements).toHaveLength(1);
@@ -194,9 +197,7 @@ describe("buildAlterPlan: rename / modify — PostgreSQL", () => {
       "postgres",
       form({
         baseline: [baseline({ name: "v", type: "int", notNull: false, defaultValue: "" })],
-        existing: [
-          edit({ original: "v", name: "value", type: "bigint", notNull: true, defaultValue: "0" }),
-        ],
+        existing: [edit({ original: "v", name: "value", type: "bigint", notNull: true, defaultValue: "0" })],
       }),
     );
     const sqls = plan.statements.map((s) => s.sql);
@@ -213,7 +214,11 @@ describe("buildAlterPlan: rename / modify — PostgreSQL", () => {
       "postgres",
       form({
         baseline: [
-          baseline({ name: "status", type: "character varying(20)", defaultValue: "'pending'::character varying" }),
+          baseline({
+            name: "status",
+            type: "character varying(20)",
+            defaultValue: "'pending'::character varying",
+          }),
         ],
         existing: [
           edit({
@@ -345,9 +350,7 @@ describe("buildAlterPlan: CREATE INDEX", () => {
       "mysql",
       form({ indexes: [{ name: "idx_email", columns: ["email"], unique: false }] }),
     );
-    expect(plain.statements[0].sql).toBe(
-      "CREATE INDEX `idx_email` ON `shop`.`users` (`email`);",
-    );
+    expect(plain.statements[0].sql).toBe("CREATE INDEX `idx_email` ON `shop`.`users` (`email`);");
     expect(plain.statements[0].kind).toBe("createIndex");
 
     const unique = buildAlterPlan(
@@ -453,7 +456,9 @@ describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
   it("ADD COLUMN の式 DEFAULT を全方言で文字列化しない", () => {
     const pg = buildAlterPlan(
       "postgres",
-      form({ added: [{ name: "token", type: "text", notNull: false, defaultValue: "gen_random_uuid()::text" }] }),
+      form({
+        added: [{ name: "token", type: "text", notNull: false, defaultValue: "gen_random_uuid()::text" }],
+      }),
     );
     expect(pg.statements[0].sql).toBe(
       'ALTER TABLE "shop"."users" ADD COLUMN "token" text DEFAULT gen_random_uuid()::text;',
@@ -462,7 +467,9 @@ describe("buildAlterPlan: 式 DEFAULT / DEFAULT_GENERATED (#1527)", () => {
       "mysql",
       form({ added: [{ name: "u", type: "varchar(36)", notNull: false, defaultValue: "(UUID())" }] }),
     );
-    expect(my.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `u` varchar(36) DEFAULT (UUID());");
+    expect(my.statements[0].sql).toBe(
+      "ALTER TABLE `shop`.`users` ADD COLUMN `u` varchar(36) DEFAULT (UUID());",
+    );
     const lite = buildAlterPlan(
       "sqlite",
       form({ added: [{ name: "c", type: "text", notNull: false, defaultValue: "007" }] }),
@@ -516,12 +523,17 @@ describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () 
     );
   });
   it("DEFAULT_GENERATED の式既定値は (expr) で包む。現在時刻系は包まない", () => {
+    expect(change({ defaultValue: "uuid()", extra: "DEFAULT_GENERATED" }, { defaultValue: "uuid()" })).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (uuid()) COMMENT 'x';",
+    );
     expect(
-      change({ defaultValue: "uuid()", extra: "DEFAULT_GENERATED" }, { defaultValue: "uuid()" }),
-    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT (uuid()) COMMENT 'x';");
-    expect(
-      change({ defaultValue: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED" }, { defaultValue: "CURRENT_TIMESTAMP" }),
-    ).toBe("ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT CURRENT_TIMESTAMP COMMENT 'x';");
+      change(
+        { defaultValue: "CURRENT_TIMESTAMP", extra: "DEFAULT_GENERATED" },
+        { defaultValue: "CURRENT_TIMESTAMP" },
+      ),
+    ).toBe(
+      "ALTER TABLE `shop`.`users` CHANGE COLUMN `c` `c` varchar(10) DEFAULT CURRENT_TIMESTAMP COMMENT 'x';",
+    );
     // 全体が 1 組の括弧で包まれているときだけ包まない。`(a) + (b)` は包む。
     expect(
       change({ defaultValue: "(rand())", extra: "DEFAULT_GENERATED" }, { defaultValue: "(rand())" }),
@@ -561,10 +573,12 @@ describe("duplicateColumnNames (#1602)", () => {
   });
 
   it("既存列と同名の新規列・リネーム先の衝突は重複 (MySQL は大小無視)", () => {
-    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("STATUS")] })).toEqual(["STATUS"]);
-    expect(
-      duplicateColumnNames("postgres", { baseline: b, existing: [], added: [add("STATUS")] }),
-    ).toEqual([]);
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("STATUS")] })).toEqual([
+      "STATUS",
+    ]);
+    expect(duplicateColumnNames("postgres", { baseline: b, existing: [], added: [add("STATUS")] })).toEqual(
+      [],
+    );
     expect(
       duplicateColumnNames("sqlite", {
         baseline: b,
@@ -572,7 +586,9 @@ describe("duplicateColumnNames (#1602)", () => {
         added: [],
       }),
     ).toEqual(["status"]);
-    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("x"), add("x")] })).toEqual(["x"]);
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("x"), add("x")] })).toEqual(
+      ["x"],
+    );
   });
 });
 
@@ -646,6 +662,8 @@ describe("renameCollisions (#1602)", () => {
         existing: [edit({ original: "a", name: "b" }), edit({ original: "b", drop: true })],
       }),
     ).toEqual([]);
-    expect(renameCollisions("mysql", { baseline: b, existing: [edit({ original: "a", name: "A" })] })).toEqual([]);
+    expect(
+      renameCollisions("mysql", { baseline: b, existing: [edit({ original: "a", name: "A" })] }),
+    ).toEqual([]);
   });
 });

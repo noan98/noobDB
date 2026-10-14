@@ -16,9 +16,7 @@ describe("Skeleton (#537)", () => {
   });
 
   it("passes through style props (width/height)", () => {
-    const { container } = renderWithProviders(
-      <Skeleton style={{ width: "120px", height: "12px" }} />,
-    );
+    const { container } = renderWithProviders(<Skeleton style={{ width: "120px", height: "12px" }} />);
     const el = container.querySelector("div") as HTMLElement;
     expect(el).toBeTruthy();
     expect(el.style.width).toBe("120px");
@@ -26,9 +24,7 @@ describe("Skeleton (#537)", () => {
   });
 
   it("supports animation-delay via style prop (for staggered rows)", () => {
-    const { container } = renderWithProviders(
-      <Skeleton style={{ animationDelay: "0.2s" }} />,
-    );
+    const { container } = renderWithProviders(<Skeleton style={{ animationDelay: "0.2s" }} />);
     const el = container.querySelector("div") as HTMLElement;
     expect(el.style.animationDelay).toBe("0.2s");
   });
@@ -42,17 +38,13 @@ describe("SkeletonRow (#537)", () => {
   });
 
   it("allows width override via style prop", () => {
-    const { container } = renderWithProviders(
-      <SkeletonRow style={{ width: "65%" }} />,
-    );
+    const { container } = renderWithProviders(<SkeletonRow style={{ width: "65%" }} />);
     const el = container.querySelector("div") as HTMLElement;
     expect(el.style.width).toBe("65%");
   });
 
   it("supports opacity for fade-out effect", () => {
-    const { container } = renderWithProviders(
-      <SkeletonRow style={{ opacity: 0.5 }} />,
-    );
+    const { container } = renderWithProviders(<SkeletonRow style={{ opacity: 0.5 }} />);
     const el = container.querySelector("div") as HTMLElement;
     expect(el.style.opacity).toBe("0.5");
   });

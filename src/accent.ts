@@ -82,20 +82,11 @@ function clampByte(n: number): number {
 export function parseHex(hex: string): [number, number, number] | null {
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return null;
   const h = hex.slice(1);
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
 function toHex(rgb: [number, number, number]): string {
-  return (
-    "#" +
-    rgb
-      .map((c) => clampByte(c).toString(16).padStart(2, "0"))
-      .join("")
-  );
+  return "#" + rgb.map((c) => clampByte(c).toString(16).padStart(2, "0")).join("");
 }
 
 /** `base` を `target` 方向へ `amount` (0–1) 混ぜる。 */
@@ -118,11 +109,7 @@ function srgbToLinear(c: number): number {
 }
 
 function luminance(rgb: [number, number, number]): number {
-  return (
-    0.2126 * srgbToLinear(rgb[0]) +
-    0.7152 * srgbToLinear(rgb[1]) +
-    0.0722 * srgbToLinear(rgb[2])
-  );
+  return 0.2126 * srgbToLinear(rgb[0]) + 0.7152 * srgbToLinear(rgb[1]) + 0.0722 * srgbToLinear(rgb[2]);
 }
 
 /** 2 色のコントラスト比 (1–21)。入力が不正なら 1 を返す。 */
@@ -155,8 +142,7 @@ export function accentForeground(hex: string): string {
 export function accentHover(hex: string, theme: Theme): string {
   const rgb = parseHex(hex);
   if (!rgb) return hex;
-  const target: [number, number, number] =
-    theme === "dark" ? [255, 255, 255] : [0, 0, 0];
+  const target: [number, number, number] = theme === "dark" ? [255, 255, 255] : [0, 0, 0];
   const amount = theme === "dark" ? 0.18 : 0.16;
   return toHex(mix(rgb, target, amount));
 }
@@ -221,12 +207,7 @@ export function readToneSurface(el: Element): ToneSurface {
  * `MIN_TONE_CONTRAST` を満たすまで `amount` を半減させ続ける。`amount` が 0 に
  * 収束すれば基準色そのもの (本文と常に高コントラスト) になるため必ず終了する。
  */
-function harmonicTone(
-  hex: string,
-  theme: Theme,
-  amount: number,
-  surface?: ToneSurface,
-): string {
+function harmonicTone(hex: string, theme: Theme, amount: number, surface?: ToneSurface): string {
   const base = toneBase(theme, surface);
   const rgb = parseHex(hex);
   if (!rgb) return toHex(base);

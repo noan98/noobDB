@@ -66,9 +66,7 @@ describe("draftToRule", () => {
       rule: { kind: "range", column: "age", min: "0", max: null },
     });
     expect(
-      draftToRule(
-        draft({ kind: "referential", columns: "order_id", refTable: "orders", refColumns: "id" }),
-      ),
+      draftToRule(draft({ kind: "referential", columns: "order_id", refTable: "orders", refColumns: "id" })),
     ).toEqual({
       ok: true,
       rule: {
@@ -113,7 +111,10 @@ describe("draftToRequest", () => {
   it("スコープを接続中のプロファイルから決める", () => {
     const base = draft({ kind: "not_null", column: "email", schema: " public " });
     const r1 = draftToRequest({ ...base, scopeKind: "profile" }, profile);
-    expect(r1).toMatchObject({ ok: true, req: { scope: { kind: "profile", profile_id: "p1" }, schema: "public" } });
+    expect(r1).toMatchObject({
+      ok: true,
+      req: { scope: { kind: "profile", profile_id: "p1" }, schema: "public" },
+    });
     const r2 = draftToRequest({ ...base, scopeKind: "group" }, profile);
     expect(r2).toMatchObject({ ok: true, req: { scope: { kind: "group", group: "prod" } } });
     const r3 = draftToRequest({ ...base, scopeKind: "any" }, profile);
@@ -139,12 +140,60 @@ describe("draftToRequest", () => {
 
   it("保存済みアサーションを編集状態へ戻して再保存すると同じ内容になる (往復)", () => {
     const saved: Assertion[] = [
-      { id: "a1", name: "nn", scope: { kind: "profile", profile_id: "p1" }, schema: null, table: "users", rule: { kind: "not_null", column: "email" } },
-      { id: "a2", name: "uq", scope: { kind: "group", group: "prod" }, schema: "s", table: "t", rule: { kind: "unique", columns: ["a", "b"] } },
-      { id: "a3", name: "av", scope: { kind: "any" }, schema: null, table: "t", rule: { kind: "accepted_values", column: "s", values: ["x", "y,z"] } },
-      { id: "a4", name: "rg", scope: { kind: "any" }, schema: null, table: "t", rule: { kind: "range", column: "d", min: null, max: "2024-12-31" } },
-      { id: "a5", name: "rf", scope: { kind: "any" }, schema: null, table: "t", rule: { kind: "referential", columns: ["o"], ref_schema: "x", ref_table: "orders", ref_columns: ["id"] } },
-      { id: "a6", name: "rc", scope: { kind: "any" }, schema: null, table: "t", rule: { kind: "row_count", op: "between", value: 1, max: 5 } },
+      {
+        id: "a1",
+        name: "nn",
+        scope: { kind: "profile", profile_id: "p1" },
+        schema: null,
+        table: "users",
+        rule: { kind: "not_null", column: "email" },
+      },
+      {
+        id: "a2",
+        name: "uq",
+        scope: { kind: "group", group: "prod" },
+        schema: "s",
+        table: "t",
+        rule: { kind: "unique", columns: ["a", "b"] },
+      },
+      {
+        id: "a3",
+        name: "av",
+        scope: { kind: "any" },
+        schema: null,
+        table: "t",
+        rule: { kind: "accepted_values", column: "s", values: ["x", "y,z"] },
+      },
+      {
+        id: "a4",
+        name: "rg",
+        scope: { kind: "any" },
+        schema: null,
+        table: "t",
+        rule: { kind: "range", column: "d", min: null, max: "2024-12-31" },
+      },
+      {
+        id: "a5",
+        name: "rf",
+        scope: { kind: "any" },
+        schema: null,
+        table: "t",
+        rule: {
+          kind: "referential",
+          columns: ["o"],
+          ref_schema: "x",
+          ref_table: "orders",
+          ref_columns: ["id"],
+        },
+      },
+      {
+        id: "a6",
+        name: "rc",
+        scope: { kind: "any" },
+        schema: null,
+        table: "t",
+        rule: { kind: "row_count", op: "between", value: 1, max: 5 },
+      },
     ];
     for (const a of saved) {
       const r = draftToRequest(draftFromAssertion(a), profile);
@@ -173,9 +222,9 @@ describe("表示整形", () => {
   });
 
   it("件数は row_count なら行数、それ以外は違反件数として見せる", () => {
-    expect(observedText({ kind: "row_count", op: "gt", value: 0, max: null }, outcome("x", true, 7)).key).toBe(
-      "assertObservedRows",
-    );
+    expect(
+      observedText({ kind: "row_count", op: "gt", value: 0, max: null }, outcome("x", true, 7)).key,
+    ).toBe("assertObservedRows");
     expect(observedText({ kind: "not_null", column: "c" }, outcome("x", false, 2))).toEqual({
       key: "assertObservedViolations",
       params: { count: "2" },
@@ -202,14 +251,7 @@ describe("runAssertionsSequentially", () => {
       () => false,
     );
     expect(calls).toEqual(["a", "b", "c"]);
-    expect(history).toEqual([
-      "a:running",
-      "a:passed",
-      "b:running",
-      "b:error",
-      "c:running",
-      "c:failed",
-    ]);
+    expect(history).toEqual(["a:running", "a:passed", "b:running", "b:error", "c:running", "c:failed"]);
     expect(summarizeRuns(["a", "b", "c"], states)).toEqual({ passed: 1, failed: 1, errored: 1, total: 3 });
   });
 

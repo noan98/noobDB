@@ -107,21 +107,11 @@ export function KnownHostsPanel() {
                 <chakra.span fontSize="sm" fontWeight={500}>
                   {h.host}:{h.port}
                 </chakra.span>
-                <chakra.code
-                  fontFamily="var(--font-mono)"
-                  fontSize="xs"
-                  opacity={0.8}
-                  wordBreak="break-all"
-                >
+                <chakra.code fontFamily="var(--font-mono)" fontSize="xs" opacity={0.8} wordBreak="break-all">
                   {h.fingerprint}
                 </chakra.code>
               </Flex>
-              <Button
-                type="button"
-                variant="dangerOutline"
-                size="sm"
-                onClick={() => handleForget(h)}
-              >
+              <Button type="button" variant="dangerOutline" size="sm" onClick={() => handleForget(h)}>
                 {t("knownHostsForget")}
               </Button>
             </Flex>

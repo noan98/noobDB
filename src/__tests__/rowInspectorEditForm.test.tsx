@@ -28,7 +28,12 @@ function makeEdit(over: Partial<RowInspectorEdit> = {}): RowInspectorEdit {
   };
 }
 
-function inspector(values: CellValue[], edit: RowInspectorEdit | undefined, onClose = () => {}, cols = COLS): ReactElement {
+function inspector(
+  values: CellValue[],
+  edit: RowInspectorEdit | undefined,
+  onClose = () => {},
+  cols = COLS,
+): ReactElement {
   return (
     <RowInspector
       columns={cols}
@@ -43,7 +48,11 @@ function inspector(values: CellValue[], edit: RowInspectorEdit | undefined, onCl
   );
 }
 
-function renderForm(opts: { edit?: Partial<RowInspectorEdit> | null; onClose?: () => void; values?: CellValue[] }) {
+function renderForm(opts: {
+  edit?: Partial<RowInspectorEdit> | null;
+  onClose?: () => void;
+  values?: CellValue[];
+}) {
   const edit = opts.edit === null ? undefined : makeEdit(opts.edit);
   const view = renderWithProviders(inspector(opts.values ?? VALUES, edit, opts.onClose));
   return { edit, rerender: (values: CellValue[]) => view.rerender(inspector(values, edit, opts.onClose)) };
@@ -86,18 +95,18 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
   it("変更が無ければ適用ボタンは無効", () => {
     renderForm({});
     startEditing();
-    expect(
-      (screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it("検証エラーの欄があると適用できず、エラー文を出す", () => {
     const { edit } = renderForm({});
     startEditing();
     fireEvent.change(screen.getByLabelText("age"), { target: { value: "abc" } });
-    expect(
-      (screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect(screen.getByRole("alert").textContent).toBe(t("editInvalidNumber"));
     expect(edit?.onApply).not.toHaveBeenCalled();
   });
@@ -150,9 +159,9 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
     startEditing();
     fireEvent.change(screen.getByLabelText("age"), { target: { value: "31" } });
     rerender(["1", "alice", 99] as CellValue[]);
-    expect(
-      (screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     expect(screen.getByText(t("rowInspectorEditStale"))).toBeTruthy();
     expect(edit?.onApply).not.toHaveBeenCalled();
   });
@@ -163,9 +172,9 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
     fireEvent.change(screen.getByLabelText("name"), { target: { value: "bob" } });
     // グリッド Apply で同じ行の age が 40 になった (結果行が更新された)
     rerender([1, "alice", 40]);
-    expect(
-      (screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    expect((screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
     fireEvent.keyDown(screen.getByLabelText("name"), { key: "Enter", ctrlKey: true });
     expect(edit?.onApply).not.toHaveBeenCalled();
     // 編集し直すと、新しい値を基準に差分が作られる (name だけ、age は送らない)
@@ -192,13 +201,17 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
     await waitFor(() => expect(onApply).toHaveBeenCalledWith({ 1: "a\nb\nc" }));
   });
 
-  it("文字列 \"NULL\" を持つ列は、別の列だけ変えたとき触らない", async () => {
+  it('文字列 "NULL" を持つ列は、別の列だけ変えたとき触らない', async () => {
     const cols: Column[] = [
       { name: "code", type_name: "VARCHAR" },
       { name: "age", type_name: "INT" },
     ];
     const onApply = vi.fn(async () => true);
-    const edit = makeEdit({ editableColumns: [true, true], onApply, validate: (ci, raw) => validateCellInput(raw, cols[ci].type_name, true) });
+    const edit = makeEdit({
+      editableColumns: [true, true],
+      onApply,
+      validate: (ci, raw) => validateCellInput(raw, cols[ci].type_name, true),
+    });
     renderWithProviders(inspector(["NULL", 5], edit, () => {}, cols));
     startEditing();
     fireEvent.change(screen.getByLabelText("age"), { target: { value: "6" } });
@@ -217,9 +230,9 @@ describe("RowInspector のフォーム編集 (#1394)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("editApplyButton") }));
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
     await waitFor(() =>
-      expect(
-        (screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled,
-      ).toBe(false),
+      expect((screen.getByRole("button", { name: t("editApplyButton") }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
     );
     expect((screen.getByLabelText("name") as HTMLInputElement).value).toBe("bob");
     fireEvent.click(screen.getByRole("button", { name: t("editApplyButton") }));

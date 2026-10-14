@@ -31,10 +31,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
 
   const trimmed = name.trim();
   const overCap = rowCount > MAX_LOCAL_TABLE_ROWS;
-  const collides = useMemo(
-    () => tableNameCollides(existingTables, trimmed),
-    [existingTables, trimmed],
-  );
+  const collides = useMemo(() => tableNameCollides(existingTables, trimmed), [existingTables, trimmed]);
   const valid = trimmed.length > 0 && !overCap;
 
   const submit = () => {
@@ -42,7 +39,13 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
   };
 
   return (
-    <Modal onSubmit={submit} submitDisabled={!valid} width="520px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal
+      onSubmit={submit}
+      submitDisabled={!valid}
+      width="520px"
+      onClose={onClose}
+      initialFocusEl={() => inputRef.current}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("localRegisterClose")}>
         {t("localRegisterTitle")}
       </ModalHeader>
@@ -60,9 +63,7 @@ export function RegisterLocalTableModal({ rowCount, existingTables, onConfirm, o
             }}
           />
           {trimmed.length > 0 && collides && (
-            <FieldError tone="warning">
-              {t("localRegisterNameExists", { table: trimmed })}
-            </FieldError>
+            <FieldError tone="warning">{t("localRegisterNameExists", { table: trimmed })}</FieldError>
           )}
         </FormSection>
 

@@ -33,12 +33,20 @@ import { diffLiveRows, type LiveChanges, type LiveField } from "./liveDiff";
  * `LiveFlash` へ移す。`<td>` 自体はパディング 0 のシェルにする。
  */
 
-const MotionTr = chakra(motion.tr, {}, {
-  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-});
-const MotionDiv = chakra(motion.div, {}, {
-  forwardProps: ["variants", "initial", "animate", "exit", "transition"],
-});
+const MotionTr = chakra(
+  motion.tr,
+  {},
+  {
+    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+  },
+);
+const MotionDiv = chakra(
+  motion.div,
+  {},
+  {
+    forwardProps: ["variants", "initial", "animate", "exit", "transition"],
+  },
+);
 
 /** 即時化した transition (reduced-motion 時)。 */
 const INSTANT = { duration: 0 } as const;

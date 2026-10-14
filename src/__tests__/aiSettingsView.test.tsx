@@ -80,9 +80,7 @@ describe("AiSettings (#690)", () => {
     const opt = Array.from(def.options).find((o) => o.value === "claude-opus-5-5");
     expect(opt?.textContent?.endsWith(suffix)).toBe(true);
 
-    const effort = screen.getByLabelText(
-      `${t("aiTaskGeneric")} - ${t("aiColEffort")}`,
-    ) as HTMLSelectElement;
+    const effort = screen.getByLabelText(`${t("aiTaskGeneric")} - ${t("aiColEffort")}`) as HTMLSelectElement;
     expect(effort.value).toBe("medium");
     fireEvent.change(effort, { target: { value: "max" } });
     expect(getSettings().ai.taskEfforts.generic).toBe("max");
@@ -98,7 +96,10 @@ describe("AiSettings (#690)", () => {
       model: null,
       elapsedMs: 3,
     });
-    replaceAllSettings({ ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true } });
+    replaceAllSettings({
+      ...DEFAULT_SETTINGS,
+      ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true },
+    });
     renderWithProviders(<AiSettings />);
     const btn = await screen.findByRole("button", { name: t("aiTestConnection") });
     await waitFor(() => expect(btn).not.toBeDisabled());
@@ -114,7 +115,10 @@ describe("AiSettings サンプル要求 (#690)", () => {
 
   async function start() {
     hasAiApiKey.mockResolvedValue(true);
-    replaceAllSettings({ ...DEFAULT_SETTINGS, ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true } });
+    replaceAllSettings({
+      ...DEFAULT_SETTINGS,
+      ai: { ...DEFAULT_SETTINGS.ai, enabled: true, consentGiven: true },
+    });
     renderWithProviders(<AiSettings />);
     const btn = await screen.findByRole("button", { name: t("aiSampleRequest") });
     await waitFor(() => expect(btn).not.toBeDisabled());
@@ -137,7 +141,14 @@ describe("AiSettings サンプル要求 (#690)", () => {
     act(() => handlers?.onDelta?.({ ...base, text: "lo" }));
     await waitFor(() => expect(screen.getByTestId("ai-sample-text").textContent).toBe("Hello"));
     act(() =>
-      handlers?.onDone?.({ ...base, model: "claude-opus-5-5", requestedModel: "claude-opus-5-5", fallbackUsed: false, stopReason: "end_turn", usage }),
+      handlers?.onDone?.({
+        ...base,
+        model: "claude-opus-5-5",
+        requestedModel: "claude-opus-5-5",
+        fallbackUsed: false,
+        stopReason: "end_turn",
+        usage,
+      }),
     );
     await screen.findByText(t("aiUsageLine", { model: "Claude Opus 5.5", input: "1", output: "2" }));
     // 既存の完了帯と使用量表示が二重にならない

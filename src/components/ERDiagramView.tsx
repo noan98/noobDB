@@ -192,11 +192,7 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
   // hover のみ対応でも native title からの後退はない。
   const { hovered, bind } = useDelegatedTooltip();
   return (
-    <Box
-      css={cardCss}
-      className="er-card"
-      style={{ ["--er-driver" as string]: data.accent }}
-    >
+    <Box css={cardCss} className="er-card" style={{ ["--er-driver" as string]: data.accent }}>
       {/* Handles are invisible anchors edges attach to. */}
       <Handle type="target" position={targetPos} style={{ opacity: 0 }} />
       <Handle type="source" position={sourcePos} style={{ opacity: 0 }} />
@@ -248,9 +244,7 @@ const ErTableNode = memo(function ErTableNode({ data }: NodeProps<ErFlowNode>) {
           )}
         </Box>
       ))}
-      {data.hiddenColumns > 0 && (
-        <Box css={moreRowCss}>+{data.hiddenColumns}</Box>
-      )}
+      {data.hiddenColumns > 0 && <Box css={moreRowCss}>+{data.hiddenColumns}</Box>}
       {hovered && <TooltipBubble label={hovered.label} anchor={hovered.rect} />}
     </Box>
   );
@@ -291,12 +285,7 @@ const ErRelationEdge = memo(function ErRelationEdge({
     sourceX,
     sourceY,
   );
-  const dst = endGlyph(
-    targetEndKind(data?.optional ?? false),
-    targetPosition as ErEndSide,
-    targetX,
-    targetY,
-  );
+  const dst = endGlyph(targetEndKind(data?.optional ?? false), targetPosition as ErEndSide, targetX, targetY);
   return (
     <>
       <BaseEdge id={id} path={path} />
@@ -342,9 +331,7 @@ function ERDiagramInner({
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
   const isDark = useIsDarkTheme();
-  const [databases, setDatabases] = useState<string[]>(
-    initialDatabase ? [initialDatabase] : [],
-  );
+  const [databases, setDatabases] = useState<string[]>(initialDatabase ? [initialDatabase] : []);
   const [database, setDatabase] = useState<string | null>(initialDatabase);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -365,10 +352,7 @@ function ERDiagramInner({
     [source, focus],
   );
   const summary = useMemo(
-    () =>
-      graph
-        ? { shown: graph.nodes.length, total: graph.totalTables, rels: graph.edges.length }
-        : null,
+    () => (graph ? { shown: graph.nodes.length, total: graph.totalTables, rels: graph.edges.length } : null),
     [graph],
   );
   // フォーカスの対象に選べるテーブル (上限で図から落ちているものも含む)。
@@ -395,9 +379,7 @@ function ERDiagramInner({
   // 全景エクスポート用に、現在のズーム/パンに依存しないビューポート変換を組み立てる。
   // ノードの外接矩形を求め、scale(1) で内容全体が収まるよう平行移動 + 出力サイズを返す。
   const buildExportCapture = useCallback(() => {
-    const viewport = flowWrapRef.current?.querySelector(
-      ".react-flow__viewport",
-    ) as HTMLElement | null;
+    const viewport = flowWrapRef.current?.querySelector(".react-flow__viewport") as HTMLElement | null;
     if (!viewport || nodes.length === 0) {
       throw new Error("diagram is not rendered");
     }
@@ -491,10 +473,7 @@ function ERDiagramInner({
         ]),
       );
       const pkByTable = Object.fromEntries(
-        described.map((tb) => [
-          tb.name,
-          tb.columns.filter((c) => c.key === "PRI").map((c) => c.name),
-        ]),
+        described.map((tb) => [tb.name, tb.columns.filter((c) => c.key === "PRI").map((c) => c.name)]),
       );
 
       setSource({ tables, foreignKeys, pkByTable, columnMeta });
@@ -562,10 +541,7 @@ function ERDiagramInner({
     return () => window.clearTimeout(id);
   }, [graph, direction, density, database, driver, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
 
-  const onNodeMouseEnter = useCallback(
-    (_: unknown, n: { id: string }) => setHoverId(n.id),
-    [],
-  );
+  const onNodeMouseEnter = useCallback((_: unknown, n: { id: string }) => setHoverId(n.id), []);
   const onNodeMouseLeave = useCallback(() => setHoverId(null), []);
 
   // ホバー連動ハイライト: 関連テーブル / 線に `er-hl`、それ以外に `er-dim` を付ける。
@@ -600,7 +576,8 @@ function ERDiagramInner({
         alignItems="center"
         gap="3"
         flexWrap="wrap"
-        py="3.5" px="6"
+        py="3.5"
+        px="6"
         borderBottom="1px solid"
         borderColor="app.border"
       >
@@ -647,7 +624,13 @@ function ERDiagramInner({
         </chakra.label>
         {focusChoices.length > 0 && !loading && !error && (
           <>
-            <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="2"
+              fontSize="sm"
+              color="app.textMuted"
+            >
               {t("erDiagramFocus")}
               <Select
                 value={focusTable ?? ""}
@@ -664,7 +647,13 @@ function ERDiagramInner({
               </Select>
             </chakra.label>
             {focusTable && (
-              <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+              <chakra.label
+                display="inline-flex"
+                alignItems="center"
+                gap="2"
+                fontSize="sm"
+                color="app.textMuted"
+              >
                 {t("erDiagramFocusHops")}
                 <Select
                   value={String(focusHops)}
@@ -756,7 +745,14 @@ function ERDiagramInner({
         {t("erDiagramDesc")}
       </chakra.p>
       {truncated && (
-        <chakra.p margin={0} pt="1.5" px="6" pb="0" fontSize="sm" color={semanticColorToken("warning", "text")}>
+        <chakra.p
+          margin={0}
+          pt="1.5"
+          px="6"
+          pb="0"
+          fontSize="sm"
+          color={semanticColorToken("warning", "text")}
+        >
           {focus
             ? t("erDiagramFocusCapped", { shown: summary!.shown })
             : `${t("erDiagramTruncated", { shown: summary!.shown, total: summary!.total })} ${t("erDiagramTruncatedFocusHint")}`}
@@ -765,7 +761,15 @@ function ERDiagramInner({
 
       <Box ref={flowWrapRef} flex="1" position="relative" minHeight={0} mt="3" mx="0" mb="0">
         {loading ? (
-          <Box position="absolute" inset={0} display="flex" alignItems="center" justifyContent="center" gap="3" color="app.textMuted">
+          <Box
+            position="absolute"
+            inset={0}
+            display="flex"
+            alignItems="center"
+            justifyContent="center"
+            gap="3"
+            color="app.textMuted"
+          >
             <Spinner size={18} />
             {t("erDiagramLoading")}
           </Box>

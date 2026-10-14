@@ -46,8 +46,7 @@ export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProp
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   const [query, setQuery] = useState("");
-  const keysText = (s: (typeof SHORTCUTS)[number]) =>
-    s.id ? formatCombo(resolved[s.id]) : t(s.keysKey);
+  const keysText = (s: (typeof SHORTCUTS)[number]) => (s.id ? formatCombo(resolved[s.id]) : t(s.keysKey));
   const visible = filterShortcuts(SHORTCUTS, query, (s) => ({
     label: t(s.descKey),
     keys: keysText(s),
@@ -56,7 +55,9 @@ export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProp
   return (
     <Modal
       // no-submit: 参照画面 (閉じるのみ)
-      onClose={onClose} width="560px">
+      onClose={onClose}
+      width="560px"
+    >
       <ModalHeader onClose={onClose} closeLabel={t("cheatSheetClose")}>
         {t("cheatSheetTitle")}
       </ModalHeader>

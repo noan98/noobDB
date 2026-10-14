@@ -17,7 +17,11 @@ const COLUMNS: TableColumnInfo[] = [
 ];
 
 function result(values: string[]): QueryResult {
-  return { columns: [{ name: "id", type_name: "INT" }], rows: values.map((v) => [v]), elapsed_ms: 1 } as never;
+  return {
+    columns: [{ name: "id", type_name: "INT" }],
+    rows: values.map((v) => [v]),
+    elapsed_ms: 1,
+  } as never;
 }
 
 beforeEach(() => vi.useFakeTimers());

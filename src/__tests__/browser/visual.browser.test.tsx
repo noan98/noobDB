@@ -54,10 +54,7 @@ async function renderVisual(ui: ReactElement, theme: Theme) {
   applyTheme(theme);
   await renderInBrowser(
     <>
-      <div
-        data-testid="visual-root"
-        style={{ width: "640px", padding: "16px", background: "var(--app-bg)" }}
-      >
+      <div data-testid="visual-root" style={{ width: "640px", padding: "16px", background: "var(--app-bg)" }}>
         {ui}
       </div>
       {/* マウスポインタの退避先。ポインタは前のテストの位置に残るため、そのままだと
@@ -122,12 +119,7 @@ describe.runIf(RUN_VISUAL)("ビジュアル回帰 (実ブラウザ)", { retry: 0
       // visual-root には収まらない。ダイアログ本体 (role="dialog") を直接撮る。
       applyTheme(theme);
       await renderInBrowser(
-        <DangerousQueryDialog
-          findings={FINDINGS}
-          isProduction
-          onConfirm={() => {}}
-          onCancel={() => {}}
-        />,
+        <DangerousQueryDialog findings={FINDINGS} isProduction onConfirm={() => {}} onCancel={() => {}} />,
       );
       const dialog = page.getByRole("dialog");
       await expect(dialog).toMatchScreenshot(`dangerous-dialog-${theme}`);

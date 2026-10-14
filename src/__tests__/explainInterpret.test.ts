@@ -80,7 +80,9 @@ describe("buildExplainInterpretPrompt", () => {
 
 describe("planForAi / maskPlanLiterals", () => {
   it("単引用符リテラルの中身を空にする", () => {
-    expect(maskPlanLiterals("Filter: (name = 'a''b') AND (x = 'c')")).toBe("Filter: (name = '') AND (x = '')");
+    expect(maskPlanLiterals("Filter: (name = 'a''b') AND (x = 'c')")).toBe(
+      "Filter: (name = '') AND (x = '')",
+    );
   });
   it("MySQL JSON の `\\'` を含む条件でも後ろの値が残らない", () => {
     const cond = "((`u`.`name` = 'it\\'s') and (`u`.`email` = 'bob@example.com'))";
@@ -94,9 +96,7 @@ describe("planForAi / maskPlanLiterals", () => {
     );
   });
   it("計画中に単独の `'` があっても別の値の後ろの値が残らない", () => {
-    const plan = JSON.stringify([
-      { Plan: { Message: "can't", Filter: "(email = 'x@y')" } },
-    ]);
+    const plan = JSON.stringify([{ Plan: { Message: "can't", Filter: "(email = 'x@y')" } }]);
     const out = maskPlanLiterals(plan);
     expect(out).not.toContain("x@y");
     expect(JSON.parse(out)[0].Plan.Message).toBe("can't");
@@ -151,7 +151,10 @@ describe("parseExplainInterpretResponse", () => {
   });
   it("不正な severity / kind / JSON でない本文は raw を返す", () => {
     const bad = { ...ok, bottlenecks: [{ node: "n", reason: "r", severity: "critical" }] };
-    expect(parseExplainInterpretResponse(JSON.stringify(bad))).toEqual({ ok: false, raw: JSON.stringify(bad) });
+    expect(parseExplainInterpretResponse(JSON.stringify(bad))).toEqual({
+      ok: false,
+      raw: JSON.stringify(bad),
+    });
     const bad2 = { ...ok, suggestions: [{ kind: "drop", sql: "x", rationale: "r" }] };
     expect(parseExplainInterpretResponse(JSON.stringify(bad2)).ok).toBe(false);
     expect(parseExplainInterpretResponse("plain")).toEqual({ ok: false, raw: "plain" });

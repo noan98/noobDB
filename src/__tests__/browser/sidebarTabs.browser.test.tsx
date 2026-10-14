@@ -28,8 +28,9 @@ async function tabHeights(locale: Locale, width: number, fontPx?: number) {
   const screen = await renderInBrowser(<App />);
   const first = screen.getByRole("tab", { name: t("sidebarTabConnections"), exact: true });
   await expect.element(first).toBeVisible();
-  const tabs = Array.from(document.querySelectorAll<HTMLElement>('[role="tablist"] [role="tab"]'))
-    .filter((el) => el.closest('[aria-label="' + t("sidebarTablistAria") + '"]'));
+  const tabs = Array.from(document.querySelectorAll<HTMLElement>('[role="tablist"] [role="tab"]')).filter(
+    (el) => el.closest('[aria-label="' + t("sidebarTablistAria") + '"]'),
+  );
   expect(tabs.length).toBe(4);
   return tabs.map((el) => el.getBoundingClientRect().height);
 }
@@ -69,7 +70,9 @@ test("タブを切り替えても下線のアニメーションでスクロー�
   setLocale("ja");
   localStorage.setItem("noobdb.sidebarWidth", String(SIDEBAR_DEFAULT_WIDTH));
   const screen = await renderInBrowser(<App />);
-  await expect.element(screen.getByRole("tab", { name: t("sidebarTabConnections"), exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("tab", { name: t("sidebarTabConnections"), exact: true }))
+    .toBeVisible();
   const tablist = sidebarTablist();
   // 右端の「ローカル」へ移るときに下線のスプリングが行き過ぎて、タブ列の幅を
   // 一瞬はみ出していた。アニメーション中の毎フレームで、はみ出していないことを確かめる。
@@ -104,7 +107,9 @@ test("最小幅ではアイコンだけになり、横スクロールせず読�
   localStorage.setItem("noobdb.sidebarWidth", String(SIDEBAR_MIN_WIDTH));
   const screen = await renderInBrowser(<App />);
   // 読み上げ名 (アクセシブルネーム) はラベルのまま。
-  await expect.element(screen.getByRole("tab", { name: t("sidebarTabSnippets"), exact: true })).toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("tab", { name: t("sidebarTabSnippets"), exact: true }))
+    .toBeInTheDocument();
   const tablist = sidebarTablist();
   await expect.poll(() => tablist.scrollWidth <= tablist.clientWidth).toBe(true);
   for (const label of Array.from(tablist.querySelectorAll<HTMLElement>("[data-sidebar-tab-label]"))) {

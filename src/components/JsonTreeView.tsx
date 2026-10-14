@@ -289,13 +289,7 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
         </TreeContext.Provider>
       </chakra.div>
 
-      <chakra.div
-        display="flex"
-        alignItems="center"
-        flexWrap="wrap"
-        gap="1.5"
-        minH="0"
-      >
+      <chakra.div display="flex" alignItems="center" flexWrap="wrap" gap="1.5" minH="0">
         {selected ? (
           <>
             <chakra.code
@@ -311,7 +305,12 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
             >
               {formatJsonPath(selected.path)}
             </chakra.code>
-            <Button type="button" size="sm" variant="ghost" onClick={() => copy(formatJsonPath(selected.path))}>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => copy(formatJsonPath(selected.path))}
+            >
               <Icon name="link" size={ICON_SIZES.sm} />
               {t("jsonTreeCopyPath")}
             </Button>
@@ -343,7 +342,10 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
               </Button>
             )}
             {update && selected.path.length > 0 && canSql && (
-              <Tooltip label={update.where ? t("jsonTreeCopySqlUpdateTitle") : t("gridCopyAsSqlNoPk")} focusableWrapper={!sqlUpdate}>
+              <Tooltip
+                label={update.where ? t("jsonTreeCopySqlUpdateTitle") : t("gridCopyAsSqlNoPk")}
+                focusableWrapper={!sqlUpdate}
+              >
                 <Button
                   type="button"
                   size="sm"
@@ -409,8 +411,7 @@ function scalarColor(node: JsonNode): string {
  * 1 ノード分の行と、展開中ならその子。行は展開ノードの子としてしか描かれない
  * ので、選択/展開状態が変わっても描画コストは「見えている行」ぶんに収まる。
  */
-const JsonTreeRow = memo(
-  function JsonTreeRow({ node, pkey: key, segment, level, firstFocusable }: RowProps) {
+const JsonTreeRow = memo(function JsonTreeRow({ node, pkey: key, segment, level, firstFocusable }: RowProps) {
   const t = useT();
   const tree = useContext(TreeContext);
   if (!tree) throw new Error("JsonTreeRow must be rendered inside TreeContext");
@@ -423,7 +424,9 @@ const JsonTreeRow = memo(
   );
   const state = store.get();
   const container = isContainer(node);
-  const open = container && (state.search?.ancestors.has(key) ? !state.searchCollapsed.has(key) : state.expanded.has(key));
+  const open =
+    container &&
+    (state.search?.ancestors.has(key) ? !state.searchCollapsed.has(key) : state.expanded.has(key));
   const count = childCount(node);
   const isSelected = state.selectedKey === key;
   const isMatch = state.search?.matches.has(key) ?? false;
@@ -504,7 +507,13 @@ const JsonTreeRow = memo(
         onKeyDown={onKeyDown}
         style={{ paddingLeft: indentFor(level) }}
         fontWeight={400}
-        bg={isSelected ? "app.active" : isMatch ? "color-mix(in srgb, var(--accent) 14%, transparent)" : undefined}
+        bg={
+          isSelected
+            ? "app.active"
+            : isMatch
+              ? "color-mix(in srgb, var(--accent) 14%, transparent)"
+              : undefined
+        }
         borderLeftColor={isSelected ? "app.accent" : "transparent"}
       >
         <TreeChevron aria-hidden transform={open ? "rotate(90deg)" : undefined}>
@@ -571,5 +580,4 @@ const JsonTreeRow = memo(
       )}
     </>
   );
-  },
-);
+});

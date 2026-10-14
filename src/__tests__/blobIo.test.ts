@@ -47,10 +47,10 @@ describe("buildBlobUpdateStatement", () => {
       "UPDATE `app`.`files` SET `data` = 0xdead WHERE `id` = 7;",
     );
     expect(buildBlobUpdateStatement({ ...base, driver: "postgres", hex: "dead" })).toBe(
-      "UPDATE \"app\".\"files\" SET \"data\" = '\\xdead' WHERE \"id\" = 7;",
+      'UPDATE "app"."files" SET "data" = \'\\xdead\' WHERE "id" = 7;',
     );
     expect(buildBlobUpdateStatement({ ...base, driver: "sqlite", hex: "dead" })).toBe(
-      "UPDATE \"files\" SET \"data\" = X'dead' WHERE \"id\" = 7;",
+      'UPDATE "files" SET "data" = X\'dead\' WHERE "id" = 7;',
     );
   });
   it("空ファイルは MySQL では '' になる", () => {

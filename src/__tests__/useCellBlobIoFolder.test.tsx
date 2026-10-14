@@ -78,10 +78,7 @@ describe("useCellBlobIo saveMany (#1539)", () => {
       "app",
       "files",
       "data",
-      [
-        [{ column: "id", value: 1 }],
-        [{ column: "id", value: 3 }],
-      ],
+      [[{ column: "id", value: 1 }], [{ column: "id", value: 3 }]],
       "/tmp/out",
     );
     await waitFor(() =>
@@ -95,13 +92,19 @@ describe("useCellBlobIo saveMany (#1539)", () => {
 
   it("フォルダ選択をキャンセルしたら何も呼ばない", async () => {
     openMock.mockResolvedValue(null);
-    const { result } = setup([[1, "00"], [2, "00"]]);
+    const { result } = setup([
+      [1, "00"],
+      [2, "00"],
+    ]);
     await result.current(0, 1)?.saveMany?.([0, 1]);
     expect(api.saveCellsToFolder).not.toHaveBeenCalled();
   });
 
   it("どの行も主キーで引けないときは保存せずエラーを出す", async () => {
-    const { result } = setup([[null, "00"], [null, "00"]]);
+    const { result } = setup([
+      [null, "00"],
+      [null, "00"],
+    ]);
     // キーが NULL の行しか無いのでハンドラ自体が作られない (導線ごと出さない)。
     expect(result.current(0, 1)).toBeUndefined();
     expect(api.saveCellsToFolder).not.toHaveBeenCalled();

@@ -4,7 +4,12 @@ import { api, type ProcessInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { useAiStream } from "../ai/useAiStream";
-import { dialectLabel, ERROR_EXPLAIN_MAX_TABLES, needsSendScopeConfirm, resolveTableDatabase } from "../ai/errorExplain";
+import {
+  dialectLabel,
+  ERROR_EXPLAIN_MAX_TABLES,
+  needsSendScopeConfirm,
+  resolveTableDatabase,
+} from "../ai/errorExplain";
 import { riskTone, type ImpactRisk } from "../ai/impactAnalysis";
 import {
   buildLockDiagnosePrompt,
@@ -243,12 +248,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
           </Button>
         )}
         {hasResult && (
-          <Button
-            type="button"
-            variant="secondary"
-            aria-expanded={open}
-            onClick={() => setOpen((v) => !v)}
-          >
+          <Button type="button" variant="secondary" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
             <Icon name={open ? "chevron-down" : "chevron-right"} size={ICON_SIZES.sm} />
             {t("lockDiagnoseResultToggle")}
           </Button>
@@ -264,9 +264,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
       )}
       {(running || (hasResult && open)) && (
         <Flex direction="column" gap="2" maxH="320px" overflow="auto" aria-live="polite">
-          {state.kind === "done" && (
-            <ResultView value={state.value} onLocate={props.onLocateProcess} />
-          )}
+          {state.kind === "done" && <ResultView value={state.value} onLocate={props.onLocateProcess} />}
           <AiUsageNote event={stream.done} />
           {state.kind === "raw" && (
             <Flex direction="column" gap="1">
@@ -302,13 +300,7 @@ export function AiLockDiagnose(props: AiLockDiagnoseProps) {
   );
 }
 
-function ResultView({
-  value,
-  onLocate,
-}: {
-  value: LockDiagnoseResponse;
-  onLocate?: (id: number) => void;
-}) {
+function ResultView({ value, onLocate }: { value: LockDiagnoseResponse; onLocate?: (id: number) => void }) {
   const t = useT();
   const impactLabel: Record<ImpactRisk, string> = {
     high: t("lockDiagnoseImpactHigh"),

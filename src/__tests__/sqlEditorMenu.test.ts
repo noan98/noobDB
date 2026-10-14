@@ -23,8 +23,7 @@ const base: SqlEditorMenuContext = {
 const items = (ctx: SqlEditorMenuContext) =>
   sqlEditorMenuSpec(ctx).filter((e): e is SqlEditorMenuItemSpec => !("separator" in e));
 const actions = (ctx: SqlEditorMenuContext) => items(ctx).map((i) => i.action);
-const find = (ctx: SqlEditorMenuContext, action: string) =>
-  items(ctx).find((i) => i.action === action);
+const find = (ctx: SqlEditorMenuContext, action: string) => items(ctx).find((i) => i.action === action);
 
 describe("sqlEditorMenuSpec", () => {
   it("実行系を先頭に、整形・クリップボード・スニペット保存を並べる", () => {
@@ -132,4 +131,3 @@ describe("sqlEditorMenuSpec: AI 解説 / 最適化案 (#695)", () => {
     expect(find(off, "aiRewrite")?.disabledReasonKey).toBe("editorHintDisabled");
   });
 });
-

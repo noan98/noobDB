@@ -332,12 +332,18 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
   });
 
   it("rejects an unknown chart type or aggregation", () => {
-    expect(sanitizeChartConfig({ type: "scatter", xCol: 0, yCols: [1], aggregation: "sum" }, columns)).toBeNull();
-    expect(sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "median" }, columns)).toBeNull();
+    expect(
+      sanitizeChartConfig({ type: "scatter", xCol: 0, yCols: [1], aggregation: "sum" }, columns),
+    ).toBeNull();
+    expect(
+      sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [1], aggregation: "median" }, columns),
+    ).toBeNull();
   });
 
   it("falls back to null when xCol is out of range (column set changed)", () => {
-    expect(sanitizeChartConfig({ type: "bar", xCol: 9, yCols: [1], aggregation: "none" }, columns)).toBeNull();
+    expect(
+      sanitizeChartConfig({ type: "bar", xCol: 9, yCols: [1], aggregation: "none" }, columns),
+    ).toBeNull();
   });
 
   it("drops out-of-range / duplicate Y columns but keeps the rest", () => {
@@ -349,7 +355,9 @@ describe("sanitizeChartConfig (#909, corruption resistance)", () => {
   });
 
   it("falls back to null when every saved Y column disappeared (schema drift)", () => {
-    expect(sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [9, 10], aggregation: "none" }, columns)).toBeNull();
+    expect(
+      sanitizeChartConfig({ type: "bar", xCol: 0, yCols: [9, 10], aggregation: "none" }, columns),
+    ).toBeNull();
   });
 
   it("respects an intentionally empty Y selection", () => {
@@ -394,7 +402,9 @@ describe("readStoredChartConfig / writeStoredChartConfig (#909)", () => {
   it("returns null when no key is given (unexecuted SQL)", () => {
     expect(readStoredChartConfig(undefined, columns)).toBeNull();
     // Writing with no key is a silent no-op, not a throw.
-    expect(() => writeStoredChartConfig(undefined, { type: "bar", xCol: 0, yCols: [1], aggregation: "none" })).not.toThrow();
+    expect(() =>
+      writeStoredChartConfig(undefined, { type: "bar", xCol: 0, yCols: [1], aggregation: "none" }),
+    ).not.toThrow();
   });
 
   it("returns null for missing or corrupt JSON instead of throwing", () => {
@@ -579,7 +589,7 @@ describe("DB 側集計モード (#1257)", () => {
   it("buildChartSql: 方言ごとに識別子をクオートする", () => {
     const base = { sourceSql: "SELECT 1", xColumn: 'we"ird', yColumns: ["v"], agg: "avg" as const };
     expect(buildChartSql({ ...base, driver: "postgres" })).toContain('"we""ird"');
-    expect(buildChartSql({ ...base, driver: "sqlite" })).toContain("AVG(\"v\")");
+    expect(buildChartSql({ ...base, driver: "sqlite" })).toContain('AVG("v")');
     expect(buildChartSql({ ...base, driver: "mysql", agg: "count" })).toContain("COUNT(`v`)");
   });
 
@@ -627,7 +637,14 @@ describe("DB 側集計モード (#1257)", () => {
       { type: "bar", xCol: 0, yCols: [1], aggregation: "sum" },
     );
     // DB が返すはずの結果 (X 昇順)。
-    const db = chartModelFromAggregatedRows([["a", 4], ["b", 2]], ["v"], "sum");
+    const db = chartModelFromAggregatedRows(
+      [
+        ["a", 4],
+        ["b", 2],
+      ],
+      ["v"],
+      "sum",
+    );
     expect(db.labels).toEqual(js.labels.slice().sort());
     expect(db.series[0].name).toBe(js.series[0].name);
     expect(Object.fromEntries(db.labels.map((l, i) => [l, db.series[0].values[i]]))).toEqual(
@@ -719,7 +736,9 @@ describe("chartSummary / stepChartIndex (#1529)", () => {
   });
 
   it("点が無ければ min / max は null", () => {
-    const empty = { labels: [], series: [{ name: "x", values: [] }] } as unknown as Parameters<typeof chartSummary>[0];
+    const empty = { labels: [], series: [{ name: "x", values: [] }] } as unknown as Parameters<
+      typeof chartSummary
+    >[0];
     expect(chartSummary(empty)).toEqual({ series: 1, points: 0, min: null, max: null });
   });
 
@@ -737,7 +756,12 @@ describe("chartSummary / stepChartIndex (#1529)", () => {
 });
 
 describe("時間バケット集計 (#1541)", () => {
-  const base = { sourceSql: "SELECT * FROM ev;", xColumn: "created_at", yColumns: ["n"], agg: "sum" as const };
+  const base = {
+    sourceSql: "SELECT * FROM ev;",
+    xColumn: "created_at",
+    yColumns: ["n"],
+    agg: "sum" as const,
+  };
 
   it("PostgreSQL は date_trunc + to_char で、位置指定の GROUP BY", () => {
     expect(buildChartSql({ ...base, driver: "postgres", bucket: "week" })).toBe(
@@ -821,27 +845,71 @@ describe("時間バケット集計 (#1541)", () => {
     );
     expect(m.labels).toEqual(["2024-01-01", "2024-01-08", "2024-01-15", "2024-01-22"]);
     expect(m.series[0].values).toEqual([1, 0, 0, 4]);
-    const bad = chartModelFromAggregatedRows([["2024-01-02", 1], ["2024-01-22", 4]], ["n"], "sum", "week");
+    const bad = chartModelFromAggregatedRows(
+      [
+        ["2024-01-02", 1],
+        ["2024-01-22", 4],
+      ],
+      ["n"],
+      "sum",
+      "week",
+    );
     expect(bad.labels).toEqual(["2024-01-02", "2024-01-22"]);
   });
 
   it("NULL の X は末尾へ寄せ、日付として読めないラベルがあれば元のまま", () => {
-    const m = chartModelFromAggregatedRows([[null, 9], ["2024-01-01", 1], ["2024-01-03", 2]], ["n"], "sum", "day");
+    const m = chartModelFromAggregatedRows(
+      [
+        [null, 9],
+        ["2024-01-01", 1],
+        ["2024-01-03", 2],
+      ],
+      ["n"],
+      "sum",
+      "day",
+    );
     expect(m.labels).toEqual(["2024-01-01", "2024-01-02", "2024-01-03", "(null)"]);
     expect(m.series[0].values).toEqual([1, 0, 2, 9]);
-    const raw = chartModelFromAggregatedRows([["abc", 1], ["2024-01-03", 2]], ["n"], "sum", "day");
+    const raw = chartModelFromAggregatedRows(
+      [
+        ["abc", 1],
+        ["2024-01-03", 2],
+      ],
+      ["n"],
+      "sum",
+      "day",
+    );
     expect(raw.labels).toEqual(["abc", "2024-01-03"]);
-    const invalid = chartModelFromAggregatedRows([["2024-02-30", 1], ["2024-03-03", 2]], ["n"], "sum", "day");
+    const invalid = chartModelFromAggregatedRows(
+      [
+        ["2024-02-30", 1],
+        ["2024-03-03", 2],
+      ],
+      ["n"],
+      "sum",
+      "day",
+    );
     expect(invalid.labels).toEqual(["2024-02-30", "2024-03-03"]);
   });
 
   it("範囲が上限を超えるときは埋めない", () => {
-    const m = chartModelFromAggregatedRows([["1990-01-01", 1], ["2024-01-01", 2]], ["n"], "sum", "day");
+    const m = chartModelFromAggregatedRows(
+      [
+        ["1990-01-01", 1],
+        ["2024-01-01", 2],
+      ],
+      ["n"],
+      "sum",
+      "day",
+    );
     expect(m.labels).toHaveLength(2);
   });
 
   it("sanitizeChartConfig は既知の timeBucket だけ引き継ぐ", () => {
-    const cols = [{ name: "d", type_name: "DATE" }, { name: "n", type_name: "INT" }];
+    const cols = [
+      { name: "d", type_name: "DATE" },
+      { name: "n", type_name: "INT" },
+    ];
     const cfg = { type: "line", xCol: 0, yCols: [1], aggregation: "sum", palette: "categorical" };
     expect(sanitizeChartConfig({ ...cfg, timeBucket: "week" }, cols)?.timeBucket).toBe("week");
     expect(sanitizeChartConfig({ ...cfg, timeBucket: "year" }, cols)?.timeBucket).toBeUndefined();
@@ -852,7 +920,14 @@ describe("時間バケットの適用条件 (#1541)", () => {
   const col = (type_name: string) => [{ name: "x", type_name }];
   it("PostgreSQL / MySQL は date / datetime / timestamp 系の列だけ。整数・文字列・time は不可", () => {
     for (const d of ["postgres", "mysql"]) {
-      for (const ok of ["DATE", "DATETIME", "TIMESTAMP", "timestamptz", "TIMESTAMP WITHOUT TIME ZONE", "datetime(6)"]) {
+      for (const ok of [
+        "DATE",
+        "DATETIME",
+        "TIMESTAMP",
+        "timestamptz",
+        "TIMESTAMP WITHOUT TIME ZONE",
+        "datetime(6)",
+      ]) {
         expect(canTimeBucket(d, col(ok), [], 0)).toBe(true);
       }
       for (const ng of ["INT", "BIGINT", "VARCHAR", "TEXT", "TIME", "BOOLEAN"]) {
@@ -865,12 +940,18 @@ describe("時間バケットの適用条件 (#1541)", () => {
   it("SQLite は取得済みの値の 80% 以上が日付表記のときだけ (整数 X は不可)", () => {
     const rows = (vals: CellValue[]) => vals.map((v) => [v]);
     const c = col("");
-    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02 10:00:00", "2024-01-03T01:02:03", null]), 0)).toBe(true);
+    expect(
+      canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02 10:00:00", "2024-01-03T01:02:03", null]), 0),
+    ).toBe(true);
     expect(canTimeBucket("sqlite", c, rows([1, 2, 3]), 0)).toBe(false);
     expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "x", "y", "z", "w"]), 0)).toBe(false);
     // 境界: 5 件中 4 件 (80%) は可、3 件 (60%) は不可
-    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "q"]), 0)).toBe(true);
-    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "q", "r"]), 0)).toBe(false);
+    expect(
+      canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "q"]), 0),
+    ).toBe(true);
+    expect(canTimeBucket("sqlite", c, rows(["2024-01-01", "2024-01-02", "2024-01-03", "q", "r"]), 0)).toBe(
+      false,
+    );
     expect(canTimeBucket("sqlite", c, [], 0)).toBe(false);
     expect(canTimeBucket("sqlite", c, rows([20240101, 20240102]), 0)).toBe(false);
   });
@@ -884,8 +965,14 @@ describe("時間バケットの適用条件 (#1541)", () => {
   });
 
   it("avg では欠損期間を 0 で埋めない (sum / count は埋める)", () => {
-    const rows: CellValue[][] = [["2024-01-01", 5], ["2024-01-03", 7]];
-    expect(chartModelFromAggregatedRows(rows, ["n"], "avg", "day").labels).toEqual(["2024-01-01", "2024-01-03"]);
+    const rows: CellValue[][] = [
+      ["2024-01-01", 5],
+      ["2024-01-03", 7],
+    ];
+    expect(chartModelFromAggregatedRows(rows, ["n"], "avg", "day").labels).toEqual([
+      "2024-01-01",
+      "2024-01-03",
+    ]);
     expect(chartModelFromAggregatedRows(rows, ["n"], "sum", "day").labels).toHaveLength(3);
     expect(chartModelFromAggregatedRows(rows, ["n"], "count", "day").labels).toHaveLength(3);
   });

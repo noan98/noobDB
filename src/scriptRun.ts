@@ -28,10 +28,7 @@ export type ScriptToggleKey = "continueOnError" | "wrapInTransaction";
  * (all-or-nothing のトランザクションで「失敗をスキップして続行」は成り立たない —
  * バックエンドも両方 true を拒否する) なので、片方を ON にしたらもう片方を OFF にする。
  */
-export function toggleScriptOption(
-  opts: ScriptOptions,
-  key: ScriptToggleKey,
-): ScriptOptions {
+export function toggleScriptOption(opts: ScriptOptions, key: ScriptToggleKey): ScriptOptions {
   const next = { ...opts, [key]: !opts[key] };
   if (next[key]) {
     if (key === "continueOnError") next.wrapInTransaction = false;
@@ -49,7 +46,9 @@ export function scriptProgressRatio(p: Pick<ScriptProgressEvent, "bytesRead" | "
 }
 
 /** 進捗率をパーセント整数に丸める (表示用)。 */
-export function scriptProgressPercent(p: Pick<ScriptProgressEvent, "bytesRead" | "totalBytes">): number | null {
+export function scriptProgressPercent(
+  p: Pick<ScriptProgressEvent, "bytesRead" | "totalBytes">,
+): number | null {
   const r = scriptProgressRatio(p);
   return r == null ? null : Math.floor(r * 100);
 }
@@ -155,9 +154,7 @@ export function dangerKindCounts(
   analysis: Pick<ScriptAnalysis, "dangerCounts">,
 ): { kind: ScriptDangerKind; count: number }[] {
   const order: ScriptDangerKind[] = ["drop", "truncate", "deleteNoWhere", "updateNoWhere"];
-  return order
-    .map((kind) => ({ kind, count: analysis.dangerCounts[kind] }))
-    .filter((e) => e.count > 0);
+  return order.map((kind) => ({ kind, count: analysis.dangerCounts[kind] })).filter((e) => e.count > 0);
 }
 
 /** 先頭の一覧が全文を網羅していない (`head` が `totalStatements` より短い)。 */

@@ -39,7 +39,18 @@ interface Props {
 /** ドライバ別の型サジェスト (datalist 用)。 */
 const TYPE_SUGGESTIONS: Record<DriverKind, string[]> = {
   mysql: ["INT", "BIGINT", "VARCHAR(255)", "TEXT", "DATETIME", "DATE", "DECIMAL(10,2)", "BOOLEAN", "JSON"],
-  postgres: ["INTEGER", "BIGINT", "VARCHAR(255)", "TEXT", "TIMESTAMPTZ", "DATE", "NUMERIC(10,2)", "BOOLEAN", "JSONB", "UUID"],
+  postgres: [
+    "INTEGER",
+    "BIGINT",
+    "VARCHAR(255)",
+    "TEXT",
+    "TIMESTAMPTZ",
+    "DATE",
+    "NUMERIC(10,2)",
+    "BOOLEAN",
+    "JSONB",
+    "UUID",
+  ],
   sqlite: ["INTEGER", "TEXT", "REAL", "BLOB", "NUMERIC"],
 };
 
@@ -68,11 +79,27 @@ function isInitialColumn(c: ColumnDef, driver: DriverKind): boolean {
   );
 }
 
-export function CreateTableModal({ sessionId, driver, database, readOnly, onRun, onSendToEditor, onClose }: Props) {
+export function CreateTableModal({
+  sessionId,
+  driver,
+  database,
+  readOnly,
+  onRun,
+  onSendToEditor,
+  onClose,
+}: Props) {
   const t = useT();
   const [table, setTable] = useState("");
   const [columns, setColumns] = useState<ColumnDef[]>(() => [
-    { name: "id", type: driver === "sqlite" ? "INTEGER" : "INT", notNull: true, primaryKey: true, unique: false, autoIncrement: true, defaultValue: "" },
+    {
+      name: "id",
+      type: driver === "sqlite" ? "INTEGER" : "INT",
+      notNull: true,
+      primaryKey: true,
+      unique: false,
+      autoIncrement: true,
+      defaultValue: "",
+    },
   ]);
 
   const [foreignKeys, setForeignKeys] = useState<FkRow[]>([]);
@@ -160,9 +187,7 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
             // 列名の前後空白は検証側 (trim 済み) と制約エディタ候補に合わせて落とす。
             columns: columns.map((c) => ({ ...c, name: c.name.trim() })),
             // id は React key 専用のローカル state なので純ロジックへ渡す前に落とす。
-            foreignKeys: foreignKeys
-              .filter(isCompleteForeignKey)
-              .map(({ id: _id, ...fk }) => fk),
+            foreignKeys: foreignKeys.filter(isCompleteForeignKey).map(({ id: _id, ...fk }) => fk),
             checks: checks.filter(isCompleteCheck).map(({ id: _id, ...ck }) => ck),
           })
         : "",
@@ -249,7 +274,13 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
         </datalist>
 
         <chakra.div display="flex" flexDirection="column" gap="1.5">
-          <chakra.div display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" textStyle="overline" px="0.5">
+          <chakra.div
+            display="grid"
+            gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto"
+            gap="1.5"
+            textStyle="overline"
+            px="0.5"
+          >
             <span>{t("createTableColName")}</span>
             <span>{t("createTableColType")}</span>
             <span>{t("createTableColNotNull")}</span>
@@ -260,7 +291,13 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
             <span />
           </chakra.div>
           {columns.map((c, i) => (
-            <chakra.div key={i} display="grid" gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto" gap="1.5" alignItems="center">
+            <chakra.div
+              key={i}
+              display="grid"
+              gridTemplateColumns="1.3fr 1.3fr repeat(4, auto) 1.2fr auto"
+              gap="1.5"
+              alignItems="center"
+            >
               <Input
                 value={c.name}
                 onChange={(e) => setCol(i, { name: e.target.value })}
@@ -347,7 +384,12 @@ export function CreateTableModal({ sessionId, driver, database, readOnly, onRun,
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("createTableClose")}
         </Button>
-        <PressableButton type="button" variant="primary" disabled={!valid || readOnly} onClick={() => onRun(sql)}>
+        <PressableButton
+          type="button"
+          variant="primary"
+          disabled={!valid || readOnly}
+          onClick={() => onRun(sql)}
+        >
           {t("createTableRun")}
         </PressableButton>
       </ModalFooter>

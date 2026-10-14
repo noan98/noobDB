@@ -7,24 +7,14 @@ import { CopyButton } from "../components/CopyButton";
 describe("CopyButton", () => {
   it("copied=false ではアイドル時のラベルを aria-label に持つ", () => {
     renderWithProviders(
-      <CopyButton
-        copied={false}
-        onClick={() => {}}
-        label="コピー"
-        copiedLabel="コピー済み"
-      />,
+      <CopyButton copied={false} onClick={() => {}} label="コピー" copiedLabel="コピー済み" />,
     );
     expect(screen.getByRole("button", { name: "コピー" })).toBeInTheDocument();
   });
 
   it("copied=true では確認表示のラベルへ aria-label が切り替わる", () => {
     renderWithProviders(
-      <CopyButton
-        copied={true}
-        onClick={() => {}}
-        label="コピー"
-        copiedLabel="コピー済み"
-      />,
+      <CopyButton copied={true} onClick={() => {}} label="コピー" copiedLabel="コピー済み" />,
     );
     expect(screen.getByRole("button", { name: "コピー済み" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "コピー" })).toBeNull();
@@ -42,13 +32,7 @@ describe("CopyButton", () => {
   it("disabled のときはクリックしても onClick を呼ばない", () => {
     const onClick = vi.fn();
     renderWithProviders(
-      <CopyButton
-        copied={false}
-        onClick={onClick}
-        label="コピー"
-        copiedLabel="コピー済み"
-        disabled
-      />,
+      <CopyButton copied={false} onClick={onClick} label="コピー" copiedLabel="コピー済み" disabled />,
     );
     fireEvent.click(screen.getByRole("button", { name: "コピー" }));
     expect(onClick).not.toHaveBeenCalled();

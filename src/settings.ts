@@ -18,12 +18,7 @@ import {
   sanitizeQuickLauncherSectionLimits,
   type QuickLauncherSectionLimits,
 } from "./quickLauncher";
-import {
-  DEFAULT_AI_SETTINGS,
-  sanitizeAiSettings,
-  type AiSendScope,
-  type AiSettings,
-} from "./ai/aiSettings";
+import { DEFAULT_AI_SETTINGS, sanitizeAiSettings, type AiSendScope, type AiSettings } from "./ai/aiSettings";
 import type { AiEffort, AiModelId, AiTaskKind } from "./ai/aiModels";
 
 export type Theme = "light" | "dark";
@@ -432,13 +427,7 @@ export const MONO_FONT_PRESETS = [
 ] as const;
 
 /** UI (sans) presets offered in the appearance settings. */
-export const UI_FONT_PRESETS = [
-  "Inter",
-  "Roboto",
-  "Segoe UI",
-  "Helvetica Neue",
-  "Arial",
-] as const;
+export const UI_FONT_PRESETS = ["Inter", "Roboto", "Segoe UI", "Helvetica Neue", "Arial"] as const;
 
 /** Wrap a family name in quotes when it contains spaces (and isn't already quoted). */
 function quoteFamily(family: string): string {
@@ -852,9 +841,7 @@ function sanitizeTabRestoreMode(input: unknown, fallback: TabRestoreMode): TabRe
 }
 
 function sanitizeDensity(input: unknown, fallback: Density): Density {
-  return input === "compact" || input === "normal" || input === "spacious"
-    ? input
-    : fallback;
+  return input === "compact" || input === "normal" || input === "spacious" ? input : fallback;
 }
 
 function sanitizeResultGridMode(input: unknown, fallback: ResultGridMode): ResultGridMode {
@@ -903,9 +890,7 @@ function sanitizeThemePreset(input: unknown, fallback: ThemePreset): ThemePreset
 }
 
 function sanitizeMotionPreference(input: unknown, fallback: MotionPreference): MotionPreference {
-  return MOTION_PREFERENCE_ORDER.includes(input as MotionPreference)
-    ? (input as MotionPreference)
-    : fallback;
+  return MOTION_PREFERENCE_ORDER.includes(input as MotionPreference) ? (input as MotionPreference) : fallback;
 }
 
 /**
@@ -1030,9 +1015,7 @@ export function normalizeSettings(input: unknown): Settings {
     defaultDisplayCount: sanitizeCount(parsed.defaultDisplayCount, DEFAULT_DISPLAY_COUNT),
     streamPrefetchSize: sanitizeCount(parsed.streamPrefetchSize, DEFAULT_STREAM_PREFETCH_SIZE),
     autoLimitEnabled:
-      typeof parsed.autoLimitEnabled === "boolean"
-        ? parsed.autoLimitEnabled
-        : DEFAULT_AUTO_LIMIT_ENABLED,
+      typeof parsed.autoLimitEnabled === "boolean" ? parsed.autoLimitEnabled : DEFAULT_AUTO_LIMIT_ENABLED,
     autoLimitCount: sanitizeCount(parsed.autoLimitCount, DEFAULT_AUTO_LIMIT_COUNT),
     confirmProductionConnect:
       typeof parsed.confirmProductionConnect === "boolean"
@@ -1042,18 +1025,14 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.confirmDangerousQueries === "boolean"
         ? parsed.confirmDangerousQueries
         : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
-    resultsInNewTab:
-      typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
+    resultsInNewTab: typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
     tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
     connectTimeoutSecs: sanitizeConnectTimeout(parsed.connectTimeoutSecs),
     fontSizePx: sanitizeFontSizePx(parsed.fontSizePx, DEFAULT_FONT_SIZE_PX),
     accentColor: sanitizeAccentColor(parsed.accentColor, DEFAULT_ACCENT_COLOR),
     density: sanitizeDensity(parsed.density, DEFAULT_DENSITY),
-    autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(
-      parsed.autoRefreshDefaultSecs,
-      DEFAULT_AUTO_REFRESH_SECS,
-    ),
+    autoRefreshDefaultSecs: sanitizeAutoRefreshSecs(parsed.autoRefreshDefaultSecs, DEFAULT_AUTO_REFRESH_SECS),
     inspectorPollIntervalSecs: sanitizeIntInRange(
       parsed.inspectorPollIntervalSecs,
       DEFAULT_INSPECTOR_POLL_SECS,
@@ -1079,17 +1058,11 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.cellEditOnBlur
         : DEFAULT_CELL_EDIT_ON_BLUR,
     richCellRendering:
-      typeof parsed.richCellRendering === "boolean"
-        ? parsed.richCellRendering
-        : DEFAULT_RICH_CELL_RENDERING,
+      typeof parsed.richCellRendering === "boolean" ? parsed.richCellRendering : DEFAULT_RICH_CELL_RENDERING,
     columnNullBars:
-      typeof parsed.columnNullBars === "boolean"
-        ? parsed.columnNullBars
-        : DEFAULT_COLUMN_NULL_BARS,
+      typeof parsed.columnNullBars === "boolean" ? parsed.columnNullBars : DEFAULT_COLUMN_NULL_BARS,
     columnMaskEnabled:
-      typeof parsed.columnMaskEnabled === "boolean"
-        ? parsed.columnMaskEnabled
-        : DEFAULT_COLUMN_MASK_ENABLED,
+      typeof parsed.columnMaskEnabled === "boolean" ? parsed.columnMaskEnabled : DEFAULT_COLUMN_MASK_ENABLED,
     columnMaskPatterns: sanitizeMaskPatterns(parsed.columnMaskPatterns, DEFAULT_MASK_PATTERNS),
     columnMaskCopyPlaceholder:
       typeof parsed.columnMaskCopyPlaceholder === "boolean"
@@ -1121,9 +1094,7 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.autoUpdateCheckEnabled
         : DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
     sqlLintEnabled:
-      typeof parsed.sqlLintEnabled === "boolean"
-        ? parsed.sqlLintEnabled
-        : DEFAULT_SQL_LINT_ENABLED,
+      typeof parsed.sqlLintEnabled === "boolean" ? parsed.sqlLintEnabled : DEFAULT_SQL_LINT_ENABLED,
     preflightImpactEnabled:
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
@@ -1137,9 +1108,7 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.schemaDriftOnConnect
         : DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
     schemaDriftOnDdl:
-      typeof parsed.schemaDriftOnDdl === "boolean"
-        ? parsed.schemaDriftOnDdl
-        : DEFAULT_SCHEMA_DRIFT_ON_DDL,
+      typeof parsed.schemaDriftOnDdl === "boolean" ? parsed.schemaDriftOnDdl : DEFAULT_SCHEMA_DRIFT_ON_DDL,
     timelapseOnConnect:
       typeof parsed.timelapseOnConnect === "boolean"
         ? parsed.timelapseOnConnect
@@ -1758,10 +1727,7 @@ export function setQuickLauncherEnabled(value: boolean): void {
   listeners.forEach((cb) => cb());
 }
 
-export function setQuickLauncherSectionLimit(
-  section: keyof QuickLauncherSectionLimits,
-  value: number,
-): void {
+export function setQuickLauncherSectionLimit(section: keyof QuickLauncherSectionLimits, value: number): void {
   const next = sanitizeQuickLauncherSectionLimits({
     ...current.quickLauncherSectionLimits,
     [section]: value,

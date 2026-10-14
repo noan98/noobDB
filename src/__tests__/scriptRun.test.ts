@@ -79,7 +79,10 @@ describe("完了/エラーの要約", () => {
       }),
     ).toEqual({ message: "boom", line: 3, index: 2, sql: "INSERT", rolledBack: true });
     expect(
-      describeScriptError({ streamId: "s", error: "no file", failure: null,
+      describeScriptError({
+        streamId: "s",
+        error: "no file",
+        failure: null,
         executed: 0,
         rolledBack: false,
         inTransaction: false,
@@ -206,7 +209,10 @@ describe("resumeFromBeginAt (#1535)", () => {
 
 describe("startInsideTransaction (#1535)", () => {
   const tx = (kind: "begin" | "commit" | "rollback", index: number) => ({ index, line: index, kind });
-  const a = { txControls: [tx("begin", 2), tx("commit", 6), tx("begin", 9), tx("rollback", 12)], txControlTotal: 4 };
+  const a = {
+    txControls: [tx("begin", 2), tx("commit", 6), tx("begin", 9), tx("rollback", 12)],
+    txControlTotal: 4,
+  };
 
   it("BEGIN と COMMIT の間の開始位置なら、その BEGIN の番号を返す", () => {
     expect(startInsideTransaction(a, 4)).toBe(2);

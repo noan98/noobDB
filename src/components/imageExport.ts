@@ -50,7 +50,13 @@ async function blobToBytes(blob: Blob): Promise<Uint8Array> {
 /** 要素を PNG の Blob 化する。背景色とピクセル比を指定する。 */
 export async function elementToPngBlob(
   el: HTMLElement,
-  opts?: { background?: string; pixelRatio?: number; width?: number; height?: number; style?: Partial<CSSStyleDeclaration> },
+  opts?: {
+    background?: string;
+    pixelRatio?: number;
+    width?: number;
+    height?: number;
+    style?: Partial<CSSStyleDeclaration>;
+  },
 ): Promise<Blob> {
   const blob = await toBlob(el, {
     backgroundColor: opts?.background ?? themeBackground(),

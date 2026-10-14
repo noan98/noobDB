@@ -54,10 +54,7 @@ const LOSSY_MESSAGE_KEYS = {
   timestamp_tz_degraded: "transferLossyTimestampTz",
 } as const;
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "running"; rows: number }
-  | { kind: "error"; message: string };
+type Status = { kind: "idle" } | { kind: "running"; rows: number } | { kind: "error"; message: string };
 
 export function DataTransferModal({ sourceSessionId, sourceProfileId, source, profiles, onClose }: Props) {
   const t = useT();
@@ -336,9 +333,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   };
 
   const sourceLabel =
-    source.kind === "table"
-      ? t("transferSourceTable", { table: source.table })
-      : t("transferSourceQuery");
+    source.kind === "table" ? t("transferSourceTable", { table: source.table }) : t("transferSourceQuery");
 
   const validationMessage =
     validation === "tableExists"

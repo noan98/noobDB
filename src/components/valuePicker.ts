@@ -94,7 +94,9 @@ export interface FkCandidatesParams {
 export function isTextDataType(dataType: string | null | undefined): boolean {
   const t = (dataType ?? "").trim().toLowerCase();
   if (t.endsWith("]") || t.startsWith("array") || t.startsWith("_")) return false;
-  return /^(character varying|character|varchar|char|nvarchar|nchar|text|tinytext|mediumtext|longtext)\b/.test(t);
+  return /^(character varying|character|varchar|char|nvarchar|nchar|text|tinytext|mediumtext|longtext)\b/.test(
+    t,
+  );
 }
 
 /**

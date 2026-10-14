@@ -299,9 +299,7 @@ export function CellValueViewer({
               borderRadius="md"
               _disabled={{ opacity: 0.5, cursor: "not-allowed" }}
             />
-            {validationError && (
-              <FieldError display="block">{t(validationError)}</FieldError>
-            )}
+            {validationError && <FieldError display="block">{t(validationError)}</FieldError>}
           </>
         ) : isNull ? (
           <chakra.div fontStyle="italic" color="app.textMuted">
@@ -320,7 +318,8 @@ export function CellValueViewer({
             minH="80px"
             maxH="60vh"
             overflow="auto"
-            py="2.5" px="3"
+            py="2.5"
+            px="3"
             fontFamily="mono"
             fontSize="sm"
             lineHeight={1.5}
@@ -341,12 +340,7 @@ export function CellValueViewer({
         {editing ? (
           <>
             <chakra.span fontSize="sm" color="app.text">
-              <Switch
-                checked={nullDraft}
-                onChange={setNullDraft}
-                size="sm"
-                label={t("cellViewerSetNull")}
-              />
+              <Switch checked={nullDraft} onChange={setNullDraft} size="sm" label={t("cellViewerSetNull")} />
             </chakra.span>
             {isJson && !nullDraft && (
               <>
@@ -368,12 +362,7 @@ export function CellValueViewer({
             <Button type="button" variant="secondary" onClick={onClose}>
               {t("cellViewerCancel")}
             </Button>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleSave}
-              disabled={!!validationError}
-            >
+            <Button type="button" variant="primary" onClick={handleSave} disabled={!!validationError}>
               {t("cellViewerSave")}
             </Button>
           </>
@@ -392,12 +381,7 @@ export function CellValueViewer({
             )}
             {canFormat && !showTree && (
               <chakra.span fontSize="sm" color="app.text">
-                <Switch
-                  checked={pretty}
-                  onChange={setPretty}
-                  size="sm"
-                  label={t("cellViewerFormatJson")}
-                />
+                <Switch checked={pretty} onChange={setPretty} size="sm" label={t("cellViewerFormatJson")} />
               </chakra.span>
             )}
             {blob && !isNull && (

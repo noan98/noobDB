@@ -61,7 +61,9 @@ describe("RunRoutineModal (#1003)", () => {
       return_type: null,
     });
     const { onRun } = renderModal();
-    await waitFor(() => expect(getRoutineSignature).toHaveBeenCalledWith("s1", "shop", "procedure", "add_order", null));
+    await waitFor(() =>
+      expect(getRoutineSignature).toHaveBeenCalledWith("s1", "shop", "procedure", "add_order", null),
+    );
     const idInput = await screen.findByLabelText(/^id ·/);
     fireEvent.change(idInput, { target: { value: "7" } });
     fireEvent.change(screen.getByLabelText(/^note ·/), { target: { value: "it's" } });

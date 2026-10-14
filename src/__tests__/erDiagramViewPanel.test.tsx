@@ -45,9 +45,7 @@ describe("ERDiagramView error state (#848)", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText(t("erDiagramError", { error: "Error: no such table" })),
-      ).toBeInTheDocument();
+      expect(screen.getByText(t("erDiagramError", { error: "Error: no such table" }))).toBeInTheDocument();
     });
     expect(api.describeDatabase).toHaveBeenCalledTimes(1);
 
@@ -67,7 +65,16 @@ describe("ERDiagramView フォーカス (#1540)", () => {
   const tb = (name: string) => ({
     name,
     columns: [
-      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
+      {
+        name: "id",
+        data_type: "int",
+        nullable: false,
+        key: "PRI",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      },
     ],
   });
   const fkRow = (table: string, ref: string) => ({
@@ -88,9 +95,7 @@ describe("ERDiagramView フォーカス (#1540)", () => {
         disconnect() {}
       },
     );
-    vi.mocked(api.describeDatabase).mockResolvedValueOnce(
-      ["a", "b", "c", "d"].map(tb) as never,
-    );
+    vi.mocked(api.describeDatabase).mockResolvedValueOnce(["a", "b", "c", "d"].map(tb) as never);
     vi.mocked(api.foreignKeys).mockResolvedValueOnce([
       fkRow("a", "b"),
       fkRow("b", "c"),

@@ -151,7 +151,9 @@ export function buildSchemaText(tables: Nl2SqlTable[], foreignKeys: Nl2SqlForeig
   const lines: string[] = [];
   for (const t of tables) {
     const comment = t.comment ? compactText(t.comment, MAX_COMMENT_CHARS) : "";
-    lines.push(`- ${oneLine(t.name)}${comment ? ` "${comment}"` : ""}(${t.columns.map(columnText).join(", ")})`);
+    lines.push(
+      `- ${oneLine(t.name)}${comment ? ` "${comment}"` : ""}(${t.columns.map(columnText).join(", ")})`,
+    );
   }
   if (foreignKeys.length > 0) {
     lines.push("");
@@ -169,9 +171,45 @@ export const NL2SQL_RELEVANT_MAX_TABLES = 40;
 export const NL2SQL_RELEVANT_MAX_WITH_FK = 60;
 
 const STOP_WORDS = new Set([
-  "the", "and", "for", "with", "from", "that", "this", "show", "list", "get", "all", "each", "per",
-  "by", "of", "to", "in", "on", "is", "are", "me", "my", "give", "find", "where", "which", "what",
-  "how", "many", "much", "order", "sort", "top", "count", "sum", "total", "number", "last", "first",
+  "the",
+  "and",
+  "for",
+  "with",
+  "from",
+  "that",
+  "this",
+  "show",
+  "list",
+  "get",
+  "all",
+  "each",
+  "per",
+  "by",
+  "of",
+  "to",
+  "in",
+  "on",
+  "is",
+  "are",
+  "me",
+  "my",
+  "give",
+  "find",
+  "where",
+  "which",
+  "what",
+  "how",
+  "many",
+  "much",
+  "order",
+  "sort",
+  "top",
+  "count",
+  "sum",
+  "total",
+  "number",
+  "last",
+  "first",
 ]);
 
 /** 依頼文からキーワードを取り出す。英数字は 3 文字以上の語、漢字・カタカナ・ハングルは 2 文字の連なり (bigram)。 */

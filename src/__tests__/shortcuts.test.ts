@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { setLocale, t } from "../i18n";
-import {
-  filterShortcuts,
-  SHORTCUTS,
-  SHORTCUT_CATEGORY_LABEL,
-  SHORTCUT_CATEGORY_ORDER,
-} from "../shortcuts";
+import { filterShortcuts, SHORTCUTS, SHORTCUT_CATEGORY_LABEL, SHORTCUT_CATEGORY_ORDER } from "../shortcuts";
 
 // ショートカット定義の単一ソース。HelpView とチートシートが共有するため、
 // 文言の欠落やカテゴリの取りこぼしが両画面を同時に壊す。ここで整合性を担保する。

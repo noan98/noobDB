@@ -3,13 +3,29 @@ import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { writeStoredGridView } from "../components/gridViewState";
-import { ResultGrid, rowToPendingInsert, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
+import {
+  ResultGrid,
+  rowToPendingInsert,
+  GRID_CSS,
+  isColumnFilterActive,
+  type ResultGridHandle,
+  readStoredColumnSizing,
+  writeStoredColumnSizing,
+  colStateKeyFrom,
+  readStoredColumnState,
+  writeStoredColumnState,
+} from "../components/ResultGrid";
 import { resultShapeSizingKey } from "../components/gridViewState";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { attachStreamStats } from "../components/streamStats";
 import { setLocale, t } from "../i18n";
-import { setColumnMaskEnabled, setColumnMaskPatterns, setColumnNullBars, setRichCellRendering } from "../settings";
+import {
+  setColumnMaskEnabled,
+  setColumnMaskPatterns,
+  setColumnNullBars,
+  setRichCellRendering,
+} from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
 import { TOOLTIP_OPEN_DELAY_MS } from "../components/Tooltip";
 
@@ -102,9 +118,7 @@ describe("ResultGrid", () => {
 
     // "banana" のみ "an" を含む。
     expect(dataRowTexts(container)).toEqual([["banana", "2"]]);
-    expect(
-      screen.getByText(t("gridFilteredCount", { shown: 1, total: 3 })),
-    ).toBeInTheDocument();
+    expect(screen.getByText(t("gridFilteredCount", { shown: 1, total: 3 }))).toBeInTheDocument();
   });
 
   it("一致行が無いフィルタでは専用メッセージを表示する", async () => {
@@ -122,26 +136,16 @@ describe("ResultGrid", () => {
 
     // 1 回目: name 昇順
     await user.click(screen.getByRole("button", { name: /^name/ }));
-    expect(dataRowTexts(container).map((r) => r[0])).toEqual([
-      "apple",
-      "banana",
-      "cherry",
-    ]);
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["apple", "banana", "cherry"]);
 
     // 2 回目: name 降順
     await user.click(screen.getByRole("button", { name: /^name/ }));
-    expect(dataRowTexts(container).map((r) => r[0])).toEqual([
-      "cherry",
-      "banana",
-      "apple",
-    ]);
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["cherry", "banana", "apple"]);
   });
 
   it("末尾付近までスクロール可能なとき onLoadMore を発火する", async () => {
     const onLoadMore = vi.fn();
-    renderWithProviders(
-      <ResultGrid result={FRUIT_RESULT} canLoadMore onLoadMore={onLoadMore} />,
-    );
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} canLoadMore onLoadMore={onLoadMore} />);
     // jsdom ではビューポート寸法が 0 のため、初回マウント時の判定で
     // 「末尾付近」と見なされ、すぐに読み込みがトリガーされる。
     await waitFor(() => expect(onLoadMore).toHaveBeenCalled());
@@ -149,9 +153,7 @@ describe("ResultGrid", () => {
 
   it("これ以上ページが無いときは onLoadMore を発火しない", () => {
     const onLoadMore = vi.fn();
-    renderWithProviders(
-      <ResultGrid result={FRUIT_RESULT} canLoadMore={false} onLoadMore={onLoadMore} />,
-    );
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} canLoadMore={false} onLoadMore={onLoadMore} />);
     expect(onLoadMore).not.toHaveBeenCalled();
   });
 
@@ -160,11 +162,7 @@ describe("ResultGrid", () => {
     const onFetchAllRows = vi.fn();
     // rows.length (3) >= autoLimitApplied (3) のときだけバッジが出る。
     renderWithProviders(
-      <ResultGrid
-        result={FRUIT_RESULT}
-        autoLimitApplied={3}
-        onFetchAllRows={onFetchAllRows}
-      />,
+      <ResultGrid result={FRUIT_RESULT} autoLimitApplied={3} onFetchAllRows={onFetchAllRows} />,
     );
 
     expect(screen.getByText(t("autoLimitApplied", { limit: 3 }))).toBeInTheDocument();
@@ -173,9 +171,7 @@ describe("ResultGrid", () => {
   });
 
   it("自動 LIMIT の付与 / 未適用の理由を注記する (#1534)", () => {
-    const { unmount } = renderWithProviders(
-      <ResultGrid result={FRUIT_RESULT} autoLimitApplied={1000} />,
-    );
+    const { unmount } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} autoLimitApplied={1000} />);
     expect(screen.getByTestId("auto-limit-note")).toHaveTextContent(
       t("autoLimitNoteApplied", { limit: 1000 }),
     );
@@ -187,9 +183,7 @@ describe("ResultGrid", () => {
       ["aggregateOnly", "autoLimitNoteAggregateOnly"],
     ] as const;
     for (const [skip, key] of cases) {
-      const r = renderWithProviders(
-        <ResultGrid result={FRUIT_RESULT} autoLimitSkip={skip} />,
-      );
+      const r = renderWithProviders(<ResultGrid result={FRUIT_RESULT} autoLimitSkip={skip} />);
       expect(screen.getByTestId("auto-limit-note")).toHaveTextContent(t(key));
       r.unmount();
     }
@@ -232,12 +226,7 @@ describe("ResultGrid", () => {
       const user = userEvent.setup();
       const onSetCellEdit = vi.fn();
       const { container } = renderWithProviders(
-        <ResultGrid
-          result={result}
-          editable
-          tableColumns={tableColumns}
-          onSetCellEdit={onSetCellEdit}
-        />,
+        <ResultGrid result={result} editable tableColumns={tableColumns} onSetCellEdit={onSetCellEdit} />,
       );
 
       // 編集可能列 (name) のセル。PK 列 (id) は編集不可。
@@ -257,12 +246,7 @@ describe("ResultGrid", () => {
 
     it("PK 列 (id) は編集不可セルにならない", () => {
       const { container } = renderWithProviders(
-        <ResultGrid
-          result={result}
-          editable
-          tableColumns={tableColumns}
-          onSetCellEdit={() => {}}
-        />,
+        <ResultGrid result={result} editable tableColumns={tableColumns} onSetCellEdit={() => {}} />,
       );
       // 編集可能セルは name の 1 つだけ (id は PK のため除外)。
       expect(container.querySelectorAll("td.is-editable-cell")).toHaveLength(1);
@@ -291,9 +275,7 @@ describe("カラム別フィルタ (#390)", () => {
 
   /** Open the per-column filter popup by clicking the header's filter icon. */
   async function openFilter(user: ReturnType<typeof userEvent.setup>, column: string) {
-    await user.click(
-      screen.getByRole("button", { name: t("gridFilterAria", { column }) }),
-    );
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column }) }));
     return screen.getByRole("dialog");
   }
 
@@ -348,14 +330,8 @@ describe("カラム別フィルタ (#390)", () => {
       within(dialog).getByRole("combobox", { name: t("gridFilterOperatorLabel") }),
       "between",
     );
-    await user.type(
-      within(dialog).getByLabelText(t("gridFilterMinPlaceholder")),
-      "3",
-    );
-    await user.type(
-      within(dialog).getByLabelText(t("gridFilterMaxPlaceholder")),
-      "6",
-    );
+    await user.type(within(dialog).getByLabelText(t("gridFilterMinPlaceholder")), "3");
+    await user.type(within(dialog).getByLabelText(t("gridFilterMaxPlaceholder")), "6");
 
     expect(dataRowTexts(container)).toEqual([["apple", "5"]]);
   });
@@ -375,11 +351,7 @@ describe("カラム別フィルタ (#390)", () => {
 
     // NULL を除外 → NULL 行が落ちる。
     await user.selectOptions(nullSelect, "exclude");
-    expect(dataRowTexts(container).map((r) => r[0])).toEqual([
-      "banana",
-      "apple",
-      "cherry",
-    ]);
+    expect(dataRowTexts(container).map((r) => r[0])).toEqual(["banana", "apple", "cherry"]);
   });
 
   it("カラムフィルタはグローバルフィルタと AND 結合で動作する", async () => {
@@ -407,9 +379,7 @@ describe("カラム別フィルタ (#390)", () => {
     await user.type(within(dialog).getByRole("textbox"), "an");
     expect(dataRowTexts(container)).toEqual([["banana", "2"]]);
 
-    await user.click(
-      within(dialog).getByRole("button", { name: t("gridFilterClearColumn") }),
-    );
+    await user.click(within(dialog).getByRole("button", { name: t("gridFilterClearColumn") }));
     // 全行に戻り、ハイライトも消える。
     expect(dataRowTexts(container)).toHaveLength(3);
     expect(container.querySelector("th.is-filtered-col")).toBeNull();
@@ -420,10 +390,7 @@ describe("カラム別フィルタ (#390)", () => {
     // 連続する大整数は Number に丸めると同値になってしまう。BigInt 比較なら
     // 正しく 1 行だけに絞り込めることを確認する。
     const cols: Column[] = [{ name: "id", type_name: "BIGINT" }];
-    const result = makeResult(cols, [
-      ["9007199254740993"],
-      ["9007199254740992"],
-    ]);
+    const result = makeResult(cols, [["9007199254740993"], ["9007199254740992"]]);
     const { container } = renderWithProviders(<ResultGrid result={result} />);
 
     const dialog = await openFilter(user, "id");
@@ -437,18 +404,10 @@ describe("カラム別フィルタ (#390)", () => {
 
   it("isColumnFilterActive は値も NULL ゲートも無い条件を非アクティブと判定する", () => {
     expect(isColumnFilterActive(undefined)).toBe(false);
-    expect(
-      isColumnFilterActive({ op: "contains", value: "", value2: "", nullMode: "any" }),
-    ).toBe(false);
-    expect(
-      isColumnFilterActive({ op: "contains", value: "x", value2: "", nullMode: "any" }),
-    ).toBe(true);
-    expect(
-      isColumnFilterActive({ op: "eq", value: "", value2: "", nullMode: "exclude" }),
-    ).toBe(true);
-    expect(
-      isColumnFilterActive({ op: "between", value: "", value2: "5", nullMode: "any" }),
-    ).toBe(true);
+    expect(isColumnFilterActive({ op: "contains", value: "", value2: "", nullMode: "any" })).toBe(false);
+    expect(isColumnFilterActive({ op: "contains", value: "x", value2: "", nullMode: "any" })).toBe(true);
+    expect(isColumnFilterActive({ op: "eq", value: "", value2: "", nullMode: "exclude" })).toBe(true);
+    expect(isColumnFilterActive({ op: "between", value: "", value2: "5", nullMode: "any" })).toBe(true);
   });
 });
 
@@ -461,7 +420,12 @@ describe("データタイプ別の視覚表現 (#385)", () => {
       { name: "qty", type_name: "INT" },
     ];
     const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [[null, 1], ["", 2]])} />,
+      <ResultGrid
+        result={makeResult(cols, [
+          [null, 1],
+          ["", 2],
+        ])}
+      />,
     );
     const nullBadges = container.querySelectorAll(".cell-null");
     // NULL の行だけにバッジが付き、空文字列の行には付かない。
@@ -471,9 +435,7 @@ describe("データタイプ別の視覚表現 (#385)", () => {
 
   it("数値列は align-right が付き、右揃えになる", () => {
     const cols: Column[] = [{ name: "qty", type_name: "INT" }];
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [[42]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [[42]])} />);
     const cell = container.querySelector("tbody td.col-number");
     expect(cell?.classList.contains("align-right")).toBe(true);
   });
@@ -481,9 +443,7 @@ describe("データタイプ別の視覚表現 (#385)", () => {
   it("BLOB セルは BLOB ラベルとバイト長を表示する", () => {
     const cols: Column[] = [{ name: "data", type_name: "BLOB" }];
     // 4 文字の 16 進 → 2 バイト。
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [["dead"]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [["dead"]])} />);
     const tag = container.querySelector(".cell-binary-tag");
     expect(tag).not.toBeNull();
     expect(tag?.textContent).toBe(t("gridBlobBytes", { size: "2 B" }));
@@ -505,9 +465,7 @@ describe("セル値のリッチ表示 (#451)", () => {
   it("JSON セルはコンパクトに整形され、hover で原文のツールチップを出す", () => {
     const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
     const raw = '{ "a": 1,  "b": [2, 3] }';
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [[raw]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [[raw]])} />);
     const cell = container.querySelector("tbody td .cell-json");
     expect(cell?.textContent).toBe(formatJsonCompact(raw));
     // 原文は native title ではなく共有ツールチップ (#884、行×列に比例して増える
@@ -522,9 +480,7 @@ describe("セル値のリッチ表示 (#451)", () => {
 
   it("真偽値はピル型バッジ (cell-bool-badge) で描画される", () => {
     const cols: Column[] = [{ name: "active", type_name: "BOOLEAN" }];
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [[true], [false]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [[true], [false]])} />);
     const badges = container.querySelectorAll(".cell-bool-badge");
     expect(badges).toHaveLength(2);
     expect(badges[0].classList.contains("is-true")).toBe(true);
@@ -534,9 +490,7 @@ describe("セル値のリッチ表示 (#451)", () => {
 
   it("ENUM 列は色相を持つ色分けバッジで描画される", () => {
     const cols: Column[] = [{ name: "status", type_name: "ENUM" }];
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [["active"]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [["active"]])} />);
     const badge = container.querySelector(".cell-enum-badge") as HTMLElement | null;
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toBe("active");
@@ -545,9 +499,7 @@ describe("セル値のリッチ表示 (#451)", () => {
 
   it("日付列はロケール整形され、hover で原文 (実値) のツールチップを出す", () => {
     const cols: Column[] = [{ name: "created", type_name: "DATE" }];
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [["2026-06-01"]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [["2026-06-01"]])} />);
     const cell = container.querySelector("tbody td .cell-date");
     expect(cell?.textContent).toBe("Jun 1, 2026");
     expect(cell?.getAttribute("title")).toBeNull();
@@ -559,9 +511,7 @@ describe("セル値のリッチ表示 (#451)", () => {
     setRichCellRendering(false);
     const cols: Column[] = [{ name: "meta", type_name: "JSON" }];
     const raw = '{ "a": 1 }';
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(cols, [[raw]])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(cols, [[raw]])} />);
     const cell = container.querySelector("tbody td .cell-json");
     expect(cell?.textContent).toBe(raw);
     expect(cell?.getAttribute("title")).toBeNull();
@@ -575,9 +525,7 @@ describe("editable-cell visual affordance (#349, #540)", () => {
     // 読み取り専用/非編集セルは既定カーソル。
     const css = GRID_CSS as Record<string, { cursor?: string; outline?: string; boxShadow?: string }>;
     expect(css["& td.is-editable-cell"]?.cursor).toBe("text");
-    expect(
-      css["& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)"]?.cursor,
-    ).toBe("default");
+    expect(css["& tbody td:not(.row-index):not(.col-filler):not(.grid-empty-cell)"]?.cursor).toBe("default");
     expect(css["& tbody tr td.is-editable-cell:hover"]?.outline).toContain("var(--accent)");
     // focus-within は outline ではなく inset box-shadow で描画する。
     expect(css["& td.is-editable-cell:focus-within"]?.boxShadow).toContain("var(--focus-ring-inset)");
@@ -591,7 +539,7 @@ describe("column sizing persistence", () => {
   });
 
   it("存在しないキーは空オブジェクトを返す", () => {
-    expect(readStoredColumnSizing("noobdb.colsizing.v1::db::t1::[\"a\"]")).toEqual({});
+    expect(readStoredColumnSizing('noobdb.colsizing.v1::db::t1::["a"]')).toEqual({});
   });
 
   it("undefined キーは常に空オブジェクトを返す", () => {
@@ -752,9 +700,7 @@ describe("列レイアウト永続化 (#447 / #463)", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
 
     // qty 列のフィルタ/列メニューを開く。
-    await user.click(
-      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
-    );
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
     // ピン留めセレクトで「左に固定」を選ぶ。
     const pinSelect = screen.getByText(t("gridPinLeft")).closest("select") as HTMLSelectElement;
     await user.selectOptions(pinSelect, "left");
@@ -791,9 +737,7 @@ describe("集計フッター行 (#645)", () => {
     expect(container.querySelector("tfoot")).toBeNull();
 
     // qty 列の列メニューを開き「集計フッターを表示」を押す。
-    await user.click(
-      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
-    );
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
     await user.click(screen.getByText(t("gridFooterShow")));
 
     // フッターが現れ、qty 列は合計 (2+5+9=16)、name 列は非NULL件数 (3)。
@@ -814,15 +758,11 @@ describe("集計フッター行 (#645)", () => {
     );
 
     // qty 列の列メニュー → 「列の統計」を開く。
-    await user.click(
-      screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }),
-    );
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
     await user.click(screen.getByText(t("gridColumnStats")));
 
     // フッター関数セレクタで avg (平均) に切替。これでフッターが自動で表示される。
-    const sel = screen.getByLabelText(
-      t("gridFooterSelectAria", { column: "qty" }),
-    ) as HTMLSelectElement;
+    const sel = screen.getByLabelText(t("gridFooterSelectAria", { column: "qty" })) as HTMLSelectElement;
     await user.selectOptions(sel, "avg");
 
     // qty 列フッターが平均 ((2+5+9)/3 = 5.333…) を表示する。
@@ -855,16 +795,32 @@ describe("集計フッターのストリーム統計利用 (件数 / NULL 率)",
 
   async function footerFor(fn: string, withStream: boolean): Promise<string[]> {
     localStorage.clear();
-    const rows: CellValue[][] = [["banana", 2], [null, 5], ["cherry", null], ["fig", 7]];
+    const rows: CellValue[][] = [
+      ["banana", 2],
+      [null, 5],
+      ["cherry", null],
+      ["fig", 7],
+    ];
     const result = makeResult(FRUIT_COLUMNS, rows);
     if (withStream) {
-      attachStreamStats(result.rows, { rowCount: 4, nullCounts: [1, 1], numMin: [null, 2], numMax: [null, 7], duplicateRows: false });
+      attachStreamStats(result.rows, {
+        rowCount: 4,
+        nullCounts: [1, 1],
+        numMin: [null, 2],
+        numMax: [null, 7],
+        duplicateRows: false,
+      });
     }
     const user = userEvent.setup();
-    const { container, unmount } = renderWithProviders(<ResultGrid result={result} database="db" table="f" />);
+    const { container, unmount } = renderWithProviders(
+      <ResultGrid result={result} database="db" table="f" />,
+    );
     await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "qty" }) }));
     await user.click(screen.getByText(t("gridColumnStats")));
-    await user.selectOptions(screen.getByLabelText(t("gridFooterSelectAria", { column: "qty" })) as HTMLSelectElement, fn);
+    await user.selectOptions(
+      screen.getByLabelText(t("gridFooterSelectAria", { column: "qty" })) as HTMLSelectElement,
+      fn,
+    );
     await waitFor(() => expect(container.querySelector("tfoot")).not.toBeNull());
     const texts = footerTexts(container);
     unmount();
@@ -903,12 +859,8 @@ describe("列ヘッダの NULL 率ミニバー (#911)", () => {
     // 列数ぶん必ず 1 本ずつ (0% の列も描くのでヘッダ高さは列間で揃う)。
     expect(bars).toHaveLength(2);
     // name 列は 4 行中 2 行が NULL = 50%、qty 列は 1 行 = 25%。
-    expect(bars[0].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe(
-      "scaleX(0.5)",
-    );
-    expect(bars[1].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe(
-      "scaleX(0.25)",
-    );
+    expect(bars[0].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe("scaleX(0.5)");
+    expect(bars[1].querySelector<HTMLElement>(".th-nullbar-fill")?.style.transform).toBe("scaleX(0.25)");
     expect(bars[0]).toHaveAttribute(
       "aria-label",
       t("gridNullBarAria", { column: "name", percent: "50", count: "4" }),
@@ -922,9 +874,7 @@ describe("列ヘッダの NULL 率ミニバー (#911)", () => {
   });
 
   it("行が 1 件も無い結果ではバーを出さない", () => {
-    const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(FRUIT_COLUMNS, [])} />,
-    );
+    const { container } = renderWithProviders(<ResultGrid result={makeResult(FRUIT_COLUMNS, [])} />);
     expect(nullBars(container)).toHaveLength(0);
   });
 });
@@ -1010,8 +960,8 @@ describe("キーボードセルナビゲーション (#406)", () => {
 
   /** tbody のデータ <td> だけ (row-index・col-filler を除く) を行×列の 2D 配列で返す。 */
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -1209,7 +1159,9 @@ describe("キーボードセルナビゲーション (#406)", () => {
       fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
         key: "ArrowRight",
       });
-      await user.click(await screen.findByRole("menuitem", { name: new RegExp(t("gridCopyRowWithHeaders")) }));
+      await user.click(
+        await screen.findByRole("menuitem", { name: new RegExp(t("gridCopyRowWithHeaders")) }),
+      );
       await waitFor(() => expect(writeText).toHaveBeenCalledWith("name\tid\nbob\t1"));
     } finally {
       writeStoredColumnState(colStateKeyFrom(sizingKey), {});
@@ -1233,12 +1185,8 @@ describe("キーボードセルナビゲーション (#406)", () => {
     fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
       key: "ArrowRight",
     });
-    await user.click(
-      await screen.findByRole("menuitem", { name: t("gridCopyAsCsvRows", { count: 2 }) }),
-    );
-    await waitFor(() =>
-      expect(writeText).toHaveBeenLastCalledWith("name\r\nbanana\r\napple\r\n"),
-    );
+    await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCsvRows", { count: 2 }) }));
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name\r\nbanana\r\napple\r\n"));
   });
 
   it("Ctrl/Cmd+A で表示中の全セルを選択し、ページ全体の選択にさせない (#1529)", () => {
@@ -1379,7 +1327,9 @@ describe("キーボードセルナビゲーション (#406)", () => {
       // 隣のセルには付かない。
       expect(cells[0][1].classList.contains("is-copy-flash")).toBe(false);
       // 一定時間後に自動で外れる (apply-flash と同じ 700ms)。
-      act(() => { vi.advanceTimersByTime(700); });
+      act(() => {
+        vi.advanceTimersByTime(700);
+      });
       expect(cells[0][0].classList.contains("is-copy-flash")).toBe(false);
     } finally {
       vi.useRealTimers();
@@ -1437,8 +1387,8 @@ describe("行インスペクタ (#462)", () => {
   beforeEach(() => setLocale("en"));
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -1667,8 +1617,8 @@ describe("行の複製 (#820)", () => {
   const result = makeResult(columns, [[1, "banana", null]]);
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -1676,12 +1626,7 @@ describe("行の複製 (#820)", () => {
     const user = userEvent.setup();
     const onDuplicateRow = vi.fn();
     const { container } = renderWithProviders(
-      <ResultGrid
-        result={result}
-        editable
-        tableColumns={tableColumns}
-        onDuplicateRow={onDuplicateRow}
-      />,
+      <ResultGrid result={result} editable tableColumns={tableColumns} onDuplicateRow={onDuplicateRow} />,
     );
     const cells = dataCells(container);
     fireEvent.contextMenu(cells[0][1]);
@@ -1767,19 +1712,14 @@ describe("セル値のクイックセット", () => {
   const result = makeResult(columns, [[1, "banana", 5]]);
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
   function renderGrid(onSetCellEdit = vi.fn()) {
     const { container } = renderWithProviders(
-      <ResultGrid
-        result={result}
-        editable
-        tableColumns={tableColumns}
-        onSetCellEdit={onSetCellEdit}
-      />,
+      <ResultGrid result={result} editable tableColumns={tableColumns} onSetCellEdit={onSetCellEdit} />,
     );
     return { container, onSetCellEdit };
   }
@@ -1839,12 +1779,7 @@ describe("セル値のクイックセット", () => {
     // (その列に保留中の編集があればそれを消す) null が渡る。
     const zeroRow = makeResult(columns, [[1, "banana", 0]]);
     const { container } = renderWithProviders(
-      <ResultGrid
-        result={zeroRow}
-        editable
-        tableColumns={tableColumns}
-        onSetCellEdit={onSetCellEdit}
-      />,
+      <ResultGrid result={zeroRow} editable tableColumns={tableColumns} onSetCellEdit={onSetCellEdit} />,
     );
     fireEvent.contextMenu(dataCells(container)[0][2]);
     await openQuickSet(user);
@@ -1975,8 +1910,8 @@ describe("選択範囲のエクスポート (#917)", () => {
   beforeEach(() => setLocale("en"));
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -2029,8 +1964,8 @@ describe("ResultGrid クイックフィルタ (#914)", () => {
   ]);
 
   function cells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -2038,11 +1973,7 @@ describe("ResultGrid クイックフィルタ (#914)", () => {
     const user = userEvent.setup();
     const onSetServerFilter = vi.fn();
     const { container } = renderWithProviders(
-      <ResultGrid
-        result={FRUIT_RESULT}
-        onSetServerSort={vi.fn()}
-        onSetServerFilter={onSetServerFilter}
-      />,
+      <ResultGrid result={FRUIT_RESULT} onSetServerSort={vi.fn()} onSetServerFilter={onSetServerFilter} />,
     );
 
     fireEvent.contextMenu(cells(container)[0][0]);
@@ -2057,9 +1988,7 @@ describe("ResultGrid クイックフィルタ (#914)", () => {
 
     // 数値列からの「除外」は numeric フラグ付きで渡り、裸の数値リテラルになる。
     fireEvent.contextMenu(cells(container)[0][1]);
-    await user.click(
-      await screen.findByRole("menuitem", { name: t("gridQuickFilterNe", { value: "2" }) }),
-    );
+    await user.click(await screen.findByRole("menuitem", { name: t("gridQuickFilterNe", { value: "2" }) }));
     expect(onSetServerFilter).toHaveBeenLastCalledWith("qty", {
       op: "ne",
       value: "2",
@@ -2071,11 +2000,7 @@ describe("ResultGrid クイックフィルタ (#914)", () => {
     const user = userEvent.setup();
     const onSetServerFilter = vi.fn();
     const { container } = renderWithProviders(
-      <ResultGrid
-        result={NULLABLE_RESULT}
-        onSetServerSort={vi.fn()}
-        onSetServerFilter={onSetServerFilter}
-      />,
+      <ResultGrid result={NULLABLE_RESULT} onSetServerSort={vi.fn()} onSetServerFilter={onSetServerFilter} />,
     );
 
     fireEvent.contextMenu(cells(container)[1][0]);
@@ -2192,9 +2117,7 @@ describe("スマート値ピッカー (#1067)", () => {
     const cell = container.querySelector("td.is-editable-cell") as HTMLElement;
     await user.dblClick(cell);
     await waitFor(() => {
-      const opts = [...cell.querySelectorAll("datalist option")].map(
-        (o) => (o as HTMLOptionElement).value,
-      );
+      const opts = [...cell.querySelectorAll("datalist option")].map((o) => (o as HTMLOptionElement).value);
       expect(opts).toEqual(["9007199254740993", "12"]);
     });
     const fkCall = onLookupQuery.mock.calls.find(([sql]) => sql.includes('"users"'));
@@ -2226,8 +2149,8 @@ describe("コンテキストメニューをキーボードから開く (Shift+F1
   beforeEach(() => setLocale("en"));
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -2277,8 +2200,26 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     { name: "user_id", type_name: "INT" },
   ];
   const meta = (refTable: string | null, refColumn: string | null): TableColumnInfo[] => [
-    { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
-    { name: "user_id", data_type: "int", nullable: true, key: "MUL", default: null, extra: "", referenced_table: refTable, referenced_column: refColumn },
+    {
+      name: "id",
+      data_type: "int",
+      nullable: false,
+      key: "PRI",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    },
+    {
+      name: "user_id",
+      data_type: "int",
+      nullable: true,
+      key: "MUL",
+      default: null,
+      extra: "",
+      referenced_table: refTable,
+      referenced_column: refColumn,
+    },
   ];
   const result = makeResult(columns, [
     [1, 7],
@@ -2301,7 +2242,13 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
 
   const renderFk = (extra: Record<string, unknown> = {}, onFkJump = vi.fn()) =>
     renderWithProviders(
-      <ResultGrid result={result} tableColumns={meta("users", "id")} onFkJump={onFkJump} driver="mysql" {...extra} />,
+      <ResultGrid
+        result={result}
+        tableColumns={meta("users", "id")}
+        onFkJump={onFkJump}
+        driver="mysql"
+        {...extra}
+      />,
     );
 
   it("マスク中のセルには出さない", () => {
@@ -2318,7 +2265,11 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
 
   it("保留中の編集があるセルには出さない", () => {
     const rowKey = rowEditKey([1, 7], [0], 0);
-    const { container } = renderFk({ editable: true, onSetCellEdit: () => {}, pendingEdits: { [rowKey]: { 1: "9" } } });
+    const { container } = renderFk({
+      editable: true,
+      onSetCellEdit: () => {},
+      pendingEdits: { [rowKey]: { 1: "9" } },
+    });
     expect(container.querySelector(".cell-fk-jump")).toBeNull();
   });
 
@@ -2333,7 +2284,11 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
 
   it("空文字の FK 値には出さない", () => {
     const { container } = renderWithProviders(
-      <ResultGrid result={makeResult(columns, [[1, ""]])} tableColumns={meta("users", "id")} onFkJump={vi.fn()} />,
+      <ResultGrid
+        result={makeResult(columns, [[1, ""]])}
+        tableColumns={meta("users", "id")}
+        onFkJump={vi.fn()}
+      />,
     );
     expect(container.querySelector(".cell-fk-jump")).toBeNull();
   });
@@ -2363,8 +2318,8 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
   });
 
   function dataCells(container: HTMLElement): HTMLElement[][] {
-    return Array.from(container.querySelectorAll("tbody tr")).map((tr) =>
-      Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    return Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
     );
   }
 
@@ -2412,7 +2367,12 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
       <ResultGrid result={r} tableColumns={meta(null, null)} editable onSetCellEdit={() => {}} />
     );
     const { container, rerender } = renderWithProviders(
-      el(makeResult(cols, [[1, 10], [2, 20]])),
+      el(
+        makeResult(cols, [
+          [1, 10],
+          [2, 20],
+        ]),
+      ),
     );
     await user.dblClick(dataCells(container)[1][1]);
     expect(container.querySelector(".cell-edit-input")).not.toBeNull();
@@ -2473,7 +2433,9 @@ describe("ペースト超過行を保留の追加行にする (#1539)", () => {
         {...props}
       />,
     );
-    const cell = container.querySelectorAll("tbody tr")[0].querySelectorAll("td[role='gridcell']")[1] as HTMLElement;
+    const cell = container
+      .querySelectorAll("tbody tr")[0]
+      .querySelectorAll("td[role='gridcell']")[1] as HTMLElement;
     fireEvent.focus(cell);
     return { cell, onBulkEdit };
   }
@@ -2498,7 +2460,9 @@ describe("ペースト超過行を保留の追加行にする (#1539)", () => {
     const onPasteInsertRows = vi.fn();
     const { cell } = renderGrid({ onPasteInsertRows });
     paste(cell, "apple\ncherry");
-    await user.click((await screen.findAllByRole("button", { name: t("confirmDefaultCancel") })).at(-1) as HTMLElement);
+    await user.click(
+      (await screen.findAllByRole("button", { name: t("confirmDefaultCancel") })).at(-1) as HTMLElement,
+    );
     expect(onPasteInsertRows).not.toHaveBeenCalled();
   });
 

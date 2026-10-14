@@ -133,9 +133,7 @@ export function ProcessListPanel({
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   // 監視パネルなので自動更新は既定で ON。間隔は結果グリッドと同じプリセット。
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [intervalSecs, setIntervalSecs] = useState<number>(
-    AUTO_REFRESH_INTERVAL_OPTIONS[0],
-  );
+  const [intervalSecs, setIntervalSecs] = useState<number>(AUTO_REFRESH_INTERVAL_OPTIONS[0]);
   // in-flight ガード: 前回の取得 (または kill) が終わるまでティックをスキップし、
   // 低速な接続 (SSH トンネル等) でもリクエストが積み重ならないようにする。
   const busyRef = useRef(false);
@@ -191,31 +189,34 @@ export function ProcessListPanel({
     return new Set([...selected].filter((id) => visible.has(id)));
   }, [filterActive, processedRows, selected]);
 
-  const load = useCallback(async (force = false) => {
-    if (busyRef.current && !force) return;
-    const seq = ++loadSeqRef.current;
-    busyRef.current = true;
-    setLoading(true);
-    try {
-      const list = await api.listProcesses(sessionId);
-      if (seq !== loadSeqRef.current) return;
-      setProcesses(list);
-      // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
-      setSelected((cur) => pruneSelection(cur, list));
-      // 消えたプロセスの強調は外す (PG の pid 再利用で無関係な行が強調されるのを防ぐ)。
-      setHighlightId((cur) => (cur !== null && list.some((p) => p.id === cur) ? cur : null));
-      setError(null);
-      setUpdatedAt(new Date());
-    } catch (e) {
-      if (seq !== loadSeqRef.current) return;
-      setError(String(e));
-    } finally {
-      if (seq === loadSeqRef.current) {
-        busyRef.current = false;
-        setLoading(false);
+  const load = useCallback(
+    async (force = false) => {
+      if (busyRef.current && !force) return;
+      const seq = ++loadSeqRef.current;
+      busyRef.current = true;
+      setLoading(true);
+      try {
+        const list = await api.listProcesses(sessionId);
+        if (seq !== loadSeqRef.current) return;
+        setProcesses(list);
+        // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
+        setSelected((cur) => pruneSelection(cur, list));
+        // 消えたプロセスの強調は外す (PG の pid 再利用で無関係な行が強調されるのを防ぐ)。
+        setHighlightId((cur) => (cur !== null && list.some((p) => p.id === cur) ? cur : null));
+        setError(null);
+        setUpdatedAt(new Date());
+      } catch (e) {
+        if (seq !== loadSeqRef.current) return;
+        setError(String(e));
+      } finally {
+        if (seq === loadSeqRef.current) {
+          busyRef.current = false;
+          setLoading(false);
+        }
       }
-    }
-  }, [sessionId]);
+    },
+    [sessionId],
+  );
 
   // 初回ロード + セッション切替時の再ロード。
   useEffect(() => {
@@ -245,8 +246,7 @@ export function ProcessListPanel({
 
   const countParts = splitAroundCountUpToken(t("processCount", { count: COUNT_UP_TOKEN }));
 
-  const allSelected =
-    processedRows.length > 0 && processedRows.every((p) => selected.has(p.id));
+  const allSelected = processedRows.length > 0 && processedRows.every((p) => selected.has(p.id));
   // 全選択は絞り込み後の行が対象。絞り込み外の選択は触らない。
   const toggleAll = useCallback(() => {
     setSelected((cur) => {
@@ -272,95 +272,100 @@ export function ProcessListPanel({
   const blockingRows = useMemo(() => buildBlockingTree(rows), [rows]);
 
   // 確認 → 一括 kill → 再取得。選択 kill と待機ツリーのブロッカー kill で共通 (#1417)。
-  const killIds = useCallback(async (rawIds: number[], statementOnly = false) => {
-    const ids = [...rawIds].sort((a, b) => a - b);
-    if (ids.length === 0 || killing) return;
-    // 確認ダイアログを開いた時点の一覧。確定直前に取り直した一覧と突き合わせて pid 再利用を検知する。
-    const shown = processes;
-    // 自アプリのプール接続を kill するとこのセッション自体が切断されるため、
-    // 選択に含まれている場合は確認文に強い警告を足す (#自己kill による切断)。
-    const includesSelf = processes.some((p) => ids.includes(p.id) && p.is_self);
-    const ok = await confirm({
-      title: t(statementOnly ? "processCancelConfirmTitle" : "processKillConfirmTitle"),
-      message: (
-        <>
-          <chakra.p margin={0}>
-            {t(statementOnly ? "processCancelConfirmMessage" : "processKillConfirmMessage", {
-              count: ids.length,
-              ids: ids.join(", "),
-            })}
-          </chakra.p>
-          {includesSelf && !statementOnly && (
-            <chakra.p marginTop="2" marginBottom={0} color={semanticColorToken("danger", "text")} fontWeight={600}>
-              {t("processKillSelfWarning")}
+  const killIds = useCallback(
+    async (rawIds: number[], statementOnly = false) => {
+      const ids = [...rawIds].sort((a, b) => a - b);
+      if (ids.length === 0 || killing) return;
+      // 確認ダイアログを開いた時点の一覧。確定直前に取り直した一覧と突き合わせて pid 再利用を検知する。
+      const shown = processes;
+      // 自アプリのプール接続を kill するとこのセッション自体が切断されるため、
+      // 選択に含まれている場合は確認文に強い警告を足す (#自己kill による切断)。
+      const includesSelf = processes.some((p) => ids.includes(p.id) && p.is_self);
+      const ok = await confirm({
+        title: t(statementOnly ? "processCancelConfirmTitle" : "processKillConfirmTitle"),
+        message: (
+          <>
+            <chakra.p margin={0}>
+              {t(statementOnly ? "processCancelConfirmMessage" : "processKillConfirmMessage", {
+                count: ids.length,
+                ids: ids.join(", "),
+              })}
             </chakra.p>
-          )}
-        </>
-      ),
-      confirmLabel: t(statementOnly ? "processCancelConfirmOk" : "processKillConfirmOk"),
-      tone: "danger",
-    });
-    if (!ok) return;
-    setKilling(true);
-    busyRef.current = true;
-    // 確認中に対象が終了して id が別接続へ再利用されていないか、kill 直前に再照合する。
-    // 一覧を取り直せなければ安全側 (kill しない) に倒す。
-    let targetIds = ids;
-    try {
-      const fresh = await api.listProcesses(sessionId);
-      const { keep, dropped } = reconcileKillTargets(ids, shown, fresh);
-      targetIds = keep;
-      if (dropped.length > 0) {
-        toast.info(t("processKillTargetsChanged", { ids: dropped.join(", ") }));
+            {includesSelf && !statementOnly && (
+              <chakra.p
+                marginTop="2"
+                marginBottom={0}
+                color={semanticColorToken("danger", "text")}
+                fontWeight={600}
+              >
+                {t("processKillSelfWarning")}
+              </chakra.p>
+            )}
+          </>
+        ),
+        confirmLabel: t(statementOnly ? "processCancelConfirmOk" : "processKillConfirmOk"),
+        tone: "danger",
+      });
+      if (!ok) return;
+      setKilling(true);
+      busyRef.current = true;
+      // 確認中に対象が終了して id が別接続へ再利用されていないか、kill 直前に再照合する。
+      // 一覧を取り直せなければ安全側 (kill しない) に倒す。
+      let targetIds = ids;
+      try {
+        const fresh = await api.listProcesses(sessionId);
+        const { keep, dropped } = reconcileKillTargets(ids, shown, fresh);
+        targetIds = keep;
+        if (dropped.length > 0) {
+          toast.info(t("processKillTargetsChanged", { ids: dropped.join(", ") }));
+        }
+      } catch (e) {
+        busyRef.current = false;
+        setKilling(false);
+        toast.error(t("processKillRecheckFailed", { error: String(e) }));
+        return;
       }
-    } catch (e) {
+      if (targetIds.length === 0) {
+        busyRef.current = false;
+        setKilling(false);
+        await load(true);
+        return;
+      }
+      // kill より前に始まったポーリングの応答 (kill 前のスナップショット) を無効化する。
+      loadSeqRef.current++;
+      // バックエンドの 1 コマンドで一括 kill (#1259)。PostgreSQL は 1 文、MySQL は 1 接続上で
+      // 順に実行し、失敗があっても残りは続行して件数と最初のエラーを返す。
+      let killed = 0;
+      let failed = targetIds.length;
+      let firstError: string | null = null;
+      try {
+        const res = await api.killProcesses(sessionId, targetIds, statementOnly);
+        killed = res.killed;
+        failed = res.failed;
+        firstError = res.first_error;
+      } catch (e) {
+        // read_only 拒否など、コマンド自体が失敗した場合は全件失敗として扱う。
+        firstError = String(e);
+      }
       busyRef.current = false;
       setKilling(false);
-      toast.error(t("processKillRecheckFailed", { error: String(e) }));
-      return;
-    }
-    if (targetIds.length === 0) {
-      busyRef.current = false;
-      setKilling(false);
+      if (firstError === null && failed === 0) {
+        toast.success(t(statementOnly ? "processCancelDone" : "processKillDone", { count: killed }));
+      } else {
+        toast.error(
+          t(statementOnly ? "processCancelFailed" : "processKillFailed", {
+            failed,
+            count: targetIds.length,
+            error: firstError ?? "",
+          }),
+        );
+      }
       await load(true);
-      return;
-    }
-    // kill より前に始まったポーリングの応答 (kill 前のスナップショット) を無効化する。
-    loadSeqRef.current++;
-    // バックエンドの 1 コマンドで一括 kill (#1259)。PostgreSQL は 1 文、MySQL は 1 接続上で
-    // 順に実行し、失敗があっても残りは続行して件数と最初のエラーを返す。
-    let killed = 0;
-    let failed = targetIds.length;
-    let firstError: string | null = null;
-    try {
-      const res = await api.killProcesses(sessionId, targetIds, statementOnly);
-      killed = res.killed;
-      failed = res.failed;
-      firstError = res.first_error;
-    } catch (e) {
-      // read_only 拒否など、コマンド自体が失敗した場合は全件失敗として扱う。
-      firstError = String(e);
-    }
-    busyRef.current = false;
-    setKilling(false);
-    if (firstError === null && failed === 0) {
-      toast.success(t(statementOnly ? "processCancelDone" : "processKillDone", { count: killed }));
-    } else {
-      toast.error(
-        t(statementOnly ? "processCancelFailed" : "processKillFailed", {
-          failed,
-          count: targetIds.length,
-          error: firstError ?? "",
-        }),
-      );
-    }
-    await load(true);
-  }, [killing, processes, confirm, t, sessionId, toast, load]);
-  const killSelected = useCallback(() => killIds([...activeSelected]), [killIds, activeSelected]);
-  const cancelSelected = useCallback(
-    () => killIds([...activeSelected], true),
-    [killIds, activeSelected],
+    },
+    [killing, processes, confirm, t, sessionId, toast, load],
   );
+  const killSelected = useCallback(() => killIds([...activeSelected]), [killIds, activeSelected]);
+  const cancelSelected = useCallback(() => killIds([...activeSelected], true), [killIds, activeSelected]);
   const killBlocker = useCallback((id: number) => killIds([id]), [killIds]);
 
   // AI の停止候補 → 一覧の該当行へ (#1538)。AI は何も実行せず、行を強調してスクロールし、
@@ -382,14 +387,11 @@ export function ProcessListPanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: scrollTick は同じ行を再度指されたときもスクロールを再実行するためのトリガー
   useEffect(() => {
     if (highlightId === null) return;
-    document
-      .getElementById(`process-row-${sessionId}-${highlightId}`)
-      ?.scrollIntoView?.({ block: "center" });
+    document.getElementById(`process-row-${sessionId}-${highlightId}`)?.scrollIntoView?.({ block: "center" });
   }, [highlightId, scrollTick, sessionId]);
 
   return (
     <Box flex="1" overflowY="auto" py="3.5" px="4" display="flex" flexDirection="column" gap="3.5">
-
       {showMetricsTab && (
         <Flex gap="1" borderBottom="1px solid" borderColor="app.border" role="tablist">
           <TabButton active={tab === "processes"} onClick={() => setTab("processes")}>
@@ -405,373 +407,380 @@ export function ProcessListPanel({
         <ServerMetricsPanel sessionId={sessionId} driver={driver} />
       ) : (
         <>
-      <chakra.p margin={0} textStyle="body" color="app.textMuted">
-        {t("processDesc")}
-      </chakra.p>
+          <chakra.p margin={0} textStyle="body" color="app.textMuted">
+            {t("processDesc")}
+          </chakra.p>
 
-      <Flex align="center" gap="3" flexWrap="wrap">
-        <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
-          <Button
-            type="button"
-            variant="danger"
-            disabled={readOnly || killing || activeSelected.size === 0}
-            onClick={() => void killSelected()}
-          >
-            {t("processKillSelected", { count: activeSelected.size })}
-          </Button>
-        </Tooltip>
-        <Tooltip
-          label={readOnly ? t("processReadOnlyHint") : t("processCancelSelectedHint")}
-          focusableWrapper={readOnly}
-        >
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={readOnly || killing || activeSelected.size === 0}
-            onClick={() => void cancelSelected()}
-          >
-            {t("processCancelSelected", { count: activeSelected.size })}
-          </Button>
-        </Tooltip>
-        <Tooltip label={t("processRefresh")} focusableWrapper={loading}>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label={t("processRefresh")}
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <Icon name="refresh" size={ICON_SIZES.md} />
-          </Button>
-        </Tooltip>
-        <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" color="app.textSecondary">
-          <Checkbox
-            checked={autoRefresh}
-            aria-label={t("autoRefreshAria")}
-            onChange={(e) => setAutoRefresh(e.target.checked)}
-          />
-          {t("autoRefreshLabel")}
-        </chakra.label>
-        <Select
-          aria-label={t("autoRefreshIntervalAria")}
-          value={String(intervalSecs)}
-          onChange={(e) => setIntervalSecs(Number(e.target.value))}
-          width="auto"
-        >
-          {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-            <option key={s} value={s}>
-              {s % 60 === 0
-                ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                : t("autoRefreshIntervalSecs", { secs: s })}
-            </option>
-          ))}
-        </Select>
-        {loading && <Spinner size={14} />}
-        {updatedAt && (
-          <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
-            {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
-          </chakra.span>
-        )}
-        {updatedAt && !error && (
-          // 接続数の増減をカウントアップで示す (#1022)。数値以外の文言は i18n
-          // テンプレートのまま、数値部分だけを CountUp へ差し替える。
-          <chakra.span fontSize="xs" color="app.textMuted" data-testid="process-count">
-            {countParts[0]}
-            <CountUp value={rows.length} />
-            {countParts[1]}
-          </chakra.span>
-        )}
-      </Flex>
-
-      {readOnly && (
-        <chakra.p margin={0} textStyle="body" color="app.textMuted">
-          {t("processReadOnlyHint")}
-        </chakra.p>
-      )}
-
-      {!error && processes.length > 0 && (
-        <Flex align="center" gap="2" flexWrap="wrap" data-testid="process-filter">
-          <Input
-            type="search"
-            width="auto"
-            minWidth="72"
-            aria-label={t("processFilterTextAria")}
-            placeholder={t("processFilterTextPlaceholder")}
-            value={filter.text}
-            onChange={(e) => setFilter((f) => ({ ...f, text: e.target.value }))}
-          />
-          <Select
-            aria-label={t("processFilterUserAria")}
-            value={filter.user}
-            onChange={(e) => setFilter((f) => ({ ...f, user: e.target.value }))}
-            width="auto"
-          >
-            <option value="">{t("processFilterUserAny")}</option>
-            {userOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("processFilterDbAria")}
-            value={filter.database}
-            onChange={(e) => setFilter((f) => ({ ...f, database: e.target.value }))}
-            width="auto"
-          >
-            <option value="">{t("processFilterDbAny")}</option>
-            {databaseOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("processFilterStateAria")}
-            value={filter.command}
-            onChange={(e) => setFilter((f) => ({ ...f, command: e.target.value }))}
-            width="auto"
-          >
-            <option value="">{t("processFilterStateAny")}</option>
-            {commandOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("processFilterMinSecsAria")}
-            value={String(filter.minSecs)}
-            onChange={(e) => setFilter((f) => ({ ...f, minSecs: Number(e.target.value) }))}
-            width="auto"
-          >
-            {PROCESS_MIN_SECS_OPTIONS.map((s) => (
-              <option key={s} value={s}>
-                {s === 0 ? t("processFilterMinSecsAny") : t("processFilterMinSecsOver", { time: formatProcessTime(s) })}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label={t("processSortAria")}
-            value={sortKey}
-            onChange={(e) => setSortKey(e.target.value as ProcessSortKey)}
-            width="auto"
-          >
-            <option value="default">{t("processSortDefault")}</option>
-            <option value="timeDesc">{t("processSortTimeDesc")}</option>
-            <option value="timeAsc">{t("processSortTimeAsc")}</option>
-            <option value="id">{t("processSortId")}</option>
-          </Select>
-          {filterActive && (
-            <>
-              <chakra.span textStyle="caption" data-testid="process-filter-count">
-                {t("processFilterCount", { shown: processedRows.length, total: rows.length })}
-              </chakra.span>
+          <Flex align="center" gap="3" flexWrap="wrap">
+            <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+              <Button
+                type="button"
+                variant="danger"
+                disabled={readOnly || killing || activeSelected.size === 0}
+                onClick={() => void killSelected()}
+              >
+                {t("processKillSelected", { count: activeSelected.size })}
+              </Button>
+            </Tooltip>
+            <Tooltip
+              label={readOnly ? t("processReadOnlyHint") : t("processCancelSelectedHint")}
+              focusableWrapper={readOnly}
+            >
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={readOnly || killing || activeSelected.size === 0}
+                onClick={() => void cancelSelected()}
+              >
+                {t("processCancelSelected", { count: activeSelected.size })}
+              </Button>
+            </Tooltip>
+            <Tooltip label={t("processRefresh")} focusableWrapper={loading}>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => setFilter(EMPTY_PROCESS_FILTER)}
+                aria-label={t("processRefresh")}
+                onClick={() => void load()}
+                disabled={loading}
               >
-                {t("processFilterClear")}
+                <Icon name="refresh" size={ICON_SIZES.md} />
               </Button>
-            </>
+            </Tooltip>
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="1.5"
+              fontSize="sm"
+              color="app.textSecondary"
+            >
+              <Checkbox
+                checked={autoRefresh}
+                aria-label={t("autoRefreshAria")}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+              />
+              {t("autoRefreshLabel")}
+            </chakra.label>
+            <Select
+              aria-label={t("autoRefreshIntervalAria")}
+              value={String(intervalSecs)}
+              onChange={(e) => setIntervalSecs(Number(e.target.value))}
+              width="auto"
+            >
+              {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+                <option key={s} value={s}>
+                  {s % 60 === 0
+                    ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                    : t("autoRefreshIntervalSecs", { secs: s })}
+                </option>
+              ))}
+            </Select>
+            {loading && <Spinner size={14} />}
+            {updatedAt && (
+              <chakra.span fontSize="xs" color="app.textMuted" textStyle="numeric">
+                {t("processUpdatedAt", { time: updatedAt.toLocaleTimeString() })}
+              </chakra.span>
+            )}
+            {updatedAt && !error && (
+              // 接続数の増減をカウントアップで示す (#1022)。数値以外の文言は i18n
+              // テンプレートのまま、数値部分だけを CountUp へ差し替える。
+              <chakra.span fontSize="xs" color="app.textMuted" data-testid="process-count">
+                {countParts[0]}
+                <CountUp value={rows.length} />
+                {countParts[1]}
+              </chakra.span>
+            )}
+          </Flex>
+
+          {readOnly && (
+            <chakra.p margin={0} textStyle="body" color="app.textMuted">
+              {t("processReadOnlyHint")}
+            </chakra.p>
           )}
-        </Flex>
-      )}
 
-      {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
-      {!error && (
-        <AiLockDiagnose
-          key={sessionId}
-          sessionId={sessionId}
-          driver={driver}
-          processes={rows}
-          selectedIds={activeSelected}
-          onLocateProcess={locateProcess}
-          isProduction={isProduction}
-          schema={schema ?? undefined}
-        />
-      )}
-
-      {!error && blockingRows.length > 0 && (
-        <Box
-          border="1px solid"
-          borderColor="app.border"
-          borderRadius="md"
-          padding="3"
-          data-testid="blocking-tree"
-        >
-          <chakra.p margin={0} fontWeight={600} fontSize="sm">
-            {t("processBlockingTitle")}
-          </chakra.p>
-          <chakra.p margin={0} marginBottom="2" textStyle="caption" color="app.textMuted">
-            {t("processBlockingDesc")}
-          </chakra.p>
-          <chakra.ul listStyleType="none" margin={0} padding={0} role="list">
-            {blockingRows.map((r, i) => (
-              <chakra.li
-                key={`${r.process.id}-${i}`}
-                role="listitem"
-                display="flex"
-                alignItems="center"
-                gap="2"
-                paddingLeft={`calc(${r.depth} * var(--space-4))`}
-                paddingY="1"
-                fontSize="sm"
-                fontFamily="var(--font-mono)"
+          {!error && processes.length > 0 && (
+            <Flex align="center" gap="2" flexWrap="wrap" data-testid="process-filter">
+              <Input
+                type="search"
+                width="auto"
+                minWidth="72"
+                aria-label={t("processFilterTextAria")}
+                placeholder={t("processFilterTextPlaceholder")}
+                value={filter.text}
+                onChange={(e) => setFilter((f) => ({ ...f, text: e.target.value }))}
+              />
+              <Select
+                aria-label={t("processFilterUserAria")}
+                value={filter.user}
+                onChange={(e) => setFilter((f) => ({ ...f, user: e.target.value }))}
+                width="auto"
               >
-                <chakra.span color="app.textMuted" aria-hidden>
-                  {r.depth === 0 ? "●" : "└"}
-                </chakra.span>
-                <chakra.span fontWeight={r.isRoot ? 700 : 400}>#{r.process.id}</chakra.span>
-                <chakra.span color="app.textMuted">{r.process.user ?? "–"}</chakra.span>
-                {r.process.time_secs != null && (
-                  <chakra.span color="app.textMuted">
-                    {formatProcessTime(r.process.time_secs)}
+                <option value="">{t("processFilterUserAny")}</option>
+                {userOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label={t("processFilterDbAria")}
+                value={filter.database}
+                onChange={(e) => setFilter((f) => ({ ...f, database: e.target.value }))}
+                width="auto"
+              >
+                <option value="">{t("processFilterDbAny")}</option>
+                {databaseOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label={t("processFilterStateAria")}
+                value={filter.command}
+                onChange={(e) => setFilter((f) => ({ ...f, command: e.target.value }))}
+                width="auto"
+              >
+                <option value="">{t("processFilterStateAny")}</option>
+                {commandOptions.map((v) => (
+                  <option key={v} value={v}>
+                    {v}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label={t("processFilterMinSecsAria")}
+                value={String(filter.minSecs)}
+                onChange={(e) => setFilter((f) => ({ ...f, minSecs: Number(e.target.value) }))}
+                width="auto"
+              >
+                {PROCESS_MIN_SECS_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s === 0
+                      ? t("processFilterMinSecsAny")
+                      : t("processFilterMinSecsOver", { time: formatProcessTime(s) })}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                aria-label={t("processSortAria")}
+                value={sortKey}
+                onChange={(e) => setSortKey(e.target.value as ProcessSortKey)}
+                width="auto"
+              >
+                <option value="default">{t("processSortDefault")}</option>
+                <option value="timeDesc">{t("processSortTimeDesc")}</option>
+                <option value="timeAsc">{t("processSortTimeAsc")}</option>
+                <option value="id">{t("processSortId")}</option>
+              </Select>
+              {filterActive && (
+                <>
+                  <chakra.span textStyle="caption" data-testid="process-filter-count">
+                    {t("processFilterCount", { shown: processedRows.length, total: rows.length })}
                   </chakra.span>
-                )}
-                <chakra.span
-                  color="app.textSecondary"
-                  overflow="hidden"
-                  textOverflow="ellipsis"
-                  whiteSpace="nowrap"
-                  flex="1"
-                  minWidth={0}
-                >
-                  {r.process.query_summary ?? ""}
-                </chakra.span>
-                {r.repeated && (
-                  <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
-                    {t("processBlockingRepeated")}
-                  </chakra.span>
-                )}
-                {r.process.is_self && (
-                  <chakra.span
-                    px="1.5"
-                    fontSize="var(--text-xs)"
-                    fontFamily="var(--font-sans)"
-                    color="var(--accent)"
-                    border="1px solid var(--accent)"
-                    borderRadius="var(--radius-sm)"
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setFilter(EMPTY_PROCESS_FILTER)}
                   >
-                    {t("processSelfBadge")}
-                  </chakra.span>
-                )}
-                {r.deadlock && (
-                  <chakra.span color="app.textError" fontFamily="var(--font-sans)">
-                    {t("processBlockingDeadlock")}
-                  </chakra.span>
-                )}
-                {r.isRoot && !r.external && (
-                  <chakra.span color="app.textError" fontFamily="var(--font-sans)">
-                    {t("processBlockingRoot", { count: r.victims })}
-                  </chakra.span>
-                )}
-                {r.external && !r.repeated && (
-                  <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
-                    {t("processBlockingExternal", { id: r.process.id, count: r.victims })}
-                  </chakra.span>
-                )}
-                {!r.repeated && !r.external && r.victims > 0 && (
-                  <Tooltip label={readOnly ? t("processReadOnlyHint") : undefined} focusableWrapper={readOnly}>
-                    <Button
-                      type="button"
-                      variant="danger"
-                      size="sm"
-                      disabled={readOnly || killing}
-                      aria-label={t("processBlockingKillAria", { id: r.process.id })}
-                      onClick={() => void killBlocker(r.process.id)}
-                    >
-                      {t("processBlockingKill")}
-                    </Button>
-                  </Tooltip>
-                )}
-              </chakra.li>
-            ))}
-          </chakra.ul>
-        </Box>
-      )}
-
-      {error ? (
-        // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
-        // 添える (#848)。
-        <EmptyState
-          illustration={errorIllustration(error)}
-          icon="warning"
-          title={t("processLoadError", { error })}
-          action={{ label: t("processRetry"), onClick: () => void load() }}
-        />
-      ) : processes.length === 0 && !loading ? (
-        // アクティブな接続/クエリが 1 件もない真の空状態: ResultGrid の
-        // 「0 行」空状態と同じリッチなイラストで表現する (#847)。
-        <EmptyState
-          illustration={<NoResultsIllustration />}
-          icon="server"
-          title={t("processEmpty")}
-        />
-      ) : processes.length > 0 && processedRows.length === 0 ? (
-        <EmptyState
-          illustration={<NoResultsIllustration />}
-          icon="search"
-          title={t("processFilterNoMatch")}
-          action={{ label: t("processFilterClear"), onClick: () => setFilter(EMPTY_PROCESS_FILTER) }}
-        />
-      ) : (
-        <Box overflowX="auto">
-          <chakra.table width="100%" borderCollapse="collapse">
-            <thead>
-              <tr>
-                <chakra.th css={thCss} width="32px">
-                  <Checkbox
-                    checked={allSelected}
-                    aria-label={t("processSelectAll")}
-                    onChange={toggleAll}
-                  />
-                </chakra.th>
-                <chakra.th css={thCss}>{t("processColId")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColUser")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColHost")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColDb")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColCommand")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColState")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColTime")}</chakra.th>
-                <chakra.th css={thCss}>{t("processColQuery")}</chakra.th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && processes.length === 0 ? (
-                // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
-                // 避け、9 列の構造をシマーで予兆表示する (#846)。
-                <SkeletonTableRows columns={9} />
-              ) : (
-                <LiveRowsPresence>
-                  {visibleRows.map((p) => (
-                    <ProcessRow
-                      key={p.id}
-                      sessionId={sessionId}
-                      process={p}
-                      selected={selected.has(p.id)}
-                      highlighted={p.id === highlightId}
-                      onToggle={toggleOne}
-                      flashCommand={flashToken(p.id, "command")}
-                      flashState={flashToken(p.id, "state")}
-                      flashTime={flashToken(p.id, "time")}
-                      flashQuery={flashToken(p.id, "query")}
-                    />
-                  ))}
-                </LiveRowsPresence>
+                    {t("processFilterClear")}
+                  </Button>
+                </>
               )}
-            </tbody>
-          </chakra.table>
-        </Box>
-      )}
-      {!error && processedRows.length > visibleRows.length && (
-        <chakra.p margin={0} textStyle="caption" data-testid="process-truncated">
-          {t("processTruncated", { shown: visibleRows.length, total: processedRows.length })}
-        </chakra.p>
-      )}
+            </Flex>
+          )}
+
+          {/* AI 解説 (#1478)。AI 無効 / SQLite では何も描かない。KILL は下の既存ボタンで行う。 */}
+          {!error && (
+            <AiLockDiagnose
+              key={sessionId}
+              sessionId={sessionId}
+              driver={driver}
+              processes={rows}
+              selectedIds={activeSelected}
+              onLocateProcess={locateProcess}
+              isProduction={isProduction}
+              schema={schema ?? undefined}
+            />
+          )}
+
+          {!error && blockingRows.length > 0 && (
+            <Box
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+              padding="3"
+              data-testid="blocking-tree"
+            >
+              <chakra.p margin={0} fontWeight={600} fontSize="sm">
+                {t("processBlockingTitle")}
+              </chakra.p>
+              <chakra.p margin={0} marginBottom="2" textStyle="caption" color="app.textMuted">
+                {t("processBlockingDesc")}
+              </chakra.p>
+              <chakra.ul listStyleType="none" margin={0} padding={0} role="list">
+                {blockingRows.map((r, i) => (
+                  <chakra.li
+                    key={`${r.process.id}-${i}`}
+                    role="listitem"
+                    display="flex"
+                    alignItems="center"
+                    gap="2"
+                    paddingLeft={`calc(${r.depth} * var(--space-4))`}
+                    paddingY="1"
+                    fontSize="sm"
+                    fontFamily="var(--font-mono)"
+                  >
+                    <chakra.span color="app.textMuted" aria-hidden>
+                      {r.depth === 0 ? "●" : "└"}
+                    </chakra.span>
+                    <chakra.span fontWeight={r.isRoot ? 700 : 400}>#{r.process.id}</chakra.span>
+                    <chakra.span color="app.textMuted">{r.process.user ?? "–"}</chakra.span>
+                    {r.process.time_secs != null && (
+                      <chakra.span color="app.textMuted">
+                        {formatProcessTime(r.process.time_secs)}
+                      </chakra.span>
+                    )}
+                    <chakra.span
+                      color="app.textSecondary"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                      flex="1"
+                      minWidth={0}
+                    >
+                      {r.process.query_summary ?? ""}
+                    </chakra.span>
+                    {r.repeated && (
+                      <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
+                        {t("processBlockingRepeated")}
+                      </chakra.span>
+                    )}
+                    {r.process.is_self && (
+                      <chakra.span
+                        px="1.5"
+                        fontSize="var(--text-xs)"
+                        fontFamily="var(--font-sans)"
+                        color="var(--accent)"
+                        border="1px solid var(--accent)"
+                        borderRadius="var(--radius-sm)"
+                      >
+                        {t("processSelfBadge")}
+                      </chakra.span>
+                    )}
+                    {r.deadlock && (
+                      <chakra.span color="app.textError" fontFamily="var(--font-sans)">
+                        {t("processBlockingDeadlock")}
+                      </chakra.span>
+                    )}
+                    {r.isRoot && !r.external && (
+                      <chakra.span color="app.textError" fontFamily="var(--font-sans)">
+                        {t("processBlockingRoot", { count: r.victims })}
+                      </chakra.span>
+                    )}
+                    {r.external && !r.repeated && (
+                      <chakra.span color="app.textWarning" fontFamily="var(--font-sans)">
+                        {t("processBlockingExternal", { id: r.process.id, count: r.victims })}
+                      </chakra.span>
+                    )}
+                    {!r.repeated && !r.external && r.victims > 0 && (
+                      <Tooltip
+                        label={readOnly ? t("processReadOnlyHint") : undefined}
+                        focusableWrapper={readOnly}
+                      >
+                        <Button
+                          type="button"
+                          variant="danger"
+                          size="sm"
+                          disabled={readOnly || killing}
+                          aria-label={t("processBlockingKillAria", { id: r.process.id })}
+                          onClick={() => void killBlocker(r.process.id)}
+                        >
+                          {t("processBlockingKill")}
+                        </Button>
+                      </Tooltip>
+                    )}
+                  </chakra.li>
+                ))}
+              </chakra.ul>
+            </Box>
+          )}
+
+          {error ? (
+            // 取得失敗: errorHints の分類結果から共有イラストを割り当て、再取得導線を
+            // 添える (#848)。
+            <EmptyState
+              illustration={errorIllustration(error)}
+              icon="warning"
+              title={t("processLoadError", { error })}
+              action={{ label: t("processRetry"), onClick: () => void load() }}
+            />
+          ) : processes.length === 0 && !loading ? (
+            // アクティブな接続/クエリが 1 件もない真の空状態: ResultGrid の
+            // 「0 行」空状態と同じリッチなイラストで表現する (#847)。
+            <EmptyState illustration={<NoResultsIllustration />} icon="server" title={t("processEmpty")} />
+          ) : processes.length > 0 && processedRows.length === 0 ? (
+            <EmptyState
+              illustration={<NoResultsIllustration />}
+              icon="search"
+              title={t("processFilterNoMatch")}
+              action={{ label: t("processFilterClear"), onClick: () => setFilter(EMPTY_PROCESS_FILTER) }}
+            />
+          ) : (
+            <Box overflowX="auto">
+              <chakra.table width="100%" borderCollapse="collapse">
+                <thead>
+                  <tr>
+                    <chakra.th css={thCss} width="32px">
+                      <Checkbox
+                        checked={allSelected}
+                        aria-label={t("processSelectAll")}
+                        onChange={toggleAll}
+                      />
+                    </chakra.th>
+                    <chakra.th css={thCss}>{t("processColId")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColUser")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColHost")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColDb")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColCommand")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColState")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColTime")}</chakra.th>
+                    <chakra.th css={thCss}>{t("processColQuery")}</chakra.th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && processes.length === 0 ? (
+                    // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
+                    // 避け、9 列の構造をシマーで予兆表示する (#846)。
+                    <SkeletonTableRows columns={9} />
+                  ) : (
+                    <LiveRowsPresence>
+                      {visibleRows.map((p) => (
+                        <ProcessRow
+                          key={p.id}
+                          sessionId={sessionId}
+                          process={p}
+                          selected={selected.has(p.id)}
+                          highlighted={p.id === highlightId}
+                          onToggle={toggleOne}
+                          flashCommand={flashToken(p.id, "command")}
+                          flashState={flashToken(p.id, "state")}
+                          flashTime={flashToken(p.id, "time")}
+                          flashQuery={flashToken(p.id, "query")}
+                        />
+                      ))}
+                    </LiveRowsPresence>
+                  )}
+                </tbody>
+              </chakra.table>
+            </Box>
+          )}
+          {!error && processedRows.length > visibleRows.length && (
+            <chakra.p margin={0} textStyle="caption" data-testid="process-truncated">
+              {t("processTruncated", { shown: visibleRows.length, total: processedRows.length })}
+            </chakra.p>
+          )}
         </>
       )}
 
@@ -850,9 +859,15 @@ const ProcessRow = memo(
             </Tooltip>
           )}
         </LiveCell>
-        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.user ?? "–"}</LiveCell>
-        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.host ?? "–"}</LiveCell>
-        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>{p.database ?? "–"}</LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+          {p.user ?? "–"}
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+          {p.host ?? "–"}
+        </LiveCell>
+        <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
+          {p.database ?? "–"}
+        </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashCommand}>
           {p.command ?? "–"}
         </LiveCell>

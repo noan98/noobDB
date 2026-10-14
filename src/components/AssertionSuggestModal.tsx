@@ -212,7 +212,10 @@ export function AssertionSuggestModal(props: AssertionSuggestModalProps) {
     const failed = new Set<number>();
     const errors: { id: number; text: string }[] = [];
     for (const item of registrable) {
-      const req = draftToRequest(suggestionToDraft({ name: item.name, sql: item.sql }, table, null), props.profile);
+      const req = draftToRequest(
+        suggestionToDraft({ name: item.name, sql: item.sql }, table, null),
+        props.profile,
+      );
       if (!req.ok) {
         failed.add(item.id);
         errors.push({ id: item.id, text: t("assertAiRegisterError", { name: item.name, error: req.error }) });

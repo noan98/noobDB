@@ -38,9 +38,7 @@ expect.extend({
         pass
           ? "a11y 違反は検出されませんでした"
           : `a11y 違反 ${violations.length} 件:\n` +
-            violations
-              .map((v) => `  - [${v.id}] ${v.help} (${v.nodes.length} 要素)`)
-              .join("\n"),
+            violations.map((v) => `  - [${v.id}] ${v.help} (${v.nodes.length} 要素)`).join("\n"),
     };
   },
 });
@@ -63,12 +61,7 @@ describe("アクセシビリティ (axe-core) 自動検査", () => {
   it("DangerousQueryDialog に a11y 違反がない", async () => {
     const findings: DangerFinding[] = [{ kind: "deleteNoWhere", target: "users" }];
     const { container } = renderWithProviders(
-      <DangerousQueryDialog
-        findings={findings}
-        isProduction
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />,
+      <DangerousQueryDialog findings={findings} isProduction onConfirm={() => {}} onCancel={() => {}} />,
     );
     expect(await axe(container, AXE_OPTIONS)).toHaveNoViolations();
   });

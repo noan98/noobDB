@@ -4,12 +4,7 @@ import { describe, it, expect } from "vitest";
 import brandCss from "../App.css?raw";
 import illustrationsSrc from "../components/illustrations.tsx?raw";
 import faviconSvg from "../../public/brand-icon.svg?raw";
-import {
-  BRAND_NAVY,
-  BRAND_NAVY_RAISED,
-  BRAND_TEAL,
-  BRAND_GRADIENT_STOPS,
-} from "../brand";
+import { BRAND_NAVY, BRAND_NAVY_RAISED, BRAND_TEAL, BRAND_GRADIENT_STOPS } from "../brand";
 import { SANDBOX_BAND_COLOR } from "../sandbox";
 
 /**
@@ -91,8 +86,8 @@ describe("brand colors (#619)", () => {
 
     // color-mix(in srgb, var(--brand-*) N%, transparent) の N (%) を全て抽出し、
     // 「控えめ」の閾値 (15%) を超えないことを確認する。
-    const percentages = [...body.matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(
-      ([, pct]) => Number(pct),
+    const percentages = [...body.matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, pct]) =>
+      Number(pct),
     );
     expect(percentages.length).toBeGreaterThan(0);
     for (const pct of percentages) {
@@ -113,7 +108,9 @@ describe("brand colors (#619)", () => {
     expect(m, "--hero-halo (radial-gradient) が :root に定義されている").toBeTruthy();
     expect(m![1]).toContain("var(--brand-navy-raised)");
     expect(m![1]).toContain("var(--brand-teal)");
-    const pcts = [...m![1].matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, p]) => Number(p));
+    const pcts = [...m![1].matchAll(/color-mix\(in srgb, var\(--brand-\w+\) (\d+)%/g)].map(([, p]) =>
+      Number(p),
+    );
     expect(pcts.length).toBeGreaterThan(0);
     for (const pct of pcts) expect(pct).toBeLessThanOrEqual(25);
     expect(brandCss).toMatch(/--hero-rule:\s*var\(--brand-gradient\);/);

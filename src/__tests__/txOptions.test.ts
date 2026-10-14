@@ -14,7 +14,10 @@ describe("txOptions", () => {
   });
 
   it("対応ドライバでは選択を通し、未知値は無視する", () => {
-    expect(resolveTxOptions("mysql", "repeatable-read", true)).toEqual({ isolation: "repeatable-read", readOnly: true });
+    expect(resolveTxOptions("mysql", "repeatable-read", true)).toEqual({
+      isolation: "repeatable-read",
+      readOnly: true,
+    });
     expect(resolveTxOptions("postgres", "", false)).toEqual({ isolation: null, readOnly: false });
     expect(resolveTxOptions("postgres", "bogus", false).isolation).toBeNull();
   });

@@ -78,12 +78,15 @@ export function ExportMaskingSection({
   return (
     <FormSection>
       <FieldLabel as="div">{t("exportMasking")}</FieldLabel>
-      <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" userSelect="none" fontSize="md">
-        <Checkbox
-          checked={enabled}
-          onChange={(e) => onEnabledChange(e.target.checked)}
-          disabled={disabled}
-        />
+      <chakra.label
+        display="inline-flex"
+        alignItems="center"
+        gap="2"
+        cursor="pointer"
+        userSelect="none"
+        fontSize="md"
+      >
+        <Checkbox checked={enabled} onChange={(e) => onEnabledChange(e.target.checked)} disabled={disabled} />
         <span>{t("exportMaskingEnable")}</span>
       </chakra.label>
       {enabled && (
@@ -104,8 +107,7 @@ export function ExportMaskingSection({
           >
             {names.map((column) => {
               const rule = effectiveMaskRule(column, presets, overrides);
-              const fromPreset =
-                rule !== null && !Object.prototype.hasOwnProperty.call(overrides, column);
+              const fromPreset = rule !== null && !Object.prototype.hasOwnProperty.call(overrides, column);
               const choice: Choice = rule ? rule.kind : "none";
               return (
                 <chakra.div
@@ -159,7 +161,13 @@ export function ExportMaskingSection({
                     />
                   )}
                   {rule?.kind === "partial" && (
-                    <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                    <chakra.span
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      fontSize="xs"
+                      color="app.textMuted"
+                    >
                       {t("exportMaskingKeepStart")}
                       <DraftNumberInput
                         min={0}
@@ -181,7 +189,13 @@ export function ExportMaskingSection({
                     </chakra.span>
                   )}
                   {rule?.kind === "hash" && (
-                    <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                    <chakra.span
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      fontSize="xs"
+                      color="app.textMuted"
+                    >
                       {t("exportMaskingHashLength")}
                       <DraftNumberInput
                         min={4}

@@ -29,9 +29,7 @@ describe("validateTableQueryTemplate", () => {
   });
 
   it("既知のプレースホルダだけの SELECT は有効", () => {
-    expect(
-      validateTableQueryTemplate("SELECT * FROM {table} ORDER BY {pk} DESC LIMIT {limit}"),
-    ).toBeNull();
+    expect(validateTableQueryTemplate("SELECT * FROM {table} ORDER BY {pk} DESC LIMIT {limit}")).toBeNull();
     expect(validateTableQueryTemplate("select {pk}, name from {database}.{table_name};")).toBeNull();
   });
 
@@ -43,9 +41,7 @@ describe("validateTableQueryTemplate", () => {
   });
 
   it("文字列リテラル内の波括弧はプレースホルダとみなさない", () => {
-    expect(
-      validateTableQueryTemplate("SELECT * FROM {table} WHERE meta = '{foo}' LIMIT {limit}"),
-    ).toBeNull();
+    expect(validateTableQueryTemplate("SELECT * FROM {table} WHERE meta = '{foo}' LIMIT {limit}")).toBeNull();
   });
 
   it("複数文を拒否する (末尾の ; 1 つは許容)", () => {
@@ -74,15 +70,19 @@ describe("validateTableQueryTemplate", () => {
   });
 
   it("長すぎるテンプレートを拒否する", () => {
-    expect(validateTableQueryTemplate(`SELECT * FROM {table} -- ${"x".repeat(5000)}`)?.kind).toBe(
-      "tooLong",
-    );
+    expect(validateTableQueryTemplate(`SELECT * FROM {table} -- ${"x".repeat(5000)}`)?.kind).toBe("tooLong");
   });
 });
 
 describe("resolveTableOpenTemplate", () => {
   const overrides: TableOpenQueryOverride[] = [
-    { profileId: "p1", profileName: "dev", database: "shop", table: "users", template: "SELECT {pk} FROM {table}" },
+    {
+      profileId: "p1",
+      profileName: "dev",
+      database: "shop",
+      table: "users",
+      template: "SELECT {pk} FROM {table}",
+    },
     { profileId: "p1", profileName: "dev", database: "shop", table: "empty", template: "  " },
   ];
 
@@ -148,11 +148,24 @@ describe("planTableOpenQuery", () => {
 
   it("末尾の行コメント / ブロックコメントがあっても LIMIT が有効なまま付く", () => {
     const line = planTableOpenQuery("SELECT * FROM {table} -- 全件", mysql());
-    expect(line).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` LIMIT 100", editable: true, keyset: true });
+    expect(line).toMatchObject({
+      kind: "template",
+      sql: "SELECT * FROM `shop`.`users` LIMIT 100",
+      editable: true,
+      keyset: true,
+    });
     const block = planTableOpenQuery("SELECT * FROM {table} /* all */", mysql());
-    expect(block).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` LIMIT 100", editable: true });
+    expect(block).toMatchObject({
+      kind: "template",
+      sql: "SELECT * FROM `shop`.`users` LIMIT 100",
+      editable: true,
+    });
     const ordered = planTableOpenQuery("SELECT * FROM {table} ORDER BY {pk} -- newest", mysql());
-    expect(ordered).toMatchObject({ kind: "template", sql: "SELECT * FROM `shop`.`users` ORDER BY `id` LIMIT 100", keyset: true });
+    expect(ordered).toMatchObject({
+      kind: "template",
+      sql: "SELECT * FROM `shop`.`users` ORDER BY `id` LIMIT 100",
+      keyset: true,
+    });
   });
 
   it("3 ドライバで {table} の修飾とクォートが揃う", () => {
@@ -219,7 +232,10 @@ describe("planTableOpenQuery", () => {
       "SELECT {pk}, note FROM {table}",
       mysql({ driver: "postgres", pkColumns: ["a", "b"] }),
     );
-    expect(plan).toMatchObject({ sql: 'SELECT "a", "b", note FROM "shop"."users" LIMIT 100', editable: true });
+    expect(plan).toMatchObject({
+      sql: 'SELECT "a", "b", note FROM "shop"."users" LIMIT 100',
+      editable: true,
+    });
   });
 
   it("主キー無し: SQLite / PostgreSQL は rowid / ctid、MySQL は従来へフォールバック", () => {
@@ -303,7 +319,13 @@ describe("applyServerBrowse の wrap", () => {
 
 describe("sanitizeTableOpenQueryOverrides", () => {
   it("壊れた要素・検証に通らないテンプレート・重複キーを捨てる", () => {
-    const ok = { profileId: "p", profileName: "dev", database: "d", table: "t", template: "SELECT * FROM {table}" };
+    const ok = {
+      profileId: "p",
+      profileName: "dev",
+      database: "d",
+      table: "t",
+      template: "SELECT * FROM {table}",
+    };
     expect(
       sanitizeTableOpenQueryOverrides([
         ok,

@@ -184,9 +184,7 @@ export function AiAdvisorExplain(props: AiAdvisorExplainProps) {
           </Button>
         )}
       </Flex>
-      {running && (
-        <AiStreamProgress stream={stream} fields={["why"]} waitingLabel={t("advisorAiRunning")} />
-      )}
+      {running && <AiStreamProgress stream={stream} fields={["why"]} waitingLabel={t("advisorAiRunning")} />}
       {state.kind !== "idle" && state.kind !== "running" && (
         <Flex direction="column" gap="2" aria-live="polite">
           {state.kind === "done" && <ResultView value={state.value} />}

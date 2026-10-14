@@ -3,7 +3,6 @@ import { invoke } from "../invoke";
 import { broadcastChannels } from "../streamChannels";
 
 export const broadcastCommands = {
-
   /**
    * 環境横断ブロードキャスト (#738, #1257): 同じ読み取りクエリを基準 + 対象セッションへ
    * 並行実行し、環境ごとの結果 (上限 5,000 行) と基準との差分サマリを `listenBroadcast`

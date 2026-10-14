@@ -55,7 +55,10 @@ export function routineParamIsArgument(p: RoutineParameter): boolean {
  * は数値として扱わないよう、そのまま (大文字化のみ) 返す。
  */
 export function routineBaseType(dataType: string): string {
-  return dataType.replace(/\(.*?\)/g, "").trim().toUpperCase();
+  return dataType
+    .replace(/\(.*?\)/g, "")
+    .trim()
+    .toUpperCase();
 }
 
 /**
@@ -133,16 +136,14 @@ export function buildRoutineCall(input: RoutineCallInput): RoutineCall {
 
   if (driver === "postgres") {
     if (signature.kind === "procedure") {
-      const args = params
-        .filter(routineParamIsArgument)
-        .map((p) => {
-          const i = params.indexOf(p);
-          return p.mode === "out"
-            ? p.data_type.trim()
-              ? `CAST(NULL AS ${p.data_type})`
-              : "NULL"
-            : routineArgLiteral(driver, p, valueAt(i));
-        });
+      const args = params.filter(routineParamIsArgument).map((p) => {
+        const i = params.indexOf(p);
+        return p.mode === "out"
+          ? p.data_type.trim()
+            ? `CAST(NULL AS ${p.data_type})`
+            : "NULL"
+          : routineArgLiteral(driver, p, valueAt(i));
+      });
       return { sql: `CALL ${name}(${args.join(", ")})`, needsSameConnection: false, outputsReturned: true };
     }
     const args = params

@@ -66,7 +66,7 @@ interface SelectInfo {
   star: boolean;
 }
 
-const IDENT = "(?:`[^`]+`|\"[^\"]+\"|[A-Za-z_]\\w*)";
+const IDENT = '(?:`[^`]+`|"[^"]+"|[A-Za-z_]\\w*)';
 const KW_RE =
   /\b(SELECT|FROM|JOIN|WHERE|ON|HAVING|GROUP\s+BY|ORDER\s+BY|UNION|INTERSECT|EXCEPT|LIMIT|SET|VALUES|WITH|INTO|RETURNING|UPDATE|DELETE|INSERT)\b/gi;
 
@@ -75,14 +75,68 @@ const KW_RE =
  * (`a IS NULL` の NULL、`x BETWEEN 1 AND 2` の AND など) を別名と誤認しないため。
  */
 const ALIAS_STOP = new Set([
-  "AND", "OR", "NOT", "IS", "IN", "LIKE", "ILIKE", "BETWEEN", "NULL", "TRUE", "FALSE",
-  "CASE", "WHEN", "THEN", "ELSE", "END", "DESC", "ASC", "OVER", "FILTER", "COLLATE",
-  "ESCAPE", "DISTINCT", "ON", "USING", "FROM", "WHERE", "GROUP", "ORDER", "HAVING",
-  "LIMIT", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS", "NATURAL", "OUTER",
-  "UNION", "WINDOW", "FETCH", "OFFSET", "LATERAL", "WITH", "SET", "AS", "INTO",
-  "SELECT", "BY", "RETURNING", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP",
+  "AND",
+  "OR",
+  "NOT",
+  "IS",
+  "IN",
+  "LIKE",
+  "ILIKE",
+  "BETWEEN",
+  "NULL",
+  "TRUE",
+  "FALSE",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "DESC",
+  "ASC",
+  "OVER",
+  "FILTER",
+  "COLLATE",
+  "ESCAPE",
+  "DISTINCT",
+  "ON",
+  "USING",
+  "FROM",
+  "WHERE",
+  "GROUP",
+  "ORDER",
+  "HAVING",
+  "LIMIT",
+  "JOIN",
+  "INNER",
+  "LEFT",
+  "RIGHT",
+  "FULL",
+  "CROSS",
+  "NATURAL",
+  "OUTER",
+  "UNION",
+  "WINDOW",
+  "FETCH",
+  "OFFSET",
+  "LATERAL",
+  "WITH",
+  "SET",
+  "AS",
+  "INTO",
+  "SELECT",
+  "BY",
+  "RETURNING",
+  "CURRENT_DATE",
+  "CURRENT_TIME",
+  "CURRENT_TIMESTAMP",
   // 派生表の直後に来うる集合演算・ロック・サンプリング指定など (別名と誤認しない)。
-  "EXCEPT", "INTERSECT", "FOR", "LOCK", "TABLESAMPLE", "STRAIGHT_JOIN", "QUALIFY",
+  "EXCEPT",
+  "INTERSECT",
+  "FOR",
+  "LOCK",
+  "TABLESAMPLE",
+  "STRAIGHT_JOIN",
+  "QUALIFY",
 ]);
 
 /**
@@ -214,9 +268,7 @@ function selectInfo(body: string): SelectInfo | null {
   if (!head || /\b(?:UNION|INTERSECT|EXCEPT)\b/i.test(top)) return null;
   const from = /\bFROM\b/i.exec(top.slice(head[0].length));
   const end = from ? head[0].length + from.index : top.length;
-  const distinct = /^\s*(?:DISTINCT\s+ON\s*\([^()]*\)|DISTINCT|ALL)\b/i.exec(
-    body.slice(head[0].length, end),
-  );
+  const distinct = /^\s*(?:DISTINCT\s+ON\s*\([^()]*\)|DISTINCT|ALL)\b/i.exec(body.slice(head[0].length, end));
   const start = head[0].length + (distinct ? distinct[0].length : 0);
   const listTop = top.slice(start, end);
   const items: SelectItem[] = [];
@@ -351,12 +403,7 @@ function eqIdent(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-function candidate(
-  label: string,
-  apply: string,
-  type: string,
-  kind: DerivedKind,
-): DerivedCandidate {
+function candidate(label: string, apply: string, type: string, kind: DerivedKind): DerivedCandidate {
   return { label, apply, type, kind };
 }
 
@@ -434,8 +481,7 @@ export function derivedCompletions(opts: {
   // `SELECT a AS |` は別名の命名位置。ここでは候補を出さない。
   if (/\bAS$/i.test(s.slice(0, cursor).trimEnd())) return null;
   // FROM / JOIN の直後、または FROM 句のカンマ区切りの次だけテーブル位置。
-  const isTable =
-    /\b(?:FROM|JOIN)$/i.test(trimmed) || (trimmed.endsWith(",") && lastKw === "FROM");
+  const isTable = /\b(?:FROM|JOIN)$/i.test(trimmed) || (trimmed.endsWith(",") && lastKw === "FROM");
 
   let mode: "table" | "expr" | null = null;
   let aliasOk = false;
@@ -457,10 +503,7 @@ export function derivedCompletions(opts: {
   }
   if (mode === null) return null;
 
-  const sources: Source[] = [
-    ...parseCtes(s, cursor),
-    ...parseDerived(s, cursor, tokenEnd),
-  ];
+  const sources: Source[] = [...parseCtes(s, cursor), ...parseDerived(s, cursor, tokenEnd)];
   const qa = (name: string) => quoteIfNeeded(driver, name);
 
   if (qualRaw !== null) {
@@ -472,9 +515,7 @@ export function derivedCompletions(opts: {
     const src = matches[0];
     return finish(
       tokenStart,
-      src.columns.map((c) =>
-        candidate(`${qualRaw}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", src.kind),
-      ),
+      src.columns.map((c) => candidate(`${qualRaw}.${c}`, `${qa(src.name)}.${qa(c)}`, "property", src.kind)),
     );
   }
 

@@ -37,10 +37,7 @@ export type ExplainAnalyzeBuild =
  * 判定できない SQL (書き込み / DDL / 複数文 / 行ロック付き SELECT など) は
  * `ok: false` を返し、呼び出し側は実行しない。
  */
-export function buildExplainAnalyzeSql(
-  driver: string | null | undefined,
-  sql: string,
-): ExplainAnalyzeBuild {
+export function buildExplainAnalyzeSql(driver: string | null | undefined, sql: string): ExplainAnalyzeBuild {
   const prefix = explainAnalyzePrefix(driver);
   if (prefix === null) return { ok: false, reason: "unsupported" };
   if (sql.trim() === "") return { ok: false, reason: "empty" };

@@ -36,7 +36,7 @@ export function buildObjectIndex(schemasByDb: Record<string, TableSchema[]>): Ob
  * 同点ならテーブルエントリをカラムエントリより上位にする (table ボーナス +1)。
  */
 function scoreEntry(entry: ObjectEntry, q: string): number {
-  const target = (entry.kind === "column" ? entry.column ?? "" : entry.table).toLowerCase();
+  const target = (entry.kind === "column" ? (entry.column ?? "") : entry.table).toLowerCase();
   if (!target) return 0;
   let base = 0;
   if (target === q) base = 100;

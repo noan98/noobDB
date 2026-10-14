@@ -131,20 +131,29 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
   const metaPending = driver === "postgres" && !pgMeta && !metaError;
   const statements = trimmed && !metaPending ? (result?.statements ?? []) : [];
   const notTable = !metaPending && !!result && result.statements.length === 0 && result.errors.length === 0;
-  const valid = !loading && !metaPending && !metaError && !collides && trimmed.length > 0 && statements.length > 0;
+  const valid =
+    !loading && !metaPending && !metaError && !collides && trimmed.length > 0 && statements.length > 0;
 
   const submit = () => {
     if (valid) onConfirm(trimmed, statements);
   };
 
   return (
-    <Modal onSubmit={submit} submitDisabled={!valid} width="600px" onClose={onClose} initialFocusEl={() => inputRef.current}>
+    <Modal
+      onSubmit={submit}
+      submitDisabled={!valid}
+      width="600px"
+      onClose={onClose}
+      initialFocusEl={() => inputRef.current}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("cloneTableClose")}>
         {t("cloneTableTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="4">
         <FormSection>
-          <FieldLabel htmlFor="clone-table-name">{t("cloneTableNameLabel", { table: sourceTable })}</FieldLabel>
+          <FieldLabel htmlFor="clone-table-name">
+            {t("cloneTableNameLabel", { table: sourceTable })}
+          </FieldLabel>
           <Flex align="center" gap="2">
             <Input
               id="clone-table-name"
@@ -177,15 +186,23 @@ export function TableCloneModal({ sessionId, driver, database, sourceTable, onCo
         {result && result.errors.length > 0 && (
           <ErrorNote>{t("cloneTableRewriteError", { statements: result.errors.join(" / ") })}</ErrorNote>
         )}
-        {!metaPending && result?.sharedSequence && <Callout tone="warning">{t("cloneTableSharedSequence")}</Callout>}
+        {!metaPending && result?.sharedSequence && (
+          <Callout tone="warning">{t("cloneTableSharedSequence")}</Callout>
+        )}
         {result && result.skipped.length > 0 && (
-          <Callout tone="warning">{t("cloneTableSkipped", { statements: result.skipped.join(" / ") })}</Callout>
+          <Callout tone="warning">
+            {t("cloneTableSkipped", { statements: result.skipped.join(" / ") })}
+          </Callout>
         )}
 
         <FormSection>
           <FieldLabel as="div">{t("cloneTablePreview")}</FieldLabel>
           <CodePreview minH="120px">
-            {metaPending ? t("cloneTablePreviewLoading") : statements.length > 0 ? formatCloneStatements(statements) : t("cloneTablePreviewEmpty")}
+            {metaPending
+              ? t("cloneTablePreviewLoading")
+              : statements.length > 0
+                ? formatCloneStatements(statements)
+                : t("cloneTablePreviewEmpty")}
           </CodePreview>
           <chakra.span textStyle="caption">{t("cloneTableNotes")}</chakra.span>
         </FormSection>

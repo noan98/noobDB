@@ -8,13 +8,7 @@
 // `db::sandbox::key_signature` が正であり、フロントはそれをそのまま呼ぶ
 // (`generateDataSyncSql` の skipKeys、Rust 側 `filter_out_keys`) ので、ここでは再実装しない。
 
-import type {
-  CellValue,
-  ConnectionProfile,
-  ForeignKey,
-  SandboxConflict,
-  SandboxRecord,
-} from "./api/tauri";
+import type { CellValue, ConnectionProfile, ForeignKey, SandboxConflict, SandboxRecord } from "./api/tauri";
 
 /** バックエンド `db::sandbox::SHADOW_PREFIX` と同じ値。テーブルツリーから
  *  base スナップショットテーブルを隠すために使う。 */
@@ -119,10 +113,7 @@ export function sandboxKeySignature(key: CellValue[]): string {
  * `expandWithFkRelated` は双方向 (AI へのスキーマ文脈提供が目的) で意図的に
  * 異なるため、共有せずここに独立実装する。
  */
-export function sandboxFkClosure(
-  selected: readonly string[],
-  foreignKeys: readonly ForeignKey[],
-): string[] {
+export function sandboxFkClosure(selected: readonly string[], foreignKeys: readonly ForeignKey[]): string[] {
   const set = new Set(selected);
   let added = true;
   while (added) {
@@ -153,7 +144,5 @@ export function sandboxSkipKeys(
   conflicts: SandboxConflict[],
   resolutions: Record<string, SandboxConflictResolution>,
 ): CellValue[][] {
-  return conflicts
-    .filter((c) => resolutions[sandboxKeySignature(c.key)] === "skip")
-    .map((c) => c.key);
+  return conflicts.filter((c) => resolutions[sandboxKeySignature(c.key)] === "skip").map((c) => c.key);
 }

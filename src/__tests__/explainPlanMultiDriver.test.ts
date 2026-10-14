@@ -53,9 +53,7 @@ describe("parsePostgresPlan", () => {
   });
 
   it("accepts a single (non-array) object too", () => {
-    const { root } = parsePostgresPlan(
-      JSON.stringify({ Plan: { "Node Type": "Result", "Total Cost": 1 } }),
-    );
+    const { root } = parsePostgresPlan(JSON.stringify({ Plan: { "Node Type": "Result", "Total Cost": 1 } }));
     expect(root!.kind).toBe("Result");
   });
 
@@ -113,9 +111,7 @@ describe("parseSqlitePlan", () => {
   });
 
   it("treats a covering index as a positive info hint", () => {
-    const { root } = parseSqlitePlan([
-      { id: 2, parent: 0, detail: "SCAN t USING COVERING INDEX ix" },
-    ]);
+    const { root } = parseSqlitePlan([{ id: 2, parent: 0, detail: "SCAN t USING COVERING INDEX ix" }]);
     const hints = computeHints(root!);
     expect(hints.some((h) => h.key === "explainHintCoveringIndex" && h.severity === "info")).toBe(true);
     expect(hints.some((h) => h.key === "explainHintFullScan")).toBe(false);

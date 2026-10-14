@@ -104,11 +104,7 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
     );
   }
 
-  const picker = (
-    value: string,
-    onChange: (v: string) => void,
-    label: string,
-  ) => (
+  const picker = (value: string, onChange: (v: string) => void, label: string) => (
     <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
       {label}
       <Select value={value} onChange={(e) => onChange(e.target.value)} minWidth="200px">
@@ -143,7 +139,15 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
   return (
     <Box flex="1" display="flex" flexDirection="column" minHeight={0}>
       <Header t={t} onClose={onClose} onClear={onClear} />
-      <Flex align="center" gap="3" flexWrap="wrap" py="2.5" px="6" borderBottom="1px solid" borderColor="app.border">
+      <Flex
+        align="center"
+        gap="3"
+        flexWrap="wrap"
+        py="2.5"
+        px="6"
+        borderBottom="1px solid"
+        borderColor="app.border"
+      >
         {picker(leftId, setLeftId, t("pinCompareLeft"))}
         {picker(rightId, setRightId, t("pinCompareRight"))}
         <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
@@ -161,12 +165,7 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
             ))}
           </Select>
         </chakra.label>
-        <Switch
-          checked={diffOn}
-          onChange={setDiffOn}
-          disabled={!comparable}
-          label={t("pinCompareDiff")}
-        />
+        <Switch checked={diffOn} onChange={setDiffOn} disabled={!comparable} label={t("pinCompareDiff")} />
         {left && right && !comparable && (
           <chakra.span fontSize="sm" color={semanticColorToken("warning", "text")}>
             {t("pinCompareNotComparable")}

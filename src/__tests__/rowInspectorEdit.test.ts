@@ -40,10 +40,7 @@ describe("inspectorEditableColumns", () => {
   });
 
   it("editableColumns が未指定なら全列 false (保守的に編集させない)", () => {
-    expect(inspectorEditableColumns({ columnCount: 2, gridEditable: true })).toEqual([
-      false,
-      false,
-    ]);
+    expect(inspectorEditableColumns({ columnCount: 2, gridEditable: true })).toEqual([false, false]);
   });
 });
 
@@ -56,17 +53,21 @@ describe("inspectorRowEditBlock", () => {
 
   it("読み込み中 > 適用中 > 削除予定 > 保留中のグリッド編集 の順で理由を返す", () => {
     expect(
-      inspectorRowEditBlock({ ...free, streaming: true, applying: true, pendingDelete: true, hasPendingEdit: true }),
+      inspectorRowEditBlock({
+        ...free,
+        streaming: true,
+        applying: true,
+        pendingDelete: true,
+        hasPendingEdit: true,
+      }),
     ).toBe("rowInspectorEditBlockedStreaming");
     expect(
       inspectorRowEditBlock({ ...free, applying: true, pendingDelete: true, hasPendingEdit: true }),
     ).toBe("rowInspectorEditBlockedApplying");
-    expect(
-      inspectorRowEditBlock({ ...free, pendingDelete: true, hasPendingEdit: true }),
-    ).toBe("rowInspectorEditBlockedDelete");
-    expect(inspectorRowEditBlock({ ...free, hasPendingEdit: true })).toBe(
-      "rowInspectorEditBlockedPending",
+    expect(inspectorRowEditBlock({ ...free, pendingDelete: true, hasPendingEdit: true })).toBe(
+      "rowInspectorEditBlockedDelete",
     );
+    expect(inspectorRowEditBlock({ ...free, hasPendingEdit: true })).toBe("rowInspectorEditBlockedPending");
   });
 });
 
@@ -130,7 +131,7 @@ describe("rowChangedSince", () => {
     expect(rowChangedSince([1, "a", null], [1, "a", "x"], 3)).toBe(true);
   });
 
-  it("NULL と文字列 \"NULL\" は別の値として区別する", () => {
+  it('NULL と文字列 "NULL" は別の値として区別する', () => {
     expect(rowChangedSince([null], ["NULL"], 1)).toBe(true);
   });
 });
@@ -206,9 +207,19 @@ describe("collectInspectorEdits", () => {
 
   it("64bit 整数は文字列のまま比較し、1 だけ違う値でも差分として拾う", () => {
     const big: Column[] = [{ name: "id", type_name: "BIGINT" }];
-    const same = run({ cols: big, base: ["9007199254740993"], editableFlags: [true], draft: { 0: "9007199254740993" } });
+    const same = run({
+      cols: big,
+      base: ["9007199254740993"],
+      editableFlags: [true],
+      draft: { 0: "9007199254740993" },
+    });
     expect(same.edits).toEqual({});
-    const diff = run({ cols: big, base: ["9007199254740993"], editableFlags: [true], draft: { 0: "9007199254740994" } });
+    const diff = run({
+      cols: big,
+      base: ["9007199254740993"],
+      editableFlags: [true],
+      draft: { 0: "9007199254740994" },
+    });
     expect(diff.edits).toEqual({ 0: "9007199254740994" });
   });
 
@@ -220,7 +231,7 @@ describe("collectInspectorEdits", () => {
     expect(diff.edits).toEqual({ 0: "false" });
   });
 
-  it("文字列 \"NULL\" を持つ未編集列は SQL NULL に化けず、差分に入らない", () => {
+  it('文字列 "NULL" を持つ未編集列は SQL NULL に化けず、差分に入らない', () => {
     const cols: Column[] = [
       { name: "code", type_name: "VARCHAR" },
       { name: "age", type_name: "INT" },
@@ -230,7 +241,7 @@ describe("collectInspectorEdits", () => {
     expect(res).toEqual({ edits: { 1: "6" }, errors: {} });
   });
 
-  it("文字列 \"null\" の列でも未操作なら差分を作らない", () => {
+  it('文字列 "null" の列でも未操作なら差分を作らない', () => {
     const cols: Column[] = [{ name: "code", type_name: "VARCHAR" }];
     const res = run({ cols, base: ["null"], editableFlags: [true] });
     expect(res.edits).toEqual({});

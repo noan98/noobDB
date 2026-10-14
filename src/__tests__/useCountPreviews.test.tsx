@@ -6,7 +6,13 @@ import { COUNT_PREVIEW_DEBOUNCE_MS, parseCountCell, useCountPreviews } from "../
 
 const run = vi.fn<(sql: string) => Promise<QueryResult>>();
 function result(cell: unknown): QueryResult {
-  return { columns: [], rows: [[cell]], rows_affected: 0, elapsed_ms: 1, server_messages: [] } as unknown as QueryResult;
+  return {
+    columns: [],
+    rows: [[cell]],
+    rows_affected: 0,
+    elapsed_ms: 1,
+    server_messages: [],
+  } as unknown as QueryResult;
 }
 
 beforeEach(() => {
@@ -44,10 +50,9 @@ describe("useCountPreviews (#1536)", () => {
 
   it("入力が変わり続けている間は発行せず、最後の SQL だけを発行する", async () => {
     run.mockResolvedValue(result(0));
-    const { rerender } = renderHook(
-      ({ sql }: { sql: string }) => useCountPreviews(run, [{ id: "a", sql }]),
-      { initialProps: { sql: "SELECT COUNT(*) FROM t WHERE a" } },
-    );
+    const { rerender } = renderHook(({ sql }: { sql: string }) => useCountPreviews(run, [{ id: "a", sql }]), {
+      initialProps: { sql: "SELECT COUNT(*) FROM t WHERE a" },
+    });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS - 100);
     });

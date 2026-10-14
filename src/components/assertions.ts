@@ -84,7 +84,10 @@ export type AssertionDraftError =
   | "sql"
   | "scopeGroup";
 
-export function emptyAssertionDraft(init?: { schema?: string | null; table?: string | null }): AssertionDraft {
+export function emptyAssertionDraft(init?: {
+  schema?: string | null;
+  table?: string | null;
+}): AssertionDraft {
   return {
     name: "",
     scopeKind: "profile",
@@ -179,9 +182,7 @@ function blankToNull(s: string): string | null {
   return t.length > 0 ? t : null;
 }
 
-export type DraftRuleResult =
-  | { ok: true; rule: AssertionRule }
-  | { ok: false; error: AssertionDraftError };
+export type DraftRuleResult = { ok: true; rule: AssertionRule } | { ok: false; error: AssertionDraftError };
 
 /**
  * ルール部分だけを組み立てる (名前・スコープは見ない)。プレビューはこれが通った
@@ -345,8 +346,14 @@ export function describeRule(a: Pick<Assertion, "schema" | "table" | "rule">): I
       return { key: "assertDescCustomSql", params: { table, sql: r.sql.replace(/\s+/g, " ").trim() } };
     case "row_count":
       return r.op === "between"
-        ? { key: "assertDescRowCountBetween", params: { table, min: String(r.value), max: String(r.max ?? r.value) } }
-        : { key: "assertDescRowCount", params: { table, op: ROW_COUNT_OP_SYMBOL[r.op], value: String(r.value) } };
+        ? {
+            key: "assertDescRowCountBetween",
+            params: { table, min: String(r.value), max: String(r.max ?? r.value) },
+          }
+        : {
+            key: "assertDescRowCount",
+            params: { table, op: ROW_COUNT_OP_SYMBOL[r.op], value: String(r.value) },
+          };
   }
 }
 

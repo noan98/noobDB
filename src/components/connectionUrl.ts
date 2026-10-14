@@ -139,15 +139,17 @@ function ok(value: ParsedConnectionUrl): ConnectionUrlResult {
  *   (URL 本体に無いときのフォールバック)。それ以外は `ignoredParams` に名前だけ残す。
  */
 export function parseConnectionUrl(input: string): ConnectionUrlResult {
-  let text = input.trim().replace(/^["']|["']$/g, "").trim();
+  let text = input
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .trim();
   if (text === "") return { ok: false, error: "empty" };
   if (/^jdbc:/i.test(text)) text = text.slice(5);
 
   try {
     const schemeMatch = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/s.exec(text);
     // `C:\x.db` の `C:` をスキームと誤認しない (1 文字は Windows ドライブ)。
-    const scheme =
-      schemeMatch && schemeMatch[1].length > 1 ? schemeMatch[1].toLowerCase() : null;
+    const scheme = schemeMatch && schemeMatch[1].length > 1 ? schemeMatch[1].toLowerCase() : null;
 
     if (scheme === null) {
       if (looksLikeFilePath(text)) {

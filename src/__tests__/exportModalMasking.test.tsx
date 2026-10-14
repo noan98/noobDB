@@ -39,7 +39,14 @@ const ROWS: CellValue[][] = [
 
 function renderModal() {
   return renderWithProviders(
-    <ExportModal columns={COLUMNS} rows={ROWS} database={null} table="users" driver="mysql" onClose={() => {}} />,
+    <ExportModal
+      columns={COLUMNS}
+      rows={ROWS}
+      database={null}
+      table="users"
+      driver="mysql"
+      onClose={() => {}}
+    />,
   );
 }
 
@@ -70,9 +77,7 @@ describe("ExportModal データマスキング (#733)", () => {
   it("有効にすると列名プリセット (email) に一致する列だけにルールを掛け、プレビューはマスク後の値", async () => {
     renderModal();
     enableMasking();
-    await waitFor(() =>
-      expect(screen.getByLabelText(t("exportPreview")).textContent).toContain("MASKED"),
-    );
+    await waitFor(() => expect(screen.getByLabelText(t("exportPreview")).textContent).toContain("MASKED"));
     const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
     expect(preview).not.toContain("taro@example.com");
     expect(vi.mocked(api.maskExportRows).mock.calls[0][0].masks).toEqual([
@@ -85,14 +90,15 @@ describe("ExportModal データマスキング (#733)", () => {
 
   it("変換結果が届くまではプレビューに生の値を出さない", async () => {
     let resolve: (rows: CellValue[][]) => void = () => {};
-    vi.mocked(api.maskExportRows).mockImplementation(
-      () => new Promise<CellValue[][]>((r) => (resolve = r)),
-    );
+    vi.mocked(api.maskExportRows).mockImplementation(() => new Promise<CellValue[][]>((r) => (resolve = r)));
     renderModal();
     enableMasking();
     const preview = screen.getByLabelText(t("exportPreview"));
     expect(preview.textContent).toBe(t("exportMaskingPending"));
-    resolve([[1, "X", "hello"], [2, "X", null]]);
+    resolve([
+      [1, "X", "hello"],
+      [2, "X", null],
+    ]);
     await waitFor(() => expect(preview.textContent).toContain("user_email"));
     expect(preview.textContent).not.toContain("taro@example.com");
   });
@@ -120,9 +126,11 @@ describe("ExportModal データマスキング (#733)", () => {
     const hashLength = screen.getByLabelText(t("exportMaskingHashLengthFor", { column: "user_email" }));
     fireEvent.change(hashLength, { target: { value: "200" } });
     fireEvent.blur(hashLength);
-    await waitFor(() => expect(screen.getByTestId("export-masked-count").textContent).toBe(
-      t("exportMaskedColumns", { count: 2 }),
-    ));
+    await waitFor(() =>
+      expect(screen.getByTestId("export-masked-count").textContent).toBe(
+        t("exportMaskedColumns", { count: 2 }),
+      ),
+    );
     fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
     await waitFor(() => expect(api.exportQueryResult).toHaveBeenCalledOnce());
     expect(vi.mocked(api.exportQueryResult).mock.calls[0][0].masks).toEqual([

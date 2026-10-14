@@ -29,8 +29,7 @@ export const queryCommands = {
     invoke<void>("finish_transaction", { sessionId, commit }),
 
   // 明示トランザクション内の SAVEPOINT (#1418)。名前は英数字と _ のみ。
-  createSavepoint: (sessionId: string, name: string) =>
-    invoke<void>("create_savepoint", { sessionId, name }),
+  createSavepoint: (sessionId: string, name: string) => invoke<void>("create_savepoint", { sessionId, name }),
 
   rollbackToSavepoint: (sessionId: string, name: string) =>
     invoke<void>("rollback_to_savepoint", { sessionId, name }),
@@ -75,11 +74,7 @@ export const queryCommands = {
       queryTimeoutSecs: params.queryTimeoutSecs ?? null,
       rowCap: params.rowCap ?? null,
     }).then((r) => parseResponse(schemas.queryResultLite, r, "run_lookup_query")),
-  runQueryTransaction: (
-    sessionId: string,
-    statements: string[],
-    database?: string | null,
-  ) =>
+  runQueryTransaction: (sessionId: string, statements: string[], database?: string | null) =>
     invoke<QueryResult>("run_query_transaction", {
       sessionId,
       statements,

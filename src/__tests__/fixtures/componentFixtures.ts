@@ -9,9 +9,7 @@ import type { CellValue, Column, ConnectionProfile } from "../../api/tauri";
  * フィールドを `overrides` で差し替えられる。既定は SQLite 以外 (MySQL) の
  * TCP 接続を想定した無害な値。
  */
-export function makeProfile(
-  overrides: Partial<ConnectionProfile> = {},
-): ConnectionProfile {
+export function makeProfile(overrides: Partial<ConnectionProfile> = {}): ConnectionProfile {
   return {
     id: "p-test",
     name: "Test DB",
@@ -38,10 +36,7 @@ export function makeColumn(name: string, type_name = "int"): Column {
 }
 
 /** 代表的な 2 カラム構成。 */
-export const SAMPLE_COLUMNS: Column[] = [
-  makeColumn("id", "int"),
-  makeColumn("name", "varchar"),
-];
+export const SAMPLE_COLUMNS: Column[] = [makeColumn("id", "int"), makeColumn("name", "varchar")];
 
 /** `SAMPLE_COLUMNS` に対応する 2 行分のセル値。 */
 export const SAMPLE_ROWS: CellValue[][] = [

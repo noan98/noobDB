@@ -5,7 +5,6 @@ import { parseResponse } from "../schemas";
 import type { WriteCaptureSummary, UndoPreviewResponse, UndoOutcome } from "../tauri";
 
 export const flightRecorderCommands = {
-
   // DML フライトレコーダ (#735)。書き込みの記録は `runQueryStream({ capture: true })`
   // に一本化されているため、非ストリーム版の `run_captured_write` /
   // `precheck_captured_write` ラッパは持たない (#907 で削除)。

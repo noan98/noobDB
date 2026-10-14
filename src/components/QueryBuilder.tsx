@@ -71,7 +71,12 @@ function pillCss(active: boolean): SystemStyleObject {
     _hover: { background: "var(--bg-hover)" },
   };
   if (active) {
-    return { ...base, background: "var(--accent)", color: "var(--accent-text)", borderColor: "var(--accent)" };
+    return {
+      ...base,
+      background: "var(--accent)",
+      color: "var(--accent-text)",
+      borderColor: "var(--accent)",
+    };
   }
   return base;
 }
@@ -399,8 +404,7 @@ export function quoteValue(driver: string, raw: string): string {
   // ただの文字なので、二重化すると値が変わってしまい (例: C:\temp が
   // C:\\temp として保存され)、WHERE 句が既存行に一致しなくなる。
   // cellEdit.ts の quoteString / db/data_diff.rs の quote_string と方針を揃える。
-  const escaped =
-    driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
+  const escaped = driver === "mysql" ? v.replace(/\\/g, "\\\\").replace(/'/g, "''") : v.replace(/'/g, "''");
   return "'" + escaped + "'";
 }
 
@@ -446,10 +450,7 @@ export function quoteValueForColumn(driver: string, raw: string, info: TableColu
 /** Looks up a table's column metadata by name; `undefined` for a free-typed
  *  column absent from the `describeTable` result (callers fall back to the
  *  type-agnostic `quoteValue`). */
-function resolveColumnInfo(
-  columns: TableColumnInfo[],
-  name: string,
-): TableColumnInfo | undefined {
+function resolveColumnInfo(columns: TableColumnInfo[], name: string): TableColumnInfo | undefined {
   return columns.find((c) => c.name === name);
 }
 
@@ -459,10 +460,7 @@ function resolveColumnInfo(
  * inline warning (改善 1-4). Never blocks Run/Dry Run; `computeBuilderBlockedReason`
  * is the only thing that does that (改善 2).
  */
-export function isNullValueOnNotNullColumn(
-  raw: string,
-  info: TableColumnInfo | undefined | null,
-): boolean {
+export function isNullValueOnNotNullColumn(raw: string, info: TableColumnInfo | undefined | null): boolean {
   if (!info || info.nullable) return false;
   return /^null$/i.test(raw.trim());
 }
@@ -495,9 +493,7 @@ function tableRef(driver: string, database: string, table: string): string {
  * ように)。グループ先頭 (空行でも) の connector が前グループとの結合で、グループが空に
  * なったら捨てる。列が空の行は出力に含めない。
  */
-function whereGroups(
-  conditions: WhereCondition[],
-): { connector: "AND" | "OR"; items: WhereCondition[] }[] {
+function whereGroups(conditions: WhereCondition[]): { connector: "AND" | "OR"; items: WhereCondition[] }[] {
   const groups: { connector: "AND" | "OR"; items: WhereCondition[] }[] = [];
   conditions.forEach((c, i) => {
     const connector = c.connector === "OR" ? "OR" : "AND";
@@ -547,11 +543,7 @@ export function removeWhereCondition(prev: WhereCondition[], idx: number): Where
   return next;
 }
 
-function renderWhereClause(
-  driver: string,
-  columns: TableColumnInfo[],
-  conditions: WhereCondition[],
-): string {
+function renderWhereClause(driver: string, columns: TableColumnInfo[], conditions: WhereCondition[]): string {
   const renderOne = (c: WhereCondition): string => {
     const col = quoteIdentFor(driver, c.column);
     const info = resolveColumnInfo(columns, c.column);
@@ -582,9 +574,7 @@ function renderWhereClause(
   const parts = live.map((g) =>
     wrap && g.items.length > 1 ? `(${joinItems(g.items)})` : joinItems(g.items),
   );
-  return (
-    " WHERE " + parts.map((part, i) => (i === 0 ? part : `${live[i].connector} ${part}`)).join(" ")
-  );
+  return " WHERE " + parts.map((part, i) => (i === 0 ? part : `${live[i].connector} ${part}`)).join(" ");
 }
 
 /** Renders the `ORDER BY` clause (leading space included, empty string if no
@@ -627,9 +617,10 @@ export function buildSql(
   };
   switch (kind) {
     case "SELECT": {
-      const cols = selectAll || selectColumns.length === 0
-        ? "*"
-        : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
+      const cols =
+        selectAll || selectColumns.length === 0
+          ? "*"
+          : selectColumns.map((c) => quoteIdentFor(driver, c)).join(", ");
       const trimmedLimit = limit.trim();
       const hasLimit = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit);
       const orderByClause = renderOrderByClause(driver, orderBy);
@@ -661,12 +652,12 @@ export function buildSql(
         return `INSERT INTO ${ref} DEFAULT VALUES;`;
       }
       const active = driver === "sqlite" ? picked.filter((p) => !usesDefault(p)) : picked;
-      const cols = active.length > 0
-        ? active.map((p) => quoteIdentFor(driver, p.column)).join(", ")
-        : "<column>";
-      const vals = active.length > 0
-        ? active.map((p) => (usesDefault(p) ? "DEFAULT" : literalFor(p.column, p.value))).join(", ")
-        : "<value>";
+      const cols =
+        active.length > 0 ? active.map((p) => quoteIdentFor(driver, p.column)).join(", ") : "<column>";
+      const vals =
+        active.length > 0
+          ? active.map((p) => (usesDefault(p) ? "DEFAULT" : literalFor(p.column, p.value))).join(", ")
+          : "<value>";
       return `INSERT INTO ${ref} (${cols}) VALUES (${vals});`;
     }
   }
@@ -736,7 +727,19 @@ export function showsNoWhereBand(kind: QueryKind, whereEnabled: boolean): boolea
   return (kind === "UPDATE" || kind === "DELETE") && !whereEnabled;
 }
 
-export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable, initialSnapshot, readOnly, onExecute, onPreview, onPersist, onInsertToEditor, onClose }: Props) {
+export function QueryBuilder({
+  sessionId,
+  driver,
+  defaultDatabase,
+  defaultTable,
+  initialSnapshot,
+  readOnly,
+  onExecute,
+  onPreview,
+  onPersist,
+  onInsertToEditor,
+  onClose,
+}: Props) {
   const t = useT();
 
   const [kind, setKind] = useState<QueryKind>(initialSnapshot?.kind ?? "SELECT");
@@ -775,7 +778,8 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   // biome-ignore lint/correctness/useExhaustiveDependencies: database / driver は「未選択なら既定 DB を自動選択」の判定にだけ使う。依存に入れると選択のたびに一覧を再取得してしまうため sessionId 変更時のみ実行する
   useEffect(() => {
     let cancelled = false;
-    api.listDatabases(sessionId)
+    api
+      .listDatabases(sessionId)
       .then((list) => {
         if (cancelled) return;
         setDatabases(list);
@@ -784,8 +788,12 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
           if (pick) setDatabase(pick);
         }
       })
-      .catch((e) => { if (!cancelled) setLoadError(String(e)); });
-    return () => { cancelled = true; };
+      .catch((e) => {
+        if (!cancelled) setLoadError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: table は「未選択なら先頭テーブルを自動選択」の判定にだけ使う。依存に入れると選択のたびに一覧を再取得してしまうため database 変更時のみ実行する
@@ -799,15 +807,22 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     // 前回の読み込みエラーは、新しい読み込みを始めた時点で消す (成功後も残り続けないように)。
     setLoadError(null);
     setLoadingTables(true);
-    api.listTables(sessionId, database)
+    api
+      .listTables(sessionId, database)
       .then((list) => {
         if (cancelled) return;
         setTables(list);
         if (!table && list.length > 0) setTable(list[0]);
       })
-      .catch((e) => { if (!cancelled) setLoadError(String(e)); })
-      .finally(() => { if (!cancelled) setLoadingTables(false); });
-    return () => { cancelled = true; };
+      .catch((e) => {
+        if (!cancelled) setLoadError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTables(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, database]);
 
   useEffect(() => {
@@ -820,16 +835,56 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     let cancelled = false;
     setLoadError(null);
     setLoadingColumns(true);
-    api.describeTable(sessionId, database, table)
-      .then((cols) => { if (!cancelled) setTableColumns(cols); })
-      .catch((e) => { if (!cancelled) setLoadError(String(e)); })
-      .finally(() => { if (!cancelled) setLoadingColumns(false); });
-    return () => { cancelled = true; };
+    api
+      .describeTable(sessionId, database, table)
+      .then((cols) => {
+        if (!cancelled) setTableColumns(cols);
+      })
+      .catch((e) => {
+        if (!cancelled) setLoadError(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingColumns(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, database, table]);
 
   const sql = useMemo(
-    () => buildSql(driver, tableColumns, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, orderBy, limitEnabled, limit, setPairs, insertPairs),
-    [driver, tableColumns, kind, database, table, selectColumns, selectAll, whereEnabled, whereConditions, orderBy, limitEnabled, limit, setPairs, insertPairs],
+    () =>
+      buildSql(
+        driver,
+        tableColumns,
+        kind,
+        database,
+        table,
+        selectColumns,
+        selectAll,
+        whereEnabled,
+        whereConditions,
+        orderBy,
+        limitEnabled,
+        limit,
+        setPairs,
+        insertPairs,
+      ),
+    [
+      driver,
+      tableColumns,
+      kind,
+      database,
+      table,
+      selectColumns,
+      selectAll,
+      whereEnabled,
+      whereConditions,
+      orderBy,
+      limitEnabled,
+      limit,
+      setPairs,
+      insertPairs,
+    ],
   );
 
   // 改善 2-1: Run / Dry Run のブロック理由 (プレースホルダが残る = 未完成の SQL)。
@@ -846,20 +901,36 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
     await copy(sql);
   }, [copy, sql]);
 
-  const captureSnapshot = useCallback((): QueryBuilderSnapshot => ({
-    kind,
-    database,
-    table,
-    selectAll,
-    selectColumns: [...selectColumns],
-    whereEnabled,
-    whereConditions: whereConditions.map((c) => ({ ...c })),
-    orderBy: orderBy.map((o) => ({ ...o })),
-    limitEnabled,
-    limit,
-    setPairs: setPairs.map((p) => ({ ...p })),
-    insertPairs: insertPairs.map((p) => ({ ...p })),
-  }), [kind, database, table, selectAll, selectColumns, whereEnabled, whereConditions, orderBy, limitEnabled, limit, setPairs, insertPairs]);
+  const captureSnapshot = useCallback(
+    (): QueryBuilderSnapshot => ({
+      kind,
+      database,
+      table,
+      selectAll,
+      selectColumns: [...selectColumns],
+      whereEnabled,
+      whereConditions: whereConditions.map((c) => ({ ...c })),
+      orderBy: orderBy.map((o) => ({ ...o })),
+      limitEnabled,
+      limit,
+      setPairs: setPairs.map((p) => ({ ...p })),
+      insertPairs: insertPairs.map((p) => ({ ...p })),
+    }),
+    [
+      kind,
+      database,
+      table,
+      selectAll,
+      selectColumns,
+      whereEnabled,
+      whereConditions,
+      orderBy,
+      limitEnabled,
+      limit,
+      setPairs,
+      insertPairs,
+    ],
+  );
 
   const handleExecute = useCallback(() => {
     // 防御的ガード: 通常はボタンの disabled が押下自体を防ぐ (改善 2-1)。
@@ -904,16 +975,13 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
   };
   const addCondition = () =>
     setWhereConditions((prev) => [...prev, { column: "", operator: "=", value: "" }]);
-  const removeCondition = (idx: number) =>
-    setWhereConditions((prev) => removeWhereCondition(prev, idx));
+  const removeCondition = (idx: number) => setWhereConditions((prev) => removeWhereCondition(prev, idx));
 
   const updateOrderBy = (idx: number, patch: Partial<OrderByItem>) => {
     setOrderBy((prev) => prev.map((o, i) => (i === idx ? { ...o, ...patch } : o)));
   };
-  const addOrderBy = () =>
-    setOrderBy((prev) => [...prev, { column: "", direction: "ASC" }]);
-  const removeOrderBy = (idx: number) =>
-    setOrderBy((prev) => prev.filter((_, i) => i !== idx));
+  const addOrderBy = () => setOrderBy((prev) => [...prev, { column: "", direction: "ASC" }]);
+  const removeOrderBy = (idx: number) => setOrderBy((prev) => prev.filter((_, i) => i !== idx));
 
   const updatePair = (which: "set" | "insert", idx: number, patch: Partial<ColumnValuePair>) => {
     const apply = (prev: ColumnValuePair[]) => prev.map((p, i) => (i === idx ? { ...p, ...patch } : p));
@@ -1000,12 +1068,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             <Box css={sectionTitleCss}>{t("qbQueryType")}</Box>
             <Box css={pillListCss}>
               {(["SELECT", "INSERT", "UPDATE", "DELETE"] as QueryKind[]).map((k) => (
-                <chakra.button
-                  key={k}
-                  type="button"
-                  css={pillCss(kind === k)}
-                  onClick={() => setKind(k)}
-                >
+                <chakra.button key={k} type="button" css={pillCss(kind === k)} onClick={() => setKind(k)}>
                   {k}
                 </chakra.button>
               ))}
@@ -1026,7 +1089,9 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
               >
                 <option value="">—</option>
                 {databases.map((d) => (
-                  <option key={d} value={d}>{d}</option>
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
                 ))}
               </Select>
             </Box>
@@ -1040,7 +1105,9 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
               >
                 <option value="">{loadingTables ? t("qbLoading") : "—"}</option>
                 {tables.map((tname) => (
-                  <option key={tname} value={tname}>{tname}</option>
+                  <option key={tname} value={tname}>
+                    {tname}
+                  </option>
                 ))}
               </Select>
             </Box>
@@ -1262,108 +1329,111 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   </chakra.button>
                 )}
               </Box>
-              {whereEnabled && whereConditions.map((c, i) => {
-                const info = resolveColumnInfo(tableColumns, c.column);
-                const nullOp = isNullOperator(c.operator);
-                // IN takes a comma-separated list, which the boolean Select /
-                // date "now" button can't represent, so it keeps the plain
-                // free-text box regardless of the column's type. The two
-                // "IS [NOT] NULL" operators need no value at all.
-                const isIn = normalizeOperator(c.operator) === "IN";
-                const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
-                const inGroup =
-                  c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
-                return (
-                  <Box css={stackedRowCss} key={`w-${i}`}>
-                    <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
-                      {i === 0 ? (
-                        <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
-                      ) : (
-                        <>
-                          <Select
-                            css={connectorCss}
-                            value={c.connector === "OR" ? "OR" : "AND"}
-                            aria-label={t("qbWhereConnector")}
-                            onChange={(e) =>
-                              updateCondition(i, { connector: e.target.value as "AND" | "OR" })
-                            }
-                          >
-                            <option value="AND">AND</option>
-                            <option value="OR">OR</option>
-                          </Select>
-                          <Tooltip label={t("qbWhereGroupTip")}>
-                            <chakra.button
-                              type="button"
-                              css={groupBtnCss}
-                              aria-pressed={c.groupWithPrevious === true}
-                              aria-label={t("qbWhereGroupTip")}
-                              onClick={() =>
-                                updateCondition(i, { groupWithPrevious: c.groupWithPrevious !== true })
+              {whereEnabled &&
+                whereConditions.map((c, i) => {
+                  const info = resolveColumnInfo(tableColumns, c.column);
+                  const nullOp = isNullOperator(c.operator);
+                  // IN takes a comma-separated list, which the boolean Select /
+                  // date "now" button can't represent, so it keeps the plain
+                  // free-text box regardless of the column's type. The two
+                  // "IS [NOT] NULL" operators need no value at all.
+                  const isIn = normalizeOperator(c.operator) === "IN";
+                  const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
+                  const inGroup =
+                    c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
+                  return (
+                    <Box css={stackedRowCss} key={`w-${i}`}>
+                      <Box css={inGroup ? { ...rowCss, ...groupedRowCss } : rowCss}>
+                        {i === 0 ? (
+                          <chakra.span css={connectorSpacerCss}>WHERE</chakra.span>
+                        ) : (
+                          <>
+                            <Select
+                              css={connectorCss}
+                              value={c.connector === "OR" ? "OR" : "AND"}
+                              aria-label={t("qbWhereConnector")}
+                              onChange={(e) =>
+                                updateCondition(i, { connector: e.target.value as "AND" | "OR" })
                               }
                             >
-                              ( )
-                            </chakra.button>
-                          </Tooltip>
-                        </>
-                      )}
-                      <ComboSelect
-                        css={rowInputCss}
-                        value={c.column}
-                        options={columnComboOptions}
-                        onChange={(v) => updateCondition(i, { column: v })}
-                        placeholder={t("qbColumn")}
-                        emptyText={t("qbComboNoMatches")}
-                        showMoreText={(count) => t("qbComboShowMore", { count })}
-                      />
-                      <ComboSelect
-                        css={opCss}
-                        value={c.operator}
-                        options={operatorComboOptions}
-                        onChange={(v) => updateCondition(i, { operator: v })}
-                        emptyText={t("qbComboNoMatches")}
-                        showMoreText={(count) => t("qbComboShowMore", { count })}
-                      />
-                      {nullOp || isIn ? (
-                        <chakra.input
+                              <option value="AND">AND</option>
+                              <option value="OR">OR</option>
+                            </Select>
+                            <Tooltip label={t("qbWhereGroupTip")}>
+                              <chakra.button
+                                type="button"
+                                css={groupBtnCss}
+                                aria-pressed={c.groupWithPrevious === true}
+                                aria-label={t("qbWhereGroupTip")}
+                                onClick={() =>
+                                  updateCondition(i, { groupWithPrevious: c.groupWithPrevious !== true })
+                                }
+                              >
+                                ( )
+                              </chakra.button>
+                            </Tooltip>
+                          </>
+                        )}
+                        <ComboSelect
                           css={rowInputCss}
-                          value={c.value}
-                          placeholder={nullOp ? "—" : t("qbValuesPlaceholder")}
-                          disabled={nullOp}
-                          aria-label={t("qbValue")}
-                          onChange={(e) => updateCondition(i, { value: e.target.value })}
+                          value={c.column}
+                          options={columnComboOptions}
+                          onChange={(v) => updateCondition(i, { column: v })}
+                          placeholder={t("qbColumn")}
+                          emptyText={t("qbComboNoMatches")}
+                          showMoreText={(count) => t("qbComboShowMore", { count })}
                         />
-                      ) : (
-                        <ValueControl
-                          value={c.value}
-                          onChange={(v) => updateCondition(i, { value: v })}
-                          columnInfo={info}
-                          placeholder={t("qbValue")}
-                          t={t}
+                        <ComboSelect
+                          css={opCss}
+                          value={c.operator}
+                          options={operatorComboOptions}
+                          onChange={(v) => updateCondition(i, { operator: v })}
+                          emptyText={t("qbComboNoMatches")}
+                          showMoreText={(count) => t("qbComboShowMore", { count })}
                         />
+                        {nullOp || isIn ? (
+                          <chakra.input
+                            css={rowInputCss}
+                            value={c.value}
+                            placeholder={nullOp ? "—" : t("qbValuesPlaceholder")}
+                            disabled={nullOp}
+                            aria-label={t("qbValue")}
+                            onChange={(e) => updateCondition(i, { value: e.target.value })}
+                          />
+                        ) : (
+                          <ValueControl
+                            value={c.value}
+                            onChange={(v) => updateCondition(i, { value: v })}
+                            columnInfo={info}
+                            placeholder={t("qbValue")}
+                            t={t}
+                          />
+                        )}
+                        <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
+                          <chakra.button
+                            type="button"
+                            css={iconBtnCss}
+                            onClick={() => removeCondition(i)}
+                            aria-label={t("qbRemove")}
+                            disabled={whereConditions.length <= 1}
+                          >
+                            <Icon name="close" size={ICON_SIZES.sm} />
+                          </chakra.button>
+                        </Tooltip>
+                      </Box>
+                      {notNullWarning && (
+                        <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
                       )}
-                      <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
-                        <chakra.button
-                          type="button"
-                          css={iconBtnCss}
-                          onClick={() => removeCondition(i)}
-                          aria-label={t("qbRemove")}
-                          disabled={whereConditions.length <= 1}
-                        >
-                          <Icon name="close" size={ICON_SIZES.sm} />
-                        </chakra.button>
-                      </Tooltip>
                     </Box>
-                    {notNullWarning && (
-                      <chakra.span css={inlineWarningCss}>{t("qbNotNullWarning")}</chakra.span>
-                    )}
-                  </Box>
-                );
-              })}
-              {whereEnabled && (kind === "UPDATE" || kind === "DELETE") && hasAmbiguousAndOr(whereConditions) && (
-                <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
-                  {t("qbWhereAndOrPrecedence")}
-                </chakra.span>
-              )}
+                  );
+                })}
+              {whereEnabled &&
+                (kind === "UPDATE" || kind === "DELETE") &&
+                hasAmbiguousAndOr(whereConditions) && (
+                  <chakra.span css={inlineWarningCss} role="status" data-testid="qb-and-or-precedence">
+                    {t("qbWhereAndOrPrecedence")}
+                  </chakra.span>
+                )}
             </chakra.section>
           )}
 
@@ -1394,9 +1464,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                     <Select
                       css={opCss}
                       value={o.direction}
-                      onChange={(e) =>
-                        updateOrderBy(i, { direction: e.target.value as "ASC" | "DESC" })
-                      }
+                      onChange={(e) => updateOrderBy(i, { direction: e.target.value as "ASC" | "DESC" })}
                     >
                       <option value="ASC">ASC</option>
                       <option value="DESC">DESC</option>
@@ -1440,9 +1508,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
                   onChange={(e) => setLimit(e.target.value)}
                   inputMode="numeric"
                 />
-                {limitInvalid && (
-                  <chakra.span css={inlineWarningCss}>{t("qbLimitInvalid")}</chakra.span>
-                )}
+                {limitInvalid && <chakra.span css={inlineWarningCss}>{t("qbLimitInvalid")}</chakra.span>}
               </Box>
             </chakra.section>
           )}
@@ -1522,11 +1588,7 @@ export function QueryBuilder({ sessionId, driver, defaultDatabase, defaultTable,
             DB 書き込み確定に限定する (theme.ts の variant 規約)。 */}
         <Tooltip
           label={
-            runBlockedByReadOnly
-              ? t("qbExecuteReadOnlyTitle")
-              : blockedReason
-                ? t(blockedReason)
-                : undefined
+            runBlockedByReadOnly ? t("qbExecuteReadOnlyTitle") : blockedReason ? t(blockedReason) : undefined
           }
           focusableWrapper={runDisabled}
         >

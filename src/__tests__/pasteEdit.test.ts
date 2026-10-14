@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import { parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "../components/pasteEdit";
-import { buildInsertStatements, buildUpdateStatements, rowEditKey, validateCellInput, type PendingEdits } from "../components/cellEdit";
+import {
+  buildInsertStatements,
+  buildUpdateStatements,
+  rowEditKey,
+  validateCellInput,
+  type PendingEdits,
+} from "../components/cellEdit";
 import type { BulkEditTarget } from "../components/bulkEdit";
 
 function col(name: string, type_name: string): Column {
@@ -277,7 +283,13 @@ describe("planPasteInsertRows (#1539)", () => {
   };
 
   it("空欄は省き、NULL 表記と値はそのまま PendingInsertRow にする", () => {
-    const plan = planPasteInsertRows({ ...base, grid: [["", "dave", "NULL"], ["", "erin", ""]] });
+    const plan = planPasteInsertRows({
+      ...base,
+      grid: [
+        ["", "dave", "NULL"],
+        ["", "erin", ""],
+      ],
+    });
     expect(plan.rows).toEqual([{ 1: "dave", 2: "NULL" }, { 1: "erin" }]);
     expect(plan.cells).toBe(3);
   });
@@ -295,7 +307,10 @@ describe("planPasteInsertRows (#1539)", () => {
       columns,
       tableColumns: null,
       targetColIndices: [0, 1, 2],
-      grid: [["1", "a", "deadbeef"], ["", "", "cafe"]],
+      grid: [
+        ["1", "a", "deadbeef"],
+        ["", "", "cafe"],
+      ],
     });
     expect(plan.rows).toEqual([{ 0: "1", 1: "a" }]);
     expect(plan.skippedBinary).toBe(2);
@@ -304,7 +319,15 @@ describe("planPasteInsertRows (#1539)", () => {
 
   it("不正な値のセルだけを外し、値が残らない行は積まない", () => {
     const validate = (c: number, v: string) => (c === 2 && v === "abc" ? "bad" : null);
-    const plan = planPasteInsertRows({ ...base, validate, grid: [["", "frank", "abc"], ["", "", "abc"], ["", "", ""]] });
+    const plan = planPasteInsertRows({
+      ...base,
+      validate,
+      grid: [
+        ["", "frank", "abc"],
+        ["", "", "abc"],
+        ["", "", ""],
+      ],
+    });
     expect(plan.rows).toEqual([{ 1: "frank" }]);
     expect(plan.skippedInvalid).toBe(2);
     expect(plan.skippedBlankRows).toBe(2);
@@ -319,7 +342,13 @@ describe("planPasteInsertRows (#1539)", () => {
   it("積んだ行は既存の buildInsertStatements でそのまま INSERT 文になる", () => {
     const plan = planPasteInsertRows({ ...base, grid: [["", "dave", "7"]] });
     expect(
-      buildInsertStatements({ driver: "mysql", database: "d", table: "t", columns: cols, inserts: plan.rows }),
+      buildInsertStatements({
+        driver: "mysql",
+        database: "d",
+        table: "t",
+        columns: cols,
+        inserts: plan.rows,
+      }),
     ).toEqual(["INSERT INTO `d`.`t` (`name`, `age`) VALUES ('dave', 7);"]);
   });
 

@@ -65,7 +65,10 @@ function findViolations(
     if (!fileFilter(path)) continue;
     const lines = content.split("\n");
     lines.forEach((line, i) => {
-      const re = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+      const re = new RegExp(
+        pattern.source,
+        pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`,
+      );
       let m: RegExpExecArray | null;
       while ((m = re.exec(line))) {
         if (isViolation(m)) out.push(`${toDisplayPath(path)}:${i + 1}: ${m[0]}`);
@@ -145,10 +148,7 @@ describe("design tokens: 余白 (spacing)", () => {
     // 素の `style={{...}}` はいずれも CSS プロパティ名で書くため、上の props 検査に
     // 掛からない。ここでは `var(--space-*)` へ寄せる (これらの文脈では Chakra の
     // トークン名ではなく CSS 変数参照が確実に効く)。
-    const offenders = findViolations(
-      new RegExp(`\\b${SPACING_CSS_PROPS}\\s*:\\s*"[^"]*[0-9]px`),
-      () => true,
-    );
+    const offenders = findViolations(new RegExp(`\\b${SPACING_CSS_PROPS}\\s*:\\s*"[^"]*[0-9]px`), () => true);
     expect(offenders, HINT).toEqual([]);
   });
 });
@@ -156,10 +156,9 @@ describe("design tokens: 余白 (spacing)", () => {
 describe("design tokens: タイポグラフィ", () => {
   it("fontSize は px 直値ではなくタイプスケール (3xs〜3xl) を使う", () => {
     const offenders = findViolations(/\bfontSize=\{?"[0-9.]+(?:px|pt)"/, () => true);
-    expect(
-      offenders,
-      "文字サイズは App.css の --text-* (theme.ts の fontSizes トークン) を使う。",
-    ).toEqual([]);
+    expect(offenders, "文字サイズは App.css の --text-* (theme.ts の fontSizes トークン) を使う。").toEqual(
+      [],
+    );
   });
 
   it("ディスプレイ用タイプスケール (2xl / 3xl) は第一印象面のファイルだけで使う (#1214)", () => {
@@ -183,10 +182,7 @@ describe("design tokens: タイポグラフィ", () => {
 
   it("スタイルオブジェクトの fontSize も px 直値を使わない", () => {
     const offenders = findViolations(/\bfontSize\s*:\s*"[^"]*[0-9](?:px|pt)/, () => true);
-    expect(
-      offenders,
-      "スタイルオブジェクトでは var(--text-*) を参照する。",
-    ).toEqual([]);
+    expect(offenders, "スタイルオブジェクトでは var(--text-*) を参照する。").toEqual([]);
   });
 
   it("letterSpacing / lineHeight は直値ではなくリズムトークンを使う", () => {
@@ -201,7 +197,7 @@ describe("design tokens: タイポグラフィ", () => {
     ).toEqual([]);
   });
 
-  it("SVG の fontSize 属性も単位無し px 直値 (fontSize=\"11\") を使わない (#1189)", () => {
+  it('SVG の fontSize 属性も単位無し px 直値 (fontSize="11") を使わない (#1189)', () => {
     // SVG の fontSize 属性は単位を省略すると px 相当として解釈される。Chakra の
     // トークン名 (xs/sm/2xs/...) は常に英字を含み純粋な数値にはならないため、
     // `fontSize="11"` のように数値のみの文字列はほぼ確実に SVG の px 直値。
@@ -212,14 +208,13 @@ describe("design tokens: タイポグラフィ", () => {
     const offenders = findViolations(/\bfontSize=\{?"[0-9.]+"\}?/, () => true);
     expect(
       offenders,
-      "SVG の <text> も App.css の --text-* を style={{ fontSize: \"var(--text-xs)\" }} " +
-        "の形で参照する。",
+      'SVG の <text> も App.css の --text-* を style={{ fontSize: "var(--text-xs)" }} ' + "の形で参照する。",
     ).toEqual([]);
   });
 });
 
 describe("design tokens: 等幅数字 (#1072)", () => {
-  it("font-variant-numeric は直書きせず textStyle=\"numeric\" を使う", () => {
+  it('font-variant-numeric は直書きせず textStyle="numeric" を使う', () => {
     const offenders = findViolations(
       /fontVariantNumeric|font-variant-numeric/,
       () => true,
@@ -228,7 +223,7 @@ describe("design tokens: 等幅数字 (#1072)", () => {
     expect(
       offenders,
       "等幅数字は theme.ts の textStyles.numeric が単一ソース。コンポーネントでは " +
-        "textStyle=\"numeric\" (スタイルオブジェクト内は textStyle: \"numeric\") を使う。",
+        'textStyle="numeric" (スタイルオブジェクト内は textStyle: "numeric") を使う。',
     ).toEqual([]);
     expect(themeTs).toMatch(/numeric:\s*\{\s*value:\s*\{\s*fontVariantNumeric:\s*"tabular-nums"/);
   });
@@ -322,7 +317,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ).length;
   }
 
-  it("fontSize=\"xs\" + color=\"app.textMuted\" の手書き caption を増やさず、減ったらベースラインも下げる", () => {
+  it('fontSize="xs" + color="app.textMuted" の手書き caption を増やさず、減ったらベースラインも下げる', () => {
     const counts = new Map<string, number>();
     for (const [path, content] of sources) {
       if (!path.startsWith("../components/")) continue;
@@ -335,31 +330,32 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
       const n = counts.get(path) ?? 0;
       const allowed = HANDWRITTEN_CAPTION_BASELINE.get(path) ?? 0;
       if (n > allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所 (許容 ${allowed})`);
-      else if (n < allowed) offenders.push(`${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`);
+      else if (n < allowed)
+        offenders.push(
+          `${toDisplayPath(path)}: ${n} 箇所に減った。ベースラインを ${n} へ下げてください (許容 ${allowed})`,
+        );
     }
     expect(
       offenders,
-      "補足テキストは fontSize=\"xs\" color=\"app.textMuted\" を手書きせず " +
-        "textStyle=\"caption\" を使う (標準本文は textStyle=\"body\")。減らしたらベースラインも下げる。",
+      '補足テキストは fontSize="xs" color="app.textMuted" を手書きせず ' +
+        'textStyle="caption" を使う (標準本文は textStyle="body")。減らしたらベースラインも下げる。',
     ).toEqual([]);
   });
 
   it("body / caption の textStyle が theme.ts に定義されている", () => {
-    expect(themeTs).toMatch(/caption:\s*\{\s*value:\s*\{\s*fontSize:\s*"xs",\s*fontWeight:\s*"400",\s*lineHeight:\s*"snug",\s*color:\s*"app\.textMuted"/);
-    expect(themeTs).toMatch(/body:\s*\{\s*value:\s*\{\s*fontSize:\s*"sm",\s*fontWeight:\s*"400",\s*lineHeight:\s*"normal",\s*color:\s*"app\.text"/);
+    expect(themeTs).toMatch(
+      /caption:\s*\{\s*value:\s*\{\s*fontSize:\s*"xs",\s*fontWeight:\s*"400",\s*lineHeight:\s*"snug",\s*color:\s*"app\.textMuted"/,
+    );
+    expect(themeTs).toMatch(
+      /body:\s*\{\s*value:\s*\{\s*fontSize:\s*"sm",\s*fontWeight:\s*"400",\s*lineHeight:\s*"normal",\s*color:\s*"app\.text"/,
+    );
   });
 });
 
 describe("design tokens: 角丸 (radius)", () => {
   it("borderRadius は px 直値ではなく radii トークン (xs/sm/md/lg/pill) を使う", () => {
-    const offenders = findViolations(
-      /\b(?:borderRadius|rounded)\s*(?:=\{?|:\s*)"[^"]*[0-9]px/,
-      () => true,
-    );
-    expect(
-      offenders,
-      "角丸は App.css の --radius-* (theme.ts の radii トークン) を使う。",
-    ).toEqual([]);
+    const offenders = findViolations(/\b(?:borderRadius|rounded)\s*(?:=\{?|:\s*)"[^"]*[0-9]px/, () => true);
+    expect(offenders, "角丸は App.css の --radius-* (theme.ts の radii トークン) を使う。").toEqual([]);
   });
 });
 
@@ -419,9 +415,7 @@ describe("design tokens: theme.ts ⇔ App.css のパリティ", () => {
     let m: RegExpExecArray | null;
     while ((m = re.exec(themeTs))) referenced.add(m[1]);
 
-    const missing = [...referenced]
-      .filter((name) => !new RegExp(`\\${name}\\s*:`).test(css))
-      .sort();
+    const missing = [...referenced].filter((name) => !new RegExp(`\\${name}\\s*:`).test(css)).sort();
     expect(missing, "theme.ts が参照する CSS 変数が App.css に無い").toEqual([]);
   });
 
@@ -477,9 +471,7 @@ describe("design tokens: ベタ塗り専用の前景色", () => {
         const m = /app\.(danger|warning|success|info)Fg/.exec(line);
         if (!m) return;
         const solid = `app.${m[1]}Bg`;
-        const window = lines
-          .slice(Math.max(0, i - PAIRED_WINDOW), i + PAIRED_WINDOW + 1)
-          .join("\n");
+        const window = lines.slice(Math.max(0, i - PAIRED_WINDOW), i + PAIRED_WINDOW + 1).join("\n");
         if (!window.includes(solid)) {
           offenders.push(`${toDisplayPath(path)}:${i + 1}: ${m[0]}`);
         }
@@ -561,17 +553,12 @@ describe("design tokens: フォーカスリング (#1162)", () => {
 
 describe("フォーム / モーダルの共通プリミティブ", () => {
   /** モーダルとダイアログ (= `modalForm.tsx` のプリミティブを使う画面)。 */
-  const isModalSource = (path: string) =>
-    /^\.\.\/components\/\w+(?:Modal|Dialog)\.tsx$/.test(path);
+  const isModalSource = (path: string) => /^\.\.\/components\/\w+(?:Modal|Dialog)\.tsx$/.test(path);
 
   it("モーダル内のコード / SQL プレビューは CodePreview を使う", () => {
     // 手書きの `<pre>` は #1114 以前、地の色 (surface / bgInput / toolbar)・角丸
     // (md / lg)・文字サイズ (xs / sm) が 3 通りに割れたまま 8 箇所へ複製されていた。
-    const offenders = findViolations(
-      /<chakra\.pre|\bas="pre"/,
-      () => true,
-      isModalSource,
-    );
+    const offenders = findViolations(/<chakra\.pre|\bas="pre"/, () => true, isModalSource);
     expect(
       offenders,
       "読み取り専用のコード表示は modalForm.tsx の <CodePreview> を使う " +
@@ -591,7 +578,7 @@ describe("フォーム / モーダルの共通プリミティブ", () => {
     );
     expect(
       offenders,
-      "入力欄の見出しは modalForm.tsx の <FieldLabel> (textStyle=\"overline\") を使う。",
+      '入力欄の見出しは modalForm.tsx の <FieldLabel> (textStyle="overline") を使う。',
     ).toEqual([]);
   });
 });
@@ -601,7 +588,11 @@ describe("フォーム / パネルの共通プリミティブ (#1114 でモー�
   /** 行が (JSDoc / 行) コメントかどうか。ルールの説明文で名前を挙げるのは違反ではない。 */
   const isCommentLine = (line: string) => /^\s*(?:\/\/|\*|\/\*|\{\/\*)/.test(line);
 
-  function scan(pattern: RegExp, fileFilter: (path: string) => boolean, allowLine: (line: string) => boolean) {
+  function scan(
+    pattern: RegExp,
+    fileFilter: (path: string) => boolean,
+    allowLine: (line: string) => boolean,
+  ) {
     const out: string[] = [];
     for (const [path, content] of sources) {
       if (!fileFilter(path)) continue;
@@ -643,7 +634,10 @@ describe("フォーム / パネルの共通プリミティブ (#1114 でモー�
     // 例外は結果グリッドのセル近傍エラー (modalForm.tsx の方針どおりセル内に出す)。
     const offenders = scan(
       /role="alert"/,
-      (path) => isComponent(path) && path !== "../components/ResultGrid.tsx" && path !== "../components/modalForm.tsx",
+      (path) =>
+        isComponent(path) &&
+        path !== "../components/ResultGrid.tsx" &&
+        path !== "../components/modalForm.tsx",
       (line) => /<(?:ErrorNote|FieldError|Callout)\b/.test(line),
     );
     expect(

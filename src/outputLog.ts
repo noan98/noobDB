@@ -171,12 +171,7 @@ export function compactOutputSql(
 /** 絞り込み。`problems` はエラー / タイムアウト / キャンセル / スキップ。 */
 export type OutputFilter = "all" | "problems";
 
-const PROBLEM_OUTCOMES: ReadonlySet<OutputOutcome> = new Set([
-  "error",
-  "timeout",
-  "cancelled",
-  "skipped",
-]);
+const PROBLEM_OUTCOMES: ReadonlySet<OutputOutcome> = new Set(["error", "timeout", "cancelled", "skipped"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 純ロジック

@@ -128,7 +128,9 @@ const SnippetRow = memo(function SnippetRow({
           }
         >
           <TreeChevron visibility="hidden" aria-hidden />
-          <TreeIcon color="app.accent" aria-hidden><Icon name="snippet" /></TreeIcon>
+          <TreeIcon color="app.accent" aria-hidden>
+            <Icon name="snippet" />
+          </TreeIcon>
           <TreeLabel>{s.name}</TreeLabel>
           {isFavorite && (
             <Tooltip label={t("snippetFavoriteBadge")}>
@@ -139,16 +141,15 @@ const SnippetRow = memo(function SnippetRow({
           )}
           {isWatched && (
             <Tooltip label={t("snippetWatchBadge")}>
-              <TreeIcon
-                color="app.accent"
-                aria-label={t("snippetWatchBadge")}
-              >
+              <TreeIcon color="app.accent" aria-label={t("snippetWatchBadge")}>
                 <Icon name="explain" />
               </TreeIcon>
             </Tooltip>
           )}
           {s.tags.map((tag) => (
-            <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">{tag}</TreeBadge>
+            <TreeBadge key={tag} textTransform="none" letterSpacing="0" fontFamily="mono">
+              {tag}
+            </TreeBadge>
           ))}
           {s.driver && <TreeBadge>{s.driver}</TreeBadge>}
           {hasRowActions && (
@@ -251,9 +252,8 @@ export const SnippetList = memo(function SnippetList({
   const [showAllScopes, setShowAllScopes] = useState(false);
   // フォルダの開閉は localStorage に永続化し、再起動後も維持する (#677)。既定は
   // 開いているので閉じているフォルダキーだけを保存する。
-  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>(
-    readCollapsedSnippetFolders,
-  );
+  const [expandedFolders, setExpandedFolders] =
+    useState<Record<string, boolean>>(readCollapsedSnippetFolders);
   const [menu, setMenu] = useState<MenuState | null>(null);
 
   // 閉じているフォルダの集合を永続化する (開くと自動でエントリが消える)。
@@ -303,9 +303,7 @@ export const SnippetList = memo(function SnippetList({
   const handleContextMenu = (e: React.MouseEvent, s: Snippet) => {
     e.preventDefault();
     e.stopPropagation();
-    const items: ContextMenuEntry[] = [
-      { label: t("snippetMenuInsert"), onSelect: () => onInsert(s) },
-    ];
+    const items: ContextMenuEntry[] = [{ label: t("snippetMenuInsert"), onSelect: () => onInsert(s) }];
     if (onRun) {
       items.push({ label: t("snippetMenuRun"), onSelect: () => onRun(s) });
     }
@@ -318,9 +316,7 @@ export const SnippetList = memo(function SnippetList({
     }
     if (onTogglePlanWatch) {
       items.push({
-        label: watchedPlanIds?.includes(s.id)
-          ? t("snippetMenuUnwatchPlan")
-          : t("snippetMenuWatchPlan"),
+        label: watchedPlanIds?.includes(s.id) ? t("snippetMenuUnwatchPlan") : t("snippetMenuWatchPlan"),
         onSelect: () => onTogglePlanWatch(s),
       });
     }
@@ -346,10 +342,7 @@ export const SnippetList = memo(function SnippetList({
   handlersRef.current = { onInsert, onRun, onToggleFavorite, handleContextMenu };
   const stableInsert = useCallback((sn: Snippet) => handlersRef.current.onInsert(sn), []);
   const stableRun = useCallback((sn: Snippet) => handlersRef.current.onRun?.(sn), []);
-  const stableToggleFavorite = useCallback(
-    (sn: Snippet) => handlersRef.current.onToggleFavorite?.(sn),
-    [],
-  );
+  const stableToggleFavorite = useCallback((sn: Snippet) => handlersRef.current.onToggleFavorite?.(sn), []);
   const stableContextMenu = useCallback(
     (e: React.MouseEvent, sn: Snippet) => handlersRef.current.handleContextMenu(e, sn),
     [],
@@ -397,10 +390,7 @@ export const SnippetList = memo(function SnippetList({
         </Box>
         {activeProfile && (
           <ScopeToggle>
-            <Checkbox
-              checked={showAllScopes}
-              onChange={(e) => setShowAllScopes(e.target.checked)}
-            />
+            <Checkbox checked={showAllScopes} onChange={(e) => setShowAllScopes(e.target.checked)} />
             {t("snippetShowAllScopes")}
           </ScopeToggle>
         )}
@@ -414,84 +404,86 @@ export const SnippetList = memo(function SnippetList({
           action={onCreate ? { label: t("appNewSnippet"), onClick: onCreate } : undefined}
         />
       ) : visibleSnippets.length === 0 ? (
-        <chakra.p color="app.textMuted" p="3">{t("snippetNoMatches")}</chakra.p>
+        <chakra.p color="app.textMuted" p="3">
+          {t("snippetNoMatches")}
+        </chakra.p>
       ) : (
         <Tree role="tree">
-          {grouped === null
-            ? <AnimatePresence initial={false}>{visibleSnippets.map(renderSnippet)}</AnimatePresence>
-            : grouped.map((g) => {
-                const key = g.name ?? "__unfiled__";
-                // 検索中は一致を含むフォルダを強制的に開く (閉じたフォルダの一致が見えない
-                // と、見出しのバッジに件数だけ出て中身が空に見える, #1534)。保存している開閉
-                // 状態は変えないので、検索を消せば元の開閉に戻る。
-                const folderOpen = searching || expandedFolders[key] !== false;
-                const label = g.name ?? t("snippetFolderNone");
-                return (
-                  <TreeNode key={key}>
-                    <Box
-                      display="flex"
-                      alignItems="center"
-                      gap="1"
-                      whiteSpace="nowrap"
-                      overflow="hidden"
-                      userSelect="none"
-                      cursor="pointer"
-                      pt={TREE_GROUP_HEADING_PY}
-                      pr="2.5"
-                      pb={TREE_GROUP_HEADING_PY}
-                      pl="1.5"
-                      textStyle="overline"
-                      bg="app.surfaceMuted"
-                      borderTop="1px solid"
-                      borderTopColor="app.borderSubtle"
-                      borderBottom="1px solid"
-                      borderBottomColor="app.borderSubtle"
-                      borderLeft="2px solid transparent"
-                      transitionProperty="background, color, border-color, box-shadow"
-                      transitionDuration="var(--dur-fast)"
-                      transitionTimingFunction="var(--ease)"
-                      _hover={{ bg: "app.hover", color: "app.text" }}
-                      // 検索中は強制的に開いているので、開閉の操作は無視する (保存状態を変えない)。
-                      onClick={() => {
+          {grouped === null ? (
+            <AnimatePresence initial={false}>{visibleSnippets.map(renderSnippet)}</AnimatePresence>
+          ) : (
+            grouped.map((g) => {
+              const key = g.name ?? "__unfiled__";
+              // 検索中は一致を含むフォルダを強制的に開く (閉じたフォルダの一致が見えない
+              // と、見出しのバッジに件数だけ出て中身が空に見える, #1534)。保存している開閉
+              // 状態は変えないので、検索を消せば元の開閉に戻る。
+              const folderOpen = searching || expandedFolders[key] !== false;
+              const label = g.name ?? t("snippetFolderNone");
+              return (
+                <TreeNode key={key}>
+                  <Box
+                    display="flex"
+                    alignItems="center"
+                    gap="1"
+                    whiteSpace="nowrap"
+                    overflow="hidden"
+                    userSelect="none"
+                    cursor="pointer"
+                    pt={TREE_GROUP_HEADING_PY}
+                    pr="2.5"
+                    pb={TREE_GROUP_HEADING_PY}
+                    pl="1.5"
+                    textStyle="overline"
+                    bg="app.surfaceMuted"
+                    borderTop="1px solid"
+                    borderTopColor="app.borderSubtle"
+                    borderBottom="1px solid"
+                    borderBottomColor="app.borderSubtle"
+                    borderLeft="2px solid transparent"
+                    transitionProperty="background, color, border-color, box-shadow"
+                    transitionDuration="var(--dur-fast)"
+                    transitionTimingFunction="var(--ease)"
+                    _hover={{ bg: "app.hover", color: "app.text" }}
+                    // 検索中は強制的に開いているので、開閉の操作は無視する (保存状態を変えない)。
+                    onClick={() => {
+                      if (searching) return;
+                      setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
                         if (searching) return;
-                        setExpandedFolders((prev) => ({ ...prev, [key]: prev[key] === false ? true : false }));
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          if (searching) return;
-                          setExpandedFolders((prev) => ({
-                            ...prev,
-                            [key]: prev[key] === false ? true : false,
-                          }));
-                        }
-                      }}
-                      role="treeitem"
-                      tabIndex={0}
-                      aria-expanded={folderOpen}
-                    >
-                      <TreeChevron aria-hidden>{folderOpen ? "▾" : "▸"}</TreeChevron>
-                      <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
-                        {label}
-                      </chakra.span>
-                      <TreeBadge textTransform="none" letterSpacing="0">{g.snippets.length}</TreeBadge>
+                        setExpandedFolders((prev) => ({
+                          ...prev,
+                          [key]: prev[key] === false ? true : false,
+                        }));
+                      }
+                    }}
+                    role="treeitem"
+                    tabIndex={0}
+                    aria-expanded={folderOpen}
+                  >
+                    <TreeChevron aria-hidden>{folderOpen ? "▾" : "▸"}</TreeChevron>
+                    <chakra.span flex="1" fontWeight={600} overflow="hidden" textOverflow="ellipsis">
+                      {label}
+                    </chakra.span>
+                    <TreeBadge textTransform="none" letterSpacing="0">
+                      {g.snippets.length}
+                    </TreeBadge>
+                  </Box>
+                  <TreeCollapse open={folderOpen}>
+                    <Box display="flex" flexDirection="column">
+                      <AnimatePresence initial={false}>{g.snippets.map(renderSnippet)}</AnimatePresence>
                     </Box>
-                    <TreeCollapse open={folderOpen}>
-                      <Box display="flex" flexDirection="column">
-                        <AnimatePresence initial={false}>
-                          {g.snippets.map(renderSnippet)}
-                        </AnimatePresence>
-                      </Box>
-                    </TreeCollapse>
-                  </TreeNode>
-                );
-              })}
+                  </TreeCollapse>
+                </TreeNode>
+              );
+            })
+          )}
         </Tree>
       )}
 
-      {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
-      )}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
       {confirmDialog}
     </TreePane>
   );

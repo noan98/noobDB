@@ -118,8 +118,7 @@ const COVERED: Record<string, string> = {
  * 抽出時に自動で除外されるので、ここには書かない。
  */
 const EXCLUDED: Record<string, string> = {
-  Response:
-    "tauri::ipc::Response は生バイト列をそのまま返す型で JSON を経由しないため serde の対象外",
+  Response: "tauri::ipc::Response は生バイト列をそのまま返す型で JSON を経由しないため serde の対象外",
   SessionId: "`type SessionId = String` の別名で、構造体ではなく文字列そのもの",
   Value:
     "`Value` 単体はコマンドの戻り値ではなく `Vec<Vec<Value>>` の要素。全形は queryResultVariants (#1195) の行で固定済み",
@@ -191,9 +190,7 @@ describe("IPC レスポンス型の serde ゴールデン網羅性 (#[tauri::com
   });
 
   it("COVERED / EXCLUDED に、もう返されない型や二重登録が残っていない", () => {
-    const stale = [...Object.keys(COVERED), ...Object.keys(EXCLUDED)]
-      .filter((t) => !returned.has(t))
-      .sort();
+    const stale = [...Object.keys(COVERED), ...Object.keys(EXCLUDED)].filter((t) => !returned.has(t)).sort();
     expect(stale, "戻り値に現れない型が一覧に残っています").toEqual([]);
     const both = Object.keys(COVERED).filter((t) => t in EXCLUDED);
     expect(both).toEqual([]);

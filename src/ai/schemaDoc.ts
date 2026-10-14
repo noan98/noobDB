@@ -239,7 +239,9 @@ export function buildSchemaDocContextText(
       lines.push(`### ${o.kind} ${o.name}`);
       lines.push("```sql");
       // マスクしてから切り詰める (先に切るとリテラルの途中で切れてマスクが外れうる)。
-      const def = mask ? maskDefinition(o.definition ?? "", mask.driver, mask.maskLiterals) : (o.definition ?? "");
+      const def = mask
+        ? maskDefinition(o.definition ?? "", mask.driver, mask.maskLiterals)
+        : (o.definition ?? "");
       lines.push(truncateDefinition(def));
       lines.push("```");
     }
@@ -286,7 +288,9 @@ export function buildSchemaDocSystem(input: SchemaDocSystemInput): string {
   );
   lines.push("");
   lines.push(input.database ? `Database: ${input.database}` : "Database: (default)");
-  lines.push(buildSchemaDocContextText(input.context, { driver: input.driver, maskLiterals: input.maskLiterals }));
+  lines.push(
+    buildSchemaDocContextText(input.context, { driver: input.driver, maskLiterals: input.maskLiterals }),
+  );
   return lines.join("\n");
 }
 

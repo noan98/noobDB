@@ -18,26 +18,18 @@ const OPTIONS = [
 
 describe("Segmented", () => {
   it("renders an exclusive radiogroup with the active option checked", () => {
-    renderWithProviders(
-      <Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />);
 
     expect(screen.getByRole("radiogroup", { name: "Fruit" })).toBeTruthy();
     const radios = screen.getAllByRole("radio");
     expect(radios.map((r) => r.textContent)).toEqual(["Apple", "Banana", "Cherry"]);
-    expect(screen.getByRole("radio", { name: "Banana" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
-    expect(screen.getByRole("radio", { name: "Apple" }).getAttribute("aria-checked")).toBe(
-      "false",
-    );
+    expect(screen.getByRole("radio", { name: "Banana" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("radio", { name: "Apple" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("reports the picked option and stays silent when the active one is clicked again", () => {
     const onChange = vi.fn();
-    renderWithProviders(
-      <Segmented value="apple" options={OPTIONS} onChange={onChange} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="apple" options={OPTIONS} onChange={onChange} ariaLabel="Fruit" />);
 
     fireEvent.click(screen.getByRole("radio", { name: "Cherry" }));
     expect(onChange).toHaveBeenCalledWith("cherry");
@@ -48,18 +40,14 @@ describe("Segmented", () => {
   });
 
   it("keeps the group a single tab stop (roving focus on the selected item)", () => {
-    renderWithProviders(
-      <Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />);
 
     const tabIndexes = screen.getAllByRole("radio").map((r) => r.getAttribute("tabindex"));
     expect(tabIndexes).toEqual(["-1", "0", "-1"]);
   });
 
   it("moves focus with the arrow keys, Home and End", () => {
-    renderWithProviders(
-      <Segmented value="apple" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="apple" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />);
     const [apple, banana, cherry] = screen.getAllByRole("radio");
 
     apple.focus();
@@ -82,9 +70,7 @@ describe("Segmented", () => {
 
   it("矢印 / Home / End はフォーカスと同時に選択も動かす (WAI-ARIA radiogroup, #1529)", () => {
     const onChange = vi.fn();
-    renderWithProviders(
-      <Segmented value="apple" options={OPTIONS} onChange={onChange} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="apple" options={OPTIONS} onChange={onChange} ariaLabel="Fruit" />);
     const [apple, banana, cherry] = screen.getAllByRole("radio");
 
     apple.focus();
@@ -106,13 +92,11 @@ describe("Segmented", () => {
   });
 
   it("renders a sliding thumb only behind the active segment", () => {
-    renderWithProviders(
-      <Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />,
-    );
+    renderWithProviders(<Segmented value="banana" options={OPTIONS} onChange={() => {}} ariaLabel="Fruit" />);
 
     const banana = screen.getByRole("radio", { name: "Banana" });
     const apple = screen.getByRole("radio", { name: "Apple" });
-    expect(banana.querySelector('[aria-hidden]')).toBeTruthy();
-    expect(apple.querySelector('[aria-hidden]')).toBeFalsy();
+    expect(banana.querySelector("[aria-hidden]")).toBeTruthy();
+    expect(apple.querySelector("[aria-hidden]")).toBeFalsy();
   });
 });
