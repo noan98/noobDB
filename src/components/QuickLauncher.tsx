@@ -305,6 +305,13 @@ export function QuickLauncher({
           onKeyDown={onButtonKeyDown}
           onContextMenu={(e) => {
             e.preventDefault();
+            // キーボード (ContextMenu キー / Shift+F10) 由来は座標が 0,0 で届くので、
+            // ボタンの下端中央へ開く (QueryEditor のキャレット位置と同じ扱い, #1113)。
+            if (e.clientX === 0 && e.clientY === 0) {
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: r.left + r.width / 2, y: r.bottom });
+              return;
+            }
             setMenu({ x: e.clientX, y: e.clientY });
           }}
           position="fixed"

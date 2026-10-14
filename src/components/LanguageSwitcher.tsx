@@ -1,5 +1,5 @@
-import { chakra } from "@chakra-ui/react";
 import { Locale, setLocale, useLocale, useT } from "../i18n";
+import { Segmented } from "./Segmented";
 
 const OPTIONS: { value: Locale; label: string }[] = [
   { value: "en", label: "EN" },
@@ -9,30 +9,5 @@ const OPTIONS: { value: Locale; label: string }[] = [
 export function LanguageSwitcher() {
   const locale = useLocale();
   const t = useT();
-  return (
-    <chakra.div display="inline-flex" gap="1" role="group" aria-label={t("appLanguage")}>
-      {OPTIONS.map((o) => {
-        const active = locale === o.value;
-        return (
-          <chakra.button
-            key={o.value}
-            type="button"
-            px="2"
-            py="0.5"
-            fontSize="var(--text-xs)"
-            border="1px solid"
-            borderColor={active ? "app.accent" : "app.borderStrong"}
-            bg={active ? "app.accent" : "app.surface"}
-            color={active ? "app.accentText" : "app.text"}
-            borderRadius="sm"
-            cursor="pointer"
-            onClick={() => setLocale(o.value)}
-            aria-pressed={active}
-          >
-            {o.label}
-          </chakra.button>
-        );
-      })}
-    </chakra.div>
-  );
+  return <Segmented value={locale} options={OPTIONS} onChange={setLocale} ariaLabel={t("appLanguage")} />;
 }

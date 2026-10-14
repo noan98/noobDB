@@ -13,14 +13,17 @@ import { Input } from "./ui";
 export function PassphraseInput(props: Omit<ComponentProps<typeof Input>, "type">) {
   const t = useT();
   const [shown, setShown] = useState(false);
-  const label = shown ? t("passphraseHide") : t("passphraseShow");
+  // 支援技術向けの名前は固定し、状態は aria-pressed だけで伝える (ラベルの切替と
+  // 併用すると「隠す、押下状態 on」と二重に読まれる)。見た目のヒント (ツールチップ) は
+  // 次の操作を示すよう切り替える。
+  const tooltipLabel = shown ? t("passphraseHide") : t("passphraseShow");
   return (
     <chakra.div display="flex" alignItems="center" gap="1.5">
       <Input {...props} type={shown ? "text" : "password"} flex="1" minW="0" />
-      <Tooltip label={label}>
+      <Tooltip label={tooltipLabel} focusableWrapper={props.disabled}>
         <chakra.button
           type="button"
-          aria-label={label}
+          aria-label={t("passphraseShow")}
           aria-pressed={shown}
           disabled={props.disabled}
           onClick={() => setShown((v) => !v)}

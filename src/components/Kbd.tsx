@@ -18,8 +18,8 @@ import { splitComboKeys } from "../shortcutKeys";
  * - `splitCombo`: `formatCombo` の出力 (`"Cmd/Ctrl+Enter"`) のような `+` 区切りの
  *   コンボ文字列を、キーごとに個別のキーキャップとして並べて描く洗練表現。分割は
  *   `shortcutKeys.ts` の純関数 `splitComboKeys` (`shortcutKeys.test.ts` でテスト済み)
- *   に委譲する。現状はどの画面からも有効化しておらず (#844 は既存 3 箇所の見た目
- *   集約が主眼)、将来の個別採用に備えて用意するオプトインの表現。
+ *   に委譲する。キー割り当て画面 (`KeybindingSettings`) が
+ *   有効化している。それ以外は既定のまま 1 チップで描画する。
  *
  * `tone` 由来のデフォルト以外のスタイル (danger 時の `color="inherit"`・
  * `disabled` 時の `opacity`・`ml`・`flexShrink` など呼び出し側固有の調整) は

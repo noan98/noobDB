@@ -8,7 +8,7 @@ import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { Kbd } from "./Kbd";
-import { computeMenuPosition, type MenuAnchor, type MenuRect } from "./menuPosition";
+import { computeMenuPosition, MENU_MARGIN, type MenuAnchor, type MenuRect } from "./menuPosition";
 
 /**
  * メニュー本体を motion 化するラッパー。`transition` を Chakra のスタイルプロップに
@@ -291,6 +291,11 @@ function MenuPanel({ entries, anchor, onCloseAll, onCloseSelf, autoFocus }: Pane
           left: pos?.left ?? (anchor.kind === "point" ? anchor.x : anchor.rect.right),
           top: pos?.top ?? (anchor.kind === "point" ? anchor.y : anchor.rect.top),
           visibility: pos ? "visible" : "hidden",
+          // 項目が画面高を超えても下側へ到達できるよう、高さをビューポート内に収めて
+          // スクロールさせる (クランプは top を余白へ固定するだけで、はみ出た分は
+          // 操作できなくなる)。roving focus の focus() が選択項目を可視域へ運ぶ。
+          maxHeight: window.innerHeight - 2 * MENU_MARGIN,
+          overflowY: "auto",
         }}
         role="menu"
         onMouseDown={(e) => e.stopPropagation()}

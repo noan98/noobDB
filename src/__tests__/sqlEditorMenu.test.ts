@@ -131,3 +131,13 @@ describe("sqlEditorMenuSpec: AI 解説 / 最適化案 (#695)", () => {
     expect(find(off, "aiRewrite")?.disabledReasonKey).toBe("editorHintDisabled");
   });
 });
+
+describe("sqlEditorMenuSpec のアイコン", () => {
+  it("全項目にアイコンが付き、有無が混在しない", () => {
+    for (const ctx of [base, { ...base, hasSelection: true }, { ...base, explainMode: true }]) {
+      for (const item of items(ctx)) {
+        expect(item.icon, item.action).toBeTruthy();
+      }
+    }
+  });
+});

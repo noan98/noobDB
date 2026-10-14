@@ -23,7 +23,16 @@
  * 全面移行は 1 PR で強制しない (#1143) — まず `PaginationBar` など目立つ箇所
  * から段階的に置き換える。
  */
-import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
@@ -120,14 +129,7 @@ export function ListboxSelect({
     triggerRef.current?.focus();
   };
 
-  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
-  // (`ComboSelect` と同じ「測定 → フリップ → クランプ」の流れ)。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (options.length) の変化でポップオーバーを測り直すトリガ依存
-  useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+  const measure = useCallback(() => {
     const triggerEl = triggerRef.current;
     const listEl = listboxRef.current;
     if (!triggerEl || !listEl) return;
@@ -149,8 +151,40 @@ export function ListboxSelect({
       Math.max(anchor.left, MENU_MARGIN),
       Math.max(MENU_MARGIN, viewportW - width - MENU_MARGIN),
     );
-    setPos({ left, top, width: anchor.width });
-  }, [open, options.length]);
+    setPos((prev) =>
+      prev && prev.left === left && prev.top === top && prev.width === anchor.width
+        ? prev
+        : { left, top, width: anchor.width },
+    );
+  }, []);
+
+  // 開いたとき / 候補数が変わったときにポップオーバーの位置を測り直す
+  // (`ComboSelect` と同じ「測定 → フリップ → クランプ」の流れ)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 候補数 (options.length) の変化でポップオーバーを測り直すトリガ依存
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    measure();
+  }, [open, options.length, measure]);
+
+  // 開いている間は、祖先のスクロールやウィンドウのリサイズにも追従させる
+  // (`ComboSelect` と同じ。scroll はバブリングしないので capture で拾い、
+  // 候補リスト自身のスクロールは無視する)。
+  useEffect(() => {
+    if (!open) return;
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && listboxRef.current?.contains(e.target)) return;
+      measure();
+    };
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", measure);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", measure);
+    };
+  }, [open, measure]);
 
   // ハイライト移動時に、はみ出していればスクロールして見えるようにする。
   useEffect(() => {

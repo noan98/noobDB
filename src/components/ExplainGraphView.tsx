@@ -109,10 +109,29 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
     color: ink,
     borderColor: data.selected ? "var(--accent)" : "var(--border)",
     outline: data.selected ? "2px solid var(--accent)" : "none",
+    // キーボードフォーカス中は、選択リングとは別に共通のフォーカスリングを重ねる。
+    "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
   };
   return (
     <Tooltip label={data.label}>
-      <Box css={css} onClick={data.onSelect}>
+      <Box
+        css={css}
+        // グラフ表示でもキーボードだけで選択 (= 詳細の確認) できるようにする。
+        // React Flow 既定のノードラッパーのフォーカスは `nodesFocusable={false}` で
+        // 止め、タブ停止位置をこの要素 1 つに揃える。
+        role="button"
+        tabIndex={0}
+        aria-label={data.label}
+        aria-pressed={data.selected}
+        onClick={data.onSelect}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+            data.onSelect();
+          }
+        }}
+      >
         <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
         <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
         <chakra.span css={labelCss}>{data.label}</chakra.span>
@@ -227,6 +246,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
       nodeTypes={nodeTypes}
       defaultEdgeOptions={defaultEdgeOptions}
       nodesConnectable={false}
+      nodesFocusable={false}
       edgesFocusable={false}
       fitView
       minZoom={0.1}

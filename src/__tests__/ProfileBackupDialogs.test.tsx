@@ -110,6 +110,8 @@ describe("パスフレーズ欄の表示切替と強度の結線 (#1529)", () =>
     expect(toggles[0]).toHaveAttribute("aria-pressed", "false");
     await user.click(toggles[0]);
     expect(input).toHaveAttribute("type", "text");
-    expect(screen.getByRole("button", { name: t("passphraseHide") })).toHaveAttribute("aria-pressed", "true");
+    // 名前は固定で、状態は aria-pressed だけが変わる。
+    expect(toggles[0]).toHaveAttribute("aria-pressed", "true");
+    expect(toggles[0]).toHaveAccessibleName(t("passphraseShow"));
   });
 });

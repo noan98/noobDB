@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import {
@@ -46,6 +46,8 @@ export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProp
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
   const [query, setQuery] = useState("");
+  // 開いた直後から検索欄へ打ち始められるよう、最初のフォーカスを検索欄へ置く。
+  const searchRef = useRef<HTMLInputElement>(null);
   const keysText = (s: (typeof SHORTCUTS)[number]) => (s.id ? formatCombo(resolved[s.id]) : t(s.keysKey));
   const visible = filterShortcuts(SHORTCUTS, query, (s) => ({
     label: t(s.descKey),
@@ -57,6 +59,7 @@ export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProp
       // no-submit: 参照画面 (閉じるのみ)
       onClose={onClose}
       width="560px"
+      initialFocusEl={() => searchRef.current}
     >
       <ModalHeader onClose={onClose} closeLabel={t("cheatSheetClose")}>
         {t("cheatSheetTitle")}
@@ -64,6 +67,7 @@ export function ShortcutCheatSheet({ onClose, onRebind }: ShortcutCheatSheetProp
       <ModalBody>
         <Flex direction="column" gap="4">
           <Input
+            ref={searchRef}
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

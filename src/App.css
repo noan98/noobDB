@@ -2014,6 +2014,18 @@ html, body, #root {
     box-shadow: var(--focus-ring-danger);
   }
 
+  /* Windows ハイコントラスト (forced-colors) では box-shadow が無効化され、上の
+     outline: none のままだとフォーカス位置を示すものが消える。forced-colors の
+     ときだけ outline を復活させる。通常時の見た目は変えない。 */
+  @media (forced-colors: active) {
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible {
+      outline: var(--focus-ring-width) solid Highlight;
+      outline-offset: var(--focus-ring-width);
+    }
+  }
+
   label {
     display: block;
     font-size: var(--text-sm);

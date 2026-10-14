@@ -18,7 +18,9 @@ import {
   SettingsSection,
   SettingsSectionHeader,
 } from "./settingsLayout";
+import { Kbd } from "./Kbd";
 import { Tooltip } from "./Tooltip";
+import { Button } from "./ui";
 
 const Row = chakra("div", {
   base: {
@@ -43,25 +45,6 @@ const RowLabel = chakra("span", {
     flex: "1 1 auto",
     minWidth: "180px",
   },
-});
-
-const ComboKbd = chakra("kbd", {
-  base: {
-    px: "1.5",
-    py: "1px",
-    borderRadius: "sm",
-    borderWidth: "1px",
-    borderColor: "app.border",
-    bg: "app.surface",
-    fontSize: "xs",
-    fontFamily: "inherit",
-    color: "app.textSecondary",
-    whiteSpace: "nowrap",
-  },
-});
-
-const SmallButton = chakra("button", {
-  base: { px: "2.5", py: "1", fontSize: "sm" },
 });
 
 const CategoryHeading = chakra("div", {
@@ -125,7 +108,8 @@ export function KeybindingSettings() {
           <chakra.h3>{t("settingsShortcuts")}</chakra.h3>
           <SettingsInfo>{t("settingsShortcutsHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
-        <SmallButton
+        <Button
+          size="sm"
           type="button"
           onClick={() => {
             setRecordingId(null);
@@ -134,7 +118,7 @@ export function KeybindingSettings() {
           disabled={!hasOverrides}
         >
           {t("settingsShortcutsResetAll")}
-        </SmallButton>
+        </Button>
       </SettingsSectionHeader>
 
       {SHORTCUT_CATEGORY_ORDER.map((category) => {
@@ -151,24 +135,29 @@ export function KeybindingSettings() {
                 <Row key={s.id}>
                   <RowLabel>{t(s.descKey)}</RowLabel>
                   {conflicting && <ConflictNote>{t("settingsShortcutConflict")}</ConflictNote>}
-                  <ComboKbd borderColor={conflicting ? semanticColorToken("danger", "text") : "app.border"}>
+                  <Kbd
+                    splitCombo
+                    borderColor={conflicting ? semanticColorToken("danger", "text") : "app.border"}
+                  >
                     {formatCombo(resolved[s.id])}
-                  </ComboKbd>
-                  <SmallButton
+                  </Kbd>
+                  <Button
+                    size="sm"
                     type="button"
                     onClick={() => setRecordingId(isRecording ? null : s.id)}
                     aria-pressed={isRecording}
                   >
                     {isRecording ? t("settingsShortcutRecording") : t("settingsShortcutRecord")}
-                  </SmallButton>
+                  </Button>
                   <Tooltip label={t("settingsReset")} focusableWrapper={!overridden}>
-                    <SmallButton
+                    <Button
+                      size="sm"
                       type="button"
                       onClick={() => setShortcutBinding(s.id, null)}
                       disabled={!overridden}
                     >
                       {t("settingsReset")}
-                    </SmallButton>
+                    </Button>
                   </Tooltip>
                 </Row>
               );

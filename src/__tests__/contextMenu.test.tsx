@@ -141,3 +141,12 @@ describe("ContextMenu のサブメニュー", () => {
     expect(document.activeElement).toBe(screen.getByRole("menuitem", { name: "トップ項目" }));
   });
 });
+
+describe("ContextMenu の高さ上限", () => {
+  it("項目が多くてもビューポート内に収め、スクロールで下側へ到達できる", () => {
+    renderMenu(Array.from({ length: 60 }, (_, i) => child(`項目${i}`)));
+    const menu = screen.getByRole("menu");
+    expect(menu.style.overflowY).toBe("auto");
+    expect(Number.parseFloat(menu.style.maxHeight)).toBeLessThan(window.innerHeight);
+  });
+});

@@ -1,8 +1,8 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import { chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
 import { typedConfirmMatches } from "../typeToConfirm";
+import { FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Input, PressableButton } from "./ui";
 
@@ -185,10 +185,10 @@ function ConfirmDialog({
       <ModalBody display="flex" flexDirection="column" gap="3">
         {message}
         {requiresTyped && (
-          <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <chakra.label htmlFor="confirm-dialog-type-confirm-input" textStyle="subheading">
+          <FormSection>
+            <FieldLabel htmlFor="confirm-dialog-type-confirm-input">
               {t("typeToConfirmLabel", { target: typedConfirmation })}
-            </chakra.label>
+            </FieldLabel>
             <Input
               id="confirm-dialog-type-confirm-input"
               ref={typedInputRef}
@@ -198,7 +198,7 @@ function ConfirmDialog({
               autoComplete="off"
               spellCheck={false}
             />
-          </chakra.div>
+          </FormSection>
         )}
       </ModalBody>
       <ModalFooter>

@@ -78,6 +78,20 @@ describe("filterShortcuts (#1540)", () => {
     expect(filterShortcuts(items, "+", texts).map((x) => x.id)).toEqual([]);
   });
 
+  it("1 文字のクエリはキー名そのものへの完全一致だけで、Enter / Option などに当たらない", () => {
+    const keyed = [
+      { id: 1, label: "x", keys: "Cmd/Ctrl+Alt/Option+Enter" },
+      { id: 2, label: "y", keys: "Cmd/Ctrl+E" },
+      { id: 3, label: "z", keys: "Alt/Option+ArrowLeft" },
+      { id: 4, label: "w", keys: "↑ ↓" },
+    ];
+    expect(filterShortcuts(keyed, "e", (i) => i).map((x) => x.id)).toEqual([2]);
+    expect(filterShortcuts(keyed, "E", (i) => i).map((x) => x.id)).toEqual([2]);
+    expect(filterShortcuts(keyed, "↑", (i) => i).map((x) => x.id)).toEqual([4]);
+    // 2 文字以上は従来どおり部分一致。
+    expect(filterShortcuts(keyed, "en", (i) => i).map((x) => x.id)).toEqual([1]);
+  });
+
   it("定義順を保つ", () => {
     expect(filterShortcuts(items, "k", texts).map((x) => x.id)).toEqual([1, 3]);
   });
