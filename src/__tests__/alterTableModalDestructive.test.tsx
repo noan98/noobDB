@@ -12,8 +12,26 @@ vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   const ctx: AlterTableContext = {
     columns: [
-      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
-      { name: "memo", data_type: "text", nullable: true, key: "", default: null, extra: "", referenced_table: null, referenced_column: null },
+      {
+        name: "id",
+        data_type: "int",
+        nullable: false,
+        key: "PRI",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      },
+      {
+        name: "memo",
+        data_type: "text",
+        nullable: true,
+        key: "",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      },
     ],
     table_comment: "",
     foreign_keys: [],

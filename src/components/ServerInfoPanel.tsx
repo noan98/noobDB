@@ -42,13 +42,7 @@ const tdCss: SystemStyleObject = {
 const nameTdCss: SystemStyleObject = { ...tdCss, whiteSpace: "nowrap", color: "var(--text-secondary)" };
 const valueTdCss: SystemStyleObject = { ...tdCss, wordBreak: "break-all", maxWidth: "640px" };
 
-export function ServerInfoPanel({
-  sessionId,
-  onClose,
-}: {
-  sessionId: string;
-  onClose: () => void;
-}) {
+export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const t = useT();
 
   const [info, setInfo] = useState<ServerInfo | null>(null);
@@ -85,9 +79,7 @@ export function ServerInfoPanel({
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return variables;
-    return variables.filter(
-      (v) => v.name.toLowerCase().includes(q) || v.value.toLowerCase().includes(q),
-    );
+    return variables.filter((v) => v.name.toLowerCase().includes(q) || v.value.toLowerCase().includes(q));
   }, [variables, filter]);
 
   return (

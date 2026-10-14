@@ -20,14 +20,27 @@ const bounds = { left: 0, top: 40, width: 1000, height: 600 };
 const size = { width: 40, height: 40 };
 
 function snippet(id: string): Snippet {
-  return { id, name: `s-${id}`, folder: null, tags: [], sql: `SELECT ${id}`, driver: null, scope: { kind: "any" } };
+  return {
+    id,
+    name: `s-${id}`,
+    folder: null,
+    tags: [],
+    sql: `SELECT ${id}`,
+    driver: null,
+    scope: { kind: "any" },
+  };
 }
 
 describe("sanitizeQuickLauncherSectionLimits", () => {
   it("欠け・型違いは既定 5、範囲外は 1〜20 にクランプ", () => {
     expect(sanitizeQuickLauncherSectionLimits(undefined)).toEqual(DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS);
     expect(
-      sanitizeQuickLauncherSectionLimits({ favoriteSnippets: 0, recentQueries: 99, favoriteTables: "3", recentTables: 7.6 }),
+      sanitizeQuickLauncherSectionLimits({
+        favoriteSnippets: 0,
+        recentQueries: 99,
+        favoriteTables: "3",
+        recentTables: 7.6,
+      }),
     ).toEqual({ favoriteSnippets: 1, recentQueries: 20, favoriteTables: 5, recentTables: 8 });
   });
 });
@@ -48,13 +61,22 @@ describe("buildQuickLauncherSections", () => {
 
   it("セクション順は スニペット → クエリ → テーブル (お気に入り → 最近)", () => {
     const s = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS);
-    expect(s.map((x) => x.id)).toEqual(["favoriteSnippets", "recentQueries", "favoriteTables", "recentTables"]);
+    expect(s.map((x) => x.id)).toEqual([
+      "favoriteSnippets",
+      "recentQueries",
+      "favoriteTables",
+      "recentTables",
+    ]);
   });
 
   it("削除済みスニペットを捨て、クエリの重複 (空白差) と空を除く", () => {
     const s = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS);
     expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["a", "c"]);
-    expect(s[1].items.map((i) => (i.kind === "query" ? i.sql : ""))).toEqual(["SELECT 1", "SELECT 2", "SELECT 3"]);
+    expect(s[1].items.map((i) => (i.kind === "query" ? i.sql : ""))).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3",
+    ]);
     expect(s[2].items.map((i) => (i.kind === "table" ? i.ref.table : ""))).toEqual(["new", "old"]);
   });
 
@@ -65,7 +87,10 @@ describe("buildQuickLauncherSections", () => {
       snippets: ids.map((id) => snippet(id)),
       snippetQuickAccess: { favorites: ids, recent: [] },
     };
-    const s = buildQuickLauncherSections(many, { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, favoriteSnippets: 2 });
+    const s = buildQuickLauncherSections(many, {
+      ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
+      favoriteSnippets: 2,
+    });
     expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["d", "c"]);
     expect(s[0].hasMore).toBe(true);
   });
@@ -115,7 +140,9 @@ describe("ボタン位置", () => {
   });
 
   it("ボタンより狭い範囲でも負の位置にしない", () => {
-    expect(launcherPositionToPoint(DEFAULT_LAUNCHER_POSITION, { left: 0, top: 0, width: 20, height: 20 }, size)).toEqual({
+    expect(
+      launcherPositionToPoint(DEFAULT_LAUNCHER_POSITION, { left: 0, top: 0, width: 20, height: 20 }, size),
+    ).toEqual({
       left: 0,
       top: 0,
     });
@@ -161,7 +188,11 @@ describe("computeLauncherPopoverPosition", () => {
   });
 
   it("はみ出す分はビューポート内へクランプする", () => {
-    const p = computeLauncherPopoverPosition({ left: 20, top: 300, width: 40, height: 40 }, { width: 300, height: 600 }, viewport);
+    const p = computeLauncherPopoverPosition(
+      { left: 20, top: 300, width: 40, height: 40 },
+      { width: 300, height: 600 },
+      viewport,
+    );
     expect(p.top).toBe(92);
   });
 });

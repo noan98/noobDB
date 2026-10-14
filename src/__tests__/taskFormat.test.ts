@@ -41,8 +41,12 @@ describe("summarizeSchedule (#730)", () => {
   it("converts with the offset at the given reference date (DST: next run date)", () => {
     const ny = "America/New_York";
     const sched = { kind: "daily", hour: 13, minute: 0 } as const;
-    expect(summarizeSchedule(sched, en, { now: new Date("2026-01-15T00:00:00Z"), timeZone: ny })).toContain("08:00");
-    expect(summarizeSchedule(sched, en, { now: new Date("2026-07-15T00:00:00Z"), timeZone: ny })).toContain("09:00");
+    expect(summarizeSchedule(sched, en, { now: new Date("2026-01-15T00:00:00Z"), timeZone: ny })).toContain(
+      "08:00",
+    );
+    expect(summarizeSchedule(sched, en, { now: new Date("2026-07-15T00:00:00Z"), timeZone: ny })).toContain(
+      "09:00",
+    );
   });
 
   it("localizes the interval summary", () => {
@@ -124,7 +128,9 @@ describe("relativeNextRun / summarizeAction の日本語化 (#1533)", () => {
     expect(relativeNextRun("2026-01-04T12:00:00Z", now, ja)).toBe("3 日後");
     expect(relativeNextRun("2026-01-01T12:00:30Z", now, ja)).toBe("1 分未満");
     expect(relativeNextRun("2026-01-01T11:00:00Z", now, ja)).toBe("実行待ち");
-    expect(summarizeAction({ kind: "run_assertions", assertion_ids: [] }, ja)).toBe("アサーション (対象すべて)");
+    expect(summarizeAction({ kind: "run_assertions", assertion_ids: [] }, ja)).toBe(
+      "アサーション (対象すべて)",
+    );
   });
 });
 
@@ -225,9 +231,9 @@ describe("summarizeAction for run_assertions (#1170)", () => {
   });
 
   it("shows the count of chosen assertions", () => {
-    expect(
-      summarizeAction({ kind: "run_assertions", database: null, assertion_ids: ["a", "b"] }, en),
-    ).toBe("assertions (2)");
+    expect(summarizeAction({ kind: "run_assertions", database: null, assertion_ids: ["a", "b"] }, en)).toBe(
+      "assertions (2)",
+    );
   });
 });
 

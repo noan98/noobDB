@@ -4,11 +4,7 @@ import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtil
 import { ResultGrid } from "../components/ResultGrid";
 import type { Column, QueryResult, TableColumnInfo } from "../api/tauri";
 import { setLocale, t } from "../i18n";
-import {
-  setColumnMaskCopyPlaceholder,
-  setColumnMaskEnabled,
-  setColumnMaskPatterns,
-} from "../settings";
+import { setColumnMaskCopyPlaceholder, setColumnMaskEnabled, setColumnMaskPatterns } from "../settings";
 import { DEFAULT_MASK_PATTERNS, MASK_PLACEHOLDER, REVEAL_TIMEOUT_MS } from "../components/columnMask";
 
 // 結果グリッドの機微カラム表示マスク (#1069) の UI 結線。
@@ -166,7 +162,11 @@ describe("ResultGrid の機微カラム表示マスク (#1069)", () => {
 
     // その行が無くなったら解除する。
     rerender(
-      <ResultGrid result={makeResult(COLUMNS, [[1, "alice", "alice@example.com"]])} editable tableColumns={TABLE_COLUMNS} />,
+      <ResultGrid
+        result={makeResult(COLUMNS, [[1, "alice", "alice@example.com"]])}
+        editable
+        tableColumns={TABLE_COLUMNS}
+      />,
     );
     expect(dataCells(container)[0][2].textContent).toBe(MASK_PLACEHOLDER);
   });
@@ -215,7 +215,11 @@ describe("ResultGrid の機微カラム表示マスク (#1069)", () => {
     });
     expect(dataCells(container)[1][2].textContent).toBe("bob@example.com");
     rerender(
-      <ResultGrid result={makeResult(COLUMNS, [...RESULT.rows.map((r) => [...r])])} editable rowIdentity={identity} />,
+      <ResultGrid
+        result={makeResult(COLUMNS, [...RESULT.rows.map((r) => [...r])])}
+        editable
+        rowIdentity={identity}
+      />,
     );
     expect(dataCells(container)[1][2].textContent).toBe(MASK_PLACEHOLDER);
   });
@@ -244,9 +248,7 @@ describe("ResultGrid の機微カラム表示マスク (#1069)", () => {
     await user.click(await screen.findByRole("button", { name: t("gridMaskColumnOn") }));
     expect(dataCells(container)[0][1].textContent).toBe(MASK_PLACEHOLDER);
 
-    await user.click(
-      screen.getByRole("button", { name: t("gridFilterAria", { column: "user_email" }) }),
-    );
+    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "user_email" }) }));
     await user.click(await screen.findByRole("button", { name: t("gridMaskColumnOff") }));
     expect(dataCells(container)[0][2].textContent).toBe("alice@example.com");
   });

@@ -64,9 +64,7 @@ const responseSchema = z.object({
 });
 export type ResultSummaryResponse = z.infer<typeof responseSchema>;
 
-export type ParsedResultSummary =
-  | { ok: true; value: ResultSummaryResponse }
-  | { ok: false; raw: string };
+export type ParsedResultSummary = { ok: true; value: ResultSummaryResponse } | { ok: false; raw: string };
 
 /**
  * ストリームで結合した本文を JSON として解釈する。失敗時は本文をそのまま返す。
@@ -139,7 +137,8 @@ export function summarizeColumns(
   columns: Column[],
   rows: CellValue[][],
 ): { columns: SummaryColumn[]; omittedColumns: number; statsRows: number } {
-  const used = rows.length > RESULT_SUMMARY_STATS_MAX_ROWS ? rows.slice(0, RESULT_SUMMARY_STATS_MAX_ROWS) : rows;
+  const used =
+    rows.length > RESULT_SUMMARY_STATS_MAX_ROWS ? rows.slice(0, RESULT_SUMMARY_STATS_MAX_ROWS) : rows;
   const shown = columns.slice(0, RESULT_SUMMARY_MAX_COLUMNS);
   return {
     columns: shown.map((c, i) => {
@@ -171,8 +170,7 @@ export function columnStatsLine(col: SummaryColumn, allowRowData: boolean): stri
   ];
   // 文字列長は値の手がかりになる (1 行だけ・異なり数 1 だと値の長さそのもの) ので、オフでは
   // 文字列系の列で、非 NULL が 2 件以上かつ異なり数が 2 以上のときだけ送る。
-  const lengthOk =
-    allowRowData || (col.kind === "string" && s.nonNullCount >= 2 && s.distinctCount >= 2);
+  const lengthOk = allowRowData || (col.kind === "string" && s.nonNullCount >= 2 && s.distinctCount >= 2);
   if (lengthOk && s.minLen !== null && s.maxLen !== null) parts.push(`length=${s.minLen}..${s.maxLen}`);
   if (allowRowData) {
     if (s.numericCount > 0 && s.min !== null && s.max !== null) {

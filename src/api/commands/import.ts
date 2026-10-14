@@ -2,16 +2,9 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type {
-  DriverKind,
-  ImportOptions,
-  NewTableColumn,
-  ColumnMapping,
-  CsvPreview,
-} from "../tauri";
+import type { DriverKind, ImportOptions, NewTableColumn, ColumnMapping, CsvPreview } from "../tauri";
 
 export const importCommands = {
-
   parseCsvPreview: (path: string, options: ImportOptions) =>
     invoke<CsvPreview>("parse_csv_preview", { path, options }).then((r) =>
       parseResponse(schemas.csvPreview, r, "parse_csv_preview"),

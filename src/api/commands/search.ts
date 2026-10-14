@@ -3,12 +3,7 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import { whereUsedChannels, dataSearchChannels } from "../streamChannels";
-import type {
-  ObjectSearchScope,
-  ObjectSearchHit,
-  WhereUsedTarget,
-  DataSearchRequest,
-} from "../tauri";
+import type { ObjectSearchScope, ObjectSearchHit, WhereUsedTarget, DataSearchRequest } from "../tauri";
 
 export const searchCommands = {
   /**
@@ -58,11 +53,7 @@ export const searchCommands = {
    * テーブルごとの結果を {@link listenDataSearchStream} の Channel へ逐次送る。読み取り専用
    * ガードを通る SELECT だけを発行し、`cancelStream(streamId)` で中断できる。
    */
-  dataSearchStream: (params: {
-    sessionId: string;
-    streamId: string;
-    request: DataSearchRequest;
-  }) => {
+  dataSearchStream: (params: { sessionId: string; streamId: string; request: DataSearchRequest }) => {
     const channel = dataSearchChannels.get(params.streamId);
     if (!channel) {
       throw new Error(

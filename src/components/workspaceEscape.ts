@@ -77,8 +77,7 @@ export function resolveWorkspaceEscape(input: WorkspaceEscapeInput): WorkspaceEs
  * フィルタ・統計ポップオーバーは `role="dialog"`、ComboSelect の候補は
  * `role="listbox"`。いずれも開いている間だけマウントされる (ポータル)。
  */
-const NESTED_LAYER_SELECTOR =
-  '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
+const NESTED_LAYER_SELECTOR = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]';
 
 /**
  * 文書内に開いたネストレイヤがあるか。`hidden` / `aria-hidden="true"` の配下は

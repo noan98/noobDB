@@ -62,8 +62,7 @@ export function Switch({
   const generatedId = useId();
   const buttonId = id ?? generatedId;
   const internalLabelId = label !== undefined ? `${buttonId}-label` : undefined;
-  const labelledBy =
-    [ariaLabelledBy, internalLabelId].filter(Boolean).join(" ") || undefined;
+  const labelledBy = [ariaLabelledBy, internalLabelId].filter(Boolean).join(" ") || undefined;
 
   const handleKey = (e: KeyboardEvent<HTMLButtonElement>) => {
     if (disabled) return;
@@ -108,11 +107,7 @@ export function Switch({
       _focusVisible={{ outline: "none", boxShadow: focusRing }}
       verticalAlign="middle"
     >
-      <chakra.span
-        display="flex"
-        width="100%"
-        justifyContent={checked ? "flex-end" : "flex-start"}
-      >
+      <chakra.span display="flex" width="100%" justifyContent={checked ? "flex-end" : "flex-start"}>
         <MotionThumb
           layout
           transition={springs.snappy}

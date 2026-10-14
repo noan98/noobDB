@@ -91,8 +91,6 @@ describe("CellValueViewer BLOB preview (#1258)", () => {
     renderWithProviders(
       <CellValueViewer columnName="x" value="00" isBinary blob={failing} onClose={() => {}} />,
     );
-    expect(
-      await screen.findByText(t("blobFetchFailed", { error: "Error: boom" })),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(t("blobFetchFailed", { error: "Error: boom" }))).toBeInTheDocument();
   });
 });

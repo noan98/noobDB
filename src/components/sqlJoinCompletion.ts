@@ -31,20 +31,76 @@ interface TableRef {
   key: string;
 }
 
-const IDENT = "(?:`[^`]+`|\"[^\"]+\"|\\w+)";
+const IDENT = '(?:`[^`]+`|"[^"]+"|\\w+)';
 const NOT_KEYWORD =
   "(?!(?:INNER|LEFT|RIGHT|FULL|CROSS|NATURAL|OUTER|JOIN|ON|USING|WHERE|GROUP|ORDER|LIMIT|HAVING|UNION|SET|WINDOW|FETCH|OFFSET)\\b)";
 // `[db.]table [[AS] alias]`
 const REF = `((?:${IDENT}\\.)?${IDENT})(?:\\s+(?:AS\\s+)?${NOT_KEYWORD}(${IDENT}))?`;
 
 const RESERVED = new Set([
-  "order", "group", "user", "select", "table", "from", "join", "where", "index",
-  "key", "desc", "asc", "limit", "references", "constraint", "primary", "check",
-  "column", "default", "range", "rank", "row", "rows", "partition", "window",
-  "to", "end", "in", "is", "on", "as", "all", "and", "or", "not", "null", "case",
-  "when", "then", "else", "values", "for", "by", "into", "distinct", "having",
-  "union", "using", "exists", "like", "between", "insert", "update", "delete",
-  "create", "drop", "alter", "set", "with", "true", "false", "unique", "foreign",
+  "order",
+  "group",
+  "user",
+  "select",
+  "table",
+  "from",
+  "join",
+  "where",
+  "index",
+  "key",
+  "desc",
+  "asc",
+  "limit",
+  "references",
+  "constraint",
+  "primary",
+  "check",
+  "column",
+  "default",
+  "range",
+  "rank",
+  "row",
+  "rows",
+  "partition",
+  "window",
+  "to",
+  "end",
+  "in",
+  "is",
+  "on",
+  "as",
+  "all",
+  "and",
+  "or",
+  "not",
+  "null",
+  "case",
+  "when",
+  "then",
+  "else",
+  "values",
+  "for",
+  "by",
+  "into",
+  "distinct",
+  "having",
+  "union",
+  "using",
+  "exists",
+  "like",
+  "between",
+  "insert",
+  "update",
+  "delete",
+  "create",
+  "drop",
+  "alter",
+  "set",
+  "with",
+  "true",
+  "false",
+  "unique",
+  "foreign",
 ]);
 
 /** 予約語として扱う識別子か (クォートしないと構文エラーになりうる)。補完の挿入判定と共有する。 */
@@ -118,8 +174,7 @@ function linksBetween(fks: ForeignKey[], existing: string, other: string): Link[
 function condition(driver: string, link: Link, existingKey: string, otherKey: string): string {
   return link.pairs
     .map(
-      ([ec, oc]) =>
-        `${otherKey}.${quoteIfNeeded(driver, oc)} = ${existingKey}.${quoteIfNeeded(driver, ec)}`,
+      ([ec, oc]) => `${otherKey}.${quoteIfNeeded(driver, oc)} = ${existingKey}.${quoteIfNeeded(driver, ec)}`,
     )
     .join(" AND ");
 }
@@ -162,7 +217,9 @@ export function joinCompletions(opts: {
   const jt = masked.match(/\bJOIN\s+([\w`"]*)$/i);
   if (jt) {
     // NATURAL / CROSS JOIN は ON を取らない。
-    if (/\b(?:NATURAL|CROSS)\s+(?:(?:INNER|LEFT|RIGHT|FULL)\s+)?(?:OUTER\s+)?$/i.test(masked.slice(0, jt.index))) {
+    if (
+      /\b(?:NATURAL|CROSS)\s+(?:(?:INNER|LEFT|RIGHT|FULL)\s+)?(?:OUTER\s+)?$/i.test(masked.slice(0, jt.index))
+    ) {
       return null;
     }
     const refs = parseRefs(masked.slice(0, jt.index));

@@ -334,7 +334,10 @@ export const tableProfileOverview = z.object({
 export const schemaObject = z.object({
   kind: z.string(),
   name: z.string(),
-  id: z.string().nullish().transform((v) => v ?? null),
+  id: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 // #1003: ストアドプロシージャ / 関数のシグネチャ (`get_routine_signature`)。
@@ -349,7 +352,10 @@ export const routineSignature = z.object({
   name: z.string(),
   parameters: z.array(routineParameter),
   returns_set: z.boolean(),
-  return_type: z.string().nullish().transform((v) => v ?? null),
+  return_type: z
+    .string()
+    .nullish()
+    .transform((v) => v ?? null),
 });
 
 // #708: 踏み台/ジャンプホスト (2 段目まで)。SshProfile と同形だが自身の jump は
@@ -390,10 +396,7 @@ export const connectionProfile = z.object({
   file_path: z.string().nullable(),
   // TLS 設定 (非秘密)。TLS 未設定で保存された旧プロファイルではフィールドごと
   // 欠落するため optional + nullable。証明書はパスのみで値は保存しない。
-  ssl_mode: z
-    .enum(["disable", "prefer", "require", "verify_ca", "verify_full"])
-    .nullable()
-    .optional(),
+  ssl_mode: z.enum(["disable", "prefer", "require", "verify_ca", "verify_full"]).nullable().optional(),
   ssl_root_cert: z.string().nullable().optional(),
   ssl_client_cert: z.string().nullable().optional(),
   ssl_client_key: z.string().nullable().optional(),
@@ -1049,7 +1052,10 @@ export const queryStreamDoneMessage = z.object({
   hasColumns: z.boolean(),
   appliedAutoLimit: z.number().nullable(),
   /** 自動 LIMIT を付けなかった理由 (#1534)。付与した / 要求なし / 古いバックエンドは null/省略。 */
-  autoLimitSkip: z.enum(["existingLimit", "lockingClause", "aggregateOnly", "notApplicable"]).nullable().optional(),
+  autoLimitSkip: z
+    .enum(["existingLimit", "lockingClause", "aggregateOnly", "notApplicable"])
+    .nullable()
+    .optional(),
   /** サーバの通知・警告 (#1165)。古いバックエンドは送らないので省略可能。 */
   serverMessages: z.array(serverMessage).optional(),
   /** 全行を観測し終えた逐次統計 (#1257)。結果セットの無い文・古いバックエンドは省略/null。 */
@@ -1510,7 +1516,9 @@ export const scriptAnalysis = z.object({
   txControlTotal: z.number(),
   head: z.array(analyzedStatement),
   dangerous: z.array(analyzedStatement),
-  txControls: z.array(z.object({ index: z.number(), line: z.number(), kind: z.enum(["begin", "commit", "rollback"]) })),
+  txControls: z.array(
+    z.object({ index: z.number(), line: z.number(), kind: z.enum(["begin", "commit", "rollback"]) }),
+  ),
   headLimit: z.number(),
   listLimit: z.number(),
   unclosedTransaction: z.boolean(),
@@ -1780,20 +1788,14 @@ function formatIssues(error: z.ZodError): string {
  * 詳細なフィールド単位のエラーをコンソールに出し、本番では簡潔なメッセージのみ
  * (バンドル/ログ配慮)。
  */
-export function parseResponse<T>(
-  schema: z.ZodType,
-  value: T,
-  command: string,
-): T {
+export function parseResponse<T>(schema: z.ZodType, value: T, command: string): T {
   const result = schema.safeParse(value);
   if (result.success) {
     return result.data as T;
   }
   if (DEV) {
     console.error(
-      `[IPC] "${command}" のレスポンスがスキーマ検証に失敗しました:\n${formatIssues(
-        result.error,
-      )}`,
+      `[IPC] "${command}" のレスポンスがスキーマ検証に失敗しました:\n${formatIssues(result.error)}`,
       value,
     );
   }
@@ -1804,9 +1806,7 @@ export function parseResponse<T>(
   const summary = issueLines.join("; ");
   // 失敗経路だけ: 本番の利用者にもアクティビティ経由で原因を伝えられるよう記録する (#1536)。
   recordIpcValidationFailure(command, issueLines);
-  throw new Error(
-    `IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`,
-  );
+  throw new Error(`IPC レスポンス "${command}" が期待した形式と一致しません: ${summary}`);
 }
 
 // --- スキーマドリフト (#736 / #1260) --------------------------------------

@@ -19,7 +19,12 @@ export function FlightIcon({ flightId, children }: { flightId: string | null; ch
   // layoutId は mount 時にしか共有スタックへ登録されないため、span → motion.span の
   // 切替 (= 作り直し) で飛行に参加させる。
   return (
-    <motion.span key={flightId} layoutId={flightId} transition={transitions.emphasized} style={{ display: "inline-block" }}>
+    <motion.span
+      key={flightId}
+      layoutId={flightId}
+      transition={transitions.emphasized}
+      style={{ display: "inline-block" }}
+    >
       {children}
     </motion.span>
   );

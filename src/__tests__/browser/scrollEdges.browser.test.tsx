@@ -43,9 +43,7 @@ describe("スクロール端影 (#1073, 実ブラウザ)", () => {
     // 右の影はスクロールポートの右端に接する。左の影は行番号列 (sticky) の右端。
     const sRect = scroller.getBoundingClientRect();
     const rowIndex = scroller.querySelector("thead th.row-index") as HTMLElement;
-    expect(Math.round(end.getBoundingClientRect().right)).toBe(
-      Math.round(sRect.left + scroller.clientWidth),
-    );
+    expect(Math.round(end.getBoundingClientRect().right)).toBe(Math.round(sRect.left + scroller.clientWidth));
     expect(Math.round(start.getBoundingClientRect().left)).toBe(
       Math.round(rowIndex.getBoundingClientRect().right),
     );
@@ -57,9 +55,7 @@ describe("スクロール端影 (#1073, 実ブラウザ)", () => {
     await nextFrames();
     await expect.poll(() => start.dataset.visible).toBe("true");
     expect(end.dataset.visible).toBe("true");
-    expect(Math.round(end.getBoundingClientRect().right)).toBe(
-      Math.round(sRect.left + scroller.clientWidth),
-    );
+    expect(Math.round(end.getBoundingClientRect().right)).toBe(Math.round(sRect.left + scroller.clientWidth));
     expect(Math.round(end.getBoundingClientRect().top)).toBe(Math.round(sRect.top));
 
     // 右端まで到達: 右の影は消える。

@@ -47,19 +47,9 @@ export type SemanticRole = "success" | "warning" | "danger" | "info";
 export type SemanticTier = "subtle" | "border" | "solid" | "text";
 
 /** 反復処理の単一ソース。新しい役割/段階を追加するときはここに足す。 */
-export const SEMANTIC_ROLES: readonly SemanticRole[] = [
-  "success",
-  "warning",
-  "danger",
-  "info",
-];
+export const SEMANTIC_ROLES: readonly SemanticRole[] = ["success", "warning", "danger", "info"];
 
-export const SEMANTIC_TIERS: readonly SemanticTier[] = [
-  "subtle",
-  "border",
-  "solid",
-  "text",
-];
+export const SEMANTIC_TIERS: readonly SemanticTier[] = ["subtle", "border", "solid", "text"];
 
 /**
  * role → CSS 変数 / Chakra トークンの名前空間名。

@@ -142,16 +142,10 @@ export interface LiveTailFilter {
   minDurationMs: number | null;
 }
 
-export function filterLiveTail(
-  entries: readonly LiveTailEntry[],
-  filter: LiveTailFilter,
-): LiveTailEntry[] {
+export function filterLiveTail(entries: readonly LiveTailEntry[], filter: LiveTailFilter): LiveTailEntry[] {
   const needle = filter.text.trim().toLowerCase();
   return entries.filter((e) => {
-    if (
-      filter.minDurationMs != null &&
-      (e.duration_ms == null || e.duration_ms < filter.minDurationMs)
-    ) {
+    if (filter.minDurationMs != null && (e.duration_ms == null || e.duration_ms < filter.minDurationMs)) {
       return false;
     }
     if (needle === "") return true;

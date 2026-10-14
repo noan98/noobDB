@@ -26,7 +26,13 @@ function diff(): DataDiff {
     column_types: ["int", "varchar", "int"],
     primary_key: ["id"],
     rows: [
-      { status: "different", key: [2], source: [2, "b@x", 250], target: [2, "b@x", 200], changed_columns: ["price"] },
+      {
+        status: "different",
+        key: [2],
+        source: [2, "b@x", 250],
+        target: [2, "b@x", 200],
+        changed_columns: ["price"],
+      },
       { status: "source_only", key: [4], source: [4, "d@x", 400], target: null, changed_columns: [] },
       { status: "target_only", key: [3], source: null, target: [3, "c@x", null], changed_columns: [] },
     ],

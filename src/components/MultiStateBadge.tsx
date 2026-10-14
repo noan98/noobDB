@@ -49,12 +49,15 @@ interface Props<S extends string> {
 }
 
 // tone → Chakra トークン (bg, fg, hoverBg, hoverFg, borderColor)
-const TONE_TOKENS: Record<BadgeTone, {
-  bg: string;
-  fg: string;
-  hoverBg: string;
-  border: string;
-}> = {
+const TONE_TOKENS: Record<
+  BadgeTone,
+  {
+    bg: string;
+    fg: string;
+    hoverBg: string;
+    border: string;
+  }
+> = {
   neutral: {
     bg: "app.surface",
     fg: "app.text",
@@ -146,13 +149,7 @@ export function MultiStateBadge<S extends string>({
       _focusVisible={{ outline: "none", boxShadow: focusRing }}
       _active={!disabled ? { transform: "translateY(1px)" } : undefined}
     >
-      <MotionInner
-        layout
-        transition={transitions.layout}
-        display="inline-flex"
-        alignItems="center"
-        gap="1.5"
-      >
+      <MotionInner layout transition={transitions.layout} display="inline-flex" alignItems="center" gap="1.5">
         {current.icon !== undefined && (
           <AnimatePresence mode="wait" initial={false}>
             <MotionInner

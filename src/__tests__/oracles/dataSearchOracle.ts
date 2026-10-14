@@ -144,10 +144,7 @@ export function buildTableScanSql(
  * 推定値が取れない (`null`。SQLite や統計未収集など) 場合は保守的に「除外しない」
  * — 巨大テーブルを誤って弾かないよう、判断材料が無ければ通す。
  */
-export function shouldSkipTableForScan(
-  estimate: number | null,
-  thresholdRows: number,
-): boolean {
+export function shouldSkipTableForScan(estimate: number | null, thresholdRows: number): boolean {
   if (estimate === null) return false;
   return estimate > thresholdRows;
 }

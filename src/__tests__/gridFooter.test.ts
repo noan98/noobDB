@@ -82,7 +82,11 @@ describe("computeFooterCell (#645)", () => {
   });
 
   it("blanks the cell for `none`", () => {
-    expect(computeFooterCell(numericStats, "none")).toMatchObject({ blank: true, numeric: null, percent: null });
+    expect(computeFooterCell(numericStats, "none")).toMatchObject({
+      blank: true,
+      numeric: null,
+      percent: null,
+    });
   });
 
   it("blanks numeric aggregates when the column has no numeric data", () => {

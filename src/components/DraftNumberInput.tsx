@@ -60,7 +60,16 @@ interface Props extends InputProps {
  *   (打鍵の途中で欄が書き換わらない)。確定 (blur / Enter) 後は常に `value` の表示へ戻るので、
  *   親側で値が変わらなかった場合も、欄が上限超過の入力値のまま残らない。
  */
-export function DraftNumberInput({ value, onCommit, min, max, allowDecimal = false, onBlur, onKeyDown, ...rest }: Props) {
+export function DraftNumberInput({
+  value,
+  onCommit,
+  min,
+  max,
+  allowDecimal = false,
+  onBlur,
+  onKeyDown,
+  ...rest
+}: Props) {
   const [draft, setDraft] = useState<string | null>(null);
   const parse = allowDecimal ? parseDraftNumber : parseDraftInt;
 

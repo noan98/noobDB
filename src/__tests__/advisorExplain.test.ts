@@ -36,7 +36,9 @@ describe("advisorRelatedTables", () => {
   it("fk_missing_index は参照先を足す。大文字小文字違いの重複は足さない", () => {
     const f = finding({ rule: "fk_missing_index", context: ["customers"] });
     expect(advisorRelatedTables(f)).toEqual(["orders", "customers"]);
-    expect(advisorRelatedTables(finding({ rule: "fk_missing_index", context: ["ORDERS"] }))).toEqual(["orders"]);
+    expect(advisorRelatedTables(finding({ rule: "fk_missing_index", context: ["ORDERS"] }))).toEqual([
+      "orders",
+    ]);
   });
   it("fk_type_mismatch は context[1] の table.列 からテーブルを取る", () => {
     const f = finding({ rule: "fk_type_mismatch", context: ["bigint", "users.id", "int"] });
@@ -52,7 +54,14 @@ describe("buildAdvisorExplainPrompt", () => {
       {
         name: "orders",
         columns: [
-          { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+          {
+            name: "id",
+            data_type: "int",
+            nullable: false,
+            key: "PRI",
+            referenced_table: null,
+            referenced_column: null,
+          },
         ],
         indexes: [{ name: "idx_note", columns: ["note"], unique: false, primary: false }],
       },

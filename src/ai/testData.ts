@@ -134,7 +134,6 @@ export function isAiEligible(spec: ColumnGenSpec): boolean {
   return AI_ELIGIBLE_STRATEGIES.has(spec.strategy) && spec.kind !== "binary";
 }
 
-
 function isUniqueKey(key: string): boolean {
   const k = key.toUpperCase();
   return k.includes("PRI") || k.includes("UNI");
@@ -271,7 +270,13 @@ export function summarizeTestDataSend(
   rowCount: number,
   locale: "ja" | "en",
 ): TestDataSendSummary {
-  return { table, columns: context.columns.length, foreignKeys: context.references.length, rows: rowCount, locale };
+  return {
+    table,
+    columns: context.columns.length,
+    foreignKeys: context.references.length,
+    rows: rowCount,
+    locale,
+  };
 }
 
 /** 応答の検証で見つかった注意点 (表示は呼び出し側が i18n する)。 */
@@ -338,7 +343,11 @@ function isUsableValue(col: TestDataAiColumn, kind: AiColumnPlan["kind"], raw: s
       return kind === "choices" && Number.isSafeInteger(Number(v)) && /^[-+]?\d+$/.test(v);
     case "decimal":
       // 有効桁数が 15 桁を超えると number へ変換した時点で精度が落ちるので採用しない。
-      return kind === "choices" && Number.isFinite(Number(v)) && v.replace(/^[-+]?0*|\./g, "").replace(/e.*$/i, "").length <= 15;
+      return (
+        kind === "choices" &&
+        Number.isFinite(Number(v)) &&
+        v.replace(/^[-+]?0*|\./g, "").replace(/e.*$/i, "").length <= 15
+      );
     case "bool":
       return kind === "choices" && /^(true|false|0|1)$/i.test(v);
     case "date":
@@ -624,7 +633,13 @@ export function generateAiRows(input: AiTableInput, seed: number): AiTableRows {
     }
     for (const m of members) {
       const ci = aiIndex.get(m) ?? 0;
-      colValues[ci] = aiColumnValues(active[ci], plan.columns[m], idxs, deriveSeed(seed, hashName(m)), unique.has(m));
+      colValues[ci] = aiColumnValues(
+        active[ci],
+        plan.columns[m],
+        idxs,
+        deriveSeed(seed, hashName(m)),
+        unique.has(m),
+      );
     }
   }
 

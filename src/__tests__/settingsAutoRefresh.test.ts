@@ -31,8 +31,6 @@ describe("sanitizeAutoRefreshSecs", () => {
   it("falls back when the input is not a finite number", () => {
     expect(sanitizeAutoRefreshSecs("30", DEFAULT_AUTO_REFRESH_SECS)).toBe(DEFAULT_AUTO_REFRESH_SECS);
     expect(sanitizeAutoRefreshSecs(NaN, DEFAULT_AUTO_REFRESH_SECS)).toBe(DEFAULT_AUTO_REFRESH_SECS);
-    expect(sanitizeAutoRefreshSecs(undefined, DEFAULT_AUTO_REFRESH_SECS)).toBe(
-      DEFAULT_AUTO_REFRESH_SECS,
-    );
+    expect(sanitizeAutoRefreshSecs(undefined, DEFAULT_AUTO_REFRESH_SECS)).toBe(DEFAULT_AUTO_REFRESH_SECS);
   });
 });

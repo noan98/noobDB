@@ -77,7 +77,7 @@ jobs:
               # `pnpm run knip` を再実行し、デッドコード検出の緩和を素通りさせない。
               - 'knip.json'
               # #1176: Biome の設定 / 警告件数チェックのスクリプトだけを変えた PR でも
-              # `pnpm run lint` を再実行する。
+              # `pnpm run lint` を再実行する (formatter の設定もここ)。
               - 'biome.json'
               # #1359: frontend ジョブが呼ぶバンドルサイズ計測スクリプトだけを変えたPRでも
               # 実走させる。
@@ -213,8 +213,9 @@ jobs:
       - name: Type-check and build
         run: pnpm run build
 
-      # Biome による静的 lint (#1176)。tsc / knip では拾えない握り潰された
-      # Promise (noFloatingPromises / noMisusedPromises) と hooks の誤用を止める。
+      # Biome による静的 lint (#1176) と整形チェック (#1636)。tsc / knip では拾えない握り潰された
+      # Promise (noFloatingPromises / noMisusedPromises) と hooks の誤用を止める。`biome check` は
+      # formatter も検査するので、未整形のコードもここで落ちる (直すには `pnpm exec biome format --write src`)。
       # 新しい必須チェックは増やさず、frontend ジョブ内のステップとして実行する。
       - name: Lint (Biome)
         run: pnpm run lint

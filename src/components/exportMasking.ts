@@ -130,10 +130,7 @@ export function defaultMaskRule(kind: ExportMaskRuleKind): ExportMaskRule {
  * 同じ)、空・長すぎ・ルール不正は捨て、同じパターンは先勝ちで重複除去。`raw` が
  * 配列でなければ `fallback`。
  */
-export function sanitizeMaskPresets(
-  raw: unknown,
-  fallback: readonly ExportMaskPreset[],
-): ExportMaskPreset[] {
+export function sanitizeMaskPresets(raw: unknown, fallback: readonly ExportMaskPreset[]): ExportMaskPreset[] {
   if (!Array.isArray(raw)) return fallback.map((p) => ({ ...p }));
   const out: ExportMaskPreset[] = [];
   const seen = new Set<string>();

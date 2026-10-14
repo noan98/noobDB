@@ -191,9 +191,14 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
     tables.length > 0 ? "Tables (name(columns)):" : "Tables: (none matched)",
     tables.map((t) => `- ${t.name}(${t.columns.join(", ")})`).join("\n"),
   ].join("\n");
-  const prompt = ["<before_cursor>", before, "</before_cursor>", "<after_cursor>", after, "</after_cursor>"].join(
-    "\n",
-  );
+  const prompt = [
+    "<before_cursor>",
+    before,
+    "</before_cursor>",
+    "<after_cursor>",
+    after,
+    "</after_cursor>",
+  ].join("\n");
   return { systemCached, prompt, cacheKey: `${input.driver}\u0000${systemCached}\u0000${prompt}` };
 }
 
@@ -219,7 +224,8 @@ export function cleanInlineCompletion(raw: string, before: string): string {
   }
   if (text.trim() === "") return "";
   const lines = text.split("\n");
-  if (lines.length > INLINE_MAX_SUGGESTION_LINES) text = lines.slice(0, INLINE_MAX_SUGGESTION_LINES).join("\n");
+  if (lines.length > INLINE_MAX_SUGGESTION_LINES)
+    text = lines.slice(0, INLINE_MAX_SUGGESTION_LINES).join("\n");
   if (text.length > INLINE_MAX_SUGGESTION_CHARS) text = sliceHead(text, INLINE_MAX_SUGGESTION_CHARS);
   return text.replace(/\s+$/, "");
 }

@@ -33,14 +33,7 @@ export function AiSetupHint({ entry = "errorExplain" }: { entry?: AiSetupHintEnt
   const unavailable = !ai.enabled || (keyKnown && !hasKey);
   if (!unavailable) return null;
   return (
-    <Flex
-      align="center"
-      gap="2"
-      px="3.5"
-      py="1"
-      textStyle="caption"
-      data-testid="ai-setup-hint"
-    >
+    <Flex align="center" gap="2" px="3.5" py="1" textStyle="caption" data-testid="ai-setup-hint">
       <Tooltip label={t("aiSetupHintTooltip")}>
         <Button type="button" variant="ghost" size="sm" onClick={requestOpenAiSettings}>
           <Icon name="sparkles" size={ICON_SIZES.sm} />

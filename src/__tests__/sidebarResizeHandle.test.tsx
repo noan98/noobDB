@@ -13,13 +13,13 @@ function renderHandle(width = 300) {
   const onWidthChange = vi.fn();
   renderWithProviders(
     <div>
-    <SidebarResizeHandle
-      width={width}
-      onWidthChange={onWidthChange}
-      resizing={false}
-      onResizingChange={vi.fn()}
-      ariaLabel="サイドバーの幅を変更"
-    />
+      <SidebarResizeHandle
+        width={width}
+        onWidthChange={onWidthChange}
+        resizing={false}
+        onResizingChange={vi.fn()}
+        ariaLabel="サイドバーの幅を変更"
+      />
     </div>,
   );
   return { onWidthChange, handle: screen.getByRole("separator", { name: "サイドバーの幅を変更" }) };

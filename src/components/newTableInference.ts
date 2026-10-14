@@ -1,9 +1,4 @@
-import type {
-  ColumnMapping,
-  DriverKind,
-  NewColumnType,
-  NewTableColumn,
-} from "../api/tauri";
+import type { ColumnMapping, DriverKind, NewColumnType, NewTableColumn } from "../api/tauri";
 import type { CellKind } from "./cellTypeMeta";
 
 /**
@@ -149,10 +144,7 @@ function mergeTypes(a: NewColumnType, b: NewColumnType): NewColumnType {
  * (またはデータ行なし) なら何でも入る文字列。MySQL では真偽を文字列へ落とす
  * (`newColumnTypeOptions` の注記を参照)。
  */
-export function inferColumnType(
-  values: readonly (string | null)[],
-  driver: DriverKind,
-): NewColumnType {
+export function inferColumnType(values: readonly (string | null)[], driver: DriverKind): NewColumnType {
   let acc: NewColumnType | null = null;
   for (const v of values) {
     if (v === null) continue;
@@ -199,9 +191,7 @@ export function proposeColumnNames(headers: readonly string[]): string[] {
 export function suggestTableName(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? "";
   const stem = base.replace(/\.[^.]*$/, "");
-  const cleaned = stem
-    .replace(/[^\p{L}\p{N}_]+/gu, "_")
-    .replace(/^_+|_+$/g, "");
+  const cleaned = stem.replace(/[^\p{L}\p{N}_]+/gu, "_").replace(/^_+|_+$/g, "");
   return cleaned || "imported_table";
 }
 
@@ -261,7 +251,7 @@ export function buildColumnDrafts(
 ): NewColumnDraft[] {
   const width = Math.max(preview.headers.length, ...preview.rows.map((r) => r.length), 0);
   const headers = Array.from({ length: width }, (_, i) => {
-    const h = named ? preview.headers[i] ?? "" : "";
+    const h = named ? (preview.headers[i] ?? "") : "";
     // xlsx のヘッダ行にあるエラーセルは列名にせず column_N にする。
     return excelErrors && isExcelErrorToken(h) ? "" : h;
   });

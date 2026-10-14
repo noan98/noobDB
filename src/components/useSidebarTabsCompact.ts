@@ -58,10 +58,7 @@ function measureTab(tab: HTMLElement): SidebarTabMetrics {
  * - ラベルの文言が変わったとき (言語切替) は `labelsKey` (全ラベルを連結した文字列) の
  *   変化で測り直す。
  */
-export function useSidebarTabsCompact(
-  tablistRef: RefObject<HTMLElement | null>,
-  labelsKey: string,
-): boolean {
+export function useSidebarTabsCompact(tablistRef: RefObject<HTMLElement | null>, labelsKey: string): boolean {
   const [compact, setCompact] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: labelsKey は言語切替で測り直すためのトリガー
   useLayoutEffect(() => {

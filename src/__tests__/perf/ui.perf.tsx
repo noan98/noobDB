@@ -17,12 +17,7 @@ import { EditorView } from "@codemirror/view";
 import { renderInBrowser } from "../browser/render";
 import App from "../../App";
 import { setTabRestoreMode } from "../../settings";
-import {
-  emitChannelMessage,
-  installTauriMock,
-  onCommand,
-  type ChannelLike,
-} from "../browser/tauriMock";
+import { emitChannelMessage, installTauriMock, onCommand, type ChannelLike } from "../browser/tauriMock";
 import type { CellValue, Column, ConnectionProfile, TableColumnInfo } from "../../api/tauri";
 
 // ---- 規模 (Epic #1306 の「大規模スキーマ」の想定) ---------------------------------
@@ -104,10 +99,21 @@ function registerHandlers() {
   onCommand("plan_watch_list", () => []);
   onCommand("plan_watch_refresh", () => ({ recorded: 0, changed: 0, errors: [] }));
   onCommand("schema_drift_list", () => []);
-  onCommand("schema_drift_capture", () => ({ added: false, database: "appdb", generations: [], summary: null }));
+  onCommand("schema_drift_capture", () => ({
+    added: false,
+    database: "appdb",
+    generations: [],
+    summary: null,
+  }));
   const openResult = (db: string, table: string, limit: number) => {
     const base = `SELECT * FROM \`${db}\`.\`${table}\``;
-    return { base, sql: `${base} LIMIT ${limit}`, columns: TABLE_COLUMNS, row_identity: null, row_estimate: null };
+    return {
+      base,
+      sql: `${base} LIMIT ${limit}`,
+      columns: TABLE_COLUMNS,
+      row_identity: null,
+      row_estimate: null,
+    };
   };
   onCommand("open_table", (args) =>
     openResult(args.database as string, args.table as string, args.limit as number),
@@ -360,12 +366,7 @@ it("UI 性能ベンチマーク", async () => {
   // 1. タブ切替
   const tabs = tabElements();
   expect(tabs).toHaveLength(OPEN_TABS);
-  await runScenario(
-    "タブ切替",
-    TAB_SWITCHES,
-    (i) => tabs[i % OPEN_TABS].click(),
-    { gapMs: 200 },
-  );
+  await runScenario("タブ切替", TAB_SWITCHES, (i) => tabs[i % OPEN_TABS].click(), { gapMs: 200 });
 
   // 2. スキーマツリーのスクロール (rAF ごとにスクロール位置を進め、フレーム間隔も記録する)
   const tree = document.querySelector<HTMLElement>("[role=tree]");
@@ -400,14 +401,10 @@ it("UI 性能ベンチマーク", async () => {
   expect(editorEl).not.toBeNull();
   const view = EditorView.findFromDOM(editorEl!);
   expect(view).not.toBeNull();
-  await runScenario(
-    "エディタ入力",
-    TYPED_CHARS,
-    () => {
-      const end = view!.state.doc.length;
-      view!.dispatch({ changes: { from: end, insert: " " }, userEvent: "input.type" });
-    },
-  );
+  await runScenario("エディタ入力", TYPED_CHARS, () => {
+    const end = view!.state.doc.length;
+    view!.dispatch({ changes: { from: end, insert: " " }, userEvent: "input.type" });
+  });
 
   // 4. サイドバー幅のドラッグ
   const handle = document.querySelector<HTMLElement>("[role=separator][aria-orientation=vertical]");
@@ -416,7 +413,16 @@ it("UI 性能ベンチマーク", async () => {
   const y = rect.top + rect.height / 2;
   const pointer = (type: string, x: number) =>
     handle!.dispatchEvent(
-      new PointerEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, pointerId: 1, button: 0, buttons: 1, isPrimary: true }),
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        pointerId: 1,
+        button: 0,
+        buttons: 1,
+        isPrimary: true,
+      }),
     );
   pointer("pointerdown", rect.left + 2);
   await runScenario(
@@ -434,7 +440,11 @@ afterAll(async () => {
   // パスはプロジェクトルート基準。
   await commands.writeFile(
     "src/__tests__/perf/__perf__/latest.json",
-    JSON.stringify({ measuredAt: new Date().toISOString(), userAgent: navigator.userAgent, results }, null, 2),
+    JSON.stringify(
+      { measuredAt: new Date().toISOString(), userAgent: navigator.userAgent, results },
+      null,
+      2,
+    ),
   );
   await commands.writeFile("src/__tests__/perf/__perf__/latest.md", `${markdown}\n`);
 });

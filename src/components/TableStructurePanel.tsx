@@ -276,7 +276,9 @@ export function TableStructurePanel({
             <SectionCaption label={t("structureColumns")} count={rows?.length ?? 0} />
             <chakra.thead>
               <chakra.tr>
-                <chakra.th css={thCss} textAlign="right">#</chakra.th>
+                <chakra.th css={thCss} textAlign="right">
+                  #
+                </chakra.th>
                 <chakra.th css={thCss}>{t("structureColName")}</chakra.th>
                 <chakra.th css={thCss}>{t("structureColType")}</chakra.th>
                 <chakra.th css={thCss}>{t("structureColNullable")}</chakra.th>
@@ -291,183 +293,183 @@ export function TableStructurePanel({
                 <SkeletonTableRows columns={6} />
               ) : (
                 rows.map((r) => (
-                <chakra.tr key={r.name}>
-                  <chakra.td css={tdCss} textAlign="right" textStyle="numeric" color="app.textMuted">
-                    {r.position}
-                  </chakra.td>
-                  <chakra.td css={tdCss}>
-                    <chakra.div fontFamily="var(--font-mono)">{r.name}</chakra.div>
-                    {r.comment && (
-                      <chakra.div textStyle="caption">
-                        {r.comment}
-                      </chakra.div>
-                    )}
-                  </chakra.td>
-                  <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
-                    {r.dataType}
-                  </chakra.td>
-                  <chakra.td css={tdCss} color={r.nullable ? "app.textMuted" : "app.text"}>
-                    {r.nullable ? t("structureNullableYes") : t("structureNullableNo")}
-                  </chakra.td>
-                  <chakra.td
-                    css={tdCss}
-                    fontFamily="var(--font-mono)"
-                    color="app.textMuted"
-                    maxW="240px"
-                    overflow="hidden"
-                    textOverflow="ellipsis"
-                    whiteSpace="nowrap"
-                  >
-                    {r.defaultValue ?? ""}
-                  </chakra.td>
-                  <chakra.td css={tdCss}>
-                    <Flex gap="1" align="center" flexWrap="wrap">
-                      {r.keys.map((k) => (
-                        <KeyBadge key={k} kind={k} label={keyLabel[k]} />
-                      ))}
-                      {r.foreignKey && (
-                        <ForeignKeyLink fk={r.foreignKey} onSelect={selectReferenced} hint={fkHint} />
-                      )}
-                      {r.extra && (
-                        <chakra.span fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
-                          {r.extra}
-                        </chakra.span>
-                      )}
-                    </Flex>
-                  </chakra.td>
-                </chakra.tr>
+                  <chakra.tr key={r.name}>
+                    <chakra.td css={tdCss} textAlign="right" textStyle="numeric" color="app.textMuted">
+                      {r.position}
+                    </chakra.td>
+                    <chakra.td css={tdCss}>
+                      <chakra.div fontFamily="var(--font-mono)">{r.name}</chakra.div>
+                      {r.comment && <chakra.div textStyle="caption">{r.comment}</chakra.div>}
+                    </chakra.td>
+                    <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                      {r.dataType}
+                    </chakra.td>
+                    <chakra.td css={tdCss} color={r.nullable ? "app.textMuted" : "app.text"}>
+                      {r.nullable ? t("structureNullableYes") : t("structureNullableNo")}
+                    </chakra.td>
+                    <chakra.td
+                      css={tdCss}
+                      fontFamily="var(--font-mono)"
+                      color="app.textMuted"
+                      maxW="240px"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                    >
+                      {r.defaultValue ?? ""}
+                    </chakra.td>
+                    <chakra.td css={tdCss}>
+                      <Flex gap="1" align="center" flexWrap="wrap">
+                        {r.keys.map((k) => (
+                          <KeyBadge key={k} kind={k} label={keyLabel[k]} />
+                        ))}
+                        {r.foreignKey && (
+                          <ForeignKeyLink fk={r.foreignKey} onSelect={selectReferenced} hint={fkHint} />
+                        )}
+                        {r.extra && (
+                          <chakra.span fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
+                            {r.extra}
+                          </chakra.span>
+                        )}
+                      </Flex>
+                    </chakra.td>
+                  </chakra.tr>
                 ))
               )}
             </chakra.tbody>
           </chakra.table>
 
           {rows && (
-          <>
-          <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
-            <SectionCaption label={t("indexesLabel")} count={sortedIndexes?.length ?? 0} />
-            {sortedIndexes === null ? null : sortedIndexes.length === 0 ? (
-              <chakra.tbody>
-                <chakra.tr>
-                  <chakra.td css={tdCss} color="app.textMuted">
-                    {t("structureNoIndexes")}
-                  </chakra.td>
-                </chakra.tr>
-              </chakra.tbody>
-            ) : (
-              <>
-                <chakra.thead>
-                  <chakra.tr>
-                    <chakra.th css={thCss}>{t("structureIndexName")}</chakra.th>
-                    <chakra.th css={thCss}>{t("structureIndexColumns")}</chakra.th>
-                    <chakra.th css={thCss}>{t("structureIndexKind")}</chakra.th>
-                  </chakra.tr>
-                </chakra.thead>
-                <chakra.tbody>
-                  {sortedIndexes.map((idx) => {
-                    const kind = indexKind(idx);
-                    return (
-                      <chakra.tr key={idx.name}>
-                        <chakra.td css={tdCss} fontFamily="var(--font-mono)">
-                          {idx.name}
-                        </chakra.td>
-                        <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
-                          {idx.columns.join(", ")}
-                        </chakra.td>
-                        <chakra.td css={tdCss}>
-                          <Flex gap="1" align="center">
-                            {kind === "primary" ? (
-                              <KeyBadge kind="pk" label={keyLabel.pk} />
-                            ) : kind === "unique" ? (
-                              <KeyBadge kind="unique" label={keyLabel.unique} />
-                            ) : null}
-                            {idx.method && (
-                              <chakra.span fontSize="xs" color="app.textMuted" fontFamily="var(--font-mono)">
-                                {idx.method}
-                              </chakra.span>
-                            )}
-                          </Flex>
-                        </chakra.td>
-                      </chakra.tr>
-                    );
-                  })}
-                </chakra.tbody>
-              </>
-            )}
-          </chakra.table>
-
-          <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
-            <SectionCaption label={t("structureForeignKeys")} count={fks.length} />
-            {fks.length === 0 ? (
-              <chakra.tbody>
-                <chakra.tr>
-                  <chakra.td css={tdCss} color="app.textMuted">
-                    {t("structureNoForeignKeys")}
-                  </chakra.td>
-                </chakra.tr>
-              </chakra.tbody>
-            ) : (
-              <>
-                <chakra.thead>
-                  <chakra.tr>
-                    <chakra.th css={thCss}>{t("structureColName")}</chakra.th>
-                    <chakra.th css={thCss}>{t("structureFkReferences")}</chakra.th>
-                  </chakra.tr>
-                </chakra.thead>
-                <chakra.tbody>
-                  {fks.map((fk) => (
-                    <chakra.tr key={fk.column}>
-                      <chakra.td css={tdCss} fontFamily="var(--font-mono)">
-                        {fk.column}
-                      </chakra.td>
-                      <chakra.td css={tdCss}>
-                        <ForeignKeyLink fk={fk} onSelect={selectReferenced} hint={fkHint} />
+            <>
+              <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                <SectionCaption label={t("indexesLabel")} count={sortedIndexes?.length ?? 0} />
+                {sortedIndexes === null ? null : sortedIndexes.length === 0 ? (
+                  <chakra.tbody>
+                    <chakra.tr>
+                      <chakra.td css={tdCss} color="app.textMuted">
+                        {t("structureNoIndexes")}
                       </chakra.td>
                     </chakra.tr>
-                  ))}
-                </chakra.tbody>
-              </>
-            )}
-          </chakra.table>
-
-          <chakra.section display="flex" flexDirection="column" gap="1.5" aria-label={t("structureDdl")}>
-            <Flex align="center" gap="2">
-              <chakra.span textStyle="overline" color="app.textMuted">
-                {t("structureDdl")}
-              </chakra.span>
-              {ddl.kind === "hidden" || ddl.kind === "error" ? (
-                <Button type="button" variant="secondary" size="sm" onClick={showDdl}>
-                  {t("structureDdlShow")}
-                </Button>
-              ) : null}
-              {ddl.kind === "ready" && (
-                <CopyButton
-                  copied={ddlCopied}
-                  onClick={() => void copyDdl(ddl.ddl)}
-                  label={t("structureDdlCopy")}
-                  copiedLabel={t("gridCopied")}
-                />
-              )}
-            </Flex>
-            {ddl.kind === "loading" && (
-              <chakra.div role="status" textStyle="caption">
-                {t("structureDdlLoading")}
-              </chakra.div>
-            )}
-            {ddl.kind === "error" && (
-              <FieldError>{t("structureDdlError", { error: ddl.message })}</FieldError>
-            )}
-            {ddl.kind === "ready" && (
-              <>
-                <CodePreview maxH="320px" aria-label={t("structureDdl")}>
-                  {ddl.ddl}
-                </CodePreview>
-                {isSynthesizedTableDdl(driver) && (
-                  <chakra.div textStyle="caption">{t("tableDdlSynthesizedHint")}</chakra.div>
+                  </chakra.tbody>
+                ) : (
+                  <>
+                    <chakra.thead>
+                      <chakra.tr>
+                        <chakra.th css={thCss}>{t("structureIndexName")}</chakra.th>
+                        <chakra.th css={thCss}>{t("structureIndexColumns")}</chakra.th>
+                        <chakra.th css={thCss}>{t("structureIndexKind")}</chakra.th>
+                      </chakra.tr>
+                    </chakra.thead>
+                    <chakra.tbody>
+                      {sortedIndexes.map((idx) => {
+                        const kind = indexKind(idx);
+                        return (
+                          <chakra.tr key={idx.name}>
+                            <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                              {idx.name}
+                            </chakra.td>
+                            <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                              {idx.columns.join(", ")}
+                            </chakra.td>
+                            <chakra.td css={tdCss}>
+                              <Flex gap="1" align="center">
+                                {kind === "primary" ? (
+                                  <KeyBadge kind="pk" label={keyLabel.pk} />
+                                ) : kind === "unique" ? (
+                                  <KeyBadge kind="unique" label={keyLabel.unique} />
+                                ) : null}
+                                {idx.method && (
+                                  <chakra.span
+                                    fontSize="xs"
+                                    color="app.textMuted"
+                                    fontFamily="var(--font-mono)"
+                                  >
+                                    {idx.method}
+                                  </chakra.span>
+                                )}
+                              </Flex>
+                            </chakra.td>
+                          </chakra.tr>
+                        );
+                      })}
+                    </chakra.tbody>
+                  </>
                 )}
-              </>
-            )}
-          </chakra.section>
-          </>
+              </chakra.table>
+
+              <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                <SectionCaption label={t("structureForeignKeys")} count={fks.length} />
+                {fks.length === 0 ? (
+                  <chakra.tbody>
+                    <chakra.tr>
+                      <chakra.td css={tdCss} color="app.textMuted">
+                        {t("structureNoForeignKeys")}
+                      </chakra.td>
+                    </chakra.tr>
+                  </chakra.tbody>
+                ) : (
+                  <>
+                    <chakra.thead>
+                      <chakra.tr>
+                        <chakra.th css={thCss}>{t("structureColName")}</chakra.th>
+                        <chakra.th css={thCss}>{t("structureFkReferences")}</chakra.th>
+                      </chakra.tr>
+                    </chakra.thead>
+                    <chakra.tbody>
+                      {fks.map((fk) => (
+                        <chakra.tr key={fk.column}>
+                          <chakra.td css={tdCss} fontFamily="var(--font-mono)">
+                            {fk.column}
+                          </chakra.td>
+                          <chakra.td css={tdCss}>
+                            <ForeignKeyLink fk={fk} onSelect={selectReferenced} hint={fkHint} />
+                          </chakra.td>
+                        </chakra.tr>
+                      ))}
+                    </chakra.tbody>
+                  </>
+                )}
+              </chakra.table>
+
+              <chakra.section display="flex" flexDirection="column" gap="1.5" aria-label={t("structureDdl")}>
+                <Flex align="center" gap="2">
+                  <chakra.span textStyle="overline" color="app.textMuted">
+                    {t("structureDdl")}
+                  </chakra.span>
+                  {ddl.kind === "hidden" || ddl.kind === "error" ? (
+                    <Button type="button" variant="secondary" size="sm" onClick={showDdl}>
+                      {t("structureDdlShow")}
+                    </Button>
+                  ) : null}
+                  {ddl.kind === "ready" && (
+                    <CopyButton
+                      copied={ddlCopied}
+                      onClick={() => void copyDdl(ddl.ddl)}
+                      label={t("structureDdlCopy")}
+                      copiedLabel={t("gridCopied")}
+                    />
+                  )}
+                </Flex>
+                {ddl.kind === "loading" && (
+                  <chakra.div role="status" textStyle="caption">
+                    {t("structureDdlLoading")}
+                  </chakra.div>
+                )}
+                {ddl.kind === "error" && (
+                  <FieldError>{t("structureDdlError", { error: ddl.message })}</FieldError>
+                )}
+                {ddl.kind === "ready" && (
+                  <>
+                    <CodePreview maxH="320px" aria-label={t("structureDdl")}>
+                      {ddl.ddl}
+                    </CodePreview>
+                    {isSynthesizedTableDdl(driver) && (
+                      <chakra.div textStyle="caption">{t("tableDdlSynthesizedHint")}</chakra.div>
+                    )}
+                  </>
+                )}
+              </chakra.section>
+            </>
           )}
         </>
       )}

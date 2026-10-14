@@ -297,9 +297,7 @@ export function TableTimelapsePanel({
       await reload();
       setPair(null);
       if (summary.failed.length > 0) {
-        setActionError(
-          summary.failed.map((f) => `${f.table}: ${f.error}`).join("\n"),
-        );
+        setActionError(summary.failed.map((f) => `${f.table}: ${f.error}`).join("\n"));
       }
       setNotice(
         summary.changed.length > 0
@@ -375,17 +373,21 @@ export function TableTimelapsePanel({
         toCapturedAt: diff.to_captured_at,
       });
     }
-    const table = timelapseRowsToTable(exportRows, [
-      t("timelapseExportColKind"),
-      t("timelapseExportColKey"),
-      t("timelapseExportColColumn"),
-      t("timelapseExportColBefore"),
-      t("timelapseExportColAfter"),
-    ], {
-      added: t("timelapseKindAdded"),
-      removed: t("timelapseKindRemoved"),
-      changed: t("timelapseKindChanged"),
-    });
+    const table = timelapseRowsToTable(
+      exportRows,
+      [
+        t("timelapseExportColKind"),
+        t("timelapseExportColKey"),
+        t("timelapseExportColColumn"),
+        t("timelapseExportColBefore"),
+        t("timelapseExportColAfter"),
+      ],
+      {
+        added: t("timelapseKindAdded"),
+        removed: t("timelapseKindRemoved"),
+        changed: t("timelapseKindChanged"),
+      },
+    );
     return tableToCsv(table.header, table.rows);
   };
 
@@ -403,7 +405,15 @@ export function TableTimelapsePanel({
   return (
     <Box flex="1" minH={0} display="flex" flexDirection="column">
       {dialog}
-      <Flex align="center" gap="2" px="4" py="2" borderBottom="1px solid" borderColor="app.border" flexWrap="wrap">
+      <Flex
+        align="center"
+        gap="2"
+        px="4"
+        py="2"
+        borderBottom="1px solid"
+        borderColor="app.border"
+        flexWrap="wrap"
+      >
         <Button type="button" variant="secondary" size="sm" onClick={() => void captureNow()} disabled={busy}>
           {busy ? <Spinner size={12} decorative /> : <Icon name="refresh" size={ICON_SIZES.sm} />}
           <chakra.span marginLeft="1.5">{t("timelapseCaptureNow")}</chakra.span>
@@ -517,14 +527,28 @@ export function TableTimelapsePanel({
           </chakra.ul>
 
           {selected && (
-            <Box flex="1" minW={0} overflow="auto" px="4" py="3" display="flex" flexDirection="column" gap="3">
+            <Box
+              flex="1"
+              minW={0}
+              overflow="auto"
+              px="4"
+              py="3"
+              display="flex"
+              flexDirection="column"
+              gap="3"
+            >
               <Flex align="center" gap="2" flexWrap="wrap">
                 <Icon name="table" size={ICON_SIZES.md} />
                 <chakra.span fontFamily="var(--font-mono)" fontSize="sm">
                   {selected.database}.{selected.table}
                 </chakra.span>
                 <Box flex="1" />
-                <Button type="button" variant="dangerOutline" size="sm" onClick={() => void unwatch(selected)}>
+                <Button
+                  type="button"
+                  variant="dangerOutline"
+                  size="sm"
+                  onClick={() => void unwatch(selected)}
+                >
                   {selected.active ? t("timelapseUnwatch") : t("timelapseDeleteDataOk")}
                 </Button>
               </Flex>
@@ -566,7 +590,9 @@ export function TableTimelapsePanel({
                 </Flex>
               )}
 
-              {diffError && <ErrorNote role="alert">{t("timelapseDiffError", { error: diffError })}</ErrorNote>}
+              {diffError && (
+                <ErrorNote role="alert">{t("timelapseDiffError", { error: diffError })}</ErrorNote>
+              )}
               {diffLoading && !diff && (
                 // 差分計算中: 列数は世代ペアが変わるたびに変わり得るため、結果
                 // ペインの列数未知スケルトンと同じ既定列数で骨格を出す
@@ -615,11 +641,7 @@ export function TableTimelapsePanel({
                       {t("timelapseColumnsRemoved", { columns: diff.columns_removed.join(", ") })}
                     </chakra.p>
                   )}
-                  {masked && (
-                    <chakra.p textStyle="caption">
-                      {t("timelapseMaskedNote")}
-                    </chakra.p>
-                  )}
+                  {masked && <chakra.p textStyle="caption">{t("timelapseMaskedNote")}</chakra.p>}
                   {rows.length === 0 ? (
                     <chakra.p textStyle="body" color="app.textMuted">
                       {t("timelapseNoChanges")}
@@ -659,13 +681,21 @@ export function TableTimelapsePanel({
                                 css={tdCss}
                                 data-changed={c.changed || undefined}
                                 style={
-                                  c.changed ? { background: semanticColorVar("warning", "subtle") } : undefined
+                                  c.changed
+                                    ? { background: semanticColorVar("warning", "subtle") }
+                                    : undefined
                                 }
-                                color={c.masked ? "app.textMuted" : c.primaryKey ? "app.keyAccent" : undefined}
+                                color={
+                                  c.masked ? "app.textMuted" : c.primaryKey ? "app.keyAccent" : undefined
+                                }
                               >
                                 {c.text}
                                 {c.before !== null && (
-                                  <chakra.div fontSize="xs" color="app.textMuted" textDecoration="line-through">
+                                  <chakra.div
+                                    fontSize="xs"
+                                    color="app.textMuted"
+                                    textDecoration="line-through"
+                                  >
                                     {c.before}
                                   </chakra.div>
                                 )}

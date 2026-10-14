@@ -66,7 +66,10 @@ export function TitleBar({
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    appWindow.isMaximized().then(setMaximized).catch(() => {});
+    appWindow
+      .isMaximized()
+      .then(setMaximized)
+      .catch(() => {});
     // ウィンドウ端のドラッグ中は onResized が毎フレーム届くので、IPC (isMaximized) の
     // 往復は止まってから 1 回だけにする (#1312)。
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -74,7 +77,10 @@ export function TitleBar({
       .onResized(() => {
         clearTimeout(timer);
         timer = setTimeout(() => {
-          appWindow.isMaximized().then(setMaximized).catch(() => {});
+          appWindow
+            .isMaximized()
+            .then(setMaximized)
+            .catch(() => {});
         }, RESIZE_DEBOUNCE_MS);
       })
       .then((fn) => {
@@ -189,24 +195,11 @@ export function TitleBar({
         >
           {maximized ? (
             <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden>
-              <path
-                d="M2.5 2.5h5v5h-5z M2.5 0.5h7v7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
+              <path d="M2.5 2.5h5v5h-5z M2.5 0.5h7v7" fill="none" stroke="currentColor" strokeWidth="1" />
             </svg>
           ) : (
             <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden>
-              <rect
-                x="0.5"
-                y="0.5"
-                width="9"
-                height="9"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1"
-              />
+              <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1" />
             </svg>
           )}
         </TitleControl>

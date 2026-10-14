@@ -93,8 +93,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     t("dangerousAiSends", {
       sql: ai.maskLiterals ? t("dangerousAiSqlMasked") : t("dangerousAiSqlRaw"),
       dialect: dialectLabel(props.driver),
-      tables:
-        tableCount > 0 ? t("dangerousAiTablesSome", { count: tableCount }) : t("dangerousAiTablesNone"),
+      tables: tableCount > 0 ? t("dangerousAiTablesSome", { count: tableCount }) : t("dangerousAiTablesNone"),
     });
 
   const run = async () => {
@@ -173,10 +172,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
     }
     const tables = fetched.filter((x): x is ImpactTable => x !== null);
     const names = tables.map((x) => x.name);
-    const foreignKeys = selectRelatedForeignKeys(
-      [...perDb.values()].flat(),
-      names,
-    );
+    const foreignKeys = selectRelatedForeignKeys([...perDb.values()].flat(), names);
     const sends = sendsLine(tables.length);
     setState({ kind: "running", sends });
     await stream.start(
@@ -217,13 +213,7 @@ export function AiImpactAnalysis(props: AiImpactAnalysisProps) {
   const hasResult = state.kind !== "idle" && state.kind !== "running";
 
   return (
-    <Flex
-      direction="column"
-      gap="2"
-      fontSize="sm"
-      color="app.text"
-      data-testid="ai-impact-analysis"
-    >
+    <Flex direction="column" gap="2" fontSize="sm" color="app.text" data-testid="ai-impact-analysis">
       <Flex align="center" gap="2" wrap="wrap">
         <Tooltip label={sendsLine(tableRefs.length)}>
           <Button

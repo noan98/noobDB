@@ -38,11 +38,7 @@ describe("parseHostKeyFingerprints", () => {
   });
 
   it("フル形式 (省略なし) の IPv6 ホストでも抽出できる", () => {
-    const message = buildMessage(
-      "2001:0db8:0000:0000:0000:0000:0000:0001:22",
-      "SHA256:old",
-      "SHA256:new",
-    );
+    const message = buildMessage("2001:0db8:0000:0000:0000:0000:0000:0001:22", "SHA256:old", "SHA256:new");
     const parsed = parseHostKeyFingerprints(message);
     expect(parsed?.host).toBe("2001:0db8:0000:0000:0000:0000:0000:0001");
     expect(parsed?.port).toBe(22);
@@ -75,11 +71,7 @@ describe("parseHostKeyFingerprints", () => {
   });
 
   it("非標準ポート (多段トンネルの踏み台 #708 を想定) の回帰が無い", () => {
-    const message = buildMessage(
-      "bastion.internal.example.com:2222",
-      "SHA256:old",
-      "SHA256:new",
-    );
+    const message = buildMessage("bastion.internal.example.com:2222", "SHA256:old", "SHA256:new");
     const parsed = parseHostKeyFingerprints(message);
     expect(parsed).toEqual({
       expected: "SHA256:old",

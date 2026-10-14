@@ -85,12 +85,7 @@ export function DisconnectedIllustration({ size = 96 }: IllustrationProps) {
       <path d="M90 48h18" opacity="0.6" />
       <path d="M82 30v6M82 60v6" />
       {/* 切断のスパーク */}
-      <path
-        d="M60 40l8 8-8 8"
-        stroke="var(--ws-accent, var(--accent))"
-        strokeWidth={2.5}
-        opacity="0.9"
-      />
+      <path d="M60 40l8 8-8 8" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5} opacity="0.9" />
     </Svg>
   );
 }
@@ -150,13 +145,7 @@ export function ConnectionFailedIllustration({ size = 96 }: IllustrationProps) {
       <path d="M80 51h12" opacity="0.4" strokeDasharray="4 3" />
       {/* ✕ マーク (エラー色) */}
       <g stroke="var(--text-error)" strokeWidth={2.5}>
-        <circle
-          cx="104"
-          cy="27"
-          r="14"
-          fill="var(--illust-error-tint)"
-          stroke="var(--text-error)"
-        />
+        <circle cx="104" cy="27" r="14" fill="var(--illust-error-tint)" stroke="var(--text-error)" />
         <path d="M97 20l14 14M111 20L97 34" />
       </g>
     </Svg>
@@ -193,12 +182,7 @@ export function TimeoutIllustration({ size = 96 }: IllustrationProps) {
       <circle cx="64" cy="48" r="2" fill="currentColor" stroke="none" opacity="0.7" />
       {/* アクセントの時計アイコン */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <circle
-          cx="100"
-          cy="22"
-          r="14"
-          fill="var(--illust-tint)"
-        />
+        <circle cx="100" cy="22" r="14" fill="var(--illust-tint)" />
         <path d="M100 14v8l5 4" />
       </g>
     </Svg>
@@ -231,10 +215,7 @@ export function PermissionDeniedIllustration({ size = 96 }: IllustrationProps) {
       <rect x="54" y="60" width="4" height="8" rx="1" fill="currentColor" stroke="none" opacity="0.5" />
       {/* アクセントの盾 */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <path
-          d="M96 14l16 6v14c0 8-7 15-16 18C87 49 80 42 80 34V20z"
-          fill="var(--illust-tint)"
-        />
+        <path d="M96 14l16 6v14c0 8-7 15-16 18C87 49 80 42 80 34V20z" fill="var(--illust-tint)" />
         <path d="M90 32l5 5 8-8" />
       </g>
     </Svg>
@@ -266,10 +247,7 @@ export function ProductionWarningIllustration({ size = 96 }: IllustrationProps) 
       <circle cx="28" cy="53" r="2.5" fill="currentColor" stroke="none" opacity="0.75" />
       {/* 警告三角 (アクセント: amber 系はトークンに乗せず ws-accent で統一) */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <path
-          d="M96 12l24 42H72z"
-          fill="var(--illust-tint)"
-        />
+        <path d="M96 12l24 42H72z" fill="var(--illust-tint)" />
         <path d="M96 26v14M96 46v4" />
       </g>
     </Svg>
@@ -298,20 +276,10 @@ export function SchemaLoadFailedIllustration({ size = 96 }: IllustrationProps) {
       <path d="M14 32h70M36 16v56" opacity="0.4" />
       <path d="M14 48h70M14 62h52" opacity="0.3" />
       {/* 右下が欠けた破断線 */}
-      <path
-        d="M66 62l8 10M74 62l8 10"
-        stroke="currentColor"
-        opacity="0.25"
-        strokeDasharray="3 3"
-      />
+      <path d="M66 62l8 10M74 62l8 10" stroke="currentColor" opacity="0.25" strokeDasharray="3 3" />
       {/* 警告アイコン (アクセント) */}
       <g stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
-        <circle
-          cx="103"
-          cy="65"
-          r="16"
-          fill="var(--illust-tint)"
-        />
+        <circle cx="103" cy="65" r="16" fill="var(--illust-tint)" />
         <path d="M103 55v12M103 73v3" />
       </g>
     </Svg>

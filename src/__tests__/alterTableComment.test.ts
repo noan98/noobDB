@@ -39,9 +39,9 @@ describe("テーブルコメント", () => {
   });
 
   it("PostgreSQL は COMMENT ON TABLE、空は IS NULL", () => {
-    expect(sqls("postgres", form({ database: "public", tableComment: { before: "", after: "会員" } }))).toEqual([
-      `COMMENT ON TABLE "public"."users" IS '会員';`,
-    ]);
+    expect(
+      sqls("postgres", form({ database: "public", tableComment: { before: "", after: "会員" } })),
+    ).toEqual([`COMMENT ON TABLE "public"."users" IS '会員';`]);
     expect(sqls("postgres", form({ database: "main", tableComment: { before: "x", after: "" } }))).toEqual([
       `COMMENT ON TABLE "main"."users" IS NULL;`,
     ]);
@@ -115,7 +115,10 @@ describe("列コメント", () => {
     expect(
       sqls(
         "sqlite",
-        form({ baseline: [baseline({ name: "n" })], existing: [edit({ original: "n", name: "n", comment: "x" })] }),
+        form({
+          baseline: [baseline({ name: "n" })],
+          existing: [edit({ original: "n", name: "n", comment: "x" })],
+        }),
       ),
     ).toEqual([]);
     expect(
@@ -133,7 +136,10 @@ describe("列コメント", () => {
     expect(
       sqls(
         "postgres",
-        form({ baseline: [baseline({ name: "n", comment: "keep" })], existing: [edit({ original: "n", name: "n" })] }),
+        form({
+          baseline: [baseline({ name: "n", comment: "keep" })],
+          existing: [edit({ original: "n", name: "n" })],
+        }),
       ),
     ).toEqual([]);
   });

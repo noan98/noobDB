@@ -27,7 +27,9 @@ function user(name: string): DbUserInfo {
 function privs(table: string): UserPrivileges {
   return {
     global: null,
-    tables: [{ table: `public.${table}`, select: true, insert: false, update: false, delete: false, ddl: false }],
+    tables: [
+      { table: `public.${table}`, select: true, insert: false, update: false, delete: false, ddl: false },
+    ],
   };
 }
 
@@ -41,7 +43,10 @@ describe("UsersPanel privilege load race", () => {
     vi.mocked(api.listDbUsers).mockResolvedValue([user("alice"), user("bob")]);
     const resolvers: Record<string, (p: UserPrivileges) => void> = {};
     vi.mocked(api.listUserPrivileges).mockImplementation(
-      (_sid, name) => new Promise<UserPrivileges>((r) => { resolvers[name] = r; }),
+      (_sid, name) =>
+        new Promise<UserPrivileges>((r) => {
+          resolvers[name] = r;
+        }),
     );
 
     renderWithProviders(
@@ -68,7 +73,10 @@ describe("UsersPanel privilege load race", () => {
     vi.mocked(api.listDbUsers).mockResolvedValue([user("alice"), user("bob")]);
     const resolvers: Record<string, (p: UserPrivileges) => void> = {};
     vi.mocked(api.listUserPrivileges).mockImplementation(
-      (_sid, name) => new Promise<UserPrivileges>((r) => { resolvers[name] = r; }),
+      (_sid, name) =>
+        new Promise<UserPrivileges>((r) => {
+          resolvers[name] = r;
+        }),
     );
     renderWithProviders(
       <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
@@ -93,12 +101,20 @@ describe("UsersPanel privilege load race", () => {
     vi.mocked(api.listDbUsers).mockResolvedValue([user("alice"), user("bob")]);
     const resolvers: Record<string, (p: UserPrivileges) => void> = {};
     vi.mocked(api.listUserPrivileges).mockImplementation(
-      (_sid, name) => new Promise<UserPrivileges>((r) => { resolvers[name] = r; }),
+      (_sid, name) =>
+        new Promise<UserPrivileges>((r) => {
+          resolvers[name] = r;
+        }),
     );
-    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue(["GRANT INSERT ON public.alice_table TO alice"]);
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue([
+      "GRANT INSERT ON public.alice_table TO alice",
+    ]);
     let resolveApply: () => void = () => {};
     vi.mocked(api.applyPrivilegeSql).mockImplementation(
-      () => new Promise<number>((r) => { resolveApply = () => r(1); }),
+      () =>
+        new Promise<number>((r) => {
+          resolveApply = () => r(1);
+        }),
     );
     renderWithProviders(
       <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,

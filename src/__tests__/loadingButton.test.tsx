@@ -15,9 +15,7 @@ import { LoadingButton } from "../components/LoadingButton";
  */
 describe("LoadingButton (#538)", () => {
   it("loading=false のとき通常のボタンとして描画される", () => {
-    const { getByRole } = renderWithProviders(
-      <LoadingButton>保存</LoadingButton>,
-    );
+    const { getByRole } = renderWithProviders(<LoadingButton>保存</LoadingButton>);
     const btn = getByRole("button", { name: "保存" });
     expect(btn).toBeTruthy();
     expect((btn as HTMLButtonElement).disabled).toBe(false);
@@ -25,9 +23,7 @@ describe("LoadingButton (#538)", () => {
   });
 
   it("loading=true のとき aria-busy が true で button が disabled になる", () => {
-    const { getByRole } = renderWithProviders(
-      <LoadingButton loading>保存</LoadingButton>,
-    );
+    const { getByRole } = renderWithProviders(<LoadingButton loading>保存</LoadingButton>);
     // aria-busy はアクセシブルな名前の計算に影響しないので role="button" でとれる
     const btn = getByRole("button");
     expect((btn as HTMLButtonElement).disabled).toBe(true);
@@ -35,27 +31,21 @@ describe("LoadingButton (#538)", () => {
   });
 
   it("loading=true のときスピナー要素が DOM に存在する", () => {
-    const { container } = renderWithProviders(
-      <LoadingButton loading>処理中</LoadingButton>,
-    );
+    const { container } = renderWithProviders(<LoadingButton loading>処理中</LoadingButton>);
     // Spinner は role="status" を持つ span として描画される
     const spinner = container.querySelector('[role="status"]');
     expect(spinner).toBeTruthy();
   });
 
   it("loading=false のときスピナーが表示されない", () => {
-    const { container } = renderWithProviders(
-      <LoadingButton>保存</LoadingButton>,
-    );
+    const { container } = renderWithProviders(<LoadingButton>保存</LoadingButton>);
     const spinner = container.querySelector('[role="status"]');
     expect(spinner).toBeNull();
   });
 
   it("loading=false の通常時に onClick が呼ばれる", () => {
     const handleClick = vi.fn();
-    const { getByRole } = renderWithProviders(
-      <LoadingButton onClick={handleClick}>実行</LoadingButton>,
-    );
+    const { getByRole } = renderWithProviders(<LoadingButton onClick={handleClick}>実行</LoadingButton>);
     fireEvent.click(getByRole("button"));
     expect(handleClick).toHaveBeenCalledTimes(1);
   });
@@ -63,16 +53,16 @@ describe("LoadingButton (#538)", () => {
   it("loading=true のとき disabled により onClick が発火しない (二重発火防止)", () => {
     const handleClick = vi.fn();
     const { getByRole } = renderWithProviders(
-      <LoadingButton loading onClick={handleClick}>実行</LoadingButton>,
+      <LoadingButton loading onClick={handleClick}>
+        実行
+      </LoadingButton>,
     );
     fireEvent.click(getByRole("button"));
     expect(handleClick).not.toHaveBeenCalled();
   });
 
   it("disabled prop が loading と独立して button を無効化する", () => {
-    const { getByRole } = renderWithProviders(
-      <LoadingButton disabled>保存</LoadingButton>,
-    );
+    const { getByRole } = renderWithProviders(<LoadingButton disabled>保存</LoadingButton>);
     const btn = getByRole("button");
     expect((btn as HTMLButtonElement).disabled).toBe(true);
     // disabled だけなら aria-busy は付かない
@@ -81,7 +71,9 @@ describe("LoadingButton (#538)", () => {
 
   it("solid variant (primary) では loading 中もボタンテキストが残る", () => {
     const { getByRole } = renderWithProviders(
-      <LoadingButton variant="primary" loading>接続</LoadingButton>,
+      <LoadingButton variant="primary" loading>
+        接続
+      </LoadingButton>,
     );
     const btn = getByRole("button");
     // ボタン内のテキストノードに「接続」が含まれること
@@ -90,7 +82,9 @@ describe("LoadingButton (#538)", () => {
 
   it("non-solid variant (secondary) でも loading 中にテキストが残る", () => {
     const { getByRole } = renderWithProviders(
-      <LoadingButton variant="secondary" loading>キャンセル</LoadingButton>,
+      <LoadingButton variant="secondary" loading>
+        キャンセル
+      </LoadingButton>,
     );
     const btn = getByRole("button");
     expect(btn.textContent).toContain("キャンセル");

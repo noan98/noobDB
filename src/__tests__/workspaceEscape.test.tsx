@@ -37,14 +37,7 @@ const base: WorkspaceEscapeInput = {
   layoutMaximized: false,
 };
 
-const CLOSABLE: WorkspaceViewKey[] = [
-  "compare",
-  "erd",
-  "users",
-  "serverInfo",
-  "sizes",
-  "compareResults",
-];
+const CLOSABLE: WorkspaceViewKey[] = ["compare", "erd", "users", "serverInfo", "sizes", "compareResults"];
 
 describe("resolveWorkspaceEscape", () => {
   it("Escape 以外のキーでは何もしない", () => {
@@ -212,9 +205,7 @@ describe("WorkspaceSurface", () => {
   it("サーフェス内の入力欄にフォーカスがある間は Escape で閉じない", async () => {
     const user = userEvent.setup();
     const onCloseSpy = vi.fn();
-    renderWithProviders(
-      <Harness onCloseSpy={onCloseSpy} inner={() => <input aria-label="search" />} />,
-    );
+    renderWithProviders(<Harness onCloseSpy={onCloseSpy} inner={() => <input aria-label="search" />} />);
     await user.click(screen.getByRole("button", { name: "open-erd" }));
     await user.click(screen.getByRole("textbox", { name: "search" }));
     await user.keyboard("{Escape}");
@@ -323,7 +314,9 @@ describe("App.tsx の結線 (#1070)", () => {
 
   it("レイアウト最大化の Escape も resolveWorkspaceEscape を引き、restoreLayout のときだけ動く", () => {
     expect(appSource).toMatch(/const escape = resolveWorkspaceEscape\(\{/);
-    expect(appSource).toMatch(/if \(escape === "restoreLayout"\) \{\s*e\.preventDefault\(\);\s*setLayoutMode\("normal"\);/);
+    expect(appSource).toMatch(
+      /if \(escape === "restoreLayout"\) \{\s*e\.preventDefault\(\);\s*setLayoutMode\("normal"\);/,
+    );
     // 旧来の「layoutMode !== normal なら無条件に解除」は残っていない。
     expect(appSource).not.toContain('e.key === "Escape" && layoutMode !== "normal"');
   });

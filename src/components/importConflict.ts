@@ -19,19 +19,14 @@ export function defaultKeyColumns(
   tableColumns: Pick<TableColumnInfo, "name" | "key">[],
   mappedColumns: readonly string[],
 ): string[] {
-  return tableColumns
-    .filter((c) => c.key === "PRI" && mappedColumns.includes(c.name))
-    .map((c) => c.name);
+  return tableColumns.filter((c) => c.key === "PRI" && mappedColumns.includes(c.name)).map((c) => c.name);
 }
 
 /**
  * マッピングが変わった後もキー列として有効なものだけを残す
  * (マッピングを外した列がキーに残ると、バックエンドが拒否するため)。
  */
-export function pruneKeyColumns(
-  keyColumns: readonly string[],
-  mappedColumns: readonly string[],
-): string[] {
+export function pruneKeyColumns(keyColumns: readonly string[], mappedColumns: readonly string[]): string[] {
   return keyColumns.filter((k) => mappedColumns.includes(k));
 }
 
@@ -41,9 +36,7 @@ export function toggleKeyColumn(
   column: string,
   mappedColumns: readonly string[],
 ): string[] {
-  const next = keyColumns.includes(column)
-    ? keyColumns.filter((k) => k !== column)
-    : [...keyColumns, column];
+  const next = keyColumns.includes(column) ? keyColumns.filter((k) => k !== column) : [...keyColumns, column];
   return mappedColumns.filter((c) => next.includes(c));
 }
 

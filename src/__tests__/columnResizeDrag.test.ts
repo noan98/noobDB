@@ -22,7 +22,9 @@ describe("beginColumnResizeDrag (#1312)", () => {
       const th = document.createElement("th");
       const onCommit = vi.fn();
       beginColumnResizeDrag({
-        event: { nativeEvent: new MouseEvent("mousedown", { clientX: 100, button: 0 }) } as unknown as React.MouseEvent,
+        event: {
+          nativeEvent: new MouseEvent("mousedown", { clientX: 100, button: 0 }),
+        } as unknown as React.MouseEvent,
         startSize: 150,
         minSize: 40,
         maxSize: 600,
@@ -54,7 +56,9 @@ describe("beginColumnResizeDrag (#1312)", () => {
   it("幅が変わらなければ確定しない", () => {
     const onCommit = vi.fn();
     beginColumnResizeDrag({
-      event: { nativeEvent: new MouseEvent("mousedown", { clientX: 100, button: 0 }) } as unknown as React.MouseEvent,
+      event: {
+        nativeEvent: new MouseEvent("mousedown", { clientX: 100, button: 0 }),
+      } as unknown as React.MouseEvent,
       startSize: 150,
       minSize: 40,
       maxSize: 600,

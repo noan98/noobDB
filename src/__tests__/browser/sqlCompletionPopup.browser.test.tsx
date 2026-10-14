@@ -62,9 +62,7 @@ async function mountEditor(sql: string) {
   content?.focus();
   // 末尾へ移動する。
   await screen.getByRole("textbox").click();
-  document.activeElement?.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-  );
+  document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   return screen;
 }
 
@@ -115,7 +113,9 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
 
   it("実データの関数名 (COUNT) は関数アイコン、NULL は関数アイコンにならない", async () => {
     await mountEditor("SELECT COU");
-    await expect.poll(() => (openCompletion(), optionLabels().includes("COUNT")), { timeout: 5_000 }).toBe(true);
+    await expect
+      .poll(() => (openCompletion(), optionLabels().includes("COUNT")), { timeout: 5_000 })
+      .toBe(true);
     const rowOf = (label: string) =>
       [...document.querySelectorAll(".cm-tooltip-autocomplete li")].find(
         (li) => li.querySelector(".cm-completionLabel")?.textContent === label,
@@ -125,7 +125,9 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
 
   it("NULL / TRUE は関数アイコンではなくキーワードのアイコン", async () => {
     await mountEditor("SELECT NUL");
-    await expect.poll(() => (openCompletion(), optionLabels().includes("NULL")), { timeout: 5_000 }).toBe(true);
+    await expect
+      .poll(() => (openCompletion(), optionLabels().includes("NULL")), { timeout: 5_000 })
+      .toBe(true);
     const row = [...document.querySelectorAll(".cm-tooltip-autocomplete li")].find(
       (li) => li.querySelector(".cm-completionLabel")?.textContent === "NULL",
     );
@@ -138,7 +140,9 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
       throw new Error("describe failed");
     });
     await mountEditor("SELECT orders.user");
-    await expect.poll(() => (openCompletion(), optionLabels().includes("user_id")), { timeout: 5_000 }).toBe(true);
+    await expect
+      .poll(() => (openCompletion(), optionLabels().includes("user_id")), { timeout: 5_000 })
+      .toBe(true);
     await expect.poll(() => invocationsOf("describe_table").length, { timeout: 5_000 }).toBeGreaterThan(0);
     // 取得の失敗が反映されるのを少し待っても、パネルは現れない。
     await new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -158,7 +162,9 @@ describe("SQL 補完ポップアップ (実ブラウザ)", () => {
     document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     const fkCalls = invocationsOf("foreign_keys").length;
     bumpSchema();
-    await expect.poll(() => invocationsOf("foreign_keys").length, { timeout: 5_000 }).toBeGreaterThan(fkCalls);
+    await expect
+      .poll(() => invocationsOf("foreign_keys").length, { timeout: 5_000 })
+      .toBeGreaterThan(fkCalls);
     await expect
       .poll(
         () => {

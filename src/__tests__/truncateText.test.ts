@@ -5,7 +5,8 @@ import { truncateReleaseNotes } from "../updaterFormat";
 import { takeGraphemes } from "../truncateText";
 
 /** 孤立サロゲートを含むか (表示時に置換文字になる)。 */
-const hasLoneSurrogate = (s: string) => /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
+const hasLoneSurrogate = (s: string) =>
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(s);
 
 describe("書記素単位の切り詰め (#1604)", () => {
   it("takeGraphemes は収まれば null、超えれば書記素で切る", () => {

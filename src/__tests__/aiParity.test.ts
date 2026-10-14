@@ -1,12 +1,7 @@
 import { describe, expect, it } from "vitest";
 import modelsRs from "../../src-tauri/src/ai/models.rs?raw";
 import requestRs from "../../src-tauri/src/ai/request.rs?raw";
-import {
-  AI_EFFORTS,
-  AI_MODEL_IDS,
-  AI_TASK_DEFS,
-  AI_TASK_KINDS,
-} from "../ai/aiModels";
+import { AI_EFFORTS, AI_MODEL_IDS, AI_TASK_DEFS, AI_TASK_KINDS } from "../ai/aiModels";
 
 // AI 基盤 (#690) のモデル / エフォート / タスク種別は Rust (`ai/models.rs`) とフロント
 // (`ai/aiModels.ts`) の二重定義。ソースを読んで集合と推奨値の一致を固定する。

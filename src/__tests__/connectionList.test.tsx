@@ -112,9 +112,7 @@ describe("ConnectionList render smoke (#604)", () => {
 
   it("invokes onCreate from the empty-state action", () => {
     const onCreate = vi.fn();
-    renderWithProviders(
-      <ConnectionList {...baseProps} profiles={[]} onCreate={onCreate} />,
-    );
+    renderWithProviders(<ConnectionList {...baseProps} profiles={[]} onCreate={onCreate} />);
     fireEvent.click(screen.getByText(t("listCreateFirst")));
     expect(onCreate).toHaveBeenCalledOnce();
   });
@@ -442,10 +440,14 @@ describe("Database Explorer の階層 (#1112)", () => {
         });
       // 主キー列 (FK でない) には出ない。
       fireEvent.contextMenu(await colRow("id"));
-      expect(screen.queryByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) })).toBeNull();
+      expect(
+        screen.queryByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) }),
+      ).toBeNull();
       fireEvent.keyDown(document.body, { key: "Escape" });
       fireEvent.contextMenu(await colRow("user_id"));
-      fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) }));
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: t("contextMenuInsertFkJoin", { table: "users" }) }),
+      );
       expect(onInsertFkJoin).toHaveBeenCalledWith("db1", "tbl1", "user_id");
     });
 
@@ -483,7 +485,17 @@ describe("Database Explorer の階層 (#1112)", () => {
       };
     }
     const ptr = (type: string, x: number, init: PointerEventInit = {}) =>
-      new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: 1, ...init });
+      new PointerEvent(type, {
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: 1,
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 1,
+        ...init,
+      });
 
     it("テーブル行は HTML5 の draggable ではなく、ポインタ移動でエディタへ挿入される", async () => {
       await openDb({ onInsertTableSelect: vi.fn() });
@@ -523,7 +535,12 @@ describe("Database Explorer の階層 (#1112)", () => {
       row.dispatchEvent(ptr("pointerdown", 0));
       window.dispatchEvent(ptr("pointermove", 40));
       window.dispatchEvent(ptr("pointerup", 40, { altKey: true }));
-      expect(insert).toHaveBeenCalledWith({ kind: "column", database: "db1", table: "tbl1", column: "id" }, 5, false, false);
+      expect(insert).toHaveBeenCalledWith(
+        { kind: "column", database: "db1", table: "tbl1", column: "id" },
+        5,
+        false,
+        false,
+      );
       cleanup();
     });
 
@@ -801,8 +818,26 @@ describe("スキーマツリーのコンテキストメニューをキーボー�
 
   it("メニューを持たない行 (外部キー) では何も開かない", async () => {
     vi.mocked(api.describeTable).mockResolvedValueOnce([
-      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "", referenced_table: null, referenced_column: null },
-      { name: "user_id", data_type: "int", nullable: false, key: "", default: null, extra: "", referenced_table: "users", referenced_column: "id" },
+      {
+        name: "id",
+        data_type: "int",
+        nullable: false,
+        key: "PRI",
+        default: null,
+        extra: "",
+        referenced_table: null,
+        referenced_column: null,
+      },
+      {
+        name: "user_id",
+        data_type: "int",
+        nullable: false,
+        key: "",
+        default: null,
+        extra: "",
+        referenced_table: "users",
+        referenced_column: "id",
+      },
     ]);
     await openDb();
     await screen.findByRole("treeitem", { name: "tbl1" });

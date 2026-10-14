@@ -122,9 +122,7 @@ describe("findingTarget", () => {
     expect(findingTarget(finding({ rule: "unused_index", table: "t", columns: ["a", "b"] }))).toBe(
       "t (a, b)",
     );
-    expect(findingTarget(finding({ rule: "missing_primary_key", table: "logs", columns: [] }))).toBe(
-      "logs",
-    );
+    expect(findingTarget(finding({ rule: "missing_primary_key", table: "logs", columns: [] }))).toBe("logs");
   });
 });
 

@@ -125,8 +125,8 @@ const BIG_RESULT = makeResult(
 
 /** tbody のうち、行番号セルを持つ実データ行だけを返す (スペーサ行は除外)。 */
 function dataRows(container: HTMLElement): HTMLTableRowElement[] {
-  return Array.from(container.querySelectorAll<HTMLTableRowElement>("tbody tr")).filter(
-    (tr) => tr.querySelector("td.row-index")?.textContent?.trim(),
+  return Array.from(container.querySelectorAll<HTMLTableRowElement>("tbody tr")).filter((tr) =>
+    tr.querySelector("td.row-index")?.textContent?.trim(),
   );
 }
 
@@ -146,9 +146,7 @@ describe("ResultGrid 行仮想化 (#403)", () => {
 
     const rendered = dataRows(container);
     // 先頭は行番号 1 から始まり、描画ウィンドウ内は連番。
-    const numbers = rendered.map((tr) =>
-      Number(tr.querySelector("td.row-index")!.textContent!.trim()),
-    );
+    const numbers = rendered.map((tr) => Number(tr.querySelector("td.row-index")!.textContent!.trim()));
     expect(numbers[0]).toBe(1);
     for (let i = 1; i < numbers.length; i++) {
       expect(numbers[i]).toBe(numbers[i - 1] + 1);
@@ -213,9 +211,7 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
   it("末尾付近の列は先頭行から連続してマウントされている (欠番なし)", () => {
     const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
     const row0 = dataRows(container)[0];
-    const texts = Array.from(row0.querySelectorAll("td[role='gridcell']")).map(
-      (td) => td.textContent ?? "",
-    );
+    const texts = Array.from(row0.querySelectorAll("td[role='gridcell']")).map((td) => td.textContent ?? "");
     // 先頭は c0 (r0c0)。
     expect(texts[0]).toBe("r0c0");
     // マウントされた列は元の列順のまま連番 (c0, c1, c2, ...)。
@@ -231,9 +227,7 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     // アンマウントされうるので、生存が保証された handler 直付け先へ送る。
     const { container } = renderWithProviders(<ResultGrid result={WIDE_RESULT} />);
     const table = container.querySelector("table[role='grid']") as HTMLElement;
-    const firstCell = dataRows(container)[0].querySelector(
-      "td[role='gridcell']",
-    ) as HTMLElement;
+    const firstCell = dataRows(container)[0].querySelector("td[role='gridcell']") as HTMLElement;
     fireEvent.focus(firstCell);
     const TARGET_COL = 15;
     for (let i = 0; i < TARGET_COL; i++) {
@@ -249,9 +243,9 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     // `scrollColumnIntoView`)。マウントされないままだと退行 (キーボード操作が
     // 大量カラムで壊れる)。
     const row0After = dataRows(container)[0];
-    const targetCell = Array.from(
-      row0After.querySelectorAll("td[role='gridcell']"),
-    ).find((td) => td.textContent === `r0c${TARGET_COL}`);
+    const targetCell = Array.from(row0After.querySelectorAll("td[role='gridcell']")).find(
+      (td) => td.textContent === `r0c${TARGET_COL}`,
+    );
     expect(targetCell).toBeTruthy();
     expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
   }, 40000);
@@ -280,9 +274,7 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     expect(container.querySelector("td.is-pinned-right")).not.toBeNull();
 
     const table = container.querySelector("table[role='grid']") as HTMLElement;
-    const firstCell = dataRows(container)[0].querySelector(
-      "td[role='gridcell']",
-    ) as HTMLElement;
+    const firstCell = dataRows(container)[0].querySelector("td[role='gridcell']") as HTMLElement;
     fireEvent.focus(firstCell);
     // 中央列の途中 (最終センター列 = count-1 は virtual-core が
     // scrollPaddingEnd を経由しない別経路 (getMaxScrollOffset) を使うため
@@ -311,9 +303,9 @@ describe("ResultGrid 列仮想化 (#1095)", () => {
     expect(itemStart - scrollEl.scrollLeft).toBeGreaterThanOrEqual(leftDeadZone);
 
     // フォーカス自体は従来どおり移っている (#1095 の退行防止と両立させる)。
-    const targetCell = Array.from(
-      dataRows(container)[0].querySelectorAll("td[role='gridcell']"),
-    ).find((td) => td.textContent === `r0c${TARGET_COL}`);
+    const targetCell = Array.from(dataRows(container)[0].querySelectorAll("td[role='gridcell']")).find(
+      (td) => td.textContent === `r0c${TARGET_COL}`,
+    );
     expect(targetCell).toBeTruthy();
     expect(targetCell?.classList.contains("is-active-cell")).toBe(true);
   }, 60000);
@@ -331,7 +323,7 @@ describe("ResultGrid keep-alive 中の行の保持 (#1341)", () => {
   it("隠れている間も窓の分の行を DOM に残し、再表示で同じ行要素を使い回す", () => {
     const view = renderWithProviders(<Host active="a" />);
     const aPane = () =>
-      document.querySelector<HTMLElement>('[data-keep-alive-active]:not([hidden])') ?? document.body;
+      document.querySelector<HTMLElement>("[data-keep-alive-active]:not([hidden])") ?? document.body;
     const before = dataRows(aPane());
     expect(before.length).toBeGreaterThan(0);
     expect(before.length).toBeLessThan(TOTAL);
@@ -340,9 +332,7 @@ describe("ResultGrid keep-alive 中の行の保持 (#1341)", () => {
     view.rerender(<Host active="b" />);
     // a は hidden になったが、行は残っている (再表示で描き直さない)。
     expect(firstRow.isConnected).toBe(true);
-    expect(dataRows(firstRow.closest("[data-keep-alive-active]") as HTMLElement)).toHaveLength(
-      before.length,
-    );
+    expect(dataRows(firstRow.closest("[data-keep-alive-active]") as HTMLElement)).toHaveLength(before.length);
 
     view.rerender(<Host active="a" />);
     expect(firstRow.isConnected).toBe(true);

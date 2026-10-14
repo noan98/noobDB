@@ -7,11 +7,7 @@ import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
-import {
-  blobToBytes,
-  copyPngToClipboard,
-  saveImageBytes,
-} from "./imageExport";
+import { blobToBytes, copyPngToClipboard, saveImageBytes } from "./imageExport";
 
 /**
  * チャート/ER 図の画像エクスポート用ボタン (#643)。クリックでメニュー
@@ -50,7 +46,14 @@ async function pickPath(base: string, ext: "png" | "svg"): Promise<string | null
   return typeof selected === "string" && selected ? selected : null;
 }
 
-export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm", iconOnly, disabled }: Props) {
+export function ImageExportButton({
+  makePng,
+  makeSvg,
+  filenameBase,
+  size = "sm",
+  iconOnly,
+  disabled,
+}: Props) {
   const t = useT();
   const toast = useToast();
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -113,9 +116,7 @@ export function ImageExportButton({ makePng, makeSvg, filenameBase, size = "sm",
           {!iconOnly && <span style={{ marginInlineStart: 6 }}>{t("imageExportButton")}</span>}
         </Button>
       </Tooltip>
-      {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />
-      )}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />}
     </>
   );
 }

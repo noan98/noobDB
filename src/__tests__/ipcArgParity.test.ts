@@ -51,12 +51,7 @@ function isQuoteChar(ch: string): boolean {
  * 解析するときは `false` を渡すこと** — ライフタイム `'_` の `'` を文字列開始の
  * シングルクォートと誤認し、残り全体を「文字列の中」とみなして壊れるため。
  */
-function splitTopLevel(
-  text: string,
-  delimiter: string,
-  angleDepth = false,
-  trackStrings = true,
-): string[] {
+function splitTopLevel(text: string, delimiter: string, angleDepth = false, trackStrings = true): string[] {
   const parts: string[] = [];
   let depth = 0;
   let current = "";
@@ -416,9 +411,7 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
   it("抽出ロジック自体の健全性: State/AppHandle が除外され、複数行シグネチャも正しく拾える", () => {
     // `connect` は AppHandle と State<'_, AppState> の両方を受けるが、実引数は
     // req/attemptId/timeoutSecs の 3 つだけのはず。
-    expect(backendParams.get("connect")?.slice().sort()).toEqual(
-      ["attemptId", "req", "timeoutSecs"].sort(),
-    );
+    expect(backendParams.get("connect")?.slice().sort()).toEqual(["attemptId", "req", "timeoutSecs"].sort());
     // `run_query_stream` は #[allow(...)] を挟んだ複数行シグネチャで、末尾に State を持つ。
     // `onEvent` (Rust 側は `Channel<QueryStreamMessage>`, #1096) は State/AppHandle
     // のような注入型ではなく、フロントが `invoke` 前に生成して渡す通常の引数なので

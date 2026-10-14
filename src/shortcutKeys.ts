@@ -23,9 +23,18 @@ const MODIFIER_ONLY_KEYS = new Set(["Control", "Shift", "Alt", "Meta", "OS", "Al
  */
 const CANONICAL_KEY_NAMES: Record<string, string> = Object.fromEntries(
   [
-    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-    "PageUp", "PageDown", "CapsLock", "NumLock", "ScrollLock",
-    "PrintScreen", "ContextMenu", "MediaPlayPause",
+    "ArrowUp",
+    "ArrowDown",
+    "ArrowLeft",
+    "ArrowRight",
+    "PageUp",
+    "PageDown",
+    "CapsLock",
+    "NumLock",
+    "ScrollLock",
+    "PrintScreen",
+    "ContextMenu",
+    "MediaPlayPause",
   ].map((k) => [k.toLowerCase(), k]),
 );
 
@@ -67,7 +76,14 @@ function parseCombo(combo: string): { mod: boolean; alt: boolean; shift: boolean
     const tok = rawTok.trim();
     if (tok.length === 0) continue;
     const lc = tok.toLowerCase();
-    if (lc === "mod" || lc === "cmd" || lc === "command" || lc === "ctrl" || lc === "control" || lc === "meta") {
+    if (
+      lc === "mod" ||
+      lc === "cmd" ||
+      lc === "command" ||
+      lc === "ctrl" ||
+      lc === "control" ||
+      lc === "meta"
+    ) {
       mod = true;
     } else if (lc === "alt" || lc === "option" || lc === "opt") {
       alt = true;

@@ -21,12 +21,25 @@ export type Status =
   // footer bar is hidden entirely; one-shot confirmations like "connected"
   // live in the toast notifications instead.
   | { kind: "idle" }
-  | { kind: "literal"; text: string; error?: boolean; errorKind?: string | null; aiContext?: StatusErrorContext }
+  | {
+      kind: "literal";
+      text: string;
+      error?: boolean;
+      errorKind?: string | null;
+      aiContext?: StatusErrorContext;
+    }
   // `errorKind` carries the structured `AppError.kind` (#683) so the hint/
   // illustration resolver can classify reliably instead of pattern-matching the
   // message text. Optional: paths that only have a plain string omit it and the
   // resolver falls back to message matching.
-  | { kind: "key"; key: I18nKey; vars?: Record<string, string | number>; error?: boolean; errorKind?: string | null; aiContext?: StatusErrorContext };
+  | {
+      kind: "key";
+      key: I18nKey;
+      vars?: Record<string, string | number>;
+      error?: boolean;
+      errorKind?: string | null;
+      aiContext?: StatusErrorContext;
+    };
 
 // エラーは重大度別に区別する。`critical` は接続喪失など回復に再接続を要する
 // 致命的状態 (赤、目立つバッジ)、`warning` はタイムアウトなど接続は生きている軽度
@@ -46,10 +59,7 @@ const RUNNING_STATUS_KEYS: ReadonlySet<string> = new Set([
 const CRITICAL_STATUS_KEYS: ReadonlySet<string> = new Set(["statusConnectionLost"]);
 
 // 警告 (warning): 接続は維持されており、設定変更や再試行で回復しうる軽度の障害。
-const WARNING_STATUS_KEYS: ReadonlySet<string> = new Set([
-  "statusQueryTimeout",
-  "statusQueryTimeoutPartial",
-]);
+const WARNING_STATUS_KEYS: ReadonlySet<string> = new Set(["statusQueryTimeout", "statusQueryTimeoutPartial"]);
 
 /**
  * 途中経過だけを伝えるステータス。フッターでは spinner や行数カウンタとして

@@ -237,10 +237,7 @@ function DumpToolNotice({
   );
 }
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "running" }
-  | { kind: "error"; message: string };
+type Status = { kind: "idle" } | { kind: "running" } | { kind: "error"; message: string };
 
 /** テーブル指定のダンプでは意味を持たない (テーブル指定時はバックエンドが無効にする) スイッチ。 */
 const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>(["routines", "events"]);
@@ -258,7 +255,9 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
   const [options, setOptions] = useState<DumpOptions>(() =>
     // PostgreSQL のツリーの「database」はスキーマ。スキーマノードからの全体ダンプは、タイトルの範囲と
     // 揃えるためスキーマ欄を初期入力する (一括 = tables 指定は送信時に database で固定される)。
-    driver === "postgres" && !(tables && tables.length > 0) ? { ...DEFAULT_OPTIONS, pgSchema: database } : DEFAULT_OPTIONS,
+    driver === "postgres" && !(tables && tables.length > 0)
+      ? { ...DEFAULT_OPTIONS, pgSchema: database }
+      : DEFAULT_OPTIONS,
   );
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<DumpProgress | null>(null);
@@ -332,7 +331,10 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
   const toggle = (key: BoolOptionKey) => {
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
     // gzip (#1539): 保存先の拡張子を `.sql` ⇔ `.sql.gz` に追従させる (手で別の名前にした場合は触らない)。
-    if (key === "gzip") setPath((cur) => (options.gzip ? cur.replace(/\.sql\.gz$/i, ".sql") : cur.replace(/\.sql$/i, ".sql.gz")));
+    if (key === "gzip")
+      setPath((cur) =>
+        options.gzip ? cur.replace(/\.sql\.gz$/i, ".sql") : cur.replace(/\.sql$/i, ".sql.gz"),
+      );
   };
 
   const handleBrowse = async () => {
@@ -449,12 +451,16 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
       closeOnEscape={!isRunning}
     >
       <ModalHeader onClose={onClose} closeLabel={t("dumpClose")} closeDisabled={isRunning}>
-        {tableScope ? t("dumpTablesTitle", { database, count: tableScope.length }) : t("dumpTitle", { database })}
+        {tableScope
+          ? t("dumpTablesTitle", { database, count: tableScope.length })
+          : t("dumpTitle", { database })}
       </ModalHeader>
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
-          {NATIVE_DUMP_DRIVERS.has(driver) ? t("dumpNoteNative") : t("dumpNote", { tool: toolName ?? "mysqldump" })}
+          {NATIVE_DUMP_DRIVERS.has(driver)
+            ? t("dumpNoteNative")
+            : t("dumpNote", { tool: toolName ?? "mysqldump" })}
         </chakra.div>
 
         {tableScope && (
@@ -489,7 +495,8 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
           <chakra.div
             display="grid"
             gridTemplateColumns="repeat(auto-fill, minmax(240px, 1fr))"
-            rowGap="1.5" columnGap="4"
+            rowGap="1.5"
+            columnGap="4"
           >
             {visibleRows.map((row) => (
               <Tooltip key={row.key} label={t(row.hint)}>
@@ -524,7 +531,12 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
                     <chakra.span id={`${optionsIdBase}-${row.key}-label`} fontSize="md" color="app.text">
                       {t(row.label)}
                     </chakra.span>
-                    <chakra.span id={`${optionsIdBase}-${row.key}-hint`} fontSize="xs" color="app.textMuted" lineHeight={1.4}>
+                    <chakra.span
+                      id={`${optionsIdBase}-${row.key}-hint`}
+                      fontSize="xs"
+                      color="app.textMuted"
+                      lineHeight={1.4}
+                    >
                       {t(row.hint)}
                     </chakra.span>
                   </chakra.span>
@@ -539,9 +551,7 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
                 id="dump-pg-schema"
                 type="text"
                 value={options.pgSchema ?? ""}
-                onChange={(e) =>
-                  setOptions((prev) => ({ ...prev, pgSchema: e.target.value || null }))
-                }
+                onChange={(e) => setOptions((prev) => ({ ...prev, pgSchema: e.target.value || null }))}
                 placeholder={t("dumpOptPgSchemaPlaceholder")}
                 disabled={isRunning}
               />
@@ -584,13 +594,7 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
               exit={variants.fade.exit}
               transition={transitions.crossfade}
             >
-              <chakra.div
-                fontSize="sm"
-                color="app.textMuted"
-                display="flex"
-                alignItems="center"
-                gap="2"
-              >
+              <chakra.div fontSize="sm" color="app.textMuted" display="flex" alignItems="center" gap="2">
                 <chakra.span fontWeight={500} color="app.text">
                   {progress
                     ? progress.tablesTotal != null

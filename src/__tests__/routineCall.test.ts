@@ -14,7 +14,9 @@ import {
 
 const p = (name: string, mode: string, data_type: string): RoutineParameter => ({ name, mode, data_type });
 
-function sig(partial: Partial<RoutineSignature> & Pick<RoutineSignature, "kind" | "parameters">): RoutineSignature {
+function sig(
+  partial: Partial<RoutineSignature> & Pick<RoutineSignature, "kind" | "parameters">,
+): RoutineSignature {
   return { name: "r", returns_set: false, return_type: null, ...partial };
 }
 
@@ -99,10 +101,18 @@ describe("buildRoutineCall — MySQL", () => {
     const r = buildRoutineCall({
       driver: "mysql",
       database: "shop",
-      signature: sig({ kind: "procedure", name: "add_order", parameters: [p("id", "in", "int"), p("note", "in", "varchar(20)")] }),
+      signature: sig({
+        kind: "procedure",
+        name: "add_order",
+        parameters: [p("id", "in", "int"), p("note", "in", "varchar(20)")],
+      }),
       values: ["7", "hi"],
     });
-    expect(r).toEqual({ sql: "CALL `shop`.`add_order`(7, 'hi')", needsSameConnection: false, outputsReturned: true });
+    expect(r).toEqual({
+      sql: "CALL `shop`.`add_order`(7, 'hi')",
+      needsSameConnection: false,
+      outputsReturned: true,
+    });
   });
   it("OUT / INOUT はセッション変数を使うスクリプトになり、固定接続が必要", () => {
     const r = buildRoutineCall({
@@ -115,9 +125,7 @@ describe("buildRoutineCall — MySQL", () => {
       }),
       values: ["1", "2", "ignored"],
     });
-    expect(r.sql).toBe(
-      "SET @`b` = 2;\nCALL `shop`.`p`(1, @`b`, @`c`);\nSELECT @`b` AS `b`, @`c` AS `c`;",
-    );
+    expect(r.sql).toBe("SET @`b` = 2;\nCALL `shop`.`p`(1, @`b`, @`c`);\nSELECT @`b` AS `b`, @`c` AS `c`;");
     expect(r.needsSameConnection).toBe(true);
   });
   it("関数は SELECT fn(...) AS fn", () => {
@@ -159,9 +167,7 @@ describe("buildRoutineCall — PostgreSQL", () => {
       }),
       values: ["1", "x", ""],
     });
-    expect(r.sql).toBe(
-      'CALL "s"."p"(CAST(1 AS integer), CAST(\'x\' AS text), CAST(NULL AS integer))',
-    );
+    expect(r.sql).toBe('CALL "s"."p"(CAST(1 AS integer), CAST(\'x\' AS text), CAST(NULL AS integer))');
   });
   it("引数なし", () => {
     const r = buildRoutineCall({
@@ -173,4 +179,3 @@ describe("buildRoutineCall — PostgreSQL", () => {
     expect(r.sql).toBe('SELECT * FROM "s"."now2"()');
   });
 });
-

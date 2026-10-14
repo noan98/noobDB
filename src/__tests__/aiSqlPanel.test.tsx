@@ -111,7 +111,7 @@ describe("AiSqlPanel (#695)", () => {
     expect(arg.task).toBe("sqlExplain");
     expect(arg.model).toBeUndefined();
     expect(arg.format.type).toBe("json_schema");
-    act(() => handlers?.onDelta?.({ streamId: "x", text: "{\"over" }));
+    act(() => handlers?.onDelta?.({ streamId: "x", text: '{"over' }));
     await screen.findByText(t("aiStreamChars", { count: 6 }));
     const mid = explainJson.indexOf("VIEW") + 2;
     act(() => handlers?.onDelta?.({ streamId: "x", text: explainJson.slice(6, mid) }));
@@ -150,7 +150,9 @@ describe("AiSqlPanel (#695)", () => {
     const view = renderWithProviders(ui(req({ kind: "rewrite" })));
     await finish(rewriteJson);
     await screen.findByTestId("ai-sql-rewrite");
-    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), { target: { value: "JOIN は使わないで" } });
+    fireEvent.change(await screen.findByLabelText(t("aiFollowUpLabel")), {
+      target: { value: "JOIN は使わないで" },
+    });
     fireEvent.click(screen.getByRole("button", { name: t("aiFollowUpSend") }));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
     expect(runAiRequest.mock.calls[1][0].task).toBe("sqlRewrite");
@@ -204,7 +206,14 @@ describe("AiSqlPanel (#695)", () => {
 
   it("参照テーブルの定義を引いて送る (最大 5 件まで extractTableRefs が絞る)", async () => {
     describeTable.mockResolvedValueOnce([
-      { name: "id", data_type: "int", nullable: false, key: "PRI", referenced_table: null, referenced_column: null },
+      {
+        name: "id",
+        data_type: "int",
+        nullable: false,
+        key: "PRI",
+        referenced_table: null,
+        referenced_column: null,
+      },
     ]);
     renderWithProviders(ui(req()));
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
@@ -233,7 +242,9 @@ describe("AiSqlPanel (#695)", () => {
   it("リライト: 提案が元と同じなら適用ボタンを無効にする (マスク無効で比較)", async () => {
     enable("schemaAndSql", false);
     renderWithProviders(ui(req({ kind: "rewrite" })));
-    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT * FROM users\nWHERE id = 1" }));
+    await finish(
+      JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT * FROM users\nWHERE id = 1" }),
+    );
     await screen.findByText(t("aiSqlNoChange"));
     expect((screen.getByRole("button", { name: t("aiSqlApply") }) as HTMLButtonElement).disabled).toBe(true);
   });
@@ -319,12 +330,19 @@ describe("AiSqlPanel (#695)", () => {
 
   it("マスク有効: 空白リテラルを元の値に差し戻して diff に出し、適用 SQL にも反映する", async () => {
     renderWithProviders(ui(req({ kind: "rewrite", sql: "SELECT * FROM users WHERE name = 'bob'" })));
-    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT id FROM users WHERE name = '   '" }));
+    await finish(
+      JSON.stringify({
+        ...JSON.parse(rewriteJson),
+        rewritten_sql: "SELECT id FROM users WHERE name = '   '",
+      }),
+    );
     await screen.findByText(t("aiSqlRestoredNote"));
     // diff の左辺は生の元 SQL、右辺は差し戻し後
     const texts = Array.from(document.querySelectorAll("[data-diff]")).map((e) => e.textContent);
     expect(texts.some((x) => x?.includes("name = 'bob'") && x.startsWith("+"))).toBe(true);
-    expect(texts.some((x) => x?.includes("SELECT * FROM users WHERE name = 'bob'") && x.startsWith("-"))).toBe(true);
+    expect(
+      texts.some((x) => x?.includes("SELECT * FROM users WHERE name = 'bob'") && x.startsWith("-")),
+    ).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
     await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
     expect(onApply.mock.calls[0][1]).toBe("SELECT id FROM users WHERE name = 'bob'");
@@ -332,7 +350,9 @@ describe("AiSqlPanel (#695)", () => {
 
   it("マスク有効で差し戻せないときは警告を出し、確認で取りやめると適用しない", async () => {
     renderWithProviders(ui(req({ kind: "rewrite", sql: "SELECT * FROM users" })));
-    await finish(JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT id FROM users WHERE n = ' '" }));
+    await finish(
+      JSON.stringify({ ...JSON.parse(rewriteJson), rewritten_sql: "SELECT id FROM users WHERE n = ' '" }),
+    );
     await screen.findByText(t("aiSqlMaskedNote"));
     fireEvent.click(screen.getByRole("button", { name: t("aiSqlApply") }));
     await screen.findByText(t("aiSqlMissingTitle"));
@@ -361,7 +381,12 @@ describe("AiSqlPanel (#695)", () => {
 
   it("適用ボタンを続けて 2 回押しても 1 回しか適用されず、適用後は無効になる", async () => {
     let resolve: (v: string) => void = () => {};
-    onApply.mockImplementationOnce(() => new Promise<string>((r) => { resolve = r; }));
+    onApply.mockImplementationOnce(
+      () =>
+        new Promise<string>((r) => {
+          resolve = r;
+        }),
+    );
     renderWithProviders(ui(req({ kind: "rewrite" })));
     await finish(rewriteJson);
     const btn = (await screen.findByRole("button", { name: t("aiSqlApply") })) as HTMLButtonElement;

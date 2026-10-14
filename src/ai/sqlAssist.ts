@@ -4,12 +4,7 @@
 
 import { z } from "zod";
 import { maskLiterals } from "../dangerousSql";
-import {
-  dialectLabel,
-  findSqlRange,
-  sqlForAi,
-  type ExplainTable,
-} from "./errorExplain";
+import { dialectLabel, findSqlRange, sqlForAi, type ExplainTable } from "./errorExplain";
 
 export type SqlAssistKind = "explain" | "rewrite";
 
@@ -161,7 +156,9 @@ export interface SqlAssistPromptInput {
 export function buildSqlAssistPrompt(input: SqlAssistPromptInput): string {
   const lines: string[] = [];
   lines.push(`Dialect: ${dialectLabel(input.driver)}`);
-  lines.push(`Task: ${input.kind === "explain" ? "explain this SQL" : "propose an optimized, equivalent rewrite"}`);
+  lines.push(
+    `Task: ${input.kind === "explain" ? "explain this SQL" : "propose an optimized, equivalent rewrite"}`,
+  );
   lines.push("");
   lines.push(input.maskLiterals ? "SQL (string literals and comments are blanked):" : "SQL:");
   lines.push(sqlForAi(input.sql, input.driver, input.maskLiterals));
@@ -227,7 +224,8 @@ export function diffLines(before: string, after: string): DiffLine[] {
   const lcs: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
-      lcs[i][j] = norm(am[i]) === norm(bm[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+      lcs[i][j] =
+        norm(am[i]) === norm(bm[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
     }
   }
   const out: DiffLine[] = [];
@@ -344,7 +342,19 @@ function scanStringLiterals(sql: string): LiteralSpan[] {
 
 /** 述語の左辺を遡るときの境界になる語。 */
 const PREDICATE_BOUNDARIES = new Set([
-  "and", "or", "where", "on", "set", "having", "when", "then", "else", "select", "values", "limit", "using",
+  "and",
+  "or",
+  "where",
+  "on",
+  "set",
+  "having",
+  "when",
+  "then",
+  "else",
+  "select",
+  "values",
+  "limit",
+  "using",
 ]);
 
 /**

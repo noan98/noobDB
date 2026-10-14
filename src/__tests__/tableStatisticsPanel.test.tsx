@@ -28,9 +28,7 @@ beforeEach(() => {
 
 describe("TableStatisticsPanel empty state (#847)", () => {
   it("shows the shared EmptyState (illustration) title when the database has no tables", async () => {
-    renderWithProviders(
-      <TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />,
-    );
+    renderWithProviders(<TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByText(t("sizeEmpty"))).toBeInTheDocument();
     });
@@ -51,9 +49,7 @@ describe("TableStatisticsPanel empty state (#847)", () => {
       },
     ]);
 
-    renderWithProviders(
-      <TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />,
-    );
+    renderWithProviders(<TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />);
     await waitFor(() => {
       expect(screen.getByText("users")).toBeInTheDocument();
     });
@@ -77,9 +73,7 @@ describe("TableStatisticsPanel error state (#848)", () => {
   it("shows the shared EmptyState title on load failure, and retries on click", async () => {
     vi.mocked(api.tableStatistics).mockRejectedValueOnce(new Error("connection refused"));
 
-    renderWithProviders(
-      <TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />,
-    );
+    renderWithProviders(<TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />);
 
     await waitFor(() => {
       expect(

@@ -197,12 +197,7 @@ function commentOnValue(driver: string, value: string): string {
 /**
  * テーブルコメントの変更文 (#1002)。変更が無い / 非対応ドライバなら null。
  */
-function tableCommentSql(
-  driver: string,
-  tIdent: string,
-  before: string,
-  after: string,
-): string | null {
+function tableCommentSql(driver: string, tIdent: string, before: string, after: string): string | null {
   if (!supportsComments(driver) || before === after) return null;
   if (driver === "mysql") return `ALTER TABLE ${tIdent} COMMENT = ${quoteString(driver, after)};`;
   return `COMMENT ON TABLE ${tIdent} IS ${commentOnValue(driver, after)};`;
@@ -535,9 +530,7 @@ export function renameCollisions(
 ): string[] {
   const norm = (n: string) => (driver === "postgres" ? n : n.toLowerCase());
   const edits = new Map(form.existing.map((e) => [e.original, e] as const));
-  const keptNames = new Set(
-    form.baseline.filter((b) => !edits.get(b.name)?.drop).map((b) => norm(b.name)),
-  );
+  const keptNames = new Set(form.baseline.filter((b) => !edits.get(b.name)?.drop).map((b) => norm(b.name)));
   const out: string[] = [];
   for (const b of form.baseline) {
     const e = edits.get(b.name);
@@ -610,12 +603,7 @@ export function buildAlterPlan(driver: string, form: AlterTableForm): AlterPlan 
   const maxLate = Math.max(0, ...lateOrder.values());
 
   if (form.tableComment) {
-    const sql = tableCommentSql(
-      driver,
-      tIdent,
-      form.tableComment.before,
-      form.tableComment.after,
-    );
+    const sql = tableCommentSql(driver, tIdent, form.tableComment.before, form.tableComment.after);
     if (sql) statements.push({ sql, kind: "comment", destructive: false });
   }
 

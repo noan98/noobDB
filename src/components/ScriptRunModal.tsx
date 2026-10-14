@@ -128,7 +128,12 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
 
   // 結果 (完了・エラー・再開ボタン) はオプションの下に出るので、見える位置へスクロールする。
   useEffect(() => {
-    if (status.kind === "done" || status.kind === "error" || status.kind === "analysisError" || status.kind === "setupError") {
+    if (
+      status.kind === "done" ||
+      status.kind === "error" ||
+      status.kind === "analysisError" ||
+      status.kind === "setupError"
+    ) {
       // フェードインで高さが確定してからスクロールする。
       const timer = window.setTimeout(() => statusRef.current?.scrollIntoView?.({ block: "end" }), 250);
       return () => window.clearTimeout(timer);
@@ -187,7 +192,8 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               setStatus({ kind: "idle" });
               setProgress(null);
               // 結果は折りたたみの下に出るので、見える位置へスクロールする。
-              if (scroll) requestAnimationFrame(() => analysisRef.current?.scrollIntoView?.({ block: "start" }));
+              if (scroll)
+                requestAnimationFrame(() => analysisRef.current?.scrollIntoView?.({ block: "start" }));
               finish(result);
             },
             onError: (e) => {
@@ -358,10 +364,18 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       : null;
 
   // ラップしない実行で BEGIN が閉じないまま終わると、EOF でランナーが黙って COMMIT する。
-  const unclosedTx = analysisFresh && !!analysis && !options.wrapInTransaction && analysis.event.analysis.unclosedTransaction;
+  const unclosedTx =
+    analysisFresh && !!analysis && !options.wrapInTransaction && analysis.event.analysis.unclosedTransaction;
 
   return (
-    <Modal onSubmit={() => handleRun()} submitDisabled={busy || !path.trim()} width="640px" onClose={onClose} closeOnInteractOutside={!busy} closeOnEscape={!busy}>
+    <Modal
+      onSubmit={() => handleRun()}
+      submitDisabled={busy || !path.trim()}
+      width="640px"
+      onClose={onClose}
+      closeOnInteractOutside={!busy}
+      closeOnEscape={!busy}
+    >
       <ModalHeader onClose={onClose} closeLabel={t("scriptClose")} closeDisabled={busy}>
         {database ? t("scriptTitleDb", { database }) : t("scriptTitle")}
       </ModalHeader>
@@ -397,7 +411,9 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               id="script-encoding"
               minW="160px"
               value={options.encoding ?? ""}
-              onChange={(e) => setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(e.target.value) }))}
+              onChange={(e) =>
+                setOptions((prev) => ({ ...prev, encoding: parseTextEncodingId(e.target.value) }))
+              }
               disabled={busy}
             >
               <option value="">{t("scriptEncodingAuto")}</option>
@@ -491,88 +507,97 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
         <StreamProgressBar active={busy} />
 
         <div ref={statusRef}>
-        <AnimatePresence mode="wait" initial={false}>
-          {(isRunning || isAnalyzing) && (
-            <motion.div
-              key="script-progress"
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-            >
-              <chakra.div fontSize="sm" color="app.textMuted" display="flex" flexWrap="wrap" alignItems="center" gap="2">
-                <chakra.span fontWeight={500} color="app.text">
-                  {isAnalyzing
-                    ? progress
-                      ? t("scriptAnalyzingProgress", { count: progress.executed.toLocaleString() })
-                      : t("scriptAnalyzing")
-                    : progress
-                      ? t("scriptProgress", { executed: progress.executed })
-                      : t("scriptRunning")}
-                </chakra.span>
-                {isRunning && progress && progress.failed > 0 && (
-                  <chakra.span color="app.textError">{t("scriptProgressFailed", { failed: progress.failed })}</chakra.span>
-                )}
-                {percent != null && <chakra.span>{t("scriptProgressPercent", { percent })}</chakra.span>}
-                {progress && (
-                  <chakra.span opacity={0.8}>
-                    {t("dumpProgressElapsed", { secs: (progress.elapsedMs / 1000).toFixed(1) })}
+          <AnimatePresence mode="wait" initial={false}>
+            {(isRunning || isAnalyzing) && (
+              <motion.div
+                key="script-progress"
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+              >
+                <chakra.div
+                  fontSize="sm"
+                  color="app.textMuted"
+                  display="flex"
+                  flexWrap="wrap"
+                  alignItems="center"
+                  gap="2"
+                >
+                  <chakra.span fontWeight={500} color="app.text">
+                    {isAnalyzing
+                      ? progress
+                        ? t("scriptAnalyzingProgress", { count: progress.executed.toLocaleString() })
+                        : t("scriptAnalyzing")
+                      : progress
+                        ? t("scriptProgress", { executed: progress.executed })
+                        : t("scriptRunning")}
                   </chakra.span>
-                )}
-              </chakra.div>
-            </motion.div>
-          )}
-          {status.kind === "done" && (
-            <motion.div
-              key="script-done"
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-            >
-              <ScriptDoneSummary event={status.event} />
-            </motion.div>
-          )}
-          {status.kind === "error" && (
-            <motion.div
-              key="script-error"
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-            >
-              <ScriptErrorSummary
-                event={status.event}
-                resumeAt={resumeAt}
-                resumeSkipAt={resumeSkipAt}
-                resumeBeginAt={resumeBeginAt}
-                onResume={handleResume}
-              />
-            </motion.div>
-          )}
-          {status.kind === "setupError" && (
-            <motion.div
-              key="script-setup-error"
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-            >
-              <ErrorNote>{t("scriptError", { error: status.message })}</ErrorNote>
-            </motion.div>
-          )}
-          {status.kind === "analysisError" && (
-            <motion.div
-              key="script-analysis-error"
-              initial={variants.fade.initial}
-              animate={variants.fade.animate}
-              exit={variants.fade.exit}
-              transition={transitions.crossfade}
-            >
-              <ErrorNote>{t("scriptAnalysisFailed", { error: status.message })}</ErrorNote>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                  {isRunning && progress && progress.failed > 0 && (
+                    <chakra.span color="app.textError">
+                      {t("scriptProgressFailed", { failed: progress.failed })}
+                    </chakra.span>
+                  )}
+                  {percent != null && <chakra.span>{t("scriptProgressPercent", { percent })}</chakra.span>}
+                  {progress && (
+                    <chakra.span opacity={0.8}>
+                      {t("dumpProgressElapsed", { secs: (progress.elapsedMs / 1000).toFixed(1) })}
+                    </chakra.span>
+                  )}
+                </chakra.div>
+              </motion.div>
+            )}
+            {status.kind === "done" && (
+              <motion.div
+                key="script-done"
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+              >
+                <ScriptDoneSummary event={status.event} />
+              </motion.div>
+            )}
+            {status.kind === "error" && (
+              <motion.div
+                key="script-error"
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+              >
+                <ScriptErrorSummary
+                  event={status.event}
+                  resumeAt={resumeAt}
+                  resumeSkipAt={resumeSkipAt}
+                  resumeBeginAt={resumeBeginAt}
+                  onResume={handleResume}
+                />
+              </motion.div>
+            )}
+            {status.kind === "setupError" && (
+              <motion.div
+                key="script-setup-error"
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+              >
+                <ErrorNote>{t("scriptError", { error: status.message })}</ErrorNote>
+              </motion.div>
+            )}
+            {status.kind === "analysisError" && (
+              <motion.div
+                key="script-analysis-error"
+                initial={variants.fade.initial}
+                animate={variants.fade.animate}
+                exit={variants.fade.exit}
+                transition={transitions.crossfade}
+              >
+                <ErrorNote>{t("scriptAnalysisFailed", { error: status.message })}</ErrorNote>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </ModalBody>
 
@@ -675,7 +700,12 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
                 <chakra.span fontSize="xs" color="app.textError">
                   {t("scriptFailureLine", { line: f.line })} — {f.error}
                 </chakra.span>
-                <chakra.span color="app.textMuted" textStyle="caption" fontFamily="mono" wordBreak="break-all">
+                <chakra.span
+                  color="app.textMuted"
+                  textStyle="caption"
+                  fontFamily="mono"
+                  wordBreak="break-all"
+                >
                   {f.sql}
                 </chakra.span>
               </chakra.li>

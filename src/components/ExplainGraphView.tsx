@@ -151,10 +151,7 @@ const defaultEdgeOptions = { type: "smoothstep" } as const;
 
 function rowsOf(node: PlanNode): number | null {
   const find = (key: string): unknown => node.attrs.find(([k]) => k === key)?.[1];
-  const raw =
-    find("rows_produced_per_join") ??
-    find("rows_examined_per_scan") ??
-    find("Plan Rows");
+  const raw = find("rows_produced_per_join") ?? find("rows_examined_per_scan") ?? find("Plan Rows");
   const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
   return Number.isFinite(n) ? n : null;
 }
@@ -197,9 +194,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
         },
       })),
     );
-    setEdges(
-      positioned.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
-    );
+    setEdges(positioned.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })));
   }, [positioned, maxCost, selectedId, onSelect, setNodes, setEdges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
@@ -211,7 +206,9 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
   // ミニマップのノードはカードと同じコストヒート色で塗る (コスト無しは中立色。関数は string を返す必要がある)。
   const miniMapNodeColor = useCallback(
     (n: PlanFlowNode) =>
-      n.data.heat === null ? "var(--border-strong)" : sampleRamp(n.data.heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark)),
+      n.data.heat === null
+        ? "var(--border-strong)"
+        : sampleRamp(n.data.heat, rampStops(SEQUENTIAL_RAMPS.blue, isDark)),
     [isDark],
   );
 

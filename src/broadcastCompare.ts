@@ -34,10 +34,7 @@ export type BroadcastRunStatus = "running" | "done" | "error" | "cancelled";
  * 全体を無効 (空配列) として返す。空の `keyColumnNames` は「キー未指定」として
  * そのまま空配列を返す (呼び出し側はこれを「PK 不明」として扱い降格させる)。
  */
-export function resolveKeyIndicesByName(
-  columns: Column[],
-  keyColumnNames: string[],
-): number[] {
+export function resolveKeyIndicesByName(columns: Column[], keyColumnNames: string[]): number[] {
   if (keyColumnNames.length === 0) return [];
   const indices: number[] = [];
   for (const name of keyColumnNames) {
@@ -56,11 +53,7 @@ export function resolveKeyIndicesByName(
  * 変化の無い行は全セル false の共有配列を指すので、行数ぶんの配列は作らない。
  * `rowCount` は対象の表示行数、`colCount` は列数。
  */
-export function diffToRowDiff(
-  diff: BroadcastDiff,
-  rowCount: number,
-  colCount: number,
-): ResultRowDiff {
+export function diffToRowDiff(diff: BroadcastDiff, rowCount: number, colCount: number): ResultRowDiff {
   const noChange = new Array<boolean>(colCount).fill(false);
   const changedCells = new Array<boolean[]>(rowCount).fill(noChange);
   for (const { row, cols } of diff.changedCells) {

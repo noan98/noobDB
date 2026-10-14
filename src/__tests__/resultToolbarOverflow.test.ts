@@ -41,9 +41,7 @@ describe("nextCollapsedCount", () => {
     expect(nextCollapsedCount({ ...base, collapsed: 2, scrollWidth: 800 })).toBe(1);
   });
   it("幅が未計測なら展開しない", () => {
-    expect(
-      nextCollapsedCount({ ...base, collapsed: 2, scrollWidth: 100, nextExpandWidth: null }),
-    ).toBe(2);
+    expect(nextCollapsedCount({ ...base, collapsed: 2, scrollWidth: 100, nextExpandWidth: null })).toBe(2);
   });
   it("展開直後の幅では再び畳まない (往復しない)", () => {
     const after = nextCollapsedCount({ ...base, collapsed: 2, scrollWidth: 800 });

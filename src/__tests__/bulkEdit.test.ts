@@ -115,8 +115,7 @@ describe("planBulkCellEdit", () => {
       value: "9",
       isColEditable: allEditable,
       // age is INT but "9" is a valid number; name VARCHAR accepts anything.
-      validate: (colIdx, value) =>
-        validateCellInput(value, columns[colIdx].type_name, true),
+      validate: (colIdx, value) => validateCellInput(value, columns[colIdx].type_name, true),
     });
     expect(plan.applied).toHaveLength(2);
     const stmts = buildUpdateStatements({
@@ -158,8 +157,7 @@ describe("planBulkCellEdit", () => {
       colIndices: [2], // age INT
       value: "not-a-number",
       isColEditable: allEditable,
-      validate: (colIdx, value) =>
-        validateCellInput(value, columns[colIdx].type_name, true),
+      validate: (colIdx, value) => validateCellInput(value, columns[colIdx].type_name, true),
     });
     expect(plan.applied).toHaveLength(0);
     expect(plan.skippedInvalid).toBe(2);
@@ -192,12 +190,8 @@ describe("planBulkCellEdit", () => {
       isColEditable: allEditable,
       validate: noValidate,
     });
-    expect(plan.applied).toEqual([
-      { rowKey: rowEditKey(rows[1], PK, 1), colIdx: 1, value: "alice" },
-    ]);
-    expect(plan.unchanged).toEqual([
-      { rowKey: rowEditKey(rows[0], PK, 0), colIdx: 1, value: null },
-    ]);
+    expect(plan.applied).toEqual([{ rowKey: rowEditKey(rows[1], PK, 1), colIdx: 1, value: "alice" }]);
+    expect(plan.unchanged).toEqual([{ rowKey: rowEditKey(rows[0], PK, 0), colIdx: 1, value: null }]);
     // 無変更の行は編集行数に数えない。
     expect(plan.rowCount).toBe(1);
   });

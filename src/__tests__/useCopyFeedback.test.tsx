@@ -13,7 +13,11 @@ vi.mock("../components/clipboard", () => ({
 }));
 
 import { copyToClipboard } from "../components/clipboard";
-import { useCopyFeedback, useKeyedCopyFeedback, COPY_FEEDBACK_DURATION_MS } from "../components/useCopyFeedback";
+import {
+  useCopyFeedback,
+  useKeyedCopyFeedback,
+  COPY_FEEDBACK_DURATION_MS,
+} from "../components/useCopyFeedback";
 
 const copyToClipboardMock = vi.mocked(copyToClipboard);
 
@@ -86,10 +90,9 @@ describe("useCopyFeedback", () => {
 
   it("失敗時はトーストを出し、copied は変化しない", async () => {
     copyToClipboardMock.mockResolvedValue(false);
-    const { result } = renderHook(
-      () => ({ copyFeedback: useCopyFeedback(), toast: useToast() }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => ({ copyFeedback: useCopyFeedback(), toast: useToast() }), {
+      wrapper,
+    });
     const errorSpy = vi.spyOn(result.current.toast, "error");
 
     let ok: boolean | undefined;

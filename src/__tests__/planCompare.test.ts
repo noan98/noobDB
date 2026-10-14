@@ -70,7 +70,10 @@ describe("summarizePlanResult / comparePlanSummaries (#1539)", () => {
       elapsed_ms: 1,
     });
     const before = summarizePlanResult("sqlite", rows("SCAN orders")) as PlanSummary;
-    const after = summarizePlanResult("sqlite", rows("SEARCH orders USING INDEX ix_user (user_id=?)")) as PlanSummary;
+    const after = summarizePlanResult(
+      "sqlite",
+      rows("SEARCH orders USING INDEX ix_user (user_id=?)"),
+    ) as PlanSummary;
     expect(before.totalCost).toBeNull();
     const cmp = comparePlanSummaries(before, after);
     expect(cmp.costDelta).toBeNull();

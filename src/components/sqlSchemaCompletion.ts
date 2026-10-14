@@ -61,10 +61,7 @@ function fkTargets(fks: ForeignKey[]): Map<string, string> {
   for (const fk of fks) {
     const key = `${fk.table.toLowerCase()}\u0000${fk.column.toLowerCase()}`;
     if (m.has(key)) continue; // 複合 FK は先頭だけ見せる
-    m.set(
-      key,
-      fk.referenced_column ? `${fk.referenced_table}.${fk.referenced_column}` : fk.referenced_table,
-    );
+    m.set(key, fk.referenced_column ? `${fk.referenced_table}.${fk.referenced_column}` : fk.referenced_table);
   }
   return m;
 }
@@ -104,13 +101,52 @@ export function buildSchemaNamespace(o: SchemaNamespaceOptions): SQLNamespace {
  * 辞書に無い名前は候補に出ないだけで害はない。
  */
 const FUNCTION_NAMES: ReadonlySet<string> = new Set([
-  "COUNT", "SUM", "AVG", "MIN", "MAX",
-  "COALESCE", "NULLIF", "IFNULL", "NVL", "IIF",
-  "CONCAT", "LENGTH", "LOWER", "UPPER", "TRIM", "LTRIM", "RTRIM", "SUBSTRING", "SUBSTR", "INSTR",
-  "ROUND", "ABS", "CEIL", "CEILING", "FLOOR", "MOD", "POWER", "SQRT",
-  "NOW", "CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "DATE_TRUNC", "DATE_FORMAT",
-  "STRFTIME", "EXTRACT", "CAST", "GREATEST", "LEAST", "GROUP_CONCAT", "STRING_AGG",
-  "ROW_NUMBER", "RANK", "DENSE_RANK", "LEAD", "LAG",
+  "COUNT",
+  "SUM",
+  "AVG",
+  "MIN",
+  "MAX",
+  "COALESCE",
+  "NULLIF",
+  "IFNULL",
+  "NVL",
+  "IIF",
+  "CONCAT",
+  "LENGTH",
+  "LOWER",
+  "UPPER",
+  "TRIM",
+  "LTRIM",
+  "RTRIM",
+  "SUBSTRING",
+  "SUBSTR",
+  "INSTR",
+  "ROUND",
+  "ABS",
+  "CEIL",
+  "CEILING",
+  "FLOOR",
+  "MOD",
+  "POWER",
+  "SQRT",
+  "NOW",
+  "CURRENT_DATE",
+  "CURRENT_TIME",
+  "CURRENT_TIMESTAMP",
+  "DATE_TRUNC",
+  "DATE_FORMAT",
+  "STRFTIME",
+  "EXTRACT",
+  "CAST",
+  "GREATEST",
+  "LEAST",
+  "GROUP_CONCAT",
+  "STRING_AGG",
+  "ROW_NUMBER",
+  "RANK",
+  "DENSE_RANK",
+  "LEAD",
+  "LAG",
 ]);
 
 /**
@@ -170,23 +206,13 @@ export function describeColumn(meta: TableColumnInfo, labels: ColumnInfoLabels):
 }
 
 /** 列名の大小文字を無視して列メタを探す。 */
-export function findColumnInfo(
-  columns: TableColumnInfo[],
-  name: string,
-): TableColumnInfo | undefined {
+export function findColumnInfo(columns: TableColumnInfo[], name: string): TableColumnInfo | undefined {
   const lower = name.toLowerCase();
   return columns.find((c) => c.name.toLowerCase() === lower);
 }
 
 /** `Completion.type` → `Icon` の語彙。対応が無い種別は null (アイコンなし)。 */
-export type CompletionIconName =
-  | "table"
-  | "database"
-  | "columns"
-  | "routine"
-  | "braces"
-  | "hash"
-  | "link";
+export type CompletionIconName = "table" | "database" | "columns" | "routine" | "braces" | "hash" | "link";
 
 const ICON_BY_TYPE: Record<string, CompletionIconName> = {
   table: "table",

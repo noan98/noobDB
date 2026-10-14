@@ -67,9 +67,36 @@ const FRUIT_COLUMNS: Column[] = [
 ];
 
 const FRUIT_TABLE_COLUMNS: TableColumnInfo[] = [
-  { name: "id", data_type: "INT", nullable: false, key: "PRI", default: null, extra: "auto_increment", referenced_table: null, referenced_column: null },
-  { name: "name", data_type: "VARCHAR(64)", nullable: true, key: "", default: null, extra: "", referenced_table: null, referenced_column: null },
-  { name: "qty", data_type: "INT", nullable: true, key: "", default: null, extra: "", referenced_table: null, referenced_column: null },
+  {
+    name: "id",
+    data_type: "INT",
+    nullable: false,
+    key: "PRI",
+    default: null,
+    extra: "auto_increment",
+    referenced_table: null,
+    referenced_column: null,
+  },
+  {
+    name: "name",
+    data_type: "VARCHAR(64)",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  },
+  {
+    name: "qty",
+    data_type: "INT",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  },
 ];
 
 // fruits テーブルの「サーバ側」データ。Apply のシナリオではトランザクション
@@ -103,9 +130,7 @@ function registerBaseHandlers() {
   onCommand("list_databases", (args) =>
     sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"],
   );
-  onCommand("list_tables", (args) =>
-    (args.database as string) === "betadb" ? ["gadgets"] : ["fruits"],
-  );
+  onCommand("list_tables", (args) => ((args.database as string) === "betadb" ? ["gadgets"] : ["fruits"]));
   onCommand("describe_table", () => FRUIT_TABLE_COLUMNS);
   onCommand("list_indexes", () => []);
   onCommand("schema_overview", (args) => [
@@ -159,8 +184,7 @@ function registerBaseHandlers() {
   );
   onCommand("table_row_estimate", () => null);
   onCommand("load_schema_tree", (args) => {
-    const databases =
-      sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"];
+    const databases = sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"];
     return {
       databases,
       open: (args.openDbs as string[])
@@ -180,9 +204,10 @@ function registerBaseHandlers() {
     };
   });
   onCommand("list_tables_all", (args) =>
-    (sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"]).map(
-      (database) => ({ database, tables: [tableOf(database)] }),
-    ),
+    (sessionProfiles.get(args.sessionId as string) === BETA.id ? ["betadb"] : ["appdb"]).map((database) => ({
+      database,
+      tables: [tableOf(database)],
+    })),
   );
   onCommand("cancel_stream", () => ({ cancelled: true, deliveredRows: 1 }));
 }
@@ -220,9 +245,7 @@ async function connectToProfile(screen: Screen, name: RegExp, database: string) 
   await screen.getByRole("treeitem", { name }).click();
   // Playwright の name は部分一致のため、プロファイル行 (ホスト/DB 名を含む) に
   // 誤マッチしないよう DB ノードは exact 指定する。
-  await expect
-    .element(screen.getByRole("treeitem", { name: database, exact: true }))
-    .toBeVisible();
+  await expect.element(screen.getByRole("treeitem", { name: database, exact: true })).toBeVisible();
 }
 
 /** ツリーで appdb を展開し、fruits テーブルをダブルクリックでタブに開く。 */
@@ -253,9 +276,12 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await openFruitsTable(screen);
 
-    await vi.waitFor(() => {
-      if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
+      },
+      { timeout: 5000 },
+    );
     const channel = capturedChannel!;
 
     // 1 バッチ目: 列定義 + 1 行。到着分が即座に描画される
@@ -283,12 +309,8 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
       readOnly: true,
       schemaMayChange: false,
     });
-    await expect
-      .element(screen.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: t("gridStopButton") }))
-      .not.toBeInTheDocument();
+    await expect.element(screen.getByText(t("statusStreamingDone", { rows: 2, ms: 5 }))).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("gridStopButton") })).not.toBeInTheDocument();
   });
 
   it("停止ボタンでキャンセルすると取得済み行は残り、以降のイベントは無視される", async () => {
@@ -304,9 +326,12 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await openFruitsTable(screen);
 
-    await vi.waitFor(() => {
-      if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (!capturedStreamId) throw new Error("run_query_stream not invoked yet");
+      },
+      { timeout: 5000 },
+    );
     const streamId = capturedStreamId!;
     const channel = capturedChannel!;
 
@@ -317,13 +342,16 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await screen.getByRole("button", { name: t("gridStopButton") }).click();
 
     // バックエンドへキャンセルが届き、キャンセル済みステータスが出る。
-    await vi.waitFor(() => {
-      expect(invocationsOf("cancel_stream")).toEqual([{ streamId }]);
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        expect(invocationsOf("cancel_stream")).toEqual([{ streamId }]);
+      },
+      { timeout: 5000 },
+    );
     // 読み上げ専用領域 (#1529) にも同じ文言が入るので、表示側 (後に描画される方) を見る。
-    await expect.element(
-      screen.getByText(t("statusQueryCancelledPartial", { rows: 1 })).last(),
-    ).toBeVisible();
+    await expect
+      .element(screen.getByText(t("statusQueryCancelledPartial", { rows: 1 })).last())
+      .toBeVisible();
 
     // 取得済みの行は保持される。
     await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
@@ -345,14 +373,15 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await openFruitsTable(screen);
 
-    await vi.waitFor(() => {
-      if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (!capturedChannel) throw new Error("run_query_stream not invoked yet");
+      },
+      { timeout: 5000 },
+    );
 
     // 列未着の「無の時間」でもバナーの停止ボタンが出ており、すぐにキャンセルできる。
-    await expect
-      .element(screen.getByRole("button", { name: t("gridStopButton") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("gridStopButton") })).toBeVisible();
     // グリッド (gridcell) はまだ描画されていない (スケルトン段階)。
     expect(screen.getByRole("gridcell", { name: "apple", exact: true }).query()).toBeNull();
 
@@ -360,12 +389,8 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     const channel = capturedChannel!;
     emitChannelMessage(channel, { kind: "columns", columns: FRUIT_COLUMNS });
     emitChannelMessage(channel, { kind: "rows", rows: [[1, "apple", 5]] });
-    await expect
-      .element(screen.getByRole("gridcell", { name: "apple", exact: true }))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("button", { name: t("gridStopButton") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("gridcell", { name: "apple", exact: true })).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: t("gridStopButton") })).toBeVisible();
   });
 
   it("タイムアウト間際になると警告 (残り秒数) が表示される", async () => {
@@ -380,9 +405,7 @@ describe("シナリオ: ストリーミング実行とキャンセル (実ブラ
     // 経過時間はバナー側が実時間で刻む。8 割 (0.8s) を越えると警告が出る。
     // setup.browser.ts はロケールを en に固定しているため、可変の残り秒数を避けて
     // 文言の静的部分 (Timing out in Ns) で照合する。
-    await expect
-      .element(screen.getByText(/Timing out in \d+s/), { timeout: 5000 })
-      .toBeVisible();
+    await expect.element(screen.getByText(/Timing out in \d+s/), { timeout: 5000 }).toBeVisible();
   });
 });
 
@@ -405,44 +428,51 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
     await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
 
     // describe_table の結果 (PK 解決) がタブへ反映され、セルが編集可能になるまで待つ。
-    await vi.waitFor(() => {
-      const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
-      if (!cell?.classList.contains("is-editable-cell")) {
-        throw new Error("qty cell is not editable yet");
-      }
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) {
+          throw new Error("qty cell is not editable yet");
+        }
+      },
+      { timeout: 5000 },
+    );
 
     // banana の qty (3) をダブルクリック → インライン入力 → Enter で確定。
     await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
-    const input = await vi.waitFor(() => {
-      const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
-      if (!el) throw new Error("cell edit input not open");
-      return el;
-    }, { timeout: 5000 });
+    const input = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+        if (!el) throw new Error("cell edit input not open");
+        return el;
+      },
+      { timeout: 5000 },
+    );
     await page.elementLocator(input).fill("42");
     await userEvent.keyboard("{Enter}");
 
     // 保留編集のツールバーが出る (1 セル / 1 行)。
-    await expect
-      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
-      .toBeVisible();
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
 
     await screen.getByRole("button", { name: t("editApplyButton") }).click();
 
     // PK (id=2) を条件にした qty = 42 の更新が、1 回の要求 (= 1 トランザクション) で送られる。
-    await vi.waitFor(() => {
-      expect(applied).toEqual([
-        {
-          sessionId: expect.any(String),
-          database: "appdb",
-          table: "fruits",
-          pkColumns: ["id"],
-          pkBinary: [false],
-          groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
-          extraStatements: [],
-        },
-      ]);
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        expect(applied).toEqual([
+          {
+            sessionId: expect.any(String),
+            database: "appdb",
+            table: "fruits",
+            pkColumns: ["id"],
+            pkBinary: [false],
+            groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
+            extraStatements: [],
+          },
+        ]);
+      },
+      { timeout: 5000 },
+    );
 
     // Apply 成功後はテーブルが自動リフレッシュされ、新値が表示される
     // (成功ステータスはリフレッシュ完了ステータスにすぐ上書きされるため、
@@ -481,17 +511,23 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
     await expect.element(screen.getByRole("tab", { name: /fruits/ })).toBeVisible();
 
     // テーブルタブは復元時に自動で初期 SELECT を再実行する。
-    await vi.waitFor(() => {
-      const runs = invocationsOf("run_query_stream");
-      expect(runs).toHaveLength(1);
-      expect(runs[0]).toMatchObject({ sql: "SELECT * FROM `appdb`.`fruits` LIMIT 100" });
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const runs = invocationsOf("run_query_stream");
+        expect(runs).toHaveLength(1);
+        expect(runs[0]).toMatchObject({ sql: "SELECT * FROM `appdb`.`fruits` LIMIT 100" });
+      },
+      { timeout: 5000 },
+    );
 
     // アクティブなクエリタブのエディタには保存していた SQL が戻っている。
-    await vi.waitFor(() => {
-      const content = document.querySelector(".cm-content")?.textContent ?? "";
-      if (!content.includes("SELECT 1")) throw new Error("editor SQL not restored");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const content = document.querySelector(".cm-content")?.textContent ?? "";
+        if (!content.includes("SELECT 1")) throw new Error("editor SQL not restored");
+      },
+      { timeout: 5000 },
+    );
 
     // テーブルタブへ切り替えると再実行済みの結果が表示されている。
     await screen.getByRole("tab", { name: /fruits/ }).click();
@@ -509,9 +545,7 @@ describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)",
 
     // Beta へ切替: ツリーは Beta のスキーマになり、ワークスペースは空に戻る。
     await connectToProfile(screen, /Beta DB/, "betadb");
-    await expect
-      .element(screen.getByText(t("tabsEmptyTitle"), { exact: true }))
-      .toBeVisible();
+    await expect.element(screen.getByText(t("tabsEmptyTitle"), { exact: true })).toBeVisible();
     expect(screen.getByRole("tab", { name: /fruits/ }).query()).toBeNull();
 
     // 前の接続 (Alpha) は切断されず背景で生存している (#複数同時接続)。
@@ -567,7 +601,10 @@ describe("シナリオ: 明示トランザクションと接続 (実ブラウザ
 
     await screen.getByRole("button", { name: t("appDisconnect") }).click();
     await expect.element(screen.getByText(t("connTxOpenTitle"))).toBeVisible();
-    await screen.getByRole("button", { name: t("confirmDefaultCancel"), exact: true }).first().click();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
     expect(invocationsOf("disconnect")).toEqual([]);
     await expect.element(screen.getByRole("button", { name: t("txCommit") })).toBeVisible();
   });
@@ -616,15 +653,16 @@ describe("シナリオ: SQL Editor / Result Grid の操作体系 (#1113, 実ブ�
     const sqlCalls = () =>
       invocationsOf("run_query_stream").map((a) => String((a as { sql?: unknown }).sql ?? ""));
     const before = sqlCalls().length;
-    const content = await vi.waitFor(() => {
-      const el = document.querySelector<HTMLElement>(".cm-content");
-      if (!el) throw new Error("editor not mounted");
-      return el;
-    }, { timeout: 5000 });
+    const content = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        return el;
+      },
+      { timeout: 5000 },
+    );
     await page.elementLocator(content).click({ button: "right" });
-    await screen
-      .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
-      .click();
+    await screen.getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) }).click();
     await vi.waitFor(() => expect(sqlCalls().length).toBeGreaterThan(before), { timeout: 5000 });
     await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
 
@@ -640,9 +678,12 @@ describe("シナリオ: SQL Editor / Result Grid の操作体系 (#1113, 実ブ�
     await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
     await userEvent.keyboard(t("cmdkExplainQuery"));
     await userEvent.keyboard("{Enter}");
-    await vi.waitFor(() => {
-      expect(sqlCalls().some((sql) => sql.startsWith("EXPLAIN FORMAT=JSON "))).toBe(true);
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        expect(sqlCalls().some((sql) => sql.startsWith("EXPLAIN FORMAT=JSON "))).toBe(true);
+      },
+      { timeout: 5000 },
+    );
     // 実行後にパレットは閉じる (退場アニメーションが終わるまで待ってから開き直す)。
     await expect
       .element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") }))
@@ -653,9 +694,7 @@ describe("シナリオ: SQL Editor / Result Grid の操作体系 (#1113, 実ブ�
     await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
     await userEvent.keyboard(t("cmdkToggleActivity"));
     await userEvent.keyboard("{Enter}");
-    await expect
-      .element(screen.getByRole("dialog", { name: t("activityCenterTitle") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("dialog", { name: t("activityCenterTitle") })).toBeVisible();
   });
 });
 
@@ -701,19 +740,13 @@ describe("シナリオ: Bottom Panel のログ系タブ (#1114, 実ブラウザ)
       .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
       .toHaveAttribute("aria-selected", "true");
     const activity = screen.getByRole("list", { name: t("activityListAria") });
-    await expect
-      .element(activity.getByText(t("statusStreamingDone", { rows: 2, ms: 5 })))
-      .toBeVisible();
-    await expect
-      .element(screen.getByRole("group", { name: t("activityFilterAria") }))
-      .toBeVisible();
+    await expect.element(activity.getByText(t("statusStreamingDone", { rows: 2, ms: 5 }))).toBeVisible();
+    await expect.element(screen.getByRole("group", { name: t("activityFilterAria") })).toBeVisible();
 
     // 5) Esc (タブバー上) でパネルを閉じる。
     await screen.getByRole("tab", { name: t("activityCenterTitle") }).click();
     await userEvent.keyboard("{Escape}");
-    await expect
-      .element(screen.getByRole("tab", { name: t("activityCenterTitle") }))
-      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("tab", { name: t("activityCenterTitle") })).not.toBeInTheDocument();
 
     // 6) ステータスバーの「履歴を表示」からもアクティビティタブへ辿れる。
     await screen.getByRole("button", { name: t("statusOpenMessages") }).click();
@@ -749,11 +782,14 @@ describe("シナリオ: 出力ログの再実行は記録した実行 DB で走�
 
     // 再実行は addTab 直後の新タブで走る。描画前のスナップショットでタブが見つからず
     // database が null になる退行を防ぐ。
-    await vi.waitFor(() => {
-      const runs = invocationsOf("run_query_stream");
-      expect(runs.length).toBeGreaterThan(before);
-      expect(runs[runs.length - 1]).toMatchObject({ database: "appdb" });
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const runs = invocationsOf("run_query_stream");
+        expect(runs.length).toBeGreaterThan(before);
+        expect(runs[runs.length - 1]).toMatchObject({ database: "appdb" });
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("複文 (バッチ) の実行は run_sql_batch にタブの database だけを渡し、プロファイル既定へ寄せない", async () => {
@@ -771,25 +807,34 @@ describe("シナリオ: 出力ログの再実行は記録した実行 DB で走�
     await expect.element(screen.getByRole("tab", { name: /Batch/ })).toBeVisible();
     // 復元したタブはエディタの再マウントが落ち着くまで右クリックメニューが出ないことがある。
     // SQL が載ったことを確認してから、メニューが出るまで右クリックからやり直す。
-    await vi.waitFor(() => {
-      if (!(document.querySelector(".cm-content")?.textContent ?? "").includes("SELECT 1")) {
-        throw new Error("editor SQL not restored");
-      }
-    }, { timeout: 5000 });
-    await vi.waitFor(async () => {
-      const el = document.querySelector<HTMLElement>(".cm-content");
-      if (!el) throw new Error("editor not mounted");
-      await page.elementLocator(el).click({ button: "right" });
-      await screen
-        .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
-        .click({ timeout: 2000 });
-    }, { timeout: 20000, interval: 300 });
-await vi.waitFor(() => {
-      const runs = invocationsOf("run_sql_batch");
-      expect(runs).toHaveLength(1);
-      // タブに database が無ければ null (プロファイルの appdb を混ぜない)。
-      expect(runs[0]).toMatchObject({ database: null });
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (!(document.querySelector(".cm-content")?.textContent ?? "").includes("SELECT 1")) {
+          throw new Error("editor SQL not restored");
+        }
+      },
+      { timeout: 5000 },
+    );
+    await vi.waitFor(
+      async () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        await page.elementLocator(el).click({ button: "right" });
+        await screen
+          .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+          .click({ timeout: 2000 });
+      },
+      { timeout: 20000, interval: 300 },
+    );
+    await vi.waitFor(
+      () => {
+        const runs = invocationsOf("run_sql_batch");
+        expect(runs).toHaveLength(1);
+        // タブに database が無ければ null (プロファイルの appdb を混ぜない)。
+        expect(runs[0]).toMatchObject({ database: null });
+      },
+      { timeout: 5000 },
+    );
   });
 });
 
@@ -818,9 +863,7 @@ describe("シナリオ: 折りたたみ時のパネルバーから中核機能�
 
     // 3) 閉じるとバーへ戻る。
     await screen.getByRole("button", { name: t("bottomPanelClose") }).click();
-    await expect
-      .element(screen.getByRole("navigation", { name: t("bottomPanelStripAria") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("navigation", { name: t("bottomPanelStripAria") })).toBeVisible();
   });
 });
 
@@ -879,18 +922,12 @@ describe("シナリオ: サイドバータブの sliding indicator とクロス�
     // History へ切替: mode="wait" のクロスフェードを挟んでも最終的に新しい
     // パネル (履歴の空状態) が表示され、旧パネルの中身は消える。
     await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
-    await expect
-      .element(screen.getByRole("treeitem", { name: /Alpha DB/ }))
-      .not.toBeInTheDocument();
-    await expect
-      .element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("treeitem", { name: /Alpha DB/ })).not.toBeInTheDocument();
+    await expect.element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") })).toBeVisible();
 
     // Local へ切替: さらに別内容へ差し替わる。
     await screen.getByRole("tab", { name: t("sidebarTabLocal") }).click();
-    await expect
-      .element(screen.getByRole("tabpanel", { name: t("sidebarTabLocal") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("tabpanel", { name: t("sidebarTabLocal") })).toBeVisible();
   });
 
   it("タブ切替後も WAI-ARIA 属性 (role/aria-selected/aria-controls) が維持される", async () => {
@@ -933,9 +970,7 @@ describe("シナリオ: グローバルオブジェクト検索 (#1261, 実ブ�
     const input = screen.getByRole("combobox", { name: t("objSearchPlaceholder") });
     await expect.element(input).toBeVisible();
     // 開いた直後に空クエリで索引を先に作らせている (ウォームアップ)。
-    await expect
-      .poll(() => invocationsOf("search_schema_objects").some((a) => a.query === ""))
-      .toBe(true);
+    await expect.poll(() => invocationsOf("search_schema_objects").some((a) => a.query === "")).toBe(true);
 
     await userEvent.keyboard("fruit");
     const option = screen.getByRole("option").first();
@@ -955,24 +990,18 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
     const screen = await renderInBrowser(<App />);
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await screen.getByRole("treeitem", { name: "appdb", exact: true }).click();
-    await expect
-      .element(screen.getByRole("treeitem", { name: "fruits", exact: true }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("treeitem", { name: "fruits", exact: true })).toBeVisible();
     const loads = invocationsOf("load_schema_tree").length;
     const history = invocationsOf("list_history").length;
 
     await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
-    await expect
-      .element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("tabpanel", { name: t("sidebarTabHistory") })).toBeVisible();
     await screen.getByRole("tab", { name: t("sidebarTabSnippets") }).click();
     await screen.getByRole("tab", { name: t("sidebarTabHistory") }).click();
     await screen.getByRole("tab", { name: t("sidebarTabConnections") }).click();
 
     // 展開状態のまま、待たずにツリーが出ている。DB からの取り直しは起きない。
-    await expect
-      .element(screen.getByRole("treeitem", { name: "fruits", exact: true }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("treeitem", { name: "fruits", exact: true })).toBeVisible();
     expect(invocationsOf("load_schema_tree").length).toBe(loads);
     // 履歴も往復でマウントし直さない (一覧の取得は初回の 1 度だけ)。
     expect(invocationsOf("list_history").length).toBeLessThanOrEqual(history + 1);
@@ -993,9 +1022,7 @@ describe("シナリオ: keep-alive による切替 (#1311, 実ブラウザ)", ()
     await userEvent.keyboard("{Control>}k{/Control}");
     await userEvent.keyboard(t("cmdkActionErDiagram"));
     await userEvent.keyboard("{Enter}");
-    await expect
-      .element(screen.getByRole("region", { name: t("erDiagramTitle") }))
-      .toBeVisible();
+    await expect.element(screen.getByRole("region", { name: t("erDiagramTitle") })).toBeVisible();
     // ワークスペースは DOM に残るが、操作・読み上げ対象からは外れる。
     expect(cellEl.isConnected).toBe(true);
     expect(cellEl.closest("[inert]")).not.toBeNull();
@@ -1054,16 +1081,19 @@ async function closeAllTabsFromMenu(screen: Screen) {
     );
   };
   openMenu();
-  await vi.waitFor(() => {
-    const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-      (el) => (el.textContent ?? "").includes(t("tabCloseAll")),
-    );
-    if (!item) {
-      openMenu();
-      throw new Error("menu item missing");
-    }
-    item.click();
-  }, { timeout: 5000 });
+  await vi.waitFor(
+    () => {
+      const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((el) =>
+        (el.textContent ?? "").includes(t("tabCloseAll")),
+      );
+      if (!item) {
+        openMenu();
+        throw new Error("menu item missing");
+      }
+      item.click();
+    },
+    { timeout: 5000 },
+  );
 }
 
 describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () => {
@@ -1093,10 +1123,13 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
 
     await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
     await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
-    await vi.waitFor(() => {
-      const content = document.querySelector(".cm-content")?.textContent ?? "";
-      if (!content.includes("SELECT 1")) throw new Error("closed tab SQL not restored");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const content = document.querySelector(".cm-content")?.textContent ?? "";
+        if (!content.includes("SELECT 1")) throw new Error("closed tab SQL not restored");
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("エディタで打ったばかりの本文 (タブ state 未反映) も復元される", async () => {
@@ -1121,12 +1154,15 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
     await expect.element(screen.getByRole("tab", { name: /My scratch/ })).not.toBeInTheDocument();
     await userEvent.keyboard("{Control>}{Shift>}t{/Shift}{/Control}");
     await expect.element(screen.getByRole("tab", { name: /My scratch/ })).toBeVisible();
-    await vi.waitFor(() => {
-      const content = document.querySelector(".cm-content")?.textContent ?? "";
-      if (!content.includes("SELECT 1") || !content.includes("zzqq")) {
-        throw new Error("typed text not restored");
-      }
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const content = document.querySelector(".cm-content")?.textContent ?? "";
+        if (!content.includes("SELECT 1") || !content.includes("zzqq")) {
+          throw new Error("typed text not restored");
+        }
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("「すべて閉じる」の後に連続で復元すると、件数も並びも元どおりになる", async () => {
@@ -1170,7 +1206,9 @@ describe("シナリオ: 閉じたタブの復元 (#1353, 実ブラウザ)", () =
 
     await userEvent.keyboard("{Control>}k{/Control}");
     await expect.element(screen.getByRole("combobox", { name: t("cmdkPlaceholder") })).toBeVisible();
-    await expect.element(screen.getByRole("option", { name: new RegExp(t("cmdkReopenClosedTab")) })).toBeVisible();
+    await expect
+      .element(screen.getByRole("option", { name: new RegExp(t("cmdkReopenClosedTab")) }))
+      .toBeVisible();
     const reopenRows = () =>
       Array.from(document.querySelectorAll('[role="option"]')).filter((el) =>
         (el.textContent ?? "").includes(t("cmdkReopenClosedTab")),
@@ -1215,30 +1253,35 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
     await connectToProfile(screen, /Alpha DB/, "appdb");
     await openFruitsTable(screen);
     await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
-    await vi.waitFor(() => {
-      const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
-      if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+      },
+      { timeout: 5000 },
+    );
 
     await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
-    const input = await vi.waitFor(() => {
-      const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
-      if (!el) throw new Error("cell edit input not open");
-      return el;
-    }, { timeout: 5000 });
+    const input = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+        if (!el) throw new Error("cell edit input not open");
+        return el;
+      },
+      { timeout: 5000 },
+    );
     await page.elementLocator(input).fill("42");
     await userEvent.keyboard("{Enter}");
-    await expect
-      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
-      .toBeVisible();
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
 
     // Ctrl+W → 確認ダイアログ。キャンセルでタブと編集が残る。
     await userEvent.keyboard("{Control>}w{/Control}");
     await expect.element(screen.getByText(t("tabCloseDiscardTitle"))).toBeVisible();
-    await screen.getByRole("button", { name: t("confirmDefaultCancel"), exact: true }).first().click();
-    await expect
-      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
-      .toBeVisible();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
 
     // キャンセル時に閉じたタブ履歴へ積まれないことは pendingEditsGuard.test.ts の構造検査で
     // 固定する (テーブルタブの復元は既存タブの前面化になり、タブ数では判別できないため)。
@@ -1246,10 +1289,14 @@ describe("シナリオ: 未確定のセル編集があるタブを閉じる (#13
     // 改めて閉じて OK すると、タブが閉じる。前の確認ダイアログの退場アニメと
     // フォーカス返却が終わる前に次を開くと、返却されたフォーカスが新しいダイアログの
     // 外側操作とみなされて閉じられるため、ダイアログが消えフォーカスが戻るのを待つ。
-    await vi.waitFor(() => {
-      if (document.querySelector("[role=dialog],[role=alertdialog]")) throw new Error("previous dialog still mounted");
-      if (document.activeElement === document.body) throw new Error("focus not restored yet");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (document.querySelector("[role=dialog],[role=alertdialog]"))
+          throw new Error("previous dialog still mounted");
+        if (document.activeElement === document.body) throw new Error("focus not restored yet");
+      },
+      { timeout: 5000 },
+    );
     await userEvent.keyboard("{Control>}w{/Control}");
     await screen.getByRole("button", { name: t("tabCloseDiscardAction") }).click();
     await expect
@@ -1283,9 +1330,12 @@ describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH �
 
   /** シード済みの「ALTER ...」タブを、ツールバーの実行ボタンで実行する。 */
   async function runSeededAlter(screen: Screen) {
-    await vi.waitFor(() => {
-      if (!document.querySelector(".cm-content")) throw new Error("editor not mounted");
-    }, { timeout: 5000 });
+    await vi.waitFor(
+      () => {
+        if (!document.querySelector(".cm-content")) throw new Error("editor not mounted");
+      },
+      { timeout: 5000 },
+    );
     await screen.getByRole("button", { name: t("editorRun"), exact: true }).click();
   }
 
@@ -1358,16 +1408,11 @@ describe("シナリオ: DDL 後のスキーマドリフト自動取得と SSH �
     expect(invocationsOf("disconnect").length).toBe(0);
 
     alive = false;
-    await expect
-      .element(screen.getByText(t("toastSshTunnelLost", { name: SSH_ALPHA.name })))
-      .toBeVisible();
+    await expect.element(screen.getByText(t("toastSshTunnelLost", { name: SSH_ALPHA.name }))).toBeVisible();
     // 統一ハンドラに渡る: 自動再接続なら reconnect、手動誘導なら古いセッションの
     // disconnect が呼ばれる (設定の既定に依らずどちらかが起きる)。
     await vi.waitFor(
-      () =>
-        expect(
-          invocationsOf("reconnect").length + invocationsOf("disconnect").length,
-        ).toBeGreaterThan(0),
+      () => expect(invocationsOf("reconnect").length + invocationsOf("disconnect").length).toBeGreaterThan(0),
       { timeout: 8000 },
     );
   });

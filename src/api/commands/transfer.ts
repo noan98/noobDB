@@ -3,7 +3,6 @@ import { invoke } from "../invoke";
 import type { TransferPreview, TransferRequest } from "../tauri";
 
 export const transferCommands = {
-
   /**
    * 接続間データ転送 (#986)。ソース接続のテーブル全件 (`sourceTable`) か単一の
    * 読み取り専用クエリ (`sourceSql`) を、ターゲット接続のテーブルへスキーマ +
@@ -18,6 +17,5 @@ export const transferCommands = {
    * 転送前プレビュー (#1532)。転送先の列定義と、値や型が縮退する列を返す。
    * 書き込み・DDL は行わず、ソースは先頭バッチだけ読む。
    */
-  previewTransfer: (request: TransferRequest) =>
-    invoke<TransferPreview>("preview_transfer", { request }),
+  previewTransfer: (request: TransferRequest) => invoke<TransferPreview>("preview_transfer", { request }),
 };

@@ -124,7 +124,13 @@ export function SeverityLogRow({
         <Icon name={SEVERITY_ICON[entry.severity]} size={ICON_SIZES.sm} />
       </chakra.span>
       <Box flex="1" minW={0} display="flex" flexDirection="column" gap="0.5">
-        <chakra.span fontSize="sm" color="app.text" lineHeight="snug" wordBreak="break-word" whiteSpace="pre-wrap">
+        <chakra.span
+          fontSize="sm"
+          color="app.text"
+          lineHeight="snug"
+          wordBreak="break-word"
+          whiteSpace="pre-wrap"
+        >
           {entry.message}
         </chakra.span>
         <chakra.span fontSize="xs" color="app.textMuted">
@@ -310,7 +316,11 @@ function SeverityLogPanel({
               disabled={shown.length === 0}
               formats={[
                 { id: "markdown", label: "Markdown", build: () => activityToMarkdown(shown, exportLabels()) },
-                { id: "text", label: t("activityExportText"), build: () => activityToText(shown, exportLabels()) },
+                {
+                  id: "text",
+                  label: t("activityExportText"),
+                  build: () => activityToText(shown, exportLabels()),
+                },
               ]}
             />
           ) : undefined
@@ -345,14 +355,7 @@ function SeverityLogPanel({
       ) : (
         <chakra.ul listStyleType="none" m={0} p={0} flex="1" minH={0} overflowY="auto" aria-label={listAria}>
           {shown.map((e) => (
-            <SeverityLogRow
-              key={e.key}
-              entry={e}
-              now={0}
-              animated={false}
-              time="clock"
-              repeat={e.repeat}
-            />
+            <SeverityLogRow key={e.key} entry={e} now={0} animated={false} time="clock" repeat={e.repeat} />
           ))}
         </chakra.ul>
       )}

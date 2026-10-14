@@ -54,13 +54,7 @@ function Host({
     <KeepAlive activeKey={active} limit={limit} liveKeys={live}>
       {/* 実 App と同じく、アクティブなタブの要素だけを渡す */}
       <ResultGridSlot register={register}>
-        {(ref) => (
-          <ResultGrid
-            ref={ref}
-            result={results[active ?? "a"]}
-            gridBindings={gridBindings}
-          />
-        )}
+        {(ref) => <ResultGrid ref={ref} result={results[active ?? "a"]} gridBindings={gridBindings} />}
       </ResultGridSlot>
     </KeepAlive>
   );

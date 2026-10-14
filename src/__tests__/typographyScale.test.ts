@@ -40,8 +40,6 @@ describe("vertical rhythm tokens (#490)", () => {
   });
 
   it("the editor consumes the shared relaxed line-height token", () => {
-    expect(/\.cm-editor \.cm-scroller \{[\s\S]*?line-height: var\(--leading-relaxed\)/.test(css)).toBe(
-      true,
-    );
+    expect(/\.cm-editor \.cm-scroller \{[\s\S]*?line-height: var\(--leading-relaxed\)/.test(css)).toBe(true);
   });
 });

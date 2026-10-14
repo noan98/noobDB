@@ -19,7 +19,6 @@ import type {
 } from "../tauri";
 
 export const schemaCommands = {
-
   listDatabases: (sessionId: string) =>
     invoke<string[]>("list_databases", { sessionId }).then((r) =>
       parseResponse(schemas.stringArray, r, "list_databases"),
@@ -29,8 +28,8 @@ export const schemaCommands = {
       parseResponse(schemas.stringArray, r, "list_tables"),
     ),
   describeTable: (sessionId: string, database: string, table: string) =>
-    invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then(
-      (r) => parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
+    invoke<TableColumnInfo[]>("describe_table", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.tableColumnInfoArray, r, "describe_table"),
     ),
   schemaOverview: (sessionId: string, database: string) =>
     invoke<TableSchema[]>("schema_overview", { sessionId, database }).then((r) =>
@@ -41,16 +40,16 @@ export const schemaCommands = {
       parseResponse(schemas.foreignKeyArray, r, "foreign_keys"),
     ),
   tableRowEstimates: (sessionId: string, database: string) =>
-    invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then(
-      (r) => parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
+    invoke<TableRowEstimate[]>("table_row_estimates", { sessionId, database }).then((r) =>
+      parseResponse(schemas.tableRowEstimateArray, r, "table_row_estimates"),
     ),
   /**
    * 1 テーブル分の行数推定 (#1263)。`tableRowEstimates` の 1 件版で、テーブルが無い・
    * ビュー・統計なし・SQLite は null。
    */
   tableRowEstimate: (sessionId: string, database: string, table: string) =>
-    invoke<number | null>("table_row_estimate", { sessionId, database, table }).then(
-      (r) => parseResponse(schemas.nullableNumber, r, "table_row_estimate"),
+    invoke<number | null>("table_row_estimate", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.nullableNumber, r, "table_row_estimate"),
     ),
   /** DB 内のテーブルコメント一覧 (#1002)。コメントを持つテーブルだけ。SQLite は常に空。 */
   listTableComments: (sessionId: string, database: string) =>
@@ -79,16 +78,16 @@ export const schemaCommands = {
    * テーブル名一覧) を 1 回で取得する (#1255)。
    */
   alterTableContext: (sessionId: string, database: string, table: string) =>
-    invoke<AlterTableContext>("alter_table_context", { sessionId, database, table }).then(
-      (r) => parseResponse(schemas.alterTableContext, r, "alter_table_context"),
+    invoke<AlterTableContext>("alter_table_context", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.alterTableContext, r, "alter_table_context"),
     ),
   /**
    * `table` を参照している外部キー (逆参照) を取得する (#621 / #1255)。結果グリッドの
    * 「参照している行へジャンプ」用。
    */
   incomingForeignKeys: (sessionId: string, database: string, table: string) =>
-    invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then(
-      (r) => parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
+    invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then((r) =>
+      parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
     ),
   /** テーブルのインデックス一覧を取得する。 */
   listIndexes: (sessionId: string, database: string, table: string) =>
@@ -141,8 +140,7 @@ export const schemaCommands = {
    * に `listDatabases` / `listTables` / `describeTable` 等を呼び直すと、必ず
    * キャッシュを経由せず再取得される。
    */
-  refreshSchemaCache: (sessionId: string) =>
-    invoke<void>("refresh_schema_cache", { sessionId }),
+  refreshSchemaCache: (sessionId: string) => invoke<void>("refresh_schema_cache", { sessionId }),
   /**
    * 1 つのテーブルのスキーマキャッシュだけを無効化する (#1539)。ALTER / CREATE INDEX の
    * 適用後のように対象が分かるとき、`refreshSchemaCache` (接続全体) の代わりに使うと

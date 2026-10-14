@@ -14,13 +14,9 @@ import {
 
 describe("semanticColors token resolution (#664)", () => {
   it("covers exactly the 4 canonical roles and 4 tiers", () => {
-    expect(SEMANTIC_ROLES).toEqual(
-      expect.arrayContaining(["success", "warning", "danger", "info"]),
-    );
+    expect(SEMANTIC_ROLES).toEqual(expect.arrayContaining(["success", "warning", "danger", "info"]));
     expect(SEMANTIC_ROLES).toHaveLength(4);
-    expect(SEMANTIC_TIERS).toEqual(
-      expect.arrayContaining(["subtle", "border", "solid", "text"]),
-    );
+    expect(SEMANTIC_TIERS).toEqual(expect.arrayContaining(["subtle", "border", "solid", "text"]));
     expect(SEMANTIC_TIERS).toHaveLength(4);
   });
 
@@ -78,6 +74,8 @@ describe("semanticColors token resolution (#664)", () => {
   it("every resolved Chakra token path matches the app.{family}.{tier} shape used by theme.ts", () => {
     const role: SemanticRole = "warning";
     const tier: SemanticTier = "border";
-    expect(semanticColorToken(role, tier)).toMatch(/^app\.(success|warning|error|info)\.(subtle|border|solid|text)$/);
+    expect(semanticColorToken(role, tier)).toMatch(
+      /^app\.(success|warning|error|info)\.(subtle|border|solid|text)$/,
+    );
   });
 });

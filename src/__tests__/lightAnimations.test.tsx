@@ -84,9 +84,7 @@ describe("TabBar の追加・削除 (#1322)", () => {
         {tabBar([...TABS, { id: "t2", kind: "query", title: "Query 2" }])}
       </MotionConfig>,
     );
-    const tab = screen.getByText("Query 2").closest<HTMLElement>(
-      '[role="tab"]',
-    ) as HTMLElement;
+    const tab = screen.getByText("Query 2").closest<HTMLElement>('[role="tab"]') as HTMLElement;
     await waitFor(() => expect(tab.style.opacity).toBe("1"));
     expect(tab.style.width).not.toBe("0px");
   });
@@ -100,9 +98,9 @@ describe("TabBar の追加・削除 (#1322)", () => {
 
 describe("ソース上のガード (#1322)", () => {
   it("StreamProgressBar / TabBar は height・width を補間しない", () => {
-    expect(read("components/StreamProgressBar.tsx").split("export function DeterminateProgressBar")[0]).not.toMatch(
-      /height:\s*0/,
-    );
+    expect(
+      read("components/StreamProgressBar.tsx").split("export function DeterminateProgressBar")[0],
+    ).not.toMatch(/height:\s*0/);
     expect(read("components/TabBar.tsx")).not.toMatch(/width:\s*0/);
   });
 

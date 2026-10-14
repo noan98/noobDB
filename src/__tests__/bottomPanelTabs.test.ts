@@ -69,11 +69,21 @@ describe("availableBottomPanelTabs", () => {
   it("「列を探索」(#974) は対象テーブルが決まったときだけ開ける", () => {
     for (const table of [null, undefined, ""]) {
       expect(
-        availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: table, openConnectionCount: 1 }),
+        availableBottomPanelTabs({
+          sessionId: "sess1",
+          advisorDatabase: "app",
+          profileTable: table,
+          openConnectionCount: 1,
+        }),
       ).not.toContain("profile");
     }
     expect(
-      availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: "app", profileTable: "users", openConnectionCount: 1 }),
+      availableBottomPanelTabs({
+        sessionId: "sess1",
+        advisorDatabase: "app",
+        profileTable: "users",
+        openConnectionCount: 1,
+      }),
     ).toContain("profile");
   });
 });
@@ -87,9 +97,9 @@ describe("構造タブ (#1112)", () => {
   });
 
   it("未接続では対象テーブルが残っていても開けない", () => {
-    expect(
-      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
-    ).not.toContain("structure");
+    expect(availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 })).not.toContain(
+      "structure",
+    );
   });
 
   it("対象が外れたら構造タブを閉じる", () => {
@@ -104,9 +114,9 @@ describe("タイムラプスタブ (#739)", () => {
     for (const id of [null, undefined, ""]) {
       expect(availableBottomPanelTabs({ ...connected, timelapseProfileId: id })).not.toContain("timelapse");
     }
-    expect(
-      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
-    ).not.toContain("timelapse");
+    expect(availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 })).not.toContain(
+      "timelapse",
+    );
     expect(BOTTOM_PANEL_TAB_GROUP.timelapse).toBe("reference");
   });
 
@@ -129,9 +139,9 @@ describe("AI 解説タブ (#695)", () => {
     for (const target of [false, undefined]) {
       expect(availableBottomPanelTabs({ ...connected, aiSqlTarget: target })).not.toContain("aiSql");
     }
-    expect(
-      availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 }),
-    ).not.toContain("aiSql");
+    expect(availableBottomPanelTabs({ ...connected, sessionId: null, openConnectionCount: 0 })).not.toContain(
+      "aiSql",
+    );
     expect(BOTTOM_PANEL_TAB_GROUP.aiSql).toBe("reference");
   });
 
@@ -143,7 +153,9 @@ describe("AI 解説タブ (#695)", () => {
   it("AI 結果要約 (#1476) は AI 利用可 + グリッドからの依頼があるときだけ開ける参照タブ", () => {
     expect(availableBottomPanelTabs(connected)).toContain("aiResultSummary");
     expect(availableBottomPanelTabs({ ...connected, aiAvailable: false })).not.toContain("aiResultSummary");
-    expect(availableBottomPanelTabs({ ...connected, aiResultSummaryTarget: false })).not.toContain("aiResultSummary");
+    expect(availableBottomPanelTabs({ ...connected, aiResultSummaryTarget: false })).not.toContain(
+      "aiResultSummary",
+    );
     expect(availableBottomPanelTabs({ ...connected, sessionId: null })).not.toContain("aiResultSummary");
     expect(BOTTOM_PANEL_TAB_GROUP.aiResultSummary).toBe("reference");
     expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("aiResultSummary");
@@ -161,7 +173,9 @@ describe("AI 解説タブ (#695)", () => {
     expect(appSource).toContain("<AiSqlPanel");
     expect(appSource).toContain("aiSqlTarget: !!aiSqlRequest");
     // 接続が切り替わったら前の接続の依頼を破棄する
-    expect(appSource).toMatch(/setAiSqlRequest\(null\);\s*setAiResultSummaryRequest\(null\);\s*\}, \[sessionId\]\)/);
+    expect(appSource).toMatch(
+      /setAiSqlRequest\(null\);\s*setAiResultSummaryRequest\(null\);\s*\}, \[sessionId\]\)/,
+    );
   });
 });
 
@@ -389,7 +403,10 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
   it("背景接続だけのときは接続ヘルスだけ開ける", () => {
     const entries = bottomPanelStripTabs({ sessionId: null, advisorDatabase: null, openConnectionCount: 1 });
     expect(entries.find((e) => e.tab === "health")).toMatchObject({ enabled: true });
-    expect(entries.find((e) => e.tab === "processes")).toMatchObject({ enabled: false, reason: "needsSession" });
+    expect(entries.find((e) => e.tab === "processes")).toMatchObject({
+      enabled: false,
+      reason: "needsSession",
+    });
   });
 
   it("App.tsx でパネルバーが WorkspaceSplit の collapsed に結線されている", () => {

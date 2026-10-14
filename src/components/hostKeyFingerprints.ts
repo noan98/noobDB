@@ -42,8 +42,9 @@ export function parseHostKeyFingerprints(
 ): { expected: string; actual: string; host?: string; port?: number } | null {
   const m = /stored fingerprint\s+(\S+?),\s+server presented\s+(\S+?)[.\s]/i.exec(message);
   if (!m) return null;
-  const endpoint =
-    /ssh host key mismatch for (?:\[([^\]]+)\]|(\S+?)):(\d+): stored fingerprint/i.exec(message);
+  const endpoint = /ssh host key mismatch for (?:\[([^\]]+)\]|(\S+?)):(\d+): stored fingerprint/i.exec(
+    message,
+  );
   const host = endpoint?.[1] ?? endpoint?.[2];
   return {
     expected: m[1],

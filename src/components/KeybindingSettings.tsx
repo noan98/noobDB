@@ -10,16 +10,8 @@ import {
   SHORTCUT_SCOPES,
   type ShortcutId,
 } from "../shortcuts";
-import {
-  eventToCombo,
-  findShortcutConflicts,
-  formatCombo,
-} from "../shortcutKeys";
-import {
-  resetShortcutBindings,
-  setShortcutBinding,
-  useSettings,
-} from "../settings";
+import { eventToCombo, findShortcutConflicts, formatCombo } from "../shortcutKeys";
+import { resetShortcutBindings, setShortcutBinding, useSettings } from "../settings";
 import {
   SettingsInfo,
   SettingsLabelWithInfo,
@@ -43,7 +35,14 @@ const Row = chakra("div", {
 });
 
 const RowLabel = chakra("span", {
-  base: { margin: 0, fontSize: "md", fontWeight: 500, color: "app.text", flex: "1 1 auto", minWidth: "180px" },
+  base: {
+    margin: 0,
+    fontSize: "md",
+    fontWeight: 500,
+    color: "app.text",
+    flex: "1 1 auto",
+    minWidth: "180px",
+  },
 });
 
 const ComboKbd = chakra("kbd", {
@@ -152,9 +151,7 @@ export function KeybindingSettings() {
                 <Row key={s.id}>
                   <RowLabel>{t(s.descKey)}</RowLabel>
                   {conflicting && <ConflictNote>{t("settingsShortcutConflict")}</ConflictNote>}
-                  <ComboKbd
-                    borderColor={conflicting ? semanticColorToken("danger", "text") : "app.border"}
-                  >
+                  <ComboKbd borderColor={conflicting ? semanticColorToken("danger", "text") : "app.border"}>
                     {formatCombo(resolved[s.id])}
                   </ComboKbd>
                   <SmallButton

@@ -233,12 +233,7 @@ function unestimable(verb: PreflightVerb): PreflightPlan {
   return { verb, table: null, allRows: false, countSql: null };
 }
 
-function planForDelete(
-  masked: string,
-  sql: string,
-  words: MaskedWord[],
-  stmtEnd: number,
-): PreflightPlan {
+function planForDelete(masked: string, sql: string, words: MaskedWord[], stmtEnd: number): PreflightPlan {
   // `DELETE FROM <table> ...` のみを扱う。`DELETE t FROM ...` (MySQL 多表削除) は
   // words[1] が "from" にならないので降格。
   if (words.length < 2 || words[1].text !== "from") return unestimable("delete");
@@ -254,12 +249,7 @@ function planForDelete(
   return finishPlan("delete", masked, sql, table, stmtEnd);
 }
 
-function planForUpdate(
-  masked: string,
-  sql: string,
-  words: MaskedWord[],
-  stmtEnd: number,
-): PreflightPlan {
+function planForUpdate(masked: string, sql: string, words: MaskedWord[], stmtEnd: number): PreflightPlan {
   // `UPDATE <table> SET ...` のみを扱う。テーブル直後が SET でなければ (別名・
   // `UPDATE a, b` の多表・`UPDATE a JOIN b`) 降格する。
   const table = readTableRef(masked, sql, words[0].to);

@@ -60,9 +60,7 @@ describe("errorHints ゴールデン (フロント matchErrorHint / illustration
   }
 
   describe("dead ヒント検出 (到達しないヒントキーが無いこと)", () => {
-    const usedHintKeys = new Set(
-      cases.map((c) => c.hintKey).filter((k): k is I18nKey => k !== null),
-    );
+    const usedHintKeys = new Set(cases.map((c) => c.hintKey).filter((k): k is I18nKey => k !== null));
 
     it("PATTERNS の全ヒントキーが少なくとも 1 ケースで踏まれている", () => {
       const dead = ALL_ERROR_HINT_KEYS.filter((key) => !usedHintKeys.has(key));

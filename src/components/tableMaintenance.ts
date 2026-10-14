@@ -32,7 +32,11 @@ export function buildDropTableSql(driver: string, database: string | null, table
  * 1 文なので全件成功か全件失敗になる。SQLite には複数形が無いのでテーブルごとの文を返す
  * (呼び出し側が `PRAGMA defer_foreign_keys=ON` と合わせて 1 トランザクションで流す)。
  */
-export function buildDropTablesSql(driver: string, database: string | null, tables: readonly string[]): string[] {
+export function buildDropTablesSql(
+  driver: string,
+  database: string | null,
+  tables: readonly string[],
+): string[] {
   if (tables.length === 0) return [];
   if (driver === "sqlite") return tables.map((t) => buildDropTableSql(driver, database, t));
   return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
@@ -98,4 +102,3 @@ export function buildDropIndexSql(
   }
   return `DROP INDEX ${quoteIdentFor(driver, indexName)};`;
 }
-

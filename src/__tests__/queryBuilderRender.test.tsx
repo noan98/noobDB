@@ -343,9 +343,7 @@ describe("QueryBuilder SQL プレビューのコピー確認 (#1158)", () => {
     await waitFor(() => expect(api.listTables).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: t("qbCopy") }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: t("qbCopied") })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbCopied") })).toBeInTheDocument());
 
     expect(() => unmount()).not.toThrow();
   });
@@ -392,7 +390,14 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
   });
   it("DELETE / UPDATE で括弧なしの AND と OR が混在すると優先順位の注意を出し、SELECT では出さない", async () => {
     renderWithProviders(
-      <QueryBuilder sessionId="s1" driver="mysql" defaultDatabase="testdb" defaultTable="users" onExecute={() => {}} onClose={() => {}} />,
+      <QueryBuilder
+        sessionId="s1"
+        driver="mysql"
+        defaultDatabase="testdb"
+        defaultTable="users"
+        onExecute={() => {}}
+        onClose={() => {}}
+      />,
     );
     await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
@@ -414,9 +419,7 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
 describe("QueryBuilder 読み込みエラー (#1602)", () => {
   it("別のテーブルの読み込みに成功したら、前回のエラーバナーを消す", async () => {
     vi.mocked(api.listTables).mockResolvedValue(["users", "orders"]);
-    vi.mocked(api.describeTable)
-      .mockRejectedValueOnce("describe failed")
-      .mockResolvedValue(COLUMNS);
+    vi.mocked(api.describeTable).mockRejectedValueOnce("describe failed").mockResolvedValue(COLUMNS);
     renderWithProviders(
       <QueryBuilder sessionId="s1" driver="mysql" onExecute={() => {}} onClose={() => {}} />,
     );

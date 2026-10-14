@@ -76,16 +76,12 @@ describe("IPC コマンドパリティ (lib.rs 登録 ↔ tauri.ts 呼び出し)
 
   it("lib.rs に登録済みだが tauri.ts から呼ばれていないコマンドが無い", () => {
     const missingInFront = [...registered].filter((c) => !invoked.has(c)).sort();
-    expect(missingInFront, `tauri.ts にラッパが無い登録コマンド: ${missingInFront.join(", ")}`).toEqual(
-      [],
-    );
+    expect(missingInFront, `tauri.ts にラッパが無い登録コマンド: ${missingInFront.join(", ")}`).toEqual([]);
   });
 
   it("tauri.ts から呼ばれているが lib.rs に登録されていないコマンドが無い", () => {
     const missingInBack = [...invoked].filter((c) => !registered.has(c)).sort();
-    expect(missingInBack, `lib.rs に登録の無い呼び出しコマンド: ${missingInBack.join(", ")}`).toEqual(
-      [],
-    );
+    expect(missingInBack, `lib.rs に登録の無い呼び出しコマンド: ${missingInBack.join(", ")}`).toEqual([]);
   });
 
   it("登録集合と呼び出し集合が完全一致する", () => {

@@ -12,11 +12,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import type { CellValue, Column, QueryResult } from "../api/tauri";
 import { useT } from "../i18n";
 import { directionalSlide, transitions } from "../motion";
-import {
-  inspectorWidth,
-  rowSlideDirection,
-  type NavDirection,
-} from "./rowInspectorNav";
+import { inspectorWidth, rowSlideDirection, type NavDirection } from "./rowInspectorNav";
 import { copyToClipboard } from "./clipboard";
 import { formatJsonLossless } from "./jsonTree";
 import { useToast } from "./Toast";
@@ -191,8 +187,7 @@ export function RowInspector({
   // 編集は「フィールド」タブでだけ。下書きがある間はタブを切り替えさせない (隠れた
   // 下書きを残さないため)。
   const editing = editState !== null && edit !== undefined && activeView === "fields";
-  const canEdit =
-    edit !== undefined && activeView === "fields" && edit.editableColumns.some(Boolean);
+  const canEdit = edit !== undefined && activeView === "fields" && edit.editableColumns.some(Boolean);
 
   // 編集中の差分と検証結果。基準は編集開始時の値 (base)。
   const edited =
@@ -210,8 +205,7 @@ export function RowInspector({
   const hasErrors = edited ? Object.keys(edited.errors).length > 0 : false;
   // 編集中に行の値が変わった (自動リフレッシュ・グリッドの Apply など)。古い基準の差分は
   // 送らず、編集し直してもらう。
-  const stale =
-    editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
+  const stale = editing && editState ? rowChangedSince(editState.base, values, columns.length) : false;
   const canApply =
     !!edit &&
     !!edited &&
@@ -281,9 +275,7 @@ export function RowInspector({
 
   const copyField = async (raw: string) => {
     const ok = await copyToClipboard(raw);
-    toast[ok ? "success" : "error"](
-      ok ? t("gridCopied") : t("clipboardCopyFailed"),
-    );
+    toast[ok ? "success" : "error"](ok ? t("gridCopied") : t("clipboardCopyFailed"));
   };
 
   // 「SQL としてコピー」メニュー (#1541)。ヘッダのボタンと、本文の右クリックで開く。
@@ -331,11 +323,7 @@ export function RowInspector({
       },
       {
         label: t("gridCopyAsUpdate"),
-        title: rowSql.blockedByMask
-          ? maskTitle
-          : noUpdate
-            ? t("gridCopyAsSqlNoPk")
-            : undefined,
+        title: rowSql.blockedByMask ? maskTitle : noUpdate ? t("gridCopyAsSqlNoPk") : undefined,
         disabled: rowSql.blockedByMask || noUpdate,
         onSelect: () => void copyRowSql("update"),
       },
@@ -361,11 +349,7 @@ export function RowInspector({
     let input: ReactElement;
     if (control.kind === "bool") {
       input = (
-        <Select
-          {...a11y}
-          value={boolSelectValue(raw, start)}
-          onChange={(e) => setCell(i, e.target.value)}
-        >
+        <Select {...a11y} value={boolSelectValue(raw, start)} onChange={(e) => setCell(i, e.target.value)}>
           {control.options.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -404,13 +388,7 @@ export function RowInspector({
         />
       );
     } else {
-      input = (
-        <Input
-          {...a11y}
-          value={raw}
-          onChange={(e) => setCell(i, e.target.value)}
-        />
-      );
+      input = <Input {...a11y} value={raw} onChange={(e) => setCell(i, e.target.value)} />;
     }
     return (
       <Box
@@ -455,45 +433,94 @@ export function RowInspector({
 
   return createPortal(
     <>
-    <AnimatePresence>
-      <MotionDrawer
-        key="row-inspector"
-        role="dialog"
-        aria-label={t("gridRowInspectorTitle", { row: rowNumber })}
-        initial={{ opacity: 0, x: 28, width: inspectorWidth(activeView) }}
-        animate={{ opacity: 1, x: 0, width: inspectorWidth(activeView) }}
-        exit={{ opacity: 0, x: 28 }}
-        transition={reduced ? { duration: 0 } : transitions.enter}
-        position="fixed"
-        top={0}
-        right={0}
-        bottom={0}
-        zIndex="modal"
-        display="flex"
-        flexDirection="column"
-        bg="app.surface"
-        borderLeft="1px solid"
-        borderColor="app.borderStrong"
-        boxShadow="var(--shadow-drawer)"
-      >
-        <Box
+      <AnimatePresence>
+        <MotionDrawer
+          key="row-inspector"
+          role="dialog"
+          aria-label={t("gridRowInspectorTitle", { row: rowNumber })}
+          initial={{ opacity: 0, x: 28, width: inspectorWidth(activeView) }}
+          animate={{ opacity: 1, x: 0, width: inspectorWidth(activeView) }}
+          exit={{ opacity: 0, x: 28 }}
+          transition={reduced ? { duration: 0 } : transitions.enter}
+          position="fixed"
+          top={0}
+          right={0}
+          bottom={0}
+          zIndex="modal"
           display="flex"
-          alignItems="center"
-          gap="1.5"
-          px="3"
-          py="2"
-          borderBottom="1px solid"
-          borderColor="app.border"
-          flexShrink={0}
+          flexDirection="column"
+          bg="app.surface"
+          borderLeft="1px solid"
+          borderColor="app.borderStrong"
+          boxShadow="var(--shadow-drawer)"
         >
-          <chakra.span textStyle="subheading" flex="1">
-            {t("gridRowInspectorTitle", { row: rowNumber })}
-          </chakra.span>
-          {canEdit && !editing && (
-            <Tooltip
-              label={edit?.blockedReason ? t(edit.blockedReason) : t("rowInspectorEdit")}
-              focusableWrapper={edit?.blockedReason != null}
-            >
+          <Box
+            display="flex"
+            alignItems="center"
+            gap="1.5"
+            px="3"
+            py="2"
+            borderBottom="1px solid"
+            borderColor="app.border"
+            flexShrink={0}
+          >
+            <chakra.span textStyle="subheading" flex="1">
+              {t("gridRowInspectorTitle", { row: rowNumber })}
+            </chakra.span>
+            {canEdit && !editing && (
+              <Tooltip
+                label={edit?.blockedReason ? t(edit.blockedReason) : t("rowInspectorEdit")}
+                focusableWrapper={edit?.blockedReason != null}
+              >
+                <chakra.button
+                  type="button"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="24px"
+                  h="24px"
+                  border="none"
+                  bg="transparent"
+                  color="app.textMuted"
+                  borderRadius="sm"
+                  cursor="pointer"
+                  _hover={{ bg: "app.hover", color: "app.text" }}
+                  _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+                  disabled={edit?.blockedReason != null}
+                  onClick={startEdit}
+                  aria-label={t("rowInspectorEdit")}
+                >
+                  <Icon name="pencil" size={ICON_SIZES.md} />
+                </chakra.button>
+              </Tooltip>
+            )}
+            {rowSql && !editing && (
+              <Tooltip label={t("rowInspectorCopySql")}>
+                <chakra.button
+                  type="button"
+                  display="inline-flex"
+                  alignItems="center"
+                  justifyContent="center"
+                  w="24px"
+                  h="24px"
+                  border="none"
+                  bg="transparent"
+                  color="app.textMuted"
+                  borderRadius="sm"
+                  cursor="pointer"
+                  _hover={{ bg: "app.hover", color: "app.text" }}
+                  aria-haspopup="menu"
+                  onClick={(e) => {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    setSqlMenu({ x: r.left, y: r.bottom + 4 });
+                  }}
+                  aria-label={t("rowInspectorCopySql")}
+                >
+                  <Icon name="insert-sql" size={ICON_SIZES.md} />
+                </chakra.button>
+              </Tooltip>
+            )}
+            <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev || editing}>
               <chakra.button
                 type="button"
                 display="inline-flex"
@@ -508,16 +535,14 @@ export function RowInspector({
                 cursor="pointer"
                 _hover={{ bg: "app.hover", color: "app.text" }}
                 _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-                disabled={edit?.blockedReason != null}
-                onClick={startEdit}
-                aria-label={t("rowInspectorEdit")}
+                disabled={!hasPrev || editing}
+                onClick={onPrev}
+                aria-label={t("gridInspectorPrev")}
               >
-                <Icon name="pencil" size={ICON_SIZES.md} />
+                <Icon name="chevron-left" size={ICON_SIZES.md} />
               </chakra.button>
             </Tooltip>
-          )}
-          {rowSql && !editing && (
-            <Tooltip label={t("rowInspectorCopySql")}>
+            <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext || editing}>
               <chakra.button
                 type="button"
                 display="inline-flex"
@@ -531,340 +556,258 @@ export function RowInspector({
                 borderRadius="sm"
                 cursor="pointer"
                 _hover={{ bg: "app.hover", color: "app.text" }}
-                aria-haspopup="menu"
-                onClick={(e) => {
-                  const r = e.currentTarget.getBoundingClientRect();
-                  setSqlMenu({ x: r.left, y: r.bottom + 4 });
-                }}
-                aria-label={t("rowInspectorCopySql")}
+                _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
+                disabled={!hasNext || editing}
+                onClick={onNext}
+                aria-label={t("gridInspectorNext")}
               >
-                <Icon name="insert-sql" size={ICON_SIZES.md} />
+                <Icon name="chevron-right" size={ICON_SIZES.md} />
               </chakra.button>
             </Tooltip>
-          )}
-          <Tooltip label={t("gridInspectorPrev")} focusableWrapper={!hasPrev || editing}>
-            <chakra.button
-              type="button"
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="24px"
-              h="24px"
-              border="none"
-              bg="transparent"
-              color="app.textMuted"
-              borderRadius="sm"
-              cursor="pointer"
-              _hover={{ bg: "app.hover", color: "app.text" }}
-              _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-              disabled={!hasPrev || editing}
-              onClick={onPrev}
-              aria-label={t("gridInspectorPrev")}
-            >
-              <Icon name="chevron-left" size={ICON_SIZES.md} />
-            </chakra.button>
-          </Tooltip>
-          <Tooltip label={t("gridInspectorNext")} focusableWrapper={!hasNext || editing}>
-            <chakra.button
-              type="button"
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="24px"
-              h="24px"
-              border="none"
-              bg="transparent"
-              color="app.textMuted"
-              borderRadius="sm"
-              cursor="pointer"
-              _hover={{ bg: "app.hover", color: "app.text" }}
-              _disabled={{ opacity: 0.4, cursor: "not-allowed" }}
-              disabled={!hasNext || editing}
-              onClick={onNext}
-              aria-label={t("gridInspectorNext")}
-            >
-              <Icon name="chevron-right" size={ICON_SIZES.md} />
-            </chakra.button>
-          </Tooltip>
-          <Tooltip label={t("gridInspectorClose")}>
-            <chakra.button
-              type="button"
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="24px"
-              h="24px"
-              border="none"
-              bg="transparent"
-              color="app.textMuted"
-              borderRadius="sm"
-              cursor="pointer"
-              _hover={{ bg: "app.hover", color: "app.text" }}
-              onClick={onClose}
-              aria-label={t("gridInspectorClose")}
-            >
-              <Icon name="close" size={ICON_SIZES.md} />
-            </chakra.button>
-          </Tooltip>
-        </Box>
-
-        {hasRelated && (
-          <Box px="3" pt="2" flexShrink={0}>
-            <Segmented
-              value={activeView}
-              onChange={(v) => {
-                if (!editing) setView(v);
-              }}
-              ariaLabel={t("inspectorTabsAria")}
-              options={[
-                { value: "fields", label: t("inspectorTabFields") },
-                {
-                  value: "related",
-                  label: t("inspectorTabRelated", {
-                    count: related?.entries.length ?? 0,
-                  }),
-                  icon: "link",
-                },
-              ]}
-            />
-          </Box>
-        )}
-
-        <Box
-          flex="1"
-          overflowY="auto"
-          css={{ scrollbarWidth: "thin" }}
-          px="3"
-          py="2"
-          onKeyDown={onFormKeyDown}
-          onContextMenu={(e) => {
-            if (!rowSql || editing || activeView !== "fields") return;
-            e.preventDefault();
-            setSqlMenu({ x: e.clientX, y: e.clientY });
-          }}
-        >
-          {activeView === "related" && related ? (
-            <RelatedRowsPanel
-              entries={related.entries}
-              driver={related.driver}
-              database={related.database}
-              runQuery={related.runQuery}
-              onOpenInGrid={related.onOpenInGrid}
-            />
-          ) : (
-            <AnimatePresence mode="wait" initial={false} custom={nav.dir}>
-              <motion.div
-                key={rowNumber}
-                custom={nav.dir}
-                variants={directionalSlide}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={transitions.enter}
+            <Tooltip label={t("gridInspectorClose")}>
+              <chakra.button
+                type="button"
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="24px"
+                h="24px"
+                border="none"
+                bg="transparent"
+                color="app.textMuted"
+                borderRadius="sm"
+                cursor="pointer"
+                _hover={{ bg: "app.hover", color: "app.text" }}
+                onClick={onClose}
+                aria-label={t("gridInspectorClose")}
               >
-                {editing && (
-                  <chakra.p textStyle="caption" mb="1">
-                    {t("rowInspectorNullHint")}
-                  </chakra.p>
-                )}
-                {columns.length === 0 ? (
-                  <chakra.div
-                    fontStyle="italic"
-                    color="app.textMuted"
-                    fontSize="sm"
-                  >
-                    {t("gridInspectorEmpty")}
-                  </chakra.div>
-                ) : (
-                  columns.map((col, i) => {
-                    const v = values[i] ?? null;
-                    const isNull = v === null || v === undefined;
-                    const isBinary = columnKinds[i] === "binary";
-                    const raw = isNull
-                      ? ""
-                      : isBinary
-                        ? `0x${String(v)}`
-                        : String(v);
-                    const json =
-                      !isNull && !isBinary ? tryFormatJson(String(v)) : null;
-                    const display = json ?? raw;
-                    const masked = !!maskedColumns?.[i];
-                    const comment = comments?.[i] ?? null;
-                    if (editing && edit?.editableColumns[i]) {
-                      return renderEditField(i);
-                    }
-                    return (
-                      <Box
-                        key={`${col.name}-${i}`}
-                        display="flex"
-                        flexDirection="column"
-                        gap="0.5"
-                        py="1.5"
-                        borderBottom="1px solid"
-                        borderColor="app.borderSubtle"
-                      >
-                        <Box display="flex" alignItems="center" gap="1.5">
-                          <Tooltip
-                            label={withComment(
-                              `${col.name} — ${col.type_name}`,
-                              comment,
-                            )}
-                          >
-                            <chakra.span
-                              flex="1"
-                              fontSize="xs"
-                              fontFamily="mono"
-                              color="app.textMuted"
-                              overflow="hidden"
-                              textOverflow="ellipsis"
-                              whiteSpace="nowrap"
-                            >
-                              {col.name}
-                            </chakra.span>
-                          </Tooltip>
-                          {editing && !edit?.editableColumns[i] && (
-                            <chakra.span
-                              fontSize="2xs"
-                              color="app.textMuted"
-                              flexShrink={0}
-                            >
-                              {t("rowInspectorFieldReadonly")}
-                            </chakra.span>
-                          )}
-                          <Tooltip
-                            label={
-                              masked
-                                ? t("gridMaskedCellTitle")
-                                : t("gridInspectorCopyField")
-                            }
-                            focusableWrapper={isNull || masked}
-                          >
-                            <chakra.button
-                              type="button"
-                              display="inline-flex"
-                              alignItems="center"
-                              justifyContent="center"
-                              w="20px"
-                              h="20px"
-                              border="none"
-                              bg="transparent"
-                              color="app.textMuted"
-                              borderRadius="sm"
-                              cursor="pointer"
-                              flexShrink={0}
-                              _hover={{ bg: "app.hover", color: "app.text" }}
-                              _disabled={{
-                                opacity: 0.35,
-                                cursor: "not-allowed",
-                              }}
-                              disabled={isNull || masked}
-                              onClick={() => void copyField(raw)}
-                              aria-label={t("gridInspectorCopyField")}
-                            >
-                              <Icon name="copy" size={ICON_SIZES.sm} />
-                            </chakra.button>
-                          </Tooltip>
-                        </Box>
-                        {comment && (
-                          <chakra.span
-                            fontSize="xs"
-                            color="app.textSecondary"
-                            wordBreak="break-word"
-                          >
-                            {comment}
-                          </chakra.span>
-                        )}
-                        {masked ? (
-                          <chakra.span
-                            fontSize="sm"
-                            color="app.textMuted"
-                            letterSpacing="wider"
-                            aria-label={t("gridMaskedCellAria")}
-                          >
-                            {MASK_PLACEHOLDER}
-                          </chakra.span>
-                        ) : isNull ? (
-                          <chakra.span
-                            fontSize="sm"
-                            fontStyle="italic"
-                            color="app.textMuted"
-                          >
-                            {t("resultNull")}
-                          </chakra.span>
-                        ) : (
-                          <chakra.pre
-                            m={0}
-                            maxH="180px"
-                            overflow="auto"
-                            fontFamily="mono"
-                            fontSize="sm"
-                            lineHeight={1.45}
-                            whiteSpace="pre-wrap"
-                            wordBreak="break-word"
-                            color="app.text"
-                          >
-                            {display}
-                          </chakra.pre>
-                        )}
-                      </Box>
-                    );
-                  })
-                )}
-              </motion.div>
-            </AnimatePresence>
-          )}
-        </Box>
+                <Icon name="close" size={ICON_SIZES.md} />
+              </chakra.button>
+            </Tooltip>
+          </Box>
 
-        {editing && edit && (
+          {hasRelated && (
+            <Box px="3" pt="2" flexShrink={0}>
+              <Segmented
+                value={activeView}
+                onChange={(v) => {
+                  if (!editing) setView(v);
+                }}
+                ariaLabel={t("inspectorTabsAria")}
+                options={[
+                  { value: "fields", label: t("inspectorTabFields") },
+                  {
+                    value: "related",
+                    label: t("inspectorTabRelated", {
+                      count: related?.entries.length ?? 0,
+                    }),
+                    icon: "link",
+                  },
+                ]}
+              />
+            </Box>
+          )}
+
           <Box
-            display="flex"
-            alignItems="center"
-            gap="2"
+            flex="1"
+            overflowY="auto"
+            css={{ scrollbarWidth: "thin" }}
             px="3"
             py="2"
-            borderTop="1px solid"
-            borderColor="app.border"
-            flexShrink={0}
+            onKeyDown={onFormKeyDown}
+            onContextMenu={(e) => {
+              if (!rowSql || editing || activeView !== "fields") return;
+              e.preventDefault();
+              setSqlMenu({ x: e.clientX, y: e.clientY });
+            }}
           >
-            <chakra.span
-              flex="1"
-              minW="0"
-              fontSize="xs"
-              color={edit.blockedReason || stale ? "app.textWarning" : "app.textMuted"}
-            >
-              {edit.blockedReason
-                ? t(edit.blockedReason)
-                : stale
-                  ? t("rowInspectorEditStale")
-                  : hasErrors
-                    ? t("rowInspectorEditHasErrors")
-                    : changedCount > 0
-                      ? t("rowInspectorChangeCount", { count: changedCount })
-                      : t("rowInspectorEditNoChanges")}
-            </chakra.span>
-            <Button type="button" variant="secondary" onClick={cancelEdit}>
-              {t("rowInspectorEditCancel")}
-            </Button>
-            <PressableButton
-              type="button"
-              variant="primary"
-              disabled={!canApply}
-              onClick={() => void applyEdit()}
-            >
-              {t("editApplyButton")}
-            </PressableButton>
+            {activeView === "related" && related ? (
+              <RelatedRowsPanel
+                entries={related.entries}
+                driver={related.driver}
+                database={related.database}
+                runQuery={related.runQuery}
+                onOpenInGrid={related.onOpenInGrid}
+              />
+            ) : (
+              <AnimatePresence mode="wait" initial={false} custom={nav.dir}>
+                <motion.div
+                  key={rowNumber}
+                  custom={nav.dir}
+                  variants={directionalSlide}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                  transition={transitions.enter}
+                >
+                  {editing && (
+                    <chakra.p textStyle="caption" mb="1">
+                      {t("rowInspectorNullHint")}
+                    </chakra.p>
+                  )}
+                  {columns.length === 0 ? (
+                    <chakra.div fontStyle="italic" color="app.textMuted" fontSize="sm">
+                      {t("gridInspectorEmpty")}
+                    </chakra.div>
+                  ) : (
+                    columns.map((col, i) => {
+                      const v = values[i] ?? null;
+                      const isNull = v === null || v === undefined;
+                      const isBinary = columnKinds[i] === "binary";
+                      const raw = isNull ? "" : isBinary ? `0x${String(v)}` : String(v);
+                      const json = !isNull && !isBinary ? tryFormatJson(String(v)) : null;
+                      const display = json ?? raw;
+                      const masked = !!maskedColumns?.[i];
+                      const comment = comments?.[i] ?? null;
+                      if (editing && edit?.editableColumns[i]) {
+                        return renderEditField(i);
+                      }
+                      return (
+                        <Box
+                          key={`${col.name}-${i}`}
+                          display="flex"
+                          flexDirection="column"
+                          gap="0.5"
+                          py="1.5"
+                          borderBottom="1px solid"
+                          borderColor="app.borderSubtle"
+                        >
+                          <Box display="flex" alignItems="center" gap="1.5">
+                            <Tooltip label={withComment(`${col.name} — ${col.type_name}`, comment)}>
+                              <chakra.span
+                                flex="1"
+                                fontSize="xs"
+                                fontFamily="mono"
+                                color="app.textMuted"
+                                overflow="hidden"
+                                textOverflow="ellipsis"
+                                whiteSpace="nowrap"
+                              >
+                                {col.name}
+                              </chakra.span>
+                            </Tooltip>
+                            {editing && !edit?.editableColumns[i] && (
+                              <chakra.span fontSize="2xs" color="app.textMuted" flexShrink={0}>
+                                {t("rowInspectorFieldReadonly")}
+                              </chakra.span>
+                            )}
+                            <Tooltip
+                              label={masked ? t("gridMaskedCellTitle") : t("gridInspectorCopyField")}
+                              focusableWrapper={isNull || masked}
+                            >
+                              <chakra.button
+                                type="button"
+                                display="inline-flex"
+                                alignItems="center"
+                                justifyContent="center"
+                                w="20px"
+                                h="20px"
+                                border="none"
+                                bg="transparent"
+                                color="app.textMuted"
+                                borderRadius="sm"
+                                cursor="pointer"
+                                flexShrink={0}
+                                _hover={{ bg: "app.hover", color: "app.text" }}
+                                _disabled={{
+                                  opacity: 0.35,
+                                  cursor: "not-allowed",
+                                }}
+                                disabled={isNull || masked}
+                                onClick={() => void copyField(raw)}
+                                aria-label={t("gridInspectorCopyField")}
+                              >
+                                <Icon name="copy" size={ICON_SIZES.sm} />
+                              </chakra.button>
+                            </Tooltip>
+                          </Box>
+                          {comment && (
+                            <chakra.span fontSize="xs" color="app.textSecondary" wordBreak="break-word">
+                              {comment}
+                            </chakra.span>
+                          )}
+                          {masked ? (
+                            <chakra.span
+                              fontSize="sm"
+                              color="app.textMuted"
+                              letterSpacing="wider"
+                              aria-label={t("gridMaskedCellAria")}
+                            >
+                              {MASK_PLACEHOLDER}
+                            </chakra.span>
+                          ) : isNull ? (
+                            <chakra.span fontSize="sm" fontStyle="italic" color="app.textMuted">
+                              {t("resultNull")}
+                            </chakra.span>
+                          ) : (
+                            <chakra.pre
+                              m={0}
+                              maxH="180px"
+                              overflow="auto"
+                              fontFamily="mono"
+                              fontSize="sm"
+                              lineHeight={1.45}
+                              whiteSpace="pre-wrap"
+                              wordBreak="break-word"
+                              color="app.text"
+                            >
+                              {display}
+                            </chakra.pre>
+                          )}
+                        </Box>
+                      );
+                    })
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            )}
           </Box>
-        )}
-      </MotionDrawer>
-    </AnimatePresence>
-    {sqlMenu && rowSql && (
-      <ContextMenu
-        x={sqlMenu.x}
-        y={sqlMenu.y}
-        items={sqlMenuItems()}
-        onClose={() => setSqlMenu(null)}
-      />
-    )}
+
+          {editing && edit && (
+            <Box
+              display="flex"
+              alignItems="center"
+              gap="2"
+              px="3"
+              py="2"
+              borderTop="1px solid"
+              borderColor="app.border"
+              flexShrink={0}
+            >
+              <chakra.span
+                flex="1"
+                minW="0"
+                fontSize="xs"
+                color={edit.blockedReason || stale ? "app.textWarning" : "app.textMuted"}
+              >
+                {edit.blockedReason
+                  ? t(edit.blockedReason)
+                  : stale
+                    ? t("rowInspectorEditStale")
+                    : hasErrors
+                      ? t("rowInspectorEditHasErrors")
+                      : changedCount > 0
+                        ? t("rowInspectorChangeCount", { count: changedCount })
+                        : t("rowInspectorEditNoChanges")}
+              </chakra.span>
+              <Button type="button" variant="secondary" onClick={cancelEdit}>
+                {t("rowInspectorEditCancel")}
+              </Button>
+              <PressableButton
+                type="button"
+                variant="primary"
+                disabled={!canApply}
+                onClick={() => void applyEdit()}
+              >
+                {t("editApplyButton")}
+              </PressableButton>
+            </Box>
+          )}
+        </MotionDrawer>
+      </AnimatePresence>
+      {sqlMenu && rowSql && (
+        <ContextMenu x={sqlMenu.x} y={sqlMenu.y} items={sqlMenuItems()} onClose={() => setSqlMenu(null)} />
+      )}
     </>,
     document.body,
   );

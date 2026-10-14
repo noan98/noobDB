@@ -33,7 +33,14 @@ interface Props {
   onClose: () => void;
 }
 
-export function CreateNamespaceModal({ driver, readOnly, initialKind, onRun, onSendToEditor, onClose }: Props) {
+export function CreateNamespaceModal({
+  driver,
+  readOnly,
+  initialKind,
+  onRun,
+  onSendToEditor,
+  onClose,
+}: Props) {
   const t = useT();
   const kinds = supportedNamespaceKinds(driver);
   const [kind, setKind] = useState<NamespaceKind>(

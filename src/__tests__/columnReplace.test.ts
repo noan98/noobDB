@@ -83,11 +83,15 @@ describe("buildColumnReplaceCountSql (#1536)", () => {
     return r.sql;
   };
   it("UPDATE と同じ WHERE 句で COUNT(*) を数える (3 ドライバ)", () => {
-    expect(countOf(base())).toBe("SELECT COUNT(*) FROM `app`.`users` WHERE CAST(REPLACE(`url`, 'http://', 'https://') AS BINARY) <> CAST(`url` AS BINARY)");
+    expect(countOf(base())).toBe(
+      "SELECT COUNT(*) FROM `app`.`users` WHERE CAST(REPLACE(`url`, 'http://', 'https://') AS BINARY) <> CAST(`url` AS BINARY)",
+    );
     expect(countOf(base({ driver: "postgres" }))).toBe(
       'SELECT COUNT(*) FROM "app"."users" WHERE POSITION(\'http://\' IN "url") > 0',
     );
-    expect(countOf(base({ driver: "sqlite" }))).toBe('SELECT COUNT(*) FROM "users" WHERE INSTR("url", \'http://\') > 0');
+    expect(countOf(base({ driver: "sqlite" }))).toBe(
+      'SELECT COUNT(*) FROM "users" WHERE INSTR("url", \'http://\') > 0',
+    );
   });
   it("UPDATE 文の WHERE 句と常に一致する (正規表現・大小無視・extraWhere を含む)", () => {
     const cases: ColumnReplaceSqlInput[] = [
@@ -99,7 +103,9 @@ describe("buildColumnReplaceCountSql (#1536)", () => {
       base({ extraWhere: "`id` > 5" }),
     ];
     for (const c of cases) {
-      const where = sqlOf(c).replace(/^.* WHERE /, "").replace(/;$/, "");
+      const where = sqlOf(c)
+        .replace(/^.* WHERE /, "")
+        .replace(/;$/, "");
       expect(countOf(c)).toMatch(new RegExp(`WHERE ${where.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
     }
   });

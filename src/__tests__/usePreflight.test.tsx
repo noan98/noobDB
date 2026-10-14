@@ -76,11 +76,7 @@ describe("usePreflightImpact", () => {
     expect(result.current?.count).toBe(1240);
     expect(result.current?.plan.allRows).toBe(false);
     // 非ストリーミング経路 (履歴を汚さない) で COUNT を流している。
-    expect(runQuery).toHaveBeenCalledWith(
-      "s1",
-      "SELECT COUNT(*) FROM users WHERE age < 18",
-      "app",
-    );
+    expect(runQuery).toHaveBeenCalledWith("s1", "SELECT COUNT(*) FROM users WHERE age < 18", "app");
   });
 
   it("長さ上限 (64KB) を超えるテキストは計画を組み立てず、COUNT も流さない (#1256)", () => {

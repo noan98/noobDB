@@ -40,11 +40,7 @@ function dirname(path: string): string {
  * import 指定子を `sources` のキーへ解決する。相対指定 (`./` / `../`) 以外
  * (npm パッケージ) と、`.css` などソース集合に無いものは `null`。
  */
-export function resolveSpecifier(
-  importer: string,
-  specifier: string,
-  sources: SourceMap,
-): string | null {
+export function resolveSpecifier(importer: string, specifier: string, sources: SourceMap): string | null {
   if (!specifier.startsWith(".")) return null;
   const bare = specifier.replace(/[?#].*$/, "");
   const base = normalize(`${dirname(importer)}/${bare}`);
@@ -88,10 +84,7 @@ export function runtimeImports(path: string, source: string): string[] {
 const NEW_URL_RE = /new\s+URL\(\s*(["'])(\.[^"']+)\1\s*,\s*import\.meta\.url\s*\)/g;
 
 /** `entries` から実行時 import をたどって到達できるモジュールの集合。 */
-export function reachableModules(
-  entries: readonly string[],
-  sources: SourceMap,
-): Set<string> {
+export function reachableModules(entries: readonly string[], sources: SourceMap): Set<string> {
   const seen = new Set<string>();
   const stack = entries.filter((e) => e in sources);
   while (stack.length > 0) {

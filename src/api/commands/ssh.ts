@@ -18,8 +18,7 @@ export const sshCommands = {
    * re-trusts the server's (possibly rotated) key via TOFU. Resolves to `true`
    * when an entry was actually removed (#682).
    */
-  forgetHostKey: (host: string, port: number) =>
-    invoke<boolean>("forget_host_key", { host, port }),
+  forgetHostKey: (host: string, port: number) => invoke<boolean>("forget_host_key", { host, port }),
   /**
    * Pin `host:port` to exactly `fingerprint`, replacing any existing entry. The
    * host-key mismatch recovery flow passes the fingerprint the user approved in

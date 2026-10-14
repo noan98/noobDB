@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { BroadcastDiff, Column } from "../api/tauri";
-import {
-  diffToRowDiff,
-  resolveKeyIndicesByName,
-  MAX_BROADCAST_COMPARE_ROWS,
-} from "../broadcastCompare";
+import { diffToRowDiff, resolveKeyIndicesByName, MAX_BROADCAST_COMPARE_ROWS } from "../broadcastCompare";
 
 // 比較ロジック本体 (PK ペアリング / 行ハッシュ降格 / 打ち切り) は #1257 でバックエンド
 // (`db/broadcast_diff.rs`) へ移り、同等の境界ケースは Rust 側のユニットテストが固定する。

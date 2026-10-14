@@ -16,11 +16,7 @@
 import type { CellValue, Column } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import { editIsNoop } from "./cellEdit";
-import {
-  boolOptions,
-  resolveTypedEditor,
-  type NativeInputType,
-} from "./typedEditor";
+import { boolOptions, resolveTypedEditor, type NativeInputType } from "./typedEditor";
 
 /** 下書き: 列インデックス → 編集中の生の入力文字列 (グリッドの保留編集と同じ表現)。 */
 export type InspectorDraft = Record<number, string>;
@@ -47,10 +43,9 @@ export function inspectorEditableColumns(input: {
   editableColumns?: boolean[];
   maskedColumns?: boolean[];
 }): boolean[] {
-  return Array.from({ length: input.columnCount }, (_, i) =>
-    input.gridEditable &&
-    !!input.editableColumns?.[i] &&
-    !input.maskedColumns?.[i],
+  return Array.from(
+    { length: input.columnCount },
+    (_, i) => input.gridEditable && !!input.editableColumns?.[i] && !input.maskedColumns?.[i],
   );
 }
 

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  reachableModules,
-  resolveSpecifier,
-  runtimeImports,
-  toSrcRelative,
-} from "./moduleGraph";
+import { reachableModules, resolveSpecifier, runtimeImports, toSrcRelative } from "./moduleGraph";
 
 // `moduleGraph.ts` (#1421) のリグレッションテスト。実ソースではなく合成したソース集合で、
 // 「UI の入口を外した機能一式」が推移的デッドコードとして検出されることを固定する。
@@ -37,9 +32,7 @@ const apiRefRe = (name: string) => new RegExp(`\\bapi\\s*\\.\\s*${name}\\b`);
 
 /** 旧判定 (#907): `src/` のどこかに `api.<name>` の文字列があれば到達可能。 */
 function textuallyReferenced(sources: Record<string, string>, name: string) {
-  return Object.entries(sources).some(
-    ([p, src]) => isConsumer(p) && apiRefRe(name).test(src),
-  );
+  return Object.entries(sources).some(([p, src]) => isConsumer(p) && apiRefRe(name).test(src));
 }
 
 /** 新判定 (#1421): main.tsx から到達するモジュール内の参照だけを数える。 */
@@ -105,13 +98,9 @@ const s = "import y from './inString'";`,
       "util.tsx": "",
     };
     expect(resolveSpecifier("App.tsx", "./components/a", sources)).toBe("components/a.ts");
-    expect(resolveSpecifier("components/b.ts", "./grid", sources)).toBe(
-      "components/grid/index.tsx",
-    );
+    expect(resolveSpecifier("components/b.ts", "./grid", sources)).toBe("components/grid/index.tsx");
     expect(resolveSpecifier("components/b.ts", "../util", sources)).toBe("util.tsx");
-    expect(resolveSpecifier("components/b.ts", "./a.ts?raw", sources)).toBe(
-      "components/a.ts",
-    );
+    expect(resolveSpecifier("components/b.ts", "./a.ts?raw", sources)).toBe("components/a.ts");
     expect(resolveSpecifier("App.tsx", "react", sources)).toBeNull();
     expect(resolveSpecifier("App.tsx", "./App.css", sources)).toBeNull();
   });

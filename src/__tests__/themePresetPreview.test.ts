@@ -5,11 +5,7 @@ import { describe, it, expect } from "vitest";
 // 値からズレていないかを検証する。
 import css from "../App.css?raw";
 import { THEME_PRESET_ORDER, themePresetDataTheme, type Theme } from "../settings";
-import {
-  THEME_PREVIEW_CHIP_ORDER,
-  themePreviewColors,
-  themePreviewGradient,
-} from "../themePresetPreview";
+import { THEME_PREVIEW_CHIP_ORDER, themePreviewColors, themePreviewGradient } from "../themePresetPreview";
 
 /**
  * themePresetPreview.ts の静的カラーマップと App.css の実値との同期を固定する

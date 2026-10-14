@@ -39,11 +39,7 @@ describe("sortStatRows (#1539)", () => {
       "c",
       "a",
     ]);
-    expect(sortStatRows(rows, { key: "mean", dir: "asc" }, fp).map((r) => r.digest)).toEqual([
-      "b",
-      "c",
-      "a",
-    ]);
+    expect(sortStatRows(rows, { key: "mean", dir: "asc" }, fp).map((r) => r.digest)).toEqual(["b", "c", "a"]);
   });
   it("値が無い行は向きに関わらず末尾", () => {
     expect(sortStatRows(rows, { key: "rows", dir: "desc" }, fp).map((r) => r.digest)).toEqual([
@@ -51,11 +47,7 @@ describe("sortStatRows (#1539)", () => {
       "c",
       "b",
     ]);
-    expect(sortStatRows(rows, { key: "rows", dir: "asc" }, fp).map((r) => r.digest)).toEqual([
-      "c",
-      "a",
-      "b",
-    ]);
+    expect(sortStatRows(rows, { key: "rows", dir: "asc" }, fp).map((r) => r.digest)).toEqual(["c", "a", "b"]);
   });
   it("同値は元の順序を保つ", () => {
     const tie = [row("x", 1, 1, 1, 1), row("y", 1, 1, 1, 1), row("z", 1, 1, 1, 1)];
@@ -66,9 +58,11 @@ describe("sortStatRows (#1539)", () => {
     ]);
   });
   it("フィンガープリントは文字列比較", () => {
-    expect(
-      sortStatRows(rows, { key: "fingerprint", dir: "desc" }, fp).map((r) => r.digest),
-    ).toEqual(["c", "b", "a"]);
+    expect(sortStatRows(rows, { key: "fingerprint", dir: "desc" }, fp).map((r) => r.digest)).toEqual([
+      "c",
+      "b",
+      "a",
+    ]);
   });
 });
 
@@ -101,16 +95,7 @@ describe("statRowsToTable / CSV / TSV (#1539)", () => {
   const r = { ...row("q", 3, 12.5, 4.1666, null, null), n_plus_one: true };
   const table = statRowsToTable([r], () => 'SELECT "a",\n b FROM t\tWHERE x = ?', labels);
   it("見出しと行を作り、null はそのまま", () => {
-    expect(table.header).toEqual([
-      "Calls",
-      "Total",
-      "Mean",
-      "Max",
-      "Rows",
-      "DB",
-      "N+1",
-      "Fingerprint",
-    ]);
+    expect(table.header).toEqual(["Calls", "Total", "Mean", "Max", "Rows", "DB", "N+1", "Fingerprint"]);
     expect(table.rows[0].slice(0, 7)).toEqual([3, 12.5, 4.1666, 8.3332, null, null, "Y"]);
   });
   it("CSV はカンマ・改行・ダブルクオートをエスケープする", () => {

@@ -53,8 +53,7 @@ function currentView(): EditorView {
   return view;
 }
 
-const schema = (name: string): TableSchema[] =>
-  [{ name, columns: ["id"] }] as unknown as TableSchema[];
+const schema = (name: string): TableSchema[] => [{ name, columns: ["id"] }] as unknown as TableSchema[];
 
 describe("QueryEditor のタブ切替 (#1308)", () => {
   beforeEach(() => {
@@ -180,12 +179,7 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
       <QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" />,
     );
     rerender(
-      <QueryEditor
-        tabId="b"
-        onRun={() => {}}
-        initialSql="ABC"
-        initialSelection={{ anchor: 1, head: 99 }}
-      />,
+      <QueryEditor tabId="b" onRun={() => {}} initialSql="ABC" initialSelection={{ anchor: 1, head: 99 }} />,
     );
     const sel = currentView().state.selection.main;
     expect(sel.anchor).toBe(1);
@@ -218,19 +212,13 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
     const { rerender } = renderWithProviders(
       <QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" databaseSchema={schema("t1")} />,
     );
-    rerender(
-      <QueryEditor tabId="b" onRun={() => {}} initialSql="SELECT 2" databaseSchema={schema("t1")} />,
-    );
+    rerender(<QueryEditor tabId="b" onRun={() => {}} initialSql="SELECT 2" databaseSchema={schema("t1")} />);
     const before = counters.sqlExt;
     // 別タブ表示中にスキーマが更新された → タブ b 用の再構成が 1 回走る。
-    rerender(
-      <QueryEditor tabId="b" onRun={() => {}} initialSql="SELECT 2" databaseSchema={schema("t2")} />,
-    );
+    rerender(<QueryEditor tabId="b" onRun={() => {}} initialSql="SELECT 2" databaseSchema={schema("t2")} />);
     expect(counters.sqlExt).toBe(before + 1);
     // 古いスキーマのまま保存されていたタブ a へ戻ると、そこでも 1 回だけ追従する。
-    rerender(
-      <QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" databaseSchema={schema("t2")} />,
-    );
+    rerender(<QueryEditor tabId="a" onRun={() => {}} initialSql="SELECT 1" databaseSchema={schema("t2")} />);
     expect(counters.sqlExt).toBe(before + 2);
   });
 
@@ -294,7 +282,10 @@ describe("QueryEditor のタブ切替 (#1308)", () => {
       />
     );
     const idCol = () => {
-      const ns = counters.lastSchema as Record<string, { children: Array<{ type: string; detail?: string }> }>;
+      const ns = counters.lastSchema as Record<
+        string,
+        { children: Array<{ type: string; detail?: string }> }
+      >;
       return ns.t1.children[0];
     };
     const { rerender } = renderWithProviders(el(schema("t1")));
@@ -359,9 +350,7 @@ describe("QueryEditor の FK 補完のスコープ追従 (#1413)", () => {
 
   it("databaseSchema の参照が同じまま session だけ切り替えても、旧 session の FK を捨てる", async () => {
     const s2 = deferred<unknown>();
-    apiMock.foreignKeys.mockImplementation((s: string) =>
-      s === "s1" ? Promise.resolve(FK) : s2.promise,
-    );
+    apiMock.foreignKeys.mockImplementation((s: string) => (s === "s1" ? Promise.resolve(FK) : s2.promise));
     const ds = schema("t1");
     const { rerender } = renderWithProviders(el({ ds }));
     await act(async () => {});

@@ -92,7 +92,8 @@ export function workspaceCommandItems(
     group: "navigation",
     label: t("cmdkActivityPanel"),
     icon: "bell",
-    keywords: "activity notifications toast panel messages status bar history アクティビティ 通知 トースト パネル メッセージ ステータス 履歴",
+    keywords:
+      "activity notifications toast panel messages status bar history アクティビティ 通知 トースト パネル メッセージ ステータス 履歴",
     run: () => actions.toggleBottomPanel("activity"),
   });
   // アドバイザは DB コンテキストが要る (ツールメニューと同じガード)。DB が解決
@@ -132,7 +133,8 @@ export function workspaceCommandItems(
       group: "navigation",
       label: t("cmdkAssertions"),
       icon: "check",
-      keywords: "data quality assertion test not null unique accepted values range orphan row count データ品質 アサーション 検証 孤児 一意",
+      keywords:
+        "data quality assertion test not null unique accepted values range orphan row count データ品質 アサーション 検証 孤児 一意",
       run: () => actions.toggleBottomPanel("assertions"),
     });
   }
@@ -202,7 +204,8 @@ export function workspaceCommandItems(
       group: "navigation",
       label: t("appSchemaDrift"),
       icon: "diff",
-      keywords: "schema drift timeline snapshot change history スキーマ ドリフト タイムライン スナップショット 変更 履歴",
+      keywords:
+        "schema drift timeline snapshot change history スキーマ ドリフト タイムライン スナップショット 変更 履歴",
       run: () => actions.openSchemaDrift(),
     });
   }

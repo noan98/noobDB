@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  buildFkJumpSql,
-  buildReverseRefSql,
-} from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql } from "../fkNavigation";
 
 describe("buildFkJumpSql", () => {
   it("qualifies the referenced table with the database for MySQL", () => {

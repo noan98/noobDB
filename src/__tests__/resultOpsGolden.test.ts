@@ -30,7 +30,14 @@ interface SortFilterCase {
   kinds: CellKind[];
   rows: CellValue[][];
   sort?: { col: number; desc: boolean }[];
-  filters?: { col: number; op: ColumnFilter["op"]; value: string; value2: string; nullMode: ColumnFilter["nullMode"]; caseSensitive?: boolean }[];
+  filters?: {
+    col: number;
+    op: ColumnFilter["op"];
+    value: string;
+    value2: string;
+    nullMode: ColumnFilter["nullMode"];
+    caseSensitive?: boolean;
+  }[];
   global?: string;
   expected: number[];
 }
@@ -60,22 +67,24 @@ function applyJs(c: SortFilterCase): number[] {
   }));
   const req = buildHandleRequest(sorting, filters, c.global, c.kinds);
   const needle = (c.global ?? "").toLowerCase();
-  let idx = c.rows.map((_, i) => i).filter((i) => {
-    for (const f of filters) {
-      if (!columnFilterPasses(c.rows[i][Number(f.id)] ?? null, f.value)) return false;
-    }
-    if (req.global !== "") {
-      let any = false;
-      for (let k = 0; k < c.kinds.length; k++) {
-        if (globalCellIncludes(c.rows[i][k] ?? null, needle)) {
-          any = true;
-          break;
-        }
+  let idx = c.rows
+    .map((_, i) => i)
+    .filter((i) => {
+      for (const f of filters) {
+        if (!columnFilterPasses(c.rows[i][Number(f.id)] ?? null, f.value)) return false;
       }
-      if (!any) return false;
-    }
-    return true;
-  });
+      if (req.global !== "") {
+        let any = false;
+        for (let k = 0; k < c.kinds.length; k++) {
+          if (globalCellIncludes(c.rows[i][k] ?? null, needle)) {
+            any = true;
+            break;
+          }
+        }
+        if (!any) return false;
+      }
+      return true;
+    });
   const cmp = (kind: HandleSortKind) =>
     kind === "numeric" ? compareNumericCells : kind === "bool" ? compareBoolCells : compareStringCells;
   idx = idx.sort((a, b) => {
@@ -119,7 +128,10 @@ describe("結果ハンドル共有ゴールデン: 列統計", () => {
     expected: ReturnType<typeof columnStats>;
   }[]) {
     it(c.name, () => {
-      const st = columnStats(c.rows.map((r) => r[c.col] ?? null), "string");
+      const st = columnStats(
+        c.rows.map((r) => r[c.col] ?? null),
+        "string",
+      );
       expect(st).toEqual(c.expected);
     });
   }

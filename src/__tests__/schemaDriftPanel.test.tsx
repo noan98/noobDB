@@ -131,9 +131,7 @@ describe("SchemaDriftPanel 構造/データへの導線と DDL の紐づけ (#15
     expect(onOpenStructure).toHaveBeenCalledWith("appdb", "users");
     expect(onClose).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: t("schemaDriftOpenDataAria", { table: "users" }) }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: t("schemaDriftOpenDataAria", { table: "users" }) }));
     expect(onOpenData).toHaveBeenCalledWith("appdb", "users");
 
     // 削除されたテーブルは開けない。

@@ -194,7 +194,9 @@ const KIND_MESSAGE_KEYS: Record<string, I18nKey> = {
 
 /** `kind` に対応する翻訳済みメッセージのキー。無ければ null。 */
 export function messageKeyForKind(kind: string | null | undefined): I18nKey | null {
-  return kind && Object.prototype.hasOwnProperty.call(KIND_MESSAGE_KEYS, kind) ? KIND_MESSAGE_KEYS[kind] : null;
+  return kind && Object.prototype.hasOwnProperty.call(KIND_MESSAGE_KEYS, kind)
+    ? KIND_MESSAGE_KEYS[kind]
+    : null;
 }
 
 /** 捕捉したエラーの表示文: `kind` が翻訳対象ならその文言、それ以外は `String(e)`。 */
@@ -209,10 +211,7 @@ export function localizedErrorMessage(e: unknown, t: (key: I18nKey) => string): 
  * フォールバックする。`kind` を持たない旧形式の生文字列エラーは `matchErrorHint` の
  * 経路だけが効く (後方互換)。
  */
-export function resolveErrorHint(err: {
-  kind?: string | null;
-  message: string;
-}): I18nKey | null {
+export function resolveErrorHint(err: { kind?: string | null; message: string }): I18nKey | null {
   return hintForKind(err.kind, err.message) ?? matchErrorHint(err.message);
 }
 

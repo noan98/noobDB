@@ -116,21 +116,15 @@ export function DangerousQueryDialog({
             <chakra.p m={0} color="app.text">
               {t("dangerousIntro")}
             </chakra.p>
-            <chakra.ul
-              m={0}
-              p={0}
-              listStyleType="none"
-              display="flex"
-              flexDirection="column"
-              gap="2"
-            >
+            <chakra.ul m={0} p={0} listStyleType="none" display="flex" flexDirection="column" gap="2">
               {findings.map((f, idx) => (
                 <chakra.li
                   key={idx}
                   display="flex"
                   flexDirection="column"
                   gap="0.5"
-                  py="2" px="2.5"
+                  py="2"
+                  px="2.5"
                   border="1px solid"
                   borderColor="app.border"
                   borderLeft="3px solid"
@@ -138,13 +132,9 @@ export function DangerousQueryDialog({
                   borderRadius="md"
                   bg="app.toolbar"
                 >
-                  <chakra.span textStyle="subheading">
-                    {t(KIND_LABEL_KEYS[f.kind])}
-                  </chakra.span>
+                  <chakra.span textStyle="subheading">{t(KIND_LABEL_KEYS[f.kind])}</chakra.span>
                   <chakra.span fontSize="sm" color="app.textMuted" fontFamily="mono">
-                    {f.target
-                      ? t("dangerousTargetTable", { target: f.target })
-                      : t("dangerousTargetUnknown")}
+                    {f.target ? t("dangerousTargetTable", { target: f.target }) : t("dangerousTargetUnknown")}
                   </chakra.span>
                 </chakra.li>
               ))}
@@ -161,10 +151,9 @@ export function DangerousQueryDialog({
           <Callout tone={impact.allRows ? "danger" : "warning"}>
             {impact.count !== null && (
               <chakra.span display="block" fontWeight={600}>
-                {t(
-                  impact.verb === "delete" ? "dangerousImpactDelete" : "dangerousImpactUpdate",
-                  { count: impact.count.toLocaleString() },
-                )}
+                {t(impact.verb === "delete" ? "dangerousImpactDelete" : "dangerousImpactUpdate", {
+                  count: impact.count.toLocaleString(),
+                })}
               </chakra.span>
             )}
             {impact.allRows && <chakra.span display="block">{t("dangerousImpactAllRows")}</chakra.span>}
@@ -187,10 +176,7 @@ export function DangerousQueryDialog({
         )}
         {requiresTyped && (
           <chakra.div display="flex" flexDirection="column" gap="1.5">
-            <chakra.label
-              htmlFor="dangerous-type-confirm-input"
-              textStyle="subheading"
-            >
+            <chakra.label htmlFor="dangerous-type-confirm-input" textStyle="subheading">
               {t("typeToConfirmLabel", { target: typedConfirmTarget })}
             </chakra.label>
             <Input

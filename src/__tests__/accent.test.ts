@@ -220,7 +220,9 @@ describe("ToneSurface (テーマプリセットの --bg / --text を基準にす
     for (const p of ACCENT_PRESETS) {
       if (p.hex === null) continue;
       expect(contrastRatio(accentSubtle(p.hex, "light", surface), surface.text)).toBeGreaterThanOrEqual(4.5);
-      expect(contrastRatio(accentSelection(p.hex, "light", surface), surface.text)).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(accentSelection(p.hex, "light", surface), surface.text)).toBeGreaterThanOrEqual(
+        4.5,
+      );
     }
   });
 

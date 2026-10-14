@@ -42,9 +42,7 @@ describe("findIdentityColumn", () => {
         col({ name: "id", data_type: "integer", key: "PRI", default: "nextval('t_id_seq'::regclass)" }),
       ]),
     ).toBe("id");
-    expect(
-      findIdentityColumn("postgres", [col({ name: "id", data_type: "bigint", key: "PRI" })]),
-    ).toBe("id");
+    expect(findIdentityColumn("postgres", [col({ name: "id", data_type: "bigint", key: "PRI" })])).toBe("id");
   });
 
   it("PostgreSQL の text PK・複合 PK・PK 無しは null", () => {
@@ -88,7 +86,7 @@ describe("buildIdentitySyncSql", () => {
 
   it("PostgreSQL の既定は現在値を下げない (GREATEST と pg_sequence_last_value)", () => {
     const sql = buildIdentitySyncSql("postgres", "public", "orders", "id");
-    expect(sql).toContain("GREATEST(COALESCE(MAX(\"id\"), 0), COALESCE(pg_sequence_last_value(");
+    expect(sql).toContain('GREATEST(COALESCE(MAX("id"), 0), COALESCE(pg_sequence_last_value(');
     // 未使用シーケンスの下限として開始値 (seqstart) も見る。
     expect(sql).toContain("SELECT seqstart FROM pg_sequence");
     expect(sql).toContain("IS NOT NULL) FROM");
@@ -120,7 +118,11 @@ describe("buildIdentitySyncSql", () => {
       "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8mb4";
     expect(parseAutoIncrementFromShowCreate(ddl)).toBe("101");
     // 次の値が 1 のときは表オプションが出ない。
-    expect(parseAutoIncrementFromShowCreate("CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB")).toBe("1");
+    expect(
+      parseAutoIncrementFromShowCreate(
+        "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB",
+      ),
+    ).toBe("1");
     expect(parseAutoIncrementFromShowCreate("")).toBeNull();
     expect(parseAutoIncrementFromShowCreate(undefined)).toBeNull();
     expect(mysqlShowCreateTableSql("d", "t")).toBe("SHOW CREATE TABLE `d`.`t`");
@@ -165,8 +167,6 @@ describe("buildIdentitySyncSql", () => {
   });
 
   it("MySQL の MAX 問い合わせ SQL", () => {
-    expect(mysqlMaxValueSql("shop", "orders", "id")).toBe(
-      "SELECT MAX(`id`) FROM `shop`.`orders`",
-    );
+    expect(mysqlMaxValueSql("shop", "orders", "id")).toBe("SELECT MAX(`id`) FROM `shop`.`orders`");
   });
 });

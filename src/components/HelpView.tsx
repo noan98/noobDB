@@ -57,7 +57,12 @@ const HelpFeatureHead = chakra("div", {
 });
 
 const HelpFeatureDesc = chakra("p", {
-  base: { margin: "var(--space-2) 0 0", fontSize: "sm", lineHeight: "var(--leading-normal)", color: "app.text" },
+  base: {
+    margin: "var(--space-2) 0 0",
+    fontSize: "sm",
+    lineHeight: "var(--leading-normal)",
+    color: "app.text",
+  },
 });
 
 const HelpUsageTitle = chakra("p", {
@@ -128,11 +133,7 @@ const SECTIONS: Section[] = [
         titleKey: "helpProfileBackupTitle",
         descKey: "helpProfileBackupDesc",
         impact: "no",
-        stepKeys: [
-          "helpProfileBackupStep1",
-          "helpProfileBackupStep2",
-          "helpProfileBackupStep3",
-        ],
+        stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
         noteKey: "helpProfileBackupNote",
       },
       { titleKey: "helpCellEditTitle", descKey: "helpCellEditDesc", impact: "no" },
@@ -161,11 +162,7 @@ const SECTIONS: Section[] = [
         titleKey: "helpFlightRecorderTitle",
         descKey: "helpFlightRecorderDesc",
         impact: "no",
-        stepKeys: [
-          "helpFlightRecorderStep1",
-          "helpFlightRecorderStep2",
-          "helpFlightRecorderStep3",
-        ],
+        stepKeys: ["helpFlightRecorderStep1", "helpFlightRecorderStep2", "helpFlightRecorderStep3"],
         noteKey: "helpFlightRecorderNote",
       },
     ],
@@ -216,12 +213,7 @@ const SECTIONS: Section[] = [
       {
         titleKey: "helpAiPolicyTitle",
         descKey: "helpAiPolicyDesc",
-        stepKeys: [
-          "helpAiPolicySend",
-          "helpAiPolicyNotSend",
-          "helpAiPolicyKey",
-          "helpAiPolicyRetention",
-        ],
+        stepKeys: ["helpAiPolicySend", "helpAiPolicyNotSend", "helpAiPolicyKey", "helpAiPolicyRetention"],
         noteKey: "helpAiPolicyNote",
       },
       {
@@ -303,8 +295,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewPro
   const [activeSection, setActiveSection] = useState<string>(sectionDomId(SECTIONS[0]));
   const suppressSpyUntilRef = useRef(0);
 
-  const featureTitle = (f: Feature) =>
-    f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey);
+  const featureTitle = (f: Feature) => (f.shortcutId ? formatCombo(resolved[f.shortcutId]) : t(f.titleKey));
   const visibleSections = filterHelpSections(
     SECTIONS.map((sec) => ({
       ...sec,
@@ -344,7 +335,9 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewPro
   return (
     <Modal
       // no-submit: 参照画面 (閉じるのみ)
-      onClose={onClose} width="1120px">
+      onClose={onClose}
+      width="1120px"
+    >
       <ModalHeader onClose={onClose} closeLabel={t("helpClose")}>
         {t("helpTitle")}
       </ModalHeader>
@@ -375,7 +368,9 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewPro
             )}
           </SettingsNavAside>
           <chakra.div display="flex" flexDirection="column" gap="4.5" flex="1" minW={0}>
-            <SettingsHelp fontSize="md" lineHeight="1.5">{t("helpIntro")}</SettingsHelp>
+            <SettingsHelp fontSize="md" lineHeight="1.5">
+              {t("helpIntro")}
+            </SettingsHelp>
 
             {(onStartTour || onOpenCheatSheet) && (
               <chakra.div display="flex" gap="2" flexWrap="wrap">
@@ -393,11 +388,7 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewPro
             )}
 
             {visibleSections.map((section) => (
-              <SettingsSection
-                key={section.headerKey}
-                id={sectionDomId(section)}
-                scrollMarginTop="8px"
-              >
+              <SettingsSection key={section.headerKey} id={sectionDomId(section)} scrollMarginTop="8px">
                 <SettingsSectionHeader>
                   <chakra.h3>{section.header}</chakra.h3>
                 </SettingsSectionHeader>

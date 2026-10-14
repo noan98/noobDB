@@ -92,9 +92,7 @@ describe("buildSchemaMarkdown", () => {
   it("全行で空の任意列 (Key/Default/Extra) はテーブル単位で省略する", () => {
     const out = buildSchemaMarkdown({
       ...base,
-      tables: [
-        { name: "plain", columns: [col({ name: "a", data_type: "text", nullable: true })] },
-      ],
+      tables: [{ name: "plain", columns: [col({ name: "a", data_type: "text", nullable: true })] }],
       foreignKeys: [],
     });
     expect(out).toContain("| Column | Type | Nullable |\n");
@@ -109,10 +107,7 @@ describe("buildSchemaMarkdown", () => {
       tables: [
         {
           name: "t",
-          columns: [
-            col({ name: "a", default: "0" }),
-            col({ name: "b", nullable: true }),
-          ],
+          columns: [col({ name: "a", default: "0" }), col({ name: "b", nullable: true })],
         },
       ],
       foreignKeys: [],
@@ -208,9 +203,7 @@ describe("buildSchemaMarkdown: コメント (#1540)", () => {
   });
 
   it("テーブルコメントは見出し直下に添え、改行と | はエスケープする", () => {
-    const md = buildSchemaMarkdown(
-      input([{ name: "t", comment: "a|b\nc", columns: [col({ name: "a" })] }]),
-    );
+    const md = buildSchemaMarkdown(input([{ name: "t", comment: "a|b\nc", columns: [col({ name: "a" })] }]));
     expect(md).toContain("## t\n\na\\|b<br>c\n\n| Column");
   });
 

@@ -95,7 +95,7 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
         rows={SAMPLE_ROWS}
         database={null}
         table={null}
-        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as (typeof SAMPLE_ROWS) }}
+        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as typeof SAMPLE_ROWS }}
         onClose={() => {}}
       />,
     );
@@ -117,7 +117,7 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
         rows={SAMPLE_ROWS}
         database={null}
         table={null}
-        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as (typeof SAMPLE_ROWS) }}
+        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as typeof SAMPLE_ROWS }}
         onClose={() => {}}
       />,
     );
@@ -131,7 +131,7 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
         rows={SAMPLE_ROWS}
         database={null}
         table={null}
-        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as (typeof SAMPLE_ROWS) }}
+        selection={{ columns: SELECTION.columns, rows: SELECTION.rows as unknown as typeof SAMPLE_ROWS }}
         onClose={() => {}}
       />,
     );
@@ -154,9 +154,11 @@ describe("ExportModal 調査バンドル (#745)", () => {
   const MASK = { enabled: true, patterns: ["email"], overrides: {} };
 
   function renderBundle() {
-    const describeFn = vi.fn().mockResolvedValue([
-      { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "" },
-    ] as unknown as TableColumnInfo[]);
+    const describeFn = vi
+      .fn()
+      .mockResolvedValue([
+        { name: "id", data_type: "int", nullable: false, key: "PRI", default: null, extra: "" },
+      ] as unknown as TableColumnInfo[]);
     const loadPlan = vi.fn().mockResolvedValue({
       columns: [makeColumn("EXPLAIN", "json")],
       rows: [['{"plan":1}']],

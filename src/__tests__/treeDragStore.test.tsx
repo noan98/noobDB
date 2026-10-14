@@ -10,7 +10,17 @@ import type { TreeDragItem } from "../components/treeDragInsert";
 const item: TreeDragItem = { kind: "column", database: "d", table: "t", column: "c" };
 
 function ptr(type: string, x: number, y: number, init: PointerEventInit = {}) {
-  return new PointerEvent(type, { pointerId: 1, isPrimary: true, button: 0, buttons: 1, bubbles: true, cancelable: true, clientX: x, clientY: y, ...init });
+  return new PointerEvent(type, {
+    pointerId: 1,
+    isPrimary: true,
+    button: 0,
+    buttons: 1,
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+    ...init,
+  });
 }
 
 describe("treeDragStore (ポインタ・ドラッグ)", () => {

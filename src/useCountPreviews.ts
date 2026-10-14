@@ -48,9 +48,10 @@ export function useCountPreviews(
   enabled = true,
 ): Record<string, CountPreviewState> {
   const signature = useMemo(() => JSON.stringify(items.map((i) => [i.id, i.sql])), [items]);
-  const [settled, setSettled] = useState<{ signature: string; results: Record<string, CountPreviewState> } | null>(
-    null,
-  );
+  const [settled, setSettled] = useState<{
+    signature: string;
+    results: Record<string, CountPreviewState>;
+  } | null>(null);
 
   // 要求中か、と、その間に溜まった「最新の 1 件」。
   const busyRef = useRef(false);

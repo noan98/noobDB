@@ -84,7 +84,12 @@ export function searchKindFor(driver: string, dataType: string): CellKind {
   const kind = classifyTypeName(dataType);
   if (driver !== "postgres") return kind;
   if (kind !== "string" && kind !== "json" && kind !== "enum") return kind;
-  const base = dataType.replace(/\([^)]*\)/g, "").trim().split(/\s+/).join(" ").toUpperCase();
+  const base = dataType
+    .replace(/\([^)]*\)/g, "")
+    .trim()
+    .split(/\s+/)
+    .join(" ")
+    .toUpperCase();
   if (base === "NUMERIC" || base === "DECIMAL") return "decimal";
   if (PG_NUMBER_TYPES.has(base)) return "number";
   if (PG_TEXT_TYPES.has(base) || base === "") return "string";

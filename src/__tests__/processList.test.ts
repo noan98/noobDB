@@ -91,7 +91,13 @@ describe("reconcileKillTargets (pid 再利用)", () => {
 
 describe("filterProcesses / sortProcesses (#1538)", () => {
   const rows = [
-    proc(1, { user: "app", database: "shop", command: "Query", time_secs: 5, query_summary: "SELECT * FROM Orders" }),
+    proc(1, {
+      user: "app",
+      database: "shop",
+      command: "Query",
+      time_secs: 5,
+      query_summary: "SELECT * FROM Orders",
+    }),
     proc(2, { user: "batch", database: "shop", command: "Sleep", time_secs: 300 }),
     proc(3, { user: "app", database: "log", command: "Query", time_secs: null, state: "Sending data" }),
     proc(4, { user: null, database: null, command: null, time_secs: 60, host: "10.0.0.7:5000" }),
@@ -108,7 +114,9 @@ describe("filterProcesses / sortProcesses (#1538)", () => {
     expect(ids(filterProcesses(rows, { ...EMPTY_PROCESS_FILTER, user: "app" }))).toEqual([1, 3]);
     expect(ids(filterProcesses(rows, { ...EMPTY_PROCESS_FILTER, database: "shop" }))).toEqual([1, 2]);
     expect(ids(filterProcesses(rows, { ...EMPTY_PROCESS_FILTER, command: "Query" }))).toEqual([1, 3]);
-    expect(ids(filterProcesses(rows, { ...EMPTY_PROCESS_FILTER, user: "app", database: "log" }))).toEqual([3]);
+    expect(ids(filterProcesses(rows, { ...EMPTY_PROCESS_FILTER, user: "app", database: "log" }))).toEqual([
+      3,
+    ]);
   });
 
   it("経過秒は以上で絞り、境界値を含み、不明 (null) は除外する", () => {

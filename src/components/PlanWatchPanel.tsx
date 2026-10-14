@@ -6,12 +6,7 @@ import { PLAN_WATCH_LIVE_FIELDS, watchedRowKey, type PlanWatchState } from "../p
 import { COUNT_UP_TOKEN, splitAroundCountUpToken } from "../useCountUp";
 import { CountUp } from "./CountUp";
 import { LiveCollapse, LiveFlash, LiveRowsPresence, useLiveChanges } from "./LiveRows";
-import {
-  type PlanChange,
-  comparePlans,
-  opsFromSnapshot,
-  resultFromSnapshot,
-} from "./planDiff";
+import { type PlanChange, comparePlans, opsFromSnapshot, resultFromSnapshot } from "./planDiff";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
 import { Button, Select } from "./ui";
@@ -76,12 +71,9 @@ export function PlanWatchPanel({
   );
   // 更新で新しい世代が記録されたスニペットの世代数を一瞬光らせる (#1022)。
   const { flashToken } = useLiveChanges(watched, watchedRowKey, PLAN_WATCH_LIVE_FIELDS);
-  const genCountParts = splitAroundCountUpToken(
-    t("planWatchGenerationCount", { count: COUNT_UP_TOKEN }),
-  );
+  const genCountParts = splitAroundCountUpToken(t("planWatchGenerationCount", { count: COUNT_UP_TOKEN }));
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const active =
-    watched.find((w) => w.id === selectedId) ?? (watched.length > 0 ? watched[0] : null);
+  const active = watched.find((w) => w.id === selectedId) ?? (watched.length > 0 ? watched[0] : null);
 
   // 比較対象の 2 世代。B (比較先) は既定で最新、A (比較元) はその 1 つ前。
   // 世代 ID で保持し、選択中スニペットが変わったら既定へ戻す。
@@ -89,8 +81,7 @@ export function PlanWatchPanel({
   const [pickB, setPickB] = useState<string | null>(null);
   const gens = active?.generations ?? [];
   const genB = gens.find((g) => g.id === pickB) ?? (gens.length > 0 ? gens[0] : null);
-  const genA =
-    gens.find((g) => g.id === pickA) ?? (gens.length > 1 ? gens[1] : genB);
+  const genA = gens.find((g) => g.id === pickA) ?? (gens.length > 1 ? gens[1] : genB);
 
   const changes = useMemo(() => {
     if (!genA || !genB || genA.id === genB.id) return [];
@@ -109,17 +100,15 @@ export function PlanWatchPanel({
   return (
     <Modal
       // no-submit: 一覧の閲覧・管理画面で、確定する主アクションが無い
-      onClose={onClose} width="1180px">
+      onClose={onClose}
+      width="1180px"
+    >
       <ModalHeader onClose={onClose} closeLabel={t("planWatchClose")}>
         {t("planWatchTitle", { name: profile.name })}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3" minHeight="60vh">
         {watched.length === 0 ? (
-          <EmptyState
-            icon="explain"
-            title={t("planWatchEmptyTitle")}
-            description={t("planWatchEmpty")}
-          />
+          <EmptyState icon="explain" title={t("planWatchEmptyTitle")} description={t("planWatchEmpty")} />
         ) : (
           <Flex flex="1" minHeight={0} gap="3" align="stretch">
             {/* 左: ウォッチ済みスニペット一覧 */}
@@ -193,12 +182,15 @@ export function PlanWatchPanel({
               ) : (
                 <>
                   <Flex gap="2.5" align="center" wrap="wrap">
-                    <chakra.label fontSize="sm" color="app.textSecondary" display="flex" alignItems="center" gap="1.5">
+                    <chakra.label
+                      fontSize="sm"
+                      color="app.textSecondary"
+                      display="flex"
+                      alignItems="center"
+                      gap="1.5"
+                    >
                       {t("planWatchCompareFrom")}
-                      <Select
-                        value={genA?.id ?? ""}
-                        onChange={(e) => setPickA(e.target.value)}
-                      >
+                      <Select value={genA?.id ?? ""} onChange={(e) => setPickA(e.target.value)}>
                         {gens.map((g, i) => (
                           <option key={g.id} value={g.id}>
                             {i === 0
@@ -211,12 +203,15 @@ export function PlanWatchPanel({
                     <chakra.span color="app.textMuted" aria-hidden>
                       →
                     </chakra.span>
-                    <chakra.label fontSize="sm" color="app.textSecondary" display="flex" alignItems="center" gap="1.5">
+                    <chakra.label
+                      fontSize="sm"
+                      color="app.textSecondary"
+                      display="flex"
+                      alignItems="center"
+                      gap="1.5"
+                    >
                       {t("planWatchCompareTo")}
-                      <Select
-                        value={genB?.id ?? ""}
-                        onChange={(e) => setPickB(e.target.value)}
-                      >
+                      <Select value={genB?.id ?? ""} onChange={(e) => setPickB(e.target.value)}>
                         {gens.map((g, i) => (
                           <option key={g.id} value={g.id}>
                             {i === 0
@@ -252,7 +247,14 @@ export function PlanWatchPanel({
                           {t("planWatchNoChanges")}
                         </chakra.p>
                       ) : (
-                        <chakra.ul m={0} p={0} listStyleType="none" display="flex" flexDirection="column" gap="1">
+                        <chakra.ul
+                          m={0}
+                          p={0}
+                          listStyleType="none"
+                          display="flex"
+                          flexDirection="column"
+                          gap="1"
+                        >
                           {changes.map((c, i) => (
                             <chakra.li
                               key={`${c.path}-${c.kind}-${i}`}
@@ -306,14 +308,13 @@ export function PlanWatchPanel({
                           borderBottom="1px solid"
                           borderBottomColor="app.borderSubtle"
                         >
-                          <chakra.span textStyle="subheading" fontSize="xs">{pane.label}</chakra.span>
+                          <chakra.span textStyle="subheading" fontSize="xs">
+                            {pane.label}
+                          </chakra.span>
                           {pane.gen && <chakra.span>{formatCaptured(pane.gen.capturedAt)}</chakra.span>}
                         </Flex>
                         <Flex flex="1" minHeight={0} direction="column">
-                          <ExplainViewer
-                            result={pane.result}
-                            driver={pane.gen?.driver ?? profile.driver}
-                          />
+                          <ExplainViewer result={pane.result} driver={pane.gen?.driver ?? profile.driver} />
                         </Flex>
                       </Flex>
                     ))}

@@ -40,7 +40,11 @@ describe("structureColumnRows", () => {
     expect(rows.map((r) => r.position)).toEqual([1, 2, 3]);
     expect(rows[0]).toMatchObject({ keys: ["pk"], extra: "auto_increment", foreignKey: null });
     expect(rows[1].keys).toEqual(["pk", "fk"]);
-    expect(rows[1].foreignKey).toEqual({ column: "user_id", referencedTable: "users", referencedColumn: "id" });
+    expect(rows[1].foreignKey).toEqual({
+      column: "user_id",
+      referencedTable: "users",
+      referencedColumn: "id",
+    });
     // 小文字の "uni" も一意として扱い、空白だけの extra は null。
     expect(rows[2]).toMatchObject({ keys: ["unique"], extra: null, nullable: true, defaultValue: "''" });
     expect(rows[0].comment).toBeNull();

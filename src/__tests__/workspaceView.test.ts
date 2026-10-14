@@ -78,9 +78,9 @@ describe("workspaceViewKey", () => {
   it("複数フラグが同時に立っても App.tsx の三項チェーンと同じ優先順位で 1 つに決まる", () => {
     const connected = { ...base, sessionId: "sess1" };
     // compare が最優先。
-    expect(
-      workspaceViewKey({ ...connected, showCompare: true, showErd: true, showForm: true }),
-    ).toBe("compare");
+    expect(workspaceViewKey({ ...connected, showCompare: true, showErd: true, showForm: true })).toBe(
+      "compare",
+    );
     // erd は users より前。
     expect(workspaceViewKey({ ...connected, showErd: true, showUsers: true })).toBe("erd");
     // form は snippetForm より前。
@@ -138,7 +138,7 @@ describe("workspaceSurfaceKey (#1311)", () => {
 });
 
 describe("App.tsx の結線 (#1311)", () => {
-  it("全画面サーフェスの切替に mode=\"wait\" を使わない (退場待ちをなくす)", () => {
+  it('全画面サーフェスの切替に mode="wait" を使わない (退場待ちをなくす)', () => {
     expect(appSource).not.toMatch(/AnimatePresence mode="wait" initial=\{false\}/);
     // サイドバー・ボトムパネルのタブ切替・結果ペイン・全画面サーフェスのいずれも。
     expect(appSource).not.toMatch(/key=\{workspaceView\}[\s\S]{0,200}exit=\{variants\.fade\.exit\}/);
@@ -157,14 +157,16 @@ describe("App.tsx の結線 (#1311)", () => {
 
   it("Suspense は KeepAlive の内側 (サーフェス単位) に置く", () => {
     expect(appSource).toMatch(
-      /<KeepAlive[\s\S]{0,500}?>\s*<Suspense fallback=\{<PaneEmpty><Spinner size=\{20\} \/><\/PaneEmpty>\}>\s*\{showCompare \? \(/,
+      /<KeepAlive[\s\S]{0,500}?>\s*<Suspense\s+fallback=\{\s*<PaneEmpty>\s*<Spinner size=\{20\} \/>\s*<\/PaneEmpty>\s*\}\s*>\s*\{showCompare \? \(/,
     );
   });
 
   it("サイドバーの ConnectionList は常駐し (離れても loadSchemaTree をやり直さない)、ほかのタブは keep-alive", () => {
     // ConnectionList はタブ分岐の三項に入れない (= タブ切替でアンマウントされない)。
     expect(appSource).not.toMatch(/sidebarTab === "connections" \? \(\s*<ConnectionList/);
-    expect(appSource).toMatch(/hidden=\{sidebarTab !== "connections"\}[\s\S]{0,200}inert=\{sidebarTab !== "connections" \|\| undefined\}/);
+    expect(appSource).toMatch(
+      /hidden=\{sidebarTab !== "connections"\}[\s\S]{0,200}inert=\{sidebarTab !== "connections" \|\| undefined\}/,
+    );
     expect(appSource).toMatch(/<KeepAlive\s+activeKey=\{sidebarTab === "connections" \? null : sidebarTab\}/);
   });
 

@@ -29,16 +29,12 @@ describe("AdvisorPanel error state (#848)", () => {
   it("shows the shared EmptyState title on diagnosis failure, and retries on click", async () => {
     vi.mocked(api.analyzeSchemaHealth).mockRejectedValueOnce(new Error("access denied"));
 
-    renderWithProviders(
-      <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
-    );
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
 
     fireEvent.click(screen.getByText(t("advisorRun")));
 
     await waitFor(() => {
-      expect(
-        screen.getByText(t("advisorError", { error: "Error: access denied" })),
-      ).toBeInTheDocument();
+      expect(screen.getByText(t("advisorError", { error: "Error: access denied" }))).toBeInTheDocument();
     });
     expect(api.analyzeSchemaHealth).toHaveBeenCalledTimes(1);
 
@@ -262,7 +258,9 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
     });
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
     fireEvent.click(screen.getByText(t("advisorRun")));
-    await waitFor(() => expect(screen.getByRole("button", { name: t("advisorInsertFix") })).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: t("advisorInsertFix") })).toBeInTheDocument(),
+    );
     expect(screen.queryByTestId("advisor-table-plans")).toBeNull();
   });
 
@@ -272,7 +270,10 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
       tables_analyzed: 2,
       findings: [finding],
       skipped: [],
-      table_plans: [plan, { ...plan, table: "items", ddl: "ALTER TABLE `items`\n  DROP INDEX `x`;", ddl_online: null }],
+      table_plans: [
+        plan,
+        { ...plan, table: "items", ddl: "ALTER TABLE `items`\n  DROP INDEX `x`;", ddl_online: null },
+      ],
     });
     const onInsertSql = vi.fn();
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);

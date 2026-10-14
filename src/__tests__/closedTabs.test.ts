@@ -26,13 +26,24 @@ describe("snapshotClosedTab", () => {
       meta,
       { anchor: 3, head: 4 },
     );
-    expect(s).toMatchObject({ kind: "query", sql: "SELECT 2", database: "db", selection: { anchor: 3, head: 4 } });
+    expect(s).toMatchObject({
+      kind: "query",
+      sql: "SELECT 2",
+      database: "db",
+      selection: { anchor: 3, head: 4 },
+    });
   });
 
   it("手動リネーム済み (titleManual) は query タブのときだけ保持する (#1390)", () => {
-    expect(snapshotClosedTab({ kind: "query", title: "月次", titleManual: true }, "SELECT 1", meta)?.titleManual).toBe(true);
-    expect(snapshotClosedTab({ kind: "query", title: "q" }, "SELECT 1", meta)).not.toHaveProperty("titleManual");
-    expect(snapshotClosedTab({ kind: "explain", title: "e", titleManual: true }, "EXPLAIN SELECT 1", meta)).not.toHaveProperty("titleManual");
+    expect(
+      snapshotClosedTab({ kind: "query", title: "月次", titleManual: true }, "SELECT 1", meta)?.titleManual,
+    ).toBe(true);
+    expect(snapshotClosedTab({ kind: "query", title: "q" }, "SELECT 1", meta)).not.toHaveProperty(
+      "titleManual",
+    );
+    expect(
+      snapshotClosedTab({ kind: "explain", title: "e", titleManual: true }, "EXPLAIN SELECT 1", meta),
+    ).not.toHaveProperty("titleManual");
   });
 
   it("本文が空白だけのクエリ / explain タブは残さない", () => {
@@ -41,7 +52,9 @@ describe("snapshotClosedTab", () => {
   });
 
   it("table タブは本文が空でも database/table があれば残し、無ければ捨てる", () => {
-    expect(snapshotClosedTab({ kind: "table", title: "users", database: "d", table: "users" }, "", meta)).not.toBeNull();
+    expect(
+      snapshotClosedTab({ kind: "table", title: "users", database: "d", table: "users" }, "", meta),
+    ).not.toBeNull();
     expect(snapshotClosedTab({ kind: "table", title: "users" }, "SELECT 1", meta)).toBeNull();
   });
 });
@@ -62,7 +75,8 @@ describe("pushClosedTab", () => {
 
   it("スコープごとに上限を超えた古い分を捨てる (他スコープは巻き込まない)", () => {
     let list: ClosedTab[] = [entry({ id: "other", scope: "s2", sql: "O" })];
-    for (let i = 0; i < MAX_CLOSED_TABS + 5; i++) list = pushClosedTab(list, entry({ id: `t${i}`, sql: `S${i}` }));
+    for (let i = 0; i < MAX_CLOSED_TABS + 5; i++)
+      list = pushClosedTab(list, entry({ id: `t${i}`, sql: `S${i}` }));
     expect(closedTabsForScope(list, "s1")).toHaveLength(MAX_CLOSED_TABS);
     expect(closedTabsForScope(list, "s1")[0].id).toBe(`t${MAX_CLOSED_TABS + 4}`);
     expect(closedTabsForScope(list, "s2")).toHaveLength(1);
@@ -76,7 +90,11 @@ describe("pushClosedTab", () => {
 });
 
 describe("takeClosedTab", () => {
-  const list = [entry({ id: "n", scope: "s2", sql: "N" }), entry({ id: "a", sql: "A" }), entry({ id: "b", sql: "B" })];
+  const list = [
+    entry({ id: "n", scope: "s2", sql: "N" }),
+    entry({ id: "a", sql: "A" }),
+    entry({ id: "b", sql: "B" }),
+  ];
 
   it("id 省略時はスコープ内の最新を取り出す", () => {
     const { entry: e, rest } = takeClosedTab(list, "s1");

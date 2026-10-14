@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  formatTokens,
-  summarizeUsage,
-  type AiUsageEventLike,
-} from "../ai/aiUsage";
+import { formatTokens, summarizeUsage, type AiUsageEventLike } from "../ai/aiUsage";
 
 const ev = (over: Partial<AiUsageEventLike> = {}): AiUsageEventLike => ({
   model: "claude-opus-5-5",
@@ -16,7 +12,9 @@ const ev = (over: Partial<AiUsageEventLike> = {}): AiUsageEventLike => ({
 describe("summarizeUsage キャッシュ作成", () => {
   it("キャッシュ書き込みは 0 より大きいときだけ併記する", () => {
     const s = summarizeUsage(
-      ev({ usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 1500 } }),
+      ev({
+        usage: { inputTokens: 10, outputTokens: 5, cacheReadInputTokens: 0, cacheCreationInputTokens: 1500 },
+      }),
     );
     expect(s.cacheWrite).toBe("1.5k");
     expect(s.cacheRead).toBeNull();
@@ -37,7 +35,12 @@ describe("formatTokens / summarizeUsage", () => {
       ev({
         model: "claude-sonnet-5-5",
         fallbackUsed: true,
-        usage: { inputTokens: 100, outputTokens: 50, cacheReadInputTokens: 2000, cacheCreationInputTokens: 0 },
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheReadInputTokens: 2000,
+          cacheCreationInputTokens: 0,
+        },
       }),
     );
     expect(s).toEqual({

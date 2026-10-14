@@ -55,7 +55,7 @@ describe("button wiring", () => {
     ["sidebarExpand", "toggleSidebar"],
   ])("shows the %s tooltip with the %s combo", (key, id) => {
     expect(app).toContain(`${key}`);
-    expect(app).toMatch(new RegExp(`shortcutTooltip\\([^\\n]*${key}[^\\n]*"${id}"`));
+    expect(app).toMatch(new RegExp(`shortcutTooltip\\([^}]{0,200}?${key}[^}]{0,200}?"${id}"`));
   });
 
   it("passes the new-tab combo to TabBar and run/preview tooltips use bindings", () => {
@@ -63,6 +63,6 @@ describe("button wiring", () => {
     const editor = queryEditorSource;
     expect(editor).toContain("labelWithShortcut(runTitleBase, runCombo)");
     expect(editor).toContain("onRunInNewTab");
-    expect(tabBarSource).toContain("labelWithShortcut(t(\"tabNew\"), newTabCombo)");
+    expect(tabBarSource).toContain('labelWithShortcut(t("tabNew"), newTabCombo)');
   });
 });

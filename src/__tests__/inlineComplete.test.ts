@@ -22,8 +22,20 @@ const tables = [
   { name: "secrets", columns: ["token"] },
 ];
 
-function req(doc: string, pos: number = doc.length, over: Partial<Parameters<typeof buildInlineRequest>[0]> = {}) {
-  return buildInlineRequest({ doc, pos, driver: "mysql", maskLiterals: true, tables, database: "app", ...over });
+function req(
+  doc: string,
+  pos: number = doc.length,
+  over: Partial<Parameters<typeof buildInlineRequest>[0]> = {},
+) {
+  return buildInlineRequest({
+    doc,
+    pos,
+    driver: "mysql",
+    maskLiterals: true,
+    tables,
+    database: "app",
+    ...over,
+  });
 }
 
 describe("inlineCompleteAllowed", () => {
@@ -94,7 +106,7 @@ describe("buildInlineRequest", () => {
     expect(sent.split("\n").length).toBeLessThanOrEqual(INLINE_BEFORE_MAX_LINES);
     const long = `SELECT ${"a".repeat(INLINE_BEFORE_MAX_CHARS * 2)} FROM users WHERE `;
     const r2 = req(long);
-    expect((r2?.prompt.length ?? 0)).toBeLessThan(INLINE_BEFORE_MAX_CHARS + 500);
+    expect(r2?.prompt.length ?? 0).toBeLessThan(INLINE_BEFORE_MAX_CHARS + 500);
     const after = Array.from({ length: 50 }, (_, i) => `x${i}`).join("\n");
     const r3 = req(`SELECT * FROM users WHERE \n${after}`, 26);
     const sentAfter = r3?.prompt.split("<after_cursor>\n")[1].split("\n</after_cursor>")[0] ?? "";
@@ -102,7 +114,9 @@ describe("buildInlineRequest", () => {
   });
   it("同じ入力は同じキャッシュキー、違えば別", () => {
     expect(req("SELECT * FROM users WHERE ")?.cacheKey).toBe(req("SELECT * FROM users WHERE ")?.cacheKey);
-    expect(req("SELECT * FROM users WHERE ")?.cacheKey).not.toBe(req("SELECT * FROM orders WHERE ")?.cacheKey);
+    expect(req("SELECT * FROM users WHERE ")?.cacheKey).not.toBe(
+      req("SELECT * FROM orders WHERE ")?.cacheKey,
+    );
   });
   it("行データを含めない (スキーマは列名のみ)", () => {
     const r = req("SELECT * FROM users WHERE ");
@@ -141,7 +155,8 @@ describe("窓の切り口が複数行リテラル / コメントの途中でも�
     const r = req(doc, head.length, { driver: "postgres" });
     expect(r).not.toBeNull();
     expect(r?.prompt).not.toContain("secret-token");
-    const body = "CREATE FUNCTION f() RETURNS int AS $$\nBEGIN\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\nSELECT * FROM users WHERE ";
+    const body =
+      "CREATE FUNCTION f() RETURNS int AS $$\nBEGIN\n  RETURN 1;\nEND;\n$$ LANGUAGE plpgsql;\nSELECT * FROM users WHERE ";
     const r2 = req(`${body}\n${"-- pad\n".repeat(200)}`, body.length, { driver: "postgres" });
     expect(r2).not.toBeNull();
     expect(r2?.prompt).not.toContain("RETURN 1");
@@ -185,10 +200,14 @@ describe("cleanInlineCompletion", () => {
     expect(/[\uD800-\uDBFF]$/.test(out)).toBe(false);
   });
   it("前置き行を除く", () => {
-    expect(cleanInlineCompletion("Here is the completion:\nWHERE id = 1", "SELECT * FROM t ")).toBe("WHERE id = 1");
+    expect(cleanInlineCompletion("Here is the completion:\nWHERE id = 1", "SELECT * FROM t ")).toBe(
+      "WHERE id = 1",
+    );
   });
   it("カーソル前の最終行の繰り返しを除く", () => {
-    expect(cleanInlineCompletion("SELECT * FROM users WHERE id = 1", "SELECT * FROM users")).toBe(" WHERE id = 1");
+    expect(cleanInlineCompletion("SELECT * FROM users WHERE id = 1", "SELECT * FROM users")).toBe(
+      " WHERE id = 1",
+    );
   });
   it("空・空白だけは空文字", () => {
     expect(cleanInlineCompletion("  \n ", "SELECT")).toBe("");
