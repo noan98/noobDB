@@ -60,7 +60,7 @@ export interface TableRef {
 
 const IDENT = String.raw`(?:` + "`[^`]+`" + String.raw`|"[^"]+"|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
 const TABLE_RE = new RegExp(
-  String.raw`\b(?:FROM|JOIN|UPDATE|(?:INSERT(?:\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE|OR\s+\w+))*|REPLACE)\s+INTO|DELETE\s+FROM)\s+(${IDENT}(?:\s*\.\s*${IDENT})?)`,
+  String.raw`\b(?:FROM|JOIN|UPDATE|(?:ALTER|CREATE|DROP|TRUNCATE)\s+TABLE(?:\s+ONLY)?(?:\s+IF\s+(?:NOT\s+)?EXISTS)?|REFERENCES(?!\s+ON\b)|(?:INSERT(?:\s+(?:LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE|OR\s+\w+))*|REPLACE)\s+INTO|DELETE\s+FROM)\s+(${IDENT}(?:\s*\.\s*${IDENT})?)`,
   "gi",
 );
 
@@ -71,6 +71,8 @@ const NON_TABLE_PATTERNS: RegExp[] = [
   /\bDUPLICATE\s+KEY\s+UPDATE\b/gi,
   /\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b/gi,
   /\bDO\s+UPDATE\b/gi,
+  // 外部キーの参照アクション (`ON UPDATE CASCADE` など)。
+  /\bON\s+UPDATE\b/gi,
 ];
 
 function unquote(ident: string): string {

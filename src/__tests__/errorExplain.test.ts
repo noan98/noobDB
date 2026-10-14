@@ -51,6 +51,16 @@ describe("リテラルマスク (#692)", () => {
 });
 
 describe("テーブル名抽出", () => {
+  it("外部キー DDL は ON UPDATE を表名と誤認せず、実テーブルを拾う (#1603)", () => {
+    const tables = (sql: string) => extractTableRefs(sql, "mysql").map((r) => r.table);
+    expect(
+      tables(
+        "ALTER TABLE orders ADD CONSTRAINT fk FOREIGN KEY (user_id) REFERENCES users(id) ON UPDATE CASCADE",
+      ),
+    ).toEqual(["orders", "users"]);
+    expect(tables("ALTER TABLE a ADD FOREIGN KEY (x) REFERENCES b(id) ON UPDATE NO ACTION")).toEqual(["a", "b"]);
+    expect(tables("CREATE TABLE IF NOT EXISTS t (id INT)")).toEqual(["t"]);
+  });
   it("FROM / JOIN / UPDATE / INSERT INTO / DELETE FROM を拾う", () => {
     expect(extractTableRefs("SELECT * FROM a JOIN b ON a.id = b.id", "mysql").map((r) => r.table)).toEqual([
       "a",

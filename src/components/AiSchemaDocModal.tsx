@@ -181,9 +181,18 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
     () => (loaded.kind === "ready" ? filterForeignKeysInScope(loaded.foreignKeys, scopeNames) : []),
     [loaded, scopeNames],
   );
+  // 定義は送信直前に取得するので、取得予定の件数ぶんを上限見積もりで上乗せする。
+  const pendingObjectCount = useMemo(
+    () =>
+      loaded.kind === "ready"
+        ? selectDocObjects(loaded.objects, mode === "all" ? null : scopeNames).length
+        : 0,
+    [loaded, mode, scopeNames],
+  );
   const summary = useMemo(
-    () => summarizeSchemaDocSend({ tables: scopedTables, foreignKeys: scopedFks, objects: [] }),
-    [scopedTables, scopedFks],
+    () =>
+      summarizeSchemaDocSend({ tables: scopedTables, foreignKeys: scopedFks, objects: [] }, pendingObjectCount),
+    [scopedTables, scopedFks, pendingObjectCount],
   );
   const filteredNames = useMemo(() => {
     const q = filter.trim().toLowerCase();

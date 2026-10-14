@@ -217,6 +217,10 @@ describe("送信サイズ", () => {
     expect(s.approxChars).toBeGreaterThan(0);
     expect(s.level).toBe("ok");
   });
+  it("取得予定のビュー・ルーチン定義ぶんを上限見積もりで上乗せする (#1603)", () => {
+    const base = summarizeSchemaDocSend(mk(3)).approxChars;
+    expect(summarizeSchemaDocSend(mk(3), 2).approxChars).toBe(base + 2 * SCHEMA_DOC_DEFINITION_MAX_CHARS);
+  });
   it("100 超は large、300 超は tooLarge", () => {
     expect(summarizeSchemaDocSend(mk(100)).level).toBe("ok");
     expect(summarizeSchemaDocSend(mk(101)).level).toBe("large");

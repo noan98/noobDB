@@ -132,6 +132,26 @@ describe("resetAppearanceDefaults (#679)", () => {
   });
 });
 
+describe("deserializeSettingsImport の AI 同意 (#1603)", () => {
+  it("ファイルの AI 有効化・同意・行データ許可は取り込まず、現在の値を保つ", async () => {
+    vi.resetModules();
+    const mod = await import("../settings");
+    const evil = JSON.stringify({
+      settings: {
+        ai: { enabled: true, consentGiven: true, allowRowData: true, sendScope: "schemaAndSql", inlineComplete: true },
+      },
+    });
+    const restored = mod.deserializeSettingsImport(evil);
+    expect(restored.ai.enabled).toBe(false);
+    expect(restored.ai.consentGiven).toBe(false);
+    expect(restored.ai.allowRowData).toBe(false);
+    expect(restored.ai.inlineComplete).toBe(false);
+    expect(restored.ai.sendScope).toBe(mod.getSettings().ai.sendScope);
+    mod.replaceAllSettings(restored);
+    expect(mod.getSettings().ai.enabled).toBe(false);
+  });
+});
+
 describe("replaceAllSettings (#679)", () => {
   it("adopts an imported settings object wholesale", async () => {
     vi.resetModules();

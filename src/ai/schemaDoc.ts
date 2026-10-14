@@ -309,14 +309,21 @@ export interface SchemaDocSendSummary {
   level: SchemaDocSendLevel;
 }
 
-/** 送信前にモーダルへ見せる、件数と送信サイズの目安。 */
-export function summarizeSchemaDocSend(ctx: SchemaDocContext): SchemaDocSendSummary {
+/**
+ * 送信前にモーダルへ見せる、件数と送信サイズの目安。
+ * ビュー / ルーチンの定義は送信直前に取得するため、`ctx.objects` には載らない。
+ * `pendingObjectCount` (定義を取得して送る予定の件数) ぶんは、1 件あたりの上限文字数で上乗せした
+ * 上限見積もりにする (実際の送信量より小さく見せない)。
+ */
+export function summarizeSchemaDocSend(ctx: SchemaDocContext, pendingObjectCount = 0): SchemaDocSendSummary {
   const tableCount = ctx.tables.length;
   return {
     tableCount,
     columnCount: ctx.tables.reduce((n, t) => n + t.columns.length, 0),
     fkCount: ctx.foreignKeys.length,
-    approxChars: buildSchemaDocContextText(ctx).length,
+    approxChars:
+      buildSchemaDocContextText(ctx).length +
+      Math.max(0, pendingObjectCount) * SCHEMA_DOC_DEFINITION_MAX_CHARS,
     level:
       tableCount > SCHEMA_DOC_WARN_TABLES
         ? "tooLarge"
