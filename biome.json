@@ -3,7 +3,12 @@
   "root": true,
   "vcs": { "enabled": false },
   "files": { "includes": ["src/**/*.ts", "src/**/*.tsx"] },
-  "formatter": { "enabled": false },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 110
+  },
   "assist": { "enabled": false },
   "linter": {
     "enabled": true,
