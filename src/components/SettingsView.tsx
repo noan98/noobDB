@@ -921,21 +921,38 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       active = false;
     };
   }, []);
+  // 確認ダイアログを開いている間はボタンを押せるが、二重にダイアログを出さない。
+  const updateFlowRef = useRef(false);
   const handleCheckForUpdates = async () => {
-    if (checkingUpdate) return;
-    setCheckingUpdate(true);
+    if (checkingUpdate || updateFlowRef.current) return;
+    updateFlowRef.current = true;
     try {
-      const update = await checkForAppUpdate();
-      if (!update) {
-        toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
-        return;
-      }
-      await confirmAndInstallUpdate(update, { t, toast, confirm });
+      await runUpdateCheck();
+    } finally {
+      updateFlowRef.current = false;
+    }
+  };
+  const runUpdateCheck = async () => {
+    setCheckingUpdate(true);
+    let update: Awaited<ReturnType<typeof checkForAppUpdate>>;
+    try {
+      update = await checkForAppUpdate();
     } catch {
       // 手動チェックは失敗を明示的に知らせる (起動時の静かな無視とは対照的)。
       toast.error(t("updateCheckFailed"));
+      return;
     } finally {
+      // ローディングは「配布元へ問い合わせている区間」だけ。確認ダイアログの間は戻す。
       setCheckingUpdate(false);
+    }
+    if (!update) {
+      toast.success(t("updateUpToDate", { version: displayVersion(appVersion) }));
+      return;
+    }
+    try {
+      await confirmAndInstallUpdate(update, { t, toast, confirm });
+    } catch {
+      toast.error(t("updateCheckFailed"));
     }
   };
 

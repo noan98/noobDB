@@ -155,6 +155,11 @@ export function TableConstraintEditor({
             </Flex>
           </chakra.div>
         ))}
+        {!disabled && columnNames.length === 0 && (
+          <chakra.span textStyle="caption" data-testid="fk-need-columns">
+            {t("constraintFkNeedColumns")}
+          </chakra.span>
+        )}
         <Flex>
           <Button
             type="button"

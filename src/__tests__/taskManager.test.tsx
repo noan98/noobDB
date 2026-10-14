@@ -343,3 +343,14 @@ describe("TaskManager 取得系アクションと接続リトライ (#1537)", ()
     await waitFor(() => expect(screen.getByText(`(${t("taskRunAttempts", { n: 3 })})`)).toBeInTheDocument());
   });
 });
+
+describe("TaskManager 初回読み込み (#1617)", () => {
+  it("一覧を取得するまでは「タスクがありません」を出さない", async () => {
+    let resolve: (v: TaskDefinition[]) => void = () => {};
+    listTasks.mockImplementation(() => new Promise<TaskDefinition[]>((res) => (resolve = res)));
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    expect(screen.queryByText(t("taskEmpty"))).toBeNull();
+    await act(async () => resolve([]));
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+  });
+});

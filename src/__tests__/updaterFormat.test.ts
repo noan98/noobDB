@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { displayVersion, downloadProgressPercent, truncateReleaseNotes } from "../updaterFormat";
+import {
+  displayVersion,
+  downloadProgressPercent,
+  formatDownloadProgress,
+  truncateReleaseNotes,
+} from "../updaterFormat";
 
 describe("downloadProgressPercent (#705)", () => {
   it("computes a rounded percentage", () => {
@@ -69,5 +74,24 @@ describe("displayVersion (#705)", () => {
     expect(displayVersion(undefined)).toBe("?");
     expect(displayVersion("")).toBe("?");
     expect(displayVersion("   ")).toBe("?");
+  });
+});
+
+describe("formatDownloadProgress (#1617)", () => {
+  const t = ((k: string, v?: Record<string, string | number>) => `${k}:${JSON.stringify(v)}`) as never;
+  it("合計サイズが分かるときは割合とサイズを文言にする", () => {
+    const out = formatDownloadProgress(
+      { percent: 42, downloadedBytes: 1024 * 1024, totalBytes: 2 * 1024 * 1024 },
+      t,
+    );
+    expect(out).toContain("updateDownloadingProgress");
+    expect(out).toContain('"percent":42');
+    expect(out).toContain("1.0 MB");
+    expect(out).toContain("2.0 MB");
+  });
+  it("合計サイズ不明 (percent が null) のときは null (不定表示のまま)", () => {
+    expect(
+      formatDownloadProgress({ percent: null, downloadedBytes: 10, totalBytes: undefined }, t),
+    ).toBeNull();
   });
 });

@@ -83,3 +83,24 @@ describe("CommandPalette 大規模候補 (#1320)", () => {
     expect(opts[0]).toHaveAttribute("aria-selected", "true");
   });
 });
+
+describe("CommandPalette 無効な候補 (#1617)", () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("理由を行に出し、選択しても実行せずパレットも閉じない", () => {
+    const run = vi.fn();
+    const onClose = vi.fn();
+    const items: CommandItem[] = [
+      { id: "editor:run", group: "navigation", label: "Run", disabledReason: "接続してから実行", run },
+    ];
+    renderWithProviders(<CommandPalette items={items} onClose={onClose} />);
+    expect(screen.getByTestId("cmdk-disabled-reason").textContent).toBe("接続してから実行");
+    expect(screen.getByRole("option")).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    fireEvent.click(screen.getByRole("option"));
+    expect(run).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
