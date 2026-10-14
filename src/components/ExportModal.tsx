@@ -454,6 +454,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
   const handleCopy = async () => {
     // xlsx (バイナリ) は全文コピーの対象外 (#711)。ボタンも無効化している。
     if (!hasTextPreview) return;
+    const wantsDdl = format === "sql" && sqlIncludeDdl && canIncludeDdl;
     let content: string;
     if (format === "bundle") {
       let sourceRows = effectiveRows;
@@ -474,13 +475,23 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
         }
       }
       content = await buildBundle(sourceRows, true);
-    } else if (masks.length === 0 && !rowsHandle) {
+    } else if (masks.length === 0 && !rowsHandle && !wantsDdl) {
       // 従来どおり: マスクも結果ハンドルも無ければフロントで即時に組み立てる。
       content = buildExportContent(format, effectiveColumns, effectiveRows, queryForJson, exportCtx);
     } else {
       // マスキング (#733) と書式化をバックエンドの `render_export_text` にまとめる (#1264)。
       // ファイル出力と同じライタを通るので内容はファイルとバイト一致し、ハンドルがあれば
       // 行を JS ⇄ Rust で往復させない。
+      let ddlHeader: string | null = null;
+      if (wantsDdl && fullExport && database) {
+        // 「CREATE TABLE を含める」はファイル出力と同じく全文コピーにも反映する (#1597)。
+        try {
+          ddlHeader = await api.getObjectDefinition(fullExport.sessionId, database, "table", sqlTable.trim());
+        } catch (e) {
+          toast.error(t("exportError", { error: String(e) }));
+          return;
+        }
+      }
       try {
         content = await withHandle((useHandle) =>
           api.renderExportText({
@@ -493,6 +504,7 @@ export function ExportModal({ columns, rows, database, table, driver, partial, s
             driver: sqlDriver,
             batchSize: sqlBatch,
             masks,
+            ddlHeader,
           }),
         );
       } catch (e) {

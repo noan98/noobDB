@@ -15,7 +15,7 @@ use crate::db::data_diff::build_sql_insert_statement;
 use crate::db::data_diff::sql_literal;
 use crate::db::masking::{mask_columns, mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
 use crate::db::sync::quote_ident;
-use crate::db::types::{Column, StreamBatch, Value};
+use crate::db::types::{float_text, Column, StreamBatch, Value};
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, StreamHandle, StreamKind};
@@ -100,10 +100,20 @@ impl SqlExportOpts {
 
 /// 表定義を `CREATE TABLE ...;` + 空行の形で書く (SQL 形式の `include_ddl`, #1539)。
 /// MySQL の `SHOW CREATE TABLE` は末尾に `;` を付けないので、無ければ補う。
-fn write_sql_ddl<W: Write>(w: &mut W, opts: &SqlExportOpts) -> std::io::Result<()> {
+///
+/// `masked` (マスク列が 1 つ以上ある) ときは表定義を**書かない**。マスク後の値は元の
+/// NOT NULL / UNIQUE / 数値型と噛み合わず (固定値で UNIQUE 違反、NULL で NOT NULL 違反、
+/// 仮名の文字列を INT 列へ)、元の定義を付けると取り込みが失敗するため。代わりに理由を
+/// SQL コメントで残す (#1597)。
+fn write_sql_ddl<W: Write>(w: &mut W, opts: &SqlExportOpts, masked: bool) -> std::io::Result<()> {
     let Some(ddl) = &opts.ddl else {
         return Ok(());
     };
+    if masked {
+        return w.write_all(
+            b"-- CREATE TABLE omitted: masked columns no longer match the original column types and constraints.\n\n",
+        );
+    }
     let ddl = ddl.trim_end();
     w.write_all(ddl.as_bytes())?;
     if !ddl.ends_with(';') {
@@ -205,15 +215,33 @@ fn create_export_temp_file(final_path: &str) -> Result<(PathBuf, std::fs::File)>
             .open(final_path)
             .map_err(AppError::Io)?;
     }
+    // 上書き時は rename で inode ごと置き換わるので、既存ファイルの権限 (0600 など) を
+    // 一時ファイルへ引き継ぐ。引き継がないと umask 由来の既定値 (0644 等) に戻って、
+    // 絞っていたはずのファイルが他ユーザから読めるようになる (#1597)。
+    let existing_perms = std::fs::metadata(final_path)
+        .ok()
+        .filter(|m| m.is_file())
+        .map(|m| m.permissions());
     let mut last_err: Option<std::io::Error> = None;
     for _ in 0..EXPORT_TEMP_FILE_MAX_ATTEMPTS {
         let candidate = export_temp_path(final_path);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => return Ok((candidate, file)),
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(p) = &existing_perms {
+            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+            // 作成の時点から既存と同じ(またはより狭い)モードにして、書き込み中も広く開かない。
+            opts.mode(p.mode() & 0o777);
+        }
+        match opts.open(&candidate) {
+            Ok(file) => {
+                if let Some(p) = existing_perms {
+                    // umask で削られたビットも含めて既存の権限に揃える。失敗しても出力自体は
+                    // 続行できるので握りつぶす (権限は付随情報)。
+                    let _ = file.set_permissions(p);
+                }
+                return Ok((candidate, file));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last_err = Some(e),
             Err(e) => return Err(AppError::Io(e)),
         }
@@ -292,7 +320,7 @@ pub(crate) fn write_export_to<W: Write + Send>(
         ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
         ExportFormat::Markdown => write_markdown(w, columns, rows)?,
         ExportFormat::Sql => {
-            write_sql_ddl(w, sql_opts)?;
+            write_sql_ddl(w, sql_opts, mask.is_some_and(|p| p.masked_count() > 0))?;
             write_sql_insert(w, columns, rows, sql_opts)?
         }
         // xlsx だけが列の型名を見る (数値セル判定)。マスク列は文字列として扱わせる。
@@ -394,7 +422,7 @@ fn value_to_csv(v: &Value) -> Cow<'_, str> {
         Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
         Value::Int(i) => Cow::Owned(i.to_string()),
         Value::UInt(u) => Cow::Owned(u.to_string()),
-        Value::Float(f) => Cow::Owned(f.to_string()),
+        Value::Float(f) => Cow::Owned(float_text(*f)),
         Value::String(s) => csv_field(s),
         Value::Bytes(hex) => Cow::Owned(csv_field(&format!("0x{}", hex)).into_owned()),
     }
@@ -573,7 +601,7 @@ fn value_to_markdown(v: &Value) -> Cow<'_, str> {
         Value::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
         Value::Int(i) => Cow::Owned(i.to_string()),
         Value::UInt(u) => Cow::Owned(u.to_string()),
-        Value::Float(f) => Cow::Owned(f.to_string()),
+        Value::Float(f) => Cow::Owned(float_text(*f)),
         Value::String(s) => md_escape(s),
         Value::Bytes(hex) => Cow::Owned(md_escape(&format!("0x{}", hex)).into_owned()),
     }
@@ -811,7 +839,13 @@ impl StreamExportSink {
             ExportFormat::Markdown => write_markdown_header(&mut self.writer, &self.columns)?,
             ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_header(&self.columns)?,
             // SQL は表定義 (#1539, 指定時のみ) を先頭に書く。INSERT は各バッチで自己完結した文を書く。
-            ExportFormat::Sql => write_sql_ddl(&mut self.writer, &self.sql_opts)?,
+            ExportFormat::Sql => {
+                let masked = self
+                    .mask_plan
+                    .as_ref()
+                    .is_some_and(|p| p.masked_count() > 0);
+                write_sql_ddl(&mut self.writer, &self.sql_opts, masked)?
+            }
             // NDJSON にはヘッダも開き括弧も無いので columns イベントでは何も書かない。
             ExportFormat::Ndjson => {}
         }
@@ -2567,5 +2601,89 @@ mod tests {
         let streamed = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(xlsx_sheet_xml(&streamed), sheet);
+    }
+    #[test]
+    fn json_export_keeps_non_finite_floats_as_strings() {
+        let columns = vec![col("x")];
+        let rows = vec![
+            vec![Value::Float(f64::NAN)],
+            vec![Value::Float(f64::INFINITY)],
+            vec![Value::Float(f64::NEG_INFINITY)],
+        ];
+        let mut buf = Vec::new();
+        write_export_to(
+            &mut buf,
+            ExportFormat::Ndjson,
+            &columns,
+            &rows,
+            None,
+            &SqlExportOpts::build(None, None, None),
+            None,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            out,
+            "{\"x\":\"NaN\"}\n{\"x\":\"Infinity\"}\n{\"x\":\"-Infinity\"}\n"
+        );
+        // CSV も JSON と同じ綴り。
+        assert_eq!(value_to_csv(&Value::Float(f64::INFINITY)), "Infinity");
+        assert_eq!(
+            value_to_markdown(&Value::Float(f64::NEG_INFINITY)),
+            "-Infinity"
+        );
+    }
+
+    #[test]
+    fn sql_export_omits_ddl_when_columns_are_masked() {
+        use crate::db::masking::{ColumnMask, MaskRule, MaskSpec};
+        let columns = vec![col("id"), col("email")];
+        let rows = vec![vec![Value::Int(1), Value::String("a@example.com".into())]];
+        let opts = SqlExportOpts::build(Some(DriverKind::Mysql), Some("t".into()), Some(100))
+            .with_ddl(Some(
+                "CREATE TABLE `t` (`id` int, `email` varchar(9) NOT NULL UNIQUE)".into(),
+            ));
+        let spec = MaskSpec::new(
+            vec![ColumnMask {
+                column: "email".into(),
+                rule: MaskRule::Fixed {
+                    value: "***".into(),
+                },
+            }],
+            None,
+        )
+        .unwrap();
+        let plan = spec.plan(&columns);
+        let mut buf = Vec::new();
+        write_export_to(
+            &mut buf,
+            ExportFormat::Sql,
+            &columns,
+            &rows,
+            None,
+            &opts,
+            Some(&plan),
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(!out.contains("CREATE TABLE `t`"), "{out}");
+        assert!(out.starts_with("-- CREATE TABLE omitted"), "{out}");
+        assert!(out.contains("INSERT INTO `t`"), "{out}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overwriting_export_keeps_existing_file_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = unique_dir("perm");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.csv");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (tmp, file) = create_export_temp_file(path.to_str().unwrap()).unwrap();
+        drop(file);
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(mode, 0o600);
     }
 }

@@ -315,6 +315,42 @@
       "expected": "50f1f72295e62a48"
     },
     {
+      "name": "hash_float_exponent_uses_js_notation",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "float",
+        "value": 1e-7
+      },
+      "expected": "4df0107a07ad9516"
+    },
+    {
+      "name": "hash_float_negative_zero_same_as_int_zero",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "float",
+        "value": -0.0
+      },
+      "expected": "b69d71c1d65ac082"
+    },
+    {
+      "name": "hash_int_zero",
+      "rule": {
+        "kind": "hash",
+        "length": 16
+      },
+      "input": {
+        "kind": "int",
+        "value": 0
+      },
+      "expected": "b69d71c1d65ac082"
+    },
+    {
       "name": "hash_bool",
       "rule": {
         "kind": "hash",

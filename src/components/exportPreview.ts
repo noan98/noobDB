@@ -164,7 +164,9 @@ function jsonKeys(columns: Column[]): string[] {
  * コードポイント順 — BTreeMap と同じ順序にするため。
  */
 function rowToObject(order: JsonColumnOrder, row: CellValue[]): Record<string, CellValue> {
-  const obj: Record<string, CellValue> = {};
+  // プロトタイプ無しのオブジェクトにする。通常の `{}` だと `__proto__` という列名への代入が
+  // 組み込みの setter に当たり、値が捨てられる / プロトタイプが書き換わって JSON から消える。
+  const obj: Record<string, CellValue> = Object.create(null);
   for (let n = 0; n < order.length; n++) {
     const { key, index } = order[n];
     obj[key] = row[index] ?? null;

@@ -21,6 +21,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       exportQueryResult: vi.fn(),
       getObjectDefinition: vi.fn(),
+      renderExportText: vi.fn(),
     },
   };
 });
@@ -52,6 +53,7 @@ beforeEach(() => {
   resetAllSettings();
   vi.mocked(api.exportQueryResult).mockResolvedValue({ bytes: 1, truncation: null });
   vi.mocked(api.getObjectDefinition).mockResolvedValue("CREATE TABLE `users` (`id` int)");
+  vi.mocked(api.renderExportText).mockResolvedValue("RENDERED");
 });
 
 describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
@@ -93,5 +95,17 @@ describe("ExportModal CREATE TABLE 文の同梱 (#1539)", () => {
     });
     expect(box).toBeDisabled();
     expect(screen.getByText(t("exportSqlIncludeDdlTableMismatch"))).toBeInTheDocument();
+  });
+
+  it("全文コピーにも定義を同梱する (#1597)", async () => {
+    Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+    renderModal(true);
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") }));
+    fireEvent.click(screen.getByRole("button", { name: t("exportCopyAll") }));
+    await waitFor(() => expect(api.renderExportText).toHaveBeenCalledOnce());
+    expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "app", "table", "users");
+    expect(vi.mocked(api.renderExportText).mock.calls[0][0].ddlHeader).toBe("CREATE TABLE `users` (`id` int)");
   });
 });

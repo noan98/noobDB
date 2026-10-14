@@ -174,6 +174,9 @@ pub struct RenderExportRequest {
     pub batch_size: Option<usize>,
     #[serde(default)]
     pub masks: Option<Vec<ColumnMask>>,
+    /// SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (ファイル出力の `ddl_header` と同じ, #1597)。
+    #[serde(default)]
+    pub ddl_header: Option<String>,
 }
 
 pub async fn render_export_text_inner(
@@ -186,7 +189,8 @@ pub async fn render_export_text_inner(
         ));
     }
     let rows = resolve_rows(state, req.result_id.as_deref(), req.rows)?;
-    let sql_opts = SqlExportOpts::build(req.driver, req.table, req.batch_size);
+    let sql_opts =
+        SqlExportOpts::build(req.driver, req.table, req.batch_size).with_ddl(req.ddl_header);
     let mask_spec = load_mask_spec(req.masks).await?;
     let (format, columns, query) = (req.format, req.columns, req.query);
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
@@ -338,6 +342,7 @@ mod tests {
                     driver: Some(DriverKind::Sqlite),
                     batch_size: None,
                     masks: None,
+                    ddl_header: None,
                 },
             )
             .await
@@ -354,6 +359,7 @@ mod tests {
                     driver: Some(DriverKind::Sqlite),
                     batch_size: None,
                     masks: None,
+                    ddl_header: None,
                 },
             )
             .await
@@ -378,6 +384,7 @@ mod tests {
                 driver: None,
                 batch_size: None,
                 masks: None,
+                ddl_header: None,
             },
         )
         .await
