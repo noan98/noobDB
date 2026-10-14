@@ -15,5 +15,7 @@ export function rowSlideDirection(prevRow: number, nextRow: number): NavDirectio
 
 /** ドロワー幅 (Fields / Related)。値はここだけに置く。 */
 export function inspectorWidth(view: "fields" | "related"): string {
-  return view === "related" ? "min(560px, 92vw)" : "min(380px, 92vw)";
+  return view === "related"
+    ? "min(calc(560px * var(--font-scale)), 92vw)"
+    : "min(calc(380px * var(--font-scale)), 92vw)";
 }

@@ -655,7 +655,7 @@ export function TestDataModal({
         )}
 
         {fkEmptyColumns.length > 0 && (
-          <chakra.div fontSize="xs" color="app.status.warning">
+          <chakra.div fontSize="xs" color="app.textWarning">
             {t("testDataFkEmpty", { columns: fkEmptyColumns.map((s) => s.column).join(", ") })}
           </chakra.div>
         )}

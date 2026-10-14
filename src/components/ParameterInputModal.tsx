@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import type { DriverKind } from "../api/tauri";
 import {
@@ -12,7 +12,7 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, PressableButton } from "./ui";
+import { Button, Input, PressableButton, Select } from "./ui";
 import { Tooltip } from "./Tooltip";
 import { isPlainEnterKey } from "./modalKeys";
 
@@ -67,21 +67,6 @@ function writeCache(next: Cache): void {
     // ignore
   }
 }
-
-const FIELD_CSS: SystemStyleObject = {
-  padding: "var(--space-1-25) var(--space-2)",
-  fontSize: "var(--text-sm)",
-  fontFamily: "var(--font-mono)",
-  color: "var(--text)",
-  background: "var(--bg-input)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-sm)",
-  _focus: {
-    outline: "none",
-    borderColor: "var(--accent)",
-    boxShadow: "0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent)",
-  },
-};
 
 const TYPE_KEYS: { type: ParamType; key: Parameters<ReturnType<typeof useT>>[0] }[] = [
   { type: "text", key: "parameterInputTypeText" },
@@ -184,8 +169,8 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                     textOverflow="ellipsis"
                   >{`{{${name}}}`}</chakra.code>
                 </Tooltip>
-                <chakra.select
-                  css={FIELD_CSS}
+                <Select
+                  fontSize="sm"
                   value={d?.type ?? "text"}
                   aria-label={t("parameterInputTypeLabelFor", { name })}
                   onChange={(e) => setDraft(name, { type: e.target.value as ParamType })}
@@ -195,11 +180,12 @@ export function ParameterInputModal({ sql, driver, onSubmit, onCancel }: Props) 
                       {t(o.key)}
                     </option>
                   ))}
-                </chakra.select>
+                </Select>
                 <chakra.div display="flex" flexDirection="column" gap="0.5" minWidth={0}>
-                  <chakra.input
+                  <Input
                     ref={idx === 0 ? firstInputRef : undefined}
-                    css={FIELD_CSS}
+                    fontFamily="mono"
+                    fontSize="sm"
                     type="text"
                     inputMode={d?.type === "number" ? "decimal" : undefined}
                     value={d?.value ?? ""}

@@ -57,8 +57,8 @@ export async function confirmAndInstallUpdate(
             overflowY="auto"
             padding="2"
             borderRadius="sm"
-            bg="bg.subtle"
-            color="fg.muted"
+            bg="app.surfaceMuted"
+            color="app.textSecondary"
           >
             {notes}
           </chakra.pre>

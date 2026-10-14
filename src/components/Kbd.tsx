@@ -39,7 +39,7 @@ export interface KbdProps extends Omit<ComponentProps<typeof chakra.kbd>, "child
 const TONE_STYLE: Record<KbdTone, ComponentProps<typeof chakra.kbd>> = {
   secondary: {
     px: "1.5",
-    py: "1px",
+    py: "0.25",
     borderRadius: "sm",
     borderWidth: "1px",
     borderColor: "app.border",

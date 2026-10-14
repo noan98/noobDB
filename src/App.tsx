@@ -12911,8 +12911,8 @@ export default function App() {
                 borderRadius: "var(--radius-xl)",
                 border: `2px dashed ${dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid")}`,
                 background: "var(--bg-elevated, var(--bg))",
-                color: dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "solid"),
-                boxShadow: "var(--shadow-lg, 0 12px 40px rgba(0,0,0,0.3))",
+                color: dragFeedback.accept ? "var(--accent)" : semanticColorVar("danger", "text"),
+                boxShadow: "var(--shadow-lg)",
               }}
             >
               <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />

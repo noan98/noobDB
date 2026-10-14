@@ -845,22 +845,10 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
           )}
         </FormSection>
 
-        {errorMode === "skip" && (
-          <chakra.div fontSize="xs" color="app.textMuted">
-            {t("importErrorModeSkipHint")}
-          </chakra.div>
-        )}
+        {errorMode === "skip" && <chakra.div textStyle="caption">{t("importErrorModeSkipHint")}</chakra.div>}
 
-        {!isCsv && !isXlsx && (
-          <chakra.div fontSize="xs" color="app.textMuted">
-            {t("importJsonHelp")}
-          </chakra.div>
-        )}
-        {isXlsx && (
-          <chakra.div fontSize="xs" color="app.textMuted">
-            {t("importXlsxHelp")}
-          </chakra.div>
-        )}
+        {!isCsv && !isXlsx && <chakra.div textStyle="caption">{t("importJsonHelp")}</chakra.div>}
+        {isXlsx && <chakra.div textStyle="caption">{t("importXlsxHelp")}</chakra.div>}
 
         {!quoteValid && (
           <ErrorNote id="import-quote-error">
@@ -923,9 +911,7 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                 </chakra.div>
               ))}
             </chakra.div>
-            <chakra.div fontSize="xs" color="app.textMuted">
-              {t("importNewTableHint")}
-            </chakra.div>
+            <chakra.div textStyle="caption">{t("importNewTableHint")}</chakra.div>
             {newTableError && <FieldError>{newTableErrorText(newTableError)}</FieldError>}
           </FormSection>
         )}
@@ -940,9 +926,7 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
             )}
             {ddlError && <ErrorNote>{ddlError}</ErrorNote>}
             {errorMode === "abort" && (
-              <chakra.div fontSize="xs" color="app.textMuted">
-                {t("importNewTableAbortHint")}
-              </chakra.div>
+              <chakra.div textStyle="caption">{t("importNewTableAbortHint")}</chakra.div>
             )}
           </FormSection>
         )}
@@ -1004,9 +988,7 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
             <FieldLabel as="div">{t("importConflictKeys")}</FieldLabel>
             <chakra.div display="flex" flexWrap="wrap" gap="3">
               {mappedColumns.length === 0 && (
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("importConflictNoMapped")}
-                </chakra.span>
+                <chakra.span textStyle="caption">{t("importConflictNoMapped")}</chakra.span>
               )}
               {mappedColumns.map((col) => (
                 <chakra.label
@@ -1026,9 +1008,7 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                 </chakra.label>
               ))}
             </chakra.div>
-            <chakra.div fontSize="xs" color="app.textMuted">
-              {t("importConflictKeysHint")}
-            </chakra.div>
+            <chakra.div textStyle="caption">{t("importConflictKeysHint")}</chakra.div>
             {conflictError === "keysRequired" && <FieldError>{t("importConflictKeysRequired")}</FieldError>}
             {conflictError === "keyNotMapped" && <FieldError>{t("importConflictKeyNotMapped")}</FieldError>}
           </FormSection>

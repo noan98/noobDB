@@ -136,7 +136,7 @@ function StatementCard({
           px="2.5"
           py="1.5"
           fontSize="xs"
-          color="var(--text-error)"
+          color="app.textError"
           fontFamily="mono"
           whiteSpace="pre-wrap"
         >
