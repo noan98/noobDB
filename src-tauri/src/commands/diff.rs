@@ -116,10 +116,20 @@ pub async fn compare_schema(
     {
         match target.conn.foreign_keys(&target_database).await {
             Ok(fks) => crate::db::diff::attach_target_foreign_keys(&mut diff, &fks),
-            Err(e) => tracing::warn!(
-                kind = e.kind(),
-                "schema compare: could not load foreign keys of the target"
-            ),
+            Err(e) => {
+                tracing::warn!(
+                    kind = e.kind(),
+                    "schema compare: could not load foreign keys of the target"
+                );
+                // SQLite は DROP TABLE が残る子表の CASCADE を発火させうるが、FK が
+                // 取れないと判定できない。破壊的な計画の警告に出す。
+                if target_driver == crate::db::DriverKind::Sqlite {
+                    diff.warnings.push(
+                        "target の外部キーを取得できなかったため、DROP TABLE が残る表の ON DELETE CASCADE / SET NULL で行を消さないか確認できていません。適用前に外部キーを確認してください"
+                            .to_string(),
+                    );
+                }
+            }
         }
     }
     Ok(diff)

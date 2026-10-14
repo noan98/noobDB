@@ -526,6 +526,7 @@ fn build_fixtures() -> serde_json::Value {
         source_driver: DriverKind::Mysql,
         target_driver: DriverKind::Postgres,
         tables: vec![table_diff],
+        warnings: Vec::new(),
     };
 
     let sync_statement = SyncStatement {
@@ -1082,6 +1083,7 @@ fn build_fixtures() -> serde_json::Value {
                         .collect(),
                 })
                 .collect(),
+            warnings: Vec::new(),
         })
         .collect();
 

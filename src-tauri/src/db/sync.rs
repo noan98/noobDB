@@ -95,6 +95,9 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     let driver = diff.target_driver;
     let mut statements: Vec<SyncStatement> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+    if allow_destructive {
+        warnings.extend(diff.warnings.iter().cloned());
+    }
 
     // 生成列の都合で CREATE TABLE 自体を出さない表。外部キーの参照先がこれだと
     // 適用に失敗するので、その FK は出さずに警告する。
@@ -111,6 +114,12 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         HashMap::new()
     };
 
+    let kept_tables = if allow_destructive {
+        sqlite_kept_tables(driver, diff)
+    } else {
+        HashMap::new()
+    };
+
     for table in &diff.tables {
         match table.status {
             DiffStatus::Same => {}
@@ -123,9 +132,9 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
             }
             DiffStatus::TargetOnly => {
                 if allow_destructive {
-                    if let Some(child) = sqlite_cascading_referrer(driver, diff, &table.name) {
+                    if let Some(child) = kept_tables.get(&table.name.to_ascii_lowercase()) {
                         warnings.push(format!(
-                            "表 {} は残る表 {} から ON DELETE CASCADE / SET NULL 付きの外部キーで参照されています。SQLite の DROP TABLE は暗黙の DELETE で {} の行を消す・書き換えるため、DROP TABLE を出力しません (先に外部キーを外してください)",
+                            "表 {} は表 {} から ON DELETE CASCADE / SET NULL 付きの外部キーで参照されています (残る表、または DROP を省いた表)。SQLite の DROP TABLE は暗黙の DELETE で {} の行を消す・書き換えるため、DROP TABLE を出力しません (先に外部キーを外してください)",
                             table.name, child, child
                         ));
                         continue;
@@ -168,31 +177,50 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
     }
 }
 
-/// SQLite で `table` (target のみの表) を `DROP TABLE` すると、残る表 (Same / Different)
-/// の ON DELETE CASCADE / SET NULL / SET DEFAULT が暗黙の DELETE で発火して行を
-/// 黙って消す・書き換える。そのような表があれば最初の 1 つの名前を返す。
-/// MySQL / PostgreSQL は参照中の表の DROP がエラーになるので対象外。
-fn sqlite_cascading_referrer<'a>(
-    driver: DriverKind,
-    diff: &'a SchemaDiff,
-    table: &str,
-) -> Option<&'a str> {
+/// SQLite で target のみの表を `DROP TABLE` すると、残る表の ON DELETE CASCADE / SET NULL /
+/// SET DEFAULT が暗黙の DELETE で発火して行を黙って消す・書き換える。DROP を省くべき
+/// 表を「小文字の表名 -> 参照している表の名前」で返す。
+/// 省いた表も残るので、それを CASCADE 等で参照する target のみの表の DROP も連鎖で
+/// 行を消す。残す集合は不動点になるまで広げる。参照先の表記は DDL のままで大小が
+/// 揺れうるため大小無視で照合する。MySQL / PostgreSQL は参照中の表の DROP がエラーに
+/// なるので対象外。
+fn sqlite_kept_tables(driver: DriverKind, diff: &SchemaDiff) -> HashMap<String, String> {
+    let mut kept: HashMap<String, String> = HashMap::new();
     if driver != DriverKind::Sqlite {
-        return None;
+        return kept;
     }
-    diff.tables
+    let target_only: HashSet<String> = diff
+        .tables
         .iter()
-        .filter(|t| matches!(t.status, DiffStatus::Same | DiffStatus::Different))
-        .find(|t| {
-            t.foreign_keys.iter().any(|fk| {
-                fk.referenced_table == table
-                    && fk.on_delete.as_deref().is_some_and(|a| {
-                        let a = a.trim().to_ascii_uppercase();
-                        a == "CASCADE" || a.starts_with("SET")
-                    })
-            })
+        .filter(|t| t.status == DiffStatus::TargetOnly)
+        .map(|t| t.name.to_ascii_lowercase())
+        .collect();
+    let cascades = |fk: &super::diff::DiffForeignKey| {
+        fk.on_delete.as_deref().is_some_and(|a| {
+            let a = a.trim().to_ascii_uppercase();
+            a == "CASCADE" || a.starts_with("SET")
         })
-        .map(|t| t.name.as_str())
+    };
+    loop {
+        let mut added = false;
+        for t in &diff.tables {
+            let survives = t.status != DiffStatus::TargetOnly
+                || kept.contains_key(&t.name.to_ascii_lowercase());
+            if !survives {
+                continue;
+            }
+            for fk in t.foreign_keys.iter().filter(|fk| cascades(fk)) {
+                let parent = fk.referenced_table.to_ascii_lowercase();
+                if target_only.contains(&parent) && !kept.contains_key(&parent) {
+                    kept.insert(parent, t.name.clone());
+                    added = true;
+                }
+            }
+        }
+        if !added {
+            return kept;
+        }
+    }
 }
 
 /// `DROP TABLE` の順位 (小さいほど先)。target のみの表同士の外部キーを見て、
@@ -586,8 +614,6 @@ fn modify_column(
                 statements.push(pg_alter(table, stmt));
                 emitted = true;
             }
-            // PK / FK reshaping on an existing column needs constraint juggling
-            // we don't attempt; flag it so the user handles it deliberately.
             if changed_fields.iter().any(|f| f == "comment") {
                 let value = match src.comment.as_deref().filter(|c| !c.trim().is_empty()) {
                     Some(c) => format!("'{}'", c.replace('\'', "''")),
@@ -599,6 +625,8 @@ fn modify_column(
                 ));
                 emitted = true;
             }
+            // PK / FK reshaping on an existing column needs constraint juggling
+            // we don't attempt; flag it so the user handles it deliberately.
             if changed_fields
                 .iter()
                 .any(|f| f == "key" || f == "foreign_key")
@@ -843,6 +871,7 @@ mod tests {
             source_driver: driver,
             target_driver: driver,
             tables,
+            warnings: Vec::new(),
         }
     }
 
@@ -1553,6 +1582,7 @@ mod tests {
                 source_driver: src_driver,
                 target_driver: DriverKind::Sqlite,
                 tables: vec![table],
+                warnings: Vec::new(),
             };
             let plan = generate_sync_sql(&d, false);
             assert_eq!(plan.statements.len(), 1, "{src_driver:?}");
@@ -1778,5 +1808,88 @@ mod tests {
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
         assert!(plan.statements[0].sql.contains("COMMENT '名前'"));
+    }
+
+    fn tdiff(name: &str, status: DiffStatus, fks: Vec<DiffForeignKey>) -> TableDiff {
+        TableDiff {
+            name: name.to_string(),
+            status,
+            foreign_keys: fks,
+            columns: vec![],
+        }
+    }
+
+    fn fk_to(parent: &str, on_delete: &str) -> DiffForeignKey {
+        let mut f = fk("fk", &["pid"], parent, &["id"]);
+        f.on_delete = Some(on_delete.to_string());
+        f
+    }
+
+    fn drops(plan: &SyncPlan) -> Vec<&str> {
+        plan.statements
+            .iter()
+            .filter(|s| s.kind == SyncKind::DropTable)
+            .map(|s| s.table.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn sqlite_cascade_chain_keeps_every_ancestor_of_a_remaining_table() {
+        // grandparent <- parent (CASCADE) <- child (残る表, CASCADE)。
+        // parent の DROP を省くなら grandparent の DROP も出してはいけない。
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![
+                tdiff("child", DiffStatus::Same, vec![fk_to("parent", "CASCADE")]),
+                tdiff("grandparent", DiffStatus::TargetOnly, vec![]),
+                tdiff(
+                    "parent",
+                    DiffStatus::TargetOnly,
+                    vec![fk_to("grandparent", "CASCADE")],
+                ),
+                tdiff("unrelated", DiffStatus::TargetOnly, vec![]),
+            ],
+        );
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(drops(&plan), vec!["unrelated"], "{:?}", plan.statements);
+        assert!(plan.warnings.iter().any(|w| w.contains("grandparent")));
+        assert!(plan.warnings.iter().any(|w| w.contains("parent")));
+        // NO ACTION の祖先は従来どおり落とす。
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![
+                tdiff("child", DiffStatus::Same, vec![fk_to("parent", "CASCADE")]),
+                tdiff("gp", DiffStatus::TargetOnly, vec![]),
+                tdiff(
+                    "parent",
+                    DiffStatus::TargetOnly,
+                    vec![fk_to("gp", "NO ACTION")],
+                ),
+            ],
+        );
+        assert_eq!(drops(&generate_sync_sql(&d, true)), vec!["gp"]);
+    }
+
+    #[test]
+    fn sqlite_fk_reference_case_differences_are_matched_case_insensitively() {
+        let d = diff(
+            DriverKind::Sqlite,
+            vec![
+                tdiff("child", DiffStatus::Same, vec![fk_to("Parent", "CASCADE")]),
+                tdiff("parent", DiffStatus::TargetOnly, vec![]),
+            ],
+        );
+        assert!(drops(&generate_sync_sql(&d, true)).is_empty());
+    }
+
+    #[test]
+    fn schema_diff_warnings_reach_destructive_plans_only() {
+        let mut d = diff(DriverKind::Sqlite, vec![target_only_parent()]);
+        d.warnings.push("fk 取得失敗".to_string());
+        assert!(generate_sync_sql(&d, true)
+            .warnings
+            .iter()
+            .any(|w| w == "fk 取得失敗"));
+        assert!(generate_sync_sql(&d, false).warnings.is_empty());
     }
 }

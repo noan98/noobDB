@@ -580,6 +580,7 @@ export const schemaDiff = z.object({
   source_driver: driverKind,
   target_driver: driverKind,
   tables: z.array(tableDiff),
+  warnings: z.array(z.string()).optional(),
 });
 
 const syncStatement = z.object({

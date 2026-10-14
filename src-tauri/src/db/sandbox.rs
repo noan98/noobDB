@@ -159,6 +159,42 @@ fn is_decimal_type(data_type: &str) -> bool {
     t.contains("decimal") || t.contains("numeric")
 }
 
+/// 整数値の `f64` (2^53 未満) を `Value::Int` にそろえる。小数や範囲外は `None`。
+fn integral_float(f: f64) -> Option<Value> {
+    (f.is_finite() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0)
+        .then_some(Value::Int(f as i64))
+}
+
+/// DECIMAL 文字列を比較用の正準形にする。小数部が無い (またはすべて 0 の) 整数は
+/// `i128` で厳密に読み `Int` / `UInt` (範囲外は正準な整数文字列) にするので、
+/// 2^53 を超える DECIMAL(p,0) でも `...993` と `...992` を区別できる。小数部を持つ値だけ
+/// `f64` に寄せる。注意: 小数部を持ち有効桁が 15 桁を超える値は `f64` の精度
+/// (約 15〜17 桁) で丸められ、末尾の差を見逃しうる (SQLite の NUMERIC アフィニティ側も
+/// REAL に丸めて保持するため、この比較ではそれ以上の精度を得られない)。
+/// 数値として読めない文字列は `None`。
+fn canonical_decimal(s: &str) -> Option<Value> {
+    let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+    if frac_part.bytes().all(|b| b == b'0') && !int_part.is_empty() {
+        if let Ok(n) = int_part
+            .strip_prefix('+')
+            .unwrap_or(int_part)
+            .parse::<i128>()
+        {
+            return Some(if let Ok(i) = i64::try_from(n) {
+                Value::Int(i)
+            } else if let Ok(u) = u64::try_from(n) {
+                Value::UInt(u)
+            } else {
+                Value::String(n.to_string())
+            });
+        }
+    }
+    s.parse::<f64>()
+        .ok()
+        .filter(|f| f.is_finite())
+        .map(Value::Float)
+}
+
 /// 実 DB (MySQL の DECIMAL は `Value::String("10.50")`) とサンドボックス (SQLite から
 /// 読み戻した `Float` / `Int`) で値の型が往復で変わる DECIMAL / NUMERIC 列を、比較用に
 /// `Value::Float` へそろえた行を返す。そろえないと `values_equal` が型違いで不一致になり、
@@ -175,14 +211,11 @@ pub fn normalize_decimal_cells(column_types: &[String], rows: &[Vec<Value>]) -> 
                         return v.clone();
                     }
                     match v {
-                        Value::Int(n) => Value::Float(*n as f64),
-                        Value::UInt(n) => Value::Float(*n as f64),
-                        Value::String(s) => s
-                            .trim()
-                            .parse::<f64>()
-                            .ok()
-                            .filter(|f| f.is_finite())
-                            .map_or_else(|| v.clone(), Value::Float),
+                        Value::String(s) => {
+                            canonical_decimal(s.trim()).unwrap_or_else(|| v.clone())
+                        }
+                        // SQLite が REAL で返した整数値 (10.0 など) は整数にそろえる。
+                        Value::Float(f) => integral_float(*f).unwrap_or_else(|| v.clone()),
                         _ => v.clone(),
                     }
                 })
@@ -555,6 +588,7 @@ mod tests {
             source_driver: DriverKind::Sqlite,
             target_driver: DriverKind::Mysql,
             tables,
+            warnings: Vec::new(),
         }
     }
 
@@ -596,11 +630,29 @@ mod tests {
         let n = normalize_decimal_cells(&types, &rows);
         assert_eq!(n[0], vec![Value::Int(1), Value::Float(10.5)]);
         assert_eq!(n[1][1], n[0][1]);
-        assert_eq!(n[2][1], Value::Float(10.0));
+        assert_eq!(n[2][1], Value::Int(10));
         // 数値に読めない値・NULL・非 DECIMAL 列はそのまま。
         assert_eq!(n[3][1], Value::String("n/a".into()));
         assert_eq!(n[4][1], Value::Null);
         assert_eq!(n[0][0], Value::Int(1));
+    }
+
+    #[test]
+    fn normalize_decimal_cells_keeps_integers_beyond_2_pow_53_exact() {
+        let types = vec!["decimal(20,0)".to_string()];
+        let rows = vec![
+            vec![Value::String("9007199254740993".into())],
+            vec![Value::String("9007199254740992".into())],
+            vec![Value::String("9007199254740993.00".into())],
+            vec![Value::Int(9_007_199_254_740_993)],
+            vec![Value::Float(10.0)],
+            vec![Value::String("10.00".into())],
+        ];
+        let n = normalize_decimal_cells(&types, &rows);
+        assert_ne!(n[0], n[1]);
+        assert_eq!(n[0], n[2]);
+        assert_eq!(n[0], n[3]);
+        assert_eq!(n[4], n[5]);
     }
 
     #[test]

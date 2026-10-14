@@ -118,11 +118,12 @@ pub fn attach_target_foreign_keys(diff: &mut SchemaDiff, fks: &[ForeignKey]) {
         .tables
         .iter()
         .filter(|t| t.status == DiffStatus::TargetOnly)
-        .map(|t| t.name.clone())
+        .map(|t| t.name.to_ascii_lowercase())
         .collect();
+    // SQLite の `foreign_key_list` は DDL に書かれた表記のまま返すので、大小は区別しない。
     let referencing: Vec<ForeignKey> = fks
         .iter()
-        .filter(|f| target_only.contains(&f.referenced_table))
+        .filter(|f| target_only.contains(&f.referenced_table.to_ascii_lowercase()))
         .cloned()
         .collect();
     for table in diff
@@ -179,6 +180,10 @@ pub struct SchemaDiff {
     pub source_driver: DriverKind,
     pub target_driver: DriverKind,
     pub tables: Vec<TableDiff>,
+    /// 比較時に集めきれなかった情報の注意 (例: SQLite で target の外部キー取得に失敗)。
+    /// 同期計画の警告にそのまま載せる。空なら JSON に出さない。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Compares `source` against `target`, classifying every table and (for tables
@@ -248,6 +253,7 @@ pub fn compute_schema_diff(
         source_driver,
         target_driver,
         tables,
+        warnings: Vec::new(),
     }
 }
 
@@ -617,11 +623,11 @@ mod tests {
             on_delete: Some("CASCADE".to_string()),
             on_update: None,
         };
-        attach_target_foreign_keys(&mut d, &[mk("child", "parent"), mk("child", "child")]);
+        attach_target_foreign_keys(&mut d, &[mk("child", "Parent"), mk("child", "child")]);
         let child = d.tables.iter().find(|t| t.name == "child").unwrap();
         assert_eq!(child.status, DiffStatus::Same);
         assert_eq!(child.foreign_keys.len(), 1);
-        assert_eq!(child.foreign_keys[0].referenced_table, "parent");
+        assert_eq!(child.foreign_keys[0].referenced_table, "Parent");
         assert_eq!(child.foreign_keys[0].on_delete.as_deref(), Some("CASCADE"));
     }
 }
