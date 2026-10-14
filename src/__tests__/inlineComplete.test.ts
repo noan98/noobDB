@@ -7,6 +7,7 @@ import {
   INLINE_AFTER_MAX_LINES,
   INLINE_BEFORE_MAX_CHARS,
   INLINE_BEFORE_MAX_LINES,
+  INLINE_MAX_SUGGESTION_CHARS,
   INLINE_TIMEOUT_MS,
   headWindow,
   relevantTables,
@@ -177,6 +178,11 @@ describe("cleanInlineCompletion", () => {
   it("コードフェンスを除く", () => {
     expect(cleanInlineCompletion("```sql\nWHERE id = 1\n```", "SELECT * FROM t ")).toBe("WHERE id = 1");
     expect(cleanInlineCompletion("```\nWHERE id = 1", "SELECT * FROM t ")).toBe("WHERE id = 1");
+  });
+  it("最大文字数の切り詰めでサロゲートペアを割らない (#1603)", () => {
+    const out = cleanInlineCompletion(`${"a".repeat(INLINE_MAX_SUGGESTION_CHARS - 1)}😀tail`, "SELECT ");
+    expect(out.length).toBeLessThanOrEqual(INLINE_MAX_SUGGESTION_CHARS);
+    expect(/[\uD800-\uDBFF]$/.test(out)).toBe(false);
   });
   it("前置き行を除く", () => {
     expect(cleanInlineCompletion("Here is the completion:\nWHERE id = 1", "SELECT * FROM t ")).toBe("WHERE id = 1");

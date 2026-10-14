@@ -164,10 +164,21 @@ async fn record_assertion_results_in(
         .execute(&mut *tx)
         .await?;
     }
+    // 全タスク共通の上限で消すが、各タスクの**直近 1 回分**の実行行は残す。頻繁に動く別タスクの
+    // 行で、低頻度タスクの前回結果 (`last_failed_assertion_ids` の比較元) が押し出されると、
+    // 既知の違反が「増えた」と誤判定されて通知が繰り返されるため。
     sqlx::query(
         "DELETE FROM assertion_runs
             WHERE id NOT IN (
                 SELECT id FROM assertion_runs ORDER BY id DESC LIMIT ?
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM (
+                    SELECT task_id, MAX(run_started_at) AS latest
+                      FROM assertion_runs GROUP BY task_id
+                ) l
+                WHERE l.task_id = assertion_runs.task_id
+                  AND l.latest = assertion_runs.run_started_at
             )",
     )
     .bind(max_rows.max(1))
@@ -292,18 +303,30 @@ async fn record_in_with_cap(pool: &SqlitePool, entry: NewTaskRun, max_rows: i64)
     .execute(pool)
     .await?;
     let id = result.last_insert_rowid();
-    enforce_retention(pool, max_rows).await?;
+    enforce_retention(pool, max_rows, MIN_RUNS_KEPT_PER_TASK.min(max_rows.max(1))).await?;
     Ok(id)
 }
 
-async fn enforce_retention(pool: &SqlitePool, max_rows: i64) -> Result<()> {
+/// 全体の上限を超えても、タスクごとに直近この件数は残す (低頻度タスクの履歴が、
+/// 頻繁に動く別タスクの行で押し出されないようにする)。
+const MIN_RUNS_KEPT_PER_TASK: i64 = 50;
+
+async fn enforce_retention(pool: &SqlitePool, max_rows: i64, per_task_keep: i64) -> Result<()> {
     sqlx::query(
         "DELETE FROM task_runs
             WHERE id NOT IN (
                 SELECT id FROM task_runs ORDER BY id DESC LIMIT ?
+            )
+            AND id NOT IN (
+                SELECT id FROM (
+                    SELECT id, ROW_NUMBER() OVER (
+                        PARTITION BY task_id ORDER BY id DESC
+                    ) AS rn FROM task_runs
+                ) WHERE rn <= ?
             )",
     )
     .bind(max_rows.max(1))
+    .bind(per_task_keep)
     .execute(pool)
     .await?;
     Ok(())
@@ -562,6 +585,49 @@ mod tests {
         }
         let remaining = list_in(&pool, None, 100).await.unwrap();
         assert_eq!(remaining.len(), 3);
+    }
+
+    // 頻繁に動く別タスクの行が、低頻度タスクの履歴 / 前回アサーション結果を押し出さない。
+    #[tokio::test]
+    async fn retention_keeps_low_frequency_task_rows() {
+        let pool = temp_pool().await;
+        record_in_with_cap(&pool, entry("rare", "ok", "2026-01-01T00:00:00Z"), 3)
+            .await
+            .unwrap();
+        for i in 0..10 {
+            record_in_with_cap(
+                &pool,
+                entry("busy", "ok", &format!("2026-02-01T00:00:{i:02}Z")),
+                3,
+            )
+            .await
+            .unwrap();
+        }
+        let rare = list_in(&pool, Some("rare"), 100).await.unwrap();
+        assert_eq!(rare.len(), 1);
+
+        record_assertion_results_in(
+            &pool,
+            "rare",
+            "2026-01-01T00:00:00Z",
+            vec![result("a", false, None)],
+            3,
+        )
+        .await
+        .unwrap();
+        for i in 0..10 {
+            record_assertion_results_in(
+                &pool,
+                "busy",
+                &format!("2026-02-01T00:00:{i:02}Z"),
+                vec![result("x", true, None), result("y", true, None)],
+                3,
+            )
+            .await
+            .unwrap();
+        }
+        let ids = last_failed_assertion_ids_in(&pool, "rare").await.unwrap();
+        assert_eq!(ids, Some(["a".to_string()].into_iter().collect()));
     }
 
     fn result(id: &str, passed: bool, observed: Option<i64>) -> NewAssertionResult {

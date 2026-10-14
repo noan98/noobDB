@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen } from "./testUtils";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "../components/Modal";
@@ -139,5 +140,21 @@ describe("IME 変換確定の Enter (#1515)", () => {
     expect(isPlainEnterKey({ ...base, metaKey: true })).toBe(false);
     expect(isPlainEnterKey({ ...base, shiftKey: true })).toBe(false);
     expect(isPlainEnterKey({ ...base, altKey: true })).toBe(false);
+  });
+
+  it("ポータル描画の子 (確認ダイアログ等) の Ctrl+Enter では外側の onSubmit を再発火しない (#1604)", () => {
+    const onSubmit = vi.fn();
+    renderWithProviders(
+      <Modal onSubmit={onSubmit} onClose={() => {}}>
+        <ModalBody>
+          <input aria-label="inside" />
+          {createPortal(<input aria-label="portaled" />, document.body)}
+        </ModalBody>
+      </Modal>,
+    );
+    fireEvent.keyDown(screen.getByLabelText("portaled"), { key: "Enter", ctrlKey: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText("inside"), { key: "Enter", ctrlKey: true });
+    expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 });

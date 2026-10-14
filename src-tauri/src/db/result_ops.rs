@@ -169,6 +169,9 @@ pub struct FilterSpec {
     pub value: String,
     pub value2: String,
     pub null_mode: NullMode,
+    /// `equals` / `notEquals` を大小区別で比較する (省略時は大小無視)。
+    #[serde(default)]
+    pub case_sensitive: bool,
 }
 
 /// `filterHasValue`。
@@ -218,6 +221,8 @@ enum Prepared {
     Text {
         op: FilterOp,
         q: String,
+        /// 大小区別の等値比較 (`q` は元の大小のまま)。
+        exact: bool,
     },
     Num {
         op: FilterOp,
@@ -244,10 +249,19 @@ fn prepare_filter(f: &FilterSpec) -> PreparedFilter {
             | FilterOp::Equals
             | FilterOp::NotEquals
             | FilterOp::StartsWith
-            | FilterOp::EndsWith => Prepared::Text {
-                op: f.op,
-                q: f.value.to_lowercase(),
-            },
+            | FilterOp::EndsWith => {
+                let exact =
+                    f.case_sensitive && matches!(f.op, FilterOp::Equals | FilterOp::NotEquals);
+                Prepared::Text {
+                    op: f.op,
+                    q: if exact {
+                        f.value.clone()
+                    } else {
+                        f.value.to_lowercase()
+                    },
+                    exact,
+                }
+            }
             _ => {
                 let a = js_trim(&f.value).to_string();
                 let b = js_trim(&f.value2).to_string();
@@ -291,11 +305,15 @@ fn prepare_filter(f: &FilterSpec) -> PreparedFilter {
 /// `matchesColumnValue` (非 NULL セル)。
 fn matches_value(v: &Value, cond: &Prepared) -> bool {
     match cond {
-        Prepared::Text { op, q } => {
+        Prepared::Text { op, q, exact } => {
             let Some(s) = value_str(v) else {
                 return false;
             };
-            let s = s.to_lowercase();
+            let s = if *exact {
+                s.to_string()
+            } else {
+                s.to_lowercase()
+            };
             match op {
                 FilterOp::Contains => s.contains(q.as_str()),
                 FilterOp::Equals => s == *q,
@@ -666,6 +684,7 @@ mod tests {
             value: value.to_string(),
             value2: String::new(),
             null_mode: NullMode::Any,
+            case_sensitive: false,
         }
     }
 
@@ -692,6 +711,22 @@ mod tests {
         assert_eq!(sort_filter(&rows, 1, &[], &[only], ""), vec![0]);
         let inactive = text_filter(FilterOp::Contains, "   ");
         assert_eq!(sort_filter(&rows, 1, &[], &[inactive], ""), vec![0, 1]);
+    }
+
+    #[test]
+    fn case_sensitive_equals_distinguishes_case() {
+        let rows = rows_of(&[s("Tokyo"), s("tokyo")]);
+        let mut ne = text_filter(FilterOp::NotEquals, "Tokyo");
+        // 既定は大小無視: 両方が除外される。
+        assert_eq!(
+            sort_filter(&rows, 1, &[], &[ne.clone()], ""),
+            Vec::<u32>::new()
+        );
+        ne.case_sensitive = true;
+        assert_eq!(sort_filter(&rows, 1, &[], &[ne], ""), vec![1]);
+        let mut eq = text_filter(FilterOp::Equals, "Tokyo");
+        eq.case_sensitive = true;
+        assert_eq!(sort_filter(&rows, 1, &[], &[eq], ""), vec![0]);
     }
 
     #[test]

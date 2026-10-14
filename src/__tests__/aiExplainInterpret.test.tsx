@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
+import { resetAiKeyStoreForTest } from "../ai/aiKeyStore";
 
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
@@ -83,6 +84,7 @@ const answer = JSON.stringify({
 
 beforeEach(() => {
   cleanup();
+  resetAiKeyStoreForTest();
   vi.clearAllMocks();
   hasAiApiKey.mockResolvedValue(true);
   handlers = null;

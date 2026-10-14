@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
 use directories::ProjectDirs;
-use serde::{Deserialize, Serialize};
 
 use super::Snippet;
 use crate::error::{AppError, Result};
@@ -11,14 +10,6 @@ use crate::error::{AppError, Result};
 const QUALIFIER: &str = "";
 const ORG: &str = "";
 const APP: &str = "noobDB";
-
-/// On-disk shape: `{ "snippets": [...] }`. Wrapping the array keeps room for
-/// future top-level metadata without a format migration.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct SnippetFile {
-    #[serde(default)]
-    snippets: Vec<Snippet>,
-}
 
 /// `snippets.json` への read-modify-write を直列化するロック。`profiles::store::
 /// STORE_LOCK` (根拠は `ssh::known_hosts::KNOWN_HOSTS_LOCK`) と同じ理由・同じ設計:
@@ -54,18 +45,27 @@ fn load_all_locked() -> Result<Vec<Snippet>> {
     if content.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let file: SnippetFile = serde_json::from_str(&content)?;
-    Ok(file.snippets)
+    if crate::json_tolerant::quarantine_if_unexpected_shape(&path, &content, "snippets")? {
+        return Ok(Vec::new());
+    }
+    // 1 件が解釈できなくても残りは読む。解釈できなかった要素は保存時に書き戻す。
+    Ok(crate::json_tolerant::parse_items::<Snippet>(&content, "snippets")?.0)
 }
 
 /// 実際のファイル書き込み (ロック非取得)。`load_all_locked` と対。
 fn save_all_locked(snippets: &[Snippet]) -> Result<()> {
-    let path = snippets_path()?;
-    let file = SnippetFile {
-        snippets: snippets.to_vec(),
-    };
-    let content = serde_json::to_string_pretty(&file)?;
-    write_atomic(&path, content.as_bytes())?;
+    save_all_at(&snippets_path()?, snippets)
+}
+
+fn save_all_at(path: &std::path::Path, snippets: &[Snippet]) -> Result<()> {
+    // 解釈できなかった既存要素を消さずに書き戻す (ID が重なるものは新しい方を優先)。
+    let ids: Vec<&str> = snippets.iter().map(|s| s.id.as_str()).collect();
+    let raw = std::fs::read_to_string(path)
+        .map(|c| crate::json_tolerant::unparsable_raw::<Snippet>(&c, "snippets", &ids))
+        .unwrap_or_default();
+    let value = crate::json_tolerant::build_with_raw("snippets", snippets, raw)?;
+    let content = serde_json::to_string_pretty(&value)?;
+    write_atomic(path, content.as_bytes())?;
     Ok(())
 }
 
@@ -190,6 +190,33 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    // 未知の scope.kind を持つ 1 件があっても残りが読め、保存しても消えない (#1593)。
+    #[test]
+    fn unparsable_snippet_is_skipped_on_load_and_kept_on_save() {
+        let dir = scratch_dir("tolerant");
+        let path = dir.join("snippets.json");
+        let good = serde_json::json!({"id": "aaaaaaaa", "name": "ok", "sql": "SELECT 1"});
+        let bad = serde_json::json!({"id": "bbbbbbbb", "name": "x", "sql": "s", "scope": {"kind": "future"}});
+        std::fs::write(
+            &path,
+            serde_json::json!({ "snippets": [bad.clone(), good] }).to_string(),
+        )
+        .unwrap();
+        let (loaded, _) = crate::json_tolerant::parse_items::<Snippet>(
+            &std::fs::read_to_string(&path).unwrap(),
+            "snippets",
+        )
+        .unwrap();
+        assert_eq!(loaded.len(), 1);
+        save_all_at(&path, &loaded).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let arr = after["snippets"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert!(arr.contains(&bad));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // 同一プロセス内で `write_atomic` を並行に呼んでも一時ファイル名が衝突しない

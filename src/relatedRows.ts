@@ -19,6 +19,7 @@
 import type { CellValue } from "./api/tauri";
 import { buildReverseRefSql, type IncomingFk } from "./fkNavigation";
 import type { CellKind } from "./components/cellTypeMeta";
+import { takeGraphemes } from "./truncateText";
 
 /** 1 回に追加で読み込む子行の件数 (初回の上限も同じ)。 */
 export const RELATED_ROWS_PAGE = 50;
@@ -160,8 +161,9 @@ export function formatRelatedCell(
   if (value === null || value === undefined) return { tone: "null" };
   const s = kind === "binary" ? `0x${String(value)}` : String(value);
   const oneLine = s.replace(/\s+/g, " ");
-  if (oneLine.length > RELATED_CELL_MAX_CHARS) {
-    return { tone: "value", text: `${oneLine.slice(0, RELATED_CELL_MAX_CHARS)}…`, truncated: true };
+  const head = takeGraphemes(oneLine, RELATED_CELL_MAX_CHARS);
+  if (head !== null) {
+    return { tone: "value", text: `${head}…`, truncated: true };
   }
   return { tone: "value", text: oneLine, truncated: false };
 }

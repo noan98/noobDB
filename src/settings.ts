@@ -1235,7 +1235,21 @@ export function deserializeSettingsImport(raw: string): Settings {
     parsed && typeof parsed === "object" && "settings" in parsed
       ? (parsed as { settings?: unknown }).settings
       : parsed;
-  return normalizeSettings(inner);
+  const next = normalizeSettings(inner);
+  // 送信同意に関わる AI 設定は、ファイルの値を信用しない。取り込みで同意ダイアログを
+  // 素通りして AI を有効化・行データ送信を許可できてしまうため、現在の端末の値を維持する。
+  return {
+    ...next,
+    ai: {
+      ...next.ai,
+      enabled: current.ai.enabled,
+      maskLiterals: current.ai.maskLiterals,
+      consentGiven: current.ai.consentGiven,
+      allowRowData: current.ai.allowRowData,
+      sendScope: current.ai.sendScope,
+      inlineComplete: current.ai.inlineComplete,
+    },
+  };
 }
 
 function loadInitial(): Settings {
