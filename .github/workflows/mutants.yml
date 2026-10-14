@@ -8,7 +8,8 @@ name: mutation-test
 #
 # 対象はファイル単位ではなく関数単位 (#1168)。対象関数リストの単一ソースは
 # src-tauri/.cargo/mutants.toml (examine_globs + examine_re) で、本ワークフローは
-# フラグ無しの `cargo mutants` / `cargo mutants --list` でそれを読むだけ。実在する
+# `cargo mutants` / `cargo mutants --list` でそれを読むだけ (本体の実行には
+# CI 専用の --in-place だけを付ける。理由は Run cargo-mutants ステップのコメント)。実在する
 # 実装は次のとおり (DriverKind は Mysql / Postgres / Sqlite の 3 つ)。
 #   db/mod.rs       is_read_only_sql* / apply_auto_limit* / has_stacked_statements*
 #   db/mysql.rs     is_query_shape / with_cte_is_mutation / quote_ident
@@ -117,6 +118,13 @@ jobs:
       # 終了コードは $GITHUB_OUTPUT (exit_code) に残す (後続の通知ジョブ用, #1395)。
       # cargo-mutants は 0=全捕捉 / 2=生存変異あり / 3=タイムアウトあり / 4=baseline 失敗
       # など。いずれも本ステップは exit 0 で終える (CI は落とさない)。
+      # --in-place: cargo-mutants は既定で src-tauri (cargo ワークスペース) だけを
+      # 一時ディレクトリへコピーして変異させる。するとコピー先から ../dist
+      # (generate_context! が参照) と ../../../src/__tests__/fixtures/*.json
+      # (include_str! の共有ゴールデンベクタ) が見えず、無変異の baseline ビルドが
+      # 失敗する (exit 4)。CI のランナーは使い捨てなので、作業ツリーをその場で
+      # 変異させて相対パスを保つ。ローカルでは作業中のファイルを書き換えるため、
+      # mutants.toml には in_place を書かない。
       - name: Run cargo-mutants
         id: mutants
         if: '!inputs.list_only'
@@ -126,6 +134,7 @@ jobs:
           set +e
           set -o pipefail
           cargo mutants \
+            --in-place \
             --no-shuffle \
             2>&1 | tee mutants-output.txt
           echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
