@@ -265,6 +265,14 @@ pub async fn run_task_now(
 
     let joined = handle.await;
     ticker.abort();
+    // ticker を止める前の最後の変化は届いていないことがあるので、最終値を 1 回送る。
+    scheduler::emit_progress(
+        &app,
+        &stream_id,
+        &task.id,
+        progress.load(Ordering::SeqCst),
+        scheduler::progress_unit(&task.action),
+    );
     state.forget_stream(&stream_id, token).await;
 
     let outcome = match joined {

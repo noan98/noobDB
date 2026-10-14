@@ -17,7 +17,7 @@ import { semanticColorToken, semanticColorVar, type SemanticRole } from "../sema
 import { pushActivity, type ActivityDetail, type ActivitySeverity } from "../activityLog";
 import { railDurationSeconds, railRatio } from "./toastProgress";
 
-export type ToastTone = "success" | "error" | "info";
+export type ToastTone = "success" | "error" | "info" | "warning";
 
 /** Toast の tone を意味色トークンの role へマップする (#664)。`error` は
  *  `danger` へ正規化する (semanticColors.ts の命名規約を参照)。 */
@@ -25,15 +25,16 @@ const TONE_ROLE: Record<ToastTone, SemanticRole> = {
   success: "success",
   error: "danger",
   info: "info",
+  warning: "warning",
 };
 
 /** Toast の tone をアクティビティセンター (#912) の重大度へマップする既定値。
- *  トースト側に「警告」トーンは無いので、警告として記録したい通知は
- *  `ToastOptions.severity` で明示する。 */
+ *  `info` のまま警告として記録したい通知は `ToastOptions.severity` で明示する。 */
 const TONE_SEVERITY: Record<ToastTone, ActivitySeverity> = {
   success: "success",
   error: "error",
   info: "info",
+  warning: "warning",
 };
 
 /** Left accent rail + icon tint per tone。`text` 段階は全テーマプリセットで
@@ -46,6 +47,7 @@ const TONE_COLOR: Record<ToastTone, string> = {
   success: semanticColorToken(TONE_ROLE.success, "text"),
   error: semanticColorToken(TONE_ROLE.error, "text"),
   info: semanticColorToken(TONE_ROLE.info, "text"),
+  warning: semanticColorToken(TONE_ROLE.warning, "text"),
 };
 
 /** 取り消しなどのアクションボタン 1 つ (#676)。押すとハンドラを実行してトーストを
@@ -67,7 +69,7 @@ export interface ToastOptions {
   action?: ToastAction;
   /**
    * アクティビティセンター (#912) に記録する重大度。既定は `tone` から導出する
-   * (`TONE_SEVERITY`)。トーストの見た目は 3 トーンしか無いが、意味としては
+   * (`TONE_SEVERITY`)。info の見た目のまま、意味としては
    * 「警告」であるもの (スキーマドリフト検知・実行計画の変化など) に
    * `severity: "warning"` を渡すと、センター側だけ警告として分類・絞り込める。
    * 見た目 (tone) は変えない。

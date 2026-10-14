@@ -151,6 +151,7 @@ import {
 import { EmptyState } from "./components/EmptyState";
 import { DisconnectedIllustration, ProductionWarningIllustration } from "./components/illustrations";
 import { WelcomeView } from "./components/WelcomeView";
+import { SkippedProfilesNotice } from "./components/SkippedProfilesNotice";
 import { ProfileCardGrid } from "./components/ProfileCardGrid";
 import { OnboardingTour } from "./components/OnboardingTour";
 import * as onboarding from "./onboarding";
@@ -2928,9 +2929,14 @@ export default function App() {
           // 見た目は info のままだが、アクティビティセンター (#912) には
           // 「警告」として残す — 実行計画の変化は後から拾い直したい種類の
           // イベントで、重大度で絞り込めると見つけやすい。
+          // フルスキャンへの退行など警告相当の変化があるときだけトーンも警告にして、
+          // スニペット名を本文に出す (#1614)。軽微な変化は従来どおり info。
+          const regressed = res.warned.length > 0;
           toast.notify({
-            message: translate("planWatchChangedToast", { count: res.changed }),
-            tone: "info",
+            message: regressed
+              ? translate("planWatchRegressedToast", { names: res.warned.join(", ") })
+              : translate("planWatchChangedToast", { count: res.changed }),
+            tone: regressed ? "warning" : "info",
             severity: "warning",
           });
         }
@@ -10853,6 +10859,7 @@ export default function App() {
                 display: sidebarTab === "connections" ? "flex" : "none",
               }}
             >
+              <SkippedProfilesNotice refreshKey={profiles} onChanged={() => void refreshProfiles()} />
               <ConnectionList
                 ref={connectionListRef}
                 profiles={visibleProfiles}

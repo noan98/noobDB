@@ -188,7 +188,7 @@ export function parsePlan(
   } catch (e) {
     return { root: null, error: e instanceof Error ? e.message : String(e) };
   }
-  if (!isPlainObject(data)) return { root: null, error: "unexpected plan shape" };
+  if (!isPlainObject(data)) return { root: null, error: tr("explainUnexpectedShape") };
   if (isPlainObject(data.query_block)) {
     return { root: buildNode("query_block", data.query_block, "query_block", tr), error: null };
   }
@@ -272,7 +272,10 @@ function pgActual(obj: Record<string, unknown>): PlanActual | undefined {
   };
 }
 
-export function parsePostgresPlan(json: string): { root: PlanNode | null; error: string | null } {
+export function parsePostgresPlan(
+  json: string,
+  tr: PlanLabelT = defaultT,
+): { root: PlanNode | null; error: string | null } {
   let data: unknown;
   try {
     data = JSON.parse(json);
@@ -281,9 +284,9 @@ export function parsePostgresPlan(json: string): { root: PlanNode | null; error:
   }
   // 通常は配列。最初の要素の `Plan` がルート。単一オブジェクトでの返却にも備える。
   const first = Array.isArray(data) ? data[0] : data;
-  if (!isPlainObject(first)) return { root: null, error: "unexpected plan shape" };
+  if (!isPlainObject(first)) return { root: null, error: tr("explainUnexpectedShape") };
   const plan = isPlainObject(first.Plan) ? first.Plan : first;
-  if (!isPlainObject(plan)) return { root: null, error: "unexpected plan shape" };
+  if (!isPlainObject(plan)) return { root: null, error: tr("explainUnexpectedShape") };
   return { root: buildPgNode(plan, "plan"), error: null };
 }
 
@@ -300,7 +303,10 @@ export interface SqlitePlanRow {
   detail: string;
 }
 
-export function parseSqlitePlan(rows: SqlitePlanRow[]): { root: PlanNode | null; error: string | null } {
+export function parseSqlitePlan(
+  rows: SqlitePlanRow[],
+  tr: PlanLabelT = defaultT,
+): { root: PlanNode | null; error: string | null } {
   const byParent = new Map<number, SqlitePlanRow[]>();
   for (const r of rows) {
     const list = byParent.get(r.parent) ?? [];
@@ -326,7 +332,7 @@ export function parseSqlitePlan(rows: SqlitePlanRow[]): { root: PlanNode | null;
     root: {
       id: "plan",
       kind: "queryPlan",
-      label: "QUERY PLAN",
+      label: tr("explainQueryPlanRoot"),
       cost: null,
       attrs: [],
       children: tops.map((tp, i) => build(tp, `plan/${i}`)),
@@ -356,7 +362,10 @@ interface MysqlTextLine {
   text: string;
 }
 
-export function parseMysqlAnalyzeText(raw: string): { root: PlanNode | null; error: string | null } {
+export function parseMysqlAnalyzeText(
+  raw: string,
+  tr: PlanLabelT = defaultT,
+): { root: PlanNode | null; error: string | null } {
   const lines: MysqlTextLine[] = [];
   for (const line of raw.split(/\r?\n/)) {
     const m = /^(\s*)->\s?(.*)$/.exec(line);
@@ -367,7 +376,7 @@ export function parseMysqlAnalyzeText(raw: string): { root: PlanNode | null; err
       lines[lines.length - 1].text += ` ${line.trim()}`;
     }
   }
-  if (lines.length === 0) return { root: null, error: "unexpected plan shape" };
+  if (lines.length === 0) return { root: null, error: tr("explainUnexpectedShape") };
 
   const roots: PlanNode[] = [];
   // 各深さの「直近のノード」。子は 1 つ浅い深さの直近ノードにぶら下がる。
@@ -389,7 +398,7 @@ export function parseMysqlAnalyzeText(raw: string): { root: PlanNode | null; err
     root: {
       id: "plan",
       kind: "queryPlan",
-      label: "QUERY PLAN",
+      label: tr("explainQueryPlanRoot"),
       cost: null,
       attrs: [],
       children: roots,
@@ -475,7 +484,7 @@ export function parseExplainForDriver(
       parent: Number(r[1]) || 0,
       detail: String(r[3] ?? r[r.length - 1] ?? ""),
     }));
-    const { root, error } = parseSqlitePlan(rows);
+    const { root, error } = parseSqlitePlan(rows, tr);
     const raw = rows.map((r) => r.detail).join("\n");
     return { raw: raw || null, root, error };
   }
@@ -484,10 +493,10 @@ export function parseExplainForDriver(
   if (!raw) return { raw: null, root: null, error: null };
   // MySQL の `EXPLAIN ANALYZE` (実測モード, #1164) は JSON でなくテキストツリー。
   if (driver !== "postgres" && looksLikeMysqlAnalyzeText(raw)) {
-    const { root, error } = parseMysqlAnalyzeText(raw);
+    const { root, error } = parseMysqlAnalyzeText(raw, tr);
     return { raw, root, error };
   }
-  const { root, error } = driver === "postgres" ? parsePostgresPlan(raw) : parsePlan(raw, tr);
+  const { root, error } = driver === "postgres" ? parsePostgresPlan(raw, tr) : parsePlan(raw, tr);
   return { raw, root, error };
 }
 

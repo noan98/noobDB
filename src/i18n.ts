@@ -45,6 +45,8 @@ const en = {
   activityEmptyTitle: "No activity yet",
   activityPanelEmpty:
     "Notifications and status bar messages (connections, query results, errors) are kept here so you can read them later.",
+  ipcValidationError:
+    'The response to "{command}" was not in the expected format. The app and its backend may be out of sync (details are in the activity log).',
   ipcValidationActivity:
     'Unexpected response from the backend for "{command}". The app and its backend may be out of sync.',
   ipcValidationHint:
@@ -373,6 +375,7 @@ const en = {
   planWatchLocalOnlyNote:
     "Plans are stored locally only. EXPLAIN runs are read-only and never recorded to query history.",
   planWatchChangedToast: "Execution plan changed for {count} watched snippet(s)",
+  planWatchRegressedToast: "Execution plan regressed (e.g. full scan): {names}",
   planWatchRefreshFailedToast: "Plan check failed for {name}: {error}",
 
   schemaDriftTitle: "Schema drift timeline — {name}",
@@ -1161,6 +1164,17 @@ const en = {
   formPickDbFileTitle: "Select database file",
   formPickCertTitle: "Select certificate / key file",
   formSqliteFileFilter: "SQLite databases",
+  skippedProfilesTitle: "{count} connection entries could not be loaded",
+  skippedProfilesHint:
+    "These entries in profiles.json could not be read (hand-edited, or written by a newer version), so they are hidden from the list. They are kept in the file until you delete them here.",
+  skippedProfileUnnamed: "(unnamed)",
+  skippedProfileDelete: "Delete",
+  skippedProfileDeleteTitle: "Delete unreadable entry",
+  skippedProfileDeleteBody: 'Delete "{name}" from profiles.json? This cannot be undone.',
+  skippedProfileDeleted: 'Deleted "{name}".',
+  skippedProfileDeleteFailed: "Could not delete the entry: {error}",
+  skippedProfilesMore: "and {count} more",
+  welcomeOpenSqliteFailed: "Could not open the file picker: {error}",
   formCertFileFilter: "Certificates & keys",
   formAnyFileFilter: "All files",
   formTlsLegend: "TLS / SSL",
@@ -1411,6 +1425,11 @@ const en = {
   explainLoading: "Analyzing query plan...",
   explainParseError: "Could not parse the EXPLAIN output: {error}",
   explainTotalCost: "Query cost: {cost}",
+  explainQueryPlanRoot: "QUERY PLAN",
+  explainUnexpectedShape: "unexpected plan shape",
+  explainNodeCost: "cost {cost}",
+  explainNodeRows: "{rows} rows",
+  explainNodeActualRows: "{est} → {actual} rows",
   explainKindQueryBlock: "Query block",
   explainKindNestedLoop: "Nested loop",
   explainKindOrdering: "Ordering",
@@ -2469,6 +2488,7 @@ const en = {
   createTableColNamePlaceholder: "column",
   createTableColType: "Type",
   createTableColNotNull: "Not null",
+  createTableColPk: "PK",
   createTableColUnique: "Unique",
   createTableColAuto: "Auto",
   createTableColDefault: "Default",
@@ -2556,6 +2576,11 @@ const en = {
   alterTableTitle: "Edit columns: {table}",
   alterTableLoading: "Loading columns...",
   alterTableLoadError: "Failed to load columns: {error}",
+  alterTableContextIncomplete:
+    "Could not load some information ({items}), so what is shown may be incomplete. Existing foreign keys or comments may not appear here.",
+  alterTableCtxItemComments: "table comment",
+  alterTableCtxItemForeignKeys: "foreign keys",
+  alterTableCtxItemTables: "table list",
   alterTableExistingSection: "Existing columns",
   alterTableMysqlExtraNote:
     "Renaming or changing a column's type/NOT NULL/DEFAULT preserves AUTO_INCREMENT and ON UPDATE, but not character set/collation, COMMENT, or generated-column expressions (this dialog doesn't read those).",
@@ -3269,6 +3294,7 @@ const en = {
   blobFetchFailed: "Could not read the binary value: {error}",
   blobLoadPickTitle: "Choose a file to store in the cell",
   blobLoadFailed: "Could not load the file into the cell: {error}",
+  blobTooLarge: "The file ({size}) is too large to load into a cell. The limit is {max}.",
   blobLoadConfirmTitle: "Replace the BLOB?",
   blobLoadConfirmBody:
     "Overwrite column {column} with the contents of {size} from the chosen file? An UPDATE runs immediately and cannot be undone from here.",
@@ -5462,6 +5488,8 @@ const ja: Dict = {
   activityEmptyTitle: "アクティビティはまだありません",
   activityPanelEmpty:
     "通知とステータスバーのメッセージ (接続・実行結果・エラー) をここに残します。後から読み返せます。",
+  ipcValidationError:
+    "「{command}」の応答が想定した形式と一致しませんでした。アプリ本体とバックエンドのバージョンが食い違っている可能性があります (詳細はアクティビティを参照)。",
   ipcValidationActivity:
     "バックエンドから「{command}」の想定外の応答がありました。アプリ本体とバックエンドのバージョンが食い違っている可能性があります。",
   ipcValidationHint:
@@ -5786,6 +5814,7 @@ const ja: Dict = {
   planWatchLocalOnlyNote:
     "計画はローカルにのみ保存されます。EXPLAIN は読み取り操作のみで、クエリ履歴には記録されません。",
   planWatchChangedToast: "{count} 件のウォッチ中スニペットで実行計画が変化しました",
+  planWatchRegressedToast: "実行計画が退行しました (フルスキャンなど): {names}",
   planWatchRefreshFailedToast: "{name} の計画チェックに失敗: {error}",
 
   schemaDriftTitle: "スキーマドリフト・タイムライン — {name}",
@@ -6569,6 +6598,17 @@ const ja: Dict = {
   formPickDbFileTitle: "データベースファイルを選択",
   formPickCertTitle: "証明書 / 鍵ファイルを選択",
   formSqliteFileFilter: "SQLite データベース",
+  skippedProfilesTitle: "{count} 件の接続エントリを読み込めませんでした",
+  skippedProfilesHint:
+    "profiles.json のこれらのエントリは解釈できない (手編集・新しい版が書いたものなど) ため、一覧に表示されません。ここで削除するまでファイルには残ります。",
+  skippedProfileUnnamed: "(名前なし)",
+  skippedProfileDelete: "削除",
+  skippedProfileDeleteTitle: "読み込めないエントリの削除",
+  skippedProfileDeleteBody: "「{name}」を profiles.json から削除しますか? 元に戻せません。",
+  skippedProfileDeleted: "「{name}」を削除しました。",
+  skippedProfileDeleteFailed: "エントリを削除できませんでした: {error}",
+  skippedProfilesMore: "ほか {count} 件",
+  welcomeOpenSqliteFailed: "ファイル選択ダイアログを開けませんでした: {error}",
   formCertFileFilter: "証明書・鍵",
   formAnyFileFilter: "すべてのファイル",
   formTlsLegend: "TLS / SSL",
@@ -6817,6 +6857,11 @@ const ja: Dict = {
   explainLoading: "実行計画を解析中...",
   explainParseError: "EXPLAIN の出力を解析できませんでした: {error}",
   explainTotalCost: "クエリコスト: {cost}",
+  explainQueryPlanRoot: "クエリプラン",
+  explainUnexpectedShape: "プランの形式が想定と異なります",
+  explainNodeCost: "コスト {cost}",
+  explainNodeRows: "{rows} 行",
+  explainNodeActualRows: "{est} → {actual} 行",
   explainKindQueryBlock: "クエリブロック",
   explainKindNestedLoop: "ネステッドループ",
   explainKindOrdering: "ソート",
@@ -7877,6 +7922,7 @@ const ja: Dict = {
   createTableColNamePlaceholder: "列名",
   createTableColType: "型",
   createTableColNotNull: "NOT NULL",
+  createTableColPk: "主キー",
   createTableColUnique: "UNIQUE",
   createTableColAuto: "自動採番",
   createTableColDefault: "デフォルト",
@@ -7964,6 +8010,11 @@ const ja: Dict = {
   alterTableTitle: "列を編集: {table}",
   alterTableLoading: "列情報を読み込み中...",
   alterTableLoadError: "列情報の読み込みに失敗しました: {error}",
+  alterTableContextIncomplete:
+    "一部の情報 ({items}) を取得できなかったため、表示が不完全です。既存の外部キーやコメントがここに出ていない可能性があります。",
+  alterTableCtxItemComments: "テーブルコメント",
+  alterTableCtxItemForeignKeys: "外部キー",
+  alterTableCtxItemTables: "テーブル一覧",
   alterTableExistingSection: "既存の列",
   alterTableMysqlExtraNote:
     "列のリネームや型・NOT NULL・DEFAULT の変更では AUTO_INCREMENT や ON UPDATE は保持されますが、文字セット・照合順序・COMMENT・生成列の式 (このダイアログでは取得していません) は保持されません。",
@@ -8667,6 +8718,7 @@ const ja: Dict = {
   blobFetchFailed: "バイナリ値を取得できませんでした: {error}",
   blobLoadPickTitle: "セルに格納するファイルを選択",
   blobLoadFailed: "ファイルをセルへ読み込めませんでした: {error}",
+  blobTooLarge: "ファイル ({size}) が大きすぎてセルへ読み込めません。上限は {max} です。",
   blobLoadConfirmTitle: "BLOB を置き換えますか?",
   blobLoadConfirmBody:
     "列 {column} を、選択したファイルの内容 ({size}) で上書きします。UPDATE を今すぐ実行し、ここから元には戻せません。",

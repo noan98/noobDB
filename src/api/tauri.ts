@@ -739,6 +739,8 @@ export interface AlterTableContext {
   foreign_keys: ForeignKey[];
   /** DB 内のテーブル名一覧 (FK の参照先候補)。 */
   table_names: string[];
+  /** 取得に失敗して空で続行した付随情報の種別 (`comments` / `foreign_keys` / `table_names`)。 */
+  warnings: string[];
 }
 
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
@@ -1231,6 +1233,18 @@ export interface PlanWatchEntry {
   generations: PlanWatchGeneration[];
 }
 
+/** 一覧に出ないプロファイルの要約 (`list_skipped_profiles`、#1614)。秘密は含まない。 */
+export interface SkippedProfile {
+  /** `unparsable`: 解釈できない要素 / `unsupported_driver`: 対応外ドライバのプロファイル。 */
+  kind: "unparsable" | "unsupported_driver";
+  /** `unparsable` のとき `delete_skipped_profile` に渡す並び順。 */
+  index: number;
+  id: string | null;
+  name: string | null;
+  driver: string | null;
+  reason: string;
+}
+
 /** `plan_watch_refresh` の結果。 */
 export interface PlanWatchRefreshResult {
   /** 新しい世代が記録された件数。 */
@@ -1238,6 +1252,8 @@ export interface PlanWatchRefreshResult {
   /** 記録された世代のうち、前世代から重要な変化があった件数。 */
   changed: number;
   errors: { snippetId: string; name: string; error: string }[];
+  /** 前世代から警告相当の変化 (フルスキャンへの退行など) があったスニペットの名前。 */
+  warned: string[];
 }
 
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde

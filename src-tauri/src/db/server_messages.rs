@@ -32,7 +32,24 @@ pub const NOTICE_TARGET: &str = "sqlx::postgres::notice";
 /// IPC ペイロードとメモリを圧迫しないための上限。
 pub const MAX_SERVER_MESSAGES: usize = 200;
 
-type Buffer = Arc<Mutex<Vec<ServerMessage>>>;
+/// 捕捉中のバッファ。上限を超えて捨てた件数も数え、省略を利用者に伝える (#1614)。
+#[derive(Default)]
+struct Captured {
+    messages: Vec<ServerMessage>,
+    dropped: usize,
+}
+
+type Buffer = Arc<Mutex<Captured>>;
+
+/// 上限超過で省略した `dropped` 件を知らせる 1 件 (一覧の末尾に足す)。
+pub fn omitted_message(dropped: usize) -> ServerMessage {
+    ServerMessage {
+        severity: ServerMessageSeverity::Info,
+        text: format!(
+            "ほか {dropped} 件のメッセージは上限 ({MAX_SERVER_MESSAGES} 件) を超えたため省略しました。"
+        ),
+    }
+}
 
 tokio::task_local! {
     static CAPTURE: Buffer;
@@ -40,12 +57,16 @@ tokio::task_local! {
 
 /// `fut` を実行しながら、その間に届いた NOTICE を集めて出力とともに返す。
 pub async fn capture<F: Future>(fut: F) -> (F::Output, Vec<ServerMessage>) {
-    let buffer: Buffer = Arc::new(Mutex::new(Vec::new()));
+    let buffer: Buffer = Arc::new(Mutex::new(Captured::default()));
     let output = CAPTURE.scope(buffer.clone(), fut).await;
-    let messages = match buffer.lock() {
+    let captured = match buffer.lock() {
         Ok(mut g) => std::mem::take(&mut *g),
         Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
     };
+    let mut messages = captured.messages;
+    if captured.dropped > 0 {
+        messages.push(omitted_message(captured.dropped));
+    }
     (output, messages)
 }
 
@@ -106,8 +127,10 @@ impl<S: Subscriber> Layer<S> for NoticeCaptureLayer {
                 Ok(g) => g,
                 Err(poisoned) => poisoned.into_inner(),
             };
-            if guard.len() < MAX_SERVER_MESSAGES {
-                guard.push(ServerMessage { severity, text });
+            if guard.messages.len() < MAX_SERVER_MESSAGES {
+                guard.messages.push(ServerMessage { severity, text });
+            } else {
+                guard.dropped += 1;
             }
         });
     }
@@ -134,9 +157,12 @@ mod tests {
 
     #[test]
     fn captures_notice_events_with_severity() {
-        let buffer: Buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer: Buffer = Arc::new(Mutex::new(Captured::default()));
         emit_in_scope(&buffer);
-        let got = buffer.lock().map(|g| g.clone()).unwrap_or_default();
+        let got = buffer
+            .lock()
+            .map(|g| g.messages.clone())
+            .unwrap_or_default();
         assert_eq!(
             got,
             vec![
@@ -170,7 +196,7 @@ mod tests {
 
     #[test]
     fn buffer_is_capped() {
-        let buffer: Buffer = Arc::new(Mutex::new(Vec::new()));
+        let buffer: Buffer = Arc::new(Mutex::new(Captured::default()));
         let subscriber = tracing_subscriber::registry().with(NoticeCaptureLayer);
         tracing::subscriber::with_default(subscriber, || {
             CAPTURE.sync_scope(buffer.clone(), || {
@@ -179,8 +205,27 @@ mod tests {
                 }
             });
         });
-        let len = buffer.lock().map(|g| g.len()).unwrap_or(0);
+        let (len, dropped) = buffer
+            .lock()
+            .map(|g| (g.messages.len(), g.dropped))
+            .unwrap_or((0, 0));
         assert_eq!(len, MAX_SERVER_MESSAGES);
+        assert_eq!(dropped, 50);
+    }
+
+    #[tokio::test]
+    async fn capture_appends_omitted_notice_when_over_cap() {
+        let subscriber = tracing_subscriber::registry().with(NoticeCaptureLayer);
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let (_, msgs) = capture(async {
+            for _ in 0..(MAX_SERVER_MESSAGES + 3) {
+                tracing::event!(target: "sqlx::postgres::notice", Level::INFO, message = "n");
+            }
+        })
+        .await;
+        assert_eq!(msgs.len(), MAX_SERVER_MESSAGES + 1);
+        let last = msgs.last().map(|m| m.text.clone()).unwrap_or_default();
+        assert!(last.contains("ほか 3 件"), "{last}");
     }
 
     #[tokio::test]
