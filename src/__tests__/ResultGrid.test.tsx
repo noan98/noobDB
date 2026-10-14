@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { writeStoredGridView } from "../components/gridViewState";
 import { ResultGrid, GRID_CSS, isColumnFilterActive, type ResultGridHandle, readStoredColumnSizing, writeStoredColumnSizing, colStateKeyFrom, readStoredColumnState, writeStoredColumnState } from "../components/ResultGrid";
 import { rowEditKey, type PendingInsertRow } from "../components/cellEdit";
 import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tauri";
@@ -649,6 +650,16 @@ describe("column sizing persistence", () => {
     }
     expect(readStoredColumnSizing(first)).toEqual({});
     for (const c of companions) expect(localStorage.getItem(c)).toBeNull();
+  });
+
+  it("gridview だけを書く形状も LRU に載り、上限超過で古い形状が退避される", () => {
+    const view = (i: number) => `noobdb.gridview.v1::db::t${i}::["col"]`;
+    const sizing = (i: number) => `noobdb.colsizing.v1::db::t${i}::["col"]`;
+    const state = { sorting: [{ id: "0", desc: true }] };
+    for (let i = 0; i <= 50; i++) writeStoredGridView(view(i), state);
+    expect(localStorage.getItem(view(0))).toBeNull();
+    expect(localStorage.getItem(view(50))).not.toBeNull();
+    expect(localStorage.getItem(sizing(0))).toBeNull();
   });
 
   it("容量超過で setItem が失敗しても、古い形状を退避して列幅を保存できる", () => {

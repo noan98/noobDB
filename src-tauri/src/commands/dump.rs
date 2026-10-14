@@ -1006,7 +1006,33 @@ async fn dump_sqlite(
             _ => None,
         })
         .collect();
-    let shadow_tables = sqlite_shadow_tables(&all_tables);
+    // 3.37+ は `table_list` の type='shadow' が正確。使えない (古い) ときだけサフィックス表。
+    let shadow_tables: std::collections::HashSet<String> = match conn
+        .execute(
+            "SELECT name FROM pragma_table_list WHERE type = 'shadow'",
+            None,
+        )
+        .await
+    {
+        Ok(r) => r
+            .rows
+            .iter()
+            .filter_map(|row| match row.first() {
+                Some(Value::String(n)) => Some(n.clone()),
+                _ => None,
+            })
+            .collect(),
+        Err(_) => sqlite_shadow_tables(&all_tables),
+    };
+    let virtual_tables: std::collections::HashSet<&str> = all_tables
+        .iter()
+        .filter(|(_, sql)| {
+            sql.trim_start()
+                .to_ascii_lowercase()
+                .starts_with("create virtual")
+        })
+        .map(|(n, _)| n.as_str())
+        .collect();
     let table_rows: Vec<&Vec<Value>> = tables
         .rows
         .iter()
@@ -1054,6 +1080,15 @@ async fn dump_sqlite(
         write_chunk(&writer, counter, &chunk)?;
         if !options.no_data {
             let quoted = sqlite_quote_ident(&name);
+            // 仮想テーブルは rowid を明示して出す。外部コンテンツ FTS などで復元時に rowid が
+            // 振り直されると、元の表との対応が壊れるため。なお content='' のコンテンツレス
+            // FTS は本文を保持しないので、行を INSERT しても復元できない (既知の制約)。
+            let is_virtual = virtual_tables.contains(name.as_str());
+            let select_sql = if is_virtual {
+                format!("SELECT rowid AS rowid, * FROM {quoted}")
+            } else {
+                format!("SELECT * FROM {quoted}")
+            };
             let mut insert_prefix = String::new();
             let writer_cb = writer.clone();
             let counter_cb = counter.clone();
@@ -1063,7 +1098,7 @@ async fn dump_sqlite(
             let mut last_progress_at = Instant::now();
             let tables_done = processed;
             conn.execute_stream(
-                &format!("SELECT * FROM {quoted}"),
+                &select_sql,
                 None,
                 DUMP_STREAM_BATCH,
                 DUMP_STREAM_BATCH,
@@ -1128,7 +1163,8 @@ async fn dump_sqlite(
             .execute(
                 "SELECT sql, type, tbl_name, name FROM sqlite_master \
                  WHERE type IN ('index','trigger','view') AND name NOT LIKE 'sqlite_%' \
-                 AND sql IS NOT NULL ORDER BY type, name",
+                 AND sql IS NOT NULL \
+                 ORDER BY CASE type WHEN 'index' THEN 0 WHEN 'view' THEN 1 ELSE 2 END, name",
                 None,
             )
             .await?;
@@ -1342,20 +1378,35 @@ fn effective_ssl_mode(opts: &DbConnectOptions) -> Option<crate::db::SslMode> {
     }
 }
 
-/// mysqldump の `[client]` オプションファイルに書く TLS 行 (`ssl-mode` / `ssl-ca` /
-/// `ssl-cert` / `ssl-key`)。モード未指定なら `ssl-mode` は書かず mysqldump の既定に任せる。
+/// mysqldump の `[client]` オプションファイルに書く TLS 行。
+///
+/// `prefer` (= クライアントの既定) のときは何も書かない。MariaDB 版の mysqldump は
+/// `ssl-mode` を知らず、未知のオプションで即終了するため、既定のプロファイルで
+/// 壊さないようにする。それ以外は `loose-` 接頭辞を付け、未知なら無視させる
+/// (MariaDB 向けには `ssl` / `ssl-verify-server-cert` も併記)。
 fn mysql_tls_lines(opts: &DbConnectOptions) -> Vec<String> {
     use crate::db::SslMode;
     let mut lines = Vec::new();
     if let Some(mode) = effective_ssl_mode(opts) {
         let v = match mode {
-            SslMode::Disable => "DISABLED",
-            SslMode::Prefer => "PREFERRED",
-            SslMode::Require => "REQUIRED",
-            SslMode::VerifyCa => "VERIFY_CA",
-            SslMode::VerifyFull => "VERIFY_IDENTITY",
+            SslMode::Prefer => None,
+            SslMode::Disable => Some("DISABLED"),
+            SslMode::Require => Some("REQUIRED"),
+            SslMode::VerifyCa => Some("VERIFY_CA"),
+            SslMode::VerifyFull => Some("VERIFY_IDENTITY"),
         };
-        lines.push(format!("ssl-mode={v}"));
+        if let Some(v) = v {
+            lines.push(format!("loose-ssl-mode={v}"));
+        }
+        if matches!(
+            mode,
+            SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
+        ) {
+            lines.push("loose-ssl".to_string());
+        }
+        if matches!(mode, SslMode::VerifyCa | SslMode::VerifyFull) {
+            lines.push("loose-ssl-verify-server-cert".to_string());
+        }
     }
     for (key, val) in [
         ("ssl-ca", &opts.ssl_root_cert),
@@ -1398,7 +1449,8 @@ fn pg_tls_env(opts: &DbConnectOptions) -> Vec<(&'static str, String)> {
 
 /// SQLite の仮想テーブル (FTS / R-Tree) が自動生成するシャドウテーブル名の集合。
 /// `(name, sql)` の全テーブル一覧から、`CREATE VIRTUAL TABLE ... USING <module>` の
-/// モジュールごとの既知サフィックスで導く。シャドウは仮想テーブルの CREATE で再生成
+/// モジュールごとの既知サフィックスで導く (SQLite 3.37+ なら呼び出し側が
+/// `PRAGMA table_list` の `shadow` を優先し、これは古い SQLite 向けのフォールバック)。シャドウは仮想テーブルの CREATE で再生成
 /// されるので、通常の表として DROP / CREATE / INSERT してはいけない。
 fn sqlite_shadow_tables(tables: &[(String, String)]) -> std::collections::HashSet<String> {
     let mut shadows = std::collections::HashSet::new();
@@ -1408,11 +1460,15 @@ fn sqlite_shadow_tables(tables: &[(String, String)]) -> std::collections::HashSe
         if words.next() != Some("create") || words.next() != Some("virtual") {
             continue;
         }
-        let Some(pos) = lower.find(" using ") else {
+        // 空白・改行・タブ区切りの `USING <module>` からモジュール名を取る。
+        let Some(token) = lower
+            .split_whitespace()
+            .skip_while(|w| *w != "using")
+            .nth(1)
+        else {
             continue;
         };
-        let module: String = lower[pos + 7..]
-            .trim_start()
+        let module: String = token
             .chars()
             .take_while(|c| c.is_alphanumeric() || *c == '_')
             .collect();
@@ -1881,13 +1937,25 @@ mod tests {
         assert_eq!(
             mysql_tls_lines(&o),
             vec![
-                "ssl-mode=VERIFY_IDENTITY".to_string(),
+                "loose-ssl-mode=VERIFY_IDENTITY".to_string(),
+                "loose-ssl".to_string(),
+                "loose-ssl-verify-server-cert".to_string(),
                 "ssl-ca=\"/etc/ca.pem\"".to_string(),
                 "ssl-key=\"/k.pem\"".to_string(),
             ]
         );
         o.ssl_mode = Some(SslMode::VerifyCa);
-        assert_eq!(mysql_tls_lines(&o)[0], "ssl-mode=VERIFY_CA");
+        assert_eq!(mysql_tls_lines(&o)[0], "loose-ssl-mode=VERIFY_CA");
+        // prefer (既定) は何も書かない (MariaDB の mysqldump は ssl-mode を知らない)。
+        o.ssl_mode = Some(SslMode::Prefer);
+        o.ssl_root_cert = None;
+        o.ssl_client_key = None;
+        assert!(mysql_tls_lines(&o).is_empty());
+        o.ssl_mode = Some(SslMode::Disable);
+        assert_eq!(
+            mysql_tls_lines(&o),
+            vec!["loose-ssl-mode=DISABLED".to_string()]
+        );
     }
 
     #[test]
@@ -1917,7 +1985,7 @@ mod tests {
             ),
             t("notes_idx", "CREATE TABLE 'notes_idx'(segid, term, pgno)"),
             t("notes_archive", "CREATE TABLE notes_archive(id)"),
-            t("geo", "CREATE VIRTUAL TABLE geo USING rtree(id, a, b)"),
+            t("geo", "CREATE VIRTUAL TABLE geo\n\tUSING\trtree (id, a, b)"),
             t(
                 "geo_node",
                 "CREATE TABLE \"geo_node\"(nodeno INTEGER PRIMARY KEY, data)",

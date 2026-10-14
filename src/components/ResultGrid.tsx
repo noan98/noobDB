@@ -238,6 +238,7 @@ import {
   resolveFooterFn,
   writeStoredFooterState,
 } from "./gridFooter";
+import { setItemWithEviction, touchColumnLayoutLru, touchLayoutLruForKey } from "./columnLayoutStorage";
 import {
   gridViewStateKeyFrom,
   readStoredGridView,
@@ -1518,30 +1519,6 @@ function rowToPendingInsert(row: CellValue[]): PendingInsertRow {
   return seed;
 }
 
-const COL_SIZING_LRU_KEY = "noobdb.colsizing.lru.v1";
-const COL_SIZING_MAX_ENTRIES = 50;
-
-function readLruOrder(): string[] {
-  try {
-    const raw = localStorage.getItem(COL_SIZING_LRU_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed as string[];
-    }
-  } catch {
-    // ignore
-  }
-  return [];
-}
-
-function writeLruOrder(order: string[]): void {
-  try {
-    localStorage.setItem(COL_SIZING_LRU_KEY, JSON.stringify(order));
-  } catch {
-    // ignore
-  }
-}
-
 export function readStoredColumnSizing(storageKey: string | undefined): ColumnSizingState {
   if (!storageKey) return {};
   try {
@@ -1554,59 +1531,6 @@ export function readStoredColumnSizing(storageKey: string | undefined): ColumnSi
     // ignore (corrupt entry, private mode, quota)
   }
   return {};
-}
-
-/** 1 つの結果形状 (列サイジングキー) に紐づく保存キー一式。LRU の退避は一式まとめて消す。 */
-function layoutKeysOf(sizingKey: string): string[] {
-  return [
-    sizingKey,
-    sizingKey.replace("noobdb.colsizing.v1", "noobdb.colstate.v1"),
-    sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridview.v1"),
-    sizingKey.replace("noobdb.colsizing.v1", "noobdb.gridfooter.v1"),
-  ];
-}
-
-function removeLayoutKeys(sizingKey: string): void {
-  for (const k of layoutKeysOf(sizingKey)) {
-    try {
-      localStorage.removeItem(k);
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-/**
- * 結果形状 `sizingKey` を LRU の先頭へ移し、上限 (`maxEntries`) を超えた古い形状の
- * 保存キー (colsizing / colstate / gridview / gridfooter) を削除する。書き込みの**前**に
- * 呼ぶので、容量超過で setItem が失敗する状況でも退避が走る。
- */
-function touchColumnLayoutLru(sizingKey: string, maxEntries = COL_SIZING_MAX_ENTRIES): void {
-  const order = readLruOrder().filter((k) => k !== sizingKey);
-  order.unshift(sizingKey);
-  if (order.length > maxEntries) {
-    for (const k of order.splice(maxEntries)) removeLayoutKeys(k);
-  }
-  writeLruOrder(order);
-}
-
-/** setItem が容量超過で失敗したとき、古い形状から 1/4 を退避して 1 回だけ再試行する。 */
-function setItemWithEviction(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-    return;
-  } catch {
-    // fall through: 容量超過の可能性。古い形状を退避して再試行する。
-  }
-  try {
-    const order = readLruOrder();
-    const keep = Math.max(1, Math.floor(order.length * 0.75));
-    for (const k of order.splice(keep)) removeLayoutKeys(k);
-    writeLruOrder(order);
-    localStorage.setItem(key, value);
-  } catch {
-    // ignore
-  }
 }
 
 export function writeStoredColumnSizing(
@@ -1671,9 +1595,7 @@ export function writeStoredColumnState(
       localStorage.removeItem(storageKey);
     } else {
       // 列サイズを一度も変えていない形状でも LRU に載せ、無制限に溜まらないようにする。
-      if (storageKey.includes("noobdb.colstate.v1")) {
-        touchColumnLayoutLru(storageKey.replace("noobdb.colstate.v1", "noobdb.colsizing.v1"));
-      }
+      touchLayoutLruForKey(storageKey);
       setItemWithEviction(storageKey, JSON.stringify(state));
     }
   } catch {
