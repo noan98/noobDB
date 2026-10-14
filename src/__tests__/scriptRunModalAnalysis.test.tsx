@@ -62,6 +62,7 @@ function analysis(over: Partial<ScriptAnalysis> = {}): ScriptAnalysis {
     txControls: [],
     headLimit: 300,
     listLimit: 200,
+    unclosedTransaction: false,
     ...over,
   };
 }
@@ -138,6 +139,52 @@ describe("ScriptRunModal: 自動事前確認 (#1535)", () => {
     expect(runSqlScript).not.toHaveBeenCalled();
     fireEvent.click(confirmButton);
     await waitFor(() => expect(runSqlScript).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
+  it("事前確認で閉じていない BEGIN があれば、ラップしない実行の前に警告する", async () => {
+    analyzeEvent = () =>
+      analyzed(
+        analysis({
+          txControlTotal: 1,
+          txControls: [{ index: 1, line: 1, kind: "begin" }],
+          unclosedTransaction: true,
+        }),
+      );
+    setup();
+    fireEvent.click(screen.getByText(t("scriptAnalyze")));
+    expect(await screen.findByText(t("scriptUnclosedTransactionWarning"), {}, { timeout: 3000 })).toBeTruthy();
+  });
+
+  it("閉じている場合は警告しない", async () => {
+    analyzeEvent = () =>
+      analyzed(analysis({ txControlTotal: 2, txControls: [{ index: 1, line: 1, kind: "begin" }] }));
+    setup();
+    fireEvent.click(screen.getByText(t("scriptAnalyze")));
+    await screen.findByText(t("scriptAnalysisTxLocked"), {}, { timeout: 3000 });
+    expect(screen.queryByText(t("scriptUnclosedTransactionWarning"))).toBeNull();
+  });
+
+  it("完了画面に、EOF で自動 COMMIT したことを出す", async () => {
+    runBehavior = (id) => {
+      handlers.get(id)?.onDone?.({
+        streamId: id,
+        executed: 2,
+        succeeded: 2,
+        failedCount: 0,
+        failures: [],
+        skippedControl: 0,
+        skippedExcluded: 0,
+        skippedBeforeStart: 0,
+        implicitCommit: true,
+        rowsAffected: 1,
+        elapsedMs: 1,
+      });
+    };
+    setup();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    expect(await screen.findByText(t("scriptDoneImplicitCommit"), {}, { timeout: 3000 })).toBeTruthy();
   });
 });
 

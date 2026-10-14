@@ -53,15 +53,16 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
   // スキーマ変更判定などから 3〜5 回マスクされる (どれも全文走査)。直近の結果を小さな
   // キャッシュに持ち、同じ (driver, options, sql) は 1 回しか走査しない (#1256)。
   const keepIdent = options?.keepQuotedIdentifiers === true;
+  const keepBrackets = options?.keepBrackets === true;
   // 補完は毎打鍵で大きな文書を渡すので、安全網のキャッシュ (直近 8 件) を押し出さないよう外せる。
   if (options?.cache === false || sql.length > MASK_CACHE_MAX_SQL_CHARS) {
-    return maskLiteralsUncached(sql, driver, keepIdent);
+    return maskLiteralsUncached(sql, driver, keepIdent, keepBrackets);
   }
   // オプション未指定のキーは従来どおり `driver\0sql` (既存のキャッシュ挙動を変えない)。
-  const key = `${keepIdent ? "ident\u0001" : ""}${driver ?? ""}\u0000${sql}`;
+  const key = `${keepIdent ? "ident\u0001" : ""}${keepBrackets ? "brackets\u0001" : ""}${driver ?? ""}\u0000${sql}`;
   const hit = maskCache.get(key);
   if (hit !== undefined) return hit;
-  const masked = maskLiteralsUncached(sql, driver, keepIdent);
+  const masked = maskLiteralsUncached(sql, driver, keepIdent, keepBrackets);
   if (maskCache.size >= MASK_CACHE_ENTRIES) {
     // Map は挿入順なので、先頭 = 最も古いエントリを捨てる (FIFO)。
     const oldest = maskCache.keys().next();
@@ -87,6 +88,12 @@ export interface MaskOptions {
    * 渡す呼び出しが、安全網の判定用エントリを追い出さないために使う。既定は true。
    */
   cache?: boolean;
+  /**
+   * true なら SQLite の `[角括弧]` 識別子を特別扱いしない (本文を潰さず、中の `'` も文字列を開く
+   * 従来の読み方)。Where-used の参照走査が `[orders]` を読むために使う (Rust の
+   * `mask_for_driver_keeping_brackets` と対)。
+   */
+  keepBrackets?: boolean;
 }
 
 /** マスク結果キャッシュの上限エントリ数。直近数回の実行ぶんで足りる。 */
@@ -95,7 +102,12 @@ const MASK_CACHE_ENTRIES = 8;
 const MASK_CACHE_MAX_SQL_CHARS = 256 * 1024;
 const maskCache = new Map<string, string>();
 
-function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): string {
+function maskLiteralsUncached(
+  sql: string,
+  driver?: string,
+  keepIdent = false,
+  keepBrackets = false,
+): string {
   const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
@@ -169,7 +181,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
         }
       }
     }
-    if (c === "[" && driver === "sqlite") {
+    if (c === "[" && driver === "sqlite" && !keepBrackets) {
       // SQLite の角括弧識別子 `[name]` (エスケープ構文なし)。閉じ `]` が無い `[` は
       // 識別子扱いにしない (後続を飲み込まない = fail-closed)。バックエンドの
       // `mask_for_analysis_impl` と同じ規則。
@@ -190,7 +202,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false): 
           quote === "'" &&
           i >= 1 &&
           (sql[i - 1] === "e" || sql[i - 1] === "E") &&
-          (i === 1 || !isWordChar(sql[i - 2])));
+          (i === 1 || !isPgIdentChar(sql[i - 2])));
       let j = i + 1;
       let closed = false;
       while (j < n) {
@@ -289,6 +301,14 @@ function startsWithKeyword(body: string, keyword: string): boolean {
 
 function containsWord(body: string, keyword: string): boolean {
   return new RegExp(`\\b${keyword}\\b`).test(body);
+}
+
+/**
+ * PostgreSQL の識別子の 2 文字目以降に使える文字 (ASCII 英数字・`_`・`$`・非 ASCII)。`E'…'` の
+ * 接頭辞判定で「直前が識別子の一部か」を見る。バックエンドの `is_pg_ident_char` と同じ規則。
+ */
+function isPgIdentChar(ch: string): boolean {
+  return /[A-Za-z0-9_$]/.test(ch) || ch.charCodeAt(0) >= 0x80;
 }
 
 function isWordChar(ch: string): boolean {

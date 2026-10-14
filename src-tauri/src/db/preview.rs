@@ -192,8 +192,7 @@ pub(crate) fn update_set_segment(sql: &str, flavor: SqlFlavor) -> Option<String>
 /// `cur` の末尾が単独の `E` / `e` (PostgreSQL のエスケープ文字列の接頭辞) か。
 fn ends_with_pg_e_prefix(cur: &str) -> bool {
     let mut it = cur.chars().rev();
-    matches!(it.next(), Some('e' | 'E'))
-        && !it.next().is_some_and(|c| c.is_alphanumeric() || c == '_')
+    matches!(it.next(), Some('e' | 'E')) && !it.next().is_some_and(super::is_pg_ident_char)
 }
 
 /// 文字列リテラル・引用付き識別子・括弧の外にある `sep` で `text` を分割する。
@@ -417,7 +416,7 @@ fn find_top_level_keyword(
                         || (flavor == SqlFlavor::Postgres
                             && i >= 1
                             && matches!(bytes[i - 1], b'e' | b'E')
-                            && (i == 1 || !is_ident_byte(bytes[i - 2])));
+                            && (i == 1 || !super::is_pg_ident_byte(bytes[i - 2])));
                 }
                 b'"' => {
                     in_double = true;

@@ -4365,7 +4365,8 @@
           "kind": "rollback",
           "line": 9
         }
-      ]
+      ],
+      "unclosedTransaction": false
     },
     "elapsedMs": 12,
     "encoding": "shift_jis",

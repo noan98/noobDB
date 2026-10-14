@@ -3596,7 +3596,7 @@ fn mask_for_analysis_impl(
                     && quote == '\''
                     && i >= 1
                     && matches!(src[i - 1], 'e' | 'E')
-                    && (i == 1 || !is_word_char(src[i - 2])));
+                    && (i == 1 || !is_pg_ident_char(src[i - 2])));
             out.push(c);
             i += 1;
             while i < n {
@@ -3793,7 +3793,20 @@ fn is_pg_e_string_open(flavor: SqlFlavor, src: &[char], i: usize) -> bool {
         && src[i] == '\''
         && i >= 1
         && matches!(src[i - 1], 'e' | 'E')
-        && (i == 1 || !is_word_char(src[i - 2]))
+        && (i == 1 || !is_pg_ident_char(src[i - 2]))
+}
+
+/// PostgreSQL の識別子の 2 文字目以降に使える文字 (ASCII 英数字・`_`・`$`・非 ASCII)。
+/// `E'…'` の接頭辞判定で「直前が識別子の一部か」を見るのに使う。`x$e'…'` や `ée'…'` の
+/// `e` は識別子の末尾であって E 文字列の接頭辞ではない。TS の `isPgIdentChar`、
+/// `script.rs` / `preview.rs` の同等判定と同じ規則。
+pub(crate) fn is_pg_ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_' || c == '$' || !c.is_ascii()
+}
+
+/// [`is_pg_ident_char`] のバイト版 (UTF-8 の継続・先頭バイトは 0x80 以上)。
+pub(crate) fn is_pg_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b >= 0x80
 }
 
 fn is_word_char(c: char) -> bool {

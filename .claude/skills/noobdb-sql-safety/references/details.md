@@ -90,7 +90,13 @@
 `mask_for_driver` / `maskLiterals(sql, driver)` / `ScriptSplitter` / プレビューの句切り出しが共通で従う。
 ドライバ不明の入口は従来どおり (E 文字列・角括弧は特別扱いしない)。Where-used だけは角括弧識別子を
 読む必要があるので `mask_for_driver_keeping_brackets` を使う。ベクタは `maskedPostgres` / `maskedSqlite` /
-`statementsPostgres` で固定。
+`statementsPostgres` で固定。`E` の直前が識別子の一部 (ASCII 英数字・`_`・`$`・非 ASCII、
+`is_pg_ident_char` / `isPgIdentChar`) なら接頭辞ではない (`x$e'…'`)。
+
+**既知の差分:** Rust の `ScriptSplitter` (ファイル実行) は SQLite の `[a;b]` 角括弧識別子を扱わない
+(チャンク境界をまたぐ状態機械に載せにくい)。TS の `splitSqlStatements` (エディタ) は `maskLiterals` を共有する
+ので角括弧を識別子として読む。`[a';b]` のような稀な入力でだけ分割が食い違うが、Rust 側は `'` が文字列を
+開いて文を分けない方向 (後続は隠れず、読み取り専用ガードは断片全体を見る) なので fail-closed。
 
 **マスクの前提を崩す設定は入口で塞ぎます。** `driver_backslash_escapes` は
 「MySQL では `\` がエスケープ文字」という静的な前提を置くため、セッション初期化 SQL

@@ -159,6 +159,18 @@
       "sql": "SELECT [a ; DELETE FROM t;",
       "note": "#1601: 閉じ ] が無い [ は識別子扱いにせず後続を隠さない (fail-closed)",
       "masked": "SELECT [a ; DELETE FROM t;"
+    },
+    {
+      "sql": "SELECT x$e'\\' ; DELETE FROM t; --'",
+      "note": "#1601: 識別子 x$e (`$` は識別子の一部) の末尾の e は E 文字列の接頭辞ではない (PostgreSQL でも通常のリテラル)",
+      "masked": "SELECT x$e' ' ; DELETE FROM t;    ",
+      "maskedMysql": "SELECT x$e'                      '"
+    },
+    {
+      "sql": "SELECT ée'\\' ; DELETE FROM t; --'",
+      "note": "#1601: 識別子 ée (非 ASCII も識別子の一部) の末尾の e は E 文字列の接頭辞ではない (PostgreSQL でも通常のリテラル)",
+      "masked": "SELECT ée' ' ; DELETE FROM t;    ",
+      "maskedMysql": "SELECT ée'                      '"
     }
   ]
 }

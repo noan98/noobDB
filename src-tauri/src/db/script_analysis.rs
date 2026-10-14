@@ -109,6 +109,9 @@ pub struct ScriptAnalysis {
     pub blocked_total: u64,
     /// トランザクション制御文の総数 (`tx_controls` は先頭 [`LIST_LIMIT`] 件のみ)。
     pub tx_control_total: u64,
+    /// スクリプトが BEGIN したまま COMMIT / ROLLBACK なしで終わるか。ラップしない実行では
+    /// EOF でランナーが黙って COMMIT するため、実行前に知らせる。
+    pub unclosed_transaction: bool,
     pub head: Vec<AnalyzedStatement>,
     pub dangerous: Vec<AnalyzedStatement>,
     pub tx_controls: Vec<TxControlMark>,
@@ -140,6 +143,7 @@ impl ScriptAnalyzer {
                 dangerous_total: 0,
                 blocked_total: 0,
                 tx_control_total: 0,
+                unclosed_transaction: false,
                 head: Vec::new(),
                 dangerous: Vec::new(),
                 tx_controls: Vec::new(),
@@ -177,6 +181,7 @@ impl ScriptAnalyzer {
         }
         if let Some(kind) = tx_kind {
             self.out.tx_control_total += 1;
+            self.out.unclosed_transaction = kind == "begin";
             if self.out.tx_controls.len() < LIST_LIMIT {
                 self.out.tx_controls.push(TxControlMark {
                     index,
@@ -406,6 +411,7 @@ mod tests {
         assert_eq!(a.dangerous[0].line, 5);
         assert_eq!(a.dangerous[1].index, 6);
         assert_eq!(a.tx_control_total, 2);
+        assert!(!a.unclosed_transaction);
         assert_eq!(
             a.tx_controls
                 .iter()
@@ -415,6 +421,19 @@ mod tests {
         );
         assert_eq!(a.blocked_total, 0);
         assert_eq!(a.head.len(), 7);
+    }
+
+    #[test]
+    fn detects_unclosed_transaction_1601() {
+        assert!(analyze("BEGIN; UPDATE t SET a = 1 WHERE id = 1;", false).unclosed_transaction);
+        assert!(
+            !analyze("BEGIN; UPDATE t SET a = 1 WHERE id = 1; COMMIT;", false).unclosed_transaction
+        );
+        assert!(
+            !analyze("BEGIN; DELETE FROM t WHERE id = 1; ROLLBACK;", false).unclosed_transaction
+        );
+        assert!(analyze("BEGIN; COMMIT; BEGIN; SELECT 1;", false).unclosed_transaction);
+        assert!(!analyze("SELECT 1;", false).unclosed_transaction);
     }
 
     #[test]

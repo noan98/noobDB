@@ -1511,6 +1511,7 @@ export const scriptAnalysis = z.object({
   txControls: z.array(z.object({ index: z.number(), line: z.number(), kind: z.enum(["begin", "commit", "rollback"]) })),
   headLimit: z.number(),
   listLimit: z.number(),
+  unclosedTransaction: z.boolean(),
 });
 
 /** `sql-script:analyzed` (#1535)。 */

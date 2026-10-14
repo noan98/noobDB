@@ -2317,6 +2317,8 @@ export interface ScriptAnalysis {
   txControls: { index: number; line: number; kind: "begin" | "commit" | "rollback" }[];
   headLimit: number;
   listLimit: number;
+  /** BEGIN したまま COMMIT / ROLLBACK なしで終わるスクリプトか。 */
+  unclosedTransaction: boolean;
 }
 
 export interface ScriptAnalyzedEvent {

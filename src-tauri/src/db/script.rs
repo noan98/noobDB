@@ -166,7 +166,8 @@ impl ScriptSplitter {
                                 && c == b'\''
                                 && self.pos >= 1
                                 && matches!(bytes[self.pos - 1], b'e' | b'E')
-                                && (self.pos == 1 || !is_word_byte(bytes[self.pos - 2])));
+                                && (self.pos == 1
+                                    || !super::is_pg_ident_byte(bytes[self.pos - 2])));
                         self.state = ScanState::Quoted(c, escapes);
                         self.pos += 1;
                         continue;

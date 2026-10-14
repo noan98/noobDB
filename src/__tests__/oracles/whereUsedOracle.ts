@@ -131,7 +131,7 @@ const DOLLAR_TAG = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y;
  * 一致するので、ヒット位置で元の文字列を切り出せる。
  */
 export function prepareForReferenceScan(sql: string, driver?: string): string {
-  const masked = maskLiterals(sql, driver);
+  const masked = maskLiterals(sql, driver, { keepBrackets: true });
   const out = masked.split("");
   const n = masked.length;
   let i = 0;
