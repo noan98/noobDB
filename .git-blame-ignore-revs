@@ -1,0 +1,6 @@
+# git blame で無視する一括整形コミット。
+# 使い方: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# (GitHub の blame 画面はこのファイルを自動で読む)
+
+# Biome formatter で src を一括整形 (#1636 / PR #1664)
+0f0d006dcf2a528ee10dfba2bcdf40f1a49033ec

@@ -37,4 +37,12 @@
 - 本体ジョブは `outputs:` で終了コード / スコア / 生存数を `notify` に渡す。
   (`exit_code` / `score` / `survived` の step output 名を変えるときは `notify` も直す。)
 - Issue のタイトル・本文は日本語、時刻は JST。秘密情報は含めない。
-- ローカル確認は `gh` をモックした PATH で `DRY_RUN=1 TRACK_STATE=... bash scripts/upsert-tracking-issue.sh`。
+- **自動テスト (#1633)**: `scripts/upsert-tracking-issue.test.mjs` が `gh` を偽物に差し替えた
+  PATH で bash を起動し、problem (新規作成 / 既存へのコメント / dedup キー一致で省略 /
+  キー違いは追記 / DRY_RUN) と ok (コメント + close / open 無しで何もしない) と入力検証を固定する。
+  `pnpm run test:scripts` で実行でき、CI では `automerge gate (script tests)` ジョブが
+  同じテストを回す (`scripts/upsert-tracking-issue.*` の変更でも起動)。スクリプトの
+  分岐を変えたらこのテストも直す。Windows ランナーでは走らせない (bash 前提)。
+- 実 GitHub 上の確認は、`mutants.yml` / `js-mutants.yml` を既定ブランチで手動実行して
+  Issue の作成 / コメント / close を目視する (これらは一度も実行されていなかった)。
+  手元での簡易確認は `DRY_RUN=1 TRACK_STATE=... bash scripts/upsert-tracking-issue.sh`。
