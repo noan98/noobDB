@@ -21,6 +21,7 @@ import {
   isSslModeAllowedForIam,
   type DbAuthMethod,
 } from "./awsIam";
+import { ComboSelect } from "./ComboSelect";
 import { parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { COLOR_INPUT_FALLBACK, DEFAULT_PRODUCTION_COLOR, PROFILE_COLOR_PRESETS } from "../profileIdentity";
@@ -1143,17 +1144,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       <Fieldset>
         <Legend>{t("formGroup")}</Legend>
         <Box>
-          <Input
+          <ComboSelect
             value={group}
-            onChange={(e) => setGroup(e.target.value)}
+            onChange={setGroup}
+            options={groupSuggestions.map((g) => ({ value: g }))}
             placeholder={t("formGroupPlaceholder")}
-            list="form-group-suggestions"
           />
-          <datalist id="form-group-suggestions">
-            {groupSuggestions.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
           <Text color="app.textMuted" fontSize="xs" mt="1" mb="0">
             {t("formGroupHelp")}
           </Text>

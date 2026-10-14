@@ -44,6 +44,12 @@ export interface CommandItem {
   sublabel?: string;
   /** ラベルに出さない追加の検索語 (タグ・SQL 全文など)。 */
   keywords?: string;
+  /**
+   * true のとき keywords は「部分文字列一致」だけで照合する (文字の部分列一致にしない)。
+   * SQL 全文のような長い本文を keywords に入れると、短い検索語が本文のどこかに部分列として
+   * 現れるだけでほぼ全件に一致するため (履歴候補など)。
+   */
+  keywordsContainsOnly?: boolean;
   /** 行頭アイコン。 */
   icon?: IconName;
   /** 行末に出す短いバッジ (本番 / 読み取り専用 / ドライバ名など)。 */
@@ -61,6 +67,11 @@ export interface CommandItem {
    * 項目 (閉じたタブの個別復元など) が、空クエリの定番操作を押し出さないために使う。
    */
   searchOnly?: boolean;
+  /**
+   * 無効な理由 (例: 「接続してから実行」)。指定された候補は検索には出したまま、グレー表示で
+   * 理由を添え、選択しても何も実行せずパレットも閉じない (候補ごと消えて理由が分からなくなるのを防ぐ)。
+   */
+  disabledReason?: string;
   /** 選択時の動作。パレットは実行後に自分を閉じる。 */
   run: () => void;
 }
@@ -145,8 +156,18 @@ export function fuzzyMatch(query: string, text: string): FuzzyMatch | null {
 export function scoreItem(item: CommandItem, query: string): ScoredItem | null {
   if (query === "") return item.searchOnly ? null : { item, score: 0, ranges: [] };
   const labelMatch = fuzzyMatch(query, item.label);
-  const extra = [item.sublabel, item.keywords].filter(Boolean).join(" ");
-  const extraMatch = extra ? fuzzyMatch(query, extra) : null;
+  const containsOnly = item.keywordsContainsOnly === true;
+  const extra = (containsOnly ? [item.sublabel] : [item.sublabel, item.keywords]).filter(Boolean).join(" ");
+  let extraMatch = extra ? fuzzyMatch(query, extra) : null;
+  if (
+    !extraMatch &&
+    containsOnly &&
+    item.keywords &&
+    item.keywords.toLowerCase().includes(query.toLowerCase())
+  ) {
+    // 本文に含む一致は低スコア (ラベル一致や他の候補より下位に並べる)。
+    extraMatch = { score: -50, ranges: [] };
+  }
   if (!labelMatch && !extraMatch) return null;
   // ラベル一致を副表示/keywords 一致より常に上位へ (大きめの加点)。
   const score = labelMatch ? labelMatch.score + 100 : extraMatch!.score;

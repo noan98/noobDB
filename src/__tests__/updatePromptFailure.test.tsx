@@ -23,6 +23,7 @@ describe("confirmAndInstallUpdate の失敗時 (#1534)", () => {
         return 7;
       }),
       dismiss: vi.fn(() => order.push("dismiss")),
+      update: vi.fn(),
     };
     await confirmAndInstallUpdate({ version: "2.0.0", currentVersion: "1.0.0" } as AvailableUpdate, {
       t: ((k: string) => k) as never,

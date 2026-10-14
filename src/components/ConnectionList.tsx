@@ -77,7 +77,7 @@ import {
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./maintenanceCommands";
-import { Input } from "./ui";
+import { Button, Input } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
@@ -1365,6 +1365,25 @@ interface SchemaRowContentProps {
   containerLabel: string;
 }
 
+/** スキーマ初回読み込み失敗時の再試行ハンドラ (行リストの深い階層へ props を通さないため context で渡す)。 */
+const SchemaRetryContext = createContext<(() => void) | null>(null);
+
+/** DB 一覧の初回読み込みに失敗したときの行。スケルトンの代わりに「再試行」を出す。 */
+function SchemaLoadFailedRow() {
+  const t = useT();
+  const retry = useContext(SchemaRetryContext);
+  return (
+    <TreeEmpty>
+      {t("treeLoadFailed")}
+      {retry && (
+        <Button type="button" variant="ghost" size="sm" ml="1" onClick={retry}>
+          {t("treeLoadRetry")}
+        </Button>
+      )}
+    </TreeEmpty>
+  );
+}
+
 /** フラットな行 (`ExplorerRow`) を、種別ごとの `memo` 行コンポーネントへ渡す。 */
 function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }: SchemaRowContentProps) {
   const t = useT();
@@ -1385,6 +1404,7 @@ function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }:
     case "loading":
       return <LoadingRow />;
     case "empty":
+      if (row.message === "loadFailed") return <SchemaLoadFailedRow />;
       return (
         <TreeEmpty>
           {row.message === "databases"
@@ -1938,6 +1958,8 @@ export const ConnectionList = memo(
     const [filter, setFilter] = useState("");
     const filterInputRef = useRef<HTMLInputElement>(null);
     const [error, setError] = useState<string | null>(null);
+    // DB 一覧の初回読み込みに失敗した (スケルトンを出し続けず再試行行を出す)。
+    const [schemaLoadFailed, setSchemaLoadFailed] = useState(false);
     const [menu, setMenu] = useState<MenuState | null>(null);
     // カラム行の詳細ホバーカード (`ColumnTooltip`)。単純テキストではないので
     // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
@@ -2033,7 +2055,10 @@ export const ConnectionList = memo(
         try {
           tree = await api.loadSchemaTree(targetSessionId, openDbNames, openTableKeys);
         } catch (e) {
-          if (sessionIdRef.current === targetSessionId) setError(String(e));
+          if (sessionIdRef.current === targetSessionId) {
+            setError(String(e));
+            setSchemaLoadFailed(true);
+          }
           return;
         }
         if (sessionIdRef.current !== targetSessionId) return;
@@ -2127,6 +2152,7 @@ export const ConnectionList = memo(
         const targetSessionId = sessionId;
         setRefreshingSession(targetSessionId);
         setError(null);
+        setSchemaLoadFailed(false);
         try {
           // 明示的な Refresh (#1097): バックエンドの Schema Cache を無効化してから
           // 再取得する。無効化に失敗しても (セッション消失など) 通常のフローで
@@ -2184,7 +2210,10 @@ export const ConnectionList = memo(
           setTableIndexes(nextIndexes);
         } catch (e) {
           // Suppress a stale session's error so it can't surface on the new one.
-          if (sessionIdRef.current === targetSessionId) setError(String(e));
+          if (sessionIdRef.current === targetSessionId) {
+            setError(String(e));
+            setSchemaLoadFailed(true);
+          }
         } finally {
           // Clear only if it's still this session being tracked, so a connection
           // switch mid-refresh can't wipe a newer session's in-flight flag.
@@ -2206,6 +2235,7 @@ export const ConnectionList = memo(
       tablesInFlightRef.current.clear();
       columnsInFlightRef.current.clear();
       estimatesInFlightRef.current.clear();
+      setSchemaLoadFailed(false);
       if (sessionId) {
         // Expanded state is restored (not reset) so the tree comes back drilled-in
         // for the reconnecting profile (#677).
@@ -3271,6 +3301,8 @@ export const ConnectionList = memo(
 
     const toggleDb = async (db: string) => {
       if (!sessionId) return;
+      // 前の展開失敗の帯は、次の展開/折りたたみ操作で消す (次の成功操作まで残り続けない)。
+      setError(null);
       const isOpen = expandedDbs[db];
       if (isOpen) {
         const next = { ...expandedDbs, [db]: false };
@@ -3307,7 +3339,8 @@ export const ConnectionList = memo(
             setSchemaObjects((prev) => ({ ...prev, [db]: [] }));
           });
       } catch (e) {
-        if (sessionIdRef.current === sessionId) setError(String(e));
+        // どの DB の失敗か分かるよう、発生元を先頭に付ける。
+        if (sessionIdRef.current === sessionId) setError(`${db}: ${String(e)}`);
       } finally {
         tablesInFlightRef.current.delete(db);
       }
@@ -3315,6 +3348,7 @@ export const ConnectionList = memo(
 
     const toggleTable = async (db: string, tbl: string) => {
       if (!sessionId) return;
+      setError(null);
       const key = tableKey(db, tbl);
       const isOpen = expandedTables[key];
       if (isOpen) {
@@ -3342,7 +3376,7 @@ export const ConnectionList = memo(
         if (sessionIdRef.current !== sessionId) return;
         setTableIndexes((prev) => ({ ...prev, [key]: idx }));
       } catch (e) {
-        if (sessionIdRef.current === sessionId) setError(String(e));
+        if (sessionIdRef.current === sessionId) setError(`${db}.${tbl}: ${String(e)}`);
       } finally {
         columnsInFlightRef.current.delete(key);
       }
@@ -3683,6 +3717,7 @@ export const ConnectionList = memo(
       if (!activeProfileId || !sessionId) return [];
       return buildExplorerRows({
         databases,
+        loadFailed: schemaLoadFailed,
         tables,
         schemaObjects,
         tableColumns,
@@ -3713,6 +3748,7 @@ export const ConnectionList = memo(
       activeProfileId,
       sessionId,
       databases,
+      schemaLoadFailed,
       tables,
       schemaObjects,
       tableColumns,
@@ -3747,6 +3783,9 @@ export const ConnectionList = memo(
       }
       selectionStore.set(pruneTableSelection(sel, visible));
     }, [explorerRows, selectionStore]);
+    const retrySchemaLoad = useCallback(() => {
+      void refreshSchemaRef.current?.();
+    }, []);
     const activeRowKey =
       activeTableDb !== undefined && activeTableName !== undefined
         ? `tbl:${tableKey(activeTableDb, activeTableName)}`
@@ -3770,6 +3809,7 @@ export const ConnectionList = memo(
       const isActive = p.id === activeProfileId;
       const isOpen = !!expandedProfiles[p.id];
       const status = profileStatus(p);
+      const waitingForConnect = !!connectingId && connectingId !== p.id && activeProfileId !== p.id;
       const accent = normalizeChipColor(p.color) ?? undefined;
       const refreshing = refreshingSession === sessionId;
       // Left stripe + tint priority: production (red, always wins) > custom color >
@@ -3844,6 +3884,10 @@ export const ConnectionList = memo(
                 data-tree-key={profileTreeKey}
                 data-testid="connection-profile-row"
                 data-profile-name={p.name}
+                // 別の接続を張っている間、この未接続行を押しても何も起きない。見た目と
+                // ツールチップで理由 (接続中のため待機) を伝える。
+                aria-disabled={waitingForConnect ? true : undefined}
+                cursor={waitingForConnect ? "not-allowed" : undefined}
                 onClick={() => handleProfileClick(p)}
                 onContextMenu={(e) => handleProfileContextMenu(e, p)}
                 onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
@@ -3861,9 +3905,11 @@ export const ConnectionList = memo(
                 // 報告するイベント委譲」方式) を使う — ラッパ要素を増やさないので
                 // アニメーションに影響しない。
                 {...treeTooltipProps(
-                  p.driver === "sqlite"
-                    ? (p.file_path ?? p.name)
-                    : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
+                  waitingForConnect
+                    ? t("listConnectingWait")
+                    : p.driver === "sqlite"
+                      ? (p.file_path ?? p.name)
+                      : `${p.user}@${p.host}:${p.port}${p.database ? "/" + p.database : ""}${p.ssh ? " " + t("listVia", { host: p.ssh.host }) : ""}`,
                 )}
               >
                 <TreeChevron transform={isOpen ? "rotate(90deg)" : undefined} aria-hidden>
@@ -3976,18 +4022,20 @@ export const ConnectionList = memo(
           <TreeCollapse open={!!(isOpen && isActive && sessionId)}>
             <TreeChildren>
               {isActive && sessionId && (
-                <SchemaRowList
-                  rows={explorerRows}
-                  level={groupLevel}
-                  q={q}
-                  removableFavorites={!!onToggleFavorite}
-                  containerLabel={containerLabel}
-                  scrollRef={treeRef}
-                  handleRef={schemaListRef}
-                  store={tabStopStore}
-                  activeKey={activeRowKey}
-                  layoutToken={rowListLayoutToken}
-                />
+                <SchemaRetryContext.Provider value={retrySchemaLoad}>
+                  <SchemaRowList
+                    rows={explorerRows}
+                    level={groupLevel}
+                    q={q}
+                    removableFavorites={!!onToggleFavorite}
+                    containerLabel={containerLabel}
+                    scrollRef={treeRef}
+                    handleRef={schemaListRef}
+                    store={tabStopStore}
+                    activeKey={activeRowKey}
+                    layoutToken={rowListLayoutToken}
+                  />
+                </SchemaRetryContext.Provider>
               )}
             </TreeChildren>
           </TreeCollapse>
@@ -4026,6 +4074,19 @@ export const ConnectionList = memo(
                 borderRadius="0"
                 borderWidth="0"
                 borderBottomWidth="1px"
+                action={
+                  <Tooltip label={t("listErrorDismiss")}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={t("listErrorDismiss")}
+                      onClick={() => setError(null)}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </Button>
+                  </Tooltip>
+                }
               >
                 {error}
               </Callout>

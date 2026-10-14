@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { api, ConnectionProfile, Snippet, SnippetScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { Button, Heading, Input, Select, Textarea } from "./ui";
+import { ComboSelect } from "./ComboSelect";
 import { LoadingButton } from "./LoadingButton";
 import { ErrorNote } from "./modalForm";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
@@ -147,18 +148,13 @@ export function SnippetForm({
 
       <Box>
         <chakra.label htmlFor={`${fid}-folder`}>{t("snippetFolder")}</chakra.label>
-        <Input
+        <ComboSelect
           id={`${fid}-folder`}
           value={folder}
-          onChange={(e) => setFolder(e.target.value)}
+          onChange={setFolder}
+          options={folderSuggestions.map((f) => ({ value: f }))}
           placeholder={t("snippetFolderPlaceholder")}
-          list="snippet-folder-suggestions"
         />
-        <datalist id="snippet-folder-suggestions">
-          {folderSuggestions.map((f) => (
-            <option key={f} value={f} />
-          ))}
-        </datalist>
       </Box>
 
       <Box>
@@ -230,18 +226,13 @@ export function SnippetForm({
           {scopeKind === "group" && (
             <Box>
               <chakra.label htmlFor={`${fid}-scope-group`}>{t("snippetScopeGroupLabel")}</chakra.label>
-              <Input
+              <ComboSelect
                 id={`${fid}-scope-group`}
                 value={scopeGroup}
-                onChange={(e) => setScopeGroup(e.target.value)}
+                onChange={setScopeGroup}
+                options={groupSuggestions.map((g) => ({ value: g }))}
                 placeholder={t("formGroupPlaceholder")}
-                list="snippet-group-suggestions"
               />
-              <datalist id="snippet-group-suggestions">
-                {groupSuggestions.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
             </Box>
           )}
         </Box>
