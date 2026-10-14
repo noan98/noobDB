@@ -251,21 +251,31 @@ export function savePersistedWorkspace(profileId: string, ws: PersistedWorkspace
  * 保存するワークスペースを決める純関数。復元確認で「今回は開かない」を選んだ接続は、
  * 保持分 (`kept`) を失わないようにする (#1615):
  * - 保持なし → `current` をそのまま保存。
- * - 保持あり・現在のタブなし → `null` (保存しない = 保持分を残す)。
- * - 保持あり・現在のタブあり → 保持分のタブを最後のペインの末尾へ足して保存
- *   (何度呼んでも `kept` から作るので重複しない)。
+ * - 保持あり・現在のタブなし → `kept` をそのまま保存し直す (セッション中に閉じたタブを残さない)。
+ * - 保持あり・現在のタブあり → 保持分をペイン構造ごと `current.panes` の後ろに足す
+ *   (`activePane` は現在のまま)。何度呼んでも `kept` から作るので重複しない。
  */
 export function resolveWorkspaceToSave(
   current: PersistedWorkspace,
   kept: PersistedWorkspace | undefined,
-): PersistedWorkspace | null {
+): PersistedWorkspace {
   if (!kept || totalTabs(kept) === 0) return current;
-  if (totalTabs(current) === 0) return null;
-  const keptTabs = kept.panes.flatMap((p) => p.tabs);
-  const panes = current.panes.map((p, i) =>
-    i === current.panes.length - 1 ? { ...p, tabs: [...p.tabs, ...keptTabs] } : p,
-  );
-  return { panes, activePane: current.activePane };
+  if (totalTabs(current) === 0) return kept;
+  return { panes: [...current.panes, ...kept.panes], activePane: current.activePane };
+}
+
+/**
+ * `resolveWorkspaceToSave` が足した保持分を保存済みワークスペースから外し、セッション中に開いた
+ * タブだけを返す。保持中の接続へ戻ったとき、保持分は復元せずに (ダイアログで選ぶまで保持のまま)
+ * そのセッションのタブだけを復元するために使う。末尾のペインが保持分と一致しなければ
+ * (保持分が足されていない) そのまま返す。
+ */
+export function splitKeptFromSaved(saved: PersistedWorkspace, kept: PersistedWorkspace): PersistedWorkspace {
+  const n = kept.panes.length;
+  const tail = saved.panes.slice(saved.panes.length - n);
+  if (n === 0 || tail.length !== n || JSON.stringify(tail) !== JSON.stringify(kept.panes)) return saved;
+  const panes = saved.panes.slice(0, saved.panes.length - n);
+  return { panes, activePane: Math.min(saved.activePane, Math.max(0, panes.length - 1)) };
 }
 
 export function clearPersistedTabs(profileId: string): void {

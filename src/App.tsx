@@ -463,6 +463,7 @@ import {
   clearPersistedTabs,
   loadPersistedWorkspace,
   resolveWorkspaceToSave,
+  splitKeptFromSaved,
   savePersistedWorkspace,
   type PersistedTab,
   type PersistedWorkspace,
@@ -3256,8 +3257,7 @@ export default function App() {
       };
       // 復元確認で「今回は開かず保持」を選んだ接続は、保持分を失わないよう保存内容を決める
       // (タブが空なら保存しない / あれば保持分を末尾に足す)。登録は復元・破棄が確定するまで残す。
-      const toSave = resolveWorkspaceToSave(ws, keptSavedTabsRef.current.get(profileId));
-      if (toSave) savePersistedWorkspace(profileId, toSave);
+      savePersistedWorkspace(profileId, resolveWorkspaceToSave(ws, keptSavedTabsRef.current.get(profileId)));
     },
     [tabSqlStore, panesRef, tabsRef],
   );
@@ -3369,11 +3369,13 @@ export default function App() {
       setConnectionStatus("connected");
       setSessionId(target.sessionId);
       setSelectedProfile(target.profile);
-      const savedWs = loadPersistedWorkspace(target.profile.id);
+      // 「今回は開かない」で保持中の接続は、保存時に足した保持分を外し、そのセッション中に
+      // 開いたタブだけを復元する (保持分は保存側が守り続ける)。
+      const keptHere = keptSavedTabsRef.current.get(target.profile.id);
+      const loadedWs = loadPersistedWorkspace(target.profile.id);
+      const savedWs = keptHere ? splitKeptFromSaved(loadedWs, keptHere) : loadedWs;
       const savedCount = savedWs.panes.reduce((n, p) => n + p.tabs.length, 0);
-      // 「今回は開かない」で保持中の接続は自動復元しない (保持分は保存側で守る)。
-      const keptHere = keptSavedTabsRef.current.has(target.profile.id);
-      if (savedCount > 0 && !keptHere && restoreSavedTabsRef.current) {
+      if (savedCount > 0 && restoreSavedTabsRef.current) {
         await restoreSavedTabsRef.current(target.sessionId, target.profile, savedWs);
       } else {
         setTabs([]);
