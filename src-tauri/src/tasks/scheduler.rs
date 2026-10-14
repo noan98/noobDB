@@ -67,6 +67,26 @@ pub(crate) fn progress_unit(action: &super::TaskAction) -> &'static str {
 
 /// 進捗の件数を一定間隔で `task-run:progress` として知らせるタスクを起動する。
 /// 返した `JoinHandle` を abort すれば止まる。
+/// `task-run:progress` を 1 回送る。ticker の定期送信と、実行完了直後の最終値の送信
+/// (ticker の周期より短い実行でも最終件数が届くように、#1614) で共有する。
+pub(crate) fn emit_progress(
+    app: &AppHandle,
+    stream_id: &str,
+    task_id: &str,
+    count: u64,
+    unit: &'static str,
+) {
+    let _ = app.emit(
+        EV_TASK_RUN_PROGRESS,
+        TaskRunProgressEvent {
+            stream_id: stream_id.to_string(),
+            task_id: task_id.to_string(),
+            count,
+            unit,
+        },
+    );
+}
+
 pub(crate) fn spawn_progress_ticker(
     app: AppHandle,
     stream_id: String,
@@ -82,15 +102,7 @@ pub(crate) fn spawn_progress_ticker(
             // 変化したときだけ送る (開始直後の 0 は 1 回送り、進行中表示の起点にする)。
             if last != Some(count) {
                 last = Some(count);
-                let _ = app.emit(
-                    EV_TASK_RUN_PROGRESS,
-                    TaskRunProgressEvent {
-                        stream_id: stream_id.clone(),
-                        task_id: task_id.clone(),
-                        count,
-                        unit,
-                    },
-                );
+                emit_progress(&app, &stream_id, &task_id, count, unit);
             }
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
         }

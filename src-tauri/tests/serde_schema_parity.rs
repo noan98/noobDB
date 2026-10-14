@@ -1203,6 +1203,7 @@ fn build_fixtures() -> serde_json::Value {
         table_comment: "registered users".into(),
         foreign_keys: vec![foreign_key.clone()],
         table_names: vec!["users".into(), "orders".into()],
+        warnings: vec!["foreign_keys".into()],
     };
     let assertion_sql = t::AssertionSql {
         check_sql: "SELECT COUNT(*) FROM `users` WHERE `id` IS NULL".into(),
@@ -1693,8 +1694,28 @@ fn build_fixtures() -> serde_json::Value {
             name: "slow query".into(),
             error: "syntax error".into(),
         }],
-        warned: vec![],
+        warned: vec!["slow report".into()],
     };
+
+    // 読み飛ばされたプロファイルの要約 (#1614): 解釈不能 (id なし) / 対応外ドライバの 2 形。
+    let skipped_profile_variants = vec![
+        t::SkippedProfile {
+            kind: "unparsable".into(),
+            index: 0,
+            id: None,
+            name: None,
+            driver: None,
+            reason: "invalid type: string \"x\", expected u16".into(),
+        },
+        t::SkippedProfile {
+            kind: "unsupported_driver".into(),
+            index: 0,
+            id: Some("old00001".into()),
+            name: Some("legacy".into()),
+            driver: Some("duckdb".into()),
+            reason: "unsupported driver: duckdb".into(),
+        },
+    ];
 
     // ダンプツール (#546 周辺): 導入方法あり / なしの 2 形。
     let dump_tool_status_variants = vec![
@@ -1885,6 +1906,7 @@ fn build_fixtures() -> serde_json::Value {
         "schemaDriftCapture": schema_drift_capture,
         "planWatchEntryVariants": plan_watch_entry_variants,
         "planWatchRefreshResult": plan_watch_refresh_result,
+        "skippedProfileVariants": skipped_profile_variants,
         "dumpToolStatusVariants": dump_tool_status_variants,
         "encryptedProfileExportResult": encrypted_profile_export_result,
         "encryptedProfileImportResult": encrypted_profile_import_result,

@@ -327,6 +327,8 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 ## プロファイル (`commands/profiles.rs`)
 
 - `list_profiles`
+- `list_skipped_profiles` (一覧に出ないプロファイルの要約。解釈できない要素と対応外ドライバ。秘密は含めない、#1614)
+- `delete_skipped_profile` (解釈できず読み飛ばされた要素を `profiles.json` から削除、#1614)
 - `reveal_profile_secret`
 - `save_profile`
 - `delete_profile`

@@ -1,9 +1,10 @@
 // `src-tauri/src/commands/profiles.rs` の IPC ラッパー。`../tauri.ts` の `api` に束ねられる。
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
-import { parseResponse } from "../schemas";
+import { ipcValidationErrorMessage, parseResponse } from "../schemas";
 import type {
   ConnectionProfile,
+  SkippedProfile,
   ProfileSecretKind,
   SaveProfileRequest,
   ProfileImportStrategy,
@@ -11,6 +12,14 @@ import type {
 } from "../tauri";
 
 export const profilesCommands = {
+  /** 一覧に出ないプロファイル (解釈できない要素・対応外ドライバ) の要約 (#1614)。 */
+  listSkippedProfiles: () =>
+    invoke<SkippedProfile[]>("list_skipped_profiles").then((r) =>
+      parseResponse(schemas.skippedProfileArray, r, "list_skipped_profiles"),
+    ),
+  /** 解釈できず読み飛ばされた要素を `profiles.json` から削除する (#1614)。 */
+  deleteSkippedProfile: (index: number, id: string | null) =>
+    invoke<void>("delete_skipped_profile", { index, id }),
   listProfiles: () =>
     invoke<ConnectionProfile[]>("list_profiles").then((r) =>
       parseResponse(schemas.connectionProfileArray, r, "list_profiles"),
@@ -32,9 +41,7 @@ export const profilesCommands = {
       // 残ってしまう。返り値が単純な `string | null` なので、値をログ経路へ
       // 一切渡さない形状チェックで代替する。
       if (r !== null && typeof r !== "string") {
-        throw new Error(
-          'IPC レスポンス "reveal_profile_secret" が期待した形式と一致しません: (root): expected string or null',
-        );
+        throw new Error(ipcValidationErrorMessage("reveal_profile_secret"));
       }
       return r;
     }),

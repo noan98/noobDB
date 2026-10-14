@@ -15,9 +15,8 @@ import { useT, type I18nKey } from "../i18n";
 import { staggerContainer, variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import { EmptyState } from "./EmptyState";
-import { errorIllustration } from "./illustrations";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
-import { FieldError, FieldLabel } from "./modalForm";
+import { ErrorNote, FieldError, FieldLabel } from "./modalForm";
 import { progressRatio } from "./progressRatio";
 import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
@@ -290,14 +289,18 @@ export function WhereUsedPanel({
       </chakra.div>
 
       {error && (
-        <EmptyState
-          illustration={errorIllustration(error)}
-          icon="warning"
-          title={t("whereUsedError", { error })}
+        // 走査の失敗は操作を止めるエラーなので ErrorNote (Callout danger) に統一する (#1614)。
+        <ErrorNote
           action={
-            scannedTarget ? { label: t("whereUsedRun"), onClick: () => void run(scannedTarget) } : undefined
+            scannedTarget ? (
+              <Button type="button" onClick={() => void run(scannedTarget)}>
+                {t("whereUsedRun")}
+              </Button>
+            ) : undefined
           }
-        />
+        >
+          {t("whereUsedError", { error })}
+        </ErrorNote>
       )}
 
       {report && scannedTarget && (

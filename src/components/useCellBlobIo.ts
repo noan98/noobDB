@@ -154,7 +154,15 @@ export function useCellBlobIo({
               const path = await open({ multiple: false, title: t("blobLoadPickTitle") });
               if (typeof path !== "string" || !path) return;
               const bytes = await api.readBinaryFile(path);
-              if (bytes.length > MAX_BLOB_BYTES) throw new Error("too large");
+              if (bytes.length > MAX_BLOB_BYTES) {
+                toast.error(
+                  t("blobTooLarge", {
+                    max: formatBlobSize(MAX_BLOB_BYTES),
+                    size: formatBlobSize(bytes.length),
+                  }),
+                );
+                return;
+              }
               await onWrite(rowIdx, colIdx, bytesToHex(bytes));
             } catch (e) {
               toast.error(t("blobLoadFailed", { error: String(e) }));

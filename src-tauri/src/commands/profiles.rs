@@ -115,6 +115,62 @@ fn filter_supported_driver_profiles(profiles: Vec<ConnectionProfile>) -> Vec<Con
         .collect()
 }
 
+/// `list_profiles` が一覧に載せなかったプロファイル 1 件の要約 (#1614)。読み飛ばしを
+/// 無言にせず、接続一覧の警告帯と「削除」に使う。秘密・その他のフィールドは含めない。
+#[derive(Debug, Clone, Serialize)]
+pub struct SkippedProfile {
+    /// `unparsable` (解釈できない要素) / `unsupported_driver` (対応外ドライバ)。
+    pub kind: String,
+    /// `unparsable` のとき、`delete_skipped_profile` に渡す並び順。
+    pub index: usize,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub driver: Option<String>,
+    pub reason: String,
+}
+
+/// 一覧に出ないプロファイル (解釈できない要素 + 対応外ドライバ) の要約を返す。
+#[tauri::command]
+pub async fn list_skipped_profiles() -> Result<Vec<SkippedProfile>> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut out: Vec<SkippedProfile> = store::list_skipped()?
+            .into_iter()
+            .map(|e| SkippedProfile {
+                kind: "unparsable".into(),
+                index: e.index,
+                id: e.id,
+                name: e.name,
+                driver: e.driver,
+                reason: e.reason,
+            })
+            .collect();
+        for p in store::load_all()? {
+            if crate::db::DriverKind::parse(&p.driver).is_none() {
+                out.push(SkippedProfile {
+                    kind: "unsupported_driver".into(),
+                    index: 0,
+                    reason: format!("unsupported driver: {}", p.driver),
+                    id: Some(p.id),
+                    name: Some(p.name),
+                    driver: Some(p.driver),
+                });
+            }
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| AppError::Other(e.to_string()))?
+}
+
+/// 解釈できず読み飛ばされた要素 (`kind: "unparsable"`) を `profiles.json` から削除する。
+/// 対応外ドライバのプロファイルは通常の `delete_profile` で消す。
+#[tauri::command]
+pub async fn delete_skipped_profile(index: usize, id: Option<String>) -> Result<()> {
+    tauri::async_runtime::spawn_blocking(move || store::delete_skipped(index, id.as_deref()))
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?
+}
+
 #[tauri::command]
 pub async fn list_profiles() -> Result<Vec<ProfileWithSecretFlags>> {
     // keyring の存在確認 (プロファイル 1 件につき 5 回) は OS の資格情報マネージャを

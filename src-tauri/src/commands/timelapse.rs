@@ -148,7 +148,7 @@ pub async fn timelapse_capture(
     state: State<'_, AppState>,
 ) -> Result<Vec<CaptureOutcome>> {
     let session = session_of(&state, &session_id).await?;
-    capture_all(&session, max_generations).await
+    capture_all(&session, max_generations, None).await
 }
 
 /// `timelapse_capture` の本体。スケジューラのタスク (`TaskAction::TimelapseCapture`、
@@ -156,6 +156,7 @@ pub async fn timelapse_capture(
 pub(crate) async fn capture_all(
     session: &Session,
     max_generations: Option<u32>,
+    progress: Option<&std::sync::atomic::AtomicU64>,
 ) -> Result<Vec<CaptureOutcome>> {
     let Some(profile_id) = session.profile_id.clone() else {
         return Ok(Vec::new());
@@ -180,6 +181,10 @@ pub(crate) async fn capture_all(
             truncated: outcome.1,
             error: outcome.2,
         });
+        // 対象 1 件ごとに進捗を進める (タスクの「今すぐ実行」の進捗表示用、#1614)。
+        if let Some(p) = progress {
+            p.store(out.len() as u64, std::sync::atomic::Ordering::SeqCst);
+        }
     }
     Ok(out)
 }

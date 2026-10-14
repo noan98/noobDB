@@ -205,6 +205,8 @@ export function AlterTableModal({
   const [addedChecks, setAddedChecks] = useState<CheckRow[]>([]);
   const [droppedChecks, setDroppedChecks] = useState<{ id: string; name: string }[]>([]);
   const [tableNames, setTableNames] = useState<string[]>([]);
+  // 付随情報 (コメント / FK / テーブル一覧) の取得に失敗して空で続行した種別 (#1614)。
+  const [ctxWarnings, setCtxWarnings] = useState<string[]>([]);
   // `added`/`indexes` 行の React key を配列インデックスに頼らないための採番。
   const rowIdCounter = useRef(0);
   const nextRowId = () => `row${++rowIdCounter.current}`;
@@ -216,7 +218,8 @@ export function AlterTableModal({
     setLoadError(null);
     // 現在の列・テーブルコメント・このテーブルの FK・テーブル名一覧を 1 回で取得する
     // (#1255)。コメント / FK / テーブル名は装飾的な付随情報なので、バックエンドは
-    // その取得に失敗しても空で続行する (列の取得失敗だけがエラー)。
+    // その取得に失敗しても空で続行する (列の取得失敗だけがエラー)。続行した場合は
+    // `warnings` で知らせ、帯で「表示が不完全」と出す (#1614)。
     api
       .alterTableContext(sessionId, database, table)
       .then((ctx) => {
@@ -225,6 +228,7 @@ export function AlterTableModal({
         setExistingFks(groupExistingFks(ctx.foreign_keys, table));
         setDroppedFks([]);
         setTableNames(ctx.table_names);
+        setCtxWarnings(ctx.warnings);
         setTableComment({ before: ctx.table_comment, after: ctx.table_comment });
         const base: ExistingColumnBaseline[] = cols.map((c) => ({
           name: c.name,
@@ -443,6 +447,21 @@ export function AlterTableModal({
               transition={transitions.crossfade}
               style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}
             >
+              {ctxWarnings.length > 0 && (
+                <Callout tone="warning" data-testid="alter-context-warning">
+                  {t("alterTableContextIncomplete", {
+                    items: ctxWarnings
+                      .map((w) =>
+                        w === "comments"
+                          ? t("alterTableCtxItemComments")
+                          : w === "foreign_keys"
+                            ? t("alterTableCtxItemForeignKeys")
+                            : t("alterTableCtxItemTables"),
+                      )
+                      .join(" / "),
+                  })}
+                </Callout>
+              )}
               <FormSection>
                 <FieldLabel htmlFor="alter-table-comment">{t("alterTableTableComment")}</FieldLabel>
                 <Input
