@@ -271,11 +271,11 @@ export function PreviewGrid({
         <chakra.span
           aria-hidden
           display="inline-block"
-          width="8px"
-          height="8px"
+          width="2"
+          height="2"
           borderRadius="50%"
           background="var(--preview-banner-dot)"
-          boxShadow="0 0 0 3px color-mix(in srgb, var(--preview-banner-dot) 25%, transparent)"
+          boxShadow="0 0 0 var(--space-0-75) var(--preview-banner-dot-ring)"
         />
         <chakra.span fontWeight={500}>{t("previewBanner")}</chakra.span>
         {pendingEditsSummary && (onApplyEdits || onDiscardEdits) && (
@@ -363,7 +363,7 @@ export function PreviewGrid({
           {t("previewRowsAffected", { rows: result.rows_affected, ms: result.elapsed_ms })}
         </chakra.span>
         {noAffectedInSnapshot && (
-          <chakra.span color="var(--cell-date)">
+          <chakra.span color="app.textWarning">
             {t("previewAffectedOutsideSnapshot", { limit: rowLimit })}
           </chakra.span>
         )}

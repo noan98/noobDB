@@ -41,7 +41,7 @@ export const TreeSearch = chakra("div", {
     py: "2",
     borderBottom: "1px solid",
     borderColor: "app.borderSubtle",
-    "& input": { px: "2", py: "5px", fontSize: "sm" },
+    "& input": { px: "2", py: "1.25", fontSize: "sm" },
   },
 });
 
@@ -195,7 +195,7 @@ export const TreeBadge = chakra("span", {
   base: {
     textStyle: "overline",
     px: "1.5",
-    py: "1px",
+    py: "0.25",
     borderRadius: "pill",
     bg: "app.surfaceMuted",
     border: "1px solid",

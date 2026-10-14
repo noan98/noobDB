@@ -275,7 +275,7 @@ const SettingsUnlimitedBadge = chakra("span", {
     display: "inline-flex",
     alignItems: "center",
     px: "2",
-    py: "1px",
+    py: "0.25",
     fontSize: "xs",
     fontWeight: 600,
     color: "app.accentText",

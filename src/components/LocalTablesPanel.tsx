@@ -4,6 +4,7 @@ import { useT } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { CodePreview } from "./modalForm";
 import { PressableButton } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -189,18 +190,17 @@ export function LocalTablesPanel({
                     {t("localPanelSourceLabel", { name: tbl.source_profile })}
                   </chakra.span>
                 )}
-                <chakra.pre
-                  fontFamily="mono"
+                <CodePreview
+                  wrap
+                  // CodePreview の上下 padding の分を足し、本文 3 行ぶんを見せる。
+                  maxH="calc(4.5em + 2 * var(--space-2-5))"
+                  overflow="hidden"
                   fontSize="xs"
                   color="app.textMuted"
-                  whiteSpace="pre-wrap"
                   wordBreak="break-all"
-                  m="0"
-                  maxH="4.5em"
-                  overflow="hidden"
                 >
                   {tbl.source_sql}
-                </chakra.pre>
+                </CodePreview>
               </chakra.li>
             ))}
           </chakra.ul>

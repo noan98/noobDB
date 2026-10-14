@@ -109,8 +109,10 @@ describe("design tokens: 余白 (spacing)", () => {
     "(?:padding|margin)(?:Top|Bottom|Left|Right|X|Y|Inline|Block|InlineStart|InlineEnd|BlockStart|BlockEnd|Start|End)?";
 
   /** 余白を表す CSS プロパティ名 (`style` / `css` / recipe の `base` オブジェクト用)。 */
+  // オブジェクト形式では Chakra の省略形 (`p` / `px` / `py` / `m` / `mx` / `my` など) も
+  // 同じ余白なので検査対象に含める (#1618)。
   const SPACING_CSS_PROPS =
-    "(?:padding|margin|gap|rowGap|columnGap)(?:Top|Bottom|Left|Right|Block|Inline|Start|End)?";
+    "(?:(?:padding|margin|gap|rowGap|columnGap)(?:Top|Bottom|Left|Right|Block|Inline|Start|End)?|[pm][xytblrse]?)";
 
   /**
    * 負のマージンで 1px の罫線を重ねる・固定幅のヒット領域を食い込ませる補正
@@ -252,7 +254,6 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/AssertionsPanel.tsx", 1],
     ["../components/BatchResultsView.tsx", 2],
     ["../components/BroadcastModal.tsx", 2],
-    ["../components/ChartView.tsx", 4],
     ["../components/CommandPalette.tsx", 2],
     ["../components/ConnectionForm.tsx", 17],
     ["../components/ConnectionHealthPanel.tsx", 2],
@@ -264,7 +265,6 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/ExportMaskingSection.tsx", 4],
     ["../components/ExportModal.tsx", 4],
     ["../components/GridReplaceModal.tsx", 3],
-    ["../components/ImportModal.tsx", 7],
     ["../components/JsonTreeView.tsx", 2],
     ["../components/LocalTablesPanel.tsx", 5],
     ["../components/MigrationExportModal.tsx", 2],
@@ -547,6 +547,12 @@ describe("design tokens: フォーカスリング (#1162)", () => {
       "フォーカスリングは var(--focus-ring) (エラー系は var(--focus-ring-danger))、" +
         "先頭に inset を付ける場合も同様に一本化する。手書きの color-mix(...) 構成は禁止。",
     ).toEqual([]);
+  });
+
+  it("_focus / :focus でも box-shadow に手書きの color-mix リングを使わない (#1618)", () => {
+    // `_focus` (マウスクリックでも出る) の枠を `0 0 0 1px color-mix(...)` で組んだ旧実装の再発防止。
+    const offenders = findViolations(/boxShadow\s*[:=]\s*\{?"0 0 0 1px color-mix\(/, () => true);
+    expect(offenders, "フォーカスリングは var(--focus-ring) を使う。").toEqual([]);
   });
 });
 

@@ -55,7 +55,7 @@ const FilterSegment = chakra("div", {
 const FilterSegmentButton = chakra("button", {
   base: {
     px: "2.5",
-    py: "3px",
+    py: "0.75",
     fontSize: "xs",
     fontWeight: 500,
     border: "none",

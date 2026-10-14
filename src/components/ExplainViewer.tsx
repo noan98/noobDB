@@ -283,7 +283,7 @@ function accessBadgeCss(bad: boolean): SystemStyleObject {
 const indexBadgeCss: SystemStyleObject = {
   ...badgeBaseCss,
   background: "color-mix(in srgb, var(--accent) 14%, transparent)",
-  borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)",
+  borderColor: "var(--accent-highlight)",
   color: "var(--accent)",
 };
 /** cost バッジ。ヒートに応じて文字/枠色を上げる。 */
