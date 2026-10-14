@@ -182,6 +182,30 @@ describe("TaskManager 実行履歴の消去 (#910)", () => {
   });
 });
 
+describe("TaskManager 実行履歴の取得競合 (#1594)", () => {
+  it("履歴の応答が遅れても、後から開いた別タスクの欄に前のタスクの履歴は入らない", async () => {
+    let resolveA: (r: TaskRun[]) => void = () => {};
+    listTasks.mockResolvedValue([TASK, { ...TASK, id: "task-2", name: "Second task" }]);
+    listTaskRuns.mockImplementation((id: string) =>
+      id === "task-1"
+        ? new Promise<TaskRun[]>((res) => (resolveA = res))
+        : Promise.resolve([{ ...RUN, id: 2, task_id: "task-2", output_path: "/tmp/b.csv" }]),
+    );
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText("Second task")).toBeInTheDocument());
+
+    const buttons = screen.getAllByRole("button", { name: t("taskHistory") });
+    await user.click(buttons[0]);
+    await user.click(buttons[1]);
+    await waitFor(() => expect(screen.getByText("/tmp/b.csv")).toBeInTheDocument());
+
+    await act(async () => resolveA([{ ...RUN, id: 1, output_path: "/tmp/a.csv" }]));
+    expect(screen.queryByText("/tmp/a.csv")).toBeNull();
+    expect(screen.getByText("/tmp/b.csv")).toBeInTheDocument();
+  });
+});
+
 describe("TaskManager 空状態の CTA (#1272)", () => {
   it("タスクが 0 件のとき空状態の「新規タスク」から作成フォームを開ける", async () => {
     listTasks.mockResolvedValue([]);

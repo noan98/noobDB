@@ -287,6 +287,19 @@ describe("Database Explorer の階層 (#1112)", () => {
     expect(screen.getByRole("treeitem", { name: "tbl1" })).toBeInTheDocument();
   });
 
+  it("ビューを Ctrl+クリックしても複数選択に入らず、テーブルの右クリックは通常のメニューのまま (#1594)", async () => {
+    vi.mocked(api.listTables).mockResolvedValueOnce(["tbl1", "v1"]);
+    vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([{ kind: "view", name: "v1", id: null }]);
+    await openDb({ onExportTables: vi.fn() });
+
+    const table = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(table, { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("treeitem", { name: "v1" }), { ctrlKey: true });
+    fireEvent.contextMenu(table);
+    const items = await screen.findAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent(t("contextMenuOpenData"));
+  });
+
   it("テーブルの右クリックは先頭に「データを開く」「構造を表示」を出す", async () => {
     const onPickTable = vi.fn();
     const onOpenStructure = vi.fn();

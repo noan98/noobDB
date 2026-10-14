@@ -229,6 +229,7 @@ export function DataSearchModal({
 
   const [term, setTerm] = useState("");
   const [matchMode, setMatchMode] = useState<MatchMode>("contains");
+  const scannedRef = useRef<{ term: string; mode: MatchMode } | null>(null);
   const [scope, setScope] = useState<ScopeMode>("all");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [tableFilter, setTableFilter] = useState("");
@@ -363,6 +364,8 @@ export function DataSearchModal({
     const streamId = makeDataSearchStreamId();
     const slot = { streamId, unlisten: () => {} };
     activeRef.current = slot;
+    // 表示するヒットは走査開始時の条件で得たもの。ジャンプ SQL も同じ条件で作る。
+    scannedRef.current = { term: term.trim(), mode: matchMode };
     const isActive = () => activeRef.current === slot;
     setResults([]);
     setScanError(null);
@@ -415,20 +418,24 @@ export function DataSearchModal({
   };
 
   const openColumnHit = (table: string, column: string, dataType: string) => {
-    const sql = buildColumnJumpSql(driver, database, table, column, dataType, term.trim(), matchMode);
+    const scanned = scannedRef.current;
+    if (!scanned) return;
+    const sql = buildColumnJumpSql(driver, database, table, column, dataType, scanned.term, scanned.mode);
     if (!sql) return;
     onOpenHit(sql, `${table}.${column}`);
   };
 
   const openTableHits = (entry: HitEntry) => {
+    const scanned = scannedRef.current;
+    if (!scanned) return;
     const sql = buildTableJumpSql(
       driver,
       database,
       entry.table,
       entry.columns,
       entry.hits.map((h) => h.column),
-      term.trim(),
-      matchMode,
+      scanned.term,
+      scanned.mode,
     );
     if (!sql) return;
     onOpenHit(sql, entry.table);

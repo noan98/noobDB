@@ -103,3 +103,27 @@ describe("ServerMetricsPanel session switch", () => {
     expect(screen.queryByText("99")).not.toBeInTheDocument();
   });
 });
+
+describe("ServerMetricsPanel 更新時刻のリセット (#1594)", () => {
+  it("セッション切替後に新接続の取得が失敗しても、旧接続の更新時刻を表示し続けない", async () => {
+    const empty: ServerMetrics = {
+      connections: null,
+      active: null,
+      idle_in_transaction: null,
+      lock_waiting: null,
+      questions: null,
+      slow_queries: null,
+      lock_waits: null,
+    };
+    vi.mocked(api.serverMetrics).mockResolvedValueOnce(empty).mockRejectedValue(new Error("boom"));
+    const { rerender } = renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(screen.getByText(/^(更新|Updated)/)).toBeInTheDocument());
+
+    rerender(<ServerMetricsPanel sessionId="s2" driver="postgres" />);
+    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByText(/^(更新|Updated)/)).not.toBeInTheDocument();
+  });
+});

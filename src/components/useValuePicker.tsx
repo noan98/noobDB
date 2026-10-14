@@ -182,9 +182,14 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
       if (a && a.values.length > 0) return;
       const search = fkSearchTerm(typed);
       const prev = fkState.current.get(column);
-      if (prev && prev.search === search) return;
+      // 前の検索語用に待機中のタイマーは、同じ検索語へ戻った場合でも必ず取り消す
+      // (残すと取り消したはずの検索語で再取得され、候補が入力欄と食い違う)。
       const existing = timers.current.get(column);
-      if (existing) clearTimeout(existing);
+      if (existing) {
+        clearTimeout(existing);
+        timers.current.delete(column);
+      }
+      if (prev && prev.search === search) return;
       // 初回 (まだ何も取っていない) は即時、入力中の再検索はデバウンスする。
       if (!prev) {
         fetchFk(column, search);

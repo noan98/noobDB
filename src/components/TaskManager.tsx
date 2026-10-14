@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 
@@ -146,14 +146,18 @@ export function TaskManager({
     void load();
   }, [load]);
 
+  // 履歴取得の連番。タスクを切り替えた後に届く古い応答は捨てる。
+  const runsSeqRef = useRef(0);
   const loadRuns = useCallback(async (taskId: string) => {
+    const seq = ++runsSeqRef.current;
     setRunsLoading(true);
     try {
-      setRuns(await api.listTaskRuns(taskId, 50));
+      const rows = await api.listTaskRuns(taskId, 50);
+      if (seq === runsSeqRef.current) setRuns(rows);
     } catch (e) {
-      toast.error(String(e));
+      if (seq === runsSeqRef.current) toast.error(String(e));
     } finally {
-      setRunsLoading(false);
+      if (seq === runsSeqRef.current) setRunsLoading(false);
     }
   }, [toast]);
 

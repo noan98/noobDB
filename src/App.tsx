@@ -5191,10 +5191,13 @@ export default function App() {
     }));
     const results: BatchStatementResult[] = [];
     const streamId = newStreamId(tabId);
+    // 停止ボタン・タブを閉じる・切断のキャンセル (cancelStreamForTab) が届くよう登録する。
+    streamIdRef.current.set(tabId, streamId);
     let unlisten: UnlistenFn | null = null;
     const finish = () => {
       unlisten?.();
       unlisten = null;
+      if (streamIdRef.current.get(tabId) === streamId) streamIdRef.current.delete(tabId);
     };
     const finishRun = (extra: { error?: string } = {}) => {
       patchTab(tabId, (tt) => ({ ...tt, batchRunning: false, batchResults: results }));
@@ -5236,6 +5239,7 @@ export default function App() {
         onCancelled: () => {
           finish();
           finishRun();
+          setStatus({ kind: "key", key: "statusQueryCancelled" });
         },
       });
       await api.runSqlBatch({
@@ -5681,6 +5685,14 @@ export default function App() {
   // flag, and keep whatever rows have already arrived. The backend
   // `cancelStream` tears down the cursor while leaving the connection open.
   const stopTab = useCallback(async (tab: Tab) => {
+    if (tab.batchRunning) {
+      // 複数文のバッチ実行 (runBatchInTab) の停止。バックエンドの取消で実行中の文を
+      // 止め、未コミットのトランザクションは巻き戻される。実行済みの文の結果は残す。
+      await cancelStreamForTab(tab.id);
+      patchTab(tab.id, (tt) => ({ ...tt, batchRunning: false }));
+      setStatus({ kind: "key", key: "statusQueryCancelled" });
+      return;
+    }
     if (!tab.streaming) return;
     const wasPreview = tab.previewStreaming;
     // バックエンドが報告する「中断時点で届いていた行数」(#685)。ストリームが

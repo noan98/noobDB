@@ -81,8 +81,10 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
   }, []);
 
   // アンマウント時は、実行中のストリームを止めて購読を外す。
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // StrictMode (開発時) はクリーンアップ後に再マウントされるので、フラグを戻す。
+    disposedRef.current = false;
+    return () => {
       disposedRef.current = true;
       cancelledRef.current = true;
       const sid = streamIdRef.current;
@@ -93,9 +95,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
       }
       unlistenRef.current?.();
       unlistenRef.current = null;
-    },
-    [],
-  );
+    };
+  }, []);
 
   const handleBrowse = async () => {
     try {
@@ -141,22 +142,28 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
         );
         masks = resolved.length > 0 ? resolved : null;
       }
-      await api.exportQueryStream({
-        sessionId,
-        streamId,
-        sql: qualifiedTableSql(driver, database, table),
-        database,
-        format,
-        path,
-        initialBatch: Math.max(1, settings.defaultDisplayCount),
-        chunkSize: Math.max(1, settings.streamPrefetchSize),
-        // 大量出力が途中で打ち切られないよう、エクスポートにはタイムアウトを掛けない。
-        queryTimeoutSecs: null,
-        table: format === "sql" ? table : null,
-        batchSize: null,
-        masks,
-        includeDdl: format === "sql" && includeDdl,
-      });
+      // describe の待機中にキャンセルされたら、ストリームを始めずに終える
+      // (この時点ではバックエンドにストリームが無く cancelStream が効かない)。
+      if (cancelledRef.current || disposedRef.current) {
+        settle({ ok: "cancelled" });
+      } else {
+        await api.exportQueryStream({
+          sessionId,
+          streamId,
+          sql: qualifiedTableSql(driver, database, table),
+          database,
+          format,
+          path,
+          initialBatch: Math.max(1, settings.defaultDisplayCount),
+          chunkSize: Math.max(1, settings.streamPrefetchSize),
+          // 大量出力が途中で打ち切られないよう、エクスポートにはタイムアウトを掛けない。
+          queryTimeoutSecs: null,
+          table: format === "sql" ? table : null,
+          batchSize: null,
+          masks,
+          includeDdl: format === "sql" && includeDdl,
+        });
+      }
     } catch (e) {
       settle({ ok: false, error: String(e) });
     }

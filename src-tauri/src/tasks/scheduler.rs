@@ -137,6 +137,10 @@ where
     tauri::async_runtime::spawn(fut);
 }
 
+/// 同一タスクの実行中に来た予定発火を見送ったことを示す実行履歴の status。
+const RUN_STATUS_SKIPPED: &str = "skipped";
+const SKIPPED_REASON: &str = "skipped: previous run still in progress";
+
 /// 1 回分の tick: 期限が来た有効なタスクをすべて実行に回す。`is_startup` は
 /// アプリ起動直後の最初の tick かどうかで、そのときだけ
 /// `schedule::resolve_startup_next_run` (未起動中に過ぎたスケジュールの追い掛け
@@ -185,6 +189,25 @@ async fn tick(app: &AppHandle, is_startup: bool) -> Result<()> {
             // 並行実行は同じ出力ファイルを壊し、接続を溜める)。
             let Some(guard) = try_acquire_run(&task.id) else {
                 tracing::warn!(task_id = %task.id, name = %task.name, "task scheduler: previous run still in progress; skipping this firing");
+                // 見送った発火も実行履歴に残す (ユーザがスケジュールの動作を判別できるように)。
+                // `last_status` のミラーと task-run イベントは、実行していないので触らない。
+                let at = now.to_rfc3339();
+                let skipped = NewTaskRun {
+                    task_id: task.id.clone(),
+                    started_at: at.clone(),
+                    finished_at: at,
+                    status: RUN_STATUS_SKIPPED.to_string(),
+                    error: Some(SKIPPED_REASON.to_string()),
+                    output_path: None,
+                    rows: None,
+                    bytes: None,
+                    elapsed_ms: 0,
+                    catch_up,
+                    attempts: 1,
+                };
+                if let Err(e) = runs::record(skipped).await {
+                    tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to record skipped run");
+                }
                 continue;
             };
             let app2 = app.clone();

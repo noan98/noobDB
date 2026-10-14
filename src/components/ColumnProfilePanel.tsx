@@ -186,8 +186,13 @@ export function ColumnProfilePanel({
   // (ボタンからの手動実行は即時)。待っている間に古い結果が出ないよう seq も進めておく。
   useEffect(() => {
     setProfile(null);
-    if (!column) return;
+    // 列が無いときも連番を進め、走行中だった前の列の応答を捨てる。
     requestSeq.current++;
+    if (!column) {
+      setRunning(false);
+      setError(null);
+      return;
+    }
     // debounce 待ちの間に前回のエラーが残らないようにする。
     setError(null);
     const timer = setTimeout(() => {

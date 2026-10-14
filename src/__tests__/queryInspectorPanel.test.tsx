@@ -208,3 +208,19 @@ describe("QueryInspectorPanel backend delta (#1259)", () => {
     expect(screen.getByText("N+1")).toBeInTheDocument();
   });
 });
+
+describe("QueryInspectorPanel 記録開始の失敗 (#1594)", () => {
+  it("基準の取得に失敗したら記録を始めず、ポーリングもしない", async () => {
+    vi.mocked(api.startStatementRecording).mockRejectedValueOnce(new Error("stats unavailable"));
+    renderWithProviders(<QueryInspectorPanel sessionId="s1" driver="mysql" />);
+    await waitFor(() => expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument());
+    fireEvent.click(screen.getByText(t("inspectorTabStats")));
+    fireEvent.click(screen.getByText(t("inspectorStart")));
+
+    await waitFor(() => expect(screen.getByText(/stats unavailable/)).toBeInTheDocument());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.sampleStatementDelta).not.toHaveBeenCalled();
+    expect(screen.queryByText(t("inspectorStop"))).not.toBeInTheDocument();
+    expect(screen.getByText(t("inspectorStart"))).toBeInTheDocument();
+  });
+});
