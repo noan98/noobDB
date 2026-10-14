@@ -2355,7 +2355,8 @@ const en = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "Sync auto-increment to data...",
   identitySyncConfirmTitle: "Sync auto-increment of {table}?",
-  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to the current maximum value. The following statement will run:",
+  identitySyncConfirmBody: "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
+  identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed:
     "Could not check whether {table} uses AUTOINCREMENT: {error}",
@@ -2426,6 +2427,7 @@ const en = {
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
   alterTableRun: "Apply",
+  alterTableDuplicateColumn: "Column names would be duplicated after applying: {names}. Rename or drop one of them.",
   alterTableReadOnly: "This connection is read-only; editing columns is disabled.",
   alterTableDestructiveTitle: "{count} destructive change(s) included",
   alterTableDestructiveBody: "These statements permanently remove columns or constraints, and the data in them cannot be restored. Check the SQL below before applying.",
@@ -7442,7 +7444,8 @@ const ja: Dict = {
   // 採番列の同期 (#1240)
   contextMenuSyncIdentity: "採番を実データに同期",
   identitySyncConfirmTitle: "{table} の採番を同期しますか?",
-  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます。次の文を実行します:",
+  identitySyncConfirmBody: "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
+  identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed:
     "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
@@ -7513,6 +7516,7 @@ const ja: Dict = {
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
   alterTableRun: "適用",
+  alterTableDuplicateColumn: "適用後に列名が重複します: {names}。どちらかの名前を変えるか削除してください。",
   alterTableReadOnly: "この接続は読み取り専用のため、列の編集はできません。",
   alterTableDestructiveTitle: "破壊的な変更を {count} 件含みます",
   alterTableDestructiveBody: "列や制約を削除する文が含まれています。削除した列のデータは元に戻せません。適用前に下の SQL を確認してください。",

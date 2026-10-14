@@ -494,6 +494,37 @@ const STATEMENT_ORDER: Record<AlterStatementKind, number> = {
 };
 
 /**
+ * 適用後の列名が重複するもの (DROP / リネームで空けた名前の再利用は重複ではない)。
+ * 空でない新規列名・リネーム後の名前・変更なしの既存列名を数える。PostgreSQL は大小を区別し、
+ * MySQL / SQLite は区別しない。重複した名前を (小文字化せず) 返す。
+ */
+export function duplicateColumnNames(
+  driver: string,
+  form: Pick<AlterTableForm, "baseline" | "existing" | "added">,
+): string[] {
+  const norm = (n: string) => (driver === "postgres" ? n : n.toLowerCase());
+  const seen = new Set<string>();
+  const dups: string[] = [];
+  const add = (name: string) => {
+    const k = norm(name);
+    if (seen.has(k)) {
+      if (!dups.some((d) => norm(d) === k)) dups.push(name);
+    } else seen.add(k);
+  };
+  const edits = new Map(form.existing.map((e) => [e.original, e] as const));
+  for (const b of form.baseline) {
+    const e = edits.get(b.name);
+    if (e?.drop) continue;
+    add(e ? e.name.trim() || b.name : b.name);
+  }
+  for (const c of form.added) {
+    const n = c.name.trim();
+    if (n) add(n);
+  }
+  return dups;
+}
+
+/**
  * フォーム入力から `ALTER TABLE` / `CREATE INDEX` 文の配列を組み立てる。順序は
  * ADD → RENAME/MODIFY → DROP → CREATE INDEX
  * (`db/sync.rs` の `SyncKind::order()` と同じ「作ってから壊す」安全な適用順)。

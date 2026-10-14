@@ -100,7 +100,9 @@ import {
   sqliteHasAutoincrementSql,
   findIdentityColumn,
   mysqlMaxValueSql,
+  mysqlAutoIncrementSql,
 } from "./components/identitySync";
+import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
 import { treeItemInsertText } from "./components/treeDragInsert";
@@ -7400,6 +7402,7 @@ export default function App() {
           return;
         }
         let maxValue: string | null = null;
+        let currentNext: string | null = null;
         if (driver === "sqlite") {
           // sqlite_sequence は AUTOINCREMENT の表が 1 つも無い DB には存在せず、
           // AUTOINCREMENT でない表は行を持たない。同期できない表は SQL を出さずに知らせる。
@@ -7431,8 +7434,24 @@ export default function App() {
             toast.error(translate("identitySyncMaxFailed", { column, error: String(e) }));
             return;
           }
+          try {
+            const res = await api.runLookupQuery({
+              sessionId,
+              sql: mysqlAutoIncrementSql(database, table),
+              database,
+            });
+            const cell = res.rows[0]?.[0] ?? null;
+            currentNext = cell === null ? null : String(cell);
+          } catch {
+            // 現在値を読めないときは「下げない」を保証できないが、同期自体は続ける
+            // (「下げる」を選んだ場合と同じ結果になる)。
+            currentNext = null;
+          }
         }
-        const sql = buildIdentitySyncSql(driver, database, table, column, maxValue);
+        let lower = false;
+        const sqlFor = (l: boolean) =>
+          buildIdentitySyncSql(driver, database, table, column, maxValue, { lower: l, currentNext });
+        const sql = sqlFor(false);
         if (!sql) {
           toast.error(translate("identitySyncMaxFailed", { column, error: String(maxValue) }));
           return;
@@ -7440,25 +7459,20 @@ export default function App() {
         const ok = await confirm({
           title: translate("identitySyncConfirmTitle", { table }),
           message: maintenanceMessage(
-            <>
-              {translate("identitySyncConfirmBody", { table, column })}
-              <br />
-              <br />
-              <chakra.code
-                display="block"
-                fontFamily="var(--font-mono)"
-                fontSize="sm"
-                whiteSpace="pre-wrap"
-                wordBreak="break-all"
-              >
-                {sql}
-              </chakra.code>
-            </>,
+            <IdentitySyncBody
+              table={table}
+              column={column}
+              buildSql={sqlFor}
+              onLowerChange={(l) => {
+                lower = l;
+              }}
+            />,
           ),
           confirmLabel: translate("maintenanceConfirmOk"),
         });
         if (!ok) return;
-        const success = await runMaintenanceDdl(sql, database);
+        const runSql = sqlFor(lower) ?? sql;
+        const success = await runMaintenanceDdl(runSql, database);
         if (success) toast.success(translate("identitySyncDone", { table }));
       } catch (e) {
         toast.error(translate("statusQueryError", { error: String(e) }));

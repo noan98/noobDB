@@ -89,14 +89,21 @@ export function buildIdentitySyncSql(
   table: string,
   column: string,
   maxValue?: string | null,
+  opts: IdentitySyncOptions = {},
 ): string | null {
   const name = qualified(driver, database, table);
   const col = quoteIdentFor(driver, column);
   if (driver === "postgres") {
-    const seqTarget = sqlString(name);
+    const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
+    if (opts.lower) {
+      return `SELECT setval(${seq}, COALESCE(MAX(${col}), 1), MAX(${col}) IS NOT NULL) FROM ${name};`;
+    }
+    // 既定は採番値を下げない: 現在値 (`pg_sequence_last_value`。未使用なら NULL) と実データの
+    // 最大値の大きい方へ進める。削除済み ID の再利用を避ける (SQLite の MAX(seq, …) と同じ方針)。
+    const last = `pg_sequence_last_value(${seq}::regclass)`;
     return (
-      `SELECT setval(pg_get_serial_sequence(${seqTarget}, ${sqlString(column)}), ` +
-      `COALESCE(MAX(${col}), 1), MAX(${col}) IS NOT NULL) FROM ${name};`
+      `SELECT setval(${seq}, GREATEST(COALESCE(MAX(${col}), 0), COALESCE(${last}, 0), 1), ` +
+      `MAX(${col}) IS NOT NULL OR ${last} IS NOT NULL) FROM ${name};`
     );
   }
   if (driver === "sqlite") {
@@ -109,6 +116,25 @@ export function buildIdentitySyncSql(
   }
   const max = parseMaxValue(maxValue);
   if (max === null) return null;
-  const next = BigInt(max) < 0n ? 1n : BigInt(max) + 1n;
+  let next = BigInt(max) < 0n ? 1n : BigInt(max) + 1n;
+  if (!opts.lower) {
+    const cur = parseMaxValue(opts.currentNext);
+    // 現在の AUTO_INCREMENT の方が大きければそれを保つ (下げない)。
+    if (cur !== null && opts.currentNext != null && BigInt(cur) > next) next = BigInt(cur);
+  }
   return `ALTER TABLE ${name} AUTO_INCREMENT = ${next.toString()};`;
+}
+
+/** 採番同期の挙動オプション。 */
+export interface IdentitySyncOptions {
+  /** true なら現在値より小さくなっても実データの最大値 + 1 にそろえる (従来の挙動)。既定は下げない。 */
+  lower?: boolean;
+  /** MySQL: 現在の AUTO_INCREMENT (`mysqlAutoIncrementSql` の結果)。取得できなければ未指定。 */
+  currentNext?: string | null;
+}
+
+/** MySQL 用: 現在の AUTO_INCREMENT を問い合わせる SELECT (`run_lookup_query` で実行する)。 */
+export function mysqlAutoIncrementSql(database: string | null, table: string): string {
+  const schema = database ? sqlString(database) : "DATABASE()";
+  return `SELECT AUTO_INCREMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ${schema} AND TABLE_NAME = ${sqlString(table)}`;
 }

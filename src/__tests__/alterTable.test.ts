@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAlterPlan,
+  duplicateColumnNames,
   indexRowProblems,
   type AlterTableForm,
   type ExistingColumnBaseline,
@@ -534,5 +535,42 @@ describe("buildAlterPlan: MySQL 既存列の既定値 (#1527 レビュー)", () 
       form({ added: [{ name: "a", type: "", notNull: false, defaultValue: "007" }] }),
     );
     expect(r.statements[0].sql).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `a` TEXT DEFAULT '007';");
+  });
+});
+
+describe("duplicateColumnNames (#1602)", () => {
+  const b = [baseline({ name: "status" }), baseline({ name: "other" })];
+  const add = (name: string) => ({ name, type: "TEXT", notNull: false, defaultValue: "" });
+
+  it("DROP / リネームで空けた名前の再利用は重複ではない", () => {
+    expect(
+      duplicateColumnNames("mysql", {
+        baseline: b,
+        existing: [edit({ original: "status", drop: true })],
+        added: [add("status")],
+      }),
+    ).toEqual([]);
+    expect(
+      duplicateColumnNames("mysql", {
+        baseline: b,
+        existing: [edit({ original: "status", name: "status_old" })],
+        added: [add("status")],
+      }),
+    ).toEqual([]);
+  });
+
+  it("既存列と同名の新規列・リネーム先の衝突は重複 (MySQL は大小無視)", () => {
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("STATUS")] })).toEqual(["STATUS"]);
+    expect(
+      duplicateColumnNames("postgres", { baseline: b, existing: [], added: [add("STATUS")] }),
+    ).toEqual([]);
+    expect(
+      duplicateColumnNames("sqlite", {
+        baseline: b,
+        existing: [edit({ original: "other", name: "status" })],
+        added: [],
+      }),
+    ).toEqual(["status"]);
+    expect(duplicateColumnNames("mysql", { baseline: b, existing: [], added: [add("x"), add("x")] })).toEqual(["x"]);
   });
 });

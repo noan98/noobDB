@@ -11,6 +11,7 @@ import {
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
   type IndexDef,
+  duplicateColumnNames,
   indexRowProblems,
   type NewColumn,
   type UnsupportedChange,
@@ -323,7 +324,12 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
   const hasIncompleteIndex = effectiveIndexes.some((r) => indexRowProblems(r) !== null);
   // 実行ボタン / Cmd+Enter を一度押された後は、空の行にもエラーを出す。
   const [runAttempted, setRunAttempted] = useState(false);
-  const valid = statements.length > 0;
+  // 適用後に同名の列が並ぶ (順序では解決できない本当の重複) と DB エラーになるので、実行前に止める。
+  const duplicateNames = useMemo(
+    () => duplicateColumnNames(driver, { baseline, existing, added }),
+    [driver, baseline, existing, added],
+  );
+  const valid = statements.length > 0 && duplicateNames.length === 0;
   // 不完全な行があるときは実行せず、理由を出す (空の新規行のエラーは触る/実行を試すまで伏せる)。
   const tryRun = () => {
     if (hasIncompleteIndex) {
@@ -758,6 +764,9 @@ export function AlterTableModal({ sessionId, driver, database, table, readOnly, 
               <Callout tone="warning">
                 {t("alterTableIndexIncompleteBlocked")}
               </Callout>
+            )}
+            {duplicateNames.length > 0 && (
+              <FieldError>{t("alterTableDuplicateColumn", { names: duplicateNames.join(", ") })}</FieldError>
             )}
             {readOnly && <FieldError>{t("alterTableReadOnly")}</FieldError>}
             </motion.div>
