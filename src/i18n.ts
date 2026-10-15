@@ -5521,6 +5521,10 @@ const en = {
   rowInspectorCompareSummary: "Compared with pinned row {pinned}: {count} column(s) differ",
   rowInspectorDiffOnly: "Differences only",
   rowInspectorPinnedValue: "Pinned row {row}",
+  structureIncomingForeignKeys: "Referenced by (incoming foreign keys)",
+  structureNoIncomingForeignKeys: "No other table references this table.",
+  structureIncomingFrom: "Referencing column",
+  structureOpenReferencingHint: "Open the structure of the referencing table",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11012,6 +11016,10 @@ const ja: Dict = {
   rowInspectorCompareSummary: "固定した行 {pinned} と比較: {count} 列が異なります",
   rowInspectorDiffOnly: "差のある列のみ",
   rowInspectorPinnedValue: "固定行 {row}",
+  structureIncomingForeignKeys: "被参照 (他テーブルからの外部キー)",
+  structureNoIncomingForeignKeys: "このテーブルを参照している外部キーはありません。",
+  structureIncomingFrom: "参照元の列",
+  structureOpenReferencingHint: "参照元テーブルの構造を開く",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
