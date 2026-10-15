@@ -970,7 +970,7 @@ export const encryptedProfileExportResult = z.object({
   secrets: z.number(),
   bytes: z.number(),
   verified: z.boolean(),
-  generationsPruned: z.number(),
+  generations_pruned: z.number(),
 });
 
 /** テーブル統計ダッシュボードの 1 行 (`table_statistics`、#1255)。サイズ情報に

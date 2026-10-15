@@ -318,7 +318,7 @@ export interface EncryptedProfileExportResult {
   /** 書き出し直後に読み直して復号・件数を確認済み (#1624)。成功応答では常に true。 */
   verified: boolean;
   /** 世代管理で削除した古い世代の数 (#1624)。 */
-  generationsPruned: number;
+  generations_pruned: number;
 }
 
 export type SnippetScope =

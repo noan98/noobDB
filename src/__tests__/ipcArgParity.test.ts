@@ -450,6 +450,8 @@ describe("IPC 引数名パリティ (Rust コマンドのパラメータ名 ↔ 
         "masks",
         "resultId",
         "ddlHeader",
+        "sqlConflict",
+        "csvEncoding",
       ].sort(),
     );
     // 引数を一切取らないコマンドは空配列。

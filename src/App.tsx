@@ -2862,8 +2862,8 @@ export default function App() {
               secrets: res.secrets,
             }),
             translate("profileBackupVerified"),
-            res.generationsPruned > 0
-              ? translate("profileBackupPruned", { count: res.generationsPruned })
+            res.generations_pruned > 0
+              ? translate("profileBackupPruned", { count: res.generations_pruned })
               : "",
           ]
             .filter((m) => m !== "")
