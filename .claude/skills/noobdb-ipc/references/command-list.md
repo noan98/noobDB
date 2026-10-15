@@ -268,6 +268,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `timelapse_capture`
 - `timelapse_list_watches`
 - `timelapse_diff_generations`
+- `timelapse_row_history`
 - `timelapse_unwatch`
 - `timelapse_clear_all`
 

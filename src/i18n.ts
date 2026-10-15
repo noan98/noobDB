@@ -5515,6 +5515,19 @@ const en = {
     "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
   sizeDeltaSince: "Change since the previous fetch ({time})",
+  timelapseRowHistoryAria: "Row history across generations",
+  timelapseRowHistoryTitle: "History of row ({key})",
+  timelapseRowHistoryColumn: "Row history",
+  timelapseRowHistoryOpen: "Show history of row {key} across generations",
+  timelapseRowHistoryLoading: "Scanning saved generations...",
+  timelapseRowHistoryNone: "This row does not appear in any of the {count} saved generations.",
+  timelapseRowHistorySummary:
+    "{changes} changes found across {count} generations (only generations where the row changed are listed).",
+  timelapseRowHistoryPartial:
+    "Some generations are partial captures; a row outside the captured range can look as if it disappeared.",
+  timelapseRowHistoryColTime: "Captured at",
+  timelapseRowHistoryGone: "(row gone)",
+  timelapseRowHistoryClose: "Close row history",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10998,6 +11011,19 @@ const ja: Dict = {
     "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
   sizeDeltaSince: "前回取得 ({time}) からの増減",
+  timelapseRowHistoryAria: "世代をまたいだ行の履歴",
+  timelapseRowHistoryTitle: "行 ({key}) の履歴",
+  timelapseRowHistoryColumn: "行の履歴",
+  timelapseRowHistoryOpen: "行 {key} の世代横断の履歴を表示",
+  timelapseRowHistoryLoading: "保存済みの世代を走査しています...",
+  timelapseRowHistoryNone: "この行は保存済みの {count} 世代のどこにも存在しません。",
+  timelapseRowHistorySummary:
+    "{count} 世代を走査し、{changes} 件の変化がありました (行に変化があった世代だけを表示)。",
+  timelapseRowHistoryPartial:
+    "部分取得の世代を含みます。取得範囲外の行は「消えた」ように見えることがあります。",
+  timelapseRowHistoryColTime: "取得時刻",
+  timelapseRowHistoryGone: "(行が消えた)",
+  timelapseRowHistoryClose: "行の履歴を閉じる",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

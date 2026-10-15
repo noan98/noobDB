@@ -56,6 +56,7 @@ const COVERED: Record<string, string> = {
   ForeignKey: "foreignKey",
   GenerationDiff: "timelapseGenerationDiff",
   GenerationMeta: "schemaDriftGeneration",
+  RowHistory: "timelapseRowHistory",
   HealthProbeItem: "healthProbeItemVariants",
   HistoryEntry: "historyEntry",
   ImportResult: "profileImportResult",

@@ -5235,6 +5235,36 @@
     "partial": false,
     "to_captured_at": "2026-01-02T00:00:00Z"
   },
+  "timelapseRowHistory": {
+    "columns": [
+      "id",
+      "price"
+    ],
+    "entries": [
+      {
+        "captured_at": "2026-01-01T00:00:00Z",
+        "changed_columns": [],
+        "generation_id": 1,
+        "present": true,
+        "row": [
+          2,
+          100
+        ]
+      },
+      {
+        "captured_at": "2026-01-02T00:00:00Z",
+        "changed_columns": [],
+        "generation_id": 2,
+        "present": false,
+        "row": null
+      }
+    ],
+    "generations_scanned": 2,
+    "partial": false,
+    "primary_key": [
+      "id"
+    ]
+  },
   "timelapseWatchOutcome": {
     "generation_added": true,
     "over_limit": false,

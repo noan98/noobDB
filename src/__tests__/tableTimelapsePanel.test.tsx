@@ -20,6 +20,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       timelapseWatchTable: vi.fn(),
       timelapseCapture: vi.fn(),
       timelapseUnwatch: vi.fn(),
+      timelapseRowHistory: vi.fn(),
     },
   };
 });
@@ -99,6 +100,50 @@ describe("TableTimelapsePanel (#739)", () => {
     expect(screen.getByText(t("timelapseCountAdded", { count: 1 }))).toBeInTheDocument();
     expect(screen.getByText(t("timelapseCountChanged", { count: 1 }))).toBeInTheDocument();
     expect(screen.getByText("300").closest("tr")).toHaveAttribute("data-kind", "added");
+  });
+
+  it("差分行の履歴ボタンで、その行の世代横断の推移を表示する (#1621)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
+    vi.mocked(api.timelapseRowHistory).mockResolvedValue({
+      columns: ["id", "price"],
+      primary_key: ["id"],
+      entries: [
+        {
+          generation_id: 10,
+          captured_at: "2025-12-01T00:00:00Z",
+          present: true,
+          row: [1, 90],
+          changed_columns: [],
+        },
+        {
+          generation_id: 11,
+          captured_at: "2026-01-01T00:00:00Z",
+          present: true,
+          row: [1, 100],
+          changed_columns: ["price"],
+        },
+        {
+          generation_id: 12,
+          captured_at: "2026-01-02T00:00:00Z",
+          present: false,
+          row: null,
+          changed_columns: [],
+        },
+      ],
+      generations_scanned: 5,
+      partial: false,
+    });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText("150")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: t("timelapseRowHistoryOpen", { key: "[1]" }) }));
+    await waitFor(() => expect(api.timelapseRowHistory).toHaveBeenCalledWith(7, [1]));
+    const section = await screen.findByTestId("timelapse-row-history");
+    expect(section).toHaveTextContent(t("timelapseRowHistorySummary", { changes: 3, count: 5 }));
+    expect(section).toHaveTextContent("90");
+    expect(screen.getAllByText("100").length).toBeGreaterThan(0);
+    expect(section.querySelector("td[data-changed]")).toHaveTextContent("100");
+    expect(section).toHaveTextContent(t("timelapseRowHistoryGone"));
   });
 
   it("ウォッチが無ければ制約を説明する空状態を出す", async () => {

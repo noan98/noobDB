@@ -222,7 +222,8 @@ pub mod __test_api {
         TaskSchedule,
     };
     pub use crate::timelapse::{
-        GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
+        GenerationDiff, GenerationMeta as TimelapseGenerationMeta, RowHistory, RowHistoryEntry,
+        TableWatch,
     };
 
     // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
@@ -1469,6 +1470,7 @@ pub fn run() {
             commands::timelapse::timelapse_capture,
             commands::timelapse::timelapse_list_watches,
             commands::timelapse::timelapse_diff_generations,
+            commands::timelapse::timelapse_row_history,
             commands::timelapse::timelapse_unwatch,
             commands::timelapse::timelapse_clear_all,
             commands::schema_drift::schema_drift_capture,

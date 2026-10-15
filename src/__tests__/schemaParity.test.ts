@@ -206,6 +206,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["timelapseCaptureOutcome", schemas.timelapseCaptureOutcome],
   ["tableWatch", schemas.tableWatch],
   ["timelapseGenerationDiff", schemas.timelapseGenerationDiff],
+  ["timelapseRowHistory", schemas.timelapseRowHistory],
   ["schemaDriftGeneration", schemas.schemaDriftGeneration],
   ["schemaDriftSummary", schemas.schemaDriftSummary],
   ["schemaDriftCapture", schemas.schemaDriftCapture],

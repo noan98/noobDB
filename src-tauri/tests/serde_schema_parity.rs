@@ -1679,6 +1679,28 @@ fn build_fixtures() -> serde_json::Value {
         from_captured_at: "2026-01-01T00:00:00Z".into(),
         to_captured_at: "2026-01-02T00:00:00Z".into(),
     };
+    let timelapse_row_history = t::RowHistory {
+        columns: vec!["id".into(), "price".into()],
+        primary_key: vec!["id".into()],
+        entries: vec![
+            t::RowHistoryEntry {
+                generation_id: 1,
+                captured_at: "2026-01-01T00:00:00Z".into(),
+                present: true,
+                row: Some(vec![Value::Int(2), Value::Int(100)]),
+                changed_columns: vec![],
+            },
+            t::RowHistoryEntry {
+                generation_id: 2,
+                captured_at: "2026-01-02T00:00:00Z".into(),
+                present: false,
+                row: None,
+                changed_columns: vec![],
+            },
+        ],
+        generations_scanned: 2,
+        partial: false,
+    };
 
     // スキーマドリフト (#736 / #1260)。テーブル変化の種別 3 種を通す。
     let schema_drift_generation = t::DriftGenerationMeta {
@@ -1952,6 +1974,7 @@ fn build_fixtures() -> serde_json::Value {
         "timelapseCaptureOutcome": timelapse_capture_outcome,
         "tableWatch": table_watch,
         "timelapseGenerationDiff": timelapse_generation_diff,
+        "timelapseRowHistory": timelapse_row_history,
         "schemaDriftGeneration": schema_drift_generation,
         "schemaDriftSummary": schema_drift_summary,
         "schemaDriftCapture": schema_drift_capture,

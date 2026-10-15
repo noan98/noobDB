@@ -1486,6 +1486,27 @@ export interface TimelapseGenerationDiff {
   to_captured_at: string;
 }
 
+/** 主キー指定の 1 行の値の推移 (#1621)。変化があった世代だけが古い順に並ぶ。 */
+export interface TimelapseRowHistoryEntry {
+  generation_id: number;
+  captured_at: string;
+  /** false = この世代でその行が無くなった。 */
+  present: boolean;
+  /** `columns` と同じ並びの値。`present` が false のとき null。 */
+  row: CellValue[] | null;
+  /** 直前の存在世代から値が変わった列 (初出・再出現は空)。 */
+  changed_columns: string[];
+}
+
+export interface TimelapseRowHistory {
+  columns: string[];
+  primary_key: string[];
+  entries: TimelapseRowHistoryEntry[];
+  generations_scanned: number;
+  /** 部分取得の世代を含む (範囲外の行が「消えた」ように見えうる)。 */
+  partial: boolean;
+}
+
 /**
  * サンドボックス (壊せる砂場、#747) の非秘密メタデータ。実データはローカル
  * SQLite ファイル (`file_path`) に持ち、`session_id` (作成/一覧取得後にセッション

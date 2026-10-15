@@ -38,6 +38,8 @@ export interface TimelapseRow {
   kind: TimelapseRowKind;
   /** React の key 用に一意化した PK 表現。 */
   key: string;
+  /** 主キー値の並び (`timelapseRowHistory` へそのまま渡す, #1621)。 */
+  rawKey: CellValue[];
   cells: TimelapseCell[];
 }
 
@@ -94,7 +96,7 @@ export function buildTimelapseRows(diff: DataDiff, masked: readonly boolean[] | 
     const base = `${kind}:${JSON.stringify(r.key)}`;
     const n = seen.get(base) ?? 0;
     seen.set(base, n + 1);
-    return { kind, key: n === 0 ? base : `${base}#${n}`, cells };
+    return { kind, key: n === 0 ? base : `${base}#${n}`, rawKey: r.key, cells };
   });
 }
 

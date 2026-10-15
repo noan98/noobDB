@@ -722,6 +722,22 @@ export const timelapseGenerationDiff = z.object({
   to_captured_at: z.string(),
 });
 
+export const timelapseRowHistory = z.object({
+  columns: z.array(z.string()),
+  primary_key: z.array(z.string()),
+  entries: z.array(
+    z.object({
+      generation_id: z.number(),
+      captured_at: z.string(),
+      present: z.boolean(),
+      row: z.array(cellValue).nullable(),
+      changed_columns: z.array(z.string()),
+    }),
+  ),
+  generations_scanned: z.number(),
+  partial: z.boolean(),
+});
+
 /** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
 export const sandboxRecord = z.object({
   id: z.string(),
