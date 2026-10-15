@@ -46,9 +46,13 @@ import { semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
+  nextTreeTypeahead,
   resolveTreeArrowLeft,
   resolveTreeArrowRight,
+  resolveTreeExpandSiblings,
   resolveTreeMove,
+  resolveTreeTypeahead,
+  type TreeTypeaheadState,
   type TreeNavEntry,
 } from "../treeKeyboardNav";
 import {
@@ -2347,6 +2351,10 @@ export const ConnectionList = memo(
     // スキーマ行リスト (仮想化されていて窓の外の行は DOM に無い) の窓口。キーボード巡回は
     // DOM の `[role=treeitem]` ではなく、ツリー全体を並べた配列で次の行を決める (#1315)。
     const schemaListRef = useRef<SchemaRowListHandle | null>(null);
+    // 先頭文字ジャンプの入力バッファ (短時間に打った文字を連結して前方一致、#1629)。
+    const typeaheadRef = useRef<TreeTypeaheadState | null>(null);
+    // 行キー (`db:` / `tbl:`) の行をまとめて開く。`*` での兄弟一括展開で窓の外の行にも使う。
+    const expandRowsByKeysRef = useRef<(keys: readonly string[]) => void>(() => {});
 
     /** テーブル行のキー操作 (#1399): Shift+Space (または Ctrl/Cmd+Space) で出し入れ、Shift+↑↓ で範囲を伸縮。 */
     const selectionKeyDown = useCallback(
@@ -2452,9 +2460,12 @@ export const ConnectionList = memo(
           const isMove = e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End";
           // 印字可能な単一文字のみ対象。修飾キー (Ctrl/Alt/Meta) 付きはショートカット用途と
           // 衝突しうるため除外する (Shift は大文字入力に必要なので許可)。
-          const isTypeahead =
-            !isArrowLR && !isMove && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
-          if (!isArrowLR && !isMove && !isTypeahead) return;
+          const noModifier = !e.ctrlKey && !e.altKey && !e.metaKey;
+          // `*`: 現在の階層の兄弟をすべて展開する (APG の任意仕様、#1629)。
+          const isExpandSiblings = e.key === "*" && noModifier;
+          const isTypeahead = !isArrowLR && !isMove && !isExpandSiblings && e.key.length === 1 && noModifier;
+          if (!isArrowLR && !isMove && !isTypeahead && !isExpandSiblings) return;
+          if (!isTypeahead) typeaheadRef.current = null;
 
           const row = e.currentTarget;
           const entries = buildNavSequence();
@@ -2493,6 +2504,28 @@ export const ConnectionList = memo(
             return;
           }
 
+          if (isExpandSiblings) {
+            e.preventDefault();
+            e.stopPropagation();
+            // 対象はスキーマツリーの行 (DB / テーブル)。プロファイル / グループの行は開かない。
+            const keys: string[] = [];
+            for (const i of resolveTreeExpandSiblings(entries, index)) {
+              const k = entries[i].key;
+              if (k) keys.push(k);
+            }
+            expandRowsByKeysRef.current(keys);
+            return;
+          }
+          if (isTypeahead) {
+            const state = nextTreeTypeahead(typeaheadRef.current, e.key, Date.now());
+            typeaheadRef.current = state;
+            const hit = resolveTreeTypeahead(entries, index, state.text);
+            if (hit !== null) {
+              e.preventDefault();
+              focusEntry(entries[hit]);
+            }
+            return;
+          }
           const target = resolveTreeMove(entries, index, e.key);
           // 矢印 / Home / End は端でもブラウザ既定のスクロールを止める。先頭文字ジャンプは
           // 一致が無いときに既定の挙動を妨げない。
@@ -3308,6 +3341,11 @@ export const ConnectionList = memo(
       const next = { ...expandedDbs, [db]: true };
       setExpandedDbs(next);
       persistTree(next, expandedTablesRef.current);
+      await ensureDbLoaded(sessionId, db);
+    };
+
+    /** DB 配下のテーブル一覧・行数・コメント・スキーマオブジェクトを (未取得なら) 取得する。 */
+    const ensureDbLoaded = async (sessionId: string, db: string) => {
       if (tables[db]) return;
       // Skip if a fetch is already in flight for this database — covers both
       // rapid collapse / re-expand and overlap with the schema-search eager loader.
@@ -3355,6 +3393,12 @@ export const ConnectionList = memo(
       const next = { ...expandedTables, [key]: true };
       setExpandedTables(next);
       persistTree(expandedDbsRef.current, next);
+      await ensureTableLoaded(sessionId, db, tbl);
+    };
+
+    /** テーブルの列・インデックスを (未取得なら) 取得する。 */
+    const ensureTableLoaded = async (sessionId: string, db: string, tbl: string) => {
+      const key = tableKey(db, tbl);
       if (tableColumns[key]) return;
       // Same in-flight guard as toggleDb: rapid collapse / re-expand mid-fetch
       // must not re-issue describeTable for the same table.
@@ -3376,6 +3420,37 @@ export const ConnectionList = memo(
         columnsInFlightRef.current.delete(key);
       }
     };
+
+    /**
+     * 行キー (`db:<DB>` / `tbl:<db>::<table>`) の行をまとめて開く (`*` キーの兄弟一括展開、#1629)。
+     * 1 回の状態更新にまとめるので、続けて開いても先に開いた分が上書きされない。
+     */
+    const expandRowsByKeys = (keys: readonly string[]) => {
+      if (!sessionId) return;
+      const dbs = { ...expandedDbsRef.current };
+      const tbls = { ...expandedTablesRef.current };
+      const dbLoads: string[] = [];
+      const tableLoads: { db: string; tbl: string }[] = [];
+      for (const key of keys) {
+        const row = explorerRowsRef.current.find((r) => r.key === key);
+        if (!row) continue;
+        if (row.kind === "db" && !dbs[row.db]) {
+          dbs[row.db] = true;
+          dbLoads.push(row.db);
+        } else if (row.kind === "table" && !tbls[tableKey(row.db, row.tbl)]) {
+          tbls[tableKey(row.db, row.tbl)] = true;
+          tableLoads.push({ db: row.db, tbl: row.tbl });
+        }
+      }
+      if (dbLoads.length === 0 && tableLoads.length === 0) return;
+      setError(null);
+      setExpandedDbs(dbs);
+      setExpandedTables(tbls);
+      persistTree(dbs, tbls);
+      for (const db of dbLoads) void ensureDbLoaded(sessionId, db);
+      for (const { db, tbl } of tableLoads) void ensureTableLoaded(sessionId, db, tbl);
+    };
+    expandRowsByKeysRef.current = expandRowsByKeys;
 
     // 検索は `useDeferredValue` で遅延させる (#1314)。入力欄 (`filter`) は即座に反映し、
     // ツリーの絞り込みとハイライト (重い) は入力を妨げない優先度で追従する。

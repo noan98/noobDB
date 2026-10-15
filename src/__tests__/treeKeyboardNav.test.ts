@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  nextTreeTypeahead,
   resolveTreeArrowLeft,
   resolveTreeArrowRight,
+  resolveTreeExpandSiblings,
   resolveTreeMove,
+  resolveTreeTypeahead,
   type TreeNavEntry,
   type TreeNavRow,
 } from "../treeKeyboardNav";
@@ -125,5 +128,77 @@ describe("resolveTreeMove (#1315)", () => {
     expect(resolveTreeMove(entries, -1, "ArrowDown")).toBe(0);
     expect(resolveTreeMove(entries, -1, "ArrowUp")).toBe(3);
     expect(resolveTreeMove(entries, -1, "g")).toBe(2);
+  });
+});
+
+describe("複数文字の先頭文字ジャンプ (#1629)", () => {
+  const entry = (label: string): TreeNavEntry => ({ level: 1, expandable: false, open: false, label });
+  const entries = ["orders", "users", "user_roles", "uploads", "events"].map(entry);
+
+  it("入力バッファは時間内なら連結し、空くと打ち直しになる", () => {
+    const a = nextTreeTypeahead(null, "U", 1000);
+    expect(a).toEqual({ text: "u", at: 1000 });
+    expect(nextTreeTypeahead(a, "s", 1500)).toEqual({ text: "us", at: 1500 });
+    expect(nextTreeTypeahead(a, "s", 1000 + 801)).toEqual({ text: "s", at: 1801 });
+    // 時刻が巻き戻ったときも連結しない。
+    expect(nextTreeTypeahead(a, "s", 900)).toEqual({ text: "s", at: 900 });
+  });
+
+  it("2 文字以上は現在行を含めて前方一致を探す", () => {
+    // 現在 users で "us" と続けても動かない。
+    expect(resolveTreeTypeahead(entries, 1, "us")).toBe(1);
+    // "use" ならどちらも一致 → 現在 users のまま、"user_" なら user_roles へ。
+    expect(resolveTreeTypeahead(entries, 1, "user_")).toBe(2);
+    expect(resolveTreeTypeahead(entries, 0, "up")).toBe(3);
+    // 末尾から先頭へ折り返す。
+    expect(resolveTreeTypeahead(entries, 4, "or")).toBe(0);
+  });
+
+  it("1 文字と同じ文字の繰り返しは、現在行の次から巡回する", () => {
+    expect(resolveTreeTypeahead(entries, 1, "u")).toBe(2);
+    expect(resolveTreeTypeahead(entries, 1, "uu")).toBe(2);
+    expect(resolveTreeTypeahead(entries, 3, "u")).toBe(1);
+  });
+
+  it("一致が無いとき・空バッファは null", () => {
+    expect(resolveTreeTypeahead(entries, 0, "zz9")).toBeNull();
+    expect(resolveTreeTypeahead(entries, 0, "")).toBeNull();
+    expect(resolveTreeTypeahead([], 0, "u")).toBeNull();
+  });
+
+  it("resolveTreeMove の 1 文字ジャンプは従来どおり", () => {
+    expect(resolveTreeMove(entries, 1, "u")).toBe(2);
+  });
+});
+
+describe("* で兄弟を一括展開 (#1629)", () => {
+  const row = (level: number, expandable: boolean, open: boolean): TreeNavRow => ({
+    level,
+    expandable,
+    open,
+  });
+  // db1 (open) > t1(閉), t2(開) > col, t3(閉) ; db2 (閉)
+  const rows: TreeNavRow[] = [
+    row(1, true, true),
+    row(2, true, false),
+    row(2, true, true),
+    row(3, false, false),
+    row(2, true, false),
+    row(2, false, false),
+    row(1, true, false),
+  ];
+
+  it("同じ親の同じ階層で、閉じている展開可能ノードの位置を返す", () => {
+    expect(resolveTreeExpandSiblings(rows, 1)).toEqual([1, 4]);
+    expect(resolveTreeExpandSiblings(rows, 4)).toEqual([1, 4]);
+  });
+
+  it("ルート階層では別の親の下の行を含めない", () => {
+    expect(resolveTreeExpandSiblings(rows, 0)).toEqual([6]);
+  });
+
+  it("範囲外・展開できる兄弟が無いときは空", () => {
+    expect(resolveTreeExpandSiblings(rows, 99)).toEqual([]);
+    expect(resolveTreeExpandSiblings([row(1, false, false)], 0)).toEqual([]);
   });
 });
