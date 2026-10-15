@@ -115,7 +115,9 @@ describe("useCellBlobIo saveMany (#1539)", () => {
       true,
     );
     await waitFor(() =>
-      expect(document.body.textContent?.includes(t("blobFolderManifest", { file: "manifest_2.csv" }))).toBe(true),
+      expect(document.body.textContent?.includes(t("blobFolderManifest", { file: "manifest_2.csv" }))).toBe(
+        true,
+      ),
     );
   });
 

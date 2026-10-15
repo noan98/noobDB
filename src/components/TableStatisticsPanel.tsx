@@ -21,6 +21,7 @@ import {
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  tableStatsExportTable,
   toTableStatRows,
   type SortDirection,
   type TableStatRow,
@@ -33,6 +34,8 @@ import { errorIllustration, NoResultsIllustration } from "./illustrations";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox, Heading } from "./ui";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -260,6 +263,20 @@ export function TableStatisticsPanel({
   // データバーは合計サイズ列に対して、絞り込み前の一覧中の最大値を基準にスケールする
   // (フィルタで最大が消えてもバーの物差しが揺れないように)。
   const maxTotal = useMemo(() => rows.reduce((m, r) => Math.max(m, r.total_bytes ?? 0), 0), [rows]);
+  const buildExport = (render: typeof tableToCsv) => {
+    const { header, rows: body } = tableStatsExportTable(sorted, {
+      name: t("sizeColName"),
+      rows: t("sizeColRows"),
+      columns: t("sizeColColumns"),
+      indexes: t("sizeColIndexes"),
+      primaryKey: t("sizeColPk"),
+      foreignKeys: t("sizeColFk"),
+      dataBytes: `${t("sizeColData")} (bytes)`,
+      indexBytes: `${t("sizeColIndex")} (bytes)`,
+      totalBytes: `${t("sizeColTotal")} (bytes)`,
+    });
+    return render(header, body);
+  };
   const arrow = (key: TableStatSortKey) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
   // 現在のソート状態を支援技術へ伝える aria-sort 値。
   const ariaSort = (key: TableStatSortKey): "ascending" | "descending" | "none" =>
@@ -371,6 +388,15 @@ export function TableStatisticsPanel({
             {t("sizeFilterCount", { shown: sorted.length, total: rows.length })}
           </chakra.span>
         )}
+        {/* 現在の並び順とフィルタ後の行を CSV / Markdown で出す (#1624)。容量調査の結果を資料や Issue に貼れる。 */}
+        <TextExportButton
+          filenameBase={`table-statistics-${database}`}
+          disabled={sorted.length === 0}
+          formats={[
+            { id: "csv", label: "CSV", build: () => buildExport(tableToCsv) },
+            { id: "markdown", label: "Markdown", build: () => buildExport(tableToMarkdown) },
+          ]}
+        />
       </Flex>
 
       {error ? (

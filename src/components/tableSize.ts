@@ -6,7 +6,7 @@
 // ここには表示用の整形・集計・ソート・フィルタだけが残る。すべて副作用なしで、Vitest で
 // ユニットテストする。表示専用でありデータは一切変更しない。
 
-import type { TableSizeInfo, TableStatistic } from "../api/tauri";
+import type { CellValue, TableSizeInfo, TableStatistic } from "../api/tauri";
 
 const SIZE_UNITS = ["B", "KB", "MB", "GB", "TB", "PB"];
 
@@ -237,5 +237,53 @@ export function computeTableSizeTotals(rows: readonly TableSizeInfo[]): TableSiz
     dataBytes: rows.reduce((acc, r) => add(acc, r.data_bytes), 0),
     indexBytes: rows.reduce((acc, r) => add(acc, r.index_bytes), 0),
     totalBytes: rows.reduce((acc, r) => add(acc, r.total_bytes), 0),
+  };
+}
+
+/** テーブル統計の書き出し表の見出し (i18n は呼び出し側で解決して渡す)。 */
+export interface TableStatExportLabels {
+  name: string;
+  rows: string;
+  columns: string;
+  indexes: string;
+  primaryKey: string;
+  foreignKeys: string;
+  dataBytes: string;
+  indexBytes: string;
+  totalBytes: string;
+}
+
+/**
+ * テーブル統計を CSV / Markdown 用の表にする (#1624)。呼び出し側で並べ替え・絞り込み済みの行を
+ * 渡せば、画面の並びと件数がそのまま出る。サイズは表示用の `1.5 MB` ではなく**バイト数の生の
+ * 値**にする (資料側で集計・並べ替えできるように)。不明 (null) は空セル。
+ */
+export function tableStatsExportTable(
+  rows: readonly TableStatRow[],
+  labels: TableStatExportLabels,
+): { header: string[]; rows: CellValue[][] } {
+  return {
+    header: [
+      labels.name,
+      labels.rows,
+      labels.columns,
+      labels.indexes,
+      labels.primaryKey,
+      labels.foreignKeys,
+      labels.dataBytes,
+      labels.indexBytes,
+      labels.totalBytes,
+    ],
+    rows: rows.map((r) => [
+      r.name,
+      r.row_estimate,
+      r.columnCount,
+      r.indexCount,
+      r.hasPrimaryKey,
+      r.foreignKeyCount,
+      r.data_bytes,
+      r.index_bytes,
+      r.total_bytes,
+    ]),
   };
 }

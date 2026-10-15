@@ -14,7 +14,14 @@
  * 検出できない (既知の限界として UI で明示する)。
  */
 
-import type { SchemaObjectKind, WhereUsedMatch } from "../api/tauri";
+import type {
+  CellValue,
+  ReferenceConfidence,
+  SchemaObjectKind,
+  WhereUsedMatch,
+  WhereUsedReport,
+} from "../api/tauri";
+import { tableToMarkdown } from "./tabularText";
 
 const ALL_KINDS: readonly SchemaObjectKind[] = [
   "view",
@@ -87,4 +94,77 @@ export function sortWhereUsedMatches(matches: readonly WhereUsedMatch[]): WhereU
       KIND_ORDER[a.kind] - KIND_ORDER[b.kind] ||
       a.name.localeCompare(b.name),
   );
+}
+
+/** 書き出し表の見出しと、種別・確度・状態の表示名 (i18n は呼び出し側で解決して渡す)。 */
+export interface WhereUsedExportLabels {
+  kind: string;
+  name: string;
+  status: string;
+  confidence: string;
+  hits: string;
+  line: string;
+  text: string;
+  kindName: (kind: WhereUsedMatch["kind"]) => string;
+  confidenceName: (c: ReferenceConfidence) => string;
+  statusMatch: string;
+  statusFailed: string;
+  statusEmpty: string;
+}
+
+/**
+ * 影響分析の結果を書き出し用の表にする (#1624)。参照のあったオブジェクト / スニペットは該当行ごとに
+ * 1 行 (行が無いときは 1 行)、定義を取得できなかったもの・本文が空だったものも、レビューで「見て
+ * いない範囲」が分かるよう状態つきで末尾に並べる。並びは画面と同じ (呼び出し側で並べ替え済みの
+ * `report.matches` をそのまま使う)。
+ */
+export function whereUsedExportTable(
+  report: WhereUsedReport,
+  labels: WhereUsedExportLabels,
+): { header: string[]; rows: CellValue[][] } {
+  const header = [
+    labels.kind,
+    labels.name,
+    labels.status,
+    labels.confidence,
+    labels.hits,
+    labels.line,
+    labels.text,
+  ];
+  const rows: CellValue[][] = [];
+  for (const m of report.matches) {
+    const head = [labels.kindName(m.kind), m.name, labels.statusMatch, labels.confidenceName(m.confidence)];
+    if (m.lines.length === 0) {
+      rows.push([...head, m.hitCount, null, null]);
+      continue;
+    }
+    for (const l of m.lines) {
+      rows.push([
+        ...head,
+        m.hitCount,
+        l.line,
+        `${l.clippedStart ? "…" : ""}${l.text}${l.clippedEnd ? "…" : ""}`,
+      ]);
+    }
+  }
+  for (const f of report.failed) {
+    rows.push([labels.kindName(f.kind), f.name, labels.statusFailed, null, null, null, f.error]);
+  }
+  for (const f of report.emptyDefinitions) {
+    rows.push([labels.kindName(f.kind), f.name, labels.statusEmpty, null, null, null, null]);
+  }
+  return { header, rows };
+}
+
+/** Markdown 版: 見出し + 要約 (+ 途中終了の注記) + 表。 */
+export function whereUsedMarkdown(
+  report: WhereUsedReport,
+  labels: WhereUsedExportLabels,
+  text: { heading: string; summary: string; cancelled: string },
+): string {
+  const { header, rows } = whereUsedExportTable(report, labels);
+  const lines = [`# ${text.heading}`, "", text.summary];
+  if (report.cancelled) lines.push("", `> ${text.cancelled}`);
+  lines.push("", tableToMarkdown(header, rows));
+  return lines.join("\n");
 }

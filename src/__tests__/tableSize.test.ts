@@ -9,6 +9,7 @@ import {
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  tableStatsExportTable,
   toTableStatRows,
   type TableStatRow,
 } from "../components/tableSize";
@@ -263,5 +264,40 @@ describe("formatBytes: 単位境界の丸め", () => {
   });
   it("境界の手前は従来どおり", () => {
     expect(formatBytes(1023 * 1024)).toBe("1023 KB");
+  });
+});
+
+describe("tableStatsExportTable", () => {
+  const labels = {
+    name: "n",
+    rows: "r",
+    columns: "c",
+    indexes: "i",
+    primaryKey: "pk",
+    foreignKeys: "fk",
+    dataBytes: "d",
+    indexBytes: "ib",
+    totalBytes: "t",
+  };
+  it("見出し順どおりに生のバイト数・null・真偽値をそのまま並べる", () => {
+    const t = tableStatsExportTable(
+      [
+        statRow("a", {
+          row_estimate: 10,
+          data_bytes: 1024,
+          index_bytes: 0,
+          total_bytes: 1024,
+          columnCount: 3,
+          indexCount: 1,
+          hasPrimaryKey: true,
+          foreignKeyCount: 0,
+        }),
+        statRow("b"),
+      ],
+      labels,
+    );
+    expect(t.header).toEqual(["n", "r", "c", "i", "pk", "fk", "d", "ib", "t"]);
+    expect(t.rows[0]).toEqual(["a", 10, 3, 1, true, 0, 1024, 0, 1024]);
+    expect(t.rows[1]).toEqual(["b", null, null, null, null, null, null, null, null]);
   });
 });

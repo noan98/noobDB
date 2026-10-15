@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { WhereUsedMatch, WhereUsedTarget } from "../api/tauri";
+import type { WhereUsedMatch, WhereUsedReport, WhereUsedTarget } from "../api/tauri";
 import {
   sortWhereUsedMatches,
   splitHighlightSegments,
   unsupportedWhereUsedKinds,
+  whereUsedExportTable,
+  whereUsedMarkdown,
+  type WhereUsedExportLabels,
 } from "../components/whereUsed";
 // 参照検出は Rust へ移植済み (#1261)。ここでは移植前の TS 実装 (オラクル) の振る舞いを
 // 固定し、共有ゴールデン (whereUsedGolden.test.ts) の期待値の出所を守る。
@@ -250,5 +253,75 @@ describe("sortWhereUsedMatches", () => {
       "possible:view:v_c",
       "possible:trigger:t_audit",
     ]);
+  });
+});
+
+describe("影響分析の書き出し (#1624)", () => {
+  const labels: WhereUsedExportLabels = {
+    kind: "Kind",
+    name: "Name",
+    status: "Status",
+    confidence: "Confidence",
+    hits: "Hits",
+    line: "Line",
+    text: "Text",
+    kindName: (k) => k.toUpperCase(),
+    confidenceName: (c) => (c === "direct" ? "Direct" : "Possible"),
+    statusMatch: "Referenced",
+    statusFailed: "Could not read",
+    statusEmpty: "Empty",
+  };
+  const report: WhereUsedReport = {
+    matches: [
+      {
+        confidence: "direct",
+        hitCount: 2,
+        source: "object",
+        kind: "view",
+        name: "v_orders",
+        id: "v1",
+        snippetId: null,
+        lines: [
+          { line: 3, text: "FROM orders | o", ranges: [[5, 11]], clippedStart: true, clippedEnd: false },
+          { line: 9, text: "JOIN orders", ranges: [[5, 11]], clippedStart: false, clippedEnd: true },
+        ],
+      },
+      {
+        confidence: "possible",
+        hitCount: 1,
+        source: "snippet",
+        kind: "snippet",
+        name: "daily",
+        id: null,
+        snippetId: "s1",
+        lines: [],
+      },
+    ],
+    scannedObjects: 5,
+    scannedSnippets: 1,
+    failed: [{ kind: "function", name: "fn_secret", error: "denied" }],
+    emptyDefinitions: [{ kind: "procedure", name: "p_enc" }],
+    cancelled: false,
+  };
+
+  it("該当行ごとに 1 行、行の無いものは 1 行、取得失敗と空本文は状態つきで末尾に並べる", () => {
+    const { header, rows } = whereUsedExportTable(report, labels);
+    expect(header).toEqual(["Kind", "Name", "Status", "Confidence", "Hits", "Line", "Text"]);
+    expect(rows).toEqual([
+      ["VIEW", "v_orders", "Referenced", "Direct", 2, 3, "…FROM orders | o"],
+      ["VIEW", "v_orders", "Referenced", "Direct", 2, 9, "JOIN orders…"],
+      ["SNIPPET", "daily", "Referenced", "Possible", 1, null, null],
+      ["FUNCTION", "fn_secret", "Could not read", null, null, null, "denied"],
+      ["PROCEDURE", "p_enc", "Empty", null, null, null, null],
+    ]);
+  });
+
+  it("Markdown は見出し・要約・表で、パイプはエスケープされ、途中終了なら注記が付く", () => {
+    const text = { heading: "Where-used: orders", summary: "2 result(s)", cancelled: "partial" };
+    const md = whereUsedMarkdown(report, labels, text);
+    expect(md.startsWith("# Where-used: orders\n\n2 result(s)\n\n| Kind |")).toBe(true);
+    expect(md).toContain("FROM orders \\| o");
+    expect(md).not.toContain("> partial");
+    expect(whereUsedMarkdown({ ...report, cancelled: true }, labels, text)).toContain("> partial");
   });
 });
