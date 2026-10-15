@@ -7,7 +7,7 @@ import { setPerfMeasureEnabled, useSettings } from "../settings";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
-import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "./perfPanel";
+import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "./perfSamples";
 import { Button, Heading, Switch } from "./ui";
 import { useToast } from "./Toast";
 

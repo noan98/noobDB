@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
 import { t } from "../i18n";
 import type { PerfStatus } from "../api/tauri";
-import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "../components/perfPanel";
+import { formatPerfBytes, formatPerfMs, slowestSqlExecuteMs, toPerfRows } from "../components/perfSamples";
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();

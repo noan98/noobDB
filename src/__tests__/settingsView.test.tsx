@@ -44,6 +44,11 @@ describe("SettingsView render smoke (#604)", () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(t("settingsTitle"))).toBeInTheDocument());
     expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // 診断の入口 (#1622): 診断情報の書き出しと、パフォーマンス計測のスイッチ (既定オフ)。
+    // (role / label の検索は設定画面の要素数だと遅いので、文言と id で確認する)
+    expect(screen.getByText(t("settingsDiagBundle"))).toBeInTheDocument();
+    expect(screen.getByText(t("settingsPerfMeasure"))).toBeInTheDocument();
+    expect(document.getElementById("settings-perf-measure")).not.toBeNull();
   });
 
   it("initialSection を渡すと該当セクションのナビが選択状態になる (#1475)", async () => {

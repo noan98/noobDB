@@ -1,72 +1,39 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
-import { t } from "../i18n";
+import { describe, it, expect, vi } from "vitest";
+import { saveDiagnosticBundle } from "../components/diagnosticBundle";
 
 /**
- * 設定画面のログ節 (#1622): 診断バンドルの書き出しと、パフォーマンス計測のトグル。
+ * 診断バンドルの書き出し手順 (#1622)。画面側の入口は settingsView.test.tsx で確認する。
  */
-const save = vi.fn();
-vi.mock("@tauri-apps/plugin-dialog", () => ({
-  save: (...a: unknown[]) => save(...a),
-  open: vi.fn(),
-}));
-vi.mock("../api/tauri", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../api/tauri")>();
-  return {
-    ...actual,
-    api: {
-      ...actual.api,
-      readLogs: vi.fn().mockResolvedValue({ text: "log", path: "/tmp/noobdb.log" }),
-      getHistoryRetentionDays: vi.fn().mockResolvedValue(0),
-      setHistoryRetentionDays: vi.fn().mockResolvedValue(0),
-      buildDiagnosticBundle: vi.fn().mockResolvedValue("# noobDB diagnostic bundle\napp_version: 1.2.3\n"),
-      writeTextFile: vi.fn().mockResolvedValue(undefined),
-    },
-  };
-});
-vi.mock("../updater", () => ({
-  getCurrentAppVersion: vi.fn().mockResolvedValue("1.2.3"),
-  checkForAppUpdate: vi.fn().mockResolvedValue(null),
-}));
-vi.mock("../components/updatePrompt", () => ({ confirmAndInstallUpdate: vi.fn() }));
-
-import { SettingsView } from "../components/SettingsView";
-import { api } from "../api/tauri";
-import { getSettings } from "../settings";
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  localStorage.clear();
-});
-
-describe("設定画面の診断 (#1622)", () => {
-  it("診断情報の書き出しは保存ダイアログで選んだ場所へバンドル本文を書く", async () => {
-    save.mockResolvedValue("/tmp/diag.txt");
-    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: t("settingsDiagBundle") }));
-    await waitFor(() =>
-      expect(api.writeTextFile).toHaveBeenCalledWith(
-        "/tmp/diag.txt",
-        expect.stringContaining("app_version: 1.2.3"),
-      ),
-    );
-    expect(api.buildDiagnosticBundle).toHaveBeenCalledTimes(1);
+describe("saveDiagnosticBundle (#1622)", () => {
+  it("選んだ場所へバンドル本文を書き、書いたパスを返す", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    const build = vi.fn().mockResolvedValue("# bundle\napp_version: 1.2.3\n");
+    const path = await saveDiagnosticBundle({ pickPath: async () => "/tmp/diag.txt", build, write });
+    expect(path).toBe("/tmp/diag.txt");
+    expect(write).toHaveBeenCalledWith("/tmp/diag.txt", expect.stringContaining("app_version: 1.2.3"));
   });
 
-  it("保存ダイアログをキャンセルしたらバンドルを作らない", async () => {
-    save.mockResolvedValue(null);
-    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: t("settingsDiagBundle") }));
-    await waitFor(() => expect(save).toHaveBeenCalled());
-    expect(api.buildDiagnosticBundle).not.toHaveBeenCalled();
-    expect(api.writeTextFile).not.toHaveBeenCalled();
+  it("保存ダイアログをキャンセルしたらバンドルを作らず、何も書かない", async () => {
+    for (const picked of [null, undefined, ""]) {
+      const write = vi.fn();
+      const build = vi.fn();
+      expect(await saveDiagnosticBundle({ pickPath: async () => picked, build, write })).toBeNull();
+      expect(build).not.toHaveBeenCalled();
+      expect(write).not.toHaveBeenCalled();
+    }
   });
 
-  it("パフォーマンス計測のスイッチで設定が切り替わる (既定はオフ)", async () => {
-    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
-    const sw = await screen.findByLabelText(t("settingsPerfMeasure"));
-    expect(getSettings().perfMeasureEnabled).toBe(false);
-    fireEvent.click(sw);
-    expect(getSettings().perfMeasureEnabled).toBe(true);
+  it("本文の生成に失敗したら書き込まずに例外を伝える", async () => {
+    const write = vi.fn();
+    await expect(
+      saveDiagnosticBundle({
+        pickPath: async () => "/tmp/x.txt",
+        build: async () => {
+          throw new Error("boom");
+        },
+        write,
+      }),
+    ).rejects.toThrow("boom");
+    expect(write).not.toHaveBeenCalled();
   });
 });

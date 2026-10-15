@@ -8,6 +8,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
+import { saveDiagnosticBundle } from "./diagnosticBundle";
 import { Button, Input, Select, SelectableCard, Switch } from "./ui";
 import {
   SettingsInfo,
@@ -987,15 +988,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   // 匿名化した診断バンドル (#1622)。バックエンドが版情報つきで作ったテキストを保存ダイアログへ出す。
   const exportDiagnosticBundle = async () => {
     try {
-      const dest = await saveFileDialog({
-        defaultPath: "noobdb-diagnostics.txt",
-        title: t("settingsDiagBundleTitle"),
-        filters: [{ name: "Text", extensions: ["txt"] }],
+      const dest = await saveDiagnosticBundle({
+        pickPath: () =>
+          saveFileDialog({
+            defaultPath: "noobdb-diagnostics.txt",
+            title: t("settingsDiagBundleTitle"),
+            filters: [{ name: "Text", extensions: ["txt"] }],
+          }),
+        build: () => api.buildDiagnosticBundle(),
+        write: async (path, text) => {
+          await api.writeTextFile(path, text);
+        },
       });
-      if (typeof dest !== "string" || !dest) return;
-      const text = await api.buildDiagnosticBundle();
-      await api.writeTextFile(dest, text);
-      toast.success(t("settingsDiagBundleSuccess", { path: dest }));
+      if (dest) toast.success(t("settingsDiagBundleSuccess", { path: dest }));
     } catch (e) {
       toast.error(t("settingsDiagBundleError", { error: String(e) }));
     }

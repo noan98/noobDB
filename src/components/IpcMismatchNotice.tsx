@@ -38,7 +38,7 @@ export function IpcMismatchNotice() {
   return (
     <Callout
       tone="warning"
-      role="alert"
+      role="status"
       title={t("ipcMismatchTitle")}
       data-testid="ipc-mismatch-notice"
       m="2"
