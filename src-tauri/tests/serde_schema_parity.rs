@@ -365,6 +365,7 @@ fn build_fixtures() -> serde_json::Value {
             auth_method: SshAuthMethod::Password,
             private_key_path: PathBuf::new(),
         }),
+        local_port: Some(15432),
     };
     let connection_profile_inner = ConnectionProfile {
         id: "abc12345".into(),
@@ -523,6 +524,29 @@ fn build_fixtures() -> serde_json::Value {
         host: "db.example.com".into(),
         port: 22,
         fingerprint: "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".into(),
+    };
+
+    // #1630: known_hosts の履歴と OpenSSH 取り込みスキャン。
+    let known_host_event = t::KnownHostEvent {
+        at: "2026-10-15T01:02:03Z".into(),
+        action: t::KnownHostAction::Trust,
+        host: "db.example.com".into(),
+        port: 22,
+        fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+        previous_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+    };
+    let import_scan = t::ImportScan {
+        found: true,
+        candidates: vec![t::ImportCandidate {
+            host: "db.example.com".into(),
+            port: 22,
+            fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+            key_type: "ssh-ed25519".into(),
+            status: t::ImportStatus::Conflict,
+            existing_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+        }],
+        hashed_skipped: 2,
+        other_skipped: 1,
     };
 
     let column_diff = ColumnDiff {
@@ -1907,6 +1931,8 @@ fn build_fixtures() -> serde_json::Value {
         "channelCancelledMessageAi": ai_stream_cancelled_message,
         "taskRunProgressEvent": task_run_progress_event,
         "knownHost": known_host,
+        "knownHostEvent": known_host_event,
+        "importScan": import_scan,
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,
         "dataDiff": data_diff,

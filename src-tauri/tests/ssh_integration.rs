@@ -120,6 +120,7 @@ fn config_for(
         remote_host: "127.0.0.1".to_string(),
         remote_port: echo_port,
         jump: None,
+        local_port: None,
     }
 }
 
@@ -305,6 +306,7 @@ async fn chain_connect_failure_is_tagged_with_the_failing_hop() {
         remote_host: "127.0.0.1".into(),
         remote_port: 1,
         jump: Some(Box::new(jump)),
+        local_port: None,
     };
 
     // `SshTunnel` doesn't implement `Debug` (it holds live task handles / an SSH

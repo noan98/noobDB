@@ -38,6 +38,10 @@ pub struct SshConfig {
     /// jump hop (2 SSH hops total) for now.
     #[serde(default)]
     pub jump: Option<Box<SshJumpConfig>>,
+    /// 最終ホップのローカル待受ポート固定 (#1630)。`None` / 0 は OS 任せの自動割当。
+    /// 踏み台ホップの内部転送ポートは常に自動割当で、この値は影響しない。
+    #[serde(default)]
+    pub local_port: Option<u16>,
 }
 
 /// The bastion/jump hop of a 2-hop SSH tunnel (#708): everything needed to
@@ -188,6 +192,22 @@ struct HopSpec<'a> {
     /// hop's real address for a jump, or the final DB endpoint for the target.
     remote_host: &'a str,
     remote_port: u16,
+    /// ローカル待受ポート (0 = 自動割当)。固定指定は最終ホップのみ (#1630)。
+    bind_port: u16,
+}
+
+/// ローカル待受ポートを bind する。`port` が 0 以外なら固定ポート指定で、使用中の衝突は
+/// 利用者が原因を判断できるメッセージにする (#1630)。
+async fn bind_local_listener(port: u16) -> Result<TcpListener> {
+    match TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(l) => Ok(l),
+        Err(e) if port != 0 && e.kind() == std::io::ErrorKind::AddrInUse => {
+            Err(AppError::InvalidInput(format!(
+                "SSH tunnel local port {port} is already in use; choose another port or leave it empty for automatic assignment"
+            )))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 impl SshTunnel {
@@ -226,6 +246,7 @@ impl SshTunnel {
                     // through that forward next.
                     remote_host: &cfg.host,
                     remote_port: cfg.port,
+                    bind_port: 0,
                 };
                 let dial = (jump.host.as_str(), jump.port);
                 let t = Self::open_one_hop(spec, dial, HopRole::Jump, &on_phase, None).await?;
@@ -253,6 +274,7 @@ impl SshTunnel {
             password: &cfg.password,
             remote_host: &cfg.remote_host,
             remote_port: cfg.remote_port,
+            bind_port: cfg.local_port.unwrap_or(0),
         };
         Self::open_one_hop(
             spec,
@@ -323,8 +345,8 @@ impl SshTunnel {
 
             let session = Arc::new(session);
 
-            // Bind a local listener on an OS-assigned port.
-            let listener = TcpListener::bind(("127.0.0.1", 0u16)).await?;
+            // Bind a local listener (OS-assigned port, or the pinned port #1630).
+            let listener = bind_local_listener(spec.bind_port).await?;
             let local_port = listener.local_addr()?.port();
             tracing::info!(
                 ssh_host = %spec.host,
@@ -480,6 +502,23 @@ impl Drop for SshTunnel {
 
 #[cfg(test)]
 mod tests {
+    // 固定ポートの bind: 0 は自動割当、指定ポートはそのまま使い、使用中は分かりやすい
+    // InvalidInput になる (#1630)。
+    #[tokio::test]
+    async fn bind_local_listener_auto_fixed_and_conflict() {
+        let auto = super::bind_local_listener(0).await.unwrap();
+        let port = auto.local_addr().unwrap().port();
+        assert_ne!(port, 0);
+        // 使用中のポートを固定指定するとエラー (メッセージにポート番号を含む)。
+        let err = super::bind_local_listener(port).await.err().unwrap();
+        assert!(matches!(err, crate::error::AppError::InvalidInput(_)));
+        assert!(err.to_string().contains(&port.to_string()));
+        drop(auto);
+        // 解放後は同じポートを固定で取れる。
+        let fixed = super::bind_local_listener(port).await.unwrap();
+        assert_eq!(fixed.local_addr().unwrap().port(), port);
+    }
+
     #[test]
     fn connect_stage_failures_are_told_apart_from_auth_failures() {
         assert!(is_ssh_connect_stage_failure("ssh connect failed: reset"));

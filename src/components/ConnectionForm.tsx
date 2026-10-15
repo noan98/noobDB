@@ -32,7 +32,7 @@ import {
   type DbAuthMethod,
 } from "./awsIam";
 import { ComboSelect } from "./ComboSelect";
-import { parseConnectionUrl } from "./connectionUrl";
+import { buildConnectionUrl, parseConnectionUrl } from "./connectionUrl";
 import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { COLOR_INPUT_FALLBACK, DEFAULT_PRODUCTION_COLOR, PROFILE_COLOR_PRESETS } from "../profileIdentity";
 
@@ -418,6 +418,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshPassphrase, setSshPassphrase] = useState("");
   const [sshPassword, setSshPassword] = useState("");
   const [loadingSshConfig, setLoadingSshConfig] = useState(false);
+  // トンネルのローカル待受ポート固定 (#1630)。空 = OS 任せの自動割当。
+  const [sshLocalPort, setSshLocalPort] = useState(
+    initial?.ssh?.local_port ? String(initial.ssh.local_port) : "",
+  );
+  const [sshLocalPortError, setSshLocalPortError] = useState<string | null>(null);
+  const urlCopy = useCopyFeedback();
 
   // 接続 URL の取り込み (#1540)。貼り付けた文字列はパスワードを含みうるので、取り込み後は
   // 入力欄ごと消し、URL もその解析結果もログ・保存には出さない。
@@ -483,6 +489,24 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   // 接続 URL (mysql:// postgres:// sqlite: またはファイルパス) をフォームへ反映する。
   // パスワードは keyring 保存対象のパスワード欄 (state) に入れるだけで、profiles.json
   // には書かれない。URL に無い項目は現在の値を残す (ポートだけはドライバ既定へ戻す)。
+  // 現在の入力から接続 URL を組み立ててコピーする (#1630)。パスワードは含めない。
+  const handleCopyUrl = async () => {
+    const url = buildConnectionUrl({
+      driver,
+      host,
+      port: parsePort(port) ?? undefined,
+      user,
+      database,
+      sslMode: effectiveSslMode,
+      filePath,
+    });
+    if (url === null) {
+      setUrlNote({ tone: "error", text: t("formUrlCopyEmpty") });
+      return;
+    }
+    if (await urlCopy.copy(url)) setUrlNote({ tone: "ok", text: t("formUrlCopied") });
+  };
+
   const handleImportUrl = () => {
     const result = parseConnectionUrl(urlText);
     if (!result.ok) {
@@ -681,6 +705,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             user: sshUser,
             auth_method: sshAuthMethod,
             private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+            local_port: sshLocalPortValue(),
             passphrase: sshAuthMethod === "key" ? sshPassphrase : "",
             password: sshAuthMethod === "password" ? sshPassword : "",
             jump: useSshJump
@@ -719,6 +744,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     const n = Number(value);
     return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
   };
+  // 空 (自動割当) は null。不正値は検証で弾くので、ここでは null に落とす。
+  const sshLocalPortValue = (): number | null =>
+    sshLocalPort.trim() === "" ? null : parsePort(sshLocalPort.trim());
 
   // 入力欄の検証 (ポート / SSM のインスタンス ID・リージョン)。ネットワーク型ドライバ
   // だけが対象で、SQLite (ファイル型) は何も検証しない。
@@ -729,6 +757,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     setPortError(null);
     setSshPortError(null);
     setSshJumpPortError(null);
+    setSshLocalPortError(null);
     setSsmTargetError(null);
     setSsmRegionError(null);
     if (isFileBacked) return true;
@@ -747,6 +776,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     }
     if (useSsh && parsePort(sshPort) === null) {
       setSshPortError(t("formInvalidSshPort"));
+      ok = false;
+    }
+    if (useSsh && sshLocalPort.trim() !== "" && parsePort(sshLocalPort.trim()) === null) {
+      setSshLocalPortError(t("formInvalidSshLocalPort"));
       ok = false;
     }
     if (useSsh && useSshJump && parsePort(sshJumpPort) === null) {
@@ -817,6 +850,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 user: sshUser,
                 auth_method: sshAuthMethod,
                 private_key_path: sshAuthMethod === "key" ? sshKeyPath : "",
+                local_port: sshLocalPortValue(),
                 jump: useSshJump
                   ? {
                       host: sshJumpHost,
@@ -923,6 +957,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           >
             {t("formUrlImportButton")}
           </Button>
+          <Tooltip label={t("formUrlCopyHelp")}>
+            <Button type="button" data-testid="connection-form-url-copy" onClick={handleCopyUrl}>
+              {t("formUrlCopyButton")}
+            </Button>
+          </Tooltip>
         </Flex>
         {urlNote?.tone === "error" ? (
           <FieldError display="block" mt="1">
@@ -1387,6 +1426,29 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Box mt="2">
                 <FieldLabel htmlFor={`${fid}-ssh-user`}>{t("formSshUser")}</FieldLabel>
                 <Input id={`${fid}-ssh-user`} value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
+              </Box>
+              <Box mt="2">
+                <SettingsLabelWithInfo>
+                  <FieldLabel htmlFor={`${fid}-ssh-local-port`}>{t("formSshLocalPort")}</FieldLabel>
+                  <SettingsInfo>{t("formSshLocalPortHelp")}</SettingsInfo>
+                </SettingsLabelWithInfo>
+                <Input
+                  id={`${fid}-ssh-local-port`}
+                  type="text"
+                  inputMode="numeric"
+                  value={sshLocalPort}
+                  placeholder={t("formSshLocalPortPlaceholder")}
+                  aria-invalid={sshLocalPortError ? true : undefined}
+                  onChange={(e) => {
+                    setSshLocalPort(e.target.value.replace(/[^0-9]/g, ""));
+                    if (sshLocalPortError) setSshLocalPortError(null);
+                  }}
+                />
+                {sshLocalPortError && (
+                  <FieldError display="block" mt="1">
+                    {sshLocalPortError}
+                  </FieldError>
+                )}
               </Box>
               <Box mt="2">
                 <FieldLabel htmlFor={`${fid}-ssh-auth`}>{t("formSshAuthMethod")}</FieldLabel>

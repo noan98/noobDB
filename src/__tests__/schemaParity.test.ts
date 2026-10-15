@@ -90,6 +90,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["channelCancelledMessageAi", schemas.channelCancelledMessage],
   ["taskRunProgressEvent", schemas.taskRunProgressEvent],
   ["knownHost", schemas.knownHost],
+  ["knownHostEvent", schemas.knownHostEvent],
+  ["importScan", schemas.importScan],
   ["schemaDiff", schemas.schemaDiff],
   ["syncPlan", schemas.syncPlan],
   ["dataDiff", schemas.dataDiff],

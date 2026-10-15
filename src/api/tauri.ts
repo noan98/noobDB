@@ -160,6 +160,11 @@ export interface SshProfile {
    * tunnel, including every profile saved before this field existed.
    */
   jump?: SshJumpProfile | null;
+  /**
+   * Fixed local listen port of the tunnel (#1630). `null`/omitted/0 = let the OS
+   * pick a free port (the previous behavior).
+   */
+  local_port?: number | null;
 }
 
 export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
@@ -1017,6 +1022,37 @@ export interface KnownHost {
   host: string;
   port: number;
   fingerprint: string;
+}
+
+/** One entry of the known_hosts trust/forget/import history (#1630). Never holds key material. */
+export interface KnownHostEvent {
+  /** UTC, RFC 3339. */
+  at: string;
+  action: "trust" | "forget" | "import";
+  host: string;
+  port: number;
+  fingerprint: string;
+  previous_fingerprint: string | null;
+}
+
+/** One OpenSSH known_hosts entry offered for import (#1630). */
+export interface ImportCandidate {
+  host: string;
+  port: number;
+  fingerprint: string;
+  key_type: string;
+  /** `conflict` = noobDB already trusts a different fingerprint (import replaces it). */
+  status: "new" | "same" | "conflict";
+  existing_fingerprint: string | null;
+}
+
+/** Result of scanning `~/.ssh/known_hosts` (#1630). */
+export interface ImportScan {
+  found: boolean;
+  candidates: ImportCandidate[];
+  /** Hashed (`HashKnownHosts`) lines that cannot be matched and were skipped. */
+  hashed_skipped: number;
+  other_skipped: number;
 }
 
 /**

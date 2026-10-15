@@ -183,6 +183,9 @@ pub struct SshRequest {
     /// Optional bastion/jump hop dialed before `host` (#708 multi-hop tunnel).
     #[serde(default)]
     pub jump: Option<SshJumpRequest>,
+    /// トンネルのローカル待受ポート固定 (#1630)。`None` / 0 は自動割当。
+    #[serde(default)]
+    pub local_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -727,6 +730,7 @@ fn reconnect_ssh_from(req: &ConnectRequest) -> Option<SshConfig> {
         password: String::new(),
         remote_host: req.host.clone(),
         remote_port: req.port,
+        local_port: ssh.local_port,
         // Same "blank the secrets" treatment as the main hop above — reopen_transport
         // re-resolves the jump hop's passphrase/password from the keyring too (#708).
         jump: ssh.jump.as_ref().map(|j| {
@@ -881,6 +885,7 @@ async fn build_options(
             remote_host: req.host.clone(),
             remote_port: req.port,
             jump,
+            local_port: ssh.local_port,
         };
         // Map the tunnel's connect/auth phases onto our connect phases so the UI
         // can tell "stuck on the tunnel" apart from "stuck on SSH auth" (#684).
@@ -1113,6 +1118,7 @@ mod tests {
             passphrase: "phrase".into(),
             password: "pw".into(),
             jump: None,
+            local_port: None,
         };
         let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
         // Non-secret SSH parameters are captured verbatim...
@@ -1154,6 +1160,7 @@ mod tests {
                 passphrase: String::new(),
                 password: "jump-pw".into(),
             }),
+            local_port: Some(15432),
         };
         let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
         let jump = cfg.jump.expect("jump hop captured");
@@ -1165,5 +1172,7 @@ mod tests {
         assert!(cfg.passphrase.is_empty());
         assert!(jump.passphrase.is_empty());
         assert!(jump.password.is_empty());
+        // 固定ポートは非秘密なので再接続用の設定にも引き継ぐ (#1630)。
+        assert_eq!(cfg.local_port, Some(15432));
     }
 }
