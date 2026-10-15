@@ -4,6 +4,9 @@ import {
   countMaskedColumns,
   defaultMaskRule,
   effectiveMaskRule,
+  mergeMaskPresets,
+  parseMaskPresets,
+  serializeMaskPresets,
   EXPORT_MASK_RULE_KINDS,
   presetRuleFor,
   resolveExportMasks,
@@ -126,5 +129,72 @@ describe("sameMaskRule", () => {
     expect(sameMaskRule({ kind: "hash", length: 8 }, { kind: "hash", length: 8 })).toBe(true);
     expect(sameMaskRule({ kind: "hash", length: 8 }, null)).toBe(false);
     expect(sameMaskRule(null, null)).toBe(true);
+  });
+});
+
+describe("email / date ルール (#1623)", () => {
+  it("email: keepStart の既定・頭打ち・非数の扱い", () => {
+    expect(sanitizeMaskRule({ kind: "email" })).toEqual({ kind: "email", keepStart: 1 });
+    expect(sanitizeMaskRule({ kind: "email", keepStart: 999 })).toEqual({ kind: "email", keepStart: 64 });
+    expect(sanitizeMaskRule({ kind: "email", keepStart: "x" })).toEqual({ kind: "email", keepStart: 1 });
+    expect(sanitizeMaskRule({ kind: "email", keepStart: -3 })).toEqual({ kind: "email", keepStart: 0 });
+  });
+
+  it("date: month 以外の precision は year に倒す", () => {
+    expect(sanitizeMaskRule({ kind: "date", precision: "month" })).toEqual({ kind: "date", precision: "month" });
+    expect(sanitizeMaskRule({ kind: "date", precision: "day" })).toEqual({ kind: "date", precision: "year" });
+    expect(sanitizeMaskRule({ kind: "date" })).toEqual({ kind: "date", precision: "year" });
+  });
+
+  it("同梱の email プリセットはドメインを残す email ルール", () => {
+    const p = BUILTIN_EXPORT_MASK_PRESETS.find((x) => x.pattern === "email");
+    expect(p?.rule).toEqual({ kind: "email", keepStart: 1 });
+  });
+});
+
+describe("マスクプリセットの JSON 書き出し・読み込み (#1623)", () => {
+  const presets: ExportMaskPreset[] = [
+    { pattern: "email", rule: { kind: "email", keepStart: 2 } },
+    { pattern: "birth", rule: { kind: "date", precision: "month" } },
+    { pattern: "ssn", rule: { kind: "null" } },
+  ];
+
+  it("書き出して読み戻すと同じ", () => {
+    expect(parseMaskPresets(serializeMaskPresets(presets))).toEqual(presets);
+  });
+
+  it("素の配列も受け付け、不正な要素・重複・正規化は sanitizeMaskPresets に従う", () => {
+    const raw = JSON.stringify([
+      { pattern: " Phone ", rule: { kind: "partial", keepStart: 999 } },
+      { pattern: "phone", rule: { kind: "null" } },
+      { pattern: "x", rule: { kind: "bogus" } },
+    ]);
+    expect(parseMaskPresets(raw)).toEqual([{ pattern: "phone", rule: { kind: "partial", keepStart: 64, keepEnd: 0 } }]);
+  });
+
+  it("JSON でない / 別種のファイル / 有効なプリセットなしは Error", () => {
+    expect(() => parseMaskPresets("not json")).toThrow();
+    expect(() => parseMaskPresets(JSON.stringify({ kind: "other", presets: [] }))).toThrow();
+    expect(() => parseMaskPresets(JSON.stringify({ kind: "noobdb-export-mask-presets", presets: "x" }))).toThrow();
+    expect(() => parseMaskPresets("[]")).toThrow();
+    expect(() => parseMaskPresets("42")).toThrow();
+  });
+
+  it("書き出しにソルトなどの秘密は含まれない", () => {
+    expect(serializeMaskPresets(presets)).not.toMatch(/salt/i);
+  });
+
+  it("merge: 読み込み側が先頭、同じパターンは置き換え", () => {
+    const merged = mergeMaskPresets(
+      [
+        { pattern: "email", rule: { kind: "null" } },
+        { pattern: "zip", rule: { kind: "null" } },
+      ],
+      [{ pattern: "email", rule: { kind: "email", keepStart: 1 } }],
+    );
+    expect(merged).toEqual([
+      { pattern: "email", rule: { kind: "email", keepStart: 1 } },
+      { pattern: "zip", rule: { kind: "null" } },
+    ]);
   });
 });

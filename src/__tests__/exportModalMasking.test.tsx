@@ -9,6 +9,8 @@ import type { CellValue } from "../api/tauri";
  * が担うのでモックし、ここでは「どの列にどのルールを送るか」「プレビューがマスク後の
  * 値を表示し、未着の間に生の値を出さないか」「プリセットの保存」を固定する。
  */
+const dialog = vi.hoisted(() => ({ save: vi.fn(), open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: dialog.save, open: dialog.open }));
 vi.mock("@tauri-apps/api/path", () => ({
   downloadDir: vi.fn().mockResolvedValue("/home/user/Downloads"),
   join: vi.fn().mockResolvedValue("/home/user/Downloads/export.csv"),
@@ -23,6 +25,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       maskExportRows: vi.fn(),
       exportQueryResult: vi.fn(),
       writeTextFile: vi.fn(),
+      readTextFile: vi.fn(),
     },
   };
 });
@@ -81,7 +84,7 @@ describe("ExportModal データマスキング (#733)", () => {
     const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
     expect(preview).not.toContain("taro@example.com");
     expect(vi.mocked(api.maskExportRows).mock.calls[0][0].masks).toEqual([
-      { column: "user_email", rule: { kind: "partial", keepStart: 2, keepEnd: 4 } },
+      { column: "user_email", rule: { kind: "email", keepStart: 1 } },
     ]);
     expect(screen.getByTestId("export-masked-count").textContent).toBe(
       t("exportMaskedColumns", { count: 1 }),
@@ -211,5 +214,41 @@ describe("ExportModal データマスキング × 他形式 (#733 / #711 / #745)
     expect(html).not.toContain("hanako@example.com");
     // 保存時は全行を変換する (プレビューの先頭行だけではない)。
     expect(vi.mocked(api.maskExportRows).mock.calls.some(([p]) => p.rows.length === ROWS.length)).toBe(true);
+  });
+
+  it("プリセットを JSON で書き出し、別ファイルから読み込んで併合できる (#1623)", async () => {
+    dialog.save.mockResolvedValue("/tmp/presets.json");
+    renderModal();
+    enableMasking();
+    fireEvent.click(screen.getByRole("button", { name: t("exportMaskingPresetsExport") }));
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalledOnce());
+    const [dest, json] = vi.mocked(api.writeTextFile).mock.calls[0];
+    expect(dest).toBe("/tmp/presets.json");
+    expect(JSON.parse(json).presets).toEqual(getSettings().exportMaskPresets);
+
+    dialog.open.mockResolvedValue("/tmp/team.json");
+    vi.mocked(api.readTextFile).mockResolvedValue(
+      JSON.stringify([{ pattern: "birth", rule: { kind: "date", precision: "month" } }]),
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("exportMaskingPresetsImport") }));
+    await waitFor(() =>
+      expect(getSettings().exportMaskPresets[0]).toEqual({
+        pattern: "birth",
+        rule: { kind: "date", precision: "month" },
+      }),
+    );
+    // 既存のプリセットは残る。
+    expect(getSettings().exportMaskPresets.some((p) => p.pattern === "email")).toBe(true);
+  });
+
+  it("壊れた JSON は読み込まず、プリセットを変えない (#1623)", async () => {
+    dialog.open.mockResolvedValue("/tmp/bad.json");
+    vi.mocked(api.readTextFile).mockResolvedValue("{ not json");
+    renderModal();
+    enableMasking();
+    const before = JSON.stringify(getSettings().exportMaskPresets);
+    fireEvent.click(screen.getByRole("button", { name: t("exportMaskingPresetsImport") }));
+    await waitFor(() => expect(api.readTextFile).toHaveBeenCalled());
+    expect(JSON.stringify(getSettings().exportMaskPresets)).toBe(before);
   });
 });

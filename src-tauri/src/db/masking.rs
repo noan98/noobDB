@@ -14,6 +14,8 @@
 //! | `partial` | 先頭 `keepStart` / 末尾 `keepEnd` 文字を残し、間を `*` にする (長さは保存) |
 //! | `hash` | HMAC-SHA256(ソルト, 値) の 16 進先頭 `length` 文字 (仮名化) |
 //! | `null` | NULL にする |
+//! | `email` | `@` の前 (ローカル部) だけ先頭 `keepStart` 文字を残して伏せ、ドメインは残す (`a***@example.com`)。`@` が無い値は全伏せ |
+//! | `date` | 日付を年 (`2026`) または年月 (`2026-10`) の粒度に落とす。日付として読めない値は全伏せ |
 //!
 //! ## 境界の扱い
 //!
@@ -60,6 +62,8 @@ pub const MAX_FIXED_VALUE_CHARS: usize = 200;
 pub const PARTIAL_MASK_CHAR: char = '*';
 /// `partial` ルールで残せる先頭 / 末尾の最大文字数 (それぞれ)。
 pub const MAX_KEEP_CHARS: usize = 64;
+/// `email` ルールの `keepStart` の既定 (ローカル部の先頭 1 文字を残す)。
+pub const DEFAULT_EMAIL_KEEP_START: usize = 1;
 /// `hash` ルールの既定の出力長 (16 進文字数)。
 pub const DEFAULT_HASH_LENGTH: usize = 16;
 /// `hash` ルールの出力長の下限。短すぎると衝突して結合キーに使えなくなる。
@@ -101,6 +105,32 @@ pub enum MaskRule {
     },
     /// NULL 化。
     Null,
+    /// メールアドレス用。ローカル部の先頭 `keep_start` 文字だけ残して `*` にし、
+    /// ドメイン (最後の `@` 以降) はそのまま残す (#1623)。
+    Email {
+        #[serde(default = "default_email_keep_start", rename = "keepStart")]
+        keep_start: usize,
+    },
+    /// 日付の粒度を落とす (#1623)。
+    Date {
+        #[serde(default)]
+        precision: DatePrecision,
+    },
+}
+
+/// `date` ルールで残す粒度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DatePrecision {
+    /// 年のみ (`2026`)。
+    #[default]
+    Year,
+    /// 年月まで (`2026-10`)。
+    Month,
+}
+
+fn default_email_keep_start() -> usize {
+    DEFAULT_EMAIL_KEEP_START
 }
 
 impl MaskRule {
@@ -110,6 +140,8 @@ impl MaskRule {
     ///   空文字列は「空へ置換」として許す。
     /// - `partial`: `keepStart` / `keepEnd` をそれぞれ `MAX_KEEP_CHARS` で頭打ち。
     /// - `hash`: `length` を `[MIN_HASH_LENGTH, MAX_HASH_LENGTH]` に収める。
+    /// - `email`: `keepStart` を `MAX_KEEP_CHARS` で頭打ち。
+    /// - `date`: 変更なし (粒度は列挙で既に有効値)。
     pub fn normalized(&self) -> MaskRule {
         match self {
             MaskRule::Fixed { value } => MaskRule::Fixed {
@@ -126,6 +158,12 @@ impl MaskRule {
                 length: (*length).clamp(MIN_HASH_LENGTH, MAX_HASH_LENGTH),
             },
             MaskRule::Null => MaskRule::Null,
+            MaskRule::Email { keep_start } => MaskRule::Email {
+                keep_start: (*keep_start).min(MAX_KEEP_CHARS),
+            },
+            MaskRule::Date { precision } => MaskRule::Date {
+                precision: *precision,
+            },
         }
     }
 
@@ -312,7 +350,76 @@ pub fn mask_value(rule: &MaskRule, v: &Value, salt: &[u8]) -> Value {
             keep_end,
         } => Value::String(partial_mask(&source_text(v), *keep_start, *keep_end)),
         MaskRule::Hash { length } => Value::String(pseudonymize(&source_text(v), salt, *length)),
+        MaskRule::Email { keep_start } => Value::String(email_mask(&source_text(v), *keep_start)),
+        MaskRule::Date { precision } => Value::String(date_mask(&source_text(v), *precision)),
     }
+}
+
+/// メールアドレスのローカル部 (最後の `@` より前) だけを `partial_mask` で伏せ、
+/// ドメインを残す。ローカル部かドメインが空、または `@` が無い値は全伏せ
+/// (`partial` と同じ。ドメインだけでも個人が絞れるため、メールとして読めない値は漏らさない)。
+pub fn email_mask(s: &str, keep_start: usize) -> String {
+    match s.rfind('@') {
+        Some(at) if at > 0 && at + 1 < s.len() => {
+            let (local, domain) = s.split_at(at);
+            // ローカル部が keep_start 以下だと全伏せになる (短い値をそのまま漏らさない)。
+            format!("{}{}", partial_mask(local, keep_start, 0), domain)
+        }
+        _ => partial_mask(s, 0, 0),
+    }
+}
+
+/// 日付文字列を年 / 年月に落とす。`YYYY-MM-DD` / `YYYY/MM/DD` / `YYYY-MM` に続けて
+/// 区切り (空白・`T`) 以降の時刻が付いていてもよい。月は 1〜12、日は 1〜31 を要求し、
+/// 外れる値・読めない値は全伏せ。
+pub fn date_mask(s: &str, precision: DatePrecision) -> String {
+    match parse_date_prefix(s) {
+        Some((y, m)) => match precision {
+            DatePrecision::Year => y.to_string(),
+            DatePrecision::Month => format!("{y}-{m:02}"),
+        },
+        None => partial_mask(s, 0, 0),
+    }
+}
+
+/// 先頭の `YYYY<sep>MM[<sep>DD][ 時刻]` から (年の 4 桁文字列, 月) を取り出す。
+fn parse_date_prefix(s: &str) -> Option<(String, u32)> {
+    let t = s.trim();
+    let b = t.as_bytes();
+    let digits = |from: usize, n: usize| -> Option<u32> {
+        let part = b.get(from..from + n)?;
+        if part.iter().all(u8::is_ascii_digit) {
+            std::str::from_utf8(part).ok()?.parse().ok()
+        } else {
+            None
+        }
+    };
+    let year = digits(0, 4)?;
+    let sep = *b.get(4)?;
+    if sep != b'-' && sep != b'/' {
+        return None;
+    }
+    let month = digits(5, 2)?;
+    if !(1..=12).contains(&month) {
+        return None;
+    }
+    match b.get(7) {
+        // 年月のみ。
+        None => {}
+        Some(&c) if c == sep => {
+            let day = digits(8, 2)?;
+            if !(1..=31).contains(&day) {
+                return None;
+            }
+            // 日の後は終端か時刻 (空白 / `T`) のみ許す。
+            match b.get(10) {
+                None | Some(b' ') | Some(b'T') => {}
+                Some(_) => return None,
+            }
+        }
+        Some(_) => return None,
+    }
+    Some((format!("{year:04}"), month))
 }
 
 /// 先頭 `keep_start` / 末尾 `keep_end` 文字 (コードポイント単位) を残し、間を `*` に
@@ -462,6 +569,59 @@ mod tests {
     // ── 個別の境界 ──
 
     #[test]
+    fn email_keeps_domain_and_masks_local_part() {
+        assert_eq!(email_mask("alice@example.com", 1), "a****@example.com");
+        assert_eq!(email_mask("alice@example.com", 0), "*****@example.com");
+        assert_eq!(email_mask("a@example.com", 1), "*@example.com");
+        // 最後の @ をドメインの区切りにする。
+        assert_eq!(email_mask("a@b@example.com", 1), "a**@example.com");
+        // @ が無い / ローカル部・ドメインが空は全伏せ。
+        assert_eq!(email_mask("alice", 1), "*****");
+        assert_eq!(email_mask("@example.com", 1), "************");
+        assert_eq!(email_mask("alice@", 1), "******");
+        assert_eq!(email_mask("山田@例.jp", 1), "山*@例.jp");
+    }
+
+    #[test]
+    fn date_mask_reduces_granularity() {
+        use DatePrecision::*;
+        assert_eq!(date_mask("2026-10-15", Year), "2026");
+        assert_eq!(date_mask("2026-10-15", Month), "2026-10");
+        assert_eq!(date_mask("2026-10-15 12:34:56", Month), "2026-10");
+        assert_eq!(date_mask("2026-10-15T12:34:56Z", Year), "2026");
+        assert_eq!(date_mask("2026/03/04", Month), "2026-03");
+        assert_eq!(date_mask("2026-03", Month), "2026-03");
+        assert_eq!(date_mask(" 2026-03-04 ", Year), "2026");
+        // 読めない値は全伏せ。
+        assert_eq!(date_mask("2026-13-01", Year), "**********");
+        assert_eq!(date_mask("2026-10-32", Year), "**********");
+        assert_eq!(date_mask("not a date", Month), "**********");
+        assert_eq!(date_mask("20261015", Month), "********");
+        assert_eq!(date_mask("2026-10-15x", Year), "***********");
+        assert_eq!(date_mask("", Year), "");
+    }
+
+    #[test]
+    fn new_rules_deserialize_with_defaults() {
+        let r: MaskRule = serde_json::from_str(r#"{"kind":"email"}"#).expect("ok");
+        assert_eq!(r, MaskRule::Email { keep_start: 1 });
+        let r: MaskRule = serde_json::from_str(r#"{"kind":"date"}"#).expect("ok");
+        assert_eq!(
+            r,
+            MaskRule::Date {
+                precision: DatePrecision::Year
+            }
+        );
+        let r: MaskRule = serde_json::from_str(r#"{"kind":"date","precision":"month"}"#).expect("ok");
+        assert_eq!(
+            r,
+            MaskRule::Date {
+                precision: DatePrecision::Month
+            }
+        );
+    }
+
+    #[test]
     fn hmac_matches_rfc4231_case_2() {
         // RFC 4231 Test Case 2: key = "Jefe", data = "what do ya want for nothing?"
         let full = pseudonymize("what do ya want for nothing?", b"Jefe", MAX_HASH_LENGTH);
@@ -521,6 +681,10 @@ mod tests {
             },
             MaskRule::Hash { length: 8 },
             MaskRule::Null,
+            MaskRule::Email { keep_start: 1 },
+            MaskRule::Date {
+                precision: DatePrecision::Year,
+            },
         ] {
             assert_eq!(mask_value(&rule, &Value::Null, b"s"), Value::Null);
         }
