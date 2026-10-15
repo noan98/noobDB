@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
@@ -32,8 +32,6 @@ const AWS_PROGRAM: &str = "aws";
 const SSM_DOCUMENT: &str = "AWS-StartPortForwardingSessionToRemoteHost";
 /// 待ち受け開始のポーリング間隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
-/// 1 回の TCP 疎通確認の上限。
-const PROBE_TIMEOUT: Duration = Duration::from_millis(500);
 /// エラー文言に載せる AWS CLI 出力の最大文字数 (資格情報の流出・巨大なメッセージの防止)。
 const MAX_OUTPUT_CHARS: usize = 500;
 /// 保持する出力の最大バイト数 (古い側を捨てる)。
@@ -63,7 +61,8 @@ pub struct SsmConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsmTunnelSpec {
     pub target: String,
-    pub region: String,
+    /// 推定できなかったときは `None` (`--region` を付けず AWS CLI のプロファイル設定に任せる)。
+    pub region: Option<String>,
     pub profile: Option<String>,
     /// 中継先 (本来の RDS エンドポイント名)。
     pub remote_host: String,
@@ -185,14 +184,15 @@ pub fn build_spec(
             "a port is required for SSM port forwarding".into(),
         ));
     }
-    let region = aws_iam::resolve_region(&cfg.region, host, env).map_err(|_| {
-        AppError::InvalidInput(
-            "AWS SSM port forwarding needs an AWS region (set it in the connection form, \
-             or use an *.<region>.rds.amazonaws.com endpoint, or set AWS_REGION)"
-                .into(),
-        )
-    })?;
-    validate_region(&region)?;
+    // 設定値 → エンドポイント名 → 環境変数の順で解決する。決まらなければエラーにせず
+    // `--region` を付けずに起動し、AWS CLI 側 (プロファイルの region) に任せる。
+    let region = match aws_iam::resolve_region(&cfg.region, host, env) {
+        Ok(r) => {
+            validate_region(&r)?;
+            Some(r)
+        }
+        Err(_) => None,
+    };
     let profile = cfg
         .profile
         .as_deref()
@@ -225,9 +225,11 @@ pub fn build_args(spec: &SsmTunnelSpec, local_port: u16) -> Vec<String> {
             "host={},portNumber={},localPortNumber={}",
             spec.remote_host, spec.remote_port, local_port
         ),
-        "--region".to_string(),
-        spec.region.clone(),
     ];
+    if let Some(region) = &spec.region {
+        args.push("--region".to_string());
+        args.push(region.clone());
+    }
     if let Some(p) = &spec.profile {
         args.push("--profile".to_string());
         args.push(p.clone());
@@ -274,13 +276,21 @@ fn tail_chars(s: &str, max: usize) -> String {
 #[derive(Default)]
 struct Output {
     text: String,
-    /// stdout に "Waiting for connections" が出た (= ローカルの待ち受け開始)。
+    /// stdout に待ち受け開始の行が出た。
     ready: bool,
 }
 
-fn push_output(shared: &Mutex<Output>, line: &str) {
+/// stdout の 1 行が「ローカルの待ち受け開始」を示すか。session-manager-plugin は
+/// `Port <local_port> opened for sessionId ...` と `Waiting for connections...` を出す。
+/// TCP 接続での疎通確認は使わない (別プロセスが同じポートを奪っていた場合に DB の
+/// 認証情報を渡してしまう恐れと、RDS 側に余計な接続を作る副作用があるため)。
+pub fn is_ready_line(line: &str, local_port: u16) -> bool {
+    line.contains("Waiting for connections") || line.contains(&format!("Port {local_port} opened"))
+}
+
+fn push_output(shared: &Mutex<Output>, line: &str, ready_port: Option<u16>) {
     let mut o = shared.lock().unwrap_or_else(|e| e.into_inner());
-    if line.contains("Waiting for connections") {
+    if ready_port.is_some_and(|port| is_ready_line(line, port)) {
         o.ready = true;
     }
     o.text.push_str(line);
@@ -296,14 +306,15 @@ fn push_output(shared: &Mutex<Output>, line: &str) {
 
 /// 出力を読み続けるタスクを起動する。読み捨てないとパイプが詰まり子プロセスが止まるため、
 /// 接続後も Drop まで走らせる。
-fn spawn_reader<R>(reader: R, shared: Arc<Mutex<Output>>) -> JoinHandle<()>
+/// `ready_port` は stdout 側だけ `Some` にする (待ち受け開始の判定は stdout のみ)。
+fn spawn_reader<R>(reader: R, shared: Arc<Mutex<Output>>, ready_port: Option<u16>) -> JoinHandle<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            push_output(&shared, &line);
+            push_output(&shared, &line, ready_port);
         }
     })
 }
@@ -315,6 +326,13 @@ pub struct SsmTunnel {
     spec: SsmTunnelSpec,
     child: Mutex<Child>,
     readers: Vec<JoinHandle<()>>,
+    /// 子のプロセスグループ ID (unix)。Drop で孫 (session-manager-plugin) ごと止める。
+    #[cfg(unix)]
+    pgid: Option<u32>,
+    /// Windows: 子を入れたジョブ。ハンドルを閉じる (Drop・アプリ終了・クラッシュ) と
+    /// OS がプロセスツリーごと終了させる。作れなかったときは `kill_on_drop` だけが頼り。
+    #[cfg(windows)]
+    _job: Option<job::KillOnCloseJob>,
 }
 
 impl SsmTunnel {
@@ -335,6 +353,9 @@ impl SsmTunnel {
             .kill_on_drop(true);
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
+        // 専用のプロセスグループで起動し、Drop でグループごと止められるようにする。
+        #[cfg(unix)]
+        cmd.process_group(0);
         let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 AppError::Other(
@@ -346,13 +367,26 @@ impl SsmTunnel {
             }
         })?;
 
+        #[cfg(unix)]
+        let pgid = child.id();
+        #[cfg(windows)]
+        let job = child
+            .raw_handle()
+            .and_then(|h| match job::KillOnCloseJob::assign(h) {
+                Ok(j) => Some(j),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to put the AWS CLI into a job object");
+                    None
+                }
+            });
+
         let shared = Arc::new(Mutex::new(Output::default()));
         let mut readers = Vec::new();
         if let Some(out) = child.stdout.take() {
-            readers.push(spawn_reader(out, shared.clone()));
+            readers.push(spawn_reader(out, shared.clone(), Some(local_port)));
         }
         if let Some(err) = child.stderr.take() {
-            readers.push(spawn_reader(err, shared.clone()));
+            readers.push(spawn_reader(err, shared.clone(), None));
         }
         // 失敗時は `child` / `readers` を落とせば子プロセスは kill_on_drop で終わる。
         let guard = Self {
@@ -360,13 +394,17 @@ impl SsmTunnel {
             spec: spec.clone(),
             child: Mutex::new(child),
             readers,
+            #[cfg(unix)]
+            pgid,
+            #[cfg(windows)]
+            _job: job,
         };
         guard.wait_until_listening(&shared).await?;
         Ok(guard)
     }
 
     /// ローカルの待ち受け開始まで 200ms 間隔でポーリングする。stdout の
-    /// "Waiting for connections" か `127.0.0.1:<local_port>` への TCP 接続成功で開始とみなし、
+    /// `Port <local_port> opened` / `Waiting for connections` で開始とみなし、
     /// その前に子プロセスが終了したら出力を読んでエラーにする。
     async fn wait_until_listening(&self, shared: &Arc<Mutex<Output>>) -> Result<()> {
         loop {
@@ -381,7 +419,7 @@ impl SsmTunnel {
                 return Err(AppError::Other(describe_failure(&text, status)));
             }
             let ready = shared.lock().unwrap_or_else(|e| e.into_inner()).ready;
-            if ready || probe(self.local_port).await {
+            if ready {
                 return Ok(());
             }
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -415,6 +453,14 @@ impl Drop for SsmTunnel {
         for r in &self.readers {
             r.abort();
         }
+        // 子がまだ動いている間だけプロセスグループへ SIGTERM を送る。終了・回収済みの
+        // pgid は別プロセスに再利用されうるので、その場合は何もしない。
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            if self.try_exit_status().is_none() {
+                terminate_group(pgid);
+            }
+        }
         // kill_on_drop(true) でも落ちるが、Drop の時点で確実に終了要求を出しておく。
         let _ = self
             .child
@@ -424,24 +470,88 @@ impl Drop for SsmTunnel {
     }
 }
 
+/// プロセスグループ全体へ SIGTERM を送る。`libc` クレートを増やさないため
+/// `killpg(3)` を直接 `extern "C"` 宣言する (`commands/local.rs` と同じ流儀)。
+#[cfg(unix)]
+fn terminate_group(pgid: u32) {
+    extern "C" {
+        fn killpg(pgrp: i32, sig: i32) -> i32;
+    }
+    const SIGTERM: i32 = 15;
+    let Ok(pgid) = i32::try_from(pgid) else {
+        return;
+    };
+    // pgid <= 1 は自プロセスのグループ等を巻き込みうるので送らない。
+    if pgid <= 1 {
+        return;
+    }
+    // SAFETY: `killpg` は整数 2 つを取る syscall ラッパーで、メモリを触らない。pgid は
+    // 自分が `process_group(0)` で作ったグループの ID (子が生存中のみ呼ぶ)。失敗は無視してよい。
+    let _ = unsafe { killpg(pgid, SIGTERM) };
+}
+
+/// Windows の Job Object (`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`)。
+#[cfg(windows)]
+mod job {
+    use std::io;
+    use std::mem::{size_of, zeroed};
+    use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    /// 閉じる (Drop) と、ジョブ内の全プロセスを OS が終了させるハンドル。
+    /// 中身は読まず、Drop でハンドルが閉じられること自体が目的。
+    pub struct KillOnCloseJob(#[allow(dead_code)] OwnedHandle);
+
+    impl KillOnCloseJob {
+        /// 新しいジョブを作り、`process` (子プロセスのハンドル) を入れる。
+        pub fn assign(process: RawHandle) -> io::Result<Self> {
+            // SAFETY: 属性・名前とも null (既定のセキュリティ記述子・無名ジョブ)。
+            let raw: HANDLE = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if raw.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: `raw` は直前に作った有効なハンドルで、所有権をここで `OwnedHandle` に移す
+            // (以降の失敗経路でも Drop で必ず閉じられる)。
+            let owned = unsafe { OwnedHandle::from_raw_handle(raw as RawHandle) };
+
+            // SAFETY: 全ビット 0 は JOBOBJECT_EXTENDED_LIMIT_INFORMATION (POD) の有効な値。
+            let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { zeroed() };
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            // SAFETY: `raw` は有効なジョブハンドル。`info` は宣言した情報クラスに対応する型で、
+            // 渡すサイズもその型のサイズ。呼び出しの間 `info` は生きている。
+            let ok = unsafe {
+                SetInformationJobObject(
+                    raw,
+                    JobObjectExtendedLimitInformation,
+                    std::ptr::addr_of!(info).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: `process` は呼び出し元 (tokio の `Child`) が保持する有効なプロセスハンドル。
+            let ok = unsafe { AssignProcessToJobObject(raw, process as HANDLE) };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Self(owned))
+        }
+    }
+}
+
 /// 空きローカルポートを 1 つ選ぶ (bind して番号を得てから閉じる)。
 async fn pick_free_port() -> Result<u16> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let port = listener.local_addr()?.port();
     drop(listener);
     Ok(port)
-}
-
-/// `127.0.0.1:<port>` に TCP 接続できるか。
-async fn probe(port: u16) -> bool {
-    matches!(
-        tokio::time::timeout(
-            PROBE_TIMEOUT,
-            TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-        )
-        .await,
-        Ok(Ok(_))
-    )
 }
 
 #[cfg(test)]
@@ -510,7 +620,7 @@ mod tests {
     #[test]
     fn spec_infers_region_from_the_endpoint_then_env() {
         let spec = build_spec(&cfg("i-0123456789abcdef0", "", None), HOST, 3306, &no_env).unwrap();
-        assert_eq!(spec.region, "ap-northeast-1");
+        assert_eq!(spec.region.as_deref(), Some("ap-northeast-1"));
         assert_eq!(spec.remote_host, HOST);
         assert_eq!(spec.remote_port, 3306);
 
@@ -522,7 +632,7 @@ mod tests {
             &env,
         )
         .unwrap();
-        assert_eq!(spec.region, "eu-west-1");
+        assert_eq!(spec.region.as_deref(), Some("eu-west-1"));
     }
 
     #[test]
@@ -535,15 +645,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(spec.target, "i-0123456789abcdef0");
-        assert_eq!(spec.region, "us-west-2");
+        assert_eq!(spec.region.as_deref(), Some("us-west-2"));
         assert_eq!(spec.profile.as_deref(), Some("work"));
     }
 
     #[test]
-    fn spec_errors_when_region_is_unknown_or_inputs_are_invalid() {
+    fn spec_leaves_region_unset_when_unknown_and_rejects_invalid_inputs() {
         let c = cfg("i-0123456789abcdef0", "", None);
-        let e = build_spec(&c, "db.internal", 3306, &no_env).unwrap_err();
-        assert!(e.to_string().contains("region"), "{e}");
+        // 推定できなければエラーにせず None (AWS CLI のプロファイル設定に任せる)。
+        let spec = build_spec(&c, "db.internal", 3306, &no_env).unwrap();
+        assert_eq!(spec.region, None);
+        assert!(!build_args(&spec, 1).iter().any(|a| a == "--region"));
         assert!(build_spec(&c, HOST, 0, &no_env).is_err());
         assert!(build_spec(&cfg("bogus", "", None), HOST, 3306, &no_env).is_err());
         assert!(build_spec(
@@ -666,5 +778,150 @@ mod tests {
             Err(e) => e,
         };
         assert!(err.to_string().contains("exited with status 1"), "{err}");
+    }
+
+    #[test]
+    fn ready_lines_are_recognized_for_this_port_only() {
+        assert!(is_ready_line("Waiting for connections...", 1));
+        assert!(is_ready_line("Port 54321 opened for sessionId abc.", 54321));
+        assert!(!is_ready_line(
+            "Port 54322 opened for sessionId abc.",
+            54321
+        ));
+        assert!(!is_ready_line(
+            "Starting session with SessionId: abc",
+            54321
+        ));
+    }
+
+    /// 偽の `aws` スクリプトによるライフサイクルテスト (Linux)。
+    #[cfg(target_os = "linux")]
+    mod lifecycle {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+        use std::path::{Path, PathBuf};
+
+        /// 一時ディレクトリに置いた偽 `aws`。起動すると自身と孫 (`sleep &`) の PID を
+        /// ファイルへ書く。`ready` なら session-manager-plugin と同じ行を stdout に出す。
+        struct FakeAws {
+            dir: PathBuf,
+            script: PathBuf,
+        }
+
+        impl FakeAws {
+            fn new(tag: &str, ready: bool) -> Self {
+                let dir = std::env::temp_dir().join(format!(
+                    "noobdb-fake-aws-{tag}-{}-{}",
+                    std::process::id(),
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |d| d.as_nanos())
+                ));
+                std::fs::create_dir_all(&dir).unwrap();
+                let announce = if ready {
+                    "echo \"Starting session with SessionId: x\"\n\
+                     echo \"Port $p opened for sessionId x.\"\n\
+                     echo \"Waiting for connections...\"\n"
+                } else {
+                    ""
+                };
+                let body = format!(
+                    "#!/bin/sh\n\
+                     d=$(dirname \"$0\")\n\
+                     for a in \"$@\"; do case \"$a\" in *localPortNumber=*) p=${{a##*localPortNumber=}};; esac; done\n\
+                     echo $$ > \"$d/self.pid\"\n\
+                     sleep 300 &\n\
+                     echo $! > \"$d/child.pid\"\n\
+                     {announce}\
+                     wait\n"
+                );
+                let script = dir.join("aws");
+                std::fs::write(&script, body).unwrap();
+                std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+                Self { dir, script }
+            }
+
+            fn pid(&self, name: &str) -> i32 {
+                std::fs::read_to_string(self.dir.join(name))
+                    .unwrap()
+                    .trim()
+                    .parse()
+                    .unwrap()
+            }
+        }
+
+        impl Drop for FakeAws {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+            }
+        }
+
+        /// プロセスが消えた (または回収待ちのゾンビ) か。
+        fn is_gone(pid: i32) -> bool {
+            match std::fs::read_to_string(Path::new("/proc").join(pid.to_string()).join("stat")) {
+                Err(_) => true,
+                // `pid (comm) S ...` — comm は括弧を含みうるので最後の ')' の後ろを見る。
+                Ok(stat) => stat
+                    .rsplit_once(')')
+                    .is_some_and(|(_, rest)| rest.trim_start().starts_with('Z')),
+            }
+        }
+
+        async fn wait_gone(pid: i32) -> bool {
+            for _ in 0..50 {
+                if is_gone(pid) {
+                    return true;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            false
+        }
+
+        fn spec() -> SsmTunnelSpec {
+            build_spec(&cfg("i-0123456789abcdef0", "", None), HOST, 3306, &no_env).unwrap()
+        }
+
+        #[tokio::test]
+        async fn drop_terminates_the_child_and_its_process_group() {
+            let fake = FakeAws::new("ok", true);
+            let program = fake.script.to_string_lossy().into_owned();
+            let tunnel = tokio::time::timeout(
+                Duration::from_secs(10),
+                SsmTunnel::open_with_program(&program, &spec()),
+            )
+            .await
+            .expect("must not time out")
+            .expect("must open");
+            assert!(tunnel.is_alive());
+            assert!(tunnel.local_port > 0);
+            let (own, grandchild) = (fake.pid("self.pid"), fake.pid("child.pid"));
+            assert!(!is_gone(own) && !is_gone(grandchild));
+
+            drop(tunnel);
+            assert!(wait_gone(own).await, "child must be gone after drop");
+            assert!(
+                wait_gone(grandchild).await,
+                "grandchild must be gone after drop"
+            );
+        }
+
+        #[tokio::test]
+        async fn cancelling_a_pending_open_stops_the_child() {
+            // 待ち受け開始の行を出さない偽 aws。タイムアウトで open の future が捨てられる。
+            let fake = FakeAws::new("pending", false);
+            let program = fake.script.to_string_lossy().into_owned();
+            let res = tokio::time::timeout(
+                Duration::from_secs(1),
+                SsmTunnel::open_with_program(&program, &spec()),
+            )
+            .await;
+            assert!(res.is_err(), "open must still be waiting");
+            let (own, grandchild) = (fake.pid("self.pid"), fake.pid("child.pid"));
+            assert!(wait_gone(own).await, "child must be stopped on cancel");
+            assert!(
+                wait_gone(grandchild).await,
+                "grandchild must be stopped on cancel"
+            );
+        }
     }
 }

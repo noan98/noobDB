@@ -1,3 +1,4 @@
+import { connectRequestFromProfile } from "../connectRequest";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
@@ -126,20 +127,10 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
       if (!profile) return;
       setConnecting(true);
       try {
-        const res = await api.connect({
-          profile_id: profile.id,
-          driver: toDriverKind(profile.driver) ?? "mysql",
-          host: profile.host,
-          port: profile.port,
-          user: profile.user,
-          password: "",
-          database: profile.database,
-          ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-          file_path: profile.file_path,
+        const res = await api.connect(
           // read_only はプロファイルから取る (読み取り専用ならバックエンドが転送を拒否する)。
-          read_only: profile.read_only,
-          skip_history: profile.skip_history,
-        });
+          connectRequestFromProfile(profile),
+        );
         if (unmountedRef.current || seq !== selectSeqRef.current) {
           // 接続待ちの間にモーダルが閉じられた / 別のプロファイルに切り替わった。
           // 誰も解放しない専用セッション (SSH トンネル含む) が残らないよう即切断する。

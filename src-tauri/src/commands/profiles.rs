@@ -302,7 +302,12 @@ fn validate_profile_name(name: &str) -> Result<()> {
 fn normalize_ssm(
     ssm: Option<&crate::ssm::SsmConfig>,
     has_ssh: bool,
+    driver: &str,
 ) -> Result<Option<crate::ssm::SsmConfig>> {
+    // SQLite はファイル直開きでトンネルを使わない (ssh と同様に無視する) ので保存しない。
+    if driver == "sqlite" {
+        return Ok(None);
+    }
     let Some(cfg) = ssm else {
         return Ok(None);
     };
@@ -324,7 +329,7 @@ fn normalize_ssm(
 /// never logged — only which secret kind was set or cleared, at debug level.
 fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
     validate_profile_name(&req.name)?;
-    let ssm = normalize_ssm(req.ssm.as_ref(), req.ssh.is_some())?;
+    let ssm = normalize_ssm(req.ssm.as_ref(), req.ssh.is_some(), &req.driver)?;
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -858,34 +863,8 @@ fn reorder_supported(
 
 #[cfg(test)]
 mod tests {
-    use crate::ssm::SsmConfig;
-
-    fn ssm_cfg(target: &str, profile: Option<&str>) -> SsmConfig {
-        SsmConfig {
-            target: target.into(),
-            region: " ap-northeast-1 ".into(),
-            profile: profile.map(str::to_string),
-        }
-    }
-
-    #[test]
-    fn normalize_ssm_trims_and_drops_blank_profile() {
-        assert!(normalize_ssm(None, true).unwrap().is_none());
-        let out = normalize_ssm(Some(&ssm_cfg(" i-0123456789abcdef0 ", Some("  "))), false)
-            .unwrap()
-            .unwrap();
-        assert_eq!(out.target, "i-0123456789abcdef0");
-        assert_eq!(out.region, "ap-northeast-1");
-        assert_eq!(out.profile, None);
-    }
-
-    #[test]
-    fn normalize_ssm_rejects_ssh_combination_and_bad_target() {
-        assert!(normalize_ssm(Some(&ssm_cfg("i-0123456789abcdef0", None)), true).is_err());
-        assert!(normalize_ssm(Some(&ssm_cfg("", None)), false).is_err());
-    }
-
     use super::*;
+    use crate::ssm::SsmConfig;
     use std::cell::RefCell;
     use std::collections::HashMap;
 
@@ -923,6 +902,41 @@ mod tests {
             ssh_jump_passphrase: None,
             ssh_jump_password: None,
         }
+    }
+
+    fn ssm_cfg(target: &str, profile: Option<&str>) -> SsmConfig {
+        SsmConfig {
+            target: target.into(),
+            region: " ap-northeast-1 ".into(),
+            profile: profile.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn normalize_ssm_trims_and_drops_blank_profile() {
+        assert!(normalize_ssm(None, true, "mysql").unwrap().is_none());
+        let out = normalize_ssm(
+            Some(&ssm_cfg(" i-0123456789abcdef0 ", Some("  "))),
+            false,
+            "mysql",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(out.target, "i-0123456789abcdef0");
+        assert_eq!(out.region, "ap-northeast-1");
+        assert_eq!(out.profile, None);
+    }
+
+    #[test]
+    fn normalize_ssm_drops_ssm_for_sqlite() {
+        let cfg = ssm_cfg("i-0123456789abcdef0", None);
+        assert!(normalize_ssm(Some(&cfg), true, "sqlite").unwrap().is_none());
+    }
+
+    #[test]
+    fn normalize_ssm_rejects_ssh_combination_and_bad_target() {
+        assert!(normalize_ssm(Some(&ssm_cfg("i-0123456789abcdef0", None)), true, "mysql").is_err());
+        assert!(normalize_ssm(Some(&ssm_cfg("", None)), false, "mysql").is_err());
     }
 
     #[test]

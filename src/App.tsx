@@ -14,6 +14,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
@@ -3491,33 +3492,13 @@ export default function App() {
         setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase } : prev)),
       ).catch(() => undefined);
       try {
-        const driver: DriverKind =
-          profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
-            ? profile.driver
-            : "mysql";
         // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
         // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
         // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
         // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
         const res = isLocalProfile(profile)
           ? { session_id: await ensureLocalSession() }
-          : await api.connect(
-              {
-                profile_id: profile.id,
-                driver,
-                host: profile.host,
-                port: profile.port,
-                user: profile.user,
-                password: "",
-                database: profile.database,
-                ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-                file_path: profile.file_path,
-                read_only: profile.read_only,
-                skip_history: profile.skip_history,
-              },
-              attemptId,
-              settings.connectTimeoutSecs,
-            );
+          : await api.connect(connectRequestFromProfile(profile), attemptId, settings.connectTimeoutSecs);
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
