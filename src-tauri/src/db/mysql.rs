@@ -60,7 +60,7 @@ fn connect_options(opts: &DbConnectOptions, password: &str) -> MySqlConnectOptio
 
 impl MySqlConn {
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
-        let password = super::aws_iam::password_for(opts)?;
+        let password = super::aws_iam::password_for(opts).await?;
         let connect = connect_options(opts, &password);
         drop(password);
         let mut pool_opts = MySqlPoolOptions::new()
