@@ -383,6 +383,67 @@ pub fn decode_all(bytes: &[u8], encoding: TextEncoding) -> Result<String> {
     }
 }
 
+/// 文字コード選び直し UI (#1627) のプレビューで、各候補に使う先頭のバイト数。
+pub const PREVIEW_BYTES: usize = 4096;
+/// プレビューに出す最大行数。
+const PREVIEW_LINES: usize = 5;
+/// プレビュー 1 行の最大文字数 (超えた分は `…` で省く)。
+const PREVIEW_LINE_CHARS: usize = 160;
+
+/// 候補 1 つ分のプレビュー (#1627)。`valid` はその文字コードとして先頭バイトに不正が
+/// 無かったか、`lines` は不正バイトを U+FFFD に置換して読んだ先頭の数行。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct EncodingPreview {
+    pub encoding: TextEncoding,
+    pub valid: bool,
+    pub lines: Vec<String>,
+}
+
+/// 全ての対応文字コードで先頭 [`PREVIEW_BYTES`] を読んだ結果を返す。実際の読み込み
+/// ([`decode_all`]) と違い、化けた文字も置換して見せる (どの候補が自然かを人が選ぶため)。
+/// 読み込み自体はこの関数を使わず、利用者が選んだ文字コードで `read_sql_file` が行う。
+pub fn preview_candidates(bytes: &[u8]) -> Vec<EncodingPreview> {
+    let end = bytes.len().min(PREVIEW_BYTES);
+    let last = bytes.len() <= PREVIEW_BYTES;
+    [
+        TextEncoding::Utf8,
+        TextEncoding::Utf8Bom,
+        TextEncoding::ShiftJis,
+        TextEncoding::EucJp,
+        TextEncoding::Utf16Le,
+        TextEncoding::Utf16Be,
+    ]
+    .into_iter()
+    .map(|encoding| {
+        let mut decoder = encoding.codec().new_decoder_without_bom_handling();
+        let prefix = &bytes[..end];
+        let need = decoder
+            .max_utf8_buffer_length(prefix.len())
+            .unwrap_or_else(|| prefix.len().saturating_mul(3).saturating_add(16));
+        let mut out = String::with_capacity(need);
+        let (_, _, had_errors) = decoder.decode_to_string(prefix, &mut out, last);
+        let text = out.strip_prefix('\u{feff}').unwrap_or(&out);
+        let lines = text
+            .lines()
+            .take(PREVIEW_LINES)
+            .map(|l| {
+                if l.chars().count() > PREVIEW_LINE_CHARS {
+                    let cut: String = l.chars().take(PREVIEW_LINE_CHARS).collect();
+                    format!("{cut}…")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect();
+        EncodingPreview {
+            encoding,
+            valid: !had_errors,
+            lines,
+        }
+    })
+    .collect()
+}
+
 /// `text` を `encoding` のバイト列にする。UTF-8 BOM / UTF-16 は BOM を付ける。
 /// その文字コードで表せない文字があればエラー (`&#NNNN;` 等へ置換しない)。
 pub fn encode(text: &str, encoding: TextEncoding) -> Result<Vec<u8>> {
@@ -722,6 +783,53 @@ mod tests {
             let bytes = encode(JP, enc).unwrap();
             assert_eq!(decode_all(&bytes, enc).unwrap(), JP, "{}", enc.label());
         }
+    }
+
+    #[test]
+    fn preview_candidates_shows_every_encoding_and_flags_invalid() {
+        let sj = encode("SELECT '日本語';\nSELECT 2;", TextEncoding::ShiftJis).unwrap();
+        let previews = preview_candidates(&sj);
+        assert_eq!(previews.len(), 6);
+        let by = |e: TextEncoding| previews.iter().find(|p| p.encoding == e).unwrap();
+        let s = by(TextEncoding::ShiftJis);
+        assert!(s.valid);
+        assert_eq!(s.lines, vec!["SELECT '日本語';", "SELECT 2;"]);
+        // UTF-8 としては不正で、置換文字が混じる。
+        let u = by(TextEncoding::Utf8);
+        assert!(!u.valid);
+        assert!(u.lines[0].contains('\u{fffd}'));
+    }
+
+    #[test]
+    fn preview_candidates_strips_bom_and_limits_lines() {
+        let text = (1..=20)
+            .map(|i| format!("SELECT {i};"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let bytes = encode(&text, TextEncoding::Utf8Bom).unwrap();
+        let p = preview_candidates(&bytes);
+        let u = p
+            .iter()
+            .find(|p| p.encoding == TextEncoding::Utf8Bom)
+            .unwrap();
+        assert!(u.valid);
+        assert_eq!(u.lines.len(), 5);
+        assert_eq!(u.lines[0], "SELECT 1;");
+    }
+
+    #[test]
+    fn preview_candidates_tolerates_a_multibyte_char_cut_at_the_boundary() {
+        // 先頭 4096 バイトの境界で多バイト文字が切れても「不正」とは扱わない。
+        let text = "あ".repeat(3000);
+        let bytes = encode(&text, TextEncoding::Utf8).unwrap();
+        assert!(bytes.len() > PREVIEW_BYTES && PREVIEW_BYTES % 3 != 0);
+        let p = preview_candidates(&bytes);
+        assert!(
+            p.iter()
+                .find(|p| p.encoding == TextEncoding::Utf8)
+                .unwrap()
+                .valid
+        );
     }
 
     #[test]

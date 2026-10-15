@@ -10,6 +10,8 @@ import {
   buildSql,
   removeWhereCondition,
   hasAmbiguousAndOr,
+  isOffsetInvalid,
+  normalizeOffset,
   type WhereCondition,
   type ColumnValuePair,
   type OrderByItem,
@@ -31,6 +33,7 @@ function buildSelectSql(
     orderBy?: OrderByItem[];
     limitEnabled?: boolean;
     limit?: string;
+    offset?: string;
   } = {},
 ): string {
   return buildSql(
@@ -48,6 +51,7 @@ function buildSelectSql(
     opts.limit ?? "",
     [],
     [],
+    opts.offset,
   );
 }
 
@@ -674,5 +678,166 @@ describe("hasAmbiguousAndOr", () => {
   });
   it("最上位で AND と OR が混ざると警告する", () => {
     expect(hasAmbiguousAndOr([c("a"), c("b", { connector: "OR" }), c("c", { connector: "AND" })])).toBe(true);
+  });
+});
+
+describe("WHERE の BETWEEN / NOT IN / NOT LIKE (#1627)", () => {
+  const where = (c: Partial<WhereCondition> & { operator: string }, columns: TableColumnInfo[] = []) =>
+    buildSelectSql("mysql", {
+      columns,
+      whereEnabled: true,
+      whereConditions: [{ column: "age", value: "", ...c }],
+    });
+  const num = makeColumnInfo({ name: "age", data_type: "int" });
+  const str = makeColumnInfo({ name: "name", data_type: "varchar" });
+
+  it("BETWEEN は下端・上端を型に応じて組み立てる", () => {
+    expect(where({ operator: "BETWEEN", value: "18", value2: "65" }, [num])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `age` BETWEEN 18 AND 65;",
+    );
+    expect(where({ column: "name", operator: "between", value: "a", value2: "m" }, [str])).toBe(
+      "SELECT * FROM `db`.`users` WHERE `name` BETWEEN 'a' AND 'm';",
+    );
+    // 未入力はプレースホルダ (Run はブロックされる)。
+    expect(where({ operator: "BETWEEN", value: "1" }, [num])).toContain("BETWEEN 1 AND <value>");
+  });
+
+  it("NOT IN は IN と同じ分割・リテラル化で NOT IN (...) を出す", () => {
+    expect(where({ operator: "NOT IN", value: "1, 2 ,3" }, [num])).toContain("`age` NOT IN (1, 2, 3)");
+    expect(where({ operator: "not  in", value: "" }, [num])).toContain("NOT IN (<values>)");
+  });
+
+  it("NOT LIKE は値をそのまま使う", () => {
+    expect(where({ column: "name", operator: "NOT LIKE", value: "a%" }, [str])).toContain(
+      "`name` NOT LIKE 'a%'",
+    );
+  });
+
+  it("含む / 前方一致 / 後方一致は % と _ と \\ をエスケープして ESCAPE 句を付ける", () => {
+    const c = (operator: string, value: string, driver = "mysql") =>
+      buildSelectSql(driver, {
+        columns: [str],
+        whereEnabled: true,
+        whereConditions: [{ column: "name", operator, value }],
+      });
+    expect(c("CONTAINS", "50%_off")).toContain("`name` LIKE '%50\\\\%\\\\_off%' ESCAPE '\\\\'");
+    expect(c("STARTS WITH", "ab", "postgres")).toContain(`"name" LIKE 'ab%' ESCAPE '\\'`);
+    expect(c("ends with", "a\\b", "sqlite")).toContain(`"name" LIKE '%a\\\\b' ESCAPE '\\'`);
+  });
+
+  it("PostgreSQL は文字列でない列を CAST してから LIKE する", () => {
+    const sql = buildSelectSql("postgres", {
+      columns: [num],
+      whereEnabled: true,
+      whereConditions: [{ column: "age", operator: "CONTAINS", value: "1" }],
+    });
+    expect(sql).toContain(`CAST("age" AS TEXT) LIKE '%1%' ESCAPE '\\'`);
+    // MySQL / SQLite は暗黙変換で動くので CAST しない。
+    expect(
+      buildSelectSql("mysql", {
+        columns: [num],
+        whereEnabled: true,
+        whereConditions: [{ column: "age", operator: "CONTAINS", value: "1" }],
+      }),
+    ).not.toContain("CAST");
+  });
+
+  it("BETWEEN は両端が揃うまで Run をブロックし、NOT IN は値が無いとブロックする", () => {
+    const base = {
+      kind: "SELECT" as const,
+      table: "users",
+      whereEnabled: true,
+      setPairs: [],
+      insertPairs: [],
+    };
+    const block = (c: WhereCondition) => computeBuilderBlockedReason({ ...base, whereConditions: [c] });
+    expect(block({ column: "age", operator: "BETWEEN", value: "1" })).toBe("qbValidationNoBetweenValues");
+    expect(block({ column: "age", operator: "BETWEEN", value: "", value2: "2" })).toBe(
+      "qbValidationNoBetweenValues",
+    );
+    expect(block({ column: "age", operator: "BETWEEN", value: "1", value2: "2" })).toBeNull();
+    expect(block({ column: "age", operator: "NOT IN", value: " , " })).toBe("qbValidationNoInValues");
+    expect(block({ column: "age", operator: "NOT IN", value: "1" })).toBeNull();
+  });
+});
+
+describe("SELECT の OFFSET (#1627)", () => {
+  it("LIMIT n OFFSET m を出す。0・空・不正な値は出さない", () => {
+    const sql = (offset: string, extra: { limitEnabled?: boolean; limit?: string } = {}) =>
+      buildSelectSql("mysql", { limitEnabled: true, limit: "50", offset, ...extra });
+    expect(sql("100")).toBe("SELECT * FROM `db`.`users` LIMIT 50 OFFSET 100;");
+    expect(sql(" 007 ")).toContain("LIMIT 50 OFFSET 7;");
+    expect(sql("0")).toBe("SELECT * FROM `db`.`users` LIMIT 50;");
+    expect(sql("")).toBe("SELECT * FROM `db`.`users` LIMIT 50;");
+    expect(sql("-1")).toBe("SELECT * FROM `db`.`users` LIMIT 50;");
+    expect(sql("1.5")).toBe("SELECT * FROM `db`.`users` LIMIT 50;");
+    // 桁数の大きい値も丸めない。
+    expect(sql("9007199254740993")).toContain("OFFSET 9007199254740993");
+  });
+
+  it("LIMIT が無効・不正なら OFFSET も出さない (MySQL / SQLite は LIMIT なしの OFFSET を受けない)", () => {
+    for (const driver of ["mysql", "postgres", "sqlite"]) {
+      expect(buildSelectSql(driver, { limitEnabled: false, limit: "50", offset: "10" })).not.toContain(
+        "OFFSET",
+      );
+      expect(buildSelectSql(driver, { limitEnabled: true, limit: "", offset: "10" })).not.toContain("OFFSET");
+      expect(buildSelectSql(driver, { limitEnabled: true, limit: "5", offset: "10" })).toContain(
+        "LIMIT 5 OFFSET 10",
+      );
+    }
+  });
+
+  it("ORDER BY の後ろに付く", () => {
+    expect(
+      buildSelectSql("postgres", {
+        orderBy: [{ column: "id", direction: "DESC" }],
+        limitEnabled: true,
+        limit: "10",
+        offset: "20",
+      }),
+    ).toBe('SELECT * FROM "db"."users" ORDER BY "id" DESC LIMIT 10 OFFSET 20;');
+  });
+
+  it("normalizeOffset / isOffsetInvalid", () => {
+    expect(normalizeOffset("0010")).toBe("10");
+    expect(normalizeOffset("000")).toBe("");
+    expect(normalizeOffset("x")).toBe("");
+    expect(isOffsetInvalid("")).toBe(false);
+    expect(isOffsetInvalid("  ")).toBe(false);
+    expect(isOffsetInvalid("12")).toBe(false);
+    expect(isOffsetInvalid("-3")).toBe(true);
+    expect(isOffsetInvalid("1e3")).toBe(true);
+  });
+
+  it("含む / 前方一致 / 後方一致 は値が空 (空白のみ) だとブロックする。素の LIKE は従来どおり (#1627)", () => {
+    for (const kind of ["SELECT", "UPDATE", "DELETE"] as const) {
+      const input = {
+        kind,
+        table: "users",
+        whereEnabled: true,
+        setPairs: [{ column: "a", value: "1" }],
+        insertPairs: [],
+      };
+      for (const operator of ["CONTAINS", "STARTS WITH", "ENDS WITH"]) {
+        expect(
+          computeBuilderBlockedReason({
+            ...input,
+            whereConditions: [{ column: "name", operator, value: "  " }],
+          }),
+        ).toBe("qbValidationNoLikeValue");
+        expect(
+          computeBuilderBlockedReason({
+            ...input,
+            whereConditions: [{ column: "name", operator, value: "x" }],
+          }),
+        ).toBeNull();
+      }
+      expect(
+        computeBuilderBlockedReason({
+          ...input,
+          whereConditions: [{ column: "name", operator: "LIKE", value: "" }],
+        }),
+      ).toBeNull();
+    }
   });
 });

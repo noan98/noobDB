@@ -20,8 +20,9 @@ use tauri::State;
 use crate::db::privileges::{
     generate_alter_password_sql as generate_alter_password,
     generate_create_user_sql as generate_create_user, generate_drop_user_sql as generate_drop_user,
-    generate_grant_sql as generate_grant, generate_revoke_sql as generate_revoke, GrantSpec,
-    PrivilegeFlags, UserSpec,
+    generate_grant_sql as generate_grant, generate_revoke_sql as generate_revoke,
+    generate_role_grant_sql as generate_role_grant,
+    generate_role_revoke_sql as generate_role_revoke, GrantSpec, PrivilegeFlags, UserSpec,
 };
 use crate::db::types::{DbUserInfo, UserPrivileges};
 use crate::db::DriverKind;
@@ -96,6 +97,10 @@ pub struct PrivilegeChange {
     pub table: Option<String>,
     pub added: PrivilegeFlags,
     pub removed: PrivilegeFlags,
+    /// 列単位の権限 (#1622)。空でなければ `table` 指定時に限り SELECT / INSERT / UPDATE を
+    /// その列に限定して GRANT / REVOKE する。省略は従来のテーブル単位。
+    #[serde(default)]
+    pub columns: Option<Vec<String>>,
 }
 
 /// 権限差分の一覧から `GRANT` / `REVOKE` 文をまとめて生成する (#1259)。テーブル順に
@@ -121,23 +126,44 @@ pub(crate) fn privilege_diff_statements(
     database: &str,
     changes: &[PrivilegeChange],
 ) -> Vec<String> {
-    let spec = |table: &Option<String>, flags: PrivilegeFlags| GrantSpec {
+    let spec = |c: &PrivilegeChange, flags: PrivilegeFlags| GrantSpec {
         user: user.to_string(),
         host: host.map(str::to_string),
         database: database.to_string(),
-        table: table.clone(),
+        table: c.table.clone(),
         flags,
+        columns: c.columns.clone(),
     };
     let mut out = Vec::new();
     for c in changes {
-        if let Some(sql) = generate_grant(driver, &spec(&c.table, c.added)) {
+        if let Some(sql) = generate_grant(driver, &spec(c, c.added)) {
             out.push(sql);
         }
-        if let Some(sql) = generate_revoke(driver, &spec(&c.table, c.removed)) {
+        if let Some(sql) = generate_revoke(driver, &spec(c, c.removed)) {
             out.push(sql);
         }
     }
     out
+}
+
+/// ロール (メンバーシップ) の付与 / 剥奪 SQL を生成する (#1622)。`grant` が true なら
+/// `GRANT role TO user`、false なら `REVOKE role FROM user`。MySQL 8 は `'role'@'host'` 形式
+/// (`role_host` 省略時 `%`)、PostgreSQL はロール名のみ。Pure — 通信もログもしない。
+/// 適用は既存の `apply_privilege_sql` (read_only 拒否・確認ダイアログ) を通す。
+#[tauri::command]
+pub fn generate_role_membership_sql(
+    driver: DriverKind,
+    grant: bool,
+    role: String,
+    role_host: Option<String>,
+    user: String,
+    host: Option<String>,
+) -> String {
+    if grant {
+        generate_role_grant(driver, &role, role_host.as_deref(), &user, host.as_deref())
+    } else {
+        generate_role_revoke(driver, &role, role_host.as_deref(), &user, host.as_deref())
+    }
 }
 
 /// Applies previously generated/confirmed statements (`CREATE USER` /
@@ -219,6 +245,7 @@ mod tests {
             table: table.map(str::to_string),
             added,
             removed,
+            columns: None,
         }
     }
 
@@ -267,6 +294,7 @@ mod tests {
                 database: "public".into(),
                 table: None,
                 flags: flags(true, true, false),
+                columns: None,
             },
         )
         .expect("grant");

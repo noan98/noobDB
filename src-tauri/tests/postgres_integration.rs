@@ -211,12 +211,28 @@ async fn postgres_table_sizes_and_server_info() {
     let index = row.index_bytes.expect("index bytes present");
     assert!(total >= index, "total must be >= index size: {row:?}");
     assert!(total > 0, "a seeded table must use storage: {row:?}");
+    // 肥大・統計の古さの指標 (#1622): ANALYZE 済みなので analyze 時刻が入り、不要行数も報告される。
+    assert!(
+        row.dead_rows.is_some(),
+        "n_dead_tup must be reported: {row:?}"
+    );
+    assert!(
+        row.last_analyze_at.is_some_and(|ts| ts > 0),
+        "last_analyze_at must reflect the manual ANALYZE: {row:?}"
+    );
 
     let info = conn.server_info().await.expect("server_info");
     assert!(!info.version.is_empty(), "version must be reported");
     assert!(
         info.variables.iter().any(|v| v.name == "server_version"),
         "pg_settings must include server_version"
+    );
+    // 値の出どころ (#1622): pg_settings.source が入り、既定値のままの変数は `default`。
+    assert!(
+        info.variables
+            .iter()
+            .any(|v| v.source.as_deref() == Some("default")),
+        "pg_settings.source must be reported"
     );
 
     conn.execute("DROP TABLE public.noobdb_pg_sizes", None)
@@ -780,6 +796,46 @@ async fn postgres_process_list_and_kill() {
     assert_eq!(mixed.killed, 1, "{mixed:?}");
     assert_eq!(mixed.failed, 1, "{mixed:?}");
     assert!(mixed.first_error.is_some());
+    // id ごとの成否 (#1622): 不正な pid だけが失敗として個別に報告される。
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
+    let invalid = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("invalid pid outcome");
+    assert_eq!(invalid.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(invalid.error.is_some());
+    assert!(
+        mixed
+            .outcomes
+            .iter()
+            .any(|o| o.id == victim_pid && o.status != t::KillOutcomeStatus::Failed),
+        "{mixed:?}"
+    );
+    // 自接続を文のみ停止の対象に含めても、スキップとして id 単位で報告され件数を狂わせない。
+    let own_id = conn
+        .list_processes()
+        .await
+        .expect("list for self")
+        .into_iter()
+        .find(|p| p.is_self)
+        .map(|p| p.id);
+    if let Some(own_id) = own_id {
+        let skipped = conn
+            .kill_processes(&[own_id], true)
+            .await
+            .expect("cancel self");
+        // プールが複数の接続を持つと、kill を実行する接続と一覧を取った接続が別になりうる。
+        // 同じ接続ならスキップ、別の接続なら通常の文のみ停止になる。どちらでも 1 件が id 単位で
+        // 1 回だけ数えられ、件数と outcomes が食い違わないことを確かめる。
+        assert_eq!(skipped.outcomes.len(), 1, "{skipped:?}");
+        let was_skipped = skipped.outcomes[0].status == t::KillOutcomeStatus::Skipped;
+        assert_eq!(
+            skipped.killed + skipped.failed,
+            if was_skipped { 0 } else { 1 },
+            "{skipped:?}"
+        );
+    }
 
     // Backend teardown is asynchronous; poll briefly.
     let mut gone = false;
@@ -943,6 +999,11 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
         m.active.is_some_and(|a| a >= 1),
         "at least one active backend (this query) expected, got {:?}",
         m.active
+    );
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported (#1622), got {:?}",
+        m.max_connections
     );
     assert!(
         m.questions.is_some_and(|q| q >= 1),
@@ -3163,4 +3224,33 @@ async fn postgres_column_profile_sampled_is_subset_of_table() {
     conn.execute("DROP TABLE IF EXISTS public.prof_sample_t", None)
         .await
         .expect("cleanup");
+}
+
+/// 構文エラーの本文に、サーバが返すエラー位置 (元の文の 1 始まりの文字オフセット) が
+/// ` (position n)` として載る (#1627)。出力タブの「エラー位置へ移動」がこれを使う。
+#[tokio::test]
+async fn postgres_syntax_error_message_carries_the_error_position() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // `SELECT 1 FORM` の FORM は別名として読まれ、次の `t` が誤り = 先頭から数えて 15 文字目
+    // ("SELECT 1\n" が 9 文字、"FORM " が 5 文字)。サーバのソース行番号 (`at line N`) は載せない。
+    let err = conn
+        .execute("SELECT 1\nFORM t", None)
+        .await
+        .expect_err("syntax error");
+    let msg = err.to_string();
+    assert!(msg.ends_with("(position 15)"), "message was: {msg}");
+    assert!(!msg.contains("at line"), "message was: {msg}");
+
+    // 位置を持たないエラー (存在しない関数ではなく、実行時エラー) は文言を変えない。
+    let err = conn
+        .execute("SELECT 1/0", None)
+        .await
+        .expect_err("division by zero");
+    assert!(!err.to_string().contains("(position"), "{err}");
 }

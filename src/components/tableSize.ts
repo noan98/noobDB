@@ -115,6 +115,9 @@ export function toTableStatRows(stats: readonly TableStatistic[]): TableStatRow[
     data_bytes: s.data_bytes,
     index_bytes: s.index_bytes,
     total_bytes: s.total_bytes,
+    dead_rows: s.dead_rows,
+    last_vacuum_at: s.last_vacuum_at,
+    last_analyze_at: s.last_analyze_at,
     columnCount: s.column_count,
     indexCount: s.index_count,
     hasPrimaryKey: s.has_primary_key,
@@ -286,4 +289,47 @@ export function tableStatsExportTable(
       r.total_bytes,
     ]),
   };
+}
+
+// ── 肥大・統計の古さ (#1622) ──────────────────────────────────────────────
+
+/** 不要行がこの割合 (生存 + 不要の合計に対して) 以上で「肥大」とみなす。 */
+export const BLOAT_DEAD_RATIO = 0.2;
+/** 不要行がこの件数に満たない小さな表は割合が高くても肥大とみなさない。 */
+export const BLOAT_MIN_DEAD_ROWS = 1000;
+/** 最後の ANALYZE からこの秒数を超えたら統計が古いとみなす (7 日)。 */
+export const STALE_STATS_SECS = 7 * 24 * 60 * 60;
+/** 統計が古いかを判定する最小の概算行数。小さな表は古くても計画に影響しにくい。 */
+export const STALE_STATS_MIN_ROWS = 1000;
+
+export interface TableMaintenanceHints {
+  /** 不要行が多く VACUUM を検討したい。 */
+  bloated: boolean;
+  /** 不要行の割合 (0〜1)。判定できなければ null。 */
+  deadRatio: number | null;
+  /** ANALYZE が長期間されていない (または一度もされていない)。 */
+  staleStats: boolean;
+}
+
+/**
+ * 1 テーブルの「VACUUM / ANALYZE を検討したい」目安を求める純関数 (#1622)。PostgreSQL の
+ * `pg_stat_user_tables` 由来の値 (`dead_rows` など) が無い行 (MySQL / SQLite / 取得不能) は
+ * 何も言わない (全て false)。`nowMs` は判定時刻 (テスト用に注入)。
+ */
+export function tableMaintenanceHints(
+  row: Pick<TableSizeInfo, "row_estimate" | "dead_rows" | "last_analyze_at">,
+  nowMs: number,
+): TableMaintenanceHints {
+  const dead = row.dead_rows;
+  if (dead == null || !Number.isFinite(dead)) return { bloated: false, deadRatio: null, staleStats: false };
+  // 行数の推定が無い (未 ANALYZE で n_live_tup も無い) と比率を出せないので、肥大とは言わない。
+  if (row.row_estimate == null) return { bloated: false, deadRatio: null, staleStats: false };
+  const live = Math.max(0, row.row_estimate);
+  const total = live + Math.max(0, dead);
+  const deadRatio = total > 0 ? Math.max(0, dead) / total : null;
+  const bloated = deadRatio !== null && dead >= BLOAT_MIN_DEAD_ROWS && deadRatio >= BLOAT_DEAD_RATIO;
+  const at = row.last_analyze_at;
+  const ageSecs = at == null ? null : Math.max(0, nowMs / 1000 - at);
+  const staleStats = live >= STALE_STATS_MIN_ROWS && (ageSecs === null || ageSecs > STALE_STATS_SECS);
+  return { bloated, deadRatio, staleStats };
 }

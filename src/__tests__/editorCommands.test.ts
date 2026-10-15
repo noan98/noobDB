@@ -30,6 +30,7 @@ function actions() {
   return {
     runAll: vi.fn(),
     runStatement: vi.fn(),
+    runFromCursor: vi.fn(),
     formatSql: vi.fn(),
     explain: vi.fn(),
     focusEditor: vi.fn(),
@@ -62,12 +63,14 @@ describe("editorCommandItems", () => {
     const byId = new Map(items.map((i) => [i.id, i]));
     byId.get("editor:run")?.run();
     byId.get("editor:run-selected")?.run();
+    byId.get("editor:run-from-cursor")?.run();
     byId.get("editor:explain")?.run();
     byId.get("editor:format")?.run();
     byId.get("editor:focus")?.run();
     byId.get("nav:toggle-activity")?.run();
     expect(a.runAll).toHaveBeenCalledOnce();
     expect(a.runStatement).toHaveBeenCalledOnce();
+    expect(a.runFromCursor).toHaveBeenCalledOnce();
     expect(a.explain).toHaveBeenCalledOnce();
     expect(a.formatSql).toHaveBeenCalledOnce();
     expect(a.focusEditor).toHaveBeenCalledOnce();

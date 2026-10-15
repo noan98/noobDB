@@ -8,6 +8,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { Modal, ModalBody, ModalHeader } from "./Modal";
 import { Segmented } from "./Segmented";
+import { saveDiagnosticBundle } from "./diagnosticBundle";
 import { Button, Input, Select, SelectableCard, Switch } from "./ui";
 import {
   SettingsInfo,
@@ -108,6 +109,7 @@ import {
   setQueryNotificationsEnabled,
   setQueryNotificationThresholdSecs,
   setAutoUpdateCheckEnabled,
+  setPerfMeasureEnabled,
   setQueryTimeoutSecs,
   setConnectTimeoutSecs,
   DEFAULT_CONNECT_TIMEOUT_SECS,
@@ -988,6 +990,26 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     }
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 1500);
+  };
+  // 匿名化した診断バンドル (#1622)。バックエンドが版情報つきで作ったテキストを保存ダイアログへ出す。
+  const exportDiagnosticBundle = async () => {
+    try {
+      const dest = await saveDiagnosticBundle({
+        pickPath: () =>
+          saveFileDialog({
+            defaultPath: "noobdb-diagnostics.txt",
+            title: t("settingsDiagBundleTitle"),
+            filters: [{ name: "Text", extensions: ["txt"] }],
+          }),
+        build: () => api.buildDiagnosticBundle(),
+        write: async (path, text) => {
+          await api.writeTextFile(path, text);
+        },
+      });
+      if (dest) toast.success(t("settingsDiagBundleSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(t("settingsDiagBundleError", { error: String(e) }));
+    }
   };
   const clearLogs = async () => {
     const ok = await confirm({
@@ -2239,6 +2261,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                         <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
                       </SettingsLogsIconButton>
                     </Tooltip>
+                    <Tooltip label={t("settingsDiagBundleHelp")}>
+                      <Button type="button" variant="secondary" size="sm" onClick={exportDiagnosticBundle}>
+                        {t("settingsDiagBundle")}
+                      </Button>
+                    </Tooltip>
                     <Button
                       type="button"
                       variant="dangerOutline"
@@ -2252,6 +2279,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                 </SettingsSectionHeader>
                 <SettingsLogsView readOnly wrap="off" value={logText} placeholder={t("settingsLogsEmpty")} />
                 {logPath && <SettingsLogsPath>{t("settingsLogsPath", { path: logPath })}</SettingsLogsPath>}
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-perf-measure">
+                      {t("settingsPerfMeasure")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsPerfMeasureHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-perf-measure"
+                    checked={settings.perfMeasureEnabled}
+                    onChange={setPerfMeasureEnabled}
+                  />
+                </SettingsToggleRow>
               </SettingsSection>
 
               <chakra.div id="settings-sec-knownhosts" scrollMarginTop="8px">

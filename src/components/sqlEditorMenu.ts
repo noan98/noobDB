@@ -25,6 +25,7 @@ import type { IconName } from "./Icon";
 export type SqlEditorMenuAction =
   | "run"
   | "runStatement"
+  | "runFromCursor"
   | "preview"
   | "explain"
   | "aiExplain"
@@ -106,6 +107,16 @@ export function sqlEditorMenuSpec(ctx: SqlEditorMenuContext): SqlEditorMenuEntry
       labelKey: "editorMenuRunStatement",
       icon: "play",
       shortcutId: "runStatement",
+      disabled: execBlocked,
+      disabledReasonKey: execReason,
+    });
+  }
+  if (!ctx.hasSelection && !ctx.explainMode) {
+    // カーソルの文から末尾まで (#1627)。ショートカットは割り当てていない。
+    entries.push({
+      action: "runFromCursor",
+      labelKey: "editorMenuRunFromCursor",
+      icon: "play",
       disabled: execBlocked,
       disabledReasonKey: execReason,
     });

@@ -183,6 +183,9 @@ pub struct SshRequest {
     /// Optional bastion/jump hop dialed before `host` (#708 multi-hop tunnel).
     #[serde(default)]
     pub jump: Option<SshJumpRequest>,
+    /// トンネルのローカル待受ポート固定 (#1630)。`None` / 0 は自動割当。
+    #[serde(default)]
+    pub local_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -226,6 +229,12 @@ pub async fn test_connection(
     let progress = ConnectProgress::new(app.clone(), attempt_id.clone());
 
     let fut = async move {
+        // 接続テストは本接続の固定ローカルポート (#1630) を占有しない (使用中の本接続と
+        // 衝突させない) ので、常に自動割当で張る。
+        let mut req = req;
+        if let Some(ssh) = req.ssh.as_mut() {
+            ssh.local_port = None;
+        }
         let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?;
         conn.execute("SELECT 1", None).await?;
         conn.close().await;
@@ -556,7 +565,10 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
 /// `SessionId` (#712). Rebuilds the SSH tunnel (when the session was tunneled),
 /// opens a fresh `db::Connection` from the session's stored `connect_options`,
 /// and only then swaps the live session for the new one — so on any failure the
-/// old session is left untouched and the caller can retry. Because the id is
+/// old session is left untouched and the caller can retry. Exception: with a
+/// pinned SSH `local_port`, the old tunnel's listener is released *before* the
+/// new tunnel binds that port, so a failed reconnect leaves the old session
+/// without a local listener (its health check then reports it dead). Because the id is
 /// unchanged, the frontend's open tabs and grid state (keyed by session id) stay
 /// alive without a disconnect/restore round-trip.
 ///
@@ -684,6 +696,13 @@ async fn reopen_transport(
                 }
             }
         }
+        // 固定ローカルポート (#1630) は旧トンネルがまだ listen している間は bind できない。
+        // 旧セッションは新トンネルが張れるまで残すが、待ち受けだけは先に手放す。
+        if cfg.local_port.is_some() {
+            if let Some(Tunnel::Ssh(old_tunnel)) = &old._tunnel {
+                old_tunnel.release_listener().await;
+            }
+        }
         let t = SshTunnel::open_with_progress(&cfg, |p| {
             set_phase(match p {
                 SshPhase::Connecting => ConnectPhase::TunnelConnecting,
@@ -727,6 +746,7 @@ fn reconnect_ssh_from(req: &ConnectRequest) -> Option<SshConfig> {
         password: String::new(),
         remote_host: req.host.clone(),
         remote_port: req.port,
+        local_port: ssh.local_port,
         // Same "blank the secrets" treatment as the main hop above — reopen_transport
         // re-resolves the jump hop's passphrase/password from the keyring too (#708).
         jump: ssh.jump.as_ref().map(|j| {
@@ -881,6 +901,7 @@ async fn build_options(
             remote_host: req.host.clone(),
             remote_port: req.port,
             jump,
+            local_port: ssh.local_port,
         };
         // Map the tunnel's connect/auth phases onto our connect phases so the UI
         // can tell "stuck on the tunnel" apart from "stuck on SSH auth" (#684).
@@ -1113,6 +1134,7 @@ mod tests {
             passphrase: "phrase".into(),
             password: "pw".into(),
             jump: None,
+            local_port: None,
         };
         let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
         // Non-secret SSH parameters are captured verbatim...
@@ -1154,6 +1176,7 @@ mod tests {
                 passphrase: String::new(),
                 password: "jump-pw".into(),
             }),
+            local_port: Some(15432),
         };
         let cfg = reconnect_ssh_from(&req_with_ssh(Some(ssh))).expect("tunneled -> Some");
         let jump = cfg.jump.expect("jump hop captured");
@@ -1165,5 +1188,7 @@ mod tests {
         assert!(cfg.passphrase.is_empty());
         assert!(jump.passphrase.is_empty());
         assert!(jump.password.is_empty());
+        // 固定ポートは非秘密なので再接続用の設定にも引き継ぐ (#1630)。
+        assert_eq!(cfg.local_port, Some(15432));
     }
 }

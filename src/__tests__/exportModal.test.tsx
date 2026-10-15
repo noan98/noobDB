@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { SAMPLE_COLUMNS, SAMPLE_ROWS, makeColumn } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 
@@ -243,6 +243,39 @@ describe("ExportModal 調査バンドル (#745)", () => {
     const { html } = lastWrittenHtml();
     expect(html).toContain(t("bundleSectionPlan"));
     expect(html).toContain("&quot;plan&quot;: 1");
+  });
+
+  it("含める列と行数の上限を選べ、持ち出し件数とプレビューに反映される (#1622)", () => {
+    renderBundle();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    const range = screen.getByTestId("export-bundle-range");
+    // 全列を含める既定では、どちらの列も外せる状態。
+    fireEvent.click(within(range).getByRole("checkbox", { name: /^id$/ }));
+    fireEvent.change(screen.getByLabelText(t("exportBundleRowLimit")), { target: { value: "1" } });
+    const warning = screen.getByTestId("export-bundle-warning");
+    expect(warning.textContent).toContain(t("exportBundleDataWarning", { rows: 1, cols: 1 }));
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    // id 列は出さず、残したマスク対象列は選んでも伏せ字のまま。
+    expect(preview).not.toContain('<th scope="col">id');
+    expect(preview).toContain(MASK_PLACEHOLDER);
+    expect(preview).not.toContain("alice@example.com");
+    expect(preview).not.toContain("bob@example.com");
+    // 最後の 1 列は外せない (空のバンドルを作らない)。
+    expect(within(range).getByRole("checkbox", { name: /user_email/ })).toBeDisabled();
+  });
+
+  it("除外した列は保存した HTML のスキーマ節にも出ない (#1622)", async () => {
+    vi.mocked(api.writeTextFile).mockClear();
+    renderBundle();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatBundle") }));
+    fireEvent.click(
+      within(screen.getByTestId("export-bundle-range")).getByRole("checkbox", { name: /^id$/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(api.writeTextFile).toHaveBeenCalled());
+    const { html } = lastWrittenHtml();
+    expect(html).not.toContain("<td>id</td>");
+    expect(html).toContain(t("bundleRangeLimited", { rows: 2, totalRows: 2, cols: 1, totalCols: 2 }));
   });
 });
 

@@ -242,6 +242,32 @@ describe("QueryEditor ツールバーのオーバーフロー (#915)", () => {
   });
 });
 
+describe("QueryEditor: カーソル以降の実行 (#1627)", () => {
+  it("カーソルの文から末尾までを 1 つのバッチとして onRun に渡す", () => {
+    const onRun = vi.fn();
+    const ref = createRef<QueryEditorHandle>();
+    renderWithProviders(
+      <QueryEditor ref={ref} onRun={onRun} initialSql={"SELECT 1;\nSELECT 2;\nSELECT 3"} />,
+    );
+    // 2 文目の途中。
+    ref.current?.selectRange(13, 13);
+    ref.current?.runFromCursor();
+    expect(onRun).toHaveBeenLastCalledWith("SELECT 2;\nSELECT 3");
+    // 先頭なら全文。
+    ref.current?.selectRange(0, 0);
+    ref.current?.runFromCursor();
+    expect(onRun).toHaveBeenLastCalledWith("SELECT 1;\nSELECT 2;\nSELECT 3");
+  });
+
+  it("空のエディタでは実行しない", () => {
+    const onRun = vi.fn();
+    const ref = createRef<QueryEditorHandle>();
+    renderWithProviders(<QueryEditor ref={ref} onRun={onRun} initialSql="  " />);
+    ref.current?.runFromCursor();
+    expect(onRun).not.toHaveBeenCalled();
+  });
+});
+
 describe("QueryEditor: AI にクエリを依頼 (#691)", () => {
   beforeEach(() => {
     setLocale("en");

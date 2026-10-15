@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
+import { matchesSearchTerms, searchTerms } from "./logSearch";
 import type { SemanticRole } from "./semanticColors";
 
 /**
@@ -191,9 +192,22 @@ export function isProblemOutcome(outcome: OutputOutcome): boolean {
   return PROBLEM_OUTCOMES.has(outcome);
 }
 
-export function filterOutput(list: readonly OutputEntry[], filter: OutputFilter): OutputEntry[] {
-  if (filter === "all") return [...list];
-  return list.filter((e) => isProblemOutcome(e.outcome));
+/**
+ * 絞り込み。`query` (#1627) は SQL・エラー本文・接続名・サーバ通知の文言の部分一致
+ * (空白区切りの語はすべて含む行だけ)。`filter` の「問題のみ」と併用できる。
+ */
+export function filterOutput(list: readonly OutputEntry[], filter: OutputFilter, query = ""): OutputEntry[] {
+  const terms = searchTerms(query);
+  return list.filter(
+    (e) =>
+      (filter === "all" || isProblemOutcome(e.outcome)) &&
+      matchesSearchTerms(terms, [
+        e.sql,
+        e.error,
+        e.connection,
+        ...(e.serverMessages ?? []).map((m) => m.text),
+      ]),
+  );
 }
 
 export function countProblems(list: readonly OutputEntry[]): number {
@@ -232,6 +246,62 @@ export function outputSummary(e: OutputEntry): { key: I18nKey; vars: Record<stri
     default:
       return { key: "outputSummaryError", vars: { error: firstLine(e.error ?? "") } };
   }
+}
+
+/**
+ * エラー本文から「文の中の行番号」(1 始まり) を求める (#1627)。
+ * - PostgreSQL: サーバの本文に `LINE n:` は載らない (psql が位置から作る装飾)。代わりにバックエンドが
+ *   末尾へ ` (position n)` (元の文の 1 始まりの文字オフセット) を足すので、`sql` の先頭からの
+ *   オフセットを行番号に変換する。`sql` が無ければ PG 由来の位置は使えず null。
+ * - MySQL / MariaDB: `... near '...' at line 3` の行番号をそのまま使う (文の先頭が 1 行目)。
+ * 行番号を含まないエラー (SQLite など) は null。
+ */
+export function parseErrorLine(error: string | null | undefined, sql?: string | null): number | null {
+  if (!error) return null;
+  const pos = /\(position (\d+)\)\s*$/.exec(error);
+  if (pos) {
+    const offset = Number(pos[1]);
+    if (sql == null || !Number.isSafeInteger(offset) || offset < 1) return null;
+    return lineOfCharOffset(sql, offset);
+  }
+  const m = /\bat line (\d+)\b/i.exec(error);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * `sql` の `offset` 文字目 (1 始まり、PostgreSQL の位置と同じくコードポイント単位) がある行
+ * (1 始まり) を返す。範囲外は最終行。改行は LF / CRLF / CR のどれでもよい。
+ */
+export function lineOfCharOffset(sql: string, offset: number): number {
+  let line = 1;
+  let count = 0;
+  const chars = Array.from(sql);
+  for (let i = 0; i < chars.length; i++) {
+    count += 1;
+    if (count >= offset) return line;
+    const c = chars[i];
+    if (c === "\n" || (c === "\r" && chars[i + 1] !== "\n")) line += 1;
+  }
+  return line;
+}
+
+/**
+ * `sql` の `line` 行目 (1 始まり、範囲外は最終行) の `[from, to)` オフセット。
+ * 改行は LF / CRLF / CR のどれでもよい。
+ */
+export function lineRangeOf(sql: string, line: number): { from: number; to: number } {
+  let from = 0;
+  const target = Math.max(1, Math.floor(line));
+  const re = /\r\n|\r|\n/g;
+  let current = 1;
+  for (let m = re.exec(sql); m !== null; m = re.exec(sql)) {
+    if (current === target) return { from, to: m.index };
+    current += 1;
+    from = m.index + m[0].length;
+  }
+  return { from, to: sql.length };
 }
 
 function firstLine(s: string): string {

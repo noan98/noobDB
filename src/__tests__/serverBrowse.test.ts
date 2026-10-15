@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   applyServerBrowse,
+  buildLikeClause,
   buildServerFilterClause,
   buildServerSortClause,
   escapeLikeValue,
   isServerFilterInputValid,
+  likePattern,
   serverFilterOpNeedsValue,
   splitInValues,
   type ServerFilter,
@@ -269,3 +271,24 @@ function quoteFor(driver: string, name: string): string {
   if (driver === "postgres" || driver === "sqlite") return `"${name}"`;
   return `\`${name}\``;
 }
+
+describe("buildLikeClause / likePattern (#1627)", () => {
+  it("パターンはワイルドカードをエスケープして mode に応じて % を付ける", () => {
+    expect(likePattern("a_b%c\\d", "contains")).toBe("%a\\_b\\%c\\\\d%");
+    expect(likePattern("x", "prefix")).toBe("x%");
+    expect(likePattern("x", "suffix")).toBe("%x");
+  });
+
+  it("ESCAPE 句は方言別に引用し、negate で NOT LIKE になる", () => {
+    expect(buildLikeClause("mysql", "`n`", "a_", "prefix")).toBe("`n` LIKE 'a\\\\_%' ESCAPE '\\\\'");
+    expect(buildLikeClause("postgres", '"n"', "a_", "prefix")).toBe(`"n" LIKE 'a\\_%' ESCAPE '\\'`);
+    expect(buildLikeClause("sqlite", '"n"', "it's", "contains", true)).toBe(
+      `"n" NOT LIKE '%it''s%' ESCAPE '\\'`,
+    );
+  });
+
+  it("サーバ側フィルタの contains と同じ生成", () => {
+    const f: ServerFilter = { column: "n", op: "contains", value: "a_b", numeric: false };
+    expect(buildServerFilterClause("mysql", f)).toBe(buildLikeClause("mysql", "`n`", "a_b", "contains"));
+  });
+});

@@ -2,7 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { SqlFileContent, TextEncodingId } from "../tauri";
+import type { SqlEncodingPreview, SqlFileContent, TextEncodingId } from "../tauri";
 
 export const fileCommands = {
   /**
@@ -24,6 +24,16 @@ export const fileCommands = {
   readSqlFile: (path: string, encoding?: TextEncodingId | null) =>
     invoke<SqlFileContent>("read_sql_file", { path, encoding: encoding ?? null }).then((r) =>
       parseResponse(schemas.sqlFileContent, r, "read_sql_file"),
+    ),
+
+  /**
+   * SQL ファイルの文字コードの自動判定結果と、候補ごとに先頭数 KB を読んだプレビューを返す (#1627)。
+   * 判定を誤ったときに、化けていない候補を目で見て選び直すための読み取り専用コマンド。
+   * 判定に失敗しても reject せず `detectError` に載せる。
+   */
+  previewSqlFileEncodings: (path: string) =>
+    invoke<SqlEncodingPreview>("preview_sql_file_encodings", { path }).then((r) =>
+      parseResponse(schemas.sqlEncodingPreview, r, "preview_sql_file_encodings"),
     ),
 
   /**

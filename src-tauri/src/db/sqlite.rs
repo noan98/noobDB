@@ -1649,6 +1649,9 @@ impl SqliteConn {
                             data_bytes: data,
                             index_bytes: index,
                             total_bytes: super::sum_size_parts(data, index),
+                            dead_rows: None,
+                            last_vacuum_at: None,
+                            last_analyze_at: None,
                         }
                     })
                     .collect());
@@ -1685,6 +1688,9 @@ impl SqliteConn {
                 data_bytes: None,
                 index_bytes: None,
                 total_bytes: None,
+                dead_rows: None,
+                last_vacuum_at: None,
+                last_analyze_at: None,
             })
             .collect())
     }
@@ -1738,6 +1744,7 @@ impl SqliteConn {
                 variables.push(ServerVariable {
                     name: (*name).to_string(),
                     value,
+                    source: None,
                 });
             }
         }

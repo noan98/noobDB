@@ -41,6 +41,8 @@ export interface EditorCommandContext {
 export interface EditorCommandActions {
   runAll: () => void;
   runStatement: () => void;
+  /** カーソルの文から末尾までを 1 つのバッチとして実行する (#1627)。 */
+  runFromCursor: () => void;
   formatSql: () => void;
   explain: () => void;
   focusEditor: () => void;
@@ -83,6 +85,15 @@ export function editorCommandItems(
         shortcut: ctx.shortcuts.runStatement,
         disabledReason: needsConnection,
         run: () => actions.runStatement(),
+      });
+      items.push({
+        id: "editor:run-from-cursor",
+        group: "navigation",
+        label: t("cmdkRunFromCursor"),
+        icon: "play",
+        keywords: "run from cursor rest batch statements 実行 カーソル以降 末尾 まとめて 後半",
+        disabledReason: needsConnection,
+        run: () => actions.runFromCursor(),
       });
       if (ctx.aiAvailable && ctx.sessionId) {
         items.push({

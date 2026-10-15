@@ -10,6 +10,7 @@ mod atomic_write;
 mod cache;
 mod commands;
 mod db;
+mod diagnostics;
 mod error;
 mod flight_recorder;
 mod history;
@@ -59,7 +60,8 @@ pub mod __test_api {
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
-        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+        generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
+        GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{
         ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,
@@ -84,12 +86,13 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
-        PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo,
-        TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema,
-        TableSizeInfo, UserPrivileges, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, KillOutcomeStatus, KillProcessOutcome,
+        KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
+        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
+        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -117,6 +120,8 @@ pub mod __test_api {
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
+    pub use crate::ssh::known_hosts_history::{KnownHostAction, KnownHostEvent};
+    pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -157,7 +162,7 @@ pub mod __test_api {
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
     pub use crate::commands::connection::ConnectResponse;
-    pub use crate::commands::logs::LogView;
+    pub use crate::commands::logs::{LogView, PerfStatus};
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags, SkippedProfile};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
@@ -165,6 +170,8 @@ pub mod __test_api {
     };
     pub use crate::history::HistoryEntry;
     pub use crate::import_templates::{ImportTemplate, TemplateColumn};
+    pub use crate::perf::PerfSample;
+    pub use crate::profiles::secrets::KeyringStatus;
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -258,7 +265,7 @@ pub mod __test_api {
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
-    pub use crate::commands::file::SqlFileContent;
+    pub use crate::commands::file::{SqlEncodingPreview, SqlFileContent};
     pub use crate::commands::import::{
         ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
         ImportStartedEvent, SheetImportResult, SkippedRowInfo,
@@ -272,7 +279,7 @@ pub mod __test_api {
         ScriptProgressEvent, ScriptRun,
     };
     pub use crate::db::script_analysis::ScriptAnalysis;
-    pub use crate::text_encoding::TextEncoding;
+    pub use crate::text_encoding::{EncodingPreview, TextEncoding};
 
     /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
     /// フロント `analyzeDangerousSql` の `DangerKind` と同じ文字列で、共有ゴールデン
@@ -1437,6 +1444,9 @@ pub fn run() {
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
             commands::ssh::resolve_ssh_config_host,
+            commands::ssh::list_known_hosts_history,
+            commands::ssh::scan_openssh_known_hosts,
+            commands::ssh::import_known_hosts,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
@@ -1488,6 +1498,7 @@ pub fn run() {
             commands::privileges::generate_drop_user_sql,
             commands::privileges::generate_alter_password_sql,
             commands::privileges::generate_privilege_diff_sql,
+            commands::privileges::generate_role_membership_sql,
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
@@ -1539,6 +1550,7 @@ pub fn run() {
             commands::history::get_history_sqls,
             commands::history::list_history_sql,
             commands::history::clear_history,
+            commands::history::delete_history_entries,
             commands::history::get_history_retention_days,
             commands::history::set_history_retention_days,
             commands::flight_recorder::list_flight_records,
@@ -1566,6 +1578,11 @@ pub fn run() {
             commands::plan_watch::plan_watch_import_legacy,
             commands::logs::read_logs,
             commands::logs::clear_logs,
+            commands::logs::get_perf_status,
+            commands::logs::set_perf_enabled,
+            commands::logs::clear_perf_samples,
+            commands::logs::build_diagnostic_bundle,
+            commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
             commands::export::export_tables_xlsx,
@@ -1595,6 +1612,7 @@ pub fn run() {
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,
+            commands::file::preview_sql_file_encodings,
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,

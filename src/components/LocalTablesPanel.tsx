@@ -1,11 +1,18 @@
+import { useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import type { LocalTableMeta } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import { CodePreview } from "./modalForm";
-import { PressableButton } from "./ui";
+import { Input, PressableButton, Select } from "./ui";
+import {
+  LOCAL_TABLE_SORTS,
+  parseLocalTableSort,
+  viewLocalTables,
+  type LocalTableSort,
+} from "./localTablesView";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 
@@ -34,6 +41,13 @@ interface Props {
   onSaveToFile: () => void;
 }
 
+const LOCAL_SORT_LABEL_KEYS: Record<LocalTableSort, I18nKey> = {
+  registered: "localPanelSortRegistered",
+  name: "localPanelSortName",
+  rows: "localPanelSortRows",
+  fetched: "localPanelSortFetched",
+};
+
 function formatFetchedAt(ms: number): string {
   try {
     return new Date(ms).toLocaleString();
@@ -55,6 +69,10 @@ export function LocalTablesPanel({
 }: Props) {
   const t = useT();
   const { confirm, dialog: confirmDialog } = useConfirm();
+  // 絞り込みと並べ替えは表示だけに効く (#1627)。登録済みのテーブルは変えない。
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<LocalTableSort>("registered");
+  const shown = useMemo(() => viewLocalTables(tables, query, sort), [tables, query, sort]);
 
   // 登録済みの結果セットは取り消せないので、削除の前に確認を挟む (#1532)。
   const requestDrop = async (name: string) => {
@@ -100,6 +118,38 @@ export function LocalTablesPanel({
           )}
         </Flex>
       </Flex>
+      {hasSession && tables.length > 0 && (
+        <Flex
+          gap="1.5"
+          px="3"
+          py="2"
+          borderBottomWidth="1px"
+          borderBottomColor="app.borderSubtle"
+          flexShrink={0}
+        >
+          <Input
+            type="search"
+            flex="1"
+            minW={0}
+            placeholder={t("localPanelFilterPlaceholder")}
+            aria-label={t("localPanelFilterPlaceholder")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <Select
+            w="auto"
+            aria-label={t("localPanelSortLabel")}
+            value={sort}
+            onChange={(e) => setSort(parseLocalTableSort(e.target.value))}
+          >
+            {LOCAL_TABLE_SORTS.map((s) => (
+              <option key={s} value={s}>
+                {t(LOCAL_SORT_LABEL_KEYS[s])}
+              </option>
+            ))}
+          </Select>
+        </Flex>
+      )}
       <Flex direction="column" flex="1" minH={0} overflowY="auto">
         {!hasSession || tables.length === 0 ? (
           <EmptyState
@@ -110,7 +160,12 @@ export function LocalTablesPanel({
           />
         ) : (
           <chakra.ul listStyleType="none" m="0" p="0">
-            {tables.map((tbl) => (
+            {shown.length === 0 && (
+              <chakra.li px="3" py="3" fontSize="sm" color="app.textMuted">
+                {t("localPanelFilterNoMatches")}
+              </chakra.li>
+            )}
+            {shown.map((tbl) => (
               <chakra.li
                 key={tbl.name}
                 px="3"

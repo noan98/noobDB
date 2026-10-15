@@ -1,11 +1,25 @@
-import { useId } from "react";
+import { useId, useMemo, useState } from "react";
 import { chakra, Flex, Text } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
 import type { ConnectionProfile } from "../api/tauri";
 import { useT } from "../i18n";
 import { staggerContainer, variants } from "../motion";
 import { driverColor, driverIconName, workspaceSpineColor } from "../profileIdentity";
-import { Heading, SelectableCard } from "./ui";
+import {
+  filterProfileCards,
+  PROFILE_SEARCH_MIN,
+  profileGroupNames,
+  UNGROUPED_FILTER,
+} from "../profileSearch";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import {
+  contextMenuTriggerFromRect,
+  isContextMenuOpenKey,
+  pickContextMenuOpenKeys,
+  type ContextMenuTriggerEvent,
+} from "./contextMenuKeyboard";
+import { useConfirm } from "./ConfirmDialog";
+import { Heading, Input, SelectableCard } from "./ui";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { GroupAvatar, ProfileBadges, ProfileColorChip } from "./ProfileBadge";
 import { Spinner } from "./Spinner";
@@ -51,6 +65,10 @@ interface Props {
   onConnect: (profile: ConnectionProfile) => void;
   /** 「新しい接続」カード — 空の接続フォームを開く。 */
   onCreate: () => void;
+  /** カードの右クリックメニュー (#1630)。未指定の操作は項目を出さない。 */
+  onEdit?: (profile: ConnectionProfile) => void;
+  onDuplicate?: (profile: ConnectionProfile) => void;
+  onDelete?: (profile: ConnectionProfile) => void;
 }
 
 /** プロファイルの接続先を 1 行で要約する (ヘッダーの表示と同じ書式)。 */
@@ -70,9 +88,58 @@ function endpointSummary(p: ConnectionProfile): string {
  * reduced-motion 時は `useReducedMotion` (MotionConfig の設定も反映) を渡して
  * 同時表示へフォールバックする。
  */
-export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }: Props) {
+export function ProfileCardGrid({
+  profiles,
+  connectingId,
+  onConnect,
+  onCreate,
+  onEdit,
+  onDuplicate,
+  onDelete,
+}: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  // 件数が多いときの検索 (名前・ホスト・グループ) とグループのチップ (#1630)。
+  const [query, setQuery] = useState("");
+  const [group, setGroup] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuEntry[] } | null>(null);
+  const showFilter = profiles.length >= PROFILE_SEARCH_MIN;
+  const groups = useMemo(() => profileGroupNames(profiles), [profiles]);
+  const hasUngrouped = useMemo(() => profiles.some((p) => !p.group), [profiles]);
+  // 絞り込みが効くのは検索欄を出している間だけ (件数が減って欄が消えたとき古い絞り込みで空にしない)。
+  const visible = useMemo(
+    () => (showFilter ? filterProfileCards(profiles, query, group) : profiles),
+    [showFilter, profiles, query, group],
+  );
+  const filtering = showFilter && (query.trim() !== "" || group !== null);
+
+  const openMenu = (e: ContextMenuTriggerEvent, p: ConnectionProfile) => {
+    if (!onEdit && !onDuplicate && !onDelete) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const items: ContextMenuEntry[] = [];
+    items.push({ label: t("contextMenuConnect"), onSelect: () => onConnect(p) });
+    if (onEdit) items.push({ label: t("contextMenuEdit"), onSelect: () => onEdit(p) });
+    if (onDuplicate) items.push({ label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) });
+    if (onDelete) {
+      items.push({
+        label: t("contextMenuDelete"),
+        danger: true,
+        onSelect: () => {
+          void confirm({
+            title: t("listDeleteConfirmTitle"),
+            message: t("listDeleteConfirm", { name: p.name }),
+            confirmLabel: t("contextMenuDelete"),
+            tone: "danger",
+          }).then((ok) => {
+            if (ok) onDelete(p);
+          });
+        },
+      });
+    }
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
 
   return (
     <Flex
@@ -94,6 +161,52 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
           {t("profileCardsSubtitle")}
         </Text>
       </Flex>
+      {showFilter && (
+        <Flex direction="column" align="center" gap="2" w="100%" maxW="960px">
+          <Input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t("profileCardsSearchPlaceholder")}
+            aria-label={t("profileCardsSearchAria")}
+            data-testid="profile-cards-search"
+            maxW="420px"
+          />
+          {groups.length > 0 && (
+            <Flex
+              gap="1.5"
+              wrap="wrap"
+              justify="center"
+              role="group"
+              aria-label={t("profileCardsGroupFilterAria")}
+            >
+              <GroupChip active={group === null} onClick={() => setGroup(null)}>
+                {t("profileCardsGroupAll")}
+              </GroupChip>
+              {groups.map((g) => (
+                <GroupChip key={g} active={group === g} onClick={() => setGroup(group === g ? null : g)}>
+                  {g}
+                </GroupChip>
+              ))}
+              {hasUngrouped && (
+                <GroupChip
+                  active={group === UNGROUPED_FILTER}
+                  onClick={() => setGroup(group === UNGROUPED_FILTER ? null : UNGROUPED_FILTER)}
+                >
+                  {t("profileCardsGroupNone")}
+                </GroupChip>
+              )}
+            </Flex>
+          )}
+          {filtering && (
+            <Text textStyle="caption" role="status">
+              {visible.length === 0
+                ? t("profileCardsNoMatches")
+                : t("profileCardsMatchCount", { shown: visible.length, total: profiles.length })}
+            </Text>
+          )}
+        </Flex>
+      )}
       <MotionFlex
         display="flex"
         flexWrap="wrap"
@@ -104,7 +217,7 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
         initial="initial"
         animate="animate"
       >
-        {profiles.map((p) => {
+        {visible.map((p) => {
           const connecting = connectingId === p.id;
           return (
             <ProfileCard
@@ -113,6 +226,7 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
               connecting={connecting}
               disabled={connectingId != null && !connecting}
               onConnect={() => onConnect(p)}
+              onMenu={openMenu}
             />
           );
         })}
@@ -142,7 +256,40 @@ export function ProfileCardGrid({ profiles, connectingId, onConnect, onCreate }:
           </SelectableCard>
         </MotionCardWrap>
       </MotionFlex>
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {confirmDialog}
     </Flex>
+  );
+}
+
+/** グループ絞り込みのチップ (トグル)。 */
+function GroupChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: string;
+}) {
+  return (
+    <chakra.button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      px="2.5"
+      py="0.5"
+      fontSize="xs"
+      borderRadius="pill"
+      borderWidth="1px"
+      borderColor={active ? "app.accent" : "app.border"}
+      bg={active ? "app.accent" : "transparent"}
+      color={active ? "app.accentText" : "app.textMuted"}
+      cursor="pointer"
+      _hover={active ? undefined : { bg: "app.hover", color: "app.text" }}
+    >
+      {children}
+    </chakra.button>
   );
 }
 
@@ -151,11 +298,13 @@ function ProfileCard({
   connecting,
   disabled,
   onConnect,
+  onMenu,
 }: {
   profile: ConnectionProfile;
   connecting: boolean;
   disabled: boolean;
   onConnect: () => void;
+  onMenu: (e: ContextMenuTriggerEvent, profile: ConnectionProfile) => void;
 }) {
   const t = useT();
   const descId = useId();
@@ -175,6 +324,12 @@ function ProfileCard({
       <SelectableCard
         type="button"
         onClick={onConnect}
+        onContextMenu={(e) => onMenu(e, p)}
+        onKeyDown={(e) => {
+          if (isContextMenuOpenKey(pickContextMenuOpenKeys(e))) {
+            onMenu(contextMenuTriggerFromRect(e.currentTarget.getBoundingClientRect()), p);
+          }
+        }}
         disabled={inert}
         aria-label={cardLabel}
         aria-describedby={descId}

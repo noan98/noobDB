@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   parseTextEncodingId,
+  convertLineEnding,
+  detectLineEnding,
+  parseLineEnding,
   planSaveAll,
   sqlSaveFileName,
   TEXT_ENCODING_OPTIONS,
@@ -81,5 +84,41 @@ describe("planSaveAll (#1631)", () => {
   });
   it("対象が無ければ空", () => {
     expect(planSaveAll([], () => "")).toEqual([]);
+  });
+});
+
+describe("改行コード (#1627)", () => {
+  it("convertLineEnding は LF / CRLF / CR の混在を正規化してから変換する", () => {
+    expect(convertLineEnding("a\nb\r\nc\rd", "lf")).toBe("a\nb\nc\nd");
+    expect(convertLineEnding("a\nb\r\nc\rd", "crlf")).toBe("a\r\nb\r\nc\r\nd");
+    // 二重化しない。
+    expect(convertLineEnding("a\r\nb", "crlf")).toBe("a\r\nb");
+    expect(convertLineEnding("", "crlf")).toBe("");
+    expect(convertLineEnding("no newline", "crlf")).toBe("no newline");
+  });
+
+  it("detectLineEnding は CRLF が LF 単独より多いときだけ crlf", () => {
+    expect(detectLineEnding("a\r\nb\r\nc")).toBe("crlf");
+    expect(detectLineEnding("a\nb\nc")).toBe("lf");
+    expect(detectLineEnding("a\r\nb\nc\nd")).toBe("lf");
+    expect(detectLineEnding("single line")).toBe("lf");
+  });
+
+  it("parseLineEnding は未知の値を null にする", () => {
+    expect(parseLineEnding("crlf")).toBe("crlf");
+    expect(parseLineEnding("lf")).toBe("lf");
+    expect(parseLineEnding("cr")).toBeNull();
+  });
+
+  it("planSaveAll はタブが覚えている改行コードで変換する", () => {
+    const plan = planSaveAll(
+      [
+        { id: "a", kind: "query", title: "a", fileLineEnding: "crlf" },
+        { id: "b", kind: "query", title: "b" },
+      ],
+      () => "x\ny",
+    );
+    expect(plan.map((p) => p.sql)).toEqual(["x\r\ny", "x\ny"]);
+    expect(plan.map((p) => p.lineEnding)).toEqual(["crlf", "lf"]);
   });
 });

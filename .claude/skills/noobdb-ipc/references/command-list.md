@@ -73,7 +73,10 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `list_known_hosts`
 - `forget_host_key`
 - `trust_host_key`
-- `resolve_ssh_config_host`
+- `resolve_ssh_config_host` (#708。#1630 で `Host *` / `Include` / `Match host|all` を OpenSSH 規則で解決)
+- `list_known_hosts_history` (#1630。信頼・削除・取り込みの履歴。ホスト名・ポート・指紋のみ)
+- `scan_openssh_known_hosts` (#1630。`~/.ssh/known_hosts` の平文エントリを読む。読み取り専用)
+- `import_known_hosts` (#1630。選択された候補を `set_host_key` で取り込み、履歴に残す)
 
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
@@ -239,10 +242,11 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `generate_create_user_sql`
 - `generate_drop_user_sql`
 - `generate_alter_password_sql`
-- `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成)
+- `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成。`changes[].columns` で列単位 #1622)
+- `generate_role_membership_sql` (#1622。ロールの付与 / 剥奪 SQL。MySQL 8 `'role'@'host'` / PostgreSQL)
 - `apply_privilege_sql`
 
-`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 / MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。任意引数 `statement_only` (`statementOnly`) が true なら接続は残して実行中の文だけを止める (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`、#1538)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
+`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL / MySQL とも 1 接続上で pid (id) ごとに順に実行する。結果は `{killed, failed, first_error, outcomes}` で、`outcomes` は id ごとの `{id, status, error}` (`killed` / `already_gone` / `failed` / `skipped`)。自接続を文のみ停止の対象に含めたときは `skipped` で、件数 (`killed` / `failed`) には数えない (#1259 / #1622)。任意引数 `statement_only` (`statementOnly`) が true なら接続は残して実行中の文だけを止める (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`、#1538)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
@@ -346,6 +350,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_profiles`
 - `list_skipped_profiles` (一覧に出ないプロファイルの要約。解釈できない要素と対応外ドライバ。秘密は含めない、#1614)
+- `check_keyring` (#1622。OS keyring の疎通診断。一時エントリを書いて読み戻して削除し、`{available, reason}` だけ返す。秘密・エラー本文は返さない)
 - `delete_skipped_profile` (解釈できず読み飛ばされた要素を `profiles.json` から削除、#1614)
 - `reveal_profile_secret`
 - `save_profile`
@@ -369,9 +374,12 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)
 - `list_history_sql`
 - `clear_history`
+- `delete_history_entries` (#1627。id 指定の一括削除。履歴の「表示中を削除」「選択を削除」。上限 10,000 件、存在しない id は無視、削除件数を返す)
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
+- `get_perf_status` / `set_perf_enabled` / `clear_perf_samples` (#1622。パフォーマンス計測の状態・設定のトグル・直近値の破棄。SQL 本文は含めない)
+- `build_diagnostic_bundle` (#1622。ログ + 版情報を匿名化したテキスト。ホスト・ユーザ・パス・SQL リテラルは伏せる)
 
 履歴 (#1256): `list_history` は SQL 全文ではなく `sql_preview` (空白を畳んだ先頭 400
 文字、超過は `…`) と `sql_len` を返す。全文は `get_history_sql(id)` を復元・コピー・
@@ -392,6 +400,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `preview_create_table_ddl`
 - `read_text_file`
 - `read_sql_file`
+- `preview_sql_file_encodings`
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
@@ -440,6 +449,12 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `write_text_file` の `encoding` へ渡して同じ文字コードに書き戻す。識別子は `utf-8` / `utf-8-bom` /
 `utf-16le` / `utf-16be` / `shift_jis` / `euc-jp` (Rust `text_encoding::TextEncoding`)。`read_text_file`
 (JSON の設定ファイルなど) は従来どおり UTF-8 固定。
+
+`preview_sql_file_encodings` (`commands/file.rs`, #1627) は SQL ファイルの文字コード自動判定の結果
+(`detected` / 失敗時は `detectError`) と、全候補 (`utf-8` / `utf-8-bom` / `shift_jis` / `euc-jp` /
+`utf-16le` / `utf-16be`) で先頭 4 KB を読んだ先頭 5 行 (`candidates[].lines`、不正バイトは U+FFFD に置換、
+`valid` は不正の有無) を返す読み取り専用コマンド。`SqlFileEncodingModal` が判定ミスの選び直しに使い、
+実際の読み込みは選んだ文字コードで `read_sql_file` が行う。
 
 `write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
 まま書く (上限 32 MiB)。`encoding` (#1535) を省略すると BOM なし UTF-8。指定すると変換して書き、

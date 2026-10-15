@@ -177,3 +177,22 @@ describe("formatMs", () => {
     expect(formatMs(-1)).toBe("–");
   });
 });
+
+import { tailExplainBlockReason } from "../components/queryInspector";
+
+describe("tailExplainBlockReason (#1622)", () => {
+  it("SELECT / DML / WITH は EXPLAIN できる (先頭コメントがあっても)", () => {
+    expect(tailExplainBlockReason("SELECT * FROM t WHERE id = 1")).toBeNull();
+    expect(tailExplainBlockReason("  update t set a = 1")).toBeNull();
+    expect(tailExplainBlockReason("/* app */ -- c\nWITH x AS (SELECT 1) SELECT * FROM x")).toBeNull();
+    expect(tailExplainBlockReason("INSERT INTO t VALUES (1)")).toBeNull();
+  });
+
+  it("権限不足の置換テキスト・DDL・$1 パラメータ付きは理由コードを返す", () => {
+    expect(tailExplainBlockReason("<insufficient privilege>")).toBe("masked");
+    expect(tailExplainBlockReason("CREATE TABLE t (id int)")).toBe("unsupported");
+    expect(tailExplainBlockReason("SET search_path = x")).toBe("unsupported");
+    expect(tailExplainBlockReason("SELECT * FROM t WHERE id = $1")).toBe("parameterized");
+    expect(tailExplainBlockReason("")).toBe("unsupported");
+  });
+});

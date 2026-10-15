@@ -49,7 +49,7 @@ import { KeepAlive } from "./KeepAlive";
 import { ResultGridSlot } from "./ResultGridSlot";
 import { GRID_KEEP_ALIVE_LIMIT } from "./keepAliveSet";
 import { type Status } from "../statusMessage";
-import { estimatedTotalPages } from "../pagination";
+import { estimatedTotalPages, exactCountKey, matchingExactCount, totalPagesFromCount } from "../pagination";
 import { Tooltip } from "./Tooltip";
 import type { Tab, PaneState } from "../App";
 import type { Settings } from "../settings";
@@ -96,11 +96,23 @@ export function PaneEmpty({ children }: { children: ReactNode }) {
  * ソートのみ (WHERE なし) なら行数は変わらないので、そのまま概算を使う。
  */
 export function tableTotalPagesEstimate(
-  tab: Pick<Tab, "serverFilter" | "rowEstimateTotal">,
+  tab: Pick<Tab, "serverFilter" | "rowEstimateTotal"> & Partial<Pick<Tab, "paginatable" | "exactRowCount">>,
   pageSize: number,
 ): number | null {
+  // 「正確な件数を数える」(#1627) で確定した件数は、条件が同じ間は推定より優先する
+  // (サーバ側フィルタ適用中でも使える。件数は条件ごとに数え直すため)。
+  const exact = tableExactRowCount(tab);
+  if (exact != null) return totalPagesFromCount(exact, pageSize);
   if (tab.serverFilter) return null;
   return estimatedTotalPages(tab.rowEstimateTotal ?? null, pageSize);
+}
+
+/** 今の表示条件 (ベース SQL + サーバ側フィルタ) に対して数え終えた正確な件数。無ければ null。 */
+export function tableExactRowCount(
+  tab: Pick<Tab, "serverFilter"> & Partial<Pick<Tab, "paginatable" | "exactRowCount">>,
+): number | null {
+  if (!tab.paginatable) return null;
+  return matchingExactCount(tab.exactRowCount, exactCountKey(tab.paginatable, tab.serverFilter ?? null));
 }
 
 /** 逆方向 FK のキャッシュキー (セッション + DB + テーブル)。 */
@@ -131,6 +143,7 @@ export interface PaneActions {
   applyEditsForTab: (tab: Tab, rowScope?: PendingEdits) => Promise<boolean>;
   clearEditsForTab: (tabId: string) => void;
   closePane: (paneId: string) => void;
+  countExactRowsInTab: (tabId: string) => void;
   discardEditsAndPreviewForTab: (tabId: string) => void;
   discardRowOpsForTab: (tabId: string) => void;
   explainForTab: (tab: Tab, sql: string) => void;
@@ -1317,6 +1330,12 @@ export const PaneView = memo(
                                 pageSize={tab.pageSize ?? tab.previewRowLimit}
                                 rowsOnPage={tab.result.rows.length}
                                 totalPages={tableTotalPagesEstimate(tab, tab.pageSize ?? tab.previewRowLimit)}
+                                totalExact={tableExactRowCount(tab) != null}
+                                exactRowCount={tableExactRowCount(tab)}
+                                counting={!!tab.countingRows}
+                                onCountExact={gridStable.fn(`${tab.id}:countExact`, () =>
+                                  actions.countExactRowsInTab(tab.id),
+                                )}
                                 loading={tab.loadingMore}
                                 onGoToPage={gridStable.fn(`${tab.id}:goToPage`, (p: number) =>
                                   actions.goToPageInTab(tab.id, p),

@@ -330,3 +330,38 @@ export function statRowsToTable<T extends StatRowLike>(
     ]),
   };
 }
+
+// ── テールの行から EXPLAIN (#1622) ─────────────────────────────────────
+
+// 先頭の行コメントとブロックコメントと空白を取り除く。
+function stripLeadingSqlComments(sql: string): string {
+  let s = sql.trimStart();
+  for (;;) {
+    if (s.startsWith("--")) {
+      const nl = s.indexOf("\n");
+      s = nl === -1 ? "" : s.slice(nl + 1).trimStart();
+    } else if (s.startsWith("/*")) {
+      const end = s.indexOf("*/");
+      s = end === -1 ? "" : s.slice(end + 2).trimStart();
+    } else {
+      return s;
+    }
+  }
+}
+
+/**
+ * ライブテールで観測した SQL 原文を EXPLAIN に渡せるかを判定する純関数 (#1622)。EXPLAIN のみ (ANALYZE は
+ * 使わない) で、SELECT / INSERT / UPDATE / DELETE / REPLACE / WITH だけが対象。次のものは実行計画を
+ * 取れないので `null` ではなく理由コードを返す:
+ * - `masked`: 権限不足で本文が見えない
+ * - `unsupported`: 計画の対象外の文 (DDL・SET など)
+ * - `parameterized`: PostgreSQL の `$1` 形式のパラメータを含み、値が無いと計画を立てられない
+ * 使えるなら `null`。
+ */
+export function tailExplainBlockReason(query: string): "masked" | "unsupported" | "parameterized" | null {
+  if (isPrivilegeMasked(query)) return "masked";
+  const body = stripLeadingSqlComments(query);
+  if (!/^(select|insert|update|delete|replace|with)\b/i.test(body)) return "unsupported";
+  if (/\$\d+/.test(body)) return "parameterized";
+  return null;
+}

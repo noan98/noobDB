@@ -253,6 +253,12 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
         "Threads_connected must be reported and >= 1, got {:?}",
         m.connections
     );
+    // 接続数の上限 (#1622)。
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported, got {:?}",
+        m.max_connections
+    );
     // Questions は起動以降の累積なので必ず正。
     assert!(
         m.questions.is_some_and(|q| q >= 1),
@@ -1081,6 +1087,15 @@ async fn mysql_process_list_and_kill() {
         mixed.failed >= 1 && mixed.first_error.is_some(),
         "{mixed:?}"
     );
+    // id ごとの成否 (#1622): 存在しない id は個別の失敗として理由つきで報告される。
+    let missing = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("outcome for the missing id");
+    assert_eq!(missing.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(missing.error.is_some());
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
 
     // The server tears the thread down asynchronously; poll briefly.
     let mut gone = false;
@@ -3645,4 +3660,71 @@ async fn mysql_column_profile_sampled_is_subset_of_table() {
     conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
         .await
         .expect("cleanup");
+}
+
+/// ロールの付与・一覧・剥奪 (#1622)。`list_db_users` が `mysql.role_edges` から
+/// `member_of` を `role@host` で埋め、剥奪 SQL (ホスト付き) で外せること。MySQL 8 以外
+/// (ロールを作れない版) ではスキップする。
+#[tokio::test]
+async fn mysql_role_membership_is_listed_and_revocable() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP USER IF EXISTS 'noobdb_t1622_u'@'%'",
+        "DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'",
+    ] {
+        let _ = conn.execute(sql, None).await;
+    }
+    if conn
+        .execute("CREATE ROLE 'noobdb_t1622_r'@'%'", None)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: roles are not supported by this server");
+        conn.close().await;
+        return;
+    }
+    conn.execute("CREATE USER 'noobdb_t1622_u'@'%'", None)
+        .await
+        .expect("create user");
+
+    let grant = t::generate_role_grant_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&grant, None).await.expect("grant role");
+    let member_of = |users: Vec<t::DbUserInfo>| {
+        users
+            .into_iter()
+            .find(|u| u.name == "noobdb_t1622_u")
+            .map(|u| u.member_of)
+            .unwrap_or_default()
+    };
+    let listed = member_of(conn.list_db_users().await.expect("list users"));
+    assert_eq!(listed, vec!["noobdb_t1622_r@%".to_string()]);
+
+    let revoke = t::generate_role_revoke_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&revoke, None).await.expect("revoke role");
+    assert!(member_of(conn.list_db_users().await.expect("list users")).is_empty());
+
+    let _ = conn
+        .execute("DROP USER IF EXISTS 'noobdb_t1622_u'@'%'", None)
+        .await;
+    let _ = conn
+        .execute("DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'", None)
+        .await;
+    conn.close().await;
 }

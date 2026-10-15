@@ -131,12 +131,18 @@ export const tableSizeInfo = z.object({
   data_bytes: z.number().nullable(),
   index_bytes: z.number().nullable(),
   total_bytes: z.number().nullable(),
+  // PostgreSQL の肥大・統計の古さ (#1622)。
+  dead_rows: z.number().nullish(),
+  last_vacuum_at: z.number().nullish(),
+  last_analyze_at: z.number().nullish(),
 });
 
 /** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。 */
 export const serverVariable = z.object({
   name: z.string(),
   value: z.string(),
+  // 値の出どころ (#1622)。
+  source: z.string().nullish(),
 });
 
 /** サーバ情報 (バージョン + 設定変数一覧)。 */
@@ -166,6 +172,15 @@ export const processInfo = z.object({
   query_truncated: z.boolean(),
   is_self: z.boolean(),
   blocked_by: z.array(z.number()),
+  // VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ。
+  progress: z
+    .object({
+      kind: z.enum(["vacuum", "create_index"]),
+      phase: z.string(),
+      done: z.number(),
+      total: z.number(),
+    })
+    .nullish(),
 });
 
 /** `insert_generated_rows` の結果 (#1259)。 */
@@ -179,6 +194,14 @@ export const killProcessesResult = z.object({
   killed: z.number(),
   failed: z.number(),
   first_error: z.string().nullable(),
+  // プロセス id ごとの成否 (#1622)。
+  outcomes: z.array(
+    z.object({
+      id: z.number(),
+      status: z.enum(["killed", "already_gone", "failed", "skipped"]),
+      error: z.string().nullable(),
+    }),
+  ),
 });
 
 /** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
@@ -216,6 +239,8 @@ export const serverMetrics = z.object({
   questions: z.number().nullable(),
   slow_queries: z.number().nullable(),
   lock_waits: z.number().nullable(),
+  // サーバの接続数上限 (#1622)。
+  max_connections: z.number().nullish(),
 });
 
 /** 接続ヘルスの一括プローブ (`health_probe_all`, #1259) の 1 セッション分。 */
@@ -237,6 +262,34 @@ export const knownHost = z.object({
   fingerprint: z.string(),
 });
 export const knownHostArray = z.array(knownHost);
+
+/** known_hosts の信頼・削除・取り込みの履歴 1 件 (ホスト名・ポート・指紋のみ)。#1630。 */
+export const knownHostEvent = z.object({
+  at: z.string(),
+  action: z.enum(["trust", "forget", "import"]),
+  host: z.string(),
+  port: z.number(),
+  fingerprint: z.string(),
+  previous_fingerprint: z.string().nullable(),
+});
+export const knownHostEventArray = z.array(knownHostEvent);
+
+/** OpenSSH known_hosts の取り込みスキャン結果。#1630。 */
+export const importScan = z.object({
+  found: z.boolean(),
+  candidates: z.array(
+    z.object({
+      host: z.string(),
+      port: z.number(),
+      fingerprint: z.string(),
+      key_type: z.string(),
+      status: z.enum(["new", "same", "conflict"]),
+      existing_fingerprint: z.string().nullable(),
+    }),
+  ),
+  hashed_skipped: z.number(),
+  other_skipped: z.number(),
+});
 
 /**
  * What `resolve_ssh_config_host` can prefill from a `~/.ssh/config` `Host`
@@ -388,6 +441,8 @@ const sshProfile = z.object({
   private_key_path: z.string(),
   // 旧プロファイル (#708 以前) には無いフィールドなので optional/nullable。
   jump: sshJumpProfile.nullable().optional(),
+  // トンネルのローカル待受ポート固定 (#1630)。未指定 / null は自動割当。
+  local_port: z.number().nullable().optional(),
 });
 
 export const connectionProfile = z.object({
@@ -559,6 +614,30 @@ export const historyEntry = z.object({
 export const logView = z.object({
   text: z.string(),
   path: z.string().nullable(),
+});
+
+const perfSample = z.object({
+  at_ms: z.number(),
+  kind: z.string(),
+  sql_execute_ms: z.number().nullable(),
+  emit_ms: z.number().nullable(),
+  payload_bytes_approx: z.number().nullable(),
+  rows: z.number(),
+  columns: z.number(),
+});
+
+/** パフォーマンス計測の状態と直近値 (#1622)。 */
+export const perfStatus = z.object({
+  enabled: z.boolean(),
+  ui_enabled: z.boolean(),
+  env_enabled: z.boolean(),
+  samples: z.array(perfSample),
+});
+
+/** OS keyring の疎通診断 (#1622)。理由は固定コードのみ。 */
+export const keyringStatus = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
 });
 
 // #735 DML フライトレコーダ / Undo。
@@ -1632,6 +1711,13 @@ export const textEncoding = z.enum(["utf-8", "utf-8-bom", "utf-16le", "utf-16be"
 export const sqlFileContent = z.object({
   content: z.string(),
   encoding: textEncoding,
+});
+
+/** `preview_sql_file_encodings` の戻り値 (#1627)。候補ごとの先頭数行と自動判定の結果。 */
+export const sqlEncodingPreview = z.object({
+  detected: textEncoding.nullable(),
+  detectError: z.string().nullable(),
+  candidates: z.array(z.object({ encoding: textEncoding, valid: z.boolean(), lines: z.array(z.string()) })),
 });
 
 const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);
