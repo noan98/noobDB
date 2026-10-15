@@ -41,9 +41,11 @@ import { resultCommands } from "./commands/result";
 import { dumpCommands } from "./commands/dump";
 import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
+import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
+import { windowCommands } from "./commands/window";
 import { cellBlobCommands } from "./commands/cellBlob";
 import { flightRecorderCommands } from "./commands/flightRecorder";
 import { timelapseCommands } from "./commands/timelapse";
@@ -400,6 +402,37 @@ export interface AssertionOutcome extends AssertionSql {
   /** row_count は総行数、それ以外は違反件数。 */
   observed: number;
   elapsed_ms: number;
+  /** 前回の結果 (初回は null)。観測値の履歴 (#1621) から引く。 */
+  previous: AssertionPrevious | null;
+}
+
+/** 前回のアサーション実行結果 (#1621)。 */
+export interface AssertionPrevious {
+  /** 実行時刻 (UTC, RFC 3339)。 */
+  at: string;
+  observed: number;
+  passed: boolean;
+}
+
+/** `accepted_values` の候補 (列の DISTINCT 値、#1621)。 */
+export interface AcceptedValuesCandidates {
+  values: string[];
+  /** 種類が多すぎて打ち切ったか。 */
+  truncated: boolean;
+}
+
+/** アサーション取り込みで読めなかった要素 (#1621)。 */
+export interface AssertionImportRejection {
+  index: number;
+  name: string | null;
+  error: string;
+}
+
+/** `import_assertions` の結果 (#1621)。 */
+export interface ImportAssertionsResult {
+  imported: Assertion[];
+  skipped_duplicates: number;
+  rejected: AssertionImportRejection[];
 }
 
 export interface HistoryEntry {
@@ -562,11 +595,18 @@ export type ObjectSearchScope = { kind: "current"; database: string } | { kind: 
 
 /** グローバルオブジェクト検索のヒット 1 件。テーブルそのものか、テーブル内のカラムか。 */
 export interface ObjectSearchHit {
-  kind: "table" | "column";
+  kind: "table" | "column" | "view" | "routine" | "trigger";
   database: string;
+  /** テーブル・カラムのヒットではテーブル名。ビュー / ルーチン / トリガーではオブジェクト名。 */
   table: string;
   /** `kind === "column"` のときだけ設定。 */
   column?: string;
+  /** `kind` が view / routine / trigger のときの `SchemaObject.kind` (定義を開くのに使う)。 */
+  object_kind?: string;
+  /** `SchemaObject.id` (PostgreSQL の oid など)。 */
+  object_id?: string;
+  /** `kind === "table"` のときの推定行数 (索引構築時の概算。統計が無ければ無い)。 */
+  row_estimate?: number;
 }
 
 /** Where-used (#1027 / #1261) の検索対象。`column` が null ならテーブル (ビュー) そのもの。 */
@@ -661,6 +701,8 @@ export interface DataSearchRequest {
   tables: string[];
   /** 概算行数がこれを超えるテーブルは走査しない。 */
   rowThreshold: number;
+  /** 日付・日時列も文字列として検索する (#1623)。省略は false。 */
+  includeDates?: boolean;
 }
 
 /** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
@@ -756,6 +798,16 @@ export interface TableStatistic extends TableSizeInfo {
   index_count: number;
   has_primary_key: boolean;
   foreign_key_count: number;
+  /** 前回取得時の値 (#1621)。増減 (今回 − 前回) の基準。初回・前回に無かったテーブルは null。 */
+  previous: TableStatPrevious | null;
+}
+
+/** 前回取得時のテーブル統計 (#1621)。 */
+export interface TableStatPrevious {
+  /** 前回取得の時刻 (UTC, RFC 3339)。 */
+  at: string;
+  row_estimate: number | null;
+  total_bytes: number | null;
 }
 
 /** 列編集ダイアログの初期ロード一式 (`alter_table_context`、#1255)。 */
@@ -1195,6 +1247,16 @@ export interface SchemaSnapshotTable {
 }
 
 /** 保存済みスキーマ世代のメタデータ (スキーマドリフト・タイムライン #736 / #1260)。 */
+/** 巻き戻し DDL の生成結果 (#1621)。`plan` は現在側の世代を戻したい世代の形へ揃える DDL。 */
+export interface SchemaDriftRevertSql {
+  plan: SyncPlan;
+  /** 破壊的な文 (DROP) の許可が無いため出力しなかった数。 */
+  omitted_destructive: number;
+  database: string;
+  /** 文の前に置く対象指定 (MySQL は USE、PostgreSQL は SET search_path)。SQLite は null。 */
+  preamble: string | null;
+}
+
 export interface SchemaDriftGeneration {
   id: string;
   /** 取得時刻 (RFC 3339)。 */
@@ -1209,6 +1271,8 @@ export interface SchemaDriftGeneration {
   omitted: boolean;
   /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
   triggerSql?: string | null;
+  /** 利用者が付けたラベル (#1621)。ラベル付きの世代はローテーションで消えない。 */
+  label?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
@@ -1312,6 +1376,8 @@ export interface PlanWatchRefreshResult {
   errors: { snippetId: string; name: string; error: string }[];
   /** 前世代から警告相当の変化 (フルスキャンへの退行など) があったスニペットの名前。 */
   warned: string[];
+  /** `warned` と同じ並びの、警告の先頭 1 件の要約 (`orders: Index Scan → Parallel Seq Scan`, #1621)。 */
+  warnedSummaries: string[];
 }
 
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
@@ -1343,6 +1409,8 @@ export interface HealthFinding {
   fix_ddl_online: string | null;
   /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
   statistical: boolean;
+  /** 削除で空く容量 (バイト)。未使用インデックスで、エンジンから取れたときだけ (#1621)。 */
+  size_bytes: number | null;
 }
 
 /** 前提を満たさずスキップしたルールと機械可読な理由コード。 */
@@ -1370,6 +1438,22 @@ export interface SchemaHealthReport {
   skipped: SkippedRule[];
   /** テーブル単位のまとめ DDL (#1540)。 */
   table_plans: TableFixPlan[];
+  /** 「対応しない」にした指摘 (#1621)。`findings` からは除かれ、別枠に折りたたんで出す。 */
+  ignored: HealthFinding[];
+  /** 前回診断 (同じセッション・同じデータベース) との差分 (#1621)。初回は null。 */
+  diff: AdvisorDiff | null;
+}
+
+/** 前回診断との差分 (#1621)。 */
+export interface AdvisorDiff {
+  /** 前回診断の時刻 (UTC, RFC 3339)。 */
+  previous_at: string;
+  /** 今回の `findings` のうち前回は無かった指摘の添字。 */
+  new_indexes: number[];
+  /** 前回は出ていて今回は消えた (解消された) 指摘。 */
+  resolved: HealthFinding[];
+  /** 前回から続いている指摘の件数。 */
+  unchanged: number;
 }
 
 /** What a generated sync statement does. */
@@ -1483,6 +1567,27 @@ export interface TimelapseGenerationDiff {
   partial: boolean;
   from_captured_at: string;
   to_captured_at: string;
+}
+
+/** 主キー指定の 1 行の値の推移 (#1621)。変化があった世代だけが古い順に並ぶ。 */
+export interface TimelapseRowHistoryEntry {
+  generation_id: number;
+  captured_at: string;
+  /** false = この世代でその行が無くなった。 */
+  present: boolean;
+  /** `columns` と同じ並びの値。`present` が false のとき null。 */
+  row: CellValue[] | null;
+  /** 直前の存在世代から値が変わった列 (初出・再出現は空)。 */
+  changed_columns: string[];
+}
+
+export interface TimelapseRowHistory {
+  columns: string[];
+  primary_key: string[];
+  entries: TimelapseRowHistoryEntry[];
+  generations_scanned: number;
+  /** 部分取得の世代を含む (範囲外の行が「消えた」ように見えうる)。 */
+  partial: boolean;
 }
 
 /**
@@ -1710,10 +1815,14 @@ export interface ConnectRetry {
   interval_secs: number;
 }
 
-/** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
+/**
+ * タスクの発火スケジュール。`daily` の時刻は `timezone` (IANA 名) のローカル時刻で、
+ * 省略 / null は UTC (旧データ)。`weekdays` は月 = bit0 … 日 = bit6 のマスクで、
+ * 0 / 省略は毎日 (曜日は `timezone` のローカル日付で判定, #1621)。
+ */
 export type TaskSchedule =
   | { kind: "interval"; minutes: number }
-  | { kind: "daily"; hour: number; minute: number };
+  | { kind: "daily"; hour: number; minute: number; timezone?: string | null; weekdays?: number };
 
 export interface TaskDefinition {
   id: string;
@@ -1728,6 +1837,12 @@ export interface TaskDefinition {
   last_run_at: string | null;
   last_status: string | null;
   connect_retry: ConnectRetry;
+  /** 連続この回数失敗したら自動で一時停止する (0 = しない, #1621)。 */
+  pause_after_failures: number;
+  /** 現在の連続失敗回数 (成功で 0 に戻る)。 */
+  consecutive_failures: number;
+  /** 連続失敗で自動停止した時刻 (手動で再有効化すると null)。 */
+  auto_paused_at: string | null;
 }
 
 export interface SaveTaskRequest {
@@ -1738,6 +1853,8 @@ export interface SaveTaskRequest {
   schedule: TaskSchedule;
   enabled: boolean;
   connect_retry?: ConnectRetry;
+  /** 連続失敗で自動停止するまでの回数 (0 / 省略 = しない, #1621)。 */
+  pause_after_failures?: number;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -1850,6 +1967,8 @@ export type NewColumnType =
 export interface NewTableColumn {
   name: string;
   type: NewColumnType;
+  /** 主キーに含める (#1623)。複数列なら複合主キー。主キー列は NOT NULL になる。 */
+  primaryKey?: boolean;
 }
 
 export interface ColumnMapping {
@@ -1940,9 +2059,11 @@ export const api = {
   ...dumpCommands,
   ...dumpToolsCommands,
   ...importCommands,
+  ...importTemplatesCommands,
   ...scriptCommands,
   ...transferCommands,
   ...fileCommands,
+  ...windowCommands,
   ...cellBlobCommands,
   ...flightRecorderCommands,
   ...timelapseCommands,
@@ -2053,6 +2174,10 @@ export interface QueryStreamPatchMessage {
   unchanged: boolean;
   /** 前回にあって今回に対応が無い行数。 */
   removedCount: number;
+  /** 前回に対応が無い (新しく現れた) 行数 (#1621)。 */
+  addedCount: number;
+  /** 前回と対応するが値が変わった行数 (#1621)。 */
+  changedCount: number;
   runs: QueryStreamPatchRun[];
 }
 
@@ -2199,6 +2324,45 @@ export interface SkippedRowInfo {
   reason: string;
 }
 
+/** スキップ行の書き出し形式 (#1623)。`csv` / `ndjson` は元の行データを書き出す。 */
+export type SkippedExportFormat = "text" | "csv" | "ndjson";
+
+/** 取り込みの事前検証 (dry run) の結果 (#1623)。 */
+export interface ImportDryRunResult {
+  total: number;
+  failed: number;
+  /** 拒否された行の先頭一部。 */
+  failures: SkippedRowInfo[];
+  /** false: 新規テーブル作成を伴うため DB への試し書きはしていない。 */
+  dbChecked: boolean;
+}
+
+/** 保存済みの取り込みマッピング (#1623)。 */
+export interface ImportTemplateColumn {
+  column: string;
+  header?: string | null;
+  csvIndex: number;
+}
+
+export interface ImportTemplate {
+  id: string;
+  profileId: string;
+  database?: string | null;
+  table: string;
+  format: string;
+  delimiter: string;
+  quote: string;
+  hasHeader: boolean;
+  nullToken?: string | null;
+  encoding: string;
+  sheet?: string | null;
+  conflictMode?: string | null;
+  errorMode?: string | null;
+  keyColumns: string[];
+  mapping: ImportTemplateColumn[];
+  updatedAtMs: number;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
@@ -2210,6 +2374,26 @@ export interface ImportDoneEvent {
   skipped: SkippedRowInfo[];
   /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
   skippedTotal: number;
+  /** 件数が多く、一部のスキップ行の元の行データを保持していない (#1623)。 */
+  skippedDataTruncated?: boolean;
+  /** 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは空。 */
+  sheets: SheetImportResult[];
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの結果 (#1623)。 */
+export interface SheetImportResult {
+  sheet: string;
+  table: string;
+  inserted: number;
+  skippedTotal: number;
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの指定 (#1623)。 */
+export interface SheetImportSpec {
+  sheet: string;
+  table: string;
+  mapping: ColumnMapping[];
+  createTable?: NewTableColumn[] | null;
 }
 
 /** BLOB セルの probe 結果 (#1258)。本体を運ばずサイズと種別だけ。 */
@@ -2301,6 +2485,44 @@ export interface TransferRequest {
   conflictMode?: "skip" | "update" | null;
   /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
   keyColumns?: string[] | null;
+  /** 列の除外・改名・型上書き (#1623)。指定のない列はそのまま転送する。 */
+  columns?: TransferColumnSpec[];
+  /** テーブル元の絞り込み (WHERE の後ろに置く式。#1623)。クエリ元では指定できない。 */
+  whereClause?: string | null;
+  /** 先頭 N 行だけ転送する試験転送 (#1623)。省略は全件。 */
+  limitRows?: number | null;
+  /** 転送後に件数を照合する (#1623)。省略は true。 */
+  verifyCounts?: boolean | null;
+}
+/** 転送先の論理型 (列ごとの型上書き, #1623)。 */
+export type TransferTypeKind =
+  | "boolean"
+  | "integer"
+  | "float"
+  | "decimal"
+  | "text"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "timestamptz"
+  | "binary"
+  | "json"
+  | "uuid";
+export interface TransferTypeOverride {
+  kind: TransferTypeKind;
+  /** `decimal` のみ。 */
+  precision?: number | null;
+  scale?: number | null;
+}
+/** 転送する列 1 つへの指定 (#1623)。`source` はソースが返した列名。 */
+export interface TransferColumnSpec {
+  source: string;
+  /** 転送先での列名 (別名)。 */
+  name?: string | null;
+  /** true なら転送しない。 */
+  exclude?: boolean;
+  /** 自動判定ではなくこの型にする。 */
+  type?: TransferTypeOverride | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {
@@ -2311,6 +2533,8 @@ export interface TransferLossyConversion {
 }
 export interface TransferPreview {
   columns: { name: string; sourceType: string; targetType: string }[];
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: { name: string; sourceType: string; targetType: string }[];
   lossy: TransferLossyConversion[];
 }
 export interface TransferProgressEvent {
@@ -2322,6 +2546,8 @@ export interface TransferDoneEvent {
   rows: number;
   elapsedMs: number;
   warnings: string[];
+  /** 件数照合 (#1623) の食い違い。`warnings` の部分集合。 */
+  integrityWarnings: string[];
 }
 export interface TransferErrorEvent {
   streamId: string;
@@ -3256,6 +3482,8 @@ export interface TaskRunEvent {
   message: string | null;
   outputPath: string | null;
   catchUp: boolean;
+  /** この失敗で連続失敗の上限に達し、タスクが自動で一時停止した (#1621)。 */
+  autoPaused: boolean;
 }
 
 /** 「今すぐ実行」(`runTaskNow`) の進捗 (#1534)。`count` の単位は `unit`

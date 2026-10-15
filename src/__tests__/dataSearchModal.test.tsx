@@ -36,6 +36,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { api } from "../api/tauri";
 import { DataSearchModal } from "../components/DataSearchModal";
+import { dataSearchScope, loadDataSearchHistory, saveDataSearchHistory } from "../inputMemory";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -108,8 +109,19 @@ describe("DataSearchModal backend scan (#1261)", () => {
         mode: "contains",
         tables: ["orders"],
         rowThreshold: 500000,
+        includeDates: false,
       },
     });
+  });
+
+  it("sends includeDates when the date-column option is checked (#1623)", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByRole("checkbox", { name: t("dataSearchIncludeDates") }));
+    await startScan(user);
+    expect(api.dataSearchStream).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ includeDates: true }) }),
+    );
   });
 
   it("renders hits and skipped tables from the streamed results, then opens a hit", async () => {
@@ -239,11 +251,56 @@ describe("DataSearchModal の選択テーブル一覧の上限 (#1616)", () => {
     const user = userEvent.setup();
     renderModal();
     await user.click(await screen.findByLabelText(t("dataSearchScopeSelected")));
-    expect(await screen.findAllByRole("checkbox")).toHaveLength(200);
+    // テーブルのチェックボックス + 「日付列も検索」(#1623) の 1 つ。
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(200 + 1);
     await user.click(screen.getByRole("button", { name: t("dataSearchShowMoreTables", { remaining: 30 }) }));
-    expect(await screen.findAllByRole("checkbox")).toHaveLength(230);
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(230 + 1);
     await user.type(screen.getByPlaceholderText(t("dataSearchFilterPlaceholder")), "tbl_0");
-    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(100));
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(100 + 1));
     expect(screen.queryByRole("button", { name: /^(さらに表示|Show more)/ })).toBeNull();
+  });
+});
+
+describe("DataSearchModal の検索履歴 (#1631)", () => {
+  it("履歴の条件をクリックすると、語と一致方式を戻して(確認を経て)再走査し、履歴の先頭へ繰り上げる", async () => {
+    localStorage.clear();
+    const scope = dataSearchScope("p1", "testdb");
+    saveDataSearchHistory(scope, [
+      { term: "older", mode: "contains", scope: "all", tables: [] },
+      { term: "token-42", mode: "exact", scope: "all", tables: [] },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DataSearchModal
+        sessionId="s1"
+        database="testdb"
+        driver="mysql"
+        isProduction={false}
+        profileName="local"
+        profileId="p1"
+        onOpenHit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await user.click(await screen.findByRole("button", { name: "token-42" }));
+    // 実行前確認ダイアログを承認する。
+    const startButtons = await screen.findAllByRole("button", { name: t("dataSearchStart") });
+    await user.click(startButtons[startButtons.length - 1]);
+    await waitFor(() => expect(api.dataSearchStream).toHaveBeenCalled());
+    const call = vi.mocked(api.dataSearchStream).mock.calls[0][0];
+    expect(call.request.term).toBe("token-42");
+    expect(call.request.mode).toBe("exact");
+    expect(call.request.tables).toEqual(["orders"]);
+    expect(loadDataSearchHistory(scope).map((h) => h.term)).toEqual(["token-42", "older"]);
+  });
+
+  it("profileId が無ければ履歴を出さず、保存もしない", async () => {
+    localStorage.clear();
+    saveDataSearchHistory(dataSearchScope("p1", "testdb"), [
+      { term: "secret-ish", mode: "contains", scope: "all", tables: [] },
+    ]);
+    renderModal();
+    await screen.findByLabelText(t("dataSearchTermLabel"));
+    expect(screen.queryByTestId("data-search-history")).not.toBeInTheDocument();
   });
 });

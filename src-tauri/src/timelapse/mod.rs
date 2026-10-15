@@ -207,6 +207,170 @@ pub fn diff_snapshots(
     (diff, columns_added, columns_removed)
 }
 
+/// 主キー値の比較用テキスト。IPC を跨ぐと 64bit 整数は丸められうる (数値 / 文字列の
+/// どちらで届くかも一定でない) ため、型ではなく表記で突き合わせる。
+pub fn key_text(v: &Value) -> String {
+    match v {
+        Value::Null => "NULL".to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Int(i) => i.to_string(),
+        Value::UInt(u) => u.to_string(),
+        Value::Float(f) => crate::db::types::float_text(*f),
+        Value::String(s) | Value::Bytes(s) => s.clone(),
+    }
+}
+
+/// 1 行の値の推移 (#1621): 変化があった世代だけを古い順に並べたもの。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowHistoryEntry {
+    pub generation_id: i64,
+    pub captured_at: String,
+    /// その世代でこの行が存在したか。false は「この世代で消えた」。
+    pub present: bool,
+    /// `RowHistory::columns` の並びの値。`present` が false のとき None。
+    pub row: Option<Vec<Value>>,
+    /// 直前に存在した世代から値が変わった列 (初出・再出現は空)。
+    pub changed_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RowHistory {
+    /// 全世代の列の和 (最新世代の並びを先頭に、既に消えた列を後ろへ)。
+    pub columns: Vec<String>,
+    pub primary_key: Vec<String>,
+    pub entries: Vec<RowHistoryEntry>,
+    /// 走査した世代数。
+    pub generations_scanned: usize,
+    /// 部分取得 (行数上限で打ち切り) の世代を含むか。範囲外の行は「消えた」ように見えうる。
+    pub partial: bool,
+}
+
+/// 世代を古い順に 1 つずつ渡して、指定 PK の行の推移を組み立てる。全世代を同時に
+/// メモリへ載せないよう、保持するのは該当行だけ。
+pub struct RowHistoryBuilder {
+    key: Vec<String>,
+    primary_key: Vec<String>,
+    columns: Vec<String>,
+    prev: Option<(Vec<String>, Vec<Value>)>,
+    entries: Vec<(RowHistoryEntry, Vec<String>)>,
+    scanned: usize,
+    partial: bool,
+}
+
+impl RowHistoryBuilder {
+    pub fn new(key: &[Value]) -> Self {
+        Self {
+            key: key.iter().map(key_text).collect(),
+            primary_key: Vec::new(),
+            columns: Vec::new(),
+            prev: None,
+            entries: Vec::new(),
+            scanned: 0,
+            partial: false,
+        }
+    }
+
+    pub fn push(&mut self, generation_id: i64, captured_at: &str, snap: &Snapshot) {
+        self.scanned += 1;
+        self.partial |= snap.truncated;
+        self.primary_key = snap.primary_key.clone();
+        // 最新世代の並びを先頭に、過去にだけある列を後ろへ足していく。
+        let mut union = snap.columns.clone();
+        for c in &self.columns {
+            if !union.contains(c) {
+                union.push(c.clone());
+            }
+        }
+        self.columns = union;
+        let pk_idx: Vec<usize> = snap
+            .primary_key
+            .iter()
+            .filter_map(|name| snap.columns.iter().position(|c| c == name))
+            .collect();
+        let found = if pk_idx.len() == self.key.len() {
+            snap.rows.iter().find(|row| {
+                pk_idx
+                    .iter()
+                    .zip(&self.key)
+                    .all(|(i, k)| row.get(*i).is_some_and(|v| &key_text(v) == k))
+            })
+        } else {
+            None
+        };
+        match (found, self.prev.take()) {
+            (Some(row), prev) => {
+                let changed: Vec<String> = match &prev {
+                    // 追加列は古い世代に無いので変更に数えない (#1534 と同じ)。
+                    Some((pcols, prow)) => snap
+                        .columns
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, c)| {
+                            let j = pcols.iter().position(|p| p == c)?;
+                            (prow.get(j) != row.get(i)).then(|| c.clone())
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let first_or_changed = prev.is_none() || !changed.is_empty();
+                if first_or_changed {
+                    self.entries.push((
+                        RowHistoryEntry {
+                            generation_id,
+                            captured_at: captured_at.to_string(),
+                            present: true,
+                            row: None,
+                            changed_columns: changed,
+                        },
+                        snap.columns.clone(),
+                    ));
+                    // 行の値は最後に和集合の列へ揃えるため、いったん世代の並びのまま持つ。
+                    if let Some((e, _)) = self.entries.last_mut() {
+                        e.row = Some(row.clone());
+                    }
+                }
+                self.prev = Some((snap.columns.clone(), row.clone()));
+            }
+            (None, Some(_)) => {
+                self.entries.push((
+                    RowHistoryEntry {
+                        generation_id,
+                        captured_at: captured_at.to_string(),
+                        present: false,
+                        row: None,
+                        changed_columns: Vec::new(),
+                    },
+                    snap.columns.clone(),
+                ));
+            }
+            (None, None) => {}
+        }
+    }
+
+    pub fn finish(self) -> RowHistory {
+        let columns = self.columns;
+        let entries = self
+            .entries
+            .into_iter()
+            .map(|(mut e, cols)| {
+                if let Some(row) = e.row.take() {
+                    let aligned = align_rows(&cols, &columns, &[row]);
+                    e.row = aligned.into_iter().next();
+                }
+                e.changed_columns.retain(|c| columns.contains(c));
+                e
+            })
+            .collect();
+        RowHistory {
+            columns,
+            primary_key: self.primary_key,
+            entries,
+            generations_scanned: self.scanned,
+            partial: self.partial,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +545,61 @@ mod tests {
         );
         let (diff, _, _) = diff_snapshots(DriverKind::Postgres, "t", &a, &a.clone());
         assert!(diff.rows.is_empty());
+    }
+
+    #[test]
+    fn row_history_lists_only_generations_where_the_row_changed() {
+        let g = |price: i64, extra: bool| {
+            let mut rows = vec![vec![Value::Int(1), Value::Int(10)]];
+            if extra {
+                rows.push(vec![Value::Int(2), Value::Int(price)]);
+            }
+            snap(&["id", "price"], rows)
+        };
+        let mut b = RowHistoryBuilder::new(&[Value::Int(2)]);
+        b.push(1, "t1", &g(0, false)); // 行なし (出力しない)
+        b.push(2, "t2", &g(100, true)); // 初出
+        b.push(3, "t3", &g(100, true)); // 変化なし (出力しない)
+        b.push(4, "t4", &g(150, true)); // price 変更
+        b.push(5, "t5", &g(0, false)); // 消えた
+        b.push(6, "t6", &g(0, false)); // 消えたまま (出力しない)
+        b.push(7, "t7", &g(200, true)); // 再出現
+        let h = b.finish();
+        let ids: Vec<i64> = h.entries.iter().map(|e| e.generation_id).collect();
+        assert_eq!(ids, vec![2, 4, 5, 7]);
+        assert_eq!(h.generations_scanned, 7);
+        assert_eq!(h.entries[1].changed_columns, vec![s("price")]);
+        assert!(h.entries[0].changed_columns.is_empty());
+        assert!(!h.entries[2].present && h.entries[2].row.is_none());
+        assert!(h.entries[3].present && h.entries[3].changed_columns.is_empty());
+        assert_eq!(h.entries[3].row.as_ref().unwrap()[1], Value::Int(200));
+    }
+
+    #[test]
+    fn row_history_matches_keys_by_text_and_tolerates_column_changes() {
+        // IPC を跨いだ文字列キー "2" でも整数 PK の行に一致する。列の追加は変更に数えない。
+        let older = snap(&["id", "v"], vec![vec![Value::Int(2), Value::Int(1)]]);
+        let newer = snap(
+            &["id", "v", "note"],
+            vec![vec![Value::Int(2), Value::Int(1), Value::String(s("n"))]],
+        );
+        let newest = snap(
+            &["id", "note"],
+            vec![vec![Value::Int(2), Value::String(s("m"))]],
+        );
+        let mut b = RowHistoryBuilder::new(&[Value::String(s("2"))]);
+        b.push(1, "t1", &older);
+        b.push(2, "t2", &newer);
+        b.push(3, "t3", &newest);
+        let h = b.finish();
+        assert_eq!(h.columns, vec![s("id"), s("note"), s("v")]);
+        // 世代 2 は追加列のみ → 出力なし。世代 3 は note が変化。
+        let ids: Vec<i64> = h.entries.iter().map(|e| e.generation_id).collect();
+        assert_eq!(ids, vec![1, 3]);
+        assert_eq!(h.entries[1].changed_columns, vec![s("note")]);
+        assert_eq!(
+            h.entries[0].row.as_ref().unwrap(),
+            &vec![Value::Int(2), Value::Null, Value::Int(1)]
+        );
     }
 }

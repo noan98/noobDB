@@ -308,23 +308,63 @@ pub struct AppState {
     /// 先頭の一部しか載せないため、「スキップ行を保存 / コピー」用に全件を Rust 側で
     /// 保持する。取り込みが終わるたびに置き換わる。
     last_import_skipped: std::sync::Mutex<Vec<crate::commands::import::SkippedRowInfo>>,
+    /// 直近の取り込みで取り込み先に渡した列名 (マッピング順)。スキップ行を元の行データ付きで
+    /// 書き出す (CSV のヘッダー / NDJSON のキー) ときに使う (#1623)。
+    last_import_columns: std::sync::Mutex<Vec<String>>,
     /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
     /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
     pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
     /// 結果ハンドル (#1264): ストリーミングで流した大きな結果を、合計メモリ上限付きで
     /// 保持するストア。ソート・フィルタ・検索・エクスポートをバックエンドで行うために使う。
     pub results: std::sync::Mutex<crate::db::result_store::ResultStore>,
+    /// スキーマ健全性アドバイザ (#1621) の直近の診断結果。(セッション ID, データベース) ごとに
+    /// 1 件だけメモリに持ち、再診断のとき「新規 / 解消された指摘」を出すための前回分として使う。
+    /// 永続化しない (セッションを閉じれば消える)ので秘密情報の扱いは増えない。
+    pub advisor_last: std::sync::Mutex<HashMap<(SessionId, String), AdvisorSnapshot>>,
+}
+
+/// アドバイザの診断スナップショット 1 件 (前回との差分用、#1621)。
+#[derive(Debug, Clone)]
+pub struct AdvisorSnapshot {
+    /// 診断した時刻 (UTC, RFC 3339)。
+    pub at: String,
+    /// 「対応しない」を含む、その時点のすべての指摘。
+    pub findings: Vec<crate::db::advisor::HealthFinding>,
 }
 
 impl AppState {
     /// 直近の取り込みのスキップ行を置き換える。
-    pub fn set_last_import_skipped(&self, rows: Vec<crate::commands::import::SkippedRowInfo>) {
+    pub fn set_last_import_skipped(&self, mut rows: Vec<crate::commands::import::SkippedRowInfo>) {
+        // 元の行データは先頭の上限件数ぶんだけ保持する (#1623)。
+        for r in rows
+            .iter_mut()
+            .skip(crate::commands::import::MAX_RETAINED_SKIPPED_CELLS)
+        {
+            r.cells = Vec::new();
+        }
         // ロックが poison されていても (別スレッドの panic) 単なる Vec なので中身を使う。
         let mut guard = self
             .last_import_skipped
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *guard = rows;
+    }
+
+    /// 直近の取り込みの列名を置き換える (#1623)。
+    pub fn set_last_import_columns(&self, columns: Vec<String>) {
+        let mut guard = self
+            .last_import_columns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = columns;
+    }
+
+    /// 直近の取り込みの列名の複製 (#1623)。
+    pub fn last_import_columns_snapshot(&self) -> Vec<String> {
+        self.last_import_columns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// 直近の取り込みのスキップ行の複製。
@@ -420,6 +460,11 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .release_session(id);
+            // アドバイザの前回診断も、切断したセッションの分は持ち越さない。
+            self.advisor_last
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|(sid, _), _| sid != id);
         }
         removed
     }

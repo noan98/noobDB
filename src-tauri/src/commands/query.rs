@@ -694,6 +694,9 @@ pub enum QueryStreamMessage {
         total_rows: u64,
         unchanged: bool,
         removed_count: u64,
+        /// 新しく現れた行数 / 値が変わった行数 (#1621)。自動リフレッシュの増減推移に使う。
+        added_count: u64,
+        changed_count: u64,
         runs: Vec<PatchRun>,
     },
     Done {
@@ -1300,6 +1303,8 @@ async fn spawn_query_stream(
                     total_rows: p.total_rows,
                     unchanged: p.unchanged,
                     removed_count: p.removed_count,
+                    added_count: p.added_count,
+                    changed_count: p.changed_count,
                     runs: p.runs,
                 }) {
                     tracing::warn!(

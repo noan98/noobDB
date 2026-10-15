@@ -46,3 +46,48 @@ describe("useValuePicker の FK 検索デバウンス (#1594)", () => {
     expect(afterAll).toBe(afterFirst);
   });
 });
+
+describe("useValuePicker の FK 表示列 (#1629)", () => {
+  it("参照先の name 列を推定して候補に説明文を付ける", async () => {
+    const lookup = vi.fn(async (sql: string) => {
+      if (sql.includes("information_schema")) {
+        return {
+          columns: [],
+          rows: [
+            ["id", "int"],
+            ["name", "varchar"],
+          ],
+          elapsed_ms: 1,
+        } as never;
+      }
+      return {
+        columns: [],
+        rows: [
+          ["1", "Alice"],
+          ["2", null],
+        ],
+        elapsed_ms: 1,
+      } as never;
+    });
+    const { result: hook } = renderHook(() =>
+      useValuePicker({ driver: "mysql", database: "app", table: "orders", columns: COLUMNS, lookup }),
+    );
+    await act(async () => hook.current.request("user_id", ""));
+    expect(hook.current.candidates("user_id")).toEqual(["1", "2"]);
+    expect(hook.current.labels("user_id")).toEqual({ "1": "Alice" });
+    expect(lookup.mock.calls.some(([sql]) => String(sql).includes("`id`, `name`"))).toBe(true);
+  });
+
+  it("列一覧が引けなくても ID だけの候補にフォールバックする", async () => {
+    const lookup = vi.fn(async (sql: string) => {
+      if (sql.includes("information_schema")) throw new Error("denied");
+      return result(["1", "2"]);
+    });
+    const { result: hook } = renderHook(() =>
+      useValuePicker({ driver: "mysql", database: "app", table: "orders", columns: COLUMNS, lookup }),
+    );
+    await act(async () => hook.current.request("user_id", ""));
+    expect(hook.current.candidates("user_id")).toEqual(["1", "2"]);
+    expect(hook.current.labels("user_id")).toEqual({});
+  });
+});

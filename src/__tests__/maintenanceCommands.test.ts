@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  batchMaintenanceCommands,
+  batchMaintenanceKinds,
   databaseMaintenanceCommands,
   matviewRefreshCommands,
   tableMaintenanceCommands,
@@ -89,5 +91,30 @@ describe("matviewRefreshCommands (#1241)", () => {
   it("returns nothing for drivers without materialized views", () => {
     expect(matviewRefreshCommands("mysql", "shop", "v")).toEqual([]);
     expect(matviewRefreshCommands("sqlite", null, "v")).toEqual([]);
+  });
+});
+
+describe("複数テーブルの一括保守 (#1629)", () => {
+  it("種別は単一テーブルの保守と同じ (ドライバごと)", () => {
+    expect(batchMaintenanceKinds("mysql")).toEqual(["analyze", "optimize", "check", "repair"]);
+    expect(batchMaintenanceKinds("postgres")).toEqual(["vacuumAnalyze", "analyze", "vacuum", "reindex"]);
+    expect(batchMaintenanceKinds("sqlite")).toEqual(["analyze", "reindex"]);
+  });
+
+  it("テーブルごとに 1 文ずつ、選択の順で生成する", () => {
+    const cmds = batchMaintenanceCommands("mysql", "shop", ["b", "a"], "optimize");
+    expect(cmds.map((c) => c.table)).toEqual(["b", "a"]);
+    expect(cmds.map((c) => c.command.sql)).toEqual([
+      "OPTIMIZE TABLE `shop`.`b`;",
+      "OPTIMIZE TABLE `shop`.`a`;",
+    ]);
+    expect(
+      batchMaintenanceCommands("postgres", "public", ["t1", "t2"], "vacuum").map((c) => c.command.sql),
+    ).toEqual(['VACUUM "public"."t1";', 'VACUUM "public"."t2";']);
+  });
+
+  it("ドライバが持たない種別・空の選択は空配列", () => {
+    expect(batchMaintenanceCommands("sqlite", null, ["a"], "vacuum")).toEqual([]);
+    expect(batchMaintenanceCommands("mysql", "d", [], "analyze")).toEqual([]);
   });
 });

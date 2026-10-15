@@ -247,7 +247,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
-- `analyze_schema_health`
+- `analyze_schema_health` (#1621。「対応しない」を `ignored` へ振り分け、前回診断 (メモリ上の直近 1 件) との差分 `diff` を載せる。未使用インデックスには `size_bytes`)
+- `ignore_advisor_finding` (#1621。`advisor_ignores.json` に (プロファイル, DB, 指摘キー) を保存)
+- `unignore_advisor_finding` (#1621。「対応しない」の取り消し)
 - `query_stats_support`
 - `sample_live_queries`
 - `start_statement_recording`
@@ -272,6 +274,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `timelapse_capture`
 - `timelapse_list_watches`
 - `timelapse_diff_generations`
+- `timelapse_row_history`
 - `timelapse_unwatch`
 - `timelapse_clear_all`
 
@@ -282,6 +285,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `schema_drift_capture`
 - `schema_drift_list`
 - `schema_drift_compare`
+- `schema_drift_set_label`
+- `schema_drift_revert_sql`
 - `schema_drift_import_legacy`
 
 #736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む。`capture` の任意引数 `trigger_sql` (#1537) は DDL 成功をきっかけにした自動取得のときの実行 SQL で、世代に紐づけて保存する
@@ -301,6 +306,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
+- `preview_task_schedule`
 - `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`
@@ -312,9 +318,13 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_assertions`
 - `save_assertion`
-- `delete_assertion`
+- `delete_assertion` (#1621。一覧から外して `assertions.json` の `trash` (直近 50 件) へ移す)
+- `restore_assertion` (#1621。ごみ箱から一覧へ戻す)
+- `export_assertions` (#1621。定義を JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `import_assertions` (#1621。ID 衝突は新規採番・同内容は追加せず・検証 NG は `rejected` で報告)
+- `suggest_accepted_values` (#1621。列の DISTINCT を `run_lookup_query` 経路で読み、最大 50 種)
 - `preview_assertion_sql`
-- `run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
+- `run_assertion` (#742。結果に前回の観測値 `previous` を添える (#1621, `assertion_history.json` に直近 30 件)。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
@@ -387,6 +397,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `read_sql_file`
 - `write_text_file`
 - `write_binary_file`
+- `reveal_in_file_manager`
+- `set_window_title`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
 - `save_cell_to_file`
@@ -394,6 +406,11 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `read_binary_file`
 - `get_import_skipped_text`
 - `save_import_skipped_rows`
+- `import_dry_run`
+- `import_xlsx_sheets`
+- `list_import_templates`
+- `save_import_template`
+- `delete_import_template`
 
 `dump_tool_status` / `install_dump_tool` (`commands/dump_tools.rs`) はダンプ用の外部ツール
 (`mysqldump` / `pg_dump`) を **noobDB を実行している PC** で探し (PATH → Homebrew の keg-only
@@ -431,10 +448,42 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 (`InvokeBody::Raw`) を受け、保存先パスはヘッダ `x-noobdb-path` に URL エンコードして載せる
 (`api.writeBinaryFile` が `encodeURIComponent`、Rust 側 `decode_path_header` が復元)。
 
+`reveal_in_file_manager` (`commands/file.rs`, #1631) は書き出し・ダンプの保存先を OS のファイルマネージャ
+(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。`path` がファイルなら親ディレクトリを開き、
+**ファイルそのものは開かない** (実行可能ファイルを起動しないため)。存在しない・空のパスは `InvalidInput`。
+`set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
+区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
+空白にして 200 文字に切り詰める。
+
 `get_import_skipped_text` / `save_import_skipped_rows` (`commands/import.rs`, #1258) は
 skip モードの取り込みでスキップされた行の「全件」を扱う。`csv-import:done` には先頭
 200 件 (`MAX_REPORTED_SKIPPED`) と総数 `skippedTotal` だけを載せ、全件は `AppState` が直近の
 取り込み結果として保持する。表示文言はフロントの i18n テンプレートを引数で受ける。
+
+`save_import_skipped_rows` は任意引数 `format` (`text` 既定 / `csv` / `ndjson`、#1623) を取る。
+`csv` / `ndjson` はスキップ行の元の行データ (取り込み先の列順、`SkippedRowInfo.cells`) を
+書き出し、直してそのまま再取り込みできる。`cells` は IPC には載せず (`#[serde(skip)]`)、
+列名とともに `AppState` が保持する。
+
+`import_dry_run` (`commands/import.rs`, #1623) は取り込みの事前検証。本番と同じ
+`load_import_rows` で行を作り、`Connection::dry_run_failures` が**必ずロールバックする**
+トランザクションで 1 行ずつ INSERT して拒否される行を数える (PostgreSQL は行ごとに
+SAVEPOINT)。MySQL の非トランザクショナル表は拒否。読み取り専用接続でも実行できる。
+新規テーブル作成付き (`createTable`) は DB を試さずファイルのパースと主キー検証だけ
+(`dbChecked: false`)。結果は失敗の総数と先頭 50 件 (`DRY_RUN_REPORT_LIMIT`)。
+
+`import_xlsx_sheets` (`commands/import.rs`, #1623) は xlsx の複数シートを、シートごとに別の
+**新規テーブル**へ順に取り込む。各シートは `run_import_core` を通る単独の取り込みと同じ
+トランザクション単位で、`csv-import:started` はシートごと、`csv-import:done` は全体で 1 回
+(`sheets` にシートごとの件数)。失敗したシートで止まり、それより前のシートは取り込み済みのまま
+(エラー文に取り込み済みのシートを添える)。シートごとに列が違うので、元データ付きのスキップ行
+書き出し (`csv` / `ndjson`) は使えない (テキストのみ)。
+
+`list_import_templates` / `save_import_template` / `delete_import_template`
+(`commands/import_templates.rs`, `import_templates/`, #1623) は接続 × データベース × テーブル単位の
+取り込みマッピングテンプレート (列の対応・区切り文字・NULL トークン・文字コード・キー列など)。
+data_dir の `import_templates.json` (非秘密、ファイルパスも持たない)。同じキーは置き換わり、
+500 件を超えたら更新が古いものから捨てる。
 
 `preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ

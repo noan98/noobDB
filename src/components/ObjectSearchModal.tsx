@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ObjectSearchHit, type ObjectSearchScope } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
-import { Icon, ICON_SIZES } from "./Icon";
+import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
 import { Modal } from "./Modal";
 import { Segmented } from "./Segmented";
@@ -13,11 +13,14 @@ import { shouldStaggerEntrance } from "./commandPaletteSearch";
 import { staggerContainer, variants } from "../motion";
 import { ErrorNote } from "./modalForm";
 import { isImeComposing } from "./modalKeys";
+import { formatRowEstimate } from "./rowEstimate";
 
 /**
- * スキーマ横断のグローバルオブジェクト検索。テーブル名・カラム名を全 DB (またはカレント DB)
- * 串刺しで部分一致検索し、選択で該当テーブルを開く。既存コマンドパレット (Cmd/Ctrl+K) とは
- * 別キー (Cmd/Ctrl+Shift+O) で起動する。
+ * スキーマ横断のグローバルオブジェクト検索。テーブル・ビュー・ルーチン・トリガー名とカラム名を
+ * 全 DB (またはカレント DB) 串刺しで部分一致検索し、選択で該当テーブルを開く (#1629:
+ * 列ヒットは開いたテーブルのその列へ移動、ルーチン / トリガーは定義を開く。Shift+Enter /
+ * Shift+クリックは新しいタブで開く)。既存コマンドパレット (Cmd/Ctrl+K) とは別キー
+ * (Cmd/Ctrl+Shift+O) で起動する。
  *
  * 索引の構築・スコアリング・上位 N 件の抽出は Rust (`search_schema_objects`、#1261) が行い、
  * 全 DB 分の索引はバックエンドの Schema Cache に保持される。ここは入力状態 (デバウンス付きの
@@ -28,7 +31,13 @@ interface Props {
   sessionId: string;
   /** 既定スコープ (カレント DB)。null なら最初から全 DB を読む。 */
   currentDatabase: string | null;
-  onOpenTable: (database: string, table: string) => void;
+  /**
+   * テーブル / ビュー / 列ヒットを開く。通常は 2 引数。列ヒットでは `column`、Shift 操作では
+   * `newTab` を第 3 引数で渡す。
+   */
+  onOpenTable: (database: string, table: string, opts?: { newTab?: boolean; column?: string }) => void;
+  /** ルーチン / トリガーの定義を開く。省略時はこれらのヒットを開けない。 */
+  onOpenObject?: (database: string, kind: string, name: string, id: string | null) => void;
   onClose: () => void;
 }
 
@@ -43,7 +52,7 @@ const RESULT_LIMIT = 300;
 /** キー入力から検索要求を出すまでの待ち時間 (連打中は最後の入力だけを問い合わせる)。 */
 const SEARCH_DEBOUNCE_MS = 120;
 
-export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onClose }: Props) {
+export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onOpenObject, onClose }: Props) {
   const t = useT();
   const reduced = useReducedMotion() ?? false;
   const [query, setQuery] = useState("");
@@ -127,17 +136,30 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
     itemRefs.current.get(entryKey(active))?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, results]);
 
-  const openAt = (i: number) => {
+  const openAt = (i: number, newTab = false) => {
     const entry = results[i];
     if (!entry) return;
+    if (entry.kind === "routine" || entry.kind === "trigger") {
+      // 定義を新しいクエリタブに開く (開く先は常に新しいタブ)。
+      if (!onOpenObject || !entry.object_kind) return;
+      onClose();
+      onOpenObject(entry.database, entry.object_kind, entry.table, entry.object_id ?? null);
+      return;
+    }
     onClose();
-    onOpenTable(entry.database, entry.table);
+    if (entry.kind === "column" && entry.column) {
+      onOpenTable(entry.database, entry.table, { column: entry.column, ...(newTab ? { newTab } : {}) });
+    } else if (newTab) {
+      onOpenTable(entry.database, entry.table, { newTab });
+    } else {
+      onOpenTable(entry.database, entry.table);
+    }
   };
 
   // 行 (memo) へ渡す安定ハンドラ。最新の openAt は ref 経由で呼ぶ。
   const openAtRef = useRef(openAt);
   openAtRef.current = openAt;
-  const onRowOpen = useCallback((i: number) => openAtRef.current(i), []);
+  const onRowOpen = useCallback((i: number, newTab: boolean) => openAtRef.current(i, newTab), []);
   const onRowHover = useCallback((i: number) => {
     if (i === activeIndexRef.current) return;
     hoverIndex.current = i;
@@ -177,7 +199,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onC
         e.preventDefault();
         // 入力中の語に対応する結果が届くまでは開かない (古い結果の先頭を開かない)。
         if (resultsFor !== searchKey) break;
-        openAt(activeIndex);
+        openAt(activeIndex, e.shiftKey);
         break;
     }
   };
@@ -309,7 +331,31 @@ interface RowProps {
   itemKey: string;
   setItemRef: (key: string, el: HTMLButtonElement | null) => void;
   onHover: (index: number) => void;
-  onOpen: (index: number) => void;
+  onOpen: (index: number, newTab: boolean) => void;
+}
+
+const HIT_ICON: Record<ObjectSearchHit["kind"], IconName> = {
+  table: "table",
+  column: "columns",
+  view: "view",
+  routine: "routine",
+  trigger: "trigger",
+};
+
+/** ビュー / ルーチン / トリガーのヒットに添える種別ラベルの i18n キー。 */
+function hitKindLabelKey(entry: ObjectSearchHit) {
+  switch (entry.object_kind) {
+    case "materialized_view":
+      return "objSearchKind_materialized_view";
+    case "procedure":
+      return "objSearchKind_procedure";
+    case "function":
+      return "objSearchKind_function";
+    case "trigger":
+      return "objSearchKind_trigger";
+    default:
+      return "objSearchKind_view";
+  }
 }
 
 const ResultRow = memo(function ResultRow({
@@ -323,6 +369,7 @@ const ResultRow = memo(function ResultRow({
   onHover,
   onOpen,
 }: RowProps) {
+  const t = useT();
   return (
     <MotionRow
       ref={(el: HTMLButtonElement | null) => setItemRef(itemKey, el)}
@@ -333,7 +380,7 @@ const ResultRow = memo(function ResultRow({
       aria-selected={active}
       tabIndex={-1}
       onMouseMove={() => onHover(index)}
-      onClick={() => onOpen(index)}
+      onClick={(e: React.MouseEvent) => onOpen(index, e.shiftKey)}
       display="flex"
       alignItems="center"
       gap="2"
@@ -348,7 +395,7 @@ const ResultRow = memo(function ResultRow({
       css={{ scrollMarginBlock: "8px" }}
     >
       <Box color="app.textMuted" flexShrink={0} display="inline-flex">
-        <Icon name={entry.kind === "column" ? "columns" : "table"} size={ICON_SIZES.md} />
+        <Icon name={HIT_ICON[entry.kind]} size={ICON_SIZES.md} />
       </Box>
       <Flex direction="column" minW={0} flex="1" gap="0.25">
         <chakra.span fontSize="sm" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
@@ -361,9 +408,25 @@ const ResultRow = memo(function ResultRow({
           textOverflow="ellipsis"
           whiteSpace="nowrap"
         >
-          {entry.kind === "column" ? `${entry.database} › ${entry.table}` : entry.database}
+          {entry.kind === "column"
+            ? `${entry.database} › ${entry.table}`
+            : entry.kind === "table"
+              ? entry.database
+              : `${entry.database} · ${t(hitKindLabelKey(entry))}`}
         </chakra.span>
       </Flex>
+      {/* 行数の目安 (テーブルのみ)。大きなテーブルかを開く前に判断できる (#1629)。 */}
+      {entry.kind === "table" && typeof entry.row_estimate === "number" && (
+        <chakra.span
+          flexShrink={0}
+          fontFamily="mono"
+          fontSize="2xs"
+          color="app.textMuted"
+          title={`${entry.row_estimate.toLocaleString()} — ${t("treeRowEstimateTitle")}`}
+        >
+          {formatRowEstimate(entry.row_estimate)}
+        </chakra.span>
+      )}
     </MotionRow>
   );
 });

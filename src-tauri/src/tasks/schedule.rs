@@ -3,14 +3,49 @@
 //! `DateTime<Utc>` を明示的に受け取る形にしてあるので、`Utc::now()` に依存せず
 //! 決定的にテストできる。
 //!
-//! 時刻はすべて UTC で解釈する。デスクトップアプリとしてはローカル時刻の方が
-//! 直感的だが、タイムゾーン変換 (DST 境界の曖昧さ含む) を持ち込むとテストの
-//! 決定性が損なわれるため、初版では UTC 固定にしている (既知の制約。HelpView に
-//! 明記)。
+//! 内部の時刻は UTC。`Daily` だけは IANA タイムゾーン (`timezone`、省略時は UTC) の
+//! ローカル時刻で `hour:minute` を解釈し、`chrono-tz` で UTC へ変換する (#1621)。
+//! DST の隙間にあたる時刻は隙間の直前のオフセットで換算し (2:30 → 3:30)、重複する時刻は早い方で 1 回だけ発火する。
+//! 曜日マスクも同じタイムゾーンのローカル日付で判定する。
 
-use chrono::{DateTime, Duration, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 
-use super::TaskSchedule;
+use super::{TaskSchedule, ALL_WEEKDAYS};
+
+/// IANA タイムゾーン名を解釈する。`None` / 空は UTC。未知の名前は `None` を返す
+/// (保存時の検証 [`validate_schedule`] で弾く。実行時に未知だった場合は UTC へ倒す)。
+pub fn parse_timezone(name: Option<&str>) -> Option<Tz> {
+    match name.map(str::trim) {
+        None | Some("") => Some(Tz::UTC),
+        Some(n) => n.parse::<Tz>().ok(),
+    }
+}
+
+/// 保存前の検証: タイムゾーン名が実在し、時刻が範囲内であること。
+pub fn validate_schedule(schedule: &TaskSchedule) -> Result<(), String> {
+    if let TaskSchedule::Daily {
+        hour,
+        minute,
+        timezone,
+        weekdays,
+    } = schedule
+    {
+        if *hour > 23 || *minute > 59 {
+            return Err(format!("invalid daily time {hour}:{minute}"));
+        }
+        if parse_timezone(timezone.as_deref()).is_none() {
+            return Err(format!(
+                "unknown timezone '{}'",
+                timezone.as_deref().unwrap_or_default()
+            ));
+        }
+        if *weekdays & !ALL_WEEKDAYS != 0 {
+            return Err(format!("invalid weekday mask {weekdays}"));
+        }
+    }
+    Ok(())
+}
 
 /// `from` より後の直近の発火時刻を返す。
 pub fn next_run_after(schedule: &TaskSchedule, from: DateTime<Utc>) -> DateTime<Utc> {
@@ -19,25 +54,86 @@ pub fn next_run_after(schedule: &TaskSchedule, from: DateTime<Utc>) -> DateTime<
             let m = (*minutes).max(1) as i64;
             from + Duration::minutes(m)
         }
-        TaskSchedule::Daily { hour, minute } => next_daily_utc(*hour, *minute, from),
+        TaskSchedule::Daily {
+            hour,
+            minute,
+            timezone,
+            weekdays,
+        } => {
+            let tz = parse_timezone(timezone.as_deref()).unwrap_or(Tz::UTC);
+            next_daily(*hour, *minute, tz, *weekdays, from)
+        }
     }
 }
 
-/// `from` より厳密に後の、UTC `hour:minute` の直近の発生時刻。`hour`/`minute` が
-/// 範囲外 (24 時制超過) のときは 23:59 にクランプする — 呼び出し元 (フォーム
-/// バリデーション) が弾く想定だが、ここでも安全側にフォールバックしておく。
-fn next_daily_utc(hour: u32, minute: u32, from: DateTime<Utc>) -> DateTime<Utc> {
+/// 今後 `count` 回の発火時刻 (最初は `from` より後)。スケジュール編集中のプレビュー用 (#1621)。
+pub fn upcoming_runs(
+    schedule: &TaskSchedule,
+    from: DateTime<Utc>,
+    count: usize,
+) -> Vec<DateTime<Utc>> {
+    let mut out = Vec::with_capacity(count);
+    let mut cursor = from;
+    for _ in 0..count {
+        cursor = next_run_after(schedule, cursor);
+        out.push(cursor);
+    }
+    out
+}
+
+/// ローカル日付 `date` の `time` を UTC に直す。重複する時刻 (秋の巻き戻し) は早い方を採る。
+/// DST の隙間 (存在しない時刻) は、一般的な方式どおり隙間の直前のオフセットで UTC に直す
+/// (米東部で 2:15 → 3:15、2:30 → 3:30。隙間の内側の分刻みはそのまま保たれる)。
+fn resolve_local(tz: Tz, date: NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {
+    use chrono::Offset;
+    let naive = date.and_time(time);
+    match tz.from_local_datetime(&naive) {
+        chrono::LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
+        chrono::LocalResult::Ambiguous(early, _) => Some(early.with_timezone(&Utc)),
+        chrono::LocalResult::None => {
+            // 隙間は最大でも 2 時間程度なので、3 時間前は隙間より前 (切り替え前のオフセット)。
+            let before = naive - Duration::hours(3);
+            let offset = match tz.offset_from_local_datetime(&before) {
+                chrono::LocalResult::Single(o) => o,
+                chrono::LocalResult::Ambiguous(_, late) => late,
+                chrono::LocalResult::None => return None,
+            };
+            let secs = i64::from(offset.fix().local_minus_utc());
+            Some((naive - Duration::seconds(secs)).and_utc())
+        }
+    }
+}
+
+/// 曜日マスクが `date` の曜日を許すか (0 = 毎日)。
+fn weekday_allowed(weekdays: u8, date: NaiveDate) -> bool {
+    let mask = weekdays & ALL_WEEKDAYS;
+    mask == 0 || mask & (1 << date.weekday().num_days_from_monday()) != 0
+}
+
+/// `from` より厳密に後の、`tz` のローカル `hour:minute` の直近の発生時刻 (曜日マスク付き)。
+/// `hour`/`minute` が範囲外 (24 時制超過) のときは 23:59 にクランプする — 呼び出し元
+/// (フォームバリデーション) が弾く想定だが、ここでも安全側にフォールバックしておく。
+fn next_daily(hour: u32, minute: u32, tz: Tz, weekdays: u8, from: DateTime<Utc>) -> DateTime<Utc> {
     let h = hour.min(23);
     let m = minute.min(59);
-    let time = NaiveTime::from_hms_opt(h, m, 0).unwrap_or(from.time());
+    let time = NaiveTime::from_hms_opt(h, m, 0).unwrap_or(NaiveTime::MIN);
 
-    let today = from.date_naive();
-    let candidate_today = Utc.from_utc_datetime(&today.and_time(time));
-    if candidate_today > from {
-        return candidate_today;
+    let start = from.with_timezone(&tz).date_naive();
+    // 曜日が 1 つでも許されていれば 7 日以内に当たる。DST の隙間で候補が `from` 以前に
+    // なるような境界に備えて 1 日余分に見る。
+    for offset in 0..9 {
+        let date = start + Duration::days(offset);
+        if !weekday_allowed(weekdays, date) {
+            continue;
+        }
+        if let Some(candidate) = resolve_local(tz, date, time) {
+            if candidate > from {
+                return candidate;
+            }
+        }
     }
-    let tomorrow = today + Duration::days(1);
-    Utc.from_utc_datetime(&tomorrow.and_time(time))
+    // 到達しない想定 (全曜日が許されない不正マスクは validate で弾く)。安全側に翌日の UTC。
+    from + Duration::days(1)
 }
 
 /// アプリ起動時に、永続化されていた `next_run_at` (前回終了時点の予定) をどう
@@ -86,6 +182,190 @@ mod tests {
         Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
     }
 
+    fn daily(hour: u32, minute: u32) -> TaskSchedule {
+        TaskSchedule::Daily {
+            hour,
+            minute,
+            timezone: None,
+            weekdays: 0,
+        }
+    }
+
+    fn daily_tz(hour: u32, minute: u32, tz: &str, weekdays: u8) -> TaskSchedule {
+        TaskSchedule::Daily {
+            hour,
+            minute,
+            timezone: Some(tz.into()),
+            weekdays,
+        }
+    }
+
+    /// 月 = bit0 … 日 = bit6 のマスク。
+    const WEEKDAYS: u8 = 0b001_1111;
+
+    #[test]
+    fn daily_in_jst_converts_local_time_to_utc() {
+        // 毎日 JST 9:00 = UTC 0:00。UTC 1/1 10:00 (JST 19:00) の次は 1/2 の UTC 0:00。
+        let sched = daily_tz(9, 0, "Asia/Tokyo", 0);
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 1, 10, 0)),
+            dt(2026, 1, 2, 0, 0)
+        );
+        // UTC 1/1 23:00 は JST 1/2 08:00 なので、まだ同じ JST 日の 9:00 (= UTC 1/2 0:00)。
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 1, 23, 0)),
+            dt(2026, 1, 2, 0, 0)
+        );
+        // 日付をまたぐ負のオフセット: America/New_York 22:00 (冬 = UTC-5) は UTC 翌日 3:00。
+        let ny = daily_tz(22, 0, "America/New_York", 0);
+        assert_eq!(
+            next_run_after(&ny, dt(2026, 1, 1, 12, 0)),
+            dt(2026, 1, 2, 3, 0)
+        );
+    }
+
+    #[test]
+    fn missing_or_empty_timezone_means_utc_and_old_json_still_loads() {
+        let old: TaskSchedule =
+            serde_json::from_str(r#"{"kind":"daily","hour":8,"minute":30}"#).unwrap();
+        assert_eq!(old, daily(8, 30));
+        assert_eq!(
+            next_run_after(&old, dt(2026, 1, 1, 0, 0)),
+            dt(2026, 1, 1, 8, 30)
+        );
+        let empty = daily_tz(8, 30, "", 0);
+        assert_eq!(
+            next_run_after(&empty, dt(2026, 1, 1, 0, 0)),
+            dt(2026, 1, 1, 8, 30)
+        );
+    }
+
+    #[test]
+    fn dst_gap_moves_forward_and_fold_fires_once_at_the_earlier_time() {
+        // 2026-03-08 米東部は 2:00 → 3:00 に飛ぶ (2:30 は存在しない)。隙間の直前のオフセット
+        // (EST = UTC-5) で換算するので 2:30 → 3:30 EDT (UTC 7:30)、2:15 → 3:15 EDT (UTC 7:15)。
+        let gap = daily_tz(2, 30, "America/New_York", 0);
+        assert_eq!(
+            next_run_after(&gap, dt(2026, 3, 8, 0, 0)),
+            dt(2026, 3, 8, 7, 30)
+        );
+        let gap15 = daily_tz(2, 15, "America/New_York", 0);
+        assert_eq!(
+            next_run_after(&gap15, dt(2026, 3, 8, 0, 0)),
+            dt(2026, 3, 8, 7, 15)
+        );
+        // 通常の日は 2:30 EST = UTC 7:30。
+        assert_eq!(
+            next_run_after(&gap, dt(2026, 3, 7, 0, 0)),
+            dt(2026, 3, 7, 7, 30)
+        );
+        // 2026-11-01 は 1:00-2:00 が 2 回ある。1:30 は早い方 (EDT = UTC 5:30) で 1 回だけ。
+        let fold = daily_tz(1, 30, "America/New_York", 0);
+        assert_eq!(
+            next_run_after(&fold, dt(2026, 11, 1, 0, 0)),
+            dt(2026, 11, 1, 5, 30)
+        );
+        // その直後の次回は翌日の 1:30 EST (UTC 6:30)。同日の 2 回目は来ない。
+        assert_eq!(
+            next_run_after(&fold, dt(2026, 11, 1, 5, 30)),
+            dt(2026, 11, 2, 6, 30)
+        );
+    }
+
+    #[test]
+    fn offset_changes_across_dst_keep_the_local_wall_clock_time() {
+        // 毎日ロンドン 9:00: 冬 (GMT) は UTC 9:00、夏 (BST、3/29 以降) は UTC 8:00。
+        let sched = daily_tz(9, 0, "Europe/London", 0);
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 3, 28, 12, 0)),
+            dt(2026, 3, 29, 8, 0)
+        );
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 3, 27, 12, 0)),
+            dt(2026, 3, 28, 9, 0)
+        );
+    }
+
+    #[test]
+    fn weekday_mask_skips_to_the_next_allowed_local_day() {
+        // 平日のみ UTC 9:00。2026-01-02 は金曜日 → 次は月曜 (1/5)。
+        let sched = daily_tz(9, 0, "UTC", WEEKDAYS);
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 2, 10, 0)),
+            dt(2026, 1, 5, 9, 0)
+        );
+        // 金曜 8:00 ならその日の 9:00。
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 2, 8, 0)),
+            dt(2026, 1, 2, 9, 0)
+        );
+        // 土曜 (1/3) から見ても月曜。
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 3, 0, 0)),
+            dt(2026, 1, 5, 9, 0)
+        );
+    }
+
+    #[test]
+    fn weekday_mask_is_judged_in_the_schedule_timezone_not_utc() {
+        // 平日のみ JST 7:00 (= UTC 前日 22:00)。月曜 JST 7:00 は UTC 日曜 22:00 なので、
+        // UTC の曜日で判定すると日曜として落ちてしまう。JST のローカル日付 (月曜) で採る。
+        let sched = daily_tz(7, 0, "Asia/Tokyo", WEEKDAYS);
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 3, 0, 0)),
+            dt(2026, 1, 4, 22, 0)
+        );
+        // 土曜 JST 7:00 (= UTC 金曜 22:00) は平日ではないので採らない。金曜 UTC 12:00 から見た次は
+        // 月曜 JST 7:00 = UTC 日曜 22:00。
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 2, 12, 0)),
+            dt(2026, 1, 4, 22, 0)
+        );
+        // 木曜 JST 21:00 (= UTC 木曜 12:00) の次は、金曜 JST 7:00 (= UTC 木曜 22:00)。
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 1, 12, 0)),
+            dt(2026, 1, 1, 22, 0)
+        );
+    }
+
+    #[test]
+    fn single_weekday_mask_and_upcoming_runs() {
+        // 日曜のみ (bit6)。
+        let sched = daily_tz(12, 0, "UTC", 1 << 6);
+        let runs = upcoming_runs(&sched, dt(2026, 1, 1, 0, 0), 3);
+        assert_eq!(
+            runs,
+            vec![
+                dt(2026, 1, 4, 12, 0),
+                dt(2026, 1, 11, 12, 0),
+                dt(2026, 1, 18, 12, 0)
+            ]
+        );
+        let every = upcoming_runs(&daily(9, 0), dt(2026, 1, 1, 10, 0), 2);
+        assert_eq!(every, vec![dt(2026, 1, 2, 9, 0), dt(2026, 1, 3, 9, 0)]);
+        assert!(upcoming_runs(&daily(9, 0), dt(2026, 1, 1, 10, 0), 0).is_empty());
+    }
+
+    #[test]
+    fn validate_schedule_rejects_unknown_timezones_and_bad_masks() {
+        assert!(validate_schedule(&daily_tz(9, 0, "Asia/Tokyo", WEEKDAYS)).is_ok());
+        assert!(validate_schedule(&daily(9, 0)).is_ok());
+        assert!(validate_schedule(&daily_tz(9, 0, "Mars/Olympus", 0)).is_err());
+        assert!(validate_schedule(&daily(24, 0)).is_err());
+        assert!(validate_schedule(&daily(9, 60)).is_err());
+        assert!(validate_schedule(&daily_tz(9, 0, "UTC", 0b1000_0000)).is_err());
+        assert!(validate_schedule(&TaskSchedule::Interval { minutes: 5 }).is_ok());
+    }
+
+    #[test]
+    fn unknown_timezone_at_runtime_falls_back_to_utc() {
+        let sched = daily_tz(9, 0, "Mars/Olympus", 0);
+        assert_eq!(
+            next_run_after(&sched, dt(2026, 1, 1, 0, 0)),
+            dt(2026, 1, 1, 9, 0)
+        );
+    }
+
     #[test]
     fn interval_adds_minutes() {
         let sched = TaskSchedule::Interval { minutes: 90 };
@@ -104,17 +384,14 @@ mod tests {
 
     #[test]
     fn daily_same_day_when_time_still_ahead() {
-        let sched = TaskSchedule::Daily {
-            hour: 18,
-            minute: 30,
-        };
+        let sched = daily(18, 30);
         let from = dt(2026, 1, 1, 9, 0);
         assert_eq!(next_run_after(&sched, from), dt(2026, 1, 1, 18, 30));
     }
 
     #[test]
     fn daily_rolls_to_next_day_when_time_already_passed() {
-        let sched = TaskSchedule::Daily { hour: 8, minute: 0 };
+        let sched = daily(8, 0);
         let from = dt(2026, 1, 1, 9, 0);
         assert_eq!(next_run_after(&sched, from), dt(2026, 1, 2, 8, 0));
     }
@@ -123,14 +400,14 @@ mod tests {
     // は常に厳密に未来を返す契約)。
     #[test]
     fn daily_exact_match_rolls_to_next_day() {
-        let sched = TaskSchedule::Daily { hour: 8, minute: 0 };
+        let sched = daily(8, 0);
         let from = dt(2026, 1, 1, 8, 0);
         assert_eq!(next_run_after(&sched, from), dt(2026, 1, 2, 8, 0));
     }
 
     #[test]
     fn daily_handles_month_and_year_rollover() {
-        let sched = TaskSchedule::Daily { hour: 0, minute: 0 };
+        let sched = daily(0, 0);
         let from = dt(2025, 12, 31, 23, 59);
         assert_eq!(next_run_after(&sched, from), dt(2026, 1, 1, 0, 0));
     }

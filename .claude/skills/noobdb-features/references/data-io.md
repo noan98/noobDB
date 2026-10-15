@@ -82,7 +82,7 @@
   文字列セルになる。調査バンドル (#745) はフロントで組み立てるため、保存 / 全文コピー /
   プレビューとも先に `mask_export_rows` で同じ変換を掛けた行をバンドルへ渡し、その上で
   表示マスク (#1069) 対象列を伏せ字にする (両方が効く)。ルールは `fixed` (固定値) / `partial`
-  (先頭・末尾 N 文字を残して `*`、コードポイント単位) / `hash` (仮名化) / `null`。
+  (先頭・末尾 N 文字を残して `*`、コードポイント単位) / `hash` (仮名化) / `null` / `email` (#1623。最後の `@` より前だけ先頭 N 文字を残して伏せ、ドメインを残す。`@` が無い・片側が空なら全伏せ) / `date` (#1623。`YYYY-MM-DD` 系を年 `2026` / 年月 `2026-10` に落とす。読めない値は全伏せ)。プリセットは JSON で書き出し・読み込みできる (`serializeMaskPresets` / `parseMaskPresets`、検証は `sanitizeMaskPresets`)。
   **NULL はどのルールでも NULL のまま**、数値・真偽値は文字列表現を変換、BLOB は 16 進
   文字列を変換 (在グリッド経路でも同じ文字列になるので `hash` は両経路で一致)。
   列は**名前の完全一致**で対応付ける (ストリーミングは列が実行時まで不明なため)。
@@ -94,7 +94,7 @@
   (変換の二重実装を持たない)。keyring が使えないときに `hash` を指定するとエラーで
   止まる (素の SHA-256 へ縮退したり、マスクせず書き出したりしない)。フロント
   (`components/exportMasking.ts`) は列名パターンのプリセット (設定 `exportMaskPresets`、
-  プロファイル非依存。同梱は email / phone / mobile / *_name 系) と列単位の上書きから
+  プロファイル非依存。同梱は email (email ルール) / phone / mobile / *_name 系) と列単位の上書きから
   ルールを解決し、パターン判定は表示マスク (#1069) の `matchesMaskPattern` を共有する。
   ルールの正規化 (上限・既定値) はフロント `sanitizeMaskRule` とバック
   `MaskRule::normalized` の二重実装なので、共有ゴールデン
@@ -244,6 +244,13 @@
   と総数 `skippedTotal` のみ。全件は `AppState::last_import_skipped` が直近の取り込み結果として
   保持し、`get_import_skipped_text` (コピー用) / `save_import_skipped_rows` (ファイル保存) が
   Rust 側で組み立てます。
+  **取り込みの精度向上 (#1623)**: ① 新規テーブルの主キー (`NewColumn.primary_key`、`PRIMARY KEY`
+  句 + NOT NULL。テーブルを作る前に NULL / 重複を `check_new_table_primary_key` で検証)、
+  ② 型推論の根拠 (`inferColumnTypeDetail`: 型ごとの件数と文字列に落ちた最初の値)、
+  ③ スキップ行を元の行データ付きで CSV / NDJSON に書き出し、④ 事前検証 `import_dry_run`
+  (ロールバック付き)、⑤ 接続 × テーブル単位のマッピングテンプレート (`import_templates/`)、
+  ⑥ xlsx の複数シート一括取り込み。テーブル未選択の CSV ドロップは `dropImport.ts` の
+  `resolveCsvDropTarget` で新規テーブル取り込みへ回す。
 
 ## 接続間データ転送 (#986)
 

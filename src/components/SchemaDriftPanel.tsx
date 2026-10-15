@@ -7,7 +7,9 @@ import { useRovingFocus } from "../keyboardNav";
 import { canDiff } from "../schemaDrift";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
-import { Button, Select } from "./ui";
+import { Button, Input, Select } from "./ui";
+import { useToast } from "./Toast";
+import { SchemaDriftRevert } from "./SchemaDriftRevert";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
@@ -42,6 +44,10 @@ interface Props {
    */
   onOpenStructure?: (database: string, table: string) => void;
   onOpenData?: (database: string, table: string) => void;
+  /** ラベルを付け替えた (null = 外した) ので、親が保持する世代一覧へ反映する (#1621)。 */
+  onLabelChanged?: (id: string, label: string | null) => void;
+  /** 巻き戻し DDL (#1621) をエディタへ挿入する。指定されると「エディタに挿入」を出す。 */
+  onInsertSql?: (sql: string) => void;
 }
 
 function formatCaptured(iso: string): string {
@@ -58,8 +64,11 @@ export function SchemaDriftPanel({
   onClose,
   onOpenStructure,
   onOpenData,
+  onLabelChanged,
+  onInsertSql,
 }: Props) {
   const t = useT();
+  const toast = useToast();
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const { onKeyDown: onTimelineKeyDown } = useRovingFocus(timelineRef, "[data-generation-item]");
@@ -67,6 +76,34 @@ export function SchemaDriftPanel({
   const [pickB, setPickB] = useState<string | null>(null);
   const genB = gens.find((g) => g.id === pickB) ?? (gens.length > 0 ? gens[0] : null);
   const genA = gens.find((g) => g.id === pickA) ?? (gens.length > 1 ? gens[1] : genB);
+
+  // 世代へのラベル (#1621): 比較先 (B) の世代に付ける。編集中の文字列は世代を切り替えたら取り直す。
+  const [labelDraft, setLabelDraft] = useState("");
+  const [labelSaving, setLabelSaving] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 世代 id と保存済みラベルが変わったときだけ下書きを取り直す
+  useEffect(() => {
+    setLabelDraft(genB?.label ?? "");
+  }, [genB?.id, genB?.label]);
+  const saveLabel = async () => {
+    if (!genB) return;
+    const next = labelDraft.trim() === "" ? null : labelDraft.trim();
+    setLabelSaving(true);
+    try {
+      const ok = await api.schemaDriftSetLabel(profile.id, genB.id, next);
+      if (ok) onLabelChanged?.(genB.id, next);
+    } catch (e) {
+      toast.notify({ message: String(e), tone: "error" });
+    } finally {
+      setLabelSaving(false);
+    }
+  };
+
+  // 巻き戻し DDL (#1621)。比較する世代が変わったら閉じる。
+  const [revertOpen, setRevertOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 比較する 2 世代の id が変わったときだけ閉じる
+  useEffect(() => {
+    setRevertOpen(false);
+  }, [pickA, pickB]);
 
   const [summary, setSummary] = useState<SchemaDriftSummary | null>(null);
   const [comparing, setComparing] = useState(false);
@@ -176,6 +213,19 @@ export function SchemaDriftPanel({
                           {formatCaptured(g.capturedAt)}
                           {i === 0 && ` ${t("schemaDriftLatestSuffix")}`}
                         </chakra.div>
+                        {g.label && (
+                          <chakra.div
+                            textStyle="caption"
+                            color="app.accent"
+                            fontWeight={600}
+                            overflow="hidden"
+                            textOverflow="ellipsis"
+                            whiteSpace="nowrap"
+                            data-testid="schema-drift-label"
+                          >
+                            {g.label}
+                          </chakra.div>
+                        )}
                         <chakra.div textStyle="caption">
                           {t("schemaDriftGenerationTables", { count: g.tableCount })}
                           {g.omitted && ` · ${t("schemaDriftOmittedBadge")}`}
@@ -245,6 +295,33 @@ export function SchemaDriftPanel({
                   </Select>
                 </chakra.label>
               </Flex>
+
+              {genB && (
+                <Flex gap="2" align="center" wrap="wrap">
+                  <Input
+                    maxW="320px"
+                    value={labelDraft}
+                    maxLength={80}
+                    placeholder={t("schemaDriftLabelPlaceholder")}
+                    aria-label={t("schemaDriftLabelAria", { time: formatCaptured(genB.capturedAt) })}
+                    onChange={(e) => setLabelDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void saveLabel();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={labelSaving || labelDraft.trim() === (genB.label ?? "")}
+                    onClick={() => void saveLabel()}
+                  >
+                    {t("schemaDriftLabelSave")}
+                  </Button>
+                  <chakra.span textStyle="caption" color="app.textMuted">
+                    {t("schemaDriftLabelHint")}
+                  </chakra.span>
+                </Flex>
+              )}
 
               <Box
                 flex="1"
@@ -369,6 +446,29 @@ export function SchemaDriftPanel({
                   </chakra.ul>
                 ) : null}
               </Box>
+              {genA && genB && bothDiffable && !differentTarget && (
+                <>
+                  <Flex justify="flex-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      aria-expanded={revertOpen}
+                      onClick={() => setRevertOpen((v) => !v)}
+                    >
+                      <Icon name="refresh" size={ICON_SIZES.sm} /> {t("schemaDriftRevertButton")}
+                    </Button>
+                  </Flex>
+                  {revertOpen && (
+                    <SchemaDriftRevert
+                      profileId={profile.id}
+                      fromId={genA.id}
+                      toId={genB.id}
+                      onInsertSql={onInsertSql}
+                      onClose={onClose}
+                    />
+                  )}
+                </>
+              )}
             </Flex>
           </Flex>
         )}

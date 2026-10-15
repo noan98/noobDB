@@ -43,6 +43,72 @@ pub struct TableStatistic {
     pub has_primary_key: bool,
     /// 外部キー (制約単位) の数。
     pub foreign_key_count: i64,
+    /// 前回取得時の値 (#1621)。行数・サイズの増減 (今回 − 前回) を出す基準。初回・前回に
+    /// 存在しなかったテーブルは `None`。永続化は [`crate::table_stat_store`]。
+    #[serde(default)]
+    pub previous: Option<TableStatPrevious>,
+}
+
+/// 前回取得時のテーブル統計 (行数・合計サイズだけ。#1621)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TableStatPrevious {
+    /// 前回取得の時刻 (UTC, RFC 3339)。
+    pub at: String,
+    pub row_estimate: Option<i64>,
+    pub total_bytes: Option<i64>,
+}
+
+/// 1 回ぶんの統計スナップショット (テーブル名 → 行数・合計サイズ)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StatSnapshot {
+    /// 取得時刻 (UTC, RFC 3339)。
+    pub at: String,
+    #[serde(default)]
+    pub tables: std::collections::BTreeMap<String, (Option<i64>, Option<i64>)>,
+}
+
+/// 今回の統計から保存用のスナップショットを作る。
+pub fn snapshot_of(stats: &[TableStatistic], at: &str) -> StatSnapshot {
+    StatSnapshot {
+        at: at.to_string(),
+        tables: stats
+            .iter()
+            .map(|s| (s.name.clone(), (s.row_estimate, s.total_bytes)))
+            .collect(),
+    }
+}
+
+/// 各テーブルに、基準スナップショットの値を `previous` として載せる (基準に無いテーブルは `None`)。
+pub fn apply_previous(stats: &mut [TableStatistic], baseline: Option<&StatSnapshot>) {
+    for s in stats {
+        s.previous = baseline.and_then(|b| {
+            b.tables
+                .get(&s.name)
+                .map(|(row_estimate, total_bytes)| TableStatPrevious {
+                    at: b.at.clone(),
+                    row_estimate: *row_estimate,
+                    total_bytes: *total_bytes,
+                })
+        });
+    }
+}
+
+/// 基準スナップショットを今回のものに置き換えてよいか。再取得を連打しても増減が 0 に
+/// 潰れないよう、基準が `min_age_secs` 秒より新しい間は据え置き、増減は「基準の時刻から」の
+/// 累積で見せる。基準が無い・時刻が読めない・十分古いときは置き換える。
+pub fn should_roll_baseline(
+    baseline: Option<&StatSnapshot>,
+    now_rfc3339: &str,
+    min_age_secs: i64,
+) -> bool {
+    let Some(b) = baseline else { return true };
+    let (Ok(then), Ok(now)) = (
+        chrono::DateTime::parse_from_rfc3339(&b.at),
+        chrono::DateTime::parse_from_rfc3339(now_rfc3339),
+    ) else {
+        return true;
+    };
+    now.signed_duration_since(then).num_seconds() >= min_age_secs
 }
 
 /// 外部キー行 (参照列 1 件につき 1 行、複合キーは `constraint_name` を共有) を、
@@ -93,6 +159,7 @@ pub fn build_table_statistics(
                 index_count: idx.map_or(0, |t| t.indexes.len() as i64),
                 has_primary_key: idx.is_some_and(|t| t.indexes.iter().any(|i| i.primary)),
                 foreign_key_count: fk_counts.get(s.name.as_str()).copied().unwrap_or(0),
+                previous: None,
                 name: s.name,
                 row_estimate: s.row_estimate,
                 data_bytes: s.data_bytes,
@@ -344,5 +411,34 @@ mod tests {
         })
         .unwrap_or_default();
         assert_eq!(v["referencedColumn"], "id");
+    }
+
+    #[test]
+    fn baseline_rolls_only_when_missing_old_enough_or_unreadable() {
+        let base = StatSnapshot {
+            at: "2026-01-01T00:00:00Z".into(),
+            tables: Default::default(),
+        };
+        assert!(should_roll_baseline(None, "2026-01-01T00:00:10Z", 300));
+        assert!(!should_roll_baseline(
+            Some(&base),
+            "2026-01-01T00:04:59Z",
+            300
+        ));
+        assert!(should_roll_baseline(
+            Some(&base),
+            "2026-01-01T00:05:00Z",
+            300
+        ));
+        // 時刻が読めない基準は据え置かずに作り直す (永遠に更新されなくなるのを防ぐ)。
+        let broken = StatSnapshot {
+            at: "garbage".into(),
+            tables: Default::default(),
+        };
+        assert!(should_roll_baseline(
+            Some(&broken),
+            "2026-01-01T00:00:10Z",
+            300
+        ));
     }
 }

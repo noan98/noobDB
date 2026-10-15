@@ -202,6 +202,8 @@ import {
   type ServerSortDirection,
 } from "./serverBrowse";
 import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
+import { RefreshTrend } from "./RefreshTrend";
+import type { RefreshSample } from "../refreshPatch";
 import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
 import {
   type SelectionSummary,
@@ -1225,6 +1227,8 @@ interface Props {
   autoRefreshAllowed?: boolean;
   /** Wall-clock ms of the last completed auto-refresh tick, for the badge. */
   autoRefreshLastRunAt?: number | null;
+  /** 直近の自動リフレッシュごとの追加・変更・削除件数 (#1621)。小さな棒グラフで出す。 */
+  autoRefreshHistory?: RefreshSample[];
   /** Enable polling at `secs`, or disable it when `null`. */
   onSetAutoRefresh?: (secs: number | null) => void;
   /** Non-null when the last query failed (before a new run). Shows an error EmptyState in the grid body. */
@@ -1407,6 +1411,11 @@ export interface ResultGridHandle {
   openFind: () => void;
   /** キーボードフォーカスをグリッドへ移す (ペインフォーカス循環 #681)。 */
   focus: () => void;
+  /**
+   * 指定した列の先頭行のセルへアクティブセルとフォーカスを移し、必要ならスクロールする
+   * (オブジェクト検索の列ヒットから開いたとき、#1629)。列が無い・行が無いときは false。
+   */
+  revealColumn: (column: string) => boolean;
 }
 
 /**
@@ -3783,7 +3792,11 @@ const GridRow = memo(function GridRow({
                 onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
               />
             )}
-            <ValueDatalist id={valuePickerListId} values={editPickerValues} />
+            <ValueDatalist
+              id={valuePickerListId}
+              values={editPickerValues}
+              labels={valuePicker?.labels(columns[colIdx]?.name ?? "")}
+            />
             {editError ? (
               <div className="cell-edit-error" role="alert">
                 {t(editError)}
@@ -8074,6 +8087,7 @@ export const ResultGrid = memo(
       autoRefreshSecs,
       autoRefreshAllowed,
       autoRefreshLastRunAt,
+      autoRefreshHistory,
       onSetAutoRefresh,
       queryError,
       onRetry,
@@ -8451,6 +8465,8 @@ export const ResultGrid = memo(
       else containerRef.current?.focus();
     };
 
+    const resultForRevealRef = useRef(result);
+    resultForRevealRef.current = result;
     useImperativeHandle(
       ref,
       () => ({
@@ -8461,8 +8477,16 @@ export const ResultGrid = memo(
         focus: () => {
           containerRef.current?.focus();
         },
+        revealColumn: (column) => {
+          const r = resultForRevealRef.current;
+          if (!r || r.rows.length === 0) return false;
+          const colIdx = r.columns.findIndex((c) => c.name === column);
+          if (colIdx < 0) return false;
+          emitFindNav({ rowIdx: 0, colIdx }, true, true);
+          return true;
+        },
       }),
-      [],
+      [emitFindNav],
     );
     // biome-ignore lint/correctness/useExhaustiveDependencies: findFocusSeq は本体で読まないが、検索バーを開き直したときに入力欄へフォーカス・全選択し直す契機として意図的に依存へ入れている
     useEffect(() => {
@@ -9139,75 +9163,82 @@ export const ResultGrid = memo(
             );
           })}
           {onSetAutoRefresh && visibleToolbarActions.includes("autoRefresh") && (
-            <Tooltip
-              label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
+            // 増減の棒グラフは棒ごとに自前のツールチップを持つので、外側のツールチップの
+            // 対象 (操作部) とは兄弟に分けて二重表示を避ける。
+            <Box
+              data-toolbar-action="autoRefresh"
+              display="inline-flex"
+              alignItems="center"
+              gap="1.5"
+              paddingLeft="0.5"
+              flexShrink={0}
             >
-              <Box
-                data-toolbar-action="autoRefresh"
-                display="inline-flex"
-                alignItems="center"
-                gap="1.5"
-                paddingLeft="0.5"
-                flexShrink={0}
+              <Tooltip
+                label={autoRefreshAllowed ? t("autoRefreshEnabledTitle") : t("autoRefreshDisabledTitle")}
               >
-                <chakra.label
-                  display="inline-flex"
-                  alignItems="center"
-                  gap="1"
-                  fontSize="xs"
-                  whiteSpace="nowrap"
-                  color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
-                  cursor={autoRefreshAllowed ? "pointer" : "not-allowed"}
-                >
-                  <chakra.input
-                    type="checkbox"
-                    checked={autoRefreshOn}
+                <Box display="inline-flex" alignItems="center" gap="1.5">
+                  <chakra.label
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="xs"
+                    whiteSpace="nowrap"
+                    color={autoRefreshAllowed ? "app.text" : "app.textMuted"}
+                    cursor={autoRefreshAllowed ? "pointer" : "not-allowed"}
+                  >
+                    <chakra.input
+                      type="checkbox"
+                      checked={autoRefreshOn}
+                      disabled={!autoRefreshAllowed}
+                      aria-label={t("autoRefreshAria")}
+                      onChange={(e) => onSetAutoRefresh(e.target.checked ? intervalChoice : null)}
+                    />
+                    {t("autoRefreshLabel")}
+                  </chakra.label>
+                  <chakra.select
+                    aria-label={t("autoRefreshIntervalAria")}
+                    value={String(intervalChoice)}
                     disabled={!autoRefreshAllowed}
-                    aria-label={t("autoRefreshAria")}
-                    onChange={(e) => onSetAutoRefresh(e.target.checked ? intervalChoice : null)}
-                  />
-                  {t("autoRefreshLabel")}
-                </chakra.label>
-                <chakra.select
-                  aria-label={t("autoRefreshIntervalAria")}
-                  value={String(intervalChoice)}
-                  disabled={!autoRefreshAllowed}
-                  onChange={(e) => {
-                    const secs = Number(e.target.value);
-                    setIntervalChoice(secs);
-                    // Retarget the live timer immediately when already polling.
-                    if (autoRefreshOn) onSetAutoRefresh(secs);
-                  }}
-                  fontSize="xs"
-                  fontFamily="inherit"
-                  py="0.5"
-                  px="1"
-                  border="1px solid var(--border)"
-                  background="var(--bg-input)"
-                  color="var(--text)"
-                  borderRadius="var(--radius-sm)"
-                >
-                  {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
-                    <option key={s} value={s}>
-                      {s % 60 === 0
-                        ? t("autoRefreshIntervalMins", { mins: s / 60 })
-                        : t("autoRefreshIntervalSecs", { secs: s })}
-                    </option>
-                  ))}
-                </chakra.select>
-                {autoRefreshOn && (
-                  <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
-                    {streaming
-                      ? t("autoRefreshRunning")
-                      : autoRefreshLastRunAt
-                        ? t("autoRefreshUpdatedAt", {
-                            time: new Date(autoRefreshLastRunAt).toLocaleTimeString(),
-                          })
-                        : ""}
-                  </chakra.span>
-                )}
-              </Box>
-            </Tooltip>
+                    onChange={(e) => {
+                      const secs = Number(e.target.value);
+                      setIntervalChoice(secs);
+                      // Retarget the live timer immediately when already polling.
+                      if (autoRefreshOn) onSetAutoRefresh(secs);
+                    }}
+                    fontSize="xs"
+                    fontFamily="inherit"
+                    py="0.5"
+                    px="1"
+                    border="1px solid var(--border)"
+                    background="var(--bg-input)"
+                    color="var(--text)"
+                    borderRadius="var(--radius-sm)"
+                  >
+                    {AUTO_REFRESH_INTERVAL_OPTIONS.map((s) => (
+                      <option key={s} value={s}>
+                        {s % 60 === 0
+                          ? t("autoRefreshIntervalMins", { mins: s / 60 })
+                          : t("autoRefreshIntervalSecs", { secs: s })}
+                      </option>
+                    ))}
+                  </chakra.select>
+                  {autoRefreshOn && (
+                    <chakra.span fontSize="xs" color="app.textMuted" whiteSpace="nowrap">
+                      {streaming
+                        ? t("autoRefreshRunning")
+                        : autoRefreshLastRunAt
+                          ? t("autoRefreshUpdatedAt", {
+                              time: new Date(autoRefreshLastRunAt).toLocaleTimeString(),
+                            })
+                          : ""}
+                    </chakra.span>
+                  )}
+                </Box>
+              </Tooltip>
+              {autoRefreshOn && autoRefreshHistory && autoRefreshHistory.length > 0 && (
+                <RefreshTrend samples={autoRefreshHistory} />
+              )}
+            </Box>
           )}
           {collapsedToolbarActions.length > 0 && (
             <Tooltip label={t("resultToolbarMoreTitle")}>

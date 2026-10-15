@@ -235,6 +235,20 @@ export function CommandPalette({ items, onClose, mruIds = [], onSelectItem }: Co
           css={{ "&::placeholder": { color: "var(--text-muted)" } }}
         />
       </Flex>
+      {query === "" && (
+        <Box
+          px="4"
+          py="1"
+          fontSize="2xs"
+          color="app.textMuted"
+          bg="app.surface"
+          borderBottomWidth="1px"
+          borderBottomColor="app.borderSubtle"
+          data-testid="cmdk-prefix-hint"
+        >
+          {t("cmdkPrefixHint")}
+        </Box>
+      )}
 
       <MotionListBox
         ref={listRef}

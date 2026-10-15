@@ -33,6 +33,7 @@ import { motion } from "motion/react";
 import { transitions } from "../motion";
 import { semanticColorVar } from "../semanticColors";
 import { Icon, ICON_SIZES } from "./Icon";
+import { rankComboOptions } from "./comboRank";
 import { MENU_MARGIN } from "./menuPosition";
 import { isImeComposing } from "./modalKeys";
 
@@ -232,9 +233,10 @@ export function ComboSelect({
   const [query, setQuery] = useState<string | null>(null);
 
   const matches = useMemo(() => {
-    const needle = (query ?? "").trim().toLowerCase();
+    const needle = (query ?? "").trim();
     if (!needle) return options;
-    return options.filter((o) => o.value.toLowerCase().includes(needle));
+    // 完全一致 → 前方一致 → 単語境界 → 部分一致の順 (#1631)。
+    return rankComboOptions(options, needle);
   }, [options, query]);
   // 件数上限。「さらに表示」で展開したら、入力が変わる / 閉じるまで全件を出す
   // (畳むのは入力の onChange と閉じる処理の中で行う)。

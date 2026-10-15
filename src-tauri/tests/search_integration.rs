@@ -66,6 +66,36 @@ fn match_names(report: &t::WhereUsedReport) -> Vec<String> {
 // オブジェクト検索
 // ---------------------------------------------------------------------------
 
+/// ビュー / トリガーも検索でき、定義を開くための種別が付く (#1629)。
+#[tokio::test]
+async fn sqlite_object_search_finds_views_and_triggers() {
+    let (session, path) = sqlite_session("objsearch_kinds", false).await;
+    for ddl in [
+        "CREATE TABLE nb1629_items (id INTEGER PRIMARY KEY, qty INTEGER)",
+        "CREATE TABLE nb1629_log (n INTEGER)",
+        "CREATE VIEW nb1629_v_items AS SELECT id FROM nb1629_items",
+        "CREATE TRIGGER nb1629_trg AFTER INSERT ON nb1629_items BEGIN INSERT INTO nb1629_log VALUES (1); END",
+    ] {
+        session.conn.execute(ddl, None).await.expect("ddl");
+    }
+    let all = t::ObjectSearchScope::All;
+    let hits = t::search_schema_objects_core(&session, &all, "nb1629", 50)
+        .await
+        .expect("search");
+    let find = |kind: &str, name: &str| {
+        hits.iter()
+            .find(|h| h.kind == kind && h.table == name && h.column.is_none())
+    };
+    assert!(find("table", "nb1629_items").is_some(), "{hits:?}");
+    let view = find("view", "nb1629_v_items").expect("view hit");
+    assert_eq!(view.object_kind.as_deref(), Some("view"));
+    let trigger = find("trigger", "nb1629_trg").expect("trigger hit");
+    assert_eq!(trigger.object_kind.as_deref(), Some("trigger"));
+    // ビューはテーブルとして二重に出ない。
+    assert!(find("table", "nb1629_v_items").is_none(), "{hits:?}");
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test]
 async fn sqlite_object_search_ranks_and_caches_the_index() {
     let (session, path) = sqlite_session("objsearch", false).await;
@@ -311,6 +341,7 @@ fn request(tables: &[&str], term: &str, mode: t::MatchMode) -> t::DataSearchRequ
         mode,
         tables: tables.iter().map(|s| s.to_string()).collect(),
         row_threshold: 500_000,
+        include_dates: false,
     }
 }
 
@@ -397,6 +428,47 @@ async fn sqlite_data_search_streams_results_in_table_order() {
     assert!(matches!(&entries[3], t::DataSearchEntry::NoHit { table } if table == "plain"));
     assert!(matches!(&entries[4], t::DataSearchEntry::Skipped { table, .. } if table == "missing"));
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn sqlite_data_search_dates_are_searched_only_when_opted_in() {
+    let (session, path) = sqlite_session("datasearch_dates", false).await;
+    for sql in [
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, happened_at DATETIME, day DATE)",
+        "INSERT INTO events (id, happened_at, day) VALUES (1, '2026-10-15 12:00:00', '2026-10-15'), (2, '2026-11-01 08:00:00', '2026-11-01'), (3, '2025-10-02 00:00:00', NULL)",
+    ] {
+        session.conn.execute(sql, None).await.expect("fixture");
+    }
+    // 既定では日付列だけの表は走査対象なし。
+    let (store, emit) = collect_messages();
+    t::data_search_core(
+        session.clone(),
+        request(&["events"], "2026-10", t::MatchMode::Prefix),
+        Arc::new(AtomicU64::new(0)),
+        emit,
+    )
+    .await;
+    let off = entries(&store.lock().expect("lock"));
+    assert!(
+        matches!(&off[0], t::DataSearchEntry::Skipped { reason, .. } if *reason == "no-searchable-columns"),
+        "{:?}",
+        off[0]
+    );
+    // opt-in で前方一致 / 部分一致の両方が日付列にヒットする。
+    let mut req = request(&["events"], "2026-10", t::MatchMode::Prefix);
+    req.include_dates = true;
+    let (store, emit) = collect_messages();
+    t::data_search_core(session.clone(), req, Arc::new(AtomicU64::new(0)), emit).await;
+    let on = entries(&store.lock().expect("lock"));
+    match &on[0] {
+        t::DataSearchEntry::Hit { hits, .. } => {
+            let counts: Vec<(&str, f64)> =
+                hits.iter().map(|h| (h.column.as_str(), h.count)).collect();
+            assert_eq!(counts, vec![("happened_at", 1.0), ("day", 1.0)]);
+        }
+        other => panic!("events must hit: {other:?}"),
+    }
     let _ = std::fs::remove_file(path);
 }
 
@@ -551,6 +623,22 @@ async fn mysql_search_commands_when_env_set() {
             .any(|h| h.kind == "table" && h.database == MYSQL_DB && h.table == "nb1261tok_orders"),
         "{hits:?}"
     );
+    // 関数とトリガーも検索対象 (#1629)。
+    let hits = t::search_schema_objects_core(&session, &t::ObjectSearchScope::All, "nb1261_", 50)
+        .await
+        .expect("search routines");
+    assert!(
+        hits.iter().any(|h| h.kind == "routine"
+            && h.database == MYSQL_DB
+            && h.table == "nb1261_f"
+            && h.object_kind.as_deref() == Some("function")),
+        "{hits:?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|h| h.kind == "trigger" && h.database == MYSQL_DB && h.table == "nb1261_t"),
+        "{hits:?}"
+    );
     let cur = t::ObjectSearchScope::Current {
         database: MYSQL_DB.into(),
     };
@@ -607,6 +695,7 @@ async fn mysql_search_commands_when_env_set() {
             mode: t::MatchMode::Contains,
             tables: vec!["nb1261tok_orders".into(), "nb1261_stock".into()],
             row_threshold: 500_000,
+            include_dates: false,
         },
         Arc::new(AtomicU64::new(0)),
         emit,
@@ -708,6 +797,21 @@ async fn postgres_search_commands_when_env_set() {
             .any(|h| h.kind == "table" && h.database == PG_SCHEMA && h.table == "nb1261tok_orders"),
         "{hits:?}"
     );
+    // 関数とトリガーも検索対象。同名の関数 (oid) を区別できるよう id が付く (#1629)。
+    let hits = t::search_schema_objects_core(&session, &t::ObjectSearchScope::All, "nb1261_", 50)
+        .await
+        .expect("search routines");
+    let func = hits
+        .iter()
+        .find(|h| h.kind == "routine" && h.database == PG_SCHEMA && h.table == "nb1261_f")
+        .unwrap_or_else(|| panic!("{hits:?}"));
+    assert_eq!(func.object_kind.as_deref(), Some("function"));
+    assert!(func.object_id.is_some(), "{func:?}");
+    assert!(
+        hits.iter()
+            .any(|h| h.kind == "trigger" && h.database == PG_SCHEMA && h.table == "nb1261_t"),
+        "{hits:?}"
+    );
 
     let report = t::find_where_used_report(
         session.clone(),
@@ -741,6 +845,7 @@ async fn postgres_search_commands_when_env_set() {
             mode: t::MatchMode::Exact,
             tables: vec!["nb1261tok_orders".into()],
             row_threshold: 500_000,
+            include_dates: false,
         },
         Arc::new(AtomicU64::new(0)),
         emit,

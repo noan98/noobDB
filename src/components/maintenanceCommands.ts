@@ -6,6 +6,7 @@
 // ドライバ別に組み立てる。実行は既存のクエリ経路 (run_query) を再利用するため、
 // ここは副作用の無い純関数に徹し、Vitest でユニットテストする。
 
+import type { I18nKey } from "../i18n";
 import { quoteIdentFor } from "./sqlDialect";
 
 /** 保守コマンドの種別。UI 側で i18n ラベル・説明にマップする。 */
@@ -19,6 +20,19 @@ export type MaintenanceKind =
   | "reindex"
   | "refreshMatview"
   | "refreshMatviewConcurrently";
+
+/** 保守種別の表示ラベル (i18n キー)。メニューと確認ダイアログで共有する。 */
+export const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
+  analyze: "maintenanceAnalyze",
+  optimize: "maintenanceOptimize",
+  check: "maintenanceCheck",
+  repair: "maintenanceRepair",
+  vacuum: "maintenanceVacuum",
+  vacuumAnalyze: "maintenanceVacuumAnalyze",
+  reindex: "maintenanceReindex",
+  refreshMatview: "maintenanceRefreshMatview",
+  refreshMatviewConcurrently: "maintenanceRefreshMatviewConcurrently",
+};
 
 /** 1 つの保守コマンド: 種別と、そのまま実行できる生成済み SQL。 */
 export interface MaintenanceCommand {
@@ -69,6 +83,33 @@ export function tableMaintenanceCommands(
     { kind: "check", sql: `CHECK TABLE ${name};` },
     { kind: "repair", sql: `REPAIR TABLE ${name};` },
   ];
+}
+
+/**
+ * 複数テーブルへ一括で流せる保守種別 (#1629)。単一テーブルの保守と同じ種別を同じ順序で返す。
+ */
+export function batchMaintenanceKinds(driver: string): MaintenanceKind[] {
+  return tableMaintenanceCommands(driver, null, "t").map((c) => c.kind);
+}
+
+/**
+ * 複数テーブルへ同じ保守コマンドを流す SQL (#1629)。テーブルごとに 1 文ずつ生成する
+ * (失敗したテーブルを特定でき、`VACUUM` のようにトランザクション内で流せない文も
+ * 1 文ずつなら実行できる)。ドライバがその種別を持たなければ空配列。
+ */
+export function batchMaintenanceCommands(
+  driver: string,
+  database: string | null,
+  tables: readonly string[],
+  kind: MaintenanceKind,
+): { table: string; command: MaintenanceCommand }[] {
+  const out: { table: string; command: MaintenanceCommand }[] = [];
+  for (const table of tables) {
+    const command = tableMaintenanceCommands(driver, database, table).find((c) => c.kind === kind);
+    if (!command) return [];
+    out.push({ table, command });
+  }
+  return out;
 }
 
 /**

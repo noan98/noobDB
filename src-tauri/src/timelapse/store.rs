@@ -164,6 +164,17 @@ pub async fn record_generation(
     .await
 }
 
+/// ウォッチの世代 ID を古い順に返す (#1621)。
+pub async fn list_generation_ids(watch_id: i64) -> Result<Vec<i64>> {
+    let pool = pool().await?;
+    Ok(
+        sqlx::query_scalar("SELECT id FROM generation WHERE watch_id = ? ORDER BY id ASC")
+            .bind(watch_id)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 pub async fn load_generation(id: i64) -> Result<StoredGeneration> {
     load_generation_in(pool().await?, id).await
 }

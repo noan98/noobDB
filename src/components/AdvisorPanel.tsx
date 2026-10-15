@@ -2,17 +2,20 @@ import { useCallback, useMemo, useState, type KeyboardEvent as ReactKeyboardEven
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import { motion } from "motion/react";
 
-import { api, type SchemaHealthReport } from "../api/tauri";
+import { api, type HealthFinding, type SchemaHealthReport } from "../api/tauri";
 import { useT } from "../i18n";
 import { useAiAvailable } from "../ai/useAiAvailable";
 import { semanticColorToken } from "../semanticColors";
 import {
   DEFAULT_ADVISOR_SORT,
   findingDescription,
+  findingSizeText,
   findingsToTable,
   findingTarget,
+  newFindingSet,
   nextAdvisorSort,
   reasonTextKey,
+  reclaimableSummary,
   ruleTitleKey,
   severityLabelKey,
   sortFindings,
@@ -22,6 +25,8 @@ import {
 import { copyToClipboard } from "./clipboard";
 import { AiAdvisorExplain } from "./AiAdvisorExplain";
 import { SeverityBadge } from "./severityBadge";
+import { Callout } from "./Callout";
+import { formatBytes } from "./tableSize";
 import { CodePreview } from "./modalForm";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -117,6 +122,9 @@ export function AdvisorPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<AdvisorSort>(DEFAULT_ADVISOR_SORT);
+  // 前回診断で無かった指摘 (参照の集合)。「対応しない」への移動で添字がずれないよう、取得時に参照へ直す。
+  const [newFindings, setNewFindings] = useState<Set<HealthFinding>>(() => new Set());
+  const [showIgnored, setShowIgnored] = useState(false);
 
   const run = useCallback(async () => {
     setRunning(true);
@@ -124,6 +132,7 @@ export function AdvisorPanel({
     try {
       const r = await api.analyzeSchemaHealth(sessionId, database);
       setReport(r);
+      setNewFindings(newFindingSet(r.findings, r.diff));
     } catch (e) {
       // 失敗した再実行の下に前回の診断結果が残ると、古い指摘が現在の結果として
       // 表示・書き出し (CSV / Markdown) されてしまうので破棄する。
@@ -134,6 +143,30 @@ export function AdvisorPanel({
     }
   }, [sessionId, database]);
 
+  // 「対応しない」(#1621): 保存してから、再診断せずに画面上で本表 ⇔ 別枠を移す。
+  const moveFinding = useCallback(
+    async (finding: HealthFinding, toIgnored: boolean) => {
+      try {
+        if (toIgnored) await api.ignoreAdvisorFinding(sessionId, database, finding);
+        else await api.unignoreAdvisorFinding(sessionId, database, finding);
+      } catch (e) {
+        toast.error(t("advisorIgnoreError", { error: String(e) }));
+        return;
+      }
+      setReport((cur) =>
+        cur
+          ? {
+              ...cur,
+              findings: toIgnored ? cur.findings.filter((f) => f !== finding) : [...cur.findings, finding],
+              ignored: toIgnored ? [...cur.ignored, finding] : cur.ignored.filter((f) => f !== finding),
+            }
+          : cur,
+      );
+      if (toIgnored) setShowIgnored(true);
+    },
+    [sessionId, database, toast, t],
+  );
+
   const insertFix = useCallback(
     (sql: string) => {
       onInsertSql(sql);
@@ -141,6 +174,8 @@ export function AdvisorPanel({
     },
     [onInsertSql, toast, t],
   );
+
+  const reclaimable = useMemo(() => (report ? reclaimableSummary(report.findings) : null), [report]);
 
   const findings = useMemo(() => {
     if (!report) return [];
@@ -210,6 +245,7 @@ export function AdvisorPanel({
         fixDdl: t("advisorExportColFixDdl"),
         fixDdlOnline: t("advisorExportColFixDdlOnline"),
         statistical: t("advisorExportColStatistical"),
+        size: t("advisorExportColSize"),
       },
       severity: (s) => t(severityLabelKey(s)),
       rule: (f) => t(ruleTitleKey(f.rule)),
@@ -275,6 +311,52 @@ export function AdvisorPanel({
       </Box>
 
       <Box flex="1" minH={0} overflowY="auto" px="4" pb="3.5" display="flex" flexDirection="column" gap="3.5">
+        {report && !running && report.diff && (
+          // 前回診断との差分 (#1621): 修正 DDL を適用した後にどれだけ改善したかをその場で確認できる。
+          <Callout
+            tone={
+              report.diff.resolved.length > 0 || report.diff.new_indexes.length === 0 ? "success" : "warning"
+            }
+          >
+            <chakra.div data-testid="advisor-diff-summary">
+              {t("advisorDiffSummary", {
+                time: new Date(report.diff.previous_at).toLocaleString(),
+                added: String(report.diff.new_indexes.length),
+                resolved: String(report.diff.resolved.length),
+                unchanged: String(report.diff.unchanged),
+              })}
+            </chakra.div>
+            {report.diff.resolved.length > 0 && (
+              <chakra.ul
+                margin={0}
+                marginTop="1"
+                paddingLeft="4"
+                fontSize="sm"
+                data-testid="advisor-diff-resolved"
+              >
+                {report.diff.resolved.map((f) => (
+                  <li key={f.rule + findingTarget(f) + (f.context[0] ?? "")}>
+                    {t("advisorDiffResolvedItem", {
+                      rule: t(ruleTitleKey(f.rule)),
+                      target: findingTarget(f),
+                    })}
+                  </li>
+                ))}
+              </chakra.ul>
+            )}
+          </Callout>
+        )}
+
+        {report && !running && reclaimable && (
+          <Callout tone="info">
+            <chakra.span data-testid="advisor-reclaimable">
+              {t("advisorReclaimable", { size: formatBytes(reclaimable.bytes) })}
+              {reclaimable.unknown > 0 &&
+                ` ${t("advisorReclaimableUnknown", { count: String(reclaimable.unknown) })}`}
+            </chakra.span>
+          </Callout>
+        )}
+
         {error && (
           // 診断失敗: errorHints の分類結果から共有イラストを割り当て、既存の
           // 実行/再実行ボタンと同じ導線を再取得アクションに配線する (#848)。
@@ -320,10 +402,11 @@ export function AdvisorPanel({
                 <chakra.th css={thCss}>{t("advisorColRule")}</chakra.th>
                 <chakra.th css={thCss}>{t("advisorColTarget")}</chakra.th>
                 <chakra.th css={thCss}>{t("advisorColDetail")}</chakra.th>
+                <chakra.th css={thCss}>{t("advisorColSize")}</chakra.th>
               </chakra.tr>
             </chakra.thead>
             <chakra.tbody>
-              <SkeletonTableRows columns={4} rows={5} />
+              <SkeletonTableRows columns={5} rows={5} />
             </chakra.tbody>
           </chakra.table>
         )}
@@ -401,6 +484,7 @@ export function AdvisorPanel({
                   {sortableTh("rule", t("advisorColRule"))}
                   {sortableTh("target", t("advisorColTarget"))}
                   {sortableTh("detail", t("advisorColDetail"))}
+                  {sortableTh("size", t("advisorColSize"))}
                 </chakra.tr>
               </chakra.thead>
               <chakra.tbody>
@@ -413,6 +497,21 @@ export function AdvisorPanel({
                       </chakra.td>
                       <chakra.td css={tdCss} fontWeight={600} whiteSpace="nowrap">
                         {t(ruleTitleKey(f.rule))}
+                        {newFindings.has(f) && (
+                          <chakra.span
+                            marginLeft="1.5"
+                            px="1.5"
+                            textStyle="overline"
+                            borderRadius="var(--radius-sm)"
+                            bg={semanticColorToken("info", "subtle")}
+                            color={semanticColorToken("info", "text")}
+                            border="1px solid"
+                            borderColor={semanticColorToken("info", "border")}
+                            data-testid="advisor-new-badge"
+                          >
+                            {t("advisorDiffNewBadge")}
+                          </chakra.span>
+                        )}
                       </chakra.td>
                       <chakra.td css={tdCss} fontFamily="var(--font-mono)">
                         {findingTarget(f)}
@@ -452,6 +551,18 @@ export function AdvisorPanel({
                             onCopy={copyFix}
                           />
                         )}
+                        <Flex gap="1" marginTop="1.5" align="center" flexWrap="wrap">
+                          <Tooltip label={t("advisorIgnoreTooltip")}>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => void moveFinding(f, true)}
+                            >
+                              {t("advisorIgnore")}
+                            </Button>
+                          </Tooltip>
+                        </Flex>
                         {aiAvailable && report && (
                           <AiAdvisorExplain
                             sessionId={sessionId}
@@ -462,12 +573,83 @@ export function AdvisorPanel({
                           />
                         )}
                       </chakra.td>
+                      <chakra.td css={tdCss} textStyle="numeric" whiteSpace="nowrap">
+                        {findingSizeText(f)}
+                      </chakra.td>
                     </chakra.tr>
                   );
                 })}
               </chakra.tbody>
             </chakra.table>
           </MotionReveal>
+        )}
+
+        {report && !running && report.ignored.length > 0 && (
+          // 「対応しない」にした指摘 (#1621): 本表には出さず、別枠に折りたたむ。
+          <Box
+            borderRadius="var(--radius-sm)"
+            border="1px solid"
+            borderColor="app.border"
+            data-testid="advisor-ignored"
+          >
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-expanded={showIgnored}
+              onClick={() => setShowIgnored((v) => !v)}
+            >
+              <Icon name={showIgnored ? "chevron-down" : "chevron-right"} size={ICON_SIZES.sm} />
+              <chakra.span marginLeft="1.5">
+                {t("advisorIgnoredTitle", { count: String(report.ignored.length) })}
+              </chakra.span>
+            </Button>
+            {showIgnored && (
+              <Box px="3" pb="2.5">
+                <chakra.div
+                  fontSize="var(--text-xs)"
+                  color="app.textMuted"
+                  marginBottom="1.5"
+                  lineHeight={1.5}
+                >
+                  {t("advisorIgnoredNote")}
+                </chakra.div>
+                {report.ignored.map((f) => {
+                  const desc = findingDescription(f);
+                  return (
+                    <Flex
+                      key={f.rule + findingTarget(f) + (f.context[0] ?? "")}
+                      align="center"
+                      gap="3"
+                      paddingY="1.5"
+                      borderTop="1px solid"
+                      borderColor="app.border"
+                    >
+                      <Box flex="1" minW={0}>
+                        <chakra.div fontWeight={600} fontSize="sm">
+                          {t(ruleTitleKey(f.rule))}{" "}
+                          <chakra.span fontFamily="var(--font-mono)" fontWeight={400}>
+                            {findingTarget(f)}
+                          </chakra.span>
+                        </chakra.div>
+                        <chakra.div fontSize="var(--text-xs)" color="app.textMuted" lineHeight={1.5}>
+                          {t(desc.key, desc.params)}
+                        </chakra.div>
+                      </Box>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => void moveFinding(f, false)}
+                      >
+                        {t("advisorUnignore")}
+                      </Button>
+                    </Flex>
+                  );
+                })}
+              </Box>
+            )}
+          </Box>
         )}
       </Box>
     </Box>

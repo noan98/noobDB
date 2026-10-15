@@ -538,6 +538,30 @@ export const assertionOutcome = z.object({
   check_sql: z.string(),
   violations_sql: z.string(),
   elapsed_ms: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      observed: z.number(),
+      passed: z.boolean(),
+    })
+    .nullable(),
+});
+
+export const acceptedValuesCandidates = z.object({
+  values: z.array(z.string()),
+  truncated: z.boolean(),
+});
+
+export const importAssertionsResult = z.object({
+  imported: z.array(assertion),
+  skipped_duplicates: z.number(),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
 });
 
 export const historyEntry = z.object({
@@ -759,6 +783,22 @@ export const timelapseGenerationDiff = z.object({
   to_captured_at: z.string(),
 });
 
+export const timelapseRowHistory = z.object({
+  columns: z.array(z.string()),
+  primary_key: z.array(z.string()),
+  entries: z.array(
+    z.object({
+      generation_id: z.number(),
+      captured_at: z.string(),
+      present: z.boolean(),
+      row: z.array(cellValue).nullable(),
+      changed_columns: z.array(z.string()),
+    }),
+  ),
+  generations_scanned: z.number(),
+  partial: z.boolean(),
+});
+
 /** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
 export const sandboxRecord = z.object({
   id: z.string(),
@@ -828,6 +868,7 @@ export const healthFinding = z.object({
   fix_ddl: z.string().nullable(),
   fix_ddl_online: z.string().nullable(),
   statistical: z.boolean(),
+  size_bytes: z.number().nullable(),
 });
 
 export const skippedRule = z.object({
@@ -848,6 +889,15 @@ export const schemaHealthReport = z.object({
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
   table_plans: z.array(tableFixPlan),
+  ignored: z.array(healthFinding),
+  diff: z
+    .object({
+      previous_at: z.string(),
+      new_indexes: z.array(z.number()),
+      resolved: z.array(healthFinding),
+      unchanged: z.number(),
+    })
+    .nullable(),
 });
 
 export const csvPreview = z.object({
@@ -884,6 +934,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const booleanResponse = z.boolean();
 export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
@@ -976,6 +1027,13 @@ export const tableStatistic = tableSizeInfo.extend({
   index_count: z.number(),
   has_primary_key: z.boolean(),
   foreign_key_count: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      row_estimate: z.number().nullable(),
+      total_bytes: z.number().nullable(),
+    })
+    .nullable(),
 });
 
 /** 1 テーブル分の全列メタデータ (`describe_database`、#1255)。Rust の
@@ -1131,6 +1189,8 @@ export const queryStreamPatchMessage = z.object({
   totalRows: z.number(),
   unchanged: z.boolean(),
   removedCount: z.number(),
+  addedCount: z.number(),
+  changedCount: z.number(),
   runs: z.array(queryStreamPatchRun),
 });
 
@@ -1221,10 +1281,13 @@ export const channelCancelledMessage = z.object({
 
 /** グローバルオブジェクト検索のヒット 1 件。`column` はカラムエントリのときだけ。 */
 export const objectSearchHit = z.object({
-  kind: z.enum(["table", "column"]),
+  kind: z.enum(["table", "column", "view", "routine", "trigger"]),
   database: z.string(),
   table: z.string(),
   column: z.string().optional(),
+  object_kind: z.string().optional(),
+  object_id: z.string().optional(),
+  row_estimate: z.number().optional(),
 });
 
 export const objectSearchHitArray = z.array(objectSearchHit);
@@ -1488,6 +1551,35 @@ export const skippedRowInfo = z.object({
   reason: z.string(),
 });
 
+export const importDryRunResult = z.object({
+  total: z.number(),
+  failed: z.number(),
+  failures: z.array(skippedRowInfo),
+  dbChecked: z.boolean(),
+});
+
+export const importTemplate = z.object({
+  id: z.string(),
+  profileId: z.string(),
+  database: z.string().nullable().optional(),
+  table: z.string(),
+  format: z.string(),
+  delimiter: z.string(),
+  quote: z.string(),
+  hasHeader: z.boolean(),
+  nullToken: z.string().nullable().optional(),
+  encoding: z.string(),
+  sheet: z.string().nullable().optional(),
+  conflictMode: z.string().nullable().optional(),
+  errorMode: z.string().nullable().optional(),
+  keyColumns: z.array(z.string()),
+  mapping: z.array(
+    z.object({ column: z.string(), header: z.string().nullable().optional(), csvIndex: z.number() }),
+  ),
+  updatedAtMs: z.number(),
+});
+export const importTemplateArray = z.array(importTemplate);
+
 export const importDoneEvent = z.object({
   streamId: z.string(),
   inserted: z.number(),
@@ -1497,11 +1589,20 @@ export const importDoneEvent = z.object({
   // 先頭一部しか `skipped` に載らないため、総件数を別に持つ (#1258)。旧バックエンドでは
   // 省略されるので既定 0 (フロントは `max(skippedTotal, skipped.length)` で使う)。
   skippedTotal: z.number().default(0),
+  // 件数が多く一部の行の元データを保持していない (#1623)。省略時 false。
+  skippedDataTruncated: z.boolean().default(false),
+  // 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは省略される。
+  sheets: z
+    .array(z.object({ sheet: z.string(), table: z.string(), inserted: z.number(), skippedTotal: z.number() }))
+    .default([]),
 });
 
 /** 転送前プレビュー (#1532)。 */
+const transferColumnInfo = z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() });
 export const transferPreview = z.object({
-  columns: z.array(z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() })),
+  columns: z.array(transferColumnInfo),
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: z.array(transferColumnInfo),
   lossy: z.array(
     z.object({
       column: z.string(),
@@ -1726,7 +1827,14 @@ const connectRetry = z.object({
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
-  z.object({ kind: z.literal("daily"), hour: z.number(), minute: z.number() }),
+  z.object({
+    kind: z.literal("daily"),
+    hour: z.number(),
+    minute: z.number(),
+    // IANA タイムゾーン (null = UTC) と曜日マスク (0 = 毎日)。#1621。
+    timezone: z.string().nullable(),
+    weekdays: z.number(),
+  }),
 ]);
 
 export const taskDefinition = z.object({
@@ -1742,6 +1850,9 @@ export const taskDefinition = z.object({
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
   connect_retry: connectRetry,
+  pause_after_failures: z.number(),
+  consecutive_failures: z.number(),
+  auto_paused_at: z.string().nullable(),
 });
 
 export const taskRun = z.object({
@@ -1774,6 +1885,9 @@ export const assertionRunRecord = z.object({
 
 export const assertionRunRecordArray = z.array(assertionRunRecord);
 
+/** `preview_task_schedule` の戻り値: 次回以降の発火時刻 (RFC3339, UTC)。 */
+export const taskSchedulePreview = z.array(z.string());
+
 export const schedulerSettings = z.object({
   catch_up_missed: z.boolean(),
 });
@@ -1785,6 +1899,7 @@ export const taskRunEvent = z.object({
   message: z.string().nullable(),
   outputPath: z.string().nullable(),
   catchUp: z.boolean(),
+  autoPaused: z.boolean(),
 });
 
 /** 「今すぐ実行」の進捗 (`task-run:progress`、#1534)。`unit` は `rows` / `bytes` / `items`。 */
@@ -1852,6 +1967,8 @@ export const transferDoneEvent = z.object({
   elapsedMs: z.number(),
   /** 損失のある型マッピングなどの注意書き (空配列が普通)。 */
   warnings: z.array(z.string()),
+  /** 件数照合 (#1623) で見つかった食い違い。`warnings` の部分集合。 */
+  integrityWarnings: z.array(z.string()).default([]),
 });
 
 export const transferErrorEvent = z.object({
@@ -1927,6 +2044,15 @@ export const schemaDriftGeneration = z.object({
   omitted: z.boolean(),
   // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
   triggerSql: z.string().nullable().optional(),
+  // 利用者が付けたラベル (#1621)。
+  label: z.string().nullable().optional(),
+});
+/** `schema_drift_revert_sql` の結果 (#1621)。 */
+export const schemaDriftRevertSql = z.object({
+  plan: syncPlan,
+  omitted_destructive: z.number(),
+  database: z.string(),
+  preamble: z.string().nullable(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
@@ -2014,4 +2140,5 @@ export const planWatchRefreshResult = z.object({
     }),
   ),
   warned: z.array(z.string()),
+  warnedSummaries: z.array(z.string()),
 });

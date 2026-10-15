@@ -1851,6 +1851,37 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
             .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
     }
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "status",
+        None,
+    )
+    .await
+    .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "email",
+        None,
+    )
+    .await
+    .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "noobdb_aq_items", "qty", None)
+            .await
+            .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     for sql in [
         "DROP TABLE IF EXISTS noobdb_aq_items",
         "DROP TABLE IF EXISTS noobdb_aq_orders",
@@ -3214,6 +3245,10 @@ async fn mysql_transfer_upsert_updates_and_skips() {
         batch_size: Some(100),
         conflict_mode: mode,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     };
     let run = |r: t::TransferRequest| {
         let state = &state;
@@ -3338,6 +3373,10 @@ async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
             batch_size: Some(100),
             conflict_mode: None,
             key_columns: None,
+            columns: Vec::new(),
+            where_clause: None,
+            limit_rows: None,
+            verify_counts: None,
         },
         Arc::new(AtomicU64::new(0)),
         |_| {},
@@ -3429,6 +3468,155 @@ async fn mysql_save_cells_to_folder() {
         .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
         .await
         .expect("cleanup");
+}
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_dry (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL) ENGINE=InnoDB",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO noobdb_my_dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_my_dry").await;
+    // 通常の InnoDB 表はトランザクショナルと判定され、information_schema に無い表は
+    // 安全側 (Err) に倒れる (#1623)。
+    assert!(conn
+        .table_is_transactional(None, "noobdb_my_dry")
+        .await
+        .expect("known InnoDB table"),);
+    assert!(
+        conn.table_is_transactional(None, "noobdb_my_dry_does_not_exist")
+            .await
+            .is_err(),
+        "an unknown table must not be assumed transactional"
+    );
+    conn.execute("DROP TABLE noobdb_my_dry", None)
+        .await
+        .expect("cleanup");
+
+    // ロールバックできない表では実行しない (試し書きが残ってしまう)。
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry_isam", None)
+        .await
+        .expect("drop isam");
+    if conn
+        .execute(
+            "CREATE TABLE noobdb_my_dry_isam (id INT PRIMARY KEY) ENGINE=MyISAM",
+            None,
+        )
+        .await
+        .is_ok()
+    {
+        let err = conn
+            .dry_run_failures(
+                None,
+                "noobdb_my_dry_isam",
+                &["id".to_string()],
+                &[vec![Some("1".to_string())]],
+                &t::ImportConflict::insert_only(),
+                10,
+            )
+            .await
+            .expect_err("non-transactional table must be rejected");
+        assert!(err.to_string().contains("transactions"), "{err}");
+        let count = conn
+            .execute("SELECT COUNT(*) FROM noobdb_my_dry_isam", None)
+            .await
+            .expect("count");
+        assert!(matches!(&count.rows[0][0], t::Value::Int(0)));
+        conn.execute("DROP TABLE noobdb_my_dry_isam", None)
+            .await
+            .expect("cleanup isam");
+    }
+}
+
+/// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 容量の取得 (`mysql.innodb_index_stats`)
+/// を足しても、統計が読めない環境で指摘そのものが消えたり失敗したりしない。
+#[tokio::test]
+async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = url.rsplit('/').next().expect("db name").to_string();
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_adv_idx",
+        "CREATE TABLE noobdb_adv_idx (id INT PRIMARY KEY, note VARCHAR(64), KEY noobdb_adv_idx_note (note))",
+        "INSERT INTO noobdb_adv_idx VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    conn.execute("DROP TABLE IF EXISTS noobdb_adv_idx", None)
+        .await
+        .expect("drop");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::UnusedIndex);
+    if skipped {
+        // performance_schema が無効 / sys が読めない環境: 縮退の理由が付く (失敗にはしない)。
+        eprintln!("unused index stats unavailable; degraded as designed");
+        return;
+    }
+    let f = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::UnusedIndex && f.table == "noobdb_adv_idx")
+        .expect("unused index finding");
+    // サイズは取れれば正の値。権限がなければ None のまま指摘は出る。
+    assert!(f.size_bytes.is_none_or(|n| n > 0), "{:?}", f.size_bytes);
 }
 
 #[tokio::test]

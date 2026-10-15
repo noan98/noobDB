@@ -97,11 +97,12 @@ function take<T>(all: T[], limit: number): { items: T[]; hasMore: boolean } {
 export function buildQuickLauncherSections(
   src: QuickLauncherSources,
   limits: QuickLauncherSectionLimits,
+  query = "",
 ): QuickLauncherSection[] {
   const byId = new Map(src.snippets.map((s) => [s.id, s]));
-  // お気に入りは登録順 (新しいものが末尾) なので、テーブル側と同じく新しい順に並べ替える。
+  // お気に入りは保存順 (登録順。並べ替えた順) のまま見せる。サイドバーと同じ向きなので、
+  // 並べ替えの「前へ / 上へ」が画面の上方向と一致する (#1631)。
   const favSnippets = [...src.snippetQuickAccess.favorites]
-    .reverse()
     .map((id) => byId.get(id))
     .filter((s): s is Snippet => s !== undefined)
     .map((snippet): QuickLauncherItem => ({ kind: "snippet", key: `snippet:${snippet.id}`, snippet }));
@@ -122,8 +123,8 @@ export function buildQuickLauncherSections(
       key: `${prefix}:${ref.database}\u0000${ref.table}`,
       ref,
     });
-  // お気に入りは登録順 (新しいものが末尾) なので、新しい順に並べ替えて見せる。
-  const favTables = [...src.tableQuickAccess.favorites].reverse().map(tableItem("fav"));
+  // お気に入りは保存順のまま (サイドバーと同じ向き)。
+  const favTables = [...src.tableQuickAccess.favorites].map(tableItem("fav"));
   const recentTables = src.tableQuickAccess.recent.map(tableItem("recent"));
 
   const all: Record<QuickLauncherSectionId, QuickLauncherItem[]> = {
@@ -132,7 +133,42 @@ export function buildQuickLauncherSections(
     favoriteTables: favTables,
     recentTables,
   };
+  // 検索中 (#1631): 表示件数の上限は絞り込みの母集団に適用せず、ヒットした全件から選べる。
+  const q = query.trim().toLowerCase();
+  if (q) {
+    return QUICK_LAUNCHER_SECTIONS.map((id) => ({
+      id,
+      items: all[id].filter((item) => quickLauncherItemMatches(item, q)),
+      hasMore: false,
+    }));
+  }
   return QUICK_LAUNCHER_SECTIONS.map((id) => ({ id, ...take(all[id], limits[id]) }));
+}
+
+/**
+ * ランチャーの項目が検索語 (小文字化・trim 済み) に部分一致するか (#1631)。スニペットは
+ * 名前・フォルダ・タグ・SQL、クエリは SQL、テーブルはテーブル名・データベース名を見る。
+ */
+export function quickLauncherItemMatches(item: QuickLauncherItem, q: string): boolean {
+  switch (item.kind) {
+    case "snippet": {
+      const s = item.snippet;
+      return (
+        s.name.toLowerCase().includes(q) ||
+        (s.folder?.toLowerCase().includes(q) ?? false) ||
+        s.sql.toLowerCase().includes(q) ||
+        s.tags.some((tag) => tag.toLowerCase().includes(q))
+      );
+    }
+    case "query":
+      return item.sql.toLowerCase().includes(q);
+    case "table":
+      return (
+        item.ref.table.toLowerCase().includes(q) ||
+        item.ref.database.toLowerCase().includes(q) ||
+        `${item.ref.database}.${item.ref.table}`.toLowerCase().includes(q)
+      );
+  }
 }
 
 /** 一覧に出す 1 行ぶんの SQL (改行・連続空白を畳み、長すぎれば省略)。 */

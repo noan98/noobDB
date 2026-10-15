@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
 import { useLocale, useT } from "../i18n";
@@ -35,7 +35,10 @@ import {
   countMaskedColumns,
   type ExportColumnMask,
   type ExportMaskOverrides,
+  mergeMaskPresets,
+  parseMaskPresets,
   resolveExportMasks,
+  serializeMaskPresets,
   upsertMaskPreset,
 } from "./exportMasking";
 
@@ -422,6 +425,36 @@ export function ExportModal({
     () => (maskEnabled ? resolveExportMasks(columnNames, settings.exportMaskPresets, maskOverrides) : []),
     [maskEnabled, columnNames, settings.exportMaskPresets, maskOverrides],
   );
+  // マスクプリセットの JSON 書き出し・読み込み (#1623)。チームで PII 列のルールを揃える。
+  const handleExportMaskPresets = async () => {
+    try {
+      const dest = await save({
+        defaultPath: "noobdb-mask-presets.json",
+        title: t("exportMaskingPresetsExport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      await api.writeTextFile(dest, serializeMaskPresets(settings.exportMaskPresets));
+      toast.success(t("exportMaskingPresetsExported", { path: dest }));
+    } catch (e) {
+      toast.error(t("exportMaskingPresetsError", { error: String(e) }));
+    }
+  };
+  const handleImportMaskPresets = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("exportMaskingPresetsImport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const imported = parseMaskPresets(await api.readTextFile(picked));
+      setExportMaskPresets(mergeMaskPresets(settings.exportMaskPresets, imported));
+      toast.success(t("exportMaskingPresetsImported", { count: imported.length }));
+    } catch (e) {
+      toast.error(t("exportMaskingPresetsError", { error: String(e) }));
+    }
+  };
   const maskedCount = countMaskedColumns(columnNames, masks);
   const maskedSuffix = maskedCount > 0 ? t("exportMaskedSuffix", { count: maskedCount }) : "";
   const previewRows = useMemo(() => effectiveRows.slice(0, PREVIEW_ROWS), [effectiveRows]);
@@ -1190,6 +1223,8 @@ export function ExportModal({
             });
             toast.success(t("exportMaskingPresetSaved", { column }));
           }}
+          onExportPresets={() => void handleExportMaskPresets()}
+          onImportPresets={() => void handleImportMaskPresets()}
           disabled={isSaving}
         />
 

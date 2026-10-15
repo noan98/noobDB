@@ -26,6 +26,8 @@ import {
 import { filterSectionsByTitle, pickActiveSection } from "../sectionNav";
 import { copyToClipboard } from "./clipboard";
 import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./columnMask";
+import { findContrastFailures, parseCustomTheme, readBaseThemeToken } from "../customTheme";
+import { diffSettingsPaths } from "../settingsDiff";
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
@@ -65,6 +67,8 @@ import {
   setMonoFontFamily,
   setUiFontFamily,
   THEME_PRESET_ORDER,
+  setCustomTheme,
+  setFollowOsContrast,
   setThemePreset,
   type ThemePreset,
   MOTION_PREFERENCE_ORDER,
@@ -649,6 +653,8 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-backup", titleKey: "settingsBackup" },
 ];
 
+const SETTINGS_IMPORT_DIFF_PREVIEW = 15;
+
 export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Props) {
   const t = useT();
   const toast = useToast();
@@ -1050,9 +1056,34 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       if (typeof picked !== "string" || !picked) return;
       const raw = await api.readTextFile(picked);
       const next = deserializeSettingsImport(raw);
+      const changed = diffSettingsPaths(settings, next);
+      if (changed.length === 0) {
+        toast.info(t("settingsBackupImportNoChanges"));
+        return;
+      }
+      const shown = changed.slice(0, SETTINGS_IMPORT_DIFF_PREVIEW);
       const ok = await confirm({
         title: t("settingsBackupImportTitle"),
-        message: t("settingsBackupImportConfirm"),
+        message: (
+          <>
+            <chakra.p>{t("settingsBackupImportConfirm")}</chakra.p>
+            <chakra.p mt="2" fontWeight="semibold">
+              {t("settingsBackupImportChanges", { count: changed.length })}
+            </chakra.p>
+            <chakra.ul mt="1" pl="4" fontSize="sm" data-testid="settings-import-diff">
+              {shown.map((path) => (
+                <chakra.li key={path} fontFamily="mono">
+                  {path}
+                </chakra.li>
+              ))}
+            </chakra.ul>
+            {changed.length > shown.length && (
+              <chakra.p fontSize="sm" color="app.textMuted">
+                {t("settingsBackupImportChangesMore", { count: changed.length - shown.length })}
+              </chakra.p>
+            )}
+          </>
+        ),
         tone: "warning",
       });
       if (!ok) return;
@@ -1060,6 +1091,56 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       toast.success(t("settingsBackupImportSuccess"));
     } catch (e) {
       toast.error(t("settingsBackupImportError", { error: String(e) }));
+    }
+  };
+
+  // カスタムテーマ (#1631): JSON を読み込み、AA を満たさない組があれば適用前に警告する。
+  const handleImportCustomTheme = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("customThemeImportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const parsed = parseCustomTheme(await api.readTextFile(picked));
+      if (!parsed.ok) {
+        toast.error(t("customThemeInvalid"));
+        return;
+      }
+      const baseOf = readBaseThemeToken(document.documentElement, settings.customTheme);
+      const failures = findContrastFailures(parsed.tokens, baseOf);
+      if (failures.length > 0 || parsed.ignored > 0) {
+        const ok = await confirm({
+          title: t("customThemeImportTitle"),
+          message: (
+            <>
+              {failures.length > 0 && (
+                <>
+                  <chakra.p>{t("customThemeContrastWarning", { count: failures.length })}</chakra.p>
+                  <chakra.ul mt="1" pl="4" fontSize="sm" data-testid="custom-theme-failures">
+                    {failures.map((f) => (
+                      <chakra.li key={`${f.fg}/${f.bg}`} fontFamily="mono">
+                        {`--${f.fg} ${f.fgColor} / --${f.bg} ${f.bgColor}: ${f.ratio.toFixed(2)}:1 (< ${f.min}:1)`}
+                      </chakra.li>
+                    ))}
+                  </chakra.ul>
+                </>
+              )}
+              {parsed.ignored > 0 && (
+                <chakra.p mt="2">{t("customThemeIgnored", { count: parsed.ignored })}</chakra.p>
+              )}
+            </>
+          ),
+          confirmLabel: t("customThemeApplyAnyway"),
+          tone: "warning",
+        });
+        if (!ok) return;
+      }
+      setCustomTheme(parsed.tokens);
+      toast.success(t("customThemeApplied", { count: Object.keys(parsed.tokens).length }));
+    } catch (e) {
+      toast.error(t("customThemeImportError", { error: String(e) }));
     }
   };
 
@@ -1228,6 +1309,40 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                       );
                     })}
                   </ThemePresetRow>
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-follow-os-contrast">
+                      {t("settingsFollowOsContrast")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsFollowOsContrastHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-follow-os-contrast"
+                    checked={settings.followOsContrast}
+                    onChange={setFollowOsContrast}
+                  />
+                </SettingsToggleRow>
+
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">{t("settingsCustomTheme")}</SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsCustomThemeHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <SettingsReset type="button" onClick={handleImportCustomTheme}>
+                    {t("customThemeImport")}
+                  </SettingsReset>
+                  <SettingsReset
+                    type="button"
+                    disabled={Object.keys(settings.customTheme).length === 0}
+                    onClick={() => setCustomTheme({})}
+                  >
+                    {t("customThemeClear")}
+                  </SettingsReset>
+                  <SettingsInfo>
+                    {t("customThemeStatus", { count: Object.keys(settings.customTheme).length })}
+                  </SettingsInfo>
                 </SettingsToggleRow>
 
                 <SettingsToggleRow>

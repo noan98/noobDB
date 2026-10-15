@@ -17,6 +17,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       schemaDriftCompare: vi.fn(),
+      schemaDriftSetLabel: vi.fn(),
+      schemaDriftRevertSql: vi.fn(),
     },
   };
 });
@@ -212,5 +214,99 @@ describe("SchemaDriftPanel タイムラインの操作 (#1612)", () => {
 
     fireEvent.click(items()[0], { shiftKey: true });
     await waitFor(() => expect(api.schemaDriftCompare).toHaveBeenCalledWith(profile.id, "g3", "g1"));
+  });
+});
+
+describe("SchemaDriftPanel generation labels (#1621)", () => {
+  it("shows labels in the timeline and saves a new label for the target generation", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue({ tables: [] });
+    vi.mocked(api.schemaDriftSetLabel).mockResolvedValue(true);
+    const generations = [
+      makeGeneration("g2", "2026-01-02T00:00:00Z"),
+      { ...makeGeneration("g1", "2026-01-01T00:00:00Z"), label: "障害前" },
+    ];
+    const onLabelChanged = vi.fn();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={generations}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+        onLabelChanged={onLabelChanged}
+      />,
+    );
+    expect(await screen.findByTestId("schema-drift-label")).toHaveTextContent("障害前");
+    const input = screen.getByPlaceholderText(t("schemaDriftLabelPlaceholder"));
+    fireEvent.change(input, { target: { value: "  リリース v1.2 " } });
+    fireEvent.click(screen.getByRole("button", { name: t("schemaDriftLabelSave") }));
+    await waitFor(() =>
+      expect(api.schemaDriftSetLabel).toHaveBeenCalledWith("p-test", "g2", "リリース v1.2"),
+    );
+    await waitFor(() => expect(onLabelChanged).toHaveBeenCalledWith("g2", "リリース v1.2"));
+  });
+});
+
+describe("SchemaDriftPanel revert DDL (#1621)", () => {
+  it("generates revert DDL for the picked generations, re-requests with the destructive switch, and inserts it", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue({ tables: [] });
+    const plan = (destructive: boolean) => ({
+      plan: {
+        statements: [
+          {
+            sql: "ALTER TABLE users ADD COLUMN legacy INT",
+            table: "users",
+            kind: "add_column" as const,
+            destructive: false,
+          },
+          ...(destructive
+            ? [{ sql: "DROP TABLE audit", table: "audit", kind: "drop_table" as const, destructive: true }]
+            : []),
+        ],
+        warnings: [],
+      },
+      omitted_destructive: destructive ? 0 : 1,
+      database: "appdb",
+      preamble: "USE `appdb`",
+    });
+    vi.mocked(api.schemaDriftRevertSql).mockImplementation(async (_p, _f, _t, allow) => plan(allow));
+    const onInsertSql = vi.fn();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={[
+          makeGeneration("g2", "2026-01-02T00:00:00Z"),
+          makeGeneration("g1", "2026-01-01T00:00:00Z"),
+        ]}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+        onInsertSql={onInsertSql}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(t("schemaDriftRevertButton")) }));
+    // 比較元 = g1 (戻したい世代)、比較先 = g2 (現在側)。既定は破壊的な文なし。
+    await waitFor(() => expect(api.schemaDriftRevertSql).toHaveBeenCalledWith("p-test", "g1", "g2", false));
+    const pre = await screen.findByTestId("schema-drift-revert-sql");
+    expect(pre).toHaveTextContent("ADD COLUMN legacy");
+    // 対象 DB が見え、貼り付ける SQL の先頭にも対象コメントと USE が付く。
+    expect(screen.getByTestId("schema-drift-revert-target")).toHaveTextContent(
+      t("schemaDriftRevertTarget", { database: "appdb" }),
+    );
+    expect(screen.getByText(t("schemaDriftRevertAssumption"))).toBeInTheDocument();
+    expect(pre.textContent?.startsWith("-- target: appdb\nUSE `appdb`;\nALTER TABLE")).toBe(true);
+    expect(pre).not.toHaveTextContent("DROP TABLE");
+    expect(screen.getByText(t("schemaDriftRevertOmitted", { count: 1 }))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: t("schemaDriftRevertAllowDestructive") }));
+    await waitFor(() => expect(api.schemaDriftRevertSql).toHaveBeenCalledWith("p-test", "g1", "g2", true));
+    await waitFor(() =>
+      expect(screen.getByTestId("schema-drift-revert-sql")).toHaveTextContent("DROP TABLE audit;"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("schemaDriftRevertInsert")) }));
+    expect(onInsertSql).toHaveBeenCalledWith(expect.stringContaining("DROP TABLE audit;"));
   });
 });

@@ -134,6 +134,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["importStartedEvent", schemas.importStartedEvent],
   ["importProgressEvent", schemas.importProgressEvent],
   ["importDoneEvent", schemas.importDoneEvent],
+  // #1623: 取り込みの事前検証の結果と、保存済みマッピングテンプレート。
+  ["importDryRunResult", schemas.importDryRunResult],
+  ["importTemplate", schemas.importTemplate],
   // #973: `.sql` スクリプト実行の `sql-script:*` (scriptFailure は done/error 内で間接カバー)。
   ["scriptProgressEvent", schemas.scriptProgressEvent],
   ["scriptDoneEvent", schemas.scriptDoneEvent],
@@ -173,6 +176,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["alterTableContext", schemas.alterTableContext],
   ["assertionSql", schemas.assertionSql],
   ["assertionOutcome", schemas.assertionOutcome],
+  ["acceptedValuesCandidates", schemas.acceptedValuesCandidates],
+  ["importAssertionsResult", schemas.importAssertionsResult],
   ["assertionVariants", schemas.assertion],
   ["assertionRowCountOpVariants", schemas.assertion],
   ["assertionRunRecord", schemas.assertionRunRecord],
@@ -207,6 +212,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["timelapseCaptureOutcome", schemas.timelapseCaptureOutcome],
   ["tableWatch", schemas.tableWatch],
   ["timelapseGenerationDiff", schemas.timelapseGenerationDiff],
+  ["timelapseRowHistory", schemas.timelapseRowHistory],
+  ["schemaDriftRevertSql", schemas.schemaDriftRevertSql],
   ["schemaDriftGeneration", schemas.schemaDriftGeneration],
   ["schemaDriftSummary", schemas.schemaDriftSummary],
   ["schemaDriftCapture", schemas.schemaDriftCapture],

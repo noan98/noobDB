@@ -78,6 +78,33 @@ export interface TableStatRow extends TableSizeInfo {
   hasPrimaryKey: boolean | null;
   /** 外部キー (制約単位) の数。 */
   foreignKeyCount: number | null;
+  /** 前回取得からの行数・合計サイズの増減 (#1621)。前回値が無い行は `null`。 */
+  change: TableStatChange | null;
+}
+
+/** 前回取得からの増減。片側が不明 (`null`) の項目は差を出せないので `null`。 */
+export interface TableStatChange {
+  /** 前回取得の時刻 (UTC, RFC 3339)。 */
+  since: string;
+  rows: number | null;
+  totalBytes: number | null;
+}
+
+/** `current - previous`。どちらかが不明なら `null`。 */
+export function deltaOf(current: number | null, previous: number | null): number | null {
+  return current == null || previous == null ? null : current - previous;
+}
+
+/**
+ * 増減の表示 (`+1,234` / `-5` / `+1.5 MB` / `±0`)。`null` は表示しない。バイトは符号つきで
+ * `formatBytes` に絶対値を渡す。
+ */
+export function formatDelta(delta: number | null, kind: "count" | "bytes"): string | null {
+  if (delta == null) return null;
+  if (delta === 0) return "±0";
+  const sign = delta > 0 ? "+" : "−";
+  const abs = Math.abs(delta);
+  return `${sign}${kind === "bytes" ? formatBytes(abs) : abs.toLocaleString("en-US")}`;
 }
 
 /** `table_statistics` の戻り値をダッシュボードの行に写す。 */
@@ -95,6 +122,13 @@ export function toTableStatRows(stats: readonly TableStatistic[]): TableStatRow[
     indexCount: s.index_count,
     hasPrimaryKey: s.has_primary_key,
     foreignKeyCount: s.foreign_key_count,
+    change: s.previous
+      ? {
+          since: s.previous.at,
+          rows: deltaOf(s.row_estimate, s.previous.row_estimate),
+          totalBytes: deltaOf(s.total_bytes, s.previous.total_bytes),
+        }
+      : null,
   }));
 }
 
