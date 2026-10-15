@@ -1256,7 +1256,20 @@ const en = {
   formPasswordRevealNote: "Read from the OS keyring. Hides again automatically after {seconds} seconds.",
   formPasswordRevealMissing: "No saved password found in the OS keyring.",
   formPasswordRevealFailed: "Could not read the saved password",
-  formUseSsh: "Use SSH tunnel",
+  formRoute: "Connection route",
+  formRouteDirect: "Direct",
+  formRouteSsh: "SSH tunnel",
+  formRouteSsm: "SSM (Session Manager)",
+  formSsmTarget: "Instance ID",
+  formSsmRegion: "Region (optional)",
+  formSsmRegionPlaceholder: "Blank = infer from the endpoint name",
+  formSsmProfile: "AWS profile (optional)",
+  formSsmProfileHelp:
+    "Passed to the AWS CLI as --profile. To use aws-vault, put `credential_process = aws-vault export --format=json NAME` in the profile in ~/.aws/config and enter that profile name here. Blank uses the default AWS credential resolution.",
+  formSsmHelp:
+    "Relays through a bastion EC2 instance with `aws ssm start-session`, to the Host / Port above (e.g. an RDS endpoint). Requires AWS CLI v2 and the Session Manager plugin on this PC.",
+  formInvalidSsmTarget:
+    "Enter an instance ID like i-0123456789abcdef0 (i- or mi- followed by 8 to 17 lowercase hex digits).",
   formSshHost: "SSH Host",
   formSshUser: "SSH User",
   formSshAuthMethod: "Authentication",
@@ -6724,7 +6737,20 @@ const ja: Dict = {
   formPasswordRevealNote: "OS キーリングから読み出しました。{seconds} 秒後に自動で非表示に戻ります。",
   formPasswordRevealMissing: "OS キーリングに保存済みパスワードが見つかりません。",
   formPasswordRevealFailed: "保存済みパスワードを読み取れませんでした",
-  formUseSsh: "SSHトンネルを使用",
+  formRoute: "接続経路",
+  formRouteDirect: "直接",
+  formRouteSsh: "SSHトンネル",
+  formRouteSsm: "SSM (Session Manager)",
+  formSsmTarget: "インスタンスID",
+  formSsmRegion: "リージョン (任意)",
+  formSsmRegionPlaceholder: "空欄ならエンドポイント名から推定",
+  formSsmProfile: "AWSプロファイル名 (任意)",
+  formSsmProfileHelp:
+    "AWS CLI の --profile に渡します。aws-vault を使う場合は ~/.aws/config のプロファイルに `credential_process = aws-vault export --format=json 名前` を書き、そのプロファイル名をここに入力してください。空欄なら AWS の既定の認証情報解決順を使います。",
+  formSsmHelp:
+    "踏み台の EC2 インスタンスを `aws ssm start-session` で経由し、上のホスト / ポート (RDS エンドポイントなど) へ中継します。この PC に AWS CLI v2 と Session Manager プラグインが必要です。",
+  formInvalidSsmTarget:
+    "i-0123456789abcdef0 のようなインスタンスID (i- または mi- + 小文字16進8〜17桁) を入力してください。",
   formSshHost: "SSHホスト",
   formSshUser: "SSHユーザー",
   formSshAuthMethod: "認証方式",

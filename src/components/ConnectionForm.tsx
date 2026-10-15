@@ -3,11 +3,21 @@ import { Box, chakra, Flex, Text } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join, dirname } from "@tauri-apps/api/path";
-import { api, ConnectionProfile, DriverKind, ProfileSecretKind, SshAuthMethod, SslMode } from "../api/tauri";
+import {
+  api,
+  ConnectionProfile,
+  DriverKind,
+  ProfileSecretKind,
+  SshAuthMethod,
+  SsmConfig,
+  SslMode,
+} from "../api/tauri";
 import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { Callout } from "./Callout";
+import { Segmented, type SegmentedOption } from "./Segmented";
+import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button, Heading, Input, Select, Switch, Textarea } from "./ui";
 import { LoadingButton } from "./LoadingButton";
@@ -270,6 +280,13 @@ function normalizeDriver(driver: string | undefined): DriverKind {
   return "mysql";
 }
 
+type ConnectionRoute = "direct" | "ssh" | "ssm";
+
+/** SSM のインスタンス ID 形式 (`src-tauri/src/ssm/mod.rs::validate_target` と同じ)。 */
+function isValidSsmTarget(target: string): boolean {
+  return /^(?:i|mi)-[0-9a-f]{8,17}$/.test(target);
+}
+
 /** Bordered field group, spanning both columns of the form grid. */
 function Fieldset({ children }: { children: ReactNode }) {
   return (
@@ -385,7 +402,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [awsRegion, setAwsRegion] = useState(initial?.aws_iam?.region ?? "");
   const [awsProfile, setAwsProfile] = useState(initial?.aws_iam?.profile ?? "");
 
-  const [useSsh, setUseSsh] = useState(!!initial?.ssh);
+  // 接続経路 (#1684): 直接 / SSH トンネル / SSM (Session Manager)。排他。既存プロファイルは
+  // ssh があれば SSH、ssm があれば SSM、どちらも無ければ直接として復元する。
+  const [route, setRoute] = useState<ConnectionRoute>(initial?.ssh ? "ssh" : initial?.ssm ? "ssm" : "direct");
+  const [ssmTarget, setSsmTarget] = useState(initial?.ssm?.target ?? "");
+  const [ssmRegion, setSsmRegion] = useState(initial?.ssm?.region ?? "");
+  const [ssmProfile, setSsmProfile] = useState(initial?.ssm?.profile ?? "");
+  const [ssmTargetError, setSsmTargetError] = useState<string | null>(null);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
   const [sshUser, setSshUser] = useState(initial?.ssh?.user ?? "");
@@ -426,13 +449,25 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshJumpPortError, setSshJumpPortError] = useState<string | null>(null);
 
   const isFileBacked = driver === "sqlite";
+  const useSsh = route === "ssh";
+  const useSsm = route === "ssm" && !isFileBacked;
   // AWS IAM auth applies only to network MySQL / PostgreSQL (#734). It forces
   // TLS, so the effective mode shown/sent is at least `require`.
   const iamActive = !isFileBacked && isIamCapableDriver(driver) && authMethod === "aws_iam";
   const effectiveSslMode: SslMode = iamActive ? effectiveSslModeForIam(sslMode) : sslMode;
+  const ssmConfig = (): SsmConfig | null =>
+    useSsm
+      ? { target: ssmTarget.trim(), region: ssmRegion.trim(), profile: ssmProfile.trim() || null }
+      : null;
   const awsIamConfig = () =>
     isFileBacked ? null : buildAwsIamConfig(authMethod, driver, awsRegion, awsProfile);
   const inferredRegion = inferRdsRegion(host);
+
+  const routeOptions: SegmentedOption<ConnectionRoute>[] = [
+    { value: "direct", label: t("formRouteDirect") },
+    { value: "ssh", label: t("formRouteSsh") },
+    { value: "ssm", label: t("formRouteSsm") },
+  ];
 
   const handleDriverChange = (next: DriverKind) => {
     if (next === driver) return;
@@ -622,6 +657,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         password: "",
         database: null,
         ssh: null,
+        ssm: null,
         file_path: filePath || null,
         read_only: readOnly,
         skip_history: skipHistory,
@@ -659,6 +695,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               : null,
           }
         : null,
+      ssm: ssmConfig(),
       file_path: null,
       read_only: readOnly,
       skip_history: skipHistory,
@@ -690,8 +727,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     setPortError(null);
     setSshPortError(null);
     setSshJumpPortError(null);
+    setSsmTargetError(null);
     if (isFileBacked) return true;
     let ok = true;
+    if (useSsm && !isValidSsmTarget(ssmTarget.trim())) {
+      setSsmTargetError(t("formInvalidSsmTarget"));
+      ok = false;
+    }
     if (parsePort(port) === null) {
       setPortError(t("formInvalidPort"));
       ok = false;
@@ -779,6 +821,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   : null,
               }
             : null,
+        ssm: ssmConfig(),
         db_password: isFileBacked || iamActive || password === "" ? undefined : password,
         ssh_passphrase:
           !isFileBacked && useSsh && sshAuthMethod === "key" && sshPassphrase !== ""
@@ -1233,10 +1276,59 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       {!isFileBacked && (
         <Fieldset>
           <Legend>
-            <Flex display="inline-flex" align="center" gap="1.5" fontSize="sm">
-              <Switch checked={useSsh} onChange={setUseSsh} size="sm" label={t("formUseSsh")} />
+            <Flex display="inline-flex" align="center" gap="2" fontSize="sm">
+              {t("formRoute")}
             </Flex>
           </Legend>
+          <Box mb="2">
+            <Segmented value={route} options={routeOptions} onChange={setRoute} ariaLabel={t("formRoute")} />
+          </Box>
+          {useSsm && (
+            <Box mt="2">
+              <Box>
+                <FieldLabel htmlFor={`${fid}-ssm-target`}>{t("formSsmTarget")}</FieldLabel>
+                <Input
+                  id={`${fid}-ssm-target`}
+                  value={ssmTarget}
+                  aria-invalid={ssmTargetError ? true : undefined}
+                  placeholder="i-0123456789abcdef0"
+                  onChange={(e) => {
+                    setSsmTarget(e.target.value);
+                    if (ssmTargetError) setSsmTargetError(null);
+                  }}
+                />
+                {ssmTargetError && (
+                  <FieldError display="block" mt="1">
+                    {ssmTargetError}
+                  </FieldError>
+                )}
+              </Box>
+              <Box mt="2">
+                <FieldLabel htmlFor={`${fid}-ssm-region`}>{t("formSsmRegion")}</FieldLabel>
+                <Input
+                  id={`${fid}-ssm-region`}
+                  value={ssmRegion}
+                  placeholder={t("formSsmRegionPlaceholder")}
+                  onChange={(e) => setSsmRegion(e.target.value)}
+                />
+              </Box>
+              <Box mt="2">
+                <SettingsLabelWithInfo>
+                  <FieldLabel htmlFor={`${fid}-ssm-profile`}>{t("formSsmProfile")}</FieldLabel>
+                  <SettingsInfo>{t("formSsmProfileHelp")}</SettingsInfo>
+                </SettingsLabelWithInfo>
+                <Input
+                  id={`${fid}-ssm-profile`}
+                  value={ssmProfile}
+                  placeholder={t("formAwsProfilePlaceholder")}
+                  onChange={(e) => setSsmProfile(e.target.value)}
+                />
+              </Box>
+              <Text textStyle="caption" mt="2" mb="0">
+                {t("formSsmHelp")}
+              </Text>
+            </Box>
+          )}
           {useSsh && (
             <>
               <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
