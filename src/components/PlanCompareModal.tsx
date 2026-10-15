@@ -34,6 +34,11 @@ interface Props {
   /** 各計画が実測 (EXPLAIN ANALYZE) で取得されたか。食い違うときは注意を出す。 */
   beforeAnalyze?: boolean;
   afterAnalyze?: boolean;
+  /**
+   * 「固定」前提の既定文言を差し替える (AI の書き換え提案との比較、#1620)。
+   * 未指定は固定した計画との比較の文言。
+   */
+  labels?: { title: string; beforeColumn: string; afterColumn: string; afterPane: string };
   onClose: () => void;
 }
 
@@ -97,6 +102,7 @@ export function PlanCompareModal({
   beforeLabel,
   beforeAnalyze,
   afterAnalyze,
+  labels,
   onClose,
 }: Props) {
   const t = useT();
@@ -116,7 +122,7 @@ export function PlanCompareModal({
       width="min(1400px, 96vw)"
     >
       <ModalHeader onClose={onClose} closeLabel={t("planCompareClose")}>
-        {t("planCompareTitle")}
+        {labels?.title ?? t("planCompareTitle")}
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3" minHeight="60vh">
         {view === null ? (
@@ -152,10 +158,10 @@ export function PlanCompareModal({
                   <chakra.tr borderBottom="1px solid" borderColor="app.border">
                     <chakra.th px="2.5" py="1" />
                     <chakra.th textStyle="overline" textAlign="right" px="2.5" py="1">
-                      {t("planCompareColBefore")}
+                      {labels?.beforeColumn ?? t("planCompareColBefore")}
                     </chakra.th>
                     <chakra.th textStyle="overline" textAlign="right" px="2.5" py="1">
-                      {t("planCompareColAfter")}
+                      {labels?.afterColumn ?? t("planCompareColAfter")}
                     </chakra.th>
                     <chakra.th textStyle="overline" textAlign="right" px="2.5" py="1">
                       {t("planCompareColDelta")}
@@ -262,7 +268,7 @@ export function PlanCompareModal({
             <Flex flex="1" minHeight="320px" gap="2.5">
               {[
                 { result: before, label: t("planCompareBeforePane", { at: beforeLabel }) },
-                { result: after, label: t("planCompareAfterPane") },
+                { result: after, label: labels?.afterPane ?? t("planCompareAfterPane") },
               ].map((pane) => (
                 <Flex
                   key={pane.label}

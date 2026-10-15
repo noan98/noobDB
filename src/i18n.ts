@@ -5487,6 +5487,15 @@ const en = {
     'The table "{name}" is not in the schema that was sent. It may not exist; check the name before running.',
   aiQueryUnknownColumn:
     'The column "{name}" was not found in the table "{table}" in the schema that was sent. It may not exist; check the name before running.',
+  explainAiCompare: "Compare plan",
+  explainAiCompareHelp:
+    "Runs EXPLAIN (no ANALYZE) on this rewrite and compares the estimated plan with the current one. The query itself is not executed and no data is touched.",
+  explainAiCompareError: "Could not get the plan of the rewrite: {message}",
+  explainAiCompareTitle: "Compare with the AI rewrite",
+  explainAiCompareColBefore: "Current",
+  explainAiCompareColAfter: "Rewrite",
+  explainAiCompareBeforePane: "Current plan",
+  explainAiCompareAfterPane: "AI rewrite (estimated)",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10945,6 +10954,15 @@ const ja: Dict = {
     "テーブル「{name}」は送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
   aiQueryUnknownColumn:
     "列「{name}」はテーブル「{table}」の送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
+  explainAiCompare: "計画を比較",
+  explainAiCompareHelp:
+    "この書き換えに EXPLAIN (ANALYZE なし) だけを実行し、見積もりの計画を現在の計画と比べます。クエリ本体は実行せず、データには触れません。",
+  explainAiCompareError: "書き換え後の計画を取得できませんでした: {message}",
+  explainAiCompareTitle: "AI の書き換え案との比較",
+  explainAiCompareColBefore: "現在",
+  explainAiCompareColAfter: "書き換え案",
+  explainAiCompareBeforePane: "現在の計画",
+  explainAiCompareAfterPane: "AI の書き換え案 (見積もり)",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

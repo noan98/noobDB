@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
-import { api } from "../api/tauri";
+import { api, type QueryResult } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
 import {
   buildExplainInterpretPrompt,
   buildExplainInterpretSystem,
+  buildRewriteExplainSql,
   EXPLAIN_INTERPRET_FORMAT,
   parseExplainInterpretResponse,
   type ExplainInterpretResponse,
@@ -30,6 +31,11 @@ import { AiSetupHint } from "./AiSetupHint";
 import { AiUsageNote } from "./AiUsageNote";
 import { Tooltip } from "./Tooltip";
 
+// 比較モーダルは ExplainViewer を内部で使うため、静的 import の循環を避けて遅延読み込みする。
+const PlanCompareModal = lazy(() =>
+  import("./PlanCompareModal").then((m) => ({ default: m.PlanCompareModal })),
+);
+
 type State =
   | { kind: "idle" }
   | { kind: "running"; sends: string }
@@ -47,6 +53,8 @@ export interface AiExplainInterpretProps {
   readOnly: boolean;
   /** EXPLAIN 出力の生テキスト。まだ無い (読込中・空) ときは null でボタンを無効にする。 */
   plan: string | null;
+  /** 元の EXPLAIN 結果そのもの。書き換え提案の計画比較 (#1620) の「元の計画」に使う。 */
+  planResult?: QueryResult | null;
   /** 実測モード (EXPLAIN ANALYZE) の結果か。 */
   analyze: boolean;
   /** EXPLAIN 対象の元 SQL (プレフィックスなし)。 */
@@ -72,6 +80,13 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
   const [state, setState] = useState<State>({ kind: "idle" });
   const [collapsed, setCollapsed] = useState(false);
   const [inserted, setInserted] = useState<ReadonlySet<number>>(new Set());
+  // 書き換え提案の計画比較 (#1620)。`index` は suggestions の添字。
+  const [compare, setCompare] = useState<
+    | { index: number; status: "running" }
+    | { index: number; status: "error"; message: string }
+    | { index: number; status: "ready"; after: QueryResult }
+    | null
+  >(null);
   const stream = useAiStream({ idPrefix: "ai_explain" });
 
   const tableRefs = useMemo(() => extractTableRefs(props.sql, props.driver), [props.sql, props.driver]);
@@ -86,6 +101,26 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
             ? t("explainAiTablesOne")
             : t("explainAiTablesSome", { count: tableCount }),
     });
+
+  /**
+   * 書き換え提案を **ANALYZE なしの EXPLAIN** で実行して計画を取る (#1620)。実行経路は
+   * `runLookupQuery` で、バックエンドがセッションの設定に関係なく読み取り専用の文だけを通す。
+   */
+  const compareRewrite = async (index: number, explainSql: string) => {
+    setCompare({ index, status: "running" });
+    try {
+      const after = await api.runLookupQuery({
+        sessionId: props.sessionId,
+        sql: explainSql,
+        database: props.database,
+        queryTimeoutSecs: 30,
+        rowCap: 1000,
+      });
+      setCompare({ index, status: "ready", after });
+    } catch (e) {
+      setCompare({ index, status: "error", message: String(e) });
+    }
+  };
 
   const run = async () => {
     // 二重クリックで 2 本のストリームが走らないよう、同期的に弾く。
@@ -122,6 +157,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
       if (!ok) return abort();
     }
     setInserted(new Set());
+    setCompare(null);
     setCollapsed(false);
     // インデックス・行数推定はベストエフォート。取得できないテーブルは黙って落とす。
     const fetched = await Promise.all(
@@ -266,35 +302,58 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
                   {t("explainAiReadOnlyNote")}
                 </Callout>
               )}
-              {state.value.suggestions.map((s, i) => (
-                <Flex key={`${i}-${s.sql}`} direction="column" gap="1" data-testid="ai-explain-suggestion">
-                  <chakra.span color="app.textMuted" fontSize="xs">
-                    {s.kind === "ddl" ? t("explainAiKindDdl") : t("explainAiKindRewrite")}
-                  </chakra.span>
-                  <chakra.span whiteSpace="pre-wrap">{s.rationale}</chakra.span>
-                  <CodePreview wrap maxH="160px">
-                    {s.sql}
-                  </CodePreview>
-                  <Flex align="center" gap="2">
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        props.onInsertSql(s.sql);
-                        setInserted((prev) => new Set(prev).add(i));
-                      }}
-                    >
-                      {t("explainAiInsert")}
-                    </Button>
-                    {inserted.has(i) && (
-                      <chakra.span color="app.textSuccess" role="status">
-                        {t("explainAiInserted")}
-                      </chakra.span>
+              {state.value.suggestions.map((s, i) => {
+                const explainSql = props.planResult ? buildRewriteExplainSql(props.driver, s) : null;
+                return (
+                  <Flex key={`${i}-${s.sql}`} direction="column" gap="1" data-testid="ai-explain-suggestion">
+                    <chakra.span color="app.textMuted" fontSize="xs">
+                      {s.kind === "ddl" ? t("explainAiKindDdl") : t("explainAiKindRewrite")}
+                    </chakra.span>
+                    <chakra.span whiteSpace="pre-wrap">{s.rationale}</chakra.span>
+                    <CodePreview wrap maxH="160px">
+                      {s.sql}
+                    </CodePreview>
+                    <Flex align="center" gap="2">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={() => {
+                          props.onInsertSql(s.sql);
+                          setInserted((prev) => new Set(prev).add(i));
+                        }}
+                      >
+                        {t("explainAiInsert")}
+                      </Button>
+                      {explainSql !== null && (
+                        <Tooltip label={t("explainAiCompareHelp")}>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={compare?.index === i && compare.status === "running"}
+                            onClick={() => {
+                              void compareRewrite(i, explainSql);
+                            }}
+                          >
+                            {t("explainAiCompare")}
+                          </Button>
+                        </Tooltip>
+                      )}
+                      {inserted.has(i) && (
+                        <chakra.span color="app.textSuccess" role="status">
+                          {t("explainAiInserted")}
+                        </chakra.span>
+                      )}
+                    </Flex>
+                    {compare?.index === i && compare.status === "error" && (
+                      <ErrorNote role="alert">
+                        {t("explainAiCompareError", { message: compare.message })}
+                      </ErrorNote>
                     )}
                   </Flex>
-                </Flex>
-              ))}
+                );
+              })}
             </Flex>
           )}
         </Flex>
@@ -320,6 +379,25 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
         <Callout tone="info" role="status">
           {t("explainAiCancelled")}
         </Callout>
+      )}
+      {compare?.status === "ready" && props.planResult && (
+        <Suspense fallback={null}>
+          <PlanCompareModal
+            driver={props.driver}
+            before={props.planResult}
+            after={compare.after}
+            beforeLabel={t("explainAiCompareBeforePane")}
+            beforeAnalyze={props.analyze}
+            afterAnalyze={false}
+            labels={{
+              title: t("explainAiCompareTitle"),
+              beforeColumn: t("explainAiCompareColBefore"),
+              afterColumn: t("explainAiCompareColAfter"),
+              afterPane: t("explainAiCompareAfterPane"),
+            }}
+            onClose={() => setCompare(null)}
+          />
+        </Suspense>
       )}
       {dialog}
     </Flex>
