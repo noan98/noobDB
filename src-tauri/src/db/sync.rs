@@ -547,7 +547,9 @@ fn alter_table(
                     table.name
                 ));
             } else {
-                if let Some(sql) = sqlite_rebuild_sql(table, snapshot, warnings) {
+                let sql = sqlite_rebuild_sql(table, snapshot, warnings);
+                let built = sql.is_some();
+                if let Some(sql) = sql {
                     statements.push(SyncStatement {
                         sql,
                         table: table.name.clone(),
@@ -555,7 +557,10 @@ fn alter_table(
                         destructive: true,
                     });
                 }
-                return true;
+                // 作れなかったとき (None) は列ごとの処理へ落とす。
+                if built {
+                    return true;
+                }
             }
         }
     }
@@ -937,14 +942,28 @@ fn sqlite_rebuild_sql(
                 continue;
             }
         }
+        let is_index = created_index_name(sql).is_some();
+        // 索引は ON <表> の後ろ (列リストと WHERE) だけを見る。表名と同名の列や、文字列
+        // リテラル内・NEW/OLD のような語に反応しない。トリガー・ビューは全文 (リテラル除外)。
+        let haystack = if is_index {
+            index_tail(sql)
+        } else {
+            mask_string_literals(sql)
+        };
         if let Some(col) = dropped_columns
             .iter()
-            .find(|c| references_identifier(sql, c))
+            .find(|c| references_identifier(&haystack, c))
         {
+            let unique_note = if is_index && sql.to_ascii_uppercase().contains("UNIQUE") {
+                " (UNIQUE インデックスのため、一意制約も失われます)"
+            } else {
+                ""
+            };
             warnings.push(format!(
-                "{}: 削除する列 {} を参照するため、次の定義は再作成後に作り直しません: {}",
+                "{}: 削除する列 {} を参照するため、次の定義は再作成後に作り直しません{}: {}",
                 table.name,
                 col,
+                unique_note,
                 sql.split_whitespace().collect::<Vec<_>>().join(" ")
             ));
             continue;
@@ -1009,25 +1028,103 @@ fn created_index_name(sql: &str) -> Option<String> {
     if rest.to_ascii_uppercase().starts_with("IF NOT EXISTS") {
         rest = rest["IF NOT EXISTS".len()..].trim_start();
     }
-    let mut chars = rest.chars();
-    let first = chars.next()?;
-    let close = match first {
-        '"' => Some('"'),
-        '`' => Some('`'),
-        '[' => Some(']'),
-        _ => None,
-    };
-    match close {
-        Some(c) => {
-            let body: String = chars.take_while(|&x| x != c).collect();
-            Some(body)
+    // `schema.name` / `"schema"."name"` は最後の要素が索引名。
+    let mut cur = rest;
+    loop {
+        let mut chars = cur.chars();
+        let first = chars.next()?;
+        let close = match first {
+            '"' => Some('"'),
+            '`' => Some('`'),
+            '[' => Some(']'),
+            _ => None,
+        };
+        let (part, consumed) = match close {
+            Some(c) => {
+                let body: String = chars.take_while(|&x| x != c).collect();
+                let n = first.len_utf8() + body.len() + c.len_utf8();
+                (body, n.min(cur.len()))
+            }
+            None => {
+                let body: String = cur
+                    .chars()
+                    .take_while(|c| !c.is_whitespace() && *c != '(' && *c != '.')
+                    .collect();
+                let n = body.len();
+                (body, n)
+            }
+        };
+        cur = &cur[consumed..];
+        match cur.strip_prefix('.') {
+            Some(next) => cur = next,
+            None => return Some(part),
         }
-        None => Some(
-            rest.chars()
-                .take_while(|c| !c.is_whitespace() && *c != '(')
-                .collect(),
-        ),
     }
+}
+
+/// 単引用符の文字列リテラルの中身を空白に置き換える (識別子の引用符は触らない)。
+fn mask_string_literals(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_lit = false;
+    for c in sql.chars() {
+        if in_lit {
+            if c == '\'' {
+                in_lit = false;
+                out.push(c);
+            } else {
+                out.push(' ');
+            }
+        } else {
+            if c == '\'' {
+                in_lit = true;
+            }
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `CREATE INDEX ... ON <表> (列, ...) WHERE ...` の最初の `(` 以降 (リテラルは除外済み)。
+/// 見つからなければ空文字列。
+fn index_tail(sql: &str) -> String {
+    let masked = mask_string_literals(sql);
+    let chars: Vec<char> = masked.chars().collect();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut i = 0;
+    let mut seen_on = false;
+    while i < chars.len() {
+        let c = chars[i];
+        let close = match c {
+            '"' => Some('"'),
+            '`' => Some('`'),
+            '[' => Some(']'),
+            _ => None,
+        };
+        if let Some(q) = close {
+            i += 1;
+            while i < chars.len() && chars[i] != q {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        if seen_on && c == '(' {
+            return chars[i..].iter().collect();
+        }
+        if !seen_on
+            && (c == 'o' || c == 'O')
+            && i + 1 < chars.len()
+            && (chars[i + 1] == 'n' || chars[i + 1] == 'N')
+            && (i == 0 || !is_word(chars[i - 1]))
+            && (i + 2 >= chars.len() || !is_word(chars[i + 2]))
+        {
+            seen_on = true;
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    String::new()
 }
 
 /// `sql` が識別子 `name` を (大文字小文字を区別せず) 単語として含むか。引用符つきも拾う。
@@ -2845,5 +2942,80 @@ mod tests {
             "old"
         ));
         assert!(!references_identifier("CREATE INDEX i ON p (older)", "old"));
+    }
+
+    #[test]
+    fn created_index_name_takes_part_after_last_dot() {
+        assert_eq!(
+            created_index_name("CREATE INDEX main.idx ON t(x)").as_deref(),
+            Some("idx")
+        );
+        assert_eq!(
+            created_index_name("CREATE UNIQUE INDEX IF NOT EXISTS \"main\".\"idx\" ON t(x)")
+                .as_deref(),
+            Some("idx")
+        );
+        assert_eq!(
+            created_index_name("CREATE INDEX \"a.b\" ON t(x)").as_deref(),
+            Some("a.b")
+        );
+    }
+
+    #[test]
+    fn index_tail_ignores_table_name_literals_and_keywords() {
+        let tail = index_tail("CREATE UNIQUE INDEX i ON tag (name) WHERE note = 'tag'");
+        assert!(!references_identifier(&tail, "tag"));
+        assert!(references_identifier(&tail, "name"));
+        assert!(references_identifier(&tail, "note"));
+        // 条件の文字列リテラルの中は列参照ではない。
+        let tail = index_tail("CREATE INDEX i ON p (a) WHERE b = 'x new y'");
+        assert!(!references_identifier(&tail, "new"));
+        assert!(!references_identifier(&tail, "x"));
+        // 引用符つきの表名・ON を含む索引名でも列リストを取り出す。
+        let tail = index_tail("CREATE INDEX \"on(x)\" ON \"t(\" (c)");
+        assert!(references_identifier(&tail, "c"));
+        assert!(!references_identifier(&tail, "x"));
+    }
+
+    #[test]
+    fn sqlite_rebuild_keeps_unique_index_when_dropped_column_has_table_name() {
+        let mut id = col("id", "INTEGER");
+        id.key = "PRI".into();
+        let table = TableDiff {
+            name: "tag".into(),
+            status: DiffStatus::Different,
+            columns: vec![
+                cdiff("tag", DiffStatus::TargetOnly, None, &[]),
+                cdiff(
+                    "name",
+                    DiffStatus::Different,
+                    Some(col("name", "VARCHAR")),
+                    &["data_type"],
+                ),
+            ],
+            target_snapshot: Some(super::super::diff::TargetTableSnapshot {
+                columns: vec![id, col("name", "TEXT"), col("tag", "TEXT")],
+                recreate_sql: vec![
+                    "CREATE UNIQUE INDEX u_name ON tag (name)".into(),
+                    "CREATE UNIQUE INDEX u_tag ON tag (tag)".into(),
+                    "CREATE INDEX i_lit ON tag (name) WHERE name <> 'tag'".into(),
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), true);
+        let rebuild = plan
+            .statements
+            .iter()
+            .find(|s| s.kind == SyncKind::RebuildTable)
+            .unwrap();
+        assert!(rebuild.sql.contains("CREATE UNIQUE INDEX u_name"));
+        assert!(rebuild.sql.contains("CREATE INDEX i_lit"));
+        assert!(!rebuild.sql.contains("u_tag"));
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("u_tag") && w.contains("一意制約")));
     }
 }

@@ -811,7 +811,7 @@ function EntryCard({
           )}
         </Box>
       )}
-      {diff && syncBlock === null && notTableResult && diff.hasDiff && (
+      {diff && syncBlock === null && tableInfo !== null && notTableResult && diff.hasDiff && (
         <Box
           px="3"
           py="1.5"
@@ -823,26 +823,32 @@ function EntryCard({
           {t("broadcastSyncNotTableResult")}
         </Box>
       )}
-      {diff && syncBlock === null && !notTableResult && table && baseline && diff.hasDiff && (
-        <BroadcastSyncPanel
-          envName={entry.profile.name}
-          loadPlan={(allowDelete) =>
-            api.broadcastSyncSql({
-              driver,
-              table,
-              columns: baseColumns ?? baseline.columns,
-              baselineRows: baseRows ?? baseline.rows,
-              baselineTotal: baseTotal ?? baseline.totalRows,
-              targetRows: entry.rows,
-              targetTotal: entry.totalRows,
-              keyColumns: [...pkNames],
-              tableColumns: tableColNames,
-              tablePk: tablePkNames,
-              allowDelete,
-            })
-          }
-        />
-      )}
+      {diff &&
+        syncBlock === null &&
+        tableInfo !== null &&
+        !notTableResult &&
+        table &&
+        baseline &&
+        diff.hasDiff && (
+          <BroadcastSyncPanel
+            envName={entry.profile.name}
+            loadPlan={(allowDelete) =>
+              api.broadcastSyncSql({
+                driver,
+                table,
+                columns: baseColumns ?? baseline.columns,
+                baselineRows: baseRows ?? baseline.rows,
+                baselineTotal: baseTotal ?? baseline.totalRows,
+                targetRows: entry.rows,
+                targetTotal: entry.totalRows,
+                keyColumns: [...pkNames],
+                tableColumns: tableColNames,
+                tablePk: tablePkNames,
+                allowDelete,
+              })
+            }
+          />
+        )}
       {diff && syncBlock === "no-table" && (
         <Box
           px="3"

@@ -125,18 +125,15 @@ pub fn checked_row_filter(
                 }
             }
             '$' if driver == DriverKind::Postgres
-                && (i == 0 || !(masked[i - 1].is_alphanumeric() || masked[i - 1] == '_')) =>
+                && (i == 0 || !super::is_word_char(orig[i - 1])) =>
             {
-                // `$tag$ ... $tag$`: 区切りは残り、本体は空白。同じ区切りまで読み飛ばす。
-                let mut j = i + 1;
-                while j < masked.len() && (masked[j].is_alphanumeric() || masked[j] == '_') {
-                    j += 1;
-                }
-                if j < masked.len() && masked[j] == '$' {
-                    let tag: Vec<char> = masked[i..=j].to_vec();
-                    let rest = &masked[j + 1..];
-                    if let Some(off) = rest.windows(tag.len()).position(|w| w == tag.as_slice()) {
-                        i = j + 1 + off + tag.len();
+                // `$tag$ ... $tag$`: マスクと同じ判定 (dollar_quote_tag_len / find_dollar_tag) で
+                // 本体を読み飛ばす。閉じがなければマスクも `$` を残すので通常文字として扱う。
+                if let Some(tag_len) = super::dollar_quote_tag_len(&orig, i) {
+                    if let Some(close) =
+                        super::find_dollar_tag(&orig, i + tag_len, &orig[i..i + tag_len])
+                    {
+                        i = close + tag_len;
                         continue;
                     }
                 }

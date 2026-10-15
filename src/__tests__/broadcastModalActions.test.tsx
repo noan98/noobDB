@@ -238,6 +238,16 @@ describe("BroadcastModal の追加検査 (#1625 レビュー)", () => {
     expect(screen.queryByRole("button", { name: t("broadcastSyncGenerate") })).toBeNull();
   });
 
+  it("表の列情報が届くまでは、案内文も同期パネルも出さない", async () => {
+    mount({ table: "users", database: "app", tableColumns: null });
+    await runAndDeliver(
+      env("s-env", "done", diff({ hasDiff: true, removedCount: 1, removedRowIndices: [0] }), [[2, "b"]]),
+    );
+    await act(async () => {});
+    expect(screen.queryByText(t("broadcastSyncNotTableResult"))).toBeNull();
+    expect(screen.queryByRole("button", { name: t("broadcastSyncGenerate") })).toBeNull();
+  });
+
   it("再実行した環境の欠落行の例は、その run で届いた基準の行を使う", async () => {
     mount();
     await runAndDeliver(env("s-env", "error", null, []));
