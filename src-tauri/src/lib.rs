@@ -31,9 +31,12 @@ mod timelapse;
 pub mod __test_api {
     pub use crate::ai::sse::AiUsage;
     pub use crate::ai::usage::AiUsageRecord;
+    pub use crate::assertions::transfer::ImportRejection;
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
     pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult, AiStreamMessage};
-    pub use crate::commands::assertions::AssertionOutcome;
+    pub use crate::commands::assertions::{
+        AcceptedValuesCandidates, AssertionOutcome, AssertionPrevious, ImportAssertionsResult,
+    };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
         analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
@@ -521,6 +524,28 @@ pub mod __test_api {
             assertion,
             database,
             query_timeout_secs,
+        )
+        .await
+    }
+
+    /// Drives the `suggest_accepted_values` IPC command's core path (#1621): the
+    /// DISTINCT query runs through the read-only lookup route.
+    pub async fn suggest_accepted_values_via_command(
+        state: &AppState,
+        session_id: &str,
+        schema: Option<&str>,
+        table: &str,
+        column: &str,
+        database: Option<&str>,
+    ) -> crate::error::Result<AcceptedValuesCandidates> {
+        crate::commands::assertions::suggest_accepted_values_with(
+            state,
+            session_id,
+            schema,
+            table,
+            column,
+            database,
+            Some(10),
         )
         .await
     }
@@ -1418,6 +1443,10 @@ pub fn run() {
             commands::assertions::delete_assertion,
             commands::assertions::preview_assertion_sql,
             commands::assertions::run_assertion,
+            commands::assertions::restore_assertion,
+            commands::assertions::export_assertions,
+            commands::assertions::import_assertions,
+            commands::assertions::suggest_accepted_values,
             commands::history::list_history,
             commands::history::get_history_sql,
             commands::history::get_history_sqls,

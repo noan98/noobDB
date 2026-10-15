@@ -501,6 +501,30 @@ export const assertionOutcome = z.object({
   check_sql: z.string(),
   violations_sql: z.string(),
   elapsed_ms: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      observed: z.number(),
+      passed: z.boolean(),
+    })
+    .nullable(),
+});
+
+export const acceptedValuesCandidates = z.object({
+  values: z.array(z.string()),
+  truncated: z.boolean(),
+});
+
+export const importAssertionsResult = z.object({
+  imported: z.array(assertion),
+  skipped_duplicates: z.number(),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
 });
 
 export const historyEntry = z.object({

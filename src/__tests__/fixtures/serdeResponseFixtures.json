@@ -1,4 +1,11 @@
 {
+  "acceptedValuesCandidates": {
+    "truncated": false,
+    "values": [
+      "active",
+      "closed"
+    ]
+  },
   "aiConnectionTestResult": {
     "elapsedMs": 812,
     "message": "ok",
@@ -81,6 +88,11 @@
     "id": "asrt0001",
     "observed": 3,
     "passed": false,
+    "previous": {
+      "at": "2026-01-01T00:00:00Z",
+      "observed": 1,
+      "passed": false
+    },
     "violations_sql": "SELECT * FROM `users` WHERE `id` IS NULL"
   },
   "assertionRowCountOpVariants": [
@@ -1325,6 +1337,31 @@
     "sql_len": 8,
     "sql_preview": "SELECT 1",
     "status": "ok"
+  },
+  "importAssertionsResult": {
+    "imported": [
+      {
+        "id": "asrt0001",
+        "name": "check",
+        "rule": {
+          "column": "id",
+          "kind": "not_null"
+        },
+        "schema": "public",
+        "scope": {
+          "kind": "any"
+        },
+        "table": "users"
+      }
+    ],
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 2,
+        "name": "bad"
+      }
+    ],
+    "skipped_duplicates": 1
   },
   "importDoneEvent": {
     "elapsedMs": 42,

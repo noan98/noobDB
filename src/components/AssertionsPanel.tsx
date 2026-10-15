@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence } from "motion/react";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { downloadDir, join } from "@tauri-apps/api/path";
 import { Box, chakra, Flex, VisuallyHidden } from "@chakra-ui/react";
 import { tableTdCss, tableThCss } from "./tableCellStyles";
 
@@ -19,6 +21,7 @@ import {
   describeRule,
   draftFromAssertion,
   emptyAssertionDraft,
+  observedChange,
   observedText,
   runAssertionsSequentially,
   summarizeRuns,
@@ -228,6 +231,81 @@ export function AssertionsPanel({
     [toast, t],
   );
 
+  // 削除の取り消し (#1621): ごみ箱から一覧へ戻す。
+  const handleRestore = useCallback(
+    async (a: Assertion) => {
+      try {
+        const restored = await api.restoreAssertion(a.id);
+        if (!mountedRef.current) return;
+        setAssertions((prev) => {
+          const list = prev ?? [];
+          return list.some((x) => x.id === restored.id) ? list : [...list, restored];
+        });
+        toast.success(t("assertRestored", { name: restored.name }));
+      } catch (e) {
+        toast.error(t("assertRestoreError", { error: String(e) }));
+      }
+    },
+    [toast, t],
+  );
+
+  // 定義を JSON に書き出す (#1621)。表示中 (スコープが合う) ものだけを対象にする。
+  const handleExport = useCallback(async () => {
+    try {
+      let defaultPath = "noobdb-assertions.json";
+      try {
+        defaultPath = await join(await downloadDir(), defaultPath);
+      } catch {
+        // ダウンロードフォルダが解決できない環境ではファイル名のみで開く。
+      }
+      const picked = await save({
+        defaultPath,
+        title: t("assertExport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.exportAssertions(visibleIds);
+      await api.writeTextFile(picked, json);
+      toast.success(t("assertExportSaved", { count: visibleIds.length, path: picked }));
+    } catch (e) {
+      toast.error(t("assertExportError", { error: String(e) }));
+    }
+  }, [visibleIds, toast, t]);
+
+  // JSON から取り込む (#1621)。プロファイル限定のスコープは接続中のプロファイルへ付け替える。
+  const handleImport = useCallback(async () => {
+    try {
+      const picked = await open({
+        multiple: false,
+        title: t("assertImport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.readTextFile(picked);
+      const result = await api.importAssertions(json, profile?.id ?? null);
+      if (!mountedRef.current) return;
+      if (result.imported.length > 0) {
+        setAssertions((prev) => [...(prev ?? []), ...result.imported]);
+      }
+      if (result.imported.length === 0 && result.rejected.length === 0 && result.skipped_duplicates === 0) {
+        toast.info(t("assertImportNothing"));
+        return;
+      }
+      toast.success(
+        t("assertImportDone", { imported: result.imported.length, skipped: result.skipped_duplicates }),
+      );
+      if (result.rejected.length > 0) {
+        const detail = result.rejected
+          .slice(0, 3)
+          .map((r) => `${r.name ?? `#${r.index + 1}`}: ${r.error}`)
+          .join(" / ");
+        toast.error(t("assertImportRejected", { count: result.rejected.length, detail }));
+      }
+    } catch (e) {
+      toast.error(t("assertImportError", { error: String(e) }));
+    }
+  }, [profile, toast, t]);
+
   const handleDelete = useCallback(
     async (a: Assertion) => {
       const ok = await confirm({
@@ -241,11 +319,17 @@ export function AssertionsPanel({
         await api.deleteAssertion(a.id);
         if (!mountedRef.current) return;
         setAssertions((prev) => (prev ?? []).filter((x) => x.id !== a.id));
+        // 誤削除を取り消せるよう、トーストに「元に戻す」を出す (#1621)。
+        toast.notify({
+          message: t("assertDeleted", { name: a.name }),
+          tone: "info",
+          action: { label: t("assertUndoDelete"), onAction: () => void handleRestore(a) },
+        });
       } catch (e) {
         toast.error(t("assertDeleteError", { error: String(e) }));
       }
     },
-    [confirm, toast, t],
+    [confirm, toast, t, handleRestore],
   );
 
   const openAdd = () => setEditing(emptyAssertionDraft());
@@ -290,6 +374,23 @@ export function AssertionsPanel({
             <chakra.span marginLeft="1.5">{t("assertAiButton")}</chakra.span>
           </Button>
         )}
+        <Tooltip label={t("assertExportTooltip")} focusableWrapper={runningAll || visible.length === 0}>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={runningAll || visible.length === 0}
+            onClick={() => void handleExport()}
+          >
+            <Icon name="download" size={ICON_SIZES.sm} />
+            <chakra.span marginLeft="1.5">{t("assertExport")}</chakra.span>
+          </Button>
+        </Tooltip>
+        <Tooltip label={t("assertImportTooltip")} focusableWrapper={runningAll}>
+          <Button type="button" variant="secondary" disabled={runningAll} onClick={() => void handleImport()}>
+            <Icon name="upload" size={ICON_SIZES.sm} />
+            <chakra.span marginLeft="1.5">{t("assertImport")}</chakra.span>
+          </Button>
+        </Tooltip>
         {summary.passed + summary.failed + summary.errored > 0 && (
           <chakra.span fontSize="sm" color="app.textMuted" textStyle="numeric">
             {t("assertSummary", {
@@ -354,6 +455,7 @@ export function AssertionsPanel({
               const desc = describeRule(a);
               const outcome = state?.status === "passed" || state?.status === "failed" ? state.outcome : null;
               const result = outcome ? observedText(a.rule, outcome) : null;
+              const change = outcome ? observedChange(a.rule, outcome) : null;
               return (
                 <chakra.tr key={a.id} data-assertion-id={a.id}>
                   <chakra.td css={tdCss}>
@@ -375,6 +477,23 @@ export function AssertionsPanel({
                       <chakra.span textStyle="numeric" whiteSpace="nowrap">
                         {t(result.key, result.params)}
                       </chakra.span>
+                    )}
+                    {change && (
+                      <chakra.div
+                        fontSize="xs"
+                        textStyle="numeric"
+                        data-testid="assertion-change"
+                        color={
+                          change.tone === "worse"
+                            ? "app.textError"
+                            : change.tone === "better"
+                              ? "app.textSuccess"
+                              : "app.textMuted"
+                        }
+                        title={outcome?.previous ? new Date(outcome.previous.at).toLocaleString() : undefined}
+                      >
+                        {t(change.text.key, change.text.params)}
+                      </chakra.div>
                     )}
                     {state?.status === "error" && (
                       <chakra.div fontSize="xs" color="app.textError" wordBreak="break-word">
@@ -445,6 +564,9 @@ export function AssertionsPanel({
         {editing && (
           <AssertionEditorModal
             initial={editing}
+            sessionId={sessionId}
+            database={database ?? null}
+            queryTimeoutSecs={queryTimeoutSecs}
             driver={driver}
             profile={profile}
             onSave={handleSave}

@@ -306,9 +306,13 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_assertions`
 - `save_assertion`
-- `delete_assertion`
+- `delete_assertion` (#1621。一覧から外して `assertions.json` の `trash` (直近 50 件) へ移す)
+- `restore_assertion` (#1621。ごみ箱から一覧へ戻す)
+- `export_assertions` (#1621。定義を JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `import_assertions` (#1621。ID 衝突は新規採番・同内容は追加せず・検証 NG は `rejected` で報告)
+- `suggest_accepted_values` (#1621。列の DISTINCT を `run_lookup_query` 経路で読み、最大 50 種)
 - `preview_assertion_sql`
-- `run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
+- `run_assertion` (#742。結果に前回の観測値 `previous` を添える (#1621, `assertion_history.json` に直近 30 件)。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 

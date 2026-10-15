@@ -1218,6 +1218,15 @@ fn build_fixtures() -> serde_json::Value {
         check_sql: assertion_sql.check_sql.clone(),
         violations_sql: assertion_sql.violations_sql.clone(),
         elapsed_ms: 4,
+        previous: Some(t::AssertionPrevious {
+            at: "2026-01-01T00:00:00Z".into(),
+            observed: 1,
+            passed: false,
+        }),
+    };
+    let accepted_values_candidates = t::AcceptedValuesCandidates {
+        values: vec!["active".into(), "closed".into()],
+        truncated: false,
     };
     // 保存済みアサーション: ルールの全種 (`kind` タグ付き enum) を通す。
     let assertion_variants: Vec<t::Assertion> = vec![
@@ -1258,6 +1267,15 @@ fn build_fixtures() -> serde_json::Value {
         rule,
     })
     .collect();
+    let import_assertions_result = t::ImportAssertionsResult {
+        imported: vec![assertion_variants[0].clone()],
+        skipped_duplicates: 1,
+        rejected: vec![t::ImportRejection {
+            index: 2,
+            name: Some("bad".into()),
+            error: "name is required".into(),
+        }],
+    };
     // RowCountOp の全種は別個に通す (上の Between だけでは 1 種しか出ない)。
     let row_count_op_variants: Vec<t::Assertion> =
         variants!(RowCountOp [Gt, Gte, Lt, Lte, Eq, Between])
@@ -1871,6 +1889,8 @@ fn build_fixtures() -> serde_json::Value {
         "alterTableContext": alter_table_context,
         "assertionSql": assertion_sql,
         "assertionOutcome": assertion_outcome,
+        "acceptedValuesCandidates": accepted_values_candidates,
+        "importAssertionsResult": import_assertions_result,
         "assertionVariants": assertion_variants,
         "assertionRowCountOpVariants": row_count_op_variants,
         "assertionRunRecord": assertion_run_record,

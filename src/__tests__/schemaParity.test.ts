@@ -170,6 +170,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["alterTableContext", schemas.alterTableContext],
   ["assertionSql", schemas.assertionSql],
   ["assertionOutcome", schemas.assertionOutcome],
+  ["acceptedValuesCandidates", schemas.acceptedValuesCandidates],
+  ["importAssertionsResult", schemas.importAssertionsResult],
   ["assertionVariants", schemas.assertion],
   ["assertionRowCountOpVariants", schemas.assertion],
   ["assertionRunRecord", schemas.assertionRunRecord],

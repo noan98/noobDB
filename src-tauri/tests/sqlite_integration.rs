@@ -3714,6 +3714,24 @@ async fn data_quality_assertions_run_on_read_only_session() {
     .expect_err("missing column must fail");
     assert!(!matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "aq_items", "status", None)
+            .await
+            .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "aq_items", "email", None)
+            .await
+            .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty = t::suggest_accepted_values_via_command(&state, &sid, None, "aq_items", "qty", None)
+        .await
+        .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     let _ = std::fs::remove_file(&path);
 }
 

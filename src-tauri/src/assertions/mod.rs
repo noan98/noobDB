@@ -15,7 +15,9 @@
 //! (`commands::assertions::run_assertion_with`) を `Assertion` 本体とセッションだけで
 //! 呼ぶ。対象の絞り込みは純関数 `select_for_task`。
 
+pub mod history;
 pub mod store;
+pub mod transfer;
 
 use serde::{Deserialize, Serialize};
 

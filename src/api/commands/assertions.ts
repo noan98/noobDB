@@ -9,6 +9,8 @@ import type {
   SaveAssertionRequest,
   AssertionSql,
   AssertionOutcome,
+  AcceptedValuesCandidates,
+  ImportAssertionsResult,
 } from "../tauri";
 
 export const assertionsCommands = {
@@ -21,7 +23,50 @@ export const assertionsCommands = {
     invoke<Assertion>("save_assertion", { req }).then((r) =>
       parseResponse(schemas.assertion, r, "save_assertion"),
     ),
+  /** 一覧から外してごみ箱へ移す。`restoreAssertion` で取り消せる (#1621)。 */
   deleteAssertion: (id: string) => invoke<void>("delete_assertion", { id }),
+  /** 削除したアサーションを一覧へ戻す (#1621)。 */
+  restoreAssertion: (id: string) =>
+    invoke<Assertion>("restore_assertion", { id }).then((r) =>
+      parseResponse(schemas.assertion, r, "restore_assertion"),
+    ),
+  /**
+   * アサーション定義を JSON 文字列として書き出す (#1621)。`ids` が空/省略なら全件。
+   * 保存ダイアログで選んだパスへ `writeTextFile` で書く。
+   */
+  exportAssertions: (ids?: string[] | null) =>
+    invoke<string>("export_assertions", { ids: ids ?? null }).then((r) =>
+      parseResponse(schemas.stringResponse, r, "export_assertions"),
+    ),
+  /**
+   * 書き出した JSON を取り込む (#1621)。ID の衝突は新規採番、同内容は追加せず、
+   * 検証に通らない要素は `rejected` で返る。`profileId` を渡すとプロファイル限定の
+   * スコープをそのプロファイルへ付け替える。
+   */
+  importAssertions: (json: string, profileId?: string | null) =>
+    invoke<ImportAssertionsResult>("import_assertions", { json, profileId: profileId ?? null }).then((r) =>
+      parseResponse(schemas.importAssertionsResult, r, "import_assertions"),
+    ),
+  /**
+   * 列の DISTINCT 値を読み取り専用で取得し、`accepted_values` の候補として返す (#1621)。
+   * 最大 50 種。read_only 接続でも動く。
+   */
+  suggestAcceptedValues: (params: {
+    sessionId: string;
+    schema: string | null;
+    table: string;
+    column: string;
+    database?: string | null;
+    queryTimeoutSecs?: number | null;
+  }) =>
+    invoke<AcceptedValuesCandidates>("suggest_accepted_values", {
+      sessionId: params.sessionId,
+      schema: params.schema,
+      table: params.table,
+      column: params.column,
+      database: params.database ?? null,
+      queryTimeoutSecs: params.queryTimeoutSecs ?? null,
+    }).then((r) => parseResponse(schemas.acceptedValuesCandidates, r, "suggest_accepted_values")),
   /**
    * 保存前のルールを `driver` 方言の読み取り専用 SQL に変換する (DB には触れない)。
    * 編集モーダルのプレビュー用。入力が不完全なら InvalidInput で reject される。

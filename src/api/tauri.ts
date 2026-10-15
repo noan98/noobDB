@@ -378,6 +378,37 @@ export interface AssertionOutcome extends AssertionSql {
   /** row_count は総行数、それ以外は違反件数。 */
   observed: number;
   elapsed_ms: number;
+  /** 前回の結果 (初回は null)。観測値の履歴 (#1621) から引く。 */
+  previous: AssertionPrevious | null;
+}
+
+/** 前回のアサーション実行結果 (#1621)。 */
+export interface AssertionPrevious {
+  /** 実行時刻 (UTC, RFC 3339)。 */
+  at: string;
+  observed: number;
+  passed: boolean;
+}
+
+/** `accepted_values` の候補 (列の DISTINCT 値、#1621)。 */
+export interface AcceptedValuesCandidates {
+  values: string[];
+  /** 種類が多すぎて打ち切ったか。 */
+  truncated: boolean;
+}
+
+/** アサーション取り込みで読めなかった要素 (#1621)。 */
+export interface AssertionImportRejection {
+  index: number;
+  name: string | null;
+  error: string;
+}
+
+/** `import_assertions` の結果 (#1621)。 */
+export interface ImportAssertionsResult {
+  imported: Assertion[];
+  skipped_duplicates: number;
+  rejected: AssertionImportRejection[];
 }
 
 export interface HistoryEntry {

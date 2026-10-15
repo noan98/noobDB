@@ -6,6 +6,7 @@ import {
   draftToRequest,
   draftToRule,
   emptyAssertionDraft,
+  observedChange,
   observedText,
   parseColumnList,
   parseValueList,
@@ -34,6 +35,7 @@ function outcome(id: string, passed: boolean, observed = passed ? 0 : 3): Assert
     check_sql: "SELECT 1",
     violations_sql: `SELECT * FROM t -- ${id}`,
     elapsed_ms: 1,
+    previous: null,
   };
 }
 
@@ -278,5 +280,39 @@ describe("runAssertionsSequentially", () => {
       ["other", { status: "failed", outcome: outcome("other", false) }],
     ]);
     expect(summarizeRuns(["a", "b"], states)).toEqual({ passed: 1, failed: 0, errored: 0, total: 2 });
+  });
+});
+
+describe("observedChange (#1621)", () => {
+  const prev = (observed: number) => ({ at: "2026-01-01T00:00:00Z", observed, passed: observed === 0 });
+  const withPrev = (observed: number, previous: number | null): AssertionOutcome => ({
+    ...outcome("x", observed === 0, observed),
+    previous: previous === null ? null : prev(previous),
+  });
+  const notNull = { kind: "not_null", column: "c" } as const;
+
+  it("前回が無ければ null", () => {
+    expect(observedChange(notNull, withPrev(3, null))).toBeNull();
+  });
+
+  it("違反件数が増えれば悪化、減れば改善、同じなら中立", () => {
+    expect(observedChange(notNull, withPrev(12, 3))).toEqual({
+      tone: "worse",
+      text: { key: "assertChangeUp", params: { previous: "3", current: "12", delta: "9" } },
+    });
+    expect(observedChange(notNull, withPrev(1, 4))).toEqual({
+      tone: "better",
+      text: { key: "assertChangeDown", params: { previous: "4", current: "1", delta: "3" } },
+    });
+    expect(observedChange(notNull, withPrev(2, 2))).toEqual({
+      tone: "neutral",
+      text: { key: "assertChangeSame" },
+    });
+  });
+
+  it("row_count の総行数は増減に良し悪しを付けない", () => {
+    const rc = { kind: "row_count", op: "gt", value: 0, max: null } as const;
+    expect(observedChange(rc, withPrev(10, 5))?.tone).toBe("neutral");
+    expect(observedChange(rc, withPrev(2, 5))?.tone).toBe("neutral");
   });
 });
