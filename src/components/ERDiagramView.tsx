@@ -707,12 +707,13 @@ function ERDiagramInner({
             )}
             <ImageExportButton
               filenameBase={`er_${database ?? "diagram"}`}
-              makePng={() => {
+              makePng={(opts) => {
                 const c = buildExportCapture();
                 return elementToPngBlob(c.viewport, {
                   width: c.width,
                   height: c.height,
                   style: c.style,
+                  ...opts,
                 });
               }}
               makeSvg={() => {

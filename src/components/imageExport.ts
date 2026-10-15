@@ -21,6 +21,32 @@ export function themeBackground(): string {
   return v || "#ffffff";
 }
 
+/** PNG の解像度倍率 (ピクセル比)。 */
+export type ExportScale = 1 | 2 | 3;
+export const EXPORT_SCALES: readonly ExportScale[] = [1, 2, 3];
+/** PNG の背景: 現在のテーマの背景 / 白 / 透過。 */
+export type ExportBackground = "theme" | "white" | "transparent";
+export const EXPORT_BACKGROUNDS: readonly ExportBackground[] = ["theme", "white", "transparent"];
+
+/** `makePng` へ渡す、倍率と背景色の解決済みオプション。 */
+export interface PngExportOptions {
+  pixelRatio: number;
+  /** CSS の色指定 (`transparent` を含む)。 */
+  background: string;
+}
+
+/**
+ * 画像書き出しメニューで選んだ倍率と背景から、`elementToPngBlob` へ渡す値を作る (#1628)。
+ * `theme` はその時点のテーマ背景 (ダークテーマの見た目をそのまま焼き込む)。
+ */
+export function resolvePngExportOptions(scale: ExportScale, background: ExportBackground): PngExportOptions {
+  return {
+    pixelRatio: scale,
+    background:
+      background === "white" ? "#ffffff" : background === "transparent" ? "transparent" : themeBackground(),
+  };
+}
+
 /**
  * `data:` URL をバイト列へデコードする純関数。`base64` (`;base64,`) と
  * URI エンコード (SVG の `toSvg` が返す形式) の両方に対応する。テスト可能なように

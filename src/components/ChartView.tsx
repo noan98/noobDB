@@ -302,9 +302,9 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
         <ImageExportButton
           filenameBase="chart"
           disabled={model.labels.length === 0 || config.yCols.length === 0}
-          makePng={() => {
+          makePng={(opts) => {
             const svg = getSvgForExport();
-            return elementToPngBlob(svg as unknown as HTMLElement, svgExportSize(svg));
+            return elementToPngBlob(svg as unknown as HTMLElement, { ...svgExportSize(svg), ...opts });
           }}
           makeSvg={() => {
             const svg = getSvgForExport();

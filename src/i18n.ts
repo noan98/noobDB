@@ -5531,6 +5531,14 @@ const en = {
   chartBarSortAsc: "Smallest first",
   chartLegendHideSeries: "Hide series {name}",
   chartLegendShowSeries: "Show series {name}",
+  imageExportScale: "Resolution: {scale}x",
+  imageExportScaleTitle: "Pixel ratio of the PNG (higher is sharper and larger)",
+  imageExportBackground: "Background: {background}",
+  imageExportBackgroundTitle: "Background color of the PNG",
+  imageExportBg_theme: "Theme",
+  imageExportBg_white: "White",
+  imageExportBg_transparent: "Transparent",
+  imageExportBgWhiteHint: "In dark themes the text is light, so it may be hard to read on white",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11032,6 +11040,14 @@ const ja: Dict = {
   chartBarSortAsc: "値の小さい順",
   chartLegendHideSeries: "系列 {name} を隠す",
   chartLegendShowSeries: "系列 {name} を表示",
+  imageExportScale: "解像度: {scale}x",
+  imageExportScaleTitle: "PNG の解像度倍率 (大きいほど鮮明でファイルも大きくなります)",
+  imageExportBackground: "背景: {background}",
+  imageExportBackgroundTitle: "PNG の背景色",
+  imageExportBg_theme: "テーマの背景",
+  imageExportBg_white: "白",
+  imageExportBg_transparent: "透過",
+  imageExportBgWhiteHint: "ダークテーマでは文字が明るい色のため、白背景だと読みにくくなることがあります",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
