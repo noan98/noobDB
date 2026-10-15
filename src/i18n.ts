@@ -5514,6 +5514,13 @@ const en = {
   rowOpsInsertPasteDenied: "Could not read the clipboard; paste into a field with Ctrl/Cmd+V instead",
   rowOpsInsertKeepOpen: "Keep adding rows",
   rowOpsInsertKeepOpenCount: "({count} added)",
+  rowInspectorPin: "Pin this row for comparison",
+  rowInspectorPinTitle: "Pin this row, then step to another row to see which columns differ",
+  rowInspectorUnpin: "Unpin the compared row",
+  rowInspectorUnpinTitle: "Stop comparing with row {row}",
+  rowInspectorCompareSummary: "Compared with pinned row {pinned}: {count} column(s) differ",
+  rowInspectorDiffOnly: "Differences only",
+  rowInspectorPinnedValue: "Pinned row {row}",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10998,6 +11005,13 @@ const ja: Dict = {
   rowOpsInsertPasteDenied: "クリップボードを読み取れませんでした。欄に Ctrl/Cmd+V で貼り付けてください",
   rowOpsInsertKeepOpen: "続けて追加する",
   rowOpsInsertKeepOpenCount: "(追加済み {count} 行)",
+  rowInspectorPin: "この行を固定して比較",
+  rowInspectorPinTitle: "この行を固定します。別の行へ移ると、異なる列が強調されます",
+  rowInspectorUnpin: "比較用の固定を解除",
+  rowInspectorUnpinTitle: "行 {row} との比較をやめる",
+  rowInspectorCompareSummary: "固定した行 {pinned} と比較: {count} 列が異なります",
+  rowInspectorDiffOnly: "差のある列のみ",
+  rowInspectorPinnedValue: "固定行 {row}",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
