@@ -12,6 +12,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { Tooltip } from "./Tooltip";
+import { batchUndoIsPartial } from "../flightRecorder";
 
 /**
  * DML フライトレコーダ (#735) の一覧・巻き戻しパネル。`HistoryList` のツール
@@ -328,6 +329,11 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             <CodePreview wrap mt="2" maxH="160px">
               {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
             </CodePreview>
+            {!redo && batchUndoIsPartial(batchId, preview.recordIds.length) && (
+              <chakra.p m={0} mt="2" color="app.textWarning" textStyle="caption">
+                {t("flightRecorderBatchPartialNote")}
+              </chakra.p>
+            )}
             {preview.conflicts.length > 0 && (
               <>
                 <chakra.p m={0} mt="2" color="app.textError" fontWeight={600}>

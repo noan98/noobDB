@@ -694,7 +694,9 @@ const en = {
   flightRecorderBatchRedoConfirmBody:
     "Re-applies {count} undone write(s) from the same script in one transaction, in the original order.",
   flightRecorderBatchOverlapHint:
-    "If several statements changed the same row, they show up as conflicts here — review the SQL before forcing.",
+    "A conflict means the row changed after the script ran — review the SQL before forcing. (Batches where several statements touched the same row can't be undone together; undo those records one at a time.)",
+  flightRecorderBatchPartialNote:
+    "Some statements of this script were not recorded (or their records are gone), so undoing this batch will not fully restore the state before the script ran.",
   flightRecorderExportPlanAction: "Save SQL…",
   flightRecorderExportPlanTip:
     "Save the undo (or redo) SQL as a .sql file without running it, so you can review it or run it elsewhere.",
@@ -7169,7 +7171,9 @@ const ja: Dict = {
   flightRecorderBatchRedoConfirmBody:
     "同じスクリプトで取り消した {count} 件の書き込みを、元の順に 1 つのトランザクションで再適用します。",
   flightRecorderBatchOverlapHint:
-    "複数の文が同じ行を変更していると、ここでは衝突として表示されます。強制適用する前に SQL を確認してください。",
+    "衝突は、スクリプト実行後にその行が変わったことを示します。強制適用する前に SQL を確認してください (複数の文が同じ行を変更したバッチはまとめて取り消せません。記録を 1 件ずつ取り消してください)。",
+  flightRecorderBatchPartialNote:
+    "このスクリプトには記録できなかった文 (または消えた記録) があるため、バッチを取り消してもスクリプト実行前の状態には完全には戻りません。",
   flightRecorderExportPlanAction: "SQL を保存…",
   flightRecorderExportPlanTip:
     "巻き戻し (または やり直し) の SQL を実行せずに .sql ファイルへ保存します。確認や別環境での実行に使えます。",

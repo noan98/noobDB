@@ -29,12 +29,20 @@ pub struct UpsertHint {
     /// 列名 (引用符を外して小文字化)。
     columns: Vec<String>,
     tuples: Vec<Vec<Lit>>,
+    /// `ON CONFLICT … DO UPDATE … WHERE …` のように、競合しても更新が見送られうる条件を持つか。
+    /// 影響行数からは更新の有無を正確に数えられないので、PostgreSQL / SQLite では辞退する。
+    update_where: bool,
 }
 
 /// 1 文で扱う VALUES の行数の上限。超えると主キー条件が長くなりすぎるので辞退する。
 const MAX_TUPLES: usize = 200;
 
 impl UpsertHint {
+    /// 競合時の更新に `WHERE` 条件があるか (文字列リテラルの外に語 `where` がある)。
+    pub(crate) fn has_update_where(&self) -> bool {
+        self.update_where
+    }
+
     /// 主キー列の値で行を引く `WHERE …` を組み立てる。主キー列が列リストに無い・値が単純な
     /// リテラルでない (NULL・式・`DEFAULT`) ときは `None`。
     pub(crate) fn anchor_where(
@@ -227,7 +235,13 @@ fn is_single_string(s: &str) -> bool {
 
 /// UPSERT 文を `INSERT INTO t (列…) VALUES (…), … ON …` として解析する。`sql` はコメント除去済みを
 /// 渡す。形が合わない (`INSERT OR REPLACE`、`INSERT … SELECT`、列リスト無し、行数超過など) と `None`。
-pub(crate) fn parse_upsert(sql: &str) -> Option<UpsertHint> {
+///
+/// `mysql` が真のとき、SQL 全体にバックスラッシュが 1 文字でもあれば辞退する (`NO_BACKSLASH_ESCAPES`
+/// の有無で文字列リテラルの終端が変わり、VALUES の読み取りがずれるため)。
+pub(crate) fn parse_upsert(sql: &str, mysql: bool) -> Option<UpsertHint> {
+    if mysql && sql.contains('\\') {
+        return None;
+    }
     let chars: Vec<char> = sql.chars().collect();
     let mut i = 0;
     skip_ws(&chars, &mut i);
@@ -329,12 +343,66 @@ pub(crate) fn parse_upsert(sql: &str) -> Option<UpsertHint> {
     if peek_word(&chars, i) != "on" {
         return None;
     }
-    Some(UpsertHint { columns, tuples })
+    let update_where = tail_has_where(&chars[i..]);
+    Some(UpsertHint {
+        columns,
+        tuples,
+        update_where,
+    })
+}
+
+/// `ON …` 以降に、文字列・引用符つき識別子の外で語 `where` があるか。
+fn tail_has_where(tail: &[char]) -> bool {
+    let mut i = 0;
+    let mut word = String::new();
+    while i < tail.len() {
+        let c = tail[i];
+        if c == '\'' || c == '"' || c == '`' {
+            let close = c;
+            i += 1;
+            while i < tail.len() && tail[i] != close {
+                i += 1;
+            }
+            word.clear();
+        } else if c.is_alphanumeric() || c == '_' {
+            word.push(c.to_ascii_lowercase());
+        } else {
+            if word == "where" {
+                return true;
+            }
+            word.clear();
+        }
+        i += 1;
+    }
+    word == "where"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn parse_upsert(sql: &str) -> Option<UpsertHint> {
+        super::parse_upsert(sql, false)
+    }
+
+    #[test]
+    fn detects_do_update_where_and_mysql_backslash() {
+        let h = parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, 2) ON CONFLICT (id) DO UPDATE SET v = 1 WHERE t.v < 5",
+        )
+        .unwrap();
+        assert!(h.has_update_where());
+        let h = parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, 'where') ON CONFLICT (id) DO UPDATE SET v = 'where'",
+        )
+        .unwrap();
+        assert!(!h.has_update_where());
+        assert!(super::parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'x\\y'",
+            true
+        )
+        .is_none());
+    }
 
     fn q(s: &str) -> String {
         format!("\"{s}\"")

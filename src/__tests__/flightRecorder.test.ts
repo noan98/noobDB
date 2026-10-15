@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { countCapturableStatements, isSingleCapturableStatement } from "../flightRecorder";
+import {
+  batchUndoIsPartial,
+  countCapturableStatements,
+  isSingleCapturableStatement,
+  noteBatchCaptureStats,
+} from "../flightRecorder";
 
 describe("isSingleCapturableStatement", () => {
   it("recognises a single INSERT/UPDATE/DELETE statement", () => {
@@ -51,5 +56,25 @@ describe("countCapturableStatements (#1626)", () => {
 
   it("does not treat a keyword inside a literal as a statement start", () => {
     expect(countCapturableStatements("SELECT 'insert into x'")).toBe(0);
+  });
+});
+
+describe("batchUndoIsPartial", () => {
+  it("統計が無い (再起動後など) バッチは注記しない", () => {
+    expect(batchUndoIsPartial("unknown-batch", 3)).toBe(false);
+  });
+
+  it("記録できなかった文があるか、記録が欠けているときだけ真", () => {
+    noteBatchCaptureStats("b-full", 3, 0);
+    expect(batchUndoIsPartial("b-full", 3)).toBe(false);
+    noteBatchCaptureStats("b-skipped", 3, 2);
+    expect(batchUndoIsPartial("b-skipped", 3)).toBe(true);
+    noteBatchCaptureStats("b-missing", 3, 0);
+    expect(batchUndoIsPartial("b-missing", 2)).toBe(true);
+  });
+
+  it("バッチ id が無ければ何も控えない", () => {
+    noteBatchCaptureStats(null, 1, 1);
+    expect(batchUndoIsPartial("", 0)).toBe(false);
   });
 });

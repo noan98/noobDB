@@ -567,6 +567,57 @@ pub mod __test_api {
         }
     }
 
+    /// [`make_session`] の履歴を残す版 (`skip_history = false`)。DML の記録をローカルの
+    /// フライトレコーダへ永続化させたいテスト用 (#1626)。
+    pub fn make_recording_session(id: &str, conn: Connection, opts: DbConnectOptions) -> Session {
+        let mut s = make_session(id, conn, opts, false);
+        s.skip_history = false;
+        s
+    }
+
+    /// `preview_flight_batch` の中核を Tauri ランタイム無しで駆動する (#1626)。
+    pub async fn preview_flight_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        batch_id: &str,
+        redo: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoBatchPreviewResponse> {
+        let (plan, records) =
+            crate::commands::flight_recorder::plan_batch(state, session_id, batch_id, false, redo)
+                .await?;
+        Ok(crate::commands::flight_recorder::UndoBatchPreviewResponse {
+            statements: plan.statements,
+            conflicts: plan.conflicts,
+            warnings: plan.warnings,
+            record_ids: records.iter().map(|r| r.id).collect(),
+        })
+    }
+
+    /// `apply_flight_batch` の中核を Tauri ランタイム無しで駆動する (#1626)。
+    pub async fn apply_flight_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        batch_id: &str,
+        force: bool,
+        redo: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::apply_flight_batch_inner(
+            state,
+            session_id.to_string(),
+            batch_id.to_string(),
+            force,
+            redo,
+        )
+        .await
+    }
+
+    /// バッチの記録をストアから直接読む (テスト用, #1626)。
+    pub async fn flight_batch_records_for_tests(
+        batch_id: &str,
+    ) -> crate::error::Result<Vec<crate::flight_recorder::WriteCaptureRecord>> {
+        crate::flight_recorder::store::list_batch(batch_id).await
+    }
+
     /// 複数の SELECT を 1 つの xlsx ブックへ書き出す (`export_tables_xlsx` の中核, #1624)。
     /// `sheets` は `(シート名の元, SELECT 文)`。書き出したバイト数と全シート通算の行数を返す。
     pub async fn export_workbook_via_command(

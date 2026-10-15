@@ -309,7 +309,8 @@ pub struct PendingCapture {
     result: QueryResult,
     tx: PendingTx,
     /// UPSERT として前後を撮った (#1626)。`analyze_capture` が新規行と更新行に分ける。
-    upsert: bool,
+    /// `Some(競合時の更新に WHERE があるか)`。
+    upsert: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -1721,7 +1722,7 @@ impl Connection {
         let mut upsert_hint = None;
         if kind == WriteKind::Insert && insert_is_upsert(self.driver_kind(), sql) {
             let cleaned = strip_sql_comments(sql, sql_flavor_of(self.driver_kind()));
-            match upsert_capture::parse_upsert(&cleaned) {
+            match upsert_capture::parse_upsert(&cleaned, self.driver_kind() == DriverKind::Mysql) {
                 Some(hint) => upsert_hint = Some(hint),
                 None => {
                     return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
@@ -1775,7 +1776,7 @@ impl Connection {
             row_cap,
             upsert,
         } = ready;
-        let is_upsert = upsert.is_some();
+        let is_upsert = upsert.as_ref().map(|h| h.has_update_where());
 
         match self
             .execute_snapshot_uncommitted(sql, database, row_cap, upsert.as_ref())
@@ -1834,7 +1835,7 @@ impl Connection {
         sql: &str,
         dry: PreviewResult,
         result: QueryResult,
-        upsert: bool,
+        upsert: Option<bool>,
     ) -> Result<(QueryResult, WriteCapture)> {
         let decline = |reason: &str| -> Result<(QueryResult, WriteCapture)> {
             Ok((
@@ -1895,7 +1896,7 @@ impl Connection {
 
         // UPSERT (#1626): 主キーを指定した行の前後から、新規行 (Undo = DELETE) と更新された
         // 既存行 (Undo = 元の値へ UPDATE) に分ける。両方あれば 2 件の記録 (本体 + companion)。
-        if upsert {
+        if let Some(update_where) = upsert {
             if dry.truncated {
                 return decline("対象行数が記録の上限を超えているため記録しません");
             }
@@ -1926,19 +1927,30 @@ impl Connection {
                     Some(_) => unchanged += 1,
                 }
             }
-            // 影響行数が、見えた変更で説明できる範囲を超えたら、主キー以外の一意キーでの
-            // 衝突などで「見ていない行」が変わっている。MySQL は更新した行を 2 と数える。
-            let per_update: u64 = if self.driver_kind() == DriverKind::Mysql {
-                2
+            // 影響行数を、見えた変更から正確に数えて照合する。主キー以外の一意キーでの衝突などで
+            // 「見ていない行」が変わっていると食い違う。
+            // MySQL (sqlx は常に CLIENT_FOUND_ROWS): 新規 1・更新 2・変化なし 1。
+            // PostgreSQL / SQLite: 新規・更新・変化なしをすべて 1 と数える。ただし
+            // `DO UPDATE … WHERE` は更新が見送られた行を 0 と数えるので正確に数えられず辞退する。
+            if self.driver_kind() == DriverKind::Mysql {
+                let expected = new_rows.len() as u64 + before_changed.len() as u64 * 2 + unchanged;
+                if result.rows_affected != expected {
+                    return decline(
+                        "主キー以外の一意キーの衝突など、記録した行以外も変わった可能性があるため記録しません",
+                    );
+                }
             } else {
-                1
-            };
-            let explained =
-                new_rows.len() as u64 + (before_changed.len() as u64 + unchanged) * per_update;
-            if result.rows_affected > explained {
-                return decline(
-                    "主キー以外の一意キーの衝突など、記録した行以外も変わった可能性があるため記録しません",
-                );
+                if update_where {
+                    return decline(
+                        "DO UPDATE … WHERE を伴う UPSERT は更新された行を正確に数えられないため記録しません",
+                    );
+                }
+                let explained = new_rows.len() as u64 + before_changed.len() as u64 + unchanged;
+                if result.rows_affected > explained {
+                    return decline(
+                        "主キー以外の一意キーの衝突など、記録した行以外も変わった可能性があるため記録しません",
+                    );
+                }
             }
             if new_rows.is_empty() && before_changed.is_empty() {
                 return decline("値が変わった行・追加された行がないため記録しません");

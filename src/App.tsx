@@ -426,7 +426,11 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
-import { countCapturableStatements, isSingleCapturableStatement } from "./flightRecorder";
+import {
+  countCapturableStatements,
+  isSingleCapturableStatement,
+  noteBatchCaptureStats,
+} from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
@@ -2221,6 +2225,17 @@ export default function App() {
       setTxTick((n) => n + 1);
     }
   }, []);
+  // 再接続 (強制再接続の失敗も含む) で旧接続の TX が破棄されたとき、画面側の TX 状態を捨てて知らせる。
+  const discardTxAfterReconnect = (sid: string) => {
+    if (!txBySessionRef.current.has(sid)) return;
+    resetTxFor(sid);
+    const name = openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile.name ?? "";
+    toast.notify({
+      message: translate("toastReconnectTxDiscarded", { name }),
+      tone: "info",
+      severity: "warning",
+    });
+  };
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
   useEffect(() => {
     txOwnerRef.current = sessionId;
@@ -5913,6 +5928,7 @@ export default function App() {
             if (done.rolledBack) toast.error(translate("batchRolledBackNotice"), 10000);
             // 複数文の DML を記録したとき、何件記録できたかを知らせる (#1626)。
             if (done.captured > 0 || done.captureSkipped > 0) {
+              noteBatchCaptureStats(done.batchId, done.captured, done.captureSkipped);
               toast.info(
                 translate("batchCaptureSummary", {
                   captured: done.captured,
@@ -12126,16 +12142,10 @@ export default function App() {
                         onReconnected={(sid) => {
                           clearEmergencyFor(sid);
                           // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
-                          if (txBySessionRef.current.has(sid)) {
-                            resetTxFor(sid);
-                            const name = openConnections.find((c) => c.sessionId === sid)?.profile.name ?? "";
-                            toast.notify({
-                              message: translate("toastReconnectTxDiscarded", { name }),
-                              tone: "info",
-                              severity: "warning",
-                            });
-                          }
+                          discardTxAfterReconnect(sid);
                         }}
+                        // 強制再接続は失敗しても旧接続の TX をロールバック済みなので、状態を残さない。
+                        onTxDiscarded={discardTxAfterReconnect}
                       />
                     ) : activeBottomPanelTab === "perf" ? (
                       // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。

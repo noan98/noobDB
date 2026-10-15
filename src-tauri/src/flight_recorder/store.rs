@@ -409,6 +409,24 @@ async fn mark_undone_in(pool: &SqlitePool, id: i64) -> Result<()> {
     Ok(())
 }
 
+/// 複数の記録の取り消し状態を 1 つのトランザクションでまとめて更新する (#1626)。
+pub async fn mark_undone_many(ids: &[i64], undone: bool) -> Result<()> {
+    mark_undone_many_in(pool().await?, ids, undone).await
+}
+
+async fn mark_undone_many_in(pool: &SqlitePool, ids: &[i64], undone: bool) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    for id in ids {
+        sqlx::query("UPDATE write_capture SET undone = ? WHERE id = ?")
+            .bind(i64::from(undone))
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Redo (#1536) の成功後に「取り消し済み」を解除する (冪等)。
 pub async fn mark_redone(id: i64) -> Result<()> {
     mark_redone_in(pool().await?, id).await
@@ -672,6 +690,33 @@ mod tests {
     async fn get_returns_none_for_missing_id() {
         let pool = temp_pool().await;
         assert!(get_in(&pool, 999).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn mark_undone_many_updates_every_record_together() {
+        let pool = temp_pool().await;
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            ids.push(
+                record_in(
+                    &pool,
+                    entry("p1", &format!("t{i}"), "2026-01-01T00:00:00Z"),
+                    100,
+                    0,
+                    u64::MAX,
+                )
+                .await
+                .unwrap(),
+            );
+        }
+        mark_undone_many_in(&pool, &ids, true).await.unwrap();
+        for id in &ids {
+            assert!(get_in(&pool, *id).await.unwrap().unwrap().undone);
+        }
+        mark_undone_many_in(&pool, &ids, false).await.unwrap();
+        for id in &ids {
+            assert!(!get_in(&pool, *id).await.unwrap().unwrap().undone);
+        }
     }
 
     #[tokio::test]

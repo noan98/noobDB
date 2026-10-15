@@ -38,8 +38,12 @@
   主キーの値を取り出し、各ドライバの `preview_inner` がその主キーの行を前後で読む
   (`UpsertHint::anchor_where`)。`analyze_capture` が「前に無く後にある行 = 新規行 (Undo = DELETE)」と
   「前後で値が変わった行 = 更新 (元の値へ UPDATE)」に分け、両方あれば Insert の記録 + `companion` の
-  Update の 2 件を同じ `batch_id` で保存する。影響行数が見えた変更で説明できる範囲 (MySQL は更新を 2 と
-  数える) を超えたら、主キー以外の一意キーでの衝突などで見ていない行が変わっているので辞退する。
+  Update の 2 件を同じ `batch_id` で保存する。影響行数は見えた変更から**正確に**数えて照合する:
+  MySQL (sqlx は常に `CLIENT_FOUND_ROWS`) は新規 1・更新 2・変化なし 1 で、一致しなければ主キー以外の
+  一意キーでの衝突などで見ていない行が変わっているので辞退する。PostgreSQL / SQLite は新規・更新・変化なしを
+  すべて 1 と数え、`DO UPDATE … WHERE` があると更新が見送られた行を 0 と数えるので辞退する。MySQL は
+  SQL にバックスラッシュが 1 文字でもあれば `parse_upsert` 全体を辞退する (`NO_BACKSLASH_ESCAPES` 次第で
+  文字列の終端が変わるため)。
   `INSERT … SELECT`・列リスト無し・式の主キーなども辞退。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来どおり「記録なしで
   1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な関数で書き換える文も辞退する。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
@@ -59,8 +63,10 @@
 - **バッチ** (`batch_id`): 複数文スクリプト (`run_sql_batch` の `capture`) と、新規行 + 更新行に分かれた
   UPSERT の記録に共通の id を付ける。`preview_flight_batch` / `apply_flight_batch` は各記録の計画
   (`plan_flight`) を連結し、1 つのトランザクションで適用する (取り消しは id 降順、やり直しは昇順)。
-  1 件でも衝突があれば `force` なしでは何も適用しない。**同じ行を複数の文が変更したバッチは、各記録の計画を
-  今のライブ行に対して独立に立てるため衝突として現れる** (確認してから `force`)。
+  1 件でも衝突があれば `force` なしでは何も適用しない。**バッチ内で (表, 主キー) が重なる記録があるバッチ
+  (INSERT → DELETE、UPDATE → DELETE など) は、各記録の計画を今のライブ行に対して独立に立てるため最終状態が
+  誤る。`check_batch_overlap` が `force` でも拒否し、記録を 1 件ずつ取り消すよう誘導する** (UPSERT 本体と
+  companion は行が重ならないので対象外)。完了後の取り消し状態は `store::mark_undone_many` が 1 トランザクションで更新する。
 - **スクリプトの DML 記録**: バッチ実行の各 INSERT/UPDATE/DELETE を `run_captured_write` で 1 文ずつ記録する
   (1 回の実行で記録を試みるのは最大 200 文。辞退された文も数え、それ以上は記録を試みず実行のみ)。`wrapInTransaction` のとき・呼び出し側の
   明示トランザクション中は、記録用の専用トランザクションを開けないので記録しない。

@@ -66,6 +66,11 @@ interface Props {
   onOpenProfile: (profile: ConnectionProfile) => void;
   /** 再接続に成功したセッション。App 側の UI ミラー (緊急モード等) の後始末用。 */
   onReconnected: (sessionId: string) => void;
+  /**
+   * 強制再接続 (開いている TX を捨てる確認を経た再接続) を試みた。成功・失敗を問わず呼ばれる —
+   * バックエンドは再接続の前に旧接続の TX をロールバックするので、失敗しても TX は残らない (#1626)。
+   */
+  onTxDiscarded?: (sessionId: string) => void;
 }
 
 const thCss: SystemStyleObject = {
@@ -124,6 +129,7 @@ export function ConnectionHealthPanel({
   connectingProfileId,
   onOpenProfile,
   onReconnected,
+  onTxDiscarded,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -251,10 +257,14 @@ export function ConnectionHealthPanel({
             title: t("reconnectTxTitle"),
             message: t("reconnectTxMessage", { name: row.name }),
             confirmLabel: t("reconnectTxConfirm"),
-            tone: "warning",
+            tone: "danger",
           });
           if (!ok) return;
-          await api.reconnect(sid, true);
+          try {
+            await api.reconnect(sid, true);
+          } finally {
+            onTxDiscarded?.(sid);
+          }
         }
         onReconnected(sid);
         toast.success(t("healthReconnected", { name: row.name }));
@@ -270,7 +280,7 @@ export function ConnectionHealthPanel({
       }
       await runChecks();
     },
-    [confirm, onReconnected, runChecks, t, toast],
+    [confirm, onReconnected, onTxDiscarded, runChecks, t, toast],
   );
 
   const rows = buildHealthRows(connections, profiles, results, {

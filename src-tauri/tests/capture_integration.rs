@@ -284,6 +284,95 @@ async fn pg_upsert_with_literal_keys_splits_new_and_updated_rows() {
         .unwrap();
 }
 
+/// 主キー以外の一意キー (email) で衝突して「見ていない行」が変わる UPSERT は記録を辞退する (#1626 レビュー)。
+/// MySQL は sqlx が常に CLIENT_FOUND_ROWS を使うので、変化なしの行も 1 と数える。新規 1・更新 2・
+/// 変化なし 1 で正確に数えないと、影響行数 5 が「説明可能」と誤判定されて id 5 の更新が記録から漏れる。
+#[tokio::test]
+async fn my_upsert_declines_when_a_secondary_unique_key_updates_an_unseen_row() {
+    let Some(o) = my_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_my_ups_uq";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, email VARCHAR(20), name VARCHAR(20), UNIQUE KEY uq_email (email)) ENGINE=InnoDB"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(
+        &format!("INSERT INTO {tb} VALUES (1,'e1','s'),(2,'e2','s'),(5,'a','old')"),
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            &format!("INSERT INTO {tb} (id, email, name) VALUES (1,'e1','s'),(2,'e2','s'),(10,'a','new'),(11,'z','n') ON DUPLICATE KEY UPDATE name = VALUES(name)"),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 5, "unchanged 1 + 1 + 更新 2 + 新規 1");
+    assert!(!cap.capturable, "id 5 の更新を見逃さず辞退する: {cap:?}");
+    // 書き込み自体は 1 回実行されている。
+    assert_eq!(
+        count(
+            &c,
+            &format!("SELECT COUNT(*) FROM {tb} WHERE id = 5 AND name = 'new'")
+        )
+        .await,
+        1
+    );
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
+/// PostgreSQL の `ON CONFLICT … DO UPDATE … WHERE` は更新を見送った行を 0 と数えるので、
+/// 影響行数から正確に数えられない。辞退する (#1626 レビュー)。
+#[tokio::test]
+async fn pg_upsert_with_do_update_where_is_declined() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_pg_ups_where";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, email TEXT UNIQUE, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(
+        &format!("INSERT INTO {tb} VALUES (1,'e1','s'),(2,'e2','s')"),
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            &format!("INSERT INTO {tb} (id, email, name) VALUES (1,'e1','changed'),(2,'e2','changed') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name WHERE {tb}.id = 1"),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 1, "id 2 の更新は見送られて 0");
+    assert!(!cap.capturable, "{cap:?}");
+    assert!(
+        cap.reason.as_deref().is_some_and(|m| m.contains("WHERE")),
+        "{:?}",
+        cap.reason
+    );
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
 /// WHERE を引き継げない UPDATE (PK を書き換える) が、無関係な行のロックを待たない。
 #[tokio::test]
 async fn pg_pk_changing_update_does_not_wait_on_unrelated_row_lock() {
