@@ -75,7 +75,9 @@ import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
+  batchMaintenanceKinds,
   databaseMaintenanceCommands,
+  MAINTENANCE_LABEL_KEYS,
   tableMaintenanceCommands,
   matviewRefreshCommands,
   type MaintenanceCommand,
@@ -114,7 +116,6 @@ import {
   type ExplorerRow,
   type ExplorerViewNode,
 } from "./explorerTree";
-import type { I18nKey } from "../i18n";
 import {
   MotionTreeRow,
   TreeBadge,
@@ -223,18 +224,6 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 }
 
 /** 保守コマンド種別ごとのメニューラベル i18n キー。#561。 */
-const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
-  analyze: "maintenanceAnalyze",
-  optimize: "maintenanceOptimize",
-  check: "maintenanceCheck",
-  repair: "maintenanceRepair",
-  vacuum: "maintenanceVacuum",
-  vacuumAnalyze: "maintenanceVacuumAnalyze",
-  reindex: "maintenanceReindex",
-  refreshMatview: "maintenanceRefreshMatview",
-  refreshMatviewConcurrently: "maintenanceRefreshMatviewConcurrently",
-};
-
 /** 接続リストのグループ折りたたみ状態を永続化する localStorage キー。
  *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
 const COLLAPSED_GROUPS_KEY = "noobdb.connlist.collapsedGroups";
@@ -392,6 +381,10 @@ interface Props {
   onExportTables?: (database: string, tables: string[]) => void;
   onDumpTables?: (database: string, tables: string[]) => void;
   onDropTables?: (database: string, tables: string[]) => void;
+  /** 選択した複数テーブルへ同じ保守コマンド (ANALYZE / OPTIMIZE / VACUUM 等) を流す (#1629)。read_only では無効化。 */
+  onRunTablesMaintenance?: (database: string, tables: string[], kind: MaintenanceKind) => void;
+  /** 選択した複数テーブルを TRUNCATE する (#1629)。read_only では無効化。 */
+  onTruncateTables?: (database: string, tables: string[]) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
   /** テーブル右クリックからインデックス作成の軽量モーダルを開く (#850)。`AlterTable`
@@ -1899,6 +1892,8 @@ export const ConnectionList = memo(
       onExportTables,
       onDumpTables,
       onDropTables,
+      onRunTablesMaintenance,
+      onTruncateTables,
       onAlterTable,
       onCreateIndex,
       onDropIndex,
@@ -2791,17 +2786,45 @@ export const ConnectionList = memo(
         label: t("batchMenuClearSelection"),
         onSelect: () => selectionStore.set(EMPTY_TABLE_SELECTION),
       });
-      if (onDropTables) {
+      // 一括の保守コマンド (#1629)。ドライバが持つ種別だけを出し、2 件以上ならサブメニューへ畳む。
+      if (onRunTablesMaintenance) {
+        const kinds = batchMaintenanceKinds(activeDriver);
+        if (kinds.length > 0) {
+          items.push(
+            { separator: true },
+            ...submenuOrFlat(
+              t("batchMenuMaintenance", { count }),
+              kinds.map((kind) => ({
+                label: t(MAINTENANCE_LABEL_KEYS[kind]),
+                onSelect: () => onRunTablesMaintenance(db, selected, kind),
+                disabled: activeReadOnly,
+                title: roTitle,
+              })),
+              { icon: "tools" },
+            ),
+          );
+        }
+      }
+      if (onTruncateTables) {
         items.push(
           { separator: true },
           {
-            label: t("batchMenuDrop", { count }),
-            onSelect: () => onDropTables(db, selected),
+            label: t("batchMenuTruncate", { count }),
+            onSelect: () => onTruncateTables(db, selected),
             disabled: activeReadOnly,
             title: roTitle,
             danger: true,
           },
         );
+      }
+      if (onDropTables) {
+        items.push(...(onTruncateTables ? [] : [{ separator: true } as const]), {
+          label: t("batchMenuDrop", { count }),
+          onSelect: () => onDropTables(db, selected),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
       }
       setMenu({ x: e.clientX, y: e.clientY, items });
     };

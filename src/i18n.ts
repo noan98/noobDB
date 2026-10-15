@@ -2545,6 +2545,25 @@ const en = {
   batchMenuDump: "Dump {count} tables...",
   batchMenuClearSelection: "Clear selection",
   batchMenuDrop: "Drop {count} tables...",
+  batchMenuTruncate: "Truncate {count} tables...",
+  batchMenuMaintenance: "Maintenance on {count} tables",
+  batchMaintenanceConfirmTitle: "Run {kind} on {count} tables?",
+  batchMaintenanceConfirmBody:
+    "The following statements will run one table at a time on these {count} tables in {database}:",
+  batchMaintenanceConfirmOk: "Run on {count} tables",
+  batchMaintenanceDone: "Maintenance finished on {count} tables",
+  batchMaintenancePartial: "Maintenance finished on {done} of {count} tables. Failed: {failed}",
+  batchTruncateConfirmTitle: "Truncate {count} tables?",
+  batchTruncateConfirmBody:
+    "This permanently deletes all rows in these {count} tables in {database}: {tables}. This cannot be undone.",
+  batchTruncateConfirmBodyList:
+    "This permanently deletes all rows in these {count} tables in {database}. This cannot be undone. Targets:",
+  batchTruncateConfirmOk: "Truncate {count} tables",
+  batchTruncateSuccess: "Truncated {count} tables",
+  batchTruncateRolledBack:
+    "Could not truncate the tables; everything was rolled back and no rows were deleted: {error}",
+  batchTruncatePartial:
+    "Truncated {done} of {count} tables, then stopped at {table} (the rest were not touched): {error}",
   batchDdlTabTitle: "DDL of {count} tables",
   batchDdlCopied: "Copied DDL of {count} tables",
   batchDdlFailed: "Could not get the DDL of {count} table(s): {tables}",
@@ -8070,6 +8089,24 @@ const ja: Dict = {
   batchMenuDump: "選択した {count} テーブルをダンプ...",
   batchMenuClearSelection: "選択を解除",
   batchMenuDrop: "選択した {count} テーブルを DROP...",
+  batchMenuTruncate: "選択した {count} テーブルを TRUNCATE...",
+  batchMenuMaintenance: "選択した {count} テーブルの保守",
+  batchMaintenanceConfirmTitle: "{count} 件のテーブルに {kind} を実行しますか?",
+  batchMaintenanceConfirmBody: "{database} の次の {count} テーブルに、1 テーブルずつ次の文を実行します:",
+  batchMaintenanceConfirmOk: "{count} 件に実行",
+  batchMaintenanceDone: "{count} 件のテーブルの保守が完了しました",
+  batchMaintenancePartial: "{count} 件中 {done} 件の保守が完了しました。失敗: {failed}",
+  batchTruncateConfirmTitle: "{count} 件のテーブルを TRUNCATE しますか?",
+  batchTruncateConfirmBody:
+    "{database} の次の {count} テーブルの全行を完全に削除します: {tables}。この操作は取り消せません。",
+  batchTruncateConfirmBodyList:
+    "{database} の次の {count} テーブルの全行を完全に削除します。この操作は取り消せません。対象:",
+  batchTruncateConfirmOk: "{count} 件を TRUNCATE",
+  batchTruncateSuccess: "{count} 件のテーブルを TRUNCATE しました",
+  batchTruncateRolledBack:
+    "テーブルを TRUNCATE できませんでした。すべてロールバックされ、どの行も削除されていません: {error}",
+  batchTruncatePartial:
+    "{count} 件中 {done} 件を TRUNCATE したところで {table} で停止しました (残りは未実行): {error}",
   batchDdlTabTitle: "{count} テーブルの DDL",
   batchDdlCopied: "{count} テーブルの DDL をコピーしました",
   batchDdlFailed: "{count} テーブルの DDL を取得できませんでした: {tables}",

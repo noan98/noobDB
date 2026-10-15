@@ -42,6 +42,37 @@ export function buildDropTablesSql(
   return [`DROP TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`];
 }
 
+/** 複数テーブルの TRUNCATE の実行方式 (#1629)。 */
+export type TruncateBatchMode = "single" | "transaction" | "sequential";
+
+/**
+ * 複数テーブルの TRUNCATE (#1629)。方言で原子性が違うため、文の組み立てと流し方を揃えて返す。
+ *
+ * - PostgreSQL: `TRUNCATE TABLE a, b` の 1 文 (選んだテーブル同士が外部キーで参照し合っていても
+ *   通り、1 文なので全件成功か全件失敗)。`single`。
+ * - SQLite: TRUNCATE が無いのでテーブルごとの `DELETE FROM`。呼び出し側が `PRAGMA
+ *   defer_foreign_keys=ON` と合わせて 1 トランザクションで流す (一括 DROP と同じ)。`transaction`。
+ * - MySQL: `TRUNCATE` は暗黙コミットで、他テーブルから FK で参照されていると失敗する。テーブルごとの
+ *   文を順に流し、失敗したらそこで止める (途中までは戻せない)。`sequential`。
+ */
+export function buildTruncateTablesSql(
+  driver: string,
+  database: string | null,
+  tables: readonly string[],
+): { mode: TruncateBatchMode; statements: string[] } {
+  if (tables.length === 0) return { mode: "sequential", statements: [] };
+  if (driver === "postgres") {
+    return {
+      mode: "single",
+      statements: [`TRUNCATE TABLE ${tables.map((t) => qualified(driver, database, t)).join(", ")};`],
+    };
+  }
+  return {
+    mode: driver === "sqlite" ? "transaction" : "sequential",
+    statements: tables.map((t) => buildTruncateSql(driver, database, t)),
+  };
+}
+
 /**
  * RENAME 文。`ALTER TABLE ... RENAME TO ...` は MySQL 8 / PostgreSQL / SQLite の
  * すべてで使える。新しい名前はスキーマ非修飾 (同じスキーマ内での改名)。

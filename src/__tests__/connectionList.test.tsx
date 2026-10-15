@@ -316,6 +316,41 @@ describe("Database Explorer の階層 (#1112)", () => {
     expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
   });
 
+  it("複数選択のメニューに一括保守と一括 TRUNCATE が並び、選択したテーブルで呼ばれる (#1629)", async () => {
+    const onRunTablesMaintenance = vi.fn();
+    const onTruncateTables = vi.fn();
+    await openDb({ onRunTablesMaintenance, onTruncateTables, onDropTables: vi.fn() });
+
+    const tbl1 = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(tbl1, { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("treeitem", { name: "tbl2" }), { ctrlKey: true });
+    fireEvent.contextMenu(tbl1);
+
+    const labels = (await screen.findAllByRole("menuitem")).map((el) => el.textContent ?? "");
+    expect(labels.findIndex((l) => l.includes(t("batchMenuMaintenance", { count: 2 })))).toBeGreaterThan(-1);
+    const truncate = await screen.findByRole("menuitem", { name: t("batchMenuTruncate", { count: 2 }) });
+    const drop = await screen.findByRole("menuitem", { name: t("batchMenuDrop", { count: 2 }) });
+    // TRUNCATE は DROP より前 (破壊の度合いが小さい順)。
+    expect(truncate.compareDocumentPosition(drop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(truncate);
+    expect(onTruncateTables).toHaveBeenCalledWith("db1", ["tbl1", "tbl2"]);
+
+    fireEvent.contextMenu(tbl1);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("batchMenuMaintenance", { count: 2 }) }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("maintenanceOptimize") }));
+    expect(onRunTablesMaintenance).toHaveBeenCalledWith("db1", ["tbl1", "tbl2"], "optimize");
+  });
+
+  it("read_only 接続では一括保守・一括 TRUNCATE が無効化される (#1629)", async () => {
+    await openDb({ onTruncateTables: vi.fn(), onRunTablesMaintenance: vi.fn() }, { read_only: true });
+    const tbl1 = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(tbl1, { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("treeitem", { name: "tbl2" }), { ctrlKey: true });
+    fireEvent.contextMenu(tbl1);
+    const truncate = await screen.findByRole("menuitem", { name: t("batchMenuTruncate", { count: 2 }) });
+    expect(truncate).toBeDisabled();
+  });
+
   it("「テーブルを複製」は onCloneTable を呼び、read_only 接続では無効化される (#1398)", async () => {
     const onCloneTable = vi.fn();
     await openDb({ onCloneTable });
