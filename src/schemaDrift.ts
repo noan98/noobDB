@@ -59,6 +59,28 @@ export function buildDriftDetail(summary: SchemaDriftSummary, maxTables = 3): st
   return more > 0 ? `${shown.join(", ")}, …` : shown.join(", ");
 }
 
+// --- スキーマ変化の OS 通知 (#1621) ---
+
+export interface SchemaDriftNotificationInput {
+  /** 設定「DDL 実行後に自動でスナップショットを取る」(`schemaDriftOnDdl`)。オフなら通知しない。 */
+  enabled: boolean;
+  /** 利用者が「今すぐ取得」を押した取得か。画面を見ているので通知しない。 */
+  manual: boolean;
+  /** 呼び出し時点でウィンドウがフォーカスされているか。 */
+  windowFocused: boolean;
+  summary: SchemaDriftSummary | null;
+}
+
+/**
+ * スキーマの変化を OS 通知で知らせるかの判定 (純粋, `queryNotify.ts` と同じ流儀)。
+ * 変化があり、自動取得 (接続時 / DDL 後) で、ウィンドウが非フォーカスのときだけ通知する。
+ * 別作業中に他のセッションや別ツールで行われた DDL を見落とさないための通知。
+ */
+export function shouldNotifySchemaDrift(input: SchemaDriftNotificationInput): boolean {
+  if (!input.enabled || input.manual || input.windowFocused) return false;
+  return (input.summary?.tables.length ?? 0) > 0;
+}
+
 // --- DDL 成功時の自動取得 (#1537) ---
 
 /** 最後の DDL からこの時間 (ms) 静かになったら 1 回だけ取得する。連続する DDL をまとめる。 */

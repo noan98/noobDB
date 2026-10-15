@@ -517,6 +517,7 @@ import {
 } from "./planWatch";
 import {
   buildDriftDetail,
+  shouldNotifySchemaDrift,
   createDdlCaptureCoalescer,
   isDriftTracked,
   migrateLegacySchemaDrift,
@@ -3040,7 +3041,11 @@ export default function App() {
   const driftResolvedTargetRef = useRef<{ profileId: string; database: string } | null>(null);
   const ddlCoalescerRef = useRef<ReturnType<typeof createDdlCaptureCoalescer> | null>(null);
   const captureSchemaSnapshotRef = useRef<
-    (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => Promise<void>
+    (
+      sid: string,
+      profile: ConnectionProfile,
+      opts?: { triggerSql?: string | null; manual?: boolean },
+    ) => Promise<void>
   >(async () => {});
   if (ddlCoalescerRef.current === null) {
     ddlCoalescerRef.current = createDdlCaptureCoalescer({
@@ -3069,7 +3074,11 @@ export default function App() {
    * 紐づけて保存する。この場合の取得失敗は DDL 自体の成否と無関係なのでトーストを出さない。
    */
   const captureSchemaSnapshot = useCallback(
-    async (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => {
+    async (
+      sid: string,
+      profile: ConnectionProfile,
+      opts?: { triggerSql?: string | null; manual?: boolean },
+    ) => {
       // PostgreSQL のプロファイルの `database` は実 DB 名 (空もありうる) で、記録対象の
       // 既定スキーマはバックエンドが決める。他のドライバは既定 DB が無ければ何もしない。
       const database = profile.database ?? "";
@@ -3103,6 +3112,25 @@ export default function App() {
               onAction: () => setSchemaDriftOpen(true),
             },
           });
+          // 別作業中でも気づけるよう、ウィンドウが非フォーカスなら OS 通知も出す (#1621)。
+          // 本文はテーブル名と増減件数だけで、SQL や値は含めない。
+          const changedSummary = res.summary;
+          void (async () => {
+            const windowFocused = await isAppWindowFocused();
+            if (
+              shouldNotifySchemaDrift({
+                enabled: getSettings().schemaDriftOnDdl,
+                manual: opts?.manual ?? false,
+                windowFocused,
+                summary: changedSummary,
+              })
+            ) {
+              void sendQueryNotification(
+                translate("notifySchemaDriftTitle", { name: profile.name }),
+                buildDriftDetail(changedSummary),
+              );
+            }
+          })();
         }
       } catch (e) {
         if (triggerSql) console.warn("schema drift capture after DDL failed", e);
@@ -3174,7 +3202,8 @@ export default function App() {
     [toast],
   );
   const handleCaptureSchemaDrift = useCallback(() => {
-    if (sessionId && selectedProfile) void captureSchemaSnapshot(sessionId, selectedProfile);
+    if (sessionId && selectedProfile)
+      void captureSchemaSnapshot(sessionId, selectedProfile, { manual: true });
   }, [sessionId, selectedProfile, captureSchemaSnapshot]);
 
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。

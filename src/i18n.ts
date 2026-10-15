@@ -602,7 +602,7 @@ const en = {
     "When connecting, capture a schema snapshot for the profile's default database and notify if it differs from the previous snapshot. Read-only and never written to query history. Turn off to only browse the stored timeline.",
   settingsSchemaDriftOnDdl: "Snapshot schema after DDL",
   settingsSchemaDriftOnDdlHelp:
-    "When a DDL statement (CREATE / ALTER / DROP ...) succeeds against the profile's default database, capture a schema snapshot and store the SQL that caused it, so the timeline shows when and by which statement the schema changed. Bursts of DDL are coalesced into one snapshot a few seconds later. Read-only; the SQL is not stored for profiles that skip query history.",
+    "When a DDL statement (CREATE / ALTER / DROP ...) succeeds against the profile's default database, capture a schema snapshot and store the SQL that caused it, so the timeline shows when and by which statement the schema changed. Bursts of DDL are coalesced into one snapshot a few seconds later. Read-only; the SQL is not stored for profiles that skip query history. Automatic captures that find changes also raise an OS notification while the window is unfocused.",
   settingsSafety: "Safety",
   settingsNotifications: "Notifications",
   settingsConfirmProductionConnect: "Confirm before connecting to production",
@@ -5534,6 +5534,7 @@ const en = {
   schemaDriftLabelSave: "Save label",
   schemaDriftLabelHint:
     'Applies to the "to" generation. Labeled generations are kept when old ones rotate out (up to 20).',
+  notifySchemaDriftTitle: "Schema changed: {name}",
 };
 
 export type I18nKey = keyof typeof en;
@@ -6134,7 +6135,7 @@ const ja: Dict = {
     "接続確立時に、そのプロファイルの既定データベースのスキーマスナップショットを取得し、前回のスナップショットと異なれば通知します。読み取り操作のみで、クエリ履歴には記録されません。オフにすると保存済みタイムラインの閲覧のみになります。",
   settingsSchemaDriftOnDdl: "DDL 実行後にスキーマをスナップショット",
   settingsSchemaDriftOnDdlHelp:
-    "プロファイルの既定データベースに対する DDL (CREATE / ALTER / DROP など) が成功したら、スキーマのスナップショットを取得し、そのきっかけになった SQL を一緒に保存します。いつ・どの文でスキーマが変わったかをタイムラインで辿れます。DDL が連続したときは数秒まとめて 1 回だけ取得します。読み取り操作のみで、クエリ履歴を残さない接続では SQL は保存しません。",
+    "プロファイルの既定データベースに対する DDL (CREATE / ALTER / DROP など) が成功したら、スキーマのスナップショットを取得し、そのきっかけになった SQL を一緒に保存します。いつ・どの文でスキーマが変わったかをタイムラインで辿れます。DDL が連続したときは数秒まとめて 1 回だけ取得します。読み取り操作のみで、クエリ履歴を残さない接続では SQL は保存しません。自動取得で変化が見つかったときは、ウィンドウが非フォーカスなら OS 通知も出します。",
   settingsSafety: "セーフティ",
   settingsNotifications: "通知",
   settingsConfirmProductionConnect: "本番環境接続時に確認ダイアログを表示",
@@ -11035,6 +11036,7 @@ const ja: Dict = {
   schemaDriftLabelAria: "{time} に取得した世代のラベル",
   schemaDriftLabelSave: "ラベルを保存",
   schemaDriftLabelHint: "比較先の世代に付きます。ラベル付きの世代は古い世代の整理で消えません (最大 20 件)。",
+  notifySchemaDriftTitle: "スキーマが変更されました: {name}",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

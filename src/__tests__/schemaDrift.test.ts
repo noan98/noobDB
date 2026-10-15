@@ -12,6 +12,7 @@ import {
   MAX_LEGACY_GENERATIONS,
   migrateLegacySchemaDrift,
   normalizeLegacySchemaDrift,
+  shouldNotifySchemaDrift,
 } from "../schemaDrift";
 
 // 世代の保存・ローテーション・フィンガープリント・インデックス差分・サマリ整形の
@@ -316,5 +317,41 @@ describe("createDdlCaptureCoalescer", () => {
     c.dispose();
     vi.advanceTimersByTime(10_000);
     expect(onFlush).not.toHaveBeenCalled();
+  });
+});
+
+describe("shouldNotifySchemaDrift (#1621)", () => {
+  const changed = {
+    tables: [
+      {
+        table: "users",
+        tableStatus: "changed" as const,
+        columnsAdded: 1,
+        columnsRemoved: 0,
+        columnsChanged: 0,
+        indexesAdded: 0,
+        indexesRemoved: 0,
+        indexesChanged: 0,
+        addedColumns: [],
+        removedColumns: [],
+        changedColumns: [],
+        addedIndexes: [],
+        removedIndexes: [],
+        changedIndexes: [],
+      },
+    ],
+  };
+  const base = { enabled: true, manual: false, windowFocused: false, summary: changed };
+
+  it("notifies for an automatic capture with changes while the window is unfocused", () => {
+    expect(shouldNotifySchemaDrift(base)).toBe(true);
+  });
+
+  it("stays quiet when disabled, manual, focused, or nothing changed", () => {
+    expect(shouldNotifySchemaDrift({ ...base, enabled: false })).toBe(false);
+    expect(shouldNotifySchemaDrift({ ...base, manual: true })).toBe(false);
+    expect(shouldNotifySchemaDrift({ ...base, windowFocused: true })).toBe(false);
+    expect(shouldNotifySchemaDrift({ ...base, summary: { tables: [] } })).toBe(false);
+    expect(shouldNotifySchemaDrift({ ...base, summary: null })).toBe(false);
   });
 });
