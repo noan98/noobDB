@@ -11,7 +11,7 @@
 //!
 //! **照合順序は完全一致ではない。** ICU の照合 (ロケール依存・Unicode 全域) を再現する
 //! 代わりに、ASCII (句読点 < 数字 < 英字、大小は無視して同順位 → 同値なら小文字が先)、
-//! 数字列の数値比較、Latin-1 / Latin Extended-A のアクセント付き英字、ひらがな・
+//! 数字列の数値比較、Latin-1 / Latin Extended-A / Extended-B (一部) / Extended Additional のアクセント付き英字、ひらがな・
 //! カタカナの同順位扱いまでを ICU root 照合に揃え、それ以外の文字はコードポイント順に
 //! 倒す。詳細な差分は `collation_key` のドキュメントを参照。
 
@@ -236,10 +236,77 @@ const LATIN_EXT_A_BASE: [&str; 128] = [
     "u", "u", "u", "u", "w", "w", "y", "y", "y", "z", "z", "z", "z", "z", "z", "s", // 170
 ];
 
-fn push_letter(out: &mut (Vec<u8>, Vec<u8>, Vec<u8>), base: u8, accent: u8, upper: bool) {
+/// 二次(アクセント)レベルへ 2 バイトで積む。Latin Extended Additional (U+1E00..) の
+/// コードポイント差は 1 バイトに収まらないため、(上位, 下位) の 7bit ずつにして
+/// 各バイトを 1 以上に保つ (終端の 0 と衝突させない)。
+fn push_accent(out: &mut Vec<u8>, accent: u16) {
+    out.push((accent >> 7) as u8 + 1);
+    out.push((accent & 0x7F) as u8 + 1);
+}
+
+/// Latin Extended-B (一部) と Latin Extended Additional (U+1E00..=U+1EFF) の基底文字。
+/// 表にない文字は `None` (コードポイント順に倒す)。ベトナム語の `ễ` / `ạ`、
+/// ルーマニア語の `ș` / `ț` などを基底文字の近くに並べる。
+/// ICU が基底文字と**別の一次キー**を持たせる文字 (`ƀ` `Ƒ` `ƒ` `Ɨ` `Ƙ` `ƙ` `ƚ` `Ʈ`
+/// `Ƶ` `ƶ` `ẚ` など。横線・フック付きで別字扱い) は表に入れない。入れると JS と順序が逆になる。
+fn latin_extended_base(cp: u32) -> Option<&'static str> {
+    let b = match cp {
+        0x1A0..=0x1A1 => "o",
+        0x1AF..=0x1B0 => "u",
+        0x1CD..=0x1CE => "a",
+        0x1CF..=0x1D0 => "i",
+        0x1D1..=0x1D2 => "o",
+        0x1D3..=0x1DC => "u",
+        0x1DE..=0x1E1 => "a",
+        0x1E2..=0x1E3 | 0x1FC..=0x1FD => "ae",
+        0x1E6..=0x1E7 | 0x1F4..=0x1F5 => "g",
+        0x1E8..=0x1E9 => "k",
+        0x1EA..=0x1ED | 0x1FE..=0x1FF => "o",
+        0x1F8..=0x1F9 => "n",
+        0x1FA..=0x1FB | 0x200..=0x203 | 0x226..=0x227 => "a",
+        0x204..=0x207 | 0x228..=0x229 => "e",
+        0x208..=0x20B => "i",
+        0x20C..=0x20F | 0x22A..=0x231 => "o",
+        0x210..=0x213 => "r",
+        0x214..=0x217 => "u",
+        0x218..=0x219 => "s",
+        0x21A..=0x21B => "t",
+        0x21E..=0x21F => "h",
+        0x232..=0x233 => "y",
+        0x1E00..=0x1E01 | 0x1EA0..=0x1EB7 => "a",
+        0x1E02..=0x1E07 => "b",
+        0x1E08..=0x1E09 => "c",
+        0x1E0A..=0x1E13 => "d",
+        0x1E14..=0x1E1D | 0x1EB8..=0x1EC7 => "e",
+        0x1E1E..=0x1E1F => "f",
+        0x1E20..=0x1E21 => "g",
+        0x1E22..=0x1E2B | 0x1E96 => "h",
+        0x1E2C..=0x1E2F | 0x1EC8..=0x1ECB => "i",
+        0x1E30..=0x1E35 => "k",
+        0x1E36..=0x1E3D => "l",
+        0x1E3E..=0x1E43 => "m",
+        0x1E44..=0x1E4B => "n",
+        0x1E4C..=0x1E53 | 0x1ECC..=0x1EE3 => "o",
+        0x1E54..=0x1E57 => "p",
+        0x1E58..=0x1E5F => "r",
+        0x1E60..=0x1E69 | 0x1E9B => "s",
+        0x1E6A..=0x1E71 | 0x1E97 => "t",
+        0x1E72..=0x1E7B | 0x1EE4..=0x1EF1 => "u",
+        0x1E7C..=0x1E7F => "v",
+        0x1E80..=0x1E89 | 0x1E98 => "w",
+        0x1E8A..=0x1E8D => "x",
+        0x1E8E..=0x1E8F | 0x1E99 | 0x1EF2..=0x1EF9 => "y",
+        0x1E90..=0x1E95 => "z",
+        0x1E9E => "ss",
+        _ => return None,
+    };
+    Some(b)
+}
+
+fn push_letter(out: &mut (Vec<u8>, Vec<u8>, Vec<u8>), base: u8, accent: u16, upper: bool) {
     out.0.push(T_LETTER);
     out.0.push(base - b'a');
-    out.1.push(accent);
+    push_accent(&mut out.1, accent);
     out.2.push(if upper { 2 } else { 1 });
 }
 
@@ -249,7 +316,7 @@ fn push_letter(out: &mut (Vec<u8>, Vec<u8>, Vec<u8>), base: u8, accent: u8, uppe
 /// 再現する範囲:
 /// - 一次: 制御文字は無視。空白・ASCII 記号 < 数字列 < 英字 (大小同順位) < その他。
 ///   数字列は先頭のゼロを無視した数値順 (`"a2" < "a10"`、`"01"` と `"1"` は同値)。
-/// - 二次: Latin-1 / Latin Extended-A のアクセント付き英字は基底文字と同順位で、
+/// - 二次: Latin-1 / Latin Extended-A / Extended-B (一部) / Extended Additional のアクセント付き英字は基底文字と同順位で、
 ///   アクセント無し < 有り。`ß` は `ss`、`æ` は `ae`、`œ` は `oe` に展開する。
 /// - 三次: 小文字 < 大文字、ひらがな < カタカナ。
 ///
@@ -276,7 +343,7 @@ pub fn collation_key(s: &str) -> Box<[u8]> {
             out.0.push(T_NUM);
             out.0.extend_from_slice(&len.to_be_bytes());
             out.0.extend_from_slice(digits.as_bytes());
-            out.1.push(1);
+            push_accent(&mut out.1, 1);
             out.2.push(1);
             continue;
         }
@@ -292,7 +359,7 @@ pub fn collation_key(s: &str) -> Box<[u8]> {
             } else if let Some(rank) = PUNCT_ORDER.iter().position(|b| *b == c as u8) {
                 out.0.push(T_PUNCT);
                 out.0.push(rank as u8 + 1);
-                out.1.push(1);
+                push_accent(&mut out.1, 1);
                 out.2.push(1);
             }
             // それ以外の ASCII 制御文字は完全に無視する。
@@ -303,26 +370,26 @@ pub fn collation_key(s: &str) -> Box<[u8]> {
             .to_lowercase()
             .next()
             .map(|l| l as u32)
-            .filter(|l| (0xC0..=0x17F).contains(l))
+            .filter(|l| (0xC0..=0x1EFF).contains(l))
             .unwrap_or(cp);
         let base = match cp {
             0xC0..=0xFF => Some((LATIN1_BASE[(cp - 0xC0) as usize], lower_cp - 0xC0)),
             0x100..=0x17F => Some((LATIN_EXT_A_BASE[(cp - 0x100) as usize], lower_cp - 0xC0)),
-            _ => None,
+            _ => latin_extended_base(cp).map(|b| (b, lower_cp - 0xC0)),
         };
         if let Some((base, accent_id)) = base {
             if base == "_" {
                 // × ÷ は記号。ASCII 記号のすぐ後 (数字の前) に置く。
                 out.0.push(T_PUNCT);
                 out.0.push(0xF0);
-                out.1.push(1);
+                push_accent(&mut out.1, 1);
                 out.2.push(1);
                 continue;
             }
             let upper = c.is_uppercase();
             for (j, b) in base.bytes().enumerate() {
                 // 展開した 2 文字目以降には二次差を付けない (ß は 1 文字目で ss と区別)。
-                let accent = if j == 0 { 2 + accent_id as u8 } else { 1 };
+                let accent = if j == 0 { 2 + accent_id as u16 } else { 1 };
                 push_letter(&mut out, b, accent, upper);
             }
             continue;
@@ -335,7 +402,7 @@ pub fn collation_key(s: &str) -> Box<[u8]> {
         };
         out.0.push(T_OTHER);
         out.0.extend_from_slice(&other.to_be_bytes()[1..]);
-        out.1.push(1);
+        push_accent(&mut out.1, 1);
         out.2.push(tertiary);
     }
     // 一次 | 0 | 二次 | 0 | 三次。各レベルの値は 1 以上なので終端 0 と衝突しない。
@@ -431,5 +498,23 @@ mod tests {
         assert_eq!(cmp("a", "あ"), Less);
         assert_eq!(cmp("$", "1"), Less);
         assert_eq!(cmp("$", "_"), Greater);
+    }
+
+    #[test]
+    fn collation_places_latin_extended_near_base_letter() {
+        use std::cmp::Ordering::*;
+        // ベトナム語 (Latin Extended Additional): ễ は e の近く、z より前。
+        assert_eq!(cmp("Nguyễn", "Nguyz"), Less);
+        assert_eq!(cmp("Nguyễn", "Nguyen"), Greater);
+        assert_eq!(cmp("ạ", "b"), Less);
+        assert_eq!(cmp("ạ", "a"), Greater);
+        // ルーマニア語 (Latin Extended-B): ș / ț は s / t の近く。
+        assert_eq!(cmp("Ștefan", "Sz"), Less);
+        assert_eq!(cmp("ț", "u"), Less);
+        assert_eq!(cmp("ș", "s"), Greater);
+        // 大小は三次差 (小文字が先)。
+        assert_eq!(cmp("ễ", "Ễ"), Less);
+        // 異なるアクセントは区別する。
+        assert_ne!(cmp("ạ", "ả"), Equal);
     }
 }

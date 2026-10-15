@@ -1381,6 +1381,14 @@
   "importDoneEvent": {
     "elapsedMs": 42,
     "inserted": 99,
+    "sheets": [
+      {
+        "inserted": 99,
+        "sheet": "Sheet1",
+        "skippedTotal": 1,
+        "table": "orders"
+      }
+    ],
     "skipped": [
       {
         "line": 8,
@@ -1388,8 +1396,21 @@
         "record": 7
       }
     ],
+    "skippedDataTruncated": true,
     "skippedTotal": 1234,
     "streamId": "strm0003"
+  },
+  "importDryRunResult": {
+    "dbChecked": true,
+    "failed": 3,
+    "failures": [
+      {
+        "line": 5,
+        "reason": "UNIQUE constraint failed",
+        "record": 4
+      }
+    ],
+    "total": 100
   },
   "importErrorEvent": {
     "committed": 12,
@@ -1406,6 +1427,32 @@
   "importStartedEvent": {
     "streamId": "strm0003",
     "total": 100
+  },
+  "importTemplate": {
+    "conflictMode": "update",
+    "database": "shop",
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "errorMode": "skip",
+    "format": "csv",
+    "hasHeader": true,
+    "id": "p1\u001fshop\u001forders",
+    "keyColumns": [
+      "id"
+    ],
+    "mapping": [
+      {
+        "column": "id",
+        "csvIndex": 0,
+        "header": "ID"
+      }
+    ],
+    "nullToken": "",
+    "profileId": "p1",
+    "quote": "\"",
+    "sheet": null,
+    "table": "orders",
+    "updatedAtMs": 1760000000000
   },
   "incomingForeignKey": {
     "column": "user_id",
@@ -5383,6 +5430,13 @@
       {
         "column": "amount",
         "kind": "decimal_clamped",
+        "sourceType": "DECIMAL(70,2)",
+        "targetType": "DECIMAL(65,2)"
+      }
+    ],
+    "sourceColumns": [
+      {
+        "name": "amount",
         "sourceType": "DECIMAL(70,2)",
         "targetType": "DECIMAL(65,2)"
       }

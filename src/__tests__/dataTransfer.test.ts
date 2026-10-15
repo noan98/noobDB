@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  allColumnsExcluded,
+  invalidDecimalColumns,
+  buildTransferColumnSpecs,
+  defaultColumnDraft,
   defaultTransferTableName,
+  parseLimitRows,
   makeTransferStreamId,
   pickDefaultDatabase,
   toDriverKind,
@@ -156,5 +161,64 @@ describe("接続間データ転送 (#986) の純ロジック", () => {
 
   it("stream id は呼び出しごとに一意", () => {
     expect(makeTransferStreamId()).not.toBe(makeTransferStreamId());
+  });
+});
+
+describe("列の選択・改名・型上書きと試験転送 (#1623)", () => {
+  const cols = [{ name: "id" }, { name: "secret" }, { name: "flag" }];
+
+  it("既定のままの列は指定に含めない (指定が空なら従来どおり全列)", () => {
+    expect(buildTransferColumnSpecs(cols, {})).toEqual([]);
+    expect(buildTransferColumnSpecs(cols, { id: defaultColumnDraft() })).toEqual([]);
+  });
+
+  it("除外・改名・型上書きを列指定にする。改名は前後の空白を除き、同名なら無視", () => {
+    const specs = buildTransferColumnSpecs(cols, {
+      id: { ...defaultColumnDraft(), name: "  id " },
+      secret: { ...defaultColumnDraft(), include: false },
+      flag: { ...defaultColumnDraft(), name: " is_on ", type: "integer" },
+    });
+    expect(specs).toEqual([
+      { source: "secret", exclude: true },
+      { source: "flag", name: "is_on", type: { kind: "integer" } },
+    ]);
+  });
+
+  it("decimal は精度と小数桁を載せる", () => {
+    const specs = buildTransferColumnSpecs(cols, {
+      id: { ...defaultColumnDraft(), type: "decimal", precision: 20, scale: 4 },
+    });
+    expect(specs).toEqual([{ source: "id", type: { kind: "decimal", precision: 20, scale: 4 } }]);
+  });
+
+  it("全列を外したら検出する (ソース列が未取得のときは対象外)", () => {
+    expect(allColumnsExcluded([], {})).toBe(false);
+    expect(allColumnsExcluded(cols, {})).toBe(false);
+    const off = { ...defaultColumnDraft(), include: false };
+    expect(allColumnsExcluded(cols, { id: off, secret: off, flag: off })).toBe(true);
+    expect(allColumnsExcluded(cols, { id: off, secret: off })).toBe(false);
+  });
+
+  it("DECIMAL の小数桁が精度を超える列を検出する (#1623)", () => {
+    const dec = (precision: number, scale: number, include = true) => ({
+      ...defaultColumnDraft(),
+      type: "decimal" as const,
+      precision,
+      scale,
+      include,
+    });
+    expect(invalidDecimalColumns(cols, { id: dec(5, 6) })).toEqual(["id"]);
+    expect(invalidDecimalColumns(cols, { id: dec(5, 5) })).toEqual([]);
+    expect(invalidDecimalColumns(cols, { id: dec(5, 6, false) })).toEqual([]);
+    expect(invalidDecimalColumns(cols, { id: { ...dec(5, 6), type: "text" } })).toEqual([]);
+    expect(invalidDecimalColumns(cols, {})).toEqual([]);
+  });
+
+  it("試験転送の行数は正の整数だけ受け付ける", () => {
+    expect(parseLimitRows("100")).toBe(100);
+    expect(parseLimitRows(" 5 ")).toBe(5);
+    for (const bad of ["", "0", "-1", "1.5", "abc", "1e3", "99999999999999999999"]) {
+      expect(parseLimitRows(bad), bad).toBeNull();
+    }
   });
 });

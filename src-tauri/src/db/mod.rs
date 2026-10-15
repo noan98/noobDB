@@ -415,6 +415,23 @@ pub struct SkippedRow {
     pub reason: String,
 }
 
+/// 取り込みの事前検証 (dry run、#1623) の結果: 失敗した行の総数と、先頭の一部 (`keep` 件)
+/// の 0 始まりの位置と理由。失敗の総数は `keep` を超えても数え続ける。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DryRunOutcome {
+    pub failed: u64,
+    pub failures: Vec<SkippedRow>,
+}
+
+impl DryRunOutcome {
+    pub(crate) fn record(&mut self, index: usize, reason: String, keep: usize) {
+        self.failed += 1;
+        if self.failures.len() < keep {
+            self.failures.push(SkippedRow { index, reason });
+        }
+    }
+}
+
 /// Result of a resilient (skip-mode) import: how many rows were inserted and
 /// which were skipped (#687).
 #[derive(Debug, Clone)]
@@ -839,6 +856,39 @@ impl Connection {
             }
             Connection::Sqlite(c) => {
                 c.probe_failing_row(database, table, columns, rows, conflict)
+                    .await
+            }
+        }
+    }
+
+    /// 取り込みの事前検証 (#1623): `rows` を 1 行ずつ、**必ずロールバックする**トランザクション
+    /// の中で INSERT してみて、DB が拒否する行を数える。何も永続化しない。拒否理由が行データ
+    /// ではなく全体障害 (テーブル消失・権限不足など) のときは、その時点でエラーを返す。
+    /// MySQL の非トランザクショナル表 (MyISAM 等) はロールバックできないので実行しない。
+    pub async fn dry_run_failures(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
+        keep: usize,
+    ) -> Result<DryRunOutcome> {
+        if columns.is_empty() {
+            return Err(AppError::InvalidInput("no columns to import".into()));
+        }
+        conflict.validate(columns)?;
+        match self {
+            Connection::MySql(c) => {
+                c.dry_run_failures(database, table, columns, rows, conflict, keep)
+                    .await
+            }
+            Connection::Postgres(c) => {
+                c.dry_run_failures(database, table, columns, rows, conflict, keep)
+                    .await
+            }
+            Connection::Sqlite(c) => {
+                c.dry_run_failures(database, table, columns, rows, conflict, keep)
                     .await
             }
         }

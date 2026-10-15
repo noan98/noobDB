@@ -752,6 +752,49 @@ impl PostgresConn {
         Ok(None)
     }
 
+    /// 取り込みの事前検証 (#1623)。各行を SAVEPOINT 付きで INSERT し (PostgreSQL は失敗した
+    /// 文でトランザクション全体が中断状態になるため)、最後に必ずロールバックする。
+    /// See [`Connection::dry_run_failures`].
+    pub(crate) async fn dry_run_failures(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
+        keep: usize,
+    ) -> Result<super::DryRunOutcome> {
+        let mut conn = self.pool.acquire().await?;
+        apply_search_path(&mut conn, database, &self.search_path).await?;
+        sqlx::Executor::execute(
+            &mut *conn,
+            sqlx::raw_sql("SET standard_conforming_strings = on"),
+        )
+        .await?;
+        let mut tx = conn.begin().await?;
+        let mut out = super::DryRunOutcome::default();
+        for (i, row) in rows.iter().enumerate() {
+            let sql = build_pg_upsert(table, columns, std::slice::from_ref(row), conflict, &[]);
+            let mut sp = tx.begin().await?;
+            match sqlx::query(sqlx::AssertSqlSafe(sql))
+                .execute(&mut *sp)
+                .await
+            {
+                Ok(_) => sp.commit().await?,
+                Err(e) => {
+                    let e = AppError::from(e);
+                    if !super::is_row_level_import_error(&e) {
+                        return Err(e);
+                    }
+                    sp.rollback().await?;
+                    out.record(i, e.to_string(), keep);
+                }
+            }
+        }
+        tx.rollback().await?;
+        Ok(out)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no

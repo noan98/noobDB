@@ -30,10 +30,12 @@ export interface ScanColumn {
  * - `numeric`: 検索語が数値のときだけ等価比較の対象 (整数・小数)。
  * - `excluded`: 既定で走査対象外 (BLOB・真偽値・日時)。BLOB は仕様どおり既定除外。
  */
-export type SearchTarget = "text" | "numeric" | "excluded";
+export type SearchTarget = "text" | "numeric" | "excluded" | "dateText";
 
-export function searchTargetForKind(kind: CellKind): SearchTarget {
+export function searchTargetForKind(kind: CellKind, includeDates = false): SearchTarget {
   switch (kind) {
+    case "date":
+      return includeDates ? "dateText" : "excluded";
     case "string":
     case "enum":
     case "json":
@@ -80,10 +82,12 @@ export function buildColumnPredicate(
   kind: CellKind,
   term: string,
   mode: MatchMode,
+  includeDates = false,
 ): string | null {
-  const target = searchTargetForKind(kind);
+  const target = searchTargetForKind(kind, includeDates);
   if (target === "excluded") return null;
-  const col = quoteIdentFor(driver, columnName);
+  let col = quoteIdentFor(driver, columnName);
+  if (target === "dateText" && driver === "postgres") col = `CAST(${col} AS TEXT)`;
   if (target === "numeric") {
     const literal = numericLiteral(term);
     if (literal === null) return null;
@@ -122,10 +126,18 @@ export function buildTableScanSql(
   columns: ScanColumn[],
   term: string,
   mode: MatchMode,
+  includeDates = false,
 ): TableScanSql | null {
   const parts: { name: string; predicate: string }[] = [];
   for (const c of columns) {
-    const predicate = buildColumnPredicate(driver, c.name, searchKindFor(driver, c.dataType), term, mode);
+    const predicate = buildColumnPredicate(
+      driver,
+      c.name,
+      searchKindFor(driver, c.dataType),
+      term,
+      mode,
+      includeDates,
+    );
     if (predicate) parts.push({ name: c.name, predicate });
   }
   if (parts.length === 0) return null;
