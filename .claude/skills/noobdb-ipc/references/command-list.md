@@ -124,6 +124,10 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 Channel で返す (#738, #1257)。読み取り専用はバックエンド強制。各環境は
 `{runId}:{sessionId}` の stream id で `cancel_stream` できる。
 
+`broadcast_sync_sql` — 比較した環境を基準に揃える INSERT / UPDATE / DELETE を描画する純関数 (#1625)。
+DB に触れず実行もしない (UI のプレビュー専用)。両環境の行 (上限 5,000 行) をフロントから受け取り、
+打ち切られた結果は `InvalidInput`。キー列が無ければ基準にだけある行の INSERT のみ。
+
 ## スキーマ (`commands/schema.rs`)
 
 - `list_databases`
@@ -216,7 +220,7 @@ Channel で返す (#738, #1257)。読み取り専用はバックエンド強制�
 - `release_data_diffs`
 - `apply_sync_sql`
 
-`compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys)` は
+`compare_table_data` は表示用 `diff` と保持差分の `diff_id` を返し、`generate_data_sync_sql(diffId, allowDelete, skipKeys, kinds, onlyKeys)` は
 ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を破棄する (#1259)。
 `compare_table_data` に `streamId` を渡して `allRows` で呼ぶと、ページごとの進捗を `data-diff:progress` イベント
 (`streamId` / `rows`) で通知し、`cancel_stream(streamId)` で中止できる (中止時は `InvalidInput` で返る, #1612)。
@@ -251,6 +255,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
 - `analyze_schema_health` (#1621。「対応しない」を `ignored` へ振り分け、前回診断 (メモリ上の直近 1 件) との差分 `diff` を載せる。未使用インデックスには `size_bytes`)
+- `check_duplicate_index` (#1625。新規インデックスと重なる既存インデックスを返す。判定はアドバイザの重複 / 冗長検出と同じ述語)
 - `ignore_advisor_finding` (#1621。`advisor_ignores.json` に (プロファイル, DB, 指摘キー) を保存)
 - `unignore_advisor_finding` (#1621。「対応しない」の取り消し)
 - `query_stats_support`
@@ -259,6 +264,7 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `sample_statement_delta` (#1259。baseline 差分と N+1 目安を Rust 側で集計)
 - `server_info`
 - `server_metrics`
+- `sqlite_maintenance`
 
 ## 列データプロファイル (`commands/profile.rs`)
 

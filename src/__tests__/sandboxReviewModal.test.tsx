@@ -80,6 +80,7 @@ const SANDBOX: SandboxRecord = {
   file_path: "/tmp/sb1.sqlite",
   created_at: "2026-01-01T00:00:00Z",
   truncated_tables: [],
+  row_filters: [],
 };
 
 beforeEach(() => {
@@ -335,5 +336,84 @@ describe("SandboxReviewModal の適用ボタンの並び (#1615)", () => {
   it("破壊的でなければ従来どおり閉じるが左、適用が右", async () => {
     const { apply, close } = await generateWith(false);
     expect(close.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+/** 競合の一括解決 (#1625)。全体・表単位で適用でき、未解決数と連動し、個別の選び直しも残る。 */
+describe("SandboxReviewModal の競合一括解決 (#1625)", () => {
+  const profile = { id: "p1", name: "src", driver: "sqlite" } as unknown as ConnectionProfile;
+  const conflict = (id: number) => ({
+    key: [id],
+    desired_status: "different" as const,
+    external_status: "different" as const,
+    desired_row: [id, "mine"],
+    external_row: [id, "theirs"],
+  });
+  const withConflicts = {
+    ...TABLE_DIFF,
+    desired: {
+      ...TABLE_DIFF.desired,
+      rows: [
+        {
+          status: "different" as const,
+          key: [1],
+          source: [1, "mine"],
+          target: [1, "base"],
+          changed_columns: ["v"],
+        },
+      ],
+    },
+    conflicts: [conflict(1), conflict(2), conflict(3)],
+  };
+
+  function mount() {
+    vi.mocked(api.sandboxTableDiff).mockResolvedValue(withConflicts as never);
+    return renderWithProviders(
+      <SandboxReviewModal
+        sandbox={SANDBOX}
+        sandboxSessionId="s1"
+        openConnections={[{ sessionId: "live", profile }]}
+        onClose={() => {}}
+      />,
+    );
+  }
+
+  it("全件スキップで未解決の警告が消え、SQL 生成にはその主キーが除外キーとして渡る", async () => {
+    mount();
+    expect(await screen.findByText(t("sandboxReviewUnresolvedConflicts", { count: 3 }))).toBeInTheDocument();
+    fireEvent.click(screen.getByText(t("sandboxReviewBulkSkip")));
+    await waitFor(() =>
+      expect(screen.queryByText(t("sandboxReviewUnresolvedConflicts", { count: 3 }))).not.toBeInTheDocument(),
+    );
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    await waitFor(() =>
+      expect(api.generateDataSyncSql).toHaveBeenCalledWith("diff-users", false, [[1], [2], [3]]),
+    );
+  });
+
+  it("全件上書きは確認を挟み、承認すると未解決が 0 になる", async () => {
+    mount();
+    await screen.findByText(t("sandboxReviewUnresolvedConflicts", { count: 3 }));
+    fireEvent.click(screen.getByText(t("sandboxReviewBulkOverwrite")));
+    fireEvent.click(await screen.findByText(t("sandboxReviewOverwrite"), { selector: "button" }));
+    await waitFor(() =>
+      expect(screen.queryByText(t("sandboxReviewUnresolvedConflicts", { count: 3 }))).not.toBeInTheDocument(),
+    );
+  });
+
+  it("一括の後でも個別の選択を変えられる (スキップ→1 件だけ上書き)", async () => {
+    mount();
+    await screen.findByText(t("sandboxReviewUnresolvedConflicts", { count: 3 }));
+    fireEvent.click(screen.getByText(t("sandboxReviewBulkSkip")));
+    const overwriteRadios = await screen.findAllByLabelText(t("sandboxReviewOverwrite"));
+    fireEvent.click(overwriteRadios[0]);
+    const generate = await screen.findByText(t("sandboxReviewGenerate"));
+    await waitFor(() => expect(generate.closest("button")).not.toBeDisabled());
+    fireEvent.click(generate);
+    await waitFor(() =>
+      expect(api.generateDataSyncSql).toHaveBeenCalledWith("diff-users", false, [[2], [3]]),
+    );
   });
 });

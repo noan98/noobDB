@@ -99,3 +99,118 @@ export function pinToastPlan(pinnedCount: number): PinToastPlan {
     ? { messageKey: "pinToastCompare", showOpenAction: true }
     : { messageKey: "pinToastNeedOneMore", showOpenAction: false };
 }
+
+/** 2 つの結果の列を列名で対応づけた結果 (#1625)。 */
+export interface ColumnMapping {
+  /** 両側にある列の名前。左の列順。 */
+  shared: string[];
+  /** `shared` と同じ順の、左の列位置。 */
+  leftIndices: number[];
+  /** `shared` と同じ順の、右の列位置。 */
+  rightIndices: number[];
+  /** 左にだけある列名 (比較の対象外)。 */
+  leftOnly: string[];
+  /** 右にだけある列名 (比較の対象外)。 */
+  rightOnly: string[];
+  /** 同じ名前の列が片側に複数あり、対応づけられない列名 (比較の対象外)。 */
+  ambiguous: string[];
+  /** 列の数・名前・順序が完全に一致する (射影しなくてよい)。 */
+  exact: boolean;
+}
+
+/**
+ * 列名で 2 つの結果の列を対応づける (#1625)。SELECT の列順を変えた、あるいは片方に
+ * 列が増減した結果同士でも比べられるようにするための対応表。
+ *
+ * - 同じ名前が片側に複数ある列 (JOIN の `a.id, b.id` など) は、どれと対応するか決められない
+ *   ので `ambiguous` に回して対象外にする (誤って組むより外す)。
+ * - 比較は `shared` の列だけで行う。片方にだけある列は差分表示の対象外 (`leftOnly` / `rightOnly`)。
+ */
+export function mapColumnsByName(a: { columns: Column[] }, b: { columns: Column[] }): ColumnMapping {
+  const countNames = (cols: Column[]) => {
+    const m = new Map<string, number>();
+    for (const c of cols) m.set(c.name, (m.get(c.name) ?? 0) + 1);
+    return m;
+  };
+  const ca = countNames(a.columns);
+  const cb = countNames(b.columns);
+  const ambiguous = new Set<string>();
+  for (const [n, k] of ca) if (k > 1) ambiguous.add(n);
+  for (const [n, k] of cb) if (k > 1) ambiguous.add(n);
+
+  const shared: string[] = [];
+  const leftIndices: number[] = [];
+  const rightIndices: number[] = [];
+  const leftOnly: string[] = [];
+  a.columns.forEach((c, i) => {
+    if (ambiguous.has(c.name)) return;
+    const j = b.columns.findIndex((d) => d.name === c.name);
+    if (j < 0) {
+      leftOnly.push(c.name);
+      return;
+    }
+    shared.push(c.name);
+    leftIndices.push(i);
+    rightIndices.push(j);
+  });
+  const rightOnly = b.columns.filter((c) => !ambiguous.has(c.name) && !ca.has(c.name)).map((c) => c.name);
+  const exact =
+    ambiguous.size === 0 &&
+    a.columns.length > 0 &&
+    a.columns.length === b.columns.length &&
+    a.columns.every((c, i) => c.name === b.columns[i].name);
+  return { shared, leftIndices, rightIndices, leftOnly, rightOnly, ambiguous: [...ambiguous], exact };
+}
+
+/**
+ * 列名で対応づけて比較できるか (#1625)。対応づけられる列が 1 つ以上あれば true。
+ * 列順や列の集合が違っても比べられるので、{@link resultsComparable} (列数・列名・順序が
+ * 完全一致) より広い。
+ */
+export function resultsComparableByName(a: { columns: Column[] }, b: { columns: Column[] }): boolean {
+  return mapColumnsByName(a, b).shared.length > 0;
+}
+
+/**
+ * 対応表に従って、左右の結果を共通の列だけ・同じ列順 (左の列順) へ射影する (#1625)。
+ * 完全一致 (`exact`) のときは何もせず元のまま返す。
+ */
+export function alignResultsByName<T extends { columns: Column[]; rows: CellValue[][] }>(
+  left: T,
+  right: T,
+  mapping: ColumnMapping,
+): { left: T; right: T } {
+  if (mapping.exact) return { left, right };
+  const project = (r: T, indices: number[]): T => ({
+    ...r,
+    columns: indices.map((i) => r.columns[i]),
+    rows: r.rows.map((row) => indices.map((i) => row[i] ?? null)),
+  });
+  return {
+    left: project(left, mapping.leftIndices),
+    right: project(right, mapping.rightIndices),
+  };
+}
+
+/**
+ * キー列で行を特定できるか (#1625)。`rows` の中で、キー (複数列なら組) の値が他の行と
+ * 重なっている行の数と、NULL を含むキーの行数を返す。重複キーのまま差分を取ると、
+ * 同じキーの行が同じ相手とペアリングされ、実際には差が無くても差分が出る (または見逃す)。
+ */
+export function keyUniqueness(
+  rows: CellValue[][],
+  keyIndices: number[],
+): { duplicateRows: number; nullKeyRows: number } {
+  if (keyIndices.length === 0) return { duplicateRows: 0, nullKeyRows: 0 };
+  const counts = new Map<string, number>();
+  let nullKeyRows = 0;
+  const keys = rows.map((row) => {
+    const vals = keyIndices.map((i) => row[i] ?? null);
+    if (vals.some((v) => v === null)) nullKeyRows++;
+    return JSON.stringify(vals.map((v) => (v === null ? null : String(v))));
+  });
+  for (const k of keys) counts.set(k, (counts.get(k) ?? 0) + 1);
+  let duplicateRows = 0;
+  for (const k of keys) if ((counts.get(k) ?? 0) > 1) duplicateRows++;
+  return { duplicateRows, nullKeyRows };
+}

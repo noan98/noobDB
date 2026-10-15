@@ -1255,6 +1255,53 @@ export interface TableDiff {
    * スキーマ比較だけが埋め、それ以外 (サンドボックス等) では空。
    */
   foreign_keys?: DiffForeignKey[];
+  /** インデックス (UNIQUE 含む、主キー以外) の差分 (#1625)。 */
+  indexes?: IndexDiff[];
+  /** 既存テーブルの外部キー制約の差分 (追加・削除・ON DELETE / ON UPDATE の変更, #1625)。 */
+  fk_changes?: ForeignKeyDiff[];
+  /** SQLite のテーブル再作成に使う target の完全な定義 (#1625)。 */
+  target_snapshot?: TargetTableSnapshot | null;
+}
+
+/** インデックス 1 本の定義 (差分用)。 */
+export interface DiffIndex {
+  name: string;
+  columns: string[];
+  unique: boolean;
+  method: string | null;
+  predicate?: string | null;
+  first_expression_at?: number | null;
+  key_column_count?: number | null;
+  column_options?: string[];
+  nulls_not_distinct?: boolean;
+}
+
+/** 1 インデックスの差分。`changed_fields` は columns / unique / method / predicate / include / order / expression。 */
+export interface IndexDiff {
+  name: string;
+  status: DiffStatus;
+  source: DiffIndex | null;
+  target: DiffIndex | null;
+  changed_fields?: string[];
+}
+
+/** 既存テーブルの外部キー 1 制約の差分。`changed_fields` は on_delete / on_update / referenced_columns。 */
+export interface ForeignKeyDiff {
+  status: DiffStatus;
+  source: DiffForeignKey | null;
+  target: DiffForeignKey | null;
+  changed_fields?: string[];
+}
+
+/** SQLite のテーブル再作成に必要な target 側の定義。 */
+export interface TargetTableSnapshot {
+  columns: TableColumnInfo[];
+  foreign_keys?: DiffForeignKey[];
+  unique_constraints?: string[][];
+  recreate_sql?: string[];
+  drop_views?: string[];
+  original_sql?: string | null;
+  referenced_by?: string[];
 }
 
 /** 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先列は未解決。 */
@@ -1267,6 +1314,38 @@ export interface DiffForeignKey {
   on_update: string | null;
 }
 
+/** 新規インデックスと既存インデックスの重なり方 (#1625)。 */
+export type IndexOverlapKind = "duplicate" | "covered_by_existing" | "makes_existing_redundant";
+
+/** 新規インデックスと重なる既存インデックス 1 件 (#1625)。 */
+export interface IndexOverlap {
+  name: string;
+  kind: IndexOverlapKind;
+}
+
+/** SQLite のメンテナンス操作 (#1625)。 */
+export type SqliteMaintenanceAction = "integrity_check" | "foreign_key_check" | "optimize" | "analyze";
+
+/** `PRAGMA foreign_key_check` の違反行 1 件。 */
+export interface SqliteFkViolation {
+  table: string;
+  rowid: number | null;
+  parent: string;
+  fk_index: number;
+}
+
+/** `sqliteMaintenance` の戻り値 (#1625)。 */
+export interface SqliteMaintenanceResult {
+  action: SqliteMaintenanceAction;
+  ok: boolean;
+  messages: string[];
+  fk_violations: SqliteFkViolation[];
+  truncated: boolean;
+  page_count: number | null;
+  freelist_count: number | null;
+  elapsed_ms: number;
+}
+
 /** Result of comparing a source schema against a target schema. */
 export interface SchemaDiff {
   source_driver: DriverKind;
@@ -1274,6 +1353,8 @@ export interface SchemaDiff {
   tables: TableDiff[];
   /** 比較時の注意 (例: SQLite で target の外部キー取得に失敗)。同期計画の警告に載る。 */
   warnings: string[];
+  /** インデックスの差分を比較済みか (#1625)。 */
+  indexes_compared?: boolean;
 }
 
 /**
@@ -1504,6 +1585,10 @@ export type SyncKind =
   | "add_foreign_key"
   | "drop_column"
   | "drop_table"
+  | "add_index"
+  | "drop_index"
+  | "drop_foreign_key"
+  | "rebuild_table"
   | "insert_row"
   | "update_row"
   | "delete_row";
@@ -1650,6 +1735,8 @@ export interface SandboxRecord {
   created_at: string;
   /** 行数上限に達し部分コピーになったテーブル。 */
   truncated_tables: string[];
+  /** 作成時に表ごとへ指定した抽出条件 (`WHERE` の中身, #1625)。 */
+  row_filters: { table: string; filter: string }[];
 }
 
 /** `createSandbox` の戻り値。`session_id` は通常のセッションと同様に扱える。 */
@@ -2991,6 +3078,8 @@ export interface BroadcastDiff {
   addedRowIndices: number[];
   /** 基準にだけ存在した行の件数。 */
   removedCount: number;
+  /** 基準にだけ存在した行の位置 (基準の表示行上の添字, #1625)。 */
+  removedRowIndices: number[];
   /** 比較上限に達して先頭行のみで比較した。 */
   truncated: boolean;
   hasDiff: boolean;

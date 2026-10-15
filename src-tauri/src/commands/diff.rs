@@ -83,60 +83,168 @@ pub async fn compare_schema(
         .await
         .ok_or_else(|| AppError::SessionNotFound(target_session_id.clone()))?;
 
-    let source_driver = source.conn.driver_kind();
-    let target_driver = target.conn.driver_kind();
+    compare_schema_core(
+        &source.conn,
+        &source_database,
+        &target.conn,
+        &target_database,
+    )
+    .await
+}
+
+/// [`compare_schema`] の本体 (セッション取得を除く)。統合テストからも呼ぶ。
+pub(crate) async fn compare_schema_core(
+    source: &Connection,
+    source_database: &str,
+    target: &Connection,
+    target_database: &str,
+) -> Result<SchemaDiff> {
+    let source_driver = source.driver_kind();
+    let target_driver = target.driver_kind();
     if source_driver != target_driver {
         return Err(AppError::InvalidInput(
             "schema comparison requires both connections to use the same driver".into(),
         ));
     }
 
-    let source_tables = collect_table_columns(&source.conn, &source_database).await?;
-    let target_tables = collect_table_columns(&target.conn, &target_database).await?;
+    let source_tables = collect_table_columns(source, source_database).await?;
+    let target_tables = collect_table_columns(target, target_database).await?;
 
     let mut diff =
         compute_schema_diff(source_driver, target_driver, &source_tables, &target_tables);
-    // CREATE TABLE 同期が外部キーを出せるよう、source 側の制約を載せる。取得に失敗
-    // しても比較自体は妨げない (FK 無しの CREATE になる)。
-    if diff
-        .tables
-        .iter()
-        .any(|t| t.status == crate::db::diff::DiffStatus::SourceOnly)
-    {
-        match source.conn.foreign_keys(&source_database).await {
-            Ok(fks) => crate::db::diff::attach_source_foreign_keys(&mut diff, &fks),
-            Err(e) => tracing::warn!(
+    // 外部キーは CREATE TABLE 同期 (source 側)・DROP TABLE の順序 (target 側)・既存表の
+    // 外部キー差分 (#1625) に使うので、両側を 1 度ずつ取る。取得に失敗しても比較自体は
+    // 妨げない (その分の情報が無い計画になる)。
+    let source_fks = match source.foreign_keys(source_database).await {
+        Ok(fks) => Some(fks),
+        Err(e) => {
+            tracing::warn!(
                 kind = e.kind(),
                 "schema compare: could not load foreign keys of the source"
-            ),
+            );
+            None
+        }
+    };
+    let target_fks = match target.foreign_keys(target_database).await {
+        Ok(fks) => Some(fks),
+        Err(e) => {
+            tracing::warn!(
+                kind = e.kind(),
+                "schema compare: could not load foreign keys of the target"
+            );
+            // SQLite は DROP TABLE が残る子表の CASCADE を発火させうるが、FK が
+            // 取れないと判定できない。破壊的な計画の警告に出す。
+            if target_driver == crate::db::DriverKind::Sqlite
+                && diff
+                    .tables
+                    .iter()
+                    .any(|t| t.status == crate::db::diff::DiffStatus::TargetOnly)
+            {
+                diff.warnings.push(
+                    "target の外部キーを取得できなかったため、DROP TABLE が残る表の ON DELETE CASCADE / SET NULL で行を消さないか確認できていません。適用前に外部キーを確認してください"
+                        .to_string(),
+                );
+            }
+            None
+        }
+    };
+    if let Some(fks) = &source_fks {
+        if diff
+            .tables
+            .iter()
+            .any(|t| t.status == crate::db::diff::DiffStatus::SourceOnly)
+        {
+            crate::db::diff::attach_source_foreign_keys(&mut diff, fks);
         }
     }
-    // down マイグレーションの DROP TABLE を子 → 親の順に並べるため、target のみに
-    // 存在する表の FK も載せる。
-    if diff
-        .tables
-        .iter()
-        .any(|t| t.status == crate::db::diff::DiffStatus::TargetOnly)
+    if let Some(fks) = &target_fks {
+        if diff
+            .tables
+            .iter()
+            .any(|t| t.status == crate::db::diff::DiffStatus::TargetOnly)
+        {
+            crate::db::diff::attach_target_foreign_keys(&mut diff, fks);
+        }
+    }
+    // 既存テーブルの外部キー (追加・削除・ON DELETE / ON UPDATE) の差分 (#1625)。
+    if let (Some(s), Some(t)) = (&source_fks, &target_fks) {
+        crate::db::diff::attach_foreign_key_diffs(&mut diff, s, t);
+    }
+    // インデックス (UNIQUE 含む) の差分 (#1625)。取得できなければ比較済みの印を立てず、
+    // 注意を残す。
+    let mut target_indexes = None;
+    match (
+        source.indexes_for_database(source_database).await,
+        target.indexes_for_database(target_database).await,
+    ) {
+        (Ok(si), Ok(ti)) => {
+            crate::db::diff::attach_index_diffs(&mut diff, &si, &ti);
+            target_indexes = Some(ti);
+        }
+        (s, t) => {
+            for e in [s.err(), t.err()].into_iter().flatten() {
+                tracing::warn!(kind = e.kind(), "schema compare: could not load indexes");
+            }
+            diff.warnings.push(
+                "インデックスを取得できなかったため、インデックスの差分は比較していません。"
+                    .to_string(),
+            );
+        }
+    }
+    // SQLite の列・外部キー変更はテーブル再作成で反映するので、target の完全な定義を載せる。
+    if target_driver == crate::db::DriverKind::Sqlite
+        && diff
+            .tables
+            .iter()
+            .any(|t| t.status == crate::db::diff::DiffStatus::Different)
     {
-        match target.conn.foreign_keys(&target_database).await {
-            Ok(fks) => crate::db::diff::attach_target_foreign_keys(&mut diff, &fks),
-            Err(e) => {
-                tracing::warn!(
+        if let (Some(fks), Some(ti)) = (&target_fks, &target_indexes) {
+            match sqlite_master_entries(target).await {
+                Ok(master) => crate::db::diff::attach_sqlite_rebuild_context(
+                    &mut diff,
+                    &target_tables,
+                    fks,
+                    ti,
+                    &master,
+                ),
+                Err(e) => tracing::warn!(
                     kind = e.kind(),
-                    "schema compare: could not load foreign keys of the target"
-                );
-                // SQLite は DROP TABLE が残る子表の CASCADE を発火させうるが、FK が
-                // 取れないと判定できない。破壊的な計画の警告に出す。
-                if target_driver == crate::db::DriverKind::Sqlite {
-                    diff.warnings.push(
-                        "target の外部キーを取得できなかったため、DROP TABLE が残る表の ON DELETE CASCADE / SET NULL で行を消さないか確認できていません。適用前に外部キーを確認してください"
-                            .to_string(),
-                    );
-                }
+                    "schema compare: could not read sqlite_master of the target"
+                ),
             }
         }
     }
     Ok(diff)
+}
+
+/// SQLite の `sqlite_master` から、テーブル再作成で作り直す対象 (索引・トリガー) と元の
+/// `CREATE TABLE` 文を集める。`sql` が NULL のもの (UNIQUE 制約の自動インデックス) は除く。
+async fn sqlite_master_entries(
+    conn: &Connection,
+) -> Result<Vec<crate::db::diff::SqliteMasterEntry>> {
+    let result = conn
+        .execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master \
+             WHERE sql IS NOT NULL AND type IN ('table', 'index', 'trigger', 'view') \
+             AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY rowid",
+            None,
+        )
+        .await?;
+    let text = |v: Option<&Value>| match v {
+        Some(Value::String(s)) => s.clone(),
+        _ => String::new(),
+    };
+    Ok(result
+        .rows
+        .iter()
+        .map(|r| crate::db::diff::SqliteMasterEntry {
+            kind: text(r.first()),
+            name: text(r.get(1)),
+            table: text(r.get(2)),
+            sql: text(r.get(3)),
+        })
+        .filter(|m| !m.sql.is_empty())
+        .collect())
 }
 
 /// Builds `SELECT <cols> FROM <table> ORDER BY <pk> LIMIT <n>` with identifiers
@@ -149,6 +257,20 @@ pub(crate) fn select_rows_sql(
     columns: &[String],
     primary_key: &[String],
     limit: usize,
+) -> String {
+    select_rows_where_sql(driver, table, columns, primary_key, limit, None)
+}
+
+/// [`select_rows_sql`] に抽出条件を足したもの (サンドボックスの表ごとの WHERE, #1625)。
+/// `filter` は `db::sandbox::checked_row_filter` を通した値だけを渡すこと。括弧で包んで
+/// 埋め込むので、`a OR b` のような条件でも `ORDER BY` / `LIMIT` に影響しない。
+pub(crate) fn select_rows_where_sql(
+    driver: DriverKind,
+    table: &str,
+    columns: &[String],
+    primary_key: &[String],
+    limit: usize,
+    filter: Option<&str>,
 ) -> String {
     let cols = columns
         .iter()
@@ -163,10 +285,11 @@ pub(crate) fn select_rows_sql(
     let table = quote_ident(driver, table);
     // 主キーが無い表 (サンドボックスの取り込みなど) は ORDER BY を省く。全列で並べると、
     // json など順序演算子の無い型を含む表で SQL エラーになる。
+    let where_clause = filter.map_or(String::new(), |f| format!(" WHERE ({f})"));
     if order.is_empty() {
-        return format!("SELECT {cols} FROM {table} LIMIT {limit}");
+        return format!("SELECT {cols} FROM {table}{where_clause} LIMIT {limit}");
     }
-    format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}")
+    format!("SELECT {cols} FROM {table}{where_clause} ORDER BY {order} LIMIT {limit}")
 }
 
 /// キーセット述語用のキー 1 成分のリテラル。2^53 を超える整数は `Value::String` で来る

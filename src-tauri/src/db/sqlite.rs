@@ -669,16 +669,55 @@ impl SqliteConn {
             return Ok(0);
         }
         let mut conn = self.pool.acquire().await?;
-        let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-                .execute(&mut *tx)
-                .await?;
-            affected += result.rows_affected();
+        run_batch(&mut conn, statements).await
+    }
+
+    /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。
+    ///
+    /// 再作成 (`SyncKind::RebuildTable`, #1625) のスクリプトは先頭・末尾に
+    /// `PRAGMA foreign_keys` を含む。PRAGMA はトランザクション内では効かないので、外して
+    /// BEGIN の前後で切り替え、コミット前に `foreign_key_check` で違反が増えていないかを
+    /// 確かめる。終わったら (失敗時も) 接続の `foreign_keys` を元の値 (ON / OFF) に戻す。
+    /// 利用者の SQL を流す経路 (`run_query_transaction` など) は PRAGMA を解釈しない
+    /// `execute_transaction` を使うので、そちらの挙動は変わらない。
+    pub async fn execute_sync_transaction(
+        &self,
+        statements: &[String],
+        _database: Option<&str>,
+    ) -> Result<u64> {
+        if statements.is_empty() {
+            return Ok(0);
         }
-        tx.commit().await?;
-        Ok(affected)
+        let (statements, fk_off) = split_fk_pragmas(statements);
+        let mut conn = self.pool.acquire().await?;
+        if !fk_off {
+            return run_batch(&mut conn, &statements).await;
+        }
+        let original_on = sqlx::query("PRAGMA foreign_keys")
+            .fetch_one(&mut *conn)
+            .await
+            .ok()
+            .and_then(|r| sqlx::Row::try_get::<i64, _>(&r, 0).ok())
+            != Some(0);
+        sqlx::query(sqlx::AssertSqlSafe(crate::db::sync::SQLITE_FK_OFF))
+            .execute(&mut *conn)
+            .await?;
+        let before = fk_violation_count(&mut conn).await;
+        let result = run_batch_checked(&mut conn, &statements, before).await;
+        // 失敗しても必ず元の値に戻す。戻せない接続はプールに返さず閉じる。
+        let restore = if original_on {
+            crate::db::sync::SQLITE_FK_ON
+        } else {
+            crate::db::sync::SQLITE_FK_OFF
+        };
+        if sqlx::query(sqlx::AssertSqlSafe(restore))
+            .execute(&mut *conn)
+            .await
+            .is_err()
+        {
+            conn.close_on_drop();
+        }
+        result
     }
 
     // ── ローカル横断クエリ (#740) ──
@@ -869,6 +908,84 @@ impl SqliteConn {
     /// `path` via `VACUUM INTO` — the explicit "ファイルに保存" persistence
     /// escape hatch (#740). The live session (and its temp backing file)
     /// stays volatile regardless; this only creates an independent copy.
+    /// SQLite のメンテナンス (#1625)。`integrity_check` / `foreign_key_check` は読み取りのみ、
+    /// `optimize` / `analyze` は統計を更新する (呼び出し側が読み取り専用セッションを拒否する)。
+    pub async fn maintenance(
+        &self,
+        action: super::types::SqliteMaintenanceAction,
+    ) -> Result<super::types::SqliteMaintenanceResult> {
+        use super::types::{
+            SqliteFkViolation, SqliteMaintenanceAction as A, SqliteMaintenanceResult,
+            SQLITE_MAINTENANCE_MAX_ROWS as MAX,
+        };
+        let started = std::time::Instant::now();
+        let mut conn = self.pool.acquire().await?;
+        let mut messages: Vec<String> = Vec::new();
+        let mut fk_violations: Vec<SqliteFkViolation> = Vec::new();
+        let mut truncated = false;
+        let ok = match action {
+            A::IntegrityCheck => {
+                let rows: Vec<SqliteRow> = sqlx::query("PRAGMA integrity_check")
+                    .fetch_all(&mut *conn)
+                    .await?;
+                let all: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.try_get::<String, _>(0).ok())
+                    .collect();
+                let healthy = all.len() == 1 && all[0].eq_ignore_ascii_case("ok");
+                if !healthy {
+                    truncated = all.len() > MAX;
+                    messages = all.into_iter().take(MAX).collect();
+                }
+                healthy
+            }
+            A::ForeignKeyCheck => {
+                // table, rowid (WITHOUT ROWID 表では NULL), parent, fkid。
+                let rows: Vec<SqliteRow> = sqlx::query("PRAGMA foreign_key_check")
+                    .fetch_all(&mut *conn)
+                    .await?;
+                truncated = rows.len() > MAX;
+                fk_violations = rows
+                    .iter()
+                    .take(MAX)
+                    .map(|r| SqliteFkViolation {
+                        table: r.try_get::<String, _>(0).unwrap_or_default(),
+                        rowid: r.try_get::<Option<i64>, _>(1).ok().flatten(),
+                        parent: r.try_get::<String, _>(2).unwrap_or_default(),
+                        fk_index: r.try_get::<i64, _>(3).unwrap_or(0),
+                    })
+                    .collect();
+                rows.is_empty()
+            }
+            A::Optimize => {
+                sqlx::query("PRAGMA optimize").execute(&mut *conn).await?;
+                true
+            }
+            A::Analyze => {
+                sqlx::query("ANALYZE").execute(&mut *conn).await?;
+                true
+            }
+        };
+        let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
+            .fetch_one(&mut *conn)
+            .await
+            .ok();
+        let freelist_count = sqlx::query_scalar::<_, i64>("PRAGMA freelist_count")
+            .fetch_one(&mut *conn)
+            .await
+            .ok();
+        Ok(SqliteMaintenanceResult {
+            action,
+            ok,
+            messages,
+            fk_violations,
+            truncated,
+            page_count,
+            freelist_count,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
     pub async fn vacuum_into(&self, path: &str) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
         sqlx::query("VACUUM INTO ?")
@@ -2192,6 +2309,83 @@ async fn fetch_capped_sqlite(
         }
     }
     Ok(rows)
+}
+
+/// 再作成スクリプトの先頭・末尾の `PRAGMA foreign_keys` を外し、先頭に OFF があったかを返す。
+fn split_fk_pragmas(statements: &[String]) -> (Vec<String>, bool) {
+    let off = crate::db::sync::SQLITE_FK_OFF;
+    let on = crate::db::sync::SQLITE_FK_ON;
+    let mut fk_off = false;
+    let out = statements
+        .iter()
+        .map(|s| {
+            let mut t = s.trim();
+            if let Some(rest) = t.strip_prefix(off) {
+                fk_off = true;
+                t = rest.trim_start_matches(';').trim();
+            }
+            let t = t.trim_end_matches(';').trim_end();
+            let t = t
+                .strip_suffix(on)
+                .map(|r| r.trim_end().trim_end_matches(';'))
+                .unwrap_or(t);
+            t.to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    (out, fk_off)
+}
+
+async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>) -> usize {
+    sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut **conn)
+        .await
+        .map(|r| r.len())
+        .unwrap_or(0)
+}
+
+async fn run_batch(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(affected)
+}
+
+/// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。
+async fn run_batch_checked(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+    before: usize,
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    let after = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut *tx)
+        .await?
+        .len();
+    if after > before {
+        return Err(AppError::InvalidInput(format!(
+            "foreign key violations would be introduced by the table rebuild ({} new); rolled back",
+            after - before
+        )));
+    }
+    tx.commit().await?;
+    Ok(affected)
 }
 
 #[cfg(test)]

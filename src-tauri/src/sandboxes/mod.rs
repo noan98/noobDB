@@ -37,4 +37,15 @@ pub struct SandboxRecord {
     /// copy of these, surfaced as a warning in the creation/review UI.
     #[serde(default)]
     pub truncated_tables: Vec<String>,
+    /// 作成時に表ごとへ指定した抽出条件 (WHERE の中身, #1625)。実 DB との競合検出でも
+    /// 同じ条件で読み直すために持つ。条件を指定しなかった表は含まれない。
+    #[serde(default)]
+    pub row_filters: Vec<SandboxRowFilter>,
+}
+
+/// 表ごとの抽出条件 1 件。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SandboxRowFilter {
+    pub table: String,
+    pub filter: String,
 }

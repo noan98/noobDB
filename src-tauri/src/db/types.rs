@@ -1273,3 +1273,69 @@ mod fk_action_tests {
         );
     }
 }
+
+/// SQLite のメンテナンス操作 (#1625)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SqliteMaintenanceAction {
+    /// `PRAGMA integrity_check` (読み取りのみ)。
+    IntegrityCheck,
+    /// `PRAGMA foreign_key_check` (読み取りのみ)。
+    ForeignKeyCheck,
+    /// `PRAGMA optimize` (統計の更新を伴うため書き込み扱い)。
+    Optimize,
+    /// `ANALYZE` (統計表 `sqlite_stat1` を更新するため書き込み扱い)。
+    Analyze,
+}
+
+impl SqliteMaintenanceAction {
+    /// 読み取り専用セッションで実行してはいけない操作か。
+    pub fn writes(self) -> bool {
+        matches!(self, Self::Optimize | Self::Analyze)
+    }
+}
+
+/// `PRAGMA foreign_key_check` が返す参照整合性違反 1 件。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqliteFkViolation {
+    /// 違反した行を持つ表 (子表)。
+    pub table: String,
+    /// 違反した行の rowid。`WITHOUT ROWID` 表では `None`。
+    pub rowid: Option<i64>,
+    /// 参照先の表 (親表)。
+    pub parent: String,
+    /// `PRAGMA foreign_key_list` 上の外部キー番号。
+    pub fk_index: i64,
+}
+
+/// SQLite メンテナンスの実行結果 (#1625)。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SqliteMaintenanceResult {
+    pub action: SqliteMaintenanceAction,
+    /// 問題が無かったか (`integrity_check` は `ok` のみ、`foreign_key_check` は違反 0 件。
+    /// `optimize` / `analyze` は実行できたら true)。
+    pub ok: bool,
+    /// `integrity_check` が返したメッセージ (破損の説明)。`ok` のときは空。
+    pub messages: Vec<String>,
+    /// `foreign_key_check` の違反行 (先頭 [`SQLITE_MAINTENANCE_MAX_ROWS`] 件)。
+    pub fk_violations: Vec<SqliteFkViolation>,
+    /// 結果を件数上限で切り詰めたか。
+    pub truncated: bool,
+    /// 実行後の `PRAGMA page_count` (VACUUM / ANALYZE の要否判断用)。
+    pub page_count: Option<i64>,
+    /// 実行後の `PRAGMA freelist_count` (空きページ数。多いなら VACUUM の候補)。
+    pub freelist_count: Option<i64>,
+    pub elapsed_ms: u64,
+}
+
+/// メンテナンス結果に載せる行数の上限。
+pub const SQLITE_MAINTENANCE_MAX_ROWS: usize = 1000;
+
+/// PostgreSQL の `CREATE TABLE` 再構成に足す、列情報だけでは分からない定義 (#1625)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableDdlExtras {
+    /// CHECK 制約 (制約名, `pg_get_constraintdef` の出力 = `CHECK (...)` 句全体)。
+    pub checks: Vec<(String, String)>,
+    /// 生成列 (列名, `pg_get_expr(adbin)` の生成式, VIRTUAL か。false は STORED)。
+    pub generated: Vec<(String, String, bool)>,
+}

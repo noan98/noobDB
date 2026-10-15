@@ -288,7 +288,7 @@ async fn sqlite_composite_pk_with_nulls_converges_end_to_end() {
     };
     let plan = t::generate_data_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|st| st.sql.clone()).collect();
-    tgt.execute_transaction(&sqls, None)
+    tgt.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply data sync plan");
 

@@ -408,7 +408,10 @@
       "comparable": true,
       "hasDiff": true,
       "mode": "pk",
-      "removedCount": 0,
+      "removedCount": 1,
+      "removedRowIndices": [
+        2
+      ],
       "truncated": false
     },
     "elapsedMs": 7,
@@ -442,6 +445,7 @@
         "hasDiff": false,
         "mode": "pk",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -467,6 +471,7 @@
         "hasDiff": false,
         "mode": "hash",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -492,6 +497,7 @@
         "hasDiff": false,
         "mode": "none",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -1492,6 +1498,10 @@
     "primary": false,
     "unique": true
   },
+  "indexOverlap": {
+    "kind": "covered_by_existing",
+    "name": "idx_email"
+  },
   "insertRowsResult": {
     "elapsed_ms": 8,
     "inserted": 100
@@ -2054,6 +2064,12 @@
       "file_path": "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite",
       "id": "sbx00001",
       "name": "experiment",
+      "row_filters": [
+        {
+          "filter": "id > 100",
+          "table": "users"
+        }
+      ],
       "row_limit": 1000,
       "source_database": "appdb",
       "source_driver": "mysql",
@@ -2072,6 +2088,12 @@
     "file_path": "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite",
     "id": "sbx00001",
     "name": "experiment",
+    "row_filters": [
+      {
+        "filter": "id > 100",
+        "table": "users"
+      }
+    ],
     "row_limit": 1000,
     "source_database": "appdb",
     "source_driver": "mysql",
@@ -2088,6 +2110,7 @@
   },
   "sandboxSchemaDiffResult": {
     "desired": {
+      "indexes_compared": true,
       "source_driver": "mysql",
       "tables": [
         {
@@ -2110,6 +2133,38 @@
               "target": null
             }
           ],
+          "fk_changes": [
+            {
+              "changed_fields": [
+                "on_delete"
+              ],
+              "source": {
+                "columns": [
+                  "org_id"
+                ],
+                "name": "fk_users_org",
+                "on_delete": "CASCADE",
+                "on_update": null,
+                "referenced_columns": [
+                  "id"
+                ],
+                "referenced_table": "orgs"
+              },
+              "status": "different",
+              "target": {
+                "columns": [
+                  "org_id"
+                ],
+                "name": "fk_users_org",
+                "on_delete": "CASCADE",
+                "on_update": null,
+                "referenced_columns": [
+                  "id"
+                ],
+                "referenced_table": "orgs"
+              }
+            }
+          ],
           "foreign_keys": [
             {
               "columns": [
@@ -2124,8 +2179,91 @@
               "referenced_table": "orgs"
             }
           ],
+          "indexes": [
+            {
+              "changed_fields": [
+                "unique"
+              ],
+              "name": "idx_users_email",
+              "source": {
+                "column_options": [
+                  ""
+                ],
+                "columns": [
+                  "email"
+                ],
+                "first_expression_at": null,
+                "key_column_count": 1,
+                "method": "btree",
+                "name": "idx_users_email",
+                "nulls_not_distinct": false,
+                "predicate": "(deleted_at IS NULL)",
+                "unique": true
+              },
+              "status": "different",
+              "target": {
+                "column_options": [
+                  ""
+                ],
+                "columns": [
+                  "email"
+                ],
+                "first_expression_at": null,
+                "key_column_count": 1,
+                "method": "btree",
+                "name": "idx_users_email",
+                "nulls_not_distinct": false,
+                "predicate": "(deleted_at IS NULL)",
+                "unique": true
+              }
+            }
+          ],
           "name": "users",
-          "status": "different"
+          "status": "different",
+          "target_snapshot": {
+            "columns": [
+              {
+                "comment": "primary key",
+                "data_type": "int",
+                "default": "0",
+                "extra": "auto_increment",
+                "key": "PRI",
+                "name": "id",
+                "nullable": false,
+                "referenced_column": "id",
+                "referenced_table": "parent"
+              }
+            ],
+            "drop_views": [
+              "v_users"
+            ],
+            "foreign_keys": [
+              {
+                "columns": [
+                  "org_id"
+                ],
+                "name": "fk_users_org",
+                "on_delete": "CASCADE",
+                "on_update": null,
+                "referenced_columns": [
+                  "id"
+                ],
+                "referenced_table": "orgs"
+              }
+            ],
+            "original_sql": "CREATE TABLE users (email text)",
+            "recreate_sql": [
+              "CREATE INDEX i ON users (email)"
+            ],
+            "referenced_by": [
+              "orders (ON DELETE CASCADE)"
+            ],
+            "unique_constraints": [
+              [
+                "email"
+              ]
+            ]
+          }
         }
       ],
       "target_driver": "postgres",
@@ -2220,6 +2358,7 @@
     "fetched_at_ms": 1760000000000
   },
   "schemaDiff": {
+    "indexes_compared": true,
     "source_driver": "mysql",
     "tables": [
       {
@@ -2242,6 +2381,38 @@
             "target": null
           }
         ],
+        "fk_changes": [
+          {
+            "changed_fields": [
+              "on_delete"
+            ],
+            "source": {
+              "columns": [
+                "org_id"
+              ],
+              "name": "fk_users_org",
+              "on_delete": "CASCADE",
+              "on_update": null,
+              "referenced_columns": [
+                "id"
+              ],
+              "referenced_table": "orgs"
+            },
+            "status": "different",
+            "target": {
+              "columns": [
+                "org_id"
+              ],
+              "name": "fk_users_org",
+              "on_delete": "CASCADE",
+              "on_update": null,
+              "referenced_columns": [
+                "id"
+              ],
+              "referenced_table": "orgs"
+            }
+          }
+        ],
         "foreign_keys": [
           {
             "columns": [
@@ -2256,8 +2427,91 @@
             "referenced_table": "orgs"
           }
         ],
+        "indexes": [
+          {
+            "changed_fields": [
+              "unique"
+            ],
+            "name": "idx_users_email",
+            "source": {
+              "column_options": [
+                ""
+              ],
+              "columns": [
+                "email"
+              ],
+              "first_expression_at": null,
+              "key_column_count": 1,
+              "method": "btree",
+              "name": "idx_users_email",
+              "nulls_not_distinct": false,
+              "predicate": "(deleted_at IS NULL)",
+              "unique": true
+            },
+            "status": "different",
+            "target": {
+              "column_options": [
+                ""
+              ],
+              "columns": [
+                "email"
+              ],
+              "first_expression_at": null,
+              "key_column_count": 1,
+              "method": "btree",
+              "name": "idx_users_email",
+              "nulls_not_distinct": false,
+              "predicate": "(deleted_at IS NULL)",
+              "unique": true
+            }
+          }
+        ],
         "name": "users",
-        "status": "different"
+        "status": "different",
+        "target_snapshot": {
+          "columns": [
+            {
+              "comment": "primary key",
+              "data_type": "int",
+              "default": "0",
+              "extra": "auto_increment",
+              "key": "PRI",
+              "name": "id",
+              "nullable": false,
+              "referenced_column": "id",
+              "referenced_table": "parent"
+            }
+          ],
+          "drop_views": [
+            "v_users"
+          ],
+          "foreign_keys": [
+            {
+              "columns": [
+                "org_id"
+              ],
+              "name": "fk_users_org",
+              "on_delete": "CASCADE",
+              "on_update": null,
+              "referenced_columns": [
+                "id"
+              ],
+              "referenced_table": "orgs"
+            }
+          ],
+          "original_sql": "CREATE TABLE users (email text)",
+          "recreate_sql": [
+            "CREATE INDEX i ON users (email)"
+          ],
+          "referenced_by": [
+            "orders (ON DELETE CASCADE)"
+          ],
+          "unique_constraints": [
+            [
+              "email"
+            ]
+          ]
+        }
       }
     ],
     "target_driver": "postgres",
@@ -2265,6 +2519,7 @@
   },
   "schemaDiffVariants": [
     {
+      "indexes_compared": true,
       "source_driver": "mysql",
       "tables": [
         {
@@ -2386,9 +2641,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "source_only"
+          "status": "source_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -2509,9 +2767,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "target_only"
+          "status": "target_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -2632,9 +2893,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "different"
+          "status": "different",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -2755,9 +3019,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "same"
+          "status": "same",
+          "target_snapshot": null
         }
       ],
       "target_driver": "postgres",
@@ -2766,6 +3033,7 @@
       ]
     },
     {
+      "indexes_compared": false,
       "source_driver": "postgres",
       "tables": [
         {
@@ -2887,9 +3155,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "source_only"
+          "status": "source_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3010,9 +3281,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "target_only"
+          "status": "target_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3133,9 +3407,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "different"
+          "status": "different",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3256,15 +3533,19 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "same"
+          "status": "same",
+          "target_snapshot": null
         }
       ],
       "target_driver": "sqlite",
       "warnings": []
     },
     {
+      "indexes_compared": false,
       "source_driver": "sqlite",
       "tables": [
         {
@@ -3386,9 +3667,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "source_only"
+          "status": "source_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3509,9 +3793,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "target_only"
+          "status": "target_only",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3632,9 +3919,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "different"
+          "status": "different",
+          "target_snapshot": null
         },
         {
           "columns": [
@@ -3755,9 +4045,12 @@
               }
             }
           ],
+          "fk_changes": [],
           "foreign_keys": [],
+          "indexes": [],
           "name": "users",
-          "status": "same"
+          "status": "same",
+          "target_snapshot": null
         }
       ],
       "target_driver": "mysql",
@@ -4844,25 +5137,48 @@
       "tags": []
     }
   ],
+  "sqlEncodingPreview": {
+    "candidates": [
+      {
+        "encoding": "shift_jis",
+        "lines": [
+          "SELECT '日本語';"
+        ],
+        "valid": true
+      },
+      {
+        "encoding": "utf-8",
+        "lines": [
+          "SELECT '�';"
+        ],
+        "valid": false
+      }
+    ],
+    "detectError": null,
+    "detected": "shift_jis"
+  },
   "sqlFileContent": {
     "content": "SELECT 1;",
     "encoding": "utf-8-bom"
   },
-  "sqlEncodingPreview": {
-    "detected": "shift_jis",
-    "detectError": null,
-    "candidates": [
+  "sqliteMaintenanceResult": {
+    "action": "foreign_key_check",
+    "elapsed_ms": 3,
+    "fk_violations": [
       {
-        "encoding": "shift_jis",
-        "valid": true,
-        "lines": ["SELECT '日本語';"]
-      },
-      {
-        "encoding": "utf-8",
-        "valid": false,
-        "lines": ["SELECT '\ufffd';"]
+        "fk_index": 0,
+        "parent": "users",
+        "rowid": 7,
+        "table": "orders"
       }
-    ]
+    ],
+    "freelist_count": 5,
+    "messages": [
+      "row 3 missing from index idx"
+    ],
+    "ok": false,
+    "page_count": 100,
+    "truncated": false
   },
   "statementDeltaRow": {
     "calls": 1200,
@@ -4928,6 +5244,30 @@
         {
           "destructive": true,
           "kind": "drop_table",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": false,
+          "kind": "add_index",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_index",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "drop_foreign_key",
+          "sql": "SELECT 1;",
+          "table": "users"
+        },
+        {
+          "destructive": true,
+          "kind": "rebuild_table",
           "sql": "SELECT 1;",
           "table": "users"
         },

@@ -11,7 +11,8 @@ use tauri::State;
 
 use crate::advisor_ignore;
 use crate::db::advisor::{
-    analyze, diff_findings, AdvisorInput, HealthFinding, SchemaHealthReport, TableMeta,
+    analyze, diff_findings, find_overlapping_indexes, AdvisorInput, HealthFinding, IndexOverlap,
+    SchemaHealthReport, TableMeta,
 };
 use crate::db::types::{IndexInfo, TableColumnInfo};
 use crate::db::Connection;
@@ -49,6 +50,26 @@ pub async fn analyze_schema_health(
         report,
         &keys,
     ))
+}
+
+/// インデックスを作る前に、同じ列構成の既存インデックスを調べる (#1625)。アドバイザの重複 /
+/// 冗長インデックス検出と同じ判定 ([`find_overlapping_indexes`]) を使う。`list_indexes` を読む
+/// だけなので read_only セッションでも許可する。
+#[tauri::command]
+pub async fn check_duplicate_index(
+    session_id: String,
+    database: String,
+    table: String,
+    columns: Vec<String>,
+    unique: bool,
+    state: State<'_, AppState>,
+) -> Result<Vec<IndexOverlap>> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let existing = session.conn.list_indexes(&database, &table).await?;
+    Ok(find_overlapping_indexes(&existing, &columns, unique))
 }
 
 /// 診断レポートに「対応しない」の振り分けと前回診断との差分を足し、今回分を前回として残す。

@@ -5,6 +5,7 @@ import {
   SANDBOX_DEFAULT_ROW_LIMIT,
   SANDBOX_MAX_ROW_LIMIT,
   SANDBOX_SHADOW_PREFIX,
+  bulkSandboxResolutions,
   clampSandboxRowLimit,
   isSandboxProfileId,
   isSandboxShadowTableName,
@@ -15,6 +16,7 @@ import {
   sandboxSkipKeys,
   sandboxToProfile,
   unresolvedSandboxConflicts,
+  type SandboxConflictResolution,
 } from "../sandbox";
 
 describe("isSandboxShadowTableName", () => {
@@ -144,6 +146,7 @@ describe("sandboxToProfile", () => {
     file_path: "/tmp/abcd1234.sqlite",
     created_at: "2026-01-01T00:00:00Z",
     truncated_tables: [],
+    row_filters: [],
   };
 
   it("非永続の合成プロファイルを作る", () => {
@@ -155,5 +158,32 @@ describe("sandboxToProfile", () => {
     expect(profile.is_production).toBe(false);
     expect(profile.read_only).toBe(false);
     expect(isSandboxProfileId(profile.id)).toBe(true);
+  });
+});
+
+describe("bulkSandboxResolutions (#1625)", () => {
+  const conflicts = [1, 2, 3].map(
+    (id) =>
+      ({
+        key: [id],
+        desired_status: "different",
+        external_status: "different",
+      }) as unknown as SandboxConflict,
+  );
+
+  it("all: 個別の選択も含めてすべて同じ解決にする", () => {
+    const current: Record<string, SandboxConflictResolution> = { [sandboxKeySignature([1])]: "overwrite" };
+    const out = bulkSandboxResolutions(conflicts, current, "skip");
+    expect(Object.values(out)).toEqual(["skip", "skip", "skip"]);
+    // 元の表は変更しない。
+    expect(current[sandboxKeySignature([1])]).toBe("overwrite");
+  });
+
+  it("unresolved: 未解決の行だけに適用して個別の選択を残す", () => {
+    const current: Record<string, SandboxConflictResolution> = { [sandboxKeySignature([1])]: "overwrite" };
+    const out = bulkSandboxResolutions(conflicts, current, "skip", "unresolved");
+    expect(out[sandboxKeySignature([1])]).toBe("overwrite");
+    expect(out[sandboxKeySignature([2])]).toBe("skip");
+    expect(unresolvedSandboxConflicts(conflicts, out)).toEqual([]);
   });
 });

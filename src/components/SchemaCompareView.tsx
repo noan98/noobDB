@@ -7,6 +7,10 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   api,
   type ColumnDiff,
+  type DiffForeignKey,
+  type DiffIndex,
+  type ForeignKeyDiff,
+  type IndexDiff,
   type ConnectionProfile,
   type DataDiff,
   type DiffStatus,
@@ -308,17 +312,21 @@ function kindColors(kind: SyncKind): { color: string; borderColor: string } {
     case "create_table":
     case "add_column":
     case "add_foreign_key":
+    case "add_index":
     case "insert_row": {
       const c = semanticColorVar("success", "text");
       return { color: c, borderColor: c };
     }
     case "alter_column":
+    case "rebuild_table":
     case "update_row": {
       const c = semanticColorVar("warning", "text");
       return { color: c, borderColor: c };
     }
     case "drop_column":
     case "drop_table":
+    case "drop_index":
+    case "drop_foreign_key":
     case "delete_row": {
       const c = semanticColorVar("danger", "text");
       return { color: c, borderColor: c };
@@ -481,6 +489,12 @@ export function SchemaCompareView({
   const [dataCancellable, setDataCancellable] = useState(false);
   const dataCancelledRef = useRef(false);
   const [allowDelete, setAllowDelete] = useState(false);
+  // 同期 SQL に含める行の種別 (#1625)。段階適用 (まず追加だけ、次に更新、最後に削除) 用。
+  const [dataKinds, setDataKinds] = useState({
+    source_only: true,
+    different: true,
+    target_only: true,
+  });
 
   // 適用直後の再比較で得た差分。この差分への切り替えでは適用成功の表示を残す。
   const keepApplyResultForDiffRef = useRef<SchemaDiff | null>(null);
@@ -799,7 +813,13 @@ export function SchemaCompareView({
     setSyncError(null);
     setApplyResult(null);
     try {
-      const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
+      const picked = (["source_only", "different", "target_only"] as const).filter((k) => dataKinds[k]);
+      const result = await api.generateDataSyncSql(
+        dataDiffId,
+        allowDelete,
+        null,
+        picked.length === 3 ? null : { kinds: picked },
+      );
       setPlan(result);
       setRisks(null);
       setPlanFlags({ allowDestructive: false, allowDelete });
@@ -811,7 +831,7 @@ export function SchemaCompareView({
     } finally {
       setGenerating(false);
     }
-  }, [dataDiffId, allowDelete]);
+  }, [dataDiffId, allowDelete, dataKinds]);
 
   const dataCounts = useMemo(() => {
     const c = { source_only: 0, target_only: 0, different: 0 };
@@ -1158,17 +1178,28 @@ export function SchemaCompareView({
                       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
                         {t("schemaCompareDataComparedTable", { table: dataDiff.table })}
                       </chakra.p>
-                      <Box css={summaryCss}>
-                        <chakra.span css={chipCss("source_only")}>
-                          {t("schemaCompareDataInserts")}: {dataCounts.source_only}
-                        </chakra.span>
-                        <chakra.span css={chipCss("different")}>
-                          {t("schemaCompareDataUpdates")}: {dataCounts.different}
-                        </chakra.span>
-                        <chakra.span css={chipCss("target_only")}>
-                          {t("schemaCompareDataDeletes")}: {dataCounts.target_only}
-                        </chakra.span>
+                      <Box css={summaryCss} role="group" aria-label={t("schemaCompareDataKinds")}>
+                        {(
+                          [
+                            ["source_only", "schemaCompareDataInserts"],
+                            ["different", "schemaCompareDataUpdates"],
+                            ["target_only", "schemaCompareDataDeletes"],
+                          ] as const
+                        ).map(([kind, key]) => (
+                          <chakra.label key={kind} css={chipCss(kind)}>
+                            <Checkbox
+                              checked={dataKinds[kind]}
+                              onChange={(e) =>
+                                setDataKinds((prev) => ({ ...prev, [kind]: e.target.checked }))
+                              }
+                            />{" "}
+                            {t(key)}: {dataCounts[kind]}
+                          </chakra.label>
+                        ))}
                       </Box>
+                      <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                        {t("schemaCompareDataKindsHint")}
+                      </chakra.p>
                       {dataDiff.truncated && (
                         <chakra.p css={backupCss}>
                           {dataComparedWith.allRows
@@ -1325,6 +1356,14 @@ function syncKindLabel(kind: SyncKind, t: ReturnType<typeof useT>): string {
       return t("schemaCompareKindDropColumn");
     case "drop_table":
       return t("schemaCompareKindDropTable");
+    case "add_index":
+      return t("schemaCompareKindAddIndex");
+    case "drop_index":
+      return t("schemaCompareKindDropIndex");
+    case "drop_foreign_key":
+      return t("schemaCompareKindDropForeignKey");
+    case "rebuild_table":
+      return t("schemaCompareKindRebuildTable");
     case "insert_row":
       return t("schemaCompareKindInsertRow");
     case "update_row":
@@ -1475,7 +1514,10 @@ export const TableDiffRow = memo(function TableDiffRow({
 }) {
   // memo で親の再レンダーを遮断しても、言語切替では描き直す (t は参照が変わらない)。
   useLocale();
-  const expandable = table.columns.length > 0;
+  const indexes = table.indexes ?? [];
+  const fkChanges = table.fk_changes ?? [];
+  const constraintCount = indexes.length + fkChanges.length;
+  const expandable = table.columns.length > 0 || constraintCount > 0;
   const [open, setOpen] = useState(table.status === "different");
   const reduced = useReducedMotion() ?? false;
   const columnsId = `${useId()}-columns`;
@@ -1492,9 +1534,14 @@ export const TableDiffRow = memo(function TableDiffRow({
       </TreeChevron>
       <chakra.span css={badgeCss(table.status)}>{statusLabel(table.status, t)}</chakra.span>
       <chakra.span css={tableNameCss}>{table.name}</chakra.span>
-      {expandable && (
+      {table.columns.length > 0 && (
         <chakra.span css={colcountCss}>
           {t("schemaCompareColumnCount", { count: table.columns.length })}
+        </chakra.span>
+      )}
+      {constraintCount > 0 && (
+        <chakra.span css={colcountCss}>
+          {t("schemaCompareConstraintCount", { count: constraintCount })}
         </chakra.span>
       )}
     </>
@@ -1534,6 +1581,12 @@ export const TableDiffRow = memo(function TableDiffRow({
             >
               {table.columns.map((col) => (
                 <ColumnDiffRow key={col.name} column={col} t={t} />
+              ))}
+              {indexes.map((ix) => (
+                <IndexDiffRow key={`ix:${ix.name}`} index={ix} t={t} />
+              ))}
+              {fkChanges.map((fk, i) => (
+                <ForeignKeyDiffRow key={`fk:${i}`} change={fk} t={t} />
               ))}
             </MotionColumnList>
           </MotionCollapseBox>
@@ -1611,4 +1664,139 @@ function ColumnDiffRow({ column, t }: { column: ColumnDiff; t: ReturnType<typeof
       )}
     </MotionColumnItem>
   );
+}
+
+function idxFieldLabel(field: string, t: ReturnType<typeof useT>): string {
+  switch (field) {
+    case "columns":
+      return t("schemaCompareIdxFieldColumns");
+    case "unique":
+      return t("schemaCompareIdxFieldUnique");
+    case "method":
+      return t("schemaCompareIdxFieldMethod");
+    case "predicate":
+      return t("schemaCompareIdxFieldPredicate");
+    case "include":
+      return t("schemaCompareIdxFieldInclude");
+    case "order":
+      return t("schemaCompareIdxFieldOrder");
+    case "expression":
+      return t("schemaCompareIdxFieldExpression");
+    default:
+      return field;
+  }
+}
+
+function idxFieldValue(ix: DiffIndex | null, field: string, t: ReturnType<typeof useT>): string {
+  if (!ix) return "—";
+  switch (field) {
+    case "columns":
+      return `(${ix.columns.join(", ")})`;
+    case "unique":
+      return ix.unique ? t("schemaCompareYes") : t("schemaCompareNo");
+    case "method":
+      return ix.method ?? "btree";
+    case "predicate":
+      return ix.predicate ?? "—";
+    case "include": {
+      const k = ix.key_column_count;
+      return k == null ? "—" : ix.columns.slice(k).join(", ") || "—";
+    }
+    case "order":
+      return (ix.column_options ?? []).map((o) => o.trim() || "ASC").join(", ") || "—";
+    default:
+      return "—";
+  }
+}
+
+/** インデックス差分 1 行 (#1625)。 */
+function IndexDiffRow({ index, t }: { index: IndexDiff; t: ReturnType<typeof useT> }) {
+  const def = index.source ?? index.target;
+  return (
+    <MotionColumnItem
+      variants={motionVariants.staggerItem}
+      css={{ ...columnCss, borderLeftColor: statusColors(index.status).color }}
+    >
+      <chakra.span css={badgeCss(index.status)}>{statusLabel(index.status, t)}</chakra.span>
+      <chakra.span css={columnNameCss}>
+        {t("schemaCompareIndexLabel")} {index.name}
+      </chakra.span>
+      {index.status === "different" ? (
+        <chakra.span css={changesCss}>
+          {(index.changed_fields ?? []).map((field) => (
+            <chakra.span key={field} css={changeCss}>
+              {idxFieldLabel(field, t)}: {idxFieldValue(index.source, field, t)} →{" "}
+              {idxFieldValue(index.target, field, t)}
+            </chakra.span>
+          ))}
+        </chakra.span>
+      ) : (
+        <chakra.span css={coltypeCss}>
+          {def ? `${def.unique ? "UNIQUE " : ""}(${def.columns.join(", ")})` : ""}
+        </chakra.span>
+      )}
+    </MotionColumnItem>
+  );
+}
+
+function fkText(fk: DiffForeignKey | null, t: ReturnType<typeof useT>): string {
+  if (!fk) return "—";
+  const od = fk.on_delete ?? t("schemaCompareActionDefault");
+  const ou = fk.on_update ?? t("schemaCompareActionDefault");
+  return `(${fk.columns.join(", ")}) → ${fk.referenced_table}(${fk.referenced_columns.join(", ") || "?"}) ON DELETE ${od} ON UPDATE ${ou}`;
+}
+
+/** 外部キー制約の差分 1 行 (#1625)。 */
+function ForeignKeyDiffRow({ change, t }: { change: ForeignKeyDiff; t: ReturnType<typeof useT> }) {
+  const def = change.source ?? change.target;
+  return (
+    <MotionColumnItem
+      variants={motionVariants.staggerItem}
+      css={{ ...columnCss, borderLeftColor: statusColors(change.status).color }}
+    >
+      <chakra.span css={badgeCss(change.status)}>{statusLabel(change.status, t)}</chakra.span>
+      <chakra.span css={columnNameCss}>
+        {t("schemaCompareForeignKeyLabel")} {def?.name ?? def?.columns.join(", ") ?? ""}
+      </chakra.span>
+      {change.status === "different" ? (
+        <chakra.span css={changesCss}>
+          {(change.changed_fields ?? []).map((field) => (
+            <chakra.span key={field} css={changeCss}>
+              {fkFieldLabel(field, t)}: {fkFieldValue(change.source, field, t)} →{" "}
+              {fkFieldValue(change.target, field, t)}
+            </chakra.span>
+          ))}
+        </chakra.span>
+      ) : (
+        <chakra.span css={coltypeCss}>{fkText(def ?? null, t)}</chakra.span>
+      )}
+    </MotionColumnItem>
+  );
+}
+
+function fkFieldLabel(field: string, t: ReturnType<typeof useT>): string {
+  switch (field) {
+    case "on_delete":
+      return t("schemaCompareFkFieldOnDelete");
+    case "on_update":
+      return t("schemaCompareFkFieldOnUpdate");
+    case "referenced_columns":
+      return t("schemaCompareFkFieldReferencedColumns");
+    default:
+      return field;
+  }
+}
+
+function fkFieldValue(fk: DiffForeignKey | null, field: string, t: ReturnType<typeof useT>): string {
+  if (!fk) return "—";
+  switch (field) {
+    case "on_delete":
+      return fk.on_delete ?? t("schemaCompareActionDefault");
+    case "on_update":
+      return fk.on_update ?? t("schemaCompareActionDefault");
+    case "referenced_columns":
+      return fk.referenced_columns.join(", ") || "—";
+    default:
+      return "—";
+  }
 }

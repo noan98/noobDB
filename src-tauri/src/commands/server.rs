@@ -1,6 +1,8 @@
 use tauri::State;
 
-use crate::db::types::{ServerInfo, ServerMetrics};
+use crate::db::types::{
+    ServerInfo, ServerMetrics, SqliteMaintenanceAction, SqliteMaintenanceResult,
+};
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -44,4 +46,40 @@ pub async fn server_metrics_inner(state: &AppState, session_id: &str) -> Result<
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
     session.conn.server_metrics().await
+}
+
+/// SQLite のメンテナンス (整合性検査 / 外部キー検査 / `PRAGMA optimize` / `ANALYZE`, #1625)。
+/// 診断パネルから呼ぶ。検査 2 種は読み取りのみなので read_only セッションでも許可し、
+/// 統計を更新する `optimize` / `analyze` は read_only セッションをバックエンドで拒否する。
+/// SQLite 以外は非対応エラー。
+#[tauri::command]
+pub async fn sqlite_maintenance(
+    session_id: String,
+    action: SqliteMaintenanceAction,
+    state: State<'_, AppState>,
+) -> Result<SqliteMaintenanceResult> {
+    sqlite_maintenance_inner(state.inner(), &session_id, action).await
+}
+
+/// Core of [`sqlite_maintenance`]. See [`server_info_inner`] (#881).
+pub async fn sqlite_maintenance_inner(
+    state: &AppState,
+    session_id: &str,
+    action: SqliteMaintenanceAction,
+) -> Result<SqliteMaintenanceResult> {
+    let session = state
+        .get(session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+    if action.writes() && session.read_only {
+        return Err(AppError::ReadOnly(
+            "read-only session: this maintenance action updates statistics".into(),
+        ));
+    }
+    let result = session.conn.sqlite_maintenance(action).await;
+    if action.writes() {
+        // 統計が変わると実行計画が変わりうる。キャッシュ済みの結果は捨てる。
+        session.query_cache.invalidate_all().await;
+    }
+    result
 }

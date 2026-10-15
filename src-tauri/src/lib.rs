@@ -45,8 +45,9 @@ pub mod __test_api {
     };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
-        analyze, AdvisorDiff, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity,
-        SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        analyze, AdvisorDiff, AdvisorInput, HealthFinding, IndexOverlap, IndexOverlapKind, RuleId,
+        SchemaHealthReport, Severity, SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry,
+        UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
@@ -54,7 +55,8 @@ pub mod __test_api {
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
     pub use crate::db::diff::{
-        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffStatus, SchemaDiff, TableDiff,
+        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffIndex, DiffStatus, ForeignKeyDiff,
+        IndexDiff, SchemaDiff, TableDiff, TargetTableSnapshot,
     };
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
@@ -90,9 +92,9 @@ pub mod __test_api {
         KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
         ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
         RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
-        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
-        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-        UserPrivileges, Value,
+        ServerMetrics, ServerVariable, SqliteFkViolation, SqliteMaintenanceAction,
+        SqliteMaintenanceResult, StreamBatch, TableColumnInfo, TableComment, TablePrivilegeRow,
+        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -168,11 +170,12 @@ pub mod __test_api {
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
+    pub use crate::db::sandbox::SandboxTableSpec;
     pub use crate::history::HistoryEntry;
     pub use crate::import_templates::{ImportTemplate, TemplateColumn};
     pub use crate::perf::PerfSample;
     pub use crate::profiles::secrets::KeyringStatus;
-    pub use crate::sandboxes::SandboxRecord;
+    pub use crate::sandboxes::{SandboxRecord, SandboxRowFilter};
     pub use crate::snippets::{Snippet, SnippetScope};
 
     // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
@@ -487,7 +490,20 @@ pub mod __test_api {
     };
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
-    pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+    pub use crate::commands::server::{
+        server_info_inner, server_metrics_inner, sqlite_maintenance_inner,
+    };
+
+    /// スキーマ比較の本体 (インデックス・外部キーの差分、SQLite の再作成コンテキスト込み)。
+    pub async fn compare_schema_via_core(
+        source: &Connection,
+        source_database: &str,
+        target: &Connection,
+        target_database: &str,
+    ) -> crate::error::Result<SchemaDiff> {
+        crate::commands::diff::compare_schema_core(source, source_database, target, target_database)
+            .await
+    }
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await
@@ -1115,6 +1131,32 @@ pub mod __test_api {
         include_related: bool,
         row_limit: Option<u64>,
     ) -> crate::error::Result<SandboxCreateResponse> {
+        create_sandbox_with_filters_via_command(
+            state,
+            source_session_id,
+            source_database,
+            name,
+            tables
+                .into_iter()
+                .map(|name| SandboxTableSpec { name, filter: None })
+                .collect(),
+            include_related,
+            row_limit,
+        )
+        .await
+    }
+
+    /// 表ごとの抽出条件つき版 (#1625)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_sandbox_with_filters_via_command(
+        state: &AppState,
+        source_session_id: &str,
+        source_database: Option<&str>,
+        name: &str,
+        tables: Vec<SandboxTableSpec>,
+        include_related: bool,
+        row_limit: Option<u64>,
+    ) -> crate::error::Result<SandboxCreateResponse> {
         crate::commands::sandbox::create_sandbox_inner(
             state,
             source_session_id.to_string(),
@@ -1231,7 +1273,35 @@ pub mod __test_api {
         allow_delete: bool,
         skip_keys: Option<&[Vec<Value>]>,
     ) -> crate::error::Result<SyncPlan> {
-        crate::commands::sync::generate_data_sync_sql_inner(state, diff_id, allow_delete, skip_keys)
+        generate_data_sync_sql_selected_via_command(
+            state,
+            diff_id,
+            allow_delete,
+            skip_keys,
+            None,
+            None,
+        )
+    }
+
+    /// 種別・主キーで行を絞る版 (#1625)。
+    pub fn generate_data_sync_sql_selected_via_command(
+        state: &AppState,
+        diff_id: &str,
+        allow_delete: bool,
+        skip_keys: Option<&[Vec<Value>]>,
+        kinds: Option<&[RowStatus]>,
+        only_keys: Option<&[Vec<Value>]>,
+    ) -> crate::error::Result<SyncPlan> {
+        crate::commands::sync::generate_data_sync_sql_inner(
+            state,
+            diff_id,
+            allow_delete,
+            &crate::commands::sync::DataSyncSelection {
+                skip_keys,
+                kinds,
+                only_keys,
+            },
+        )
     }
 
     /// Releases stored diffs like the `release_data_diffs` command does (#1259).
@@ -1460,6 +1530,7 @@ pub fn run() {
             commands::query::release_savepoint,
             commands::query::run_query_stream,
             commands::broadcast::broadcast_compare,
+            commands::broadcast::broadcast_sync_sql,
             commands::query::set_emergency_mode,
             commands::query::preview_query_stream,
             commands::query::cancel_stream,
@@ -1488,6 +1559,7 @@ pub fn run() {
             commands::schema::incoming_foreign_keys,
             commands::server::server_info,
             commands::server::server_metrics,
+            commands::server::sqlite_maintenance,
             commands::process::list_processes,
             commands::process::get_process_query,
             commands::process::get_process_queries,
@@ -1507,6 +1579,7 @@ pub fn run() {
             commands::profile::profile_column,
             commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
+            commands::advisor::check_duplicate_index,
             commands::advisor::ignore_advisor_finding,
             commands::advisor::unignore_advisor_finding,
             commands::diff::compare_schema,

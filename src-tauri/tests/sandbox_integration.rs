@@ -875,3 +875,105 @@ async fn sandbox_reset_table_rejects_read_only_and_unrelated_sessions() {
     }
     let _ = std::fs::remove_file(&source_path);
 }
+
+/// 表ごとの抽出条件 (WHERE) で、条件に合う行だけをコピーする (#1625)。条件は記録され、
+/// 括弧を抜けるような条件・複数文は作成前に拒否される。
+#[tokio::test]
+async fn create_sandbox_copies_only_rows_matching_the_row_filter() {
+    let (source_path, source_conn) = fresh_sqlite("rowfilter").await;
+    source_conn
+        .execute(
+            "CREATE TABLE items (id INTEGER PRIMARY KEY, label TEXT NOT NULL, qty INTEGER NOT NULL)",
+            None,
+        )
+        .await
+        .expect("create source table");
+    source_conn
+        .execute(
+            "INSERT INTO items (id, label, qty) VALUES (1, 'a', 10), (2, 'b', 5), (3, 'c', 20), (4, 'd', 1)",
+            None,
+        )
+        .await
+        .expect("seed source rows");
+    let state = std::sync::Arc::new(t::AppState::default());
+    let source_session = t::make_session(
+        "sbx_filter_source",
+        source_conn,
+        t::sqlite_options(source_path.to_str().expect("utf8 path")),
+        false,
+    );
+    let source_session_id = state.insert(source_session).await;
+
+    // 危険な条件は何も作らずに拒否する。
+    for bad in ["1=1; DROP TABLE items", "1=1) OR (1=1", "qty > 1 -- x"] {
+        let err = t::create_sandbox_with_filters_via_command(
+            &state,
+            &source_session_id,
+            None,
+            "bad",
+            vec![t::SandboxTableSpec {
+                name: "items".into(),
+                filter: Some(bad.into()),
+            }],
+            false,
+            Some(100),
+        )
+        .await
+        .expect_err("a breaking filter must be rejected");
+        assert_eq!(err.kind(), "invalidInput", "{bad}");
+    }
+
+    let create = t::create_sandbox_with_filters_via_command(
+        &state,
+        &source_session_id,
+        None,
+        "filtered",
+        vec![t::SandboxTableSpec {
+            name: "items".into(),
+            filter: Some("qty >= 10".into()),
+        }],
+        false,
+        Some(100),
+    )
+    .await
+    .expect("create_sandbox with filter");
+    let guard = DiscardGuard {
+        state: state.clone(),
+        sandbox_id: Some(create.sandbox.id.clone()),
+        session_id: Some(create.session_id.clone()),
+    };
+    assert_eq!(create.sandbox.row_filters.len(), 1);
+    assert_eq!(create.sandbox.row_filters[0].table, "items");
+    assert_eq!(create.sandbox.row_filters[0].filter, "qty >= 10");
+    assert!(create.sandbox.truncated_tables.is_empty());
+
+    let sandbox_session = state
+        .get(&create.session_id)
+        .await
+        .expect("sandbox session registered");
+    let copied = sandbox_session
+        .conn
+        .execute("SELECT id FROM items ORDER BY id", None)
+        .await
+        .expect("select from sandbox copy");
+    let ids: Vec<String> = copied.rows.iter().map(|r| format!("{:?}", r[0])).collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+
+    // 実 DB の競合検出も同じ条件で読むので、条件外の行 (id 2, 4) は差分に現れない。
+    let diff = t::sandbox_table_diff_via_command(
+        &state,
+        &create.sandbox.id,
+        &create.session_id,
+        "items",
+        Some(&source_session_id),
+        None,
+    )
+    .await
+    .expect("sandbox_table_diff");
+    assert!(diff.source_checked);
+    assert!(diff.conflicts.is_empty());
+    assert!(diff.desired.rows.is_empty());
+
+    guard.discard().await;
+    let _ = std::fs::remove_file(&source_path);
+}

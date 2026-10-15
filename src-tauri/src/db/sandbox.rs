@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use super::data_diff::{coerce_binary_key, key_signature, DataDiff, RowDiff, RowStatus};
 use super::diff::{DiffStatus, SchemaDiff, TableColumns, TableDiff};
 use super::types::{ForeignKey, TableColumnInfo, Value};
+use super::DriverKind;
 
 /// Table-name prefix reserved for the frozen "base" snapshot mirrored
 /// alongside every live table copied into a sandbox. Never shown in the
@@ -56,6 +57,116 @@ pub fn is_shadow_table_name(name: &str) -> bool {
 /// to data comparison).
 pub const DEFAULT_ROW_LIMIT: u64 = 5_000;
 pub const MAX_ROW_LIMIT: u64 = 100_000;
+
+/// `create_sandbox` の対象表 1 件 (#1625)。`filter` は `WHERE` の中身 (任意)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxTableSpec {
+    pub name: String,
+    #[serde(default)]
+    pub filter: Option<String>,
+}
+
+/// 抽出条件の最大長 (文字数)。
+const MAX_ROW_FILTER_LEN: usize = 2000;
+
+/// 表ごとの抽出条件を検査して整える。空白だけなら `None` (条件なし)。
+///
+/// 条件は `SELECT ... FROM t WHERE (<条件>) ...` の括弧の中へ埋め込まれるので、
+/// - 文の区切り (`;`)・コメント (`--` / `/*`) は引用符の外にあれば拒否する
+///   (後ろの `ORDER BY` / `LIMIT` を潰したり、2 文目を足したりさせない)。
+/// - 括弧は閉じ過ぎない・閉じ忘れない (`) UNION SELECT ... (` で埋め込み先の括弧を
+///   抜けさせない)。引用符も閉じていること。
+/// - 最後に、完成した SELECT を読み取り専用ガード (`is_read_only_sql_for`) と副作用関数の
+///   検査に通す (`FOR UPDATE`、`nextval()` など)。
+///
+/// 条件の中の副問い合わせは許す (読み取りだけ)。
+pub fn checked_row_filter(
+    driver: DriverKind,
+    table: &str,
+    filter: Option<&str>,
+) -> std::result::Result<Option<String>, String> {
+    let Some(raw) = filter.map(str::trim).filter(|f| !f.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.chars().count() > MAX_ROW_FILTER_LEN {
+        return Err(format!(
+            "the row filter for '{table}' is too long (max {MAX_ROW_FILTER_LEN} characters)"
+        ));
+    }
+    let bad = |why: &str| Err(format!("invalid row filter for '{table}': {why}"));
+    // 走査は read-only ガードと同じマスク (`mask_for_driver`) の結果に対して行い、文字列・
+    // 引用符つき識別子・コメント・PG の `$$` 文字列の扱いを一本化する。マスクは文字列の中身と
+    // コメントを空白に置き換え、引用符・`$tag$` の区切りは残す。
+    let orig: Vec<char> = raw.chars().collect();
+    let masked = super::mask_for_driver(driver, &orig);
+    let mut depth: i32 = 0;
+    let mut quote: Option<char> = None;
+    let mut i = 0;
+    while i < masked.len() {
+        let c = masked[i];
+        if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        // コメント (マスクが空白にしたのに元は空白でない文字) は拒否する。
+        if c == ' ' && !orig[i].is_whitespace() {
+            return bad("comments are not allowed");
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '[' if driver == DriverKind::Sqlite => {
+                // SQLite の [識別子] は本体がマスクで空白になる。閉じ括弧まで読み飛ばす。
+                match masked[i..].iter().position(|&d| d == ']') {
+                    Some(off) => i += off,
+                    None => return bad("unterminated identifier"),
+                }
+            }
+            '$' if driver == DriverKind::Postgres
+                && (i == 0 || !super::is_word_char(orig[i - 1])) =>
+            {
+                // `$tag$ ... $tag$`: マスクと同じ判定 (dollar_quote_tag_len / find_dollar_tag) で
+                // 本体を読み飛ばす。閉じがなければマスクも `$` を残すので通常文字として扱う。
+                if let Some(tag_len) = super::dollar_quote_tag_len(&orig, i) {
+                    if let Some(close) =
+                        super::find_dollar_tag(&orig, i + tag_len, &orig[i..i + tag_len])
+                    {
+                        i = close + tag_len;
+                        continue;
+                    }
+                }
+            }
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return bad("unbalanced parentheses");
+                }
+            }
+            ';' => return bad("a statement separator (;) is not allowed"),
+            _ => {}
+        }
+        i += 1;
+    }
+    if quote.is_some() {
+        return bad("unterminated quote");
+    }
+    if depth != 0 {
+        return bad("unbalanced parentheses");
+    }
+    let probe = format!(
+        "SELECT 1 FROM {} WHERE ({raw})",
+        super::sync::quote_ident(driver, table)
+    );
+    if !super::is_read_only_sql_for(driver, &probe)
+        || super::sql_has_side_effect_function(driver, &probe)
+    {
+        return bad("only a read-only condition is allowed");
+    }
+    Ok(Some(raw.to_string()))
+}
 
 /// Clamps a caller-supplied row limit into `[1, MAX_ROW_LIMIT]`, defaulting to
 /// `DEFAULT_ROW_LIMIT` when absent or zero.
@@ -320,6 +431,58 @@ pub fn filter_out_keys(diff: &DataDiff, skip_keys: &[Vec<Value>]) -> DataDiff {
         .iter()
         .filter(|r| !skip.contains(&key_signature(&r.key)))
         .cloned()
+        .collect();
+    DataDiff {
+        rows,
+        ..diff.clone()
+    }
+}
+
+/// 同期 SQL の対象行を種別と主キーで絞った `DataDiff` のコピーを返す (#1625)。
+///
+/// - `kinds`: `Some` のとき、その種別 (追加 / 更新 / 削除) の行だけ残す。
+/// - `only_keys`: `Some` のとき、その主キーの行だけ残す (BLOB 主キーは JSON 往復で
+///   `Value::String` になるので `coerce_binary_key` で戻してから署名を取る)。
+///
+/// 絞る前の diff で重複キーだった行は `key_unreliable` を立てて残す。絞った後の行集合
+/// だけで重複を再計算すると、片方を外した重複キーの行が「一意」に見えて UPDATE/DELETE
+/// が生成されてしまうため。
+pub fn select_rows(
+    diff: &DataDiff,
+    kinds: Option<&[RowStatus]>,
+    only_keys: Option<&[Vec<Value>]>,
+) -> DataDiff {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for r in &diff.rows {
+        *counts.entry(key_signature(&r.key)).or_insert(0) += 1;
+    }
+    let only: Option<HashSet<String>> = only_keys.map(|keys| {
+        keys.iter()
+            .map(|k| {
+                key_signature(&coerce_binary_key(
+                    &diff.columns,
+                    &diff.column_types,
+                    &diff.primary_key,
+                    k,
+                ))
+            })
+            .collect()
+    });
+    let rows = diff
+        .rows
+        .iter()
+        .filter(|r| kinds.map_or(true, |ks| ks.contains(&r.status)))
+        .filter(|r| {
+            only.as_ref()
+                .map_or(true, |set| set.contains(&key_signature(&r.key)))
+        })
+        .map(|r| {
+            let mut r = r.clone();
+            if counts.get(&key_signature(&r.key)).copied().unwrap_or(0) > 1 {
+                r.key_unreliable = true;
+            }
+            r
+        })
         .collect();
     DataDiff {
         rows,
@@ -616,12 +779,121 @@ mod tests {
         assert_eq!(filtered.rows.len(), 1);
     }
 
+    #[test]
+    fn select_rows_filters_by_kind_and_key() {
+        let diff = data_diff(vec![
+            row_diff(RowStatus::SourceOnly, 1, Some(1), None),
+            row_diff(RowStatus::Different, 2, Some(2), Some(0)),
+            row_diff(RowStatus::TargetOnly, 3, None, Some(3)),
+        ]);
+        let only_ins = select_rows(&diff, Some(&[RowStatus::SourceOnly]), None);
+        assert_eq!(only_ins.rows.len(), 1);
+        assert_eq!(only_ins.rows[0].key, vec![Value::Int(1)]);
+        let by_key = select_rows(
+            &diff,
+            None,
+            Some(&[vec![Value::Int(2)], vec![Value::Int(3)]]),
+        );
+        assert_eq!(by_key.rows.len(), 2);
+        let both = select_rows(
+            &diff,
+            Some(&[RowStatus::TargetOnly]),
+            Some(&[vec![Value::Int(2)], vec![Value::Int(3)]]),
+        );
+        assert_eq!(both.rows.len(), 1);
+        assert_eq!(both.rows[0].key, vec![Value::Int(3)]);
+        // 何も指定しなければ全行。
+        assert_eq!(select_rows(&diff, None, None).rows.len(), 3);
+        // 空の選択は 0 行 (「何も選ばない」を全行と取り違えない)。
+        assert!(select_rows(&diff, None, Some(&[])).rows.is_empty());
+    }
+
+    #[test]
+    fn select_rows_keeps_duplicate_keys_unreliable_after_narrowing() {
+        let diff = data_diff(vec![
+            row_diff(RowStatus::Different, 1, Some(1), Some(0)),
+            row_diff(RowStatus::Different, 1, Some(2), Some(0)),
+        ]);
+        let narrowed = select_rows(&diff, None, Some(&[vec![Value::Int(1)]]));
+        assert!(narrowed.rows.iter().all(|r| r.key_unreliable));
+        // 重複キーのない行は信頼できるまま。
+        let ok = data_diff(vec![row_diff(RowStatus::Different, 5, Some(1), Some(0))]);
+        assert!(!select_rows(&ok, None, None).rows[0].key_unreliable);
+    }
+
+    #[test]
+    fn row_filter_accepts_plain_read_only_conditions() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            assert_eq!(checked_row_filter(d, "t", None), Ok(None));
+            assert_eq!(checked_row_filter(d, "t", Some("   ")), Ok(None));
+            assert_eq!(
+                checked_row_filter(d, "t", Some(" created_at >= '2026-01-01' AND a IN (1, 2) ")),
+                Ok(Some(
+                    "created_at >= '2026-01-01' AND a IN (1, 2)".to_string()
+                ))
+            );
+        }
+        // 引用符の中の ; や -- は条件の一部。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("note = 'a;b -- c'")).is_ok());
+        // 副問い合わせ (読み取りだけ) は許す。
+        assert!(checked_row_filter(
+            DriverKind::Mysql,
+            "t",
+            Some("id IN (SELECT user_id FROM vip)")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn row_filter_rejects_breaking_out_of_the_where() {
+        for bad in [
+            "1=1; DROP TABLE t",
+            "1=1) UNION SELECT password FROM users WHERE (1=1",
+            "a = 1 -- trailing",
+            "a = 1 /* x */",
+            "(a = 1",
+            "a = 'unterminated",
+            "1=1 FOR UPDATE",
+        ] {
+            assert!(
+                checked_row_filter(DriverKind::Postgres, "t", Some(bad)).is_err(),
+                "should reject: {bad}"
+            );
+        }
+        // MySQL の # コメント。
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("a = 1 # x")).is_err());
+        // PostgreSQL の $$ 文字列: 中の ; や -- は文字列、外の ; は拒否する。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("a = $$x; -- y$$")).is_ok());
+        assert!(
+            checked_row_filter(DriverKind::Postgres, "t", Some("a = $q$it's$q$ AND b = 1")).is_ok()
+        );
+        assert!(
+            checked_row_filter(DriverKind::Postgres, "t", Some("a = $$x$$; DROP TABLE t")).is_err()
+        );
+        assert!(checked_row_filter(
+            DriverKind::Postgres,
+            "t",
+            Some("a = $$x$$) UNION SELECT 1 --")
+        )
+        .is_err());
+        // バッククォートの引用符つき識別子の中の ; は識別子の一部。外に出す書き方は拒否する。
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("`a;b` = 1")).is_ok());
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("`a` = 1; DROP TABLE t")).is_err());
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some("[a;b] = 1")).is_ok());
+        // 副作用のある関数。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("id = nextval('s')")).is_err());
+        // 長すぎる条件。
+        let long = format!("a IN ({})", "1,".repeat(2000));
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(&long)).is_err());
+    }
+
     fn table_diff(name: &str, status: DiffStatus) -> TableDiff {
         TableDiff {
             name: name.to_string(),
             status,
             foreign_keys: vec![],
             columns: Vec::<ColumnDiff>::new(),
+            ..Default::default()
         }
     }
 
@@ -631,6 +903,7 @@ mod tests {
             target_driver: DriverKind::Mysql,
             tables,
             warnings: Vec::new(),
+            indexes_compared: false,
         }
     }
 
@@ -678,6 +951,7 @@ mod tests {
                 target: Some(col_info("qty", "int")),
                 changed_fields: vec!["data_type".into()],
             }],
+            ..Default::default()
         }
     }
 
@@ -716,6 +990,7 @@ mod tests {
                     target,
                     changed_fields: vec![],
                 }],
+                ..Default::default()
             }
         };
         for st in [DiffStatus::SourceOnly, DiffStatus::TargetOnly] {

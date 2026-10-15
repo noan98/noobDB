@@ -101,3 +101,46 @@ describe("TableDiffRow アコーディオン (#1008)", () => {
     expect(screen.getByText("empty_table")).toBeInTheDocument();
   });
 });
+
+describe("インデックス・外部キー差分の表示 (#1625)", () => {
+  it("列の差分が無くてもインデックスと外部キーの差分を展開して表示する", () => {
+    const ix = (columns: string[], unique: boolean) => ({
+      name: "idx_email",
+      columns,
+      unique,
+      method: null,
+    });
+    const fk = (onDelete: string | null) => ({
+      name: "fk_user",
+      columns: ["user_id"],
+      referenced_table: "users",
+      referenced_columns: ["id"],
+      on_delete: onDelete,
+      on_update: null,
+    });
+    const table: TableDiff = {
+      name: "orders",
+      status: "different",
+      columns: [],
+      indexes: [
+        {
+          name: "idx_email",
+          status: "different",
+          source: ix(["email"], true),
+          target: ix(["email", "name"], false),
+          changed_fields: ["columns", "unique"],
+        },
+      ],
+      fk_changes: [
+        { status: "different", source: fk("CASCADE"), target: fk(null), changed_fields: ["on_delete"] },
+      ],
+    };
+    renderWithProviders(<TableDiffRow table={table} t={t} />);
+
+    const toggle = screen.getByRole("button", { name: /orders/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/idx_email/)).toBeInTheDocument();
+    expect(screen.getByText(/\(email\) → \(email, name\)/)).toBeInTheDocument();
+    expect(screen.getByText(/ON DELETE: CASCADE → NO ACTION/)).toBeInTheDocument();
+  });
+});

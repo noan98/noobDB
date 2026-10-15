@@ -99,6 +99,8 @@ const COVERED: Record<string, string> = {
   SchemaTree: "schemaTree",
   ServerInfo: "serverInfo",
   ServerMetrics: "serverMetrics",
+  SqliteMaintenanceResult: "sqliteMaintenanceResult",
+  IndexOverlap: "indexOverlap",
   Snippet: "snippet",
   SqlFileContent: "sqlFileContent",
   SqlEncodingPreview: "sqlEncodingPreview",

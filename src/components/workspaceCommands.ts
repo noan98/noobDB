@@ -126,6 +126,18 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("processes"),
     });
   }
+  // SQLite のメンテナンス (#1625)。SQLite の接続でだけ開ける。
+  if (ctx.sessionId && ctx.driver === "sqlite") {
+    items.push({
+      id: "nav:sqliteMaintenance",
+      group: "navigation",
+      label: t("sqliteMaintTitle"),
+      icon: "check",
+      keywords:
+        "sqlite maintenance integrity check foreign key analyze optimize vacuum 整合性 検査 破損 外部キー メンテナンス",
+      run: () => actions.toggleBottomPanel("sqliteMaintenance"),
+    });
+  }
   // データ品質アサーション (#742)。接続だけを要求する (検証 DB はセッション既定で可)。
   if (ctx.sessionId) {
     items.push({

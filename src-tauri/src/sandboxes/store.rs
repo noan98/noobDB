@@ -188,6 +188,7 @@ mod tests {
             file_path: "/tmp/x.sqlite".to_string(),
             created_at: "2026-01-01T00:00:00Z".to_string(),
             truncated_tables: Vec::new(),
+            row_filters: Vec::new(),
         }
     }
 

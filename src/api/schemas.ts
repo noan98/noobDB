@@ -231,6 +231,30 @@ export const userPrivileges = z.object({
 });
 
 /** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
+export const indexOverlap = z.object({
+  name: z.string(),
+  kind: z.enum(["duplicate", "covered_by_existing", "makes_existing_redundant"]),
+});
+export const indexOverlapArray = z.array(indexOverlap);
+
+export const sqliteMaintenanceResult = z.object({
+  action: z.enum(["integrity_check", "foreign_key_check", "optimize", "analyze"]),
+  ok: z.boolean(),
+  messages: z.array(z.string()),
+  fk_violations: z.array(
+    z.object({
+      table: z.string(),
+      rowid: z.number().nullable(),
+      parent: z.string(),
+      fk_index: z.number(),
+    }),
+  ),
+  truncated: z.boolean(),
+  page_count: z.number().nullable(),
+  freelist_count: z.number().nullable(),
+  elapsed_ms: z.number(),
+});
+
 export const serverMetrics = z.object({
   connections: z.number().nullable(),
   active: z.number().nullable(),
@@ -695,11 +719,51 @@ const diffForeignKey = z.object({
   on_update: z.string().nullable(),
 });
 
+const diffIndex = z.object({
+  name: z.string(),
+  columns: z.array(z.string()),
+  unique: z.boolean(),
+  method: z.string().nullable(),
+  predicate: z.string().nullable().default(null),
+  first_expression_at: z.number().nullable().default(null),
+  key_column_count: z.number().nullable().default(null),
+  column_options: z.array(z.string()).default([]),
+  nulls_not_distinct: z.boolean().default(false),
+});
+
+const indexDiff = z.object({
+  name: z.string(),
+  status: diffStatus,
+  source: diffIndex.nullable(),
+  target: diffIndex.nullable(),
+  changed_fields: z.array(z.string()).default([]),
+});
+
+const foreignKeyDiff = z.object({
+  status: diffStatus,
+  source: diffForeignKey.nullable(),
+  target: diffForeignKey.nullable(),
+  changed_fields: z.array(z.string()).default([]),
+});
+
+const targetTableSnapshot = z.object({
+  columns: z.array(tableColumnInfo),
+  foreign_keys: z.array(diffForeignKey).default([]),
+  unique_constraints: z.array(z.array(z.string())).default([]),
+  recreate_sql: z.array(z.string()).default([]),
+  drop_views: z.array(z.string()).default([]),
+  original_sql: z.string().nullable().default(null),
+  referenced_by: z.array(z.string()).default([]),
+});
+
 const tableDiff = z.object({
   name: z.string(),
   status: diffStatus,
   columns: z.array(columnDiff),
   foreign_keys: z.array(diffForeignKey).default([]),
+  indexes: z.array(indexDiff).default([]),
+  fk_changes: z.array(foreignKeyDiff).default([]),
+  target_snapshot: targetTableSnapshot.nullable().default(null),
 });
 
 const driverKind = z.enum(["mysql", "postgres", "sqlite"]);
@@ -709,6 +773,7 @@ export const schemaDiff = z.object({
   target_driver: driverKind,
   tables: z.array(tableDiff),
   warnings: z.array(z.string()).default([]),
+  indexes_compared: z.boolean().default(false),
 });
 
 const syncStatement = z.object({
@@ -721,6 +786,10 @@ const syncStatement = z.object({
     "add_foreign_key",
     "drop_column",
     "drop_table",
+    "add_index",
+    "drop_index",
+    "drop_foreign_key",
+    "rebuild_table",
     "insert_row",
     "update_row",
     "delete_row",
@@ -841,6 +910,7 @@ export const sandboxRecord = z.object({
   file_path: z.string(),
   created_at: z.string(),
   truncated_tables: z.array(z.string()),
+  row_filters: z.array(z.object({ table: z.string(), filter: z.string() })),
 });
 
 export const sandboxRecordArray = z.array(sandboxRecord);
@@ -1274,6 +1344,7 @@ export const broadcastDiff = z.object({
   changedCellCount: z.number(),
   addedRowIndices: z.array(z.number()),
   removedCount: z.number(),
+  removedRowIndices: z.array(z.number()),
   truncated: z.boolean(),
   hasDiff: z.boolean(),
 });

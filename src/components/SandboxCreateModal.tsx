@@ -42,6 +42,8 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [includeRelated, setIncludeRelated] = useState(true);
   const [filter, setFilter] = useState("");
+  // 表ごとの抽出条件 (WHERE の中身, #1625)。直接選んだ表だけに掛かる。
+  const [rowFilters, setRowFilters] = useState<Record<string, string>>({});
   const [rowLimit, setRowLimit] = useState(SANDBOX_DEFAULT_ROW_LIMIT);
   const [name, setName] = useState(defaultName);
 
@@ -105,7 +107,7 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
         sourceSessionId: sessionId,
         sourceDatabase: database,
         name: name.trim() || defaultName,
-        tables: [...selected],
+        tables: [...selected].map((name) => ({ name, filter: rowFilters[name] ?? null })),
         includeRelated,
         rowLimit,
       });
@@ -218,6 +220,37 @@ export function SandboxCreateModal({ sessionId, database, defaultName, onClose, 
               <chakra.div fontSize="xs" color="app.textMuted">
                 {t("sandboxCreateRelatedPreview", { count: effective.length })}
               </chakra.div>
+            )}
+
+            {selected.size > 0 && (
+              <FormSection>
+                <FieldLabel as="div">{t("sandboxCreateFilters")}</FieldLabel>
+                <chakra.div textStyle="caption" color="app.textMuted" mb="1.5">
+                  {t("sandboxCreateFiltersHint")}
+                </chakra.div>
+                <chakra.div display="flex" flexDirection="column" gap="1.5">
+                  {[...selected].sort().map((tbl) => (
+                    <chakra.div key={tbl} display="flex" alignItems="center" gap="2">
+                      <chakra.span fontSize="sm" fontFamily="mono" minWidth="30%" truncate>
+                        {tbl}
+                      </chakra.span>
+                      <Input
+                        aria-label={t("sandboxCreateFilterLabel", { table: tbl })}
+                        placeholder={t("sandboxCreateFilterPlaceholder")}
+                        value={rowFilters[tbl] ?? ""}
+                        onChange={(e) => setRowFilters((prev) => ({ ...prev, [tbl]: e.target.value }))}
+                        disabled={creating}
+                        fontFamily="mono"
+                      />
+                    </chakra.div>
+                  ))}
+                </chakra.div>
+                {includeRelated && effective.length > selected.size && (
+                  <chakra.div textStyle="caption" color="app.textMuted" mt="1.5">
+                    {t("sandboxCreateFiltersRelatedNote")}
+                  </chakra.div>
+                )}
+              </FormSection>
             )}
 
             <FormSection>

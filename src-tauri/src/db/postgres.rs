@@ -2143,6 +2143,66 @@ impl PostgresConn {
         super::upsert::check_conflict_target_unique(DriverKind::Postgres, &uniques, key_columns)
     }
 
+    /// `CREATE TABLE` の再構成に足す CHECK 制約と生成列の式 (#1625)。`pg_get_constraintdef` /
+    /// `pg_get_expr(adbin)` で取るので、サーバが正規化した式がそのまま得られる。
+    /// `attgenerated` は PG12+ の列なので `to_jsonb` 経由で読み、古い版でも SQL エラーにしない。
+    pub async fn table_ddl_extras(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<super::types::TableDdlExtras> {
+        let checks: Vec<PgRow> = sqlx::query(
+            r#"SELECT con.conname::text, pg_catalog.pg_get_constraintdef(con.oid, true)
+                 FROM pg_catalog.pg_constraint con
+                 JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+                 JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
+                WHERE ns.nspname = $1 AND cl.relname = $2 AND con.contype = 'c'
+                ORDER BY con.conname"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        let generated: Vec<PgRow> = sqlx::query(
+            r#"SELECT a.attname::text,
+                      pg_catalog.pg_get_expr(d.adbin, d.adrelid),
+                      to_jsonb(a)->>'attgenerated'
+                 FROM pg_catalog.pg_attribute a
+                 JOIN pg_catalog.pg_class cl ON cl.oid = a.attrelid
+                 JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace
+                 JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+                WHERE ns.nspname = $1 AND cl.relname = $2
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND COALESCE(to_jsonb(a)->>'attgenerated', '') <> ''
+                ORDER BY a.attnum"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(super::types::TableDdlExtras {
+            checks: checks
+                .iter()
+                .filter_map(|r| {
+                    Some((
+                        r.try_get::<String, _>(0).ok()?,
+                        r.try_get::<String, _>(1).ok()?,
+                    ))
+                })
+                .collect(),
+            generated: generated
+                .iter()
+                .filter_map(|r| {
+                    Some((
+                        r.try_get::<String, _>(0).ok()?,
+                        r.try_get::<String, _>(1).ok()?,
+                        r.try_get::<Option<String>, _>(2).ok().flatten().as_deref() == Some("v"),
+                    ))
+                })
+                .collect(),
+        })
+    }
+
     pub async fn list_indexes(&self, schema: &str, table: &str) -> Result<Vec<IndexInfo>> {
         // Expand pg_index.indkey (the ordered column attnums) with ordinality so
         // composite indexes keep declaration order, then resolve each attnum to a
@@ -2169,7 +2229,8 @@ impl PostgresConn {
                JOIN pg_am am       ON am.oid = i.relam
                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
                LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-               WHERE t.relname = $1 AND n.nspname = $2
+               -- スキーマが空 (指定なし) のときは接続の現在のスキーマを使う。
+               WHERE t.relname = $1 AND n.nspname = COALESCE(NULLIF($2, ''), current_schema())
                ORDER BY i.relname, k.ord"#,
         )
         .bind(table)

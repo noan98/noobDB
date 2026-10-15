@@ -351,6 +351,9 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const SqliteMaintenancePanel = lazy(() =>
+  import("./components/SqliteMaintenancePanel").then((m) => ({ default: m.SqliteMaintenancePanel })),
+);
 const PerfPanel = lazy(() => import("./components/PerfPanel").then((m) => ({ default: m.PerfPanel })));
 const ConnectionHealthPanel = lazy(() =>
   import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
@@ -1430,6 +1433,9 @@ export default function App() {
   const [broadcastRequest, setBroadcastRequest] = useState<{
     sql: string;
     tableColumns: TableColumnInfo[] | null;
+    /** テーブル閲覧タブ由来のときの表名・データベース (同期 SQL・全件比較用, #1625)。 */
+    table: string | null;
+    database: string | null;
   } | null>(null);
   /**
    * ボトムパネル (#1112) で開いているタブ。null = 閉じている。
@@ -5035,7 +5041,12 @@ export default function App() {
         toast.error(translate("broadcastBlockedToast"));
         return;
       }
-      setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
+      setBroadcastRequest({
+        sql,
+        tableColumns: tab?.tableColumns ?? null,
+        table: tab?.kind === "table" ? (tab.table ?? null) : null,
+        database: tab?.kind === "table" ? (tab.database ?? null) : null,
+      });
     },
     [toast],
   );
@@ -11339,17 +11350,19 @@ export default function App() {
                   ? t("healthTitle")
                   : tab === "perf"
                     ? t("perfTitle")
-                    : tab === "profile"
-                      ? t("profileTitle")
-                      : tab === "structure"
-                        ? t("structureTitle")
-                        : tab === "timelapse"
-                          ? t("timelapseTitle")
-                          : tab === "aiSql"
-                            ? t("aiSqlTitle")
-                            : tab === "aiResultSummary"
-                              ? t("aiResultSummaryTitle")
-                              : t("processTitle");
+                    : tab === "sqliteMaintenance"
+                      ? t("sqliteMaintTitle")
+                      : tab === "profile"
+                        ? t("profileTitle")
+                        : tab === "structure"
+                          ? t("structureTitle")
+                          : tab === "timelapse"
+                            ? t("timelapseTitle")
+                            : tab === "aiSql"
+                              ? t("aiSqlTitle")
+                              : tab === "aiResultSummary"
+                                ? t("aiResultSummaryTitle")
+                                : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -11990,7 +12003,12 @@ export default function App() {
                     ) : activeBottomPanelTab === "perf" ? (
                       // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。
                       <PerfPanel />
-                    ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
+                    ) : !sessionId ? null : activeBottomPanelTab === "sqliteMaintenance" ? (
+                      <SqliteMaintenancePanel
+                        sessionId={sessionId}
+                        readOnly={selectedProfile?.read_only ?? false}
+                      />
+                    ) : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
                         sessionId={sessionId}
                         driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
@@ -13160,6 +13178,8 @@ export default function App() {
                     !isSandboxProfileId(c.profile.id),
                 )}
                 tableColumns={broadcastRequest.tableColumns}
+                table={broadcastRequest.table}
+                database={broadcastRequest.database}
                 autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
                 queryTimeoutSecs={settings.queryTimeoutSecs}
                 confirm={confirm}
@@ -13626,6 +13646,14 @@ export default function App() {
                 label: t("perfTitle"),
                 icon: "clock",
                 onSelect: () => toggleBottomPanel("perf"),
+              },
+              {
+                label: t("sqliteMaintTitle"),
+                icon: "check",
+                onSelect: () => toggleBottomPanel("sqliteMaintenance"),
+                // SQLite の接続でだけ意味がある。
+                disabled: !sessionId || selectedProfile?.driver !== "sqlite",
+                title: !sessionId ? t("appToolsNeedsSession") : undefined,
               },
               {
                 label: t("appAssertions"),

@@ -3,7 +3,16 @@ import { Box, Flex, chakra } from "@chakra-ui/react";
 
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
-import { defaultKeyColumn, resultsComparable, type PinnedResult } from "../pinnedCompare";
+import {
+  alignResultsByName,
+  defaultKeyColumn,
+  keyUniqueness,
+  mapColumnsByName,
+  resultsComparableByName,
+  type PinnedResult,
+} from "../pinnedCompare";
+import { diffResultRows } from "../resultDiff";
+import { Callout } from "./Callout";
 import { semanticColorToken } from "../semanticColors";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
@@ -34,12 +43,12 @@ function toQueryResult(p: PinnedResult): QueryResult {
  * メタを作る。`ResultGrid` は `tableColumns` から PK 位置を解決して差分を取るため、
  * 自由クエリ結果でもキー列を指定すれば行ペアリングが効く。
  */
-function syntheticKeyColumns(p: PinnedResult, keyColumn: string | null): TableColumnInfo[] {
+function syntheticKeyColumns(p: PinnedResult, keyColumns: string[]): TableColumnInfo[] {
   return p.columns.map((c) => ({
     name: c.name,
     data_type: c.type_name,
     nullable: true,
-    key: c.name === keyColumn ? "PRI" : "",
+    key: keyColumns.includes(c.name) ? "PRI" : "",
     default: null,
     extra: "",
     referenced_table: null,
@@ -62,6 +71,8 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
   const [rightId, setRightId] = useState<string>(() => pinned[pinned.length - 1]?.id ?? "");
   const [diffOn, setDiffOn] = useState(true);
   const [keyColumn, setKeyColumn] = useState<string | null>(null);
+  // 複合キーの 2 列目 (任意, #1625)。
+  const [keyColumn2, setKeyColumn2] = useState<string | null>(null);
 
   const left = useMemo(() => pinned.find((p) => p.id === leftId) ?? null, [pinned, leftId]);
   const right = useMemo(() => pinned.find((p) => p.id === rightId) ?? null, [pinned, rightId]);
@@ -74,24 +85,65 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
     if (!ids.has(rightId)) setRightId(pinned[pinned.length - 1]?.id ?? "");
   }, [pinned, leftId, rightId]);
 
-  // 選択中のキー列が左結果のカラムに無くなったら未選択へ戻す (先頭列に既定化)。
-  useEffect(() => {
-    if (keyColumn && !(left?.columns.some((c) => c.name === keyColumn) ?? false)) {
-      setKeyColumn(null);
-    }
-  }, [left, keyColumn]);
+  // 列順や列の集合が違う結果も、列名で対応づけて共通の列だけ比べる (#1625)。
+  // 完全一致のときは射影せず元のまま使う。
+  const mapping = useMemo(() => (left && right ? mapColumnsByName(left, right) : null), [left, right]);
+  const comparable = left && right ? resultsComparableByName(left, right) : false;
+  const aligned = useMemo(
+    () => (left && right && mapping && comparable ? alignResultsByName(left, right, mapping) : null),
+    [left, right, mapping, comparable],
+  );
+  const viewLeft = aligned?.left ?? left;
+  const viewRight = aligned?.right ?? right;
 
-  const comparable = left && right ? resultsComparable(left, right) : false;
+  // 選択中のキー列が比較する列に無くなったら未選択へ戻す (先頭列に既定化)。
+  useEffect(() => {
+    const names = new Set((viewLeft?.columns ?? []).map((c) => c.name));
+    if (keyColumn && !names.has(keyColumn)) setKeyColumn(null);
+    if (keyColumn2 && !names.has(keyColumn2)) setKeyColumn2(null);
+  }, [viewLeft, keyColumn, keyColumn2]);
+
   // 既定のキー列は両結果で一意な最初の列 (無ければ先頭列)。比較不能なら差分は出さない。
   const effectiveKey = useMemo(
-    () => keyColumn ?? (left && right ? defaultKeyColumn(left, right) : (left?.columns[0]?.name ?? null)),
-    [keyColumn, left, right],
+    () =>
+      keyColumn ??
+      (viewLeft && viewRight ? defaultKeyColumn(viewLeft, viewRight) : (viewLeft?.columns[0]?.name ?? null)),
+    [keyColumn, viewLeft, viewRight],
+  );
+  // 1 列目と同じ列を 2 列目に選んでも無視する。
+  const keyColumns = useMemo(
+    () =>
+      [effectiveKey, keyColumn2 && keyColumn2 !== effectiveKey ? keyColumn2 : null].filter(
+        (k): k is string => !!k,
+      ),
+    [effectiveKey, keyColumn2],
   );
 
   const rightTableColumns = useMemo(
-    () => (right && comparable ? syntheticKeyColumns(right, effectiveKey) : undefined),
-    [right, comparable, effectiveKey],
+    () => (viewRight && comparable ? syntheticKeyColumns(viewRight, keyColumns) : undefined),
+    [viewRight, comparable, keyColumns],
   );
+
+  // 差分の件数サマリとキーの一意性 (#1625)。グリッドが描く差分と同じ突き合わせを使う。
+  const analysis = useMemo(() => {
+    if (!viewLeft || !viewRight || !comparable) return null;
+    const idx = (cols: { name: string }[]) =>
+      keyColumns.map((k) => cols.findIndex((c) => c.name === k)).filter((i) => i >= 0);
+    const leftKey = idx(viewLeft.columns);
+    const rightKey = idx(viewRight.columns);
+    if (rightKey.length === 0 || rightKey.length !== keyColumns.length) return null;
+    const diff = diffResultRows(viewLeft.rows, viewRight.rows, rightKey, viewRight.columns.length);
+    let changedRows = 0;
+    for (const flags of diff.changedCells) if (flags.some(Boolean)) changedRows++;
+    return {
+      changedRows,
+      added: diff.addedRows.size,
+      removed: diff.removedCount,
+      hasChanges: diff.hasChanges,
+      left: keyUniqueness(viewLeft.rows, leftKey),
+      right: keyUniqueness(viewRight.rows, rightKey),
+    };
+  }, [viewLeft, viewRight, comparable, keyColumns]);
 
   if (pinned.length === 0) {
     return (
@@ -158,11 +210,29 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
             minWidth="160px"
             disabled={!comparable}
           >
-            {(left?.columns ?? []).map((c) => (
+            {(viewLeft?.columns ?? []).map((c) => (
               <option key={c.name} value={c.name}>
                 {c.name}
               </option>
             ))}
+          </Select>
+        </chakra.label>
+        <chakra.label display="inline-flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+          {t("pinCompareKeyColumn2")}
+          <Select
+            value={keyColumn2 ?? ""}
+            onChange={(e) => setKeyColumn2(e.target.value || null)}
+            minWidth="160px"
+            disabled={!comparable}
+          >
+            <option value="">{t("pinCompareKeyColumn2None")}</option>
+            {(viewLeft?.columns ?? [])
+              .filter((c) => c.name !== effectiveKey)
+              .map((c) => (
+                <option key={c.name} value={c.name}>
+                  {c.name}
+                </option>
+              ))}
           </Select>
         </chakra.label>
         <Switch checked={diffOn} onChange={setDiffOn} disabled={!comparable} label={t("pinCompareDiff")} />
@@ -180,14 +250,53 @@ export function PinnedComparisonView({ pinned, driver, onUnpin, onClear, onClose
           </Button>
         )}
       </Flex>
+      {mapping && comparable && !mapping.exact && (
+        <Box px="6" pt="2">
+          <Callout tone="info" role="status">
+            {t("pinCompareMappedByName", {
+              shared: mapping.shared.length,
+              excluded: [...mapping.leftOnly, ...mapping.rightOnly, ...mapping.ambiguous].join(", ") || "-",
+            })}
+          </Callout>
+        </Box>
+      )}
+      {analysis && diffOn && (
+        <Flex px="6" pt="2" gap="2" direction="column">
+          <chakra.span fontSize="sm" color="app.text" role="status">
+            {analysis.hasChanges
+              ? t("pinCompareSummary", {
+                  changed: analysis.changedRows,
+                  added: analysis.added,
+                  removed: analysis.removed,
+                })
+              : t("pinCompareSummaryNone")}
+          </chakra.span>
+          {(analysis.left.duplicateRows > 0 || analysis.right.duplicateRows > 0) && (
+            <Callout tone="warning" role="alert">
+              {t("pinCompareKeyDuplicate", {
+                left: analysis.left.duplicateRows,
+                right: analysis.right.duplicateRows,
+              })}
+            </Callout>
+          )}
+          {(analysis.left.nullKeyRows > 0 || analysis.right.nullKeyRows > 0) && (
+            <Callout tone="warning" role="status">
+              {t("pinCompareKeyNull", {
+                left: analysis.left.nullKeyRows,
+                right: analysis.right.nullKeyRows,
+              })}
+            </Callout>
+          )}
+        </Flex>
+      )}
       {/* Splitter のルートは flex 子として高さを受け取るので、器も flex 列にする。
           ブロック要素のままだとグリッドが内容の高さまで伸び、縦スクロールが効かない。 */}
       <Box flex="1" minHeight={0} display="flex" flexDirection="column" overflow="hidden">
         <Splitter
           direction="row"
           storageKey="noobdb.split.pinCompare"
-          first={pane(left)}
-          second={pane(right, rightTableColumns, left)}
+          first={pane(viewLeft)}
+          second={pane(viewRight, rightTableColumns, viewLeft)}
         />
       </Box>
     </Box>

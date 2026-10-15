@@ -47,14 +47,15 @@ use t::{
     DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
-    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, KeyringStatus, KnownHost,
-    LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus, PreviewStreamMessage,
-    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
-    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
-    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
-    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
-    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SheetImportResult,
-    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
+    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, IndexOverlap, IndexOverlapKind,
+    KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus,
+    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
+    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
+    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity,
+    SheetImportResult, SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SqliteFkViolation,
+    SqliteMaintenanceAction, SqliteMaintenanceResult, SshAuthMethod, SshJumpProfile, SshProfile,
     SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
     SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
     TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
@@ -302,6 +303,25 @@ fn build_fixtures() -> serde_json::Value {
         fetched_at_ms: 1_760_000_000_000,
     };
     let sandbox_reset_result = t::SandboxResetResult { restored_rows: 3 };
+    let sqlite_maintenance_result = SqliteMaintenanceResult {
+        action: SqliteMaintenanceAction::ForeignKeyCheck,
+        ok: false,
+        messages: vec!["row 3 missing from index idx".into()],
+        fk_violations: vec![SqliteFkViolation {
+            table: "orders".into(),
+            rowid: Some(7),
+            parent: "users".into(),
+            fk_index: 0,
+        }],
+        truncated: false,
+        page_count: Some(100),
+        freelist_count: Some(5),
+        elapsed_ms: 3,
+    };
+    let index_overlap = IndexOverlap {
+        name: "idx_email".into(),
+        kind: IndexOverlapKind::CoveredByExisting,
+    };
     let server_metrics = ServerMetrics {
         connections: Some(42),
         active: Some(3),
@@ -599,9 +619,50 @@ fn build_fixtures() -> serde_json::Value {
         target: None,
         changed_fields: vec![],
     };
+    let diff_index = t::DiffIndex {
+        name: "idx_users_email".into(),
+        columns: vec!["email".into()],
+        unique: true,
+        method: Some("btree".into()),
+        predicate: Some("(deleted_at IS NULL)".into()),
+        first_expression_at: None,
+        key_column_count: Some(1),
+        column_options: vec![String::new()],
+        nulls_not_distinct: false,
+    };
+    let diff_fk = t::DiffForeignKey {
+        name: Some("fk_users_org".into()),
+        columns: vec!["org_id".into()],
+        referenced_table: "orgs".into(),
+        referenced_columns: vec!["id".into()],
+        on_delete: Some("CASCADE".into()),
+        on_update: None,
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
+        indexes: vec![t::IndexDiff {
+            name: "idx_users_email".into(),
+            status: DiffStatus::Different,
+            source: Some(diff_index.clone()),
+            target: Some(diff_index),
+            changed_fields: vec!["unique".into()],
+        }],
+        fk_changes: vec![t::ForeignKeyDiff {
+            status: DiffStatus::Different,
+            source: Some(diff_fk.clone()),
+            target: Some(diff_fk.clone()),
+            changed_fields: vec!["on_delete".into()],
+        }],
+        target_snapshot: Some(t::TargetTableSnapshot {
+            columns: vec![table_column_info.clone()],
+            foreign_keys: vec![diff_fk],
+            unique_constraints: vec![vec!["email".into()]],
+            recreate_sql: vec!["CREATE INDEX i ON users (email)".into()],
+            drop_views: vec!["v_users".into()],
+            original_sql: Some("CREATE TABLE users (email text)".into()),
+            referenced_by: vec!["orders (ON DELETE CASCADE)".into()],
+        }),
         foreign_keys: vec![t::DiffForeignKey {
             name: Some("fk_users_org".into()),
             columns: vec!["org_id".into()],
@@ -617,6 +678,7 @@ fn build_fixtures() -> serde_json::Value {
         target_driver: DriverKind::Postgres,
         tables: vec![table_diff],
         warnings: Vec::new(),
+        indexes_compared: true,
     };
 
     let sync_statement = SyncStatement {
@@ -767,7 +829,8 @@ fn build_fixtures() -> serde_json::Value {
             }],
             changed_cell_count: 1,
             added_row_indices: vec![],
-            removed_count: 0,
+            removed_count: 1,
+            removed_row_indices: vec![2],
             truncated: false,
             has_diff: true,
         }),
@@ -1257,6 +1320,7 @@ fn build_fixtures() -> serde_json::Value {
                             changed_fields: vec!["data_type".into()],
                         })
                         .collect(),
+                    ..Default::default()
                 })
                 .collect(),
             warnings: if i == 0 {
@@ -1264,21 +1328,29 @@ fn build_fixtures() -> serde_json::Value {
             } else {
                 Vec::new()
             },
+            indexes_compared: i == 0,
         })
         .collect();
 
-    // 同期プラン: SyncKind 9 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 13 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
             CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,
-            InsertRow, UpdateRow, DeleteRow
+            AddIndex, DropIndex, DropForeignKey, RebuildTable, InsertRow, UpdateRow, DeleteRow
         ])
         .into_iter()
         .map(|kind| SyncStatement {
             sql: "SELECT 1;".into(),
             table: "users".into(),
             kind,
-            destructive: matches!(kind, SyncKind::DropColumn | SyncKind::DropTable),
+            destructive: matches!(
+                kind,
+                SyncKind::DropColumn
+                    | SyncKind::DropTable
+                    | SyncKind::DropIndex
+                    | SyncKind::DropForeignKey
+                    | SyncKind::RebuildTable
+            ),
         })
         .collect(),
         warnings: vec![],
@@ -1331,6 +1403,7 @@ fn build_fixtures() -> serde_json::Value {
                         changed_cell_count: 0,
                         added_row_indices: vec![],
                         removed_count: 0,
+                        removed_row_indices: vec![],
                         truncated: false,
                         has_diff: false,
                     }),
@@ -1649,6 +1722,10 @@ fn build_fixtures() -> serde_json::Value {
         file_path: "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite".into(),
         created_at: "2026-01-01T00:00:00Z".into(),
         truncated_tables: vec!["users".into()],
+        row_filters: vec![t::SandboxRowFilter {
+            table: "users".into(),
+            filter: "id > 100".into(),
+        }],
     };
     let sandbox_create_response = t::SandboxCreateResponse {
         sandbox: sandbox_record.clone(),
@@ -2034,6 +2111,8 @@ fn build_fixtures() -> serde_json::Value {
         "serverInfo": server_info,
         "processInfo": process_info,
         "serverMetrics": server_metrics,
+        "indexOverlap": index_overlap,
+        "sqliteMaintenanceResult": sqlite_maintenance_result,
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
         "statementDeltaRow": statement_delta_row,

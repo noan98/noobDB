@@ -1006,7 +1006,7 @@ async fn sqlite_sync_plan_applied_makes_target_match_source() {
         .any(|s| s.kind == t::SyncKind::AddColumn && s.table == "users"));
 
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
-    tgt.execute_transaction(&sqls, None)
+    tgt.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply sync plan");
 
@@ -1109,7 +1109,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     let plan = t::generate_data_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
     assert_eq!(sqls.len(), 3, "insert + update + delete");
-    tgt.execute_transaction(&sqls, None)
+    tgt.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply data sync plan");
 
@@ -1179,7 +1179,7 @@ async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them(
     };
     let plan = t::generate_data_sync_sql(&diff, false);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
-    conn.execute_transaction(&sqls, None)
+    conn.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply must not write the generated column");
     let rows = conn
@@ -5254,6 +5254,73 @@ async fn sqlite_import_each_xlsx_sheet_into_its_own_table() {
     assert_eq!(count("users").await, "2");
     assert_eq!(count("orders").await, "1");
     let _ = std::fs::remove_file(&xlsx);
+}
+
+#[tokio::test]
+async fn sqlite_maintenance_checks_and_statistics() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_maint_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE p (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("p");
+    conn.execute(
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id))",
+        None,
+    )
+    .await
+    .expect("c");
+    conn.execute("INSERT INTO p (id) VALUES (1)", None)
+        .await
+        .expect("seed");
+
+    let integrity = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::IntegrityCheck)
+        .await
+        .expect("integrity");
+    assert!(integrity.ok && integrity.messages.is_empty());
+    assert!(integrity.page_count.is_some());
+
+    let clean = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::ForeignKeyCheck)
+        .await
+        .expect("fk");
+    assert!(clean.ok && clean.fk_violations.is_empty());
+
+    // 外部キー検査を切った別接続で壊れた行 (親を持たない子) を入れる。
+    {
+        use sqlx::{Connection as _, Executor as _};
+        let mut raw = sqlx::SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .expect("raw connect");
+        raw.execute("PRAGMA foreign_keys = OFF")
+            .await
+            .expect("fk off");
+        raw.execute("INSERT INTO c (id, pid) VALUES (5, 99)")
+            .await
+            .expect("bad row");
+    }
+    let bad = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::ForeignKeyCheck)
+        .await
+        .expect("fk bad");
+    assert!(!bad.ok);
+    assert_eq!(bad.fk_violations[0].table, "c");
+    assert_eq!(bad.fk_violations[0].parent, "p");
+    assert_eq!(bad.fk_violations[0].rowid, Some(5));
+
+    for action in [
+        t::SqliteMaintenanceAction::Optimize,
+        t::SqliteMaintenanceAction::Analyze,
+    ] {
+        let r = conn.sqlite_maintenance(action).await.expect("stats");
+        assert!(r.ok);
+    }
+    let _ = std::fs::remove_file(&path);
 }
 
 /// 複数テーブルを 1 つの xlsx ブックへシートごとに書き出す (#1624)。実際の SQLite に対して

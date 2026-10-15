@@ -38,9 +38,10 @@ use tauri::State;
 use crate::db::data_diff::{compute_data_diff, sql_literal, DataDiff, RowStatus};
 use crate::db::diff::{compute_schema_diff, SchemaDiff, TableColumns};
 use crate::db::sandbox::{
-    clamp_row_limit, detect_conflicts, filter_out_keys, fk_closure, is_shadow_table_name,
-    normalize_columns_for_sqlite_base, normalize_decimal_cells, row_to_cells,
+    checked_row_filter, clamp_row_limit, detect_conflicts, filter_out_keys, fk_closure,
+    is_shadow_table_name, normalize_columns_for_sqlite_base, normalize_decimal_cells, row_to_cells,
     schema_conflict_tables, shadow_table_name, with_shadow_copies, SandboxConflict,
+    SandboxTableSpec,
 };
 use crate::db::sync::{generate_sync_sql, quote_ident};
 use crate::db::types::{generated_column_names, TableColumnInfo, Value};
@@ -48,10 +49,10 @@ use crate::db::upsert::ImportConflict;
 use crate::db::{Connection, DbConnectOptions, DriverKind};
 use crate::error::{AppError, Result};
 use crate::sandboxes::store as sandbox_store;
-use crate::sandboxes::SandboxRecord;
+use crate::sandboxes::{SandboxRecord, SandboxRowFilter};
 use crate::state::{new_session_id, AppState, Session};
 
-use super::diff::{select_rows_sql, DEFAULT_DATA_ROWS, MAX_DATA_ROWS};
+use super::diff::{select_rows_sql, select_rows_where_sql, DEFAULT_DATA_ROWS, MAX_DATA_ROWS};
 
 /// Row batch size used when importing the copied data into the sandbox file.
 const IMPORT_BATCH_SIZE: usize = 500;
@@ -118,12 +119,17 @@ pub struct SandboxCreateResponse {
 /// under its real name (the live, freely-editable copy) and once under its
 /// `shadow_table_name` (the frozen base, never touched again) — so later
 /// diffing needs only the sandbox's own connection.
+///
+/// `tables` は表名と任意の抽出条件 (`WHERE` の中身, #1625) の組。条件は
+/// `db::sandbox::checked_row_filter` で検査し、読み取り専用の条件だけを取得 SQL へ入れる。
+/// 条件が掛かるのは利用者が直接選んだ表だけで、外部キーの閉包で追加される表は
+/// 条件なし (親子の整合を保つため)。
 #[tauri::command]
 pub async fn create_sandbox(
     source_session_id: String,
     source_database: Option<String>,
     name: String,
-    tables: Vec<String>,
+    tables: Vec<SandboxTableSpec>,
     include_related: bool,
     row_limit: Option<u64>,
     state: State<'_, AppState>,
@@ -148,7 +154,7 @@ pub(crate) async fn create_sandbox_inner(
     source_session_id: String,
     source_database: Option<String>,
     name: String,
-    tables: Vec<String>,
+    tables: Vec<SandboxTableSpec>,
     include_related: bool,
     row_limit: Option<u64>,
 ) -> Result<SandboxCreateResponse> {
@@ -164,7 +170,11 @@ pub(crate) async fn create_sandbox_inner(
     let db = source_database.clone().unwrap_or_default();
     let source_driver = source.conn.driver_kind();
 
-    if let Some(t) = tables.iter().find(|t| is_shadow_table_name(t)) {
+    if let Some(t) = tables
+        .iter()
+        .map(|s| &s.name)
+        .find(|n| is_shadow_table_name(n))
+    {
         // The shadow prefix is a reserved namespace this module manages
         // internally (the frozen base mirror); a real table can't legally use
         // it as a name inside a sandbox without colliding with its own base
@@ -174,7 +184,17 @@ pub(crate) async fn create_sandbox_inner(
             "table '{t}' uses the reserved sandbox prefix and can't be copied into a sandbox"
         )));
     }
-    let mut selected = tables;
+    // 抽出条件は表名ごとに最初の指定を採る (重複した表は 1 つにまとめる)。
+    let mut filters: std::collections::BTreeMap<String, String> = Default::default();
+    let mut selected: Vec<String> = Vec::with_capacity(tables.len());
+    for spec in &tables {
+        if let Some(f) = checked_row_filter(source_driver, &spec.name, spec.filter.as_deref())
+            .map_err(AppError::InvalidInput)?
+        {
+            filters.entry(spec.name.clone()).or_insert(f);
+        }
+        selected.push(spec.name.clone());
+    }
     selected.sort();
     selected.dedup();
     let effective_tables = if include_related {
@@ -251,12 +271,13 @@ pub(crate) async fn create_sandbox_inner(
             .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
             .map(|c| c.name.clone())
             .collect();
-        let sql = select_rows_sql(
+        let sql = select_rows_where_sql(
             source_driver,
             t,
             &col_names,
             &order_cols,
             limit as usize + 1,
+            filters.get(t).map(String::as_str),
         );
         let res = source.conn.execute(&sql, Some(&db)).await?;
         let truncated = res.rows.len() > limit as usize;
@@ -371,6 +392,11 @@ pub(crate) async fn create_sandbox_inner(
         file_path: file_path_str,
         created_at: chrono::Utc::now().to_rfc3339(),
         truncated_tables,
+        row_filters: filters
+            .into_iter()
+            .filter(|(t, _)| fetched.iter().any(|f| &f.name == t))
+            .map(|(table, filter)| SandboxRowFilter { table, filter })
+            .collect(),
     };
     if let Err(e) = sandbox_store::upsert(record.clone()) {
         return Err(fail(conn, &file_path, e).await);
@@ -614,12 +640,21 @@ pub(crate) async fn sandbox_table_diff_inner(
     if let Some(source_session_id) = source_session_id {
         if let Some(source) = state.get(&source_session_id).await {
             let source_db = record.source_database.clone().unwrap_or_default();
-            let sql = select_rows_sql(
+            // 抽出条件つきで作ったサンドボックスは、実 DB も同じ条件で読む (条件に合わない
+            // 行を「実 DB にだけある行」と誤判定して競合に見せない, #1625)。
+            // 保存済みの値も使う前に検査し直す (sandboxes.json は手で編集されうる)。
+            let row_filter = match record.row_filters.iter().find(|f| f.table == table) {
+                Some(f) => checked_row_filter(record.source_driver, &table, Some(&f.filter))
+                    .map_err(AppError::InvalidInput)?,
+                None => None,
+            };
+            let sql = select_rows_where_sql(
                 record.source_driver,
                 &table,
                 &columns,
                 &primary_key,
                 want + 1,
+                row_filter.as_deref(),
             );
             // 実 DB 側の取得失敗 (テーブルの DROP/RENAME・一時的な接続不良) は
             // 競合検出ができなかった (`source_checked = false`) として扱い、

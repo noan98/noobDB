@@ -25,7 +25,7 @@
  *      ステータスバーに出た文の履歴 (`messageLog.ts`) を時系列で 1 本にまとめたもの。
  *      以前は「メッセージ」タブが別にあったが、同じ出来事がトーストとステータスの
  *      両方に出るため 2 タブで似た行が並んでいた。
- * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `health` / `perf`) —
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `sqliteMaintenance` / `health` / `perf`) —
  *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
@@ -62,6 +62,7 @@ export const BOTTOM_PANEL_TABS = [
   "inspector",
   "processes",
   "assertions",
+  "sqliteMaintenance",
   "health",
   "perf",
   "whereUsed",
@@ -84,6 +85,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   inspector: "diagnostics",
   processes: "diagnostics",
   assertions: "diagnostics",
+  sqliteMaintenance: "diagnostics",
   health: "diagnostics",
   perf: "diagnostics",
   whereUsed: "reference",
@@ -165,6 +167,8 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
     if (tab === "perf") return true;
     if (tab === "health") return !!ctx.sessionId || ctx.openConnectionCount > 0;
     if (!ctx.sessionId) return false;
+    // SQLite のメンテナンス (#1625) は SQLite の接続でだけ意味がある。
+    if (tab === "sqliteMaintenance") return ctx.driver === "sqlite";
     if (tab === "advisor") return !!ctx.advisorDatabase;
     if (tab === "profile") return !!ctx.profileTable;
     if (tab === "structure") return !!ctx.structureTable;
@@ -252,6 +256,8 @@ export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripE
     if (BOTTOM_PANEL_TAB_GROUP[tab] === "reference") continue;
     // 計測 (#1622) は設定で ON にした人向けの開発寄りの診断なので、常設のパネルバーには並べない。
     if (tab === "perf") continue;
+    // SQLite 専用のタブは他ドライバでは並べない (無効にしても使える日は来ない)。
+    if (tab === "sqliteMaintenance" && ctx.driver !== "sqlite") continue;
     // SQLite はサーバ統計を持たず、プロセス一覧 / クエリ統計を取れない (#732 / #746)。
     // 開けはするが中身が非対応表示になるだけなので、バーでは無効にして理由を示す。
     const sqliteUnsupported = ctx.driver === "sqlite" && (tab === "processes" || tab === "inspector");
