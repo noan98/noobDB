@@ -10,10 +10,12 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import {
   comparePlanSummaries,
   PLAN_CHANGE_I18N_KEY,
+  planCompareMarkdown,
   summarizePlanResult,
   type PlanComparisonView,
   type PlanSummary,
 } from "./planCompare";
+import { TextExportButton } from "./TextExportButton";
 import { Button } from "./ui";
 
 /**
@@ -120,6 +122,70 @@ export function PlanCompareModal({
   }, [driver, before, after, t]);
 
   const num = (v: number | null) => (v === null ? "—" : formatNumber(v));
+
+  /** 要約表・変化点・判定文の Markdown (クリック時にだけ組む)。 */
+  const buildMarkdown = (): string => {
+    if (view === null) return "";
+    const { cmp, b, a } = view;
+    const band = (x: PlanSummary) => `${x.score.score} ${t(scoreBandLabelKey(x.score.band))}`;
+    const metrics = [
+      { label: t("explainScoreLabel"), before: band(b), after: band(a), delta: signed(cmp.scoreDelta) },
+      {
+        label: t("planCompareMetricCost"),
+        before: num(b.totalCost),
+        after: num(a.totalCost),
+        delta:
+          cmp.costDelta === null
+            ? "—"
+            : signed(cmp.costDelta, formatNumber) +
+              (cmp.costRatio !== null ? ` (×${cmp.costRatio.toFixed(2)})` : ""),
+      },
+      ...(cmp.actualMsDelta !== null
+        ? [
+            {
+              label: t("planCompareMetricActual"),
+              before: formatDurationMs(b.actualMs ?? 0),
+              after: formatDurationMs(a.actualMs ?? 0),
+              delta: signed(cmp.actualMsDelta, formatDurationMs),
+            },
+          ]
+        : []),
+      {
+        label: t("planCompareMetricWarnings"),
+        before: String(b.hints.warning),
+        after: String(a.hints.warning),
+        delta: signed(cmp.warningDelta),
+      },
+      {
+        label: t("planCompareMetricCautions"),
+        before: String(b.hints.caution),
+        after: String(a.hints.caution),
+        delta: signed(cmp.cautionDelta),
+      },
+      {
+        label: t("planCompareMetricNodes"),
+        before: String(b.nodeCount),
+        after: String(a.nodeCount),
+        delta: signed(a.nodeCount - b.nodeCount),
+      },
+    ];
+    return planCompareMarkdown({
+      title: labels?.title ?? t("planCompareTitle"),
+      verdict: t(VERDICT_KEY[cmp.verdict], { before: b.score.score, after: a.score.score }),
+      headers: [
+        t("planCompareMdMetric"),
+        labels?.beforeColumn ?? t("planCompareColBefore"),
+        labels?.afterColumn ?? t("planCompareColAfter"),
+        t("planCompareColDelta"),
+      ],
+      metrics,
+      changesHeading: t("planCompareMdChanges"),
+      changes: cmp.changes.map((c) =>
+        t(PLAN_CHANGE_I18N_KEY[c.kind], { object: c.object, before: c.before ?? "—", after: c.after ?? "—" }),
+      ),
+      noChanges: t("planWatchNoChanges"),
+    });
+  };
 
   return (
     <Modal
@@ -312,6 +378,12 @@ export function PlanCompareModal({
         )}
       </ModalBody>
       <ModalFooter>
+        <TextExportButton
+          formats={[{ id: "markdown", label: "Markdown", build: buildMarkdown }]}
+          filenameBase="plan-comparison"
+          disabled={view === null}
+          label={t("planCompareMdExport")}
+        />
         <Box flex="1" />
         <Button variant="primary" onClick={onClose}>
           {t("planCompareClose")}

@@ -63,6 +63,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
   const [maskEnabled, setMaskEnabled] = useState(remembered?.maskEnabled ?? false);
   // SQL 形式で各ファイルの先頭に CREATE TABLE 文を含める (#1539)。
   const [includeDdl, setIncludeDdl] = useState(remembered?.includeDdl ?? false);
+  // xlsx のとき、全テーブルを 1 つのブックの別シートへまとめる (#1624)。
+  const [singleWorkbook, setSingleWorkbook] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
@@ -70,6 +72,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
   const disposedRef = useRef(false);
   const userEditedDirRef = useRef(!!remembered?.dir);
   const isRunning = status.kind === "running";
+  const workbookMode = format === "xlsx" && singleWorkbook && tables.length > 1;
 
   // 既定の保存先は OS のダウンロードフォルダ (`ExportModal` と同じ)。取得できなければ空のまま。
   useEffect(() => {
@@ -117,8 +120,28 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     }
   };
 
-  /** 1 テーブルを書き出し、完了 / 失敗 / キャンセルのどれかで解決する。 */
-  const exportOne = async (table: string, path: string, index: number): Promise<OneResult> => {
+  /** 列名はテーブルごとに違うので、書き出す直前に定義を取ってマスクのプリセットを解決する。 */
+  const resolveMasks = async (table: string) => {
+    if (!maskEnabled) return null;
+    const cols = await api.describeTable(sessionId, database, table);
+    const resolved = resolveExportMasks(
+      cols.map((c) => c.name),
+      settings.exportMaskPresets,
+      {},
+    );
+    return resolved.length > 0 ? resolved : null;
+  };
+
+  /**
+   * 1 回のストリーム書き出しを走らせ、完了 / 失敗 / キャンセルのどれかで解決する。`start` が
+   * バックエンドの書き出しコマンドを呼ぶ (テーブルごと 1 ファイル / 1 ブックの両方で共通)。
+   * `start` が false を返したら (準備中にキャンセルされた) ストリームを始めずに終える。
+   */
+  const runStream = async (
+    label: string,
+    index: number,
+    start: (streamId: string) => Promise<boolean>,
+  ): Promise<OneResult> => {
     const streamId = `export_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
     streamIdRef.current = streamId;
     let settle: (r: OneResult) => void = () => {};
@@ -126,7 +149,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
       settle = resolve;
     });
     const unlisten = await listenExportStream(streamId, {
-      onProgress: (e) => setStatus({ kind: "running", index, table, rows: e.rows }),
+      onProgress: (e) => setStatus({ kind: "running", index, table: label, rows: e.rows }),
       onDone: (e) => settle({ ok: true, rows: e.rows }),
       onError: (e) => settle({ ok: false, error: e.message }),
       onCancelled: () => settle({ ok: "cancelled" }),
@@ -137,44 +160,14 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
       return { ok: "cancelled" };
     }
     try {
-      // 列名はテーブルごとに違うので、書き出す直前に定義を取ってプリセットを解決する。
-      // 取得に失敗したときはマスクできないまま書き出さず、そのテーブルを失敗にする。
-      let masks: ReturnType<typeof resolveExportMasks> | null = null;
-      if (maskEnabled) {
-        const cols = await api.describeTable(sessionId, database, table);
-        const resolved = resolveExportMasks(
-          cols.map((c) => c.name),
-          settings.exportMaskPresets,
-          {},
-        );
-        masks = resolved.length > 0 ? resolved : null;
-      }
-      // describe の待機中にキャンセルされたら、ストリームを始めずに終える
+      // 準備 (マスク解決の describe など) の待機中にキャンセルされたら、ストリームを始めずに終える
       // (この時点ではバックエンドにストリームが無く cancelStream が効かない)。
-      if (cancelledRef.current || disposedRef.current) {
+      if (cancelledRef.current || disposedRef.current || !(await start(streamId))) {
         settle({ ok: "cancelled" });
-      } else {
-        await api.exportQueryStream({
-          sessionId,
-          streamId,
-          sql: qualifiedTableSql(driver, database, table),
-          database,
-          format,
-          path,
-          initialBatch: Math.max(1, settings.defaultDisplayCount),
-          chunkSize: Math.max(1, settings.streamPrefetchSize),
-          // 大量出力が途中で打ち切られないよう、エクスポートにはタイムアウトを掛けない。
-          queryTimeoutSecs: null,
-          table: format === "sql" ? table : null,
-          batchSize: null,
-          masks,
-          includeDdl: format === "sql" && includeDdl,
-        });
+      } else if (cancelledRef.current || disposedRef.current) {
         // 起動の IPC を待つ間にキャンセルされると、その時点では取消が空振りしうる。
         // 戻ってきた時点で登録済みなので、もう一度取消を送る。
-        if (cancelledRef.current || disposedRef.current) {
-          await api.cancelStream(streamId).catch(() => undefined);
-        }
+        await api.cancelStream(streamId).catch(() => undefined);
       }
     } catch (e) {
       settle({ ok: false, error: String(e) });
@@ -186,6 +179,55 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     return result;
   };
 
+  /** 1 テーブルを 1 ファイルへ書き出す。 */
+  const exportOne = (table: string, path: string, index: number): Promise<OneResult> =>
+    runStream(table, index, async (streamId) => {
+      // 取得に失敗したときはマスクできないまま書き出さず、そのテーブルを失敗にする (throw)。
+      const masks = await resolveMasks(table);
+      if (cancelledRef.current || disposedRef.current) return false;
+      await api.exportQueryStream({
+        sessionId,
+        streamId,
+        sql: qualifiedTableSql(driver, database, table),
+        database,
+        format,
+        path,
+        initialBatch: Math.max(1, settings.defaultDisplayCount),
+        chunkSize: Math.max(1, settings.streamPrefetchSize),
+        // 大量出力が途中で打ち切られないよう、エクスポートにはタイムアウトを掛けない。
+        queryTimeoutSecs: null,
+        table: format === "sql" ? table : null,
+        batchSize: null,
+        masks,
+        includeDdl: format === "sql" && includeDdl,
+      });
+      return true;
+    });
+
+  /** 選んだ全テーブルを 1 つの xlsx ブック (テーブルごとに 1 シート) へ書き出す (#1624)。 */
+  const exportWorkbook = (path: string): Promise<OneResult> =>
+    runStream(t("batchExportWorkbookLabel", { count: tables.length }), 0, async (streamId) => {
+      const sheets = [];
+      for (const table of tables) {
+        sheets.push({
+          name: table,
+          sql: qualifiedTableSql(driver, database, table),
+          masks: await resolveMasks(table),
+        });
+        if (cancelledRef.current || disposedRef.current) return false;
+      }
+      await api.exportTablesXlsx({
+        sessionId,
+        streamId,
+        database,
+        sheets,
+        path,
+        initialBatch: Math.max(1, settings.defaultDisplayCount),
+        chunkSize: Math.max(1, settings.streamPrefetchSize),
+      });
+      return true;
+    });
+
   const handleExport = async () => {
     if (isRunning || !dir.trim()) return;
     cancelledRef.current = false;
@@ -196,20 +238,35 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
     const stamp = batchTimestamp();
     const failures: { table: string; error: string }[] = [];
     let written = 0;
-    for (let i = 0; i < tables.length; i++) {
-      if (cancelledRef.current || disposedRef.current) break;
-      const table = tables[i] as string;
-      setStatus({ kind: "running", index: i, table, rows: 0 });
+    if (workbookMode) {
+      // 1 ブックにまとめる: 1 回の書き出しで全テーブルが成功か失敗かになる。
+      const label = t("batchExportWorkbookLabel", { count: tables.length });
+      setStatus({ kind: "running", index: 0, table: label, rows: 0 });
       let result: OneResult;
       try {
-        const path = await join(dir, batchExportFileName(table, format, used, stamp));
-        result = await exportOne(table, path, i);
+        const path = await join(dir, batchExportFileName(database, format, used, stamp));
+        result = await exportWorkbook(path);
       } catch (e) {
         result = { ok: false, error: String(e) };
       }
-      if (result.ok === true) written += 1;
-      else if (result.ok === false) failures.push({ table, error: result.error });
-      else break;
+      if (result.ok === true) written = tables.length;
+      else if (result.ok === false) failures.push({ table: label, error: result.error });
+    } else {
+      for (let i = 0; i < tables.length; i++) {
+        if (cancelledRef.current || disposedRef.current) break;
+        const table = tables[i] as string;
+        setStatus({ kind: "running", index: i, table, rows: 0 });
+        let result: OneResult;
+        try {
+          const path = await join(dir, batchExportFileName(table, format, used, stamp));
+          result = await exportOne(table, path, i);
+        } catch (e) {
+          result = { ok: false, error: String(e) };
+        }
+        if (result.ok === true) written += 1;
+        else if (result.ok === false) failures.push({ table, error: result.error });
+        else break;
+      }
     }
     if (disposedRef.current) return;
     if (cancelledRef.current) {
@@ -326,6 +383,27 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
           </FormSection>
         )}
 
+        {format === "xlsx" && tables.length > 1 && (
+          <FormSection>
+            <chakra.label
+              display="inline-flex"
+              alignItems="center"
+              gap="2"
+              cursor="pointer"
+              userSelect="none"
+              fontSize="md"
+            >
+              <Checkbox
+                checked={singleWorkbook}
+                onChange={(e) => setSingleWorkbook(e.target.checked)}
+                disabled={isRunning}
+              />
+              <span>{t("batchExportSingleWorkbook")}</span>
+            </chakra.label>
+            <chakra.div textStyle="caption">{t("batchExportSingleWorkbookHint")}</chakra.div>
+          </FormSection>
+        )}
+
         <FormSection>
           <FieldLabel as="div">{t("exportMasking")}</FieldLabel>
           <chakra.label
@@ -371,12 +449,14 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
           <chakra.div display="flex" flexDirection="column" gap="1.5">
             <DeterminateProgressBar value={tables.length > 0 ? status.index / tables.length : 0} />
             <chakra.div fontSize="sm" color="app.text" role="status" fontWeight={500}>
-              {t("batchExportProgress", {
-                index: status.index + 1,
-                count: tables.length,
-                table: status.table,
-                rows: status.rows,
-              })}
+              {workbookMode
+                ? t("batchExportWorkbookProgress", { count: tables.length, rows: status.rows })
+                : t("batchExportProgress", {
+                    index: status.index + 1,
+                    count: tables.length,
+                    table: status.table,
+                    rows: status.rows,
+                  })}
             </chakra.div>
           </chakra.div>
         )}

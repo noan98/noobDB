@@ -320,6 +320,10 @@ export interface EncryptedProfileExportResult {
   profiles: number;
   secrets: number;
   bytes: number;
+  /** 書き出し直後に読み直して復号・件数を確認済み (#1624)。成功応答では常に true。 */
+  verified: boolean;
+  /** 世代管理で削除した古い世代の数 (#1624)。 */
+  generations_pruned: number;
 }
 
 export type SnippetScope =
@@ -1795,6 +1799,14 @@ export interface DumpOptions {
    * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
    */
   tables?: string[] | null;
+  /** MySQL のみ — `mysqldump --no-tablespaces` (PROCESS 権限が無いユーザ向け, #1624)。 */
+  noTablespaces?: boolean;
+  /** MySQL のみ — `mysqldump --set-gtid-purged=OFF` (GTID 有効サーバ間の移行向け, #1624)。 */
+  setGtidPurgedOff?: boolean;
+  /** 全ドライバ — 完成したダンプの SHA-256 を `<保存先>.sha256` に書く (#1624)。 */
+  writeChecksum?: boolean;
+  /** SQLite のみ — SQL ではなく `VACUUM INTO` による整合したバイナリ・スナップショット (`.db`, #1624)。 */
+  sqliteSnapshot?: boolean;
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------
@@ -2458,6 +2470,8 @@ export interface BlobFolderSaveResult {
   failed: number;
   /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
   errors: { row: number; error: string }[];
+  /** 対応表 (CSV) を書いたときのフォルダ内のファイル名。書かなかったときは null (#1624)。 */
+  manifestFile: string | null;
 }
 
 export interface ImportErrorEvent {

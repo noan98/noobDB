@@ -21,7 +21,16 @@ import { progressRatio } from "./progressRatio";
 import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
 import { Button, Input } from "./ui";
-import { sortWhereUsedMatches, splitHighlightSegments, unsupportedWhereUsedKinds } from "./whereUsed";
+import {
+  sortWhereUsedMatches,
+  splitHighlightSegments,
+  unsupportedWhereUsedKinds,
+  whereUsedExportTable,
+  whereUsedMarkdown,
+  type WhereUsedExportLabels,
+} from "./whereUsed";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv } from "./tabularText";
 
 /**
  * オブジェクト依存検索 / 影響分析 (#1027) のボトムパネル。
@@ -334,6 +343,48 @@ function WhereUsedResults({
     objects: report.scannedObjects,
     snippets: report.scannedSnippets,
   };
+  // 影響分析の結果を Markdown / CSV で出す (#1624)。画面と同じ並びで、ビュー・ルーチン・スニペットの
+  // 影響範囲を変更依頼やレビューにそのまま貼れる。
+  const exportLabels: WhereUsedExportLabels = {
+    kind: t("whereUsedExportKind"),
+    name: t("whereUsedExportName"),
+    status: t("whereUsedExportStatus"),
+    confidence: t("whereUsedExportConfidence"),
+    hits: t("whereUsedExportHits"),
+    line: t("whereUsedExportLine"),
+    text: t("whereUsedExportText"),
+    kindName: (k) => t(KIND_LABEL[k]),
+    confidenceName: (c) => (c === "possible" ? t("whereUsedPossible") : t("whereUsedDirect")),
+    statusMatch: t("whereUsedExportStatusMatch"),
+    statusFailed: t("whereUsedExportStatusFailed"),
+    statusEmpty: t("whereUsedExportStatusEmpty"),
+  };
+  const exportButton = (
+    <TextExportButton
+      filenameBase={`where-used-${targetLabel(target).replace(/[^\w.-]+/g, "_")}`}
+      formats={[
+        {
+          id: "markdown",
+          label: "Markdown",
+          build: () =>
+            whereUsedMarkdown(report, exportLabels, {
+              heading: t("whereUsedExportHeading", { target: targetLabel(target) }),
+              summary:
+                report.matches.length === 0 ? t("whereUsedNone", counts) : t("whereUsedSummary", counts),
+              cancelled: t("whereUsedCancelled"),
+            }),
+        },
+        {
+          id: "csv",
+          label: "CSV",
+          build: () => {
+            const { header, rows } = whereUsedExportTable(report, exportLabels);
+            return tableToCsv(header, rows);
+          },
+        },
+      ]}
+    />
+  );
   return (
     <Flex direction="column" gap="2.5">
       {report.cancelled && (
@@ -341,13 +392,18 @@ function WhereUsedResults({
           {t("whereUsedCancelled")}
         </chakra.div>
       )}
-      {report.matches.length === 0 ? (
-        <EmptyState compact icon="search" title={t("whereUsedNone", counts)} />
-      ) : (
-        <chakra.div textStyle="body" color="app.textMuted">
-          {t("whereUsedSummary", counts)}
-        </chakra.div>
-      )}
+      <Flex align="center" gap="2">
+        <Box flex="1" minW={0}>
+          {report.matches.length === 0 ? (
+            <EmptyState compact icon="search" title={t("whereUsedNone", counts)} />
+          ) : (
+            <chakra.div textStyle="body" color="app.textMuted">
+              {t("whereUsedSummary", counts)}
+            </chakra.div>
+          )}
+        </Box>
+        {exportButton}
+      </Flex>
 
       {report.matches.length > 0 && (
         <MotionUl

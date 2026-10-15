@@ -374,6 +374,7 @@
       }
     ],
     "failed": 1,
+    "manifestFile": "manifest.csv",
     "saved": 3,
     "skippedNull": 1,
     "skippedTooLarge": 2,
@@ -1171,8 +1172,10 @@
   ],
   "encryptedProfileExportResult": {
     "bytes": 1024,
+    "generations_pruned": 1,
     "profiles": 3,
-    "secrets": 2
+    "secrets": 2,
+    "verified": true
   },
   "encryptedProfileImportResult": {
     "imported": 3,
@@ -5108,11 +5111,15 @@
           "noData": false,
           "noOwner": false,
           "noPrivileges": false,
+          "noTablespaces": false,
           "pgSchema": "public",
           "routines": false,
+          "setGtidPurgedOff": false,
           "singleTransaction": false,
+          "sqliteSnapshot": false,
           "tables": null,
-          "triggers": false
+          "triggers": false,
+          "writeChecksum": false
         },
         "output_path": "/tmp/dump.sql"
       },

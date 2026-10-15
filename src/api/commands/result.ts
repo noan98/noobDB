@@ -3,6 +3,7 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { ExportColumnMask } from "../../components/exportMasking";
+import type { SqlConflict } from "../../components/exportPreview";
 import type { HandleSortFilterRequest } from "../../components/gridSortFilter";
 import type {
   Column,
@@ -79,6 +80,8 @@ export const resultCommands = {
     masks?: ExportColumnMask[] | null;
     /** SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (ファイル出力の `ddlHeader` と同じ)。 */
     ddlHeader?: string | null;
+    /** SQL 形式の衝突時の書き方 (ファイル出力の `sqlConflict` と同じ, #1624)。 */
+    sqlConflict?: SqlConflict | null;
   }) =>
     invoke<string>("render_export_text", {
       req: {
@@ -92,6 +95,7 @@ export const resultCommands = {
         batchSize: params.batchSize ?? null,
         masks: params.masks && params.masks.length > 0 ? params.masks : null,
         ddlHeader: params.ddlHeader ?? null,
+        sqlConflict: params.sqlConflict ?? null,
       },
     }).then((r) => parseResponse(schemas.stringResponse, r, "render_export_text")),
 };

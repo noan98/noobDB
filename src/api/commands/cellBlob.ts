@@ -75,6 +75,8 @@ export const cellBlobCommands = {
     column: string,
     keys: { column: string; value: CellValue }[][],
     folder: string,
+    /** true なら folder に対応表 `manifest.csv` (行・主キー・保存ファイル名・サイズ・種別・結果) も書く (#1624)。 */
+    writeManifest = false,
   ) =>
     invoke<BlobFolderSaveResult>("save_cells_to_folder", {
       sessionId,
@@ -83,6 +85,7 @@ export const cellBlobCommands = {
       column,
       keys,
       folder,
+      writeManifest,
     }).then((r) => parseResponse(schemas.blobFolderSaveResult, r, "save_cells_to_folder")),
 
   /**

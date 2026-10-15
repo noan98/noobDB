@@ -306,6 +306,49 @@ export function sqlLiteral(driver: string, v: CellValue): string {
   return "'" + escaped + "'";
 }
 
+/** SQL INSERT の衝突時の書き方 (UPSERT, #1624)。バックエンド `export.rs::SqlConflictMode` と対応。 */
+export type SqlConflictMode = "insert" | "skip" | "update" | "replace";
+
+export interface SqlConflict {
+  mode: SqlConflictMode;
+  /** 衝突判定に使うキー列。`skip` / `update` で必須、出力列に含まれていること。 */
+  keyColumns: string[];
+}
+
+export const SQL_CONFLICT_MODES: readonly SqlConflictMode[] = ["insert", "skip", "update", "replace"];
+
+/** 衝突指定が使えない理由。使えるなら null (バックエンド `validate_conflict` と同じ判定)。 */
+export type SqlConflictProblem = "keyRequired" | "keyMissing" | "replaceUnsupported";
+
+export function sqlConflictProblem(
+  driver: string,
+  columns: Column[],
+  conflict: SqlConflict | undefined,
+): SqlConflictProblem | null {
+  if (!conflict || conflict.mode === "insert") return null;
+  if (conflict.mode === "replace") return driver === "postgres" ? "replaceUnsupported" : null;
+  if (conflict.keyColumns.length === 0) return "keyRequired";
+  const names = columns.map((c) => c.name);
+  return conflict.keyColumns.every((k) => names.includes(k)) ? null : "keyMissing";
+}
+
+/** `INSERT … VALUES (…)` の後ろに付ける競合句。バックエンド `db/upsert.rs::conflict_clause` と同じ。 */
+function conflictClause(driver: string, columns: Column[], conflict: SqlConflict): string {
+  const q = (name: string) => quoteSqlIdent(driver, name);
+  const updates = columns.map((c) => c.name).filter((n) => !conflict.keyColumns.includes(n));
+  const doUpdate = conflict.mode === "update" && updates.length > 0;
+  if (driver === "mysql") {
+    const set = doUpdate
+      ? updates.map((c) => `${q(c)} = VALUES(${q(c)})`).join(", ")
+      : `${q(conflict.keyColumns[0] ?? columns[0]?.name ?? "")} = ${q(conflict.keyColumns[0] ?? columns[0]?.name ?? "")}`;
+    return ` ON DUPLICATE KEY UPDATE ${set}`;
+  }
+  const keys = conflict.keyColumns.map(q).join(", ");
+  return doUpdate
+    ? ` ON CONFLICT (${keys}) DO UPDATE SET ${updates.map((c) => `${q(c)} = EXCLUDED.${q(c)}`).join(", ")}`
+    : ` ON CONFLICT (${keys}) DO NOTHING`;
+}
+
 /**
  * SQL INSERT 文を生成する。`batchSize` 行ごとに 1 文へまとめ、各文は
  * `INSERT INTO <table> (cols) VALUES\n  (...),\n  (...);` の形。空結果なら空文字列。
@@ -317,8 +360,18 @@ export function buildSqlInsert(
   columns: Column[],
   rows: CellValue[][],
   batchSize = DEFAULT_SQL_BATCH,
+  conflict?: SqlConflict,
 ): string {
   if (columns.length === 0 || rows.length === 0) return "";
+  // 使えない指定 (キー未選択など) は素の INSERT にする。UI は理由を示して書き出しを止める。
+  const usable = conflict && conflict.mode !== "insert" && !sqlConflictProblem(driver, columns, conflict);
+  const insertHead =
+    usable && conflict.mode === "replace"
+      ? driver === "mysql"
+        ? "REPLACE INTO"
+        : "INSERT OR REPLACE INTO"
+      : "INSERT INTO";
+  const suffix = usable && conflict.mode !== "replace" ? conflictClause(driver, columns, conflict) : "";
   const tbl = (table ?? "").trim() || DEFAULT_SQL_TABLE;
   const size = batchSize > 0 ? batchSize : DEFAULT_SQL_BATCH;
   const ref = quoteSqlIdent(driver, tbl);
@@ -326,11 +379,11 @@ export function buildSqlInsert(
   let out = "";
   for (let start = 0; start < rows.length; start += size) {
     const chunk = rows.slice(start, start + size);
-    out += `INSERT INTO ${ref} (${cols}) VALUES\n`;
+    out += `${insertHead} ${ref} (${cols}) VALUES\n`;
     out += chunk
       .map((row) => "  (" + columns.map((_, i) => sqlLiteral(driver, row[i] ?? null)).join(", ") + ")")
       .join(",\n");
-    out += ";\n";
+    out += `${suffix};\n`;
   }
   return out;
 }
@@ -340,6 +393,8 @@ export interface ExportFormatContext {
   driver?: string;
   table?: string | null;
   sqlBatchSize?: number;
+  /** SQL 形式の衝突時の書き方 (#1624)。未指定は素の INSERT。 */
+  sqlConflict?: SqlConflict;
 }
 
 /**
@@ -368,6 +423,7 @@ export function buildExportContent(
         columns,
         rows,
         ctx?.sqlBatchSize ?? DEFAULT_SQL_BATCH,
+        ctx?.sqlConflict,
       );
     case "xlsx":
       // バイナリ形式 (#711) はテキストとしてプレビュー/コピーできない。表示側は

@@ -18,6 +18,17 @@ const STRONG_PASSPHRASE_LENGTH = 16;
 /** 暗号化バックアップのファイル拡張子 (ドットなし)。 */
 export const BACKUP_FILE_EXTENSION = "noobdb-backup";
 
+/** 世代管理 (#1624) で残す世代数 (最新を含む) の範囲と既定値。 */
+export const MIN_KEEP_GENERATIONS = 2;
+export const MAX_KEEP_GENERATIONS = 50;
+export const DEFAULT_KEEP_GENERATIONS = 5;
+
+/** 入力された世代数を範囲に収める (NaN・小数は既定値 / 切り捨て)。 */
+export function clampKeepGenerations(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_KEEP_GENERATIONS;
+  return Math.min(MAX_KEEP_GENERATIONS, Math.max(MIN_KEEP_GENERATIONS, Math.trunc(n)));
+}
+
 /** 保存ダイアログの既定ファイル名。 */
 export function defaultBackupFileName(now: Date = new Date()): string {
   const y = now.getFullYear();

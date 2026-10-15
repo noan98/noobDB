@@ -11,6 +11,7 @@ import {
   canTimeBucket,
   effectiveTimeBucket,
   chartConfigKeyFrom,
+  chartModelTable,
   chartNotices,
   donutSlicePath,
   isDonut,
@@ -1023,5 +1024,29 @@ describe("棒グラフの並び替え (#1628)", () => {
     expect(buildChartModel(columns, rows, cfg).labels).toEqual(["y", "z", "x"]);
     expect(sanitizeChartConfig(cfg, columns)?.barSort).toBe("desc");
     expect(sanitizeChartConfig({ ...cfg, barSort: "bogus" }, columns)?.barSort).toBeUndefined();
+  });
+});
+
+describe("chartModelTable (#1624)", () => {
+  it("ラベル列 + 系列名のヘッダと、ラベルごとの値の行を作る", () => {
+    const model: ChartModel = {
+      labels: ["a", "b"],
+      series: [
+        { name: "x", values: [1, 2] },
+        { name: "y", values: [3] },
+      ],
+      sampledFrom: null,
+    };
+    expect(chartModelTable(model, "Label")).toEqual({
+      header: ["Label", "x", "y"],
+      rows: [
+        ["a", 1, 3],
+        ["b", 2, null],
+      ],
+    });
+  });
+
+  it("系列が無くてもラベルだけの表になる", () => {
+    expect(chartModelTable({ labels: ["a"], series: [] }, "L")).toEqual({ header: ["L"], rows: [["a"]] });
   });
 });

@@ -411,7 +411,38 @@ pub mod __test_api {
         Ok(buf)
     }
 
-    pub use crate::commands::export::{ExportFormat, ExportResult, ExportTruncation};
+    /// SQL 形式を衝突時の書き方付きでメモリへ書き出す (UPSERT, #1624)。共有ゴールデンの
+    /// `conflictCases` を実ファイル出力と同じ `write_export_to` で検証するためのもの。
+    pub fn export_sql_with_conflict(
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        driver: DriverKind,
+        table: &str,
+        batch_size: usize,
+        conflict: SqlConflict,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(
+            Some(driver),
+            Some(table.to_string()),
+            Some(batch_size),
+        )
+        .with_conflict(Some(conflict));
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(
+            &mut buf,
+            crate::commands::export::ExportFormat::Sql,
+            columns,
+            rows,
+            None,
+            &opts,
+            None,
+        )?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::{
+        ExportFormat, ExportResult, ExportTruncation, SqlConflict, SqlConflictMode,
+    };
 
     /// xlsx エクスポートで 1 つの値がどのセルになるかを文字列で表す (#711)。
     /// 書き出し ([`crate::commands::export_xlsx::XlsxSheetWriter`]) が従う判定
@@ -489,6 +520,30 @@ pub mod __test_api {
             health_version: Default::default(),
             inspector: Default::default(),
         }
+    }
+
+    /// 複数の SELECT を 1 つの xlsx ブックへ書き出す (`export_tables_xlsx` の中核, #1624)。
+    /// `sheets` は `(シート名の元, SELECT 文)`。書き出したバイト数と全シート通算の行数を返す。
+    pub async fn export_workbook_via_command(
+        session: &Session,
+        sheets: &[(&str, &str)],
+        path: &str,
+    ) -> crate::error::Result<(u64, u64)> {
+        let prepared = sheets
+            .iter()
+            .map(|(name, sql)| crate::commands::export::PreparedSheet::for_test(name, sql))
+            .collect();
+        let outcome = crate::commands::export::run_export_workbook(
+            session,
+            None,
+            prepared,
+            path,
+            100,
+            100,
+            |_| {},
+        )
+        .await?;
+        Ok((outcome.bytes, outcome.rows))
     }
 
     /// Drives the `set_emergency_mode` IPC command's core path (session lookup
@@ -683,7 +738,24 @@ pub mod __test_api {
         let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
             .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
         crate::commands::cell_blob::save_cells_to_folder_inner(
-            session, database, table, column, &keys, folder,
+            session, database, table, column, &keys, folder, false,
+        )
+        .await
+    }
+
+    /// [`save_cells_to_folder_via_session`] の対応表 (`manifest.csv`) 付き版 (#1624)。
+    pub async fn save_cells_to_folder_with_manifest_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        keys: serde_json::Value,
+        folder: &str,
+    ) -> crate::error::Result<crate::commands::cell_blob::BlobFolderSaveResult> {
+        let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::commands::cell_blob::save_cells_to_folder_inner(
+            session, database, table, column, &keys, folder, true,
         )
         .await
     }
@@ -1513,6 +1585,7 @@ pub fn run() {
             commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
+            commands::export::export_tables_xlsx,
             commands::export::mask_export_rows,
             commands::result::result_sort_filter,
             commands::result::result_find,

@@ -64,6 +64,7 @@ describe("useCellBlobIo saveMany (#1539)", () => {
       skippedTooLarge: 0,
       failed: 0,
       errors: [],
+      manifestFile: null,
     });
     const { result } = setup([
       [1, "00"],
@@ -80,6 +81,7 @@ describe("useCellBlobIo saveMany (#1539)", () => {
       "data",
       [[{ column: "id", value: 1 }], [{ column: "id", value: 3 }]],
       "/tmp/out",
+      false,
     );
     await waitFor(() =>
       expect(
@@ -87,6 +89,35 @@ describe("useCellBlobIo saveMany (#1539)", () => {
           t("blobFolderSaved", { saved: 2, size: "2.0 KiB", skipped: 1, failed: 0, folder: "/tmp/out" }),
         ),
       ).toBe(true),
+    );
+  });
+
+  it("対応表付きで保存すると writeManifest=true を渡し、書いた対応表のファイル名を通知する (#1624)", async () => {
+    openMock.mockResolvedValue("/tmp/out");
+    vi.mocked(api.saveCellsToFolder).mockResolvedValue({
+      saved: 1,
+      totalBytes: 10,
+      skippedNull: 0,
+      skippedTooLarge: 0,
+      failed: 0,
+      errors: [],
+      manifestFile: "manifest_2.csv",
+    });
+    const { result } = setup([[1, "00"]]);
+    await result.current(0, 1)?.saveMany?.([0], true);
+    expect(api.saveCellsToFolder).toHaveBeenCalledWith(
+      "s1",
+      "app",
+      "files",
+      "data",
+      [[{ column: "id", value: 1 }]],
+      "/tmp/out",
+      true,
+    );
+    await waitFor(() =>
+      expect(document.body.textContent?.includes(t("blobFolderManifest", { file: "manifest_2.csv" }))).toBe(
+        true,
+      ),
     );
   });
 

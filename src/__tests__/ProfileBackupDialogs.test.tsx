@@ -35,7 +35,25 @@ describe("ProfileBackupExportDialog (#710)", () => {
     await user.type(screen.getByLabelText(t("profileBackupPassphraseConfirm")), "short-enough");
     expect(confirmBtn).toBeEnabled();
     await user.click(confirmBtn);
-    expect(onConfirm).toHaveBeenCalledWith("short-enough");
+    expect(onConfirm).toHaveBeenCalledWith("short-enough", null);
+  });
+
+  it("世代管理をオンにすると残す世代数 (範囲内に丸めた値) を渡す (#1624)", async () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <ProfileBackupExportDialog profileCount={3} onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText(t("profileBackupPassphrase")), "long-enough-pass");
+    await user.type(screen.getByLabelText(t("profileBackupPassphraseConfirm")), "long-enough-pass");
+    expect(screen.queryByLabelText(t("profileBackupKeepGenerationsCount"))).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: t("profileBackupKeepGenerations") }));
+    const count = screen.getByLabelText(t("profileBackupKeepGenerationsCount")) as HTMLInputElement;
+    expect(count.value).toBe("5");
+    await user.clear(count);
+    await user.type(count, "999");
+    await user.click(screen.getByRole("button", { name: t("profileBackupExportConfirm") }));
+    expect(onConfirm).toHaveBeenCalledWith("long-enough-pass", 50);
   });
 
   it("強度の目安と取り扱いの注意を表示する", async () => {

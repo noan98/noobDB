@@ -451,6 +451,9 @@ async fn run_action(
                 None,
                 // スケジュール実行は表定義 (CREATE TABLE) を付けない (#1539。ExportModal から行う)。
                 false,
+                // 衝突時の書き方 (UPSERT) と CSV の文字コードは ExportModal / 一括書き出しの機能 (#1624)。
+                None,
+                None,
                 |rows| progress.store(rows, Ordering::SeqCst),
             )
             .await;

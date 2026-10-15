@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildExportContent } from "../components/exportPreview";
+import {
+  buildExportContent,
+  buildSqlInsert,
+  sqlConflictProblem,
+  type SqlConflict,
+} from "../components/exportPreview";
 import type { CellValue, Column, ExportFormat } from "../api/tauri";
 import vectors from "./fixtures/exportFormatVectors.json";
 
@@ -78,5 +83,54 @@ describe("エクスポート書式ゴールデン (フロント buildExportConte
     // `frontendExpected` の上書きが 1 件も無くなったら、BLOB がフロントでは
     // ただの文字列になるという既知の差分が暗黙化している。
     expect(cases.some((c) => c.frontendExpected !== undefined)).toBe(true);
+  });
+});
+
+// UPSERT 形式 (#1624): バックエンド `write_sql_insert` の衝突句と同じ出力になる。
+interface ConflictCase {
+  name: string;
+  columns: Column[];
+  rows: CellSpec[][];
+  sql: { driver: string; table: string; batchSize: number; conflict: SqlConflict };
+  expected: string;
+}
+
+const conflictCases = (vectors as unknown as { conflictCases: ConflictCase[] }).conflictCases;
+
+describe("エクスポート SQL の衝突時の書き方ゴールデン (#1624)", () => {
+  it("ベクタが存在する", () => {
+    expect(conflictCases.length).toBeGreaterThanOrEqual(5);
+  });
+
+  for (const c of conflictCases) {
+    it(c.name, () => {
+      const rows = c.rows.map((r) => r.map(toCellValue));
+      expect(
+        buildSqlInsert(c.sql.driver, c.sql.table, c.columns, rows, c.sql.batchSize, c.sql.conflict),
+      ).toBe(c.expected);
+    });
+  }
+
+  it("使えない指定は理由を返し、出力は素の INSERT に倒す", () => {
+    const cols: Column[] = [
+      { name: "id", type_name: "int" },
+      { name: "name", type_name: "text" },
+    ];
+    expect(sqlConflictProblem("mysql", cols, { mode: "update", keyColumns: [] })).toBe("keyRequired");
+    expect(sqlConflictProblem("mysql", cols, { mode: "skip", keyColumns: ["zzz"] })).toBe("keyMissing");
+    expect(sqlConflictProblem("postgres", cols, { mode: "replace", keyColumns: [] })).toBe(
+      "replaceUnsupported",
+    );
+    expect(sqlConflictProblem("sqlite", cols, { mode: "replace", keyColumns: [] })).toBeNull();
+    expect(sqlConflictProblem("sqlite", cols, { mode: "insert", keyColumns: [] })).toBeNull();
+    const plain = buildSqlInsert("mysql", "t", cols, [[1, "a"]], 100, { mode: "update", keyColumns: [] });
+    expect(plain).toBe("INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a');\n");
+  });
+
+  it("キー以外の列が無い update は no-op (DO NOTHING) になる", () => {
+    const cols: Column[] = [{ name: "id", type_name: "int" }];
+    expect(buildSqlInsert("sqlite", "t", cols, [[1]], 100, { mode: "update", keyColumns: ["id"] })).toBe(
+      'INSERT INTO "t" ("id") VALUES\n  (1) ON CONFLICT ("id") DO NOTHING;\n',
+    );
   });
 });

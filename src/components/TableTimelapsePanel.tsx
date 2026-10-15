@@ -25,6 +25,7 @@ import {
 } from "../tableTimelapse";
 import { resolveMaskedColumns } from "./columnMask";
 import { TextExportButton } from "./TextExportButton";
+import { TimelapseDmlModal } from "./TimelapseDmlModal";
 import { tableToCsv } from "./tabularText";
 import { useConfirm } from "./ConfirmDialog";
 import { statusColors } from "./diffStatusColors";
@@ -395,6 +396,14 @@ export function TableTimelapsePanel({
     return tableToCsv(table.header, table.rows);
   };
 
+  // 再現用 DML のプレビュー (#1624)。マスク前の値は伏せ字判定した列を除いて SQL に書かない。
+  const [dmlOpen, setDmlOpen] = useState(false);
+  const dmlRows = useMemo(() => (diff ? buildTimelapseExportRows(diff.diff, null) : []), [diff]);
+  const maskedColumnSet = useMemo(
+    () => new Set(diff ? diff.diff.columns.filter((_, i) => masked?.[i]) : []),
+    [diff, masked],
+  );
+
   const kindLabel: Record<TimelapseRowKind, string> = {
     added: t("timelapseKindAdded"),
     removed: t("timelapseKindRemoved"),
@@ -409,6 +418,16 @@ export function TableTimelapsePanel({
   return (
     <Box flex="1" minH={0} display="flex" flexDirection="column">
       {dialog}
+      {dmlOpen && diff && selected && (
+        <TimelapseDmlModal
+          rows={dmlRows}
+          maskedColumns={maskedColumnSet}
+          driver={selected.driver}
+          database={selected.database}
+          table={diff.diff.table}
+          onClose={() => setDmlOpen(false)}
+        />
+      )}
       <Flex
         align="center"
         gap="2"
@@ -622,6 +641,14 @@ export function TableTimelapsePanel({
                     <Chip status="different">{t("timelapseCountChanged", { count: counts.changed })}</Chip>
                     <Chip status="target_only">{t("timelapseCountRemoved", { count: counts.removed })}</Chip>
                     <Box flex="1" />
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setDmlOpen(true)}
+                      disabled={rows.length === 0}
+                    >
+                      {t("timelapseDmlButton")}
+                    </Button>
                     <TextExportButton
                       filenameBase={`timelapse-${diff.diff.table}`}
                       disabled={rows.length === 0}

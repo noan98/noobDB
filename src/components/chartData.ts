@@ -66,6 +66,21 @@ export interface ChartSeries {
   values: number[];
 }
 
+/**
+ * 描画に使ったチャートのデータ (ラベルと各系列の値) を表にする (#1624)。1 行目はヘッダ
+ * (`labelHeader` + 系列名)、以降はラベルごとに 1 行。報告資料に使う数値を画像ではなく
+ * データとして取り出すための CSV / Markdown 書き出し用。
+ */
+export function chartModelTable(
+  model: Pick<ChartModel, "labels" | "series">,
+  labelHeader: string,
+): { header: string[]; rows: CellValue[][] } {
+  return {
+    header: [labelHeader, ...model.series.map((s) => s.name)],
+    rows: model.labels.map((label, i) => [label, ...model.series.map((s) => s.values[i] ?? null)]),
+  };
+}
+
 export interface ChartModel {
   labels: string[];
   series: ChartSeries[];

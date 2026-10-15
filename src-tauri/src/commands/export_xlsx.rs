@@ -219,6 +219,48 @@ pub(crate) fn clamp_cell_text(s: &str) -> (Cow<'_, str>, bool) {
     (Cow::Borrowed(s), false)
 }
 
+/// Excel のシート名の上限 (文字数)。
+const XLSX_MAX_SHEET_NAME_CHARS: usize = 31;
+
+/// 表名などからシート名を決める (#1624)。Excel の規則 (31 文字以内・`[ ] : * ? / \` 禁止・
+/// 先頭末尾に `'` を置かない・空は不可・予約名 `History` 不可・大文字小文字を区別せず重複不可)
+/// に合わせて整え、`used` (小文字化したこれまでの名前) と重ならない名前にして登録する。
+/// 禁止文字は `_` に置換し、重複は `_2`, `_3` … を付ける (本体を削って 31 文字に収める)。
+pub(crate) fn xlsx_sheet_name(raw: &str, used: &mut std::collections::HashSet<String>) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| match c {
+            '[' | ']' | ':' | '*' | '?' | '/' | '\\' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches(|c: char| c == '\'' || c.is_whitespace());
+    let mut base: String = if cleaned.is_empty() {
+        "Sheet".to_string()
+    } else {
+        cleaned.to_string()
+    };
+    if base.eq_ignore_ascii_case("history") {
+        base.push('_');
+    }
+    let fit = |s: &str, suffix: &str| -> String {
+        let keep = XLSX_MAX_SHEET_NAME_CHARS.saturating_sub(suffix.chars().count());
+        let head: String = s.chars().take(keep).collect();
+        // 切り詰めた結果の先頭末尾に `'` や空白が来ないようにする。
+        let head = head.trim_matches(|c: char| c == '\'' || c.is_whitespace());
+        format!("{head}{suffix}")
+    };
+    let mut candidate = fit(&base, "");
+    let mut n = 2usize;
+    while used.contains(&candidate.to_lowercase()) {
+        candidate = fit(&base, &format!("_{n}"));
+        n += 1;
+    }
+    used.insert(candidate.to_lowercase());
+    candidate
+}
+
 fn xlsx_err(e: XlsxError) -> AppError {
     AppError::Other(format!("xlsx export failed: {e}"))
 }
@@ -228,9 +270,14 @@ fn xlsx_err(e: XlsxError) -> AppError {
 pub(crate) struct XlsxSheetWriter {
     workbook: Workbook,
     header_format: Format,
+    /// いま書いているシートの添字 (ブック内の何枚目か)。
+    current: usize,
+    /// ブックが持つシート数。
+    sheet_count: usize,
     column_count: usize,
     /// 次に書くシート上の行番号 (0 始まり。0 はヘッダ)。
     next_row: u32,
+    /// 行数・文字数の上限による欠けの集計。複数シートのときはブック全体の合計。
     report: ExportTruncation,
 }
 
@@ -250,10 +297,65 @@ impl XlsxSheetWriter {
         Ok(Self {
             workbook,
             header_format: Format::new().set_bold(),
+            current: 0,
+            sheet_count: 1,
             column_count: 0,
             next_row: 0,
             report: ExportTruncation::default(),
         })
+    }
+
+    /// シートを 1 枚も持たないブックを作る (複数シート用, #1624)。`begin_sheet` で 1 枚ずつ足す。
+    /// 一時ディレクトリの検証は [`Self::new`] と同じ。
+    pub(crate) fn new_workbook() -> Result<Self> {
+        let mut workbook = Workbook::new();
+        workbook
+            .set_tempdir(std::env::temp_dir())
+            .map_err(xlsx_err)?;
+        Ok(Self {
+            workbook,
+            header_format: Format::new().set_bold(),
+            current: 0,
+            sheet_count: 0,
+            column_count: 0,
+            next_row: 0,
+            report: ExportTruncation::default(),
+        })
+    }
+
+    /// 新しいシートを足して書き込み先にする (#1624)。直前のシートはここで閉じる (オートフィルタ
+    /// の範囲確定)。`name` は [`xlsx_sheet_name`] で整えたものを渡す。
+    pub(crate) fn begin_sheet(&mut self, name: &str) -> Result<()> {
+        if self.sheet_count > 0 {
+            self.finish_current_sheet()?;
+        }
+        let sheet = self.workbook.add_worksheet_with_constant_memory();
+        sheet.set_name(name).map_err(xlsx_err)?;
+        self.current = self.sheet_count;
+        self.sheet_count += 1;
+        self.column_count = 0;
+        self.next_row = 0;
+        Ok(())
+    }
+
+    /// いま書いているシートのオートフィルタ範囲をヘッダから最終データ行までに張る。
+    /// `autofilter` は範囲を覚えるだけで書き込み済みの行には触れないので、定数メモリモード
+    /// でも行を書き終えた後に呼べる。
+    fn finish_current_sheet(&mut self) -> Result<()> {
+        let last_col = self
+            .column_count
+            .checked_sub(1)
+            .and_then(|n| u16::try_from(n).ok());
+        if let (Some(last), true) = (last_col, self.next_row > 0) {
+            let sheet = self
+                .workbook
+                .worksheet_from_index(self.current)
+                .map_err(xlsx_err)?;
+            sheet
+                .autofilter(0, 0, self.next_row - 1, last)
+                .map_err(xlsx_err)?;
+        }
+        Ok(())
     }
 
     /// ヘッダ行 (列名 + 太字) を書く。列数が Excel の上限を超えるならエラー。
@@ -266,7 +368,10 @@ impl XlsxSheetWriter {
         }
         self.column_count = columns.len();
         let row = self.next_row;
-        let sheet = self.workbook.worksheet_from_index(0).map_err(xlsx_err)?;
+        let sheet = self
+            .workbook
+            .worksheet_from_index(self.current)
+            .map_err(xlsx_err)?;
         for (i, col) in columns.iter().enumerate() {
             let (text, truncated) = clamp_cell_text(&col.name);
             if truncated {
@@ -302,7 +407,10 @@ impl XlsxSheetWriter {
 
     /// データ行を書く。行数上限を超えた分は書かずに `dropped_rows` へ数える。
     pub(crate) fn write_rows(&mut self, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
-        let sheet = self.workbook.worksheet_from_index(0).map_err(xlsx_err)?;
+        let sheet = self
+            .workbook
+            .worksheet_from_index(self.current)
+            .map_err(xlsx_err)?;
         for row in rows {
             if u64::from(self.next_row) >= XLSX_MAX_SHEET_ROWS {
                 self.report.dropped_rows += 1;
@@ -347,18 +455,7 @@ impl XlsxSheetWriter {
     pub(crate) fn save_to<W: Write + Send>(&mut self, w: W) -> Result<Option<ExportTruncation>> {
         // ヘッダが一度も書かれていない (列イベントが来なかった) 場合も、空シートの
         // 有効な xlsx を出す。
-        // オートフィルタはヘッダ (0 行目) から最終データ行までに張る。`autofilter` は範囲を
-        // 覚えるだけで書き込み済みの行には触れないので、定数メモリモードでも最後に呼べる。
-        let last_col = self
-            .column_count
-            .checked_sub(1)
-            .and_then(|n| u16::try_from(n).ok());
-        if let (Some(last), true) = (last_col, self.next_row > 0) {
-            let sheet = self.workbook.worksheet_from_index(0).map_err(xlsx_err)?;
-            sheet
-                .autofilter(0, 0, self.next_row - 1, last)
-                .map_err(xlsx_err)?;
-        }
+        self.finish_current_sheet()?;
         self.workbook.save_to_writer(w).map_err(xlsx_err)?;
         Ok(self.finish_report())
     }
@@ -607,6 +704,72 @@ mod tests {
         let jp = "あ".repeat(XLSX_MAX_CELL_CHARS);
         let (s, t) = clamp_cell_text(&jp);
         assert_eq!((s.chars().count(), t), (XLSX_MAX_CELL_CHARS, false));
+    }
+
+    #[test]
+    fn sheet_names_follow_excel_rules_and_stay_unique() {
+        let mut used = std::collections::HashSet::new();
+        assert_eq!(xlsx_sheet_name("users", &mut used), "users");
+        // 大文字小文字を区別せず重複扱い。
+        assert_eq!(xlsx_sheet_name("USERS", &mut used), "USERS_2");
+        assert_eq!(xlsx_sheet_name("users", &mut used), "users_3");
+        // 禁止文字は `_`、先頭末尾の `'` は除く。
+        assert_eq!(
+            xlsx_sheet_name("'a/b:c*d?e[f]g\\h'", &mut used),
+            "a_b_c_d_e_f_g_h"
+        );
+        // 空・予約名。
+        assert_eq!(xlsx_sheet_name("  ", &mut used), "Sheet");
+        assert_eq!(xlsx_sheet_name("History", &mut used), "History_");
+        // 31 文字に切り詰め、重複の接尾辞を含めても 31 文字以内。
+        let long = "a".repeat(40);
+        let first = xlsx_sheet_name(&long, &mut used);
+        assert_eq!(first.chars().count(), 31);
+        let second = xlsx_sheet_name(&long, &mut used);
+        assert_eq!(second.chars().count(), 31);
+        assert!(second.ends_with("_2"));
+        assert_ne!(first, second);
+        // 全角文字も文字数で数える。
+        assert_eq!(
+            xlsx_sheet_name(&"表".repeat(40), &mut used).chars().count(),
+            31
+        );
+    }
+
+    #[test]
+    fn multi_sheet_workbook_writes_each_sheet_with_its_own_header() {
+        let cols_a = vec![col("id", "int")];
+        let cols_b = vec![col("name", "text"), col("n", "int")];
+        let mut w = XlsxSheetWriter::new_workbook().unwrap();
+        w.begin_sheet("a").unwrap();
+        w.write_header(&cols_a).unwrap();
+        w.write_rows(&cols_a, &[vec![Value::Int(1)], vec![Value::Int(2)]])
+            .unwrap();
+        w.begin_sheet("b").unwrap();
+        w.write_header(&cols_b).unwrap();
+        w.write_rows(&cols_b, &[vec![Value::String("x".into()), Value::Int(9)]])
+            .unwrap();
+        let mut buf = Vec::new();
+        assert_eq!(w.save_to(&mut buf).unwrap(), None);
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(buf)).unwrap();
+        let mut read = |name: &str| {
+            use std::io::Read;
+            let mut s = String::new();
+            zip.by_name(name).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        let wb = read("xl/workbook.xml");
+        assert!(
+            wb.contains("name=\"a\"") && wb.contains("name=\"b\""),
+            "{wb}"
+        );
+        let s1 = read("xl/worksheets/sheet1.xml");
+        let s2 = read("xl/worksheets/sheet2.xml");
+        assert!(s1.contains("id") && !s1.contains(">name<"), "{s1}");
+        assert!(s2.contains("name") && s2.contains("x"), "{s2}");
+        // 各シートにオートフィルタが張られる (a: A1:A3, b: A1:B2)。
+        assert!(s1.contains("autoFilter ref=\"A1:A3\""), "{s1}");
+        assert!(s2.contains("autoFilter ref=\"A1:B2\""), "{s2}");
     }
 
     #[test]

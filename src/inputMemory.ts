@@ -71,6 +71,10 @@ export const DUMP_BOOL_KEYS = [
   "noPrivileges",
   "formatSql",
   "gzip",
+  "noTablespaces",
+  "setGtidPurgedOff",
+  "writeChecksum",
+  "sqliteSnapshot",
 ] as const;
 export type DumpBoolKey = (typeof DUMP_BOOL_KEYS)[number];
 

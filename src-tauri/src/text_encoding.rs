@@ -499,9 +499,118 @@ pub fn encode(text: &str, encoding: TextEncoding) -> Result<Vec<u8>> {
     }
 }
 
+/// 逐次書き出し用のエンコーダ (#1624)。UTF-8 のテキストを任意の区切りで受け取り、`encoding` の
+/// バイト列にして返す。BOM は最初に出力が出るチャンクにだけ付ける。チャンク境界で UTF-8 の
+/// 文字が分断されても (末尾の不完全なバイトを次回へ持ち越して) 壊さない。
+/// CSV のストリーミング書き出しが sink 越しに文字コードを変換するために使う。
+#[derive(Debug)]
+pub struct ChunkEncoder {
+    encoding: TextEncoding,
+    bom_pending: bool,
+    tail: Vec<u8>,
+}
+
+impl ChunkEncoder {
+    pub fn new(encoding: TextEncoding) -> Self {
+        Self {
+            encoding,
+            bom_pending: true,
+            tail: Vec::new(),
+        }
+    }
+
+    pub fn encoding(&self) -> TextEncoding {
+        self.encoding
+    }
+
+    /// BOM の長さ (BOM を持たない文字コードは 0)。
+    fn bom_len(&self) -> usize {
+        match self.encoding {
+            TextEncoding::Utf8Bom => 3,
+            TextEncoding::Utf16Le | TextEncoding::Utf16Be => 2,
+            _ => 0,
+        }
+    }
+
+    pub fn encode_chunk(&mut self, utf8: &[u8]) -> Result<Vec<u8>> {
+        let mut buf = std::mem::take(&mut self.tail);
+        buf.extend_from_slice(utf8);
+        let valid_len = match std::str::from_utf8(&buf) {
+            Ok(_) => buf.len(),
+            // 末尾が途中で切れているだけなら持ち越す。本当に不正なバイト列はエラー。
+            Err(e) if e.error_len().is_none() => e.valid_up_to(),
+            Err(_) => {
+                return Err(AppError::InvalidInput(
+                    "the text to encode is not valid UTF-8".into(),
+                ))
+            }
+        };
+        self.tail = buf.split_off(valid_len);
+        if buf.is_empty() {
+            return Ok(Vec::new());
+        }
+        let text = std::str::from_utf8(&buf)
+            .map_err(|_| AppError::InvalidInput("the text to encode is not valid UTF-8".into()))?;
+        let mut out = encode(text, self.encoding)?;
+        if self.bom_pending {
+            self.bom_pending = false;
+        } else {
+            out.drain(..self.bom_len().min(out.len()));
+        }
+        Ok(out)
+    }
+
+    /// 書き終わりの確認。不完全な UTF-8 が残っていればエラー。
+    pub fn finish(self) -> Result<()> {
+        if self.tail.is_empty() {
+            Ok(())
+        } else {
+            Err(AppError::InvalidInput(
+                "the text to encode ends with an incomplete UTF-8 sequence".into(),
+            ))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_encoder_matches_one_shot_encode_across_split_chars() {
+        let text = "名前,値\r\nこんにちは世界,ｱｲｳ\r\n";
+        let bytes = text.as_bytes();
+        for enc in [
+            TextEncoding::Utf8,
+            TextEncoding::Utf8Bom,
+            TextEncoding::Utf16Le,
+            TextEncoding::Utf16Be,
+            TextEncoding::ShiftJis,
+            TextEncoding::EucJp,
+        ] {
+            let expected = encode(text, enc).unwrap();
+            // 1 バイトずつ渡しても (文字の途中で切れても) 一括変換と同じになる。
+            let mut e = ChunkEncoder::new(enc);
+            let mut got = Vec::new();
+            for b in bytes {
+                got.extend(e.encode_chunk(std::slice::from_ref(b)).unwrap());
+            }
+            e.finish().unwrap();
+            assert_eq!(got, expected, "{enc:?}");
+        }
+    }
+
+    #[test]
+    fn chunk_encoder_reports_unmappable_and_truncated_input() {
+        let mut e = ChunkEncoder::new(TextEncoding::ShiftJis);
+        assert!(e.encode_chunk("😀".as_bytes()).is_err());
+        let mut e = ChunkEncoder::new(TextEncoding::Utf8Bom);
+        assert!(e.encode_chunk(&"あ".as_bytes()[..2]).unwrap().is_empty());
+        assert!(e.finish().is_err());
+        assert!(ChunkEncoder::new(TextEncoding::Utf8)
+            .encode_chunk(&[0xff, 0xfe])
+            .is_err());
+    }
 
     const JP: &str = "-- 日本語のコメント\nINSERT INTO t VALUES ('こんにちは世界', 'ｱｲｳ');\n";
 

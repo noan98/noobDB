@@ -22,6 +22,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       describeTable: vi.fn(),
       exportQueryStream: vi.fn(),
+      exportTablesXlsx: vi.fn(),
       cancelStream: vi.fn().mockResolvedValue({ cancelled: false, deliveredRows: 0 }),
       revealInFileManager: vi.fn().mockResolvedValue(undefined),
     },
@@ -112,5 +113,39 @@ describe("TablesExportModal 前回設定と保存先を開く (#1631)", () => {
       format: "json",
       dir: "/dl",
     });
+  });
+});
+
+describe("TablesExportModal 1 ブックにまとめる (#1624)", () => {
+  it("xlsx で全テーブルを 1 ブックへ書き出し、シートごとに SELECT を渡す", async () => {
+    vi.mocked(api.exportTablesXlsx).mockImplementation(async () => {
+      handlers.current?.onDone?.({ streamId: "x", rows: 5, bytes: 1 } as never);
+    });
+    renderWithProviders(
+      <TablesExportModal
+        sessionId="s1"
+        driver="mysql"
+        database="app"
+        tables={["a", "b"]}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatXlsx") }));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("batchExportSingleWorkbook") }));
+    const execute = screen.getByRole("button", { name: t("exportExecute") });
+    await waitFor(() => expect(execute).toBeEnabled());
+    fireEvent.click(execute);
+    await waitFor(() => expect(api.exportTablesXlsx).toHaveBeenCalledTimes(1));
+    const arg = vi.mocked(api.exportTablesXlsx).mock.calls[0]?.[0];
+    expect(arg?.sheets.map((x) => x.name)).toEqual(["a", "b"]);
+    expect(arg?.sheets[0]?.sql).toContain("`app`.`a`");
+    expect(arg?.path).toMatch(/^\/dl\/app_.*\.xlsx$/);
+    expect(api.exportQueryStream).not.toHaveBeenCalled();
+  });
+
+  it("テーブルが 1 つなら 1 ブックの選択肢を出さない", () => {
+    renderWithProviders(modal());
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatXlsx") }));
+    expect(screen.queryByRole("checkbox", { name: t("batchExportSingleWorkbook") })).toBeNull();
   });
 });

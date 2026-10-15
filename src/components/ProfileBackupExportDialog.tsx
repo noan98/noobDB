@@ -3,10 +3,14 @@ import { chakra } from "@chakra-ui/react";
 import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, PressableButton } from "./ui";
+import { Button, Checkbox, Input, PressableButton } from "./ui";
 import { PassphraseInput } from "./PassphraseInput";
 import {
+  clampKeepGenerations,
+  DEFAULT_KEEP_GENERATIONS,
+  MAX_KEEP_GENERATIONS,
   MIN_BACKUP_PASSPHRASE_LENGTH,
+  MIN_KEEP_GENERATIONS,
   passphraseStrength,
   validateBackupPassphrase,
   type PassphraseStrength,
@@ -23,7 +27,8 @@ import {
 interface Props {
   /** 対象プロファイル数 (説明文に出す)。 */
   profileCount: number;
-  onConfirm: (passphrase: string) => Promise<void> | void;
+  /** `keepGenerations`: 保存先に残す世代数 (最新を含む)。世代管理しないときは null (#1624)。 */
+  onConfirm: (passphrase: string, keepGenerations: number | null) => Promise<void> | void;
   onCancel: () => void;
 }
 
@@ -45,6 +50,9 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
   const [confirmation, setConfirmation] = useState("");
   const [touched, setTouched] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 世代管理 (#1624)。既定はオフ (従来どおり同名ファイルを置き換える)。
+  const [keepOn, setKeepOn] = useState(false);
+  const [keepCount, setKeepCount] = useState(DEFAULT_KEEP_GENERATIONS);
   const firstRef = useRef<HTMLInputElement>(null);
 
   const error = validateBackupPassphrase(passphrase, confirmation);
@@ -62,7 +70,7 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
     if (error || busy) return;
     setBusy(true);
     try {
-      await onConfirm(passphrase);
+      await onConfirm(passphrase, keepOn ? clampKeepGenerations(keepCount) : null);
     } finally {
       setBusy(false);
     }
@@ -128,6 +136,29 @@ export function ProfileBackupExportDialog({ profileCount, onConfirm, onCancel }:
               onChange={(e) => setConfirmation(e.target.value)}
             />
             {shownError && <FieldError>{shownError}</FieldError>}
+          </FormSection>
+          <FormSection>
+            <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" fontSize="md">
+              <Checkbox checked={keepOn} disabled={busy} onChange={(e) => setKeepOn(e.target.checked)} />
+              <span>{t("profileBackupKeepGenerations")}</span>
+            </chakra.label>
+            {keepOn && (
+              <chakra.div>
+                <FieldLabel htmlFor="profile-backup-keep">
+                  {t("profileBackupKeepGenerationsCount")}
+                </FieldLabel>
+                <Input
+                  id="profile-backup-keep"
+                  type="number"
+                  min={MIN_KEEP_GENERATIONS}
+                  max={MAX_KEEP_GENERATIONS}
+                  value={keepCount}
+                  disabled={busy}
+                  onChange={(e) => setKeepCount(Number(e.target.value))}
+                />
+              </chakra.div>
+            )}
+            <chakra.span textStyle="caption">{t("profileBackupKeepGenerationsHint")}</chakra.span>
           </FormSection>
           <chakra.p fontSize="xs" color="app.textWarning">
             {t("profileBackupWarning")}

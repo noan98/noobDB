@@ -195,3 +195,54 @@ export function topValueRowDiffers(row: TopValueRow, entries: readonly CompareEn
 export function countMetricDifferences(rows: readonly MetricRow[]): number {
   return rows.reduce((n, r) => n + r.cells.filter((c) => c?.differs).length, 0);
 }
+
+/** 書き出し表の見出し・文言 (i18n は呼び出し側で解決して渡す)。 */
+export interface CompareExportLabels {
+  section: string;
+  item: string;
+  /** 基準と差がある接続名の列の見出し。 */
+  differs: string;
+  sectionMetric: string;
+  sectionTop: string;
+  /** 指標 ID → 表示名。 */
+  metric: Record<MetricId, string>;
+  /** 上位値に無いときの文言。 */
+  absent: string;
+}
+
+/**
+ * 列分布の比較結果 (指標の表と上位値の表) を 1 枚の表 (CSV / Markdown 用) に整形する (#1624)。
+ * 先頭列 `section` で指標 (metric) と上位値 (top) を分け、接続ごとの列には画面と同じ表記
+ * (上位値は `件数 (構成比)`) を入れる。最後の列は基準と差のある接続名 (画面の強調と同じ判定)。
+ */
+export function compareExportTable(
+  entries: readonly CompareEntry[],
+  labels: CompareExportLabels,
+  topLimit = 20,
+): { header: string[]; rows: CellValue[][] } {
+  const header = [labels.section, labels.item, ...entries.map((e) => e.label), labels.differs];
+  const rows: CellValue[][] = [];
+  for (const m of buildMetricRows(entries)) {
+    const differing = m.cells.flatMap((c, i) => (c?.differs ? [entries[i]?.label ?? ""] : []));
+    rows.push([
+      labels.sectionMetric,
+      labels.metric[m.id],
+      ...m.cells.map((c) => (c ? c.text : null)),
+      differing.join(", "),
+    ]);
+  }
+  for (const r of buildTopValueRows(entries, topLimit)) {
+    const differing = r.cells.flatMap((_, i) =>
+      topValueCellDiffers(r, i, entries) ? [entries[i]?.label ?? ""] : [],
+    );
+    rows.push([
+      labels.sectionTop,
+      r.label,
+      ...r.cells.map((c, i) =>
+        c ? `${c.count} (${formatPercent(c.share)})` : entries[i]?.profile ? labels.absent : null,
+      ),
+      differing.join(", "),
+    ]);
+  }
+  return { header, rows };
+}

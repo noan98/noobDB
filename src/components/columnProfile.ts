@@ -12,7 +12,7 @@
  *   ロジックを二重実装しない。
  * - 縮退理由コード (`notes`) を i18n キーへ写す。
  */
-import type { CellValue, Column, ColumnProfile, ProfileCount } from "../api/tauri";
+import type { CellValue, Column, ColumnOverview, ColumnProfile, ProfileCount } from "../api/tauri";
 import { buildChartModel, type ChartModel } from "./chartData";
 
 /** 件数を数値にする (率・比較用)。解釈できなければ 0。 */
@@ -35,6 +35,102 @@ export function formatProfileCount(c: ProfileCount | null | undefined): string {
   const digits = neg ? s.slice(1) : s;
   const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
   return neg ? `-${grouped}` : grouped;
+}
+
+/** 全列概要 (#1539) の並べ替えキー (#1624)。 */
+export type OverviewSortKey = "column" | "nonNull" | "nullRate" | "distinct";
+export interface OverviewSort {
+  key: OverviewSortKey;
+  dir: "asc" | "desc";
+}
+
+/**
+ * 列ヘッダのクリックで次に切り替わる並べ替え。別の列なら昇順から始め、同じ列なら
+ * 昇順 → 降順 → 解除の順に進む。NULL 率・ユニーク数は「大きい順」で見たいことが多いが、
+ * 列名と揃えて昇順を先頭にし、操作を 1 種類に保つ。
+ */
+export function nextOverviewSort(current: OverviewSort | null, key: OverviewSortKey): OverviewSort | null {
+  if (!current || current.key !== key) return { key, dir: "asc" };
+  return current.dir === "asc" ? { key, dir: "desc" } : null;
+}
+
+/** 並べ替えに使う数値。集計をスキップした列 (notes あり) や未取得 (null) は null。 */
+function overviewSortValue(c: ColumnOverview, total: ProfileCount, key: OverviewSortKey): number | null {
+  if (key === "nonNull") return profileCountValue(c.non_null_count);
+  if (key === "nullRate") return profilePercent(c.null_count, total);
+  if (key === "distinct") return c.distinct_count === null ? null : profileCountValue(c.distinct_count);
+  return null;
+}
+
+/**
+ * 全列概要の行を並べ替える。`sort` が null なら取得順のまま。値が取れない行 (集計スキップ・
+ * 分母 0) は昇順でも降順でも**末尾**に置く。同値は列名順で安定させる。
+ */
+export function sortOverviewColumns(
+  columns: readonly ColumnOverview[],
+  total: ProfileCount,
+  sort: OverviewSort | null,
+): ColumnOverview[] {
+  if (!sort) return [...columns];
+  const sign = sort.dir === "asc" ? 1 : -1;
+  return [...columns].sort((a, b) => {
+    if (sort.key === "column") return sign * a.column.localeCompare(b.column);
+    const av = overviewSortValue(a, total, sort.key);
+    const bv = overviewSortValue(b, total, sort.key);
+    if (av === null && bv === null) return a.column.localeCompare(b.column);
+    if (av === null) return 1;
+    if (bv === null) return -1;
+    return sign * (av - bv) || a.column.localeCompare(b.column);
+  });
+}
+
+/** 全列概要の CSV / Markdown 用の表ヘッダ (表示と同じ並び)。 */
+export interface OverviewTableLabels {
+  column: string;
+  type: string;
+  nonNull: string;
+  nullCount: string;
+  nullRate: string;
+  distinct: string;
+  min: string;
+  max: string;
+  skipped: string;
+}
+
+/**
+ * 全列概要を書き出し用の表にする (#1624)。件数は桁区切りなしの生の数、NULL 率は小数 1 桁の %。
+ * 集計をスキップした列は件数以外の統計を `skipped` で埋める。
+ */
+export function overviewTable(
+  columns: readonly ColumnOverview[],
+  total: ProfileCount,
+  labels: OverviewTableLabels,
+): { header: string[]; rows: CellValue[][] } {
+  const header = [
+    labels.column,
+    labels.type,
+    labels.nonNull,
+    labels.nullCount,
+    labels.nullRate,
+    labels.distinct,
+    labels.min,
+    labels.max,
+  ];
+  const rows = columns.map((c): CellValue[] => {
+    const skipped = c.notes.length > 0;
+    const rate = profilePercent(c.null_count, total);
+    return [
+      c.column,
+      c.data_type,
+      c.non_null_count,
+      c.null_count,
+      rate === null ? null : `${rate.toFixed(1)}%`,
+      c.distinct_count === null ? null : c.distinct_count,
+      skipped ? labels.skipped : (profileValueLabel(c.min_value) ?? null),
+      skipped ? labels.skipped : (profileValueLabel(c.max_value) ?? null),
+    ];
+  });
+  return { header, rows };
 }
 
 /** 百分率 (0〜100)。分母が 0 のときは null (「0 行中の 0%」を出さない)。 */

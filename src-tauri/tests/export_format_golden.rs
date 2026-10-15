@@ -41,6 +41,34 @@ const FORMATS: [(&str, t::ExportFormat); 5] = [
 #[derive(Deserialize)]
 struct Vectors {
     cases: Vec<Case>,
+    /// SQL 形式の衝突時の書き方 (UPSERT, #1624)。SQL 出力だけを固定する。
+    #[serde(default, rename = "conflictCases")]
+    conflict_cases: Vec<ConflictCase>,
+}
+
+#[derive(Deserialize)]
+struct ConflictCase {
+    name: String,
+    columns: Vec<ColumnSpec>,
+    rows: Vec<Vec<CellSpec>>,
+    sql: ConflictSqlSpec,
+    expected: String,
+}
+
+#[derive(Deserialize)]
+struct ConflictSqlSpec {
+    driver: String,
+    table: String,
+    #[serde(rename = "batchSize")]
+    batch_size: usize,
+    conflict: ConflictSpec,
+}
+
+#[derive(Deserialize)]
+struct ConflictSpec {
+    mode: String,
+    #[serde(rename = "keyColumns")]
+    key_columns: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -319,6 +347,7 @@ async fn render_export_text_matches_shared_vectors() {
                         batch_size: Some(case.sql.batch_size),
                         masks: None,
                         ddl_header: None,
+                        sql_conflict: None,
                     },
                 )
                 .await
@@ -460,4 +489,52 @@ fn dump_export_golden() {
         "EXPORT_GOLDEN_JSON_BEGIN\n{}\nEXPORT_GOLDEN_JSON_END",
         serde_json::to_string_pretty(&out).unwrap_or_default()
     );
+}
+
+/// UPSERT 形式 (#1624) の SQL 出力が、フロントの `buildSqlInsert` と共有する期待値に一致する。
+#[test]
+fn sql_conflict_modes_match_shared_vectors() {
+    let vectors = load();
+    assert!(!vectors.conflict_cases.is_empty());
+    for case in &vectors.conflict_cases {
+        let columns: Vec<t::Column> = case
+            .columns
+            .iter()
+            .map(|c| t::Column {
+                name: c.name.clone(),
+                type_name: c.type_name.clone(),
+            })
+            .collect();
+        let rows: Vec<Vec<t::Value>> = case
+            .rows
+            .iter()
+            .map(|r| r.iter().map(cell).collect())
+            .collect();
+        let driver = t::DriverKind::parse(&case.sql.driver).expect("driver in vectors");
+        let mode = match case.sql.conflict.mode.as_str() {
+            "insert" => t::SqlConflictMode::Insert,
+            "skip" => t::SqlConflictMode::Skip,
+            "update" => t::SqlConflictMode::Update,
+            "replace" => t::SqlConflictMode::Replace,
+            other => panic!("unknown conflict mode in vectors: {other}"),
+        };
+        let bytes = t::export_sql_with_conflict(
+            &columns,
+            &rows,
+            driver,
+            &case.sql.table,
+            case.sql.batch_size,
+            t::SqlConflict {
+                mode,
+                key_columns: case.sql.conflict.key_columns.clone(),
+            },
+        )
+        .expect("conflict export must succeed");
+        assert_eq!(
+            String::from_utf8(bytes).expect("utf-8"),
+            case.expected,
+            "{}",
+            case.name
+        );
+    }
 }
