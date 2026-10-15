@@ -748,6 +748,7 @@ fn build_fixtures() -> serde_json::Value {
             cells: Vec::new(),
         }],
         skipped_total: 1234,
+        skipped_data_truncated: true,
         sheets: vec![SheetImportResult {
             sheet: "Sheet1".into(),
             table: "orders".into(),

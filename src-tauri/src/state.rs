@@ -284,7 +284,14 @@ pub struct AppState {
 
 impl AppState {
     /// 直近の取り込みのスキップ行を置き換える。
-    pub fn set_last_import_skipped(&self, rows: Vec<crate::commands::import::SkippedRowInfo>) {
+    pub fn set_last_import_skipped(&self, mut rows: Vec<crate::commands::import::SkippedRowInfo>) {
+        // 元の行データは先頭の上限件数ぶんだけ保持する (#1623)。
+        for r in rows
+            .iter_mut()
+            .skip(crate::commands::import::MAX_RETAINED_SKIPPED_CELLS)
+        {
+            r.cells = Vec::new();
+        }
         // ロックが poison されていても (別スレッドの panic) 単なる Vec なので中身を使う。
         let mut guard = self
             .last_import_skipped

@@ -472,7 +472,7 @@ describe("ImportModal preview spinner", () => {
 });
 
 describe("ImportModal skipped rows (#1258)", () => {
-  async function finishWithSkips(skippedTotal: number, shown: number) {
+  async function finishWithSkips(skippedTotal: number, shown: number, dataTruncated = false) {
     renderWithProviders(
       <ImportModal
         sessionId="s1"
@@ -500,6 +500,7 @@ describe("ImportModal skipped rows (#1258)", () => {
         reason: `bad ${i}`,
       })),
       skippedTotal,
+      skippedDataTruncated: dataTruncated,
       sheets: [],
     };
     await act(async () => {
@@ -532,6 +533,17 @@ describe("ImportModal skipped rows (#1258)", () => {
         t("importSkippedRowLine"),
       ),
     );
+  });
+
+  it("元データを保持しきれなかったときは注記を出す (#1623)", async () => {
+    await finishWithSkips(150000, 200, true);
+    expect(await screen.findByText(t("importSkippedDataTruncated"))).toBeInTheDocument();
+  });
+
+  it("元データを全件保持しているときは注記を出さない (#1623)", async () => {
+    await finishWithSkips(5, 5);
+    await screen.findByText(t("importSkippedSaveCsv"));
+    expect(screen.queryByText(t("importSkippedDataTruncated"))).not.toBeInTheDocument();
   });
 
   it("saves the original row data as CSV or NDJSON (#1623)", async () => {

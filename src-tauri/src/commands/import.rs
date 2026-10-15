@@ -868,6 +868,16 @@ pub struct SkippedRowInfo {
 /// ファイルで大半がスキップされたとき JSON と描画が重くなる。
 pub const MAX_REPORTED_SKIPPED: usize = 200;
 
+/// 「元の行データ付きで書き出す」ために Rust 側へ保持するスキップ行の上限 (#1623)。
+/// 巨大なファイルで大半がスキップされたときにメモリを使い切らないよう、超過した行は
+/// 行番号と理由だけを残し、元の行データ (`cells`) は保持しない。
+pub const MAX_RETAINED_SKIPPED_CELLS: usize = 100_000;
+
+/// スキップ行 `total` 件のうち、元の行データを保持しきれない行があるか。
+fn skipped_cells_truncated(total: usize) -> bool {
+    total > MAX_RETAINED_SKIPPED_CELLS
+}
+
 /// 1 行ぶんのテキスト。`{record}` / `{line}` / `{reason}` を 1 回の走査で置換する
 /// (置換結果の中に `{record}` のような文字列があっても再置換しない)。
 fn render_skipped_template(template: &str, row: &SkippedRowInfo) -> String {
@@ -999,6 +1009,7 @@ pub async fn save_import_skipped_rows(
     if rows.is_empty() {
         return Err(AppError::InvalidInput("no skipped rows to save".into()));
     }
+    let mut written = rows.len() as u64;
     let text = match format.unwrap_or_default() {
         SkippedExportFormat::Text => {
             let mut text = format_skipped_rows(&rows, &record_template, &line_template);
@@ -1012,15 +1023,19 @@ pub async fn save_import_skipped_rows(
                     "the original row data of the skipped rows is not available".into(),
                 ));
             }
+            // 上限超過で元の行データを保持していない行は、空行を書かないよう除く。
+            let with_cells: Vec<SkippedRowInfo> =
+                rows.into_iter().filter(|r| !r.cells.is_empty()).collect();
+            written = with_cells.len() as u64;
             if data_format == SkippedExportFormat::Csv {
-                skipped_rows_csv(&columns, &rows)?
+                skipped_rows_csv(&columns, &with_cells)?
             } else {
-                skipped_rows_ndjson(&columns, &rows)?
+                skipped_rows_ndjson(&columns, &with_cells)?
             }
         }
     };
     tokio::fs::write(&path, text).await?;
-    Ok(rows.len() as u64)
+    Ok(written)
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1038,6 +1053,14 @@ pub struct ImportDoneEvent {
     /// Total number of skipped rows, including those not listed in `skipped`.
     #[serde(rename = "skippedTotal")]
     pub skipped_total: u64,
+    /// 件数が多く、一部のスキップ行の元の行データを保持していない (#1623)。
+    /// 「元の行データ付きで書き出す」には保持できた先頭の行だけが含まれる。
+    #[serde(
+        default,
+        rename = "skippedDataTruncated",
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    pub skipped_data_truncated: bool,
     /// 複数シート一括取り込み (`import_xlsx_sheets`、#1623) のシートごとの結果。通常の
     /// 取り込みでは空 (省略)。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -1430,6 +1453,7 @@ async fn spawn_import(
             columns,
         }) => {
             let skipped_total = skipped.len() as u64;
+            let skipped_data_truncated = skipped_cells_truncated(skipped.len());
             tracing::info!(
                 stream_id = %stream_id,
                 inserted,
@@ -1453,6 +1477,7 @@ async fn spawn_import(
                     elapsed_ms,
                     skipped: head,
                     skipped_total,
+                    skipped_data_truncated,
                     sheets: Vec::new(),
                 },
             ) {
@@ -1778,7 +1803,14 @@ async fn spawn_import_sheets(
         state.set_last_import_skipped(if failure.is_some() {
             Vec::new()
         } else {
-            all_skipped.clone()
+            // 列が違うので元の行データは使わない。保持しても無駄にメモリを使うだけ。
+            all_skipped
+                .iter()
+                .map(|r| SkippedRowInfo {
+                    cells: Vec::new(),
+                    ..r.clone()
+                })
+                .collect()
         });
     }
     match failure {
@@ -1804,6 +1836,7 @@ async fn spawn_import_sheets(
                     elapsed_ms: started.elapsed().as_millis() as u64,
                     skipped: head,
                     skipped_total,
+                    skipped_data_truncated: false,
                     sheets: results,
                 },
             ) {
@@ -3364,6 +3397,27 @@ mod tests {
             skipped_rows_csv(&cols, &rows).expect("csv"),
             "id,note\n1,\"a,\"\"b\"\"\"\n2,\n3,\n"
         );
+    }
+
+    #[test]
+    fn skipped_cells_truncation_boundary() {
+        assert!(!skipped_cells_truncated(0));
+        assert!(!skipped_cells_truncated(MAX_RETAINED_SKIPPED_CELLS));
+        assert!(skipped_cells_truncated(MAX_RETAINED_SKIPPED_CELLS + 1));
+    }
+
+    #[test]
+    fn retained_skipped_rows_drop_cells_beyond_the_cap_but_keep_every_row() {
+        let state = AppState::default();
+        let rows: Vec<SkippedRowInfo> = (0..MAX_RETAINED_SKIPPED_CELLS as u64 + 3)
+            .map(|i| skipped_with_cells(i + 1, &[Some("x")]))
+            .collect();
+        state.set_last_import_skipped(rows);
+        let kept = state.last_import_skipped_snapshot();
+        assert_eq!(kept.len(), MAX_RETAINED_SKIPPED_CELLS + 3);
+        assert_eq!(kept[MAX_RETAINED_SKIPPED_CELLS - 1].cells.len(), 1);
+        assert!(kept[MAX_RETAINED_SKIPPED_CELLS].cells.is_empty());
+        assert!(kept[MAX_RETAINED_SKIPPED_CELLS + 2].cells.is_empty());
     }
 
     #[test]

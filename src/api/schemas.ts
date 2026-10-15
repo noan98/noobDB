@@ -1449,6 +1449,8 @@ export const importDoneEvent = z.object({
   // 先頭一部しか `skipped` に載らないため、総件数を別に持つ (#1258)。旧バックエンドでは
   // 省略されるので既定 0 (フロントは `max(skippedTotal, skipped.length)` で使う)。
   skippedTotal: z.number().default(0),
+  // 件数が多く一部の行の元データを保持していない (#1623)。省略時 false。
+  skippedDataTruncated: z.boolean().default(false),
   // 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは省略される。
   sheets: z
     .array(z.object({ sheet: z.string(), table: z.string(), inserted: z.number(), skippedTotal: z.number() }))

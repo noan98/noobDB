@@ -93,7 +93,13 @@ type Status =
   | { kind: "importing"; inserted: number; total: number }
   // Skip-mode completion carrying the rows that were dropped (#687).
   // `skipped` は先頭の一部だけ。総数は `skippedTotal`、全件は Rust 側が保持する (#1258)。
-  | { kind: "done"; inserted: number; skipped: SkippedRowInfo[]; skippedTotal: number }
+  | {
+      kind: "done";
+      inserted: number;
+      skipped: SkippedRowInfo[];
+      skippedTotal: number;
+      dataTruncated: boolean;
+    }
   | { kind: "error"; message: string };
 
 /** 同じファイルでプレビューのオプションが変わったときの待ち時間 (入力欄の連続編集向け)。 */
@@ -589,7 +595,9 @@ export function ImportModal({
     quoteValid &&
     conflictError === null &&
     (!createNew || (newTable !== null && newTableError === null && !created)) &&
-    (createNew || importedPath !== path);
+    (createNew || importedPath !== path) &&
+    // 事前検証の実行中は取り込みを始めない (同じ表への並行書き込みを避ける)。
+    dryRun.kind !== "running";
 
   const handleImport = async () => {
     if (!canImport) return;
@@ -613,7 +621,13 @@ export function ImportModal({
         if (skippedTotal > 0) {
           // Skip mode dropped some rows — keep the modal open to show them.
           toast.info(t("importSkippedSummary", { inserted: e.inserted, skipped: skippedTotal }));
-          setStatus({ kind: "done", inserted: e.inserted, skipped: e.skipped, skippedTotal });
+          setStatus({
+            kind: "done",
+            inserted: e.inserted,
+            skipped: e.skipped,
+            skippedTotal,
+            dataTruncated: e.skippedDataTruncated === true,
+          });
         } else {
           toast.success(t("importSuccess", { inserted: e.inserted, ms: e.elapsedMs }));
           setStatus({ kind: "idle" });
@@ -1527,6 +1541,9 @@ export function ImportModal({
                 </Button>
               </chakra.div>
             </chakra.div>
+            {status.dataTruncated && (
+              <chakra.div textStyle="caption">{t("importSkippedDataTruncated")}</chakra.div>
+            )}
             {status.skippedTotal > status.skipped.length && (
               <chakra.div fontSize="sm" color="app.textMuted" textStyle="numeric">
                 {t("importSkippedShowing", {

@@ -2153,6 +2153,8 @@ export interface ImportDoneEvent {
   skipped: SkippedRowInfo[];
   /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
   skippedTotal: number;
+  /** 件数が多く、一部のスキップ行の元の行データを保持していない (#1623)。 */
+  skippedDataTruncated?: boolean;
   /** 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは空。 */
   sheets: SheetImportResult[];
 }

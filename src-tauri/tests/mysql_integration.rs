@@ -3482,6 +3482,18 @@ async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
         .await
         .expect("seed");
     assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_my_dry").await;
+    // 通常の InnoDB 表はトランザクショナルと判定され、information_schema に無い表は
+    // 安全側 (Err) に倒れる (#1623)。
+    assert!(conn
+        .table_is_transactional(None, "noobdb_my_dry")
+        .await
+        .expect("known InnoDB table"),);
+    assert!(
+        conn.table_is_transactional(None, "noobdb_my_dry_does_not_exist")
+            .await
+            .is_err(),
+        "an unknown table must not be assumed transactional"
+    );
     conn.execute("DROP TABLE noobdb_my_dry", None)
         .await
         .expect("cleanup");

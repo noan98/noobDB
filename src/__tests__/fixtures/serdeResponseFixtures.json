@@ -1344,6 +1344,7 @@
         "record": 7
       }
     ],
+    "skippedDataTruncated": true,
     "skippedTotal": 1234,
     "streamId": "strm0003"
   },
