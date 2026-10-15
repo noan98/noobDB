@@ -289,6 +289,7 @@ impl Serialize for AppError {
 /// - 構文エラーなどが持つエラー位置 (`P` フィールド、元の文の 1 始まりの文字オフセット) を
 ///   ` (position n)` として末尾に足す。出力タブの「エラー位置へ移動」が使う。内部生成クエリ側の
 ///   位置 (`p`) は元の文のオフセットではないので載せない。
+///
 /// MySQL / SQLite の文言は変えない。
 pub fn sqlx_message(e: &sqlx::Error) -> String {
     let base = e.to_string();
