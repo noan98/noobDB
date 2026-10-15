@@ -166,3 +166,86 @@ export function formatCount(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return "–";
   return `${Math.round(value)}`;
 }
+
+// ── 期間切替 (#1622) ─────────────────────────────────────────────────────
+
+/** 表示期間の選択肢 (秒)。5 分 / 15 分 / 60 分。 */
+export const METRICS_WINDOW_OPTIONS_SECS: readonly number[] = [300, 900, 3600];
+
+/** 最新サンプルを基準に、直近 `windowMs` に入るサンプルだけを返す (入力は変更しない)。 */
+export function windowSamples(samples: readonly MetricSample[], windowMs: number): MetricSample[] {
+  const last = samples[samples.length - 1];
+  if (!last) return [];
+  const cutoff = last.atMs - Math.max(0, windowMs);
+  return samples.filter((s) => s.atMs >= cutoff);
+}
+
+// ── 接続数の余裕 (#1622) ─────────────────────────────────────────────────
+
+export type ConnectionHeadroomLevel = "ok" | "warn" | "danger";
+
+export interface ConnectionHeadroom {
+  used: number;
+  max: number;
+  /** 使用率 (0〜100 の整数、100 超は 100 に収める)。 */
+  percent: number;
+  level: ConnectionHeadroomLevel;
+}
+
+/** 使用率がこの値 (%) 以上で警告、`DANGER` 以上で危険。 */
+export const CONNECTION_WARN_PERCENT = 80;
+export const CONNECTION_DANGER_PERCENT = 90;
+
+/**
+ * 接続数とサーバ上限から余裕を求める。どちらかが無い / 上限が 0 以下なら `null` (表示しない)。
+ * 上限に近づいたら `too many connections` になる前に警告するための材料。
+ */
+export function connectionHeadroom(
+  metrics: Pick<ServerMetrics, "connections" | "max_connections"> | null | undefined,
+): ConnectionHeadroom | null {
+  const used = metrics?.connections;
+  const max = metrics?.max_connections;
+  if (used == null || max == null || !Number.isFinite(used) || !Number.isFinite(max) || max <= 0) return null;
+  const percent = Math.min(100, Math.max(0, Math.round((used / max) * 100)));
+  const level: ConnectionHeadroomLevel =
+    percent >= CONNECTION_DANGER_PERCENT ? "danger" : percent >= CONNECTION_WARN_PERCENT ? "warn" : "ok";
+  return { used, max, percent, level };
+}
+
+// ── CSV 書き出し (#1622) ─────────────────────────────────────────────────
+
+/** CSV の列見出し (`metricsToCsvRows` の列順と一致)。 */
+export const METRICS_CSV_HEADER: readonly string[] = [
+  "time",
+  "connections",
+  "max_connections",
+  "active",
+  "idle_in_transaction",
+  "lock_waiting",
+  "query_rate_per_sec",
+  "slow_query_rate_per_sec",
+  "lock_wait_rate_per_sec",
+];
+
+/**
+ * 在メモリのバッファを CSV 用の行にする。時刻は ISO 8601 (UTC)、レートは小数 4 桁。
+ * 取れなかった項目 (`null`) は空欄。レートは `deriveSeries` と同じ差分計算なので、画面のグラフと一致する。
+ */
+export function metricsToCsvRows(samples: readonly MetricSample[]): (string | number | null)[][] {
+  const points = deriveSeries(samples);
+  return points.map((p, i) => [
+    new Date(p.atMs).toISOString(),
+    p.connections,
+    samples[i]?.metrics.max_connections ?? null,
+    p.active,
+    p.idleInTransaction,
+    p.lockWaiting,
+    roundRate(p.queryRate),
+    roundRate(p.slowQueryRate),
+    roundRate(p.lockWaitRate),
+  ]);
+}
+
+function roundRate(v: number | null): number | null {
+  return v == null || !Number.isFinite(v) ? null : Math.round(v * 10_000) / 10_000;
+}

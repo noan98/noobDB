@@ -25,6 +25,15 @@ pub struct TableStatistic {
     pub data_bytes: Option<i64>,
     pub index_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
+    /// 不要行の概算数 (#1622)。PostgreSQL のみ。
+    #[serde(default)]
+    pub dead_rows: Option<i64>,
+    /// 最後の VACUUM / autovacuum の時刻 (Unix 秒, #1622)。PostgreSQL のみ。
+    #[serde(default)]
+    pub last_vacuum_at: Option<i64>,
+    /// 最後の ANALYZE / autoanalyze の時刻 (Unix 秒, #1622)。PostgreSQL のみ。
+    #[serde(default)]
+    pub last_analyze_at: Option<i64>,
     /// 列数。列メタデータが無いテーブル (PostgreSQL のマテビューなど) は `None`
     /// (「不明」と「0」を区別する)。
     pub column_count: Option<i64>,
@@ -156,6 +165,9 @@ pub fn build_table_statistics(
                 data_bytes: s.data_bytes,
                 index_bytes: s.index_bytes,
                 total_bytes: s.total_bytes,
+                dead_rows: s.dead_rows,
+                last_vacuum_at: s.last_vacuum_at,
+                last_analyze_at: s.last_analyze_at,
             }
         })
         .collect()
@@ -220,6 +232,9 @@ mod tests {
             data_bytes: Some(100),
             index_bytes: Some(20),
             total_bytes: Some(120),
+            dead_rows: None,
+            last_vacuum_at: None,
+            last_analyze_at: None,
         }
     }
 

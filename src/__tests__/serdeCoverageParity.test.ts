@@ -70,6 +70,8 @@ const COVERED: Record<string, string> = {
   LiveQuery: "liveQuery",
   LocalTableMeta: "localTableMeta",
   LogView: "logView",
+  PerfStatus: "perfStatus",
+  KeyringStatus: "keyringStatus",
   ObjectHit: "objectSearchHit",
   OpenTableEntry: "openTableEntryVariants",
   OpenTableResult: "openTableResult",

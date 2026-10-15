@@ -154,6 +154,7 @@ function bundleLabels(t: ReturnType<typeof useT>, generatedAt: Date): BundleLabe
     colExtra: t("bundleColExtra"),
     yes: t("bundleYes"),
     no: t("bundleNo"),
+    rangeLimited: t("bundleRangeLimited"),
   };
 }
 
@@ -260,6 +261,10 @@ export function ExportModal({
   const [bundleHost, setBundleHost] = useState(false);
   const [bundleSchema, setBundleSchema] = useState(true);
   const [bundlePlan, setBundlePlan] = useState(false);
+  // 含める列・行の範囲 (#1622)。既定は全列・全行。除外は列名で持つので、スコープ切替で
+  // 列の部分集合が変わっても追従する。
+  const [bundleExcluded, setBundleExcluded] = useState<ReadonlySet<string>>(() => new Set());
+  const [bundleRowLimitText, setBundleRowLimitText] = useState("");
   // SQL INSERT 形式の対象テーブル名 (既定は結果元テーブル、JOIN 等で不明なら空入力可)
   // とバッチサイズ (1 文へまとめる行数の上限)。
   const [sqlTable, setSqlTable] = useState<string>(table ?? "");
@@ -335,6 +340,20 @@ export function ExportModal({
     () => effectiveColumns.filter((_, i) => bundleMasked?.[i]).map((c) => c.name),
     [effectiveColumns, bundleMasked],
   );
+  const bundleIncludeColumns = useMemo(
+    () =>
+      bundleExcluded.size === 0
+        ? null
+        : effectiveColumns.flatMap((c, i) => (bundleExcluded.has(c.name) ? [] : [i])),
+    [effectiveColumns, bundleExcluded],
+  );
+  const bundleRowLimit = useMemo(() => {
+    const n = Number.parseInt(bundleRowLimitText, 10);
+    return Number.isFinite(n) && n >= 1 ? n : null;
+  }, [bundleRowLimitText]);
+  const bundleShownCols = bundleIncludeColumns ? bundleIncludeColumns.length : effectiveColumns.length;
+  const bundleShownRows =
+    bundleRowLimit === null ? effectiveRows.length : Math.min(effectiveRows.length, bundleRowLimit);
   const canBundleSchema = !!bundle?.describe;
   const canBundlePlan = !!bundle?.loadPlan;
 
@@ -391,6 +410,8 @@ export function ExportModal({
       plan,
       labels: bundleLabels(t, generatedAt),
       lang: locale,
+      includeColumns: bundleIncludeColumns,
+      rowLimit: bundleRowLimit,
     });
 
   // ── データマスキング (#733) ──
@@ -522,6 +543,8 @@ export function ExportModal({
       ddlPreviewHeader,
       bundleMasked,
       bundleHost,
+      bundleIncludeColumns,
+      bundleRowLimit,
       bundle,
       elapsedMs,
       partial,
@@ -1068,8 +1091,8 @@ export function ExportModal({
               <chakra.div display="flex" flexDirection="column" gap="1">
                 <chakra.span>
                   {t("exportBundleDataWarning", {
-                    rows: effectiveRows.length,
-                    cols: effectiveColumns.length,
+                    rows: bundleShownRows,
+                    cols: bundleShownCols,
                   })}
                 </chakra.span>
                 <chakra.span>
@@ -1130,6 +1153,55 @@ export function ExportModal({
                   <span>{t("exportBundleIncludePlan")}</span>
                 </chakra.label>
               )}
+            </chakra.div>
+            {/* 含める列と行数の上限 (#1622)。マスク対象の列は選んでも伏せ字のまま。 */}
+            <chakra.div display="flex" flexDirection="column" gap="1.5" data-testid="export-bundle-range">
+              <FieldLabel as="div">{t("exportBundleColumns")}</FieldLabel>
+              <chakra.div display="flex" flexWrap="wrap" columnGap="4" rowGap="1">
+                {effectiveColumns.map((c, i) => {
+                  const included = !bundleExcluded.has(c.name);
+                  return (
+                    <chakra.label
+                      key={`${c.name}-${i}`}
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="2"
+                      cursor="pointer"
+                      userSelect="none"
+                    >
+                      <Checkbox
+                        checked={included}
+                        // 最後の 1 列は外せない (空のバンドルを作らない)。
+                        disabled={isSaving || (included && bundleShownCols <= 1)}
+                        onChange={(e) =>
+                          setBundleExcluded((cur) => {
+                            const next = new Set(cur);
+                            if (e.target.checked) next.delete(c.name);
+                            else next.add(c.name);
+                            return next;
+                          })
+                        }
+                      />
+                      <span>
+                        {c.name}
+                        {bundleMasked?.[i] ? ` ${t("exportBundleColumnMasked")}` : ""}
+                      </span>
+                    </chakra.label>
+                  );
+                })}
+              </chakra.div>
+              <FieldLabel htmlFor="export-bundle-row-limit">{t("exportBundleRowLimit")}</FieldLabel>
+              <Input
+                id="export-bundle-row-limit"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                maxW="40"
+                value={bundleRowLimitText}
+                placeholder={String(effectiveRows.length)}
+                onChange={(e) => setBundleRowLimitText(e.target.value)}
+                disabled={isSaving}
+              />
             </chakra.div>
           </FormSection>
         )}

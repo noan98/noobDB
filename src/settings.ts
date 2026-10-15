@@ -220,6 +220,12 @@ export interface Settings {
    */
   autoUpdateCheckEnabled: boolean;
   /**
+   * パフォーマンス計測 (#1622)。オンにするとバックエンドが SQL 実行・結果整形・IPC 送出の
+   * 所要時間を直近 20 件だけメモリに持ち、診断タブ「パフォーマンス」に表示する。SQL 本文や
+   * 行データは載せない。環境変数 `NOOBDB_PERF_LOG` による有効化とは独立 (どちらかが ON なら計測)。
+   */
+  perfMeasureEnabled: boolean;
+  /**
    * クエリエディタのリアルタイム SQL 構文チェック (#704)。既定オン。オンのとき
    * CodeMirror の Lezer パースツリーを使い、括弧の不整合・未終端の文字列/引用符
    * などを実行前に下線 + ガターで表示する。ベストエフォートの編集支援であり
@@ -696,6 +702,9 @@ export const MAX_QUERY_NOTIFICATION_THRESHOLD_SECS = 3_600;
 /** 起動時のアプリ更新チェック (#705) は既定オン。 */
 export const DEFAULT_AUTO_UPDATE_CHECK_ENABLED = true;
 
+/** パフォーマンス計測 (#1622) の既定。計測コストを出さないよう既定オフ。 */
+export const DEFAULT_PERF_MEASURE_ENABLED = false;
+
 /** リアルタイム SQL 構文チェック (#704) は既定オン。 */
 export const DEFAULT_SQL_LINT_ENABLED = true;
 
@@ -771,6 +780,7 @@ export const DEFAULT_SETTINGS: Settings = {
   queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+  perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
@@ -1001,6 +1011,7 @@ export function normalizeSettings(input: unknown): Settings {
     queryNotificationsEnabled?: unknown;
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
+    perfMeasureEnabled?: unknown;
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
     planWatchOnConnect?: unknown;
@@ -1111,6 +1122,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.autoUpdateCheckEnabled === "boolean"
         ? parsed.autoUpdateCheckEnabled
         : DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
+    perfMeasureEnabled:
+      typeof parsed.perfMeasureEnabled === "boolean"
+        ? parsed.perfMeasureEnabled
+        : DEFAULT_PERF_MEASURE_ENABLED,
     sqlLintEnabled:
       typeof parsed.sqlLintEnabled === "boolean" ? parsed.sqlLintEnabled : DEFAULT_SQL_LINT_ENABLED,
     preflightImpactEnabled:
@@ -1614,6 +1629,13 @@ export function setQueryNotificationThresholdSecs(value: number): void {
 export function setAutoUpdateCheckEnabled(value: boolean): void {
   if (current.autoUpdateCheckEnabled === value) return;
   current = { ...current, autoUpdateCheckEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setPerfMeasureEnabled(value: boolean): void {
+  if (current.perfMeasureEnabled === value) return;
+  current = { ...current, perfMeasureEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }

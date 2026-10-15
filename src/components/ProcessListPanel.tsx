@@ -11,10 +11,13 @@ import {
   buildBlockingTree,
   distinctProcessValues,
   EMPTY_PROCESS_FILTER,
+  failedKillReasons,
   filterProcesses,
   formatProcessTime,
+  groupProcessesByQuery,
   isProcessFilterActive,
   processKey,
+  processProgressPercent,
   PROCESS_LIVE_FIELDS,
   PROCESS_MIN_SECS_OPTIONS,
   pruneSelection,
@@ -130,6 +133,8 @@ export function ProcessListPanel({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [killing, setKilling] = useState(false);
+  // 直近の停止で失敗したプロセス id → 理由 (#1622)。次の停止の開始・セッション切替・一覧から消えたときに外す。
+  const [killFailures, setKillFailures] = useState<Map<number, string>>(new Map());
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   // 監視パネルなので自動更新は既定で ON。間隔は結果グリッドと同じプリセット。
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -155,6 +160,8 @@ export function ProcessListPanel({
   const [highlightId, setHighlightId] = useState<number | null>(null);
   const [scrollTick, setScrollTick] = useState(0);
   const filterActive = isProcessFilterActive(filter);
+  // 同じクエリを実行している行のグループ (#1622)。絞り込み前の全件から作る。
+  const queryGroups = useMemo(() => groupProcessesByQuery(rows), [rows]);
   const processedRows = useMemo(
     () => sortProcesses(filterProcesses(rows, filter), sortKey),
     [rows, filter, sortKey],
@@ -201,6 +208,11 @@ export function ProcessListPanel({
         setProcesses(list);
         // 消えたプロセスの選択を持ち越さない (id 再利用の巻き込み防止)。
         setSelected((cur) => pruneSelection(cur, list));
+        setKillFailures((cur) => {
+          if (cur.size === 0) return cur;
+          const alive = new Map([...cur].filter(([id]) => list.some((p) => p.id === id)));
+          return alive.size === cur.size ? cur : alive;
+        });
         // 消えたプロセスの強調は外す (PG の pid 再利用で無関係な行が強調されるのを防ぐ)。
         setHighlightId((cur) => (cur !== null && list.some((p) => p.id === cur) ? cur : null));
         setError(null);
@@ -222,6 +234,7 @@ export function ProcessListPanel({
   useEffect(() => {
     setProcesses([]);
     setSelected(new Set());
+    setKillFailures(new Map());
     setHighlightId(null);
     // 別セッションへ絞り込み・並べ替えを持ち越さない (他セッションの値で全件が隠れるのを防ぐ)。
     setFilter(EMPTY_PROCESS_FILTER);
@@ -261,6 +274,15 @@ export function ProcessListPanel({
       return next;
     });
   }, [processedRows]);
+  // 同じクエリの行をまとめて選択に加える (#1622)。実行は従来の KILL / キャンセルボタン (確認ダイアログつき)。
+  const selectQueryGroup = useCallback(
+    (summary: string) => {
+      const group = queryGroups.find((g) => g.summary === summary);
+      if (!group) return;
+      setSelected((cur) => new Set([...cur, ...group.ids]));
+    },
+    [queryGroups],
+  );
   const toggleOne = useCallback((id: number) => {
     setSelected((cur) => {
       const next = new Set(cur);
@@ -340,15 +362,19 @@ export function ProcessListPanel({
       let killed = 0;
       let failed = targetIds.length;
       let firstError: string | null = null;
+      let failures = new Map<number, string>();
       try {
         const res = await api.killProcesses(sessionId, targetIds, statementOnly);
         killed = res.killed;
         failed = res.failed;
         firstError = res.first_error;
+        failures = failedKillReasons(res.outcomes ?? []);
       } catch (e) {
         // read_only 拒否など、コマンド自体が失敗した場合は全件失敗として扱う。
         firstError = String(e);
+        failures = new Map(targetIds.map((id) => [id, String(e)]));
       }
+      setKillFailures(failures);
       busyRef.current = false;
       setKilling(false);
       if (firstError === null && failed === 0) {
@@ -575,6 +601,28 @@ export function ProcessListPanel({
                 <option value="timeAsc">{t("processSortTimeAsc")}</option>
                 <option value="id">{t("processSortId")}</option>
               </Select>
+              {queryGroups.length > 0 && (
+                <Select
+                  aria-label={t("processSelectSameQueryAria")}
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value !== "") selectQueryGroup(e.target.value);
+                  }}
+                  width="auto"
+                  maxWidth="72"
+                  data-testid="process-select-same-query"
+                >
+                  <option value="">{t("processSelectSameQuery")}</option>
+                  {queryGroups.map((g) => (
+                    <option key={g.summary} value={g.summary}>
+                      {t("processSelectSameQueryOption", {
+                        count: g.ids.length,
+                        query: g.summary.length > 60 ? `${g.summary.slice(0, 60)}…` : g.summary,
+                      })}
+                    </option>
+                  ))}
+                </Select>
+              )}
               {filterActive && (
                 <>
                   <chakra.span textStyle="caption" data-testid="process-filter-count">
@@ -765,6 +813,7 @@ export function ProcessListPanel({
                           process={p}
                           selected={selected.has(p.id)}
                           highlighted={p.id === highlightId}
+                          killFailure={killFailures.get(p.id) ?? null}
                           onToggle={toggleOne}
                           flashCommand={flashToken(p.id, "command")}
                           flashState={flashToken(p.id, "state")}
@@ -802,7 +851,25 @@ function withCurrent(options: string[], current: string): string[] {
 function sameProcess(a: ProcessInfo, b: ProcessInfo): boolean {
   if (a === b) return true;
   const ka = Object.keys(a) as (keyof ProcessInfo)[];
-  for (const k of ka) if (a[k] !== b[k]) return false;
+  for (const k of ka) {
+    if (k === "progress") {
+      // 進捗はポーリングごとに別オブジェクトになるので中身で比べる (#1622)。
+      const pa = a.progress;
+      const pb = b.progress;
+      if (pa === pb) continue;
+      if (
+        !pa ||
+        !pb ||
+        pa.kind !== pb.kind ||
+        pa.phase !== pb.phase ||
+        pa.done !== pb.done ||
+        pa.total !== pb.total
+      )
+        return false;
+      continue;
+    }
+    if (a[k] !== b[k]) return false;
+  }
   return Object.keys(b).length === ka.length;
 }
 
@@ -817,6 +884,7 @@ const ProcessRow = memo(
     process: p,
     selected,
     highlighted,
+    killFailure,
     onToggle,
     flashCommand,
     flashState,
@@ -827,6 +895,8 @@ const ProcessRow = memo(
     process: ProcessInfo;
     selected: boolean;
     highlighted: boolean;
+    /** 直近の停止で失敗したときの理由 (#1622)。 */
+    killFailure: string | null;
     onToggle: (id: number) => void;
     flashCommand: number | null;
     flashState: number | null;
@@ -845,6 +915,23 @@ const ProcessRow = memo(
         </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false}>
           {p.id}
+          {killFailure !== null && (
+            <Tooltip label={t("processKillFailedRow", { error: killFailure })} focusableWrapper>
+              <chakra.span
+                marginLeft="1.5"
+                px="1.5"
+                fontSize="var(--text-xs)"
+                fontFamily="var(--font-sans)"
+                color="app.textError"
+                border="1px solid"
+                borderColor="app.textError"
+                borderRadius="var(--radius-sm)"
+                data-testid={`process-kill-failed-${p.id}`}
+              >
+                {t("processKillFailedBadge")}
+              </chakra.span>
+            </Tooltip>
+          )}
           {p.is_self && (
             <Tooltip label={t("processSelfBadgeTitle")} focusableWrapper>
               <chakra.span
@@ -875,6 +962,7 @@ const ProcessRow = memo(
         </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashState}>
           {p.state ?? "–"}
+          {p.progress && <ProcessProgressBadge progress={p.progress} />}
         </LiveCell>
         <LiveCell css={tdCss} innerCss={cellInnerCss} collapse={false} flash={flashTime}>
           {/* 単調な増加は CountUp の補間で「進んでいる」ことを示し、
@@ -893,6 +981,7 @@ const ProcessRow = memo(
     a.sessionId === b.sessionId &&
     a.selected === b.selected &&
     a.highlighted === b.highlighted &&
+    a.killFailure === b.killFailure &&
     a.onToggle === b.onToggle &&
     a.flashCommand === b.flashCommand &&
     a.flashState === b.flashState &&
@@ -900,6 +989,35 @@ const ProcessRow = memo(
     a.flashQuery === b.flashQuery &&
     sameProcess(a.process, b.process),
 );
+
+/** VACUUM / CREATE INDEX の進捗 (#1622)。割合が出せるフェーズは `<progress>`、出せないときはフェーズ名だけ。 */
+function ProcessProgressBadge({ progress }: { progress: NonNullable<ProcessInfo["progress"]> }) {
+  const t = useT();
+  const pct = processProgressPercent(progress);
+  const kind = t(progress.kind === "vacuum" ? "processProgressVacuum" : "processProgressCreateIndex");
+  return (
+    <chakra.div
+      fontFamily="var(--font-sans)"
+      textStyle="caption"
+      color="app.textSecondary"
+      data-testid="process-progress"
+    >
+      {pct === null ? (
+        t("processProgressPhase", { kind, phase: progress.phase })
+      ) : (
+        <>
+          <span>{t("processProgressPercent", { kind, phase: progress.phase, percent: pct })}</span>
+          <progress
+            max={100}
+            value={pct}
+            aria-label={t("processProgressAria", { kind })}
+            style={{ display: "block", width: "100%" }}
+          />
+        </>
+      )}
+    </chakra.div>
+  );
+}
 
 /** ホバーしてから全文を取りに行くまでの待ち時間 (ms)。通過しただけの行では取得しない。 */
 const PROCESS_QUERY_HOVER_DELAY_MS = 250;

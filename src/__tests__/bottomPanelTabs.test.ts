@@ -45,13 +45,19 @@ describe("availableBottomPanelTabs", () => {
     // 接続失敗のメッセージこそ未接続のときに読みたいので、ログ系は接続を要求しない。
     expect(
       availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 0 }),
-    ).toEqual(LOG_TABS);
+    ).toEqual([...LOG_TABS, "perf"]);
+  });
+
+  it("パフォーマンス計測 (#1622) は接続に依存せず開ける", () => {
+    expect(
+      availableBottomPanelTabs({ sessionId: null, advisorDatabase: null, openConnectionCount: 0 }),
+    ).toContain("perf");
   });
 
   it("アクティブ接続が無くても背景接続があれば接続ヘルスも開ける (#1068)", () => {
     expect(
       availableBottomPanelTabs({ sessionId: null, advisorDatabase: "app", openConnectionCount: 2 }),
-    ).toEqual([...LOG_TABS, "health"]);
+    ).toEqual([...LOG_TABS, "health", "perf"]);
   });
 
   it("接続していて対象が揃えば全タブを開ける (定義順を保つ)", () => {
@@ -62,7 +68,7 @@ describe("availableBottomPanelTabs", () => {
     for (const db of [null, undefined, ""]) {
       expect(
         availableBottomPanelTabs({ sessionId: "sess1", advisorDatabase: db, openConnectionCount: 1 }),
-      ).toEqual([...LOG_TABS, "inspector", "processes", "assertions", "health", "whereUsed"]);
+      ).toEqual([...LOG_TABS, "inspector", "processes", "assertions", "health", "perf", "whereUsed"]);
     }
   });
 
@@ -376,10 +382,14 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
     }
   });
 
+  it("パフォーマンス計測 (#1622) は常設のパネルバーに並べない", () => {
+    expect(bottomPanelStripTabs(connected).map((e) => e.tab)).not.toContain("perf");
+  });
+
   it("参照グループは対象が揃っていても並べない (対象を決めて開くもの)", () => {
     const entries = bottomPanelStripTabs(connected);
     expect(entries.map((e) => e.tab)).toEqual(
-      BOTTOM_PANEL_TABS.filter((tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference"),
+      BOTTOM_PANEL_TABS.filter((tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" && tab !== "perf"),
     );
     expect(entries.every((e) => e.enabled && e.reason === null)).toBe(true);
   });

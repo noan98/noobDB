@@ -10,6 +10,7 @@ mod atomic_write;
 mod cache;
 mod commands;
 mod db;
+mod diagnostics;
 mod error;
 mod flight_recorder;
 mod history;
@@ -59,7 +60,8 @@ pub mod __test_api {
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
-        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+        generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
+        GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{
         ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,
@@ -84,12 +86,13 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
-        PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo,
-        TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema,
-        TableSizeInfo, UserPrivileges, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, KillOutcomeStatus, KillProcessOutcome,
+        KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
+        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
+        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -157,7 +160,7 @@ pub mod __test_api {
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
     pub use crate::commands::connection::ConnectResponse;
-    pub use crate::commands::logs::LogView;
+    pub use crate::commands::logs::{LogView, PerfStatus};
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags, SkippedProfile};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
@@ -165,6 +168,8 @@ pub mod __test_api {
     };
     pub use crate::history::HistoryEntry;
     pub use crate::import_templates::{ImportTemplate, TemplateColumn};
+    pub use crate::perf::PerfSample;
+    pub use crate::profiles::secrets::KeyringStatus;
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -1416,6 +1421,7 @@ pub fn run() {
             commands::privileges::generate_drop_user_sql,
             commands::privileges::generate_alter_password_sql,
             commands::privileges::generate_privilege_diff_sql,
+            commands::privileges::generate_role_membership_sql,
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
@@ -1494,6 +1500,11 @@ pub fn run() {
             commands::plan_watch::plan_watch_import_legacy,
             commands::logs::read_logs,
             commands::logs::clear_logs,
+            commands::logs::get_perf_status,
+            commands::logs::set_perf_enabled,
+            commands::logs::clear_perf_samples,
+            commands::logs::build_diagnostic_bundle,
+            commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
             commands::export::mask_export_rows,

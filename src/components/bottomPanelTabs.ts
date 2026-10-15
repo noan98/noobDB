@@ -25,7 +25,7 @@
  *      ステータスバーに出た文の履歴 (`messageLog.ts`) を時系列で 1 本にまとめたもの。
  *      以前は「メッセージ」タブが別にあったが、同じ出来事がトーストとステータスの
  *      両方に出るため 2 タブで似た行が並んでいた。
- * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `health`) —
+ * 2. **診断** (`advisor` / `inspector` / `processes` / `assertions` / `health` / `perf`) —
  *    DB とサーバの状態・改善提案・データ品質の検証。
  * 3. **参照** (`whereUsed` / `structure` / `profile`) — 選んだオブジェクトの詳細。
  *
@@ -63,6 +63,7 @@ export const BOTTOM_PANEL_TABS = [
   "processes",
   "assertions",
   "health",
+  "perf",
   "whereUsed",
   "structure",
   "profile",
@@ -84,6 +85,7 @@ export const BOTTOM_PANEL_TAB_GROUP: Record<BottomPanelTab, BottomPanelTabGroup>
   processes: "diagnostics",
   assertions: "diagnostics",
   health: "diagnostics",
+  perf: "diagnostics",
   whereUsed: "reference",
   structure: "reference",
   profile: "reference",
@@ -159,6 +161,8 @@ export function availableBottomPanelTabs(ctx: BottomPanelContext): BottomPanelTa
   return BOTTOM_PANEL_TABS.filter((tab) => {
     // ログ系は接続に依存しない (未接続時の接続失敗メッセージも読めるように)。
     if (BOTTOM_PANEL_TAB_GROUP[tab] === "log") return true;
+    // パフォーマンス計測 (#1622) は接続に依存しない (計測値はアプリ全体で持つ)。
+    if (tab === "perf") return true;
     if (tab === "health") return !!ctx.sessionId || ctx.openConnectionCount > 0;
     if (!ctx.sessionId) return false;
     if (tab === "advisor") return !!ctx.advisorDatabase;
@@ -246,6 +250,8 @@ export function bottomPanelStripTabs(ctx: BottomPanelContext): BottomPanelStripE
   const out: BottomPanelStripEntry[] = [];
   for (const tab of BOTTOM_PANEL_TABS) {
     if (BOTTOM_PANEL_TAB_GROUP[tab] === "reference") continue;
+    // 計測 (#1622) は設定で ON にした人向けの開発寄りの診断なので、常設のパネルバーには並べない。
+    if (tab === "perf") continue;
     // SQLite はサーバ統計を持たず、プロセス一覧 / クエリ統計を取れない (#732 / #746)。
     // 開けはするが中身が非対応表示になるだけなので、バーでは無効にして理由を示す。
     const sqliteUnsupported = ctx.driver === "sqlite" && (tab === "processes" || tab === "inspector");

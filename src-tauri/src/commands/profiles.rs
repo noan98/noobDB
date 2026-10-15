@@ -1323,3 +1323,13 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 }
+
+/// OS keyring が使えるかの疎通診断 (#1622)。接続フォームでパスワード欄を初めて描画した
+/// ときに 1 回だけ実行し (固定名の一時エントリを書いて読み戻し、削除する)、結果はプロセス内に
+/// キャッシュする。結果は bool と固定の理由コードだけで、秘密もエラー本文も返さない。
+#[tauri::command]
+pub async fn check_keyring() -> Result<secrets::KeyringStatus> {
+    tauri::async_runtime::spawn_blocking(secrets::check_keyring_once)
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))
+}

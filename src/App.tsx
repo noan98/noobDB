@@ -335,6 +335,7 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const PerfPanel = lazy(() => import("./components/PerfPanel").then((m) => ({ default: m.PerfPanel })));
 const ConnectionHealthPanel = lazy(() =>
   import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
 );
@@ -400,6 +401,7 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
+import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
 import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
@@ -6111,6 +6113,16 @@ export default function App() {
     [runExplainInTab, addTab, panesRef],
   );
 
+  // ライブテールで観測した SQL 原文を、新しい EXPLAIN タブ (推定モード = ANALYZE なし) で開く (#1622)。
+  const explainTailSql = useCallback(
+    (sql: string, database: string | null) => {
+      const tab = makeExplainTab(sql, database ?? undefined);
+      addTab(tab);
+      void runExplainInTab(tab.id, sql, false, { tab });
+    },
+    [runExplainInTab, addTab],
+  );
+
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
   const pinCurrentResult = useCallback(
@@ -9857,6 +9869,15 @@ export default function App() {
     redoCellEditForTab,
   ]);
 
+  // パフォーマンス計測の設定 (#1622) をバックエンドへ反映する。既定 (オフ) のまま起動した
+  // ときは IPC を呼ばず、一度でもオンにしたあとのオフだけを伝える。
+  const perfSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!settings.perfMeasureEnabled && !perfSyncedRef.current) return;
+    perfSyncedRef.current = true;
+    void api.setPerfEnabled(settings.perfMeasureEnabled).catch(() => {});
+  }, [settings.perfMeasureEnabled]);
+
   // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
   // いれば統一ハンドラ (自動再接続 or 手動フォールバック) に倒す。トンネル断やスリープ
@@ -10943,17 +10964,19 @@ export default function App() {
                 ? t("assertTitle")
                 : tab === "health"
                   ? t("healthTitle")
-                  : tab === "profile"
-                    ? t("profileTitle")
-                    : tab === "structure"
-                      ? t("structureTitle")
-                      : tab === "timelapse"
-                        ? t("timelapseTitle")
-                        : tab === "aiSql"
-                          ? t("aiSqlTitle")
-                          : tab === "aiResultSummary"
-                            ? t("aiResultSummaryTitle")
-                            : t("processTitle");
+                  : tab === "perf"
+                    ? t("perfTitle")
+                    : tab === "profile"
+                      ? t("profileTitle")
+                      : tab === "structure"
+                        ? t("structureTitle")
+                        : tab === "timelapse"
+                          ? t("timelapseTitle")
+                          : tab === "aiSql"
+                            ? t("aiSqlTitle")
+                            : tab === "aiResultSummary"
+                              ? t("aiResultSummaryTitle")
+                              : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -11501,6 +11524,8 @@ export default function App() {
             selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
           }
         >
+          {/* IPC 検証失敗が複数コマンドで続いたときの版不一致の警告 (#1622)。通常は何も描画しない。 */}
+          <IpcMismatchNotice />
           {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
             `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
             `transitions.enter` を流用する (尺を二重定義しない)。
@@ -11583,6 +11608,9 @@ export default function App() {
                           }
                         }}
                       />
+                    ) : activeBottomPanelTab === "perf" ? (
+                      // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。
+                      <PerfPanel />
                     ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
                         sessionId={sessionId}
@@ -11629,6 +11657,7 @@ export default function App() {
                       <QueryInspectorPanel
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
+                        onExplain={explainTailSql}
                       />
                     ) : activeBottomPanelTab === "whereUsed" ? (
                       <WhereUsedPanel
@@ -13184,6 +13213,11 @@ export default function App() {
                 onSelect: () => toggleBottomPanel("health"),
                 disabled: openConnections.length === 0,
                 title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("perfTitle"),
+                icon: "clock",
+                onSelect: () => toggleBottomPanel("perf"),
               },
               {
                 label: t("appAssertions"),

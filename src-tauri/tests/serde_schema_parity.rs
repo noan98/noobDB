@@ -47,17 +47,17 @@ use t::{
     DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
-    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, KnownHost, LiveQuery,
-    LocalTableMeta, LogView, PatchRun, PreviewStreamMessage, ProcessListItem,
-    ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
-    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
-    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
-    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
-    ServerMetrics, ServerVariable, Severity, SheetImportResult, SkippedRowInfo, SkippedRule,
-    Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
-    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
+    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, KeyringStatus, KnownHost,
+    LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus, PreviewStreamMessage,
+    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
+    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
+    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
+    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
+    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SheetImportResult,
+    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
+    SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -180,10 +180,14 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
     };
     let server_variable = ServerVariable {
         name: "max_connections".into(),
         value: "151".into(),
+        source: Some("configuration file".into()),
     };
     let server_info = ServerInfo {
         version: "8.0.36".into(),
@@ -201,6 +205,12 @@ fn build_fixtures() -> serde_json::Value {
         query_truncated: false,
         is_self: true,
         blocked_by: vec![41],
+        progress: Some(t::ProcessProgress {
+            kind: "vacuum".into(),
+            phase: "scanning heap".into(),
+            done: 40,
+            total: 100,
+        }),
     };
     let query_stats_support = QueryStatsSupport {
         live_tail: true,
@@ -300,6 +310,7 @@ fn build_fixtures() -> serde_json::Value {
         questions: Some(1_000_000),
         slow_queries: Some(12),
         lock_waits: Some(5),
+        max_connections: Some(151),
     };
     let health_finding = HealthFinding {
         rule: RuleId::FkMissingIndex,
@@ -435,6 +446,37 @@ fn build_fixtures() -> serde_json::Value {
     let log_view = LogView {
         text: "2026-01-01T00:00:00Z INFO noobdb starting".into(),
         path: Some("/home/user/.local/share/noobDB/noobdb.log".into()),
+    };
+
+    let perf_status = PerfStatus {
+        enabled: true,
+        ui_enabled: true,
+        env_enabled: false,
+        samples: vec![
+            PerfSample {
+                at_ms: 1_767_225_600_000,
+                kind: "stream",
+                sql_execute_ms: Some(12.5),
+                emit_ms: Some(3.25),
+                payload_bytes_approx: Some(4096),
+                rows: 100,
+                columns: 4,
+            },
+            PerfSample {
+                at_ms: 1_767_225_500_000,
+                kind: "query",
+                sql_execute_ms: Some(8.0),
+                emit_ms: None,
+                payload_bytes_approx: None,
+                rows: 1,
+                columns: 1,
+            },
+        ],
+    };
+
+    let keyring_status = KeyringStatus {
+        available: false,
+        reason: Some("storage_unavailable"),
     };
 
     let csv_preview = CsvPreview {
@@ -1431,6 +1473,9 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
         column_count: Some(5),
         index_count: 2,
         has_primary_key: true,
@@ -1499,6 +1544,23 @@ fn build_fixtures() -> serde_json::Value {
         killed: 2,
         failed: 1,
         first_error: Some("permission denied".into()),
+        outcomes: vec![
+            t::KillProcessOutcome {
+                id: 101,
+                status: t::KillOutcomeStatus::Killed,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 102,
+                status: t::KillOutcomeStatus::AlreadyGone,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 103,
+                status: t::KillOutcomeStatus::Failed,
+                error: Some("permission denied".into()),
+            },
+        ],
     };
     let db_user_info = t::DbUserInfo {
         name: "app".into(),
@@ -1943,6 +2005,8 @@ fn build_fixtures() -> serde_json::Value {
         "snippet": snippet,
         "historyEntry": history_entry,
         "logView": log_view,
+        "perfStatus": perf_status,
+        "keyringStatus": keyring_status,
         "csvPreview": csv_preview,
         "connectResult": connect_result,
         "localTableMeta": local_table_meta,

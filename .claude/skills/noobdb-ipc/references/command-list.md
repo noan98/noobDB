@@ -239,10 +239,11 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 - `generate_create_user_sql`
 - `generate_drop_user_sql`
 - `generate_alter_password_sql`
-- `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成)
+- `generate_privilege_diff_sql` (#1259。権限差分から GRANT/REVOKE をまとめて生成。`changes[].columns` で列単位 #1622)
+- `generate_role_membership_sql` (#1622。ロールの付与 / 剥奪 SQL。MySQL 8 `'role'@'host'` / PostgreSQL)
 - `apply_privilege_sql`
 
-`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL は `unnest` で 1 文 / MySQL は 1 接続上で順に `KILL`、結果は `{killed, failed, first_error}` (#1259)。任意引数 `statement_only` (`statementOnly`) が true なら接続は残して実行中の文だけを止める (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`、#1538)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
+`list_processes` はクエリを Rust 側で 1 行要約 (`query_summary` / `query_truncated`) にして返し、全文は `get_process_query` で id 指定取得。`kill_processes` は read_only ガード 1 回 + PostgreSQL / MySQL とも 1 接続上で pid (id) ごとに順に実行する。結果は `{killed, failed, first_error, outcomes}` で、`outcomes` は id ごとの `{id, status, error}` (`killed` / `already_gone` / `failed` / `skipped`)。自接続を文のみ停止の対象に含めたときは `skipped` で、件数 (`killed` / `failed`) には数えない (#1259 / #1622)。任意引数 `statement_only` (`statementOnly`) が true なら接続は残して実行中の文だけを止める (MySQL `KILL QUERY` / PostgreSQL `pg_cancel_backend`、#1538)。`list_user_privileges` は任意引数 `database` でテーブル別の行をサーバ側 WHERE で絞る
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
@@ -346,6 +347,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_profiles`
 - `list_skipped_profiles` (一覧に出ないプロファイルの要約。解釈できない要素と対応外ドライバ。秘密は含めない、#1614)
+- `check_keyring` (#1622。OS keyring の疎通診断。一時エントリを書いて読み戻して削除し、`{available, reason}` だけ返す。秘密・エラー本文は返さない)
 - `delete_skipped_profile` (解釈できず読み飛ばされた要素を `profiles.json` から削除、#1614)
 - `reveal_profile_secret`
 - `save_profile`
@@ -372,6 +374,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
+- `get_perf_status` / `set_perf_enabled` / `clear_perf_samples` (#1622。パフォーマンス計測の状態・設定のトグル・直近値の破棄。SQL 本文は含めない)
+- `build_diagnostic_bundle` (#1622。ログ + 版情報を匿名化したテキスト。ホスト・ユーザ・パス・SQL リテラルは伏せる)
 
 履歴 (#1256): `list_history` は SQL 全文ではなく `sql_preview` (空白を畳んだ先頭 400
 文字、超過は `…`) と `sql_len` を返す。全文は `get_history_sql(id)` を復元・コピー・

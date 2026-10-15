@@ -780,6 +780,12 @@ export interface TableSizeInfo {
   data_bytes: number | null;
   index_bytes: number | null;
   total_bytes: number | null;
+  /** 不要行 (dead tuple) の概算数 (#1622)。PostgreSQL のみ。 */
+  dead_rows?: number | null;
+  /** 最後の VACUUM / autovacuum の時刻 (Unix 秒, #1622)。PostgreSQL のみ。 */
+  last_vacuum_at?: number | null;
+  /** 最後の ANALYZE / autoanalyze の時刻 (Unix 秒, #1622)。PostgreSQL のみ。 */
+  last_analyze_at?: number | null;
 }
 
 /**
@@ -864,6 +870,9 @@ export interface SchemaTree {
 export interface ServerVariable {
   name: string;
   value: string;
+  /** 値の出どころ (#1622)。PostgreSQL は pg_settings.source、MySQL 8 は variables_info。`default` 以外が変更済み。
+   *  取れない / SQLite は無し。 */
+  source?: string | null;
 }
 
 /**
@@ -892,6 +901,17 @@ export interface KillProcessesResult {
   killed: number;
   failed: number;
   first_error: string | null;
+  /** プロセス id ごとの成否 (#1622)。入力順ではなくバックエンドの実行順。 */
+  outcomes: KillProcessOutcome[];
+}
+
+/** `kill_processes` の 1 プロセスぶんの結果 (#1622)。 */
+export interface KillProcessOutcome {
+  id: number;
+  /** killed=停止を受け付けた / already_gone=既に居なかった (成功扱い) / failed=失敗 (error に理由) /
+   *  skipped=実行しなかった (文のみ停止で自接続)。 */
+  status: "killed" | "already_gone" | "failed" | "skipped";
+  error: string | null;
 }
 
 export interface ProcessInfo {
@@ -919,6 +939,16 @@ export interface ProcessInfo {
    * できない (権限不足・SQLite) ときは空。待機チェーンのツリー化はフロント側で行う。
    */
   blocked_by: number[];
+  /** VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ・走っているときだけ。 */
+  progress?: ProcessProgress | null;
+}
+
+/** プロセスのメンテナンス作業の進捗 (#1622)。`total` が 0 のフェーズは割合を出せない。 */
+export interface ProcessProgress {
+  kind: "vacuum" | "create_index";
+  phase: string;
+  done: number;
+  total: number;
 }
 
 /**
@@ -981,6 +1011,8 @@ export interface PrivilegeChange {
   added: PrivilegeFlags;
   /** 剥奪するフラグ。 */
   removed: PrivilegeFlags;
+  /** 列単位の権限 (#1622)。空でなければ `table` 指定時に SELECT / INSERT / UPDATE をその列に限定する。 */
+  columns?: string[] | null;
 }
 
 /**
@@ -1020,6 +1052,8 @@ export interface ServerMetrics {
   slow_queries: number | null;
   /** 行ロック待ちの累積回数。MySQL Innodb_row_lock_waits。PG は null。 */
   lock_waits: number | null;
+  /** サーバの接続数上限 (#1622)。MySQL max_connections / PG max_connections。取れなければ null。 */
+  max_connections?: number | null;
 }
 
 /** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
@@ -1638,6 +1672,30 @@ export interface SandboxSchemaDiffResult {
 export interface LogView {
   text: string;
   path: string | null;
+}
+
+/** 直近の計測値 1 件 (#1622)。SQL 本文・行データは含まない。 */
+export interface PerfSample {
+  at_ms: number;
+  kind: string;
+  sql_execute_ms: number | null;
+  emit_ms: number | null;
+  payload_bytes_approx: number | null;
+  rows: number;
+  columns: number;
+}
+
+export interface PerfStatus {
+  enabled: boolean;
+  ui_enabled: boolean;
+  env_enabled: boolean;
+  samples: PerfSample[];
+}
+
+/** OS keyring の疎通診断結果 (#1622)。`reason` は固定コード (秘密・エラー本文は含まない)。 */
+export interface KeyringStatus {
+  available: boolean;
+  reason: string | null;
 }
 
 export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql" | "xlsx";

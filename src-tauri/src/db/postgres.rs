@@ -12,10 +12,10 @@ use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
 use super::types::{
     Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, PreviewResult,
-    ProcessInfo, QueryResult, QueryStatsSupport, RoutineParameter, RoutineSignature, SchemaObject,
-    ServerInfo, ServerMetrics, ServerVariable, StatementStat, StreamBatch, TableColumnInfo,
-    TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    UserPrivileges, Value,
+    ProcessInfo, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
+    RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, ServerVariable, StatementStat,
+    StreamBatch, TableColumnInfo, TablePrivilegeRow, TableRowEstimate, TableRowIdentity,
+    TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
@@ -874,7 +874,7 @@ impl PostgresConn {
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
+        let mut list: Vec<ProcessInfo> = rows
             .into_iter()
             .map(|r| ProcessInfo {
                 id: i64::from(r.try_get::<i32, _>(0).unwrap_or_default()),
@@ -895,16 +895,80 @@ impl PostgresConn {
                     .flatten()
                     .map(|v| v.into_iter().map(i64::from).collect())
                     .unwrap_or_default(),
+                progress: None,
             })
-            .collect())
+            .collect();
+        // VACUUM / CREATE INDEX の進捗 (#1622)。ビューが無い古い版・権限不足は無視して None のまま。
+        let progress = self.maintenance_progress().await;
+        if !progress.is_empty() {
+            for p in &mut list {
+                p.progress = progress.get(&p.id).cloned();
+            }
+        }
+        Ok(list)
     }
 
-    /// `pg_terminate_backend(pid)` を `unnest` で 1 文にまとめて実行する (#1259)。
+    /// `pg_stat_progress_vacuum` / `pg_stat_progress_create_index` を pid で引けるようにする (#1622)。
+    /// 一覧の取得を壊さないよう、各ビューの失敗 (PostgreSQL 12 未満の `create_index` など) は
+    /// 空として扱う。進捗は VACUUM が走査済みヒープブロック / 総ブロック、索引作成が
+    /// 処理済みブロック / 総ブロック (総ブロックが 0 のフェーズは行数、それも無ければ割合なし)。
+    async fn maintenance_progress(&self) -> std::collections::HashMap<i64, ProcessProgress> {
+        let mut out = std::collections::HashMap::new();
+        if let Ok(rows) = sqlx::query(
+            "SELECT pid, phase, COALESCE(heap_blks_scanned, 0)::bigint, \
+                    COALESCE(heap_blks_total, 0)::bigint \
+             FROM pg_catalog.pg_stat_progress_vacuum",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for r in rows {
+                let pid = i64::from(r.try_get::<i32, _>(0).unwrap_or_default());
+                out.insert(
+                    pid,
+                    ProcessProgress {
+                        kind: "vacuum".into(),
+                        phase: r.try_get::<String, _>(1).unwrap_or_default(),
+                        done: r.try_get::<i64, _>(2).unwrap_or_default(),
+                        total: r.try_get::<i64, _>(3).unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        if let Ok(rows) = sqlx::query(
+            "SELECT pid, phase, \
+                    CASE WHEN blocks_total > 0 THEN blocks_done ELSE tuples_done END::bigint, \
+                    CASE WHEN blocks_total > 0 THEN blocks_total ELSE tuples_total END::bigint \
+             FROM pg_catalog.pg_stat_progress_create_index",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for r in rows {
+                let pid = i64::from(r.try_get::<i32, _>(0).unwrap_or_default());
+                out.insert(
+                    pid,
+                    ProcessProgress {
+                        kind: "create_index".into(),
+                        phase: r.try_get::<String, _>(1).unwrap_or_default(),
+                        done: r.try_get::<i64, _>(2).unwrap_or_default(),
+                        total: r.try_get::<i64, _>(3).unwrap_or_default(),
+                    },
+                );
+            }
+        }
+        out
+    }
+
+    /// `pg_terminate_backend(pid)` を pid ごとに実行する (#1259 / #1622)。
     /// MySQL `KILL` と同じく接続全体を終了する。`statement_only` のときは
     /// `pg_cancel_backend` で実行中の文だけをキャンセルし、接続は残す。pid が既に消えていても関数は false を
-    /// 返すだけなので成功扱い (プロセス自然終了との競合は正常)。アプリ自身の接続
+    /// 返すだけなので成功扱い (`AlreadyGone`。プロセス自然終了との競合は正常)。アプリ自身の接続
     /// (`pg_backend_pid()`) は最後に回す。int4 に収まらない pid は実行前に失敗として数える。
-    /// 文が失敗した場合 (権限不足など) は対象全件を失敗として数え、最初のエラーを返す。
+    ///
+    /// 結果は pid ごと (`outcomes`)。キャンセルの二重送信を避けるため最初から 1 本ずつ実行し、
+    /// 失敗した pid だけにそのエラーを付ける (自接続を含むときも pid 単位で数えるので件数が
+    /// ずれない)。SQL 側の `<> pg_backend_pid()` で自接続は常に除外される。
     pub async fn kill_processes(
         &self,
         ids: &[i64],
@@ -915,69 +979,67 @@ impl PostgresConn {
         for id in ids {
             match i32::try_from(*id) {
                 Ok(pid) => pids.push(pid),
-                Err(_) => out.record_failure(1, format!("invalid backend pid: {id}")),
+                Err(_) => out.record_failure(*id, format!("invalid backend pid: {id}")),
             }
         }
         if pids.is_empty() {
             return Ok(out);
         }
-        let count = pids.len() as u64;
-        if statement_only {
-            // 自分自身の接続 (pg_backend_pid) は対象から外す。スキップは成功・失敗どちらにも数えない。
-            let sql = "SELECT pg_cancel_backend(s.p) FROM ( \
-               SELECT p FROM unnest($1::int4[]) WITH ORDINALITY AS t(p, ord) \
-               WHERE p <> pg_backend_pid() ORDER BY ord \
-             ) s";
-            match sqlx::query(sql).bind(&pids).execute(&self.pool).await {
-                // 自分自身を除いた行数だけ成功として数える (SELECT の rows_affected は返却行数)。
-                Ok(done) => out.killed += done.rows_affected(),
-                Err(e) => out.record_failure(count, AppError::from(e).to_string()),
-            }
-            return Ok(out);
-        }
-
-        // 同じ接続で 2 段階に分ける。自分自身を他の pid と同じ文の中で終了すると、結果を返す前に
-        // 接続が FATAL で切れ、他の pid が既に終了していても全件失敗に見えてしまうため。
-        // 接続を 1 本確保して両段階を同じ接続で実行するので、段階 2 の対象は確実にその接続自身になる。
+        let func = if statement_only {
+            "pg_cancel_backend"
+        } else {
+            "pg_terminate_backend"
+        };
+        // この接続自身を最後に回すため、同じ接続で段階 1 / 段階 2 を実行する。
         let mut conn = match self.pool.acquire().await {
             Ok(c) => c,
             Err(e) => {
-                out.record_failure(count, AppError::from(e).to_string());
+                let msg = AppError::from(e).to_string();
+                let failed: Vec<i64> = pids.iter().map(|p| i64::from(*p)).collect();
+                out.record_failures(&failed, &msg);
                 return Ok(out);
             }
         };
-        // 段階 1: この接続自身を除いて終了する。pg_terminate_backend が false を返すのは
-        // 対象がもう居ない (既に終了した) ときで、目的は達しているので従来どおり成功に数える。
-        let others_sql = "SELECT t.p FROM ( \
-               SELECT p, ord FROM unnest($1::int4[]) WITH ORDINALITY AS u(p, ord) \
-               WHERE p <> pg_backend_pid() \
-             ) t CROSS JOIN LATERAL pg_terminate_backend(t.p) ORDER BY t.ord";
-        let rows: Vec<(i32,)> = match sqlx::query_as::<_, (i32,)>(others_sql)
-            .bind(&pids)
-            .fetch_all(&mut *conn)
+        let own: Option<i32> = sqlx::query_scalar::<_, i32>("SELECT pg_backend_pid()")
+            .fetch_one(&mut *conn)
             .await
-        {
-            Ok(rows) => rows,
-            Err(e) => {
-                out.record_failure(count, AppError::from(e).to_string());
-                return Ok(out);
+            .ok();
+        let others: Vec<i32> = pids.iter().copied().filter(|p| Some(*p) != own).collect();
+        let own_requested = pids.iter().any(|p| Some(*p) == own);
+
+        // 段階 1: 自分自身を除いて pid ごとに実行する。一括 (LATERAL) 文は途中で失敗すると
+        // フォールバックで先に届いたシグナルを再送しうる (キャンセルの二重送信) ので、最初から
+        // pid 単位にする。`pg_backend_pid()` の取得に失敗していても自接続を巻き込まないよう、
+        // SQL 側でも `<> pg_backend_pid()` を条件に残す (その場合は行が返らず skipped になる)。
+        let one_sql = format!("SELECT {func}($1::int4) WHERE $1::int4 <> pg_backend_pid()");
+        for pid in &others {
+            match sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(one_sql.clone()))
+                .bind(pid)
+                .fetch_optional(&mut *conn)
+                .await
+            {
+                Ok(Some(true)) => out.record_killed(i64::from(*pid)),
+                Ok(Some(false)) => out.record_already_gone(i64::from(*pid)),
+                Ok(None) => out.record_skipped(i64::from(*pid)),
+                Err(e) => out.record_failure(i64::from(*pid), AppError::from(e).to_string()),
             }
-        };
-        let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
-        for (pid,) in rows {
-            seen.insert(pid);
-            out.killed += 1;
         }
 
-        // 段階 2: 段階 1 で除外された pid (= この接続自身) を最後に終了する。接続断のエラーは
-        // 終了が成功した結果なので失敗に数えない。
-        if pids.iter().any(|p| !seen.contains(p)) {
-            let last_sql = "SELECT pg_terminate_backend(p) FROM unnest($1::int4[]) AS t(p) \
-               WHERE p = pg_backend_pid()";
-            match sqlx::query(last_sql).bind(&pids).execute(&mut *conn).await {
-                Ok(_) => out.killed += 1,
-                Err(e) if is_connection_dropped(&e) => out.killed += 1,
-                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+        // 段階 2: この接続自身。文のみ停止では無意味なのでスキップ (成功にも失敗にも数えない)。
+        // 終了では、接続断のエラーは終了が成功した結果なので失敗に数えない。
+        if own_requested {
+            let own_pid = i64::from(own.unwrap_or_default());
+            if statement_only {
+                out.record_skipped(own_pid);
+            } else {
+                match sqlx::query("SELECT pg_terminate_backend(pg_backend_pid())")
+                    .execute(&mut *conn)
+                    .await
+                {
+                    Ok(_) => out.record_killed(own_pid),
+                    Err(e) if is_connection_dropped(&e) => out.record_killed(own_pid),
+                    Err(e) => out.record_failure(own_pid, AppError::from(e).to_string()),
+                }
             }
         }
         Ok(out)
@@ -2297,17 +2359,23 @@ impl PostgresConn {
         // pg_total_relation_size = table + all indexes + TOAST; pg_indexes_size
         // = just the indexes; pg_table_size = total minus indexes (heap + TOAST
         // + FSM/VM). These read catalog bookkeeping, not the heap, so no scan.
-        // reltuples is the planner's cached estimate (-1 == never analyzed,
-        // surfaced as None). relkind 'r'/'p' covers ordinary + partitioned
+        // reltuples is the planner's cached estimate (-1 == never analyzed). PostgreSQL 14+
+        // では未 ANALYZE のとき -1 になるので、統計コレクタの n_live_tup で補う (#1622)。
+        // それも無ければ None. relkind 'r'/'p' covers ordinary + partitioned
         // tables; views/indexes are excluded.
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT c.relname,
-                      c.reltuples::bigint,
+                      CASE WHEN c.reltuples < 0 THEN COALESCE(st.n_live_tup, -1)
+                           ELSE c.reltuples END::bigint,
                       pg_table_size(c.oid)::bigint,
                       pg_indexes_size(c.oid)::bigint,
-                      pg_total_relation_size(c.oid)::bigint
+                      pg_total_relation_size(c.oid)::bigint,
+                      st.n_dead_tup::bigint,
+                      EXTRACT(EPOCH FROM GREATEST(st.last_vacuum, st.last_autovacuum))::bigint,
+                      EXTRACT(EPOCH FROM GREATEST(st.last_analyze, st.last_autoanalyze))::bigint
                FROM pg_class c
                JOIN pg_namespace n ON n.oid = c.relnamespace
+               LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
                WHERE n.nspname = $1 AND c.relkind IN ('r', 'p')
                ORDER BY c.relname"#,
         )
@@ -2324,6 +2392,10 @@ impl PostgresConn {
                     data_bytes: r.try_get::<Option<i64>, _>(2).ok().flatten(),
                     index_bytes: r.try_get::<Option<i64>, _>(3).ok().flatten(),
                     total_bytes: r.try_get::<Option<i64>, _>(4).ok().flatten(),
+                    // 肥大・統計の古さの指標 (#1622)。pg_stat_user_tables に行が無ければ None。
+                    dead_rows: r.try_get::<Option<i64>, _>(5).ok().flatten(),
+                    last_vacuum_at: r.try_get::<Option<i64>, _>(6).ok().flatten(),
+                    last_analyze_at: r.try_get::<Option<i64>, _>(7).ok().flatten(),
                 }
             })
             .collect())
@@ -2348,9 +2420,10 @@ impl PostgresConn {
             .unwrap_or_default();
         // pg_settings exposes every GUC as (name, setting). Read-only.
         // Secret-named settings are masked as defense-in-depth (#563).
-        let rows: Vec<PgRow> = sqlx::query("SELECT name, setting FROM pg_settings ORDER BY name")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<PgRow> =
+            sqlx::query("SELECT name, setting, source FROM pg_settings ORDER BY name")
+                .fetch_all(&self.pool)
+                .await?;
         let variables = rows
             .into_iter()
             .map(|r| {
@@ -2361,7 +2434,12 @@ impl PostgresConn {
                     .flatten()
                     .unwrap_or_default();
                 let value = super::mask_sensitive_var(&name, value);
-                ServerVariable { name, value }
+                let source = r.try_get::<Option<String>, _>(2).ok().flatten();
+                ServerVariable {
+                    name,
+                    value,
+                    source,
+                }
             })
             .collect();
         Ok(ServerInfo { version, variables })
@@ -2428,6 +2506,13 @@ impl PostgresConn {
             // 安価な常設カウンタが無い (待ち数は lock_waiting ゲージで見る)。
             slow_queries: None,
             lock_waits: None,
+            // 接続数の上限 (#1622)。`max_connections` は GUC なので誰でも読める。
+            max_connections: sqlx::query_scalar::<_, i64>(
+                "SELECT current_setting('max_connections')::bigint",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .ok(),
         })
     }
 }

@@ -1265,6 +1265,7 @@ impl MySqlConn {
                     .map(|v| v != 0)
                     .unwrap_or(false),
                 blocked_by: Vec::new(),
+                progress: None,
             })
             .map(|mut p| {
                 p.blocked_by = blockers.get(&p.id).cloned().unwrap_or_default();
@@ -1757,17 +1758,21 @@ impl MySqlConn {
         let mut ordered: Vec<i64> = ids.iter().copied().filter(|id| Some(*id) != own).collect();
         // 文のみ停止では自分自身の接続を対象から外す (この KILL QUERY を打つ接続自体のため無意味)。
         // スキップは成功・失敗どちらにも数えない。
+        let mut out = KillProcessesResult::default();
         if !statement_only {
             ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        } else {
+            for id in ids.iter().copied().filter(|id| Some(*id) == own) {
+                out.record_skipped(id);
+            }
         }
-        let mut out = KillProcessesResult::default();
         for id in ordered {
             match sqlx::query(sqlx::AssertSqlSafe(format!("{verb} {id}")))
                 .execute(&mut *conn)
                 .await
             {
-                Ok(_) => out.killed += 1,
-                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+                Ok(_) => out.record_killed(id),
+                Err(e) => out.record_failure(id, AppError::from(e).to_string()),
             }
         }
         Ok(out)
@@ -1783,6 +1788,28 @@ impl MySqlConn {
             sqlx::query("SELECT User, Host, Super_priv FROM mysql.user ORDER BY User, Host")
                 .fetch_all(&self.pool)
                 .await?;
+        // MySQL 8 のロール付与 (`mysql.role_edges`)。ユーザごとに `role@host` で埋める (#1622)。
+        // 5.7 / MariaDB (テーブルが無い) や権限不足ではクエリが失敗するので、空のままにする。
+        let mut roles: std::collections::HashMap<(String, String), Vec<String>> =
+            std::collections::HashMap::new();
+        if let Ok(edges) = sqlx::query(
+            "SELECT TO_USER, TO_HOST, FROM_USER, FROM_HOST FROM mysql.role_edges \
+             ORDER BY FROM_USER, FROM_HOST",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for e in edges {
+                let to_user: String = e.try_get(0).unwrap_or_default();
+                let to_host: String = e.try_get(1).unwrap_or_default();
+                let from_user: String = e.try_get(2).unwrap_or_default();
+                let from_host: String = e.try_get(3).unwrap_or_default();
+                roles
+                    .entry((to_user, to_host))
+                    .or_default()
+                    .push(format!("{from_user}@{from_host}"));
+            }
+        }
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -1790,15 +1817,20 @@ impl MySqlConn {
                     .try_get::<String, _>(2)
                     .map(|v| v.eq_ignore_ascii_case("Y"))
                     .unwrap_or(false);
+                let name: String = r.try_get(0).unwrap_or_default();
+                let host: Option<String> = r.try_get::<Option<String>, _>(1).ok().flatten();
+                let member_of = roles
+                    .remove(&(name.clone(), host.clone().unwrap_or_default()))
+                    .unwrap_or_default();
                 DbUserInfo {
-                    name: r.try_get(0).unwrap_or_default(),
-                    host: r.try_get::<Option<String>, _>(1).ok().flatten(),
+                    name,
+                    host,
                     attributes: if is_super {
                         vec!["SUPER".to_string()]
                     } else {
                         Vec::new()
                     },
-                    member_of: Vec::new(),
+                    member_of,
                     is_superuser: is_super,
                     // `mysql.user` also has an `account_locked` column this
                     // panel does not read; login is reported as always
@@ -2496,6 +2528,9 @@ impl MySqlConn {
                     data_bytes: data,
                     index_bytes: index,
                     total_bytes: super::sum_size_parts(data, index),
+                    dead_rows: None,
+                    last_vacuum_at: None,
+                    last_analyze_at: None,
                 }
             })
             .collect())
@@ -2518,6 +2553,23 @@ impl MySqlConn {
         // variables, which we render as an empty string. Secret-named variables
         // are masked as defense-in-depth (#563).
         let rows: Vec<MySqlRow> = sqlx::query("SHOW VARIABLES").fetch_all(&self.pool).await?;
+        // 値の出どころ (#1622)。MySQL 8 の performance_schema.variables_info が読めるときだけ。
+        // 読めない (5.7 / MariaDB / 権限不足) ときは出どころなしで続行する。
+        let sources: std::collections::HashMap<String, String> = sqlx::query(
+            "SELECT VARIABLE_NAME, VARIABLE_SOURCE FROM performance_schema.variables_info",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|r| {
+                    let name = r.try_get::<String, _>(0).ok()?.to_ascii_lowercase();
+                    let src = r.try_get::<String, _>(1).ok()?;
+                    Some((name, mysql_variable_source(&src)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
         let variables = rows
             .into_iter()
             .map(|r| {
@@ -2528,7 +2580,12 @@ impl MySqlConn {
                     .flatten()
                     .unwrap_or_default();
                 let value = super::mask_sensitive_var(&name, value);
-                ServerVariable { name, value }
+                let source = sources.get(&name.to_ascii_lowercase()).cloned();
+                ServerVariable {
+                    name,
+                    value,
+                    source,
+                }
             })
             .collect();
         Ok(ServerInfo { version, variables })
@@ -2578,6 +2635,14 @@ impl MySqlConn {
             questions: g("questions"),
             slow_queries: g("slow_queries"),
             lock_waits: g("innodb_row_lock_waits"),
+            // 接続数の上限 (#1622)。変数が読めなければ None (使用率は出さない)。
+            max_connections: sqlx::query("SHOW GLOBAL VARIABLES LIKE 'max_connections'")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| r.try_get::<String, _>(1).ok())
+                .and_then(|v| v.trim().parse::<i64>().ok()),
         })
     }
 }
@@ -2595,6 +2660,17 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     drop(c);
     conn.close().await;
     Ok(())
+}
+
+/// `performance_schema.variables_info.VARIABLE_SOURCE` を、PostgreSQL の `pg_settings.source` と
+/// 並べて扱える表記にする (#1622)。`COMPILED` (コンパイル時の既定) だけを `default` にし、他は
+/// 小文字化して返す (`GLOBAL` / `COMMAND_LINE` / `PERSISTED` など)。
+fn mysql_variable_source(source: &str) -> String {
+    if source.eq_ignore_ascii_case("COMPILED") {
+        "default".to_string()
+    } else {
+        source.to_ascii_lowercase()
+    }
 }
 
 /// `processlist.STATE` がロック待ち (`Waiting for table metadata lock` /
@@ -3907,6 +3983,13 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn variable_source_normalizes_compiled_to_default() {
+        assert_eq!(super::mysql_variable_source("COMPILED"), "default");
+        assert_eq!(super::mysql_variable_source("PERSISTED"), "persisted");
+        assert_eq!(super::mysql_variable_source("COMMAND_LINE"), "command_line");
+    }
+
     #[test]
     fn lock_conflict_errors_are_recognised() {
         let dead = AppError::Other(

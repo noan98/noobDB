@@ -84,6 +84,9 @@ mod tests {
             index_count: 0,
             has_primary_key: true,
             foreign_key_count: 0,
+            dead_rows: None,
+            last_vacuum_at: None,
+            last_analyze_at: None,
             previous: None,
         }
     }

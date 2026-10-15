@@ -6,8 +6,11 @@
 //! ## 設計方針
 //!
 //! - **既定は無効。** `NOOBDB_PERF_LOG=1` (または `true`、大文字小文字を無視) が
-//!   設定されているときだけ計測する。本番ログに計測情報を常時出さない、という
-//!   Issue #1094 の実装方針そのもの。
+//!   設定されているか、設定画面のトグル (#1622、[`set_ui_enabled`]) が ON のときだけ
+//!   計測する。本番ログに計測情報を常時出さない、という Issue #1094 の実装方針そのもの。
+//!   環境変数はパッケージ版では使えないので、画面から切り替えられるようにした。
+//!   直近の計測値は [`recent_samples`] で取り出して診断タブに表示する (メモリ上のみ・
+//!   最大 [`RECENT_SAMPLE_CAPACITY`] 件)。
 //! - **計測 OFF 時のオーバーヘッドは真偽値 1 回の読み取りのみ。** [`Span::start`]
 //!   は無効時に `Instant::now()` すら呼ばない。[`StreamAccumulator::record_emit`]
 //!   も同様に、無効時は渡されたクロージャをそのまま実行するだけで計測コストを
@@ -24,9 +27,12 @@
 
 pub mod bench;
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
-use std::time::Instant;
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use serde::Serialize;
 
 use crate::db::types::Column;
 use crate::db::types::Value;
@@ -38,12 +44,116 @@ fn parse_enabled(raw: Option<&str>) -> bool {
     matches!(raw, Some(v) if v == "1" || v.eq_ignore_ascii_case("true"))
 }
 
-/// 計測が有効かどうか。プロセス起動後は変わらない前提で一度だけ判定して
+/// 環境変数 `NOOBDB_PERF_LOG` による有効化。起動後は変わらない前提で一度だけ判定して
 /// キャッシュする — 呼び出しのたびに `env::var` を読むとホットパス
 /// (行バッチの emit 毎など) で無視できないコストになるため。
-pub fn perf_enabled() -> bool {
+pub fn env_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| parse_enabled(std::env::var("NOOBDB_PERF_LOG").ok().as_deref()))
+}
+
+/// 設定画面のトグルによる有効化 (#1622)。実行中に切り替えられるよう `AtomicBool`。
+static UI_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// 設定画面のトグルを反映する。環境変数が有効なら、これを OFF にしても計測は止まらない
+/// (開発者の `NOOBDB_PERF_LOG=1` を設定が上書きしない)。
+pub fn set_ui_enabled(enabled: bool) {
+    UI_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// 画面のトグルの現在値 (環境変数は含まない)。
+pub fn ui_enabled() -> bool {
+    UI_ENABLED.load(Ordering::Relaxed)
+}
+
+/// 計測が有効かどうか (環境変数 または 設定のトグル)。ホットパスから呼ばれるので
+/// 環境変数はキャッシュ済みの値、トグルは緩い順序の原子読み取りだけで済ませる。
+pub fn perf_enabled() -> bool {
+    env_enabled() || UI_ENABLED.load(Ordering::Relaxed)
+}
+
+/// 診断タブに出す直近の計測値の最大件数。
+pub const RECENT_SAMPLE_CAPACITY: usize = 20;
+
+/// 計測値 1 件 (#1622)。SQL 本文・行データ・接続先は含めない — 経過時間・件数・
+/// 概算サイズだけ。フィールド名は構造化ログと揃える。
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct PerfSample {
+    /// 記録時刻 (Unix ミリ秒)。
+    pub at_ms: u64,
+    /// `"query"` (非ストリーミング実行) / `"stream"` (ストリーミング実行)。
+    pub kind: &'static str,
+    /// SQL 実行 (+ ドライバ内の行デコード) の所要ミリ秒。
+    pub sql_execute_ms: Option<f64>,
+    /// emit (シリアライズ + IPC) の積算ミリ秒。ストリーミングのみ。
+    pub emit_ms: Option<f64>,
+    /// 概算ペイロードバイト数。ストリーミングのみ。
+    pub payload_bytes_approx: Option<u64>,
+    pub rows: u64,
+    pub columns: u64,
+}
+
+/// 直近の計測値を固定長で保持するリング。古いものから捨てる。
+#[derive(Debug)]
+struct SampleRing {
+    cap: usize,
+    items: VecDeque<PerfSample>,
+}
+
+impl SampleRing {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap: cap.max(1),
+            items: VecDeque::new(),
+        }
+    }
+
+    fn push(&mut self, sample: PerfSample) {
+        if self.items.len() >= self.cap {
+            self.items.pop_front();
+        }
+        self.items.push_back(sample);
+    }
+
+    /// 新しい順。
+    fn newest_first(&self) -> Vec<PerfSample> {
+        self.items.iter().rev().cloned().collect()
+    }
+
+    fn clear(&mut self) {
+        self.items.clear();
+    }
+}
+
+fn ring() -> &'static Mutex<SampleRing> {
+    static RING: OnceLock<Mutex<SampleRing>> = OnceLock::new();
+    RING.get_or_init(|| Mutex::new(SampleRing::new(RECENT_SAMPLE_CAPACITY)))
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default()
+}
+
+fn record_sample(sample: PerfSample) {
+    // 他スレッドが panic して毒化していても、計測値の記録は続ける。
+    let mut guard = ring().lock().unwrap_or_else(|e| e.into_inner());
+    guard.push(sample);
+}
+
+/// 直近の計測値 (新しい順)。
+pub fn recent_samples() -> Vec<PerfSample> {
+    ring()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .newest_first()
+}
+
+/// 保持している計測値を捨てる。
+pub fn clear_samples() {
+    ring().lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// 1 区間の計測。計測 OFF のときは中身が `None` になり、`Instant::now()` を
@@ -143,6 +253,15 @@ pub fn log_query_execute(
     if !perf_enabled() {
         return;
     }
+    record_sample(PerfSample {
+        at_ms: now_ms(),
+        kind: "query",
+        sql_execute_ms,
+        emit_ms: None,
+        payload_bytes_approx: None,
+        rows: rows as u64,
+        columns: columns as u64,
+    });
     tracing::debug!(
         target: "noobdb::perf",
         session_id = %session_id,
@@ -177,6 +296,15 @@ pub fn log_query_stream(
     if !perf_enabled() {
         return;
     }
+    record_sample(PerfSample {
+        at_ms: now_ms(),
+        kind: "stream",
+        sql_execute_ms: Some(sql_execute_ms as f64),
+        emit_ms: Some(emit_ms),
+        payload_bytes_approx: Some(payload_bytes_approx),
+        rows,
+        columns: columns as u64,
+    });
     tracing::debug!(
         target: "noobdb::perf",
         session_id = %session_id,
@@ -271,5 +399,61 @@ mod tests {
         ];
         assert_eq!(approx_rows_bytes(&rows), 4 * 12);
         assert_eq!(approx_rows_bytes(&[]), 0);
+    }
+
+    fn sample(rows: u64) -> PerfSample {
+        PerfSample {
+            at_ms: rows,
+            kind: "query",
+            sql_execute_ms: Some(1.0),
+            emit_ms: None,
+            payload_bytes_approx: None,
+            rows,
+            columns: 1,
+        }
+    }
+
+    #[test]
+    fn sample_ring_keeps_only_the_newest_samples_newest_first() {
+        let mut ring = SampleRing::new(3);
+        for n in 1..=5 {
+            ring.push(sample(n));
+        }
+        let got: Vec<u64> = ring.newest_first().iter().map(|s| s.rows).collect();
+        assert_eq!(got, vec![5, 4, 3]);
+        ring.clear();
+        assert!(ring.newest_first().is_empty());
+    }
+
+    #[test]
+    fn sample_ring_capacity_is_at_least_one() {
+        let mut ring = SampleRing::new(0);
+        ring.push(sample(1));
+        ring.push(sample(2));
+        assert_eq!(ring.newest_first().len(), 1);
+        assert_eq!(ring.newest_first()[0].rows, 2);
+    }
+
+    #[test]
+    fn sample_serializes_without_any_sql_or_row_data_fields() {
+        let json = serde_json::to_value(sample(7)).expect("serialize");
+        let keys: Vec<&str> = json
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        for k in [
+            "at_ms",
+            "kind",
+            "sql_execute_ms",
+            "emit_ms",
+            "payload_bytes_approx",
+            "rows",
+            "columns",
+        ] {
+            assert!(keys.contains(&k), "missing {k}");
+        }
+        assert_eq!(keys.len(), 7, "{keys:?}");
     }
 }
