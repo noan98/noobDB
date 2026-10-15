@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { t } from "../i18n";
+import { setAiMonthlyBudget } from "../settings";
+import { AiUsageNote } from "../components/AiUsageNote";
 
 const getAiUsageHistory = vi.fn();
 const clearAiUsageHistory = vi.fn();
@@ -33,6 +35,7 @@ const record = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  setAiMonthlyBudget(null);
   clearAiUsageHistory.mockResolvedValue(undefined);
 });
 
@@ -102,5 +105,56 @@ describe("AiUsageHistory (#1540)", () => {
     getAiUsageHistory.mockRejectedValue(new Error("boom"));
     renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
     await screen.findByText(/boom/);
+  });
+});
+
+describe("月次予算の表示 (#1620)", () => {
+  // record は今月 $4.00 (Opus 入力 100 万トークン × 単価 $4 × 1 レコード)。
+  it("予算が無ければ予算の帯を出さない", async () => {
+    getAiUsageHistory.mockResolvedValue([record]);
+    renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    await screen.findAllByText(/\$4\.00/);
+    expect(screen.queryByTestId("ai-budget-status")).toBeNull();
+  });
+
+  it("8 割未満は info、8 割以上は警告、到達で超過の文言", async () => {
+    getAiUsageHistory.mockResolvedValue([record]);
+    setAiMonthlyBudget(10);
+    const { unmount } = renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    expect((await screen.findByTestId("ai-budget-status")).textContent).toContain(
+      t("aiBudgetOk", { spent: "$4.00", budget: "$10.00", percent: 40 }),
+    );
+    unmount();
+    setAiMonthlyBudget(5);
+    const second = renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    expect((await screen.findByTestId("ai-budget-status")).textContent).toContain(
+      t("aiBudgetWarning", { spent: "$4.00", budget: "$5.00", percent: 80 }),
+    );
+    second.unmount();
+    setAiMonthlyBudget(4);
+    renderWithProviders(<AiUsageHistory taskLabel={(x) => x} />);
+    expect((await screen.findByTestId("ai-budget-status")).textContent).toContain(
+      t("aiBudgetExceeded", { spent: "$4.00", budget: "$4.00", percent: 100 }),
+    );
+  });
+
+  it("回答下の使用量表示は、予算の 8 割を超えたときだけ警告を足す", async () => {
+    getAiUsageHistory.mockResolvedValue([record]);
+    const event = {
+      streamId: "s",
+      model: "claude-opus-5-5",
+      requestedModel: "claude-opus-5-5",
+      fallbackUsed: false,
+      stopReason: "end_turn",
+      usage: { inputTokens: 10, outputTokens: 10, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+    };
+    setAiMonthlyBudget(100);
+    const { unmount } = renderWithProviders(<AiUsageNote event={event} />);
+    await waitFor(() => expect(getAiUsageHistory).toHaveBeenCalled());
+    expect(screen.queryByTestId("ai-usage-budget-warning")).toBeNull();
+    unmount();
+    setAiMonthlyBudget(4.5);
+    renderWithProviders(<AiUsageNote event={event} />);
+    await screen.findByTestId("ai-usage-budget-warning");
   });
 });

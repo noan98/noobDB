@@ -114,6 +114,28 @@ export interface AwsIamSettings {
 }
 
 /**
+ * AWS Systems Manager (SSM) Session Manager port-forwarding settings (#1683) —
+ * an alternative to the SSH tunnel, mutually exclusive with `ssh` (the backend
+ * rejects both). All fields are non-secret: authentication is resolved by the AWS
+ * CLI (`aws ssm start-session`), which must be on PATH together with the Session
+ * Manager plugin.
+ */
+export interface SsmConfig {
+  /** Bastion EC2 instance ID (`i-0123456789abcdef0`) or managed node ID (`mi-...`). Required. */
+  target: string;
+  /** AWS region. Empty = infer from the RDS endpoint name, then `AWS_REGION` / `AWS_DEFAULT_REGION`. */
+  region: string;
+  /** AWS CLI `--profile` name. `null`/omitted = AWS default resolution. */
+  profile?: string | null;
+}
+
+/** SSM port-forwarding selector shared by the connect request and the saved profile. */
+export interface SsmSettings {
+  /** `null`/omitted = no SSM; set = connect through SSM port forwarding (not for SQLite). */
+  ssm?: SsmConfig | null;
+}
+
+/**
  * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
  * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
  * bastion hop (2 SSH hops total) for now.
@@ -140,7 +162,7 @@ export interface SshProfile {
   jump?: SshJumpProfile | null;
 }
 
-export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   id: string;
   name: string;
   driver: string;
@@ -226,7 +248,7 @@ export interface ResolvedSshAlias {
   jump_user: string | null;
 }
 
-export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -246,7 +268,7 @@ export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIam
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   id?: string;
   name: string;
   driver: string;
@@ -1025,7 +1047,7 @@ export type ProfileCount = number | string;
  * DISTINCT / MIN・MAX / 上位頻出値 / (数値列のみ) ヒストグラム。`notes` は縮退
  * 理由コード (`stats_unavailable` / `top_values_unavailable` /
  * `histogram_unavailable` / `approx_distinct_unsupported` /
- * `approx_distinct_no_stats`)。
+ * `approx_distinct_no_stats` / `sampled`)。
  */
 export interface ColumnProfile {
   column: string;
@@ -1041,6 +1063,8 @@ export interface ColumnProfile {
   top_values: { value: CellValue; count: ProfileCount }[];
   histogram: { lower: number; upper: number; count: ProfileCount }[];
   notes: string[];
+  /** 標本モード (#1628) の抽出率 (%)。全件を集計したときは null。 */
+  sample_percent?: number | null;
 }
 
 /** 全列の概要の 1 列分 (#1539)。`distinct_count` が null なら求めていない / 求められなかった。 */
@@ -1908,6 +1932,24 @@ export interface ResultFindOutput {
   truncated: boolean;
 }
 
+/** `result_duplicate_keys` の戻り値 (#1628)。 */
+export interface ResultDuplicateKeys {
+  rowCount: number;
+  /** キー列のどれかが NULL で対象外にした行数。 */
+  nullKeyRows: number;
+  distinctKeys: number;
+  /** 2 行以上で現れたキー値の数。 */
+  groupCount: number;
+  /** 重複グループに属する行の総数。 */
+  duplicateRows: number;
+  /** 各グループの 2 行目以降の行数の合計。 */
+  extraRows: number;
+  top: { values: string[]; count: number; firstRow: number }[];
+  /** 重複グループに属する行のインデックス (昇順、上限あり)。 */
+  rowIndices: number[];
+  indicesTruncated: boolean;
+}
+
 /** `result_column_stats` の戻り値 (#1264)。`gridStats.ts::ColumnStats` と同形。 */
 export interface ResultColumnStats {
   count: number;
@@ -1933,6 +1975,8 @@ export interface StreamStatsSnapshot {
   numMax: (number | null)[];
   /** 全列が同一の行が 2 行以上あるか (`null` = 追跡上限超えで不明)。 */
   duplicateRows: boolean | null;
+  /** 列ごとの近似ユニーク数 (HyperLogLog、#1628)。非 NULL 値が無い列は 0。 */
+  distinctEstimates?: number[];
 }
 
 export interface QueryStreamRowsMessage {

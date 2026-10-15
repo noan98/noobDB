@@ -224,6 +224,10 @@ describe("localizedErrorMessage (#1533)", () => {
 });
 
 describe("aiErrorHintKey (#1608)", () => {
+  it("月次予算の超過 (#1620) は予算の案内", () => {
+    expect(aiErrorHintKey("aiBudgetExceeded")).toBe("errorHintAiBudget");
+  });
+
   it("混雑・認証・ネットワークに次の手の案内を返し、それ以外の kind は null", () => {
     expect(aiErrorHintKey("aiOverloaded", "HTTP 529")).toBe("errorHintAiOverloaded");
     expect(aiErrorHintKey("aiAuth", "API request was not authorized (HTTP 401, authentication_error)")).toBe(

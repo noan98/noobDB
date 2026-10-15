@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +146,8 @@ pub enum FilterOp {
     NotEquals,
     StartsWith,
     EndsWith,
+    /// 値のチェックリスト (複数選択, #1628)。`FilterSpec::values` との完全一致 (大小区別)。
+    In,
     Eq,
     Ne,
     Gt,
@@ -173,12 +175,17 @@ pub struct FilterSpec {
     /// `equals` / `notEquals` を大小区別で比較する (省略時は大小無視)。
     #[serde(default)]
     pub case_sensitive: bool,
+    /// `In` で選んだ値の集合 (他の演算子では無視される)。
+    #[serde(default)]
+    pub values: Vec<String>,
 }
 
 /// `filterHasValue`。
 fn filter_has_value(f: &FilterSpec) -> bool {
     if f.op == FilterOp::Between {
         !js_trim(&f.value).is_empty() || !js_trim(&f.value2).is_empty()
+    } else if f.op == FilterOp::In {
+        !f.values.is_empty()
     } else {
         !js_trim(&f.value).is_empty()
     }
@@ -219,6 +226,8 @@ fn cmp_big_int(a: &str, b: &str) -> Ordering {
 
 /// 評価用に前処理した列フィルタ。
 enum Prepared {
+    /// 値集合との完全一致 (`FilterOp::In`)。
+    In(HashSet<String>),
     Text {
         op: FilterOp,
         q: String,
@@ -246,6 +255,7 @@ struct PreparedFilter {
 fn prepare_filter(f: &FilterSpec) -> PreparedFilter {
     let cond = if filter_has_value(f) {
         Some(match f.op {
+            FilterOp::In => Prepared::In(f.values.iter().cloned().collect()),
             FilterOp::Contains
             | FilterOp::Equals
             | FilterOp::NotEquals
@@ -335,6 +345,15 @@ fn text_matches(op: FilterOp, s: &str, q: &str, exact: bool) -> bool {
 /// `matchesColumnValue` (非 NULL セル)。
 fn matches_value(v: &Value, cond: &Prepared) -> bool {
     match cond {
+        Prepared::In(set) => {
+            if let Some(ib) = int_buf(v) {
+                return set.contains(ib.as_str());
+            }
+            match value_str(v) {
+                Some(s) => set.contains(s.as_ref()),
+                None => false,
+            }
+        }
         Prepared::Text { op, q, exact } => {
             if let Some(ib) = int_buf(v) {
                 return text_matches(*op, ib.as_str(), q, *exact);
@@ -657,6 +676,142 @@ pub fn column_stats(rows: &[Vec<Value>], col: usize) -> ColumnStatsOut {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 重複キー検出 (#1628)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 重複グループ 1 件 (同じキー値を持つ 2 行以上)。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateGroup {
+    /// キー列の値 (指定した列の順)。
+    pub values: Vec<String>,
+    /// このキー値を持つ行数 (2 以上)。
+    pub count: u64,
+    /// 最初に現れた行 (結果ハンドルの行インデックス)。
+    pub first_row: u32,
+}
+
+/// 指定した列の組み合わせでの重複検出の結果。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DuplicateKeysOut {
+    /// 対象の総行数。
+    pub row_count: u64,
+    /// キー列のどれかが NULL で対象外にした行数 (UNIQUE 制約と同じく NULL は互いに別物)。
+    pub null_key_rows: u64,
+    /// 判定対象の行にあるキー値の種類数。
+    pub distinct_keys: u64,
+    /// 2 行以上で現れたキー値の数 (重複グループ数)。
+    pub group_count: u64,
+    /// 重複グループに属する行の総数。
+    pub duplicate_rows: u64,
+    /// 各グループで 2 行目以降の行数の合計 (重複を 1 行に畳むと減る行数)。
+    pub extra_rows: u64,
+    /// 件数の多い重複グループの上位 (件数降順、同数は先に現れた順)。
+    pub top: Vec<DuplicateGroup>,
+    /// 重複グループに属する行のインデックス (昇順)。`index_limit` で打ち切る。
+    pub row_indices: Vec<u32>,
+    /// `row_indices` が `index_limit` で打ち切られたか。
+    pub indices_truncated: bool,
+}
+
+/// 行のキー列を 1 本の文字列にする。各値は「長さ:値」で連結するので、区切り文字を含む値でも
+/// 別のキーと衝突しない。キー列のどれかが NULL なら `None`。
+fn duplicate_key(row: &[Value], cols: &[usize]) -> Option<String> {
+    let mut key = String::new();
+    for &c in cols {
+        let s = value_str(row.get(c).unwrap_or(&Value::Null))?;
+        key.push_str(&s.len().to_string());
+        key.push(':');
+        key.push_str(&s);
+    }
+    Some(key)
+}
+
+/// 結果ハンドルの行に対する重複キー検出。`cols` のキー値が同じ行が 2 行以上あるグループの
+/// 数・行数と上位 `top` 件、重複行のインデックス (最大 `index_limit` 件) を返す。
+/// 再実行や SQL の書き換えは要らない (保持済みの行だけで完結する)。
+pub fn duplicate_keys(
+    rows: &[Vec<Value>],
+    cols: &[usize],
+    top: usize,
+    index_limit: usize,
+) -> DuplicateKeysOut {
+    // キー → (件数, 最初の行)。
+    let mut groups: HashMap<String, (u64, u32)> = HashMap::new();
+    let mut null_key_rows = 0u64;
+    for (r, row) in rows.iter().enumerate() {
+        match duplicate_key(row, cols) {
+            None => null_key_rows += 1,
+            Some(k) => {
+                groups
+                    .entry(k)
+                    .and_modify(|e| e.0 += 1)
+                    .or_insert((1, r as u32));
+            }
+        }
+    }
+    let distinct_keys = groups.len() as u64;
+    let mut dup: Vec<(&String, u64, u32)> = groups
+        .iter()
+        .filter(|(_, (n, _))| *n >= 2)
+        .map(|(k, (n, first))| (k, *n, *first))
+        .collect();
+    let group_count = dup.len() as u64;
+    let duplicate_rows: u64 = dup.iter().map(|(_, n, _)| *n).sum();
+    dup.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+    let top_groups = dup
+        .iter()
+        .take(top)
+        .map(|(_, n, first)| DuplicateGroup {
+            values: rows
+                .get(*first as usize)
+                .map(|row| {
+                    cols.iter()
+                        .map(|&c| {
+                            value_str(row.get(c).unwrap_or(&Value::Null))
+                                .map(|s| s.into_owned())
+                                .unwrap_or_default()
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            count: *n,
+            first_row: *first,
+        })
+        .collect();
+    // 重複グループに属する行のインデックス (2 周目: キーを持たせず、件数表だけを引く)。
+    let mut row_indices = Vec::new();
+    let mut indices_truncated = false;
+    if group_count > 0 {
+        for (r, row) in rows.iter().enumerate() {
+            let Some(k) = duplicate_key(row, cols) else {
+                continue;
+            };
+            if groups.get(&k).is_some_and(|(n, _)| *n >= 2) {
+                if row_indices.len() < index_limit {
+                    row_indices.push(r as u32);
+                } else {
+                    indices_truncated = true;
+                    break;
+                }
+            }
+        }
+    }
+    DuplicateKeysOut {
+        row_count: rows.len() as u64,
+        null_key_rows,
+        distinct_keys,
+        group_count,
+        duplicate_rows,
+        extra_rows: duplicate_rows - group_count,
+        top: top_groups,
+        row_indices,
+        indices_truncated,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +875,7 @@ mod tests {
             value2: String::new(),
             null_mode: NullMode::Any,
             case_sensitive: false,
+            values: Vec::new(),
         }
     }
 
@@ -823,5 +979,72 @@ mod tests {
         );
         assert_eq!(st.numeric_count, 1);
         assert_eq!(st.sum, Some(3.0));
+    }
+
+    #[test]
+    fn duplicate_keys_counts_groups_and_extra_rows() {
+        let rows = vec![
+            vec![s("a"), Value::Int(1)],
+            vec![s("b"), Value::Int(1)],
+            vec![s("a"), Value::Int(1)],
+            vec![s("a"), Value::Int(1)],
+            vec![s("b"), Value::Int(2)],
+            vec![s("c"), Value::Int(9)],
+        ];
+        let out = duplicate_keys(&rows, &[0, 1], 10, 100);
+        assert_eq!(out.row_count, 6);
+        assert_eq!(out.distinct_keys, 4);
+        assert_eq!(out.group_count, 1);
+        assert_eq!(out.duplicate_rows, 3);
+        assert_eq!(out.extra_rows, 2);
+        assert_eq!(out.top.len(), 1);
+        assert_eq!(out.top[0].values, vec!["a".to_string(), "1".to_string()]);
+        assert_eq!(out.top[0].count, 3);
+        assert_eq!(out.top[0].first_row, 0);
+        assert_eq!(out.row_indices, vec![0, 2, 3]);
+        assert!(!out.indices_truncated);
+        // 列 0 だけでは a が 3 行、b が 2 行の 2 グループ。多い順。
+        let one = duplicate_keys(&rows, &[0], 10, 100);
+        assert_eq!(one.group_count, 2);
+        assert_eq!(one.top[0].values, vec!["a".to_string()]);
+        assert_eq!(one.top[1].values, vec!["b".to_string()]);
+        assert_eq!(one.extra_rows, 3);
+    }
+
+    #[test]
+    fn duplicate_keys_skips_null_keys_and_does_not_collide_on_separators() {
+        let rows = vec![
+            vec![Value::Null, s("x")],
+            vec![Value::Null, s("x")],
+            // 区切りに見える文字を含んでも、別のキーとして扱う。
+            vec![s("a:1"), s("b")],
+            vec![s("a"), s("1:b")],
+        ];
+        let out = duplicate_keys(&rows, &[0, 1], 10, 100);
+        assert_eq!(out.null_key_rows, 2);
+        assert_eq!(out.group_count, 0);
+        assert_eq!(out.distinct_keys, 2);
+        assert_eq!(out.extra_rows, 0);
+        assert!(out.top.is_empty());
+        assert!(out.row_indices.is_empty());
+    }
+
+    #[test]
+    fn duplicate_keys_limits_top_and_indices() {
+        let rows: Vec<Vec<Value>> = (0..10).map(|i| vec![Value::Int(i % 2)]).collect();
+        let out = duplicate_keys(&rows, &[0], 1, 3);
+        assert_eq!(out.group_count, 2);
+        assert_eq!(out.duplicate_rows, 10);
+        assert_eq!(out.top.len(), 1, "top is limited");
+        assert_eq!(out.row_indices, vec![0, 1, 2]);
+        assert!(out.indices_truncated);
+    }
+
+    #[test]
+    fn duplicate_keys_on_a_unique_column_reports_no_duplicates() {
+        let rows = rows_of(&[Value::Int(1), Value::Int(2), Value::Int(3)]);
+        let out = duplicate_keys(&rows, &[0], 5, 10);
+        assert_eq!(out.group_count, 0);
+        assert_eq!(out.distinct_keys, 3);
     }
 }

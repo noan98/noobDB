@@ -20,6 +20,7 @@ import { useToast } from "./Toast";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import type { CellKind } from "./cellTypeMeta";
 import { Tooltip } from "./Tooltip";
+import { semanticColorToken } from "../semanticColors";
 import { withComment } from "./schemaComment";
 import { MASK_PLACEHOLDER } from "./columnMask";
 import { RelatedRowsPanel } from "./RelatedRowsPanel";
@@ -34,6 +35,7 @@ import { isModalSubmitKey, pickModalKeys } from "./modalKeys";
 import { boolSelectValue, fromNativeValue, toNativeValue } from "./typedEditor";
 import {
   collectInspectorEdits,
+  differingColumns,
   draftFromRow,
   inspectorControlFor,
   rowChangedSince,
@@ -143,6 +145,7 @@ function InspectorIconButton({
   disabled?: boolean;
   onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void;
   "aria-haspopup"?: "menu";
+  "aria-pressed"?: boolean;
 }) {
   return (
     <Tooltip label={tooltip ?? label} focusableWrapper={disabled}>
@@ -214,6 +217,11 @@ export function RowInspector({
   // 幅は MotionConfig の自動抑制対象外 (transform ではない) なので明示的に即時化する。
   const reduced = useReducedMotion();
 
+  // 2 行の比較 (#1628): 固定した行を持ち、行送りで動く現在の行との列ごとの差を強調する。
+  // 行送り (rowNumber) とは独立に保持し、固定行の値は固定した時点のコピー。
+  const [pinnedRow, setPinnedRow] = useState<{ rowNumber: number; values: CellValue[] } | null>(null);
+  const [diffOnly, setDiffOnly] = useState(false);
+
   // フォーム編集の下書き (#1394)。行が変われば破棄する (行送りの方向と同じく、描画中に
   // 確定させて古い下書きを一瞬も表示しない)。`session` は編集開始ごとに変え、非制御の
   // 入力欄 (ネイティブ日時入力の badInput 対策) を作り直すための鍵。
@@ -272,6 +280,15 @@ export function RowInspector({
     !stale &&
     edit.blockedReason === null &&
     !applying;
+
+  // 固定行がある間だけ比較する。固定行と同じ行を見ているとき (rowNumber 同一) は差が無いので出さない。
+  const diffMask = useMemo(
+    () => (pinnedRow ? differingColumns(pinnedRow.values, values, columns.length) : null),
+    [pinnedRow, values, columns.length],
+  );
+  const diffCount = diffMask ? diffMask.filter(Boolean).length : 0;
+  const comparing = pinnedRow !== null && pinnedRow.rowNumber !== rowNumber && activeView === "fields";
+  const togglePin = () => setPinnedRow((prev) => (prev ? null : { rowNumber, values: [...values] }));
 
   const startEdit = () => {
     if (!edit || edit.blockedReason !== null) return;
@@ -534,6 +551,19 @@ export function RowInspector({
                 onClick={startEdit}
               />
             )}
+            {activeView === "fields" && !editing && (
+              <InspectorIconButton
+                label={pinnedRow ? t("rowInspectorUnpin") : t("rowInspectorPin")}
+                tooltip={
+                  pinnedRow
+                    ? t("rowInspectorUnpinTitle", { row: pinnedRow.rowNumber })
+                    : t("rowInspectorPinTitle")
+                }
+                icon="pin"
+                aria-pressed={pinnedRow !== null}
+                onClick={togglePin}
+              />
+            )}
             {rowSql && !editing && (
               <InspectorIconButton
                 label={t("rowInspectorCopySql")}
@@ -619,6 +649,22 @@ export function RowInspector({
                       {t("rowInspectorNullHint")}
                     </chakra.p>
                   )}
+                  {comparing && pinnedRow && (
+                    <Box display="flex" alignItems="center" gap="2" mb="1" role="status">
+                      <chakra.span textStyle="caption" flex="1">
+                        {t("rowInspectorCompareSummary", { pinned: pinnedRow.rowNumber, count: diffCount })}
+                      </chakra.span>
+                      <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+                        <input
+                          type="checkbox"
+                          checked={diffOnly}
+                          onChange={(e) => setDiffOnly(e.target.checked)}
+                          aria-label={t("rowInspectorDiffOnly")}
+                        />
+                        {t("rowInspectorDiffOnly")}
+                      </chakra.label>
+                    </Box>
+                  )}
                   {columns.length === 0 ? (
                     <chakra.div fontStyle="italic" color="app.textMuted" fontSize="sm">
                       {t("gridInspectorEmpty")}
@@ -633,6 +679,20 @@ export function RowInspector({
                       if (editing && edit?.editableColumns[i]) {
                         return renderEditField(i);
                       }
+                      const differs = comparing && !!diffMask?.[i];
+                      if (comparing && diffOnly && !differs) return null;
+                      // 固定行の値 (差があるときだけ出す)。マスク中の列は実値を出さない。
+                      const pinnedV = differs && pinnedRow ? (pinnedRow.values[i] ?? null) : null;
+                      const pinnedText =
+                        !differs || !pinnedRow
+                          ? null
+                          : masked
+                            ? MASK_PLACEHOLDER
+                            : pinnedV === null
+                              ? t("resultNull")
+                              : columnKinds[i] === "binary"
+                                ? `0x${String(pinnedV)}`
+                                : String(pinnedV);
                       return (
                         <Box
                           key={`${col.name}-${i}`}
@@ -642,6 +702,15 @@ export function RowInspector({
                           py="1.5"
                           borderBottom="1px solid"
                           borderColor="app.borderSubtle"
+                          data-differs={differs ? "true" : undefined}
+                          {...(differs
+                            ? {
+                                borderLeftWidth: "3px",
+                                borderLeftColor: semanticColorToken("warning", "solid"),
+                                pl: "2",
+                                bg: semanticColorToken("warning", "subtle"),
+                              }
+                            : {})}
                         >
                           <Box display="flex" alignItems="center" gap="1.5">
                             <Tooltip label={withComment(`${col.name} — ${col.type_name}`, comment)}>
@@ -724,6 +793,16 @@ export function RowInspector({
                             >
                               {display}
                             </chakra.pre>
+                          )}
+                          {pinnedText !== null && pinnedRow && (
+                            <chakra.span
+                              textStyle="caption"
+                              fontFamily="mono"
+                              wordBreak="break-word"
+                              data-testid="inspector-pinned-value"
+                            >
+                              {t("rowInspectorPinnedValue", { row: pinnedRow.rowNumber })}: {pinnedText}
+                            </chakra.span>
                           )}
                         </Box>
                       );

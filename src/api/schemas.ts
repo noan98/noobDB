@@ -318,6 +318,8 @@ export const columnProfile = z.object({
   top_values: z.array(profileValueCount),
   histogram: z.array(profileHistogramBucket),
   notes: z.array(z.string()),
+  /** 標本モード (#1628) の抽出率 (%)。全件なら null。 */
+  sample_percent: z.number().nullish(),
 });
 
 /** 全列の概要 (#1539)。 */
@@ -416,6 +418,16 @@ export const connectionProfile = z.object({
   // しない)。null / 欠落はパスワード認証 (本機能以前の旧プロファイルを含む)。
   aws_iam: z
     .object({
+      region: z.string(),
+      profile: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  // AWS SSM ポートフォワード経由の接続 (#1683)。踏み台のインスタンス ID・リージョン・
+  // AWS プロファイル名のみ (すべて非秘密)。null / 欠落は SSM 不使用。
+  ssm: z
+    .object({
+      target: z.string(),
       region: z.string(),
       profile: z.string().nullable().optional(),
     })
@@ -867,6 +879,20 @@ export const resultColumnStats = z.object({
 });
 export const resultColumnStatsResponse = resultColumnStats.nullable();
 
+/** `result_duplicate_keys` の戻り値 (#1628)。`null` はハンドルが無い。 */
+export const resultDuplicateKeys = z.object({
+  rowCount: z.number(),
+  nullKeyRows: z.number(),
+  distinctKeys: z.number(),
+  groupCount: z.number(),
+  duplicateRows: z.number(),
+  extraRows: z.number(),
+  top: z.array(z.object({ values: z.array(z.string()), count: z.number(), firstRow: z.number() })),
+  rowIndices: z.array(z.number()),
+  indicesTruncated: z.boolean(),
+});
+export const resultDuplicateKeysResponse = resultDuplicateKeys.nullable();
+
 /** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
  *  拡張されている。 */
 export const cancelStreamResponse = z.object({
@@ -1020,6 +1046,8 @@ export const streamStatsSnapshot = z.object({
   numMin: z.array(z.number().nullable()),
   numMax: z.array(z.number().nullable()),
   duplicateRows: z.boolean().nullable(),
+  /** 列ごとの近似ユニーク数 (HyperLogLog、#1628)。 */
+  distinctEstimates: z.array(z.number()).optional(),
 });
 
 export const queryStreamColumnsMessage = z.object({

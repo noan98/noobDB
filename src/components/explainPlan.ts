@@ -905,3 +905,38 @@ export function heatT(cost: number | null, max: number): number | null {
   const r = cost / max;
   return r < 0 ? 0 : r > 1 ? 1 : r;
 }
+
+/**
+ * プランのノード検索 (#1628)。ラベル・種別・属性 (キーと値) のいずれかに `query` を
+ * 大文字小文字無視の部分一致で含むノードの ID を、ツリーの先行順 (表示順) で返す。
+ * 空白だけのクエリは「検索なし」として空配列。
+ */
+export function searchPlanNodes(root: PlanNode, query: string): string[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const hits: string[] = [];
+  const visit = (n: PlanNode) => {
+    const hay = [
+      n.label,
+      n.kind,
+      ...n.attrs.map(([k, v]) => `${k} ${Array.isArray(v) ? v.join(", ") : String(v)}`),
+    ];
+    if (hay.some((h) => h.toLowerCase().includes(q))) hits.push(n.id);
+    for (const c of n.children) visit(c);
+  };
+  visit(root);
+  return hits;
+}
+
+/** `id` のノードの祖先 ID (根から親まで、自身は含まない)。見つからなければ空配列。 */
+export function planAncestorIds(root: PlanNode, id: string): string[] {
+  const path: string[] = [];
+  const walk = (n: PlanNode): boolean => {
+    if (n.id === id) return true;
+    path.push(n.id);
+    for (const c of n.children) if (walk(c)) return true;
+    path.pop();
+    return false;
+  };
+  return walk(root) ? path : [];
+}

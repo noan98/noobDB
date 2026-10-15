@@ -30,6 +30,7 @@ import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
 
 const onApply = vi.fn().mockResolvedValue("applied");
 const onRequestConsumed = vi.fn();
+const onOpenInNewTab = vi.fn();
 
 function enable(sendScope: "schemaOnly" | "schemaAndSql" = "schemaAndSql", maskLiterals = true) {
   replaceAllSettings({
@@ -58,6 +59,7 @@ function ui(request: AiSqlRequest | null, isProduction = false) {
       request={request}
       onRequestConsumed={onRequestConsumed}
       onApply={onApply}
+      onOpenInNewTab={onOpenInNewTab}
     />
   );
 }
@@ -239,6 +241,19 @@ describe("AiSqlPanel (#695)", () => {
     await screen.findByText(t("aiSqlApplied"));
   });
 
+  it("リライト: 「新しいタブで開く」は提案をそのまま新タブへ渡し、元のタブは書き換えず範囲確認もしない (#1620)", async () => {
+    renderWithProviders(ui(req({ kind: "rewrite" })));
+    await finish(rewriteJson);
+    await screen.findByTestId("ai-sql-diff");
+    expect(onOpenInNewTab).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("aiSqlOpenInNewTab") }));
+    expect(onOpenInNewTab).toHaveBeenCalledWith("SELECT id\nFROM users\nWHERE id = 1", "app");
+    await screen.findByText(t("aiSqlOpenedInNewTab"));
+    // 元のタブへの適用は呼ばれず、適用ボタンも押せるまま。
+    expect(onApply).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: t("aiSqlApply") }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("リライト: 提案が元と同じなら適用ボタンを無効にする (マスク無効で比較)", async () => {
     enable("schemaAndSql", false);
     renderWithProviders(ui(req({ kind: "rewrite" })));
@@ -247,6 +262,9 @@ describe("AiSqlPanel (#695)", () => {
     );
     await screen.findByText(t("aiSqlNoChange"));
     expect((screen.getByRole("button", { name: t("aiSqlApply") }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: t("aiSqlOpenInNewTab") }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
   });
 
   it("適用が取りやめられたら通知する", async () => {

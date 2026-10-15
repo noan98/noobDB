@@ -16,7 +16,45 @@ import { SEQUENTIAL_RAMPS, DIVERGING_RAMPS, sampleRamp, rampStops } from "../col
 import type { ColorRamp } from "../colorScale";
 
 /** 列ごとの適用モード。 */
-export type CondFormatMode = "off" | "bar" | "heat";
+export type CondFormatMode = "off" | "bar" | "heat" | "threshold";
+
+/** 閾値ルールの比較演算子 (#1628)。 */
+export type ThresholdOp = ">" | ">=" | "<" | "<=" | "=";
+
+/** 閾値ルールで塗る意味色。実際の色は CSS 側 (`is-<tone>`) が持つ。 */
+export type ThresholdTone = "danger" | "warning" | "success";
+
+/** 「値が N を超えたら赤」のような絶対値基準の列単位ルール (#1628)。 */
+export interface ThresholdRule {
+  op: ThresholdOp;
+  value: number;
+  tone: ThresholdTone;
+}
+
+export const DEFAULT_THRESHOLD_RULE: ThresholdRule = { op: ">", value: 0, tone: "danger" };
+
+export const THRESHOLD_OPS: readonly ThresholdOp[] = [">", ">=", "<", "<=", "="];
+export const THRESHOLD_TONES: readonly ThresholdTone[] = ["danger", "warning", "success"];
+
+/**
+ * 数値がルールに該当するか。NULL / 非数値 (`num === null`) は常に非該当。
+ * 相対的な min-max 正規化とは独立で、列の値の範囲に依らず絶対値で判定する。
+ */
+export function matchesThreshold(num: number | null, rule: ThresholdRule): boolean {
+  if (num === null || !Number.isFinite(rule.value)) return false;
+  switch (rule.op) {
+    case ">":
+      return num > rule.value;
+    case ">=":
+      return num >= rule.value;
+    case "<":
+      return num < rule.value;
+    case "<=":
+      return num <= rule.value;
+    case "=":
+      return num === rule.value;
+  }
+}
 
 export interface NumericStats {
   min: number;

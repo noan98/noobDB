@@ -196,6 +196,8 @@ export function aiErrorHintKey(kind: string | null | undefined, message = ""): I
       return /permission_error|HTTP 403/i.test(message) ? "errorHintAiPermission" : "errorHintAiAuth";
     case "aiNetwork":
       return "errorHintAiNetwork";
+    case "aiBudgetExceeded":
+      return "errorHintAiBudget";
     default:
       return null;
   }

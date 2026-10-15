@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dataUrlToBytes } from "../components/imageExport";
+import { dataUrlToBytes, resolvePngExportOptions, themeBackground } from "../components/imageExport";
+import { DEFAULT_IMAGE_EXPORT_PREFS, sanitizeImageExportPrefs } from "../components/imageExportPrefs";
 
 describe("dataUrlToBytes", () => {
   it("base64 の data URL をデコードする", () => {
@@ -24,5 +25,23 @@ describe("dataUrlToBytes", () => {
 
   it("不正な data URL は例外", () => {
     expect(() => dataUrlToBytes("not-a-data-url")).toThrow();
+  });
+});
+
+describe("resolvePngExportOptions / imageExportPrefs (#1628)", () => {
+  it("倍率はそのままピクセル比になり、背景は白・透過・テーマで解決される", () => {
+    expect(resolvePngExportOptions(3, "white")).toEqual({ pixelRatio: 3, background: "#ffffff" });
+    expect(resolvePngExportOptions(1, "transparent")).toEqual({ pixelRatio: 1, background: "transparent" });
+    expect(resolvePngExportOptions(2, "theme").pixelRatio).toBe(2);
+    expect(resolvePngExportOptions(2, "theme").background).toBe(themeBackground());
+  });
+  it("保存値の検証: 未知の値・壊れた値は既定 (2x・テーマ) に倒す", () => {
+    expect(sanitizeImageExportPrefs({ scale: 3, background: "white" })).toEqual({
+      scale: 3,
+      background: "white",
+    });
+    expect(sanitizeImageExportPrefs({ scale: 7, background: "pink" })).toEqual(DEFAULT_IMAGE_EXPORT_PREFS);
+    expect(sanitizeImageExportPrefs(null)).toEqual(DEFAULT_IMAGE_EXPORT_PREFS);
+    expect(sanitizeImageExportPrefs("x")).toEqual(DEFAULT_IMAGE_EXPORT_PREFS);
   });
 });

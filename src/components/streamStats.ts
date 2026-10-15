@@ -34,3 +34,42 @@ export function numericStatsFromStream(stats: StreamStatsSnapshot, i: number): N
   const max = stats.numMax[i];
   return min === null || min === undefined || max === null || max === undefined ? null : { min, max };
 }
+
+/** 列の近似ユニーク数から読み取れる傾向 (#1628)。 */
+export type DistinctHintKind = "candidateKey" | "constant" | "lowCardinality";
+
+export interface DistinctHint {
+  /** 近似ユニーク数 (HyperLogLog。標準誤差は約 1.6%)。 */
+  estimate: number;
+  kind: DistinctHintKind | null;
+}
+
+/** 候補キーとみなす近似ユニーク数の下限 (行数に対する比率)。標準誤差 1.6% の約 2σ 下。 */
+const CANDIDATE_KEY_RATIO = 0.97;
+/** 傾向の判定に最低限必要な行数。少ない行数では偶然一意になりやすい。 */
+const CANDIDATE_KEY_MIN_ROWS = 10;
+const LOW_CARDINALITY_MIN_ROWS = 100;
+const LOW_CARDINALITY_MAX_DISTINCT = 10;
+
+/**
+ * 列 `i` の近似ユニーク数と傾向 (候補キー / 定数列 / 低カーディナリティ)。追加のクエリ無しで、
+ * ストリーム逐次統計の HyperLogLog (`distinctEstimates`) だけから求める。推定が無い (古いバックエンド・
+ * 非 NULL 値が無い列) ときは null。
+ */
+export function distinctHintFor(
+  stats: StreamStatsSnapshot,
+  rowCount: number,
+  i: number,
+): DistinctHint | null {
+  const est = stats.distinctEstimates?.[i];
+  const nulls = stats.nullCounts[i];
+  if (est === undefined || nulls === undefined || rowCount - nulls <= 0) return null;
+  const nonNull = rowCount - nulls;
+  let kind: DistinctHintKind | null = null;
+  if (est <= 1 && nonNull >= 2) kind = "constant";
+  else if (nulls === 0 && rowCount >= CANDIDATE_KEY_MIN_ROWS && est >= rowCount * CANDIDATE_KEY_RATIO)
+    kind = "candidateKey";
+  else if (rowCount >= LOW_CARDINALITY_MIN_ROWS && est <= LOW_CARDINALITY_MAX_DISTINCT)
+    kind = "lowCardinality";
+  return { estimate: est, kind };
+}

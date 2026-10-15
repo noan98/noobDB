@@ -301,3 +301,38 @@ describe("nullRatesFromCounts (#1257)", () => {
     expect(nullRatesFromCounts([1], 1, -3)).toEqual([]);
   });
 });
+
+describe("selectionSummary 中央値・四分位・DISTINCT (#1628)", () => {
+  it("奇数件の中央値と四分位 (線形補間)", () => {
+    const s = selectionSummary([5, 1, 3, 2, 4]);
+    expect(s.median).toBe(3);
+    expect(s.q1).toBe(2);
+    expect(s.q3).toBe(4);
+  });
+
+  it("偶数件の中央値は中央 2 値の平均", () => {
+    const s = selectionSummary([1, 2, 3, 4]);
+    expect(s.median).toBe(2.5);
+    expect(s.q1).toBe(1.75);
+    expect(s.q3).toBe(3.25);
+  });
+
+  it("数値が無ければ null、DISTINCT は非 NULL の文字列表現で数える", () => {
+    const s = selectionSummary(["a", "a", "b", null]);
+    expect(s.median).toBeNull();
+    expect(s.q1).toBeNull();
+    expect(s.q3).toBeNull();
+    expect(s.distinctCount).toBe(2);
+  });
+
+  it("数値 1 と文字列 '1' は同一視する (columnStats と同じ規則)", () => {
+    expect(selectionSummary([1, "1", 2]).distinctCount).toBe(2);
+  });
+
+  it("1 件でも中央値が出る", () => {
+    const s = selectionSummary([7]);
+    expect(s.median).toBe(7);
+    expect(s.q1).toBe(7);
+    expect(s.q3).toBe(7);
+  });
+});

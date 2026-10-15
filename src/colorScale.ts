@@ -181,6 +181,28 @@ export function rampStops(ramp: ColorRamp, isDark: boolean): string[] {
   return isDark ? ramp.stopsDark : ramp.stops;
 }
 
+/** 凡例 1 点ぶん: 位置 (0–1) とその位置の色。 */
+export interface RampLegendStop {
+  t: number;
+  color: string;
+}
+
+/**
+ * 条件付き書式の凡例用に、ランプの min (t=0)・中間点・max (t=1) の色を返す (#1628)。
+ * `middle` 個の等間隔の中間点を挟む (既定 1 = 計 3 点)。`isDark` で `stopsDark` に切り替わる。
+ * 色は `sampleRamp` と同じ補間なので、セルに塗られる色と一致する。
+ */
+export function rampLegendStops(ramp: ColorRamp, isDark: boolean, middle = 1): RampLegendStop[] {
+  const stops = rampStops(ramp, isDark);
+  const n = Math.max(0, Math.floor(middle));
+  const out: RampLegendStop[] = [];
+  for (let i = 0; i <= n + 1; i++) {
+    const t = i / (n + 1);
+    out.push({ t, color: sampleRamp(t, stops) });
+  }
+  return out;
+}
+
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace("#", "");
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];

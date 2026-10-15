@@ -14,6 +14,7 @@ import {
   type CSSProperties,
   type ReactNode,
 } from "react";
+import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
@@ -3589,33 +3590,13 @@ export default function App() {
         setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase } : prev)),
       ).catch(() => undefined);
       try {
-        const driver: DriverKind =
-          profile.driver === "postgres" || profile.driver === "sqlite" || profile.driver === "mysql"
-            ? profile.driver
-            : "mysql";
         // ローカル横断クエリ (#740): 「ローカル」擬似プロファイルは駆動元を持たない
         // ため通常の `api.connect` を呼ばず、既存 (または新規) のローカルセッション
         // をそのまま使う。以降 (setSessionId 以下) は通常の接続と完全に同じ経路 —
         // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
         const res = isLocalProfile(profile)
           ? { session_id: await ensureLocalSession() }
-          : await api.connect(
-              {
-                profile_id: profile.id,
-                driver,
-                host: profile.host,
-                port: profile.port,
-                user: profile.user,
-                password: "",
-                database: profile.database,
-                ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-                file_path: profile.file_path,
-                read_only: profile.read_only,
-                skip_history: profile.skip_history,
-              },
-              attemptId,
-              settings.connectTimeoutSecs,
-            );
+          : await api.connect(connectRequestFromProfile(profile), attemptId, settings.connectTimeoutSecs);
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -7089,6 +7070,14 @@ export default function App() {
     (tabId: string, row: PendingInsertRow) => {
       setRowInsertTabId(null);
       setRowInsertSeed(null);
+      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+    },
+    [patchTab],
+  );
+
+  // 行追加モーダルの連続追加モード (#1628): モーダルは閉じず、保留の追加行へ 1 行足すだけ。
+  const addInsertRowKeepOpenForTab = useCallback(
+    (tabId: string, row: PendingInsertRow) => {
       patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
     },
     [patchTab],
@@ -11355,6 +11344,7 @@ export default function App() {
                         request={aiSqlRequest}
                         onRequestConsumed={() => setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))}
                         onApply={handleApplyAiSqlRewrite}
+                        onOpenInNewTab={handleOpenAiSql}
                       />
                     ) : activeBottomPanelTab === "aiResultSummary" ? (
                       <AiResultSummaryPanel
@@ -11756,6 +11746,8 @@ export default function App() {
                         driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                         initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
                         onOpenTable={handleOpenTable}
+                        connectionKey={selectedProfile?.id ?? null}
+                        onInsertSql={handleInsertAdvisorSql}
                         onGenerateDoc={
                           aiAvailable
                             ? (database, tables) => setSchemaDocTarget({ database, tables })
@@ -12210,6 +12202,7 @@ export default function App() {
                 database={testDataTarget.database}
                 table={testDataTarget.table}
                 driver={selectedProfile?.driver ?? "mysql"}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 profileId={selectedProfile?.id}
                 onClose={() => setTestDataTarget(null)}
@@ -12326,6 +12319,7 @@ export default function App() {
                 driver={selectedProfile?.driver ?? "mysql"}
                 database={schemaDocTarget.database}
                 profileName={selectedProfile?.name ?? ""}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 initialTables={schemaDocTarget.tables}
                 onClose={() => setSchemaDocTarget(null)}
@@ -12664,6 +12658,7 @@ export default function App() {
                     tableColumns={insTab.tableColumns}
                     lookup={sessionId ? lookupForSession(sessionId) : undefined}
                     onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
+                    onAddKeepOpen={(row) => addInsertRowKeepOpenForTab(insTab.id, row)}
                     onCancel={() => {
                       setRowInsertTabId(null);
                       setRowInsertSeed(null);

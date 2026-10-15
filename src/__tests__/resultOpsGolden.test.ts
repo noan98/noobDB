@@ -13,6 +13,7 @@ import {
 } from "../components/gridSortFilter";
 import { computeFindMatches } from "../components/gridFind";
 import { columnStats } from "../components/gridStats";
+import { findDuplicateKeys } from "../components/duplicateKeys";
 import type { CellKind } from "../components/cellTypeMeta";
 import vectors from "./fixtures/resultOpsVectors.json";
 
@@ -37,6 +38,7 @@ interface SortFilterCase {
     value2: string;
     nullMode: ColumnFilter["nullMode"];
     caseSensitive?: boolean;
+    values?: string[];
   }[];
   global?: string;
   expected: number[];
@@ -63,6 +65,7 @@ function applyJs(c: SortFilterCase): number[] {
       value2: f.value2,
       nullMode: f.nullMode,
       ...(f.caseSensitive ? { caseSensitive: true } : {}),
+      ...(f.values ? { values: f.values } : {}),
     } as ColumnFilter,
   }));
   const req = buildHandleRequest(sorting, filters, c.global, c.kinds);
@@ -177,4 +180,20 @@ describe("buildHandleRequest", () => {
     expect(isIdentityRequest(buildHandleRequest([], [], "", kinds))).toBe(true);
     expect(isIdentityRequest(buildHandleRequest([], [], "a", kinds))).toBe(false);
   });
+});
+
+// 重複キー検出 (#1628): フロントのフォールバック実装 (`duplicateKeys.ts`) が共有ベクタと一致する。
+describe("resultOps golden: duplicateKeys", () => {
+  for (const c of vectors.duplicateKeys as unknown as {
+    name: string;
+    rows: CellValue[][];
+    cols: number[];
+    top: number;
+    indexLimit: number;
+    expected: ReturnType<typeof findDuplicateKeys>;
+  }[]) {
+    it(c.name, () => {
+      expect(findDuplicateKeys(c.rows, c.cols, c.top, c.indexLimit)).toEqual(c.expected);
+    });
+  }
 });

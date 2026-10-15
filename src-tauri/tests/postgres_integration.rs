@@ -2988,3 +2988,36 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
         "unexpected DDL: {ddl}"
     );
 }
+
+#[tokio::test]
+async fn postgres_column_profile_sampled_is_subset_of_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS public.prof_sample_t", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.prof_sample_t AS \
+         SELECT g AS id, g % 7 AS v FROM generate_series(1, 20000) g",
+        None,
+    )
+    .await
+    .expect("create");
+    let p = conn
+        .column_profile("public", "prof_sample_t", "v", false, 5, Some(10.0))
+        .await
+        .expect("sampled profile");
+    assert_eq!(p.sample_percent, Some(10.0));
+    assert!(p.notes.contains(&"sampled".to_string()));
+    match p.total_count {
+        t::Value::UInt(n) => assert!(n < 20000, "sample must be a strict subset: {n}"),
+        ref other => panic!("unexpected count: {other:?}"),
+    }
+    conn.execute("DROP TABLE IF EXISTS public.prof_sample_t", None)
+        .await
+        .expect("cleanup");
+}

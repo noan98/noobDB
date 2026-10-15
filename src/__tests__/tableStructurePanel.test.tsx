@@ -16,6 +16,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       describeTable: vi.fn(),
       listIndexes: vi.fn(),
       getObjectDefinition: vi.fn(),
+      incomingForeignKeys: vi.fn(),
     },
   };
 });
@@ -53,6 +54,7 @@ function renderPanel() {
 describe("TableStructurePanel (#1112)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.incomingForeignKeys).mockResolvedValue([]);
   });
 
   it("列・インデックス・外部キーを並べ、データへも参照先の構造へも移れる", async () => {
@@ -191,5 +193,37 @@ describe("TableStructurePanel (#1112)", () => {
     expect(screen.queryByText(t("structureLoading"))).not.toBeInTheDocument();
     expect(screen.getByText(t("structureNoIndexes"))).toBeInTheDocument();
     expect(screen.getByText(t("structureNoForeignKeys"))).toBeInTheDocument();
+  });
+});
+
+describe("TableStructurePanel 被参照の外部キー (#1628)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("このテーブルを参照している外部キーを並べ、参照元テーブルの構造へ移れる", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([]);
+    vi.mocked(api.incomingForeignKeys).mockResolvedValueOnce([
+      { table: "payments", column: "order_id", referencedColumn: "id" },
+      { table: "items", column: "order_id", referencedColumn: "id" },
+    ]);
+    const { onSelectTable } = renderPanel();
+    const link = await screen.findByRole("button", { name: "items.order_id" });
+    // 参照元は表名順に並ぶ。
+    const names = screen
+      .getAllByRole("button", { name: /^(items|payments)\.order_id$/ })
+      .map((b) => b.textContent);
+    expect(names).toEqual(["items.order_id", "payments.order_id"]);
+    fireEvent.click(link);
+    expect(onSelectTable).toHaveBeenCalledWith({ database: "app", table: "items" });
+  });
+
+  it("参照元が無ければその旨を出す。取得に失敗しても構造は出す", async () => {
+    vi.mocked(api.describeTable).mockResolvedValueOnce([col("id")]);
+    vi.mocked(api.listIndexes).mockResolvedValueOnce([]);
+    vi.mocked(api.incomingForeignKeys).mockRejectedValueOnce(new Error("denied"));
+    renderPanel();
+    expect(await screen.findByText(t("structureNoIncomingForeignKeys"))).toBeInTheDocument();
   });
 });
