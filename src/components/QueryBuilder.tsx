@@ -828,6 +828,14 @@ export function computeBuilderBlockedReason(input: BuilderValidationInput): I18n
   ) {
     return "qbValidationNoBetweenValues";
   }
+  // 含む / 前方一致 / 後方一致 は値が空だと `LIKE '%%'` (全行一致) になってしまう (#1627)。
+  if (
+    kind !== "INSERT" &&
+    whereEnabled &&
+    whereConditions.some((c) => c.column && likeModeOf(c.operator) !== undefined && c.value.trim() === "")
+  ) {
+    return "qbValidationNoLikeValue";
+  }
   return null;
 }
 

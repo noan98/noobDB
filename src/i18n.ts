@@ -1670,6 +1670,8 @@ const en = {
   qbOffset: "OFFSET",
   qbOffsetInvalid: "OFFSET must be a whole number (0 or more) — the clause will be omitted.",
   qbOffsetNeedsLimit: "OFFSET is only used together with LIMIT — enable and fill in LIMIT.",
+  qbValidationNoLikeValue:
+    "A contains / starts with / ends with condition needs a value — fill it in or remove the condition.",
   qbValidationNoBetweenValues:
     "A BETWEEN condition needs both values — fill them in or remove the condition.",
   qbValidationNoInValues: "An IN condition has no values — fill them in or remove the condition.",
@@ -7559,6 +7561,8 @@ const ja: Dict = {
   qbOffset: "OFFSET",
   qbOffsetInvalid: "OFFSET は 0 以上の整数で指定してください。句は省略されます。",
   qbOffsetNeedsLimit: "OFFSET は LIMIT と一緒にのみ出力されます。LIMIT を有効にして値を入力してください。",
+  qbValidationNoLikeValue:
+    "「含む」「で始まる」「で終わる」条件には値が必要です。値を入力するか条件を削除してください。",
   qbValidationNoBetweenValues:
     "BETWEEN 条件には下限と上限の両方が必要です。値を入力するか条件を削除してください。",
   qbValidationNoInValues: "IN 条件に値がありません。値を入力するか条件を削除してください。",

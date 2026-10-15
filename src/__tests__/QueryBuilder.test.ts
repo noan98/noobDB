@@ -808,4 +808,36 @@ describe("SELECT の OFFSET (#1627)", () => {
     expect(isOffsetInvalid("-3")).toBe(true);
     expect(isOffsetInvalid("1e3")).toBe(true);
   });
+
+  it("含む / 前方一致 / 後方一致 は値が空 (空白のみ) だとブロックする。素の LIKE は従来どおり (#1627)", () => {
+    for (const kind of ["SELECT", "UPDATE", "DELETE"] as const) {
+      const input = {
+        kind,
+        table: "users",
+        whereEnabled: true,
+        setPairs: [{ column: "a", value: "1" }],
+        insertPairs: [],
+      };
+      for (const operator of ["CONTAINS", "STARTS WITH", "ENDS WITH"]) {
+        expect(
+          computeBuilderBlockedReason({
+            ...input,
+            whereConditions: [{ column: "name", operator, value: "  " }],
+          }),
+        ).toBe("qbValidationNoLikeValue");
+        expect(
+          computeBuilderBlockedReason({
+            ...input,
+            whereConditions: [{ column: "name", operator, value: "x" }],
+          }),
+        ).toBeNull();
+      }
+      expect(
+        computeBuilderBlockedReason({
+          ...input,
+          whereConditions: [{ column: "name", operator: "LIKE", value: "" }],
+        }),
+      ).toBeNull();
+    }
+  });
 });
