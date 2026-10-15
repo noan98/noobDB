@@ -2595,6 +2595,11 @@ export interface ScriptOptions {
   continueOnError: boolean;
   /** 全体を 1 トランザクションで包む (失敗・キャンセルで ROLLBACK)。 */
   wrapInTransaction: boolean;
+  /**
+   * スクリプトが BEGIN したまま COMMIT / ROLLBACK なしで終わったときの扱い (#1626)。
+   * 既定は `rollback` (EOF で取り消す)。`commit` で EOF に確定する。`wrapInTransaction` には影響しない。
+   */
+  unclosedTx: "rollback" | "commit";
   /** ファイルの文字コード (#1535)。`null` は自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。 */
   encoding: TextEncodingId | null;
   /**
@@ -2633,7 +2638,20 @@ export interface SqlFileContent {
 }
 
 /** 事前確認で検出する危険な文の種別 (`src/dangerousSql.ts` の `DangerKind` と同じ名前)。 */
-export type ScriptDangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
+/** INSERT の対象テーブル別の集計 (#1626)。`rows` は VALUES のタプル数の概算 (INSERT ... SELECT は 0)。 */
+export interface ScriptInsertTable {
+  table: string;
+  statements: number;
+  rows: number;
+}
+
+export type ScriptDangerKind =
+  | "deleteNoWhere"
+  | "updateNoWhere"
+  | "drop"
+  | "truncate"
+  | "dropColumn"
+  | "dropConstraint";
 
 /** 事前確認の一覧の 1 文。`index` は実行時の通し番号 (`ScriptFailure.index`) と同じ。 */
 export interface ScriptAnalyzedStatement {
@@ -2650,7 +2668,18 @@ export interface ScriptAnalyzedStatement {
 export interface ScriptAnalysis {
   totalStatements: number;
   categories: { read: number; write: number; ddl: number; txControl: number };
-  dangerCounts: { deleteNoWhere: number; updateNoWhere: number; drop: number; truncate: number };
+  dangerCounts: {
+    deleteNoWhere: number;
+    updateNoWhere: number;
+    drop: number;
+    truncate: number;
+    dropColumn: number;
+    dropConstraint: number;
+  };
+  /** INSERT の対象テーブル別の文数・概算行数 (概算行数の多い順、上限あり, #1626)。 */
+  insertTables: ScriptInsertTable[];
+  /** 上限を超えて別集計できなかった表への INSERT の文数。0 でなければ `insertTables` は一部のみ。 */
+  insertTablesOverflow: number;
   dangerousTotal: number;
   blockedTotal: number;
   txControlTotal: number;
@@ -2705,8 +2734,10 @@ export interface ScriptDoneEvent {
   skippedExcluded: number;
   /** 開始位置より前で読み飛ばした文の数 (#1535)。 */
   skippedBeforeStart: number;
-  /** BEGIN したまま終わったスクリプトを EOF でランナーが COMMIT したか。 */
+  /** BEGIN したまま終わったスクリプトを EOF でランナーが取り消した (ROLLBACK) か。 */
   implicitRollback: boolean;
+  /** 同じく BEGIN したまま終わったスクリプトを、利用者の選択で EOF に確定した (COMMIT) か (#1626)。 */
+  implicitCommit: boolean;
   rowsAffected: number;
   elapsedMs: number;
 }

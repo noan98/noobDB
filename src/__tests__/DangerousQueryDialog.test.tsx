@@ -34,6 +34,25 @@ describe("DangerousQueryDialog", () => {
     expect(screen.getByText(t("dangerousTargetTable", { target: "users" }))).toBeInTheDocument();
   });
 
+  it("主キーで絞る WHERE の提案を出し、押すと onInsert だけが呼ばれる (#1626)", async () => {
+    const onInsert = vi.fn();
+    const onConfirm = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <DangerousQueryDialog
+        findings={findings}
+        isProduction={false}
+        pkSuggestion={{ template: "WHERE `id` = ", onInsert }}
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText("WHERE `id` =")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("dangerousPkSuggestInsert") }));
+    expect(onInsert).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
   it("「実行する」を押すと onConfirm が呼ばれ onCancel は呼ばれない", async () => {
     const onConfirm = vi.fn();
     const onCancel = vi.fn();

@@ -1127,6 +1127,34 @@ async fn unclosed_begin_is_rolled_back_at_eof() {
     assert_eq!(count(&session, "t").await, 2);
 }
 
+/// 終端ポリシーを `commit` にすると、未閉じの BEGIN 以降を EOF で確定し `implicit_commit` で知らせる (#1626)。
+#[tokio::test]
+async fn unclosed_begin_is_committed_at_eof_when_policy_is_commit() {
+    let (mut fx, session) = setup("unclosed_begin_commit", false).await;
+    let path = write_script(
+        &mut fx,
+        "unclosed_begin_commit",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1);\nBEGIN;\nINSERT INTO t VALUES (2);\nINSERT INTO t VALUES (3);",
+    );
+    let o = t::ScriptOptions {
+        unclosed_tx: t::UnclosedTxPolicy::Commit,
+        ..Default::default()
+    };
+    match run(&session, &path, o).await {
+        t::ScriptRun::Done {
+            implicit_rollback,
+            implicit_commit,
+            ..
+        } => {
+            assert!(!implicit_rollback);
+            assert!(implicit_commit);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 3);
+    assert!(!session.conn.transaction_active().await);
+}
+
 /// 全体を包む wrap_in_transaction は従来どおり EOF で確定し、取り消しの通知は出さない。
 #[tokio::test]
 async fn wrapped_script_still_commits_at_eof() {

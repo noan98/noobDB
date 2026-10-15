@@ -242,6 +242,8 @@ export function TableTimelapsePanel({
           </chakra.ul>
         ),
         confirmLabel: t("timelapseWatchConfirmOk"),
+        // 非破壊の確認なので「今後は表示しない」を選べる (#1626)。
+        rememberKey: "timelapseWatch",
       });
       if (!ok) return;
       setBusy(true);

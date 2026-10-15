@@ -101,6 +101,7 @@ import {
   setAutoRefreshDefaultSecs,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
+  clearSuppressedConfirms,
   setResultsInNewTab,
   getSettings,
   setDefaultDisplayCount,
@@ -1898,6 +1899,23 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     checked={settings.confirmProductionConnect}
                     onChange={setConfirmProductionConnect}
                   />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel as="span">
+                      {t("settingsSuppressedConfirms", { count: settings.suppressedConfirms.length })}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsSuppressedConfirmsHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={settings.suppressedConfirms.length === 0}
+                    onClick={clearSuppressedConfirms}
+                  >
+                    {t("settingsSuppressedConfirmsReset")}
+                  </Button>
                 </SettingsToggleRow>
                 <SettingsToggleRow>
                   <SettingsLabelWithInfo>

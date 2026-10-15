@@ -122,6 +122,21 @@ export function buildColumnReplaceCountSql(input: ColumnReplaceSqlInput): Column
   return { ok: true, sql: `SELECT COUNT(*) FROM ${parts.ref} WHERE ${parts.where}` };
 }
 
+/**
+ * `buildColumnReplaceSql` の UPDATE が書き換える先頭数行の「変更前 → 変更後」を読む読み取り専用の
+ * `SELECT col, <置換式> FROM t WHERE ... LIMIT n` (#1626)。WHERE 句と置換式は UPDATE と同一の部品を共有するので、
+ * サンプルと実際の書き換え結果がずれない。
+ */
+export function buildColumnReplaceSampleSql(input: ColumnReplaceSqlInput, limit = 5): ColumnReplaceSql {
+  const parts = columnReplaceParts(input);
+  if (!parts.ok) return parts;
+  const n = Math.max(1, Math.floor(limit));
+  return {
+    ok: true,
+    sql: `SELECT ${parts.col}, ${parts.expr} FROM ${parts.ref} WHERE ${parts.where} LIMIT ${n}`,
+  };
+}
+
 /** UPDATE 版と COUNT 版が共有する、置換式・WHERE 句・対象テーブル参照の組み立て。 */
 function columnReplaceParts(
   input: ColumnReplaceSqlInput,

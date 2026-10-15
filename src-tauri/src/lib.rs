@@ -273,10 +273,11 @@ pub mod __test_api {
     };
     pub use crate::commands::script::{
         BatchStatementResult, BatchStatus, BatchStreamMessage, FileStamp, ScriptAnalyzedEvent,
-        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
+        ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress, UnclosedTxPolicy,
         ScriptProgressEvent, ScriptRun,
     };
     pub use crate::db::script_analysis::ScriptAnalysis;
+    pub use crate::db::tx_options::{TxIsolation, TxOptions};
     pub use crate::text_encoding::TextEncoding;
 
     /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
@@ -289,6 +290,8 @@ pub mod __test_api {
             DangerKind::UpdateNoWhere => "updateNoWhere",
             DangerKind::Drop => "drop",
             DangerKind::Truncate => "truncate",
+            DangerKind::DropColumn => "dropColumn",
+            DangerKind::DropConstraint => "dropConstraint",
         })
     }
 
@@ -504,8 +507,9 @@ pub mod __test_api {
     pub async fn reconnect_via_command(
         state: &AppState,
         session_id: &str,
+        force: bool,
     ) -> crate::error::Result<()> {
-        crate::commands::connection::reconnect_inner(state, session_id).await
+        crate::commands::connection::reconnect_inner(state, session_id, force).await
     }
 
     /// Drives the `run_query` IPC command's core path (session lookup +

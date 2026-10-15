@@ -19,7 +19,7 @@ import {
   type TableDiff,
   listenDataDiffProgress,
 } from "../api/tauri";
-import type { SyncRiskItem } from "../ai/syncRisk";
+import { countDmlStatements, type SyncRiskItem } from "../ai/syncRisk";
 import { useLocale, useT } from "../i18n";
 import { staggerContainer, transitions, variants as motionVariants } from "../motion";
 import { semanticColorVar } from "../semanticColors";
@@ -812,9 +812,25 @@ export function SchemaCompareView({
       name: targetProfile.name,
       destructive: destructiveCount,
     });
+    // データ同期は、適用する DML の件数を AI の要約とは独立に実数で出す (#1626)。
+    const dml =
+      planKind === "data" ? countDmlStatements(plan.statements.filter((_, i) => selected.has(i))) : null;
     const applyOk = await confirm({
       title: t("schemaCompareApply", { count: statements.length }),
-      message: confirmMsg,
+      message: dml ? (
+        <>
+          {confirmMsg}
+          <Box mt="2" fontWeight={600} data-testid="sync-dml-counts">
+            {t("schemaCompareApplyDmlCounts", {
+              deletes: dml.deletes.toLocaleString(),
+              updates: dml.updates.toLocaleString(),
+              inserts: dml.inserts.toLocaleString(),
+            })}
+          </Box>
+        </>
+      ) : (
+        confirmMsg
+      ),
       tone: destructiveCount > 0 ? "danger" : "warning",
     });
     if (!applyOk) return;

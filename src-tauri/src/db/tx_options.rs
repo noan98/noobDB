@@ -10,8 +10,11 @@
 //! - **PostgreSQL**: `BEGIN ISOLATION LEVEL ... READ ONLY` を 1 文で発行する。
 //!   `READ UNCOMMITTED` は PostgreSQL では `READ COMMITTED` と同じ挙動になる
 //!   (構文は受理される)。
-//! - **SQLite**: 非対応。オプションが指定されたら `InvalidInput` で拒否する
-//!   (黙って無視すると「READ ONLY のつもりで書けてしまう」ため)。
+//! - **SQLite**: 分離レベルは持たないので指定されたら `InvalidInput` で拒否する (黙って
+//!   無視すると意図とずれるため)。READ ONLY は、その接続だけ BEGIN の前に
+//!   `PRAGMA query_only = ON` を立て、COMMIT / ROLLBACK のあとで OFF に戻して実現する (#1626)。
+//!   `query_only` は接続単位の設定なので、トランザクション用に取った接続にだけ効き、
+//!   プールの他の接続や、戻したあとの接続には残らない。
 
 use serde::Deserialize;
 
@@ -79,15 +82,20 @@ impl TxOptions {
         sql
     }
 
-    /// SQLite: 非対応。オプション指定があれば拒否する。
-    pub fn ensure_default_for_sqlite(&self) -> Result<()> {
-        if self.is_default() {
+    /// SQLite: 分離レベルは非対応なので指定があれば拒否する。READ ONLY は許可する (#1626)。
+    pub fn ensure_supported_for_sqlite(&self) -> Result<()> {
+        if self.isolation.is_none() {
             Ok(())
         } else {
             Err(AppError::InvalidInput(
-                "SQLite does not support transaction isolation level / READ ONLY options".into(),
+                "SQLite does not support transaction isolation levels".into(),
             ))
         }
+    }
+
+    /// SQLite: BEGIN の前に発行する読み取り専用化 (READ ONLY のときだけ)。
+    pub fn sqlite_pre_sql(&self) -> Option<&'static str> {
+        self.read_only.then_some("PRAGMA query_only = ON")
     }
 }
 
@@ -109,7 +117,8 @@ mod tests {
         assert_eq!(o.mysql_pre_sql(), None);
         assert_eq!(o.mysql_begin_sql(), "START TRANSACTION");
         assert_eq!(o.postgres_begin_sql(), "BEGIN");
-        assert!(o.ensure_default_for_sqlite().is_ok());
+        assert!(o.ensure_supported_for_sqlite().is_ok());
+        assert_eq!(o.sqlite_pre_sql(), None);
     }
 
     #[test]
@@ -138,11 +147,18 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_rejects_any_option() {
+    fn sqlite_rejects_isolation_but_allows_read_only() {
         assert!(opts(Some(TxIsolation::ReadCommitted), false)
-            .ensure_default_for_sqlite()
+            .ensure_supported_for_sqlite()
             .is_err());
-        assert!(opts(None, true).ensure_default_for_sqlite().is_err());
+        assert!(opts(Some(TxIsolation::Serializable), true)
+            .ensure_supported_for_sqlite()
+            .is_err());
+        assert!(opts(None, true).ensure_supported_for_sqlite().is_ok());
+        assert_eq!(
+            opts(None, true).sqlite_pre_sql(),
+            Some("PRAGMA query_only = ON")
+        );
     }
 
     #[test]

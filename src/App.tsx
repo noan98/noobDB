@@ -157,7 +157,7 @@ import {
 } from "./components/identitySync";
 import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
-import { qualifiedTableSql } from "./components/sqlDialect";
+import { qualifiedTableSql, quoteIdentFor } from "./components/sqlDialect";
 import { treeItemInsertText } from "./components/treeDragInsert";
 import { fkJoinSnippets } from "./components/fkJoin";
 import {
@@ -212,6 +212,7 @@ import {
   isolationIsAliasedOn,
   resolveTxOptions,
   supportsTxOptions,
+  supportsTxReadOnly,
   TX_ISOLATION_DEFAULT,
   type TxIsolation,
 } from "./txOptions";
@@ -395,7 +396,14 @@ const RoutineEditorModal = lazy(() =>
 const RunRoutineModal = lazy(() =>
   import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
 );
-import { analyzeDangerousSql, isReadOnlySql, type ReadOnlyHint, type DangerFinding } from "./dangerousSql";
+import {
+  analyzeDangerousSql,
+  appendWhereTemplate,
+  buildPkWhereTemplate,
+  isReadOnlySql,
+  type ReadOnlyHint,
+  type DangerFinding,
+} from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
 import { isSingleCapturableStatement } from "./flightRecorder";
@@ -4095,7 +4103,26 @@ export default function App() {
         }
         try {
           // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
-          await api.reconnect(oldSessionId);
+          try {
+            await api.reconnect(oldSessionId);
+          } catch (e) {
+            // 明示トランザクション中の生きた接続は、未確定の書き込みを捨てることを確認してから (#1626)。
+            if (errorKindOf(e) !== "transactionActive") throw e;
+            const ok = await confirm({
+              title: translate("reconnectTxTitle"),
+              message: translate("reconnectTxMessage", { name: profile.name }),
+              confirmLabel: translate("reconnectTxConfirm"),
+              tone: "warning",
+            });
+            if (!ok) {
+              // 断ったら接続はそのまま (トランザクションも生きている)。ループを止める。
+              reconnectingRef.current = false;
+              setConnectionStatus("connected");
+              setStatus({ kind: "idle" });
+              return;
+            }
+            await api.reconnect(oldSessionId, true);
+          }
           // 再接続でサーバ側の接続が入れ替わるため、開いていたトランザクションは破棄済み。
           if (txBySessionRef.current.has(oldSessionId)) {
             resetTxFor(oldSessionId);
@@ -4136,7 +4163,7 @@ export default function App() {
       reconnectingRef.current = false;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor, resetTxFor],
+    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor, resetTxFor, confirm],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -6083,6 +6110,40 @@ export default function App() {
   }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
+
+  // WHERE なしの UPDATE / DELETE の確認に添える「主キーで絞る」提案 (#1626)。対象表の主キー列を
+  // `describe_table` で引き、雛形が作れる単純な文のときだけ出す。実行はしない (読み取りのみ)。
+  const [pkSuggestTemplate, setPkSuggestTemplate] = useState<string | null>(null);
+  useEffect(() => {
+    setPkSuggestTemplate(null);
+    const pending = pendingDangerous;
+    const driver = selectedProfile?.driver;
+    if (!pending || !sessionId || !driver || pending.batch) return;
+    const only = pending.findings.length === 1 ? pending.findings[0] : null;
+    if (!only || (only.kind !== "deleteNoWhere" && only.kind !== "updateNoWhere") || !only.target) return;
+    if (appendWhereTemplate(pending.sql, "WHERE x", driver) === null) return;
+    const parts = only.target.split(".");
+    const table = parts[parts.length - 1];
+    const database =
+      parts.length > 1
+        ? parts[parts.length - 2]
+        : (tabsRef.current.find((tb) => tb.id === pending.tabId)?.database ??
+          selectedProfile?.database ??
+          null);
+    if (!database || !table) return;
+    let cancelled = false;
+    void api
+      .describeTable(sessionId, database, table)
+      .then((cols) => {
+        if (cancelled) return;
+        const pk = cols.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
+        setPkSuggestTemplate(buildPkWhereTemplate(pk, (n) => quoteIdentFor(driver, n)));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingDangerous, sessionId, selectedProfile?.driver, selectedProfile?.database, tabsRef]);
 
   // Badge action: re-run the auto-limited query without the cap so the user
   // sees the full result set.
@@ -11931,17 +11992,17 @@ export default function App() {
                               </Tooltip>
                               <Tooltip
                                 label={
-                                  supportsTxOptions(selectedProfile?.driver)
-                                    ? t("txReadOnlyHelp")
-                                    : t("txOptionsUnsupported")
+                                  selectedProfile?.driver === "sqlite"
+                                    ? t("txReadOnlyHelpSqlite")
+                                    : t("txReadOnlyHelp")
                                 }
                                 focusableWrapper
                               >
                                 <Box>
                                   <Switch
-                                    checked={supportsTxOptions(selectedProfile?.driver) && txReadOnly}
+                                    checked={supportsTxReadOnly(selectedProfile?.driver) && txReadOnly}
                                     onChange={setTxReadOnly}
-                                    disabled={!supportsTxOptions(selectedProfile?.driver)}
+                                    disabled={!supportsTxReadOnly(selectedProfile?.driver)}
                                     label={t("txReadOnly")}
                                   />
                                 </Box>
@@ -13083,6 +13144,23 @@ export default function App() {
                           selectedProfile.database ??
                           null,
                         sql: pendingDangerous.sql,
+                      }
+                    : null
+                }
+                pkSuggestion={
+                  pkSuggestTemplate
+                    ? {
+                        template: pkSuggestTemplate,
+                        onInsert: () => {
+                          const next = appendWhereTemplate(
+                            pendingDangerous.sql,
+                            pkSuggestTemplate,
+                            selectedProfile?.driver,
+                          );
+                          const { tabId, sql } = pendingDangerous;
+                          setPendingDangerous(null);
+                          if (next) void handleApplyAiSql(tabId, sql, next);
+                        },
                       }
                     : null
                 }

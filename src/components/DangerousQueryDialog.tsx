@@ -46,6 +46,12 @@ interface Props {
     database: string | null;
     sql: string;
   } | null;
+  /**
+   * WHERE なしの UPDATE / DELETE に添える「主キーで絞る」提案 (#1626)。`template` は `WHERE id = ` のような
+   * 雛形で、`onInsert` を押すとダイアログを閉じ (実行はしない)、エディタの文の末尾へ雛形を挿入する。
+   * 判定ロジックは変えず、止めるだけでなく安全な書き方を示すための追加。
+   */
+  pkSuggestion?: { template: string; onInsert: () => void } | null;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -63,6 +69,8 @@ const KIND_LABEL_KEYS: Record<DangerKind, Parameters<ReturnType<typeof useT>>[0]
   updateNoWhere: "dangerousKindUpdateNoWhere",
   drop: "dangerousKindDrop",
   truncate: "dangerousKindTruncate",
+  dropColumn: "dangerousKindDropColumn",
+  dropConstraint: "dangerousKindDropConstraint",
 };
 
 export function DangerousQueryDialog({
@@ -72,6 +80,7 @@ export function DangerousQueryDialog({
   typedConfirmTarget,
   impact,
   aiContext,
+  pkSuggestion,
   onConfirm,
   onCancel,
 }: Props) {
@@ -160,6 +169,19 @@ export function DangerousQueryDialog({
             <chakra.span display="block" color="app.textMuted">
               {t("dangerousImpactNote")}
             </chakra.span>
+          </Callout>
+        )}
+        {pkSuggestion && (
+          <Callout tone="info" data-testid="dangerous-pk-suggestion">
+            <chakra.span display="block" fontWeight={600}>
+              {t("dangerousPkSuggestTitle")}
+            </chakra.span>
+            <chakra.span display="block" fontFamily="mono" my="1">
+              {pkSuggestion.template}
+            </chakra.span>
+            <Button type="button" variant="secondary" size="sm" onClick={pkSuggestion.onInsert}>
+              {t("dangerousPkSuggestInsert")}
+            </Button>
           </Callout>
         )}
         {aiContext && (

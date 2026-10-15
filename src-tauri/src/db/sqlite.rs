@@ -101,7 +101,7 @@ impl SqliteConn {
     // ── 明示トランザクション ──
 
     pub async fn tx_begin(&self, _database: Option<&str>, opts: TxOptions) -> Result<()> {
-        opts.ensure_default_for_sqlite()?;
+        opts.ensure_supported_for_sqlite()?;
         let mut guard = self.tx.lock().await;
         if guard.is_some() {
             return Err(AppError::InvalidInput(
@@ -109,7 +109,23 @@ impl SqliteConn {
             ));
         }
         let mut conn = self.pool.acquire().await?;
-        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        // READ ONLY (#1626): この接続だけ query_only を立ててから BEGIN する。
+        if let Some(pre) = opts.sqlite_pre_sql() {
+            sqlx::query(pre).execute(&mut *conn).await?;
+        }
+        if let Err(e) = sqlx::query("BEGIN").execute(&mut *conn).await {
+            if opts.read_only {
+                // プールへ戻る接続に query_only を残さない。戻せないなら接続ごと捨てる。
+                if sqlx::query("PRAGMA query_only = OFF")
+                    .execute(&mut *conn)
+                    .await
+                    .is_err()
+                {
+                    drop(conn.detach());
+                }
+            }
+            return Err(e.into());
+        }
         *guard = Some(conn);
         Ok(())
     }
@@ -129,6 +145,15 @@ impl SqliteConn {
             .ok_or_else(|| AppError::InvalidInput("no active transaction".into()))?;
         let stmt = if commit { "COMMIT" } else { "ROLLBACK" };
         let result = sqlx::query(stmt).execute(&mut *conn).await;
+        // READ ONLY で開始していた場合に立てた query_only を戻す (#1626)。常に OFF にしてよい:
+        // アプリはこの PRAGMA を他では使わない。戻せない接続はプールへ返さず捨てる。
+        let restore = sqlx::query("PRAGMA query_only = OFF")
+            .execute(&mut *conn)
+            .await;
+        if restore.is_err() {
+            drop(conn.detach());
+            return result.map(|_| ()).map_err(Into::into);
+        }
         if let Err(e) = result {
             // COMMIT/ROLLBACK 自体が失敗すると、この接続は BEGIN したままの
             // 不定状態になり得る。`guard` は既に None にしてあるので復旧の

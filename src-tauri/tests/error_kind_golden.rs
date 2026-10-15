@@ -86,6 +86,7 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
         "ViewBaseUnresolved" => AppError::ViewBaseUnresolved,
         "FlightDriverMismatch" => AppError::FlightDriverMismatch,
         "FlightProfileMismatch" => AppError::FlightProfileMismatch,
+        "TransactionActive" => AppError::TransactionActive,
         other => panic!(
             "error_kind_golden.rs の build_native が未対応の variant: {other} (フィクスチャと \
              このテストファイルの対応表を両方更新してください)"

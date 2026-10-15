@@ -4527,9 +4527,9 @@
   },
   "scriptAnalyzedEvent": {
     "analysis": {
-      "blockedTotal": 6,
+      "blockedTotal": 8,
       "categories": {
-        "ddl": 3,
+        "ddl": 5,
         "read": 1,
         "txControl": 2,
         "write": 3
@@ -4537,6 +4537,8 @@
       "dangerCounts": {
         "deleteNoWhere": 1,
         "drop": 1,
+        "dropColumn": 1,
+        "dropConstraint": 1,
         "truncate": 1,
         "updateNoWhere": 1
       },
@@ -4572,9 +4574,25 @@
           "index": 8,
           "line": 8,
           "sql": "DROP TABLE t"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "dropColumn",
+          "index": 9,
+          "line": 9,
+          "sql": "ALTER TABLE t DROP COLUMN c"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "dropConstraint",
+          "index": 10,
+          "line": 10,
+          "sql": "ALTER TABLE t DROP CONSTRAINT fk"
         }
       ],
-      "dangerousTotal": 4,
+      "dangerousTotal": 6,
       "head": [
         {
           "blocked": false,
@@ -4637,16 +4655,40 @@
           "sql": "DROP TABLE t"
         },
         {
-          "blocked": false,
-          "category": "txControl",
+          "blocked": true,
+          "category": "ddl",
+          "danger": "dropColumn",
           "index": 9,
           "line": 9,
+          "sql": "ALTER TABLE t DROP COLUMN c"
+        },
+        {
+          "blocked": true,
+          "category": "ddl",
+          "danger": "dropConstraint",
+          "index": 10,
+          "line": 10,
+          "sql": "ALTER TABLE t DROP CONSTRAINT fk"
+        },
+        {
+          "blocked": false,
+          "category": "txControl",
+          "index": 11,
+          "line": 11,
           "sql": "ROLLBACK"
         }
       ],
       "headLimit": 300,
+      "insertTables": [
+        {
+          "rows": 1,
+          "statements": 1,
+          "table": "t"
+        }
+      ],
+      "insertTablesOverflow": 0,
       "listLimit": 200,
-      "totalStatements": 9,
+      "totalStatements": 11,
       "txControlTotal": 2,
       "txControls": [
         {
@@ -4655,9 +4697,9 @@
           "line": 1
         },
         {
-          "index": 9,
+          "index": 11,
           "kind": "rollback",
-          "line": 9
+          "line": 11
         }
       ],
       "unclosedTransaction": false
@@ -4683,6 +4725,7 @@
         "sql": "INSERT INTO t VALUES (1)"
       }
     ],
+    "implicitCommit": false,
     "implicitRollback": true,
     "rowsAffected": 57,
     "skippedBeforeStart": 10,

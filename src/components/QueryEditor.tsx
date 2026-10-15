@@ -70,9 +70,10 @@ import { useSettings } from "../settings";
 import { springs } from "../motion";
 import { statementAtOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
-import { PREFLIGHT_MAX_CHARS } from "./preflight";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
+import { PreflightSampleModal } from "./PreflightSampleModal";
+import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -1375,6 +1376,15 @@ export const QueryEditor = memo(
       enabled: settings.preflightImpactEnabled && !disabled,
       driver,
     });
+    // バッジから開く影響行サンプル (#1626)。開いている間はその時点の SQL に固定する。
+    const [preflightSampleOpen, setPreflightSampleOpen] = useState(false);
+    const [preflightSampleSql, setPreflightSampleSql] = useState<string | null>(null);
+    const openPreflightSample = () => {
+      const sample = preflight ? buildPreflightSampleSql(preflight.plan) : null;
+      if (!sample) return;
+      setPreflightSampleSql(sample);
+      setPreflightSampleOpen(true);
+    };
     // 結果が変わるたび親へ通知 (危険クエリ確認ダイアログへの件数引き継ぎ用)。
     // タブ切替直後に結果が変わらない (同じ SQL) 場合も、新しいタブのコールバックへ
     // 通知し直す (#1308)。
@@ -1821,7 +1831,7 @@ export const QueryEditor = memo(
             />
           )}
           {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}
-          <PreflightBadge result={preflight} />
+          <PreflightBadge result={preflight} onOpenSample={sessionId ? openPreflightSample : undefined} />
           <ToolbarButton
             onClick={formatSelectionOrAll}
             disabled={disabled || !hasContent}
@@ -1972,6 +1982,14 @@ export const QueryEditor = memo(
               onPersist={onBuilderPersist}
               onInsertToEditor={insertAtCursor}
               onClose={() => setShowBuilder(false)}
+            />
+          )}
+          {preflightSampleOpen && preflightSampleSql && sessionId && (
+            <PreflightSampleModal
+              sessionId={sessionId}
+              database={defaultDatabase ?? null}
+              sampleSql={preflightSampleSql}
+              onClose={() => setPreflightSampleOpen(false)}
             />
           )}
         </AnimatePresence>

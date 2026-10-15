@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
 import { useT } from "../i18n";
+import { isConfirmSuppressed, suppressConfirm } from "../settings";
 import { typedConfirmMatches } from "../typeToConfirm";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, Checkbox, Input, PressableButton } from "./ui";
 
 /**
  * テーマに追従するカスタム確認ダイアログ。`window.confirm()` を置き換えるために
@@ -46,6 +48,19 @@ export interface ConfirmOptions {
    * 通常の確認 (tone: primary) でのみ有効。
    */
   altLabel?: string;
+  /**
+   * 指定すると「今後は表示しない」を選べる (#1626)。**非破壊の確認 (tone: primary) だけ**で有効で、
+   * danger / warning・タイプ確認・第 3 の選択肢 (altLabel) があるときは無視される (出さない)。
+   * 選ぶと確認なしで即「確認」として解決し、設定画面の「安全」から戻せる。本番接続の確認には付けないこと。
+   */
+  rememberKey?: string;
+}
+
+/** `rememberKey` が有効になる確認か (非破壊で、タイプ確認も第 3 の選択肢も無い)。 */
+function rememberApplies(opts: ConfirmOptions): boolean {
+  return (
+    !!opts.rememberKey && (opts.tone ?? "primary") === "primary" && !opts.altLabel && !opts.typedConfirmation
+  );
 }
 
 /** `choose()` の結果。cancel は Esc / × / キャンセルボタン。 */
@@ -89,6 +104,11 @@ export function useConfirm(): {
 
   const choose = useCallback((opts: ConfirmOptions) => {
     return new Promise<ConfirmChoice>((resolve) => {
+      // 「今後は表示しない」にしてある確認は出さずに確認済みとして扱う。
+      if (rememberApplies(opts) && opts.rememberKey && isConfirmSuppressed(opts.rememberKey)) {
+        resolve("confirm");
+        return;
+      }
       if (lastResolveRef.current) lastResolveRef.current("cancel");
       lastResolveRef.current = resolve;
       seqRef.current += 1;
@@ -120,6 +140,7 @@ export function useConfirm(): {
           tone={state.tone ?? "primary"}
           typedConfirmation={state.typedConfirmation}
           altLabel={state.altLabel}
+          rememberKey={rememberApplies(state) ? state.rememberKey : undefined}
           onConfirm={() => close("confirm")}
           onAlt={() => close("alt")}
           onCancel={() => close("cancel")}
@@ -139,6 +160,7 @@ interface ConfirmDialogProps {
   tone: ConfirmTone;
   typedConfirmation?: string;
   altLabel?: string;
+  rememberKey?: string;
   onConfirm: () => void;
   onAlt: () => void;
   onCancel: () => void;
@@ -152,6 +174,7 @@ function ConfirmDialog({
   tone,
   typedConfirmation,
   altLabel,
+  rememberKey,
   onConfirm,
   onAlt,
   onCancel,
@@ -163,6 +186,11 @@ function ConfirmDialog({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const typedInputRef = useRef<HTMLInputElement>(null);
   const [typedValue, setTypedValue] = useState("");
+  const [remember, setRemember] = useState(false);
+  const confirmAndRemember = () => {
+    if (rememberKey && remember) suppressConfirm(rememberKey);
+    onConfirm();
+  };
   const requiresTyped = !!typedConfirmation;
   const typedMatches = !requiresTyped || typedConfirmMatches(typedValue, typedConfirmation);
   // 破壊的/注意付き確認 (danger・warning) は安全側優先レイアウトに従い、
@@ -184,6 +212,12 @@ function ConfirmDialog({
       </ModalHeader>
       <ModalBody display="flex" flexDirection="column" gap="3">
         {message}
+        {rememberKey && (
+          <chakra.label display="flex" alignItems="center" gap="2" fontSize="sm" color="app.textMuted">
+            <Checkbox checked={remember} onChange={() => setRemember((v) => !v)} />
+            {t("confirmRememberLabel")}
+          </chakra.label>
+        )}
         {requiresTyped && (
           <FormSection>
             {/* overline の大文字化をここだけ解除する。ラベルに入力すべき対象名が入って
@@ -233,7 +267,7 @@ function ConfirmDialog({
             <PressableButton
               type="button"
               variant="primary"
-              onClick={onConfirm}
+              onClick={confirmAndRemember}
               disabled={requiresTyped && !typedMatches}
             >
               {confirmLabel}

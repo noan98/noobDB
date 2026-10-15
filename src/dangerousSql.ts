@@ -9,7 +9,13 @@
  * for the statement's own guard (see `hasTopLevelWhere`).
  */
 
-export type DangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
+export type DangerKind =
+  | "deleteNoWhere"
+  | "updateNoWhere"
+  | "drop"
+  | "truncate"
+  | "dropColumn"
+  | "dropConstraint";
 
 export interface DangerFinding {
   kind: DangerKind;
@@ -366,6 +372,27 @@ function extractTarget(rawStatement: string, lead: RegExp): string | null {
   return readTargetIdentifier(rawStatement.slice(m.index + m[0].length));
 }
 
+/**
+ * `ALTER TABLE` の中の `DROP COLUMN` / `DROP CONSTRAINT` (MySQL の `DROP FOREIGN KEY` /
+ * `DROP PRIMARY KEY` / `DROP CHECK` を含む) を拾う (#1626)。コメント・リテラルをマスクした小文字の
+ * 文を ASCII の単語 (`[a-z0-9_]+`) に分けて隣り合う 2 語を見るので、列名が `drop` でも
+ * `DROP INDEX` / `DROP PARTITION` は拾わない。先に現れた方を返す。バックの `alter_drop_kind`
+ * (`db/script_analysis.rs`) と同じ規則で、共有ゴールデンで固定している。
+ */
+function alterDropKind(bodyLower: string): "dropColumn" | "dropConstraint" | null {
+  const words = bodyLower.split(/[^a-z0-9_]+/).filter((w) => w.length > 0);
+  if (words[0] !== "alter" || words[1] !== "table") return null;
+  for (let i = 2; i + 1 < words.length; i++) {
+    if (words[i] !== "drop") continue;
+    const next = words[i + 1];
+    if (next === "column") return "dropColumn";
+    if (next === "constraint" || next === "foreign" || next === "primary" || next === "check") {
+      return "dropConstraint";
+    }
+  }
+  return null;
+}
+
 function classifyStatement(masked: string, raw: string): DangerFinding | null {
   const maskedLower = masked.toLowerCase();
   // 先頭の空白と `(` を読み飛ばす。JS の `\s` は U+FEFF を含み U+0085 を含まないが、Rust の
@@ -390,6 +417,13 @@ function classifyStatement(masked: string, raw: string): DangerFinding | null {
     // Skip the object keyword (table/database/...) and an optional IF EXISTS.
     return { kind: "drop", target: extractTarget(raw, /drop\s+\w+\s+(?:if\s+exists\s+)?/i) };
   }
+  if (startsWithKeyword(body, "alter")) {
+    const kind = alterDropKind(body);
+    if (kind) {
+      // `ALTER TABLE [ONLY] [IF EXISTS] <name>` の表名 (PostgreSQL の ONLY / IF EXISTS を読み飛ばす)。
+      return { kind, target: extractTarget(raw, /alter\s+table\s+(?:only\s+)?(?:if\s+exists\s+)?/i) };
+    }
+  }
   return null;
 }
 
@@ -413,6 +447,34 @@ export function analyzeDangerousSql(sql: string, driver?: string): DangerFinding
     }
   }
   return findings;
+}
+
+/**
+ * WHERE なしの UPDATE / DELETE に対して、対象表の主キー列で絞り込む `WHERE` の雛形を作る (#1626)。
+ * 判定ロジック (`analyzeDangerousSql`) は変えず、確認ダイアログが提案を添えるための純関数。
+ * 例: 主キー `id` → `WHERE id = `、複合 → `WHERE a = AND b = `。値は利用者が埋める。
+ * `quote` は識別子の引用 (ドライバ別)。主キーが無ければ null。
+ */
+export function buildPkWhereTemplate(
+  pkColumns: readonly string[],
+  quote: (name: string) => string,
+): string | null {
+  if (pkColumns.length === 0) return null;
+  return `WHERE ${pkColumns.map((c) => `${quote(c)} =`).join(" AND ")} `;
+}
+
+/**
+ * `sql` (WHERE なしの単一の UPDATE / DELETE) の末尾へ `WHERE` の雛形を足した文を返す (#1626)。
+ * 単純な形でなければ null (提案しない): 複数文、`RETURNING` / `ORDER BY` / `LIMIT` /
+ * `USING` / `JOIN` を伴う文は WHERE の置き場所が末尾とは限らないため。
+ */
+export function appendWhereTemplate(sql: string, template: string, driver?: string): string | null {
+  const masked = trimTrailingSeparators(maskLiterals(sql, driver)).toLowerCase();
+  if (masked.trim().length === 0 || masked.includes(";")) return null;
+  if (!/^[\s(\u0085\uFEFF]*(update|delete)\b/.test(masked)) return null;
+  if (/\b(where|returning|order|limit|using|join)\b/.test(masked)) return null;
+  const body = trimTrailingSeparators(sql).replace(/\s+$/, "");
+  return `${body}\n${template}`;
 }
 
 const READ_ONLY_PREFIXES = ["select", "show", "describe", "desc", "explain", "with"];

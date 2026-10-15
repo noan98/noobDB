@@ -50,10 +50,14 @@ describe("GridReplaceModal: 列全体モードの対象行数 (#1536)", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COUNT_PREVIEW_DEBOUNCE_MS + 10);
     });
-    expect(lookup).toHaveBeenCalledTimes(1);
-    expect(lookup.mock.calls[0][0]).toBe(
-      "SELECT COUNT(*) FROM `app`.`users` WHERE REGEXP_LIKE(`url`, 'http://', 'i')",
-    );
+    // 件数 (COUNT) と、変更前 → 変更後のサンプル (#1626) の 2 本だけ。
+    expect(lookup).toHaveBeenCalledTimes(2);
+    const sqls = lookup.mock.calls.map((c) => c[0] as string);
+    expect(sqls).toContain("SELECT COUNT(*) FROM `app`.`users` WHERE REGEXP_LIKE(`url`, 'http://', 'i')");
+    const sample = sqls.find((q) => q.startsWith("SELECT `url`, "));
+    expect(sample).toMatch(/REGEXP_REPLACE\(`url`, .*\) FROM `app`.`users` WHERE REGEXP_LIKE\(.*\) LIMIT 5$/);
+    expect(lookup.mock.calls.find((c) => c[0] === sample)?.[1]).toBe(5);
+    expect(screen.getByTestId("grid-replace-sample")).toBeTruthy();
     expect(screen.getByTestId("grid-replace-count")).toHaveTextContent(
       t("gridReplaceColumnCount", { count: "42" }),
     );

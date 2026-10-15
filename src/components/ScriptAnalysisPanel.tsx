@@ -16,6 +16,8 @@ import { Button, Checkbox } from "./ui";
 const DANGER_LABELS: Record<ScriptDangerKind, I18nKey> = {
   drop: "scriptDangerDrop",
   truncate: "scriptDangerTruncate",
+  dropColumn: "scriptDangerDropColumn",
+  dropConstraint: "scriptDangerDropConstraint",
   deleteNoWhere: "scriptDangerDeleteNoWhere",
   updateNoWhere: "scriptDangerUpdateNoWhere",
 };
@@ -23,6 +25,8 @@ const DANGER_LABELS: Record<ScriptDangerKind, I18nKey> = {
 const DANGER_KIND_LABELS: Record<ScriptDangerKind, I18nKey> = {
   drop: "scriptDangerKindDrop",
   truncate: "scriptDangerKindTruncate",
+  dropColumn: "scriptDangerKindDropColumn",
+  dropConstraint: "scriptDangerKindDropConstraint",
   deleteNoWhere: "scriptDangerKindDeleteNoWhere",
   updateNoWhere: "scriptDangerKindUpdateNoWhere",
 };
@@ -154,6 +158,38 @@ export function ScriptAnalysisPanel({
           onToggle={onToggle}
           label={t("scriptAnalysisDangerTitle", { count: a.dangerousTotal.toLocaleString() })}
         />
+      )}
+
+      {a.insertTables.length > 0 && (
+        <chakra.div color="app.textMuted" textStyle="caption" data-testid="script-insert-tables">
+          <chakra.span fontWeight={600} color="app.text">
+            {t("scriptAnalysisInsertTitle", { count: a.insertTables.length.toLocaleString() })}
+          </chakra.span>
+          <chakra.ul
+            listStyleType="none"
+            m="0"
+            p="0"
+            maxH="120px"
+            overflowY="auto"
+            aria-label={t("scriptAnalysisInsertTitle", { count: a.insertTables.length.toLocaleString() })}
+          >
+            {a.insertTables.map((e) => (
+              <chakra.li key={e.table} fontFamily="mono" wordBreak="break-all">
+                {t("scriptAnalysisInsertRow", {
+                  table: e.table,
+                  statements: e.statements.toLocaleString(),
+                  rows: e.rows.toLocaleString(),
+                })}
+              </chakra.li>
+            ))}
+          </chakra.ul>
+          {a.insertTablesOverflow > 0 && (
+            <chakra.div>
+              {t("scriptAnalysisInsertOverflow", { count: a.insertTablesOverflow.toLocaleString() })}
+            </chakra.div>
+          )}
+          <chakra.div>{t("scriptAnalysisInsertNote")}</chakra.div>
+        </chakra.div>
       )}
 
       {a.txControlTotal > 0 && (

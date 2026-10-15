@@ -108,7 +108,14 @@ describe("事前確認 (ドライラン) の補助 (#1535)", () => {
   const analysis = {
     totalStatements: 1000,
     categories: { read: 0, write: 998, ddl: 2, txControl: 0 },
-    dangerCounts: { deleteNoWhere: 3, updateNoWhere: 0, drop: 2, truncate: 0 },
+    dangerCounts: {
+      deleteNoWhere: 3,
+      updateNoWhere: 0,
+      drop: 2,
+      truncate: 0,
+      dropColumn: 1,
+      dropConstraint: 0,
+    },
     dangerousTotal: 5,
     blockedTotal: 0,
     txControlTotal: 0,
@@ -154,6 +161,7 @@ describe("事前確認 (ドライラン) の補助 (#1535)", () => {
   it("危険種別は件数のあるものだけ固定順で返す", () => {
     expect(dangerKindCounts(analysis)).toEqual([
       { kind: "drop", count: 2 },
+      { kind: "dropColumn", count: 1 },
       { kind: "deleteNoWhere", count: 3 },
     ]);
   });

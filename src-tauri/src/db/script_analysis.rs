@@ -6,7 +6,7 @@
 //!
 //! * 文の総数・種別ごとの件数 (読み取り / 書き込み / DDL / トランザクション制御)
 //! * 先頭 [`HEAD_LIMIT`] 文の一覧 (プレビュー用。個別除外のチェックボックスの対象)
-//! * 危険な文 (WHERE なしの DELETE / UPDATE、DROP、TRUNCATE) の件数と、先頭
+//! * 危険な文 (WHERE なしの DELETE / UPDATE、DROP、TRUNCATE、ALTER TABLE の DROP COLUMN / CONSTRAINT) の件数と、先頭
 //!   [`LIST_LIMIT`] 件の一覧
 //! * トランザクション制御文 (BEGIN / COMMIT / ROLLBACK) の位置の先頭 [`LIST_LIMIT`] 件
 //! * 読み取り専用セッションで拒否される文の件数
@@ -18,6 +18,8 @@
 //! (`analyzeDangerousSql`) の Rust 実装で、共有ゴールデン
 //! (`src/__tests__/fixtures/dangerousSqlVectors.json`) で一致を固定している。
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use super::script::{classify_tx_statement, ScriptStatement, TxControl};
@@ -27,6 +29,9 @@ use super::{is_read_only_sql_for, mask_for_driver, sql_may_change_schema, Driver
 pub const HEAD_LIMIT: usize = 300;
 /// 危険文・トランザクション制御文の一覧に保持する最大件数。
 pub const LIST_LIMIT: usize = 200;
+/// INSERT の対象テーブル別集計で別々に数える表の数の上限 (#1626)。超えた表への INSERT は
+/// 表名を持たずに文の数だけ `insert_tables_overflow` へ足す (巨大ダンプでも状態を有限に保つ)。
+pub const INSERT_TABLE_LIMIT: usize = 100;
 /// 一覧に載せる SQL の最大文字数 (巨大な INSERT をそのまま返さない)。
 const PREVIEW_CHARS: usize = 200;
 
@@ -38,6 +43,10 @@ pub enum DangerKind {
     UpdateNoWhere,
     Drop,
     Truncate,
+    /// `ALTER TABLE ... DROP COLUMN` (#1626)。
+    DropColumn,
+    /// `ALTER TABLE ... DROP CONSTRAINT` / `DROP FOREIGN KEY` / `DROP PRIMARY KEY` / `DROP CHECK` (#1626)。
+    DropConstraint,
 }
 
 /// 文の種別 (集計と一覧の表示用)。
@@ -95,6 +104,18 @@ pub struct DangerCounts {
     pub update_no_where: u64,
     pub drop: u64,
     pub truncate: u64,
+    pub drop_column: u64,
+    pub drop_constraint: u64,
+}
+
+/// INSERT の対象テーブル別の集計 (#1626)。`rows` は `VALUES (..),(..)` のタプル数の概算で、
+/// `INSERT ... SELECT` のように行数を文面から数えられない文は 0 行として数える (文の数は数える)。
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InsertTableCount {
+    pub table: String,
+    pub statements: u64,
+    pub rows: u64,
 }
 
 /// 事前確認の結果。ファイルサイズに依らず小さい (一覧は上限つき)。
@@ -110,11 +131,15 @@ pub struct ScriptAnalysis {
     /// トランザクション制御文の総数 (`tx_controls` は先頭 [`LIST_LIMIT`] 件のみ)。
     pub tx_control_total: u64,
     /// スクリプトが BEGIN したまま COMMIT / ROLLBACK なしで終わるか。ラップしない実行では
-    /// EOF でランナーが黙って COMMIT するため、実行前に知らせる。
+    /// EOF でランナーが取り消す (実行前に確定を選ぶこともできる, #1626) ため、実行前に知らせる。
     pub unclosed_transaction: bool,
     pub head: Vec<AnalyzedStatement>,
     pub dangerous: Vec<AnalyzedStatement>,
     pub tx_controls: Vec<TxControlMark>,
+    /// INSERT の対象テーブル別の文数・概算行数 (概算行数の多い順、最大 [`INSERT_TABLE_LIMIT`] 表, #1626)。
+    pub insert_tables: Vec<InsertTableCount>,
+    /// 上限を超えて別集計できなかった表への INSERT の文数。0 でなければ `insert_tables` は一部のみ。
+    pub insert_tables_overflow: u64,
     /// `head` に保持する最大件数 (`total_statements` がこれを超えると先頭のみ)。
     pub head_limit: u64,
     /// `dangerous` / `tx_controls` に保持する最大件数。
@@ -128,6 +153,8 @@ pub struct ScriptAnalyzer {
     enforce_read_only: bool,
     seen: u64,
     out: ScriptAnalysis,
+    /// INSERT の対象テーブル別集計 (表名 → (文数, 概算行数))。`finish` で `out.insert_tables` へ。
+    inserts: HashMap<String, (u64, u64)>,
 }
 
 impl ScriptAnalyzer {
@@ -136,6 +163,7 @@ impl ScriptAnalyzer {
             driver,
             enforce_read_only,
             seen: 0,
+            inserts: HashMap::new(),
             out: ScriptAnalysis {
                 total_statements: 0,
                 categories: CategoryCounts::default(),
@@ -147,6 +175,8 @@ impl ScriptAnalyzer {
                 head: Vec::new(),
                 dangerous: Vec::new(),
                 tx_controls: Vec::new(),
+                insert_tables: Vec::new(),
+                insert_tables_overflow: 0,
                 head_limit: HEAD_LIMIT as u64,
                 list_limit: LIST_LIMIT as u64,
             },
@@ -169,6 +199,9 @@ impl ScriptAnalyzer {
         let sql = stmt.sql.as_str();
         self.out.total_statements = self.seen;
 
+        if starts_with_word(sql, "insert") {
+            self.record_insert(sql);
+        }
         let (category, danger, blocked, tx_kind) = self.classify(sql);
         match category {
             StatementCategory::Read => self.out.categories.read += 1,
@@ -197,6 +230,8 @@ impl ScriptAnalyzer {
                 DangerKind::UpdateNoWhere => self.out.danger_counts.update_no_where += 1,
                 DangerKind::Drop => self.out.danger_counts.drop += 1,
                 DangerKind::Truncate => self.out.danger_counts.truncate += 1,
+                DangerKind::DropColumn => self.out.danger_counts.drop_column += 1,
+                DangerKind::DropConstraint => self.out.danger_counts.drop_constraint += 1,
             }
         }
         let need_head = self.out.head.len() < HEAD_LIMIT;
@@ -219,8 +254,41 @@ impl ScriptAnalyzer {
         }
     }
 
-    pub fn finish(self) -> ScriptAnalysis {
+    pub fn finish(mut self) -> ScriptAnalysis {
+        let mut tables: Vec<InsertTableCount> = self
+            .inserts
+            .into_iter()
+            .map(|(table, (statements, rows))| InsertTableCount {
+                table,
+                statements,
+                rows,
+            })
+            .collect();
+        // 概算行数の多い順 (同数は文数、表名で決定的に)。
+        tables.sort_by(|a, b| {
+            b.rows
+                .cmp(&a.rows)
+                .then(b.statements.cmp(&a.statements))
+                .then_with(|| a.table.cmp(&b.table))
+        });
+        self.out.insert_tables = tables;
         self.out
+    }
+
+    /// INSERT 1 文を対象テーブル別の集計へ足す (#1626)。表名を読み取れない文は数えない。
+    fn record_insert(&mut self, sql: &str) {
+        let Some((table, rest)) = insert_target(sql) else {
+            return;
+        };
+        let rows = count_values_tuples(rest, self.driver == DriverKind::Mysql);
+        if let Some(entry) = self.inserts.get_mut(&table) {
+            entry.0 += 1;
+            entry.1 = entry.1.saturating_add(rows);
+        } else if self.inserts.len() < INSERT_TABLE_LIMIT {
+            self.inserts.insert(table, (1, rows));
+        } else {
+            self.out.insert_tables_overflow += 1;
+        }
     }
 
     /// 1 文を分類する。戻り値は (種別, 危険種別, 読み取り専用で拒否, 制御文の種類)。
@@ -260,6 +328,132 @@ impl ScriptAnalyzer {
         };
         (category, danger, self.enforce_read_only && !read_only, None)
     }
+}
+
+/// `INSERT [LOW_PRIORITY|DELAYED|HIGH_PRIORITY|IGNORE|OR <action>] [INTO] <表名>` の表名
+/// (引用符を外し、`.` で連ねたもの) と、表名より後ろの文字列を返す (#1626)。引用符付きの表名は
+/// 中の空白・`.` を保つ。表名を読み取れなければ `None`。
+fn insert_target(sql: &str) -> Option<(String, &str)> {
+    let mut rest = sql.trim_start();
+    // 先頭の `INSERT`。
+    rest = rest.get(6..)?;
+    // 修飾語と INTO を読み飛ばす。
+    loop {
+        rest = rest.trim_start();
+        let word_end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .unwrap_or(rest.len());
+        let word = &rest[..word_end];
+        let lower = word.to_ascii_lowercase();
+        match lower.as_str() {
+            "low_priority" | "delayed" | "high_priority" | "ignore" | "into" => {
+                rest = &rest[word_end..];
+            }
+            // SQLite の `INSERT OR REPLACE / OR IGNORE / ...`
+            "or" => {
+                rest = rest[word_end..].trim_start();
+                let w2 = rest
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(rest.len());
+                rest = &rest[w2..];
+            }
+            _ => break,
+        }
+    }
+    rest = rest.trim_start();
+    let mut name = String::new();
+    let mut i = 0;
+    let bytes = rest.as_bytes();
+    loop {
+        // 1 つの識別子 (引用符付き or 素)。
+        let part_start = i;
+        match bytes.get(i)? {
+            b'`' | b'"' | b'[' => {
+                let close = if bytes[i] == b'[' { b']' } else { bytes[i] };
+                let end = rest[i + 1..].find(close as char)? + i + 1;
+                name.push_str(&rest[i + 1..end]);
+                i = end + 1;
+            }
+            c if c.is_ascii_alphanumeric() || *c == b'_' || *c == b'$' || *c >= 0x80 => {
+                while i < bytes.len()
+                    && (bytes[i].is_ascii_alphanumeric()
+                        || bytes[i] == b'_'
+                        || bytes[i] == b'$'
+                        || bytes[i] >= 0x80)
+                {
+                    i += 1;
+                }
+                name.push_str(&rest[part_start..i]);
+            }
+            _ => return None,
+        }
+        if bytes.get(i) == Some(&b'.') {
+            name.push('.');
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    if name.is_empty() {
+        None
+    } else {
+        Some((name, &rest[i..]))
+    }
+}
+
+/// `VALUES (..),(..)` のタプルの数 (#1626)。引用符の中の `(` は数えず、`VALUES` より前
+/// (列リスト) と、タプルの後ろの `ON DUPLICATE KEY UPDATE ... VALUES(c)` は数えない。
+/// `INSERT ... SELECT` のように `VALUES` が無ければ 0。コメントは考慮しない概算。
+/// `backslash_escapes` は MySQL の文字列内 `\'` を閉じ引用符と取り違えないため。
+fn count_values_tuples(rest: &str, backslash_escapes: bool) -> u64 {
+    let b = rest.as_bytes();
+    let mut i = 0;
+    let mut depth = 0usize;
+    let mut quote: Option<u8> = None;
+    let mut in_values = false;
+    let mut rows = 0u64;
+    while i < b.len() {
+        let c = b[i];
+        if let Some(q) = quote {
+            if backslash_escapes && c == b'\\' && q != b'`' {
+                i += 2;
+                continue;
+            }
+            if c == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' | b'"' | b'`' => quote = Some(c),
+            b'(' => {
+                if in_values && depth == 0 {
+                    rows += 1;
+                }
+                depth += 1;
+            }
+            b')' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && c.is_ascii_alphabetic() => {
+                let start = i;
+                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
+                    i += 1;
+                }
+                let word = &rest[start..i];
+                if in_values {
+                    // タプルの並びの後ろに単語 (ON DUPLICATE / RETURNING など) が来たら終わり。
+                    return rows;
+                }
+                if word.eq_ignore_ascii_case("values") || word.eq_ignore_ascii_case("value") {
+                    in_values = true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    rows
 }
 
 /// 先頭の空白を除いて `word` で始まり、直後が単語文字でなければ true (大文字小文字無視)。
@@ -335,6 +529,37 @@ pub fn classify_dangerous(driver: DriverKind, sql: &str) -> Option<DangerKind> {
     }
     if keyword_prefix(body, "drop") {
         return Some(DangerKind::Drop);
+    }
+    if keyword_prefix(body, "alter") {
+        return alter_drop_kind(body);
+    }
+    None
+}
+
+/// `ALTER TABLE` の中の `DROP COLUMN` / `DROP CONSTRAINT` (MySQL の `DROP FOREIGN KEY` /
+/// `DROP PRIMARY KEY` / `DROP CHECK` を含む) を拾う (#1626)。`lower` はコメント・リテラルが
+/// マスク済みの小文字文字列。ASCII の単語 (`[a-z0-9_]+`) に分けて隣り合う 2 語を見るので、列名が
+/// `drop` でも `DROP INDEX` / `DROP PARTITION` は拾わない。先に現れた方を返す。フロントの
+/// `alterDropKind` (`src/dangerousSql.ts`) と同じ規則で、共有ゴールデンで固定している。
+fn alter_drop_kind(lower: &str) -> Option<DangerKind> {
+    let words: Vec<&str> = lower
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.first() != Some(&"alter") || words.get(1) != Some(&"table") {
+        return None;
+    }
+    for i in 2..words.len().saturating_sub(1) {
+        if words[i] != "drop" {
+            continue;
+        }
+        match words[i + 1] {
+            "column" => return Some(DangerKind::DropColumn),
+            "constraint" | "foreign" | "primary" | "check" => {
+                return Some(DangerKind::DropConstraint)
+            }
+            _ => {}
+        }
     }
     None
 }
@@ -523,5 +748,80 @@ mod tests {
         );
         assert!(a.head[0].sql.chars().count() <= PREVIEW_CHARS + 1);
         assert!(a.head[0].sql.ends_with('…'));
+    }
+
+    #[test]
+    fn classifies_alter_table_drops() {
+        for (driver, sql, want) in [
+            (D, "ALTER TABLE t DROP COLUMN c", Some(DangerKind::DropColumn)),
+            (D, "alter table `t` drop column if exists `c`", Some(DangerKind::DropColumn)),
+            (D, "ALTER TABLE t DROP CONSTRAINT fk", Some(DangerKind::DropConstraint)),
+            (D, "ALTER TABLE t DROP FOREIGN KEY fk", Some(DangerKind::DropConstraint)),
+            (D, "ALTER TABLE t DROP PRIMARY KEY", Some(DangerKind::DropConstraint)),
+            (D, "ALTER TABLE t DROP CHECK ck", Some(DangerKind::DropConstraint)),
+            (DriverKind::Postgres, "ALTER TABLE ONLY s.t DROP COLUMN c CASCADE", Some(DangerKind::DropColumn)),
+            (D, "ALTER TABLE t ADD COLUMN c INT, DROP COLUMN d", Some(DangerKind::DropColumn)),
+            (D, "ALTER TABLE t DROP INDEX i", None),
+            (D, "ALTER TABLE t ADD COLUMN c INT", None),
+            (D, "ALTER TABLE t ADD COLUMN `drop` INT", None),
+            (D, "ALTER TABLE t COMMENT 'drop column'", None),
+            (D, "ALTER INDEX i RENAME TO j", None),
+        ] {
+            assert_eq!(classify_dangerous(driver, sql), want, "{sql}");
+        }
+    }
+
+    #[test]
+    fn insert_target_reads_table_names() {
+        let name = |sql: &str| insert_target(sql).map(|(n, _)| n);
+        assert_eq!(name("INSERT INTO t VALUES (1)").as_deref(), Some("t"));
+        assert_eq!(name("insert into `db`.`my t` (a) values (1)").as_deref(), Some("db.my t"));
+        assert_eq!(name("INSERT IGNORE INTO \"s\".t VALUES (1)").as_deref(), Some("s.t"));
+        assert_eq!(name("INSERT OR REPLACE INTO t VALUES (1)").as_deref(), Some("t"));
+        assert_eq!(name("INSERT t VALUES (1)").as_deref(), Some("t"));
+        assert_eq!(name("INSERT INTO"), None);
+    }
+
+    #[test]
+    fn counts_value_tuples_ignoring_quotes_and_upsert_tail() {
+        let rows = |sql: &str, mysql: bool| {
+            let (_, rest) = insert_target(sql).expect("target");
+            count_values_tuples(rest, mysql)
+        };
+        assert_eq!(rows("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')", false), 3);
+        assert_eq!(rows("INSERT INTO t (a, b) VALUES (1,'),('),(2,'x')", false), 2);
+        assert_eq!(rows("INSERT INTO t VALUES (1,'it\\'s ('),(2,'x')", true), 2);
+        assert_eq!(
+            rows("INSERT INTO t VALUES (1,2) ON DUPLICATE KEY UPDATE a = VALUES(a)", true),
+            1
+        );
+        assert_eq!(rows("INSERT INTO t SELECT * FROM u", false), 0);
+        assert_eq!(rows("INSERT INTO t (a) SELECT (1)", false), 0);
+    }
+
+    #[test]
+    fn aggregates_inserts_per_table() {
+        let a = analyze(
+            "INSERT INTO a VALUES (1),(2);\nINSERT INTO b VALUES (1);\nINSERT INTO a VALUES (3);\nINSERT INTO c SELECT 1;",
+            false,
+        );
+        let got: Vec<(&str, u64, u64)> = a
+            .insert_tables
+            .iter()
+            .map(|t| (t.table.as_str(), t.statements, t.rows))
+            .collect();
+        assert_eq!(got, vec![("a", 2, 3), ("b", 1, 1), ("c", 1, 0)]);
+        assert_eq!(a.insert_tables_overflow, 0);
+    }
+
+    #[test]
+    fn insert_table_aggregation_is_capped() {
+        let mut sql = String::new();
+        for i in 0..(INSERT_TABLE_LIMIT + 5) {
+            sql.push_str(&format!("INSERT INTO t{i} VALUES (1);\n"));
+        }
+        let a = analyze(&sql, false);
+        assert_eq!(a.insert_tables.len(), INSERT_TABLE_LIMIT);
+        assert_eq!(a.insert_tables_overflow, 5);
     }
 }

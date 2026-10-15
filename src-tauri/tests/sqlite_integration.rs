@@ -1478,7 +1478,7 @@ async fn emergency_mode_resets_after_reconnect() {
 
     // 再接続はセッションを同 id のまま差し替えるが、緊急モードは引き継がれず
     // オフに戻る (安全側の既定)。
-    t::reconnect_via_command(&state, &sid)
+    t::reconnect_via_command(&state, &sid, false)
         .await
         .expect("reconnect");
     let err = t::run_query_via_command(
@@ -2013,7 +2013,7 @@ async fn sqlite_reconnect_reestablishes_same_session() {
     );
 
     // Reconnect in place: same id, fresh connection.
-    t::reconnect_via_command(&state, &sid)
+    t::reconnect_via_command(&state, &sid, false)
         .await
         .expect("reconnect must succeed");
 
@@ -2038,9 +2038,118 @@ async fn sqlite_reconnect_reestablishes_same_session() {
 
     // Reconnecting an unknown session id is a clean error, not a panic.
     assert!(matches!(
-        t::reconnect_via_command(&state, "nope").await,
+        t::reconnect_via_command(&state, "nope", false).await,
         Err(t::AppError::SessionNotFound(_))
     ));
+
+    let _ = std::fs::remove_file(&path);
+}
+
+/// #1626: SQLite の READ ONLY トランザクションは BEGIN 中だけ `PRAGMA query_only = ON` で
+/// 書き込みを拒否し、終了後は書き込めるように戻る。分離レベルの指定は引き続き拒否する。
+#[tokio::test]
+async fn sqlite_read_only_transaction_rejects_writes_then_restores() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_ro_tx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE rot (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+
+    // 分離レベルは SQLite に無いので拒否。
+    let iso = t::TxOptions {
+        isolation: Some(t::TxIsolation::Serializable),
+        read_only: false,
+    };
+    assert!(conn.begin_transaction_with(None, iso).await.is_err());
+    assert!(!conn.transaction_active().await);
+
+    let ro = t::TxOptions {
+        isolation: None,
+        read_only: true,
+    };
+    conn.begin_transaction_with(None, ro).await.expect("begin ro");
+    assert!(conn
+        .execute_in_transaction("INSERT INTO rot (id) VALUES (1)")
+        .await
+        .is_err());
+    // 読み取りはできる。
+    conn.execute_in_transaction("SELECT COUNT(*) FROM rot")
+        .await
+        .expect("select in ro tx");
+    conn.finish_transaction(false).await.expect("rollback");
+
+    // 終了後は同じ接続プールで書き込める (query_only が残らない)。
+    for _ in 0..3 {
+        conn.execute("INSERT INTO rot (id) VALUES (NULL)", None)
+            .await
+            .expect("write after ro tx");
+    }
+    conn.begin_transaction(None).await.expect("begin rw");
+    conn.execute_in_transaction("INSERT INTO rot (id) VALUES (NULL)")
+        .await
+        .expect("write in rw tx");
+    conn.finish_transaction(true).await.expect("commit");
+
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// #1626: 明示トランザクション中の生存セッションへの reconnect は、force 指定が無い限り
+/// `TransactionActive` で拒否する。force 付きなら張り直せて、トランザクションは破棄される。
+#[tokio::test]
+async fn sqlite_reconnect_refuses_live_explicit_transaction_without_force() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_reconnect_tx_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("CREATE TABLE rtx (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("create");
+    let session = t::make_session("rtx_sess", conn, opts, false);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let live = state.get(&sid).await.expect("session present");
+    live.conn.begin_transaction(None).await.expect("begin");
+    live.conn
+        .execute_in_transaction("INSERT INTO rtx (id) VALUES (1)")
+        .await
+        .expect("insert in tx");
+    drop(live);
+
+    assert!(matches!(
+        t::reconnect_via_command(&state, &sid, false).await,
+        Err(t::AppError::TransactionActive)
+    ));
+    // 拒否されたセッションは無傷でトランザクションも生きている。
+    assert!(
+        state
+            .get(&sid)
+            .await
+            .expect("session present")
+            .conn
+            .transaction_active()
+            .await
+    );
+
+    t::reconnect_via_command(&state, &sid, true)
+        .await
+        .expect("forced reconnect must succeed");
+    let after = state.get(&sid).await.expect("session present");
+    assert!(!after.conn.transaction_active().await);
+    let rows = after
+        .conn
+        .execute("SELECT COUNT(*) FROM rtx", None)
+        .await
+        .expect("count");
+    assert!(matches!(&rows.rows[0][0], t::Value::Int(0)));
 
     let _ = std::fs::remove_file(&path);
 }

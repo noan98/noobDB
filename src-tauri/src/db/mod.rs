@@ -539,7 +539,7 @@ impl Connection {
     }
 
     /// [`Self::begin_transaction`] に分離レベル / READ ONLY を指定する版 (#1166)。
-    /// SQLite は非対応で、オプション指定があれば `InvalidInput`。
+    /// SQLite は分離レベル非対応 (指定は `InvalidInput`)。READ ONLY は `PRAGMA query_only` で実現 (#1626)。
     pub async fn begin_transaction_with(
         &self,
         database: Option<&str>,

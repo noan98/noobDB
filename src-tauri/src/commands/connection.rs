@@ -565,17 +565,33 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
 /// re-resolved from the keyring by `profile_id` — no new plaintext is retained.
 /// Session flags (`read_only` / `skip_history`) are preserved.
 #[tauri::command]
-pub async fn reconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
-    reconnect_inner(&state, &session_id).await
+pub async fn reconnect(
+    session_id: String,
+    force: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    reconnect_inner(&state, &session_id, force.unwrap_or(false)).await
 }
 
 /// Core of [`reconnect`], split out so integration tests can drive the
 /// session-swap path without a Tauri runtime (exposed via `__test_api`).
-pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
+///
+/// `force` が偽のとき、明示トランザクション中の **生きている** セッションへの再接続は
+/// [`AppError::TransactionActive`] で拒否する (#1626)。再接続は旧接続を閉じるため、開いている
+/// BEGIN の未確定の書き込みがサーバ側でロールバックされる。トランザクション用接続が本当に
+/// 死んでいる (`SELECT 1` が通らない) ときは失うものが無いので従来どおり再接続できる。
+pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) -> Result<()> {
     let old = state
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+
+    if !force && old.conn.transaction_active().await {
+        // プール側の疎通ではなく、トランザクションが掴んでいる接続自体の生死を見る。
+        if old.conn.execute_in_transaction("SELECT 1").await.is_ok() {
+            return Err(AppError::TransactionActive);
+        }
+    }
 
     // Build the fresh transport under an overall deadline so a reconnect against
     // a now-unreachable host can't hang indefinitely (mirrors `connect`'s

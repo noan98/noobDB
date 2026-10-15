@@ -30,8 +30,12 @@ export const connectionCommands = {
    * トンネルを再構築し、`connect_options` から新しい接続を確立してセッションを
    * 差し替える。id が変わらないため、開いているタブ・グリッド状態はそのまま生きる。
    * 失敗時は旧セッションを壊さずに reject する。
+   *
+   * 明示トランザクション中の **生きている** セッションは、`force` を付けない限り
+   * `kind: "transactionActive"` で拒否される (#1626)。再接続は旧接続を閉じるので、未確定の
+   * 書き込みがロールバックされるため。呼び出し側は確認ダイアログを出して `force: true` で再実行する。
    */
-  reconnect: (sessionId: string) => invoke<void>("reconnect", { sessionId }),
+  reconnect: (sessionId: string, force?: boolean) => invoke<void>("reconnect", { sessionId, force }),
   /**
    * 接続のヘルスチェック。生きていれば true、死んでいれば (スリープ復帰や
    * トンネル断) false。セッションが見つからない場合のみ reject する。

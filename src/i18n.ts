@@ -869,7 +869,9 @@ const en = {
   txIsolationReadUncommitted: "READ UNCOMMITTED",
   txReadOnly: "READ ONLY",
   txReadOnlyHelp: "Start a READ ONLY transaction: writes are rejected by the server.",
-  txOptionsUnsupported: "SQLite does not support isolation level / READ ONLY options.",
+  txOptionsUnsupported: "SQLite does not have isolation levels.",
+  txReadOnlyHelpSqlite:
+    "Start a read-only transaction: writes are rejected while it is open (PRAGMA query_only is turned on for this connection only).",
   txIsolationAliasedHelp: "PostgreSQL treats READ UNCOMMITTED as READ COMMITTED.",
   txBegun: "Transaction started",
   txCommitted: "Transaction committed",
@@ -894,6 +896,18 @@ const en = {
   productionConfirmAction: "Connect",
   productionConfirmHint: "Write operations on this connection will require an additional confirmation.",
   confirmDefaultOk: "OK",
+  confirmRememberLabel: "Don't show this again",
+  preflightSampleTitle: "Rows this statement would touch (first {count})",
+  preflightSampleSql: "Read-only query",
+  preflightSampleClose: "Close",
+  editorPreflightSampleHint: "Click to view a sample of the affected rows",
+  rowSampleLoading: "Loading a sample...",
+  rowSampleError: "Could not load the sample: {error}",
+  rowSampleEmpty: "No matching rows.",
+  settingsSuppressedConfirms: 'Confirmations hidden with "Don\'t show again": {count}',
+  settingsSuppressedConfirmsHelp:
+    "Only non-destructive confirmations can be hidden. Destructive and production-connection confirmations are always shown.",
+  settingsSuppressedConfirmsReset: "Show them again",
   confirmDefaultCancel: "Cancel",
   dangerousTitle: "Confirm dangerous query",
   dangerousIntro: "This query may modify or destroy data:",
@@ -904,6 +918,10 @@ const en = {
   dangerousKindUpdateNoWhere: "UPDATE without WHERE (updates all rows)",
   dangerousKindDrop: "DROP (removes the object)",
   dangerousKindTruncate: "TRUNCATE (removes all rows)",
+  dangerousPkSuggestTitle: "Narrow it down by primary key",
+  dangerousPkSuggestInsert: "Cancel and add this WHERE to the editor",
+  dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN (removes the column and its data)",
+  dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT (removes a constraint)",
   dangerousTargetTable: "Target: {target}",
   dangerousTargetUnknown: "Target: (could not determine)",
   // Impact-row count handed off from the editor preflight (#737).
@@ -2431,6 +2449,14 @@ const en = {
     "The script has a BEGIN with no matching COMMIT/ROLLBACK. Running it as is will roll back the changes after that BEGIN at the end of the file.",
   scriptDoneImplicitRollback:
     "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were rolled back at the end of the file.",
+  scriptUnclosedConfirmTitle: "The script ends with an open BEGIN",
+  scriptUnclosedConfirmMessage:
+    "The script has a BEGIN with no matching COMMIT/ROLLBACK. Choose what happens to the changes after that BEGIN at the end of the file.",
+  scriptUnclosedConfirmRollback: "Roll back at the end (recommended)",
+  scriptUnclosedConfirmCommit: "Commit at the end",
+  scriptUnclosedConfirmCancel: "Do not run",
+  scriptDoneImplicitCommit:
+    "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were committed at the end of the file as you chose.",
   scriptDoneSkippedControl:
     "{count} BEGIN/COMMIT statements in the file were skipped (the runner's transaction was used).",
   scriptFailuresLabel: "Failed statements",
@@ -2463,6 +2489,8 @@ const en = {
     "These run for real and cannot be undone unless you wrap the script in a transaction.",
   scriptDangerDrop: "DROP × {count}",
   scriptDangerTruncate: "TRUNCATE × {count}",
+  scriptDangerDropColumn: "DROP COLUMN × {count}",
+  scriptDangerDropConstraint: "DROP CONSTRAINT × {count}",
   scriptDangerDeleteNoWhere: "DELETE without WHERE × {count}",
   scriptDangerUpdateNoWhere: "UPDATE without WHERE × {count}",
   scriptAnalysisDangerOverflow:
@@ -2482,6 +2510,13 @@ const en = {
   scriptStatementLine: "#{index} · line {line}",
   scriptDangerKindDrop: "DROP",
   scriptDangerKindTruncate: "TRUNCATE",
+  scriptDangerKindDropColumn: "DROP COLUMN",
+  scriptDangerKindDropConstraint: "DROP CONSTRAINT",
+  scriptAnalysisInsertTitle: "INSERT targets ({count} tables)",
+  scriptAnalysisInsertRow: "{table}: {statements} statements / about {rows} rows",
+  scriptAnalysisInsertOverflow: "{count} more INSERT statements target tables not listed here.",
+  scriptAnalysisInsertNote:
+    "Row counts are estimated from VALUES tuples (INSERT ... SELECT counts as 0 rows).",
   scriptDangerKindDeleteNoWhere: "DELETE without WHERE",
   scriptDangerKindUpdateNoWhere: "UPDATE without WHERE",
   scriptCategoryRead: "read",
@@ -3120,6 +3155,10 @@ const en = {
   connTxOpenBody: "This connection has an uncommitted transaction. Disconnecting rolls back its changes.",
   connTxOpenAction: "Disconnect and roll back",
   toastReconnectTxDiscarded: "Reconnected to {name}, but the open transaction was discarded.",
+  reconnectTxTitle: "Reconnect and discard the open transaction?",
+  reconnectTxMessage:
+    "{name} has an open transaction. Reconnecting closes the old connection, so its uncommitted changes will be rolled back.",
+  reconnectTxConfirm: "Discard and reconnect",
   windowCloseTxBody:
     "{count} connection(s) have an uncommitted transaction. Closing the window rolls back its changes.",
   windowCloseTxAction: "Close and roll back",
@@ -3436,6 +3475,7 @@ const en = {
   gridReplaceColumnCountZero: "No rows match, so nothing would be updated.",
   gridReplaceColumnCountError: "Could not count the affected rows: {error}",
   gridReplaceColumnCountRunning: "Counting the affected rows…",
+  gridReplaceSampleTitle: "Before -> after (first {count} rows)",
   gridReplaceColumnWarning:
     "This can rewrite many rows at once. It runs as one transaction (all or nothing) after you confirm.",
   gridReplaceApplyGrid: "Buffer edits",
@@ -4269,6 +4309,8 @@ const en = {
   schemaCompareApplying: "Applying...",
   schemaCompareApplyConfirm:
     'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
+  schemaCompareApplyDmlCounts:
+    "Deletes {deletes} rows / updates {updates} rows / inserts {inserts} rows (counted from the selected statements).",
   schemaCompareApplyProductionConfirm: '"{name}" is a production connection. Apply schema changes anyway?',
   schemaCompareApplyTypedConfirmTitle: "Confirm destructive apply on production",
   schemaCompareApplyTypedConfirmBody:
@@ -6989,7 +7031,9 @@ const ja: Dict = {
   txIsolationReadUncommitted: "READ UNCOMMITTED",
   txReadOnly: "READ ONLY",
   txReadOnlyHelp: "READ ONLY トランザクションで開始します。書き込みはサーバが拒否します。",
-  txOptionsUnsupported: "SQLite は分離レベル / READ ONLY の指定に対応していません。",
+  txOptionsUnsupported: "SQLite には分離レベルがありません。",
+  txReadOnlyHelpSqlite:
+    "読み取り専用のトランザクションで開始します。開いている間は書き込みが拒否されます (この接続だけ PRAGMA query_only を ON にします)。",
   txIsolationAliasedHelp: "PostgreSQL では READ UNCOMMITTED は READ COMMITTED と同じ扱いになります。",
   txBegun: "トランザクションを開始しました",
   txCommitted: "トランザクションをコミットしました",
@@ -7014,6 +7058,18 @@ const ja: Dict = {
   productionConfirmAction: "接続する",
   productionConfirmHint: "この接続での書き込み操作は実行時にも追加の確認が必要になります。",
   confirmDefaultOk: "OK",
+  confirmRememberLabel: "今後は表示しない",
+  preflightSampleTitle: "この文が対象にする行 (先頭 {count} 件)",
+  preflightSampleSql: "読み取り専用のクエリ",
+  preflightSampleClose: "閉じる",
+  editorPreflightSampleHint: "クリックで対象行のサンプルを表示",
+  rowSampleLoading: "サンプルを取得中...",
+  rowSampleError: "サンプルを取得できませんでした: {error}",
+  rowSampleEmpty: "該当する行はありません。",
+  settingsSuppressedConfirms: "「今後は表示しない」にした確認: {count} 件",
+  settingsSuppressedConfirmsHelp:
+    "非破壊の確認だけを隠せます。破壊的な操作や本番接続の確認は常に表示されます。",
+  settingsSuppressedConfirmsReset: "再び表示する",
   confirmDefaultCancel: "キャンセル",
   dangerousTitle: "危険なクエリの確認",
   dangerousIntro: "このクエリはデータを破壊・変更する可能性があります:",
@@ -7023,6 +7079,10 @@ const ja: Dict = {
   dangerousKindUpdateNoWhere: "WHERE 句のない UPDATE（全行を更新します）",
   dangerousKindDrop: "DROP（オブジェクトを削除します）",
   dangerousKindTruncate: "TRUNCATE（全行を削除します）",
+  dangerousPkSuggestTitle: "主キーで絞り込む",
+  dangerousPkSuggestInsert: "キャンセルしてエディタに WHERE を追加",
+  dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN（列とそのデータを削除します）",
+  dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT（制約を削除します）",
   dangerousTargetTable: "対象: {target}",
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   // エディタのプリフライトから引き継ぐ影響行数 (#737)。
@@ -8552,6 +8612,14 @@ const ja: Dict = {
     "このスクリプトには、対応する COMMIT / ROLLBACK のない BEGIN があります。このまま実行すると、ファイルの末尾で BEGIN 以降の変更が取り消され (ROLLBACK) ます。",
   scriptDoneImplicitRollback:
     "スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わったため、ファイルの末尾で BEGIN 以降の変更を取り消し (ROLLBACK) ました。",
+  scriptUnclosedConfirmTitle: "スクリプトの終端に閉じられていない BEGIN があります",
+  scriptUnclosedConfirmMessage:
+    "COMMIT / ROLLBACK のない BEGIN があります。その BEGIN 以降の変更をファイルの終端でどう扱うか選んでください。",
+  scriptUnclosedConfirmRollback: "終端で取り消す (推奨)",
+  scriptUnclosedConfirmCommit: "終端で確定する",
+  scriptUnclosedConfirmCancel: "実行しない",
+  scriptDoneImplicitCommit:
+    "スクリプトは COMMIT / ROLLBACK のない BEGIN で終わったため、選択どおり BEGIN 以降の変更をファイルの終端で確定しました。",
   scriptDoneSkippedControl:
     "ファイル内の BEGIN/COMMIT {count} 文は読み飛ばしました (ランナーのトランザクションを使用)。",
   scriptFailuresLabel: "失敗した文",
@@ -8582,6 +8650,8 @@ const ja: Dict = {
   scriptAnalysisDangerBody: "実際に実行され、スクリプトをトランザクションで包まない限り元に戻せません。",
   scriptDangerDrop: "DROP × {count}",
   scriptDangerTruncate: "TRUNCATE × {count}",
+  scriptDangerDropColumn: "DROP COLUMN × {count}",
+  scriptDangerDropConstraint: "DROP CONSTRAINT × {count}",
   scriptDangerDeleteNoWhere: "WHERE なしの DELETE × {count}",
   scriptDangerUpdateNoWhere: "WHERE なしの UPDATE × {count}",
   scriptAnalysisDangerOverflow:
@@ -8601,6 +8671,13 @@ const ja: Dict = {
   scriptStatementLine: "#{index} · {line} 行目",
   scriptDangerKindDrop: "DROP",
   scriptDangerKindTruncate: "TRUNCATE",
+  scriptDangerKindDropColumn: "DROP COLUMN",
+  scriptDangerKindDropConstraint: "DROP CONSTRAINT",
+  scriptAnalysisInsertTitle: "INSERT の対象表 ({count} 表)",
+  scriptAnalysisInsertRow: "{table}: {statements} 文 / 約 {rows} 行",
+  scriptAnalysisInsertOverflow: "ほか {count} 文の INSERT が、ここに載せていない表を対象にしています。",
+  scriptAnalysisInsertNote:
+    "行数は VALUES のタプル数からの概算です (INSERT ... SELECT は 0 行として数えます)。",
   scriptDangerKindDeleteNoWhere: "WHERE なしの DELETE",
   scriptDangerKindUpdateNoWhere: "WHERE なしの UPDATE",
   scriptCategoryRead: "読み取り",
@@ -9235,6 +9312,10 @@ const ja: Dict = {
     "この接続には COMMIT していないトランザクションがあります。切断すると変更はロールバックされます。",
   connTxOpenAction: "切断してロールバック",
   toastReconnectTxDiscarded: "{name} へ再接続しましたが、開いていたトランザクションは破棄されました。",
+  reconnectTxTitle: "開いているトランザクションを破棄して再接続しますか?",
+  reconnectTxMessage:
+    "{name} にはトランザクションが開いています。再接続すると旧接続が閉じられ、未確定の変更はロールバックされます。",
+  reconnectTxConfirm: "破棄して再接続",
   windowCloseTxBody:
     "COMMIT していないトランザクションを持つ接続が {count} 件あります。ウィンドウを閉じると変更はロールバックされます。",
   windowCloseTxAction: "閉じてロールバック",
@@ -9544,6 +9625,7 @@ const ja: Dict = {
   gridReplaceColumnCountZero: "一致する行がないため、何も更新されません。",
   gridReplaceColumnCountError: "対象行数を数えられませんでした: {error}",
   gridReplaceColumnCountRunning: "対象行数を数えています…",
+  gridReplaceSampleTitle: "変更前 → 変更後 (先頭 {count} 件)",
   gridReplaceColumnWarning:
     "一度に多数の行を書き換える可能性があります。確認後に 1 トランザクション (全件成功か全件ロールバック) で実行します。",
   gridReplaceApplyGrid: "編集を保留",
@@ -10374,6 +10456,8 @@ const ja: Dict = {
   schemaCompareApplying: "適用中...",
   schemaCompareApplyConfirm:
     "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
+  schemaCompareApplyDmlCounts:
+    "{deletes} 行を削除 / {updates} 行を更新 / {inserts} 行を追加します (選択中の文から数えた件数)。",
   schemaCompareApplyProductionConfirm: "「{name}」は本番接続です。スキーマ変更を適用しますか?",
   schemaCompareApplyTypedConfirmTitle: "本番への破壊的な適用の確認",
   schemaCompareApplyTypedConfirmBody:

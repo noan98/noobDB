@@ -95,6 +95,22 @@ pub struct ScriptOptions {
     /// ファイルと違えば、除外・開始位置の文番号がずれるので実行前にエラーにする (#1535)。
     #[serde(default)]
     pub expected_file: Option<FileStamp>,
+    /// スクリプトが BEGIN したまま COMMIT / ROLLBACK なしで終わったときの扱い (#1626)。
+    /// 既定は取り消し。`wrap_in_transaction` の全体トランザクションには影響しない。
+    #[serde(default)]
+    pub unclosed_tx: UnclosedTxPolicy,
+}
+
+/// スクリプト終端の未閉じ BEGIN の扱い (#1626)。「実行を止めて確認」は事前確認の結果
+/// (`unclosedTransaction`) を見たフロントが実行前に選ばせ、その結果をここへ渡す。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UnclosedTxPolicy {
+    /// EOF で取り消す (既定。書き忘れが画面に出ないまま確定するのを防ぐ)。
+    #[default]
+    Rollback,
+    /// EOF で確定する (ダンプの復元など、COMMIT を省く前提のスクリプト用)。
+    Commit,
 }
 
 /// ファイルの大きさと更新時刻 (ミリ秒)。事前確認の後でファイルが書き換わっていないかの照合用。
@@ -153,6 +169,10 @@ pub struct ScriptDoneEvent {
     /// 取り消した (ROLLBACK) か。BEGIN 以降の変更が残っていないことを利用者へ伝える。
     #[serde(rename = "implicitRollback")]
     pub implicit_rollback: bool,
+    /// 同じく BEGIN したまま終わったスクリプトを、利用者の選択 (`unclosedTx: "commit"`) で
+    /// EOF に確定したか (#1626)。`implicitRollback` とは排他。
+    #[serde(rename = "implicitCommit")]
+    pub implicit_commit: bool,
     #[serde(rename = "rowsAffected")]
     pub rows_affected: u64,
     #[serde(rename = "elapsedMs")]
@@ -203,6 +223,7 @@ pub enum ScriptRun {
         skipped_excluded: u64,
         skipped_before_start: u64,
         implicit_rollback: bool,
+        implicit_commit: bool,
         rows_affected: u64,
         elapsed_ms: u64,
     },
@@ -466,11 +487,18 @@ where
     // BEGIN が COMMIT / ROLLBACK なしで終わった場合は、書き忘れの可能性が高いので安全側に
     // 倒して取り消し (ROLLBACK)、利用者へ知らせる (#1601)。
     let mut implicit_rollback = false;
+    let mut implicit_commit = false;
     if runner.guard.active {
         if runner.options.wrap_in_transaction {
             if let Err(e) = runner.commit().await {
                 return Ok(runner.abort_with(format!("commit failed: {e}"), None).await);
             }
+        } else if runner.options.unclosed_tx == UnclosedTxPolicy::Commit {
+            // 利用者が確定を選んだ (#1626)。BEGIN 以降の文を確定済み件数へ数える。
+            if let Err(e) = runner.commit().await {
+                return Ok(runner.abort_with(format!("commit failed: {e}"), None).await);
+            }
+            implicit_commit = true;
         } else {
             if let Err(e) = runner.rollback_unclosed().await {
                 return Ok(runner
@@ -493,6 +521,7 @@ where
         skipped_excluded: runner.skipped_excluded,
         skipped_before_start: runner.skipped_before_start,
         implicit_rollback,
+        implicit_commit,
         rows_affected: runner.rows_affected,
         elapsed_ms: started.elapsed().as_millis() as u64,
     })
@@ -1410,6 +1439,7 @@ async fn spawn_script(
             skipped_excluded,
             skipped_before_start,
             implicit_rollback,
+            implicit_commit,
             rows_affected,
             elapsed_ms,
         }) => {
@@ -1426,6 +1456,7 @@ async fn spawn_script(
                     skipped_excluded,
                     skipped_before_start,
                     implicit_rollback,
+                    implicit_commit,
                     rows_affected,
                     elapsed_ms,
                 },

@@ -60,6 +60,11 @@ export interface Settings {
   /** Show a confirmation dialog when connecting to a profile flagged as production. */
   confirmProductionConnect: boolean;
   /**
+   * 「今後は表示しない」を選んだ非破壊の確認ダイアログの `rememberKey` 一覧 (#1626)。
+   * 設定画面の「安全」から一括で戻せる。破壊的 (danger / warning) の確認や本番接続の確認はキーを持たない。
+   */
+  suppressedConfirms: string[];
+  /**
    * Show a confirmation dialog before running destructive write statements
    * (WHERE-less UPDATE/DELETE, DROP, TRUNCATE). Production profiles always
    * confirm regardless of this flag.
@@ -750,6 +755,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoLimitEnabled: DEFAULT_AUTO_LIMIT_ENABLED,
   autoLimitCount: DEFAULT_AUTO_LIMIT_COUNT,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+  suppressedConfirms: [],
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
@@ -981,6 +987,7 @@ export function normalizeSettings(input: unknown): Settings {
     autoLimitEnabled?: unknown;
     autoLimitCount?: unknown;
     confirmProductionConnect?: unknown;
+    suppressedConfirms?: unknown;
     confirmDangerousQueries?: unknown;
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
@@ -1050,6 +1057,7 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.confirmProductionConnect === "boolean"
         ? parsed.confirmProductionConnect
         : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
+    suppressedConfirms: sanitizeSuppressedConfirms(parsed.suppressedConfirms),
     confirmDangerousQueries:
       typeof parsed.confirmDangerousQueries === "boolean"
         ? parsed.confirmDangerousQueries
@@ -1376,6 +1384,43 @@ export function setAutoLimitCount(value: number): void {
 export function setConfirmProductionConnect(value: boolean): void {
   if (current.confirmProductionConnect === value) return;
   current = { ...current, confirmProductionConnect: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+const MAX_SUPPRESSED_CONFIRMS = 100;
+
+function sanitizeSuppressedConfirms(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out: string[] = [];
+  for (const v of input) {
+    if (typeof v !== "string" || v.length === 0 || v.length > 80 || out.includes(v)) continue;
+    out.push(v);
+    if (out.length >= MAX_SUPPRESSED_CONFIRMS) break;
+  }
+  return out;
+}
+
+/** その確認ダイアログを「今後は表示しない」にしてあるか (#1626)。 */
+export function isConfirmSuppressed(key: string): boolean {
+  return current.suppressedConfirms.includes(key);
+}
+
+/** 確認ダイアログを「今後は表示しない」にする (#1626)。 */
+export function suppressConfirm(key: string): void {
+  if (!key || current.suppressedConfirms.includes(key)) return;
+  current = {
+    ...current,
+    suppressedConfirms: sanitizeSuppressedConfirms([...current.suppressedConfirms, key]),
+  };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** 「今後は表示しない」にした確認をすべて元に戻す (#1626)。 */
+export function clearSuppressedConfirms(): void {
+  if (current.suppressedConfirms.length === 0) return;
+  current = { ...current, suppressedConfirms: [] };
   persist();
   listeners.forEach((cb) => cb());
 }

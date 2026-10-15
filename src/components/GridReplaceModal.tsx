@@ -5,6 +5,7 @@ import { useT, type I18nKey } from "../i18n";
 import type { BulkEditTarget } from "./bulkEdit";
 import {
   buildColumnReplaceCountSql,
+  buildColumnReplaceSampleSql,
   buildColumnReplaceSql,
   columnReplaceUnsupported,
   isTextColumnType,
@@ -16,6 +17,8 @@ import { CodePreview, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { buildServerFilterClause, type ServerFilter } from "./serverBrowse";
 import { Button, Checkbox, Input, Radio } from "./ui";
 import { useCountPreviews } from "../useCountPreviews";
+import { useRowSample } from "../useRowSample";
+import { RowSampleTable } from "./RowSampleTable";
 import type { ValueLookup } from "./useValuePicker";
 
 /**
@@ -55,6 +58,9 @@ interface Props {
 }
 
 type Mode = "grid" | "column";
+
+/** 列全体モードで「変更前 → 変更後」を見せる先頭の件数 (#1626)。 */
+const REPLACE_SAMPLE_ROWS = 5;
 
 export function GridReplaceModal({
   columns,
@@ -141,6 +147,32 @@ export function GridReplaceModal({
   );
   const countItems = useMemo(() => (countSql ? [{ id: "target", sql: countSql }] : []), [countSql]);
   const countState = useCountPreviews(runCount, countItems, mode === "column" && textColumn).target;
+
+  // 列全体モードの「変更前 → 変更後」サンプル (#1626)。件数クエリと同じ WHERE・UPDATE と同じ置換式で
+  // 先頭 5 件を読み取り専用 SELECT (onLookupQuery 経由) で取得する。
+  const sampleSql = useMemo(() => {
+    if (!columnModeAvailable || !col || !table || database === null) return null;
+    const built = buildColumnReplaceSampleSql(
+      {
+        driver,
+        database,
+        table,
+        column: col.name,
+        find,
+        replace,
+        options,
+        extraWhere: filterActive && serverFilter ? buildServerFilterClause(driver, serverFilter) : null,
+      },
+      REPLACE_SAMPLE_ROWS,
+    );
+    return built.ok ? built.sql : null;
+  }, [columnModeAvailable, col, table, database, driver, find, replace, options, filterActive, serverFilter]);
+  const sampleState = useRowSample(
+    onLookupQuery ?? null,
+    sampleSql,
+    REPLACE_SAMPLE_ROWS,
+    mode === "column" && textColumn,
+  );
 
   const canApply =
     mode === "grid"
@@ -318,6 +350,18 @@ export function GridReplaceModal({
                     ? t("gridReplaceColumnCountError", { error: countState.error })
                     : t("gridReplaceColumnCountRunning")}
               </Callout>
+            )}
+            {sampleSql && onLookupQuery && textColumn && (
+              <FormSection>
+                <FieldLabel as="div">
+                  {t("gridReplaceSampleTitle", { count: REPLACE_SAMPLE_ROWS })}
+                </FieldLabel>
+                <RowSampleTable
+                  state={sampleState}
+                  label={t("gridReplaceSampleTitle", { count: REPLACE_SAMPLE_ROWS })}
+                  testId="grid-replace-sample"
+                />
+              </FormSection>
             )}
             <Callout tone="warning" role="status">
               {t("gridReplaceColumnWarning")}

@@ -900,6 +900,7 @@ fn build_fixtures() -> serde_json::Value {
         skipped_excluded: 3,
         skipped_before_start: 10,
         implicit_rollback: true,
+        implicit_commit: false,
         rows_affected: 57,
         elapsed_ms: 900,
     };
@@ -916,7 +917,7 @@ fn build_fixtures() -> serde_json::Value {
         analysis: t::analyze_script_text(
             t::DriverKind::Sqlite,
             true,
-            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nROLLBACK;",
+            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nALTER TABLE t DROP COLUMN c;\nALTER TABLE t DROP CONSTRAINT fk;\nROLLBACK;",
         ),
     };
     let sql_file_content = t::SqlFileContent {
