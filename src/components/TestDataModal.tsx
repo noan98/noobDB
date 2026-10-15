@@ -73,14 +73,13 @@ interface Props {
   table: string;
   driver: string;
   /**
-   * 接続プロファイルの ID。AI の生成プランを接続単位で保存して再利用する (#1620) のに使う。
+   * 接続プロファイルの ID。AI の生成プランを接続単位で保存して再利用する (#1620) のと、
+   * 列ごとの戦略・シード・行数を接続 × DB × テーブルごとに記憶する (#1631) のに使う。
    * 無いときは保存も再利用もしない。
    */
   profileId?: string;
   /** 本番フラグ。true なら投入前にタイプ確認付きの強確認を挟む。 */
   isProduction: boolean;
-  /** 接続プロファイル ID。列ごとの戦略・シード・行数を接続 × DB × テーブルごとに記憶する (#1631)。 */
-  profileId?: string;
   onClose: () => void;
   /** 投入成功後に呼ばれる (開いているテーブルタブの再読込など)。 */
   onInserted: () => void;
@@ -140,7 +139,6 @@ export function TestDataModal({
   driver,
   profileId,
   isProduction,
-  profileId,
   onClose,
   onInserted,
 }: Props) {
