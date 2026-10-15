@@ -637,7 +637,7 @@ describe("ConnectionForm connection route (#1684)", () => {
     expect(screen.queryByLabelText(t("formSsmTarget"))).toBeNull();
   });
 
-  it("hides the route selector's SSM fields for SQLite and sends ssm null", async () => {
+  it("hides the whole route radiogroup for SQLite and sends ssm null", async () => {
     saveProfile.mockResolvedValue({} as never);
     renderForm({
       ...base,
@@ -645,9 +645,96 @@ describe("ConnectionForm connection route (#1684)", () => {
       file_path: "/tmp/a.db",
       ssm: { target: "i-0123456789abcdef0", region: "" },
     });
+    expect(screen.queryByRole("radiogroup", { name: t("formRoute") })).toBeNull();
     expect(screen.queryByLabelText(t("formSsmTarget"))).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
     await waitFor(() => expect(saveProfile).toHaveBeenCalled());
     expect(saveProfile.mock.calls[0][0].ssm ?? null).toBeNull();
+  });
+
+  const fillSsh = () => {
+    pick(t("formRouteSsh"));
+    fireEvent.change(screen.getByLabelText(t("formSshHost")), { target: { value: "bastion.example.com" } });
+    const sshAuth = document.querySelector('select[id$="-ssh-auth"]') as HTMLSelectElement;
+    fireEvent.change(sshAuth, { target: { value: "password" } });
+    fireEvent.change(screen.getByLabelText(t("formSshPassword")), { target: { value: "ssh-pw" } });
+    fireEvent.click(screen.getByRole("switch", { name: t("formUseSshJump") }));
+    const jumpAuth = document.querySelector('select[id$="-ssh-jump-auth"]') as HTMLSelectElement;
+    fireEvent.change(jumpAuth, { target: { value: "password" } });
+    fireEvent.change(document.querySelector('input[id$="-ssh-jump-password"]') as HTMLInputElement, {
+      target: { value: "jump-pw" },
+    });
+  };
+
+  it("drops ssh and its secrets when switching from SSH to SSM on save", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderForm(null);
+    fireEvent.change(screen.getByTestId("connection-form-name"), { target: { value: "X" } });
+    fillSsh();
+    pick(t("formRouteSsm"));
+    fireEvent.change(screen.getByLabelText(t("formSsmTarget")), { target: { value: "i-0123456789abcdef0" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    const req = saveProfile.mock.calls[0][0];
+    expect(req.ssh).toBeNull();
+    expect(req.ssh_password).toBeUndefined();
+    expect(req.ssh_passphrase).toBeUndefined();
+    expect(req.ssh_jump_password).toBeUndefined();
+    expect(req.ssh_jump_passphrase).toBeUndefined();
+    expect(req.ssm?.target).toBe("i-0123456789abcdef0");
+  });
+
+  it("drops ssh and its secrets when switching from SSH to direct on save", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    renderForm(null);
+    fireEvent.change(screen.getByTestId("connection-form-name"), { target: { value: "X" } });
+    fillSsh();
+    pick(t("formRouteDirect"));
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalled());
+    const req = saveProfile.mock.calls[0][0];
+    expect(req.ssh).toBeNull();
+    expect(req.ssm ?? null).toBeNull();
+    expect(req.ssh_password).toBeUndefined();
+    expect(req.ssh_passphrase).toBeUndefined();
+  });
+
+  it("sends neither ssh nor ssm when switching from SSM to direct", async () => {
+    testConnection.mockResolvedValue("ok" as never);
+    renderForm(null);
+    pick(t("formRouteSsm"));
+    fireEvent.change(screen.getByLabelText(t("formSsmTarget")), { target: { value: "i-0123456789abcdef0" } });
+    pick(t("formRouteDirect"));
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    await waitFor(() => expect(testConnection).toHaveBeenCalled());
+    const req = testConnection.mock.calls[0][0];
+    expect(req.ssh).toBeNull();
+    expect(req.ssm).toBeNull();
+  });
+
+  it("trims the region and turns a whitespace-only profile into null", async () => {
+    testConnection.mockResolvedValue("ok" as never);
+    renderForm(null);
+    pick(t("formRouteSsm"));
+    fireEvent.change(screen.getByLabelText(t("formSsmTarget")), { target: { value: "i-0123456789abcdef0" } });
+    fireEvent.change(screen.getByLabelText(t("formSsmRegion")), { target: { value: " us-west-2 " } });
+    fireEvent.change(screen.getByLabelText(t("formSsmProfile")), { target: { value: "   " } });
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    await waitFor(() => expect(testConnection).toHaveBeenCalled());
+    expect(testConnection.mock.calls[0][0].ssm).toEqual({
+      target: "i-0123456789abcdef0",
+      region: "us-west-2",
+      profile: null,
+    });
+  });
+
+  it("rejects a malformed region with an inline error", async () => {
+    renderForm(null);
+    pick(t("formRouteSsm"));
+    fireEvent.change(screen.getByLabelText(t("formSsmTarget")), { target: { value: "i-0123456789abcdef0" } });
+    fireEvent.change(screen.getByLabelText(t("formSsmRegion")), { target: { value: "US West!" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formTest") }));
+    expect(await screen.findByText(t("formInvalidSsmRegion"))).toBeInTheDocument();
+    expect(testConnection).not.toHaveBeenCalled();
   });
 });

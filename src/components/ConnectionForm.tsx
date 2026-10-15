@@ -409,6 +409,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [ssmRegion, setSsmRegion] = useState(initial?.ssm?.region ?? "");
   const [ssmProfile, setSsmProfile] = useState(initial?.ssm?.profile ?? "");
   const [ssmTargetError, setSsmTargetError] = useState<string | null>(null);
+  const [ssmRegionError, setSsmRegionError] = useState<string | null>(null);
   const [sshHost, setSshHost] = useState(initial?.ssh?.host ?? "");
   const [sshPort, setSshPort] = useState(String(initial?.ssh?.port ?? 22));
   const [sshUser, setSshUser] = useState(initial?.ssh?.user ?? "");
@@ -719,15 +720,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     return Number.isInteger(n) && n >= 1 && n <= 65535 ? n : null;
   };
 
-  // Network-backed drivers need a valid port; SQLite is file-backed and skips it.
+  // 入力欄の検証 (ポート / SSM のインスタンス ID・リージョン)。ネットワーク型ドライバ
+  // だけが対象で、SQLite (ファイル型) は何も検証しない。
   // Each invalid field gets its own message (shown inline under the field with
   // `aria-invalid`, #1006) rather than a single aggregated string, since the
   // aggregated `error` box is now reserved for the connection test result.
-  const validatePorts = (): boolean => {
+  const validateFields = (): boolean => {
     setPortError(null);
     setSshPortError(null);
     setSshJumpPortError(null);
     setSsmTargetError(null);
+    setSsmRegionError(null);
     if (isFileBacked) return true;
     let ok = true;
     if (useSsm && !isValidSsmTarget(ssmTarget.trim())) {
@@ -736,6 +739,10 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     }
     if (parsePort(port) === null) {
       setPortError(t("formInvalidPort"));
+      ok = false;
+    }
+    if (useSsm && ssmRegion.trim() !== "" && !/^[a-z0-9-]+$/.test(ssmRegion.trim())) {
+      setSsmRegionError(t("formInvalidSsmRegion"));
       ok = false;
     }
     if (useSsh && parsePort(sshPort) === null) {
@@ -767,7 +774,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
     setError(null);
     setMessage(null);
     testedSigRef.current = null;
-    if (!validatePorts()) return;
+    if (!validateFields()) return;
     setTesting(true);
     try {
       const req = buildRequest();
@@ -791,7 +798,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       setError(t("formNameRequired"));
       return;
     }
-    if (!validatePorts()) return;
+    if (!validateFields()) return;
     setSaving(true);
     try {
       await api.saveProfile({
@@ -1068,7 +1075,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Text color="app.textMuted" fontSize="xs" m="0">
                 {t("formAwsIamExpiryHelp")}
               </Text>
-              {useSsh && (
+              {(useSsh || useSsm) && (
                 <Text color="app.textMuted" fontSize="xs" m="0">
                   {t("formAwsIamSshHint")}
                 </Text>
@@ -1176,7 +1183,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               {t("formTlsClientHelp")}
             </Text>
           </Box>
-          {useSsh && (
+          {(useSsh || useSsm) && (
             <Text color="app.textMuted" fontSize="xs" mt="2" mb="0">
               {t("formTlsSshHint")}
             </Text>
@@ -1275,16 +1282,12 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
 
       {!isFileBacked && (
         <Fieldset>
-          <Legend>
-            <Flex display="inline-flex" align="center" gap="2" fontSize="sm">
-              {t("formRoute")}
-            </Flex>
-          </Legend>
+          <Legend>{t("formRoute")}</Legend>
           <Box mb="2">
             <Segmented value={route} options={routeOptions} onChange={setRoute} ariaLabel={t("formRoute")} />
           </Box>
           {useSsm && (
-            <Box mt="2">
+            <>
               <Box>
                 <FieldLabel htmlFor={`${fid}-ssm-target`}>{t("formSsmTarget")}</FieldLabel>
                 <Input
@@ -1309,8 +1312,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   id={`${fid}-ssm-region`}
                   value={ssmRegion}
                   placeholder={t("formSsmRegionPlaceholder")}
-                  onChange={(e) => setSsmRegion(e.target.value)}
+                  aria-invalid={ssmRegionError ? true : undefined}
+                  onChange={(e) => {
+                    setSsmRegion(e.target.value);
+                    if (ssmRegionError) setSsmRegionError(null);
+                  }}
                 />
+                {ssmRegionError && (
+                  <FieldError display="block" mt="1">
+                    {ssmRegionError}
+                  </FieldError>
+                )}
               </Box>
               <Box mt="2">
                 <SettingsLabelWithInfo>
@@ -1327,7 +1339,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               <Text textStyle="caption" mt="2" mb="0">
                 {t("formSsmHelp")}
               </Text>
-            </Box>
+            </>
           )}
           {useSsh && (
             <>
