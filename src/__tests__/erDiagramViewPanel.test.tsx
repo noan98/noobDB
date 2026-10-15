@@ -15,6 +15,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       describeDatabase: vi.fn(),
       foreignKeys: vi.fn().mockResolvedValue([]),
+      getObjectDefinition: vi.fn(),
     },
   };
 });
@@ -158,7 +159,10 @@ describe("ERDiagramView 配置の保存とノードの右クリックメニュ�
         disconnect() {}
       },
     );
-  const mount = (onGenerateDoc?: (db: string, tables: string[]) => void) =>
+  const mount = (
+    onGenerateDoc?: (db: string, tables: string[]) => void,
+    onInsertSql?: (sql: string) => void,
+  ) =>
     renderWithProviders(
       <ERDiagramView
         sessionId="s1"
@@ -167,6 +171,7 @@ describe("ERDiagramView 配置の保存とノードの右クリックメニュ�
         connectionKey="p1"
         onOpenTable={() => {}}
         onGenerateDoc={onGenerateDoc}
+        onInsertSql={onInsertSql}
         onClose={() => {}}
       />,
     );
@@ -221,5 +226,42 @@ describe("ERDiagramView 配置の保存とノードの右クリックメニュ�
     fireEvent.contextMenu(container.querySelector('.react-flow__node[data-id="beta"]') as HTMLElement);
     fireEvent.click(await screen.findByRole("menuitem", { name: t("erDiagramMenuDocTable") }));
     expect(onDoc).toHaveBeenCalledWith("appdb", ["beta"]);
+  });
+
+  it("SELECT 文をエディタへ渡し、DDL をコピーし、強調を固定できる", async () => {
+    stubRo();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    vi.mocked(api.describeDatabase).mockResolvedValueOnce(["alpha", "beta"].map(tbl) as never);
+    vi.mocked(api.foreignKeys).mockResolvedValueOnce([
+      {
+        table: "alpha",
+        column: "id",
+        referenced_table: "beta",
+        referenced_column: "id",
+        constraint_name: "fk",
+      },
+    ] as never);
+    vi.mocked(api.getObjectDefinition).mockResolvedValueOnce("CREATE TABLE alpha (id int)");
+    const onInsert = vi.fn();
+    const { container } = mount(undefined, onInsert);
+    await screen.findByText(t("erDiagramSummary", { tables: 2, relationships: 1 }));
+    await waitFor(() => expect(container.querySelector(".react-flow__node")).not.toBeNull());
+
+    fireEvent.contextMenu(container.querySelector('.react-flow__node[data-id="alpha"]') as HTMLElement);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("erDiagramMenuCopyDdl") }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("CREATE TABLE alpha (id int)"));
+    expect(api.getObjectDefinition).toHaveBeenCalledWith("s1", "appdb", "table", "alpha", null);
+
+    fireEvent.contextMenu(container.querySelector('.react-flow__node[data-id="alpha"]') as HTMLElement);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("erDiagramMenuPin") }));
+    await waitFor(() =>
+      expect(container.querySelector('.react-flow__node[data-id="alpha"]')?.className).toContain("er-hl"),
+    );
+    expect(container.querySelector('.react-flow__node[data-id="beta"]')?.className).toContain("er-hl");
+
+    fireEvent.contextMenu(container.querySelector('.react-flow__node[data-id="beta"]') as HTMLElement);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("erDiagramMenuSelectSql") }));
+    expect(onInsert).toHaveBeenCalledWith("SELECT * FROM `appdb`.`beta`");
   });
 });

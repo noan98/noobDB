@@ -63,6 +63,8 @@ import { Spinner } from "./Spinner";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { copyToClipboard } from "./clipboard";
 import { clearErLayout, readErLayout, writeErLayout } from "./erPositions";
+import { qualifiedTableSql } from "./sqlDialect";
+import { TABLE_DDL_KIND } from "./tableDdl";
 import { ImageExportButton } from "./ImageExportButton";
 import { useToast } from "./Toast";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
@@ -332,6 +334,11 @@ interface ERDiagramViewProps {
    * ノード位置の保存先を分ける接続の識別子 (プロファイル ID, #1628)。無いときは位置を保存しない。
    */
   connectionKey?: string | null;
+  /**
+   * テーブルノードの右クリックメニュー『SELECT 文をエディタへ』(#1628)。SQL をエディタ (無ければ新しい
+   * クエリタブ) へ差し込む。渡されたときだけ項目を出す。実行はしない。
+   */
+  onInsertSql?: (sql: string) => void;
   onClose: () => void;
 }
 
@@ -342,6 +349,7 @@ function ERDiagramInner({
   onOpenTable,
   onGenerateDoc,
   connectionKey,
+  onInsertSql,
   onClose,
 }: ERDiagramViewProps) {
   const t = useT();
@@ -384,6 +392,8 @@ function ERDiagramInner({
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   // 連動ハイライト用: ホバー中のテーブル ID は 1 つだけ。関連判定は純関数 `erHighlight`。
   const [hoverId, setHoverId] = useState<string | null>(null);
+  // 右クリックメニューの『参照元・参照先を強調』で固定した強調対象 (#1628)。ホバー中はホバーが優先。
+  const [pinId, setPinId] = useState<string | null>(null);
   // 再取得ボタン用のカウンタ (#848)。データベース一覧・グラフ取得のどちらの
   // 失敗でも、これをインクリメントして両 effect を再実行させれば復旧できる。
   const [retryAttempt, setRetryAttempt] = useState(0);
@@ -619,6 +629,36 @@ function ERDiagramInner({
         icon: "table",
         onSelect: () => database && handleOpen(database, table),
       },
+    ];
+    if (onInsertSql && database) {
+      items.push({
+        label: t("erDiagramMenuSelectSql"),
+        icon: "query",
+        onSelect: () => {
+          onInsertSql(qualifiedTableSql(driver, database, table));
+          openHandlersRef.current.onClose();
+        },
+      });
+    }
+    if (database) {
+      items.push({
+        label: t("erDiagramMenuCopyDdl"),
+        onSelect: () => {
+          api
+            .getObjectDefinition(sessionId, database, TABLE_DDL_KIND, table, null)
+            .then(async (ddl) => {
+              if (await copyToClipboard(ddl)) toast.success(t("tableDdlCopied", { table }));
+              else toast.error(t("clipboardCopyFailed"));
+            })
+            .catch((e) => toast.error(t("objDefinitionError", { error: String(e) })));
+        },
+      });
+    }
+    items.push(
+      {
+        label: pinId === table ? t("erDiagramMenuUnpin") : t("erDiagramMenuPin"),
+        onSelect: () => setPinId((cur) => (cur === table ? null : table)),
+      },
       {
         label: t("erDiagramMenuFocusTable"),
         disabled: focusTable === table,
@@ -632,7 +672,7 @@ function ERDiagramInner({
           });
         },
       },
-    ];
+    );
     if (onGenerateDoc && database) {
       items.push({ separator: true });
       items.push({
@@ -652,7 +692,7 @@ function ERDiagramInner({
   // 要素だけを再描画する (大きなスキーマでも全ノード再レンダーにならない)。見た目は
   // App.css の `.er-hl` / `.er-dim` (減光の遷移は reduced-motion で自動的に止まる)。
   useEffect(() => {
-    const hl = graph ? erHighlight(hoverId, graph.edges) : null;
+    const hl = graph ? erHighlight(hoverId ?? pinId, graph.edges) : null;
     const cls = (related: boolean): string | undefined =>
       hl === null ? undefined : related ? "er-hl" : "er-dim";
     setNodes((ns) =>
@@ -667,7 +707,7 @@ function ERDiagramInner({
         return e.className === c ? e : { ...e, className: c };
       }),
     );
-  }, [hoverId, graph, setNodes, setEdges]);
+  }, [hoverId, pinId, graph, setNodes, setEdges]);
 
   const truncated = graph?.capped === true;
   const selectedTable = nodes.filter((n) => n.selected).map((n) => n.data.table);
