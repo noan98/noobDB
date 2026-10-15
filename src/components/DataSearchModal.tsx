@@ -649,7 +649,7 @@ export function DataSearchModal({
                 />
                 <span>{t("dataSearchIncludeDates")}</span>
               </chakra.label>
-              <chakra.span fontSize="xs" color="app.textMuted">
+              <chakra.span textStyle="caption" color="app.textMuted">
                 {t("dataSearchIncludeDatesHint")}
               </chakra.span>
             </FormSection>

@@ -141,7 +141,10 @@ describe("email / date ルール (#1623)", () => {
   });
 
   it("date: month 以外の precision は year に倒す", () => {
-    expect(sanitizeMaskRule({ kind: "date", precision: "month" })).toEqual({ kind: "date", precision: "month" });
+    expect(sanitizeMaskRule({ kind: "date", precision: "month" })).toEqual({
+      kind: "date",
+      precision: "month",
+    });
     expect(sanitizeMaskRule({ kind: "date", precision: "day" })).toEqual({ kind: "date", precision: "year" });
     expect(sanitizeMaskRule({ kind: "date" })).toEqual({ kind: "date", precision: "year" });
   });
@@ -169,13 +172,17 @@ describe("マスクプリセットの JSON 書き出し・読み込み (#1623)",
       { pattern: "phone", rule: { kind: "null" } },
       { pattern: "x", rule: { kind: "bogus" } },
     ]);
-    expect(parseMaskPresets(raw)).toEqual([{ pattern: "phone", rule: { kind: "partial", keepStart: 64, keepEnd: 0 } }]);
+    expect(parseMaskPresets(raw)).toEqual([
+      { pattern: "phone", rule: { kind: "partial", keepStart: 64, keepEnd: 0 } },
+    ]);
   });
 
   it("JSON でない / 別種のファイル / 有効なプリセットなしは Error", () => {
     expect(() => parseMaskPresets("not json")).toThrow();
     expect(() => parseMaskPresets(JSON.stringify({ kind: "other", presets: [] }))).toThrow();
-    expect(() => parseMaskPresets(JSON.stringify({ kind: "noobdb-export-mask-presets", presets: "x" }))).toThrow();
+    expect(() =>
+      parseMaskPresets(JSON.stringify({ kind: "noobdb-export-mask-presets", presets: "x" })),
+    ).toThrow();
     expect(() => parseMaskPresets("[]")).toThrow();
     expect(() => parseMaskPresets("42")).toThrow();
   });

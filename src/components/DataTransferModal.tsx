@@ -102,7 +102,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const [keyColumnsInput, setKeyColumnsInput] = useState("");
   const [lossy, setLossy] = useState<TransferLossyConversion[]>([]);
   // 列の選択・改名・型上書き (#1623)。プレビューが返すソースの全列を元に編集する。
-  const [sourceColumns, setSourceColumns] = useState<{ name: string; sourceType: string; targetType: string }[]>([]);
+  const [sourceColumns, setSourceColumns] = useState<
+    { name: string; sourceType: string; targetType: string }[]
+  >([]);
   const [colDrafts, setColDrafts] = useState<Record<string, TransferColumnDraft>>({});
   const [whereClause, setWhereClause] = useState("");
   const [trialEnabled, setTrialEnabled] = useState(false);
@@ -591,7 +593,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             )}
           </chakra.label>
           {trialInvalid && <FieldError>{t("transferTrialInvalid")}</FieldError>}
-          <chakra.span fontSize="xs" color="app.textMuted">
+          <chakra.span textStyle="caption" color="app.textMuted">
             {t("transferTrialHint")}
           </chakra.span>
         </FormSection>
@@ -655,7 +657,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
                       <Select
                         w="150px"
                         value={d.type}
-                        onChange={(e) => updateDraft(c.name, { type: e.target.value as TransferColumnDraft["type"] })}
+                        onChange={(e) =>
+                          updateDraft(c.name, { type: e.target.value as TransferColumnDraft["type"] })
+                        }
                         aria-label={t("transferColumnType", { column: c.name })}
                         disabled={isRunning || !d.include}
                       >
@@ -668,7 +672,13 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
                       </Select>
                     )}
                     {typeEditable && d.type === "decimal" && (
-                      <chakra.span display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                      <chakra.span
+                        display="inline-flex"
+                        alignItems="center"
+                        gap="1"
+                        textStyle="caption"
+                        color="app.textMuted"
+                      >
                         <DraftNumberInput
                           min={1}
                           max={65}
@@ -695,7 +705,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
               })}
             </chakra.div>
             {noColumns && <FieldError>{t("transferAllColumnsExcluded")}</FieldError>}
-            <chakra.span fontSize="xs" color="app.textMuted">
+            <chakra.span textStyle="caption" color="app.textMuted">
               {writesExistingTable(mode) ? t("transferColumnsHintAppend") : t("transferColumnsHint")}
             </chakra.span>
           </FormSection>

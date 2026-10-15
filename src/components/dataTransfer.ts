@@ -5,12 +5,7 @@
 // 拒否・読み取り専用ソースの強制) を持つので、ここは UI で無意味/危険な操作を
 // 早めに止めるための判定に徹する。
 
-import type {
-  DriverKind,
-  TransferColumnSpec,
-  TransferMode,
-  TransferTypeKind,
-} from "../api/tauri";
+import type { DriverKind, TransferColumnSpec, TransferMode, TransferTypeKind } from "../api/tauri";
 import { maskLiterals } from "../dangerousSql";
 import { tableNameCollides } from "./resultsToTable";
 

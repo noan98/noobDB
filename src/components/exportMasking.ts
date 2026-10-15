@@ -35,7 +35,14 @@ export type ExportMaskDatePrecision = "year" | "month";
 export type ExportMaskRuleKind = ExportMaskRule["kind"];
 
 /** UI の選択肢の並び順。 */
-export const EXPORT_MASK_RULE_KINDS: readonly ExportMaskRuleKind[] = ["fixed", "partial", "hash", "null", "email", "date"];
+export const EXPORT_MASK_RULE_KINDS: readonly ExportMaskRuleKind[] = [
+  "fixed",
+  "partial",
+  "hash",
+  "null",
+  "email",
+  "date",
+];
 
 /** IPC に渡す列単位の指定。バックエンドの `db::masking::ColumnMask` と同形。 */
 export interface ExportColumnMask {
@@ -116,7 +123,10 @@ export function sanitizeMaskRule(raw: unknown): ExportMaskRule | null {
     case "null":
       return { kind: "null" };
     case "email":
-      return { kind: "email", keepStart: Math.min(toCount(r.keepStart, DEFAULT_EMAIL_KEEP_START), MAX_KEEP_CHARS) };
+      return {
+        kind: "email",
+        keepStart: Math.min(toCount(r.keepStart, DEFAULT_EMAIL_KEEP_START), MAX_KEEP_CHARS),
+      };
     case "date":
       return { kind: "date", precision: r.precision === "month" ? "month" : "year" };
     default:

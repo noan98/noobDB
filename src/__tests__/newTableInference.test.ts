@@ -398,12 +398,7 @@ describe("型推論の根拠 (#1623)", () => {
   });
 
   it("buildColumnDrafts が根拠を下書きに載せる", () => {
-    const drafts = buildColumnDrafts(
-      { headers: ["a"], rows: [["1"], ["zz"]] },
-      null,
-      "postgres",
-      true,
-    );
+    const drafts = buildColumnDrafts({ headers: ["a"], rows: [["1"], ["zz"]] }, null, "postgres", true);
     expect(drafts[0].detail?.firstText).toMatchObject({ value: "zz", row: 1 });
   });
 });
@@ -420,12 +415,23 @@ describe("新規テーブルの主キー (#1623)", () => {
   });
 
   it("主キーに選んだ含める列だけを IPC の列定義へ載せる", () => {
-    const { columns } = newTableRequest([draft(0, "id", true), draft(1, "name", false), draft(2, "x", true, false)]);
-    expect(columns).toEqual([{ name: "id", type: "text", primaryKey: true }, { name: "name", type: "text" }]);
+    const { columns } = newTableRequest([
+      draft(0, "id", true),
+      draft(1, "name", false),
+      draft(2, "x", true, false),
+    ]);
+    expect(columns).toEqual([
+      { name: "id", type: "text", primaryKey: true },
+      { name: "name", type: "text" },
+    ]);
   });
 
   it("プレビュー行の NULL と重複を行番号つきで見つける", () => {
-    const rows = [["1", "a"], ["2", "b"], ["1", "c"]];
+    const rows = [
+      ["1", "a"],
+      ["2", "b"],
+      ["1", "c"],
+    ];
     expect(findPrimaryKeyIssue([draft(0, "id", true), draft(1, "n", false)], rows, null)).toEqual({
       kind: "duplicate",
       row: 3,
@@ -438,7 +444,16 @@ describe("新規テーブルの主キー (#1623)", () => {
     });
     // 複合キーは組で比べる。
     expect(findPrimaryKeyIssue([draft(0, "a", true), draft(1, "b", true)], rows, null)).toBeNull();
-    expect(findPrimaryKeyIssue([draft(0, "a", true), draft(1, "b", true)], [["ab", "c"], ["a", "bc"]], null)).toBeNull();
+    expect(
+      findPrimaryKeyIssue(
+        [draft(0, "a", true), draft(1, "b", true)],
+        [
+          ["ab", "c"],
+          ["a", "bc"],
+        ],
+        null,
+      ),
+    ).toBeNull();
     // 主キー無し / 除外列は対象外。
     expect(findPrimaryKeyIssue([draft(0, "id", false)], rows, null)).toBeNull();
     expect(findPrimaryKeyIssue([draft(0, "id", true, false)], rows, null)).toBeNull();

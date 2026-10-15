@@ -427,7 +427,9 @@ export function newTableRequest(drafts: readonly NewColumnDraft[]): {
 } {
   const included = drafts.filter((d) => d.include);
   return {
-    columns: included.map((d) => (d.primaryKey ? { name: d.name, type: d.type, primaryKey: true } : { name: d.name, type: d.type })),
+    columns: included.map((d) =>
+      d.primaryKey ? { name: d.name, type: d.type, primaryKey: true } : { name: d.name, type: d.type },
+    ),
     mapping: included.map((d) => ({ column: d.name, csvIndex: d.csvIndex })),
   };
 }

@@ -954,7 +954,13 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                     ))}
                   </Select>
                   <Tooltip label={t("importNewTablePrimaryKeyHint")}>
-                    <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                    <chakra.label
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      textStyle="caption"
+                      color="app.textMuted"
+                    >
                       <Checkbox
                         checked={!!d.primaryKey}
                         onChange={() => updateDraft(i, { primaryKey: !d.primaryKey })}
@@ -968,7 +974,13 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
               ))}
             </chakra.div>
             {inferenceNotes.length > 0 && (
-              <chakra.ul listStyleType="disc" pl="4" m="0" textStyle="caption" data-testid="import-new-table-why">
+              <chakra.ul
+                listStyleType="disc"
+                pl="4"
+                m="0"
+                textStyle="caption"
+                data-testid="import-new-table-why"
+              >
                 {inferenceNotes.slice(0, 5).map((n) => (
                   <li key={n}>{n}</li>
                 ))}

@@ -1970,9 +1970,11 @@ export default function App() {
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
-  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(
-    null,
-  );
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
+    sql: string;
+    database: string;
+    resultColumns?: string[];
+  } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
   // `initialName` は「定義を編集」タブから開いたときのみセットされ (`editingViewName`)、
   // モーダルの名前欄の初期値になる。
@@ -7767,15 +7769,19 @@ export default function App() {
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
   const handleSaveAsTableConfirm = useCallback(
-    (newName: string) => {
+    (newName: string, appendSql?: string) => {
       const req = saveAsTableRequest;
       setSaveAsTableRequest(null);
       if (!req) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+      // 追記 (INSERT ... SELECT、#1623) は呼び出し元のモーダルが組んだ文をそのまま流す。
+      const ddl = appendSql ?? buildCreateTableAsSql(driver, req.database, newName, req.sql);
       void (async () => {
         const success = await runMaintenanceDdl(ddl, req.database);
-        if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+        if (success)
+          toast.success(
+            translate(appendSql ? "saveAsTableAppendSuccess" : "saveAsTableSuccess", { table: newName }),
+          );
       })();
     },
     [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast],
@@ -12411,6 +12417,7 @@ export default function App() {
                   driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                   database={saveAsTableRequest.database}
                   sourceSql={saveAsTableRequest.sql}
+                  resultColumns={saveAsTableRequest.resultColumns}
                   onConfirm={handleSaveAsTableConfirm}
                   onClose={() => setSaveAsTableRequest(null)}
                 />

@@ -202,7 +202,7 @@ export function ExportMaskingSection({
                       display="inline-flex"
                       alignItems="center"
                       gap="1"
-                      fontSize="xs"
+                      textStyle="caption"
                       color="app.textMuted"
                     >
                       {t("exportMaskingKeepStart")}
@@ -223,7 +223,10 @@ export function ExportMaskingSection({
                       aria-label={t("exportMaskingDatePrecisionFor", { column })}
                       disabled={disabled}
                       onChange={(e) =>
-                        setRule(column, { kind: "date", precision: e.target.value === "month" ? "month" : "year" })
+                        setRule(column, {
+                          kind: "date",
+                          precision: e.target.value === "month" ? "month" : "year",
+                        })
                       }
                     >
                       <option value="year">{t("exportMaskingDateYear")}</option>
@@ -283,12 +286,24 @@ export function ExportMaskingSection({
           {(onExportPresets || onImportPresets) && (
             <chakra.div display="flex" gap="2" flexWrap="wrap">
               {onImportPresets && (
-                <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={onImportPresets}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onImportPresets}
+                >
                   {t("exportMaskingPresetsImport")}
                 </Button>
               )}
               {onExportPresets && (
-                <Button type="button" variant="secondary" size="sm" disabled={disabled} onClick={onExportPresets}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onExportPresets}
+                >
                   {t("exportMaskingPresetsExport")}
                 </Button>
               )}

@@ -97,7 +97,9 @@ describe("DataTransferModal の列・範囲指定 (#1623)", () => {
 
   it("除外・改名・型上書き・WHERE・試験転送がリクエストに載る", async () => {
     const user = await setup();
-    await user.click(screen.getByRole("checkbox", { name: t("transferColumnInclude", { column: "secret" }) }));
+    await user.click(
+      screen.getByRole("checkbox", { name: t("transferColumnInclude", { column: "secret" }) }),
+    );
     await user.type(screen.getByLabelText(t("transferColumnRename", { column: "flag" })), "is_on");
     await user.selectOptions(screen.getByLabelText(t("transferColumnType", { column: "flag" })), "integer");
     await user.type(screen.getByLabelText(t("transferWhereLabel")), "id > 10");

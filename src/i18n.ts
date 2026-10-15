@@ -1985,6 +1985,20 @@ const en = {
   saveAsTablePreview: "SQL preview",
   saveAsTablePreviewEmpty: "Enter a table name to preview the SQL.",
   saveAsTableConfirm: "Create table",
+  saveAsTableAppendNotice:
+    'A table named "{table}" already exists. The rows will be appended to it (INSERT ... SELECT).',
+  saveAsTableAppendMapping: "Column mapping (result → table)",
+  saveAsTableAppendSkip: "(do not insert)",
+  saveAsTableAppendTargetAria: 'Target column for result column "{column}"',
+  saveAsTableAppendDescribeError: "Couldn't read the table's columns: {error}",
+  saveAsTableAppendNoneMapped: "No column is mapped.",
+  saveAsTableAppendDuplicateTarget: 'Column "{column}" is mapped from more than one result column.',
+  saveAsTableAppendDuplicateSource:
+    'The result has several columns named "{column}", so it can\'t be mapped by name. Alias the columns in the query.',
+  saveAsTableAppendMissingRequired:
+    'Required column "{column}" has no default and is not mapped; the insert may fail.',
+  saveAsTableAppendConfirm: "Append rows",
+  saveAsTableAppendSuccess: 'Appended the result set to "{table}".',
   saveAsTableSuccess: 'Created table "{table}" from the result set.',
   // 現在のクエリをビューとして保存 / ビュー定義を編集して置換 (#851)。
   saveAsViewButton: "Save as view",
@@ -2201,7 +2215,8 @@ const en = {
   dataSearchNoSelection: "Select at least one table",
   dataSearchThresholdLabel: "Skip tables larger than (estimated rows)",
   dataSearchIncludeDates: "Also search date and datetime columns",
-  dataSearchIncludeDatesHint: "Matches the text form (e.g. 2026-10-15 12:00:00), so a partial value like \"2026-10\" works. Off by default; PostgreSQL columns are cast to text.",
+  dataSearchIncludeDatesHint:
+    'Matches the text form (e.g. 2026-10-15 12:00:00), so a partial value like "2026-10" works. Off by default; PostgreSQL columns are cast to text.',
   dataSearchThresholdHint: "Tables with more estimated rows than this are skipped and listed separately.",
   dataSearchEstimateRows: "~{rows} rows",
   dataSearchEstimateUnknownRows: "~{rows}+ rows (some tables' row counts are unknown)",
@@ -3522,16 +3537,20 @@ const en = {
     "Types are inferred from the preview rows (up to 50). Override any column whose type looks wrong. Unsupported types degrade per database (e.g. SQLite stores dates as TEXT).",
   importNewTableInferred: "inferred: {type}",
   importNewTableValueTypes: "values: {counts}",
-  importNewTableWhyValue: 'Column "{name}" became text: row {row} "{value}" is not a number, boolean, or date.',
+  importNewTableWhyValue:
+    'Column "{name}" became text: row {row} "{value}" is not a number, boolean, or date.',
   importNewTableWhyConflict:
     'Column "{name}" became text: row {row} "{value}" is {type}, which cannot be combined with the {previous} values before it.',
   importNewTableWhyDriver:
     'Column "{name}" became text: row {row} "{value}" is a boolean, which this database cannot store from an import.',
   importNewTableWhyMore: "...and {count} more column(s) became text",
   importNewTablePrimaryKey: "Use {name} in the primary key",
-  importNewTablePrimaryKeyHint: "Include this column in the primary key (several columns make a composite key; they become NOT NULL)",
-  importNewTablePkNull: "Primary key column {column} is empty at row {row} of the preview. The import will stop before creating the table if any row has no value.",
-  importNewTablePkDuplicate: "The primary key repeats at row {row} of the preview (same as row {first}). The import will stop before creating the table if any key repeats.",
+  importNewTablePrimaryKeyHint:
+    "Include this column in the primary key (several columns make a composite key; they become NOT NULL)",
+  importNewTablePkNull:
+    "Primary key column {column} is empty at row {row} of the preview. The import will stop before creating the table if any row has no value.",
+  importNewTablePkDuplicate:
+    "The primary key repeats at row {row} of the preview (same as row {first}). The import will stop before creating the table if any key repeats.",
   importNewTablePkNote: "Every row is checked for empty or repeated keys before the table is created.",
   importNewTableInclude: "Import column {name}",
   importNewTableColumnName: "Column name for field {n}",
@@ -7512,6 +7531,19 @@ const ja: Dict = {
   saveAsTablePreview: "SQL プレビュー",
   saveAsTablePreviewEmpty: "テーブル名を入力すると SQL がプレビューされます。",
   saveAsTableConfirm: "テーブルを作成",
+  saveAsTableAppendNotice: "テーブル「{table}」は既に存在します。行を追記します (INSERT ... SELECT)。",
+  saveAsTableAppendMapping: "列の対応 (結果 → テーブル)",
+  saveAsTableAppendSkip: "(挿入しない)",
+  saveAsTableAppendTargetAria: "結果の列「{column}」の追記先",
+  saveAsTableAppendDescribeError: "テーブルの列を取得できませんでした: {error}",
+  saveAsTableAppendNoneMapped: "対応づけられた列がありません。",
+  saveAsTableAppendDuplicateTarget: "列「{column}」に複数の結果列が割り当てられています。",
+  saveAsTableAppendDuplicateSource:
+    "結果に同名の列「{column}」が複数あり、名前では対応づけられません。クエリで別名を付けてください。",
+  saveAsTableAppendMissingRequired:
+    "必須列「{column}」は既定値が無く対応づけられていません。挿入が失敗する可能性があります。",
+  saveAsTableAppendConfirm: "行を追記",
+  saveAsTableAppendSuccess: "結果セットを「{table}」へ追記しました。",
   saveAsTableSuccess: "結果セットからテーブル「{table}」を作成しました。",
   // 現在のクエリをビューとして保存 / ビュー定義を編集して置換 (#851)。
   saveAsViewButton: "ビューへ保存",
@@ -7731,7 +7763,8 @@ const ja: Dict = {
   dataSearchNoSelection: "1 つ以上テーブルを選択してください",
   dataSearchThresholdLabel: "スキップする閾値 (概算行数)",
   dataSearchIncludeDates: "日付・日時の列も検索する",
-  dataSearchIncludeDatesHint: "文字列表現 (例: 2026-10-15 12:00:00) に対して照合するので、「2026-10」のような部分一致が使えます。既定はオフで、PostgreSQL の列は文字列へキャストして比較します。",
+  dataSearchIncludeDatesHint:
+    "文字列表現 (例: 2026-10-15 12:00:00) に対して照合するので、「2026-10」のような部分一致が使えます。既定はオフで、PostgreSQL の列は文字列へキャストして比較します。",
   dataSearchThresholdHint: "概算行数がこの値を超えるテーブルはスキャンをスキップし、別途一覧表示します。",
   dataSearchEstimateRows: "約 {rows} 行",
   dataSearchEstimateUnknownRows: "約 {rows} 行以上 (一部テーブルの行数は不明)",
@@ -9039,16 +9072,20 @@ const ja: Dict = {
     "型はプレビュー行 (最大 50 行) から推論しています。合っていない列は型を上書きしてください。DB が持たない型は方言ごとに縮退します (例: SQLite の日付は TEXT)。",
   importNewTableInferred: "推論: {type}",
   importNewTableValueTypes: "値の型: {counts}",
-  importNewTableWhyValue: "列「{name}」を文字列にした理由: {row} 行目の「{value}」が数値・真偽値・日付として読めないため。",
+  importNewTableWhyValue:
+    "列「{name}」を文字列にした理由: {row} 行目の「{value}」が数値・真偽値・日付として読めないため。",
   importNewTableWhyConflict:
     "列「{name}」を文字列にした理由: {row} 行目の「{value}」は {type} ですが、それ以前の {previous} の値とまとめられないため。",
   importNewTableWhyDriver:
     "列「{name}」を文字列にした理由: {row} 行目の「{value}」は真偽値ですが、このデータベースでは取り込みから真偽型の列を作れないため。",
   importNewTableWhyMore: "ほか {count} 列も文字列にしました",
   importNewTablePrimaryKey: "{name} を主キーに含める",
-  importNewTablePrimaryKeyHint: "この列を主キーに含めます (複数列で複合主キー。主キー列は NOT NULL になります)",
-  importNewTablePkNull: "主キーの列 {column} がプレビューの {row} 行目で空です。値のない行が 1 つでもあると、テーブルを作る前に取り込みを止めます。",
-  importNewTablePkDuplicate: "主キーがプレビューの {row} 行目で重複しています ({first} 行目と同じ)。キーが重複する行があると、テーブルを作る前に取り込みを止めます。",
+  importNewTablePrimaryKeyHint:
+    "この列を主キーに含めます (複数列で複合主キー。主キー列は NOT NULL になります)",
+  importNewTablePkNull:
+    "主キーの列 {column} がプレビューの {row} 行目で空です。値のない行が 1 つでもあると、テーブルを作る前に取り込みを止めます。",
+  importNewTablePkDuplicate:
+    "主キーがプレビューの {row} 行目で重複しています ({first} 行目と同じ)。キーが重複する行があると、テーブルを作る前に取り込みを止めます。",
   importNewTablePkNote: "テーブルを作る前に、全行のキーが空でないこと・重複しないことを確認します。",
   importNewTableInclude: "列 {name} を取り込む",
   importNewTableColumnName: "フィールド {n} の列名",

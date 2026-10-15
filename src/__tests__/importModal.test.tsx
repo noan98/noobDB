@@ -238,7 +238,10 @@ describe("ImportModal create a new table (#985)", () => {
   it("warns when the preview has repeated primary key values (#1623)", async () => {
     vi.mocked(api.parseCsvPreview).mockResolvedValueOnce({
       headers: ["id", "name"],
-      rows: [["1", "a"], ["1", "b"]],
+      rows: [
+        ["1", "a"],
+        ["1", "b"],
+      ],
       truncated: false,
       sheets: [],
     });
