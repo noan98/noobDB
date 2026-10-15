@@ -113,6 +113,28 @@ export interface AwsIamSettings {
 }
 
 /**
+ * AWS Systems Manager (SSM) Session Manager port-forwarding settings (#1683) —
+ * an alternative to the SSH tunnel, mutually exclusive with `ssh` (the backend
+ * rejects both). All fields are non-secret: authentication is resolved by the AWS
+ * CLI (`aws ssm start-session`), which must be on PATH together with the Session
+ * Manager plugin.
+ */
+export interface SsmConfig {
+  /** Bastion EC2 instance ID (`i-0123456789abcdef0`) or managed node ID (`mi-...`). Required. */
+  target: string;
+  /** AWS region. Empty = infer from the RDS endpoint name, then `AWS_REGION` / `AWS_DEFAULT_REGION`. */
+  region: string;
+  /** AWS CLI `--profile` name. `null`/omitted = AWS default resolution. */
+  profile?: string | null;
+}
+
+/** SSM port-forwarding selector shared by the connect request and the saved profile. */
+export interface SsmSettings {
+  /** `null`/omitted = no SSM; set = connect through SSM port forwarding (not for SQLite). */
+  ssm?: SsmConfig | null;
+}
+
+/**
  * The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same
  * shape as {@link SshProfile} minus its own `jump` — chains are capped at one
  * bastion hop (2 SSH hops total) for now.
@@ -139,7 +161,7 @@ export interface SshProfile {
   jump?: SshJumpProfile | null;
 }
 
-export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   id: string;
   name: string;
   driver: string;
@@ -225,7 +247,7 @@ export interface ResolvedSshAlias {
   jump_user: string | null;
 }
 
-export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   profile_id?: string;
   driver: DriverKind;
   host: string;
@@ -245,7 +267,7 @@ export interface ConnectRequest extends TlsSettings, SessionInitSettings, AwsIam
   skip_history?: boolean;
 }
 
-export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings {
+export interface SaveProfileRequest extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
   id?: string;
   name: string;
   driver: string;

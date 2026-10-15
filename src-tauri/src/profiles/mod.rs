@@ -75,6 +75,12 @@ pub struct ConnectionProfile {
     /// stored by noobDB (neither here nor in the keyring).
     #[serde(default)]
     pub aws_iam: Option<crate::db::aws_iam::AwsIamConfig>,
+    /// AWS SSM Session Manager のポートフォワード経由の接続 (#1683)。`ssh` と排他。
+    /// 踏み台のインスタンス ID・リージョン・AWS プロファイル名のみで、すべて非秘密
+    /// (認証は AWS CLI 側が解決する)。`None` は SSM を使わず、本項目の追加前に保存された
+    /// 旧プロファイルも `None` として読める。
+    #[serde(default)]
+    pub ssm: Option<crate::ssm::SsmConfig>,
 }
 
 /// How an SSH tunnel authenticates with the jump host.
@@ -123,4 +129,36 @@ pub struct SshJumpProfile {
     pub auth_method: SshAuthMethod,
     #[serde(default)]
     pub private_key_path: PathBuf,
+}
+
+#[cfg(test)]
+mod ssm_tests {
+    use super::*;
+
+    /// SSM 追加前に保存された JSON (`ssm` キー無し) も読め、`None` になる (#1683)。
+    #[test]
+    fn legacy_profile_json_without_ssm_still_loads() {
+        let p: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "Prod", "driver": "mysql", "host": "db",
+            "port": 3306, "user": "app", "database": null, "ssh": null
+        }))
+        .unwrap();
+        assert!(p.ssm.is_none());
+    }
+
+    #[test]
+    fn ssm_settings_roundtrip_through_json() {
+        let p: ConnectionProfile = serde_json::from_value(serde_json::json!({
+            "id": "p1", "name": "Prod", "driver": "postgres", "host": "db",
+            "port": 5432, "user": "app",
+            "ssm": {"target": "i-0123456789abcdef0", "region": "", "profile": "work"}
+        }))
+        .unwrap();
+        let ssm = p.ssm.clone().unwrap();
+        assert_eq!(ssm.target, "i-0123456789abcdef0");
+        assert_eq!(ssm.profile.as_deref(), Some("work"));
+        let back: ConnectionProfile =
+            serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.ssm, p.ssm);
+    }
 }

@@ -171,6 +171,14 @@ hmac = "0.13"
 # ビルド中のターゲットに不要なバックエンド (とその推移依存) が依存グラフから外れる。
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# SSM ポートフォワードの子プロセスをツリーごと終了させる Job Object 用 (#1683)。
+# Cargo.lock に既にある 0.61 系を明示依存にしただけ。
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

@@ -594,6 +594,7 @@
     "ssl_client_key": "/etc/ssl/client.key",
     "ssl_mode": "verify_full",
     "ssl_root_cert": "/etc/ssl/ca.pem",
+    "ssm": null,
     "user": "app"
   },
   "connectionProfileVariants": [
@@ -639,6 +640,7 @@
       "ssl_client_key": "/etc/ssl/client.key",
       "ssl_mode": "disable",
       "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": null,
       "user": "app"
     },
     {
@@ -683,6 +685,7 @@
       "ssl_client_key": "/etc/ssl/client.key",
       "ssl_mode": "prefer",
       "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": null,
       "user": "app"
     },
     {
@@ -727,6 +730,7 @@
       "ssl_client_key": "/etc/ssl/client.key",
       "ssl_mode": "require",
       "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": null,
       "user": "app"
     },
     {
@@ -771,6 +775,7 @@
       "ssl_client_key": "/etc/ssl/client.key",
       "ssl_mode": "verify_ca",
       "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": null,
       "user": "app"
     },
     {
@@ -815,6 +820,7 @@
       "ssl_client_key": "/etc/ssl/client.key",
       "ssl_mode": "verify_full",
       "ssl_root_cert": "/etc/ssl/ca.pem",
+      "ssm": null,
       "user": "app"
     }
   ],
