@@ -24,6 +24,10 @@ vi.mock("../api/tauri", async (importOriginal) => {
       importCsv: vi.fn().mockResolvedValue(undefined),
       getImportSkippedText: vi.fn().mockResolvedValue("ALL SKIPPED ROWS"),
       saveImportSkippedRows: vi.fn().mockResolvedValue(1000),
+      importDryRun: vi.fn(),
+      listImportTemplates: vi.fn().mockResolvedValue([]),
+      saveImportTemplate: vi.fn().mockImplementation(async (tpl: unknown) => tpl),
+      deleteImportTemplate: vi.fn().mockResolvedValue(undefined),
       previewCreateTableDdl: vi
         .fn()
         .mockImplementation(async (_driver: string, table: string) => `CREATE TABLE "${table}" (...)`),
@@ -476,6 +480,29 @@ describe("ImportModal skipped rows (#1258)", () => {
     );
   });
 
+  it("saves the original row data as CSV or NDJSON (#1623)", async () => {
+    saveMock.mockResolvedValue("/tmp/out.csv");
+    await finishWithSkips(3, 3);
+    fireEvent.click(await screen.findByRole("button", { name: t("importSkippedSaveCsv") }));
+    await waitFor(() =>
+      expect(api.saveImportSkippedRows).toHaveBeenLastCalledWith(
+        "/tmp/out.csv",
+        t("importSkippedRow"),
+        t("importSkippedRowLine"),
+        "csv",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("importSkippedSaveNdjson") }));
+    await waitFor(() =>
+      expect(api.saveImportSkippedRows).toHaveBeenLastCalledWith(
+        "/tmp/out.csv",
+        t("importSkippedRow"),
+        t("importSkippedRowLine"),
+        "ndjson",
+      ),
+    );
+  });
+
   it("omits the truncation note when every skipped row is listed", async () => {
     await finishWithSkips(3, 3);
     await screen.findAllByText(t("importSkippedSummary", { inserted: 10, skipped: 3 }));
@@ -519,5 +546,138 @@ describe("ImportModal re-run guard for an existing table (#1598)", () => {
     // パスを編集すれば再び実行できる。
     fireEvent.change(screen.getByLabelText(t("importFile")), { target: { value: "/tmp/users2.csv" } });
     await waitFor(() => expect(screen.getByRole("button", { name: t("importExecute") })).toBeEnabled());
+  });
+});
+
+describe("ImportModal dry run (#1623)", () => {
+  const renderUsers = () =>
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+
+  it("lists the rejected rows without importing, and hides a stale result when the input changes", async () => {
+    vi.mocked(api.importDryRun).mockResolvedValue({
+      total: 120,
+      failed: 61,
+      failures: Array.from({ length: 50 }, (_, i) => ({ record: i + 3, line: i + 4, reason: `dup ${i}` })),
+      dbChecked: true,
+    });
+    renderUsers();
+    await screen.findByText(t("importMappingTitle"));
+    const validate = await screen.findByRole("button", { name: t("importDryRun") });
+    await waitFor(() => expect(validate).toBeEnabled());
+    fireEvent.click(validate);
+    expect(await screen.findByText(t("importDryRunFailed", { failed: 61, total: 120 }))).toBeInTheDocument();
+    expect(screen.getByText(t("importDryRunShowing", { shown: 50, total: 61 }))).toBeInTheDocument();
+    expect(screen.getByText(/dup 49/)).toBeInTheDocument();
+    expect(api.importDryRun).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "s1", database: "appdb", table: "users", path: "/tmp/users.csv" }),
+    );
+    expect(api.importCsv).not.toHaveBeenCalled();
+    // 入力 (ここでは取り込みファイル) を変えると、古い検証結果は隠れる。
+    fireEvent.change(screen.getByLabelText(t("importFile")), { target: { value: "/tmp/other.csv" } });
+    await waitFor(() => expect(screen.queryByTestId("import-dry-run-result")).not.toBeInTheDocument());
+  });
+
+  it("says when the database was not tried because the table does not exist yet", async () => {
+    vi.mocked(api.importDryRun).mockResolvedValue({ total: 7, failed: 0, failures: [], dbChecked: false });
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table={null}
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    const validate = await screen.findByRole("button", { name: t("importDryRun") });
+    await waitFor(() => expect(validate).toBeEnabled());
+    fireEvent.click(validate);
+    expect(await screen.findByText(t("importDryRunFileOnly", { total: 7 }))).toBeInTheDocument();
+    expect(vi.mocked(api.importDryRun).mock.calls[0][0].createTable).not.toBeNull();
+  });
+});
+
+describe("ImportModal saved mapping templates (#1623)", () => {
+  const tpl = {
+    id: "p1\u001fappdb\u001fusers",
+    profileId: "p1",
+    database: "appdb",
+    table: "users",
+    format: "csv",
+    delimiter: ",",
+    quote: '"',
+    hasHeader: true,
+    nullToken: "",
+    encoding: "utf-8",
+    sheet: null,
+    conflictMode: "insert",
+    errorMode: "skip",
+    keyColumns: [],
+    mapping: [{ column: SAMPLE_COLUMNS[0].name, header: "name", csvIndex: 1 }],
+    updatedAtMs: 1,
+  };
+  const renderUsers = () =>
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        profileId="p1"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+
+  it("offers the saved template for this table and applies its mapping by header name", async () => {
+    vi.mocked(api.listImportTemplates).mockResolvedValue([tpl]);
+    renderUsers();
+    expect(api.listImportTemplates).toHaveBeenCalledWith("p1", "appdb", "users");
+    const apply = await screen.findByRole("button", { name: t("importTemplateApply") });
+    await waitFor(() => expect(apply).toBeEnabled());
+    fireEvent.click(apply);
+    const select = await screen.findByLabelText(t("importMappingAria", { column: SAMPLE_COLUMNS[0].name }));
+    // 保存時の位置 (1) ではなく、見出し "name" の今の位置 (1)。さらに skip モードも戻る。
+    await waitFor(() => expect((select as HTMLSelectElement).value).toBe("1"));
+  });
+
+  it("saves the current mapping without the file path", async () => {
+    vi.mocked(api.listImportTemplates).mockResolvedValue([]);
+    renderUsers();
+    const save = await screen.findByRole("button", { name: t("importTemplateSave") });
+    fireEvent.click(save);
+    await waitFor(() => expect(api.saveImportTemplate).toHaveBeenCalled());
+    const saved = vi.mocked(api.saveImportTemplate).mock.calls[0][0];
+    expect(saved).toMatchObject({ profileId: "p1", database: "appdb", table: "users", format: "csv" });
+    expect(JSON.stringify(saved)).not.toContain("/tmp/users.csv");
+  });
+
+  it("shows no template UI without a profile id", async () => {
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    expect(screen.queryByRole("button", { name: t("importTemplateSave") })).not.toBeInTheDocument();
+    expect(api.listImportTemplates).not.toHaveBeenCalled();
   });
 });

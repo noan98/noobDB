@@ -244,6 +244,13 @@
   と総数 `skippedTotal` のみ。全件は `AppState::last_import_skipped` が直近の取り込み結果として
   保持し、`get_import_skipped_text` (コピー用) / `save_import_skipped_rows` (ファイル保存) が
   Rust 側で組み立てます。
+  **取り込みの精度向上 (#1623)**: ① 新規テーブルの主キー (`NewColumn.primary_key`、`PRIMARY KEY`
+  句 + NOT NULL。テーブルを作る前に NULL / 重複を `check_new_table_primary_key` で検証)、
+  ② 型推論の根拠 (`inferColumnTypeDetail`: 型ごとの件数と文字列に落ちた最初の値)、
+  ③ スキップ行を元の行データ付きで CSV / NDJSON に書き出し、④ 事前検証 `import_dry_run`
+  (ロールバック付き)、⑤ 接続 × テーブル単位のマッピングテンプレート (`import_templates/`)、
+  ⑥ xlsx の複数シート一括取り込み。テーブル未選択の CSV ドロップは `dropImport.ts` の
+  `resolveCsvDropTarget` で新規テーブル取り込みへ回す。
 
 ## 接続間データ転送 (#986)
 

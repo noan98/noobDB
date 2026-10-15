@@ -2101,6 +2101,45 @@ export interface SkippedRowInfo {
   reason: string;
 }
 
+/** スキップ行の書き出し形式 (#1623)。`csv` / `ndjson` は元の行データを書き出す。 */
+export type SkippedExportFormat = "text" | "csv" | "ndjson";
+
+/** 取り込みの事前検証 (dry run) の結果 (#1623)。 */
+export interface ImportDryRunResult {
+  total: number;
+  failed: number;
+  /** 拒否された行の先頭一部。 */
+  failures: SkippedRowInfo[];
+  /** false: 新規テーブル作成を伴うため DB への試し書きはしていない。 */
+  dbChecked: boolean;
+}
+
+/** 保存済みの取り込みマッピング (#1623)。 */
+export interface ImportTemplateColumn {
+  column: string;
+  header?: string | null;
+  csvIndex: number;
+}
+
+export interface ImportTemplate {
+  id: string;
+  profileId: string;
+  database?: string | null;
+  table: string;
+  format: string;
+  delimiter: string;
+  quote: string;
+  hasHeader: boolean;
+  nullToken?: string | null;
+  encoding: string;
+  sheet?: string | null;
+  conflictMode?: string | null;
+  errorMode?: string | null;
+  keyColumns: string[];
+  mapping: ImportTemplateColumn[];
+  updatedAtMs: number;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;

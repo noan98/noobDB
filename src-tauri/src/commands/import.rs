@@ -858,6 +858,10 @@ pub struct SkippedRowInfo {
     pub record: u64,
     pub line: Option<u64>,
     pub reason: String,
+    /// 元の行の中身 (マッピング順、取り込み先に渡した値)。IPC には載せず (巨大になりうる)、
+    /// Rust 側に保持して「元の行データ付きで書き出す」(#1623) ときだけ使う。
+    #[serde(skip)]
+    pub cells: Vec<Option<String>>,
 }
 
 /// 完了イベントへ載せるスキップ行の上限 (#1258)。全件を IPC に載せると、巨大な
@@ -926,13 +930,66 @@ pub async fn get_import_skipped_text(
     Ok(format_skipped_rows(&rows, &record_template, &line_template))
 }
 
-/// 直近の取り込みで保持しているスキップ行の全件を、ユーザが選んだ `path` へ
-/// テキストで書き出す。書き出した行数を返す。保持している行が無ければエラー。
+/// スキップ行の書き出し形式 (#1623)。`text` は従来の「行番号・理由」の一覧、`csv` /
+/// `ndjson` は元の行データ (取り込み先の列順) をそのまま書き出し、直して再取り込みできる。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SkippedExportFormat {
+    #[default]
+    Text,
+    Csv,
+    Ndjson,
+}
+
+/// スキップ行の元データを CSV (ヘッダー付き、カンマ区切り、UTF-8) にする。NULL は空セル
+/// (再取り込み時に NULL トークンを空にすれば NULL へ戻る)。
+fn skipped_rows_csv(columns: &[String], rows: &[SkippedRowInfo]) -> Result<String> {
+    let mut w = csv::WriterBuilder::new()
+        .terminator(csv::Terminator::Any(b'\n'))
+        .from_writer(Vec::new());
+    w.write_record(columns)
+        .map_err(|e| AppError::Other(format!("csv write failed: {e}")))?;
+    for r in rows {
+        let record: Vec<&str> = (0..columns.len())
+            .map(|i| r.cells.get(i).and_then(|c| c.as_deref()).unwrap_or(""))
+            .collect();
+        w.write_record(&record)
+            .map_err(|e| AppError::Other(format!("csv write failed: {e}")))?;
+    }
+    let bytes = w
+        .into_inner()
+        .map_err(|e| AppError::Other(format!("csv write failed: {e}")))?;
+    String::from_utf8(bytes).map_err(|e| AppError::Other(format!("csv is not utf-8: {e}")))
+}
+
+/// スキップ行の元データを NDJSON (1 行 1 オブジェクト、キーは取り込み先の列名、NULL は null)
+/// にする。値は文字列のまま (型の解釈は再取り込み側に任せる)。
+fn skipped_rows_ndjson(columns: &[String], rows: &[SkippedRowInfo]) -> Result<String> {
+    let mut out = String::new();
+    for r in rows {
+        let mut map = serde_json::Map::with_capacity(columns.len());
+        for (i, c) in columns.iter().enumerate() {
+            let v = match r.cells.get(i).and_then(|c| c.as_ref()) {
+                Some(s) => serde_json::Value::String(s.clone()),
+                None => serde_json::Value::Null,
+            };
+            map.insert(c.clone(), v);
+        }
+        out.push_str(&serde_json::to_string(&serde_json::Value::Object(map))?);
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+/// 直近の取り込みで保持しているスキップ行の全件を、ユーザが選んだ `path` へ書き出す。
+/// 書き出した行数を返す。保持している行が無ければエラー。`format` が `csv` / `ndjson`
+/// のときは元の行データを書き出す (#1623。テンプレートは使わない)。
 #[tauri::command]
 pub async fn save_import_skipped_rows(
     path: String,
     record_template: String,
     line_template: String,
+    format: Option<SkippedExportFormat>,
     state: State<'_, AppState>,
 ) -> Result<u64> {
     if path.trim().is_empty() {
@@ -942,8 +999,26 @@ pub async fn save_import_skipped_rows(
     if rows.is_empty() {
         return Err(AppError::InvalidInput("no skipped rows to save".into()));
     }
-    let mut text = format_skipped_rows(&rows, &record_template, &line_template);
-    text.push('\n');
+    let text = match format.unwrap_or_default() {
+        SkippedExportFormat::Text => {
+            let mut text = format_skipped_rows(&rows, &record_template, &line_template);
+            text.push('\n');
+            text
+        }
+        data_format => {
+            let columns = state.last_import_columns_snapshot();
+            if columns.is_empty() || rows.iter().all(|r| r.cells.is_empty()) {
+                return Err(AppError::InvalidInput(
+                    "the original row data of the skipped rows is not available".into(),
+                ));
+            }
+            if data_format == SkippedExportFormat::Csv {
+                skipped_rows_csv(&columns, &rows)?
+            } else {
+                skipped_rows_ndjson(&columns, &rows)?
+            }
+        }
+    };
     tokio::fs::write(&path, text).await?;
     Ok(rows.len() as u64)
 }
@@ -988,6 +1063,8 @@ enum ImportRun {
         inserted: u64,
         elapsed_ms: u64,
         skipped: Vec<SkippedRowInfo>,
+        /// 取り込み先へ渡した列名 (スキップ行の書き出し用、#1623)。
+        columns: Vec<String>,
     },
     Failed {
         message: String,
@@ -1335,6 +1412,7 @@ async fn spawn_import(
             inserted,
             elapsed_ms,
             skipped,
+            columns,
         }) => {
             let skipped_total = skipped.len() as u64;
             tracing::info!(
@@ -1350,6 +1428,7 @@ async fn spawn_import(
                 skipped.iter().take(MAX_REPORTED_SKIPPED).cloned().collect();
             if let Some(state) = app.try_state::<AppState>() {
                 state.set_last_import_skipped(skipped);
+                state.set_last_import_columns(columns);
             }
             if let Err(e) = app.emit(
                 EV_IMPORT_DONE,
@@ -1554,6 +1633,145 @@ fn check_new_table_primary_key(
     Ok(())
 }
 
+/// 事前検証 (dry run) の結果に載せる失敗行の上限 (#1623)。
+pub const DRY_RUN_REPORT_LIMIT: usize = 50;
+
+/// 取り込みの事前検証 (dry run) の結果 (#1623)。
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportDryRunResult {
+    /// 取り込み対象のデータ行数。
+    pub total: u64,
+    /// DB が拒否した行の総数。
+    pub failed: u64,
+    /// 拒否された行の先頭 [`DRY_RUN_REPORT_LIMIT`] 件 (レコード番号・ファイル行・理由)。
+    pub failures: Vec<SkippedRowInfo>,
+    /// `false` のとき DB への試し書きはしていない (新規テーブル作成を伴う取り込みは、
+    /// テーブルがまだ無いのでファイルのパースと主キーの検証だけ行った)。
+    pub db_checked: bool,
+}
+
+/// 取り込みを実際には書き込まずに検証する (#1623)。ファイルを本番と同じ解釈でパースし、
+/// 全行を**必ずロールバックするトランザクション**で INSERT して、DB が拒否する行を理由付きで
+/// 返す。キー衝突・型違い・桁あふれ・NOT NULL 違反を本番の前に把握できる。読み取り専用
+/// 接続でも実行できる (何も永続化しない)。MySQL の非トランザクショナル表は拒否する。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn import_dry_run(
+    session_id: String,
+    database: Option<String>,
+    table: String,
+    path: String,
+    options: ImportOptions,
+    mapping: Vec<ColumnMapping>,
+    create_table: Option<Vec<NewColumn>>,
+    state: State<'_, AppState>,
+) -> Result<ImportDryRunResult> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("import file path is empty".into()));
+    }
+    if options.format == ImportFormat::Csv {
+        validate_chars(&options)?;
+    }
+    if mapping.is_empty() {
+        return Err(AppError::InvalidInput(
+            "no columns mapped for import".into(),
+        ));
+    }
+    let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
+    let conflict = options.conflict();
+    conflict.validate(&columns)?;
+    if let Some(cols) = &create_table {
+        validate_create_spec(session.conn.driver_kind(), &table, cols, &columns)?;
+    }
+    let (mut rows, lines) = load_import_rows(&path, &options, &mapping).await?;
+    let total = rows.len() as u64;
+    if let Some(cols) = &create_table {
+        check_new_table_primary_key(cols, &columns, &rows)?;
+        return Ok(ImportDryRunResult {
+            total,
+            failed: 0,
+            failures: Vec::new(),
+            db_checked: false,
+        });
+    }
+    if options.format != ImportFormat::Csv {
+        let numeric =
+            numeric_target_flags(&session, database.as_deref(), &table, &mapping, None).await;
+        convert_bool_cells_for_numeric(&mut rows, &numeric);
+    }
+    if conflict.is_upsert() {
+        session
+            .conn
+            .check_upsert_keys(database.as_deref(), &table, &columns, &conflict)
+            .await?;
+    }
+    let outcome = session
+        .conn
+        .dry_run_failures(
+            database.as_deref(),
+            &table,
+            &columns,
+            &rows,
+            &conflict,
+            DRY_RUN_REPORT_LIMIT,
+        )
+        .await?;
+    let failures = outcome
+        .failures
+        .iter()
+        .map(|f| SkippedRowInfo {
+            record: f.index as u64 + 1,
+            line: lines.get(f.index).copied().flatten(),
+            reason: f.reason.clone(),
+            cells: Vec::new(),
+        })
+        .collect();
+    tracing::info!(
+        session_id = %session.id,
+        table = %table,
+        total,
+        failed = outcome.failed,
+        "import dry run finished"
+    );
+    Ok(ImportDryRunResult {
+        total,
+        failed: outcome.failed,
+        failures,
+        db_checked: true,
+    })
+}
+
+/// 取り込みファイルを読み、マッピング順の行と各行のファイル行番号 (CSV / xlsx のみ) にする。
+/// 取り込み本体と事前検証 (dry run、#1623) が同じ解釈で行を作るための共通部。
+async fn load_import_rows(
+    path: &str,
+    options: &ImportOptions,
+    mapping: &[ColumnMapping],
+) -> Result<ParsedRowsWithLines> {
+    if options.format == ImportFormat::Xlsx {
+        // xlsx はバイナリ (ZIP) なので文字コード変換を通さず、ファイルから直接
+        // シークしながら読む (全体をメモリへ載せない #1530)。
+        check_import_file(path).await?;
+        let (opts, map) = (options.clone(), mapping.to_vec());
+        let p = path.to_string();
+        tokio::task::spawn_blocking(move || {
+            let file = std::fs::File::open(&p)?;
+            parse_xlsx_rows_from(std::io::BufReader::new(file), &opts, &map)
+        })
+        .await
+        .map_err(|e| AppError::Other(format!("xlsx import task failed: {e}")))?
+    } else {
+        let bytes = read_import_file(path).await?;
+        let decoded = decode_bytes(&bytes, &options.encoding);
+        parse_rows_with_lines(decoded.as_bytes(), options, mapping)
+    }
+}
+
 /// 取り込みの本体。ファイルを読んでパースし、`create_table` があれば新規
 /// テーブルを作成してから、既存の `import_rows` / `import_rows_skipping`
 /// 経路へ合流する (新しい書き込み経路は増やさない)。
@@ -1587,23 +1805,7 @@ where
     let columns: Vec<String> = mapping.iter().map(|m| m.column.clone()).collect();
     // `lines[i]` is record i's source file line (CSV only), used to report a bad
     // row by both record number and file line (#687).
-    let (mut rows, lines) = if options.format == ImportFormat::Xlsx {
-        // xlsx はバイナリ (ZIP) なので文字コード変換を通さず、ファイルから直接
-        // シークしながら読む (全体をメモリへ載せない #1530)。
-        check_import_file(&path).await?;
-        let (opts, map) = (options.clone(), mapping.clone());
-        let p = path.clone();
-        tokio::task::spawn_blocking(move || {
-            let file = std::fs::File::open(&p)?;
-            parse_xlsx_rows_from(std::io::BufReader::new(file), &opts, &map)
-        })
-        .await
-        .map_err(|e| AppError::Other(format!("xlsx import task failed: {e}")))??
-    } else {
-        let bytes = read_import_file(&path).await?;
-        let decoded = decode_bytes(&bytes, &options.encoding);
-        parse_rows_with_lines(decoded.as_bytes(), &options, &mapping)?
-    };
+    let (mut rows, lines) = load_import_rows(&path, &options, &mapping).await?;
     let total = rows.len() as u64;
     let conflict = options.conflict();
 
@@ -1699,12 +1901,14 @@ where
                     record: s.index as u64 + 1,
                     line: lines.get(s.index).copied().flatten(),
                     reason: s.reason.clone(),
+                    cells: rows.get(s.index).cloned().unwrap_or_default(),
                 })
                 .collect();
             Ok(ImportRun::Ok {
                 inserted: outcome.inserted,
                 elapsed_ms: started.elapsed().as_millis() as u64,
                 skipped,
+                columns: columns.clone(),
             })
         }
         ImportErrorMode::Abort => {
@@ -1727,6 +1931,7 @@ where
                     inserted,
                     elapsed_ms: started.elapsed().as_millis() as u64,
                     skipped: Vec::new(),
+                    columns: Vec::new(),
                 }),
                 Err(e) => {
                     let located = session
@@ -2692,6 +2897,74 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    // ---- #1623: 元の行データ付きのスキップ行の書き出し ------------------------
+
+    fn skipped_with_cells(record: u64, cells: &[Option<&str>]) -> SkippedRowInfo {
+        SkippedRowInfo {
+            record,
+            line: None,
+            reason: "x".into(),
+            cells: cells.iter().map(|c| c.map(str::to_string)).collect(),
+        }
+    }
+
+    #[test]
+    fn skipped_rows_csv_quotes_cells_and_writes_null_as_empty() {
+        let cols = vec!["id".to_string(), "note".to_string()];
+        let rows = vec![
+            skipped_with_cells(1, &[Some("1"), Some("a,\"b\"")]),
+            skipped_with_cells(2, &[Some("2"), None]),
+            // 行が短くても列数ぶんの空セルで埋める。
+            skipped_with_cells(3, &[Some("3")]),
+        ];
+        assert_eq!(
+            skipped_rows_csv(&cols, &rows).expect("csv"),
+            "id,note\n1,\"a,\"\"b\"\"\"\n2,\n3,\n"
+        );
+    }
+
+    #[test]
+    fn skipped_rows_ndjson_keys_by_column_and_keeps_null() {
+        let cols = vec!["id".to_string(), "note".to_string()];
+        let rows = vec![skipped_with_cells(1, &[Some("1"), None])];
+        assert_eq!(
+            skipped_rows_ndjson(&cols, &rows).expect("ndjson"),
+            "{\"id\":\"1\",\"note\":null}\n"
+        );
+    }
+
+    #[test]
+    fn exported_csv_of_skipped_rows_can_be_parsed_back_as_an_import() {
+        let cols = vec!["id".to_string(), "note".to_string()];
+        let rows = vec![skipped_with_cells(1, &[Some("7"), Some("multi\nline")])];
+        let text = skipped_rows_csv(&cols, &rows).expect("csv");
+        let opts = ImportOptions {
+            format: ImportFormat::Csv,
+            delimiter: ',',
+            quote: '"',
+            has_header: true,
+            null_token: None,
+            encoding: "utf-8".into(),
+            error_mode: ImportErrorMode::Abort,
+            conflict_mode: ConflictMode::Insert,
+            key_columns: Vec::new(),
+            sheet: None,
+        };
+        let mapping: Vec<ColumnMapping> = cols
+            .iter()
+            .enumerate()
+            .map(|(i, c)| ColumnMapping {
+                column: c.clone(),
+                csv_index: i,
+            })
+            .collect();
+        let (parsed, _) = parse_rows_with_lines(text.as_bytes(), &opts, &mapping).expect("parse");
+        assert_eq!(
+            parsed,
+            vec![vec![Some("7".to_string()), Some("multi\nline".to_string())]]
+        );
+    }
+
     // ---- #1258: スキップ行の保持とテキスト化 ---------------------------------
 
     fn skipped(record: u64, line: Option<u64>, reason: &str) -> SkippedRowInfo {
@@ -2699,6 +2972,7 @@ mod tests {
             record,
             line,
             reason: reason.into(),
+            cells: Vec::new(),
         }
     }
 

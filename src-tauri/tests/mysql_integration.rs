@@ -3423,3 +3423,100 @@ async fn mysql_save_cells_to_folder() {
         .await
         .expect("cleanup");
 }
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_dry (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL) ENGINE=InnoDB",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO noobdb_my_dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_my_dry").await;
+    conn.execute("DROP TABLE noobdb_my_dry", None)
+        .await
+        .expect("cleanup");
+
+    // ロールバックできない表では実行しない (試し書きが残ってしまう)。
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry_isam", None)
+        .await
+        .expect("drop isam");
+    if conn
+        .execute(
+            "CREATE TABLE noobdb_my_dry_isam (id INT PRIMARY KEY) ENGINE=MyISAM",
+            None,
+        )
+        .await
+        .is_ok()
+    {
+        let err = conn
+            .dry_run_failures(
+                None,
+                "noobdb_my_dry_isam",
+                &["id".to_string()],
+                &[vec![Some("1".to_string())]],
+                &t::ImportConflict::insert_only(),
+                10,
+            )
+            .await
+            .expect_err("non-transactional table must be rejected");
+        assert!(err.to_string().contains("transactions"), "{err}");
+        let count = conn
+            .execute("SELECT COUNT(*) FROM noobdb_my_dry_isam", None)
+            .await
+            .expect("count");
+        assert!(matches!(&count.rows[0][0], t::Value::Int(0)));
+        conn.execute("DROP TABLE noobdb_my_dry_isam", None)
+            .await
+            .expect("cleanup isam");
+    }
+}

@@ -271,6 +271,9 @@ pub struct AppState {
     /// 先頭の一部しか載せないため、「スキップ行を保存 / コピー」用に全件を Rust 側で
     /// 保持する。取り込みが終わるたびに置き換わる。
     last_import_skipped: std::sync::Mutex<Vec<crate::commands::import::SkippedRowInfo>>,
+    /// 直近の取り込みで取り込み先に渡した列名 (マッピング順)。スキップ行を元の行データ付きで
+    /// 書き出す (CSV のヘッダー / NDJSON のキー) ときに使う (#1623)。
+    last_import_columns: std::sync::Mutex<Vec<String>>,
     /// 自動リフレッシュの差分パッチ (#1257) が使う、タブ単位の前回結果スナップ
     /// ショット (PK ハッシュ → 行ハッシュ)。行データは持たない。
     pub refresh_snapshots: std::sync::Mutex<crate::db::refresh_diff::RefreshSnapshotStore>,
@@ -288,6 +291,23 @@ impl AppState {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *guard = rows;
+    }
+
+    /// 直近の取り込みの列名を置き換える (#1623)。
+    pub fn set_last_import_columns(&self, columns: Vec<String>) {
+        let mut guard = self
+            .last_import_columns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = columns;
+    }
+
+    /// 直近の取り込みの列名の複製 (#1623)。
+    pub fn last_import_columns_snapshot(&self) -> Vec<String> {
+        self.last_import_columns
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// 直近の取り込みのスキップ行の複製。

@@ -5014,3 +5014,62 @@ async fn sqlite_skip_import_wide_table_splits_statements_within_chunk() {
     assert!(matches!(&count.rows[0][0], t::Value::Int(500)));
     let _ = std::fs::remove_file(&p);
 }
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn sqlite_import_dry_run_does_not_persist() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_dryrun_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE dry (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "dry").await;
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}

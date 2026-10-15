@@ -105,6 +105,8 @@ const COVERED: Record<string, string> = {
   TaskDefinition: "taskDefinitionVariants",
   TaskRun: "taskRun",
   TransferPreview: "transferPreview",
+  ImportDryRunResult: "importDryRunResult",
+  ImportTemplate: "importTemplate",
   UndoOutcome: "undoOutcome",
   UndoPreviewResponse: "undoPreviewResponse",
   UserPrivileges: "userPrivileges",

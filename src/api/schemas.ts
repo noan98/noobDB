@@ -1411,6 +1411,35 @@ export const skippedRowInfo = z.object({
   reason: z.string(),
 });
 
+export const importDryRunResult = z.object({
+  total: z.number(),
+  failed: z.number(),
+  failures: z.array(skippedRowInfo),
+  dbChecked: z.boolean(),
+});
+
+export const importTemplate = z.object({
+  id: z.string(),
+  profileId: z.string(),
+  database: z.string().nullable().optional(),
+  table: z.string(),
+  format: z.string(),
+  delimiter: z.string(),
+  quote: z.string(),
+  hasHeader: z.boolean(),
+  nullToken: z.string().nullable().optional(),
+  encoding: z.string(),
+  sheet: z.string().nullable().optional(),
+  conflictMode: z.string().nullable().optional(),
+  errorMode: z.string().nullable().optional(),
+  keyColumns: z.array(z.string()),
+  mapping: z.array(
+    z.object({ column: z.string(), header: z.string().nullable().optional(), csvIndex: z.number() }),
+  ),
+  updatedAtMs: z.number(),
+});
+export const importTemplateArray = z.array(importTemplate);
+
 export const importDoneEvent = z.object({
   streamId: z.string(),
   inserted: z.number(),

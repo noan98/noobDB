@@ -3513,6 +3513,28 @@ const en = {
   importSkippedCopy: "Copy list",
   importSkippedCopied: "Copied skipped rows.",
   importSkippedSave: "Save skipped rows",
+  importSkippedSaveCsv: "Save as CSV",
+  importSkippedSaveCsvHint:
+    "Save the original data of the skipped rows (with a header row) so you can fix them and import them again",
+  importSkippedSaveNdjson: "Save as NDJSON",
+  importTemplateFound: 'A saved mapping for "{table}" is available ({count} columns).',
+  importTemplateApply: "Apply",
+  importTemplateDelete: "Delete",
+  importTemplateApplied: "Applied the saved mapping.",
+  importTemplateSave: "Save mapping",
+  importTemplateSaveHint:
+    "Remember the column mapping, delimiter, NULL token, encoding and key columns for this table on this connection (the file path is not saved)",
+  importTemplateSaved: 'Saved the import mapping for "{table}".',
+  importTemplateDeleted: "Deleted the saved mapping.",
+  importDryRun: "Validate only",
+  importDryRunHint:
+    "Try every row in a transaction that is always rolled back, and list the rows the database would reject. Nothing is written.",
+  importDryRunRunning: "Validating all rows...",
+  importDryRunShowing: "Showing the first {shown} of {total} rejected rows.",
+  importDryRunClean: "Validated {total} rows: the database accepted all of them (nothing was written).",
+  importDryRunFailed: "{failed} of {total} rows would be rejected by the database (nothing was written).",
+  importDryRunFileOnly:
+    "The file parsed into {total} rows and the primary key is valid. The table doesn't exist yet, so the database was not tried.",
   importSkippedSaveTitle: "Save skipped rows",
   importSkippedSaved: "Saved {count} skipped rows to {path}.",
   importSkippedShowing:
@@ -9048,6 +9070,28 @@ const ja: Dict = {
   importSkippedCopy: "一覧をコピー",
   importSkippedCopied: "スキップ行をコピーしました。",
   importSkippedSave: "スキップ行を保存",
+  importSkippedSaveCsv: "CSV で保存",
+  importSkippedSaveCsvHint:
+    "スキップ行の元データ (ヘッダー行つき) を書き出します。直してそのまま再取り込みできます",
+  importSkippedSaveNdjson: "NDJSON で保存",
+  importTemplateFound: "テーブル「{table}」の保存済みマッピングがあります ({count} 列)。",
+  importTemplateApply: "適用",
+  importTemplateDelete: "削除",
+  importTemplateApplied: "保存済みのマッピングを適用しました。",
+  importTemplateSave: "マッピングを保存",
+  importTemplateSaveHint:
+    "この接続のこのテーブル向けに、列の対応・区切り文字・NULL トークン・文字コード・キー列を記憶します (ファイルのパスは保存しません)",
+  importTemplateSaved: "テーブル「{table}」の取り込みマッピングを保存しました。",
+  importTemplateDeleted: "保存済みのマッピングを削除しました。",
+  importDryRun: "検証のみ",
+  importDryRunHint:
+    "全行を必ずロールバックするトランザクションで試し、DB が拒否する行を一覧します。何も書き込みません。",
+  importDryRunRunning: "全行を検証しています...",
+  importDryRunShowing: "拒否された {total} 行のうち先頭 {shown} 行を表示しています。",
+  importDryRunClean: "{total} 行を検証しました。DB はすべて受け入れました (何も書き込んでいません)。",
+  importDryRunFailed: "{total} 行中 {failed} 行が DB に拒否されます (何も書き込んでいません)。",
+  importDryRunFileOnly:
+    "ファイルを {total} 行として解析でき、主キーも問題ありません。テーブルがまだ無いため DB への試し書きはしていません。",
   importSkippedSaveTitle: "スキップ行を保存",
   importSkippedSaved: "スキップ行 {count} 件を {path} に保存しました。",
   importSkippedShowing:

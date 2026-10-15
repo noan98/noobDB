@@ -12,6 +12,7 @@ mod db;
 mod error;
 mod flight_recorder;
 mod history;
+mod import_templates;
 mod json_tolerant;
 mod logs;
 mod perf;
@@ -155,6 +156,7 @@ pub mod __test_api {
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
+    pub use crate::import_templates::{ImportTemplate, TemplateColumn};
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -248,7 +250,8 @@ pub mod __test_api {
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
     pub use crate::commands::file::SqlFileContent;
     pub use crate::commands::import::{
-        ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
+        ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
+        ImportStartedEvent, SkippedRowInfo,
     };
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
@@ -1485,6 +1488,10 @@ pub fn run() {
             commands::file::write_text_file,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
+            commands::import::import_dry_run,
+            commands::import_templates::list_import_templates,
+            commands::import_templates::save_import_template,
+            commands::import_templates::delete_import_template,
             commands::local::create_local_session,
             commands::local::register_local_table,
             commands::local::list_local_tables,

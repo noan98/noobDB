@@ -11996,6 +11996,7 @@ export default function App() {
                 table={importTarget.table}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
+                profileId={selectedProfile?.id}
                 onClose={() => {
                   setImportTarget(null);
                   setImportInitialPath(null);

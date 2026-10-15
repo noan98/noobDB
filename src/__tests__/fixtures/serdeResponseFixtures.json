@@ -1339,6 +1339,18 @@
     "skippedTotal": 1234,
     "streamId": "strm0003"
   },
+  "importDryRunResult": {
+    "dbChecked": true,
+    "failed": 3,
+    "failures": [
+      {
+        "line": 5,
+        "reason": "UNIQUE constraint failed",
+        "record": 4
+      }
+    ],
+    "total": 100
+  },
   "importErrorEvent": {
     "committed": 12,
     "error": "NOT NULL constraint failed",
@@ -1354,6 +1366,32 @@
   "importStartedEvent": {
     "streamId": "strm0003",
     "total": 100
+  },
+  "importTemplate": {
+    "conflictMode": "update",
+    "database": "shop",
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "errorMode": "skip",
+    "format": "csv",
+    "hasHeader": true,
+    "id": "p1\u001fshop\u001forders",
+    "keyColumns": [
+      "id"
+    ],
+    "mapping": [
+      {
+        "column": "id",
+        "csvIndex": 0,
+        "header": "ID"
+      }
+    ],
+    "nullToken": "",
+    "profileId": "p1",
+    "quote": "\"",
+    "sheet": null,
+    "table": "orders",
+    "updatedAtMs": 1760000000000
   },
   "incomingForeignKey": {
     "column": "user_id",

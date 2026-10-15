@@ -1084,6 +1084,57 @@ impl MySqlConn {
         Ok(None)
     }
 
+    /// 取り込みの事前検証 (#1623)。1 行ずつ INSERT し、最後に必ずロールバックする。
+    /// 非トランザクショナル表はロールバックできないので拒否する。
+    /// See [`Connection::dry_run_failures`].
+    pub(crate) async fn dry_run_failures(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
+        keep: usize,
+    ) -> Result<super::DryRunOutcome> {
+        if !self
+            .table_is_transactional(database, table)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::InvalidInput(
+                "dry run is not available: the table does not support transactions".into(),
+            ));
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        sql.push_str(&conflict_clause(DriverKind::Mysql, columns, conflict));
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
+        let mut out = super::DryRunOutcome::default();
+        for (i, row) in rows.iter().enumerate() {
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+            if let Err(e) = q.execute(&mut *tx).await {
+                let e = AppError::from(e);
+                if !super::is_row_level_import_error(&e) {
+                    return Err(e);
+                }
+                out.record(i, e.to_string(), keep);
+            }
+        }
+        tx.rollback().await?;
+        Ok(out)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no

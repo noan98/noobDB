@@ -9,7 +9,10 @@ import {
   type DriverKind,
   type ImportConflictMode,
   type ImportErrorMode,
+  type ImportDryRunResult,
   type ImportFormat,
+  type ImportTemplate,
+  type SkippedExportFormat,
   type ImportOptions,
   type NewColumnType,
   type SkippedRowInfo,
@@ -24,6 +27,7 @@ import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { buildImportTemplate, templateSettings, templateToMapping } from "./importTemplate";
 import { defaultKeyColumns, pruneKeyColumns, toggleKeyColumn, validateConflictKeys } from "./importConflict";
 import {
   buildColumnDrafts,
@@ -68,6 +72,11 @@ interface Props {
    * loads immediately without the user re-picking the file.
    */
   initialPath?: string;
+  /**
+   * 接続プロファイルの ID。渡すと、既存テーブルへの取り込みで保存済みのマッピング
+   * テンプレートを候補に出し、現在のマッピングを保存できる (#1623)。
+   */
+  profileId?: string;
 }
 
 type DelimiterChoice = "," | "\t" | ";";
@@ -150,7 +159,16 @@ function autoMap(
   return m;
 }
 
-export function ImportModal({ sessionId, database, table, driver, onClose, onImported, initialPath }: Props) {
+export function ImportModal({
+  sessionId,
+  database,
+  table,
+  driver,
+  onClose,
+  onImported,
+  initialPath,
+  profileId,
+}: Props) {
   const t = useT();
   const toast = useToast();
   const [path, setPath] = useState(initialPath ?? "");
@@ -195,6 +213,17 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
   // エンコーディングの変更) で自動割り当てに戻さず、手動の指定を保つ。ファイルを選び直したら解除。
   const mappingEditedRef = useRef(false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
+  // 保存済みのマッピングテンプレート (#1623)。適用はユーザの操作で行う。
+  const [templates, setTemplates] = useState<ImportTemplate[]>([]);
+  // テンプレートの設定でプレビューを読み直した後に、見出しへ当てはめるための保留。
+  const pendingTemplateRef = useRef<ImportTemplate | null>(null);
+  // 事前検証 (dry run、#1623)。結果は検証したときの入力の署名つきで持ち、入力が変わったら古い結果を隠す。
+  const [dryRun, setDryRun] = useState<
+    | { kind: "idle" }
+    | { kind: "running" }
+    | { kind: "done"; signature: string; result: ImportDryRunResult }
+    | { kind: "error"; signature: string; message: string }
+  >({ kind: "idle" });
 
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const streamIdRef = useRef<string | null>(null);
@@ -246,6 +275,28 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
       cancelled = true;
     };
   }, [sessionId, database, table]);
+
+  // 保存済みのマッピングテンプレート (#1623)。既存テーブルへの取り込みのときだけ。
+  useEffect(() => {
+    if (!profileId || table === null) {
+      // 既に空なら同じ参照を返して余計な再描画を起こさない。
+      setTemplates((prev) => (prev.length > 0 ? [] : prev));
+      return;
+    }
+    let cancelled = false;
+    api
+      .listImportTemplates(profileId, database, table)
+      .then((list) => {
+        if (!cancelled) setTemplates(list);
+      })
+      .catch(() => {
+        // 候補が出ないだけで取り込み自体には影響しないので黙って無視する。
+        if (!cancelled) setTemplates([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profileId, database, table]);
 
   // 別のファイルを選んだら前のブックのシート指定を捨てる (先頭シートに戻す)。
   // biome-ignore lint/correctness/useExhaustiveDependencies: path の変化でシート指定を捨てるトリガ依存 (effect 内では参照しない)
@@ -305,6 +356,21 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
           // the (CSV-only) header toggle.
           if (tableColumns) {
             const auto = autoMap(tableColumns, p.headers, headerApplies ? hasHeader : true);
+            const pending = pendingTemplateRef.current;
+            if (pending) {
+              // 保存済みテンプレートの適用待ち (#1623): 読み直したプレビューの見出しへ当てはめる。
+              pendingTemplateRef.current = null;
+              mappingEditedRef.current = true;
+              setMapping(
+                templateToMapping(
+                  pending,
+                  p.headers,
+                  headerApplies ? pending.hasHeader : true,
+                  tableColumns.map((c) => c.name),
+                ),
+              );
+              return;
+            }
             setMapping((prev) => {
               if (!mappingEditedRef.current) return auto;
               // 手動の指定は、割り当て先の列がまだ存在する範囲で保つ。
@@ -604,6 +670,130 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
     }
   };
 
+  const savedTemplate = templates[0] ?? null;
+
+  // 保存済みテンプレートの設定を画面へ戻し、列の対応は (読み直した) プレビューの見出しへ当てはめる。
+  const applyTemplate = (tpl: ImportTemplate) => {
+    const st = templateSettings(tpl);
+    const sameParsing =
+      st.format === format &&
+      st.delimiter === delimiter &&
+      st.quote === quote &&
+      st.hasHeader === hasHeader &&
+      st.encoding === encoding &&
+      (st.format !== "xlsx" || st.sheet === sheet);
+    setFormat(st.format);
+    setDelimiter(st.delimiter);
+    setQuote(st.quote);
+    setHasHeader(st.hasHeader);
+    setEncoding(st.encoding);
+    setSheet(st.format === "xlsx" ? st.sheet : "");
+    setNullMode(st.nullMode);
+    setNullCustom(st.nullCustom);
+    setErrorMode(st.errorMode);
+    setConflictMode(st.conflictMode);
+    setKeyColumns(st.keyColumns.length > 0 ? st.keyColumns : null);
+    if (sameParsing && preview && tableColumns) {
+      // 読み直しが起きない (解析設定が同じ) ので、今のプレビューへ直接当てはめる。
+      mappingEditedRef.current = true;
+      setMapping(
+        templateToMapping(
+          tpl,
+          preview.headers,
+          headerApplies ? tpl.hasHeader : true,
+          tableColumns.map((c) => c.name),
+        ),
+      );
+    } else {
+      pendingTemplateRef.current = tpl;
+    }
+    toast.success(t("importTemplateApplied"));
+  };
+
+  const saveTemplate = async () => {
+    if (!profileId || table === null || !preview) return;
+    try {
+      const tpl = buildImportTemplate({
+        profileId,
+        database,
+        table,
+        settings: {
+          format,
+          delimiter,
+          quote,
+          hasHeader,
+          nullToken,
+          encoding,
+          sheet: isXlsx ? sheet : "",
+          errorMode,
+          conflictMode,
+          keyColumns: conflictMode === "insert" ? [] : effectiveKeyColumns,
+        },
+        mapping: mappingEntries,
+        headers: preview.headers,
+        namedHeaders: headerApplies ? hasHeader : true,
+      });
+      const saved = await api.saveImportTemplate(tpl);
+      setTemplates([saved]);
+      toast.success(t("importTemplateSaved", { table }));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  const deleteTemplate = async (tpl: ImportTemplate) => {
+    try {
+      await api.deleteImportTemplate(tpl.id);
+      setTemplates((prev) => prev.filter((x) => x.id !== tpl.id));
+      toast.success(t("importTemplateDeleted"));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
+  // 事前検証の入力の署名。ファイル・オプション・マッピング・新規テーブル定義のどれかが変わると変わる。
+  const dryRunSignature = JSON.stringify([
+    path,
+    createNew ? newTableName : table,
+    buildOptions(),
+    conflictMode,
+    effectiveKeyColumns,
+    effectiveMapping,
+    newTable?.columns ?? null,
+  ]);
+  const canValidate =
+    !!path &&
+    effectiveMapping.length > 0 &&
+    quoteValid &&
+    conflictError === null &&
+    (!createNew || (newTable !== null && newTableError === null));
+
+  const handleDryRun = async () => {
+    if (!canValidate) return;
+    const signature = dryRunSignature;
+    setDryRun({ kind: "running" });
+    try {
+      const result = await api.importDryRun({
+        sessionId,
+        database,
+        table: targetTable,
+        path,
+        options: createNew
+          ? { ...buildOptions(), conflictMode: "insert", keyColumns: [] }
+          : { ...buildOptions(), conflictMode, keyColumns: effectiveKeyColumns },
+        mapping: effectiveMapping,
+        createTable: newTable?.columns ?? null,
+      });
+      setDryRun({ kind: "done", signature, result });
+    } catch (e) {
+      setDryRun({ kind: "error", signature, message: String(e) });
+    }
+  };
+  const dryRunCurrent =
+    (dryRun.kind === "done" || dryRun.kind === "error") && dryRun.signature === dryRunSignature
+      ? dryRun
+      : null;
+
   // スキップ行の全件は Rust 側が「直近の取り込み結果」として保持している (#1258)。
   // コピー用テキストの組み立てもファイルへの書き出しもバックエンドで行い、フロントは
   // 先頭の一部しか持たない。行の書式は表示と同じ i18n 文言をテンプレートとして渡す。
@@ -616,20 +806,28 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
     }
   }, [toast, t]);
 
-  const saveSkipped = useCallback(async () => {
-    try {
-      const dest = await save({
-        defaultPath: "skipped-rows.txt",
-        title: t("importSkippedSaveTitle"),
-        filters: [{ name: "Text", extensions: ["txt"] }],
-      });
-      if (typeof dest !== "string" || !dest) return;
-      const count = await api.saveImportSkippedRows(dest, t("importSkippedRow"), t("importSkippedRowLine"));
-      toast.success(t("importSkippedSaved", { count, path: dest }));
-    } catch (e) {
-      toast.error(String(e));
-    }
-  }, [toast, t]);
+  // `csv` / `ndjson` は元の行データを書き出す (#1623)。直して再取り込みできる。
+  const saveSkipped = useCallback(
+    async (format: SkippedExportFormat = "text") => {
+      try {
+        const ext = format === "text" ? "txt" : format;
+        const dest = await save({
+          defaultPath: `skipped-rows.${ext}`,
+          title: t("importSkippedSaveTitle"),
+          filters: [{ name: format === "text" ? "Text" : format.toUpperCase(), extensions: [ext] }],
+        });
+        if (typeof dest !== "string" || !dest) return;
+        const count =
+          format === "text"
+            ? await api.saveImportSkippedRows(dest, t("importSkippedRow"), t("importSkippedRowLine"))
+            : await api.saveImportSkippedRows(dest, t("importSkippedRow"), t("importSkippedRowLine"), format);
+        toast.success(t("importSkippedSaved", { count, path: dest }));
+      } catch (e) {
+        toast.error(String(e));
+      }
+    },
+    [toast, t],
+  );
 
   const handleCancelImport = async () => {
     const sid = streamIdRef.current;
@@ -1019,6 +1217,37 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
           </FormSection>
         )}
 
+        {!createNew && savedTemplate && (
+          <Callout
+            tone="info"
+            data-testid="import-template-callout"
+            action={
+              <chakra.div display="flex" gap="2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => applyTemplate(savedTemplate)}
+                  disabled={importing || !preview || !tableColumns}
+                >
+                  {t("importTemplateApply")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void deleteTemplate(savedTemplate)}
+                  disabled={importing}
+                >
+                  {t("importTemplateDelete")}
+                </Button>
+              </chakra.div>
+            }
+          >
+            {t("importTemplateFound", { table: table ?? "", count: savedTemplate.mapping.length })}
+          </Callout>
+        )}
+
         {!createNew && preview && tableColumns && (
           <FormSection>
             <FieldLabel as="div">{t("importMappingTitle")}</FieldLabel>
@@ -1068,6 +1297,21 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                 </chakra.div>
               ))}
             </chakra.div>
+            {profileId && (
+              <chakra.div>
+                <Tooltip label={t("importTemplateSaveHint")}>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void saveTemplate()}
+                    disabled={importing || mappingEntries.length === 0}
+                  >
+                    {t("importTemplateSave")}
+                  </Button>
+                </Tooltip>
+              </chakra.div>
+            )}
           </FormSection>
         )}
 
@@ -1163,6 +1407,68 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
           </FormSection>
         )}
 
+        {dryRun.kind === "running" && (
+          <chakra.div role="status" aria-live="polite" display="flex" alignItems="center" gap="2">
+            <Spinner size={14} />
+            <chakra.span textStyle="caption">{t("importDryRunRunning")}</chakra.span>
+          </chakra.div>
+        )}
+        {dryRunCurrent?.kind === "error" && <ErrorNote>{dryRunCurrent.message}</ErrorNote>}
+        {dryRunCurrent?.kind === "done" && (
+          <chakra.div display="flex" flexDirection="column" gap="2" data-testid="import-dry-run-result">
+            {!dryRunCurrent.result.dbChecked ? (
+              <Callout tone="info" role="status">
+                {t("importDryRunFileOnly", { total: dryRunCurrent.result.total })}
+              </Callout>
+            ) : dryRunCurrent.result.failed === 0 ? (
+              <Callout tone="success" role="status">
+                {t("importDryRunClean", { total: dryRunCurrent.result.total })}
+              </Callout>
+            ) : (
+              <Callout tone="warning" role="status">
+                {t("importDryRunFailed", {
+                  failed: dryRunCurrent.result.failed,
+                  total: dryRunCurrent.result.total,
+                })}
+              </Callout>
+            )}
+            {dryRunCurrent.result.failures.length > 0 && (
+              <>
+                {dryRunCurrent.result.failed > dryRunCurrent.result.failures.length && (
+                  <chakra.div textStyle="caption">
+                    {t("importDryRunShowing", {
+                      shown: dryRunCurrent.result.failures.length,
+                      total: dryRunCurrent.result.failed,
+                    })}
+                  </chakra.div>
+                )}
+                <chakra.div
+                  maxH="180px"
+                  overflowY="auto"
+                  border="1px solid"
+                  borderColor="app.border"
+                  borderRadius="sm"
+                  fontSize="xs"
+                  fontFamily="var(--font-mono)"
+                >
+                  {dryRunCurrent.result.failures.map((s, i) => (
+                    <chakra.div
+                      key={`${s.record}-${i}`}
+                      px="2"
+                      py="1"
+                      borderBottom={i < dryRunCurrent.result.failures.length - 1 ? "1px solid" : undefined}
+                      borderColor="app.border"
+                    >
+                      {s.line != null
+                        ? t("importSkippedRowLine", { record: s.record, line: s.line, reason: s.reason })
+                        : t("importSkippedRow", { record: s.record, reason: s.reason })}
+                    </chakra.div>
+                  ))}
+                </chakra.div>
+              </>
+            )}
+          </chakra.div>
+        )}
         {status.kind === "importing" && (
           <chakra.div role="status" aria-live="polite" display="flex" flexDirection="column" gap="1.5">
             <DeterminateProgressBar value={percent / 100} />
@@ -1183,6 +1489,19 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
               <chakra.div display="flex" gap="2">
                 <Button type="button" variant="secondary" size="sm" onClick={() => void saveSkipped()}>
                   {t("importSkippedSave")}
+                </Button>
+                <Tooltip label={t("importSkippedSaveCsvHint")}>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => void saveSkipped("csv")}>
+                    {t("importSkippedSaveCsv")}
+                  </Button>
+                </Tooltip>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void saveSkipped("ndjson")}
+                >
+                  {t("importSkippedSaveNdjson")}
                 </Button>
                 <Button type="button" variant="secondary" size="sm" onClick={() => void copySkipped()}>
                   {t("importSkippedCopy")}
@@ -1226,6 +1545,16 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
       </ModalBody>
 
       <ModalFooter>
+        <Tooltip label={t("importDryRunHint")}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void handleDryRun()}
+            disabled={importing || dryRun.kind === "running" || !canValidate}
+          >
+            {t("importDryRun")}
+          </Button>
+        </Tooltip>
         <div style={{ flex: 1 }} />
         {importing ? (
           <PressableButton type="button" variant="warning" onClick={handleCancelImport}>

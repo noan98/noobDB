@@ -131,6 +131,9 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["importStartedEvent", schemas.importStartedEvent],
   ["importProgressEvent", schemas.importProgressEvent],
   ["importDoneEvent", schemas.importDoneEvent],
+  // #1623: 取り込みの事前検証の結果と、保存済みマッピングテンプレート。
+  ["importDryRunResult", schemas.importDryRunResult],
+  ["importTemplate", schemas.importTemplate],
   // #973: `.sql` スクリプト実行の `sql-script:*` (scriptFailure は done/error 内で間接カバー)。
   ["scriptProgressEvent", schemas.scriptProgressEvent],
   ["scriptDoneEvent", schemas.scriptDoneEvent],
