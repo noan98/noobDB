@@ -14,7 +14,7 @@ import type { CellKind } from "./cellTypeMeta";
  */
 
 export type FilterNullMode = "any" | "only" | "exclude";
-export type TextFilterOp = "contains" | "equals" | "notEquals" | "startsWith" | "endsWith";
+export type TextFilterOp = "contains" | "equals" | "notEquals" | "startsWith" | "endsWith" | "in";
 export type NumberFilterOp = "eq" | "ne" | "gt" | "lt" | "between";
 export type FilterOp = TextFilterOp | NumberFilterOp;
 
@@ -31,6 +31,11 @@ export interface ColumnFilter {
    * と同じ行集合になるようにするためのもの。
    */
   caseSensitive?: boolean;
+  /**
+   * `in` (値のチェックリスト, #1628) で選んだ値の集合。セルの文字列表現との**完全一致**
+   * (大小区別) で判定する。他の演算子では無視される。
+   */
+  values?: string[];
 }
 
 // Sort: nulls are pushed after non-null values for asc; flipped to top by desc inversion.
@@ -87,6 +92,7 @@ function isIntegerLiteral(s: string): boolean {
 /** Does the filter carry a value operand (vs. being a NULL-only condition)? */
 function filterHasValue(f: ColumnFilter): boolean {
   if (f.op === "between") return f.value.trim() !== "" || f.value2.trim() !== "";
+  if (f.op === "in") return (f.values?.length ?? 0) > 0;
   return f.value.trim() !== "";
 }
 
@@ -107,6 +113,10 @@ export function isColumnFilterActive(f: ColumnFilter | undefined): f is ColumnFi
  */
 function compileValuePredicate(f: ColumnFilter): (v: Exclude<CellValue, null | undefined>) => boolean {
   switch (f.op) {
+    case "in": {
+      const set = new Set(f.values ?? []);
+      return (v) => set.has(String(v));
+    }
     case "contains":
     case "equals":
     case "notEquals":
@@ -223,6 +233,8 @@ export interface HandleFilterSpec {
   nullMode: FilterNullMode;
   /** `equals` / `notEquals` を大小区別で比較する (`ColumnFilter.caseSensitive` と同じ)。 */
   caseSensitive?: boolean;
+  /** `in` の値集合 (`ColumnFilter.values` と同じ)。 */
+  values?: string[];
 }
 
 /** `result_sort_filter` の条件。 */
@@ -274,6 +286,7 @@ export function buildHandleRequest(
       value2: v.value2,
       nullMode: v.nullMode,
       ...(v.caseSensitive ? { caseSensitive: true } : {}),
+      ...(v.op === "in" ? { values: v.values ?? [] } : {}),
     });
   }
   return { sort, filters, global: globalFilter ?? "" };
@@ -287,4 +300,54 @@ export function isIdentityRequest(req: HandleSortFilterRequest): boolean {
 /** 条件の同一性キー (古い応答の破棄・再取得の抑止に使う)。 */
 export function handleRequestKey(req: HandleSortFilterRequest): string {
   return JSON.stringify(req);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 値のチェックリスト (#1628)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DistinctValueOption {
+  /** セル値の文字列表現 (`in` フィルタの照合に使うものと同じ)。 */
+  value: string;
+  /** 取得済み行での出現数。 */
+  count: number;
+}
+
+/** チェックリストに並べる DISTINCT 値の上限。これを超える列は候補を出さない。 */
+export const VALUE_CHECKLIST_MAX = 50;
+
+/**
+ * 取得済み行の 1 列から、チェックリスト用の DISTINCT 値 (NULL を除く) を数える。
+ * 値の種類が `maxDistinct` を超えたら `null` (候補が多すぎて選べない列)。
+ * 出現数の多い順、同数なら値の昇順 (numeric 照合)。
+ */
+export function distinctValueOptions(
+  rows: ReadonlyArray<ReadonlyArray<CellValue>>,
+  col: number,
+  maxDistinct = VALUE_CHECKLIST_MAX,
+): DistinctValueOption[] | null {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const v = row[col];
+    if (v === null || v === undefined) continue;
+    const s = String(v);
+    const prev = counts.get(s);
+    if (prev === undefined) {
+      if (counts.size >= maxDistinct) return null;
+      counts.set(s, 1);
+    } else {
+      counts.set(s, prev + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || stringCollator.compare(a.value, b.value));
+}
+
+/**
+ * テーブルタブ (サーバ側 `in`) へ渡せる値か。`splitInValues` はカンマ・改行で分割し前後の
+ * 空白を落とすため、これらを含む値は往復できない。
+ */
+export function isServerInSafeValue(v: string): boolean {
+  return v !== "" && v === v.trim() && !/[,\n]/.test(v);
 }

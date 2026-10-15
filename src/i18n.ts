@@ -2993,7 +2993,8 @@ const en = {
   gridFilteredCount: "Showing {shown} of {total} rows",
   gridClearFilters: "Clear filters",
   gridNoMatches: "No rows match the current filters.",
-  gridResizeColumn: "Drag to resize (or use the left/right arrow keys); double-click to fit the content",
+  gridResizeColumn:
+    "Drag to resize (or use the left/right arrow keys); double-click to fit the content (measured from the first 1,000 loaded rows)",
   gridDragColumn: "Drag to reorder column",
   gridMoveColumnLeft: "Move left",
   gridMoveColumnRight: "Move right",
@@ -5487,6 +5488,16 @@ const en = {
   gridFindHitsOnlyTitle: "Show only rows with hits",
   diffGhostTitle: "Removed rows ({count})",
   diffGhostCapped: "Showing the first {limit} rows",
+  gridSelectColumn: "Select column",
+  gridCopyColumnValues: "Copy column values",
+  gridStatFilterByValue: "Filter to rows where this column is {value}",
+  gridFilterOpIn: "Is one of the selected values",
+  gridFilterValuesLabel: "Pick values",
+  gridFilterValuesEmpty: "(empty string)",
+  gridFilterValuesServerApply: "Filter all rows by these values",
+  gridFilterValuesServerTitle: "Runs a WHERE ... IN (...) on the server",
+  gridFilterValuesServerUnsafe:
+    "Values containing commas, line breaks or surrounding spaces cannot be sent to the server filter",
 };
 
 export type I18nKey = keyof typeof en;
@@ -8473,7 +8484,8 @@ const ja: Dict = {
   gridFilteredCount: "{total} 件中 {shown} 件を表示",
   gridClearFilters: "フィルターをクリア",
   gridNoMatches: "条件に一致する行がありません。",
-  gridResizeColumn: "ドラッグでサイズ変更 (左右キーでも変更できます)、ダブルクリックで内容に合わせる",
+  gridResizeColumn:
+    "ドラッグでサイズ変更 (左右キーでも変更できます)、ダブルクリックで内容に合わせる (取得済みの先頭 1,000 行で計測)",
   gridDragColumn: "ドラッグで列を並び替え",
   gridMoveColumnLeft: "左へ移動",
   gridMoveColumnRight: "右へ移動",
@@ -10945,6 +10957,15 @@ const ja: Dict = {
   gridFindHitsOnlyTitle: "ヒットのある行だけを表示",
   diffGhostTitle: "削除された行 ({count})",
   diffGhostCapped: "先頭 {limit} 行のみ表示",
+  gridSelectColumn: "列を選択",
+  gridCopyColumnValues: "列の値をコピー",
+  gridStatFilterByValue: "この列が {value} の行だけに絞り込む",
+  gridFilterOpIn: "選んだ値のいずれか",
+  gridFilterValuesLabel: "値から選ぶ",
+  gridFilterValuesEmpty: "(空文字)",
+  gridFilterValuesServerApply: "選んだ値で全件を絞り込む",
+  gridFilterValuesServerTitle: "サーバ側で WHERE ... IN (...) を実行します",
+  gridFilterValuesServerUnsafe: "カンマ・改行・前後の空白を含む値はサーバ側の絞り込みに渡せません",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

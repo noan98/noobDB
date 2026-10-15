@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -146,6 +146,8 @@ pub enum FilterOp {
     NotEquals,
     StartsWith,
     EndsWith,
+    /// 値のチェックリスト (複数選択, #1628)。`FilterSpec::values` との完全一致 (大小区別)。
+    In,
     Eq,
     Ne,
     Gt,
@@ -173,12 +175,17 @@ pub struct FilterSpec {
     /// `equals` / `notEquals` を大小区別で比較する (省略時は大小無視)。
     #[serde(default)]
     pub case_sensitive: bool,
+    /// `In` で選んだ値の集合 (他の演算子では無視される)。
+    #[serde(default)]
+    pub values: Vec<String>,
 }
 
 /// `filterHasValue`。
 fn filter_has_value(f: &FilterSpec) -> bool {
     if f.op == FilterOp::Between {
         !js_trim(&f.value).is_empty() || !js_trim(&f.value2).is_empty()
+    } else if f.op == FilterOp::In {
+        !f.values.is_empty()
     } else {
         !js_trim(&f.value).is_empty()
     }
@@ -219,6 +226,8 @@ fn cmp_big_int(a: &str, b: &str) -> Ordering {
 
 /// 評価用に前処理した列フィルタ。
 enum Prepared {
+    /// 値集合との完全一致 (`FilterOp::In`)。
+    In(HashSet<String>),
     Text {
         op: FilterOp,
         q: String,
@@ -246,6 +255,7 @@ struct PreparedFilter {
 fn prepare_filter(f: &FilterSpec) -> PreparedFilter {
     let cond = if filter_has_value(f) {
         Some(match f.op {
+            FilterOp::In => Prepared::In(f.values.iter().cloned().collect()),
             FilterOp::Contains
             | FilterOp::Equals
             | FilterOp::NotEquals
@@ -335,6 +345,15 @@ fn text_matches(op: FilterOp, s: &str, q: &str, exact: bool) -> bool {
 /// `matchesColumnValue` (非 NULL セル)。
 fn matches_value(v: &Value, cond: &Prepared) -> bool {
     match cond {
+        Prepared::In(set) => {
+            if let Some(ib) = int_buf(v) {
+                return set.contains(ib.as_str());
+            }
+            match value_str(v) {
+                Some(s) => set.contains(s.as_ref()),
+                None => false,
+            }
+        }
         Prepared::Text { op, q, exact } => {
             if let Some(ib) = int_buf(v) {
                 return text_matches(*op, ib.as_str(), q, *exact);

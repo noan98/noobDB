@@ -258,7 +258,34 @@
     {"name": "filter_contains_ignores_case_sensitive_flag", "note": "caseSensitive が付いても contains は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "contains", "value": "TOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
     {"name": "filter_starts_with_ignores_case_sensitive_flag", "note": "caseSensitive が付いても startsWith は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "startsWith", "value": "tOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
     {"name": "filter_equals_case_sensitive_non_ascii", "note": "非 ASCII (Ä/ä) も caseSensitive の equals は大小区別。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "Ärger", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [4]},
-    {"name": "filter_equals_insensitive_non_ascii", "note": "非 ASCII (Ä/ä) は大小無視の equals で両方一致。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "ÄRGER", "value2": "", "nullMode": "any"}], "sort": [], "expected": [4, 5]}
+    {"name": "filter_equals_insensitive_non_ascii", "note": "非 ASCII (Ä/ä) は大小無視の equals で両方一致。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "ÄRGER", "value2": "", "nullMode": "any"}], "sort": [], "expected": [4, 5]},
+    {
+      "name": "filter_in_values_exact_match",
+      "note": "in (値のチェックリスト, #1628): セルの文字列表現との完全一致 (大小区別)。数値 1 と文字列 \"1\" は同一視。NULL はマッチしない。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": ["Apple", "1"]}],
+      "sort": [],
+      "expected": [0, 4, 6]
+    },
+    {
+      "name": "filter_in_values_bool",
+      "note": "真偽値は true / false の文字列で一致する。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": ["true", "x"]}],
+      "sort": [],
+      "expected": [2, 5]
+    },
+    {
+      "name": "filter_in_empty_values_is_inactive",
+      "note": "values が空の in は絞り込みにならない (非アクティブ)。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": []}],
+      "sort": [],
+      "expected": [0, 1, 2, 3, 4, 5, 6]
+    }
   ],
   "find": [
     {

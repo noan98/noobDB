@@ -227,6 +227,9 @@ import {
   compareStringCells,
   globalCellIncludes,
   isColumnFilterActive,
+  distinctValueOptions,
+  isServerInSafeValue,
+  type DistinctValueOption,
   type ColumnFilter,
   type FilterNullMode,
   type FilterOp,
@@ -1784,6 +1787,86 @@ function RemovedRowsGhost({ columns, rows }: { columns: string[]; rows: CellValu
   );
 }
 
+/**
+ * 値のチェックリスト (#1628)。取得済み行の DISTINCT 値を出現数つきで並べ、選んだ値の
+ * 集合を `in` 条件として列フィルタに載せる。ENUM・ステータス・真偽値のような少数の値を
+ * 持つ列で「A または B または C」を一度に絞るための入口。
+ */
+function ValueChecklist({
+  options,
+  selected,
+  disabled,
+  onChange,
+  onApplyToServer,
+  serverSafe,
+}: {
+  options: DistinctValueOption[];
+  selected: string[];
+  disabled: boolean;
+  onChange: (values: string[]) => void;
+  /** table タブのとき、選んだ値で全件 (サーバ側 WHERE) を絞る。 */
+  onApplyToServer?: () => void;
+  /** 選択値がすべてサーバ側 `in` に往復できるか (カンマ・改行・前後空白を含まない)。 */
+  serverSafe: boolean;
+}) {
+  const t = useT();
+  const sel = new Set(selected);
+  const toggle = (value: string) => {
+    const next = new Set(sel);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    // 出現順 (options の並び) で保持して、再描画でも安定させる。
+    onChange(options.filter((o) => next.has(o.value)).map((o) => o.value));
+  };
+  return (
+    <Box display="flex" flexDirection="column" gap="0.75" data-testid="value-checklist">
+      <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+        {t("gridFilterValuesLabel")}
+      </chakra.span>
+      <Box
+        role="group"
+        aria-label={t("gridFilterValuesLabel")}
+        display="flex"
+        flexDirection="column"
+        gap="0.5"
+        maxH="40"
+        overflowY="auto"
+      >
+        {options.map((o) => (
+          <chakra.label
+            key={o.value}
+            display="flex"
+            alignItems="center"
+            gap="1.5"
+            fontSize="var(--text-sm)"
+            cursor={disabled ? "default" : "pointer"}
+          >
+            <chakra.input
+              type="checkbox"
+              checked={sel.has(o.value)}
+              disabled={disabled}
+              onChange={() => toggle(o.value)}
+            />
+            <chakra.span flex="1" minW="0" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+              {o.value === "" ? t("gridFilterValuesEmpty") : o.value}
+            </chakra.span>
+            <chakra.span textStyle="numeric" color="app.textMuted" fontSize="var(--text-xs)">
+              {o.count.toLocaleString()}
+            </chakra.span>
+          </chakra.label>
+        ))}
+      </Box>
+      {onApplyToServer && (
+        <Tooltip label={serverSafe ? t("gridFilterValuesServerTitle") : t("gridFilterValuesServerUnsafe")}>
+          <Button variant="secondary" size="sm" px="2" disabled={!serverSafe} onClick={onApplyToServer}>
+            {t("gridFilterValuesServerApply")}
+          </Button>
+        </Tooltip>
+      )}
+    </Box>
+  );
+}
+
 /** 閾値の数値入力。入力中は文字列で持ち、数値として解釈できたときだけ確定する (#1628)。 */
 function ThresholdValueInput({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
   const t = useT();
@@ -1862,6 +1945,9 @@ function ColumnFilterMenu({
   pinned,
   onPin,
   onShowStats,
+  valueOptions,
+  onSelectColumn,
+  onCopyColumnValues,
   footerEnabled,
   onToggleFooter,
   serverSortDir,
@@ -1901,6 +1987,12 @@ function ColumnFilterMenu({
   onPin?: (side: false | "left" | "right") => void;
   /** 「列の統計」ポップオーバーを開く。未指定なら項目を出さない (#524)。 */
   onShowStats?: () => void;
+  /** 値のチェックリストの候補 (取得済み行の DISTINCT 値)。null なら出さない (#1628)。 */
+  valueOptions?: DistinctValueOption[] | null;
+  /** 列全体を矩形選択に乗せる (#1628)。未指定なら項目を出さない。 */
+  onSelectColumn?: () => void;
+  /** 列の値を表示中の行・表示順でコピーする (#1628)。 */
+  onCopyColumnValues?: () => void;
   /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
   footerEnabled?: boolean;
   onToggleFooter?: () => void;
@@ -2045,10 +2137,11 @@ function ColumnFilterMenu({
               {t(o.key)}
             </option>
           ))}
+          {draft.op === "in" && <option value="in">{t("gridFilterOpIn")}</option>}
         </chakra.select>
       </chakra.label>
 
-      {draft.op === "between" ? (
+      {draft.op === "in" ? null : draft.op === "between" ? (
         <Box display="flex" gap="1.5">
           <chakra.input
             css={FILTER_FIELD_CSS}
@@ -2082,6 +2175,24 @@ function ColumnFilterMenu({
           placeholder={t("gridFilterValuePlaceholder")}
           aria-label={label}
           onChange={(e) => apply({ ...draft, value: e.target.value })}
+        />
+      )}
+
+      {valueOptions && valueOptions.length > 0 && (
+        <ValueChecklist
+          options={valueOptions}
+          selected={draft.op === "in" ? (draft.values ?? []) : []}
+          disabled={valuesDisabled}
+          onChange={(values) => apply({ ...draft, op: "in", value: "", value2: "", values })}
+          onApplyToServer={
+            onApplyServerFilter && draft.op === "in" && (draft.values ?? []).length > 0
+              ? () => {
+                  onApplyServerFilter("in", (draft.values ?? []).join(","));
+                  onClose();
+                }
+              : undefined
+          }
+          serverSafe={(draft.values ?? []).every(isServerInSafeValue)}
         />
       )}
 
@@ -2357,6 +2468,8 @@ function ColumnFilterMenu({
         onShowAllColumns ||
         onResetLayout ||
         onShowStats ||
+        onSelectColumn ||
+        onCopyColumnValues ||
         onToggleFooter ||
         onMoveColumn) && (
         <Box
@@ -2382,6 +2495,32 @@ function ColumnFilterMenu({
                 }}
               >
                 {t("gridColumnStats")}
+              </Button>
+            )}
+            {onSelectColumn && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onSelectColumn();
+                  onClose();
+                }}
+              >
+                {t("gridSelectColumn")}
+              </Button>
+            )}
+            {onCopyColumnValues && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onCopyColumnValues();
+                  onClose();
+                }}
+              >
+                {t("gridCopyColumnValues")}
               </Button>
             )}
             {onToggleFooter && (
@@ -2485,9 +2624,34 @@ function ColumnFilterMenu({
 }
 
 /** 統計ポップオーバーの 1 行 (ラベル + 値)。 */
-function StatRow({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+function StatRow({
+  label,
+  value,
+  title,
+  onActivate,
+  activateValue,
+}: {
+  label: string;
+  value: ReactNode;
+  title?: string;
+  /** `onActivate` のスクリーンリーダー向け名称に入れる値の文字列。 */
+  activateValue?: string;
+  /** 指定すると値がボタンになり、押すとその値での絞り込みへ移れる (#1628)。 */
+  onActivate?: () => void;
+}) {
+  const t = useT();
   const valueSpan = (
     <chakra.span
+      {...(onActivate
+        ? {
+            as: "button" as const,
+            type: "button" as const,
+            onClick: onActivate,
+            "aria-label": t("gridStatFilterByValue", { value: activateValue ?? "" }),
+            cursor: "pointer",
+            _hover: { textDecoration: "underline" },
+          }
+        : {})}
       fontSize="var(--text-sm)"
       fontFamily="mono"
       textStyle="numeric"
@@ -2582,10 +2746,13 @@ function ColumnStatsMenu({
   onSetFooterFn,
   resultId,
   colIdx,
+  onFilterByValue,
 }: {
   columnName: string;
   kind: CellKind;
   anchor: DOMRect;
+  /** 最頻値・最小値・最大値の押下で、その値による絞り込みへ移る (#1628)。 */
+  onFilterByValue?: (value: CellValue) => void;
   /** 取得済み (在メモリ) のこの列の全値。 */
   values: CellValue[];
   /**
@@ -2696,6 +2863,18 @@ function ColumnStatsMenu({
       window.removeEventListener("resize", onClose);
     };
   }, [onClose]);
+
+  // 値の押下 → 絞り込み (#1628)。NULL は対象外 (`null` を渡さない)。適用後はポップオーバーを閉じて結果を見せる。
+  const filterAction = (v: CellValue): { onActivate?: () => void; activateValue?: string } =>
+    onFilterByValue && v !== null && v !== undefined
+      ? {
+          activateValue: String(v),
+          onActivate: () => {
+            onFilterByValue(v);
+            onClose();
+          },
+        }
+      : {};
 
   const runFull = async () => {
     if (!statsRequest || !onRunStatsQuery || loadingFull) return;
@@ -2817,8 +2996,8 @@ function ColumnStatsMenu({
           <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
           {numeric ? (
             <>
-              <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
-              <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} />
+              <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} {...filterAction(stats.min)} />
+              <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} {...filterAction(stats.max)} />
               <StatRow label={t("gridAvgLabel")} value={fmtStatNum(stats.avg)} />
               <StatRow label={t("gridSumLabel")} value={fmtStatNum(stats.sum)} />
             </>
@@ -2831,6 +3010,7 @@ function ColumnStatsMenu({
                   label={t("gridModeLabel")}
                   value={`${stats.mode.value} (${stats.mode.count})`}
                   title={stats.mode.value}
+                  {...filterAction(stats.mode.value)}
                 />
               )}
             </>
@@ -2904,11 +3084,13 @@ function ColumnStatsMenu({
                 label={t("gridMinLabel")}
                 value={fmtStatCell(full.min)}
                 title={fmtStatCell(full.min)}
+                {...filterAction(full.min)}
               />
               <StatRow
                 label={t("gridMaxLabel")}
                 value={fmtStatCell(full.max)}
                 title={fmtStatCell(full.max)}
+                {...filterAction(full.max)}
               />
               {numeric && (
                 <>
@@ -5017,6 +5199,15 @@ export const DataGrid = memo(function DataGrid({
   // Column quick-stats popover (#524): which column + the anchor rect of the
   // header control that opened it (reuses the filter icon's rect).
   const [statsMenu, setStatsMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
+  // 列フィルタ メニューの値チェックリスト (#1628) の候補。文字列・ENUM・真偽値などの
+  // 非数値列で、取得済み行の DISTINCT 値が少ないときだけ出す。メニューを開いている間だけ集計する。
+  const filterValueOptions = useMemo(() => {
+    if (!filterMenu) return null;
+    const kind = columnKinds[filterMenu.colIdx] ?? "string";
+    if (kind === "number" || kind === "decimal" || kind === "binary" || kind === "json") return null;
+    if (maskedCols?.[filterMenu.colIdx]) return null;
+    return distinctValueOptions(rows, filterMenu.colIdx);
+  }, [filterMenu, columnKinds, rows, maskedCols]);
   // 統計ポップオーバーに渡す列の全値 (#1257)。描画のたびに `rows.map` で配列を作り直すと
   // 子の `computeColumnStats` の memo が毎回無効になり、ポップオーバーを開いている間
   // ストリーミング/再描画のたびに全行の頻度集計をやり直していた。開いている列と行配列に
@@ -5381,6 +5572,44 @@ export const DataGrid = memo(function DataGrid({
         copyCell(activeCell.rowIdx, activeCell.colIdx);
       }
     }
+  };
+
+  // 統計ポップオーバーの値 → その値での絞り込み (#1628)。セル右クリックのクイックフィルタと
+  // 同じ 2 経路 (table タブはサーバ側 WHERE、それ以外はクライアント側 ColumnFilter) へ流す。
+  const filterColumnByValue = (colIdx: number, value: CellValue) => {
+    const col = columns[colIdx];
+    if (!col) return;
+    const numeric = isNumericFilterKind(columnKinds[colIdx] ?? "string");
+    if (onSetServerFilter) {
+      onSetServerFilter(col.name, serverQuickFilter(value, "eq", numeric));
+    } else {
+      table
+        .getColumn(String(colIdx))
+        ?.setFilterValue(
+          clientQuickFilter(value, "eq", numeric, rowSqlDriver === "postgres" || rowSqlDriver === "sqlite"),
+        );
+    }
+  };
+  // 列全体の選択 (#1628): 表示中の先頭行〜末尾行を同じ列で結ぶ矩形選択にする。以降は既存の
+  // 一括編集・選択統計・範囲コピー・CSV/JSON コピーの経路がそのまま使える。
+  const selectColumn = (colIdx: number) => {
+    const first = visibleRows[0];
+    const last = visibleRows[visibleRows.length - 1];
+    if (!first || !last) return;
+    setActiveCell({ rowIdx: first.index, colIdx });
+    setSelection({
+      anchor: { rowIdx: first.index, colIdx },
+      focus: { rowIdx: last.index, colIdx },
+    });
+  };
+  // 列の値のコピー (#1628): 絞り込み後の表示中の行を表示順に、改行区切りで 1 列ぶん。
+  const copyColumnValues = (colIdx: number) => {
+    const rowIdxs = visibleRows.map((r) => r.index);
+    if (rowIdxs.length === 0) return;
+    void runCopy(rowIdxs.map((ri) => copyTextAt(ri, colIdx)).join("\n"), {
+      rowIndices: rowIdxs,
+      colIndices: [colIdx],
+    });
   };
 
   // 「CSV / JSON としてコピー」(#1113) の対象。右クリックしたセルが矩形選択に
@@ -7269,6 +7498,11 @@ export const DataGrid = memo(function DataGrid({
                 }
               : undefined
           }
+          valueOptions={filterValueOptions}
+          onSelectColumn={() => selectColumn(filterMenu.colIdx)}
+          onCopyColumnValues={
+            isColumnMaskedNow(filterMenu.colIdx) ? undefined : () => copyColumnValues(filterMenu.colIdx)
+          }
           footerEnabled={footerEnabled}
           onToggleFooter={enableColumnControls ? toggleFooter : undefined}
           serverSortDir={
@@ -7342,6 +7576,11 @@ export const DataGrid = memo(function DataGrid({
               values={colValues}
               resultId={enableColumnControls ? shouldUseHandleForGrid(rows) : null}
               colIdx={colIdx}
+              onFilterByValue={
+                kind === "binary" || !(onSetServerFilter || enableColumnControls)
+                  ? undefined
+                  : (value) => filterColumnByValue(colIdx, value)
+              }
               statsRequest={statsRequest}
               onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
               onExploreColumn={

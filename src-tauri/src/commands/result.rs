@@ -271,6 +271,7 @@ mod tests {
                 value2: String::new(),
                 null_mode: NullMode::Any,
                 case_sensitive: false,
+                values: Vec::new(),
             }],
             String::new(),
         )
@@ -284,6 +285,7 @@ mod tests {
             "A".into(),
             FindOptions {
                 case_sensitive: false,
+                values: Vec::new(),
                 whole_cell: false,
             },
             10,

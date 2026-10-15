@@ -37,6 +37,7 @@ interface SortFilterCase {
     value2: string;
     nullMode: ColumnFilter["nullMode"];
     caseSensitive?: boolean;
+    values?: string[];
   }[];
   global?: string;
   expected: number[];
@@ -63,6 +64,7 @@ function applyJs(c: SortFilterCase): number[] {
       value2: f.value2,
       nullMode: f.nullMode,
       ...(f.caseSensitive ? { caseSensitive: true } : {}),
+      ...(f.values ? { values: f.values } : {}),
     } as ColumnFilter,
   }));
   const req = buildHandleRequest(sorting, filters, c.global, c.kinds);
