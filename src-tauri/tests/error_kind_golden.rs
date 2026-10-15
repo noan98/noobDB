@@ -78,6 +78,9 @@ fn build_native(variant: &str, arg: Option<&str>) -> AppError {
         "AiOverloaded" => {
             AppError::AiOverloaded(arg.expect("AiOverloaded requires arg").to_string())
         }
+        "AiBudgetExceeded" => {
+            AppError::AiBudgetExceeded(arg.expect("AiBudgetExceeded requires arg").to_string())
+        }
         "FlightAlreadyUndone" => AppError::FlightAlreadyUndone,
         "FlightPrimaryKeyUnresolved" => AppError::FlightPrimaryKeyUnresolved,
         "ViewBaseUnresolved" => AppError::ViewBaseUnresolved,

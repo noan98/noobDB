@@ -9,8 +9,10 @@
 //! - `sse`: SSE 行のパースと、Anthropic のストリームイベント → 内部イベントの変換。
 //! - `client`: HTTP 層 (`AiTransport` でスタブ可能) と、ストリーミング / 非ストリーミング
 //!   の実行ロジック (refusal・usage・フォールバックモデルの扱い)。
+//! - `budget`: 月次予算の判定 (#1620)。台帳の月初からの概算コストが予算以上なら実行前に止める。
 //! - `usage`: 使用量台帳 (日 × タスク × モデルのトークン数、#1540)。数値のみ保存する。
 
+pub mod budget;
 pub mod client;
 pub mod models;
 pub mod request;

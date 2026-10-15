@@ -5486,6 +5486,50 @@ const en = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  aiMonthlyBudget: "Monthly budget (USD)",
+  aiMonthlyBudgetHelp:
+    "Once the estimated cost since the start of the month (JST) reaches this amount, AI requests are stopped before they are sent. You get a warning at 80%. Empty = no limit. The cost is an estimate from the usage history and the built-in price table.",
+  aiMonthlyBudgetPlaceholder: "No limit",
+  aiBudgetOk: "This month's estimated AI cost: {spent} of {budget} ({percent}%).",
+  aiBudgetWarning:
+    "This month's estimated AI cost is {spent} of {budget} ({percent}%). Requests stop when the budget is reached.",
+  aiBudgetExceeded:
+    "This month's estimated AI cost ({spent}) has reached the budget ({budget}). AI requests are stopped until you raise the budget or the month changes.",
+  errorHintAiBudget:
+    "The monthly AI budget has been reached. Raise it under Settings > AI assistant, or wait for the next month (JST).",
+  aiQueryUnknownTable:
+    'The table "{name}" is not in the schema that was sent. It may not exist; check the name before running.',
+  aiQueryUnknownColumn:
+    'The column "{name}" was not found in the table "{table}" in the schema that was sent. It may not exist; check the name before running.',
+  explainAiCompare: "Compare plan",
+  explainAiCompareHelp:
+    "Runs EXPLAIN (no ANALYZE) on this rewrite and compares the estimated plan with the current one. The query itself is not executed and no data is touched.",
+  explainAiCompareError: "Could not get the plan of the rewrite: {message}",
+  explainAiCompareTitle: "Compare with the AI rewrite",
+  explainAiCompareColBefore: "Current",
+  explainAiCompareColAfter: "Rewrite",
+  explainAiCompareBeforePane: "Current plan",
+  explainAiCompareAfterPane: "AI rewrite (estimated)",
+  testDataAiPlanCached:
+    'Reusing the saved plan for this table (saved {at}); the AI was not called. Press "Regenerate with AI" to create a new one. A saved plan is discarded when the table\'s columns change.',
+  aiSchemaDocIncremental: "Regenerate only the tables that changed",
+  aiSchemaDocIncrementalHelp:
+    "A document from the previous run ({at}) is saved. Only the tables whose columns, indexes or foreign keys changed, and the tables they reference, are sent to the AI; the other table sections are reused. The overview, table list and relationships sections stay as they were. Turn this off to regenerate everything.",
+  aiSchemaDocIncrementalResult:
+    "Incremental update: {updated} tables regenerated, {reused} reused from the previous document, {removed} removed.",
+  aiSchemaDocIncrementalMissing:
+    "{count} tables were not returned by the AI and keep their previous section.",
+  aiErrorExplainShowFull: "Show full SQL",
+  aiErrorExplainShowDiff: "Show diff",
+  aiSqlOpenInNewTab: "Open in new tab",
+  aiSqlOpenInNewTabHelp:
+    "Opens the proposal in a new query tab without running it. The original tab is not changed, so you can run and compare both.",
+  aiSqlOpenedInNewTab: "Opened in a new tab. It has not been run.",
+  schemaExportTokens: "Approx. {tokens} tokens ({percent}% of a {limit}-token context guide)",
+  schemaExportTokensWarn:
+    "This is large. Narrow the tables, or turn off FK-related tables, before pasting into an AI so the reply is not cut off.",
+  schemaExportTokensDanger: "This may exceed the AI context limit. Reduce the selection before pasting.",
+  schemaExportTokensFkExpanded: "FK expansion added {added} table(s) (about {tokens} tokens in total).",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10944,6 +10988,51 @@ const ja: Dict = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  aiMonthlyBudget: "月次予算 (USD)",
+  aiMonthlyBudgetHelp:
+    "月初 (JST) からの概算コストがこの額に達すると、AI への要求を送る前に止めます。80% に達すると警告を出します。空欄 = 上限なし。コストは使用量の履歴と内蔵の単価表による概算です。",
+  aiMonthlyBudgetPlaceholder: "上限なし",
+  aiBudgetOk: "今月の AI の概算コスト: {budget} 中 {spent} ({percent}%)。",
+  aiBudgetWarning:
+    "今月の AI の概算コストが {budget} 中 {spent} ({percent}%) に達しています。予算に達すると AI の実行を止めます。",
+  aiBudgetExceeded:
+    "今月の AI の概算コスト ({spent}) が予算 ({budget}) に達しました。予算を引き上げるか翌月になるまで、AI の実行は止まります。",
+  errorHintAiBudget:
+    "AI の月次予算に達しました。設定の「AI アシスタント」で予算を引き上げるか、翌月 (JST) まで待ってください。",
+  aiQueryUnknownTable:
+    "テーブル「{name}」は送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
+  aiQueryUnknownColumn:
+    "列「{name}」はテーブル「{table}」の送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
+  explainAiCompare: "計画を比較",
+  explainAiCompareHelp:
+    "この書き換えに EXPLAIN (ANALYZE なし) だけを実行し、見積もりの計画を現在の計画と比べます。クエリ本体は実行せず、データには触れません。",
+  explainAiCompareError: "書き換え後の計画を取得できませんでした: {message}",
+  explainAiCompareTitle: "AI の書き換え案との比較",
+  explainAiCompareColBefore: "現在",
+  explainAiCompareColAfter: "書き換え案",
+  explainAiCompareBeforePane: "現在の計画",
+  explainAiCompareAfterPane: "AI の書き換え案 (見積もり)",
+  testDataAiPlanCached:
+    "この表の保存済みのプランを再利用しています (保存: {at})。AI は呼び出していません。作り直すには「AI で再生成」を押してください。表の列が変わると保存済みのプランは使われません。",
+  aiSchemaDocIncremental: "変わった表だけを再生成する",
+  aiSchemaDocIncrementalHelp:
+    "前回 ({at}) のドキュメントが保存されています。列・インデックス・外部キーが変わった表と、その参照先の表だけを AI に送り、ほかの表の節は前回のものを再利用します。概要・表一覧・関係の節は前回のままです。全体を作り直すときはオフにしてください。",
+  aiSchemaDocIncrementalResult:
+    "差分再生成: {updated} 表を更新、{reused} 表は前回の節を再利用、{removed} 表を削除しました。",
+  aiSchemaDocIncrementalMissing: "{count} 表は AI の応答に節が無かったため、前回の節のままです。",
+  aiErrorExplainShowFull: "全文を表示",
+  aiErrorExplainShowDiff: "差分を表示",
+  aiSqlOpenInNewTab: "新しいタブで開く",
+  aiSqlOpenInNewTabHelp:
+    "提案を新しいクエリタブで開きます (実行はしません)。元のタブは変更しないので、両方を実行して比較できます。",
+  aiSqlOpenedInNewTab: "新しいタブで開きました (未実行)。",
+  schemaExportTokens: "概算 {tokens} トークン (コンテキスト上限の目安 {limit} トークンの {percent}%)",
+  schemaExportTokensWarn:
+    "大きめです。AI に貼り付ける前にテーブルを絞るか、FK 関連テーブルの追加を外すと、応答が途中で切れにくくなります。",
+  schemaExportTokensDanger:
+    "AI のコンテキスト上限を超える可能性があります。貼り付け前に選択を減らしてください。",
+  schemaExportTokensFkExpanded:
+    "FK 展開で {added} 件のテーブルが加わっています (合計で概算 {tokens} トークン)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

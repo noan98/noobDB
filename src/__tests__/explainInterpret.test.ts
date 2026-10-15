@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExplainInterpretPrompt,
   buildExplainInterpretSystem,
+  buildRewriteExplainSql,
   EXPLAIN_INTERPRET_FORMAT,
   EXPLAIN_INTERPRET_MAX_PLAN_CHARS,
   explainFormatLabel,
@@ -158,5 +159,32 @@ describe("parseExplainInterpretResponse", () => {
     const bad2 = { ...ok, suggestions: [{ kind: "drop", sql: "x", rationale: "r" }] };
     expect(parseExplainInterpretResponse(JSON.stringify(bad2)).ok).toBe(false);
     expect(parseExplainInterpretResponse("plain")).toEqual({ ok: false, raw: "plain" });
+  });
+});
+
+describe("buildRewriteExplainSql (#1620)", () => {
+  const rw = (sql: string) => ({ kind: "rewrite", sql });
+
+  it("書き換え提案の読み取り専用 SQL に、ANALYZE なしの方言別 EXPLAIN を付ける", () => {
+    expect(buildRewriteExplainSql("mysql", rw("SELECT 1;"))).toBe("EXPLAIN FORMAT=JSON SELECT 1");
+    expect(buildRewriteExplainSql("postgres", rw("SELECT 1"))).toBe("EXPLAIN (FORMAT JSON) SELECT 1");
+    expect(buildRewriteExplainSql("sqlite", rw("WITH a AS (SELECT 1) SELECT * FROM a"))).toBe(
+      "EXPLAIN QUERY PLAN WITH a AS (SELECT 1) SELECT * FROM a",
+    );
+    for (const d of ["mysql", "postgres", "sqlite"]) {
+      expect(buildRewriteExplainSql(d, rw("SELECT 1"))).not.toMatch(/ANALYZE/i);
+    }
+  });
+
+  it("DDL 提案・書き込み・複数文・EXPLAIN 済み・空は比較しない (null)", () => {
+    expect(buildRewriteExplainSql("mysql", { kind: "ddl", sql: "CREATE INDEX i ON t(a)" })).toBeNull();
+    expect(buildRewriteExplainSql("mysql", rw("DELETE FROM t"))).toBeNull();
+    expect(buildRewriteExplainSql("mysql", rw("UPDATE t SET a = 1"))).toBeNull();
+    expect(buildRewriteExplainSql("postgres", rw("SELECT 1; DROP TABLE t"))).toBeNull();
+    expect(buildRewriteExplainSql("mysql", rw("EXPLAIN SELECT 1"))).toBeNull();
+    expect(buildRewriteExplainSql("mysql", rw("  ;  "))).toBeNull();
+    // 行ロック付き SELECT は読み取り専用ではない。
+    expect(buildRewriteExplainSql("postgres", rw("SELECT * FROM t FOR UPDATE"))).toBeNull();
+    expect(buildRewriteExplainSql("oracle", rw("SELECT 1"))).toBeNull();
   });
 });
