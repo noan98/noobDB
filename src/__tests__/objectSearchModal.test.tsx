@@ -217,3 +217,96 @@ describe("ObjectSearchModal Enter 判定 (#1604)", () => {
     expect(onOpenTable).not.toHaveBeenCalled();
   });
 });
+
+describe("ObjectSearchModal ビュー・ルーチン・列ジャンプ・行数 (#1629)", () => {
+  const hits: ObjectSearchHit[] = [
+    { kind: "table", database: "testdb", table: "users", row_estimate: 120000 },
+    { kind: "view", database: "testdb", table: "v_users", object_kind: "view" },
+    { kind: "routine", database: "testdb", table: "calc_users", object_kind: "function", object_id: "42" },
+    { kind: "trigger", database: "testdb", table: "trg_users", object_kind: "trigger" },
+    { kind: "column", database: "testdb", table: "users", column: "user_name" },
+  ];
+  const setup = async (extra: { onOpenObject?: (...a: unknown[]) => void } = {}) => {
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(api.searchSchemaObjects).mockImplementation(async (params: { query: string }) =>
+      params.query.trim() ? hits : [],
+    );
+    const onOpenTable = vi.fn();
+    const onClose = vi.fn();
+    renderWithProviders(
+      <ObjectSearchModal
+        sessionId="s1"
+        currentDatabase="testdb"
+        onOpenTable={onOpenTable}
+        onClose={onClose}
+        {...extra}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText(t("objSearchHint"))).toBeInTheDocument());
+    const input = screen.getByPlaceholderText(t("objSearchPlaceholder"));
+    fireEvent.change(input, { target: { value: "user" } });
+    await waitFor(() => expect(screen.getAllByRole("option").length).toBe(hits.length));
+    return { input, onOpenTable, onClose };
+  };
+
+  it("テーブルの行に行数の目安が付く (ビューや列には付かない)", async () => {
+    await setup();
+    expect(screen.getByText("~120K")).toBeInTheDocument();
+    expect(screen.getAllByText(/^~/)).toHaveLength(1);
+  });
+
+  it("ビュー / ルーチン / トリガーには種別が添えられる", async () => {
+    await setup();
+    expect(screen.getByText(`testdb · ${t("objSearchKind_view")}`)).toBeInTheDocument();
+    expect(screen.getByText(`testdb · ${t("objSearchKind_function")}`)).toBeInTheDocument();
+    expect(screen.getByText(`testdb · ${t("objSearchKind_trigger")}`)).toBeInTheDocument();
+  });
+
+  it("ビューはテーブルと同じようにデータを開く", async () => {
+    const { input, onOpenTable } = await setup();
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTable).toHaveBeenCalledWith("testdb", "v_users");
+  });
+
+  it("ルーチンは定義を開き、id も渡す", async () => {
+    const onOpenObject = vi.fn();
+    const { input, onOpenTable, onClose } = await setup({ onOpenObject });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenObject).toHaveBeenCalledWith("testdb", "function", "calc_users", "42");
+    expect(onOpenTable).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("onOpenObject が無ければルーチンは開けず、閉じもしない", async () => {
+    const { input, onOpenTable, onClose } = await setup();
+    for (let i = 0; i < 2; i++) fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTable).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("列ヒットはテーブルを開いて列を伝える", async () => {
+    const { input, onOpenTable } = await setup();
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenTable).toHaveBeenCalledWith("testdb", "users", { column: "user_name" });
+  });
+
+  it("Shift+Enter は新しいタブで開く (列ヒットでも列を伝える)", async () => {
+    const { input, onOpenTable } = await setup();
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(onOpenTable).toHaveBeenLastCalledWith("testdb", "users", { newTab: true });
+    fireEvent.keyDown(input, { key: "ArrowUp" });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(onOpenTable).toHaveBeenLastCalledWith("testdb", "users", { column: "user_name", newTab: true });
+  });
+
+  it("Shift+クリックも新しいタブで開く", async () => {
+    const { onOpenTable } = await setup();
+    fireEvent.click(screen.getAllByRole("option")[1], { shiftKey: true });
+    expect(onOpenTable).toHaveBeenCalledWith("testdb", "v_users", { newTab: true });
+  });
+});

@@ -125,6 +125,7 @@ import {
   buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
+  buildTruncateTablesSql,
 } from "./components/tableMaintenance";
 import {
   buildDropNamespaceSql,
@@ -140,7 +141,12 @@ import {
   buildReplaceViewSql,
   extractViewBody,
 } from "./components/viewMaintenance";
-import type { MaintenanceCommand } from "./components/maintenanceCommands";
+import {
+  batchMaintenanceCommands,
+  MAINTENANCE_LABEL_KEYS,
+  type MaintenanceCommand,
+  type MaintenanceKind,
+} from "./components/maintenanceCommands";
 import {
   buildIdentitySyncSql,
   sqliteHasAutoincrementSql,
@@ -184,6 +190,7 @@ import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
+import type { SchemaJumpTarget } from "./components/identifierJump";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -7168,12 +7175,33 @@ export default function App() {
   // open_table の応答待ち中の (database, table)。タブがまだ state に無い間の再実行で
   // 同じテーブルのタブが二重に開かないようにする (tabOpenFlightId と同じキー)。
   const openingTablesRef = useRef<Set<string>>(new Set());
+  // オブジェクト検索の列ヒットから開いたとき、開いたテーブルの結果グリッドでその列へ
+  // アクティブセルとフォーカスを移すための保留中の要求 (#1629)。
+  const [columnReveal, setColumnReveal] = useState<{
+    database: string;
+    table: string;
+    column: string;
+    /** 「新しいタブで開く」ときに、すでにあったタブ (これらには移さない)。 */
+    excludeTabIds: string[];
+  } | null>(null);
+  const newTableTabSeqRef = useRef(0);
   const handleOpenTable = useCallback(
-    (database: string, table: string) => {
+    (database: string, table: string, opts?: { newTab?: boolean; column?: string }) => {
       recordRecentTableOpen(database, table);
-      const existing = tabs.find(
-        (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+      setColumnReveal(
+        opts?.column
+          ? {
+              database,
+              table,
+              column: opts.column,
+              excludeTabIds: opts.newTab ? tabs.map((tt) => tt.id) : [],
+            }
+          : null,
       );
+      // 「新しいタブで開く」は同じテーブルのタブが開いていても、もう 1 つ開く (#1629)。
+      const existing = opts?.newTab
+        ? undefined
+        : tabs.find((tt) => tt.kind === "table" && tt.database === database && tt.table === table);
       // サイドバー行のダブルクリックが始めた飛行 (#1415)。タブを作らない経路では即解除する。
       const flightId = tabOpenFlightId(database, table);
       if (existing) {
@@ -7186,7 +7214,9 @@ export default function App() {
         return;
       }
       // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-      const openKey = `${sessionId}\u0000${flightId}`;
+      const openKey = opts?.newTab
+        ? `${sessionId}\u0000${flightId}\u0000new${++newTableTabSeqRef.current}`
+        : `${sessionId}\u0000${flightId}`;
       if (openingTablesRef.current.has(openKey)) return;
       openingTablesRef.current.add(openKey);
       const limit = Math.max(1, settings.defaultDisplayCount);
@@ -7277,6 +7307,33 @@ export default function App() {
       patchTab,
     ],
   );
+
+  // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
+  // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
+  useEffect(() => {
+    if (!columnReveal) return;
+    const timer = setTimeout(() => setColumnReveal(null), 15000);
+    const tab = activeTab;
+    if (
+      tab &&
+      tab.kind === "table" &&
+      tab.database === columnReveal.database &&
+      tab.table === columnReveal.table &&
+      !columnReveal.excludeTabIds.includes(tab.id) &&
+      tab.result
+    ) {
+      if (tab.result.rows.length > 0) {
+        const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
+        if (grid) {
+          grid.revealColumn(columnReveal.column);
+          setColumnReveal(null);
+        }
+      } else if (!tab.streaming) {
+        setColumnReveal(null);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [columnReveal, activeTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -8521,6 +8578,164 @@ export default function App() {
       }
     },
     [toast],
+  );
+
+  // 複数選択したテーブルの一括 TRUNCATE (#1629)。確認導線は一括 DROP と同じ (本番接続ではデータベース名の
+  // タイプ入力、対象は全件をスクロール可能な一覧で見せる)。流し方は方言で違う:
+  // PostgreSQL は 1 文 (全件成功か全件失敗)、SQLite は 1 トランザクション (同、FK は COMMIT まで遅延)、
+  // MySQL は暗黙コミットなのでテーブルごとに順に流し、失敗したらそこで止めて途中までの件数を伝える。
+  const handleTruncateTables = useCallback(
+    async (database: string, tables: string[]) => {
+      if (tables.length === 0 || !sessionId) return;
+      const production = Boolean(selectedProfile?.is_production);
+      const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+      const body: ReactNode = production ? (
+        <>
+          {translate("batchTruncateConfirmBodyList", { count: tables.length, database })}
+          <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-truncate-table-list">
+            {tables.map((tbl) => (
+              <Box as="li" key={tbl} wordBreak="break-all">
+                {tbl}
+              </Box>
+            ))}
+          </Box>
+        </>
+      ) : (
+        translate("batchTruncateConfirmBody", { count: tables.length, database, tables: names })
+      );
+      // MySQL は暗黙コミットでテーブルごとに流すため、途中失敗で戻せないことを確認文に足す。
+      const bodyWithNote: ReactNode =
+        selectedProfile?.driver === "mysql" ? (
+          <>
+            {body}
+            <Box mt="2">{translate("batchTruncateMysqlNote")}</Box>
+          </>
+        ) : (
+          body
+        );
+      const ok = await confirm({
+        title: translate("batchTruncateConfirmTitle", { count: tables.length }),
+        message: maintenanceMessage(bodyWithNote),
+        confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
+        tone: "danger",
+        typedConfirmation: production ? database : undefined,
+      });
+      if (!ok) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const { mode, statements } = buildTruncateTablesSql(driver, database, tables);
+      let failed = false;
+      try {
+        if (mode === "transaction") {
+          await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
+        } else if (mode === "single") {
+          await api.runQuery(sessionId, statements[0], database);
+        } else {
+          let done = 0;
+          for (const sql of statements) {
+            try {
+              await api.runQuery(sessionId, sql, database);
+              done += 1;
+            } catch (e) {
+              failed = true;
+              toast.error(
+                translate("batchTruncatePartial", {
+                  done,
+                  count: tables.length,
+                  table: tables[done] ?? "",
+                  error: String(e),
+                }),
+              );
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        failed = true;
+        toast.error(translate("batchTruncateRolledBack", { error: String(e) }));
+      }
+      // 失敗しても途中まで実行された可能性があるので、ツリーと補完は読み直す。
+      invalidateSchemaCache(database);
+      noteSchemaDdl(statements.join(";\n"), database);
+      connectionListRef.current?.refreshSchema();
+      if (!failed) toast.success(translate("batchTruncateSuccess", { count: tables.length }));
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      sessionId,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
+  );
+
+  // 複数選択したテーブルへの一括保守 (ANALYZE / OPTIMIZE / VACUUM 等、#1629)。単一テーブルの
+  // `handleRunTableMaintenance` と同じく生成した SQL を確認ダイアログで見せ、一括 DROP と同じく
+  // 本番接続ではデータベース名の入力を求める。テーブルごとに 1 文ずつ流し、失敗したテーブルが
+  // あっても残りは続けて、最後に件数と失敗したテーブルを伝える。
+  const handleRunTablesMaintenance = useCallback(
+    async (database: string, tables: string[], kind: MaintenanceKind) => {
+      if (!sessionId) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const commands = batchMaintenanceCommands(driver, database, tables, kind);
+      if (commands.length === 0) return;
+      const ok = await confirm({
+        title: translate("batchMaintenanceConfirmTitle", {
+          kind: translate(MAINTENANCE_LABEL_KEYS[kind]),
+          count: commands.length,
+        }),
+        message: maintenanceMessage(
+          <>
+            {translate("batchMaintenanceConfirmBody", { count: commands.length, database })}
+            <br />
+            <br />
+            <CodePreview wrap maxH="40vh">
+              {commands.map((c) => c.command.sql).join("\n")}
+            </CodePreview>
+          </>,
+        ),
+        confirmLabel: translate("batchMaintenanceConfirmOk", { count: commands.length }),
+        typedConfirmation: selectedProfile?.is_production ? database : undefined,
+      });
+      if (!ok) return;
+      const failedTables: string[] = [];
+      let firstError = "";
+      for (const { table, command } of commands) {
+        try {
+          await api.runQuery(sessionId, command.sql, database);
+        } catch (e) {
+          failedTables.push(table);
+          if (!firstError) firstError = String(e);
+        }
+      }
+      invalidateSchemaCache(database);
+      // 統計更新などで推定行数が変わるので、ツリーも読み直す。
+      noteSchemaDdl(commands.map((c) => c.command.sql).join("\n"), database);
+      connectionListRef.current?.refreshSchema();
+      if (failedTables.length === 0) {
+        toast.success(translate("batchMaintenanceDone", { count: commands.length }));
+      } else {
+        toast.error(
+          `${translate("batchMaintenancePartial", {
+            done: commands.length - failedTables.length,
+            count: commands.length,
+            failed: failedTables.join(", "),
+          })} (${firstError})`,
+        );
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      sessionId,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
   );
 
   // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
@@ -10019,6 +10234,16 @@ export default function App() {
   }, []);
   focusExplorerRef.current = focusExplorer;
 
+  // エディタの識別子を Ctrl/Cmd+クリックしたとき、サイドバーのスキーマツリーで対象の
+  // テーブル / 列を選ぶ (#1629)。折りたたみ中はサイドバーを開いて接続タブへ切り替える。
+  // ツリー側が DB・テーブルを展開し、行が描画されたらフォーカスする。
+  const handleRevealSchemaObject = useCallback((target: SchemaJumpTarget) => {
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+    setSidebarTab("connections");
+    requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
+  }, []);
+
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
   // 組み立てると全テーブル分の項目生成が行バッチのたびに走っていた。
@@ -10518,6 +10743,7 @@ export default function App() {
     handleCloseTab: requestCloseTab,
     handleEditorDocChange,
     handleAiSqlAction,
+    handleRevealSchemaObject,
     handleAiResultSummary,
     handleExploreColumns,
     handleNewTab,
@@ -10769,6 +10995,8 @@ export default function App() {
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
     onDropTables: handleDropTables,
+    onTruncateTables: handleTruncateTables,
+    onRunTablesMaintenance: handleRunTablesMaintenance,
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
     onDropIndex: handleDropIndex,
@@ -13106,6 +13334,9 @@ export default function App() {
               sessionId={sessionId}
               currentDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onOpenObject={(database, kind, name, id) =>
+                void handleOpenObjectDefinition(database, kind, name, id)
+              }
               onClose={() => setShowObjectSearch(false)}
             />
           )}

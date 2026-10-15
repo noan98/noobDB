@@ -1232,10 +1232,13 @@ export const channelCancelledMessage = z.object({
 
 /** グローバルオブジェクト検索のヒット 1 件。`column` はカラムエントリのときだけ。 */
 export const objectSearchHit = z.object({
-  kind: z.enum(["table", "column"]),
+  kind: z.enum(["table", "column", "view", "routine", "trigger"]),
   database: z.string(),
   table: z.string(),
   column: z.string().optional(),
+  object_kind: z.string().optional(),
+  object_id: z.string().optional(),
+  row_estimate: z.number().optional(),
 });
 
 export const objectSearchHitArray = z.array(objectSearchHit);

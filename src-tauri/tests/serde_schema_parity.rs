@@ -1525,6 +1525,9 @@ fn build_fixtures() -> serde_json::Value {
         database: "appdb".into(),
         table: "users".into(),
         column: Some("email".into()),
+        object_kind: Some("function".into()),
+        object_id: Some("16385".into()),
+        row_estimate: Some(1200),
     };
     let table_columns = t::TableColumns {
         name: "users".into(),

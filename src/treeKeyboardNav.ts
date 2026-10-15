@@ -90,12 +90,77 @@ export function resolveTreeMove(
       return n - 1;
     default: {
       if (key.length !== 1) return null;
-      const needle = key.toLowerCase();
-      for (let step = 1; step <= n; step++) {
-        const i = (((current + step) % n) + n) % n;
-        if (entries[i].label.trim().toLowerCase().startsWith(needle)) return i;
-      }
-      return null;
+      return resolveTreeTypeahead(entries, current, key);
     }
   }
+}
+
+/** 先頭文字ジャンプの入力バッファを持ち越す時間 (ミリ秒)。これを超えて空くと打ち直し扱い。 */
+export const TREE_TYPEAHEAD_TIMEOUT_MS = 800;
+
+/** 先頭文字ジャンプの入力バッファ (#1629)。 */
+export interface TreeTypeaheadState {
+  /** これまでに打った文字列 (大小は区別しない)。 */
+  text: string;
+  /** 最後に打った時刻 (ミリ秒)。 */
+  at: number;
+}
+
+/**
+ * 1 文字打たれたときの入力バッファを更新する。直前の入力から `timeoutMs` 以内なら連結し、
+ * 空いていれば打ち直し (その 1 文字だけ) にする。
+ */
+export function nextTreeTypeahead(
+  prev: TreeTypeaheadState | null,
+  key: string,
+  now: number,
+  timeoutMs: number = TREE_TYPEAHEAD_TIMEOUT_MS,
+): TreeTypeaheadState {
+  const keep = prev !== null && now - prev.at >= 0 && now - prev.at <= timeoutMs;
+  return { text: (keep ? prev.text : "") + key.toLowerCase(), at: now };
+}
+
+/**
+ * 前方一致で移動先の行を返す (APG Tree パターンの先頭文字ジャンプ)。
+ *
+ * - バッファが 1 文字、または同じ文字の繰り返し (`ss`) のときは従来どおり 1 文字ジャンプ:
+ *   現在行の次から探して同じ頭文字の行を順に巡回する。
+ * - 2 文字以上の文字列 (`us`) は、現在行を含めて探す。`u` で `users` に着いたあと `us` と
+ *   続けても、現在行が一致するならそのままにする。末尾まで探して無ければ先頭へ折り返す。
+ */
+export function resolveTreeTypeahead(
+  entries: readonly TreeNavEntry[],
+  current: number,
+  buffer: string,
+): number | null {
+  const n = entries.length;
+  const needle = buffer.toLowerCase();
+  if (n === 0 || needle.length === 0) return null;
+  const cycling = [...needle].every((c) => c === needle[0]);
+  const prefix = cycling ? needle[0] : needle;
+  const from = cycling ? 1 : 0;
+  for (let step = from; step < n + from; step++) {
+    const i = (((current + step) % n) + n) % n;
+    if (entries[i].label.trim().toLowerCase().startsWith(prefix)) return i;
+  }
+  return null;
+}
+
+/**
+ * `*` キー: 現在行と同じ階層の兄弟のうち、折りたたまれた展開可能ノードの位置を返す (APG の任意仕様)。
+ * 兄弟は「同じ親の下で同じ `level` の行」で、現在行から上下に自分より浅い行に当たるまでの範囲。
+ */
+export function resolveTreeExpandSiblings(entries: readonly TreeNavRow[], index: number): number[] {
+  const row = entries[index];
+  if (!row) return [];
+  let lo = index;
+  while (lo > 0 && entries[lo - 1].level >= row.level) lo--;
+  let hi = index;
+  while (hi < entries.length - 1 && entries[hi + 1].level >= row.level) hi++;
+  const out: number[] = [];
+  for (let i = lo; i <= hi; i++) {
+    const e = entries[i];
+    if (e.level === row.level && e.expandable && !e.open) out.push(i);
+  }
+  return out;
 }

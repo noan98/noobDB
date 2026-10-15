@@ -24,8 +24,8 @@ use crate::db::data_search::{
     build_table_scan_sql, parse_scan_row, should_skip_table_for_scan, ColumnHit, MatchMode,
     ScanColumn,
 };
-use crate::db::object_search::{js_trim, ObjectHit, ObjectIndex};
-use crate::db::types::{SchemaObject, TableColumnInfo};
+use crate::db::object_search::{js_trim, ObjectHit, ObjectIndex, ObjectIndexSource};
+use crate::db::types::{SchemaObject, TableColumnInfo, TableRowEstimate, TableSchema};
 use crate::db::where_used::{
     analyze_definition, snippet_applies_to_driver, supports_kind, DefinitionAnalysis,
     WhereUsedTarget,
@@ -50,6 +50,52 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 pub enum ObjectSearchScope {
     Current { database: String },
     All,
+}
+
+/// 索引へ取り込む DB ごとの補足情報を同時に取りに行く数 (#1629)。
+const INDEX_ENRICH_CONCURRENCY: usize = 6;
+
+/// 検索索引に足す、ビュー / ルーチン / トリガーと推定行数 (#1629)。どちらもベストエフォートで、
+/// 権限不足などで取れなかった DB は空のまま (テーブルと列の検索は従来どおり動く)。
+/// スキーマオブジェクト一覧は `SchemaCache` を共有する。推定行数は DML で変わる統計なので
+/// キャッシュせず、索引が作り直されるとき (スキーマ更新・DDL) にだけ取り直す。
+async fn fetch_index_extras(
+    session: &Session,
+    databases: &[String],
+) -> HashMap<String, (Vec<SchemaObject>, Vec<TableRowEstimate>)> {
+    use futures_util::stream::{self, StreamExt};
+    let conn = &session.conn;
+    let cache = &session.schema_cache;
+    stream::iter(databases.iter().cloned())
+        .map(|db| async move {
+            let (objects, estimates) = tokio::join!(
+                cache.schema_objects(&db, || conn.schema_objects(&db)),
+                conn.table_row_estimates(&db)
+            );
+            (
+                db,
+                (objects.unwrap_or_default(), estimates.unwrap_or_default()),
+            )
+        })
+        .buffered(INDEX_ENRICH_CONCURRENCY)
+        .collect::<HashMap<_, _>>()
+        .await
+}
+
+/// テーブル一覧 (列名つき) に補足情報を合わせて索引を作る。
+async fn build_index(session: &Session, per_db: &[(String, Vec<TableSchema>)]) -> Arc<ObjectIndex> {
+    let names: Vec<String> = per_db.iter().map(|(d, _)| d.clone()).collect();
+    let extras = fetch_index_extras(session, &names).await;
+    let empty = (Vec::new(), Vec::new());
+    Arc::new(ObjectIndex::build_full(per_db.iter().map(|(d, t)| {
+        let (objects, estimates) = extras.get(d).unwrap_or(&empty);
+        ObjectIndexSource {
+            database: d.as_str(),
+            tables: t.as_slice(),
+            objects: objects.as_slice(),
+            row_estimates: estimates.as_slice(),
+        }
+    })))
 }
 
 /// 全 DB 分の索引を (キャッシュ経由で) 返す。`information_schema` を 1 問い合わせで
@@ -78,9 +124,7 @@ async fn all_databases_index(session: &Session) -> Result<Arc<ObjectIndex>> {
                     acc
                 }
             };
-            Ok(Arc::new(ObjectIndex::build(
-                per_db.iter().map(|(d, t)| (d.as_str(), t.as_slice())),
-            )))
+            Ok(build_index(session, &per_db).await)
         })
         .await
 }
@@ -93,10 +137,7 @@ async fn single_database_index(session: &Session, database: &str) -> Result<Arc<
             let tables = cache
                 .schema_overview(database, || conn.schema_overview(database))
                 .await?;
-            Ok(Arc::new(ObjectIndex::build([(
-                database,
-                tables.as_slice(),
-            )])))
+            Ok(build_index(session, &[(database.to_string(), tables)]).await)
         })
         .await
 }
@@ -124,7 +165,7 @@ pub async fn search_schema_objects_core(
         .map_err(|e| AppError::Other(format!("object search task failed: {e}")))
 }
 
-/// スキーマ横断のオブジェクト検索 (テーブル名・カラム名の大小無視の部分一致)。全 DB 分の
+/// スキーマ横断のオブジェクト検索 (テーブル・ビュー・ルーチン・トリガー名とカラム名の大小無視の部分一致)。全 DB 分の
 /// 索引はセッションの `SchemaCache` に保持され、2 回目以降の検索は再取得しない。
 /// `query` が空なら結果は空で、索引の事前構築 (ウォームアップ) だけを行う。
 #[tauri::command]

@@ -82,6 +82,30 @@ export function buildRelatedOpenSql(p: Omit<RelatedRowsSqlParams, "limit">): str
   return buildReverseRefSql(p);
 }
 
+/**
+ * アコーディオン見出しに出す子行件数を数える SQL (#1629)。数えるのは `RELATED_ROWS_MAX + 1` 件までで
+ * (サブクエリの `LIMIT` で打ち切る)、巨大な子テーブルでも全件を走査しない。結果は 1 行 1 列の件数。
+ * キー値が NULL (子行が存在し得ない) なら null。
+ */
+export function buildRelatedCountSql(p: Omit<RelatedRowsSqlParams, "limit">): string | null {
+  if (p.value === null || p.value === undefined) return null;
+  // `buildReverseRefSql` は常に `SELECT * FROM …` で始まる。件数だけなので列は読まない。
+  const rows = buildReverseRefSql(p).replace(/^SELECT \* /, "SELECT 1 ");
+  return `SELECT COUNT(*) FROM (${rows} LIMIT ${RELATED_ROWS_MAX + 1}) AS related_count`;
+}
+
+/** [`buildRelatedCountSql`] の結果 (先頭セル) を件数に直す。数として読めなければ null。 */
+export function parseRelatedCount(rows: readonly (readonly CellValue[])[]): number | null {
+  const cell = rows[0]?.[0];
+  const n = typeof cell === "number" ? cell : typeof cell === "string" ? Number(cell.trim()) : Number.NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+/** 見出しの件数表示。`RELATED_ROWS_MAX` を超えたら「超」の側 (`over`) にする。 */
+export function describeRelatedCount(count: number): { count: number; over: boolean } {
+  return count > RELATED_ROWS_MAX ? { count: RELATED_ROWS_MAX, over: true } : { count, over: false };
+}
+
 /** 上限 + 1 件で取った行を、表示分と「続きあり」に分ける。 */
 export function splitRelatedRows<T>(rows: readonly T[], limit: number): { rows: T[]; hasMore: boolean } {
   const n = clampRelatedLimit(limit);
