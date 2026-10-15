@@ -17,14 +17,18 @@ import { displayVersion, formatDownloadProgress, truncateReleaseNotes } from "..
 type Translate = ReturnType<typeof useT>;
 type ToastApi = ReturnType<typeof useToast>;
 type ConfirmFn = ReturnType<typeof useConfirm>["confirm"];
+type ChooseFn = ReturnType<typeof useConfirm>["choose"];
 
 export interface UpdatePromptDeps {
   t: Translate;
   toast: ToastApi;
   confirm: ConfirmFn;
+  /** 3 択版 (`useConfirm().choose`)。`rememberSkip` のときに使う。 */
+  choose?: ChooseFn;
   /**
-   * 起動時の自動チェック用 (#1631)。true なら「後で」を選んだバージョンを覚え、より新しい版が出るまで
-   * 次回以降の起動では出さない。設定画面の手動チェックでは指定しない (毎回見せる)。
+   * 起動時の自動チェック用 (#1631)。true なら「このバージョンは見送る」ボタンを足し、押したときだけ
+   * そのバージョンを覚えて、より新しい版が出るまで次回以降の起動では出さない。Esc / × / 「後で」は
+   * 見送りにしない。設定画面の手動チェックでは指定しない (毎回見せる)。
    */
   rememberSkip?: boolean;
 }
@@ -40,7 +44,7 @@ export async function confirmAndInstallUpdate(
   update: AvailableUpdate,
   deps: UpdatePromptDeps,
 ): Promise<void> {
-  const { t, toast, confirm, rememberSkip } = deps;
+  const { t, toast, confirm, choose, rememberSkip } = deps;
   const notes = truncateReleaseNotes(update.body);
   const message: ReactNode = (
     <chakra.div display="flex" flexDirection="column" gap="3">
@@ -74,15 +78,23 @@ export async function confirmAndInstallUpdate(
     </chakra.div>
   );
 
-  const ok = await confirm({
+  const dialogOpts = {
     title: t("updateAvailableTitle"),
     message,
     confirmLabel: t("updateDownloadAndRestart"),
-    cancelLabel: rememberSkip ? t("updateSkipVersion") : t("updateLater"),
-    tone: "primary",
-  });
+    cancelLabel: t("updateLater"),
+    tone: "primary" as const,
+  };
+  let ok: boolean;
+  if (rememberSkip && choose) {
+    const choice = await choose({ ...dialogOpts, altLabel: t("updateSkipVersion") });
+    // 見送りは「このバージョンは見送る」を押したときだけ。Esc / × / 後で は次回も出す。
+    if (choice === "alt") saveSkippedUpdateVersion(update.version);
+    ok = choice === "confirm";
+  } else {
+    ok = await confirm(dialogOpts);
+  }
   if (!ok) {
-    if (rememberSkip) saveSkippedUpdateVersion(update.version);
     void dismissUpdate(update);
     return;
   }

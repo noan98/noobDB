@@ -71,16 +71,16 @@ describe("buildQuickLauncherSections", () => {
 
   it("削除済みスニペットを捨て、クエリの重複 (空白差) と空を除く", () => {
     const s = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS);
-    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["a", "c"]);
+    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["c", "a"]);
     expect(s[1].items.map((i) => (i.kind === "query" ? i.sql : ""))).toEqual([
       "SELECT 1",
       "SELECT 2",
       "SELECT 3",
     ]);
-    expect(s[2].items.map((i) => (i.kind === "table" ? i.ref.table : ""))).toEqual(["new", "old"]);
+    expect(s[2].items.map((i) => (i.kind === "table" ? i.ref.table : ""))).toEqual(["old", "new"]);
   });
 
-  it("お気に入りスニペットは新しい登録順 (末尾が先頭) で、件数超過時も新しいものが残る", () => {
+  it("お気に入りスニペットはサイドバーと同じ保存順で、件数超過時は先頭から切る", () => {
     const ids = ["a", "b", "c", "d"];
     const many = {
       ...src,
@@ -91,7 +91,7 @@ describe("buildQuickLauncherSections", () => {
       ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
       favoriteSnippets: 2,
     });
-    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["d", "c"]);
+    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["a", "b"]);
     expect(s[0].hasMore).toBe(true);
   });
 

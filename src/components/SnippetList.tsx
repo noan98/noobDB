@@ -47,8 +47,6 @@ interface Props {
   onOpenPlanWatch?: () => void;
   /** お気に入り (ピン留め) 済みのスニペット ID (#877)。接続の有無に関わらず永続化される。 */
   favoriteIds?: string[];
-  /** お気に入りの並べ替え (#1631)。delta は登録順での移動量 (負が前)。 */
-  onMoveFavorite?: (snippet: Snippet, delta: number) => void;
   /** お気に入りのトグル。ローカル永続化のみなので接続有無に関わらず常に渡せる。 */
   onToggleFavorite?: (snippet: Snippet) => void;
   /**
@@ -284,7 +282,6 @@ export const SnippetList = memo(function SnippetList({
   onOpenPlanWatch,
   favoriteIds,
   onToggleFavorite,
-  onMoveFavorite,
   onRun,
 }: Props) {
   const t = useT();
@@ -353,19 +350,6 @@ export const SnippetList = memo(function SnippetList({
       items.push({
         label: favoriteIds?.includes(s.id) ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite"),
         onSelect: () => onToggleFavorite(s),
-      });
-    }
-    if (onMoveFavorite && favoriteIds?.includes(s.id)) {
-      const pos = favoriteIds.indexOf(s.id);
-      items.push({
-        label: t("snippetMenuFavoriteEarlier"),
-        onSelect: () => onMoveFavorite(s, -1),
-        disabled: pos <= 0,
-      });
-      items.push({
-        label: t("snippetMenuFavoriteLater"),
-        onSelect: () => onMoveFavorite(s, 1),
-        disabled: pos >= favoriteIds.length - 1,
       });
     }
     if (onTogglePlanWatch) {

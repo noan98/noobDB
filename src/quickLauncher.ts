@@ -100,9 +100,9 @@ export function buildQuickLauncherSections(
   query = "",
 ): QuickLauncherSection[] {
   const byId = new Map(src.snippets.map((s) => [s.id, s]));
-  // お気に入りは登録順 (新しいものが末尾) なので、テーブル側と同じく新しい順に並べ替える。
+  // お気に入りは保存順 (登録順。並べ替えた順) のまま見せる。サイドバーと同じ向きなので、
+  // 並べ替えの「前へ / 上へ」が画面の上方向と一致する (#1631)。
   const favSnippets = [...src.snippetQuickAccess.favorites]
-    .reverse()
     .map((id) => byId.get(id))
     .filter((s): s is Snippet => s !== undefined)
     .map((snippet): QuickLauncherItem => ({ kind: "snippet", key: `snippet:${snippet.id}`, snippet }));
@@ -123,8 +123,8 @@ export function buildQuickLauncherSections(
       key: `${prefix}:${ref.database}\u0000${ref.table}`,
       ref,
     });
-  // お気に入りは登録順 (新しいものが末尾) なので、新しい順に並べ替えて見せる。
-  const favTables = [...src.tableQuickAccess.favorites].reverse().map(tableItem("fav"));
+  // お気に入りは保存順のまま (サイドバーと同じ向き)。
+  const favTables = [...src.tableQuickAccess.favorites].map(tableItem("fav"));
   const recentTables = src.tableQuickAccess.recent.map(tableItem("recent"));
 
   const all: Record<QuickLauncherSectionId, QuickLauncherItem[]> = {

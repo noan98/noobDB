@@ -88,6 +88,7 @@ import {
   closedTabsForScope,
   dropClosedTabsForScope,
   loadPersistedClosedTabs,
+  removePersistedClosedTabs,
   pushClosedTab,
   restoreClosedTabs,
   savePersistedClosedTabs,
@@ -1444,11 +1445,6 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [dataTheme, theme]);
-  // カスタムテーマ (#1631): 色トークンの上書きをインライン CSS 変数として当てる。
-  useEffect(
-    () => applyCustomThemeVars(document.documentElement, settings.customTheme),
-    [settings.customTheme],
-  );
 
   useEffect(() => {
     // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
@@ -1508,6 +1504,10 @@ export default function App() {
     // `:root[data-motion=...]` ルールが OS 設定を上書きし、"system" は
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
+
+    // カスタムテーマ (#1631): 上の構文色・アクセント色などの注入より後に当てる (--syntax-* など同名の
+    // トークンを上書きしても、この effect の内側で最後に勝つ)。外すときは effect の再実行で元の値へ戻る。
+    return applyCustomThemeVars(root, settings.customTheme);
   }, [settings, theme, activeThemePreset]);
 
   // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
@@ -1579,8 +1579,21 @@ export default function App() {
   // 長時間クエリ完了時の OS 通知 (#707): クリックでウィンドウを前面化する購読を
   // アプリ起動時に一度だけ登録する。通知自体は runQueryInTab の onDone/onError で
   // 個別に判定・送信する (notifyQueryOutcome を参照)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ登録する (toast は初回の値で足りる)
   useEffect(() => {
-    registerNotificationClickFocus((tabId) => activateTabRef.current(tabId));
+    registerNotificationClickFocus(
+      (tabId) => activateTabRef.current(tabId),
+      // クリックが届かない環境: 勝手にタブを切り替えず、戻ってきたときに移動を提案する (#1631)。
+      (tabId) =>
+        toast.notify({
+          message: translate("notifyFocusReturnMessage"),
+          tone: "info",
+          action: {
+            label: translate("notifyFocusReturnAction"),
+            onAction: () => activateTabRef.current(tabId),
+          },
+        }),
+    );
   }, []);
 
   // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
@@ -1630,7 +1643,7 @@ export default function App() {
           void dismissUpdate(update);
           return;
         }
-        await confirmAndInstallUpdate(update, { t, toast, confirm, rememberSkip: true });
+        await confirmAndInstallUpdate(update, { t, toast, confirm, choose, rememberSkip: true });
       } catch {
         // ベストエフォート: 起動時チェックの失敗は静かに無視する。
       }
@@ -2353,6 +2366,8 @@ export default function App() {
     if (!scope) return;
     const next = dropClosedTabsForScope(closedTabsRef.current, scope);
     if (next.length === closedTabsRef.current.length) return;
+    // 切断で捨てるだけなので、保存済みの履歴は消さない (次の接続で読み戻す)。
+    skipNextClosedPersistRef.current = true;
     closedTabsRef.current = next;
     setClosedTabs(next);
   }, []);
@@ -2373,12 +2388,23 @@ export default function App() {
     setClosedTabs(next);
   }, [sessionId, selectedProfile]);
   // 履歴が変わるたびに現在のプロファイルへ保存する (読み戻し前のセッションは対象外)。
+  // 接続・プロファイルが変わっただけ (履歴の中身は同じ) のときと、切断で履歴を捨てたときは保存しない
+  // (保存済みの履歴を空で上書きしないため)。
+  const persistedSourceRef = useRef<ClosedTab[] | null>(null);
+  const skipNextClosedPersistRef = useRef(false);
   useEffect(() => {
-    const sid = sessionIdRef.current;
-    const profile = selectedProfileRef.current;
-    if (!sid || !profile || !closedTabsSeededRef.current.has(sid)) return;
-    savePersistedClosedTabs(profile.id, toPersistedClosedTabs(closedTabsForScope(closedTabs, sid)));
-  }, [closedTabs]);
+    if (persistedSourceRef.current === closedTabs) return;
+    persistedSourceRef.current = closedTabs;
+    if (skipNextClosedPersistRef.current) {
+      skipNextClosedPersistRef.current = false;
+      return;
+    }
+    if (!sessionId || !selectedProfile || !closedTabsSeededRef.current.has(sessionId)) return;
+    savePersistedClosedTabs(
+      selectedProfile.id,
+      toPersistedClosedTabs(closedTabsForScope(closedTabs, sessionId)),
+    );
+  }, [closedTabs, sessionId, selectedProfile]);
   const getTabSql = useCallback((tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql), [tabSqlStore]);
   // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
   const [dirtyTick, bumpDirty] = useReducer((n: number) => n + 1, 0);
@@ -3283,15 +3309,6 @@ export default function App() {
     setSnippetQuickAccess((prev) => {
       const next = toggleSnippetFavorite(prev, snippet.id);
       saveSnippetQuickAccess(next);
-      return next;
-    });
-  }, []);
-
-  // スニペットのお気に入りの並べ替え (#1631)。delta は保存順の向き (負が前)。
-  const handleMoveSnippetFavorite = useCallback((snippet: Snippet, delta: number) => {
-    setSnippetQuickAccess((prev) => {
-      const next = moveSnippetFavorite(prev, snippet.id, delta);
-      if (next !== prev) saveSnippetQuickAccess(next);
       return next;
     });
   }, []);
@@ -8609,6 +8626,8 @@ export default function App() {
         // Undo 満了後の無関係なタイミングで再確認しない (force)。
         await handleDisconnectProfile(id, { force: true });
         await api.deleteProfile(id);
+        // 閉じたタブ履歴 (#1631) はプロファイルとともに消す。
+        removePersistedClosedTabs(id);
         await refreshProfiles();
         // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
         // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
@@ -11036,7 +11055,6 @@ export default function App() {
                   onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
                   favoriteIds={snippetQuickAccess.favorites}
                   onToggleFavorite={handleToggleSnippetFavorite}
-                  onMoveFavorite={handleMoveSnippetFavorite}
                   onRun={sessionId ? handleRunSnippet : undefined}
                 />
               ) : sidebarTab === "history" ? (
@@ -12947,16 +12965,16 @@ export default function App() {
           onOpenTable={(ref) => handleOpenTable(ref.database, ref.table)}
           onShowMore={handleLauncherShowMore}
           onOpenSettings={() => openFullView("settings")}
-          // ランチャーはお気に入りを新しい順 (保存順の逆) に見せるので、表示上の移動量は符号を反転する。
+          // ランチャーもサイドバーも保存順のまま表示するので、移動量はそのまま保存順に使える。
           onMoveSnippetFavorite={(id, delta) => {
             setSnippetQuickAccess((prev) => {
-              const next = moveSnippetFavorite(prev, id, -delta);
+              const next = moveSnippetFavorite(prev, id, delta);
               if (next !== prev) saveSnippetQuickAccess(next);
               return next;
             });
           }}
           onMoveTableFavorite={
-            selectedProfile ? (ref, delta) => handleMoveFavorite(ref.database, ref.table, -delta) : undefined
+            selectedProfile ? (ref, delta) => handleMoveFavorite(ref.database, ref.table, delta) : undefined
           }
         />
       )}
@@ -12989,7 +13007,8 @@ export default function App() {
               driver={selectedProfile?.driver ?? "mysql"}
               isProduction={selectedProfile?.is_production ?? false}
               profileName={selectedProfile?.name ?? ""}
-              profileId={selectedProfile?.id}
+              // 履歴を残さない接続 (skip_history) では、値検索の履歴も保存・表示しない (#1631)。
+              profileId={selectedProfile?.skip_history ? undefined : selectedProfile?.id}
               onOpenHit={(sql, title) => openAndRunQuery(sql, title)}
               onClose={() => setShowDataSearch(false)}
             />

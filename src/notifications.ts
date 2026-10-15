@@ -71,42 +71,53 @@ export async function sendQueryNotification(title: string, body: string, tabId?:
 }
 
 let clickFocusRegistered = false;
+let focusReturnRegistered = false;
 /** 直近に出した通知のタブ。クリックを通知してこない環境のフォールバックに使う。 */
 let lastNotified: NotifiedTab | null = null;
 
 /** 通知クリックでアプリウィンドウを前面化する購読を 1 回だけ登録する
  *  (何度呼んでも安全な冪等操作)。アプリ起動時に一度呼び出しておく想定。
- *  `onActivateTab` を渡すと、通知に載せたタブ ID のタブへ移動する (#1631)。クリックが届かない
- *  環境では、通知の直後 (猶予内) にウィンドウが前面化されたことをクリックの代わりにする。 */
-export function registerNotificationClickFocus(onActivateTab?: (tabId: string) => void): void {
-  if (clickFocusRegistered) return;
-  clickFocusRegistered = true;
-  onAction((notification) => {
-    const win = getCurrentWindow();
-    void win.unminimize().catch(() => {});
-    void win.setFocus().catch(() => {});
-    const tabId = tabIdFromNotificationExtra(notification?.extra);
-    if (tabId) {
-      // クリックで移動したので、フォーカスのフォールバックで二重に移動しない。
-      lastNotified = null;
-      onActivateTab?.(tabId);
-    }
-  }).catch(() => {
-    // リスナー登録自体に失敗した場合は次回呼び出しで再試行できるようにする。
-    clickFocusRegistered = false;
-  });
-  if (onActivateTab) {
+ *  `onActivateTab` を渡すと、通知に載せたタブ ID のタブへ移動する (#1631)。
+ *  クリックが届かない環境向けに、通知の直後 (猶予内) にウィンドウが前面へ戻ったときは、勝手にタブを
+ *  切り替えず `onFocusReturn` へ知らせる (呼び出し側が「結果タブへ移動」のトーストを出す)。
+ *  ユーザが自分で選んだタブを奪わないため。 */
+export function registerNotificationClickFocus(
+  onActivateTab?: (tabId: string) => void,
+  onFocusReturn?: (tabId: string) => void,
+): void {
+  if (!clickFocusRegistered) {
+    clickFocusRegistered = true;
+    onAction((notification) => {
+      const win = getCurrentWindow();
+      void win.unminimize().catch(() => {});
+      void win.setFocus().catch(() => {});
+      const tabId = tabIdFromNotificationExtra(notification?.extra);
+      if (tabId) {
+        // クリックで移動したので、フォーカス復帰の案内は出さない。
+        lastNotified = null;
+        onActivateTab?.(tabId);
+      }
+    }).catch(() => {
+      // リスナー登録自体に失敗した場合は次回呼び出しで再試行できるようにする。
+      clickFocusRegistered = false;
+    });
+  }
+  if (onFocusReturn && !focusReturnRegistered) {
+    focusReturnRegistered = true;
     try {
       void getCurrentWindow()
         .onFocusChanged(({ payload: focused }) => {
           if (!focused) return;
           const { tabId, next } = consumeFocusTarget(lastNotified, Date.now());
           lastNotified = next;
-          if (tabId) onActivateTab(tabId);
+          if (tabId) onFocusReturn(tabId);
         })
-        .catch(() => {});
+        .catch(() => {
+          focusReturnRegistered = false;
+        });
     } catch {
       // ウィンドウ API が使えない環境ではフォールバックなし。
+      focusReturnRegistered = false;
     }
   }
 }

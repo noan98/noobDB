@@ -49,22 +49,27 @@ describe("起動時の見送り (#1631)", () => {
   };
   const upd = { version: "2.0.0", currentVersion: "1.0.0" } as AvailableUpdate;
 
-  it("rememberSkip で「見送る」を選ぶとそのバージョンを覚える", async () => {
-    await confirmAndInstallUpdate(upd, {
+  const run = (choice: "confirm" | "alt" | "cancel", rememberSkip = true) =>
+    confirmAndInstallUpdate(upd, {
       t: ((k: string) => k) as never,
       toast: toast as never,
       confirm: vi.fn().mockResolvedValue(false),
-      rememberSkip: true,
+      choose: vi.fn().mockResolvedValue(choice),
+      rememberSkip,
     });
+
+  it("「このバージョンは見送る」を押したときだけバージョンを覚える", async () => {
+    await run("alt");
     expect(localStorage.getItem("noobdb.skippedUpdateVersion")).toBe("2.0.0");
   });
 
+  it("Esc / × / 後で (cancel) は見送りにしない", async () => {
+    await run("cancel");
+    expect(localStorage.getItem("noobdb.skippedUpdateVersion")).toBeNull();
+  });
+
   it("手動チェック (rememberSkip なし) の「後で」は覚えない", async () => {
-    await confirmAndInstallUpdate(upd, {
-      t: ((k: string) => k) as never,
-      toast: toast as never,
-      confirm: vi.fn().mockResolvedValue(false),
-    });
+    await run("cancel", false);
     expect(localStorage.getItem("noobdb.skippedUpdateVersion")).toBeNull();
   });
 });

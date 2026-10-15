@@ -125,7 +125,17 @@ pub(crate) fn resolve_reveal_dir(path: &str) -> Result<std::path::PathBuf> {
     if trimmed.is_empty() {
         return Err(AppError::InvalidInput("path is empty".into()));
     }
+    // 絶対パスだけを受け付ける。相対パスや `-` 始まりの文字列がファイルマネージャのコマンドの
+    // オプションとして解釈されないようにする。
+    if trimmed.starts_with('-') {
+        return Err(AppError::InvalidInput(
+            "path must not start with '-'".into(),
+        ));
+    }
     let p = std::path::PathBuf::from(trimmed);
+    if !p.is_absolute() {
+        return Err(AppError::InvalidInput("path must be absolute".into()));
+    }
     let meta = std::fs::metadata(&p)
         .map_err(|e| AppError::InvalidInput(format!("path does not exist: {e}")))?;
     if meta.is_dir() {
@@ -144,7 +154,13 @@ fn spawn_file_manager(dir: &std::path::Path) -> Result<()> {
     #[cfg(target_os = "windows")]
     let mut cmd = std::process::Command::new("explorer");
     #[cfg(target_os = "macos")]
-    let mut cmd = std::process::Command::new("open");
+    let mut cmd = {
+        // `open <dir>` は `.app` バンドル (実体はディレクトリ) だとアプリを起動してしまうので、
+        // `-R` で Finder 上に表示するだけにする。
+        let mut c = std::process::Command::new("open");
+        c.arg("-R");
+        c
+    };
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let mut cmd = std::process::Command::new("xdg-open");
     cmd.arg(dir)
@@ -255,6 +271,22 @@ mod tests {
         assert_eq!(resolve_reveal_dir(&dir.to_string_lossy()).unwrap(), dir);
         assert_eq!(resolve_reveal_dir(&file.to_string_lossy()).unwrap(), dir);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_reveal_dir_rejects_relative_and_option_like_paths() {
+        assert!(matches!(
+            resolve_reveal_dir("relative/dir"),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            resolve_reveal_dir("-R"),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            resolve_reveal_dir(" --help"),
+            Err(AppError::InvalidInput(_))
+        ));
     }
 
     #[test]

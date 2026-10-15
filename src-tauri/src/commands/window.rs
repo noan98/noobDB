@@ -14,11 +14,40 @@ const MAX_TITLE_CHARS: usize = 200;
 /// タイトルが空になったときの既定。
 const DEFAULT_TITLE: &str = "noobDB";
 
-/// タイトル文字列を整える。制御文字 (改行・タブなど) は空白にし、前後の空白を除いて
+/// Unicode の書式文字 (Cf)。表示順を反転する U+202E (RLO) や不可視のゼロ幅文字などで、本番 / サンドボックス
+/// の表示を偽装できないよう取り除く。外部クレートを増やさず、Cf の範囲を直接並べている。
+fn is_format_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x00AD
+            | 0x0600..=0x0605
+            | 0x061C
+            | 0x06DD
+            | 0x070F
+            | 0x08E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
+}
+
+/// タイトル文字列を整える。制御文字 (改行・タブなど) は空白にし、書式文字 (Cf) は除き、前後の空白を除いて
 /// 長さを `MAX_TITLE_CHARS` に切り詰める。空になったら既定のタイトルにする。
 pub(crate) fn sanitize_window_title(raw: &str) -> String {
     let cleaned: String = raw
         .chars()
+        .filter(|c| !is_format_char(*c))
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect();
     let trimmed = cleaned.trim();
@@ -52,6 +81,18 @@ mod tests {
     #[test]
     fn replaces_control_characters_and_trims() {
         assert_eq!(sanitize_window_title("  a\nb\tc  "), "a b c");
+    }
+
+    #[test]
+    fn removes_unicode_format_characters() {
+        // RLO / LRI / ゼロ幅スペース / BOM は表示の偽装に使えるので除く。
+        assert_eq!(
+            sanitize_window_title("a\u{202E}b\u{2066}c\u{200B}d\u{FEFF}"),
+            "abcd"
+        );
+        assert_eq!(sanitize_window_title("\u{202E}\u{200B}"), "noobDB");
+        // 通常の日本語・絵文字は残す。
+        assert_eq!(sanitize_window_title("本番 ✓"), "本番 ✓");
     }
 
     #[test]

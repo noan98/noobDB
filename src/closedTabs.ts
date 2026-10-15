@@ -155,7 +155,13 @@ export function takeClosedTab(
 const PERSIST_PREFIX = "noobdb.closedTabs.v1.";
 
 /** 1 件の SQL 本文として保存する最大文字数 (巨大な貼り付けで容量を使い切らないため)。 */
-export const MAX_PERSISTED_CLOSED_SQL_CHARS = 200_000;
+export const MAX_PERSISTED_CLOSED_SQL_CHARS = 50_000;
+
+/**
+ * 1 プロファイルあたりの保存量の上限 (JSON 文字数)。localStorage は全体で約 5MB なので、
+ * 設定など他の保存を巻き込まないよう小さく抑える。超えたら古い履歴から捨てる。
+ */
+export const MAX_PERSISTED_CLOSED_TOTAL_CHARS = 256 * 1024;
 
 /** 保存する 1 件 (スコープ = 接続セッションは再接続で変わるので持たない)。 */
 export interface PersistedClosedTab {
@@ -175,6 +181,7 @@ export function toPersistedClosedTabs(
   max: number = MAX_CLOSED_TABS,
 ): PersistedClosedTab[] {
   const out: PersistedClosedTab[] = [];
+  let total = 2;
   for (const e of list) {
     if (e.sql.length > MAX_PERSISTED_CLOSED_SQL_CHARS) continue;
     const item: PersistedClosedTab = {
@@ -187,6 +194,9 @@ export function toPersistedClosedTabs(
     if (e.database) item.database = e.database;
     if (e.table) item.table = e.table;
     if (e.selection) item.selection = { anchor: e.selection.anchor, head: e.selection.head };
+    // 合計が上限を超える手前で打ち切る (list は新しい順なので古いものから捨てる)。
+    total += JSON.stringify(item).length + 1;
+    if (total > MAX_PERSISTED_CLOSED_TOTAL_CHARS) break;
     out.push(item);
     if (out.length >= max) break;
   }
@@ -248,10 +258,32 @@ export function loadPersistedClosedTabs(profileId: string): PersistedClosedTab[]
 }
 
 export function savePersistedClosedTabs(profileId: string, list: readonly PersistedClosedTab[]): void {
+  const key = PERSIST_PREFIX + profileId;
   try {
-    if (list.length === 0) localStorage.removeItem(PERSIST_PREFIX + profileId);
-    else localStorage.setItem(PERSIST_PREFIX + profileId, JSON.stringify(list));
+    if (list.length === 0) {
+      localStorage.removeItem(key);
+      return;
+    }
+    // 容量超過 (QuotaExceededError) なら件数を半分ずつ減らして再試行する (新しい側を残す)。
+    for (let n = list.length; n >= 1; n = Math.floor(n / 2)) {
+      try {
+        localStorage.setItem(key, JSON.stringify(list.slice(0, n)));
+        return;
+      } catch {
+        // 次はもっと少なく
+      }
+    }
+    localStorage.removeItem(key);
   } catch {
-    // ignore (quota / disabled storage)
+    // ignore (disabled storage)
+  }
+}
+
+/** プロファイル削除時に、そのプロファイルの閉じたタブ履歴を消す。 */
+export function removePersistedClosedTabs(profileId: string): void {
+  try {
+    localStorage.removeItem(PERSIST_PREFIX + profileId);
+  } catch {
+    // ignore
   }
 }
