@@ -25,6 +25,7 @@ import {
 import { filterSectionsByTitle, pickActiveSection } from "../sectionNav";
 import { copyToClipboard } from "./clipboard";
 import { DEFAULT_MASK_PATTERNS, formatMaskPatterns, parseMaskPatterns } from "./columnMask";
+import { diffSettingsPaths } from "../settingsDiff";
 import { useConfirm } from "./ConfirmDialog";
 import { KeybindingSettings } from "./KeybindingSettings";
 import { KnownHostsPanel } from "./KnownHostsPanel";
@@ -647,6 +648,8 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-backup", titleKey: "settingsBackup" },
 ];
 
+const SETTINGS_IMPORT_DIFF_PREVIEW = 15;
+
 export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Props) {
   const t = useT();
   const toast = useToast();
@@ -1028,9 +1031,34 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
       if (typeof picked !== "string" || !picked) return;
       const raw = await api.readTextFile(picked);
       const next = deserializeSettingsImport(raw);
+      const changed = diffSettingsPaths(settings, next);
+      if (changed.length === 0) {
+        toast.info(t("settingsBackupImportNoChanges"));
+        return;
+      }
+      const shown = changed.slice(0, SETTINGS_IMPORT_DIFF_PREVIEW);
       const ok = await confirm({
         title: t("settingsBackupImportTitle"),
-        message: t("settingsBackupImportConfirm"),
+        message: (
+          <>
+            <chakra.p>{t("settingsBackupImportConfirm")}</chakra.p>
+            <chakra.p mt="2" fontWeight="semibold">
+              {t("settingsBackupImportChanges", { count: changed.length })}
+            </chakra.p>
+            <chakra.ul mt="1" pl="4" fontSize="sm" data-testid="settings-import-diff">
+              {shown.map((path) => (
+                <chakra.li key={path} fontFamily="mono">
+                  {path}
+                </chakra.li>
+              ))}
+            </chakra.ul>
+            {changed.length > shown.length && (
+              <chakra.p fontSize="sm" color="app.textMuted">
+                {t("settingsBackupImportChangesMore", { count: changed.length - shown.length })}
+              </chakra.p>
+            )}
+          </>
+        ),
         tone: "warning",
       });
       if (!ok) return;

@@ -753,6 +753,9 @@ const en = {
   settingsBackupImportTitle: "Import settings",
   settingsBackupImportConfirm:
     "Replace all current app settings with the imported file? Invalid or out-of-range values fall back to defaults automatically.",
+  settingsBackupImportNoChanges: "The file has no differences from the current settings.",
+  settingsBackupImportChanges: "Changes ({count}):",
+  settingsBackupImportChangesMore: "…and {count} more",
   settingsBackupImportSuccess: "Settings imported.",
   settingsBackupImportError: "Settings import failed: {error}",
   settingsBackupExcludesProfiles:
@@ -6251,6 +6254,9 @@ const ja: Dict = {
   settingsBackupImportTitle: "設定をインポート",
   settingsBackupImportConfirm:
     "現在のアプリ設定をすべて、選択したファイルの内容で置き換えますか？ 不正な値や範囲外の値は自動的に既定値へフォールバックします。",
+  settingsBackupImportNoChanges: "ファイルの内容は現在の設定と同じです。",
+  settingsBackupImportChanges: "変わる項目 ({count} 件):",
+  settingsBackupImportChangesMore: "…ほか {count} 件",
   settingsBackupImportSuccess: "設定をインポートしました。",
   settingsBackupImportError: "設定のインポートに失敗しました: {error}",
   settingsBackupExcludesProfiles:
