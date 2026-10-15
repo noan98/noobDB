@@ -184,6 +184,7 @@ describe("AiExplainInterpret (#693)", () => {
       database: "main",
     });
     await screen.findByText(t("explainAiCompareTitle"));
+    expect(screen.getByText(t("explainAiCompareBeforePane"))).toBeTruthy();
     expect(runAiRequest).toHaveBeenCalledTimes(1);
   });
 

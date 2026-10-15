@@ -32,7 +32,7 @@ const NOT_ALIAS = new Set(
 
 const IDENT = String.raw`(?:` + "`[^`]+`" + String.raw`|"[^"]+"|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
 const FROM_JOIN_RE = new RegExp(
-  String.raw`\b(?:FROM|JOIN)\s+(${IDENT}(?:\s*\.\s*${IDENT})?)(\s*\()?(?:\s+(?:AS\s+)?(?!(?:${[...NOT_ALIAS].join("|")})\b)(${IDENT}))?`,
+  String.raw`\b(?:FROM|JOIN)\s+(?:ONLY\s+)?(${IDENT}(?:\s*\.\s*${IDENT})?)(\s*\()?(?:\s+(?:AS\s+)?(?!(?:${[...NOT_ALIAS].join("|")})\b)(${IDENT}))?`,
   "gi",
 );
 const CTE_RE = new RegExp(
@@ -104,6 +104,8 @@ export function checkSqlNames(
     if (prefix !== null && !["public", "main", db].includes(prefix)) continue; // 別 DB / 別スキーマ
     const lower = name.toLowerCase();
     if (isSystemTable(name) || (prefix === null && cteNames.has(lower))) continue;
+    // MySQL の疑似表 dual は実在しないので警告しない (既知の表名と衝突するときは下で通常どおり扱う)。
+    if (lower === "dual" && !known.has(lower)) continue;
     const table = known.get(lower);
     if (!table) {
       if (prefix === null || SYSTEM_SCHEMAS.has(prefix) === false) push({ kind: "table", name });

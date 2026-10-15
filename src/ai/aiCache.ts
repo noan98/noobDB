@@ -8,7 +8,9 @@
 const PREFIX = "noobdb.aiCache.v1:";
 const INDEX_KEY = `${PREFIX}index`;
 /** 1 エントリの上限 (文字数)。これを超える生成物は保存しない。 */
-export const AI_CACHE_MAX_ENTRY_CHARS = 1_500_000;
+export const AI_CACHE_MAX_ENTRY_CHARS = 500_000;
+/** 全エントリの合計文字数の上限。localStorage (約 5MB) を使い切って他の永続化を妨げないため。 */
+export const AI_CACHE_MAX_TOTAL_CHARS = 1_000_000;
 /** 保持するエントリ数の上限。超えたら最後に使ったのが古いものから捨てる。 */
 export const AI_CACHE_MAX_ENTRIES = 40;
 
@@ -101,9 +103,23 @@ export function saveAiCache(key: string, value: unknown): boolean {
   };
   let index = readIndex().filter((e) => e.k !== key);
   // 上限を超える分は、古い順に捨ててから書く。
-  while (index.length >= AI_CACHE_MAX_ENTRIES) {
+  const sizeOf = (k: string): number => {
+    try {
+      return localStorage.getItem(k)?.length ?? 0;
+    } catch {
+      return 0;
+    }
+  };
+  let total = index.reduce((sum, e) => sum + sizeOf(e.k), 0);
+  while (
+    index.length >= AI_CACHE_MAX_ENTRIES ||
+    (index.length > 0 && total + raw.length > AI_CACHE_MAX_TOTAL_CHARS)
+  ) {
     const oldest = index.shift();
-    if (oldest) removeQuietly(oldest.k);
+    if (oldest) {
+      total -= sizeOf(oldest.k);
+      removeQuietly(oldest.k);
+    }
   }
   let ok = attempt();
   // 容量超過のときは、古いものから捨てて 1 エントリずつ空けながら再試行する。

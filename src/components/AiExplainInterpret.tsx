@@ -393,6 +393,7 @@ export function AiExplainInterpret(props: AiExplainInterpretProps) {
               title: t("explainAiCompareTitle"),
               beforeColumn: t("explainAiCompareColBefore"),
               afterColumn: t("explainAiCompareColAfter"),
+              beforePane: t("explainAiCompareBeforePane"),
               afterPane: t("explainAiCompareAfterPane"),
             }}
             onClose={() => setCompare(null)}

@@ -38,7 +38,13 @@ interface Props {
    * 「固定」前提の既定文言を差し替える (AI の書き換え提案との比較、#1620)。
    * 未指定は固定した計画との比較の文言。
    */
-  labels?: { title: string; beforeColumn: string; afterColumn: string; afterPane: string };
+  labels?: {
+    title: string;
+    beforeColumn: string;
+    afterColumn: string;
+    beforePane: string;
+    afterPane: string;
+  };
   onClose: () => void;
 }
 
@@ -267,7 +273,10 @@ export function PlanCompareModal({
 
             <Flex flex="1" minHeight="320px" gap="2.5">
               {[
-                { result: before, label: t("planCompareBeforePane", { at: beforeLabel }) },
+                {
+                  result: before,
+                  label: labels?.beforePane ?? t("planCompareBeforePane", { at: beforeLabel }),
+                },
                 { result: after, label: labels?.afterPane ?? t("planCompareAfterPane") },
               ].map((pane) => (
                 <Flex

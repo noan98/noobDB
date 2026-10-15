@@ -360,7 +360,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             foreignKeys: scopedFks,
           })
         : null;
-    const remember = (body: string) => {
+    const remember = (body: string, hashOverride?: Record<string, string>) => {
       if (!cacheKey) return;
       const saved = saveAiCache(
         cacheKey,
@@ -369,7 +369,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
           driver: props.driver,
           maskLiterals: ai.maskLiterals,
           objectsFp,
-          hashes,
+          hashes: hashOverride ?? hashes,
           body,
           generatedAt: generatedAt.getTime(),
         }),
@@ -440,7 +440,17 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
               removed: plan.removed.length,
             };
             // 途中で切れた応答は、次回の「前回の本文」にしない。
-            if (!truncated) remember(merged.body);
+            if (!truncated) {
+              // AI が節を返さなかった表は、前回の節を再利用している。新しい指紋で保存すると
+              // 古い節が二度と再生成されないので、前回の指紋に戻す (無ければ消す) 。
+              const kept = { ...hashes };
+              for (const name of merged.missing) {
+                const prev = cachedDoc.hashes[name];
+                if (prev === undefined) delete kept[name];
+                else kept[name] = prev;
+              }
+              remember(merged.body, kept);
+            }
             setState({
               kind: "done",
               doc: assembleSchemaDoc(headerFor(info), merged.body),

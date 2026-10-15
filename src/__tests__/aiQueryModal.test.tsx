@@ -135,7 +135,7 @@ describe("AiQueryModal (#691)", () => {
     expect(screen.queryByTestId("ai-query-modal")).toBeNull();
   });
 
-  it("生成 → 結果表示 → 挿入 / 新しいタブで開く。nl2sql タスクで依頼し、実行はしない", async () => {
+  it("生成 → 結果表示 → 挿入。nl2sql タスクで依頼し、実行はしない", async () => {
     renderWithProviders(ui());
     const btn = await generate();
     fireEvent.click(btn); // 二重クリックでも 1 本だけ
@@ -157,10 +157,22 @@ describe("AiQueryModal (#691)", () => {
     // 生成 SQL は整形してから表示・挿入する。
     expect(onInsert).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }));
     await screen.findByText(t("aiQueryInserted"));
-    fireEvent.click(screen.getByRole("button", { name: t("aiQueryOpenInNewTab") }));
-    expect(onOpenInNewTab).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }), "app");
     // 挿入後も説明・注意点は見えたまま。
     expect(screen.getByText("説明です")).toBeTruthy();
+  });
+
+  it("結果は新しいタブで開ける (元のエディタには書き込まない)", async () => {
+    renderWithProviders(ui());
+    fireEvent.click(await generate());
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await findSql("SELECT 1");
+    fireEvent.click(screen.getByRole("button", { name: t("aiQueryOpenInNewTab") }));
+    expect(onOpenInNewTab).toHaveBeenCalledWith(format("SELECT 1", { language: "postgresql" }), "app");
+    expect(onInsert).not.toHaveBeenCalled();
   });
 
   it("やりとりが始まるまで右ペイン (結果) とチャット欄は出さず、最初の送信で出す。新しい会話で閉じる", async () => {

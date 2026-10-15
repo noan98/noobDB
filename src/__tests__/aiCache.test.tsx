@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   AI_CACHE_MAX_ENTRIES,
   AI_CACHE_MAX_ENTRY_CHARS,
+  AI_CACHE_MAX_TOTAL_CHARS,
   aiCacheKey,
   fingerprint,
   loadAiCache,
@@ -45,6 +46,22 @@ describe("AI キャッシュ (#1620)", () => {
     expect(
       saveAiCache(aiCacheKey("schemaDoc", "p", "big"), { n: 1, pad: "x".repeat(AI_CACHE_MAX_ENTRY_CHARS) }),
     ).toBe(false);
+  });
+
+  it("合計サイズが上限を超えないよう、保存前に古いエントリから捨てる", () => {
+    const chunk = AI_CACHE_MAX_ENTRY_CHARS - 100;
+    const keys = [0, 1, 2].map((i) => aiCacheKey("schemaDoc", "p", `big${i}`));
+    for (const k of keys) expect(saveAiCache(k, { n: 1, pad: "x".repeat(chunk) })).toBe(true);
+    let total = 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("noobdb.aiCache.v1:") && !key.endsWith("index")) {
+        total += localStorage.getItem(key)?.length ?? 0;
+      }
+    }
+    expect(total).toBeLessThanOrEqual(AI_CACHE_MAX_TOTAL_CHARS);
+    expect(loadAiCache(keys[0], isObj)).toBeNull();
+    expect(loadAiCache(keys[2], isObj)).not.toBeNull();
   });
 
   it("エントリ数の上限を超えたら、最後に使ったのが古いものから捨てる", () => {

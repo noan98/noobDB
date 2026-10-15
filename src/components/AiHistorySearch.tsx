@@ -435,7 +435,7 @@ export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet 
                       <chakra.button
                         type="button"
                         flexShrink={0}
-                        w="28px"
+                        w="7"
                         display="inline-flex"
                         alignItems="center"
                         justifyContent="center"

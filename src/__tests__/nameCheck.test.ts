@@ -72,4 +72,10 @@ describe("生成 SQL の表名・列名の照合 (#1620)", () => {
       checkSqlNames('SELECT "u"."id" FROM "users" "u" JOIN "ghost" g ON 1=1', "postgres", tables),
     ).toEqual([{ kind: "table", name: "ghost" }]);
   });
+
+  it("MySQL の dual と PostgreSQL の FROM ONLY は誤警告しない", () => {
+    expect(check("SELECT 1 FROM dual")).toEqual([]);
+    expect(check("SELECT u.id FROM ONLY users u WHERE u.name = 'a'")).toEqual([]);
+    expect(check("SELECT * FROM ONLY ghosts")).toEqual([{ kind: "table", name: "ghosts" }]);
+  });
 });
