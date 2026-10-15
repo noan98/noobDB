@@ -46,18 +46,22 @@ pub const HISTOGRAM_BUCKETS: u32 = 20;
 pub const NOTE_STATS_UNAVAILABLE: &str = "stats_unavailable";
 pub const NOTE_TOP_VALUES_UNAVAILABLE: &str = "top_values_unavailable";
 pub const NOTE_HISTOGRAM_UNAVAILABLE: &str = "histogram_unavailable";
+pub const NOTE_SAMPLED: &str = "sampled";
 pub const NOTE_APPROX_UNSUPPORTED: &str = "approx_distinct_unsupported";
 pub const NOTE_APPROX_NO_STATS: &str = "approx_distinct_no_stats";
 pub const NOTE_OVERVIEW_APPROX_NO_STATS: &str = "overview_approx_no_stats";
 
 /// プロファイル対象の列。`database` は MySQL ではデータベース、PostgreSQL では
 /// スキーマ、SQLite では無視される (UI ツリーの規約と同じ)。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ProfileTarget<'a> {
     pub driver: DriverKind,
     pub database: &'a str,
     pub table: &'a str,
     pub column: &'a str,
+    /// 標本モード (#1628) の抽出率 (%)。`None` は全件。`(0, 100)` の有限値だけを渡す
+    /// ([`normalize_sample_percent`] で検証済みの値)。
+    pub sample: Option<f64>,
 }
 
 /// DISTINCT 数の求め方。
@@ -108,6 +112,11 @@ pub struct ColumnProfile {
     pub histogram: Vec<ProfileHistogramBucket>,
     /// 縮退理由コード (`NOTE_*`)。
     pub notes: Vec<String>,
+    /// 標本モード (#1628) の抽出率 (%)。全件を集計したときは `None`。標本のときは件数・
+    /// DISTINCT・上位値・ヒストグラムのすべてが標本に対する値で、問い合わせごとに独立に
+    /// 抽出するため、段の間で件数が厳密には揃わない。
+    #[serde(default)]
+    pub sample_percent: Option<f64>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +183,60 @@ pub fn table_ref(t: &ProfileTarget<'_>) -> String {
     format!("{db}.{table}")
 }
 
+/// 標本モードの抽出率の下限 (%)。これ未満は 0 件になりやすいので受け付けない。
+pub const MIN_SAMPLE_PERCENT: f64 = 0.0001;
+
+/// IPC で受けた抽出率 (%) を検証する。`None` と 100 以上は全件 (`None`)、有限の正値は
+/// [`MIN_SAMPLE_PERCENT`] 以上に丸め、0 以下・NaN は入力エラー。
+pub fn normalize_sample_percent(p: Option<f64>) -> Result<Option<f64>> {
+    match p {
+        None => Ok(None),
+        Some(v) if !v.is_finite() || v <= 0.0 => Err(AppError::InvalidInput(
+            "sample_percent must be a positive number".into(),
+        )),
+        Some(v) if v >= 100.0 => Ok(None),
+        Some(v) => Ok(Some(v.max(MIN_SAMPLE_PERCENT))),
+    }
+}
+
+/// 標本モードの FROM 句と追加の WHERE 条件 (方言差はここに閉じ込める)。
+///
+/// - PostgreSQL: `TABLESAMPLE SYSTEM (p)` (ブロック単位で読むので全件走査を避けられる。
+///   行が物理的に偏っていると標本も偏る)。ビューには使えず、その場合の失敗は各段の縮退に乗る。
+/// - MySQL: `RAND() < p/100` (行ごとに乱数を引く。走査は全件)。
+/// - SQLite: `(random() & i64::MAX) % 1000000 < p * 10000` (`abs(random())` は i64::MIN で
+///   整数オーバーフローになるのでビットマスクで非負にする。走査は全件)。
+fn sample_parts(t: &ProfileTarget<'_>) -> (String, Option<String>) {
+    let table = table_ref(t);
+    let Some(p) = t.sample else {
+        return (table, None);
+    };
+    match t.driver {
+        DriverKind::Postgres => (format!("{table} TABLESAMPLE SYSTEM ({p})"), None),
+        DriverKind::Mysql => (table, Some(format!("RAND() < {}", p / 100.0))),
+        DriverKind::Sqlite => {
+            let threshold = ((p * 10_000.0).round() as i64).clamp(1, 1_000_000);
+            (
+                table,
+                Some(format!(
+                    "(random() & 9223372036854775807) % 1000000 < {threshold}"
+                )),
+            )
+        }
+    }
+}
+
+/// `FROM` 以降 (`<source>[ WHERE ...]`)。`base` は列固有の条件、標本条件があれば AND で足す。
+fn from_where(t: &ProfileTarget<'_>, base: Option<&str>) -> String {
+    let (source, sample_where) = sample_parts(t);
+    let conds: Vec<&str> = base.into_iter().chain(sample_where.as_deref()).collect();
+    if conds.is_empty() {
+        source
+    } else {
+        format!("{source} WHERE {}", conds.join(" AND "))
+    }
+}
+
 /// 行数を数える集計関数。
 fn count_fn(driver: DriverKind) -> &'static str {
     let _ = driver;
@@ -198,7 +261,7 @@ pub fn build_summary_sql(t: &ProfileTarget<'_>, distinct: DistinctMode) -> Strin
     }
     parts.push(format!("MIN({col}) AS min_value"));
     parts.push(format!("MAX({col}) AS max_value"));
-    format!("SELECT {} FROM {}", parts.join(", "), table_ref(t))
+    format!("SELECT {} FROM {}", parts.join(", "), from_where(t, None))
 }
 
 /// 件数だけの集計 SQL (`build_summary_sql` が型の都合で通らないときの縮退先)。
@@ -207,7 +270,7 @@ pub fn build_count_sql(t: &ProfileTarget<'_>) -> String {
     let count = count_fn(t.driver);
     format!(
         "SELECT {count}(*) AS total_count, {count}({col}) AS non_null_count FROM {}",
-        table_ref(t)
+        from_where(t, None)
     )
 }
 
@@ -217,7 +280,7 @@ pub fn build_distinct_sql(t: &ProfileTarget<'_>) -> String {
     let count = count_fn(t.driver);
     format!(
         "SELECT {count}(DISTINCT {col}) AS distinct_count FROM {}",
-        table_ref(t)
+        from_where(t, None)
     )
 }
 
@@ -226,10 +289,10 @@ pub fn build_top_values_sql(t: &ProfileTarget<'_>, top_n: u32) -> String {
     let col = quote_ident(t.driver, t.column);
     let count = count_fn(t.driver);
     let n = top_n.clamp(1, MAX_TOP_N);
-    let from = table_ref(t);
+    let from = from_where(t, Some(&format!("{col} IS NOT NULL")));
     format!(
         "SELECT {col} AS value, {count}(*) AS freq FROM {from} \
-         WHERE {col} IS NOT NULL GROUP BY {col} ORDER BY {count}(*) DESC LIMIT {n}"
+         GROUP BY {col} ORDER BY {count}(*) DESC LIMIT {n}"
     )
 }
 
@@ -273,10 +336,10 @@ pub fn build_histogram_sql(t: &ProfileTarget<'_>, min: f64, max: f64, buckets: u
     format!(
         "SELECT bucket, {count}(*) AS freq FROM (\
          SELECT CASE WHEN {col} >= {max_lit} THEN {last} ELSE {floor} END AS bucket \
-         FROM {from} WHERE {col} IS NOT NULL{numeric_only}\
+         FROM {from}\
          ) profile_buckets GROUP BY bucket ORDER BY bucket",
         max_lit = float_literal(max),
-        from = table_ref(t),
+        from = from_where(t, Some(&format!("{col} IS NOT NULL{numeric_only}"))),
     )
 }
 
@@ -580,6 +643,7 @@ pub fn build_overview_sql(
         database,
         table,
         column: "",
+        sample: None,
     };
     format!("SELECT {} FROM {}", parts.join(", "), table_ref(&target))
 }
@@ -637,12 +701,14 @@ pub async fn run_column_profile(
     column: &str,
     approximate: bool,
     top_n: u32,
+    sample_percent: Option<f64>,
 ) -> Result<ColumnProfile> {
     if table.trim().is_empty() || column.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "table and column are required".into(),
         ));
     }
+    let sample = normalize_sample_percent(sample_percent)?;
     let driver = conn.driver_kind();
     // 列の実在確認と型の取得。存在しない列名で集計 SQL を組まない (識別子は
     // クオートするので注入にはならないが、エラーを分かりやすくする)。
@@ -659,11 +725,19 @@ pub async fn run_column_profile(
         database,
         table,
         column,
+        sample,
     };
     let mut notes: Vec<String> = Vec::new();
 
     // ── 件数 / DISTINCT / MIN・MAX ──
-    let (mode, approx_note) = distinct_mode(driver, approximate);
+    // 標本モードでは `pg_stats` の推定(全件が対象)は使えないので、標本に対する正確な
+    // DISTINCT にする。標本の DISTINCT は真の値の下限であることを UI が注記する。
+    let (mode, approx_note) = if sample.is_some() {
+        notes.push(NOTE_SAMPLED.to_string());
+        (DistinctMode::Exact, None)
+    } else {
+        distinct_mode(driver, approximate)
+    };
     if let Some(n) = approx_note {
         notes.push(n.to_string());
     }
@@ -803,6 +877,7 @@ pub async fn run_column_profile(
         top_values,
         histogram,
         notes,
+        sample_percent: sample,
     })
 }
 
@@ -1021,6 +1096,7 @@ mod tests {
             database: "app",
             table: "users",
             column: "age",
+            sample: None,
         }
     }
 
@@ -1040,6 +1116,79 @@ mod tests {
         );
     }
 
+    fn sampled(driver: DriverKind, p: f64) -> ProfileTarget<'static> {
+        ProfileTarget {
+            sample: Some(p),
+            ..target(driver)
+        }
+    }
+
+    #[test]
+    fn sample_percent_is_validated() {
+        assert_eq!(normalize_sample_percent(None).unwrap(), None);
+        assert_eq!(normalize_sample_percent(Some(100.0)).unwrap(), None);
+        assert_eq!(normalize_sample_percent(Some(250.0)).unwrap(), None);
+        assert_eq!(normalize_sample_percent(Some(10.0)).unwrap(), Some(10.0));
+        assert_eq!(
+            normalize_sample_percent(Some(0.000001)).unwrap(),
+            Some(MIN_SAMPLE_PERCENT)
+        );
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(normalize_sample_percent(Some(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn sampled_sql_is_dialect_specific_and_read_only() {
+        let pg = build_summary_sql(&sampled(DriverKind::Postgres, 1.5), DistinctMode::Exact);
+        assert!(
+            pg.contains("FROM \"app\".\"users\" TABLESAMPLE SYSTEM (1.5)"),
+            "{pg}"
+        );
+        assert!(!pg.contains("WHERE"), "{pg}");
+        let my = build_summary_sql(&sampled(DriverKind::Mysql, 10.0), DistinctMode::Exact);
+        assert!(
+            my.ends_with("FROM `app`.`users` WHERE RAND() < 0.1"),
+            "{my}"
+        );
+        let lite = build_summary_sql(&sampled(DriverKind::Sqlite, 10.0), DistinctMode::Exact);
+        assert!(
+            lite.ends_with(
+                "FROM \"users\" WHERE (random() & 9223372036854775807) % 1000000 < 100000"
+            ),
+            "{lite}"
+        );
+        for d in ALL {
+            let t = sampled(d, 5.0);
+            for sql in [
+                build_summary_sql(&t, DistinctMode::Exact),
+                build_count_sql(&t),
+                build_distinct_sql(&t),
+                build_top_values_sql(&t, 5),
+                build_histogram_sql(&t, 0.0, 10.0, 4),
+            ] {
+                assert!(is_read_only_sql_for(d, &sql), "{d:?}: {sql}");
+            }
+        }
+    }
+
+    #[test]
+    fn sample_condition_is_anded_with_column_conditions() {
+        let top = build_top_values_sql(&sampled(DriverKind::Mysql, 10.0), 5);
+        assert!(
+            top.contains("WHERE `age` IS NOT NULL AND RAND() < 0.1 GROUP BY"),
+            "{top}"
+        );
+        let hist = build_histogram_sql(&sampled(DriverKind::Sqlite, 10.0), 0.0, 10.0, 4);
+        assert!(
+            hist.contains("IN ('integer', 'real') AND (random() &"),
+            "{hist}"
+        );
+        // 全件のときは従来の SQL のまま。
+        let full = build_top_values_sql(&target(DriverKind::Mysql), 5);
+        assert!(full.contains("WHERE `age` IS NOT NULL GROUP BY"), "{full}");
+    }
+
     #[test]
     fn sqlite_ignores_database() {
         assert!(build_count_sql(&target(DriverKind::Sqlite)).ends_with("FROM \"users\""));
@@ -1052,6 +1201,7 @@ mod tests {
             database: "d",
             table: "t",
             column: "a`b\"c]d",
+            sample: None,
         };
         assert!(build_count_sql(&evil(DriverKind::Mysql)).contains("`a``b\"c]d`"));
         assert!(build_count_sql(&evil(DriverKind::Postgres)).contains("\"a`b\"\"c]d\""));
