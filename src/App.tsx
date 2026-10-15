@@ -252,6 +252,9 @@ const PlanWatchPanel = lazy(() =>
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
 );
+const SavedTabsModal = lazy(() =>
+  import("./components/SavedTabsModal").then((m) => ({ default: m.SavedTabsModal })),
+);
 const SqlFileEncodingModal = lazy(() =>
   import("./components/SqlFileEncodingModal").then((m) => ({ default: m.SqlFileEncodingModal })),
 );
@@ -501,6 +504,9 @@ import {
 import { reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
+import { BACKGROUND_PING_INTERVAL_MS, nextStaleProfileIds } from "./backgroundHealth";
+import { buildGroupMoveRequest } from "./profileGroup";
+import { summarizeSavedWorkspace } from "./savedTabsSummary";
 import { formatElapsed } from "./queryRunState";
 import { buildPageSql, canGoNext, canGoPrev, clampPage, effectiveTotalPages } from "./pagination";
 import {
@@ -1855,6 +1861,15 @@ export default function App() {
   useEffect(() => {
     openConnectionsRef.current = openConnections;
   }, [openConnections]);
+  // 生存確認で切れていると分かった背景接続のプロファイル ID (#1630)。接続一覧にバッジを出し、
+  // その行を選ぶと残骸を片付けて張り直す (`handleConnect`)。
+  const [staleProfileIds, setStaleProfileIds] = useState<ReadonlySet<string>>(() => new Set());
+  const staleProfileIdsRef = useRef<ReadonlySet<string>>(staleProfileIds);
+  useEffect(() => {
+    staleProfileIdsRef.current = staleProfileIds;
+  }, [staleProfileIds]);
+  // 保存済みタブの確認・消去モーダルの対象 (#1630)。
+  const [savedTabsTarget, setSavedTabsTarget] = useState<ConnectionProfile | null>(null);
   // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
   const openProfileIds = useMemo(() => new Set(openConnections.map((c) => c.profile.id)), [openConnections]);
   // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
@@ -3600,7 +3615,43 @@ export default function App() {
       if (sessionId && selectedProfile?.id === profile.id) return;
       // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
       const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
-      if (alreadyOpen) {
+      if (alreadyOpen && staleProfileIdsRef.current.has(profile.id)) {
+        // 切れたと判定された背景接続 (#1630): クリック時にもう一度生存確認する。
+        // 一時的な ping 失敗で生きている接続を捨てないよう、生きていれば通常の切替にする。
+        const alive = await api.pingSession(alreadyOpen.sessionId).catch(() => false);
+        if (alive) {
+          setStaleProfileIds((prev) =>
+            nextStaleProfileIds(
+              prev,
+              [{ profileId: profile.id, alive: true }],
+              openConnectionsRef.current.map((c) => c.profile.id),
+            ),
+          );
+          await switchToOpenConnection(alreadyOpen);
+          return;
+        }
+        // 死んでいる: 未コミットのトランザクションがあれば破棄の確認を通してから片付ける。
+        if (!(await confirmDiscardOpenTransactions([alreadyOpen.sessionId], "disconnect"))) return;
+        // 残骸を片付けて以降は新規接続と同じ経路で張り直す (保存済みタブは切替時に退避済みで、
+        // ここで復元される)。
+        openConnectionsRef.current = openConnectionsRef.current.filter((c) => c.profile.id !== profile.id);
+        removeOpenConnection(profile.id);
+        setStaleProfileIds((prev) =>
+          nextStaleProfileIds(
+            prev,
+            [],
+            openConnectionsRef.current.map((c) => c.profile.id),
+          ),
+        );
+        // 固定ローカルポート (#1630) のトンネルは切断が済むまでポートを握っているため、
+        // 張り直す前に切断の完了を待つ。
+        await api.disconnect(alreadyOpen.sessionId).catch(() => {
+          /* 既に切れている接続の後始末なので失敗は無視 */
+        });
+        clearEmergencyFor(alreadyOpen.sessionId);
+        forgetClosedTabs(alreadyOpen.sessionId);
+        forgetTxState(alreadyOpen.sessionId);
+      } else if (alreadyOpen) {
         await switchToOpenConnection(alreadyOpen);
         return;
       }
@@ -3664,7 +3715,11 @@ export default function App() {
         // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
         const res = isLocalProfile(profile)
           ? { session_id: await ensureLocalSession() }
-          : await api.connect(connectRequestFromProfile(profile), attemptId, settings.connectTimeoutSecs);
+          : await api.connect(
+              connectRequestFromProfile(profile, { pinLocalPort: true }),
+              attemptId,
+              settings.connectTimeoutSecs,
+            );
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -3756,7 +3811,12 @@ export default function App() {
       switchToOpenConnection,
       confirmDiscardPendingEdits,
       confirmLeaveOpenTransaction,
+      confirmDiscardOpenTransactions,
       upsertOpenConnection,
+      removeOpenConnection,
+      clearEmergencyFor,
+      forgetClosedTabs,
+      forgetTxState,
       ensureLocalSession,
       settings.connectTimeoutSecs,
       settings.confirmProductionConnect,
@@ -3923,6 +3983,42 @@ export default function App() {
       confirmDiscardOpenTransactions,
     ],
   );
+
+  // アクティブ以外 (背景) の接続をまとめて切断する (#1630)。未確定トランザクションの確認は
+  // 全セッション分を 1 回にまとめる (1 件ずつ聞かない)。アクティブな接続とそのタブには触れない。
+  const handleDisconnectBackground = useCallback(async (): Promise<boolean> => {
+    const targets = openConnectionsRef.current.filter((c) => c.sessionId !== sessionId);
+    if (targets.length === 0) return true;
+    if (
+      !(await confirmDiscardOpenTransactions(
+        targets.map((c) => c.sessionId),
+        "disconnect",
+      ))
+    ) {
+      return false;
+    }
+    for (const entry of targets) {
+      removeOpenConnection(entry.profile.id);
+      try {
+        await api.disconnect(entry.sessionId);
+      } catch (e) {
+        console.warn(e);
+      }
+      clearEmergencyFor(entry.sessionId);
+      forgetClosedTabs(entry.sessionId);
+      forgetTxState(entry.sessionId);
+    }
+    toast.info(translate("toastDisconnectedBackground", { count: targets.length }));
+    return true;
+  }, [
+    sessionId,
+    confirmDiscardOpenTransactions,
+    removeOpenConnection,
+    clearEmergencyFor,
+    forgetClosedTabs,
+    forgetTxState,
+    toast,
+  ]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
   // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
@@ -9002,6 +9098,43 @@ export default function App() {
     [profiles, runWithErrorStatus, refreshProfiles],
   );
 
+  // 接続を別グループへ移す (#1630)。既存の `save_profile` を流用し、`group` だけを書き換える
+  // (秘密は触らない・並び順は id 上書きなので変わらない)。1 件ずつ保存し、終わったら一覧を読み直す。
+  const handleMoveProfilesToGroup = useCallback(
+    async (profileIds: string[], group: string | null) => {
+      const targets = profiles.filter((p) => profileIds.includes(p.id));
+      if (targets.length === 0) return;
+      const ok = await runWithErrorStatus(async () => {
+        for (const p of targets) await api.saveProfile(buildGroupMoveRequest(p, group));
+      }, "statusFailedMoveProfiles");
+      await refreshProfiles();
+      if (ok) {
+        toast.success(
+          group === null
+            ? translate("toastProfilesUngrouped", { count: targets.length })
+            : translate("toastProfilesMoved", { count: targets.length, group }),
+        );
+      }
+    },
+    [profiles, runWithErrorStatus, refreshProfiles, toast],
+  );
+
+  // 保存済みタブの確認・消去 (#1630)。
+  const savedTabsSummary = useMemo(
+    () => (savedTabsTarget ? summarizeSavedWorkspace(loadPersistedWorkspace(savedTabsTarget.id)) : null),
+    [savedTabsTarget],
+  );
+  const handleClearSavedTabs = useCallback(() => {
+    if (!savedTabsTarget) return;
+    // 開いている接続の保存内容は切替/切断時に上書きされるので消せない (モーダルでも無効化済み)。
+    if (openConnectionsRef.current.some((c) => c.profile.id === savedTabsTarget.id)) return;
+    clearPersistedTabs(savedTabsTarget.id);
+    // 「今回は開かない」で保持していた分も忘れる (残すと保存側が書き戻してしまう)。
+    keptSavedTabsRef.current.delete(savedTabsTarget.id);
+    toast.success(translate("savedTabsCleared", { name: savedTabsTarget.name }));
+    setSavedTabsTarget(null);
+  }, [savedTabsTarget, toast]);
+
   // Clear any pending profile-delete timers on unmount. Leaving them uncancelled
   // would fire setState on a torn-down tree; not finalizing is the safe choice
   // (the profile simply isn't deleted — its keyring secrets stay intact).
@@ -9944,6 +10077,46 @@ export default function App() {
     return () => clearInterval(handle);
   }, [sessionId, selectedProfile, connectingId, toast]);
 
+  // 背景接続の生存確認 (#1630)。自動再接続 (`handleConnectionLost`) はアクティブな接続だけが対象で、
+  // 背景の接続が切れても切り替えるまで気付けなかった。低頻度で `pingSession` を呼び、切れていたら
+  // 接続一覧にバッジを出す (再接続は行を選ぶと `handleConnect` が行う)。ウィンドウが隠れている間と、
+  // 接続処理・再接続ループの最中は叩かない。
+  useEffect(() => {
+    if (!openConnections.some((c) => c.sessionId !== sessionId)) {
+      setStaleProfileIds((prev) =>
+        nextStaleProfileIds(
+          prev,
+          [],
+          openConnections.map((c) => c.profile.id),
+        ),
+      );
+      return;
+    }
+    const check = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (connectingId || reconnectingRef.current) return;
+      const background = openConnectionsRef.current.filter((c) => c.sessionId !== sessionIdRef.current);
+      if (background.length === 0) return;
+      const results = await Promise.all(
+        background.map(async (c) => ({
+          profileId: c.profile.id,
+          alive: await api.pingSession(c.sessionId).catch(() => false),
+        })),
+      );
+      setStaleProfileIds((prev) =>
+        nextStaleProfileIds(
+          prev,
+          results,
+          openConnectionsRef.current.map((c) => c.profile.id),
+        ),
+      );
+    };
+    const handle = setInterval(() => {
+      void check();
+    }, BACKGROUND_PING_INTERVAL_MS);
+    return () => clearInterval(handle);
+  }, [openConnections, sessionId, connectingId]);
+
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
   useEffect(() => {
@@ -10530,6 +10703,18 @@ export default function App() {
       });
     }
 
+    // 背景接続が 1 本以上あるとき、まとめて切断する導線 (#1630)。
+    if (openConnections.some((c) => c.sessionId !== sessionId)) {
+      items.push({
+        id: "nav:disconnect-background",
+        group: "navigation",
+        label: t("cmdkActionDisconnectBackground"),
+        icon: "unplug",
+        keywords: "disconnect background others close all 切断 背景 他の接続 すべて",
+        run: () => void handleDisconnectBackground(),
+      });
+    }
+
     // 接続プロファイル。削除 Undo 待ち (#676) のプロファイルは、finalize で
     // keyring ごと消える前に接続されてしまわないよう除外する。
     for (const profile of visibleProfiles) {
@@ -10984,6 +11169,10 @@ export default function App() {
   const connectionListHandlers = useStableCallbacks({
     onConnect: handleConnect,
     onDisconnectProfile: handleDisconnectProfile,
+    onDisconnectBackground: () => void handleDisconnectBackground(),
+    onShowSavedTabs: setSavedTabsTarget,
+    onMoveProfilesToGroup: (ids: string[], group: string | null) =>
+      void handleMoveProfilesToGroup(ids, group),
     onReorderProfiles: handleReorderProfiles,
     onCreate: handleOpenCreateForm,
     onEdit: handleOpenEditForm,
@@ -11354,6 +11543,7 @@ export default function App() {
                 connectingId={connectingId}
                 errorProfileId={errorProfileId}
                 openProfileIds={openProfileIds}
+                staleProfileIds={staleProfileIds}
                 txProfileIds={txProfileIds}
                 {...connectionListHandlers}
                 selectLimit={Math.max(1, settings.defaultDisplayCount)}
@@ -12044,6 +12234,9 @@ export default function App() {
                           connectingId={connectingId}
                           onConnect={(p) => void handleConnect(p)}
                           onCreate={handleOpenCreateForm}
+                          onEdit={handleOpenEditForm}
+                          onDuplicate={handleDuplicateProfile}
+                          onDelete={(p) => void handleDeleteProfile(p)}
                         />
                       </Flex>
                     )}
@@ -12647,6 +12840,20 @@ export default function App() {
                   tables={exportTablesTarget.tables}
                   profileId={selectedProfile?.id}
                   onClose={() => setExportTablesTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {savedTabsTarget && savedTabsSummary && (
+              <Suspense fallback={null}>
+                <SavedTabsModal
+                  profileName={savedTabsTarget.name}
+                  summary={savedTabsSummary}
+                  isOpen={openProfileIds.has(savedTabsTarget.id)}
+                  onClear={handleClearSavedTabs}
+                  onClose={() => setSavedTabsTarget(null)}
                 />
               </Suspense>
             )}

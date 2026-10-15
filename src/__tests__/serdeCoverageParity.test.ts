@@ -67,6 +67,8 @@ const COVERED: Record<string, string> = {
   InsertRowsResult: "insertRowsResult",
   KillProcessesResult: "killProcessesResult",
   KnownHost: "knownHost",
+  KnownHostEvent: "knownHostEvent",
+  ImportScan: "importScan",
   LiveQuery: "liveQuery",
   LocalTableMeta: "localTableMeta",
   LogView: "logView",

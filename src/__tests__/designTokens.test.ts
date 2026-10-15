@@ -789,6 +789,8 @@ describe("共通コンポーネントの迂回", () => {
     // 描画する図であり、固定グリフの選択ではないため対象外。
     "../components/ChartView.tsx",
     "../components/ServerMetricsPanel.tsx",
+    // 接続ヘルスのレイテンシ推移 (#1630): 算出した座標で折れ線を描くデータの図。
+    "../components/LatencySparkline.tsx",
     // ブランドカラー定数と同様、noobDB ロゴそのもの (favicon / App.css と parity
     // 固定) を描く単一ソース。
     "../brand.tsx",

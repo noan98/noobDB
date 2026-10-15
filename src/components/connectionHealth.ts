@@ -328,3 +328,111 @@ export function pruneHealthResults(
   for (const [sid, r] of results) if (live.has(sid)) out.set(sid, r);
   return out;
 }
+
+/** 接続ごとに保持するレイテンシ履歴の最大件数 (スパークライン用, #1630)。 */
+export const LATENCY_HISTORY_MAX = 30;
+
+/** レイテンシ履歴の 1 サンプル。`null` は計測できなかった回 (down / timeout など)。 */
+export type LatencySample = number | null;
+
+/**
+ * 今回の確認結果を接続ごとの履歴 (古い順) に足す純関数 (#1630)。閉じたセッションの履歴は捨て、
+ * 各履歴は新しい `max` 件に切り詰める。結果の無いセッションには何も足さない。
+ */
+export function appendLatencyHistory(
+  prev: ReadonlyMap<string, readonly LatencySample[]>,
+  results: ReadonlyMap<string, HealthProbeResult>,
+  max: number = LATENCY_HISTORY_MAX,
+): Map<string, LatencySample[]> {
+  const out = new Map<string, LatencySample[]>();
+  for (const [sid, r] of results) {
+    const sample: LatencySample = r.status === "up" ? r.latencyMs : null;
+    const history = [...(prev.get(sid) ?? []), sample];
+    out.set(sid, history.length > max ? history.slice(history.length - max) : history);
+  }
+  return out;
+}
+
+/** スパークライン 1 区間 (隣り合う 2 サンプルの間)。段階は 2 点のうち悪い方。 */
+export interface SparklineSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  level: LatencyLevel;
+}
+
+/** 計測できなかった回の印 (下端に置く)。 */
+export interface SparklineGap {
+  x: number;
+  y: number;
+}
+
+export interface SparklineGeometry {
+  segments: SparklineSegment[];
+  /** 区間が作れない孤立点 (前後が欠測) と、その段階。 */
+  points: { x: number; y: number; level: LatencyLevel }[];
+  gaps: SparklineGap[];
+  /** 閾値 (`LATENCY_SLOW_MS`) の高さ (縦軸の最大が閾値のときは上端 0)。 */
+  thresholdY: number;
+  /** 縦軸の最大 (ms)。 */
+  maxMs: number;
+}
+
+const LEVEL_ORDER: Record<LatencyLevel, number> = { good: 0, slow: 1, critical: 2 };
+
+function worseLevel(a: LatencyLevel, b: LatencyLevel): LatencyLevel {
+  return LEVEL_ORDER[a] >= LEVEL_ORDER[b] ? a : b;
+}
+
+/**
+ * レイテンシ履歴をスパークラインの座標にする純関数 (#1630)。新しいサンプルが右端、サンプル間隔は
+ * `maxSamples` 件ぶんで固定 (件数が少ないうちは左を空ける)。縦軸は 0〜max(最大値, 遅い閾値)
+ * なので、揺らぎ程度では閾値を超えて見えない。閾値を超えた区間は `slow` / `critical` の段階で
+ * 返し、色付けは呼び出し側が行う。
+ */
+export function sparklineGeometry(
+  samples: readonly LatencySample[],
+  width: number,
+  height: number,
+  maxSamples: number = LATENCY_HISTORY_MAX,
+): SparklineGeometry {
+  const values = samples.filter((s): s is number => s !== null);
+  const maxMs = Math.max(LATENCY_SLOW_MS, ...values);
+  const step = maxSamples > 1 ? width / (maxSamples - 1) : 0;
+  const xAt = (i: number) => round1(width - (samples.length - 1 - i) * step);
+  const yAt = (ms: number) => round1(height - (Math.min(ms, maxMs) / maxMs) * height);
+  const segments: SparklineSegment[] = [];
+  const points: SparklineGeometry["points"] = [];
+  const gaps: SparklineGap[] = [];
+  samples.forEach((s, i) => {
+    if (s === null) {
+      gaps.push({ x: xAt(i), y: height });
+      return;
+    }
+    const prev = i > 0 ? samples[i - 1] : null;
+    const next = i + 1 < samples.length ? samples[i + 1] : null;
+    if (prev !== null && prev !== undefined) {
+      segments.push({
+        x1: xAt(i - 1),
+        y1: yAt(prev),
+        x2: xAt(i),
+        y2: yAt(s),
+        level: worseLevel(latencyLevel(prev), latencyLevel(s)),
+      });
+    } else if (next === null || next === undefined) {
+      points.push({ x: xAt(i), y: yAt(s), level: latencyLevel(s) });
+    }
+  });
+  return {
+    segments,
+    points,
+    gaps,
+    thresholdY: yAt(LATENCY_SLOW_MS),
+    maxMs,
+  };
+}
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConnectionUrl, parseSslModeParam } from "../components/connectionUrl";
+import { parseConnectionUrl, buildConnectionUrl, parseSslModeParam } from "../components/connectionUrl";
 
 function parsed(input: string) {
   const r = parseConnectionUrl(input);
@@ -214,5 +214,74 @@ describe("parseSslModeParam", () => {
     expect(parseSslModeParam("Verify-Full")).toBe("verify_full");
     expect(parseSslModeParam("VERIFY_CA")).toBe("verify_ca");
     expect(parseSslModeParam("")).toBeNull();
+  });
+});
+
+describe("buildConnectionUrl (#1630)", () => {
+  it("MySQL / PostgreSQL の URL を組み立て、パスワードは含めない", () => {
+    expect(
+      buildConnectionUrl({
+        driver: "mysql",
+        host: "db.example.com",
+        port: 3306,
+        user: "app",
+        database: "shop",
+        sslMode: "require",
+      }),
+    ).toBe("mysql://app@db.example.com:3306/shop?ssl-mode=REQUIRED");
+    expect(
+      buildConnectionUrl({
+        driver: "postgres",
+        host: "pg",
+        port: 5432,
+        user: "u p",
+        database: "d/b",
+        sslMode: "verify_full",
+      }),
+    ).toBe("postgres://u%20p@pg:5432/d%2Fb?sslmode=verify-full");
+  });
+
+  it("IPv6 ホストは角括弧で囲み、ホスト未入力は null", () => {
+    expect(buildConnectionUrl({ driver: "postgres", host: "::1", port: 5432 })).toBe("postgres://[::1]:5432");
+    expect(buildConnectionUrl({ driver: "mysql", host: " " })).toBeNull();
+  });
+
+  it("SQLite は絶対 / Windows / 相対パスを URL にする", () => {
+    expect(buildConnectionUrl({ driver: "sqlite", filePath: "/data/app.db" })).toBe("sqlite:///data/app.db");
+    expect(buildConnectionUrl({ driver: "sqlite", filePath: "C:\\data\\app.db" })).toBe(
+      "sqlite:///C:/data/app.db",
+    );
+    expect(buildConnectionUrl({ driver: "sqlite", filePath: "rel.db" })).toBe("sqlite:rel.db");
+    expect(buildConnectionUrl({ driver: "sqlite", filePath: "" })).toBeNull();
+  });
+
+  it("parseConnectionUrl と往復できる", () => {
+    for (const sslMode of ["disable", "prefer", "require", "verify_ca", "verify_full"] as const) {
+      for (const driver of ["mysql", "postgres"] as const) {
+        const url = buildConnectionUrl({
+          driver,
+          host: "h.example",
+          port: 1234,
+          user: "a@b",
+          database: "d",
+          sslMode,
+        });
+        expect(url).not.toBeNull();
+        const v = parsed(url ?? "");
+        expect(v).toMatchObject({
+          driver,
+          host: "h.example",
+          port: 1234,
+          user: "a@b",
+          database: "d",
+          sslMode,
+        });
+        expect(v.password).toBeUndefined();
+      }
+    }
+    for (const filePath of ["/data/app.db", "C:/data/app.db", "rel.db"]) {
+      const url = buildConnectionUrl({ driver: "sqlite", filePath });
+      expect(parsed(url ?? "")).toMatchObject({ driver: "sqlite", filePath });
+    }
   });
 });

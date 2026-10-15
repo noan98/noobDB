@@ -701,6 +701,8 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
             passphrase: String::new(),
             password: String::new(),
         }),
+        // 定期実行は対話セッションの固定ポートと衝突しないよう常に自動割当にする (#1630)。
+        local_port: None,
     });
     Ok(ConnectRequest {
         profile_id: Some(profile.id.clone()),

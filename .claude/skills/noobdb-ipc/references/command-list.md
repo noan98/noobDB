@@ -73,7 +73,10 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `list_known_hosts`
 - `forget_host_key`
 - `trust_host_key`
-- `resolve_ssh_config_host`
+- `resolve_ssh_config_host` (#708。#1630 で `Host *` / `Include` / `Match host|all` を OpenSSH 規則で解決)
+- `list_known_hosts_history` (#1630。信頼・削除・取り込みの履歴。ホスト名・ポート・指紋のみ)
+- `scan_openssh_known_hosts` (#1630。`~/.ssh/known_hosts` の平文エントリを読む。読み取り専用)
+- `import_known_hosts` (#1630。選択された候補を `set_host_key` で取り込み、履歴に残す)
 
 ## クエリ実行・トランザクション (`commands/query.rs`)
 

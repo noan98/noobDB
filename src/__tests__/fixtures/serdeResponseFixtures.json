@@ -598,6 +598,7 @@
         "private_key_path": "",
         "user": "ops"
       },
+      "local_port": 15432,
       "port": 22,
       "private_key_path": "/home/deploy/.ssh/id_ed25519",
       "user": "deploy"
@@ -644,6 +645,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -689,6 +691,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -734,6 +737,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -779,6 +783,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -824,6 +829,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -1424,6 +1430,21 @@
     "streamId": "strm0003",
     "total": 100
   },
+  "importScan": {
+    "candidates": [
+      {
+        "existing_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold",
+        "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+        "host": "db.example.com",
+        "key_type": "ssh-ed25519",
+        "port": 22,
+        "status": "conflict"
+      }
+    ],
+    "found": true,
+    "hashed_skipped": 2,
+    "other_skipped": 1
+  },
   "importStartedEvent": {
     "streamId": "strm0003",
     "total": 100
@@ -1502,6 +1523,14 @@
     "fingerprint": "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
     "host": "db.example.com",
     "port": 22
+  },
+  "knownHostEvent": {
+    "action": "trust",
+    "at": "2026-10-15T01:02:03Z",
+    "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+    "host": "db.example.com",
+    "port": 22,
+    "previous_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold"
   },
   "liveQuery": {
     "application": "myapp",

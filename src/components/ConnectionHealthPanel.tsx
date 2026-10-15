@@ -7,7 +7,9 @@ import { useT, type I18nKey } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
 import {
+  appendLatencyHistory,
   buildHealthRows,
+  type LatencySample,
   changedHealthSessions,
   sameHealthResults,
   HEALTH_PROBE_TIMEOUT_MS,
@@ -22,6 +24,7 @@ import {
 } from "./connectionHealth";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
+import { LatencySparkline } from "./LatencySparkline";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
@@ -126,6 +129,9 @@ export function ConnectionHealthPanel({
 
   const [results, setResults] = useState<Map<string, HealthProbeResult>>(() => new Map());
   const resultsRef = useRef(results);
+  // 接続ごとの直近レイテンシ (スパークライン用, #1630)。確認のたびに追記し、閉じた接続は捨てる。
+  const [latencyHistory, setLatencyHistory] = useState<Map<string, LatencySample[]>>(() => new Map());
+  const latencyHistoryRef = useRef(latencyHistory);
   // 値が変わった行を一瞬光らせる。値はフラッシュの世代で、偶奇で CSS の animation-name を
   // 切り替えてアニメーションを最初から再生し直す。行の key には混ぜない (再マウントすると
   // キーボードで操作中のボタンからフォーカスが落ちる, #1529)。
@@ -178,6 +184,10 @@ export function ConnectionHealthPanel({
       targets.forEach((target) => {
         next.set(target.sessionId, toHealthProbeResult(target, bySession.get(target.sessionId)));
       });
+      // 履歴は毎回伸びる (値が同じでも 1 サンプル増える) ので、結果が不変でも更新する。
+      const nextHistory = appendLatencyHistory(latencyHistoryRef.current, next);
+      latencyHistoryRef.current = nextHistory;
+      setLatencyHistory(nextHistory);
       const changed = changedHealthSessions(resultsRef.current, next);
       const unchanged = sameHealthResults(resultsRef.current, next);
       resultsRef.current = next;
@@ -345,6 +355,7 @@ export function ConnectionHealthPanel({
                 <chakra.th css={thCss}>{t("healthColName")}</chakra.th>
                 <chakra.th css={thCss}>{t("healthColStatus")}</chakra.th>
                 <chakra.th css={thCss}>{t("healthColLatency")}</chakra.th>
+                <chakra.th css={thCss}>{t("healthColTrend")}</chakra.th>
                 <chakra.th css={thCss}>{t("healthColVersion")}</chakra.th>
                 <chakra.th css={thCss}>{t("healthColConnections")}</chakra.th>
                 <chakra.th css={thCss}>{t("healthColActions")}</chakra.th>
@@ -354,7 +365,7 @@ export function ConnectionHealthPanel({
               {loading && rows.length === 0 ? (
                 // 初回ロード中 (まだ 1 件も取得していない): 裸のヘッダのみ表示を
                 // 避け、6 列の構造をシマーで予兆表示する (#846 の横展開、#1160)。
-                <SkeletonTableRows columns={6} />
+                <SkeletonTableRows columns={7} />
               ) : (
                 rows.map((row) => {
                   const gen = row.sessionId ? (flash.get(row.sessionId) ?? 0) : 0;
@@ -391,6 +402,11 @@ export function ConnectionHealthPanel({
                       </chakra.td>
                       <chakra.td css={monoTdCss}>
                         <LatencyCell ms={row.latencyMs} label={(ms) => t("healthLatencyMs", { ms })} />
+                      </chakra.td>
+                      <chakra.td css={tdCss}>
+                        <LatencySparkline
+                          samples={row.sessionId ? latencyHistory.get(row.sessionId) : undefined}
+                        />
                       </chakra.td>
                       <chakra.td css={monoTdCss}>{row.version ?? "–"}</chakra.td>
                       <chakra.td css={monoTdCss}>

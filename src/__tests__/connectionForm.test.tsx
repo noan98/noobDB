@@ -738,3 +738,105 @@ describe("ConnectionForm connection route (#1684)", () => {
     expect(testConnection).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * 接続 URL のコピー (#1630) とトンネルのローカルポート固定 (#1630)。
+ */
+describe("ConnectionForm URL copy and fixed tunnel port (#1630)", () => {
+  const saveProfile = vi.mocked(api.saveProfile);
+
+  beforeEach(() => {
+    saveProfile.mockReset();
+  });
+
+  it("現在の入力から接続 URL をコピーし、パスワードは含めない", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(t("formHost")), { target: { value: "db.example.com" } });
+    fireEvent.change(screen.getByLabelText(t("formUser")), { target: { value: "app" } });
+    fireEvent.change(screen.getByLabelText(t("formDatabase")), { target: { value: "shop" } });
+    fireEvent.change(screen.getByLabelText(t("formDbPassword")), { target: { value: "s3cret" } });
+    fireEvent.click(screen.getByTestId("connection-form-url-copy"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
+    const copied = writeText.mock.calls[0][0] as string;
+    expect(copied).toMatch(/^mysql:\/\/app@db\.example\.com:3306\/shop\?ssl-mode=/);
+    expect(copied).not.toContain("s3cret");
+  });
+
+  it("ホスト未入力のときはコピーせず案内を出す", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+    renderWithProviders(
+      <ConnectionForm initial={null} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(t("formHost")), { target: { value: "" } });
+    fireEvent.click(screen.getByTestId("connection-form-url-copy"));
+    expect(await screen.findByText(t("formUrlCopyEmpty"))).toBeInTheDocument();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  const sshProfile: ConnectionProfile = {
+    id: "abcd2345",
+    name: "Tunnel",
+    driver: "mysql",
+    host: "10.0.0.5",
+    port: 3306,
+    user: "root",
+    database: null,
+    ssh: {
+      host: "bastion",
+      port: 22,
+      user: "ops",
+      auth_method: "agent",
+      private_key_path: "",
+      local_port: 15432,
+    },
+    group: null,
+    color: null,
+    is_production: false,
+    confirm_writes: false,
+    read_only: false,
+    skip_history: false,
+    file_path: null,
+  };
+
+  it("固定ポートを保存でき、空にすると自動割当 (null) に戻る", async () => {
+    saveProfile.mockResolvedValue({} as never);
+    const onSaved = vi.fn();
+    renderWithProviders(
+      <ConnectionForm initial={sshProfile} profiles={[]} onSaved={onSaved} onCancel={() => {}} />,
+    );
+    const input = screen.getByLabelText(t("formSshLocalPort")) as HTMLInputElement;
+    expect(input.value).toBe("15432");
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledOnce());
+    expect(saveProfile.mock.calls[0][0].ssh?.local_port).toBe(15432);
+
+    saveProfile.mockClear();
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    await waitFor(() => expect(saveProfile).toHaveBeenCalledOnce());
+    expect(saveProfile.mock.calls[0][0].ssh?.local_port).toBeNull();
+  });
+
+  it("範囲外のポートは保存せずフィールドにエラーを出す", async () => {
+    renderWithProviders(
+      <ConnectionForm initial={sshProfile} profiles={[]} onSaved={() => {}} onCancel={() => {}} />,
+    );
+    fireEvent.change(screen.getByLabelText(t("formSshLocalPort")), { target: { value: "70000" } });
+    fireEvent.click(screen.getByRole("button", { name: t("formSave") }));
+    expect(await screen.findByText(t("formInvalidSshLocalPort"))).toBeInTheDocument();
+    expect(saveProfile).not.toHaveBeenCalled();
+  });
+});

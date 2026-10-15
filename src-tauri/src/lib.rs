@@ -120,6 +120,8 @@ pub mod __test_api {
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
+    pub use crate::ssh::known_hosts_history::{KnownHostAction, KnownHostEvent};
+    pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -1370,6 +1372,9 @@ pub fn run() {
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
             commands::ssh::resolve_ssh_config_host,
+            commands::ssh::list_known_hosts_history,
+            commands::ssh::scan_openssh_known_hosts,
+            commands::ssh::import_known_hosts,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
