@@ -3578,7 +3578,7 @@ const en = {
   contextMenuShowCreate: "Show DDL",
   contextMenuCopyDdl: "Copy DDL",
   tableDdlSynthesizedHint:
-    "This database has no native CREATE TABLE output, so the DDL is reconstructed from catalog metadata (best-effort: generated columns, CHECK constraints, partitioning and expression indexes are not included).",
+    "This database has no native CREATE TABLE output, so the DDL is reconstructed from catalog metadata (best-effort: partitioning, storage options and expression indexes are not included).",
   tableDdlCopied: "Copied the DDL of {table}",
   contextMenuAddFavorite: "Add to favorites",
   contextMenuRemoveFavorite: "Remove from favorites",
@@ -9729,7 +9729,7 @@ const ja: Dict = {
   contextMenuShowCreate: "DDL を表示",
   contextMenuCopyDdl: "DDL をコピー",
   tableDdlSynthesizedHint:
-    "この DB は CREATE TABLE をネイティブに出力できないため、カタログ情報から DDL を再構成します (ベストエフォート: 生成列・CHECK 制約・パーティション・式インデックスは含まれません)。",
+    "この DB は CREATE TABLE をネイティブに出力できないため、カタログ情報から DDL を再構成します (ベストエフォート: パーティション・ストレージオプション・式インデックスは含まれません。CHECK 制約と生成列は含まれます)。",
   tableDdlCopied: "{table} の DDL をコピーしました",
   contextMenuAddFavorite: "お気に入りに追加",
   contextMenuRemoveFavorite: "お気に入りから削除",

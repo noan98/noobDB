@@ -9,21 +9,24 @@
 //! **同じ列定義レンダラ** (`column_def` / `quote_ident` / `render_create_table`)
 //! で接続自身の方言の DDL にする。純関数なので DB 無しでテストできる。
 //!
-//! あくまでベストエフォート: 生成列の式・CHECK 制約・パーティション・
+//! CHECK 制約と生成列の式は PostgreSQL の `pg_get_constraintdef` / `pg_get_expr` で取れるので
+//! [`TableDdlExtras`] として受け取って含める (#1625)。
+//!
+//! あくまでベストエフォート: パーティション・
 //! ストレージオプション・式インデックスは introspection が持たないため出力されない (式インデックスは誤った形で出さず、
 //! 末尾のコメントで名前だけ知らせる)。部分インデックスは述語 (`WHERE`) 付きで出力する。
 //! その旨を DDL 冒頭のコメント ([`SYNTHESIZED_DDL_HEADER`]) で明示する。
 
 use super::sync::{column_def, quote_ident, render_create_table};
-use super::types::{ForeignKey, IndexInfo, TableColumnInfo};
+use super::types::{ForeignKey, IndexInfo, TableColumnInfo, TableDdlExtras};
 use super::DriverKind;
 
 /// 再構成 DDL の先頭に付ける注意書き。SQL コメントなので貼り付けてもそのまま
 /// 実行できる。
 pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Reconstructed by noobDB from catalog metadata (best-effort).
--- Generated columns, CHECK constraints, partitioning, storage options,
--- and expression indexes are not included. Review before running.
+-- Partitioning, storage options, and expression indexes are not included.
+-- Review before running.
 ";
 
 /// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
@@ -36,8 +39,23 @@ fn qualified_name(driver: DriverKind, schema: Option<&str>, table: &str) -> Stri
     }
 }
 
-/// 1 列ぶんの定義。sync と共通の `column_def` をそのまま使う。
-fn render_column(driver: DriverKind, col: &TableColumnInfo) -> String {
+/// 1 列ぶんの定義。sync と共通の `column_def` をそのまま使う。生成列は式が取れていれば
+/// `GENERATED ALWAYS AS (式) STORED|VIRTUAL` で出す (`column_default` は生成式なので
+/// `DEFAULT` として出すと別物になる)。
+fn render_column(driver: DriverKind, col: &TableColumnInfo, extras: &TableDdlExtras) -> String {
+    if let Some((_, expr, virtual_col)) = extras.generated.iter().find(|(n, _, _)| n == &col.name) {
+        let mut def = format!(
+            "{} {} GENERATED ALWAYS AS ({}) {}",
+            quote_ident(driver, &col.name),
+            col.data_type,
+            expr,
+            if *virtual_col { "VIRTUAL" } else { "STORED" }
+        );
+        if !col.nullable {
+            def.push_str(" NOT NULL");
+        }
+        return def;
+    }
     column_def(driver, col)
 }
 
@@ -210,9 +228,13 @@ pub fn synthesize_create_table(
     columns: &[TableColumnInfo],
     indexes: &[IndexInfo],
     foreign_keys: &[ForeignKey],
+    extras: &TableDdlExtras,
 ) -> String {
     let qualified = qualified_name(driver, schema, table);
-    let mut lines: Vec<String> = columns.iter().map(|c| render_column(driver, c)).collect();
+    let mut lines: Vec<String> = columns
+        .iter()
+        .map(|c| render_column(driver, c, extras))
+        .collect();
 
     let pk = primary_key_columns(columns, indexes);
     if !pk.is_empty() {
@@ -221,6 +243,10 @@ pub fn synthesize_create_table(
     }
     for g in group_foreign_keys(table, foreign_keys) {
         lines.push(render_foreign_key(driver, &g));
+    }
+    // CHECK 制約 (`pg_get_constraintdef` が `CHECK (...)` 句ごと返す)。
+    for (name, def) in &extras.checks {
+        lines.push(format!("CONSTRAINT {} {}", quote_ident(driver, name), def));
     }
 
     let mut statements = vec![render_create_table(&qualified, &lines)];
@@ -352,6 +378,7 @@ mod tests {
             &cols,
             &indexes,
             &fks,
+            &TableDdlExtras::default(),
         );
         assert!(ddl.starts_with(SYNTHESIZED_DDL_HEADER));
         assert!(ddl.contains("CREATE TABLE \"public\".\"orders\" (\n"));
@@ -391,7 +418,15 @@ mod tests {
             fk("t", "pb", "parent", Some("y"), Some("fk_parent")),
             fk("t", "pa", "parent", Some("y"), Some("fk_parent")),
         ];
-        let ddl = synthesize_create_table(DriverKind::Mysql, None, "t", &cols, &indexes, &fks);
+        let ddl = synthesize_create_table(
+            DriverKind::Mysql,
+            None,
+            "t",
+            &cols,
+            &indexes,
+            &fks,
+            &TableDdlExtras::default(),
+        );
         assert!(ddl.contains("CREATE TABLE `t` ("));
         assert!(ddl.contains("PRIMARY KEY (`a`, `b`)"));
         assert!(ddl.contains(
@@ -403,7 +438,15 @@ mod tests {
     fn fk_without_resolved_referenced_column_omits_column_list() {
         let cols = vec![col("p", "INTEGER", true, "")];
         let fks = vec![fk("c", "p", "parent", None, None)];
-        let ddl = synthesize_create_table(DriverKind::Postgres, None, "c", &cols, &[], &fks);
+        let ddl = synthesize_create_table(
+            DriverKind::Postgres,
+            None,
+            "c",
+            &cols,
+            &[],
+            &fks,
+            &TableDdlExtras::default(),
+        );
         assert!(ddl.contains("CREATE TABLE \"c\" ("));
         assert!(ddl.contains("FOREIGN KEY (\"p\") REFERENCES \"parent\"\n"));
         assert!(!ddl.contains("CONSTRAINT"));
@@ -420,6 +463,7 @@ mod tests {
             &cols,
             &indexes,
             &[],
+            &TableDdlExtras::default(),
         );
         assert!(ddl.contains("CREATE TABLE \"s\"\"x\".\"t\"\"1\""));
         assert!(ddl.contains("\"we\"\"ird\" text"));
@@ -433,7 +477,15 @@ mod tests {
         let mut f = fk("orders", "user_id", "users", Some("id"), Some("fk_u"));
         f.on_delete = Some("CASCADE".into());
         f.on_update = Some("SET NULL".into());
-        let ddl = synthesize_create_table(DriverKind::Postgres, None, "orders", &cols, &[], &[f]);
+        let ddl = synthesize_create_table(
+            DriverKind::Postgres,
+            None,
+            "orders",
+            &cols,
+            &[],
+            &[f],
+            &TableDdlExtras::default(),
+        );
         assert!(ddl.contains(
             "FOREIGN KEY (\"user_id\") REFERENCES \"users\" (\"id\") ON DELETE CASCADE ON UPDATE SET NULL"
         ));
@@ -470,6 +522,7 @@ mod tests {
             &cols,
             &[partial, expr],
             &[],
+            &TableDdlExtras::default(),
         );
         assert!(ddl.contains(
             "CREATE UNIQUE INDEX \"u_email\" ON \"public\".\"t\" (\"email\") WHERE (deleted_at IS NULL);"
@@ -484,5 +537,30 @@ mod tests {
             join_native_statements(["CREATE TABLE t (a int)", "  CREATE INDEX i ON t(a);  ", ""]);
         assert_eq!(out, "CREATE TABLE t (a int);\n\nCREATE INDEX i ON t(a);\n");
         assert_eq!(join_native_statements(Vec::<String>::new()), "");
+    }
+
+    #[test]
+    fn check_constraints_and_generated_columns_are_included() {
+        let mut total = col("total", "integer", true, "");
+        // information_schema の column_default は生成式。DEFAULT として出してはいけない。
+        total.default = Some("(price * qty)".into());
+        total.extra = "STORED GENERATED".into();
+        let cols = vec![col("price", "integer", false, ""), total];
+        let extras = TableDdlExtras {
+            checks: vec![("price_pos".into(), "CHECK (price > 0)".into())],
+            generated: vec![("total".into(), "price * qty".into(), false)],
+        };
+        let ddl =
+            synthesize_create_table(DriverKind::Postgres, None, "t", &cols, &[], &[], &extras);
+        assert!(
+            ddl.contains("\"total\" integer GENERATED ALWAYS AS (price * qty) STORED"),
+            "{ddl}"
+        );
+        assert!(!ddl.contains("DEFAULT"), "{ddl}");
+        assert!(
+            ddl.contains("CONSTRAINT \"price_pos\" CHECK (price > 0)"),
+            "{ddl}"
+        );
+        assert!(!ddl.contains("Generated columns, CHECK"));
     }
 }

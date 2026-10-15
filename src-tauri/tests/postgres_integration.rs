@@ -3085,6 +3085,62 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
     );
 }
 
+/// CHECK 制約と生成列の式が再構成 DDL に含まれ、そのまま別名のテーブルを作れる (#1625)。
+#[tokio::test]
+async fn postgres_reconstructed_ddl_keeps_check_and_generated_columns() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS ddl1625, ddl1625_copy", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE ddl1625 (price int NOT NULL, qty int, total int GENERATED ALWAYS AS (price * qty) STORED, \
+         CONSTRAINT ddl1625_price_pos CHECK (price > 0))",
+        None,
+    )
+    .await
+    .expect("create");
+    let ddl = conn
+        .object_definition("public", "table", "ddl1625", None)
+        .await
+        .expect("ddl");
+    assert!(
+        ddl.contains("CONSTRAINT \"ddl1625_price_pos\" CHECK (price > 0)"),
+        "unexpected DDL: {ddl}"
+    );
+    assert!(
+        ddl.contains("\"total\" integer GENERATED ALWAYS AS ((price * qty)) STORED"),
+        "unexpected DDL: {ddl}"
+    );
+    assert!(!ddl.contains("DEFAULT (price"), "{ddl}");
+    // 再構成した DDL をそのまま流して、制約と生成列が効くことを確かめる。
+    let copy_ddl = ddl
+        .replace("\"ddl1625\"", "\"ddl1625_copy\"")
+        .replace("ddl1625_price_pos", "ddl1625_copy_price_pos");
+    for stmt in copy_ddl.split(";\n").filter(|s| s.contains("CREATE TABLE")) {
+        conn.execute(stmt, None).await.expect("recreate");
+    }
+    conn.execute("INSERT INTO ddl1625_copy (price, qty) VALUES (3, 4)", None)
+        .await
+        .expect("insert");
+    let r = conn
+        .execute("SELECT total FROM ddl1625_copy", None)
+        .await
+        .expect("select");
+    assert!(matches!(&r.rows[0][0], t::Value::Int(12)), "{r:?}");
+    assert!(conn
+        .execute("INSERT INTO ddl1625_copy (price, qty) VALUES (0, 1)", None)
+        .await
+        .is_err());
+    conn.execute("DROP TABLE IF EXISTS ddl1625, ddl1625_copy", None)
+        .await
+        .ok();
+}
+
 /// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
 async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
     let columns = vec!["id".to_string(), "name".to_string()];

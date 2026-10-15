@@ -1330,3 +1330,12 @@ pub struct SqliteMaintenanceResult {
 
 /// メンテナンス結果に載せる行数の上限。
 pub const SQLITE_MAINTENANCE_MAX_ROWS: usize = 1000;
+
+/// PostgreSQL の `CREATE TABLE` 再構成に足す、列情報だけでは分からない定義 (#1625)。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TableDdlExtras {
+    /// CHECK 制約 (制約名, `pg_get_constraintdef` の出力 = `CHECK (...)` 句全体)。
+    pub checks: Vec<(String, String)>,
+    /// 生成列 (列名, `pg_get_expr(adbin)` の生成式, VIRTUAL か。false は STORED)。
+    pub generated: Vec<(String, String, bool)>,
+}

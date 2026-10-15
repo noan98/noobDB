@@ -1307,6 +1307,11 @@ impl Connection {
         let indexes = self.list_indexes(db, table).await?;
         let fks = self.foreign_keys_for_table(db, table).await?;
         let driver = self.driver_kind();
+        // CHECK 制約と生成列の式 (#1625)。取れなくても DDL 自体は返す (その分は省かれる)。
+        let extras = match self {
+            Connection::Postgres(c) => c.table_ddl_extras(db, table).await.unwrap_or_default(),
+            Connection::MySql(_) | Connection::Sqlite(_) => types::TableDdlExtras::default(),
+        };
         Ok(table_ddl::synthesize_create_table(
             driver,
             Some(db),
@@ -1314,6 +1319,7 @@ impl Connection {
             &columns,
             &indexes,
             &fks,
+            &extras,
         ))
     }
 
