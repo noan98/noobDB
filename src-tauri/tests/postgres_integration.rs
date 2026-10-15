@@ -458,6 +458,12 @@ async fn postgres_new_schema_apis_and_transaction_when_env_set() {
         .find(|i| i.name == "noobdb_uq_sku")
         .expect("unique index listed");
     assert!(uq.unique && uq.columns == vec!["sku".to_string()]);
+    // スキーマ未指定 (空) は現在のスキーマとして読む (CreateIndexModal の重複検査, #1625)。
+    let implicit = conn
+        .list_indexes("", "noobdb_objtest_idx")
+        .await
+        .expect("list_indexes with empty schema");
+    assert_eq!(implicit.len(), indexes.len(), "{implicit:?}");
 
     // Objects: view, function, trigger (with its function).
     conn.execute(

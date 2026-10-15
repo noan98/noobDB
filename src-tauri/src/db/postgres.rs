@@ -2229,7 +2229,8 @@ impl PostgresConn {
                JOIN pg_am am       ON am.oid = i.relam
                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
                LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
-               WHERE t.relname = $1 AND n.nspname = $2
+               -- スキーマが空 (指定なし) のときは接続の現在のスキーマを使う。
+               WHERE t.relname = $1 AND n.nspname = COALESCE(NULLIF($2, ''), current_schema())
                ORDER BY i.relname, k.ord"#,
         )
         .bind(table)

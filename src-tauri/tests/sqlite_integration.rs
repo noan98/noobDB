@@ -1006,7 +1006,7 @@ async fn sqlite_sync_plan_applied_makes_target_match_source() {
         .any(|s| s.kind == t::SyncKind::AddColumn && s.table == "users"));
 
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
-    tgt.execute_transaction(&sqls, None)
+    tgt.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply sync plan");
 
@@ -1109,7 +1109,7 @@ async fn sqlite_data_sync_plan_applied_makes_rows_converge() {
     let plan = t::generate_data_sync_sql(&diff, true);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
     assert_eq!(sqls.len(), 3, "insert + update + delete");
-    tgt.execute_transaction(&sqls, None)
+    tgt.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply data sync plan");
 
@@ -1179,7 +1179,7 @@ async fn sqlite_generated_columns_are_not_listed_so_data_sync_never_writes_them(
     };
     let plan = t::generate_data_sync_sql(&diff, false);
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
-    conn.execute_transaction(&sqls, None)
+    conn.execute_sync_transaction(&sqls, None)
         .await
         .expect("apply must not write the generated column");
     let rows = conn

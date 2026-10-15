@@ -81,6 +81,14 @@ interface Entry {
   error: string | null;
   /** バックエンドが計算した基準環境との差分 (基準自身・未到着・比較不能のときは null)。 */
   diff: BroadcastDiff | null;
+  /**
+   * 「この環境だけ再実行」で届いた、その run の基準環境の結果 (#1625)。再実行の差分
+   * (`removedRowIndices` など) はこの基準の行に対する添字なので、画面の基準環境の行ではなく
+   * こちらを使う。通常の run では null (画面の基準環境の行が基準)。
+   */
+  baselineRows?: CellValue[][] | null;
+  baselineColumns?: Column[] | null;
+  baselineTotal?: number | null;
 }
 
 export interface BroadcastModalProps {
@@ -351,9 +359,23 @@ export function BroadcastModal({
       elapsedMs: 0,
       error: null,
       diff: null,
+      baselineRows: null,
+      baselineColumns: null,
+      baselineTotal: null,
     });
     const unlisten = await listenBroadcast(runId, {
       onEnv: (rep) => {
+        if (rep.sessionId === base.sessionId) {
+          // この run の基準の結果。差分の添字はこの行に対するものなので Entry に持たせる。
+          live(() =>
+            patchEntry(sessionId, {
+              baselineRows: rep.rows,
+              baselineColumns: rep.columns,
+              baselineTotal: rep.totalRows,
+            }),
+          )();
+          return;
+        }
         if (rep.sessionId !== sessionId) return;
         live(() =>
           patchEntry(sessionId, {
@@ -567,6 +589,7 @@ export function BroadcastModal({
               pkNames={pkNames}
               driver={driver}
               table={table ?? null}
+              tableInfo={tableColumns ?? null}
               baselineSessionId={baselineSessionId}
               baselineDatabase={database ?? null}
               envDatabase={
@@ -626,6 +649,7 @@ function EntryCard({
   pkNames,
   driver,
   table,
+  tableInfo,
   baselineSessionId,
   baselineDatabase,
   envDatabase,
@@ -638,6 +662,7 @@ function EntryCard({
   pkNames: Set<string>;
   driver: string;
   table: string | null;
+  tableInfo: TableColumnInfo[] | null;
   baselineSessionId: string;
   baselineDatabase: string | null;
   envDatabase: string | null;
@@ -681,10 +706,21 @@ function EntryCard({
   // (グリッドの初回描画より前に揃っている必要がある)。
   if (rowDiff) attachRowDiff(entry.rows, rowDiff);
 
+  // 差分の基準にした行。再実行した環境はその run の基準、それ以外は画面の基準環境。
+  const baseRows = entry.baselineRows ?? baseline?.rows ?? null;
+  const baseColumns = entry.baselineColumns ?? baseline?.columns ?? null;
+  const baseTotal = entry.baselineTotal ?? baseline?.totalRows ?? null;
+
   const removedSamples = useMemo(
-    () => (diff && baseline ? removedRowSamples(diff, baseline.rows, baseline.columns) : null),
-    [diff, baseline],
+    () => (diff && baseRows ? removedRowSamples(diff, baseRows, baseColumns ?? []) : null),
+    [diff, baseRows, baseColumns],
   );
+  // 同期 SQL は結果が表の列だけでできているときだけ作る (別名・式・別の表の列は不可)。
+  // 発火元のタブの SQL が書き換えられていても、表宛てに誤った SQL を作らないための検査。
+  const tableColNames = tableInfo?.map((c) => c.name) ?? [];
+  const tablePkNames = (tableInfo ?? []).filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
+  const notTableResult =
+    !!baseColumns && (tableColNames.length === 0 || baseColumns.some((c) => !tableColNames.includes(c.name)));
   const syncBlock = syncSqlBlockReason(diff, table);
 
   const tableColumnsForGrid =
@@ -775,19 +811,33 @@ function EntryCard({
           )}
         </Box>
       )}
-      {diff && syncBlock === null && table && baseline && diff.hasDiff && (
+      {diff && syncBlock === null && notTableResult && diff.hasDiff && (
+        <Box
+          px="3"
+          py="1.5"
+          textStyle="caption"
+          color="app.textMuted"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          {t("broadcastSyncNotTableResult")}
+        </Box>
+      )}
+      {diff && syncBlock === null && !notTableResult && table && baseline && diff.hasDiff && (
         <BroadcastSyncPanel
           envName={entry.profile.name}
           loadPlan={(allowDelete) =>
             api.broadcastSyncSql({
               driver,
               table,
-              columns: baseline.columns,
-              baselineRows: baseline.rows,
-              baselineTotal: baseline.totalRows,
+              columns: baseColumns ?? baseline.columns,
+              baselineRows: baseRows ?? baseline.rows,
+              baselineTotal: baseTotal ?? baseline.totalRows,
               targetRows: entry.rows,
               targetTotal: entry.totalRows,
               keyColumns: [...pkNames],
+              tableColumns: tableColNames,
+              tablePk: tablePkNames,
               allowDelete,
             })
           }
@@ -838,7 +888,7 @@ function EntryCard({
           streaming={entry.status === "running"}
           driver={driver}
           tableColumns={tableColumnsForGrid}
-          diffPrevRows={tableColumnsForGrid ? (baseline?.rows ?? null) : null}
+          diffPrevRows={tableColumnsForGrid ? (baseRows ?? null) : null}
           diffComparable={!!tableColumnsForGrid}
           diffHighlightEnabled={!!tableColumnsForGrid}
         />

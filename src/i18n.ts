@@ -4343,6 +4343,8 @@ const en = {
   broadcastSyncNotice:
     "This SQL makes {env} match the baseline. Nothing is run here; review it and apply it to {env} yourself.",
   broadcastSyncEmpty: "There is nothing to sync.",
+  broadcastSyncNotTableResult:
+    "This result is not made of the table's own columns (aliases, expressions or another table), so sync SQL cannot be built.",
   broadcastSyncPreviewLabel: "Sync SQL preview",
   broadcastSyncCount: "{count} statements",
   broadcastSyncCopy: "Copy SQL",
@@ -10823,6 +10825,8 @@ const ja: Dict = {
   broadcastSyncNotice:
     "この SQL は {env} を基準に揃えるものです。ここでは実行しません。内容を確認して、{env} へ自分で適用してください。",
   broadcastSyncEmpty: "同期する内容はありません。",
+  broadcastSyncNotTableResult:
+    "テーブルの列ではない結果 (別名・式・別の表の列を含む) のため、同期 SQL は作れません。",
   broadcastSyncPreviewLabel: "同期 SQL のプレビュー",
   broadcastSyncCount: "{count} 文",
   broadcastSyncCopy: "SQL をコピー",

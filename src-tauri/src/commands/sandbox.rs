@@ -642,18 +642,19 @@ pub(crate) async fn sandbox_table_diff_inner(
             let source_db = record.source_database.clone().unwrap_or_default();
             // 抽出条件つきで作ったサンドボックスは、実 DB も同じ条件で読む (条件に合わない
             // 行を「実 DB にだけある行」と誤判定して競合に見せない, #1625)。
-            let row_filter = record
-                .row_filters
-                .iter()
-                .find(|f| f.table == table)
-                .map(|f| f.filter.as_str());
+            // 保存済みの値も使う前に検査し直す (sandboxes.json は手で編集されうる)。
+            let row_filter = match record.row_filters.iter().find(|f| f.table == table) {
+                Some(f) => checked_row_filter(record.source_driver, &table, Some(&f.filter))
+                    .map_err(AppError::InvalidInput)?,
+                None => None,
+            };
             let sql = select_rows_where_sql(
                 record.source_driver,
                 &table,
                 &columns,
                 &primary_key,
                 want + 1,
-                row_filter,
+                row_filter.as_deref(),
             );
             // 実 DB 側の取得失敗 (テーブルの DROP/RENAME・一時的な接続不良) は
             // 競合検出ができなかった (`source_checked = false`) として扱い、

@@ -71,7 +71,32 @@ function lastRunId(): string {
   return calls[calls.length - 1][0].runId;
 }
 
-function mount(extra: { table?: string | null; database?: string | null } = {}) {
+const TABLE_COLUMNS = [
+  {
+    name: "id",
+    data_type: "int",
+    nullable: false,
+    key: "PRI",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  },
+  {
+    name: "v",
+    data_type: "text",
+    nullable: true,
+    key: "",
+    default: null,
+    extra: "",
+    referenced_table: null,
+    referenced_column: null,
+  },
+];
+
+function mount(
+  extra: { table?: string | null; database?: string | null; tableColumns?: typeof TABLE_COLUMNS | null } = {},
+) {
   return renderWithProviders(
     <BroadcastModal
       sql="SELECT * FROM users"
@@ -79,7 +104,9 @@ function mount(extra: { table?: string | null; database?: string | null } = {}) 
       baselineSessionId="s-base"
       baselineProfile={BASE}
       candidates={[{ sessionId: "s-env", profile: ENV }]}
-      tableColumns={null}
+      tableColumns={
+        extra.tableColumns === undefined ? (extra.table ? TABLE_COLUMNS : null) : extra.tableColumns
+      }
       table={extra.table ?? null}
       database={extra.database ?? null}
       autoLimit={null}
@@ -176,6 +203,8 @@ describe("BroadcastModal の追加操作 (#1625)", () => {
     const params = vi.mocked(api.broadcastSyncSql).mock.calls[0][0];
     expect(params.table).toBe("users");
     expect(params.allowDelete).toBe(false);
+    expect(params.tablePk).toEqual(["id"]);
+    expect(params.tableColumns).toEqual(["id", "v"]);
     expect(params.baselineRows).toHaveLength(3);
     expect(params.targetRows).toHaveLength(2);
     expect(await screen.findByLabelText(t("broadcastSyncPreviewLabel"))).toHaveTextContent(
@@ -196,5 +225,39 @@ describe("BroadcastModal の追加操作 (#1625)", () => {
     mount({ table: "users", database: "app" });
     await runAndDeliver(env("s-env", "done", diff({ truncated: true }), [[1, "a"]]));
     expect(await screen.findByRole("button", { name: t("broadcastFullRun") })).toBeInTheDocument();
+  });
+});
+
+describe("BroadcastModal の追加検査 (#1625 レビュー)", () => {
+  it("結果が表の列でなければ同期 SQL を作らず、その旨を案内する", async () => {
+    mount({ table: "users", database: "app", tableColumns: [TABLE_COLUMNS[0]] });
+    await runAndDeliver(
+      env("s-env", "done", diff({ hasDiff: true, removedCount: 1, removedRowIndices: [0] }), [[2, "b"]]),
+    );
+    expect(await screen.findByText(t("broadcastSyncNotTableResult"))).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("broadcastSyncGenerate") })).toBeNull();
+  });
+
+  it("再実行した環境の欠落行の例は、その run で届いた基準の行を使う", async () => {
+    mount();
+    await runAndDeliver(env("s-env", "error", null, []));
+    vi.mocked(api.broadcastCompare).mockClear();
+    fireEvent.click(await screen.findByRole("button", { name: t("broadcastRerunEntry") }));
+    await waitFor(() => expect(api.broadcastCompare).toHaveBeenCalledTimes(1));
+    const h = handlers.get(vi.mocked(api.broadcastCompare).mock.calls[0][0].runId);
+    // 再実行時の基準は画面の基準 (id 1,2,3) と違う行。添字 0 は新しい基準の行を指す。
+    act(() => {
+      h?.onEnv?.(env("s-base", "done", null, [[100, "new-base"]]));
+      h?.onEnv?.(
+        env(
+          "s-env",
+          "done",
+          diff({ mode: "hash", hasDiff: true, removedCount: 1, removedRowIndices: [0] }),
+          [],
+        ),
+      );
+    });
+    expect(await screen.findByText("id=100, v=new-base")).toBeInTheDocument();
+    expect(screen.queryByText("id=1, v=a")).toBeNull();
   });
 });

@@ -56,6 +56,9 @@ export const broadcastCommands = {
     targetRows: CellValue[][];
     targetTotal: number;
     keyColumns: string[];
+    /** 表の全列名と主キー列名。結果が表の列だけで、キーが主キーと一致するときだけ UPDATE / DELETE を作る。 */
+    tableColumns: string[];
+    tablePk: string[];
     allowDelete: boolean;
   }) =>
     invoke<SyncPlan>("broadcast_sync_sql", {
@@ -67,6 +70,8 @@ export const broadcastCommands = {
       targetRows: params.targetRows,
       targetTotal: params.targetTotal,
       keyColumns: params.keyColumns,
+      tableColumns: params.tableColumns,
+      tablePk: params.tablePk,
       allowDelete: params.allowDelete,
     }).then((r) => parseResponse(schemas.syncPlan, r, "broadcast_sync_sql")),
 };

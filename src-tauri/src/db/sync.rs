@@ -70,8 +70,10 @@ impl SyncKind {
             SyncKind::AddColumn => 1,
             SyncKind::AlterColumn | SyncKind::RebuildTable => 2,
             // 同名の索引・外部キーを作り直すときは DROP を先に、列の DROP より前に出す。
-            SyncKind::DropIndex => 3,
-            SyncKind::DropForeignKey => 4,
+            // MySQL は外部キーを支えるインデックスを先に消すと ERROR 1553 になるので、
+            // 外部キーの DROP をインデックスの DROP より前に出す。
+            SyncKind::DropForeignKey => 3,
+            SyncKind::DropIndex => 4,
             SyncKind::AddIndex => 5,
             SyncKind::AddForeignKey => 6,
             SyncKind::DropColumn => 7,
@@ -150,6 +152,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
                     index_statements(
                         driver,
                         table,
+                        false,
                         allow_destructive,
                         &mut statements,
                         &mut warnings,
@@ -184,6 +187,7 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
                 index_statements(
                     driver,
                     table,
+                    rebuilt,
                     allow_destructive,
                     &mut statements,
                     &mut warnings,
@@ -536,19 +540,23 @@ fn alter_table(
     if driver == DriverKind::Sqlite && sqlite_needs_rebuild(table) {
         if let Some(snapshot) = &table.target_snapshot {
             if !allow_destructive {
+                // 再作成は破壊的なので出さない。警告を足し、非破壊な ADD COLUMN などは
+                // 従来どおり列ごとの処理で出す (後退させない)。
                 warnings.push(format!(
                     "{}: SQLite は列・外部キーの変更を ALTER で行えません。テーブルの再作成 SQL (旧表を DROP して作り直す) は「破壊的な操作を許可」を有効にすると出力します。",
                     table.name
                 ));
-            } else if let Some(sql) = sqlite_rebuild_sql(table, snapshot, warnings) {
-                statements.push(SyncStatement {
-                    sql,
-                    table: table.name.clone(),
-                    kind: SyncKind::RebuildTable,
-                    destructive: true,
-                });
+            } else {
+                if let Some(sql) = sqlite_rebuild_sql(table, snapshot, warnings) {
+                    statements.push(SyncStatement {
+                        sql,
+                        table: table.name.clone(),
+                        kind: SyncKind::RebuildTable,
+                        destructive: true,
+                    });
+                }
+                return true;
             }
-            return true;
         }
     }
     let tident = quote_ident(driver, &table.name);
@@ -740,7 +748,7 @@ fn modify_column(
 
 /// SQLite のテーブル再作成の前後に付ける PRAGMA。外部キー検査を切らずに旧表を `DROP` すると
 /// 暗黙の `DELETE` で子表の `ON DELETE CASCADE` が発火して行が消える。`PRAGMA foreign_keys` は
-/// トランザクション内では効かないため、`SqliteConn::execute_transaction` がこの 2 行を見つけて
+/// トランザクション内では効かないため、`SqliteConn::execute_sync_transaction` (`apply_sync_sql` の経路) がこの 2 行を見つけて
 /// トランザクションの外で切り替える (他のドライバ・直接実行では通常の文として実行される)。
 pub(crate) const SQLITE_FK_OFF: &str = "PRAGMA foreign_keys=OFF";
 pub(crate) const SQLITE_FK_ON: &str = "PRAGMA foreign_keys=ON";
@@ -907,11 +915,43 @@ fn sqlite_rebuild_sql(
         format!("DROP TABLE {tident}"),
         format!("ALTER TABLE {tmp_ident} RENAME TO {tident}"),
     ]);
-    script.extend(
-        snap.recreate_sql
+    // 作り直すインデックス・トリガー・ビュー。削除する列を参照するものは作り直しに失敗する
+    // ので除き、計画で DROP / 作り直しする索引 (TargetOnly / Different) は旧表の DROP で
+    // 消えるだけにする (Different は index_statements が source の定義で作る)。
+    let dropped_columns: Vec<&str> = snap
+        .columns
+        .iter()
+        .filter(|c| !names.contains(c.name.as_str()))
+        .map(|c| c.name.as_str())
+        .collect();
+    let planned: HashSet<String> = table
+        .indexes
+        .iter()
+        .filter(|i| matches!(i.status, DiffStatus::TargetOnly | DiffStatus::Different))
+        .map(|i| i.name.to_ascii_lowercase())
+        .collect();
+    let mut recreate: Vec<String> = Vec::new();
+    for sql in &snap.recreate_sql {
+        if let Some(name) = created_index_name(sql) {
+            if planned.contains(&name.to_ascii_lowercase()) {
+                continue;
+            }
+        }
+        if let Some(col) = dropped_columns
             .iter()
-            .map(|s| s.trim().trim_end_matches(';').to_string()),
-    );
+            .find(|c| references_identifier(sql, c))
+        {
+            warnings.push(format!(
+                "{}: 削除する列 {} を参照するため、次の定義は再作成後に作り直しません: {}",
+                table.name,
+                col,
+                sql.split_whitespace().collect::<Vec<_>>().join(" ")
+            ));
+            continue;
+        }
+        recreate.push(sql.trim().trim_end_matches(';').to_string());
+    }
+    script.extend(recreate.iter().cloned());
     script.push(SQLITE_FK_ON.to_string());
 
     // 警告: 再現できない構文・子表の参照・作り直す索引。
@@ -941,14 +981,78 @@ fn sqlite_rebuild_sql(
             snap.referenced_by.join(", ")
         ));
     }
-    if !snap.recreate_sql.is_empty() {
+    if !recreate.is_empty() {
         warnings.push(format!(
-            "{}: インデックス・トリガー・ビュー {} 件を元の CREATE 文で作り直します。削除・型変更した列を参照している場合は適用に失敗します。",
+            "{}: インデックス・トリガー・ビュー {} 件を元の CREATE 文で作り直します。型変更した列を参照している場合は適用後に確認してください。",
             table.name,
-            snap.recreate_sql.len()
+            recreate.len()
+        ));
+    }
+    if autoincrement {
+        warnings.push(format!(
+            "{}: AUTOINCREMENT の表を再作成すると sqlite_sequence は残っている最大 ID まで戻り、削除済みの ID が再利用されることがあります。",
+            table.name
         ));
     }
     Some(script.join(";\n") + ";")
+}
+
+/// `CREATE [UNIQUE] INDEX [IF NOT EXISTS] name ON ...` から索引名を取り出す。索引以外は `None`。
+fn created_index_name(sql: &str) -> Option<String> {
+    let upper = sql.to_ascii_uppercase();
+    let head = upper.trim_start();
+    if !(head.starts_with("CREATE INDEX") || head.starts_with("CREATE UNIQUE INDEX")) {
+        return None;
+    }
+    let pos = upper.find("INDEX")? + "INDEX".len();
+    let mut rest = sql[pos..].trim_start();
+    if rest.to_ascii_uppercase().starts_with("IF NOT EXISTS") {
+        rest = rest["IF NOT EXISTS".len()..].trim_start();
+    }
+    let mut chars = rest.chars();
+    let first = chars.next()?;
+    let close = match first {
+        '"' => Some('"'),
+        '`' => Some('`'),
+        '[' => Some(']'),
+        _ => None,
+    };
+    match close {
+        Some(c) => {
+            let body: String = chars.take_while(|&x| x != c).collect();
+            Some(body)
+        }
+        None => Some(
+            rest.chars()
+                .take_while(|c| !c.is_whitespace() && *c != '(')
+                .collect(),
+        ),
+    }
+}
+
+/// `sql` が識別子 `name` を (大文字小文字を区別せず) 単語として含むか。引用符つきも拾う。
+fn references_identifier(sql: &str, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let hay = sql.to_ascii_lowercase();
+    let needle = name.to_ascii_lowercase();
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(&needle) {
+        let start = from + i;
+        let end = start + needle.len();
+        let before_ok = hay[..start]
+            .chars()
+            .next_back()
+            .map_or(true, |c| !is_word(c));
+        let after_ok = hay[end..].chars().next().map_or(true, |c| !is_word(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + needle.len().max(1);
+    }
+    false
 }
 
 /// インデックスの差分を `CREATE INDEX` / `DROP INDEX` にする (#1625)。主キーは対象外。
@@ -956,6 +1060,7 @@ fn sqlite_rebuild_sql(
 fn index_statements(
     driver: DriverKind,
     table: &TableDiff,
+    rebuilt: bool,
     allow_destructive: bool,
     statements: &mut Vec<SyncStatement>,
     warnings: &mut Vec<String>,
@@ -1002,13 +1107,16 @@ fn index_statements(
         match (ch.status, &ch.source, &ch.target) {
             (DiffStatus::SourceOnly, Some(s), _) => create(s, statements, warnings),
             (DiffStatus::TargetOnly, _, Some(t)) => {
-                if allow_destructive {
+                // 再作成する表では旧表の DROP で索引ごと消えるので DROP INDEX は出さない。
+                if allow_destructive && !rebuilt {
                     drop(t, statements, warnings);
                 }
             }
             (DiffStatus::Different, Some(s), Some(t)) => {
                 if allow_destructive {
-                    drop(t, statements, warnings);
+                    if !rebuilt {
+                        drop(t, statements, warnings);
+                    }
                     create(s, statements, warnings);
                 } else {
                     warnings.push(format!(
@@ -2584,5 +2692,158 @@ mod tests {
             .warnings
             .iter()
             .any(|w| w.contains("c (ON DELETE CASCADE)")));
+    }
+
+    #[test]
+    fn mysql_drops_the_foreign_key_before_the_index_that_backs_it() {
+        let fk = DiffForeignKey {
+            name: Some("fk_t_p".into()),
+            columns: vec!["pid".into()],
+            referenced_table: "p".into(),
+            referenced_columns: vec!["id".into()],
+            on_delete: None,
+            on_update: None,
+        };
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            fk_changes: vec![super::super::diff::ForeignKeyDiff {
+                status: DiffStatus::TargetOnly,
+                source: None,
+                target: Some(fk),
+                changed_fields: vec![],
+            }],
+            // 外部キーと同名の (外部キーを支える) インデックスも target にだけ在る。
+            indexes: vec![idx_diff(
+                DiffStatus::TargetOnly,
+                None,
+                Some(dix("fk_t_p", &["pid"], false)),
+            )],
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
+        let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sqls,
+            vec![
+                "ALTER TABLE `t` DROP FOREIGN KEY `fk_t_p`",
+                "DROP INDEX `fk_t_p` ON `t`",
+            ]
+        );
+    }
+
+    #[test]
+    fn sqlite_without_destructive_still_adds_columns_when_a_rebuild_is_needed() {
+        let mut name_new = col("name", "TEXT");
+        name_new.nullable = false;
+        let table = TableDiff {
+            name: "p".into(),
+            status: DiffStatus::Different,
+            columns: vec![
+                cdiff("name", DiffStatus::Different, Some(name_new), &["nullable"]),
+                cdiff(
+                    "extra",
+                    DiffStatus::SourceOnly,
+                    Some(col("extra", "TEXT")),
+                    &[],
+                ),
+            ],
+            target_snapshot: Some(super::super::diff::TargetTableSnapshot {
+                columns: vec![col("id", "INTEGER"), col("name", "TEXT")],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), false);
+        assert!(plan
+            .statements
+            .iter()
+            .any(|s| s.kind == SyncKind::AddColumn && s.sql.contains("\"extra\"")));
+        assert!(plan
+            .statements
+            .iter()
+            .all(|s| s.kind != SyncKind::RebuildTable));
+        assert!(plan.warnings.iter().any(|w| w.contains("破壊的")));
+    }
+
+    #[test]
+    fn sqlite_rebuild_skips_definitions_that_reference_a_dropped_column() {
+        let mut id = col("id", "INTEGER");
+        id.key = "PRI".into();
+        let table = TableDiff {
+            name: "p".into(),
+            status: DiffStatus::Different,
+            columns: vec![
+                cdiff("old", DiffStatus::TargetOnly, None, &[]),
+                cdiff(
+                    "name",
+                    DiffStatus::Different,
+                    Some(col("name", "VARCHAR")),
+                    &["data_type"],
+                ),
+            ],
+            indexes: vec![
+                idx_diff(
+                    DiffStatus::TargetOnly,
+                    None,
+                    Some(dix("idx_gone", &["name"], false)),
+                ),
+                idx_diff(
+                    DiffStatus::Different,
+                    Some(dix("idx_chg", &["name"], true)),
+                    Some(dix("idx_chg", &["name"], false)),
+                ),
+            ],
+            target_snapshot: Some(super::super::diff::TargetTableSnapshot {
+                columns: vec![id, col("name", "TEXT"), col("old", "TEXT")],
+                recreate_sql: vec![
+                    "CREATE INDEX idx_old ON p (old)".into(),
+                    "CREATE INDEX \"idx_gone\" ON p (name)".into(),
+                    "CREATE INDEX idx_chg ON p (name)".into(),
+                    "CREATE INDEX idx_keep ON p (id, name)".into(),
+                    "CREATE TRIGGER trg AFTER UPDATE ON p BEGIN SELECT old.old; END".into(),
+                ],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), true);
+        let rebuild = plan
+            .statements
+            .iter()
+            .find(|s| s.kind == SyncKind::RebuildTable)
+            .unwrap();
+        assert!(rebuild.sql.contains("CREATE INDEX idx_keep"));
+        assert!(!rebuild.sql.contains("idx_old"));
+        assert!(!rebuild.sql.contains("idx_gone"));
+        assert!(!rebuild.sql.contains("CREATE INDEX idx_chg"));
+        assert!(!rebuild.sql.contains("TRIGGER trg"));
+        // 再作成する表では DROP INDEX を出さず、Different の索引は source の定義で作る。
+        assert!(plan
+            .statements
+            .iter()
+            .all(|s| s.kind != SyncKind::DropIndex));
+        assert!(plan.statements.iter().any(|s| s.kind == SyncKind::AddIndex
+            && s.sql.contains("UNIQUE")
+            && s.sql.contains("idx_chg")));
+        assert!(plan.warnings.iter().any(|w| w.contains("idx_old")));
+    }
+
+    #[test]
+    fn index_name_and_identifier_helpers() {
+        assert_eq!(
+            created_index_name("CREATE UNIQUE INDEX IF NOT EXISTS \"a b\" ON t(x)").as_deref(),
+            Some("a b")
+        );
+        assert_eq!(
+            created_index_name("create index i1 on t(x)").as_deref(),
+            Some("i1")
+        );
+        assert_eq!(created_index_name("CREATE TRIGGER x ON t"), None);
+        assert!(references_identifier(
+            "CREATE INDEX i ON p (\"Old\")",
+            "old"
+        ));
+        assert!(!references_identifier("CREATE INDEX i ON p (older)", "old"));
     }
 }

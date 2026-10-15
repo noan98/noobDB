@@ -94,30 +94,53 @@ pub fn checked_row_filter(
         ));
     }
     let bad = |why: &str| Err(format!("invalid row filter for '{table}': {why}"));
-    let chars: Vec<char> = raw.chars().collect();
-    let mut i = 0;
+    // 走査は read-only ガードと同じマスク (`mask_for_driver`) の結果に対して行い、文字列・
+    // 引用符つき識別子・コメント・PG の `$$` 文字列の扱いを一本化する。マスクは文字列の中身と
+    // コメントを空白に置き換え、引用符・`$tag$` の区切りは残す。
+    let orig: Vec<char> = raw.chars().collect();
+    let masked = super::mask_for_driver(driver, &orig);
     let mut depth: i32 = 0;
     let mut quote: Option<char> = None;
-    while i < chars.len() {
-        let c = chars[i];
+    let mut i = 0;
+    while i < masked.len() {
+        let c = masked[i];
         if let Some(q) = quote {
-            if c == '\\' && q != '`' && driver == DriverKind::Mysql {
-                // MySQL の文字列は `\'` で引用符をエスケープできる。
-                i += 2;
-                continue;
-            }
             if c == q {
-                if chars.get(i + 1) == Some(&q) {
-                    i += 2;
-                    continue;
-                }
                 quote = None;
             }
             i += 1;
             continue;
         }
+        // コメント (マスクが空白にしたのに元は空白でない文字) は拒否する。
+        if c == ' ' && !orig[i].is_whitespace() {
+            return bad("comments are not allowed");
+        }
         match c {
             '\'' | '"' | '`' => quote = Some(c),
+            '[' if driver == DriverKind::Sqlite => {
+                // SQLite の [識別子] は本体がマスクで空白になる。閉じ括弧まで読み飛ばす。
+                match masked[i..].iter().position(|&d| d == ']') {
+                    Some(off) => i += off,
+                    None => return bad("unterminated identifier"),
+                }
+            }
+            '$' if driver == DriverKind::Postgres
+                && (i == 0 || !(masked[i - 1].is_alphanumeric() || masked[i - 1] == '_')) =>
+            {
+                // `$tag$ ... $tag$`: 区切りは残り、本体は空白。同じ区切りまで読み飛ばす。
+                let mut j = i + 1;
+                while j < masked.len() && (masked[j].is_alphanumeric() || masked[j] == '_') {
+                    j += 1;
+                }
+                if j < masked.len() && masked[j] == '$' {
+                    let tag: Vec<char> = masked[i..=j].to_vec();
+                    let rest = &masked[j + 1..];
+                    if let Some(off) = rest.windows(tag.len()).position(|w| w == tag.as_slice()) {
+                        i = j + 1 + off + tag.len();
+                        continue;
+                    }
+                }
+            }
             '(' => depth += 1,
             ')' => {
                 depth -= 1;
@@ -126,9 +149,6 @@ pub fn checked_row_filter(
                 }
             }
             ';' => return bad("a statement separator (;) is not allowed"),
-            '-' if chars.get(i + 1) == Some(&'-') => return bad("comments are not allowed"),
-            '/' if chars.get(i + 1) == Some(&'*') => return bad("comments are not allowed"),
-            '#' if driver == DriverKind::Mysql => return bad("comments are not allowed"),
             _ => {}
         }
         i += 1;
@@ -845,6 +865,24 @@ mod tests {
         }
         // MySQL の # コメント。
         assert!(checked_row_filter(DriverKind::Mysql, "t", Some("a = 1 # x")).is_err());
+        // PostgreSQL の $$ 文字列: 中の ; や -- は文字列、外の ; は拒否する。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("a = $$x; -- y$$")).is_ok());
+        assert!(
+            checked_row_filter(DriverKind::Postgres, "t", Some("a = $q$it's$q$ AND b = 1")).is_ok()
+        );
+        assert!(
+            checked_row_filter(DriverKind::Postgres, "t", Some("a = $$x$$; DROP TABLE t")).is_err()
+        );
+        assert!(checked_row_filter(
+            DriverKind::Postgres,
+            "t",
+            Some("a = $$x$$) UNION SELECT 1 --")
+        )
+        .is_err());
+        // バッククォートの引用符つき識別子の中の ; は識別子の一部。外に出す書き方は拒否する。
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("`a;b` = 1")).is_ok());
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("`a` = 1; DROP TABLE t")).is_err());
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some("[a;b] = 1")).is_ok());
         // 副作用のある関数。
         assert!(checked_row_filter(DriverKind::Postgres, "t", Some("id = nextval('s')")).is_err());
         // 長すぎる条件。

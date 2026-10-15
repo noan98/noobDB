@@ -465,7 +465,7 @@ async fn sqlite_index_diff_is_synced_by_create_and_drop_index() {
         .any(|s| s.kind == SyncKind::DropIndex));
     let full = t::generate_sync_sql(&diff, true);
     let sqls: Vec<String> = full.statements.iter().map(|s| s.sql.clone()).collect();
-    dst.execute_transaction(&sqls, None).await.unwrap();
+    dst.execute_sync_transaction(&sqls, None).await.unwrap();
 
     let again = t::compare_schema_via_core(&src, "main", &dst, "main")
         .await
@@ -553,7 +553,7 @@ async fn sqlite_column_change_is_rebuilt_without_cascading_children() {
     );
 
     let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
-    dst.execute_transaction(&sqls, None).await.unwrap();
+    dst.execute_sync_transaction(&sqls, None).await.unwrap();
 
     assert_eq!(count(&dst, "p").await, 2);
     assert_eq!(
@@ -576,5 +576,63 @@ async fn sqlite_column_change_is_rebuilt_without_cascading_children() {
     // 外部キー検査は元に戻っている
     let fk = dst.execute("PRAGMA foreign_keys", None).await.unwrap();
     assert!(matches!(&fk.rows[0][0], Value::Int(1)));
+    let _ = (std::fs::remove_file(sp), std::fs::remove_file(dp));
+}
+
+/// 型変更 + インデックス付き列の削除 + 計画で作り直す索引が同居しても、再作成が成功する。
+#[tokio::test]
+async fn sqlite_rebuild_survives_dropped_indexed_column_and_replanned_indexes() {
+    let (src, sp, dst, dp) = sqlite_pair("rebuild_idx").await;
+    src.execute(
+        "CREATE TABLE p (id INTEGER PRIMARY KEY, name TEXT NOT NULL, qty INTEGER)",
+        None,
+    )
+    .await
+    .unwrap();
+    src.execute("CREATE UNIQUE INDEX idx_name ON p (name)", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "CREATE TABLE p (id INTEGER PRIMARY KEY, name TEXT, qty TEXT, old TEXT)",
+        None,
+    )
+    .await
+    .unwrap();
+    // 削除予定の列を参照する索引 / 定義が違う索引 (Different) / target にだけある索引
+    dst.execute("CREATE INDEX idx_old ON p (old)", None)
+        .await
+        .unwrap();
+    dst.execute("CREATE INDEX idx_name ON p (name)", None)
+        .await
+        .unwrap();
+    dst.execute("CREATE INDEX idx_extra ON p (qty)", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "INSERT INTO p (id, name, qty, old) VALUES (1, 'a', '5', 'x'), (2, 'b', '6', 'y')",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let diff = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    let plan = t::generate_sync_sql(&diff, true);
+    assert!(plan
+        .statements
+        .iter()
+        .any(|s| s.kind == SyncKind::RebuildTable));
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    dst.execute_sync_transaction(&sqls, None).await.unwrap();
+
+    assert_eq!(count(&dst, "p").await, 2);
+    let again = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    assert!(
+        again.tables.iter().all(|x| x.status == t::DiffStatus::Same),
+        "{again:?}"
+    );
     let _ = (std::fs::remove_file(sp), std::fs::remove_file(dp));
 }

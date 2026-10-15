@@ -326,11 +326,24 @@ pub fn build_sync_diff(
     baseline: EnvSide<'_>,
     target: EnvSide<'_>,
     key_columns: &[String],
+    table_columns: &[String],
+    table_pk: &[String],
 ) -> Result<(DataDiff, Vec<String>)> {
     if !same_columns(baseline.columns, target.columns) {
         return Err(AppError::InvalidInput(
             "the column layouts of the two environments differ; cannot build sync SQL".into(),
         ));
+    }
+    // 結果の列が表の列でなければ INSERT / UPDATE を正しく作れない (別名・式・別の表の列)。
+    if let Some(c) = baseline
+        .columns
+        .iter()
+        .find(|c| !table_columns.iter().any(|t| t == &c.name))
+    {
+        return Err(AppError::InvalidInput(format!(
+            "the result is not made of columns of table '{table}' (column '{}'); cannot build sync SQL",
+            c.name
+        )));
     }
     let cap = MAX_BROADCAST_COMPARE_ROWS as u64;
     if baseline.total > cap
@@ -349,13 +362,34 @@ pub fn build_sync_diff(
         .iter()
         .map(|c| c.type_name.clone())
         .collect();
-    let pk = resolve_key_indices(baseline.columns, key_columns, None);
+    let mut pk = resolve_key_indices(baseline.columns, key_columns, None);
+    // UPDATE / DELETE は `WHERE キー = ...` なので、キーが表の主キーそのものでないと
+    // 結果の外にある行まで書き換え・削除しうる (利用者が選んだ非一意の列など)。主キーが
+    // すべて揃っているときだけキーとして使い、それ以外は INSERT だけにする。
+    let mut key_warning: Option<String> = None;
+    if !pk.is_empty() {
+        let mut chosen: Vec<&str> = pk
+            .iter()
+            .map(|&i| baseline.columns[i].name.as_str())
+            .collect();
+        let mut want: Vec<&str> = table_pk.iter().map(String::as_str).collect();
+        chosen.sort_unstable();
+        want.sort_unstable();
+        if want.is_empty() || chosen != want {
+            pk.clear();
+            key_warning = Some(
+                "キー列が表の主キーと一致しないため、UPDATE / DELETE は生成しません (一意でない列では結果の外の行まで書き換え・削除しうるため)。"
+                    .to_string(),
+            );
+        }
+    }
     let (base, targ) = (baseline.rows, target.rows);
     let mut rows: Vec<RowDiff> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
     let key_names: Vec<String> = pk.iter().map(|&i| columns[i].clone()).collect();
 
     if pk.is_empty() {
+        warnings.extend(key_warning);
         let mut remaining: HashMap<String, Vec<usize>> = HashMap::new();
         for (ti, trow) in targ.iter().enumerate() {
             remaining
@@ -732,12 +766,15 @@ mod tests {
         keys: &[String],
     ) -> crate::db::sync::SyncPlan {
         let c = cols(&["id", "v"]);
+        let names = vec!["id".to_string(), "v".to_string()];
         let (diff, warnings) = build_sync_diff(
             DriverKind::Postgres,
             "t",
             side(&c, base),
             side(&c, targ),
             keys,
+            &names,
+            &key_cols(),
         )
         .unwrap();
         let mut plan = crate::db::data_diff::generate_data_sync_sql(&diff, true);
@@ -796,6 +833,7 @@ mod tests {
     fn sync_diff_rejects_truncated_or_mismatched_results() {
         let c = cols(&["id", "v"]);
         let rows = vec![r(1, "a")];
+        let names = vec!["id".to_string(), "v".to_string()];
         let truncated = EnvSide {
             columns: &c,
             rows: &rows,
@@ -806,6 +844,8 @@ mod tests {
             "t",
             truncated,
             side(&c, &rows),
+            &key_cols(),
+            &names,
             &key_cols()
         )
         .is_err());
@@ -815,9 +855,70 @@ mod tests {
             "t",
             side(&c, &rows),
             side(&other, &rows),
+            &key_cols(),
+            &names,
             &key_cols()
         )
         .is_err());
+    }
+
+    #[test]
+    fn sync_diff_refuses_results_that_are_not_table_columns() {
+        let c = cols(&["id", "total"]);
+        let rows = vec![r(1, "a")];
+        let names = vec!["id".to_string(), "v".to_string()];
+        let err = build_sync_diff(
+            DriverKind::Mysql,
+            "t",
+            side(&c, &rows),
+            side(&c, &rows),
+            &key_cols(),
+            &names,
+            &key_cols(),
+        )
+        .expect_err("alias column");
+        assert!(err.to_string().contains("not made of columns"), "{err}");
+    }
+
+    #[test]
+    fn sync_diff_uses_only_the_table_primary_key_for_update_and_delete() {
+        let base = vec![r(1, "a"), r(2, "b")];
+        let targ = vec![r(1, "A"), r(3, "c")];
+        let c = cols(&["id", "v"]);
+        let names = vec!["id".to_string(), "v".to_string()];
+        // 利用者が非主キーの列 v を選んだ (表の主キーは id) → INSERT のみ + 警告。
+        let (diff, warnings) = build_sync_diff(
+            DriverKind::Postgres,
+            "t",
+            side(&c, &base),
+            side(&c, &targ),
+            &["v".to_string()],
+            &names,
+            &key_cols(),
+        )
+        .unwrap();
+        let plan = crate::db::data_diff::generate_data_sync_sql(&diff, true);
+        assert!(plan.statements.iter().all(|s| s.sql.starts_with("INSERT")));
+        assert!(warnings.iter().any(|w| w.contains("主キー")));
+        // 主キーが分からない表 (table_pk が空) でも、選んだ列は信用しない。
+        let (diff, _) = build_sync_diff(
+            DriverKind::Postgres,
+            "t",
+            side(&c, &base),
+            side(&c, &targ),
+            &key_cols(),
+            &names,
+            &[],
+        )
+        .unwrap();
+        assert!(crate::db::data_diff::generate_data_sync_sql(&diff, true)
+            .statements
+            .iter()
+            .all(|s| s.sql.starts_with("INSERT")));
+        // 主キー全体が揃えば UPDATE / DELETE も出る。
+        let plan = sync_plan(&base, &targ, &key_cols());
+        assert!(plan.statements.iter().any(|s| s.sql.starts_with("UPDATE")));
+        assert!(plan.statements.iter().any(|s| s.sql.starts_with("DELETE")));
     }
 
     #[test]

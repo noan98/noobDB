@@ -419,6 +419,10 @@ pub fn broadcast_sync_sql(
     target_rows: Vec<Vec<Value>>,
     target_total: u64,
     key_columns: Vec<String>,
+    // 表の全列名と主キー列名 (テーブル閲覧タブ由来)。結果が表の列だけでできていること、
+    // キーが表の主キーと一致することの検査に使う。
+    table_columns: Vec<String>,
+    table_pk: Vec<String>,
     allow_delete: bool,
 ) -> Result<SyncPlan> {
     if table.trim().is_empty() {
@@ -440,6 +444,8 @@ pub fn broadcast_sync_sql(
             total: target_total,
         },
         &key_columns,
+        &table_columns,
+        &table_pk,
     )?;
     let mut plan = generate_data_sync_sql(&diff, allow_delete);
     plan.warnings.extend(warnings);

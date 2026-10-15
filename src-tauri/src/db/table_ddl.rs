@@ -29,6 +29,22 @@ pub const SYNTHESIZED_DDL_HEADER: &str = "\
 -- Review before running.
 ";
 
+/// MySQL / SQLite は CHECK 制約・生成列の式を introspection で取っていない (PostgreSQL だけ
+/// [`TableDdlExtras`] で含める, #1625) ので、その旨を足した注意書き。
+pub const SYNTHESIZED_DDL_HEADER_NO_EXTRAS: &str = "\
+-- Reconstructed by noobDB from catalog metadata (best-effort).
+-- Partitioning, storage options, expression indexes, generated-column expressions, and CHECK constraints are not included.
+-- Review before running.
+";
+
+/// ドライバ別の注意書き。
+pub fn synthesized_ddl_header(driver: DriverKind) -> &'static str {
+    match driver {
+        DriverKind::Postgres => SYNTHESIZED_DDL_HEADER,
+        _ => SYNTHESIZED_DDL_HEADER_NO_EXTRAS,
+    }
+}
+
 /// `schema` (PostgreSQL のスキーマ) で修飾したテーブル名。
 fn qualified_name(driver: DriverKind, schema: Option<&str>, table: &str) -> String {
     match schema {
@@ -256,7 +272,7 @@ pub fn synthesize_create_table(
             .filter_map(|idx| render_index(driver, &qualified, idx)),
     );
 
-    let mut out = String::from(SYNTHESIZED_DDL_HEADER);
+    let mut out = String::from(synthesized_ddl_header(driver));
     out.push_str(&statements.join(";\n\n"));
     out.push(';');
     out.push('\n');
@@ -562,5 +578,14 @@ mod tests {
             "{ddl}"
         );
         assert!(!ddl.contains("Generated columns, CHECK"));
+    }
+
+    #[test]
+    fn header_mentions_missing_check_and_generated_expressions_except_on_postgres() {
+        assert!(!synthesized_ddl_header(DriverKind::Postgres).contains("CHECK"));
+        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
+            let h = synthesized_ddl_header(d);
+            assert!(h.contains("CHECK") && h.contains("generated-column"), "{h}");
+        }
     }
 }

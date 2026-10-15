@@ -145,7 +145,7 @@ pub(crate) async fn apply_sync_sql_inner(
 
     let result = session
         .conn
-        .execute_transaction(&statements, database.as_deref())
+        .execute_sync_transaction(&statements, database.as_deref())
         .await;
     {
         // 失敗時も invalidate する (fail-closed)。MySQL は DDL の暗黙コミットで、

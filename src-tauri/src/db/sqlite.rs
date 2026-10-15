@@ -668,21 +668,49 @@ impl SqliteConn {
         if statements.is_empty() {
             return Ok(0);
         }
-        // テーブル再作成 (`SyncKind::RebuildTable`, #1625) は先頭・末尾の
-        // `PRAGMA foreign_keys` を含む。PRAGMA はトランザクション内では効かないので、
-        // 外して BEGIN の前後で切り替える。
+        let mut conn = self.pool.acquire().await?;
+        run_batch(&mut conn, statements).await
+    }
+
+    /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。
+    ///
+    /// 再作成 (`SyncKind::RebuildTable`, #1625) のスクリプトは先頭・末尾に
+    /// `PRAGMA foreign_keys` を含む。PRAGMA はトランザクション内では効かないので、外して
+    /// BEGIN の前後で切り替え、コミット前に `foreign_key_check` で違反が増えていないかを
+    /// 確かめる。終わったら (失敗時も) 接続の `foreign_keys` を元の値 (ON / OFF) に戻す。
+    /// 利用者の SQL を流す経路 (`run_query_transaction` など) は PRAGMA を解釈しない
+    /// `execute_transaction` を使うので、そちらの挙動は変わらない。
+    pub async fn execute_sync_transaction(
+        &self,
+        statements: &[String],
+        _database: Option<&str>,
+    ) -> Result<u64> {
+        if statements.is_empty() {
+            return Ok(0);
+        }
         let (statements, fk_off) = split_fk_pragmas(statements);
         let mut conn = self.pool.acquire().await?;
         if !fk_off {
             return run_batch(&mut conn, &statements).await;
         }
+        let original_on = sqlx::query("PRAGMA foreign_keys")
+            .fetch_one(&mut *conn)
+            .await
+            .ok()
+            .and_then(|r| sqlx::Row::try_get::<i64, _>(&r, 0).ok())
+            != Some(0);
         sqlx::query(sqlx::AssertSqlSafe(crate::db::sync::SQLITE_FK_OFF))
             .execute(&mut *conn)
             .await?;
         let before = fk_violation_count(&mut conn).await;
         let result = run_batch_checked(&mut conn, &statements, before).await;
-        // 失敗しても必ず外部キー検査を戻す。戻せない接続はプールに返さず閉じる。
-        if sqlx::query(sqlx::AssertSqlSafe(crate::db::sync::SQLITE_FK_ON))
+        // 失敗しても必ず元の値に戻す。戻せない接続はプールに返さず閉じる。
+        let restore = if original_on {
+            crate::db::sync::SQLITE_FK_ON
+        } else {
+            crate::db::sync::SQLITE_FK_OFF
+        };
+        if sqlx::query(sqlx::AssertSqlSafe(restore))
             .execute(&mut *conn)
             .await
             .is_err()

@@ -5,6 +5,7 @@ import { api, type DataDiffHandle } from "../api/tauri";
 import { useT } from "../i18n";
 import { BroadcastSyncPanel } from "./BroadcastSyncPanel";
 import { Callout } from "./Callout";
+import { ErrorNote } from "./modalForm";
 import { Button } from "./ui";
 
 let fullSeq = 0;
@@ -111,7 +112,7 @@ export function BroadcastFullCompare({
           {t("broadcastFullHint")}
         </chakra.span>
       </Flex>
-      {state === "error" && error && <Callout tone="danger">{error}</Callout>}
+      {state === "error" && error && <ErrorNote>{error}</ErrorNote>}
       {state === "done" && handle && (
         <>
           <chakra.p margin={0} textStyle="caption" color="app.textMuted" role="status">

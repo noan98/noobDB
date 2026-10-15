@@ -1078,6 +1078,20 @@ impl Connection {
         }
     }
 
+    /// スキーマ同期の適用用。SQLite だけ、テーブル再作成の `PRAGMA foreign_keys` 切り替えと
+    /// 外部キー検査を行う (`SqliteConn::execute_sync_transaction`)。他のドライバは
+    /// [`Self::execute_transaction`] と同じ。
+    pub async fn execute_sync_transaction(
+        &self,
+        statements: &[String],
+        database: Option<&str>,
+    ) -> Result<u64> {
+        match self {
+            Connection::Sqlite(c) => c.execute_sync_transaction(statements, database).await,
+            _ => self.execute_transaction(statements, database).await,
+        }
+    }
+
     pub async fn databases(&self) -> Result<Vec<String>> {
         match self {
             Connection::MySql(c) => c.databases().await,
