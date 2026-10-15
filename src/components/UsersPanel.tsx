@@ -1289,7 +1289,8 @@ export function UsersPanel({
                           <SkeletonTableRows columns={6} />
                         ) : rowKeys.length === 0 ? (
                           <tr>
-                            <chakra.td css={tdCss} colSpan={6}>
+                            {/* tdCss は nowrap なので、長い案内文だけ折り返す。 */}
+                            <chakra.td css={{ ...tdCss, whiteSpace: "normal" }} colSpan={6}>
                               {t("usersPrivilegesEmpty")}
                             </chakra.td>
                           </tr>
