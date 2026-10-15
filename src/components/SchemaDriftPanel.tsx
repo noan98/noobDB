@@ -9,6 +9,7 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Tooltip } from "./Tooltip";
 import { Button, Input, Select } from "./ui";
 import { useToast } from "./Toast";
+import { SchemaDriftRevert } from "./SchemaDriftRevert";
 import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonRow } from "./Skeleton";
 import { EmptyState } from "./EmptyState";
@@ -45,6 +46,8 @@ interface Props {
   onOpenData?: (database: string, table: string) => void;
   /** ラベルを付け替えた (null = 外した) ので、親が保持する世代一覧へ反映する (#1621)。 */
   onLabelChanged?: (id: string, label: string | null) => void;
+  /** 巻き戻し DDL (#1621) をエディタへ挿入する。指定されると「エディタに挿入」を出す。 */
+  onInsertSql?: (sql: string) => void;
 }
 
 function formatCaptured(iso: string): string {
@@ -62,6 +65,7 @@ export function SchemaDriftPanel({
   onOpenStructure,
   onOpenData,
   onLabelChanged,
+  onInsertSql,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -93,6 +97,13 @@ export function SchemaDriftPanel({
       setLabelSaving(false);
     }
   };
+
+  // 巻き戻し DDL (#1621)。比較する世代が変わったら閉じる。
+  const [revertOpen, setRevertOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 比較する 2 世代の id が変わったときだけ閉じる
+  useEffect(() => {
+    setRevertOpen(false);
+  }, [pickA, pickB]);
 
   const [summary, setSummary] = useState<SchemaDriftSummary | null>(null);
   const [comparing, setComparing] = useState(false);
@@ -435,6 +446,29 @@ export function SchemaDriftPanel({
                   </chakra.ul>
                 ) : null}
               </Box>
+              {genA && genB && bothDiffable && !differentTarget && (
+                <>
+                  <Flex justify="flex-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      aria-expanded={revertOpen}
+                      onClick={() => setRevertOpen((v) => !v)}
+                    >
+                      <Icon name="refresh" size={ICON_SIZES.sm} /> {t("schemaDriftRevertButton")}
+                    </Button>
+                  </Flex>
+                  {revertOpen && (
+                    <SchemaDriftRevert
+                      profileId={profile.id}
+                      fromId={genA.id}
+                      toId={genB.id}
+                      onInsertSql={onInsertSql}
+                      onClose={onClose}
+                    />
+                  )}
+                </>
+              )}
             </Flex>
           </Flex>
         )}

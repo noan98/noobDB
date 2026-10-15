@@ -1679,6 +1679,11 @@ fn build_fixtures() -> serde_json::Value {
         from_captured_at: "2026-01-01T00:00:00Z".into(),
         to_captured_at: "2026-01-02T00:00:00Z".into(),
     };
+    let schema_drift_revert_sql = t::RevertSql {
+        plan: sync_plan.clone(),
+        omitted_destructive: 2,
+        database: "appdb".into(),
+    };
     let timelapse_row_history = t::RowHistory {
         columns: vec!["id".into(), "price".into()],
         primary_key: vec!["id".into()],
@@ -1976,6 +1981,7 @@ fn build_fixtures() -> serde_json::Value {
         "tableWatch": table_watch,
         "timelapseGenerationDiff": timelapse_generation_diff,
         "timelapseRowHistory": timelapse_row_history,
+        "schemaDriftRevertSql": schema_drift_revert_sql,
         "schemaDriftGeneration": schema_drift_generation,
         "schemaDriftSummary": schema_drift_summary,
         "schemaDriftCapture": schema_drift_capture,

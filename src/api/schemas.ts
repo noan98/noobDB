@@ -1911,6 +1911,12 @@ export const schemaDriftGeneration = z.object({
   // 利用者が付けたラベル (#1621)。
   label: z.string().nullable().optional(),
 });
+/** `schema_drift_revert_sql` の結果 (#1621)。 */
+export const schemaDriftRevertSql = z.object({
+  plan: syncPlan,
+  omitted_destructive: z.number(),
+  database: z.string(),
+});
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
 /** ダンプ用ツール (`mysqldump` / `pg_dump`) の検出結果と導入方法。 */

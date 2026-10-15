@@ -12113,6 +12113,7 @@ export default function App() {
                 onClose={() => setSchemaDriftOpen(false)}
                 onOpenStructure={sessionId ? handleOpenStructure : undefined}
                 onOpenData={sessionId ? handleOpenTable : undefined}
+                onInsertSql={sessionId ? handleInsertAdvisorSql : undefined}
                 onLabelChanged={(id, label) =>
                   setSchemaDrift((prev) => prev.map((g) => (g.id === id ? { ...g, label } : g)))
                 }

@@ -204,7 +204,7 @@ pub mod __test_api {
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
     pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
-    pub use crate::commands::schema_drift::SchemaDriftCapture;
+    pub use crate::commands::schema_drift::{RevertSql, SchemaDriftCapture};
     pub use crate::commands::ssh::ResolvedSshAlias;
     pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
     pub use crate::db::assertions::AssertionSql;
@@ -1477,6 +1477,7 @@ pub fn run() {
             commands::schema_drift::schema_drift_list,
             commands::schema_drift::schema_drift_compare,
             commands::schema_drift::schema_drift_set_label,
+            commands::schema_drift::schema_drift_revert_sql,
             commands::schema_drift::schema_drift_import_legacy,
             commands::plan_watch::plan_watch_list,
             commands::plan_watch::plan_watch_set,

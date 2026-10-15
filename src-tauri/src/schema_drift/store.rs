@@ -623,7 +623,9 @@ mod tests {
         let pool = temp_pool().await;
         rec(&pool, "p", &payload(&["a"]), 2).await;
         let first: i64 = list_in(&pool, "p").await.unwrap()[0].id.parse().unwrap();
-        assert!(set_label_in(&pool, "p", first, Some("  リリース v1.2  ")).await.unwrap());
+        assert!(set_label_in(&pool, "p", first, Some("  リリース v1.2  "))
+            .await
+            .unwrap());
         // 他プロファイル・存在しない ID は false。
         assert!(!set_label_in(&pool, "q", first, Some("x")).await.unwrap());
         assert!(!set_label_in(&pool, "p", 9999, Some("x")).await.unwrap());

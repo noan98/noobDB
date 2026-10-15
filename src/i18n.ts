@@ -5535,6 +5535,17 @@ const en = {
   schemaDriftLabelHint:
     'Applies to the "to" generation. Labeled generations are kept when old ones rotate out (up to 20).',
   notifySchemaDriftTitle: "Schema changed: {name}",
+  schemaDriftRevertTitle: 'Revert DDL (back to the "from" generation)',
+  schemaDriftRevertButton: "Generate revert DDL",
+  schemaDriftRevertAllowDestructive: "Include destructive statements (DROP)",
+  schemaDriftRevertLoading: "Generating DDL...",
+  schemaDriftRevertOmitted:
+    "{count} destructive statement(s) (DROP) are not shown. Turn on the switch to include them; dropped columns and tables lose their data.",
+  schemaDriftRevertEmpty: "No DDL is needed to revert these generations.",
+  schemaDriftRevertDestructiveNote:
+    "Contains DROP statements that delete data. Review carefully before running.",
+  schemaDriftRevertCopy: "Copy DDL",
+  schemaDriftRevertInsert: "Insert into editor",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11037,6 +11048,16 @@ const ja: Dict = {
   schemaDriftLabelSave: "ラベルを保存",
   schemaDriftLabelHint: "比較先の世代に付きます。ラベル付きの世代は古い世代の整理で消えません (最大 20 件)。",
   notifySchemaDriftTitle: "スキーマが変更されました: {name}",
+  schemaDriftRevertTitle: "巻き戻し DDL (「比較元」の世代へ戻す)",
+  schemaDriftRevertButton: "巻き戻し DDL を生成",
+  schemaDriftRevertAllowDestructive: "破壊的な文 (DROP) も含める",
+  schemaDriftRevertLoading: "DDL を生成しています...",
+  schemaDriftRevertOmitted:
+    "破壊的な文 (DROP) {count} 件は表示していません。含めるにはスイッチをオンにしてください (列・テーブルを削除するとデータも失われます)。",
+  schemaDriftRevertEmpty: "この 2 世代を戻すのに必要な DDL はありません。",
+  schemaDriftRevertDestructiveNote: "データを削除する DROP 文を含みます。実行前によく確認してください。",
+  schemaDriftRevertCopy: "DDL をコピー",
+  schemaDriftRevertInsert: "エディタに挿入",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

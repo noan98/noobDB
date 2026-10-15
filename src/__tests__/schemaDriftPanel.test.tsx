@@ -18,6 +18,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       schemaDriftCompare: vi.fn(),
       schemaDriftSetLabel: vi.fn(),
+      schemaDriftRevertSql: vi.fn(),
     },
   };
 });
@@ -244,5 +245,61 @@ describe("SchemaDriftPanel generation labels (#1621)", () => {
       expect(api.schemaDriftSetLabel).toHaveBeenCalledWith("p-test", "g2", "リリース v1.2"),
     );
     await waitFor(() => expect(onLabelChanged).toHaveBeenCalledWith("g2", "リリース v1.2"));
+  });
+});
+
+describe("SchemaDriftPanel revert DDL (#1621)", () => {
+  it("generates revert DDL for the picked generations, re-requests with the destructive switch, and inserts it", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue({ tables: [] });
+    const plan = (destructive: boolean) => ({
+      plan: {
+        statements: [
+          {
+            sql: "ALTER TABLE users ADD COLUMN legacy INT",
+            table: "users",
+            kind: "add_column" as const,
+            destructive: false,
+          },
+          ...(destructive
+            ? [{ sql: "DROP TABLE audit", table: "audit", kind: "drop_table" as const, destructive: true }]
+            : []),
+        ],
+        warnings: [],
+      },
+      omitted_destructive: destructive ? 0 : 1,
+      database: "appdb",
+    });
+    vi.mocked(api.schemaDriftRevertSql).mockImplementation(async (_p, _f, _t, allow) => plan(allow));
+    const onInsertSql = vi.fn();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={[
+          makeGeneration("g2", "2026-01-02T00:00:00Z"),
+          makeGeneration("g1", "2026-01-01T00:00:00Z"),
+        ]}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+        onInsertSql={onInsertSql}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(t("schemaDriftRevertButton")) }));
+    // 比較元 = g1 (戻したい世代)、比較先 = g2 (現在側)。既定は破壊的な文なし。
+    await waitFor(() => expect(api.schemaDriftRevertSql).toHaveBeenCalledWith("p-test", "g1", "g2", false));
+    const pre = await screen.findByTestId("schema-drift-revert-sql");
+    expect(pre).toHaveTextContent("ADD COLUMN legacy");
+    expect(pre).not.toHaveTextContent("DROP TABLE");
+    expect(screen.getByText(t("schemaDriftRevertOmitted", { count: 1 }))).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: t("schemaDriftRevertAllowDestructive") }));
+    await waitFor(() => expect(api.schemaDriftRevertSql).toHaveBeenCalledWith("p-test", "g1", "g2", true));
+    await waitFor(() =>
+      expect(screen.getByTestId("schema-drift-revert-sql")).toHaveTextContent("DROP TABLE audit;"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(t("schemaDriftRevertInsert")) }));
+    expect(onInsertSql).toHaveBeenCalledWith(expect.stringContaining("DROP TABLE audit;"));
   });
 });

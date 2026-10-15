@@ -1178,6 +1178,14 @@ export interface SchemaSnapshotTable {
 }
 
 /** 保存済みスキーマ世代のメタデータ (スキーマドリフト・タイムライン #736 / #1260)。 */
+/** 巻き戻し DDL の生成結果 (#1621)。`plan` は現在側の世代を戻したい世代の形へ揃える DDL。 */
+export interface SchemaDriftRevertSql {
+  plan: SyncPlan;
+  /** 破壊的な文 (DROP) の許可が無いため出力しなかった数。 */
+  omitted_destructive: number;
+  database: string;
+}
+
 export interface SchemaDriftGeneration {
   id: string;
   /** 取得時刻 (RFC 3339)。 */

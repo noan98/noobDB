@@ -3703,6 +3703,23 @@
     "tableCount": 12,
     "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
   },
+  "schemaDriftRevertSql": {
+    "database": "appdb",
+    "omitted_destructive": 2,
+    "plan": {
+      "statements": [
+        {
+          "destructive": false,
+          "kind": "add_column",
+          "sql": "ALTER TABLE `users` ADD COLUMN `email` VARCHAR(255);",
+          "table": "users"
+        }
+      ],
+      "warnings": [
+        "SQLite cannot alter columns in place"
+      ]
+    }
+  },
   "schemaDriftSummary": {
     "tables": [
       {
