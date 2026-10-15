@@ -525,6 +525,7 @@ import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
 import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
+import { resolveCsvDropTarget } from "./dropImport";
 
 type Theme = "light" | "dark";
 
@@ -8728,7 +8729,8 @@ export default function App() {
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
    * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
    * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
-   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
+   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。テーブルタブでなくても
+   *   データベースが決まっていれば新規テーブル作成モードで開く (#1623)。
    * - 非対応拡張子 … トーストで明示的に拒否する。
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
@@ -8780,15 +8782,21 @@ export default function App() {
 
       // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
       if (csvPaths.length > 0) {
-        const tab = activeTabRef.current;
-        if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
+        // テーブルタブならそのテーブルへ、データベースだけ決まっていれば新規テーブルとして取り込む (#1623)。
+        const dropTarget = resolveCsvDropTarget(!!sessionIdRef.current, activeTabRef.current);
+        if (dropTarget.kind === "none") {
           toast.error(translate("dropCsvNoTable"));
         } else {
           if (csvPaths.length > 1) {
             toast.info(translate("dropCsvMultiOnlyFirst"));
           }
           setImportInitialPath(csvPaths[0]);
-          setImportTarget({ database: tab.database, table: tab.table });
+          if (dropTarget.kind === "table") {
+            setImportTarget({ database: dropTarget.database, table: dropTarget.table });
+          } else {
+            toast.info(translate("dropCsvNewTable", { database: dropTarget.database }));
+            setImportTarget({ database: dropTarget.database, table: null });
+          }
         }
       }
 
