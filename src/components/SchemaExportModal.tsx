@@ -423,7 +423,7 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
               {hasOutput && (
                 <chakra.div
                   data-testid="schema-export-tokens"
-                  fontSize="xs"
+                  textStyle="caption"
                   color="app.textMuted"
                   data-level={tokenEstimate.level}
                 >

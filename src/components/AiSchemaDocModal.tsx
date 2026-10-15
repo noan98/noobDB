@@ -672,7 +672,7 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
                 />
                 <chakra.span fontSize="md">{t("aiSchemaDocIncremental")}</chakra.span>
               </chakra.label>
-              <chakra.span fontSize="xs" color="app.textMuted">
+              <chakra.span textStyle="caption" color="app.textMuted">
                 {t("aiSchemaDocIncrementalHelp", {
                   at: formatDocTimestamp(new Date(cachedDoc.generatedAt)),
                 })}
