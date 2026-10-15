@@ -3,11 +3,14 @@ import {
   RELATED_CELL_MAX_CHARS,
   RELATED_ROWS_MAX,
   RELATED_ROWS_PAGE,
+  buildRelatedCountSql,
   buildRelatedOpenSql,
   buildRelatedRowsSql,
   clampRelatedLimit,
+  describeRelatedCount,
   formatRelatedCell,
   nextRelatedLimit,
+  parseRelatedCount,
   resolveRelatedEntries,
   splitRelatedRows,
 } from "../relatedRows";
@@ -176,5 +179,48 @@ describe("formatRelatedCell", () => {
   it("数値・真偽値", () => {
     expect(formatRelatedCell(0, "number", false)).toMatchObject({ text: "0" });
     expect(formatRelatedCell(false, "bool", false)).toMatchObject({ text: "false" });
+  });
+});
+
+describe("子行件数の事前表示 (#1629)", () => {
+  const base = { childTable: "orders", childColumn: "user_id", value: 42 };
+
+  it("COUNT は上限 + 1 件で打ち切るサブクエリ (方言ごとに識別子をクオート)", () => {
+    expect(buildRelatedCountSql({ ...base, driver: "mysql", database: "shop" })).toBe(
+      "SELECT COUNT(*) FROM (SELECT 1 FROM `shop`.`orders` WHERE `user_id` = 42 LIMIT 1001) AS related_count",
+    );
+    expect(buildRelatedCountSql({ ...base, driver: "postgres", database: "public" })).toBe(
+      'SELECT COUNT(*) FROM (SELECT 1 FROM "public"."orders" WHERE "user_id" = 42 LIMIT 1001) AS related_count',
+    );
+    expect(buildRelatedCountSql({ ...base, driver: "sqlite", database: "main" })).toBe(
+      'SELECT COUNT(*) FROM (SELECT 1 FROM "orders" WHERE "user_id" = 42 LIMIT 1001) AS related_count',
+    );
+  });
+
+  it("文字列キーはエスケープされ、NULL キーは SQL を作らない", () => {
+    expect(buildRelatedCountSql({ ...base, driver: "mysql", database: "d", value: "o'x" })).toContain(
+      "= 'o''x'",
+    );
+    expect(buildRelatedCountSql({ ...base, driver: "mysql", database: "d", value: null })).toBeNull();
+  });
+
+  it("生成する SQL は読み取り専用ガードを通る", () => {
+    const sql = buildRelatedCountSql({ ...base, driver: "mysql", database: "shop" });
+    expect(sql && isReadOnlySql(sql)).toBe(true);
+  });
+
+  it("parseRelatedCount は数値・数字文字列を読み、それ以外は null", () => {
+    expect(parseRelatedCount([[7]])).toBe(7);
+    expect(parseRelatedCount([["12"]])).toBe(12);
+    expect(parseRelatedCount([[null]])).toBeNull();
+    expect(parseRelatedCount([["abc"]])).toBeNull();
+    expect(parseRelatedCount([])).toBeNull();
+    expect(parseRelatedCount([[-1]])).toBeNull();
+  });
+
+  it("describeRelatedCount は上限ちょうどまでは実数、超えたら「超」", () => {
+    expect(describeRelatedCount(0)).toEqual({ count: 0, over: false });
+    expect(describeRelatedCount(RELATED_ROWS_MAX)).toEqual({ count: RELATED_ROWS_MAX, over: false });
+    expect(describeRelatedCount(RELATED_ROWS_MAX + 1)).toEqual({ count: RELATED_ROWS_MAX, over: true });
   });
 });
