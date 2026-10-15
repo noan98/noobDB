@@ -386,6 +386,11 @@ export interface BundleLabels {
   colExtra: string;
   yes: string;
   no: string;
+  /**
+   * 列・行を絞ったときの注記 (#1622)。`{rows}` `{totalRows}` `{cols}` `{totalCols}` を埋める。
+   * 省略時は注記を出さない。
+   */
+  rangeLimited?: string;
 }
 
 export interface BundleInput {
@@ -400,6 +405,56 @@ export interface BundleInput {
   labels: BundleLabels;
   /** `<html lang>`。既定は "ja"。 */
   lang?: string;
+  /**
+   * 含める列 (`columns` の添字)。未指定 / null は全列。範囲外・重複は無視し、出力は元の
+   * 列順。マスク対象 (`maskedColumns`) の列は選んでも常に伏せ字のまま (#1622)。
+   */
+  includeColumns?: readonly number[] | null;
+  /** 含める行数の上限 (先頭から)。未指定 / null / 非有限は全行 (#1622)。 */
+  rowLimit?: number | null;
+}
+
+export interface BundleRangeResult {
+  columns: Column[];
+  rows: CellValue[][];
+  /** 絞り込み後の列に対応するマスクフラグ。元が null なら null。 */
+  masked: boolean[] | null;
+  /** 除外した列の名前 (スキーマ節から同名の列を落とすため)。 */
+  excludedNames: string[];
+  totalRows: number;
+  totalCols: number;
+  limited: boolean;
+}
+
+/**
+ * 調査バンドルに含める列・行の範囲を適用する (#1622)。マスクフラグは列の添字に追従させる
+ * ので、選んだ列がマスク対象なら絞り込み後も対象のまま (漏らさない側に倒す)。
+ */
+export function applyBundleRange(
+  columns: readonly Column[],
+  rows: readonly CellValue[][],
+  masked: readonly boolean[] | null,
+  range: { includeColumns?: readonly number[] | null; rowLimit?: number | null },
+): BundleRangeResult {
+  const all = columns.map((_, i) => i);
+  const picked = range.includeColumns ? all.filter((i) => range.includeColumns?.includes(i)) : all;
+  const limit =
+    typeof range.rowLimit === "number" && Number.isFinite(range.rowLimit) && range.rowLimit >= 0
+      ? Math.floor(range.rowLimit)
+      : null;
+  const colsOut = picked.map((i) => columns[i]);
+  const rowSlice = limit === null ? rows : rows.slice(0, limit);
+  const rowsOut =
+    picked.length === columns.length ? [...rowSlice] : rowSlice.map((r) => picked.map((i) => r[i]));
+  return {
+    columns: colsOut,
+    rows: rowsOut,
+    masked: masked ? picked.map((i) => !!masked[i]) : null,
+    excludedNames: all.filter((i) => !picked.includes(i)).map((i) => columns[i].name),
+    totalRows: rows.length,
+    totalCols: columns.length,
+    limited: picked.length < columns.length || rowsOut.length < rows.length,
+  };
 }
 
 /** セル値の表示テキスト (エスケープ前)。 */
@@ -594,7 +649,17 @@ export const BUNDLE_CSP =
 
 /** 調査バンドルの HTML 全体を組み立てる。 */
 export function buildInvestigationBundleHtml(input: BundleInput): string {
-  const { sql, columns, rows, maskedColumns, meta, schema, plan, labels } = input;
+  const { sql, meta, plan, labels } = input;
+  const range = applyBundleRange(input.columns, input.rows, input.maskedColumns, input);
+  const { columns, rows, masked: maskedColumns } = range;
+  // 除外した列の定義は、スキーマ節にも出さない (共有範囲を絞った意味が無くなるため)。
+  const schema =
+    input.schema && range.excludedNames.length > 0
+      ? input.schema.map((s) => ({
+          ...s,
+          columns: s.columns ? s.columns.filter((c) => !range.excludedNames.includes(c.name)) : s.columns,
+        }))
+      : input.schema;
   const lang = /^[A-Za-z-]{1,16}$/.test(input.lang ?? "") ? (input.lang as string) : "ja";
   const metaRows: string[] = [metaRow(labels.generatedAt, formatBundleDate(meta.generatedAt))];
   if (meta.executedAt) metaRows.push(metaRow(labels.executedAt, formatBundleDate(meta.executedAt)));
@@ -603,6 +668,14 @@ export function buildInvestigationBundleHtml(input: BundleInput): string {
   if (meta.database) metaRows.push(metaRow(labels.database, meta.database));
   if (meta.host) metaRows.push(metaRow(labels.host, meta.host));
   metaRows.push(metaRow(labels.rows, `${rows.length} × ${columns.length}`));
+  const rangeNote =
+    range.limited && labels.rangeLimited
+      ? labels.rangeLimited
+          .replace("{rows}", String(rows.length))
+          .replace("{totalRows}", String(range.totalRows))
+          .replace("{cols}", String(columns.length))
+          .replace("{totalCols}", String(range.totalCols))
+      : null;
   if (meta.elapsedMs !== null && Number.isFinite(meta.elapsedMs)) {
     metaRows.push(metaRow(labels.elapsed, `${meta.elapsedMs} ms`));
   }
@@ -614,6 +687,8 @@ export function buildInvestigationBundleHtml(input: BundleInput): string {
     `<section><h2>${escapeHtml(labels.sectionMeta)}</h2><table class="meta"><tbody>${metaRows.join(
       "",
     )}</tbody></table>${meta.partial ? `<p class="notice">${escapeHtml(labels.partial)}</p>` : ""}${
+      rangeNote ? `<p class="notice">${escapeHtml(rangeNote)}</p>` : ""
+    }${
       maskedNames.length > 0
         ? `<p class="muted">${escapeHtml(labels.masked)}: ${maskedNames.map(escapeHtml).join(", ")}</p>`
         : ""
