@@ -18,7 +18,7 @@ const tables: TableSchema[] = [
 /** `|` の位置をクリック位置として、`|` を除いた SQL と位置を返す。 */
 function at(sqlWithCaret: string): { text: string; pos: number } {
   const pos = sqlWithCaret.indexOf("|");
-  return { text: sqlWithCaret.replace("|", ""), pos };
+  return { text: sqlWithCaret.slice(0, pos) + sqlWithCaret.slice(pos + 1), pos };
 }
 
 const jump = (sql: string, defaultDatabase: string | null = "shop") => {
