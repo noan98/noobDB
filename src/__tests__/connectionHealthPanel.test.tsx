@@ -245,6 +245,34 @@ describe("ConnectionHealthPanel (#1068)", () => {
     );
     await waitFor(() => expect(api.reconnect).toHaveBeenLastCalledWith("dead", true));
     await waitFor(() => expect(onReconnected).toHaveBeenCalledWith("dead"));
+    // 画面側の TX 破棄 (とその通知) は onReconnected だけが担う — 二重に呼ばない。
+    expect(onReconnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("強制再接続が失敗したら、TX が残りうることを伝え、再接続完了の通知は出さない", async () => {
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new BackendError("transactionActive", "tx"));
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new Error("boom"));
+    const onReconnected = vi.fn();
+    renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[{ sessionId: "dead", profile: mysql }]}
+        profiles={[mysql]}
+        activeSessionId={null}
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={onReconnected}
+      />,
+    );
+    const row = await screen.findByTestId("health-row-m");
+    await waitFor(() => expect(within(row).getByText(t("healthStatusDown"))).toBeInTheDocument());
+    fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthReconnect")) }));
+    const dialogs = await screen.findAllByRole("dialog");
+    fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("reconnectTxConfirm") }),
+    );
+    expect(await screen.findByText(t("healthReconnectFailedTx", { name: mysql.name }))).toBeInTheDocument();
+    expect(onReconnected).not.toHaveBeenCalled();
   });
 
   it("確認で取りやめたら force 付きで再接続しない", async () => {

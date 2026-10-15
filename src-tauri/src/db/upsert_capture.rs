@@ -32,12 +32,35 @@ pub struct UpsertHint {
     /// `ON CONFLICT … DO UPDATE … WHERE …` のように、競合しても更新が見送られうる条件を持つか。
     /// 影響行数からは更新の有無を正確に数えられないので、PostgreSQL / SQLite では辞退する。
     update_where: bool,
+    /// `ON CONFLICT … DO UPDATE` か (`DO NOTHING` / MySQL の `ON DUPLICATE KEY UPDATE` は偽)。
+    do_update: bool,
+    /// `ON CONFLICT (列…)` の競合先の列 (小文字)。省略・`ON CONSTRAINT`・式のときは `None`。
+    conflict_target: Option<Vec<String>>,
 }
 
 /// 1 文で扱う VALUES の行数の上限。超えると主キー条件が長くなりすぎるので辞退する。
 const MAX_TUPLES: usize = 200;
 
 impl UpsertHint {
+    /// PG / SQLite の `DO UPDATE` で、競合先が主キー列と集合として完全一致しているか。一致しないと
+    /// 主キーの行ではなく別の一意キーの行が更新される (主キーの書き換えも起こりうる) ので記録できない。
+    /// `DO UPDATE` でなければ (`DO NOTHING` や MySQL) 常に真。
+    pub(crate) fn conflict_target_is_primary_key(&self, primary_key: &[String]) -> bool {
+        if !self.do_update {
+            return true;
+        }
+        let Some(target) = &self.conflict_target else {
+            return false;
+        };
+        let mut a: Vec<String> = target.clone();
+        let mut b: Vec<String> = primary_key.iter().map(|c| c.to_ascii_lowercase()).collect();
+        a.sort();
+        a.dedup();
+        b.sort();
+        b.dedup();
+        a == b
+    }
+
     /// 競合時の更新に `WHERE` 条件があるか (文字列リテラルの外に語 `where` がある)。
     pub(crate) fn has_update_where(&self) -> bool {
         self.update_where
@@ -236,10 +259,10 @@ fn is_single_string(s: &str) -> bool {
 /// UPSERT 文を `INSERT INTO t (列…) VALUES (…), … ON …` として解析する。`sql` はコメント除去済みを
 /// 渡す。形が合わない (`INSERT OR REPLACE`、`INSERT … SELECT`、列リスト無し、行数超過など) と `None`。
 ///
-/// `mysql` が真のとき、SQL 全体にバックスラッシュが 1 文字でもあれば辞退する (`NO_BACKSLASH_ESCAPES`
-/// の有無で文字列リテラルの終端が変わり、VALUES の読み取りがずれるため)。
-pub(crate) fn parse_upsert(sql: &str, mysql: bool) -> Option<UpsertHint> {
-    if mysql && sql.contains('\\') {
+/// SQL 全体にバックスラッシュが 1 文字でもあれば辞退する (MySQL の `NO_BACKSLASH_ESCAPES` や
+/// PostgreSQL の `E'…'` で文字列の終端が変わり、VALUES の読み取りがずれるため)。
+pub(crate) fn parse_upsert(sql: &str) -> Option<UpsertHint> {
+    if sql.contains('\\') {
         return None;
     }
     let chars: Vec<char> = sql.chars().collect();
@@ -343,46 +366,122 @@ pub(crate) fn parse_upsert(sql: &str, mysql: bool) -> Option<UpsertHint> {
     if peek_word(&chars, i) != "on" {
         return None;
     }
-    let update_where = tail_has_where(&chars[i..]);
+    let words = tail_words(&chars[i..]);
+    let update_where = words.iter().any(|w| w == "where");
+    let do_update = words.windows(2).any(|w| w[0] == "do" && w[1] == "update");
+    let conflict_target = parse_conflict_target(&chars, i);
     Some(UpsertHint {
         columns,
         tuples,
         update_where,
+        do_update,
+        conflict_target,
     })
 }
 
-/// `ON …` 以降に、文字列・引用符つき識別子の外で語 `where` があるか。
-fn tail_has_where(tail: &[char]) -> bool {
-    let mut i = 0;
+/// `ON …` 以降の語 (小文字)。文字列リテラルと引用符つき識別子の中身は読み飛ばし、引用符の手前で
+/// 語を確定させる (`WHERE"t".v` のように引用符が語に直結していても見逃さない)。
+fn tail_words(tail: &[char]) -> Vec<String> {
+    let mut words = Vec::new();
     let mut word = String::new();
+    let mut i = 0;
     while i < tail.len() {
         let c = tail[i];
         if c == '\'' || c == '"' || c == '`' {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
             let close = c;
             i += 1;
             while i < tail.len() && tail[i] != close {
                 i += 1;
             }
-            word.clear();
         } else if c.is_alphanumeric() || c == '_' {
             word.push(c.to_ascii_lowercase());
-        } else {
-            if word == "where" {
-                return true;
-            }
-            word.clear();
+        } else if !word.is_empty() {
+            words.push(std::mem::take(&mut word));
         }
         i += 1;
     }
-    word == "where"
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
+/// `ON CONFLICT (列, …)` の列を読む。`ON CONFLICT` の直後が `(` でない (競合先の省略・
+/// `ON CONSTRAINT`) か、列が識別子だけでない (式・部分インデックスの述語) ときは `None`。
+fn parse_conflict_target(chars: &[char], start: usize) -> Option<Vec<String>> {
+    let mut i = start;
+    skip_ws(chars, &mut i);
+    if peek_word(chars, i) != "on" {
+        return None;
+    }
+    i += 2;
+    skip_ws(chars, &mut i);
+    if peek_word(chars, i) != "conflict" {
+        return None;
+    }
+    i += "conflict".len();
+    skip_ws(chars, &mut i);
+    if chars.get(i) != Some(&'(') {
+        return None;
+    }
+    i += 1;
+    let mut cols = Vec::new();
+    loop {
+        skip_ws(chars, &mut i);
+        cols.push(read_ident(chars, &mut i)?);
+        skip_ws(chars, &mut i);
+        match chars.get(i)? {
+            ',' => i += 1,
+            ')' => break,
+            _ => return None,
+        }
+    }
+    Some(cols)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn conflict_target_must_equal_the_primary_key_for_do_update() {
+        let pk = vec!["id".to_string()];
+        let on = |tail: &str| {
+            super::parse_upsert(&format!("INSERT INTO t (id, email) VALUES (5, 'a') {tail}"))
+                .unwrap()
+        };
+        assert!(on("ON CONFLICT (id) DO UPDATE SET email = excluded.email")
+            .conflict_target_is_primary_key(&pk));
+        assert!(
+            on("ON CONFLICT (\"ID\") DO UPDATE SET email = excluded.email")
+                .conflict_target_is_primary_key(&pk)
+        );
+        // 主キー以外の列 / 省略 / ON CONSTRAINT / 主キーの一部だけ。
+        assert!(!on("ON CONFLICT (email) DO UPDATE SET id = excluded.id")
+            .conflict_target_is_primary_key(&pk));
+        assert!(!on("ON CONFLICT DO UPDATE SET email = excluded.email")
+            .conflict_target_is_primary_key(&pk));
+        assert!(
+            !on("ON CONFLICT ON CONSTRAINT t_pkey DO UPDATE SET email = 'x'")
+                .conflict_target_is_primary_key(&pk)
+        );
+        let composite = vec!["a".to_string(), "b".to_string()];
+        assert!(!on("ON CONFLICT (a) DO UPDATE SET email = 'x'")
+            .conflict_target_is_primary_key(&composite));
+        // DO NOTHING は競合先を問わない。MySQL の ON DUPLICATE KEY UPDATE も対象外
+        // (影響行数の照合で守る)。
+        assert!(on("ON CONFLICT (email) DO NOTHING").conflict_target_is_primary_key(&pk));
+        assert!(on("ON CONFLICT DO NOTHING").conflict_target_is_primary_key(&pk));
+        assert!(
+            on("ON DUPLICATE KEY UPDATE email = VALUES(email)").conflict_target_is_primary_key(&pk)
+        );
+    }
+
     fn parse_upsert(sql: &str) -> Option<UpsertHint> {
-        super::parse_upsert(sql, false)
+        super::parse_upsert(sql)
     }
 
     #[test]
@@ -397,9 +496,19 @@ mod tests {
         )
         .unwrap();
         assert!(!h.has_update_where());
-        assert!(super::parse_upsert(
-            "INSERT INTO t (id, v) VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'x\\y'",
-            true
+        assert!(parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'x\\y'"
+        )
+        .is_none());
+        // 引用符が語に直結していても WHERE を見逃さない。
+        let h = parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, 2) ON CONFLICT (id) DO UPDATE SET v = 1 WHERE\"t\".v < 5",
+        )
+        .unwrap();
+        assert!(h.has_update_where());
+        // PostgreSQL の E'…' など、バックスラッシュを含むものは辞退。
+        assert!(parse_upsert(
+            "INSERT INTO t (id, v) VALUES (1, E'a\\'b') ON CONFLICT (id) DO NOTHING"
         )
         .is_none());
     }

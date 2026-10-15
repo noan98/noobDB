@@ -2225,7 +2225,7 @@ export default function App() {
       setTxTick((n) => n + 1);
     }
   }, []);
-  // 再接続 (強制再接続の失敗も含む) で旧接続の TX が破棄されたとき、画面側の TX 状態を捨てて知らせる。
+  // 再接続で旧接続の TX が破棄されたとき、画面側の TX 状態を捨てて知らせる。
   const discardTxAfterReconnect = (sid: string) => {
     if (!txBySessionRef.current.has(sid)) return;
     resetTxFor(sid);
@@ -12144,8 +12144,6 @@ export default function App() {
                           // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
                           discardTxAfterReconnect(sid);
                         }}
-                        // 強制再接続は失敗しても旧接続の TX をロールバック済みなので、状態を残さない。
-                        onTxDiscarded={discardTxAfterReconnect}
                       />
                     ) : activeBottomPanelTab === "perf" ? (
                       // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。

@@ -309,8 +309,8 @@ pub struct PendingCapture {
     result: QueryResult,
     tx: PendingTx,
     /// UPSERT として前後を撮った (#1626)。`analyze_capture` が新規行と更新行に分ける。
-    /// `Some(競合時の更新に WHERE があるか)`。
-    upsert: Option<bool>,
+    /// 解析した UPSERT (競合先・`DO UPDATE … WHERE` の有無を判定に使う)。
+    upsert: Option<upsert_capture::UpsertHint>,
 }
 
 #[derive(Debug, Clone)]
@@ -1722,7 +1722,7 @@ impl Connection {
         let mut upsert_hint = None;
         if kind == WriteKind::Insert && insert_is_upsert(self.driver_kind(), sql) {
             let cleaned = strip_sql_comments(sql, sql_flavor_of(self.driver_kind()));
-            match upsert_capture::parse_upsert(&cleaned, self.driver_kind() == DriverKind::Mysql) {
+            match upsert_capture::parse_upsert(&cleaned) {
                 Some(hint) => upsert_hint = Some(hint),
                 None => {
                     return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
@@ -1776,7 +1776,7 @@ impl Connection {
             row_cap,
             upsert,
         } = ready;
-        let is_upsert = upsert.as_ref().map(|h| h.has_update_where());
+        let is_upsert = upsert.clone();
 
         match self
             .execute_snapshot_uncommitted(sql, database, row_cap, upsert.as_ref())
@@ -1835,7 +1835,7 @@ impl Connection {
         sql: &str,
         dry: PreviewResult,
         result: QueryResult,
-        upsert: Option<bool>,
+        upsert: Option<upsert_capture::UpsertHint>,
     ) -> Result<(QueryResult, WriteCapture)> {
         let decline = |reason: &str| -> Result<(QueryResult, WriteCapture)> {
             Ok((
@@ -1896,7 +1896,7 @@ impl Connection {
 
         // UPSERT (#1626): 主キーを指定した行の前後から、新規行 (Undo = DELETE) と更新された
         // 既存行 (Undo = 元の値へ UPDATE) に分ける。両方あれば 2 件の記録 (本体 + companion)。
-        if let Some(update_where) = upsert {
+        if let Some(hint) = upsert {
             if dry.truncated {
                 return decline("対象行数が記録の上限を超えているため記録しません");
             }
@@ -1932,6 +1932,15 @@ impl Connection {
             // MySQL (sqlx は常に CLIENT_FOUND_ROWS): 新規 1・更新 2・変化なし 1。
             // PostgreSQL / SQLite: 新規・更新・変化なしをすべて 1 と数える。ただし
             // `DO UPDATE … WHERE` は更新が見送られた行を 0 と数えるので正確に数えられず辞退する。
+            if self.driver_kind() != DriverKind::Mysql
+                && !hint.conflict_target_is_primary_key(&primary_key)
+            {
+                // 競合先が主キーでないと、主キーを指定した行ではなく別の一意キーの行が更新される
+                // (主キー列ごと書き換わることもある)。記録した行と実際に変わった行が食い違う。
+                return decline(
+                    "DO UPDATE の競合先が主キーと一致しないため記録しません (主キー以外の一意キーで更新される可能性があります)",
+                );
+            }
             if self.driver_kind() == DriverKind::Mysql {
                 let expected = new_rows.len() as u64 + before_changed.len() as u64 * 2 + unchanged;
                 if result.rows_affected != expected {
@@ -1940,7 +1949,7 @@ impl Connection {
                     );
                 }
             } else {
-                if update_where {
+                if hint.has_update_where() {
                     return decline(
                         "DO UPDATE … WHERE を伴う UPSERT は更新された行を正確に数えられないため記録しません",
                     );

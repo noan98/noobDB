@@ -41,9 +41,10 @@
   Update の 2 件を同じ `batch_id` で保存する。影響行数は見えた変更から**正確に**数えて照合する:
   MySQL (sqlx は常に `CLIENT_FOUND_ROWS`) は新規 1・更新 2・変化なし 1 で、一致しなければ主キー以外の
   一意キーでの衝突などで見ていない行が変わっているので辞退する。PostgreSQL / SQLite は新規・更新・変化なしを
-  すべて 1 と数え、`DO UPDATE … WHERE` があると更新が見送られた行を 0 と数えるので辞退する。MySQL は
-  SQL にバックスラッシュが 1 文字でもあれば `parse_upsert` 全体を辞退する (`NO_BACKSLASH_ESCAPES` 次第で
-  文字列の終端が変わるため)。
+  すべて 1 と数え、`DO UPDATE … WHERE` があると更新が見送られた行を 0 と数えるので辞退する。PG / SQLite の `DO UPDATE` は競合先 `ON CONFLICT (列…)` が主キー列と集合として完全一致するときだけ記録する
+  (競合先の省略・`ON CONSTRAINT`・主キー以外の列は辞退。`UpsertHint::conflict_target_is_primary_key`)。
+  SQL にバックスラッシュが 1 文字でもあれば `parse_upsert` 全体を辞退する (`NO_BACKSLASH_ESCAPES` や
+  PG の `E'…'` で文字列の終端が変わるため)。
   `INSERT … SELECT`・列リスト無し・式の主キーなども辞退。**PK が無い表・主キーを特定できない文・複数行 INSERT などは従来どおり「記録なしで
   1 回実行」にフォールバックする**。UPDATE の SET で主キーを非決定的な関数で書き換える文も辞退する。
 - 対象は `INSERT` / `UPDATE` / `DELETE` **のみ**。DDL (`DROP` / `TRUNCATE` など) は
@@ -65,7 +66,7 @@
   (`plan_flight`) を連結し、1 つのトランザクションで適用する (取り消しは id 降順、やり直しは昇順)。
   1 件でも衝突があれば `force` なしでは何も適用しない。**バッチ内で (表, 主キー) が重なる記録があるバッチ
   (INSERT → DELETE、UPDATE → DELETE など) は、各記録の計画を今のライブ行に対して独立に立てるため最終状態が
-  誤る。`check_batch_overlap` が `force` でも拒否し、記録を 1 件ずつ取り消すよう誘導する** (UPSERT 本体と
+  誤る。`check_batch_overlap` (表名は最後のドット以降・引用符除去・小文字化で正規化して照合) が `force` でも拒否し、記録を 1 件ずつ取り消すよう誘導する** (UPSERT 本体と
   companion は行が重ならないので対象外)。完了後の取り消し状態は `store::mark_undone_many` が 1 トランザクションで更新する。
 - **スクリプトの DML 記録**: バッチ実行の各 INSERT/UPDATE/DELETE を `run_captured_write` で 1 文ずつ記録する
   (1 回の実行で記録を試みるのは最大 200 文。辞退された文も数え、それ以上は記録を試みず実行のみ)。`wrapInTransaction` のとき・呼び出し側の

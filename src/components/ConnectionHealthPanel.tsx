@@ -66,11 +66,6 @@ interface Props {
   onOpenProfile: (profile: ConnectionProfile) => void;
   /** 再接続に成功したセッション。App 側の UI ミラー (緊急モード等) の後始末用。 */
   onReconnected: (sessionId: string) => void;
-  /**
-   * 強制再接続 (開いている TX を捨てる確認を経た再接続) を試みた。成功・失敗を問わず呼ばれる —
-   * バックエンドは再接続の前に旧接続の TX をロールバックするので、失敗しても TX は残らない (#1626)。
-   */
-  onTxDiscarded?: (sessionId: string) => void;
 }
 
 const thCss: SystemStyleObject = {
@@ -129,7 +124,6 @@ export function ConnectionHealthPanel({
   connectingProfileId,
   onOpenProfile,
   onReconnected,
-  onTxDiscarded,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -247,6 +241,9 @@ export function ConnectionHealthPanel({
       const sid = row.sessionId;
       if (!sid) return;
       setReconnecting((cur) => new Set(cur).add(sid));
+      // 強制再接続まで進んだか。失敗したとき、旧セッションの TX が残っているかをここでは判別できない
+      // (ロールバックが時間切れでも再接続は続けるため) ので、TX の画面状態は消さず、その旨を伝える。
+      let forced = false;
       try {
         try {
           await api.reconnect(sid);
@@ -260,17 +257,14 @@ export function ConnectionHealthPanel({
             tone: "danger",
           });
           if (!ok) return;
-          try {
-            await api.reconnect(sid, true);
-          } finally {
-            onTxDiscarded?.(sid);
-          }
+          forced = true;
+          await api.reconnect(sid, true);
         }
         onReconnected(sid);
         toast.success(t("healthReconnected", { name: row.name }));
       } catch {
         // エラー文面は接続先情報を含みうるので出さない (状態は再確認で示す)。
-        toast.error(t("healthReconnectFailed", { name: row.name }));
+        toast.error(t(forced ? "healthReconnectFailedTx" : "healthReconnectFailed", { name: row.name }));
       } finally {
         setReconnecting((cur) => {
           const next = new Set(cur);
@@ -280,7 +274,7 @@ export function ConnectionHealthPanel({
       }
       await runChecks();
     },
-    [confirm, onReconnected, onTxDiscarded, runChecks, t, toast],
+    [confirm, onReconnected, runChecks, t, toast],
   );
 
   const rows = buildHealthRows(connections, profiles, results, {

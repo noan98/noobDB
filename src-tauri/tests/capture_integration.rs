@@ -789,3 +789,83 @@ async fn pg_search_path_does_not_leak_to_schema_less_statements() {
         .await
         .unwrap();
 }
+
+async fn sqlite_conn(tag: &str) -> (std::path::PathBuf, t::Connection) {
+    let path = std::env::temp_dir().join(format!("noobdb_cap1626_{tag}_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8"));
+    let c = t::connect(&opts).await.expect("connect");
+    c.execute(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE, v INTEGER)",
+        None,
+    )
+    .await
+    .unwrap();
+    (path, c)
+}
+
+/// 競合先が主キー以外 (email) の `DO UPDATE` は、主キーを指定した行ではなく別の行を更新する
+/// (主キー列ごと書き換わることもある)。誤った記録 (新規 INSERT) を残さず辞退する (#1626 レビュー)。
+/// 例 a: 既存 (9,'a@x') を id=5 に書き換える UPSERT。記録は「id=5 の新規 INSERT」ではない。
+#[tokio::test]
+async fn sqlite_upsert_with_non_pk_conflict_target_is_declined() {
+    let (path, c) = sqlite_conn("ups_target").await;
+    c.execute("INSERT INTO t VALUES (9,'a@x',0)", None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (5,'a@x',1) ON CONFLICT(email) DO UPDATE SET id=excluded.id, v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 1);
+    assert!(!cap.capturable, "{cap:?}");
+    // 書き込み自体は 1 回実行されている (行 9 が id=5 になった)。
+    assert_eq!(count(&c, "SELECT COUNT(*) FROM t WHERE id = 5").await, 1);
+    assert_eq!(count(&c, "SELECT COUNT(*) FROM t WHERE id = 9").await, 0);
+
+    // 例 b: id=3 は変化なしだが、email 競合で別の行 (9→...) が更新される。件数が一致しても隠れた更新を見逃さない。
+    c.execute("DELETE FROM t", None).await.unwrap();
+    c.execute("INSERT INTO t VALUES (3,'c',0),(9,'a@x',0)", None)
+        .await
+        .unwrap();
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',0),(4,'a@x',7) ON CONFLICT(email) DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(!cap.capturable, "{cap:?}");
+    assert_eq!(count(&c, "SELECT v FROM t WHERE id = 9").await, 7);
+
+    // 競合先が省略されたときも辞退する。
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',1) ON CONFLICT DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(!cap.capturable, "{cap:?}");
+
+    // 競合先が主キーなら従来どおり記録できる。
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',5),(20,'n',1) ON CONFLICT(id) DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(ids(&cap), vec![20]);
+    assert!(cap.companion.is_some());
+    let _ = std::fs::remove_file(&path);
+}

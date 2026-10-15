@@ -276,6 +276,8 @@ const en = {
   healthReconnect: "Reconnect",
   healthReconnected: "Reconnected {name}",
   healthReconnectFailed: "Could not reconnect {name}",
+  healthReconnectFailedTx:
+    "Could not reconnect {name}. The open transaction may still be active on the old connection — COMMIT or ROLLBACK it explicitly.",
   toastSshTunnelLost: 'The SSH tunnel for "{name}" was closed.',
   healthSummary: "{up} of {open} up",
   healthSummaryDown: "{count} down",
@@ -6760,6 +6762,8 @@ const ja: Dict = {
   healthReconnect: "再接続",
   healthReconnected: "{name} に再接続しました",
   healthReconnectFailed: "{name} に再接続できませんでした",
+  healthReconnectFailedTx:
+    "{name} に再接続できませんでした。旧接続で開いていたトランザクションが残っている可能性があります。COMMIT または ROLLBACK で明示的に終えてください。",
   toastSshTunnelLost: "「{name}」の SSH トンネルが切断されました。",
   healthSummary: "{open} 本中 {up} 本が稼働中",
   healthSummaryDown: "停止 {count}",

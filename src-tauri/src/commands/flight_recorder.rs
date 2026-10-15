@@ -458,6 +458,31 @@ pub(crate) async fn plan_batch(
     Ok((merged, records))
 }
 
+/// 表名の表記揺れ (`users` / `"users"` / `Users` / `public.users` / `"public"."users"`) を
+/// 同じ表として扱うための正規化: 最後のドット以降を取り、引用符を外して小文字にする。
+/// 別スキーマの同名表を同一視しうるが、重なり検出では安全側 (拒否側) に倒れるだけ。
+fn normalize_table_name(name: &str) -> String {
+    let mut last = String::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in name.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None => match c {
+                '"' | '`' => quote = Some(c),
+                '[' => quote = Some(']'),
+                '.' => last = std::mem::take(&mut cur),
+                _ => cur.push(c),
+            },
+        }
+    }
+    if !cur.is_empty() || last.is_empty() {
+        last = cur;
+    }
+    last.to_lowercase()
+}
+
 /// バッチ内で、複数の記録が同じ行 (表 + 主キー、更新前後どちらでも) に触れていればエラー。
 /// UPSERT の本体と companion は行が重ならない (新規行と既存行に分けて記録する) ので対象外になる。
 pub(crate) fn check_batch_overlap(
@@ -485,7 +510,7 @@ pub(crate) fn check_batch_overlap(
             let key = format!(
                 "{}\u{1}{}\u{1}{}",
                 r.database.as_deref().unwrap_or(""),
-                r.table,
+                normalize_table_name(&r.table),
                 serde_json::to_string(&pk)?
             );
             if let Some(other) = seen.get(&key) {
@@ -958,6 +983,28 @@ mod tests {
         let moved = rec(5, "t", WriteKind::Update, &[1], &[2]);
         let other = rec(6, "t", WriteKind::Insert, &[], &[2]);
         assert!(check_batch_overlap(&[moved, other]).is_err());
+    }
+
+    #[test]
+    fn batch_overlap_normalizes_table_name_spellings() {
+        for (a, b) in [
+            ("users", "\"public\".\"users\""),
+            ("Users", "users"),
+            ("`users`", "db.users"),
+            ("\"users\"", "public.users"),
+        ] {
+            let ins = rec(1, a, WriteKind::Insert, &[], &[1]);
+            let del = rec(2, b, WriteKind::Delete, &[1], &[]);
+            assert!(
+                check_batch_overlap(&[ins, del]).is_err(),
+                "{a} と {b} は同じ表"
+            );
+        }
+        assert_eq!(normalize_table_name("\"a.b\".c"), "c");
+        assert_eq!(normalize_table_name("\"a.b\""), "a.b");
+        let x = rec(1, "users", WriteKind::Insert, &[], &[1]);
+        let y = rec(2, "orders", WriteKind::Delete, &[1], &[]);
+        assert!(check_batch_overlap(&[x, y]).is_ok());
     }
 
     #[test]
