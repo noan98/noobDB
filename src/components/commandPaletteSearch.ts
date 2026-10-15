@@ -232,6 +232,31 @@ function buildMruGroup(items: CommandItem[], mruIds: string[]): GroupedCommands 
 }
 
 /**
+ * 入力先頭の接頭辞 → 対象グループ (#1631)。`>` 画面遷移・操作 (操作 + 接続)、`@` テーブル、
+ * `#` スニペット、`!` 履歴。テーブルが数千ある環境でも、1 文字で目的の候補群へ絞れる。
+ */
+export const GROUP_PREFIXES: Readonly<Record<string, readonly CommandGroup[]>> = {
+  ">": ["navigation", "connections"],
+  "@": ["tables"],
+  "#": ["snippets"],
+  "!": ["history"],
+};
+
+export interface ParsedPaletteQuery {
+  /** 接頭辞で絞られた対象グループ。接頭辞が無ければ null (全グループ)。 */
+  groups: readonly CommandGroup[] | null;
+  /** 接頭辞と直後の空白を除いた検索語。 */
+  query: string;
+}
+
+/** 先頭 1 文字が接頭辞ならそのグループへ絞り、残りを検索語にする。純粋。 */
+export function parsePaletteQuery(raw: string): ParsedPaletteQuery {
+  const groups = GROUP_PREFIXES[raw.charAt(0)];
+  if (!groups) return { groups: null, query: raw };
+  return { groups, query: raw.slice(1).replace(/^\s+/, "") };
+}
+
+/**
  * 候補を query で絞り込み、`GROUP_ORDER` の順にグループ化して返す。query が
  * 非空のときは各グループ内をスコア降順 (同点は入力順を維持) で並べ替える。空の
  * グループは含めない。
@@ -242,11 +267,19 @@ function buildMruGroup(items: CommandItem[], mruIds: string[]): GroupedCommands 
  * からは除外する (置き換え表示。重複表示ではない)。検索中 (query 非空) は MRU を
  * 適用せず、通常の絞り込み結果だけを返す。
  */
-export function groupCommands(items: CommandItem[], query: string, mruIds: string[] = []): GroupedCommands[] {
-  const mruIdSet = query === "" && mruIds.length > 0 ? new Set(mruIds) : null;
+export function groupCommands(
+  items: CommandItem[],
+  rawQuery: string,
+  mruIds: string[] = [],
+): GroupedCommands[] {
+  // 接頭辞 (#1631) があれば対象グループだけに絞る。接頭辞付きは MRU 合成の対象外。
+  const parsed = parsePaletteQuery(rawQuery);
+  const query = parsed.query;
+  const mruIdSet = rawQuery === "" && mruIds.length > 0 ? new Set(mruIds) : null;
   const byGroup = new Map<CommandGroup, ScoredItem[]>();
   for (const item of items) {
     if (mruIdSet?.has(item.id)) continue;
+    if (parsed.groups && !parsed.groups.includes(item.group)) continue;
     const scored = scoreItem(item, query);
     if (!scored) continue;
     const arr = byGroup.get(item.group);

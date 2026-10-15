@@ -4085,6 +4085,7 @@ const en = {
   // コマンドパレット
   cmdkPlaceholder: "Search connections, tables, snippets, history…",
   cmdkNoResults: "No matching commands",
+  cmdkPrefixHint: "Prefix to narrow: > actions  @ tables  # snippets  ! history",
   cmdkShowMore: "Show {count} more",
   cmdkGroupMru: "Recently used",
   cmdkGroupNavigation: "Actions",
@@ -9550,6 +9551,7 @@ const ja: Dict = {
   // コマンドパレット
   cmdkPlaceholder: "接続・テーブル・スニペット・履歴を検索…",
   cmdkNoResults: "一致するコマンドがありません",
+  cmdkPrefixHint: "先頭に付けて絞り込み: > 操作  @ テーブル  # スニペット  ! 履歴",
   cmdkShowMore: "さらに {count} 件を表示",
   cmdkGroupMru: "最近使った項目",
   cmdkGroupNavigation: "操作",
