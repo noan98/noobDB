@@ -9,6 +9,7 @@ mod atomic_write;
 mod cache;
 mod commands;
 mod db;
+mod diagnostics;
 mod error;
 mod flight_recorder;
 mod history;
@@ -151,13 +152,15 @@ pub mod __test_api {
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
     pub use crate::commands::connection::ConnectResponse;
-    pub use crate::commands::logs::LogView;
+    pub use crate::commands::logs::{LogView, PerfStatus};
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags, SkippedProfile};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
+    pub use crate::perf::PerfSample;
+    pub use crate::profiles::secrets::KeyringStatus;
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -1453,6 +1456,11 @@ pub fn run() {
             commands::plan_watch::plan_watch_import_legacy,
             commands::logs::read_logs,
             commands::logs::clear_logs,
+            commands::logs::get_perf_status,
+            commands::logs::set_perf_enabled,
+            commands::logs::clear_perf_samples,
+            commands::logs::build_diagnostic_bundle,
+            commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
             commands::export::mask_export_rows,

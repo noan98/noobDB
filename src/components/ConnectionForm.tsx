@@ -16,6 +16,7 @@ import { useT } from "../i18n";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { Callout } from "./Callout";
+import { keyringReasonKey, useKeyringStatus } from "../keyringStatus";
 import { Segmented, type SegmentedOption } from "./Segmented";
 import { SettingsInfo, SettingsLabelWithInfo } from "./settingsLayout";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -450,6 +451,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshJumpPortError, setSshJumpPortError] = useState<string | null>(null);
 
   const isFileBacked = driver === "sqlite";
+  const keyringStatus = useKeyringStatus();
   const useSsh = route === "ssh";
   const useSsm = route === "ssm" && !isFileBacked;
   // AWS IAM auth applies only to network MySQL / PostgreSQL (#734). It forces
@@ -1083,6 +1085,17 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </FormSection>
           ) : (
             <Box mt="2">
+              {/* keyring が使えない端末ではパスワードを保存できない (#1622)。秘密は返さず理由コードだけを見せる。 */}
+              {keyringStatus && !keyringStatus.available && (
+                <Callout
+                  tone="warning"
+                  title={t("keyringUnavailableTitle")}
+                  mb="2"
+                  data-testid="keyring-unavailable"
+                >
+                  {t("keyringUnavailableBody")} {t(keyringReasonKey(keyringStatus.reason))}
+                </Callout>
+              )}
               <FieldLabel htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</FieldLabel>
               <PasswordInput
                 id={`${fid}-db-password`}

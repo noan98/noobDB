@@ -193,6 +193,62 @@ const EXPORT_MASK_SALT_KIND: &str = "hash_salt";
 /// ソルトのバイト長 (HMAC-SHA256 のブロック長未満で十分なエントロピー)。
 const EXPORT_MASK_SALT_BYTES: usize = 32;
 
+/// OS keyring の疎通診断の結果 (#1622)。**秘密・エラー本文は含めない** — 失敗の理由は
+/// 固定の分類コード (`reason`) だけで返す。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct KeyringStatus {
+    pub available: bool,
+    /// `None` なら正常。それ以外は `storage_unavailable` (Secret Service 等が無い) /
+    /// `platform_failure` / `readback_missing` / `readback_mismatch` / `other`。
+    pub reason: Option<&'static str>,
+}
+
+/// keyring のエラーを、本文を含まない固定コードへ分類する。
+fn classify_keyring_error(e: &keyring::Error) -> &'static str {
+    match e {
+        keyring::Error::NoStorageAccess(_) => "storage_unavailable",
+        keyring::Error::PlatformFailure(_) => "platform_failure",
+        keyring::Error::NoEntry => "readback_missing",
+        _ => "other",
+    }
+}
+
+/// 一時エントリを書いて読み戻し、削除する (パスワード保存の前に使えるかを確認する)。
+/// 書く値は毎回ランダムな非秘密の文字列で、実プロファイルの秘密には触れない。
+pub fn probe_keyring() -> KeyringStatus {
+    use rand::RngExt;
+    let mut rng = rand::rng();
+    let nonce: String = (0..12)
+        .map(|_| char::from(b'a' + rng.random_range(0..26u8)))
+        .collect();
+    let target = format!("diagnostics/probe-{nonce}");
+    let fail = |reason: &'static str| KeyringStatus {
+        available: false,
+        reason: Some(reason),
+    };
+    let entry = match Entry::new(SERVICE, &target) {
+        Ok(e) => e,
+        Err(e) => return fail(classify_keyring_error(&e)),
+    };
+    if let Err(e) = entry.set_password(&nonce) {
+        return fail(classify_keyring_error(&e));
+    }
+    let result = match entry.get_password() {
+        Ok(v) if v == nonce => None,
+        Ok(_) => Some("readback_mismatch"),
+        Err(e) => Some(classify_keyring_error(&e)),
+    };
+    // 後始末の失敗は診断結果に影響させない (残っても無害な一時エントリ)。
+    let _ = entry.delete_credential();
+    match result {
+        None => KeyringStatus {
+            available: true,
+            reason: None,
+        },
+        Some(r) => fail(r),
+    }
+}
+
 /// 初回生成の競合 (2 本のエクスポートが同時に「未作成」を観測して別々のソルトを書く)
 /// を防ぐ直列化。敗者のエクスポートだけ別の仮名になるのを避ける。
 static EXPORT_MASK_SALT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -223,4 +279,32 @@ pub fn get_or_create_export_mask_salt() -> Result<Vec<u8>> {
     set_secret(EXPORT_MASK_NAMESPACE, EXPORT_MASK_SALT_KIND, &hex)?;
     tracing::info!("keyring: generated a new export masking salt");
     Ok(hex.into_bytes())
+}
+
+#[cfg(test)]
+mod probe_tests {
+    use super::*;
+
+    #[test]
+    fn classify_maps_errors_to_fixed_codes_without_text() {
+        assert_eq!(
+            classify_keyring_error(&keyring::Error::NoEntry),
+            "readback_missing"
+        );
+        assert_eq!(
+            classify_keyring_error(&keyring::Error::TooLong("x".into(), 1)),
+            "other"
+        );
+        assert_eq!(
+            classify_keyring_error(&keyring::Error::NoStorageAccess("secret".into())),
+            "storage_unavailable"
+        );
+    }
+
+    #[test]
+    fn probe_reports_a_consistent_status() {
+        // 実 keyring の有無は環境依存。available と reason が矛盾しないことだけ確認する。
+        let st = probe_keyring();
+        assert_eq!(st.available, st.reason.is_none());
+    }
 }

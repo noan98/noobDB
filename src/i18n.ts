@@ -195,6 +195,46 @@ const en = {
   aiSqlMovedAllBody:
     "The editor no longer matches the SQL this proposal was based on, and it could not be located. Replace the entire editor contents with the proposal?",
   aiSqlMovedConfirm: "Replace",
+  perfTitle: "Performance",
+  perfMeasure: "Measure",
+  perfRefresh: "Refresh",
+  perfClear: "Clear",
+  perfDesc:
+    "Shows timings for the last {count} query executions kept in memory. SQL text and row data are never recorded.",
+  perfEnvEnabled:
+    "Measurement is forced on by the NOOBDB_PERF_LOG environment variable, so the switch cannot turn it off.",
+  perfEmptyOn: "No samples yet. Run a query to see timings.",
+  perfEmptyOff: "Measurement is off",
+  perfEmptyOffHint: 'Turn on "Measure" above, then run a query.',
+  perfSlowest: "Slowest SQL execution: {ms}",
+  perfColTime: "Time",
+  perfColKind: "Kind",
+  perfColSql: "SQL execute",
+  perfColEmit: "Emit (IPC)",
+  perfColPayload: "Payload (approx.)",
+  perfColRows: "Rows",
+  perfColColumns: "Columns",
+  perfKindStream: "Stream",
+  perfKindQuery: "Query",
+  settingsPerfMeasure: "Performance measurement",
+  settingsPerfMeasureHelp:
+    "Keeps timings (SQL execution, result delivery, approximate payload size) of the last 20 queries in memory and shows them in the Performance diagnostics tab. SQL text and row data are never recorded.",
+  settingsDiagBundle: "Export diagnostics",
+  settingsDiagBundleHelp:
+    "Saves the log with app/OS/driver versions as an anonymized text file. Hosts, users, paths, secrets and SQL literals are removed.",
+  settingsDiagBundleTitle: "Export diagnostics",
+  settingsDiagBundleSuccess: "Diagnostics saved: {path}",
+  settingsDiagBundleError: "Failed to export diagnostics: {error}",
+  keyringUnavailableTitle: "Passwords can't be saved on this device",
+  keyringUnavailableBody:
+    "The OS keyring is not usable, so you will need to enter the password every time you connect.",
+  keyringReasonStorageUnavailable:
+    "No secret storage was found. On Linux, start a Secret Service provider such as GNOME Keyring or KWallet.",
+  keyringReasonPlatformFailure: "The OS keyring reported an error. Check that it is unlocked and running.",
+  keyringReasonReadback: "A test value written to the keyring could not be read back correctly.",
+  keyringReasonOther: "The OS keyring could not be used for an unknown reason.",
+  keyringStartupWarning:
+    "The OS keyring is unavailable, so passwords can't be saved. You will be asked for them on every connection.",
   healthTitle: "Connection health",
   healthDesc:
     "Checks every open connection in parallel (SELECT 1 + read-only introspection). Saved profiles are never connected automatically.",
@@ -5933,6 +5973,45 @@ const ja: Dict = {
   aiSqlMovedAllBody:
     "エディタの内容が提案の元にした SQL と一致せず、位置も特定できませんでした。エディタ全体を提案で置き換えますか?",
   aiSqlMovedConfirm: "置き換える",
+  perfTitle: "パフォーマンス",
+  perfMeasure: "計測する",
+  perfRefresh: "更新",
+  perfClear: "クリア",
+  perfDesc:
+    "直近 {count} 件のクエリ実行の所要時間をメモリ上に保持して表示します。SQL 本文と行データは記録しません。",
+  perfEnvEnabled: "環境変数 NOOBDB_PERF_LOG で計測が有効になっているため、このスイッチでは止められません。",
+  perfEmptyOn: "まだ計測値がありません。クエリを実行すると表示されます。",
+  perfEmptyOff: "計測はオフです",
+  perfEmptyOffHint: "上の「計測する」をオンにしてからクエリを実行してください。",
+  perfSlowest: "SQL 実行が最も遅かったもの: {ms}",
+  perfColTime: "時刻",
+  perfColKind: "種別",
+  perfColSql: "SQL 実行",
+  perfColEmit: "送出 (IPC)",
+  perfColPayload: "ペイロード (概算)",
+  perfColRows: "行数",
+  perfColColumns: "列数",
+  perfKindStream: "ストリーム",
+  perfKindQuery: "通常実行",
+  settingsPerfMeasure: "パフォーマンス計測",
+  settingsPerfMeasureHelp:
+    "直近 20 件のクエリの所要時間 (SQL 実行・結果送出・概算ペイロード) をメモリに保持し、診断タブ「パフォーマンス」に表示します。SQL 本文と行データは記録しません。",
+  settingsDiagBundle: "診断情報を書き出し",
+  settingsDiagBundleHelp:
+    "ログにアプリ・OS・ドライバの版情報を付けた匿名化テキストを保存します。ホスト・ユーザ・パス・秘密情報・SQL リテラルは除かれます。",
+  settingsDiagBundleTitle: "診断情報を書き出し",
+  settingsDiagBundleSuccess: "診断情報を保存しました: {path}",
+  settingsDiagBundleError: "診断情報の書き出しに失敗しました: {error}",
+  keyringUnavailableTitle: "この端末ではパスワードを保存できません",
+  keyringUnavailableBody: "OS の keyring が使えないため、接続のたびにパスワードの入力が必要になります。",
+  keyringReasonStorageUnavailable:
+    "秘密情報の保存先が見つかりません。Linux では GNOME Keyring や KWallet などの Secret Service を起動してください。",
+  keyringReasonPlatformFailure:
+    "OS の keyring がエラーを返しました。ロック解除されているか、起動しているかを確認してください。",
+  keyringReasonReadback: "keyring に書いた確認用の値を正しく読み戻せませんでした。",
+  keyringReasonOther: "原因不明の理由で OS の keyring を使えません。",
+  keyringStartupWarning:
+    "OS の keyring が使えないため、パスワードを保存できません。接続のたびに入力が必要です。",
   healthTitle: "接続ヘルス",
   healthDesc:
     "開いている全接続を並列に確認します (SELECT 1 + 読み取り専用の introspection)。保存済みプロファイルへ自動で接続することはありません。",

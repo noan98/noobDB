@@ -71,6 +71,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["snippet", schemas.snippet],
   ["historyEntry", schemas.historyEntry],
   ["logView", schemas.logView],
+  ["perfStatus", schemas.perfStatus],
+  ["keyringStatus", schemas.keyringStatus],
   ["csvPreview", schemas.csvPreview],
   ["cellBlobProbe", schemas.cellBlobProbe],
   ["blobFolderSaveResult", schemas.blobFolderSaveResult],

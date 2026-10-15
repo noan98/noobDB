@@ -1380,6 +1380,10 @@
     "elapsed_ms": 8,
     "inserted": 100
   },
+  "keyringStatus": {
+    "available": false,
+    "reason": "storage_unavailable"
+  },
   "killProcessesResult": {
     "failed": 1,
     "first_error": "permission denied",
@@ -1496,6 +1500,31 @@
       "strategy": "rowid"
     },
     "sql": "SELECT * FROM `appdb`.`users`"
+  },
+  "perfStatus": {
+    "enabled": true,
+    "env_enabled": false,
+    "samples": [
+      {
+        "at_ms": 1767225600000,
+        "columns": 4,
+        "emit_ms": 3.25,
+        "kind": "stream",
+        "payload_bytes_approx": 4096,
+        "rows": 100,
+        "sql_execute_ms": 12.5
+      },
+      {
+        "at_ms": 1767225500000,
+        "columns": 1,
+        "emit_ms": null,
+        "kind": "query",
+        "payload_bytes_approx": null,
+        "rows": 1,
+        "sql_execute_ms": 8.0
+      }
+    ],
+    "ui_enabled": true
   },
   "planWatchEntryVariants": [
     {

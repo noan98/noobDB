@@ -1569,6 +1569,30 @@ export interface LogView {
   path: string | null;
 }
 
+/** 直近の計測値 1 件 (#1622)。SQL 本文・行データは含まない。 */
+export interface PerfSample {
+  at_ms: number;
+  kind: string;
+  sql_execute_ms: number | null;
+  emit_ms: number | null;
+  payload_bytes_approx: number | null;
+  rows: number;
+  columns: number;
+}
+
+export interface PerfStatus {
+  enabled: boolean;
+  ui_enabled: boolean;
+  env_enabled: boolean;
+  samples: PerfSample[];
+}
+
+/** OS keyring の疎通診断結果 (#1622)。`reason` は固定コード (秘密・エラー本文は含まない)。 */
+export interface KeyringStatus {
+  available: boolean;
+  reason: string | null;
+}
+
 export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql" | "xlsx";
 
 /** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */

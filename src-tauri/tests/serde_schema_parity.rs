@@ -47,16 +47,17 @@ use t::{
     DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
-    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
-    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, Value,
+    ImportStartedEvent, IndexInfo, KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView,
+    PatchRun, PerfSample, PerfStatus, PreviewStreamMessage, ProcessListItem,
+    ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags, QueryResult,
+    QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
+    RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
+    ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
+    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
+    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow, StreamCancelledEvent,
+    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
+    TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    TaskRunProgressEvent, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -427,6 +428,37 @@ fn build_fixtures() -> serde_json::Value {
     let log_view = LogView {
         text: "2026-01-01T00:00:00Z INFO noobdb starting".into(),
         path: Some("/home/user/.local/share/noobDB/noobdb.log".into()),
+    };
+
+    let perf_status = PerfStatus {
+        enabled: true,
+        ui_enabled: true,
+        env_enabled: false,
+        samples: vec![
+            PerfSample {
+                at_ms: 1_767_225_600_000,
+                kind: "stream",
+                sql_execute_ms: Some(12.5),
+                emit_ms: Some(3.25),
+                payload_bytes_approx: Some(4096),
+                rows: 100,
+                columns: 4,
+            },
+            PerfSample {
+                at_ms: 1_767_225_500_000,
+                kind: "query",
+                sql_execute_ms: Some(8.0),
+                emit_ms: None,
+                payload_bytes_approx: None,
+                rows: 1,
+                columns: 1,
+            },
+        ],
+    };
+
+    let keyring_status = KeyringStatus {
+        available: false,
+        reason: Some("storage_unavailable"),
     };
 
     let csv_preview = CsvPreview {
@@ -1833,6 +1865,8 @@ fn build_fixtures() -> serde_json::Value {
         "snippet": snippet,
         "historyEntry": history_entry,
         "logView": log_view,
+        "perfStatus": perf_status,
+        "keyringStatus": keyring_status,
         "csvPreview": csv_preview,
         "connectResult": connect_result,
         "localTableMeta": local_table_meta,

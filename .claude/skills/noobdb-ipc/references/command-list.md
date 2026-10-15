@@ -337,6 +337,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_profiles`
 - `list_skipped_profiles` (一覧に出ないプロファイルの要約。解釈できない要素と対応外ドライバ。秘密は含めない、#1614)
+- `check_keyring` (#1622。OS keyring の疎通診断。一時エントリを書いて読み戻して削除し、`{available, reason}` だけ返す。秘密・エラー本文は返さない)
 - `delete_skipped_profile` (解釈できず読み飛ばされた要素を `profiles.json` から削除、#1614)
 - `reveal_profile_secret`
 - `save_profile`
@@ -363,6 +364,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
+- `get_perf_status` / `set_perf_enabled` / `clear_perf_samples` (#1622。パフォーマンス計測の状態・設定のトグル・直近値の破棄。SQL 本文は含めない)
+- `build_diagnostic_bundle` (#1622。ログ + 版情報を匿名化したテキスト。ホスト・ユーザ・パス・SQL リテラルは伏せる)
 
 履歴 (#1256): `list_history` は SQL 全文ではなく `sql_preview` (空白を畳んだ先頭 400
 文字、超過は `…`) と `sql_len` を返す。全文は `get_history_sql(id)` を復元・コピー・

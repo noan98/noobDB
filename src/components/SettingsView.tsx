@@ -104,6 +104,7 @@ import {
   setQueryNotificationsEnabled,
   setQueryNotificationThresholdSecs,
   setAutoUpdateCheckEnabled,
+  setPerfMeasureEnabled,
   setQueryTimeoutSecs,
   setConnectTimeoutSecs,
   DEFAULT_CONNECT_TIMEOUT_SECS,
@@ -982,6 +983,22 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
     }
     setLogCopied(true);
     setTimeout(() => setLogCopied(false), 1500);
+  };
+  // 匿名化した診断バンドル (#1622)。バックエンドが版情報つきで作ったテキストを保存ダイアログへ出す。
+  const exportDiagnosticBundle = async () => {
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: "noobdb-diagnostics.txt",
+        title: t("settingsDiagBundleTitle"),
+        filters: [{ name: "Text", extensions: ["txt"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      const text = await api.buildDiagnosticBundle();
+      await api.writeTextFile(dest, text);
+      toast.success(t("settingsDiagBundleSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(t("settingsDiagBundleError", { error: String(e) }));
+    }
   };
   const clearLogs = async () => {
     const ok = await confirm({
@@ -2124,6 +2141,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                         <Icon name={logCopied ? "check" : "copy"} size={ICON_SIZES.md} />
                       </SettingsLogsIconButton>
                     </Tooltip>
+                    <Tooltip label={t("settingsDiagBundleHelp")}>
+                      <Button type="button" variant="secondary" size="sm" onClick={exportDiagnosticBundle}>
+                        {t("settingsDiagBundle")}
+                      </Button>
+                    </Tooltip>
                     <Button
                       type="button"
                       variant="dangerOutline"
@@ -2137,6 +2159,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                 </SettingsSectionHeader>
                 <SettingsLogsView readOnly wrap="off" value={logText} placeholder={t("settingsLogsEmpty")} />
                 {logPath && <SettingsLogsPath>{t("settingsLogsPath", { path: logPath })}</SettingsLogsPath>}
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-perf-measure">
+                      {t("settingsPerfMeasure")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsPerfMeasureHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-perf-measure"
+                    checked={settings.perfMeasureEnabled}
+                    onChange={setPerfMeasureEnabled}
+                  />
+                </SettingsToggleRow>
               </SettingsSection>
 
               <chakra.div id="settings-sec-knownhosts" scrollMarginTop="8px">

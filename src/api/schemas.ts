@@ -562,6 +562,30 @@ export const logView = z.object({
   path: z.string().nullable(),
 });
 
+const perfSample = z.object({
+  at_ms: z.number(),
+  kind: z.string(),
+  sql_execute_ms: z.number().nullable(),
+  emit_ms: z.number().nullable(),
+  payload_bytes_approx: z.number().nullable(),
+  rows: z.number(),
+  columns: z.number(),
+});
+
+/** パフォーマンス計測の状態と直近値 (#1622)。 */
+export const perfStatus = z.object({
+  enabled: z.boolean(),
+  ui_enabled: z.boolean(),
+  env_enabled: z.boolean(),
+  samples: z.array(perfSample),
+});
+
+/** OS keyring の疎通診断 (#1622)。理由は固定コードのみ。 */
+export const keyringStatus = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
+});
+
 // #735 DML フライトレコーダ / Undo。
 const writeKind = z.enum(["insert", "update", "delete", "other"]);
 

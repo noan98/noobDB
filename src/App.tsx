@@ -313,6 +313,7 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const PerfPanel = lazy(() => import("./components/PerfPanel").then((m) => ({ default: m.PerfPanel })));
 const ConnectionHealthPanel = lazy(() =>
   import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
 );
@@ -378,6 +379,7 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
+import { getKeyringStatus } from "./keyringStatus";
 import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
@@ -1610,6 +1612,20 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
+  }, []);
+
+  // OS keyring の疎通診断 (#1622)。使えない環境ではパスワードを保存できないので、
+  // 起動時に一度だけ警告する (接続フォームには常時 Callout が出る)。診断自体はベストエフォート。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ実行する。t/toast は初回の値で足りる
+  useEffect(() => {
+    let cancelled = false;
+    void getKeyringStatus().then((s) => {
+      if (cancelled || !s || s.available) return;
+      toast.notify({ message: t("keyringStartupWarning"), tone: "info", severity: "warning" });
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);
@@ -9420,6 +9436,15 @@ export default function App() {
     redoCellEditForTab,
   ]);
 
+  // パフォーマンス計測の設定 (#1622) をバックエンドへ反映する。既定 (オフ) のまま起動した
+  // ときは IPC を呼ばず、一度でもオンにしたあとのオフだけを伝える。
+  const perfSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!settings.perfMeasureEnabled && !perfSyncedRef.current) return;
+    perfSyncedRef.current = true;
+    void api.setPerfEnabled(settings.perfMeasureEnabled).catch(() => {});
+  }, [settings.perfMeasureEnabled]);
+
   // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
   // いれば統一ハンドラ (自動再接続 or 手動フォールバック) に倒す。トンネル断やスリープ
@@ -10485,17 +10510,19 @@ export default function App() {
                 ? t("assertTitle")
                 : tab === "health"
                   ? t("healthTitle")
-                  : tab === "profile"
-                    ? t("profileTitle")
-                    : tab === "structure"
-                      ? t("structureTitle")
-                      : tab === "timelapse"
-                        ? t("timelapseTitle")
-                        : tab === "aiSql"
-                          ? t("aiSqlTitle")
-                          : tab === "aiResultSummary"
-                            ? t("aiResultSummaryTitle")
-                            : t("processTitle");
+                  : tab === "perf"
+                    ? t("perfTitle")
+                    : tab === "profile"
+                      ? t("profileTitle")
+                      : tab === "structure"
+                        ? t("structureTitle")
+                        : tab === "timelapse"
+                          ? t("timelapseTitle")
+                          : tab === "aiSql"
+                            ? t("aiSqlTitle")
+                            : tab === "aiResultSummary"
+                              ? t("aiResultSummaryTitle")
+                              : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -11121,6 +11148,9 @@ export default function App() {
                           }
                         }}
                       />
+                    ) : activeBottomPanelTab === "perf" ? (
+                      // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。
+                      <PerfPanel />
                     ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
                         sessionId={sessionId}
@@ -12680,6 +12710,11 @@ export default function App() {
                 onSelect: () => toggleBottomPanel("health"),
                 disabled: openConnections.length === 0,
                 title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
+              },
+              {
+                label: t("perfTitle"),
+                icon: "clock",
+                onSelect: () => toggleBottomPanel("perf"),
               },
               {
                 label: t("appAssertions"),
