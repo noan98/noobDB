@@ -2943,7 +2943,11 @@ export default function App() {
           const regressed = res.warned.length > 0;
           toast.notify({
             message: regressed
-              ? translate("planWatchRegressedToast", { names: res.warned.join(", ") })
+              ? translate("planWatchRegressedToast", {
+                  names: res.warned
+                    .map((n, i) => (res.warnedSummaries[i] ? `${n} (${res.warnedSummaries[i]})` : n))
+                    .join(", "),
+                })
               : translate("planWatchChangedToast", { count: res.changed }),
             tone: regressed ? "warning" : "info",
             severity: "warning",

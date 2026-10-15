@@ -1558,6 +1558,9 @@
     "recorded": 3,
     "warned": [
       "slow report"
+    ],
+    "warnedSummaries": [
+      "orders: Index Scan → Parallel Seq Scan"
     ]
   },
   "previewStreamCancelledMessage": {

@@ -97,7 +97,13 @@ function registerHandlers() {
   onCommand("list_schema_objects", () => []);
   onCommand("list_table_comments", () => []);
   onCommand("plan_watch_list", () => []);
-  onCommand("plan_watch_refresh", () => ({ recorded: 0, changed: 0, errors: [], warned: [] }));
+  onCommand("plan_watch_refresh", () => ({
+    recorded: 0,
+    changed: 0,
+    errors: [],
+    warned: [],
+    warnedSummaries: [],
+  }));
   onCommand("schema_drift_list", () => []);
   onCommand("schema_drift_capture", () => ({
     added: false,

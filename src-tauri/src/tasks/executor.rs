@@ -113,9 +113,19 @@ pub fn summarize_timelapse_failures(outcomes: &[CaptureOutcome]) -> Option<Strin
 pub fn summarize_plan_watch(res: &PlanWatchRefresh) -> Option<String> {
     let mut parts = Vec::new();
     if !res.warned.is_empty() {
+        // 要約が揃っているときは「名前 (対象: 変更前 → 変更後)」で内容まで載せる (#1621)。
+        let described: Vec<String> = res
+            .warned
+            .iter()
+            .enumerate()
+            .map(|(i, name)| match res.warned_summaries.get(i) {
+                Some(s) if !s.is_empty() => format!("{name} ({s})"),
+                _ => name.clone(),
+            })
+            .collect();
         parts.push(format!(
             "plan regression detected: {}",
-            res.warned.join(", ")
+            described.join(", ")
         ));
     }
     if !res.errors.is_empty() {
@@ -840,6 +850,16 @@ mod tests {
         assert_eq!(
             summarize_plan_watch(&warned).as_deref(),
             Some("plan regression detected: slow report")
+        );
+        // 変化の要約があれば本文に載せる (#1621)。
+        let detailed = PlanWatchRefresh {
+            warned: vec!["slow report".into(), "q9".into()],
+            warned_summaries: vec!["orders: Index Scan → Parallel Seq Scan".into()],
+            ..Default::default()
+        };
+        assert_eq!(
+            summarize_plan_watch(&detailed).as_deref(),
+            Some("plan regression detected: slow report (orders: Index Scan → Parallel Seq Scan), q9")
         );
         let both = PlanWatchRefresh {
             warned: vec!["q1".into()],

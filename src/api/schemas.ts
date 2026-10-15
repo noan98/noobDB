@@ -2005,4 +2005,5 @@ export const planWatchRefreshResult = z.object({
     }),
   ),
   warned: z.array(z.string()),
+  warnedSummaries: z.array(z.string()),
 });

@@ -14,7 +14,7 @@ use super::query::ensure_allowed_for_session;
 use crate::error::{AppError, Result};
 use crate::plan_watch::store::{self, WatchEntry};
 use crate::plan_watch::{
-    compare_plans, explain_snapshot, ops_from_payload, plan_fingerprint, PlanChangeSeverity,
+    compare_plans, explain_snapshot, first_warning_summary, ops_from_payload, plan_fingerprint,
     DEFAULT_ROW_FACTOR,
 };
 use crate::snippets::store as snippet_store;
@@ -42,6 +42,9 @@ pub struct PlanWatchRefresh {
     /// など) があったスニペットの名前 (#1537)。定期実行タスクがこれだけを通知する。画面も
     /// 退行があるときだけトーストを警告トーンにし、名前を出す (#1614)。
     pub warned: Vec<String>,
+    /// `warned` と同じ並びで、各スニペットの警告の先頭 1 件の要約 (`orders: Index Scan →
+    /// Parallel Seq Scan`, #1621)。通知本文に載せる。
+    pub warned_summaries: Vec<String>,
 }
 
 /// プロファイルのウォッチ一覧 (世代つき)。セッション不要。
@@ -156,11 +159,9 @@ pub(crate) async fn refresh_plans(
             if !changes.is_empty() {
                 out.changed += 1;
             }
-            if changes
-                .iter()
-                .any(|c| c.severity == PlanChangeSeverity::Warning)
-            {
+            if let Some(summary) = first_warning_summary(&changes) {
                 out.warned.push(snippet.name.clone());
+                out.warned_summaries.push(summary);
             }
         }
     }

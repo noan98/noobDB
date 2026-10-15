@@ -1305,6 +1305,8 @@ export interface PlanWatchRefreshResult {
   errors: { snippetId: string; name: string; error: string }[];
   /** 前世代から警告相当の変化 (フルスキャンへの退行など) があったスニペットの名前。 */
   warned: string[];
+  /** `warned` と同じ並びの、警告の先頭 1 件の要約 (`orders: Index Scan → Parallel Seq Scan`, #1621)。 */
+  warnedSummaries: string[];
 }
 
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde

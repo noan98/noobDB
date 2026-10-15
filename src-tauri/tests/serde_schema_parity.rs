@@ -1774,6 +1774,7 @@ fn build_fixtures() -> serde_json::Value {
             error: "syntax error".into(),
         }],
         warned: vec!["slow report".into()],
+        warned_summaries: vec!["orders: Index Scan → Parallel Seq Scan".into()],
     };
 
     // 読み飛ばされたプロファイルの要約 (#1614): 解釈不能 (id なし) / 対応外ドライバの 2 形。
