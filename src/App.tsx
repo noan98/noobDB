@@ -10257,6 +10257,7 @@ export default function App() {
         {
           runAll: () => activeEditor()?.runAll(),
           runStatement: () => activeEditor()?.runStatement(),
+          runFromCursor: () => activeEditor()?.runFromCursor(),
           formatSql: () => activeEditor()?.formatSql(),
           explain: () => activeEditor()?.explain(),
           // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。

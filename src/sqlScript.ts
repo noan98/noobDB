@@ -108,6 +108,20 @@ export function statementAtOffset(sql: string, offset: number, driver?: string):
   return ranges[ranges.length - 1];
 }
 
+/**
+ * カーソル (オフセット `offset`) の文から末尾の文までを、1 つのバッチとして返す (#1627)。
+ * 途中からの再実行や、複数文の後半だけのやり直しに使う。先頭は `statementAtOffset` が選ぶ文の
+ * 先頭、終端は最後の実行文の末尾で、間のコメント・空行は元のまま残る。実行可能な文が無ければ `null`。
+ * `driver` は `splitSqlStatementRanges` と同じ (#1004)。
+ */
+export function statementsFromOffset(sql: string, offset: number, driver?: string): StatementRange | null {
+  const ranges = splitSqlStatementRanges(sql, driver);
+  if (ranges.length === 0) return null;
+  const first = ranges.find((r) => offset <= r.to) ?? ranges[ranges.length - 1];
+  const last = ranges[ranges.length - 1];
+  return { from: first.from, to: last.to, text: sql.slice(first.from, last.to) };
+}
+
 // マスク済みの断片に実行可能な SQL が残るか。コメントはマスクで空白化済みなので
 // 空白を除けばよい。ただし MySQL バージョンコメントの閉じ `*/` はマスクが素通し
 // にする (本体を実行対象として残すため) ので、`/*!40000 SET x = 1; */` を分割した

@@ -4,6 +4,7 @@ import {
   splitSqlStatementRanges,
   splitSqlStatements,
   statementAtOffset,
+  statementsFromOffset,
 } from "../sqlScript";
 
 describe("splitSqlStatements", () => {
@@ -319,5 +320,29 @@ describe("toBatchResult / toBatchOutputInput (run_sql_batch の結果変換)", (
       outcome: "skipped",
       rows: null,
     });
+  });
+});
+
+describe("statementsFromOffset (#1627)", () => {
+  const sql = "SELECT 1;\n-- memo\nSELECT 2;\n\nSELECT ';' ;\n";
+  it("カーソルの文から最後の文までを元のまま (間のコメント込み) 返す", () => {
+    const r = statementsFromOffset(sql, sql.indexOf("SELECT 2") + 3);
+    // 文の前のコメントは直後の文の一部として扱われる (statementAtOffset と同じ)。
+    expect(r?.text).toBe("-- memo\nSELECT 2;\n\nSELECT ';'");
+    expect(r?.from).toBe(sql.indexOf("-- memo"));
+    expect(r?.to).toBe(sql.lastIndexOf("';'") + 3);
+  });
+  it("先頭なら全文 (前後の空白は除く)", () => {
+    expect(statementsFromOffset(sql, 0)?.text).toBe("SELECT 1;\n-- memo\nSELECT 2;\n\nSELECT ';'");
+  });
+  it("末尾の空白上は最後の文だけ", () => {
+    expect(statementsFromOffset(sql, sql.length)?.text).toBe("SELECT ';'");
+  });
+  it("文字列内のセミコロンでは区切らず、1 文だけでもそのまま返す", () => {
+    expect(statementsFromOffset("SELECT ';'", 3)?.text).toBe("SELECT ';'");
+  });
+  it("実行可能な文が無ければ null", () => {
+    expect(statementsFromOffset("  -- only comment", 2)).toBeNull();
+    expect(statementsFromOffset("", 0)).toBeNull();
   });
 });

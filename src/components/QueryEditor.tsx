@@ -62,7 +62,7 @@ import { renderCompletionIcon } from "./completionIcons";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
-import { statementAtOffset } from "../sqlScript";
+import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { PREFLIGHT_MAX_CHARS } from "./preflight";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
@@ -385,6 +385,8 @@ export interface QueryEditorHandle {
   runAll: () => void;
   /** 選択があれば選択を、無ければカーソル位置の 1 文を実行する (Mod+Alt+Enter と同じ)。 */
   runStatement: () => void;
+  /** カーソルの文から末尾までを 1 つのバッチとして実行する (#1627)。 */
+  runFromCursor: () => void;
   formatSql: () => void;
   explain: () => void;
   /** 「AI にクエリを依頼」モーダルを開く (#691。コマンドパレット用)。 */
@@ -980,6 +982,18 @@ export const QueryEditor = memo(
       return true;
     };
 
+    // カーソルの文から末尾までを 1 つのバッチとして実行する (#1627)。実行経路は選択実行と同じ
+    // `onRun` (複数文なら通常のバッチ実行 + 安全網に載る)。
+    const runFromCursor = (view: EditorView): boolean => {
+      const sel = view.state.selection.main;
+      const range = statementsFromOffset(view.state.doc.toString(), sel.head, driverRef.current);
+      if (!range) return true;
+      resetHistoryNav();
+      onRunRef.current(range.text);
+      flashStatement(view, range.from, range.to);
+      return true;
+    };
+
     // 再割り当て可能なエディタアクション (#557) のキーマップを、解決済みコンボから
     // 組み立てる。Compartment 経由で初回構築と変更時の再構成の両方に使う。
     const buildActionKeymap = (bindings: EditorKeyBindings) => [
@@ -1466,6 +1480,10 @@ export const QueryEditor = memo(
           const view = viewRef.current;
           if (view) runStatementUnderCursor(view);
         },
+        runFromCursor: () => {
+          const view = viewRef.current;
+          if (view) runFromCursor(view);
+        },
         formatSql: () => {
           const view = viewRef.current;
           if (view) formatEditorContent(view, driverRef.current, onFormatErrorRef.current);
@@ -1549,6 +1567,9 @@ export const QueryEditor = memo(
           break;
         case "runStatement":
           runStatementUnderCursor(view);
+          break;
+        case "runFromCursor":
+          runFromCursor(view);
           break;
         case "preview":
           previewSelectionOrAll();
