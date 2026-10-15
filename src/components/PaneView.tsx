@@ -180,7 +180,7 @@ export interface PaneActions {
   setLayoutMode: (next: LayoutMode | ((prev: LayoutMode) => LayoutMode)) => void;
   setPageSizeInTab: (tabId: string, size: number) => void;
   setResultView: (tabId: string, view: ResultViewKind) => void;
-  setSaveAsTableRequest: (req: { sql: string; database: string }) => void;
+  setSaveAsTableRequest: (req: { sql: string; database: string; resultColumns?: string[] }) => void;
   setSaveAsViewRequest: (req: { sql: string; database: string; initialName?: string }) => void;
   setServerFilterInTab: (
     tabId: string,
@@ -1036,6 +1036,7 @@ export const PaneView = memo(
                                           actions.setSaveAsTableRequest({
                                             sql: tab.lastExecutedSql,
                                             database: (tab.database ?? selectedProfile?.database) as string,
+                                            resultColumns: tab.result?.columns.map((c) => c.name),
                                           }),
                                         )
                                       : undefined

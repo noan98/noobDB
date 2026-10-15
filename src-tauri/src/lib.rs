@@ -13,6 +13,7 @@ mod db;
 mod error;
 mod flight_recorder;
 mod history;
+mod import_templates;
 mod json_store;
 mod json_tolerant;
 mod logs;
@@ -163,6 +164,7 @@ pub mod __test_api {
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
+    pub use crate::import_templates::{ImportTemplate, TemplateColumn};
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -193,7 +195,9 @@ pub mod __test_api {
         preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
         TransferPreview, TransferRequest,
     };
-    pub use crate::db::transfer::{LossyConversion, LossyKind, TransferMode};
+    pub use crate::db::transfer::{
+        ColumnSpec, LossyConversion, LossyKind, OverrideKind, TransferMode, TypeOverride,
+    };
 
     // IPC レスポンス型の serde ゴールデン網羅 (#1243)。`#[tauri::command]` の戻り値型を
     // `serde_schema_parity.rs` のフィクスチャへ載せるための追加の再エクスポート
@@ -256,7 +260,8 @@ pub mod __test_api {
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
     pub use crate::commands::file::SqlFileContent;
     pub use crate::commands::import::{
-        ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
+        ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
+        ImportStartedEvent, SheetImportResult, SkippedRowInfo,
     };
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
@@ -1528,6 +1533,11 @@ pub fn run() {
             commands::window::set_window_title,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
+            commands::import::import_dry_run,
+            commands::import::import_xlsx_sheets,
+            commands::import_templates::list_import_templates,
+            commands::import_templates::save_import_template,
+            commands::import_templates::delete_import_template,
             commands::local::create_local_session,
             commands::local::register_local_table,
             commands::local::list_local_tables,

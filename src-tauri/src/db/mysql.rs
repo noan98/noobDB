@@ -889,8 +889,9 @@ impl MySqlConn {
     /// InnoDB (the default) and NDB do; MyISAM / MEMORY / CSV / ARCHIVE etc. do
     /// not. The resilient-import probe/retry strategies rely on rollback, so they
     /// must not run against a non-transactional table (#687 review follow-up).
-    /// Returns `true` for an unknown table (no row), since InnoDB is the
-    /// overwhelming default. A **view** has a NULL engine, so its base tables
+    /// An unknown table (no row in `information_schema`, e.g. the account lacks
+    /// privileges on it or the name does not resolve) is returned as `Err` so
+    /// callers take the safe side instead of assuming InnoDB (#1623). A **view** has a NULL engine, so its base tables
     /// (`VIEW_TABLE_USAGE`, falling back to parsing `VIEW_DEFINITION`; nested
     /// views included) are checked instead: a write through a view onto a MyISAM
     /// base table is not rolled back either (#1600). A query error — or a view
@@ -912,7 +913,9 @@ impl MySqlConn {
         .fetch_optional(&self.pool)
         .await?;
         let Some((schema, table_type, engine)) = row else {
-            return Ok(true);
+            return Err(AppError::InvalidInput(format!(
+                "cannot determine the storage engine of `{table}` (not found in information_schema)"
+            )));
         };
         if !table_type.eq_ignore_ascii_case("VIEW") {
             return Ok(engine_is_transactional(engine.as_deref()));
@@ -1029,7 +1032,7 @@ impl MySqlConn {
         let db = schema.as_deref().or(database);
         // 照会そのものが失敗した (権限不足など) ときは、ロールバックできるか
         // 確認できないので非トランザクショナル扱いにして安全側に倒す。表が
-        // 見つからない (行なし) 場合は `table_is_transactional` が true を返す。
+        // 見つからない (行なし) 場合も `table_is_transactional` が Err を返すので同じ扱い (#1623)。
         match self.table_is_transactional(db, &table).await {
             Ok(transactional) => Ok(!transactional),
             Err(e @ AppError::ViewBaseUnresolved) => Err(e),
@@ -1082,6 +1085,57 @@ impl MySqlConn {
             }
         }
         Ok(None)
+    }
+
+    /// 取り込みの事前検証 (#1623)。1 行ずつ INSERT し、最後に必ずロールバックする。
+    /// 非トランザクショナル表はロールバックできないので拒否する。
+    /// See [`Connection::dry_run_failures`].
+    pub(crate) async fn dry_run_failures(
+        &self,
+        database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
+        keep: usize,
+    ) -> Result<super::DryRunOutcome> {
+        if !self
+            .table_is_transactional(database, table)
+            .await
+            .unwrap_or(false)
+        {
+            return Err(AppError::InvalidInput(
+                "dry run is not available: the table does not support transactions".into(),
+            ));
+        }
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        sql.push_str(&conflict_clause(DriverKind::Mysql, columns, conflict));
+        let mut conn = self.pool.acquire().await?;
+        apply_use_database(&mut conn, database).await?;
+        let mut tx = conn.begin().await?;
+        let mut out = super::DryRunOutcome::default();
+        for (i, row) in rows.iter().enumerate() {
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+            if let Err(e) = q.execute(&mut *tx).await {
+                let e = AppError::from(e);
+                if !super::is_row_level_import_error(&e) {
+                    return Err(e);
+                }
+                out.record(i, e.to_string(), keep);
+            }
+        }
+        tx.rollback().await?;
+        Ok(out)
     }
 
     /// Runs `statements` sequentially inside a single transaction. If any

@@ -41,6 +41,7 @@ import { resultCommands } from "./commands/result";
 import { dumpCommands } from "./commands/dump";
 import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
+import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
@@ -700,6 +701,8 @@ export interface DataSearchRequest {
   tables: string[];
   /** 概算行数がこれを超えるテーブルは走査しない。 */
   rowThreshold: number;
+  /** 日付・日時列も文字列として検索する (#1623)。省略は false。 */
+  includeDates?: boolean;
 }
 
 /** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
@@ -1906,6 +1909,8 @@ export type NewColumnType =
 export interface NewTableColumn {
   name: string;
   type: NewColumnType;
+  /** 主キーに含める (#1623)。複数列なら複合主キー。主キー列は NOT NULL になる。 */
+  primaryKey?: boolean;
 }
 
 export interface ColumnMapping {
@@ -1996,6 +2001,7 @@ export const api = {
   ...dumpCommands,
   ...dumpToolsCommands,
   ...importCommands,
+  ...importTemplatesCommands,
   ...scriptCommands,
   ...transferCommands,
   ...fileCommands,
@@ -2260,6 +2266,45 @@ export interface SkippedRowInfo {
   reason: string;
 }
 
+/** スキップ行の書き出し形式 (#1623)。`csv` / `ndjson` は元の行データを書き出す。 */
+export type SkippedExportFormat = "text" | "csv" | "ndjson";
+
+/** 取り込みの事前検証 (dry run) の結果 (#1623)。 */
+export interface ImportDryRunResult {
+  total: number;
+  failed: number;
+  /** 拒否された行の先頭一部。 */
+  failures: SkippedRowInfo[];
+  /** false: 新規テーブル作成を伴うため DB への試し書きはしていない。 */
+  dbChecked: boolean;
+}
+
+/** 保存済みの取り込みマッピング (#1623)。 */
+export interface ImportTemplateColumn {
+  column: string;
+  header?: string | null;
+  csvIndex: number;
+}
+
+export interface ImportTemplate {
+  id: string;
+  profileId: string;
+  database?: string | null;
+  table: string;
+  format: string;
+  delimiter: string;
+  quote: string;
+  hasHeader: boolean;
+  nullToken?: string | null;
+  encoding: string;
+  sheet?: string | null;
+  conflictMode?: string | null;
+  errorMode?: string | null;
+  keyColumns: string[];
+  mapping: ImportTemplateColumn[];
+  updatedAtMs: number;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
@@ -2271,6 +2316,26 @@ export interface ImportDoneEvent {
   skipped: SkippedRowInfo[];
   /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
   skippedTotal: number;
+  /** 件数が多く、一部のスキップ行の元の行データを保持していない (#1623)。 */
+  skippedDataTruncated?: boolean;
+  /** 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは空。 */
+  sheets: SheetImportResult[];
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの結果 (#1623)。 */
+export interface SheetImportResult {
+  sheet: string;
+  table: string;
+  inserted: number;
+  skippedTotal: number;
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの指定 (#1623)。 */
+export interface SheetImportSpec {
+  sheet: string;
+  table: string;
+  mapping: ColumnMapping[];
+  createTable?: NewTableColumn[] | null;
 }
 
 /** BLOB セルの probe 結果 (#1258)。本体を運ばずサイズと種別だけ。 */
@@ -2362,6 +2427,44 @@ export interface TransferRequest {
   conflictMode?: "skip" | "update" | null;
   /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
   keyColumns?: string[] | null;
+  /** 列の除外・改名・型上書き (#1623)。指定のない列はそのまま転送する。 */
+  columns?: TransferColumnSpec[];
+  /** テーブル元の絞り込み (WHERE の後ろに置く式。#1623)。クエリ元では指定できない。 */
+  whereClause?: string | null;
+  /** 先頭 N 行だけ転送する試験転送 (#1623)。省略は全件。 */
+  limitRows?: number | null;
+  /** 転送後に件数を照合する (#1623)。省略は true。 */
+  verifyCounts?: boolean | null;
+}
+/** 転送先の論理型 (列ごとの型上書き, #1623)。 */
+export type TransferTypeKind =
+  | "boolean"
+  | "integer"
+  | "float"
+  | "decimal"
+  | "text"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "timestamptz"
+  | "binary"
+  | "json"
+  | "uuid";
+export interface TransferTypeOverride {
+  kind: TransferTypeKind;
+  /** `decimal` のみ。 */
+  precision?: number | null;
+  scale?: number | null;
+}
+/** 転送する列 1 つへの指定 (#1623)。`source` はソースが返した列名。 */
+export interface TransferColumnSpec {
+  source: string;
+  /** 転送先での列名 (別名)。 */
+  name?: string | null;
+  /** true なら転送しない。 */
+  exclude?: boolean;
+  /** 自動判定ではなくこの型にする。 */
+  type?: TransferTypeOverride | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {
@@ -2372,6 +2475,8 @@ export interface TransferLossyConversion {
 }
 export interface TransferPreview {
   columns: { name: string; sourceType: string; targetType: string }[];
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: { name: string; sourceType: string; targetType: string }[];
   lossy: TransferLossyConversion[];
 }
 export interface TransferProgressEvent {
@@ -2383,6 +2488,8 @@ export interface TransferDoneEvent {
   rows: number;
   elapsedMs: number;
   warnings: string[];
+  /** 件数照合 (#1623) の食い違い。`warnings` の部分集合。 */
+  integrityWarnings: string[];
 }
 export interface TransferErrorEvent {
   streamId: string;

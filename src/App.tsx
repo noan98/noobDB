@@ -28,6 +28,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  ImportOptions,
   SchemaDriftGeneration,
   type LocalTableMeta,
   type ProfileImportStrategy,
@@ -132,7 +133,7 @@ import {
   type NamespaceKind,
 } from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
-import { buildCreateTableAsSql } from "./components/resultsToTable";
+import { appendNeedsApproval, buildCreateTableAsSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
@@ -236,6 +237,9 @@ const ConnectionForm = lazy(() =>
 );
 const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
 const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
+const ImportSheetsModal = lazy(() =>
+  import("./components/ImportSheetsModal").then((m) => ({ default: m.ImportSheetsModal })),
+);
 const DataTransferModal = lazy(() =>
   import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
@@ -551,6 +555,7 @@ import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
 import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
+import { resolveCsvDropTarget } from "./dropImport";
 
 type Theme = "light" | "dark";
 
@@ -1991,6 +1996,13 @@ export default function App() {
   const [openQueryTarget, setOpenQueryTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
+  // xlsx の複数シート一括取り込み (#1623): 対象のデータベースとブックの指定。null で閉じる。
+  const [importSheetsRequest, setImportSheetsRequest] = useState<{
+    database: string;
+    path: string;
+    options: ImportOptions;
+    sheets: string[];
+  } | null>(null);
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
@@ -2033,9 +2045,11 @@ export default function App() {
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
-  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(
-    null,
-  );
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
+    sql: string;
+    database: string;
+    resultColumns?: string[];
+  } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
   // `initialName` は「定義を編集」タブから開いたときのみセットされ (`editingViewName`)、
   // モーダルの名前欄の初期値になる。
@@ -7973,18 +7987,32 @@ export default function App() {
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
   const handleSaveAsTableConfirm = useCallback(
-    (newName: string) => {
+    (newName: string, appendSql?: string) => {
       const req = saveAsTableRequest;
       setSaveAsTableRequest(null);
       if (!req) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+      // 追記 (INSERT ... SELECT、#1623) は呼び出し元のモーダルが組んだ文をそのまま流す。
+      const ddl = appendSql ?? buildCreateTableAsSql(driver, req.database, newName, req.sql);
       void (async () => {
+        // 追記は既存テーブルへの書き込みなので、本番 + confirm_writes では通常の書き込みと同じく確認する (#1623)。
+        if (appendSql && appendNeedsApproval(selectedProfile)) {
+          const ok = await confirm({
+            title: translate("saveAsTableAppendApproveTitle"),
+            message: translate("saveAsTableAppendApproveBody", { table: newName }),
+            confirmLabel: translate("saveAsTableAppendConfirm"),
+            tone: "warning",
+          });
+          if (!ok) return;
+        }
         const success = await runMaintenanceDdl(ddl, req.database);
-        if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+        if (success)
+          toast.success(
+            translate(appendSql ? "saveAsTableAppendSuccess" : "saveAsTableSuccess", { table: newName }),
+          );
       })();
     },
-    [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast],
+    [saveAsTableRequest, selectedProfile, runMaintenanceDdl, toast, confirm],
   );
 
   // 現在のクエリをビューとして保存 / 既存ビュー定義の編集を保存 (#851)。
@@ -9095,7 +9123,8 @@ export default function App() {
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
    * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
    * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
-   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
+   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。テーブルタブでなくても
+   *   データベースが決まっていれば新規テーブル作成モードで開く (#1623)。
    * - 非対応拡張子 … トーストで明示的に拒否する。
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
@@ -9147,15 +9176,21 @@ export default function App() {
 
       // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
       if (csvPaths.length > 0) {
-        const tab = activeTabRef.current;
-        if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
+        // テーブルタブならそのテーブルへ、データベースだけ決まっていれば新規テーブルとして取り込む (#1623)。
+        const dropTarget = resolveCsvDropTarget(!!sessionIdRef.current, activeTabRef.current);
+        if (dropTarget.kind === "none") {
           toast.error(translate("dropCsvNoTable"));
         } else {
           if (csvPaths.length > 1) {
             toast.info(translate("dropCsvMultiOnlyFirst"));
           }
           setImportInitialPath(csvPaths[0]);
-          setImportTarget({ database: tab.database, table: tab.table });
+          if (dropTarget.kind === "table") {
+            setImportTarget({ database: dropTarget.database, table: dropTarget.table });
+          } else {
+            toast.info(translate("dropCsvNewTable", { database: dropTarget.database }));
+            setImportTarget({ database: dropTarget.database, table: null });
+          }
         }
       }
 
@@ -12412,6 +12447,11 @@ export default function App() {
                 profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
+                onImportAllSheets={(req) => {
+                  setImportSheetsRequest({ database: importTarget.database, ...req });
+                  setImportTarget(null);
+                  setImportInitialPath(null);
+                }}
                 onClose={() => {
                   setImportTarget(null);
                   setImportInitialPath(null);
@@ -12425,6 +12465,27 @@ export default function App() {
                     handleOpenTable(importTarget.database, table);
                   } else {
                     handleImported(importTarget.database, table);
+                  }
+                }}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {importSheetsRequest && sessionId && (
+              <ImportSheetsModal
+                sessionId={sessionId}
+                database={importSheetsRequest.database}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                path={importSheetsRequest.path}
+                options={importSheetsRequest.options}
+                sheets={importSheetsRequest.sheets}
+                onClose={() => setImportSheetsRequest(null)}
+                onImported={(tables) => {
+                  // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新する。
+                  if (tables.length > 0) {
+                    invalidateSchemaCache(importSheetsRequest.database);
+                    connectionListRef.current?.refreshSchema();
                   }
                 }}
               />
@@ -12842,6 +12903,8 @@ export default function App() {
                   driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                   database={saveAsTableRequest.database}
                   sourceSql={saveAsTableRequest.sql}
+                  resultColumns={saveAsTableRequest.resultColumns}
+                  readOnly={readOnly}
                   onConfirm={handleSaveAsTableConfirm}
                   onClose={() => setSaveAsTableRequest(null)}
                 />

@@ -402,6 +402,11 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `read_binary_file`
 - `get_import_skipped_text`
 - `save_import_skipped_rows`
+- `import_dry_run`
+- `import_xlsx_sheets`
+- `list_import_templates`
+- `save_import_template`
+- `delete_import_template`
 
 `dump_tool_status` / `install_dump_tool` (`commands/dump_tools.rs`) はダンプ用の外部ツール
 (`mysqldump` / `pg_dump`) を **noobDB を実行している PC** で探し (PATH → Homebrew の keg-only
@@ -450,6 +455,31 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 skip モードの取り込みでスキップされた行の「全件」を扱う。`csv-import:done` には先頭
 200 件 (`MAX_REPORTED_SKIPPED`) と総数 `skippedTotal` だけを載せ、全件は `AppState` が直近の
 取り込み結果として保持する。表示文言はフロントの i18n テンプレートを引数で受ける。
+
+`save_import_skipped_rows` は任意引数 `format` (`text` 既定 / `csv` / `ndjson`、#1623) を取る。
+`csv` / `ndjson` はスキップ行の元の行データ (取り込み先の列順、`SkippedRowInfo.cells`) を
+書き出し、直してそのまま再取り込みできる。`cells` は IPC には載せず (`#[serde(skip)]`)、
+列名とともに `AppState` が保持する。
+
+`import_dry_run` (`commands/import.rs`, #1623) は取り込みの事前検証。本番と同じ
+`load_import_rows` で行を作り、`Connection::dry_run_failures` が**必ずロールバックする**
+トランザクションで 1 行ずつ INSERT して拒否される行を数える (PostgreSQL は行ごとに
+SAVEPOINT)。MySQL の非トランザクショナル表は拒否。読み取り専用接続でも実行できる。
+新規テーブル作成付き (`createTable`) は DB を試さずファイルのパースと主キー検証だけ
+(`dbChecked: false`)。結果は失敗の総数と先頭 50 件 (`DRY_RUN_REPORT_LIMIT`)。
+
+`import_xlsx_sheets` (`commands/import.rs`, #1623) は xlsx の複数シートを、シートごとに別の
+**新規テーブル**へ順に取り込む。各シートは `run_import_core` を通る単独の取り込みと同じ
+トランザクション単位で、`csv-import:started` はシートごと、`csv-import:done` は全体で 1 回
+(`sheets` にシートごとの件数)。失敗したシートで止まり、それより前のシートは取り込み済みのまま
+(エラー文に取り込み済みのシートを添える)。シートごとに列が違うので、元データ付きのスキップ行
+書き出し (`csv` / `ndjson`) は使えない (テキストのみ)。
+
+`list_import_templates` / `save_import_template` / `delete_import_template`
+(`commands/import_templates.rs`, `import_templates/`, #1623) は接続 × データベース × テーブル単位の
+取り込みマッピングテンプレート (列の対応・区切り文字・NULL トークン・文字コード・キー列など)。
+data_dir の `import_templates.json` (非秘密、ファイルパスも持たない)。同じキーは置き換わり、
+500 件を超えたら更新が古いものから捨てる。
 
 `preview_create_table_ddl` は「ファイルから新規テーブルを作成」(#985) の DDL
 プレビュー。`import_csv` の `createTable` 引数が実行時に通るのと同じ

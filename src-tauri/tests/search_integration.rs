@@ -341,6 +341,7 @@ fn request(tables: &[&str], term: &str, mode: t::MatchMode) -> t::DataSearchRequ
         mode,
         tables: tables.iter().map(|s| s.to_string()).collect(),
         row_threshold: 500_000,
+        include_dates: false,
     }
 }
 
@@ -427,6 +428,47 @@ async fn sqlite_data_search_streams_results_in_table_order() {
     assert!(matches!(&entries[3], t::DataSearchEntry::NoHit { table } if table == "plain"));
     assert!(matches!(&entries[4], t::DataSearchEntry::Skipped { table, .. } if table == "missing"));
 
+    let _ = std::fs::remove_file(path);
+}
+
+#[tokio::test]
+async fn sqlite_data_search_dates_are_searched_only_when_opted_in() {
+    let (session, path) = sqlite_session("datasearch_dates", false).await;
+    for sql in [
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, happened_at DATETIME, day DATE)",
+        "INSERT INTO events (id, happened_at, day) VALUES (1, '2026-10-15 12:00:00', '2026-10-15'), (2, '2026-11-01 08:00:00', '2026-11-01'), (3, '2025-10-02 00:00:00', NULL)",
+    ] {
+        session.conn.execute(sql, None).await.expect("fixture");
+    }
+    // 既定では日付列だけの表は走査対象なし。
+    let (store, emit) = collect_messages();
+    t::data_search_core(
+        session.clone(),
+        request(&["events"], "2026-10", t::MatchMode::Prefix),
+        Arc::new(AtomicU64::new(0)),
+        emit,
+    )
+    .await;
+    let off = entries(&store.lock().expect("lock"));
+    assert!(
+        matches!(&off[0], t::DataSearchEntry::Skipped { reason, .. } if *reason == "no-searchable-columns"),
+        "{:?}",
+        off[0]
+    );
+    // opt-in で前方一致 / 部分一致の両方が日付列にヒットする。
+    let mut req = request(&["events"], "2026-10", t::MatchMode::Prefix);
+    req.include_dates = true;
+    let (store, emit) = collect_messages();
+    t::data_search_core(session.clone(), req, Arc::new(AtomicU64::new(0)), emit).await;
+    let on = entries(&store.lock().expect("lock"));
+    match &on[0] {
+        t::DataSearchEntry::Hit { hits, .. } => {
+            let counts: Vec<(&str, f64)> =
+                hits.iter().map(|h| (h.column.as_str(), h.count)).collect();
+            assert_eq!(counts, vec![("happened_at", 1.0), ("day", 1.0)]);
+        }
+        other => panic!("events must hit: {other:?}"),
+    }
     let _ = std::fs::remove_file(path);
 }
 
@@ -653,6 +695,7 @@ async fn mysql_search_commands_when_env_set() {
             mode: t::MatchMode::Contains,
             tables: vec!["nb1261tok_orders".into(), "nb1261_stock".into()],
             row_threshold: 500_000,
+            include_dates: false,
         },
         Arc::new(AtomicU64::new(0)),
         emit,
@@ -802,6 +845,7 @@ async fn postgres_search_commands_when_env_set() {
             mode: t::MatchMode::Exact,
             tables: vec!["nb1261tok_orders".into()],
             row_threshold: 500_000,
+            include_dates: false,
         },
         Arc::new(AtomicU64::new(0)),
         emit,

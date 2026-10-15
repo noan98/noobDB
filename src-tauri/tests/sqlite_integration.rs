@@ -5108,3 +5108,150 @@ async fn sqlite_skip_import_wide_table_splits_statements_within_chunk() {
     assert!(matches!(&count.rows[0][0], t::Value::Int(500)));
     let _ = std::fs::remove_file(&p);
 }
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn sqlite_import_dry_run_does_not_persist() {
+    let mut p = std::env::temp_dir();
+    p.push(format!("noobdb_sqlite_dryrun_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&p);
+    std::fs::File::create(&p).expect("create temp sqlite file");
+    let opts = t::sqlite_options(p.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute(
+        "CREATE TABLE dry (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "dry").await;
+    conn.close().await;
+    let _ = std::fs::remove_file(&p);
+}
+
+/// xlsx の複数シート一括取り込み (#1623) の 1 シートぶんの契約: 同じブックから `sheet` を
+/// 変えて続けて取り込むと、シートごとに別テーブルが作られ、他のシートの行は混ざらない
+/// (`import_xlsx_sheets` はこれをシートごとに繰り返す)。
+#[tokio::test]
+async fn sqlite_import_each_xlsx_sheet_into_its_own_table() {
+    let db = temp_cmd_db("xlsx_sheets");
+    let xlsx = std::env::temp_dir().join(format!("noobdb_sheets_{}.xlsx", std::process::id()));
+    let mut wb = rust_xlsxwriter::Workbook::new();
+    {
+        let ws = wb.add_worksheet();
+        ws.set_name("Users").expect("name");
+        ws.write_string(0, 0, "id").expect("w");
+        ws.write_string(0, 1, "name").expect("w");
+        ws.write_number(1, 0, 1).expect("w");
+        ws.write_string(1, 1, "alice").expect("w");
+        ws.write_number(2, 0, 2).expect("w");
+        ws.write_string(2, 1, "bob").expect("w");
+    }
+    {
+        let ws = wb.add_worksheet();
+        ws.set_name("Orders").expect("name");
+        ws.write_string(0, 0, "no").expect("w");
+        ws.write_number(1, 0, 100).expect("w");
+    }
+    wb.save(&xlsx).expect("save xlsx");
+    let xlsx_path = xlsx.to_str().expect("utf8 path");
+    let db_path = db.to_str().expect("utf8 path");
+
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-sheets", conn, t::sqlite_options(db_path), false);
+
+    let opts = |sheet: &str| {
+        serde_json::json!({
+            "format": "xlsx",
+            "delimiter": ",",
+            "quote": "\"",
+            "hasHeader": true,
+            "nullToken": "",
+            "encoding": "utf-8",
+            "sheet": sheet,
+        })
+    };
+    let n_users = t::import_file_via_command(
+        &session,
+        None,
+        "users",
+        xlsx_path,
+        opts("Users"),
+        serde_json::json!([{ "column": "id", "csvIndex": 0 }, { "column": "name", "csvIndex": 1 }]),
+        Some(serde_json::json!([
+            { "name": "id", "type": "integer", "primaryKey": true },
+            { "name": "name", "type": "text" },
+        ])),
+    )
+    .await
+    .expect("users setup")
+    .expect("users rows");
+    let n_orders = t::import_file_via_command(
+        &session,
+        None,
+        "orders",
+        xlsx_path,
+        opts("Orders"),
+        serde_json::json!([{ "column": "no", "csvIndex": 0 }]),
+        Some(serde_json::json!([{ "name": "no", "type": "integer" }])),
+    )
+    .await
+    .expect("orders setup")
+    .expect("orders rows");
+    assert_eq!((n_users, n_orders), (2, 1));
+
+    let count = |table: &'static str| {
+        let conn = &session.conn;
+        async move {
+            let r = conn
+                .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+                .await
+                .expect("count");
+            cell_text(&r.rows[0][0])
+        }
+    };
+    assert_eq!(count("users").await, "2");
+    assert_eq!(count("orders").await, "1");
+    let _ = std::fs::remove_file(&xlsx);
+}

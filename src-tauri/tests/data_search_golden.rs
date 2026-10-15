@@ -51,6 +51,8 @@ struct Predicate {
     data_type: String,
     term: String,
     mode: t::MatchMode,
+    #[serde(default, rename = "includeDates")]
+    include_dates: bool,
     expected: Option<String>,
 }
 
@@ -68,6 +70,8 @@ struct ScanSql {
     columns: Vec<t::ScanColumn>,
     term: String,
     mode: t::MatchMode,
+    #[serde(default, rename = "includeDates")]
+    include_dates: bool,
     expected: Option<ExpectedScan>,
 }
 
@@ -124,6 +128,7 @@ fn target_name(target: t::SearchTarget) -> &'static str {
         t::SearchTarget::Text => "text",
         t::SearchTarget::Numeric => "numeric",
         t::SearchTarget::Excluded => "excluded",
+        t::SearchTarget::DateText => "dateText",
     }
 }
 
@@ -160,6 +165,7 @@ fn column_predicates_match_the_shared_vectors() {
             t::classify_for_search(driver_of(&p.driver), &p.data_type),
             &p.term,
             p.mode,
+            p.include_dates,
         );
         assert_eq!(
             actual, p.expected,
@@ -186,6 +192,7 @@ fn table_scan_sql_matches_the_shared_vectors() {
             &s.columns,
             &s.term,
             s.mode,
+            s.include_dates,
         );
         match (&actual, &s.expected) {
             (None, None) => {}

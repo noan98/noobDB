@@ -2868,6 +2868,10 @@ async fn postgres_transfer_upsert_updates_and_skips() {
         batch_size: Some(100),
         conflict_mode: mode,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     };
     let run = |r: t::TransferRequest| {
         let state = &state;
@@ -3018,6 +3022,69 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
         ddl.contains("(\"a\" DESC) INCLUDE (\"b\")"),
         "unexpected DDL: {ddl}"
     );
+}
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn postgres_import_dry_run_does_not_persist() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_pg_dry", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_pg_dry (id INT PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO noobdb_pg_dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_pg_dry").await;
+    conn.execute("DROP TABLE noobdb_pg_dry", None)
+        .await
+        .expect("cleanup");
 }
 
 /// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 一度も使われていないインデックスの
