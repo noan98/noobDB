@@ -64,6 +64,21 @@ describe("DumpModal render smoke (#604)", () => {
     expect(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") })).toBeInTheDocument();
   });
 
+  it("スナップショット中は無視される SQL 形式向けスイッチを無効にする", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
+    expect(screen.getByRole("switch", { name: t("dumpOptNoData") })).toBeEnabled();
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") }));
+    for (const k of [
+      "dumpOptNoData",
+      "dumpOptNoCreateInfo",
+      "dumpOptAddDropTable",
+      "dumpOptFormatSql",
+    ] as const) {
+      expect(screen.getByRole("switch", { name: t(k) })).toBeDisabled();
+    }
+    expect(screen.getByRole("switch", { name: t("dumpOptGzip") })).toBeEnabled();
+  });
+
   it("snapshot toggle swaps the save path extension to .db (and .db.gz with gzip)", () => {
     renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
     const pathInput = screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement;

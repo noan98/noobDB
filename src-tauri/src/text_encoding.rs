@@ -519,6 +519,10 @@ impl ChunkEncoder {
         }
     }
 
+    pub fn encoding(&self) -> TextEncoding {
+        self.encoding
+    }
+
     /// BOM の長さ (BOM を持たない文字コードは 0)。
     fn bom_len(&self) -> usize {
         match self.encoding {

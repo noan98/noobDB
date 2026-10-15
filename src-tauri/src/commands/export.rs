@@ -935,6 +935,8 @@ struct StreamExportSink {
     xlsx: Option<XlsxSheetWriter>,
     /// CSV の文字コード変換 (#1624)。`Some` のとき CSV を UTF-8 で組み立ててから変換して書く。
     csv_encoder: Option<ChunkEncoder>,
+    /// CSV 文字コード変換のエラーに行番号を添えるための、これまでに書いた CSV データ行数。
+    csv_rows_seen: u64,
 }
 
 impl StreamExportSink {
@@ -990,6 +992,7 @@ impl StreamExportSink {
             mask_plan: None,
             xlsx,
             csv_encoder,
+            csv_rows_seen: 0,
         })
     }
 
@@ -1048,7 +1051,19 @@ impl StreamExportSink {
                 if let Some(enc) = self.csv_encoder.as_mut() {
                     let mut buf = Vec::new();
                     write_csv_rows(&mut buf, &self.columns, rows)?;
-                    self.writer.write_all(&enc.encode_chunk(&buf)?)?;
+                    match enc.encode_chunk(&buf) {
+                        Ok(bytes) => self.writer.write_all(&bytes)?,
+                        Err(e) => {
+                            return Err(csv_encoding_error_with_row(
+                                e,
+                                enc.encoding(),
+                                &self.columns,
+                                rows,
+                                self.csv_rows_seen,
+                            ))
+                        }
+                    }
+                    self.csv_rows_seen += rows.len() as u64;
                 } else {
                     write_csv_rows(&mut self.writer, &self.columns, rows)?
                 }
@@ -1647,6 +1662,33 @@ pub(crate) async fn run_export_workbook(
     })
 }
 
+/// CSV の文字コード変換が失敗したとき、変換できなかった行 (データ行の通し番号) を特定して
+/// エラー文に足す。行ごとに変換し直すのは失敗時の 1 回だけ。特定できなければ元のエラーのまま。
+fn csv_encoding_error_with_row(
+    err: AppError,
+    encoding: crate::text_encoding::TextEncoding,
+    columns: &[Column],
+    rows: &[Vec<Value>],
+    rows_before: u64,
+) -> AppError {
+    if !matches!(err, AppError::InvalidInput(_)) {
+        return err;
+    }
+    for (i, row) in rows.iter().enumerate() {
+        let mut buf = Vec::new();
+        if write_csv_rows(&mut buf, columns, std::slice::from_ref(row)).is_err() {
+            continue;
+        }
+        let Ok(text) = String::from_utf8(buf) else {
+            continue;
+        };
+        if let Err(AppError::InvalidInput(msg)) = crate::text_encoding::encode(&text, encoding) {
+            return AppError::InvalidInput(format!("row {}: {msg}", rows_before + i as u64 + 1));
+        }
+    }
+    err
+}
+
 /// 複数テーブルを 1 つの xlsx ブック (テーブルごとに 1 シート) へストリーミングで書き出す (#1624)。
 /// `export_query_stream` と同じ `export-stream:*` イベントで進捗 (全シート通算の行数) と完了を
 /// 通知し、`cancel_stream` で中断できる。SELECT 系だけを受け付ける。
@@ -2209,6 +2251,31 @@ mod tests {
     }
 
     // #1624: CSV の文字コード。ストリーミングと在メモリのどちらも一括変換と同じ結果になる。
+    #[test]
+    fn csv_encoding_error_names_the_row_and_character() {
+        let columns = vec![col("名前")];
+        let rows = vec![
+            vec![Value::String("ok".into())],
+            vec![Value::String("bad😀".into())],
+        ];
+        let path =
+            std::env::temp_dir().join(format!("noobdb_csvenc_err_{}.csv", std::process::id()));
+        let opts = test_sql_opts().with_csv_encoding(Some(TextEncoding::ShiftJis));
+        let mut sink = StreamExportSink::with_query(
+            path.to_str().unwrap(),
+            ExportFormat::Csv,
+            None,
+            opts,
+            None,
+        )
+        .unwrap();
+        sink.on_columns(columns).unwrap();
+        let err = sink.on_rows(&rows).unwrap_err().to_string();
+        assert!(err.contains("row 2"), "{err}");
+        assert!(err.contains("U+1F600"), "{err}");
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn csv_encoding_applies_on_both_paths() {
         let columns = vec![col("名前"), col("値")];

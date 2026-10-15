@@ -82,6 +82,8 @@ interface Props {
   rows: CellValue[][];
   database: string | null;
   table: string | null;
+  /** 結果元テーブルの主キー列 (分かるとき)。SQL の UPSERT のキー列の初期選択に使う (#1624)。 */
+  primaryKey?: string[];
   /** 接続中のドライバ。SQL INSERT 形式のリテラル/識別子クオートに使う。 */
   driver?: string;
   /**
@@ -269,6 +271,7 @@ export function ExportModal({
   rows,
   database,
   table,
+  primaryKey,
   driver,
   partial,
   stoppedPartial,
@@ -1113,7 +1116,20 @@ export function ExportModal({
                   <Select
                     id="export-sql-conflict"
                     value={sqlConflictMode}
-                    onChange={(e) => setSqlConflictMode(e.target.value as SqlConflictMode)}
+                    onChange={(e) => {
+                      const mode = e.target.value as SqlConflictMode;
+                      setSqlConflictMode(mode);
+                      // キー列が未選択で主キーが分かるときは、出力列に含まれる主キーを初期選択する。
+                      if (
+                        (mode === "skip" || mode === "update") &&
+                        sqlKeyColumns.length === 0 &&
+                        primaryKey
+                      ) {
+                        const names = new Set(effectiveColumns.map((c) => c.name));
+                        const pk = primaryKey.filter((n) => names.has(n));
+                        if (pk.length === primaryKey.length) setSqlKeyColumns(pk);
+                      }
+                    }}
                     disabled={isSaving}
                   >
                     {SQL_CONFLICT_MODES.map((m) => (

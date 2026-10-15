@@ -279,6 +279,9 @@ describe("buildTimelapseDml (#1624)", () => {
     const k = buildTimelapseDml(rows(), { ...base, direction: "forward", maskedColumns: new Set(["id"]) });
     expect(k.statements).toBe(0);
     expect(k.skipped).toBe(3);
+    // スキップ注記にも主キーの実値(2 / 3 / 4)は出さず、伏せ字にする。
+    expect(k.sql).not.toMatch(/id=[234]\b/);
+    expect(k.sql).toContain(`id=${MASK_PLACEHOLDER}`);
   });
 
   it("文字列のクォートと NULL 主キーを安全に扱う", () => {

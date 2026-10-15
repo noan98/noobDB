@@ -326,17 +326,26 @@ describe("ExportModal Excel (xlsx) (#711)", () => {
 });
 
 describe("ExportModal CSV 文字コードと SQL の衝突時の書き方 (#1624)", () => {
-  const renderIt = (driver: "mysql" | "postgres" | "sqlite" = "mysql") =>
+  const renderIt = (driver: "mysql" | "postgres" | "sqlite" = "mysql", primaryKey?: string[]) =>
     renderWithProviders(
       <ExportModal
         columns={SAMPLE_COLUMNS}
         rows={SAMPLE_ROWS}
         database={null}
         table="users"
+        primaryKey={primaryKey}
         driver={driver}
         onClose={() => {}}
       />,
     );
+
+  it("主キーが分かるときは UPSERT のキー列を初期選択する", () => {
+    renderIt("postgres", ["id"]);
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.change(screen.getByLabelText(t("exportSqlConflict")), { target: { value: "update" } });
+    expect(screen.getByRole("checkbox", { name: "id" })).toBeChecked();
+    expect(screen.getByRole("button", { name: t("exportExecute") })).not.toBeDisabled();
+  });
 
   it("CSV では文字コードを選べて、選んだ値を書き出しに渡す", async () => {
     const spy = vi.spyOn(api, "exportQueryResult").mockResolvedValue({ bytes: 1, truncation: null });

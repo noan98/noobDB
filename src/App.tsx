@@ -12464,7 +12464,10 @@ export default function App() {
                       <SchemaCompareView
                         profiles={visibleProfiles}
                         onClose={() => setShowCompare(false)}
-                        onOpenSql={(sql) => handleOpenAiSql(sql, null)}
+                        onOpenSql={(sql, title) =>
+                          // 比較先の DB は現在のタブと無関係なので database は載せず、ファイル名をタブ名にする。
+                          addTab({ ...makeQueryTab(), sql, title, titleManual: true })
+                        }
                       />
                     </WorkspaceSurface>
                   ) : showErd && sessionId ? (

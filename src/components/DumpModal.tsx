@@ -387,7 +387,13 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     );
   }, [driver, tableScope]);
 
+  /** SQLite スナップショットは SQL を生成しないので、SQL 形式向けのスイッチは効かない (#1624)。 */
+  const ignoredBySnapshot = (key: BoolOptionKey): boolean =>
+    !!options.sqliteSnapshot &&
+    (key === "addDropTable" || key === "noData" || key === "noCreateInfo" || key === "formatSql");
+
   const toggle = (key: BoolOptionKey) => {
+    if (ignoredBySnapshot(key)) return;
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
     // gzip (#1539) / SQLite スナップショット (#1624): 保存先の拡張子を追従させる。
     if (key === "gzip" || key === "sqliteSnapshot") {
@@ -574,7 +580,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                   cursor={isRunning ? "not-allowed" : "pointer"}
                   userSelect="none"
                   onClick={(e) => {
-                    if (isRunning) return;
+                    if (isRunning || ignoredBySnapshot(row.key)) return;
                     // Switch 自身のクリックはコンポーネント側で処理されるので、
                     // ラッパーは text 部分のクリックだけを引き受ける。
                     if (e.target instanceof HTMLElement && e.target.closest("button[role=switch]")) {
@@ -587,7 +593,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
                     <Switch
                       checked={!!options[row.key]}
                       onChange={() => toggle(row.key)}
-                      disabled={isRunning}
+                      disabled={isRunning || ignoredBySnapshot(row.key)}
                       size="sm"
                       aria-labelledby={`${optionsIdBase}-${row.key}-label`}
                       aria-describedby={`${optionsIdBase}-${row.key}-hint`}

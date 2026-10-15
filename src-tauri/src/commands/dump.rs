@@ -427,6 +427,17 @@ pub(crate) async fn run_dump(
             "sqliteSnapshot is only supported for SQLite connections".into(),
         ));
     }
+    // 開いている SQLite の DB ファイル (と -wal / -shm / -journal) 自身を保存先にすると、rename で
+    // 使用中のファイルを差し替えてしまうので拒否する (ダンプ全体・スナップショット共通)。
+    if session.connect_options.driver == DriverKind::Sqlite {
+        if let Some(open_path) = session.connect_options.file_path.as_deref() {
+            if dump_target_is_open_db(open_path, final_path) {
+                return Err(AppError::InvalidInput(
+                    "cannot save over the database file that is currently open".into(),
+                ));
+            }
+        }
+    }
     let (tmp, tmp_file) = create_dump_temp_file(final_path).await?;
     let tmp_str = tmp.to_string_lossy().to_string();
     let mut cleanup = PartialFileCleanup::new(tmp.clone());
@@ -496,9 +507,7 @@ pub(crate) async fn run_dump(
             .await
             .map_err(AppError::Io)?;
         gz_cleanup.commit();
-        if let Some(digest) = digest {
-            write_checksum_sidecar(final_path, &digest).await?;
-        }
+        finish_checksum_sidecar(final_path, digest).await?;
         // `cleanup` は未 commit のまま関数末尾で Drop され、未圧縮の一時ファイルを消す。
         return Ok(gz_bytes);
     }
@@ -515,10 +524,49 @@ pub(crate) async fn run_dump(
         .await
         .map_err(AppError::Io)?;
     cleanup.commit();
-    if let Some(digest) = digest {
-        write_checksum_sidecar(final_path, &digest).await?;
-    }
+    finish_checksum_sidecar(final_path, digest).await?;
     Ok(bytes)
+}
+
+/// チェックサム有りならサイドカーを書き、無しなら同名の古いサイドカーを消す (残すと新しい
+/// ダンプと食い違う古いハッシュで検証してしまう)。
+async fn finish_checksum_sidecar(final_path: &str, digest: Option<String>) -> Result<()> {
+    match digest {
+        Some(d) => write_checksum_sidecar(final_path, &d).await,
+        None => {
+            let _ = tokio::fs::remove_file(checksum_sidecar_path(final_path)).await;
+            Ok(())
+        }
+    }
+}
+
+/// 存在しないパスでも比べられるよう、親ディレクトリを正規化してファイル名を付け直す。
+fn canonical_or_parent(p: &Path) -> Option<PathBuf> {
+    if let Ok(c) = std::fs::canonicalize(p) {
+        return Some(c);
+    }
+    let name = p.file_name()?;
+    let parent = p
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    Some(std::fs::canonicalize(parent).ok()?.join(name))
+}
+
+/// 保存先が、開いている SQLite の DB ファイル本体か付随ファイル (-wal / -shm / -journal) かを返す。
+/// 判定は正規化パスの一致のみ (ハードリンク等の別名までは見ない)。
+fn dump_target_is_open_db(open_path: &str, target: &str) -> bool {
+    let Some(t) = canonical_or_parent(Path::new(target)) else {
+        return false;
+    };
+    let Some(open) = canonical_or_parent(Path::new(open_path)) else {
+        return false;
+    };
+    ["", "-wal", "-shm", "-journal"].iter().any(|suffix| {
+        let mut os = open.clone().into_os_string();
+        os.push(suffix);
+        t.as_os_str() == os.as_os_str()
+    })
 }
 
 /// ファイルの SHA-256 を 16 進で返す (#1624)。ストリームで読むので巨大なダンプでもメモリに
@@ -1990,6 +2038,42 @@ mod tests {
             .unwrap();
         let body = std::fs::read_to_string(dir.join("d.sql.sha256")).unwrap();
         assert_eq!(body, format!("{digest}  d.sql\n"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn stale_sidecar_is_removed_when_checksum_is_off() {
+        let dir = std::env::temp_dir().join(format!("noobdb-stale-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("d.sql");
+        std::fs::write(&f, b"x").unwrap();
+        std::fs::write(dir.join("d.sql.sha256"), b"old").unwrap();
+        finish_checksum_sidecar(f.to_str().unwrap(), None)
+            .await
+            .unwrap();
+        assert!(!dir.join("d.sql.sha256").exists());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn dump_target_equal_to_open_sqlite_file_is_refused() {
+        let dir = std::env::temp_dir().join(format!("noobdb-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("app.db");
+        std::fs::write(&db, b"x").unwrap();
+        let db_s = db.to_str().unwrap();
+        assert!(dump_target_is_open_db(db_s, db_s));
+        // 別表記 (./ 経由) でも同じファイルとして拒否する。
+        let alias = dir.join(".").join("app.db");
+        assert!(dump_target_is_open_db(db_s, alias.to_str().unwrap()));
+        // まだ存在しない -wal / -shm も付随ファイルとして拒否する。
+        assert!(dump_target_is_open_db(db_s, &format!("{db_s}-wal")));
+        assert!(dump_target_is_open_db(db_s, &format!("{db_s}-shm")));
+        // 別名のファイルは許可する。
+        assert!(!dump_target_is_open_db(
+            db_s,
+            dir.join("backup.db").to_str().unwrap()
+        ));
         std::fs::remove_dir_all(&dir).ok();
     }
 

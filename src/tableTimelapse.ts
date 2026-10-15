@@ -319,7 +319,11 @@ export function buildTimelapseDml(
     skipped += 1;
     lines.push(`-- ${(o.skippedComment ?? ((k) => `skipped (masked / no key): ${k}`))(key)}`);
   };
-  const keyText = (r: TimelapseExportRow) => formatKey(r.key);
+  // スキップ注記の主キー表記。入力はマスク前の値なので、伏せ字の列は実値を書かず伏せ字にする。
+  const keyText = (r: TimelapseExportRow) =>
+    formatKey(
+      Object.fromEntries(Object.entries(r.key).map(([k, v]) => [k, masked.has(k) ? MASK_PLACEHOLDER : v])),
+    );
 
   for (const r of rows) {
     const forward = o.direction === "forward";

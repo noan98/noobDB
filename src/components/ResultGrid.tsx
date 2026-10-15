@@ -10153,6 +10153,7 @@ export const ResultGrid = memo(
               rows={result.rows}
               database={database ?? null}
               table={table ?? null}
+              primaryKey={tableColumns?.filter((c) => c.key === "PRI").map((c) => c.name)}
               driver={driver}
               partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
               stoppedPartial={!!partialResult}
