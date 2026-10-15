@@ -91,9 +91,9 @@ pub mod __test_api {
         KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
         ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
         RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
-        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
-        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-        UserPrivileges, Value,
+        ServerMetrics, ServerVariable, SqliteFkViolation, SqliteMaintenanceAction,
+        SqliteMaintenanceResult, StreamBatch, TableColumnInfo, TableComment, TablePrivilegeRow,
+        TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -455,7 +455,9 @@ pub mod __test_api {
     };
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
-    pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+    pub use crate::commands::server::{
+        server_info_inner, server_metrics_inner, sqlite_maintenance_inner,
+    };
 
     /// スキーマ比較の本体 (インデックス・外部キーの差分、SQLite の再作成コンテキスト込み)。
     pub async fn compare_schema_via_core(
@@ -1423,6 +1425,7 @@ pub fn run() {
             commands::schema::incoming_foreign_keys,
             commands::server::server_info,
             commands::server::server_metrics,
+            commands::server::sqlite_maintenance,
             commands::process::list_processes,
             commands::process::get_process_query,
             commands::process::get_process_queries,

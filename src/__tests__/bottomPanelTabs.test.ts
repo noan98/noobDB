@@ -61,7 +61,23 @@ describe("availableBottomPanelTabs", () => {
   });
 
   it("接続していて対象が揃えば全タブを開ける (定義順を保つ)", () => {
-    expect(availableBottomPanelTabs(connected)).toEqual([...BOTTOM_PANEL_TABS]);
+    // SQLite 専用のメンテナンス (#1625) は SQLite の接続でだけ並ぶ。
+    expect(availableBottomPanelTabs({ ...connected, driver: "sqlite" })).toEqual([...BOTTOM_PANEL_TABS]);
+    expect(availableBottomPanelTabs({ ...connected, driver: "mysql" })).toEqual(
+      BOTTOM_PANEL_TABS.filter((tab) => tab !== "sqliteMaintenance"),
+    );
+  });
+
+  it("SQLite のメンテナンス (#1625) は未接続・他ドライバでは開けない", () => {
+    expect(availableBottomPanelTabs({ ...connected, driver: "postgres" })).not.toContain("sqliteMaintenance");
+    expect(
+      availableBottomPanelTabs({
+        sessionId: null,
+        advisorDatabase: null,
+        openConnectionCount: 0,
+        driver: "sqlite",
+      }),
+    ).not.toContain("sqliteMaintenance");
   });
 
   it("対象データベースが決まらないとアドバイザだけ落ちる", () => {
@@ -192,7 +208,7 @@ describe("resolveBottomPanelTab", () => {
 
   it("開けるタブはそのまま通す", () => {
     for (const tab of BOTTOM_PANEL_TABS) {
-      expect(resolveBottomPanelTab(tab, connected)).toBe(tab);
+      expect(resolveBottomPanelTab(tab, { ...connected, driver: "sqlite" })).toBe(tab);
     }
   });
 
@@ -389,9 +405,15 @@ describe("bottomPanelStripTabs (折りたたみ時のパネルバー)", () => {
   it("参照グループは対象が揃っていても並べない (対象を決めて開くもの)", () => {
     const entries = bottomPanelStripTabs(connected);
     expect(entries.map((e) => e.tab)).toEqual(
-      BOTTOM_PANEL_TABS.filter((tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" && tab !== "perf"),
+      BOTTOM_PANEL_TABS.filter(
+        (tab) => BOTTOM_PANEL_TAB_GROUP[tab] !== "reference" && tab !== "perf" && tab !== "sqliteMaintenance",
+      ),
     );
     expect(entries.every((e) => e.enabled && e.reason === null)).toBe(true);
+    // SQLite のときだけメンテナンス (#1625) が並ぶ。
+    expect(
+      bottomPanelStripTabs({ ...connected, driver: "sqlite" }).some((e) => e.tab === "sqliteMaintenance"),
+    ).toBe(true);
   });
 
   it("接続中でも対象 DB が無ければアドバイザだけ「DB が必要」で無効", () => {

@@ -54,10 +54,11 @@ use t::{
     RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
     ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
     ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SheetImportResult,
-    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
-    SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
-    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
+    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SqliteFkViolation, SqliteMaintenanceAction,
+    SqliteMaintenanceResult, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
+    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
+    TableComment, TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -302,6 +303,21 @@ fn build_fixtures() -> serde_json::Value {
         fetched_at_ms: 1_760_000_000_000,
     };
     let sandbox_reset_result = t::SandboxResetResult { restored_rows: 3 };
+    let sqlite_maintenance_result = SqliteMaintenanceResult {
+        action: SqliteMaintenanceAction::ForeignKeyCheck,
+        ok: false,
+        messages: vec!["row 3 missing from index idx".into()],
+        fk_violations: vec![SqliteFkViolation {
+            table: "orders".into(),
+            rowid: Some(7),
+            parent: "users".into(),
+            fk_index: 0,
+        }],
+        truncated: false,
+        page_count: Some(100),
+        freelist_count: Some(5),
+        elapsed_ms: 3,
+    };
     let server_metrics = ServerMetrics {
         connections: Some(42),
         active: Some(3),
@@ -2043,6 +2059,7 @@ fn build_fixtures() -> serde_json::Value {
         "serverInfo": server_info,
         "processInfo": process_info,
         "serverMetrics": server_metrics,
+        "sqliteMaintenanceResult": sqlite_maintenance_result,
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,
         "statementDeltaRow": statement_delta_row,

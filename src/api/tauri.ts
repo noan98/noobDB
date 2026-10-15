@@ -1274,6 +1274,29 @@ export interface DiffForeignKey {
   on_update: string | null;
 }
 
+/** SQLite のメンテナンス操作 (#1625)。 */
+export type SqliteMaintenanceAction = "integrity_check" | "foreign_key_check" | "optimize" | "analyze";
+
+/** `PRAGMA foreign_key_check` の違反行 1 件。 */
+export interface SqliteFkViolation {
+  table: string;
+  rowid: number | null;
+  parent: string;
+  fk_index: number;
+}
+
+/** `sqliteMaintenance` の戻り値 (#1625)。 */
+export interface SqliteMaintenanceResult {
+  action: SqliteMaintenanceAction;
+  ok: boolean;
+  messages: string[];
+  fk_violations: SqliteFkViolation[];
+  truncated: boolean;
+  page_count: number | null;
+  freelist_count: number | null;
+  elapsed_ms: number;
+}
+
 /** Result of comparing a source schema against a target schema. */
 export interface SchemaDiff {
   source_driver: DriverKind;

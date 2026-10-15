@@ -231,6 +231,24 @@ export const userPrivileges = z.object({
 });
 
 /** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
+export const sqliteMaintenanceResult = z.object({
+  action: z.enum(["integrity_check", "foreign_key_check", "optimize", "analyze"]),
+  ok: z.boolean(),
+  messages: z.array(z.string()),
+  fk_violations: z.array(
+    z.object({
+      table: z.string(),
+      rowid: z.number().nullable(),
+      parent: z.string(),
+      fk_index: z.number(),
+    }),
+  ),
+  truncated: z.boolean(),
+  page_count: z.number().nullable(),
+  freelist_count: z.number().nullable(),
+  elapsed_ms: z.number(),
+});
+
 export const serverMetrics = z.object({
   connections: z.number().nullable(),
   active: z.number().nullable(),

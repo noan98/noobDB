@@ -880,6 +880,84 @@ impl SqliteConn {
     /// `path` via `VACUUM INTO` — the explicit "ファイルに保存" persistence
     /// escape hatch (#740). The live session (and its temp backing file)
     /// stays volatile regardless; this only creates an independent copy.
+    /// SQLite のメンテナンス (#1625)。`integrity_check` / `foreign_key_check` は読み取りのみ、
+    /// `optimize` / `analyze` は統計を更新する (呼び出し側が読み取り専用セッションを拒否する)。
+    pub async fn maintenance(
+        &self,
+        action: super::types::SqliteMaintenanceAction,
+    ) -> Result<super::types::SqliteMaintenanceResult> {
+        use super::types::{
+            SqliteFkViolation, SqliteMaintenanceAction as A, SqliteMaintenanceResult,
+            SQLITE_MAINTENANCE_MAX_ROWS as MAX,
+        };
+        let started = std::time::Instant::now();
+        let mut conn = self.pool.acquire().await?;
+        let mut messages: Vec<String> = Vec::new();
+        let mut fk_violations: Vec<SqliteFkViolation> = Vec::new();
+        let mut truncated = false;
+        let ok = match action {
+            A::IntegrityCheck => {
+                let rows: Vec<SqliteRow> = sqlx::query("PRAGMA integrity_check")
+                    .fetch_all(&mut *conn)
+                    .await?;
+                let all: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.try_get::<String, _>(0).ok())
+                    .collect();
+                let healthy = all.len() == 1 && all[0].eq_ignore_ascii_case("ok");
+                if !healthy {
+                    truncated = all.len() > MAX;
+                    messages = all.into_iter().take(MAX).collect();
+                }
+                healthy
+            }
+            A::ForeignKeyCheck => {
+                // table, rowid (WITHOUT ROWID 表では NULL), parent, fkid。
+                let rows: Vec<SqliteRow> = sqlx::query("PRAGMA foreign_key_check")
+                    .fetch_all(&mut *conn)
+                    .await?;
+                truncated = rows.len() > MAX;
+                fk_violations = rows
+                    .iter()
+                    .take(MAX)
+                    .map(|r| SqliteFkViolation {
+                        table: r.try_get::<String, _>(0).unwrap_or_default(),
+                        rowid: r.try_get::<Option<i64>, _>(1).ok().flatten(),
+                        parent: r.try_get::<String, _>(2).unwrap_or_default(),
+                        fk_index: r.try_get::<i64, _>(3).unwrap_or(0),
+                    })
+                    .collect();
+                rows.is_empty()
+            }
+            A::Optimize => {
+                sqlx::query("PRAGMA optimize").execute(&mut *conn).await?;
+                true
+            }
+            A::Analyze => {
+                sqlx::query("ANALYZE").execute(&mut *conn).await?;
+                true
+            }
+        };
+        let page_count = sqlx::query_scalar::<_, i64>("PRAGMA page_count")
+            .fetch_one(&mut *conn)
+            .await
+            .ok();
+        let freelist_count = sqlx::query_scalar::<_, i64>("PRAGMA freelist_count")
+            .fetch_one(&mut *conn)
+            .await
+            .ok();
+        Ok(SqliteMaintenanceResult {
+            action,
+            ok,
+            messages,
+            fk_violations,
+            truncated,
+            page_count,
+            freelist_count,
+            elapsed_ms: started.elapsed().as_millis() as u64,
+        })
+    }
+
     pub async fn vacuum_into(&self, path: &str) -> Result<()> {
         let mut conn = self.pool.acquire().await?;
         sqlx::query("VACUUM INTO ?")

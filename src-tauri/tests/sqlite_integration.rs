@@ -5255,3 +5255,70 @@ async fn sqlite_import_each_xlsx_sheet_into_its_own_table() {
     assert_eq!(count("orders").await, "1");
     let _ = std::fs::remove_file(&xlsx);
 }
+
+#[tokio::test]
+async fn sqlite_maintenance_checks_and_statistics() {
+    let mut path = std::env::temp_dir();
+    path.push(format!("noobdb_sqlite_maint_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create temp sqlite file");
+    let conn = t::connect(&t::sqlite_options(path.to_str().expect("utf8 path")))
+        .await
+        .expect("connect");
+    conn.execute("CREATE TABLE p (id INTEGER PRIMARY KEY)", None)
+        .await
+        .expect("p");
+    conn.execute(
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id))",
+        None,
+    )
+    .await
+    .expect("c");
+    conn.execute("INSERT INTO p (id) VALUES (1)", None)
+        .await
+        .expect("seed");
+
+    let integrity = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::IntegrityCheck)
+        .await
+        .expect("integrity");
+    assert!(integrity.ok && integrity.messages.is_empty());
+    assert!(integrity.page_count.is_some());
+
+    let clean = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::ForeignKeyCheck)
+        .await
+        .expect("fk");
+    assert!(clean.ok && clean.fk_violations.is_empty());
+
+    // 外部キー検査を切った別接続で壊れた行 (親を持たない子) を入れる。
+    {
+        use sqlx::{Connection as _, Executor as _};
+        let mut raw = sqlx::SqliteConnection::connect(&format!("sqlite://{}", path.display()))
+            .await
+            .expect("raw connect");
+        raw.execute("PRAGMA foreign_keys = OFF")
+            .await
+            .expect("fk off");
+        raw.execute("INSERT INTO c (id, pid) VALUES (5, 99)")
+            .await
+            .expect("bad row");
+    }
+    let bad = conn
+        .sqlite_maintenance(t::SqliteMaintenanceAction::ForeignKeyCheck)
+        .await
+        .expect("fk bad");
+    assert!(!bad.ok);
+    assert_eq!(bad.fk_violations[0].table, "c");
+    assert_eq!(bad.fk_violations[0].parent, "p");
+    assert_eq!(bad.fk_violations[0].rowid, Some(5));
+
+    for action in [
+        t::SqliteMaintenanceAction::Optimize,
+        t::SqliteMaintenanceAction::Analyze,
+    ] {
+        let r = conn.sqlite_maintenance(action).await.expect("stats");
+        assert!(r.ok);
+    }
+    let _ = std::fs::remove_file(&path);
+}

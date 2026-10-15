@@ -2,7 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { ServerInfo, ServerMetrics } from "../tauri";
+import type { ServerInfo, ServerMetrics, SqliteMaintenanceAction, SqliteMaintenanceResult } from "../tauri";
 
 export const serverCommands = {
   /** 接続中サーバの情報 (バージョン + 設定変数) を取得する (サーバ情報パネル #563)。 */
@@ -19,5 +19,13 @@ export const serverCommands = {
   serverMetrics: (sessionId: string) =>
     invoke<ServerMetrics>("server_metrics", { sessionId }).then((r) =>
       parseResponse(schemas.serverMetrics, r, "server_metrics"),
+    ),
+  /**
+   * SQLite のメンテナンスを実行する (#1625): `integrity_check` / `foreign_key_check` は
+   * 読み取りのみ、`optimize` / `analyze` は統計を更新する (read_only セッションは拒否)。
+   */
+  sqliteMaintenance: (sessionId: string, action: SqliteMaintenanceAction) =>
+    invoke<SqliteMaintenanceResult>("sqlite_maintenance", { sessionId, action }).then((r) =>
+      parseResponse(schemas.sqliteMaintenanceResult, r, "sqlite_maintenance"),
     ),
 };

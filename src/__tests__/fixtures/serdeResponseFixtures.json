@@ -5087,6 +5087,25 @@
     "content": "SELECT 1;",
     "encoding": "utf-8-bom"
   },
+  "sqliteMaintenanceResult": {
+    "action": "foreign_key_check",
+    "elapsed_ms": 3,
+    "fk_violations": [
+      {
+        "fk_index": 0,
+        "parent": "users",
+        "rowid": 7,
+        "table": "orders"
+      }
+    ],
+    "freelist_count": 5,
+    "messages": [
+      "row 3 missing from index idx"
+    ],
+    "ok": false,
+    "page_count": 100,
+    "truncated": false
+  },
   "statementDeltaRow": {
     "calls": 1200,
     "database": "appdb",

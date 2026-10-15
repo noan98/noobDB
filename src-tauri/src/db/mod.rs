@@ -60,9 +60,10 @@ use advisor::UnusedIndexStats;
 use types::{
     group_tables_by_database, Column, DatabaseTables, DbUserInfo, ForeignKey, IndexInfo,
     KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo, QueryResult,
-    QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics, StatementStat,
-    StreamBatch, TableColumnInfo, TableComment, TableIndexes, TableRowEstimate, TableRowIdentity,
-    TableSchema, TableSizeInfo, UserPrivileges, Value,
+    QueryStatsSupport, RoutineSignature, SchemaObject, ServerInfo, ServerMetrics,
+    SqliteMaintenanceAction, SqliteMaintenanceResult, StatementStat, StreamBatch, TableColumnInfo,
+    TableComment, TableIndexes, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+    UserPrivileges, Value,
 };
 use upsert::ImportConflict;
 
@@ -2149,6 +2150,20 @@ impl Connection {
     /// Persists a clean snapshot of the local database to `path` (the
     /// explicit "ファイルに保存" escape hatch out of the default volatile
     /// behavior).
+    /// SQLite のメンテナンス (`integrity_check` / `foreign_key_check` / `optimize` /
+    /// `ANALYZE`, #1625)。他ドライバは非対応 (サーバ側のメンテナンスは別機能)。
+    pub async fn sqlite_maintenance(
+        &self,
+        action: SqliteMaintenanceAction,
+    ) -> Result<SqliteMaintenanceResult> {
+        match self {
+            Connection::Sqlite(c) => c.maintenance(action).await,
+            Connection::MySql(_) | Connection::Postgres(_) => Err(AppError::InvalidInput(
+                "maintenance checks are only supported on SQLite".into(),
+            )),
+        }
+    }
+
     pub async fn vacuum_into(&self, path: &str) -> Result<()> {
         match self {
             Connection::Sqlite(c) => c.vacuum_into(path).await,
