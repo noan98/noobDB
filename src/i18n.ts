@@ -5511,6 +5511,11 @@ const en = {
   aiSqlOpenInNewTabHelp:
     "Opens the proposal in a new query tab without running it. The original tab is not changed, so you can run and compare both.",
   aiSqlOpenedInNewTab: "Opened in a new tab. It has not been run.",
+  schemaExportTokens: "Approx. {tokens} tokens ({percent}% of a {limit}-token context guide)",
+  schemaExportTokensWarn:
+    "This is large. Narrow the tables, or turn off FK-related tables, before pasting into an AI so the reply is not cut off.",
+  schemaExportTokensDanger: "This may exceed the AI context limit. Reduce the selection before pasting.",
+  schemaExportTokensFkExpanded: "FK expansion added {added} table(s) (about {tokens} tokens in total).",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10992,6 +10997,13 @@ const ja: Dict = {
   aiSqlOpenInNewTabHelp:
     "提案を新しいクエリタブで開きます (実行はしません)。元のタブは変更しないので、両方を実行して比較できます。",
   aiSqlOpenedInNewTab: "新しいタブで開きました (未実行)。",
+  schemaExportTokens: "概算 {tokens} トークン (コンテキスト上限の目安 {limit} トークンの {percent}%)",
+  schemaExportTokensWarn:
+    "大きめです。AI に貼り付ける前にテーブルを絞るか、FK 関連テーブルの追加を外すと、応答が途中で切れにくくなります。",
+  schemaExportTokensDanger:
+    "AI のコンテキスト上限を超える可能性があります。貼り付け前に選択を減らしてください。",
+  schemaExportTokensFkExpanded:
+    "FK 展開で {added} 件のテーブルが加わっています (合計で概算 {tokens} トークン)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
