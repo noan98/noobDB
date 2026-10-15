@@ -5109,6 +5109,10 @@ export const DataGrid = memo(function DataGrid({
         selectionStats.avg,
         selectionStats.min,
         selectionStats.max,
+        selectionStats.median,
+        selectionStats.q1,
+        selectionStats.q3,
+        selectionStats.distinctCount,
       ].join("|")
     : null;
   const selectionStatsRef = useRef(selectionStats);
@@ -8778,13 +8782,24 @@ export const ResultGrid = memo(
                   <span>
                     {t("gridMaxLabel")} {fmtStatNum(selSummary.max)}
                   </span>
+                  <span>
+                    {t("gridMedianLabel")} {fmtStatNum(selSummary.median)}
+                  </span>
+                  <span>
+                    {t("gridQuartilesLabel")} {fmtStatNum(selSummary.q1)} / {fmtStatNum(selSummary.q3)}
+                  </span>
                   <chakra.span color="app.textMuted">
                     {t("gridCountLabel")} {selSummary.numericCount.toLocaleString()}
+                  </chakra.span>
+                  <chakra.span color="app.textMuted">
+                    {t("gridSelDistinctLabel")} {selSummary.distinctCount.toLocaleString()}
                   </chakra.span>
                 </>
               ) : (
                 <chakra.span color="app.textMuted">
                   {t("gridSelectionNonNull", { n: selSummary.nonNullCount })}
+                  {" · "}
+                  {t("gridSelDistinctLabel")} {selSummary.distinctCount.toLocaleString()}
                 </chakra.span>
               )}
             </chakra.span>

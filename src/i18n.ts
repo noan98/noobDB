@@ -5472,6 +5472,9 @@ const en = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  gridMedianLabel: "Median",
+  gridQuartilesLabel: "Q1/Q3",
+  gridSelDistinctLabel: "Distinct",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10915,6 +10918,9 @@ const ja: Dict = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  gridMedianLabel: "中央値",
+  gridQuartilesLabel: "四分位",
+  gridSelDistinctLabel: "DISTINCT",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
