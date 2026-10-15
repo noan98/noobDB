@@ -1201,7 +1201,7 @@ const en = {
   formTlsClientHelp:
     "Optional client certificate and key for servers that require mutual TLS (mTLS). Leave blank otherwise. Only the file paths are stored — the file contents are read at connect time and never saved.",
   formTlsSshHint:
-    "Over an SSH tunnel the driver connects to 127.0.0.1, so Verify full (hostname check) may fail against a certificate issued for the real host. Use Verify CA, or set the database host to match the certificate.",
+    "Over a tunnel (SSH / SSM) the driver connects to 127.0.0.1, so Verify full (hostname check) may fail against a certificate issued for the real host. Use Verify CA, or set the database host to match the certificate.",
   formAuthMethod: "Authentication",
   formAuthMethodPassword: "Password",
   formAuthMethodAwsIam: "AWS IAM (RDS / Aurora)",
@@ -1217,7 +1217,7 @@ const en = {
   formAwsIamExpiryHelp:
     "Tokens expire after 15 minutes. Connections already open keep working; noobDB regenerates the token every 10 minutes for new pooled connections, and on reconnect. If your AWS credentials themselves expire (temporary keys), reconnecting fails until you refresh them.",
   formAwsIamSshHint:
-    "Over an SSH tunnel the token is still signed for the host entered above (the real RDS endpoint), not 127.0.0.1 — keep the endpoint name here, not the tunnel address.",
+    "Over a tunnel (SSH / SSM) the token is still signed for the host entered above (the real RDS endpoint), not 127.0.0.1 — keep the endpoint name here, not the tunnel address.",
   formAwsIamTlsNote:
     "AWS IAM authentication requires TLS, so Disable / Prefer are not available. For Verify CA / Verify full, set the CA certificate to the Amazon RDS CA bundle (global-bundle.pem).",
   formInitSqlLegend: "Session init SQL",
@@ -1256,7 +1256,21 @@ const en = {
   formPasswordRevealNote: "Read from the OS keyring. Hides again automatically after {seconds} seconds.",
   formPasswordRevealMissing: "No saved password found in the OS keyring.",
   formPasswordRevealFailed: "Could not read the saved password",
-  formUseSsh: "Use SSH tunnel",
+  formRoute: "Connection route",
+  formRouteDirect: "Direct",
+  formRouteSsh: "SSH tunnel",
+  formRouteSsm: "SSM (Session Manager)",
+  formSsmTarget: "Instance ID",
+  formSsmRegion: "Region (optional)",
+  formSsmRegionPlaceholder: "Blank = from the endpoint name, then the AWS profile settings",
+  formSsmProfile: "AWS profile (optional)",
+  formSsmProfileHelp:
+    "Passed to the AWS CLI as --profile. To use aws-vault, put `credential_process = aws-vault export --format=json NAME` in the profile in ~/.aws/config and enter that profile name here. Blank uses the default AWS credential resolution.",
+  formSsmHelp:
+    "Relays through a bastion EC2 instance with `aws ssm start-session`, to the Host / Port above (e.g. an RDS endpoint). Requires AWS CLI v2 and the Session Manager plugin on this PC. To use aws-vault, write `credential_process` in an AWS profile and enter its name below (if MFA is needed, use aws-vault --prompt=wincredui).",
+  formInvalidSsmRegion: "Enter a region like ap-northeast-1 (lowercase letters, digits and hyphens only).",
+  formInvalidSsmTarget:
+    "Enter an instance ID like i-0123456789abcdef0 (i- or mi- followed by 8 to 17 lowercase hex digits).",
   formSshHost: "SSH Host",
   formSshUser: "SSH User",
   formSshAuthMethod: "Authentication",
@@ -6712,7 +6726,7 @@ const ja: Dict = {
   formTlsClientHelp:
     "相互 TLS (mTLS) を要求するサーバ向けの任意のクライアント証明書と鍵です。不要なら空のままにします。保存されるのはファイルパスのみで、ファイルの中身は接続時に読み込むだけで保存しません。",
   formTlsSshHint:
-    "SSH トンネル経由ではドライバは 127.0.0.1 に接続するため、「完全検証」(ホスト名検証) は実ホスト向けに発行された証明書に対して失敗することがあります。「CA 検証」を使うか、DB ホスト名を証明書に合わせてください。",
+    "トンネル (SSH / SSM) 経由ではドライバは 127.0.0.1 に接続するため、「完全検証」(ホスト名検証) は実ホスト向けに発行された証明書に対して失敗することがあります。「CA 検証」を使うか、DB ホスト名を証明書に合わせてください。",
   formAuthMethod: "認証方式",
   formAuthMethodPassword: "パスワード",
   formAuthMethodAwsIam: "AWS IAM (RDS / Aurora)",
@@ -6728,7 +6742,7 @@ const ja: Dict = {
   formAwsIamExpiryHelp:
     "トークンの有効期限は 15 分です。確立済みの接続は失効後もそのまま使えます。プールが新しく張る接続向けに 10 分ごとにトークンを作り直し、再接続時にも新しいトークンを生成します。一時的な AWS 資格情報そのものが失効した場合は、資格情報を更新するまで再接続に失敗します。",
   formAwsIamSshHint:
-    "SSH トンネル経由でも、トークンは 127.0.0.1 ではなく上で入力したホスト名 (本来の RDS エンドポイント) で署名されます。ここにはトンネルのアドレスではなくエンドポイント名を入力してください。",
+    "トンネル (SSH / SSM) 経由でも、トークンは 127.0.0.1 ではなく上で入力したホスト名 (本来の RDS エンドポイント) で署名されます。ここにはトンネルのアドレスではなくエンドポイント名を入力してください。",
   formAwsIamTlsNote:
     "AWS IAM 認証は TLS 必須のため「無効」「優先」は選べません。「CA 検証」「完全検証」を使う場合は CA 証明書に Amazon RDS の CA バンドル (global-bundle.pem) を指定してください。",
   formInitSqlLegend: "セッション初期化 SQL",
@@ -6768,7 +6782,22 @@ const ja: Dict = {
   formPasswordRevealNote: "OS キーリングから読み出しました。{seconds} 秒後に自動で非表示に戻ります。",
   formPasswordRevealMissing: "OS キーリングに保存済みパスワードが見つかりません。",
   formPasswordRevealFailed: "保存済みパスワードを読み取れませんでした",
-  formUseSsh: "SSHトンネルを使用",
+  formRoute: "接続経路",
+  formRouteDirect: "直接",
+  formRouteSsh: "SSHトンネル",
+  formRouteSsm: "SSM (Session Manager)",
+  formSsmTarget: "インスタンスID",
+  formSsmRegion: "リージョン (任意)",
+  formSsmRegionPlaceholder: "空欄ならエンドポイント名 → AWSプロファイルの設定から決定",
+  formSsmProfile: "AWSプロファイル名 (任意)",
+  formSsmProfileHelp:
+    "AWS CLI の --profile に渡します。aws-vault を使う場合は ~/.aws/config のプロファイルに `credential_process = aws-vault export --format=json 名前` を書き、そのプロファイル名をここに入力してください。空欄なら AWS の既定の認証情報解決順を使います。",
+  formSsmHelp:
+    "踏み台の EC2 インスタンスを `aws ssm start-session` で経由し、上のホスト / ポート (RDS エンドポイントなど) へ中継します。この PC に AWS CLI v2 と Session Manager プラグインが必要です。aws-vault を使うには、AWS プロファイルに `credential_process` を書いてその名前を下に入力します (MFA が必要なら aws-vault の --prompt=wincredui)。",
+  formInvalidSsmRegion:
+    "ap-northeast-1 のようなリージョン名 (小文字英数字とハイフンのみ) を入力してください。",
+  formInvalidSsmTarget:
+    "i-0123456789abcdef0 のようなインスタンスID (i- または mi- + 小文字16進8〜17桁) を入力してください。",
   formSshHost: "SSHホスト",
   formSshUser: "SSHユーザー",
   formSshAuthMethod: "認証方式",

@@ -209,6 +209,38 @@ describe("アクセシビリティ自動検査 (axe-core / 実ブラウザ)", ()
     expect(violations, formatViolations(violations)).toEqual([]);
   });
 
+  it("接続フォーム (SSM 経路の入力欄表示時) に新規の critical/serious 違反がない", async () => {
+    const screen = await renderInBrowser(
+      <ConnectionForm
+        initial={{
+          id: "ssm00001",
+          name: "Via SSM",
+          driver: "mysql",
+          host: "db.abc.ap-northeast-1.rds.amazonaws.com",
+          port: 3306,
+          user: "app",
+          database: null,
+          ssh: null,
+          ssm: { target: "i-0123456789abcdef0", region: "", profile: null },
+          group: null,
+          color: null,
+          is_production: false,
+          confirm_writes: false,
+          read_only: false,
+          skip_history: false,
+          file_path: null,
+        }}
+        profiles={[]}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await expect.element(screen.getByLabelText(t("formSsmTarget"))).toBeVisible();
+
+    const violations = await runAxe("connection-form-ssm");
+    expect(violations, formatViolations(violations)).toEqual([]);
+  });
+
   it("結果グリッドに新規の critical/serious 違反がない", async () => {
     const result = makeResult(
       [
