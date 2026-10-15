@@ -249,3 +249,19 @@ export function parseLimitRows(input: string): number | null {
 
 /** 試験転送の既定行数。 */
 export const DEFAULT_TRIAL_ROWS = 100;
+
+/**
+ * DECIMAL に上書きした列のうち、小数桁が精度より大きい (DB が拒否する) ものの元の列名。
+ * 含めない列と、型が DECIMAL でない列は対象外 (#1623)。
+ */
+export function invalidDecimalColumns(
+  sourceColumns: readonly { name: string }[],
+  drafts: Readonly<Record<string, TransferColumnDraft>>,
+): string[] {
+  return sourceColumns
+    .filter((c) => {
+      const d = drafts[c.name];
+      return !!d && d.include && d.type === "decimal" && d.scale > d.precision;
+    })
+    .map((c) => c.name);
+}

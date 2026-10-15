@@ -172,3 +172,13 @@ export function buildInsertSelectSql(
     `SELECT ${pairs.map((p) => q(p.source)).join(", ")}\nFROM (\n${query}\n) AS _src;`
   );
 }
+
+/**
+ * 追記 (INSERT ... SELECT) の実行前に確認が要るか。通常のクエリ実行の書き込み承認と同じ条件:
+ * 本番プロファイルで `confirm_writes` が有効、かつ読み取り専用でない (#1623)。
+ */
+export function appendNeedsApproval(
+  profile: { is_production?: boolean; confirm_writes?: boolean; read_only?: boolean } | null | undefined,
+): boolean {
+  return !!profile && !!profile.is_production && !!profile.confirm_writes && !profile.read_only;
+}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   type AppendTargetColumn,
+  appendNeedsApproval,
   autoMapAppendColumns,
   buildCreateTableAsSql,
   buildInsertSelectSql,
@@ -150,5 +151,15 @@ describe("append helpers (#1623)", () => {
       'INSERT INTO "t" ("a")',
     );
     expect(buildInsertSelectSql("mysql", "d", "t", ["a"], [null], "SELECT 1")).toBe("");
+  });
+});
+
+describe("appendNeedsApproval (#1623)", () => {
+  it("asks only for a production profile with confirm_writes that is not read-only", () => {
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: true })).toBe(true);
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: false })).toBe(false);
+    expect(appendNeedsApproval({ is_production: false, confirm_writes: true })).toBe(false);
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: true, read_only: true })).toBe(false);
+    expect(appendNeedsApproval(null)).toBe(false);
   });
 });

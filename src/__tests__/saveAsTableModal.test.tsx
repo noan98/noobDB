@@ -196,4 +196,26 @@ describe("SaveAsTableModal append mode (#1623)", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("saveAsTableAppendConfirm") })).toBeDisabled();
   });
+
+  it("does not offer append on a read-only connection and keeps the name collision block", async () => {
+    renderWithProviders(
+      <SaveAsTableModal
+        sessionId="s1"
+        driver="mysql"
+        database="shop"
+        sourceSql="SELECT id FROM orders"
+        resultColumns={["id"]}
+        readOnly
+        onConfirm={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await waitFor(() => expect(listTables).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("saveAsTableNamePlaceholder")), {
+      target: { value: "orders" },
+    });
+    expect(await screen.findByText(t("saveAsTableNameExists", { table: "orders" }))).toBeInTheDocument();
+    expect(describeTable).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: t("saveAsTableAppendConfirm") })).not.toBeInTheDocument();
+  });
 });

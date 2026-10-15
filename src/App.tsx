@@ -120,7 +120,7 @@ import {
   type NamespaceKind,
 } from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
-import { buildCreateTableAsSql } from "./components/resultsToTable";
+import { appendNeedsApproval, buildCreateTableAsSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
@@ -7788,6 +7788,16 @@ export default function App() {
       // 追記 (INSERT ... SELECT、#1623) は呼び出し元のモーダルが組んだ文をそのまま流す。
       const ddl = appendSql ?? buildCreateTableAsSql(driver, req.database, newName, req.sql);
       void (async () => {
+        // 追記は既存テーブルへの書き込みなので、本番 + confirm_writes では通常の書き込みと同じく確認する (#1623)。
+        if (appendSql && appendNeedsApproval(selectedProfile)) {
+          const ok = await confirm({
+            title: translate("saveAsTableAppendApproveTitle"),
+            message: translate("saveAsTableAppendApproveBody", { table: newName }),
+            confirmLabel: translate("saveAsTableAppendConfirm"),
+            tone: "warning",
+          });
+          if (!ok) return;
+        }
         const success = await runMaintenanceDdl(ddl, req.database);
         if (success)
           toast.success(
@@ -7795,7 +7805,7 @@ export default function App() {
           );
       })();
     },
-    [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast],
+    [saveAsTableRequest, selectedProfile, runMaintenanceDdl, toast, confirm],
   );
 
   // 現在のクエリをビューとして保存 / 既存ビュー定義の編集を保存 (#851)。
@@ -12456,6 +12466,7 @@ export default function App() {
                   database={saveAsTableRequest.database}
                   sourceSql={saveAsTableRequest.sql}
                   resultColumns={saveAsTableRequest.resultColumns}
+                  readOnly={readOnly}
                   onConfirm={handleSaveAsTableConfirm}
                   onClose={() => setSaveAsTableRequest(null)}
                 />

@@ -40,6 +40,8 @@ interface Props {
   sourceSql: string;
   /** 結果セットの列名。渡すと既存テーブルへの追記モードが使える (#1623)。 */
   resultColumns?: string[];
+  /** 読み取り専用接続では追記モードを使わない (従来どおり名前の衝突として扱う)。 */
+  readOnly?: boolean;
   /** 追記モードのときは `appendSql` (INSERT ... SELECT) も渡る。 */
   onConfirm: (name: string, appendSql?: string) => void;
   onClose: () => void;
@@ -51,6 +53,7 @@ export function SaveAsTableModal({
   database,
   sourceSql,
   resultColumns,
+  readOnly = false,
   onConfirm,
   onClose,
 }: Props) {
@@ -88,7 +91,7 @@ export function SaveAsTableModal({
   const collides = existingTables ? tableNameCollides(existingTables, trimmed) : false;
   // 追記モード: 既存テーブルと同名で、結果の列名が分かっているとき。
   const appendTable =
-    collides && resultColumns
+    collides && resultColumns && !readOnly
       ? (existingTables?.find((x) => x.toLowerCase() === trimmed.toLowerCase()) ?? null)
       : null;
   const appendMode = appendTable !== null;

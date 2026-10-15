@@ -22,6 +22,7 @@ import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import {
   allColumnsExcluded,
+  invalidDecimalColumns,
   buildTransferColumnSpecs,
   DEFAULT_TRIAL_ROWS,
   defaultColumnDraft,
@@ -232,6 +233,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const limitRows = trialEnabled ? parseLimitRows(trialRows) : null;
   const trialInvalid = trialEnabled && limitRows === null;
   const noColumns = allColumnsExcluded(sourceColumns, colDrafts);
+  const badDecimals = invalidDecimalColumns(sourceColumns, colDrafts);
   useEffect(() => {
     setLossy([]);
     if (!targetSession || !database) return;
@@ -302,6 +304,7 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     validation === null &&
     !trialInvalid &&
     !noColumns &&
+    badDecimals.length === 0 &&
     !isRunning;
 
   const cleanupStream = () => {
@@ -705,6 +708,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
               })}
             </chakra.div>
             {noColumns && <FieldError>{t("transferAllColumnsExcluded")}</FieldError>}
+            {badDecimals.map((name) => (
+              <FieldError key={name}>{t("transferDecimalScaleTooLarge", { column: name })}</FieldError>
+            ))}
             <chakra.span textStyle="caption" color="app.textMuted">
               {writesExistingTable(mode) ? t("transferColumnsHintAppend") : t("transferColumnsHint")}
             </chakra.span>

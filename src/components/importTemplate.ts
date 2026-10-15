@@ -64,8 +64,9 @@ export function templateSettings(tpl: ImportTemplate): TemplateSettings {
 
 /**
  * 保存済みの対応を、今のファイルの見出しに当てはめる。ヘッダーがあるファイルでは保存した
- * 見出し名で位置を引き直し (列の並びが変わっても追従)、見つからなければ保存時の位置を使う
- * (ただし範囲内のときだけ)。テンプレートに無い列は `null` (取り込まない)。
+ * 見出し名で位置を引き直し (列の並びが変わっても追従)、見つからなければ未対応付けにする。
+ * ヘッダー無しのファイル、または保存時に見出しを持たなかった列は保存時の位置を使う
+ * (ファイルの幅の範囲内のときだけ)。テンプレートに無い列は `null` (取り込まない)。
  */
 export function templateToMapping(
   tpl: Pick<ImportTemplate, "mapping">,
@@ -82,10 +83,13 @@ export function templateToMapping(
     }
     let idx = -1;
     if (namedHeaders && entry.header) {
+      // 見出しのあるファイルでは見出し名だけで引く。見つからないときに保存時の位置へ
+      // 戻すと別の列を黙って取り込みうるので、未対応付け (取り込まない) にする。
       const want = norm(entry.header);
       idx = headers.findIndex((h) => norm(h) === want);
+    } else if (entry.csvIndex < headers.length) {
+      idx = entry.csvIndex;
     }
-    if (idx < 0 && entry.csvIndex < headers.length) idx = entry.csvIndex;
     out[name] = idx >= 0 ? idx : null;
   }
   return out;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allColumnsExcluded,
+  invalidDecimalColumns,
   buildTransferColumnSpecs,
   defaultColumnDraft,
   defaultTransferTableName,
@@ -196,6 +197,21 @@ describe("列の選択・改名・型上書きと試験転送 (#1623)", () => {
     const off = { ...defaultColumnDraft(), include: false };
     expect(allColumnsExcluded(cols, { id: off, secret: off, flag: off })).toBe(true);
     expect(allColumnsExcluded(cols, { id: off, secret: off })).toBe(false);
+  });
+
+  it("DECIMAL の小数桁が精度を超える列を検出する (#1623)", () => {
+    const dec = (precision: number, scale: number, include = true) => ({
+      ...defaultColumnDraft(),
+      type: "decimal" as const,
+      precision,
+      scale,
+      include,
+    });
+    expect(invalidDecimalColumns(cols, { id: dec(5, 6) })).toEqual(["id"]);
+    expect(invalidDecimalColumns(cols, { id: dec(5, 5) })).toEqual([]);
+    expect(invalidDecimalColumns(cols, { id: dec(5, 6, false) })).toEqual([]);
+    expect(invalidDecimalColumns(cols, { id: { ...dec(5, 6), type: "text" } })).toEqual([]);
+    expect(invalidDecimalColumns(cols, {})).toEqual([]);
   });
 
   it("試験転送の行数は正の整数だけ受け付ける", () => {

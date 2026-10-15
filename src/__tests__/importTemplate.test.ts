@@ -61,10 +61,15 @@ describe("import template (#1623)", () => {
     expect(m).toEqual({ id: 2, total: 0, memo: null });
   });
 
-  it("falls back to the saved position when the header is gone, but only inside the file width", () => {
-    expect(templateToMapping(base, ["a", "b", "c"], true, ["id", "total"])).toEqual({ id: 0, total: 2 });
-    expect(templateToMapping(base, ["a", "b"], true, ["id", "total"])).toEqual({ id: 0, total: null });
-    // ヘッダー無しのファイルは位置だけで対応づける。
+  it("leaves a column unmapped when its header is gone instead of guessing by position", () => {
+    expect(templateToMapping(base, ["a", "b", "c"], true, ["id", "total"])).toEqual({
+      id: null,
+      total: null,
+    });
+    // 見出しを持たない列 / ヘッダー無しのファイルは、保存時の位置を使う (範囲内のときだけ)。
+    const noHeader = { mapping: [{ column: "total", header: null, csvIndex: 2 }] };
+    expect(templateToMapping(noHeader, ["a", "b", "c"], true, ["total"])).toEqual({ total: 2 });
+    expect(templateToMapping(noHeader, ["a", "b"], true, ["total"])).toEqual({ total: null });
     expect(templateToMapping(base, ["c1", "c2", "c3"], false, ["total"])).toEqual({ total: 2 });
   });
 

@@ -1998,6 +1998,9 @@ const en = {
   saveAsTableAppendMissingRequired:
     'Required column "{column}" has no default and is not mapped; the insert may fail.',
   saveAsTableAppendConfirm: "Append rows",
+  saveAsTableAppendApproveTitle: "Append rows to an existing table?",
+  saveAsTableAppendApproveBody:
+    'This connection is marked as production. The result set will be appended to the existing table "{table}" (INSERT ... SELECT). This changes data.',
   saveAsTableAppendSuccess: 'Appended the result set to "{table}".',
   saveAsTableSuccess: 'Created table "{table}" from the result set.',
   // 現在のクエリをビューとして保存 / ビュー定義を編集して置換 (#851)。
@@ -2450,6 +2453,7 @@ const en = {
   transferColumnType: "Target type for {column}",
   transferDecimalPrecision: "Precision of {column}",
   transferDecimalScale: "Scale of {column}",
+  transferDecimalScaleTooLarge: 'Column "{column}": the decimal places cannot be larger than the precision.',
   transferAllColumnsExcluded: "Select at least one column.",
   transferTypeAuto: "Auto ({type})",
   transferTypeBoolean: "Boolean",
@@ -3517,6 +3521,8 @@ const en = {
   importSkippedSaveCsvHint:
     "Save the original data of the skipped rows (with a header row) so you can fix them and import them again",
   importSkippedSaveNdjson: "Save as NDJSON",
+  importSkippedDataTruncated:
+    "Too many rows were skipped, so the original data is kept only for the first 100,000. Saving as CSV / NDJSON includes just those rows.",
   importTemplateFound: 'A saved mapping for "{table}" is available ({count} columns).',
   importTemplateApply: "Apply",
   importTemplateDelete: "Delete",
@@ -3549,11 +3555,11 @@ const en = {
   importSheetsCancelled: "The import was cancelled. Sheets that finished before that stay imported.",
   importDryRun: "Validate only",
   importDryRunHint:
-    "Try every row in a transaction that is always rolled back, and list the rows the database would reject. Nothing is written.",
+    "Try every row in a transaction that is always rolled back, and list the rows the database would reject. No rows are kept, but auto-increment values and sequences are not rolled back.",
   importDryRunRunning: "Validating all rows...",
   importDryRunShowing: "Showing the first {shown} of {total} rejected rows.",
-  importDryRunClean: "Validated {total} rows: the database accepted all of them (nothing was written).",
-  importDryRunFailed: "{failed} of {total} rows would be rejected by the database (nothing was written).",
+  importDryRunClean: "Validated {total} rows: the database accepted all of them (no rows were kept).",
+  importDryRunFailed: "{failed} of {total} rows would be rejected by the database (no rows were kept).",
   importDryRunFileOnly:
     "The file parsed into {total} rows and the primary key is valid. The table doesn't exist yet, so the database was not tried.",
   importSkippedSaveTitle: "Save skipped rows",
@@ -7586,6 +7592,9 @@ const ja: Dict = {
   saveAsTableAppendMissingRequired:
     "必須列「{column}」は既定値が無く対応づけられていません。挿入が失敗する可能性があります。",
   saveAsTableAppendConfirm: "行を追記",
+  saveAsTableAppendApproveTitle: "既存テーブルへ行を追記しますか?",
+  saveAsTableAppendApproveBody:
+    "この接続は本番として設定されています。結果セットを既存のテーブル「{table}」へ追記します (INSERT ... SELECT)。データが変更されます。",
   saveAsTableAppendSuccess: "結果セットを「{table}」へ追記しました。",
   saveAsTableSuccess: "結果セットからテーブル「{table}」を作成しました。",
   // 現在のクエリをビューとして保存 / ビュー定義を編集して置換 (#851)。
@@ -8039,6 +8048,7 @@ const ja: Dict = {
   transferColumnType: "{column} の転送先の型",
   transferDecimalPrecision: "{column} の精度",
   transferDecimalScale: "{column} の小数桁",
+  transferDecimalScaleTooLarge: "列「{column}」: 小数桁は精度以下にしてください。",
   transferAllColumnsExcluded: "少なくとも 1 列は選んでください。",
   transferTypeAuto: "自動 ({type})",
   transferTypeBoolean: "真偽値",
@@ -9095,6 +9105,8 @@ const ja: Dict = {
   importSkippedSaveCsvHint:
     "スキップ行の元データ (ヘッダー行つき) を書き出します。直してそのまま再取り込みできます",
   importSkippedSaveNdjson: "NDJSON で保存",
+  importSkippedDataTruncated:
+    "スキップ行が多いため、元データは先頭 10 万行ぶんだけ保持しています。CSV / NDJSON で保存するのはその行だけです。",
   importTemplateFound: "テーブル「{table}」の保存済みマッピングがあります ({count} 列)。",
   importTemplateApply: "適用",
   importTemplateDelete: "削除",
@@ -9127,11 +9139,11 @@ const ja: Dict = {
   importSheetsCancelled: "取り込みを中止しました。それまでに完了したシートは取り込み済みです。",
   importDryRun: "検証のみ",
   importDryRunHint:
-    "全行を必ずロールバックするトランザクションで試し、DB が拒否する行を一覧します。何も書き込みません。",
+    "全行を必ずロールバックするトランザクションで試し、DB が拒否する行を一覧します。行は残りませんが、採番 (AUTO_INCREMENT / シーケンス) は戻りません。",
   importDryRunRunning: "全行を検証しています...",
   importDryRunShowing: "拒否された {total} 行のうち先頭 {shown} 行を表示しています。",
-  importDryRunClean: "{total} 行を検証しました。DB はすべて受け入れました (何も書き込んでいません)。",
-  importDryRunFailed: "{total} 行中 {failed} 行が DB に拒否されます (何も書き込んでいません)。",
+  importDryRunClean: "{total} 行を検証しました。DB はすべて受け入れました (行は残していません)。",
+  importDryRunFailed: "{total} 行中 {failed} 行が DB に拒否されます (行は残していません)。",
   importDryRunFileOnly:
     "ファイルを {total} 行として解析でき、主キーも問題ありません。テーブルがまだ無いため DB への試し書きはしていません。",
   importSkippedSaveTitle: "スキップ行を保存",
