@@ -1382,6 +1382,7 @@ pub fn run() {
             commands::privileges::generate_drop_user_sql,
             commands::privileges::generate_alter_password_sql,
             commands::privileges::generate_privilege_diff_sql,
+            commands::privileges::generate_role_membership_sql,
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,

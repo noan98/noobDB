@@ -929,6 +929,8 @@ export interface PrivilegeChange {
   added: PrivilegeFlags;
   /** 剥奪するフラグ。 */
   removed: PrivilegeFlags;
+  /** 列単位の権限 (#1622)。空でなければ `table` 指定時に SELECT / INSERT / UPDATE をその列に限定する。 */
+  columns?: string[] | null;
 }
 
 /**
