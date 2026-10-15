@@ -675,6 +675,23 @@ const en = {
   settingsThemePreset: "Theme preset",
   settingsThemePresetHelp:
     "Switches the whole color palette. Accent color, density and syntax colors are kept as-is. Dracula, Nord, One Dark and Catppuccin Mocha are dark-only; the other presets follow the light/dark toggle.",
+  settingsFollowOsContrast: "Follow the OS high-contrast setting",
+  settingsFollowOsContrastHelp:
+    "When the OS asks for more contrast (prefers-contrast: more) and the theme preset is Default, switch to the High contrast preset. A preset you picked yourself is never overridden.",
+  settingsCustomTheme: "Custom theme (JSON)",
+  settingsCustomThemeHelp:
+    'Load a JSON file that overrides color tokens, e.g. {"accent": "#0b5fff", "bg": "#101418"}. Pairs that fail WCAG AA are warned about before applying. The overrides sit on top of every preset.',
+  customThemeImport: "Load JSON…",
+  customThemeClear: "Clear",
+  customThemeStatus: "{count} tokens overridden",
+  customThemeImportTitle: "Load custom theme",
+  customThemeInvalid:
+    "The file is not a valid custom theme (a JSON object of color tokens with #rrggbb values).",
+  customThemeContrastWarning: "{count} color pairs do not meet WCAG AA contrast:",
+  customThemeIgnored: "{count} entries with an invalid name or value are ignored.",
+  customThemeApplyAnyway: "Apply anyway",
+  customThemeApplied: "Applied {count} color tokens.",
+  customThemeImportError: "Could not load the custom theme: {error}",
   themePresetDefault: "Default",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",
@@ -6179,6 +6196,23 @@ const ja: Dict = {
   settingsThemePreset: "テーマプリセット",
   settingsThemePresetHelp:
     "配色全体を切り替えます。アクセント色・表示密度・シンタックス配色はそのまま維持されます。Dracula / Nord / One Dark / Catppuccin Mocha はダーク専用で、その他のプリセットはライト/ダーク切替に追従します。",
+  settingsFollowOsContrast: "OS の高コントラスト設定に追従する",
+  settingsFollowOsContrastHelp:
+    "OS が「コントラストを上げる」(prefers-contrast: more) を示していて、テーマプリセットが「標準」のときは高コントラストに切り替えます。自分で選んだプリセットは上書きしません。",
+  settingsCustomTheme: "カスタムテーマ (JSON)",
+  settingsCustomThemeHelp:
+    '色トークンを上書きする JSON ファイルを読み込みます (例: {"accent": "#0b5fff", "bg": "#101418"})。WCAG AA を満たさない組は適用前に警告します。上書きはどのプリセットの上にも載ります。',
+  customThemeImport: "JSON を読み込む…",
+  customThemeClear: "解除",
+  customThemeStatus: "{count} 個のトークンを上書き中",
+  customThemeImportTitle: "カスタムテーマを読み込む",
+  customThemeInvalid:
+    "カスタムテーマとして読み込めません (#rrggbb の色をもつトークンの JSON オブジェクトにしてください)。",
+  customThemeContrastWarning: "{count} 組の色が WCAG AA のコントラストを満たしません:",
+  customThemeIgnored: "名前または値が不正な {count} 件は無視します。",
+  customThemeApplyAnyway: "このまま適用",
+  customThemeApplied: "{count} 個の色トークンを適用しました。",
+  customThemeImportError: "カスタムテーマを読み込めませんでした: {error}",
   themePresetDefault: "デフォルト",
   themePresetDracula: "Dracula",
   themePresetNord: "Nord",

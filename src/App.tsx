@@ -392,6 +392,8 @@ import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
 import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
 import { checkForAppUpdate, dismissUpdate } from "./updater";
+import { applyCustomThemeVars } from "./customTheme";
+import { usePrefersMoreContrast } from "./prefersContrast";
 import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
 import {
@@ -450,6 +452,7 @@ import {
   monoFontStack,
   uiFontStack,
   effectiveTheme,
+  resolveThemePreset,
   themePresetDataTheme,
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
@@ -1429,16 +1432,28 @@ export default function App() {
 
   // data-theme はテーマプリセットと light/dark トグルから合成する。
   // THEME_STORAGE_KEY には light/dark のみ保存する。
-  const dataTheme = themePresetDataTheme(settings.themePreset, theme);
+  // OS が「コントラストを上げる」を示し、プリセットが既定なら高コントラストへ (#1631)。
+  const prefersMoreContrast = usePrefersMoreContrast();
+  const activeThemePreset = resolveThemePreset(
+    settings.themePreset,
+    settings.followOsContrast,
+    prefersMoreContrast,
+  );
+  const dataTheme = themePresetDataTheme(activeThemePreset, theme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [dataTheme, theme]);
+  // カスタムテーマ (#1631): 色トークンの上書きをインライン CSS 変数として当てる。
+  useEffect(
+    () => applyCustomThemeVars(document.documentElement, settings.customTheme),
+    [settings.customTheme],
+  );
 
   useEffect(() => {
     // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
     // テーマ別の設定は実効テーマで選ぶ (トグル値で選ぶと暗い面に明るい用の文字色が載る)。
-    const effTheme = effectiveTheme(settings.themePreset, theme);
+    const effTheme = effectiveTheme(activeThemePreset, theme);
     const colors = settings.syntaxColors[effTheme];
     const root = document.documentElement;
     for (const [key, val] of Object.entries(colors)) {
@@ -1493,7 +1508,7 @@ export default function App() {
     // `:root[data-motion=...]` ルールが OS 設定を上書きし、"system" は
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
-  }, [settings, theme]);
+  }, [settings, theme, activeThemePreset]);
 
   // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
   // 一時的な data-density-transition 属性 ("grow"/"shrink") を立てて App.css /
