@@ -251,3 +251,53 @@ describe("RowInsertModal 空文字の明示値 (#1526)", () => {
     expect(sql).toBe("INSERT INTO `d`.`users` (`id`, `name`) VALUES (7, '');");
   });
 });
+
+/** 連続追加モードとタブ区切りの貼り付け (#1628)。 */
+describe("RowInsertModal 連続追加と貼り付け (#1628)", () => {
+  it("連続追加をオンにすると、追加後もモーダルを閉じず入力値を保持する", () => {
+    const onConfirm = vi.fn();
+    const onAddKeepOpen = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "42" }}
+        onConfirm={onConfirm}
+        onAddKeepOpen={onAddKeepOpen}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: t("rowOpsInsertKeepOpen") }));
+    fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
+    expect(onAddKeepOpen).toHaveBeenCalledWith({ 0: "42" });
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe("42");
+    expect(screen.getByRole("status")).toHaveTextContent("1");
+  });
+
+  it("連続追加がオフなら従来どおり onConfirm で閉じる", () => {
+    const onConfirm = vi.fn();
+    renderWithProviders(
+      <RowInsertModal
+        table="users"
+        columns={SAMPLE_COLUMNS}
+        initialValues={{ 0: "1" }}
+        onConfirm={onConfirm}
+        onAddKeepOpen={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: t("rowOpsInsertAdd") }));
+    expect(onConfirm).toHaveBeenCalledWith({ 0: "1" });
+  });
+
+  it("タブ区切りのテキストを欄に貼ると、その欄から列の順に展開される", () => {
+    renderWithProviders(
+      <RowInsertModal table="users" columns={SAMPLE_COLUMNS} onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    const inputs = screen.getAllByRole("textbox");
+    fireEvent.paste(inputs[0], { clipboardData: { getData: () => "7\tbob" } });
+    expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe("7");
+    expect((screen.getAllByRole("textbox")[1] as HTMLInputElement).value).toBe("bob");
+  });
+});

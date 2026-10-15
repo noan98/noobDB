@@ -5505,6 +5505,15 @@ const en = {
   gridPasteHeaderMapped: "Treated the first row as column names and mapped {matched} column(s) by name",
   gridQuickSetAbove: "Same as the row above",
   gridQuickSetAboveAmbiguous: 'The text "NULL" cannot be told apart from a NULL; type it by hand',
+  rowOpsInsertPaste: "Paste from clipboard",
+  rowOpsInsertPasteTitle:
+    "Fill the fields from one tab-separated row on the clipboard (the first row is used as column names when it matches)",
+  rowOpsInsertPasteApplied: "Filled {cells} field(s) from the clipboard",
+  rowOpsInsertPasteAppliedIgnored: "Filled {cells} field(s); ignored the other {rows} row(s)",
+  rowOpsInsertPasteNone: "Nothing to paste: the clipboard has no values",
+  rowOpsInsertPasteDenied: "Could not read the clipboard; paste into a field with Ctrl/Cmd+V instead",
+  rowOpsInsertKeepOpen: "Keep adding rows",
+  rowOpsInsertKeepOpenCount: "({count} added)",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10980,6 +10989,15 @@ const ja: Dict = {
   gridPasteHeaderMapped: "1 行目を列名として扱い、{matched} 列を名前で対応付けました",
   gridQuickSetAbove: "上の行と同じ値",
   gridQuickSetAboveAmbiguous: "文字列の NULL は NULL 化と区別できないため、手で入力してください",
+  rowOpsInsertPaste: "クリップボードから貼り付け",
+  rowOpsInsertPasteTitle:
+    "クリップボードのタブ区切り 1 行を列の順に入力します (1 行目が列名と一致するときは名前で対応付けます)",
+  rowOpsInsertPasteApplied: "クリップボードから {cells} 個の欄を入力しました",
+  rowOpsInsertPasteAppliedIgnored: "{cells} 個の欄を入力しました (残り {rows} 行は使っていません)",
+  rowOpsInsertPasteNone: "貼り付ける値がありません",
+  rowOpsInsertPasteDenied: "クリップボードを読み取れませんでした。欄に Ctrl/Cmd+V で貼り付けてください",
+  rowOpsInsertKeepOpen: "続けて追加する",
+  rowOpsInsertKeepOpenCount: "(追加済み {count} 行)",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

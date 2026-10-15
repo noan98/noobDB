@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import {
   detectPasteHeader,
+  parseInsertPaste,
   parseClipboardGrid,
   planPasteEdit,
   planPasteInsertRows,
@@ -438,5 +439,34 @@ describe("detectPasteHeader (#1628)", () => {
       validate: () => null,
     });
     expect(plan.applied.map((a) => [a.colIdx, a.value])).toEqual([[2, "a@x"]]);
+  });
+});
+
+describe("parseInsertPaste (#1628)", () => {
+  const cols = ["id", "name", "memo"].map((name) => ({ name, type_name: "TEXT" })) as Column[];
+  it("タブ区切り 1 行を先頭の列から順に展開し、空欄は省く", () => {
+    const r = parseInsertPaste("1\t\tnote", cols);
+    expect(r?.values).toEqual({ 0: "1", 2: "note" });
+    expect(r?.count).toBe(2);
+    expect(r?.headerMapped).toBe(false);
+  });
+  it("startCol から展開し、範囲外の列は skipped に数える", () => {
+    const r = parseInsertPaste("a\tb\tc", cols, { startCol: 2 });
+    expect(r?.values).toEqual({ 2: "a" });
+    expect(r?.skipped).toBe(2);
+  });
+  it("skip 対象の列 (生成列など) には入れない", () => {
+    const r = parseInsertPaste("1\tx\ty", cols, { skip: (i) => i === 0 });
+    expect(r?.values).toEqual({ 1: "x", 2: "y" });
+    expect(r?.skipped).toBe(1);
+  });
+  it("1 行目が列名なら名前で対応付け、次の行を値にする。余った行数を返す", () => {
+    const r = parseInsertPaste("memo\tid\nM\t7\nM2\t8", cols);
+    expect(r?.values).toEqual({ 2: "M", 0: "7" });
+    expect(r?.headerMapped).toBe(true);
+    expect(r?.ignoredRows).toBe(1);
+  });
+  it("空のクリップボードは null", () => {
+    expect(parseInsertPaste("", cols)?.count ?? 0).toBe(0);
   });
 });

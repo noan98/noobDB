@@ -340,3 +340,59 @@ export function planPasteInsertRows(input: PlanPasteInsertInput): PasteInsertPla
   }
   return plan;
 }
+
+/** `parseInsertPaste` の結果。 */
+export interface InsertPasteResult {
+  /** 入力欄へ展開する値 (列の元添字 → 文字列)。空欄セルは含めない (INSERT から省く規約)。 */
+  values: PendingInsertRow;
+  /** 展開したセル数。 */
+  count: number;
+  /** 1 行目を列名として対応付けたか。 */
+  headerMapped: boolean;
+  /** 2 行目以降で使わなかったデータ行の数 (行追加モーダルは 1 行ぶんの入力欄)。 */
+  ignoredRows: number;
+  /** 受け付けず捨てたセル数 (範囲外の列・`skip` 対象の列)。 */
+  skipped: number;
+}
+
+/**
+ * 行追加モーダルへのタブ区切り貼り付け (#1628)。グリッドの貼り付けと同じ `parseClipboardGrid` /
+ * `detectPasteHeader` を使い、1 行ぶんを列の順 (`startCol` から) に展開する。1 行目が列名と
+ * 一致するときは名前で対応付け、その次の行を値として使う。`skip` が true の列 (生成列・
+ * バイナリ列など値を入れられない列) は入れない。
+ */
+export function parseInsertPaste(
+  text: string,
+  columns: Column[],
+  opts: { startCol?: number; skip?: (colIdx: number) => boolean } = {},
+): InsertPasteResult | null {
+  const parsed = parseClipboardGrid(text);
+  if (parsed.length === 0 || parsed[0].length === 0) return null;
+  const header = detectPasteHeader(parsed, columns);
+  const dataGrid = header ? header.dataGrid : parsed;
+  const first = dataGrid[0];
+  if (!first) return null;
+  const start = Math.max(0, opts.startCol ?? 0);
+  const values: PendingInsertRow = {};
+  let count = 0;
+  let skipped = 0;
+  for (let c = 0; c < first.length; c++) {
+    const colIdx = header ? header.targetColIndices[c] : start + c;
+    if (colIdx === undefined || colIdx < 0) continue;
+    if (colIdx >= columns.length || opts.skip?.(colIdx)) {
+      skipped++;
+      continue;
+    }
+    const v = first[c];
+    if (v === "") continue;
+    values[colIdx] = v;
+    count++;
+  }
+  return {
+    values,
+    count,
+    headerMapped: header !== null,
+    ignoredRows: dataGrid.length - 1,
+    skipped,
+  };
+}
