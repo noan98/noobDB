@@ -477,6 +477,244 @@
         "value": "00ff"
       },
       "expected": null
+    },
+    {
+      "name": "email_keeps_domain",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@example.com"
+      },
+      "expected": "a****@example.com"
+    },
+    {
+      "name": "email_keep_zero",
+      "rule": {
+        "kind": "email",
+        "keepStart": 0
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@example.com"
+      },
+      "expected": "*****@example.com"
+    },
+    {
+      "name": "email_short_local_fully_masked",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "a@example.com"
+      },
+      "expected": "*@example.com"
+    },
+    {
+      "name": "email_uses_last_at",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "a@b@example.com"
+      },
+      "expected": "a**@example.com"
+    },
+    {
+      "name": "email_without_at_fully_masked",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice"
+      },
+      "expected": "*****"
+    },
+    {
+      "name": "email_empty_local_fully_masked",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "@example.com"
+      },
+      "expected": "************"
+    },
+    {
+      "name": "email_empty_domain_fully_masked",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "alice@"
+      },
+      "expected": "******"
+    },
+    {
+      "name": "email_multibyte_local",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "string",
+        "value": "山田@例.jp"
+      },
+      "expected": "山*@例.jp"
+    },
+    {
+      "name": "email_keeps_null",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1
+      },
+      "input": {
+        "kind": "null"
+      },
+      "expected": null
+    },
+    {
+      "name": "date_year_from_date",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-10-15"
+      },
+      "expected": "2026"
+    },
+    {
+      "name": "date_month_from_datetime",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-10-15 12:34:56"
+      },
+      "expected": "2026-10"
+    },
+    {
+      "name": "date_year_from_iso_t",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-10-15T12:34:56Z"
+      },
+      "expected": "2026"
+    },
+    {
+      "name": "date_month_slash",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026/03/04"
+      },
+      "expected": "2026-03"
+    },
+    {
+      "name": "date_month_year_month_only",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-03"
+      },
+      "expected": "2026-03"
+    },
+    {
+      "name": "date_invalid_month_fully_masked",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-13-01"
+      },
+      "expected": "**********"
+    },
+    {
+      "name": "date_invalid_day_fully_masked",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-10-32"
+      },
+      "expected": "**********"
+    },
+    {
+      "name": "date_not_a_date_fully_masked",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "input": {
+        "kind": "string",
+        "value": "not a date"
+      },
+      "expected": "**********"
+    },
+    {
+      "name": "date_compact_form_fully_masked",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "input": {
+        "kind": "string",
+        "value": "20261015"
+      },
+      "expected": "********"
+    },
+    {
+      "name": "date_trailing_garbage_fully_masked",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "string",
+        "value": "2026-10-15x"
+      },
+      "expected": "***********"
+    },
+    {
+      "name": "date_keeps_null",
+      "rule": {
+        "kind": "date",
+        "precision": "year"
+      },
+      "input": {
+        "kind": "null"
+      },
+      "expected": null
     }
   ],
   "normalize": [
@@ -586,6 +824,59 @@
       },
       "normalized": {
         "kind": "null"
+      }
+    },
+    {
+      "name": "email_default_keep_start",
+      "rule": {
+        "kind": "email"
+      },
+      "normalized": {
+        "kind": "email",
+        "keepStart": 1
+      }
+    },
+    {
+      "name": "email_keep_start_clamped",
+      "rule": {
+        "kind": "email",
+        "keepStart": 1000
+      },
+      "normalized": {
+        "kind": "email",
+        "keepStart": 64
+      }
+    },
+    {
+      "name": "email_in_range_unchanged",
+      "rule": {
+        "kind": "email",
+        "keepStart": 3
+      },
+      "normalized": {
+        "kind": "email",
+        "keepStart": 3
+      }
+    },
+    {
+      "name": "date_default_precision",
+      "rule": {
+        "kind": "date"
+      },
+      "normalized": {
+        "kind": "date",
+        "precision": "year"
+      }
+    },
+    {
+      "name": "date_month_unchanged",
+      "rule": {
+        "kind": "date",
+        "precision": "month"
+      },
+      "normalized": {
+        "kind": "date",
+        "precision": "month"
       }
     }
   ]

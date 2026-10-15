@@ -65,6 +65,10 @@ fn table_request(src: &str, dst: &str, table: &str, target_table: &str) -> t::Tr
         batch_size: Some(1000),
         conflict_mode: None,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     }
 }
 
@@ -574,6 +578,174 @@ async fn upsert_mode_updates_or_skips_existing_rows() {
     .await;
     assert_eq!(int(&r.rows[0][0]), 0);
 
+    remove_files(&src);
+    remove_files(&dst);
+}
+
+// ── 列マッピング・WHERE・試験転送・件数照合 (#1623) ──
+
+async fn seed_people(state: &t::AppState, id: &str) {
+    exec(
+        state,
+        id,
+        "CREATE TABLE people (id INTEGER, name TEXT, secret TEXT, active INTEGER)",
+    )
+    .await;
+    exec(
+        state,
+        id,
+        "INSERT INTO people VALUES (1,'a','s1',1),(2,'b','s2',0),(3,'c','s3',1),(4,'d','s4',1)",
+    )
+    .await;
+}
+
+fn spec(source: &str) -> t::ColumnSpec {
+    serde_json::from_value(serde_json::json!({ "source": source })).expect("spec")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transfer_excludes_renames_and_overrides_columns() {
+    let state = t::AppState::default();
+    let src = sqlite_session(&state, "map_src", false).await;
+    let dst = sqlite_session(&state, "map_dst", false).await;
+    seed_people(&state, "map_src").await;
+
+    let mut req = table_request("map_src", "map_dst", "people", "people_copy");
+    let mut excluded = spec("secret");
+    excluded.exclude = true;
+    let mut renamed = spec("name");
+    renamed.name = Some("full_name".into());
+    let mut typed = spec("active");
+    typed.type_override = Some(t::TypeOverride {
+        kind: t::OverrideKind::Text,
+        precision: None,
+        scale: None,
+    });
+    req.columns = vec![excluded, renamed, typed];
+    let out = run(&state, req).await.expect("mapped transfer");
+    assert_eq!(out.rows, 4);
+    let names: Vec<&str> = out.columns.iter().map(|c| c.name.as_str()).collect();
+    assert_eq!(names, ["id", "full_name", "active"]);
+    assert_eq!(out.columns[2].target_type, "TEXT");
+    assert!(
+        out.integrity_warnings.is_empty(),
+        "{:?}",
+        out.integrity_warnings
+    );
+    let r = exec(
+        &state,
+        "map_dst",
+        "SELECT full_name, active FROM people_copy WHERE id = 2",
+    )
+    .await;
+    assert_eq!(text(&r.rows[0][0]), "b");
+    // 除外した列は転送先に存在しない。
+    let s = state.get("map_dst").await.expect("session");
+    assert!(s
+        .conn
+        .execute("SELECT secret FROM people_copy", None)
+        .await
+        .is_err());
+    remove_files(&src);
+    remove_files(&dst);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transfer_where_filter_and_trial_limit() {
+    let state = t::AppState::default();
+    let src = sqlite_session(&state, "flt_src", false).await;
+    let dst = sqlite_session(&state, "flt_dst", false).await;
+    seed_people(&state, "flt_src").await;
+
+    let mut req = table_request("flt_src", "flt_dst", "people", "active_only");
+    req.where_clause = Some("active = 1".into());
+    let out = run(&state, req).await.expect("filtered");
+    assert_eq!(out.rows, 3);
+    assert!(
+        out.integrity_warnings.is_empty(),
+        "{:?}",
+        out.integrity_warnings
+    );
+
+    let mut req = table_request("flt_src", "flt_dst", "people", "first_two");
+    req.limit_rows = Some(2);
+    let out = run(&state, req).await.expect("trial");
+    assert_eq!(out.rows, 2);
+    assert!(
+        out.integrity_warnings.is_empty(),
+        "{:?}",
+        out.integrity_warnings
+    );
+    let r = exec(&state, "flt_dst", "SELECT count(*) FROM first_two").await;
+    assert_eq!(int(&r.rows[0][0]), 2);
+
+    // 条件 + 試験転送の組み合わせ。
+    let mut req = table_request("flt_src", "flt_dst", "people", "both");
+    req.where_clause = Some("active = 1".into());
+    req.limit_rows = Some(1);
+    assert_eq!(run(&state, req).await.expect("both").rows, 1);
+
+    // クエリ元に WHERE は指定できない。
+    let mut req = table_request("flt_src", "flt_dst", "people", "bad");
+    req.source_table = None;
+    req.source_sql = Some("SELECT * FROM people".into());
+    req.where_clause = Some("1 = 1".into());
+    assert!(run(&state, req).await.is_err());
+
+    // 書き込みを仕込む WHERE は読み取り専用ガードで拒否され、テーブルも作られない。
+    let mut req = table_request("flt_src", "flt_dst", "people", "evil");
+    req.where_clause = Some("1 = 1); DROP TABLE people; --".into());
+    assert!(run(&state, req).await.is_err());
+    let r = exec(&state, "flt_src", "SELECT count(*) FROM people").await;
+    assert_eq!(int(&r.rows[0][0]), 4);
+
+    // 試験転送の行数 0 は不正。
+    let mut req = table_request("flt_src", "flt_dst", "people", "zero");
+    req.limit_rows = Some(0);
+    assert!(run(&state, req).await.is_err());
+    remove_files(&src);
+    remove_files(&dst);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transfer_count_check_flags_target_mismatch() {
+    let state = t::AppState::default();
+    let src = sqlite_session(&state, "cnt_src", false).await;
+    let dst = sqlite_session(&state, "cnt_dst", false).await;
+    seed_people(&state, "cnt_src").await;
+    // 追記先に行を持たせ、増分で照合する。
+    exec(
+        &state,
+        "cnt_dst",
+        "CREATE TABLE people (id INTEGER, name TEXT, secret TEXT, active INTEGER)",
+    )
+    .await;
+    exec(
+        &state,
+        "cnt_dst",
+        "INSERT INTO people VALUES (9,'z','zz',0)",
+    )
+    .await;
+    let mut req = table_request("cnt_src", "cnt_dst", "people", "people");
+    req.mode = t::TransferMode::Append;
+    let out = run(&state, req).await.expect("append");
+    assert_eq!(out.rows, 4);
+    assert!(
+        out.integrity_warnings.is_empty(),
+        "{:?}",
+        out.integrity_warnings
+    );
+    let r = exec(&state, "cnt_dst", "SELECT count(*) FROM people").await;
+    assert_eq!(int(&r.rows[0][0]), 5);
+
+    // 照合を無効にできる。
+    let mut req = table_request("cnt_src", "cnt_dst", "people", "people2");
+    req.verify_counts = Some(false);
+    assert!(run(&state, req)
+        .await
+        .expect("no verify")
+        .integrity_warnings
+        .is_empty());
     remove_files(&src);
     remove_files(&dst);
 }

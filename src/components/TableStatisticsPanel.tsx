@@ -21,6 +21,7 @@ import {
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  tableMaintenanceHints,
   toTableStatRows,
   type SortDirection,
   type TableStatRow,
@@ -91,6 +92,16 @@ const openButtonCss: SystemStyleObject = {
   _hover: { textDecoration: "underline" },
 };
 
+// VACUUM / ANALYZE を促す小さな注記バッジ (#1622)。
+const maintenanceBadgeCss: SystemStyleObject = {
+  marginLeft: "var(--space-1-5)",
+  padding: "0 var(--space-1-5)",
+  fontSize: "var(--text-xs)",
+  color: "var(--text-warning)",
+  border: "1px solid currentColor",
+  borderRadius: "var(--radius-sm)",
+  whiteSpace: "nowrap",
+};
 /** 前回取得からの増減を値の下に小さく添える (#1621)。`delta` が無い・不明なら何も出さない。 */
 function DeltaText({
   delta,
@@ -133,6 +144,7 @@ const TableStatRowView = memo(function TableStatRowView({
   onOpenTable?: (table: string) => void;
 }) {
   const t = useT();
+  const hints = tableMaintenanceHints(r, Date.now());
   return (
     <tr>
       <chakra.td css={tdCss}>
@@ -144,6 +156,33 @@ const TableStatRowView = memo(function TableStatRowView({
           </Tooltip>
         ) : (
           r.name
+        )}
+        {/* 肥大・統計の古さ (#1622)。PostgreSQL の統計が取れた表だけ注記する。 */}
+        {hints.bloated && (
+          <Tooltip
+            label={t("sizeBloatedHint", {
+              dead: formatCount(r.dead_rows ?? null),
+              percent: Math.round((hints.deadRatio ?? 0) * 100),
+              vacuum: r.last_vacuum_at ? new Date(r.last_vacuum_at * 1000).toLocaleDateString() : "–",
+            })}
+            focusableWrapper
+          >
+            <chakra.span css={maintenanceBadgeCss} data-testid="table-bloated">
+              {t("sizeBloatedBadge")}
+            </chakra.span>
+          </Tooltip>
+        )}
+        {hints.staleStats && (
+          <Tooltip
+            label={t("sizeStaleStatsHint", {
+              analyzed: r.last_analyze_at ? new Date(r.last_analyze_at * 1000).toLocaleDateString() : "–",
+            })}
+            focusableWrapper
+          >
+            <chakra.span css={maintenanceBadgeCss} data-testid="table-stale-stats">
+              {t("sizeStaleStatsBadge")}
+            </chakra.span>
+          </Tooltip>
         )}
       </chakra.td>
       <chakra.td css={numTdCss}>

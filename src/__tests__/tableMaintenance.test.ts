@@ -6,6 +6,7 @@ import {
   buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
+  buildTruncateTablesSql,
 } from "../components/tableMaintenance";
 
 describe("buildTruncateSql", () => {
@@ -105,5 +106,32 @@ describe("buildDropTablesSql (#1399)", () => {
 
   it("空なら文を作らない", () => {
     expect(buildDropTablesSql("mysql", "shop", [])).toEqual([]);
+  });
+});
+
+describe("buildTruncateTablesSql (#1629)", () => {
+  it("PostgreSQL は 1 文にまとめる (single)", () => {
+    expect(buildTruncateTablesSql("postgres", "public", ["a", "b"])).toEqual({
+      mode: "single",
+      statements: ['TRUNCATE TABLE "public"."a", "public"."b";'],
+    });
+  });
+
+  it("SQLite はテーブルごとの DELETE を 1 トランザクションで流す (transaction)", () => {
+    expect(buildTruncateTablesSql("sqlite", null, ["a", "b"])).toEqual({
+      mode: "transaction",
+      statements: ['DELETE FROM "a";', 'DELETE FROM "b";'],
+    });
+  });
+
+  it("MySQL はテーブルごとの TRUNCATE を順に流す (sequential)", () => {
+    expect(buildTruncateTablesSql("mysql", "shop", ["a", "b"])).toEqual({
+      mode: "sequential",
+      statements: ["TRUNCATE TABLE `shop`.`a`;", "TRUNCATE TABLE `shop`.`b`;"],
+    });
+  });
+
+  it("空の選択は文なし", () => {
+    expect(buildTruncateTablesSql("mysql", "shop", []).statements).toEqual([]);
   });
 });

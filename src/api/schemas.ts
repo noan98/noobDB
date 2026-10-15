@@ -131,12 +131,18 @@ export const tableSizeInfo = z.object({
   data_bytes: z.number().nullable(),
   index_bytes: z.number().nullable(),
   total_bytes: z.number().nullable(),
+  // PostgreSQL の肥大・統計の古さ (#1622)。
+  dead_rows: z.number().nullish(),
+  last_vacuum_at: z.number().nullish(),
+  last_analyze_at: z.number().nullish(),
 });
 
 /** サーバ設定/状態の 1 変数 (サーバ情報パネル #563)。 */
 export const serverVariable = z.object({
   name: z.string(),
   value: z.string(),
+  // 値の出どころ (#1622)。
+  source: z.string().nullish(),
 });
 
 /** サーバ情報 (バージョン + 設定変数一覧)。 */
@@ -166,6 +172,15 @@ export const processInfo = z.object({
   query_truncated: z.boolean(),
   is_self: z.boolean(),
   blocked_by: z.array(z.number()),
+  // VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ。
+  progress: z
+    .object({
+      kind: z.enum(["vacuum", "create_index"]),
+      phase: z.string(),
+      done: z.number(),
+      total: z.number(),
+    })
+    .nullish(),
 });
 
 /** `insert_generated_rows` の結果 (#1259)。 */
@@ -179,6 +194,14 @@ export const killProcessesResult = z.object({
   killed: z.number(),
   failed: z.number(),
   first_error: z.string().nullable(),
+  // プロセス id ごとの成否 (#1622)。
+  outcomes: z.array(
+    z.object({
+      id: z.number(),
+      status: z.enum(["killed", "already_gone", "failed", "skipped"]),
+      error: z.string().nullable(),
+    }),
+  ),
 });
 
 /** データベースユーザ / ロール 1 件 (ユーザ・権限管理パネル #732)。 */
@@ -216,6 +239,8 @@ export const serverMetrics = z.object({
   questions: z.number().nullable(),
   slow_queries: z.number().nullable(),
   lock_waits: z.number().nullable(),
+  // サーバの接続数上限 (#1622)。
+  max_connections: z.number().nullish(),
 });
 
 /** 接続ヘルスの一括プローブ (`health_probe_all`, #1259) の 1 セッション分。 */
@@ -589,6 +614,30 @@ export const historyEntry = z.object({
 export const logView = z.object({
   text: z.string(),
   path: z.string().nullable(),
+});
+
+const perfSample = z.object({
+  at_ms: z.number(),
+  kind: z.string(),
+  sql_execute_ms: z.number().nullable(),
+  emit_ms: z.number().nullable(),
+  payload_bytes_approx: z.number().nullable(),
+  rows: z.number(),
+  columns: z.number(),
+});
+
+/** パフォーマンス計測の状態と直近値 (#1622)。 */
+export const perfStatus = z.object({
+  enabled: z.boolean(),
+  ui_enabled: z.boolean(),
+  env_enabled: z.boolean(),
+  samples: z.array(perfSample),
+});
+
+/** OS keyring の疎通診断 (#1622)。理由は固定コードのみ。 */
+export const keyringStatus = z.object({
+  available: z.boolean(),
+  reason: z.string().nullable(),
 });
 
 // #735 DML フライトレコーダ / Undo。
@@ -1262,10 +1311,13 @@ export const channelCancelledMessage = z.object({
 
 /** グローバルオブジェクト検索のヒット 1 件。`column` はカラムエントリのときだけ。 */
 export const objectSearchHit = z.object({
-  kind: z.enum(["table", "column"]),
+  kind: z.enum(["table", "column", "view", "routine", "trigger"]),
   database: z.string(),
   table: z.string(),
   column: z.string().optional(),
+  object_kind: z.string().optional(),
+  object_id: z.string().optional(),
+  row_estimate: z.number().optional(),
 });
 
 export const objectSearchHitArray = z.array(objectSearchHit);
@@ -1529,6 +1581,35 @@ export const skippedRowInfo = z.object({
   reason: z.string(),
 });
 
+export const importDryRunResult = z.object({
+  total: z.number(),
+  failed: z.number(),
+  failures: z.array(skippedRowInfo),
+  dbChecked: z.boolean(),
+});
+
+export const importTemplate = z.object({
+  id: z.string(),
+  profileId: z.string(),
+  database: z.string().nullable().optional(),
+  table: z.string(),
+  format: z.string(),
+  delimiter: z.string(),
+  quote: z.string(),
+  hasHeader: z.boolean(),
+  nullToken: z.string().nullable().optional(),
+  encoding: z.string(),
+  sheet: z.string().nullable().optional(),
+  conflictMode: z.string().nullable().optional(),
+  errorMode: z.string().nullable().optional(),
+  keyColumns: z.array(z.string()),
+  mapping: z.array(
+    z.object({ column: z.string(), header: z.string().nullable().optional(), csvIndex: z.number() }),
+  ),
+  updatedAtMs: z.number(),
+});
+export const importTemplateArray = z.array(importTemplate);
+
 export const importDoneEvent = z.object({
   streamId: z.string(),
   inserted: z.number(),
@@ -1538,11 +1619,20 @@ export const importDoneEvent = z.object({
   // 先頭一部しか `skipped` に載らないため、総件数を別に持つ (#1258)。旧バックエンドでは
   // 省略されるので既定 0 (フロントは `max(skippedTotal, skipped.length)` で使う)。
   skippedTotal: z.number().default(0),
+  // 件数が多く一部の行の元データを保持していない (#1623)。省略時 false。
+  skippedDataTruncated: z.boolean().default(false),
+  // 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは省略される。
+  sheets: z
+    .array(z.object({ sheet: z.string(), table: z.string(), inserted: z.number(), skippedTotal: z.number() }))
+    .default([]),
 });
 
 /** 転送前プレビュー (#1532)。 */
+const transferColumnInfo = z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() });
 export const transferPreview = z.object({
-  columns: z.array(z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() })),
+  columns: z.array(transferColumnInfo),
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: z.array(transferColumnInfo),
   lossy: z.array(
     z.object({
       column: z.string(),
@@ -1907,6 +1997,8 @@ export const transferDoneEvent = z.object({
   elapsedMs: z.number(),
   /** 損失のある型マッピングなどの注意書き (空配列が普通)。 */
   warnings: z.array(z.string()),
+  /** 件数照合 (#1623) で見つかった食い違い。`warnings` の部分集合。 */
+  integrityWarnings: z.array(z.string()).default([]),
 });
 
 export const transferErrorEvent = z.object({

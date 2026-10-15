@@ -22,6 +22,15 @@ import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Heading, Input, Select } from "./ui";
 import { isPlainEnterKey } from "./modalKeys";
+import { copyToClipboard } from "./clipboard";
+import {
+  applyPrivilegeTemplate,
+  generatePassword,
+  parseColumnList,
+  parseRoleInput,
+  PRIVILEGE_TEMPLATE_IDS,
+  type PrivilegeTemplateId,
+} from "./privilegeTemplates";
 
 /**
  * ユーザ / 権限管理パネル (#732)。MySQL ユーザ (`mysql.user`) / PostgreSQL
@@ -215,6 +224,19 @@ export function UsersPanel({
 
   const [showPassword, setShowPassword] = useState(false);
   const [newPassword, setNewPassword] = useState("");
+  // 生成したパスワードは見えないとコピーできないので、生成後は平文表示に切り替える (#1622)。
+  const [revealCreatePw, setRevealCreatePw] = useState(false);
+  const [revealNewPw, setRevealNewPw] = useState(false);
+
+  // 権限テンプレート (#1622)。
+  const [templateId, setTemplateId] = useState<PrivilegeTemplateId | "">("");
+  // ロール付与 / 剥奪 (#1622)。
+  const [roleInput, setRoleInput] = useState("");
+  // 列単位の権限 (#1622)。
+  const [showColumns, setShowColumns] = useState(false);
+  const [colTable, setColTable] = useState("");
+  const [colList, setColList] = useState("");
+  const [colFlags, setColFlags] = useState({ select: true, insert: false, update: false });
 
   // 他ユーザの権限コピー (#1536)。コピー元は `${name}@@${host}` で持つ。
   const [showCopy, setShowCopy] = useState(false);
@@ -230,8 +252,10 @@ export function UsersPanel({
       const list = await api.listDbUsers(sessionId);
       setUsers(list);
       setUsersError(null);
+      return list;
     } catch (e) {
       setUsersError(String(e));
+      return null;
     } finally {
       setLoadingUsers(false);
     }
@@ -290,6 +314,10 @@ export function UsersPanel({
       setCopySourceKey("");
       setShowPassword(false);
       setNewPassword("");
+      setRevealNewPw(false);
+      setTemplateId("");
+      setRoleInput("");
+      setShowColumns(false);
       void loadPrivileges(u);
     },
     [loadPrivileges],
@@ -423,6 +451,128 @@ export function UsersPanel({
     }
   }, [selected, database, users, copySourceKey, sessionId, original, toast, t]);
 
+  // 権限テンプレートを編集中のマトリクスの全行へ反映する (#1622)。SQL は従来の差分経路で作る。
+  const applyTemplate = useCallback(() => {
+    if (!templateId) return;
+    setEdited((cur) =>
+      flagsMap(applyPrivilegeTemplate(cur, Object.keys({ ...original, ...cur }), templateId)),
+    );
+    setCopied(null);
+    toast.info(t("usersTemplateApplied", { name: t(`usersTemplate_${templateId}`) }));
+  }, [templateId, original, toast, t]);
+
+  // 生成済み SQL を確認ダイアログ → 適用する共通経路 (ロール・列単位で使う, #1622)。
+  const confirmAndRun = useCallback(
+    async (statements: string[], opts: { title: string; okLabel: string; doneMessage: string }) => {
+      if (!selected || statements.length === 0) return false;
+      const ok = await confirm({
+        title: opts.title,
+        message: (
+          <>
+            <chakra.p margin={0}>{t("usersApplyConfirmMessage", { count: statements.length })}</chakra.p>
+            {driver === "mysql" && (
+              <Callout tone="warning" role="status">
+                {t("usersApplyMysqlNonAtomic")}
+              </Callout>
+            )}
+            <CodePreview wrap mt="2" maxH="260px">
+              {statements.join(";\n")}
+            </CodePreview>
+          </>
+        ),
+        confirmLabel: opts.okLabel,
+        tone: statements.some((s) => s.startsWith("REVOKE")) ? "danger" : "primary",
+      });
+      if (!ok) return false;
+      setBusy(true);
+      const seqBefore = privSeq.current;
+      try {
+        await api.applyPrivilegeSql({ sessionId, database, statements });
+        toast.success(opts.doneMessage);
+        const list = await loadUsers();
+        // 選択中ユーザの表示 (所属ロールなど) を最新の一覧へ差し替える。
+        const fresh = list?.find((u) => userKey(u) === userKey(selected)) ?? selected;
+        if (fresh !== selected) setSelected(fresh);
+        if (privSeq.current === seqBefore) await loadPrivileges(fresh);
+        return true;
+      } catch (e) {
+        toast.error(t("usersApplyFailed", { error: String(e) }));
+        if (driver === "mysql" && privSeq.current === seqBefore) await loadPrivileges(selected);
+        return false;
+      } finally {
+        setBusy(false);
+      }
+    },
+    [selected, confirm, t, driver, sessionId, database, toast, loadUsers, loadPrivileges],
+  );
+
+  const submitRoleMembership = useCallback(
+    async (grant: boolean, role: string, roleHost: string | null) => {
+      if (!selected) return;
+      const sql = await api.generateRoleMembershipSql({
+        driver,
+        grant,
+        role,
+        roleHost,
+        user: selected.name,
+        host: selected.host,
+      });
+      const done = await confirmAndRun([sql], {
+        title: t(grant ? "usersRoleGrantTitle" : "usersRoleRevokeTitle"),
+        okLabel: t(grant ? "usersRoleGrantOk" : "usersRoleRevokeOk"),
+        doneMessage: t(grant ? "usersRoleGranted" : "usersRoleRevoked", { role, name: selected.name }),
+      });
+      if (done && grant) setRoleInput("");
+    },
+    [selected, driver, confirmAndRun, t],
+  );
+
+  const submitColumnPrivilege = useCallback(
+    async (grant: boolean) => {
+      if (!selected || !database) return;
+      const table = colTable.trim();
+      const columns = parseColumnList(colList);
+      if (!table || columns.length === 0) return;
+      const flags = { ...colFlags, delete: false, ddl: false };
+      const none = { select: false, insert: false, update: false, delete: false, ddl: false };
+      const change: PrivilegeChange = {
+        table,
+        columns,
+        added: grant ? flags : none,
+        removed: grant ? none : flags,
+      };
+      const statements = await api.generatePrivilegeDiffSql(driver, selected.name, selected.host, database, [
+        change,
+      ]);
+      await confirmAndRun(statements, {
+        title: t(grant ? "usersColumnGrantTitle" : "usersColumnRevokeTitle"),
+        okLabel: t(grant ? "usersColumnGrantOk" : "usersColumnRevokeOk"),
+        doneMessage: t("usersColumnDone"),
+      });
+    },
+    [selected, database, colTable, colList, colFlags, driver, confirmAndRun, t],
+  );
+
+  const fillGeneratedPassword = useCallback(
+    async (setPw: (v: string) => void, reveal: (v: boolean) => void) => {
+      const pw = generatePassword();
+      setPw(pw);
+      reveal(true);
+      // クリップボードへは自動でコピーしない (履歴ツールなどへ秘密が残るため)。コピーはボタン操作のみ。
+      toast.info(t("usersPasswordGenerated"));
+    },
+    [toast, t],
+  );
+
+  const copyPassword = useCallback(
+    async (pw: string) => {
+      if (!pw) return;
+      if (await copyToClipboard(pw)) toast.info(t("usersPasswordCopied"));
+      else toast.error(t("clipboardCopyFailed"));
+    },
+    [toast, t],
+  );
+
   const submitCreateUser = useCallback(async () => {
     const name = createName.trim();
     if (!name) return;
@@ -453,6 +603,7 @@ export function UsersPanel({
       setCreateName("");
       setCreateHost("%");
       setCreatePassword("");
+      setRevealCreatePw(false);
       await loadUsers();
     } catch (e) {
       toast.error(t("usersCreateFailed", { error: String(e) }));
@@ -520,6 +671,7 @@ export function UsersPanel({
       toast.success(t("usersPasswordDone"));
       setShowPassword(false);
       setNewPassword("");
+      setRevealNewPw(false);
     } catch (e) {
       toast.error(t("usersPasswordFailed", { error: String(e) }));
     } finally {
@@ -636,11 +788,26 @@ export function UsersPanel({
               <FieldLabel htmlFor="users-create-password">{t("usersCreatePasswordLabel")}</FieldLabel>
               <Input
                 id="users-create-password"
-                type="password"
+                type={revealCreatePw ? "text" : "password"}
                 autoComplete="new-password"
                 value={createPassword}
                 onChange={(e) => setCreatePassword(e.target.value)}
               />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void fillGeneratedPassword(setCreatePassword, setRevealCreatePw)}
+              >
+                {t("usersPasswordGenerate")}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!createPassword}
+                onClick={() => void copyPassword(createPassword)}
+              >
+                {t("usersPasswordCopy")}
+              </Button>
               <Flex gap="2" justifyContent="flex-end">
                 <Button type="button" onClick={() => setShowCreate(false)} disabled={busy}>
                   {t("usersCreateCancel")}
@@ -836,11 +1003,26 @@ export function UsersPanel({
                   <FieldLabel htmlFor="users-new-password">{t("usersPasswordLabel")}</FieldLabel>
                   <Input
                     id="users-new-password"
-                    type="password"
+                    type={revealNewPw ? "text" : "password"}
                     autoComplete="new-password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                   />
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void fillGeneratedPassword(setNewPassword, setRevealNewPw)}
+                  >
+                    {t("usersPasswordGenerate")}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!newPassword}
+                    onClick={() => void copyPassword(newPassword)}
+                  >
+                    {t("usersPasswordCopy")}
+                  </Button>
                   <Flex gap="2" justifyContent="flex-end">
                     <Button type="button" onClick={() => setShowPassword(false)} disabled={busy}>
                       {t("usersPasswordCancel")}
@@ -856,6 +1038,63 @@ export function UsersPanel({
                   </Flex>
                 </FormSection>
               )}
+
+              <FormSection data-testid="users-roles">
+                <FieldLabel htmlFor="users-role-input">{t("usersRolesLabel")}</FieldLabel>
+                {selected.member_of.length > 0 ? (
+                  <Flex gap="2" flexWrap="wrap">
+                    {selected.member_of.map((role) => (
+                      <Flex key={role} align="center" gap="1">
+                        <chakra.span fontFamily="var(--font-mono)" textStyle="caption">
+                          {role}
+                        </chakra.span>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          disabled={readOnly || busy}
+                          aria-label={t("usersRoleRevokeAria", { role })}
+                          onClick={() => {
+                            // MySQL の member_of は `role@host`。剥奪にはホストが要る。
+                            const parsed = driver === "mysql" ? parseRoleInput(role) : null;
+                            void submitRoleMembership(false, parsed?.role ?? role, parsed?.host ?? null);
+                          }}
+                        >
+                          {t("usersRoleRevoke")}
+                        </Button>
+                      </Flex>
+                    ))}
+                  </Flex>
+                ) : (
+                  <chakra.p margin={0} textStyle="caption">
+                    {driver === "mysql" ? t("usersRolesMysqlNote") : t("usersRolesNone")}
+                  </chakra.p>
+                )}
+                <Flex gap="2" align="center">
+                  <Input
+                    id="users-role-input"
+                    value={roleInput}
+                    onChange={(e) => setRoleInput(e.target.value)}
+                    placeholder={t(
+                      driver === "mysql" ? "usersRoleInputPlaceholderMysql" : "usersRoleInputPlaceholder",
+                    )}
+                    width="240px"
+                    disabled={readOnly}
+                  />
+                  <Tooltip label={readOnly ? t("usersReadOnlyHint") : undefined} focusableWrapper={readOnly}>
+                    <Button
+                      type="button"
+                      disabled={readOnly || busy || !parseRoleInput(roleInput)}
+                      onClick={() => {
+                        const parsed = parseRoleInput(roleInput);
+                        if (parsed) void submitRoleMembership(true, parsed.role, parsed.host);
+                      }}
+                    >
+                      {t("usersRoleGrant")}
+                    </Button>
+                  </Tooltip>
+                </Flex>
+              </FormSection>
 
               {globalRow && (
                 <Box borderBottom="1px solid" borderColor="app.border" paddingBottom="2">
@@ -911,6 +1150,123 @@ export function UsersPanel({
                       {t("usersAddTableButton")}
                     </Button>
                   </Flex>
+
+                  <Flex gap="2" align="center" flexWrap="wrap">
+                    <Select
+                      aria-label={t("usersTemplateLabel")}
+                      value={templateId}
+                      onChange={(e) => setTemplateId(e.target.value as PrivilegeTemplateId | "")}
+                      disabled={readOnly}
+                      width="240px"
+                    >
+                      <option value="">{t("usersTemplatePlaceholder")}</option>
+                      {PRIVILEGE_TEMPLATE_IDS.map((id) => (
+                        <option key={id} value={id}>
+                          {t(`usersTemplate_${id}`)}
+                        </option>
+                      ))}
+                    </Select>
+                    <Button
+                      type="button"
+                      disabled={readOnly || !templateId || rowKeys.length === 0}
+                      onClick={applyTemplate}
+                    >
+                      {t("usersTemplateApply")}
+                    </Button>
+                    <Button type="button" disabled={readOnly} onClick={() => setShowColumns((v) => !v)}>
+                      {t("usersColumnPrivileges")}
+                    </Button>
+                  </Flex>
+                  {templateId && (
+                    <chakra.p margin={0} textStyle="caption">
+                      {t("usersTemplateHint")}
+                    </chakra.p>
+                  )}
+
+                  {showColumns && (
+                    <FormSection
+                      data-testid="users-columns"
+                      css={{
+                        border: "1px solid var(--border)",
+                        borderRadius: "var(--radius-sm)",
+                        padding: "var(--space-2)",
+                        maxWidth: "56ch",
+                      }}
+                    >
+                      <FieldLabel htmlFor="users-col-table">{t("usersColumnTableLabel")}</FieldLabel>
+                      <Input
+                        id="users-col-table"
+                        list="users-col-table-options"
+                        value={colTable}
+                        onChange={(e) => setColTable(e.target.value)}
+                      />
+                      <datalist id="users-col-table-options">
+                        {rowKeys.map((k) => (
+                          <option key={k} value={k} />
+                        ))}
+                      </datalist>
+                      <FieldLabel htmlFor="users-col-list">{t("usersColumnListLabel")}</FieldLabel>
+                      <Input
+                        id="users-col-list"
+                        value={colList}
+                        placeholder="id, name"
+                        onChange={(e) => setColList(e.target.value)}
+                      />
+                      <Flex gap="3">
+                        {(["select", "insert", "update"] as const).map((f) => (
+                          <chakra.label key={f} display="flex" alignItems="center" gap="1">
+                            <Checkbox
+                              checked={colFlags[f]}
+                              onChange={() => setColFlags((cur) => ({ ...cur, [f]: !cur[f] }))}
+                            />
+                            <span>
+                              {t(
+                                f === "select"
+                                  ? "usersColSelect"
+                                  : f === "insert"
+                                    ? "usersColInsert"
+                                    : "usersColUpdate",
+                              )}
+                            </span>
+                          </chakra.label>
+                        ))}
+                      </Flex>
+                      <chakra.p margin={0} textStyle="caption">
+                        {t("usersColumnHint")}
+                      </chakra.p>
+                      <Flex gap="2" justifyContent="flex-end">
+                        <Button type="button" onClick={() => setShowColumns(false)} disabled={busy}>
+                          {t("usersCopyCancel")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="dangerOutline"
+                          disabled={
+                            busy ||
+                            !colTable.trim() ||
+                            parseColumnList(colList).length === 0 ||
+                            !(colFlags.select || colFlags.insert || colFlags.update)
+                          }
+                          onClick={() => void submitColumnPrivilege(false)}
+                        >
+                          {t("usersColumnRevoke")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          disabled={
+                            busy ||
+                            !colTable.trim() ||
+                            parseColumnList(colList).length === 0 ||
+                            !(colFlags.select || colFlags.insert || colFlags.update)
+                          }
+                          onClick={() => void submitColumnPrivilege(true)}
+                        >
+                          {t("usersColumnGrant")}
+                        </Button>
+                      </Flex>
+                    </FormSection>
+                  )}
 
                   <Box overflowX="auto" overflowY="auto" flex="1">
                     <chakra.table width="100%" borderCollapse="collapse">

@@ -211,12 +211,28 @@ async fn postgres_table_sizes_and_server_info() {
     let index = row.index_bytes.expect("index bytes present");
     assert!(total >= index, "total must be >= index size: {row:?}");
     assert!(total > 0, "a seeded table must use storage: {row:?}");
+    // 肥大・統計の古さの指標 (#1622): ANALYZE 済みなので analyze 時刻が入り、不要行数も報告される。
+    assert!(
+        row.dead_rows.is_some(),
+        "n_dead_tup must be reported: {row:?}"
+    );
+    assert!(
+        row.last_analyze_at.is_some_and(|ts| ts > 0),
+        "last_analyze_at must reflect the manual ANALYZE: {row:?}"
+    );
 
     let info = conn.server_info().await.expect("server_info");
     assert!(!info.version.is_empty(), "version must be reported");
     assert!(
         info.variables.iter().any(|v| v.name == "server_version"),
         "pg_settings must include server_version"
+    );
+    // 値の出どころ (#1622): pg_settings.source が入り、既定値のままの変数は `default`。
+    assert!(
+        info.variables
+            .iter()
+            .any(|v| v.source.as_deref() == Some("default")),
+        "pg_settings.source must be reported"
     );
 
     conn.execute("DROP TABLE public.noobdb_pg_sizes", None)
@@ -780,6 +796,46 @@ async fn postgres_process_list_and_kill() {
     assert_eq!(mixed.killed, 1, "{mixed:?}");
     assert_eq!(mixed.failed, 1, "{mixed:?}");
     assert!(mixed.first_error.is_some());
+    // id ごとの成否 (#1622): 不正な pid だけが失敗として個別に報告される。
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
+    let invalid = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("invalid pid outcome");
+    assert_eq!(invalid.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(invalid.error.is_some());
+    assert!(
+        mixed
+            .outcomes
+            .iter()
+            .any(|o| o.id == victim_pid && o.status != t::KillOutcomeStatus::Failed),
+        "{mixed:?}"
+    );
+    // 自接続を文のみ停止の対象に含めても、スキップとして id 単位で報告され件数を狂わせない。
+    let own_id = conn
+        .list_processes()
+        .await
+        .expect("list for self")
+        .into_iter()
+        .find(|p| p.is_self)
+        .map(|p| p.id);
+    if let Some(own_id) = own_id {
+        let skipped = conn
+            .kill_processes(&[own_id], true)
+            .await
+            .expect("cancel self");
+        // プールが複数の接続を持つと、kill を実行する接続と一覧を取った接続が別になりうる。
+        // 同じ接続ならスキップ、別の接続なら通常の文のみ停止になる。どちらでも 1 件が id 単位で
+        // 1 回だけ数えられ、件数と outcomes が食い違わないことを確かめる。
+        assert_eq!(skipped.outcomes.len(), 1, "{skipped:?}");
+        let was_skipped = skipped.outcomes[0].status == t::KillOutcomeStatus::Skipped;
+        assert_eq!(
+            skipped.killed + skipped.failed,
+            if was_skipped { 0 } else { 1 },
+            "{skipped:?}"
+        );
+    }
 
     // Backend teardown is asynchronous; poll briefly.
     let mut gone = false;
@@ -943,6 +999,11 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
         m.active.is_some_and(|a| a >= 1),
         "at least one active backend (this query) expected, got {:?}",
         m.active
+    );
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported (#1622), got {:?}",
+        m.max_connections
     );
     assert!(
         m.questions.is_some_and(|q| q >= 1),
@@ -2868,6 +2929,10 @@ async fn postgres_transfer_upsert_updates_and_skips() {
         batch_size: Some(100),
         conflict_mode: mode,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     };
     let run = |r: t::TransferRequest| {
         let state = &state;
@@ -3018,6 +3083,69 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
         ddl.contains("(\"a\" DESC) INCLUDE (\"b\")"),
         "unexpected DDL: {ddl}"
     );
+}
+
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn postgres_import_dry_run_does_not_persist() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_pg_dry", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_pg_dry (id INT PRIMARY KEY, name TEXT NOT NULL)",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO noobdb_pg_dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_pg_dry").await;
+    conn.execute("DROP TABLE noobdb_pg_dry", None)
+        .await
+        .expect("cleanup");
 }
 
 /// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 一度も使われていないインデックスの

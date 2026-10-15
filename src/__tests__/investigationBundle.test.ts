@@ -1,6 +1,7 @@
 // @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyBundleRange,
   BUNDLE_CSP,
   buildInvestigationBundleHtml,
   bundlePlanSupported,
@@ -475,5 +476,103 @@ describe("反斜線で終わる文字列リテラル (#1527)", () => {
   });
   it("MySQL では反斜線がエスケープなので従来どおり", () => {
     expect(extractReferencedTables(sql, 5, "mysql").map((t) => t.table)).toEqual(["a"]);
+  });
+});
+
+describe("含める列・行の範囲 (#1622)", () => {
+  const wide = (over: Partial<BundleInput> = {}) =>
+    input({
+      columns: [
+        { name: "id", type_name: "INT" },
+        { name: "email", type_name: "VARCHAR" },
+        { name: "memo", type_name: "TEXT" },
+      ],
+      rows: [
+        [1, "a@example.com", "m1"],
+        [2, "b@example.com", "m2"],
+        [3, "c@example.com", "m3"],
+      ],
+      ...over,
+    });
+
+  it("applyBundleRange は列を元の順で絞り、行を先頭から切る", () => {
+    const r = applyBundleRange(wide().columns, wide().rows, null, { includeColumns: [2, 0], rowLimit: 2 });
+    expect(r.columns.map((c) => c.name)).toEqual(["id", "memo"]);
+    expect(r.rows).toEqual([
+      [1, "m1"],
+      [2, "m2"],
+    ]);
+    expect(r.excludedNames).toEqual(["email"]);
+    expect(r.limited).toBe(true);
+    expect(r.totalRows).toBe(3);
+    expect(r.totalCols).toBe(3);
+  });
+
+  it("範囲外・重複の添字と不正な行数上限は無視する", () => {
+    const base = wide();
+    const r = applyBundleRange(base.columns, base.rows, null, {
+      includeColumns: [0, 0, 9, -1],
+      rowLimit: Number.NaN,
+    });
+    expect(r.columns.map((c) => c.name)).toEqual(["id"]);
+    expect(r.rows).toHaveLength(3);
+    const all = applyBundleRange(base.columns, base.rows, null, {});
+    expect(all.limited).toBe(false);
+    expect(all.columns).toHaveLength(3);
+  });
+
+  it("選ばなかった列の名前も値も HTML に出さない", () => {
+    const html = buildInvestigationBundleHtml(wide({ includeColumns: [0, 2] }));
+    expect(html).not.toContain("email");
+    expect(html).not.toContain("a@example.com");
+    expect(html).toContain("<td>m1</td>");
+  });
+
+  it("行数の上限を超えた行は出さず、メタの件数は絞り込み後を示す", () => {
+    const html = buildInvestigationBundleHtml(wide({ rowLimit: 1 }));
+    expect(html).toContain("<td>m1</td>");
+    expect(html).not.toContain("m2");
+    expect(html).toContain("1 × 3");
+  });
+
+  it("マスク対象の列は選んでも伏せ字のまま、絞り込みで添字がずれてもマスクが追従する", () => {
+    const base = wide();
+    // email (元の添字 1) がマスク対象。id を外すと email の添字は 0 になる。
+    const masked = [false, true, false];
+    const html = buildInvestigationBundleHtml(wide({ maskedColumns: masked, includeColumns: [1, 2] }));
+    expect(html).not.toContain("a@example.com");
+    expect(html).toContain(MASK_PLACEHOLDER);
+    expect(html).toContain("<td>m1</td>");
+    expect(base.rows[0][1]).toBe("a@example.com");
+  });
+
+  it("除外した列の定義はスキーマ節からも落とす", () => {
+    const col = (name: string): TableColumnInfo => ({
+      name,
+      data_type: "text",
+      nullable: true,
+      key: "",
+      default: null,
+      extra: "",
+      referenced_table: null,
+      referenced_column: null,
+    });
+    const html = buildInvestigationBundleHtml(
+      wide({
+        includeColumns: [0],
+        schema: [{ database: "app", table: "users", columns: [col("id"), col("email"), col("memo")] }],
+      }),
+    );
+    expect(html).not.toContain("email");
+    expect(html).not.toContain("memo");
+    expect(html).toContain("<td>id</td>");
+  });
+
+  it("絞り込んだときだけ注記を出す (ラベル指定時)", () => {
+    const labels = { ...LABELS, rangeLimited: "Showing {rows}/{totalRows} rows, {cols}/{totalCols} columns" };
+    const limited = buildInvestigationBundleHtml(wide({ labels, rowLimit: 2, includeColumns: [0, 1] }));
+    expect(limited).toContain("Showing 2/3 rows, 2/3 columns");
+    const full = buildInvestigationBundleHtml(wide({ labels }));
+    expect(full).not.toContain("Showing");
   });
 });

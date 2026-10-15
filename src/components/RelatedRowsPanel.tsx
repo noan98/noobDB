@@ -8,10 +8,13 @@ import { transitions, variants } from "../motion";
 import {
   RELATED_ROWS_MAX,
   RELATED_ROWS_PAGE,
+  buildRelatedCountSql,
   buildRelatedOpenSql,
   buildRelatedRowsSql,
+  describeRelatedCount,
   formatRelatedCell,
   nextRelatedLimit,
+  parseRelatedCount,
   splitRelatedRows,
   type RelatedEntry,
 } from "../relatedRows";
@@ -38,6 +41,10 @@ import { ErrorNote } from "./modalForm";
  *   親の結果に付けた列単位の上書きは結果シェイプ単位なので子行には持ち込まない。
  * - 開閉は `variants.collapse`。`height` / `opacity` は `MotionConfig reducedMotion`
  *   で止まらないため、`useReducedMotion()` で transition を即時化する (`LiveRows` と同じ)。
+ * - 見出しには子行の件数を事前に出す (#1629)。関連タブが開いている間だけ、展開できるエントリ
+ *   (キー値が取れているもの) の件数を 1 件ずつ順に 1 回取る (`RELATED_ROWS_MAX` + 1 件で打ち切る
+ *   COUNT なので巨大な子テーブルでも走査しない)。上限を超えたら「1000 件超」と表示し、取得に
+ *   失敗したエントリは件数を出さないだけで展開は妨げない。親行が変わったら取り直す。
  * - 開閉状態はエントリキー単位で保持し、インスペクタの ↑/↓ で親行を移っても
  *   開いたまま新しい親の子行を取り直す (親行を順に眺める探索のため)。
  */
@@ -61,9 +68,75 @@ const MotionCollapse = chakra(
 
 const INSTANT = { duration: 0 } as const;
 
+type CountState = { count: number; over: boolean } | "error";
+
+/**
+ * 見出しの子行件数を 1 件ずつ順に取る (#1629)。結果は取得時のエントリ集合の署名とともに持ち、
+ * 親行が変わって署名がずれたら古い件数は使わない。
+ */
+/** 親行の切り替えから子行件数を取り始めるまでの待ち (ms)。 */
+const RELATED_COUNT_DEBOUNCE_MS = 250;
+
+function useRelatedCounts(
+  entries: RelatedEntry[],
+  driver: string,
+  database: string | null,
+  runQuery: (sql: string) => Promise<QueryResult>,
+): Record<string, CountState> {
+  // App から渡る runQuery は描画ごとに作り直されるので ref で最新を参照する (依存に入れない)。
+  const runRef = useRef(runQuery);
+  useEffect(() => {
+    runRef.current = runQuery;
+  }, [runQuery]);
+  const sig = JSON.stringify([
+    driver,
+    database,
+    entries.filter((e) => e.blocked === null).map((e) => [e.key, e.fk.table, e.fk.column, e.value]),
+  ]);
+  const [done, setDone] = useState<{ sig: string; counts: Record<string, CountState> }>({
+    sig: "",
+    counts: {},
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries の中身は sig に畳み込んである。sig が変わったときだけ取り直す
+  useEffect(() => {
+    let cancelled = false;
+    // 親行をすばやく切り替えている間は COUNT を発行しない (止まってから 1 回だけ取る)。
+    const timer = setTimeout(() => {
+      void (async () => {
+        const counts: Record<string, CountState> = {};
+        for (const entry of entries) {
+          if (entry.blocked !== null) continue;
+          const sql = buildRelatedCountSql({
+            driver,
+            database,
+            childTable: entry.fk.table,
+            childColumn: entry.fk.column,
+            value: entry.value,
+          });
+          if (!sql) continue;
+          try {
+            const n = parseRelatedCount((await runRef.current(sql)).rows);
+            counts[entry.key] = n === null ? "error" : describeRelatedCount(n);
+          } catch {
+            counts[entry.key] = "error";
+          }
+          if (cancelled) return;
+          setDone({ sig, counts: { ...counts } });
+        }
+      })();
+    }, RELATED_COUNT_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [sig]);
+  return done.sig === sig ? done.counts : {};
+}
+
 export function RelatedRowsPanel({ entries, driver, database, runQuery, onOpenInGrid }: Props) {
   const t = useT();
   const [open, setOpen] = useState<Set<string>>(() => new Set());
+  const counts = useRelatedCounts(entries, driver, database, runQuery);
   const reduced = useReducedMotion() ?? false;
   const toggle = (key: string) =>
     setOpen((prev) => {
@@ -80,6 +153,7 @@ export function RelatedRowsPanel({ entries, driver, database, runQuery, onOpenIn
         <RelatedSection
           key={entry.key}
           entry={entry}
+          count={counts[entry.key]}
           open={open.has(entry.key)}
           onToggle={() => toggle(entry.key)}
           driver={driver}
@@ -108,6 +182,7 @@ function blockedText(entry: RelatedEntry, t: ReturnType<typeof useT>): string | 
 
 function RelatedSection({
   entry,
+  count,
   open,
   onToggle,
   driver,
@@ -117,6 +192,8 @@ function RelatedSection({
   transition,
 }: {
   entry: RelatedEntry;
+  /** 見出しに出す子行件数。未取得は undefined、取得失敗は "error" (どちらも表示しない)。 */
+  count: CountState | undefined;
   open: boolean;
   onToggle: () => void;
   driver: string;
@@ -169,6 +246,13 @@ function RelatedSection({
         >
           {entry.fk.table}.{entry.fk.column}
         </chakra.span>
+        {count && count !== "error" && (
+          <chakra.span flexShrink={0} textStyle="caption" fontFamily="mono" data-testid="related-count">
+            {count.over
+              ? t("relatedRowsBadgeOver", { count: count.count })
+              : t("relatedRowsBadge", { count: count.count })}
+          </chakra.span>
+        )}
       </chakra.button>
       {blocked && (
         <chakra.div px="2" py="1" textStyle="caption">

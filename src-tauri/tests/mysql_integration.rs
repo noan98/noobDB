@@ -253,6 +253,12 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
         "Threads_connected must be reported and >= 1, got {:?}",
         m.connections
     );
+    // 接続数の上限 (#1622)。
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported, got {:?}",
+        m.max_connections
+    );
     // Questions は起動以降の累積なので必ず正。
     assert!(
         m.questions.is_some_and(|q| q >= 1),
@@ -1081,6 +1087,15 @@ async fn mysql_process_list_and_kill() {
         mixed.failed >= 1 && mixed.first_error.is_some(),
         "{mixed:?}"
     );
+    // id ごとの成否 (#1622): 存在しない id は個別の失敗として理由つきで報告される。
+    let missing = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("outcome for the missing id");
+    assert_eq!(missing.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(missing.error.is_some());
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
 
     // The server tears the thread down asynchronously; poll briefly.
     let mut gone = false;
@@ -3230,6 +3245,10 @@ async fn mysql_transfer_upsert_updates_and_skips() {
         batch_size: Some(100),
         conflict_mode: mode,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     };
     let run = |r: t::TransferRequest| {
         let state = &state;
@@ -3354,6 +3373,10 @@ async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
             batch_size: Some(100),
             conflict_mode: None,
             key_columns: None,
+            columns: Vec::new(),
+            where_clause: None,
+            limit_rows: None,
+            verify_counts: None,
         },
         Arc::new(AtomicU64::new(0)),
         |_| {},
@@ -3447,6 +3470,115 @@ async fn mysql_save_cells_to_folder() {
         .expect("cleanup");
 }
 
+/// 取り込みの事前検証 (dry run、#1623): 拒否される行を数えるが、何も永続化しない。
+async fn assert_dry_run_counts_failures_without_persisting(conn: &t::Connection, table: &str) {
+    let columns = vec!["id".to_string(), "name".to_string()];
+    let cell = |s: Option<&str>| s.map(str::to_string);
+    let rows = vec![
+        vec![cell(Some("2")), cell(Some("b"))],
+        vec![cell(Some("1")), cell(Some("dup"))],
+        vec![cell(Some("3")), cell(None)],
+        vec![cell(Some("4")), cell(Some("d"))],
+    ];
+    let out = conn
+        .dry_run_failures(
+            None,
+            table,
+            &columns,
+            &rows,
+            &t::ImportConflict::insert_only(),
+            1,
+        )
+        .await
+        .expect("dry run");
+    assert_eq!(out.failed, 2, "{out:?}");
+    // 先頭 1 件だけ保持し、総数は数え続ける。
+    assert_eq!(out.failures.len(), 1);
+    assert_eq!(out.failures[0].index, 1);
+    assert!(!out.failures[0].reason.is_empty());
+    let count = conn
+        .execute(&format!("SELECT COUNT(*) FROM {table}"), None)
+        .await
+        .expect("count");
+    assert!(
+        matches!(&count.rows[0][0], t::Value::Int(1)),
+        "dry run must not persist anything: {:?}",
+        count.rows[0][0]
+    );
+}
+
+#[tokio::test]
+async fn mysql_import_dry_run_does_not_persist_and_rejects_myisam() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE noobdb_my_dry (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL) ENGINE=InnoDB",
+        None,
+    )
+    .await
+    .expect("create");
+    conn.execute("INSERT INTO noobdb_my_dry VALUES (1, 'a')", None)
+        .await
+        .expect("seed");
+    assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_my_dry").await;
+    // 通常の InnoDB 表はトランザクショナルと判定され、information_schema に無い表は
+    // 安全側 (Err) に倒れる (#1623)。
+    assert!(conn
+        .table_is_transactional(None, "noobdb_my_dry")
+        .await
+        .expect("known InnoDB table"),);
+    assert!(
+        conn.table_is_transactional(None, "noobdb_my_dry_does_not_exist")
+            .await
+            .is_err(),
+        "an unknown table must not be assumed transactional"
+    );
+    conn.execute("DROP TABLE noobdb_my_dry", None)
+        .await
+        .expect("cleanup");
+
+    // ロールバックできない表では実行しない (試し書きが残ってしまう)。
+    conn.execute("DROP TABLE IF EXISTS noobdb_my_dry_isam", None)
+        .await
+        .expect("drop isam");
+    if conn
+        .execute(
+            "CREATE TABLE noobdb_my_dry_isam (id INT PRIMARY KEY) ENGINE=MyISAM",
+            None,
+        )
+        .await
+        .is_ok()
+    {
+        let err = conn
+            .dry_run_failures(
+                None,
+                "noobdb_my_dry_isam",
+                &["id".to_string()],
+                &[vec![Some("1".to_string())]],
+                &t::ImportConflict::insert_only(),
+                10,
+            )
+            .await
+            .expect_err("non-transactional table must be rejected");
+        assert!(err.to_string().contains("transactions"), "{err}");
+        let count = conn
+            .execute("SELECT COUNT(*) FROM noobdb_my_dry_isam", None)
+            .await
+            .expect("count");
+        assert!(matches!(&count.rows[0][0], t::Value::Int(0)));
+        conn.execute("DROP TABLE noobdb_my_dry_isam", None)
+            .await
+            .expect("cleanup isam");
+    }
+}
+
 /// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 容量の取得 (`mysql.innodb_index_stats`)
 /// を足しても、統計が読めない環境で指摘そのものが消えたり失敗したりしない。
 #[tokio::test]
@@ -3528,4 +3660,71 @@ async fn mysql_column_profile_sampled_is_subset_of_table() {
     conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
         .await
         .expect("cleanup");
+}
+
+/// ロールの付与・一覧・剥奪 (#1622)。`list_db_users` が `mysql.role_edges` から
+/// `member_of` を `role@host` で埋め、剥奪 SQL (ホスト付き) で外せること。MySQL 8 以外
+/// (ロールを作れない版) ではスキップする。
+#[tokio::test]
+async fn mysql_role_membership_is_listed_and_revocable() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP USER IF EXISTS 'noobdb_t1622_u'@'%'",
+        "DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'",
+    ] {
+        let _ = conn.execute(sql, None).await;
+    }
+    if conn
+        .execute("CREATE ROLE 'noobdb_t1622_r'@'%'", None)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: roles are not supported by this server");
+        conn.close().await;
+        return;
+    }
+    conn.execute("CREATE USER 'noobdb_t1622_u'@'%'", None)
+        .await
+        .expect("create user");
+
+    let grant = t::generate_role_grant_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&grant, None).await.expect("grant role");
+    let member_of = |users: Vec<t::DbUserInfo>| {
+        users
+            .into_iter()
+            .find(|u| u.name == "noobdb_t1622_u")
+            .map(|u| u.member_of)
+            .unwrap_or_default()
+    };
+    let listed = member_of(conn.list_db_users().await.expect("list users"));
+    assert_eq!(listed, vec!["noobdb_t1622_r@%".to_string()]);
+
+    let revoke = t::generate_role_revoke_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&revoke, None).await.expect("revoke role");
+    assert!(member_of(conn.list_db_users().await.expect("list users")).is_empty());
+
+    let _ = conn
+        .execute("DROP USER IF EXISTS 'noobdb_t1622_u'@'%'", None)
+        .await;
+    let _ = conn
+        .execute("DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'", None)
+        .await;
+    conn.close().await;
 }

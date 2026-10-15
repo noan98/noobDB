@@ -8,22 +8,32 @@ import {
   type ConnectionProfile,
   type TransferLossyConversion,
   type TransferMode,
+  type TransferTypeKind,
 } from "../api/tauri";
-import { useT } from "../i18n";
+import { useT, type I18nKey } from "../i18n";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Callout } from "./Callout";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Input, Select } from "./ui";
+import { Button, Checkbox, Input, Select } from "./ui";
+import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useConfirm } from "./ConfirmDialog";
 import { useToast } from "./Toast";
 import {
+  allColumnsExcluded,
+  invalidDecimalColumns,
+  buildTransferColumnSpecs,
+  DEFAULT_TRIAL_ROWS,
+  defaultColumnDraft,
   defaultTransferTableName,
   makeTransferStreamId,
+  parseLimitRows,
   pickDefaultDatabase,
   toDriverKind,
+  TRANSFER_TYPE_KINDS,
+  type TransferColumnDraft,
   transferConfirmSteps,
   validateTransferTarget,
   writesExistingTable,
@@ -55,6 +65,24 @@ const LOSSY_MESSAGE_KEYS = {
   timestamp_tz_degraded: "transferLossyTimestampTz",
 } as const;
 
+const TYPE_LABEL_KEYS: Record<TransferTypeKind, I18nKey> = {
+  boolean: "transferTypeBoolean",
+  integer: "transferTypeInteger",
+  float: "transferTypeFloat",
+  decimal: "transferTypeDecimal",
+  text: "transferTypeText",
+  date: "transferTypeDate",
+  time: "transferTypeTime",
+  timestamp: "transferTypeTimestamp",
+  timestamptz: "transferTypeTimestamptz",
+  binary: "transferTypeBinary",
+  json: "transferTypeJson",
+  uuid: "transferTypeUuid",
+};
+
+/** プレビューの再取得を遅らせる時間 (WHERE や列名の入力 1 文字ごとの往復を避ける)。 */
+const PREVIEW_DEBOUNCE_MS = 300;
+
 type Status = { kind: "idle" } | { kind: "running"; rows: number } | { kind: "error"; message: string };
 
 export function DataTransferModal({ sourceSessionId, sourceProfileId, source, profiles, onClose }: Props) {
@@ -75,6 +103,15 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const [conflictMode, setConflictMode] = useState<"update" | "skip">("update");
   const [keyColumnsInput, setKeyColumnsInput] = useState("");
   const [lossy, setLossy] = useState<TransferLossyConversion[]>([]);
+  // 列の選択・改名・型上書き (#1623)。プレビューが返すソースの全列を元に編集する。
+  const [sourceColumns, setSourceColumns] = useState<
+    { name: string; sourceType: string; targetType: string }[]
+  >([]);
+  const [colDrafts, setColDrafts] = useState<Record<string, TransferColumnDraft>>({});
+  const [whereClause, setWhereClause] = useState("");
+  const [trialEnabled, setTrialEnabled] = useState(false);
+  const [trialRows, setTrialRows] = useState(String(DEFAULT_TRIAL_ROWS));
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
 
   const ownedSessionRef = useRef<string | null>(null);
@@ -178,29 +215,65 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
   const sourceTableName = source.kind === "table" ? source.table : null;
   const sourceSqlText = source.kind === "query" ? source.sql : null;
   const sourceDatabase = source.database;
+  const columnSpecs = useMemo(
+    () => buildTransferColumnSpecs(sourceColumns, colDrafts),
+    [sourceColumns, colDrafts],
+  );
+  const specsKey = JSON.stringify(columnSpecs);
+  const whereTrimmed = sourceTableName ? whereClause.trim() : "";
+  const limitRows = trialEnabled ? parseLimitRows(trialRows) : null;
+  const trialInvalid = trialEnabled && limitRows === null;
+  const noColumns = allColumnsExcluded(sourceColumns, colDrafts);
+  const badDecimals = invalidDecimalColumns(sourceColumns, colDrafts);
   useEffect(() => {
     setLossy([]);
     if (!targetSession || !database) return;
     let cancelled = false;
-    api
-      .previewTransfer({
-        sourceSessionId,
-        targetSessionId: targetSession,
-        sourceDatabase,
-        sourceTable: sourceTableName,
-        sourceSql: sourceSqlText,
-        targetDatabase: database,
-        targetTable: "",
-        mode: "create",
-      })
-      .then((p) => {
-        if (!cancelled) setLossy(p.lossy);
-      })
-      .catch(() => {});
+    const timer = window.setTimeout(() => {
+      api
+        .previewTransfer({
+          sourceSessionId,
+          targetSessionId: targetSession,
+          sourceDatabase,
+          sourceTable: sourceTableName,
+          sourceSql: sourceSqlText,
+          targetDatabase: database,
+          targetTable: "",
+          mode: "create",
+          columns: JSON.parse(specsKey),
+          whereClause: whereTrimmed || null,
+          limitRows,
+        })
+        .then((p) => {
+          if (cancelled) return;
+          setLossy(p.lossy);
+          setPreviewError(null);
+          setSourceColumns((prev) =>
+            JSON.stringify(prev) === JSON.stringify(p.sourceColumns) ? prev : p.sourceColumns,
+          );
+        })
+        .catch((e) => {
+          if (!cancelled) setPreviewError(String(e));
+        });
+    }, PREVIEW_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
-  }, [sourceSessionId, sourceDatabase, sourceTableName, sourceSqlText, targetSession, database]);
+  }, [
+    sourceSessionId,
+    sourceDatabase,
+    sourceTableName,
+    sourceSqlText,
+    targetSession,
+    database,
+    specsKey,
+    whereTrimmed,
+    limitRows,
+  ]);
+
+  const updateDraft = (name: string, patch: Partial<TransferColumnDraft>) =>
+    setColDrafts((cur) => ({ ...cur, [name]: { ...(cur[name] ?? defaultColumnDraft()), ...patch } }));
 
   const tableExists = existingTables ? tableNameCollides(existingTables, tableName) : false;
   const validation = validateTransferTarget({
@@ -220,6 +293,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
     !connecting &&
     existingTables !== null &&
     validation === null &&
+    !trialInvalid &&
+    !noColumns &&
+    badDecimals.length === 0 &&
     !isRunning;
 
   const cleanupStream = () => {
@@ -273,6 +349,14 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
           cleanupStream();
           setStatus({ kind: "idle" });
           toast.success(t("transferDone", { rows: e.rows, table: name, name: targetProfile.name }));
+          // 件数照合の食い違い (#1623) は転送前には分からないので、完了時に別に知らせる。
+          for (const detail of e.integrityWarnings) {
+            toast.notify({
+              message: t("transferIntegrityWarning", { detail }),
+              tone: "info",
+              severity: "warning",
+            });
+          }
           // 縮退の警告は転送前の Callout (翻訳済み) で示すので、完了時のトーストは出さない。
           onClose();
         },
@@ -294,6 +378,9 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
         targetDatabase: database,
         targetTable: name,
         mode,
+        columns: columnSpecs,
+        whereClause: whereTrimmed || null,
+        limitRows,
         ...(mode === "upsert"
           ? {
               conflictMode,
@@ -459,6 +546,164 @@ export function DataTransferModal({ sourceSessionId, sourceProfileId, source, pr
             />
             <chakra.span textStyle="caption" color="app.textMuted">
               {t("transferKeyColumnsHint")}
+            </chakra.span>
+          </FormSection>
+        )}
+
+        <FormSection>
+          <FieldLabel as="div">{t("transferRangeLabel")}</FieldLabel>
+          {source.kind === "table" && (
+            <>
+              <FieldLabel htmlFor="transfer-where">{t("transferWhereLabel")}</FieldLabel>
+              <Input
+                id="transfer-where"
+                value={whereClause}
+                onChange={(e) => setWhereClause(e.target.value)}
+                placeholder={t("transferWherePlaceholder")}
+                disabled={isRunning}
+                fontFamily="mono"
+              />
+              {whereTrimmed && previewError && (
+                <FieldError>{t("transferPreviewError", { error: previewError })}</FieldError>
+              )}
+            </>
+          )}
+          <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" fontSize="md">
+            <Checkbox
+              checked={trialEnabled}
+              onChange={(e) => setTrialEnabled(e.target.checked)}
+              disabled={isRunning}
+            />
+            <span>{t("transferTrialLabel")}</span>
+            {trialEnabled && (
+              <Input
+                w="96px"
+                value={trialRows}
+                onChange={(e) => setTrialRows(e.target.value)}
+                aria-label={t("transferTrialRows")}
+                disabled={isRunning}
+                inputMode="numeric"
+              />
+            )}
+          </chakra.label>
+          {trialInvalid && <FieldError>{t("transferTrialInvalid")}</FieldError>}
+          <chakra.span textStyle="caption" color="app.textMuted">
+            {t("transferTrialHint")}
+          </chakra.span>
+        </FormSection>
+
+        {sourceColumns.length > 0 && (
+          <FormSection>
+            <FieldLabel as="div">{t("transferColumnsLabel")}</FieldLabel>
+            <chakra.div
+              display="flex"
+              flexDirection="column"
+              gap="1.5"
+              maxH="220px"
+              overflowY="auto"
+              border="1px solid"
+              borderColor="app.border"
+              borderRadius="md"
+              p="2"
+            >
+              {sourceColumns.map((c) => {
+                const d = colDrafts[c.name] ?? defaultColumnDraft();
+                const typeEditable = !writesExistingTable(mode);
+                return (
+                  <chakra.div
+                    key={c.name}
+                    data-testid="transfer-column-row"
+                    display="flex"
+                    alignItems="center"
+                    gap="2"
+                    flexWrap="wrap"
+                  >
+                    <Checkbox
+                      checked={d.include}
+                      onChange={(e) => updateDraft(c.name, { include: e.target.checked })}
+                      disabled={isRunning}
+                      aria-label={t("transferColumnInclude", { column: c.name })}
+                    />
+                    <chakra.span
+                      flex="1"
+                      minW="100px"
+                      fontFamily="mono"
+                      fontSize="sm"
+                      overflow="hidden"
+                      textOverflow="ellipsis"
+                      whiteSpace="nowrap"
+                      title={c.sourceType}
+                    >
+                      {c.name}
+                      <chakra.span ml="1.5" fontFamily="body" fontSize="2xs" color="app.textMuted">
+                        {c.sourceType}
+                      </chakra.span>
+                    </chakra.span>
+                    <Input
+                      w="130px"
+                      value={d.name}
+                      placeholder={c.name}
+                      onChange={(e) => updateDraft(c.name, { name: e.target.value })}
+                      aria-label={t("transferColumnRename", { column: c.name })}
+                      disabled={isRunning || !d.include}
+                    />
+                    {typeEditable && (
+                      <Select
+                        w="150px"
+                        value={d.type}
+                        onChange={(e) =>
+                          updateDraft(c.name, { type: e.target.value as TransferColumnDraft["type"] })
+                        }
+                        aria-label={t("transferColumnType", { column: c.name })}
+                        disabled={isRunning || !d.include}
+                      >
+                        <option value="auto">{t("transferTypeAuto", { type: c.targetType })}</option>
+                        {TRANSFER_TYPE_KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {t(TYPE_LABEL_KEYS[k])}
+                          </option>
+                        ))}
+                      </Select>
+                    )}
+                    {typeEditable && d.type === "decimal" && (
+                      <chakra.span
+                        display="inline-flex"
+                        alignItems="center"
+                        gap="1"
+                        textStyle="caption"
+                        color="app.textMuted"
+                      >
+                        <DraftNumberInput
+                          min={1}
+                          max={65}
+                          w="56px"
+                          value={d.precision}
+                          aria-label={t("transferDecimalPrecision", { column: c.name })}
+                          disabled={isRunning}
+                          onCommit={(n) => updateDraft(c.name, { precision: n })}
+                        />
+                        ,
+                        <DraftNumberInput
+                          min={0}
+                          max={30}
+                          w="56px"
+                          value={d.scale}
+                          aria-label={t("transferDecimalScale", { column: c.name })}
+                          disabled={isRunning}
+                          onCommit={(n) => updateDraft(c.name, { scale: n })}
+                        />
+                      </chakra.span>
+                    )}
+                  </chakra.div>
+                );
+              })}
+            </chakra.div>
+            {noColumns && <FieldError>{t("transferAllColumnsExcluded")}</FieldError>}
+            {badDecimals.map((name) => (
+              <FieldError key={name}>{t("transferDecimalScaleTooLarge", { column: name })}</FieldError>
+            ))}
+            <chakra.span textStyle="caption" color="app.textMuted">
+              {writesExistingTable(mode) ? t("transferColumnsHintAppend") : t("transferColumnsHint")}
             </chakra.span>
           </FormSection>
         )}

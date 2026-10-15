@@ -52,6 +52,7 @@ describe("workspaceCommandItems", () => {
       "nav:processes",
       "nav:assertions",
       "nav:connectionHealth",
+      "nav:perf",
       "nav:whereUsed",
       "structure:app\0users",
       "structure:app\0orders",
@@ -70,6 +71,7 @@ describe("workspaceCommandItems", () => {
       "nav:focus-explorer",
       "nav:output",
       "nav:activityPanel",
+      "nav:perf",
       "nav:tasks",
     ]);
   });

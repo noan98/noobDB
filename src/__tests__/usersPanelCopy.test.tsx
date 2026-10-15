@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 import type { DbUserInfo, UserPrivileges } from "../api/tauri";
 
@@ -12,6 +12,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listDbUsers: vi.fn(),
       listUserPrivileges: vi.fn(),
       generatePrivilegeDiffSql: vi.fn(),
+      generateRoleMembershipSql: vi.fn(),
       applyPrivilegeSql: vi.fn(),
     },
   };
@@ -174,5 +175,153 @@ describe("UsersPanel: 権限コピー (#1536)", () => {
     fireEvent.click(screen.getByRole("button", { name: t("usersCopySubmit") }));
     const warn = await screen.findByTestId("users-copy-warning");
     expect(warn).toHaveTextContent(t("usersCopyRevokes", { count: 1 }));
+  });
+});
+
+describe("UsersPanel: ロール・列単位・テンプレート・パスワード生成 (#1622)", () => {
+  it("PostgreSQL のロールを外すと REVOKE を確認して適用する", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("app"), member_of: ["reader"] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("t1", true)] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue('REVOKE "reader" FROM "app"');
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
+    );
+    expect(await screen.findByText(/REVOKE "reader" FROM "app"/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("usersRoleRevokeOk") }));
+    await waitFor(() =>
+      expect(api.applyPrivilegeSql).toHaveBeenCalledWith({
+        sessionId: "s1",
+        database: "public",
+        statements: ['REVOKE "reader" FROM "app"'],
+      }),
+    );
+    expect(api.generateRoleMembershipSql).toHaveBeenCalledWith(
+      expect.objectContaining({ grant: false, role: "reader", user: "app" }),
+    );
+  });
+
+  it("ロールを外したあと、選択中ユーザの所属ロール表示が最新の一覧に更新される", async () => {
+    vi.mocked(api.listDbUsers)
+      .mockResolvedValueOnce([{ ...user("app"), member_of: ["reader"] }])
+      .mockResolvedValue([{ ...user("app"), member_of: [] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue('REVOKE "reader" FROM "app"');
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleRevokeOk") }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("MySQL の空ホストのロール (role@) は空ホストのまま剥奪に渡す", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("app"), member_of: ["r@"] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue("REVOKE 'r'@'' FROM 'app'@'%'");
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "r@" }) }));
+    await waitFor(() =>
+      expect(api.generateRoleMembershipSql).toHaveBeenCalledWith(
+        expect.objectContaining({ grant: false, role: "r", roleHost: "" }),
+      ),
+    );
+  });
+
+  it("MySQL では role@host を分解してロール付与 SQL を生成する", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue("GRANT 'r'@'h' TO 'app'@'%'");
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.change(await screen.findByLabelText(t("usersRolesLabel")), { target: { value: "r@h" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersRoleGrant") }));
+    await waitFor(() =>
+      expect(api.generateRoleMembershipSql).toHaveBeenCalledWith(
+        expect.objectContaining({ grant: true, role: "r", roleHost: "h" }),
+      ),
+    );
+  });
+
+  it("read_only ではロール付与ボタンが無効", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={true} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    expect(await screen.findByRole("button", { name: t("usersRoleGrant") })).toBeDisabled();
+  });
+
+  it("テンプレートを選ぶと全行へ反映され、変更ありになる", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({
+      global: null,
+      tables: [priv("a", false), priv("b", true, true)],
+    });
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("a");
+    fireEvent.change(screen.getByLabelText(t("usersTemplateLabel")), { target: { value: "readOnly" } });
+    fireEvent.click(screen.getByRole("button", { name: t("usersTemplateApply") }));
+    expect(screen.getByLabelText("a select")).toBeChecked();
+    expect(screen.getByLabelText("b select")).toBeChecked();
+    expect(screen.getByLabelText("b insert")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: t("usersApplyChanges") })).toBeEnabled();
+  });
+
+  it("列単位の付与は columns 付きの差分で SQL を生成する", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [priv("a", false)] });
+    vi.mocked(api.generatePrivilegeDiffSql).mockResolvedValue([
+      'GRANT SELECT ("id") ON "public"."a" TO "app"',
+    ]);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    await screen.findByText("a");
+    fireEvent.click(screen.getByRole("button", { name: t("usersColumnPrivileges") }));
+    fireEvent.change(screen.getByLabelText(t("usersColumnTableLabel")), { target: { value: "a" } });
+    fireEvent.change(screen.getByLabelText(t("usersColumnListLabel")), { target: { value: "id" } });
+    fireEvent.click(
+      within(screen.getByTestId("users-columns")).getByRole("button", { name: t("usersColumnGrant") }),
+    );
+    await waitFor(() =>
+      expect(api.generatePrivilegeDiffSql).toHaveBeenCalledWith("postgres", "app", null, "public", [
+        expect.objectContaining({ table: "a", columns: ["id"] }),
+      ]),
+    );
+  });
+
+  it("パスワード生成ボタンで入力欄に平文の乱数パスワードが入る", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([]);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("usersNewUser") }));
+    fireEvent.click(screen.getByRole("button", { name: t("usersPasswordGenerate") }));
+    const input = screen.getByLabelText(t("usersCreatePasswordLabel")) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toHaveLength(24));
+    expect(input.type).toBe("text");
   });
 });

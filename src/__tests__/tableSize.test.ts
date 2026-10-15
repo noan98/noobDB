@@ -9,6 +9,7 @@ import {
   formatRowCount,
   sizeBarPercent,
   sortTableStats,
+  tableMaintenanceHints,
   toTableStatRows,
   type TableStatRow,
 } from "../components/tableSize";
@@ -263,5 +264,58 @@ describe("formatBytes: 単位境界の丸め", () => {
   });
   it("境界の手前は従来どおり", () => {
     expect(formatBytes(1023 * 1024)).toBe("1023 KB");
+  });
+});
+
+describe("tableMaintenanceHints (#1622)", () => {
+  const NOW = Date.UTC(2026, 9, 15);
+  const day = 24 * 60 * 60;
+  const at = (daysAgo: number) => NOW / 1000 - daysAgo * day;
+
+  it("統計が無い行 (MySQL / SQLite / 取得不能) は何も言わない", () => {
+    expect(
+      tableMaintenanceHints({ row_estimate: 100000, dead_rows: null, last_analyze_at: null }, NOW),
+    ).toEqual({
+      bloated: false,
+      deadRatio: null,
+      staleStats: false,
+    });
+    expect(tableMaintenanceHints({ row_estimate: 5 }, NOW).staleStats).toBe(false);
+  });
+
+  it("不要行が 1000 件以上かつ 20% 以上で肥大", () => {
+    expect(
+      tableMaintenanceHints({ row_estimate: 4000, dead_rows: 1000, last_analyze_at: at(1) }, NOW),
+    ).toMatchObject({
+      bloated: true,
+      deadRatio: 0.2,
+    });
+    expect(
+      tableMaintenanceHints({ row_estimate: 4000, dead_rows: 999, last_analyze_at: at(1) }, NOW).bloated,
+    ).toBe(false);
+    expect(
+      tableMaintenanceHints({ row_estimate: 100000, dead_rows: 1000, last_analyze_at: at(1) }, NOW).bloated,
+    ).toBe(false);
+  });
+
+  it("行数の推定が無い (未 ANALYZE) と、比率を出せないので肥大とも古いとも言わない", () => {
+    expect(
+      tableMaintenanceHints({ row_estimate: null, dead_rows: 50000, last_analyze_at: null }, NOW),
+    ).toEqual({ bloated: false, deadRatio: null, staleStats: false });
+  });
+
+  it("行数が少ない表は統計が古くても指摘せず、大きい表は 7 日超 / 未実行で指摘する", () => {
+    expect(
+      tableMaintenanceHints({ row_estimate: 10, dead_rows: 0, last_analyze_at: null }, NOW).staleStats,
+    ).toBe(false);
+    expect(
+      tableMaintenanceHints({ row_estimate: 5000, dead_rows: 0, last_analyze_at: null }, NOW).staleStats,
+    ).toBe(true);
+    expect(
+      tableMaintenanceHints({ row_estimate: 5000, dead_rows: 0, last_analyze_at: at(8) }, NOW).staleStats,
+    ).toBe(true);
+    expect(
+      tableMaintenanceHints({ row_estimate: 5000, dead_rows: 0, last_analyze_at: at(6) }, NOW).staleStats,
+    ).toBe(false);
   });
 });

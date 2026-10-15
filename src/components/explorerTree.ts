@@ -184,6 +184,44 @@ export function splitTableKey(
   return first;
 }
 
+// --- 種別の絞り込みと並べ替え (#1629) ---
+
+/** スキーマツリーの種別絞り込み。検索 (`matchers`) とは独立で、両方が効く。 */
+export type ExplorerKindFilter = "all" | "tables" | "views" | "routines";
+
+export const EXPLORER_KIND_FILTERS: readonly ExplorerKindFilter[] = ["all", "tables", "views", "routines"];
+
+/**
+ * テーブル / ビューの並べ替え。`name` は取得順 (バックエンドが名前順で返す) のまま、
+ * `rows` は推定行数の多い順 (推定の無いものは末尾、同数は取得順)。
+ */
+export type ExplorerTableSort = "name" | "rows";
+
+export const EXPLORER_TABLE_SORTS: readonly ExplorerTableSort[] = ["name", "rows"];
+
+/** 保存値や任意の文字列を `ExplorerTableSort` へ整える (不正値は既定の `name`)。 */
+export function parseExplorerTableSort(value: unknown): ExplorerTableSort {
+  return value === "rows" ? "rows" : "name";
+}
+
+/** 推定行数の多い順に並べ替えた配列を返す (`name` なら同じ配列をそのまま返す)。安定ソート。 */
+export function sortByRowEstimate<T>(
+  items: readonly T[],
+  sort: ExplorerTableSort,
+  nameOf: (item: T) => string,
+  estimateOf: (name: string) => number | null | undefined,
+): readonly T[] {
+  if (sort === "name") return items;
+  return items
+    .map((item, i) => ({ item, i, est: estimateOf(nameOf(item)) }))
+    .sort((a, b) => {
+      const ea = a.est ?? -1;
+      const eb = b.est ?? -1;
+      return eb - ea || a.i - b.i;
+    })
+    .map((x) => x.item);
+}
+
 /** 見出し行の種別。 */
 export type ExplorerHeaderGroup =
   | "favorites"
@@ -212,7 +250,7 @@ export type ExplorerRow = ExplorerRowBase &
   (
     | { kind: "header"; group: ExplorerHeaderGroup; count: number | null }
     | { kind: "loading" }
-    | { kind: "empty"; message: "databases" | "tables" | "columns" | "loadFailed" }
+    | { kind: "empty"; message: "databases" | "tables" | "columns" | "loadFailed" | "filtered" }
     | { kind: "quick"; ref: TableRef; variant: "favorite" | "recent" }
     | { kind: "db"; db: string; open: boolean }
     | {
@@ -275,6 +313,10 @@ export interface ExplorerRowsInput {
   partition: (db: string, tables: string[], objects: SchemaObject[] | undefined) => ExplorerDatabaseGroups;
   /** ルーチン / トリガーなどの定義を開ける (= そのグループを出す) か。 */
   showObjects: boolean;
+  /** 種別の絞り込み (省略は `all`)。 */
+  kindFilter?: ExplorerKindFilter;
+  /** テーブル / ビューの並べ替え (省略は `name`)。 */
+  tableSort?: ExplorerTableSort;
   favorites: readonly TableRef[];
   recent: readonly TableRef[];
   rowEstimate: (db: string, tbl: string) => number | null | undefined;
@@ -302,6 +344,8 @@ const OBJECT_GROUP_ORDER: readonly SchemaObjectKind[] = [
 export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
   const { query: q, schemaFiltered, matchers } = input;
   const searching = q.length > 0;
+  const kindFilter = input.kindFilter ?? "all";
+  const tableSort = input.tableSort ?? "name";
   const rows: ExplorerRow[] = [];
 
   // 削除済みテーブルの行を出さない。DB 一覧が読めていてその DB が無い、または DB の
@@ -358,13 +402,32 @@ export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
         if (!schemaFiltered && input.showObjects) pushObjects(rows, db, dbKey, groups.objects);
         continue;
       }
-      const visibleTables = groups.tables.filter(
-        (tbl) => !schemaFiltered || dbNameHit || (matchers?.table(db, tbl) ?? false),
-      );
-      const visibleViews = groups.views.filter(
-        (v) => !schemaFiltered || dbNameHit || (matchers?.table(db, v.name) ?? false),
-      );
-      if (showTablesHeader(groups) && visibleTables.length > 0) {
+      const groupsStart = rows.length;
+      const showTables = kindFilter === "all" || kindFilter === "tables";
+      const showViews = kindFilter === "all" || kindFilter === "views";
+      const showRoutines = kindFilter === "all" || kindFilter === "routines";
+      const visibleTables = !showTables
+        ? []
+        : sortByRowEstimate(
+            groups.tables.filter(
+              (tbl) => !schemaFiltered || dbNameHit || (matchers?.table(db, tbl) ?? false),
+            ),
+            tableSort,
+            (tbl) => tbl,
+            (tbl) => input.rowEstimate(db, tbl),
+          );
+      const visibleViews = !showViews
+        ? []
+        : sortByRowEstimate(
+            groups.views.filter(
+              (v) => !schemaFiltered || dbNameHit || (matchers?.table(db, v.name) ?? false),
+            ),
+            tableSort,
+            (v) => v.name,
+            (name) => input.rowEstimate(db, name),
+          );
+      // 絞り込み中は「テーブル」見出しを出さない (1 グループしか出ないので情報が増えない)。
+      if (showTablesHeader(groups) && visibleTables.length > 0 && kindFilter === "all") {
         rows.push({
           key: `hdr:tables:${db}`,
           depth: 1,
@@ -386,7 +449,13 @@ export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
         });
       }
       for (const v of visibleViews) pushTable(input, rows, db, v.name, v, dbKey, dbNameHit);
-      if (!schemaFiltered && input.showObjects) pushObjects(rows, db, dbKey, groups.objects);
+      if (!schemaFiltered && input.showObjects) {
+        pushObjects(rows, db, dbKey, groups.objects, objectKindsFor(showViews, showRoutines));
+      }
+      // 絞り込みの結果このデータベースに何も出なかったときは、空であることを示す。
+      if (kindFilter !== "all" && rows.length === groupsStart) {
+        rows.push({ key: `ph:filtered:${db}`, depth: 1, parent: dbKey, kind: "empty", message: "filtered" });
+      }
     }
   }
 
@@ -394,9 +463,20 @@ export function buildExplorerRows(input: ExplorerRowsInput): ExplorerRow[] {
   return rows;
 }
 
-function pushObjects(rows: ExplorerRow[], db: string, dbKey: string, objects: readonly SchemaObject[]): void {
+/** 種別の絞り込みで出す「その他オブジェクト」の種別。ビューは `groups.objects` に残る分も対象。 */
+function objectKindsFor(showViews: boolean, showRoutines: boolean): readonly SchemaObjectKind[] {
+  return OBJECT_GROUP_ORDER.filter((k) => (VIEW_KINDS.has(k) ? showViews : showRoutines));
+}
+
+function pushObjects(
+  rows: ExplorerRow[],
+  db: string,
+  dbKey: string,
+  objects: readonly SchemaObject[],
+  kinds: readonly SchemaObjectKind[] = OBJECT_GROUP_ORDER,
+): void {
   if (objects.length === 0) return;
-  for (const kind of OBJECT_GROUP_ORDER) {
+  for (const kind of kinds) {
     const items = objects.filter((o) => o.kind === kind);
     if (items.length === 0) continue;
     rows.push({

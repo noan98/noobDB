@@ -148,6 +148,15 @@ export function workspaceCommandItems(
       run: () => actions.toggleBottomPanel("health"),
     });
   }
+  // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。
+  items.push({
+    id: "nav:perf",
+    group: "navigation",
+    label: t("perfTitle"),
+    icon: "clock",
+    keywords: "performance perf latency timing measure パフォーマンス 計測 遅い 所要時間",
+    run: () => actions.toggleBottomPanel("perf"),
+  });
   // 影響分析 (#1027)。対象はパネル内のフォームで決めるので接続だけを要求する。
   if (ctx.sessionId) {
     items.push({
