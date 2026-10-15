@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -6,9 +6,11 @@ import {
   Controls,
   Handle,
   MiniMap,
+  Panel,
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getNodesBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -34,6 +36,9 @@ import {
   worstSeverity,
   type PlanNode,
 } from "./explainPlan";
+import { erExportGeometry } from "./ERDiagramView";
+import { ImageExportButton } from "./ImageExportButton";
+import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -192,6 +197,7 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
   const isDark = useIsDarkTheme();
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<PlanFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -237,26 +243,61 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     [isDark],
   );
 
+  // 全景エクスポート (#1628): 現在のズーム/パンに依存せず、ノード外接矩形を等倍で収める。
+  const buildExportCapture = useCallback(() => {
+    const viewport = wrapRef.current?.querySelector(".react-flow__viewport") as HTMLElement | null;
+    if (!viewport || nodes.length === 0) {
+      throw new Error("plan graph is not rendered");
+    }
+    const { width, height, tx, ty, scale } = erExportGeometry(getNodesBounds(nodes));
+    const style: Partial<CSSStyleDeclaration> = {
+      width: `${width}px`,
+      height: `${height}px`,
+      transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+    };
+    return { viewport, width, height, style };
+  }, [nodes]);
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      defaultEdgeOptions={defaultEdgeOptions}
-      nodesConnectable={false}
-      nodesFocusable={false}
-      edgesFocusable={false}
-      fitView
-      minZoom={0.1}
-      colorMode={isDark ? "dark" : "light"}
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-      <Controls showInteractive={false} />
-      <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
-    </ReactFlow>
+    <Box ref={wrapRef} w="100%" h="100%">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
+        nodesConnectable={false}
+        nodesFocusable={false}
+        edgesFocusable={false}
+        fitView
+        minZoom={0.1}
+        colorMode={isDark ? "dark" : "light"}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+        <Controls showInteractive={false} />
+        <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
+        <Panel position="top-right">
+          <ImageExportButton
+            filenameBase="explain_plan"
+            makePng={(opts) => {
+              const c = buildExportCapture();
+              return elementToPngBlob(c.viewport, {
+                width: c.width,
+                height: c.height,
+                style: c.style,
+                ...opts,
+              });
+            }}
+            makeSvg={() => {
+              const c = buildExportCapture();
+              return elementToSvgBytes(c.viewport, { width: c.width, height: c.height, style: c.style });
+            }}
+          />
+        </Panel>
+      </ReactFlow>
+    </Box>
   );
 }
 
