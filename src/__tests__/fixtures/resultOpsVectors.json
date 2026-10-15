@@ -258,7 +258,34 @@
     {"name": "filter_contains_ignores_case_sensitive_flag", "note": "caseSensitive が付いても contains は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "contains", "value": "TOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
     {"name": "filter_starts_with_ignores_case_sensitive_flag", "note": "caseSensitive が付いても startsWith は大小無視のまま。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "startsWith", "value": "tOK", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [0, 1, 2]},
     {"name": "filter_equals_case_sensitive_non_ascii", "note": "非 ASCII (Ä/ä) も caseSensitive の equals は大小区別。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "Ärger", "value2": "", "nullMode": "any", "caseSensitive": true}], "sort": [], "expected": [4]},
-    {"name": "filter_equals_insensitive_non_ascii", "note": "非 ASCII (Ä/ä) は大小無視の equals で両方一致。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "ÄRGER", "value2": "", "nullMode": "any"}], "sort": [], "expected": [4, 5]}
+    {"name": "filter_equals_insensitive_non_ascii", "note": "非 ASCII (Ä/ä) は大小無視の equals で両方一致。", "kinds": ["string"], "rows": [["Tokyo"], ["tokyo"], ["TOKYO"], [null], ["Ärger"], ["ärger"]], "filters": [{"col": 0, "op": "equals", "value": "ÄRGER", "value2": "", "nullMode": "any"}], "sort": [], "expected": [4, 5]},
+    {
+      "name": "filter_in_values_exact_match",
+      "note": "in (値のチェックリスト, #1628): セルの文字列表現との完全一致 (大小区別)。数値 1 と文字列 \"1\" は同一視。NULL はマッチしない。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": ["Apple", "1"]}],
+      "sort": [],
+      "expected": [0, 4, 6]
+    },
+    {
+      "name": "filter_in_values_bool",
+      "note": "真偽値は true / false の文字列で一致する。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": ["true", "x"]}],
+      "sort": [],
+      "expected": [2, 5]
+    },
+    {
+      "name": "filter_in_empty_values_is_inactive",
+      "note": "values が空の in は絞り込みにならない (非アクティブ)。",
+      "kinds": ["string"],
+      "rows": [["Apple"], ["apple"], ["x"], [null], [1], [true], ["1"]],
+      "filters": [{"col": 0, "op": "in", "value": "", "value2": "", "nullMode": "any", "values": []}],
+      "sort": [],
+      "expected": [0, 1, 2, 3, 4, 5, 6]
+    }
   ],
   "find": [
     {
@@ -418,6 +445,44 @@
       "rows": [[1], [1], [0.1], [1e+21], [1e+21]],
       "col": 0,
       "expected": {"count": 5, "nullCount": 0, "nonNullCount": 5, "distinctCount": 3, "numericCount": 5, "sum": 2e+21, "avg": 400000000000000000000, "min": 0.1, "max": 1e+21, "minLen": 1, "maxLen": 5, "mode": {"value": "1", "count": 2}}
+    }
+  ],
+  "duplicateKeys": [
+    {
+      "name": "dup_composite_key_groups_and_indices",
+      "note": "複合キーの重複: グループ数・行数・畳むと減る行数・上位 (件数降順)・重複行の添字。",
+      "rows": [["a", 1], ["b", 1], ["a", 1], ["a", 1], ["b", 2], ["c", 9]],
+      "cols": [0, 1],
+      "top": 10,
+      "indexLimit": 100,
+      "expected": {"rowCount": 6, "nullKeyRows": 0, "distinctKeys": 4, "groupCount": 1, "duplicateRows": 3, "extraRows": 2, "top": [{"values": ["a", "1"], "count": 3, "firstRow": 0}], "rowIndices": [0, 2, 3], "indicesTruncated": false}
+    },
+    {
+      "name": "dup_single_column_ties_by_first_seen",
+      "note": "同数のグループは先に現れた順。数値 1 と文字列 \"1\" は同一視する。",
+      "rows": [["x"], ["y"], ["y"], ["x"], [1], ["1"]],
+      "cols": [0],
+      "top": 10,
+      "indexLimit": 100,
+      "expected": {"rowCount": 6, "nullKeyRows": 0, "distinctKeys": 3, "groupCount": 3, "duplicateRows": 6, "extraRows": 3, "top": [{"values": ["x"], "count": 2, "firstRow": 0}, {"values": ["y"], "count": 2, "firstRow": 1}, {"values": ["1"], "count": 2, "firstRow": 4}], "rowIndices": [0, 1, 2, 3, 4, 5], "indicesTruncated": false}
+    },
+    {
+      "name": "dup_null_keys_are_skipped_and_separators_do_not_collide",
+      "note": "キー列に NULL を含む行は対象外。区切りに見える文字を含む値でも別のキーになる。",
+      "rows": [[null, "x"], [null, "x"], ["a:1", "b"], ["a", "1:b"]],
+      "cols": [0, 1],
+      "top": 10,
+      "indexLimit": 100,
+      "expected": {"rowCount": 4, "nullKeyRows": 2, "distinctKeys": 2, "groupCount": 0, "duplicateRows": 0, "extraRows": 0, "top": [], "rowIndices": [], "indicesTruncated": false}
+    },
+    {
+      "name": "dup_top_and_index_limits",
+      "note": "上位件数と行添字は上限で打ち切る (総数は数え続ける)。",
+      "rows": [[0], [1], [0], [1], [0], [1], [0], [1], [0], [1]],
+      "cols": [0],
+      "top": 1,
+      "indexLimit": 3,
+      "expected": {"rowCount": 10, "nullKeyRows": 0, "distinctKeys": 2, "groupCount": 2, "duplicateRows": 10, "extraRows": 8, "top": [{"values": ["0"], "count": 5, "firstRow": 0}], "rowIndices": [0, 1, 2], "indicesTruncated": true}
     }
   ]
 }

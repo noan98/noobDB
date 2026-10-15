@@ -84,3 +84,35 @@ export function sortIndexes(indexes: readonly IndexInfo[]): IndexInfo[] {
 export function structureTargetLabel(driver: string, target: StructureTarget): string {
   return driver === "sqlite" || !target.database ? target.table : `${target.database}.${target.table}`;
 }
+
+/** 被参照 (逆方向) の外部キー 1 件を表の行にしたもの (#1628)。 */
+export interface StructureIncomingRow {
+  /** 外部キーを持つ参照元 (子) テーブル。 */
+  table: string;
+  /** 参照元の列。 */
+  column: string;
+  /** このテーブル側の参照されている列。 */
+  referencedColumn: string;
+}
+
+/**
+ * `incoming_foreign_keys` の結果を、参照元テーブル → 参照元の列の順に並べる (#1628)。
+ * 自己参照 (参照元がこのテーブル自身) も含めて返す — 影響範囲の確認では見えるべきなので。
+ * 同じ組が重複して返っても 1 行にまとめる。
+ */
+export function structureIncomingRows(incoming: readonly StructureIncomingRow[]): StructureIncomingRow[] {
+  const seen = new Set<string>();
+  const out: StructureIncomingRow[] = [];
+  for (const fk of incoming) {
+    const key = JSON.stringify([fk.table, fk.column, fk.referencedColumn]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ table: fk.table, column: fk.column, referencedColumn: fk.referencedColumn });
+  }
+  return out.sort(
+    (a, b) =>
+      a.table.localeCompare(b.table) ||
+      a.column.localeCompare(b.column) ||
+      a.referencedColumn.localeCompare(b.referencedColumn),
+  );
+}

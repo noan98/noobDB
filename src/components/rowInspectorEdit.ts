@@ -127,6 +127,24 @@ export function rowChangedSince(base: CellValue[], current: CellValue[], columnC
   return false;
 }
 
+/**
+ * 固定した行と現在の行を列ごとに比べ、値が異なる列を true にする (#1628)。NULL は NULL
+ * 同士のときだけ等しく、それ以外は文字列表現で比べる (`rowChangedSince` と同じ規則)。
+ */
+export function differingColumns(pinned: CellValue[], current: CellValue[], columnCount: number): boolean[] {
+  const out = new Array<boolean>(columnCount).fill(false);
+  for (let i = 0; i < columnCount; i++) {
+    const a = pinned[i] ?? null;
+    const b = current[i] ?? null;
+    if (a === null || b === null) {
+      out[i] = a !== b;
+    } else {
+      out[i] = String(a) !== String(b);
+    }
+  }
+  return out;
+}
+
 /** 変更差分と、その中の検証エラー。 */
 export interface InspectorEditResult {
   /** 元の値から変わった編集可能な列だけ。値は生の入力文字列。 */

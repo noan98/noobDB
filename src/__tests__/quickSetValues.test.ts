@@ -166,3 +166,43 @@ describe("editIsNoop (クイックセットの無変更判定)", () => {
     expect(editIsNoop("NULL", col("a", "VARCHAR"), "")).toBe(false);
   });
 });
+
+describe("上の行と同じ値 (#1628)", () => {
+  const above = (
+    column: Column,
+    aboveValue: Parameters<typeof quickSetOptions>[0]["aboveValue"],
+    m = null as TableColumnInfo | null,
+  ) => quickSetOptions({ column, meta: m, now: NOW, aboveValue }).find((o) => o.id === "above");
+
+  it("aboveValue が無い (先頭行・マスク中) ときは出さない", () => {
+    expect(above(col("c", "VARCHAR(10)"), undefined)).toBeUndefined();
+  });
+  it("直前の行の値を手で打つ生文字列として返す", () => {
+    expect(above(col("c", "VARCHAR(10)"), "A01")?.value).toBe("A01");
+    expect(above(col("n", "INT"), 42)?.value).toBe("42");
+    expect(above(col("b", "BOOLEAN"), true)?.value).toBe("true");
+  });
+  it("NULL は NULL 化の指示になり、NOT NULL 列では無効化される", () => {
+    expect(above(col("c", "TEXT"), null)?.value).toBe("NULL");
+    expect(above(col("c", "TEXT"), null)?.disabledReason).toBeUndefined();
+    expect(above(col("c", "TEXT"), null, meta("c", false))?.disabledReason).toBe("editInvalidNotNull");
+  });
+  it("文字列の NULL は区別できないので無効化する", () => {
+    expect(above(col("c", "TEXT"), "null")?.disabledReason).toBe("gridQuickSetAboveAmbiguous");
+  });
+  it("得られた値は既存の検証 (validateCellInput) をそのまま通る / 弾かれる", () => {
+    const o = above(col("d", "DATE"), "2024-03-05");
+    expect(validateCellInput(o?.value ?? "", "DATE", true)).toBeNull();
+    const bad = above(col("n", "INT"), "abc");
+    expect(validateCellInput(bad?.value ?? "", "INT", true)).not.toBeNull();
+  });
+  it("BIT(postgres) では他の候補と同様に他の型別候補は出ないが、上の行は出る", () => {
+    const opts = quickSetOptions({
+      column: col("b", "BIT(3)"),
+      now: NOW,
+      driver: "postgres",
+      aboveValue: "101",
+    });
+    expect(opts.map((o) => o.id)).toEqual(["null", "above"]);
+  });
+});

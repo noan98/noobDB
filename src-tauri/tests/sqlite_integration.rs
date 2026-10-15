@@ -3188,9 +3188,18 @@ async fn sqlite_profile_column_via_command_layer() {
     let state = t::AppState::default();
     let sid = state.insert(session).await;
 
-    let p = t::profile_column_inner(&state, &sid, "main", "profile_t", "score", false, None)
-        .await
-        .expect("profile numeric column");
+    let p = t::profile_column_inner(
+        &state,
+        &sid,
+        "main",
+        "profile_t",
+        "score",
+        false,
+        None,
+        None,
+    )
+    .await
+    .expect("profile numeric column");
     assert!(p.numeric);
     assert_eq!(p.total_count, t::Value::UInt(5));
     assert_eq!(p.non_null_count, t::Value::UInt(4));
@@ -3212,9 +3221,18 @@ async fn sqlite_profile_column_via_command_layer() {
     assert_eq!(p.histogram.last().map(|b| b.upper), Some(10.0));
 
     // SQLite は近似 DISTINCT を持たないので正確値に縮退し、理由を残す。
-    let approx = t::profile_column_inner(&state, &sid, "main", "profile_t", "tag", true, Some(1))
-        .await
-        .expect("profile text column");
+    let approx = t::profile_column_inner(
+        &state,
+        &sid,
+        "main",
+        "profile_t",
+        "tag",
+        true,
+        Some(1),
+        None,
+    )
+    .await
+    .expect("profile text column");
     assert!(!approx.numeric);
     assert!(approx.histogram.is_empty());
     assert!(!approx.distinct_approximate);
@@ -3226,18 +3244,76 @@ async fn sqlite_profile_column_via_command_layer() {
     assert_eq!(approx.top_values[0].value, t::Value::String("a".into()));
     assert_eq!(approx.top_values[0].count, t::Value::UInt(3));
 
+    // 標本モード (#1628): 100% 以上は全件扱い、小さい率でも集計は通り、標本の印が付く。
+    let full_equiv = t::profile_column_inner(
+        &state,
+        &sid,
+        "main",
+        "profile_t",
+        "score",
+        false,
+        None,
+        Some(100.0),
+    )
+    .await
+    .expect("100% is the full table");
+    assert_eq!(full_equiv.sample_percent, None);
+    assert_eq!(full_equiv.total_count, t::Value::UInt(5));
+    let sampled = t::profile_column_inner(
+        &state,
+        &sid,
+        "main",
+        "profile_t",
+        "score",
+        false,
+        None,
+        Some(50.0),
+    )
+    .await
+    .expect("sampled profile");
+    assert_eq!(sampled.sample_percent, Some(50.0));
+    assert!(sampled.notes.contains(&"sampled".to_string()));
+    match sampled.total_count {
+        t::Value::UInt(n) => assert!(n <= 5, "sample cannot exceed the table: {n}"),
+        ref other => panic!("unexpected count: {other:?}"),
+    }
+    assert!(matches!(
+        t::profile_column_inner(
+            &state,
+            &sid,
+            "main",
+            "profile_t",
+            "score",
+            false,
+            None,
+            Some(0.0)
+        )
+        .await,
+        Err(t::AppError::InvalidInput(_))
+    ));
+
     // 2^53 を超える値は丸めずに文字列で届く (from_*_lossless 経由)。
-    let big = t::profile_column_inner(&state, &sid, "main", "profile_t", "big", false, None)
+    let big = t::profile_column_inner(&state, &sid, "main", "profile_t", "big", false, None, None)
         .await
         .expect("profile bigint column");
     assert_eq!(big.max_value, t::Value::String("9007199254740993".into()));
 
     assert!(matches!(
-        t::profile_column_inner(&state, &sid, "main", "profile_t", "nope", false, None).await,
+        t::profile_column_inner(&state, &sid, "main", "profile_t", "nope", false, None, None).await,
         Err(t::AppError::InvalidInput(_))
     ));
     assert!(matches!(
-        t::profile_column_inner(&state, "nope", "main", "profile_t", "score", false, None).await,
+        t::profile_column_inner(
+            &state,
+            "nope",
+            "main",
+            "profile_t",
+            "score",
+            false,
+            None,
+            None
+        )
+        .await,
         Err(t::AppError::SessionNotFound(_))
     ));
 

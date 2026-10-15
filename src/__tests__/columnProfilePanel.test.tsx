@@ -328,3 +328,42 @@ describe("ColumnProfilePanel 列の解除と走行中の応答 (#1594)", () => {
     expect(screen.queryByText(t("profileTotal"))).not.toBeInTheDocument();
   });
 });
+
+describe("ColumnProfilePanel 標本モード (#1628)", () => {
+  const base = {
+    data_type: "int",
+    total_count: 100,
+    non_null_count: 100,
+    null_count: 0,
+    distinct_count: 5,
+    distinct_approximate: false,
+    min_value: null,
+    max_value: null,
+    top_values: [],
+    histogram: [],
+  };
+
+  it("抽出率を選ぶと標本つきで集計し、標本の注記を出す", async () => {
+    vi.mocked(api.profileColumn)
+      .mockResolvedValueOnce({ ...base, notes: [], sample_percent: null } as never)
+      .mockResolvedValueOnce({ ...base, notes: ["sampled"], sample_percent: 1 } as never);
+    renderWithProviders(
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="postgres"
+        target={{ database: "public", table: "orders", column: "id" }}
+        onSelectColumn={() => {}}
+      />,
+    );
+    await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(1));
+    expect(api.profileColumn).toHaveBeenLastCalledWith("s1", "public", "orders", "id", false);
+    expect(screen.queryByTestId("profile-sample-note")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(t("profileSampleLabel")), { target: { value: "1" } });
+    await waitFor(() => expect(api.profileColumn).toHaveBeenCalledTimes(2));
+    expect(api.profileColumn).toHaveBeenLastCalledWith("s1", "public", "orders", "id", false, null, 1);
+    expect(await screen.findByTestId("profile-sample-note")).toHaveTextContent("1%");
+    // 標本の注記は情報帯で出し、警告の縮退メッセージには混ぜない。
+    expect(screen.queryByText(t("profileNoteSampled"))).not.toBeInTheDocument();
+  });
+});

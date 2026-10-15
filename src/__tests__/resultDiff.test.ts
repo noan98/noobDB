@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CellValue } from "../api/tauri";
-import { diffResultRows } from "../resultDiff";
+import { diffResultRows, removedPrevRows, changedRowIndexSet } from "../resultDiff";
 
 // Helper: a single-PK table where column 0 is the key.
 const PK = [0];
@@ -191,5 +191,43 @@ describe("diffResultRows の配列確保 (出力は変えない)", () => {
     ]);
     expect([...d.addedRows]).toEqual([1]);
     expect(d.removedCount).toBe(1);
+  });
+});
+
+describe("removedPrevRows / changedRowIndexSet (#1628)", () => {
+  const prev: CellValue[][] = [
+    [1, "a"],
+    [2, "b"],
+    [3, "c"],
+  ];
+  it("今回に無い PK の前回行を前回の順で返す", () => {
+    const next: CellValue[][] = [
+      [2, "b"],
+      [4, "d"],
+    ];
+    expect(removedPrevRows(prev, next, [0])).toEqual([
+      [1, "a"],
+      [3, "c"],
+    ]);
+  });
+  it("PK が無ければ空、limit で打ち切る", () => {
+    expect(removedPrevRows(prev, [], [])).toEqual([]);
+    expect(removedPrevRows(prev, [], [0], 2)).toHaveLength(2);
+  });
+  it("複合 PK でも曖昧にならない", () => {
+    const p: CellValue[][] = [
+      [1, 2, "x"],
+      [12, null, "y"],
+    ];
+    expect(removedPrevRows(p, [[1, 2, "x"]], [0, 1])).toEqual([[12, null, "y"]]);
+  });
+  it("変化行と追加行の行位置集合を返す", () => {
+    const next: CellValue[][] = [
+      [1, "a"],
+      [2, "B"],
+      [5, "e"],
+    ];
+    const diff = diffResultRows(prev, next, [0], 2);
+    expect([...changedRowIndexSet(diff, next.length)].sort()).toEqual([1, 2]);
   });
 });

@@ -7,7 +7,18 @@ import { Tooltip } from "./Tooltip";
 import { Button } from "./ui";
 import { Icon, ICON_SIZES } from "./Icon";
 import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
-import { blobToBytes, copyPngToClipboard, saveImageBytes } from "./imageExport";
+import {
+  blobToBytes,
+  copyPngToClipboard,
+  EXPORT_BACKGROUNDS,
+  EXPORT_SCALES,
+  resolvePngExportOptions,
+  saveImageBytes,
+  type ExportBackground,
+  type ExportScale,
+  type PngExportOptions,
+} from "./imageExport";
+import { usePersistedImageExportPrefs } from "./imageExportPrefs";
 
 /**
  * チャート/ER 図の画像エクスポート用ボタン (#643)。クリックでメニュー
@@ -17,8 +28,11 @@ import { blobToBytes, copyPngToClipboard, saveImageBytes } from "./imageExport";
  * パスを得てバックエンドの `write_binary_file` で書き出す。
  */
 interface Props {
-  /** PNG の Blob を生成する (背景・ピクセル比は呼び出し側で指定)。 */
-  makePng: () => Promise<Blob>;
+  /**
+   * PNG の Blob を生成する。メニューで選んだ倍率と背景色が `opts` で渡る (#1628) ので、
+   * 呼び出し側は `elementToPngBlob` へそのまま転送する。
+   */
+  makePng: (opts: PngExportOptions) => Promise<Blob>;
   /** SVG のバイト列を生成する。 */
   makeSvg: () => Promise<Uint8Array>;
   /** 保存ファイル名のベース (拡張子なし)。 */
@@ -59,6 +73,9 @@ export function ImageExportButton({
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [busy, setBusy] = useState(false);
+  // 倍率と背景色 (#1628)。選んだ値は次回以降も使う。
+  const [prefs, setPrefs] = usePersistedImageExportPrefs();
+  const pngOptions = () => resolvePngExportOptions(prefs.scale, prefs.background);
 
   const openMenu = () => {
     const r = btnRef.current?.getBoundingClientRect();
@@ -70,7 +87,7 @@ export function ImageExportButton({
     try {
       const path = await pickPath(filenameBase, ext);
       if (!path) return;
-      const bytes = ext === "png" ? await blobToBytes(await makePng()) : await makeSvg();
+      const bytes = ext === "png" ? await blobToBytes(await makePng(pngOptions())) : await makeSvg();
       await saveImageBytes(path, bytes);
       toast.success(t("imageExportSaved", { path }));
     } catch (e) {
@@ -83,7 +100,7 @@ export function ImageExportButton({
   const handleCopy = async () => {
     setBusy(true);
     try {
-      const ok = await copyPngToClipboard(await makePng());
+      const ok = await copyPngToClipboard(await makePng(pngOptions()));
       if (ok) toast.success(t("imageExportCopied"));
       else toast.error(t("imageExportCopyFailed"));
     } catch (e) {
@@ -93,11 +110,31 @@ export function ImageExportButton({
     }
   };
 
+  // 現在の選択には先頭に ✓ を付ける (メニューにチェック表示が無いため)。
+  const mark = (selected: boolean, label: string) => `${selected ? "✓ " : "   "}${label}`;
   const items: ContextMenuEntry[] = [
     { label: t("imageExportPng"), onSelect: () => void handleSave("png") },
     { label: t("imageExportSvg"), onSelect: () => void handleSave("svg") },
     { separator: true },
     { label: t("imageExportCopy"), onSelect: () => void handleCopy() },
+    { separator: true },
+    {
+      label: t("imageExportScale", { scale: prefs.scale }),
+      title: t("imageExportScaleTitle"),
+      items: EXPORT_SCALES.map((scale: ExportScale) => ({
+        label: mark(prefs.scale === scale, `${scale}x`),
+        onSelect: () => setPrefs({ ...prefs, scale }),
+      })),
+    },
+    {
+      label: t("imageExportBackground", { background: t(`imageExportBg_${prefs.background}`) }),
+      title: t("imageExportBackgroundTitle"),
+      items: EXPORT_BACKGROUNDS.map((background: ExportBackground) => ({
+        label: mark(prefs.background === background, t(`imageExportBg_${background}`)),
+        onSelect: () => setPrefs({ ...prefs, background }),
+        ...(background === "white" ? { title: t("imageExportBgWhiteHint") } : {}),
+      })),
+    },
   ];
 
   return (

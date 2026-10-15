@@ -23,6 +23,19 @@ struct Vectors {
     find: Vec<FindCase>,
     #[serde(rename = "columnStats")]
     column_stats: Vec<StatsCase>,
+    #[serde(rename = "duplicateKeys")]
+    duplicate_keys: Vec<DuplicateCase>,
+}
+
+#[derive(Deserialize)]
+struct DuplicateCase {
+    name: String,
+    rows: Vec<Vec<t::Value>>,
+    cols: Vec<usize>,
+    top: usize,
+    #[serde(rename = "indexLimit")]
+    index_limit: usize,
+    expected: Json,
 }
 
 #[derive(Deserialize)]
@@ -134,6 +147,22 @@ fn column_stats_match_the_js_implementation() {
     assert!(!v.column_stats.is_empty());
     for c in v.column_stats {
         let got = serde_json::to_value(t::column_stats(&c.rows, c.col)).expect("serializes");
+        assert!(
+            json_eq(&got, &c.expected),
+            "{}: {got} != {}",
+            c.name,
+            c.expected
+        );
+    }
+}
+
+#[test]
+fn duplicate_keys_match_the_js_implementation() {
+    let v = vectors();
+    assert!(!v.duplicate_keys.is_empty());
+    for c in v.duplicate_keys {
+        let got = serde_json::to_value(t::duplicate_keys(&c.rows, &c.cols, c.top, c.index_limit))
+            .expect("serializes");
         assert!(
             json_eq(&got, &c.expected),
             "{}: {got} != {}",

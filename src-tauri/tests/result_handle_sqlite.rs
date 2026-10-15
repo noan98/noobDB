@@ -136,6 +136,7 @@ async fn retained_rows_answer_sort_filter_find_and_export_like_the_database() {
             value2: String::new(),
             null_mode: t::NullMode::Any,
             case_sensitive: false,
+            values: Vec::new(),
         }],
         String::new(),
     )
@@ -181,6 +182,45 @@ async fn retained_rows_answer_sort_filter_find_and_export_like_the_database() {
     assert_eq!(stats.count, 12_000);
     assert_eq!(stats.min, Some(1.0));
     assert_eq!(stats.max, Some(12_000.0));
+
+    // 重複キー検出 (#1628): DB の GROUP BY ... HAVING の結果と一致する。主キー列は重複なし。
+    let unique = t::result_duplicate_keys_inner(&state, "r1", vec![0], 5)
+        .await
+        .expect("dup")
+        .expect("handle exists");
+    assert_eq!(unique.group_count, 0);
+    assert_eq!(unique.distinct_keys, 12_000);
+    let dups = t::result_duplicate_keys_inner(&state, "r1", vec![1], 3)
+        .await
+        .expect("dup")
+        .expect("handle exists");
+    let sql_groups = conn
+        .execute(
+            "SELECT COUNT(*), COALESCE(SUM(c), 0) FROM \
+             (SELECT COUNT(*) AS c FROM t WHERE name IS NOT NULL GROUP BY name HAVING COUNT(*) > 1)",
+            None,
+        )
+        .await
+        .expect("sql groups");
+    let as_u64 = |v: &t::Value| match v {
+        t::Value::Int(n) => *n as u64,
+        other => panic!("unexpected value {other:?}"),
+    };
+    assert_eq!(dups.group_count, as_u64(&sql_groups.rows[0][0]));
+    assert_eq!(dups.duplicate_rows, as_u64(&sql_groups.rows[0][1]));
+    assert_eq!(dups.top.len(), 3);
+    assert_eq!(dups.row_indices.len() as u64, dups.duplicate_rows);
+    // 範囲外の列・空の列指定は入力エラー、未知のハンドルは null。
+    assert!(t::result_duplicate_keys_inner(&state, "r1", vec![9], 5)
+        .await
+        .is_err());
+    assert!(t::result_duplicate_keys_inner(&state, "r1", vec![], 5)
+        .await
+        .is_err());
+    assert!(t::result_duplicate_keys_inner(&state, "nope", vec![0], 5)
+        .await
+        .expect("missing handle is not an error")
+        .is_none());
 
     // エクスポート文字列: ハンドル経由と、DB から取り直した行の直接渡しが一致する。
     let columns = vec![

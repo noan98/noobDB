@@ -10,8 +10,10 @@ use crate::state::AppState;
 /// `conn` を直接呼ぶ経路のためクエリ履歴 (`history.sqlite`) は汚さない
 /// (`commands/inspector.rs` と同じ)。`approximate` は使えるドライバ
 /// (PostgreSQL の統計情報) で DISTINCT を
-/// 近似し、全件の `COUNT(DISTINCT)` を避ける。
+/// 近似し、全件の `COUNT(DISTINCT)` を避ける。`sample_percent` (0〜100 の %) を渡すと
+/// 標本モード (#1628) で、その割合の行だけを集計する (数千万行の表で傾向を素早く掴む用)。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // IPC の引数をそのまま受ける (Tauri コマンドは引数を束ねられない)
 pub async fn profile_column(
     session_id: String,
     database: String,
@@ -19,6 +21,7 @@ pub async fn profile_column(
     column: String,
     approximate: bool,
     top_n: Option<u32>,
+    sample_percent: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<ColumnProfile> {
     profile_column_inner(
@@ -29,6 +32,7 @@ pub async fn profile_column(
         &column,
         approximate,
         top_n,
+        sample_percent,
     )
     .await
 }
@@ -37,6 +41,7 @@ pub async fn profile_column(
 /// always-on SQLite integration suite can drive the exact command path
 /// (session lookup + driver dispatch) — same pattern as
 /// `commands::inspector::query_stats_support_inner` (#881).
+#[allow(clippy::too_many_arguments)] // `profile_column` の引数に State を除いて 1:1 で対応させるため束ねない
 pub async fn profile_column_inner(
     state: &AppState,
     session_id: &str,
@@ -45,6 +50,7 @@ pub async fn profile_column_inner(
     column: &str,
     approximate: bool,
     top_n: Option<u32>,
+    sample_percent: Option<f64>,
 ) -> Result<ColumnProfile> {
     let session = state
         .get(session_id)
@@ -58,6 +64,7 @@ pub async fn profile_column_inner(
             column,
             approximate,
             top_n.unwrap_or(DEFAULT_TOP_N),
+            sample_percent,
         )
         .await
 }

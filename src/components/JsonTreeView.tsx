@@ -20,8 +20,11 @@ import { Icon, ICON_SIZES } from "./Icon";
 import {
   childCount,
   childSlice,
+  expandKeysToDepth,
   formatJsonPath,
+  formatJsonPointer,
   isContainer,
+  jsonArrayRowsSql,
   jsonPathSqlExpression,
   jsonPathSqlPredicate,
   jsonPathSqlUpdate,
@@ -218,6 +221,17 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
     [store, toggle, showMore],
   );
 
+  // 深さ指定の一括展開 (#1628)。depth=1 はルートのみ、Infinity は全展開 (コンテナ数は上限あり)。
+  const [expandNote, setExpandNote] = useState(false);
+  const expandToDepth = (depth: number) => {
+    const { keys, truncated } = expandKeysToDepth(root, depth);
+    if (keys.size === 0) keys.add(rootKey);
+    setExpanded(keys);
+    setSearchCollapsed(new Set());
+    setExpandNote(truncated);
+  };
+  const [depthInput, setDepthInput] = useState("");
+
   const treeRef = useRef<HTMLDivElement>(null);
   const { onKeyDown } = useRovingFocus(treeRef, "[role=treeitem]", {
     orientation: "vertical",
@@ -242,6 +256,12 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
       ? jsonPathSqlUpdate(driver!, update.tableRef, columnName!, selected.path, selected.node, update.where)
       : null;
 
+  // 配列ノードを行に展開する SELECT (#1628)。テーブル参照が分かるときだけ出す。
+  const sqlRows =
+    selected && canSql && update
+      ? jsonArrayRowsSql(driver!, update.tableRef, columnName!, selected.path, selected.node, update.where)
+      : null;
+
   return (
     <chakra.div display="flex" flexDirection="column" gap="2" flex="1" minH="0">
       <chakra.div display="flex" alignItems="center" gap="2">
@@ -263,6 +283,41 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
               : search.truncated
                 ? t("jsonTreeSearchTruncated", { count: search.paths.length })
                 : t("jsonTreeSearchCount", { count: search.paths.length })}
+          </chakra.span>
+        )}
+      </chakra.div>
+
+      <chakra.div display="flex" alignItems="center" flexWrap="wrap" gap="1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => expandToDepth(Number.POSITIVE_INFINITY)}
+        >
+          {t("jsonTreeExpandAll")}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => expandToDepth(1)}>
+          {t("jsonTreeCollapseAll")}
+        </Button>
+        <chakra.label display="inline-flex" alignItems="center" gap="1" textStyle="caption">
+          {t("jsonTreeExpandDepth")}
+          <Input
+            type="number"
+            min={1}
+            max={99}
+            value={depthInput}
+            width="72px"
+            aria-label={t("jsonTreeExpandDepthAria")}
+            onChange={(e) => {
+              setDepthInput(e.target.value);
+              const n = Number.parseInt(e.target.value, 10);
+              if (Number.isFinite(n) && n >= 1) expandToDepth(n + 1);
+            }}
+          />
+        </chakra.label>
+        {expandNote && (
+          <chakra.span textStyle="caption" role="status">
+            {t("jsonTreeExpandTruncated")}
           </chakra.span>
         )}
       </chakra.div>
@@ -318,6 +373,15 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
               type="button"
               size="sm"
               variant="ghost"
+              onClick={() => copy(formatJsonPointer(selected.path))}
+            >
+              <Icon name="link" size={ICON_SIZES.sm} />
+              {t("jsonTreeCopyPointer")}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
               onClick={() =>
                 copy(
                   selected.node.kind === "string"
@@ -340,6 +404,14 @@ export function JsonTreeView({ root, columnName, driver, update }: Props) {
                 <Icon name="filter" size={ICON_SIZES.sm} />
                 {t("jsonTreeCopySqlWhere")}
               </Button>
+            )}
+            {sqlRows && (
+              <Tooltip label={t("jsonTreeCopySqlRowsTitle")}>
+                <Button type="button" size="sm" variant="ghost" onClick={() => copy(sqlRows)}>
+                  <Icon name="query" size={ICON_SIZES.sm} />
+                  {t("jsonTreeCopySqlRows")}
+                </Button>
+              </Tooltip>
             )}
             {update && selected.path.length > 0 && canSql && (
               <Tooltip

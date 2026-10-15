@@ -124,6 +124,72 @@ pub struct StreamStatsSnapshot {
     pub num_max: Vec<Option<f64>>,
     /// 全列が同一の行が 2 行以上あるか。追跡上限を超えたら `null` (不明)。
     pub duplicate_rows: Option<bool>,
+    /// 列ごとの非 NULL 値の近似ユニーク数 (HyperLogLog、#1628)。標準誤差は約 1.6%。
+    /// 非 NULL 値が無い列は 0。
+    pub distinct_estimates: Vec<u64>,
+}
+
+/// HyperLogLog のレジスタ数の指数 (レジスタ数 = 2^P)。P = 12 で 1 列 4KB、標準誤差は
+/// 約 1.04 / sqrt(4096) = 1.6%。
+const HLL_P: u32 = 12;
+const HLL_M: usize = 1 << HLL_P;
+
+/// 近似ユニーク数を数える HyperLogLog (64bit ハッシュ版)。ストリームで 1 列ずつ持ち、
+/// 追加のクエリ無しで「ユニーク値が行数にほぼ一致する列 (候補キー)」や「ほぼ一定の列」を
+/// 見分けるために使う。小さい濃度は線形カウントに切り替えて精度を保つ。
+#[derive(Debug, Clone)]
+struct Hll {
+    regs: Box<[u8]>,
+}
+
+impl Hll {
+    fn new() -> Self {
+        Self {
+            regs: vec![0u8; HLL_M].into_boxed_slice(),
+        }
+    }
+
+    fn insert(&mut self, hash: u64) {
+        let idx = (hash >> (64 - HLL_P)) as usize;
+        // 先頭の P ビットを添字に使い、残りの先頭ゼロ数 + 1 を順位にする。番兵ビットで
+        // 残りが全ゼロでも順位が 64 - P + 1 に収まる。
+        let rest = (hash << HLL_P) | (1u64 << (HLL_P - 1));
+        let rank = rest.leading_zeros() as u8 + 1;
+        if let Some(reg) = self.regs.get_mut(idx) {
+            if rank > *reg {
+                *reg = rank;
+            }
+        }
+    }
+
+    fn estimate(&self) -> u64 {
+        let m = HLL_M as f64;
+        let alpha = 0.7213 / (1.0 + 1.079 / m);
+        let mut sum = 0.0f64;
+        let mut zeros = 0u32;
+        for &r in self.regs.iter() {
+            sum += 2f64.powi(-i32::from(r));
+            if r == 0 {
+                zeros += 1;
+            }
+        }
+        let raw = alpha * m * m / sum;
+        // 小さい濃度は空レジスタ数からの線形カウントのほうが正確 (標準的な補正)。
+        let est = if raw <= 2.5 * m && zeros > 0 {
+            m * (m / f64::from(zeros)).ln()
+        } else {
+            raw
+        };
+        est.round() as u64
+    }
+}
+
+/// セル値を 64bit にハッシュする (`hash_values` と同じ等価性: 型タグで区別し Int(1) と
+/// Float(1.0) は同一視)。
+fn hash_cell(v: &Value) -> u64 {
+    let mut h = FastHasher::new(0xA076_1D64_78BD_642F);
+    hash_value(v, &mut h);
+    h.finish()
 }
 
 #[derive(Debug, Default)]
@@ -135,6 +201,8 @@ pub struct StreamStats {
     seen: HashSet<u128>,
     duplicate: bool,
     dup_overflow: bool,
+    /// 列ごとの HyperLogLog (非 NULL 値が初めて来た列だけ確保する)。
+    hll: Vec<Option<Hll>>,
 }
 
 impl StreamStats {
@@ -147,6 +215,7 @@ impl StreamStats {
             self.null_counts.resize(width, 0);
             self.num_min.resize(width, None);
             self.num_max.resize(width, None);
+            self.hll.resize_with(width, || None);
         }
     }
 
@@ -157,6 +226,9 @@ impl StreamStats {
                 match v {
                     Value::Null => self.null_counts[i] += 1,
                     other => {
+                        self.hll[i]
+                            .get_or_insert_with(Hll::new)
+                            .insert(hash_cell(other));
                         if let Some(n) = value_to_number(other) {
                             let lo = &mut self.num_min[i];
                             if lo.map_or(true, |m| n < m) {
@@ -196,6 +268,11 @@ impl StreamStats {
             } else {
                 Some(false)
             },
+            distinct_estimates: self
+                .hll
+                .iter()
+                .map(|h| h.as_ref().map_or(0, Hll::estimate))
+                .collect(),
         }
     }
 }
@@ -375,6 +452,52 @@ fn hash_number<H: Hasher>(n: f64, h: &mut H) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn distinct_of(stats: &StreamStats, col: usize) -> u64 {
+        stats.snapshot().distinct_estimates[col]
+    }
+
+    #[test]
+    fn hll_estimates_small_cardinalities_almost_exactly() {
+        let mut st = StreamStats::new();
+        // 3 種類の値を 1000 回ずつ: 近似ユニーク数は 3。
+        let rows: Vec<Vec<Value>> = (0..3000)
+            .map(|i| vec![Value::Int(i % 3), Value::String("same".into())])
+            .collect();
+        st.observe(&rows);
+        assert_eq!(distinct_of(&st, 0), 3);
+        assert_eq!(distinct_of(&st, 1), 1);
+    }
+
+    #[test]
+    fn hll_estimate_is_within_a_few_percent_for_a_unique_column() {
+        let mut st = StreamStats::new();
+        let n = 100_000i64;
+        let rows: Vec<Vec<Value>> = (0..n).map(|i| vec![Value::Int(i)]).collect();
+        st.observe(&rows);
+        let est = distinct_of(&st, 0) as f64;
+        let err = (est - n as f64).abs() / n as f64;
+        assert!(err < 0.05, "estimate {est} too far from {n}");
+    }
+
+    #[test]
+    fn hll_ignores_nulls_and_treats_int_and_float_alike() {
+        let mut st = StreamStats::new();
+        st.observe(&[
+            vec![Value::Null, Value::Int(1)],
+            vec![Value::Null, Value::Float(1.0)],
+            vec![Value::Null, Value::Int(2)],
+        ]);
+        assert_eq!(distinct_of(&st, 0), 0, "all-NULL column");
+        assert_eq!(distinct_of(&st, 1), 2, "1 and 1.0 are the same value");
+    }
+
+    #[test]
+    fn hll_snapshot_has_one_entry_per_column() {
+        let mut st = StreamStats::new();
+        st.observe(&[vec![Value::Int(1), Value::Null, Value::Int(3)]]);
+        assert_eq!(st.snapshot().distinct_estimates.len(), 3);
+    }
 
     fn r(n: i64) -> Vec<Vec<Value>> {
         (0..n).map(|i| vec![Value::Int(i)]).collect()

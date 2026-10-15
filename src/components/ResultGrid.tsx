@@ -127,7 +127,13 @@ import {
 } from "./typedEditor";
 import {
   type CondFormatMode,
+  type ThresholdRule,
+  DEFAULT_THRESHOLD_RULE,
+  THRESHOLD_OPS,
+  THRESHOLD_TONES,
+  matchesThreshold,
   type NumericStats,
+  type HeatPalette,
   toNumber,
   computeNumericStats,
   normalize,
@@ -136,7 +142,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
-import { accentFill, ACCENT_FILL_STOPS, readableInk, useIsDarkTheme } from "../colorScale";
+import { accentFill, ACCENT_FILL_STOPS, rampLegendStops, readableInk, useIsDarkTheme } from "../colorScale";
 import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
@@ -144,6 +150,7 @@ import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { DuplicateKeysModal } from "./DuplicateKeysModal";
 import { GridReplaceModal } from "./GridReplaceModal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -164,6 +171,7 @@ import {
   countEditedCells,
   countEditedRows,
   editIsNoop,
+  previewSavedValue,
   hasAmbiguousIdentity,
   isBinaryColumnType,
   isEditableColumnType,
@@ -176,7 +184,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
-import { parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
+import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import {
   clientQuickFilter,
@@ -193,7 +201,7 @@ import {
   type ServerSort,
   type ServerSortDirection,
 } from "./serverBrowse";
-import { diffResultRows, rowDiffFor } from "../resultDiff";
+import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
 import {
   type SelectionSummary,
@@ -209,7 +217,7 @@ import {
   nullRatesFromCounts,
   nullRatePercentOf,
 } from "./gridStats";
-import { numericStatsFromStream, streamStatsFor } from "./streamStats";
+import { distinctHintFor, numericStatsFromStream, streamStatsFor } from "./streamStats";
 import { shouldUseHandleForGrid, resultHandleFor, HANDLE_FIND_LIMIT } from "./resultHandle";
 import {
   buildHandleRequest,
@@ -221,6 +229,9 @@ import {
   compareStringCells,
   globalCellIncludes,
   isColumnFilterActive,
+  distinctValueOptions,
+  isServerInSafeValue,
+  type DistinctValueOption,
   type ColumnFilter,
   type FilterNullMode,
   type FilterOp,
@@ -234,6 +245,8 @@ import {
   FIND_DEBOUNCE_MIN_ROWS,
   FIND_DEBOUNCE_MS,
   buildFindKeySet,
+  findHitRowSet,
+  intersectRowAllow,
   computeFindMatches,
   findMatchKey,
   nextMatchIndex,
@@ -570,6 +583,11 @@ export const GRID_CSS: SystemStyleObject = {
     transitionTimingFunction: "var(--ease-out)",
   },
   "& .cell-cf-value": { position: "relative" },
+  // 閾値ルール (#1628): 絶対値の基準に該当したセルを意味色で塗る (相対 min-max ではない)。
+  "& .cell-cf-threshold": { display: "block", width: "100%", borderRadius: "var(--radius-sm)" },
+  "& .cell-cf-threshold.is-danger": { background: "var(--error-subtle)", color: "var(--error-text)" },
+  "& .cell-cf-threshold.is-warning": { background: "var(--warning-subtle)", color: "var(--warning-text)" },
+  "& .cell-cf-threshold.is-success": { background: "var(--success-subtle)", color: "var(--success-text)" },
   "& .cell-bool": { fontWeight: 600 },
   "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
   "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
@@ -1029,6 +1047,23 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-edit-input.is-invalid": {
     borderColor: "var(--error-solid)",
     boxShadow: "var(--focus-ring-danger)",
+  },
+  // 編集中の値が実際にどう保存されるかの注記 (#1628)。エラーが無いときだけ出る。
+  "& .cell-edit-preview": {
+    position: "absolute",
+    top: "calc(100% + 2px)",
+    left: "calc(var(--space-1-5) * -1)",
+    zIndex: 5,
+    maxWidth: "36ch",
+    padding: "var(--space-0-75) var(--space-1-75)",
+    fontSize: "var(--text-xs)",
+    color: "var(--text)",
+    background: "var(--bg-elevated, var(--bg-input))",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
+    whiteSpace: "normal",
+    pointerEvents: "none",
   },
   "& .cell-edit-error": {
     position: "absolute",
@@ -1722,6 +1757,203 @@ const FIND_TOGGLE_CSS: SystemStyleObject = {
  * contains/equals/starts/ends; numeric columns expose = / > / < / range; both
  * carry a NULL gate (include / only / exclude).
  */
+const GHOST_ROWS_SHOWN = 200;
+
+/**
+ * 再実行差分で「前回にあって今回に無い」行を、取り消し線の淡い行として並べる (#1628)。
+ * 元の位置には差し込めない (行位置が選択・編集の添字に使われる) ので、グリッドの直下に
+ * まとめて出す。表示専用で、選択・編集・コピーの対象にはならない。
+ */
+function RemovedRowsGhost({
+  columns,
+  rows,
+  maskedCols,
+}: {
+  columns: string[];
+  rows: CellValue[][];
+  maskedCols: ReturnType<typeof resolveMaskedColumns>;
+}) {
+  const t = useT();
+  return (
+    <Box
+      borderTopWidth="1px"
+      borderColor="app.border"
+      px="2"
+      py="1.5"
+      data-testid="removed-rows-ghost"
+      aria-label={t("diffGhostTitle", { count: rows.length })}
+      role="group"
+    >
+      <chakra.div textStyle="caption" mb="1">
+        {t("diffGhostTitle", { count: rows.length })}
+        {rows.length >= GHOST_ROWS_SHOWN ? ` — ${t("diffGhostCapped", { limit: GHOST_ROWS_SHOWN })}` : ""}
+      </chakra.div>
+      <chakra.table fontSize="xs" fontFamily="mono" opacity={0.6} textDecoration="line-through">
+        <thead>
+          <tr>
+            {columns.map((c, ci) => (
+              <chakra.th key={ci} textAlign="left" px="2" fontWeight="600">
+                {c}
+              </chakra.th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri}>
+              {columns.map((_, ci) => (
+                <chakra.td key={ci} px="2" whiteSpace="nowrap">
+                  {maskedCols?.[ci]
+                    ? MASK_PLACEHOLDER
+                    : r[ci] === null || r[ci] === undefined
+                      ? "NULL"
+                      : String(r[ci])}
+                </chakra.td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </chakra.table>
+    </Box>
+  );
+}
+
+/**
+ * 値のチェックリスト (#1628)。取得済み行の DISTINCT 値を出現数つきで並べ、選んだ値の
+ * 集合を `in` 条件として列フィルタに載せる。ENUM・ステータス・真偽値のような少数の値を
+ * 持つ列で「A または B または C」を一度に絞るための入口。
+ */
+function ValueChecklist({
+  options,
+  selected,
+  disabled,
+  onChange,
+  onApplyToServer,
+  serverSafe,
+}: {
+  options: DistinctValueOption[];
+  selected: string[];
+  disabled: boolean;
+  onChange: (values: string[]) => void;
+  /** table タブのとき、選んだ値で全件 (サーバ側 WHERE) を絞る。 */
+  onApplyToServer?: () => void;
+  /** 選択値がすべてサーバ側 `in` に往復できるか (カンマ・改行・前後空白を含まない)。 */
+  serverSafe: boolean;
+}) {
+  const t = useT();
+  const sel = new Set(selected);
+  const toggle = (value: string) => {
+    const next = new Set(sel);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    // 出現順 (options の並び) で保持して、再描画でも安定させる。
+    onChange(options.filter((o) => next.has(o.value)).map((o) => o.value));
+  };
+  return (
+    <Box display="flex" flexDirection="column" gap="0.75" data-testid="value-checklist">
+      <chakra.span fontSize="var(--text-xs)" color="app.textMuted">
+        {t("gridFilterValuesLabel")}
+      </chakra.span>
+      <Box
+        role="group"
+        aria-label={t("gridFilterValuesLabel")}
+        display="flex"
+        flexDirection="column"
+        gap="0.5"
+        maxH="40"
+        overflowY="auto"
+      >
+        {options.map((o) => (
+          <chakra.label
+            key={o.value}
+            display="flex"
+            alignItems="center"
+            gap="1.5"
+            fontSize="var(--text-sm)"
+            cursor={disabled ? "default" : "pointer"}
+          >
+            <chakra.input
+              type="checkbox"
+              checked={sel.has(o.value)}
+              disabled={disabled}
+              onChange={() => toggle(o.value)}
+            />
+            <chakra.span flex="1" minW="0" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+              {o.value === "" ? t("gridFilterValuesEmpty") : o.value}
+            </chakra.span>
+            <chakra.span textStyle="numeric" color="app.textMuted" fontSize="var(--text-xs)">
+              {o.count.toLocaleString()}
+            </chakra.span>
+          </chakra.label>
+        ))}
+      </Box>
+      {onApplyToServer && (
+        <Tooltip label={serverSafe ? t("gridFilterValuesServerTitle") : t("gridFilterValuesServerUnsafe")}>
+          <Button variant="secondary" size="sm" px="2" disabled={!serverSafe} onClick={onApplyToServer}>
+            {t("gridFilterValuesServerApply")}
+          </Button>
+        </Tooltip>
+      )}
+    </Box>
+  );
+}
+
+/** 閾値の数値入力。入力中は文字列で持ち、数値として解釈できたときだけ確定する (#1628)。 */
+function ThresholdValueInput({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState(String(value));
+  return (
+    <chakra.input
+      css={FILTER_FIELD_CSS}
+      inputMode="decimal"
+      value={draft}
+      aria-label={t("gridCondThresholdValue")}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = toNumber(e.target.value);
+        if (n !== null) onCommit(n);
+      }}
+    />
+  );
+}
+
+/**
+ * ヒートマップ / データバーの色の凡例 (#1628)。min と max の間を細いグラデーションバーで示し、
+ * 数値ラベルは取得済み行の範囲。色は `rampLegendStops` (セルへ塗る色と同じ補間) から作る。
+ */
+function CondFormatLegend({
+  mode,
+  palette,
+  range,
+}: {
+  mode: "bar" | "heat";
+  palette: HeatPalette;
+  range: NumericStats | null;
+}) {
+  const isDark = useIsDarkTheme();
+  const background =
+    mode === "heat"
+      ? `linear-gradient(to right, ${rampLegendStops(palette, isDark)
+          .map((s) => `${s.color} ${Math.round(s.t * 100)}%`)
+          .join(", ")})`
+      : `linear-gradient(to right, transparent, ${accentFill(ACCENT_FILL_STOPS.dataBar)})`;
+  return (
+    <Box display="flex" flexDirection="column" gap="0.5" data-testid="cond-format-legend">
+      <Box
+        h="2"
+        borderRadius="var(--radius-sm)"
+        borderWidth="1px"
+        borderColor="app.border"
+        style={{ background }}
+      />
+      <Box display="flex" justifyContent="space-between" textStyle="caption">
+        <chakra.span>{range ? fmtStatNum(range.min) : "—"}</chakra.span>
+        <chakra.span>{range ? fmtStatNum(range.max) : "—"}</chakra.span>
+      </Box>
+    </Box>
+  );
+}
+
 function ColumnFilterMenu({
   columnName,
   kind,
@@ -1734,6 +1966,9 @@ function ColumnFilterMenu({
   onFormatModeChange,
   paletteKey,
   onPaletteChange,
+  thresholdRule,
+  onThresholdChange,
+  legendRange,
   onHideColumn,
   onShowAllColumns,
   onResetLayout,
@@ -1741,6 +1976,10 @@ function ColumnFilterMenu({
   pinned,
   onPin,
   onShowStats,
+  valueOptions,
+  onSelectColumn,
+  onFindDuplicates,
+  onCopyColumnValues,
   footerEnabled,
   onToggleFooter,
   serverSortDir,
@@ -1764,6 +2003,11 @@ function ColumnFilterMenu({
   onFormatModeChange: (mode: CondFormatMode) => void;
   paletteKey: string;
   onPaletteChange: (key: string) => void;
+  /** 閾値ルール (#1628)。モードが threshold のときに編集する。 */
+  thresholdRule: ThresholdRule;
+  onThresholdChange: (rule: ThresholdRule) => void;
+  /** 凡例に出す列の min/max (取得済み行の範囲)。算出できなければ null。 */
+  legendRange: NumericStats | null;
   /** 列の表示/並び替え操作。未指定なら該当セクションを出さない。 */
   onHideColumn?: () => void;
   onShowAllColumns?: () => void;
@@ -1775,6 +2019,14 @@ function ColumnFilterMenu({
   onPin?: (side: false | "left" | "right") => void;
   /** 「列の統計」ポップオーバーを開く。未指定なら項目を出さない (#524)。 */
   onShowStats?: () => void;
+  /** 値のチェックリストの候補 (取得済み行の DISTINCT 値)。null なら出さない (#1628)。 */
+  valueOptions?: DistinctValueOption[] | null;
+  /** 列全体を矩形選択に乗せる (#1628)。未指定なら項目を出さない。 */
+  onSelectColumn?: () => void;
+  /** 重複キー検出ダイアログを開く (#1628)。未指定なら項目を出さない。 */
+  onFindDuplicates?: () => void;
+  /** 列の値を表示中の行・表示順でコピーする (#1628)。 */
+  onCopyColumnValues?: () => void;
   /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
   footerEnabled?: boolean;
   onToggleFooter?: () => void;
@@ -1919,10 +2171,11 @@ function ColumnFilterMenu({
               {t(o.key)}
             </option>
           ))}
+          {draft.op === "in" && <option value="in">{t("gridFilterOpIn")}</option>}
         </chakra.select>
       </chakra.label>
 
-      {draft.op === "between" ? (
+      {draft.op === "in" ? null : draft.op === "between" ? (
         <Box display="flex" gap="1.5">
           <chakra.input
             css={FILTER_FIELD_CSS}
@@ -1956,6 +2209,24 @@ function ColumnFilterMenu({
           placeholder={t("gridFilterValuePlaceholder")}
           aria-label={label}
           onChange={(e) => apply({ ...draft, value: e.target.value })}
+        />
+      )}
+
+      {valueOptions && valueOptions.length > 0 && (
+        <ValueChecklist
+          options={valueOptions}
+          selected={draft.op === "in" ? (draft.values ?? []) : []}
+          disabled={valuesDisabled}
+          onChange={(values) => apply({ ...draft, op: "in", value: "", value2: "", values })}
+          onApplyToServer={
+            onApplyServerFilter && draft.op === "in" && (draft.values ?? []).length > 0
+              ? () => {
+                  onApplyServerFilter("in", (draft.values ?? []).join(","));
+                  onClose();
+                }
+              : undefined
+          }
+          serverSafe={(draft.values ?? []).every(isServerInSafeValue)}
         />
       )}
 
@@ -2102,6 +2373,7 @@ function ColumnFilterMenu({
             <option value="off">{t("gridCondFormatOff")}</option>
             <option value="bar">{t("gridCondFormatBar")}</option>
             <option value="heat">{t("gridCondFormatHeat")}</option>
+            <option value="threshold">{t("gridCondFormatThreshold")}</option>
           </chakra.select>
           {formatMode === "heat" && (
             <chakra.select
@@ -2117,6 +2389,49 @@ function ColumnFilterMenu({
                 </option>
               ))}
             </chakra.select>
+          )}
+          {formatMode === "threshold" && (
+            <Box display="flex" gap="1" alignItems="center">
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={thresholdRule.op}
+                aria-label={t("gridCondThresholdOp")}
+                onChange={(e) =>
+                  onThresholdChange({ ...thresholdRule, op: e.target.value as ThresholdRule["op"] })
+                }
+              >
+                {THRESHOLD_OPS.map((op) => (
+                  <option key={op} value={op}>
+                    {op}
+                  </option>
+                ))}
+              </chakra.select>
+              <ThresholdValueInput
+                value={thresholdRule.value}
+                onCommit={(value) => onThresholdChange({ ...thresholdRule, value })}
+              />
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={thresholdRule.tone}
+                aria-label={t("gridCondThresholdTone")}
+                onChange={(e) =>
+                  onThresholdChange({ ...thresholdRule, tone: e.target.value as ThresholdRule["tone"] })
+                }
+              >
+                {THRESHOLD_TONES.map((tone) => (
+                  <option key={tone} value={tone}>
+                    {t(`gridCondTone_${tone}` as Parameters<typeof t>[0])}
+                  </option>
+                ))}
+              </chakra.select>
+            </Box>
+          )}
+          {(formatMode === "bar" || formatMode === "heat") && (
+            <CondFormatLegend
+              mode={formatMode}
+              palette={HEAT_PALETTES[paletteKey] ?? HEAT_PALETTES[DEFAULT_HEAT_PALETTE]}
+              range={legendRange}
+            />
           )}
         </chakra.label>
       )}
@@ -2187,6 +2502,9 @@ function ColumnFilterMenu({
         onShowAllColumns ||
         onResetLayout ||
         onShowStats ||
+        onSelectColumn ||
+        onFindDuplicates ||
+        onCopyColumnValues ||
         onToggleFooter ||
         onMoveColumn) && (
         <Box
@@ -2212,6 +2530,45 @@ function ColumnFilterMenu({
                 }}
               >
                 {t("gridColumnStats")}
+              </Button>
+            )}
+            {onSelectColumn && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onSelectColumn();
+                  onClose();
+                }}
+              >
+                {t("gridSelectColumn")}
+              </Button>
+            )}
+            {onFindDuplicates && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onFindDuplicates();
+                  onClose();
+                }}
+              >
+                {t("gridFindDuplicates")}
+              </Button>
+            )}
+            {onCopyColumnValues && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onCopyColumnValues();
+                  onClose();
+                }}
+              >
+                {t("gridCopyColumnValues")}
               </Button>
             )}
             {onToggleFooter && (
@@ -2315,9 +2672,34 @@ function ColumnFilterMenu({
 }
 
 /** 統計ポップオーバーの 1 行 (ラベル + 値)。 */
-function StatRow({ label, value, title }: { label: string; value: ReactNode; title?: string }) {
+function StatRow({
+  label,
+  value,
+  title,
+  onActivate,
+  activateValue,
+}: {
+  label: string;
+  value: ReactNode;
+  title?: string;
+  /** `onActivate` のスクリーンリーダー向け名称に入れる値の文字列。 */
+  activateValue?: string;
+  /** 指定すると値がボタンになり、押すとその値での絞り込みへ移れる (#1628)。 */
+  onActivate?: () => void;
+}) {
+  const t = useT();
   const valueSpan = (
     <chakra.span
+      {...(onActivate
+        ? {
+            as: "button" as const,
+            type: "button" as const,
+            onClick: onActivate,
+            "aria-label": t("gridStatFilterByValue", { value: activateValue ?? "" }),
+            cursor: "pointer",
+            _hover: { textDecoration: "underline" },
+          }
+        : {})}
       fontSize="var(--text-sm)"
       fontFamily="mono"
       textStyle="numeric"
@@ -2412,10 +2794,13 @@ function ColumnStatsMenu({
   onSetFooterFn,
   resultId,
   colIdx,
+  onFilterByValue,
 }: {
   columnName: string;
   kind: CellKind;
   anchor: DOMRect;
+  /** 最頻値・最小値・最大値の押下で、その値による絞り込みへ移る (#1628)。 */
+  onFilterByValue?: (value: CellValue) => void;
   /** 取得済み (在メモリ) のこの列の全値。 */
   values: CellValue[];
   /**
@@ -2526,6 +2911,18 @@ function ColumnStatsMenu({
       window.removeEventListener("resize", onClose);
     };
   }, [onClose]);
+
+  // 値の押下 → 絞り込み (#1628)。NULL は対象外 (`null` を渡さない)。適用後はポップオーバーを閉じて結果を見せる。
+  const filterAction = (v: CellValue): { onActivate?: () => void; activateValue?: string } =>
+    onFilterByValue && v !== null && v !== undefined
+      ? {
+          activateValue: String(v),
+          onActivate: () => {
+            onFilterByValue(v);
+            onClose();
+          },
+        }
+      : {};
 
   const runFull = async () => {
     if (!statsRequest || !onRunStatsQuery || loadingFull) return;
@@ -2647,8 +3044,8 @@ function ColumnStatsMenu({
           <StatRow label={t("gridDistinctLabel")} value={<CountUp value={stats.distinctCount} />} />
           {numeric ? (
             <>
-              <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} />
-              <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} />
+              <StatRow label={t("gridMinLabel")} value={fmtStatNum(stats.min)} {...filterAction(stats.min)} />
+              <StatRow label={t("gridMaxLabel")} value={fmtStatNum(stats.max)} {...filterAction(stats.max)} />
               <StatRow label={t("gridAvgLabel")} value={fmtStatNum(stats.avg)} />
               <StatRow label={t("gridSumLabel")} value={fmtStatNum(stats.sum)} />
             </>
@@ -2661,6 +3058,7 @@ function ColumnStatsMenu({
                   label={t("gridModeLabel")}
                   value={`${stats.mode.value} (${stats.mode.count})`}
                   title={stats.mode.value}
+                  {...filterAction(stats.mode.value)}
                 />
               )}
             </>
@@ -2734,11 +3132,13 @@ function ColumnStatsMenu({
                 label={t("gridMinLabel")}
                 value={fmtStatCell(full.min)}
                 title={fmtStatCell(full.min)}
+                {...filterAction(full.min)}
               />
               <StatRow
                 label={t("gridMaxLabel")}
                 value={fmtStatCell(full.max)}
                 title={fmtStatCell(full.max)}
+                {...filterAction(full.max)}
               />
               {numeric && (
                 <>
@@ -2872,6 +3272,8 @@ interface GridHeaderCellProps {
   filterOpen: boolean;
   /** NULL 率 (%)。ミニバーを出さないときは null。 */
   nullPct: number | null;
+  /** 近似ユニーク数の一言 (#1628)。ミニバーのツールチップに添える。 */
+  distinctHint?: string | null;
   rowCount: number;
   /** 現在の列幅 (px)。リサイズハンドルの aria-valuenow に使う。 */
   colSize: number;
@@ -2907,6 +3309,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
   isDragSource,
   filterOpen,
   nullPct,
+  distinctHint,
   rowCount,
   colSize,
   t,
@@ -3010,11 +3413,12 @@ const GridHeaderCell = memo(function GridHeaderCell({
           // ストップを増やさないよう、共有 Tooltip ではなくセルと同じ
           // 委譲ツールチップ (hover 専用) に載せる。読み上げ向けの情報は
           // `aria-label` が持つ。
-          const label = t("gridNullBarAria", {
+          const nullLabel = t("gridNullBarAria", {
             column: colName,
             percent: nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0),
             count: rowCount.toLocaleString(),
           });
+          const label = distinctHint ? `${nullLabel} / ${distinctHint}` : nullLabel;
           return (
             <div className="th-nullbar" role="img" aria-label={label} {...bindTooltip(label)}>
               <div className="th-nullbar-fill" style={{ transform: `scaleX(${nullPct / 100})` }} />
@@ -3247,6 +3651,26 @@ const GridRow = memo(function GridRow({
     const editError = isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
       hasPending && !isEditingHere && validateEdit ? validateEdit(colIdx, pendingValue) : null;
+    // 「実際に保存される値」の注記 (#1628)。型別エディタ (日付・真偽値の選択) は入力が
+    // 正規化済みなので出さない。
+    const editPreview = (() => {
+      // 開いた直後 (入力が開始時の値のまま) は何も変えていないので出さない。
+      if (!isEditingHere || editError || typedEditor || editing!.value === editing!.start) return null;
+      const col = columns[colIdx];
+      if (!col) return null;
+      const pv = previewSavedValue(editing!.value, col);
+      if (!pv) return null;
+      switch (pv.kind) {
+        case "null":
+          return t("editPreviewNull");
+        case "empty":
+          return t("editPreviewEmpty");
+        case "edgeSpace":
+          return t("editPreviewEdgeSpace");
+        case "normalized":
+          return t("editPreviewNormalized", { value: pv.value, raw: pv.raw });
+      }
+    })();
     // Original display string — used both for the input's
     // default contents and to detect "user typed it back to
     // the original" (which clears the pending edit).
@@ -3360,10 +3784,16 @@ const GridRow = memo(function GridRow({
               />
             )}
             <ValueDatalist id={valuePickerListId} values={editPickerValues} />
-            {editError && (
+            {editError ? (
               <div className="cell-edit-error" role="alert">
                 {t(editError)}
               </div>
+            ) : (
+              editPreview && (
+                <div className="cell-edit-preview" role="status">
+                  {editPreview}
+                </div>
+              )
             )}
           </div>
         ) : cellMasked ? (
@@ -3505,6 +3935,8 @@ export const DataGrid = memo(function DataGrid({
   changedCells,
   changedColumns,
   addedRowIndices,
+  rowAllowSet,
+  onFindDuplicates,
   globalFilter,
   editable = false,
   editableColumns,
@@ -3572,6 +4004,10 @@ export const DataGrid = memo(function DataGrid({
    * `rows[i]` and resolved through `row.index`, like `changedCells`.
    */
   addedRowIndices?: Set<number>;
+  /** 表示を許可する元の行位置。null/未指定なら制限なし (ヒットのみ / 変化のみ表示, #1628)。 */
+  rowAllowSet?: ReadonlySet<number> | null;
+  /** 列メニューの「重複を検出」(#1628)。結果ハンドル/行を持つ外側が受けてダイアログを開く。 */
+  onFindDuplicates?: (colIdx: number) => void;
   /** Optional global filter string applied across all visible columns. */
   globalFilter?: string;
   /**
@@ -3822,6 +4258,8 @@ export const DataGrid = memo(function DataGrid({
   // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
+  // 閾値ルール (#1628): 列ごとの「値が N を超えたら赤」。
+  const [colThresholds, setColThresholds] = useState<Record<number, ThresholdRule>>({});
   // ダークテーマではヒートマップを「暗→明」の向きへ切り替える (#1187)。
   const isDarkTheme = useIsDarkTheme();
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のうち条件付き書式
@@ -3834,7 +4272,8 @@ export const DataGrid = memo(function DataGrid({
     return columnKinds.map((k, i) => {
       if (k !== "number" && k !== "decimal") return null;
       const mode = colFormats[i] ?? "off";
-      if (mode === "off") return null;
+      // 閾値ルール (#1628) は絶対値で判定するので min/max の走査は要らない。
+      if (mode === "off" || mode === "threshold") return null;
       if (stream) return numericStatsFromStream(stream, i);
       return computeNumericStats(
         (function* () {
@@ -4214,6 +4653,23 @@ export const DataGrid = memo(function DataGrid({
     return columnNullRates(rows, columns.length);
   }, [columnNullBars, rows, columns.length]);
 
+  // 列ヘッダの近似ユニーク数 (#1628)。ストリーム逐次統計の HyperLogLog から、追加のクエリ無しで
+  // 「候補キー / 定数列 / 低カーディナリティ」を一言添える。統計が無ければ出さない。
+  const distinctHints = useMemo<(string | null)[] | null>(() => {
+    if (!columnNullBars || rows.length === 0) return null;
+    const stream = streamStatsFor(rows);
+    if (!stream?.distinctEstimates) return null;
+    return columns.map((_, i) => {
+      const h = distinctHintFor(stream, rows.length, i);
+      if (!h) return null;
+      const count = h.estimate.toLocaleString();
+      if (h.kind === "candidateKey") return t("gridDistinctCandidateKey", { count });
+      if (h.kind === "constant") return t("gridDistinctConstant");
+      if (h.kind === "lowCardinality") return t("gridDistinctLow", { count });
+      return t("gridDistinctApprox", { count });
+    });
+  }, [columnNullBars, rows, columns, t]);
+
   // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
   const [dragColId, setDragColId] = useState<string | null>(null);
@@ -4342,7 +4798,20 @@ export const DataGrid = memo(function DataGrid({
             // (上のコメント参照) ため、ここは常に最新値を持つ ref から読む。
             const stats = columnStatsRef.current[i];
             const num = toNumber(v);
-            if (mode === "off" || !stats || num === null) {
+            if (mode === "threshold" && num !== null) {
+              const rule = colThresholds[i] ?? DEFAULT_THRESHOLD_RULE;
+              if (matchesThreshold(num, rule)) {
+                return (
+                  <span
+                    className={`cell-number cell-cf-threshold is-${rule.tone} ${extraClass}`}
+                    {...bindCellTooltip(title)}
+                  >
+                    {display}
+                  </span>
+                );
+              }
+            }
+            if (mode === "off" || mode === "threshold" || !stats || num === null) {
               return (
                 <span className={`cell-number ${extraClass}`} {...bindCellTooltip(title)}>
                   {display}
@@ -4496,6 +4965,7 @@ export const DataGrid = memo(function DataGrid({
     richCellRendering,
     locale,
     colFormats,
+    colThresholds,
     heatPaletteKey,
     maskedCols,
     isDarkTheme,
@@ -4827,6 +5297,15 @@ export const DataGrid = memo(function DataGrid({
   // Column quick-stats popover (#524): which column + the anchor rect of the
   // header control that opened it (reuses the filter icon's rect).
   const [statsMenu, setStatsMenu] = useState<{ colIdx: number; anchor: DOMRect } | null>(null);
+  // 列フィルタ メニューの値チェックリスト (#1628) の候補。文字列・ENUM・真偽値などの
+  // 非数値列で、取得済み行の DISTINCT 値が少ないときだけ出す。メニューを開いている間だけ集計する。
+  const filterValueOptions = useMemo(() => {
+    if (!filterMenu) return null;
+    const kind = columnKinds[filterMenu.colIdx] ?? "string";
+    if (kind === "number" || kind === "decimal" || kind === "binary" || kind === "json") return null;
+    if (maskedCols?.[filterMenu.colIdx]) return null;
+    return distinctValueOptions(rows, filterMenu.colIdx);
+  }, [filterMenu, columnKinds, rows, maskedCols]);
   // 統計ポップオーバーに渡す列の全値 (#1257)。描画のたびに `rows.map` で配列を作り直すと
   // 子の `computeColumnStats` の memo が毎回無効になり、ポップオーバーを開いている間
   // ストリーミング/再描画のたびに全行の頻度集計をやり直していた。開いている列と行配列に
@@ -4995,15 +5474,19 @@ export const DataGrid = memo(function DataGrid({
 
   const tableRows = table.getRowModel().rows;
   const visibleRows = useMemo(() => {
-    if (!handleManual || !handleOrder?.order) return tableRows;
-    // ハンドルの順序は元の行位置 (= core row model の添字) の並び。
-    const out: typeof tableRows = [];
-    for (const i of handleOrder.order) {
-      const r = tableRows[i];
-      if (r) out.push(r);
+    let base: typeof tableRows = tableRows;
+    if (handleManual && handleOrder?.order) {
+      // ハンドルの順序は元の行位置 (= core row model の添字) の並び。
+      const out: typeof tableRows = [];
+      for (const i of handleOrder.order) {
+        const r = tableRows[i];
+        if (r) out.push(r);
+      }
+      base = out;
     }
-    return out;
-  }, [handleManual, handleOrder, tableRows]);
+    // ヒットのみ / 変化のみ表示 (#1628): 並び・フィルタの結果にさらに行の許可集合を掛ける。
+    return rowAllowSet ? base.filter((r) => rowAllowSet.has(r.index)) : base;
+  }, [handleManual, handleOrder, tableRows, rowAllowSet]);
   // Original column indices in their current *display* order (reorder/hide
   // aware). Keyboard navigation steps through this; data lookups use the
   // original index it yields.
@@ -5022,7 +5505,7 @@ export const DataGrid = memo(function DataGrid({
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
-  const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
+  const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter || !!rowAllowSet);
   // Multi-column sort summary: surface a clear-all affordance when more
   // than one sort key is active (single-column sort clears via its own cycle).
   const multiSortActive = enableColumnControls && sorting.length > 1;
@@ -5109,6 +5592,10 @@ export const DataGrid = memo(function DataGrid({
         selectionStats.avg,
         selectionStats.min,
         selectionStats.max,
+        selectionStats.median,
+        selectionStats.q1,
+        selectionStats.q3,
+        selectionStats.distinctCount,
       ].join("|")
     : null;
   const selectionStatsRef = useRef(selectionStats);
@@ -5185,6 +5672,44 @@ export const DataGrid = memo(function DataGrid({
     }
   };
 
+  // 統計ポップオーバーの値 → その値での絞り込み (#1628)。セル右クリックのクイックフィルタと
+  // 同じ 2 経路 (table タブはサーバ側 WHERE、それ以外はクライアント側 ColumnFilter) へ流す。
+  const filterColumnByValue = (colIdx: number, value: CellValue) => {
+    const col = columns[colIdx];
+    if (!col) return;
+    const numeric = isNumericFilterKind(columnKinds[colIdx] ?? "string");
+    if (onSetServerFilter) {
+      onSetServerFilter(col.name, serverQuickFilter(value, "eq", numeric));
+    } else {
+      table
+        .getColumn(String(colIdx))
+        ?.setFilterValue(
+          clientQuickFilter(value, "eq", numeric, rowSqlDriver === "postgres" || rowSqlDriver === "sqlite"),
+        );
+    }
+  };
+  // 列全体の選択 (#1628): 表示中の先頭行〜末尾行を同じ列で結ぶ矩形選択にする。以降は既存の
+  // 一括編集・選択統計・範囲コピー・CSV/JSON コピーの経路がそのまま使える。
+  const selectColumn = (colIdx: number) => {
+    const first = visibleRows[0];
+    const last = visibleRows[visibleRows.length - 1];
+    if (!first || !last) return;
+    setActiveCell({ rowIdx: first.index, colIdx });
+    setSelection({
+      anchor: { rowIdx: first.index, colIdx },
+      focus: { rowIdx: last.index, colIdx },
+    });
+  };
+  // 列の値のコピー (#1628): 絞り込み後の表示中の行を表示順に、改行区切りで 1 列ぶん。
+  const copyColumnValues = (colIdx: number) => {
+    const rowIdxs = visibleRows.map((r) => r.index);
+    if (rowIdxs.length === 0) return;
+    void runCopy(rowIdxs.map((ri) => copyTextAt(ri, colIdx)).join("\n"), {
+      rowIndices: rowIdxs,
+      colIndices: [colIdx],
+    });
+  };
+
   // 「CSV / JSON としてコピー」(#1113) の対象。右クリックしたセルが矩形選択に
   // 含まれていれば選択範囲 (表示順)、そうでなければその 1 行の表示中の全列。
   const copyTargetFor = (rowIdx: number, colIdx: number) => {
@@ -5221,11 +5746,14 @@ export const DataGrid = memo(function DataGrid({
     if (editing || !editable || !onBulkEdit) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text) return;
-    const grid = parseClipboardGrid(text);
-    if (grid.length === 0 || grid[0].length === 0) return;
+    const parsedGrid = parseClipboardGrid(text);
+    if (parsedGrid.length === 0 || parsedGrid[0].length === 0) return;
     e.preventDefault();
+    // 1 行目が列名と一致するときは、その列名で貼り付け先の列を対応付ける (#1628)。
+    const headerMap = detectPasteHeader(parsedGrid, columns);
+    const grid = headerMap ? headerMap.dataGrid : parsedGrid;
 
-    if (grid.length === 1 && grid[0].length === 1 && selectionRect) {
+    if (!headerMap && grid.length === 1 && grid[0].length === 1 && selectionRect) {
       applyValueToCells(
         visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
         visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
@@ -5242,7 +5770,10 @@ export const DataGrid = memo(function DataGrid({
 
     const maxCols = Math.max(...grid.map((r) => r.length));
     const targetRowIndices = visibleRows.slice(anchorVis, anchorVis + grid.length).map((r) => r.index);
-    const targetColIndices = visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+    const targetColIndices = headerMap
+      ? headerMap.targetColIndices
+      : visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+    if (headerMap) toast.info(t("gridPasteHeaderMapped", { matched: headerMap.matched }));
 
     // 表示行を超えた分は、保留の追加行へ積む選択肢を出す (#1539)。
     // 積める可能性があるときは、範囲内の行だけを既存の貼り付け編集に渡す。
@@ -6200,6 +6731,7 @@ export const DataGrid = memo(function DataGrid({
                     isDragSource={dragColId === h.column.id}
                     filterOpen={filterMenu?.colIdx === colIdx}
                     nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
+                    distinctHint={distinctHints?.[colIdx] ?? null}
                     rowCount={nullRates ? rows.length : 0}
                     colSize={h.column.getSize()}
                     t={t}
@@ -6651,28 +7183,40 @@ export const DataGrid = memo(function DataGrid({
                   : 0;
               const scopeNote =
                 selectedCells > 1 ? t("gridQuickSetSelectionNote", { count: selectedCells }) : null;
-              const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
-                (opt) => {
-                  const note = opt.noteKey ? t(opt.noteKey) : null;
-                  const title = opt.disabledReason
-                    ? t(opt.disabledReason)
-                    : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
-                  return {
-                    label: t(opt.labelKey),
-                    title,
-                    disabled: !!opt.disabledReason,
-                    onSelect: () => {
-                      const rk = copyMenu.rowIdx;
-                      const ck = copyMenu.colIdx;
-                      // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
-                      // 確定した瞬間の時計で組み立て直す。
-                      const value = opt.dynamic ? resolveDynamicValue(opt.dynamic, new Date()) : opt.value;
-                      setCopyMenu(null);
-                      applyQuickSet(rk, ck, value);
-                    },
-                  };
-                },
-              );
+              // 同じ列で表示順の直前の行の値 (#1628)。範囲選択の一括設定とは意味が違う
+              // (範囲全体に同じ値を入れる) ので単一セルのときだけ。マスク中は渡さない。
+              const visPos = visibleRows.findIndex((r) => r.index === copyMenu.rowIdx);
+              const aboveRowIdx = selectedCells > 1 || visPos <= 0 ? null : visibleRows[visPos - 1].index;
+              const aboveValue =
+                aboveRowIdx === null || cellMaskedNow(aboveRowIdx, copyMenu.colIdx)
+                  ? undefined
+                  : (rows[aboveRowIdx]?.[copyMenu.colIdx] ?? null);
+              const items = quickSetOptions({
+                column: col,
+                meta,
+                now: new Date(),
+                driver: rowSqlDriver,
+                aboveValue,
+              }).map((opt) => {
+                const note = opt.noteKey ? t(opt.noteKey) : null;
+                const title = opt.disabledReason
+                  ? t(opt.disabledReason)
+                  : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
+                return {
+                  label: t(opt.labelKey),
+                  title,
+                  disabled: !!opt.disabledReason,
+                  onSelect: () => {
+                    const rk = copyMenu.rowIdx;
+                    const ck = copyMenu.colIdx;
+                    // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
+                    // 確定した瞬間の時計で組み立て直す。
+                    const value = opt.dynamic ? resolveDynamicValue(opt.dynamic, new Date()) : opt.value;
+                    setCopyMenu(null);
+                    applyQuickSet(rk, ck, value);
+                  },
+                };
+              });
               // 保留中の編集があるセルだけ、その 1 セルぶんを取り消す導線を足す
               // (Undo は編集履歴全体を 1 手戻すので、狙ったセルだけ戻したいとき用)。
               const rowKey = rowEditKey(rows[copyMenu.rowIdx] ?? [], pkIndices ?? [], copyMenu.rowIdx);
@@ -7026,6 +7570,9 @@ export const DataGrid = memo(function DataGrid({
           }
           paletteKey={heatPaletteKey}
           onPaletteChange={setHeatPaletteKey}
+          thresholdRule={colThresholds[filterMenu.colIdx] ?? DEFAULT_THRESHOLD_RULE}
+          onThresholdChange={(rule) => setColThresholds((prev) => ({ ...prev, [filterMenu.colIdx]: rule }))}
+          legendRange={columnStats[filterMenu.colIdx] ?? null}
           onHideColumn={
             enableColumnControls
               ? () => table.getColumn(String(filterMenu.colIdx))?.toggleVisibility(false)
@@ -7067,6 +7614,16 @@ export const DataGrid = memo(function DataGrid({
                   setStatsMenu({ colIdx, anchor });
                 }
               : undefined
+          }
+          valueOptions={filterValueOptions}
+          onSelectColumn={() => selectColumn(filterMenu.colIdx)}
+          onFindDuplicates={
+            onFindDuplicates && !isColumnMaskedNow(filterMenu.colIdx)
+              ? () => onFindDuplicates(filterMenu.colIdx)
+              : undefined
+          }
+          onCopyColumnValues={
+            isColumnMaskedNow(filterMenu.colIdx) ? undefined : () => copyColumnValues(filterMenu.colIdx)
           }
           footerEnabled={footerEnabled}
           onToggleFooter={enableColumnControls ? toggleFooter : undefined}
@@ -7141,6 +7698,11 @@ export const DataGrid = memo(function DataGrid({
               values={colValues}
               resultId={enableColumnControls ? shouldUseHandleForGrid(rows) : null}
               colIdx={colIdx}
+              onFilterByValue={
+                kind === "binary" || !(onSetServerFilter || enableColumnControls)
+                  ? undefined
+                  : (value) => filterColumnByValue(colIdx, value)
+              }
               statsRequest={statsRequest}
               onRunStatsQuery={statsRequest ? onRunStatsQuery : undefined}
               onExploreColumn={
@@ -7677,6 +8239,20 @@ export const ResultGrid = memo(
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [findWholeCell, setFindWholeCell] = useState(false);
     const [findRegex, setFindRegex] = useState(false);
+    // Find の「ヒットのみ表示」(#1628)。
+    const [findHitsOnly, setFindHitsOnly] = useState(false);
+    // 再実行差分の「変化のみ」(#1628)。
+    const [diffChangedOnly, setDiffChangedOnly] = useState(false);
+    // 重複キー検出 (#1628): ダイアログの対象列と、重複行だけに絞り込む行インデックス。
+    const [dupColIdx, setDupColIdx] = useState<number | null>(null);
+    const [dupRowAllow, setDupRowAllow] = useState<ReadonlySet<number> | null>(null);
+    // 結果の行が入れ替わったら (再実行・編集適用・load-more) 古いインデックスの絞り込みは捨てる。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows の同一性が変わったことのトリガ依存
+    useEffect(() => {
+      setDupRowAllow(null);
+      setDiffChangedOnly(false);
+      setDupColIdx(null);
+    }, [result?.rows]);
     const [findIdx, setFindIdx] = useState<number | null>(null);
     const [findNav, setFindNav] = useState<GridFindNav | null>(null);
     const findSeqRef = useRef(0);
@@ -7806,6 +8382,21 @@ export const ResultGrid = memo(
       () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
       [findResult],
     );
+    // ヒット行だけに絞る許可集合。ハンドル経由で先頭 N 件に打ち切られているときは、
+    // 残りのヒット行を隠してしまうので絞らない。
+    const findRowAllow = useMemo(
+      () =>
+        findHitsOnly &&
+        findOpen &&
+        effectiveFindQuery !== "" &&
+        !findResult.invalidRegex &&
+        findTotal <= findResult.matches.length
+          ? findHitRowSet(findResult.matches)
+          : null,
+      [findHitsOnly, findOpen, effectiveFindQuery, findResult, findTotal],
+    );
+    // ヒットが打ち切られている間は「ヒットのみ表示」を使えない (残りのヒット行まで隠れるため)。
+    const findHitsOnlyBlocked = effectiveFindQuery !== "" && findTotal > findResult.matches.length;
     const findCurrentMatch = findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
 
     const emitFindNav = useCallback((m: GridFindMatch, select: boolean, focusCell: boolean) => {
@@ -8047,6 +8638,24 @@ export const ResultGrid = memo(
       // (全行の突き合わせをやり直さない, #1257)。
       return rowDiffFor(resultRows) ?? diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
     }, [diffHighlightEnabled, diffComparable, streaming, diffPrevRows, resultRows, columns, pkIndices]);
+
+    const diffRowAllow = useMemo(
+      () =>
+        diffChangedOnly && diff?.hasChanges && result ? changedRowIndexSet(diff, result.rows.length) : null,
+      [diffChangedOnly, diff, result],
+    );
+    const rowAllowSet = useMemo(
+      () => intersectRowAllow(intersectRowAllow(findRowAllow, diffRowAllow), dupRowAllow),
+      [findRowAllow, diffRowAllow, dupRowAllow],
+    );
+    // 削除行のゴースト表示 (#1628): 前回にあって今回に無い行 (PK ペア無し)。
+    const ghostRows = useMemo(
+      () =>
+        diff && diff.removedCount > 0 && diffPrevRows && resultRows
+          ? removedPrevRows(diffPrevRows, resultRows, pkIndices, GHOST_ROWS_SHOWN)
+          : [],
+      [diff, diffPrevRows, resultRows, pkIndices],
+    );
 
     // Persist column widths per result shape: same database+table+column set
     // restores saved widths, a different shape falls back to defaults. The
@@ -8628,6 +9237,19 @@ export const ResultGrid = memo(
               onClose={() => setOverflowMenu(null)}
             />
           )}
+          {dupRowAllow && (
+            <Tooltip label={t("dupKeysFilterChipClear")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => setDupRowAllow(null)}
+                aria-label={t("dupKeysFilterChipClear")}
+              >
+                {t("dupKeysFilterChip")} ✕
+              </Button>
+            </Tooltip>
+          )}
           {onToggleDiffHighlight && pkIndices.length > 0 && (
             <Tooltip label={t("diffHighlightTitle")}>
               <Box display="inline-flex" alignItems="center" gap="1.5" paddingLeft="0.5">
@@ -8648,6 +9270,25 @@ export const ResultGrid = memo(
                   />
                   {t("diffHighlightLabel")}
                 </chakra.label>
+                {diff?.hasChanges && (
+                  <chakra.label
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="xs"
+                    whiteSpace="nowrap"
+                    color="app.text"
+                    cursor="pointer"
+                  >
+                    <chakra.input
+                      type="checkbox"
+                      checked={diffChangedOnly}
+                      aria-label={t("diffChangedOnlyAria")}
+                      onChange={(e) => setDiffChangedOnly(e.target.checked)}
+                    />
+                    {t("diffChangedOnlyLabel")}
+                  </chakra.label>
+                )}
                 {diff?.hasChanges && (
                   <chakra.span
                     role="status"
@@ -8778,13 +9419,24 @@ export const ResultGrid = memo(
                   <span>
                     {t("gridMaxLabel")} {fmtStatNum(selSummary.max)}
                   </span>
+                  <span>
+                    {t("gridMedianLabel")} {fmtStatNum(selSummary.median)}
+                  </span>
+                  <span>
+                    {t("gridQuartilesLabel")} {fmtStatNum(selSummary.q1)} / {fmtStatNum(selSummary.q3)}
+                  </span>
                   <chakra.span color="app.textMuted">
                     {t("gridCountLabel")} {selSummary.numericCount.toLocaleString()}
+                  </chakra.span>
+                  <chakra.span color="app.textMuted">
+                    {t("gridSelDistinctLabel")} {selSummary.distinctCount.toLocaleString()}
                   </chakra.span>
                 </>
               ) : (
                 <chakra.span color="app.textMuted">
                   {t("gridSelectionNonNull", { n: selSummary.nonNullCount })}
+                  {" · "}
+                  {t("gridSelDistinctLabel")} {selSummary.distinctCount.toLocaleString()}
                 </chakra.span>
               )}
             </chakra.span>
@@ -9135,6 +9787,24 @@ export const ResultGrid = memo(
                     .*
                   </chakra.button>
                 </Tooltip>
+                <Tooltip
+                  label={
+                    findHitsOnlyBlocked
+                      ? t("gridFindHitsOnlyTruncated", { limit: findResult.matches.length })
+                      : t("gridFindHitsOnlyTitle")
+                  }
+                >
+                  <chakra.button
+                    type="button"
+                    css={FIND_TOGGLE_CSS}
+                    disabled={findHitsOnlyBlocked}
+                    aria-pressed={findHitsOnly && !findHitsOnlyBlocked}
+                    onClick={() => setFindHitsOnly((v) => !v)}
+                    aria-label={t("gridFindHitsOnlyTitle")}
+                  >
+                    <Icon name="filter" size={ICON_SIZES.sm} />
+                  </chakra.button>
+                </Tooltip>
                 <chakra.span
                   fontSize="xs"
                   fontFamily="mono"
@@ -9204,6 +9874,24 @@ export const ResultGrid = memo(
             </motion.div>
           )}
         </AnimatePresence>
+        <AnimatePresence>
+          {dupColIdx !== null && (
+            <DuplicateKeysModal
+              columns={result.columns}
+              rows={result.rows}
+              resultId={resultHandleFor(result.rows)}
+              initialCols={[dupColIdx]}
+              maskedCols={resolveMaskedColumns(
+                result.columns.map((c) => c.name),
+                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns },
+              )}
+              filterActive={dupRowAllow !== null}
+              onShowDuplicates={(idx) => setDupRowAllow(new Set(idx))}
+              onClearFilter={() => setDupRowAllow(null)}
+              onClose={() => setDupColIdx(null)}
+            />
+          )}
+        </AnimatePresence>
         <Box
           ref={containerRef}
           tabIndex={-1}
@@ -9230,6 +9918,8 @@ export const ResultGrid = memo(
             onLookupQuery={editableActive ? onLookupQuery : undefined}
             changedCells={diff?.changedCells}
             addedRowIndices={diff?.addedRows}
+            rowAllowSet={rowAllowSet}
+            onFindDuplicates={streaming ? undefined : setDupColIdx}
             pendingDeleteKeys={pendingDeleteKeys}
             onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
             onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
@@ -9270,6 +9960,16 @@ export const ResultGrid = memo(
             onSetServerFilter={onSetServerFilter}
             emptyMessage={gridEmptyMessage}
           />
+          {ghostRows.length > 0 && result && (
+            <RemovedRowsGhost
+              columns={result.columns.map((c) => c.name)}
+              rows={ghostRows}
+              maskedCols={resolveMaskedColumns(
+                result.columns.map((c) => c.name),
+                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns },
+              )}
+            />
+          )}
           {!paginateMode && loadingMore && (
             <Box
               role="status"

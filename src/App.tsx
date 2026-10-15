@@ -6964,6 +6964,14 @@ export default function App() {
     [patchTab],
   );
 
+  // 行追加モーダルの連続追加モード (#1628): モーダルは閉じず、保留の追加行へ 1 行足すだけ。
+  const addInsertRowKeepOpenForTab = useCallback(
+    (tabId: string, row: PendingInsertRow) => {
+      patchTab(tabId, (tt) => ({ ...tt, pendingInserts: [...(tt.pendingInserts ?? []), row] }));
+    },
+    [patchTab],
+  );
+
   // 貼り付けが表示行を超えた分を、保留の追加行へまとめて積む (#1539)。確定後の流れ
   // (反映時の確認・SQL 生成) は行追加モーダルで足した行と同じ。
   const addInsertRowsForTab = useCallback(
@@ -11579,6 +11587,8 @@ export default function App() {
                         driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                         initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
                         onOpenTable={handleOpenTable}
+                        connectionKey={selectedProfile?.id ?? null}
+                        onInsertSql={handleInsertAdvisorSql}
                         onGenerateDoc={
                           aiAvailable
                             ? (database, tables) => setSchemaDocTarget({ database, tables })
@@ -12484,6 +12494,7 @@ export default function App() {
                     tableColumns={insTab.tableColumns}
                     lookup={sessionId ? lookupForSession(sessionId) : undefined}
                     onConfirm={(row) => addInsertRowForTab(insTab.id, row)}
+                    onAddKeepOpen={(row) => addInsertRowKeepOpenForTab(insTab.id, row)}
                     onCancel={() => {
                       setRowInsertTabId(null);
                       setRowInsertSeed(null);
