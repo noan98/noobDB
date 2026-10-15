@@ -11605,6 +11605,7 @@ export default function App() {
                         driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                         initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
                         onOpenTable={handleOpenTable}
+                        connectionKey={selectedProfile?.id ?? null}
                         onGenerateDoc={
                           aiAvailable
                             ? (database, tables) => setSchemaDocTarget({ database, tables })

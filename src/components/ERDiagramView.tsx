@@ -1,4 +1,12 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -52,7 +60,11 @@ import { errorIllustration } from "./illustrations";
 import { Tooltip, TooltipBubble, useDelegatedTooltip } from "./Tooltip";
 import { Button, Heading, Select } from "./ui";
 import { Spinner } from "./Spinner";
+import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
+import { copyToClipboard } from "./clipboard";
+import { clearErLayout, readErLayout, writeErLayout } from "./erPositions";
 import { ImageExportButton } from "./ImageExportButton";
+import { useToast } from "./Toast";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
 
 /** ER 図の全景エクスポート時に内容の周囲へ取る余白 (px)。 */
@@ -316,6 +328,10 @@ interface ERDiagramViewProps {
    * (AI 利用可のときだけ親が渡す)。選択中のノードのテーブル名を一緒に渡す。
    */
   onGenerateDoc?: (database: string, selectedTables: string[]) => void;
+  /**
+   * ノード位置の保存先を分ける接続の識別子 (プロファイル ID, #1628)。無いときは位置を保存しない。
+   */
+  connectionKey?: string | null;
   onClose: () => void;
 }
 
@@ -325,9 +341,11 @@ function ERDiagramInner({
   initialDatabase,
   onOpenTable,
   onGenerateDoc,
+  connectionKey,
   onClose,
 }: ERDiagramViewProps) {
   const t = useT();
+  const toast = useToast();
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
   const isDark = useIsDarkTheme();
@@ -369,6 +387,8 @@ function ERDiagramInner({
   // 再取得ボタン用のカウンタ (#848)。データベース一覧・グラフ取得のどちらの
   // 失敗でも、これをインクリメントして両 effect を再実行させれば復旧できる。
   const [retryAttempt, setRetryAttempt] = useState(0);
+  const [hasSavedLayout, setHasSavedLayout] = useState(false);
+  const [layoutResetTick, setLayoutResetTick] = useState(0);
   const retry = useCallback(() => setRetryAttempt((n) => n + 1), []);
   // Skip the fit-view animation on the first layout (initial mount already
   // fits via the `fitView` prop); animate only subsequent relayouts.
@@ -499,9 +519,13 @@ function ERDiagramInner({
   // Position the graph and feed React Flow. Re-runs when the layout direction or
   // density changes (cheap, no DB round-trip) and animates the viewport to the
   // new layout — unless the user prefers reduced motion (#560).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layoutResetTick は「配置をリセット」で再レイアウトさせるトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     if (!graph || !database) return;
     const positioned = layoutErGraph(graph, { direction, density });
+    // 保存済みの手動配置があれば自動レイアウトの位置に重ねる (#1628)。
+    const saved = connectionKey ? readErLayout(connectionKey, database, direction, density) : null;
+    setHasSavedLayout(saved !== null);
     // 再レイアウトでノードを作り直すのでホバー状態も捨てる (className が落ちるため)。
     // 直後のハイライト effect が hoverId=null を反映して整合を取る。
     setHoverId(null);
@@ -509,7 +533,7 @@ function ERDiagramInner({
       positioned.nodes.map((n) => ({
         id: n.id,
         type: "erTable" as const,
-        position: { x: n.x, y: n.y },
+        position: saved?.[n.data.table] ?? { x: n.x, y: n.y },
         width: n.width,
         data: {
           ...n.data,
@@ -539,7 +563,86 @@ function ERDiagramInner({
       void fitView({ duration: animate ? 400 : 0 });
     }, 0);
     return () => window.clearTimeout(id);
-  }, [graph, direction, density, database, driver, handleOpen, t, reduceMotion, fitView, setNodes, setEdges]);
+    // layoutResetTick: 「配置をリセット」で自動レイアウトを再計算させるトリガ依存。
+  }, [
+    graph,
+    direction,
+    density,
+    database,
+    driver,
+    handleOpen,
+    t,
+    reduceMotion,
+    fitView,
+    setNodes,
+    setEdges,
+    connectionKey,
+    layoutResetTick,
+  ]);
+
+  // ドラッグ終了時に全ノードの位置を保存する (#1628)。ドラッグ中のノードは引数の最新位置を使う。
+  const nodesRef = useRef(nodes);
+  nodesRef.current = nodes;
+  const onNodeDragStop = useCallback(
+    (_: unknown, __: unknown, dragged: Node[]) => {
+      if (!connectionKey || !database) return;
+      const positions: Record<string, { x: number; y: number }> = {};
+      for (const n of nodesRef.current) positions[n.data.table] = n.position;
+      for (const n of dragged) {
+        const table = (n.data as ErNodeData | undefined)?.table;
+        if (table) positions[table] = n.position;
+      }
+      writeErLayout(connectionKey, database, direction, density, positions);
+      setHasSavedLayout(true);
+    },
+    [connectionKey, database, direction, density],
+  );
+  const resetLayout = useCallback(() => {
+    if (!connectionKey || !database) return;
+    clearErLayout(connectionKey, database);
+    setHasSavedLayout(false);
+    setLayoutResetTick((n) => n + 1);
+  }, [connectionKey, database]);
+
+  // テーブルノードの右クリックメニュー (#1628)。
+  const [nodeMenu, setNodeMenu] = useState<{ x: number; y: number; table: string } | null>(null);
+  const onNodeContextMenu = useCallback((e: ReactMouseEvent, n: Node) => {
+    e.preventDefault();
+    const table = (n.data as ErNodeData | undefined)?.table;
+    if (table) setNodeMenu({ x: e.clientX, y: e.clientY, table });
+  }, []);
+
+  const erNodeMenuItems = (table: string): ContextMenuEntry[] => {
+    const items: ContextMenuEntry[] = [
+      {
+        label: t("erDiagramMenuOpenTable"),
+        icon: "table",
+        onSelect: () => database && handleOpen(database, table),
+      },
+      {
+        label: t("erDiagramMenuFocusTable"),
+        disabled: focusTable === table,
+        onSelect: () => setFocusTable(table),
+      },
+      {
+        label: t("contextMenuCopyTableName"),
+        onSelect: () => {
+          void copyToClipboard(table).then((ok) => {
+            if (!ok) toast.error(t("clipboardCopyFailed"));
+          });
+        },
+      },
+    ];
+    if (onGenerateDoc && database) {
+      items.push({ separator: true });
+      items.push({
+        label: t("erDiagramMenuDocTable"),
+        icon: "sparkles",
+        onSelect: () => onGenerateDoc(database, [table]),
+      });
+    }
+    return items;
+  };
 
   const onNodeMouseEnter = useCallback((_: unknown, n: { id: string }) => setHoverId(n.id), []);
   const onNodeMouseLeave = useCallback(() => setHoverId(null), []);
@@ -705,6 +808,13 @@ function ERDiagramInner({
                 </Button>
               </Tooltip>
             )}
+            {hasSavedLayout && (
+              <Tooltip label={t("erDiagramResetLayoutTip")}>
+                <Button type="button" variant="secondary" size="sm" onClick={resetLayout}>
+                  {t("erDiagramResetLayout")}
+                </Button>
+              </Tooltip>
+            )}
             <ImageExportButton
               filenameBase={`er_${database ?? "diagram"}`}
               makePng={(opts) => {
@@ -808,6 +918,8 @@ function ERDiagramInner({
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             className="er-flow"
+            onNodeDragStop={onNodeDragStop}
+            onNodeContextMenu={onNodeContextMenu}
             onNodeMouseEnter={onNodeMouseEnter}
             onNodeMouseLeave={onNodeMouseLeave}
             defaultEdgeOptions={defaultEdgeOptions}
@@ -825,6 +937,14 @@ function ERDiagramInner({
           </ReactFlow>
         )}
       </Box>
+      {nodeMenu && database && (
+        <ContextMenu
+          x={nodeMenu.x}
+          y={nodeMenu.y}
+          items={erNodeMenuItems(nodeMenu.table)}
+          onClose={() => setNodeMenu(null)}
+        />
+      )}
     </Box>
   );
 }

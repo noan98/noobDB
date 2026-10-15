@@ -5554,6 +5554,11 @@ const en = {
   jsonTreeCopyPointer: "Copy JSON Pointer",
   jsonTreeCopySqlRows: "Copy rows SQL",
   jsonTreeCopySqlRowsTitle: "Copy a SELECT that expands this array into rows (not executed)",
+  erDiagramResetLayout: "Reset layout",
+  erDiagramResetLayoutTip: "Discard the saved node positions and re-run the automatic layout",
+  erDiagramMenuOpenTable: "Open table",
+  erDiagramMenuFocusTable: "Focus on this table",
+  erDiagramMenuDocTable: "Generate docs for this table with AI",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11078,6 +11083,11 @@ const ja: Dict = {
   jsonTreeCopyPointer: "JSON Pointer をコピー",
   jsonTreeCopySqlRows: "行展開 SQL をコピー",
   jsonTreeCopySqlRowsTitle: "この配列を行に展開する SELECT をコピー (実行はしません)",
+  erDiagramResetLayout: "配置をリセット",
+  erDiagramResetLayoutTip: "保存した手動配置を捨て、自動レイアウトに戻します",
+  erDiagramMenuOpenTable: "テーブルを開く",
+  erDiagramMenuFocusTable: "このテーブルにフォーカス",
+  erDiagramMenuDocTable: "このテーブルの AI ドキュメントを生成",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
