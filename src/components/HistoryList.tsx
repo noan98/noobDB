@@ -573,13 +573,19 @@ export const HistoryList = memo(function HistoryList({
         />
       )}
 
-      <TreeSearch borderTop="none" pt={0} display="flex" gap="1.5">
-        <PressableButton type="button" variant="secondary" onClick={() => setFlightRecorderOpen(true)}>
+      <TreeSearch borderTop="none" pt={0} display="flex" gap="1.5" flexWrap="wrap">
+        <PressableButton
+          type="button"
+          size="sm"
+          variant="secondary"
+          onClick={() => setFlightRecorderOpen(true)}
+        >
           <Icon name="undo" size={ICON_SIZES.sm} /> {t("flightRecorderTitle")}
         </PressableButton>
         {hasActiveFilter && shownEntries.length > 0 && (
           <Tooltip label={t("historyDeleteShownHint")}>
             <PressableButton
+              size="sm"
               type="button"
               variant="danger"
               onClick={() =>
@@ -594,7 +600,7 @@ export const HistoryList = memo(function HistoryList({
           </Tooltip>
         )}
         {entries.length > 0 && (
-          <PressableButton type="button" variant="danger" onClick={handleClear}>
+          <PressableButton type="button" size="sm" variant="danger" onClick={handleClear}>
             {hasActiveFilter ? t("historyClearAllIgnoringFilter") : t("historyClear")}
           </PressableButton>
         )}
@@ -605,6 +611,7 @@ export const HistoryList = memo(function HistoryList({
             {t("historySelectedCount", { count: selection.selected.size })}
           </chakra.span>
           <PressableButton
+            size="sm"
             type="button"
             variant="danger"
             onClick={() => void handleDeleteIds([...selection.selected], "selected")}
@@ -612,6 +619,7 @@ export const HistoryList = memo(function HistoryList({
             {t("historyDeleteSelected")}
           </PressableButton>
           <PressableButton
+            size="sm"
             type="button"
             variant="secondary"
             onClick={() => setSelection(EMPTY_HISTORY_SELECTION)}
