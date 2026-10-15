@@ -1,4 +1,4 @@
-import type { Column, TableColumnInfo } from "../api/tauri";
+import type { CellValue, Column, TableColumnInfo } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import { classifyEditType, type EditTypeKind } from "./cellEdit";
 
@@ -26,7 +26,7 @@ function acceptsEmptyString(base: string): boolean {
  */
 
 /** Stable identity of a shortcut, used as a React key and in tests. */
-export type QuickSetId = "null" | "empty" | "zero" | "true" | "false" | "now";
+export type QuickSetId = "null" | "empty" | "zero" | "true" | "false" | "now" | "above";
 
 /**
  * Time-derived shortcuts carry the shape to (re)format instead of a frozen
@@ -130,6 +130,11 @@ export function quickSetOptions(input: {
   now: Date;
   /** Session driver, for the `BIT` split above. Unknown/absent → not a bit string. */
   driver?: string;
+  /**
+   * 同じ列で表示順の直前の行の値 (#1628)。直前の行が無い (先頭行)・出してはいけない
+   * (マスク中など) ときは `undefined`。`null` は NULL を意味する。
+   */
+  aboveValue?: CellValue;
 }): QuickSetOption[] {
   const kind: EditTypeKind = classifyEditType(input.column.type_name);
   const nullable = input.meta?.nullable ?? true;
@@ -141,11 +146,13 @@ export function quickSetOptions(input: {
       disabledReason: nullable ? undefined : "editInvalidNotNull",
     },
   ];
+  const above = aboveQuickSetOption(input.aboveValue, nullable);
   // `classifyEditType` buckets BIT as "other" (it cannot know the driver), so
   // intercept it before the string-like default would offer the empty string.
   const base = input.column.type_name.toUpperCase().replace(/\(.*$/, "").trim();
   if (base === "BIT") {
     if (!isBitStringDriver(input.driver)) options.push(...BOOLEAN_OPTIONS);
+    if (above) options.push(above);
     return options;
   }
   switch (kind) {
@@ -194,5 +201,24 @@ export function quickSetOptions(input: {
       });
       break;
   }
+  if (above) options.push(above);
   return options;
+}
+
+/**
+ * 「上の行と同じ値」(#1628)。直前の行の値を、手で打つ文字列と同じ生テキストにして返す。
+ * 値の検証・NOT NULL・型別の変換は他のショートカットと同じ経路 (`validateCellInput` など) が
+ * 担うので、ここでは作らない。上の値が NULL で列が NOT NULL のときは無効化して理由を出す。
+ * 文字列の `NULL` は入力欄では NULL 化の指示と区別できないので、曖昧なものは無効化する。
+ */
+function aboveQuickSetOption(aboveValue: CellValue | undefined, nullable: boolean): QuickSetOption | null {
+  if (aboveValue === undefined) return null;
+  const base: QuickSetOption = { id: "above", labelKey: "gridQuickSetAbove", value: "NULL" };
+  if (aboveValue === null) {
+    return nullable ? base : { ...base, disabledReason: "editInvalidNotNull" };
+  }
+  const text = String(aboveValue);
+  if (/^null$/i.test(text.trim()))
+    return { ...base, value: text, disabledReason: "gridQuickSetAboveAmbiguous" };
+  return { ...base, value: text };
 }

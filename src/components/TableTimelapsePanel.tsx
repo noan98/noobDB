@@ -3,6 +3,7 @@ import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chak
 
 import {
   api,
+  type CellValue,
   type DiffStatus,
   type TableWatch,
   type TimelapseGenerationDiff,
@@ -33,6 +34,7 @@ import { ErrorNote } from "./modalForm";
 import { SkeletonRow, SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { formatBytes } from "./tableSize";
+import { TimelapseRowHistoryView } from "./TimelapseRowHistory";
 import { Button, Select } from "./ui";
 
 /**
@@ -158,6 +160,8 @@ export function TableTimelapsePanel({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // 行の値の推移 (#1621)。ウォッチやペアを切り替えたら閉じる。
+  const [historyKey, setHistoryKey] = useState<CellValue[] | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -510,6 +514,7 @@ export function TableTimelapsePanel({
                     onClick={() => {
                       setSelectedId(w.id);
                       setPair(null);
+                      setHistoryKey(null);
                     }}
                   >
                     <chakra.span fontFamily="var(--font-mono)" fontSize="sm" color="app.text">
@@ -642,6 +647,13 @@ export function TableTimelapsePanel({
                     </chakra.p>
                   )}
                   {masked && <chakra.p textStyle="caption">{t("timelapseMaskedNote")}</chakra.p>}
+                  {historyKey && selected && (
+                    <TimelapseRowHistoryView
+                      watchId={selected.id}
+                      rowKey={historyKey}
+                      onClose={() => setHistoryKey(null)}
+                    />
+                  )}
                   {rows.length === 0 ? (
                     <chakra.p textStyle="body" color="app.textMuted">
                       {t("timelapseNoChanges")}
@@ -651,6 +663,9 @@ export function TableTimelapsePanel({
                       <chakra.thead>
                         <chakra.tr>
                           <chakra.th css={thCss}>{t("timelapseChangeColumn")}</chakra.th>
+                          <chakra.th css={thCss}>
+                            <VisuallyHidden>{t("timelapseRowHistoryColumn")}</VisuallyHidden>
+                          </chakra.th>
                           {diff.diff.columns.map((c) => (
                             <chakra.th key={c} css={thCss}>
                               {c}
@@ -674,6 +689,17 @@ export function TableTimelapsePanel({
                               >
                                 {kindLabel[r.kind]}
                               </chakra.span>
+                            </chakra.td>
+                            <chakra.td css={tdCss}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                aria-label={t("timelapseRowHistoryOpen", { key: JSON.stringify(r.rawKey) })}
+                                onClick={() => setHistoryKey(r.rawKey)}
+                              >
+                                <Icon name="clock" size={ICON_SIZES.sm} />
+                              </Button>
                             </chakra.td>
                             {r.cells.map((c) => (
                               <chakra.td

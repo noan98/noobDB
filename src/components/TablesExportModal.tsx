@@ -14,6 +14,7 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { useToast } from "./Toast";
 import { qualifiedTableSql } from "./sqlDialect";
 import { batchExportFileName, batchTimestamp } from "./batchTables";
+import { loadTablesExportPrefs, saveTablesExportPrefs, tablesExportScope } from "../inputMemory";
 
 const FORMATS: ExportFormat[] = ["csv", "json", "ndjson", "markdown", "sql", "xlsx"];
 
@@ -31,6 +32,8 @@ interface Props {
   driver: string;
   database: string;
   tables: string[];
+  /** 接続プロファイル ID。前回の形式・保存先・マスク・DDL 同梱を接続 × DB ごとに記憶する (#1631)。 */
+  profileId?: string;
   onClose: () => void;
 }
 
@@ -47,22 +50,25 @@ type OneResult = { ok: true; rows: number } | { ok: false; error: string } | { o
  * テーブルの数だけ順に呼ぶ。進捗は「n / N テーブル目 + 行数」、キャンセルは実行中のストリームを
  * 止めて残りを打ち切る。失敗したテーブルがあっても残りは続け、最後にまとめて表示する。
  */
-export function TablesExportModal({ sessionId, driver, database, tables, onClose }: Props) {
+export function TablesExportModal({ sessionId, driver, database, tables, profileId, onClose }: Props) {
   const t = useT();
   const toast = useToast();
   const settings = useSettings();
-  const [format, setFormat] = useState<ExportFormat>("csv");
-  const [dir, setDir] = useState("");
+  const memoryScope = tablesExportScope(profileId, database);
+  const [remembered] = useState(() => (profileId ? loadTablesExportPrefs(memoryScope) : null));
+  const [format, setFormat] = useState<ExportFormat>(remembered?.format ?? "csv");
+  // 前回の保存先があればそれを初期値にし、ダウンロードフォルダの既定で上書きしない。
+  const [dir, setDir] = useState(remembered?.dir ?? "");
   // 単発の ExportModal と同じ設定 (exportMaskPresets) をテーブルごとの列名に当てて masks を作る。
-  const [maskEnabled, setMaskEnabled] = useState(false);
+  const [maskEnabled, setMaskEnabled] = useState(remembered?.maskEnabled ?? false);
   // SQL 形式で各ファイルの先頭に CREATE TABLE 文を含める (#1539)。
-  const [includeDdl, setIncludeDdl] = useState(false);
+  const [includeDdl, setIncludeDdl] = useState(remembered?.includeDdl ?? false);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const streamIdRef = useRef<string | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   const cancelledRef = useRef(false);
   const disposedRef = useRef(false);
-  const userEditedDirRef = useRef(false);
+  const userEditedDirRef = useRef(!!remembered?.dir);
   const isRunning = status.kind === "running";
 
   // 既定の保存先は OS のダウンロードフォルダ (`ExportModal` と同じ)。取得できなければ空のまま。
@@ -183,6 +189,8 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
   const handleExport = async () => {
     if (isRunning || !dir.trim()) return;
     cancelledRef.current = false;
+    // 次回の初期値にするため、形式・保存先・マスク・DDL 同梱を覚える (秘密情報は含まない, #1631)。
+    if (profileId) saveTablesExportPrefs(memoryScope, { format, dir: dir.trim(), maskEnabled, includeDdl });
     const used = new Set<string>();
     // 保存先の既存ファイルを上書きしないよう、この実行の日時をファイル名に付ける。
     const stamp = batchTimestamp();
@@ -214,7 +222,19 @@ export function TablesExportModal({ sessionId, driver, database, tables, onClose
       toast.error(t("batchExportPartial", { done: written, count: tables.length, failed: failures.length }));
       return;
     }
-    toast.success(t("batchExportDone", { count: written, dir }));
+    // 完了トーストから保存先をすぐ開ける (#1631)。開けなかったときは理由をエラートーストで知らせる。
+    toast.notify({
+      message: t("batchExportDone", { count: written, dir }),
+      tone: "success",
+      action: {
+        label: t("batchExportOpenDir"),
+        onAction: () => {
+          api
+            .revealInFileManager(dir)
+            .catch((e) => toast.error(t("batchExportOpenDirFailed", { error: String(e) })));
+        },
+      },
+    });
     onClose();
   };
 

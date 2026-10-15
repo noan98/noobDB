@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod advisor_ignore;
 mod ai;
 mod assertions;
 mod atomic_write;
@@ -12,6 +13,7 @@ mod db;
 mod error;
 mod flight_recorder;
 mod history;
+mod json_store;
 mod json_tolerant;
 mod logs;
 mod perf;
@@ -21,7 +23,9 @@ mod sandboxes;
 mod schema_drift;
 mod snippets;
 mod ssh;
+mod ssm;
 mod state;
+mod table_stat_store;
 mod tasks;
 mod text_encoding;
 mod timelapse;
@@ -31,13 +35,16 @@ mod timelapse;
 pub mod __test_api {
     pub use crate::ai::sse::AiUsage;
     pub use crate::ai::usage::AiUsageRecord;
+    pub use crate::assertions::transfer::ImportRejection;
     pub use crate::assertions::{Assertion, AssertionRule, RowCountOp};
     pub use crate::commands::ai::{AiConnectionStatus, AiConnectionTestResult, AiStreamMessage};
-    pub use crate::commands::assertions::AssertionOutcome;
+    pub use crate::commands::assertions::{
+        AcceptedValuesCandidates, AssertionOutcome, AssertionPrevious, ImportAssertionsResult,
+    };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
-        analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
-        TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        analyze, AdvisorDiff, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity,
+        SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
@@ -62,8 +69,8 @@ pub mod __test_api {
         RefreshSnapshotStore,
     };
     pub use crate::db::result_ops::{
-        column_stats, find, sort_filter, ColumnStatsOut, FilterOp, FilterSpec, FindHit,
-        FindOptions, FindOutput, NullMode, SortKind, SortSpec,
+        column_stats, duplicate_keys, find, sort_filter, ColumnStatsOut, DuplicateKeysOut,
+        FilterOp, FilterSpec, FindHit, FindOptions, FindOutput, NullMode, SortKind, SortSpec,
     };
     pub use crate::db::result_store::{
         approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
@@ -110,6 +117,7 @@ pub mod __test_api {
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
+    pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
@@ -198,13 +206,13 @@ pub mod __test_api {
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
     pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
-    pub use crate::commands::schema_drift::SchemaDriftCapture;
+    pub use crate::commands::schema_drift::{RevertSql, SchemaDriftCapture};
     pub use crate::commands::ssh::ResolvedSshAlias;
     pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
     pub use crate::db::assertions::AssertionSql;
     pub use crate::db::diff::TableColumns;
     pub use crate::db::sandbox::SandboxConflict;
-    pub use crate::db::schema_insight::{IncomingForeignKey, TableStatistic};
+    pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
     pub use crate::db::types::DatabaseTables;
     pub use crate::plan_watch::store::{PlanGeneration, WatchEntry};
     pub use crate::schema_drift::{
@@ -216,7 +224,8 @@ pub mod __test_api {
         TaskSchedule,
     };
     pub use crate::timelapse::{
-        GenerationDiff, GenerationMeta as TimelapseGenerationMeta, TableWatch,
+        GenerationDiff, GenerationMeta as TimelapseGenerationMeta, RowHistory, RowHistoryEntry,
+        TableWatch,
     };
 
     // ローカル横断クエリ (#740) — Tauri を経由せずに統合テストから駆動できるよう、
@@ -229,8 +238,9 @@ pub mod __test_api {
 
     // 結果ハンドル (#1264) の IPC コア (State なし)。
     pub use crate::commands::result::{
-        render_export_text_inner, resolve_rows, result_column_stats_inner, result_find_inner,
-        result_sort_filter_inner, RenderExportRequest,
+        render_export_text_inner, resolve_rows, result_column_stats_inner,
+        result_duplicate_keys_inner, result_find_inner, result_sort_filter_inner,
+        RenderExportRequest,
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
@@ -459,6 +469,7 @@ pub mod __test_api {
             emergency_write: std::sync::atomic::AtomicBool::new(false),
             skip_history: true,
             reconnect_ssh: None,
+            reconnect_ssm: None,
             _tunnel: None,
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),
@@ -521,6 +532,28 @@ pub mod __test_api {
             assertion,
             database,
             query_timeout_secs,
+        )
+        .await
+    }
+
+    /// Drives the `suggest_accepted_values` IPC command's core path (#1621): the
+    /// DISTINCT query runs through the read-only lookup route.
+    pub async fn suggest_accepted_values_via_command(
+        state: &AppState,
+        session_id: &str,
+        schema: Option<&str>,
+        table: &str,
+        column: &str,
+        database: Option<&str>,
+    ) -> crate::error::Result<AcceptedValuesCandidates> {
+        crate::commands::assertions::suggest_accepted_values_with(
+            state,
+            session_id,
+            schema,
+            table,
+            column,
+            database,
+            Some(10),
         )
         .await
     }
@@ -1386,6 +1419,8 @@ pub fn run() {
             commands::profile::profile_column,
             commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
+            commands::advisor::ignore_advisor_finding,
+            commands::advisor::unignore_advisor_finding,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,
@@ -1418,6 +1453,10 @@ pub fn run() {
             commands::assertions::delete_assertion,
             commands::assertions::preview_assertion_sql,
             commands::assertions::run_assertion,
+            commands::assertions::restore_assertion,
+            commands::assertions::export_assertions,
+            commands::assertions::import_assertions,
+            commands::assertions::suggest_accepted_values,
             commands::history::list_history,
             commands::history::get_history_sql,
             commands::history::get_history_sqls,
@@ -1435,11 +1474,14 @@ pub fn run() {
             commands::timelapse::timelapse_capture,
             commands::timelapse::timelapse_list_watches,
             commands::timelapse::timelapse_diff_generations,
+            commands::timelapse::timelapse_row_history,
             commands::timelapse::timelapse_unwatch,
             commands::timelapse::timelapse_clear_all,
             commands::schema_drift::schema_drift_capture,
             commands::schema_drift::schema_drift_list,
             commands::schema_drift::schema_drift_compare,
+            commands::schema_drift::schema_drift_set_label,
+            commands::schema_drift::schema_drift_revert_sql,
             commands::schema_drift::schema_drift_import_legacy,
             commands::plan_watch::plan_watch_list,
             commands::plan_watch::plan_watch_set,
@@ -1453,6 +1495,7 @@ pub fn run() {
             commands::result::result_sort_filter,
             commands::result::result_find,
             commands::result::result_column_stats,
+            commands::result::result_duplicate_keys,
             commands::result::release_result,
             commands::result::render_export_text,
             commands::dump::dump_database,
@@ -1481,6 +1524,8 @@ pub fn run() {
             commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::file::write_text_file,
+            commands::file::reveal_in_file_manager,
+            commands::window::set_window_title,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
             commands::local::create_local_session,
@@ -1492,6 +1537,7 @@ pub fn run() {
             commands::tasks::save_task,
             commands::tasks::delete_task,
             commands::tasks::set_task_enabled,
+            commands::tasks::preview_task_schedule,
             commands::tasks::run_task_now,
             commands::tasks::list_task_runs,
             commands::tasks::clear_task_runs,

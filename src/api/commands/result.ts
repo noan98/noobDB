@@ -4,7 +4,14 @@ import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { ExportColumnMask } from "../../components/exportMasking";
 import type { HandleSortFilterRequest } from "../../components/gridSortFilter";
-import type { Column, CellValue, ExportFormat, ResultFindOutput, ResultColumnStats } from "../tauri";
+import type {
+  Column,
+  CellValue,
+  ExportFormat,
+  ResultFindOutput,
+  ResultColumnStats,
+  ResultDuplicateKeys,
+} from "../tauri";
 
 export const resultCommands = {
   /**
@@ -41,6 +48,15 @@ export const resultCommands = {
   resultColumnStats: (resultId: string, col: number) =>
     invoke<ResultColumnStats | null>("result_column_stats", { resultId, col }).then((r) =>
       parseResponse(schemas.resultColumnStatsResponse, r, "result_column_stats"),
+    ),
+
+  /**
+   * 結果ハンドル (#1628): 指定した列の組み合わせの重複キー検出。重複グループ数・行数と
+   * 件数の多い上位 `top` グループ、重複行のインデックスを返す。`null` はハンドルが無い。
+   */
+  resultDuplicateKeys: (resultId: string, cols: number[], top = 10) =>
+    invoke<ResultDuplicateKeys | null>("result_duplicate_keys", { resultId, cols, top }).then((r) =>
+      parseResponse(schemas.resultDuplicateKeysResponse, r, "result_duplicate_keys"),
     ),
 
   /** 結果ハンドル (#1264) を破棄する。存在しない ID でも成功 (冪等)。 */

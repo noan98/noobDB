@@ -386,6 +386,7 @@ pub async fn create_local_session_inner(state: &AppState) -> Result<SessionId> {
         // UI) に None プロファイルの行を混ぜない方針。
         skip_history: true,
         reconnect_ssh: None,
+        reconnect_ssm: None,
         _tunnel: None,
         local_temp_file: Some(path),
         schema_cache: crate::cache::SchemaCache::default(),

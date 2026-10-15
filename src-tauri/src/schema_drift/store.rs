@@ -87,6 +87,17 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
             .execute(pool)
             .await?;
     }
+    // #1621: 世代へのラベル。
+    let has_label: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('generation') WHERE name = 'label'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if has_label == 0 {
+        sqlx::query("ALTER TABLE generation ADD COLUMN label TEXT")
+            .execute(pool)
+            .await?;
+    }
     Ok(())
 }
 
@@ -151,6 +162,12 @@ pub async fn load(profile_id: &str, id: i64) -> Result<Option<StoredGeneration>>
     load_in(pool().await?, profile_id, id).await
 }
 
+/// 世代のラベルを付け替える (`None` / 空で外す, #1621)。世代が無ければ `false`。
+/// ラベル付きの世代数が上限を超えるときはエラー。
+pub async fn set_label(profile_id: &str, id: i64, label: Option<&str>) -> Result<bool> {
+    set_label_in(pool().await?, profile_id, id, label).await
+}
+
 pub async fn import_legacy(profile_id: &str, generations: Vec<LegacyGeneration>) -> Result<usize> {
     import_legacy_in(pool().await?, profile_id, generations).await
 }
@@ -175,12 +192,13 @@ fn meta_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<GenerationMeta> {
         table_count: r.try_get::<i64, _>("table_count")?.max(0) as usize,
         omitted: r.try_get("omitted")?,
         trigger_sql: r.try_get("trigger_sql")?,
+        label: r.try_get("label")?,
     })
 }
 
 async fn list_in(pool: &SqlitePool, profile_id: &str) -> Result<Vec<GenerationMeta>> {
     let rows = sqlx::query(
-        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql
+        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql, label
            FROM generation WHERE profile_id = ? ORDER BY id DESC",
     )
     .bind(profile_id)
@@ -191,7 +209,7 @@ async fn list_in(pool: &SqlitePool, profile_id: &str) -> Result<Vec<GenerationMe
 
 async fn load_in(pool: &SqlitePool, profile_id: &str, id: i64) -> Result<Option<StoredGeneration>> {
     let row = sqlx::query(
-        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql, payload
+        "SELECT id, captured_at, driver, \"database\", fingerprint, table_count, omitted, trigger_sql, label, payload
            FROM generation WHERE profile_id = ? AND id = ?",
     )
     .bind(profile_id)
@@ -252,7 +270,7 @@ async fn rotate_in(
     sqlx::query(
         "DELETE FROM generation WHERE profile_id = ? AND id NOT IN (
             SELECT id FROM generation WHERE profile_id = ? ORDER BY id DESC LIMIT ?
-         )",
+         ) AND label IS NULL",
     )
     .bind(profile_id)
     .bind(profile_id)
@@ -260,6 +278,38 @@ async fn rotate_in(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+async fn set_label_in(
+    pool: &SqlitePool,
+    profile_id: &str,
+    id: i64,
+    label: Option<&str>,
+) -> Result<bool> {
+    let _guard = WRITE_LOCK.lock().await;
+    let label = super::normalize_label(label);
+    if label.is_some() {
+        let labeled: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM generation WHERE profile_id = ? AND label IS NOT NULL AND id <> ?",
+        )
+        .bind(profile_id)
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+        if labeled as usize >= super::MAX_LABELED {
+            return Err(AppError::InvalidInput(format!(
+                "too many labeled generations (max {})",
+                super::MAX_LABELED
+            )));
+        }
+    }
+    let done = sqlx::query("UPDATE generation SET label = ? WHERE profile_id = ? AND id = ?")
+        .bind(label)
+        .bind(profile_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(done.rows_affected() > 0)
 }
 
 /// 世代を 1 つ記録する。直前世代とフィンガープリントが同じなら何もしない。追加した
@@ -565,6 +615,55 @@ mod tests {
         let list = list_in(&pool, "p").await.unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].trigger_sql, None);
+    }
+
+    /// #1621: ラベルは付け外しでき、ラベル付きの世代はローテーションで消えない。
+    #[tokio::test]
+    async fn labeled_generations_survive_rotation_and_labels_are_normalized() {
+        let pool = temp_pool().await;
+        rec(&pool, "p", &payload(&["a"]), 2).await;
+        let first: i64 = list_in(&pool, "p").await.unwrap()[0].id.parse().unwrap();
+        assert!(set_label_in(&pool, "p", first, Some("  リリース v1.2  "))
+            .await
+            .unwrap());
+        // 他プロファイル・存在しない ID は false。
+        assert!(!set_label_in(&pool, "q", first, Some("x")).await.unwrap());
+        assert!(!set_label_in(&pool, "p", 9999, Some("x")).await.unwrap());
+        for name in ["b", "c", "d"] {
+            rec(&pool, "p", &payload(&["a", name]), 2).await;
+        }
+        let list = list_in(&pool, "p").await.unwrap();
+        // 上限 2 + ラベル付き 1。
+        assert_eq!(list.len(), 3);
+        let labeled = list.iter().find(|g| g.id == first.to_string()).unwrap();
+        assert_eq!(labeled.label.as_deref(), Some("リリース v1.2"));
+        // 空文字で外すと、次のローテーションで消える。
+        assert!(set_label_in(&pool, "p", first, Some("   ")).await.unwrap());
+        rec(&pool, "p", &payload(&["a", "e"]), 2).await;
+        let list = list_in(&pool, "p").await.unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|g| g.label.is_none()));
+    }
+
+    #[tokio::test]
+    async fn label_count_is_capped() {
+        let pool = temp_pool().await;
+        for i in 0..=super::super::MAX_LABELED {
+            rec(&pool, "p", &payload(&["a", &format!("t{i}")]), 100).await;
+        }
+        let ids: Vec<i64> = list_in(&pool, "p")
+            .await
+            .unwrap()
+            .iter()
+            .map(|g| g.id.parse().unwrap())
+            .collect();
+        for id in ids.iter().take(super::super::MAX_LABELED) {
+            assert!(set_label_in(&pool, "p", *id, Some("x")).await.unwrap());
+        }
+        let last = ids[super::super::MAX_LABELED];
+        assert!(set_label_in(&pool, "p", last, Some("x")).await.is_err());
+        // 付け替え (既にラベル付きの世代) は上限に達していても通る。
+        assert!(set_label_in(&pool, "p", ids[0], Some("y")).await.unwrap());
     }
 
     #[tokio::test]

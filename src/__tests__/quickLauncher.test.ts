@@ -71,16 +71,16 @@ describe("buildQuickLauncherSections", () => {
 
   it("削除済みスニペットを捨て、クエリの重複 (空白差) と空を除く", () => {
     const s = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS);
-    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["a", "c"]);
+    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["c", "a"]);
     expect(s[1].items.map((i) => (i.kind === "query" ? i.sql : ""))).toEqual([
       "SELECT 1",
       "SELECT 2",
       "SELECT 3",
     ]);
-    expect(s[2].items.map((i) => (i.kind === "table" ? i.ref.table : ""))).toEqual(["new", "old"]);
+    expect(s[2].items.map((i) => (i.kind === "table" ? i.ref.table : ""))).toEqual(["old", "new"]);
   });
 
-  it("お気に入りスニペットは新しい登録順 (末尾が先頭) で、件数超過時も新しいものが残る", () => {
+  it("お気に入りスニペットはサイドバーと同じ保存順で、件数超過時は先頭から切る", () => {
     const ids = ["a", "b", "c", "d"];
     const many = {
       ...src,
@@ -91,8 +91,45 @@ describe("buildQuickLauncherSections", () => {
       ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS,
       favoriteSnippets: 2,
     });
-    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["d", "c"]);
+    expect(s[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["a", "b"]);
     expect(s[0].hasMore).toBe(true);
+  });
+
+  it("検索語があると表示件数の上限を外し、ヒットした全件を返す (#1631)", () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g"];
+    const many = {
+      ...src,
+      snippets: ids.map((id) => snippet(id)),
+      snippetQuickAccess: { favorites: ids, recent: [] },
+    };
+    const limits = { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, favoriteSnippets: 2 };
+    const s = buildQuickLauncherSections(many, limits, "s-");
+    expect(s[0].items).toHaveLength(7);
+    expect(s[0].hasMore).toBe(false);
+  });
+
+  it("検索はスニペット名・SQL・クエリ・テーブル名/DB 名に部分一致 (大文字小文字無視)", () => {
+    expect(
+      buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, "SELECT b")[0].items,
+    ).toHaveLength(0);
+    const bySql = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, "select c");
+    expect(bySql[0].items.map((i) => (i.kind === "snippet" ? i.snippet.id : ""))).toEqual(["c"]);
+    const byQuery = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, "select 3");
+    expect(byQuery[1].items).toHaveLength(1);
+    const byTable = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, "R1");
+    expect(byTable[3].items).toHaveLength(1);
+    expect(byTable[2].items).toHaveLength(0);
+    const byDb = buildQuickLauncherSections(src, DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, "d.old");
+    expect(byDb[2].items).toHaveLength(1);
+  });
+
+  it("空白だけの検索語は通常表示 (上限あり)", () => {
+    const s = buildQuickLauncherSections(
+      src,
+      { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS, recentQueries: 2 },
+      "  ",
+    );
+    expect(s[1].items).toHaveLength(2);
   });
 
   it("表示件数で切り、溢れたら hasMore", () => {

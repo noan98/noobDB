@@ -11,7 +11,18 @@ import {
   type ShortcutId,
 } from "../shortcuts";
 import { eventToCombo, findShortcutConflicts, formatCombo } from "../shortcutKeys";
-import { resetShortcutBindings, setShortcutBinding, useSettings } from "../settings";
+import {
+  applyShortcutBindings,
+  replaceShortcutBindings,
+  resetShortcutBindings,
+  sanitizeShortcutOverrides,
+  setShortcutBinding,
+  useSettings,
+} from "../settings";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { api } from "../api/tauri";
+import { parseKeybindings, planBindingAssignment, serializeKeybindings } from "../keybindingIO";
+import { useToast } from "./Toast";
 import {
   SettingsInfo,
   SettingsLabelWithInfo,
@@ -73,6 +84,7 @@ const ConflictNote = chakra("span", {
  */
 export function KeybindingSettings() {
   const t = useT();
+  const toast = useToast();
   const settings = useSettings();
   const overrides = settings.shortcutOverrides;
   const resolved = resolveShortcutBindings(overrides);
@@ -92,12 +104,60 @@ export function KeybindingSettings() {
       }
       const combo = eventToCombo(e);
       if (combo === null) return;
-      setShortcutBinding(recordingId, combo);
+      // 同じスコープで既に使われているコンボなら、相手に元のコンボを渡して入れ替える (#1631)。
+      const plan = planBindingAssignment(overrides, recordingId, combo);
+      applyShortcutBindings(plan.changes);
+      if (plan.swapped) {
+        const label = (id: ShortcutId) =>
+          t(REBINDABLE_SHORTCUTS.find((s) => s.id === id)?.descKey ?? "settingsShortcuts");
+        toast.info(t("settingsShortcutSwapped", { other: label(plan.swapped) }));
+      }
       setRecordingId(null);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [recordingId]);
+  }, [recordingId, overrides, t, toast]);
+
+  const handleExport = async () => {
+    try {
+      const dest = await saveFileDialog({
+        defaultPath: "noobdb-keybindings.json",
+        title: t("settingsShortcutsExportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof dest !== "string" || !dest) return;
+      await api.writeTextFile(dest, serializeKeybindings(overrides));
+      toast.success(t("settingsShortcutsExportSuccess", { path: dest }));
+    } catch (e) {
+      toast.error(t("settingsShortcutsIoError", { error: String(e) }));
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("settingsShortcutsImportTitle"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const parsed = parseKeybindings(await api.readTextFile(picked), sanitizeShortcutOverrides);
+      if (!parsed.ok) {
+        toast.error(t("settingsShortcutsImportInvalid"));
+        return;
+      }
+      replaceShortcutBindings(parsed.bindings);
+      toast.success(
+        t("settingsShortcutsImportSuccess", {
+          count: Object.keys(parsed.bindings).length,
+          ignored: parsed.ignored,
+          conflicts: parsed.conflicts,
+        }),
+      );
+    } catch (e) {
+      toast.error(t("settingsShortcutsIoError", { error: String(e) }));
+    }
+  };
 
   const hasOverrides = Object.keys(overrides).length > 0;
 
@@ -108,6 +168,12 @@ export function KeybindingSettings() {
           <chakra.h3>{t("settingsShortcuts")}</chakra.h3>
           <SettingsInfo>{t("settingsShortcutsHelp")}</SettingsInfo>
         </SettingsLabelWithInfo>
+        <Button size="sm" type="button" onClick={handleExport}>
+          {t("settingsShortcutsExport")}
+        </Button>
+        <Button size="sm" type="button" onClick={handleImport}>
+          {t("settingsShortcutsImport")}
+        </Button>
         <Button
           size="sm"
           type="button"

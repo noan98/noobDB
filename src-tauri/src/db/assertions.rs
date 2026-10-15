@@ -19,7 +19,7 @@ use crate::assertions::{AssertionRule, RowCountOp};
 use crate::db::data_diff::is_numeric_literal;
 use crate::db::data_diff::sql_literal;
 use crate::db::sync::quote_ident;
-use crate::db::types::Value;
+use crate::db::types::{float_text, Value};
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use serde::Serialize;
@@ -454,6 +454,50 @@ pub fn custom_sql_duplicate_column_hint(
     })
 }
 
+/// `accepted_values` の候補 (#1621) として、列の DISTINCT 値を読む読み取り専用 SELECT を作る。
+/// NULL は候補にしない (`accepted_values` は NULL を対象外にするため)。`limit + 1` 行を
+/// 要求するので、呼び出し側は返った行数が `limit` を超えたかで「候補が多すぎて打ち切った」を
+/// 判定できる。生成物は [`build_sql`] と同じく読み取り専用の単一文であることを検証する。
+pub fn build_distinct_values_sql(
+    driver: DriverKind,
+    schema: Option<&str>,
+    table: &str,
+    column: &str,
+    limit: u32,
+) -> Result<String> {
+    if !non_blank(table) {
+        return Err(invalid("table is required"));
+    }
+    if !non_blank(column) {
+        return Err(invalid("column is required"));
+    }
+    let col = quote_ident(driver, column.trim());
+    let from = qualified(driver, schema, table.trim());
+    let sql = format!(
+        "SELECT DISTINCT {col} FROM {from} WHERE {col} IS NOT NULL ORDER BY {col} LIMIT {}",
+        u64::from(limit) + 1
+    );
+    if !is_read_only_sql_for(driver, &sql) {
+        return Err(AppError::ReadOnly(
+            "distinct values query is not read-only".into(),
+        ));
+    }
+    Ok(sql)
+}
+
+/// DISTINCT の 1 セルを `accepted_values` の候補文字列にする。`NULL` と BLOB は候補にしない
+/// (`None`)。数値・真偽値は文字列化し、日付などは既に文字列で来る。
+pub fn distinct_value_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Null | Value::Bytes(_) => None,
+        Value::Bool(b) => Some(if *b { "true" } else { "false" }.to_string()),
+        Value::Int(i) => Some(i.to_string()),
+        Value::UInt(u) => Some(u.to_string()),
+        Value::Float(f) => Some(float_text(*f)),
+        Value::String(s) => Some(s.clone()),
+    }
+}
+
 /// `check_sql` の結果 (件数) からルールの pass/fail を決める。`row_count` は条件と
 /// 比較し、それ以外は違反件数が 0 なら pass。
 pub fn evaluate(rule: &AssertionRule, observed: u64) -> bool {
@@ -509,6 +553,39 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn distinct_values_sql_is_read_only_and_quotes_identifiers() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            let sql = build_distinct_values_sql(d, Some("pub"), "us\"ers", "st`atus", 50).unwrap();
+            assert!(is_read_only_sql_for(d, &sql), "{sql}");
+            assert!(sql.starts_with("SELECT DISTINCT "), "{sql}");
+            assert!(sql.ends_with("LIMIT 51"), "{sql}");
+            assert!(sql.contains("IS NOT NULL"));
+        }
+        let pg = build_distinct_values_sql(DriverKind::Postgres, None, "t", "c", 1).unwrap();
+        assert_eq!(
+            pg,
+            "SELECT DISTINCT \"c\" FROM \"t\" WHERE \"c\" IS NOT NULL ORDER BY \"c\" LIMIT 2"
+        );
+        assert!(build_distinct_values_sql(DriverKind::Mysql, None, " ", "c", 5).is_err());
+        assert!(build_distinct_values_sql(DriverKind::Mysql, None, "t", "", 5).is_err());
+    }
+
+    #[test]
+    fn distinct_value_text_skips_null_and_blob() {
+        assert_eq!(distinct_value_text(&Value::Null), None);
+        assert_eq!(distinct_value_text(&Value::Bytes("ab".into())), None);
+        assert_eq!(distinct_value_text(&Value::Int(-3)).as_deref(), Some("-3"));
+        assert_eq!(
+            distinct_value_text(&Value::Bool(true)).as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            distinct_value_text(&Value::String("a b".into())).as_deref(),
+            Some("a b")
+        );
+    }
 
     const ALL: [DriverKind; 3] = [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite];
 

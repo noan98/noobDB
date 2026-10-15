@@ -1836,6 +1836,37 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
             .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
     }
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "status",
+        None,
+    )
+    .await
+    .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "email",
+        None,
+    )
+    .await
+    .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "noobdb_aq_items", "qty", None)
+            .await
+            .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     for sql in [
         "DROP TABLE IF EXISTS noobdb_aq_items",
         "DROP TABLE IF EXISTS noobdb_aq_orders",
@@ -3412,6 +3443,89 @@ async fn mysql_save_cells_to_folder() {
     session
         .conn
         .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
+        .await
+        .expect("cleanup");
+}
+
+/// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 容量の取得 (`mysql.innodb_index_stats`)
+/// を足しても、統計が読めない環境で指摘そのものが消えたり失敗したりしない。
+#[tokio::test]
+async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = url.rsplit('/').next().expect("db name").to_string();
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_adv_idx",
+        "CREATE TABLE noobdb_adv_idx (id INT PRIMARY KEY, note VARCHAR(64), KEY noobdb_adv_idx_note (note))",
+        "INSERT INTO noobdb_adv_idx VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    conn.execute("DROP TABLE IF EXISTS noobdb_adv_idx", None)
+        .await
+        .expect("drop");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::UnusedIndex);
+    if skipped {
+        // performance_schema が無効 / sys が読めない環境: 縮退の理由が付く (失敗にはしない)。
+        eprintln!("unused index stats unavailable; degraded as designed");
+        return;
+    }
+    let f = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::UnusedIndex && f.table == "noobdb_adv_idx")
+        .expect("unused index finding");
+    // サイズは取れれば正の値。権限がなければ None のまま指摘は出る。
+    assert!(f.size_bytes.is_none_or(|n| n > 0), "{:?}", f.size_bytes);
+}
+
+#[tokio::test]
+async fn mysql_column_profile_sampled_is_subset_of_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in url");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE prof_sample_t (id INT PRIMARY KEY, v INT)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    let values: Vec<String> = (1..=200).map(|i| format!("({i}, {})", i % 7)).collect();
+    conn.execute(
+        &format!("INSERT INTO prof_sample_t VALUES {}", values.join(",")),
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    let p = conn
+        .column_profile(&db, "prof_sample_t", "v", false, 5, Some(50.0))
+        .await
+        .expect("sampled profile");
+    assert_eq!(p.sample_percent, Some(50.0));
+    assert!(p.notes.contains(&"sampled".to_string()));
+    match p.total_count {
+        t::Value::UInt(n) => assert!(n <= 200, "sample cannot exceed the table: {n}"),
+        ref other => panic!("unexpected count: {other:?}"),
+    }
+    conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
         .await
         .expect("cleanup");
 }

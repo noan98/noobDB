@@ -155,6 +155,7 @@ async fn refresh_patch_reconstructs_the_new_result_from_real_rows() {
     let p = second.patch.expect("patch");
     assert!(!p.unchanged);
     assert_eq!(p.removed_count, 1);
+    assert_eq!(p.added_count, 1);
     assert_eq!(p.total_rows, second_rows.len() as u64);
 
     // パッチを前回結果に適用すると今回の結果と一致する。

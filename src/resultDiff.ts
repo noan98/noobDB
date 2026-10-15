@@ -139,3 +139,38 @@ export function attachRowDiff(rows: CellValue[][], diff: ResultRowDiff): void {
 export function rowDiffFor(rows: CellValue[][] | null | undefined): ResultRowDiff | null {
   return rows ? (precomputedDiffs.get(rows) ?? null) : null;
 }
+
+/**
+ * 前回結果のうち今回結果に PK ペアを持たない行 (= 削除された行) を、前回の並び順で返す
+ * (#1628)。グリッドへ「ゴースト行」として描くための元データ。`limit` 件で打ち切る
+ * (大量削除でも DOM を膨らませない)。PK が空なら diffResultRows と同じく空配列。
+ */
+export function removedPrevRows(
+  prev: CellValue[][],
+  next: CellValue[][],
+  pkIndices: number[],
+  limit = 200,
+): CellValue[][] {
+  if (pkIndices.length === 0) return [];
+  const nextKeys = new Set<PkKey>();
+  for (const row of next) nextKeys.add(pkKey(row, pkIndices));
+  const out: CellValue[][] = [];
+  for (const row of prev) {
+    if (nextKeys.has(pkKey(row, pkIndices))) continue;
+    out.push(row);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * 「変化のみ」表示用に、変化したセルを持つ行と追加行の行位置集合を返す (#1628)。
+ * 削除行は今回結果に存在しないのでここには含まれない (ゴースト行として別枠で出す)。
+ */
+export function changedRowIndexSet(diff: ResultRowDiff, rowCount: number): Set<number> {
+  const out = new Set<number>(diff.addedRows);
+  for (let i = 0; i < rowCount; i++) {
+    if (diff.changedCells[i]?.some(Boolean)) out.add(i);
+  }
+  return out;
+}

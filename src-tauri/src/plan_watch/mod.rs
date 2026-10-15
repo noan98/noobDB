@@ -660,6 +660,22 @@ pub fn is_full_scan_access(access: Option<&str>) -> bool {
     }
 }
 
+/// 警告 (Warning) の変化のうち先頭 1 件を「対象: 変更前 → 変更後」の 1 行にする (#1621)。
+/// 例: `orders: Index Scan → Parallel Seq Scan`。変更前 / 後が無いもの (オペレーションの追加など) は
+/// `—` で埋める。警告が無ければ `None`。通知本文に載せ、画面を開かずに退行の中身を判断できるようにする。
+pub fn first_warning_summary(changes: &[PlanChange]) -> Option<String> {
+    let c = changes
+        .iter()
+        .find(|c| c.severity == PlanChangeSeverity::Warning)?;
+    let side = |v: &Option<String>| v.clone().unwrap_or_else(|| "—".to_string());
+    Some(format!(
+        "{}: {} → {}",
+        c.object,
+        side(&c.before),
+        side(&c.after)
+    ))
+}
+
 fn op_display_name(op: &PlanOp) -> String {
     op.object.clone().unwrap_or_else(|| op.kind.clone())
 }
@@ -901,6 +917,53 @@ mod tests {
 
     fn mysql_ops(json: &str) -> Vec<PlanOp> {
         ops_from_payload("mysql", PayloadKind::Json, json)
+    }
+
+    fn change(
+        sev: PlanChangeSeverity,
+        object: &str,
+        before: Option<&str>,
+        after: Option<&str>,
+    ) -> PlanChange {
+        PlanChange {
+            kind: PlanChangeKind::Access,
+            severity: sev,
+            path: "0".into(),
+            object: object.into(),
+            before: before.map(String::from),
+            after: after.map(String::from),
+        }
+    }
+
+    #[test]
+    fn first_warning_summary_names_object_and_transition_of_the_first_warning() {
+        assert_eq!(first_warning_summary(&[]), None);
+        // 情報レベルだけなら要約しない。
+        let info = change(PlanChangeSeverity::Info, "t", Some("ref"), Some("range"));
+        assert_eq!(first_warning_summary(std::slice::from_ref(&info)), None);
+        let w1 = change(
+            PlanChangeSeverity::Warning,
+            "orders",
+            Some("Index Scan"),
+            Some("Parallel Seq Scan"),
+        );
+        let w2 = change(
+            PlanChangeSeverity::Warning,
+            "items",
+            Some("ref"),
+            Some("ALL"),
+        );
+        // 情報を飛ばして最初の警告を採る。
+        assert_eq!(
+            first_warning_summary(&[info, w1, w2]).as_deref(),
+            Some("orders: Index Scan → Parallel Seq Scan")
+        );
+        // オペレーション追加 (変更前なし) は — で埋める。
+        let added = change(PlanChangeSeverity::Warning, "logs", None, Some("ALL"));
+        assert_eq!(
+            first_warning_summary(&[added]).as_deref(),
+            Some("logs: — → ALL")
+        );
     }
 
     #[test]

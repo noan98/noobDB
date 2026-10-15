@@ -3,6 +3,7 @@ import type { IndexInfo, TableColumnInfo } from "../api/tauri";
 import {
   indexKind,
   sortIndexes,
+  structureIncomingRows,
   structureColumnRows,
   structureTargetLabel,
 } from "../components/tableStructure";
@@ -84,5 +85,20 @@ describe("structureTargetLabel", () => {
     expect(structureTargetLabel("mysql", { database: "app", table: "users" })).toBe("app.users");
     expect(structureTargetLabel("sqlite", { database: "main", table: "users" })).toBe("users");
     expect(structureTargetLabel("postgres", { database: "", table: "users" })).toBe("users");
+  });
+});
+
+describe("structureIncomingRows (#1628)", () => {
+  it("参照元テーブル → 列の順に並べ、重複を 1 行にまとめる", () => {
+    const rows = structureIncomingRows([
+      { table: "b", column: "x", referencedColumn: "id" },
+      { table: "a", column: "z", referencedColumn: "id" },
+      { table: "a", column: "y", referencedColumn: "id" },
+      { table: "a", column: "y", referencedColumn: "id" },
+    ]);
+    expect(rows.map((r) => `${r.table}.${r.column}`)).toEqual(["a.y", "a.z", "b.x"]);
+  });
+  it("空なら空", () => {
+    expect(structureIncomingRows([])).toEqual([]);
   });
 });

@@ -126,6 +126,26 @@ export function buildFindKeySet(matches: GridFindMatch[]): Set<string> {
   return new Set(matches.map(findMatchKey));
 }
 
+/** ヒットを持つ行の添字集合 (「ヒットのみ表示」で行を絞るのに使う, #1628)。 */
+export function findHitRowSet(matches: GridFindMatch[]): Set<number> {
+  return new Set(matches.map((m) => m.rowIdx));
+}
+
+/**
+ * 「ヒットのみ表示」と「変化のみ表示」など、元の行位置に対する複数の許可集合を束ねる (#1628)。
+ * `null` は「制限なし」。両方あれば共通部分、片方だけならそれ自身を返す。
+ */
+export function intersectRowAllow(
+  a: ReadonlySet<number> | null,
+  b: ReadonlySet<number> | null,
+): ReadonlySet<number> | null {
+  if (!a) return b;
+  if (!b) return a;
+  const out = new Set<number>();
+  for (const v of a) if (b.has(v)) out.add(v);
+  return out;
+}
+
 /**
  * 次/前ヒットのインデックスを wrap-around 付きで返す。
  * ヒット 0 件なら null。現在位置が無い (null) 場合は先頭 (dir=1) / 末尾 (dir=-1)。

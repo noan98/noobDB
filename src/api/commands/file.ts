@@ -48,4 +48,11 @@ export const fileCommands = {
     invoke<number>("write_text_file", { path, content, encoding: encoding ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "write_text_file"),
     ),
+
+  /**
+   * 書き出し・ダンプの保存先を OS のファイルマネージャで開く (#1631)。`path` はディレクトリ、
+   * またはそこにあるファイル (親ディレクトリを開く)。存在しないパスは reject。シェルプラグインを
+   * 直に叩かずバックエンド経由で起動する (capabilities を増やさない)。
+   */
+  revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),
 };

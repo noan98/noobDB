@@ -4,6 +4,8 @@
 // ここでは永続化と更新の純ロジックのみを提供し (Vitest でユニットテスト)、UI への
 // 反映は App.tsx / ConnectionList.tsx が担当する。
 
+import { moveTabBy, reorderIfPermutation } from "./tabReorder";
+
 const STORAGE_PREFIX = "noobdb.quickaccess.";
 
 /** 直近に開いたテーブルとして保持する最大件数 (LRU)。 */
@@ -76,6 +78,29 @@ export function toggleFavorite(state: QuickAccessState, ref: TableRef): QuickAcc
     return { ...state, favorites: state.favorites.filter((f) => !tableRefEquals(f, ref)) };
   }
   return { ...state, favorites: [...state.favorites, { database: ref.database, table: ref.table }] };
+}
+
+const refKey = (r: TableRef) => `${r.database}\u0000${r.table}`;
+
+/**
+ * お気に入りの並びを `proposed` に差し替える (純粋, #1631)。現在のお気に入りの真の
+ * 順列でなければ (欠落・重複・混入) 何もせず同じ参照を返す。`recent` には触れない。
+ */
+export function reorderFavorites(state: QuickAccessState, proposed: TableRef[]): QuickAccessState {
+  const byKey = new Map(state.favorites.map((r) => [refKey(r), r]));
+  const keys = reorderIfPermutation(state.favorites.map(refKey), proposed.map(refKey));
+  if (!keys || keys.every((k, i) => k === refKey(state.favorites[i]))) return state;
+  return { ...state, favorites: keys.map((k) => byKey.get(k) as TableRef) };
+}
+
+/** お気に入りの `ref` を `delta` 個ずらす (保存順の向き。端では動かない)。純粋。 */
+export function moveFavorite(state: QuickAccessState, ref: TableRef, delta: number): QuickAccessState {
+  const keys = moveTabBy(state.favorites.map(refKey), refKey(ref), delta);
+  const byKey = new Map(state.favorites.map((r) => [refKey(r), r]));
+  return reorderFavorites(
+    state,
+    keys.map((k) => byKey.get(k) as TableRef),
+  );
 }
 
 /**

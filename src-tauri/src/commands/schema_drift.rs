@@ -9,10 +9,13 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::db::sync::{generate_sync_sql, quote_ident, SyncPlan};
+use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::schema_drift::store::{self, LegacyGeneration};
 use crate::schema_drift::{
-    capture_payload, summarize_payloads, DriftSummary, GenerationMeta, SnapshotPayload,
+    capture_payload, diff_indexes, schema_diff_between, summarize_payloads, DriftSummary,
+    GenerationMeta, IndexDriftStatus, SnapshotPayload,
 };
 use crate::state::{AppState, Session};
 
@@ -112,6 +115,17 @@ pub async fn schema_drift_list(profile_id: String) -> Result<Vec<GenerationMeta>
     store::list(&profile_id).await
 }
 
+/// 世代にラベルを付ける・外す (`label` が null / 空で外す, #1621)。セッション不要。
+/// ラベル付きの世代はローテーションで消えない。世代が無ければ false。
+#[tauri::command]
+pub async fn schema_drift_set_label(
+    profile_id: String,
+    id: String,
+    label: Option<String>,
+) -> Result<bool> {
+    store::set_label(&profile_id, parse_id(&id)?, label.as_deref()).await
+}
+
 /// 同じプロファイルの 2 世代 (`from_id` = 比較元、`to_id` = 比較先) の変化サマリ。
 /// どちらかの世代が (サイズ超過で) 省略されている、存在しない、または対象 (DB / スキーマ)
 /// が異なるときは `None` (対象が違うと全テーブルが増減したように見えるため。PostgreSQL で
@@ -128,6 +142,101 @@ pub async fn schema_drift_compare(
     match (a.and_then(|g| g.payload), b.and_then(|g| g.payload)) {
         (Some(a), Some(b)) => Ok(summarize_if_same_target(&a, &b)),
         _ => Ok(None),
+    }
+}
+
+/// `schema_drift_revert_sql` の結果 (#1621)。
+#[derive(Debug, Clone, Serialize)]
+pub struct RevertSql {
+    /// 現在の世代 (`to`) を戻したい世代 (`from`) の形へ戻す DDL と警告。
+    pub plan: SyncPlan,
+    /// `allow_destructive` が false のために出力しなかった破壊的な文 (DROP) の数。
+    pub omitted_destructive: usize,
+    /// 戻す対象のデータベース / スキーマ。
+    pub database: String,
+    /// 文の前に置く対象の指定 (MySQL は `USE`、PostgreSQL は `SET search_path`)。
+    /// 生成 DDL は表名を修飾しないため、接続中の DB / スキーマが違うと別の対象へ
+    /// 適用してしまうのを防ぐ。SQLite は DB が 1 つなので `None`。
+    pub preamble: Option<String>,
+}
+
+/// 巻き戻し DDL の先頭に置く対象指定の文 (純関数)。
+pub(crate) fn target_preamble(driver: DriverKind, database: &str) -> Option<String> {
+    match driver {
+        DriverKind::Mysql => Some(format!("USE {}", quote_ident(driver, database))),
+        DriverKind::Postgres => Some(format!(
+            "SET search_path TO {}",
+            quote_ident(driver, database)
+        )),
+        DriverKind::Sqlite => None,
+    }
+}
+
+/// 巻き戻し DDL の本体 (純粋)。`from` を source、`to` を target として差分を取り、
+/// 既存の `generate_sync_sql` で target を source に揃える DDL にする。インデックスの
+/// 差分は同期 DDL が扱わないため、警告に列挙して手での対応を促す。
+pub(crate) fn revert_plan(
+    from: &SnapshotPayload,
+    to: &SnapshotPayload,
+    allow_destructive: bool,
+) -> Result<RevertSql> {
+    if from.driver != to.driver || from.database != to.database {
+        return Err(AppError::InvalidInput(
+            "generations target different databases or schemas".into(),
+        ));
+    }
+    let diff = schema_diff_between(from, to);
+    // 本体は許可どおりに生成し (DROP 前提の警告も許可があるときだけ出る)、
+    // 省いた件数を知るためだけに「全部生成」を別に呼ぶ。
+    let mut plan = generate_sync_sql(&diff, allow_destructive);
+    let omitted_destructive = if allow_destructive {
+        0
+    } else {
+        generate_sync_sql(&diff, true)
+            .statements
+            .iter()
+            .filter(|s| s.destructive)
+            .count()
+    };
+    for entry in diff_indexes(from, to) {
+        let what = match entry.status {
+            IndexDriftStatus::Added => "追加",
+            IndexDriftStatus::Removed => "削除",
+            IndexDriftStatus::Changed => "変更",
+        };
+        plan.warnings.push(format!(
+            "表 {} のインデックス {} が{}されています。巻き戻し DDL にはインデックスの変更を含みません (手動で戻してください)",
+            entry.table, entry.index_name, what
+        ));
+    }
+    Ok(RevertSql {
+        plan,
+        omitted_destructive,
+        database: to.database.clone(),
+        preamble: target_preamble(to.driver, &to.database),
+    })
+}
+
+/// 2 世代の差分を打ち消す DDL を生成する (#1621)。`from` = 戻したい世代、`to` = 現在側の世代で、
+/// `to` の状態から `from` の状態へ戻す DDL を返す。DROP を含む文は `destructive` とし、
+/// `allow_destructive` が false の間は出力しない (件数だけ `omitted_destructive` で返す)。
+/// 世代の対象 (DB / スキーマ) が違う、またはどちらかのペイロードが省略されているときは拒否する。
+/// 生成のみで実行はしない (適用は利用者が内容を確認してエディタから行う)。
+#[tauri::command]
+pub async fn schema_drift_revert_sql(
+    profile_id: String,
+    from_id: String,
+    to_id: String,
+    allow_destructive: bool,
+) -> Result<RevertSql> {
+    let (from, to) = (parse_id(&from_id)?, parse_id(&to_id)?);
+    let a = store::load(&profile_id, from).await?;
+    let b = store::load(&profile_id, to).await?;
+    match (a.and_then(|g| g.payload), b.and_then(|g| g.payload)) {
+        (Some(a), Some(b)) => revert_plan(&a, &b, allow_destructive),
+        _ => Err(AppError::InvalidInput(
+            "generation not found or its snapshot was omitted".into(),
+        )),
     }
 }
 
@@ -166,6 +275,167 @@ mod tests {
             database: database.to_string(),
             tables: Vec::new(),
         }
+    }
+
+    fn col(name: &str, ty: &str, key: &str) -> crate::db::types::TableColumnInfo {
+        crate::db::types::TableColumnInfo {
+            name: name.into(),
+            data_type: ty.into(),
+            nullable: key.is_empty(),
+            key: key.into(),
+            default: None,
+            extra: String::new(),
+            referenced_table: None,
+            referenced_column: None,
+            comment: None,
+        }
+    }
+
+    fn table(
+        name: &str,
+        cols: Vec<crate::db::types::TableColumnInfo>,
+    ) -> crate::schema_drift::SnapshotTable {
+        crate::schema_drift::SnapshotTable {
+            name: name.into(),
+            columns: cols,
+            indexes: Vec::new(),
+        }
+    }
+
+    fn mysql_payload(tables: Vec<crate::schema_drift::SnapshotTable>) -> SnapshotPayload {
+        SnapshotPayload {
+            driver: DriverKind::Mysql,
+            database: "app".into(),
+            tables,
+        }
+    }
+
+    /// #1621: 古い世代へ戻す DDL。追加された列は DROP COLUMN (破壊的)、
+    /// 削除された列は ADD COLUMN になり、破壊的な文は許可があるときだけ出る。
+    #[test]
+    fn revert_plan_reverses_the_change_and_gates_destructive_statements() {
+        let old = mysql_payload(vec![table(
+            "users",
+            vec![col("id", "int", "PRI"), col("legacy", "varchar(10)", "")],
+        )]);
+        // 新世代: legacy 列が消え、email 列とテーブル audit が増えた。
+        let new = mysql_payload(vec![
+            table(
+                "users",
+                vec![col("id", "int", "PRI"), col("email", "varchar(50)", "")],
+            ),
+            table("audit", vec![col("id", "int", "PRI")]),
+        ]);
+        let safe = revert_plan(&old, &new, false).unwrap();
+        assert_eq!(safe.database, "app");
+        assert!(safe.plan.statements.iter().all(|s| !s.destructive));
+        assert!(safe
+            .plan
+            .statements
+            .iter()
+            .any(|s| s.sql.contains("ADD COLUMN") && s.sql.contains("legacy")));
+        // DROP COLUMN email と DROP TABLE audit が省かれた。
+        assert_eq!(safe.omitted_destructive, 2);
+
+        let full = revert_plan(&old, &new, true).unwrap();
+        assert_eq!(full.omitted_destructive, 0);
+        let drops: Vec<&str> = full
+            .plan
+            .statements
+            .iter()
+            .filter(|s| s.destructive)
+            .map(|s| s.sql.as_str())
+            .collect();
+        assert_eq!(drops.len(), 2);
+        assert!(drops
+            .iter()
+            .any(|s| s.contains("DROP COLUMN") && s.contains("email")));
+        assert!(drops
+            .iter()
+            .any(|s| s.contains("DROP TABLE") && s.contains("audit")));
+    }
+
+    #[test]
+    fn revert_plan_without_permission_has_no_destructive_warnings() {
+        let old = mysql_payload(vec![table("a", vec![col("id", "int", "PRI")])]);
+        let new = mysql_payload(vec![
+            table("a", vec![col("id", "int", "PRI")]),
+            table("b", vec![col("id", "int", "PRI")]),
+        ]);
+        let safe = revert_plan(&old, &new, false).unwrap();
+        assert_eq!(safe.omitted_destructive, 1);
+        assert!(safe.plan.statements.is_empty());
+    }
+
+    #[test]
+    fn revert_plan_carries_target_preamble_per_driver() {
+        let m = revert_plan(&mysql_payload(vec![]), &mysql_payload(vec![]), false).unwrap();
+        assert_eq!(m.preamble.as_deref(), Some("USE `app`"));
+        let p = revert_plan(&payload("public"), &payload("public"), false).unwrap();
+        assert_eq!(p.preamble.as_deref(), Some("SET search_path TO \"public\""));
+        let mut sq = payload("main");
+        sq.driver = DriverKind::Sqlite;
+        let r = revert_plan(&sq, &sq, false).unwrap();
+        assert_eq!(r.preamble, None);
+    }
+
+    #[test]
+    fn revert_plan_works_for_postgres_and_sqlite() {
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
+            let mk = |tables| SnapshotPayload {
+                driver,
+                database: "main".into(),
+                tables,
+            };
+            let old = mk(vec![table(
+                "users",
+                vec![col("id", "integer", "PRI"), col("legacy", "text", "")],
+            )]);
+            let new = mk(vec![table("users", vec![col("id", "integer", "PRI")])]);
+            let plan = revert_plan(&old, &new, false).unwrap();
+            assert!(
+                plan.plan
+                    .statements
+                    .iter()
+                    .any(|s| s.sql.contains("ADD COLUMN") && s.sql.contains("legacy")),
+                "{driver:?}: {:?}",
+                plan.plan.statements
+            );
+            // 追加された列を戻す DROP は許可が無いと省かれる。
+            let rev = revert_plan(&new, &old, false).unwrap();
+            assert!(rev.plan.statements.iter().all(|s| !s.destructive));
+            assert_eq!(rev.omitted_destructive, 1, "{driver:?}");
+        }
+    }
+
+    #[test]
+    fn revert_plan_rejects_different_targets_and_reports_index_changes() {
+        let a = mysql_payload(vec![table("users", vec![col("id", "int", "PRI")])]);
+        let mut other = a.clone();
+        other.database = "other".into();
+        assert!(revert_plan(&a, &other, false).is_err());
+        let mut pg = a.clone();
+        pg.driver = DriverKind::Postgres;
+        assert!(revert_plan(&a, &pg, false).is_err());
+
+        // インデックスだけが違う場合は DDL が空で、警告に出る。
+        let mut with_index = a.clone();
+        with_index.tables[0]
+            .indexes
+            .push(crate::db::types::IndexInfo {
+                name: "idx_id".into(),
+                columns: vec!["id".into()],
+                unique: false,
+                primary: false,
+                method: Some("BTREE".into()),
+                ..Default::default()
+            });
+        let plan = revert_plan(&a, &with_index, true).unwrap();
+        assert!(plan.plan.statements.is_empty());
+        assert!(plan.plan.warnings.iter().any(|w| w.contains("idx_id")));
+        // 同一世代なら空。
+        let same = revert_plan(&a, &a, true).unwrap();
+        assert!(same.plan.statements.is_empty() && same.plan.warnings.is_empty());
     }
 
     #[test]

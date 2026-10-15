@@ -5,8 +5,10 @@
  *
  * 通知は「時間のかかったクエリが完了したとき、他の作業に切り替えている利用者へ
  * 気付かせる」ためのものなので、次の 2 条件を両方満たすときだけ発火する:
- *   - 実行時間が設定の閾値 (秒) 以上
+ *   - 実行時間が設定の閾値 (秒) 以上 (**正常終了 `done` と `cancelled` だけ**に適用する)
  *   - ウィンドウが非フォーカス (フォーカス中は画面を見ているので不要)
+ * 失敗 (`error`) とタイムアウト (`timeout`) は閾値に関係なく通知する (#1621): 短時間で
+ * 失敗したクエリ (接続エラー・構文エラー) は、別作業中だと気づけないため。
  * 加えて設定でオフにできる。
  */
 
@@ -21,6 +23,8 @@ export interface QueryNotificationDecisionInput {
   thresholdSecs: number;
   /** 呼び出し時点でウィンドウがフォーカスされているか。 */
   windowFocused: boolean;
+  /** 完了の種別。省略時は `done` (閾値を適用する)。 */
+  kind?: QueryNotificationKind;
 }
 
 /**
@@ -30,7 +34,9 @@ export interface QueryNotificationDecisionInput {
 export function shouldNotifyQueryCompletion(input: QueryNotificationDecisionInput): boolean {
   if (!input.enabled) return false;
   if (input.windowFocused) return false;
-  if (!Number.isFinite(input.elapsedMs) || !Number.isFinite(input.thresholdSecs)) return false;
+  if (!Number.isFinite(input.elapsedMs)) return false;
+  if (input.kind === "error" || input.kind === "timeout") return true;
+  if (!Number.isFinite(input.thresholdSecs)) return false;
   const elapsed = Math.max(0, input.elapsedMs);
   const thresholdMs = Math.max(0, input.thresholdSecs) * 1000;
   return elapsed >= thresholdMs;

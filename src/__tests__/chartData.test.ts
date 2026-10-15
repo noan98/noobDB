@@ -4,6 +4,7 @@ import type { CellValue, Column } from "../api/tauri";
 import { CATEGORICAL, CATEGORICAL_DARK, DIVERGING_RAMPS, SEQUENTIAL_RAMPS, sampleRamp } from "../colorScale";
 import {
   buildChartModel,
+  sortChartModel,
   buildChartSql,
   canAggregateInDb,
   chartModelFromAggregatedRows,
@@ -32,6 +33,7 @@ import {
   valueExtent,
   writeStoredChartConfig,
   type ChartConfig,
+  type ChartModel,
 } from "../components/chartData";
 
 const col = (name: string): Column => ({ name, type_name: "x" });
@@ -975,5 +977,51 @@ describe("時間バケットの適用条件 (#1541)", () => {
     ]);
     expect(chartModelFromAggregatedRows(rows, ["n"], "sum", "day").labels).toHaveLength(3);
     expect(chartModelFromAggregatedRows(rows, ["n"], "count", "day").labels).toHaveLength(3);
+  });
+});
+
+describe("棒グラフの並び替え (#1628)", () => {
+  const model: ChartModel = {
+    labels: ["a", "b", "c", "d"],
+    series: [
+      { name: "s1", values: [3, 9, 1, 9] },
+      { name: "s2", values: [1, 1, 5, 0] },
+    ],
+    sampledFrom: null,
+  };
+  it("desc は系列の合計の大きい順 (同値は元の順)、ラベルと全系列が同じ順に動く", () => {
+    const m = sortChartModel(model, { type: "bar", barSort: "desc" });
+    expect(m.labels).toEqual(["b", "d", "c", "a"]);
+    expect(m.series[0].values).toEqual([9, 9, 1, 3]);
+    expect(m.series[1].values).toEqual([1, 0, 5, 1]);
+  });
+  it("asc は小さい順", () => {
+    expect(sortChartModel(model, { type: "bar", barSort: "asc" }).labels).toEqual(["a", "c", "d", "b"]);
+  });
+  it("x / 未設定 / 棒以外は元のモデルをそのまま返す", () => {
+    expect(sortChartModel(model, { type: "bar", barSort: "x" })).toBe(model);
+    expect(sortChartModel(model, { type: "bar" })).toBe(model);
+    expect(sortChartModel(model, { type: "line", barSort: "desc" })).toBe(model);
+  });
+  it("buildChartModel が config.barSort を適用し、sanitizeChartConfig が保存値を引き継ぐ", () => {
+    const columns = [
+      { name: "k", type_name: "TEXT" },
+      { name: "v", type_name: "INT" },
+    ];
+    const rows: CellValue[][] = [
+      ["x", 1],
+      ["y", 3],
+      ["z", 2],
+    ];
+    const cfg = {
+      type: "bar" as const,
+      xCol: 0,
+      yCols: [1],
+      aggregation: "none" as const,
+      barSort: "desc" as const,
+    };
+    expect(buildChartModel(columns, rows, cfg).labels).toEqual(["y", "z", "x"]);
+    expect(sanitizeChartConfig(cfg, columns)?.barSort).toBe("desc");
+    expect(sanitizeChartConfig({ ...cfg, barSort: "bogus" }, columns)?.barSort).toBeUndefined();
   });
 });

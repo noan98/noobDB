@@ -51,6 +51,7 @@ const { saveMock, copyMock } = vi.hoisted(() => ({
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: saveMock }));
 vi.mock("../components/clipboard", () => ({ copyToClipboard: copyMock }));
 
+import { DEFAULT_IMPORT_PREFS, importScope, saveImportPrefs } from "../inputMemory";
 import { ImportModal } from "../components/ImportModal";
 import { api, listenImportStream, type ImportDoneEvent } from "../api/tauri";
 
@@ -448,5 +449,51 @@ describe("ImportModal re-run guard for an existing table (#1598)", () => {
     // パスを編集すれば再び実行できる。
     fireEvent.change(screen.getByLabelText(t("importFile")), { target: { value: "/tmp/users2.csv" } });
     await waitFor(() => expect(screen.getByRole("button", { name: t("importExecute") })).toBeEnabled());
+  });
+});
+
+describe("ImportModal 前回の取り込み設定 (#1631)", () => {
+  it("接続 × DB × テーブルに保存した設定を初期値にし、別テーブルには持ち込まない", async () => {
+    localStorage.clear();
+    saveImportPrefs(importScope("p1", "appdb", "users"), {
+      ...DEFAULT_IMPORT_PREFS,
+      delimiter: ";",
+      encoding: "shift_jis",
+      errorMode: "skip",
+      nullMode: "custom",
+      nullCustom: "\\N",
+    });
+    const { unmount } = renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        profileId="p1"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    expect((screen.getByLabelText(t("importDelimiter")) as HTMLSelectElement).value).toBe(";");
+    expect((screen.getByLabelText(t("importEncoding")) as HTMLSelectElement).value).toBe("shift_jis");
+    expect((screen.getByLabelText(t("importErrorMode")) as HTMLSelectElement).value).toBe("skip");
+    unmount();
+
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="orders"
+        driver="postgres"
+        profileId="p1"
+        initialPath="/tmp/orders.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importMappingTitle"));
+    expect((screen.getByLabelText(t("importDelimiter")) as HTMLSelectElement).value).toBe(",");
   });
 });

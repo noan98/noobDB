@@ -44,6 +44,29 @@ export interface SelectionSummary {
   min: number | null;
   /** 数値セルの最大 (数値が 0 件なら null)。 */
   max: number | null;
+  /** 数値セルの中央値 (数値が 0 件なら null, #1628)。 */
+  median: number | null;
+  /** 数値セルの第 1 四分位 (線形補間, 数値が 0 件なら null)。 */
+  q1: number | null;
+  /** 数値セルの第 3 四分位 (線形補間, 数値が 0 件なら null)。 */
+  q3: number | null;
+  /** 非 NULL セルの DISTINCT 数 (文字列表現で比較, #1628)。 */
+  distinctCount: number;
+}
+
+/**
+ * 昇順ソート済み配列の分位点 (0〜1, 線形補間)。空配列は null。
+ * 中央値・四分位で共有する。
+ */
+export function quantileSorted(sorted: readonly number[], p: number): number | null {
+  const n = sorted.length;
+  if (n === 0) return null;
+  const pos = Math.min(1, Math.max(0, p)) * (n - 1);
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  const a = sorted[lo] as number;
+  const b = sorted[hi] as number;
+  return lo === hi ? a : a + (b - a) * (pos - lo);
 }
 
 /**
@@ -58,19 +81,28 @@ export function selectionSummary(cells: Iterable<CellValue>): SelectionSummary {
   let sum = 0;
   let min = Infinity;
   let max = -Infinity;
+  const nums: number[] = [];
+  const distinct = new Set<string>();
   for (const v of cells) {
     count++;
     if (isNullish(v)) continue;
     nonNullCount++;
+    distinct.add(String(v));
     const n = toNumber(v);
     if (n === null) continue;
     numericCount++;
+    nums.push(n);
     sum += n;
     if (n < min) min = n;
     if (n > max) max = n;
   }
   const hasNumeric = numericCount > 0;
+  nums.sort((a, b) => a - b);
   return {
+    median: quantileSorted(nums, 0.5),
+    q1: quantileSorted(nums, 0.25),
+    q3: quantileSorted(nums, 0.75),
+    distinctCount: distinct.size,
     count,
     nonNullCount,
     numericCount,

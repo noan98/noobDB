@@ -40,11 +40,11 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, AiUsageRecord,
-    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
-    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
-    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
-    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    AdvisorDiff, AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage,
+    AiUsageRecord, BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff,
+    BroadcastEnvReport, BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column,
+    ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview,
+    DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
     ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
@@ -254,6 +254,7 @@ fn build_fixtures() -> serde_json::Value {
             count: Value::UInt(7),
         }],
         notes: vec!["approx_distinct_no_stats".into()],
+        sample_percent: Some(2.5),
     };
     // 全列の概要 (#1539)。`distinct_count` の Some / None と lossless 文字列の両方を出す。
     let table_profile_overview = t::TableProfileOverview {
@@ -311,6 +312,7 @@ fn build_fixtures() -> serde_json::Value {
                 .into(),
         ),
         statistical: false,
+        size_bytes: None,
     };
     let skipped_rule = SkippedRule {
         rule: RuleId::UnusedIndex,
@@ -327,6 +329,23 @@ fn build_fixtures() -> serde_json::Value {
             ddl: "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);".into(),
             ddl_online: Some("ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;".into()),
         }],
+        ignored: vec![HealthFinding {
+            rule: RuleId::UnusedIndex,
+            severity: Severity::Low,
+            table: "logs".into(),
+            columns: vec!["created_at".into()],
+            context: vec!["idx_logs_created".into()],
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: true,
+            size_bytes: Some(1_048_576),
+        }],
+        diff: Some(AdvisorDiff {
+            previous_at: "2026-01-01T00:00:00Z".into(),
+            new_indexes: vec![0],
+            resolved: vec![health_finding.clone()],
+            unchanged: 2,
+        }),
     };
 
     // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
@@ -374,6 +393,7 @@ fn build_fixtures() -> serde_json::Value {
             region: "ap-northeast-1".into(),
             profile: Some("work".into()),
         }),
+        ssm: None,
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,
@@ -599,6 +619,7 @@ fn build_fixtures() -> serde_json::Value {
             num_min: vec![Some(1.0), None],
             num_max: vec![Some(1.0), None],
             duplicate_rows: Some(false),
+            distinct_estimates: vec![1, 1],
         }),
     };
     // 境界ケース: 空の結果セット (0 行の SELECT)。`Vec::new()` は serde で必ず
@@ -624,6 +645,7 @@ fn build_fixtures() -> serde_json::Value {
             num_min: vec![Some(1.0), None],
             num_max: vec![Some(2.0), None],
             duplicate_rows: None,
+            distinct_estimates: vec![2, 1],
         }),
         snapshot_id: Some(3),
         read_only: false,
@@ -648,6 +670,18 @@ fn build_fixtures() -> serde_json::Value {
             vec![Value::Null],
         ],
         0,
+    );
+    // 重複キー検出 (#1628): グループ・上位・行インデックスのすべてが埋まる入力。
+    let result_duplicate_keys = t::duplicate_keys(
+        &[
+            vec![Value::String("a".into()), Value::Int(1)],
+            vec![Value::String("a".into()), Value::Int(1)],
+            vec![Value::Null, Value::Int(2)],
+            vec![Value::String("b".into()), Value::Int(3)],
+        ],
+        &[0, 1],
+        5,
+        10,
     );
     let broadcast_env_message = BroadcastMessage::Env(BroadcastEnvReport {
         session_id: "sess0001".into(),
@@ -679,6 +713,8 @@ fn build_fixtures() -> serde_json::Value {
         total_rows: 3,
         unchanged: false,
         removed_count: 1,
+        added_count: 1,
+        changed_count: 1,
         runs: vec![
             PatchRun::Keep { from: 0, count: 1 },
             PatchRun::Rows {
@@ -966,6 +1002,8 @@ fn build_fixtures() -> serde_json::Value {
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: i % 2 == 0,
+            // 容量あり / なしの両方の形を通す。
+            size_bytes: (i % 2 == 0).then_some(4096),
         })
         .collect();
     let all_drivers = variants!(DriverKind [Mysql, Postgres, Sqlite]);
@@ -994,6 +1032,9 @@ fn build_fixtures() -> serde_json::Value {
                     Some("DROP INDEX CONCURRENTLY \"a\";".into())
                 },
             }],
+            // 前回診断なし (None) / 対応しない無しの形。
+            ignored: vec![],
+            diff: None,
         })
         .collect();
 
@@ -1218,6 +1259,15 @@ fn build_fixtures() -> serde_json::Value {
         check_sql: assertion_sql.check_sql.clone(),
         violations_sql: assertion_sql.violations_sql.clone(),
         elapsed_ms: 4,
+        previous: Some(t::AssertionPrevious {
+            at: "2026-01-01T00:00:00Z".into(),
+            observed: 1,
+            passed: false,
+        }),
+    };
+    let accepted_values_candidates = t::AcceptedValuesCandidates {
+        values: vec!["active".into(), "closed".into()],
+        truncated: false,
     };
     // 保存済みアサーション: ルールの全種 (`kind` タグ付き enum) を通す。
     let assertion_variants: Vec<t::Assertion> = vec![
@@ -1258,6 +1308,15 @@ fn build_fixtures() -> serde_json::Value {
         rule,
     })
     .collect();
+    let import_assertions_result = t::ImportAssertionsResult {
+        imported: vec![assertion_variants[0].clone()],
+        skipped_duplicates: 1,
+        rejected: vec![t::ImportRejection {
+            index: 2,
+            name: Some("bad".into()),
+            error: "name is required".into(),
+        }],
+    };
     // RowCountOp の全種は別個に通す (上の Between だけでは 1 種しか出ない)。
     let row_count_op_variants: Vec<t::Assertion> =
         variants!(RowCountOp [Gt, Gte, Lt, Lte, Eq, Between])
@@ -1329,6 +1388,11 @@ fn build_fixtures() -> serde_json::Value {
         index_count: 2,
         has_primary_key: true,
         foreign_key_count: 1,
+        previous: Some(t::TableStatPrevious {
+            at: "2026-01-01T00:00:00Z".into(),
+            row_estimate: Some(1000),
+            total_bytes: None,
+        }),
     };
     let insert_rows_result = t::InsertRowsResult {
         inserted: 100,
@@ -1509,6 +1573,8 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskSchedule::Daily {
                 hour: 3,
                 minute: 15,
+                timezone: Some("Asia/Tokyo".into()),
+                weekdays: 0b001_1111,
             },
         ),
         (
@@ -1523,7 +1589,12 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskAction::TimelapseCapture {
                 max_generations: Some(30),
             },
-            t::TaskSchedule::Daily { hour: 2, minute: 0 },
+            t::TaskSchedule::Daily {
+                hour: 2,
+                minute: 0,
+                timezone: None,
+                weekdays: 0,
+            },
         ),
         (
             t::TaskAction::RefreshPlanWatch {
@@ -1549,6 +1620,9 @@ fn build_fixtures() -> serde_json::Value {
             max_retries: 3,
             interval_secs: 30,
         },
+        pause_after_failures: 5,
+        consecutive_failures: 2,
+        auto_paused_at: Some("2026-01-02T00:00:00Z".into()),
     })
     .collect();
     // ExportFormat 全種 (zod `exportFormat` と突き合わせる)。
@@ -1576,6 +1650,9 @@ fn build_fixtures() -> serde_json::Value {
         last_run_at: None,
         last_status: None,
         connect_retry: t::ConnectRetry::default(),
+        pause_after_failures: 0,
+        consecutive_failures: 0,
+        auto_paused_at: None,
     })
     .collect();
     let task_run = t::TaskRun {
@@ -1636,6 +1713,34 @@ fn build_fixtures() -> serde_json::Value {
         from_captured_at: "2026-01-01T00:00:00Z".into(),
         to_captured_at: "2026-01-02T00:00:00Z".into(),
     };
+    let schema_drift_revert_sql = t::RevertSql {
+        plan: sync_plan.clone(),
+        omitted_destructive: 2,
+        database: "appdb".into(),
+        preamble: Some("USE `appdb`".into()),
+    };
+    let timelapse_row_history = t::RowHistory {
+        columns: vec!["id".into(), "price".into()],
+        primary_key: vec!["id".into()],
+        entries: vec![
+            t::RowHistoryEntry {
+                generation_id: 1,
+                captured_at: "2026-01-01T00:00:00Z".into(),
+                present: true,
+                row: Some(vec![Value::Int(2), Value::Int(100)]),
+                changed_columns: vec![],
+            },
+            t::RowHistoryEntry {
+                generation_id: 2,
+                captured_at: "2026-01-02T00:00:00Z".into(),
+                present: false,
+                row: None,
+                changed_columns: vec![],
+            },
+        ],
+        generations_scanned: 2,
+        partial: false,
+    };
 
     // スキーマドリフト (#736 / #1260)。テーブル変化の種別 3 種を通す。
     let schema_drift_generation = t::DriftGenerationMeta {
@@ -1647,6 +1752,7 @@ fn build_fixtures() -> serde_json::Value {
         table_count: 12,
         omitted: false,
         trigger_sql: Some("ALTER TABLE users ADD COLUMN age INT".into()),
+        label: Some("リリース v1.2".into()),
     };
     let schema_drift_summary = t::DriftSummary {
         tables: variants!(TableChangeStatus [Added, Removed, Changed])
@@ -1701,6 +1807,7 @@ fn build_fixtures() -> serde_json::Value {
             error: "syntax error".into(),
         }],
         warned: vec!["slow report".into()],
+        warned_summaries: vec!["orders: Index Scan → Parallel Seq Scan".into()],
     };
 
     // 読み飛ばされたプロファイルの要約 (#1614): 解釈不能 (id なし) / 対応外ドライバの 2 形。
@@ -1815,6 +1922,7 @@ fn build_fixtures() -> serde_json::Value {
         "queryStreamDoneMessage": query_stream_done_message,
         "resultFindOutput": result_find_output,
         "resultColumnStats": result_column_stats,
+        "resultDuplicateKeys": result_duplicate_keys,
         "queryStreamPatchMessage": query_stream_patch_message,
         "broadcastEnvMessage": broadcast_env_message,
         "broadcastCancelledMessage": broadcast_cancelled_message,
@@ -1874,6 +1982,8 @@ fn build_fixtures() -> serde_json::Value {
         "alterTableContext": alter_table_context,
         "assertionSql": assertion_sql,
         "assertionOutcome": assertion_outcome,
+        "acceptedValuesCandidates": accepted_values_candidates,
+        "importAssertionsResult": import_assertions_result,
         "assertionVariants": assertion_variants,
         "assertionRowCountOpVariants": row_count_op_variants,
         "assertionRunRecord": assertion_run_record,
@@ -1907,6 +2017,8 @@ fn build_fixtures() -> serde_json::Value {
         "timelapseCaptureOutcome": timelapse_capture_outcome,
         "tableWatch": table_watch,
         "timelapseGenerationDiff": timelapse_generation_diff,
+        "timelapseRowHistory": timelapse_row_history,
+        "schemaDriftRevertSql": schema_drift_revert_sql,
         "schemaDriftGeneration": schema_drift_generation,
         "schemaDriftSummary": schema_drift_summary,
         "schemaDriftCapture": schema_drift_capture,

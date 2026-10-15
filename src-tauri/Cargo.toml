@@ -158,7 +158,7 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 rust_xlsxwriter = { version = "0.99", default-features = false, features = ["constant_memory"] }
 # Excel (xlsx) インポート (#1171)。読み取り専用の純 Rust 実装 (MIT)。default features
 # (chrono) は使わず、日時セルは自前で ISO 文字列へ変換する。
-calamine = { version = "0.30", default-features = false, features = ["dates"] }
+calamine = { version = "0.36", default-features = false, features = ["dates"] }
 chrono = { version = "0.4", features = ["serde"] }
 rust_decimal = { version = "1", features = ["serde"] }
 rand = "0.10"
@@ -166,11 +166,20 @@ rand = "0.10"
 # 既に推移依存としてロックに載っている版 (digest 0.11 系) を明示依存にしただけ。
 sha2 = "0.11"
 hmac = "0.13"
+chrono-tz = { version = "0.10", default-features = false, features = ["std"] }
 
 # keyring のネイティブバックエンドはターゲット OS ごとに有効化する。これにより
 # ビルド中のターゲットに不要なバックエンド (とその推移依存) が依存グラフから外れる。
 [target.'cfg(windows)'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# SSM ポートフォワードの子プロセスをツリーごと終了させる Job Object 用 (#1683)。
+# Cargo.lock に既にある 0.61 系を明示依存にしただけ。
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_JobObjects",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

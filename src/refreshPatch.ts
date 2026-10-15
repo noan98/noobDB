@@ -95,3 +95,30 @@ export function applyRefreshPatch(
     : null;
   return { rows, diff };
 }
+
+/** 自動リフレッシュ 1 回ぶんの増減 (#1621)。タブの小さな棒グラフの 1 本になる。 */
+export interface RefreshSample {
+  at: number;
+  added: number;
+  changed: number;
+  removed: number;
+}
+
+/** 棒グラフに残す直近の回数。 */
+export const REFRESH_HISTORY_LIMIT = 10;
+
+/**
+ * パッチの追加・変更・削除件数を履歴の末尾へ足す (純粋)。直近 `limit` 回だけ残す。
+ * `unchanged` のパッチはすべて 0 の 1 本として数える (「変化なし」も推移の一部)。
+ */
+export function appendRefreshSample(
+  history: readonly RefreshSample[] | undefined,
+  patch: Pick<QueryStreamPatchMessage, "unchanged" | "addedCount" | "changedCount" | "removedCount">,
+  at: number,
+  limit: number = REFRESH_HISTORY_LIMIT,
+): RefreshSample[] {
+  const sample: RefreshSample = patch.unchanged
+    ? { at, added: 0, changed: 0, removed: 0 }
+    : { at, added: patch.addedCount, changed: patch.changedCount, removed: patch.removedCount };
+  return [...(history ?? []), sample].slice(-limit);
+}

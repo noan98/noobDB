@@ -2,7 +2,12 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { SchemaDriftGeneration, SchemaDriftSummary, SchemaDriftCapture } from "../tauri";
+import type {
+  SchemaDriftGeneration,
+  SchemaDriftRevertSql,
+  SchemaDriftSummary,
+  SchemaDriftCapture,
+} from "../tauri";
 
 export const schemaDriftCommands = {
   // --- スキーマドリフト (#736 / #1260) ---
@@ -35,6 +40,25 @@ export const schemaDriftCommands = {
   schemaDriftCompare: (profileId: string, fromId: string, toId: string) =>
     invoke<SchemaDriftSummary | null>("schema_drift_compare", { profileId, fromId, toId }).then((r) =>
       parseResponse(schemas.schemaDriftSummaryOrNull, r, "schema_drift_compare"),
+    ),
+
+  /**
+   * 2 世代の差分を打ち消す DDL を生成する (#1621)。`fromId` = 戻したい世代、`toId` = 現在側の世代。
+   * 生成のみで実行はしない。DROP を含む文は `allowDestructive` が true のときだけ出力する。
+   * 世代の対象 (DB / スキーマ) が違う・スナップショットが省略済みのときはエラー。セッション不要。
+   */
+  schemaDriftRevertSql: (profileId: string, fromId: string, toId: string, allowDestructive: boolean) =>
+    invoke<SchemaDriftRevertSql>("schema_drift_revert_sql", {
+      profileId,
+      fromId,
+      toId,
+      allowDestructive,
+    }).then((r) => parseResponse(schemas.schemaDriftRevertSql, r, "schema_drift_revert_sql")),
+
+  /** 世代にラベルを付ける・外す (null / 空で外す, #1621)。世代が無ければ false。 */
+  schemaDriftSetLabel: (profileId: string, id: string, label: string | null) =>
+    invoke<boolean>("schema_drift_set_label", { profileId, id, label }).then((r) =>
+      parseResponse(schemas.booleanResponse, r, "schema_drift_set_label"),
     ),
 
   /** 旧 localStorage の世代 (新しい順) をストアへ一度だけ取り込む。取り込んだ件数を返す。 */

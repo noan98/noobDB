@@ -3,6 +3,7 @@ import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chak
 
 import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
+import type { IncomingFk } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -18,6 +19,7 @@ import {
   indexKind,
   sortIndexes,
   structureColumnRows,
+  structureIncomingRows,
   structureTargetLabel,
   type StructureKeyKind,
   type StructureTarget,
@@ -152,6 +154,8 @@ export function TableStructurePanel({
   const t = useT();
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
   const [indexes, setIndexes] = useState<IndexInfo[] | null>(null);
+  // このテーブルを参照している他テーブルの外部キー (逆方向, #1628)。ベストエフォート。
+  const [incoming, setIncoming] = useState<IncomingFk[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   // CREATE TABLE の DDL (#1540)。見るまで取得しない (get_object_definition は
@@ -169,6 +173,7 @@ export function TableStructurePanel({
     let cancelled = false;
     setColumns(null);
     setIndexes(null);
+    setIncoming(null);
     setError(null);
     ddlSeq.current += 1;
     setDdl({ kind: "hidden" });
@@ -188,6 +193,15 @@ export function TableStructurePanel({
       })
       .catch(() => {
         if (!cancelled) setIndexes([]);
+      });
+    // 逆方向の外部キーもベストエフォート: 取れなくても構造は出す。
+    api
+      .incomingForeignKeys(sessionId, database, table)
+      .then((list) => {
+        if (!cancelled) setIncoming(list);
+      })
+      .catch(() => {
+        if (!cancelled) setIncoming([]);
       });
     return () => {
       cancelled = true;
@@ -222,6 +236,7 @@ export function TableStructurePanel({
   const fks = columns ? foreignKeysOf(columns) : [];
   const sortedIndexes = indexes ? sortIndexes(indexes) : null;
   const fkHint = t("structureOpenReferencedHint");
+  const incomingRows = incoming ? structureIncomingRows(incoming) : null;
 
   return (
     <Box flex="1" overflowY="auto" py="3" px="4" display="flex" flexDirection="column" gap="3">
@@ -423,6 +438,48 @@ export function TableStructurePanel({
                           </chakra.td>
                           <chakra.td css={tdCss}>
                             <ForeignKeyLink fk={fk} onSelect={selectReferenced} hint={fkHint} />
+                          </chakra.td>
+                        </chakra.tr>
+                      ))}
+                    </chakra.tbody>
+                  </>
+                )}
+              </chakra.table>
+
+              <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
+                <SectionCaption label={t("structureIncomingForeignKeys")} count={incomingRows?.length ?? 0} />
+                {incomingRows === null ? null : incomingRows.length === 0 ? (
+                  <chakra.tbody>
+                    <chakra.tr>
+                      <chakra.td css={tdCss} color="app.textMuted">
+                        {t("structureNoIncomingForeignKeys")}
+                      </chakra.td>
+                    </chakra.tr>
+                  </chakra.tbody>
+                ) : (
+                  <>
+                    <chakra.thead>
+                      <chakra.tr>
+                        <chakra.th css={thCss}>{t("structureIncomingFrom")}</chakra.th>
+                        <chakra.th css={thCss}>{t("structureFkReferences")}</chakra.th>
+                      </chakra.tr>
+                    </chakra.thead>
+                    <chakra.tbody>
+                      {incomingRows.map((fk) => (
+                        <chakra.tr key={`${fk.table}.${fk.column}.${fk.referencedColumn}`}>
+                          <chakra.td css={tdCss}>
+                            <ForeignKeyLink
+                              fk={{
+                                column: fk.column,
+                                referencedTable: fk.table,
+                                referencedColumn: fk.column,
+                              }}
+                              onSelect={selectReferenced}
+                              hint={t("structureOpenReferencingHint")}
+                            />
+                          </chakra.td>
+                          <chakra.td css={tdCss} fontFamily="var(--font-mono)" color="app.textSecondary">
+                            {table}.{fk.referencedColumn}
                           </chakra.td>
                         </chakra.tr>
                       ))}

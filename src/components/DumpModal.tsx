@@ -16,6 +16,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { isAbsolutePath } from "./pathUtil";
+import { dirnameOf, joinDirAndName, loadDumpPrefs, saveDumpPrefs, type DumpBoolKey } from "../inputMemory";
 
 let dumpStreamSeq = 0;
 /** Unique stream id per dump run so progress events / cancel target it (#686). */
@@ -56,6 +57,8 @@ interface Props {
    * (接続先 DB はプロファイルのもの)。
    */
   tables?: string[];
+  /** 接続プロファイル ID。前回のスイッチと保存先ディレクトリをプロファイルごとに記憶する (#1631)。 */
+  profileId?: string;
   onClose: () => void;
 }
 
@@ -242,7 +245,7 @@ type Status = { kind: "idle" } | { kind: "running" } | { kind: "error"; message:
 /** テーブル指定のダンプでは意味を持たない (テーブル指定時はバックエンドが無効にする) スイッチ。 */
 const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>(["routines", "events"]);
 
-export function DumpModal({ sessionId, database, driver, tables, onClose }: Props) {
+export function DumpModal({ sessionId, database, driver, tables, profileId, onClose }: Props) {
   const t = useT();
   const optionsIdBase = `dump-opt-${useId().replace(/:/g, "")}`;
   const toast = useToast();
@@ -251,14 +254,32 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
     () => defaultBasename(database, tableScope?.length),
     [database, tableScope?.length],
   );
-  const [path, setPath] = useState<string>(`${initialBasename}.sql`);
-  const [options, setOptions] = useState<DumpOptions>(() =>
+  // 前回のスイッチと保存先ディレクトリ (プロファイル単位, #1631)。この接続のドライバで表示するスイッチ
+  // だけを復元する (表示されない値を黙って持ち込まない)。
+  const [remembered] = useState(() => {
+    const prefs = loadDumpPrefs(profileId);
+    if (!prefs) return null;
+    const shown = new Set<DumpBoolKey>(
+      DRIVER_OPTIONS[driver].filter((k) => !(tableScope && TABLE_SCOPE_HIDDEN_OPTIONS.has(k))),
+    );
+    const options: Partial<DumpOptions> = {};
+    for (const [k, v] of Object.entries(prefs.options)) {
+      if (shown.has(k as DumpBoolKey)) (options as Record<string, boolean>)[k] = v;
+    }
+    return { options, dir: prefs.dir };
+  });
+  const [path, setPath] = useState<string>(() =>
+    joinDirAndName(
+      remembered?.dir ?? "",
+      `${initialBasename}${remembered?.options.gzip ? ".sql.gz" : ".sql"}`,
+    ),
+  );
+  const [options, setOptions] = useState<DumpOptions>(() => {
+    const base = { ...DEFAULT_OPTIONS, ...remembered?.options };
     // PostgreSQL のツリーの「database」はスキーマ。スキーマノードからの全体ダンプは、タイトルの範囲と
     // 揃えるためスキーマ欄を初期入力する (一括 = tables 指定は送信時に database で固定される)。
-    driver === "postgres" && !(tables && tables.length > 0)
-      ? { ...DEFAULT_OPTIONS, pgSchema: database }
-      : DEFAULT_OPTIONS,
-  );
+    return driver === "postgres" && !(tables && tables.length > 0) ? { ...base, pgSchema: database } : base;
+  });
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [progress, setProgress] = useState<DumpProgress | null>(null);
   // Active dump's stream id + event unlistener, so the modal can cancel and
@@ -369,6 +390,13 @@ export function DumpModal({ sessionId, database, driver, tables, onClose }: Prop
       setPath(selected);
       target = selected;
     }
+    // 次回の初期値にするため、表示中のスイッチと保存先ディレクトリを覚える (秘密情報は含まない, #1631)。
+    saveDumpPrefs(profileId, {
+      options: Object.fromEntries(visibleRows.map((row) => [row.key, options[row.key] === true])) as Partial<
+        Record<DumpBoolKey, boolean>
+      >,
+      dir: dirnameOf(target),
+    });
     const streamId = makeDumpStreamId();
     streamIdRef.current = streamId;
     setStatus({ kind: "running" });

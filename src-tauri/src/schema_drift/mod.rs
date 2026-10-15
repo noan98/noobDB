@@ -72,6 +72,24 @@ pub struct GenerationMeta {
     /// 接続時・手動の取得、旧データでは `None`。
     #[serde(default)]
     pub trigger_sql: Option<String>,
+    /// 利用者が付けたラベル (「リリース v1.2」「障害前」など, #1621)。ラベル付きの世代は
+    /// ローテーションで消えない (上限 [`MAX_LABELED`])。
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// ラベルの最大文字数。
+pub const MAX_LABEL_CHARS: usize = 80;
+/// ラベル付きで保持できる世代数の上限 (ローテーションの対象外にするため無制限にはしない)。
+pub const MAX_LABELED: usize = 20;
+
+/// ラベルの正規化: 前後の空白を除き、空なら `None` (ラベルを外す)、長すぎるなら文字境界で切る。
+pub fn normalize_label(label: Option<&str>) -> Option<String> {
+    let t = label?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(t.chars().take(MAX_LABEL_CHARS).collect())
 }
 
 /// インデックス差分の種別。
@@ -382,6 +400,14 @@ pub fn summarize_drift(diff: &SchemaDiff, index_drift: &[IndexDriftEntry]) -> Dr
 /// その DB では `extra` の比較が恒久的に外れる (生成列を後から追加しても、列の追加として
 /// 検出されるだけで、既存列の `extra` 変化は拾わない)。
 pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> DriftSummary {
+    summarize_drift(&schema_diff_between(prev, next), &diff_indexes(prev, next))
+}
+
+/// `prev` を source、`next` を target としたスキーマ差分。`summarize_payloads` の差分計算を
+/// そのまま使う (PostgreSQL の `extra` / IDENTITY の後付けによる誤検知の補正を含む)。
+/// 巻き戻し DDL (#1621) では `prev` = 戻したい世代、`next` = 現在の世代として渡し、
+/// `generate_sync_sql` が「target を source に揃える」DDL を作る。
+pub fn schema_diff_between(prev: &SnapshotPayload, next: &SnapshotPayload) -> SchemaDiff {
     let ignore_extra = prev.driver == DriverKind::Postgres
         && next.driver == DriverKind::Postgres
         && !prev
@@ -419,13 +445,12 @@ pub fn summarize_payloads(prev: &SnapshotPayload, next: &SnapshotPayload) -> Dri
             })
             .collect()
     };
-    let diff = compute_schema_diff(
+    compute_schema_diff(
         prev.driver,
         next.driver,
         &to_columns(prev),
         &to_columns(next),
-    );
-    summarize_drift(&diff, &diff_indexes(prev, next))
+    )
 }
 
 #[cfg(test)]

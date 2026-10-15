@@ -10,7 +10,8 @@ use crate::db::{is_session_init_sql_for, Connection, DbConnectOptions, DriverKin
 use crate::error::{AppError, Result};
 use crate::profiles::{secrets, SshAuthMethod};
 use crate::ssh::{SshConfig, SshJumpConfig, SshPhase, SshTunnel};
-use crate::state::{new_session_id, AppState, Session, SessionId};
+use crate::ssm::{self, SsmConfig, SsmTunnel, SsmTunnelSpec};
+use crate::state::{new_session_id, AppState, Session, SessionId, Tunnel};
 
 /// Default overall deadline (seconds) for a whole connection attempt when the
 /// caller doesn't specify one. Covers the SSH tunnel connect + auth and the DB
@@ -150,6 +151,10 @@ pub struct ConnectRequest {
     /// connection; TLS is forced to `require` or stricter. MySQL / PostgreSQL only.
     #[serde(default)]
     pub aws_iam: Option<AwsIamConfig>,
+    /// AWS SSM Session Manager のポートフォワード経由で接続する (#1683)。`ssh` と排他
+    /// (両方あれば InvalidInput)。SQLite では `ssh` と同様に無視する。すべて非秘密。
+    #[serde(default)]
+    pub ssm: Option<SsmConfig>,
     /// When true the resulting session refuses to execute non-read-only SQL.
     #[serde(default)]
     pub read_only: bool,
@@ -265,6 +270,8 @@ pub async fn connect(
         }
     };
 
+    // SSM の再接続用パラメータはトンネル自身が持つ (リージョン解決済み)。
+    let reconnect_ssm = tunnel.as_ref().and_then(Tunnel::ssm_spec).cloned();
     let session = Session {
         id: new_session_id(),
         profile_id,
@@ -275,6 +282,7 @@ pub async fn connect(
         skip_history,
         connect_options: opts,
         reconnect_ssh,
+        reconnect_ssm,
         _tunnel: tunnel,
         local_temp_file: None,
         schema_cache: crate::cache::SchemaCache::default(),
@@ -465,7 +473,7 @@ async fn probe_session_health(
     };
     // トンネルが閉じていれば DB には触れずに Down を確定する (#1537)。
     if tunnel_alive == Some(false) {
-        tracing::info!(session_id = %session_id, "ssh tunnel is closed; connection is down");
+        tracing::info!(session_id = %session_id, "tunnel (ssh/ssm) is closed; connection is down");
         return item(
             HealthProbeStatus::Down,
             None,
@@ -575,11 +583,13 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
     let secs = DEFAULT_CONNECT_TIMEOUT_SECS;
     // 止まった段階 (トンネル接続 / SSH 認証 / DB 接続) を記録し、タイムアウト時にその値を
     // 返す。常に db_connecting と報告すると、踏み台で止まっていても DB 側の問題に見える。
-    let phase = Mutex::new(if old.reconnect_ssh.is_some() {
-        ConnectPhase::TunnelConnecting
-    } else {
-        ConnectPhase::DbConnecting
-    });
+    let phase = Mutex::new(
+        if old.reconnect_ssh.is_some() || old.reconnect_ssm.is_some() {
+            ConnectPhase::TunnelConnecting
+        } else {
+            ConnectPhase::DbConnecting
+        },
+    );
     let (tunnel, opts, conn) =
         match tokio::time::timeout(Duration::from_secs(secs), reopen_transport(&old, &phase)).await
         {
@@ -605,6 +615,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
         emergency_write: AtomicBool::new(false),
         skip_history: old.skip_history,
         reconnect_ssh: old.reconnect_ssh.clone(),
+        reconnect_ssm: old.reconnect_ssm.clone(),
         _tunnel: tunnel,
         local_temp_file: old.local_temp_file.clone(),
         // 再接続は必ず新しい (空の) キャッシュから始める — 旧セッションの
@@ -640,7 +651,7 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
 async fn reopen_transport(
     old: &Session,
     phase: &Mutex<ConnectPhase>,
-) -> Result<(Option<SshTunnel>, DbConnectOptions, Connection)> {
+) -> Result<(Option<Tunnel>, DbConnectOptions, Connection)> {
     let set_phase = |p: ConnectPhase| *phase.lock().unwrap_or_else(|e| e.into_inner()) = p;
     let mut opts = old.connect_options.clone();
     let tunnel = if let Some(ssh) = &old.reconnect_ssh {
@@ -685,7 +696,15 @@ async fn reopen_transport(
         // redirect them at the freshly-bound one.
         opts.host = "127.0.0.1".to_string();
         opts.port = t.local_port;
-        Some(t)
+        Some(Tunnel::Ssh(t))
+    } else if let Some(spec) = &old.reconnect_ssm {
+        // SSM はリージョン解決済みの spec をそのまま使い、`aws` を起動し直す (#1683)。
+        // 認証は AWS CLI が毎回解決するので、キーリングからの再取得は不要。
+        let t = SsmTunnel::open(spec).await?;
+        set_phase(ConnectPhase::DbConnecting);
+        opts.host = "127.0.0.1".to_string();
+        opts.port = t.local_port;
+        Some(Tunnel::Ssm(Box::new(t)))
     } else {
         None
     };
@@ -734,6 +753,7 @@ fn log_attempt(req: &ConnectRequest, op: &str) {
         port = req.port,
         user = %req.user,
         via_ssh = req.ssh.is_some(),
+        via_ssm = req.ssm.is_some(),
         ssh_auth = ?req.ssh.as_ref().map(|s| s.auth_method),
         db_auth = if req.aws_iam.is_some() { "aws_iam" } else { "password" },
         "attempting connection"
@@ -748,7 +768,7 @@ async fn open_connection(
     req: &ConnectRequest,
     progress: &ConnectProgress,
     timeout_secs: u64,
-) -> Result<(Option<SshTunnel>, DbConnectOptions, Connection)> {
+) -> Result<(Option<Tunnel>, DbConnectOptions, Connection)> {
     let work = async {
         let (tunnel, opts) = build_options(req, progress).await?;
         progress.report(ConnectPhase::DbConnecting);
@@ -770,7 +790,7 @@ async fn open_connection(
 async fn build_options(
     req: &ConnectRequest,
     progress: &ConnectProgress,
-) -> Result<(Option<SshTunnel>, DbConnectOptions)> {
+) -> Result<(Option<Tunnel>, DbConnectOptions)> {
     // Reject session-init SQL that isn't a non-mutating session setting before we
     // open anything, so the failure is a clear validation error rather than a
     // surprise on the first pooled connection. Applies to all drivers.
@@ -815,6 +835,9 @@ async fn build_options(
         };
         return Ok((None, opts));
     }
+
+    // SSH と SSM は排他 (#1683)。トンネルや keyring に触れる前に弾く。
+    ssm::ensure_exclusive(req.ssh.is_some(), req.ssm.is_some())?;
 
     // AWS IAM auth (#734): resolve the signing parameters *before* the SSH
     // tunnel swaps `host` for 127.0.0.1 — the token must be signed for the real
@@ -869,7 +892,19 @@ async fn build_options(
         })
         .await?;
         let port = t.local_port;
-        (Some(t), "127.0.0.1".to_string(), port)
+        (Some(Tunnel::Ssh(t)), "127.0.0.1".to_string(), port)
+    } else if let Some(cfg) = &req.ssm {
+        // 署名用のエンドポイント名は上で確定済み (iam_options_for)。ここで初めて
+        // host を 127.0.0.1 に差し替える (#1683)。
+        let spec: SsmTunnelSpec = ssm::build_spec(cfg, &req.host, req.port, &aws_iam::process_env)?;
+        progress.report(ConnectPhase::TunnelConnecting);
+        let t = SsmTunnel::open(&spec).await?;
+        let port = t.local_port;
+        (
+            Some(Tunnel::Ssm(Box::new(t))),
+            "127.0.0.1".to_string(),
+            port,
+        )
     } else {
         (None, req.host.clone(), req.port)
     };
@@ -1038,6 +1073,7 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            ssm: None,
             read_only: false,
             skip_history: false,
         }

@@ -64,4 +64,18 @@ describe("HelpView 節ナビ・検索・導線 (#1273 / #1274)", () => {
     expect(onStartTour).toHaveBeenCalledOnce();
     expect(onOpenCheatSheet).toHaveBeenCalledOnce();
   });
+
+  it("『試す』ボタンは行き先を onOpenFeature へ渡し、未指定なら出さない (#1631)", () => {
+    const { unmount } = renderWithProviders(<HelpView onClose={() => {}} />);
+    expect(screen.queryAllByTestId("help-try")).toHaveLength(0);
+    unmount();
+    const onOpenFeature = vi.fn();
+    renderWithProviders(<HelpView onClose={() => {}} onOpenFeature={onOpenFeature} />);
+    fireEvent.click(screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSqlLintTitle") }) }));
+    expect(onOpenFeature).toHaveBeenCalledWith({ kind: "settings", section: "settings-sec-sql-lint" });
+    fireEvent.click(
+      screen.getByRole("button", { name: t("helpTryAria", { title: t("helpSchemaCompareTitle") }) }),
+    );
+    expect(onOpenFeature).toHaveBeenLastCalledWith({ kind: "view", view: "compare" });
+  });
 });

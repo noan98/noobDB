@@ -252,6 +252,7 @@ describe("テーブル統計 (#1321)", () => {
       index_count: 1,
       has_primary_key: true,
       foreign_key_count: 0,
+      previous: null,
     }));
     vi.mocked(api.tableStatistics).mockResolvedValue(stats);
     renderWithProviders(<TableStatisticsPanel sessionId="s1" database="db" onClose={() => {}} />);

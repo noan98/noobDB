@@ -205,3 +205,14 @@
   作り直しで同期計測 (行数ぶんのレイアウト読み出し) をしない。
 - テスト: `resultGridRowMemo.test.tsx` (行・ヘッダの再レンダー回数) / `ResultGrid.virtualized.test.tsx`
   (keep-alive 中の行の保持)。
+
+## 重複キー検出と近似ユニーク数 (#1628)
+
+- 列メニューの「重複を検出」は `DuplicateKeysModal` を開く。結果ハンドルがあれば `result_duplicate_keys`
+  (`db/result_ops.rs::duplicate_keys`)、無ければ `duplicateKeys.ts::findDuplicateKeys` (JS) で検出する。
+  2 つの実装は共有ゴールデン (`fixtures/resultOpsVectors.json` の `duplicateKeys`) で突き合わせる。
+  マスク中 (#1069) の列は上位の重複値が実値を出すので選べない。「重複行だけ表示」は `rowAllowSet`
+  (`dupRowAllow`) に乗り、行が入れ替わると捨てる。
+- 列ヘッダの NULL 率ミニバーのツールチップには、ストリーム逐次統計の HyperLogLog
+  (`StreamStatsSnapshot.distinctEstimates`、`db/stream_batch.rs`) から求めた近似ユニーク数と傾向
+  (候補キー / 定数列 / 低カーディナリティ、`streamStats.ts::distinctHintFor`) を添える。

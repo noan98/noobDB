@@ -32,7 +32,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
-import { AssertionSuggestModal } from "../components/AssertionSuggestModal";
+import { AssertionSuggestModal, MAX_SUGGEST_TABLES } from "../components/AssertionSuggestModal";
 import { AssertionsPanel } from "../components/AssertionsPanel";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
 import { DEFAULT_SETTINGS, replaceAllSettings } from "../settings";
@@ -103,10 +103,17 @@ beforeEach(() => {
   enable();
 });
 
+/** テーブルのチップ (aria-pressed のトグル) を押して選ぶ。 */
+async function pick(...names: string[]) {
+  for (const name of names) {
+    const chip = (await screen.findByRole("button", { name })) as HTMLButtonElement;
+    await waitFor(() => expect(chip.disabled).toBe(false));
+    fireEvent.click(chip);
+  }
+}
+
 async function generate() {
-  const select = (await screen.findByLabelText(t("assertAiTable"))) as HTMLSelectElement;
-  await waitFor(() => expect(select.disabled).toBe(false));
-  fireEvent.change(select, { target: { value: "orders" } });
+  await pick("orders");
   const btn = screen.getByRole("button", { name: t("assertAiGenerate") });
   await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
   fireEvent.click(btn);
@@ -137,9 +144,7 @@ describe("AssertionSuggestModal (#1477)", () => {
   it("本番接続のときだけ送信前に確認し、拒否すれば要求しない", async () => {
     enable({ sendScope: "schemaOnly" });
     renderWithProviders(ui({ profile: { ...profile, is_production: true } }));
-    const select = (await screen.findByLabelText(t("assertAiTable"))) as HTMLSelectElement;
-    await waitFor(() => expect(select.disabled).toBe(false));
-    fireEvent.change(select, { target: { value: "orders" } });
+    await pick("orders");
     fireEvent.click(screen.getByRole("button", { name: t("assertAiGenerate") }));
     await screen.findByText(t("assertAiConfirmTitle"));
     const cancels = screen.getAllByRole("button", { name: t("confirmDefaultCancel") });
@@ -207,6 +212,66 @@ describe("AssertionSuggestModal (#1477)", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(onRegistered).toHaveBeenCalledTimes(1);
     expect(screen.getAllByTestId("assertion-suggestion")).toHaveLength(1);
+  });
+
+  it("複数テーブルを選ぶと順に要求し、候補をテーブルごとに区切って表示する (#1621)", async () => {
+    renderWithProviders(ui());
+    await pick("orders", "users");
+    expect(screen.getAllByRole("button", { pressed: true }).map((b) => b.textContent)).toEqual([
+      "orders",
+      "users",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: t("assertAiGenerate") }));
+    // テーブルごとの「送る内容」を 1 行ずつ出す。
+    await screen.findByText(/the schema of orders/);
+    expect(screen.getByText(/the schema of users/)).toBeTruthy();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].prompt).toContain("orders");
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    // 1 テーブル目が終わったら、続けて 2 テーブル目を要求する。
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    expect(runAiRequest.mock.calls[1][0].prompt).toContain("users");
+    expect(describeTable).toHaveBeenCalledWith("s1", "app", "users");
+    act(() => {
+      handlers?.onDelta?.({ streamId: "y", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await waitFor(() => expect(screen.getAllByTestId("assertion-suggestion")).toHaveLength(4));
+    const groups = screen.getAllByTestId("assertion-suggest-group").map((g) => g.textContent);
+    expect(groups).toEqual(["orders (2)", "users (2)"]);
+
+    // 登録時は候補ごとに元のテーブルが使われる。
+    fireEvent.click(screen.getByRole("button", { name: t("assertAiRegister", { count: 2 }) }));
+    await waitFor(() => expect(saveAssertion).toHaveBeenCalledTimes(2));
+    expect(saveAssertion.mock.calls.map((c) => c[0].table)).toEqual(["orders", "users"]);
+  });
+
+  it("2 テーブル目で失敗しても、1 テーブル目の候補は残りテーブル名つきで通知する (#1621)", async () => {
+    renderWithProviders(ui());
+    await pick("orders", "users");
+    fireEvent.click(screen.getByRole("button", { name: t("assertAiGenerate") }));
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: result });
+      handlers?.onDone?.({} as never);
+    });
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(2));
+    act(() => handlers?.onError?.({ streamId: "y", error: "overloaded", kind: "aiOverloaded" } as never));
+    await screen.findByText(/users: overloaded/);
+    expect(screen.getAllByTestId("assertion-suggestion")).toHaveLength(2);
+  });
+
+  it("選べるテーブルは上限までで、超える分は選べない (#1621)", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => `t${i}`);
+    listTables.mockResolvedValue(many);
+    renderWithProviders(ui());
+    await pick(...many.slice(0, MAX_SUGGEST_TABLES));
+    const extra = screen.getByRole("button", { name: "t10" }) as HTMLButtonElement;
+    expect(extra.disabled).toBe(true);
+    expect(screen.getByText(t("assertAiTableLimit", { count: MAX_SUGGEST_TABLES }))).toBeTruthy();
   });
 
   it("実行中は中止でき、中止の表示になる", async () => {

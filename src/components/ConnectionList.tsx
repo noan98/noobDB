@@ -484,6 +484,8 @@ interface Props {
   recent?: TableRef[];
   /** お気に入りのトグル (登録/解除)。未指定ならお気に入り UI を出さない。 */
   onToggleFavorite?: (database: string, table: string) => void;
+  /** お気に入りテーブルの並べ替え (#1631)。delta は保存順での移動量 (負が前)。 */
+  onMoveFavorite?: (database: string, table: string, delta: number) => void;
 }
 
 interface MenuState {
@@ -1934,6 +1936,7 @@ export const ConnectionList = memo(
       favorites,
       recent,
       onToggleFavorite,
+      onMoveFavorite,
     },
     ref,
   ) {
@@ -2923,6 +2926,19 @@ export const ConnectionList = memo(
           label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
           onSelect: () => onToggleFavorite(db, tbl),
         });
+        if (fav && onMoveFavorite) {
+          const pos = (favorites ?? []).findIndex((f) => tableRefEquals(f, { database: db, table: tbl }));
+          items.push({
+            label: t("contextMenuFavoriteEarlier"),
+            onSelect: () => onMoveFavorite(db, tbl, -1),
+            disabled: pos <= 0,
+          });
+          items.push({
+            label: t("contextMenuFavoriteLater"),
+            onSelect: () => onMoveFavorite(db, tbl, 1),
+            disabled: pos >= (favorites ?? []).length - 1,
+          });
+        }
       }
       items.push({ separator: true });
       // Import writes to the table, so it's rejected on a read-only session;
