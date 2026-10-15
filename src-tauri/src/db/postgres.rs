@@ -746,7 +746,7 @@ impl PostgresConn {
                 .execute(&mut *tx)
                 .await
             {
-                return Ok(Some((i, e.to_string())));
+                return Ok(Some((i, crate::error::sqlx_message(&e))));
             }
         }
         Ok(None)
