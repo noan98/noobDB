@@ -142,7 +142,7 @@ pub(crate) fn render_foreign_key(driver: DriverKind, g: &FkGroup<'_>) -> String 
 
 /// PK 以外のインデックスの `CREATE INDEX`。列の無いもの・式を含むものは正しく再現できない
 /// (列だけで作ると制約が変わる) ので出さない。部分インデックスは `WHERE` 述語を付ける。
-fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<String> {
+pub(crate) fn render_index(driver: DriverKind, qualified: &str, idx: &IndexInfo) -> Option<String> {
     if idx.primary || idx.columns.is_empty() || idx.first_expression_at.is_some() {
         return None;
     }

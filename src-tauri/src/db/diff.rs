@@ -14,11 +14,11 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::types::{ForeignKey, TableColumnInfo};
+use super::types::{ForeignKey, IndexInfo, TableColumnInfo, TableIndexes};
 use super::DriverKind;
 
 /// Where a table or column sits relative to the two schemas being compared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffStatus {
     /// Present only in the source schema (would be added to the target).
@@ -28,6 +28,7 @@ pub enum DiffStatus {
     /// Present in both, but the definitions differ.
     Different,
     /// Present in both with identical definitions.
+    #[default]
     Same,
 }
 
@@ -60,7 +61,7 @@ pub struct ColumnDiff {
 }
 
 /// Difference of a single table between the two schemas.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TableDiff {
     pub name: String,
     pub status: DiffStatus,
@@ -77,6 +78,121 @@ pub struct TableDiff {
     /// `#[serde(default)]`: このフィールドを持たない JSON (往復後の diff) も読める。
     #[serde(default)]
     pub foreign_keys: Vec<DiffForeignKey>,
+    /// インデックス (UNIQUE 含む、主キー以外) の差分 (#1625)。[`attach_index_diffs`] を
+    /// 呼んだ経路 (スキーマ比較) でのみ埋まる。`SourceOnly` テーブルは source の
+    /// インデックスを全て `SourceOnly` で持ち (`CREATE TABLE` の後に作る)、
+    /// `Same` / `Different` テーブルは差のあるものだけを持つ。
+    #[serde(default)]
+    pub indexes: Vec<IndexDiff>,
+    /// 既存テーブルの外部キー制約の差分 (追加・削除・参照動作の変更, #1625)。
+    /// [`attach_foreign_key_diffs`] を呼んだ経路でのみ埋まる。`foreign_keys` とは別物。
+    #[serde(default)]
+    pub fk_changes: Vec<ForeignKeyDiff>,
+    /// SQLite の列変更 (テーブル再作成) に必要な target 側の完全な定義 (#1625)。
+    /// [`attach_sqlite_rebuild_context`] が `Different` テーブルにだけ載せる。
+    #[serde(default)]
+    pub target_snapshot: Option<TargetTableSnapshot>,
+}
+
+/// インデックス 1 本の定義。`IndexInfo` は内部用の項目を IPC に出さない (`serde(skip)`)
+/// ので、往復する diff 用に全項目を直列化できる形で持つ。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiffIndex {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub unique: bool,
+    pub method: Option<String>,
+    #[serde(default)]
+    pub predicate: Option<String>,
+    #[serde(default)]
+    pub first_expression_at: Option<usize>,
+    #[serde(default)]
+    pub key_column_count: Option<usize>,
+    #[serde(default)]
+    pub column_options: Vec<String>,
+    #[serde(default)]
+    pub nulls_not_distinct: bool,
+}
+
+impl DiffIndex {
+    fn from_info(i: &IndexInfo) -> Self {
+        Self {
+            name: i.name.clone(),
+            columns: i.columns.clone(),
+            unique: i.unique,
+            method: i.method.clone(),
+            predicate: i.predicate.clone(),
+            first_expression_at: i.first_expression_at,
+            key_column_count: i.key_column_count,
+            column_options: i.column_options.clone(),
+            nulls_not_distinct: i.nulls_not_distinct,
+        }
+    }
+
+    pub(crate) fn to_info(&self) -> IndexInfo {
+        IndexInfo {
+            name: self.name.clone(),
+            columns: self.columns.clone(),
+            unique: self.unique,
+            primary: false,
+            method: self.method.clone(),
+            predicate: self.predicate.clone(),
+            first_expression_at: self.first_expression_at,
+            key_column_count: self.key_column_count,
+            column_options: self.column_options.clone(),
+            nulls_not_distinct: self.nulls_not_distinct,
+        }
+    }
+}
+
+/// 1 インデックスの差分。`changed_fields` は `Different` のとき、違う属性名
+/// (`columns` / `unique` / `method` / `predicate` / `include` / `order` / `expression`)。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexDiff {
+    pub name: String,
+    pub status: DiffStatus,
+    pub source: Option<DiffIndex>,
+    pub target: Option<DiffIndex>,
+    #[serde(default)]
+    pub changed_fields: Vec<String>,
+}
+
+/// 既存テーブルの外部キー 1 制約の差分。制約名ではなく (列, 参照先テーブル) で対応づける
+/// (名前だけの違いは差分にしない)。`changed_fields` は `Different` のとき
+/// `on_delete` / `on_update` / `referenced_columns`。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForeignKeyDiff {
+    pub status: DiffStatus,
+    pub source: Option<DiffForeignKey>,
+    pub target: Option<DiffForeignKey>,
+    #[serde(default)]
+    pub changed_fields: Vec<String>,
+}
+
+/// SQLite のテーブル再作成 (12 ステップ手順) が必要とする target 側の完全な定義。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TargetTableSnapshot {
+    /// target の全列 (差分に出ない同一の列も含む)。
+    pub columns: Vec<TableColumnInfo>,
+    /// target の全外部キー制約。
+    #[serde(default)]
+    pub foreign_keys: Vec<DiffForeignKey>,
+    /// UNIQUE 制約 (`sqlite_autoindex_*`) の列。再作成で失わないよう `UNIQUE (...)` で出す。
+    #[serde(default)]
+    pub unique_constraints: Vec<Vec<String>>,
+    /// 旧表を DROP すると消えるインデックス・トリガーの元の `CREATE` 文 (`sqlite_master.sql`)。
+    #[serde(default)]
+    pub recreate_sql: Vec<String>,
+    /// 表を参照するビュー。`RENAME` のスキーマ検査を通すため、旧表の `DROP` の前に
+    /// 落として (名前)、再作成後に `recreate_sql` の末尾で作り直す。
+    #[serde(default)]
+    pub drop_views: Vec<String>,
+    /// 元の `CREATE TABLE` 文。再現できない構文 (CHECK など) の警告に使う。
+    #[serde(default)]
+    pub original_sql: Option<String>,
+    /// この表を外部キーで参照する他の表 (`表名 (ON DELETE ...)`)。再作成の警告に使う。
+    #[serde(default)]
+    pub referenced_by: Vec<String>,
 }
 
 /// 外部キー 1 制約 (複合キーの列を束ねたもの)。`referenced_columns` が空なら参照先
@@ -184,6 +300,10 @@ pub struct SchemaDiff {
     /// 同期計画の警告にそのまま載せる。
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// インデックスの差分を比較済みか ([`attach_index_diffs`] を通ったか)。true なら
+    /// `CREATE TABLE` 同期は「索引が含まれません」の警告を出さず `CREATE INDEX` を出す。
+    #[serde(default)]
+    pub indexes_compared: bool,
 }
 
 /// Compares `source` against `target`, classifying every table and (for tables
@@ -221,13 +341,13 @@ pub fn compute_schema_diff(
                     name,
                     status: DiffStatus::SourceOnly,
                     columns: one_sided_columns(&s.columns, DiffStatus::SourceOnly),
-                    foreign_keys: Vec::new(),
+                    ..Default::default()
                 },
                 (None, Some(t)) => TableDiff {
                     name,
                     status: DiffStatus::TargetOnly,
                     columns: one_sided_columns(&t.columns, DiffStatus::TargetOnly),
-                    foreign_keys: Vec::new(),
+                    ..Default::default()
                 },
                 (Some(s), Some(t)) => {
                     let columns = diff_columns(&s.columns, &t.columns);
@@ -240,7 +360,7 @@ pub fn compute_schema_diff(
                         name,
                         status,
                         columns,
-                        foreign_keys: Vec::new(),
+                        ..Default::default()
                     }
                 }
                 // `names` is the union of the two sides, so at least one is Some.
@@ -254,6 +374,359 @@ pub fn compute_schema_diff(
         target_driver,
         tables,
         warnings: Vec::new(),
+        indexes_compared: false,
+    }
+}
+
+/// インデックス差分の対象か。主キーは列の `key` で比べ、SQLite の UNIQUE 制約に紐づく
+/// 自動インデックス (`sqlite_autoindex_*`、名前が合成で作り直せない) は対象外。
+fn is_comparable_index(i: &IndexInfo) -> bool {
+    !i.primary && !i.name.starts_with("sqlite_autoindex_")
+}
+
+fn normalize_predicate(p: &Option<String>) -> Option<String> {
+    p.as_deref()
+        .map(|p| p.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|p| !p.is_empty())
+}
+
+/// 同名のインデックス 2 本の違いを属性名で返す。アクセスメソッドは省略 (SQLite) と
+/// `btree` を同一視し、大小は無視する。
+fn index_changed_fields(s: &DiffIndex, t: &DiffIndex) -> Vec<String> {
+    let method = |m: &Option<String>| m.as_deref().unwrap_or("btree").to_ascii_lowercase();
+    let mut fields = Vec::new();
+    if s.columns != t.columns {
+        fields.push("columns".to_string());
+    }
+    if s.unique != t.unique {
+        fields.push("unique".to_string());
+    }
+    if method(&s.method) != method(&t.method) {
+        fields.push("method".to_string());
+    }
+    if normalize_predicate(&s.predicate) != normalize_predicate(&t.predicate) {
+        fields.push("predicate".to_string());
+    }
+    // INCLUDE 列の境目 (`None` は全列がキー列)。
+    let include_len = |i: &DiffIndex| {
+        i.key_column_count
+            .map_or(0, |k| i.columns.len().saturating_sub(k))
+    };
+    if include_len(s) != include_len(t) {
+        fields.push("include".to_string());
+    }
+    if s.column_options != t.column_options
+        && !(s.column_options.iter().all(String::is_empty)
+            && t.column_options.iter().all(String::is_empty))
+    {
+        fields.push("order".to_string());
+    }
+    if s.first_expression_at != t.first_expression_at
+        || s.nulls_not_distinct != t.nulls_not_distinct
+    {
+        fields.push("expression".to_string());
+    }
+    fields
+}
+
+/// 両側のインデックスを比べて各テーブルの `indexes` に載せる (#1625)。`SourceOnly` テーブルは
+/// source のインデックスを全て `SourceOnly` で載せ (`CREATE TABLE` の後に作る)、`TargetOnly` は
+/// `DROP TABLE` で消えるので載せない。`Same` / `Different` は同名で突き合わせ、差のあるものだけを
+/// 載せる。差があれば `Same` を `Different` に格上げする。比較済みの印 (`indexes_compared`) を立てる。
+pub fn attach_index_diffs(diff: &mut SchemaDiff, source: &[TableIndexes], target: &[TableIndexes]) {
+    let by_table = |all: &'_ [TableIndexes]| -> HashMap<String, Vec<DiffIndex>> {
+        all.iter()
+            .map(|t| {
+                (
+                    t.name.clone(),
+                    t.indexes
+                        .iter()
+                        .filter(|i| is_comparable_index(i))
+                        .map(DiffIndex::from_info)
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    let src = by_table(source);
+    let tgt = by_table(target);
+    let empty: Vec<DiffIndex> = Vec::new();
+    for table in diff.tables.iter_mut() {
+        let s = src.get(&table.name).unwrap_or(&empty);
+        let t = tgt.get(&table.name).unwrap_or(&empty);
+        match table.status {
+            DiffStatus::SourceOnly => {
+                table.indexes = s
+                    .iter()
+                    .map(|i| IndexDiff {
+                        name: i.name.clone(),
+                        status: DiffStatus::SourceOnly,
+                        source: Some(i.clone()),
+                        target: None,
+                        changed_fields: Vec::new(),
+                    })
+                    .collect();
+            }
+            DiffStatus::TargetOnly => {}
+            DiffStatus::Same | DiffStatus::Different => {
+                table.indexes = diff_indexes(s, t);
+                if !table.indexes.is_empty() && table.status == DiffStatus::Same {
+                    table.status = DiffStatus::Different;
+                }
+            }
+        }
+    }
+    diff.indexes_compared = true;
+}
+
+fn diff_indexes(source: &[DiffIndex], target: &[DiffIndex]) -> Vec<IndexDiff> {
+    let names = sorted_union(
+        source.iter().map(|i| i.name.as_str()),
+        target.iter().map(|i| i.name.as_str()),
+    );
+    let mut out = Vec::new();
+    for name in names {
+        let s = source.iter().find(|i| i.name == name);
+        let t = target.iter().find(|i| i.name == name);
+        match (s, t) {
+            (Some(s), None) => out.push(IndexDiff {
+                name,
+                status: DiffStatus::SourceOnly,
+                source: Some(s.clone()),
+                target: None,
+                changed_fields: Vec::new(),
+            }),
+            (None, Some(t)) => out.push(IndexDiff {
+                name,
+                status: DiffStatus::TargetOnly,
+                source: None,
+                target: Some(t.clone()),
+                changed_fields: Vec::new(),
+            }),
+            (Some(s), Some(t)) => {
+                let changed = index_changed_fields(s, t);
+                if !changed.is_empty() {
+                    out.push(IndexDiff {
+                        name,
+                        status: DiffStatus::Different,
+                        source: Some(s.clone()),
+                        target: Some(t.clone()),
+                        changed_fields: changed,
+                    });
+                }
+            }
+            (None, None) => {}
+        }
+    }
+    out
+}
+
+/// 外部キー 1 制約を diff 用の形にする (名前が使えなければ `None`)。
+fn diff_fk_of(table: &str, g: &super::table_ddl::FkGroup<'_>) -> DiffForeignKey {
+    DiffForeignKey {
+        name: g
+            .name
+            .filter(|n| is_usable_constraint_name(table, n))
+            .map(str::to_string),
+        columns: g.columns.iter().map(|c| c.to_string()).collect(),
+        referenced_table: g.referenced_table.to_string(),
+        referenced_columns: if g.referenced_columns.iter().all(Option::is_some) {
+            g.referenced_columns
+                .iter()
+                .flatten()
+                .map(|c| c.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        },
+        on_delete: g.on_delete.map(str::to_string),
+        on_update: g.on_update.map(str::to_string),
+    }
+}
+
+fn all_diff_fks(table: &str, fks: &[ForeignKey]) -> Vec<DiffForeignKey> {
+    super::table_ddl::group_foreign_keys(table, fks)
+        .iter()
+        .map(|g| diff_fk_of(table, g))
+        .collect()
+}
+
+/// 外部キーを (列, 参照先テーブル) で同一視するためのキー。表記の大小は無視する。
+fn fk_signature(fk: &DiffForeignKey) -> String {
+    format!(
+        "{}->{}",
+        fk.columns
+            .iter()
+            .map(|c| c.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(","),
+        fk.referenced_table.to_ascii_lowercase()
+    )
+}
+
+fn fk_changed_fields(s: &DiffForeignKey, t: &DiffForeignKey) -> Vec<String> {
+    let action = |a: &Option<String>| {
+        a.as_deref()
+            .map(|a| a.trim().to_ascii_uppercase())
+            .filter(|a| !a.is_empty() && a != "NO ACTION")
+    };
+    let mut fields = Vec::new();
+    if action(&s.on_delete) != action(&t.on_delete) {
+        fields.push("on_delete".to_string());
+    }
+    if action(&s.on_update) != action(&t.on_update) {
+        fields.push("on_update".to_string());
+    }
+    let refs = |f: &DiffForeignKey| {
+        f.referenced_columns
+            .iter()
+            .map(|c| c.to_ascii_lowercase())
+            .collect::<Vec<_>>()
+    };
+    // 参照先列が解決できていない側 (空) は比べない。
+    if !s.referenced_columns.is_empty() && !t.referenced_columns.is_empty() && refs(s) != refs(t) {
+        fields.push("referenced_columns".to_string());
+    }
+    fields
+}
+
+/// 既存テーブル (`Same` / `Different`) の外部キーを両側で比べて `fk_changes` に載せる
+/// (#1625)。追加・削除・`ON DELETE` / `ON UPDATE` の違いが対象。差があれば `Same` を
+/// `Different` に格上げする。
+pub fn attach_foreign_key_diffs(
+    diff: &mut SchemaDiff,
+    source_fks: &[ForeignKey],
+    target_fks: &[ForeignKey],
+) {
+    for table in diff
+        .tables
+        .iter_mut()
+        .filter(|t| matches!(t.status, DiffStatus::Same | DiffStatus::Different))
+    {
+        let s = all_diff_fks(&table.name, source_fks);
+        let t = all_diff_fks(&table.name, target_fks);
+        let mut changes = Vec::new();
+        for sf in &s {
+            let sig = fk_signature(sf);
+            match t.iter().find(|tf| fk_signature(tf) == sig) {
+                None => changes.push(ForeignKeyDiff {
+                    status: DiffStatus::SourceOnly,
+                    source: Some(sf.clone()),
+                    target: None,
+                    changed_fields: Vec::new(),
+                }),
+                Some(tf) => {
+                    let changed = fk_changed_fields(sf, tf);
+                    if !changed.is_empty() {
+                        changes.push(ForeignKeyDiff {
+                            status: DiffStatus::Different,
+                            source: Some(sf.clone()),
+                            target: Some(tf.clone()),
+                            changed_fields: changed,
+                        });
+                    }
+                }
+            }
+        }
+        for tf in &t {
+            let sig = fk_signature(tf);
+            if !s.iter().any(|sf| fk_signature(sf) == sig) {
+                changes.push(ForeignKeyDiff {
+                    status: DiffStatus::TargetOnly,
+                    source: None,
+                    target: Some(tf.clone()),
+                    changed_fields: Vec::new(),
+                });
+            }
+        }
+        if !changes.is_empty() && table.status == DiffStatus::Same {
+            table.status = DiffStatus::Different;
+        }
+        table.fk_changes = changes;
+    }
+}
+
+/// `sqlite_master` の 1 行 (索引・トリガー・表の元の `CREATE` 文)。
+#[derive(Debug, Clone)]
+pub struct SqliteMasterEntry {
+    /// `table` / `index` / `trigger`
+    pub kind: String,
+    pub name: String,
+    pub table: String,
+    pub sql: String,
+}
+
+/// SQLite の target で、テーブル再作成が要る表 (列の変更・外部キーの変更がある `Different`)
+/// に、再作成に必要な target の完全な定義を載せる (#1625)。
+pub fn attach_sqlite_rebuild_context(
+    diff: &mut SchemaDiff,
+    target_tables: &[TableColumns],
+    target_fks: &[ForeignKey],
+    target_indexes: &[TableIndexes],
+    master: &[SqliteMasterEntry],
+) {
+    if diff.target_driver != DriverKind::Sqlite {
+        return;
+    }
+    for table in diff.tables.iter_mut().filter(|t| {
+        t.status == DiffStatus::Different
+            && (t.columns.iter().any(|c| c.status == DiffStatus::Different)
+                || !t.fk_changes.is_empty())
+    }) {
+        let Some(tt) = target_tables.iter().find(|t| t.name == table.name) else {
+            continue;
+        };
+        let lower = table.name.to_ascii_lowercase();
+        let referenced_by = target_fks
+            .iter()
+            .filter(|f| f.referenced_table.to_ascii_lowercase() == lower && f.table != table.name)
+            .map(|f| {
+                format!(
+                    "{} ({})",
+                    f.table,
+                    f.on_delete
+                        .as_deref()
+                        .map(|a| format!("ON DELETE {a}"))
+                        .unwrap_or_else(|| "ON DELETE NO ACTION".to_string())
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let unique_constraints = target_indexes
+            .iter()
+            .filter(|t| t.name == table.name)
+            .flat_map(|t| t.indexes.iter())
+            .filter(|i| i.unique && !i.primary && i.name.starts_with("sqlite_autoindex_"))
+            .filter(|i| i.first_expression_at.is_none() && !i.columns.is_empty())
+            .map(|i| i.columns.clone())
+            .collect();
+        table.target_snapshot = Some(TargetTableSnapshot {
+            columns: tt.columns.clone(),
+            foreign_keys: all_diff_fks(&table.name, target_fks),
+            unique_constraints,
+            recreate_sql: master
+                .iter()
+                .filter(|m| m.table == table.name && matches!(m.kind.as_str(), "index" | "trigger"))
+                .map(|m| m.sql.clone())
+                .chain(
+                    master
+                        .iter()
+                        .filter(|m| m.kind == "view" && m.sql.to_ascii_lowercase().contains(&lower))
+                        .map(|m| m.sql.clone()),
+                )
+                .collect(),
+            drop_views: master
+                .iter()
+                .filter(|m| m.kind == "view" && m.sql.to_ascii_lowercase().contains(&lower))
+                .map(|m| m.name.clone())
+                .collect(),
+            original_sql: master
+                .iter()
+                .find(|m| m.kind == "table" && m.name == table.name)
+                .map(|m| m.sql.clone()),
+            referenced_by,
+        });
     }
 }
 
@@ -629,5 +1102,107 @@ mod tests {
         assert_eq!(child.foreign_keys.len(), 1);
         assert_eq!(child.foreign_keys[0].referenced_table, "Parent");
         assert_eq!(child.foreign_keys[0].on_delete.as_deref(), Some("CASCADE"));
+    }
+
+    fn ti(table: &str, indexes: Vec<IndexInfo>) -> TableIndexes {
+        TableIndexes {
+            name: table.to_string(),
+            indexes,
+        }
+    }
+
+    fn ix(name: &str, cols: &[&str], unique: bool) -> IndexInfo {
+        IndexInfo {
+            name: name.to_string(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn index_diffs_classify_added_removed_and_changed_and_promote_same_tables() {
+        let tables = vec![table("t", vec![col("a", "int")])];
+        let mut d = diff(&tables, &tables);
+        assert_eq!(d.tables[0].status, DiffStatus::Same);
+        let src = vec![ti(
+            "t",
+            vec![
+                ix("only_src", &["a"], false),
+                ix("both", &["a", "b"], true),
+                ix("same", &["a"], false),
+                IndexInfo {
+                    primary: true,
+                    ..ix("PRIMARY", &["a"], true)
+                },
+            ],
+        )];
+        let tgt = vec![ti(
+            "t",
+            vec![
+                ix("only_tgt", &["a"], false),
+                ix("both", &["a"], false),
+                ix("same", &["a"], false),
+                ix("sqlite_autoindex_t_1", &["a"], true),
+            ],
+        )];
+        attach_index_diffs(&mut d, &src, &tgt);
+        assert!(d.indexes_compared);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        let by: Vec<(&str, DiffStatus)> = d.tables[0]
+            .indexes
+            .iter()
+            .map(|i| (i.name.as_str(), i.status))
+            .collect();
+        assert_eq!(
+            by,
+            vec![
+                ("both", DiffStatus::Different),
+                ("only_src", DiffStatus::SourceOnly),
+                ("only_tgt", DiffStatus::TargetOnly),
+            ]
+        );
+        assert_eq!(
+            d.tables[0].indexes[0].changed_fields,
+            vec!["columns", "unique"]
+        );
+    }
+
+    #[test]
+    fn index_method_default_and_predicate_whitespace_are_not_differences() {
+        let mut a = ix("i", &["a"], false);
+        a.method = Some("BTREE".into());
+        a.predicate = Some("(x  IS NULL)".into());
+        let mut b = ix("i", &["a"], false);
+        b.predicate = Some("(x IS NULL)".into());
+        assert!(
+            index_changed_fields(&DiffIndex::from_info(&a), &DiffIndex::from_info(&b)).is_empty()
+        );
+    }
+
+    #[test]
+    fn foreign_key_actions_are_compared_by_columns_and_parent_not_name() {
+        fn fk(name: &str, on_delete: Option<&str>) -> ForeignKey {
+            ForeignKey {
+                table: "t".into(),
+                column: "pid".into(),
+                referenced_table: "p".into(),
+                referenced_column: Some("id".into()),
+                constraint_name: Some(name.into()),
+                on_delete: on_delete.map(str::to_string),
+                on_update: None,
+            }
+        }
+        let tables = vec![table("t", vec![col("pid", "int")])];
+        let mut d = diff(&tables, &tables);
+        attach_foreign_key_diffs(&mut d, &[fk("a", Some("CASCADE"))], &[fk("b", None)]);
+        assert_eq!(d.tables[0].status, DiffStatus::Different);
+        assert_eq!(d.tables[0].fk_changes[0].changed_fields, vec!["on_delete"]);
+        let mut same = diff(&tables, &tables);
+        attach_foreign_key_diffs(&mut same, &[fk("a", None)], &[fk("b", None)]);
+        assert!(same.tables[0].fk_changes.is_empty());
+        let mut added = diff(&tables, &tables);
+        attach_foreign_key_diffs(&mut added, &[fk("a", None)], &[]);
+        assert_eq!(added.tables[0].fk_changes[0].status, DiffStatus::SourceOnly);
     }
 }

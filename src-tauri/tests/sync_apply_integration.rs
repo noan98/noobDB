@@ -406,3 +406,175 @@ async fn allow_delete_gates_delete_row_through_command() {
     );
     let _ = std::fs::remove_file(&p2);
 }
+
+// ---------------------------------------------------------------------------
+// #1625: インデックス・外部キーの差分と、SQLite のテーブル再作成
+// ---------------------------------------------------------------------------
+
+async fn sqlite_pair(
+    tag: &str,
+) -> (
+    t::Connection,
+    std::path::PathBuf,
+    t::Connection,
+    std::path::PathBuf,
+) {
+    let (s, sp) = temp_conn(&format!("{tag}_src")).await;
+    let (d, dp) = temp_conn(&format!("{tag}_dst")).await;
+    (s, sp, d, dp)
+}
+
+#[tokio::test]
+async fn sqlite_index_diff_is_synced_by_create_and_drop_index() {
+    let (src, sp, dst, dp) = sqlite_pair("idx").await;
+    src.execute(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+        None,
+    )
+    .await
+    .unwrap();
+    src.execute("CREATE INDEX idx_a ON t (a)", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT, b TEXT)",
+        None,
+    )
+    .await
+    .unwrap();
+    dst.execute("CREATE INDEX idx_b ON t (b)", None)
+        .await
+        .unwrap();
+
+    let diff = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    assert!(diff.indexes_compared);
+    let table = diff.tables.iter().find(|x| x.name == "t").unwrap();
+    assert_eq!(
+        table.indexes.len(),
+        2,
+        "idx_a (source only) and idx_b (target only)"
+    );
+
+    let safe = t::generate_sync_sql(&diff, false);
+    assert!(safe.statements.iter().any(|s| s.kind == SyncKind::AddIndex));
+    assert!(!safe
+        .statements
+        .iter()
+        .any(|s| s.kind == SyncKind::DropIndex));
+    let full = t::generate_sync_sql(&diff, true);
+    let sqls: Vec<String> = full.statements.iter().map(|s| s.sql.clone()).collect();
+    dst.execute_transaction(&sqls, None).await.unwrap();
+
+    let again = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    assert!(
+        again.tables.iter().all(|x| x.indexes.is_empty()),
+        "{again:?}"
+    );
+    let _ = (std::fs::remove_file(sp), std::fs::remove_file(dp));
+}
+
+#[tokio::test]
+async fn sqlite_column_change_is_rebuilt_without_cascading_children() {
+    let (src, sp, dst, dp) = sqlite_pair("rebuild").await;
+    src.execute(
+        "CREATE TABLE p (id INTEGER PRIMARY KEY, name TEXT NOT NULL DEFAULT 'x', note TEXT)",
+        None,
+    )
+    .await
+    .unwrap();
+    src.execute("CREATE INDEX p_name ON p (name)", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "CREATE TABLE p (id INTEGER PRIMARY KEY, name TEXT, note TEXT, UNIQUE (note))",
+        None,
+    )
+    .await
+    .unwrap();
+    dst.execute("CREATE INDEX p_name ON p (name)", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) ON DELETE CASCADE)",
+        None,
+    )
+    .await
+    .unwrap();
+    dst.execute("CREATE VIEW v AS SELECT id, name FROM p", None)
+        .await
+        .unwrap();
+    dst.execute(
+        "INSERT INTO p (id, name, note) VALUES (1, 'a', 'n1'), (2, 'b', 'n2')",
+        None,
+    )
+    .await
+    .unwrap();
+    dst.execute("INSERT INTO c (id, pid) VALUES (10, 1), (11, 2)", None)
+        .await
+        .unwrap();
+    src.execute("CREATE VIEW v AS SELECT id, name FROM p", None)
+        .await
+        .unwrap();
+    // 子表 c と、ソース側にも c が必要 (差分に出さないため同じ定義にする)
+    src.execute(
+        "CREATE TABLE c (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES p(id) ON DELETE CASCADE)",
+        None,
+    )
+    .await
+    .unwrap();
+
+    let diff = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    let p = diff.tables.iter().find(|x| x.name == "p").unwrap();
+    assert!(p.target_snapshot.is_some());
+    let safe = t::generate_sync_sql(&diff, false);
+    assert!(safe
+        .statements
+        .iter()
+        .all(|s| s.kind != SyncKind::RebuildTable));
+    let plan = t::generate_sync_sql(&diff, true);
+    let rebuild: Vec<_> = plan
+        .statements
+        .iter()
+        .filter(|s| s.kind == SyncKind::RebuildTable)
+        .collect();
+    assert_eq!(rebuild.len(), 1, "{plan:?}");
+    assert!(
+        plan.warnings
+            .iter()
+            .any(|w| w.contains("c (ON DELETE CASCADE)")),
+        "{:?}",
+        plan.warnings
+    );
+
+    let sqls: Vec<String> = plan.statements.iter().map(|s| s.sql.clone()).collect();
+    dst.execute_transaction(&sqls, None).await.unwrap();
+
+    assert_eq!(count(&dst, "p").await, 2);
+    assert_eq!(
+        count(&dst, "c").await,
+        2,
+        "child rows must survive the rebuild"
+    );
+    let again = t::compare_schema_via_core(&src, "main", &dst, "main")
+        .await
+        .unwrap();
+    assert!(
+        again.tables.iter().all(|x| x.status == t::DiffStatus::Same),
+        "{again:?}"
+    );
+    // UNIQUE 制約は引き継がれる
+    assert!(dst
+        .execute("INSERT INTO p (id, name, note) VALUES (3, 'z', 'n1')", None)
+        .await
+        .is_err());
+    // 外部キー検査は元に戻っている
+    let fk = dst.execute("PRAGMA foreign_keys", None).await.unwrap();
+    assert!(matches!(&fk.rows[0][0], Value::Int(1)));
+    let _ = (std::fs::remove_file(sp), std::fs::remove_file(dp));
+}

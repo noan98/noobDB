@@ -622,6 +622,7 @@ mod tests {
             status,
             foreign_keys: vec![],
             columns: Vec::<ColumnDiff>::new(),
+            ..Default::default()
         }
     }
 
@@ -631,6 +632,7 @@ mod tests {
             target_driver: DriverKind::Mysql,
             tables,
             warnings: Vec::new(),
+            indexes_compared: false,
         }
     }
 
@@ -678,6 +680,7 @@ mod tests {
                 target: Some(col_info("qty", "int")),
                 changed_fields: vec!["data_type".into()],
             }],
+            ..Default::default()
         }
     }
 
@@ -716,6 +719,7 @@ mod tests {
                     target,
                     changed_fields: vec![],
                 }],
+                ..Default::default()
             }
         };
         for st in [DiffStatus::SourceOnly, DiffStatus::TargetOnly] {

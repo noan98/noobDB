@@ -668,17 +668,28 @@ impl SqliteConn {
         if statements.is_empty() {
             return Ok(0);
         }
+        // テーブル再作成 (`SyncKind::RebuildTable`, #1625) は先頭・末尾の
+        // `PRAGMA foreign_keys` を含む。PRAGMA はトランザクション内では効かないので、
+        // 外して BEGIN の前後で切り替える。
+        let (statements, fk_off) = split_fk_pragmas(statements);
         let mut conn = self.pool.acquire().await?;
-        let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-                .execute(&mut *tx)
-                .await?;
-            affected += result.rows_affected();
+        if !fk_off {
+            return run_batch(&mut conn, &statements).await;
         }
-        tx.commit().await?;
-        Ok(affected)
+        sqlx::query(sqlx::AssertSqlSafe(crate::db::sync::SQLITE_FK_OFF))
+            .execute(&mut *conn)
+            .await?;
+        let before = fk_violation_count(&mut conn).await;
+        let result = run_batch_checked(&mut conn, &statements, before).await;
+        // 失敗しても必ず外部キー検査を戻す。戻せない接続はプールに返さず閉じる。
+        if sqlx::query(sqlx::AssertSqlSafe(crate::db::sync::SQLITE_FK_ON))
+            .execute(&mut *conn)
+            .await
+            .is_err()
+        {
+            conn.close_on_drop();
+        }
+        result
     }
 
     // ── ローカル横断クエリ (#740) ──
@@ -2479,4 +2490,81 @@ mod tests {
             "WITH c AS (SELECT 1) UPDATE t SET x = 1 WHERE id IN (SELECT * FROM c)"
         ));
     }
+}
+
+/// 再作成スクリプトの先頭・末尾の `PRAGMA foreign_keys` を外し、先頭に OFF があったかを返す。
+fn split_fk_pragmas(statements: &[String]) -> (Vec<String>, bool) {
+    let off = crate::db::sync::SQLITE_FK_OFF;
+    let on = crate::db::sync::SQLITE_FK_ON;
+    let mut fk_off = false;
+    let out = statements
+        .iter()
+        .map(|s| {
+            let mut t = s.trim();
+            if let Some(rest) = t.strip_prefix(off) {
+                fk_off = true;
+                t = rest.trim_start_matches(';').trim();
+            }
+            let t = t.trim_end_matches(';').trim_end();
+            let t = t
+                .strip_suffix(on)
+                .map(|r| r.trim_end().trim_end_matches(';'))
+                .unwrap_or(t);
+            t.to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    (out, fk_off)
+}
+
+async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>) -> usize {
+    sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut **conn)
+        .await
+        .map(|r| r.len())
+        .unwrap_or(0)
+}
+
+async fn run_batch(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(affected)
+}
+
+/// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。
+async fn run_batch_checked(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+    before: usize,
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    let after = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut *tx)
+        .await?
+        .len();
+    if after > before {
+        return Err(AppError::InvalidInput(format!(
+            "foreign key violations would be introduced by the table rebuild ({} new); rolled back",
+            after - before
+        )));
+    }
+    tx.commit().await?;
+    Ok(affected)
 }

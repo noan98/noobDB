@@ -54,7 +54,8 @@ pub mod __test_api {
         compute_data_diff, generate_data_sync_sql, DataDiff, RowDiff, RowStatus,
     };
     pub use crate::db::diff::{
-        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffStatus, SchemaDiff, TableDiff,
+        compute_schema_diff, ColumnDiff, DiffForeignKey, DiffIndex, DiffStatus, ForeignKeyDiff,
+        IndexDiff, SchemaDiff, TableDiff, TargetTableSnapshot,
     };
     pub use crate::db::inspector::{normalize_sql_fingerprint, NPlusOneOptions, StatementDeltaRow};
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
@@ -455,6 +456,17 @@ pub mod __test_api {
     pub use crate::commands::process::{get_process_query_inner, list_processes_inner};
     pub use crate::commands::profile::{profile_column_inner, profile_table_inner};
     pub use crate::commands::server::{server_info_inner, server_metrics_inner};
+
+    /// スキーマ比較の本体 (インデックス・外部キーの差分、SQLite の再作成コンテキスト込み)。
+    pub async fn compare_schema_via_core(
+        source: &Connection,
+        source_database: &str,
+        target: &Connection,
+        target_database: &str,
+    ) -> crate::error::Result<SchemaDiff> {
+        crate::commands::diff::compare_schema_core(source, source_database, target, target_database)
+            .await
+    }
 
     pub async fn connect(opts: &DbConnectOptions) -> crate::error::Result<Connection> {
         Connection::connect(opts).await

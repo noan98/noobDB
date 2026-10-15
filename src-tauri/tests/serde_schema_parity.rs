@@ -575,9 +575,50 @@ fn build_fixtures() -> serde_json::Value {
         target: None,
         changed_fields: vec![],
     };
+    let diff_index = t::DiffIndex {
+        name: "idx_users_email".into(),
+        columns: vec!["email".into()],
+        unique: true,
+        method: Some("btree".into()),
+        predicate: Some("(deleted_at IS NULL)".into()),
+        first_expression_at: None,
+        key_column_count: Some(1),
+        column_options: vec![String::new()],
+        nulls_not_distinct: false,
+    };
+    let diff_fk = t::DiffForeignKey {
+        name: Some("fk_users_org".into()),
+        columns: vec!["org_id".into()],
+        referenced_table: "orgs".into(),
+        referenced_columns: vec!["id".into()],
+        on_delete: Some("CASCADE".into()),
+        on_update: None,
+    };
     let table_diff = TableDiff {
         name: "users".into(),
         status: DiffStatus::Different,
+        indexes: vec![t::IndexDiff {
+            name: "idx_users_email".into(),
+            status: DiffStatus::Different,
+            source: Some(diff_index.clone()),
+            target: Some(diff_index),
+            changed_fields: vec!["unique".into()],
+        }],
+        fk_changes: vec![t::ForeignKeyDiff {
+            status: DiffStatus::Different,
+            source: Some(diff_fk.clone()),
+            target: Some(diff_fk.clone()),
+            changed_fields: vec!["on_delete".into()],
+        }],
+        target_snapshot: Some(t::TargetTableSnapshot {
+            columns: vec![table_column_info.clone()],
+            foreign_keys: vec![diff_fk],
+            unique_constraints: vec![vec!["email".into()]],
+            recreate_sql: vec!["CREATE INDEX i ON users (email)".into()],
+            drop_views: vec!["v_users".into()],
+            original_sql: Some("CREATE TABLE users (email text)".into()),
+            referenced_by: vec!["orders (ON DELETE CASCADE)".into()],
+        }),
         foreign_keys: vec![t::DiffForeignKey {
             name: Some("fk_users_org".into()),
             columns: vec!["org_id".into()],
@@ -587,12 +628,14 @@ fn build_fixtures() -> serde_json::Value {
             on_update: None,
         }],
         columns: vec![column_diff],
+        ..Default::default()
     };
     let schema_diff = SchemaDiff {
         source_driver: DriverKind::Mysql,
         target_driver: DriverKind::Postgres,
         tables: vec![table_diff],
         warnings: Vec::new(),
+        indexes_compared: true,
     };
 
     let sync_statement = SyncStatement {
@@ -1216,6 +1259,7 @@ fn build_fixtures() -> serde_json::Value {
                             changed_fields: vec!["data_type".into()],
                         })
                         .collect(),
+                    ..Default::default()
                 })
                 .collect(),
             warnings: if i == 0 {
@@ -1223,21 +1267,29 @@ fn build_fixtures() -> serde_json::Value {
             } else {
                 Vec::new()
             },
+            indexes_compared: i == 0,
         })
         .collect();
 
-    // 同期プラン: SyncKind 9 種すべて (destructive は DROP 系のみ true)。
+    // 同期プラン: SyncKind 13 種すべて (destructive は DROP 系のみ true)。
     let sync_plan_variants = vec![SyncPlan {
         statements: variants!(SyncKind [
             CreateTable, AddColumn, AlterColumn, AddForeignKey, DropColumn, DropTable,
-            InsertRow, UpdateRow, DeleteRow
+            AddIndex, DropIndex, DropForeignKey, RebuildTable, InsertRow, UpdateRow, DeleteRow
         ])
         .into_iter()
         .map(|kind| SyncStatement {
             sql: "SELECT 1;".into(),
             table: "users".into(),
             kind,
-            destructive: matches!(kind, SyncKind::DropColumn | SyncKind::DropTable),
+            destructive: matches!(
+                kind,
+                SyncKind::DropColumn
+                    | SyncKind::DropTable
+                    | SyncKind::DropIndex
+                    | SyncKind::DropForeignKey
+                    | SyncKind::RebuildTable
+            ),
         })
         .collect(),
         warnings: vec![],

@@ -44,6 +44,16 @@ pub enum SyncKind {
     AddForeignKey,
     DropColumn,
     DropTable,
+    /// `CREATE [UNIQUE] INDEX` (#1625)。
+    AddIndex,
+    /// `DROP INDEX` (#1625)。
+    DropIndex,
+    /// 既存テーブルの外部キー制約の削除 (#1625)。
+    DropForeignKey,
+    /// SQLite の列変更・外部キー変更のためのテーブル再作成 (新表 → コピー → DROP →
+    /// RENAME → インデックス / トリガーの作り直し)。1 つの `SyncStatement` に複数文を持つ
+    /// (#1625)。
+    RebuildTable,
     // Data-level statements (`db::data_diff`).
     InsertRow,
     UpdateRow,
@@ -58,13 +68,17 @@ impl SyncKind {
         match self {
             SyncKind::CreateTable => 0,
             SyncKind::AddColumn => 1,
-            SyncKind::AlterColumn => 2,
-            SyncKind::AddForeignKey => 3,
-            SyncKind::DropColumn => 4,
-            SyncKind::DropTable => 5,
-            SyncKind::InsertRow => 6,
-            SyncKind::UpdateRow => 7,
-            SyncKind::DeleteRow => 8,
+            SyncKind::AlterColumn | SyncKind::RebuildTable => 2,
+            // 同名の索引・外部キーを作り直すときは DROP を先に、列の DROP より前に出す。
+            SyncKind::DropIndex => 3,
+            SyncKind::DropForeignKey => 4,
+            SyncKind::AddIndex => 5,
+            SyncKind::AddForeignKey => 6,
+            SyncKind::DropColumn => 7,
+            SyncKind::DropTable => 8,
+            SyncKind::InsertRow => 9,
+            SyncKind::UpdateRow => 10,
+            SyncKind::DeleteRow => 11,
         }
     }
 }
@@ -124,10 +138,22 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
         match table.status {
             DiffStatus::Same => {}
             DiffStatus::SourceOnly => {
-                if let Some(stmt) =
-                    create_table_stmt(driver, table, &uncreatable, &mut statements, &mut warnings)
-                {
+                if let Some(stmt) = create_table_stmt(
+                    driver,
+                    table,
+                    diff.indexes_compared,
+                    &uncreatable,
+                    &mut statements,
+                    &mut warnings,
+                ) {
                     statements.push(stmt);
+                    index_statements(
+                        driver,
+                        table,
+                        allow_destructive,
+                        &mut statements,
+                        &mut warnings,
+                    );
                 }
             }
             DiffStatus::TargetOnly => {
@@ -148,9 +174,24 @@ pub fn generate_sync_sql(diff: &SchemaDiff, allow_destructive: bool) -> SyncPlan
                 }
             }
             DiffStatus::Different => {
-                alter_table(
+                let rebuilt = alter_table(
                     driver,
                     table,
+                    allow_destructive,
+                    &mut statements,
+                    &mut warnings,
+                );
+                index_statements(
+                    driver,
+                    table,
+                    allow_destructive,
+                    &mut statements,
+                    &mut warnings,
+                );
+                foreign_key_statements(
+                    driver,
+                    table,
+                    rebuilt,
                     allow_destructive,
                     &mut statements,
                     &mut warnings,
@@ -309,6 +350,7 @@ fn can_create_table(driver: DriverKind, table: &TableDiff) -> bool {
 fn create_table_stmt(
     driver: DriverKind,
     table: &TableDiff,
+    indexes_compared: bool,
     uncreatable: &HashSet<&str>,
     fk_statements: &mut Vec<SyncStatement>,
     warnings: &mut Vec<String>,
@@ -416,12 +458,24 @@ fn create_table_stmt(
         .iter()
         .flat_map(|f| f.columns.iter().map(String::as_str))
         .collect();
+    // インデックスの差分を比較済みなら、`CREATE INDEX` で出す索引の列は警告から外す。
+    let covered: HashSet<&str> = if indexes_compared {
+        table
+            .indexes
+            .iter()
+            .filter_map(|i| i.source.as_ref())
+            .flat_map(|i| i.columns.iter().map(String::as_str))
+            .collect()
+    } else {
+        HashSet::new()
+    };
     let indexed: Vec<&str> = cols
         .iter()
         .filter(|c| {
             c.key.eq_ignore_ascii_case("UNI")
                 || (c.key.eq_ignore_ascii_case("MUL") && !fk_cols.contains(c.name.as_str()))
         })
+        .filter(|c| !covered.contains(c.name.as_str()))
         .map(|c| c.name.as_str())
         .collect();
     if !indexed.is_empty() {
@@ -469,14 +523,34 @@ pub(crate) fn render_create_table(qualified: &str, lines: &[String]) -> String {
 }
 
 /// Emits add / modify / drop column statements for a table present on both
-/// sides, pushing warnings for changes the driver cannot express.
+/// sides, pushing warnings for changes the driver cannot express. Returns true
+/// when a SQLite table rebuild covers every column / foreign-key change of the
+/// table (so the caller must not emit per-constraint statements again).
 fn alter_table(
     driver: DriverKind,
     table: &TableDiff,
     allow_destructive: bool,
     statements: &mut Vec<SyncStatement>,
     warnings: &mut Vec<String>,
-) {
+) -> bool {
+    if driver == DriverKind::Sqlite && sqlite_needs_rebuild(table) {
+        if let Some(snapshot) = &table.target_snapshot {
+            if !allow_destructive {
+                warnings.push(format!(
+                    "{}: SQLite は列・外部キーの変更を ALTER で行えません。テーブルの再作成 SQL (旧表を DROP して作り直す) は「破壊的な操作を許可」を有効にすると出力します。",
+                    table.name
+                ));
+            } else if let Some(sql) = sqlite_rebuild_sql(table, snapshot, warnings) {
+                statements.push(SyncStatement {
+                    sql,
+                    table: table.name.clone(),
+                    kind: SyncKind::RebuildTable,
+                    destructive: true,
+                });
+            }
+            return true;
+        }
+    }
     let tident = quote_ident(driver, &table.name);
     for col in &table.columns {
         match col.status {
@@ -537,6 +611,7 @@ fn alter_table(
             DiffStatus::Same => {}
         }
     }
+    false
 }
 
 /// Emits the statement(s) that align an existing column with its source-side
@@ -659,6 +734,402 @@ fn modify_column(
                  (新定義で CREATE TABLE → INSERT ... SELECT でデータ移行 → DROP TABLE → RENAME)。",
                 table, src.name
             ));
+        }
+    }
+}
+
+/// SQLite のテーブル再作成の前後に付ける PRAGMA。外部キー検査を切らずに旧表を `DROP` すると
+/// 暗黙の `DELETE` で子表の `ON DELETE CASCADE` が発火して行が消える。`PRAGMA foreign_keys` は
+/// トランザクション内では効かないため、`SqliteConn::execute_transaction` がこの 2 行を見つけて
+/// トランザクションの外で切り替える (他のドライバ・直接実行では通常の文として実行される)。
+pub(crate) const SQLITE_FK_OFF: &str = "PRAGMA foreign_keys=OFF";
+pub(crate) const SQLITE_FK_ON: &str = "PRAGMA foreign_keys=ON";
+
+/// SQLite で列の変更 (型・NOT NULL・DEFAULT など) か外部キーの変更があり、テーブルの
+/// 再作成が要る表か。生成列は対象外 (SQLite 宛ては生成列を外さないので該当しない)。
+fn sqlite_needs_rebuild(table: &TableDiff) -> bool {
+    table
+        .columns
+        .iter()
+        .any(|c| c.status == DiffStatus::Different)
+        || !table.fk_changes.is_empty()
+}
+
+/// SQLite の「12 ステップ」のテーブル再作成 SQL を 1 つの文字列 (複数文) にして返す。
+/// 新表を作る → `INSERT ... SELECT` で移す → 旧表を `DROP` → `RENAME` → インデックス /
+/// トリガーを元の `CREATE` 文で作り直す。同じ表の列の追加・削除・外部キーの変更も一緒に
+/// 反映する (target の列を source の定義へ差し替え、source だけの列を足す。target だけの列は
+/// `DROP` の許可があるので落とす)。再現できない構文は警告に出す。
+fn sqlite_rebuild_sql(
+    table: &TableDiff,
+    snap: &super::diff::TargetTableSnapshot,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
+    let driver = DriverKind::Sqlite;
+    let status_of = |name: &str| table.columns.iter().find(|c| c.name == name);
+
+    // 最終的な列 (target の並びを保ち、変更は source の定義へ、source のみの列は末尾に足す)。
+    let mut finals: Vec<TableColumnInfo> = Vec::new();
+    for tc in &snap.columns {
+        match status_of(&tc.name) {
+            Some(c) if c.status == DiffStatus::Different => {
+                finals.push(c.source.clone().unwrap_or_else(|| tc.clone()));
+            }
+            Some(c) if c.status == DiffStatus::TargetOnly => {} // 破壊的操作を許可しているので落とす
+            _ => finals.push(tc.clone()),
+        }
+    }
+    let copied: Vec<String> = finals
+        .iter()
+        .filter(|f| snap.columns.iter().any(|t| t.name == f.name))
+        .map(|f| quote_ident(driver, &f.name))
+        .collect();
+    for c in &table.columns {
+        if c.status == DiffStatus::SourceOnly {
+            if let Some(src) = &c.source {
+                finals.push(src.clone());
+            }
+        }
+    }
+    if finals.is_empty() || copied.is_empty() {
+        warnings.push(format!(
+            "{}: 再作成後の列が無いため、テーブル再作成 SQL を生成しません。",
+            table.name
+        ));
+        return None;
+    }
+
+    let original_upper = snap
+        .original_sql
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    let pk: Vec<&TableColumnInfo> = finals
+        .iter()
+        .filter(|c| c.key.eq_ignore_ascii_case("PRI"))
+        .collect();
+    let autoincrement = original_upper.contains("AUTOINCREMENT")
+        && pk.len() == 1
+        && pk
+            .first()
+            .is_some_and(|c| c.data_type.eq_ignore_ascii_case("INTEGER"));
+    let mut lines: Vec<String> = finals
+        .iter()
+        .map(|c| {
+            if autoincrement && c.key.eq_ignore_ascii_case("PRI") {
+                format!(
+                    "{} INTEGER PRIMARY KEY AUTOINCREMENT",
+                    quote_ident(driver, &c.name)
+                )
+            } else {
+                column_def(driver, c)
+            }
+        })
+        .collect();
+    if !autoincrement && !pk.is_empty() {
+        let cols: Vec<String> = pk.iter().map(|c| quote_ident(driver, &c.name)).collect();
+        lines.push(format!("PRIMARY KEY ({})", cols.join(", ")));
+    }
+    let names: HashSet<&str> = finals.iter().map(|c| c.name.as_str()).collect();
+    for uq in &snap.unique_constraints {
+        if uq.iter().all(|c| names.contains(c.as_str())) {
+            let cols: Vec<String> = uq.iter().map(|c| quote_ident(driver, c)).collect();
+            lines.push(format!("UNIQUE ({})", cols.join(", ")));
+        } else {
+            warnings.push(format!(
+                "{}: UNIQUE ({}) は削除する列を含むため、再作成後の表には含めません。",
+                table.name,
+                uq.join(", ")
+            ));
+        }
+    }
+
+    // 外部キー: target の定義に fk_changes (source への揃え) を反映する。
+    let mut fks: Vec<DiffForeignKey> = snap.foreign_keys.clone();
+    for ch in &table.fk_changes {
+        let sig = |f: &DiffForeignKey| {
+            format!(
+                "{}->{}",
+                f.columns.join(",").to_ascii_lowercase(),
+                f.referenced_table.to_ascii_lowercase()
+            )
+        };
+        match ch.status {
+            DiffStatus::TargetOnly => {
+                if let Some(t) = &ch.target {
+                    fks.retain(|f| sig(f) != sig(t));
+                }
+            }
+            DiffStatus::Different => {
+                if let (Some(s), Some(t)) = (&ch.source, &ch.target) {
+                    fks.retain(|f| sig(f) != sig(t));
+                    fks.push(s.clone());
+                }
+            }
+            DiffStatus::SourceOnly => {
+                if let Some(s) = &ch.source {
+                    fks.push(s.clone());
+                }
+            }
+            DiffStatus::Same => {}
+        }
+    }
+    for fk in &fks {
+        if let Some(missing) = fk.columns.iter().find(|c| !names.contains(c.as_str())) {
+            warnings.push(format!(
+                "{}: 外部キー ({}) は再作成後に存在しない列 {} を含むため含めません。",
+                table.name,
+                fk.columns.join(", "),
+                missing
+            ));
+            continue;
+        }
+        lines.push(render_foreign_key(driver, &fk_group(fk)));
+    }
+
+    let tmp = format!("__noobdb_rebuild_{}", table.name);
+    let tmp_ident = quote_ident(driver, &tmp);
+    let tident = quote_ident(driver, &table.name);
+    let mut create = render_create_table(&tmp_ident, &lines);
+    if original_upper.contains("WITHOUT ROWID") {
+        create.push_str(" WITHOUT ROWID");
+    }
+    let cols = copied.join(", ");
+    let mut script: Vec<String> = vec![SQLITE_FK_OFF.to_string()];
+    script.extend(
+        snap.drop_views
+            .iter()
+            .map(|v| format!("DROP VIEW IF EXISTS {}", quote_ident(driver, v))),
+    );
+    script.extend([
+        create,
+        format!("INSERT INTO {tmp_ident} ({cols}) SELECT {cols} FROM {tident}"),
+        format!("DROP TABLE {tident}"),
+        format!("ALTER TABLE {tmp_ident} RENAME TO {tident}"),
+    ]);
+    script.extend(
+        snap.recreate_sql
+            .iter()
+            .map(|s| s.trim().trim_end_matches(';').to_string()),
+    );
+    script.push(SQLITE_FK_ON.to_string());
+
+    // 警告: 再現できない構文・子表の参照・作り直す索引。
+    let mut lost: Vec<&str> = Vec::new();
+    for (kw, label) in [
+        ("CHECK", "CHECK 制約"),
+        ("COLLATE", "COLLATE"),
+        ("GENERATED", "生成列"),
+        ("STRICT", "STRICT"),
+        ("ON CONFLICT", "ON CONFLICT 句"),
+    ] {
+        if original_upper.contains(kw) {
+            lost.push(label);
+        }
+    }
+    if !lost.is_empty() {
+        warnings.push(format!(
+            "{}: 元の CREATE TABLE に {} が含まれています。列情報から組み立てる再作成 SQL には含まれないため、適用前に SQL を確認して手で補ってください。",
+            table.name,
+            lost.join(" / ")
+        ));
+    }
+    if !snap.referenced_by.is_empty() {
+        warnings.push(format!(
+            "{}: 次の表から外部キーで参照されています: {}。再作成中は PRAGMA foreign_keys=OFF にして旧表の DROP で子表の行が連鎖削除・書き換えされないようにします。適用後は PRAGMA foreign_key_check で参照整合性を確認してください。",
+            table.name,
+            snap.referenced_by.join(", ")
+        ));
+    }
+    if !snap.recreate_sql.is_empty() {
+        warnings.push(format!(
+            "{}: インデックス・トリガー・ビュー {} 件を元の CREATE 文で作り直します。削除・型変更した列を参照している場合は適用に失敗します。",
+            table.name,
+            snap.recreate_sql.len()
+        ));
+    }
+    Some(script.join(";\n") + ";")
+}
+
+/// インデックスの差分を `CREATE INDEX` / `DROP INDEX` にする (#1625)。主キーは対象外。
+/// 定義が違うインデックスは `DROP` + `CREATE` なので破壊的操作の許可が要る。
+fn index_statements(
+    driver: DriverKind,
+    table: &TableDiff,
+    allow_destructive: bool,
+    statements: &mut Vec<SyncStatement>,
+    warnings: &mut Vec<String>,
+) {
+    let tident = quote_ident(driver, &table.name);
+    let create = |idx: &super::diff::DiffIndex,
+                  statements: &mut Vec<SyncStatement>,
+                  warnings: &mut Vec<String>| {
+        match super::table_ddl::render_index(driver, &tident, &idx.to_info()) {
+            Some(sql) => statements.push(SyncStatement {
+                sql,
+                table: table.name.clone(),
+                kind: SyncKind::AddIndex,
+                destructive: false,
+            }),
+            None => warnings.push(format!(
+                "{}: インデックス {} は式を含む、または列が無いため自動生成できません。手動で作成してください。",
+                table.name, idx.name
+            )),
+        }
+    };
+    let drop = |idx: &super::diff::DiffIndex,
+                statements: &mut Vec<SyncStatement>,
+                warnings: &mut Vec<String>| {
+        let name = quote_ident(driver, &idx.name);
+        let sql = match driver {
+            DriverKind::Mysql => format!("DROP INDEX {name} ON {tident}"),
+            _ => format!("DROP INDEX {name}"),
+        };
+        if driver == DriverKind::Postgres && idx.unique {
+            warnings.push(format!(
+                "{}: UNIQUE インデックス {} が UNIQUE 制約に紐づく場合、DROP INDEX は失敗します (ALTER TABLE ... DROP CONSTRAINT を使ってください)。",
+                table.name, idx.name
+            ));
+        }
+        statements.push(SyncStatement {
+            sql,
+            table: table.name.clone(),
+            kind: SyncKind::DropIndex,
+            destructive: true,
+        });
+    };
+    for ch in &table.indexes {
+        match (ch.status, &ch.source, &ch.target) {
+            (DiffStatus::SourceOnly, Some(s), _) => create(s, statements, warnings),
+            (DiffStatus::TargetOnly, _, Some(t)) => {
+                if allow_destructive {
+                    drop(t, statements, warnings);
+                }
+            }
+            (DiffStatus::Different, Some(s), Some(t)) => {
+                if allow_destructive {
+                    drop(t, statements, warnings);
+                    create(s, statements, warnings);
+                } else {
+                    warnings.push(format!(
+                        "{}: インデックス {} の定義 ({}) が違います。DROP INDEX → CREATE INDEX が必要なため、破壊的な操作を許可すると出力します。",
+                        table.name,
+                        ch.name,
+                        ch.changed_fields.join(", ")
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// 既存テーブルの外部キーの差分 (追加・削除・参照動作の変更) を `ALTER TABLE` にする
+/// (#1625)。SQLite は ALTER で制約を変えられない: テーブル再作成 (`rebuilt`) が引き受ける
+/// か、無ければ警告に落とす。
+fn foreign_key_statements(
+    driver: DriverKind,
+    table: &TableDiff,
+    rebuilt: bool,
+    allow_destructive: bool,
+    statements: &mut Vec<SyncStatement>,
+    warnings: &mut Vec<String>,
+) {
+    if table.fk_changes.is_empty() || rebuilt {
+        return;
+    }
+    if driver == DriverKind::Sqlite {
+        warnings.push(format!(
+            "{}: SQLite は外部キーの追加・削除・変更を ALTER で行えません。テーブルの再作成が必要です (外部キーの差分: {} 件)。",
+            table.name,
+            table.fk_changes.len()
+        ));
+        return;
+    }
+    let tident = quote_ident(driver, &table.name);
+    let drop =
+        |fk: &DiffForeignKey, statements: &mut Vec<SyncStatement>, warnings: &mut Vec<String>| {
+            let Some(name) = fk.name.as_deref() else {
+                warnings.push(format!(
+                "{}: 外部キー ({}) は制約名を取得できず DROP できません。手動で削除してください。",
+                table.name,
+                fk.columns.join(", ")
+            ));
+                return false;
+            };
+            let name = quote_ident(driver, name);
+            let sql = match driver {
+                DriverKind::Mysql => format!("ALTER TABLE {tident} DROP FOREIGN KEY {name}"),
+                _ => format!("ALTER TABLE {tident} DROP CONSTRAINT {name}"),
+            };
+            statements.push(SyncStatement {
+                sql,
+                table: table.name.clone(),
+                kind: SyncKind::DropForeignKey,
+                destructive: true,
+            });
+            true
+        };
+    let add = |fk: &DiffForeignKey,
+               statements: &mut Vec<SyncStatement>,
+               warnings: &mut Vec<String>| {
+        let mut fk = fk.clone();
+        if driver == DriverKind::Mysql {
+            for (label, action) in [
+                ("ON DELETE", &mut fk.on_delete),
+                ("ON UPDATE", &mut fk.on_update),
+            ] {
+                if action
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case("SET DEFAULT"))
+                {
+                    *action = None;
+                    warnings.push(format!(
+                        "{}: 外部キー ({}) の {label} SET DEFAULT は MySQL (InnoDB) で使えないため外しました。",
+                        table.name,
+                        fk.columns.join(", ")
+                    ));
+                }
+            }
+        }
+        statements.push(SyncStatement {
+            sql: format!(
+                "ALTER TABLE {tident} ADD {}",
+                render_foreign_key(driver, &fk_group(&fk))
+            ),
+            table: table.name.clone(),
+            kind: SyncKind::AddForeignKey,
+            destructive: false,
+        });
+    };
+    for ch in &table.fk_changes {
+        match (ch.status, &ch.source, &ch.target) {
+            (DiffStatus::SourceOnly, Some(s), _) => add(s, statements, warnings),
+            (DiffStatus::TargetOnly, _, Some(t)) => {
+                if allow_destructive {
+                    drop(t, statements, warnings);
+                }
+            }
+            (DiffStatus::Different, Some(s), Some(t)) => {
+                if allow_destructive {
+                    // 名前を引き継いで同名で作り直す (source 側が名前を持たないとき)。
+                    let mut s = s.clone();
+                    if s.name.is_none() {
+                        s.name = t.name.clone();
+                    }
+                    if drop(t, statements, warnings) {
+                        add(&s, statements, warnings);
+                    }
+                } else {
+                    warnings.push(format!(
+                        "{}: 外部キー ({}) の {} が違います。DROP → ADD が必要なため、破壊的な操作を許可すると出力します。",
+                        table.name,
+                        s.columns.join(", "),
+                        ch.changed_fields.join(", ")
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 }
@@ -882,6 +1353,7 @@ mod tests {
             target_driver: driver,
             tables,
             warnings: Vec::new(),
+            indexes_compared: false,
         }
     }
 
@@ -900,6 +1372,7 @@ mod tests {
                 cdiff("id", DiffStatus::SourceOnly, Some(id), &[]),
                 cdiff("name", DiffStatus::SourceOnly, Some(name), &[]),
             ],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert_eq!(plan.statements.len(), 1);
@@ -942,6 +1415,7 @@ mod tests {
                     cdiff("a", DiffStatus::SourceOnly, Some(col("a", "int")), &[]),
                     cdiff("b", DiffStatus::SourceOnly, Some(col("b", "int")), &[]),
                 ],
+                ..Default::default()
             },
             TableDiff {
                 name: "users".to_string(),
@@ -951,6 +1425,7 @@ mod tests {
                     cdiff("a", DiffStatus::SourceOnly, Some(pk_col("a")), &[]),
                     cdiff("b", DiffStatus::SourceOnly, Some(pk_col("b")), &[]),
                 ],
+                ..Default::default()
             },
         ]
     }
@@ -1035,6 +1510,7 @@ mod tests {
             status: DiffStatus::TargetOnly,
             foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::TargetOnly, None, &[])],
+            ..Default::default()
         };
         let without = generate_sync_sql(&diff(DriverKind::Mysql, vec![table.clone()]), false);
         assert!(
@@ -1067,6 +1543,7 @@ mod tests {
                 ),
                 cdiff("gone", DiffStatus::TargetOnly, None, &[]),
             ],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
         let kinds: Vec<SyncKind> = plan.statements.iter().map(|s| s.kind).collect();
@@ -1101,6 +1578,7 @@ mod tests {
                 Some(src),
                 &["data_type", "nullable", "default"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         let sqls: Vec<&str> = plan.statements.iter().map(|s| s.sql.as_str()).collect();
@@ -1118,6 +1596,7 @@ mod tests {
             status: DiffStatus::Different,
             foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::Different, Some(src), &["key"])],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         assert!(plan.statements.is_empty());
@@ -1139,6 +1618,7 @@ mod tests {
                 cdiff("v", DiffStatus::Different, Some(changed), &["data_type"]),
                 cdiff("gone", DiffStatus::TargetOnly, None, &[]),
             ],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), true);
         assert!(plan
@@ -1165,6 +1645,7 @@ mod tests {
             status: DiffStatus::Same,
             foreign_keys: vec![],
             columns: vec![],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
         assert!(plan.statements.is_empty());
@@ -1211,11 +1692,13 @@ mod tests {
                 cdiff("id", DiffStatus::SourceOnly, Some(plain.clone()), &[]),
                 cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
             ],
+            ..Default::default()
         };
         let mut warnings = Vec::new();
         let stmt = create_table_stmt(
             DriverKind::Mysql,
             &table,
+            false,
             &HashSet::new(),
             &mut Vec::new(),
             &mut warnings,
@@ -1232,6 +1715,7 @@ mod tests {
                 cdiff("total", DiffStatus::SourceOnly, Some(g.clone()), &[]),
                 cdiff("v", DiffStatus::Different, Some(v), &["data_type"]),
             ],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![alter]), false);
         assert!(plan.statements.is_empty());
@@ -1252,6 +1736,7 @@ mod tests {
                 cdiff("id", DiffStatus::SourceOnly, Some(g.clone()), &[]),
                 cdiff("name", DiffStatus::SourceOnly, Some(plain), &[]),
             ],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert!(plan.statements.is_empty());
@@ -1263,6 +1748,7 @@ mod tests {
             status: DiffStatus::SourceOnly,
             foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::SourceOnly, Some(g), &[])],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![only]), false);
         assert!(plan.statements.is_empty());
@@ -1280,6 +1766,7 @@ mod tests {
             status: DiffStatus::Different,
             foreign_keys: vec![],
             columns: vec![cd],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert!(plan.statements.is_empty());
@@ -1474,6 +1961,7 @@ mod tests {
             status: DiffStatus::Different,
             foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::Different, Some(src), &["key"])],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert!(
@@ -1497,6 +1985,7 @@ mod tests {
                 Some(src),
                 &["foreign_key"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert!(plan.statements.is_empty());
@@ -1519,6 +2008,7 @@ mod tests {
                 Some(src),
                 &["data_type", "key"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert_eq!(plan.statements.len(), 1);
@@ -1539,6 +2029,7 @@ mod tests {
             status: DiffStatus::SourceOnly,
             foreign_keys: vec![],
             columns: vec![cdiff("price", DiffStatus::SourceOnly, Some(price), &[])],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         assert!(
@@ -1564,6 +2055,7 @@ mod tests {
                 Some(src),
                 &["data_type"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         assert_eq!(plan.statements.len(), 1);
@@ -1587,12 +2079,14 @@ mod tests {
                     cdiff("id", DiffStatus::SourceOnly, Some(col("id", "int")), &[]),
                     cdiff("total", DiffStatus::SourceOnly, Some(g), &[]),
                 ],
+                ..Default::default()
             };
             let d = SchemaDiff {
                 source_driver: src_driver,
                 target_driver: DriverKind::Sqlite,
                 tables: vec![table],
                 warnings: Vec::new(),
+                indexes_compared: false,
             };
             let plan = generate_sync_sql(&d, false);
             assert_eq!(plan.statements.len(), 1, "{src_driver:?}");
@@ -1625,6 +2119,7 @@ mod tests {
             status: DiffStatus::TargetOnly,
             foreign_keys: fks,
             columns: vec![],
+            ..Default::default()
         }
     }
 
@@ -1683,12 +2178,14 @@ mod tests {
                 cdiff("id", DiffStatus::SourceOnly, Some(id), &[]),
                 cdiff("pid", DiffStatus::SourceOnly, Some(col("pid", "int")), &[]),
             ],
+            ..Default::default()
         };
         let parent = TableDiff {
             name: "parent".to_string(),
             status: DiffStatus::Same,
             foreign_keys: vec![],
             columns: vec![],
+            ..Default::default()
         };
         let mut d = diff(DriverKind::Mysql, vec![table, parent]);
         d.source_driver = DriverKind::Postgres;
@@ -1710,6 +2207,7 @@ mod tests {
             status: DiffStatus::Same,
             foreign_keys: vec![f],
             columns: vec![],
+            ..Default::default()
         }
     }
 
@@ -1719,6 +2217,7 @@ mod tests {
             status: DiffStatus::TargetOnly,
             foreign_keys: vec![],
             columns: vec![cdiff("id", DiffStatus::TargetOnly, None, &[])],
+            ..Default::default()
         }
     }
 
@@ -1791,6 +2290,7 @@ mod tests {
                 Some(src),
                 &["comment"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Postgres, vec![table]), false);
         assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
@@ -1814,6 +2314,7 @@ mod tests {
                 Some(src),
                 &["comment"],
             )],
+            ..Default::default()
         };
         let plan = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), false);
         assert_eq!(plan.statements.len(), 1, "{:?}", plan.statements);
@@ -1826,6 +2327,7 @@ mod tests {
             status,
             foreign_keys: fks,
             columns: vec![],
+            ..Default::default()
         }
     }
 
@@ -1914,5 +2416,173 @@ mod tests {
             .iter()
             .any(|w| w == "fk 取得失敗"));
         assert!(generate_sync_sql(&d, false).warnings.is_empty());
+    }
+
+    fn dix(name: &str, cols: &[&str], unique: bool) -> super::super::diff::DiffIndex {
+        super::super::diff::DiffIndex {
+            name: name.to_string(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique,
+            method: None,
+            predicate: None,
+            first_expression_at: None,
+            key_column_count: None,
+            column_options: vec![],
+            nulls_not_distinct: false,
+        }
+    }
+
+    fn idx_diff(
+        status: DiffStatus,
+        s: Option<super::super::diff::DiffIndex>,
+        t: Option<super::super::diff::DiffIndex>,
+    ) -> super::super::diff::IndexDiff {
+        super::super::diff::IndexDiff {
+            name: s
+                .as_ref()
+                .or(t.as_ref())
+                .map(|i| i.name.clone())
+                .unwrap_or_default(),
+            status,
+            source: s,
+            target: t,
+            changed_fields: vec!["columns".into()],
+        }
+    }
+
+    #[test]
+    fn index_differences_become_create_and_drop_with_destructive_gate() {
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            indexes: vec![
+                idx_diff(DiffStatus::SourceOnly, Some(dix("a", &["x"], true)), None),
+                idx_diff(DiffStatus::TargetOnly, None, Some(dix("b", &["y"], false))),
+                idx_diff(
+                    DiffStatus::Different,
+                    Some(dix("c", &["x", "y"], false)),
+                    Some(dix("c", &["x"], false)),
+                ),
+            ],
+            ..Default::default()
+        };
+        let safe = generate_sync_sql(&diff(DriverKind::Mysql, vec![table.clone()]), false);
+        assert_eq!(safe.statements.len(), 1);
+        assert_eq!(
+            safe.statements[0].sql,
+            "CREATE UNIQUE INDEX `a` ON `t` (`x`)"
+        );
+        assert_eq!(safe.statements[0].kind, SyncKind::AddIndex);
+        assert!(safe
+            .warnings
+            .iter()
+            .any(|w| w.contains("`c`") || w.contains(" c ")));
+
+        let full = generate_sync_sql(&diff(DriverKind::Mysql, vec![table]), true);
+        let sqls: Vec<&str> = full.statements.iter().map(|s| s.sql.as_str()).collect();
+        // DROP は CREATE より前 (同名の作り直し)
+        assert_eq!(
+            sqls,
+            vec![
+                "DROP INDEX `b` ON `t`",
+                "DROP INDEX `c` ON `t`",
+                "CREATE UNIQUE INDEX `a` ON `t` (`x`)",
+                "CREATE INDEX `c` ON `t` (`x`, `y`)",
+            ]
+        );
+        assert!(full.statements[0].destructive && !full.statements[2].destructive);
+    }
+
+    #[test]
+    fn foreign_key_differences_become_alter_table_statements() {
+        let f = |od: Option<&str>| DiffForeignKey {
+            name: Some("fk_t_p".into()),
+            columns: vec!["pid".into()],
+            referenced_table: "p".into(),
+            referenced_columns: vec!["id".into()],
+            on_delete: od.map(str::to_string),
+            on_update: None,
+        };
+        let table = TableDiff {
+            name: "t".into(),
+            status: DiffStatus::Different,
+            fk_changes: vec![super::super::diff::ForeignKeyDiff {
+                status: DiffStatus::Different,
+                source: Some(f(Some("CASCADE"))),
+                target: Some(f(None)),
+                changed_fields: vec!["on_delete".into()],
+            }],
+            ..Default::default()
+        };
+        let pg = generate_sync_sql(&diff(DriverKind::Postgres, vec![table.clone()]), true);
+        let sqls: Vec<&str> = pg.statements.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sqls,
+            vec![
+                "ALTER TABLE \"t\" DROP CONSTRAINT \"fk_t_p\"",
+                "ALTER TABLE \"t\" ADD CONSTRAINT \"fk_t_p\" FOREIGN KEY (\"pid\") REFERENCES \"p\" (\"id\") ON DELETE CASCADE",
+            ]
+        );
+        let my = generate_sync_sql(&diff(DriverKind::Mysql, vec![table.clone()]), true);
+        assert_eq!(
+            my.statements[0].sql,
+            "ALTER TABLE `t` DROP FOREIGN KEY `fk_t_p`"
+        );
+        let safe = generate_sync_sql(&diff(DriverKind::Postgres, vec![table.clone()]), false);
+        assert!(safe.statements.is_empty() && !safe.warnings.is_empty());
+        let lite = generate_sync_sql(&diff(DriverKind::Sqlite, vec![table]), true);
+        assert!(lite.statements.is_empty());
+        assert!(lite.warnings.iter().any(|w| w.contains("SQLite")));
+    }
+
+    #[test]
+    fn sqlite_rebuild_script_keeps_unique_autoincrement_and_other_columns() {
+        let mut id = col("id", "INTEGER");
+        id.key = "PRI".into();
+        let mut name_old = col("name", "TEXT");
+        name_old.nullable = true;
+        let mut name_new = col("name", "TEXT");
+        name_new.nullable = false;
+        let table = TableDiff {
+            name: "p".into(),
+            status: DiffStatus::Different,
+            columns: vec![cdiff("name", DiffStatus::Different, Some(name_new), &["nullable"])],
+            target_snapshot: Some(super::super::diff::TargetTableSnapshot {
+                columns: vec![id, name_old, col("note", "TEXT")],
+                unique_constraints: vec![vec!["note".into()]],
+                recreate_sql: vec!["CREATE INDEX i ON p (name);".into()],
+                original_sql: Some("CREATE TABLE p (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, note TEXT CHECK (note <> ''))".into()),
+                referenced_by: vec!["c (ON DELETE CASCADE)".into()],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let d = diff(DriverKind::Sqlite, vec![table]);
+        let safe = generate_sync_sql(&d, false);
+        assert!(safe.statements.is_empty());
+        assert!(safe.warnings.iter().any(|w| w.contains("破壊的")));
+        let plan = generate_sync_sql(&d, true);
+        assert_eq!(plan.statements.len(), 1);
+        let stmt = &plan.statements[0];
+        assert_eq!(stmt.kind, SyncKind::RebuildTable);
+        assert!(stmt.destructive);
+        let sql = &stmt.sql;
+        assert!(sql.starts_with("PRAGMA foreign_keys=OFF;\n"));
+        assert!(sql.ends_with("PRAGMA foreign_keys=ON;"));
+        assert!(sql.contains("\"id\" INTEGER PRIMARY KEY AUTOINCREMENT"));
+        assert!(sql.contains("\"name\" TEXT NOT NULL"));
+        assert!(sql.contains("UNIQUE (\"note\")"));
+        assert!(sql.contains(
+            "INSERT INTO \"__noobdb_rebuild_p\" (\"id\", \"name\", \"note\") SELECT \"id\", \"name\", \"note\" FROM \"p\""
+        ));
+        assert!(
+            sql.contains("DROP TABLE \"p\";\nALTER TABLE \"__noobdb_rebuild_p\" RENAME TO \"p\"")
+        );
+        assert!(sql.contains("CREATE INDEX i ON p (name);"));
+        assert!(plan.warnings.iter().any(|w| w.contains("CHECK")));
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|w| w.contains("c (ON DELETE CASCADE)")));
     }
 }
