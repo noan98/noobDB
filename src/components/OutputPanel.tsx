@@ -8,6 +8,7 @@ import {
   isProblemOutcome,
   isSqlTruncated,
   outputSummary,
+  parseErrorLine,
   SERVER_SEVERITY_LABEL,
   SERVER_SEVERITY_ROLE,
   sqlHeadline,
@@ -39,6 +40,7 @@ export function OutputPanel({
   onOpenSql,
   onInsertSql,
   onRunSql,
+  onGotoError,
   canRun = false,
   currentConnectionId = null,
 }: {
@@ -47,6 +49,8 @@ export function OutputPanel({
   onInsertSql?: (sql: string) => void;
   /** 新しいタブで再実行する (#1541)。実行は通常の実行経路 (安全網つき) に委ねる。省略時は出さない。 */
   onRunSql?: (sql: string, execDatabase: string | null) => void;
+  /** 失敗した文のエラー行へエディタ上で移動する (#1627)。`line` はエラー本文の行番号 (無ければ null = 文の先頭)。 */
+  onGotoError?: (sql: string, line: number | null) => void;
   /** 接続中か。再実行に必要 (挿入は未接続でも使える)。 */
   canRun?: boolean;
   /** いま接続しているプロファイル id。記録時の接続 (id) と違う行、id を持たない行は再実行を無効にする。 */
@@ -108,6 +112,7 @@ export function OutputPanel({
               onOpenSql={onOpenSql}
               onInsertSql={onInsertSql}
               onRunSql={onRunSql}
+              onGotoError={onGotoError}
               canRun={canRun}
               currentConnectionId={currentConnectionId}
             />
@@ -125,6 +130,7 @@ function OutputRow({
   onOpenSql,
   onInsertSql,
   onRunSql,
+  onGotoError,
   canRun,
   currentConnectionId,
 }: {
@@ -134,6 +140,7 @@ function OutputRow({
   onOpenSql: (sql: string) => void;
   onInsertSql?: (sql: string) => void;
   onRunSql?: (sql: string, execDatabase: string | null) => void;
+  onGotoError?: (sql: string, line: number | null) => void;
   canRun: boolean;
   currentConnectionId: string | null;
 }) {
@@ -153,6 +160,7 @@ function OutputRow({
       : entry.connectionId === null || entry.connectionId !== currentConnectionId
         ? t("outputRerunOtherConnection", { name: entry.connection ?? "?" })
         : null;
+  const errorLine = entry.outcome === "error" ? parseErrorLine(entry.error) : null;
   const serverMessages = entry.serverMessages ?? [];
   const worstServer = worstServerSeverity(serverMessages);
 
@@ -298,6 +306,21 @@ function OutputRow({
                   onClick={() => onInsertSql(entry.sql)}
                 >
                   {t("outputInsertInEditor")}
+                </Button>
+              </Tooltip>
+            )}
+            {onGotoError && entry.outcome === "error" && !truncated && (
+              <Tooltip label={t("outputGotoErrorHint")}>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => onGotoError(entry.sql, errorLine)}
+                >
+                  <Icon name="chevron-right" size={ICON_SIZES.md} />
+                  {errorLine === null
+                    ? t("outputGotoStatement")
+                    : t("outputGotoErrorLine", { line: errorLine })}
                 </Button>
               </Tooltip>
             )}

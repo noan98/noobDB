@@ -151,7 +151,7 @@ import {
 import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
-import { treeItemInsertText } from "./components/treeDragInsert";
+import { tableSelectWithColumnsText, treeItemInsertText } from "./components/treeDragInsert";
 import { fkJoinSnippets } from "./components/fkJoin";
 import {
   applyServerBrowse,
@@ -442,7 +442,7 @@ import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
-import { pushOutput, type OutputInput } from "./outputLog";
+import { lineRangeOf, pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
   bottomPanelStripTabs,
@@ -6511,6 +6511,25 @@ export default function App() {
     [sessionId, addTab, runInTabWithGate],
   );
 
+  // 出力タブの「エラー位置へ移動」(#1627)。失敗した文をフォーカス中のエディタから探し、
+  // エラー本文の行番号 (無ければ文の先頭) の行を選択する。エディタが書き換わって文が
+  // 見つからないときは通知だけ出す。
+  const handleOutputGotoError = useCallback(
+    (sql: string, line: number | null) => {
+      const editor =
+        activeTab && (activeTab.kind === "query" || activeTab.kind === "explain") ? activeEditor() : null;
+      const text = editor?.getText() ?? "";
+      const at = editor && sql.length > 0 ? text.indexOf(sql) : -1;
+      if (!editor || at < 0) {
+        toast.info(t("outputGotoNotFound"));
+        return;
+      }
+      const r = lineRangeOf(sql, line ?? 1);
+      editor.selectRange(at + r.from, at + r.to);
+    },
+    [activeTab, activeEditor, toast, t],
+  );
+
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
   const handleOutputRunSql = useCallback(
@@ -8345,8 +8364,23 @@ export default function App() {
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
   const handleInsertTableSelect = useCallback(
-    (database: string, table: string) => {
-      const sql = treeItemInsertText(selectedProfile?.driver ?? "mysql", { kind: "table", database, table });
+    async (database: string, table: string, withColumns = false) => {
+      const driver = selectedProfile?.driver ?? "mysql";
+      let sql = treeItemInsertText(driver, { kind: "table", database, table });
+      // 列名つきの雛形 (#1627)。列が取れなければ SELECT * のまま挿入する。
+      if (withColumns && sessionId) {
+        try {
+          const cols = await api.describeTable(sessionId, database, table);
+          sql = tableSelectWithColumnsText(
+            driver,
+            database,
+            table,
+            cols.map((c) => c.name),
+          );
+        } catch {
+          // 列の取得は best-effort
+        }
+      }
       if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
         activeEditor()?.insertText(sql);
       } else if (sessionId) {
@@ -11291,6 +11325,7 @@ export default function App() {
                         onOpenSql={handleOpenHistoryInNewTab}
                         onInsertSql={handleLauncherInsertSql}
                         onRunSql={handleOutputRunSql}
+                        onGotoError={handleOutputGotoError}
                         canRun={sessionId !== null}
                         currentConnectionId={selectedProfile?.id ?? null}
                       />

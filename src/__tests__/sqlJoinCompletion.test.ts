@@ -104,6 +104,33 @@ describe("joinCompletions: JOIN の相手テーブル", () => {
   });
 });
 
+describe("joinCompletions: カンマ区切りの FROM (#1627)", () => {
+  it("FROM a x, b y JOIN の b 側の FK も候補元にする", () => {
+    const r = run("SELECT * FROM customers c, order_items i JOIN ");
+    const labels = r?.options.map((o) => o.label);
+    expect(labels).toContain("orders");
+    expect(labels).toContain("products");
+    expect(r?.options.find((o) => o.label === "products")?.apply).toBe(
+      "products ON products.id = i.product_id",
+    );
+  });
+
+  it("3 つ以上のカンマ区切りと別名なしも拾う", () => {
+    const r = run("SELECT * FROM customers, products, order_items JOIN ");
+    expect(r?.options.map((o) => o.label)).toContain("orders");
+  });
+
+  it("SELECT 句のカンマは参照として拾わない", () => {
+    const r = run("SELECT products, x FROM customers JOIN ");
+    expect(r?.options.map((o) => o.label)).toEqual(["orders"]);
+  });
+
+  it("ON でもカンマ区切りの先行テーブルを使う", () => {
+    const r = run("SELECT * FROM customers c, order_items i JOIN orders o ON ");
+    expect(r?.options.map((o) => o.label)).toContain("o.id = i.order_id");
+  });
+});
+
 describe("joinCompletions: ON 条件", () => {
   it("結合したテーブルと先行テーブルの FK 条件を返す", () => {
     const text = "SELECT * FROM orders o JOIN customers c ON ";

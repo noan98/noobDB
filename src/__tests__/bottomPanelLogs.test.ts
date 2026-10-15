@@ -8,6 +8,8 @@ import {
   filterOutput,
   isProblemOutcome,
   isSqlTruncated,
+  lineRangeOf,
+  parseErrorLine,
   outputSummary,
   sqlHeadline,
   worstServerSeverity,
@@ -264,5 +266,34 @@ describe("outputLog の SQL 保持量 (#1534)", () => {
     const [out] = compactOutputSql([entry(1, sql)], 50, 10);
     expect(out.sql).toBe("a".repeat(9));
     expect(out.sqlLength).toBe(sql.length);
+  });
+});
+
+describe("エラー行番号の抽出 (#1627)", () => {
+  it("PostgreSQL の LINE n と MySQL の at line n を拾う", () => {
+    expect(
+      parseErrorLine('syntax error at or near "FORM"\nLINE 3: SELECT * FORM t\n                 ^'),
+    ).toBe(3);
+    expect(parseErrorLine("You have an error in your SQL syntax; check ... near 'FORM t' at line 2")).toBe(2);
+    expect(parseErrorLine("... AT LINE 12")).toBe(12);
+  });
+
+  it("行番号が無い・不正なエラーは null", () => {
+    expect(parseErrorLine('near "x": syntax error')).toBeNull();
+    expect(parseErrorLine(null)).toBeNull();
+    expect(parseErrorLine("")).toBeNull();
+    expect(parseErrorLine("at line 0")).toBeNull();
+    // 文中の "LINE 3:" は行頭でなければ PG の書式ではない。
+    expect(parseErrorLine("see GUC LINE 3: x")).toBeNull();
+  });
+
+  it("lineRangeOf は n 行目の範囲 (LF / CRLF / 範囲外は最終行)", () => {
+    const sql = "SELECT 1\nFROM t\nWHERE x";
+    expect(lineRangeOf(sql, 1)).toEqual({ from: 0, to: 8 });
+    expect(lineRangeOf(sql, 2)).toEqual({ from: 9, to: 15 });
+    expect(lineRangeOf(sql, 3)).toEqual({ from: 16, to: sql.length });
+    expect(lineRangeOf(sql, 99)).toEqual({ from: 16, to: sql.length });
+    expect(lineRangeOf("a\r\nb", 2)).toEqual({ from: 3, to: 4 });
+    expect(lineRangeOf("a", 0)).toEqual({ from: 0, to: 1 });
   });
 });

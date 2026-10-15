@@ -40,6 +40,28 @@ const run = (over: Partial<Parameters<typeof pushOutput>[0]> = {}) =>
   });
 
 describe("OutputPanel", () => {
+  it("失敗した行はエラー行へ移動でき、行番号が無ければ文の先頭へ (#1627)", () => {
+    run({
+      sql: "SELECT 1\nFORM t",
+      outcome: "error",
+      rows: null,
+      elapsedMs: null,
+      error: "x\nLINE 2: FORM t",
+    });
+    run({ sql: "bad", outcome: "error", rows: null, elapsedMs: null, error: "near x" });
+    run({ sql: "ok", outcome: "rows" });
+    const onGotoError = vi.fn();
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} onGotoError={onGotoError} />);
+    const rows = screen.getAllByRole("button", { expanded: false });
+    // 新しい順: ok / bad / FORM。成功行には出ない。
+    fireEvent.click(rows[2]);
+    fireEvent.click(screen.getByRole("button", { name: t("outputGotoErrorLine", { line: 2 }) }));
+    expect(onGotoError).toHaveBeenCalledWith("SELECT 1\nFORM t", 2);
+    fireEvent.click(rows[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("outputGotoStatement") }));
+    expect(onGotoError).toHaveBeenLastCalledWith("bad", null);
+  });
+
   it("空のときは説明付きの空状態を出す", () => {
     renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
     expect(screen.getByText(t("outputEmptyTitle"))).toBeInTheDocument();

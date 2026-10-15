@@ -234,6 +234,36 @@ export function outputSummary(e: OutputEntry): { key: I18nKey; vars: Record<stri
   }
 }
 
+/**
+ * エラー本文から「文の中の行番号」(1 始まり) を抜き出す (#1627)。
+ * PostgreSQL は `LINE 3: SELECT ...`、MySQL / MariaDB は `... near '...' at line 3`。
+ * 行番号を含まないエラー (SQLite など) は null。
+ */
+export function parseErrorLine(error: string | null | undefined): number | null {
+  if (!error) return null;
+  const m = /^\s*LINE (\d+):/m.exec(error) ?? /\bat line (\d+)\b/i.exec(error);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isSafeInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * `sql` の `line` 行目 (1 始まり、範囲外は最終行) の `[from, to)` オフセット。
+ * 改行は LF / CRLF / CR のどれでもよい。
+ */
+export function lineRangeOf(sql: string, line: number): { from: number; to: number } {
+  let from = 0;
+  const target = Math.max(1, Math.floor(line));
+  const re = /\r\n|\r|\n/g;
+  let current = 1;
+  for (let m = re.exec(sql); m !== null; m = re.exec(sql)) {
+    if (current === target) return { from, to: m.index };
+    current += 1;
+    from = m.index + m[0].length;
+  }
+  return { from, to: sql.length };
+}
+
 function firstLine(s: string): string {
   const line = s.split(/\r?\n/, 1)[0] ?? "";
   return line.trim();

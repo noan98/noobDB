@@ -81,6 +81,10 @@ const en = {
   outputInsertInEditor: "Insert into editor",
   outputRerun: "Run again",
   outputRerunHint: "Runs in a new tab on the current connection, through the usual safety checks",
+  outputGotoErrorLine: "Go to line {line}",
+  outputGotoStatement: "Go to statement",
+  outputGotoErrorHint: "Selects the failing line (or the statement) in the active editor",
+  outputGotoNotFound: "That statement was not found in the active editor",
   outputNeedsConnection: "Connect to a database first",
   outputRerunOtherConnection: 'This ran on "{name}". Switch to that connection to run it again.',
   outputCopySql: "Copy SQL",
@@ -3421,6 +3425,7 @@ const en = {
 
   contextMenuRunSelect: "Run SELECT * (LIMIT {limit})",
   contextMenuInsertSelect: "Insert SELECT * into editor",
+  contextMenuInsertSelectColumns: "Insert SELECT with column names into editor",
   contextMenuShowCreate: "Show DDL",
   contextMenuCopyDdl: "Copy DDL",
   tableDdlSynthesizedHint:
@@ -5915,6 +5920,10 @@ const ja: Dict = {
   outputInsertInEditor: "エディタへ挿入",
   outputRerun: "再実行",
   outputRerunHint: "現在の接続で新しいタブに流します (通常の実行と同じ安全確認を通ります)",
+  outputGotoErrorLine: "{line} 行目へ移動",
+  outputGotoStatement: "該当の文へ移動",
+  outputGotoErrorHint: "フォーカス中のエディタで、エラーになった行 (行番号が無ければ文の先頭) を選択します",
+  outputGotoNotFound: "この文がフォーカス中のエディタに見つかりません (編集された可能性があります)",
   outputNeedsConnection: "先にデータベースへ接続してください",
   outputRerunOtherConnection:
     "この文は「{name}」で実行されました。再実行するにはその接続へ切り替えてください。",
@@ -9237,6 +9246,7 @@ const ja: Dict = {
 
   contextMenuRunSelect: "SELECT * を実行 (LIMIT {limit})",
   contextMenuInsertSelect: "SELECT * をエディタへ挿入",
+  contextMenuInsertSelectColumns: "列名つきの SELECT をエディタへ挿入",
   contextMenuShowCreate: "DDL を表示",
   contextMenuCopyDdl: "DDL をコピー",
   tableDdlSynthesizedHint:
