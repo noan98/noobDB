@@ -3628,6 +3628,9 @@ const en = {
   helpOpenCheatSheet: "Open shortcut cheat sheet",
   helpIntro:
     "What each feature does, and whether running it changes the database. Check the badge on an entry before you run it.",
+  helpTry: "Try it",
+  helpTryAria: "Try: {title}",
+  helpTryNeedsConnection: "Connect to a database first to try this.",
   helpImpactLabel: "DB impact",
   helpImpactYes: "Writes",
   helpImpactNo: "None",
@@ -9136,6 +9139,9 @@ const ja: Dict = {
   helpOpenCheatSheet: "ショートカット一覧を開く",
   helpIntro:
     "各機能の説明と、実行したとき DB に変更が反映されるかどうかの一覧です。実行前に各項目のバッジを確認してください。",
+  helpTry: "試す",
+  helpTryAria: "{title} を試す",
+  helpTryNeedsConnection: "試すにはデータベースへの接続が必要です。",
   helpImpactLabel: "DB への影響",
   helpImpactYes: "反映される",
   helpImpactNo: "反映されない",

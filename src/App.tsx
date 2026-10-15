@@ -13032,6 +13032,18 @@ export default function App() {
                 setShowHelp(false);
                 setShowCheatSheet(true);
               }}
+              onOpenFeature={(target) => {
+                setShowHelp(false);
+                if (target.kind === "newQuery") {
+                  if (sessionIdRef.current) handleNewTab();
+                  else toast.info(translate("helpTryNeedsConnection"));
+                } else if (target.kind === "settings") {
+                  setSettingsInitialSection(target.section);
+                  openFullView("settings");
+                } else {
+                  openFullView(target.view);
+                }
+              }}
             />
           )}
         </AnimatePresence>

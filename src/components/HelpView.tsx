@@ -17,6 +17,7 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { Button, Input } from "./ui";
+import type { HelpTryTarget } from "../helpTry";
 import { filterHelpSections } from "../helpSearch";
 import { pickActiveSection } from "../sectionNav";
 
@@ -98,6 +99,8 @@ interface Feature {
   noteKey?: Key;
   /** 再割り当て可能なショートカット。見出しを解決済みコンボで表示する (#557)。 */
   shortcutId?: ShortcutId;
+  /** 『試す』ボタンで開く画面 (#1631)。 */
+  tryTarget?: HelpTryTarget;
 }
 
 interface Section {
@@ -113,24 +116,42 @@ const SECTIONS: Section[] = [
     features: [
       {
         titleKey: "helpDryRunTitle",
+        tryTarget: { kind: "newQuery" },
         descKey: "helpDryRunDesc",
         impact: "no",
         stepKeys: ["helpDryRunStep1", "helpDryRunStep2", "helpDryRunStep3"],
         noteKey: "helpDryRunNote",
       },
-      { titleKey: "helpExplainTitle", descKey: "helpExplainDesc", impact: "no" },
-      { titleKey: "helpFormatTitle", descKey: "helpFormatDesc", impact: "no" },
+      {
+        titleKey: "helpExplainTitle",
+        descKey: "helpExplainDesc",
+        impact: "no",
+        tryTarget: { kind: "newQuery" },
+      },
+      {
+        titleKey: "helpFormatTitle",
+        descKey: "helpFormatDesc",
+        impact: "no",
+        tryTarget: { kind: "newQuery" },
+      },
       {
         titleKey: "helpSqlLintTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-sql-lint" },
         descKey: "helpSqlLintDesc",
         impact: "no",
         noteKey: "helpSqlLintNote",
       },
-      { titleKey: "helpQueryBuilderTitle", descKey: "helpQueryBuilderDesc", impact: "no" },
+      {
+        titleKey: "helpQueryBuilderTitle",
+        descKey: "helpQueryBuilderDesc",
+        impact: "no",
+        tryTarget: { kind: "newQuery" },
+      },
       { titleKey: "helpSnippetTitle", descKey: "helpSnippetDesc", impact: "no" },
       { titleKey: "helpExportTitle", descKey: "helpExportDesc", impact: "no" },
       {
         titleKey: "helpProfileBackupTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-backup" },
         descKey: "helpProfileBackupDesc",
         impact: "no",
         stepKeys: ["helpProfileBackupStep1", "helpProfileBackupStep2", "helpProfileBackupStep3"],
@@ -138,10 +159,16 @@ const SECTIONS: Section[] = [
       },
       { titleKey: "helpCellEditTitle", descKey: "helpCellEditDesc", impact: "no" },
       { titleKey: "helpDiscardTitle", descKey: "helpDiscardDesc", impact: "no" },
-      { titleKey: "helpHistoryTitle", descKey: "helpHistoryDesc", impact: "no" },
+      {
+        titleKey: "helpHistoryTitle",
+        descKey: "helpHistoryDesc",
+        impact: "no",
+        tryTarget: { kind: "settings", section: "settings-sec-history" },
+      },
       { titleKey: "helpPaginationTitle", descKey: "helpPaginationDesc", impact: "no" },
       {
         titleKey: "helpSchemaCompareTitle",
+        tryTarget: { kind: "view", view: "compare" },
         descKey: "helpSchemaCompareDesc",
         impact: "no",
         noteKey: "helpSchemaCompareNote",
@@ -154,12 +181,14 @@ const SECTIONS: Section[] = [
       },
       {
         titleKey: "helpTaskSchedulerTitle",
+        tryTarget: { kind: "view", view: "tasks" },
         descKey: "helpTaskSchedulerDesc",
         impact: "no",
         noteKey: "helpTaskSchedulerNote",
       },
       {
         titleKey: "helpFlightRecorderTitle",
+        tryTarget: { kind: "settings", section: "settings-sec-flight-recorder" },
         descKey: "helpFlightRecorderDesc",
         impact: "no",
         stepKeys: ["helpFlightRecorderStep1", "helpFlightRecorderStep2", "helpFlightRecorderStep3"],
@@ -171,7 +200,7 @@ const SECTIONS: Section[] = [
     headerKey: "helpSectionWrite",
     descKey: "helpSectionWriteDesc",
     features: [
-      { titleKey: "helpRunTitle", descKey: "helpRunDesc", impact: "yes" },
+      { titleKey: "helpRunTitle", descKey: "helpRunDesc", impact: "yes", tryTarget: { kind: "newQuery" } },
       {
         titleKey: "helpApplyTitle",
         descKey: "helpApplyDesc",
@@ -199,6 +228,7 @@ const SECTIONS: Section[] = [
       {
         // AWS IAM 認証 (#734)。トークン失効 (15 分) 後の再接続挙動をここに明記する。
         titleKey: "helpAwsIamTitle",
+        tryTarget: { kind: "view", view: "newConnection" },
         descKey: "helpAwsIamDesc",
         stepKeys: ["helpAwsIamStep1", "helpAwsIamStep2", "helpAwsIamStep3"],
         noteKey: "helpAwsIamNote",
@@ -283,9 +313,11 @@ interface HelpViewProps {
   onStartTour?: () => void;
   /** 「ショートカット一覧」(#1274)。未指定ならボタンを出さない。 */
   onOpenCheatSheet?: () => void;
+  /** 機能カードの『試す』ボタン (#1631)。未指定ならボタンを出さない。 */
+  onOpenFeature?: (target: HelpTryTarget) => void;
 }
 
-export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewProps) {
+export function HelpView({ onClose, onStartTour, onOpenCheatSheet, onOpenFeature }: HelpViewProps) {
   const t = useT();
   const settings = useSettings();
   const resolved = resolveShortcutBindings(settings.shortcutOverrides);
@@ -418,6 +450,19 @@ export function HelpView({ onClose, onStartTour, onOpenCheatSheet }: HelpViewPro
                         <HelpNote>
                           <chakra.strong>{t("helpNoteLabel")}:</chakra.strong> {t(f.noteKey)}
                         </HelpNote>
+                      )}
+
+                      {onOpenFeature && f.tryTarget && (
+                        <chakra.div mt="2">
+                          <Button
+                            size="sm"
+                            data-testid="help-try"
+                            aria-label={t("helpTryAria", { title: featureTitle(f) })}
+                            onClick={() => f.tryTarget && onOpenFeature(f.tryTarget)}
+                          >
+                            {t("helpTry")}
+                          </Button>
+                        </chakra.div>
                       )}
                     </HelpFeature>
                   ))}
