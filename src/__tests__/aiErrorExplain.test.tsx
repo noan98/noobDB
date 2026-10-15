@@ -40,7 +40,7 @@ function enable(sendScope: "schemaOnly" | "schemaAndSql" = "schemaAndSql", enabl
   });
 }
 
-function ui(isProduction = false) {
+function ui(isProduction = false, sql = "SELECT nme FROM users") {
   return (
     <AiErrorExplain
       sessionId="s1"
@@ -48,7 +48,7 @@ function ui(isProduction = false) {
       isProduction={isProduction}
       errorKind="db"
       message="Unknown column 'nme'"
-      sql="SELECT nme FROM users"
+      sql={sql}
       database="app"
       onApply={onApply}
     />
@@ -121,6 +121,54 @@ describe("AiErrorExplain (#692)", () => {
     await waitFor(() => expect(onApply).toHaveBeenCalledWith("SELECT name FROM users"));
     await screen.findByText(t("aiErrorExplainApplied"));
     expect(screen.getByText(t("aiErrorExplainMaskedNote"))).toBeTruthy();
+  });
+
+  async function showFix(sql: string, suggestedSql: string) {
+    renderWithProviders(ui(false, sql));
+    await clickExplain();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
+    act(() => {
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({ explanation: "E", cause: "C", suggestedSql, notes: [] }),
+      });
+      handlers?.onDone?.({} as never);
+    });
+    return screen.findByTestId("ai-error-fix");
+  }
+
+  it("修正案は元の SQL との行単位の差分で見せ、全文に切り替えられる (#1620)", async () => {
+    const fix = await showFix("SELECT nme\nFROM users", "SELECT name\nFROM users");
+    const diff = fix.querySelector("[data-testid=ai-sql-diff]");
+    expect(diff).not.toBeNull();
+    expect(diff?.querySelector("[data-diff=del]")?.textContent).toContain("SELECT nme");
+    expect(diff?.querySelector("[data-diff=add]")?.textContent).toContain("SELECT name");
+    expect(diff?.querySelector("[data-diff=same]")?.textContent).toContain("FROM users");
+    fireEvent.click(screen.getByRole("button", { name: t("aiErrorExplainShowFull") }));
+    expect(screen.getByTestId("ai-error-fix-full").textContent).toBe("SELECT name\nFROM users");
+    expect(fix.querySelector("[data-testid=ai-sql-diff]")).toBeNull();
+    // 反映は自動実行ではなく、押したときだけ。
+    expect(onApply).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("aiErrorExplainApply") }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith("SELECT name\nFROM users"));
+  });
+
+  it("マスク送信で伏せたリテラルは元の値へ差し戻して比べ、反映もその SQL (#1620)", async () => {
+    const fix = await showFix("SELECT nme FROM users WHERE a = 'x'", "SELECT name FROM users WHERE a = ''");
+    expect(screen.getByText(t("aiSqlRestoredNote"))).toBeTruthy();
+    // 差戻し済みなので、リテラル行は差分に出ない (列名の違いだけ)。
+    const added = [...fix.querySelectorAll("[data-diff=add]")].map((e) => e.textContent ?? "");
+    expect(added.join("\n")).toContain("'x'");
+    fireEvent.click(screen.getByRole("button", { name: t("aiErrorExplainApply") }));
+    await waitFor(() => expect(onApply).toHaveBeenCalledWith("SELECT name FROM users WHERE a = 'x'"));
+  });
+
+  it("元の SQL と同じ修正案は差分なしと表示し、反映は無効 (#1620)", async () => {
+    await showFix("SELECT 1", "SELECT 1");
+    await screen.findByText(t("aiSqlNoChange"));
+    expect(
+      (screen.getByRole("button", { name: t("aiErrorExplainApply") }) as HTMLButtonElement).disabled,
+    ).toBe(true);
   });
 
   it("JSON でない応答は本文をそのまま見せる", async () => {

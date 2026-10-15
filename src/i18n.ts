@@ -5505,6 +5505,8 @@ const en = {
     "Incremental update: {updated} tables regenerated, {reused} reused from the previous document, {removed} removed.",
   aiSchemaDocIncrementalMissing:
     "{count} tables were not returned by the AI and keep their previous section.",
+  aiErrorExplainShowFull: "Show full SQL",
+  aiErrorExplainShowDiff: "Show diff",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10980,6 +10982,8 @@ const ja: Dict = {
   aiSchemaDocIncrementalResult:
     "差分再生成: {updated} 表を更新、{reused} 表は前回の節を再利用、{removed} 表を削除しました。",
   aiSchemaDocIncrementalMissing: "{count} 表は AI の応答に節が無かったため、前回の節のままです。",
+  aiErrorExplainShowFull: "全文を表示",
+  aiErrorExplainShowDiff: "差分を表示",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
