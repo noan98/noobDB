@@ -383,6 +383,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `export_query_result`
 - `export_query_stream`
+- `export_tables_xlsx` (#1624: 複数テーブルを 1 ブック・テーブルごと 1 シートでストリーミング書き出し。`sheets: [{name, sql, masks}]`。進捗・完了は `export_query_stream` と同じ `export-stream:*` イベント (行数は全シート通算)。シート名は 31 文字・禁止文字置換・大文字小文字無視の重複に `_2`)
 - `dump_database` (`options.tables` で対象テーブルを絞れる (#1399): MySQL は `mysqldump <db> <tbl>...`、PostgreSQL は `pg_dump --table` (スキーマ修飾)、SQLite は指定テーブル + 付随する索引/トリガー。未指定は DB 全体)
 - `dump_tool_status`
 - `install_dump_tool`
@@ -427,7 +428,9 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 `-` 連結) で 1 つのフォルダへ書き出す。行ごとに probe でサイズ・種別を調べ、NULL / 16 MiB 超過は
 飛ばし、拡張子は種別 (不明は `bin`)、既存ファイルは上書きせず `_2` を付ける。1 行の失敗で止めず
 件数 (`saved` / `skippedNull` / `skippedTooLarge` / `failed`) と先頭 20 件の失敗理由を返す。
-行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。
+行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。`writeManifest: true` (#1624) で
+同じフォルダに対応表 `manifest.csv` (行番号・主キー列・保存ファイル名・サイズ・MIME・状態・エラー。
+飛ばした行・失敗した行も載る) を書き、結果の `manifestFile` にそのファイル名を返す。
 
 `read_sql_file` (`commands/file.rs`, #1535) は SQL ファイルを**文字コード付き**で読む。`encoding`
 省略は自動判定 (BOM → UTF-8 として妥当か → Shift_JIS / EUC-JP をスコアで判別。UTF-16 は BOM または

@@ -110,4 +110,31 @@ export const exportCommands = {
       sqlConflict: params.sqlConflict ?? null,
       csvEncoding: params.csvEncoding ?? null,
     }),
+
+  /**
+   * 複数テーブルを 1 つの xlsx ブック (テーブルごとに 1 シート) へストリーミングで書き出す (#1624)。
+   * 進捗・完了は `export_query_stream` と同じ `export-stream:*` イベント (行数は全シート通算)。
+   */
+  exportTablesXlsx: (params: {
+    sessionId: string;
+    streamId: string;
+    database: string | null;
+    sheets: { name: string; sql: string; masks?: ExportColumnMask[] | null }[];
+    path: string;
+    initialBatch: number;
+    chunkSize: number;
+  }) =>
+    invoke<void>("export_tables_xlsx", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database,
+      sheets: params.sheets.map((s) => ({
+        name: s.name,
+        sql: s.sql,
+        masks: s.masks && s.masks.length > 0 ? s.masks : null,
+      })),
+      path: params.path,
+      initialBatch: params.initialBatch,
+      chunkSize: params.chunkSize,
+    }),
 };

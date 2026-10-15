@@ -2750,6 +2750,11 @@ const en = {
   batchExportDir: "Save to folder",
   batchExportDirPlaceholder: "Path to the output folder",
   batchExportPickDir: "Choose an output folder",
+  batchExportSingleWorkbook: "Put all tables in one workbook (one sheet per table)",
+  batchExportSingleWorkbookHint:
+    "Sheet names come from the table names (31 characters max, forbidden characters replaced). The workbook is named after the database.",
+  batchExportWorkbookLabel: "{count} tables (one workbook)",
+  batchExportWorkbookProgress: "Writing {count} tables to one workbook ({rows} rows so far)",
   batchExportProgress: "Exporting {index} / {count}: {table} ({rows} rows)",
   batchExportCancelRun: "Stop",
   batchExportCancelled: "Export stopped after {done} of {count} tables",
@@ -8839,6 +8844,11 @@ const ja: Dict = {
   batchExportDir: "保存先フォルダ",
   batchExportDirPlaceholder: "出力先フォルダのパス",
   batchExportPickDir: "出力先フォルダを選択",
+  batchExportSingleWorkbook: "全テーブルを 1 つのブックにまとめる (テーブルごとに 1 シート)",
+  batchExportSingleWorkbookHint:
+    "シート名はテーブル名から決めます (31 文字まで・禁止文字は置換)。ファイル名はデータベース名です。",
+  batchExportWorkbookLabel: "{count} テーブル (1 ブック)",
+  batchExportWorkbookProgress: "{count} テーブルを 1 つのブックへ書き出し中 (ここまで {rows} 行)",
   batchExportProgress: "エクスポート中 {index} / {count}: {table} ({rows} 行)",
   batchExportCancelRun: "中止",
   batchExportCancelled: "{count} テーブル中 {done} 件を書き出して中止しました",
