@@ -1889,6 +1889,12 @@ const en = {
   profileBackupPassphraseMismatch: "The passphrases do not match.",
   profileBackupWarning:
     "Anyone with this file and the passphrase can read every saved password. A weak passphrase can be brute-forced, so use a long one (16+ characters recommended). The passphrase is not stored anywhere and cannot be recovered.",
+  profileBackupKeepGenerations: "Keep previous backups (generations)",
+  profileBackupKeepGenerationsCount: "Generations to keep (including the newest)",
+  profileBackupKeepGenerationsHint:
+    "When a file with the same name exists, it is renamed to <name>.<date>.noobdb-backup instead of being replaced, and the oldest ones beyond this count are deleted.",
+  profileBackupVerified: "Verified by decrypting the saved file.",
+  profileBackupPruned: "Removed {count} old generations.",
   profileBackupExportConfirm: "Choose file and export",
   profileBackupExporting: "Encrypting…",
   profileBackupSaveTitle: "Save encrypted profile backup",
@@ -3505,6 +3511,10 @@ const en = {
   blobFolderNoKeys: "None of the selected rows can be located by a primary key, so nothing was saved.",
   blobFolderSaved: "Saved {saved} files ({size}) to {folder}. Skipped {skipped}, failed {failed}.",
   blobFolderFirstError: "First error: {error}",
+  blobFolderManifest: "Wrote the mapping table {file}.",
+  blobSaveManyWithManifest: "Save BLOBs of {count} selected rows to a folder with a mapping table…",
+  blobSaveManyWithManifestTitle:
+    "Also writes manifest.csv listing each row's key, the saved file name, size, type and result, so the files can be traced back to their rows.",
   blobLoading: "Loading the binary value…",
   blobKindUnknown: "Unknown type",
   blobPreviewAlt: "Image preview of {column}",
@@ -7913,6 +7923,12 @@ const ja: Dict = {
   profileBackupPassphraseMismatch: "パスフレーズが一致しません。",
   profileBackupWarning:
     "このファイルとパスフレーズがあれば、保存済みのパスワードをすべて読めます。弱いパスフレーズは総当たりで破られるため、長いもの (16 文字以上を推奨) を使ってください。パスフレーズはどこにも保存されず、忘れると復元できません。",
+  profileBackupKeepGenerations: "以前のバックアップを世代として残す",
+  profileBackupKeepGenerationsCount: "残す世代数 (最新を含む)",
+  profileBackupKeepGenerationsHint:
+    "同じ名前のファイルがあるときは置き換えず <名前>.<日時>.noobdb-backup へ退避し、この数を超えた古いものから削除します。",
+  profileBackupVerified: "保存したファイルを復号して確認済みです。",
+  profileBackupPruned: "古い世代を {count} 件削除しました。",
   profileBackupExportConfirm: "保存先を選んで書き出す",
   profileBackupExporting: "暗号化しています…",
   profileBackupSaveTitle: "プロファイルの暗号化バックアップを保存",
@@ -9518,6 +9534,10 @@ const ja: Dict = {
   blobFolderSaved:
     "{saved} 件 ({size}) を {folder} に保存しました。スキップ {skipped} 件・失敗 {failed} 件。",
   blobFolderFirstError: "最初のエラー: {error}",
+  blobFolderManifest: "対応表 {file} を書き出しました。",
+  blobSaveManyWithManifest: "選択した {count} 行の BLOB を対応表付きでフォルダへ保存…",
+  blobSaveManyWithManifestTitle:
+    "行の主キー・保存ファイル名・サイズ・種別・結果を並べた manifest.csv も書き出します。保存したファイルを元の行へ辿れます。",
   blobLoading: "バイナリ値を読み込み中…",
   blobKindUnknown: "種別不明",
   blobPreviewAlt: "{column} の画像プレビュー",

@@ -532,7 +532,7 @@ fn mitigate_formula_injection(s: &str) -> Cow<'_, str> {
     }
 }
 
-fn csv_field(s: &str) -> Cow<'_, str> {
+pub(crate) fn csv_field(s: &str) -> Cow<'_, str> {
     let mitigated = mitigate_formula_injection(s);
     let needs_quote = mitigated.contains(',')
         || mitigated.contains('"')
@@ -1533,6 +1533,280 @@ async fn spawn_export_stream(
                     rows,
                     bytes,
                     truncation,
+                },
+            );
+        }
+        Err(e) => {
+            let _ = app.emit(
+                EV_EXPORT_ERROR,
+                ExportErrorEvent {
+                    stream_id: stream_id.clone(),
+                    message: e.to_string(),
+                    rows: counter.load(Ordering::SeqCst),
+                },
+            );
+        }
+    }
+
+    if let Some(state) = app.try_state::<AppState>() {
+        state.forget_stream(&stream_id, stream_token).await;
+    }
+}
+
+// ── 複数テーブルを 1 つの xlsx ブック (テーブルごとに 1 シート) へ書き出す (#1624) ──
+
+/// [`export_tables_xlsx`] の 1 シート分の入力。`name` からシート名を決める (表名)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XlsxSheetSource {
+    /// シート名の元 (通常は表名)。31 文字・禁止文字・重複は書き出し側で整える。
+    pub name: String,
+    /// そのシートに書く SELECT 文。
+    pub sql: String,
+    /// そのシートの列単位のマスキングルール (#733)。None / 空ならマスクしない。
+    #[serde(default)]
+    pub masks: Option<Vec<ColumnMask>>,
+}
+
+/// 1 シート分の入力を検証済みの形にしたもの。
+pub(crate) struct PreparedSheet {
+    name: String,
+    sql: String,
+    mask_spec: Option<MaskSpec>,
+}
+
+impl PreparedSheet {
+    /// マスクなしの入力 (統合テスト用)。
+    pub(crate) fn for_test(name: &str, sql: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            sql: sql.to_string(),
+            mask_spec: None,
+        }
+    }
+}
+
+/// 複数の SELECT を 1 つの xlsx ブックへ書き出す (シートごとに 1 クエリ)。出力は一時ファイルへ書き、
+/// 成功したときだけ `rename` で保存先へ置き換える。進捗は全シート通算の行数。
+pub(crate) async fn run_export_workbook(
+    session: &crate::state::Session,
+    database: Option<&str>,
+    sheets: Vec<PreparedSheet>,
+    path: &str,
+    initial_batch: usize,
+    chunk_size: usize,
+    mut on_progress: impl FnMut(u64),
+) -> Result<StreamExportOutcome> {
+    use crate::commands::export_xlsx::xlsx_sheet_name;
+    let (tmp, tmp_file) = create_export_temp_file(path)?;
+    let mut cleanup = PartialFileCleanup::new(tmp.clone());
+    let mut book = XlsxSheetWriter::new_workbook()?;
+    let mut used = std::collections::HashSet::new();
+    let mut total_rows = 0u64;
+    for sheet in sheets {
+        book.begin_sheet(&xlsx_sheet_name(&sheet.name, &mut used))?;
+        let mut plan: Option<MaskPlan> = None;
+        let mut xlsx_columns: Vec<Column> = Vec::new();
+        session
+            .conn
+            .execute_stream(
+                &sheet.sql,
+                database,
+                initial_batch,
+                chunk_size,
+                |batch| match batch {
+                    StreamBatch::Columns(columns) => {
+                        plan = sheet.mask_spec.as_ref().map(|s| s.plan(&columns));
+                        xlsx_columns = mask_columns(plan.as_ref(), &columns).into_owned();
+                        book.write_header(&columns)
+                    }
+                    StreamBatch::Rows(rows) => {
+                        let masked = mask_rows(plan.as_ref(), &rows);
+                        book.write_rows(&xlsx_columns, &masked)?;
+                        total_rows += rows.len() as u64;
+                        on_progress(total_rows);
+                        Ok(())
+                    }
+                },
+            )
+            .await?;
+    }
+    let mut writer = BufWriter::new(tmp_file);
+    let truncation = book.save_to(&mut writer)?;
+    let file = writer
+        .into_inner()
+        .map_err(|e| AppError::Io(e.into_error()))?;
+    let bytes = file.metadata()?.len();
+    drop(file);
+    std::fs::rename(&tmp, path)?;
+    cleanup.commit();
+    Ok(StreamExportOutcome {
+        rows: total_rows,
+        bytes,
+        truncation,
+    })
+}
+
+/// 複数テーブルを 1 つの xlsx ブック (テーブルごとに 1 シート) へストリーミングで書き出す (#1624)。
+/// `export_query_stream` と同じ `export-stream:*` イベントで進捗 (全シート通算の行数) と完了を
+/// 通知し、`cancel_stream` で中断できる。SELECT 系だけを受け付ける。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn export_tables_xlsx(
+    app: AppHandle,
+    session_id: String,
+    stream_id: String,
+    database: Option<String>,
+    sheets: Vec<XlsxSheetSource>,
+    path: String,
+    initial_batch: usize,
+    chunk_size: usize,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("save path is empty".into()));
+    }
+    if sheets.is_empty() {
+        return Err(AppError::InvalidInput("no sheets to export".into()));
+    }
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let mut prepared = Vec::with_capacity(sheets.len());
+    for sheet in sheets {
+        ensure_allowed_for_session(&session, &sheet.sql)?;
+        if !is_read_only_sql_for(session.conn.driver_kind(), &sheet.sql) {
+            return Err(AppError::ReadOnly(
+                "export supports only read-only statements (SELECT / SHOW / DESCRIBE / EXPLAIN / WITH)"
+                    .into(),
+            ));
+        }
+        prepared.push(PreparedSheet {
+            name: sheet.name,
+            sql: sheet.sql,
+            mask_spec: load_mask_spec(sheet.masks).await?,
+        });
+    }
+
+    // register_stream をタスク本体より前に完了させるゲート (export_query_stream と同じ理由, #685)。
+    let counter = Arc::new(AtomicU64::new(0));
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
+    let stream_id_for_task = stream_id.clone();
+    let counter_for_task = counter.clone();
+    let handle = tokio::spawn(async move {
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
+        spawn_export_workbook(
+            app,
+            session,
+            stream_id_for_task,
+            token,
+            database,
+            prepared,
+            path,
+            initial_batch,
+            chunk_size,
+            counter_for_task,
+        )
+        .await;
+    });
+    let token = state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: counter,
+                kind: StreamKind::Export,
+                on_cancel: None,
+            },
+        )
+        .await;
+    let _ = ready_tx.send(token);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn spawn_export_workbook(
+    app: AppHandle,
+    session: Arc<crate::state::Session>,
+    stream_id: String,
+    stream_token: u64,
+    database: Option<String>,
+    sheets: Vec<PreparedSheet>,
+    path: String,
+    initial_batch: usize,
+    chunk_size: usize,
+    counter: Arc<AtomicU64>,
+) {
+    let emit_app = app.clone();
+    let emit_id = stream_id.clone();
+    let counter_cb = counter.clone();
+    let emitted = Arc::new(AtomicU64::new(0));
+    let emitted_cb = emitted.clone();
+    let mut throttle = ProgressThrottle::standard();
+
+    let result = run_export_workbook(
+        &session,
+        database.as_deref(),
+        sheets,
+        &path,
+        initial_batch,
+        chunk_size,
+        move |total| {
+            counter_cb.store(total, Ordering::SeqCst);
+            if !throttle.ready() {
+                return;
+            }
+            emitted_cb.store(total, Ordering::SeqCst);
+            let _ = emit_app.emit(
+                EV_EXPORT_PROGRESS,
+                ExportProgressEvent {
+                    stream_id: emit_id.clone(),
+                    rows: total,
+                },
+            );
+        },
+    )
+    .await;
+
+    if let Ok(outcome) = &result {
+        if needs_final_emit(emitted.load(Ordering::SeqCst), outcome.rows) {
+            let _ = app.emit(
+                EV_EXPORT_PROGRESS,
+                ExportProgressEvent {
+                    stream_id: stream_id.clone(),
+                    rows: outcome.rows,
+                },
+            );
+        }
+    }
+
+    match result {
+        Ok(outcome) => {
+            tracing::info!(
+                stream_id = %stream_id,
+                rows = outcome.rows,
+                bytes = outcome.bytes,
+                "multi-sheet xlsx export complete"
+            );
+            if let Some(t) = &outcome.truncation {
+                tracing::warn!(
+                    stream_id = %stream_id,
+                    written_rows = t.written_rows,
+                    dropped_rows = t.dropped_rows,
+                    truncated_cells = t.truncated_cells,
+                    "xlsx export hit an Excel limit; output is incomplete"
+                );
+            }
+            let _ = app.emit(
+                EV_EXPORT_DONE,
+                ExportDoneEvent {
+                    stream_id: stream_id.clone(),
+                    rows: outcome.rows,
+                    bytes: outcome.bytes,
+                    truncation: outcome.truncation,
                 },
             );
         }

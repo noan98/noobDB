@@ -31,6 +31,11 @@ pub struct EncryptedExportResult {
     pub secrets: usize,
     /// 書き込んだバイト数 (暗号文 + ヘッダ)。
     pub bytes: usize,
+    /// 書き出し直後にファイルを読み直し、パスフレーズで復号できて件数が一致することを確認済みか
+    /// (#1624)。確認に失敗すると保存先は置き換えずエラーにするので、成功応答では常に `true`。
+    pub verified: bool,
+    /// 世代管理 (`keep_generations`) で削除した古い世代の数 (#1624)。指定が無ければ 0。
+    pub generations_pruned: usize,
 }
 
 /// 暗号化インポートの結果要約。`ImportResult` に、keyring へ書き戻した秘密の
@@ -62,6 +67,11 @@ pub struct EncryptedExportRequest {
     /// `None` / 空なら全件。
     #[serde(default)]
     pub ids: Option<Vec<String>>,
+    /// 保存先ディレクトリに残す世代数 (最新を含む, #1624)。`None` / 0 は世代管理なし (従来どおり
+    /// 同名ファイルを置き換える)。指定時は、上書き前の既存ファイルを `<名前>.<日時>.<拡張子>` へ
+    /// 退避し、古い退避から削除して合計がこの数に収まるようにする。
+    #[serde(default)]
+    pub keep_generations: Option<u32>,
 }
 
 impl std::fmt::Debug for EncryptedImportRequest {
@@ -232,17 +242,26 @@ pub async fn export_profiles_encrypted(
         let profiles = entries.len();
         let secret_count = entries.iter().map(|e| e.secrets.count()).sum();
         let file = backup::seal_payload(entries, &passphrase, KdfParams::DEFAULT)?;
-        crate::atomic_write::write_atomic(std::path::Path::new(&req.path), &file)?;
+        let generations_pruned = write_verified(
+            std::path::Path::new(&req.path),
+            &file,
+            &passphrase,
+            (profiles, secret_count),
+            req.keep_generations,
+        )?;
         tracing::info!(
             path = %req.path,
             profiles,
             secrets = secret_count,
+            generations_pruned,
             "profiles exported (encrypted backup)"
         );
         Ok(EncryptedExportResult {
             profiles,
             secrets: secret_count,
             bytes: file.len(),
+            verified: true,
+            generations_pruned,
         })
     })
     .await
@@ -251,6 +270,160 @@ pub async fn export_profiles_encrypted(
         tracing::error!(error = %e, "encrypted profile export failed");
     }
     res
+}
+
+/// 世代の退避名に使う日時の書式 (`<名前>.20260101-120000.<拡張子>`)。辞書順 = 時系列順。
+const GENERATION_STAMP_FORMAT: &str = "%Y%m%d-%H%M%S";
+
+/// `path` の退避ファイル名の幹と拡張子 (`backup.noobdb` → (`backup`, `.noobdb`))。
+fn split_backup_name(path: &std::path::Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "backup".to_string());
+    match name.rfind('.') {
+        Some(i) if i > 0 => (name[..i].to_string(), name[i..].to_string()),
+        _ => (name, String::new()),
+    }
+}
+
+/// `name` が `<stem>.<日時 (YYYYMMDDhhmmss を `-` で区切った 15 文字)>[-<連番>]<ext>` の形の退避
+/// ファイルなら、並べ替え用の `(日時, 連番)` を返す。
+fn generation_key(name: &str, stem: &str, ext: &str) -> Option<(String, u32)> {
+    let rest = name.strip_prefix(stem)?.strip_prefix('.')?;
+    let mid = rest.strip_suffix(ext)?;
+    let (stamp, seq) = match mid.split_once('-')? {
+        // `20260101-120000` の `-` は日時の一部。連番は 2 つ目の `-` 以降。
+        (date, tail) => match tail.split_once('-') {
+            Some((time, seq)) => (format!("{date}-{time}"), Some(seq)),
+            None => (format!("{date}-{tail}"), None),
+        },
+    };
+    let stamp_ok = stamp.len() == 15
+        && stamp.bytes().enumerate().all(|(i, b)| {
+            if i == 8 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
+    if !stamp_ok {
+        return None;
+    }
+    let seq = match seq {
+        None => 0,
+        Some(q) if !q.is_empty() && q.bytes().all(|b| b.is_ascii_digit()) => q.parse().ok()?,
+        Some(_) => return None,
+    };
+    Some((stamp, seq))
+}
+
+#[cfg(test)]
+fn is_generation_name(name: &str, stem: &str, ext: &str) -> bool {
+    generation_key(name, stem, ext).is_some()
+}
+
+/// 既存の `path` を退避名へ移す。退避名は更新日時 (無ければ現在) から作り、衝突したら連番を付ける。
+fn archive_existing(path: &std::path::Path) -> Result<()> {
+    let (stem, ext) = split_backup_name(path);
+    let when = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .map(chrono::DateTime::<chrono::Utc>::from)
+        .unwrap_or_else(|_| chrono::Utc::now());
+    let stamp = when.format(GENERATION_STAMP_FORMAT).to_string();
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    for n in 0..1000u32 {
+        let name = if n == 0 {
+            format!("{stem}.{stamp}{ext}")
+        } else {
+            format!("{stem}.{stamp}-{n}{ext}")
+        };
+        let dest = dir.join(name);
+        if !dest.exists() {
+            std::fs::rename(path, dest)?;
+            return Ok(());
+        }
+    }
+    Err(AppError::Other(
+        "could not find a free name to archive the previous backup".into(),
+    ))
+}
+
+/// 退避済みの世代を新しい順に `keep_archived` 件だけ残して削除し、削除した数を返す。
+fn prune_generations(path: &std::path::Path, keep_archived: usize) -> Result<usize> {
+    let (stem, ext) = split_backup_name(path);
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut found: Vec<((String, u32), String)> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter_map(|n| generation_key(&n, &stem, &ext).map(|k| (k, n)))
+        .collect();
+    // 古い順 (日時 → 同じ秒の中では連番)。
+    found.sort();
+    let excess = found.len().saturating_sub(keep_archived);
+    let mut pruned = 0;
+    for (_, name) in found.into_iter().take(excess) {
+        match std::fs::remove_file(dir.join(&name)) {
+            Ok(()) => pruned += 1,
+            Err(e) => tracing::warn!(file = %name, error = %e, "failed to remove an old backup generation"),
+        }
+    }
+    Ok(pruned)
+}
+
+/// 暗号化済みの `file` を `path` に保存する (#1624)。
+///
+/// 1. 保存先と同じディレクトリの一時ファイルへ書き (原子的)、**読み直して**パスフレーズで復号し、
+///    プロファイル数・秘密の件数が `expected` と一致することを確かめる。失敗したら一時ファイルを
+///    消してエラーにし、既存の `path` には触れない。
+/// 2. `keep_generations` が 1 以上なら、既存の `path` を退避名へ移し、古い退避を削除する。
+/// 3. 一時ファイルを `path` へ rename する。
+///
+/// 戻り値は削除した古い世代の数。
+fn write_verified(
+    path: &std::path::Path,
+    file: &[u8],
+    passphrase: &str,
+    expected: (usize, usize),
+    keep_generations: Option<u32>,
+) -> Result<usize> {
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let (stem, ext) = split_backup_name(path);
+    let tmp = dir.join(format!(".{stem}.verify.{}{ext}", std::process::id()));
+    crate::atomic_write::write_atomic(&tmp, file)?;
+    let verified = (|| -> Result<()> {
+        let written = std::fs::read(&tmp)?;
+        let payload = backup::open_payload(&written, passphrase)?;
+        let profiles = payload.profiles.len();
+        let secrets: usize = payload.profiles.iter().map(|e| e.secrets.count()).sum();
+        if (profiles, secrets) != expected {
+            return Err(AppError::Other(format!(
+                "backup verification failed: expected {} profiles / {} secrets, read back {profiles} / {secrets}",
+                expected.0, expected.1
+            )));
+        }
+        Ok(())
+    })();
+    if let Err(e) = verified {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    let keep = keep_generations.filter(|n| *n > 0).map(|n| n as usize);
+    let placed = (|| -> Result<usize> {
+        if keep.is_some() && path.is_file() {
+            archive_existing(path)?;
+        }
+        std::fs::rename(&tmp, path)?;
+        match keep {
+            Some(n) => prune_generations(path, n - 1),
+            None => Ok(0),
+        }
+    })();
+    if placed.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    placed
 }
 
 /// `path` の暗号化バックアップをパスフレーズで開封して取り込む。ID 衝突は
@@ -603,6 +776,103 @@ mod tests {
         }))
         .unwrap();
         assert!(!format!("{req:?}").contains("very-secret-pass"));
+    }
+
+    fn sealed(ids: &[&str]) -> (Vec<u8>, (usize, usize)) {
+        let fast = KdfParams {
+            m_cost_kib: 8,
+            t_cost: 1,
+            p_cost: 1,
+        };
+        let entries: Vec<BackupEntry> = ids
+            .iter()
+            .map(|id| BackupEntry {
+                profile: profile(id),
+                secrets: bundle(&[("password", "pw")]),
+            })
+            .collect();
+        let secrets = entries.iter().map(|e| e.secrets.count()).sum();
+        let count = entries.len();
+        (
+            backup::seal_payload(entries, "migration passphrase", fast).unwrap(),
+            (count, secrets),
+        )
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("noobdb_pbackup_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // #1624: 書き出し直後の復号検証。件数が合わない・パスフレーズが違うときは保存先を置き換えない。
+    #[test]
+    fn write_verified_checks_decryption_and_keeps_existing_file_on_failure() {
+        let dir = temp_dir("verify");
+        let path = dir.join("b.noobdb");
+        std::fs::write(&path, b"old").unwrap();
+        let (file, expected) = sealed(&["a", "b"]);
+        // 件数の期待値が合わない → エラー、既存ファイルは無傷、一時ファイルも残らない。
+        let err = write_verified(&path, &file, "migration passphrase", (3, expected.1), None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("verification failed"), "{err}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        // パスフレーズ違い → エラー。
+        assert!(write_verified(&path, &file, "wrong passphrase!!", expected, None).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        // 正常。
+        assert_eq!(
+            write_verified(&path, &file, "migration passphrase", expected, None).unwrap(),
+            0
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), file);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // #1624: 世代管理。上書き前のファイルを退避し、最新を含めて指定件数に収める。
+    #[test]
+    fn write_verified_keeps_the_requested_number_of_generations() {
+        let dir = temp_dir("gens");
+        let path = dir.join("b.noobdb");
+        let (file, expected) = sealed(&["a"]);
+        for _ in 0..5 {
+            write_verified(&path, &file, "migration passphrase", expected, Some(3)).unwrap();
+            // 退避名は秒単位の日時 + 連番なので、同じ秒でも衝突しない。
+        }
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        // 最新 1 + 退避 2 = 3 件。
+        assert_eq!(names.len(), 3, "{names:?}");
+        assert!(names.contains(&"b.noobdb".to_string()));
+        assert_eq!(
+            names.iter().filter(|n| is_generation_name(n, "b", ".noobdb")).count(),
+            2
+        );
+        // 世代管理なし (None / 0) は退避も削除もしない。
+        write_verified(&path, &file, "migration passphrase", expected, Some(0)).unwrap();
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn generation_names_are_recognised_strictly() {
+        assert!(is_generation_name("b.20260101-120000.noobdb", "b", ".noobdb"));
+        assert!(is_generation_name("b.20260101-120000-2.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name("b.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name("b.2026.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name("c.20260101-120000.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name("b.20260101-120000.txt", "b", ".noobdb"));
+        assert!(!is_generation_name("b.20260101-1200xx.noobdb", "b", ".noobdb"));
+        assert_eq!(
+            split_backup_name(std::path::Path::new("/x/profiles.noobdb-backup")),
+            ("profiles".to_string(), ".noobdb-backup".to_string())
+        );
     }
 
     #[test]

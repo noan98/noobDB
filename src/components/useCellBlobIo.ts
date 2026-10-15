@@ -38,7 +38,7 @@ export interface CellBlobHandlers {
    * この列の BLOB を、指定した複数行ぶんまとめてフォルダへ保存する (#1539)。ファイル名は
    * 主キー由来で、フォルダ選択・件数の通知までここで行う。主キーで引けない行は飛ばす。
    */
-  saveMany?: (rowIndices: number[]) => Promise<void>;
+  saveMany?: (rowIndices: number[], writeManifest?: boolean) => Promise<void>;
 }
 
 interface Input {
@@ -102,7 +102,7 @@ export function useCellBlobIo({
         }
       };
 
-      const saveMany = async (rowIndices: number[]) => {
+      const saveMany = async (rowIndices: number[], writeManifest = false) => {
         try {
           const keys: BlobKeyPart[][] = [];
           let noKey = 0;
@@ -128,6 +128,7 @@ export function useCellBlobIo({
             col.name,
             keys,
             folder,
+            writeManifest,
           );
           const skipped = res.skippedNull + res.skippedTooLarge + noKey;
           const summary = t("blobFolderSaved", {
@@ -137,10 +138,15 @@ export function useCellBlobIo({
             failed: res.failed,
             folder,
           });
+          const manifestNote = res.manifestFile
+            ? ` ${t("blobFolderManifest", { file: res.manifestFile })}`
+            : "";
           if (res.failed > 0) {
-            toast.error(`${summary} ${t("blobFolderFirstError", { error: res.errors[0]?.error ?? "" })}`);
+            toast.error(
+              `${summary}${manifestNote} ${t("blobFolderFirstError", { error: res.errors[0]?.error ?? "" })}`,
+            );
           } else {
-            toast.success(summary);
+            toast.success(`${summary}${manifestNote}`);
           }
         } catch (e) {
           toast.error(t("blobSaveFailed", { error: String(e) }));

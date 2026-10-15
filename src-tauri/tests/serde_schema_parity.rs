@@ -971,6 +971,7 @@ fn build_fixtures() -> serde_json::Value {
             row: 4,
             error: "expected exactly one row for the key, got 0".into(),
         }],
+        manifest_file: Some("manifest.csv".into()),
     };
 
     // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
@@ -1901,6 +1902,8 @@ fn build_fixtures() -> serde_json::Value {
         profiles: 3,
         secrets: 2,
         bytes: 1024,
+        verified: true,
+        generations_pruned: 1,
     };
     let encrypted_profile_import_result = t::EncryptedImportResult {
         result: ImportResult {

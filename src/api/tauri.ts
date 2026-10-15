@@ -315,6 +315,10 @@ export interface EncryptedProfileExportResult {
   profiles: number;
   secrets: number;
   bytes: number;
+  /** 書き出し直後に読み直して復号・件数を確認済み (#1624)。成功応答では常に true。 */
+  verified: boolean;
+  /** 世代管理で削除した古い世代の数 (#1624)。 */
+  generationsPruned: number;
 }
 
 export type SnippetScope =
@@ -2372,6 +2376,8 @@ export interface BlobFolderSaveResult {
   failed: number;
   /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
   errors: { row: number; error: string }[];
+  /** 対応表 (CSV) を書いたときのフォルダ内のファイル名。書かなかったときは null (#1624)。 */
+  manifestFile: string | null;
 }
 
 export interface ImportErrorEvent {

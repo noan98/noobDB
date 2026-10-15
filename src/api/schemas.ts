@@ -969,6 +969,8 @@ export const encryptedProfileExportResult = z.object({
   profiles: z.number(),
   secrets: z.number(),
   bytes: z.number(),
+  verified: z.boolean(),
+  generationsPruned: z.number(),
 });
 
 /** テーブル統計ダッシュボードの 1 行 (`table_statistics`、#1255)。サイズ情報に
@@ -1580,6 +1582,7 @@ export const blobFolderSaveResult = z.object({
   skippedTooLarge: z.number(),
   failed: z.number(),
   errors: z.array(z.object({ row: z.number(), error: z.string() })),
+  manifestFile: z.string().nullable(),
 });
 
 export const importErrorEvent = z.object({

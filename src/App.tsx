@@ -2844,7 +2844,7 @@ export default function App() {
   }, [profiles.length, toast]);
 
   const handleBackupExportConfirm = useCallback(
-    async (passphrase: string) => {
+    async (passphrase: string, keepGenerations: number | null) => {
       try {
         const dest = await saveFileDialog({
           defaultPath: defaultBackupFileName(),
@@ -2852,14 +2852,22 @@ export default function App() {
           filters: [{ name: translate("profileBackupFileFilter"), extensions: [BACKUP_FILE_EXTENSION] }],
         });
         if (typeof dest !== "string" || !dest) return;
-        const res = await api.exportProfilesEncrypted(dest, passphrase);
+        const res = await api.exportProfilesEncrypted(dest, passphrase, undefined, keepGenerations);
         setBackupExportOpen(false);
         toast.success(
-          translate("profileBackupExportSuccess", {
-            path: dest,
-            profiles: res.profiles,
-            secrets: res.secrets,
-          }),
+          [
+            translate("profileBackupExportSuccess", {
+              path: dest,
+              profiles: res.profiles,
+              secrets: res.secrets,
+            }),
+            translate("profileBackupVerified"),
+            res.generationsPruned > 0
+              ? translate("profileBackupPruned", { count: res.generationsPruned })
+              : "",
+          ]
+            .filter((m) => m !== "")
+            .join(" "),
         );
       } catch (e) {
         toast.error(translate("profileBackupExportError", { error: String(e) }));
