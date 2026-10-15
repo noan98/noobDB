@@ -234,6 +234,9 @@ import { isMruRecordable, singleLine, type CommandItem } from "./components/comm
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
 );
+const HistorySearchModal = lazy(() =>
+  import("./components/HistorySearchModal").then((m) => ({ default: m.HistorySearchModal })),
+);
 const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
 const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
 const DataTransferModal = lazy(() =>
@@ -1425,6 +1428,7 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  const [showHistorySearch, setShowHistorySearch] = useState(false);
   // DB 全体からの値検索 (#748) の開閉。
   const [showDataSearch, setShowDataSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
@@ -9564,6 +9568,21 @@ export default function App() {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
       }
+      // クエリ履歴のインクリメンタル検索 (#1627)。bash の reverse-i-search に倣い、エディタに
+      // フォーカスがあるときの Ctrl+R だけ (Cmd+R / 他の場所のリロード系キーは奪わない)。
+      if (
+        e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "r" &&
+        e.target instanceof Element &&
+        e.target.closest(".cm-editor") &&
+        sessionIdRef.current
+      ) {
+        e.preventDefault();
+        setShowHistorySearch(true);
+      }
       // スキーマ横断のグローバルオブジェクト検索。接続中のみ。
       if (comboMatchesEvent(bindingsRef.current.objectSearch, e)) {
         e.preventDefault();
@@ -10104,6 +10123,15 @@ export default function App() {
           searchOnly: true,
           run: () => reopenClosedTabRef.current(c.id),
         });
+      });
+      items.push({
+        id: "nav:history-search",
+        group: "navigation",
+        label: t("cmdkActionHistorySearch"),
+        icon: "clock",
+        keywords: "history search reverse ctrl+r 履歴 検索",
+        shortcut: "Ctrl+R",
+        run: () => setShowHistorySearch(true),
       });
       // .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D 非対応の
       // キーボード/コマンドパレット中心のユーザ向け導線で、読み込みは D&D 経路
@@ -13112,6 +13140,13 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+        {showHistorySearch && (
+          <HistorySearchModal
+            history={queryHistory}
+            onPick={handleRestoreHistory}
+            onClose={() => setShowHistorySearch(false)}
+          />
+        )}
         <AnimatePresence>
           {showObjectSearch && sessionId && (
             <ObjectSearchModal

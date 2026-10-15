@@ -601,7 +601,7 @@ export const HistoryList = memo(function HistoryList({
       </TreeSearch>
       {selection.selected.size > 0 && (
         <TreeSearch borderTop="none" pt={0} display="flex" alignItems="center" gap="1.5" flexWrap="wrap">
-          <chakra.span fontSize="xs" color="app.textMuted" role="status">
+          <chakra.span textStyle="caption" role="status">
             {t("historySelectedCount", { count: selection.selected.size })}
           </chakra.span>
           <PressableButton
