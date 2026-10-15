@@ -507,6 +507,7 @@ export const HistoryList = memo(function HistoryList({
           filters={{ profileId: scopeId, search: debounced || null, status: statusParam, from, to }}
           periodLabel={t(PERIOD_FILTER_LABEL_KEYS[periodFilter])}
           onOpen={restoreById}
+          onSaveAsSnippet={onSaveAsSnippet !== undefined ? saveAsSnippetById : undefined}
         />
       )}
 
