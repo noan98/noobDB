@@ -57,6 +57,14 @@
       "expected": [9, 2, 1, 11, 3, 0, 5, 4, 12, 6, 7, 8, 10]
     },
     {
+      "name": "string_sort_latin_extended",
+      "note": "Latin Extended-B (ș) と Latin Extended Additional (ễ) は基底文字の近くに並ぶ (ベトナム語・ルーマニア語)。",
+      "kinds": ["string"],
+      "rows": [["Nguyễn"], ["Nguyen"], ["Nguyz"], ["Ștefan"], ["Sz"], ["Sa"]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [1, 0, 2, 5, 3, 4]
+    },
+    {
       "name": "string_sort_numbers_as_text",
       "note": "数値・真偽値セルも String() してから照合する。",
       "kinds": ["string"],
