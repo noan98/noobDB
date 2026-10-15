@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen } from "./testUtils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { ProfileCardGrid } from "../components/ProfileCardGrid";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -76,5 +76,83 @@ describe("ProfileCardGrid (#874)", () => {
     expect(other).toBeDisabled();
     fireEvent.click(other);
     expect(onConnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("ProfileCardGrid の検索とグループ絞り込み (#1630)", () => {
+  const many = Array.from({ length: 7 }, (_, i) =>
+    makeProfile({
+      id: `p-${i}`,
+      name: `Conn ${i}`,
+      host: `host-${i}.example.com`,
+      group: i < 3 ? "Billing" : i < 5 ? "Ops" : null,
+    }),
+  );
+
+  it("件数が少ないうちは検索欄を出さない", () => {
+    renderWithProviders(
+      <ProfileCardGrid
+        profiles={many.slice(0, 3)}
+        connectingId={null}
+        onConnect={() => {}}
+        onCreate={() => {}}
+      />,
+    );
+    expect(screen.queryByTestId("profile-cards-search")).not.toBeInTheDocument();
+  });
+
+  it("名前・ホストで絞り込み、一致が無ければ案内を出す", () => {
+    renderWithProviders(
+      <ProfileCardGrid profiles={many} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
+    );
+    const search = screen.getByTestId("profile-cards-search");
+    fireEvent.change(search, { target: { value: "host-4" } });
+    expect(screen.getByRole("button", { name: "Conn 4" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conn 1" })).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByText(t("profileCardsNoMatches"))).toBeInTheDocument();
+  });
+
+  it("グループのチップで絞り込み、もう一度押すと解除する", () => {
+    renderWithProviders(
+      <ProfileCardGrid profiles={many} connectingId={null} onConnect={() => {}} onCreate={() => {}} />,
+    );
+    const chip = screen.getByRole("button", { name: "Ops" });
+    fireEvent.click(chip);
+    expect(screen.getByRole("button", { name: "Conn 3" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conn 0" })).not.toBeInTheDocument();
+    expect(chip).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(chip);
+    expect(screen.getByRole("button", { name: "Conn 0" })).toBeInTheDocument();
+  });
+
+  it("カードの右クリックから編集・複製・削除 (確認付き) へ行ける", async () => {
+    const onEdit = vi.fn();
+    const onDuplicate = vi.fn();
+    const onDelete = vi.fn();
+    renderWithProviders(
+      <ProfileCardGrid
+        profiles={many.slice(0, 2)}
+        connectingId={null}
+        onConnect={() => {}}
+        onCreate={() => {}}
+        onEdit={onEdit}
+        onDuplicate={onDuplicate}
+        onDelete={onDelete}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Conn 0" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuEdit") }));
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ id: "p-0" }));
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Conn 1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuDuplicate") }));
+    expect(onDuplicate).toHaveBeenCalledWith(expect.objectContaining({ id: "p-1" }));
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Conn 1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuDelete") }));
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: t("contextMenuDelete") }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledWith(expect.objectContaining({ id: "p-1" })));
   });
 });

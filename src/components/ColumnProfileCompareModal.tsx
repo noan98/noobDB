@@ -7,6 +7,7 @@ import {
   buildMetricRows,
   baselineIndex,
   buildTopValueRows,
+  compareExportTable,
   countMetricDifferences,
   topValueCellDiffers,
   topValueRowDiffers,
@@ -20,6 +21,8 @@ import { ErrorNote } from "./modalForm";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
 import { Spinner } from "./Spinner";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { Button, Checkbox, Input } from "./ui";
 
 /**
@@ -171,6 +174,19 @@ export function ColumnProfileCompareModal({
   const diffCount =
     countMetricDifferences(metricRows) + topRows.filter((r) => topValueRowDiffers(r, entries)).length;
   const fetched = entries.filter((e) => e.profile).length;
+  /** 画面と同じ判定・表記の書き出し表。クリック時にだけ組む (#1624)。 */
+  const buildExportTable = () =>
+    compareExportTable(entries, {
+      section: t("profileCompareExportSection"),
+      item: t("profileCompareExportItem"),
+      differs: t("profileCompareExportDiffers"),
+      sectionMetric: t("profileCompareExportMetric"),
+      sectionTop: t("profileCompareExportTop"),
+      metric: Object.fromEntries(
+        (Object.keys(METRIC_LABEL) as MetricId[]).map((k) => [k, t(METRIC_LABEL[k])]),
+      ) as Record<MetricId, string>,
+      absent: t("profileCompareAbsent"),
+    });
   // 基準は「取得できた最初の接続」(columnProfileCompare.baselineIndex)。今の接続の取得に失敗した
   // ときは次の接続が基準になるので、見出しの「基準」表示もそれに合わせる。まだ何も取れていない間は先頭。
   const baseHeaderIdx = Math.max(0, baselineIndex(entries));
@@ -377,6 +393,28 @@ export function ColumnProfileCompareModal({
         <Button type="button" variant="secondary" onClick={() => setPhase("pick")} disabled={running}>
           {t("profileCompareBack")}
         </Button>
+        <TextExportButton
+          formats={[
+            {
+              id: "csv",
+              label: "CSV",
+              build: () => {
+                const x = buildExportTable();
+                return tableToCsv(x.header, x.rows);
+              },
+            },
+            {
+              id: "markdown",
+              label: "Markdown",
+              build: () => {
+                const x = buildExportTable();
+                return tableToMarkdown(x.header, x.rows);
+              },
+            },
+          ]}
+          filenameBase="column-profile-compare"
+          disabled={running || fetched === 0}
+        />
         <chakra.span flex="1" />
         <Button type="button" variant="primary" onClick={onClose}>
           {t("profileCompareClose")}

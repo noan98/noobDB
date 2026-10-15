@@ -5457,3 +5457,123 @@ async fn sqlite_import_each_xlsx_sheet_into_its_own_table() {
     assert_eq!(count("orders").await, "1");
     let _ = std::fs::remove_file(&xlsx);
 }
+
+/// 複数テーブルを 1 つの xlsx ブックへシートごとに書き出す (#1624)。実際の SQLite に対して
+/// 2 つの SELECT を流し、シート名・行・通算行数を zip から読み戻して確かめる。
+#[tokio::test]
+async fn export_workbook_writes_one_sheet_per_query() {
+    use std::io::Read;
+    let mut db = std::env::temp_dir();
+    db.push(format!("noobdb_sqlite_book_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db);
+    std::fs::File::create(&db).expect("create temp sqlite file");
+    let opts = t::sqlite_options(db.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "CREATE TABLE users (id INTEGER, name TEXT)",
+        "INSERT INTO users VALUES (1, 'alice'), (2, 'bob')",
+        "CREATE TABLE orders (no INTEGER)",
+        "INSERT INTO orders VALUES (10)",
+    ] {
+        conn.execute(sql, None).await.expect("setup");
+    }
+    let session = t::make_session("book", conn, opts, false);
+
+    let mut out = std::env::temp_dir();
+    out.push(format!("noobdb_sqlite_book_{}.xlsx", std::process::id()));
+    let (bytes, rows) = t::export_workbook_via_command(
+        &session,
+        &[
+            ("users", "SELECT id, name FROM users ORDER BY id"),
+            ("orders", "SELECT no FROM orders"),
+        ],
+        out.to_str().expect("utf8 path"),
+    )
+    .await
+    .expect("workbook export");
+    assert_eq!(rows, 3);
+    assert!(bytes > 0);
+
+    let mut zip =
+        zip::ZipArchive::new(std::fs::File::open(&out).expect("open xlsx")).expect("valid zip");
+    let mut read = |name: &str| {
+        let mut s = String::new();
+        zip.by_name(name)
+            .expect("entry")
+            .read_to_string(&mut s)
+            .expect("utf-8");
+        s
+    };
+    let book = read("xl/workbook.xml");
+    assert!(
+        book.contains("name=\"users\"") && book.contains("name=\"orders\""),
+        "{book}"
+    );
+    let users = read("xl/worksheets/sheet1.xml");
+    assert!(users.contains("alice") && users.contains("bob"), "{users}");
+    let orders = read("xl/worksheets/sheet2.xml");
+    assert!(orders.contains("<v>10</v>"), "{orders}");
+    let _ = std::fs::remove_file(&out);
+    let _ = std::fs::remove_file(&db);
+}
+
+/// フォルダ一括保存の対応表 (#1624)。保存・NULL・失敗のどの行も 1 行ずつ載り、衝突で
+/// `_2` が付いたファイル名がそのまま書かれる。対応表のファイル名も既存を上書きしない。
+#[tokio::test]
+async fn sqlite_save_cells_to_folder_writes_manifest() {
+    let db = temp_cmd_db("blob_manifest");
+    let db_path = db.to_str().expect("utf8 path");
+    let conn = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("connect");
+    let session = t::make_session("s-blob-manifest", conn, t::sqlite_options(db_path), true);
+    let writer = t::connect(&t::sqlite_options(db_path))
+        .await
+        .expect("writer");
+    writer
+        .execute(
+            "CREATE TABLE files (id INTEGER PRIMARY KEY, data BLOB)",
+            None,
+        )
+        .await
+        .expect("create");
+    for sql in [
+        "INSERT INTO files VALUES (1, X'89504E470D0A1A0A0000')",
+        "INSERT INTO files VALUES (2, X'0102')",
+        "INSERT INTO files VALUES (3, NULL)",
+    ] {
+        writer.execute(sql, None).await.expect("insert");
+    }
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("noobdb_blob_manifest_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(dir.join("2.bin"), b"keep").expect("existing");
+    std::fs::write(dir.join("manifest.csv"), b"mine").expect("existing manifest");
+
+    let keys = serde_json::json!([
+        [{ "column": "id", "value": 1 }],
+        [{ "column": "id", "value": 2 }],
+        [{ "column": "id", "value": 3 }],
+        [{ "column": "id", "value": 99 }],
+    ]);
+    let folder = dir.to_str().expect("utf8");
+    let r = t::save_cells_to_folder_with_manifest_via_session(
+        &session, None, "files", "data", keys, folder,
+    )
+    .await
+    .expect("save to folder");
+    assert_eq!(r.manifest_file.as_deref(), Some("manifest_2.csv"));
+    assert_eq!(
+        std::fs::read(dir.join("manifest.csv")).expect("kept"),
+        b"mine"
+    );
+    let manifest = std::fs::read_to_string(dir.join("manifest_2.csv")).expect("manifest");
+    let lines: Vec<&str> = manifest.split("\r\n").collect();
+    assert_eq!(lines[0], "row,key_id,file,bytes,mime,status,error");
+    assert_eq!(lines[1], "1,1,1.png,10,image/png,saved,");
+    assert_eq!(lines[2], "2,2,2_2.bin,2,,saved,");
+    assert_eq!(lines[3], "3,3,,,,skipped_null,");
+    assert!(lines[4].starts_with("4,99,,,,failed,"), "{}", lines[4]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

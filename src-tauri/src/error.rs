@@ -49,7 +49,7 @@ pub enum AppError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("sqlx error: {0}")]
+    #[error("sqlx error: {}", sqlx_message(.0))]
     Sqlx(#[from] sqlx::Error),
 
     #[error("serde error: {0}")]
@@ -291,11 +291,50 @@ impl Serialize for AppError {
     }
 }
 
+/// sqlx のエラー文言。PostgreSQL のサーバエラーについて次の 2 点を整える (#1627)。
+/// - sqlx の `Display` は末尾にサーバ**ソースコード**の行番号 (`at line 1244`) を足す。
+///   利用者の SQL の行とは無関係で、MySQL の `near '…' at line n` (文の行) と取り違えられるので外す。
+/// - 構文エラーなどが持つエラー位置 (`P` フィールド、元の文の 1 始まりの文字オフセット) を
+///   ` (position n)` として末尾に足す。出力タブの「エラー位置へ移動」が使う。内部生成クエリ側の
+///   位置 (`p`) は元の文のオフセットではないので載せない。
+///
+/// MySQL / SQLite の文言は変えない。
+pub fn sqlx_message(e: &sqlx::Error) -> String {
+    let base = e.to_string();
+    let Some(pg) = e
+        .as_database_error()
+        .and_then(|d| d.try_downcast_ref::<sqlx::postgres::PgDatabaseError>())
+    else {
+        return base;
+    };
+    let base = match pg.line() {
+        Some(line) => base
+            .strip_suffix(&format!(" at line {line}"))
+            .map(str::to_string)
+            .unwrap_or(base),
+        None => base,
+    };
+    match pg.position() {
+        Some(sqlx::postgres::PgErrorPosition::Original(n)) => format!("{base} (position {n})"),
+        _ => base,
+    }
+}
+
 pub type Result<T> = std::result::Result<T, AppError>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sqlx_message_leaves_non_postgres_errors_untouched() {
+        // 位置の付与と行番号の除去は PostgreSQL のサーバエラーだけ (#1627)。
+        let e = sqlx::Error::Protocol("boom at line 3".into());
+        assert_eq!(sqlx_message(&e), e.to_string());
+        assert!(!AppError::Sqlx(sqlx::Error::RowNotFound)
+            .to_string()
+            .contains("position"));
+    }
 
     #[test]
     fn io_errors_are_connection_lost() {

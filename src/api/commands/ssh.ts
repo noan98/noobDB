@@ -2,7 +2,7 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { ResolvedSshAlias, KnownHost } from "../tauri";
+import type { ImportScan, KnownHost, KnownHostEvent, ResolvedSshAlias } from "../tauri";
 
 export const sshCommands = {
   /**
@@ -28,6 +28,19 @@ export const sshCommands = {
    */
   trustHostKey: (host: string, port: number, fingerprint: string) =>
     invoke<void>("trust_host_key", { host, port, fingerprint }),
+  /** History of known_hosts trust / forget / import actions, newest first (#1630). */
+  listKnownHostsHistory: () =>
+    invoke<KnownHostEvent[]>("list_known_hosts_history").then((r) =>
+      parseResponse(schemas.knownHostEventArray, r, "list_known_hosts_history"),
+    ),
+  /** Read-only scan of the OpenSSH `~/.ssh/known_hosts` for import candidates (#1630). */
+  scanOpensshKnownHosts: () =>
+    invoke<ImportScan>("scan_openssh_known_hosts").then((r) =>
+      parseResponse(schemas.importScan, r, "scan_openssh_known_hosts"),
+    ),
+  /** Write the chosen OpenSSH entries into noobDB's known_hosts; resolves to the imported count (#1630). */
+  importKnownHosts: (entries: { host: string; port: number; fingerprint: string }[]) =>
+    invoke<number>("import_known_hosts", { entries }),
   /**
    * Resolve `HostName` / `Port` / `User` / `IdentityFile` / `ProxyJump` for
    * `alias` from the user's `~/.ssh/config`, for the connection form's "load

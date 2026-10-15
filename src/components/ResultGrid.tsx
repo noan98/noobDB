@@ -7178,6 +7178,15 @@ export const DataGrid = memo(function DataGrid({
                         void saveMany(rowIdxs);
                       },
                     },
+                    // 対応表 (manifest.csv: 行・主キー・保存ファイル名・サイズ・種別・結果) も書く (#1624)。
+                    {
+                      label: t("blobSaveManyWithManifest", { count: rowIdxs.length }),
+                      title: t("blobSaveManyWithManifestTitle"),
+                      onSelect: () => {
+                        setCopyMenu(null);
+                        void saveMany(rowIdxs, true);
+                      },
+                    },
                   ];
                 })(),
                 ...(blob.load
@@ -10210,6 +10219,7 @@ export const ResultGrid = memo(
               rows={result.rows}
               database={database ?? null}
               table={table ?? null}
+              primaryKey={tableColumns?.filter((c) => c.key === "PRI").map((c) => c.name)}
               driver={driver}
               partial={showAutoLimitBadge || !!canLoadMore || !!partialResult}
               stoppedPartial={!!partialResult}

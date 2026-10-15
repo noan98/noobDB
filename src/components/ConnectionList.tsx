@@ -43,7 +43,7 @@ import { useToast } from "./Toast";
 import { springs, transitions, variants } from "../motion";
 import { beginTabOpenFlight, useTabOpenFlightFor } from "../sharedElement";
 import { FlightIcon } from "./FlightIcon";
-import { semanticColorVar } from "../semanticColors";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
@@ -62,6 +62,18 @@ import {
   pickContextMenuOpenKeys,
   type ContextMenuTriggerEvent,
 } from "./contextMenuKeyboard";
+import { existingGroupNames } from "../profileGroup";
+import {
+  EMPTY_PROFILE_SELECTION,
+  isProfileSelected,
+  orderedSelectedProfileIds,
+  profileSelectionSize,
+  pruneProfileSelection,
+  rangeProfileSelection,
+  toggleProfileSelection,
+  type ProfileSelection,
+} from "../profileSelection";
+import { GroupNameModal } from "./GroupNameModal";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
@@ -329,6 +341,23 @@ interface Props {
   /** Close a specific background (or active) connection without reconnecting. */
   onDisconnectProfile?: (profileId: string) => void;
   /**
+   * アクティブ以外 (背景) の接続をまとめて切断する (#1630)。未確定トランザクションの確認は
+   * 呼び出し側が 1 回だけ行う。背景接続が無いときはメニュー項目を出さない。
+   */
+  onDisconnectBackground?: () => void;
+  /**
+   * 生存確認で切れていると分かった背景接続のプロファイル ID (#1630)。行に「切断」バッジを出し、
+   * 行のクリック / メニューの「再接続」で張り直す (`onConnect` が再接続を引き受ける)。
+   */
+  staleProfileIds?: ReadonlySet<string>;
+  /** 接続ごとの保存済みワークスペース (タブ) を確認・消去する画面を開く (#1630)。 */
+  onShowSavedTabs?: (profile: ConnectionProfile) => void;
+  /**
+   * 接続を別のグループへ移す (#1630)。`group = null` は未分類へ戻す。複数 ID は一括移動。
+   * 保存は呼び出し側 (既存の `save_profile` 流用) で、並び順は変えない。
+   */
+  onMoveProfilesToGroup?: (profileIds: string[], group: string | null) => void;
+  /**
    * Drag/keyboard reorder of connections (#786). Called with the new order of
    * every id present in the `profiles` prop (a true permutation of
    * `profiles.map(p => p.id)`) — the caller is responsible for embedding this
@@ -364,7 +393,7 @@ interface Props {
   /** DB スキーマを AI 向け Markdown としてエクスポートするモーダルを開く。 */
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
-  onInsertTableSelect: (database: string, table: string) => void;
+  onInsertTableSelect: (database: string, table: string, withColumns?: boolean) => void;
   /** テーブルの CREATE TABLE DDL を新しいクエリタブに表示する (#1001)。全ドライバ対応
    *  (`get_object_definition` の kind = "table")。読み取りのみなので read_only でも有効。 */
   onShowCreateTable?: (database: string, table: string) => void;
@@ -1873,6 +1902,10 @@ export const ConnectionList = memo(
       txProfileIds,
       onConnect,
       onDisconnectProfile,
+      onDisconnectBackground,
+      staleProfileIds,
+      onShowSavedTabs,
+      onMoveProfilesToGroup,
       onReorderProfiles,
       onCreate,
       onEdit,
@@ -1980,6 +2013,12 @@ export const ConnectionList = memo(
     // DB 一覧の初回読み込みに失敗した (スケルトンを出し続けず再試行行を出す)。
     const [schemaLoadFailed, setSchemaLoadFailed] = useState(false);
     const [menu, setMenu] = useState<MenuState | null>(null);
+    // 接続プロファイル行の複数選択 (#1630)。テーブルの複数選択 (#1399) と同じ操作モデル
+    // (Ctrl/Cmd+クリックで出し入れ、Shift+クリックで範囲)。行数は高々数百なので、外部ストアでは
+    // なく state で持つ。
+    const [profileSelection, setProfileSelection] = useState<ProfileSelection>(EMPTY_PROFILE_SELECTION);
+    // 「新しいグループ…」の入力モーダルの対象 (移す接続の ID)。
+    const [groupNameTarget, setGroupNameTarget] = useState<string[] | null>(null);
     // カラム行の詳細ホバーカード (`ColumnTooltip`)。単純テキストではないので
     // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
     // 遅延・「同時に見えるのは 1 つ」の登録簿・スクロール連動非表示を他の
@@ -2623,6 +2662,17 @@ export const ConnectionList = memo(
      *  their existing "activate the row" behavior. */
     const handleProfileRowKeyDown =
       (p: ConnectionProfile, siblingIds: string[]) => (e: React.KeyboardEvent<HTMLElement>) => {
+        // 複数選択 (#1630): Shift/Ctrl/Cmd+Space で行を選択に出し入れし、Esc で解除する。
+        if (e.key === " " && (e.shiftKey || e.ctrlKey || e.metaKey) && e.target === e.currentTarget) {
+          e.preventDefault();
+          setProfileSelection((sel) => toggleProfileSelection(sel, p.id));
+          return;
+        }
+        if (e.key === "Escape" && profileSelectionSize(profileSelection) > 0) {
+          e.preventDefault();
+          setProfileSelection(EMPTY_PROFILE_SELECTION);
+          return;
+        }
         if (e.key === "Enter" || e.key === " ") {
           // 行内のボタン (スキーマ更新など) から伝わったキーはボタンに任せる
           if (e.target !== e.currentTarget) return;
@@ -2707,18 +2757,127 @@ export const ConnectionList = memo(
       onConnect(p);
     };
 
+    /** いま画面に並んでいる接続の ID (表示順)。畳んだグループの中は含めない。範囲選択の基準 (#1630)。 */
+    const displayedProfileIds = (): string[] =>
+      grouped === null
+        ? visibleProfiles.map((pp) => pp.id)
+        : grouped.flatMap((g) =>
+            expandedGroups[g.name ?? "__ungrouped__"] !== false ? g.profiles.map((pp) => pp.id) : [],
+          );
+
+    // 行のクリック (#1630): Ctrl/Cmd で出し入れ、Shift で範囲。修飾なしは選択を解除してから従来どおり
+    // 接続 / 展開する。
+    const handleProfileRowClick = (e: React.MouseEvent, p: ConnectionProfile) => {
+      if (e.shiftKey) {
+        setProfileSelection((sel) =>
+          rangeProfileSelection(sel, displayedProfileIds(), p.id, e.ctrlKey || e.metaKey),
+        );
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        setProfileSelection((sel) => toggleProfileSelection(sel, p.id));
+        return;
+      }
+      if (profileSelectionSize(profileSelection) > 0) setProfileSelection(EMPTY_PROFILE_SELECTION);
+      handleProfileClick(p);
+    };
+
+    /** 接続を別グループへ移すサブメニュー (#1630)。`ids` は 1 件以上。 */
+    const groupMoveSubmenu = (
+      ids: string[],
+      currentGroup: string | null | undefined,
+    ): ContextMenuEntry | null => {
+      if (!onMoveProfilesToGroup) return null;
+      const others = existingGroupNames(profiles).filter((g) => g !== currentGroup);
+      const items: ContextMenuEntry[] = others.map((g) => ({
+        label: g,
+        onSelect: () => onMoveProfilesToGroup(ids, g),
+      }));
+      if (items.length > 0) items.push({ separator: true });
+      items.push({ label: t("contextMenuGroupNew"), onSelect: () => setGroupNameTarget(ids) });
+      // 全員が未分類なら「未分類へ戻す」は意味が無いので出さない。
+      const anyGrouped = ids.some((id) => profiles.find((pp) => pp.id === id)?.group);
+      if (anyGrouped) {
+        items.push({ label: t("contextMenuGroupNone"), onSelect: () => onMoveProfilesToGroup(ids, null) });
+      }
+      return {
+        label:
+          ids.length > 1 ? t("contextMenuGroupMoveMany", { count: ids.length }) : t("contextMenuGroupMove"),
+        items,
+      };
+    };
+
+    // 選択中の接続の一括メニュー (#1630): 一括削除 (確認付き) / グループ移動 / 選択解除。
+    const openBatchProfilesMenu = (e: ContextMenuTriggerEvent, ids: string[]) => {
+      const count = ids.length;
+      const items: ContextMenuEntry[] = [];
+      const move = groupMoveSubmenu(ids, undefined);
+      if (move) items.push(move);
+      items.push({
+        label: t("batchProfilesClearSelection"),
+        onSelect: () => setProfileSelection(EMPTY_PROFILE_SELECTION),
+      });
+      items.push(
+        { separator: true },
+        {
+          label: t("batchProfilesDelete", { count }),
+          danger: true,
+          onSelect: () => {
+            const targets = profiles.filter((pp) => ids.includes(pp.id));
+            void confirm({
+              title: t("batchProfilesDeleteTitle"),
+              message: t("batchProfilesDeleteConfirm", {
+                count: targets.length,
+                names: targets.map((pp) => pp.name).join(", "),
+              }),
+              confirmLabel: t("batchProfilesDelete", { count: targets.length }),
+              tone: "danger",
+            }).then((ok) => {
+              if (!ok) return;
+              for (const target of targets) onDelete(target);
+              setProfileSelection(EMPTY_PROFILE_SELECTION);
+            });
+          },
+        },
+      );
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    };
+
     const handleProfileContextMenu = (e: ContextMenuTriggerEvent, p: ConnectionProfile) => {
       e.preventDefault();
       e.stopPropagation();
+      // 選択中の接続の上なら一括メニュー。選択の外なら選択を取り直して単一メニュー (#1399 と同じ)。
+      if (profileSelectionSize(profileSelection) >= 2 && isProfileSelected(profileSelection, p.id)) {
+        openBatchProfilesMenu(e, orderedSelectedProfileIds(profileSelection, displayedProfileIds()));
+        return;
+      }
+      if (profileSelectionSize(profileSelection) > 0 && !isProfileSelected(profileSelection, p.id)) {
+        setProfileSelection(EMPTY_PROFILE_SELECTION);
+      }
+      const backgroundCount = Array.from(openProfileIds ?? []).filter((id) => id !== activeProfileId).length;
+      const groupMove = groupMoveSubmenu([p.id], p.group);
       setMenu({
         x: e.clientX,
         y: e.clientY,
         items: [
+          // 生存確認で切れていた背景接続は 1 クリックで張り直せる (#1630)。
+          ...(staleProfileIds?.has(p.id)
+            ? [{ label: t("contextMenuReconnectStale"), onSelect: () => onConnect(p) }]
+            : []),
           ...(onDisconnectProfile && openProfileIds?.has(p.id)
             ? [
                 {
                   label: t("contextMenuDisconnect"),
                   onSelect: () => onDisconnectProfile(p.id),
+                },
+              ]
+            : []),
+          // 背景の接続をまとめて切断 (#1630)。未確定 TX の確認は呼び出し側が 1 回だけ出す。
+          ...(onDisconnectBackground && backgroundCount > 0
+            ? [
+                {
+                  label: t("contextMenuDisconnectBackground", { count: backgroundCount }),
+                  onSelect: () => onDisconnectBackground(),
                 },
               ]
             : []),
@@ -2751,6 +2910,11 @@ export const ConnectionList = memo(
             : []),
           { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
           { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
+          ...(groupMove ? [groupMove] : []),
+          // 保存済みワークスペース (タブ) の確認・消去 (#1630)。
+          ...(onShowSavedTabs
+            ? [{ label: t("contextMenuSavedTabs"), onSelect: () => onShowSavedTabs(p) }]
+            : []),
           {
             label: t("contextMenuDelete"),
             danger: true,
@@ -2883,6 +3047,10 @@ export const ConnectionList = memo(
           onSelect: () => onRunTableSelect(db, tbl),
         },
         { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
+        {
+          label: t("contextMenuInsertSelectColumns"),
+          onSelect: () => onInsertTableSelect(db, tbl, true),
+        },
       );
       // デフォルトクエリ (#1253) は設定の保存だけなので read_only でも有効。
       if (onConfigureOpenQuery) {
@@ -3125,6 +3293,10 @@ export const ConnectionList = memo(
             onSelect: () => onRunTableSelect(db, name),
           },
           { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, name) },
+          {
+            label: t("contextMenuInsertSelectColumns"),
+            onSelect: () => onInsertTableSelect(db, name, true),
+          },
         );
       }
       if (onOpenObjectDefinition && asNode) {
@@ -3758,6 +3930,12 @@ export const ConnectionList = memo(
       return groups;
     }, [profiles, visibleProfiles, groupOrder]);
 
+    // 見えなくなった接続 (削除・検索で絞られた・グループを畳んだ) は選択から外す。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: displayedProfileIds は本体の関数で、依存は構造の変化を表す visibleProfiles / expandedGroups / grouped で足りる
+    useEffect(() => {
+      setProfileSelection((sel) => pruneProfileSelection(sel, displayedProfileIds()));
+    }, [visibleProfiles, expandedGroups, grouped]);
+
     // グループ見出しがある (`grouped !== null`) 場合、プロファイル行はグループ行の
     // 1 段下になるため、その配下 (DB/テーブル/カラム…) も `aria-level` が 1 段深くなる。
     const groupLevel = grouped !== null ? 1 : 0;
@@ -4020,6 +4198,8 @@ export const ConnectionList = memo(
       const profileTreeKey = `profile:${p.id}`;
       const isActive = p.id === activeProfileId;
       const isOpen = !!expandedProfiles[p.id];
+      const isSelected = isProfileSelected(profileSelection, p.id);
+      const isStale = !!staleProfileIds?.has(p.id) && !isActive;
       const status = profileStatus(p);
       const waitingForConnect = !!connectingId && connectingId !== p.id && activeProfileId !== p.id;
       const accent = normalizeChipColor(p.color) ?? undefined;
@@ -4045,6 +4225,8 @@ export const ConnectionList = memo(
         borderLeftColor = "transparent";
         rowBg = undefined;
       }
+      // 複数選択中の行 (#1630) は、本番 / アクティブより薄いアクセント色で塗る。
+      if (isSelected) rowBg = "color-mix(in srgb, var(--accent) 18%, transparent)";
       const subtitle =
         p.driver === "sqlite"
           ? p.file_path
@@ -4100,7 +4282,7 @@ export const ConnectionList = memo(
                 // ツールチップで理由 (接続中のため待機) を伝える。
                 aria-disabled={waitingForConnect ? true : undefined}
                 cursor={waitingForConnect ? "not-allowed" : undefined}
-                onClick={() => handleProfileClick(p)}
+                onClick={(e: React.MouseEvent) => handleProfileRowClick(e, p)}
                 onContextMenu={(e) => handleProfileContextMenu(e, p)}
                 onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
                 onFocus={onFocus}
@@ -4108,6 +4290,7 @@ export const ConnectionList = memo(
                 role="treeitem"
                 aria-level={groupLevel + 1}
                 aria-expanded={isOpen}
+                aria-selected={isSelected || undefined}
                 // 共有 `Tooltip` (#814) で単純に包むと、この行自体が `AnimatePresence`
                 // の直接の子として追跡される `Reorder.Item` (ドラッグ並べ替え #786) のため、
                 // `TabBar` の `MotionTab` と同じ理由で開閉/並べ替えアニメーションが壊れる
@@ -4173,6 +4356,20 @@ export const ConnectionList = memo(
                   readOnly={p.read_only}
                   inTransaction={txProfileIds?.has(p.id) ?? false}
                 />
+                {/* 生存確認で切れていた背景接続のバッジ (#1630)。行のクリックで再接続する。 */}
+                {isStale && (
+                  <Tooltip label={t("listStaleTooltip")} focusableWrapper>
+                    <TreeBadge
+                      color="app.textWarning"
+                      borderColor={semanticColorToken("warning", "border")}
+                      textTransform="none"
+                      letterSpacing="0"
+                      data-testid="profile-stale-badge"
+                    >
+                      {t("listStaleBadge")}
+                    </TreeBadge>
+                  </Tooltip>
+                )}
                 {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
@@ -4640,6 +4837,18 @@ export const ConnectionList = memo(
             )}
 
             {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+            {groupNameTarget && onMoveProfilesToGroup && (
+              <GroupNameModal
+                count={groupNameTarget.length}
+                existingGroups={existingGroupNames(profiles)}
+                onConfirm={(group) => {
+                  onMoveProfilesToGroup(groupNameTarget, group);
+                  setGroupNameTarget(null);
+                  setProfileSelection(EMPTY_PROFILE_SELECTION);
+                }}
+                onClose={() => setGroupNameTarget(null)}
+              />
+            )}
             {confirmDialog}
           </Flex>
         </SchemaCacheTimesContext.Provider>

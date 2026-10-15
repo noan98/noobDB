@@ -367,3 +367,49 @@ describe("ColumnProfilePanel 標本モード (#1628)", () => {
     expect(screen.queryByText(t("profileNoteSampled"))).not.toBeInTheDocument();
   });
 });
+
+describe("ColumnProfilePanel 全列概要の並べ替えと CSV 保存 (#1624)", () => {
+  const ovCol = (column: string, nulls: number, distinct: number) => ({
+    column,
+    data_type: "int",
+    non_null_count: 10 - nulls,
+    null_count: nulls,
+    distinct_count: distinct,
+    min_value: 1,
+    max_value: 9,
+    notes: [],
+  });
+
+  it("NULL 率の見出しで昇順 → 降順に並べ替わり、書き出しボタンが出る", async () => {
+    vi.mocked(api.profileColumn).mockResolvedValue({ notes: [], top_values: [], histogram: [] } as never);
+    vi.mocked(api.profileTable).mockResolvedValue({
+      table: "orders",
+      total_count: 10,
+      scans: 1,
+      distinct_approximate: false,
+      notes: [],
+      columns: [ovCol("a", 5, 2), ovCol("b", 0, 9), ovCol("c", 9, 1)],
+    });
+    renderWithProviders(
+      <ColumnProfilePanel
+        sessionId="s1"
+        driver="mysql"
+        target={{ database: "app", table: "orders", column: null }}
+        onSelectColumn={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByText(t("profileOverviewRun")));
+    const overview = await screen.findByTestId("profile-overview");
+    const order = () =>
+      Array.from(overview.querySelectorAll("tbody tr")).map((r) => r.querySelector("button")?.textContent);
+    expect(order()).toEqual(["a", "b", "c"]);
+    expect(screen.getByRole("button", { name: t("textExportButton") })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: t("profileNulls") }));
+    expect(order()).toEqual(["b", "a", "c"]);
+    fireEvent.click(screen.getByRole("button", { name: t("profileNulls") }));
+    expect(order()).toEqual(["c", "a", "b"]);
+    fireEvent.click(screen.getByRole("button", { name: t("profileNulls") }));
+    expect(order()).toEqual(["a", "b", "c"]);
+  });
+});

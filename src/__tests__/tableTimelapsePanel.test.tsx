@@ -102,6 +102,19 @@ describe("TableTimelapsePanel (#739)", () => {
     expect(screen.getByText("300").closest("tr")).toHaveAttribute("data-kind", "added");
   });
 
+  it("再現用 DML ボタンでプレビューを開き、既定は巻き戻し SQL (実行はしない) (#1624)", async () => {
+    vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
+    vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole("button", { name: t("timelapseDmlButton") }));
+    const preview = await screen.findByLabelText(t("timelapseDmlPreviewAria"));
+    expect(preview.textContent).toContain("UPDATE `app`.`fees` SET `price` = 100 WHERE `id` = 1;");
+    expect(preview.textContent).toContain("DELETE FROM `app`.`fees` WHERE `id` = 3;");
+    fireEvent.change(screen.getByLabelText(t("timelapseDmlDirection")), { target: { value: "forward" } });
+    expect(preview.textContent).toContain("INSERT INTO `app`.`fees` (`id`, `price`) VALUES (3, 300);");
+  });
+
   it("差分行の履歴ボタンで、その行の世代横断の推移を表示する (#1621)", async () => {
     vi.mocked(api.timelapseListWatches).mockResolvedValue([watch()]);
     vi.mocked(api.timelapseDiffGenerations).mockResolvedValue(genDiff());

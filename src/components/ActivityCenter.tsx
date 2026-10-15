@@ -16,11 +16,12 @@ import {
   countBySeverity,
   countUnread,
   filterActivity,
+  searchActivity,
   markActivityRead,
   useActivityLog,
   type ActivitySeverity,
 } from "../activityLog";
-import { FilterChip, SEVERITY_LABEL, SeverityLogRow } from "./SeverityLog";
+import { FilterChip, LogSearchInput, SEVERITY_LABEL, SeverityLogRow } from "./SeverityLog";
 
 /**
  * アプリ内アクティビティ (通知センター、#912)。
@@ -87,6 +88,7 @@ function ActivityPanel({
   const { entries } = useActivityLog();
   const panelRef = useRef<HTMLDivElement | null>(null);
   const [severity, setSeverity] = useState<ActivitySeverity | null>(null);
+  const [query, setQuery] = useState("");
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   // 相対時刻は開いた時点で固定する (開きっぱなしで秒刻みに再描画しない)。
   const [now] = useState(() => Date.now());
@@ -103,8 +105,9 @@ function ActivityPanel({
     panelRef.current?.focus();
   }, []);
 
-  const counts = useMemo(() => countBySeverity(entries), [entries]);
-  const shown = useMemo(() => filterActivity(entries, severity), [entries, severity]);
+  const searched = useMemo(() => searchActivity(entries, query), [entries, query]);
+  const counts = useMemo(() => countBySeverity(searched), [searched]);
+  const shown = useMemo(() => filterActivity(entries, severity, query), [entries, severity, query]);
 
   // アンカー (ベルボタン) の直下にビューポート内へクランプして配置する
   // (`ColumnStatsMenu` / `ColumnFilterMenu` と同じ方式)。
@@ -246,9 +249,10 @@ function ActivityPanel({
           role="group"
           aria-label={t("activityFilterAria")}
         >
+          <LogSearchInput value={query} onChange={setQuery} flex="1 1 100%" />
           <FilterChip
             label={t("activityFilterAll")}
-            count={entries.length}
+            count={searched.length}
             active={severity === null}
             onClick={() => setSeverity(null)}
           />

@@ -252,6 +252,7 @@ async fn retained_rows_answer_sort_filter_find_and_export_like_the_database() {
         batch_size: None,
         masks: None,
         ddl_header: None,
+        sql_conflict: None,
     };
     let via_handle = t::render_export_text_inner(&state, request(vec![], Some("r1".into())))
         .await

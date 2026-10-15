@@ -67,3 +67,13 @@ describe("defaultBackupFileName (#710)", () => {
     expect(BACKUP_FILE_EXTENSION).toBe("noobdb-backup");
   });
 });
+
+describe("clampKeepGenerations (#1624)", () => {
+  it("範囲 2〜50 に収め、数でない値は既定値にする", async () => {
+    const { clampKeepGenerations, DEFAULT_KEEP_GENERATIONS } = await import("../components/profileBackup");
+    expect(clampKeepGenerations(1)).toBe(2);
+    expect(clampKeepGenerations(7.9)).toBe(7);
+    expect(clampKeepGenerations(1000)).toBe(50);
+    expect(clampKeepGenerations(Number.NaN)).toBe(DEFAULT_KEEP_GENERATIONS);
+  });
+});

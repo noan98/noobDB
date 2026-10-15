@@ -120,6 +120,8 @@ pub mod __test_api {
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
+    pub use crate::ssh::known_hosts_history::{KnownHostAction, KnownHostEvent};
+    pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -265,7 +267,7 @@ pub mod __test_api {
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
-    pub use crate::commands::file::SqlFileContent;
+    pub use crate::commands::file::{SqlEncodingPreview, SqlFileContent};
     pub use crate::commands::import::{
         ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
         ImportStartedEvent, SheetImportResult, SkippedRowInfo,
@@ -280,7 +282,7 @@ pub mod __test_api {
     };
     pub use crate::db::script_analysis::ScriptAnalysis;
     pub use crate::db::tx_options::{TxIsolation, TxOptions};
-    pub use crate::text_encoding::TextEncoding;
+    pub use crate::text_encoding::{EncodingPreview, TextEncoding};
 
     /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
     /// フロント `analyzeDangerousSql` の `DangerKind` と同じ文字列で、共有ゴールデン
@@ -454,7 +456,38 @@ pub mod __test_api {
         Ok(buf)
     }
 
-    pub use crate::commands::export::{ExportFormat, ExportResult, ExportTruncation};
+    /// SQL 形式を衝突時の書き方付きでメモリへ書き出す (UPSERT, #1624)。共有ゴールデンの
+    /// `conflictCases` を実ファイル出力と同じ `write_export_to` で検証するためのもの。
+    pub fn export_sql_with_conflict(
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        driver: DriverKind,
+        table: &str,
+        batch_size: usize,
+        conflict: SqlConflict,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(
+            Some(driver),
+            Some(table.to_string()),
+            Some(batch_size),
+        )
+        .with_conflict(Some(conflict));
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(
+            &mut buf,
+            crate::commands::export::ExportFormat::Sql,
+            columns,
+            rows,
+            None,
+            &opts,
+            None,
+        )?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::{
+        ExportFormat, ExportResult, ExportTruncation, SqlConflict, SqlConflictMode,
+    };
 
     /// xlsx エクスポートで 1 つの値がどのセルになるかを文字列で表す (#711)。
     /// 書き出し ([`crate::commands::export_xlsx::XlsxSheetWriter`]) が従う判定
@@ -532,6 +565,30 @@ pub mod __test_api {
             health_version: Default::default(),
             inspector: Default::default(),
         }
+    }
+
+    /// 複数の SELECT を 1 つの xlsx ブックへ書き出す (`export_tables_xlsx` の中核, #1624)。
+    /// `sheets` は `(シート名の元, SELECT 文)`。書き出したバイト数と全シート通算の行数を返す。
+    pub async fn export_workbook_via_command(
+        session: &Session,
+        sheets: &[(&str, &str)],
+        path: &str,
+    ) -> crate::error::Result<(u64, u64)> {
+        let prepared = sheets
+            .iter()
+            .map(|(name, sql)| crate::commands::export::PreparedSheet::for_test(name, sql))
+            .collect();
+        let outcome = crate::commands::export::run_export_workbook(
+            session,
+            None,
+            prepared,
+            path,
+            100,
+            100,
+            |_| {},
+        )
+        .await?;
+        Ok((outcome.bytes, outcome.rows))
     }
 
     /// Drives the `set_emergency_mode` IPC command's core path (session lookup
@@ -727,7 +784,24 @@ pub mod __test_api {
         let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
             .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
         crate::commands::cell_blob::save_cells_to_folder_inner(
-            session, database, table, column, &keys, folder,
+            session, database, table, column, &keys, folder, false,
+        )
+        .await
+    }
+
+    /// [`save_cells_to_folder_via_session`] の対応表 (`manifest.csv`) 付き版 (#1624)。
+    pub async fn save_cells_to_folder_with_manifest_via_session(
+        session: &Session,
+        database: Option<&str>,
+        table: &str,
+        column: &str,
+        keys: serde_json::Value,
+        folder: &str,
+    ) -> crate::error::Result<crate::commands::cell_blob::BlobFolderSaveResult> {
+        let keys: Vec<Vec<crate::commands::cell_blob::CellKeyPart>> = serde_json::from_value(keys)
+            .map_err(|e| crate::error::AppError::InvalidInput(e.to_string()))?;
+        crate::commands::cell_blob::save_cells_to_folder_inner(
+            session, database, table, column, &keys, folder, true,
         )
         .await
     }
@@ -1416,6 +1490,9 @@ pub fn run() {
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
             commands::ssh::resolve_ssh_config_host,
+            commands::ssh::list_known_hosts_history,
+            commands::ssh::scan_openssh_known_hosts,
+            commands::ssh::import_known_hosts,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
@@ -1519,6 +1596,7 @@ pub fn run() {
             commands::history::get_history_sqls,
             commands::history::list_history_sql,
             commands::history::clear_history,
+            commands::history::delete_history_entries,
             commands::history::get_history_retention_days,
             commands::history::set_history_retention_days,
             commands::flight_recorder::list_flight_records,
@@ -1558,6 +1636,7 @@ pub fn run() {
             commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
+            commands::export::export_tables_xlsx,
             commands::export::mask_export_rows,
             commands::result::result_sort_filter,
             commands::result::result_find,
@@ -1584,6 +1663,7 @@ pub fn run() {
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,
+            commands::file::preview_sql_file_encodings,
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,

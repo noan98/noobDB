@@ -115,6 +115,10 @@ pub struct SshProfile {
     /// saved before this field existed (single-hop, unchanged behavior).
     #[serde(default)]
     pub jump: Option<SshJumpProfile>,
+    /// トンネルのローカル待受ポートの固定値 (#1630)。`None` / 0 は従来どおり OS 任せの
+    /// 自動割当。IDE・外部クライアントが接続先ポートを固定で持てるようにする。
+    #[serde(default)]
+    pub local_port: Option<u16>,
 }
 
 /// The bastion/jump hop of a 2-hop SSH tunnel (#708). Structurally the same

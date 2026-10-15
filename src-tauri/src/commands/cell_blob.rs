@@ -453,6 +453,65 @@ pub struct BlobFolderSaveResult {
     pub failed: u32,
     /// 失敗した行の理由 (先頭 20 件まで)。
     pub errors: Vec<BlobFolderIssue>,
+    /// 対応表 (CSV) を書いたときのファイル名 (フォルダ内の名前)。書かなかったときは `None` (#1624)。
+    pub manifest_file: Option<String>,
+}
+
+/// 対応表 (`manifest.csv`) の 1 行ぶん (#1624)。保存の成否にかかわらず 1 行ずつ作る。
+struct ManifestRow {
+    key: Vec<String>,
+    file: Option<String>,
+    bytes: Option<u64>,
+    mime: Option<String>,
+    status: &'static str,
+    error: Option<String>,
+}
+
+/// 主キーの値を対応表のセルに出す文字列にする (ファイル名用の置換はしない)。
+fn manifest_key_text(v: &Value) -> String {
+    match v {
+        Value::Null => String::new(),
+        Value::Int(n) => n.to_string(),
+        Value::UInt(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::String(s) => s.clone(),
+        Value::Bytes(h) => format!("0x{h}"),
+    }
+}
+
+/// 対応表を CSV 本文にする (純関数)。ヘッダは `row`、主キー列ごとの `key_<列名>`、`file`、
+/// `bytes`、`mime`、`status`、`error`。エスケープと数式の無害化は CSV エクスポートと同じ。
+fn render_manifest(key_columns: &[String], rows: &[ManifestRow]) -> String {
+    use crate::commands::export::csv_field;
+    let mut out = String::new();
+    let mut header: Vec<String> = vec!["row".into()];
+    header.extend(key_columns.iter().map(|c| format!("key_{c}")));
+    header.extend(
+        ["file", "bytes", "mime", "status", "error"]
+            .iter()
+            .map(|s| s.to_string()),
+    );
+    out.push_str(
+        &header
+            .iter()
+            .map(|h| csv_field(h).into_owned())
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    out.push_str("\r\n");
+    for (i, r) in rows.iter().enumerate() {
+        let mut cells: Vec<String> = vec![(i + 1).to_string()];
+        cells.extend(r.key.iter().map(|k| csv_field(k).into_owned()));
+        cells.push(csv_field(r.file.as_deref().unwrap_or("")).into_owned());
+        cells.push(r.bytes.map(|b| b.to_string()).unwrap_or_default());
+        cells.push(csv_field(r.mime.as_deref().unwrap_or("")).into_owned());
+        cells.push(r.status.to_string());
+        cells.push(csv_field(r.error.as_deref().unwrap_or("")).into_owned());
+        out.push_str(&cells.join(","));
+        out.push_str("\r\n");
+    }
+    out
 }
 
 /// 失敗理由として返す件数の上限 (IPC を肥大させない)。
@@ -569,6 +628,7 @@ async fn create_unique_file(
 /// 既存のファイルは上書きせず `_2` などを付ける。1 行の失敗で全体は止めず、件数と
 /// 先頭の失敗理由を返す。読み取りの SELECT だけなので read_only セッションでも使える。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri コマンドの引数は IPC の形そのもので、まとめられない
 pub async fn save_cells_to_folder(
     session_id: String,
     database: Option<String>,
@@ -576,6 +636,8 @@ pub async fn save_cells_to_folder(
     column: String,
     keys: Vec<Vec<CellKeyPart>>,
     folder: String,
+    // true なら保存先に対応表 (`manifest.csv`: 行・主キー・保存ファイル名・サイズ・種別・結果) も書く (#1624)。
+    write_manifest: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<BlobFolderSaveResult> {
     let session = state
@@ -589,6 +651,7 @@ pub async fn save_cells_to_folder(
         &column,
         &keys,
         &folder,
+        write_manifest.unwrap_or(false),
     )
     .await
 }
@@ -601,6 +664,7 @@ pub(crate) async fn save_cells_to_folder_inner(
     column: &str,
     keys: &[Vec<CellKeyPart>],
     folder: &str,
+    write_manifest: bool,
 ) -> Result<BlobFolderSaveResult> {
     if folder.trim().is_empty() {
         return Err(AppError::InvalidInput("destination folder is empty".into()));
@@ -626,6 +690,7 @@ pub(crate) async fn save_cells_to_folder_inner(
     }
     let mut result = BlobFolderSaveResult::default();
     let mut used = std::collections::HashSet::new();
+    let mut manifest: Vec<ManifestRow> = Vec::new();
     let report = |result: &mut BlobFolderSaveResult, row: usize, error: String| {
         result.failed += 1;
         if result.errors.len() < MAX_REPORTED_ERRORS {
@@ -636,28 +701,47 @@ pub(crate) async fn save_cells_to_folder_inner(
         }
     };
     for (i, key) in keys.iter().enumerate() {
+        let mut entry = ManifestRow {
+            key: key.iter().map(|p| manifest_key_text(&p.value)).collect(),
+            file: None,
+            bytes: None,
+            mime: None,
+            status: "failed",
+            error: None,
+        };
         // probe と本体を 1 往復で取る (#1609)。1 行あたり 2 往復だったものを 1 往復にする。
         let (probe, bytes) = match fetch_probe_and_body(session, database, table, column, key).await
         {
             Ok(Some((p, _))) if p.size > MAX_CELL_BLOB_BYTES as u64 => {
                 result.skipped_too_large += 1;
+                entry.status = "skipped_too_large";
+                entry.bytes = Some(p.size);
+                entry.mime = p.mime.clone();
+                manifest.push(entry);
                 continue;
             }
             Ok(Some((p, Some(b)))) => (p, b),
             Ok(Some((_, None))) | Ok(None) => {
                 result.skipped_null += 1;
+                entry.status = "skipped_null";
+                manifest.push(entry);
                 continue;
             }
             Err(e) => {
+                entry.error = Some(e.to_string());
+                manifest.push(entry);
                 report(&mut result, i, e.to_string());
                 continue;
             }
         };
+        entry.mime = probe.mime.clone();
         let stem = blob_file_stem(key, i + 1);
         let ext = probe.ext.as_deref().unwrap_or("bin");
         let (mut file, path) = match create_unique_file(dir, &stem, ext, &mut used).await {
             Ok(v) => v,
             Err(e) => {
+                entry.error = Some(e.to_string());
+                manifest.push(entry);
                 report(&mut result, i, e.to_string());
                 continue;
             }
@@ -672,13 +756,39 @@ pub(crate) async fn save_cells_to_folder_inner(
             Ok(()) => {
                 result.saved += 1;
                 result.total_bytes += bytes.len() as u64;
+                entry.status = "saved";
+                entry.bytes = Some(bytes.len() as u64);
+                entry.file = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                manifest.push(entry);
             }
             Err(e) => {
                 // 書きかけのファイルは残さない。
                 let _ = tokio::fs::remove_file(&path).await;
+                entry.error = Some(e.to_string());
+                manifest.push(entry);
                 report(&mut result, i, e.to_string());
             }
         }
+    }
+    if write_manifest {
+        // 対応表は BLOB と同じ規則で未使用の名前に書く (既存ファイルは上書きしない)。
+        let key_columns: Vec<String> = keys
+            .first()
+            .map(|k| k.iter().map(|p| p.column.clone()).collect())
+            .unwrap_or_default();
+        let body = render_manifest(&key_columns, &manifest);
+        let (mut file, path) = create_unique_file(dir, "manifest", "csv", &mut used).await?;
+        use tokio::io::AsyncWriteExt;
+        let written = match file.write_all(body.as_bytes()).await {
+            Ok(()) => file.flush().await,
+            Err(e) => Err(e),
+        };
+        drop(file);
+        if let Err(e) = written {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(e.into());
+        }
+        result.manifest_file = path.file_name().map(|n| n.to_string_lossy().into_owned());
     }
     Ok(result)
 }
@@ -952,6 +1062,44 @@ mod tests {
             .is_none());
         assert!(interpret_probe_row(vec![Value::Int(1)]).is_err());
         assert!(interpret_probe_row(vec![Value::Float(1.5), Value::Null]).is_err());
+    }
+
+    #[test]
+    fn manifest_lists_every_row_with_escaped_cells() {
+        let rows = vec![
+            ManifestRow {
+                key: vec!["1".into()],
+                file: Some("1.png".into()),
+                bytes: Some(10),
+                mime: Some("image/png".into()),
+                status: "saved",
+                error: None,
+            },
+            ManifestRow {
+                key: vec!["=SUM(A1)".into()],
+                file: None,
+                bytes: None,
+                mime: None,
+                status: "failed",
+                error: Some("boom, \"bad\"".into()),
+            },
+            ManifestRow {
+                key: vec!["3".into()],
+                file: None,
+                bytes: None,
+                mime: None,
+                status: "skipped_null",
+                error: None,
+            },
+        ];
+        let csv = render_manifest(&["id".to_string()], &rows);
+        let lines: Vec<&str> = csv.split("\r\n").collect();
+        assert_eq!(lines[0], "row,key_id,file,bytes,mime,status,error");
+        assert_eq!(lines[1], "1,1,1.png,10,image/png,saved,");
+        // 数式の先頭文字は無害化され、カンマ・引用符を含むセルはクオートされる。
+        assert_eq!(lines[2], "2,'=SUM(A1),,,,failed,\"boom, \"\"bad\"\"\"");
+        assert_eq!(lines[3], "3,3,,,,skipped_null,");
+        assert_eq!(lines[4], "");
     }
 
     #[test]

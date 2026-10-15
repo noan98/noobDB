@@ -5,6 +5,8 @@ use crate::history::HistoryEntry;
 /// Default page size when the caller doesn't specify one.
 const DEFAULT_LIMIT: i64 = 200;
 const MAX_LIMIT: i64 = 1000;
+/// `delete_history_entries` が 1 回で受ける id の上限。
+const MAX_DELETE_IDS: usize = 10_000;
 
 /// `status` filters to `"ok"`/`"error"` exactly; `from`/`to` are RFC3339
 /// timestamp bounds (inclusive). All three are `None`-by-default and
@@ -39,6 +41,19 @@ pub async fn list_history(
 #[tauri::command]
 pub async fn clear_history(profile_id: Option<String>) -> Result<u64> {
     store::clear(profile_id.as_deref()).await
+}
+
+/// 履歴の指定 id の行だけを削除し、消えた件数を返す (#1627)。一覧で Shift / Ctrl クリックで選んだ
+/// 行や、絞り込み結果として表示中の行を消す一括削除。`clear_history` (プロファイル単位の全消し)
+/// と違い、削除範囲を呼び出し側が id で明示する。存在しない id は無視する。
+#[tauri::command]
+pub async fn delete_history_entries(ids: Vec<i64>) -> Result<u64> {
+    if ids.len() > MAX_DELETE_IDS {
+        return Err(AppError::InvalidInput(format!(
+            "too many history entries to delete at once (limit {MAX_DELETE_IDS})"
+        )));
+    }
+    store::delete_ids(&ids).await
 }
 
 /// 履歴 1 件の SQL 全文を返す (#1256)。一覧 (`list_history`) は要約 (`sql_preview`) と

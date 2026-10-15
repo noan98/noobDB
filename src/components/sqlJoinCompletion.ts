@@ -129,10 +129,20 @@ export function quoteIfNeeded(driver: string, name: string): string {
 
 function parseRefs(masked: string): TableRef[] {
   const refs: TableRef[] = [];
-  const re = new RegExp(`\\b(?:FROM|JOIN)\\s+${REF}`, "gi");
+  const re = new RegExp(`\\b(FROM|JOIN)\\s+${REF}`, "gi");
   for (const m of masked.matchAll(re)) {
-    const table = lastPart(m[1]);
-    refs.push({ table, key: m[2] ?? m[1] });
+    refs.push({ table: lastPart(m[2]), key: m[3] ?? m[2] });
+    // `FROM a x, b y` のカンマ区切りで続く参照も拾う (#1627)。JOIN の後ろのカンマは対象外。
+    if (m[1].toUpperCase() !== "FROM") continue;
+    const comma = new RegExp(`\\s*,\\s*${REF}`, "iy");
+    let pos = m.index + m[0].length;
+    for (;;) {
+      comma.lastIndex = pos;
+      const c = comma.exec(masked);
+      if (!c) break;
+      refs.push({ table: lastPart(c[1]), key: c[2] ?? c[1] });
+      pos = comma.lastIndex;
+    }
   }
   return refs;
 }

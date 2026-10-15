@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor, fireEvent } from "./testUtils";
+import { renderWithProviders, screen, waitFor, fireEvent, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { HistoryEntry } from "../api/tauri";
@@ -11,6 +11,7 @@ import type { HistoryEntry } from "../api/tauri";
 const listHistory = vi.fn().mockResolvedValue([]);
 // 一覧は要約 (sql_preview) しか持たず、全文は getHistorySql で必要時に取る (#1256)。
 const getHistorySql = vi.fn();
+const deleteHistoryEntries = vi.fn();
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
   return {
@@ -19,6 +20,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       ...actual.api,
       listHistory: (...args: unknown[]) => listHistory(...args),
       getHistorySql: (...args: unknown[]) => getHistorySql(...args),
+      deleteHistoryEntries: (...args: unknown[]) => deleteHistoryEntries(...args),
     },
   };
 });
@@ -49,6 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   listHistory.mockResolvedValue([]);
   getHistorySql.mockReset();
+  deleteHistoryEntries.mockReset();
 });
 
 describe("HistoryList render smoke (#604)", () => {
@@ -326,5 +329,96 @@ describe("HistoryList の実行時間フィルタ (#1541)", () => {
     expect(order()).toHaveLength(2);
     // listHistory の引数は変えない (クライアント側だけで処理する)。
     expect(listHistory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("HistoryList の一括削除 (#1627)", () => {
+  const rows = () => [
+    makeHistoryEntry({ id: 3, sql_preview: "SELECT c", status: "error" }),
+    makeHistoryEntry({ id: 2, sql_preview: "SELECT b" }),
+    makeHistoryEntry({ id: 1, sql_preview: "SELECT a", status: "error" }),
+  ];
+  const renderList = () =>
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={vi.fn()}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+
+  it("Shift クリックで範囲選択、Ctrl クリックで入れ替え。通常クリックは復元のまま", async () => {
+    listHistory.mockResolvedValue(rows());
+    const onRestore = vi.fn();
+    renderWithProviders(
+      <HistoryList
+        activeProfile={makeProfile()}
+        sessionId={null}
+        reloadKey={0}
+        onRestore={onRestore}
+        onOpenInNewTab={() => {}}
+      />,
+    );
+    await screen.findByText("SELECT c");
+    const items = () => screen.getAllByRole("treeitem");
+    fireEvent.click(items()[0], { ctrlKey: true });
+    fireEvent.click(items()[2], { shiftKey: true });
+    expect(screen.getByRole("status")).toHaveTextContent(t("historySelectedCount", { count: 3 }));
+    expect(items().map((n) => n.getAttribute("aria-selected"))).toEqual(["true", "true", "true"]);
+    fireEvent.click(items()[1], { ctrlKey: true });
+    expect(screen.getByRole("status")).toHaveTextContent(t("historySelectedCount", { count: 2 }));
+    expect(getHistorySql).not.toHaveBeenCalled();
+    expect(onRestore).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: t("historySelectionClear") }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("選択を削除すると、確認のうえ選んだ id だけを渡して一覧を取り直す", async () => {
+    listHistory.mockResolvedValue(rows());
+    deleteHistoryEntries.mockResolvedValue(2);
+    renderList();
+    await screen.findByText("SELECT c");
+    const items = () => screen.getAllByRole("treeitem");
+    fireEvent.click(items()[0], { ctrlKey: true });
+    fireEvent.click(items()[2], { ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: t("historyDeleteSelected") }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("historyDeleteConfirmLabel", { count: 2 }) }),
+    );
+    await waitFor(() => expect(deleteHistoryEntries).toHaveBeenCalledWith([3, 1]));
+    await waitFor(() => expect(listHistory).toHaveBeenCalledTimes(2));
+  });
+
+  it("絞り込み中だけ「表示中を削除」が出て、表示中の行の id を渡す", async () => {
+    listHistory.mockResolvedValue(rows());
+    deleteHistoryEntries.mockResolvedValue(3);
+    renderList();
+    await screen.findByText("SELECT c");
+    // 絞り込みなしでは出ない。
+    expect(screen.queryByRole("button", { name: t("historyDeleteShownCount", { count: 3 }) })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: t("historyStatusFilterError") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("historyDeleteShownCount", { count: 3 }) }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("historyDeleteConfirmLabel", { count: 3 }) }),
+    );
+    await waitFor(() => expect(deleteHistoryEntries).toHaveBeenCalledWith([3, 2, 1]));
+  });
+
+  it("削除の確認をキャンセルしたら何も消さない", async () => {
+    listHistory.mockResolvedValue(rows());
+    renderList();
+    await screen.findByText("SELECT c");
+    fireEvent.click(screen.getAllByRole("treeitem")[0], { ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: t("historyDeleteSelected") }));
+    const dialog = await screen.findByRole("dialog");
+    // 見出しの閉じるボタンと同名のため、フッタ側 (末尾) を押す。
+    fireEvent.click(
+      within(dialog)
+        .getAllByRole("button", { name: t("confirmDefaultCancel") })
+        .at(-1) as HTMLElement,
+    );
+    expect(deleteHistoryEntries).not.toHaveBeenCalled();
   });
 });

@@ -125,6 +125,50 @@ export function comparePlanSummaries(before: PlanSummary, after: PlanSummary): P
   };
 }
 
+/** Markdown 化に渡す指標 1 行 (表示用に整形済みの文字列)。 */
+export interface PlanCompareMdMetric {
+  label: string;
+  before: string;
+  after: string;
+  /** 差分。無い指標は "—"。 */
+  delta: string;
+}
+
+export interface PlanCompareMdInput {
+  title: string;
+  verdict: string;
+  /** [指標, 前, 後, 差分] の見出し。 */
+  headers: [string, string, string, string];
+  metrics: readonly PlanCompareMdMetric[];
+  changesHeading: string;
+  /** 変化点の説明文 (整形済み)。空なら noChanges を出す。 */
+  changes: readonly string[];
+  noChanges: string;
+}
+
+/** Markdown 表のセルで壊れる文字 (`|` と改行) を無害化する。 */
+function mdCell(s: string): string {
+  // `\` を先に二重化しないと、既存の `\` が後段の `\|` の区切りを打ち消してしまう。
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+/**
+ * 計画比較の要約表・変化点・判定文を Markdown にまとめる (#1624)。2 面表示の計画本体は含めず、
+ * 数値と変化点だけ (PR / Issue に貼ってチューニングの経緯を共有する用途)。
+ */
+export function planCompareMarkdown(input: PlanCompareMdInput): string {
+  const lines: string[] = [`## ${input.title}`, "", input.verdict, ""];
+  lines.push(`| ${input.headers.map(mdCell).join(" | ")} |`);
+  lines.push("| --- | ---: | ---: | ---: |");
+  for (const m of input.metrics) {
+    lines.push(`| ${[m.label, m.before, m.after, m.delta].map(mdCell).join(" | ")} |`);
+  }
+  lines.push("", `### ${input.changesHeading}`, "");
+  if (input.changes.length === 0) lines.push(input.noChanges);
+  else for (const c of input.changes) lines.push(`- ${c.replace(/\r?\n/g, " ")}`);
+  return lines.join("\n") + "\n";
+}
+
 /** 変化の種別 → 説明文の i18n キー (実行計画ウォッチと同じ文言を使う)。 */
 export const PLAN_CHANGE_I18N_KEY: Record<PlanChange["kind"], I18nKey> = {
   access: "planWatchChangeAccess",
