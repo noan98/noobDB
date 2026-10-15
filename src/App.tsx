@@ -116,6 +116,7 @@ import { TabPaneStore } from "./tabPaneStore";
 import {
   PaneView,
   PaneEmpty,
+  tableExactRowCount,
   tableTotalPagesEstimate,
   incomingFkCacheKey,
   type PaneEnv,
@@ -234,6 +235,8 @@ import { isMruRecordable, singleLine, type CommandItem } from "./components/comm
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
 );
+/** 正確な件数を数える COUNT(*) の打ち切り秒数 (#1627)。巨大テーブルで画面が待ち続けないための上限。 */
+const EXACT_COUNT_TIMEOUT_SECS = 120;
 const HistorySearchModal = lazy(() =>
   import("./components/HistorySearchModal").then((m) => ({ default: m.HistorySearchModal })),
 );
@@ -500,7 +503,17 @@ import { reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { formatElapsed } from "./queryRunState";
-import { buildPageSql, canGoNext, canGoPrev, clampPage, effectiveTotalPages } from "./pagination";
+import {
+  buildCountSql,
+  buildPageSql,
+  canGoNext,
+  canGoPrev,
+  clampPage,
+  effectiveTotalPages,
+  exactCountKey,
+  parseCountCell,
+  type ExactRowCount,
+} from "./pagination";
 import {
   buildKeysetPageSql,
   keysetMoveFor,
@@ -878,6 +891,13 @@ export interface Tab {
    * `table_row_estimates` から取得して設定する。未取得/不明なら null/undefined。
    */
   rowEstimateTotal?: number | null;
+  /**
+   * 「正確な件数を数える」(#1627) で数え終えた件数。`key` (ベース SQL + サーバ側フィルタ) が
+   * 今の条件と一致する間だけ総ページ数・最終ページの判定に使う。In-memory only。
+   */
+  exactRowCount?: ExactRowCount | null;
+  /** 正確な件数を数えている最中。二重実行の防止とボタンの待機表示に使う。 */
+  countingRows?: boolean;
   /**
    * サーバ側ソート (#792): table タブのヘッダーメニューから適用した全件ソート。
    * `paginatable` base SQL への注入 (`applyServerBrowse`) と再フェッチは
@@ -5448,14 +5468,21 @@ export default function App() {
           : (tab.serverFilter ?? null);
       const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
       const estimatedTotal = tableTotalPagesEstimate(
-        { serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal },
+        {
+          serverFilter: nextFilter,
+          rowEstimateTotal: tab.rowEstimateTotal,
+          paginatable: tab.paginatable,
+          exactRowCount: tab.exactRowCount,
+        },
         pageSize,
       );
+      const totalIsExact = tableExactRowCount({ ...tab, serverFilter: nextFilter }) != null;
       // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
       const total = effectiveTotalPages(
         estimatedTotal,
         tab.page ?? 1,
         (tab.result?.rows.length ?? 0) >= pageSize,
+        totalIsExact,
       );
       const target = clampPage(page, total);
       if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
@@ -5574,6 +5601,45 @@ export default function App() {
       void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
     },
     [goToPageInTab],
+  );
+
+  // 正確な総件数 (#1627)。PaginationBar の「正確な件数を数える」を押したときだけ、現在の
+  // 表示条件 (ベース SQL + サーバ側フィルタ、ソートなし) を COUNT(*) で数える。自動では
+  // 実行しない。読み取り専用の裏方クエリ (`run_lookup_query`) なのでクエリ履歴・出力ログを
+  // 汚さず、read_only セッションでも通る。結果は条件キー付きで保持し、条件が変われば無効。
+  const countExactRowsInTab = useCallback(
+    async (tabId: string) => {
+      if (!sessionId) return;
+      const tab = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab || tab.kind !== "table" || !tab.paginatable || tab.countingRows) return;
+      const base = tab.paginatable;
+      const filter = tab.serverFilter ?? null;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const sql = buildCountSql(
+        applyServerBrowse(base, driver, filter, null, tab.openTemplate?.wrapBrowse ?? false),
+      );
+      patchTab(tabId, (tt) => ({ ...tt, countingRows: true }));
+      try {
+        const res = await api.runLookupQuery({
+          sessionId,
+          sql,
+          database: tab.database ?? null,
+          queryTimeoutSecs: EXACT_COUNT_TIMEOUT_SECS,
+          rowCap: 1,
+        });
+        const total = parseCountCell(res.rows[0]?.[0]);
+        if (total === null) throw new Error("COUNT(*) returned no integer");
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          countingRows: false,
+          exactRowCount: { total, key: exactCountKey(base, filter) },
+        }));
+      } catch (e) {
+        patchTab(tabId, (tt) => ({ ...tt, countingRows: false }));
+        setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+      }
+    },
+    [sessionId, patchTab, selectedProfile?.driver, tabsRef],
   );
 
   // サーバ側ソート (#792): ヘッダーメニューから列の昇順/降順/解除を選ぶと、1 ページ目
@@ -9483,7 +9549,13 @@ export default function App() {
         const totalPages = tableTotalPagesEstimate(tab, pageSize);
         const page = tab.page ?? 1;
         const canAdvance = pageNext
-          ? canGoNext(page, totalPages, tab.result?.rows.length ?? 0, pageSize)
+          ? canGoNext(
+              page,
+              totalPages,
+              tab.result?.rows.length ?? 0,
+              pageSize,
+              tableExactRowCount(tab) != null,
+            )
           : canGoPrev(page);
         if (!canAdvance) return;
         e.preventDefault();
@@ -10617,6 +10689,7 @@ export default function App() {
     setCellEditForTab,
     setLayoutMode,
     setPageSizeInTab,
+    countExactRowsInTab,
     setResultView,
     setSaveAsTableRequest,
     setSaveAsViewRequest,
