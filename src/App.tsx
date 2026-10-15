@@ -12163,6 +12163,7 @@ export default function App() {
                 driver={selectedProfile?.driver ?? "mysql"}
                 database={schemaDocTarget.database}
                 profileName={selectedProfile?.name ?? ""}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 initialTables={schemaDocTarget.tables}
                 onClose={() => setSchemaDocTarget(null)}

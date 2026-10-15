@@ -360,17 +360,28 @@ export interface SchemaDocHeaderInput {
   database: string | null;
   driver: string;
   locale: "ja" | "en";
+  /** 差分再生成 (#1620) のときの内訳。全体の生成では省略する。 */
+  incremental?: { updated: number; reused: number; removed: number };
 }
 
 /** 生成物の冒頭注記 (モデルに書かせず、フロントで必ず付ける)。 */
 export function buildSchemaDocHeader(input: SchemaDocHeaderInput): string {
   const ja = input.locale === "ja";
   const target = [input.profileName, input.database].filter((x): x is string => !!x).join(" / ");
-  return [
+  const lines = [
     `> - ${ja ? "生成日時" : "Generated at"}: ${formatDocTimestamp(input.generatedAt)}`,
     `> - ${ja ? "対象接続" : "Connection"}: ${target} (${dialectLabel(input.driver)})`,
     `> - ${ja ? "注意" : "Note"}: ${DISCLAIMER[input.locale]}`,
-  ].join("\n");
+  ];
+  if (input.incremental) {
+    const { updated, reused, removed } = input.incremental;
+    lines.push(
+      ja
+        ? `> - 差分再生成: ${updated} 表を更新、${reused} 表は前回の節を再利用、${removed} 表を削除。概要・表一覧・関係の節は前回のままです。`
+        : `> - Incremental update: ${updated} tables regenerated, ${reused} reused from the previous document, ${removed} removed. The overview, table list and relationships sections are unchanged from the previous run.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 /** 冒頭注記 + モデルの本文。 */

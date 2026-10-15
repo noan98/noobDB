@@ -5498,6 +5498,13 @@ const en = {
   explainAiCompareAfterPane: "AI rewrite (estimated)",
   testDataAiPlanCached:
     'Reusing the saved plan for this table (saved {at}); the AI was not called. Press "Regenerate with AI" to create a new one. A saved plan is discarded when the table\'s columns change.',
+  aiSchemaDocIncremental: "Regenerate only the tables that changed",
+  aiSchemaDocIncrementalHelp:
+    "A document from the previous run ({at}) is saved. Only the tables whose columns, indexes or foreign keys changed, and the tables they reference, are sent to the AI; the other table sections are reused. The overview, table list and relationships sections stay as they were. Turn this off to regenerate everything.",
+  aiSchemaDocIncrementalResult:
+    "Incremental update: {updated} tables regenerated, {reused} reused from the previous document, {removed} removed.",
+  aiSchemaDocIncrementalMissing:
+    "{count} tables were not returned by the AI and keep their previous section.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10967,6 +10974,12 @@ const ja: Dict = {
   explainAiCompareAfterPane: "AI の書き換え案 (見積もり)",
   testDataAiPlanCached:
     "この表の保存済みのプランを再利用しています (保存: {at})。AI は呼び出していません。作り直すには「AI で再生成」を押してください。表の列が変わると保存済みのプランは使われません。",
+  aiSchemaDocIncremental: "変わった表だけを再生成する",
+  aiSchemaDocIncrementalHelp:
+    "前回 ({at}) のドキュメントが保存されています。列・インデックス・外部キーが変わった表と、その参照先の表だけを AI に送り、ほかの表の節は前回のものを再利用します。概要・表一覧・関係の節は前回のままです。全体を作り直すときはオフにしてください。",
+  aiSchemaDocIncrementalResult:
+    "差分再生成: {updated} 表を更新、{reused} 表は前回の節を再利用、{removed} 表を削除しました。",
+  aiSchemaDocIncrementalMissing: "{count} 表は AI の応答に節が無かったため、前回の節のままです。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
