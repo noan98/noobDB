@@ -148,7 +148,8 @@ export interface PlanCompareMdInput {
 
 /** Markdown 表のセルで壊れる文字 (`|` と改行) を無害化する。 */
 function mdCell(s: string): string {
-  return s.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+  // `\` を先に二重化しないと、既存の `\` が後段の `\|` の区切りを打ち消してしまう。
+  return s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
 }
 
 /**
