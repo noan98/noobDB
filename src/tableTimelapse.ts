@@ -18,6 +18,8 @@ import type {
   TimelapseGenerationMeta,
 } from "./api/tauri";
 import { MASK_PLACEHOLDER } from "./components/columnMask";
+import { sqlLiteral } from "./components/exportPreview";
+import { qualifiedTableName, quoteIdentFor } from "./components/sqlDialect";
 
 export type TimelapseRowKind = "added" | "removed" | "changed";
 
@@ -259,4 +261,110 @@ export function timelapseRowsToJson(rows: readonly TimelapseExportRow[], meta: T
     null,
     2,
   );
+}
+
+// ── 再現用 DML のプレビュー (#1624) ─────────────────────────────────────
+
+/**
+ * 生成する向き。`forward` = 古い世代 → 新しい世代の変更を再現する、`revert` = 新しい世代を
+ * 古い世代の状態へ戻す (巻き戻し)。
+ */
+export type TimelapseDmlDirection = "forward" | "revert";
+
+export interface TimelapseDmlOptions {
+  driver: string;
+  database: string;
+  table: string;
+  direction: TimelapseDmlDirection;
+  /** 伏せ字にされている列名。値が必要な文はコメントに置き換え、伏せ字を SQL に書かない。 */
+  maskedColumns?: ReadonlySet<string>;
+  /** 見出しコメント (「プレビュー専用」などの注記。翻訳済み)。空なら出さない。 */
+  header?: string;
+  /** マスク列を含むため出せなかった文のコメント文言。`{key}` は主キー表記。 */
+  skippedComment?: (key: string) => string;
+}
+
+export interface TimelapseDmlResult {
+  sql: string;
+  /** 出力した DML の文数。 */
+  statements: number;
+  /** マスク列・主キー無しのため出せなかった行数。 */
+  skipped: number;
+}
+
+/**
+ * タイムラプスの差分行から INSERT / UPDATE / DELETE を組む。**プレビューとコピー専用**で、
+ * 実行する経路は無い。識別子は `quoteIdentFor`、値は `sqlLiteral` (共有ゴールデンで固定された
+ * ドライバ別リテラル) を通す。
+ *
+ * - forward: 追加 → INSERT(after) / 削除 → DELETE / 変更 → UPDATE(変わった列 = after)
+ * - revert : 追加 → DELETE / 削除 → INSERT(before) / 変更 → UPDATE(変わった列 = before)
+ * - 主キーが無い (WHERE を作れない)・主キー値が伏せ字・INSERT/UPDATE に必要な値が伏せ字、の
+ *   いずれかは文を出さずコメントにする (伏せ字を実データとして書かない)。
+ * - `rows` は `buildTimelapseExportRows(diff, null)` のようにマスク前の値で渡すこと。
+ */
+export function buildTimelapseDml(
+  rows: readonly TimelapseExportRow[],
+  o: TimelapseDmlOptions,
+): TimelapseDmlResult {
+  const q = (n: string) => quoteIdentFor(o.driver, n);
+  const target = qualifiedTableName(o.driver, o.database, o.table);
+  const masked = o.maskedColumns ?? new Set<string>();
+  const lines: string[] = [];
+  if (o.header) for (const h of o.header.split("\n")) lines.push(`-- ${h}`);
+  let statements = 0;
+  let skipped = 0;
+
+  const skip = (key: string) => {
+    skipped += 1;
+    lines.push(`-- ${(o.skippedComment ?? ((k) => `skipped (masked / no key): ${k}`))(key)}`);
+  };
+  const keyText = (r: TimelapseExportRow) => formatKey(r.key);
+
+  for (const r of rows) {
+    const forward = o.direction === "forward";
+    const keyCols = Object.keys(r.key);
+    // 追加行は forward で INSERT・revert で DELETE。削除行はその逆。変更行は常に UPDATE。
+    const op: "insert" | "delete" | "update" =
+      r.kind === "changed" ? "update" : (r.kind === "added") === forward ? "insert" : "delete";
+    const values = op === "insert" ? (forward ? r.after : r.before) : null;
+
+    if (op === "insert") {
+      if (!values) continue;
+      const cols = Object.keys(values);
+      if (cols.some((c) => masked.has(c))) {
+        skip(keyText(r));
+        continue;
+      }
+      lines.push(
+        `INSERT INTO ${target} (${cols.map(q).join(", ")}) VALUES (${cols.map((c) => sqlLiteral(o.driver, values[c] ?? null)).join(", ")});`,
+      );
+      statements += 1;
+      continue;
+    }
+
+    if (keyCols.length === 0 || keyCols.some((c) => masked.has(c))) {
+      skip(keyText(r));
+      continue;
+    }
+    const where = keyCols
+      .map((c) => `${q(c)} ${r.key[c] === null ? "IS NULL" : `= ${sqlLiteral(o.driver, r.key[c] ?? null)}`}`)
+      .join(" AND ");
+    if (op === "delete") {
+      lines.push(`DELETE FROM ${target} WHERE ${where};`);
+      statements += 1;
+      continue;
+    }
+    const src = forward ? r.after : r.before;
+    const cols = r.changedColumns;
+    if (!src || cols.length === 0 || cols.some((c) => masked.has(c))) {
+      skip(keyText(r));
+      continue;
+    }
+    lines.push(
+      `UPDATE ${target} SET ${cols.map((c) => `${q(c)} = ${sqlLiteral(o.driver, src[c] ?? null)}`).join(", ")} WHERE ${where};`,
+    );
+    statements += 1;
+  }
+  return { sql: lines.join("\n") + (lines.length ? "\n" : ""), statements, skipped };
 }
