@@ -81,12 +81,17 @@ import {
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./maintenanceCommands";
+import { Segmented } from "./Segmented";
 import { Button, Input } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
   buildExplorerRows,
   EMPTY_TABLE_SELECTION,
+  EXPLORER_KIND_FILTERS,
+  EXPLORER_TABLE_SORTS,
+  type ExplorerKindFilter,
+  type ExplorerTableSort,
   explorerContainerKind,
   explorerRowExpansion,
   explorerRowLabel,
@@ -1410,7 +1415,9 @@ function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }:
             ? t("treeNoDatabases")
             : row.message === "tables"
               ? t("treeNoTables")
-              : t("treeNoColumns")}
+              : row.message === "filtered"
+                ? t("treeKindFilterEmpty")
+                : t("treeNoColumns")}
         </TreeEmpty>
       );
     case "quick":
@@ -1934,6 +1941,11 @@ export const ConnectionList = memo(
     const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
     const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
     const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+    // 種別の絞り込み (セッション内のみ) とテーブルの並べ替え (プロファイルごとに永続化, #1629)。
+    const [kindFilter, setKindFilter] = useState<ExplorerKindFilter>("all");
+    const [tableSort, setTableSort] = useState<ExplorerTableSort>("name");
+    const tableSortRef = useRef(tableSort);
+    tableSortRef.current = tableSort;
     // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する。
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
     // グループの表示順序 (#786)。触られていない名前は `applyGroupOrder` が
@@ -2028,7 +2040,7 @@ export const ConnectionList = memo(
     expandedTablesRef.current = expandedTables;
     const persistTree = useCallback((dbs: Record<string, boolean>, tables: Record<string, boolean>) => {
       const pid = activeProfileIdRef.current;
-      if (pid) saveSchemaTree(pid, { dbs, tables });
+      if (pid) saveSchemaTree(pid, { dbs, tables, sort: tableSortRef.current });
     }, []);
 
     // Restore the persisted tree expansion for the connecting session's profile
@@ -2039,7 +2051,9 @@ export const ConnectionList = memo(
     const restoreTreeForSession = useCallback(
       async (targetSessionId: string) => {
         const pid = activeProfileIdRef.current;
-        const stored = pid ? loadSchemaTree(pid) : { dbs: {}, tables: {} };
+        const stored = pid ? loadSchemaTree(pid) : { dbs: {}, tables: {}, sort: undefined };
+        setTableSort(stored.sort ?? "name");
+        tableSortRef.current = stored.sort ?? "name";
         const openDbNames = Object.keys(stored.dbs).filter((db) => stored.dbs[db]);
         const openTableKeys = Object.keys(stored.tables).filter((k) => stored.tables[k]);
         // Optimistically open the stored nodes so the tree feels continuous while
@@ -3327,6 +3341,13 @@ export const ConnectionList = memo(
       }
     }
 
+    /** テーブル / ビューの並べ替えを切り替えて保存する (#1629)。 */
+    const changeTableSort = (next: ExplorerTableSort) => {
+      setTableSort(next);
+      tableSortRef.current = next;
+      persistTree(expandedDbsRef.current, expandedTablesRef.current);
+    };
+
     const toggleDb = async (db: string) => {
       if (!sessionId) return;
       // 前の展開失敗の帯は、次の展開/折りたたみ操作で消す (次の成功操作まで残り続けない)。
@@ -3805,6 +3826,8 @@ export const ConnectionList = memo(
           : null,
         partition: partitionFor,
         showObjects: hasObjectDefinitionOpener,
+        kindFilter,
+        tableSort,
         favorites: favorites ?? EMPTY_REFS,
         recent: recent ?? EMPTY_REFS,
         rowEstimate: (db, tbl) => rowEstimates[db]?.[tbl],
@@ -3829,6 +3852,8 @@ export const ConnectionList = memo(
       activeSchemaFiltered,
       schemaMatch,
       hasObjectDefinitionOpener,
+      kindFilter,
+      tableSort,
       favorites,
       recent,
       rowEstimates,
@@ -4132,6 +4157,27 @@ export const ConnectionList = memo(
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
+              {/* 種別の絞り込みと並べ替え。検索とは独立で、アクティブ接続のスキーマが
+                  読めているときだけ出す (#1629)。 */}
+              {sessionId && activeProfileId && databases !== null && (
+                <Flex mt="1.5" gap="2" flexWrap="wrap" alignItems="center" data-testid="tree-view-options">
+                  <Segmented
+                    ariaLabel={t("treeKindFilterLabel")}
+                    value={kindFilter}
+                    options={EXPLORER_KIND_FILTERS.map((k) => ({
+                      value: k,
+                      label: t(`treeKindFilter_${k}`),
+                    }))}
+                    onChange={setKindFilter}
+                  />
+                  <Segmented
+                    ariaLabel={t("treeSortLabel")}
+                    value={tableSort}
+                    options={EXPLORER_TABLE_SORTS.map((k) => ({ value: k, label: t(`treeSort_${k}`) }))}
+                    onChange={changeTableSort}
+                  />
+                </Flex>
+              )}
             </Box>
 
             {error && (
