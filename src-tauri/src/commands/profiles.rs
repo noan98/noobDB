@@ -71,6 +71,9 @@ pub struct SaveProfileRequest {
     /// AWS IAM database authentication settings (#734). Non-secret.
     #[serde(default)]
     pub aws_iam: Option<crate::db::aws_iam::AwsIamConfig>,
+    /// AWS SSM ポートフォワード設定 (#1683)。`ssh` と排他。非秘密。
+    #[serde(default)]
+    pub ssm: Option<crate::ssm::SsmConfig>,
 }
 
 /// A stored profile plus flags telling the UI which secrets already exist in the
@@ -294,10 +297,34 @@ fn validate_profile_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// SSM 設定を保存用に整える (#1683)。空白を落とし、SSH との排他と形式を検証する。
+/// `target` が空のまま保存することは認めない (SSM を使わないなら `None` にする)。
+fn normalize_ssm(
+    ssm: Option<&crate::ssm::SsmConfig>,
+    has_ssh: bool,
+) -> Result<Option<crate::ssm::SsmConfig>> {
+    let Some(cfg) = ssm else {
+        return Ok(None);
+    };
+    crate::ssm::ensure_exclusive(has_ssh, true)?;
+    crate::ssm::validate_config(cfg)?;
+    Ok(Some(crate::ssm::SsmConfig {
+        target: cfg.target.trim().to_string(),
+        region: cfg.region.trim().to_string(),
+        profile: cfg
+            .profile
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string),
+    }))
+}
+
 /// Persists the profile row and any changed secrets. The secret *values* are
 /// never logged — only which secret kind was set or cleared, at debug level.
 fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionProfile> {
     validate_profile_name(&req.name)?;
+    let ssm = normalize_ssm(req.ssm.as_ref(), req.ssh.is_some())?;
     let req_secrets = ProfileSecretUpdates {
         db_password: req.db_password.clone(),
         ssh_passphrase: req.ssh_passphrase.clone(),
@@ -344,6 +371,7 @@ fn save_profile_inner(id: String, req: SaveProfileRequest) -> Result<ConnectionP
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty()),
         }),
+        ssm,
     };
     // 秘密を先に書き、すべて成功してから本体を upsert する。秘密の書き込みが途中で失敗しても
     // それまでに書いた秘密は元の値へ戻し (既存プロファイル)、新規プロファイルなら孤立
@@ -830,6 +858,33 @@ fn reorder_supported(
 
 #[cfg(test)]
 mod tests {
+    use crate::ssm::SsmConfig;
+
+    fn ssm_cfg(target: &str, profile: Option<&str>) -> SsmConfig {
+        SsmConfig {
+            target: target.into(),
+            region: " ap-northeast-1 ".into(),
+            profile: profile.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn normalize_ssm_trims_and_drops_blank_profile() {
+        assert!(normalize_ssm(None, true).unwrap().is_none());
+        let out = normalize_ssm(Some(&ssm_cfg(" i-0123456789abcdef0 ", Some("  "))), false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.target, "i-0123456789abcdef0");
+        assert_eq!(out.region, "ap-northeast-1");
+        assert_eq!(out.profile, None);
+    }
+
+    #[test]
+    fn normalize_ssm_rejects_ssh_combination_and_bad_target() {
+        assert!(normalize_ssm(Some(&ssm_cfg("i-0123456789abcdef0", None)), true).is_err());
+        assert!(normalize_ssm(Some(&ssm_cfg("", None)), false).is_err());
+    }
+
     use super::*;
     use std::cell::RefCell;
     use std::collections::HashMap;
@@ -960,6 +1015,7 @@ mod tests {
             ssl_client_key: None,
             init_sql: None,
             aws_iam: None,
+            ssm: None,
         }
     }
 

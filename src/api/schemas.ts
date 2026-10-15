@@ -421,6 +421,16 @@ export const connectionProfile = z.object({
     })
     .nullable()
     .optional(),
+  // AWS SSM ポートフォワード経由の接続 (#1683)。踏み台のインスタンス ID・リージョン・
+  // AWS プロファイル名のみ (すべて非秘密)。null / 欠落は SSM 不使用。
+  ssm: z
+    .object({
+      target: z.string(),
+      region: z.string(),
+      profile: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   // 以下は list_profiles の戻り値にのみ含まれる「秘密が設定済みか」の表示用フラグ。
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
