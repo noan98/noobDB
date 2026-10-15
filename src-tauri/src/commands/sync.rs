@@ -8,8 +8,9 @@
 use tauri::State;
 
 use crate::db::data_diff::generate_data_sync_sql as generate_data;
+use crate::db::data_diff::RowStatus;
 use crate::db::diff::SchemaDiff;
-use crate::db::sandbox::filter_out_keys;
+use crate::db::sandbox::{filter_out_keys, select_rows};
 use crate::db::sync::{generate_sync_sql as generate, SyncPlan};
 use crate::db::types::Value;
 use crate::error::{AppError, Result};
@@ -38,9 +39,31 @@ pub fn generate_data_sync_sql(
     diff_id: String,
     allow_delete: bool,
     skip_keys: Option<Vec<Vec<Value>>>,
+    kinds: Option<Vec<RowStatus>>,
+    only_keys: Option<Vec<Vec<Value>>>,
     state: State<'_, AppState>,
 ) -> Result<SyncPlan> {
-    generate_data_sync_sql_inner(state.inner(), &diff_id, allow_delete, skip_keys.as_deref())
+    generate_data_sync_sql_inner(
+        state.inner(),
+        &diff_id,
+        allow_delete,
+        &DataSyncSelection {
+            skip_keys: skip_keys.as_deref(),
+            kinds: kinds.as_deref(),
+            only_keys: only_keys.as_deref(),
+        },
+    )
+}
+
+/// 同期 SQL に含める行の絞り込み (#1625)。全部 `None` なら全行。
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct DataSyncSelection<'a> {
+    /// 主キーで除外する行 (サンドボックスの競合解決「スキップ」)。
+    pub skip_keys: Option<&'a [Vec<Value>]>,
+    /// 含める行の種別 (追加 / 更新 / 削除)。
+    pub kinds: Option<&'a [RowStatus]>,
+    /// 含める行の主キー (行ごとの選択)。
+    pub only_keys: Option<&'a [Vec<Value>]>,
 }
 
 /// Core of [`generate_data_sync_sql`] without Tauri's `State` wrapper (#881).
@@ -48,15 +71,17 @@ pub(crate) fn generate_data_sync_sql_inner(
     state: &AppState,
     diff_id: &str,
     allow_delete: bool,
-    skip_keys: Option<&[Vec<Value>]>,
+    selection: &DataSyncSelection<'_>,
 ) -> Result<SyncPlan> {
-    let diff = stored_diff(state, diff_id)?;
-    Ok(match skip_keys {
-        Some(keys) if !keys.is_empty() => {
-            generate_data(&filter_out_keys(&diff, keys), allow_delete)
-        }
-        _ => generate_data(&diff, allow_delete),
-    })
+    let stored = stored_diff(state, diff_id)?;
+    let mut diff = stored.as_ref().clone();
+    if selection.kinds.is_some() || selection.only_keys.is_some() {
+        diff = select_rows(&diff, selection.kinds, selection.only_keys);
+    }
+    if let Some(keys) = selection.skip_keys.filter(|k| !k.is_empty()) {
+        diff = filter_out_keys(&diff, keys);
+    }
+    Ok(generate_data(&diff, allow_delete))
 }
 
 /// 保持中の差分を取り出す。無ければ (解放済み / 上限で破棄 / 切断で破棄) 比較のやり直しを促す。

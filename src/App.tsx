@@ -1394,6 +1394,9 @@ export default function App() {
   const [broadcastRequest, setBroadcastRequest] = useState<{
     sql: string;
     tableColumns: TableColumnInfo[] | null;
+    /** テーブル閲覧タブ由来のときの表名・データベース (同期 SQL・全件比較用, #1625)。 */
+    table: string | null;
+    database: string | null;
   } | null>(null);
   /**
    * ボトムパネル (#1112) で開いているタブ。null = 閉じている。
@@ -4896,7 +4899,12 @@ export default function App() {
         toast.error(translate("broadcastBlockedToast"));
         return;
       }
-      setBroadcastRequest({ sql, tableColumns: tab?.tableColumns ?? null });
+      setBroadcastRequest({
+        sql,
+        tableColumns: tab?.tableColumns ?? null,
+        table: tab?.kind === "table" ? (tab.table ?? null) : null,
+        database: tab?.kind === "table" ? (tab.database ?? null) : null,
+      });
     },
     [toast],
   );
@@ -12762,6 +12770,8 @@ export default function App() {
                     !isSandboxProfileId(c.profile.id),
                 )}
                 tableColumns={broadcastRequest.tableColumns}
+                table={broadcastRequest.table}
+                database={broadcastRequest.database}
                 autoLimit={settings.autoLimitEnabled ? settings.autoLimitCount : null}
                 queryTimeoutSecs={settings.queryTimeoutSecs}
                 confirm={confirm}

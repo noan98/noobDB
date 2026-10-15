@@ -16,7 +16,9 @@ import { useT } from "../i18n";
 import {
   diffToRowDiff,
   MAX_BROADCAST_COMPARE_ROWS,
+  removedRowSamples,
   resolveKeyIndicesByName,
+  syncSqlBlockReason,
   type BroadcastRunStatus,
 } from "../broadcastCompare";
 import { attachRowDiff } from "../resultDiff";
@@ -30,6 +32,8 @@ import { LoadingButton } from "./LoadingButton";
 import { Spinner } from "./Spinner";
 import { ProductionBadge, ProfileColorChip } from "./ProfileBadge";
 import { ResultGrid } from "./ResultGrid";
+import { BroadcastFullCompare } from "./BroadcastFullCompare";
+import { BroadcastSyncPanel } from "./BroadcastSyncPanel";
 
 /**
  * 環境横断ブロードキャスト実行 (#738) — 同じ読み取りクエリを複数の接続へ一斉実行し、
@@ -88,6 +92,9 @@ export interface BroadcastModalProps {
   candidates: Candidate[];
   /** 発火元タブが "table" タブのときの実テーブル列メタ。PK 自動解決に使う。 */
   tableColumns?: TableColumnInfo[] | null;
+  /** 発火元が "table" タブのときの表名とデータベース。同期 SQL・全件比較に使う (#1625)。 */
+  table?: string | null;
+  database?: string | null;
   autoLimit: number | null;
   queryTimeoutSecs: number;
   confirm: (opts: ConfirmOptions) => Promise<boolean>;
@@ -155,6 +162,8 @@ export function BroadcastModal({
   baselineProfile,
   candidates,
   tableColumns,
+  table,
+  database,
   autoLimit,
   queryTimeoutSecs,
   confirm,
@@ -171,13 +180,22 @@ export function BroadcastModal({
   // 現在の実行 (run) の識別子と、その対象。キー列の変更で同じ対象を再比較するために持つ。
   const runIdRef = useRef<string | null>(null);
   const targetsRef = useRef<Candidate[]>([]);
+  // 環境ごとの「いま実行中の run」(#1625)。全体の再実行と「この環境だけ再実行」で run が
+  // 環境ごとに違うので、キャンセルの宛先 (stream id) と古い結果の破棄判定に使う。
+  const envRunIdsRef = useRef<Map<string, string>>(new Map());
+  // 「この環境だけ再実行」の購読。アンマウントと全体の再実行で外す。
+  const rerunUnlistensRef = useRef<Set<UnlistenFn>>(new Set());
+
+  const dropRerunListeners = () => {
+    for (const u of rerunUnlistensRef.current) u();
+    rerunUnlistensRef.current.clear();
+  };
 
   // 実行中の環境を個別にキャンセルする (stream id は `{runId}:{sessionId}`)。
   const cancelRunning = () => {
-    const runId = runIdRef.current;
-    if (!runId) return;
     for (const e of entriesRef.current) {
-      if (e.status === "running") void api.cancelStream(broadcastEnvStreamId(runId, e.sessionId));
+      const runId = envRunIdsRef.current.get(e.sessionId);
+      if (runId && e.status === "running") void api.cancelStream(broadcastEnvStreamId(runId, e.sessionId));
     }
   };
 
@@ -190,6 +208,7 @@ export function BroadcastModal({
       cancelRunning();
       unlistenRef.current?.();
       unlistenRef.current = null;
+      dropRerunListeners();
     };
   }, []);
 
@@ -214,9 +233,11 @@ export function BroadcastModal({
   // 環境ごとの結果 (表示行 + 差分サマリ) が届くたびに対応するカードを更新する。
   const startRun = async (targets: Candidate[], userKeyColumn: string) => {
     unlistenRef.current?.();
+    dropRerunListeners();
     const runId = newBroadcastRunId();
     runIdRef.current = runId;
     targetsRef.current = targets;
+    envRunIdsRef.current = new Map(targets.map((c) => [c.sessionId, runId]));
     // 古い run のメッセージは無視する (キー列の変更で再実行したときの取りこぼし防止)。
     const live = (fn: () => void) => () => {
       if (runIdRef.current === runId) fn();
@@ -292,7 +313,7 @@ export function BroadcastModal({
   };
 
   const cancelEntry = (sessionId: string) => {
-    const runId = runIdRef.current;
+    const runId = envRunIdsRef.current.get(sessionId);
     const entry = entriesRef.current.find((e) => e.sessionId === sessionId);
     if (runId && entry && entry.status === "running") {
       void api.cancelStream(broadcastEnvStreamId(runId, sessionId));
@@ -300,6 +321,72 @@ export function BroadcastModal({
   };
 
   const cancelAll = () => cancelRunning();
+
+  // 失敗・キャンセルした環境だけを撃ち直す (#1625)。基準が完了していれば、基準 + その
+  // 環境だけで `broadcast_compare` を呼ぶ (他の環境の結果は触らない)。基準自身、または基準が
+  // 完了していないときは、差分の基準が無いので全環境を実行し直す。
+  // 補足: 基準の問い合わせも再実行されるため、画面の基準の行はこの run のものに更新せず
+  // (他の環境との整合を保つ)、差分はこの run の基準との比較になる。
+  const rerunEntry = async (sessionId: string) => {
+    const targets = targetsRef.current;
+    const base = targets[0];
+    const target = targets.find((c) => c.sessionId === sessionId);
+    if (!base || !target) return;
+    const baseEntry = entriesRef.current.find((e) => e.sessionId === base.sessionId);
+    if (sessionId === base.sessionId || !baseEntry || baseEntry.status !== "done") {
+      cancelRunning();
+      await startRun(targets, keyColumn);
+      return;
+    }
+    const runId = newBroadcastRunId();
+    envRunIdsRef.current.set(sessionId, runId);
+    const live = (fn: () => void) => () => {
+      if (envRunIdsRef.current.get(sessionId) === runId) fn();
+    };
+    patchEntry(sessionId, {
+      status: "running",
+      columns: [],
+      rows: [],
+      totalRows: 0,
+      elapsedMs: 0,
+      error: null,
+      diff: null,
+    });
+    const unlisten = await listenBroadcast(runId, {
+      onEnv: (rep) => {
+        if (rep.sessionId !== sessionId) return;
+        live(() =>
+          patchEntry(sessionId, {
+            status: rep.status === "error" ? "error" : "done",
+            columns: rep.columns,
+            rows: rep.rows,
+            totalRows: rep.totalRows,
+            elapsedMs: rep.elapsedMs,
+            error: rep.error,
+            diff: rep.diff,
+          }),
+        )();
+      },
+      onCancelled: ({ sessionId: sid }) => {
+        if (sid === sessionId) live(() => patchEntry(sessionId, { status: "cancelled" }))();
+      },
+    });
+    rerunUnlistensRef.current.add(unlisten);
+    try {
+      await api.broadcastCompare({
+        runId,
+        sql,
+        baselineSessionId: base.sessionId,
+        targetSessionIds: [sessionId],
+        autoLimit,
+        queryTimeoutSecs,
+        tablePkColumns: (tableColumns ?? []).filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name),
+        userKeyColumn: keyColumn || null,
+      });
+    } catch (e) {
+      live(() => patchEntry(sessionId, { status: "error", error: String(e) }))();
+    }
+  };
 
   // 結果画面でキー列を選び直したら、同じ対象で再比較する (差分の計算はバックエンドが
   // 行うため)。実行中の環境は先にキャンセルする。
@@ -479,7 +566,16 @@ export function BroadcastModal({
               baseline={baseline}
               pkNames={pkNames}
               driver={driver}
+              table={table ?? null}
+              baselineSessionId={baselineSessionId}
+              baselineDatabase={database ?? null}
+              envDatabase={
+                e.sessionId === baselineSessionId
+                  ? (database ?? null)
+                  : (e.profile.database ?? database ?? null)
+              }
               onCancel={() => cancelEntry(e.sessionId)}
+              onRerun={() => void rerunEntry(e.sessionId)}
             />
           ))}
         </Grid>
@@ -529,14 +625,24 @@ function EntryCard({
   baseline,
   pkNames,
   driver,
+  table,
+  baselineSessionId,
+  baselineDatabase,
+  envDatabase,
   onCancel,
+  onRerun,
 }: {
   entry: Entry;
   isBaseline: boolean;
   baseline: Entry | null;
   pkNames: Set<string>;
   driver: string;
+  table: string | null;
+  baselineSessionId: string;
+  baselineDatabase: string | null;
+  envDatabase: string | null;
   onCancel: () => void;
+  onRerun: () => void;
 }) {
   const t = useT();
   const settled = entry.status !== "running";
@@ -574,6 +680,12 @@ function EntryCard({
   // 行配列への紐づけは WeakMap への冪等な登録なので、描画中に行っても安全
   // (グリッドの初回描画より前に揃っている必要がある)。
   if (rowDiff) attachRowDiff(entry.rows, rowDiff);
+
+  const removedSamples = useMemo(
+    () => (diff && baseline ? removedRowSamples(diff, baseline.rows, baseline.columns) : null),
+    [diff, baseline],
+  );
+  const syncBlock = syncSqlBlockReason(diff, table);
 
   const tableColumnsForGrid =
     diff && diff.mode === "pk" ? syntheticPkColumns(entry.columns, pkNames) : undefined;
@@ -618,6 +730,11 @@ function EntryCard({
             {t("broadcastCancelEntry")}
           </Button>
         )}
+        {(entry.status === "error" || entry.status === "cancelled") && (
+          <Button type="button" variant="secondary" size="sm" onClick={onRerun}>
+            {t("broadcastRerunEntry")}
+          </Button>
+        )}
       </Flex>
       {diffLine && (
         <Box
@@ -634,6 +751,80 @@ function EntryCard({
               {t("broadcastDiffTruncated", { max: MAX_BROADCAST_COMPARE_ROWS })}
             </chakra.span>
           )}
+        </Box>
+      )}
+      {removedSamples && removedSamples.samples.length > 0 && (
+        <Box
+          px="3"
+          py="1.5"
+          textStyle="caption"
+          color="app.textMuted"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          <chakra.div fontWeight={600}>{t("broadcastRemovedSamplesTitle")}</chakra.div>
+          <chakra.ul margin={0} paddingLeft="4">
+            {removedSamples.samples.map((line) => (
+              <chakra.li key={line} fontFamily="mono" wordBreak="break-all">
+                {line}
+              </chakra.li>
+            ))}
+          </chakra.ul>
+          {removedSamples.hiddenCount > 0 && (
+            <chakra.div>{t("broadcastRemovedSamplesMore", { count: removedSamples.hiddenCount })}</chakra.div>
+          )}
+        </Box>
+      )}
+      {diff && syncBlock === null && table && baseline && diff.hasDiff && (
+        <BroadcastSyncPanel
+          envName={entry.profile.name}
+          loadPlan={(allowDelete) =>
+            api.broadcastSyncSql({
+              driver,
+              table,
+              columns: baseline.columns,
+              baselineRows: baseline.rows,
+              baselineTotal: baseline.totalRows,
+              targetRows: entry.rows,
+              targetTotal: entry.totalRows,
+              keyColumns: [...pkNames],
+              allowDelete,
+            })
+          }
+        />
+      )}
+      {diff && syncBlock === "no-table" && (
+        <Box
+          px="3"
+          py="1.5"
+          textStyle="caption"
+          color="app.textMuted"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          {t("broadcastSyncNeedsTable")}
+        </Box>
+      )}
+      {diff && syncBlock === "truncated" && table && baselineDatabase && envDatabase && (
+        <BroadcastFullCompare
+          baselineSessionId={baselineSessionId}
+          baselineDatabase={baselineDatabase}
+          envSessionId={entry.sessionId}
+          envDatabase={envDatabase}
+          envName={entry.profile.name}
+          table={table}
+        />
+      )}
+      {diff && syncBlock === "truncated" && !(table && baselineDatabase && envDatabase) && (
+        <Box
+          px="3"
+          py="1.5"
+          textStyle="caption"
+          color="app.textMuted"
+          borderBottom="1px solid"
+          borderColor="app.borderSubtle"
+        >
+          {t("broadcastSyncTruncatedNeedsTable", { max: MAX_BROADCAST_COMPARE_ROWS })}
         </Box>
       )}
       {entry.status === "error" && entry.error && (

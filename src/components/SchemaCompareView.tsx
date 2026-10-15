@@ -484,6 +484,12 @@ export function SchemaCompareView({
   const [dataCancellable, setDataCancellable] = useState(false);
   const dataCancelledRef = useRef(false);
   const [allowDelete, setAllowDelete] = useState(false);
+  // 同期 SQL に含める行の種別 (#1625)。段階適用 (まず追加だけ、次に更新、最後に削除) 用。
+  const [dataKinds, setDataKinds] = useState({
+    source_only: true,
+    different: true,
+    target_only: true,
+  });
 
   // 適用直後の再比較で得た差分。この差分への切り替えでは適用成功の表示を残す。
   const keepApplyResultForDiffRef = useRef<SchemaDiff | null>(null);
@@ -766,7 +772,13 @@ export function SchemaCompareView({
     setSyncError(null);
     setApplyResult(null);
     try {
-      const result = await api.generateDataSyncSql(dataDiffId, allowDelete);
+      const picked = (["source_only", "different", "target_only"] as const).filter((k) => dataKinds[k]);
+      const result = await api.generateDataSyncSql(
+        dataDiffId,
+        allowDelete,
+        null,
+        picked.length === 3 ? null : { kinds: picked },
+      );
       setPlan(result);
       setRisks(null);
       setPlanFlags({ allowDestructive: false, allowDelete });
@@ -778,7 +790,7 @@ export function SchemaCompareView({
     } finally {
       setGenerating(false);
     }
-  }, [dataDiffId, allowDelete]);
+  }, [dataDiffId, allowDelete, dataKinds]);
 
   const dataCounts = useMemo(() => {
     const c = { source_only: 0, target_only: 0, different: 0 };
@@ -1120,17 +1132,28 @@ export function SchemaCompareView({
                       <chakra.p margin={0} fontSize="sm" color="app.textMuted">
                         {t("schemaCompareDataComparedTable", { table: dataDiff.table })}
                       </chakra.p>
-                      <Box css={summaryCss}>
-                        <chakra.span css={chipCss("source_only")}>
-                          {t("schemaCompareDataInserts")}: {dataCounts.source_only}
-                        </chakra.span>
-                        <chakra.span css={chipCss("different")}>
-                          {t("schemaCompareDataUpdates")}: {dataCounts.different}
-                        </chakra.span>
-                        <chakra.span css={chipCss("target_only")}>
-                          {t("schemaCompareDataDeletes")}: {dataCounts.target_only}
-                        </chakra.span>
+                      <Box css={summaryCss} role="group" aria-label={t("schemaCompareDataKinds")}>
+                        {(
+                          [
+                            ["source_only", "schemaCompareDataInserts"],
+                            ["different", "schemaCompareDataUpdates"],
+                            ["target_only", "schemaCompareDataDeletes"],
+                          ] as const
+                        ).map(([kind, key]) => (
+                          <chakra.label key={kind} css={chipCss(kind)}>
+                            <Checkbox
+                              checked={dataKinds[kind]}
+                              onChange={(e) =>
+                                setDataKinds((prev) => ({ ...prev, [kind]: e.target.checked }))
+                              }
+                            />{" "}
+                            {t(key)}: {dataCounts[kind]}
+                          </chakra.label>
+                        ))}
                       </Box>
+                      <chakra.p margin={0} textStyle="caption" color="app.textMuted">
+                        {t("schemaCompareDataKindsHint")}
+                      </chakra.p>
                       {dataDiff.truncated && (
                         <chakra.p css={backupCss}>
                           {dataComparedWith.allRows

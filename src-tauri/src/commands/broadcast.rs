@@ -26,8 +26,11 @@ use crate::commands::query::{
 };
 use crate::db::apply_auto_limit_for;
 use crate::db::broadcast_diff::{
-    compare_environments, resolve_key_indices, BroadcastDiff, EnvSide, MAX_BROADCAST_COMPARE_ROWS,
+    build_sync_diff, compare_environments, resolve_key_indices, BroadcastDiff, EnvSide,
+    MAX_BROADCAST_COMPARE_ROWS,
 };
+use crate::db::data_diff::generate_data_sync_sql;
+use crate::db::sync::SyncPlan;
 use crate::db::types::{Column, QueryResult, StreamBatch, Value};
 use crate::db::DriverKind;
 use crate::error::{AppError, Result};
@@ -397,4 +400,48 @@ mod tests {
             "SELECT * FROM t LIMIT 3"
         );
     }
+}
+
+/// ブロードキャスト比較の差分から、環境を基準に揃える同期 SQL を描画する (#1625)。
+///
+/// 純粋な描画で、DB には触れず何も実行しない (結果は UI のプレビューと確認用)。
+/// 行はフロントが既に持っている各環境の結果 (上限 5,000 行) を受け取る。キー列
+/// (`key_columns`) は比較に使った主キー列名で、空なら基準にだけある行の INSERT のみ。
+/// どちらかの結果が上限で打ち切られていれば `InvalidInput`。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn broadcast_sync_sql(
+    driver: DriverKind,
+    table: String,
+    columns: Vec<Column>,
+    baseline_rows: Vec<Vec<Value>>,
+    baseline_total: u64,
+    target_rows: Vec<Vec<Value>>,
+    target_total: u64,
+    key_columns: Vec<String>,
+    allow_delete: bool,
+) -> Result<SyncPlan> {
+    if table.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "a table name is required to build sync SQL".into(),
+        ));
+    }
+    let (diff, warnings) = build_sync_diff(
+        driver,
+        &table,
+        EnvSide {
+            columns: &columns,
+            rows: &baseline_rows,
+            total: baseline_total,
+        },
+        EnvSide {
+            columns: &columns,
+            rows: &target_rows,
+            total: target_total,
+        },
+        &key_columns,
+    )?;
+    let mut plan = generate_data_sync_sql(&diff, allow_delete);
+    plan.warnings.extend(warnings);
+    Ok(plan)
 }

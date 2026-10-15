@@ -69,3 +69,57 @@ export function diffToRowDiff(diff: BroadcastDiff, rowCount: number, colCount: n
     hasChanges: diff.hasDiff,
   };
 }
+
+/** 「欠落行の例」に並べる行数の既定 (#1625)。 */
+export const REMOVED_ROW_SAMPLE_LIMIT = 5;
+
+const SAMPLE_CELL_MAX = 40;
+const SAMPLE_LINE_MAX = 200;
+
+function sampleCell(v: unknown): string {
+  if (v === null || v === undefined) return "NULL";
+  const text = typeof v === "string" ? v : JSON.stringify(v);
+  return text.length > SAMPLE_CELL_MAX ? `${text.slice(0, SAMPLE_CELL_MAX)}…` : text;
+}
+
+/**
+ * 基準にだけある行 (対象で欠けている行) の先頭 `limit` 件を `列名=値, …` の 1 行ずつに整形する
+ * (#1625)。キーを指定しない行ハッシュ比較でも、どの行が欠けているかが読める。位置は
+ * バックエンドの `removedRowIndices` (基準の表示行上の添字) で、範囲外は読み飛ばす。
+ * `hiddenCount` は例に載せなかった欠落行の数 (`removedCount` との差も含む)。
+ */
+export function removedRowSamples(
+  diff: Pick<BroadcastDiff, "removedRowIndices" | "removedCount">,
+  baselineRows: CellValueRow[],
+  columns: Pick<Column, "name">[],
+  limit: number = REMOVED_ROW_SAMPLE_LIMIT,
+): { samples: string[]; hiddenCount: number } {
+  const samples: string[] = [];
+  for (const idx of diff.removedRowIndices) {
+    if (samples.length >= limit) break;
+    const row = baselineRows[idx];
+    if (!row) continue;
+    const line = columns.map((c, i) => `${c.name}=${sampleCell(row[i])}`).join(", ");
+    samples.push(line.length > SAMPLE_LINE_MAX ? `${line.slice(0, SAMPLE_LINE_MAX)}…` : line);
+  }
+  return { samples, hiddenCount: Math.max(0, diff.removedCount - samples.length) };
+}
+
+type CellValueRow = readonly unknown[];
+
+/**
+ * 同期 SQL を作れない理由 (#1625)。作れるなら null。テーブル名が分かり (テーブル閲覧タブ由来)、
+ * 差分があり、比較できて、打ち切られていないことが条件。打ち切られた結果は窓のずれで存在する
+ * 行を欠落や余剰と取り違えうるので、バックエンドも拒否する (代わりに全件比較を案内する)。
+ */
+export function syncSqlBlockReason(
+  diff: BroadcastDiff | null,
+  table: string | null | undefined,
+): "no-table" | "truncated" | null {
+  if (!diff || !diff.comparable) return null;
+  // 打ち切られた比較は「差分なし」でも先頭だけの結果なので、全件比較の案内を出す。
+  if (diff.truncated) return "truncated";
+  if (!diff.hasDiff) return null;
+  if (!table) return "no-table";
+  return null;
+}

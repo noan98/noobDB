@@ -327,6 +327,58 @@ pub fn filter_out_keys(diff: &DataDiff, skip_keys: &[Vec<Value>]) -> DataDiff {
     }
 }
 
+/// 同期 SQL の対象行を種別と主キーで絞った `DataDiff` のコピーを返す (#1625)。
+///
+/// - `kinds`: `Some` のとき、その種別 (追加 / 更新 / 削除) の行だけ残す。
+/// - `only_keys`: `Some` のとき、その主キーの行だけ残す (BLOB 主キーは JSON 往復で
+///   `Value::String` になるので `coerce_binary_key` で戻してから署名を取る)。
+///
+/// 絞る前の diff で重複キーだった行は `key_unreliable` を立てて残す。絞った後の行集合
+/// だけで重複を再計算すると、片方を外した重複キーの行が「一意」に見えて UPDATE/DELETE
+/// が生成されてしまうため。
+pub fn select_rows(
+    diff: &DataDiff,
+    kinds: Option<&[RowStatus]>,
+    only_keys: Option<&[Vec<Value>]>,
+) -> DataDiff {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for r in &diff.rows {
+        *counts.entry(key_signature(&r.key)).or_insert(0) += 1;
+    }
+    let only: Option<HashSet<String>> = only_keys.map(|keys| {
+        keys.iter()
+            .map(|k| {
+                key_signature(&coerce_binary_key(
+                    &diff.columns,
+                    &diff.column_types,
+                    &diff.primary_key,
+                    k,
+                ))
+            })
+            .collect()
+    });
+    let rows = diff
+        .rows
+        .iter()
+        .filter(|r| kinds.is_none_or(|ks| ks.contains(&r.status)))
+        .filter(|r| {
+            only.as_ref()
+                .is_none_or(|set| set.contains(&key_signature(&r.key)))
+        })
+        .map(|r| {
+            let mut r = r.clone();
+            if counts.get(&key_signature(&r.key)).copied().unwrap_or(0) > 1 {
+                r.key_unreliable = true;
+            }
+            r
+        })
+        .collect();
+    DataDiff {
+        rows,
+        ..diff.clone()
+    }
+}
+
 /// Table names present in both `desired` (sandbox schema vs. frozen base) and
 /// `external` (current real-database schema vs. the same frozen base) with a
 /// non-`Same` status — i.e. the schema changed both in the sandbox and on the
@@ -614,6 +666,48 @@ mod tests {
         let diff = data_diff(vec![row_diff(RowStatus::Different, 1, Some(1), Some(0))]);
         let filtered = filter_out_keys(&diff, &[]);
         assert_eq!(filtered.rows.len(), 1);
+    }
+
+    #[test]
+    fn select_rows_filters_by_kind_and_key() {
+        let diff = data_diff(vec![
+            row_diff(RowStatus::SourceOnly, 1, Some(1), None),
+            row_diff(RowStatus::Different, 2, Some(2), Some(0)),
+            row_diff(RowStatus::TargetOnly, 3, None, Some(3)),
+        ]);
+        let only_ins = select_rows(&diff, Some(&[RowStatus::SourceOnly]), None);
+        assert_eq!(only_ins.rows.len(), 1);
+        assert_eq!(only_ins.rows[0].key, vec![Value::Int(1)]);
+        let by_key = select_rows(
+            &diff,
+            None,
+            Some(&[vec![Value::Int(2)], vec![Value::Int(3)]]),
+        );
+        assert_eq!(by_key.rows.len(), 2);
+        let both = select_rows(
+            &diff,
+            Some(&[RowStatus::TargetOnly]),
+            Some(&[vec![Value::Int(2)], vec![Value::Int(3)]]),
+        );
+        assert_eq!(both.rows.len(), 1);
+        assert_eq!(both.rows[0].key, vec![Value::Int(3)]);
+        // 何も指定しなければ全行。
+        assert_eq!(select_rows(&diff, None, None).rows.len(), 3);
+        // 空の選択は 0 行 (「何も選ばない」を全行と取り違えない)。
+        assert!(select_rows(&diff, None, Some(&[])).rows.is_empty());
+    }
+
+    #[test]
+    fn select_rows_keeps_duplicate_keys_unreliable_after_narrowing() {
+        let diff = data_diff(vec![
+            row_diff(RowStatus::Different, 1, Some(1), Some(0)),
+            row_diff(RowStatus::Different, 1, Some(2), Some(0)),
+        ]);
+        let narrowed = select_rows(&diff, None, Some(&[vec![Value::Int(1)]]));
+        assert!(narrowed.rows.iter().all(|r| r.key_unreliable));
+        // 重複キーのない行は信頼できるまま。
+        let ok = data_diff(vec![row_diff(RowStatus::Different, 5, Some(1), Some(0))]);
+        assert!(!select_rows(&ok, None, None).rows[0].key_unreliable);
     }
 
     fn table_diff(name: &str, status: DiffStatus) -> TableDiff {
