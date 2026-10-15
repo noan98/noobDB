@@ -570,3 +570,179 @@ export function jsonPathSqlUpdate(
   }
   return `UPDATE ${tableRef} SET ${col} = ${set} WHERE ${where};`;
 }
+
+/**
+ * RFC 6901 の JSON Pointer (`/a/0/b`)。ルートは空文字。キー中の `~` は `~0`、`/` は `~1` に
+ * エスケープする (`~` を先に置換する)。アプリケーションコードや JSON Patch に貼れる形式 (#1628)。
+ */
+export function formatJsonPointer(path: readonly JsonPathSegment[]): string {
+  return path.map((seg) => `/${String(seg).replace(/~/g, "~0").replace(/\//g, "~1")}`).join("");
+}
+
+/** 深さ指定の一括展開で展開するコンテナ数の上限 (巨大 JSON で Set が膨らまないように)。 */
+export const JSON_EXPAND_LIMIT = 5000;
+
+/**
+ * ルートから `depth` 段目より浅いコンテナの `pathKey` 集合 (#1628)。`depth = 1` はルートだけ、
+ * `Infinity` は全コンテナ。コンテナ数が `JSON_EXPAND_LIMIT` に達したら打ち切り、`truncated` を立てる。
+ * 描画は従来どおり 1 ノードあたり `CHILD_PAGE_SIZE` 件までなので、ここで開いても描画量は抑えられる。
+ * 明示的なスタックで走査し、深いネストでも再帰が溢れない。
+ */
+export function expandKeysToDepth(
+  root: JsonNode,
+  depth: number,
+  limit = JSON_EXPAND_LIMIT,
+): { keys: Set<string>; truncated: boolean } {
+  const keys = new Set<string>();
+  let truncated = false;
+  const stack: { node: JsonNode; path: JsonPathSegment[]; level: number }[] = [
+    { node: root, path: [], level: 0 },
+  ];
+  while (stack.length > 0) {
+    const cur = stack.pop();
+    if (!cur || !isContainer(cur.node) || cur.level >= depth) continue;
+    if (keys.size >= limit) {
+      truncated = true;
+      break;
+    }
+    keys.add(pathKey(cur.path));
+    for (const c of childSlice(cur.node, 0, childCount(cur.node))) {
+      if (isContainer(c.node))
+        stack.push({ node: c.node, path: [...cur.path, c.segment], level: cur.level + 1 });
+    }
+  }
+  return { keys, truncated };
+}
+
+type ColumnKind = "number" | "string" | "boolean" | "json";
+
+/** 行展開 SQL で列を作るキー数の上限。 */
+const ROWS_SQL_MAX_COLUMNS = 30;
+/** 列・型の推定に見る要素数の上限。 */
+const ROWS_SQL_SAMPLE = 200;
+
+/** 要素の値種別 (null は型を決めないので undefined)。 */
+function kindOf(node: JsonNode): ColumnKind | undefined {
+  switch (node.kind) {
+    case "number":
+    case "string":
+    case "boolean":
+      return node.kind;
+    case "null":
+      return undefined;
+    default:
+      return "json";
+  }
+}
+
+function mergeKind(cur: ColumnKind | undefined, next: ColumnKind | undefined): ColumnKind | undefined {
+  if (next === undefined) return cur;
+  if (cur === undefined) return next;
+  return cur === next ? cur : "json";
+}
+
+/** 配列要素から列 (オブジェクトの共通キーと推定型) を求める。オブジェクト以外が混じるなら null (スカラ展開)。 */
+function inferRowColumns(items: readonly JsonNode[]): { key: string; kind: ColumnKind }[] | null {
+  const sample = items.slice(0, ROWS_SQL_SAMPLE);
+  if (sample.length === 0 || sample.some((n) => n.kind !== "object")) return null;
+  const cols = new Map<string, ColumnKind | undefined>();
+  for (const n of sample) {
+    if (n.kind !== "object") continue;
+    const seen = new Set<string>();
+    for (const e of n.entries) {
+      // JSON パスで表せないキー (SQLite は `"` / `\` を解釈しない) は列にしない。
+      if (/["\\]/.test(e.key) || seen.has(e.key)) continue;
+      seen.add(e.key);
+      if (cols.size >= ROWS_SQL_MAX_COLUMNS && !cols.has(e.key)) continue;
+      cols.set(e.key, mergeKind(cols.get(e.key), kindOf(e.value)));
+    }
+  }
+  const out = [...cols].map(([key, kind]) => ({ key, kind: kind ?? ("json" as ColumnKind) }));
+  return out.length > 0 ? out : null;
+}
+
+function scalarKind(items: readonly JsonNode[]): ColumnKind {
+  let k: ColumnKind | undefined;
+  for (const n of items.slice(0, ROWS_SQL_SAMPLE)) k = mergeKind(k, kindOf(n));
+  return k ?? "json";
+}
+
+const MYSQL_COLUMN_TYPE: Record<ColumnKind, string> = {
+  number: "DOUBLE",
+  string: "TEXT",
+  boolean: "JSON",
+  json: "JSON",
+};
+const POSTGRES_COLUMN_TYPE: Record<ColumnKind, string> = {
+  number: "numeric",
+  string: "text",
+  boolean: "boolean",
+  json: "jsonb",
+};
+
+/**
+ * 選択中の JSON 配列を**行として**取り出す SELECT を方言別に組み立てる (#1628)。クリップボードへ
+ * コピーするだけで実行はしない (`jsonPathSqlExpression` / `jsonPathSqlUpdate` と同じ方針)。
+ *
+ * - MySQL: `JSON_TABLE(col, '$.a[*]' COLUMNS (...))`
+ * - PostgreSQL: オブジェクト配列は `jsonb_to_recordset(...) AS x(col type, ...)`、スカラ配列は
+ *   `jsonb_array_elements(...)`
+ * - SQLite: `json_each(col, '$.a')` と `json_extract(j.value, '$.k')`
+ *
+ * 要素が全てオブジェクトならキーごとに列を作り (最大 30 列、型は要素から推定)、そうでなければ
+ * `value` 1 列に展開する。`where` があれば PostgreSQL / SQLite は先に 1 行へ絞った副問い合わせを展開元に
+ * する (MySQL は JSON_TABLE の制約で外側の WHERE)。配列でないノードは null。
+ */
+export function jsonArrayRowsSql(
+  driver: string,
+  tableRef: string,
+  column: string,
+  path: readonly JsonPathSegment[],
+  node: JsonNode,
+  where: string | null,
+): string | null {
+  if (node.kind !== "array") return null;
+  if (driver === "sqlite" && path.some((seg) => typeof seg === "string" && /["\\]/.test(seg))) return null;
+  const col = quoteIdentFor(driver, column);
+  const w = where && where.trim() !== "" ? ` WHERE ${where}` : "";
+  const src = `(SELECT ${col} FROM ${tableRef}${w}) AS t`;
+  const cols = inferRowColumns(node.items);
+  const qi = (n: string) => quoteIdentFor(driver, n);
+  const valueKind = scalarKind(node.items);
+
+  if (driver === "postgres") {
+    const arrPath =
+      "{" +
+      path.map((seg) => '"' + String(seg).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"').join(",") +
+      "}";
+    const arr = path.length === 0 ? `t.${col}::jsonb` : `(t.${col}::jsonb #> ${sqlString(driver, arrPath)})`;
+    if (cols) {
+      const defs = cols.map((c) => `${qi(c.key)} ${POSTGRES_COLUMN_TYPE[c.kind]}`).join(", ");
+      return `SELECT x.*\nFROM ${src}\nCROSS JOIN LATERAL jsonb_to_recordset(${arr}) AS x(${defs});`;
+    }
+    return `SELECT x.value\nFROM ${src}\nCROSS JOIN LATERAL jsonb_array_elements(${arr}) AS x(value);`;
+  }
+  if (driver === "sqlite") {
+    const p = path.length === 0 ? "" : `, ${sqlString(driver, formatJsonPath(path))}`;
+    const sel = cols
+      ? cols
+          .map((c) => `json_extract(j.value, ${sqlString(driver, formatJsonPath([c.key]))}) AS ${qi(c.key)}`)
+          .join(",\n       ")
+      : "j.value AS value";
+    return `SELECT ${sel}\nFROM ${src}, json_each(t.${col}${p}) AS j;`;
+  }
+  // MySQL (未知のドライバも MySQL 扱い)。JSON_TABLE は派生テーブルの列を引数にできない (ERROR 1210)
+  // ので、テーブルを直接 FROM に置き、主キー述語は外側の WHERE に書く。展開列の名前が WHERE 内の
+  // 列名と衝突すると曖昧になるため、衝突する展開列だけ出力名の末尾に `_` を付ける (PATH は元のキーのまま)。
+  const arrPath = sqlString(driver, `${formatJsonPath(path)}[*]`);
+  const outName = (key: string) => (w !== "" && where?.includes(qi(key)) ? `${key}_` : key);
+  const defs = cols
+    ? cols
+        .map(
+          (c) =>
+            `${qi(outName(c.key))} ${MYSQL_COLUMN_TYPE[c.kind]} PATH ${sqlString(driver, formatJsonPath([c.key]))}`,
+        )
+        .join(",\n    ")
+    : `${qi(outName("value"))} ${MYSQL_COLUMN_TYPE[valueKind]} PATH '$'`;
+  return `SELECT jt.*\nFROM ${tableRef} AS t,\nJSON_TABLE(t.${col}, ${arrPath} COLUMNS (\n    ${defs}\n)) AS jt${w};`;
+}

@@ -5546,6 +5546,14 @@ const en = {
   explainSearchNext: "Next match (Enter)",
   explainSearchPrev: "Previous match (Shift+Enter)",
   explainSearchMatchMark: "Search match",
+  jsonTreeExpandAll: "Expand all",
+  jsonTreeCollapseAll: "Collapse all",
+  jsonTreeExpandDepth: "Depth",
+  jsonTreeExpandDepthAria: "Expand to this depth",
+  jsonTreeExpandTruncated: "Too many nodes; expanded only the first part",
+  jsonTreeCopyPointer: "Copy JSON Pointer",
+  jsonTreeCopySqlRows: "Copy rows SQL",
+  jsonTreeCopySqlRowsTitle: "Copy a SELECT that expands this array into rows (not executed)",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11062,6 +11070,14 @@ const ja: Dict = {
   explainSearchNext: "次の一致 (Enter)",
   explainSearchPrev: "前の一致 (Shift+Enter)",
   explainSearchMatchMark: "検索に一致",
+  jsonTreeExpandAll: "すべて展開",
+  jsonTreeCollapseAll: "すべて閉じる",
+  jsonTreeExpandDepth: "深さ",
+  jsonTreeExpandDepthAria: "この深さまで展開",
+  jsonTreeExpandTruncated: "ノードが多いため、一部だけ展開しました",
+  jsonTreeCopyPointer: "JSON Pointer をコピー",
+  jsonTreeCopySqlRows: "行展開 SQL をコピー",
+  jsonTreeCopySqlRowsTitle: "この配列を行に展開する SELECT をコピー (実行はしません)",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
