@@ -1024,7 +1024,7 @@ export type ProfileCount = number | string;
  * DISTINCT / MIN・MAX / 上位頻出値 / (数値列のみ) ヒストグラム。`notes` は縮退
  * 理由コード (`stats_unavailable` / `top_values_unavailable` /
  * `histogram_unavailable` / `approx_distinct_unsupported` /
- * `approx_distinct_no_stats`)。
+ * `approx_distinct_no_stats` / `sampled`)。
  */
 export interface ColumnProfile {
   column: string;
@@ -1040,6 +1040,8 @@ export interface ColumnProfile {
   top_values: { value: CellValue; count: ProfileCount }[];
   histogram: { lower: number; upper: number; count: ProfileCount }[];
   notes: string[];
+  /** 標本モード (#1628) の抽出率 (%)。全件を集計したときは null。 */
+  sample_percent?: number | null;
 }
 
 /** 全列の概要の 1 列分 (#1539)。`distinct_count` が null なら求めていない / 求められなかった。 */
@@ -1906,6 +1908,24 @@ export interface ResultFindOutput {
   truncated: boolean;
 }
 
+/** `result_duplicate_keys` の戻り値 (#1628)。 */
+export interface ResultDuplicateKeys {
+  rowCount: number;
+  /** キー列のどれかが NULL で対象外にした行数。 */
+  nullKeyRows: number;
+  distinctKeys: number;
+  /** 2 行以上で現れたキー値の数。 */
+  groupCount: number;
+  /** 重複グループに属する行の総数。 */
+  duplicateRows: number;
+  /** 各グループの 2 行目以降の行数の合計。 */
+  extraRows: number;
+  top: { values: string[]; count: number; firstRow: number }[];
+  /** 重複グループに属する行のインデックス (昇順、上限あり)。 */
+  rowIndices: number[];
+  indicesTruncated: boolean;
+}
+
 /** `result_column_stats` の戻り値 (#1264)。`gridStats.ts::ColumnStats` と同形。 */
 export interface ResultColumnStats {
   count: number;
@@ -1931,6 +1951,8 @@ export interface StreamStatsSnapshot {
   numMax: (number | null)[];
   /** 全列が同一の行が 2 行以上あるか (`null` = 追跡上限超えで不明)。 */
   duplicateRows: boolean | null;
+  /** 列ごとの近似ユニーク数 (HyperLogLog、#1628)。非 NULL 値が無い列は 0。 */
+  distinctEstimates?: number[];
 }
 
 export interface QueryStreamRowsMessage {

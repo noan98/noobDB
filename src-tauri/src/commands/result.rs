@@ -16,7 +16,8 @@ use tauri::State;
 use crate::commands::export::{load_mask_spec, write_export_to, ExportFormat, SqlExportOpts};
 use crate::db::masking::ColumnMask;
 use crate::db::result_ops::{
-    column_stats, find, sort_filter, ColumnStatsOut, FilterSpec, FindOptions, FindOutput, SortSpec,
+    column_stats, duplicate_keys, find, sort_filter, ColumnStatsOut, DuplicateKeysOut, FilterSpec,
+    FindOptions, FindOutput, SortSpec,
 };
 use crate::db::result_store::{StoredResult, RESULT_GONE};
 use crate::db::types::{Column, Value};
@@ -141,6 +142,56 @@ pub async fn result_column_stats(
     state: State<'_, AppState>,
 ) -> Result<Option<ColumnStatsOut>> {
     result_column_stats_inner(&state, &result_id, col).await
+}
+
+/// 重複キー検出の `row_indices` に載せる行数の上限。
+const DUPLICATE_INDEX_LIMIT: usize = 100_000;
+/// 上位の重複グループの件数の上限。
+const DUPLICATE_TOP_MAX: usize = 100;
+
+pub async fn result_duplicate_keys_inner(
+    state: &AppState,
+    result_id: &str,
+    cols: Vec<usize>,
+    top: usize,
+) -> Result<Option<DuplicateKeysOut>> {
+    let Some(stored) = lookup(state, result_id) else {
+        return Ok(None);
+    };
+    let mut cols = cols;
+    // 同じ列を複数回指定されても 1 回として扱う (順序は保つ)。
+    let mut seen = std::collections::HashSet::new();
+    cols.retain(|c| seen.insert(*c));
+    if cols.is_empty() {
+        return Err(AppError::InvalidInput(
+            "at least one key column is required".into(),
+        ));
+    }
+    if let Some(bad) = cols.iter().find(|&&c| c >= stored.col_count) {
+        return Err(AppError::InvalidInput(format!(
+            "column index out of range: {bad}"
+        )));
+    }
+    let top = top.clamp(1, DUPLICATE_TOP_MAX);
+    let out = tokio::task::spawn_blocking(move || {
+        duplicate_keys(&stored.rows, &cols, top, DUPLICATE_INDEX_LIMIT)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("result duplicate-keys task failed: {e}")))?;
+    Ok(Some(out))
+}
+
+/// 重複キー検出 (#1628)。指定した列の組み合わせで同じ値を持つ行のグループ数・行数と、
+/// 件数の多い上位 `top` グループ、重複行のインデックスを返す。結果ハンドルに保持済みの行に
+/// 対して動くので、再実行も SQL の書き換えも要らない。ハンドルが無ければ `null`。
+#[tauri::command]
+pub async fn result_duplicate_keys(
+    result_id: String,
+    cols: Vec<usize>,
+    top: usize,
+    state: State<'_, AppState>,
+) -> Result<Option<DuplicateKeysOut>> {
+    result_duplicate_keys_inner(&state, &result_id, cols, top).await
 }
 
 /// 結果ハンドルを破棄する。無い id でも成功 (冪等)。
@@ -285,7 +336,6 @@ mod tests {
             "A".into(),
             FindOptions {
                 case_sensitive: false,
-                values: Vec::new(),
                 whole_cell: false,
             },
             10,

@@ -536,6 +536,7 @@
     ],
     "null_count": 20,
     "numeric": true,
+    "sample_percent": 2.5,
     "top_values": [
       {
         "count": 10,
@@ -1693,6 +1694,10 @@
     ],
     "snapshotId": 3,
     "stats": {
+      "distinctEstimates": [
+        2,
+        1
+      ],
       "duplicateRows": null,
       "nullCounts": [
         0,
@@ -1756,6 +1761,10 @@
       ]
     ],
     "stats": {
+      "distinctEstimates": [
+        1,
+        1
+      ],
       "duplicateRows": false,
       "nullCounts": [
         0,
@@ -1802,6 +1811,29 @@
     "nullCount": 1,
     "numericCount": 1,
     "sum": 1.0
+  },
+  "resultDuplicateKeys": {
+    "distinctKeys": 2,
+    "duplicateRows": 2,
+    "extraRows": 1,
+    "groupCount": 1,
+    "indicesTruncated": false,
+    "nullKeyRows": 1,
+    "rowCount": 4,
+    "rowIndices": [
+      0,
+      1
+    ],
+    "top": [
+      {
+        "count": 2,
+        "firstRow": 0,
+        "values": [
+          "a",
+          "1"
+        ]
+      }
+    ]
   },
   "resultFindOutput": {
     "hits": [

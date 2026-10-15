@@ -62,8 +62,8 @@ pub mod __test_api {
         RefreshSnapshotStore,
     };
     pub use crate::db::result_ops::{
-        column_stats, find, sort_filter, ColumnStatsOut, FilterOp, FilterSpec, FindHit,
-        FindOptions, FindOutput, NullMode, SortKind, SortSpec,
+        column_stats, duplicate_keys, find, sort_filter, ColumnStatsOut, DuplicateKeysOut,
+        FilterOp, FilterSpec, FindHit, FindOptions, FindOutput, NullMode, SortKind, SortSpec,
     };
     pub use crate::db::result_store::{
         approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
@@ -229,8 +229,9 @@ pub mod __test_api {
 
     // 結果ハンドル (#1264) の IPC コア (State なし)。
     pub use crate::commands::result::{
-        render_export_text_inner, resolve_rows, result_column_stats_inner, result_find_inner,
-        result_sort_filter_inner, RenderExportRequest,
+        render_export_text_inner, resolve_rows, result_column_stats_inner,
+        result_duplicate_keys_inner, result_find_inner, result_sort_filter_inner,
+        RenderExportRequest,
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
@@ -1453,6 +1454,7 @@ pub fn run() {
             commands::result::result_sort_filter,
             commands::result::result_find,
             commands::result::result_column_stats,
+            commands::result::result_duplicate_keys,
             commands::result::release_result,
             commands::result::render_export_text,
             commands::dump::dump_database,

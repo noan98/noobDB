@@ -11606,6 +11606,7 @@ export default function App() {
                         initialDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
                         onOpenTable={handleOpenTable}
                         connectionKey={selectedProfile?.id ?? null}
+                        onInsertSql={handleInsertAdvisorSql}
                         onGenerateDoc={
                           aiAvailable
                             ? (database, tables) => setSchemaDocTarget({ database, tables })

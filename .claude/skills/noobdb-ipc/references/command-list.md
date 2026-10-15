@@ -254,7 +254,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 ## 列データプロファイル (`commands/profile.rs`)
 
 `profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
-サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
+サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可。`sample_percent` で標本モード #1628:
+PostgreSQL は `TABLESAMPLE SYSTEM`、MySQL は `RAND() <`、SQLite は `random()` で抽出し、`ColumnProfile.sample_percent` と
+notes `sampled` に印を付ける)
 
 `profile_table` (#1539。表の全列の件数 / NULL 数 / DISTINCT / MIN・MAX を 1 回の走査で一括取得。
 上位値・ヒストグラムは含まず `profile_column` で列ごとに遅延取得。`approximate` で PostgreSQL の
@@ -453,6 +455,8 @@ JS から行を送る。ハンドルは「行配列」に紐づけて持ち (`co
 
 `result_find` — 結果内検索 (正規表現なし。正規表現は JS の文法と違うためフロントが JS で
 処理する)。ヒットは行優先で `limit` 件 + 総数。`null` はハンドルが無い。
+
+`result_duplicate_keys` — 重複キー検出 (#1628。指定列の組み合わせで同じ値を持つ行のグループ数・行数・上位グループ・重複行インデックスを返す。保持済みの行だけで完結)。`null` はハンドルが無い。
 
 `result_column_stats` — 列クイック統計 (`gridStats.ts::columnStats` と同じ値)。
 

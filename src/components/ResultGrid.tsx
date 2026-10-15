@@ -150,6 +150,7 @@ import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { buildGridCopyText, type GridCopyFormat } from "./gridCopyFormats";
 import { buildCopyFlashRange, collectCopyFlashKeys } from "./gridCopyFlash";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
+import { DuplicateKeysModal } from "./DuplicateKeysModal";
 import { GridReplaceModal } from "./GridReplaceModal";
 import { Spinner } from "./Spinner";
 import { shimmerAfterCss, shimmerContainerCss } from "./Skeleton";
@@ -216,7 +217,7 @@ import {
   nullRatesFromCounts,
   nullRatePercentOf,
 } from "./gridStats";
-import { numericStatsFromStream, streamStatsFor } from "./streamStats";
+import { distinctHintFor, numericStatsFromStream, streamStatsFor } from "./streamStats";
 import { shouldUseHandleForGrid, resultHandleFor, HANDLE_FIND_LIMIT } from "./resultHandle";
 import {
   buildHandleRequest,
@@ -1965,6 +1966,7 @@ function ColumnFilterMenu({
   onShowStats,
   valueOptions,
   onSelectColumn,
+  onFindDuplicates,
   onCopyColumnValues,
   footerEnabled,
   onToggleFooter,
@@ -2009,6 +2011,8 @@ function ColumnFilterMenu({
   valueOptions?: DistinctValueOption[] | null;
   /** 列全体を矩形選択に乗せる (#1628)。未指定なら項目を出さない。 */
   onSelectColumn?: () => void;
+  /** 重複キー検出ダイアログを開く (#1628)。未指定なら項目を出さない。 */
+  onFindDuplicates?: () => void;
   /** 列の値を表示中の行・表示順でコピーする (#1628)。 */
   onCopyColumnValues?: () => void;
   /** 集計フッター (#645) の表示状態と切替。未指定なら項目を出さない。 */
@@ -2487,6 +2491,7 @@ function ColumnFilterMenu({
         onResetLayout ||
         onShowStats ||
         onSelectColumn ||
+        onFindDuplicates ||
         onCopyColumnValues ||
         onToggleFooter ||
         onMoveColumn) && (
@@ -2526,6 +2531,19 @@ function ColumnFilterMenu({
                 }}
               >
                 {t("gridSelectColumn")}
+              </Button>
+            )}
+            {onFindDuplicates && (
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => {
+                  onFindDuplicates();
+                  onClose();
+                }}
+              >
+                {t("gridFindDuplicates")}
               </Button>
             )}
             {onCopyColumnValues && (
@@ -3242,6 +3260,8 @@ interface GridHeaderCellProps {
   filterOpen: boolean;
   /** NULL 率 (%)。ミニバーを出さないときは null。 */
   nullPct: number | null;
+  /** 近似ユニーク数の一言 (#1628)。ミニバーのツールチップに添える。 */
+  distinctHint?: string | null;
   rowCount: number;
   /** 現在の列幅 (px)。リサイズハンドルの aria-valuenow に使う。 */
   colSize: number;
@@ -3277,6 +3297,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
   isDragSource,
   filterOpen,
   nullPct,
+  distinctHint,
   rowCount,
   colSize,
   t,
@@ -3380,11 +3401,12 @@ const GridHeaderCell = memo(function GridHeaderCell({
           // ストップを増やさないよう、共有 Tooltip ではなくセルと同じ
           // 委譲ツールチップ (hover 専用) に載せる。読み上げ向けの情報は
           // `aria-label` が持つ。
-          const label = t("gridNullBarAria", {
+          const nullLabel = t("gridNullBarAria", {
             column: colName,
             percent: nullPct.toFixed(nullPct > 0 && nullPct < 1 ? 1 : 0),
             count: rowCount.toLocaleString(),
           });
+          const label = distinctHint ? `${nullLabel} / ${distinctHint}` : nullLabel;
           return (
             <div className="th-nullbar" role="img" aria-label={label} {...bindTooltip(label)}>
               <div className="th-nullbar-fill" style={{ transform: `scaleX(${nullPct / 100})` }} />
@@ -3902,6 +3924,7 @@ export const DataGrid = memo(function DataGrid({
   changedColumns,
   addedRowIndices,
   rowAllowSet,
+  onFindDuplicates,
   globalFilter,
   editable = false,
   editableColumns,
@@ -3971,6 +3994,8 @@ export const DataGrid = memo(function DataGrid({
   addedRowIndices?: Set<number>;
   /** 表示を許可する元の行位置。null/未指定なら制限なし (ヒットのみ / 変化のみ表示, #1628)。 */
   rowAllowSet?: ReadonlySet<number> | null;
+  /** 列メニューの「重複を検出」(#1628)。結果ハンドル/行を持つ外側が受けてダイアログを開く。 */
+  onFindDuplicates?: (colIdx: number) => void;
   /** Optional global filter string applied across all visible columns. */
   globalFilter?: string;
   /**
@@ -4615,6 +4640,23 @@ export const DataGrid = memo(function DataGrid({
     if (stream) return nullRatesFromCounts(stream.nullCounts, rows.length, columns.length);
     return columnNullRates(rows, columns.length);
   }, [columnNullBars, rows, columns.length]);
+
+  // 列ヘッダの近似ユニーク数 (#1628)。ストリーム逐次統計の HyperLogLog から、追加のクエリ無しで
+  // 「候補キー / 定数列 / 低カーディナリティ」を一言添える。統計が無ければ出さない。
+  const distinctHints = useMemo<(string | null)[] | null>(() => {
+    if (!columnNullBars || rows.length === 0) return null;
+    const stream = streamStatsFor(rows);
+    if (!stream?.distinctEstimates) return null;
+    return columns.map((_, i) => {
+      const h = distinctHintFor(stream, rows.length, i);
+      if (!h) return null;
+      const count = h.estimate.toLocaleString();
+      if (h.kind === "candidateKey") return t("gridDistinctCandidateKey", { count });
+      if (h.kind === "constant") return t("gridDistinctConstant");
+      if (h.kind === "lowCardinality") return t("gridDistinctLow", { count });
+      return t("gridDistinctApprox", { count });
+    });
+  }, [columnNullBars, rows, columns, t]);
 
   // Drag-to-reorder columns: track the dragged/hovered column ids for
   // visual feedback, and commit a new order on drop.
@@ -6677,6 +6719,7 @@ export const DataGrid = memo(function DataGrid({
                     isDragSource={dragColId === h.column.id}
                     filterOpen={filterMenu?.colIdx === colIdx}
                     nullPct={nullRates ? (nullRates[colIdx] ?? 0) : null}
+                    distinctHint={distinctHints?.[colIdx] ?? null}
                     rowCount={nullRates ? rows.length : 0}
                     colSize={h.column.getSize()}
                     t={t}
@@ -7562,6 +7605,11 @@ export const DataGrid = memo(function DataGrid({
           }
           valueOptions={filterValueOptions}
           onSelectColumn={() => selectColumn(filterMenu.colIdx)}
+          onFindDuplicates={
+            onFindDuplicates && !isColumnMaskedNow(filterMenu.colIdx)
+              ? () => onFindDuplicates(filterMenu.colIdx)
+              : undefined
+          }
           onCopyColumnValues={
             isColumnMaskedNow(filterMenu.colIdx) ? undefined : () => copyColumnValues(filterMenu.colIdx)
           }
@@ -8183,6 +8231,15 @@ export const ResultGrid = memo(
     const [findHitsOnly, setFindHitsOnly] = useState(false);
     // 再実行差分の「変化のみ」(#1628)。
     const [diffChangedOnly, setDiffChangedOnly] = useState(false);
+    // 重複キー検出 (#1628): ダイアログの対象列と、重複行だけに絞り込む行インデックス。
+    const [dupColIdx, setDupColIdx] = useState<number | null>(null);
+    const [dupRowAllow, setDupRowAllow] = useState<ReadonlySet<number> | null>(null);
+    // 結果の行が入れ替わったら (再実行・編集適用・load-more) 古いインデックスの絞り込みは捨てる。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows の同一性が変わったことのトリガ依存
+    useEffect(() => {
+      setDupRowAllow(null);
+      setDupColIdx(null);
+    }, [result?.rows]);
     const [findIdx, setFindIdx] = useState<number | null>(null);
     const [findNav, setFindNav] = useState<GridFindNav | null>(null);
     const findSeqRef = useRef(0);
@@ -8572,8 +8629,8 @@ export const ResultGrid = memo(
       [diffChangedOnly, diff, result],
     );
     const rowAllowSet = useMemo(
-      () => intersectRowAllow(findRowAllow, diffRowAllow),
-      [findRowAllow, diffRowAllow],
+      () => intersectRowAllow(intersectRowAllow(findRowAllow, diffRowAllow), dupRowAllow),
+      [findRowAllow, diffRowAllow, dupRowAllow],
     );
     // 削除行のゴースト表示 (#1628): 前回にあって今回に無い行 (PK ペア無し)。
     const ghostRows = useMemo(
@@ -9163,6 +9220,19 @@ export const ResultGrid = memo(
               items={overflowMenuItems}
               onClose={() => setOverflowMenu(null)}
             />
+          )}
+          {dupRowAllow && (
+            <Tooltip label={t("dupKeysFilterChipClear")}>
+              <Button
+                variant="secondary"
+                size="sm"
+                px="2"
+                onClick={() => setDupRowAllow(null)}
+                aria-label={t("dupKeysFilterChipClear")}
+              >
+                {t("dupKeysFilterChip")} ✕
+              </Button>
+            </Tooltip>
           )}
           {onToggleDiffHighlight && pkIndices.length > 0 && (
             <Tooltip label={t("diffHighlightTitle")}>
@@ -9781,6 +9851,24 @@ export const ResultGrid = memo(
             </motion.div>
           )}
         </AnimatePresence>
+        <AnimatePresence>
+          {dupColIdx !== null && (
+            <DuplicateKeysModal
+              columns={result.columns}
+              rows={result.rows}
+              resultId={resultHandleFor(result.rows)}
+              initialCols={[dupColIdx]}
+              maskedCols={resolveMaskedColumns(
+                result.columns.map((c) => c.name),
+                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns },
+              )}
+              filterActive={dupRowAllow !== null}
+              onShowDuplicates={(idx) => setDupRowAllow(new Set(idx))}
+              onClearFilter={() => setDupRowAllow(null)}
+              onClose={() => setDupColIdx(null)}
+            />
+          )}
+        </AnimatePresence>
         <Box
           ref={containerRef}
           tabIndex={-1}
@@ -9808,6 +9896,7 @@ export const ResultGrid = memo(
             changedCells={diff?.changedCells}
             addedRowIndices={diff?.addedRows}
             rowAllowSet={rowAllowSet}
+            onFindDuplicates={streaming ? undefined : setDupColIdx}
             pendingDeleteKeys={pendingDeleteKeys}
             onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
             onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}

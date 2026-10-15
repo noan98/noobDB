@@ -254,6 +254,7 @@ fn build_fixtures() -> serde_json::Value {
             count: Value::UInt(7),
         }],
         notes: vec!["approx_distinct_no_stats".into()],
+        sample_percent: Some(2.5),
     };
     // 全列の概要 (#1539)。`distinct_count` の Some / None と lossless 文字列の両方を出す。
     let table_profile_overview = t::TableProfileOverview {
@@ -599,6 +600,7 @@ fn build_fixtures() -> serde_json::Value {
             num_min: vec![Some(1.0), None],
             num_max: vec![Some(1.0), None],
             duplicate_rows: Some(false),
+            distinct_estimates: vec![1, 1],
         }),
     };
     // 境界ケース: 空の結果セット (0 行の SELECT)。`Vec::new()` は serde で必ず
@@ -624,6 +626,7 @@ fn build_fixtures() -> serde_json::Value {
             num_min: vec![Some(1.0), None],
             num_max: vec![Some(2.0), None],
             duplicate_rows: None,
+            distinct_estimates: vec![2, 1],
         }),
         snapshot_id: Some(3),
         read_only: false,
@@ -648,6 +651,18 @@ fn build_fixtures() -> serde_json::Value {
             vec![Value::Null],
         ],
         0,
+    );
+    // 重複キー検出 (#1628): グループ・上位・行インデックスのすべてが埋まる入力。
+    let result_duplicate_keys = t::duplicate_keys(
+        &[
+            vec![Value::String("a".into()), Value::Int(1)],
+            vec![Value::String("a".into()), Value::Int(1)],
+            vec![Value::Null, Value::Int(2)],
+            vec![Value::String("b".into()), Value::Int(3)],
+        ],
+        &[0, 1],
+        5,
+        10,
     );
     let broadcast_env_message = BroadcastMessage::Env(BroadcastEnvReport {
         session_id: "sess0001".into(),
@@ -1812,6 +1827,7 @@ fn build_fixtures() -> serde_json::Value {
         "queryStreamDoneMessage": query_stream_done_message,
         "resultFindOutput": result_find_output,
         "resultColumnStats": result_column_stats,
+        "resultDuplicateKeys": result_duplicate_keys,
         "queryStreamPatchMessage": query_stream_patch_message,
         "broadcastEnvMessage": broadcast_env_message,
         "broadcastCancelledMessage": broadcast_cancelled_message,

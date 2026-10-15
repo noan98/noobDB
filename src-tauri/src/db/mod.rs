@@ -1550,6 +1550,7 @@ impl Connection {
 
     /// 列データプロファイル (「列を探索」、#974)。件数 / NULL 率 / DISTINCT /
     /// MIN・MAX / 上位頻出値 / (数値列のみ) ヒストグラムをサーバ側で全件集計する。
+    /// `sample_percent` を渡すと標本モード (#1628) で、その割合の行だけを対象にする。
     /// 方言別の SQL は `profile::build_*_sql` (純関数) が `DriverKind` の全
     /// バリアントについて生成し、ここは `execute` 経由で流すだけ。すべて単一の
     /// SELECT なので read_only セッションでも実行できる。型の都合で通らない段は
@@ -1561,8 +1562,10 @@ impl Connection {
         column: &str,
         approximate: bool,
         top_n: u32,
+        sample_percent: Option<f64>,
     ) -> Result<profile::ColumnProfile> {
-        profile::run_column_profile(self, db, table, column, approximate, top_n).await
+        profile::run_column_profile(self, db, table, column, approximate, top_n, sample_percent)
+            .await
     }
 
     /// 表の全列の概要 (件数 / NULL 数 / DISTINCT / MIN・MAX) を、列数ぶんの集計式を
