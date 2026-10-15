@@ -46,6 +46,7 @@ describe("TableStatisticsPanel empty state (#847)", () => {
         index_count: 1,
         has_primary_key: true,
         foreign_key_count: 0,
+        previous: null,
       },
     ]);
 
@@ -87,5 +88,41 @@ describe("TableStatisticsPanel error state (#848)", () => {
     await waitFor(() => {
       expect(api.tableStatistics).toHaveBeenCalledTimes(2);
     });
+  });
+});
+
+/** 前回取得からの行数・サイズの増減 (#1621)。 */
+describe("TableStatisticsPanel 前回取得からの増減 (#1621)", () => {
+  it("行数と合計サイズの増減を表示し、前回値が無いテーブルには出さない", async () => {
+    const base = {
+      index_bytes: 0,
+      column_count: 1,
+      index_count: 1,
+      has_primary_key: true,
+      foreign_key_count: 0,
+    };
+    vi.mocked(api.tableStatistics).mockResolvedValueOnce([
+      {
+        ...base,
+        name: "orders",
+        row_estimate: 1500,
+        data_bytes: 3 * 1024 * 1024,
+        total_bytes: 3 * 1024 * 1024,
+        previous: { at: "2026-01-01T00:00:00Z", row_estimate: 1000, total_bytes: 1024 * 1024 },
+      },
+      {
+        ...base,
+        name: "fresh",
+        row_estimate: 5,
+        data_bytes: 10,
+        total_bytes: 10,
+        previous: null,
+      },
+    ]);
+    renderWithProviders(<TableStatisticsPanel sessionId="s1" database="testdb" onClose={() => {}} />);
+    await screen.findByText("orders");
+    const deltas = screen.getAllByTestId("stat-delta").map((d) => d.textContent);
+    expect(deltas).toEqual(["+500", "+2.0 MB"]);
+    expect(screen.getByText("fresh").closest("tr")?.querySelector("[data-testid=stat-delta]")).toBeNull();
   });
 });

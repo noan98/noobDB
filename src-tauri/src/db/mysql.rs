@@ -1420,12 +1420,40 @@ impl MySqlConn {
                 });
             }
         };
+        // インデックスのサイズ (#1621): `mysql.innodb_index_stats` の `size` はページ数なので
+        // ページサイズを掛ける。このテーブルは権限が無いことが多いので、読めなければサイズなし
+        // (指摘そのものは出す) に縮退する。
+        let sizes: std::collections::HashMap<(String, String), u64> = match sqlx::query(
+            "SELECT table_name, index_name, CAST(stat_value * @@innodb_page_size AS UNSIGNED)
+             FROM mysql.innodb_index_stats
+             WHERE database_name = ? AND stat_name = 'size'",
+        )
+        .bind(db)
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(size_rows) => size_rows
+                .iter()
+                .filter_map(|r| {
+                    let table = r.try_get::<String, _>(0).ok()?;
+                    let index = r.try_get::<String, _>(1).ok()?;
+                    let bytes = r.try_get::<u64, _>(2).ok()?;
+                    Some(((table, index), bytes))
+                })
+                .collect(),
+            Err(_) => std::collections::HashMap::new(),
+        };
         let entries = rows
             .iter()
             .filter_map(|r| {
                 let table = r.try_get::<Option<String>, _>(0).ok().flatten()?;
                 let index = r.try_get::<Option<String>, _>(1).ok().flatten()?;
-                Some(UnusedIndexEntry { table, index })
+                let size_bytes = sizes.get(&(table.clone(), index.clone())).copied();
+                Some(UnusedIndexEntry {
+                    table,
+                    index,
+                    size_bytes,
+                })
             })
             .collect();
         Ok(UnusedIndexStats {

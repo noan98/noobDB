@@ -94,10 +94,13 @@ beforeEach(() => {
         fix_ddl: "DROP INDEX idx_note ON orders;",
         fix_ddl_online: null,
         statistical: true,
+        size_bytes: null,
       },
     ],
     skipped: [],
     table_plans: [],
+    ignored: [],
+    diff: null,
   });
   handlers = null;
   enable();
@@ -230,6 +233,7 @@ describe("アドバイザの AI 解説 (#1468)", () => {
       fix_ddl: null,
       fix_ddl_online: null,
       statistical: false,
+      size_bytes: null,
     });
     analyzeSchemaHealth.mockResolvedValue({
       driver: "mysql",
@@ -237,6 +241,8 @@ describe("アドバイザの AI 解説 (#1468)", () => {
       findings: [mk("t_a"), mk("t_b")],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     renderWithProviders(ui());
     fireEvent.click(screen.getByText(t("advisorRun")));

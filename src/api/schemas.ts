@@ -791,6 +791,7 @@ export const healthFinding = z.object({
   fix_ddl: z.string().nullable(),
   fix_ddl_online: z.string().nullable(),
   statistical: z.boolean(),
+  size_bytes: z.number().nullable(),
 });
 
 export const skippedRule = z.object({
@@ -811,6 +812,15 @@ export const schemaHealthReport = z.object({
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
   table_plans: z.array(tableFixPlan),
+  ignored: z.array(healthFinding),
+  diff: z
+    .object({
+      previous_at: z.string(),
+      new_indexes: z.array(z.number()),
+      resolved: z.array(healthFinding),
+      unchanged: z.number(),
+    })
+    .nullable(),
 });
 
 export const csvPreview = z.object({
@@ -925,6 +935,13 @@ export const tableStatistic = tableSizeInfo.extend({
   index_count: z.number(),
   has_primary_key: z.boolean(),
   foreign_key_count: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      row_estimate: z.number().nullable(),
+      total_bytes: z.number().nullable(),
+    })
+    .nullable(),
 });
 
 /** 1 テーブル分の全列メタデータ (`describe_database`、#1255)。Rust の

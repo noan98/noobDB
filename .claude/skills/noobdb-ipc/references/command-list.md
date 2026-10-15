@@ -243,7 +243,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
-- `analyze_schema_health`
+- `analyze_schema_health` (#1621。「対応しない」を `ignored` へ振り分け、前回診断 (メモリ上の直近 1 件) との差分 `diff` を載せる。未使用インデックスには `size_bytes`)
+- `ignore_advisor_finding` (#1621。`advisor_ignores.json` に (プロファイル, DB, 指摘キー) を保存)
+- `unignore_advisor_finding` (#1621。「対応しない」の取り消し)
 - `query_stats_support`
 - `sample_live_queries`
 - `start_statement_recording`

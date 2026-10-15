@@ -265,7 +265,7 @@ pub fn plan_import(
 /// `path` をアトミックに (全体差し替えで) 書き込む。`snippets::store::write_atomic`
 /// と同じ理由・同じ実装 (モジュールをまたいだ共有ヘルパーにはせず各ストアで完結させる
 /// 既存の流儀に合わせる)。
-pub(super) fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     // PID だけでは同一プロセス内の並行呼び出しを区別できないため、プロセス内で
     // 単調増加するカウンタも足して一時ファイル名を一意にする。

@@ -3,6 +3,7 @@
 // やむを得ず残す箇所には #[allow(...)] + 根拠コメントを付けること。
 #![warn(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod advisor_ignore;
 mod ai;
 mod assertions;
 mod atomic_write;
@@ -12,6 +13,7 @@ mod db;
 mod error;
 mod flight_recorder;
 mod history;
+mod json_store;
 mod json_tolerant;
 mod logs;
 mod perf;
@@ -22,6 +24,7 @@ mod schema_drift;
 mod snippets;
 mod ssh;
 mod state;
+mod table_stat_store;
 mod tasks;
 mod text_encoding;
 mod timelapse;
@@ -39,8 +42,8 @@ pub mod __test_api {
     };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
-        analyze, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity, SkippedRule,
-        TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        analyze, AdvisorDiff, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity,
+        SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
@@ -207,7 +210,7 @@ pub mod __test_api {
     pub use crate::db::assertions::AssertionSql;
     pub use crate::db::diff::TableColumns;
     pub use crate::db::sandbox::SandboxConflict;
-    pub use crate::db::schema_insight::{IncomingForeignKey, TableStatistic};
+    pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
     pub use crate::db::types::DatabaseTables;
     pub use crate::plan_watch::store::{PlanGeneration, WatchEntry};
     pub use crate::schema_drift::{
@@ -1411,6 +1414,8 @@ pub fn run() {
             commands::profile::profile_column,
             commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
+            commands::advisor::ignore_advisor_finding,
+            commands::advisor::unignore_advisor_finding,
             commands::diff::compare_schema,
             commands::diff::compare_table_data,
             commands::sync::generate_sync_sql,

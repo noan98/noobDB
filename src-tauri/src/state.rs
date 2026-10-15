@@ -277,6 +277,19 @@ pub struct AppState {
     /// 結果ハンドル (#1264): ストリーミングで流した大きな結果を、合計メモリ上限付きで
     /// 保持するストア。ソート・フィルタ・検索・エクスポートをバックエンドで行うために使う。
     pub results: std::sync::Mutex<crate::db::result_store::ResultStore>,
+    /// スキーマ健全性アドバイザ (#1621) の直近の診断結果。(セッション ID, データベース) ごとに
+    /// 1 件だけメモリに持ち、再診断のとき「新規 / 解消された指摘」を出すための前回分として使う。
+    /// 永続化しない (セッションを閉じれば消える)ので秘密情報の扱いは増えない。
+    pub advisor_last: std::sync::Mutex<HashMap<(SessionId, String), AdvisorSnapshot>>,
+}
+
+/// アドバイザの診断スナップショット 1 件 (前回との差分用、#1621)。
+#[derive(Debug, Clone)]
+pub struct AdvisorSnapshot {
+    /// 診断した時刻 (UTC, RFC 3339)。
+    pub at: String,
+    /// 「対応しない」を含む、その時点のすべての指摘。
+    pub findings: Vec<crate::db::advisor::HealthFinding>,
 }
 
 impl AppState {
@@ -383,6 +396,11 @@ impl AppState {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .release_session(id);
+            // アドバイザの前回診断も、切断したセッションの分は持ち越さない。
+            self.advisor_last
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .retain(|(sid, _), _| sid != id);
         }
         removed
     }

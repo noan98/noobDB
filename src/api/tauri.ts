@@ -759,6 +759,16 @@ export interface TableStatistic extends TableSizeInfo {
   index_count: number;
   has_primary_key: boolean;
   foreign_key_count: number;
+  /** 前回取得時の値 (#1621)。増減 (今回 − 前回) の基準。初回・前回に無かったテーブルは null。 */
+  previous: TableStatPrevious | null;
+}
+
+/** 前回取得時のテーブル統計 (#1621)。 */
+export interface TableStatPrevious {
+  /** 前回取得の時刻 (UTC, RFC 3339)。 */
+  at: string;
+  row_estimate: number | null;
+  total_bytes: number | null;
 }
 
 /** 列編集ダイアログの初期ロード一式 (`alter_table_context`、#1255)。 */
@@ -1316,6 +1326,8 @@ export interface HealthFinding {
   fix_ddl_online: string | null;
   /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
   statistical: boolean;
+  /** 削除で空く容量 (バイト)。未使用インデックスで、エンジンから取れたときだけ (#1621)。 */
+  size_bytes: number | null;
 }
 
 /** 前提を満たさずスキップしたルールと機械可読な理由コード。 */
@@ -1343,6 +1355,22 @@ export interface SchemaHealthReport {
   skipped: SkippedRule[];
   /** テーブル単位のまとめ DDL (#1540)。 */
   table_plans: TableFixPlan[];
+  /** 「対応しない」にした指摘 (#1621)。`findings` からは除かれ、別枠に折りたたんで出す。 */
+  ignored: HealthFinding[];
+  /** 前回診断 (同じセッション・同じデータベース) との差分 (#1621)。初回は null。 */
+  diff: AdvisorDiff | null;
+}
+
+/** 前回診断との差分 (#1621)。 */
+export interface AdvisorDiff {
+  /** 前回診断の時刻 (UTC, RFC 3339)。 */
+  previous_at: string;
+  /** 今回の `findings` のうち前回は無かった指摘の添字。 */
+  new_indexes: number[];
+  /** 前回は出ていて今回は消えた (解消された) 指摘。 */
+  resolved: HealthFinding[];
+  /** 前回から続いている指摘の件数。 */
+  unchanged: number;
 }
 
 /** What a generated sync statement does. */

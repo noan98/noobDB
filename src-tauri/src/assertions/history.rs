@@ -7,15 +7,11 @@
 //! 退避して空から再開)。履歴は補助情報なので、記録の失敗は検証結果そのものを失敗させない
 //! (呼び出し側が警告ログに留める)。
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
-
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-use super::store::write_atomic;
-use crate::error::{AppError, Result};
+use crate::error::Result;
+use crate::json_store::JsonStore;
 
 const FILE_NAME: &str = "assertion_history.json";
 /// アサーション 1 件あたりに残す実行結果の最大件数。
@@ -38,44 +34,10 @@ struct HistoryFile {
     runs: BTreeMap<String, Vec<RunSample>>,
 }
 
-static STORE_LOCK: Mutex<()> = Mutex::new(());
-
-fn history_path() -> Result<PathBuf> {
-    let dir = ProjectDirs::from("", "", "noobDB")
-        .map(|p| p.data_dir().to_path_buf())
-        .ok_or(AppError::ConfigDir)?;
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join(FILE_NAME))
-}
-
-fn load_file(path: &Path) -> Result<HistoryFile> {
-    if !path.exists() {
-        return Ok(HistoryFile::default());
-    }
-    let content = std::fs::read_to_string(path)?;
-    if content.trim().is_empty() {
-        return Ok(HistoryFile::default());
-    }
-    match serde_json::from_str::<HistoryFile>(&content) {
-        Ok(f) => Ok(f),
-        Err(e) => {
-            // 履歴は補助情報なので、壊れていたら退避して空から再開する。
-            let backup = crate::json_tolerant::corrupt_backup_path(path);
-            tracing::error!(
-                path = %path.display(),
-                backup = %backup.display(),
-                error = %e,
-                "assertion history is corrupt; moving it aside and starting empty"
-            );
-            std::fs::rename(path, &backup)?;
-            Ok(HistoryFile::default())
-        }
-    }
-}
+static STORE: JsonStore = JsonStore::new(FILE_NAME);
 
 /// `sample` を追記し、追記前の最新の結果 (= 「前回」) を返す。上限を超えた古い結果は捨てる。
-fn record_at(path: &Path, id: &str, sample: RunSample) -> Result<Option<RunSample>> {
-    let mut file = load_file(path)?;
+fn push_sample(file: &mut HistoryFile, id: &str, sample: RunSample) -> Option<RunSample> {
     let runs = file.runs.entry(id.to_string()).or_default();
     let previous = runs.last().cloned();
     runs.push(sample);
@@ -83,15 +45,12 @@ fn record_at(path: &Path, id: &str, sample: RunSample) -> Result<Option<RunSampl
         let excess = runs.len() - HISTORY_LIMIT;
         runs.drain(..excess);
     }
-    let content = serde_json::to_string_pretty(&file)?;
-    write_atomic(path, content.as_bytes())?;
-    Ok(previous)
+    previous
 }
 
 /// 実行結果を記録して前回の結果を返す。
 pub fn record(id: &str, sample: RunSample) -> Result<Option<RunSample>> {
-    let _guard = STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
-    record_at(&history_path()?, id, sample)
+    STORE.update::<HistoryFile, _>(|f| push_sample(f, id, sample))
 }
 
 /// 現在時刻の `RunSample` を作る。
@@ -107,6 +66,17 @@ pub fn sample_now(observed: u64, passed: bool, elapsed_ms: u64) -> RunSample {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::json_store::update_at;
+    use std::path::{Path, PathBuf};
+
+    fn record_at(path: &Path, id: &str, sample: RunSample) -> Result<Option<RunSample>> {
+        update_at::<HistoryFile, _>(path, |f| push_sample(f, id, sample))
+    }
+
+    fn load_file(path: &Path) -> Result<HistoryFile> {
+        crate::json_store::load_from(path)
+    }
 
     fn scratch(tag: &str) -> PathBuf {
         let mut p = std::env::temp_dir();

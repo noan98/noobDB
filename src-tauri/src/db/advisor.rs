@@ -64,7 +64,7 @@ pub enum RuleId {
 }
 
 /// 1 件の指摘。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HealthFinding {
     pub rule: RuleId,
     pub severity: Severity,
@@ -92,6 +92,34 @@ pub struct HealthFinding {
     /// エンジンの実行時統計 (未使用インデックス) に由来する指摘のとき `true`。
     /// フロントは「観測期間に依存する」旨の注記を表示する。
     pub statistical: bool,
+    /// 削除で空く容量 (バイト)。未使用インデックスの指摘で、エンジンから取れたときだけ `Some`
+    /// (PostgreSQL は `pg_relation_size`、MySQL は `mysql.innodb_index_stats` の `size` × ページサイズ)。
+    /// 優先順位付け (容量の大きい順) と「合計でどれだけ空くか」の表示に使う (#1621)。
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
+}
+
+impl HealthFinding {
+    /// 指摘の同一性を表す安定キー (#1621)。前回診断との差分 (新規 / 解消) と「対応しない」で
+    /// 同じ指摘を指すために使う。`(ルール, 対象テーブル, 対象列)` に、インデックスを対象にする
+    /// ルール (重複 / 冗長 / 未使用) では `context[0]` = インデックス名を足す (同じ列構成の
+    /// 別インデックスを区別するため)。型文字列などの付随情報 (`context` の他の要素) は含めない —
+    /// 型が変わっても「同じ指摘が続いている」と扱う。
+    pub fn key(&self) -> String {
+        let rule = serde_json::to_value(self.rule)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let mut key = format!("{rule}|{}|{}", self.table, self.columns.join(","));
+        if matches!(
+            self.rule,
+            RuleId::DuplicateIndex | RuleId::RedundantIndex | RuleId::UnusedIndex
+        ) {
+            key.push('|');
+            key.push_str(self.context.first().map(String::as_str).unwrap_or(""));
+        }
+        key
+    }
 }
 
 /// 前提を満たさずスキップしたルールと、その機械可読な理由コード。黙って
@@ -116,6 +144,65 @@ pub struct SchemaHealthReport {
     /// 統計依存の指摘 (未使用インデックス) は観測期間に左右されるため含めない。
     #[serde(default)]
     pub table_plans: Vec<TableFixPlan>,
+    /// 利用者が「対応しない」にした指摘 (#1621)。`findings` からは除かれ、画面では別枠に折りたたむ。
+    /// 純ロジック (`analyze`) は常に空で、IPC 層が非秘密の JSON ストアで振り分ける。
+    #[serde(default)]
+    pub ignored: Vec<HealthFinding>,
+    /// 前回診断 (同じセッション・同じデータベース) との差分 (#1621)。初回は `None`。
+    #[serde(default)]
+    pub diff: Option<AdvisorDiff>,
+}
+
+/// 前回診断との差分 (#1621)。指摘の同一性は [`HealthFinding::key`]。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdvisorDiff {
+    /// 前回診断の時刻 (UTC, RFC 3339)。
+    pub previous_at: String,
+    /// 今回の `findings` のうち、前回は無かった指摘の添字。
+    pub new_indexes: Vec<usize>,
+    /// 前回は出ていて今回は消えた (= 解消された) 指摘。「対応しない」にしたものは含めない。
+    pub resolved: Vec<HealthFinding>,
+    /// 前回から続いている指摘の件数。
+    pub unchanged: usize,
+}
+
+/// 前回の指摘一覧と今回の一覧から差分を作る純関数。`current` は表示対象 (対応しない除外後) の
+/// 指摘、`ignored` は今回「対応しない」で除いた指摘 (解消扱いにしないために参照する)。
+pub fn diff_findings(
+    previous: &[HealthFinding],
+    previous_at: &str,
+    current: &[HealthFinding],
+    ignored: &[HealthFinding],
+) -> AdvisorDiff {
+    use std::collections::HashSet;
+    let prev_keys: HashSet<String> = previous.iter().map(HealthFinding::key).collect();
+    let cur_keys: HashSet<String> = current.iter().map(HealthFinding::key).collect();
+    let ignored_keys: HashSet<String> = ignored.iter().map(HealthFinding::key).collect();
+    let new_indexes = current
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| !prev_keys.contains(&f.key()))
+        .map(|(i, _)| i)
+        .collect();
+    let mut seen = HashSet::new();
+    let resolved = previous
+        .iter()
+        .filter(|f| {
+            let k = f.key();
+            !cur_keys.contains(&k) && !ignored_keys.contains(&k) && seen.insert(k)
+        })
+        .cloned()
+        .collect();
+    let unchanged = current
+        .iter()
+        .filter(|f| prev_keys.contains(&f.key()))
+        .count();
+    AdvisorDiff {
+        previous_at: previous_at.to_string(),
+        new_indexes,
+        resolved,
+        unchanged,
+    }
 }
 
 /// 1 テーブルぶんの修正 DDL のまとめ (#1540)。各指摘の `fix_ddl` を連結しただけでなく、
@@ -161,6 +248,9 @@ pub struct UnusedIndexStats {
 pub struct UnusedIndexEntry {
     pub table: String,
     pub index: String,
+    /// インデックスのサイズ (バイト)。取得できなければ `None` (権限不足・非対応など)。
+    #[serde(default)]
+    pub size_bytes: Option<u64>,
 }
 
 /// 純ルール判定への入力一式。
@@ -207,6 +297,8 @@ pub fn analyze(input: &AdvisorInput) -> SchemaHealthReport {
         findings,
         skipped,
         table_plans,
+        ignored: Vec::new(),
+        diff: None,
     }
 }
 
@@ -397,6 +489,7 @@ fn rule_missing_primary_key(table: &TableMeta, out: &mut Vec<HealthFinding>) {
         fix_ddl: None,
         fix_ddl_online: None,
         statistical: false,
+        size_bytes: None,
     });
 }
 
@@ -453,6 +546,7 @@ fn rule_duplicate_and_redundant_indexes(
                 fix_ddl: Some(drop_index_ddl(driver, &table.name, &x.name)),
                 fix_ddl_online: drop_index_online_ddl(driver, &table.name, &x.name),
                 statistical: false,
+                size_bytes: None,
             });
             continue;
         }
@@ -480,6 +574,7 @@ fn rule_duplicate_and_redundant_indexes(
                 fix_ddl: Some(drop_index_ddl(driver, &table.name, &x.name)),
                 fix_ddl_online: drop_index_online_ddl(driver, &table.name, &x.name),
                 statistical: false,
+                size_bytes: None,
             });
         }
     }
@@ -555,6 +650,7 @@ fn rule_fk_missing_index(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
             fix_ddl: Some(create_index_ddl(input.driver, &group.table, &group.columns)),
             fix_ddl_online: create_index_online_ddl(input.driver, &group.table, &group.columns),
             statistical: false,
+            size_bytes: None,
         });
     }
 }
@@ -597,6 +693,7 @@ fn rule_fk_type_mismatch(input: &AdvisorInput, out: &mut Vec<HealthFinding>) {
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: false,
+            size_bytes: None,
         });
     }
 }
@@ -734,6 +831,7 @@ fn rule_unused_indexes(
                 continue;
             }
         }
+        let idx_size = entry.size_bytes;
         out.push(HealthFinding {
             rule: RuleId::UnusedIndex,
             severity: Severity::Low,
@@ -746,6 +844,7 @@ fn rule_unused_indexes(
             fix_ddl: Some(drop_index_ddl(input.driver, &entry.table, &entry.index)),
             fix_ddl_online: drop_index_online_ddl(input.driver, &entry.table, &entry.index),
             statistical: true,
+            size_bytes: idx_size,
         });
     }
 }
@@ -777,6 +876,7 @@ fn rule_sqlite_integer_pk_hint(table: &TableMeta, out: &mut Vec<HealthFinding>) 
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: false,
+            size_bytes: None,
         });
     }
 }
@@ -1202,6 +1302,7 @@ mod tests {
         inp.unused = unused_supported(vec![UnusedIndexEntry {
             table: "t".into(),
             index: "idx_a".into(),
+            size_bytes: None,
         }]);
         let report = analyze(&inp);
         let f = findings_for(&report, RuleId::UnusedIndex);
@@ -1223,6 +1324,7 @@ mod tests {
         inp.unused = unused_supported(vec![UnusedIndexEntry {
             table: "t".into(),
             index: "uq_a".into(),
+            size_bytes: None,
         }]);
         let report = analyze(&inp);
         assert!(findings_for(&report, RuleId::UnusedIndex).is_empty());
@@ -1810,6 +1912,7 @@ mod tests {
         i.unused = unused_supported(vec![UnusedIndexEntry {
             table: "zeta".into(),
             index: "i_x".into(),
+            size_bytes: None,
         }]);
         let report = analyze(&i);
         // zeta には統計依存の未使用インデックス 1 件だけ → まとめ対象外。
@@ -1855,5 +1958,99 @@ mod tests {
         assert!(ddl.contains("`ta``ble`"));
         assert!(ddl.contains("DROP INDEX `we``ird`"));
         assert!(ddl.contains("(`c``ol`)"));
+    }
+
+    // ── #1621: 指摘の同一性・前回診断との差分・容量 ──────────────────────────
+
+    fn finding(rule: RuleId, table: &str, cols: &[&str], ctx: &[&str]) -> HealthFinding {
+        HealthFinding {
+            rule,
+            severity: Severity::Low,
+            table: table.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            context: ctx.iter().map(|c| c.to_string()).collect(),
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: false,
+            size_bytes: None,
+        }
+    }
+
+    #[test]
+    fn finding_key_distinguishes_indexes_but_ignores_type_context() {
+        let a = finding(RuleId::UnusedIndex, "t", &["a"], &["idx_a"]);
+        let b = finding(RuleId::UnusedIndex, "t", &["a"], &["idx_a2"]);
+        assert_ne!(
+            a.key(),
+            b.key(),
+            "同じ列構成でもインデックス名が違えば別の指摘"
+        );
+        // 重複インデックスは相手側の名前が変わっても同じ指摘。
+        let d1 = finding(RuleId::DuplicateIndex, "t", &["a"], &["idx_a", "idx_b"]);
+        let d2 = finding(RuleId::DuplicateIndex, "t", &["a"], &["idx_a", "idx_c"]);
+        assert_eq!(d1.key(), d2.key());
+        // 型不一致は型文字列が変わっても同じ指摘。
+        let m1 = finding(
+            RuleId::FkTypeMismatch,
+            "t",
+            &["u"],
+            &["int", "users.id", "bigint"],
+        );
+        let m2 = finding(
+            RuleId::FkTypeMismatch,
+            "t",
+            &["u"],
+            &["smallint", "users.id", "bigint"],
+        );
+        assert_eq!(m1.key(), m2.key());
+        // ルールが違えば別。
+        assert_ne!(
+            finding(RuleId::MissingPrimaryKey, "t", &[], &[]).key(),
+            finding(RuleId::FkMissingIndex, "t", &[], &[]).key()
+        );
+    }
+
+    #[test]
+    fn diff_findings_separates_new_resolved_and_unchanged() {
+        let keep = finding(RuleId::MissingPrimaryKey, "log", &[], &[]);
+        let fixed = finding(RuleId::FkMissingIndex, "orders", &["user_id"], &["users"]);
+        let silenced = finding(RuleId::UnusedIndex, "t", &["a"], &["idx_a"]);
+        let added = finding(RuleId::DuplicateIndex, "t", &["b"], &["i1", "i2"]);
+        let previous = vec![keep.clone(), fixed.clone(), silenced.clone()];
+        let current = vec![keep, added.clone()];
+        let diff = diff_findings(&previous, "2026-01-01T00:00:00Z", &current, &[silenced]);
+        assert_eq!(diff.new_indexes, vec![1]);
+        assert_eq!(
+            diff.resolved,
+            vec![fixed],
+            "対応しない側へ移したものは解消に数えない"
+        );
+        assert_eq!(diff.unchanged, 1);
+        assert_eq!(diff.previous_at, "2026-01-01T00:00:00Z");
+        let _ = added;
+    }
+
+    #[test]
+    fn unused_index_finding_carries_the_reclaimable_size() {
+        let t = table(
+            "t",
+            vec![col("a", "int", false)],
+            vec![idx("idx_a", &["a"], false, false)],
+        );
+        let mut inp = input(DriverKind::Postgres, vec![t], vec![]);
+        inp.unused = unused_supported(vec![UnusedIndexEntry {
+            table: "t".into(),
+            index: "idx_a".into(),
+            size_bytes: Some(8192),
+        }]);
+        let report = analyze(&inp);
+        let f = report
+            .findings
+            .iter()
+            .find(|f| f.rule == RuleId::UnusedIndex)
+            .expect("unused finding");
+        assert_eq!(f.size_bytes, Some(8192));
+        assert!(report.ignored.is_empty());
+        assert!(report.diff.is_none());
     }
 }

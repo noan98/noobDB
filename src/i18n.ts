@@ -4728,6 +4728,22 @@ const en = {
   advisorColTarget: "Target",
   advisorColSeverity: "Severity",
   advisorColDetail: "Detail",
+  advisorColSize: "Reclaimable",
+  advisorExportColSize: "Reclaimable size (bytes)",
+  advisorReclaimable: "Dropping the unused indexes below would free up to {size}.",
+  advisorReclaimableUnknown: "({count} index(es) have no size information and are not counted.)",
+  advisorIgnore: "Won't fix",
+  advisorIgnoreTooltip:
+    "Hide this finding from future diagnoses. It moves to a collapsed list you can restore it from.",
+  advisorIgnoreError: "Could not update the finding: {error}",
+  advisorUnignore: "Restore",
+  advisorIgnoredTitle: "Won't fix ({count})",
+  advisorIgnoredNote:
+    "These findings are hidden from the main list on every diagnosis. Restore one to see it again.",
+  advisorDiffSummary:
+    "Since the previous diagnosis ({time}): {added} new, {resolved} resolved, {unchanged} unchanged.",
+  advisorDiffResolvedItem: "Resolved: {rule} — {target}",
+  advisorDiffNewBadge: "New",
   advisorPlansTitle: "Per-table fix plans",
   advisorPlansInsertAll: "Insert all plans into the editor",
   advisorPlansNote:
@@ -5498,6 +5514,7 @@ const en = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  sizeDeltaSince: "Change since the previous fetch ({time})",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10207,6 +10224,19 @@ const ja: Dict = {
   advisorColTarget: "対象",
   advisorColSeverity: "重要度",
   advisorColDetail: "説明",
+  advisorColSize: "再利用可能サイズ",
+  advisorExportColSize: "再利用可能サイズ (バイト)",
+  advisorReclaimable: "下の未使用インデックスをすべて削除すると、最大 {size} 空きます。",
+  advisorReclaimableUnknown: "(サイズを取得できなかった {count} 件は含みません。)",
+  advisorIgnore: "対応しない",
+  advisorIgnoreTooltip: "この指摘を次回以降の診断で本表から外します。折りたたんだ別枠から元に戻せます。",
+  advisorIgnoreError: "指摘を更新できませんでした: {error}",
+  advisorUnignore: "戻す",
+  advisorIgnoredTitle: "対応しない指摘 ({count} 件)",
+  advisorIgnoredNote: "これらの指摘は診断のたびに本表から外されます。戻すと再び本表に出ます。",
+  advisorDiffSummary: "前回の診断 ({time}) から: 新規 {added} 件 / 解消 {resolved} 件 / 継続 {unchanged} 件",
+  advisorDiffResolvedItem: "解消: {rule} — {target}",
+  advisorDiffNewBadge: "新規",
   advisorPlansTitle: "テーブル別の修正計画",
   advisorPlansInsertAll: "すべての計画をエディタへ挿入",
   advisorPlansNote:
@@ -10967,6 +10997,7 @@ const ja: Dict = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  sizeDeltaSince: "前回取得 ({time}) からの増減",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

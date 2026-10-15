@@ -1209,6 +1209,7 @@
     "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
     "rule": "fk_missing_index",
     "severity": "high",
+    "size_bytes": null,
     "statistical": false,
     "table": "orders"
   },
@@ -1222,6 +1223,7 @@
       "fix_ddl_online": null,
       "rule": "fk_missing_index",
       "severity": "high",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1234,6 +1236,7 @@
       "fix_ddl_online": null,
       "rule": "duplicate_index",
       "severity": "medium",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1246,6 +1249,7 @@
       "fix_ddl_online": null,
       "rule": "redundant_index",
       "severity": "low",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1258,6 +1262,7 @@
       "fix_ddl_online": null,
       "rule": "missing_primary_key",
       "severity": "high",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1270,6 +1275,7 @@
       "fix_ddl_online": null,
       "rule": "unused_index",
       "severity": "medium",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1282,6 +1288,7 @@
       "fix_ddl_online": null,
       "rule": "fk_type_mismatch",
       "severity": "low",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1294,6 +1301,7 @@
       "fix_ddl_online": null,
       "rule": "sqlite_integer_pk_hint",
       "severity": "high",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     }
@@ -3782,6 +3790,30 @@
     ]
   },
   "schemaHealthReport": {
+    "diff": {
+      "new_indexes": [
+        0
+      ],
+      "previous_at": "2026-01-01T00:00:00Z",
+      "resolved": [
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [
+            "users"
+          ],
+          "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+          "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
+          "rule": "fk_missing_index",
+          "severity": "high",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
+        }
+      ],
+      "unchanged": 2
+    },
     "driver": "mysql",
     "findings": [
       {
@@ -3795,8 +3827,26 @@
         "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
         "rule": "fk_missing_index",
         "severity": "high",
+        "size_bytes": null,
         "statistical": false,
         "table": "orders"
+      }
+    ],
+    "ignored": [
+      {
+        "columns": [
+          "created_at"
+        ],
+        "context": [
+          "idx_logs_created"
+        ],
+        "fix_ddl": null,
+        "fix_ddl_online": null,
+        "rule": "unused_index",
+        "severity": "low",
+        "size_bytes": 1048576,
+        "statistical": true,
+        "table": "logs"
       }
     ],
     "skipped": [
@@ -3817,6 +3867,7 @@
   },
   "schemaHealthReportVariants": [
     {
+      "diff": null,
       "driver": "mysql",
       "findings": [
         {
@@ -3828,6 +3879,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3840,6 +3892,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3852,6 +3905,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3864,6 +3918,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3876,6 +3931,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3888,6 +3944,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3900,10 +3957,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -3945,6 +4004,7 @@
       "tables_analyzed": 1
     },
     {
+      "diff": null,
       "driver": "postgres",
       "findings": [
         {
@@ -3956,6 +4016,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3968,6 +4029,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3980,6 +4042,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3992,6 +4055,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4004,6 +4068,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4016,6 +4081,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4028,10 +4094,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -4073,6 +4141,7 @@
       "tables_analyzed": 1
     },
     {
+      "diff": null,
       "driver": "sqlite",
       "findings": [
         {
@@ -4084,6 +4153,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4096,6 +4166,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4108,6 +4179,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4120,6 +4192,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4132,6 +4205,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4144,6 +4218,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4156,10 +4231,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -4738,6 +4815,11 @@
     "index_bytes": 16384,
     "index_count": 2,
     "name": "users",
+    "previous": {
+      "at": "2026-01-01T00:00:00Z",
+      "row_estimate": 1000,
+      "total_bytes": null
+    },
     "row_estimate": 1234,
     "total_bytes": 81920
   },

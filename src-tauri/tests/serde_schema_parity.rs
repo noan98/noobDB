@@ -40,11 +40,11 @@ use std::path::PathBuf;
 use noobdb_lib::__test_api as t;
 use serde_json::json;
 use t::{
-    AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage, AiUsageRecord,
-    BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff, BroadcastEnvReport,
-    BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column, ColumnDiff,
-    ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview, DataDiff,
-    DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
+    AdvisorDiff, AiConnectionStatus, AiConnectionTestResult, AiStreamMessage, AiUsage,
+    AiUsageRecord, BatchStatementResult, BatchStatus, BatchStreamMessage, BroadcastDiff,
+    BroadcastEnvReport, BroadcastMessage, CancelStreamResult, CellBlobProbe, ChangedRow, Column,
+    ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview,
+    DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
     ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
@@ -311,6 +311,7 @@ fn build_fixtures() -> serde_json::Value {
                 .into(),
         ),
         statistical: false,
+        size_bytes: None,
     };
     let skipped_rule = SkippedRule {
         rule: RuleId::UnusedIndex,
@@ -327,6 +328,23 @@ fn build_fixtures() -> serde_json::Value {
             ddl: "ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`);".into(),
             ddl_online: Some("ALTER TABLE `orders`\n  DROP INDEX `idx_a`,\n  ADD INDEX `idx_orders_user_id` (`user_id`),\n  ALGORITHM=INPLACE, LOCK=NONE;".into()),
         }],
+        ignored: vec![HealthFinding {
+            rule: RuleId::UnusedIndex,
+            severity: Severity::Low,
+            table: "logs".into(),
+            columns: vec!["created_at".into()],
+            context: vec!["idx_logs_created".into()],
+            fix_ddl: None,
+            fix_ddl_online: None,
+            statistical: true,
+            size_bytes: Some(1_048_576),
+        }],
+        diff: Some(AdvisorDiff {
+            previous_at: "2026-01-01T00:00:00Z".into(),
+            new_indexes: vec![0],
+            resolved: vec![health_finding.clone()],
+            unchanged: 2,
+        }),
     };
 
     // --- #824: 未収載だった主要レスポンス/永続化型 ---------------------------
@@ -966,6 +984,8 @@ fn build_fixtures() -> serde_json::Value {
             fix_ddl: None,
             fix_ddl_online: None,
             statistical: i % 2 == 0,
+            // 容量あり / なしの両方の形を通す。
+            size_bytes: (i % 2 == 0).then_some(4096),
         })
         .collect();
     let all_drivers = variants!(DriverKind [Mysql, Postgres, Sqlite]);
@@ -994,6 +1014,9 @@ fn build_fixtures() -> serde_json::Value {
                     Some("DROP INDEX CONCURRENTLY \"a\";".into())
                 },
             }],
+            // 前回診断なし (None) / 対応しない無しの形。
+            ignored: vec![],
+            diff: None,
         })
         .collect();
 
@@ -1347,6 +1370,11 @@ fn build_fixtures() -> serde_json::Value {
         index_count: 2,
         has_primary_key: true,
         foreign_key_count: 1,
+        previous: Some(t::TableStatPrevious {
+            at: "2026-01-01T00:00:00Z".into(),
+            row_estimate: Some(1000),
+            total_bytes: None,
+        }),
     };
     let insert_rows_result = t::InsertRowsResult {
         inserted: 100,
