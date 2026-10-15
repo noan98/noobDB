@@ -1194,9 +1194,9 @@ const en = {
   formTlsRootCertPlaceholder: "/path/to/ca.pem",
   formTlsRootCertHelp:
     "PEM file used to verify the server certificate. Required for Verify CA / Verify full against a private CA (e.g. Amazon RDS / Cloud SQL bundles).",
-  formTlsClientCert: "Client certificate (mTLS)",
+  formTlsClientCert: "Client certificate",
   formTlsClientCertPlaceholder: "/path/to/client-cert.pem",
-  formTlsClientKey: "Client key (mTLS)",
+  formTlsClientKey: "Client key",
   formTlsClientKeyPlaceholder: "/path/to/client-key.pem",
   formTlsClientHelp:
     "Optional client certificate and key for servers that require mutual TLS (mTLS). Leave blank otherwise. Only the file paths are stored — the file contents are read at connect time and never saved.",
@@ -6661,9 +6661,9 @@ const ja: Dict = {
   formTlsRootCertPlaceholder: "/path/to/ca.pem",
   formTlsRootCertHelp:
     "サーバ証明書の検証に使う PEM ファイルです。プライベート CA に対して「CA 検証」「完全検証」を行う場合に必要です (Amazon RDS / Cloud SQL のバンドル等)。",
-  formTlsClientCert: "クライアント証明書 (mTLS)",
+  formTlsClientCert: "クライアント証明書",
   formTlsClientCertPlaceholder: "/path/to/client-cert.pem",
-  formTlsClientKey: "クライアント鍵 (mTLS)",
+  formTlsClientKey: "クライアント鍵",
   formTlsClientKeyPlaceholder: "/path/to/client-key.pem",
   formTlsClientHelp:
     "相互 TLS (mTLS) を要求するサーバ向けの任意のクライアント証明書と鍵です。不要なら空のままにします。保存されるのはファイルパスのみで、ファイルの中身は接続時に読み込むだけで保存しません。",

@@ -844,7 +844,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Heading>
 
       <Box gridColumn="span 2">
-        <label htmlFor={`${fid}-url`}>{t("formUrlImport")}</label>
+        <FieldLabel htmlFor={`${fid}-url`}>{t("formUrlImport")}</FieldLabel>
         <Flex gap="2" align="end">
           <Input
             id={`${fid}-url`}
@@ -892,7 +892,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Box>
 
       <Box gridColumn="span 2">
-        <label htmlFor={`${fid}-name`}>{t("formName")}</label>
+        <FieldLabel htmlFor={`${fid}-name`}>{t("formName")}</FieldLabel>
         <Input
           id={`${fid}-name`}
           data-testid="connection-form-name"
@@ -903,7 +903,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
       </Box>
 
       <Box gridColumn="span 2">
-        <label htmlFor={`${fid}-driver`}>{t("formDriver")}</label>
+        <FieldLabel htmlFor={`${fid}-driver`}>{t("formDriver")}</FieldLabel>
         <Select
           id={`${fid}-driver`}
           data-testid="connection-form-driver"
@@ -920,7 +920,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Fieldset>
           <Legend>{t("formSqliteLegend")}</Legend>
           <Box>
-            <label htmlFor={`${fid}-sqlite-path`}>{t("formSqliteFilePath")}</label>
+            <FieldLabel htmlFor={`${fid}-sqlite-path`}>{t("formSqliteFilePath")}</FieldLabel>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-sqlite-path`}
@@ -943,11 +943,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           <Legend>{driver === "postgres" ? t("formPostgresLegend") : t("formMysqlLegend")}</Legend>
           <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
             <Box>
-              <label htmlFor={`${fid}-host`}>{t("formHost")}</label>
+              <FieldLabel htmlFor={`${fid}-host`}>{t("formHost")}</FieldLabel>
               <Input id={`${fid}-host`} value={host} onChange={(e) => setHost(e.target.value)} />
             </Box>
             <Box>
-              <label htmlFor={`${fid}-port`}>{t("formPort")}</label>
+              <FieldLabel htmlFor={`${fid}-port`}>{t("formPort")}</FieldLabel>
               <Input
                 id={`${fid}-port`}
                 type="text"
@@ -968,11 +968,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
           </Box>
           <Box display="grid" gridTemplateColumns="1fr 1fr" gap="3" mt="2">
             <Box>
-              <label htmlFor={`${fid}-user`}>{t("formUser")}</label>
+              <FieldLabel htmlFor={`${fid}-user`}>{t("formUser")}</FieldLabel>
               <Input id={`${fid}-user`} value={user} onChange={(e) => setUser(e.target.value)} />
             </Box>
             <Box>
-              <label htmlFor={`${fid}-database`}>{t("formDatabase")}</label>
+              <FieldLabel htmlFor={`${fid}-database`}>{t("formDatabase")}</FieldLabel>
               <Input id={`${fid}-database`} value={database} onChange={(e) => setDatabase(e.target.value)} />
             </Box>
           </Box>
@@ -1033,7 +1033,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </FormSection>
           ) : (
             <Box mt="2">
-              <label htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</label>
+              <FieldLabel htmlFor={`${fid}-db-password`}>{t("formDbPassword")}</FieldLabel>
               <PasswordInput
                 id={`${fid}-db-password`}
                 value={password}
@@ -1051,7 +1051,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Fieldset>
           <Legend>{t("formTlsLegend")}</Legend>
           <Box>
-            <label htmlFor={`${fid}-tls-mode`}>{t("formTlsMode")}</label>
+            <FieldLabel htmlFor={`${fid}-tls-mode`}>{t("formTlsMode")}</FieldLabel>
             <Select
               id={`${fid}-tls-mode`}
               value={effectiveSslMode}
@@ -1086,7 +1086,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               </Text>
             )}
           <Box mt="2">
-            <label htmlFor={`${fid}-tls-root-cert`}>{t("formTlsRootCert")}</label>
+            <FieldLabel htmlFor={`${fid}-tls-root-cert`}>{t("formTlsRootCert")}</FieldLabel>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-tls-root-cert`}
@@ -1103,7 +1103,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </Text>
           </Box>
           <Box mt="2">
-            <label htmlFor={`${fid}-tls-client-cert`}>{t("formTlsClientCert")}</label>
+            <FieldLabel htmlFor={`${fid}-tls-client-cert`}>{t("formTlsClientCert")}</FieldLabel>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-tls-client-cert`}
@@ -1117,7 +1117,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             </Flex>
           </Box>
           <Box mt="2">
-            <label htmlFor={`${fid}-tls-client-key`}>{t("formTlsClientKey")}</label>
+            <FieldLabel htmlFor={`${fid}-tls-client-key`}>{t("formTlsClientKey")}</FieldLabel>
             <Flex gap="2" align="end">
               <Input
                 id={`${fid}-tls-client-key`}
@@ -1160,7 +1160,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
         <Legend>{t("formDisplay")}</Legend>
         <Flex direction="column" gap="3">
           <Box>
-            <label htmlFor={`${fid}-color`}>{t("formColor")}</label>
+            <FieldLabel htmlFor={`${fid}-color`}>{t("formColor")}</FieldLabel>
             <Flex align="center" gap="2" flexWrap="wrap">
               {PROFILE_COLOR_PRESETS.map((c) => (
                 <Tooltip key={c} label={c}>
@@ -1241,7 +1241,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
             <>
               <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                 <Box>
-                  <label htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</label>
+                  <FieldLabel htmlFor={`${fid}-ssh-host`}>{t("formSshHost")}</FieldLabel>
                   <Flex gap="2" align="end">
                     <Input
                       id={`${fid}-ssh-host`}
@@ -1261,7 +1261,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   </Flex>
                 </Box>
                 <Box>
-                  <label htmlFor={`${fid}-ssh-port`}>{t("formPort")}</label>
+                  <FieldLabel htmlFor={`${fid}-ssh-port`}>{t("formPort")}</FieldLabel>
                   <Input
                     id={`${fid}-ssh-port`}
                     type="text"
@@ -1281,11 +1281,11 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                 </Box>
               </Box>
               <Box mt="2">
-                <label htmlFor={`${fid}-ssh-user`}>{t("formSshUser")}</label>
+                <FieldLabel htmlFor={`${fid}-ssh-user`}>{t("formSshUser")}</FieldLabel>
                 <Input id={`${fid}-ssh-user`} value={sshUser} onChange={(e) => setSshUser(e.target.value)} />
               </Box>
               <Box mt="2">
-                <label htmlFor={`${fid}-ssh-auth`}>{t("formSshAuthMethod")}</label>
+                <FieldLabel htmlFor={`${fid}-ssh-auth`}>{t("formSshAuthMethod")}</FieldLabel>
                 <Select
                   id={`${fid}-ssh-auth`}
                   value={sshAuthMethod}
@@ -1299,7 +1299,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               {sshAuthMethod === "key" && (
                 <>
                   <Box mt="2">
-                    <label htmlFor={`${fid}-ssh-key-path`}>{t("formPrivateKeyPath")}</label>
+                    <FieldLabel htmlFor={`${fid}-ssh-key-path`}>{t("formPrivateKeyPath")}</FieldLabel>
                     <Flex gap="2" align="end">
                       <Input
                         id={`${fid}-ssh-key-path`}
@@ -1313,7 +1313,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     </Flex>
                   </Box>
                   <Box mt="2">
-                    <label htmlFor={`${fid}-ssh-passphrase`}>{t("formSshPassphrase")}</label>
+                    <FieldLabel htmlFor={`${fid}-ssh-passphrase`}>{t("formSshPassphrase")}</FieldLabel>
                     <PasswordInput
                       id={`${fid}-ssh-passphrase`}
                       value={sshPassphrase}
@@ -1327,7 +1327,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
               )}
               {sshAuthMethod === "password" && (
                 <Box mt="2">
-                  <label htmlFor={`${fid}-ssh-password`}>{t("formSshPassword")}</label>
+                  <FieldLabel htmlFor={`${fid}-ssh-password`}>{t("formSshPassword")}</FieldLabel>
                   <PasswordInput
                     id={`${fid}-ssh-password`}
                     value={sshPassword}
@@ -1360,7 +1360,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                   <Box mt="2">
                     <Box display="grid" gridTemplateColumns="1fr 120px" gap="3">
                       <Box>
-                        <label htmlFor={`${fid}-ssh-jump-host`}>{t("formSshJumpHost")}</label>
+                        <FieldLabel htmlFor={`${fid}-ssh-jump-host`}>{t("formSshJumpHost")}</FieldLabel>
                         <Input
                           id={`${fid}-ssh-jump-host`}
                           value={sshJumpHost}
@@ -1368,7 +1368,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                         />
                       </Box>
                       <Box>
-                        <label htmlFor={`${fid}-ssh-jump-port`}>{t("formPort")}</label>
+                        <FieldLabel htmlFor={`${fid}-ssh-jump-port`}>{t("formPort")}</FieldLabel>
                         <Input
                           id={`${fid}-ssh-jump-port`}
                           type="text"
@@ -1388,7 +1388,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                       </Box>
                     </Box>
                     <Box mt="2">
-                      <label htmlFor={`${fid}-ssh-jump-user`}>{t("formSshJumpUser")}</label>
+                      <FieldLabel htmlFor={`${fid}-ssh-jump-user`}>{t("formSshJumpUser")}</FieldLabel>
                       <Input
                         id={`${fid}-ssh-jump-user`}
                         value={sshJumpUser}
@@ -1396,7 +1396,7 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                       />
                     </Box>
                     <Box mt="2">
-                      <label htmlFor={`${fid}-ssh-jump-auth`}>{t("formSshJumpAuthMethod")}</label>
+                      <FieldLabel htmlFor={`${fid}-ssh-jump-auth`}>{t("formSshJumpAuthMethod")}</FieldLabel>
                       <Select
                         id={`${fid}-ssh-jump-auth`}
                         value={sshJumpAuthMethod}
@@ -1410,7 +1410,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     {sshJumpAuthMethod === "key" && (
                       <>
                         <Box mt="2">
-                          <label htmlFor={`${fid}-ssh-jump-key-path`}>{t("formPrivateKeyPath")}</label>
+                          <FieldLabel htmlFor={`${fid}-ssh-jump-key-path`}>
+                            {t("formPrivateKeyPath")}
+                          </FieldLabel>
                           <Flex gap="2" align="end">
                             <Input
                               id={`${fid}-ssh-jump-key-path`}
@@ -1424,7 +1426,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                           </Flex>
                         </Box>
                         <Box mt="2">
-                          <label htmlFor={`${fid}-ssh-jump-passphrase`}>{t("formSshJumpPassphrase")}</label>
+                          <FieldLabel htmlFor={`${fid}-ssh-jump-passphrase`}>
+                            {t("formSshJumpPassphrase")}
+                          </FieldLabel>
                           <PasswordInput
                             id={`${fid}-ssh-jump-passphrase`}
                             value={sshJumpPassphrase}
@@ -1438,7 +1442,9 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
                     )}
                     {sshJumpAuthMethod === "password" && (
                       <Box mt="2">
-                        <label htmlFor={`${fid}-ssh-jump-password`}>{t("formSshJumpPassword")}</label>
+                        <FieldLabel htmlFor={`${fid}-ssh-jump-password`}>
+                          {t("formSshJumpPassword")}
+                        </FieldLabel>
                         <PasswordInput
                           id={`${fid}-ssh-jump-password`}
                           value={sshJumpPassword}
