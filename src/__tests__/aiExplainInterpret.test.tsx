@@ -5,6 +5,7 @@ import { resetAiKeyStoreForTest } from "../ai/aiKeyStore";
 
 const hasAiApiKey = vi.fn().mockResolvedValue(true);
 const runAiRequest = vi.fn().mockResolvedValue(undefined);
+const runLookupQuery = vi.fn();
 const listIndexes = vi.fn().mockResolvedValue([]);
 const tableRowEstimate = vi.fn().mockResolvedValue(100);
 const cancelStream = vi.fn().mockResolvedValue({ cancelled: true, deliveredRows: 0 });
@@ -24,6 +25,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       hasAiApiKey: () => hasAiApiKey(),
       runAiRequest: (...a: unknown[]) => runAiRequest(...a),
       listIndexes: (...a: unknown[]) => listIndexes(...a),
+      runLookupQuery: (...a: unknown[]) => runLookupQuery(...a),
       tableRowEstimate: (...a: unknown[]) => tableRowEstimate(...a),
       cancelStream: (...a: unknown[]) => cancelStream(...a),
     },
@@ -146,6 +148,64 @@ describe("AiExplainInterpret (#693)", () => {
     expect(onInsertSql).toHaveBeenCalledWith("CREATE INDEX idx_name ON users(name)");
     await screen.findByText(t("explainAiInserted"));
     expect(runAiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("書き換え提案だけに「計画を比較」を出し、ANALYZE なしの EXPLAIN を読み取り専用経路で実行して比較モーダルを開く (#1620)", async () => {
+    runLookupQuery.mockResolvedValue({
+      columns: ["id", "parent", "notused", "detail"],
+      rows: [[2, 0, 0, "SEARCH users USING INDEX idx_name (name=?)"]],
+    });
+    renderWithProviders(ui());
+    await clickInterpret();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({
+          summary: "s",
+          bottlenecks: [],
+          suggestions: [
+            { kind: "ddl", sql: "CREATE INDEX idx_name ON users(name)", rationale: "r1" },
+            { kind: "rewrite", sql: "SELECT id FROM users WHERE name = ''; ", rationale: "r2" },
+            { kind: "rewrite", sql: "DELETE FROM users", rationale: "r3" },
+          ],
+        }),
+      });
+      handlers?.onDone?.({} as never);
+    });
+    const buttons = await screen.findAllByRole("button", { name: t("explainAiCompare") });
+    // DDL と読み取り専用でない書き換えには出ない。
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0]);
+    await waitFor(() => expect(runLookupQuery).toHaveBeenCalledTimes(1));
+    expect(runLookupQuery.mock.calls[0][0]).toMatchObject({
+      sessionId: "s1",
+      sql: "EXPLAIN QUERY PLAN SELECT id FROM users WHERE name = ''",
+      database: "main",
+    });
+    await screen.findByText(t("explainAiCompareTitle"));
+    expect(screen.getByText(t("explainAiCompareBeforePane"))).toBeTruthy();
+    expect(runAiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("書き換え後の計画の取得に失敗したらその提案の下にエラーを出す (#1620)", async () => {
+    runLookupQuery.mockRejectedValue("syntax error");
+    renderWithProviders(ui());
+    await clickInterpret();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: JSON.stringify({
+          summary: "s",
+          bottlenecks: [],
+          suggestions: [{ kind: "rewrite", sql: "SELECT 1", rationale: "r" }],
+        }),
+      });
+      handlers?.onDone?.({} as never);
+    });
+    fireEvent.click(await screen.findByRole("button", { name: t("explainAiCompare") }));
+    await screen.findByText(t("explainAiCompareError", { message: "syntax error" }));
   });
 
   it("読み取り専用でなければ注記を出さない", async () => {

@@ -3486,3 +3486,46 @@ async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
     // サイズは取れれば正の値。権限がなければ None のまま指摘は出る。
     assert!(f.size_bytes.is_none_or(|n| n > 0), "{:?}", f.size_bytes);
 }
+
+#[tokio::test]
+async fn mysql_column_profile_sampled_is_subset_of_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let Some(db) = opts.database.clone() else {
+        eprintln!("skip: no database in url");
+        return;
+    };
+    conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE prof_sample_t (id INT PRIMARY KEY, v INT)",
+        Some(&db),
+    )
+    .await
+    .expect("create");
+    let values: Vec<String> = (1..=200).map(|i| format!("({i}, {})", i % 7)).collect();
+    conn.execute(
+        &format!("INSERT INTO prof_sample_t VALUES {}", values.join(",")),
+        Some(&db),
+    )
+    .await
+    .expect("insert");
+    let p = conn
+        .column_profile(&db, "prof_sample_t", "v", false, 5, Some(50.0))
+        .await
+        .expect("sampled profile");
+    assert_eq!(p.sample_percent, Some(50.0));
+    assert!(p.notes.contains(&"sampled".to_string()));
+    match p.total_count {
+        t::Value::UInt(n) => assert!(n <= 200, "sample cannot exceed the table: {n}"),
+        ref other => panic!("unexpected count: {other:?}"),
+    }
+    conn.execute("DROP TABLE IF EXISTS prof_sample_t", Some(&db))
+        .await
+        .expect("cleanup");
+}

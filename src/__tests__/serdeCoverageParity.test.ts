@@ -49,6 +49,7 @@ const COVERED: Record<string, string> = {
   DbUserInfo: "dbUserInfo",
   DriftSummary: "schemaDriftSummary",
   DumpToolStatus: "dumpToolStatusVariants",
+  DuplicateKeysOut: "resultDuplicateKeys",
   EncryptedExportResult: "encryptedProfileExportResult",
   EncryptedImportResult: "encryptedProfileImportResult",
   ExportResult: "exportResult",

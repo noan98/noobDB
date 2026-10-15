@@ -13,6 +13,7 @@ import {
   ACCENT_FILL_STOPS,
   isDarkDataTheme,
   rampStops,
+  rampLegendStops,
 } from "../colorScale";
 // コントラスト比の計算は accent.ts と共有する (themeContrast.test.ts と同じ方針)。
 import { contrastRatio } from "../accent";
@@ -268,5 +269,24 @@ describe("color-blind safety metadata (#525)", () => {
   it("provides enough distinct categorical colors for multi-series charts", () => {
     expect(new Set(CATEGORICAL).size).toBe(CATEGORICAL.length);
     expect(CATEGORICAL.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("rampLegendStops (#1628)", () => {
+  it("既定で min / 中間 / max の 3 点を返し、色は sampleRamp と一致する", () => {
+    const ramp = SEQUENTIAL_RAMPS.blue;
+    const stops = rampLegendStops(ramp, false);
+    expect(stops.map((s) => s.t)).toEqual([0, 0.5, 1]);
+    expect(stops[0].color).toBe(sampleRamp(0, ramp.stops));
+    expect(stops[1].color).toBe(sampleRamp(0.5, ramp.stops));
+    expect(stops[2].color).toBe(sampleRamp(1, ramp.stops));
+  });
+  it("isDark で stopsDark に切り替わる", () => {
+    const ramp = SEQUENTIAL_RAMPS.blue;
+    expect(rampLegendStops(ramp, true)[0].color).toBe(sampleRamp(0, ramp.stopsDark));
+  });
+  it("middle 個の等間隔な中間点を挟む (負値は 0 点)", () => {
+    expect(rampLegendStops(SEQUENTIAL_RAMPS.blue, false, 3).map((s) => s.t)).toEqual([0, 0.25, 0.5, 0.75, 1]);
+    expect(rampLegendStops(SEQUENTIAL_RAMPS.blue, false, -2).map((s) => s.t)).toEqual([0, 1]);
   });
 });

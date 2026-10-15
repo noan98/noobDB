@@ -14,6 +14,9 @@ import { isPlainEnterKey } from "./modalKeys";
 import { Button, Input, PressableButton, Select } from "./ui";
 import { boolOptions, resolveTypedEditor } from "./typedEditor";
 import { insertDefaultHint, insertFunctionChips, stripNonInsertableSeed } from "./insertDefaults";
+import { parseInsertPaste } from "./pasteEdit";
+import { isBinaryColumnType } from "./cellEdit";
+import { useToast } from "./Toast";
 import { insertFunctionSql } from "./sqlDialect";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -45,6 +48,11 @@ interface Props {
    */
   initialValues?: PendingInsertRow;
   onConfirm: (row: PendingInsertRow) => void;
+  /**
+   * 連続追加モード (#1628) 用: モーダルを閉じずに行を保留へ積む。未指定なら連続追加の
+   * チェックボックスを出さない。
+   */
+  onAddKeepOpen?: (row: PendingInsertRow) => void;
   onCancel: () => void;
   /** 値ピッカー用: ドライバ ("mysql" | "postgres" | ...)。 */
   driver?: string;
@@ -76,6 +84,7 @@ export function RowInsertModal({
   columns,
   initialValues,
   onConfirm,
+  onAddKeepOpen,
   onCancel,
   driver = "mysql",
   database = null,
@@ -130,12 +139,61 @@ export function RowInsertModal({
     return t("valuePickerTitleAllowed");
   };
 
+  // 連続追加モード (#1628): 追加後もモーダルを閉じず、入力値を保持したまま次の行を入力する。
+  const [keepOpen, setKeepOpen] = useState(false);
+  const [addedCount, setAddedCount] = useState(0);
+  const toast = useToast();
+
   const submit = () => {
     const row: PendingInsertRow = {};
     for (const [k, v] of Object.entries(values)) {
       if (!isEmptyInsertValue(v)) row[Number(k)] = v;
     }
+    if (keepOpen && onAddKeepOpen) {
+      onAddKeepOpen(row);
+      setAddedCount((n) => n + 1);
+      firstRef.current?.focus();
+      return;
+    }
     onConfirm(row);
+  };
+
+  // タブ区切りの貼り付け (#1628): グリッドの貼り付けと同じ解析で、1 行ぶんを列の順に展開する。
+  // 生成列・バイナリ列には入れない。展開した値は既存の入力を上書きする。
+  const generatedCols = new Set<number>();
+  if (tableColumns) {
+    columns.forEach((c, i) => {
+      const meta = tableColumns.find((m) => m.name === c.name);
+      if (meta && insertDefaultHint(driver, meta, tableColumns)?.kind === "generated") generatedCols.add(i);
+    });
+  }
+  const applyPastedText = (text: string, startCol: number): boolean => {
+    const res = parseInsertPaste(text, columns, {
+      startCol,
+      skip: (i) => generatedCols.has(i) || isBinaryColumnType(columns[i]?.type_name ?? ""),
+    });
+    if (!res || res.count === 0) return false;
+    setValues((prev) => ({ ...prev, ...res.values }));
+    toast.info(
+      res.ignoredRows > 0
+        ? t("rowOpsInsertPasteAppliedIgnored", { cells: res.count, rows: res.ignoredRows })
+        : t("rowOpsInsertPasteApplied", { cells: res.count }),
+    );
+    return true;
+  };
+  const pasteFromClipboard = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!applyPastedText(text, 0)) toast.error(t("rowOpsInsertPasteNone"));
+    } catch {
+      toast.error(t("rowOpsInsertPasteDenied"));
+    }
+  };
+  // 欄へ直接 (Ctrl+V) 貼り付けたテキストにタブがあれば、その欄から列の順に展開する。
+  const onFieldPaste = (e: React.ClipboardEvent<HTMLElement>, colIdx: number) => {
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text.includes("\t")) return;
+    if (applyPastedText(text, colIdx)) e.preventDefault();
   };
 
   // Enter は確定ではなく次の欄へ移るだけにする (途中までの行を誤って保留追加しない)。
@@ -245,6 +303,7 @@ export function RowInsertModal({
                     list={pickerValues.length > 0 ? listId : undefined}
                     onFocus={() => setFocused(i)}
                     onChange={(e) => setValues((prev) => ({ ...prev, [i]: e.target.value }))}
+                    onPaste={(e) => onFieldPaste(e, i)}
                     data-insert-field
                     onKeyDown={focusNextField}
                     flex="1"
@@ -364,6 +423,27 @@ export function RowInsertModal({
         })}
       </ModalBody>
       <ModalFooter>
+        <Tooltip label={t("rowOpsInsertPasteTitle")}>
+          <Button type="button" variant="secondary" onClick={() => void pasteFromClipboard()}>
+            {t("rowOpsInsertPaste")}
+          </Button>
+        </Tooltip>
+        {onAddKeepOpen && (
+          <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="xs" color="app.text">
+            <input
+              type="checkbox"
+              checked={keepOpen}
+              onChange={(e) => setKeepOpen(e.target.checked)}
+              aria-label={t("rowOpsInsertKeepOpen")}
+            />
+            {t("rowOpsInsertKeepOpen")}
+            {addedCount > 0 && (
+              <chakra.span color="app.textMuted" role="status">
+                {t("rowOpsInsertKeepOpenCount", { count: addedCount })}
+              </chakra.span>
+            )}
+          </chakra.label>
+        )}
         <div style={{ flex: 1 }} />
         <Button type="button" variant="secondary" onClick={onCancel}>
           {t("createTableClose")}

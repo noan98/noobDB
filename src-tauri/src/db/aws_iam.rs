@@ -29,27 +29,43 @@
 //!
 //! アクセスキー等の AWS 資格情報は **noobDB のストレージ (profiles.json / keyring)
 //! に一切保存しない**。接続のたびに AWS 標準の置き場所 (環境変数 / 共有資格情報
-//! ファイル) から読み、トークンを作ったら捨てる。プロファイルに残るのはリージョンと
+//! ファイル) から読み、トークンを作ったら捨てる (`credential_process` の結果だけは
+//! 外部コマンドの起動回数を抑えるため、プロセス内メモリに限ってキャッシュする)。プロファイルに残るのはリージョンと
 //! AWS プロファイル名 (非秘密) だけ。生成したトークンもセッションの
 //! `DbConnectOptions.password` には入れず (空のまま)、ログにも出さない。
 //!
 //! ## 対応する資格情報ソース
 //!
-//! 1. プロファイル名を明示した場合は、その名前の共有資格情報ファイル / 設定ファイルの
-//!    静的キーのみ (AWS CLI の `--profile` と同じく環境変数のキーより優先)。
+//! 1. プロファイル名を明示した場合は、その名前のプロファイル (静的キー → `credential_process`
+//!    の順で、静的キーがあればそれを優先)。AWS CLI の `--profile` と同じく環境変数の
+//!    キーより優先。
 //! 2. 明示しない場合は環境変数 `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
 //!    (+ 任意の `AWS_SESSION_TOKEN`)。
-//! 3. それも無ければ `AWS_PROFILE` (未設定なら `default`) のプロファイル。
+//! 3. それも無ければ `AWS_PROFILE` (未設定なら `default`) のプロファイル (1. と同様)。
 //!
 //! 共有資格情報ファイルは `AWS_SHARED_CREDENTIALS_FILE` (既定 `~/.aws/credentials`)、
-//! 設定ファイルは `AWS_CONFIG_FILE` (既定 `~/.aws/config`)。**IAM Identity Center
-//! (SSO)・`role_arn` による AssumeRole・`credential_process`・EC2/ECS のメタデータ
-//! エンドポイントは範囲外** (AWS API / 外部プロセス呼び出しが要るため)。それらの
-//! プロファイルを指定した場合は `aws configure export-credentials` で一時キーを
-//! 環境変数へ書き出す手順をエラーで案内する。
+//! 設定ファイルは `AWS_CONFIG_FILE` (既定 `~/.aws/config`)。
+//!
+//! ## `credential_process` (#1682、aws-vault 連携)
+//!
+//! プロファイルに `credential_process = aws-vault export --format=json <profile>` の
+//! ようなコマンドがあれば、それを**シェルを介さず**実行し、標準出力の JSON
+//! (`Version: 1` / `AccessKeyId` / `SecretAccessKey` / `SessionToken` / `Expiration`) から
+//! 一時キーを受け取る (AWS CLI と同じ仕様)。結果は `Expiration` の 5 分前までプロセス内の
+//! メモリだけにキャッシュし、10 分ごとのトークン更新のたびに外部コマンドを起動しない
+//! (`Expiration` が無いときも 5 分だけ)。ディスクには保存しない。標準出力 (= 秘密) と
+//! 標準エラーはログにもエラー文にも出さない。
+//!
+//! **IAM Identity Center (SSO)・`role_arn` による AssumeRole・EC2/ECS のメタデータ
+//! エンドポイントは範囲外** (AWS API 呼び出しが要るため)。それらのプロファイルを
+//! 指定した場合は `aws configure export-credentials` で一時キーを環境変数へ書き出す
+//! 手順をエラーで案内する。
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -409,11 +425,347 @@ fn static_keys(entries: &[(String, String)]) -> Option<AwsCredentials> {
     })
 }
 
+// ── credential_process (#1682) ─────────────────────────────────────────
+
+/// `credential_process` の最大待ち時間。aws-vault は MFA プロンプトで時間がかかる
+/// ことがあるため長めに取る。超えたら子プロセスを kill してエラーにする。
+/// なお接続処理全体のタイムアウト (既定 30 秒) の方が先に効くため、初回接続では
+/// 実質それが上限になる (トークン更新は接続とは別タスクなのでこの値まで待てる)。
+const PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// キャッシュを `Expiration` の何分前で無効扱いにするか。トークンはプールに最大
+/// [`TOKEN_REFRESH_INTERVAL`] 残るので、それより長く取らないと、期限が近い一時キーで
+/// 署名したトークンが失効窓を作る (下の const assert で保証)。
+const CACHE_EXPIRY_MARGIN_SECS: i64 = 15 * 60;
+const _: () = assert!(CACHE_EXPIRY_MARGIN_SECS > TOKEN_REFRESH_INTERVAL.as_secs() as i64);
+
+/// `Expiration` が無い出力をキャッシュする時間。
+const CACHE_NO_EXPIRATION_SECS: i64 = 5 * 60;
+
+/// 標準出力として読み込む上限。暴走したコマンドでメモリを食わないため。
+const MAX_PROCESS_OUTPUT: u64 = 1024 * 1024;
+
+/// 外部コマンドの実行結果。`stdout` は秘密なのでログ・エラー文に出さない。
+/// 標準エラーは (秘密が混ざりうるため) 一切保持しない。
+pub struct ProcessOutput {
+    pub code: Option<i32>,
+    pub success: bool,
+    pub stdout: String,
+}
+
+impl std::fmt::Debug for ProcessOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // stdout は秘密なので出さない。
+        f.debug_struct("ProcessOutput")
+            .field("code", &self.code)
+            .field("success", &self.success)
+            .field("stdout", &"<redacted>")
+            .finish()
+    }
+}
+
+struct CachedCredentials {
+    key: (String, String),
+    creds: AwsCredentials,
+    valid_until: DateTime<Utc>,
+}
+
+/// `credential_process` の結果のメモリキャッシュ (キー: プロファイル名 + コマンド文字列)。
+pub struct ProcessCredentialCache {
+    entries: Mutex<Vec<CachedCredentials>>,
+    /// 取得の直列化用 (キャッシュが空のときの同時取得で外部コマンドを二重起動しない)。
+    fetch: Mutex<()>,
+}
+
+impl ProcessCredentialCache {
+    pub const fn new() -> Self {
+        Self {
+            entries: Mutex::new(Vec::new()),
+            fetch: Mutex::new(()),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<CachedCredentials>> {
+        // 毒化しても中身は単なるキャッシュなので、そのまま使い続けて問題ない。
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn get(&self, key: &(String, String), now: DateTime<Utc>) -> Option<AwsCredentials> {
+        self.lock()
+            .iter()
+            .find(|c| &c.key == key && now < c.valid_until)
+            .map(|c| c.creds.clone())
+    }
+
+    fn put(
+        &self,
+        key: (String, String),
+        creds: AwsCredentials,
+        valid_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) {
+        let mut g = self.lock();
+        g.retain(|c| c.key != key && c.valid_until > now);
+        g.push(CachedCredentials {
+            key,
+            creds,
+            valid_until,
+        });
+    }
+}
+
+impl Default for ProcessCredentialCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static PROCESS_CACHE: ProcessCredentialCache = ProcessCredentialCache::new();
+
+/// コマンド文字列をシェルを介さず引数列に分割する。空白区切りで、`"..."` と `'...'`
+/// でまとめられる。`"..."` 内では `\"` と `\\` だけがエスケープ。引用の外の `\` は
+/// そのまま (Windows のパス区切りを壊さないため)。閉じていない引用はエラー。
+///
+/// AWS CLI との差異: AWS CLI は POSIX では shlex 相当 (引用の外の `\ ` で空白を
+/// エスケープできる等)、Windows では `'` を引用扱いしない。ここでは OS によらず
+/// 同じ規則にしており、空白を含む実行ファイルのパスは `"..."` で囲むこと。
+fn split_command(s: &str) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut cur = String::new();
+    let mut in_arg = false;
+    let mut quote: Option<char> = None;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match quote {
+            Some('"') => match c {
+                '"' => quote = None,
+                '\\' if matches!(chars.peek(), Some('"') | Some('\\')) => {
+                    if let Some(n) = chars.next() {
+                        cur.push(n);
+                    }
+                }
+                _ => cur.push(c),
+            },
+            Some(_) => {
+                if c == '\'' {
+                    quote = None;
+                } else {
+                    cur.push(c);
+                }
+            }
+            None => match c {
+                '"' | '\'' => {
+                    quote = Some(c);
+                    in_arg = true;
+                }
+                c if c.is_whitespace() => {
+                    if in_arg {
+                        args.push(std::mem::take(&mut cur));
+                        in_arg = false;
+                    }
+                }
+                _ => {
+                    cur.push(c);
+                    in_arg = true;
+                }
+            },
+        }
+    }
+    if quote.is_some() {
+        return Err(AppError::InvalidInput(
+            "credential_process has an unterminated quote".into(),
+        ));
+    }
+    if in_arg {
+        args.push(cur);
+    }
+    if args.is_empty() {
+        return Err(AppError::InvalidInput("credential_process is empty".into()));
+    }
+    Ok(args)
+}
+
+/// `credential_process` の標準出力 JSON (AWS CLI の外部資格情報ソース仕様)。
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct ProcessJson {
+    version: Option<i64>,
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
+    session_token: Option<String>,
+    expiration: Option<String>,
+}
+
+/// 出力を解釈して資格情報と有効期限を返す。エラー文に出力内容 (秘密) は含めない。
+fn parse_process_output(stdout: &str) -> Result<(AwsCredentials, Option<DateTime<Utc>>)> {
+    let bad = |why: &str| {
+        AppError::InvalidInput(format!("credential_process returned invalid output: {why}"))
+    };
+    // serde_json のエラー文には値の断片が入りうるので、理由は固定文言にする。
+    let j: ProcessJson =
+        serde_json::from_str(stdout).map_err(|_| bad("not a JSON object of the expected shape"))?;
+    if j.version != Some(1) {
+        return Err(bad("`Version` must be 1"));
+    }
+    let non_empty = |v: Option<String>| v.filter(|s| !s.is_empty());
+    let (Some(access_key_id), Some(secret_access_key)) =
+        (non_empty(j.access_key_id), non_empty(j.secret_access_key))
+    else {
+        return Err(bad("`AccessKeyId` / `SecretAccessKey` missing"));
+    };
+    let expiration = match non_empty(j.expiration) {
+        Some(e) => Some(
+            DateTime::parse_from_rfc3339(&e)
+                .map_err(|_| bad("`Expiration` is not RFC 3339"))?
+                .with_timezone(&Utc),
+        ),
+        None => None,
+    };
+    Ok((
+        AwsCredentials {
+            access_key_id,
+            secret_access_key,
+            session_token: non_empty(j.session_token),
+        },
+        expiration,
+    ))
+}
+
+/// キャッシュを使ってよい期限。`Expiration` の 5 分前、無ければ取得から 5 分。
+fn cache_valid_until(now: DateTime<Utc>, expiration: Option<DateTime<Utc>>) -> DateTime<Utc> {
+    match expiration {
+        Some(e) => e - chrono::Duration::seconds(CACHE_EXPIRY_MARGIN_SECS),
+        None => now + chrono::Duration::seconds(CACHE_NO_EXPIRATION_SECS),
+    }
+}
+
+fn credentials_from_process(
+    profile: &str,
+    command: &str,
+    src: &CredentialSources<'_>,
+) -> Result<AwsCredentials> {
+    let key = (profile.to_string(), command.to_string());
+    if let Some(c) = src.cache.get(&key, src.now) {
+        return Ok(c);
+    }
+    // 同時取得 (接続とトークン更新など) で二重起動しないよう直列化し、待っている間に
+    // 他方が取得を終えているかもしれないのでキャッシュを再確認する。
+    let _fetching = src.cache.fetch.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = src.cache.get(&key, src.now) {
+        return Ok(c);
+    }
+    let argv = split_command(command)
+        .map_err(|e| AppError::InvalidInput(format!("AWS profile '{profile}': {e}")))?;
+    let out = (src.run_process)(&argv)?;
+    if !out.success {
+        // 標準エラーには秘密 (トークンやパスフレーズのエコー) が混ざりうるため、
+        // 原因の手掛かりとして出すのは終了コードだけにする。
+        let code = out
+            .code
+            .map_or_else(|| "signal".to_string(), |c| c.to_string());
+        return Err(AppError::InvalidInput(format!(
+            "credential_process for AWS profile '{profile}' failed (exit code: {code}); \
+             run the command in a terminal to see its error. If it needs an MFA prompt, \
+             set aws-vault's `--prompt=wincredui` (Windows) / `--prompt=osascript` (macOS) \
+             or the AWS_VAULT_PROMPT environment variable"
+        )));
+    }
+    let (creds, expiration) = parse_process_output(&out.stdout)
+        .map_err(|e| AppError::InvalidInput(format!("AWS profile '{profile}': {e}")))?;
+    if expiration.is_some_and(|e| e <= src.now) {
+        return Err(AppError::InvalidInput(format!(
+            "AWS profile '{profile}': credential_process returned expired credentials"
+        )));
+    }
+    let valid_until = cache_valid_until(src.now, expiration);
+    if valid_until > src.now {
+        src.cache.put(key, creds.clone(), valid_until, src.now);
+    }
+    Ok(creds)
+}
+
+/// 子プロセスを (シェルなしで) 起動し、`timeout` 以内に終わるのを待つ。標準入力は null、
+/// 標準出力 / 標準エラーはパイプ。超過したら kill してエラー。
+fn run_command(argv: &[String], timeout: Duration) -> Result<ProcessOutput> {
+    let Some((program, args)) = argv.split_first() else {
+        return Err(AppError::InvalidInput("credential_process is empty".into()));
+    };
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // GUI アプリから起動したときにコンソール窓を出さない (CREATE_NO_WINDOW)。
+        cmd.creation_flags(0x0800_0000);
+    }
+    // 起動失敗の OS エラー文にはコマンドが含まれうるので、固定文言にする。
+    let mut child = cmd.spawn().map_err(|e| {
+        let hint = if e.kind() == std::io::ErrorKind::NotFound {
+            "; write the absolute path of the executable in credential_process"
+        } else {
+            ""
+        };
+        AppError::InvalidInput(format!(
+            "failed to start credential_process ({:?}){hint}",
+            e.kind()
+        ))
+    })?;
+    // パイプが詰まって子が止まらないよう、別スレッドで読み出す。標準エラーは捨てる。
+    let stdout_reader = child.stdout.take().map(|mut o| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = (&mut o).take(MAX_PROCESS_OUTPUT).read_to_end(&mut buf);
+            let _ = std::io::copy(&mut o, &mut std::io::sink());
+            buf
+        })
+    });
+    if let Some(mut e) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut e, &mut std::io::sink());
+        });
+    }
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {}
+            Err(e) => return Err(AppError::Io(e)),
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::InvalidInput(format!(
+                "credential_process timed out after {} seconds",
+                timeout.as_secs()
+            )));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let stdout = stdout_reader
+        .and_then(|h| h.join().ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    Ok(ProcessOutput {
+        code: status.code(),
+        success: status.success(),
+        stdout,
+    })
+}
+
 /// 資格情報の置き場所へのアクセスを差し替え可能にしたもの (テスト用に純化)。
 pub struct CredentialSources<'a> {
     pub env: &'a dyn Fn(&str) -> Option<String>,
     pub read_file: &'a dyn Fn(&Path) -> Option<String>,
     pub home: Option<PathBuf>,
+    /// `credential_process` の実行 (分割済みの argv を受け取り、終了コードと標準出力を返す)。
+    pub run_process: &'a dyn Fn(&[String]) -> Result<ProcessOutput>,
+    /// 現在時刻 (キャッシュの有効判定用)。
+    pub now: DateTime<Utc>,
+    /// `credential_process` の結果のメモリキャッシュ。
+    pub cache: &'a ProcessCredentialCache,
 }
 
 impl CredentialSources<'_> {
@@ -462,10 +814,9 @@ pub fn resolve_credentials(
         .and_then(|p| (src.read_file)(&p))
         .map(|t| parse_ini(&t))
         .unwrap_or_default();
-    if let Some(entries) = find_section(&creds_file, std::slice::from_ref(&name)) {
-        if let Some(c) = static_keys(entries) {
-            return Ok(c);
-        }
+    let creds_entries = find_section(&creds_file, std::slice::from_ref(&name));
+    if let Some(c) = creds_entries.and_then(static_keys) {
+        return Ok(c);
     }
     let config_file = src
         .file_path("AWS_CONFIG_FILE", "config")
@@ -477,22 +828,25 @@ pub fn resolve_credentials(
     } else {
         vec![format!("profile {name}")]
     };
-    if let Some(entries) = find_section(&config_file, &config_names) {
-        if let Some(c) = static_keys(entries) {
-            return Ok(c);
+    let config_entries = find_section(&config_file, &config_names);
+    if let Some(c) = config_entries.and_then(static_keys) {
+        return Ok(c);
+    }
+    // 静的キーが無ければ `credential_process` (AWS CLI は credentials ファイル側の
+    // 記述も受け付ける)。
+    for entries in [creds_entries, config_entries].into_iter().flatten() {
+        if let Some(cmd) = get(entries, "credential_process") {
+            return credentials_from_process(&name, cmd, src);
         }
-        // SSO / AssumeRole / credential_process は範囲外。黙って別の資格情報へ
-        // 落ちるより、何をすればよいかを示して失敗させる。
-        let unsupported = [
-            "sso_session",
-            "sso_start_url",
-            "role_arn",
-            "credential_process",
-        ];
+    }
+    if let Some(entries) = config_entries {
+        // SSO / AssumeRole は範囲外。黙って別の資格情報へ落ちるより、何をすれば
+        // よいかを示して失敗させる。
+        let unsupported = ["sso_session", "sso_start_url", "role_arn"];
         if let Some(kind) = unsupported.iter().find(|k| get(entries, k).is_some()) {
             return Err(AppError::InvalidInput(format!(
                 "AWS profile '{name}' uses `{kind}`, which noobDB does not resolve \
-                 (supported: static keys in ~/.aws/credentials or environment variables). \
+                 (supported: static keys, `credential_process`, or environment variables). \
                  Run `aws configure export-credentials --profile {name} --format env` \
                  and start noobDB with those AWS_* variables set"
             )));
@@ -520,6 +874,9 @@ pub fn load_credentials(profile: Option<&str>) -> Result<AwsCredentials> {
             env: &env,
             read_file: &read_file,
             home: home_dir(),
+            run_process: &|argv| run_command(argv, PROCESS_TIMEOUT),
+            now: Utc::now(),
+            cache: &PROCESS_CACHE,
         },
     )
 }
@@ -530,7 +887,7 @@ pub fn process_env(key: &str) -> Option<String> {
 }
 
 /// `iam` の設定で今この瞬間に有効なトークンを作る。資格情報は毎回読み直し、
-/// 保持しない。トークン・資格情報はログに出さない (出すのはエンドポイント情報のみ)。
+/// 保持しない (`credential_process` の結果だけはメモリにキャッシュする)。トークン・資格情報はログに出さない (出すのはエンドポイント情報のみ)。
 pub fn fresh_token(iam: &AwsIamOptions, user: &str) -> Result<String> {
     let creds = load_credentials(iam.profile.as_deref())?;
     let token = generate_auth_token(
@@ -550,21 +907,34 @@ pub fn fresh_token(iam: &AwsIamOptions, user: &str) -> Result<String> {
     Ok(token)
 }
 
+/// [`fresh_token`] を tokio のブロッキングプールで実行する。`credential_process` は
+/// 外部プロセスの完了を同期的に待つため (MFA で最大 60 秒)、非同期ワーカーを塞がない
+/// ようにする。tokio ランタイム内から呼ぶこと。
+pub async fn fresh_token_blocking(iam: &AwsIamOptions, user: &str) -> Result<String> {
+    let iam = iam.clone();
+    let user = user.to_string();
+    tokio::task::spawn_blocking(move || fresh_token(&iam, &user))
+        .await
+        .map_err(|_| AppError::Other("aws iam: token generation task failed".into()))?
+}
+
 /// ドライバの `connect` が使うパスワード。IAM 認証ならその場で作ったトークン、
 /// そうでなければ保存済みのパスワード。
-pub fn password_for(opts: &super::DbConnectOptions) -> Result<String> {
+pub async fn password_for(opts: &super::DbConnectOptions) -> Result<String> {
     match &opts.aws_iam {
-        Some(iam) => fresh_token(iam, &opts.user),
+        Some(iam) => fresh_token_blocking(iam, &opts.user).await,
         None => Ok(opts.password.clone()),
     }
 }
 
 /// ネイティブダンプ (`mysqldump` / `pg_dump`) のように外部プロセスへ資格情報を
 /// 渡す経路向け: IAM 認証ならパスワード欄を今有効なトークンに差し替えた複製を返す。
-pub fn with_fresh_password(opts: &super::DbConnectOptions) -> Result<super::DbConnectOptions> {
+pub async fn with_fresh_password(
+    opts: &super::DbConnectOptions,
+) -> Result<super::DbConnectOptions> {
     let mut out = opts.clone();
     if opts.aws_iam.is_some() {
-        out.password = password_for(opts)?;
+        out.password = password_for(opts).await?;
         out.ssl_mode = Some(enforce_tls(opts.ssl_mode));
     }
     Ok(out)
@@ -595,7 +965,7 @@ pub fn spawn_token_refresh(
     TokenRefreshGuard(tokio::spawn(async move {
         loop {
             tokio::time::sleep(TOKEN_REFRESH_INTERVAL).await;
-            match fresh_token(&iam, &user) {
+            match fresh_token_blocking(&iam, &user).await {
                 Ok(token) => {
                     if !apply(token) {
                         break;
@@ -853,10 +1223,14 @@ mod tests {
         env: &'a dyn Fn(&str) -> Option<String>,
         read_file: &'a dyn Fn(&Path) -> Option<String>,
     ) -> CredentialSources<'a> {
+        static NO_CACHE: ProcessCredentialCache = ProcessCredentialCache::new();
         CredentialSources {
             env,
             read_file,
             home: Some(PathBuf::from("/home/u")),
+            run_process: &|_| panic!("credential_process must not run in this test"),
+            now: Utc::now(),
+            cache: &NO_CACHE,
         }
     }
 
@@ -876,6 +1250,14 @@ aws_session_token = SESSWORK
 [profile cfgonly]
 aws_access_key_id = AKIDCFG
 aws_secret_access_key = SECRETCFG
+
+[profile vault]
+credential_process = aws-vault export --format=json \"my profile\"
+
+[profile both]
+aws_access_key_id = AKIDBOTH
+aws_secret_access_key = SECRETBOTH
+credential_process = should-not-run
 
 [profile sso]
 sso_session = my-sso
@@ -951,5 +1333,269 @@ sso_account_id = 123456789012
         assert!(e.to_string().contains("not found"));
         // エラー文に秘密が混ざらない。
         assert!(!msg.contains("SECRET"));
+    }
+
+    // ── credential_process (#1682) ──
+
+    const PROC_JSON: &str = r#"{"Version":1,"AccessKeyId":"AKIDPROC","SecretAccessKey":"SECRETPROC","SessionToken":"SESSPROC","Expiration":"2030-01-01T00:00:00Z"}"#;
+
+    fn ok_output(stdout: &str) -> Result<ProcessOutput> {
+        Ok(ProcessOutput {
+            code: Some(0),
+            success: true,
+            stdout: stdout.to_string(),
+        })
+    }
+
+    #[test]
+    fn split_command_handles_quotes_without_a_shell() {
+        let v = |s: &str| split_command(s).expect("split");
+        assert_eq!(
+            v("aws-vault export --format=json work"),
+            ["aws-vault", "export", "--format=json", "work"]
+        );
+        assert_eq!(
+            v(r#"  cmd "a b"  'c d' e"f g"h  """#),
+            ["cmd", "a b", "c d", "ef gh", ""]
+        );
+        assert_eq!(v(r#"cmd "say \"hi\" \\""#), ["cmd", r#"say "hi" \"#]);
+        // 引用の外の `\` はそのまま (Windows のパス)。
+        assert_eq!(v(r"C:\bin\tool.exe x"), [r"C:\bin\tool.exe", "x"]);
+        // `;` や `$()` はシェルで解釈されない。
+        assert_eq!(v("a; rm -rf $(x)"), ["a;", "rm", "-rf", "$(x)"]);
+        assert!(split_command("cmd \"open").is_err());
+        assert!(split_command("cmd 'open").is_err());
+        assert!(split_command("   ").is_err());
+    }
+
+    #[test]
+    fn process_output_is_parsed_per_the_aws_spec() {
+        let (c, exp) = parse_process_output(PROC_JSON).expect("ok");
+        assert_eq!(c.access_key_id, "AKIDPROC");
+        assert_eq!(c.session_token.as_deref(), Some("SESSPROC"));
+        assert_eq!(
+            exp,
+            Some(Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap())
+        );
+        // SessionToken / Expiration は任意。
+        let (c, exp) =
+            parse_process_output(r#"{"Version":1,"AccessKeyId":"A","SecretAccessKey":"B"}"#)
+                .expect("minimal");
+        assert_eq!((c.session_token, exp), (None, None));
+        // Version が 1 以外 / 無いものはエラー。
+        for bad in [
+            r#"{"Version":2,"AccessKeyId":"A","SecretAccessKey":"B"}"#,
+            r#"{"AccessKeyId":"A","SecretAccessKey":"B"}"#,
+            r#"{"Version":1,"AccessKeyId":"A"}"#,
+            r#"{"Version":1,"AccessKeyId":"A","SecretAccessKey":"B","Expiration":"tomorrow"}"#,
+            "not json SECRETLEAK",
+        ] {
+            let e = parse_process_output(bad).expect_err(bad).to_string();
+            assert!(!e.contains("SECRETLEAK"), "{e}");
+        }
+    }
+
+    #[test]
+    fn cache_validity_window() {
+        let now = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
+        let exp = now + chrono::Duration::minutes(60);
+        assert_eq!(
+            cache_valid_until(now, Some(exp)),
+            now + chrono::Duration::minutes(45)
+        );
+        assert_eq!(
+            cache_valid_until(now, None),
+            now + chrono::Duration::minutes(5)
+        );
+        // 期限まで 15 分を切っていればキャッシュしない (valid_until <= now)。
+        assert!(cache_valid_until(now, Some(now + chrono::Duration::minutes(14))) <= now);
+    }
+
+    #[test]
+    fn credential_process_runs_once_and_is_cached_until_near_expiry() {
+        use std::cell::Cell;
+        let none = |_: &str| None;
+        let calls = Cell::new(0);
+        let cache = ProcessCredentialCache::new();
+        let runner = |argv: &[String]| {
+            calls.set(calls.get() + 1);
+            assert_eq!(argv[0], "aws-vault");
+            assert_eq!(argv[3], "my profile");
+            ok_output(PROC_JSON)
+        };
+        let make = |now: DateTime<Utc>| CredentialSources {
+            run_process: &runner,
+            now,
+            cache: &cache,
+            ..sources(&none, &read_files)
+        };
+        let t0 = Utc.with_ymd_and_hms(2029, 12, 31, 22, 0, 0).unwrap();
+        let c = resolve_credentials(Some("vault"), &make(t0)).expect("first");
+        assert_eq!(c.access_key_id, "AKIDPROC");
+        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(10)))
+            .expect("cached");
+        assert_eq!(calls.get(), 1, "10 分後はキャッシュを使う");
+        // Expiration の 5 分前を過ぎたら再実行。
+        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(106)))
+            .expect("refetch");
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn credential_process_without_expiration_is_cached_briefly() {
+        use std::cell::Cell;
+        let none = |_: &str| None;
+        let calls = Cell::new(0);
+        let cache = ProcessCredentialCache::new();
+        let runner = |_: &[String]| {
+            calls.set(calls.get() + 1);
+            ok_output(r#"{"Version":1,"AccessKeyId":"A","SecretAccessKey":"B"}"#)
+        };
+        let make = |now: DateTime<Utc>| CredentialSources {
+            run_process: &runner,
+            now,
+            cache: &cache,
+            ..sources(&none, &read_files)
+        };
+        let t0 = Utc.with_ymd_and_hms(2030, 1, 1, 0, 0, 0).unwrap();
+        resolve_credentials(Some("vault"), &make(t0)).expect("1");
+        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(4))).expect("2");
+        assert_eq!(calls.get(), 1);
+        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(6))).expect("3");
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn static_keys_beat_credential_process() {
+        // `both` は静的キーを持つのでコマンドは実行されない (sources の runner は panic)。
+        let none = |_: &str| None;
+        let c = resolve_credentials(Some("both"), &sources(&none, &read_files)).expect("both");
+        assert_eq!(c.access_key_id, "AKIDBOTH");
+    }
+
+    #[test]
+    fn credential_process_in_credentials_file_is_accepted() {
+        let none = |_: &str| None;
+        let read = |p: &Path| {
+            p.ends_with("credentials")
+                .then(|| "[ci]\ncredential_process = fetch-creds\n".to_string())
+        };
+        let runner = |argv: &[String]| {
+            assert_eq!(argv, ["fetch-creds"]);
+            ok_output(PROC_JSON)
+        };
+        let cache = ProcessCredentialCache::new();
+        let src = CredentialSources {
+            run_process: &runner,
+            cache: &cache,
+            ..sources(&none, &read)
+        };
+        let c = resolve_credentials(Some("ci"), &src).expect("ci");
+        assert_eq!(c.access_key_id, "AKIDPROC");
+    }
+
+    #[test]
+    fn credential_process_failure_does_not_leak_output() {
+        let none = |_: &str| None;
+        let runner = |_: &[String]| {
+            Ok(ProcessOutput {
+                code: Some(3),
+                success: false,
+                stdout: "SECRETLEAK".to_string(),
+            })
+        };
+        let cache = ProcessCredentialCache::new();
+        let src = CredentialSources {
+            run_process: &runner,
+            cache: &cache,
+            ..sources(&none, &read_files)
+        };
+        let msg = resolve_credentials(Some("vault"), &src)
+            .expect_err("exit 3")
+            .to_string();
+        assert!(msg.contains("exit code: 3"), "{msg}");
+        assert!(!msg.contains("SECRETLEAK"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_captures_stdout_and_exit_code() {
+        let argv = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let out = run_command(
+            &argv(&["sh", "-c", "printf hello; echo err >&2"]),
+            Duration::from_secs(10),
+        )
+        .expect("run");
+        assert!(out.success);
+        assert_eq!(out.stdout, "hello");
+        let out =
+            run_command(&argv(&["sh", "-c", "exit 7"]), Duration::from_secs(10)).expect("run");
+        assert_eq!((out.success, out.code), (false, Some(7)));
+        assert!(run_command(&argv(&["/nonexistent/bin"]), Duration::from_secs(1)).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_command_kills_on_timeout() {
+        let started = Instant::now();
+        let e = run_command(
+            &["sleep".to_string(), "30".to_string()],
+            Duration::from_millis(300),
+        )
+        .expect_err("timeout");
+        assert!(e.to_string().contains("timed out"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn cache_margin_exceeds_the_token_refresh_interval() {
+        assert!(CACHE_EXPIRY_MARGIN_SECS as u64 > TOKEN_REFRESH_INTERVAL.as_secs());
+    }
+
+    #[test]
+    fn expired_credentials_are_rejected() {
+        let none = |_: &str| None;
+        let runner = |_: &[String]| ok_output(PROC_JSON);
+        let cache = ProcessCredentialCache::new();
+        let src = CredentialSources {
+            run_process: &runner,
+            now: Utc.with_ymd_and_hms(2031, 1, 1, 0, 0, 0).unwrap(),
+            cache: &cache,
+            ..sources(&none, &read_files)
+        };
+        let msg = resolve_credentials(Some("vault"), &src)
+            .expect_err("expired")
+            .to_string();
+        assert!(msg.contains("returned expired credentials"), "{msg}");
+        assert!(!msg.contains("SECRETPROC"), "{msg}");
+    }
+
+    #[test]
+    fn cache_is_not_shared_between_profiles() {
+        use std::cell::Cell;
+        let none = |_: &str| None;
+        let calls = Cell::new(0);
+        let runner = |_: &[String]| {
+            calls.set(calls.get() + 1);
+            ok_output(PROC_JSON)
+        };
+        let cache = ProcessCredentialCache::new();
+        let read = |p: &Path| {
+            p.ends_with("credentials").then(|| {
+                "[a]\ncredential_process = same-cmd\n[b]\ncredential_process = same-cmd\n"
+                    .to_string()
+            })
+        };
+        let src = CredentialSources {
+            run_process: &runner,
+            now: Utc.with_ymd_and_hms(2029, 12, 31, 22, 0, 0).unwrap(),
+            cache: &cache,
+            ..sources(&none, &read)
+        };
+        resolve_credentials(Some("a"), &src).expect("a");
+        resolve_credentials(Some("b"), &src).expect("b");
+        assert_eq!(calls.get(), 2, "同じコマンドでもプロファイルが違えば別キー");
+        resolve_credentials(Some("a"), &src).expect("a again");
+        assert_eq!(calls.get(), 2);
     }
 }

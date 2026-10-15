@@ -221,6 +221,8 @@ describe("ResultGrid 結果ハンドル経由の結果内検索 (#1264)", () => 
       limit: 10_000,
     });
     expect(container.querySelector("td.is-find-current")?.textContent).toBe("row-5");
+    // 打ち切り中は「ヒットのみ表示」を使えない (残りのヒット行まで隠れるため)。
+    expect(screen.getByRole("button", { name: t("gridFindHitsOnlyTitle") })).toBeDisabled();
   });
 
   it("正規表現モードはハンドルがあっても JS で検索する", async () => {

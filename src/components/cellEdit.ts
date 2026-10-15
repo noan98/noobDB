@@ -486,6 +486,44 @@ export function cellValueFromInput(raw: string, col: Column): CellValue {
 }
 
 /**
+ * 編集欄の入力から「実際に保存される値」の注記を作る (#1628)。`cellValueFromInput` と同じ
+ * 変換を通すので、Apply 後にグリッドへ反映される値と食い違わない。
+ *
+ * 入力がそのまま保存されるだけの通常のテキスト・数値は注記不要なので `null`。注記が要るのは
+ * 次の場合: NULL 化 (`NULL` と打った)、空文字の保存、真偽値表記の正規化 (`yes` → `TRUE`)、
+ * 数値の正規化 (`007` → `7`)、前後の空白をそのまま保存する文字列。
+ */
+export type SavedValuePreview =
+  | { kind: "null" }
+  | { kind: "empty" }
+  | { kind: "normalized"; value: string; raw: string }
+  | { kind: "edgeSpace" };
+
+export function previewSavedValue(raw: string, col: Column): SavedValuePreview | null {
+  const v = cellValueFromInput(raw, col);
+  if (v === null || v === undefined) return { kind: "null" };
+  const trimmed = raw.trim();
+  if (typeof v === "boolean") {
+    const shown = v ? "TRUE" : "FALSE";
+    return trimmed === shown ? null : { kind: "normalized", value: shown, raw: trimmed };
+  }
+  if (typeof v === "number") {
+    // DECIMAL/NUMERIC は DB が列の小数桁に合わせて保存する ("1.50" は 1.50 のまま) ので、
+    // JS の数値表記への「正規化」を示すと誤解を招く。
+    if (/decimal|numeric|money/i.test(col.type_name)) return null;
+    const shown = String(v);
+    return trimmed === shown ? null : { kind: "normalized", value: shown, raw: trimmed };
+  }
+  if (raw === "") {
+    // 文字列系の空欄は NULL ではなく空文字 (`literalFromInput` が `''` を作る)。
+    // 数値・日時などは空欄が検証エラーになるのでここへは来ない前提だが、注記は文字列系に限る。
+    return classifyEditType(col.type_name) === "other" ? { kind: "empty" } : null;
+  }
+  if (raw !== trimmed && classifyEditType(col.type_name) === "other") return { kind: "edgeSpace" };
+  return null;
+}
+
+/**
  * Whether buffering `raw` for a cell currently holding `current` would be a
  * no-op — i.e. the edit sets the value the row already has.
  *

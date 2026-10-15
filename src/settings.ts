@@ -18,7 +18,13 @@ import {
   sanitizeQuickLauncherSectionLimits,
   type QuickLauncherSectionLimits,
 } from "./quickLauncher";
-import { DEFAULT_AI_SETTINGS, sanitizeAiSettings, type AiSendScope, type AiSettings } from "./ai/aiSettings";
+import {
+  DEFAULT_AI_SETTINGS,
+  sanitizeAiSettings,
+  sanitizeMonthlyBudget,
+  type AiSendScope,
+  type AiSettings,
+} from "./ai/aiSettings";
 import type { AiEffort, AiModelId, AiTaskKind } from "./ai/aiModels";
 
 export type Theme = "light" | "dark";
@@ -1790,6 +1796,11 @@ export function setAiMaskLiterals(value: boolean): void {
 /** AI 無効時の案内リンクを今後表示しないか (#1475)。AI 設定画面から戻せる。 */
 export function setAiHideSetupHint(value: boolean): void {
   patchAi({ hideSetupHint: value });
+}
+
+/** AI の月次予算 (USD、#1620)。`null` / 不正な値は上限なし。 */
+export function setAiMonthlyBudget(value: number | null): void {
+  patchAi({ monthlyBudgetUsd: sanitizeMonthlyBudget(value) });
 }
 
 /** エディタの AI インライン補完 (#1479) のオン / オフ。 */

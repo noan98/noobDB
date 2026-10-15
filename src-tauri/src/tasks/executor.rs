@@ -718,6 +718,7 @@ fn build_connect_request(profile: &ConnectionProfile) -> Result<ConnectRequest, 
         ssl_client_key: profile.ssl_client_key.clone(),
         init_sql: profile.init_sql.clone(),
         aws_iam: profile.aws_iam.clone(),
+        ssm: profile.ssm.clone(),
         read_only: true,
         skip_history: true,
     })

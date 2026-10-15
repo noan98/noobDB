@@ -30,6 +30,8 @@ import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { AiUsageNote } from "./AiUsageNote";
+import { Icon, ICON_SIZES } from "./Icon";
+import { Tooltip } from "./Tooltip";
 import { useCopyFeedback } from "./useCopyFeedback";
 import { isImeComposing } from "./modalKeys";
 
@@ -70,6 +72,11 @@ export interface AiHistorySearchProps {
   periodLabel: string;
   /** 結果の行を押したときに SQL をエディタへ復元する。 */
   onOpen: (id: number) => void;
+  /**
+   * 結果の行から、その履歴の SQL を既存のスニペット作成フォームへ渡す (#1620)。
+   * タグ・スコープの入力は既存のスニペット機能に任せる。未指定なら保存ボタンを出さない。
+   */
+  onSaveAsSnippet?: (id: number) => void;
 }
 
 /**
@@ -77,7 +84,7 @@ export interface AiHistorySearchProps {
  * 既存の LIKE 検索 / 期間 / 接続フィルタで絞った候補 (最大 300 件) だけを送り、送信前に
  * 必ず件数・期間・接続を示して確認する。AI が使えない (無効 / キー未設定) ときは何も描かない。
  */
-export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearchProps) {
+export function AiHistorySearch({ filters, periodLabel, onOpen, onSaveAsSnippet }: AiHistorySearchProps) {
   const t = useT();
   const locale = useLocale();
   const ai = useSettings().ai;
@@ -390,37 +397,63 @@ export function AiHistorySearch({ filters, periodLabel, onOpen }: AiHistorySearc
           <Flex direction="column" gap="1.5" aria-live="polite" maxH="320px" overflow="auto">
             {state.matches.map((m) => {
               return (
-                <chakra.button
-                  key={m.historyId}
-                  type="button"
-                  textAlign="left"
-                  p="1.5"
-                  borderWidth="1px"
-                  borderColor="app.border"
-                  borderRadius="md"
-                  bg="app.bg"
-                  cursor="pointer"
-                  _hover={{ bg: "app.hover" }}
-                  title={t("aiHistoryOpen")}
-                  onClick={() => onOpen(m.historyId)}
-                >
-                  {/* button の中身は phrasing content のみ (div を入れない)。aria-label を付けないので、
+                <Flex key={m.historyId} gap="1" align="stretch" data-testid="ai-history-match">
+                  <chakra.button
+                    type="button"
+                    flex="1"
+                    minW="0"
+                    textAlign="left"
+                    p="1.5"
+                    borderWidth="1px"
+                    borderColor="app.border"
+                    borderRadius="md"
+                    bg="app.bg"
+                    cursor="pointer"
+                    _hover={{ bg: "app.hover" }}
+                    title={t("aiHistoryOpen")}
+                    onClick={() => onOpen(m.historyId)}
+                  >
+                    {/* button の中身は phrasing content のみ (div を入れない)。aria-label を付けないので、
                       スコア・SQL・理由・日時がそのまま読み上げの名前になる。 */}
-                  <chakra.span display="flex" gap="2" alignItems="baseline">
-                    <chakra.span color="app.textMuted" fontSize="xs" textStyle="numeric" flexShrink={0}>
-                      {t("aiHistoryMatchScore", { score: m.relevance })}
+                    <chakra.span display="flex" gap="2" alignItems="baseline">
+                      <chakra.span color="app.textMuted" fontSize="xs" textStyle="numeric" flexShrink={0}>
+                        {t("aiHistoryMatchScore", { score: m.relevance })}
+                      </chakra.span>
+                      <chakra.span fontFamily="mono" fontSize="xs" truncate>
+                        {m.preview}
+                      </chakra.span>
                     </chakra.span>
-                    <chakra.span fontFamily="mono" fontSize="xs" truncate>
-                      {m.preview}
+                    <chakra.span display="block" color="app.textMuted" fontSize="xs" whiteSpace="pre-wrap">
+                      {m.reason}
                     </chakra.span>
-                  </chakra.span>
-                  <chakra.span display="block" color="app.textMuted" fontSize="xs" whiteSpace="pre-wrap">
-                    {m.reason}
-                  </chakra.span>
-                  <chakra.span display="block" color="app.textMuted" fontSize="2xs">
-                    {new Date(m.executedAt).toLocaleString()}
-                  </chakra.span>
-                </chakra.button>
+                    <chakra.span display="block" color="app.textMuted" fontSize="2xs">
+                      {new Date(m.executedAt).toLocaleString()}
+                    </chakra.span>
+                  </chakra.button>
+                  {onSaveAsSnippet && (
+                    <Tooltip label={t("historySaveAsSnippet")}>
+                      <chakra.button
+                        type="button"
+                        flexShrink={0}
+                        w="7"
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        borderWidth="1px"
+                        borderColor="app.border"
+                        borderRadius="md"
+                        bg="app.bg"
+                        color="app.textSecondary"
+                        cursor="pointer"
+                        _hover={{ bg: "app.hover", color: "app.text" }}
+                        aria-label={t("historySaveAsSnippet")}
+                        onClick={() => onSaveAsSnippet(m.historyId)}
+                      >
+                        <Icon name="snippet" size={ICON_SIZES.md} />
+                      </chakra.button>
+                    </Tooltip>
+                  )}
+                </Flex>
               );
             })}
           </Flex>

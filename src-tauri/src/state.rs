@@ -8,6 +8,7 @@ use crate::cache::{QueryResultCache, SchemaCache};
 use crate::db::data_diff::DataDiff;
 use crate::db::{Connection, DbConnectOptions};
 use crate::ssh::{SshConfig, SshTunnel};
+use crate::ssm::{SsmTunnel, SsmTunnelSpec};
 
 pub type SessionId = String;
 pub type StreamId = String;
@@ -178,9 +179,12 @@ pub struct Session {
     /// plaintext retention beyond the DB password already held in
     /// `connect_options`.
     pub reconnect_ssh: Option<SshConfig>,
+    /// SSM ポートフォワード (#1683) を張り直すための非秘密パラメータ。SSH と排他で、
+    /// 直結・ファイル・SSH 経由のセッションは `None`。リージョンは接続時に解決済み。
+    pub reconnect_ssm: Option<SsmTunnelSpec>,
     /// Held to keep the tunnel alive for the lifetime of this session.
     /// Dropping the Session drops this and cleans the tunnel up.
-    pub _tunnel: Option<SshTunnel>,
+    pub _tunnel: Option<Tunnel>,
     /// Set only for a **local cross-connection query** session (#740): the
     /// path of its temp-file-backed SQLite database. Its presence is how
     /// commands recognize "this session is the local engine, not a driven
@@ -215,6 +219,39 @@ pub struct Session {
     pub inspector: tokio::sync::Mutex<crate::db::inspector::InspectorState>,
 }
 
+/// セッションが握る踏み台経由の経路 (#1683)。SSH トンネルか SSM ポートフォワードの
+/// どちらか一方で、Drop されると経路ごと片付く (DB 接続より先に落とさないこと)。
+pub enum Tunnel {
+    Ssh(SshTunnel),
+    Ssm(Box<SsmTunnel>),
+}
+
+impl Tunnel {
+    /// DB 接続先として使う `127.0.0.1` 側のローカルポート。
+    pub fn local_port(&self) -> u16 {
+        match self {
+            Tunnel::Ssh(t) => t.local_port,
+            Tunnel::Ssm(t) => t.local_port,
+        }
+    }
+
+    /// 経路がまだ生きているか (ネットワークには触れない)。
+    pub fn is_alive(&self) -> bool {
+        match self {
+            Tunnel::Ssh(t) => t.is_alive(),
+            Tunnel::Ssm(t) => t.is_alive(),
+        }
+    }
+
+    /// SSM 経路なら、再接続用の非秘密パラメータ。
+    pub fn ssm_spec(&self) -> Option<&SsmTunnelSpec> {
+        match self {
+            Tunnel::Ssm(t) => Some(t.spec()),
+            Tunnel::Ssh(_) => None,
+        }
+    }
+}
+
 impl Session {
     /// True when the emergency-write override is currently on. Relaxed-enough
     /// ordering is fine — the flag is an independent boolean with no other
@@ -234,10 +271,10 @@ impl Session {
         }
     }
 
-    /// SSH トンネル越しのセッションならトンネルが生きているか (#1537)。トンネルを
+    /// SSH / SSM トンネル越しのセッションならトンネルが生きているか (#1537)。トンネルを
     /// 持たない (直結・ファイル・ローカル) セッションは `None`。ネットワークには触れない。
     pub fn tunnel_alive(&self) -> Option<bool> {
-        self._tunnel.as_ref().map(SshTunnel::is_alive)
+        self._tunnel.as_ref().map(Tunnel::is_alive)
     }
 
     pub fn set_emergency_write(&self, enabled: bool) {

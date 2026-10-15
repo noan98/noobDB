@@ -119,3 +119,35 @@ export function formatUsd(v: number): string {
   if (v < 0.01) return `$${v.toFixed(4)}`;
   return `$${v.toFixed(2)}`;
 }
+
+/** 予算の何割に達したら「超過前の警告」を出すか (#1620)。 */
+export const BUDGET_WARN_RATIO = 0.8;
+
+export type BudgetState = "none" | "ok" | "warning" | "exceeded";
+
+export interface BudgetStatus {
+  state: BudgetState;
+  /** 今月の概算コスト (USD)。 */
+  spent: number;
+  budget: number | null;
+  /** `spent / budget` (予算なしは 0)。1 以上で超過。 */
+  ratio: number;
+}
+
+/**
+ * 今月 (JST) の概算コストと予算から状態を決める (#1620)。バックエンドの
+ * `ai::budget::check_budget` と同じ境界 (`spent >= budget` で超過) にそろえている。
+ */
+export function budgetStatus(
+  records: readonly AiUsageRecord[],
+  budget: number | null,
+  now: Date = new Date(),
+): BudgetStatus {
+  const spent = buildUsageReport(records, monthStartKey(now)).total.costUsd;
+  if (budget === null || !Number.isFinite(budget) || budget <= 0) {
+    return { state: "none", spent, budget: null, ratio: 0 };
+  }
+  const ratio = spent / budget;
+  const state: BudgetState = ratio >= 1 ? "exceeded" : ratio >= BUDGET_WARN_RATIO ? "warning" : "ok";
+  return { state, spent, budget, ratio };
+}

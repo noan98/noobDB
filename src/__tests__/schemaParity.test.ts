@@ -105,6 +105,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // 結果ハンドル (#1264)。
   ["resultFindOutput", schemas.resultFindOutput],
   ["resultColumnStats", schemas.resultColumnStats],
+  ["resultDuplicateKeys", schemas.resultDuplicateKeys],
   ["queryStreamPatchMessage", schemas.queryStreamPatchMessage],
   // #1257: ブロードキャスト比較の Channel メッセージ。
   ["broadcastEnvMessage", schemas.broadcastEnvMessage],

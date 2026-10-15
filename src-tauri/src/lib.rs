@@ -23,6 +23,7 @@ mod sandboxes;
 mod schema_drift;
 mod snippets;
 mod ssh;
+mod ssm;
 mod state;
 mod table_stat_store;
 mod tasks;
@@ -68,8 +69,8 @@ pub mod __test_api {
         RefreshSnapshotStore,
     };
     pub use crate::db::result_ops::{
-        column_stats, find, sort_filter, ColumnStatsOut, FilterOp, FilterSpec, FindHit,
-        FindOptions, FindOutput, NullMode, SortKind, SortSpec,
+        column_stats, duplicate_keys, find, sort_filter, ColumnStatsOut, DuplicateKeysOut,
+        FilterOp, FilterSpec, FindHit, FindOptions, FindOutput, NullMode, SortKind, SortSpec,
     };
     pub use crate::db::result_store::{
         approx_row_bytes, ResultBuilder, ResultStore, MIN_RETAIN_ROWS, RESULT_GONE,
@@ -116,6 +117,7 @@ pub mod __test_api {
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
+    pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
@@ -236,8 +238,9 @@ pub mod __test_api {
 
     // 結果ハンドル (#1264) の IPC コア (State なし)。
     pub use crate::commands::result::{
-        render_export_text_inner, resolve_rows, result_column_stats_inner, result_find_inner,
-        result_sort_filter_inner, RenderExportRequest,
+        render_export_text_inner, resolve_rows, result_column_stats_inner,
+        result_duplicate_keys_inner, result_find_inner, result_sort_filter_inner,
+        RenderExportRequest,
     };
 
     // ストリーミングイベントの emit ペイロード構造体 (#825)。上記と同じくフィクスチャ
@@ -466,6 +469,7 @@ pub mod __test_api {
             emergency_write: std::sync::atomic::AtomicBool::new(false),
             skip_history: true,
             reconnect_ssh: None,
+            reconnect_ssm: None,
             _tunnel: None,
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),
@@ -1491,6 +1495,7 @@ pub fn run() {
             commands::result::result_sort_filter,
             commands::result::result_find,
             commands::result::result_column_stats,
+            commands::result::result_duplicate_keys,
             commands::result::release_result,
             commands::result::render_export_text,
             commands::dump::dump_database,
