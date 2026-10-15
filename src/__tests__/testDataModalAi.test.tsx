@@ -91,6 +91,7 @@ const aiResponse = JSON.stringify({
 
 beforeEach(() => {
   cleanup();
+  localStorage.clear();
   vi.clearAllMocks();
   handlers = null;
   listenGate = Promise.resolve();
@@ -173,6 +174,66 @@ describe("TestDataModal AI モード (#698)", () => {
       expect(["ペン:120", "ノート:250"]).toContain(`${r[1]}:${r[2]}`);
     }
     await waitFor(() => expect(onInserted).toHaveBeenCalled());
+  });
+
+  it("プロファイル単位で計画を保存し、同じ表への再投入では AI を呼ばず保存済みを使う。スキーマが変わったら使わない (#1620)", async () => {
+    const first = renderWithProviders(ui({ profileId: "p1" }));
+    await startGenerate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: aiResponse });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText(t("testDataPreviewTitle", { count: 20 }));
+    // AI が作った直後は「保存済みを再利用」の表示は出さない。
+    expect(screen.queryByTestId("testdata-ai-plan-cached")).toBeNull();
+    first.unmount();
+
+    // 同じ接続・同じ表を開き直す: AI モードに入っただけで保存済みの計画が使われる。
+    vi.clearAllMocks();
+    renderWithProviders(ui({ profileId: "p1" }));
+    await selectAiMode();
+    await screen.findByTestId("testdata-ai-plan-cached");
+    await screen.findByText(t("testDataPreviewTitle", { count: 20 }));
+    expect(runAiRequest).not.toHaveBeenCalled();
+    cleanup();
+
+    // 別の接続プロファイルでは使わない。
+    vi.clearAllMocks();
+    renderWithProviders(ui({ profileId: "p2" }));
+    await selectAiMode();
+    expect(screen.queryByTestId("testdata-ai-plan-cached")).toBeNull();
+    expect(screen.getByRole("button", { name: t("testDataAiGenerate") })).toBeTruthy();
+    cleanup();
+
+    // 同じ接続でも列の型が変わったら (スキーマの指紋が変わる) 破棄して AI に作らせる。
+    vi.clearAllMocks();
+    describeTable.mockResolvedValue([
+      column("id", { data_type: "int", key: "PRI", extra: "auto_increment" }),
+      column("customer_id", { data_type: "int", referenced_table: "customers", referenced_column: "id" }),
+      column("product_name", { data_type: "varchar(200)" }),
+      column("unit_price", { data_type: "int" }),
+    ]);
+    runQuery.mockResolvedValue({ rows: [[98765]] });
+    renderWithProviders(ui({ profileId: "p1" }));
+    await selectAiMode();
+    expect(screen.queryByTestId("testdata-ai-plan-cached")).toBeNull();
+    expect(screen.getByRole("button", { name: t("testDataAiGenerate") })).toBeTruthy();
+  });
+
+  it("profileId が無いときは保存も再利用もしない (#1620)", async () => {
+    const first = renderWithProviders(ui());
+    await startGenerate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: aiResponse });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText(t("testDataPreviewTitle", { count: 20 }));
+    first.unmount();
+    renderWithProviders(ui());
+    await selectAiMode();
+    expect(screen.queryByTestId("testdata-ai-plan-cached")).toBeNull();
   });
 
   it("応答が不正ならエラーを出し、ルールベースへの切り替えを案内する", async () => {

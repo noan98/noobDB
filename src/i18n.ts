@@ -5496,6 +5496,8 @@ const en = {
   explainAiCompareColAfter: "Rewrite",
   explainAiCompareBeforePane: "Current plan",
   explainAiCompareAfterPane: "AI rewrite (estimated)",
+  testDataAiPlanCached:
+    'Reusing the saved plan for this table (saved {at}); the AI was not called. Press "Regenerate with AI" to create a new one. A saved plan is discarded when the table\'s columns change.',
 };
 
 export type I18nKey = keyof typeof en;
@@ -10963,6 +10965,8 @@ const ja: Dict = {
   explainAiCompareColAfter: "書き換え案",
   explainAiCompareBeforePane: "現在の計画",
   explainAiCompareAfterPane: "AI の書き換え案 (見積もり)",
+  testDataAiPlanCached:
+    "この表の保存済みのプランを再利用しています (保存: {at})。AI は呼び出していません。作り直すには「AI で再生成」を押してください。表の列が変わると保存済みのプランは使われません。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

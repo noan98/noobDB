@@ -12050,6 +12050,7 @@ export default function App() {
                 database={testDataTarget.database}
                 table={testDataTarget.table}
                 driver={selectedProfile?.driver ?? "mysql"}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 onClose={() => setTestDataTarget(null)}
                 onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
