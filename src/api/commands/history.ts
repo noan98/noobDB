@@ -58,6 +58,14 @@ export const historyCommands = {
     invoke<number>("set_history_retention_days", { days }).then((r) =>
       parseResponse(schemas.numberResponse, r, "set_history_retention_days"),
     ),
+  /**
+   * 履歴の指定 id の行だけを削除し、消えた件数を返す (#1627)。一覧で選択した行や、絞り込みで
+   * 表示中の行の一括削除用。存在しない id は無視する。上限 10,000 件。
+   */
+  deleteHistoryEntries: (ids: number[]) =>
+    invoke<number>("delete_history_entries", { ids }).then((r) =>
+      parseResponse(schemas.numberResponse, r, "delete_history_entries"),
+    ),
   clearHistory: (profileId?: string | null) =>
     invoke<number>("clear_history", { profileId: profileId ?? null }).then((r) =>
       parseResponse(schemas.numberResponse, r, "clear_history"),

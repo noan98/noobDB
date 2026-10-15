@@ -369,6 +369,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)
 - `list_history_sql`
 - `clear_history`
+- `delete_history_entries` (#1627。id 指定の一括削除。履歴の「表示中を削除」「選択を削除」。上限 10,000 件、存在しない id は無視、削除件数を返す)
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`

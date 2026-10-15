@@ -503,6 +503,27 @@ async fn clear_in(pool: &SqlitePool, profile_id: Option<&str>) -> Result<u64> {
     Ok(affected)
 }
 
+/// 履歴の指定 id の行を削除し、実際に消えた件数を返す (#1627)。一覧で選択した行や、絞り込み結果
+/// として表示中の行だけを消すための一括削除で、存在しない id は数えない。
+pub async fn delete_ids(ids: &[i64]) -> Result<u64> {
+    delete_ids_in(pool().await?, ids).await
+}
+
+async fn delete_ids_in(pool: &SqlitePool, ids: &[i64]) -> Result<u64> {
+    let mut removed = 0u64;
+    for chunk in ids.chunks(GET_SQLS_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("DELETE FROM query_history WHERE id IN ({placeholders})");
+        // プレースホルダ "?" の個数だけを組み立てた文字列で、値はすべて bind する。
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
+        for id in chunk {
+            q = q.bind(*id);
+        }
+        removed += q.execute(pool).await?.rows_affected();
+    }
+    Ok(removed)
+}
+
 fn row_to_entry(r: &SqliteRow) -> HistoryEntry {
     HistoryEntry {
         id: r.try_get("id").unwrap_or_default(),
@@ -661,6 +682,53 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_ids_removes_only_the_given_rows() {
+        let pool = temp_pool().await;
+        for (i, sql) in ["SELECT 1", "SELECT 2", "SELECT 3"].iter().enumerate() {
+            record_in(
+                &pool,
+                entry("p1", sql, &format!("2026-01-0{}T00:00:00Z", i + 1)),
+            )
+            .await
+            .unwrap();
+        }
+        let all = list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+        // 新しい順: 3, 2, 1。先頭と末尾を消し、存在しない id は数えない。
+        let removed = delete_ids_in(&pool, &[all[0].id, all[2].id, 999_999])
+            .await
+            .unwrap();
+        assert_eq!(removed, 2);
+        let rest = list_in(&pool, None, 100, None, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(rest.len(), 1);
+        assert_eq!(rest[0].sql_preview, "SELECT 2");
+        assert_eq!(delete_ids_in(&pool, &[]).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn delete_ids_handles_more_ids_than_one_chunk() {
+        let pool = temp_pool().await;
+        for i in 0..(GET_SQLS_CHUNK + 20) {
+            record_in(
+                &pool,
+                entry("p1", &format!("SELECT {i}"), "2026-01-01T00:00:00Z"),
+            )
+            .await
+            .unwrap();
+        }
+        let all = list_in(&pool, None, 1000, None, None, None, None)
+            .await
+            .unwrap();
+        let ids: Vec<i64> = all.iter().map(|e| e.id).collect();
+        let removed = delete_ids_in(&pool, &ids).await.unwrap();
+        assert_eq!(removed as usize, GET_SQLS_CHUNK + 20);
     }
 
     fn entry_with_status(profile: &str, sql: &str, at: &str, status: &str) -> NewHistoryEntry {
