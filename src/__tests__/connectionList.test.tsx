@@ -281,8 +281,11 @@ describe("Database Explorer の階層 (#1112)", () => {
     vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([{ kind: "view", name: "v1", id: null }]);
     await openDb();
 
-    await screen.findByText(t("objGroupViews"));
-    expect(screen.getByText(t("objGroupTables"))).toBeInTheDocument();
+    // 種別チップ (#1629) にも同じ語があるので、ツリー行のグループ見出しだけを数える。
+    const inTree = (text: string) =>
+      screen.queryAllByText(text).filter((el) => !el.closest('[data-testid="tree-view-options"]'));
+    await waitFor(() => expect(inTree(t("objGroupViews"))).toHaveLength(1));
+    expect(inTree(t("objGroupTables"))).toHaveLength(1);
     expect(screen.getAllByRole("treeitem", { name: "v1" })).toHaveLength(1);
     expect(screen.getByRole("treeitem", { name: "tbl1" })).toBeInTheDocument();
   });
