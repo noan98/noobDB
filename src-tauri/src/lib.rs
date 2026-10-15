@@ -21,6 +21,7 @@ mod sandboxes;
 mod schema_drift;
 mod snippets;
 mod ssh;
+mod ssm;
 mod state;
 mod tasks;
 mod text_encoding;
@@ -110,6 +111,7 @@ pub mod __test_api {
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
+    pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
 
     // コメント/リテラル・マスキングの実装横断ゴールデン (#988)。read-only 判定・
@@ -459,6 +461,7 @@ pub mod __test_api {
             emergency_write: std::sync::atomic::AtomicBool::new(false),
             skip_history: true,
             reconnect_ssh: None,
+            reconnect_ssm: None,
             _tunnel: None,
             local_temp_file: None,
             schema_cache: crate::cache::SchemaCache::default(),

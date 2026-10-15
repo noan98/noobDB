@@ -374,6 +374,7 @@ fn build_fixtures() -> serde_json::Value {
             region: "ap-northeast-1".into(),
             profile: Some("work".into()),
         }),
+        ssm: None,
     };
     let connection_profile = ProfileWithSecretFlags {
         profile: connection_profile_inner,
