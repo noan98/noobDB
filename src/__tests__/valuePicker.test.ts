@@ -6,6 +6,10 @@ import {
   allowedValuesFromType,
   buildAllowedValuesQueries,
   buildFkCandidatesSql,
+  buildRefColumnsSql,
+  fkCandidatesWithLabels,
+  pickDisplayColumn,
+  refColumnsFromResult,
   candidatesFromResult,
   collectAllowedValues,
   fkSearchTerm,
@@ -326,5 +330,97 @@ describe("candidatesFromResult / fkSearchTerm (#1067)", () => {
     expect(fkSearchTerm("NULL")).toBe("");
     expect(fkSearchTerm("nu")).toBe("nu");
     expect(fkSearchTerm("")).toBe("");
+  });
+});
+
+describe("FK 候補の表示列 (#1629)", () => {
+  const base = { database: "shop", refTable: "users", refColumn: "id" } as const;
+
+  it("表示列を指定すると参照列と表示列を SELECT し、検索は両方の前方一致にする", () => {
+    const sql = buildFkCandidatesSql({ driver: "mysql", ...base, search: "al", displayColumn: "name" });
+    expect(sql).toContain("SELECT DISTINCT `id`, `name` FROM");
+    expect(sql).toContain("`name` LIKE 'al%'");
+    expect(sql).toContain("ORDER BY `id`");
+    expect(isReadOnlySql(sql)).toBe(true);
+  });
+
+  it("表示列なしは従来どおり ID 列だけ", () => {
+    const sql = buildFkCandidatesSql({ driver: "postgres", ...base, displayColumn: null });
+    expect(sql).toContain('SELECT DISTINCT "id" FROM');
+    expect(sql).not.toContain(",");
+  });
+
+  it.each(["mysql", "postgres", "sqlite"])("列一覧 SQL は読み取り専用 (%s)", (driver) => {
+    expect(isReadOnlySql(buildRefColumnsSql(driver, "shop", "users"))).toBe(true);
+  });
+
+  it("pickDisplayColumn は優先名 > 接尾辞の順で文字列型だけを選ぶ", () => {
+    const cols = [
+      { name: "id", type: "int" },
+      { name: "first_name", type: "varchar" },
+      { name: "Title", type: "text" },
+      { name: "age", type: "int" },
+    ];
+    expect(pickDisplayColumn(cols, "id")).toBe("Title");
+    expect(
+      pickDisplayColumn(
+        cols.filter((c) => c.name !== "Title"),
+        "id",
+      ),
+    ).toBe("first_name");
+    expect(
+      pickDisplayColumn(
+        [
+          { name: "id", type: "int" },
+          { name: "name", type: "int" },
+        ],
+        "id",
+      ),
+    ).toBeNull();
+  });
+
+  it("マスク対象の列と参照列自身は表示列にしない", () => {
+    const cols = [
+      { name: "email", type: "varchar" },
+      { name: "name", type: "varchar" },
+    ];
+    expect(pickDisplayColumn(cols, "id", (n) => n === "name")).toBe("email");
+    expect(pickDisplayColumn(cols, "name")).toBe("email");
+    expect(pickDisplayColumn(cols, "id", () => true)).toBeNull();
+  });
+
+  it("refColumnsFromResult は NULL 名を飛ばす", () => {
+    expect(
+      refColumnsFromResult({
+        rows: [
+          ["a", "int"],
+          [null, "x"],
+          ["b", null],
+        ],
+      }),
+    ).toEqual([
+      { name: "a", type: "int" },
+      { name: "b", type: null },
+    ]);
+  });
+
+  it("fkCandidatesWithLabels は説明文を整形・省略し、重複と NULL を除く", () => {
+    const long = "あ".repeat(80);
+    const r = fkCandidatesWithLabels({
+      rows: [
+        ["1", " Alice \n B "],
+        ["1", "dup"],
+        ["2", null],
+        ["3", "  "],
+        [null, "x"],
+        ["4", long],
+      ],
+    });
+    expect(r.values).toEqual(["1", "2", "3", "4"]);
+    expect(r.labels["1"]).toBe("Alice B");
+    expect(r.labels["2"]).toBeUndefined();
+    expect(r.labels["3"]).toBeUndefined();
+    expect([...(r.labels["4"] ?? "")]).toHaveLength(60);
+    expect(r.labels["4"]?.endsWith("…")).toBe(true);
   });
 });

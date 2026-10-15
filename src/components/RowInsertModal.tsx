@@ -250,7 +250,7 @@ export function RowInsertModal({
                     flex="1"
                   />
                 )}
-                <ValueDatalist id={listId} values={pickerValues} />
+                <ValueDatalist id={listId} values={pickerValues} labels={picker.labels(c.name)} />
                 {emptyStr && (
                   <chakra.span
                     flexShrink={0}

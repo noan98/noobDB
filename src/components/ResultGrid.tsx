@@ -3364,7 +3364,11 @@ const GridRow = memo(function GridRow({
                 onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
               />
             )}
-            <ValueDatalist id={valuePickerListId} values={editPickerValues} />
+            <ValueDatalist
+              id={valuePickerListId}
+              values={editPickerValues}
+              labels={valuePicker?.labels(columns[colIdx]?.name ?? "")}
+            />
             {editError && (
               <div className="cell-edit-error" role="alert">
                 {t(editError)}
