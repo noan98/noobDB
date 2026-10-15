@@ -279,6 +279,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `schema_drift_capture`
 - `schema_drift_list`
 - `schema_drift_compare`
+- `schema_drift_set_label`
 - `schema_drift_import_legacy`
 
 #736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む。`capture` の任意引数 `trigger_sql` (#1537) は DDL 成功をきっかけにした自動取得のときの実行 SQL で、世代に紐づけて保存する

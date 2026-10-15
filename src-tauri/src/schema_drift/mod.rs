@@ -72,6 +72,24 @@ pub struct GenerationMeta {
     /// 接続時・手動の取得、旧データでは `None`。
     #[serde(default)]
     pub trigger_sql: Option<String>,
+    /// 利用者が付けたラベル (「リリース v1.2」「障害前」など, #1621)。ラベル付きの世代は
+    /// ローテーションで消えない (上限 [`MAX_LABELED`])。
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// ラベルの最大文字数。
+pub const MAX_LABEL_CHARS: usize = 80;
+/// ラベル付きで保持できる世代数の上限 (ローテーションの対象外にするため無制限にはしない)。
+pub const MAX_LABELED: usize = 20;
+
+/// ラベルの正規化: 前後の空白を除き、空なら `None` (ラベルを外す)、長すぎるなら文字境界で切る。
+pub fn normalize_label(label: Option<&str>) -> Option<String> {
+    let t = label?.trim();
+    if t.is_empty() {
+        return None;
+    }
+    Some(t.chars().take(MAX_LABEL_CHARS).collect())
 }
 
 /// インデックス差分の種別。

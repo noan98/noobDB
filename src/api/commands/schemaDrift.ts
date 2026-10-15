@@ -37,6 +37,12 @@ export const schemaDriftCommands = {
       parseResponse(schemas.schemaDriftSummaryOrNull, r, "schema_drift_compare"),
     ),
 
+  /** 世代にラベルを付ける・外す (null / 空で外す, #1621)。世代が無ければ false。 */
+  schemaDriftSetLabel: (profileId: string, id: string, label: string | null) =>
+    invoke<boolean>("schema_drift_set_label", { profileId, id, label }).then((r) =>
+      parseResponse(schemas.booleanResponse, r, "schema_drift_set_label"),
+    ),
+
   /** 旧 localStorage の世代 (新しい順) をストアへ一度だけ取り込む。取り込んだ件数を返す。 */
   schemaDriftImportLegacy: (profileId: string, generations: unknown[]) =>
     invoke<number>("schema_drift_import_legacy", { profileId, generations }).then((r) =>

@@ -17,6 +17,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       schemaDriftCompare: vi.fn(),
+      schemaDriftSetLabel: vi.fn(),
     },
   };
 });
@@ -212,5 +213,36 @@ describe("SchemaDriftPanel タイムラインの操作 (#1612)", () => {
 
     fireEvent.click(items()[0], { shiftKey: true });
     await waitFor(() => expect(api.schemaDriftCompare).toHaveBeenCalledWith(profile.id, "g3", "g1"));
+  });
+});
+
+describe("SchemaDriftPanel generation labels (#1621)", () => {
+  it("shows labels in the timeline and saves a new label for the target generation", async () => {
+    vi.mocked(api.schemaDriftCompare).mockResolvedValue({ tables: [] });
+    vi.mocked(api.schemaDriftSetLabel).mockResolvedValue(true);
+    const generations = [
+      makeGeneration("g2", "2026-01-02T00:00:00Z"),
+      { ...makeGeneration("g1", "2026-01-01T00:00:00Z"), label: "障害前" },
+    ];
+    const onLabelChanged = vi.fn();
+    renderWithProviders(
+      <SchemaDriftPanel
+        profile={makeProfile()}
+        generations={generations}
+        canCapture={false}
+        capturing={false}
+        onCapture={() => {}}
+        onClose={() => {}}
+        onLabelChanged={onLabelChanged}
+      />,
+    );
+    expect(await screen.findByTestId("schema-drift-label")).toHaveTextContent("障害前");
+    const input = screen.getByPlaceholderText(t("schemaDriftLabelPlaceholder"));
+    fireEvent.change(input, { target: { value: "  リリース v1.2 " } });
+    fireEvent.click(screen.getByRole("button", { name: t("schemaDriftLabelSave") }));
+    await waitFor(() =>
+      expect(api.schemaDriftSetLabel).toHaveBeenCalledWith("p-test", "g2", "リリース v1.2"),
+    );
+    await waitFor(() => expect(onLabelChanged).toHaveBeenCalledWith("g2", "リリース v1.2"));
   });
 });

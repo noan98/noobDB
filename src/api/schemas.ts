@@ -873,6 +873,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const booleanResponse = z.boolean();
 export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
@@ -1907,6 +1908,8 @@ export const schemaDriftGeneration = z.object({
   omitted: z.boolean(),
   // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
   triggerSql: z.string().nullable().optional(),
+  // 利用者が付けたラベル (#1621)。
+  label: z.string().nullable().optional(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 

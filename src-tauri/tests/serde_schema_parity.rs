@@ -1712,6 +1712,7 @@ fn build_fixtures() -> serde_json::Value {
         table_count: 12,
         omitted: false,
         trigger_sql: Some("ALTER TABLE users ADD COLUMN age INT".into()),
+        label: Some("リリース v1.2".into()),
     };
     let schema_drift_summary = t::DriftSummary {
         tables: variants!(TableChangeStatus [Added, Removed, Changed])

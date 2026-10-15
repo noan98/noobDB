@@ -3597,6 +3597,7 @@
         "driver": "postgres",
         "fingerprint": "deadbeef",
         "id": "gen00001",
+        "label": "リリース v1.2",
         "omitted": false,
         "tableCount": 12,
         "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
@@ -3697,6 +3698,7 @@
     "driver": "postgres",
     "fingerprint": "deadbeef",
     "id": "gen00001",
+    "label": "リリース v1.2",
     "omitted": false,
     "tableCount": 12,
     "triggerSql": "ALTER TABLE users ADD COLUMN age INT"

@@ -1192,6 +1192,8 @@ export interface SchemaDriftGeneration {
   omitted: boolean;
   /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
   triggerSql?: string | null;
+  /** 利用者が付けたラベル (#1621)。ラベル付きの世代はローテーションで消えない。 */
+  label?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は

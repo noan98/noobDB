@@ -1476,6 +1476,7 @@ pub fn run() {
             commands::schema_drift::schema_drift_capture,
             commands::schema_drift::schema_drift_list,
             commands::schema_drift::schema_drift_compare,
+            commands::schema_drift::schema_drift_set_label,
             commands::schema_drift::schema_drift_import_legacy,
             commands::plan_watch::plan_watch_list,
             commands::plan_watch::plan_watch_set,

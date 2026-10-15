@@ -5528,6 +5528,11 @@ const en = {
   timelapseRowHistoryColTime: "Captured at",
   timelapseRowHistoryGone: "(row gone)",
   timelapseRowHistoryClose: "Close row history",
+  schemaDriftLabelPlaceholder: "Label for this generation (e.g. release v1.2)",
+  schemaDriftLabelAria: "Label for the generation captured at {time}",
+  schemaDriftLabelSave: "Save label",
+  schemaDriftLabelHint:
+    'Applies to the "to" generation. Labeled generations are kept when old ones rotate out (up to 20).',
 };
 
 export type I18nKey = keyof typeof en;
@@ -11024,6 +11029,10 @@ const ja: Dict = {
   timelapseRowHistoryColTime: "取得時刻",
   timelapseRowHistoryGone: "(行が消えた)",
   timelapseRowHistoryClose: "行の履歴を閉じる",
+  schemaDriftLabelPlaceholder: "この世代のラベル (例: リリース v1.2)",
+  schemaDriftLabelAria: "{time} に取得した世代のラベル",
+  schemaDriftLabelSave: "ラベルを保存",
+  schemaDriftLabelHint: "比較先の世代に付きます。ラベル付きの世代は古い世代の整理で消えません (最大 20 件)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

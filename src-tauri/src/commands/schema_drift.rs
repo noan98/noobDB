@@ -112,6 +112,17 @@ pub async fn schema_drift_list(profile_id: String) -> Result<Vec<GenerationMeta>
     store::list(&profile_id).await
 }
 
+/// 世代にラベルを付ける・外す (`label` が null / 空で外す, #1621)。セッション不要。
+/// ラベル付きの世代はローテーションで消えない。世代が無ければ false。
+#[tauri::command]
+pub async fn schema_drift_set_label(
+    profile_id: String,
+    id: String,
+    label: Option<String>,
+) -> Result<bool> {
+    store::set_label(&profile_id, parse_id(&id)?, label.as_deref()).await
+}
+
 /// 同じプロファイルの 2 世代 (`from_id` = 比較元、`to_id` = 比較先) の変化サマリ。
 /// どちらかの世代が (サイズ超過で) 省略されている、存在しない、または対象 (DB / スキーマ)
 /// が異なるときは `None` (対象が違うと全テーブルが増減したように見えるため。PostgreSQL で

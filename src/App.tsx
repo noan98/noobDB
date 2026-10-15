@@ -12083,6 +12083,9 @@ export default function App() {
                 onClose={() => setSchemaDriftOpen(false)}
                 onOpenStructure={sessionId ? handleOpenStructure : undefined}
                 onOpenData={sessionId ? handleOpenTable : undefined}
+                onLabelChanged={(id, label) =>
+                  setSchemaDrift((prev) => prev.map((g) => (g.id === id ? { ...g, label } : g)))
+                }
               />
             )}
           </AnimatePresence>
