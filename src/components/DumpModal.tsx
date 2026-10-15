@@ -310,10 +310,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
     return { options, dir: prefs.dir };
   });
   const [path, setPath] = useState<string>(() =>
-    joinDirAndName(
-      remembered?.dir ?? "",
-      `${initialBasename}.${dumpExtension(remembered?.options ?? {})}`,
-    ),
+    joinDirAndName(remembered?.dir ?? "", `${initialBasename}.${dumpExtension(remembered?.options ?? {})}`),
   );
   const [options, setOptions] = useState<DumpOptions>(() => {
     const base = { ...DEFAULT_OPTIONS, ...remembered?.options };

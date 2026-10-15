@@ -3,19 +3,29 @@ import { chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
 import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
 import { downloadDir, join } from "@tauri-apps/api/path";
-import { api, CellValue, Column, ExportFormat, listenExportStream } from "../api/tauri";
-import { useLocale, useT } from "../i18n";
+import { api, CellValue, Column, ExportFormat, listenExportStream, type TextEncodingId } from "../api/tauri";
+import { useLocale, useT, type I18nKey } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { Button, Checkbox, Input, Radio } from "./ui";
+import { Button, Checkbox, Input, Radio, Select } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { LoadingButton } from "./LoadingButton";
 import { Callout } from "./Callout";
-import { CodePreview, ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } from "./modalForm";
+import { TextEncodingSelect } from "./TextEncodingSelect";
+import { parseTextEncodingId } from "../sqlFileIO";
 import { useToast } from "./Toast";
 import { CopyButton } from "./CopyButton";
 import { useCopyFeedback } from "./useCopyFeedback";
-import { buildExportContent, DEFAULT_SQL_BATCH, SQL_DDL_OMITTED_COMMENT } from "./exportPreview";
+import {
+  buildExportContent,
+  DEFAULT_SQL_BATCH,
+  SQL_CONFLICT_MODES,
+  SQL_DDL_OMITTED_COMMENT,
+  sqlConflictProblem,
+  type SqlConflict,
+  type SqlConflictMode,
+} from "./exportPreview";
 import { isResultGoneError } from "./resultHandle";
 import { exportFormatHasTextPreview, xlsxTruncationNotices, type ExportNotice } from "./exportXlsx";
 import { resolveMaskedColumns, type MaskConfig } from "./columnMask";
@@ -233,6 +243,26 @@ type Status =
  */
 type ExportScope = "current" | "selection" | "full";
 
+const SQL_CONFLICT_LABELS: Record<SqlConflictMode, I18nKey> = {
+  insert: "exportSqlConflictInsert",
+  skip: "exportSqlConflictSkip",
+  update: "exportSqlConflictUpdate",
+  replace: "exportSqlConflictReplace",
+};
+
+const SQL_CONFLICT_HINTS: Record<SqlConflictMode, I18nKey> = {
+  insert: "exportSqlConflictInsertHint",
+  skip: "exportSqlConflictSkipHint",
+  update: "exportSqlConflictUpdateHint",
+  replace: "exportSqlConflictReplaceHint",
+};
+
+const SQL_CONFLICT_PROBLEMS: Record<NonNullable<ReturnType<typeof sqlConflictProblem>>, I18nKey> = {
+  keyRequired: "exportSqlConflictKeyRequired",
+  keyMissing: "exportSqlConflictKeyMissing",
+  replaceUnsupported: "exportSqlConflictReplaceUnsupported",
+};
+
 export function ExportModal({
   columns,
   rows,
@@ -265,6 +295,11 @@ export function ExportModal({
   const [sqlTable, setSqlTable] = useState<string>(table ?? "");
   const [sqlBatch, setSqlBatch] = useState<number>(DEFAULT_SQL_BATCH);
   const sqlDriver = driver ?? "mysql";
+  // SQL 形式の衝突時の書き方 (UPSERT, #1624) とキー列。既定は素の INSERT。
+  const [sqlConflictMode, setSqlConflictMode] = useState<SqlConflictMode>("insert");
+  const [sqlKeyColumns, setSqlKeyColumns] = useState<string[]>([]);
+  // CSV の文字コード (#1624)。既定は従来どおりの BOM なし UTF-8。
+  const [csvEncoding, setCsvEncoding] = useState<TextEncodingId>("utf-8");
   // SQL 形式で先頭に CREATE TABLE 文を含める (#1539)。定義の取得にセッションが要るので、
   // 全件エクスポートの文脈 (セッション ID) があるときだけ選べる。
   const [sqlIncludeDdl, setSqlIncludeDdl] = useState(false);
@@ -467,10 +502,17 @@ export function ExportModal({
 
   // プレビューは先頭 PREVIEW_ROWS 行のみ生成して表示負荷を抑える。実際の出力書式
   // (CSV のクオート・JSON の整形・実行クエリ同梱) はバックエンドと同じ。
-  const exportCtx = useMemo(
-    () => ({ driver: sqlDriver, table: sqlTable, sqlBatchSize: sqlBatch }),
-    [sqlDriver, sqlTable, sqlBatch],
+  const sqlConflict = useMemo<SqlConflict | undefined>(
+    () => (sqlConflictMode === "insert" ? undefined : { mode: sqlConflictMode, keyColumns: sqlKeyColumns }),
+    [sqlConflictMode, sqlKeyColumns],
   );
+  const exportCtx = useMemo(
+    () => ({ driver: sqlDriver, table: sqlTable, sqlBatchSize: sqlBatch, sqlConflict }),
+    [sqlDriver, sqlTable, sqlBatch, sqlConflict],
+  );
+  // 使えない指定 (キー未選択・PostgreSQL の REPLACE) のときは SQL 形式の書き出しを止める。
+  const conflictProblem =
+    format === "sql" ? sqlConflictProblem(sqlDriver, effectiveColumns, sqlConflict) : null;
   const previewWantsDdl = format === "sql" && sqlIncludeDdl && canIncludeDdl;
   // マスク列があるときはバックエンドが定義を出さないので取得もしない。
   const previewFetchesDdl = previewWantsDdl && masks.length === 0;
@@ -612,6 +654,7 @@ export function ExportModal({
             batchSize: sqlBatch,
             masks,
             ddlHeader,
+            sqlConflict: format === "sql" ? sqlConflict : null,
           }),
         );
       } catch (e) {
@@ -756,6 +799,8 @@ export function ExportModal({
           batchSize: sqlBatch,
           masks,
           ddlHeader,
+          sqlConflict: format === "sql" ? sqlConflict : null,
+          csvEncoding: format === "csv" ? csvEncoding : null,
         }),
       );
       toast.success(t("exportSuccess", { bytes: result.bytes, path }) + maskedSuffix);
@@ -815,6 +860,8 @@ export function ExportModal({
         batchSize: sqlBatch,
         masks,
         includeDdl: format === "sql" && sqlIncludeDdl && canIncludeDdl,
+        sqlConflict: format === "sql" ? sqlConflict : null,
+        csvEncoding: format === "csv" ? csvEncoding : null,
       });
     } catch (e) {
       unlisten();
@@ -835,7 +882,7 @@ export function ExportModal({
   return (
     <Modal
       onSubmit={handleExport}
-      submitDisabled={isSaving || !path.trim()}
+      submitDisabled={isSaving || !path.trim() || conflictProblem !== null}
       width="560px"
       onClose={onClose}
       closeOnInteractOutside={!isSaving}
@@ -982,6 +1029,20 @@ export function ExportModal({
               {t("exportXlsxHint")}
             </chakra.div>
           )}
+          {format === "csv" && (
+            <chakra.div mt="2">
+              <FieldLabel htmlFor="export-csv-encoding">{t("exportCsvEncoding")}</FieldLabel>
+              <TextEncodingSelect
+                id="export-csv-encoding"
+                value={csvEncoding}
+                onChange={(e) => setCsvEncoding(parseTextEncodingId(e.target.value) ?? "utf-8")}
+                disabled={isSaving}
+              />
+              <chakra.div textStyle="caption" mt="1">
+                {t("exportCsvEncodingHint")}
+              </chakra.div>
+            </chakra.div>
+          )}
         </FormSection>
 
         {/* 形式 (CSV/JSON/SQL 等) の切替でオプション群が瞬間的に差し替わらない
@@ -1023,6 +1084,53 @@ export function ExportModal({
                 </chakra.div>
                 <chakra.div fontSize="xs" color="app.textMuted" mt="1">
                   {t("exportSqlHint")}
+                </chakra.div>
+                <chakra.div mt="2">
+                  <FieldLabel htmlFor="export-sql-conflict">{t("exportSqlConflict")}</FieldLabel>
+                  <Select
+                    id="export-sql-conflict"
+                    value={sqlConflictMode}
+                    onChange={(e) => setSqlConflictMode(e.target.value as SqlConflictMode)}
+                    disabled={isSaving}
+                  >
+                    {SQL_CONFLICT_MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {t(SQL_CONFLICT_LABELS[m])}
+                      </option>
+                    ))}
+                  </Select>
+                  {(sqlConflictMode === "skip" || sqlConflictMode === "update") && (
+                    <chakra.div role="group" aria-label={t("exportSqlConflictKeys")} mt="2">
+                      <FieldLabel as="div">{t("exportSqlConflictKeys")}</FieldLabel>
+                      <chakra.div display="flex" flexWrap="wrap" gap="3">
+                        {effectiveColumns.map((c) => (
+                          <chakra.label
+                            key={c.name}
+                            display="inline-flex"
+                            alignItems="center"
+                            gap="1.5"
+                            fontSize="md"
+                            cursor="pointer"
+                          >
+                            <Checkbox
+                              checked={sqlKeyColumns.includes(c.name)}
+                              onChange={(e) =>
+                                setSqlKeyColumns((cur) =>
+                                  e.target.checked ? [...cur, c.name] : cur.filter((n) => n !== c.name),
+                                )
+                              }
+                              disabled={isSaving}
+                            />
+                            <span>{c.name}</span>
+                          </chakra.label>
+                        ))}
+                      </chakra.div>
+                    </chakra.div>
+                  )}
+                  <chakra.div textStyle="caption" mt="1">
+                    {t(SQL_CONFLICT_HINTS[sqlConflictMode])}
+                  </chakra.div>
+                  {conflictProblem && <FieldError>{t(SQL_CONFLICT_PROBLEMS[conflictProblem])}</FieldError>}
                 </chakra.div>
                 {fullExport && (
                   <chakra.div mt="2">
@@ -1273,7 +1381,7 @@ export function ExportModal({
           variant="primary"
           loading={status.kind === "saving"}
           onClick={handleExport}
-          disabled={isSaving || !path.trim()}
+          disabled={isSaving || !path.trim() || conflictProblem !== null}
         >
           {status.kind === "streaming"
             ? t("exportStreamRunning")

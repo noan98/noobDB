@@ -3,7 +3,8 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type { ExportColumnMask } from "../../components/exportMasking";
-import type { Column, CellValue, ExportFormat, ExportResult } from "../tauri";
+import type { SqlConflict } from "../../components/exportPreview";
+import type { Column, CellValue, ExportFormat, ExportResult, TextEncodingId } from "../tauri";
 
 export const exportCommands = {
   exportQueryResult: (params: {
@@ -26,6 +27,10 @@ export const exportCommands = {
     resultId?: string | null;
     /** SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (#1539)。他形式では無視。 */
     ddlHeader?: string | null;
+    /** SQL 形式の衝突時の書き方 (UPSERT, #1624)。未指定は素の INSERT。 */
+    sqlConflict?: SqlConflict | null;
+    /** CSV の文字コード (#1624)。未指定 / utf-8 は BOM なし UTF-8。 */
+    csvEncoding?: TextEncodingId | null;
   }) =>
     invoke<ExportResult>("export_query_result", {
       path: params.path,
@@ -39,6 +44,8 @@ export const exportCommands = {
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
       resultId: params.resultId ?? null,
       ddlHeader: params.ddlHeader ?? null,
+      sqlConflict: params.sqlConflict ?? null,
+      csvEncoding: params.csvEncoding ?? null,
     }).then((r) => parseResponse(schemas.exportResult, r, "export_query_result")),
 
   /**
@@ -81,6 +88,10 @@ export const exportCommands = {
     masks?: ExportColumnMask[] | null;
     /** SQL 形式のとき先頭に `CREATE TABLE` 文を含める (#1539)。バックエンドが取得する。 */
     includeDdl?: boolean | null;
+    /** SQL 形式の衝突時の書き方 (UPSERT, #1624)。未指定は素の INSERT。 */
+    sqlConflict?: SqlConflict | null;
+    /** CSV の文字コード (#1624)。未指定 / utf-8 は BOM なし UTF-8。 */
+    csvEncoding?: TextEncodingId | null;
   }) =>
     invoke<void>("export_query_stream", {
       sessionId: params.sessionId,
@@ -96,5 +107,7 @@ export const exportCommands = {
       batchSize: params.batchSize ?? null,
       masks: params.masks && params.masks.length > 0 ? params.masks : null,
       includeDdl: params.includeDdl ?? null,
+      sqlConflict: params.sqlConflict ?? null,
+      csvEncoding: params.csvEncoding ?? null,
     }),
 };

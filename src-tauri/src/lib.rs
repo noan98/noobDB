@@ -404,7 +404,38 @@ pub mod __test_api {
         Ok(buf)
     }
 
-    pub use crate::commands::export::{ExportFormat, ExportResult, ExportTruncation};
+    /// SQL 形式を衝突時の書き方付きでメモリへ書き出す (UPSERT, #1624)。共有ゴールデンの
+    /// `conflictCases` を実ファイル出力と同じ `write_export_to` で検証するためのもの。
+    pub fn export_sql_with_conflict(
+        columns: &[Column],
+        rows: &[Vec<Value>],
+        driver: DriverKind,
+        table: &str,
+        batch_size: usize,
+        conflict: SqlConflict,
+    ) -> crate::error::Result<Vec<u8>> {
+        let opts = crate::commands::export::SqlExportOpts::build(
+            Some(driver),
+            Some(table.to_string()),
+            Some(batch_size),
+        )
+        .with_conflict(Some(conflict));
+        let mut buf = Vec::new();
+        crate::commands::export::write_export_to(
+            &mut buf,
+            crate::commands::export::ExportFormat::Sql,
+            columns,
+            rows,
+            None,
+            &opts,
+            None,
+        )?;
+        Ok(buf)
+    }
+
+    pub use crate::commands::export::{
+        ExportFormat, ExportResult, ExportTruncation, SqlConflict, SqlConflictMode,
+    };
 
     /// xlsx エクスポートで 1 つの値がどのセルになるかを文字列で表す (#711)。
     /// 書き出し ([`crate::commands::export_xlsx::XlsxSheetWriter`]) が従う判定

@@ -228,6 +228,9 @@ pub struct RenderExportRequest {
     /// SQL 形式のとき先頭に付ける `CREATE TABLE` 文 (ファイル出力の `ddl_header` と同じ, #1597)。
     #[serde(default)]
     pub ddl_header: Option<String>,
+    /// SQL 形式の衝突時の書き方 (UPSERT, ファイル出力の `sql_conflict` と同じ, #1624)。
+    #[serde(default)]
+    pub sql_conflict: Option<crate::commands::export::SqlConflict>,
 }
 
 pub async fn render_export_text_inner(
@@ -241,7 +244,9 @@ pub async fn render_export_text_inner(
     }
     let rows = resolve_rows(state, req.result_id.as_deref(), req.rows)?;
     let sql_opts =
-        SqlExportOpts::build(req.driver, req.table, req.batch_size).with_ddl(req.ddl_header);
+        SqlExportOpts::build(req.driver, req.table, req.batch_size)
+            .with_ddl(req.ddl_header)
+            .with_conflict(req.sql_conflict);
     let mask_spec = load_mask_spec(req.masks).await?;
     let (format, columns, query) = (req.format, req.columns, req.query);
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
@@ -396,6 +401,7 @@ mod tests {
                     batch_size: None,
                     masks: None,
                     ddl_header: None,
+                    sql_conflict: None,
                 },
             )
             .await
@@ -413,6 +419,7 @@ mod tests {
                     batch_size: None,
                     masks: None,
                     ddl_header: None,
+                    sql_conflict: None,
                 },
             )
             .await
@@ -438,6 +445,7 @@ mod tests {
                 batch_size: None,
                 masks: None,
                 ddl_header: None,
+                sql_conflict: None,
             },
         )
         .await

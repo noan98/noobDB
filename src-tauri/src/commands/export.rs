@@ -15,6 +15,8 @@ use crate::db::data_diff::build_sql_insert_statement;
 use crate::db::data_diff::sql_literal;
 use crate::db::masking::{mask_columns, mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
 use crate::db::sync::quote_ident;
+use crate::db::upsert::{conflict_clause, ConflictMode, ImportConflict};
+use crate::text_encoding::{ChunkEncoder, TextEncoding};
 use crate::db::types::{float_text, Column, StreamBatch, Value};
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
@@ -58,8 +60,36 @@ pub struct ExportResult {
     pub truncation: Option<ExportTruncation>,
 }
 
+/// SQL INSERT 文が主キーなどの衝突したときの書き方 (#1624)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SqlConflictMode {
+    /// 素の INSERT (既定。衝突はエラー)。
+    #[default]
+    Insert,
+    /// 既存キーの行は読み飛ばす (MySQL: `ON DUPLICATE KEY UPDATE k = k` /
+    /// PostgreSQL・SQLite: `ON CONFLICT (keys) DO NOTHING`)。
+    Skip,
+    /// 既存キーの行を書き出した値で更新する (MySQL: `ON DUPLICATE KEY UPDATE c = VALUES(c)` /
+    /// PostgreSQL・SQLite: `ON CONFLICT (keys) DO UPDATE SET c = EXCLUDED.c`)。
+    Update,
+    /// 既存行を削除して入れ直す (MySQL: `REPLACE INTO` / SQLite: `INSERT OR REPLACE INTO`)。
+    /// PostgreSQL には同等の構文が無いので拒否する。
+    Replace,
+}
+
+/// SQL 形式の衝突時の書き方と、衝突判定に使うキー列 (`skip` / `update` で必須)。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlConflict {
+    #[serde(default)]
+    pub mode: SqlConflictMode,
+    #[serde(default)]
+    pub key_columns: Vec<String>,
+}
+
 /// SQL INSERT 形式の出力に必要なパラメータ (対象テーブル・ドライバ・バッチサイズ)。
-/// CSV/JSON/NDJSON/Markdown では使われない。
+/// CSV/JSON/NDJSON/Markdown では使われない (`csv_encoding` だけは CSV 専用の付加設定)。
 #[derive(Debug, Clone)]
 pub(crate) struct SqlExportOpts {
     driver: DriverKind,
@@ -67,6 +97,10 @@ pub(crate) struct SqlExportOpts {
     batch_size: usize,
     /// 先頭に付ける `CREATE TABLE` 文 (#1539)。`None` なら INSERT のみ。
     ddl: Option<String>,
+    /// 衝突時の書き方 (#1624)。既定は素の INSERT。
+    conflict: SqlConflict,
+    /// CSV の文字コード (#1624)。`None` / UTF-8 は従来どおり BOM なし UTF-8。
+    csv_encoding: Option<TextEncoding>,
 }
 
 impl SqlExportOpts {
@@ -88,6 +122,77 @@ impl SqlExportOpts {
             table,
             batch_size,
             ddl: None,
+            conflict: SqlConflict::default(),
+            csv_encoding: None,
+        }
+    }
+
+    /// 衝突時の書き方を設定する (#1624)。`None` は素の INSERT。
+    pub(crate) fn with_conflict(mut self, conflict: Option<SqlConflict>) -> Self {
+        self.conflict = conflict.unwrap_or_default();
+        self
+    }
+
+    /// CSV の文字コードを設定する (#1624)。`None` と UTF-8 は同じ (従来どおり)。
+    pub(crate) fn with_csv_encoding(mut self, encoding: Option<TextEncoding>) -> Self {
+        self.csv_encoding = encoding.filter(|e| *e != TextEncoding::Utf8);
+        self
+    }
+
+    /// 衝突指定が列・ドライバと整合しているかを検証する (#1624)。書き出しの前 (列が分かった時点)
+    /// に呼ぶ。`skip` / `update` はキー列が 1 つ以上必要で、出力列に含まれていなければならない。
+    pub(crate) fn validate_conflict(&self, columns: &[Column]) -> Result<()> {
+        let import_mode = match self.conflict.mode {
+            SqlConflictMode::Insert => return Ok(()),
+            SqlConflictMode::Replace => {
+                if self.driver == DriverKind::Postgres {
+                    return Err(AppError::InvalidInput(
+                        "REPLACE is not available on PostgreSQL; choose skip or update".into(),
+                    ));
+                }
+                return Ok(());
+            }
+            SqlConflictMode::Skip => ConflictMode::Skip,
+            SqlConflictMode::Update => ConflictMode::Update,
+        };
+        let names: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+        ImportConflict {
+            mode: import_mode,
+            key_columns: self.conflict.key_columns.clone(),
+        }
+        .validate(&names)
+    }
+
+    /// `INSERT` 文 1 つ (末尾 `;\n`) を、衝突指定に合わせた形へ書き換える (#1624)。
+    fn apply_conflict(&self, stmt: String, columns: &[Column]) -> String {
+        let names = || columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+        match self.conflict.mode {
+            SqlConflictMode::Insert => stmt,
+            SqlConflictMode::Replace => match self.driver {
+                DriverKind::Mysql => stmt.replacen("INSERT INTO", "REPLACE INTO", 1),
+                DriverKind::Sqlite => stmt.replacen("INSERT INTO", "INSERT OR REPLACE INTO", 1),
+                // `validate_conflict` で弾く。
+                DriverKind::Postgres => stmt,
+            },
+            SqlConflictMode::Skip | SqlConflictMode::Update => {
+                let mode = if self.conflict.mode == SqlConflictMode::Skip {
+                    ConflictMode::Skip
+                } else {
+                    ConflictMode::Update
+                };
+                let clause = conflict_clause(
+                    self.driver,
+                    &names(),
+                    &ImportConflict {
+                        mode,
+                        key_columns: self.conflict.key_columns.clone(),
+                    },
+                );
+                match stmt.strip_suffix(";\n") {
+                    Some(body) => format!("{body}{clause};\n"),
+                    None => stmt,
+                }
+            }
         }
     }
 
@@ -144,6 +249,10 @@ pub async fn export_query_result(
     // SQL INSERT 形式のとき先頭に付ける `CREATE TABLE` 文 (#1539)。フロントが
     // `get_object_definition` で取得して渡す。他形式では無視。
     ddl_header: Option<String>,
+    // SQL INSERT 形式の衝突時の書き方 (UPSERT, #1624)。他形式では無視。
+    sql_conflict: Option<SqlConflict>,
+    // CSV の文字コード (#1624)。None / UTF-8 は BOM なし UTF-8。他形式では無視。
+    csv_encoding: Option<TextEncoding>,
     state: State<'_, AppState>,
 ) -> Result<ExportResult> {
     if path.trim().is_empty() {
@@ -151,7 +260,10 @@ pub async fn export_query_result(
     }
     let rows = crate::commands::result::resolve_rows(&state, result_id.as_deref(), rows)?;
     let row_count = rows.len();
-    let sql_opts = SqlExportOpts::build(driver, table, batch_size).with_ddl(ddl_header);
+    let sql_opts = SqlExportOpts::build(driver, table, batch_size)
+        .with_ddl(ddl_header)
+        .with_conflict(sql_conflict)
+        .with_csv_encoding(csv_encoding);
     let mask_spec = load_mask_spec(masks).await?;
     let masked_columns = mask_spec
         .as_ref()
@@ -321,11 +433,22 @@ pub(crate) fn write_export_to<W: Write + Send>(
     let rows = mask_rows(mask, rows);
     let rows: &[Vec<Value>] = &rows;
     match format {
-        ExportFormat::Csv => write_csv(w, columns, rows)?,
+        ExportFormat::Csv => match sql_opts.csv_encoding {
+            None => write_csv(w, columns, rows)?,
+            Some(enc) => {
+                // 文字コード指定 (#1624): UTF-8 で組み立ててから変換する。
+                let mut buf = Vec::new();
+                write_csv(&mut buf, columns, rows)?;
+                let mut encoder = ChunkEncoder::new(enc);
+                w.write_all(&encoder.encode_chunk(&buf)?)?;
+                encoder.finish()?;
+            }
+        },
         ExportFormat::Json => write_json(w, columns, rows, query)?,
         ExportFormat::Ndjson => write_ndjson(w, columns, rows)?,
         ExportFormat::Markdown => write_markdown(w, columns, rows)?,
         ExportFormat::Sql => {
+            sql_opts.validate_conflict(columns)?;
             write_sql_ddl(w, sql_opts, mask.is_some_and(|p| p.masked_count() > 0))?;
             write_sql_insert(w, columns, rows, sql_opts)?
         }
@@ -736,6 +859,7 @@ fn write_sql_insert<W: Write>(
         let stmt = build_sql_insert_statement(&table, &cols, chunk, |row| {
             sql_values_tuple(opts.driver, columns, row)
         });
+        let stmt = opts.apply_conflict(stmt, columns);
         w.write_all(stmt.as_bytes())?;
     }
     Ok(())
@@ -809,6 +933,8 @@ struct StreamExportSink {
     /// xlsx 形式のときのシートライタ (定数メモリモード)。他形式では `None`。
     /// セルは一時ファイルへ逐次書かれ、`finish` でブック全体を `writer` へ保存する。
     xlsx: Option<XlsxSheetWriter>,
+    /// CSV の文字コード変換 (#1624)。`Some` のとき CSV を UTF-8 で組み立ててから変換して書く。
+    csv_encoder: Option<ChunkEncoder>,
 }
 
 impl StreamExportSink {
@@ -847,6 +973,10 @@ impl StreamExportSink {
             ExportFormat::Xlsx => Some(XlsxSheetWriter::new()?),
             _ => None,
         };
+        let csv_encoder = match (format, sql_opts.csv_encoding) {
+            (ExportFormat::Csv, Some(enc)) => Some(ChunkEncoder::new(enc)),
+            _ => None,
+        };
         Ok(Self {
             writer: BufWriter::new(file),
             format,
@@ -859,6 +989,7 @@ impl StreamExportSink {
             mask_spec,
             mask_plan: None,
             xlsx,
+            csv_encoder,
         })
     }
 
@@ -870,7 +1001,15 @@ impl StreamExportSink {
         }
         self.columns = columns;
         match self.format {
-            ExportFormat::Csv => write_csv_header(&mut self.writer, &self.columns)?,
+            ExportFormat::Csv => {
+                if let Some(enc) = self.csv_encoder.as_mut() {
+                    let mut buf = Vec::new();
+                    write_csv_header(&mut buf, &self.columns)?;
+                    self.writer.write_all(&enc.encode_chunk(&buf)?)?;
+                } else {
+                    write_csv_header(&mut self.writer, &self.columns)?
+                }
+            }
             ExportFormat::Json => {
                 if let Some(q) = &self.json_query {
                     // `{ "query": <sql>, "rows": [` まで書き、行は後続バッチで足す。
@@ -887,6 +1026,7 @@ impl StreamExportSink {
             ExportFormat::Xlsx => xlsx_sheet(&mut self.xlsx)?.write_header(&self.columns)?,
             // SQL は表定義 (#1539, 指定時のみ) を先頭に書く。INSERT は各バッチで自己完結した文を書く。
             ExportFormat::Sql => {
+                self.sql_opts.validate_conflict(&self.columns)?;
                 let masked = self
                     .mask_plan
                     .as_ref()
@@ -904,7 +1044,15 @@ impl StreamExportSink {
         let masked = mask_rows(self.mask_plan.as_ref(), rows);
         let rows: &[Vec<Value>] = &masked;
         match self.format {
-            ExportFormat::Csv => write_csv_rows(&mut self.writer, &self.columns, rows)?,
+            ExportFormat::Csv => {
+                if let Some(enc) = self.csv_encoder.as_mut() {
+                    let mut buf = Vec::new();
+                    write_csv_rows(&mut buf, &self.columns, rows)?;
+                    self.writer.write_all(&enc.encode_chunk(&buf)?)?;
+                } else {
+                    write_csv_rows(&mut self.writer, &self.columns, rows)?
+                }
+            }
             ExportFormat::Markdown => write_markdown_rows(&mut self.writer, &self.columns, rows)?,
             // SQL は各 on_rows でバッチサイズ単位の自己完結した INSERT 文を書く。
             ExportFormat::Sql => {
@@ -955,6 +1103,9 @@ impl StreamExportSink {
                 self.writer
                     .write_all(if self.json_count == 0 { b"]" } else { b"\n]" })?;
             }
+        }
+        if let Some(enc) = self.csv_encoder.take() {
+            enc.finish()?;
         }
         // NDJSON は行ごとに完結しており、終端処理は不要 (各行末の `\n` のみ)。
         let file = self
@@ -1075,11 +1226,15 @@ pub(crate) async fn run_export_to_file(
     query_timeout_secs: Option<u64>,
     mask_spec: Option<MaskSpec>,
     include_ddl: bool,
+    sql_conflict: Option<SqlConflict>,
+    csv_encoding: Option<TextEncoding>,
     mut on_progress: impl FnMut(u64),
 ) -> Result<StreamExportOutcome> {
     // SQL 形式のドライバはセッション (実接続) の方言を使う。
     let mut sql_opts =
-        SqlExportOpts::build(Some(session.conn.driver_kind()), sql_table, sql_batch_size);
+        SqlExportOpts::build(Some(session.conn.driver_kind()), sql_table, sql_batch_size)
+            .with_conflict(sql_conflict)
+            .with_csv_encoding(csv_encoding);
     // 表定義を先頭に付ける (#1539)。出力ファイルを作る前に取得し、失敗はここで返す。
     if include_ddl && matches!(format, ExportFormat::Sql) {
         let ddl = fetch_table_ddl(session, database, &sql_opts.table).await?;
@@ -1190,6 +1345,10 @@ pub async fn export_query_stream(
     masks: Option<Vec<ColumnMask>>,
     // SQL INSERT 形式のとき、先頭に `CREATE TABLE` 文を含める (#1539)。他形式では無視。
     include_ddl: Option<bool>,
+    // SQL INSERT 形式の衝突時の書き方 (UPSERT, #1624)。他形式では無視。
+    sql_conflict: Option<SqlConflict>,
+    // CSV の文字コード (#1624)。None / UTF-8 は BOM なし UTF-8。他形式では無視。
+    csv_encoding: Option<TextEncoding>,
     state: State<'_, AppState>,
 ) -> Result<()> {
     if path.trim().is_empty() {
@@ -1248,6 +1407,8 @@ pub async fn export_query_stream(
             query_timeout_secs,
             mask_spec,
             include_ddl.unwrap_or(false),
+            sql_conflict,
+            csv_encoding,
             counter_for_task,
         )
         .await;
@@ -1288,6 +1449,8 @@ async fn spawn_export_stream(
     query_timeout_secs: Option<u64>,
     mask_spec: Option<MaskSpec>,
     include_ddl: bool,
+    sql_conflict: Option<SqlConflict>,
+    csv_encoding: Option<TextEncoding>,
     counter: Arc<AtomicU64>,
 ) {
     let emit_app = app.clone();
@@ -1312,6 +1475,8 @@ async fn spawn_export_stream(
         query_timeout_secs,
         mask_spec,
         include_ddl,
+        sql_conflict,
+        csv_encoding,
         move |total| {
             // AppState の StreamHandle.delivered_rows と同期させ、cancel_stream が
             // 現在までの行数を報告できるようにする。
@@ -1767,6 +1932,113 @@ mod tests {
         assert_eq!(out, "id,name\r\n1,a\r\n2,\"b, c\"\r\n");
         assert_eq!(bytes as usize, out.len());
         let _ = std::fs::remove_file(&path);
+    }
+
+    // #1624: CSV の文字コード。ストリーミングと在メモリのどちらも一括変換と同じ結果になる。
+    #[test]
+    fn csv_encoding_applies_on_both_paths() {
+        let columns = vec![col("名前"), col("値")];
+        let rows = vec![
+            vec![Value::String("こんにちは".into()), Value::Int(1)],
+            vec![Value::String("世界".into()), Value::Int(2)],
+        ];
+        let utf8 = String::from_utf8(csv_bytes(&columns, &rows)).unwrap();
+        for enc in [
+            TextEncoding::Utf8Bom,
+            TextEncoding::ShiftJis,
+            TextEncoding::Utf16Le,
+        ] {
+            let expected = crate::text_encoding::encode(&utf8, enc).unwrap();
+            let opts = test_sql_opts().with_csv_encoding(Some(enc));
+            let mut mem = Vec::new();
+            write_export_to(&mut mem, ExportFormat::Csv, &columns, &rows, None, &opts, None)
+                .unwrap();
+            assert_eq!(mem, expected, "in-memory {enc:?}");
+
+            let path = std::env::temp_dir().join(format!(
+                "noobdb_export_csvenc_{}_{enc:?}.csv",
+                std::process::id()
+            ));
+            let mut sink = StreamExportSink::with_query(
+                path.to_str().unwrap(),
+                ExportFormat::Csv,
+                None,
+                opts,
+                None,
+            )
+            .unwrap();
+            sink.on_columns(columns.clone()).unwrap();
+            sink.on_rows(&rows[..1]).unwrap();
+            sink.on_rows(&rows[1..]).unwrap();
+            sink.finish().unwrap();
+            assert_eq!(std::fs::read(&path).unwrap(), expected, "stream {enc:?}");
+            let _ = std::fs::remove_file(&path);
+        }
+        // 表せない文字は黙って置換せずエラーにする。
+        let mut sink_buf = Vec::new();
+        let bad = vec![vec![Value::String("😀".into()), Value::Int(1)]];
+        assert!(write_export_to(
+            &mut sink_buf,
+            ExportFormat::Csv,
+            &columns,
+            &bad,
+            None,
+            &test_sql_opts().with_csv_encoding(Some(TextEncoding::ShiftJis)),
+            None
+        )
+        .is_err());
+        // UTF-8 指定は従来と同じ (BOM なし)。
+        assert_eq!(
+            test_sql_opts()
+                .with_csv_encoding(Some(TextEncoding::Utf8))
+                .csv_encoding,
+            None
+        );
+    }
+
+    fn conflict_sql(driver: DriverKind, mode: SqlConflictMode, keys: &[&str]) -> Result<String> {
+        let columns = vec![col("id"), col("name")];
+        let rows = vec![vec![Value::Int(1), Value::String("a".into())]];
+        let opts = SqlExportOpts::build(Some(driver), Some("t".into()), Some(100)).with_conflict(
+            Some(SqlConflict {
+                mode,
+                key_columns: keys.iter().map(|k| k.to_string()).collect(),
+            }),
+        );
+        let mut buf = Vec::new();
+        write_export_to(&mut buf, ExportFormat::Sql, &columns, &rows, None, &opts, None)?;
+        Ok(String::from_utf8(buf).unwrap())
+    }
+
+    // #1624: ドライバ別の UPSERT 形式。
+    #[test]
+    fn sql_export_conflict_modes_per_driver() {
+        use SqlConflictMode::*;
+        let my_up = conflict_sql(DriverKind::Mysql, Update, &["id"]).unwrap();
+        assert_eq!(
+            my_up,
+            "INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);\n"
+        );
+        let my_skip = conflict_sql(DriverKind::Mysql, Skip, &["id"]).unwrap();
+        assert!(my_skip.ends_with("ON DUPLICATE KEY UPDATE `id` = `id`;\n"), "{my_skip}");
+        let pg_up = conflict_sql(DriverKind::Postgres, Update, &["id"]).unwrap();
+        assert!(
+            pg_up.ends_with("ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\";\n"),
+            "{pg_up}"
+        );
+        let sq_skip = conflict_sql(DriverKind::Sqlite, Skip, &["id"]).unwrap();
+        assert!(sq_skip.ends_with("ON CONFLICT (\"id\") DO NOTHING;\n"), "{sq_skip}");
+        let sq_rep = conflict_sql(DriverKind::Sqlite, Replace, &[]).unwrap();
+        assert!(sq_rep.starts_with("INSERT OR REPLACE INTO \"t\""), "{sq_rep}");
+        let my_rep = conflict_sql(DriverKind::Mysql, Replace, &[]).unwrap();
+        assert!(my_rep.starts_with("REPLACE INTO `t`"), "{my_rep}");
+        // 検証: PostgreSQL の REPLACE、キー無し / 出力に無いキーの skip・update は拒否。
+        assert!(conflict_sql(DriverKind::Postgres, Replace, &[]).is_err());
+        assert!(conflict_sql(DriverKind::Postgres, Update, &[]).is_err());
+        assert!(conflict_sql(DriverKind::Sqlite, Skip, &["missing"]).is_err());
+        // 既定 (素の INSERT) は従来と同じ。
+        let plain = conflict_sql(DriverKind::Mysql, SqlConflictMode::Insert, &[]).unwrap();
+        assert_eq!(plain, "INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a');\n");
     }
 
     #[test]

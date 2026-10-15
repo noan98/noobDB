@@ -291,3 +291,58 @@ describe("ExportModal Excel (xlsx) (#711)", () => {
     spy.mockRestore();
   });
 });
+
+describe("ExportModal CSV 文字コードと SQL の衝突時の書き方 (#1624)", () => {
+  const renderIt = (driver: "mysql" | "postgres" | "sqlite" = "mysql") =>
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table="users"
+        driver={driver}
+        onClose={() => {}}
+      />,
+    );
+
+  it("CSV では文字コードを選べて、選んだ値を書き出しに渡す", async () => {
+    const spy = vi.spyOn(api, "exportQueryResult").mockResolvedValue({ bytes: 1, truncation: null });
+    renderIt();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatCsv") }));
+    const select = screen.getByLabelText(t("exportCsvEncoding")) as HTMLSelectElement;
+    expect(select.value).toBe("utf-8");
+    fireEvent.change(select, { target: { value: "shift_jis" } });
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    expect(spy).toHaveBeenCalledWith(expect.objectContaining({ format: "csv", csvEncoding: "shift_jis" }));
+    spy.mockRestore();
+  });
+
+  it("CSV 以外では文字コードの選択肢を出さない", () => {
+    renderIt();
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatJson") }));
+    expect(screen.queryByLabelText(t("exportCsvEncoding"))).not.toBeInTheDocument();
+  });
+
+  it("SQL の UPSERT はキー列を選ぶまで書き出せず、選ぶとプレビューに衝突句が付く", () => {
+    renderIt("postgres");
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.change(screen.getByLabelText(t("exportSqlConflict")), { target: { value: "update" } });
+    expect(screen.getByText(t("exportSqlConflictKeyRequired"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("exportExecute") })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: "id" }));
+    expect(screen.queryByText(t("exportSqlConflictKeyRequired"))).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("exportExecute") })).not.toBeDisabled();
+    expect(screen.getByLabelText(t("exportPreview")).textContent).toContain(
+      'ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name"',
+    );
+  });
+
+  it("PostgreSQL では「置き換える」を選ぶと理由を示して書き出しを止める", () => {
+    renderIt("postgres");
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatSql") }));
+    fireEvent.change(screen.getByLabelText(t("exportSqlConflict")), { target: { value: "replace" } });
+    expect(screen.getByText(t("exportSqlConflictReplaceUnsupported"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("exportExecute") })).toBeDisabled();
+  });
+});

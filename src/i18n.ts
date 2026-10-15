@@ -1812,6 +1812,25 @@ const en = {
   exportSqlIncludeDdlTableMismatch:
     "The definition can only be included when the table name matches the result's source table.",
   exportSqlBatch: "Rows per statement",
+  exportSqlConflict: "On key conflict",
+  exportSqlConflictInsert: "Plain INSERT",
+  exportSqlConflictSkip: "Skip existing rows",
+  exportSqlConflictUpdate: "Update existing rows (UPSERT)",
+  exportSqlConflictReplace: "Replace existing rows",
+  exportSqlConflictInsertHint: "A key conflict stops the script when it is run twice.",
+  exportSqlConflictSkipHint:
+    "MySQL: ON DUPLICATE KEY UPDATE (no-op). PostgreSQL / SQLite: ON CONFLICT (keys) DO NOTHING. Safe to run the same script again.",
+  exportSqlConflictUpdateHint:
+    "MySQL: ON DUPLICATE KEY UPDATE c = VALUES(c). PostgreSQL / SQLite: ON CONFLICT (keys) DO UPDATE SET c = EXCLUDED.c. The key columns below are not updated.",
+  exportSqlConflictReplaceHint:
+    "MySQL: REPLACE INTO. SQLite: INSERT OR REPLACE INTO. Deletes the existing row and inserts a new one (other columns not in the export are reset). Not available on PostgreSQL.",
+  exportSqlConflictKeys: "Key columns (a unique / primary key of the table)",
+  exportSqlConflictKeyRequired: "Select at least one key column.",
+  exportSqlConflictKeyMissing: "A selected key column is not in the exported columns.",
+  exportSqlConflictReplaceUnsupported: "PostgreSQL has no REPLACE; choose skip or update.",
+  exportCsvEncoding: "Character encoding",
+  exportCsvEncodingHint:
+    "Choose UTF-8 (BOM) or Shift_JIS so Excel on Windows opens Japanese text correctly. Characters the encoding cannot represent make the export fail instead of being replaced.",
   exportSqlHint:
     "Generates INSERT statements with driver-specific literal escaping, grouping rows into batches.",
   imageExportButton: "Export image",
@@ -7817,6 +7836,26 @@ const ja: Dict = {
   exportSqlIncludeDdlTableMismatch:
     "表定義を含められるのは、対象テーブル名が結果の取得元テーブルと一致しているときだけです。",
   exportSqlBatch: "1 文あたり行数",
+  exportSqlConflict: "キー衝突時の書き方",
+  exportSqlConflictInsert: "通常の INSERT",
+  exportSqlConflictSkip: "既存の行は読み飛ばす",
+  exportSqlConflictUpdate: "既存の行を更新する (UPSERT)",
+  exportSqlConflictReplace: "既存の行を置き換える",
+  exportSqlConflictInsertHint: "同じスクリプトを二度流すと、キーが衝突した時点で止まります。",
+  exportSqlConflictSkipHint:
+    "MySQL: ON DUPLICATE KEY UPDATE (何も変えない)。PostgreSQL / SQLite: ON CONFLICT (キー) DO NOTHING。同じスクリプトを再実行しても安全です。",
+  exportSqlConflictUpdateHint:
+    "MySQL: ON DUPLICATE KEY UPDATE c = VALUES(c)。PostgreSQL / SQLite: ON CONFLICT (キー) DO UPDATE SET c = EXCLUDED.c。下で選んだキー列は更新しません。",
+  exportSqlConflictReplaceHint:
+    "MySQL: REPLACE INTO。SQLite: INSERT OR REPLACE INTO。既存の行を削除して入れ直すため、書き出していない列は既定値に戻ります。PostgreSQL では使えません。",
+  exportSqlConflictKeys: "キー列 (テーブルの主キー / ユニークキー)",
+  exportSqlConflictKeyRequired: "キー列を 1 つ以上選んでください。",
+  exportSqlConflictKeyMissing: "選択したキー列が、書き出す列に含まれていません。",
+  exportSqlConflictReplaceUnsupported:
+    "PostgreSQL には REPLACE が無いので、読み飛ばすか更新を選んでください。",
+  exportCsvEncoding: "文字コード",
+  exportCsvEncodingHint:
+    "Windows の Excel で日本語を文字化けなく開くには UTF-8 (BOM) か Shift_JIS を選びます。その文字コードで表せない文字があると、置換せず書き出しを失敗にします。",
   exportSqlHint: "ドライバ別のリテラルエスケープで INSERT 文を生成し、指定行数ごとに 1 文へまとめます。",
   imageExportButton: "画像を書き出し",
   imageExportPng: "PNG で保存",

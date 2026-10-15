@@ -735,5 +735,291 @@
         ]
       ]
     }
+  ],
+  "conflictCases": [
+    {
+      "name": "mysql-update",
+      "note": "MySQL: ON DUPLICATE KEY UPDATE (キー以外の列を VALUES() で更新)",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "mysql",
+        "table": "users",
+        "batchSize": 100,
+        "conflict": {
+          "mode": "update",
+          "keyColumns": [
+            "id"
+          ]
+        }
+      },
+      "expected": "INSERT INTO `users` (`id`, `name`) VALUES\n  (1, 'a'),\n  (2, 'b''c') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);\n"
+    },
+    {
+      "name": "mysql-skip",
+      "note": "MySQL: skip は先頭のキー列を自己代入する no-op",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "mysql",
+        "table": "users",
+        "batchSize": 100,
+        "conflict": {
+          "mode": "skip",
+          "keyColumns": [
+            "id"
+          ]
+        }
+      },
+      "expected": "INSERT INTO `users` (`id`, `name`) VALUES\n  (1, 'a'),\n  (2, 'b''c') ON DUPLICATE KEY UPDATE `id` = `id`;\n"
+    },
+    {
+      "name": "postgres-update",
+      "note": "PostgreSQL: ON CONFLICT (keys) DO UPDATE SET c = EXCLUDED.c",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "postgres",
+        "table": "users",
+        "batchSize": 100,
+        "conflict": {
+          "mode": "update",
+          "keyColumns": [
+            "id"
+          ]
+        }
+      },
+      "expected": "INSERT INTO \"users\" (\"id\", \"name\") VALUES\n  (1, 'a'),\n  (2, 'b''c') ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\";\n"
+    },
+    {
+      "name": "sqlite-skip-batched",
+      "note": "SQLite: DO NOTHING は文ごと (バッチ 1 行) に付く",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "sqlite",
+        "table": "users",
+        "batchSize": 1,
+        "conflict": {
+          "mode": "skip",
+          "keyColumns": [
+            "id"
+          ]
+        }
+      },
+      "expected": "INSERT INTO \"users\" (\"id\", \"name\") VALUES\n  (1, 'a') ON CONFLICT (\"id\") DO NOTHING;\nINSERT INTO \"users\" (\"id\", \"name\") VALUES\n  (2, 'b''c') ON CONFLICT (\"id\") DO NOTHING;\n"
+    },
+    {
+      "name": "sqlite-replace",
+      "note": "SQLite: INSERT OR REPLACE INTO (キー指定なし)",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "sqlite",
+        "table": "users",
+        "batchSize": 100,
+        "conflict": {
+          "mode": "replace",
+          "keyColumns": []
+        }
+      },
+      "expected": "INSERT OR REPLACE INTO \"users\" (\"id\", \"name\") VALUES\n  (1, 'a'),\n  (2, 'b''c');\n"
+    },
+    {
+      "name": "mysql-replace",
+      "note": "MySQL: REPLACE INTO",
+      "columns": [
+        {
+          "name": "id",
+          "typeName": "int"
+        },
+        {
+          "name": "name",
+          "typeName": "text"
+        }
+      ],
+      "rows": [
+        [
+          {
+            "kind": "int",
+            "value": 1
+          },
+          {
+            "kind": "string",
+            "value": "a"
+          }
+        ],
+        [
+          {
+            "kind": "int",
+            "value": 2
+          },
+          {
+            "kind": "string",
+            "value": "b'c"
+          }
+        ]
+      ],
+      "sql": {
+        "driver": "mysql",
+        "table": "users",
+        "batchSize": 100,
+        "conflict": {
+          "mode": "replace",
+          "keyColumns": []
+        }
+      },
+      "expected": "REPLACE INTO `users` (`id`, `name`) VALUES\n  (1, 'a'),\n  (2, 'b''c');\n"
+    }
   ]
 }
