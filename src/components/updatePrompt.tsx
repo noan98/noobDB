@@ -92,7 +92,7 @@ export async function confirmAndInstallUpdate(
     if (choice === "alt") saveSkippedUpdateVersion(update.version);
     ok = choice === "confirm";
   } else {
-    ok = await confirm(dialogOpts);
+    ok = await confirm({ ...dialogOpts });
   }
   if (!ok) {
     void dismissUpdate(update);
