@@ -15,6 +15,7 @@ import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
   buildChartModel,
+  sortChartModel,
   buildChartSql,
   canAggregateInDb,
   canTimeBucket,
@@ -39,6 +40,7 @@ import {
   valueExtent,
   writeStoredChartConfig,
   type Aggregation,
+  type BarSort,
   type TimeBucket,
   type ChartType,
   type ChartConfig,
@@ -183,7 +185,14 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
     // 結果列の参照は config と一緒に変わるので dbAggSql だけで十分。
   }, [dbAggSql]);
   const remoteForSql = remote && remote.sql === dbAggSql ? remote : null;
-  const model = remoteForSql?.model ?? clientModel;
+  // DB 側集計の結果にも棒グラフの並び順 (#1628) を掛ける (クライアント側は buildChartModel で適用済み)。
+  const rawModel = remoteForSql?.model ?? clientModel;
+  const model = useMemo(
+    () => (rawModel && config && remoteForSql?.model ? sortChartModel(rawModel, config) : rawModel),
+    [rawModel, config, remoteForSql],
+  );
+  // 凡例のクリックで一時的に隠した系列 (#1628)。設定 (chartConfig) には保存しない。
+  const [hiddenSeries, setHiddenSeries] = useState<ReadonlySet<string>>(() => new Set());
   const dbAggStatus: "off" | "pending" | "ok" | "failed" = !dbAggSql
     ? "off"
     : !remoteForSql
@@ -236,6 +245,24 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
   const setPalette = (palette: ChartPaletteKey) => setConfig({ ...config, palette });
   const setBucket = (timeBucket: TimeBucket) => setConfig({ ...config, timeBucket });
   const setDonut = (donut: boolean) => setConfig({ ...config, donut });
+  const setBarSort = (barSort: BarSort) => setConfig({ ...config, barSort });
+  // 凡例から系列を隠す / 戻す。最後の 1 系列は隠せない (空のチャートにならないように)。
+  const toggleSeries = (name: string) =>
+    setHiddenSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else if (model.series.filter((s) => !prev.has(s.name)).length > 1) {
+        next.add(name);
+      }
+      return next;
+    });
+  // 隠した系列を除いたモデル。色は元の並びで決めるので、隠しても残りの色は変わらない。
+  const visibleIdx = model.series.map((s, i) => (hiddenSeries.has(s.name) ? -1 : i)).filter((i) => i >= 0);
+  const shownModel: ChartModel =
+    visibleIdx.length === model.series.length
+      ? model
+      : { ...model, series: visibleIdx.map((i) => model.series[i]) };
   const toggleY = (c: number) =>
     setConfig({
       ...config,
@@ -244,14 +271,15 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
 
   // 系列色 (#916)。既定はこれまでどおりカテゴリスケールで、連続/発散ランプを
   // 選ぶとグリッドのヒートマップと同じ体系の色になる。
-  const seriesColors = chartSeriesColors(config.palette, model.series.length, isDark);
+  const allSeriesColors = chartSeriesColors(config.palette, model.series.length, isDark);
+  const seriesColors = visibleIdx.map((i) => allSeriesColors[i]);
   // 単一数値系列を「値の大小」でランプ着色する。棒だけが対象で、折れ線/面は
   // 1 本の線・面が 1 色である方が形状を追いやすいので系列色のままにする
   // (円グラフはもともとスライス単位の着色なので `PieChart` 側で解決する)。
   // `categorical` では null が返り、従来どおり系列 1 色で描く。
   const valueColors =
-    model.series.length === 1 && config.type === "bar"
-      ? chartValueColors(model.series[0].values, config.palette, isDark)
+    shownModel.series.length === 1 && config.type === "bar"
+      ? chartValueColors(shownModel.series[0].values, config.palette, isDark)
       : null;
   // 値で着色しているときの凡例見本は、単色ではなくランプの勾配で示す。
   const legendGradient = valueColors ? chartRampGradient(config.palette, isDark) : null;
@@ -317,6 +345,20 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             ]}
           />
         </Field>
+        {config.type === "bar" && (
+          <Field label={t("chartBarSort")}>
+            <ListboxSelect
+              value={config.barSort ?? "x"}
+              ariaLabel={t("chartBarSort")}
+              onChange={(v) => setBarSort(v as BarSort)}
+              options={[
+                { value: "x", label: t("chartBarSortX") },
+                { value: "desc", label: t("chartBarSortDesc") },
+                { value: "asc", label: t("chartBarSortAsc") },
+              ]}
+            />
+          </Field>
+        )}
         {config.type === "pie" && (
           <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" cursor="pointer">
             <Checkbox checked={isDonut(config)} onChange={(e) => setDonut(e.target.checked)} />
@@ -422,21 +464,43 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
       {/* 凡例 */}
       {config.type !== "pie" && model.series.length > 0 && (
         <Flex gap="3" px="3" py="1" flex="none" flexWrap="wrap" fontSize="xs" color="app.textSecondary">
-          {model.series.map((s, i) => (
-            <Flex key={s.name} align="center" gap="1.25">
-              {/* 値で着色しているときは単色の見本が実態と食い違うため、ランプの
-                  勾配そのものを見本にする (読み上げ向けの説明は aria-label)。 */}
-              <chakra.span
-                w={legendGradient ? "22px" : "10px"}
-                h="10px"
-                borderRadius="xs"
-                bg={legendGradient ?? seriesColors[i]}
-                role={legendGradient ? "img" : undefined}
-                aria-label={legendGradient ? t("chartPaletteValueColoring") : undefined}
-              />
-              {s.name}
-            </Flex>
-          ))}
+          {model.series.map((s, i) => {
+            const hidden = hiddenSeries.has(s.name);
+            return (
+              // 凡例の項目を押すと系列を一時的に隠す / 戻す (#1628)。
+              <chakra.button
+                key={s.name}
+                type="button"
+                display="inline-flex"
+                alignItems="center"
+                gap="1.25"
+                p="0"
+                bg="transparent"
+                border="none"
+                cursor="pointer"
+                color="inherit"
+                fontSize="inherit"
+                opacity={hidden ? 0.45 : 1}
+                textDecoration={hidden ? "line-through" : "none"}
+                aria-pressed={!hidden}
+                aria-label={t(hidden ? "chartLegendShowSeries" : "chartLegendHideSeries", { name: s.name })}
+                _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+                onClick={() => toggleSeries(s.name)}
+              >
+                {/* 値で着色しているときは単色の見本が実態と食い違うため、ランプの
+                    勾配そのものを見本にする (読み上げ向けの説明は aria-label)。 */}
+                <chakra.span
+                  w={legendGradient && !hidden ? "22px" : "10px"}
+                  h="10px"
+                  borderRadius="xs"
+                  bg={legendGradient && !hidden ? legendGradient : allSeriesColors[i]}
+                  role={legendGradient && !hidden ? "img" : undefined}
+                  aria-label={legendGradient && !hidden ? t("chartPaletteValueColoring") : undefined}
+                />
+                {s.name}
+              </chakra.button>
+            );
+          })}
         </Flex>
       )}
 
@@ -454,7 +518,7 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
           />
         ) : (
           <CartesianChart
-            model={model}
+            model={shownModel}
             type={config.type}
             xName={result.columns[config.xCol]?.name ?? ""}
             colors={seriesColors}

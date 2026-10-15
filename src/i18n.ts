@@ -5525,6 +5525,12 @@ const en = {
   structureNoIncomingForeignKeys: "No other table references this table.",
   structureIncomingFrom: "Referencing column",
   structureOpenReferencingHint: "Open the structure of the referencing table",
+  chartBarSort: "Bar order",
+  chartBarSortX: "X axis order",
+  chartBarSortDesc: "Largest first",
+  chartBarSortAsc: "Smallest first",
+  chartLegendHideSeries: "Hide series {name}",
+  chartLegendShowSeries: "Show series {name}",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11020,6 +11026,12 @@ const ja: Dict = {
   structureNoIncomingForeignKeys: "このテーブルを参照している外部キーはありません。",
   structureIncomingFrom: "参照元の列",
   structureOpenReferencingHint: "参照元テーブルの構造を開く",
+  chartBarSort: "棒の並び順",
+  chartBarSortX: "X 軸の順",
+  chartBarSortDesc: "値の大きい順",
+  chartBarSortAsc: "値の小さい順",
+  chartLegendHideSeries: "系列 {name} を隠す",
+  chartLegendShowSeries: "系列 {name} を表示",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
