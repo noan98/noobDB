@@ -58,7 +58,15 @@ export const broadcastCommands = {
     keyColumns: string[];
     allowDelete: boolean;
   }) =>
-    invoke<SyncPlan>("broadcast_sync_sql", params).then((r) =>
-      parseResponse(schemas.syncPlan, r, "broadcast_sync_sql"),
-    ),
+    invoke<SyncPlan>("broadcast_sync_sql", {
+      driver: params.driver,
+      table: params.table,
+      columns: params.columns,
+      baselineRows: params.baselineRows,
+      baselineTotal: params.baselineTotal,
+      targetRows: params.targetRows,
+      targetTotal: params.targetTotal,
+      keyColumns: params.keyColumns,
+      allowDelete: params.allowDelete,
+    }).then((r) => parseResponse(schemas.syncPlan, r, "broadcast_sync_sql")),
 };

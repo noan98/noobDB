@@ -1539,7 +1539,6 @@ export const TableDiffRow = memo(function TableDiffRow({
                 <IndexDiffRow key={`ix:${ix.name}`} index={ix} t={t} />
               ))}
               {fkChanges.map((fk, i) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: 外部キー差分に安定した ID は無い (表示順で固定)
                 <ForeignKeyDiffRow key={`fk:${i}`} change={fk} t={t} />
               ))}
             </MotionColumnList>

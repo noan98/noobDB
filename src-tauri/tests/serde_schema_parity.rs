@@ -648,7 +648,6 @@ fn build_fixtures() -> serde_json::Value {
             on_update: None,
         }],
         columns: vec![column_diff],
-        ..Default::default()
     };
     let schema_diff = SchemaDiff {
         source_driver: DriverKind::Mysql,
