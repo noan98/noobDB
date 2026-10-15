@@ -108,8 +108,19 @@ describe("DataSearchModal backend scan (#1261)", () => {
         mode: "contains",
         tables: ["orders"],
         rowThreshold: 500000,
+        includeDates: false,
       },
     });
+  });
+
+  it("sends includeDates when the date-column option is checked (#1623)", async () => {
+    const user = userEvent.setup();
+    renderModal();
+    await user.click(await screen.findByRole("checkbox", { name: t("dataSearchIncludeDates") }));
+    await startScan(user);
+    expect(api.dataSearchStream).toHaveBeenCalledWith(
+      expect.objectContaining({ request: expect.objectContaining({ includeDates: true }) }),
+    );
   });
 
   it("renders hits and skipped tables from the streamed results, then opens a hit", async () => {
@@ -239,11 +250,12 @@ describe("DataSearchModal の選択テーブル一覧の上限 (#1616)", () => {
     const user = userEvent.setup();
     renderModal();
     await user.click(await screen.findByLabelText(t("dataSearchScopeSelected")));
-    expect(await screen.findAllByRole("checkbox")).toHaveLength(200);
+    // テーブルのチェックボックス + 「日付列も検索」(#1623) の 1 つ。
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(200 + 1);
     await user.click(screen.getByRole("button", { name: t("dataSearchShowMoreTables", { remaining: 30 }) }));
-    expect(await screen.findAllByRole("checkbox")).toHaveLength(230);
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(230 + 1);
     await user.type(screen.getByPlaceholderText(t("dataSearchFilterPlaceholder")), "tbl_0");
-    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(100));
+    await waitFor(() => expect(screen.getAllByRole("checkbox")).toHaveLength(100 + 1));
     expect(screen.queryByRole("button", { name: /^(さらに表示|Show more)/ })).toBeNull();
   });
 });

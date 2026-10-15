@@ -92,6 +92,74 @@ impl TransferMode {
     }
 }
 
+/// 転送先列の論理型の指定 (列ごとの型上書き, #1623)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OverrideKind {
+    Boolean,
+    Integer,
+    Float,
+    Decimal,
+    Text,
+    Date,
+    Time,
+    Timestamp,
+    Timestamptz,
+    Binary,
+    Json,
+    Uuid,
+}
+
+/// 型上書き。`decimal` のときだけ `precision` / `scale` を使う。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeOverride {
+    pub kind: OverrideKind,
+    #[serde(default)]
+    pub precision: Option<u32>,
+    #[serde(default)]
+    pub scale: Option<u32>,
+}
+
+impl TypeOverride {
+    pub fn to_type(&self) -> TransferType {
+        match self.kind {
+            OverrideKind::Boolean => TransferType::Boolean,
+            OverrideKind::Integer => TransferType::Integer,
+            OverrideKind::Float => TransferType::Float,
+            OverrideKind::Decimal => TransferType::Decimal {
+                precision: self.precision,
+                scale: self.scale,
+            },
+            OverrideKind::Text => TransferType::Text,
+            OverrideKind::Date => TransferType::Date,
+            OverrideKind::Time => TransferType::Time,
+            OverrideKind::Timestamp => TransferType::Timestamp,
+            OverrideKind::Timestamptz => TransferType::TimestampTz,
+            OverrideKind::Binary => TransferType::Binary,
+            OverrideKind::Json => TransferType::Json,
+            OverrideKind::Uuid => TransferType::Uuid,
+        }
+    }
+}
+
+/// 転送する列 1 つに対する指定 (#1623)。`source` はソースが返した列名 (完全一致)。
+/// 指定のない列は従来どおりそのまま転送する。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ColumnSpec {
+    pub source: String,
+    /// 転送先での列名 (別名)。省略 / 空白のみは元の名前。
+    #[serde(default)]
+    pub name: Option<String>,
+    /// true なら転送しない。
+    #[serde(default)]
+    pub exclude: bool,
+    /// 転送先の論理型を自動判定ではなくこれにする。
+    #[serde(default, rename = "type")]
+    pub type_override: Option<TypeOverride>,
+}
+
 /// 型名の括弧内 `(p, s)` を読む。読めなければ `(None, None)`。
 fn parse_precision_scale(raw: &str) -> (Option<u32>, Option<u32>) {
     let Some(open) = raw.find('(') else {
@@ -249,6 +317,63 @@ pub fn plan_columns(columns: &[Column], sample: &[Vec<Value>]) -> Vec<TransferCo
     out
 }
 
+/// [`plan_columns`] に列の除外・改名・型上書き ([`ColumnSpec`]) を適用した版 (#1623)。
+/// 戻り値は (転送先の列計画, 残すソース列の位置)。位置は除外が無ければ `None`
+/// (= 全列そのまま。行の複製を避けるため)。改名は重複除去の前に適用するので、
+/// 改名先が他の列と衝突すれば `_2` のように連番で一意化される。
+pub fn plan_columns_mapped(
+    columns: &[Column],
+    sample: &[Vec<Value>],
+    specs: &[ColumnSpec],
+) -> Result<(Vec<TransferColumn>, Option<Vec<usize>>)> {
+    if specs.is_empty() {
+        return Ok((plan_columns(columns, sample), None));
+    }
+    let spec_for = |name: &str| specs.iter().find(|s| s.source == name);
+    let keep: Vec<usize> = (0..columns.len())
+        .filter(|i| !spec_for(&columns[*i].name).is_some_and(|s| s.exclude))
+        .collect();
+    if keep.is_empty() {
+        return Err(AppError::InvalidInput(
+            "every column is excluded from the transfer".into(),
+        ));
+    }
+    let kept_columns: Vec<Column> = keep
+        .iter()
+        .map(|&i| {
+            let c = &columns[i];
+            let renamed = spec_for(&c.name)
+                .and_then(|s| s.name.as_deref())
+                .map(str::trim)
+                .filter(|n| !n.is_empty());
+            Column {
+                name: renamed.map(str::to_string).unwrap_or_else(|| c.name.clone()),
+                type_name: c.type_name.clone(),
+            }
+        })
+        .collect();
+    let identity = keep.len() == columns.len();
+    let kept_sample: Vec<Vec<Value>> = if identity {
+        sample.to_vec()
+    } else {
+        sample.iter().map(|r| select_cells(r, &keep)).collect()
+    };
+    let mut plan = plan_columns(&kept_columns, &kept_sample);
+    for (j, &i) in keep.iter().enumerate() {
+        if let Some(over) = spec_for(&columns[i].name).and_then(|s| s.type_override.as_ref()) {
+            plan[j].ty = over.to_type();
+        }
+    }
+    Ok((plan, if identity { None } else { Some(keep) }))
+}
+
+/// 行から `keep` の位置のセルだけを取り出す (欠けた位置は NULL)。
+pub fn select_cells(row: &[Value], keep: &[usize]) -> Vec<Value> {
+    keep.iter()
+        .map(|&i| row.get(i).cloned().unwrap_or(Value::Null))
+        .collect()
+}
+
 /// 論理型 → ターゲット方言の DDL 型名。
 pub fn target_type_sql(driver: DriverKind, ty: &TransferType) -> String {
     use DriverKind as D;
@@ -388,6 +513,44 @@ pub fn source_select_sql(driver: DriverKind, table: &str) -> String {
     format!("SELECT * FROM {}", quote_ident(driver, table))
 }
 
+/// 列の絞り込み・WHERE・LIMIT 付きのテーブル元 SQL (#1623)。`columns` が `None` なら `*`。
+/// WHERE は利用者が書いた式をそのまま括弧で包んで入れる (読み取り専用ガードは呼び出し側が
+/// 完成した SQL 全体に掛ける)。
+pub fn source_select_sql_ext(
+    driver: DriverKind,
+    table: &str,
+    columns: Option<&[String]>,
+    where_clause: Option<&str>,
+    limit: Option<u64>,
+) -> String {
+    let list = match columns {
+        Some(cols) if !cols.is_empty() => cols
+            .iter()
+            .map(|c| quote_ident(driver, c))
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => "*".to_string(),
+    };
+    let mut sql = format!("SELECT {list} FROM {}", quote_ident(driver, table));
+    if let Some(w) = where_clause.map(str::trim).filter(|w| !w.is_empty()) {
+        // 末尾の行コメント (`-- ...`) が閉じ括弧を巻き込まないよう、改行を挟む。
+        sql.push_str(&format!(" WHERE ({w}\n)"));
+    }
+    if let Some(n) = limit {
+        sql.push_str(&format!(" LIMIT {n}"));
+    }
+    sql
+}
+
+/// テーブル元の件数を数える SQL (#1623)。転送後の件数照合に使う。
+pub fn source_count_sql(driver: DriverKind, table: &str, where_clause: Option<&str>) -> String {
+    let mut sql = format!("SELECT COUNT(*) FROM {}", quote_ident(driver, table));
+    if let Some(w) = where_clause.map(str::trim).filter(|w| !w.is_empty()) {
+        sql.push_str(&format!(" WHERE ({w}\n)"));
+    }
+    sql
+}
+
 /// 列ごとに「hex 文字列で bind し、INSERT の値式で `unhex` するか」。テキストでしか
 /// 渡せないインポート経路で、SQLite / MySQL のバイナリ列だけが対象 (PostgreSQL は
 /// `\x<hex>` を bytea へ暗黙変換できるので不要)。
@@ -490,6 +653,13 @@ fn value_to_cell_inner(driver: DriverKind, ty: &TransferType, value: &Value) -> 
         // MySQL の BIT(n) は 16 進文字列 (`Bytes`)、PostgreSQL の bit(n) は `'10101010'` の
         // ビット列で届く。そのまま渡すと MySQL では `'0a'` が 0 になり、PostgreSQL の
         // BOOLEAN は構文エラーになるので、整数値に直して渡す (#1598)。
+        // BIT(n) の 16 進文字列を整数列へ転送するとき (型上書き, #1623) は、`'0a'` のような
+        // 16 進のまま渡さず整数値に直す。
+        Value::Bytes(hex) if *ty == TransferType::Integer => Some(
+            u64::from_str_radix(hex, 16)
+                .map(|n| n.to_string())
+                .unwrap_or_else(|_| hex.clone()),
+        ),
         Value::Bytes(hex) if *ty == TransferType::Boolean => {
             Some(match u64::from_str_radix(hex, 16) {
                 Ok(n) if n <= 1 => bool_text(n == 1),

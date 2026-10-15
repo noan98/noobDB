@@ -35,9 +35,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::commands::progress::{needs_final_emit, ProgressThrottle};
 use crate::commands::query::{ensure_allowed_for_session, record_write_history};
 use crate::db::transfer::{
-    create_table_sql, drop_table_sql, hex_binary_columns, lossy_conversions, plan_columns,
-    plan_warnings, source_select_sql, validate_target_table, value_to_cell, LossyConversion,
-    TransferColumn, TransferMode,
+    create_table_sql, drop_table_sql, hex_binary_columns, lossy_conversions, plan_columns_mapped,
+    plan_warnings, select_cells, source_count_sql, source_select_sql, source_select_sql_ext,
+    validate_target_table, value_to_cell, ColumnSpec, LossyConversion, TransferColumn,
+    TransferMode,
 };
 use crate::db::types::{Column, StreamBatch};
 use crate::db::upsert::{ConflictMode, ImportConflict};
@@ -86,6 +87,19 @@ pub struct TransferRequest {
     /// `mode == upsert` のときの衝突判定キー列。省略 / 空は転送先テーブルの主キーを使う。
     #[serde(default)]
     pub key_columns: Option<Vec<String>>,
+    /// 列の除外・改名・型上書き (#1623)。指定のない列はそのまま転送する。
+    #[serde(default)]
+    pub columns: Vec<ColumnSpec>,
+    /// テーブル元の絞り込み条件 (`WHERE` の後ろに置く式。#1623)。クエリ元では指定できない。
+    #[serde(default)]
+    pub where_clause: Option<String>,
+    /// 先頭 N 行だけ転送する (試験転送, #1623)。省略は全件。
+    #[serde(default)]
+    pub limit_rows: Option<u64>,
+    /// 転送後にソース / 転送先の件数を照合する (#1623)。省略は true。テーブル元のときだけ
+    /// ソース側を数える (`COUNT(*)` を転送の前後に 1 回ずつ発行する)。
+    #[serde(default)]
+    pub verify_counts: Option<bool>,
 }
 
 /// 転送の結果。
@@ -96,8 +110,11 @@ pub struct TransferOutcome {
     pub rows: u64,
     /// 転送先の列名 (重複除去後) と DDL 型。
     pub columns: Vec<TransferColumnInfo>,
-    /// 損失のあるマッピングなどの注意書き。
+    /// 損失のあるマッピングなどの注意書き。件数照合の食い違い (`integrity_warnings`) も含む。
     pub warnings: Vec<String>,
+    /// 件数照合 (#1623) で見つかった食い違い。`warnings` の部分集合で、UI が転送前の
+    /// 縮退警告と区別して完了時に知らせるために分けて持つ。
+    pub integrity_warnings: Vec<String>,
 }
 
 /// 転送前プレビュー (#1532): 転送先の列定義と、値や型が縮退する列の一覧。
@@ -130,6 +147,8 @@ pub struct TransferDoneEvent {
     pub rows: u64,
     pub elapsed_ms: u64,
     pub warnings: Vec<String>,
+    /// 件数照合の食い違い (#1623)。
+    pub integrity_warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -195,12 +214,52 @@ async fn prepare_transfer_with(
     validate_target_table(&request.target_table)?;
 
     let source_driver = source.conn.driver_kind();
+    let where_clause = request
+        .where_clause
+        .as_deref()
+        .map(str::trim)
+        .filter(|w| !w.is_empty());
+    if request.limit_rows == Some(0) {
+        return Err(AppError::InvalidInput(
+            "limit_rows must be at least 1".into(),
+        ));
+    }
     let source_sql = match (
         request.source_table.as_deref().map(str::trim),
         request.source_sql.as_deref().map(str::trim),
     ) {
-        (Some(t), None) if !t.is_empty() => source_select_sql(source_driver, t),
+        (Some(t), None) if !t.is_empty() => {
+            // 除外する列があるテーブル元は、SELECT リストをカタログから組んで読まない列を
+            // サーバ側で省く (大きな BLOB 列などを無駄に転送しない)。
+            let select_columns = excluded_aware_select_columns(&source, &request, t).await?;
+            let sql = if select_columns.is_none() && where_clause.is_none() && request.limit_rows.is_none() {
+                source_select_sql(source_driver, t)
+            } else {
+                source_select_sql_ext(
+                    source_driver,
+                    t,
+                    select_columns.as_deref(),
+                    where_clause,
+                    request.limit_rows,
+                )
+            };
+            if where_clause.is_some() {
+                // 利用者が書いた式を埋め込むので、完成した SQL 全体に読み取り専用ガードを掛ける。
+                ensure_allowed_for_session(&source, &sql)?;
+                if !is_read_only_sql_for(source_driver, &sql) {
+                    return Err(AppError::ReadOnly(
+                        "transfer filter must keep the source statement read-only".into(),
+                    ));
+                }
+            }
+            sql
+        }
         (None, Some(sql)) if !sql.is_empty() => {
+            if where_clause.is_some() {
+                return Err(AppError::InvalidInput(
+                    "a WHERE filter can only be used with a table source".into(),
+                ));
+            }
             // エクスポートと同じく、ソースは読み取り専用文に限る (転送が
             // ソース側を書き換えることは決してない)。
             ensure_allowed_for_session(&source, sql)?;
@@ -209,7 +268,12 @@ async fn prepare_transfer_with(
                     "transfer source must be a read-only statement (SELECT / WITH ...)".into(),
                 ));
             }
-            sql.to_string()
+            // 試験転送: サーバ側でも読み出しを打ち切る (付けられない文は読み手側で打ち切る)。
+            match request.limit_rows {
+                Some(n) => crate::db::apply_auto_limit_for(source_driver, sql, n as usize)
+                    .unwrap_or_else(|| sql.to_string()),
+                None => sql.to_string(),
+            }
         }
         _ => {
             return Err(AppError::InvalidInput(
@@ -254,6 +318,35 @@ async fn prepare_transfer_with(
         source_sql,
         request,
     })
+}
+
+/// 除外指定のあるテーブル元の SELECT リスト (残す列の名前)。除外が無ければ `None`。
+/// カタログに無い列名の除外指定は無視する (ソースが変わった場合に備える)。
+async fn excluded_aware_select_columns(
+    source: &Session,
+    request: &TransferRequest,
+    table: &str,
+) -> Result<Option<Vec<String>>> {
+    if !request.columns.iter().any(|c| c.exclude) {
+        return Ok(None);
+    }
+    let resolved = source
+        .conn
+        .resolve_database(request.source_database.as_deref())
+        .await;
+    let db = if resolved.is_empty() { "main" } else { resolved.as_str() };
+    let all = source.conn.columns(db, table).await?;
+    let kept: Vec<String> = all
+        .into_iter()
+        .map(|c| c.name)
+        .filter(|n| !request.columns.iter().any(|s| s.exclude && &s.source == n))
+        .collect();
+    if kept.is_empty() {
+        return Err(AppError::InvalidInput(
+            "every column is excluded from the transfer".into(),
+        ));
+    }
+    Ok(Some(kept))
 }
 
 /// 同一テーブル名か。PostgreSQL は引用符付き識別子で大文字小文字を区別する
@@ -411,9 +504,9 @@ async fn prepare_target(
     sample: &[Vec<crate::db::types::Value>],
     guard: &mut Option<CreatedTableGuard>,
     deferred: &Option<Arc<std::sync::Mutex<Option<DeferredDrop>>>>,
-) -> Result<Vec<TransferColumn>> {
+) -> Result<(Vec<TransferColumn>, Option<Vec<usize>>)> {
     let driver = target.conn.driver_kind();
-    let plan = plan_columns(columns, sample);
+    let (plan, keep) = plan_columns_mapped(columns, sample, &request.columns)?;
     if plan.is_empty() {
         return Err(AppError::InvalidInput(
             "transfer source returned no columns".into(),
@@ -443,7 +536,7 @@ async fn prepare_target(
             });
         }
     }
-    Ok(plan)
+    Ok((plan, keep))
 }
 
 /// 転送の衝突設定を決める (#1539)。`upsert` 以外は従来どおり素の INSERT。
@@ -572,6 +665,140 @@ async fn write_batch(
         .await
 }
 
+/// `SELECT COUNT(*)` の結果を数値として読む。取れなければ `None` (照合は付加機能なので
+/// 失敗しても転送自体は失敗させない)。
+async fn count_rows(session: &Session, sql: &str, database: Option<&str>) -> Option<u64> {
+    use crate::db::types::Value;
+    let res = session.conn.execute(sql, database).await.ok()?;
+    match res.rows.first()?.first()? {
+        Value::Int(n) => u64::try_from(*n).ok(),
+        Value::UInt(n) => Some(*n),
+        Value::String(s) => s.trim().parse().ok(),
+        Value::Float(f) if *f >= 0.0 => Some(*f as u64),
+        _ => None,
+    }
+}
+
+/// 転送前に数えておく件数 (#1623)。
+#[derive(Debug, Default, Clone, Copy)]
+struct CountsBefore {
+    /// テーブル元の対象行数 (WHERE 適用後)。
+    source: Option<u64>,
+    /// 転送先の既存行数 (追記系のみ)。
+    target: Option<u64>,
+}
+
+fn verify_enabled(request: &TransferRequest) -> bool {
+    request.verify_counts.unwrap_or(true)
+}
+
+fn target_count_sql(prepared: &PreparedTransfer) -> String {
+    source_count_sql(
+        prepared.target.conn.driver_kind(),
+        prepared.request.target_table.trim(),
+        None,
+    )
+}
+
+fn source_where(request: &TransferRequest) -> Option<&str> {
+    request.where_clause.as_deref()
+}
+
+async fn count_before(prepared: &PreparedTransfer) -> CountsBefore {
+    let request = &prepared.request;
+    if !verify_enabled(request) {
+        return CountsBefore::default();
+    }
+    let source = match request.source_table.as_deref() {
+        Some(t) => {
+            let sql = source_count_sql(
+                prepared.source.conn.driver_kind(),
+                t.trim(),
+                source_where(request),
+            );
+            count_rows(
+                &prepared.source,
+                &sql,
+                request.source_database.as_deref().filter(|d| !d.is_empty()),
+            )
+            .await
+        }
+        None => None,
+    };
+    let target = if request.mode.writes_existing_table() {
+        count_rows(
+            &prepared.target,
+            &target_count_sql(prepared),
+            request.target_database.as_deref().filter(|d| !d.is_empty()),
+        )
+        .await
+    } else {
+        None
+    };
+    CountsBefore { source, target }
+}
+
+/// 転送前後の件数と書き込み件数を突き合わせ、食い違いの注意書きを返す (#1623)。
+async fn verify_counts(
+    prepared: &PreparedTransfer,
+    before: CountsBefore,
+    written: u64,
+) -> Vec<String> {
+    let request = &prepared.request;
+    let mut out = Vec::new();
+    if !verify_enabled(request) {
+        return out;
+    }
+    let mut source_after = None;
+    if let (Some(b), Some(t)) = (before.source, request.source_table.as_deref()) {
+        let sql = source_count_sql(
+            prepared.source.conn.driver_kind(),
+            t.trim(),
+            source_where(request),
+        );
+        source_after = count_rows(
+            &prepared.source,
+            &sql,
+            request.source_database.as_deref().filter(|d| !d.is_empty()),
+        )
+        .await;
+        let expected = request.limit_rows.map_or(b, |l| l.min(b));
+        // upsert は衝突行を読み飛ばす / 更新するので、書き込み件数が行数と一致するとは限らない。
+        if request.mode != TransferMode::Upsert && written != expected {
+            out.push(format!(
+                "row count mismatch: the source had {expected} row(s) to transfer but {written} were written"
+            ));
+        }
+        if let Some(a) = source_after {
+            if a != b {
+                out.push(format!(
+                    "the source row count changed during the transfer ({b} before, {a} after), so the copy may not match the source"
+                ));
+            }
+        }
+    }
+    // 転送先: 作成系は書き込み件数 = 行数、追記は増分 = 書き込み件数。
+    if request.mode != TransferMode::Upsert {
+        let after = count_rows(
+            &prepared.target,
+            &target_count_sql(prepared),
+            request.target_database.as_deref().filter(|d| !d.is_empty()),
+        )
+        .await;
+        if let Some(after) = after {
+            let delta = after.saturating_sub(before.target.unwrap_or(0));
+            let baseline_known = !request.mode.writes_existing_table() || before.target.is_some();
+            if baseline_known && delta != written {
+                out.push(format!(
+                    "target row count mismatch: {written} row(s) were written but the target table gained {delta}"
+                ));
+            }
+        }
+    }
+    let _ = source_after;
+    out
+}
+
 /// 転送本体。`counter` は書き込み済み行数 (キャンセル時に `cancel_stream` が読む)。
 pub(crate) async fn run_transfer(
     prepared: &PreparedTransfer,
@@ -623,26 +850,41 @@ pub(crate) async fn run_transfer(
         let mut plan: Option<Vec<TransferColumn>> = None;
         let mut conflict: Option<ImportConflict> = None;
         let mut written: u64 = 0;
+        // 列の除外 (#1623) があるときの、残すソース列の位置。
+        let mut keep: Option<Vec<usize>> = None;
+        // 試験転送 (#1623): 読んだ行数と、上限に達して読み出しを打ち切ったか。
+        let limit = request.limit_rows;
+        let mut read: u64 = 0;
+        let mut stopped_early = false;
         while let Some(batch) = rx.recv().await {
             match batch {
                 StreamBatch::Columns(c) => columns = Some(c),
-                StreamBatch::Rows(rows) => {
+                StreamBatch::Rows(mut rows) => {
+                    if let Some(limit) = limit {
+                        let remaining = limit.saturating_sub(read) as usize;
+                        rows.truncate(remaining);
+                        read += rows.len() as u64;
+                    }
                     if plan.is_none() {
                         let cols = columns.as_deref().ok_or_else(|| {
                             AppError::Other("transfer source sent rows before columns".into())
                         })?;
-                        plan = Some(
-                            prepare_target(
-                                &target,
-                                request,
-                                cols,
-                                &rows,
-                                &mut guard,
-                                &prepared.cancel_drop,
-                            )
-                            .await?,
-                        );
+                        let (p, k) = prepare_target(
+                            &target,
+                            request,
+                            cols,
+                            &rows,
+                            &mut guard,
+                            &prepared.cancel_drop,
+                        )
+                        .await?;
+                        plan = Some(p);
+                        keep = k;
                     }
+                    let rows = match &keep {
+                        Some(k) => rows.iter().map(|r| select_cells(r, k)).collect(),
+                        None => rows,
+                    };
                     let p = plan.as_deref().unwrap_or(&[]);
                     // 衝突設定は最初のバッチで 1 回だけ解決する (upsert のキー列解決で
                     // 転送先のカタログを引くため)。
@@ -654,16 +896,23 @@ pub(crate) async fn run_transfer(
                         write_batch(&target, request, driver, p, &rows, batch_size, &c).await?;
                     counter.store(written, Ordering::SeqCst);
                     on_progress(written);
+                    if limit.is_some_and(|l| read >= l) {
+                        stopped_early = true;
+                        break;
+                    }
                 }
             }
         }
-        // チャネルが閉じた = 読み出しタスクが終わった (成功 or 失敗)。
+        // チャネルが閉じた = 読み出しタスクが終わった (成功 or 失敗)。上限で打ち切った
+        // ときは読み出し側が「書き込み側が止まった」エラーになりうるので無視する。
         drop(rx);
         let read_result = match (&mut reader.0).await {
             Ok(r) => r,
             Err(e) => Err(AppError::Other(format!("transfer reader failed: {e}"))),
         };
-        read_result?;
+        if !stopped_early {
+            read_result?;
+        }
         let plan = match plan {
             Some(p) => p,
             // 0 行の結果でも、列定義どおりのテーブルは作る。
@@ -702,6 +951,7 @@ pub(crate) async fn run_transfer(
                     &prepared.cancel_drop,
                 )
                 .await?
+                .0
             }
         };
         Ok::<_, AppError>((written, plan))

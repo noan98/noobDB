@@ -27,11 +27,15 @@ export type MatchMode = "exact" | "contains" | "prefix";
  * - `text`: LIKE / 完全一致の対象 (文字列・ENUM・JSON)。
  * - `numeric`: 検索語が数値のときだけ等価比較の対象 (整数・小数)。
  * - `excluded`: 既定で走査対象外 (BLOB・真偽値・日時)。BLOB は仕様どおり既定除外。
+ * - `dateText`: 日付・日時列 (`date` 型)。「日付列も検索」(#1623) を有効にしたときだけ
+ *   文字列として LIKE / 完全一致の対象にする (PostgreSQL は `CAST(col AS TEXT)`)。
  */
-export type SearchTarget = "text" | "numeric" | "excluded";
+export type SearchTarget = "text" | "numeric" | "excluded" | "dateText";
 
-export function searchTargetForKind(kind: CellKind): SearchTarget {
+export function searchTargetForKind(kind: CellKind, includeDates = false): SearchTarget {
   switch (kind) {
+    case "date":
+      return includeDates ? "dateText" : "excluded";
     case "string":
     case "enum":
     case "json":
@@ -40,7 +44,7 @@ export function searchTargetForKind(kind: CellKind): SearchTarget {
     case "decimal":
       return "numeric";
     default:
-      // bool / date / time / binary — 既定除外。
+      // bool / time / binary — 常に除外 (date は上で opt-in)。
       return "excluded";
   }
 }
@@ -59,6 +63,13 @@ const PG_TEXT_TYPES = new Set([
   "BPCHAR",
   "NAME",
   "CITEXT",
+]);
+const PG_DATE_TYPES = new Set([
+  "DATE",
+  "TIMESTAMP",
+  "TIMESTAMP WITHOUT TIME ZONE",
+  "TIMESTAMP WITH TIME ZONE",
+  "TIMESTAMPTZ",
 ]);
 const PG_NUMBER_TYPES = new Set([
   "SMALLINT",
@@ -92,6 +103,7 @@ export function searchKindFor(driver: string, dataType: string): CellKind {
     .toUpperCase();
   if (base === "NUMERIC" || base === "DECIMAL") return "decimal";
   if (PG_NUMBER_TYPES.has(base)) return "number";
+  if (PG_DATE_TYPES.has(base)) return "date";
   if (PG_TEXT_TYPES.has(base) || base === "") return "string";
   return "binary";
 }
@@ -139,6 +151,8 @@ export function escapeLikeWildcards(term: string): string {
  *   LIKE は既定のエスケープ文字を持たないため)。
  * - numeric 列: 検索語が数値のときだけ `=` で等価比較 (一致モードは無視。
  *   部分一致/前方一致は数値の等価比較に意味を持たないため)。
+ * - date 列: `includeDates` (#1623) のときだけ text 列と同じ形で比較する。MySQL / SQLite は
+ *   そのまま、PostgreSQL は `CAST(col AS TEXT)`。
  */
 export function buildColumnPredicate(
   driver: string,
@@ -146,10 +160,12 @@ export function buildColumnPredicate(
   kind: CellKind,
   term: string,
   mode: MatchMode,
+  includeDates = false,
 ): string | null {
-  const target = searchTargetForKind(kind);
+  const target = searchTargetForKind(kind, includeDates);
   if (target === "excluded") return null;
-  const col = quoteIdentFor(driver, columnName);
+  let col = quoteIdentFor(driver, columnName);
+  if (target === "dateText" && driver === "postgres") col = `CAST(${col} AS TEXT)`;
   if (target === "numeric") {
     // 正規表現で数値と確認済みの語を `numericLiteral` で正規化して埋め込む。
     const literal = numericLiteral(term);
@@ -182,8 +198,16 @@ export function buildColumnJumpSql(
   dataType: string,
   term: string,
   mode: MatchMode,
+  includeDates = false,
 ): string | null {
-  const predicate = buildColumnPredicate(driver, columnName, searchKindFor(driver, dataType), term, mode);
+  const predicate = buildColumnPredicate(
+    driver,
+    columnName,
+    searchKindFor(driver, dataType),
+    term,
+    mode,
+    includeDates,
+  );
   if (!predicate) return null;
   return `SELECT * FROM ${qualifiedTable(driver, database, table)} WHERE ${predicate}`;
 }
@@ -201,12 +225,20 @@ export function buildTableJumpSql(
   hitColumns: string[],
   term: string,
   mode: MatchMode,
+  includeDates = false,
 ): string | null {
   const hitSet = new Set(hitColumns);
   const predicates: string[] = [];
   for (const c of columns) {
     if (!hitSet.has(c.name)) continue;
-    const predicate = buildColumnPredicate(driver, c.name, searchKindFor(driver, c.dataType), term, mode);
+    const predicate = buildColumnPredicate(
+      driver,
+      c.name,
+      searchKindFor(driver, c.dataType),
+      term,
+      mode,
+      includeDates,
+    );
     if (predicate) predicates.push(predicate);
   }
   if (predicates.length === 0) return null;

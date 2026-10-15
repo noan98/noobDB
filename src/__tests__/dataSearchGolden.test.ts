@@ -45,6 +45,7 @@ describe("data search golden vectors", () => {
           searchKindFor(p.driver, p.dataType),
           p.term,
           p.mode as MatchMode,
+          "includeDates" in p ? p.includeDates : false,
         ),
         `${p.driver} ${p.column} ${p.dataType} ${JSON.stringify(p.term)} ${p.mode}`,
       ).toBe(p.expected);
@@ -60,7 +61,15 @@ describe("data search golden vectors", () => {
   it("table scan SQL (oracle)", () => {
     for (const s of vectors.scanSql) {
       expect(
-        buildTableScanSql(s.driver, s.database, s.table, s.columns, s.term, s.mode as MatchMode),
+        buildTableScanSql(
+          s.driver,
+          s.database,
+          s.table,
+          s.columns,
+          s.term,
+          s.mode as MatchMode,
+          "includeDates" in s ? s.includeDates : false,
+        ),
         `${s.driver} ${s.table}`,
       ).toEqual(s.expected);
     }

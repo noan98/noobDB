@@ -139,21 +139,85 @@ function mergeTypes(a: NewColumnType, b: NewColumnType): NewColumnType {
   return "text";
 }
 
+/** 推論を文字列へ落とした最初の値と、その理由 (#1623)。 */
+export interface InferenceFallback {
+  /** 落とした値そのもの。 */
+  value: string;
+  /** プレビュー内の行位置 (0 始まり)。 */
+  row: number;
+  /**
+   * - `value`: その値単体が文字列 (数値・日付として読めない)。
+   * - `conflict`: 値単体は `valueType` だが、それまでの `previousType` とまとめられない。
+   * - `driver`: 値は真偽値だが、この方言 (MySQL) では真偽型を選べない。
+   */
+  reason: "value" | "conflict" | "driver";
+  valueType: NewColumnType;
+  /** `conflict` のとき、その値の直前までの推論型。 */
+  previousType: NewColumnType | null;
+}
+
+/** 推論の根拠 (取り込みモーダルが列ごとに「なぜこの型か」を示すのに使う)。 */
+export interface ColumnInferenceDetail {
+  type: NewColumnType;
+  /** 値単体で判定した型ごとの非 NULL 値の件数 (値を最後まで数える)。 */
+  counts: Partial<Record<NewColumnType, number>>;
+  nullCount: number;
+  /** 推論を文字列へ落とした最初の値。文字列に落ちていなければ `null`。 */
+  firstText: InferenceFallback | null;
+}
+
+/**
+ * 列の値 (NULL は `null`) から型を推論し、その根拠も返す (#1623)。型の決定規則は
+ * {@link inferColumnType} と同じで、件数は最後の値まで数える (文字列に落ちた後も
+ * 「他の値はどの型だったか」を示すため)。
+ */
+export function inferColumnTypeDetail(
+  values: readonly (string | null)[],
+  driver: DriverKind,
+): ColumnInferenceDetail {
+  const counts: Partial<Record<NewColumnType, number>> = {};
+  let nullCount = 0;
+  let acc: NewColumnType | null = null;
+  let firstText: InferenceFallback | null = null;
+  let firstBoolean: { value: string; row: number } | null = null;
+  for (let row = 0; row < values.length; row += 1) {
+    const v = values[row];
+    if (v === null) {
+      nullCount += 1;
+      continue;
+    }
+    const ty = inferValueType(v);
+    counts[ty] = (counts[ty] ?? 0) + 1;
+    if (ty === "boolean" && firstBoolean === null) firstBoolean = { value: v, row };
+    if (acc === "text") continue;
+    const merged: NewColumnType = acc === null ? ty : mergeTypes(acc, ty);
+    if (merged === "text" && firstText === null) {
+      firstText =
+        ty === "text"
+          ? { value: v, row, reason: "value", valueType: ty, previousType: acc }
+          : { value: v, row, reason: "conflict", valueType: ty, previousType: acc };
+    }
+    acc = merged;
+  }
+  let type: NewColumnType = acc ?? "text";
+  if (!newColumnTypeOptions(driver).includes(type)) {
+    // MySQL は真偽型を選べないので文字列へ戻す。落とした値は最初の真偽値。
+    type = "text";
+    if (firstBoolean) {
+      const { value, row } = firstBoolean;
+      firstText = { value, row, reason: "driver", valueType: "boolean", previousType: null };
+    }
+  }
+  return { type, counts, nullCount, firstText: type === "text" ? firstText : null };
+}
+
 /**
  * 列の値 (NULL は `null`) から型を推論する。NULL は判定に使わない。すべて NULL
  * (またはデータ行なし) なら何でも入る文字列。MySQL では真偽を文字列へ落とす
- * (`newColumnTypeOptions` の注記を参照)。
+ * (`newColumnTypeOptions` の注記を参照)。根拠が要るときは {@link inferColumnTypeDetail}。
  */
 export function inferColumnType(values: readonly (string | null)[], driver: DriverKind): NewColumnType {
-  let acc: NewColumnType | null = null;
-  for (const v of values) {
-    if (v === null) continue;
-    const ty = inferValueType(v);
-    acc = acc === null ? ty : mergeTypes(acc, ty);
-    if (acc === "text") break;
-  }
-  const result = acc ?? "text";
-  return newColumnTypeOptions(driver).includes(result) ? result : "text";
+  return inferColumnTypeDetail(values, driver).type;
 }
 
 /**
@@ -207,6 +271,8 @@ export interface NewColumnDraft {
   inferredType: NewColumnType;
   /** false なら作成も取り込みもしない列。 */
   include: boolean;
+  /** 推論の根拠 (型ごとの件数・文字列に落ちた最初の値。#1623)。 */
+  detail?: ColumnInferenceDetail;
 }
 
 /**
@@ -264,8 +330,9 @@ export function buildColumnDrafts(
       if (excelErrors && isExcelErrorToken(r[i])) return null;
       return applyNullToken(r[i], nullToken);
     });
-    const ty = inferColumnType(values, driver);
-    return { csvIndex: i, name, proposedName: name, type: ty, inferredType: ty, include: true };
+    const detail = inferColumnTypeDetail(values, driver);
+    const ty = detail.type;
+    return { csvIndex: i, name, proposedName: name, type: ty, inferredType: ty, include: true, detail };
   });
 }
 

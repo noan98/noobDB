@@ -4886,6 +4886,114 @@
       "term": "-1e400",
       "mode": "exact",
       "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "DATETIME",
+      "term": "2026-10",
+      "mode": "prefix",
+      "includeDates": true,
+      "expected": "`created_at` LIKE '2026-10%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "created_at",
+      "dataType": "DATETIME",
+      "term": "2026-10",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": "`created_at` LIKE '%2026-10%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "mysql",
+      "column": "d",
+      "dataType": "DATE",
+      "term": "2026-10-15",
+      "mode": "exact",
+      "includeDates": true,
+      "expected": "`d` = '2026-10-15'"
+    },
+    {
+      "driver": "mysql",
+      "column": "t",
+      "dataType": "TIMESTAMP",
+      "term": "2026_10",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": "`t` LIKE '%2026\\\\_10%' ESCAPE '\\\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "created_at",
+      "dataType": "DATETIME",
+      "term": "2026-10",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": "\"created_at\" LIKE '%2026-10%' ESCAPE '\\'"
+    },
+    {
+      "driver": "sqlite",
+      "column": "d",
+      "dataType": "DATE",
+      "term": "2026-10-15",
+      "mode": "exact",
+      "includeDates": true,
+      "expected": "\"d\" = '2026-10-15'"
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "timestamp without time zone",
+      "term": "2026-10",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": "CAST(\"created_at\" AS TEXT) LIKE '%2026-10%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "created_at",
+      "dataType": "timestamp with time zone",
+      "term": "2026-10",
+      "mode": "prefix",
+      "includeDates": true,
+      "expected": "CAST(\"created_at\" AS TEXT) LIKE '2026-10%' ESCAPE '\\'"
+    },
+    {
+      "driver": "postgres",
+      "column": "d",
+      "dataType": "date",
+      "term": "2026-10-15",
+      "mode": "exact",
+      "includeDates": true,
+      "expected": "CAST(\"d\" AS TEXT) = '2026-10-15'"
+    },
+    {
+      "driver": "mysql",
+      "column": "t",
+      "dataType": "TIME",
+      "term": "10:00",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": null
+    },
+    {
+      "driver": "mysql",
+      "column": "b",
+      "dataType": "BOOLEAN",
+      "term": "1",
+      "mode": "exact",
+      "includeDates": true,
+      "expected": null
+    },
+    {
+      "driver": "postgres",
+      "column": "t",
+      "dataType": "time without time zone",
+      "term": "10:00",
+      "mode": "contains",
+      "includeDates": true,
+      "expected": null
     }
   ],
   "numericTerms": [
@@ -5240,6 +5348,49 @@
           "e"
         ]
       }
+    },
+    {
+      "driver": "postgres",
+      "database": "public",
+      "table": "events",
+      "columns": [
+        {
+          "name": "title",
+          "dataType": "text"
+        },
+        {
+          "name": "happened_at",
+          "dataType": "timestamp without time zone"
+        },
+        {
+          "name": "id",
+          "dataType": "integer"
+        }
+      ],
+      "term": "2026-10",
+      "mode": "prefix",
+      "includeDates": true,
+      "expected": {
+        "sql": "SELECT SUM(CASE WHEN \"title\" LIKE '2026-10%' ESCAPE '\\' THEN 1 ELSE 0 END) AS \"title\", SUM(CASE WHEN CAST(\"happened_at\" AS TEXT) LIKE '2026-10%' ESCAPE '\\' THEN 1 ELSE 0 END) AS \"happened_at\" FROM \"public\".\"events\"",
+        "columns": [
+          "title",
+          "happened_at"
+        ]
+      }
+    },
+    {
+      "driver": "postgres",
+      "database": "public",
+      "table": "events",
+      "columns": [
+        {
+          "name": "happened_at",
+          "dataType": "timestamp without time zone"
+        }
+      ],
+      "term": "2026-10",
+      "mode": "prefix",
+      "expected": null
     }
   ],
   "skip": [
@@ -5419,12 +5570,12 @@
     {
       "driver": "postgres",
       "dataType": "timestamp without time zone",
-      "kind": "binary"
+      "kind": "date"
     },
     {
       "driver": "postgres",
       "dataType": "timestamp with time zone",
-      "kind": "binary"
+      "kind": "date"
     },
     {
       "driver": "postgres",
@@ -5535,6 +5686,31 @@
       "driver": "mysql",
       "dataType": "json",
       "kind": "json"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "date",
+      "kind": "date"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "timestamp(3) without time zone",
+      "kind": "date"
+    },
+    {
+      "driver": "postgres",
+      "dataType": "timestamptz",
+      "kind": "date"
+    },
+    {
+      "driver": "mysql",
+      "dataType": "datetime",
+      "kind": "date"
+    },
+    {
+      "driver": "sqlite",
+      "dataType": "DATE",
+      "kind": "date"
     }
   ]
 }

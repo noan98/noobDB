@@ -623,6 +623,9 @@ pub struct DataSearchRequest {
     pub tables: Vec<String>,
     /// 概算行数がこれを超えるテーブルは走査しない。
     pub row_threshold: i64,
+    /// 日付・日時列も文字列として検索する (#1623)。既定はオフ。
+    #[serde(default)]
+    pub include_dates: bool,
 }
 
 fn columns_to_scan(columns: &[TableColumnInfo]) -> Vec<ScanColumn> {
@@ -676,6 +679,7 @@ async fn scan_one_table(
         &scan_columns,
         &req.term,
         req.mode,
+        req.include_dates,
     ) else {
         return skipped("no-searchable-columns", None);
     };

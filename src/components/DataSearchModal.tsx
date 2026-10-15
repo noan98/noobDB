@@ -225,7 +225,9 @@ export function DataSearchModal({
 
   const [term, setTerm] = useState("");
   const [matchMode, setMatchMode] = useState<MatchMode>("contains");
-  const scannedRef = useRef<{ term: string; mode: MatchMode } | null>(null);
+  // 日付・日時列も文字列として検索する opt-in (#1623)。既定はオフ。
+  const [includeDates, setIncludeDates] = useState(false);
+  const scannedRef = useRef<{ term: string; mode: MatchMode; includeDates: boolean } | null>(null);
   const [scope, setScope] = useState<ScopeMode>("all");
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [tableFilter, setTableFilter] = useState("");
@@ -366,7 +368,7 @@ export function DataSearchModal({
     const slot = { streamId, unlisten: () => {} };
     activeRef.current = slot;
     // 表示するヒットは走査開始時の条件で得たもの。ジャンプ SQL も同じ条件で作る。
-    scannedRef.current = { term: term.trim(), mode: matchMode };
+    scannedRef.current = { term: term.trim(), mode: matchMode, includeDates };
     const isActive = () => activeRef.current === slot;
     setResults([]);
     setScanError(null);
@@ -403,6 +405,7 @@ export function DataSearchModal({
           mode: matchMode,
           tables: targetTables,
           rowThreshold: threshold,
+          includeDates,
         },
       });
     } catch (e) {
@@ -421,7 +424,16 @@ export function DataSearchModal({
   const openColumnHit = (table: string, column: string, dataType: string) => {
     const scanned = scannedRef.current;
     if (!scanned) return;
-    const sql = buildColumnJumpSql(driver, database, table, column, dataType, scanned.term, scanned.mode);
+    const sql = buildColumnJumpSql(
+      driver,
+      database,
+      table,
+      column,
+      dataType,
+      scanned.term,
+      scanned.mode,
+      scanned.includeDates,
+    );
     if (!sql) return;
     onOpenHit(sql, `${table}.${column}`);
   };
@@ -437,6 +449,7 @@ export function DataSearchModal({
       entry.hits.map((h) => h.column),
       scanned.term,
       scanned.mode,
+      scanned.includeDates,
     );
     if (!sql) return;
     onOpenHit(sql, entry.table);
@@ -624,6 +637,20 @@ export function DataSearchModal({
               />
               <chakra.span fontSize="xs" color="app.textMuted">
                 {t("dataSearchThresholdHint")}
+              </chakra.span>
+            </FormSection>
+
+            <FormSection>
+              <chakra.label display="inline-flex" alignItems="center" gap="2" cursor="pointer" fontSize="md">
+                <Checkbox
+                  checked={includeDates}
+                  onChange={(e) => setIncludeDates(e.target.checked)}
+                  disabled={scanning}
+                />
+                <span>{t("dataSearchIncludeDates")}</span>
+              </chakra.label>
+              <chakra.span fontSize="xs" color="app.textMuted">
+                {t("dataSearchIncludeDatesHint")}
               </chakra.span>
             </FormSection>
 

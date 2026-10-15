@@ -639,6 +639,8 @@ export interface DataSearchRequest {
   tables: string[];
   /** 概算行数がこれを超えるテーブルは走査しない。 */
   rowThreshold: number;
+  /** 日付・日時列も文字列として検索する (#1623)。省略は false。 */
+  includeDates?: boolean;
 }
 
 /** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */

@@ -89,6 +89,15 @@ const PG_NUMBER_TYPES: &[&str] = &[
     "FLOAT8",
 ];
 
+/// PostgreSQL の日付・日時型の名前 (`information_schema` / `format_type` の表記)。
+const PG_DATE_TYPES: &[&str] = &[
+    "DATE",
+    "TIMESTAMP",
+    "TIMESTAMP WITHOUT TIME ZONE",
+    "TIMESTAMP WITH TIME ZONE",
+    "TIMESTAMPTZ",
+];
+
 /// 走査用の型分類。MySQL / SQLite は [`classify_type_name`] そのまま。PostgreSQL は
 /// `LIKE` が使えない型 (uuid・timestamp・bytea・json/jsonb・enum=`USER-DEFINED`・配列 …) を
 /// 文字列扱いすると表ごと SQL エラーになるため、`information_schema` の型名
@@ -123,6 +132,10 @@ pub fn classify_for_search(driver: DriverKind, type_name: &str) -> CellKind {
         CellKind::Decimal
     } else if PG_NUMBER_TYPES.contains(&base.as_str()) {
         CellKind::Number
+    } else if PG_DATE_TYPES.contains(&base.as_str()) {
+        // `timestamp without time zone` など (#1623)。既定では走査対象外のまま、
+        // 「日付列も検索」を有効にしたときだけ `CAST(col AS TEXT)` で比較する。
+        CellKind::Date
     } else if PG_TEXT_TYPES.contains(&base.as_str()) || base.is_empty() {
         CellKind::String
     } else {
@@ -139,10 +152,21 @@ pub enum SearchTarget {
     Numeric,
     /// 既定で走査対象外 (BLOB・真偽値・日時)。
     Excluded,
+    /// 日付・日時列。`include_dates` が有効なときだけ文字列として LIKE / 完全一致の
+    /// 対象にする (#1623)。PostgreSQL は `CAST(col AS TEXT)` を介して比較する。
+    DateText,
 }
 
 pub fn search_target_for_kind(kind: CellKind) -> SearchTarget {
+    search_target_with_dates(kind, false)
+}
+
+/// [`search_target_for_kind`] に「日付列も検索」の opt-in (#1623) を加えたもの。有効なときも
+/// 対象にするのは `DATE` / `DATETIME` / `TIMESTAMP` 系 ([`CellKind::Date`]) だけで、
+/// 時刻のみ (`TIME`)・真偽値・BLOB は外したまま。
+pub fn search_target_with_dates(kind: CellKind, include_dates: bool) -> SearchTarget {
     match kind {
+        CellKind::Date if include_dates => SearchTarget::DateText,
         CellKind::String | CellKind::Enum | CellKind::Json => SearchTarget::Text,
         CellKind::Number | CellKind::Decimal => SearchTarget::Numeric,
         _ => SearchTarget::Excluded,
@@ -237,18 +261,25 @@ fn quote_string(driver: DriverKind, s: &str) -> String {
 /// - text 列: `exact` は `=`、`contains`/`prefix` は `LIKE` (ワイルドカードをエスケープし、
 ///   SQLite でも効くよう常に明示的な `ESCAPE` 句を付ける)。
 /// - numeric 列: 検索語が数値のときだけ `=` で等価比較 (一致モードは無視)。
+/// - 日付列: `include_dates` のときだけ text 列と同じ形で比較する (#1623)。MySQL / SQLite は
+///   そのまま、PostgreSQL は `CAST(col AS TEXT)`。
 pub fn build_column_predicate(
     driver: DriverKind,
     column_name: &str,
     kind: CellKind,
     term: &str,
     mode: MatchMode,
+    include_dates: bool,
 ) -> Option<String> {
-    let target = search_target_for_kind(kind);
+    let target = search_target_with_dates(kind, include_dates);
     if target == SearchTarget::Excluded {
         return None;
     }
-    let col = quote_ident(driver, column_name);
+    let mut col = quote_ident(driver, column_name);
+    if target == SearchTarget::DateText && driver == DriverKind::Postgres {
+        // PostgreSQL の日時型は LIKE できないので文字列へキャストする (ISO 形式)。
+        col = format!("CAST({col} AS TEXT)");
+    }
     if target == SearchTarget::Numeric {
         if !is_numeric_term(term) {
             return None;
@@ -307,6 +338,7 @@ pub fn build_table_scan_sql(
     columns: &[ScanColumn],
     term: &str,
     mode: MatchMode,
+    include_dates: bool,
 ) -> Option<TableScanSql> {
     let mut parts: Vec<(&str, String)> = Vec::new();
     for c in columns {
@@ -316,6 +348,7 @@ pub fn build_table_scan_sql(
             classify_for_search(driver, &c.data_type),
             term,
             mode,
+            include_dates,
         ) {
             parts.push((c.name.as_str(), predicate));
         }
@@ -421,14 +454,22 @@ mod tests {
         let pg = DriverKind::Postgres;
         for t in [
             "uuid",
-            "timestamp without time zone",
-            "timestamp with time zone",
             "bytea",
             "jsonb",
             "USER-DEFINED",
             "ARRAY",
         ] {
             assert_eq!(classify_for_search(pg, t), CellKind::Binary, "{t}");
+        }
+        for t in [
+            "date",
+            "timestamp",
+            "timestamp(3) without time zone",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "timestamptz",
+        ] {
+            assert_eq!(classify_for_search(pg, t), CellKind::Date, "{t}");
         }
         assert_eq!(
             classify_for_search(pg, "double precision"),
@@ -462,7 +503,7 @@ mod tests {
 
     #[test]
     fn predicates_match_the_documented_shapes() {
-        let p = |d, c, k, t, m| build_column_predicate(d, c, k, t, m);
+        let p = |d, c, k, t, m| build_column_predicate(d, c, k, t, m, false);
         assert_eq!(
             p(
                 DriverKind::Mysql,
@@ -530,6 +571,33 @@ mod tests {
     }
 
     #[test]
+    fn date_columns_are_searched_only_when_opted_in() {
+        let p = |d, k, m, inc| build_column_predicate(d, "created_at", k, "2026-10", m, inc);
+        // 既定 (opt-out) では日付列は対象外。
+        assert_eq!(p(DriverKind::Mysql, CellKind::Date, MatchMode::Contains, false), None);
+        assert_eq!(
+            p(DriverKind::Mysql, CellKind::Date, MatchMode::Prefix, true).as_deref(),
+            Some("`created_at` LIKE '2026-10%' ESCAPE '\\\\'")
+        );
+        assert_eq!(
+            p(DriverKind::Sqlite, CellKind::Date, MatchMode::Contains, true).as_deref(),
+            Some("\"created_at\" LIKE '%2026-10%' ESCAPE '\\'")
+        );
+        assert_eq!(
+            p(DriverKind::Postgres, CellKind::Date, MatchMode::Contains, true).as_deref(),
+            Some("CAST(\"created_at\" AS TEXT) LIKE '%2026-10%' ESCAPE '\\'")
+        );
+        assert_eq!(
+            p(DriverKind::Postgres, CellKind::Date, MatchMode::Exact, true).as_deref(),
+            Some("CAST(\"created_at\" AS TEXT) = '2026-10'")
+        );
+        // 時刻のみ・真偽値・BLOB は opt-in でも対象外のまま。
+        for k in [CellKind::Time, CellKind::Bool, CellKind::Binary] {
+            assert_eq!(p(DriverKind::Mysql, k, MatchMode::Contains, true), None, "{k:?}");
+        }
+    }
+
+    #[test]
     fn scan_sql_selects_only_searchable_columns() {
         let cols = vec![
             ScanColumn {
@@ -552,6 +620,7 @@ mod tests {
             &cols,
             "ali",
             MatchMode::Contains,
+            false,
         );
         assert_eq!(
             scan,
@@ -567,6 +636,7 @@ mod tests {
             &cols,
             "42",
             MatchMode::Contains,
+            false,
         );
         assert_eq!(
             numeric.map(|s| s.columns),
