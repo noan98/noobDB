@@ -242,9 +242,8 @@ function RelatedSection({
         {count && count !== "error" && (
           <chakra.span
             flexShrink={0}
-            fontSize="xs"
+            textStyle="caption"
             fontFamily="mono"
-            color="app.textMuted"
             data-testid="related-count"
           >
             {count.over
