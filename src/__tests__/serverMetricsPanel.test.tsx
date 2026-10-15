@@ -155,3 +155,41 @@ describe("ServerMetricsPanel 手動の再取得 (#1617)", () => {
     await waitFor(() => expect(api.serverMetrics).toHaveBeenCalledTimes(3));
   });
 });
+
+describe("ServerMetricsPanel 期間切替・接続数の余裕 (#1622)", () => {
+  it("上限に近い接続数を警告で示し、期間の選択肢を出す", async () => {
+    vi.mocked(api.serverMetrics).mockResolvedValue({
+      connections: 85,
+      active: 1,
+      idle_in_transaction: null,
+      lock_waiting: null,
+      questions: null,
+      slow_queries: null,
+      lock_waits: null,
+      max_connections: 100,
+    } satisfies ServerMetrics);
+    renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    const note = await screen.findByTestId("metrics-connection-headroom");
+    expect(note).toHaveTextContent("85");
+    expect(note).toHaveTextContent("100");
+    const select = screen.getByLabelText(t("metricsWindowAria")) as HTMLSelectElement;
+    expect([...select.options].map((o) => o.value)).toEqual(["300", "900", "3600"]);
+    fireEvent.change(select, { target: { value: "900" } });
+    expect(select.value).toBe("900");
+  });
+
+  it("上限が不明なら余裕の帯を出さない", async () => {
+    vi.mocked(api.serverMetrics).mockResolvedValue({
+      connections: 5,
+      active: null,
+      idle_in_transaction: null,
+      lock_waiting: null,
+      questions: null,
+      slow_queries: null,
+      lock_waits: null,
+    } satisfies ServerMetrics);
+    renderWithProviders(<ServerMetricsPanel sessionId="s1" driver="postgres" />);
+    await waitFor(() => expect(api.serverMetrics).toHaveBeenCalled());
+    expect(screen.queryByTestId("metrics-connection-headroom")).not.toBeInTheDocument();
+  });
+});

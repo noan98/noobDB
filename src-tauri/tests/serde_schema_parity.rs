@@ -179,6 +179,9 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
     };
     let server_variable = ServerVariable {
         name: "max_connections".into(),
@@ -200,6 +203,12 @@ fn build_fixtures() -> serde_json::Value {
         query_truncated: false,
         is_self: true,
         blocked_by: vec![41],
+        progress: Some(t::ProcessProgress {
+            kind: "vacuum".into(),
+            phase: "scanning heap".into(),
+            done: 40,
+            total: 100,
+        }),
     };
     let query_stats_support = QueryStatsSupport {
         live_tail: true,
@@ -299,6 +308,7 @@ fn build_fixtures() -> serde_json::Value {
         questions: Some(1_000_000),
         slow_queries: Some(12),
         lock_waits: Some(5),
+        max_connections: Some(151),
     };
     let health_finding = HealthFinding {
         rule: RuleId::FkMissingIndex,
@@ -1341,6 +1351,9 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
         column_count: Some(5),
         index_count: 2,
         has_primary_key: true,
@@ -1404,6 +1417,23 @@ fn build_fixtures() -> serde_json::Value {
         killed: 2,
         failed: 1,
         first_error: Some("permission denied".into()),
+        outcomes: vec![
+            t::KillProcessOutcome {
+                id: 101,
+                status: t::KillOutcomeStatus::Killed,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 102,
+                status: t::KillOutcomeStatus::AlreadyGone,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 103,
+                status: t::KillOutcomeStatus::Failed,
+                error: Some("permission denied".into()),
+            },
+        ],
     };
     let db_user_info = t::DbUserInfo {
         name: "app".into(),

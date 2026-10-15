@@ -211,6 +211,15 @@ async fn postgres_table_sizes_and_server_info() {
     let index = row.index_bytes.expect("index bytes present");
     assert!(total >= index, "total must be >= index size: {row:?}");
     assert!(total > 0, "a seeded table must use storage: {row:?}");
+    // 肥大・統計の古さの指標 (#1622): ANALYZE 済みなので analyze 時刻が入り、不要行数も報告される。
+    assert!(
+        row.dead_rows.is_some(),
+        "n_dead_tup must be reported: {row:?}"
+    );
+    assert!(
+        row.last_analyze_at.is_some_and(|ts| ts > 0),
+        "last_analyze_at must reflect the manual ANALYZE: {row:?}"
+    );
 
     let info = conn.server_info().await.expect("server_info");
     assert!(!info.version.is_empty(), "version must be reported");
@@ -780,6 +789,44 @@ async fn postgres_process_list_and_kill() {
     assert_eq!(mixed.killed, 1, "{mixed:?}");
     assert_eq!(mixed.failed, 1, "{mixed:?}");
     assert!(mixed.first_error.is_some());
+    // id ごとの成否 (#1622): 不正な pid だけが失敗として個別に報告される。
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
+    let invalid = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("invalid pid outcome");
+    assert_eq!(invalid.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(invalid.error.is_some());
+    assert!(
+        mixed
+            .outcomes
+            .iter()
+            .any(|o| o.id == victim_pid && o.status != t::KillOutcomeStatus::Failed),
+        "{mixed:?}"
+    );
+    // 自接続を文のみ停止の対象に含めても、スキップとして id 単位で報告され件数を狂わせない。
+    let own_id = conn
+        .list_processes()
+        .await
+        .expect("list for self")
+        .into_iter()
+        .find(|p| p.is_self)
+        .map(|p| p.id);
+    if let Some(own_id) = own_id {
+        let skipped = conn
+            .kill_processes(&[own_id], true)
+            .await
+            .expect("cancel self");
+        assert_eq!(skipped.killed + skipped.failed, 0, "{skipped:?}");
+        assert!(
+            skipped
+                .outcomes
+                .iter()
+                .any(|o| o.status == t::KillOutcomeStatus::Skipped),
+            "{skipped:?}"
+        );
+    }
 
     // Backend teardown is asynchronous; poll briefly.
     let mut gone = false;
@@ -943,6 +990,11 @@ async fn postgres_server_metrics_reports_connection_and_transaction_counters() {
         m.active.is_some_and(|a| a >= 1),
         "at least one active backend (this query) expected, got {:?}",
         m.active
+    );
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported (#1622), got {:?}",
+        m.max_connections
     );
     assert!(
         m.questions.is_some_and(|q| q >= 1),

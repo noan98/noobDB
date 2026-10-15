@@ -77,12 +77,13 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
-        PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo,
-        TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema,
-        TableSizeInfo, UserPrivileges, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, KillOutcomeStatus, KillProcessOutcome,
+        KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
+        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
+        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{

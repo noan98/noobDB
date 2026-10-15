@@ -311,3 +311,52 @@ export function distinctProcessValues(
 
 /** 経過秒の絞り込みプリセット (秒)。0 は「条件なし」。 */
 export const PROCESS_MIN_SECS_OPTIONS: readonly number[] = [0, 1, 10, 60, 300, 3600];
+
+/** 同じクエリ (要約が一致) を実行している行のまとまり (#1622)。 */
+export interface ProcessQueryGroup {
+  summary: string;
+  /** 自アプリの接続 (`is_self`) を除いた id。昇順。 */
+  ids: number[];
+}
+
+/**
+ * `query_summary` が同じ行を 2 件以上持つグループを、件数の多い順 (同数は要約の辞書順) で返す純関数 (#1622)。
+ * 障害時に同じ暴走クエリだけを一括選択するために使う。要約が無い / 空の行は対象外。
+ * 自アプリのプール接続 (`is_self`) は選択に入れない (一括 KILL で自分のセッションを切らないため)。
+ * `minSize` は自接続を除いた後の件数で判定する。
+ */
+export function groupProcessesByQuery(rows: readonly ProcessInfo[], minSize = 2): ProcessQueryGroup[] {
+  const byQuery = new Map<string, number[]>();
+  for (const p of rows) {
+    const summary = p.query_summary?.trim();
+    if (!summary || p.is_self) continue;
+    const list = byQuery.get(summary);
+    if (list) list.push(p.id);
+    else byQuery.set(summary, [p.id]);
+  }
+  return [...byQuery.entries()]
+    .filter(([, ids]) => ids.length >= minSize)
+    .map(([summary, ids]) => ({ summary, ids: [...ids].sort((a, b) => a - b) }))
+    .sort((a, b) => b.ids.length - a.ids.length || a.summary.localeCompare(b.summary));
+}
+
+/**
+ * メンテナンス進捗の割合 (0〜100 の整数)。`total` が 0 以下 (索引作成の待機・ソートなど割合が出せない
+ * フェーズ) と `progress` なしは `null`。範囲外の値は 0〜100 に収める (#1622)。
+ */
+export function processProgressPercent(
+  progress: { done: number; total: number } | null | undefined,
+): number | null {
+  if (!progress || !(progress.total > 0)) return null;
+  const pct = Math.round((progress.done / progress.total) * 100);
+  return Math.min(100, Math.max(0, pct));
+}
+
+/** 停止結果のうち失敗した id → エラー文のマップ (#1622)。一覧の該当行に理由を出す。 */
+export function failedKillReasons(
+  outcomes: readonly { id: number; status: string; error: string | null }[],
+): Map<number, string> {
+  const out = new Map<number, string>();
+  for (const o of outcomes) if (o.status === "failed") out.set(o.id, o.error ?? "");
+  return out;
+}

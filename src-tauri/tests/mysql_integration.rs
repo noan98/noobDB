@@ -253,6 +253,12 @@ async fn mysql_server_metrics_reports_connection_and_throughput_counters() {
         "Threads_connected must be reported and >= 1, got {:?}",
         m.connections
     );
+    // 接続数の上限 (#1622)。
+    assert!(
+        m.max_connections.is_some_and(|c| c >= 1),
+        "max_connections must be reported, got {:?}",
+        m.max_connections
+    );
     // Questions は起動以降の累積なので必ず正。
     assert!(
         m.questions.is_some_and(|q| q >= 1),
@@ -1081,6 +1087,15 @@ async fn mysql_process_list_and_kill() {
         mixed.failed >= 1 && mixed.first_error.is_some(),
         "{mixed:?}"
     );
+    // id ごとの成否 (#1622): 存在しない id は個別の失敗として理由つきで報告される。
+    let missing = mixed
+        .outcomes
+        .iter()
+        .find(|o| o.id == i64::MAX)
+        .expect("outcome for the missing id");
+    assert_eq!(missing.status, t::KillOutcomeStatus::Failed, "{mixed:?}");
+    assert!(missing.error.is_some());
+    assert_eq!(mixed.outcomes.len(), 2, "{mixed:?}");
 
     // The server tears the thread down asynchronously; poll briefly.
     let mut gone = false;

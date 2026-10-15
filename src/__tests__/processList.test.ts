@@ -165,3 +165,65 @@ describe("filterProcesses / sortProcesses (#1538)", () => {
     expect(distinctProcessValues([proc(1, { command: "" })], "command")).toEqual([]);
   });
 });
+
+import { failedKillReasons, groupProcessesByQuery, processProgressPercent } from "../components/processList";
+
+describe("groupProcessesByQuery / processProgressPercent / failedKillReasons (#1622)", () => {
+  const p = (id: number, query_summary: string | null, is_self = false): ProcessInfo => ({
+    id,
+    user: null,
+    host: null,
+    database: null,
+    command: null,
+    state: null,
+    time_secs: null,
+    query_summary,
+    query_truncated: false,
+    is_self,
+    blocked_by: [],
+  });
+
+  it("同じ要約が 2 件以上のものを件数順にまとめ、自接続・空要約・単独は除く", () => {
+    const groups = groupProcessesByQuery([
+      p(5, "SELECT 1"),
+      p(3, "SELECT 1"),
+      p(9, "SELECT 1", true),
+      p(1, "UPDATE t"),
+      p(2, "UPDATE t"),
+      p(4, "UPDATE t"),
+      p(6, "alone"),
+      p(7, null),
+      p(8, "  "),
+      p(10, null),
+    ]);
+    expect(groups).toEqual([
+      { summary: "UPDATE t", ids: [1, 2, 4] },
+      { summary: "SELECT 1", ids: [3, 5] },
+    ]);
+  });
+
+  it("自接続を除いて 1 件になるグループは出ない", () => {
+    expect(groupProcessesByQuery([p(1, "x"), p(2, "x", true)])).toEqual([]);
+  });
+
+  it("進捗の割合は total が 0 以下なら null、範囲外は丸める", () => {
+    expect(processProgressPercent(null)).toBeNull();
+    expect(processProgressPercent({ done: 5, total: 0 })).toBeNull();
+    expect(processProgressPercent({ done: 1, total: 3 })).toBe(33);
+    expect(processProgressPercent({ done: 200, total: 100 })).toBe(100);
+    expect(processProgressPercent({ done: -5, total: 100 })).toBe(0);
+  });
+
+  it("失敗した id だけ理由を取り出す", () => {
+    const m = failedKillReasons([
+      { id: 1, status: "killed", error: null },
+      { id: 2, status: "failed", error: "permission denied" },
+      { id: 3, status: "skipped", error: null },
+      { id: 4, status: "failed", error: null },
+    ]);
+    expect([...m]).toEqual([
+      [2, "permission denied"],
+      [4, ""],
+    ]);
+  });
+});

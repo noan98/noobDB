@@ -1211,6 +1211,7 @@ impl MySqlConn {
                     .map(|v| v != 0)
                     .unwrap_or(false),
                 blocked_by: Vec::new(),
+                progress: None,
             })
             .map(|mut p| {
                 p.blocked_by = blockers.get(&p.id).cloned().unwrap_or_default();
@@ -1675,17 +1676,21 @@ impl MySqlConn {
         let mut ordered: Vec<i64> = ids.iter().copied().filter(|id| Some(*id) != own).collect();
         // 文のみ停止では自分自身の接続を対象から外す (この KILL QUERY を打つ接続自体のため無意味)。
         // スキップは成功・失敗どちらにも数えない。
+        let mut out = KillProcessesResult::default();
         if !statement_only {
             ordered.extend(ids.iter().copied().filter(|id| Some(*id) == own));
+        } else {
+            for id in ids.iter().copied().filter(|id| Some(*id) == own) {
+                out.record_skipped(id);
+            }
         }
-        let mut out = KillProcessesResult::default();
         for id in ordered {
             match sqlx::query(sqlx::AssertSqlSafe(format!("{verb} {id}")))
                 .execute(&mut *conn)
                 .await
             {
-                Ok(_) => out.killed += 1,
-                Err(e) => out.record_failure(1, AppError::from(e).to_string()),
+                Ok(_) => out.record_killed(id),
+                Err(e) => out.record_failure(id, AppError::from(e).to_string()),
             }
         }
         Ok(out)
@@ -2414,6 +2419,9 @@ impl MySqlConn {
                     data_bytes: data,
                     index_bytes: index,
                     total_bytes: super::sum_size_parts(data, index),
+                    dead_rows: None,
+                    last_vacuum_at: None,
+                    last_analyze_at: None,
                 }
             })
             .collect())
@@ -2496,6 +2504,14 @@ impl MySqlConn {
             questions: g("questions"),
             slow_queries: g("slow_queries"),
             lock_waits: g("innodb_row_lock_waits"),
+            // 接続数の上限 (#1622)。変数が読めなければ None (使用率は出さない)。
+            max_connections: sqlx::query("SHOW GLOBAL VARIABLES LIKE 'max_connections'")
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|r| r.try_get::<String, _>(1).ok())
+                .and_then(|v| v.trim().parse::<i64>().ok()),
         })
     }
 }

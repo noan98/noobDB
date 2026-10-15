@@ -443,6 +443,16 @@ pub struct TableSizeInfo {
     pub data_bytes: Option<i64>,
     pub index_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
+    /// 不要行 (dead tuple) の概算数 (#1622)。PostgreSQL の `pg_stat_user_tables.n_dead_tup`。
+    /// 取れない / 他ドライバは `None`。
+    #[serde(default)]
+    pub dead_rows: Option<i64>,
+    /// 最後に VACUUM された時刻 (手動・autovacuum の新しい方, Unix 秒)。PostgreSQL のみ。
+    #[serde(default)]
+    pub last_vacuum_at: Option<i64>,
+    /// 最後に ANALYZE された時刻 (手動・autoanalyze の新しい方, Unix 秒)。PostgreSQL のみ。
+    #[serde(default)]
+    pub last_analyze_at: Option<i64>,
 }
 
 /// One name/value pair from a server's configuration or status catalogs, shown
@@ -509,6 +519,10 @@ pub struct ServerMetrics {
     /// 行ロック待ちが発生した累積回数。MySQL `Innodb_row_lock_waits`。PostgreSQL は
     /// 同等の安価な累積カウンタが無く `None` (待ち数は `lock_waiting` ゲージで見る)。
     pub lock_waits: Option<i64>,
+    /// サーバの接続数上限 (ゲージ, #1622)。MySQL `max_connections`、PostgreSQL
+    /// `current_setting('max_connections')`。取れなければ `None`。接続数との比で使用率を出す。
+    #[serde(default)]
+    pub max_connections: Option<i64>,
 }
 
 /// One server-side process/connection shown in the process monitor panel.
@@ -547,6 +561,22 @@ pub struct ProcessInfo {
     /// PostgreSQL は `pg_blocking_pids()`、MySQL 8 は `performance_schema.data_lock_waits`。
     /// 取得できない (権限不足・古い版) / 待っていないときは空。
     pub blocked_by: Vec<i64>,
+    /// 長時間メンテナンス (VACUUM / CREATE INDEX) の進捗 (#1622)。PostgreSQL の
+    /// `pg_stat_progress_*` から取れたときだけ入る。MySQL / 取得不能は `None`。
+    #[serde(default)]
+    pub progress: Option<ProcessProgress>,
+}
+
+/// プロセスのメンテナンス作業の進捗 (#1622)。`done` / `total` はブロック数 (または行数)。
+/// `total` が 0 のフェーズ (索引作成の待機・ソートなど) は割合が出せないので、フェーズ名だけを示す。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessProgress {
+    /// `"vacuum"` / `"create_index"`。
+    pub kind: String,
+    /// サーバが報告するフェーズ名 (例: `scanning heap`)。
+    pub phase: String,
+    pub done: i64,
+    pub total: i64,
 }
 
 /// プロセス一覧の 1 行に載せるクエリ要約の最大文字数 (#1259)。
@@ -573,6 +603,8 @@ pub struct ProcessListItem {
     pub is_self: bool,
     /// ブロッカー (待たされている相手) の id 一覧 (#1417)。待機チェーンのツリー化はフロントで行う。
     pub blocked_by: Vec<i64>,
+    /// VACUUM / CREATE INDEX の進捗 (#1622)。
+    pub progress: Option<ProcessProgress>,
 }
 
 /// クエリ本文を 1 行要約にする。空白の畳み込みは `split_whitespace` (Unicode 空白)、
@@ -610,24 +642,81 @@ impl From<ProcessInfo> for ProcessListItem {
             query_truncated,
             is_self: p.is_self,
             blocked_by: p.blocked_by,
+            progress: p.progress,
         }
     }
 }
 
-/// `kill_processes` の結果 (#1259)。失敗があっても残りは実行を続け、件数と最初の
-/// エラー文だけを返す (フロントの toast 文言は従来どおり件数 + 最初のエラー)。
+/// 1 プロセスぶんの停止結果の種別 (#1622)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KillOutcomeStatus {
+    /// 停止 (または文のキャンセル) を受け付けた。
+    Killed,
+    /// 対象が既に居なかった (自然終了との競合)。目的は達しているので成功として数える。
+    AlreadyGone,
+    /// 失敗 (権限不足・不正な id など)。理由は `error`。
+    Failed,
+    /// 実行しなかった (文のみ停止で自分自身の接続を対象から外した場合)。成功にも失敗にも数えない。
+    Skipped,
+}
+
+/// プロセス id ごとの停止結果 (#1622)。画面は一覧の行ごとに成否と理由を示せる。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KillProcessOutcome {
+    pub id: i64,
+    pub status: KillOutcomeStatus,
+    /// `status == Failed` のときのエラー文。
+    pub error: Option<String>,
+}
+
+/// `kill_processes` の結果 (#1259 / #1622)。失敗があっても残りは実行を続ける。
+/// `killed` / `failed` / `first_error` は従来どおりの集計 (トーストの件数用)、`outcomes` が
+/// 入力 id ごとの成否 (自接続を含むときも id 単位なので件数がずれない)。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KillProcessesResult {
     pub killed: u64,
     pub failed: u64,
     pub first_error: Option<String>,
+    #[serde(default)]
+    pub outcomes: Vec<KillProcessOutcome>,
 }
 
 impl KillProcessesResult {
-    pub fn record_failure(&mut self, count: u64, error: String) {
-        self.failed += count;
+    fn push(&mut self, id: i64, status: KillOutcomeStatus, error: Option<String>) {
+        self.outcomes.push(KillProcessOutcome { id, status, error });
+    }
+
+    /// 停止を受け付けた id を記録する。
+    pub fn record_killed(&mut self, id: i64) {
+        self.killed += 1;
+        self.push(id, KillOutcomeStatus::Killed, None);
+    }
+
+    /// 既に居なかった id を記録する (成功として数える)。
+    pub fn record_already_gone(&mut self, id: i64) {
+        self.killed += 1;
+        self.push(id, KillOutcomeStatus::AlreadyGone, None);
+    }
+
+    /// 実行しなかった id を記録する (成功にも失敗にも数えない)。
+    pub fn record_skipped(&mut self, id: i64) {
+        self.push(id, KillOutcomeStatus::Skipped, None);
+    }
+
+    /// 1 つの id の失敗を記録する。
+    pub fn record_failure(&mut self, id: i64, error: String) {
+        self.failed += 1;
         if self.first_error.is_none() {
-            self.first_error = Some(error);
+            self.first_error = Some(error.clone());
+        }
+        self.push(id, KillOutcomeStatus::Failed, Some(error));
+    }
+
+    /// 複数 id が同じ理由で失敗したときにまとめて記録する。
+    pub fn record_failures(&mut self, ids: &[i64], error: &str) {
+        for id in ids {
+            self.record_failure(*id, error.to_string());
         }
     }
 }

@@ -178,6 +178,7 @@ mod tests {
             query: query.map(str::to_string),
             is_self: false,
             blocked_by: vec![],
+            progress: None,
         }
     }
 
