@@ -7,6 +7,8 @@ import {
   heatmapColor,
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
+  matchesThreshold,
+  type ThresholdOp,
 } from "../components/cellConditionalFormat";
 
 describe("toNumber (#499)", () => {
@@ -69,5 +71,27 @@ describe("heatmapColor (#499)", () => {
   it("ships at least one color-blind-safe palette", () => {
     expect(Object.values(HEAT_PALETTES).some((p) => p.colorBlindSafe)).toBe(true);
     expect(HEAT_PALETTES[DEFAULT_HEAT_PALETTE].colorBlindSafe).toBe(true);
+  });
+});
+
+describe("閾値ルール (#1628)", () => {
+  it("演算子ごとに絶対値で判定する", () => {
+    const r = (op: ThresholdOp) => ({ op, value: 100, tone: "danger" as const });
+    expect(matchesThreshold(101, r(">"))).toBe(true);
+    expect(matchesThreshold(100, r(">"))).toBe(false);
+    expect(matchesThreshold(100, r(">="))).toBe(true);
+    expect(matchesThreshold(99, r("<"))).toBe(true);
+    expect(matchesThreshold(100, r("<"))).toBe(false);
+    expect(matchesThreshold(100, r("<="))).toBe(true);
+    expect(matchesThreshold(100, r("="))).toBe(true);
+    expect(matchesThreshold(100.5, r("="))).toBe(false);
+  });
+  it("NULL / 非数値 / 非有限の閾値は非該当", () => {
+    expect(matchesThreshold(null, { op: ">", value: 0, tone: "danger" })).toBe(false);
+    expect(matchesThreshold(5, { op: ">", value: Number.NaN, tone: "danger" })).toBe(false);
+  });
+  it("toNumber と組み合わせて文字列の数値も判定できる", () => {
+    expect(matchesThreshold(toNumber("150"), { op: ">", value: 100, tone: "warning" })).toBe(true);
+    expect(matchesThreshold(toNumber("abc"), { op: ">", value: 100, tone: "warning" })).toBe(false);
   });
 });

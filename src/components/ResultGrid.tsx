@@ -127,7 +127,13 @@ import {
 } from "./typedEditor";
 import {
   type CondFormatMode,
+  type ThresholdRule,
+  DEFAULT_THRESHOLD_RULE,
+  THRESHOLD_OPS,
+  THRESHOLD_TONES,
+  matchesThreshold,
   type NumericStats,
+  type HeatPalette,
   toNumber,
   computeNumericStats,
   normalize,
@@ -136,7 +142,7 @@ import {
   HEAT_PALETTES,
   DEFAULT_HEAT_PALETTE,
 } from "./cellConditionalFormat";
-import { accentFill, ACCENT_FILL_STOPS, readableInk, useIsDarkTheme } from "../colorScale";
+import { accentFill, ACCENT_FILL_STOPS, rampLegendStops, readableInk, useIsDarkTheme } from "../colorScale";
 import { CountUp } from "./CountUp";
 import { COUNT_UP_TOKEN, formatCountUpPlainInt, splitAroundCountUpToken } from "../useCountUp";
 import { ExportModal, type FullExportContext } from "./ExportModal";
@@ -570,6 +576,11 @@ export const GRID_CSS: SystemStyleObject = {
     transitionTimingFunction: "var(--ease-out)",
   },
   "& .cell-cf-value": { position: "relative" },
+  // 閾値ルール (#1628): 絶対値の基準に該当したセルを意味色で塗る (相対 min-max ではない)。
+  "& .cell-cf-threshold": { display: "block", width: "100%", borderRadius: "var(--radius-sm)" },
+  "& .cell-cf-threshold.is-danger": { background: "var(--error-subtle)", color: "var(--error-text)" },
+  "& .cell-cf-threshold.is-warning": { background: "var(--warning-subtle)", color: "var(--warning-text)" },
+  "& .cell-cf-threshold.is-success": { background: "var(--success-subtle)", color: "var(--success-text)" },
   "& .cell-bool": { fontWeight: 600 },
   "& .cell-bool.is-true": { color: "var(--cell-bool-true)" },
   "& .cell-bool.is-false": { color: "var(--cell-bool-false)" },
@@ -1722,6 +1733,62 @@ const FIND_TOGGLE_CSS: SystemStyleObject = {
  * contains/equals/starts/ends; numeric columns expose = / > / < / range; both
  * carry a NULL gate (include / only / exclude).
  */
+/** 閾値の数値入力。入力中は文字列で持ち、数値として解釈できたときだけ確定する (#1628)。 */
+function ThresholdValueInput({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState(String(value));
+  return (
+    <chakra.input
+      css={FILTER_FIELD_CSS}
+      inputMode="decimal"
+      value={draft}
+      aria-label={t("gridCondThresholdValue")}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const n = toNumber(e.target.value);
+        if (n !== null) onCommit(n);
+      }}
+    />
+  );
+}
+
+/**
+ * ヒートマップ / データバーの色の凡例 (#1628)。min と max の間を細いグラデーションバーで示し、
+ * 数値ラベルは取得済み行の範囲。色は `rampLegendStops` (セルへ塗る色と同じ補間) から作る。
+ */
+function CondFormatLegend({
+  mode,
+  palette,
+  range,
+}: {
+  mode: "bar" | "heat";
+  palette: HeatPalette;
+  range: NumericStats | null;
+}) {
+  const isDark = useIsDarkTheme();
+  const background =
+    mode === "heat"
+      ? `linear-gradient(to right, ${rampLegendStops(palette, isDark)
+          .map((s) => `${s.color} ${Math.round(s.t * 100)}%`)
+          .join(", ")})`
+      : `linear-gradient(to right, transparent, ${accentFill(ACCENT_FILL_STOPS.dataBar)})`;
+  return (
+    <Box display="flex" flexDirection="column" gap="0.5" data-testid="cond-format-legend">
+      <Box
+        h="2"
+        borderRadius="var(--radius-sm)"
+        borderWidth="1px"
+        borderColor="app.border"
+        style={{ background }}
+      />
+      <Box display="flex" justifyContent="space-between" textStyle="caption">
+        <chakra.span>{range ? fmtStatNum(range.min) : "—"}</chakra.span>
+        <chakra.span>{range ? fmtStatNum(range.max) : "—"}</chakra.span>
+      </Box>
+    </Box>
+  );
+}
+
 function ColumnFilterMenu({
   columnName,
   kind,
@@ -1734,6 +1801,9 @@ function ColumnFilterMenu({
   onFormatModeChange,
   paletteKey,
   onPaletteChange,
+  thresholdRule,
+  onThresholdChange,
+  legendRange,
   onHideColumn,
   onShowAllColumns,
   onResetLayout,
@@ -1764,6 +1834,11 @@ function ColumnFilterMenu({
   onFormatModeChange: (mode: CondFormatMode) => void;
   paletteKey: string;
   onPaletteChange: (key: string) => void;
+  /** 閾値ルール (#1628)。モードが threshold のときに編集する。 */
+  thresholdRule: ThresholdRule;
+  onThresholdChange: (rule: ThresholdRule) => void;
+  /** 凡例に出す列の min/max (取得済み行の範囲)。算出できなければ null。 */
+  legendRange: NumericStats | null;
   /** 列の表示/並び替え操作。未指定なら該当セクションを出さない。 */
   onHideColumn?: () => void;
   onShowAllColumns?: () => void;
@@ -2102,6 +2177,7 @@ function ColumnFilterMenu({
             <option value="off">{t("gridCondFormatOff")}</option>
             <option value="bar">{t("gridCondFormatBar")}</option>
             <option value="heat">{t("gridCondFormatHeat")}</option>
+            <option value="threshold">{t("gridCondFormatThreshold")}</option>
           </chakra.select>
           {formatMode === "heat" && (
             <chakra.select
@@ -2117,6 +2193,49 @@ function ColumnFilterMenu({
                 </option>
               ))}
             </chakra.select>
+          )}
+          {formatMode === "threshold" && (
+            <Box display="flex" gap="1" alignItems="center">
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={thresholdRule.op}
+                aria-label={t("gridCondThresholdOp")}
+                onChange={(e) =>
+                  onThresholdChange({ ...thresholdRule, op: e.target.value as ThresholdRule["op"] })
+                }
+              >
+                {THRESHOLD_OPS.map((op) => (
+                  <option key={op} value={op}>
+                    {op}
+                  </option>
+                ))}
+              </chakra.select>
+              <ThresholdValueInput
+                value={thresholdRule.value}
+                onCommit={(value) => onThresholdChange({ ...thresholdRule, value })}
+              />
+              <chakra.select
+                css={FILTER_FIELD_CSS}
+                value={thresholdRule.tone}
+                aria-label={t("gridCondThresholdTone")}
+                onChange={(e) =>
+                  onThresholdChange({ ...thresholdRule, tone: e.target.value as ThresholdRule["tone"] })
+                }
+              >
+                {THRESHOLD_TONES.map((tone) => (
+                  <option key={tone} value={tone}>
+                    {t(`gridCondTone_${tone}` as Parameters<typeof t>[0])}
+                  </option>
+                ))}
+              </chakra.select>
+            </Box>
+          )}
+          {(formatMode === "bar" || formatMode === "heat") && (
+            <CondFormatLegend
+              mode={formatMode}
+              palette={HEAT_PALETTES[paletteKey] ?? HEAT_PALETTES[DEFAULT_HEAT_PALETTE]}
+              range={legendRange}
+            />
           )}
         </chakra.label>
       )}
@@ -3822,6 +3941,8 @@ export const DataGrid = memo(function DataGrid({
   // 数値セルの条件付き書式。列ごとの適用モードと、共有のヒートパレット。
   const [colFormats, setColFormats] = useState<Record<number, CondFormatMode>>({});
   const [heatPaletteKey, setHeatPaletteKey] = useState<string>(DEFAULT_HEAT_PALETTE);
+  // 閾値ルール (#1628): 列ごとの「値が N を超えたら赤」。
+  const [colThresholds, setColThresholds] = useState<Record<number, ThresholdRule>>({});
   // ダークテーマではヒートマップを「暗→明」の向きへ切り替える (#1187)。
   const isDarkTheme = useIsDarkTheme();
   // 列内 min/max は全行から求める (バー/ヒートの基準)。数値列のうち条件付き書式
@@ -3834,7 +3955,8 @@ export const DataGrid = memo(function DataGrid({
     return columnKinds.map((k, i) => {
       if (k !== "number" && k !== "decimal") return null;
       const mode = colFormats[i] ?? "off";
-      if (mode === "off") return null;
+      // 閾値ルール (#1628) は絶対値で判定するので min/max の走査は要らない。
+      if (mode === "off" || mode === "threshold") return null;
       if (stream) return numericStatsFromStream(stream, i);
       return computeNumericStats(
         (function* () {
@@ -3855,6 +3977,8 @@ export const DataGrid = memo(function DataGrid({
   // 直後の同じ描画で、新しく算出した列の統計を `cell` が読めるようにするため)。
   const columnStatsRef = useRef(columnStats);
   columnStatsRef.current = columnStats;
+  const colThresholdsRef = useRef(colThresholds);
+  colThresholdsRef.current = colThresholds;
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -4342,7 +4466,20 @@ export const DataGrid = memo(function DataGrid({
             // (上のコメント参照) ため、ここは常に最新値を持つ ref から読む。
             const stats = columnStatsRef.current[i];
             const num = toNumber(v);
-            if (mode === "off" || !stats || num === null) {
+            if (mode === "threshold" && num !== null) {
+              const rule = colThresholdsRef.current[i] ?? DEFAULT_THRESHOLD_RULE;
+              if (matchesThreshold(num, rule)) {
+                return (
+                  <span
+                    className={`cell-number cell-cf-threshold is-${rule.tone} ${extraClass}`}
+                    {...bindCellTooltip(title)}
+                  >
+                    {display}
+                  </span>
+                );
+              }
+            }
+            if (mode === "off" || mode === "threshold" || !stats || num === null) {
               return (
                 <span className={`cell-number ${extraClass}`} {...bindCellTooltip(title)}>
                   {display}
@@ -4496,6 +4633,7 @@ export const DataGrid = memo(function DataGrid({
     richCellRendering,
     locale,
     colFormats,
+    colThresholds,
     heatPaletteKey,
     maskedCols,
     isDarkTheme,
@@ -7030,6 +7168,9 @@ export const DataGrid = memo(function DataGrid({
           }
           paletteKey={heatPaletteKey}
           onPaletteChange={setHeatPaletteKey}
+          thresholdRule={colThresholds[filterMenu.colIdx] ?? DEFAULT_THRESHOLD_RULE}
+          onThresholdChange={(rule) => setColThresholds((prev) => ({ ...prev, [filterMenu.colIdx]: rule }))}
+          legendRange={columnStats[filterMenu.colIdx] ?? null}
           onHideColumn={
             enableColumnControls
               ? () => table.getColumn(String(filterMenu.colIdx))?.toggleVisibility(false)

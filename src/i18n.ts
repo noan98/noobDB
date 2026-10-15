@@ -5475,6 +5475,13 @@ const en = {
   gridMedianLabel: "Median",
   gridQuartilesLabel: "Q1/Q3",
   gridSelDistinctLabel: "Distinct",
+  gridCondFormatThreshold: "Threshold rule",
+  gridCondThresholdOp: "Comparison operator",
+  gridCondThresholdValue: "Threshold value",
+  gridCondThresholdTone: "Highlight color",
+  gridCondTone_danger: "Red",
+  gridCondTone_warning: "Amber",
+  gridCondTone_success: "Green",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10921,6 +10928,13 @@ const ja: Dict = {
   gridMedianLabel: "中央値",
   gridQuartilesLabel: "四分位",
   gridSelDistinctLabel: "DISTINCT",
+  gridCondFormatThreshold: "閾値ルール",
+  gridCondThresholdOp: "比較演算子",
+  gridCondThresholdValue: "閾値",
+  gridCondThresholdTone: "強調の色",
+  gridCondTone_danger: "赤",
+  gridCondTone_warning: "黄",
+  gridCondTone_success: "緑",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
