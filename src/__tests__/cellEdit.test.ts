@@ -14,6 +14,7 @@ import {
   FALLBACK_INSERT_TABLE,
   hasAmbiguousIdentity,
   isEditableColumnType,
+  previewSavedValue,
   literalFromCellValue,
   literalFromInput,
   resolvePkIndices,
@@ -1455,5 +1456,33 @@ describe("boolean 入力の正規化 (parseBooleanInput)", () => {
   it("受理しない表記は null で、文字列のまま扱われる", () => {
     expect(parseBooleanInput("maybe")).toBeNull();
     expect(setValueFromInput("maybe", bool)).toEqual({ kind: "text", text: "maybe" });
+  });
+});
+
+describe("previewSavedValue (#1628)", () => {
+  const c = (type_name: string) => col("c", type_name);
+  it("NULL と打つと NULL 化の注記", () => {
+    expect(previewSavedValue(" null ", c("VARCHAR(10)"))).toEqual({ kind: "null" });
+  });
+  it("文字列列の空欄は空文字、数値列の空欄は注記なし", () => {
+    expect(previewSavedValue("", c("VARCHAR(10)"))).toEqual({ kind: "empty" });
+    expect(previewSavedValue("", c("INT"))).toBeNull();
+  });
+  it("真偽値の別表記は TRUE/FALSE へ正規化される", () => {
+    expect(previewSavedValue("yes", c("BOOLEAN"))).toEqual({ kind: "normalized", value: "TRUE", raw: "yes" });
+    expect(previewSavedValue("false", c("BOOL"))).toEqual({
+      kind: "normalized",
+      value: "FALSE",
+      raw: "false",
+    });
+    expect(previewSavedValue("TRUE", c("BOOLEAN"))).toBeNull();
+  });
+  it("数値は桁揃いの 007 などが正規化される", () => {
+    expect(previewSavedValue("007", c("INT"))).toEqual({ kind: "normalized", value: "7", raw: "007" });
+    expect(previewSavedValue("7", c("INT"))).toBeNull();
+  });
+  it("文字列の前後空白は注記、通常の文字列は注記なし", () => {
+    expect(previewSavedValue(" a", c("TEXT"))).toEqual({ kind: "edgeSpace" });
+    expect(previewSavedValue("abc", c("TEXT"))).toBeNull();
   });
 });

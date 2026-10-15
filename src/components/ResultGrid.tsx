@@ -170,6 +170,7 @@ import {
   countEditedCells,
   countEditedRows,
   editIsNoop,
+  previewSavedValue,
   hasAmbiguousIdentity,
   isBinaryColumnType,
   isEditableColumnType,
@@ -1045,6 +1046,23 @@ export const GRID_CSS: SystemStyleObject = {
   "& .cell-edit-input.is-invalid": {
     borderColor: "var(--error-solid)",
     boxShadow: "var(--focus-ring-danger)",
+  },
+  // 編集中の値が実際にどう保存されるかの注記 (#1628)。エラーが無いときだけ出る。
+  "& .cell-edit-preview": {
+    position: "absolute",
+    top: "calc(100% + 2px)",
+    left: "calc(var(--space-1-5) * -1)",
+    zIndex: 5,
+    maxWidth: "36ch",
+    padding: "var(--space-0-75) var(--space-1-75)",
+    fontSize: "var(--text-xs)",
+    color: "var(--text)",
+    background: "var(--bg-elevated, var(--bg-input))",
+    border: "1px solid var(--border)",
+    borderRadius: "var(--radius-sm)",
+    boxShadow: "var(--shadow-md, 0 2px 6px rgb(0 0 0 / 0.3))",
+    whiteSpace: "normal",
+    pointerEvents: "none",
   },
   "& .cell-edit-error": {
     position: "absolute",
@@ -3599,6 +3617,26 @@ const GridRow = memo(function GridRow({
     const editError = isEditingHere && validateEdit ? validateEdit(colIdx, editing!.value) : null;
     const pendingError =
       hasPending && !isEditingHere && validateEdit ? validateEdit(colIdx, pendingValue) : null;
+    // 「実際に保存される値」の注記 (#1628)。型別エディタ (日付・真偽値の選択) は入力が
+    // 正規化済みなので出さない。
+    const editPreview = (() => {
+      // 開いた直後 (入力が開始時の値のまま) は何も変えていないので出さない。
+      if (!isEditingHere || editError || typedEditor || editing!.value === editing!.start) return null;
+      const col = columns[colIdx];
+      if (!col) return null;
+      const pv = previewSavedValue(editing!.value, col);
+      if (!pv) return null;
+      switch (pv.kind) {
+        case "null":
+          return t("editPreviewNull");
+        case "empty":
+          return t("editPreviewEmpty");
+        case "edgeSpace":
+          return t("editPreviewEdgeSpace");
+        case "normalized":
+          return t("editPreviewNormalized", { value: pv.value, raw: pv.raw });
+      }
+    })();
     // Original display string — used both for the input's
     // default contents and to detect "user typed it back to
     // the original" (which clears the pending edit).
@@ -3712,10 +3750,16 @@ const GridRow = memo(function GridRow({
               />
             )}
             <ValueDatalist id={valuePickerListId} values={editPickerValues} />
-            {editError && (
+            {editError ? (
               <div className="cell-edit-error" role="alert">
                 {t(editError)}
               </div>
+            ) : (
+              editPreview && (
+                <div className="cell-edit-preview" role="status">
+                  {editPreview}
+                </div>
+              )
             )}
           </div>
         ) : cellMasked ? (
