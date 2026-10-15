@@ -65,6 +65,14 @@
       "expected": [1, 0, 2, 5, 3, 4]
     },
     {
+      "name": "string_sort_latin_extended_distinct_letters",
+      "note": "ƒ ƀ ẚ などは ICU では基底文字と別の一次キー。アクセント付き英字として基底文字の間に並べない。",
+      "kinds": ["string"],
+      "rows": [["fz"], ["ƒa"], ["fa"], ["bz"], ["az"]],
+      "sort": [{"col": 0, "desc": false}],
+      "expected": [4, 3, 2, 0, 1]
+    },
+    {
       "name": "string_sort_numbers_as_text",
       "note": "数値・真偽値セルも String() してから照合する。",
       "kinds": ["string"],

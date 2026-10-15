@@ -247,32 +247,19 @@ fn push_accent(out: &mut Vec<u8>, accent: u16) {
 /// Latin Extended-B (一部) と Latin Extended Additional (U+1E00..=U+1EFF) の基底文字。
 /// 表にない文字は `None` (コードポイント順に倒す)。ベトナム語の `ễ` / `ạ`、
 /// ルーマニア語の `ș` / `ț` などを基底文字の近くに並べる。
+/// ICU が基底文字と**別の一次キー**を持たせる文字 (`ƀ` `Ƒ` `ƒ` `Ɨ` `Ƙ` `ƙ` `ƚ` `Ʈ`
+/// `Ƶ` `ƶ` `ẚ` など。横線・フック付きで別字扱い) は表に入れない。入れると JS と順序が逆になる。
 fn latin_extended_base(cp: u32) -> Option<&'static str> {
     let b = match cp {
-        0x180..=0x183 => "b",
-        0x187..=0x188 => "c",
-        0x189..=0x18C => "d",
-        0x18E..=0x190 => "e",
-        0x191..=0x192 => "f",
-        0x193 => "g",
-        0x197 => "i",
-        0x198..=0x199 => "k",
-        0x19A => "l",
-        0x19D..=0x19E => "n",
-        0x19F..=0x1A1 => "o",
-        0x1A4..=0x1A5 => "p",
-        0x1AB..=0x1AE => "t",
+        0x1A0..=0x1A1 => "o",
         0x1AF..=0x1B0 => "u",
-        0x1B2 => "v",
-        0x1B3..=0x1B4 => "y",
-        0x1B5..=0x1B6 => "z",
         0x1CD..=0x1CE => "a",
         0x1CF..=0x1D0 => "i",
         0x1D1..=0x1D2 => "o",
         0x1D3..=0x1DC => "u",
         0x1DE..=0x1E1 => "a",
         0x1E2..=0x1E3 | 0x1FC..=0x1FD => "ae",
-        0x1E4..=0x1E7 | 0x1F4..=0x1F5 => "g",
+        0x1E6..=0x1E7 | 0x1F4..=0x1F5 => "g",
         0x1E8..=0x1E9 => "k",
         0x1EA..=0x1ED | 0x1FE..=0x1FF => "o",
         0x1F8..=0x1F9 => "n",
@@ -286,7 +273,7 @@ fn latin_extended_base(cp: u32) -> Option<&'static str> {
         0x21A..=0x21B => "t",
         0x21E..=0x21F => "h",
         0x232..=0x233 => "y",
-        0x1E00..=0x1E01 | 0x1E9A | 0x1EA0..=0x1EB7 => "a",
+        0x1E00..=0x1E01 | 0x1EA0..=0x1EB7 => "a",
         0x1E02..=0x1E07 => "b",
         0x1E08..=0x1E09 => "c",
         0x1E0A..=0x1E13 => "d",
