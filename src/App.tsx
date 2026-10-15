@@ -53,7 +53,7 @@ import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profi
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
-import { sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
+import { planSaveAll, sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
 import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
@@ -8931,6 +8931,40 @@ export default function App() {
     [toast, getTabSql, updateTab],
   );
 
+  /**
+   * 開いている SQL タブをまとめて保存する (#1631)。タブごとに「名前を付けて保存」を順に開き、
+   * 既存ファイルの上書きは OS のダイアログの確認に任せる。途中でキャンセルしたら残りは保存しない。
+   * 開いたときの文字コードを維持する点は単体保存 (#1535) と同じ。
+   */
+  const handleSaveAllSqlFiles = useCallback(async () => {
+    const entries = planSaveAll(tabsRef.current, (id) => {
+      const t = tabsRef.current.find((x) => x.id === id);
+      return t ? getTabSql(t) : "";
+    });
+    if (entries.length === 0) {
+      toast.info(translate("saveAllSqlNothing"));
+      return;
+    }
+    let saved = 0;
+    try {
+      for (const entry of entries) {
+        const dest = await saveFileDialog({
+          defaultPath: entry.fileName,
+          title: translate("saveAllSqlDialogTitle", { current: saved + 1, total: entries.length }),
+          filters: [{ name: "SQL", extensions: ["sql"] }],
+        });
+        if (typeof dest !== "string" || !dest) break;
+        await api.writeTextFile(dest, entry.sql, entry.encoding);
+        updateTab(entry.tabId, { fileEncoding: entry.encoding });
+        saved += 1;
+      }
+    } catch (e) {
+      toast.error(translate("saveSqlFileError", { error: String(e) }));
+      return;
+    }
+    if (saved > 0) toast.success(translate("saveAllSqlDone", { saved, total: entries.length }));
+  }, [toast, getTabSql, updateTab, tabsRef]);
+
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
   // 座標のみでパスを持たないため、enter で得た判定をそのまま維持する。`leave` /
@@ -9953,6 +9987,14 @@ export default function App() {
           run: () => void handleSaveSqlFile(),
         });
         items.push({
+          id: "nav:save-all-sql-files",
+          group: "navigation",
+          label: t("cmdkActionSaveAllSqlFiles"),
+          icon: "download",
+          keywords: "save all files sql tabs export まとめて すべて 全部 保存",
+          run: () => void handleSaveAllSqlFiles(),
+        });
+        items.push({
           id: "nav:save-sql-file-encoding",
           group: "navigation",
           label: t("cmdkActionSaveSqlFileEncoding"),
@@ -10233,6 +10275,7 @@ export default function App() {
     closedTabs,
     handleOpenSqlFile,
     handleSaveSqlFile,
+    handleSaveAllSqlFiles,
     handleDisconnect,
     handleConnect,
     handleRunTableSelect,
@@ -10369,6 +10412,7 @@ export default function App() {
     handleRegisterLocalTable,
     handleSaveSnippetFromEditor,
     handleSaveSqlFile,
+    handleSaveAllSqlFiles,
     handleToggleEmergencyMode,
     loadMoreInTab,
     openAndRunQuery,

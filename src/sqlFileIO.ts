@@ -46,3 +46,37 @@ export function sqlSaveFileName(title: string): string {
   const safe = base.replace(/[/\\]/g, "_");
   return /\.(sql|txt)$/i.test(safe) ? safe : `${safe}.sql`;
 }
+
+/** 「すべて保存」(#1631) の 1 件。 */
+export interface SaveAllEntry {
+  tabId: string;
+  fileName: string;
+  sql: string;
+  encoding: TextEncodingId;
+}
+
+/**
+ * 開いているタブから「すべて保存」の対象を決める。本文が空白だけのタブ・クエリ以外のタブは対象外。
+ * 既定ファイル名は `sqlSaveFileName` を使い、同名のタブがあるときは `name (2).sql` のように連番を付ける。
+ */
+export function planSaveAll(
+  tabs: readonly { id: string; kind: string; title: string; fileEncoding?: TextEncodingId | null }[],
+  getSql: (id: string) => string,
+): SaveAllEntry[] {
+  const used = new Set<string>();
+  const out: SaveAllEntry[] = [];
+  for (const tab of tabs) {
+    if (tab.kind !== "query") continue;
+    const sql = getSql(tab.id);
+    if (sql.trim().length === 0) continue;
+    const base = sqlSaveFileName(tab.title);
+    let fileName = base;
+    for (let n = 2; used.has(fileName.toLowerCase()); n += 1) {
+      const m = /^(.*?)(\.[^.]*)$/.exec(base);
+      fileName = m ? `${m[1]} (${n})${m[2]}` : `${base} (${n})`;
+    }
+    used.add(fileName.toLowerCase());
+    out.push({ tabId: tab.id, fileName, sql, encoding: tab.fileEncoding ?? "utf-8" });
+  }
+  return out;
+}

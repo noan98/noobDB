@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseTextEncodingId, sqlSaveFileName, TEXT_ENCODING_OPTIONS, textEncodingLabel } from "../sqlFileIO";
+import {
+  parseTextEncodingId,
+  planSaveAll,
+  sqlSaveFileName,
+  TEXT_ENCODING_OPTIONS,
+  textEncodingLabel,
+} from "../sqlFileIO";
 
 describe("sqlSaveFileName", () => {
   it("appends .sql when the title has no recognized extension", () => {
@@ -50,5 +56,30 @@ describe("text encoding options (#1535)", () => {
     expect(parseTextEncodingId("euc-jp")).toBe("euc-jp");
     expect(parseTextEncodingId("")).toBeNull();
     expect(parseTextEncodingId("latin1")).toBeNull();
+  });
+});
+
+describe("planSaveAll (#1631)", () => {
+  const sqls: Record<string, string> = {
+    a: "SELECT 1",
+    b: "  ",
+    c: "SELECT 2",
+    d: "SELECT 3",
+    e: "SELECT 4",
+  };
+  const tabs = [
+    { id: "a", kind: "query", title: "Report" },
+    { id: "b", kind: "query", title: "Blank" },
+    { id: "c", kind: "query", title: "Report" },
+    { id: "d", kind: "table", title: "users" },
+    { id: "e", kind: "query", title: "x.sql", fileEncoding: "shift_jis" as const },
+  ];
+  it("空・クエリ以外を除き、同名は連番にし、文字コードを維持する", () => {
+    const plan = planSaveAll(tabs, (id) => sqls[id] ?? "");
+    expect(plan.map((p) => p.fileName)).toEqual(["Report.sql", "Report (2).sql", "x.sql"]);
+    expect(plan.map((p) => p.encoding)).toEqual(["utf-8", "utf-8", "shift_jis"]);
+  });
+  it("対象が無ければ空", () => {
+    expect(planSaveAll([], () => "")).toEqual([]);
   });
 });
