@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { ResultGrid } from "../components/ResultGrid";
 import { attachStreamStats } from "../components/streamStats";
 import type { CellValue, Column, QueryResult } from "../api/tauri";
@@ -34,7 +34,6 @@ beforeEach(() => {
 
 describe("列メニューの重複検出 (#1628)", () => {
   it("検出して「重複行だけ表示」で絞り込み、チップで解除できる", async () => {
-    const user = userEvent.setup();
     const result = makeResult([
       ["a1", "pro"],
       ["b1", "pro"],
@@ -42,12 +41,12 @@ describe("列メニューの重複検出 (#1628)", () => {
       ["c1", "pro"],
     ]);
     const { container } = renderWithProviders(<ResultGrid result={result} database="db" table="users" />);
-    await user.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "code" }) }));
-    await user.click(screen.getByText(t("gridFindDuplicates")));
+    fireEvent.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "code" }) }));
+    fireEvent.click(screen.getByText(t("gridFindDuplicates")));
 
     const summary = await screen.findByTestId("dup-keys-summary");
     expect(summary).toHaveTextContent(t("dupKeysSummary", { groups: "1", rows: "2", extra: "1" }));
-    await user.click(screen.getByRole("button", { name: t("dupKeysShowOnly") }));
+    fireEvent.click(screen.getByRole("button", { name: t("dupKeysShowOnly") }));
 
     await waitFor(() =>
       expect(bodyRows(container)).toEqual([
@@ -56,7 +55,7 @@ describe("列メニューの重複検出 (#1628)", () => {
       ]),
     );
     // モーダルの閉じるアニメーションが終わると、背面の aria-hidden が外れてチップに届く。
-    await user.click(await screen.findByRole("button", { name: t("dupKeysFilterChipClear") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("dupKeysFilterChipClear") }));
     await waitFor(() => expect(bodyRows(container)).toHaveLength(4));
   });
 });
