@@ -473,7 +473,7 @@ async fn probe_session_health(
     };
     // トンネルが閉じていれば DB には触れずに Down を確定する (#1537)。
     if tunnel_alive == Some(false) {
-        tracing::info!(session_id = %session_id, "ssh tunnel is closed; connection is down");
+        tracing::info!(session_id = %session_id, "tunnel (ssh/ssm) is closed; connection is down");
         return item(
             HealthProbeStatus::Down,
             None,

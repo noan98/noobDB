@@ -1,3 +1,4 @@
+import { connectRequestFromProfile } from "../connectRequest";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
@@ -520,20 +521,10 @@ export function SchemaCompareView({
   const ensureSession = useCallback(async (profile: ConnectionProfile): Promise<string> => {
     const existing = ownedRef.current.get(profile.id);
     if (existing) return existing;
-    const res = await api.connect({
-      profile_id: profile.id,
-      driver: coerceDriver(profile.driver),
-      host: profile.host,
-      port: profile.port,
-      user: profile.user,
-      password: "",
-      database: profile.database,
-      ssh: profile.ssh ? { ...profile.ssh, passphrase: "" } : null,
-      file_path: profile.file_path,
+    const res = await api.connect(
       // Comparison only introspects; force read-only and keep it out of history.
-      read_only: true,
-      skip_history: true,
-    });
+      connectRequestFromProfile(profile, { read_only: true, skip_history: true }),
+    );
     ownedRef.current.set(profile.id, res.session_id);
     return res.session_id;
   }, []);
@@ -861,19 +852,7 @@ export function SchemaCompareView({
       // Open a dedicated writable session to the target profile. read_only is
       // taken from the profile, so a read-only profile makes the backend reject
       // the apply (acceptance criterion).
-      const res = await api.connect({
-        profile_id: targetProfile.id,
-        driver: coerceDriver(targetProfile.driver),
-        host: targetProfile.host,
-        port: targetProfile.port,
-        user: targetProfile.user,
-        password: "",
-        database: targetProfile.database,
-        ssh: targetProfile.ssh ? { ...targetProfile.ssh, passphrase: "" } : null,
-        file_path: targetProfile.file_path,
-        read_only: targetProfile.read_only,
-        skip_history: false,
-      });
+      const res = await api.connect(connectRequestFromProfile(targetProfile, { skip_history: false }));
       writableSession = res.session_id;
       await api.applySyncSql({
         sessionId: res.session_id,

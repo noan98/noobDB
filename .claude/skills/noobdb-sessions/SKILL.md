@@ -37,9 +37,18 @@ Windows は `CREATE_NO_WINDOW`) で起動し、`127.0.0.1:<空きポート>` を
 - **SSH と排他** (両方指定は `InvalidInput`)。SQLite では SSH 同様に無視する。
 - セッションの `_tunnel` は `state::Tunnel` (`Ssh` / `Ssm`)。再接続用の非秘密パラメータは
   `Session.reconnect_ssm` (リージョン解決済み)。再接続は `aws` を起動し直す。
-- 待ち受け検知は stdout の "Waiting for connections" か `127.0.0.1:<port>` への TCP 接続成功。
+- 待ち受け検知は stdout の `Port <local_port> opened` / "Waiting for connections" **だけ**で行う
+  (TCP 接続での疎通確認は、別プロセスへ DB 認証情報を渡す TOCTOU と RDS への余計な接続のため使わない)。
   その前に子が終了したら出力 (末尾 500 文字) をエラーにする。`aws` 未導入 / session-manager-plugin
   未導入は専用文言。進捗は既存の `tunnel_connecting` フェーズを流用。
+- リージョンは 設定値 → エンドポイント名 → `AWS_REGION` の順で解決し、決まらなければエラーにせず
+  `--region` を付けずに起動する (AWS CLI のプロファイル設定に任せる。`SsmTunnelSpec.region: Option`)。
+- 後始末: unix は `process_group(0)` で起動して Drop で `killpg(SIGTERM)` (孫の session-manager-plugin
+  も止める)。Windows は Job Object (`KILL_ON_JOB_CLOSE`) に入れ、ハンドルを閉じる (Drop・アプリ終了・
+  クラッシュ) とツリーごと OS が終了させる。`kill_on_drop` は保険。
+- **`session_tunnel_alive` が見るのは `aws` プロセスの生存だけ**。session-manager-plugin だけが落ちた
+  ・SSM セッションがサーバ側で切れた場合は検知できず、クエリ失敗で初めて分かる (SSH のような
+  keepalive 相当は無い)。
 - IAM 認証のトークン署名は SSH 同様、host を 127.0.0.1 に差し替える**前**の RDS エンドポイント名で行う。
   `target` / `host` / `region` / `profile` は形式検証してから引数に渡す (インジェクション防止)。
 - 制約は SSH トンネルと同じ: 接続先が 127.0.0.1 になるため TLS `verify_full` のホスト名検証は通らない。
