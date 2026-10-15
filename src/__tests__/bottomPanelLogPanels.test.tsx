@@ -46,7 +46,7 @@ describe("OutputPanel", () => {
       outcome: "error",
       rows: null,
       elapsedMs: null,
-      error: "x\nLINE 2: FORM t",
+      error: 'syntax error at or near "t" (position 15)',
     });
     run({ sql: "bad", outcome: "error", rows: null, elapsedMs: null, error: "near x" });
     run({ sql: "ok", outcome: "rows" });

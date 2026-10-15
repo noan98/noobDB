@@ -8,6 +8,7 @@ import {
   filterOutput,
   isProblemOutcome,
   isSqlTruncated,
+  lineOfCharOffset,
   lineRangeOf,
   parseErrorLine,
   outputSummary,
@@ -289,12 +290,25 @@ describe("outputLog の SQL 保持量 (#1534)", () => {
 });
 
 describe("エラー行番号の抽出 (#1627)", () => {
-  it("PostgreSQL の LINE n と MySQL の at line n を拾う", () => {
+  it("PostgreSQL は (position n) を文の先頭からの文字オフセットとして行に変換し、MySQL は at line n を使う", () => {
+    const sql = "SELECT 1\nFORM t";
+    // 実際の形式: サーバのソース行番号は載らず、末尾に位置が付く。
     expect(
-      parseErrorLine('syntax error at or near "FORM"\nLINE 3: SELECT * FORM t\n                 ^'),
-    ).toBe(3);
+      parseErrorLine('error returned from database: syntax error at or near "t" (position 15)', sql),
+    ).toBe(2);
+    expect(parseErrorLine("syntax error (position 1)", sql)).toBe(1);
+    expect(parseErrorLine("syntax error (position 9)", sql)).toBe(1);
+    expect(parseErrorLine("syntax error (position 10)", sql)).toBe(2);
     expect(parseErrorLine("You have an error in your SQL syntax; check ... near 'FORM t' at line 2")).toBe(2);
     expect(parseErrorLine("... AT LINE 12")).toBe(12);
+  });
+
+  it("位置は UTF-16 ではなくコードポイントで数え、CRLF / 範囲外も扱う", () => {
+    // 😀 は 2 コード単位だが PostgreSQL の位置では 1 文字。
+    expect(lineOfCharOffset("😀\nx", 3)).toBe(2);
+    expect(lineOfCharOffset("a\r\nb", 3)).toBe(1);
+    expect(lineOfCharOffset("a\r\nb", 4)).toBe(2);
+    expect(lineOfCharOffset("a\nb", 99)).toBe(2);
   });
 
   it("行番号が無い・不正なエラーは null", () => {
@@ -302,8 +316,11 @@ describe("エラー行番号の抽出 (#1627)", () => {
     expect(parseErrorLine(null)).toBeNull();
     expect(parseErrorLine("")).toBeNull();
     expect(parseErrorLine("at line 0")).toBeNull();
-    // 文中の "LINE 3:" は行頭でなければ PG の書式ではない。
-    expect(parseErrorLine("see GUC LINE 3: x")).toBeNull();
+    // PG の位置は文が無いと行に直せない。末尾以外の "(position n)" も対象外。
+    expect(parseErrorLine("x (position 5)")).toBeNull();
+    expect(parseErrorLine("x (position 5) y", "SELECT")).toBeNull();
+    // 実在しない `LINE n:` 形式は拾わない。
+    expect(parseErrorLine("syntax error\nLINE 3: SELECT")).toBeNull();
   });
 
   it("lineRangeOf は n 行目の範囲 (LF / CRLF / 範囲外は最終行)", () => {

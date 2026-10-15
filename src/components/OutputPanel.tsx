@@ -164,7 +164,7 @@ function OutputRow({
       : entry.connectionId === null || entry.connectionId !== currentConnectionId
         ? t("outputRerunOtherConnection", { name: entry.connection ?? "?" })
         : null;
-  const errorLine = entry.outcome === "error" ? parseErrorLine(entry.error) : null;
+  const errorLine = entry.outcome === "error" ? parseErrorLine(entry.error, entry.sql) : null;
   const serverMessages = entry.serverMessages ?? [];
   const worstServer = worstServerSeverity(serverMessages);
 

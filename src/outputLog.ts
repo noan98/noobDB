@@ -249,16 +249,42 @@ export function outputSummary(e: OutputEntry): { key: I18nKey; vars: Record<stri
 }
 
 /**
- * エラー本文から「文の中の行番号」(1 始まり) を抜き出す (#1627)。
- * PostgreSQL は `LINE 3: SELECT ...`、MySQL / MariaDB は `... near '...' at line 3`。
+ * エラー本文から「文の中の行番号」(1 始まり) を求める (#1627)。
+ * - PostgreSQL: サーバの本文に `LINE n:` は載らない (psql が位置から作る装飾)。代わりにバックエンドが
+ *   末尾へ ` (position n)` (元の文の 1 始まりの文字オフセット) を足すので、`sql` の先頭からの
+ *   オフセットを行番号に変換する。`sql` が無ければ PG 由来の位置は使えず null。
+ * - MySQL / MariaDB: `... near '...' at line 3` の行番号をそのまま使う (文の先頭が 1 行目)。
  * 行番号を含まないエラー (SQLite など) は null。
  */
-export function parseErrorLine(error: string | null | undefined): number | null {
+export function parseErrorLine(error: string | null | undefined, sql?: string | null): number | null {
   if (!error) return null;
-  const m = /^\s*LINE (\d+):/m.exec(error) ?? /\bat line (\d+)\b/i.exec(error);
+  const pos = /\(position (\d+)\)\s*$/.exec(error);
+  if (pos) {
+    const offset = Number(pos[1]);
+    if (sql == null || !Number.isSafeInteger(offset) || offset < 1) return null;
+    return lineOfCharOffset(sql, offset);
+  }
+  const m = /\bat line (\d+)\b/i.exec(error);
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isSafeInteger(n) && n >= 1 ? n : null;
+}
+
+/**
+ * `sql` の `offset` 文字目 (1 始まり、PostgreSQL の位置と同じくコードポイント単位) がある行
+ * (1 始まり) を返す。範囲外は最終行。改行は LF / CRLF / CR のどれでもよい。
+ */
+export function lineOfCharOffset(sql: string, offset: number): number {
+  let line = 1;
+  let count = 0;
+  const chars = Array.from(sql);
+  for (let i = 0; i < chars.length; i++) {
+    count += 1;
+    if (count >= offset) return line;
+    const c = chars[i];
+    if (c === "\n" || (c === "\r" && chars[i + 1] !== "\n")) line += 1;
+  }
+  return line;
 }
 
 /**
