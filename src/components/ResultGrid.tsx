@@ -183,7 +183,7 @@ import {
   type RowSqlKind,
 } from "./cellEdit";
 import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
-import { parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
+import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import {
   clientQuickFilter,
@@ -5692,11 +5692,14 @@ export const DataGrid = memo(function DataGrid({
     if (editing || !editable || !onBulkEdit) return;
     const text = e.clipboardData?.getData("text/plain") ?? "";
     if (!text) return;
-    const grid = parseClipboardGrid(text);
-    if (grid.length === 0 || grid[0].length === 0) return;
+    const parsedGrid = parseClipboardGrid(text);
+    if (parsedGrid.length === 0 || parsedGrid[0].length === 0) return;
     e.preventDefault();
+    // 1 行目が列名と一致するときは、その列名で貼り付け先の列を対応付ける (#1628)。
+    const headerMap = detectPasteHeader(parsedGrid, columns);
+    const grid = headerMap ? headerMap.dataGrid : parsedGrid;
 
-    if (grid.length === 1 && grid[0].length === 1 && selectionRect) {
+    if (!headerMap && grid.length === 1 && grid[0].length === 1 && selectionRect) {
       applyValueToCells(
         visibleRows.slice(selectionRect.r0, selectionRect.r1 + 1).map((r) => r.index),
         visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1),
@@ -5713,7 +5716,10 @@ export const DataGrid = memo(function DataGrid({
 
     const maxCols = Math.max(...grid.map((r) => r.length));
     const targetRowIndices = visibleRows.slice(anchorVis, anchorVis + grid.length).map((r) => r.index);
-    const targetColIndices = visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+    const targetColIndices = headerMap
+      ? headerMap.targetColIndices
+      : visibleColIds.slice(anchorColPos, anchorColPos + maxCols);
+    if (headerMap) toast.info(t("gridPasteHeaderMapped", { matched: headerMap.matched }));
 
     // 表示行を超えた分は、保留の追加行へ積む選択肢を出す (#1539)。
     // 積める可能性があるときは、範囲内の行だけを既存の貼り付け編集に渡す。

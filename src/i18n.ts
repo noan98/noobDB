@@ -5502,6 +5502,7 @@ const en = {
   editPreviewEmpty: "Will be saved as: empty string ('')",
   editPreviewNormalized: 'Will be saved as: {value} (from "{raw}")',
   editPreviewEdgeSpace: "Leading / trailing spaces are saved as typed",
+  gridPasteHeaderMapped: "Treated the first row as column names and mapped {matched} column(s) by name",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10974,6 +10975,7 @@ const ja: Dict = {
   editPreviewEmpty: "保存される値: 空文字 ('')",
   editPreviewNormalized: '保存される値: {value} (入力 "{raw}" から正規化)',
   editPreviewEdgeSpace: "前後の空白もそのまま保存されます",
+  gridPasteHeaderMapped: "1 行目を列名として扱い、{matched} 列を名前で対応付けました",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

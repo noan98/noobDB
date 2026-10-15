@@ -193,6 +193,52 @@ export function parseClipboardGrid(text: string): string[][] {
   return rows;
 }
 
+/** `detectPasteHeader` の結果。 */
+export interface PasteHeaderMapping {
+  /** 1 行目 (列名) を除いた貼り付けデータ。 */
+  dataGrid: string[][];
+  /** `dataGrid` の各列の貼り付け先の列の元添字。対応しない列は -1 (従来どおり省かれる)。 */
+  targetColIndices: number[];
+  /** 列名で対応付けできた列数。 */
+  matched: number;
+}
+
+/**
+ * 貼り付けデータの 1 行目が結果の列名と一致するとき、その列を貼り付け先の列に対応付ける (#1628)。
+ * Excel などで列順を入れ替えた表や、一部の列だけの表をそのまま貼れるようにする。
+ *
+ * 1 行目を列名行とみなす条件は、(1) 2 行以上ある、(2) 空でないセルの半数以上が列名に一致し
+ * (大小無視・前後空白無視)、かつ 1 つ以上一致する、(3) 同じ列名への二重対応はしない
+ * (重複する列名の結果は左から順に割り当てる)。一致しない見出しの列は -1 (対象外) にする。
+ * 条件を満たさなければ null で、従来どおり 1 行目もデータとして貼る。
+ */
+export function detectPasteHeader(grid: string[][], columns: Column[]): PasteHeaderMapping | null {
+  if (grid.length < 2) return null;
+  const header = grid[0];
+  const used = new Set<number>();
+  const targets: number[] = [];
+  let matched = 0;
+  let nonEmpty = 0;
+  for (const cell of header) {
+    const name = cell.trim().toLowerCase();
+    if (name === "") {
+      targets.push(-1);
+      continue;
+    }
+    nonEmpty++;
+    const idx = columns.findIndex((c, i) => !used.has(i) && c.name.trim().toLowerCase() === name);
+    if (idx < 0) {
+      targets.push(-1);
+      continue;
+    }
+    used.add(idx);
+    targets.push(idx);
+    matched++;
+  }
+  if (matched === 0 || matched * 2 < nonEmpty) return null;
+  return { dataGrid: grid.slice(1), targetColIndices: targets, matched };
+}
+
 /** `planPasteInsertRows` の入力。 */
 export interface PlanPasteInsertInput {
   /** 保留 INSERT 行へ積む貼り付け行 (表示行を超えた分)。`parseClipboardGrid` の行×列。 */
