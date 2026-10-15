@@ -113,13 +113,19 @@ describe("jsonArrayRowsSql (#1628)", () => {
 describe("JSON ツリーの一括展開と Pointer コピー (#1628)", () => {
   const DOC = '{"user":{"name":"Alice","tags":["admin","dev"]},"n":null}';
 
-  it("すべて展開で深い値まで見え、閉じるでルートだけに戻る", async () => {
+  it("すべて展開で深い値まで見える", () => {
     renderWithProviders(<CellValueViewer columnName="doc" value={DOC} isJson onClose={() => {}} />);
     const tree = screen.getByRole("tree");
     expect(within(tree).queryByText('"Alice"')).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: t("jsonTreeExpandAll") }));
     expect(within(tree).getByText('"Alice"')).toBeInTheDocument();
     expect(within(tree).getByText('"dev"')).toBeInTheDocument();
+  });
+
+  it("閉じるでルートだけに戻る", async () => {
+    renderWithProviders(<CellValueViewer columnName="doc" value={DOC} isJson onClose={() => {}} />);
+    const tree = screen.getByRole("tree");
+    fireEvent.click(screen.getByRole("button", { name: t("jsonTreeExpandAll") }));
     fireEvent.click(screen.getByRole("button", { name: t("jsonTreeCollapseAll") }));
     // 閉じるアニメーション (TreeCollapse) の完了を待つ。
     await waitFor(() => expect(within(tree).queryByText('"Alice"')).toBeNull());

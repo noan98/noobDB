@@ -1764,7 +1764,15 @@ const GHOST_ROWS_SHOWN = 200;
  * 元の位置には差し込めない (行位置が選択・編集の添字に使われる) ので、グリッドの直下に
  * まとめて出す。表示専用で、選択・編集・コピーの対象にはならない。
  */
-function RemovedRowsGhost({ columns, rows }: { columns: string[]; rows: CellValue[][] }) {
+function RemovedRowsGhost({
+  columns,
+  rows,
+  maskedCols,
+}: {
+  columns: string[];
+  rows: CellValue[][];
+  maskedCols: ReturnType<typeof resolveMaskedColumns>;
+}) {
   const t = useT();
   return (
     <Box
@@ -1795,7 +1803,11 @@ function RemovedRowsGhost({ columns, rows }: { columns: string[]; rows: CellValu
             <tr key={ri}>
               {columns.map((_, ci) => (
                 <chakra.td key={ci} px="2" whiteSpace="nowrap">
-                  {r[ci] === null || r[ci] === undefined ? "NULL" : String(r[ci])}
+                  {maskedCols?.[ci]
+                    ? MASK_PLACEHOLDER
+                    : r[ci] === null || r[ci] === undefined
+                      ? "NULL"
+                      : String(r[ci])}
                 </chakra.td>
               ))}
             </tr>
@@ -8238,6 +8250,7 @@ export const ResultGrid = memo(
     // biome-ignore lint/correctness/useExhaustiveDependencies: result?.rows の同一性が変わったことのトリガ依存
     useEffect(() => {
       setDupRowAllow(null);
+      setDiffChangedOnly(false);
       setDupColIdx(null);
     }, [result?.rows]);
     const [findIdx, setFindIdx] = useState<number | null>(null);
@@ -8382,6 +8395,8 @@ export const ResultGrid = memo(
           : null,
       [findHitsOnly, findOpen, effectiveFindQuery, findResult, findTotal],
     );
+    // ヒットが打ち切られている間は「ヒットのみ表示」を使えない (残りのヒット行まで隠れるため)。
+    const findHitsOnlyBlocked = effectiveFindQuery !== "" && findTotal > findResult.matches.length;
     const findCurrentMatch = findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
 
     const emitFindNav = useCallback((m: GridFindMatch, select: boolean, focusCell: boolean) => {
@@ -8625,7 +8640,8 @@ export const ResultGrid = memo(
     }, [diffHighlightEnabled, diffComparable, streaming, diffPrevRows, resultRows, columns, pkIndices]);
 
     const diffRowAllow = useMemo(
-      () => (diffChangedOnly && diff && result ? changedRowIndexSet(diff, result.rows.length) : null),
+      () =>
+        diffChangedOnly && diff?.hasChanges && result ? changedRowIndexSet(diff, result.rows.length) : null,
       [diffChangedOnly, diff, result],
     );
     const rowAllowSet = useMemo(
@@ -9771,11 +9787,18 @@ export const ResultGrid = memo(
                     .*
                   </chakra.button>
                 </Tooltip>
-                <Tooltip label={t("gridFindHitsOnlyTitle")}>
+                <Tooltip
+                  label={
+                    findHitsOnlyBlocked
+                      ? t("gridFindHitsOnlyTruncated", { limit: findResult.matches.length })
+                      : t("gridFindHitsOnlyTitle")
+                  }
+                >
                   <chakra.button
                     type="button"
                     css={FIND_TOGGLE_CSS}
-                    aria-pressed={findHitsOnly}
+                    disabled={findHitsOnlyBlocked}
+                    aria-pressed={findHitsOnly && !findHitsOnlyBlocked}
                     onClick={() => setFindHitsOnly((v) => !v)}
                     aria-label={t("gridFindHitsOnlyTitle")}
                   >
@@ -9938,7 +9961,14 @@ export const ResultGrid = memo(
             emptyMessage={gridEmptyMessage}
           />
           {ghostRows.length > 0 && result && (
-            <RemovedRowsGhost columns={result.columns.map((c) => c.name)} rows={ghostRows} />
+            <RemovedRowsGhost
+              columns={result.columns.map((c) => c.name)}
+              rows={ghostRows}
+              maskedCols={resolveMaskedColumns(
+                result.columns.map((c) => c.name),
+                maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns },
+              )}
+            />
           )}
           {!paginateMode && loadingMore && (
             <Box

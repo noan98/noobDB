@@ -508,6 +508,9 @@ export function previewSavedValue(raw: string, col: Column): SavedValuePreview |
     return trimmed === shown ? null : { kind: "normalized", value: shown, raw: trimmed };
   }
   if (typeof v === "number") {
+    // DECIMAL/NUMERIC は DB が列の小数桁に合わせて保存する ("1.50" は 1.50 のまま) ので、
+    // JS の数値表記への「正規化」を示すと誤解を招く。
+    if (/decimal|numeric|money/i.test(col.type_name)) return null;
     const shown = String(v);
     return trimmed === shown ? null : { kind: "normalized", value: shown, raw: trimmed };
   }

@@ -54,6 +54,22 @@ describe("列メニューの重複検出 (#1628)", () => {
         ["a1", "free"],
       ]),
     );
+  });
+
+  it("絞り込み後はチップで解除できる", async () => {
+    const result = makeResult([
+      ["a1", "pro"],
+      ["b1", "pro"],
+      ["a1", "free"],
+      ["c1", "pro"],
+    ]);
+    const { container } = renderWithProviders(<ResultGrid result={result} database="db" table="users" />);
+    fireEvent.click(screen.getByRole("button", { name: t("gridFilterAria", { column: "code" }) }));
+    fireEvent.click(screen.getByText(t("gridFindDuplicates")));
+
+    const summary = await screen.findByTestId("dup-keys-summary");
+    expect(summary).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("dupKeysShowOnly") }));
     // モーダルの閉じるアニメーションが終わると、背面の aria-hidden が外れてチップに届く。
     fireEvent.click(await screen.findByRole("button", { name: t("dupKeysFilterChipClear") }));
     await waitFor(() => expect(bodyRows(container)).toHaveLength(4));

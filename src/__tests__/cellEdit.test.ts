@@ -1481,6 +1481,11 @@ describe("previewSavedValue (#1628)", () => {
     expect(previewSavedValue("007", c("INT"))).toEqual({ kind: "normalized", value: "7", raw: "007" });
     expect(previewSavedValue("7", c("INT"))).toBeNull();
   });
+  it("DECIMAL/NUMERIC の 1.50 などは JS 数値への正規化注記を出さない", () => {
+    expect(previewSavedValue("1.50", c("DECIMAL(10,2)"))).toBeNull();
+    expect(previewSavedValue("1.50", c("numeric"))).toBeNull();
+    expect(previewSavedValue("1.50", c("DOUBLE"))).toEqual({ kind: "normalized", value: "1.5", raw: "1.50" });
+  });
   it("文字列の前後空白は注記、通常の文字列は注記なし", () => {
     expect(previewSavedValue(" a", c("TEXT"))).toEqual({ kind: "edgeSpace" });
     expect(previewSavedValue("abc", c("TEXT"))).toBeNull();

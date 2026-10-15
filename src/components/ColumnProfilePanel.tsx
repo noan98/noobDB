@@ -258,7 +258,7 @@ export function ColumnProfilePanel({
             {t("profileApproximate")}
           </chakra.label>
         </Tooltip>
-        <Tooltip label={t("profileSampleHint")}>
+        <Tooltip label={driver === "postgres" ? t("profileSampleHint") : t("profileSampleHintScan")}>
           <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
             <chakra.span color="app.textMuted">{t("profileSampleLabel")}</chakra.span>
             <Select

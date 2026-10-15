@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import explainGraphView from "../components/ExplainGraphView.tsx?raw";
-import { erExportGeometry } from "../components/ERDiagramView";
+import { erExportGeometry } from "../components/imageExport";
 
 // 実行計画グラフの画像書き出し (#1628): ER 図と同じ全景ジオメトリを使い、PNG / SVG の両方を出す。
 describe("実行計画グラフの書き出し", () => {

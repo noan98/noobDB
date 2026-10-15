@@ -5545,7 +5545,6 @@ const en = {
   explainSearchNone: "No match",
   explainSearchNext: "Next match (Enter)",
   explainSearchPrev: "Previous match (Shift+Enter)",
-  explainSearchMatchMark: "Search match",
   jsonTreeExpandAll: "Expand all",
   jsonTreeCollapseAll: "Collapse all",
   jsonTreeExpandDepth: "Depth",
@@ -5596,6 +5595,10 @@ const en = {
   erDiagramMenuCopyDdl: "Copy DDL",
   erDiagramMenuPin: "Highlight referencing / referenced tables",
   erDiagramMenuUnpin: "Clear highlight",
+  profileSampleHintScan:
+    "Profile a random sample instead of the whole table. MySQL and SQLite still scan every row to draw the sample, so only the aggregation shortens; counts, distinct values and the histogram describe the sample only",
+  gridFindHitsOnlyTruncated:
+    "Too many matches: only the first {limit} are kept, so showing matching rows only is unavailable. Narrow the search",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11111,7 +11114,6 @@ const ja: Dict = {
   explainSearchNone: "一致なし",
   explainSearchNext: "次の一致 (Enter)",
   explainSearchPrev: "前の一致 (Shift+Enter)",
-  explainSearchMatchMark: "検索に一致",
   jsonTreeExpandAll: "すべて展開",
   jsonTreeCollapseAll: "すべて閉じる",
   jsonTreeExpandDepth: "深さ",
@@ -11162,6 +11164,10 @@ const ja: Dict = {
   erDiagramMenuCopyDdl: "DDL をコピー",
   erDiagramMenuPin: "参照元・参照先を強調",
   erDiagramMenuUnpin: "強調を解除",
+  profileSampleHintScan:
+    "全件ではなくランダムな標本で集計します。MySQL / SQLite は標本を選ぶために全行を走査するため短くなるのは集計だけです。件数・DISTINCT・ヒストグラムは標本の値です",
+  gridFindHitsOnlyTruncated:
+    "ヒットが多すぎて先頭 {limit} 件で打ち切られているため、ヒット行だけの表示は使えません。検索を絞ってください",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

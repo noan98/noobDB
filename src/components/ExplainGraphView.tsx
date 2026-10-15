@@ -36,9 +36,8 @@ import {
   worstSeverity,
   type PlanNode,
 } from "./explainPlan";
-import { erExportGeometry } from "./ERDiagramView";
 import { ImageExportButton } from "./ImageExportButton";
-import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
+import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
 import { Tooltip } from "./Tooltip";
 
 /**

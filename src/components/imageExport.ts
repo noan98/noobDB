@@ -131,3 +131,32 @@ export async function copyPngToClipboard(blob: Blob): Promise<boolean> {
 }
 
 export { blobToBytes };
+
+/** ER 図の全景エクスポート時に内容の周囲へ取る余白 (px)。 */
+const ER_EXPORT_PADDING = 40;
+/** 出力画像の 1 辺の上限 (px)。巨大スキーマで過大なキャンバスを避ける。 */
+const ER_EXPORT_MAX_DIM = 8000;
+
+/**
+ * 全景エクスポートの出力サイズと変換を求める。内容が `ER_EXPORT_MAX_DIM` を超えるときは
+ * 切り捨てずに縮小 (scale < 1) して全体を収める。
+ */
+export function erExportGeometry(bounds: { x: number; y: number; width: number; height: number }): {
+  width: number;
+  height: number;
+  tx: number;
+  ty: number;
+  scale: number;
+} {
+  const pad = ER_EXPORT_PADDING;
+  const fullW = Math.max(1, bounds.width + pad * 2);
+  const fullH = Math.max(1, bounds.height + pad * 2);
+  const scale = Math.min(1, ER_EXPORT_MAX_DIM / fullW, ER_EXPORT_MAX_DIM / fullH);
+  return {
+    width: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullW * scale))),
+    height: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullH * scale))),
+    tx: (-bounds.x + pad) * scale,
+    ty: (-bounds.y + pad) * scale,
+    scale,
+  };
+}

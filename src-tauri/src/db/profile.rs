@@ -199,11 +199,16 @@ pub fn normalize_sample_percent(p: Option<f64>) -> Result<Option<f64>> {
     }
 }
 
+/// 標本の乱数シード。サマリ・Top-N・ヒストグラムなど段ごとのクエリで同じ標本になるよう揃える
+/// (PostgreSQL は `REPEATABLE`、MySQL は `RAND(seed)`。SQLite の `random()` はシード指定不可で、
+/// 段ごとに別の標本になりうる)。
+const SAMPLE_SEED: i64 = 1628;
+
 /// 標本モードの FROM 句と追加の WHERE 条件 (方言差はここに閉じ込める)。
 ///
 /// - PostgreSQL: `TABLESAMPLE SYSTEM (p)` (ブロック単位で読むので全件走査を避けられる。
 ///   行が物理的に偏っていると標本も偏る)。ビューには使えず、その場合の失敗は各段の縮退に乗る。
-/// - MySQL: `RAND() < p/100` (行ごとに乱数を引く。走査は全件)。
+/// - MySQL: `RAND(seed) < p/100` (行ごとに乱数を引く。走査は全件)。
 /// - SQLite: `(random() & i64::MAX) % 1000000 < p * 10000` (`abs(random())` は i64::MIN で
 ///   整数オーバーフローになるのでビットマスクで非負にする。走査は全件)。
 fn sample_parts(t: &ProfileTarget<'_>) -> (String, Option<String>) {
@@ -212,8 +217,11 @@ fn sample_parts(t: &ProfileTarget<'_>) -> (String, Option<String>) {
         return (table, None);
     };
     match t.driver {
-        DriverKind::Postgres => (format!("{table} TABLESAMPLE SYSTEM ({p})"), None),
-        DriverKind::Mysql => (table, Some(format!("RAND() < {}", p / 100.0))),
+        DriverKind::Postgres => (
+            format!("{table} TABLESAMPLE SYSTEM ({p}) REPEATABLE ({SAMPLE_SEED})"),
+            None,
+        ),
+        DriverKind::Mysql => (table, Some(format!("RAND({SAMPLE_SEED}) < {}", p / 100.0))),
         DriverKind::Sqlite => {
             let threshold = ((p * 10_000.0).round() as i64).clamp(1, 1_000_000);
             (
@@ -1142,13 +1150,13 @@ mod tests {
     fn sampled_sql_is_dialect_specific_and_read_only() {
         let pg = build_summary_sql(&sampled(DriverKind::Postgres, 1.5), DistinctMode::Exact);
         assert!(
-            pg.contains("FROM \"app\".\"users\" TABLESAMPLE SYSTEM (1.5)"),
+            pg.contains("FROM \"app\".\"users\" TABLESAMPLE SYSTEM (1.5) REPEATABLE (1628)"),
             "{pg}"
         );
         assert!(!pg.contains("WHERE"), "{pg}");
         let my = build_summary_sql(&sampled(DriverKind::Mysql, 10.0), DistinctMode::Exact);
         assert!(
-            my.ends_with("FROM `app`.`users` WHERE RAND() < 0.1"),
+            my.ends_with("FROM `app`.`users` WHERE RAND(1628) < 0.1"),
             "{my}"
         );
         let lite = build_summary_sql(&sampled(DriverKind::Sqlite, 10.0), DistinctMode::Exact);
@@ -1176,7 +1184,7 @@ mod tests {
     fn sample_condition_is_anded_with_column_conditions() {
         let top = build_top_values_sql(&sampled(DriverKind::Mysql, 10.0), 5);
         assert!(
-            top.contains("WHERE `age` IS NOT NULL AND RAND() < 0.1 GROUP BY"),
+            top.contains("WHERE `age` IS NOT NULL AND RAND(1628) < 0.1 GROUP BY"),
             "{top}"
         );
         let hist = build_histogram_sql(&sampled(DriverKind::Sqlite, 10.0), 0.0, 10.0, 4);

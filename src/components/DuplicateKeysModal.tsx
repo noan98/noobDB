@@ -5,7 +5,7 @@ import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { findDuplicateKeys } from "./duplicateKeys";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { FieldLabel, FormSection } from "./modalForm";
+import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Spinner } from "./Spinner";
 import { Button, Checkbox } from "./ui";
 
@@ -136,7 +136,7 @@ export function DuplicateKeysModal({
             <chakra.span textStyle="caption">{t("dupKeysRunning")}</chakra.span>
           </chakra.div>
         )}
-        {error && <Callout tone="warning">{error}</Callout>}
+        {error && <ErrorNote>{error}</ErrorNote>}
         {result && selected.length > 0 && (
           <>
             <Callout
