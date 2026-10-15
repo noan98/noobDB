@@ -103,7 +103,7 @@ export function KnownHostsPanel() {
 
   const handleImport = useCallback(async () => {
     if (!scan) return;
-    const chosen = scan.candidates.filter((c) => picked.has(`${c.host}:${c.port}`));
+    const chosen = scan.candidates.filter((c) => c.status !== "same" && picked.has(`${c.host}:${c.port}`));
     if (chosen.length === 0) return;
     const replacing = chosen.filter((c) => c.status === "conflict");
     if (replacing.length > 0) {
@@ -221,7 +221,12 @@ export function KnownHostsPanel() {
                 borderRadius="sm"
                 bg="app.surfaceMuted"
               >
-                <Checkbox checked={picked.has(key)} onChange={() => togglePicked(key)} aria-label={key} />
+                <Checkbox
+                  checked={c.status !== "same" && picked.has(key)}
+                  disabled={c.status === "same"}
+                  onChange={() => togglePicked(key)}
+                  aria-label={key}
+                />
                 <Flex direction="column" gap="0.5" flex="1" minW="0">
                   <chakra.span fontSize="sm" fontWeight={500}>
                     {key} <chakra.span color="app.textMuted">({c.key_type})</chakra.span>

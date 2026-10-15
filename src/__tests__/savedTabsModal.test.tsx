@@ -25,7 +25,7 @@ describe("SavedTabsModal (#1630)", () => {
       <SavedTabsModal
         profileName="Prod"
         summary={summary}
-        isActive={false}
+        isOpen={false}
         onClear={onClear}
         onClose={() => {}}
       />,
@@ -39,7 +39,7 @@ describe("SavedTabsModal (#1630)", () => {
 
   it("接続中の接続では消去できず、理由を示す", () => {
     renderWithProviders(
-      <SavedTabsModal profileName="Prod" summary={summary} isActive onClear={() => {}} onClose={() => {}} />,
+      <SavedTabsModal profileName="Prod" summary={summary} isOpen onClear={() => {}} onClose={() => {}} />,
     );
     expect(screen.getByRole("button", { name: t("savedTabsClear") })).toBeDisabled();
     expect(screen.getByText(t("savedTabsActiveNote"))).toBeInTheDocument();
@@ -50,7 +50,7 @@ describe("SavedTabsModal (#1630)", () => {
       <SavedTabsModal
         profileName="Prod"
         summary={{ total: 0, panes: [] }}
-        isActive={false}
+        isOpen={false}
         onClear={() => {}}
         onClose={() => {}}
       />,

@@ -94,6 +94,14 @@ describe("KnownHostsPanel の履歴と OpenSSH 取り込み (#1630)", () => {
           status: "conflict",
           existing_fingerprint: "SHA256:old",
         },
+        {
+          host: "same.example.com",
+          port: 22,
+          fingerprint: "SHA256:s",
+          key_type: "ssh-ed25519",
+          status: "same",
+          existing_fingerprint: "SHA256:s",
+        },
       ],
       hashed_skipped: 3,
       other_skipped: 0,
@@ -104,6 +112,8 @@ describe("KnownHostsPanel の履歴と OpenSSH 取り込み (#1630)", () => {
     await user.click(await screen.findByRole("button", { name: t("knownHostsImportOpen") }));
     const box = await screen.findByTestId("known-hosts-import");
     expect(box).toHaveTextContent(t("knownHostsImportHashed", { count: 3 }));
+    // 指紋が同じ候補は選べない (取り込んでも何も変わらない)。
+    expect(screen.getByRole("checkbox", { name: "same.example.com:22" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: t("knownHostsImportRun") }));
     expect(importKnownHosts).toHaveBeenCalledWith([
       { host: "new.example.com", port: 22, fingerprint: "SHA256:n" },

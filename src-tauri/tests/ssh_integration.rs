@@ -218,6 +218,37 @@ async fn ssh_reconnect_succeeds_with_known_host_when_env_set() {
     }
 }
 
+// #1630: 固定ローカルポートのトンネルは、旧トンネルが残ったままだと再 bind できない。
+// 再接続は旧セッションを残したまま新トンネルを開くので、release_listener で待ち受けだけを
+// 先に手放してから同じポートへ bind し直せることを実 sshd で確認する。
+#[tokio::test]
+async fn ssh_pinned_port_can_be_rebound_after_release_listener_when_env_set() {
+    let Some(url) = test_url() else {
+        eprintln!("skip: NOOBDB_TEST_SSH_URL not set");
+        return;
+    };
+    let echo_port = spawn_echo_server().await;
+    // 空きポートを OS に選ばせ、いったん閉じてから固定ポートとして使う。
+    let pinned = {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        l.local_addr().expect("addr").port()
+    };
+    let mut cfg = config_for(&url, echo_port, SshAuthMethod::Password, None);
+    cfg.local_port = Some(pinned);
+
+    let old = SshTunnel::open(&cfg).await.expect("first tunnel");
+    assert_eq!(old.local_port, pinned);
+    // 旧トンネルが残っている間は使用中エラー。
+    assert!(SshTunnel::open(&cfg).await.is_err());
+
+    old.release_listener().await;
+    let new = SshTunnel::open(&cfg).await.expect("rebind after release");
+    assert_eq!(new.local_port, pinned);
+    assert_tunnel_forwards(new.local_port).await;
+    drop(old);
+    drop(new);
+}
+
 // #708: 多段トンネル (踏み台 1 段 + 最終 SSH ホスト、計 2 ホップ) の実 sshd に対する
 // ラウンドトリップ。同一 sshd を 2 段として使い (CLAUDE.md 記載の許容パターン)、
 // 「1 段目のローカルポートを 2 段目の接続先にする」チェーンを実際に張って

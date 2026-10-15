@@ -1177,7 +1177,7 @@ const en = {
   savedTabsKindQuery: "Query",
   savedTabsKindExplain: "Explain",
   savedTabsActiveNote:
-    "This connection is open. Its saved tabs are replaced with the current tabs when you switch away or disconnect, so they can't be cleared here.",
+    "This connection is open (including in the background). Its saved tabs are replaced with the current tabs when you switch away or disconnect, so they can't be cleared here.",
   savedTabsClear: "Clear saved tabs",
   savedTabsClose: "Close",
   savedTabsCleared: "Cleared the saved tabs of {name}.",

@@ -1,3 +1,4 @@
+import { Box } from "@chakra-ui/react";
 import { useState } from "react";
 import { useT } from "../i18n";
 import { normalizeGroupName } from "../profileGroup";
@@ -50,7 +51,7 @@ export function GroupNameModal({ count, existingGroups, onConfirm, onClose }: Pr
         </FormSection>
       </ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
+        <Box flex="1" />
         <Button type="button" variant="secondary" onClick={onClose}>
           {t("groupNameCancel")}
         </Button>

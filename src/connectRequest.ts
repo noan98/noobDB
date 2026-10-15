@@ -15,7 +15,14 @@ export function normalizeDriver(driver: string): DriverKind {
   return driver === "postgres" || driver === "sqlite" ? driver : "mysql";
 }
 
-export type ConnectRequestOverrides = Partial<Pick<ConnectRequest, "read_only" | "skip_history">>;
+export type ConnectRequestOverrides = Partial<Pick<ConnectRequest, "read_only" | "skip_history">> & {
+  /**
+   * true のときだけプロファイルの固定ローカルポート (`ssh.local_port`, #1630) を引き継ぐ。
+   * 既定は false (自動割当) — 補助セッション (スキーマ比較・データ転送) が本接続の
+   * 固定ポートを奪い合って「使用中」で失敗するのを防ぐ。本接続だけ true にする。
+   */
+  pinLocalPort?: boolean;
+};
 
 export function connectRequestFromProfile(
   profile: ConnectionProfile,
@@ -26,6 +33,7 @@ export function connectRequestFromProfile(
         ...profile.ssh,
         passphrase: "",
         password: "",
+        local_port: overrides.pinLocalPort ? (profile.ssh.local_port ?? null) : null,
         jump: profile.ssh.jump ? { ...profile.ssh.jump, passphrase: "", password: "" } : null,
       }
     : null;

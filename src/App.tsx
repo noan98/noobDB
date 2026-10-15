@@ -3593,8 +3593,24 @@ export default function App() {
       // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
       const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
       if (alreadyOpen && staleProfileIdsRef.current.has(profile.id)) {
-        // 生存確認で切れていた背景接続 (#1630): 切り替えても死んだセッションなので、残骸を片付けて
-        // 以降は新規接続と同じ経路で張り直す (保存済みタブは切替時に退避済みで、ここで復元される)。
+        // 切れたと判定された背景接続 (#1630): クリック時にもう一度生存確認する。
+        // 一時的な ping 失敗で生きている接続を捨てないよう、生きていれば通常の切替にする。
+        const alive = await api.pingSession(alreadyOpen.sessionId).catch(() => false);
+        if (alive) {
+          setStaleProfileIds((prev) =>
+            nextStaleProfileIds(
+              prev,
+              [{ profileId: profile.id, alive: true }],
+              openConnectionsRef.current.map((c) => c.profile.id),
+            ),
+          );
+          await switchToOpenConnection(alreadyOpen);
+          return;
+        }
+        // 死んでいる: 未コミットのトランザクションがあれば破棄の確認を通してから片付ける。
+        if (!(await confirmDiscardOpenTransactions([alreadyOpen.sessionId], "disconnect"))) return;
+        // 残骸を片付けて以降は新規接続と同じ経路で張り直す (保存済みタブは切替時に退避済みで、
+        // ここで復元される)。
         openConnectionsRef.current = openConnectionsRef.current.filter((c) => c.profile.id !== profile.id);
         removeOpenConnection(profile.id);
         setStaleProfileIds((prev) =>
@@ -3604,7 +3620,9 @@ export default function App() {
             openConnectionsRef.current.map((c) => c.profile.id),
           ),
         );
-        void api.disconnect(alreadyOpen.sessionId).catch(() => {
+        // 固定ローカルポート (#1630) のトンネルは切断が済むまでポートを握っているため、
+        // 張り直す前に切断の完了を待つ。
+        await api.disconnect(alreadyOpen.sessionId).catch(() => {
           /* 既に切れている接続の後始末なので失敗は無視 */
         });
         clearEmergencyFor(alreadyOpen.sessionId);
@@ -3674,7 +3692,11 @@ export default function App() {
         // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
         const res = isLocalProfile(profile)
           ? { session_id: await ensureLocalSession() }
-          : await api.connect(connectRequestFromProfile(profile), attemptId, settings.connectTimeoutSecs);
+          : await api.connect(
+              connectRequestFromProfile(profile, { pinLocalPort: true }),
+              attemptId,
+              settings.connectTimeoutSecs,
+            );
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -3766,6 +3788,7 @@ export default function App() {
       switchToOpenConnection,
       confirmDiscardPendingEdits,
       confirmLeaveOpenTransaction,
+      confirmDiscardOpenTransactions,
       upsertOpenConnection,
       removeOpenConnection,
       clearEmergencyFor,
@@ -8848,6 +8871,8 @@ export default function App() {
   );
   const handleClearSavedTabs = useCallback(() => {
     if (!savedTabsTarget) return;
+    // 開いている接続の保存内容は切替/切断時に上書きされるので消せない (モーダルでも無効化済み)。
+    if (openConnectionsRef.current.some((c) => c.profile.id === savedTabsTarget.id)) return;
     clearPersistedTabs(savedTabsTarget.id);
     // 「今回は開かない」で保持していた分も忘れる (残すと保存側が書き戻してしまう)。
     keptSavedTabsRef.current.delete(savedTabsTarget.id);
@@ -12508,7 +12533,7 @@ export default function App() {
                 <SavedTabsModal
                   profileName={savedTabsTarget.name}
                   summary={savedTabsSummary}
-                  isActive={savedTabsTarget.id === selectedProfile?.id}
+                  isOpen={openProfileIds.has(savedTabsTarget.id)}
                   onClear={handleClearSavedTabs}
                   onClose={() => setSavedTabsTarget(null)}
                 />

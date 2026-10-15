@@ -92,7 +92,7 @@ fn next_accept_backoff(current: Duration) -> Duration {
 /// invariant extended one level further up the chain.
 pub struct SshTunnel {
     pub local_port: u16,
-    accept_task: Option<JoinHandle<()>>,
+    accept_task: Mutex<Option<JoinHandle<()>>>,
     /// Handles for per-connection `copy_bidirectional` tasks.  The accept loop
     /// prunes finished handles on every new connection; `Drop` aborts whatever
     /// remains so no orphan tasks outlive the tunnel.
@@ -438,7 +438,7 @@ impl SshTunnel {
 
             Ok(Self {
                 local_port,
-                accept_task: Some(accept_task),
+                accept_task: Mutex::new(Some(accept_task)),
                 transfer_tasks,
                 _session: session,
                 _upstream: upstream,
@@ -450,6 +450,31 @@ impl SshTunnel {
 }
 
 impl SshTunnel {
+    fn accept_task_finished(&self) -> bool {
+        self.accept_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map_or(true, |h| h.is_finished())
+    }
+
+    /// 待ち受けソケットだけを先に手放す (#1630)。固定ローカルポートのトンネルを再接続
+    /// するとき、旧セッションが残ったまま同じポートへ bind すると AddrInUse になるため、
+    /// accept ループを中断し、タスクが破棄されて listener が閉じるまで待つ。
+    /// 以後このトンネルは新規接続を受け付けない (`is_alive` も false になる)。
+    pub async fn release_listener(&self) {
+        let handle = self
+            .accept_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(h) = handle {
+            h.abort();
+            // 中断済みなので Err(cancelled) になる。完了 = listener の drop。
+            let _ = h.await;
+        }
+    }
+
     /// トンネルがまだ使える状態か (#1537)。外部に見えるのは `local_port` だけだったため、
     /// SSH セッションが落ちても accept ループは待ち受けを続け、次のクエリが失敗して
     /// 初めて切断に気付けた。ここでは次の 3 点を**ネットワークに触れず**に調べる:
@@ -462,7 +487,7 @@ impl SshTunnel {
     pub fn is_alive(&self) -> bool {
         tunnel_state_alive(
             self._session.is_closed(),
-            self.accept_task.as_ref().map_or(true, |h| h.is_finished()),
+            self.accept_task_finished(),
             self._upstream.as_ref().map(|u| u.is_alive()),
         )
     }
@@ -479,7 +504,12 @@ fn tunnel_state_alive(
 
 impl Drop for SshTunnel {
     fn drop(&mut self) {
-        if let Some(h) = self.accept_task.take() {
+        if let Some(h) = self
+            .accept_task
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             h.abort();
         }
         // Abort all in-flight transfer tasks so no orphan tasks outlive the

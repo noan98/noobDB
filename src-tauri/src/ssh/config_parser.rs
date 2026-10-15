@@ -54,36 +54,95 @@ pub struct ProxyJumpTarget {
 ///   treated as not matching, since it can't be decided without the context
 ///   OpenSSH has at connect time.
 /// - `Include` is *not* followed here (this function only sees `content`);
-///   use [`resolve_host_with_includes`] to expand it first.
+///   use [`resolve_host_with_includes`] to follow it.
 ///
 /// Returns `None` when no block names `alias` explicitly (a bare `Host *`
 /// alone does not make an alias "known"), so the caller can distinguish
 /// "unknown alias" from "known alias, config just doesn't say much".
 pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
-    // Directives before the first Host / Match are global.
-    let mut in_block = true;
-    let mut found = false;
-    let mut out = ResolvedSshHost::default();
-    // `ProxyJump none` は「踏み台を使わない」の明示で、最初に得た値として後続ブロックの
-    // ProxyJump も打ち消す (値としては `None` のまま)。
-    let mut proxy_decided = false;
+    resolve_inner(content, alias, None)
+}
+
+/// 解決中の可変状態 (Include をまたいで共有する)。
+#[derive(Default)]
+struct ResolveState {
+    out: ResolvedSshHost,
+    found: bool,
+    /// `ProxyJump none` は「踏み台を使わない」の明示で、最初に得た値として後続ブロックの
+    /// ProxyJump も打ち消す (値としては `None` のまま)。
+    proxy_decided: bool,
+}
+
+fn resolve_inner(content: &str, alias: &str, base_dir: Option<&Path>) -> Option<ResolvedSshHost> {
+    let mut st = ResolveState::default();
+    // Directives before the first Host / Match are global (= active).
+    process_config(content, alias, base_dir, 0, true, false, &mut st);
+    st.found.then_some(st.out)
+}
+
+/// 1 ファイル分を OpenSSH (readconf.c) と同じ流儀で処理する。
+///
+/// - `active_in`: 呼び出し元の時点でブロックが有効か。Include されたファイルの先頭は
+///   この状態を引き継ぐ。
+/// - `never_match`: 不一致ブロックの中の `Include`。中の `Host` / `Match` は有効に
+///   ならず (ブロックを適用しない)、`found` にも寄与しない。
+/// - Include から戻ったら親の有効状態を元に戻す (子の `Host` で親が切り替わらない)。
+fn process_config(
+    content: &str,
+    alias: &str,
+    base_dir: Option<&Path>,
+    depth: usize,
+    active_in: bool,
+    never_match: bool,
+    st: &mut ResolveState,
+) {
+    let mut in_block = active_in;
     for raw_line in content.lines() {
         let Some((key, rest)) = split_directive(raw_line) else {
             continue;
         };
         let key_lower = key.to_ascii_lowercase();
         if key_lower == "host" {
+            if never_match {
+                in_block = false;
+                continue;
+            }
             let (matched, explicit) = host_patterns_match(rest, alias);
             in_block = matched;
             if matched && explicit {
-                found = true;
+                st.found = true;
             }
             continue;
         }
         if key_lower == "match" {
             // 条件は host / all だけ評価する。判定できない条件 (exec / user 等) の
             // ブロックは適用しない (誤適用より未適用を選ぶ)。
-            in_block = match_condition_holds(rest, alias);
+            let current_host = st.out.host_name.as_deref().unwrap_or(alias);
+            in_block = !never_match && match_condition_holds(rest, alias, current_host);
+            continue;
+        }
+        if key_lower == "include" {
+            let Some(base) = base_dir else { continue };
+            if depth >= MAX_INCLUDE_DEPTH {
+                continue;
+            }
+            for token in rest.split_whitespace() {
+                for file in include_targets(token, base) {
+                    let Some(text) = read_limited(&file) else {
+                        continue;
+                    };
+                    // 子の中の Host / Match は親へ漏らさない (戻り後は in_block のまま)。
+                    process_config(
+                        &text,
+                        alias,
+                        base_dir,
+                        depth + 1,
+                        in_block,
+                        never_match || !in_block,
+                        st,
+                    );
+                }
+            }
             continue;
         }
         if !in_block {
@@ -92,6 +151,7 @@ pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
         // "First obtained value wins" — matches real OpenSSH behavior, so a
         // later, more general `Host *` block can't silently override an
         // already-resolved specific setting.
+        let out = &mut st.out;
         match key_lower.as_str() {
             "hostname" if out.host_name.is_none() => out.host_name = Some(rest.to_string()),
             "port" if out.port.is_none() => out.port = rest.parse().ok(),
@@ -99,19 +159,14 @@ pub fn resolve_host(content: &str, alias: &str) -> Option<ResolvedSshHost> {
             "identityfile" if out.identity_file.is_none() => {
                 out.identity_file = Some(expand_tilde(rest))
             }
-            "proxyjump" if !proxy_decided => {
-                proxy_decided = true;
+            "proxyjump" if !st.proxy_decided => {
+                st.proxy_decided = true;
                 if !rest.eq_ignore_ascii_case("none") {
                     out.proxy_jump = Some(rest.to_string());
                 }
             }
             _ => {}
         }
-    }
-    if found {
-        Some(out)
-    } else {
-        None
     }
 }
 
@@ -139,7 +194,7 @@ fn host_patterns_match(patterns: &str, alias: &str) -> (bool, bool) {
 /// `Match` 行の条件が成り立つか。`all` と `host` / `originalhost` (パターン列) だけ
 /// 評価し、複数条件はすべて成り立つ場合のみ真 (OpenSSH と同じ AND)。それ以外の条件が
 /// 1 つでもあれば偽。
-fn match_condition_holds(rest: &str, alias: &str) -> bool {
+fn match_condition_holds(rest: &str, alias: &str, current_host: &str) -> bool {
     let tokens: Vec<&str> = rest.split_whitespace().collect();
     if tokens.is_empty() {
         return false;
@@ -153,9 +208,11 @@ fn match_condition_holds(rest: &str, alias: &str) -> bool {
                 let Some(list) = tokens.get(i + 1) else {
                     return false;
                 };
-                // パターンはカンマ区切り (`host a.example,!b.example`)。
+                // `host` は HostName 適用後のホスト名、`originalhost` はコマンドラインの
+                // alias と照合する (OpenSSH と同じ)。パターンはカンマ区切り。
+                let target = if crit == "host" { current_host } else { alias };
                 let joined = list.replace(',', " ");
-                let (matched, _) = host_patterns_match(&joined, alias);
+                let (matched, _) = host_patterns_match(&joined, target);
                 if !matched {
                     return false;
                 }
@@ -167,58 +224,39 @@ fn match_condition_holds(rest: &str, alias: &str) -> bool {
     true
 }
 
-/// `*` (任意長) と `?` (1 文字) だけのシンプルな glob 照合。
+/// `*` (任意長) と `?` (1 文字) だけのシンプルな glob 照合。反復実装 (最悪でも
+/// O(パターン長 x 文字列長)) で、`*` を並べた悪意あるパターンでも指数的に膨らまない。
 fn glob_match(pattern: &str, text: &str) -> bool {
-    fn go(p: &[char], t: &[char]) -> bool {
-        match p.first() {
-            None => t.is_empty(),
-            Some('*') => (0..=t.len()).any(|k| go(&p[1..], &t[k..])),
-            Some('?') => !t.is_empty() && go(&p[1..], &t[1..]),
-            Some(c) => t.first() == Some(c) && go(&p[1..], &t[1..]),
-        }
-    }
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
-    go(&p, &t)
+    let (mut pi, mut ti) = (0usize, 0usize);
+    // 直近の `*` の位置と、その `*` が飲み込んだ文字列の終端。
+    let mut star: Option<(usize, usize)> = None;
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) && p[pi] != '*' {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some((pi, ti));
+            pi += 1;
+        } else if let Some((sp, st)) = star {
+            pi = sp + 1;
+            ti = st + 1;
+            star = Some((sp, st + 1));
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
 }
 
 /// `Include` の再帰上限 (OpenSSH は 16)。循環や深い入れ子で暴走しないための保険。
 const MAX_INCLUDE_DEPTH: usize = 8;
 /// 読み込む設定ファイル 1 つあたりの上限。
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
-
-/// `content` の `Include` 行を `base_dir` 基準で展開した 1 本のテキストにする。
-/// 相対パスは `base_dir` (通常は `~/.ssh`) 起点、`~/` はホーム、ファイル名部分の
-/// `*` / `?` は辞書順に展開する。読めないファイルは黙って飛ばす (best-effort)。
-pub fn expand_includes(content: &str, base_dir: &Path) -> String {
-    let mut out = String::new();
-    expand_into(content, base_dir, 0, &mut out);
-    out
-}
-
-fn expand_into(content: &str, base_dir: &Path, depth: usize, out: &mut String) {
-    for line in content.lines() {
-        let is_include = split_directive(line)
-            .filter(|(k, _)| k.eq_ignore_ascii_case("include"))
-            .map(|(_, rest)| rest.to_string());
-        let Some(arg) = is_include else {
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        };
-        if depth >= MAX_INCLUDE_DEPTH {
-            continue;
-        }
-        for token in arg.split_whitespace() {
-            for file in include_targets(token, base_dir) {
-                let Some(text) = read_limited(&file) else {
-                    continue;
-                };
-                expand_into(&text, base_dir, depth + 1, out);
-            }
-        }
-    }
-}
 
 fn read_limited(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
@@ -258,13 +296,15 @@ fn include_targets(token: &str, base_dir: &Path) -> Vec<PathBuf> {
     hits
 }
 
-/// [`expand_includes`] で `Include` を辿ってから [`resolve_host`] する (#1630)。
+/// `Include` を再帰的に辿りながら [`resolve_host`] する (#1630)。相対パスは `base_dir`
+/// (通常は `~/.ssh`) 起点、`~/` はホーム、ファイル名部分の `*` / `?` は辞書順に展開する。
+/// 読めないファイルは黙って飛ばす (best-effort)。
 pub fn resolve_host_with_includes(
     content: &str,
     alias: &str,
     base_dir: &Path,
 ) -> Option<ResolvedSshHost> {
-    resolve_host(&expand_includes(content, base_dir), alias)
+    resolve_inner(content, alias, Some(base_dir))
 }
 
 /// Split one config line into `(directive, value)`, skipping blank lines,
@@ -589,7 +629,7 @@ Host *
         let content = "\
 Host t
   HostName t.example
-Match host t,u
+Match originalhost t,u
   User matched
 Match user bob
   Port 2201
@@ -630,5 +670,91 @@ Match all
         let r = resolve_host_with_includes("Include loop\n", "l", &dir).unwrap();
         assert_eq!(r.user.as_deref(), Some("u"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn temp_cfg_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("noobdb-cfg-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    // 不一致ブロック内の Include は never-match で読まれ、中の Host * / Host bar は効かない。
+    #[test]
+    fn include_inside_non_matching_block_does_not_leak_to_other_aliases() {
+        let dir = temp_cfg_dir("leak");
+        std::fs::write(
+            dir.join("common"),
+            "Host *
+  User leaked
+Host bar
+  Port 9999
+",
+        )
+        .unwrap();
+        let content = "Host foo
+  Include common
+Host bar
+  HostName bar.example
+";
+        let r = resolve_host_with_includes(content, "bar", &dir).unwrap();
+        assert_eq!(r.host_name.as_deref(), Some("bar.example"));
+        assert_eq!(r.user, None);
+        assert_eq!(r.port, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Include から戻ったら親ブロックの適用状態に戻る (子の Host で親の後続指定が消えない)。
+    #[test]
+    fn include_restores_parent_block_state_on_return() {
+        let dir = temp_cfg_dir("restore");
+        std::fs::write(
+            dir.join("common"),
+            "Host other
+  User bob
+",
+        )
+        .unwrap();
+        let content = "Host db
+  HostName db.example
+  Include common
+  User alice
+";
+        let r = resolve_host_with_includes(content, "db", &dir).unwrap();
+        assert_eq!(r.user.as_deref(), Some("alice"));
+        assert_eq!(r.host_name.as_deref(), Some("db.example"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // `Match host` は HostName 適用後、`originalhost` は alias と照合する。
+    #[test]
+    fn match_host_uses_resolved_hostname_and_originalhost_uses_alias() {
+        let content = "\
+Host web
+  HostName real.example
+Match host real.example
+  User byhost
+Match originalhost web
+  Port 2222
+Match host web
+  IdentityFile /keys/no
+";
+        let r = resolve_host(content, "web").unwrap();
+        assert_eq!(r.user.as_deref(), Some("byhost"));
+        assert_eq!(r.port, Some(2222));
+        assert_eq!(r.identity_file, None);
+    }
+
+    #[test]
+    fn glob_match_basics_and_no_exponential_backtracking() {
+        assert!(glob_match("*.example.com", "a.example.com"));
+        assert!(glob_match("a?c", "abc"));
+        assert!(!glob_match("a?c", "ac"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("a*b*c", "aXXbYYc"));
+        assert!(!glob_match("a*b*c", "aXXbYY"));
+        // 指数的バックトラックを起こす古典的なパターンが即座に終わる。
+        let pat = "*a".repeat(40) + "b";
+        assert!(!glob_match(&pat, &"a".repeat(200)));
     }
 }

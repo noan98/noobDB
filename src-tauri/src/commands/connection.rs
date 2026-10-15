@@ -229,6 +229,12 @@ pub async fn test_connection(
     let progress = ConnectProgress::new(app.clone(), attempt_id.clone());
 
     let fut = async move {
+        // 接続テストは本接続の固定ローカルポート (#1630) を占有しない (使用中の本接続と
+        // 衝突させない) ので、常に自動割当で張る。
+        let mut req = req;
+        if let Some(ssh) = req.ssh.as_mut() {
+            ssh.local_port = None;
+        }
         let (tunnel, _opts, conn) = open_connection(&req, &progress, secs).await?;
         conn.execute("SELECT 1", None).await?;
         conn.close().await;
@@ -685,6 +691,13 @@ async fn reopen_transport(
                         jump.password = p;
                     }
                 }
+            }
+        }
+        // 固定ローカルポート (#1630) は旧トンネルがまだ listen している間は bind できない。
+        // 旧セッションは新トンネルが張れるまで残すが、待ち受けだけは先に手放す。
+        if cfg.local_port.is_some() {
+            if let Some(Tunnel::Ssh(old_tunnel)) = &old._tunnel {
+                old_tunnel.release_listener().await;
             }
         }
         let t = SshTunnel::open_with_progress(&cfg, |p| {

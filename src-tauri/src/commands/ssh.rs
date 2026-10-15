@@ -135,7 +135,7 @@ pub async fn scan_openssh_known_hosts() -> Result<ImportScan> {
 }
 
 /// 選択された候補を noobDB の known_hosts へ書き込み、取り込んだ件数を返す (#1630)。
-/// 既存エントリがある場合は置き換え、旧指紋を履歴に残す。
+/// 既存エントリがある場合は置き換え、旧指紋を履歴に残す。指紋が同じものは何もしない。
 #[tauri::command]
 pub async fn import_known_hosts(entries: Vec<ImportKnownHostEntry>) -> Result<usize> {
     tokio::task::spawn_blocking(move || {
@@ -147,6 +147,10 @@ pub async fn import_known_hosts(entries: Vec<ImportKnownHostEntry>) -> Result<us
                 ));
             }
             let previous = current_fingerprint(&e.host, e.port);
+            // 既に同じ指紋で登録済みなら何も変わらない: 書き込まず履歴にも残さない。
+            if previous.as_deref() == Some(e.fingerprint.as_str()) {
+                continue;
+            }
             known_hosts::set_host_key(&e.host, e.port, &e.fingerprint)?;
             record_history(
                 KnownHostAction::Import,

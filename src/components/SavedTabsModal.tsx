@@ -9,7 +9,7 @@ interface Props {
   profileName: string;
   summary: SavedWorkspaceSummary;
   /** この接続が今開いている (保存内容は閉じる / 切断時に現在のタブで上書きされる)。 */
-  isActive: boolean;
+  isOpen: boolean;
   /** 保存済みタブだけを消す (接続・現在のタブには触れない)。 */
   onClear: () => void;
   onClose: () => void;
@@ -26,7 +26,7 @@ const KIND_KEY = {
  * 復元確認の「今回は開かない」で残した下書きを、あとから確認して残すか消すか選べる。
  * 破壊的操作 (消去) は左の dangerOutline、右の primary が閉じる (初期フォーカス)。
  */
-export function SavedTabsModal({ profileName, summary, isActive, onClear, onClose }: Props) {
+export function SavedTabsModal({ profileName, summary, isOpen, onClear, onClose }: Props) {
   const t = useT();
   return (
     <Modal
@@ -91,13 +91,13 @@ export function SavedTabsModal({ profileName, summary, isActive, onClear, onClos
             ))}
           </>
         )}
-        {isActive && <Callout tone="info">{t("savedTabsActiveNote")}</Callout>}
+        {isOpen && <Callout tone="info">{t("savedTabsActiveNote")}</Callout>}
       </ModalBody>
       <ModalFooter>
         <Button
           type="button"
           variant="dangerOutline"
-          disabled={summary.total === 0 || isActive}
+          disabled={summary.total === 0 || isOpen}
           onClick={onClear}
         >
           {t("savedTabsClear")}
