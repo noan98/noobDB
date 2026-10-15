@@ -85,7 +85,7 @@ import {
   type MaintenanceKind,
 } from "./maintenanceCommands";
 import { Segmented } from "./Segmented";
-import { Button, Input } from "./ui";
+import { Button, Input, Select } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
@@ -4278,15 +4278,23 @@ export const ConnectionList = memo(
                   読めているときだけ出す (#1629)。 */}
               {sessionId && activeProfileId && databases !== null && (
                 <Flex mt="1.5" gap="2" flexWrap="wrap" alignItems="center" data-testid="tree-view-options">
-                  <Segmented
-                    ariaLabel={t("treeKindFilterLabel")}
+                  {/* 種別は 4 択でラベルも長く、サイドバー幅では横並びのセグメントが
+                      はみ出すため、幅に追従するセレクトにする。 */}
+                  <Select
+                    aria-label={t("treeKindFilterLabel")}
+                    width="auto"
+                    minW="0"
+                    flex="1 1 auto"
+                    fontSize="sm"
                     value={kindFilter}
-                    options={EXPLORER_KIND_FILTERS.map((k) => ({
-                      value: k,
-                      label: t(`treeKindFilter_${k}`),
-                    }))}
-                    onChange={setKindFilter}
-                  />
+                    onChange={(e) => setKindFilter(e.target.value as ExplorerKindFilter)}
+                  >
+                    {EXPLORER_KIND_FILTERS.map((k) => (
+                      <option key={k} value={k}>
+                        {t(`treeKindFilter_${k}`)}
+                      </option>
+                    ))}
+                  </Select>
                   <Segmented
                     ariaLabel={t("treeSortLabel")}
                     value={tableSort}

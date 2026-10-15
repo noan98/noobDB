@@ -144,7 +144,7 @@ export function ExportMaskingSection({
                     )}
                   </chakra.span>
                   <Select
-                    w="170px"
+                    w="200px"
                     value={choice}
                     aria-label={t("exportMaskingRuleFor", { column })}
                     disabled={disabled}

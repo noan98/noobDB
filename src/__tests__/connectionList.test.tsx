@@ -356,7 +356,7 @@ describe("Database Explorer の階層 (#1112)", () => {
 
   it("revealInTree は種別の絞り込みと検索語を解除してから探す (#1629)", async () => {
     const ref = await renderWithHandle();
-    fireEvent.click(await screen.findByRole("radio", { name: t("treeKindFilter_views") }));
+    fireEvent.change(await screen.findByLabelText(t("treeKindFilterLabel")), { target: { value: "views" } });
     fireEvent.change(screen.getByPlaceholderText(t("listSearchPlaceholder")), { target: { value: "zzz" } });
     act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1" }));
     const row = await screen.findByRole("treeitem", { name: "tbl1" });
