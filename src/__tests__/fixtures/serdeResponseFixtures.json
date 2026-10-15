@@ -1414,6 +1414,9 @@
     "column": "email",
     "database": "appdb",
     "kind": "column",
+    "object_id": "16385",
+    "object_kind": "function",
+    "row_estimate": 1200,
     "table": "users"
   },
   "openTableEntryVariants": [

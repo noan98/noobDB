@@ -2169,12 +2169,17 @@ const en = {
   pageJumpLabel: "Go to",
   pageSizeLabel: "Per page",
   // スキーマ横断のグローバルオブジェクト検索。
-  objSearchPlaceholder: "Search tables and columns across the schema...",
+  objSearchPlaceholder: "Search tables, views, routines and columns across the schema...",
+  objSearchKind_view: "View",
+  objSearchKind_materialized_view: "Materialized view",
+  objSearchKind_procedure: "Procedure",
+  objSearchKind_function: "Function",
+  objSearchKind_trigger: "Trigger",
   objSearchScopeLabel: "Search scope",
   objSearchScopeCurrent: "Current DB",
   objSearchScopeAll: "All DBs",
-  objSearchNoResults: "No matching tables or columns",
-  objSearchHint: "Type to search table and column names",
+  objSearchNoResults: "No matching objects",
+  objSearchHint: "Type to search table, view, routine and column names (Shift+Enter opens in a new tab)",
 
   // DB 全体からの値検索 (#748): 「この値はどのテーブル・どの列にあるか」を横断検索。
   cmdkActionDataSearch: "Search data values",
@@ -7692,12 +7697,17 @@ const ja: Dict = {
   pageJumpLabel: "移動",
   pageSizeLabel: "1 ページ",
   // スキーマ横断のグローバルオブジェクト検索。
-  objSearchPlaceholder: "テーブル/カラムをスキーマ横断で検索...",
+  objSearchPlaceholder: "テーブル/ビュー/ルーチン/カラムをスキーマ横断で検索...",
+  objSearchKind_view: "ビュー",
+  objSearchKind_materialized_view: "マテリアライズドビュー",
+  objSearchKind_procedure: "プロシージャ",
+  objSearchKind_function: "関数",
+  objSearchKind_trigger: "トリガー",
   objSearchScopeLabel: "検索範囲",
   objSearchScopeCurrent: "現在の DB",
   objSearchScopeAll: "全 DB",
-  objSearchNoResults: "一致するテーブル/カラムがありません",
-  objSearchHint: "テーブル名/カラム名を入力して検索",
+  objSearchNoResults: "一致するオブジェクトがありません",
+  objSearchHint: "テーブル/ビュー/ルーチン/カラム名を入力して検索 (Shift+Enter で新しいタブに開く)",
 
   // DB 全体からの値検索 (#748): 「この値はどのテーブル・どの列にあるか」を横断検索。
   cmdkActionDataSearch: "データ値を検索",

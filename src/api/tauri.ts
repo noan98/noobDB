@@ -540,11 +540,18 @@ export type ObjectSearchScope = { kind: "current"; database: string } | { kind: 
 
 /** グローバルオブジェクト検索のヒット 1 件。テーブルそのものか、テーブル内のカラムか。 */
 export interface ObjectSearchHit {
-  kind: "table" | "column";
+  kind: "table" | "column" | "view" | "routine" | "trigger";
   database: string;
+  /** テーブル・カラムのヒットではテーブル名。ビュー / ルーチン / トリガーではオブジェクト名。 */
   table: string;
   /** `kind === "column"` のときだけ設定。 */
   column?: string;
+  /** `kind` が view / routine / trigger のときの `SchemaObject.kind` (定義を開くのに使う)。 */
+  object_kind?: string;
+  /** `SchemaObject.id` (PostgreSQL の oid など)。 */
+  object_id?: string;
+  /** `kind === "table"` のときの推定行数 (索引構築時の概算。統計が無ければ無い)。 */
+  row_estimate?: number;
 }
 
 /** Where-used (#1027 / #1261) の検索対象。`column` が null ならテーブル (ビュー) そのもの。 */

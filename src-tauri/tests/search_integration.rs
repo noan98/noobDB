@@ -66,6 +66,36 @@ fn match_names(report: &t::WhereUsedReport) -> Vec<String> {
 // オブジェクト検索
 // ---------------------------------------------------------------------------
 
+/// ビュー / トリガーも検索でき、定義を開くための種別が付く (#1629)。
+#[tokio::test]
+async fn sqlite_object_search_finds_views_and_triggers() {
+    let (session, path) = sqlite_session("objsearch_kinds", false).await;
+    for ddl in [
+        "CREATE TABLE nb1629_items (id INTEGER PRIMARY KEY, qty INTEGER)",
+        "CREATE TABLE nb1629_log (n INTEGER)",
+        "CREATE VIEW nb1629_v_items AS SELECT id FROM nb1629_items",
+        "CREATE TRIGGER nb1629_trg AFTER INSERT ON nb1629_items BEGIN INSERT INTO nb1629_log VALUES (1); END",
+    ] {
+        session.conn.execute(ddl, None).await.expect("ddl");
+    }
+    let all = t::ObjectSearchScope::All;
+    let hits = t::search_schema_objects_core(&session, &all, "nb1629", 50)
+        .await
+        .expect("search");
+    let find = |kind: &str, name: &str| {
+        hits.iter()
+            .find(|h| h.kind == kind && h.table == name && h.column.is_none())
+    };
+    assert!(find("table", "nb1629_items").is_some(), "{hits:?}");
+    let view = find("view", "nb1629_v_items").expect("view hit");
+    assert_eq!(view.object_kind.as_deref(), Some("view"));
+    let trigger = find("trigger", "nb1629_trg").expect("trigger hit");
+    assert_eq!(trigger.object_kind.as_deref(), Some("trigger"));
+    // ビューはテーブルとして二重に出ない。
+    assert!(find("table", "nb1629_v_items").is_none(), "{hits:?}");
+    let _ = std::fs::remove_file(path);
+}
+
 #[tokio::test]
 async fn sqlite_object_search_ranks_and_caches_the_index() {
     let (session, path) = sqlite_session("objsearch", false).await;
@@ -551,6 +581,22 @@ async fn mysql_search_commands_when_env_set() {
             .any(|h| h.kind == "table" && h.database == MYSQL_DB && h.table == "nb1261tok_orders"),
         "{hits:?}"
     );
+    // 関数とトリガーも検索対象 (#1629)。
+    let hits = t::search_schema_objects_core(&session, &t::ObjectSearchScope::All, "nb1261_", 50)
+        .await
+        .expect("search routines");
+    assert!(
+        hits.iter().any(|h| h.kind == "routine"
+            && h.database == MYSQL_DB
+            && h.table == "nb1261_f"
+            && h.object_kind.as_deref() == Some("function")),
+        "{hits:?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|h| h.kind == "trigger" && h.database == MYSQL_DB && h.table == "nb1261_t"),
+        "{hits:?}"
+    );
     let cur = t::ObjectSearchScope::Current {
         database: MYSQL_DB.into(),
     };
@@ -706,6 +752,21 @@ async fn postgres_search_commands_when_env_set() {
     assert!(
         hits.iter()
             .any(|h| h.kind == "table" && h.database == PG_SCHEMA && h.table == "nb1261tok_orders"),
+        "{hits:?}"
+    );
+    // 関数とトリガーも検索対象。同名の関数 (oid) を区別できるよう id が付く (#1629)。
+    let hits = t::search_schema_objects_core(&session, &t::ObjectSearchScope::All, "nb1261_", 50)
+        .await
+        .expect("search routines");
+    let func = hits
+        .iter()
+        .find(|h| h.kind == "routine" && h.database == PG_SCHEMA && h.table == "nb1261_f")
+        .unwrap_or_else(|| panic!("{hits:?}"));
+    assert_eq!(func.object_kind.as_deref(), Some("function"));
+    assert!(func.object_id.is_some(), "{func:?}");
+    assert!(
+        hits.iter()
+            .any(|h| h.kind == "trigger" && h.database == PG_SCHEMA && h.table == "nb1261_t"),
         "{hits:?}"
     );
 

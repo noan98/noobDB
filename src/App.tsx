@@ -7004,12 +7004,33 @@ export default function App() {
   // open_table の応答待ち中の (database, table)。タブがまだ state に無い間の再実行で
   // 同じテーブルのタブが二重に開かないようにする (tabOpenFlightId と同じキー)。
   const openingTablesRef = useRef<Set<string>>(new Set());
+  // オブジェクト検索の列ヒットから開いたとき、開いたテーブルの結果グリッドでその列へ
+  // アクティブセルとフォーカスを移すための保留中の要求 (#1629)。
+  const [columnReveal, setColumnReveal] = useState<{
+    database: string;
+    table: string;
+    column: string;
+    /** 「新しいタブで開く」ときに、すでにあったタブ (これらには移さない)。 */
+    excludeTabIds: string[];
+  } | null>(null);
+  const newTableTabSeqRef = useRef(0);
   const handleOpenTable = useCallback(
-    (database: string, table: string) => {
+    (database: string, table: string, opts?: { newTab?: boolean; column?: string }) => {
       recordRecentTableOpen(database, table);
-      const existing = tabs.find(
-        (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+      setColumnReveal(
+        opts?.column
+          ? {
+              database,
+              table,
+              column: opts.column,
+              excludeTabIds: opts.newTab ? tabs.map((tt) => tt.id) : [],
+            }
+          : null,
       );
+      // 「新しいタブで開く」は同じテーブルのタブが開いていても、もう 1 つ開く (#1629)。
+      const existing = opts?.newTab
+        ? undefined
+        : tabs.find((tt) => tt.kind === "table" && tt.database === database && tt.table === table);
       // サイドバー行のダブルクリックが始めた飛行 (#1415)。タブを作らない経路では即解除する。
       const flightId = tabOpenFlightId(database, table);
       if (existing) {
@@ -7022,7 +7043,9 @@ export default function App() {
         return;
       }
       // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-      const openKey = `${sessionId}\u0000${flightId}`;
+      const openKey = opts?.newTab
+        ? `${sessionId}\u0000${flightId}\u0000new${++newTableTabSeqRef.current}`
+        : `${sessionId}\u0000${flightId}`;
       if (openingTablesRef.current.has(openKey)) return;
       openingTablesRef.current.add(openKey);
       const limit = Math.max(1, settings.defaultDisplayCount);
@@ -7113,6 +7136,33 @@ export default function App() {
       patchTab,
     ],
   );
+
+  // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
+  // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
+  useEffect(() => {
+    if (!columnReveal) return;
+    const timer = setTimeout(() => setColumnReveal(null), 15000);
+    const tab = activeTab;
+    if (
+      tab &&
+      tab.kind === "table" &&
+      tab.database === columnReveal.database &&
+      tab.table === columnReveal.table &&
+      !columnReveal.excludeTabIds.includes(tab.id) &&
+      tab.result
+    ) {
+      if (tab.result.rows.length > 0) {
+        const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
+        if (grid) {
+          grid.revealColumn(columnReveal.column);
+          setColumnReveal(null);
+        }
+      } else if (!tab.streaming) {
+        setColumnReveal(null);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [columnReveal, activeTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -12816,6 +12866,9 @@ export default function App() {
               sessionId={sessionId}
               currentDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onOpenObject={(database, kind, name, id) =>
+                void handleOpenObjectDefinition(database, kind, name, id)
+              }
               onClose={() => setShowObjectSearch(false)}
             />
           )}
