@@ -493,7 +493,7 @@ function TaskRow({
               color={semanticColorToken("warning", "text")}
               data-testid="task-auto-paused"
             >
-              {t("taskAutoPausedBadge", { n: task.consecutive_failures })}
+              {t("taskAutoPausedBadge", { n: task.pause_after_failures || task.consecutive_failures })}
             </chakra.div>
           )}
         </chakra.div>

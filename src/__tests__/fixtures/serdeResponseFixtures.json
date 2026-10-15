@@ -3723,7 +3723,8 @@
       "warnings": [
         "SQLite cannot alter columns in place"
       ]
-    }
+    },
+    "preamble": "USE `appdb`"
   },
   "schemaDriftSummary": {
     "tables": [

@@ -311,18 +311,23 @@ pub async fn run_task_now(
     );
     state.forget_stream(&stream_id, token).await;
 
+    let mut cancelled = false;
     let outcome = match joined {
         Ok(outcome) => outcome,
         // `cancel_stream` による中断 (実行の future は破棄済みで、接続は Drop ガードが閉じる)。
-        Err(e) if e.is_cancelled() => executor::TaskOutcome::err(format!(
-            "cancelled by user (progress: {} {})",
-            progress.load(Ordering::SeqCst),
-            scheduler::progress_unit(&task.action)
-        )),
+        Err(e) if e.is_cancelled() => {
+            cancelled = true;
+            executor::TaskOutcome::err(format!(
+                "cancelled by user (progress: {} {})",
+                progress.load(Ordering::SeqCst),
+                scheduler::progress_unit(&task.action)
+            ))
+        }
         Err(e) => executor::TaskOutcome::err(format!("task execution aborted: {e}")),
     };
     let (event, run_id) =
-        scheduler::record_outcome(&app, task.clone(), false, started, outcome).await;
+        scheduler::record_outcome_counting(&app, task.clone(), false, started, outcome, !cancelled)
+            .await;
     // 記録した行そのものを返す。「最新の 1 件」だと、手動実行中に見送られた予定発火の
     // skipped 行 (started_at が新しい) を取り違える。
     if let Some(id) = run_id {

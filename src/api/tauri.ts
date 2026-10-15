@@ -1184,6 +1184,8 @@ export interface SchemaDriftRevertSql {
   /** 破壊的な文 (DROP) の許可が無いため出力しなかった数。 */
   omitted_destructive: number;
   database: string;
+  /** 文の前に置く対象指定 (MySQL は USE、PostgreSQL は SET search_path)。SQLite は null。 */
+  preamble: string | null;
 }
 
 export interface SchemaDriftGeneration {

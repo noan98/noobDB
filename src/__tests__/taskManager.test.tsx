@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll } from "vitest";
 import { clearTaskFormatCache } from "../taskFormat";
 import userEvent from "@testing-library/user-event";
-import { act, renderWithProviders, screen, waitFor, within } from "./testUtils";
+import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import { api, type TaskDefinition, type TaskRun } from "../api/tauri";
@@ -101,6 +101,7 @@ beforeEach(() => {
   listTaskRuns.mockResolvedValue([RUN]);
   clearTaskRuns.mockResolvedValue(1);
   getSchedulerSettings.mockResolvedValue({ catch_up_missed: false });
+  previewTaskSchedule.mockResolvedValue([]);
 });
 
 describe("TaskManager 今すぐ実行の中断・進捗 (#1534)", () => {
@@ -301,13 +302,10 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
 
     // タイムゾーンを東京、時刻 10:30、平日のみに変える。
     await user.selectOptions(screen.getByLabelText(t("taskScheduleTimezone")), "Asia/Tokyo");
-    await user.clear(hour);
-    await user.type(hour, "10");
-    await user.clear(minute);
-    await user.type(minute, "30");
+    fireEvent.change(hour, { target: { value: "10" } });
+    fireEvent.change(minute, { target: { value: "30" } });
     await user.click(screen.getByRole("button", { name: t("taskScheduleWorkdaysPreset") }));
-    await user.clear(screen.getByLabelText(t("taskFormPauseAfterFailures")));
-    await user.type(screen.getByLabelText(t("taskFormPauseAfterFailures")), "3");
+    fireEvent.change(screen.getByLabelText(t("taskFormPauseAfterFailures")), { target: { value: "3" } });
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
 
     await waitFor(() => expect(saveTask).toHaveBeenCalled());
@@ -331,9 +329,9 @@ describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
     renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
     await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
-    await user.type(await screen.findByLabelText(t("taskFormName")), "Weekly");
-    await user.type(screen.getByLabelText(t("taskFormOutputPath")), "/tmp/out.csv");
-    await user.type(screen.getByLabelText(t("taskFormSql")), "SELECT 1");
+    fireEvent.change(await screen.findByLabelText(t("taskFormName")), { target: { value: "Weekly" } });
+    fireEvent.change(screen.getByLabelText(t("taskFormOutputPath")), { target: { value: "/tmp/out.csv" } });
+    fireEvent.change(screen.getByLabelText(t("taskFormSql")), { target: { value: "SELECT 1" } });
     expect(screen.getByLabelText(t("taskFormPauseAfterFailures"))).toHaveValue(5);
 
     await user.selectOptions(screen.getByDisplayValue(t("taskScheduleInterval")), "daily");

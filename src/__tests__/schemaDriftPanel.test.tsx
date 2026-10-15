@@ -268,6 +268,7 @@ describe("SchemaDriftPanel revert DDL (#1621)", () => {
       },
       omitted_destructive: destructive ? 0 : 1,
       database: "appdb",
+      preamble: "USE `appdb`",
     });
     vi.mocked(api.schemaDriftRevertSql).mockImplementation(async (_p, _f, _t, allow) => plan(allow));
     const onInsertSql = vi.fn();
@@ -290,6 +291,12 @@ describe("SchemaDriftPanel revert DDL (#1621)", () => {
     await waitFor(() => expect(api.schemaDriftRevertSql).toHaveBeenCalledWith("p-test", "g1", "g2", false));
     const pre = await screen.findByTestId("schema-drift-revert-sql");
     expect(pre).toHaveTextContent("ADD COLUMN legacy");
+    // 対象 DB が見え、貼り付ける SQL の先頭にも対象コメントと USE が付く。
+    expect(screen.getByTestId("schema-drift-revert-target")).toHaveTextContent(
+      t("schemaDriftRevertTarget", { database: "appdb" }),
+    );
+    expect(screen.getByText(t("schemaDriftRevertAssumption"))).toBeInTheDocument();
+    expect(pre.textContent?.startsWith("-- target: appdb\nUSE `appdb`;\nALTER TABLE")).toBe(true);
     expect(pre).not.toHaveTextContent("DROP TABLE");
     expect(screen.getByText(t("schemaDriftRevertOmitted", { count: 1 }))).toBeInTheDocument();
 

@@ -9,7 +9,8 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::db::sync::{generate_sync_sql, SyncPlan};
+use crate::db::sync::{generate_sync_sql, quote_ident, SyncPlan};
+use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::schema_drift::store::{self, LegacyGeneration};
 use crate::schema_drift::{
@@ -153,6 +154,22 @@ pub struct RevertSql {
     pub omitted_destructive: usize,
     /// 戻す対象のデータベース / スキーマ。
     pub database: String,
+    /// 文の前に置く対象の指定 (MySQL は `USE`、PostgreSQL は `SET search_path`)。
+    /// 生成 DDL は表名を修飾しないため、接続中の DB / スキーマが違うと別の対象へ
+    /// 適用してしまうのを防ぐ。SQLite は DB が 1 つなので `None`。
+    pub preamble: Option<String>,
+}
+
+/// 巻き戻し DDL の先頭に置く対象指定の文 (純関数)。
+pub(crate) fn target_preamble(driver: DriverKind, database: &str) -> Option<String> {
+    match driver {
+        DriverKind::Mysql => Some(format!("USE {}", quote_ident(driver, database))),
+        DriverKind::Postgres => Some(format!(
+            "SET search_path TO {}",
+            quote_ident(driver, database)
+        )),
+        DriverKind::Sqlite => None,
+    }
 }
 
 /// 巻き戻し DDL の本体 (純粋)。`from` を source、`to` を target として差分を取り、
@@ -169,14 +186,17 @@ pub(crate) fn revert_plan(
         ));
     }
     let diff = schema_diff_between(from, to);
-    // 破壊的な文の数を数えるため、いったん全部生成してから許可されないものを外す。
-    let mut plan = generate_sync_sql(&diff, true);
-    let destructive = plan.statements.iter().filter(|s| s.destructive).count();
+    // 本体は許可どおりに生成し (DROP 前提の警告も許可があるときだけ出る)、
+    // 省いた件数を知るためだけに「全部生成」を別に呼ぶ。
+    let mut plan = generate_sync_sql(&diff, allow_destructive);
     let omitted_destructive = if allow_destructive {
         0
     } else {
-        plan.statements.retain(|s| !s.destructive);
-        destructive
+        generate_sync_sql(&diff, true)
+            .statements
+            .iter()
+            .filter(|s| s.destructive)
+            .count()
     };
     for entry in diff_indexes(from, to) {
         let what = match entry.status {
@@ -193,6 +213,7 @@ pub(crate) fn revert_plan(
         plan,
         omitted_destructive,
         database: to.database.clone(),
+        preamble: target_preamble(to.driver, &to.database),
     })
 }
 
@@ -332,6 +353,59 @@ mod tests {
         assert!(drops
             .iter()
             .any(|s| s.contains("DROP TABLE") && s.contains("audit")));
+    }
+
+    #[test]
+    fn revert_plan_without_permission_has_no_destructive_warnings() {
+        let old = mysql_payload(vec![table("a", vec![col("id", "int", "PRI")])]);
+        let new = mysql_payload(vec![
+            table("a", vec![col("id", "int", "PRI")]),
+            table("b", vec![col("id", "int", "PRI")]),
+        ]);
+        let safe = revert_plan(&old, &new, false).unwrap();
+        assert_eq!(safe.omitted_destructive, 1);
+        assert!(safe.plan.statements.is_empty());
+    }
+
+    #[test]
+    fn revert_plan_carries_target_preamble_per_driver() {
+        let m = revert_plan(&mysql_payload(vec![]), &mysql_payload(vec![]), false).unwrap();
+        assert_eq!(m.preamble.as_deref(), Some("USE `app`"));
+        let p = revert_plan(&payload("public"), &payload("public"), false).unwrap();
+        assert_eq!(p.preamble.as_deref(), Some("SET search_path TO \"public\""));
+        let mut sq = payload("main");
+        sq.driver = DriverKind::Sqlite;
+        let r = revert_plan(&sq, &sq, false).unwrap();
+        assert_eq!(r.preamble, None);
+    }
+
+    #[test]
+    fn revert_plan_works_for_postgres_and_sqlite() {
+        for driver in [DriverKind::Postgres, DriverKind::Sqlite] {
+            let mk = |tables| SnapshotPayload {
+                driver,
+                database: "main".into(),
+                tables,
+            };
+            let old = mk(vec![table(
+                "users",
+                vec![col("id", "integer", "PRI"), col("legacy", "text", "")],
+            )]);
+            let new = mk(vec![table("users", vec![col("id", "integer", "PRI")])]);
+            let plan = revert_plan(&old, &new, false).unwrap();
+            assert!(
+                plan.plan
+                    .statements
+                    .iter()
+                    .any(|s| s.sql.contains("ADD COLUMN") && s.sql.contains("legacy")),
+                "{driver:?}: {:?}",
+                plan.plan.statements
+            );
+            // 追加された列を戻す DROP は許可が無いと省かれる。
+            let rev = revert_plan(&new, &old, false).unwrap();
+            assert!(rev.plan.statements.iter().all(|s| !s.destructive));
+            assert_eq!(rev.omitted_destructive, 1, "{driver:?}");
+        }
     }
 
     #[test]

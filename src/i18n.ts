@@ -5190,7 +5190,6 @@ const en = {
   taskRelMinutes: "{n} min",
   taskRelHours: "{n} h",
   taskRelDays: "{n} d",
-  taskScheduleLocalHint: "({tz}, = UTC {utc})",
   taskFormEnabled: "Enabled",
   taskFormCancel: "Cancel",
   taskFormSave: "Save",
@@ -5577,6 +5576,9 @@ const en = {
   taskAutoPausedNotifyTitle: "Task paused: {name}",
   taskScheduleHour: "Hour",
   taskScheduleMinute: "Minute",
+  schemaDriftRevertTarget: "Target: {database}",
+  schemaDriftRevertAssumption:
+    "Assumes the target database is in the same state as the newer generation you compared against. If it has drifted since, review each statement before running it.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10744,7 +10746,6 @@ const ja: Dict = {
   taskRelMinutes: "{n} 分後",
   taskRelHours: "{n} 時間後",
   taskRelDays: "{n} 日後",
-  taskScheduleLocalHint: "({tz}。UTC {utc} に相当)",
   taskFormEnabled: "有効",
   taskFormCancel: "キャンセル",
   taskFormSave: "保存",
@@ -11119,6 +11120,9 @@ const ja: Dict = {
   taskAutoPausedNotifyTitle: "タスクを自動停止しました: {name}",
   taskScheduleHour: "時",
   taskScheduleMinute: "分",
+  schemaDriftRevertTarget: "対象: {database}",
+  schemaDriftRevertAssumption:
+    "比較先の世代と今の DB が同じ状態であることが前提です。その後に変わっている場合は、各文を確認してから実行してください。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

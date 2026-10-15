@@ -5,7 +5,7 @@
 //!
 //! 内部の時刻は UTC。`Daily` だけは IANA タイムゾーン (`timezone`、省略時は UTC) の
 //! ローカル時刻で `hour:minute` を解釈し、`chrono-tz` で UTC へ変換する (#1621)。
-//! DST の隙間にあたる時刻はその直後へ送り、重複する時刻は早い方で 1 回だけ発火する。
+//! DST の隙間にあたる時刻は隙間の直前のオフセットで換算し (2:30 → 3:30)、重複する時刻は早い方で 1 回だけ発火する。
 //! 曜日マスクも同じタイムゾーンのローカル日付で判定する。
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -81,19 +81,27 @@ pub fn upcoming_runs(
     out
 }
 
-/// ローカル日付 `date` の `time` を UTC に直す。DST の隙間 (存在しない時刻) は隙間が終わる
-/// 直後の時刻へ送り、重複する時刻 (秋の巻き戻し) は早い方を採る。
+/// ローカル日付 `date` の `time` を UTC に直す。重複する時刻 (秋の巻き戻し) は早い方を採る。
+/// DST の隙間 (存在しない時刻) は、一般的な方式どおり隙間の直前のオフセットで UTC に直す
+/// (米東部で 2:15 → 3:15、2:30 → 3:30。隙間の内側の分刻みはそのまま保たれる)。
 fn resolve_local(tz: Tz, date: NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {
-    let mut naive = date.and_time(time);
-    // 隙間は通常 1 時間 (歴史的には最大 2 時間) なので、30 分刻みで最大 6 時間まで送る。
-    for _ in 0..12 {
-        match tz.from_local_datetime(&naive) {
-            chrono::LocalResult::Single(dt) => return Some(dt.with_timezone(&Utc)),
-            chrono::LocalResult::Ambiguous(early, _) => return Some(early.with_timezone(&Utc)),
-            chrono::LocalResult::None => naive += Duration::minutes(30),
+    use chrono::Offset;
+    let naive = date.and_time(time);
+    match tz.from_local_datetime(&naive) {
+        chrono::LocalResult::Single(dt) => Some(dt.with_timezone(&Utc)),
+        chrono::LocalResult::Ambiguous(early, _) => Some(early.with_timezone(&Utc)),
+        chrono::LocalResult::None => {
+            // 隙間は最大でも 2 時間程度なので、3 時間前は隙間より前 (切り替え前のオフセット)。
+            let before = naive - Duration::hours(3);
+            let offset = match tz.offset_from_local_datetime(&before) {
+                chrono::LocalResult::Single(o) => o,
+                chrono::LocalResult::Ambiguous(_, late) => late,
+                chrono::LocalResult::None => return None,
+            };
+            let secs = i64::from(offset.fix().local_minus_utc());
+            Some((naive - Duration::seconds(secs)).and_utc())
         }
     }
-    None
 }
 
 /// 曜日マスクが `date` の曜日を許すか (0 = 毎日)。
@@ -234,11 +242,17 @@ mod tests {
 
     #[test]
     fn dst_gap_moves_forward_and_fold_fires_once_at_the_earlier_time() {
-        // 2026-03-08 米東部は 2:00 → 3:00 に飛ぶ (2:30 は存在しない)。隙間の直後 (3:00 EDT = UTC 7:00)。
+        // 2026-03-08 米東部は 2:00 → 3:00 に飛ぶ (2:30 は存在しない)。隙間の直前のオフセット
+        // (EST = UTC-5) で換算するので 2:30 → 3:30 EDT (UTC 7:30)、2:15 → 3:15 EDT (UTC 7:15)。
         let gap = daily_tz(2, 30, "America/New_York", 0);
         assert_eq!(
             next_run_after(&gap, dt(2026, 3, 8, 0, 0)),
-            dt(2026, 3, 8, 7, 0)
+            dt(2026, 3, 8, 7, 30)
+        );
+        let gap15 = daily_tz(2, 15, "America/New_York", 0);
+        assert_eq!(
+            next_run_after(&gap15, dt(2026, 3, 8, 0, 0)),
+            dt(2026, 3, 8, 7, 15)
         );
         // 通常の日は 2:30 EST = UTC 7:30。
         assert_eq!(

@@ -1698,6 +1698,7 @@ fn build_fixtures() -> serde_json::Value {
         plan: sync_plan.clone(),
         omitted_destructive: 2,
         database: "appdb".into(),
+        preamble: Some("USE `appdb`".into()),
     };
     let timelapse_row_history = t::RowHistory {
         columns: vec!["id".into(), "price".into()],

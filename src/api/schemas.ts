@@ -1932,6 +1932,7 @@ export const schemaDriftRevertSql = z.object({
   plan: syncPlan,
   omitted_destructive: z.number(),
   database: z.string(),
+  preamble: z.string().nullable(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 

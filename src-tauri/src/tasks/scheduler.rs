@@ -291,6 +291,19 @@ pub(crate) async fn record_outcome(
     started: DateTime<Utc>,
     outcome: executor::TaskOutcome,
 ) -> (TaskRunEvent, Option<i64>) {
+    record_outcome_counting(app, task, catch_up, started, outcome, true).await
+}
+
+/// [`record_outcome`] の本体。`count_streak` が false のとき、この結果を連続失敗の
+/// 数え直しに反映しない (手動実行の「中断」は失敗ではないため, #1621)。
+pub(crate) async fn record_outcome_counting(
+    app: &AppHandle,
+    task: TaskDefinition,
+    catch_up: bool,
+    started: DateTime<Utc>,
+    outcome: executor::TaskOutcome,
+    count_streak: bool,
+) -> (TaskRunEvent, Option<i64>) {
     let finished = Utc::now();
     let elapsed_ms = (finished - started).num_milliseconds().max(0);
     let status = if outcome.ok { "ok" } else { "error" };
@@ -329,7 +342,13 @@ pub(crate) async fn record_outcome(
     }
 
     let started_str = started.to_rfc3339();
-    let auto_paused = match update_last_run_mirror(&task.id, &started_str, status, outcome.ok) {
+    let auto_paused = match update_last_run_mirror(
+        &task.id,
+        &started_str,
+        status,
+        outcome.ok,
+        count_streak,
+    ) {
         Ok(paused) => paused,
         Err(e) => {
             tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to update task's last-run mirror");
@@ -386,7 +405,13 @@ fn persist_next_run(id: &str, next: DateTime<Utc>) -> Result<()> {
 
 /// 直近の実行結果のミラーと連続失敗の数え直しを書く。連続失敗の上限に達して
 /// タスクを自動停止したら `true` (#1621)。
-fn update_last_run_mirror(id: &str, started_at: &str, status: &str, ok: bool) -> Result<bool> {
+fn update_last_run_mirror(
+    id: &str,
+    started_at: &str,
+    status: &str,
+    ok: bool,
+    count_streak: bool,
+) -> Result<bool> {
     let started_at = started_at.to_string();
     let status = status.to_string();
     let now = Utc::now().to_rfc3339();
@@ -394,7 +419,9 @@ fn update_last_run_mirror(id: &str, started_at: &str, status: &str, ok: bool) ->
     update_task_fields(id, |t| {
         t.last_run_at = Some(started_at);
         t.last_status = Some(status);
-        paused = super::apply_run_result(t, ok, &now);
+        if count_streak {
+            paused = super::apply_run_result(t, ok, &now);
+        }
     })?;
     Ok(paused)
 }

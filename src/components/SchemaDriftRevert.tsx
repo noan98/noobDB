@@ -54,8 +54,14 @@ export function SchemaDriftRevert({
     };
   }, [profileId, fromId, toId, allowDestructive]);
 
+  // 生成 DDL は表名を修飾しないので、先頭に対象のコメントと USE / SET search_path を付け、
+  // 接続中の DB が違っても別の対象へ流してしまわないようにする。
   const sql = result
-    ? result.plan.statements.map((s) => (s.sql.trimEnd().endsWith(";") ? s.sql : `${s.sql};`)).join("\n")
+    ? [
+        `-- target: ${result.database}`,
+        ...(result.preamble ? [`${result.preamble};`] : []),
+        ...result.plan.statements.map((s) => (s.sql.trimEnd().endsWith(";") ? s.sql : `${s.sql};`)),
+      ].join("\n")
     : "";
 
   return (
@@ -91,6 +97,12 @@ export function SchemaDriftRevert({
       )}
       {result && (
         <>
+          <chakra.p m={0} textStyle="caption" data-testid="schema-drift-revert-target">
+            {t("schemaDriftRevertTarget", { database: result.database })}
+          </chakra.p>
+          <Callout tone="info" role="status">
+            {t("schemaDriftRevertAssumption")}
+          </Callout>
           {result.omitted_destructive > 0 && (
             <Callout tone="warning" role="status">
               {t("schemaDriftRevertOmitted", { count: result.omitted_destructive })}
