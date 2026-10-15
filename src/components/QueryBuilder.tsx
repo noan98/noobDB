@@ -23,6 +23,7 @@ import { buildLikeClause, type LikeMode } from "./serverBrowse";
 import {
   buildDistinctValuesSql,
   candidatesFromResult,
+  isSuggestableDataType,
   isTextDataType,
   WHERE_VALUE_CANDIDATE_LIMIT,
 } from "./valuePicker";
@@ -1545,7 +1546,7 @@ export function QueryBuilder({
                   // 文字列列の = / != / 比較は、列の既存値を候補に出す (#1627)。
                   const suggestable =
                     !!info &&
-                    isTextDataType(info.data_type) &&
+                    isSuggestableDataType(info.data_type) &&
                     SUGGEST_OPERATORS.has(normalizeOperator(c.operator));
                   const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
                   const inGroup =

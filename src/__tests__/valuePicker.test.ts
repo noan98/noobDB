@@ -10,6 +10,7 @@ import {
   candidatesFromResult,
   collectAllowedValues,
   fkSearchTerm,
+  isSuggestableDataType,
   isTextDataType,
   pickerKindFor,
 } from "../components/valuePicker";
@@ -357,5 +358,22 @@ describe("buildDistinctValuesSql (#1627)", () => {
     expect(sql).toContain("`d``b`.`t`");
     expect(sql.endsWith("LIMIT 1")).toBe(true);
     expect(isReadOnlySql(sql)).toBe(true);
+  });
+});
+
+describe("isSuggestableDataType (#1627)", () => {
+  it("文字列型に加え MySQL ENUM / citext / PG のユーザ定義型 (ENUM) も候補の対象にする", () => {
+    for (const t of ["varchar(20)", "text", "enum('a','b')", "ENUM('x')", "citext", "USER-DEFINED"]) {
+      expect(isSuggestableDataType(t)).toBe(true);
+    }
+    for (const t of ["int", "integer", "text[]", "_text", "ARRAY", "boolean", "", null, undefined]) {
+      expect(isSuggestableDataType(t)).toBe(false);
+    }
+  });
+
+  it("CAST の要否を決める isTextDataType は広げない", () => {
+    expect(isTextDataType("citext")).toBe(false);
+    expect(isTextDataType("enum('a')")).toBe(false);
+    expect(isTextDataType("USER-DEFINED")).toBe(false);
   });
 });

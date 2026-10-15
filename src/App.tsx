@@ -2021,6 +2021,8 @@ export default function App() {
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
+  // ドラッグ中のポインタがクエリエディタの上にあるか (#1627)。ドロップ先が新規タブかカーソル位置かの表示切替に使う。
+  const [dragOverEditor, setDragOverEditor] = useState(false);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
   // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
@@ -4492,6 +4494,8 @@ export default function App() {
         autoLimitSql: autoLimit !== null ? sql : null,
         loadingMore: false,
         canLoadMore: false,
+        // 再実行した結果の母数は変わりうるので、数え済みの正確な件数 (#1627) は破棄する。
+        exactRowCount: null,
         queryError: null,
         partialResult: null,
         // Drop any in-flight cell edits: their row indices reference the
@@ -7043,7 +7047,8 @@ export default function App() {
           };
         });
       }
-      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
+      // 編集の適用で行数が変わりうる (削除・追加) ので、正確な件数 (#1627) は破棄する。
+      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
       // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
       // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
       if (appliedRowShortfall(opCount, totalAffected) > 0) {
@@ -9193,10 +9198,15 @@ export default function App() {
           const payload = event.payload;
           if (payload.type === "enter") {
             setDragFeedback(dragFeedbackFor(payload.paths, !!sessionIdRef.current));
+          } else if (payload.type === "over") {
+            const pt = physicalToCssPoint(payload.position, window.devicePixelRatio);
+            setDragOverEditor([...editorRefs.current.values()].some((ed) => ed.containsPoint(pt.x, pt.y)));
           } else if (payload.type === "leave") {
             setDragFeedback(null);
+            setDragOverEditor(false);
           } else if (payload.type === "drop") {
             setDragFeedback(null);
+            setDragOverEditor(false);
             void handleFilesDropped(
               payload.paths,
               null,
@@ -13344,12 +13354,18 @@ export default function App() {
             >
               <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />
               <chakra.span fontSize="lg" fontWeight={600}>
-                {dragFeedback.accept ? t("dropOverlayTitle") : t("dropOverlayReject")}
+                {dragFeedback.accept
+                  ? dragOverEditor && dragFeedback.kind === "sql"
+                    ? t("dropOverlayTitleInsert")
+                    : t("dropOverlayTitle")
+                  : t("dropOverlayReject")}
               </chakra.span>
               {dragFeedback.accept && (
                 <chakra.span fontSize="sm" color="app.textMuted" textAlign="center">
                   {dragFeedback.kind === "sql"
-                    ? t("dropOverlayHintSql")
+                    ? dragOverEditor
+                      ? t("dropOverlayHintSqlInsert")
+                      : t("dropOverlayHintSql")
                     : dragFeedback.kind === "csv"
                       ? t("dropOverlayHintCsv")
                       : t("dropOverlayHintMixed")}

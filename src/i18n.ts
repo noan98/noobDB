@@ -3510,6 +3510,8 @@ const en = {
   // ファイルのドラッグ&ドロップ
   dropOverlayTitle: "Drop to open",
   dropOverlayReject: "Unsupported file type",
+  dropOverlayTitleInsert: "Drop to insert",
+  dropOverlayHintSqlInsert: "Inserted at the cursor of this editor (no new tab)",
   dropOverlayHintSql: ".sql / .txt opens in a new query tab",
   dropOverlayHintCsv: ".csv imports into the open table",
   dropOverlayHintMixed: ".sql opens in tabs · .csv imports into the open table",
@@ -5473,6 +5475,8 @@ const en = {
   shortcutQuickLauncherTitle: "Cmd/Ctrl+Shift+J",
   shortcutQuickLauncherDesc:
     "Open or close the floating launcher (favorite snippets, recent queries and tables).",
+  shortcutHistorySearchTitle: "Ctrl+R",
+  shortcutHistorySearchDesc: "Search the query history incrementally from the editor and restore a match.",
 
   // AI 基盤 (#690)
   aiSettingsTitle: "AI assistant",
@@ -9392,6 +9396,8 @@ const ja: Dict = {
   // ファイルのドラッグ&ドロップ
   dropOverlayTitle: "ドロップして開く",
   dropOverlayReject: "対応していないファイル形式",
+  dropOverlayTitleInsert: "ドロップして挿入",
+  dropOverlayHintSqlInsert: "このエディタのカーソル位置へ挿入します (新しいタブは開きません)",
   dropOverlayHintSql: ".sql / .txt は新しいクエリタブで開きます",
   dropOverlayHintCsv: ".csv は開いているテーブルへインポートします",
   dropOverlayHintMixed: ".sql はタブで開き · .csv は開いているテーブルへインポートします",
@@ -11345,6 +11351,8 @@ const ja: Dict = {
   shortcutQuickLauncherTitle: "Cmd/Ctrl+Shift+J",
   shortcutQuickLauncherDesc:
     "フローティング・ランチャー (お気に入りスニペット・最近のクエリ・テーブル) を開閉します。",
+  shortcutHistorySearchTitle: "Ctrl+R",
+  shortcutHistorySearchDesc: "エディタからクエリ履歴を部分一致で検索し、選んだクエリを戻します。",
 
   // AI 基盤 (#690)
   aiSettingsTitle: "AI アシスタント",

@@ -100,6 +100,19 @@ export function isTextDataType(dataType: string | null | undefined): boolean {
 }
 
 /**
+ * WHERE ビルダーの値候補 (#1627) を出してよい列型か。素の文字列型 (`isTextDataType`) に加えて、
+ * 値が文字列で現れる MySQL の `enum(...)`、PostgreSQL の `citext` とユーザ定義型 (ENUM は
+ * `USER-DEFINED` と報告される) も対象にする。`CAST(col AS TEXT)` を外してよいかの判定
+ * (`isTextDataType`) とは別物で、あちらは変えない。
+ */
+export function isSuggestableDataType(dataType: string | null | undefined): boolean {
+  if (isTextDataType(dataType)) return true;
+  const t = (dataType ?? "").trim().toLowerCase();
+  if (t.endsWith("]") || t.startsWith("array") || t.startsWith("_")) return false;
+  return /^(enum\b|citext\b|user-defined\b)/.test(t);
+}
+
+/**
  * FK 列の候補値 (参照先テーブルの DISTINCT 値) を引く読み取り専用 SQL。
  * NULL は候補にしない (NULL は `null` と打てば従来どおり入る)。必ず行数上限付き。
  */
