@@ -391,7 +391,8 @@ import {
 import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
 import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
-import { checkForAppUpdate } from "./updater";
+import { checkForAppUpdate, dismissUpdate } from "./updater";
+import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
 import {
   firstLineForNotification,
@@ -1609,7 +1610,12 @@ export default function App() {
       try {
         const update = await checkForAppUpdate();
         if (cancelled || !update) return;
-        await confirmAndInstallUpdate(update, { t, toast, confirm });
+        // 前回の起動時に「見送り」を選んだ版 (とそれより古い版) は出さない (#1631)。
+        if (shouldSkipStartupNotice(update.version, loadSkippedUpdateVersion())) {
+          void dismissUpdate(update);
+          return;
+        }
+        await confirmAndInstallUpdate(update, { t, toast, confirm, rememberSkip: true });
       } catch {
         // ベストエフォート: 起動時チェックの失敗は静かに無視する。
       }

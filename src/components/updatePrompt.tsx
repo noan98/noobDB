@@ -11,6 +11,7 @@ import type { useConfirm } from "./ConfirmDialog";
 import type { useToast } from "./Toast";
 import type { useT } from "../i18n";
 import { dismissUpdate, installUpdateAndRestart, type AvailableUpdate } from "../updater";
+import { saveSkippedUpdateVersion } from "../updateSkip";
 import { displayVersion, formatDownloadProgress, truncateReleaseNotes } from "../updaterFormat";
 
 type Translate = ReturnType<typeof useT>;
@@ -21,6 +22,11 @@ export interface UpdatePromptDeps {
   t: Translate;
   toast: ToastApi;
   confirm: ConfirmFn;
+  /**
+   * 起動時の自動チェック用 (#1631)。true なら「後で」を選んだバージョンを覚え、より新しい版が出るまで
+   * 次回以降の起動では出さない。設定画面の手動チェックでは指定しない (毎回見せる)。
+   */
+  rememberSkip?: boolean;
 }
 
 /**
@@ -34,7 +40,7 @@ export async function confirmAndInstallUpdate(
   update: AvailableUpdate,
   deps: UpdatePromptDeps,
 ): Promise<void> {
-  const { t, toast, confirm } = deps;
+  const { t, toast, confirm, rememberSkip } = deps;
   const notes = truncateReleaseNotes(update.body);
   const message: ReactNode = (
     <chakra.div display="flex" flexDirection="column" gap="3">
@@ -44,6 +50,7 @@ export async function confirmAndInstallUpdate(
           current: displayVersion(update.currentVersion),
         })}
       </chakra.p>
+      {rememberSkip && <chakra.p color="app.textMuted">{t("updateLaterSkipNote")}</chakra.p>}
       {notes && (
         <chakra.div>
           <chakra.p fontWeight="semibold" mb="1">
@@ -71,10 +78,11 @@ export async function confirmAndInstallUpdate(
     title: t("updateAvailableTitle"),
     message,
     confirmLabel: t("updateDownloadAndRestart"),
-    cancelLabel: t("updateLater"),
+    cancelLabel: rememberSkip ? t("updateSkipVersion") : t("updateLater"),
     tone: "primary",
   });
   if (!ok) {
+    if (rememberSkip) saveSkippedUpdateVersion(update.version);
     void dismissUpdate(update);
     return;
   }

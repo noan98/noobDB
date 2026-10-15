@@ -738,6 +738,9 @@ const en = {
   updateReleaseNotesLabel: "Release notes",
   updateDownloadAndRestart: "Download & restart",
   updateLater: "Later",
+  updateSkipVersion: "Skip this version",
+  updateLaterSkipNote:
+    "If you skip, this version won't be announced at startup again. A newer version will be announced, and you can always update from Settings > Check for updates.",
   updateDownloadingProgress: "Downloading the update… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "Downloading the update… the app will restart automatically when it's ready.",
   updateFailed: "Update failed: {error}",
@@ -6239,6 +6242,9 @@ const ja: Dict = {
   updateReleaseNotesLabel: "リリースノート",
   updateDownloadAndRestart: "ダウンロードして再起動",
   updateLater: "後で",
+  updateSkipVersion: "このバージョンは見送る",
+  updateLaterSkipNote:
+    "見送ると、このバージョンは次回以降の起動時に通知しません。より新しいバージョンが出たときは再び通知します。設定の「更新を確認」からいつでも更新できます。",
   updateDownloadingProgress: "更新をダウンロードしています… {percent}% ({downloaded} / {total})",
   updateDownloadingStarted: "更新をダウンロードしています… 準備ができると自動的に再起動します。",
   updateFailed: "更新に失敗しました: {error}",
