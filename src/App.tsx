@@ -12219,7 +12219,6 @@ export default function App() {
                 profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
-                profileId={selectedProfile?.id}
                 onImportAllSheets={(req) => {
                   setImportSheetsRequest({ database: importTarget.database, ...req });
                   setImportTarget(null);
