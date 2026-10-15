@@ -380,6 +380,7 @@ import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import { getKeyringStatus } from "./keyringStatus";
+import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
 import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
@@ -11066,6 +11067,8 @@ export default function App() {
             selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
           }
         >
+          {/* IPC 検証失敗が複数コマンドで続いたときの版不一致の警告 (#1622)。通常は何も描画しない。 */}
+          <IpcMismatchNotice />
           {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
             `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
             `transitions.enter` を流用する (尺を二重定義しない)。

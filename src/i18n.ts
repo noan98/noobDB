@@ -235,6 +235,12 @@ const en = {
   keyringReasonOther: "The OS keyring could not be used for an unknown reason.",
   keyringStartupWarning:
     "The OS keyring is unavailable, so passwords can't be saved. You will be asked for them on every connection.",
+  ipcMismatchTitle: "The app and backend versions may not match",
+  ipcMismatchBody:
+    "Responses from {count} commands did not match the expected format. Please restart the app or check for an update. When reporting this, copy the diagnostic text.",
+  ipcMismatchCopy: "Copy diagnostic text",
+  ipcMismatchCopied: "Copied",
+  ipcMismatchDismiss: "Dismiss",
   healthTitle: "Connection health",
   healthDesc:
     "Checks every open connection in parallel (SELECT 1 + read-only introspection). Saved profiles are never connected automatically.",
@@ -6012,6 +6018,12 @@ const ja: Dict = {
   keyringReasonOther: "原因不明の理由で OS の keyring を使えません。",
   keyringStartupWarning:
     "OS の keyring が使えないため、パスワードを保存できません。接続のたびに入力が必要です。",
+  ipcMismatchTitle: "アプリとバックエンドのバージョンが一致していない可能性があります",
+  ipcMismatchBody:
+    "{count} 個のコマンドの応答が期待した形式と一致しませんでした。再起動または更新を確認してください。問い合わせる際は診断テキストをコピーして添えてください。",
+  ipcMismatchCopy: "診断テキストをコピー",
+  ipcMismatchCopied: "コピーしました",
+  ipcMismatchDismiss: "閉じる",
   healthTitle: "接続ヘルス",
   healthDesc:
     "開いている全接続を並列に確認します (SELECT 1 + 読み取り専用の introspection)。保存済みプロファイルへ自動で接続することはありません。",
