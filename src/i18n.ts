@@ -7429,7 +7429,7 @@ const ja: Dict = {
   savedTabsKindQuery: "クエリ",
   savedTabsKindExplain: "実行計画",
   savedTabsActiveNote:
-    "この接続は開いています。保存内容は、別の接続へ切り替えるか切断するときに現在のタブで置き換わるため、ここでは消去できません。",
+    "この接続は開いています (バックグラウンドを含む)。保存内容は、別の接続へ切り替えるか切断するときに現在のタブで置き換わるため、ここでは消去できません。",
   savedTabsClear: "保存されたタブを消去",
   savedTabsClose: "閉じる",
   savedTabsCleared: "{name} の保存されたタブを消去しました。",

@@ -565,7 +565,10 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
 /// `SessionId` (#712). Rebuilds the SSH tunnel (when the session was tunneled),
 /// opens a fresh `db::Connection` from the session's stored `connect_options`,
 /// and only then swaps the live session for the new one — so on any failure the
-/// old session is left untouched and the caller can retry. Because the id is
+/// old session is left untouched and the caller can retry. Exception: with a
+/// pinned SSH `local_port`, the old tunnel's listener is released *before* the
+/// new tunnel binds that port, so a failed reconnect leaves the old session
+/// without a local listener (its health check then reports it dead). Because the id is
 /// unchanged, the frontend's open tabs and grid state (keyed by session id) stay
 /// alive without a disconnect/restore round-trip.
 ///
