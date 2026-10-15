@@ -179,9 +179,7 @@ export function RunRoutineModal({
                     </option>
                   ))}
                 </Select>
-                <chakra.span fontSize="xs" color="app.textMuted">
-                  {t("runRoutineHistoryNote")}
-                </chakra.span>
+                <chakra.span textStyle="caption">{t("runRoutineHistoryNote")}</chakra.span>
               </FormSection>
             )}
             {args.map((p, argIdx) => {

@@ -17,7 +17,6 @@ import {
   SettingsSectionHeader,
 } from "./settingsLayout";
 import { Button, Input } from "./ui";
-import type { HelpTryTarget } from "../helpTry";
 import { filterHelpSections } from "../helpSearch";
 import { pickActiveSection } from "../sectionNav";
 
@@ -90,6 +89,12 @@ const HelpNote = chakra("p", {
     "& strong": { color: "app.text" },
   },
 });
+
+/** 『試す』ボタンの行き先 (#1631)。実際に開く処理は App が持つ (`onOpenFeature`)。 */
+type HelpTryTarget =
+  | { kind: "newQuery" }
+  | { kind: "settings"; section: string }
+  | { kind: "view"; view: "compare" | "tasks" | "newConnection" };
 
 interface Feature {
   titleKey: Key;

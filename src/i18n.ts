@@ -690,7 +690,7 @@ const en = {
     "When the OS asks for more contrast (prefers-contrast: more) and the theme preset is Default, switch to the High contrast preset. A preset you picked yourself is never overridden.",
   settingsCustomTheme: "Custom theme (JSON)",
   settingsCustomThemeHelp:
-    'Load a JSON file that overrides color tokens, e.g. {"accent": "#0b5fff", "bg": "#101418"}. Pairs that fail WCAG AA are warned about before applying. The overrides sit on top of every preset.',
+    'Load a JSON file that overrides color tokens, e.g. {"accent": "<color>"}. Pairs that fail WCAG AA are warned about before applying. The overrides sit on top of every preset.',
   customThemeImport: "Load JSON…",
   customThemeClear: "Clear",
   customThemeStatus: "{count} tokens overridden",
@@ -6224,7 +6224,7 @@ const ja: Dict = {
     "OS が「コントラストを上げる」(prefers-contrast: more) を示していて、テーマプリセットが「標準」のときは高コントラストに切り替えます。自分で選んだプリセットは上書きしません。",
   settingsCustomTheme: "カスタムテーマ (JSON)",
   settingsCustomThemeHelp:
-    '色トークンを上書きする JSON ファイルを読み込みます (例: {"accent": "#0b5fff", "bg": "#101418"})。WCAG AA を満たさない組は適用前に警告します。上書きはどのプリセットの上にも載ります。',
+    '色トークンを上書きする JSON ファイルを読み込みます (例: {"accent": "<color>"})。WCAG AA を満たさない組は適用前に警告します。上書きはどのプリセットの上にも載ります。',
   customThemeImport: "JSON を読み込む…",
   customThemeClear: "解除",
   customThemeStatus: "{count} 個のトークンを上書き中",
