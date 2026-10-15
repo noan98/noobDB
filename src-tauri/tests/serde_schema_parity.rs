@@ -53,11 +53,11 @@ use t::{
     QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature, RowDiff, RowStatus,
     RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent, ScriptErrorEvent,
     ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage, ServerMessageSeverity,
-    ServerMetrics, ServerVariable, Severity, SkippedRowInfo, SkippedRule, Snippet, SnippetScope,
-    SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow, StreamCancelledEvent,
-    StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo, TableComment,
-    TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
-    TaskRunProgressEvent, TemplateColumn, Value,
+    ServerMetrics, ServerVariable, Severity, SheetImportResult, SkippedRowInfo, SkippedRule,
+    Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
+    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
+    TableComment, TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema,
+    TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -748,6 +748,12 @@ fn build_fixtures() -> serde_json::Value {
             cells: Vec::new(),
         }],
         skipped_total: 1234,
+        sheets: vec![SheetImportResult {
+            sheet: "Sheet1".into(),
+            table: "orders".into(),
+            inserted: 99,
+            skipped_total: 1,
+        }],
     };
     let import_dry_run_result = ImportDryRunResult {
         total: 100,

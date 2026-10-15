@@ -27,6 +27,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  ImportOptions,
   SchemaDriftGeneration,
   type LocalTableMeta,
   type ProfileImportStrategy,
@@ -217,6 +218,9 @@ const ConnectionForm = lazy(() =>
 );
 const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
 const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
+const ImportSheetsModal = lazy(() =>
+  import("./components/ImportSheetsModal").then((m) => ({ default: m.ImportSheetsModal })),
+);
 const DataTransferModal = lazy(() =>
   import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
@@ -1928,6 +1932,13 @@ export default function App() {
   const [openQueryTarget, setOpenQueryTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
+  // xlsx の複数シート一括取り込み (#1623): 対象のデータベースとブックの指定。null で閉じる。
+  const [importSheetsRequest, setImportSheetsRequest] = useState<{
+    database: string;
+    path: string;
+    options: ImportOptions;
+    sheets: string[];
+  } | null>(null);
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
@@ -11997,6 +12008,11 @@ export default function App() {
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
                 profileId={selectedProfile?.id}
+                onImportAllSheets={(req) => {
+                  setImportSheetsRequest({ database: importTarget.database, ...req });
+                  setImportTarget(null);
+                  setImportInitialPath(null);
+                }}
                 onClose={() => {
                   setImportTarget(null);
                   setImportInitialPath(null);
@@ -12010,6 +12026,27 @@ export default function App() {
                     handleOpenTable(importTarget.database, table);
                   } else {
                     handleImported(importTarget.database, table);
+                  }
+                }}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {importSheetsRequest && sessionId && (
+              <ImportSheetsModal
+                sessionId={sessionId}
+                database={importSheetsRequest.database}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                path={importSheetsRequest.path}
+                options={importSheetsRequest.options}
+                sheets={importSheetsRequest.sheets}
+                onClose={() => setImportSheetsRequest(null)}
+                onImported={(tables) => {
+                  // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新する。
+                  if (tables.length > 0) {
+                    invalidateSchemaCache(importSheetsRequest.database);
+                    connectionListRef.current?.refreshSchema();
                   }
                 }}
               />

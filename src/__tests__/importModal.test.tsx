@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, act } from "./testUtils";
 import { SAMPLE_COLUMNS } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -169,6 +169,59 @@ describe("ImportModal xlsx source (#1171)", () => {
     const params = vi.mocked(api.importCsv).mock.calls[0][0];
     expect(params.options.format).toBe("xlsx");
     expect(params.options.sheet).toBe("Second");
+  });
+});
+
+describe("ImportModal bulk sheet import entry (#1623)", () => {
+  // `mockResolvedValue` は clearAllMocks で戻らないので、既定のプレビューへ戻す。
+  afterEach(() => {
+    vi.mocked(api.parseCsvPreview).mockResolvedValue({
+      headers: ["id", "name"],
+      rows: [["1", "alice"]],
+      truncated: false,
+      sheets: [],
+    });
+  });
+  const book = (sheets: string[]) =>
+    vi.mocked(api.parseCsvPreview).mockResolvedValue({
+      headers: ["id"],
+      rows: [["1"]],
+      truncated: false,
+      sheets,
+    });
+  const renderBook = (onImportAllSheets?: () => void) =>
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table="users"
+        driver="postgres"
+        initialPath="/tmp/book.xlsx"
+        onImportAllSheets={onImportAllSheets}
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+
+  it("hands the workbook over to the bulk import for a multi-sheet book", async () => {
+    book(["A", "B"]);
+    const onAll = vi.fn();
+    renderBook(onAll);
+    fireEvent.click(await screen.findByRole("button", { name: t("importSheetsOpen") }));
+    expect(onAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "/tmp/book.xlsx",
+        sheets: ["A", "B"],
+        options: expect.objectContaining({ format: "xlsx", hasHeader: true }),
+      }),
+    );
+  });
+
+  it("does not offer it for a single-sheet book", async () => {
+    book(["Only"]);
+    renderBook(vi.fn());
+    await screen.findByText(t("importMappingTitle"));
+    expect(screen.queryByRole("button", { name: t("importSheetsOpen") })).not.toBeInTheDocument();
   });
 });
 
@@ -447,6 +500,7 @@ describe("ImportModal skipped rows (#1258)", () => {
         reason: `bad ${i}`,
       })),
       skippedTotal,
+      sheets: [],
     };
     await act(async () => {
       handlers.onDone?.(event);
@@ -539,7 +593,14 @@ describe("ImportModal re-run guard for an existing table (#1598)", () => {
     await waitFor(() => expect(listenImportStream).toHaveBeenCalled());
     const handlers = vi.mocked(listenImportStream).mock.calls[0][1];
     await act(async () => {
-      handlers.onDone?.({ streamId: "x", inserted: 10, elapsedMs: 5, skipped: [], skippedTotal: 0 });
+      handlers.onDone?.({
+        streamId: "x",
+        inserted: 10,
+        elapsedMs: 5,
+        skipped: [],
+        skippedTotal: 0,
+        sheets: [],
+      });
     });
     // 同じファイルのままの再実行 (行の重複挿入) はできない。
     await waitFor(() => expect(screen.getByRole("button", { name: t("importExecute") })).toBeDisabled());

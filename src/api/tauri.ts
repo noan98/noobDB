@@ -2151,6 +2151,24 @@ export interface ImportDoneEvent {
   skipped: SkippedRowInfo[];
   /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
   skippedTotal: number;
+  /** 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは空。 */
+  sheets: SheetImportResult[];
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの結果 (#1623)。 */
+export interface SheetImportResult {
+  sheet: string;
+  table: string;
+  inserted: number;
+  skippedTotal: number;
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの指定 (#1623)。 */
+export interface SheetImportSpec {
+  sheet: string;
+  table: string;
+  mapping: ColumnMapping[];
+  createTable?: NewTableColumn[] | null;
 }
 
 /** BLOB セルの probe 結果 (#1258)。本体を運ばずサイズと種別だけ。 */

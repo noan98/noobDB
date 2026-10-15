@@ -10,6 +10,7 @@ import type {
   CsvPreview,
   ImportDryRunResult,
   ImportTemplate,
+  SheetImportSpec,
   SkippedExportFormat,
 } from "../tauri";
 
@@ -107,6 +108,31 @@ export const importCommands = {
       mapping: params.mapping,
       createTable: params.createTable ?? null,
     }).then((r) => parseResponse(schemas.importDryRunResult, r, "import_dry_run")),
+
+  /**
+   * xlsx の複数シートを、シートごとに別のテーブルへ順に取り込む (#1623)。進捗・完了は
+   * {@link importCsv} と同じ `csv-import:*` イベント (`started` はシートごとに届き、`done` は
+   * 全体で 1 回で `sheets` にシートごとの件数が入る)。各シートは単独の取り込みと同じ
+   * トランザクション単位で、失敗したシートより前のシートは取り込み済みのまま残る。
+   */
+  importXlsxSheets: (params: {
+    sessionId: string;
+    streamId: string;
+    database?: string | null;
+    path: string;
+    options: ImportOptions;
+    sheets: SheetImportSpec[];
+    batchSize?: number;
+  }) =>
+    invoke<void>("import_xlsx_sheets", {
+      sessionId: params.sessionId,
+      streamId: params.streamId,
+      database: params.database ?? null,
+      path: params.path,
+      options: params.options,
+      sheets: params.sheets,
+      batchSize: params.batchSize ?? null,
+    }),
 
   /** 保存済みの取り込みマッピング (#1623)。`table` 省略でそのデータベースの全テーブル分。 */
   listImportTemplates: (profileId: string, database?: string | null, table?: string | null) =>

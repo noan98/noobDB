@@ -251,7 +251,7 @@ pub mod __test_api {
     pub use crate::commands::file::SqlFileContent;
     pub use crate::commands::import::{
         ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
-        ImportStartedEvent, SkippedRowInfo,
+        ImportStartedEvent, SheetImportResult, SkippedRowInfo,
     };
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
@@ -1489,6 +1489,7 @@ pub fn run() {
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
             commands::import::import_dry_run,
+            commands::import::import_xlsx_sheets,
             commands::import_templates::list_import_templates,
             commands::import_templates::save_import_template,
             commands::import_templates::delete_import_template,

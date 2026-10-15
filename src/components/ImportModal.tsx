@@ -77,6 +77,12 @@ interface Props {
    * テンプレートを候補に出し、現在のマッピングを保存できる (#1623)。
    */
   profileId?: string;
+  /**
+   * xlsx の複数シートを一括で別テーブルへ取り込む画面を開く (#1623)。渡されたときだけ、
+   * シートが 2 つ以上のブックで「全シートを一括取り込み」を出す。呼び出し側はこのモーダルを
+   * 閉じて一括取り込みのモーダルを開く。
+   */
+  onImportAllSheets?: (request: { path: string; options: ImportOptions; sheets: string[] }) => void;
 }
 
 type DelimiterChoice = "," | "\t" | ";";
@@ -168,6 +174,7 @@ export function ImportModal({
   onImported,
   initialPath,
   profileId,
+  onImportAllSheets,
 }: Props) {
   const t = useT();
   const toast = useToast();
@@ -960,6 +967,18 @@ export function ImportModal({
                 ))}
               </Select>
             </chakra.div>
+          )}
+          {isXlsx && preview && preview.sheets.length > 1 && onImportAllSheets && (
+            <Tooltip label={t("importSheetsOpenHint")}>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={importing}
+                onClick={() => onImportAllSheets({ path, options: buildOptions(), sheets: preview.sheets })}
+              >
+                {t("importSheetsOpen")}
+              </Button>
+            </Tooltip>
           )}
 
           {!isXlsx && (

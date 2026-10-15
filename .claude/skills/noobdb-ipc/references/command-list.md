@@ -386,6 +386,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_import_skipped_text`
 - `save_import_skipped_rows`
 - `import_dry_run`
+- `import_xlsx_sheets`
 - `list_import_templates`
 - `save_import_template`
 - `delete_import_template`
@@ -442,6 +443,13 @@ skip モードの取り込みでスキップされた行の「全件」を扱う
 SAVEPOINT)。MySQL の非トランザクショナル表は拒否。読み取り専用接続でも実行できる。
 新規テーブル作成付き (`createTable`) は DB を試さずファイルのパースと主キー検証だけ
 (`dbChecked: false`)。結果は失敗の総数と先頭 50 件 (`DRY_RUN_REPORT_LIMIT`)。
+
+`import_xlsx_sheets` (`commands/import.rs`, #1623) は xlsx の複数シートを、シートごとに別の
+**新規テーブル**へ順に取り込む。各シートは `run_import_core` を通る単独の取り込みと同じ
+トランザクション単位で、`csv-import:started` はシートごと、`csv-import:done` は全体で 1 回
+(`sheets` にシートごとの件数)。失敗したシートで止まり、それより前のシートは取り込み済みのまま
+(エラー文に取り込み済みのシートを添える)。シートごとに列が違うので、元データ付きのスキップ行
+書き出し (`csv` / `ndjson`) は使えない (テキストのみ)。
 
 `list_import_templates` / `save_import_template` / `delete_import_template`
 (`commands/import_templates.rs`, `import_templates/`, #1623) は接続 × データベース × テーブル単位の

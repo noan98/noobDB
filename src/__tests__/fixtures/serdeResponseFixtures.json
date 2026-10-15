@@ -1329,6 +1329,14 @@
   "importDoneEvent": {
     "elapsedMs": 42,
     "inserted": 99,
+    "sheets": [
+      {
+        "inserted": 99,
+        "sheet": "Sheet1",
+        "skippedTotal": 1,
+        "table": "orders"
+      }
+    ],
     "skipped": [
       {
         "line": 8,

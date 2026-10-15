@@ -1038,6 +1038,20 @@ pub struct ImportDoneEvent {
     /// Total number of skipped rows, including those not listed in `skipped`.
     #[serde(rename = "skippedTotal")]
     pub skipped_total: u64,
+    /// 複数シート一括取り込み (`import_xlsx_sheets`、#1623) のシートごとの結果。通常の
+    /// 取り込みでは空 (省略)。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sheets: Vec<SheetImportResult>,
+}
+
+/// 複数シート一括取り込みの 1 シートぶんの結果 (#1623)。
+#[derive(Debug, Serialize, Clone)]
+pub struct SheetImportResult {
+    pub sheet: String,
+    pub table: String,
+    pub inserted: u64,
+    #[serde(rename = "skippedTotal")]
+    pub skipped_total: u64,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1335,6 +1349,7 @@ async fn spawn_import(
         create_table,
         committed.clone(),
         created_flag,
+        None,
     )
     .await;
     cancel_cleanup.disarm();
@@ -1438,6 +1453,7 @@ async fn spawn_import(
                     elapsed_ms,
                     skipped: head,
                     skipped_total,
+                    sheets: Vec::new(),
                 },
             ) {
                 tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import done event");
@@ -1488,6 +1504,344 @@ async fn spawn_import(
     }
 }
 
+/// 複数シート一括取り込みの 1 シートぶんの指定 (#1623)。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SheetImportSpec {
+    /// 読むシート名。
+    pub sheet: String,
+    /// 取り込み先のテーブル名。
+    pub table: String,
+    pub mapping: Vec<ColumnMapping>,
+    /// 指定するとこの定義でテーブルを新規作成してから取り込む。
+    #[serde(default)]
+    pub create_table: Option<Vec<NewColumn>>,
+}
+
+/// 一括取り込みで扱えるシート数の上限。
+const MAX_IMPORT_SHEETS: usize = 100;
+
+/// 一括取り込みの指定を検証する (ストリームを始める前に同期的に弾く)。
+fn validate_sheet_specs(
+    driver: DriverKind,
+    options: &ImportOptions,
+    sheets: &[SheetImportSpec],
+) -> Result<()> {
+    if options.format != ImportFormat::Xlsx {
+        return Err(AppError::InvalidInput(
+            "multi-sheet import needs the xlsx format".into(),
+        ));
+    }
+    if sheets.is_empty() {
+        return Err(AppError::InvalidInput("no sheets to import".into()));
+    }
+    if sheets.len() > MAX_IMPORT_SHEETS {
+        return Err(AppError::InvalidInput(format!(
+            "too many sheets (limit {MAX_IMPORT_SHEETS})"
+        )));
+    }
+    let mut seen_sheets = std::collections::HashSet::new();
+    let mut seen_tables = std::collections::HashSet::new();
+    for spec in sheets {
+        if spec.table.trim().is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "table name is empty for sheet {}",
+                spec.sheet
+            )));
+        }
+        if !seen_sheets.insert(spec.sheet.clone()) {
+            return Err(AppError::InvalidInput(format!(
+                "sheet {} is listed more than once",
+                spec.sheet
+            )));
+        }
+        // 2 つのシートを同じテーブルへ流すのは、作成の衝突や重複挿入になりやすいので別々の
+        // テーブルに限る (大小無視。MySQL / SQLite は大小を区別しない照合が多い)。
+        if !seen_tables.insert(spec.table.to_lowercase()) {
+            return Err(AppError::InvalidInput(format!(
+                "table {} is used by more than one sheet",
+                spec.table
+            )));
+        }
+        if spec.mapping.is_empty() {
+            return Err(AppError::InvalidInput(format!(
+                "no columns mapped for sheet {}",
+                spec.sheet
+            )));
+        }
+        let mapped: Vec<String> = spec.mapping.iter().map(|m| m.column.clone()).collect();
+        match &spec.create_table {
+            Some(cols) => validate_create_spec(driver, &spec.table, cols, &mapped)?,
+            None => options.conflict().validate(&mapped)?,
+        }
+    }
+    Ok(())
+}
+
+/// xlsx のブックの複数シートを、シートごとに別のテーブルへ順に取り込む (#1623)。
+/// 各シートは単独の取り込みと同じ経路 (`run_import_core`) で流れ、トランザクションも
+/// シートごと (abort モードは 1 シートの失敗でそのシートだけロールバックし、以降のシートは
+/// 実行しない。それまでに完了したシートは取り込み済みのまま)。進捗は `csv-import:*` の
+/// 同じイベントで、`started` がシートごとに届く。完了は 1 つの `csv-import:done` にまとめ、
+/// `sheets` にシートごとの件数を載せる。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn import_xlsx_sheets(
+    app: AppHandle,
+    session_id: String,
+    stream_id: String,
+    database: Option<String>,
+    path: String,
+    options: ImportOptions,
+    sheets: Vec<SheetImportSpec>,
+    batch_size: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    ensure_import_writable(&session)?;
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("import file path is empty".into()));
+    }
+    validate_sheet_specs(session.conn.driver_kind(), &options, &sheets)?;
+
+    let committed = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<u64>();
+    let stream_id_for_task = stream_id.clone();
+    let committed_for_task = committed.clone();
+    let handle = tokio::spawn(async move {
+        let Ok(token) = ready_rx.await else {
+            return;
+        };
+        spawn_import_sheets(
+            app,
+            session,
+            stream_id_for_task,
+            token,
+            database,
+            path,
+            options,
+            sheets,
+            batch_size.unwrap_or(DEFAULT_BATCH_SIZE),
+            committed_for_task,
+        )
+        .await;
+    });
+    let token = state
+        .register_stream(
+            stream_id,
+            StreamHandle {
+                abort: handle.abort_handle(),
+                delivered_rows: committed,
+                kind: StreamKind::Import,
+                on_cancel: None,
+            },
+        )
+        .await;
+    let _ = ready_tx.send(token);
+    Ok(())
+}
+
+/// [`import_xlsx_sheets`] のタスク本体。シートを順に `run_import` へ流し、結果を 1 つの
+/// 完了 (またはエラー) イベントにまとめる。
+#[allow(clippy::too_many_arguments)]
+async fn spawn_import_sheets(
+    app: AppHandle,
+    session: Arc<Session>,
+    stream_id: String,
+    stream_token: u64,
+    database: Option<String>,
+    path: String,
+    options: ImportOptions,
+    sheets: Vec<SheetImportSpec>,
+    batch_size: usize,
+    committed: Arc<std::sync::atomic::AtomicU64>,
+) {
+    let started = Instant::now();
+    let mut results: Vec<SheetImportResult> = Vec::new();
+    let mut all_skipped: Vec<SkippedRowInfo> = Vec::new();
+    let mut inserted_total: u64 = 0;
+    let mut failure: Option<(String, Option<u64>, Option<u64>)> = None;
+
+    for spec in sheets {
+        let summary = format!(
+            "-- XLSX import into {} ({} columns, sheet {})",
+            spec.table,
+            spec.mapping.len(),
+            spec.sheet
+        );
+        let mut sheet_options = options.clone();
+        sheet_options.sheet = Some(spec.sheet.clone());
+        if spec.create_table.is_some() {
+            // 作ったばかりの空テーブルに UPSERT の意味は無い。
+            sheet_options.conflict_mode = ConflictMode::Insert;
+            sheet_options.key_columns = Vec::new();
+        }
+        let created_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut cancel_cleanup = CancelledImportCleanup {
+            app: app.clone(),
+            session: session.clone(),
+            summary: summary.clone(),
+            database: database.clone(),
+            table: spec.table.clone(),
+            abort_mode: options.error_mode == ImportErrorMode::Abort,
+            committed: committed.clone(),
+            created: created_flag.clone(),
+            armed: true,
+        };
+        let result = run_import(
+            &app,
+            &session,
+            &stream_id,
+            database.clone(),
+            spec.table.clone(),
+            path.clone(),
+            sheet_options,
+            spec.mapping.clone(),
+            batch_size,
+            spec.create_table.clone(),
+            committed.clone(),
+            created_flag,
+            Some(inserted_total),
+        )
+        .await;
+        cancel_cleanup.disarm();
+        match result {
+            Ok(ImportRun::Ok {
+                inserted,
+                elapsed_ms,
+                skipped,
+                ..
+            }) => {
+                if inserted > 0 {
+                    session.query_cache.invalidate_all().await;
+                }
+                record_write_history(
+                    &session,
+                    summary,
+                    database.as_deref(),
+                    Some(inserted as i64),
+                    Some(elapsed_ms as i64),
+                    None,
+                )
+                .await;
+                inserted_total += inserted;
+                results.push(SheetImportResult {
+                    sheet: spec.sheet.clone(),
+                    table: spec.table.clone(),
+                    inserted,
+                    skipped_total: skipped.len() as u64,
+                });
+                all_skipped.extend(skipped.into_iter().map(|mut s| {
+                    s.reason = format!("[{}] {}", spec.sheet, s.reason);
+                    s
+                }));
+            }
+            Ok(ImportRun::Failed {
+                message,
+                record,
+                line,
+            }) => {
+                record_write_history(
+                    &session,
+                    summary,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(message.clone()),
+                )
+                .await;
+                failure = Some((format!("[{}] {message}", spec.sheet), record, line));
+                break;
+            }
+            Err(e) => {
+                record_write_history(
+                    &session,
+                    summary,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(e.to_string()),
+                )
+                .await;
+                failure = Some((format!("[{}] {e}", spec.sheet), None, None));
+                break;
+            }
+        }
+    }
+
+    if let Some(state) = app.try_state::<AppState>() {
+        // シートごとに列が違うので、元データ付きの書き出しは単独の取り込みのときだけ。
+        state.set_last_import_columns(Vec::new());
+        state.set_last_import_skipped(if failure.is_some() {
+            Vec::new()
+        } else {
+            all_skipped.clone()
+        });
+    }
+    match failure {
+        None => {
+            let skipped_total = all_skipped.len() as u64;
+            tracing::info!(
+                stream_id = %stream_id,
+                sheets = results.len(),
+                inserted = inserted_total,
+                skipped = skipped_total,
+                "xlsx multi-sheet import completed"
+            );
+            let head: Vec<SkippedRowInfo> = all_skipped
+                .iter()
+                .take(MAX_REPORTED_SKIPPED)
+                .cloned()
+                .collect();
+            if let Err(e) = app.emit(
+                EV_IMPORT_DONE,
+                ImportDoneEvent {
+                    stream_id: stream_id.clone(),
+                    inserted: inserted_total,
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                    skipped: head,
+                    skipped_total,
+                    sheets: results,
+                },
+            ) {
+                tracing::warn!(stream_id = %stream_id, error = %e, "failed to emit import done event");
+            }
+        }
+        Some((message, record, line)) => {
+            tracing::error!(stream_id = %stream_id, error = %message, "xlsx multi-sheet import failed");
+            // 失敗したシートより前に完了したシートは取り込み済み。UI がそれを伝えられるよう
+            // メッセージに添える。
+            let done: Vec<String> = results
+                .iter()
+                .map(|r| format!("{} -> {}", r.sheet, r.table))
+                .collect();
+            let message = if done.is_empty() {
+                message
+            } else {
+                format!("{message} (already imported: {})", done.join(", "))
+            };
+            if let Err(emit_err) = app.emit(
+                EV_IMPORT_ERROR,
+                ImportErrorEvent {
+                    stream_id: stream_id.clone(),
+                    error: message,
+                    record,
+                    line,
+                    committed: (inserted_total > 0).then_some(inserted_total),
+                },
+            ) {
+                tracing::warn!(stream_id = %stream_id, error = %emit_err, "failed to emit import error event");
+            }
+        }
+    }
+    if let Some(state) = app.try_state::<AppState>() {
+        state.forget_stream(&stream_id, stream_token).await;
+    }
+}
+
 /// Tauri 側のラッパー: `csv-import:*` イベントの emit を `run_import_core` へ
 /// 渡すだけ。取り込みの本体 (パース → 新規テーブル作成 → `import_rows`) は
 /// AppHandle 無しでも統合テストから駆動できるよう core に置く (#985)。
@@ -1505,7 +1859,10 @@ async fn run_import(
     create_table: Option<Vec<NewColumn>>,
     committed: Arc<std::sync::atomic::AtomicU64>,
     created_flag: Arc<std::sync::atomic::AtomicBool>,
+    committed_base: Option<u64>,
 ) -> Result<ImportRun> {
+    let skip_mode = options.error_mode == ImportErrorMode::Skip;
+    let committed_for_progress = committed.clone();
     let started_app = app.clone();
     let started_id = stream_id.to_string();
     let on_started = move |total: u64| {
@@ -1524,6 +1881,13 @@ async fn run_import(
     // 進捗イベントは 150ms ごとに間引く (#1258)。最後の進捗 (全行挿入済み) は必ず送る。
     let mut throttle = ProgressThrottle::standard();
     let on_progress = move |inserted: u64, total: u64| -> Result<()> {
+        // 複数シート取り込み (#1623) では、完了済みシートの行数に今のシートの進み具合を足した
+        // 値を「コミット済みの行数」にする (skip モードのチャンク単位のコミットぶんだけ。
+        // abort モードは今のシートがロールバックされるので完了済みシートぶんだけ)。
+        if let Some(base) = committed_base {
+            let now = if skip_mode { base + inserted } else { base };
+            committed_for_progress.store(now, std::sync::atomic::Ordering::SeqCst);
+        }
         if !(throttle.ready() || inserted >= total) {
             return Ok(());
         }
@@ -2895,6 +3259,85 @@ mod tests {
         assert_eq!(got.headers, vec!["v", "名前"]);
         assert_eq!(got.rows[1], vec!["2", "佐藤"]);
         let _ = std::fs::remove_file(path);
+    }
+
+    // ---- #1623: 複数シート一括取り込みの指定検証 ------------------------------
+
+    fn sheet_spec(sheet: &str, table: &str) -> SheetImportSpec {
+        SheetImportSpec {
+            sheet: sheet.into(),
+            table: table.into(),
+            mapping: vec![ColumnMapping {
+                column: "id".into(),
+                csv_index: 0,
+            }],
+            create_table: None,
+        }
+    }
+
+    #[test]
+    fn sheet_specs_accept_distinct_sheets_and_tables() {
+        let specs = vec![sheet_spec("A", "t1"), sheet_spec("B", "t2")];
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &specs).is_ok()
+        );
+    }
+
+    #[test]
+    fn sheet_specs_reject_bad_input() {
+        let ok = vec![sheet_spec("A", "t1")];
+        let mut csv = xlsx_opts(true, None, None);
+        csv.format = ImportFormat::Csv;
+        assert!(validate_sheet_specs(DriverKind::Sqlite, &csv, &ok).is_err());
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &[]).is_err()
+        );
+        // 同じシート / 同じテーブル (大小無視) を 2 度指定できない。
+        let dup_sheet = vec![sheet_spec("A", "t1"), sheet_spec("A", "t2")];
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &dup_sheet)
+                .is_err()
+        );
+        let dup_table = vec![sheet_spec("A", "T1"), sheet_spec("B", "t1")];
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &dup_table)
+                .is_err()
+        );
+        let empty_table = vec![sheet_spec("A", " ")];
+        assert!(validate_sheet_specs(
+            DriverKind::Sqlite,
+            &xlsx_opts(true, None, None),
+            &empty_table
+        )
+        .is_err());
+        let mut no_map = sheet_spec("A", "t1");
+        no_map.mapping.clear();
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &[no_map])
+                .is_err()
+        );
+        // 上限を超えるシート数。
+        let many: Vec<SheetImportSpec> = (0..=MAX_IMPORT_SHEETS)
+            .map(|i| sheet_spec(&format!("s{i}"), &format!("t{i}")))
+            .collect();
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &many).is_err()
+        );
+    }
+
+    #[test]
+    fn sheet_specs_validate_the_new_table_definition_per_sheet() {
+        let mut spec = sheet_spec("A", "t1");
+        // マッピング先 (id) が作成列に無い。
+        spec.create_table = Some(vec![NewColumn {
+            name: "other".into(),
+            column_type: crate::db::create_table::NewColumnType::Text,
+            primary_key: false,
+        }]);
+        assert!(
+            validate_sheet_specs(DriverKind::Sqlite, &xlsx_opts(true, None, None), &[spec])
+                .is_err()
+        );
     }
 
     // ---- #1623: 元の行データ付きのスキップ行の書き出し ------------------------
