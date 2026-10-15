@@ -146,3 +146,23 @@ export function sandboxSkipKeys(
 ): CellValue[][] {
   return conflicts.filter((c) => resolutions[sandboxKeySignature(c.key)] === "skip").map((c) => c.key);
 }
+
+/**
+ * 競合 `conflicts` のすべてを同じ解決 (`overwrite` / `skip`) にした解決表を返す (#1625)。
+ * 一括解決の元になる純関数。`current` に個別の選択があっても、`scope` が "all" ならすべて
+ * 上書きし、"unresolved" なら未解決の行だけに適用して個別の選択を残す。
+ */
+export function bulkSandboxResolutions(
+  conflicts: SandboxConflict[],
+  current: Record<string, SandboxConflictResolution>,
+  resolution: SandboxConflictResolution,
+  scope: "all" | "unresolved" = "all",
+): Record<string, SandboxConflictResolution> {
+  const next = { ...current };
+  for (const c of conflicts) {
+    const key = sandboxKeySignature(c.key);
+    if (scope === "unresolved" && next[key]) continue;
+    next[key] = resolution;
+  }
+  return next;
+}

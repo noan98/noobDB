@@ -12,6 +12,7 @@ import {
 } from "../api/tauri";
 import { useT } from "../i18n";
 import {
+  bulkSandboxResolutions,
   sandboxKeySignature,
   sandboxSkipKeys,
   unresolvedSandboxConflicts,
@@ -193,6 +194,38 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
     }));
     setCombined(null);
   };
+
+  // 競合の一括解決 (#1625)。`table` を渡せばその表だけ、省略なら全表の競合にまとめて適用する。
+  // 個別の選択は一括の後でも変えられる。全件上書きは元 DB 側の変更を捨てるので確認する。
+  const resolveAll = async (resolution: SandboxConflictResolution, table?: string) => {
+    if (resolution === "overwrite") {
+      const ok = await confirm({
+        title: t("sandboxReviewBulkOverwriteTitle"),
+        message: t("sandboxReviewBulkOverwriteMessage"),
+        confirmLabel: t("sandboxReviewOverwrite"),
+        tone: "warning",
+      });
+      if (!ok) return;
+    }
+    setTables((prev) => {
+      const next = { ...prev };
+      for (const [name, st] of Object.entries(prev)) {
+        if (table !== undefined && name !== table) continue;
+        if (!st.diff || st.diff.conflicts.length === 0) continue;
+        next[name] = {
+          ...st,
+          resolutions: bulkSandboxResolutions(st.diff.conflicts, st.resolutions, resolution),
+        };
+      }
+      return next;
+    });
+    setCombined(null);
+  };
+
+  const totalConflicts = useMemo(
+    () => Object.values(tables).reduce((n, st) => n + (st.diff?.conflicts.length ?? 0), 0),
+    [tables],
+  );
 
   // 1 表を base スナップショットへ戻す (#1539)。確認のうえ実行し、完了後は差分を再読込する。
   const resetTable = async (table: string) => {
@@ -499,6 +532,20 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
           </Callout>
         )}
 
+        {totalConflicts > 1 && (
+          <chakra.div display="flex" alignItems="center" gap="2" flexWrap="wrap" fontSize="sm">
+            <chakra.span fontWeight={600}>
+              {t("sandboxReviewBulkTitle", { count: totalConflicts })}
+            </chakra.span>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void resolveAll("overwrite")}>
+              {t("sandboxReviewBulkOverwrite")}
+            </Button>
+            <Button type="button" size="sm" variant="secondary" onClick={() => void resolveAll("skip")}>
+              {t("sandboxReviewBulkSkip")}
+            </Button>
+          </chakra.div>
+        )}
+
         {sandbox.tables.map((table) => {
           const st = tables[table];
           if (!st || st.loading) return null;
@@ -559,9 +606,29 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
               )}
               {st.diff.conflicts.length > 0 && (
                 <chakra.div mt="2" display="flex" flexDirection="column" gap="1.5">
-                  <chakra.strong fontSize="xs" color="app.textWarning">
-                    {t("sandboxReviewConflictsTitle", { count: st.diff.conflicts.length })}
-                  </chakra.strong>
+                  <chakra.div display="flex" alignItems="center" gap="2" flexWrap="wrap">
+                    <chakra.strong fontSize="xs" color="app.textWarning">
+                      {t("sandboxReviewConflictsTitle", { count: st.diff.conflicts.length })}
+                    </chakra.strong>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={t("sandboxReviewTableOverwriteAria", { table })}
+                      onClick={() => void resolveAll("overwrite", table)}
+                    >
+                      {t("sandboxReviewTableOverwrite")}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={t("sandboxReviewTableSkipAria", { table })}
+                      onClick={() => void resolveAll("skip", table)}
+                    >
+                      {t("sandboxReviewTableSkip")}
+                    </Button>
+                  </chakra.div>
                   {st.diff.conflicts.map((c) => {
                     const keySig = sandboxKeySignature(c.key);
                     const resolution = st.resolutions[keySig];
