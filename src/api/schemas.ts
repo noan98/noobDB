@@ -1709,7 +1709,14 @@ const connectRetry = z.object({
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
-  z.object({ kind: z.literal("daily"), hour: z.number(), minute: z.number() }),
+  z.object({
+    kind: z.literal("daily"),
+    hour: z.number(),
+    minute: z.number(),
+    // IANA タイムゾーン (null = UTC) と曜日マスク (0 = 毎日)。#1621。
+    timezone: z.string().nullable(),
+    weekdays: z.number(),
+  }),
 ]);
 
 export const taskDefinition = z.object({
@@ -1725,6 +1732,9 @@ export const taskDefinition = z.object({
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
   connect_retry: connectRetry,
+  pause_after_failures: z.number(),
+  consecutive_failures: z.number(),
+  auto_paused_at: z.string().nullable(),
 });
 
 export const taskRun = z.object({
@@ -1757,6 +1767,9 @@ export const assertionRunRecord = z.object({
 
 export const assertionRunRecordArray = z.array(assertionRunRecord);
 
+/** `preview_task_schedule` の戻り値: 次回以降の発火時刻 (RFC3339, UTC)。 */
+export const taskSchedulePreview = z.array(z.string());
+
 export const schedulerSettings = z.object({
   catch_up_missed: z.boolean(),
 });
@@ -1768,6 +1781,7 @@ export const taskRunEvent = z.object({
   message: z.string().nullable(),
   outputPath: z.string().nullable(),
   catchUp: z.boolean(),
+  autoPaused: z.boolean(),
 });
 
 /** 「今すぐ実行」の進捗 (`task-run:progress`、#1534)。`unit` は `rows` / `bytes` / `items`。 */

@@ -21,17 +21,18 @@ import { isReadOnlySql } from "../dangerousSql";
 import { semanticColorToken } from "../semanticColors";
 import {
   buildAssertionTrends,
-  formatClock,
-  localToUtcClock,
+  deviceTimeZone,
+  draftFromSchedule,
   previewOutputPath,
   relativeNextRun,
+  scheduleFromDraft,
   sortTasksForDisplay,
   summarizeAction,
   summarizeSchedule,
-  timeZoneLabel,
-  utcToLocalClock,
   type AssertionTrend,
+  type ScheduleDraft,
 } from "../taskFormat";
+import { TaskScheduleEditor } from "./TaskScheduleEditor";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration, NoResultsIllustration } from "./illustrations";
@@ -44,6 +45,10 @@ import { Spinner } from "./Spinner";
 import { Button, Checkbox, Input, Select, Switch, Textarea } from "./ui";
 import { useToast } from "./Toast";
 import { Tooltip } from "./Tooltip";
+
+/** 連続失敗で自動停止する回数の既定 (新規タスク) と上限。バックエンドの `MAX_PAUSE_AFTER_FAILURES` と揃える。 */
+const DEFAULT_PAUSE_AFTER_FAILURES = 5;
+const MAX_PAUSE_AFTER_FAILURES = 100;
 
 /** 接続リトライの間隔入力の上限 (秒)。バックエンドの `MAX_RETRY_DELAY_SECS` (15 分) と揃える。 */
 const MAX_RETRY_INTERVAL_SECS = 15 * 60;
@@ -87,6 +92,8 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<TaskDefinition | null>(null);
+  // true のとき `editing` を雛形にした新規タスクを作る (複製, #1621)。
+  const [duplicating, setDuplicating] = useState(false);
   const [runningId, setRunningId] = useState<string | null>(null);
   // 「今すぐ実行」の中断用 ID と進捗 (#1534)。
   const [runningStreamId, setRunningStreamId] = useState<string | null>(null);
@@ -281,6 +288,7 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
   const sorted = useMemo(() => sortTasksForDisplay(tasks), [tasks]);
   const openCreateForm = () => {
     setEditing(null);
+    setDuplicating(false);
     setShowForm(true);
   };
   const profileName = (id: string) => profiles.find((p) => p.id === id)?.name ?? id;
@@ -300,13 +308,16 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
             <TaskForm
               profiles={profiles}
               task={editing}
+              duplicate={duplicating}
               onCancel={() => {
                 setShowForm(false);
                 setEditing(null);
+                setDuplicating(false);
               }}
               onSaved={async () => {
                 setShowForm(false);
                 setEditing(null);
+                setDuplicating(false);
                 await load();
               }}
             />
@@ -379,6 +390,12 @@ export function TaskManager({ profiles, onClose }: { profiles: ConnectionProfile
                       onToggleEnabled={() => void handleToggleEnabled(task)}
                       onEdit={() => {
                         setEditing(task);
+                        setDuplicating(false);
+                        setShowForm(true);
+                      }}
+                      onDuplicate={() => {
+                        setEditing(task);
+                        setDuplicating(true);
                         setShowForm(true);
                       }}
                       onDelete={() => void handleDelete(task)}
@@ -422,6 +439,7 @@ function TaskRow({
   runsLoading,
   onToggleEnabled,
   onEdit,
+  onDuplicate,
   onDelete,
   onRunNow,
   onToggleHistory,
@@ -441,6 +459,7 @@ function TaskRow({
   runsLoading: boolean;
   onToggleEnabled: () => void;
   onEdit: () => void;
+  onDuplicate: () => void;
   onDelete: () => void;
   onRunNow: () => void;
   onToggleHistory: () => void;
@@ -468,6 +487,15 @@ function TaskRow({
               locale,
             })}
           </chakra.div>
+          {task.auto_paused_at && !task.enabled && (
+            <chakra.div
+              fontSize="xs"
+              color={semanticColorToken("warning", "text")}
+              data-testid="task-auto-paused"
+            >
+              {t("taskAutoPausedBadge", { n: task.consecutive_failures })}
+            </chakra.div>
+          )}
         </chakra.div>
         <chakra.div fontSize="xs" color="app.textMuted" minW="90px" textAlign="right" textStyle="numeric">
           {task.enabled ? (
@@ -529,6 +557,11 @@ function TaskRow({
           <Tooltip label={t("taskEdit")}>
             <Button type="button" onClick={onEdit} aria-label={t("taskEdit")}>
               <Icon name="tools" size={ICON_SIZES.sm} />
+            </Button>
+          </Tooltip>
+          <Tooltip label={t("taskDuplicate")}>
+            <Button type="button" onClick={onDuplicate} aria-label={t("taskDuplicate")}>
+              <Icon name="copy" size={ICON_SIZES.sm} />
             </Button>
           </Tooltip>
           <Tooltip label={t("taskDelete")}>
@@ -683,16 +716,18 @@ function AssertionTrendList({ taskId, refreshKey }: { taskId: string; refreshKey
 }
 
 type ActionKind = TaskAction["kind"];
-type ScheduleKind = TaskSchedule["kind"];
 
 function TaskForm({
   profiles,
   task,
+  duplicate = false,
   onCancel,
   onSaved,
 }: {
   profiles: ConnectionProfile[];
   task: TaskDefinition | null;
+  /** true なら `task` を雛形にした**新規**タスクとして開く (複製, #1621)。 */
+  duplicate?: boolean;
   onCancel: () => void;
   onSaved: () => void;
 }) {
@@ -700,7 +735,9 @@ function TaskForm({
   const toast = useToast();
   const { confirm, dialog } = useConfirm();
 
-  const [name, setName] = useState(task?.name ?? "");
+  const [name, setName] = useState(
+    task ? (duplicate ? t("taskDuplicateName", { name: task.name }) : task.name) : "",
+  );
   const [profileId, setProfileId] = useState(task?.profile_id ?? profiles[0]?.id ?? "");
   const [enabled, setEnabled] = useState(task?.enabled ?? true);
 
@@ -760,34 +797,19 @@ function TaskForm({
     task?.action.kind === "dump" ? task.action.options : DEFAULT_DUMP_OPTIONS,
   );
 
-  const [scheduleKind, setScheduleKind] = useState<ScheduleKind>(task?.schedule.kind ?? "interval");
-  const [intervalMinutes, setIntervalMinutes] = useState(
-    task?.schedule.kind === "interval" ? String(task.schedule.minutes) : "60",
+  // スケジュールの編集状態 (#1621)。新規は端末のタイムゾーンの 9:00。旧データ (タイムゾーンなし = UTC) は UTC として開く。
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() =>
+    draftFromSchedule(task?.schedule, deviceTimeZone()),
   );
-  // 日次の時刻は「ローカル時刻」で入力し、保存時に UTC (バックエンドの保存形式) へ変換する。
-  const [initialLocalDaily] = useState(() =>
-    task?.schedule.kind === "daily"
-      ? utcToLocalClock(task.schedule.hour, task.schedule.minute, new Date())
-      : { hour: 9, minute: 0, dayShift: 0 as const },
+  const legacyUtc = task?.schedule.kind === "daily" && !task.schedule.timezone;
+  const [pauseAfterFailures, setPauseAfterFailures] = useState(
+    String(task ? task.pause_after_failures : DEFAULT_PAUSE_AFTER_FAILURES),
   );
-  const [dailyHour, setDailyHour] = useState(String(initialLocalDaily.hour));
-  const [dailyMinute, setDailyMinute] = useState(String(initialLocalDaily.minute));
 
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
   const selectedProfile = profiles.find((p) => p.id === profileId) ?? null;
-  const locale = useLocale();
-  // ヒント: 入力欄はローカル時刻で、保存時に UTC (バックエンドの保存形式) へ変換される。
-  // 変換後の UTC 時刻を即時表示する (日付境界で前日/翌日になる場合も分かる)。
-  const dailyHint = (() => {
-    const at = new Date();
-    const utc = localToUtcClock(Number(dailyHour) || 0, Number(dailyMinute) || 0, at);
-    return t("taskScheduleLocalHint", {
-      tz: timeZoneLabel(at, locale),
-      utc: formatClock(utc.hour, utc.minute),
-    });
-  })();
   // ドライバを渡さない (= 保守的なマスク) のは意図的: バックエンドの
   // `commands::tasks::validate_action` / `tasks::executor::run_once` も、
   // プロファイル解決前に同じドライバ非依存の判定で弾くため (#852)。ここで
@@ -885,13 +907,12 @@ function TaskForm({
       };
     }
 
-    const schedule: TaskSchedule =
-      scheduleKind === "interval"
-        ? { kind: "interval", minutes: Math.max(1, Number(intervalMinutes) || 1) }
-        : (() => {
-            const utc = localToUtcClock(Number(dailyHour) || 0, Number(dailyMinute) || 0, new Date());
-            return { kind: "daily" as const, hour: utc.hour, minute: utc.minute };
-          })();
+    const built = scheduleFromDraft(scheduleDraft);
+    if (!built.ok) {
+      setFormError(t("taskScheduleWeekdaysRequired"));
+      return;
+    }
+    const schedule: TaskSchedule = built.schedule;
 
     if (selectedProfile?.is_production) {
       const ok = await confirm({
@@ -906,12 +927,16 @@ function TaskForm({
     setSaving(true);
     try {
       await api.saveTask({
-        id: task?.id ?? null,
+        id: duplicate ? null : (task?.id ?? null),
         name: name.trim(),
         profile_id: profileId,
         action,
         schedule,
         enabled,
+        pause_after_failures: Math.min(
+          MAX_PAUSE_AFTER_FAILURES,
+          Math.max(0, Math.floor(Number(pauseAfterFailures) || 0)),
+        ),
         connect_retry: {
           max_retries: Math.max(0, Math.floor(Number(connectRetries) || 0)),
           interval_secs: Math.min(
@@ -1174,53 +1199,7 @@ function TaskForm({
 
       <FormSection>
         <FieldLabel as="div">{t("taskFormSchedule")}</FieldLabel>
-        <Flex gap="3" align="center" flexWrap="wrap">
-          <Select
-            value={scheduleKind}
-            onChange={(e) => setScheduleKind(e.target.value as ScheduleKind)}
-            width="auto"
-          >
-            <option value="interval">{t("taskScheduleInterval")}</option>
-            <option value="daily">{t("taskScheduleDaily")}</option>
-          </Select>
-          {scheduleKind === "interval" ? (
-            <Flex align="center" gap="1.5">
-              <Input
-                type="number"
-                min={1}
-                width="90px"
-                value={intervalMinutes}
-                onChange={(e) => setIntervalMinutes(e.target.value)}
-              />
-              <chakra.span fontSize="sm" color="app.textMuted">
-                {t("taskScheduleMinutes")}
-              </chakra.span>
-            </Flex>
-          ) : (
-            <Flex align="center" gap="1.5">
-              <Input
-                type="number"
-                min={0}
-                max={23}
-                width="70px"
-                value={dailyHour}
-                onChange={(e) => setDailyHour(e.target.value)}
-              />
-              <chakra.span>:</chakra.span>
-              <Input
-                type="number"
-                min={0}
-                max={59}
-                width="70px"
-                value={dailyMinute}
-                onChange={(e) => setDailyMinute(e.target.value)}
-              />
-              <chakra.span fontSize="sm" color="app.textMuted">
-                {dailyHint}
-              </chakra.span>
-            </Flex>
-          )}
-        </Flex>
+        <TaskScheduleEditor draft={scheduleDraft} onChange={setScheduleDraft} legacyUtc={legacyUtc} />
       </FormSection>
 
       <FormSection>
@@ -1252,6 +1231,27 @@ function TaskForm({
         </Flex>
         <chakra.p margin={0} marginTop="1" textStyle="caption" color="app.textMuted">
           {t("taskFormConnectRetryHint")}
+        </chakra.p>
+      </FormSection>
+
+      <FormSection>
+        <FieldLabel htmlFor="task-pause-after-failures">{t("taskFormPauseAfterFailures")}</FieldLabel>
+        <Flex align="center" gap="1.5" flexWrap="wrap">
+          <Input
+            id="task-pause-after-failures"
+            type="number"
+            min={0}
+            max={MAX_PAUSE_AFTER_FAILURES}
+            width="90px"
+            value={pauseAfterFailures}
+            onChange={(e) => setPauseAfterFailures(e.target.value)}
+          />
+          <chakra.span fontSize="sm" color="app.textMuted">
+            {t("taskFormPauseAfterFailuresSuffix")}
+          </chakra.span>
+        </Flex>
+        <chakra.p margin={0} marginTop="1" textStyle="caption">
+          {t("taskFormPauseAfterFailuresHint")}
         </chakra.p>
       </FormSection>
 

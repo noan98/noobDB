@@ -300,6 +300,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
+- `preview_task_schedule`
 - `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`

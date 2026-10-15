@@ -15,7 +15,7 @@ use crate::profiles;
 use crate::state::{AppState, StreamHandle, StreamKind};
 use crate::tasks::{
     executor, runs, schedule, scheduler, store, AssertionRunRecord, ConnectRetry,
-    SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule,
+    SchedulerSettings, TaskAction, TaskDefinition, TaskRun, TaskSchedule, MAX_PAUSE_AFTER_FAILURES,
 };
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +32,9 @@ pub struct SaveTaskRequest {
     /// 接続失敗時の自動リトライ (#1537)。省略時は再試行なし。保存時に範囲へ丸める。
     #[serde(default)]
     pub connect_retry: ConnectRetry,
+    /// 連続失敗で自動停止するまでの回数 (#1621)。0 / 省略なら停止しない。
+    #[serde(default)]
+    pub pause_after_failures: u32,
 }
 
 fn default_task_enabled() -> bool {
@@ -116,7 +119,7 @@ fn apply_save(
         name: req.name.clone(),
         profile_id: req.profile_id.clone(),
         action: req.action.clone(),
-        schedule: req.schedule,
+        schedule: req.schedule.clone(),
         enabled: req.enabled,
         created_at,
         updated_at: now.to_rfc3339(),
@@ -124,6 +127,17 @@ fn apply_save(
         last_run_at: existing.as_ref().and_then(|t| t.last_run_at.clone()),
         last_status: existing.as_ref().and_then(|t| t.last_status.clone()),
         connect_retry: req.connect_retry.normalized(),
+        pause_after_failures: req.pause_after_failures.min(MAX_PAUSE_AFTER_FAILURES),
+        // 有効のまま保存したときは連続失敗の数え直しを引き継ぎ、無効 → 有効にしたとき
+        // (手動の再開) だけ 0 に戻す。自動停止の印も再有効化で消す。
+        consecutive_failures: match &existing {
+            Some(t) if req.enabled && t.enabled => t.consecutive_failures,
+            _ => 0,
+        },
+        auto_paused_at: match &existing {
+            Some(t) if !req.enabled => t.auto_paused_at.clone(),
+            _ => None,
+        },
     };
     match tasks.iter_mut().find(|t| t.id == id) {
         Some(slot) => *slot = task.clone(),
@@ -138,6 +152,7 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
         return Err(AppError::InvalidInput("task name is empty".into()));
     }
     validate_action(&req.action)?;
+    schedule::validate_schedule(&req.schedule).map_err(AppError::InvalidInput)?;
 
     // プロファイルが実在することを確認する (孤立タスクの作成を防ぐ)。
     let profiles = profiles::store::load_all()?;
@@ -179,6 +194,22 @@ pub async fn save_task(req: SaveTaskRequest) -> Result<TaskDefinition> {
     Ok(task)
 }
 
+/// プレビューで返す回数の上限。
+const MAX_SCHEDULE_PREVIEW: usize = 10;
+
+/// スケジュールの次回以降の発火時刻 (RFC3339, UTC) を `count` 件返す (#1621)。保存前の
+/// 編集中の値で呼べ、DST・曜日マスクを含む実際の計算 (`schedule::next_run_after`) と
+/// 同じ経路なので、時刻やタイムゾーンの設定ミスを保存前に確認できる。副作用なし。
+#[tauri::command]
+pub fn preview_task_schedule(schedule: TaskSchedule, count: usize) -> Result<Vec<String>> {
+    schedule::validate_schedule(&schedule).map_err(AppError::InvalidInput)?;
+    let count = count.clamp(1, MAX_SCHEDULE_PREVIEW);
+    Ok(schedule::upcoming_runs(&schedule, Utc::now(), count)
+        .into_iter()
+        .map(|t| t.to_rfc3339())
+        .collect())
+}
+
 #[tauri::command]
 pub async fn delete_task(id: String) -> Result<()> {
     store::delete(&id)?;
@@ -200,6 +231,11 @@ pub async fn set_task_enabled(id: String, enabled: bool) -> Result<TaskDefinitio
             .find(|t| t.id == id)
             .ok_or_else(|| AppError::InvalidInput(format!("task not found: {id}")))?;
         task.enabled = enabled;
+        if enabled {
+            // 手動の再開 (連続失敗による自動停止からの復帰を含む)。数え直す (#1621)。
+            task.consecutive_failures = 0;
+            task.auto_paused_at = None;
+        }
         task.next_run_at = if enabled {
             Some(schedule::next_run_after(&task.schedule, Utc::now()).to_rfc3339())
         } else {
@@ -354,6 +390,7 @@ mod apply_save_tests {
             schedule: TaskSchedule::Interval { minutes: 5 },
             enabled: true,
             connect_retry: ConnectRetry::default(),
+            pause_after_failures: 0,
         }
     }
 
@@ -374,6 +411,70 @@ mod apply_save_tests {
             saved.connect_retry.interval_secs,
             crate::tasks::MIN_RETRY_INTERVAL_SECS
         );
+    }
+
+    /// #1621: 連続失敗の数え直しは保存で保たれ、再有効化 (無効 → 有効) でだけ 0 に戻る。
+    #[test]
+    fn save_keeps_failure_streak_until_the_task_is_re_enabled() {
+        let mut tasks = Vec::new();
+        let now = Utc::now();
+        let mut r = req(None);
+        r.pause_after_failures = 500; // 上限へ丸められる
+        let saved = apply_save(&mut tasks, None, "t1", &r, None, now).unwrap();
+        assert_eq!(saved.pause_after_failures, MAX_PAUSE_AFTER_FAILURES);
+        // 失敗が溜まった状態。
+        tasks[0].consecutive_failures = 4;
+        let same = apply_save(&mut tasks, Some("t1"), "t1", &req(Some("t1")), None, now).unwrap();
+        assert_eq!(
+            same.consecutive_failures, 4,
+            "有効のまま保存しても数え直さない"
+        );
+        // 自動停止後 (無効) に、無効のまま保存すると印は残る。
+        tasks[0].enabled = false;
+        tasks[0].auto_paused_at = Some("t".into());
+        let mut off = req(Some("t1"));
+        off.enabled = false;
+        let kept = apply_save(&mut tasks, Some("t1"), "t1", &off, None, now).unwrap();
+        assert_eq!(kept.auto_paused_at.as_deref(), Some("t"));
+        assert_eq!(kept.consecutive_failures, 0);
+        // 有効に戻すと印も数え直しも消える。
+        tasks[0].consecutive_failures = 5;
+        let back = apply_save(&mut tasks, Some("t1"), "t1", &req(Some("t1")), None, now).unwrap();
+        assert_eq!(back.consecutive_failures, 0);
+        assert_eq!(back.auto_paused_at, None);
+    }
+
+    #[test]
+    fn preview_returns_validated_future_runs_in_order() {
+        let sched = TaskSchedule::Daily {
+            hour: 9,
+            minute: 0,
+            timezone: Some("Asia/Tokyo".into()),
+            weekdays: 0b001_1111,
+        };
+        let runs = preview_task_schedule(sched.clone(), 5).unwrap();
+        assert_eq!(runs.len(), 5);
+        let parsed: Vec<_> = runs
+            .iter()
+            .map(|s| chrono::DateTime::parse_from_rfc3339(s).unwrap())
+            .collect();
+        assert!(parsed.windows(2).all(|w| w[0] < w[1]));
+        // どれも JST の平日 9:00。
+        for p in &parsed {
+            let jst = p.with_timezone(&chrono_tz::Asia::Tokyo);
+            assert_eq!(chrono::Timelike::hour(&jst), 9);
+            assert!(chrono::Datelike::weekday(&jst).number_from_monday() <= 5);
+        }
+        // 件数は 1..=10 に丸め、不正なタイムゾーンは拒否する。
+        assert_eq!(preview_task_schedule(sched.clone(), 0).unwrap().len(), 1);
+        assert_eq!(preview_task_schedule(sched, 999).unwrap().len(), 10);
+        let bad = TaskSchedule::Daily {
+            hour: 9,
+            minute: 0,
+            timezone: Some("Nowhere/City".into()),
+            weekdays: 0,
+        };
+        assert!(preview_task_schedule(bad, 5).is_err());
     }
 
     #[test]

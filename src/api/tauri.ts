@@ -1720,10 +1720,14 @@ export interface ConnectRetry {
   interval_secs: number;
 }
 
-/** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
+/**
+ * タスクの発火スケジュール。`daily` の時刻は `timezone` (IANA 名) のローカル時刻で、
+ * 省略 / null は UTC (旧データ)。`weekdays` は月 = bit0 … 日 = bit6 のマスクで、
+ * 0 / 省略は毎日 (曜日は `timezone` のローカル日付で判定, #1621)。
+ */
 export type TaskSchedule =
   | { kind: "interval"; minutes: number }
-  | { kind: "daily"; hour: number; minute: number };
+  | { kind: "daily"; hour: number; minute: number; timezone?: string | null; weekdays?: number };
 
 export interface TaskDefinition {
   id: string;
@@ -1738,6 +1742,12 @@ export interface TaskDefinition {
   last_run_at: string | null;
   last_status: string | null;
   connect_retry: ConnectRetry;
+  /** 連続この回数失敗したら自動で一時停止する (0 = しない, #1621)。 */
+  pause_after_failures: number;
+  /** 現在の連続失敗回数 (成功で 0 に戻る)。 */
+  consecutive_failures: number;
+  /** 連続失敗で自動停止した時刻 (手動で再有効化すると null)。 */
+  auto_paused_at: string | null;
 }
 
 export interface SaveTaskRequest {
@@ -1748,6 +1758,8 @@ export interface SaveTaskRequest {
   schedule: TaskSchedule;
   enabled: boolean;
   connect_retry?: ConnectRetry;
+  /** 連続失敗で自動停止するまでの回数 (0 / 省略 = しない, #1621)。 */
+  pause_after_failures?: number;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -3250,6 +3262,8 @@ export interface TaskRunEvent {
   message: string | null;
   outputPath: string | null;
   catchUp: boolean;
+  /** この失敗で連続失敗の上限に達し、タスクが自動で一時停止した (#1621)。 */
+  autoPaused: boolean;
 }
 
 /** 「今すぐ実行」(`runTaskNow`) の進捗 (#1534)。`count` の単位は `unit`

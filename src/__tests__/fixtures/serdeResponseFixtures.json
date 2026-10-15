@@ -4877,10 +4877,12 @@
         "sql_batch_size": 100,
         "sql_table": "users"
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4888,6 +4890,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4918,10 +4921,12 @@
         },
         "output_path": "/tmp/dump.sql"
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4929,11 +4934,14 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "hour": 3,
         "kind": "daily",
-        "minute": 15
+        "minute": 15,
+        "timezone": "Asia/Tokyo",
+        "weekdays": 31
       },
       "updated_at": "2026-01-02T00:00:00Z"
     },
@@ -4946,10 +4954,12 @@
         "kind": "run_assertions",
         "notify_only_on_increase": true
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4957,6 +4967,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4969,10 +4980,12 @@
         "kind": "timelapse_capture",
         "max_generations": 30
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4980,11 +4993,14 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "hour": 2,
         "kind": "daily",
-        "minute": 0
+        "minute": 0,
+        "timezone": null,
+        "weekdays": 0
       },
       "updated_at": "2026-01-02T00:00:00Z"
     },
@@ -4995,10 +5011,12 @@
           "snip0001"
         ]
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -5006,6 +5024,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5025,10 +5044,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5036,6 +5057,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5053,10 +5075,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5064,6 +5088,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5081,10 +5106,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5092,6 +5119,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5109,10 +5137,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5120,6 +5150,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5137,10 +5168,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5148,6 +5181,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5165,10 +5199,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5176,6 +5212,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",

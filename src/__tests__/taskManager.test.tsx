@@ -33,6 +33,9 @@ const TASK: TaskDefinition = {
   last_run_at: null,
   last_status: "ok",
   connect_retry: { max_retries: 0, interval_secs: 30 },
+  pause_after_failures: 0,
+  consecutive_failures: 0,
+  auto_paused_at: null,
 };
 
 const RUN: TaskRun = {
@@ -62,6 +65,7 @@ const runTaskNow = vi.fn();
 const cancelStream = vi.fn();
 let progressHandler: ((e: import("../api/tauri").TaskRunProgressEvent) => void) | null = null;
 const getSchedulerSettings = vi.fn();
+const previewTaskSchedule = vi.fn();
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -73,6 +77,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listTaskRuns: (...args: unknown[]) => listTaskRuns(...(args as [string, number])),
       clearTaskRuns: (...args: unknown[]) => clearTaskRuns(...(args as [string])),
       saveTask: vi.fn(),
+      previewTaskSchedule: (...args: unknown[]) => previewTaskSchedule(...args),
       getSchedulerSettings: (...args: unknown[]) => getSchedulerSettings(...args),
       setSchedulerSettings: vi.fn(),
       runTaskNow: (...args: unknown[]) => runTaskNow(...args),
@@ -255,10 +260,10 @@ describe("TaskManager スケジューラ設定の取得 (#1534)", () => {
   });
 });
 
-describe("TaskForm 日次スケジュールの保存 (#1533)", () => {
+describe("TaskForm 日次スケジュールの保存 (#1621)", () => {
   const prevTz = process.env.TZ;
   beforeAll(() => {
-    // UTC 以外の環境でも変換が効くことを確かめるため JST に固定する。
+    // 端末のタイムゾーンを JST に固定する (新規の既定タイムゾーンに使われる)。
     process.env.TZ = "Asia/Tokyo";
     clearTaskFormatCache();
   });
@@ -267,30 +272,131 @@ describe("TaskForm 日次スケジュールの保存 (#1533)", () => {
     else process.env.TZ = prevTz;
     clearTaskFormatCache();
   });
+  beforeEach(() => {
+    previewTaskSchedule.mockResolvedValue([
+      "2026-01-05T00:00:00Z",
+      "2026-01-06T00:00:00Z",
+      "2026-01-07T00:00:00Z",
+      "2026-01-08T00:00:00Z",
+      "2026-01-09T00:00:00Z",
+    ]);
+  });
 
-  it("ローカル時刻で入力した日次時刻が UTC に変換されて saveTask に渡る", async () => {
+  it("旧データ (タイムゾーンなし) は UTC として開き、時刻・タイムゾーン・曜日・停止回数がそのまま saveTask に渡る", async () => {
     const saveTask = vi.mocked(api.saveTask);
     saveTask.mockResolvedValue(TASK);
-    // UTC 00:05 は JST 09:05。
     listTasks.mockResolvedValue([{ ...TASK, schedule: { kind: "daily", hour: 0, minute: 5 } }]);
     const user = userEvent.setup();
     renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
     await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: t("taskEdit") }));
 
-    const [hour, minute] = await screen.findAllByRole("spinbutton");
-    expect(hour).toHaveValue(9);
+    // 保存済みの UTC 00:05 は、換算せずそのまま UTC として見える。
+    const hour = await screen.findByLabelText(t("taskScheduleHour"));
+    const minute = screen.getByLabelText(t("taskScheduleMinute"));
+    expect(hour).toHaveValue(0);
     expect(minute).toHaveValue(5);
+    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveValue("UTC");
+    expect(screen.getByText(t("taskScheduleLegacyUtcNote"))).toBeInTheDocument();
 
-    // ローカル 10:30 → UTC 01:30。
+    // タイムゾーンを東京、時刻 10:30、平日のみに変える。
+    await user.selectOptions(screen.getByLabelText(t("taskScheduleTimezone")), "Asia/Tokyo");
     await user.clear(hour);
     await user.type(hour, "10");
     await user.clear(minute);
     await user.type(minute, "30");
+    await user.click(screen.getByRole("button", { name: t("taskScheduleWorkdaysPreset") }));
+    await user.clear(screen.getByLabelText(t("taskFormPauseAfterFailures")));
+    await user.type(screen.getByLabelText(t("taskFormPauseAfterFailures")), "3");
     await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
 
     await waitFor(() => expect(saveTask).toHaveBeenCalled());
-    expect(saveTask.mock.calls[0][0].schedule).toEqual({ kind: "daily", hour: 1, minute: 30 });
+    const req = saveTask.mock.calls[0][0];
+    expect(req.schedule).toEqual({
+      kind: "daily",
+      hour: 10,
+      minute: 30,
+      timezone: "Asia/Tokyo",
+      weekdays: 0b001_1111,
+    });
+    expect(req.pause_after_failures).toBe(3);
+    expect(req.id).toBe("task-1");
+  });
+
+  it("新規タスクは端末のタイムゾーンの毎日・連続失敗 5 回で始まり、曜日を全部外すと保存できない", async () => {
+    listTasks.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(t("taskEmpty"))).toBeInTheDocument());
+    await user.click(screen.getAllByRole("button", { name: t("taskCreate") })[0]);
+    await user.type(await screen.findByLabelText(t("taskFormName")), "Weekly");
+    await user.type(screen.getByLabelText(t("taskFormOutputPath")), "/tmp/out.csv");
+    await user.type(screen.getByLabelText(t("taskFormSql")), "SELECT 1");
+    expect(screen.getByLabelText(t("taskFormPauseAfterFailures"))).toHaveValue(5);
+
+    await user.selectOptions(screen.getByDisplayValue(t("taskScheduleInterval")), "daily");
+    expect(screen.getByLabelText(t("taskScheduleTimezone"))).toHaveValue("Asia/Tokyo");
+    // 全曜日のチェックを外すと検証エラーになり、保存は呼ばれない。
+    const group = screen.getByRole("group", { name: t("taskScheduleWeekdays") });
+    for (const box of within(group).getAllByRole("checkbox")) await user.click(box);
+    expect(screen.getByText(t("taskScheduleWeekdaysRequired"))).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    expect(saveTask).not.toHaveBeenCalled();
+  });
+
+  it("スケジュール編集中は、バックエンドの計算結果を端末のローカル時刻と JST で次の 5 回ぶん並べる", async () => {
+    listTasks.mockResolvedValue([
+      { ...TASK, schedule: { kind: "daily", hour: 9, minute: 0, timezone: "UTC", weekdays: 0 } },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskEdit") }));
+    const preview = await screen.findByTestId("task-schedule-preview");
+    await waitFor(() => expect(within(preview).getAllByRole("row")).toHaveLength(6)); // 見出し + 5 回
+    expect(previewTaskSchedule).toHaveBeenLastCalledWith(
+      { kind: "daily", hour: 9, minute: 0, timezone: "UTC", weekdays: 0 },
+      5,
+    );
+  });
+
+  it("複製は元の設定を雛形にした新規タスクとして保存される (id なし・名前に「コピー」)", async () => {
+    previewTaskSchedule.mockResolvedValue([]);
+    const saveTask = vi.mocked(api.saveTask);
+    saveTask.mockClear();
+    saveTask.mockResolvedValue({ ...TASK, id: "copy" });
+    listTasks.mockResolvedValue([TASK]);
+    const user = userEvent.setup();
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    await waitFor(() => expect(screen.getByText(TASK.name)).toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: t("taskDuplicate") }));
+    expect(await screen.findByLabelText(t("taskFormName"))).toHaveValue(
+      t("taskDuplicateName", { name: TASK.name }),
+    );
+    await user.click(screen.getByRole("button", { name: t("taskFormSave") }));
+    await waitFor(() => expect(saveTask).toHaveBeenCalled());
+    const req = saveTask.mock.calls[0][0];
+    expect(req.id).toBeNull();
+    expect(req.name).toBe(t("taskDuplicateName", { name: TASK.name }));
+    expect(req.action).toEqual({ ...TASK.action, sql_table: null, sql_batch_size: null });
+  });
+
+  it("連続失敗で自動停止したタスクには、その旨を行に表示する", async () => {
+    listTasks.mockResolvedValue([
+      {
+        ...TASK,
+        enabled: false,
+        consecutive_failures: 5,
+        pause_after_failures: 5,
+        auto_paused_at: "2026-01-02T00:00:00Z",
+      },
+    ]);
+    renderWithProviders(<TaskManager profiles={[makeProfile()]} onClose={() => {}} />);
+    expect(await screen.findByTestId("task-auto-paused")).toHaveTextContent(
+      t("taskAutoPausedBadge", { n: 5 }),
+    );
   });
 });
 

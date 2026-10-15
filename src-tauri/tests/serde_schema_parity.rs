@@ -1554,6 +1554,8 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskSchedule::Daily {
                 hour: 3,
                 minute: 15,
+                timezone: Some("Asia/Tokyo".into()),
+                weekdays: 0b001_1111,
             },
         ),
         (
@@ -1568,7 +1570,12 @@ fn build_fixtures() -> serde_json::Value {
             t::TaskAction::TimelapseCapture {
                 max_generations: Some(30),
             },
-            t::TaskSchedule::Daily { hour: 2, minute: 0 },
+            t::TaskSchedule::Daily {
+                hour: 2,
+                minute: 0,
+                timezone: None,
+                weekdays: 0,
+            },
         ),
         (
             t::TaskAction::RefreshPlanWatch {
@@ -1594,6 +1601,9 @@ fn build_fixtures() -> serde_json::Value {
             max_retries: 3,
             interval_secs: 30,
         },
+        pause_after_failures: 5,
+        consecutive_failures: 2,
+        auto_paused_at: Some("2026-01-02T00:00:00Z".into()),
     })
     .collect();
     // ExportFormat 全種 (zod `exportFormat` と突き合わせる)。
@@ -1621,6 +1631,9 @@ fn build_fixtures() -> serde_json::Value {
         last_run_at: None,
         last_status: None,
         connect_retry: t::ConnectRetry::default(),
+        pause_after_failures: 0,
+        consecutive_failures: 0,
+        auto_paused_at: None,
     })
     .collect();
     let task_run = t::TaskRun {

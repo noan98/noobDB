@@ -5549,6 +5549,34 @@ const en = {
   refreshTrendAria:
     "Changes over the last {count} refreshes; latest: +{added} added, ~{changed} changed, -{removed} removed",
   refreshTrendBar: "{time}: +{added} added, ~{changed} changed, -{removed} removed",
+  taskSummaryDailyTz: "daily {time} ({tz})",
+  taskSummaryWeekdaysTz: "weekdays {time} ({tz})",
+  taskSummaryDaysTz: "{days} {time} ({tz})",
+  taskScheduleTimezone: "Time zone",
+  taskScheduleTimezoneHint:
+    "The time is read in this time zone (daylight saving time is handled). Weekdays use the same time zone.",
+  taskScheduleLegacyUtcNote:
+    "This task was saved with UTC times; it is shown here as UTC. Pick another time zone to change it.",
+  taskScheduleWeekdays: "Run on",
+  taskScheduleWorkdaysPreset: "Weekdays",
+  taskScheduleEveryDayPreset: "Every day",
+  taskScheduleWeekdaysRequired: "Select at least one weekday.",
+  taskSchedulePreviewTitle: "Next 5 runs",
+  taskSchedulePreviewLocal: "Local time ({tz})",
+  taskSchedulePreviewJst: "JST",
+  taskSchedulePreviewError: "Cannot compute the schedule: {error}",
+  taskFormPauseAfterFailures: "Pause after consecutive failures",
+  taskFormPauseAfterFailuresSuffix: "failures in a row (0 = never)",
+  taskFormPauseAfterFailuresHint:
+    "Stops tasks that keep failing, such as a wrong password that would otherwise retry the login on every run and lock the account. Re-enable the task to resume.",
+  taskDuplicate: "Duplicate",
+  taskDuplicateName: "{name} (copy)",
+  taskAutoPausedBadge: "Paused after {n} failures",
+  taskAutoPausedToast:
+    'Task "{name}" was paused after repeated failures. Re-enable it after fixing the cause.',
+  taskAutoPausedNotifyTitle: "Task paused: {name}",
+  taskScheduleHour: "Hour",
+  taskScheduleMinute: "Minute",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11063,6 +11091,34 @@ const ja: Dict = {
   schemaDriftRevertInsert: "エディタに挿入",
   refreshTrendAria: "直近 {count} 回の更新での増減。最新は 追加 {added} / 変更 {changed} / 削除 {removed}",
   refreshTrendBar: "{time}: 追加 {added} / 変更 {changed} / 削除 {removed}",
+  taskSummaryDailyTz: "毎日 {time} ({tz})",
+  taskSummaryWeekdaysTz: "平日 {time} ({tz})",
+  taskSummaryDaysTz: "{days} {time} ({tz})",
+  taskScheduleTimezone: "タイムゾーン",
+  taskScheduleTimezoneHint:
+    "時刻はこのタイムゾーンで解釈します (夏時間も考慮)。曜日の判定も同じタイムゾーンです。",
+  taskScheduleLegacyUtcNote:
+    "このタスクは UTC の時刻で保存されています。ここでは UTC として表示しています (変更するにはタイムゾーンを選び直してください)。",
+  taskScheduleWeekdays: "実行する曜日",
+  taskScheduleWorkdaysPreset: "平日のみ",
+  taskScheduleEveryDayPreset: "毎日",
+  taskScheduleWeekdaysRequired: "曜日を 1 つ以上選んでください。",
+  taskSchedulePreviewTitle: "次の 5 回の実行予定",
+  taskSchedulePreviewLocal: "ローカル時刻 ({tz})",
+  taskSchedulePreviewJst: "JST",
+  taskSchedulePreviewError: "実行予定を計算できません: {error}",
+  taskFormPauseAfterFailures: "連続失敗で自動停止",
+  taskFormPauseAfterFailuresSuffix: "回連続で失敗したら (0 = 停止しない)",
+  taskFormPauseAfterFailuresHint:
+    "パスワード誤りなどで毎回ログインを繰り返し、アカウントロックを招くのを防ぎます。再開するにはタスクを有効に戻してください。",
+  taskDuplicate: "複製",
+  taskDuplicateName: "{name} (コピー)",
+  taskAutoPausedBadge: "連続 {n} 回の失敗で自動停止",
+  taskAutoPausedToast:
+    "タスク「{name}」は連続して失敗したため自動停止しました。原因を直してから有効に戻してください。",
+  taskAutoPausedNotifyTitle: "タスクを自動停止しました: {name}",
+  taskScheduleHour: "時",
+  taskScheduleMinute: "分",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

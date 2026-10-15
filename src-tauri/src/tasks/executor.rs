@@ -988,6 +988,9 @@ mod tests {
             last_run_at: None,
             last_status: None,
             connect_retry: Default::default(),
+            pause_after_failures: 0,
+            consecutive_failures: 0,
+            auto_paused_at: None,
         }
     }
 

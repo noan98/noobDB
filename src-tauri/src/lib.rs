@@ -1530,6 +1530,7 @@ pub fn run() {
             commands::tasks::save_task,
             commands::tasks::delete_task,
             commands::tasks::set_task_enabled,
+            commands::tasks::preview_task_schedule,
             commands::tasks::run_task_now,
             commands::tasks::list_task_runs,
             commands::tasks::clear_task_runs,

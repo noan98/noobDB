@@ -1578,10 +1578,14 @@ export default function App() {
       onError: (e) => {
         const message = e.message ?? "";
         toast.error(translate("taskRunFailed", { name: e.taskName, error: message }));
+        // 連続失敗の上限で自動停止したときは、止まったことを別に知らせる (#1621)。
+        if (e.autoPaused) toast.error(translate("taskAutoPausedToast", { name: e.taskName }));
         void isAppWindowFocused().then((focused) => {
           if (!focused) {
             void sendQueryNotification(
-              translate("taskRunNotifyTitle", { name: e.taskName }),
+              e.autoPaused
+                ? translate("taskAutoPausedNotifyTitle", { name: e.taskName })
+                : translate("taskRunNotifyTitle", { name: e.taskName }),
               firstLineForNotification(message || translate("taskLastError")),
             );
           }
