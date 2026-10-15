@@ -60,6 +60,8 @@ interface PlanNodeData {
   actualMs: number | null;
   worstHint: "info" | "caution" | "warning" | null;
   selected: boolean;
+  /** ノード検索に一致 (#1628)。 */
+  match: boolean;
   onSelect: () => void;
   [key: string]: unknown;
 }
@@ -113,7 +115,7 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
     background: fill ?? "var(--bg-elevated)",
     color: ink,
     borderColor: data.selected ? "var(--accent)" : "var(--border)",
-    outline: data.selected ? "2px solid var(--accent)" : "none",
+    outline: data.selected ? "2px solid var(--accent)" : data.match ? "2px dashed var(--accent)" : "none",
     // キーボードフォーカス中は、選択リングとは別に共通のフォーカスリングを重ねる。
     "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
   };
@@ -128,6 +130,7 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
         tabIndex={0}
         aria-label={data.label}
         aria-pressed={data.selected}
+        data-search-match={data.match ? "true" : undefined}
         onClick={data.onSelect}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -191,9 +194,11 @@ interface ExplainGraphViewProps {
   maxCost: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** ノード検索に一致した ID (#1628)。 */
+  matchIds?: ReadonlySet<string>;
 }
 
-function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraphViewProps) {
+function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: ExplainGraphViewProps) {
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
   const isDark = useIsDarkTheme();
@@ -221,12 +226,13 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
           actualMs: actualTotalMs(n.node),
           worstHint: worstSeverity(computeHints(n.node)),
           selected: selectedId === n.id,
+          match: matchIds?.has(n.id) ?? false,
           onSelect: () => onSelect(n.id),
         },
       })),
     );
     setEdges(positioned.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })));
-  }, [positioned, maxCost, selectedId, onSelect, setNodes, setEdges]);
+  }, [positioned, maxCost, selectedId, onSelect, matchIds, setNodes, setEdges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
   useEffect(() => {

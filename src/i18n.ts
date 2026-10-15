@@ -5539,6 +5539,13 @@ const en = {
   imageExportBg_white: "White",
   imageExportBg_transparent: "Transparent",
   imageExportBgWhiteHint: "In dark themes the text is light, so it may be hard to read on white",
+  explainSearchPlaceholder: "Search nodes…",
+  explainSearchAria: "Search plan nodes (label and attributes)",
+  explainSearchCount: "{current} / {total}",
+  explainSearchNone: "No match",
+  explainSearchNext: "Next match (Enter)",
+  explainSearchPrev: "Previous match (Shift+Enter)",
+  explainSearchMatchMark: "Search match",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11048,6 +11055,13 @@ const ja: Dict = {
   imageExportBg_white: "白",
   imageExportBg_transparent: "透過",
   imageExportBgWhiteHint: "ダークテーマでは文字が明るい色のため、白背景だと読みにくくなることがあります",
+  explainSearchPlaceholder: "ノードを検索…",
+  explainSearchAria: "プランのノードを検索 (ラベル・属性)",
+  explainSearchCount: "{current} / {total}",
+  explainSearchNone: "一致なし",
+  explainSearchNext: "次の一致 (Enter)",
+  explainSearchPrev: "前の一致 (Shift+Enter)",
+  explainSearchMatchMark: "検索に一致",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
