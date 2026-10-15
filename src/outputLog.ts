@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { ServerMessage, ServerMessageSeverity } from "./api/tauri";
 import type { I18nKey } from "./i18n";
+import { matchesSearchTerms, searchTerms } from "./logSearch";
 import type { SemanticRole } from "./semanticColors";
 
 /**
@@ -191,9 +192,22 @@ export function isProblemOutcome(outcome: OutputOutcome): boolean {
   return PROBLEM_OUTCOMES.has(outcome);
 }
 
-export function filterOutput(list: readonly OutputEntry[], filter: OutputFilter): OutputEntry[] {
-  if (filter === "all") return [...list];
-  return list.filter((e) => isProblemOutcome(e.outcome));
+/**
+ * 絞り込み。`query` (#1627) は SQL・エラー本文・接続名・サーバ通知の文言の部分一致
+ * (空白区切りの語はすべて含む行だけ)。`filter` の「問題のみ」と併用できる。
+ */
+export function filterOutput(list: readonly OutputEntry[], filter: OutputFilter, query = ""): OutputEntry[] {
+  const terms = searchTerms(query);
+  return list.filter(
+    (e) =>
+      (filter === "all" || isProblemOutcome(e.outcome)) &&
+      matchesSearchTerms(terms, [
+        e.sql,
+        e.error,
+        e.connection,
+        ...(e.serverMessages ?? []).map((m) => m.text),
+      ]),
+  );
 }
 
 export function countProblems(list: readonly OutputEntry[]): number {

@@ -170,6 +170,25 @@ describe("outputLog", () => {
     expect(countProblems(list)).toBe(2);
   });
 
+  it("文言検索は SQL・エラー・接続名・サーバメッセージを AND で探し、問題のみと併用できる (#1627)", () => {
+    const list = [
+      out(1, "rows", { sql: "select name from Users", connection: "local" }),
+      out(2, "error", { sql: "select 2", error: 'relation "Users" does not exist' }),
+      out(3, "rows", { sql: "select 3", connection: "prod-db" }),
+      out(4, "rows", {
+        sql: "select 4",
+        serverMessages: [{ severity: "warning", text: "Deprecated syntax" }],
+      }),
+    ];
+    expect(filterOutput(list, "all", "users").map((e) => e.id)).toEqual([1, 2]);
+    expect(filterOutput(list, "all", "users select").map((e) => e.id)).toEqual([1, 2]);
+    expect(filterOutput(list, "all", "users prod").map((e) => e.id)).toEqual([]);
+    expect(filterOutput(list, "all", "PROD").map((e) => e.id)).toEqual([3]);
+    expect(filterOutput(list, "all", "deprecated").map((e) => e.id)).toEqual([4]);
+    expect(filterOutput(list, "problems", "users").map((e) => e.id)).toEqual([2]);
+    expect(filterOutput(list, "all", "  ")).toHaveLength(4);
+  });
+
   it("先頭に積み、上限で古い方を捨てる", () => {
     const list = appendOutput(appendOutput([], out(1, "rows")), out(2, "rows"), 1);
     expect(list.map((e) => e.id)).toEqual([2]);

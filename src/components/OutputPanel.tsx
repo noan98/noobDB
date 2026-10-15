@@ -60,8 +60,11 @@ export function OutputPanel({
   const entries = useOutputLog();
   const [filter, setFilter] = useState<OutputFilter>("all");
   const [expanded, setExpanded] = useState<number | null>(null);
-  const problems = useMemo(() => countProblems(entries), [entries]);
-  const shown = useMemo(() => filterOutput(entries, filter), [entries, filter]);
+  const [query, setQuery] = useState("");
+  // 件数のバッジは文言検索の結果に対する件数 (「問題のみ」の絞り込みとは独立に併用できる)。
+  const searched = useMemo(() => filterOutput(entries, "all", query), [entries, query]);
+  const problems = useMemo(() => countProblems(searched), [searched]);
+  const shown = useMemo(() => filterOutput(entries, filter, query), [entries, filter, query]);
 
   return (
     <Flex direction="column" h="100%" minH={0}>
@@ -69,11 +72,12 @@ export function OutputPanel({
         filterAria={t("outputFilterAria")}
         onClear={clearOutput}
         clearDisabled={entries.length === 0}
+        search={{ value: query, onChange: setQuery }}
         filters={
           <>
             <FilterChip
               label={t("activityFilterAll")}
-              count={entries.length}
+              count={searched.length}
               active={filter === "all"}
               onClick={() => setFilter("all")}
             />

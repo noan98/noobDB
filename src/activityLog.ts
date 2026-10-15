@@ -29,6 +29,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { SchemaDriftSummary } from "./api/tauri";
+import { matchesSearchTerms, searchTerms } from "./logSearch";
 import type { SemanticRole } from "./semanticColors";
 
 /**
@@ -89,13 +90,25 @@ export function appendActivity(
   return [entry, ...list].slice(0, Math.floor(limit));
 }
 
-/** 重大度で絞り込む。`null` (フィルタなし) はそのまま全件返す。 */
+/** 文言 (メッセージ本文) の部分一致で絞り込む (#1627)。空の検索語は絞り込まない。 */
+export function searchActivity<E extends ActivityEntry>(list: readonly E[], query: string): E[] {
+  const terms = searchTerms(query);
+  if (terms.length === 0) return [...list];
+  return list.filter((e) => matchesSearchTerms(terms, [e.message]));
+}
+
+/**
+ * 重大度と文言で絞り込む。重大度 `null` (フィルタなし) と空の検索語はそれぞれ絞り込まない。
+ * 検索語 (#1627) は重大度と併用できる (両方に合う行だけ残る)。
+ */
 export function filterActivity<E extends ActivityEntry>(
   list: readonly E[],
   severity: ActivitySeverity | null,
+  query = "",
 ): E[] {
-  if (!severity) return [...list];
-  return list.filter((e) => e.severity === severity);
+  const searched = searchActivity(list, query);
+  if (!severity) return searched;
+  return searched.filter((e) => e.severity === severity);
 }
 
 /** `lastReadId` より新しい (= 未読の) 件数。 */
