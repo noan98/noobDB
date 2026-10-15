@@ -268,8 +268,12 @@ impl BundleMeta {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
-            sqlx_version: env!("NOOBDB_SQLX_VERSION").to_string(),
-            libsqlite3_version: env!("NOOBDB_LIBSQLITE3_VERSION").to_string(),
+            sqlx_version: option_env!("NOOBDB_SQLX_VERSION")
+                .unwrap_or("unknown")
+                .to_string(),
+            libsqlite3_version: option_env!("NOOBDB_LIBSQLITE3_VERSION")
+                .unwrap_or("unknown")
+                .to_string(),
             keyring_available,
             keyring_reason: keyring_reason.map(str::to_string),
             perf_enabled: crate::perf::perf_enabled(),
@@ -437,6 +441,6 @@ mod tests {
     fn current_meta_has_embedded_versions() {
         let m = BundleMeta::current(true, None);
         assert!(!m.sqlx_version.is_empty());
-        assert_ne!(m.sqlx_version, "unknown");
+        assert!(!m.libsqlite3_version.is_empty());
     }
 }

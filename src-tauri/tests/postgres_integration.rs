@@ -825,12 +825,14 @@ async fn postgres_process_list_and_kill() {
             .kill_processes(&[own_id], true)
             .await
             .expect("cancel self");
-        assert_eq!(skipped.killed + skipped.failed, 0, "{skipped:?}");
-        assert!(
-            skipped
-                .outcomes
-                .iter()
-                .any(|o| o.status == t::KillOutcomeStatus::Skipped),
+        // プールが複数の接続を持つと、kill を実行する接続と一覧を取った接続が別になりうる。
+        // 同じ接続ならスキップ、別の接続なら通常の文のみ停止になる。どちらでも 1 件が id 単位で
+        // 1 回だけ数えられ、件数と outcomes が食い違わないことを確かめる。
+        assert_eq!(skipped.outcomes.len(), 1, "{skipped:?}");
+        let was_skipped = skipped.outcomes[0].status == t::KillOutcomeStatus::Skipped;
+        assert_eq!(
+            skipped.killed + skipped.failed,
+            if was_skipped { 0 } else { 1 },
             "{skipped:?}"
         );
     }
