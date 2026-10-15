@@ -4678,6 +4678,9 @@ const en = {
   planCompareAnalyzeMismatch:
     "Only one of the two plans was measured with EXPLAIN ANALYZE, so measured times and some hints are not comparable. Run both in the same mode for a fair comparison.",
   planCompareClose: "Close",
+  planCompareMdExport: "Copy / save as Markdown",
+  planCompareMdMetric: "Metric",
+  planCompareMdChanges: "Changes",
   planCompareUnparsable: "One of the plans could not be parsed, so they cannot be compared.",
   planCompareVerdictImproved: "The heaviness score dropped from {before} to {after}. The plan looks lighter.",
   planCompareVerdictRegressed:
@@ -10718,6 +10721,9 @@ const ja: Dict = {
   planCompareAnalyzeMismatch:
     "片方だけ EXPLAIN ANALYZE (実測) で取得した計画なので、実測時間や一部のヒントは比べられません。同じモードで取り直すと公平に比較できます。",
   planCompareClose: "閉じる",
+  planCompareMdExport: "Markdown でコピー / 保存",
+  planCompareMdMetric: "指標",
+  planCompareMdChanges: "変化点",
   planCompareUnparsable: "どちらかの計画を解析できないため、比較できません。",
   planCompareVerdictImproved: "重さスコアが {before} から {after} に下がりました。計画は軽くなっています。",
   planCompareVerdictRegressed:
