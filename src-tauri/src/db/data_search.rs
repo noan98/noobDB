@@ -452,13 +452,7 @@ mod tests {
     #[test]
     fn postgres_non_text_types_are_not_searched_as_text() {
         let pg = DriverKind::Postgres;
-        for t in [
-            "uuid",
-            "bytea",
-            "jsonb",
-            "USER-DEFINED",
-            "ARRAY",
-        ] {
+        for t in ["uuid", "bytea", "jsonb", "USER-DEFINED", "ARRAY"] {
             assert_eq!(classify_for_search(pg, t), CellKind::Binary, "{t}");
         }
         for t in [
@@ -574,17 +568,37 @@ mod tests {
     fn date_columns_are_searched_only_when_opted_in() {
         let p = |d, k, m, inc| build_column_predicate(d, "created_at", k, "2026-10", m, inc);
         // 既定 (opt-out) では日付列は対象外。
-        assert_eq!(p(DriverKind::Mysql, CellKind::Date, MatchMode::Contains, false), None);
+        assert_eq!(
+            p(
+                DriverKind::Mysql,
+                CellKind::Date,
+                MatchMode::Contains,
+                false
+            ),
+            None
+        );
         assert_eq!(
             p(DriverKind::Mysql, CellKind::Date, MatchMode::Prefix, true).as_deref(),
             Some("`created_at` LIKE '2026-10%' ESCAPE '\\\\'")
         );
         assert_eq!(
-            p(DriverKind::Sqlite, CellKind::Date, MatchMode::Contains, true).as_deref(),
+            p(
+                DriverKind::Sqlite,
+                CellKind::Date,
+                MatchMode::Contains,
+                true
+            )
+            .as_deref(),
             Some("\"created_at\" LIKE '%2026-10%' ESCAPE '\\'")
         );
         assert_eq!(
-            p(DriverKind::Postgres, CellKind::Date, MatchMode::Contains, true).as_deref(),
+            p(
+                DriverKind::Postgres,
+                CellKind::Date,
+                MatchMode::Contains,
+                true
+            )
+            .as_deref(),
             Some("CAST(\"created_at\" AS TEXT) LIKE '%2026-10%' ESCAPE '\\'")
         );
         assert_eq!(
@@ -593,7 +607,11 @@ mod tests {
         );
         // 時刻のみ・真偽値・BLOB は opt-in でも対象外のまま。
         for k in [CellKind::Time, CellKind::Bool, CellKind::Binary] {
-            assert_eq!(p(DriverKind::Mysql, k, MatchMode::Contains, true), None, "{k:?}");
+            assert_eq!(
+                p(DriverKind::Mysql, k, MatchMode::Contains, true),
+                None,
+                "{k:?}"
+            );
         }
     }
 

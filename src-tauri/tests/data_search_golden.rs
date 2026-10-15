@@ -128,6 +128,7 @@ fn target_name(target: t::SearchTarget) -> &'static str {
         t::SearchTarget::Text => "text",
         t::SearchTarget::Numeric => "numeric",
         t::SearchTarget::Excluded => "excluded",
+        t::SearchTarget::DateText => "dateText",
     }
 }
 

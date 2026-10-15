@@ -27,6 +27,7 @@ import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection, PathRow } 
 import { defaultKeyColumns, pruneKeyColumns, toggleKeyColumn, validateConflictKeys } from "./importConflict";
 import {
   buildColumnDrafts,
+  findPrimaryKeyIssue,
   countExcelErrors,
   mergeColumnDrafts,
   newColumnTypeCellKind,
@@ -403,6 +404,44 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
         return t("importNewTableDuplicateColumn", { name: err.name });
     }
   };
+
+  // 主キーに選んだ列の NULL / 重複をプレビュー行の範囲で調べる (#1623)。全行の検証は
+  // 取り込み時にバックエンドがテーブルを作る前に行う。
+  const pkIssue = useMemo(
+    () => (createNew && drafts && preview ? findPrimaryKeyIssue(drafts, preview.rows, nullToken) : null),
+    [createNew, drafts, preview, nullToken],
+  );
+  const hasPrimaryKey = !!drafts?.some((d) => d.include && d.primaryKey);
+
+  // 型推論の根拠 (#1623): 型ごとの値の件数と、文字列に落ちた最初の値。
+  const typeCountsText = (d: NewColumnDraft): string | null => {
+    const detail = d.detail;
+    if (!detail) return null;
+    const parts = (Object.keys(TYPE_LABEL_KEYS) as NewColumnType[])
+      .filter((ty) => (detail.counts[ty] ?? 0) > 0)
+      .map((ty) => `${t(TYPE_LABEL_KEYS[ty])} ${detail.counts[ty]}`);
+    if (detail.nullCount > 0) parts.push(`NULL ${detail.nullCount}`);
+    return parts.length > 0 ? parts.join(" / ") : null;
+  };
+  const inferenceNote = (d: NewColumnDraft): string | null => {
+    const fb = d.detail?.firstText;
+    if (!fb || d.inferredType !== "text" || d.type !== "text") return null;
+    const value = Array.from(fb.value).slice(0, 40).join("");
+    const params = { name: d.name, row: fb.row + 1, value };
+    if (fb.reason === "driver") return t("importNewTableWhyDriver", params);
+    if (fb.reason === "conflict") {
+      return t("importNewTableWhyConflict", {
+        ...params,
+        type: t(TYPE_LABEL_KEYS[fb.valueType]),
+        previous: fb.previousType ? t(TYPE_LABEL_KEYS[fb.previousType]) : "",
+      });
+    }
+    return t("importNewTableWhyValue", params);
+  };
+  const inferenceNotes = (drafts ?? [])
+    .filter((d) => d.include)
+    .map((d) => inferenceNote(d))
+    .filter((n): n is string => n !== null);
 
   // Detach the event listener on unmount.
   useEffect(() => {
@@ -875,7 +914,13 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                     disabled={importing}
                     aria-label={t("importNewTableInclude", { name: d.name })}
                   />
-                  <Tooltip label={csvColumnLabel(d.csvIndex)}>
+                  <Tooltip
+                    label={
+                      typeCountsText(d)
+                        ? `${csvColumnLabel(d.csvIndex)} — ${t("importNewTableValueTypes", { counts: typeCountsText(d) ?? "" })}`
+                        : csvColumnLabel(d.csvIndex)
+                    }
+                  >
                     <chakra.span color="app.textMuted" display="inline-flex">
                       <Icon name={cellKindIcon(newColumnTypeCellKind(d.type))} />
                     </chakra.span>
@@ -908,9 +953,40 @@ export function ImportModal({ sessionId, database, table, driver, onClose, onImp
                       </option>
                     ))}
                   </Select>
+                  <Tooltip label={t("importNewTablePrimaryKeyHint")}>
+                    <chakra.label display="inline-flex" alignItems="center" gap="1" fontSize="xs" color="app.textMuted">
+                      <Checkbox
+                        checked={!!d.primaryKey}
+                        onChange={() => updateDraft(i, { primaryKey: !d.primaryKey })}
+                        disabled={importing || !d.include}
+                        aria-label={t("importNewTablePrimaryKey", { name: d.name })}
+                      />
+                      PK
+                    </chakra.label>
+                  </Tooltip>
                 </chakra.div>
               ))}
             </chakra.div>
+            {inferenceNotes.length > 0 && (
+              <chakra.ul listStyleType="disc" pl="4" m="0" textStyle="caption" data-testid="import-new-table-why">
+                {inferenceNotes.slice(0, 5).map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+                {inferenceNotes.length > 5 && (
+                  <li>{t("importNewTableWhyMore", { count: inferenceNotes.length - 5 })}</li>
+                )}
+              </chakra.ul>
+            )}
+            {pkIssue && (
+              <Callout tone="warning" role="status">
+                {pkIssue.kind === "null"
+                  ? t("importNewTablePkNull", { column: pkIssue.column, row: pkIssue.row })
+                  : t("importNewTablePkDuplicate", { row: pkIssue.row, first: pkIssue.firstRow })}
+              </Callout>
+            )}
+            {hasPrimaryKey && !pkIssue && (
+              <chakra.div textStyle="caption">{t("importNewTablePkNote")}</chakra.div>
+            )}
             <chakra.div textStyle="caption">{t("importNewTableHint")}</chakra.div>
             {newTableError && <FieldError>{newTableErrorText(newTableError)}</FieldError>}
           </FormSection>

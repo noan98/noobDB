@@ -612,7 +612,8 @@ mod tests {
                 precision: DatePrecision::Year
             }
         );
-        let r: MaskRule = serde_json::from_str(r#"{"kind":"date","precision":"month"}"#).expect("ok");
+        let r: MaskRule =
+            serde_json::from_str(r#"{"kind":"date","precision":"month"}"#).expect("ok");
         assert_eq!(
             r,
             MaskRule::Date {

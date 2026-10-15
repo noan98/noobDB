@@ -271,6 +271,8 @@ export interface NewColumnDraft {
   inferredType: NewColumnType;
   /** false なら作成も取り込みもしない列。 */
   include: boolean;
+  /** 主キーに含める列 (#1623)。省略は false。 */
+  primaryKey?: boolean;
   /** 推論の根拠 (型ごとの件数・文字列に落ちた最初の値。#1623)。 */
   detail?: ColumnInferenceDetail;
 }
@@ -355,6 +357,7 @@ export function mergeColumnDrafts(
       name: p.name !== p.proposedName ? p.name : n.name,
       type: p.type !== p.inferredType ? p.type : n.type,
       include: p.include ? n.include : false,
+      primaryKey: p.primaryKey,
     };
   });
 }
@@ -424,7 +427,43 @@ export function newTableRequest(drafts: readonly NewColumnDraft[]): {
 } {
   const included = drafts.filter((d) => d.include);
   return {
-    columns: included.map((d) => ({ name: d.name, type: d.type })),
+    columns: included.map((d) => (d.primaryKey ? { name: d.name, type: d.type, primaryKey: true } : { name: d.name, type: d.type })),
     mapping: included.map((d) => ({ column: d.name, csvIndex: d.csvIndex })),
   };
+}
+
+/** 主キーの事前検証 (プレビュー行の範囲) で見つかった問題 (#1623)。 */
+export type PrimaryKeyIssue =
+  | { kind: "null"; column: string; row: number }
+  | { kind: "duplicate"; row: number; firstRow: number };
+
+/**
+ * 主キーに選んだ列について、プレビュー行の NULL と重複を調べる。`row` は 1 始まりの
+ * データ行番号。プレビューは先頭の一部 (最大 50 行) だけなので「無問題」はファイル全体の
+ * 保証ではない — 全行の検証は取り込み時にバックエンド (テーブルを作る前) が行う。
+ * 値は文字列として比べる (バックエンドと同じ)。
+ */
+export function findPrimaryKeyIssue(
+  drafts: readonly NewColumnDraft[],
+  rows: readonly (readonly string[])[],
+  nullToken: string | null,
+): PrimaryKeyIssue | null {
+  const keys = drafts.filter((d) => d.include && d.primaryKey);
+  if (keys.length === 0) return null;
+  const seen = new Map<string, number>();
+  for (let n = 0; n < rows.length; n += 1) {
+    const cells: string[] = [];
+    for (const k of keys) {
+      const raw = rows[n][k.csvIndex];
+      const v = raw === undefined ? null : applyNullToken(raw, nullToken);
+      if (v === null) return { kind: "null", column: k.name, row: n + 1 };
+      cells.push(v);
+    }
+    // 区切りの曖昧さ (("ab","c") と ("a","bc")) を避けるため JSON 配列でキー化する。
+    const key = JSON.stringify(cells);
+    const first = seen.get(key);
+    if (first !== undefined) return { kind: "duplicate", row: n + 1, firstRow: first };
+    seen.set(key, n + 1);
+  }
+  return null;
 }

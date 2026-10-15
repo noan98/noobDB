@@ -212,6 +212,74 @@ describe("ImportModal create a new table (#985)", () => {
     expect(params.options.conflictMode).toBe("insert");
   });
 
+  it("sends the chosen primary key columns with createTable (#1623)", async () => {
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table={null}
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importNewTableColumns"));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("importNewTablePrimaryKey", { name: "id" }) }));
+    expect(await screen.findByText(t("importNewTablePkNote"))).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: t("importExecute") }));
+    await waitFor(() => expect(api.importCsv).toHaveBeenCalledOnce());
+    expect(vi.mocked(api.importCsv).mock.calls[0][0].createTable).toEqual([
+      { name: "id", type: "integer", primaryKey: true },
+      { name: "name", type: "text" },
+    ]);
+  });
+
+  it("warns when the preview has repeated primary key values (#1623)", async () => {
+    vi.mocked(api.parseCsvPreview).mockResolvedValueOnce({
+      headers: ["id", "name"],
+      rows: [["1", "a"], ["1", "b"]],
+      truncated: false,
+      sheets: [],
+    });
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table={null}
+        driver="postgres"
+        initialPath="/tmp/users.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    await screen.findByText(t("importNewTableColumns"));
+    fireEvent.click(screen.getByRole("checkbox", { name: t("importNewTablePrimaryKey", { name: "id" }) }));
+    expect(await screen.findByText(t("importNewTablePkDuplicate", { row: 2, first: 1 }))).toBeInTheDocument();
+  });
+
+  it("explains which value turned a column into text (#1623)", async () => {
+    vi.mocked(api.parseCsvPreview).mockResolvedValueOnce({
+      headers: ["code"],
+      rows: [["1"], ["2"], ["N/A"]],
+      truncated: false,
+      sheets: [],
+    });
+    renderWithProviders(
+      <ImportModal
+        sessionId="s1"
+        database="appdb"
+        table={null}
+        driver="postgres"
+        initialPath="/tmp/codes.csv"
+        onClose={() => {}}
+        onImported={() => {}}
+      />,
+    );
+    const why = await screen.findByTestId("import-new-table-why");
+    expect(why).toHaveTextContent(t("importNewTableWhyValue", { name: "code", row: 3, value: "N/A" }));
+  });
+
   it("blocks the import on a duplicate column name", async () => {
     renderWithProviders(
       <ImportModal

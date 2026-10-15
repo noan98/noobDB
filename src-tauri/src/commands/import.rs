@@ -1495,6 +1495,62 @@ fn validate_create_spec(
             )));
         }
     }
+    // 主キー列は取り込む列でなければならない (取り込まない主キー列は NOT NULL で
+    // 値が入らず、すべての行が失敗する)。
+    for c in columns.iter().filter(|c| c.primary_key) {
+        if !mapped.iter().any(|m| m == &c.name) {
+            return Err(AppError::InvalidInput(format!(
+                "primary key column {} must be imported",
+                c.name
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// 新規テーブルの主キー列 (#1623) について、取り込む全行を事前に検証する: NULL と、
+/// 列の組の重複はテーブルを作る前にレコード番号付きで拒否する。DB に任せると
+/// 作成直後の失敗 → DROP になり、原因の行も分かりにくい。値は文字列として比べる
+/// (大文字小文字や末尾空白の照合規則の差による衝突は、DB 側のエラーに任せる)。
+fn check_new_table_primary_key(
+    columns: &[NewColumn],
+    mapped: &[String],
+    rows: &[Vec<Option<String>>],
+) -> Result<()> {
+    let key_idx: Vec<(usize, &str)> = columns
+        .iter()
+        .filter(|c| c.primary_key)
+        .filter_map(|c| {
+            mapped
+                .iter()
+                .position(|m| m == &c.name)
+                .map(|i| (i, c.name.as_str()))
+        })
+        .collect();
+    if key_idx.is_empty() {
+        return Ok(());
+    }
+    let mut seen: std::collections::HashMap<Vec<&str>, usize> =
+        std::collections::HashMap::with_capacity(rows.len());
+    for (n, row) in rows.iter().enumerate() {
+        let record = n + 1;
+        let mut key: Vec<&str> = Vec::with_capacity(key_idx.len());
+        for (i, name) in &key_idx {
+            match row.get(*i).and_then(|c| c.as_deref()) {
+                Some(v) => key.push(v),
+                None => {
+                    return Err(AppError::InvalidInput(format!(
+                        "primary key column {name} is NULL at record {record}"
+                    )))
+                }
+            }
+        }
+        if let Some(first) = seen.insert(key, record) {
+            return Err(AppError::InvalidInput(format!(
+                "duplicate primary key at record {record} (same as record {first})"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -1550,6 +1606,11 @@ where
     };
     let total = rows.len() as u64;
     let conflict = options.conflict();
+
+    // 新規テーブルの主キー (#1623): テーブルを作る前に NULL / 重複を検証する。
+    if let Some(cols) = &create_table {
+        check_new_table_primary_key(cols, &columns, &rows)?;
+    }
 
     // 新規テーブル作成 (#985)。パース成功後に実行する。DDL は履歴にも残す
     // (インポート自体の要約とは別エントリ)。
@@ -2774,5 +2835,78 @@ mod tests {
             parse_preview_reader(text.as_bytes(), &json_opts(ImportFormat::Json, None)).unwrap();
         let i = p.headers.iter().position(|h| h == "amount").unwrap();
         assert_eq!(p.rows[0][i], "123456789.12345678901");
+    }
+
+    fn new_col(name: &str, primary_key: bool) -> NewColumn {
+        serde_json::from_value(serde_json::json!({
+            "name": name, "type": "text", "primaryKey": primary_key
+        }))
+        .expect("column")
+    }
+
+    fn cells(rows: &[&[Option<&str>]]) -> Vec<Vec<Option<String>>> {
+        rows.iter()
+            .map(|r| r.iter().map(|c| c.map(str::to_string)).collect())
+            .collect()
+    }
+
+    #[test]
+    fn new_table_primary_key_rejects_null_and_duplicates_by_record() {
+        let cols = [new_col("id", true), new_col("name", false)];
+        let mapped = vec!["id".to_string(), "name".to_string()];
+        let ok = cells(&[&[Some("1"), Some("a")], &[Some("2"), None]]);
+        assert!(check_new_table_primary_key(&cols, &mapped, &ok).is_ok());
+
+        let null = cells(&[&[Some("1"), Some("a")], &[None, Some("b")]]);
+        let err = check_new_table_primary_key(&cols, &mapped, &null).unwrap_err();
+        assert!(err.to_string().contains("NULL at record 2"), "{err}");
+
+        let dup = cells(&[
+            &[Some("1"), Some("a")],
+            &[Some("2"), Some("b")],
+            &[Some("1"), Some("c")],
+        ]);
+        let err = check_new_table_primary_key(&cols, &mapped, &dup).unwrap_err();
+        assert!(
+            err.to_string().contains("record 3 (same as record 1)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn new_table_composite_primary_key_compares_the_tuple() {
+        let cols = [new_col("a", true), new_col("b", true)];
+        let mapped = vec!["a".to_string(), "b".to_string()];
+        // 片方だけ同じなら重複ではない。
+        let ok = cells(&[
+            &[Some("1"), Some("x")],
+            &[Some("1"), Some("y")],
+            &[Some("2"), Some("x")],
+        ]);
+        assert!(check_new_table_primary_key(&cols, &mapped, &ok).is_ok());
+        let dup = cells(&[&[Some("1"), Some("x")], &[Some("1"), Some("x")]]);
+        assert!(check_new_table_primary_key(&cols, &mapped, &dup).is_err());
+        // 区切りの曖昧さ: ("ab","c") と ("a","bc") は別のキー。
+        let tricky = cells(&[&[Some("ab"), Some("c")], &[Some("a"), Some("bc")]]);
+        assert!(check_new_table_primary_key(&cols, &mapped, &tricky).is_ok());
+    }
+
+    #[test]
+    fn new_table_primary_key_must_be_imported() {
+        let cols = [new_col("id", true), new_col("name", false)];
+        let err = validate_create_spec(DriverKind::Sqlite, "t", &cols, &["name".to_string()])
+            .unwrap_err();
+        assert!(err.to_string().contains("primary key column id"), "{err}");
+        assert!(validate_create_spec(
+            DriverKind::Sqlite,
+            "t",
+            &cols,
+            &["id".to_string(), "name".to_string()]
+        )
+        .is_ok());
+        // 主キー無しなら従来どおり。
+        assert!(
+            check_new_table_primary_key(&[new_col("x", false)], &["x".to_string()], &[]).is_ok()
+        );
     }
 }

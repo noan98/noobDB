@@ -4,7 +4,9 @@ import {
   buildColumnDrafts,
   countExcelErrors,
   isExcelErrorToken,
+  findPrimaryKeyIssue,
   inferColumnType,
+  inferColumnTypeDetail,
   inferValueType,
   mergeColumnDrafts,
   newColumnTypeCellKind,
@@ -350,5 +352,101 @@ describe("xlsx のエラー値 (#1532)", () => {
     expect(drafts[1].type).toBe("integer");
     // xlsx 以外 (CSV) では "#N/A" は普通の文字列。
     expect(buildColumnDrafts(preview, "", "postgres", true)[0].type).toBe("text");
+  });
+});
+
+describe("型推論の根拠 (#1623)", () => {
+  it("型ごとの件数と NULL 件数を数える", () => {
+    const d = inferColumnTypeDetail(["1", "2", null, "300"], "postgres");
+    expect(d.type).toBe("integer");
+    expect(d.counts).toEqual({ integer: 3 });
+    expect(d.nullCount).toBe(1);
+    expect(d.firstText).toBeNull();
+  });
+
+  it("値単体が文字列の行を、文字列に落とした最初の値として返す", () => {
+    const d = inferColumnTypeDetail(["1", "2", "abc", "def"], "postgres");
+    expect(d.type).toBe("text");
+    expect(d.firstText).toMatchObject({ value: "abc", row: 2, reason: "value" });
+    // 落ちた後の値も数える。
+    expect(d.counts).toEqual({ integer: 2, text: 2 });
+  });
+
+  it("値自体は有効でも、それまでの型とまとめられない値を conflict として返す", () => {
+    const d = inferColumnTypeDetail(["1", "2", "2024-01-02"], "postgres");
+    expect(d.type).toBe("text");
+    expect(d.firstText).toMatchObject({
+      value: "2024-01-02",
+      row: 2,
+      reason: "conflict",
+      valueType: "date",
+      previousType: "integer",
+    });
+  });
+
+  it("MySQL で真偽値が文字列に戻る理由は driver", () => {
+    const d = inferColumnTypeDetail(["x1"].slice(1).concat(["true", "false"]), "mysql");
+    expect(d.type).toBe("text");
+    expect(d.firstText).toMatchObject({ value: "true", row: 0, reason: "driver", valueType: "boolean" });
+    expect(inferColumnTypeDetail(["true", "false"], "postgres").firstText).toBeNull();
+  });
+
+  it("inferColumnType は根拠付き版と同じ型を返す", () => {
+    for (const values of [["1", "x"], ["1.5", "2"], [null, null], ["true"], []] as (string | null)[][]) {
+      expect(inferColumnType(values, "mysql")).toBe(inferColumnTypeDetail(values, "mysql").type);
+    }
+  });
+
+  it("buildColumnDrafts が根拠を下書きに載せる", () => {
+    const drafts = buildColumnDrafts(
+      { headers: ["a"], rows: [["1"], ["zz"]] },
+      null,
+      "postgres",
+      true,
+    );
+    expect(drafts[0].detail?.firstText).toMatchObject({ value: "zz", row: 1 });
+  });
+});
+
+describe("新規テーブルの主キー (#1623)", () => {
+  const draft = (csvIndex: number, name: string, primaryKey: boolean, include = true) => ({
+    csvIndex,
+    name,
+    proposedName: name,
+    type: "text" as const,
+    inferredType: "text" as const,
+    include,
+    primaryKey,
+  });
+
+  it("主キーに選んだ含める列だけを IPC の列定義へ載せる", () => {
+    const { columns } = newTableRequest([draft(0, "id", true), draft(1, "name", false), draft(2, "x", true, false)]);
+    expect(columns).toEqual([{ name: "id", type: "text", primaryKey: true }, { name: "name", type: "text" }]);
+  });
+
+  it("プレビュー行の NULL と重複を行番号つきで見つける", () => {
+    const rows = [["1", "a"], ["2", "b"], ["1", "c"]];
+    expect(findPrimaryKeyIssue([draft(0, "id", true), draft(1, "n", false)], rows, null)).toEqual({
+      kind: "duplicate",
+      row: 3,
+      firstRow: 1,
+    });
+    expect(findPrimaryKeyIssue([draft(0, "id", true)], [["1"], [""]], "")).toEqual({
+      kind: "null",
+      column: "id",
+      row: 2,
+    });
+    // 複合キーは組で比べる。
+    expect(findPrimaryKeyIssue([draft(0, "a", true), draft(1, "b", true)], rows, null)).toBeNull();
+    expect(findPrimaryKeyIssue([draft(0, "a", true), draft(1, "b", true)], [["ab", "c"], ["a", "bc"]], null)).toBeNull();
+    // 主キー無し / 除外列は対象外。
+    expect(findPrimaryKeyIssue([draft(0, "id", false)], rows, null)).toBeNull();
+    expect(findPrimaryKeyIssue([draft(0, "id", true, false)], rows, null)).toBeNull();
+  });
+
+  it("再プレビューでも手で付けた主キー指定を引き継ぐ", () => {
+    const prev = [draft(0, "id", true)];
+    const next = [draft(0, "id", false)];
+    expect(mergeColumnDrafts(prev, next)[0].primaryKey).toBe(true);
   });
 });
