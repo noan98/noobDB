@@ -5137,6 +5137,13 @@
         "sourceType": "DECIMAL(70,2)",
         "targetType": "DECIMAL(65,2)"
       }
+    ],
+    "sourceColumns": [
+      {
+        "name": "amount",
+        "sourceType": "DECIMAL(70,2)",
+        "targetType": "DECIMAL(65,2)"
+      }
     ]
   },
   "undoOutcome": {

@@ -863,6 +863,11 @@ fn build_fixtures() -> serde_json::Value {
             source_type: "DECIMAL(70,2)".into(),
             target_type: "DECIMAL(65,2)".into(),
         }],
+        source_columns: vec![t::TransferColumnInfo {
+            name: "amount".into(),
+            source_type: "DECIMAL(70,2)".into(),
+            target_type: "DECIMAL(65,2)".into(),
+        }],
         lossy: vec![t::LossyConversion {
             column: "amount".into(),
             kind: t::LossyKind::DecimalClamped,

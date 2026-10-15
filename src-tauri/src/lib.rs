@@ -185,7 +185,9 @@ pub mod __test_api {
         preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
         TransferPreview, TransferRequest,
     };
-    pub use crate::db::transfer::{LossyConversion, LossyKind, TransferMode};
+    pub use crate::db::transfer::{
+        ColumnSpec, LossyConversion, LossyKind, OverrideKind, TransferMode, TypeOverride,
+    };
 
     // IPC レスポンス型の serde ゴールデン網羅 (#1243)。`#[tauri::command]` の戻り値型を
     // `serde_schema_parity.rs` のフィクスチャへ載せるための追加の再エクスポート

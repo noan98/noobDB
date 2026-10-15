@@ -347,7 +347,9 @@ pub fn plan_columns_mapped(
                 .map(str::trim)
                 .filter(|n| !n.is_empty());
             Column {
-                name: renamed.map(str::to_string).unwrap_or_else(|| c.name.clone()),
+                name: renamed
+                    .map(str::to_string)
+                    .unwrap_or_else(|| c.name.clone()),
                 type_name: c.type_name.clone(),
             }
         })
@@ -804,6 +806,139 @@ pub fn plan_warnings(driver: DriverKind, columns: &[TransferColumn]) -> Vec<Stri
 
 #[cfg(test)]
 mod tests {
+
+    fn spec(source: &str) -> ColumnSpec {
+        ColumnSpec {
+            source: source.into(),
+            name: None,
+            exclude: false,
+            type_override: None,
+        }
+    }
+
+    #[test]
+    fn mapped_plan_excludes_renames_and_overrides_types() {
+        let cols = [
+            col("id", "INT"),
+            col("secret", "TEXT"),
+            col("flag", "BIT(1)"),
+        ];
+        let sample = vec![vec![
+            Value::Int(1),
+            Value::String("x".into()),
+            Value::Bytes("01".into()),
+        ]];
+        let specs = [
+            ColumnSpec {
+                exclude: true,
+                ..spec("secret")
+            },
+            ColumnSpec {
+                name: Some("  is_on ".into()),
+                type_override: Some(TypeOverride {
+                    kind: OverrideKind::Integer,
+                    precision: None,
+                    scale: None,
+                }),
+                ..spec("flag")
+            },
+        ];
+        let (plan, keep) = plan_columns_mapped(&cols, &sample, &specs).expect("plan");
+        assert_eq!(keep, Some(vec![0, 2]));
+        let names: Vec<&str> = plan.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["id", "is_on"]);
+        assert_eq!(plan[1].ty, TransferType::Integer);
+        // 上書きなしの自動判定では整数にならない (サンプルが Bytes のため Binary)。
+        let (auto, none) = plan_columns_mapped(&cols, &sample, &[]).expect("plan");
+        assert!(none.is_none());
+        assert_ne!(auto[2].ty, TransferType::Integer);
+        assert_eq!(select_cells(&sample[0], &[0, 2]).len(), 2);
+    }
+
+    #[test]
+    fn mapped_plan_dedups_rename_collisions_and_rejects_all_excluded() {
+        let cols = [col("a", "INT"), col("b", "INT")];
+        let specs = [ColumnSpec {
+            name: Some("a".into()),
+            ..spec("b")
+        }];
+        let (plan, keep) = plan_columns_mapped(&cols, &[], &specs).expect("plan");
+        assert!(keep.is_none());
+        let names: Vec<&str> = plan.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["a", "a_2"]);
+        let all = [
+            ColumnSpec {
+                exclude: true,
+                ..spec("a")
+            },
+            ColumnSpec {
+                exclude: true,
+                ..spec("b")
+            },
+        ];
+        assert!(plan_columns_mapped(&cols, &[], &all).is_err());
+    }
+
+    #[test]
+    fn column_spec_wire_shape_and_unknown_type() {
+        let s: Vec<ColumnSpec> = serde_json::from_str(
+            r#"[{"source":"a","name":"b","type":{"kind":"decimal","precision":20,"scale":4}},{"source":"c","exclude":true}]"#,
+        )
+        .expect("ok");
+        assert_eq!(
+            s[0].type_override.as_ref().map(TypeOverride::to_type),
+            Some(TransferType::Decimal {
+                precision: Some(20),
+                scale: Some(4)
+            })
+        );
+        assert!(s[1].exclude);
+        assert!(
+            serde_json::from_str::<ColumnSpec>(r#"{"source":"a","type":{"kind":"varchar"}}"#)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn bit_bytes_become_integers_when_overridden() {
+        let ty = TransferType::Integer;
+        assert_eq!(
+            value_to_cell(DriverKind::Postgres, &ty, &Value::Bytes("0a".into())).as_deref(),
+            Some("10")
+        );
+        assert_eq!(
+            value_to_cell(DriverKind::Mysql, &ty, &Value::Bytes("01".into())).as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn source_sql_with_columns_filter_and_limit() {
+        let cols = vec!["id".to_string(), "name".to_string()];
+        assert_eq!(
+            source_select_sql_ext(
+                DriverKind::Mysql,
+                "t",
+                Some(&cols),
+                Some(" id > 5 "),
+                Some(10)
+            ),
+            "SELECT `id`, `name` FROM `t` WHERE (id > 5\n) LIMIT 10"
+        );
+        assert_eq!(
+            source_select_sql_ext(DriverKind::Postgres, "t", None, None, None),
+            "SELECT * FROM \"t\""
+        );
+        assert_eq!(
+            source_count_sql(DriverKind::Sqlite, "t", Some("x = 1")),
+            "SELECT COUNT(*) FROM \"t\" WHERE (x = 1\n)"
+        );
+        // 空白だけの WHERE は無視する。
+        assert_eq!(
+            source_count_sql(DriverKind::Sqlite, "t", Some("  ")),
+            "SELECT COUNT(*) FROM \"t\""
+        );
+    }
     use super::*;
 
     fn col(name: &str, ty: &str) -> Column {

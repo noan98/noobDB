@@ -3199,6 +3199,10 @@ async fn mysql_transfer_upsert_updates_and_skips() {
         batch_size: Some(100),
         conflict_mode: mode,
         key_columns: None,
+        columns: Vec::new(),
+        where_clause: None,
+        limit_rows: None,
+        verify_counts: None,
     };
     let run = |r: t::TransferRequest| {
         let state = &state;
@@ -3323,6 +3327,10 @@ async fn mysql_transfer_upsert_rejects_table_with_other_unique_key() {
             batch_size: Some(100),
             conflict_mode: None,
             key_columns: None,
+            columns: Vec::new(),
+            where_clause: None,
+            limit_rows: None,
+            verify_counts: None,
         },
         Arc::new(AtomicU64::new(0)),
         |_| {},

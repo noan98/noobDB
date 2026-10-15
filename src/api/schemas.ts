@@ -1423,8 +1423,11 @@ export const importDoneEvent = z.object({
 });
 
 /** 転送前プレビュー (#1532)。 */
+const transferColumnInfo = z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() });
 export const transferPreview = z.object({
-  columns: z.array(z.object({ name: z.string(), sourceType: z.string(), targetType: z.string() })),
+  columns: z.array(transferColumnInfo),
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: z.array(transferColumnInfo),
   lossy: z.array(
     z.object({
       column: z.string(),
@@ -1775,6 +1778,8 @@ export const transferDoneEvent = z.object({
   elapsedMs: z.number(),
   /** 損失のある型マッピングなどの注意書き (空配列が普通)。 */
   warnings: z.array(z.string()),
+  /** 件数照合 (#1623) で見つかった食い違い。`warnings` の部分集合。 */
+  integrityWarnings: z.array(z.string()).default([]),
 });
 
 export const transferErrorEvent = z.object({

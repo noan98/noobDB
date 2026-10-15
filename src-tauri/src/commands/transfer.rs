@@ -121,8 +121,12 @@ pub struct TransferOutcome {
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferPreview {
+    /// 指定 (除外・改名・型上書き) を適用した後の転送先の列定義。
     pub columns: Vec<TransferColumnInfo>,
     pub lossy: Vec<LossyConversion>,
+    /// 指定を適用する前の、ソースの全列と自動判定した転送先の型 (#1623)。列ごとの指定を
+    /// 編集する UI が、除外した列も含めて一覧し続けるために使う。
+    pub source_columns: Vec<TransferColumnInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -232,7 +236,10 @@ async fn prepare_transfer_with(
             // 除外する列があるテーブル元は、SELECT リストをカタログから組んで読まない列を
             // サーバ側で省く (大きな BLOB 列などを無駄に転送しない)。
             let select_columns = excluded_aware_select_columns(&source, &request, t).await?;
-            let sql = if select_columns.is_none() && where_clause.is_none() && request.limit_rows.is_none() {
+            let sql = if select_columns.is_none()
+                && where_clause.is_none()
+                && request.limit_rows.is_none()
+            {
                 source_select_sql(source_driver, t)
             } else {
                 source_select_sql_ext(
@@ -334,7 +341,11 @@ async fn excluded_aware_select_columns(
         .conn
         .resolve_database(request.source_database.as_deref())
         .await;
-    let db = if resolved.is_empty() { "main" } else { resolved.as_str() };
+    let db = if resolved.is_empty() {
+        "main"
+    } else {
+        resolved.as_str()
+    };
     let all = source.conn.columns(db, table).await?;
     let kept: Vec<String> = all
         .into_iter()
@@ -749,14 +760,13 @@ async fn verify_counts(
     if !verify_enabled(request) {
         return out;
     }
-    let mut source_after = None;
     if let (Some(b), Some(t)) = (before.source, request.source_table.as_deref()) {
         let sql = source_count_sql(
             prepared.source.conn.driver_kind(),
             t.trim(),
             source_where(request),
         );
-        source_after = count_rows(
+        let source_after = count_rows(
             &prepared.source,
             &sql,
             request.source_database.as_deref().filter(|d| !d.is_empty()),
@@ -795,7 +805,6 @@ async fn verify_counts(
             }
         }
     }
-    let _ = source_after;
     out
 }
 
@@ -821,6 +830,9 @@ pub(crate) async fn run_transfer(
             "data transfer requires a multi-threaded runtime".into(),
         ));
     }
+
+    // 転送前の件数 (#1623)。失敗しても転送は続ける (照合は付加機能)。
+    let before = count_before(prepared).await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<StreamBatch>(CHANNEL_CAPACITY);
     let source = prepared.source.clone();
@@ -963,6 +975,7 @@ pub(crate) async fn run_transfer(
             if let Some(g) = guard.as_mut() {
                 g.disarm();
             }
+            let integrity_warnings = verify_counts(prepared, before, rows).await;
             // 追記は DDL を発行せず既存テーブルの型で書くので、型の縮退は起きない。
             let warnings = if request.mode.creates_table() {
                 plan_warnings(driver, &plan)
@@ -977,10 +990,13 @@ pub(crate) async fn run_transfer(
                     target_type: crate::db::transfer::target_type_sql(driver, &c.ty),
                 })
                 .collect();
+            let mut warnings = warnings;
+            warnings.extend(integrity_warnings.iter().cloned());
             Ok(TransferOutcome {
                 rows,
                 columns,
                 warnings,
+                integrity_warnings,
             })
         }
         Err(e) => {
@@ -1117,8 +1133,17 @@ pub async fn preview_transfer_inner(
                 .collect();
         }
     }
-    let plan = plan_columns(&cols, &sample);
+    let (plan, _) = plan_columns_mapped(&cols, &sample, &request.columns)?;
+    let (auto_plan, _) = plan_columns_mapped(&cols, &sample, &[])?;
     Ok(TransferPreview {
+        source_columns: auto_plan
+            .iter()
+            .map(|c| TransferColumnInfo {
+                name: c.name.clone(),
+                source_type: c.source_type.clone(),
+                target_type: crate::db::transfer::target_type_sql(driver, &c.ty),
+            })
+            .collect(),
         columns: plan
             .iter()
             .map(|c| TransferColumnInfo {
@@ -1218,6 +1243,7 @@ pub async fn transfer_data(
                         rows: outcome.rows,
                         elapsed_ms,
                         warnings: outcome.warnings,
+                        integrity_warnings: outcome.integrity_warnings,
                     },
                 );
             }
