@@ -3977,8 +3977,6 @@ export const DataGrid = memo(function DataGrid({
   // 直後の同じ描画で、新しく算出した列の統計を `cell` が読めるようにするため)。
   const columnStatsRef = useRef(columnStats);
   columnStatsRef.current = columnStats;
-  const colThresholdsRef = useRef(colThresholds);
-  colThresholdsRef.current = colThresholds;
 
   // --- Sort & column filters, persisted per result shape (#677) ---
   // Column widths/order/visibility were already persisted (#616); sort and
@@ -4467,7 +4465,7 @@ export const DataGrid = memo(function DataGrid({
             const stats = columnStatsRef.current[i];
             const num = toNumber(v);
             if (mode === "threshold" && num !== null) {
-              const rule = colThresholdsRef.current[i] ?? DEFAULT_THRESHOLD_RULE;
+              const rule = colThresholds[i] ?? DEFAULT_THRESHOLD_RULE;
               if (matchesThreshold(num, rule)) {
                 return (
                   <span
