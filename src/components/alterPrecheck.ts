@@ -240,3 +240,18 @@ export function buildAlterPrechecks(
   }
   return out;
 }
+
+const PRECHECK_COUNT_PREFIX = "SELECT COUNT(*) FROM ";
+/** 該当行の確認用 SELECT の既定の行数上限。 */
+export const PRECHECK_ROWS_LIMIT = 1000;
+
+/**
+ * 事前検査の件数 SQL (`SELECT COUNT(*) FROM t WHERE ...`) を、同じ条件で収まらない行そのものを返す
+ * `SELECT * FROM t WHERE ... LIMIT n` に変換する (#1626)。ALTER の前に「どの行が問題か」を見て直せるようにする。
+ * 件数 SQL の形でなければ null。
+ */
+export function precheckRowsSql(countSql: string, limit = PRECHECK_ROWS_LIMIT): string | null {
+  if (!countSql.startsWith(PRECHECK_COUNT_PREFIX)) return null;
+  const n = Math.max(1, Math.floor(limit));
+  return `SELECT * FROM ${countSql.slice(PRECHECK_COUNT_PREFIX.length)} LIMIT ${n};`;
+}

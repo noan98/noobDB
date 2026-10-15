@@ -2160,6 +2160,8 @@ const en = {
   routineEditLoading: "Loading definition...",
   routineEditLoadError: "Could not load the definition: {error}",
   routineEditSqlLabel: "Definition (SQL)",
+  routineEditDiffLabel: "Changes from the current definition",
+  routineEditDiffNone: "No changes from the current definition.",
   routineEditPreviewLabel: "Statements to run",
   routineEditApply: "Apply",
   routineEditCreate: "Create",
@@ -2823,6 +2825,9 @@ const en = {
     "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
   identitySyncCurrentUnknown:
     'Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on "lower" to sync anyway.',
+  identitySyncNextValue: "Next value: {before} -> {after} after syncing (max existing value: {max})",
+  identitySyncDecreases:
+    "The next value will go down. A previously issued value can be issued again; make sure the rows with larger values are really gone.",
   identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed: "Could not check whether {table} uses AUTOINCREMENT: {error}",
@@ -2898,6 +2903,7 @@ const en = {
   alterPrecheckNotNull: "{count} row(s) are NULL",
   alterPrecheckRunning: "Checking whether existing data fits…",
   alterPrecheckError: "Could not check existing data: {error}",
+  alterPrecheckOpenRows: "Show these rows",
   alterPrecheckOk: "All existing rows fit the new definition.",
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
@@ -2950,6 +2956,9 @@ const en = {
   dropNamespaceConfirmTitle: "Drop {kind} {name}?",
   dropNamespaceConfirmBody:
     "This permanently removes the {kind} {name} and everything in it. This cannot be undone.",
+  dropNamespaceContents:
+    "This {kind} contains {tables} tables with about {rows} rows; all of it will be deleted.",
+  dropNamespaceEmpty: "This {kind} contains no tables.",
   dropNamespaceConfirmOk: "Drop {kind}",
   dropNamespaceSuccess: "Dropped {kind} {name}.",
   contextMenuNamespaceProtectedTitle: "System databases cannot be dropped",
@@ -3434,6 +3443,9 @@ const en = {
   gridBulkEditPlaceholder: "Value to apply (or NULL)",
   gridBulkEditValueLabel: "Value",
   gridBulkEditSetNull: 'Set to SQL NULL (no value; not an empty string or the text "NULL")',
+  gridBulkEditPreviewSummary:
+    "{cells} cells in {rows} rows will change. Skipped: {unchanged} already that value, {invalid} invalid for the column type, {readonly} read-only.",
+  gridBulkEditPreviewLabel: "Current value -> new value (first rows)",
   gridBulkEditApply: "Set cells",
   gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
   gridBulkEditAppliedSkipped: "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
@@ -8321,6 +8333,8 @@ const ja: Dict = {
   routineEditLoading: "定義を読み込み中...",
   routineEditLoadError: "定義を取得できませんでした: {error}",
   routineEditSqlLabel: "定義 (SQL)",
+  routineEditDiffLabel: "現在の定義からの変更点",
+  routineEditDiffNone: "現在の定義からの変更はありません。",
   routineEditPreviewLabel: "実行される文",
   routineEditApply: "適用",
   routineEditCreate: "作成",
@@ -8982,6 +8996,9 @@ const ja: Dict = {
     "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
   identitySyncCurrentUnknown:
     "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
+  identitySyncNextValue: "次の採番値: {before} → 同期後 {after} (実データの最大値: {max})",
+  identitySyncDecreases:
+    "次の採番値が下がります。過去に払い出した値が再び採番されることがあるので、それより大きい値の行が本当に無いか確認してください。",
   identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed: "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
@@ -9057,6 +9074,7 @@ const ja: Dict = {
   alterPrecheckNotNull: "{count} 行が NULL です",
   alterPrecheckRunning: "既存データが収まるか検査しています…",
   alterPrecheckError: "既存データの検査に失敗しました: {error}",
+  alterPrecheckOpenRows: "該当行を表示",
   alterPrecheckOk: "既存の行はすべて新しい定義に収まります。",
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
@@ -9106,6 +9124,8 @@ const ja: Dict = {
     "データベース {name} を作成しました。参照するには別のプロファイルで接続してください。",
   dropNamespaceConfirmTitle: "{kind} {name} を削除しますか?",
   dropNamespaceConfirmBody: "{kind} {name} とその中身をすべて完全に削除します。この操作は取り消せません。",
+  dropNamespaceContents: "この{kind}には {tables} テーブル / 約 {rows} 行が入っており、すべて削除されます。",
+  dropNamespaceEmpty: "この{kind}にはテーブルがありません。",
   dropNamespaceConfirmOk: "{kind}を削除",
   dropNamespaceSuccess: "{kind} {name} を削除しました。",
   contextMenuNamespaceProtectedTitle: "システムデータベースは削除できません",
@@ -9586,6 +9606,9 @@ const ja: Dict = {
   gridBulkEditPlaceholder: "適用する値 (または NULL)",
   gridBulkEditValueLabel: "設定する値",
   gridBulkEditSetNull: 'NULL にする (値なし。空文字や文字列の "NULL" とは別)',
+  gridBulkEditPreviewSummary:
+    "{rows} 行の {cells} セルが変わります。スキップ: 同じ値 {unchanged} / 型が合わない {invalid} / 編集不可 {readonly}。",
+  gridBulkEditPreviewLabel: "現在値 → 新しい値 (先頭数件)",
   gridBulkEditApply: "セルに設定",
   gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
   gridBulkEditAppliedSkipped: "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",

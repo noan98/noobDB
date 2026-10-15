@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildAlterPrechecks, parseTypeSpec } from "../components/alterPrecheck";
+import { buildAlterPrechecks, parseTypeSpec, precheckRowsSql } from "../components/alterPrecheck";
 import type { ExistingColumnBaseline, ExistingColumnEdit } from "../components/alterTable";
 
 function base(name: string, type: string, notNull = false): ExistingColumnBaseline {
@@ -165,5 +165,33 @@ describe("buildAlterPrechecks", () => {
     const e: ExistingColumnEdit = { ...edit("a", "varchar(5)"), name: "renamed" };
     const got = buildAlterPrechecks("mysql", "d", "t", [base("a", "varchar(255)")], [e]);
     expect(got[0].sql).toContain("CHAR_LENGTH(`a`)");
+  });
+});
+
+describe("precheckRowsSql (#1626)", () => {
+  it("件数 SQL を同じ条件の SELECT * に変換する", () => {
+    expect(precheckRowsSql("SELECT COUNT(*) FROM `app`.`t` WHERE CHAR_LENGTH(`name`) > 10")).toBe(
+      "SELECT * FROM `app`.`t` WHERE CHAR_LENGTH(`name`) > 10 LIMIT 1000;",
+    );
+    expect(precheckRowsSql('SELECT COUNT(*) FROM "t" WHERE "c" IS NULL', 5)).toBe(
+      'SELECT * FROM "t" WHERE "c" IS NULL LIMIT 5;',
+    );
+  });
+
+  it("全ての検査の SQL が変換できる", () => {
+    const checks = buildAlterPrechecks(
+      "mysql",
+      "app",
+      "t",
+      [base("c", "varchar(100)")],
+      [edit("c", "varchar(10)", true)],
+    );
+    expect(checks.length).toBeGreaterThan(0);
+    for (const c of checks)
+      expect(precheckRowsSql(c.sql)).toMatch(/^SELECT \* FROM .* WHERE .* LIMIT 1000;$/);
+  });
+
+  it("件数 SQL の形でなければ null", () => {
+    expect(precheckRowsSql("SELECT 1")).toBeNull();
   });
 });

@@ -118,3 +118,36 @@ export function planBulkCellEdit(input: PlanBulkEditInput): BulkEditPlan {
   }
   return { applied, unchanged, rowCount: touchedRows.size, skippedReadonly, skippedInvalid };
 }
+
+/** 一括編集の適用前プレビュー 1 件: 実際に値が変わるセルの「現在値 → 新しい値」(#1626)。 */
+export interface BulkEditSample {
+  /** 結果行の添字 (元の行順)。 */
+  rowIdx: number;
+  colIdx: number;
+  before: CellValue;
+  /** 入力した生の値 ("NULL" は SQL NULL)。 */
+  after: string;
+}
+
+/**
+ * `planBulkCellEdit` で `applied` になるセルのうち先頭 `limit` 件を、現在値つきで返す (#1626)。
+ * 判定 (編集可否・型妥当性・無変更) は `planBulkCellEdit` と同じ順序・同じ関数なので、プレビューに出るセルは
+ * 実際に保留編集へ積まれるセルと一致する。PK 欠如テーブルは空。
+ */
+export function bulkEditSamples(input: PlanBulkEditInput, limit = 5): BulkEditSample[] {
+  const out: BulkEditSample[] = [];
+  if (input.pkIndices.length === 0) return out;
+  const cols = input.colIndices.filter((c) => input.columns[c] !== undefined);
+  for (const rowIdx of input.rowIndices) {
+    const row = input.rows[rowIdx];
+    if (!row) continue;
+    for (const colIdx of cols) {
+      if (!input.isColEditable(colIdx)) continue;
+      if (input.validate(colIdx, input.value)) continue;
+      if (editIsNoop(input.value, input.columns[colIdx], row[colIdx])) continue;
+      out.push({ rowIdx, colIdx, before: row[colIdx], after: input.value });
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}

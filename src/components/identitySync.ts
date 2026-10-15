@@ -157,3 +157,95 @@ export function parseAutoIncrementFromShowCreate(ddl: unknown): string | null {
   const last = all[all.length - 1];
   return last ? last[1] : "1";
 }
+
+/**
+ * PostgreSQL / SQLite 用: 確認ダイアログに「同期後の次の値」を出すために、実データの最大値と現在の採番値を
+ * 1 本の読み取り専用 SELECT で読む (#1626)。1 列目が最大値 (空は NULL / SQLite は rowid の最大で空なら 0)、
+ * 2 列目が現在の採番値 (PostgreSQL は `pg_sequence_last_value`、未使用なら NULL / SQLite は
+ * `sqlite_sequence.seq`、行が無ければ NULL)。MySQL は最大値と `SHOW CREATE TABLE` を既に読んでいるので不要 (null)。
+ */
+export function identityStatsSql(
+  driver: string,
+  database: string | null,
+  table: string,
+  column: string,
+): string | null {
+  const name = qualified(driver, database, table);
+  if (driver === "postgres") {
+    const seq = `pg_get_serial_sequence(${sqlString(name)}, ${sqlString(column)})`;
+    return `SELECT MAX(${quoteIdentFor(driver, column)}), pg_sequence_last_value(${seq}::regclass) FROM ${name}`;
+  }
+  if (driver === "sqlite") {
+    return (
+      `SELECT (SELECT COALESCE(MAX(rowid), 0) FROM ${name}), ` +
+      `(SELECT seq FROM sqlite_sequence WHERE name = ${sqlString(table)})`
+    );
+  }
+  return null;
+}
+
+/** 採番同期の前後の「次に採番される値」(#1626)。数値は 10 進整数の文字列。 */
+export interface IdentitySyncPreview {
+  /** 実データの最大値 (空表は "0")。読めなければ null。 */
+  max: string | null;
+  /** 同期前の次の採番値。読めなければ null。 */
+  currentNext: string | null;
+  /** 同期後の次の採番値。計算できなければ null。 */
+  nextAfter: string | null;
+  /** 同期で採番値が下がる (巻き戻る) か。 */
+  decreases: boolean;
+}
+
+function big(v: unknown): bigint | null {
+  const s = parseMaxValue(v);
+  return s === null ? null : BigInt(s);
+}
+
+/**
+ * 確認ダイアログ用に、同期後の次の採番値と「下がるか」を計算する (#1626)。生成 SQL (`buildIdentitySyncSql`) と
+ * 同じ規則: 既定は下げない (現在値と実データの大きい方)、`lower` なら実データの最大値 + 1。SQLite は常に下げない。
+ * `currentRaw` は PostgreSQL では最後に払い出した値 (次はその +1)、SQLite では `sqlite_sequence.seq` (次は +1)、
+ * MySQL では次の AUTO_INCREMENT そのもの。
+ */
+export function identitySyncPreview(input: {
+  driver: string;
+  maxRaw: unknown;
+  currentRaw: unknown;
+  lower: boolean;
+}): IdentitySyncPreview {
+  const { driver, lower } = input;
+  const max = big(input.maxRaw);
+  const cur = input.currentRaw === null || input.currentRaw === undefined ? null : big(input.currentRaw);
+  const maxPlus1 = max === null ? null : max < 0n ? 1n : max + 1n;
+  let currentNext: bigint | null;
+  let nextAfter: bigint | null;
+  if (driver === "mysql") {
+    currentNext = cur;
+    nextAfter =
+      maxPlus1 === null
+        ? null
+        : lower || currentNext === null
+          ? maxPlus1
+          : currentNext > maxPlus1
+            ? currentNext
+            : maxPlus1;
+  } else {
+    // PostgreSQL / SQLite: 現在の採番値 (last / seq)。未使用 (NULL) は 0 とみなす。
+    const last = cur ?? 0n;
+    currentNext = last + 1n;
+    if (max === null) {
+      nextAfter = null;
+    } else if (driver === "sqlite" || !lower) {
+      const top = max > last ? max : last;
+      nextAfter = (top < 0n ? 0n : top) + 1n;
+    } else {
+      nextAfter = max < 0n ? 1n : max + 1n;
+    }
+  }
+  return {
+    max: max === null ? null : max.toString(),
+    currentNext: currentNext === null ? null : currentNext.toString(),
+    nextAfter: nextAfter === null ? null : nextAfter.toString(),
+    decreases: currentNext !== null && nextAfter !== null && nextAfter < currentNext,
+  };
+}

@@ -129,6 +129,9 @@ import {
 } from "./components/tableMaintenance";
 import {
   buildDropNamespaceSql,
+  namespaceContentsSql,
+  parseNamespaceContents,
+  type NamespaceContents,
   treeNamespaceKind,
   type NamespaceKind,
 } from "./components/databaseMaintenance";
@@ -151,6 +154,7 @@ import {
   buildIdentitySyncSql,
   sqliteHasAutoincrementSql,
   findIdentityColumn,
+  identityStatsSql,
   mysqlMaxValueSql,
   mysqlShowCreateTableSql,
   parseAutoIncrementFromShowCreate,
@@ -7977,9 +7981,35 @@ export default function App() {
       const sql = buildDropNamespaceSql(driver, kind, name);
       if (!sql) return;
       const kindLabel = namespaceKindLabel(kind);
+      // 含まれるテーブル数と概算行数を読む (#1626)。読み取り専用で、読めなくても確認は出す。
+      let contents: NamespaceContents | null = null;
+      const contentsSql = namespaceContentsSql(driver, kind, name);
+      if (contentsSql && sessionId) {
+        try {
+          const res = await api.runLookupQuery({ sessionId, sql: contentsSql, rowCap: 1 });
+          contents = parseNamespaceContents(res.rows[0]);
+        } catch {
+          contents = null;
+        }
+      }
       const ok = await confirm({
         title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
-        message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
+        message: maintenanceMessage(
+          <>
+            {translate("dropNamespaceConfirmBody", { kind: kindLabel, name })}
+            {contents && (
+              <Box mt="2" fontWeight={600} data-testid="drop-namespace-contents">
+                {contents.tables > 0
+                  ? translate("dropNamespaceContents", {
+                      kind: kindLabel,
+                      tables: contents.tables.toLocaleString(),
+                      rows: contents.approxRows.toLocaleString(),
+                    })
+                  : translate("dropNamespaceEmpty", { kind: kindLabel })}
+              </Box>
+            )}
+          </>,
+        ),
         confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
         tone: "danger",
         typedConfirmation: name,
@@ -7998,6 +8028,7 @@ export default function App() {
       confirm,
       maintenanceMessage,
       selectedProfile?.driver,
+      sessionId,
       runNamespaceDdl,
       toast,
       namespaceKindLabel,
@@ -8407,6 +8438,23 @@ export default function App() {
           }
           currentUnknown = currentNext === null;
         }
+        // 確認ダイアログに出す「同期後の次の値」の素データ (#1626)。読めなければ行を出さない (SQL は従来どおり)。
+        let stats: { driver: string; maxRaw: unknown; currentRaw: unknown } | null = null;
+        if (driver === "mysql") {
+          stats = { driver, maxRaw: maxValue, currentRaw: currentNext };
+        } else {
+          const statsSql = identityStatsSql(driver, database, table, column);
+          if (statsSql) {
+            try {
+              const res = await api.runLookupQuery({ sessionId, sql: statsSql, database });
+              stats = { driver, maxRaw: res.rows[0]?.[0] ?? null, currentRaw: res.rows[0]?.[1] ?? null };
+              // PostgreSQL の空表は MAX が NULL = 実データ 0 件。SQLite は 0 が返る。
+              if (stats.maxRaw === null) stats.maxRaw = 0;
+            } catch {
+              stats = null;
+            }
+          }
+        }
         let lower = false;
         const sqlFor = (l: boolean) =>
           buildIdentitySyncSql(driver, database, table, column, maxValue, {
@@ -8428,6 +8476,7 @@ export default function App() {
               column={column}
               buildSql={sqlFor}
               showLower={driver !== "sqlite"}
+              stats={stats}
               unavailable={currentUnknown ? translate("identitySyncCurrentUnknown", { table }) : null}
               onLowerChange={(l) => {
                 lower = l;

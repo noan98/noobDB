@@ -4,6 +4,8 @@ import {
   buildDropNamespaceSql,
   isProtectedNamespace,
   isValidNamespaceName,
+  namespaceContentsSql,
+  parseNamespaceContents,
   supportedNamespaceKinds,
   treeNamespaceKind,
 } from "../components/databaseMaintenance";
@@ -80,5 +82,32 @@ describe("isProtectedNamespace / isValidNamespaceName", () => {
   it("rejects blank names", () => {
     expect(isValidNamespaceName("  ")).toBe(false);
     expect(isValidNamespaceName("a")).toBe(true);
+  });
+});
+
+describe("namespaceContentsSql / parseNamespaceContents (#1626)", () => {
+  it("MySQL は information_schema、PostgreSQL は pg_class から読む SELECT を作る", () => {
+    const my = namespaceContentsSql("mysql", "database", "sh'op");
+    expect(my).toContain("information_schema.TABLES");
+    expect(my).toContain("TABLE_SCHEMA = 'sh''op'");
+    const pg = namespaceContentsSql("postgres", "schema", "app");
+    expect(pg).toContain("pg_class");
+    expect(pg).toContain("n.nspname = 'app'");
+    expect(pg).toContain("GREATEST(c.reltuples, 0)");
+  });
+
+  it("非対応 (SQLite・種別違い・空の名前) は null", () => {
+    expect(namespaceContentsSql("sqlite", "database", "x")).toBeNull();
+    expect(namespaceContentsSql("mysql", "schema", "x")).toBeNull();
+    expect(namespaceContentsSql("postgres", "database", "x")).toBeNull();
+    expect(namespaceContentsSql("mysql", "database", "  ")).toBeNull();
+  });
+
+  it("結果の先頭行を読み、数値に読めなければ null", () => {
+    expect(parseNamespaceContents([3, "1200"])).toEqual({ tables: 3, approxRows: 1200 });
+    expect(parseNamespaceContents(["0", 0])).toEqual({ tables: 0, approxRows: 0 });
+    expect(parseNamespaceContents([null, 1])).toBeNull();
+    expect(parseNamespaceContents([-1, 1])).toBeNull();
+    expect(parseNamespaceContents(undefined)).toBeNull();
   });
 });

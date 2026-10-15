@@ -5,6 +5,8 @@ import {
   mysqlShowCreateTableSql,
   parseAutoIncrementFromShowCreate,
   findIdentityColumn,
+  identityStatsSql,
+  identitySyncPreview,
   mysqlMaxValueSql,
   parseMaxValue,
   sqliteHasAutoincrementSql,
@@ -168,5 +170,56 @@ describe("buildIdentitySyncSql", () => {
 
   it("MySQL の MAX 問い合わせ SQL", () => {
     expect(mysqlMaxValueSql("shop", "orders", "id")).toBe("SELECT MAX(`id`) FROM `shop`.`orders`");
+  });
+});
+
+describe("identitySyncPreview (#1626)", () => {
+  it("MySQL: 既定は現在値を保ち、下げるを選ぶと max+1 で下がる", () => {
+    const keep = identitySyncPreview({ driver: "mysql", maxRaw: "10", currentRaw: "500", lower: false });
+    expect(keep).toEqual({ max: "10", currentNext: "500", nextAfter: "500", decreases: false });
+    const low = identitySyncPreview({ driver: "mysql", maxRaw: "10", currentRaw: "500", lower: true });
+    expect(low.nextAfter).toBe("11");
+    expect(low.decreases).toBe(true);
+    expect(
+      identitySyncPreview({ driver: "mysql", maxRaw: "10", currentRaw: "5", lower: false }).nextAfter,
+    ).toBe("11");
+    expect(
+      identitySyncPreview({ driver: "mysql", maxRaw: null, currentRaw: null, lower: false }).nextAfter,
+    ).toBe("1");
+  });
+
+  it("PostgreSQL: last_value+1 が現在の次の値。既定は下げず、下げるで max+1", () => {
+    const keep = identitySyncPreview({ driver: "postgres", maxRaw: 7, currentRaw: 100, lower: false });
+    expect(keep).toEqual({ max: "7", currentNext: "101", nextAfter: "101", decreases: false });
+    const low = identitySyncPreview({ driver: "postgres", maxRaw: 7, currentRaw: 100, lower: true });
+    expect(low.nextAfter).toBe("8");
+    expect(low.decreases).toBe(true);
+    // 未使用のシーケンス (NULL) は 0 扱い。
+    expect(
+      identitySyncPreview({ driver: "postgres", maxRaw: 7, currentRaw: null, lower: false }).nextAfter,
+    ).toBe("8");
+    expect(
+      identitySyncPreview({ driver: "postgres", maxRaw: "9007199254740993", currentRaw: 1, lower: false })
+        .nextAfter,
+    ).toBe("9007199254740994");
+  });
+
+  it("SQLite: 常に下げない (lower を無視)", () => {
+    const p = identitySyncPreview({ driver: "sqlite", maxRaw: 3, currentRaw: 9, lower: true });
+    expect(p).toEqual({ max: "3", currentNext: "10", nextAfter: "10", decreases: false });
+  });
+
+  it("最大値を読めなければ nextAfter は null", () => {
+    expect(
+      identitySyncPreview({ driver: "postgres", maxRaw: "x", currentRaw: 1, lower: false }).nextAfter,
+    ).toBeNull();
+  });
+});
+
+describe("identityStatsSql (#1626)", () => {
+  it("PostgreSQL / SQLite だけ SELECT を返し、MySQL は null", () => {
+    expect(identityStatsSql("postgres", "public", "t", "id")).toContain("pg_sequence_last_value");
+    expect(identityStatsSql("sqlite", null, "t", "id")).toContain("sqlite_sequence");
+    expect(identityStatsSql("mysql", "d", "t", "id")).toBeNull();
   });
 });
