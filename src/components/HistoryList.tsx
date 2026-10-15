@@ -35,6 +35,12 @@ import {
   historyStatusParam,
   HistoryStatusFilter,
 } from "./historyFilters";
+import {
+  EMPTY_HISTORY_SELECTION,
+  pruneHistorySelection,
+  selectHistoryRow,
+  type HistorySelection,
+} from "./historySelection";
 import { Tooltip } from "./Tooltip";
 import { AiHistorySearch } from "./AiHistorySearch";
 import { useAiAvailable } from "../ai/useAiAvailable";
@@ -132,19 +138,25 @@ function formatTime(iso: string): string {
 const HistoryRow = memo(function HistoryRow({
   h,
   copied,
+  selected,
   canSaveAsSnippet,
   fadeIn,
   onRestore,
+  onSelect,
   onCopy,
   onOpenInNewTab,
   onSaveAsSnippet,
 }: {
   h: HistoryEntry;
   copied: boolean;
+  /** 一括削除の対象として選択中か (#1627)。 */
+  selected: boolean;
   canSaveAsSnippet: boolean;
   /** マウント時にフェードインするか (先頭の数行だけ。検索のたびに 200 行が一斉に動くのを避ける)。 */
   fadeIn: boolean;
   onRestore: (id: number) => void;
+  /** Shift (範囲) / Ctrl・Cmd (入れ替え) クリックで呼ばれる (#1627)。 */
+  onSelect: (id: number, mode: "range" | "toggle") => void;
   onCopy: (id: number) => void;
   onOpenInNewTab: (id: number) => void;
   onSaveAsSnippet: (id: number) => void;
@@ -164,18 +176,28 @@ const HistoryRow = memo(function HistoryRow({
       animate={variants.fade.animate}
       transition={transitions.crossfade}
     >
-      <Tooltip label={`${t("historyRestoreHint")}\n\n${h.sql_preview}`}>
+      <Tooltip label={`${t("historyRestoreHint")}\n${t("historySelectHint")}\n\n${h.sql_preview}`}>
         <TreeRow
           position="relative"
           role="treeitem"
           tabIndex={0}
-          onClick={() => onRestore(h.id)}
+          aria-selected={selected}
+          data-selected={selected ? "true" : undefined}
+          bg={selected ? "var(--accent-selection)" : undefined}
+          onClick={(e) => {
+            // 修飾キー付きは復元ではなく一括削除用の選択 (#1627)。
+            if (e.shiftKey) onSelect(h.id, "range");
+            else if (e.ctrlKey || e.metaKey) onSelect(h.id, "toggle");
+            else onRestore(h.id);
+          }}
           onKeyDown={(e) => {
             // 行内のボタン (コピー等) から伝わったキーはボタンに任せる
             if (e.target !== e.currentTarget) return;
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              onRestore(h.id);
+              if (e.shiftKey) onSelect(h.id, "range");
+              else if (e.ctrlKey || e.metaKey) onSelect(h.id, "toggle");
+              else onRestore(h.id);
             }
           }}
           css={{
@@ -320,6 +342,7 @@ export const HistoryList = memo(function HistoryList({
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [localReload, setLocalReload] = useState(0);
+  const [selection, setSelection] = useState<HistorySelection>(EMPTY_HISTORY_SELECTION);
   const toast = useToast();
   const { copiedKey: copiedId, copy } = useKeyedCopyFeedback<number>();
 
@@ -376,6 +399,22 @@ export const HistoryList = memo(function HistoryList({
   // 実行時間の並べ替え / 絞り込み (#1541) は取得済みの行へクライアント側で掛ける。
   const shownEntries = useMemo(() => applyHistorySpeedFilter(entries, speedFilter), [entries, speedFilter]);
 
+  // 絞り込みや再読み込みで画面から消えた行は選択から外す (#1627)。
+  useEffect(() => {
+    setSelection((cur) =>
+      pruneHistorySelection(
+        cur,
+        shownEntries.map((h) => h.id),
+      ),
+    );
+  }, [shownEntries]);
+  const shownIds = useMemo(() => shownEntries.map((h) => h.id), [shownEntries]);
+  const selectById = useCallback(
+    (id: number, mode: "range" | "toggle") =>
+      setSelection((cur) => selectHistoryRow(shownIds, cur, id, mode)),
+    [shownIds],
+  );
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
     let cancelled = false;
@@ -430,6 +469,29 @@ export const HistoryList = memo(function HistoryList({
       setError(null);
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  // 表示中の行 / 選択した行を id 指定で削除する (#1627)。全件削除 (`handleClear`) と違い、
+  // 消す範囲は画面に見えている行だけ (実行時間の絞り込みや 200 件の表示上限も含めて一致する)。
+  const handleDeleteIds = async (ids: number[], kind: "shown" | "selected") => {
+    if (ids.length === 0) return;
+    const ok = await confirm({
+      title: t(kind === "shown" ? "historyDeleteShown" : "historyDeleteSelected"),
+      message: t(kind === "shown" ? "historyDeleteShownConfirm" : "historyDeleteSelectedConfirm", {
+        count: ids.length,
+      }),
+      confirmLabel: t("historyDeleteConfirmLabel", { count: ids.length }),
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      const removed = await api.deleteHistoryEntries(ids);
+      setSelection(EMPTY_HISTORY_SELECTION);
+      setLocalReload((n) => n + 1);
+      toast.success(t("historyDeleted", { count: removed }));
+    } catch (e) {
+      toast.error(String(e));
     }
   };
 
@@ -515,12 +577,49 @@ export const HistoryList = memo(function HistoryList({
         <PressableButton type="button" variant="secondary" onClick={() => setFlightRecorderOpen(true)}>
           <Icon name="undo" size={ICON_SIZES.sm} /> {t("flightRecorderTitle")}
         </PressableButton>
+        {hasActiveFilter && shownEntries.length > 0 && (
+          <Tooltip label={t("historyDeleteShownHint")}>
+            <PressableButton
+              type="button"
+              variant="danger"
+              onClick={() =>
+                void handleDeleteIds(
+                  shownEntries.map((h) => h.id),
+                  "shown",
+                )
+              }
+            >
+              {t("historyDeleteShownCount", { count: shownEntries.length })}
+            </PressableButton>
+          </Tooltip>
+        )}
         {entries.length > 0 && (
           <PressableButton type="button" variant="danger" onClick={handleClear}>
             {hasActiveFilter ? t("historyClearAllIgnoringFilter") : t("historyClear")}
           </PressableButton>
         )}
       </TreeSearch>
+      {selection.selected.size > 0 && (
+        <TreeSearch borderTop="none" pt={0} display="flex" alignItems="center" gap="1.5" flexWrap="wrap">
+          <chakra.span textStyle="caption" role="status">
+            {t("historySelectedCount", { count: selection.selected.size })}
+          </chakra.span>
+          <PressableButton
+            type="button"
+            variant="danger"
+            onClick={() => void handleDeleteIds([...selection.selected], "selected")}
+          >
+            {t("historyDeleteSelected")}
+          </PressableButton>
+          <PressableButton
+            type="button"
+            variant="secondary"
+            onClick={() => setSelection(EMPTY_HISTORY_SELECTION)}
+          >
+            {t("historySelectionClear")}
+          </PressableButton>
+        </TreeSearch>
+      )}
       {flightRecorderOpen && (
         <FlightRecorderPanel
           profileId={activeProfile?.id ?? null}
@@ -558,9 +657,11 @@ export const HistoryList = memo(function HistoryList({
               key={h.id}
               h={h}
               copied={copiedId === h.id}
+              selected={selection.selected.has(h.id)}
               canSaveAsSnippet={onSaveAsSnippet !== undefined}
               fadeIn={i < HISTORY_FADE_IN_ROWS}
               onRestore={restoreById}
+              onSelect={selectById}
               onCopy={copyById}
               onOpenInNewTab={openInNewTabById}
               onSaveAsSnippet={saveAsSnippetById}

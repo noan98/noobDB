@@ -30,6 +30,7 @@ describe("sqlEditorMenuSpec", () => {
     expect(actions(base)).toEqual([
       "run",
       "runStatement",
+      "runFromCursor",
       "preview",
       "explain",
       "format",
@@ -54,6 +55,7 @@ describe("sqlEditorMenuSpec", () => {
     expect(find(ctx, "run")?.labelKey).toBe("editorMenuRunSelection");
     expect(find(ctx, "format")?.labelKey).toBe("editorMenuFormatSelection");
     expect(actions(ctx)).not.toContain("runStatement");
+    expect(actions(ctx)).not.toContain("runFromCursor");
     expect(find(ctx, "copy")?.disabled).toBe(false);
   });
 
@@ -89,6 +91,7 @@ describe("sqlEditorMenuSpec", () => {
     expect(spec.map((e) => ("separator" in e ? "|" : e.action))).toEqual([
       "run",
       "runStatement",
+      "runFromCursor",
       "|",
       "format",
       "toggleComment",
@@ -110,9 +113,10 @@ describe("sqlEditorMenuSpec", () => {
 
 describe("sqlEditorMenuSpec: AI 解説 / 最適化案 (#695)", () => {
   it("canAi のときだけ EXPLAIN の直後に 2 項目を出す", () => {
-    expect(actions({ ...base, canAi: true }).slice(0, 6)).toEqual([
+    expect(actions({ ...base, canAi: true }).slice(0, 7)).toEqual([
       "run",
       "runStatement",
+      "runFromCursor",
       "preview",
       "explain",
       "aiExplain",

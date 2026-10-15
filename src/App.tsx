@@ -55,7 +55,14 @@ import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profi
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
-import { planSaveAll, sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
+import {
+  convertLineEnding,
+  detectLineEnding,
+  planSaveAll,
+  sqlSaveFileName,
+  textEncodingLabel,
+  type LineEnding,
+} from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
 import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
@@ -110,6 +117,7 @@ import { TabPaneStore } from "./tabPaneStore";
 import {
   PaneView,
   PaneEmpty,
+  tableExactRowCount,
   tableTotalPagesEstimate,
   incomingFkCacheKey,
   type PaneEnv,
@@ -158,7 +166,7 @@ import {
 import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
 import { qualifiedTableSql } from "./components/sqlDialect";
-import { treeItemInsertText } from "./components/treeDragInsert";
+import { tableSelectWithColumnsText, treeItemInsertText } from "./components/treeDragInsert";
 import { fkJoinSnippets } from "./components/fkJoin";
 import {
   applyServerBrowse,
@@ -234,6 +242,11 @@ import { isMruRecordable, singleLine, type CommandItem } from "./components/comm
 // the modal/full-screen views only load when first rendered.
 const ConnectionForm = lazy(() =>
   import("./components/ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
+);
+/** 正確な件数を数える COUNT(*) の打ち切り秒数 (#1627)。巨大テーブルで画面が待ち続けないための上限。 */
+const EXACT_COUNT_TIMEOUT_SECS = 120;
+const HistorySearchModal = lazy(() =>
+  import("./components/HistorySearchModal").then((m) => ({ default: m.HistorySearchModal })),
 );
 const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
 const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
@@ -458,7 +471,8 @@ import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
-import { pushOutput, type OutputInput } from "./outputLog";
+import { joinDroppedSql, physicalToCssPoint } from "./dropInsert";
+import { lineRangeOf, pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
   bottomPanelStripTabs,
@@ -508,7 +522,17 @@ import { BACKGROUND_PING_INTERVAL_MS, nextStaleProfileIds } from "./backgroundHe
 import { buildGroupMoveRequest } from "./profileGroup";
 import { summarizeSavedWorkspace } from "./savedTabsSummary";
 import { formatElapsed } from "./queryRunState";
-import { buildPageSql, canGoNext, canGoPrev, clampPage, effectiveTotalPages } from "./pagination";
+import {
+  buildCountSql,
+  buildPageSql,
+  canGoNext,
+  canGoPrev,
+  clampPage,
+  effectiveTotalPages,
+  exactCountKey,
+  parseCountCell,
+  type ExactRowCount,
+} from "./pagination";
 import {
   buildKeysetPageSql,
   keysetMoveFor,
@@ -792,6 +816,8 @@ export interface Tab {
    * 書き戻す。未設定は UTF-8。永続化しない。
    */
   fileEncoding?: TextEncodingId;
+  /** ファイルから開いた / 保存したタブの改行コード (#1627)。保存で同じ改行へ戻す。未設定は LF。永続化しない。 */
+  fileLineEnding?: LineEnding;
   database?: string;
   table?: string;
   sql: string;
@@ -885,6 +911,13 @@ export interface Tab {
    * `table_row_estimates` から取得して設定する。未取得/不明なら null/undefined。
    */
   rowEstimateTotal?: number | null;
+  /**
+   * 「正確な件数を数える」(#1627) で数え終えた件数。`key` (ベース SQL + サーバ側フィルタ) が
+   * 今の条件と一致する間だけ総ページ数・最終ページの判定に使う。In-memory only。
+   */
+  exactRowCount?: ExactRowCount | null;
+  /** 正確な件数を数えている最中。二重実行の防止とボタンの待機表示に使う。 */
+  countingRows?: boolean;
   /**
    * サーバ側ソート (#792): table タブのヘッダーメニューから適用した全件ソート。
    * `paginatable` base SQL への注入 (`applyServerBrowse`) と再フェッチは
@@ -1435,6 +1468,7 @@ export default function App() {
   const [showCommandPalette, setShowCommandPalette] = useState(false);
   // スキーマ横断のグローバルオブジェクト検索の開閉。
   const [showObjectSearch, setShowObjectSearch] = useState(false);
+  const [showHistorySearch, setShowHistorySearch] = useState(false);
   // DB 全体からの値検索 (#748) の開閉。
   const [showDataSearch, setShowDataSearch] = useState(false);
   // `?` キーで開くショートカット チートシートの開閉。
@@ -2023,6 +2057,8 @@ export default function App() {
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
+  // ドラッグ中のポインタがクエリエディタの上にあるか (#1627)。ドロップ先が新規タブかカーソル位置かの表示切替に使う。
+  const [dragOverEditor, setDragOverEditor] = useState(false);
   const [dumpTarget, setDumpTarget] = useState<string | null>(null);
   // `.sql` スクリプト実行モーダルの対象 DB (#973。null で閉じる)。
   const [scriptTarget, setScriptTarget] = useState<string | null>(null);
@@ -4577,6 +4613,8 @@ export default function App() {
         autoLimitSql: autoLimit !== null ? sql : null,
         loadingMore: false,
         canLoadMore: false,
+        // 再実行した結果の母数は変わりうるので、数え済みの正確な件数 (#1627) は破棄する。
+        exactRowCount: null,
         queryError: null,
         partialResult: null,
         // Drop any in-flight cell edits: their row indices reference the
@@ -5553,14 +5591,21 @@ export default function App() {
           : (tab.serverFilter ?? null);
       const pageSize = Math.max(1, sizeOverride ?? tab.pageSize ?? tab.previewRowLimit);
       const estimatedTotal = tableTotalPagesEstimate(
-        { serverFilter: nextFilter, rowEstimateTotal: tab.rowEstimateTotal },
+        {
+          serverFilter: nextFilter,
+          rowEstimateTotal: tab.rowEstimateTotal,
+          paginatable: tab.paginatable,
+          exactRowCount: tab.exactRowCount,
+        },
         pageSize,
       );
+      const totalIsExact = tableExactRowCount({ ...tab, serverFilter: nextFilter }) != null;
       // 推定の総ページ数は実数より小さいことがある。現在ページを下限にし、満杯なら 1 ページ先まで進める。
       const total = effectiveTotalPages(
         estimatedTotal,
         tab.page ?? 1,
         (tab.result?.rows.length ?? 0) >= pageSize,
+        totalIsExact,
       );
       const target = clampPage(page, total);
       if (!browseOverride?.force && target === (tab.page ?? 1) && tab.result) return;
@@ -5679,6 +5724,45 @@ export default function App() {
       void goToPageInTab(tabId, 1, Math.max(1, Math.floor(size)));
     },
     [goToPageInTab],
+  );
+
+  // 正確な総件数 (#1627)。PaginationBar の「正確な件数を数える」を押したときだけ、現在の
+  // 表示条件 (ベース SQL + サーバ側フィルタ、ソートなし) を COUNT(*) で数える。自動では
+  // 実行しない。読み取り専用の裏方クエリ (`run_lookup_query`) なのでクエリ履歴・出力ログを
+  // 汚さず、read_only セッションでも通る。結果は条件キー付きで保持し、条件が変われば無効。
+  const countExactRowsInTab = useCallback(
+    async (tabId: string) => {
+      if (!sessionId) return;
+      const tab = tabsRef.current.find((tt) => tt.id === tabId);
+      if (!tab || tab.kind !== "table" || !tab.paginatable || tab.countingRows) return;
+      const base = tab.paginatable;
+      const filter = tab.serverFilter ?? null;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const sql = buildCountSql(
+        applyServerBrowse(base, driver, filter, null, tab.openTemplate?.wrapBrowse ?? false),
+      );
+      patchTab(tabId, (tt) => ({ ...tt, countingRows: true }));
+      try {
+        const res = await api.runLookupQuery({
+          sessionId,
+          sql,
+          database: tab.database ?? null,
+          queryTimeoutSecs: EXACT_COUNT_TIMEOUT_SECS,
+          rowCap: 1,
+        });
+        const total = parseCountCell(res.rows[0]?.[0]);
+        if (total === null) throw new Error("COUNT(*) returned no integer");
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          countingRows: false,
+          exactRowCount: { total, key: exactCountKey(base, filter) },
+        }));
+      } catch (e) {
+        patchTab(tabId, (tt) => ({ ...tt, countingRows: false }));
+        setStatus({ kind: "key", key: "statusQueryError", vars: { error: String(e) }, error: true });
+      }
+    },
+    [sessionId, patchTab, selectedProfile?.driver, tabsRef],
   );
 
   // サーバ側ソート (#792): ヘッダーメニューから列の昇順/降順/解除を選ぶと、1 ページ目
@@ -6640,6 +6724,25 @@ export default function App() {
     [sessionId, addTab, runInTabWithGate],
   );
 
+  // 出力タブの「エラー位置へ移動」(#1627)。失敗した文をフォーカス中のエディタから探し、
+  // エラー本文の行番号 (無ければ文の先頭) の行を選択する。エディタが書き換わって文が
+  // 見つからないときは通知だけ出す。
+  const handleOutputGotoError = useCallback(
+    (sql: string, line: number | null) => {
+      const editor =
+        activeTab && (activeTab.kind === "query" || activeTab.kind === "explain") ? activeEditor() : null;
+      const text = editor?.getText() ?? "";
+      const at = editor && sql.length > 0 ? text.indexOf(sql) : -1;
+      if (!editor || at < 0) {
+        toast.info(t("outputGotoNotFound"));
+        return;
+      }
+      const r = lineRangeOf(sql, line ?? 1);
+      editor.selectRange(at + r.from, at + r.to);
+    },
+    [activeTab, activeEditor, toast, t],
+  );
+
   // 出力タブの「再実行」(#1541)。記録時と同じ DB のタブで流す (`database` が無ければ接続の既定)。
   // 接続が違う行はパネル側で無効にしている。実行は通常の `runInTabWithGate` に委ねる。
   const handleOutputRunSql = useCallback(
@@ -7073,7 +7176,8 @@ export default function App() {
           };
         });
       }
-      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now() }));
+      // 編集の適用で行数が変わりうる (削除・追加) ので、正確な件数 (#1627) は破棄する。
+      patchTab(tabId, (tt) => ({ ...tt, lastEditAppliedAt: Date.now(), exactRowCount: null }));
       // 期待より少ない行しか書き換わらなかったとき (別クライアントが行を削除した等) は、
       // 成功と同じ表示にせず警告する。コミット済みなので適用自体は取り消せない。
       if (appliedRowShortfall(opCount, totalAffected) > 0) {
@@ -8538,8 +8642,23 @@ export default function App() {
   // when the active tab has no editor (e.g. a table tab) — mirrors
   // handleRestoreHistory.
   const handleInsertTableSelect = useCallback(
-    (database: string, table: string) => {
-      const sql = treeItemInsertText(selectedProfile?.driver ?? "mysql", { kind: "table", database, table });
+    async (database: string, table: string, withColumns = false) => {
+      const driver = selectedProfile?.driver ?? "mysql";
+      let sql = treeItemInsertText(driver, { kind: "table", database, table });
+      // 列名つきの雛形 (#1627)。列が取れなければ SELECT * のまま挿入する。
+      if (withColumns && sessionId) {
+        try {
+          const cols = await api.describeTable(sessionId, database, table);
+          sql = tableSelectWithColumnsText(
+            driver,
+            database,
+            table,
+            cols.map((c) => c.name),
+          );
+        } catch {
+          // 列の取得は best-effort
+        }
+      }
       if (activeTab && (activeTab.kind === "query" || activeTab.kind === "explain")) {
         activeEditor()?.insertText(sql);
       } else if (sessionId) {
@@ -9274,7 +9393,11 @@ export default function App() {
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
   const handleFilesDropped = useCallback(
-    async (paths: string[], sqlEncoding: TextEncodingId | null = null) => {
+    async (
+      paths: string[],
+      sqlEncoding: TextEncodingId | null = null,
+      dropPoint: { x: number; y: number } | null = null,
+    ) => {
       if (paths.length === 0) return;
       const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
       const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
@@ -9287,24 +9410,39 @@ export default function App() {
       if (sqlPaths.length > 0 && !sessionIdRef.current) {
         toast.error(translate("dropSqlNoConnection"));
       }
+      // エディタの上へのドロップは、新規タブではなくそのエディタのカーソル位置へ挿入する (#1627)。
+      const dropEditor = dropPoint
+        ? ([...editorRefs.current.values()].find((ed) => ed.containsPoint(dropPoint.x, dropPoint.y)) ?? null)
+        : null;
+      const readContents: string[] = [];
       for (const p of sessionIdRef.current ? sqlPaths : []) {
         try {
           // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
           // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
           const { content, encoding } = await api.readSqlFile(p, sqlEncoding);
-          addTab({
-            ...makeQueryTab(),
-            title: fileBaseName(p),
-            titleManual: true,
-            sql: content,
-            lastExecutedSql: content,
-            fileEncoding: encoding,
-          });
+          if (dropEditor) {
+            readContents.push(content);
+          } else {
+            addTab({
+              ...makeQueryTab(),
+              title: fileBaseName(p),
+              titleManual: true,
+              sql: content,
+              lastExecutedSql: content,
+              fileEncoding: encoding,
+              fileLineEnding: detectLineEnding(content),
+            });
+          }
           openedSql += 1;
           lastEncoding = encoding;
         } catch (e) {
           toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
         }
+      }
+      if (dropEditor && readContents.length > 0) {
+        dropEditor.insertText(joinDroppedSql(readContents));
+        toast.success(translate("dropInsertedSql", { count: readContents.length }));
+        openedSql = 0;
       }
       if (openedSql === 1 && sqlPaths.length === 1) {
         toast.success(
@@ -9383,9 +9521,10 @@ export default function App() {
    * ディスクへ書き出す。
    */
   const handleSaveSqlFile = useCallback(
-    async (encodingOverride: TextEncodingId | null = null) => {
+    async (encodingOverride: TextEncodingId | null = null, lineEndingOverride: LineEnding | null = null) => {
       const tab = activeTabRef.current;
       if (!tab) return;
+      const lineEnding = lineEndingOverride ?? tab.fileLineEnding ?? "lf";
       // 開いたときの文字コード (または指定) で書き戻す。表せない文字があれば保存は失敗する (#1535)。
       const encoding = encodingOverride ?? tab.fileEncoding ?? "utf-8";
       try {
@@ -9395,8 +9534,8 @@ export default function App() {
           filters: [{ name: "SQL", extensions: ["sql"] }],
         });
         if (typeof dest !== "string" || !dest) return;
-        await api.writeTextFile(dest, getTabSql(tab), encoding);
-        updateTab(tab.id, { fileEncoding: encoding });
+        await api.writeTextFile(dest, convertLineEnding(getTabSql(tab), lineEnding), encoding);
+        updateTab(tab.id, { fileEncoding: encoding, fileLineEnding: lineEnding });
         toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
       } catch (e) {
         toast.error(translate("saveSqlFileError", { error: String(e) }));
@@ -9429,7 +9568,7 @@ export default function App() {
         });
         if (typeof dest !== "string" || !dest) break;
         await api.writeTextFile(dest, entry.sql, entry.encoding);
-        updateTab(entry.tabId, { fileEncoding: entry.encoding });
+        updateTab(entry.tabId, { fileEncoding: entry.encoding, fileLineEnding: entry.lineEnding });
         saved += 1;
       }
     } catch (e) {
@@ -9454,11 +9593,20 @@ export default function App() {
           const payload = event.payload;
           if (payload.type === "enter") {
             setDragFeedback(dragFeedbackFor(payload.paths, !!sessionIdRef.current));
+          } else if (payload.type === "over") {
+            const pt = physicalToCssPoint(payload.position, window.devicePixelRatio);
+            setDragOverEditor([...editorRefs.current.values()].some((ed) => ed.containsPoint(pt.x, pt.y)));
           } else if (payload.type === "leave") {
             setDragFeedback(null);
+            setDragOverEditor(false);
           } else if (payload.type === "drop") {
             setDragFeedback(null);
-            void handleFilesDropped(payload.paths);
+            setDragOverEditor(false);
+            void handleFilesDropped(
+              payload.paths,
+              null,
+              physicalToCssPoint(payload.position, window.devicePixelRatio),
+            );
           }
         });
         if (disposed) un();
@@ -9806,7 +9954,13 @@ export default function App() {
         const totalPages = tableTotalPagesEstimate(tab, pageSize);
         const page = tab.page ?? 1;
         const canAdvance = pageNext
-          ? canGoNext(page, totalPages, tab.result?.rows.length ?? 0, pageSize)
+          ? canGoNext(
+              page,
+              totalPages,
+              tab.result?.rows.length ?? 0,
+              pageSize,
+              tableExactRowCount(tab) != null,
+            )
           : canGoPrev(page);
         if (!canAdvance) return;
         e.preventDefault();
@@ -9890,6 +10044,21 @@ export default function App() {
       if (comboMatchesEvent(bindingsRef.current.commandPalette, e)) {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
+      }
+      // クエリ履歴のインクリメンタル検索 (#1627)。bash の reverse-i-search に倣い、エディタに
+      // フォーカスがあるときの Ctrl+R だけ (Cmd+R / 他の場所のリロード系キーは奪わない)。
+      if (
+        e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "r" &&
+        e.target instanceof Element &&
+        e.target.closest(".cm-editor") &&
+        sessionIdRef.current
+      ) {
+        e.preventDefault();
+        setShowHistorySearch(true);
       }
       // スキーマ横断のグローバルオブジェクト検索。接続中のみ。
       if (comboMatchesEvent(bindingsRef.current.objectSearch, e)) {
@@ -10491,6 +10660,15 @@ export default function App() {
           run: () => reopenClosedTabRef.current(c.id),
         });
       });
+      items.push({
+        id: "nav:history-search",
+        group: "navigation",
+        label: t("cmdkActionHistorySearch"),
+        icon: "clock",
+        keywords: "history search reverse ctrl+r 履歴 検索",
+        shortcut: "Ctrl+R",
+        run: () => setShowHistorySearch(true),
+      });
       // .sql スクリプトの明示的な「開く」/「名前を付けて保存」(#918)。D&D 非対応の
       // キーボード/コマンドパレット中心のユーザ向け導線で、読み込みは D&D 経路
       // (`handleFilesDropped`) をそのまま共有する。
@@ -10643,6 +10821,7 @@ export default function App() {
         {
           runAll: () => activeEditor()?.runAll(),
           runStatement: () => activeEditor()?.runStatement(),
+          runFromCursor: () => activeEditor()?.runFromCursor(),
           formatSql: () => activeEditor()?.formatSql(),
           explain: () => activeEditor()?.explain(),
           // パレットが閉じてフォーカスを戻し終えてから移す (focusExplorer と同じ理由)。
@@ -10987,6 +11166,7 @@ export default function App() {
     setCellEditForTab,
     setLayoutMode,
     setPageSizeInTab,
+    countExactRowsInTab,
     setResultView,
     setSaveAsTableRequest,
     setSaveAsViewRequest,
@@ -11769,6 +11949,7 @@ export default function App() {
                         onOpenSql={handleOpenHistoryInNewTab}
                         onInsertSql={handleLauncherInsertSql}
                         onRunSql={handleOutputRunSql}
+                        onGotoError={handleOutputGotoError}
                         canRun={sessionId !== null}
                         currentConnectionId={selectedProfile?.id ?? null}
                       />
@@ -12865,11 +13046,16 @@ export default function App() {
                 <SqlFileEncodingModal
                   mode={sqlEncodingDialog.mode}
                   initial={activeTabRef.current?.fileEncoding}
-                  onConfirm={(encoding) => {
+                  initialLineEnding={activeTabRef.current?.fileLineEnding}
+                  onConfirmFile={(path, encoding) => {
+                    setSqlEncodingDialog(null);
+                    void handleFilesDropped([path], encoding);
+                  }}
+                  onConfirm={(encoding, lineEnding) => {
                     const mode = sqlEncodingDialog.mode;
                     setSqlEncodingDialog(null);
                     if (mode === "open") void handleOpenSqlFile(encoding);
-                    else void handleSaveSqlFile(encoding);
+                    else void handleSaveSqlFile(encoding, lineEnding);
                   }}
                   onClose={() => setSqlEncodingDialog(null)}
                 />
@@ -13569,6 +13755,13 @@ export default function App() {
             />
           )}
         </AnimatePresence>
+        {showHistorySearch && (
+          <HistorySearchModal
+            history={queryHistory}
+            onPick={handleRestoreHistory}
+            onClose={() => setShowHistorySearch(false)}
+          />
+        )}
         <AnimatePresence>
           {showObjectSearch && sessionId && (
             <ObjectSearchModal
@@ -13696,12 +13889,18 @@ export default function App() {
             >
               <Icon name={dragFeedback.accept ? "upload" : "warning"} size={ICON_SIZES["2xl"]} />
               <chakra.span fontSize="lg" fontWeight={600}>
-                {dragFeedback.accept ? t("dropOverlayTitle") : t("dropOverlayReject")}
+                {dragFeedback.accept
+                  ? dragOverEditor && dragFeedback.kind === "sql"
+                    ? t("dropOverlayTitleInsert")
+                    : t("dropOverlayTitle")
+                  : t("dropOverlayReject")}
               </chakra.span>
               {dragFeedback.accept && (
                 <chakra.span fontSize="sm" color="app.textMuted" textAlign="center">
                   {dragFeedback.kind === "sql"
-                    ? t("dropOverlayHintSql")
+                    ? dragOverEditor
+                      ? t("dropOverlayHintSqlInsert")
+                      : t("dropOverlayHintSql")
                     : dragFeedback.kind === "csv"
                       ? t("dropOverlayHintCsv")
                       : t("dropOverlayHintMixed")}

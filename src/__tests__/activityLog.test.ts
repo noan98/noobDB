@@ -11,6 +11,7 @@ import {
   markActivityRead,
   pushActivity,
   relativeActivityTime,
+  searchActivity,
   type ActivityEntry,
   mergeLogEntries,
 } from "../activityLog";
@@ -40,6 +41,30 @@ describe("appendActivity", () => {
   it("上限が 0 以下なら何も保持しない", () => {
     expect(appendActivity([entry(1)], entry(2), 0)).toEqual([]);
     expect(appendActivity([entry(1)], entry(2), -1)).toEqual([]);
+  });
+});
+
+describe("searchActivity / filterActivity の文言検索 (#1627)", () => {
+  const list = [
+    entry(3, { severity: "error", message: "Connection LOST to Prod" }),
+    entry(2, { severity: "info", message: "Connected to prod" }),
+    entry(1, { severity: "error", message: "syntax error near x" }),
+  ];
+
+  it("大文字小文字を区別せず、空白区切りの語をすべて含む行だけ残す", () => {
+    expect(searchActivity(list, "prod").map((e) => e.id)).toEqual([3, 2]);
+    expect(searchActivity(list, "connection  LOST").map((e) => e.id)).toEqual([3]);
+    expect(searchActivity(list, "prod syntax")).toEqual([]);
+  });
+
+  it("空・空白だけの検索語は絞り込まない", () => {
+    expect(searchActivity(list, "")).toHaveLength(3);
+    expect(searchActivity(list, "   ")).toHaveLength(3);
+  });
+
+  it("重大度フィルタと併用できる", () => {
+    expect(filterActivity(list, "error", "prod").map((e) => e.id)).toEqual([3]);
+    expect(filterActivity(list, null, "prod").map((e) => e.id)).toEqual([3, 2]);
   });
 });
 

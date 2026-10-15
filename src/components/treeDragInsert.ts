@@ -1,5 +1,5 @@
 import { columnInsertText, qualifiedColumnInsertText } from "./columnInsert";
-import { qualifiedTableSql } from "./sqlDialect";
+import { qualifiedTableName, qualifiedTableSql } from "./sqlDialect";
 
 /**
  * スキーマツリーのテーブル / 列行を SQL エディタへドラッグ挿入する (#1414)。
@@ -24,6 +24,22 @@ export function treeItemInsertText(driver: string, item: TreeDragItem, qualified
   return qualified
     ? qualifiedColumnInsertText(driver, item.table, item.column)
     : columnInsertText(driver, item.column);
+}
+
+/**
+ * 列名を並べた SELECT の雛形 (#1627)。`SELECT *` より列を明示した形を一手で作る。
+ * 列が取れなかった (空) ときは通常の `SELECT * FROM ...` に退避する。
+ * 列名は `columnInsertText` と同じクォート規則 (予約語・大文字混じりだけ引用符で囲む)。
+ */
+export function tableSelectWithColumnsText(
+  driver: string,
+  database: string,
+  table: string,
+  columns: readonly string[],
+): string {
+  if (columns.length === 0) return qualifiedTableSql(driver, database, table);
+  const list = columns.map((c) => `  ${columnInsertText(driver, c)}`).join(",\n");
+  return `SELECT\n${list}\nFROM ${qualifiedTableName(driver, database, table)}`;
 }
 
 /** ドラッグ中のゴーストに出すラベル (何を掴んでいるか)。 */

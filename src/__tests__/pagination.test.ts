@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildCountSql,
   buildPageSql,
+  exactCountKey,
+  matchingExactCount,
+  parseCountCell,
+  totalPagesFromCount,
   canGoNext,
   effectiveTotalPages,
   canGoPrev,
@@ -95,5 +100,49 @@ describe("effectiveTotalPages", () => {
     expect(clampPage(7, effectiveTotalPages(6, 6, true))).toBe(7);
     expect(clampPage(8, effectiveTotalPages(6, 6, true))).toBe(7);
     expect(clampPage(7, effectiveTotalPages(6, 6, false))).toBe(6);
+  });
+});
+
+describe("正確な総件数 (#1627)", () => {
+  it("buildCountSql は派生テーブルに別名を付け、末尾の ; を落とす", () => {
+    expect(buildCountSql("SELECT * FROM t WHERE a = 1;")).toBe(
+      "SELECT COUNT(*) FROM (SELECT * FROM t WHERE a = 1) AS noobdb_count",
+    );
+    expect(buildCountSql("  SELECT 1  ")).toBe("SELECT COUNT(*) FROM (SELECT 1) AS noobdb_count");
+  });
+
+  it("parseCountCell は非負の安全整数だけを受ける (数値・文字列)", () => {
+    expect(parseCountCell(42)).toBe(42);
+    expect(parseCountCell("1234")).toBe(1234);
+    expect(parseCountCell(0)).toBe(0);
+    expect(parseCountCell("9007199254740993")).toBeNull();
+    expect(parseCountCell(-1)).toBeNull();
+    expect(parseCountCell(1.5)).toBeNull();
+    expect(parseCountCell(null)).toBeNull();
+    expect(parseCountCell("abc")).toBeNull();
+    expect(parseCountCell("")).toBeNull();
+  });
+
+  it("totalPagesFromCount は 0 件でも 1 ページ、端数は切り上げる", () => {
+    expect(totalPagesFromCount(0, 100)).toBe(1);
+    expect(totalPagesFromCount(100, 100)).toBe(1);
+    expect(totalPagesFromCount(101, 100)).toBe(2);
+  });
+
+  it("matchingExactCount は条件キーが一致するときだけ件数を返す", () => {
+    const key = exactCountKey("SELECT * FROM t", null);
+    expect(matchingExactCount({ total: 7, key }, key)).toBe(7);
+    expect(matchingExactCount({ total: 7, key }, exactCountKey("SELECT * FROM t", { a: 1 }))).toBeNull();
+    expect(matchingExactCount(null, key)).toBeNull();
+    expect(matchingExactCount(undefined, key)).toBeNull();
+  });
+
+  it("確定した総ページ数では最終ページで満杯でも次へ進めず、推定を現在ページで底上げしない", () => {
+    // 推定なら満杯の最終ページで次へ進めるが、確定値なら止める。
+    expect(canGoNext(3, 3, 100, 100)).toBe(true);
+    expect(canGoNext(3, 3, 100, 100, true)).toBe(false);
+    expect(canGoNext(2, 3, 100, 100, true)).toBe(true);
+    expect(effectiveTotalPages(3, 5, true)).toBe(6);
+    expect(effectiveTotalPages(3, 5, true, true)).toBe(3);
   });
 });

@@ -40,6 +40,39 @@ const run = (over: Partial<Parameters<typeof pushOutput>[0]> = {}) =>
   });
 
 describe("OutputPanel", () => {
+  it("失敗した行はエラー行へ移動でき、行番号が無ければ文の先頭へ (#1627)", () => {
+    run({
+      sql: "SELECT 1\nFORM t",
+      outcome: "error",
+      rows: null,
+      elapsedMs: null,
+      error: 'syntax error at or near "t" (position 15)',
+    });
+    run({ sql: "bad", outcome: "error", rows: null, elapsedMs: null, error: "near x" });
+    run({ sql: "ok", outcome: "rows" });
+    const onGotoError = vi.fn();
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} onGotoError={onGotoError} />);
+    const rows = screen.getAllByRole("button", { expanded: false });
+    // 新しい順: ok / bad / FORM。成功行には出ない。
+    fireEvent.click(rows[2]);
+    fireEvent.click(screen.getByRole("button", { name: t("outputGotoErrorLine", { line: 2 }) }));
+    expect(onGotoError).toHaveBeenCalledWith("SELECT 1\nFORM t", 2);
+    fireEvent.click(rows[1]);
+    fireEvent.click(screen.getByRole("button", { name: t("outputGotoStatement") }));
+    expect(onGotoError).toHaveBeenLastCalledWith("bad", null);
+  });
+
+  it("検索欄で SQL / エラー本文を絞り込める (#1627)", () => {
+    run({ sql: "select * from users" });
+    run({ sql: "select * from orders" });
+    renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
+    const list = () => screen.getByRole("list", { name: t("outputListAria") }).querySelectorAll("li");
+    expect(list()).toHaveLength(2);
+    fireEvent.change(screen.getByPlaceholderText(t("logSearchPlaceholder")), { target: { value: "ORDERS" } });
+    expect(list()).toHaveLength(1);
+    expect(list()[0].textContent).toContain("orders");
+  });
+
   it("空のときは説明付きの空状態を出す", () => {
     renderWithProviders(<OutputPanel onOpenSql={vi.fn()} />);
     expect(screen.getByText(t("outputEmptyTitle"))).toBeInTheDocument();
@@ -207,6 +240,18 @@ describe("ActivityLogPanel (ステータスメッセージの統合)", () => {
     const items = screen.getByRole("list", { name: t("activityListAria") }).querySelectorAll("li");
     expect(items).toHaveLength(1);
     expect(items[0].textContent).toContain("boom");
+  });
+
+  it("検索欄で文言を絞り込み、チップの件数も検索後の数になる (#1627)", () => {
+    pushMessage("error", "boom prod", "text:boom prod");
+    pushMessage("error", "boom dev", "text:boom dev");
+    pushMessage("success", "ok prod", "key:x");
+    renderWithProviders(<ActivityLogPanel />);
+    fireEvent.change(screen.getByPlaceholderText(t("logSearchPlaceholder")), { target: { value: "prod" } });
+    const items = screen.getByRole("list", { name: t("activityListAria") }).querySelectorAll("li");
+    expect(items).toHaveLength(2);
+    const chip = screen.getByRole("button", { name: new RegExp(`^${t("activitySeverityError")}`) });
+    expect(chip.textContent).toContain("1");
   });
 
   it("トーストと同じ文言のステータスメッセージは 1 行にまとめる", () => {

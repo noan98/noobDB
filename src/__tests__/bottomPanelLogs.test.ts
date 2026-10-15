@@ -8,6 +8,9 @@ import {
   filterOutput,
   isProblemOutcome,
   isSqlTruncated,
+  lineOfCharOffset,
+  lineRangeOf,
+  parseErrorLine,
   outputSummary,
   sqlHeadline,
   worstServerSeverity,
@@ -168,6 +171,25 @@ describe("outputLog", () => {
     expect(countProblems(list)).toBe(2);
   });
 
+  it("文言検索は SQL・エラー・接続名・サーバメッセージを AND で探し、問題のみと併用できる (#1627)", () => {
+    const list = [
+      out(1, "rows", { sql: "select name from Users", connection: "local" }),
+      out(2, "error", { sql: "select 2", error: 'relation "Users" does not exist' }),
+      out(3, "rows", { sql: "select 3", connection: "prod-db" }),
+      out(4, "rows", {
+        sql: "select 4",
+        serverMessages: [{ severity: "warning", text: "Deprecated syntax" }],
+      }),
+    ];
+    expect(filterOutput(list, "all", "users").map((e) => e.id)).toEqual([1, 2]);
+    expect(filterOutput(list, "all", "users select").map((e) => e.id)).toEqual([1, 2]);
+    expect(filterOutput(list, "all", "users prod").map((e) => e.id)).toEqual([]);
+    expect(filterOutput(list, "all", "PROD").map((e) => e.id)).toEqual([3]);
+    expect(filterOutput(list, "all", "deprecated").map((e) => e.id)).toEqual([4]);
+    expect(filterOutput(list, "problems", "users").map((e) => e.id)).toEqual([2]);
+    expect(filterOutput(list, "all", "  ")).toHaveLength(4);
+  });
+
   it("先頭に積み、上限で古い方を捨てる", () => {
     const list = appendOutput(appendOutput([], out(1, "rows")), out(2, "rows"), 1);
     expect(list.map((e) => e.id)).toEqual([2]);
@@ -264,5 +286,50 @@ describe("outputLog の SQL 保持量 (#1534)", () => {
     const [out] = compactOutputSql([entry(1, sql)], 50, 10);
     expect(out.sql).toBe("a".repeat(9));
     expect(out.sqlLength).toBe(sql.length);
+  });
+});
+
+describe("エラー行番号の抽出 (#1627)", () => {
+  it("PostgreSQL は (position n) を文の先頭からの文字オフセットとして行に変換し、MySQL は at line n を使う", () => {
+    const sql = "SELECT 1\nFORM t";
+    // 実際の形式: サーバのソース行番号は載らず、末尾に位置が付く。
+    expect(
+      parseErrorLine('error returned from database: syntax error at or near "t" (position 15)', sql),
+    ).toBe(2);
+    expect(parseErrorLine("syntax error (position 1)", sql)).toBe(1);
+    expect(parseErrorLine("syntax error (position 9)", sql)).toBe(1);
+    expect(parseErrorLine("syntax error (position 10)", sql)).toBe(2);
+    expect(parseErrorLine("You have an error in your SQL syntax; check ... near 'FORM t' at line 2")).toBe(2);
+    expect(parseErrorLine("... AT LINE 12")).toBe(12);
+  });
+
+  it("位置は UTF-16 ではなくコードポイントで数え、CRLF / 範囲外も扱う", () => {
+    // 😀 は 2 コード単位だが PostgreSQL の位置では 1 文字。
+    expect(lineOfCharOffset("😀\nx", 3)).toBe(2);
+    expect(lineOfCharOffset("a\r\nb", 3)).toBe(1);
+    expect(lineOfCharOffset("a\r\nb", 4)).toBe(2);
+    expect(lineOfCharOffset("a\nb", 99)).toBe(2);
+  });
+
+  it("行番号が無い・不正なエラーは null", () => {
+    expect(parseErrorLine('near "x": syntax error')).toBeNull();
+    expect(parseErrorLine(null)).toBeNull();
+    expect(parseErrorLine("")).toBeNull();
+    expect(parseErrorLine("at line 0")).toBeNull();
+    // PG の位置は文が無いと行に直せない。末尾以外の "(position n)" も対象外。
+    expect(parseErrorLine("x (position 5)")).toBeNull();
+    expect(parseErrorLine("x (position 5) y", "SELECT")).toBeNull();
+    // 実在しない `LINE n:` 形式は拾わない。
+    expect(parseErrorLine("syntax error\nLINE 3: SELECT")).toBeNull();
+  });
+
+  it("lineRangeOf は n 行目の範囲 (LF / CRLF / 範囲外は最終行)", () => {
+    const sql = "SELECT 1\nFROM t\nWHERE x";
+    expect(lineRangeOf(sql, 1)).toEqual({ from: 0, to: 8 });
+    expect(lineRangeOf(sql, 2)).toEqual({ from: 9, to: 15 });
+    expect(lineRangeOf(sql, 3)).toEqual({ from: 16, to: sql.length });
+    expect(lineRangeOf(sql, 99)).toEqual({ from: 16, to: sql.length });
+    expect(lineRangeOf("a\r\nb", 2)).toEqual({ from: 3, to: 4 });
+    expect(lineRangeOf("a", 0)).toEqual({ from: 0, to: 1 });
   });
 });

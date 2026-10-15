@@ -393,7 +393,7 @@ interface Props {
   /** DB スキーマを AI 向け Markdown としてエクスポートするモーダルを開く。 */
   onSchemaExport?: (database: string) => void;
   onRunTableSelect: (database: string, table: string) => void;
-  onInsertTableSelect: (database: string, table: string) => void;
+  onInsertTableSelect: (database: string, table: string, withColumns?: boolean) => void;
   /** テーブルの CREATE TABLE DDL を新しいクエリタブに表示する (#1001)。全ドライバ対応
    *  (`get_object_definition` の kind = "table")。読み取りのみなので read_only でも有効。 */
   onShowCreateTable?: (database: string, table: string) => void;
@@ -3047,6 +3047,10 @@ export const ConnectionList = memo(
           onSelect: () => onRunTableSelect(db, tbl),
         },
         { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, tbl) },
+        {
+          label: t("contextMenuInsertSelectColumns"),
+          onSelect: () => onInsertTableSelect(db, tbl, true),
+        },
       );
       // デフォルトクエリ (#1253) は設定の保存だけなので read_only でも有効。
       if (onConfigureOpenQuery) {
@@ -3289,6 +3293,10 @@ export const ConnectionList = memo(
             onSelect: () => onRunTableSelect(db, name),
           },
           { label: t("contextMenuInsertSelect"), onSelect: () => onInsertTableSelect(db, name) },
+          {
+            label: t("contextMenuInsertSelectColumns"),
+            onSelect: () => onInsertTableSelect(db, name, true),
+          },
         );
       }
       if (onOpenObjectDefinition && asNode) {

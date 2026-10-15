@@ -50,6 +50,8 @@ function isStringPair(v: unknown): v is { column: string; value: string } {
 function isWhereCondition(v: unknown): v is { column: string; operator: string; value: string } {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
+  // `value2` (BETWEEN の上端) は後から足したので省略可 (#1627)。
+  if (o.value2 !== undefined && typeof o.value2 !== "string") return false;
   return typeof o.column === "string" && typeof o.operator === "string" && typeof o.value === "string";
 }
 
@@ -73,6 +75,8 @@ function isValidBuilderSnapshot(v: unknown): v is QueryBuilderSnapshot {
   if (typeof o.table !== "string") return false;
   if (typeof o.selectAll !== "boolean") return false;
   if (typeof o.limit !== "string") return false;
+  // `offset` (OFFSET 入力) は後から足したので、旧データは持たない。型が違うものだけ弾く (#1627)。
+  if (o.offset !== undefined && typeof o.offset !== "string") return false;
   // `whereEnabled` / `limitEnabled` were added later; tolerate older snapshots
   // that omit them (they default to enabled when restored) but reject wrong types.
   if (o.whereEnabled !== undefined && typeof o.whereEnabled !== "boolean") return false;

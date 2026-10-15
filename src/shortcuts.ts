@@ -172,6 +172,10 @@ export const SHORTCUTS: ShortcutDef[] = [
     scope: "global",
     defaultCombo: "F6",
   },
+  // クエリ履歴のインクリメンタル検索 (#1627)。判定は App の keydown が Ctrl+R (Cmd+R は除く) を
+  // エディタ内でだけ拾う。`Mod` は Cmd と Ctrl を区別できず、Cmd+R (リロード) を奪えないため
+  // 再割り当ては対象外の表示専用。
+  { keysKey: "shortcutHistorySearchTitle", descKey: "shortcutHistorySearchDesc", category: "editor" },
   {
     keysKey: "helpShortcutRunTitle",
     descKey: "helpShortcutRunDesc",

@@ -106,6 +106,19 @@ export function isTextDataType(dataType: string | null | undefined): boolean {
 }
 
 /**
+ * WHERE ビルダーの値候補 (#1627) を出してよい列型か。素の文字列型 (`isTextDataType`) に加えて、
+ * 値が文字列で現れる MySQL の `enum(...)`、PostgreSQL の `citext` とユーザ定義型 (ENUM は
+ * `USER-DEFINED` と報告される) も対象にする。`CAST(col AS TEXT)` を外してよいかの判定
+ * (`isTextDataType`) とは別物で、あちらは変えない。
+ */
+export function isSuggestableDataType(dataType: string | null | undefined): boolean {
+  if (isTextDataType(dataType)) return true;
+  const t = (dataType ?? "").trim().toLowerCase();
+  if (t.endsWith("]") || t.startsWith("array") || t.startsWith("_")) return false;
+  return /^(enum\b|citext\b|user-defined\b)/.test(t);
+}
+
+/**
  * FK 列の候補値 (参照先テーブルの DISTINCT 値) を引く読み取り専用 SQL。
  * NULL は候補にしない (NULL は `null` と打てば従来どおり入る)。必ず行数上限付き。
  */
@@ -203,6 +216,25 @@ export function refColumnsFromResult(
     out.push({ name: String(name), type: type === null || type === undefined ? null : String(type) });
   }
   return out;
+}
+
+/** クエリビルダの WHERE 値入力に出す、列の既存値の候補の最大件数 (#1627)。 */
+export const WHERE_VALUE_CANDIDATE_LIMIT = 50;
+
+/**
+ * 列の既存値の候補 (DISTINCT 上位 N 件) を引く読み取り専用 SQL (#1627)。NULL は候補にしない。
+ * 先頭から N 種類見つかった時点で打ち切れるよう `ORDER BY` は付けない (並べ替えは呼び出し側)。
+ */
+export function buildDistinctValuesSql(p: {
+  driver: string;
+  database?: string | null;
+  table: string;
+  column: string;
+  limit?: number;
+}): string {
+  const limit = Math.max(1, Math.floor(p.limit ?? WHERE_VALUE_CANDIDATE_LIMIT));
+  const col = quoteIdentFor(p.driver, p.column);
+  return `SELECT DISTINCT ${col} FROM ${tableRef(p.driver, p.database, p.table)} WHERE ${col} IS NOT NULL LIMIT ${limit}`;
 }
 
 /** 許可値取得クエリの用途。 */
