@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildCreateTableAsSql, isCtasEligibleSql, tableNameCollides } from "../components/resultsToTable";
+import {
+  type AppendTargetColumn,
+  appendNeedsApproval,
+  autoMapAppendColumns,
+  buildCreateTableAsSql,
+  buildInsertSelectSql,
+  findAppendIssues,
+  hasBlockingAppendIssue,
+  isCtasEligibleSql,
+  tableNameCollides,
+} from "../components/resultsToTable";
 
 describe("isCtasEligibleSql", () => {
   it("accepts a plain SELECT", () => {
@@ -92,5 +102,64 @@ describe("tableNameCollides", () => {
   it("treats an empty/whitespace-only name as not colliding", () => {
     expect(tableNameCollides(["users"], "")).toBe(false);
     expect(tableNameCollides(["users"], "   ")).toBe(false);
+  });
+});
+
+describe("append helpers (#1623)", () => {
+  const tcol = (name: string, over: Partial<AppendTargetColumn> = {}): AppendTargetColumn => ({
+    name,
+    nullable: true,
+    default: null,
+    extra: "",
+    ...over,
+  });
+
+  it("autoMapAppendColumns matches names case-insensitively, falls back to position only when nothing matches", () => {
+    const target = [tcol("ID"), tcol("Total")];
+    expect(autoMapAppendColumns(["id", "x"], target)).toEqual(["ID", null]);
+    expect(autoMapAppendColumns(["a", "b"], target)).toEqual(["ID", "Total"]);
+    expect(autoMapAppendColumns(["a", "b", "c"], target)).toEqual([null, null, null]);
+  });
+
+  it("findAppendIssues reports blocking and warning problems", () => {
+    const target = [
+      tcol("id", { nullable: false }),
+      tcol("n", { nullable: false, extra: "auto_increment" }),
+      tcol("v"),
+    ];
+    expect(findAppendIssues(["a"], [null], target)).toContainEqual({ kind: "noneMapped" });
+    expect(findAppendIssues(["a", "b"], ["v", "v"], target)).toContainEqual({
+      kind: "duplicateTarget",
+      column: "v",
+    });
+    expect(findAppendIssues(["a", "A"], ["id", "v"], target)).toContainEqual({
+      kind: "duplicateSource",
+      column: "a",
+    });
+    // 採番列は未対応でも警告にならない。必須列 id が未対応なら警告。
+    const issues = findAppendIssues(["a"], ["v"], target);
+    expect(issues).toEqual([{ kind: "missingRequired", column: "id" }]);
+    expect(hasBlockingAppendIssue(issues)).toBe(false);
+    expect(hasBlockingAppendIssue([{ kind: "noneMapped" }])).toBe(true);
+  });
+
+  it("buildInsertSelectSql quotes per dialect, skips unmapped columns and strips the trailing semicolon", () => {
+    expect(
+      buildInsertSelectSql("postgres", "public", "t", ["a", "b"], ["x", null], "SELECT 1 AS a, 2 AS b;"),
+    ).toBe('INSERT INTO "public"."t" ("x")\nSELECT "a"\nFROM (\nSELECT 1 AS a, 2 AS b\n) AS _src;');
+    expect(buildInsertSelectSql("sqlite", null, "t", ["a"], ["a"], "SELECT 1 AS a")).toContain(
+      'INSERT INTO "t" ("a")',
+    );
+    expect(buildInsertSelectSql("mysql", "d", "t", ["a"], [null], "SELECT 1")).toBe("");
+  });
+});
+
+describe("appendNeedsApproval (#1623)", () => {
+  it("asks only for a production profile with confirm_writes that is not read-only", () => {
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: true })).toBe(true);
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: false })).toBe(false);
+    expect(appendNeedsApproval({ is_production: false, confirm_writes: true })).toBe(false);
+    expect(appendNeedsApproval({ is_production: true, confirm_writes: true, read_only: true })).toBe(false);
+    expect(appendNeedsApproval(null)).toBe(false);
   });
 });

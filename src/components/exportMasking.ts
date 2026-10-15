@@ -24,12 +24,25 @@ export type ExportMaskRule =
   | { kind: "fixed"; value: string }
   | { kind: "partial"; keepStart: number; keepEnd: number }
   | { kind: "hash"; length: number }
-  | { kind: "null" };
+  | { kind: "null" }
+  /** ローカル部だけ伏せてドメインを残す (#1623)。 */
+  | { kind: "email"; keepStart: number }
+  /** 日付を年 / 年月の粒度に落とす (#1623)。 */
+  | { kind: "date"; precision: ExportMaskDatePrecision };
+
+export type ExportMaskDatePrecision = "year" | "month";
 
 export type ExportMaskRuleKind = ExportMaskRule["kind"];
 
 /** UI の選択肢の並び順。 */
-export const EXPORT_MASK_RULE_KINDS: readonly ExportMaskRuleKind[] = ["fixed", "partial", "hash", "null"];
+export const EXPORT_MASK_RULE_KINDS: readonly ExportMaskRuleKind[] = [
+  "fixed",
+  "partial",
+  "hash",
+  "null",
+  "email",
+  "date",
+];
 
 /** IPC に渡す列単位の指定。バックエンドの `db::masking::ColumnMask` と同形。 */
 export interface ExportColumnMask {
@@ -54,6 +67,7 @@ export const MAX_KEEP_CHARS = 64;
 export const DEFAULT_HASH_LENGTH = 16;
 export const MIN_HASH_LENGTH = 4;
 export const MAX_HASH_LENGTH = 64;
+export const DEFAULT_EMAIL_KEEP_START = 1;
 
 /** プリセットの最大件数・パターンの最大長 (設定ファイル破損への耐性)。 */
 const MAX_PRESETS = 100;
@@ -64,7 +78,7 @@ const MAX_PATTERN_LENGTH = 100;
  * `EmailAddress` / `phone_number` / `last_name` などにも効く。
  */
 export const BUILTIN_EXPORT_MASK_PRESETS: readonly ExportMaskPreset[] = [
-  { pattern: "email", rule: { kind: "partial", keepStart: 2, keepEnd: 4 } },
+  { pattern: "email", rule: { kind: "email", keepStart: DEFAULT_EMAIL_KEEP_START } },
   { pattern: "phone", rule: { kind: "partial", keepStart: 0, keepEnd: 4 } },
   { pattern: "mobile", rule: { kind: "partial", keepStart: 0, keepEnd: 4 } },
   { pattern: "first_name", rule: { kind: "hash", length: DEFAULT_HASH_LENGTH } },
@@ -84,6 +98,8 @@ function toCount(raw: unknown, fallback: number): number {
  *   - fixed: 値は文字列でなければ既定 `***`、`MAX_FIXED_VALUE_CHARS` コードポイントで切る
  *   - partial: keepStart / keepEnd は非負整数 (既定 0)、各 `MAX_KEEP_CHARS` で頭打ち
  *   - hash: length は整数 (既定 16)、`[MIN_HASH_LENGTH, MAX_HASH_LENGTH]` に収める
+ *   - email: keepStart は非負整数 (既定 1)、`MAX_KEEP_CHARS` で頭打ち
+ *   - date: precision は "month" 以外なら "year"
  */
 export function sanitizeMaskRule(raw: unknown): ExportMaskRule | null {
   if (!raw || typeof raw !== "object") return null;
@@ -106,6 +122,13 @@ export function sanitizeMaskRule(raw: unknown): ExportMaskRule | null {
       };
     case "null":
       return { kind: "null" };
+    case "email":
+      return {
+        kind: "email",
+        keepStart: Math.min(toCount(r.keepStart, DEFAULT_EMAIL_KEEP_START), MAX_KEEP_CHARS),
+      };
+    case "date":
+      return { kind: "date", precision: r.precision === "month" ? "month" : "year" };
     default:
       return null;
   }
@@ -122,6 +145,10 @@ export function defaultMaskRule(kind: ExportMaskRuleKind): ExportMaskRule {
       return { kind: "hash", length: DEFAULT_HASH_LENGTH };
     case "null":
       return { kind: "null" };
+    case "email":
+      return { kind: "email", keepStart: DEFAULT_EMAIL_KEEP_START };
+    case "date":
+      return { kind: "date", precision: "year" };
   }
 }
 
@@ -224,4 +251,54 @@ export function upsertMaskPreset(
 /** 2 つのルールが同じか (UI の「プリセットと同じ」判定)。 */
 export function sameMaskRule(a: ExportMaskRule | null, b: ExportMaskRule | null): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// ── プリセットの JSON 書き出し・読み込み (#1623) ──
+
+/** 書き出しファイルの識別子。別種の JSON を読み込もうとしたときに弾く。 */
+const PRESET_FILE_KIND = "noobdb-export-mask-presets";
+const PRESET_FILE_VERSION = 1;
+
+/**
+ * プリセットを共有用の JSON 文字列にする。プロファイル非依存で、秘密情報
+ * (ハッシュのソルトなど) は含まない — ルールの種類とパラメータだけ。
+ */
+export function serializeMaskPresets(presets: readonly ExportMaskPreset[]): string {
+  const clean = sanitizeMaskPresets(presets, []);
+  return `${JSON.stringify({ kind: PRESET_FILE_KIND, version: PRESET_FILE_VERSION, presets: clean }, null, 2)}\n`;
+}
+
+/**
+ * 書き出した JSON を検証して読み込む。検証は `sanitizeMaskPresets` (件数上限・重複除去・
+ * ルール検証) をそのまま使う。JSON として壊れている / 形式が違う / 有効なプリセットが
+ * 1 件も無いときは `Error`。素の配列 (`[{pattern, rule}]`) も受け付ける。
+ */
+export function parseMaskPresets(text: string): ExportMaskPreset[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("invalid JSON");
+  }
+  let list: unknown = parsed;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const o = parsed as Record<string, unknown>;
+    if (o.kind !== PRESET_FILE_KIND) throw new Error("not a mask preset file");
+    list = o.presets;
+  }
+  if (!Array.isArray(list)) throw new Error("not a mask preset file");
+  const presets = sanitizeMaskPresets(list, []);
+  if (presets.length === 0) throw new Error("no valid presets");
+  return presets;
+}
+
+/**
+ * 読み込んだプリセットを既存へ併合する。同じパターンは読み込み側で置き換え、
+ * 読み込み側を先頭に置く (先勝ちなので、共有されたルールが既存の広いパターンより優先される)。
+ */
+export function mergeMaskPresets(
+  current: readonly ExportMaskPreset[],
+  imported: readonly ExportMaskPreset[],
+): ExportMaskPreset[] {
+  return sanitizeMaskPresets([...imported, ...current], []);
 }

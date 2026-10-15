@@ -46,6 +46,14 @@ describe("SettingsView render smoke (#604)", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("診断の入口 (#1622): 診断情報の書き出しと、パフォーマンス計測のスイッチが出る", async () => {
+    renderWithProviders(<SettingsView theme="light" onClose={() => {}} />);
+    // role / label の検索は設定画面の要素数だと遅いので、文言と id で確認する。
+    expect(await screen.findByText(t("settingsDiagBundle"))).toBeInTheDocument();
+    expect(screen.getByText(t("settingsPerfMeasure"))).toBeInTheDocument();
+    expect(document.getElementById("settings-perf-measure")).not.toBeNull();
+  });
+
   it("initialSection を渡すと該当セクションのナビが選択状態になる (#1475)", async () => {
     renderWithProviders(<SettingsView theme="light" onClose={() => {}} initialSection="settings-sec-ai" />);
     const nav = await screen.findByRole("navigation", { name: t("settingsTitle") });

@@ -41,6 +41,7 @@ import { resultCommands } from "./commands/result";
 import { dumpCommands } from "./commands/dump";
 import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
+import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
@@ -160,6 +161,11 @@ export interface SshProfile {
    * tunnel, including every profile saved before this field existed.
    */
   jump?: SshJumpProfile | null;
+  /**
+   * Fixed local listen port of the tunnel (#1630). `null`/omitted/0 = let the OS
+   * pick a free port (the previous behavior).
+   */
+  local_port?: number | null;
 }
 
 export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
@@ -594,11 +600,18 @@ export type ObjectSearchScope = { kind: "current"; database: string } | { kind: 
 
 /** グローバルオブジェクト検索のヒット 1 件。テーブルそのものか、テーブル内のカラムか。 */
 export interface ObjectSearchHit {
-  kind: "table" | "column";
+  kind: "table" | "column" | "view" | "routine" | "trigger";
   database: string;
+  /** テーブル・カラムのヒットではテーブル名。ビュー / ルーチン / トリガーではオブジェクト名。 */
   table: string;
   /** `kind === "column"` のときだけ設定。 */
   column?: string;
+  /** `kind` が view / routine / trigger のときの `SchemaObject.kind` (定義を開くのに使う)。 */
+  object_kind?: string;
+  /** `SchemaObject.id` (PostgreSQL の oid など)。 */
+  object_id?: string;
+  /** `kind === "table"` のときの推定行数 (索引構築時の概算。統計が無ければ無い)。 */
+  row_estimate?: number;
 }
 
 /** Where-used (#1027 / #1261) の検索対象。`column` が null ならテーブル (ビュー) そのもの。 */
@@ -693,6 +706,8 @@ export interface DataSearchRequest {
   tables: string[];
   /** 概算行数がこれを超えるテーブルは走査しない。 */
   rowThreshold: number;
+  /** 日付・日時列も文字列として検索する (#1623)。省略は false。 */
+  includeDates?: boolean;
 }
 
 /** ルーチン引数の入出力モード (#1003)。`table` は PostgreSQL の RETURNS TABLE 出力列。 */
@@ -770,6 +785,12 @@ export interface TableSizeInfo {
   data_bytes: number | null;
   index_bytes: number | null;
   total_bytes: number | null;
+  /** 不要行 (dead tuple) の概算数 (#1622)。PostgreSQL のみ。 */
+  dead_rows?: number | null;
+  /** 最後の VACUUM / autovacuum の時刻 (Unix 秒, #1622)。PostgreSQL のみ。 */
+  last_vacuum_at?: number | null;
+  /** 最後の ANALYZE / autoanalyze の時刻 (Unix 秒, #1622)。PostgreSQL のみ。 */
+  last_analyze_at?: number | null;
 }
 
 /**
@@ -854,6 +875,9 @@ export interface SchemaTree {
 export interface ServerVariable {
   name: string;
   value: string;
+  /** 値の出どころ (#1622)。PostgreSQL は pg_settings.source、MySQL 8 は variables_info。`default` 以外が変更済み。
+   *  取れない / SQLite は無し。 */
+  source?: string | null;
 }
 
 /**
@@ -882,6 +906,17 @@ export interface KillProcessesResult {
   killed: number;
   failed: number;
   first_error: string | null;
+  /** プロセス id ごとの成否 (#1622)。入力順ではなくバックエンドの実行順。 */
+  outcomes: KillProcessOutcome[];
+}
+
+/** `kill_processes` の 1 プロセスぶんの結果 (#1622)。 */
+export interface KillProcessOutcome {
+  id: number;
+  /** killed=停止を受け付けた / already_gone=既に居なかった (成功扱い) / failed=失敗 (error に理由) /
+   *  skipped=実行しなかった (文のみ停止で自接続)。 */
+  status: "killed" | "already_gone" | "failed" | "skipped";
+  error: string | null;
 }
 
 export interface ProcessInfo {
@@ -909,6 +944,16 @@ export interface ProcessInfo {
    * できない (権限不足・SQLite) ときは空。待機チェーンのツリー化はフロント側で行う。
    */
   blocked_by: number[];
+  /** VACUUM / CREATE INDEX の進捗 (#1622)。PostgreSQL のみ・走っているときだけ。 */
+  progress?: ProcessProgress | null;
+}
+
+/** プロセスのメンテナンス作業の進捗 (#1622)。`total` が 0 のフェーズは割合を出せない。 */
+export interface ProcessProgress {
+  kind: "vacuum" | "create_index";
+  phase: string;
+  done: number;
+  total: number;
 }
 
 /**
@@ -971,6 +1016,8 @@ export interface PrivilegeChange {
   added: PrivilegeFlags;
   /** 剥奪するフラグ。 */
   removed: PrivilegeFlags;
+  /** 列単位の権限 (#1622)。空でなければ `table` 指定時に SELECT / INSERT / UPDATE をその列に限定する。 */
+  columns?: string[] | null;
 }
 
 /**
@@ -1010,6 +1057,8 @@ export interface ServerMetrics {
   slow_queries: number | null;
   /** 行ロック待ちの累積回数。MySQL Innodb_row_lock_waits。PG は null。 */
   lock_waits: number | null;
+  /** サーバの接続数上限 (#1622)。MySQL max_connections / PG max_connections。取れなければ null。 */
+  max_connections?: number | null;
 }
 
 /** One trusted SSH host from known_hosts (`host:port` + fingerprint). #682. */
@@ -1017,6 +1066,37 @@ export interface KnownHost {
   host: string;
   port: number;
   fingerprint: string;
+}
+
+/** One entry of the known_hosts trust/forget/import history (#1630). Never holds key material. */
+export interface KnownHostEvent {
+  /** UTC, RFC 3339. */
+  at: string;
+  action: "trust" | "forget" | "import";
+  host: string;
+  port: number;
+  fingerprint: string;
+  previous_fingerprint: string | null;
+}
+
+/** One OpenSSH known_hosts entry offered for import (#1630). */
+export interface ImportCandidate {
+  host: string;
+  port: number;
+  fingerprint: string;
+  key_type: string;
+  /** `conflict` = noobDB already trusts a different fingerprint (import replaces it). */
+  status: "new" | "same" | "conflict";
+  existing_fingerprint: string | null;
+}
+
+/** Result of scanning `~/.ssh/known_hosts` (#1630). */
+export interface ImportScan {
+  found: boolean;
+  candidates: ImportCandidate[];
+  /** Hashed (`HashKnownHosts`) lines that cannot be matched and were skipped. */
+  hashed_skipped: number;
+  other_skipped: number;
 }
 
 /**
@@ -1630,6 +1710,30 @@ export interface LogView {
   path: string | null;
 }
 
+/** 直近の計測値 1 件 (#1622)。SQL 本文・行データは含まない。 */
+export interface PerfSample {
+  at_ms: number;
+  kind: string;
+  sql_execute_ms: number | null;
+  emit_ms: number | null;
+  payload_bytes_approx: number | null;
+  rows: number;
+  columns: number;
+}
+
+export interface PerfStatus {
+  enabled: boolean;
+  ui_enabled: boolean;
+  env_enabled: boolean;
+  samples: PerfSample[];
+}
+
+/** OS keyring の疎通診断結果 (#1622)。`reason` は固定コード (秘密・エラー本文は含まない)。 */
+export interface KeyringStatus {
+  available: boolean;
+  reason: string | null;
+}
+
 export type ExportFormat = "csv" | "json" | "ndjson" | "markdown" | "sql" | "xlsx";
 
 /** xlsx エクスポートで Excel の上限 (行数 / セル文字数) に当たり、出力が欠けた内訳 (#711)。 */
@@ -1899,6 +2003,8 @@ export type NewColumnType =
 export interface NewTableColumn {
   name: string;
   type: NewColumnType;
+  /** 主キーに含める (#1623)。複数列なら複合主キー。主キー列は NOT NULL になる。 */
+  primaryKey?: boolean;
 }
 
 export interface ColumnMapping {
@@ -1989,6 +2095,7 @@ export const api = {
   ...dumpCommands,
   ...dumpToolsCommands,
   ...importCommands,
+  ...importTemplatesCommands,
   ...scriptCommands,
   ...transferCommands,
   ...fileCommands,
@@ -2253,6 +2360,45 @@ export interface SkippedRowInfo {
   reason: string;
 }
 
+/** スキップ行の書き出し形式 (#1623)。`csv` / `ndjson` は元の行データを書き出す。 */
+export type SkippedExportFormat = "text" | "csv" | "ndjson";
+
+/** 取り込みの事前検証 (dry run) の結果 (#1623)。 */
+export interface ImportDryRunResult {
+  total: number;
+  failed: number;
+  /** 拒否された行の先頭一部。 */
+  failures: SkippedRowInfo[];
+  /** false: 新規テーブル作成を伴うため DB への試し書きはしていない。 */
+  dbChecked: boolean;
+}
+
+/** 保存済みの取り込みマッピング (#1623)。 */
+export interface ImportTemplateColumn {
+  column: string;
+  header?: string | null;
+  csvIndex: number;
+}
+
+export interface ImportTemplate {
+  id: string;
+  profileId: string;
+  database?: string | null;
+  table: string;
+  format: string;
+  delimiter: string;
+  quote: string;
+  hasHeader: boolean;
+  nullToken?: string | null;
+  encoding: string;
+  sheet?: string | null;
+  conflictMode?: string | null;
+  errorMode?: string | null;
+  keyColumns: string[];
+  mapping: ImportTemplateColumn[];
+  updatedAtMs: number;
+}
+
 export interface ImportDoneEvent {
   streamId: string;
   inserted: number;
@@ -2264,6 +2410,26 @@ export interface ImportDoneEvent {
   skipped: SkippedRowInfo[];
   /** スキップされた総件数 (`skipped` に載っていない行を含む)。 */
   skippedTotal: number;
+  /** 件数が多く、一部のスキップ行の元の行データを保持していない (#1623)。 */
+  skippedDataTruncated?: boolean;
+  /** 複数シート一括取り込み (#1623) のシートごとの結果。通常の取り込みでは空。 */
+  sheets: SheetImportResult[];
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの結果 (#1623)。 */
+export interface SheetImportResult {
+  sheet: string;
+  table: string;
+  inserted: number;
+  skippedTotal: number;
+}
+
+/** 複数シート一括取り込みの 1 シートぶんの指定 (#1623)。 */
+export interface SheetImportSpec {
+  sheet: string;
+  table: string;
+  mapping: ColumnMapping[];
+  createTable?: NewTableColumn[] | null;
 }
 
 /** BLOB セルの probe 結果 (#1258)。本体を運ばずサイズと種別だけ。 */
@@ -2355,6 +2521,44 @@ export interface TransferRequest {
   conflictMode?: "skip" | "update" | null;
   /** `mode === "upsert"` の衝突判定キー列。省略 / 空は転送先テーブルの主キー (#1539)。 */
   keyColumns?: string[] | null;
+  /** 列の除外・改名・型上書き (#1623)。指定のない列はそのまま転送する。 */
+  columns?: TransferColumnSpec[];
+  /** テーブル元の絞り込み (WHERE の後ろに置く式。#1623)。クエリ元では指定できない。 */
+  whereClause?: string | null;
+  /** 先頭 N 行だけ転送する試験転送 (#1623)。省略は全件。 */
+  limitRows?: number | null;
+  /** 転送後に件数を照合する (#1623)。省略は true。 */
+  verifyCounts?: boolean | null;
+}
+/** 転送先の論理型 (列ごとの型上書き, #1623)。 */
+export type TransferTypeKind =
+  | "boolean"
+  | "integer"
+  | "float"
+  | "decimal"
+  | "text"
+  | "date"
+  | "time"
+  | "timestamp"
+  | "timestamptz"
+  | "binary"
+  | "json"
+  | "uuid";
+export interface TransferTypeOverride {
+  kind: TransferTypeKind;
+  /** `decimal` のみ。 */
+  precision?: number | null;
+  scale?: number | null;
+}
+/** 転送する列 1 つへの指定 (#1623)。`source` はソースが返した列名。 */
+export interface TransferColumnSpec {
+  source: string;
+  /** 転送先での列名 (別名)。 */
+  name?: string | null;
+  /** true なら転送しない。 */
+  exclude?: boolean;
+  /** 自動判定ではなくこの型にする。 */
+  type?: TransferTypeOverride | null;
 }
 export type TransferLossyKind = "decimal_clamped" | "decimal_float" | "timestamp_tz_degraded";
 export interface TransferLossyConversion {
@@ -2365,6 +2569,8 @@ export interface TransferLossyConversion {
 }
 export interface TransferPreview {
   columns: { name: string; sourceType: string; targetType: string }[];
+  /** 指定を適用する前のソースの全列と自動判定した型 (#1623)。 */
+  sourceColumns: { name: string; sourceType: string; targetType: string }[];
   lossy: TransferLossyConversion[];
 }
 export interface TransferProgressEvent {
@@ -2376,6 +2582,8 @@ export interface TransferDoneEvent {
   rows: number;
   elapsedMs: number;
   warnings: string[];
+  /** 件数照合 (#1623) の食い違い。`warnings` の部分集合。 */
+  integrityWarnings: string[];
 }
 export interface TransferErrorEvent {
   streamId: string;

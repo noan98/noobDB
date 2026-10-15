@@ -615,6 +615,46 @@ impl SqliteConn {
         Ok(None)
     }
 
+    /// 取り込みの事前検証 (#1623)。1 行ずつ INSERT し、最後に必ずロールバックする。
+    /// See [`Connection::dry_run_failures`].
+    pub(crate) async fn dry_run_failures(
+        &self,
+        _database: Option<&str>,
+        table: &str,
+        columns: &[String],
+        rows: &[Vec<Option<String>>],
+        conflict: &ImportConflict,
+        keep: usize,
+    ) -> Result<super::DryRunOutcome> {
+        let ncols = columns.len();
+        let cols_sql = columns
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let table_ident = quote_ident(table);
+        let mut sql = build_insert_sql(&table_ident, &cols_sql, ncols, 1);
+        sql.push_str(&conflict_clause(DriverKind::Sqlite, columns, conflict));
+        let mut conn = self.pool.acquire().await?;
+        let mut tx = conn.begin().await?;
+        let mut out = super::DryRunOutcome::default();
+        for (i, row) in rows.iter().enumerate() {
+            let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.clone()));
+            for ci in 0..ncols {
+                q = q.bind(row.get(ci).and_then(|c| c.as_deref()));
+            }
+            if let Err(e) = q.execute(&mut *tx).await {
+                let e = AppError::from(e);
+                if !super::is_row_level_import_error(&e) {
+                    return Err(e);
+                }
+                out.record(i, e.to_string(), keep);
+            }
+        }
+        tx.rollback().await?;
+        Ok(out)
+    }
+
     /// Runs `statements` sequentially inside a single transaction. If any
     /// statement fails the transaction is rolled back (the `Transaction` is
     /// dropped without committing) so the batch is all-or-nothing — no
@@ -1609,6 +1649,9 @@ impl SqliteConn {
                             data_bytes: data,
                             index_bytes: index,
                             total_bytes: super::sum_size_parts(data, index),
+                            dead_rows: None,
+                            last_vacuum_at: None,
+                            last_analyze_at: None,
                         }
                     })
                     .collect());
@@ -1645,6 +1688,9 @@ impl SqliteConn {
                 data_bytes: None,
                 index_bytes: None,
                 total_bytes: None,
+                dead_rows: None,
+                last_vacuum_at: None,
+                last_analyze_at: None,
             })
             .collect())
     }
@@ -1698,6 +1744,7 @@ impl SqliteConn {
                 variables.push(ServerVariable {
                     name: (*name).to_string(),
                     value,
+                    source: None,
                 });
             }
         }

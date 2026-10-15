@@ -11,13 +11,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { QueryResult, TableColumnInfo } from "../api/tauri";
+import { useSettings } from "../settings";
+import { isColumnMasked } from "./columnMask";
 import {
   ALLOWED_VALUES_ROW_CAP,
   FK_CANDIDATE_LIMIT,
   buildAllowedValuesQueries,
   buildFkCandidatesSql,
+  buildRefColumnsSql,
   isTextDataType,
-  candidatesFromResult,
+  fkCandidatesWithLabels,
+  pickDisplayColumn,
+  refColumnsFromResult,
   collectAllowedValues,
   definitionsFromResult,
   fkSearchTerm,
@@ -43,12 +48,15 @@ export interface ValuePicker {
   kindOf: (column: string) => PickerKind | null;
   /** 列の現在の候補 (まだ取得していなければ空)。 */
   candidates: (column: string) => string[];
+  /** FK 候補の説明文 (参照先の表示列、#1629)。値 → 説明文。無ければ空。 */
+  labels: (column: string) => Record<string, string>;
   /** 入力欄を開いた / 入力が変わったときに呼ぶ。必要なら候補を (再) 取得する。 */
   request: (column: string, typed: string) => void;
 }
 
 /** FK 前方一致検索のデバウンス (ms)。 */
 const FK_DEBOUNCE_MS = 200;
+const NO_LABELS: Record<string, string> = {};
 
 export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   const { driver, database, table, columns, lookup } = cfg;
@@ -62,6 +70,12 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   );
   const [fetchedAllowed, setFetchedAllowed] = useState<Map<string, AllowedValues> | null>(null);
   const [fkValues, setFkValues] = useState<Record<string, string[]>>({});
+  const [fkLabels, setFkLabels] = useState<Record<string, Record<string, string>>>({});
+  const { columnMaskEnabled, columnMaskPatterns } = useSettings();
+  const maskRef = useRef({ enabled: columnMaskEnabled, patterns: columnMaskPatterns });
+  maskRef.current = { enabled: columnMaskEnabled, patterns: columnMaskPatterns };
+  // 参照先テーブルごとの表示列 (null = 無し)。テーブルが変わったら捨てる。
+  const displayCols = useRef<Map<string, Promise<string | null>>>(new Map());
 
   const tableKey = `${driver}\u0000${database ?? ""}\u0000${table ?? ""}`;
   const allowedRequested = useRef<string | null>(null);
@@ -77,11 +91,13 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
   useEffect(() => {
     allowedRequested.current = null;
     fkState.current = new Map();
+    displayCols.current = new Map();
     // デバウンス中のタイマーは旧テーブルの参照先を握ったクロージャなので解除する。
     for (const t of timers.current.values()) clearTimeout(t);
     timers.current.clear();
     setFetchedAllowed(null);
     setFkValues({});
+    setFkLabels({});
   }, [tableKey]);
 
   useEffect(() => {
@@ -109,6 +125,11 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
       return fkValues[column] ?? [];
     },
     [enabled, allowed, fkValues],
+  );
+
+  const labels = useCallback(
+    (column: string): Record<string, string> => fkLabels[column] ?? NO_LABELS,
+    [fkLabels],
   );
 
   const loadAllowed = useCallback(() => {
@@ -143,27 +164,46 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
       if (!run || !meta?.referenced_table || !meta.referenced_column) return;
       const seq = ++fkSeqRef.current;
       fkState.current.set(column, { search, seq });
-      const sql = buildFkCandidatesSql({
-        driver,
-        database,
-        refTable: meta.referenced_table,
-        refColumn: meta.referenced_column,
-        search,
-        limit: FK_CANDIDATE_LIMIT,
-        textColumn: isTextDataType(meta.data_type),
-      });
-      run(sql, FK_CANDIDATE_LIMIT).then(
-        (res) => {
-          // 古い応答 (入力が進んだ後に返ってきたもの) は捨てる。
+      const refTable = meta.referenced_table;
+      const refColumn = meta.referenced_column;
+      // 参照先の表示列 (name / title など) を推定する。1 度だけ列一覧を引き、失敗・無しなら
+      // null で従来どおり ID だけの候補にする (#1629)。
+      let display = displayCols.current.get(refTable);
+      if (!display) {
+        display = run(buildRefColumnsSql(driver, database, refTable), ALLOWED_VALUES_ROW_CAP).then(
+          (res) =>
+            pickDisplayColumn(refColumnsFromResult(res), refColumn, (n) =>
+              isColumnMasked(n, maskRef.current),
+            ),
+          () => null,
+        );
+        displayCols.current.set(refTable, display);
+      }
+      void display.then((displayColumn) => {
+        if (fkState.current.get(column)?.seq !== seq) return;
+        const sql = buildFkCandidatesSql({
+          driver,
+          database,
+          refTable,
+          refColumn,
+          search,
+          limit: FK_CANDIDATE_LIMIT,
+          textColumn: isTextDataType(meta.data_type),
+          displayColumn,
+        });
+        const apply = (values: string[], lbl: Record<string, string>) => {
           if (fkState.current.get(column)?.seq !== seq) return;
-          const values = candidatesFromResult(res);
           setFkValues((cur) => ({ ...cur, [column]: values }));
-        },
-        () => {
-          if (fkState.current.get(column)?.seq !== seq) return;
-          setFkValues((cur) => ({ ...cur, [column]: [] }));
-        },
-      );
+          setFkLabels((cur) => ({ ...cur, [column]: lbl }));
+        };
+        run(sql, FK_CANDIDATE_LIMIT).then(
+          (res) => {
+            const r = fkCandidatesWithLabels(res);
+            apply(r.values, r.labels);
+          },
+          () => apply([], NO_LABELS),
+        );
+      });
     },
     [driver, database, metaByName],
   );
@@ -203,19 +243,28 @@ export function useValuePicker(cfg: ValuePickerConfig): ValuePicker {
     [enabled, loadAllowed, metaByName, allowed, fetchFk],
   );
 
-  return useMemo(() => ({ kindOf, candidates, request }), [kindOf, candidates, request]);
+  return useMemo(() => ({ kindOf, candidates, labels, request }), [kindOf, candidates, labels, request]);
 }
 
 /**
  * 入力欄に紐づける候補リスト。`<input list={id}>` と組み合わせる。候補が無ければ
  * 何も描画しない (入力欄は従来のテキスト入力のまま)。
  */
-export function ValueDatalist({ id, values }: { id: string; values: string[] }) {
+export function ValueDatalist({
+  id,
+  values,
+  labels,
+}: {
+  id: string;
+  values: string[];
+  /** 値 → 説明文 (FK の表示列、#1629)。`<option label>` として併記する。 */
+  labels?: Record<string, string>;
+}) {
   if (values.length === 0) return null;
   return (
     <datalist id={id}>
       {values.map((v) => (
-        <option key={v} value={v} />
+        <option key={v} value={v} label={labels?.[v] ? `${v} — ${labels[v]}` : undefined} />
       ))}
     </datalist>
   );

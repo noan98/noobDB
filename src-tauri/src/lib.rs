@@ -10,9 +10,11 @@ mod atomic_write;
 mod cache;
 mod commands;
 mod db;
+mod diagnostics;
 mod error;
 mod flight_recorder;
 mod history;
+mod import_templates;
 mod json_store;
 mod json_tolerant;
 mod logs;
@@ -58,7 +60,8 @@ pub mod __test_api {
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
-        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+        generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
+        GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{
         ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,
@@ -83,12 +86,13 @@ pub mod __test_api {
     pub use crate::db::stream_batch::{StreamBatcher, StreamStats, StreamStatsSnapshot};
     pub use crate::db::sync::{generate_sync_sql, SyncKind, SyncPlan, SyncStatement};
     pub use crate::db::types::{
-        Column, DbUserInfo, ForeignKey, IndexInfo, KillProcessesResult, LiveQuery, LocalTableMeta,
-        PreviewResult, ProcessInfo, ProcessListItem, QueryResult, QueryStatsSupport,
-        RoutineParameter, RoutineSignature, SchemaObject, ServerInfo, ServerMessage,
-        ServerMessageSeverity, ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo,
-        TableComment, TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema,
-        TableSizeInfo, UserPrivileges, Value,
+        Column, DbUserInfo, ForeignKey, IndexInfo, KillOutcomeStatus, KillProcessOutcome,
+        KillProcessesResult, LiveQuery, LocalTableMeta, PreviewResult, ProcessInfo,
+        ProcessListItem, ProcessProgress, QueryResult, QueryStatsSupport, RoutineParameter,
+        RoutineSignature, SchemaObject, ServerInfo, ServerMessage, ServerMessageSeverity,
+        ServerMetrics, ServerVariable, StreamBatch, TableColumnInfo, TableComment,
+        TablePrivilegeRow, TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo,
+        UserPrivileges, Value,
     };
     pub use crate::db::upsert::{ConflictMode, ImportConflict};
     pub use crate::db::{
@@ -116,6 +120,8 @@ pub mod __test_api {
     };
     pub use crate::ssh::config_parser::{parse_proxy_jump, resolve_host, ResolvedSshHost};
     pub use crate::ssh::known_hosts::KnownHost;
+    pub use crate::ssh::known_hosts_history::{KnownHostAction, KnownHostEvent};
+    pub use crate::ssh::known_hosts_import::{ImportCandidate, ImportScan, ImportStatus};
     pub use crate::ssh::{SshConfig, SshJumpConfig, SshTunnel};
     pub use crate::ssm::SsmConfig;
     pub use crate::state::{AppState, Session, StreamHandle, StreamKind};
@@ -156,13 +162,16 @@ pub mod __test_api {
     // レスポンス/永続化型の再エクスポート。いずれも非公開モジュール配下にあるため、
     // 内部モジュールを丸ごと public にせずここでピンポイントに公開する。
     pub use crate::commands::connection::ConnectResponse;
-    pub use crate::commands::logs::LogView;
+    pub use crate::commands::logs::{LogView, PerfStatus};
     pub use crate::commands::profiles::{ImportResult, ProfileWithSecretFlags, SkippedProfile};
     pub use crate::commands::query::CancelStreamResult;
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::history::HistoryEntry;
+    pub use crate::import_templates::{ImportTemplate, TemplateColumn};
+    pub use crate::perf::PerfSample;
+    pub use crate::profiles::secrets::KeyringStatus;
     pub use crate::sandboxes::SandboxRecord;
     pub use crate::snippets::{Snippet, SnippetScope};
 
@@ -193,7 +202,9 @@ pub mod __test_api {
         preview_transfer_inner, transfer_data_inner, TransferColumnInfo, TransferOutcome,
         TransferPreview, TransferRequest,
     };
-    pub use crate::db::transfer::{LossyConversion, LossyKind, TransferMode};
+    pub use crate::db::transfer::{
+        ColumnSpec, LossyConversion, LossyKind, OverrideKind, TransferMode, TypeOverride,
+    };
 
     // IPC レスポンス型の serde ゴールデン網羅 (#1243)。`#[tauri::command]` の戻り値型を
     // `serde_schema_parity.rs` のフィクスチャへ載せるための追加の再エクスポート
@@ -256,7 +267,8 @@ pub mod __test_api {
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
     pub use crate::commands::file::{SqlEncodingPreview, SqlFileContent};
     pub use crate::commands::import::{
-        ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
+        ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
+        ImportStartedEvent, SheetImportResult, SkippedRowInfo,
     };
     pub use crate::commands::query::{
         PreviewStreamMessage, QueryStreamMessage, StreamCancelledEvent,
@@ -1360,6 +1372,9 @@ pub fn run() {
             commands::ssh::forget_host_key,
             commands::ssh::trust_host_key,
             commands::ssh::resolve_ssh_config_host,
+            commands::ssh::list_known_hosts_history,
+            commands::ssh::scan_openssh_known_hosts,
+            commands::ssh::import_known_hosts,
             commands::query::run_query,
             commands::query::run_query_transaction,
             commands::bulk_write::bulk_update_cells,
@@ -1411,6 +1426,7 @@ pub fn run() {
             commands::privileges::generate_drop_user_sql,
             commands::privileges::generate_alter_password_sql,
             commands::privileges::generate_privilege_diff_sql,
+            commands::privileges::generate_role_membership_sql,
             commands::privileges::apply_privilege_sql,
             commands::inspector::query_stats_support,
             commands::inspector::sample_live_queries,
@@ -1490,6 +1506,11 @@ pub fn run() {
             commands::plan_watch::plan_watch_import_legacy,
             commands::logs::read_logs,
             commands::logs::clear_logs,
+            commands::logs::get_perf_status,
+            commands::logs::set_perf_enabled,
+            commands::logs::clear_perf_samples,
+            commands::logs::build_diagnostic_bundle,
+            commands::profiles::check_keyring,
             commands::export::export_query_result,
             commands::export::export_query_stream,
             commands::export::mask_export_rows,
@@ -1530,6 +1551,11 @@ pub fn run() {
             commands::window::set_window_title,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
+            commands::import::import_dry_run,
+            commands::import::import_xlsx_sheets,
+            commands::import_templates::list_import_templates,
+            commands::import_templates::save_import_template,
+            commands::import_templates::delete_import_template,
             commands::local::create_local_session,
             commands::local::register_local_table,
             commands::local::list_local_tables,

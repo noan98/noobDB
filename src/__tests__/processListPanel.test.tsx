@@ -194,7 +194,12 @@ describe("ProcessListPanel bulk kill & lazy query (#1259)", () => {
 
   it("選択した id を killProcesses 1 回で送り、失敗件数と最初のエラーを toast に出す", async () => {
     vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8 }]);
-    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 1, first_error: "denied" });
+    vi.mocked(api.killProcesses).mockResolvedValue({
+      killed: 1,
+      failed: 1,
+      first_error: "denied",
+      outcomes: [],
+    });
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await waitFor(() => expect(screen.getByText("8")).toBeInTheDocument());
 
@@ -251,7 +256,7 @@ describe("ProcessListPanel blocking tree (#1417)", () => {
       { ...base, id: 2, blocked_by: [1] },
       { ...base, id: 3, blocked_by: [2] },
     ]);
-    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null, outcomes: [] });
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
     await screen.findByTestId("blocking-tree");
     expect(screen.getAllByRole("listitem")).toHaveLength(3);
@@ -367,7 +372,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     );
     await waitFor(() => expect(container.querySelector("#process-row-s1-2")).not.toBeNull());
     fireEvent.click(screen.getByLabelText(t("processSelectAll")));
-    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null, outcomes: [] });
     fireEvent.change(screen.getByLabelText(t("processFilterUserAria")), { target: { value: "app" } });
     fireEvent.click(await screen.findByRole("button", { name: t("processKillSelected", { count: 1 }) }));
     fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
@@ -416,7 +421,7 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
 
   it("「文を停止」は確認後に statementOnly=true で killProcesses を呼ぶ", async () => {
     vi.mocked(api.listProcesses).mockResolvedValue([base]);
-    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null, outcomes: [] });
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly={false} />);
     await screen.findByText("SELECT 1");
     fireEvent.click(screen.getByLabelText(t("processSelectAll")));
@@ -431,5 +436,74 @@ describe("ProcessListPanel filter, sort and statement-only stop (#1538)", () => 
     renderWithProviders(<ProcessListPanel sessionId="s1" driver="mysql" readOnly />);
     await screen.findByText("SELECT 1");
     expect(screen.getByRole("button", { name: t("processCancelSelected", { count: 0 }) })).toBeDisabled();
+  });
+});
+
+/** #1622: 失敗行の表示・同じクエリの一括選択・VACUUM 進捗。 */
+describe("ProcessListPanel per-process results / same-query select / progress (#1622)", () => {
+  const base: ProcessInfo = {
+    id: 7,
+    user: "app",
+    host: "h",
+    database: "db",
+    command: "active",
+    state: null,
+    time_secs: 10,
+    query_summary: "SELECT slow()",
+    query_truncated: false,
+    is_self: false,
+    blocked_by: [],
+  };
+
+  it("停止に失敗した行へ失敗バッジを出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8, query_summary: "other" }]);
+    vi.mocked(api.killProcesses).mockResolvedValue({
+      killed: 1,
+      failed: 1,
+      first_error: "permission denied",
+      outcomes: [
+        { id: 7, status: "killed", error: null },
+        { id: 8, status: "failed", error: "permission denied" },
+      ],
+    });
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await screen.findByText("8");
+    fireEvent.click(screen.getByLabelText(t("processSelectAll")));
+    fireEvent.click(screen.getByRole("button", { name: t("processKillSelected", { count: 2 }) }));
+    fireEvent.click(await screen.findByRole("button", { name: t("processKillConfirmOk") }));
+    expect(await screen.findByTestId("process-kill-failed-8")).toBeInTheDocument();
+    expect(screen.queryByTestId("process-kill-failed-7")).not.toBeInTheDocument();
+  });
+
+  it("同じクエリの行をまとめて選択でき、他の行は選ばれない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      base,
+      { ...base, id: 8 },
+      { ...base, id: 9, query_summary: "other" },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await screen.findByText("9");
+    fireEvent.change(screen.getByTestId("process-select-same-query"), { target: { value: "SELECT slow()" } });
+    expect(screen.getByLabelText(t("processSelectRow", { id: 7 }))).toBeChecked();
+    expect(screen.getByLabelText(t("processSelectRow", { id: 8 }))).toBeChecked();
+    expect(screen.getByLabelText(t("processSelectRow", { id: 9 }))).not.toBeChecked();
+    expect(screen.getByRole("button", { name: t("processKillSelected", { count: 2 }) })).toBeEnabled();
+  });
+
+  it("同じクエリが無ければ一括選択の欄を出さない", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([base, { ...base, id: 8, query_summary: "other" }]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    await screen.findByText("8");
+    expect(screen.queryByTestId("process-select-same-query")).not.toBeInTheDocument();
+  });
+
+  it("VACUUM の進捗率を状態列に出す", async () => {
+    vi.mocked(api.listProcesses).mockResolvedValue([
+      { ...base, progress: { kind: "vacuum", phase: "scanning heap", done: 40, total: 100 } },
+    ]);
+    renderWithProviders(<ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />);
+    const badge = await screen.findByTestId("process-progress");
+    expect(badge).toHaveTextContent("40%");
+    expect(badge).toHaveTextContent("scanning heap");
   });
 });

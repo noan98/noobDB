@@ -46,17 +46,18 @@ use t::{
     ColumnDiff, ColumnProfile, ConnectPhaseEvent, ConnectResponse, ConnectionProfile, CsvPreview,
     DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
-    HistoryEntry, ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportResult,
-    ImportStartedEvent, IndexInfo, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun,
-    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
-    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
-    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
-    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
-    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SkippedRowInfo,
-    SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile, SslMode,
-    StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
+    HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
+    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, KeyringStatus, KnownHost,
+    LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus, PreviewStreamMessage,
+    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
+    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
+    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
+    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
+    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SheetImportResult,
+    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SshAuthMethod, SshJumpProfile, SshProfile,
+    SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
     SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
-    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, Value,
+    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -179,10 +180,14 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
     };
     let server_variable = ServerVariable {
         name: "max_connections".into(),
         value: "151".into(),
+        source: Some("configuration file".into()),
     };
     let server_info = ServerInfo {
         version: "8.0.36".into(),
@@ -200,6 +205,12 @@ fn build_fixtures() -> serde_json::Value {
         query_truncated: false,
         is_self: true,
         blocked_by: vec![41],
+        progress: Some(t::ProcessProgress {
+            kind: "vacuum".into(),
+            phase: "scanning heap".into(),
+            done: 40,
+            total: 100,
+        }),
     };
     let query_stats_support = QueryStatsSupport {
         live_tail: true,
@@ -299,6 +310,7 @@ fn build_fixtures() -> serde_json::Value {
         questions: Some(1_000_000),
         slow_queries: Some(12),
         lock_waits: Some(5),
+        max_connections: Some(151),
     };
     let health_finding = HealthFinding {
         rule: RuleId::FkMissingIndex,
@@ -365,6 +377,7 @@ fn build_fixtures() -> serde_json::Value {
             auth_method: SshAuthMethod::Password,
             private_key_path: PathBuf::new(),
         }),
+        local_port: Some(15432),
     };
     let connection_profile_inner = ConnectionProfile {
         id: "abc12345".into(),
@@ -434,6 +447,37 @@ fn build_fixtures() -> serde_json::Value {
     let log_view = LogView {
         text: "2026-01-01T00:00:00Z INFO noobdb starting".into(),
         path: Some("/home/user/.local/share/noobDB/noobdb.log".into()),
+    };
+
+    let perf_status = PerfStatus {
+        enabled: true,
+        ui_enabled: true,
+        env_enabled: false,
+        samples: vec![
+            PerfSample {
+                at_ms: 1_767_225_600_000,
+                kind: "stream",
+                sql_execute_ms: Some(12.5),
+                emit_ms: Some(3.25),
+                payload_bytes_approx: Some(4096),
+                rows: 100,
+                columns: 4,
+            },
+            PerfSample {
+                at_ms: 1_767_225_500_000,
+                kind: "query",
+                sql_execute_ms: Some(8.0),
+                emit_ms: None,
+                payload_bytes_approx: None,
+                rows: 1,
+                columns: 1,
+            },
+        ],
+    };
+
+    let keyring_status = KeyringStatus {
+        available: false,
+        reason: Some("storage_unavailable"),
     };
 
     let csv_preview = CsvPreview {
@@ -523,6 +567,29 @@ fn build_fixtures() -> serde_json::Value {
         host: "db.example.com".into(),
         port: 22,
         fingerprint: "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".into(),
+    };
+
+    // #1630: known_hosts の履歴と OpenSSH 取り込みスキャン。
+    let known_host_event = t::KnownHostEvent {
+        at: "2026-10-15T01:02:03Z".into(),
+        action: t::KnownHostAction::Trust,
+        host: "db.example.com".into(),
+        port: 22,
+        fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+        previous_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+    };
+    let import_scan = t::ImportScan {
+        found: true,
+        candidates: vec![t::ImportCandidate {
+            host: "db.example.com".into(),
+            port: 22,
+            fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+            key_type: "ssh-ed25519".into(),
+            status: t::ImportStatus::Conflict,
+            existing_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+        }],
+        hashed_skipped: 2,
+        other_skipped: 1,
     };
 
     let column_diff = ColumnDiff {
@@ -780,8 +847,49 @@ fn build_fixtures() -> serde_json::Value {
             record: 7,
             line: Some(8),
             reason: "duplicate key".into(),
+            cells: Vec::new(),
         }],
         skipped_total: 1234,
+        skipped_data_truncated: true,
+        sheets: vec![SheetImportResult {
+            sheet: "Sheet1".into(),
+            table: "orders".into(),
+            inserted: 99,
+            skipped_total: 1,
+        }],
+    };
+    let import_dry_run_result = ImportDryRunResult {
+        total: 100,
+        failed: 3,
+        failures: vec![SkippedRowInfo {
+            record: 4,
+            line: Some(5),
+            reason: "UNIQUE constraint failed".into(),
+            cells: Vec::new(),
+        }],
+        db_checked: true,
+    };
+    let import_template = ImportTemplate {
+        id: "p1\u{1f}shop\u{1f}orders".into(),
+        profile_id: "p1".into(),
+        database: Some("shop".into()),
+        table: "orders".into(),
+        format: "csv".into(),
+        delimiter: ",".into(),
+        quote: "\"".into(),
+        has_header: true,
+        null_token: Some(String::new()),
+        encoding: "utf-8".into(),
+        sheet: None,
+        conflict_mode: Some("update".into()),
+        error_mode: Some("skip".into()),
+        key_columns: vec!["id".into()],
+        mapping: vec![TemplateColumn {
+            column: "id".into(),
+            header: Some("ID".into()),
+            csv_index: 0,
+        }],
+        updated_at_ms: 1_760_000_000_000,
     };
     let import_error_event = ImportErrorEvent {
         stream_id: "strm0003".into(),
@@ -911,6 +1019,11 @@ fn build_fixtures() -> serde_json::Value {
     // #1532: 転送前プレビュー (`preview_transfer`)。
     let transfer_preview = t::TransferPreview {
         columns: vec![t::TransferColumnInfo {
+            name: "amount".into(),
+            source_type: "DECIMAL(70,2)".into(),
+            target_type: "DECIMAL(65,2)".into(),
+        }],
+        source_columns: vec![t::TransferColumnInfo {
             name: "amount".into(),
             source_type: "DECIMAL(70,2)".into(),
             target_type: "DECIMAL(65,2)".into(),
@@ -1400,6 +1513,9 @@ fn build_fixtures() -> serde_json::Value {
         data_bytes: Some(65536),
         index_bytes: Some(16384),
         total_bytes: Some(81920),
+        dead_rows: Some(120),
+        last_vacuum_at: Some(1_700_000_000),
+        last_analyze_at: None,
         column_count: Some(5),
         index_count: 2,
         has_primary_key: true,
@@ -1468,6 +1584,23 @@ fn build_fixtures() -> serde_json::Value {
         killed: 2,
         failed: 1,
         first_error: Some("permission denied".into()),
+        outcomes: vec![
+            t::KillProcessOutcome {
+                id: 101,
+                status: t::KillOutcomeStatus::Killed,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 102,
+                status: t::KillOutcomeStatus::AlreadyGone,
+                error: None,
+            },
+            t::KillProcessOutcome {
+                id: 103,
+                status: t::KillOutcomeStatus::Failed,
+                error: Some("permission denied".into()),
+            },
+        ],
     };
     let db_user_info = t::DbUserInfo {
         name: "app".into(),
@@ -1494,6 +1627,9 @@ fn build_fixtures() -> serde_json::Value {
         database: "appdb".into(),
         table: "users".into(),
         column: Some("email".into()),
+        object_kind: Some("function".into()),
+        object_id: Some("16385".into()),
+        row_estimate: Some(1200),
     };
     let table_columns = t::TableColumns {
         name: "users".into(),
@@ -1909,6 +2045,8 @@ fn build_fixtures() -> serde_json::Value {
         "snippet": snippet,
         "historyEntry": history_entry,
         "logView": log_view,
+        "perfStatus": perf_status,
+        "keyringStatus": keyring_status,
         "csvPreview": csv_preview,
         "connectResult": connect_result,
         "localTableMeta": local_table_meta,
@@ -1923,6 +2061,8 @@ fn build_fixtures() -> serde_json::Value {
         "channelCancelledMessageAi": ai_stream_cancelled_message,
         "taskRunProgressEvent": task_run_progress_event,
         "knownHost": known_host,
+        "knownHostEvent": known_host_event,
+        "importScan": import_scan,
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,
         "dataDiff": data_diff,
@@ -1959,6 +2099,8 @@ fn build_fixtures() -> serde_json::Value {
         "importStartedEvent": import_started_event,
         "importProgressEvent": import_progress_event,
         "importDoneEvent": import_done_event,
+        "importDryRunResult": import_dry_run_result,
+        "importTemplate": import_template,
         "cellBlobProbe": cell_blob_probe,
         "blobFolderSaveResult": blob_folder_save_result,
         "transferPreview": transfer_preview,

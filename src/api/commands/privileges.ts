@@ -65,8 +65,27 @@ export const privilegesCommands = {
       user,
       host,
       database,
-      changes: changes.map((c) => ({ ...c, table: c.table ?? null })),
+      changes: changes.map((c) => ({ ...c, table: c.table ?? null, columns: c.columns ?? null })),
     }).then((r) => parseResponse(schemas.stringArrayResponse, r, "generate_privilege_diff_sql")),
+  /** ロール (メンバーシップ) の付与 / 剥奪 SQL を生成する (純粋, #1622)。`grant` が true なら
+   *  `GRANT role TO user`、false なら `REVOKE role FROM user`。MySQL 8 は `'role'@'host'`
+   *  (`roleHost` 省略時 `%`)、PostgreSQL はロール名のみ。適用は `applyPrivilegeSql` を通す。 */
+  generateRoleMembershipSql: (params: {
+    driver: DriverKind;
+    grant: boolean;
+    role: string;
+    roleHost?: string | null;
+    user: string;
+    host?: string | null;
+  }) =>
+    invoke<string>("generate_role_membership_sql", {
+      driver: params.driver,
+      grant: params.grant,
+      role: params.role,
+      roleHost: params.roleHost ?? null,
+      user: params.user,
+      host: params.host ?? null,
+    }).then((r) => parseResponse(schemas.stringResponse, r, "generate_role_membership_sql")),
   /**
    * 確認済みの SQL 文 (CREATE USER / DROP USER / ALTER ... PASSWORD / GRANT /
    * REVOKE) を 1 トランザクションで適用する。`applySyncSql` と同じガード

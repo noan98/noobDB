@@ -59,7 +59,7 @@ describe("ProcessListPanel AI 停止候補との連動 (#1538)", () => {
       { ...base, id: 2, user: "batch" },
       { ...base, id: 3 },
     ]);
-    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null });
+    vi.mocked(api.killProcesses).mockResolvedValue({ killed: 1, failed: 0, first_error: null, outcomes: [] });
     const { container } = renderWithProviders(
       <ProcessListPanel sessionId="s1" driver="postgres" readOnly={false} />,
     );

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  LATENCY_HISTORY_MAX,
+  appendLatencyHistory,
+  sparklineGeometry,
   LATENCY_CRITICAL_MS,
   LATENCY_SLOW_MS,
   buildHealthRows,
@@ -321,5 +324,63 @@ describe("sameHealthResults (#1617)", () => {
     expect(sameHealthResults(new Map([["a", r()]]), new Map())).toBe(false);
     expect(sameHealthResults(new Map([["a", r()]]), new Map([["b", r()]]))).toBe(false);
     expect(sameHealthResults(new Map([["a", r()]]), new Map([["a", r({ tunnelClosed: false })]]))).toBe(true);
+  });
+});
+
+describe("レイテンシ履歴とスパークライン (#1630)", () => {
+  const up = (latencyMs: number): HealthProbeResult => ({
+    status: "up",
+    latencyMs,
+    version: null,
+    connections: null,
+  });
+  const down: HealthProbeResult = { status: "down", latencyMs: null, version: null, connections: null };
+
+  it("確認のたびに履歴へ足し、down は欠測 (null) として残す", () => {
+    let h = appendLatencyHistory(new Map(), new Map([["s1", up(10)]]));
+    h = appendLatencyHistory(h, new Map([["s1", down]]));
+    h = appendLatencyHistory(h, new Map([["s1", up(30)]]));
+    expect(h.get("s1")).toEqual([10, null, 30]);
+  });
+
+  it("閉じたセッションの履歴は捨て、最大件数に切り詰める", () => {
+    let h = appendLatencyHistory(
+      new Map(),
+      new Map([
+        ["a", up(1)],
+        ["b", up(2)],
+      ]),
+    );
+    h = appendLatencyHistory(h, new Map([["a", up(3)]]));
+    expect(h.has("b")).toBe(false);
+    for (let i = 0; i < LATENCY_HISTORY_MAX + 5; i++) {
+      h = appendLatencyHistory(h, new Map([["a", up(i)]]));
+    }
+    expect(h.get("a")).toHaveLength(LATENCY_HISTORY_MAX);
+    expect(h.get("a")?.at(-1)).toBe(LATENCY_HISTORY_MAX + 4);
+  });
+
+  it("閾値を超えた区間は slow / critical になり、新しいサンプルが右端に来る", () => {
+    const g = sparklineGeometry([10, 20, LATENCY_SLOW_MS + 50, LATENCY_CRITICAL_MS + 1], 60, 20, 4);
+    expect(g.segments.map((s) => s.level)).toEqual(["good", "slow", "critical"]);
+    expect(g.segments.at(-1)?.x2).toBe(60);
+    expect(g.segments[0].x1).toBe(0);
+    expect(g.maxMs).toBe(LATENCY_CRITICAL_MS + 1);
+  });
+
+  it("欠測は区間を切って下端の印になり、孤立点は点で返す", () => {
+    const g = sparklineGeometry([10, null, 12, null, 14, 15], 50, 10, 6);
+    expect(g.gaps).toHaveLength(2);
+    expect(g.gaps.every((p) => p.y === 10)).toBe(true);
+    // 10 と 12 は欠測で分断されるので孤立点、14-15 だけが区間になる。
+    expect(g.points).toHaveLength(2);
+    expect(g.segments).toHaveLength(1);
+  });
+
+  it("縦軸は最低でも遅い閾値まで取り、小さな揺らぎが大きく見えない", () => {
+    const g = sparklineGeometry([1, 3], 10, 20, 2);
+    expect(g.maxMs).toBe(LATENCY_SLOW_MS);
+    expect(g.segments[0].y1).toBeGreaterThan(19);
+    expect(g.thresholdY).toBe(0);
   });
 });

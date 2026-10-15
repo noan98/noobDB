@@ -1411,6 +1411,11 @@ export interface ResultGridHandle {
   openFind: () => void;
   /** キーボードフォーカスをグリッドへ移す (ペインフォーカス循環 #681)。 */
   focus: () => void;
+  /**
+   * 指定した列の先頭行のセルへアクティブセルとフォーカスを移し、必要ならスクロールする
+   * (オブジェクト検索の列ヒットから開いたとき、#1629)。列が無い・行が無いときは false。
+   */
+  revealColumn: (column: string) => boolean;
 }
 
 /**
@@ -3787,7 +3792,11 @@ const GridRow = memo(function GridRow({
                 onKeyDown={(e) => handlers.onEditKeyDown(e, originalDisplay)}
               />
             )}
-            <ValueDatalist id={valuePickerListId} values={editPickerValues} />
+            <ValueDatalist
+              id={valuePickerListId}
+              values={editPickerValues}
+              labels={valuePicker?.labels(columns[colIdx]?.name ?? "")}
+            />
             {editError ? (
               <div className="cell-edit-error" role="alert">
                 {t(editError)}
@@ -8456,6 +8465,8 @@ export const ResultGrid = memo(
       else containerRef.current?.focus();
     };
 
+    const resultForRevealRef = useRef(result);
+    resultForRevealRef.current = result;
     useImperativeHandle(
       ref,
       () => ({
@@ -8466,8 +8477,16 @@ export const ResultGrid = memo(
         focus: () => {
           containerRef.current?.focus();
         },
+        revealColumn: (column) => {
+          const r = resultForRevealRef.current;
+          if (!r || r.rows.length === 0) return false;
+          const colIdx = r.columns.findIndex((c) => c.name === column);
+          if (colIdx < 0) return false;
+          emitFindNav({ rowIdx: 0, colIdx }, true, true);
+          return true;
+        },
       }),
-      [],
+      [emitFindNav],
     );
     // biome-ignore lint/correctness/useExhaustiveDependencies: findFocusSeq は本体で読まないが、検索バーを開き直したときに入力欄へフォーカス・全選択し直す契機として意図的に依存へ入れている
     useEffect(() => {

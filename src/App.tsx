@@ -28,6 +28,7 @@ import {
   Column,
   ConnectionProfile,
   DriverKind,
+  ImportOptions,
   SchemaDriftGeneration,
   type LocalTableMeta,
   type ProfileImportStrategy,
@@ -132,6 +133,7 @@ import {
   buildDropTablesSql,
   buildRenameTableSql,
   buildTruncateSql,
+  buildTruncateTablesSql,
 } from "./components/tableMaintenance";
 import {
   buildDropNamespaceSql,
@@ -139,7 +141,7 @@ import {
   type NamespaceKind,
 } from "./components/databaseMaintenance";
 import type { AlterStatement } from "./components/alterTable";
-import { buildCreateTableAsSql } from "./components/resultsToTable";
+import { appendNeedsApproval, buildCreateTableAsSql } from "./components/resultsToTable";
 import type { TransferSource } from "./components/dataTransfer";
 import {
   buildCreateViewSql,
@@ -147,7 +149,12 @@ import {
   buildReplaceViewSql,
   extractViewBody,
 } from "./components/viewMaintenance";
-import type { MaintenanceCommand } from "./components/maintenanceCommands";
+import {
+  batchMaintenanceCommands,
+  MAINTENANCE_LABEL_KEYS,
+  type MaintenanceCommand,
+  type MaintenanceKind,
+} from "./components/maintenanceCommands";
 import {
   buildIdentitySyncSql,
   sqliteHasAutoincrementSql,
@@ -191,6 +198,7 @@ import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
+import type { SchemaJumpTarget } from "./components/identifierJump";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -242,6 +250,9 @@ const HistorySearchModal = lazy(() =>
 );
 const SnippetForm = lazy(() => import("./components/SnippetForm").then((m) => ({ default: m.SnippetForm })));
 const ImportModal = lazy(() => import("./components/ImportModal").then((m) => ({ default: m.ImportModal })));
+const ImportSheetsModal = lazy(() =>
+  import("./components/ImportSheetsModal").then((m) => ({ default: m.ImportSheetsModal })),
+);
 const DataTransferModal = lazy(() =>
   import("./components/DataTransferModal").then((m) => ({ default: m.DataTransferModal })),
 );
@@ -253,6 +264,9 @@ const PlanWatchPanel = lazy(() =>
 );
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
+);
+const SavedTabsModal = lazy(() =>
+  import("./components/SavedTabsModal").then((m) => ({ default: m.SavedTabsModal })),
 );
 const SqlFileEncodingModal = lazy(() =>
   import("./components/SqlFileEncodingModal").then((m) => ({ default: m.SqlFileEncodingModal })),
@@ -337,6 +351,7 @@ const PinnedComparisonView = lazy(() =>
 const ProcessListPanel = lazy(() =>
   import("./components/ProcessListPanel").then((m) => ({ default: m.ProcessListPanel })),
 );
+const PerfPanel = lazy(() => import("./components/PerfPanel").then((m) => ({ default: m.PerfPanel })));
 const ConnectionHealthPanel = lazy(() =>
   import("./components/ConnectionHealthPanel").then((m) => ({ default: m.ConnectionHealthPanel })),
 );
@@ -402,6 +417,7 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
+import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
 import { formatBlobSize } from "./components/blobIo";
 import {
   backoffDelayMs,
@@ -502,6 +518,9 @@ import {
 import { reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
+import { BACKGROUND_PING_INTERVAL_MS, nextStaleProfileIds } from "./backgroundHealth";
+import { buildGroupMoveRequest } from "./profileGroup";
+import { summarizeSavedWorkspace } from "./savedTabsSummary";
 import { formatElapsed } from "./queryRunState";
 import {
   buildCountSql,
@@ -568,6 +587,7 @@ import type { TimelapseWatchRequest } from "./components/TableTimelapsePanel";
 import { summarizeCapture } from "./tableTimelapse";
 import { clearExplainPin } from "./explainPins";
 import { Tooltip } from "./components/Tooltip";
+import { resolveCsvDropTarget } from "./dropImport";
 
 type Theme = "light" | "dark";
 
@@ -1875,6 +1895,15 @@ export default function App() {
   useEffect(() => {
     openConnectionsRef.current = openConnections;
   }, [openConnections]);
+  // 生存確認で切れていると分かった背景接続のプロファイル ID (#1630)。接続一覧にバッジを出し、
+  // その行を選ぶと残骸を片付けて張り直す (`handleConnect`)。
+  const [staleProfileIds, setStaleProfileIds] = useState<ReadonlySet<string>>(() => new Set());
+  const staleProfileIdsRef = useRef<ReadonlySet<string>>(staleProfileIds);
+  useEffect(() => {
+    staleProfileIdsRef.current = staleProfileIds;
+  }, [staleProfileIds]);
+  // 保存済みタブの確認・消去モーダルの対象 (#1630)。
+  const [savedTabsTarget, setSavedTabsTarget] = useState<ConnectionProfile | null>(null);
   // プロファイル id の集合 (ConnectionList の接続済み表示・切替/切断 UI 用)。
   const openProfileIds = useMemo(() => new Set(openConnections.map((c) => c.profile.id)), [openConnections]);
   // レジストリへの登録/差し替え (同一プロファイルは最新セッションで上書き)。
@@ -2018,6 +2047,13 @@ export default function App() {
   const [openQueryTarget, setOpenQueryTarget] = useState<{ database: string; table: string } | null>(null);
   // ドラッグ&ドロップで .csv を落としたときに ImportModal へ渡す事前選択パス。
   const [importInitialPath, setImportInitialPath] = useState<string | null>(null);
+  // xlsx の複数シート一括取り込み (#1623): 対象のデータベースとブックの指定。null で閉じる。
+  const [importSheetsRequest, setImportSheetsRequest] = useState<{
+    database: string;
+    path: string;
+    options: ImportOptions;
+    sheets: string[];
+  } | null>(null);
   // ファイルがウィンドウ上にドラッグされている間の受理/拒否フィードバック。
   // null のときオーバーレイは出さない。
   const [dragFeedback, setDragFeedback] = useState<DragFeedback | null>(null);
@@ -2062,9 +2098,11 @@ export default function App() {
   // 接続間データ転送 (#986): 転送元。null で閉じる。
   const [transferSource, setTransferSource] = useState<TransferSource | null>(null);
   // 結果を新規テーブルへ保存 (CREATE TABLE ... AS SELECT、#821): 対象。null で閉じる。
-  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{ sql: string; database: string } | null>(
-    null,
-  );
+  const [saveAsTableRequest, setSaveAsTableRequest] = useState<{
+    sql: string;
+    database: string;
+    resultColumns?: string[];
+  } | null>(null);
   // 結果をビューへ保存 / 既存ビュー定義の編集を保存 (#851): 対象。null で閉じる。
   // `initialName` は「定義を編集」タブから開いたときのみセットされ (`editingViewName`)、
   // モーダルの名前欄の初期値になる。
@@ -3613,7 +3651,43 @@ export default function App() {
       if (sessionId && selectedProfile?.id === profile.id) return;
       // 背景で開いたままの接続をクリックしたら、再接続せず即座に切り替える。
       const alreadyOpen = openConnectionsRef.current.find((c) => c.profile.id === profile.id);
-      if (alreadyOpen) {
+      if (alreadyOpen && staleProfileIdsRef.current.has(profile.id)) {
+        // 切れたと判定された背景接続 (#1630): クリック時にもう一度生存確認する。
+        // 一時的な ping 失敗で生きている接続を捨てないよう、生きていれば通常の切替にする。
+        const alive = await api.pingSession(alreadyOpen.sessionId).catch(() => false);
+        if (alive) {
+          setStaleProfileIds((prev) =>
+            nextStaleProfileIds(
+              prev,
+              [{ profileId: profile.id, alive: true }],
+              openConnectionsRef.current.map((c) => c.profile.id),
+            ),
+          );
+          await switchToOpenConnection(alreadyOpen);
+          return;
+        }
+        // 死んでいる: 未コミットのトランザクションがあれば破棄の確認を通してから片付ける。
+        if (!(await confirmDiscardOpenTransactions([alreadyOpen.sessionId], "disconnect"))) return;
+        // 残骸を片付けて以降は新規接続と同じ経路で張り直す (保存済みタブは切替時に退避済みで、
+        // ここで復元される)。
+        openConnectionsRef.current = openConnectionsRef.current.filter((c) => c.profile.id !== profile.id);
+        removeOpenConnection(profile.id);
+        setStaleProfileIds((prev) =>
+          nextStaleProfileIds(
+            prev,
+            [],
+            openConnectionsRef.current.map((c) => c.profile.id),
+          ),
+        );
+        // 固定ローカルポート (#1630) のトンネルは切断が済むまでポートを握っているため、
+        // 張り直す前に切断の完了を待つ。
+        await api.disconnect(alreadyOpen.sessionId).catch(() => {
+          /* 既に切れている接続の後始末なので失敗は無視 */
+        });
+        clearEmergencyFor(alreadyOpen.sessionId);
+        forgetClosedTabs(alreadyOpen.sessionId);
+        forgetTxState(alreadyOpen.sessionId);
+      } else if (alreadyOpen) {
         await switchToOpenConnection(alreadyOpen);
         return;
       }
@@ -3677,7 +3751,11 @@ export default function App() {
         // 複数接続レジストリ・タブ復元・エディタ/グリッドはすべて共有する。
         const res = isLocalProfile(profile)
           ? { session_id: await ensureLocalSession() }
-          : await api.connect(connectRequestFromProfile(profile), attemptId, settings.connectTimeoutSecs);
+          : await api.connect(
+              connectRequestFromProfile(profile, { pinLocalPort: true }),
+              attemptId,
+              settings.connectTimeoutSecs,
+            );
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -3769,7 +3847,12 @@ export default function App() {
       switchToOpenConnection,
       confirmDiscardPendingEdits,
       confirmLeaveOpenTransaction,
+      confirmDiscardOpenTransactions,
       upsertOpenConnection,
+      removeOpenConnection,
+      clearEmergencyFor,
+      forgetClosedTabs,
+      forgetTxState,
       ensureLocalSession,
       settings.connectTimeoutSecs,
       settings.confirmProductionConnect,
@@ -3936,6 +4019,42 @@ export default function App() {
       confirmDiscardOpenTransactions,
     ],
   );
+
+  // アクティブ以外 (背景) の接続をまとめて切断する (#1630)。未確定トランザクションの確認は
+  // 全セッション分を 1 回にまとめる (1 件ずつ聞かない)。アクティブな接続とそのタブには触れない。
+  const handleDisconnectBackground = useCallback(async (): Promise<boolean> => {
+    const targets = openConnectionsRef.current.filter((c) => c.sessionId !== sessionId);
+    if (targets.length === 0) return true;
+    if (
+      !(await confirmDiscardOpenTransactions(
+        targets.map((c) => c.sessionId),
+        "disconnect",
+      ))
+    ) {
+      return false;
+    }
+    for (const entry of targets) {
+      removeOpenConnection(entry.profile.id);
+      try {
+        await api.disconnect(entry.sessionId);
+      } catch (e) {
+        console.warn(e);
+      }
+      clearEmergencyFor(entry.sessionId);
+      forgetClosedTabs(entry.sessionId);
+      forgetTxState(entry.sessionId);
+    }
+    toast.info(translate("toastDisconnectedBackground", { count: targets.length }));
+    return true;
+  }, [
+    sessionId,
+    confirmDiscardOpenTransactions,
+    removeOpenConnection,
+    clearEmergencyFor,
+    forgetClosedTabs,
+    forgetTxState,
+    toast,
+  ]);
 
   // サンドボックス (壊せる砂場、#747)。開く/切替は非永続の合成プロファイル
   // (`sandboxToProfile`) を通常の `handleConnect` に渡すだけで、複数同時接続の
@@ -6174,6 +6293,16 @@ export default function App() {
     [runExplainInTab, addTab, panesRef],
   );
 
+  // ライブテールで観測した SQL 原文を、新しい EXPLAIN タブ (推定モード = ANALYZE なし) で開く (#1622)。
+  const explainTailSql = useCallback(
+    (sql: string, database: string | null) => {
+      const tab = makeExplainTab(sql, database ?? undefined);
+      addTab(tab);
+      void runExplainInTab(tab.id, sql, false, { tab });
+    },
+    [runExplainInTab, addTab],
+  );
+
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
   const pinCurrentResult = useCallback(
@@ -7258,12 +7387,33 @@ export default function App() {
   // open_table の応答待ち中の (database, table)。タブがまだ state に無い間の再実行で
   // 同じテーブルのタブが二重に開かないようにする (tabOpenFlightId と同じキー)。
   const openingTablesRef = useRef<Set<string>>(new Set());
+  // オブジェクト検索の列ヒットから開いたとき、開いたテーブルの結果グリッドでその列へ
+  // アクティブセルとフォーカスを移すための保留中の要求 (#1629)。
+  const [columnReveal, setColumnReveal] = useState<{
+    database: string;
+    table: string;
+    column: string;
+    /** 「新しいタブで開く」ときに、すでにあったタブ (これらには移さない)。 */
+    excludeTabIds: string[];
+  } | null>(null);
+  const newTableTabSeqRef = useRef(0);
   const handleOpenTable = useCallback(
-    (database: string, table: string) => {
+    (database: string, table: string, opts?: { newTab?: boolean; column?: string }) => {
       recordRecentTableOpen(database, table);
-      const existing = tabs.find(
-        (tt) => tt.kind === "table" && tt.database === database && tt.table === table,
+      setColumnReveal(
+        opts?.column
+          ? {
+              database,
+              table,
+              column: opts.column,
+              excludeTabIds: opts.newTab ? tabs.map((tt) => tt.id) : [],
+            }
+          : null,
       );
+      // 「新しいタブで開く」は同じテーブルのタブが開いていても、もう 1 つ開く (#1629)。
+      const existing = opts?.newTab
+        ? undefined
+        : tabs.find((tt) => tt.kind === "table" && tt.database === database && tt.table === table);
       // サイドバー行のダブルクリックが始めた飛行 (#1415)。タブを作らない経路では即解除する。
       const flightId = tabOpenFlightId(database, table);
       if (existing) {
@@ -7276,7 +7426,9 @@ export default function App() {
         return;
       }
       // 既に開いている途中なら何もしない (飛行の後始末は先行する呼び出しが行う)。
-      const openKey = `${sessionId}\u0000${flightId}`;
+      const openKey = opts?.newTab
+        ? `${sessionId}\u0000${flightId}\u0000new${++newTableTabSeqRef.current}`
+        : `${sessionId}\u0000${flightId}`;
       if (openingTablesRef.current.has(openKey)) return;
       openingTablesRef.current.add(openKey);
       const limit = Math.max(1, settings.defaultDisplayCount);
@@ -7367,6 +7519,33 @@ export default function App() {
       patchTab,
     ],
   );
+
+  // 保留中の列移動を、対象テーブルのタブがアクティブになり最初の行が届いた時点で実行する (#1629)。
+  // 行が 0 件のまま完了したとき・15 秒たっても条件が揃わないときは諦める。
+  useEffect(() => {
+    if (!columnReveal) return;
+    const timer = setTimeout(() => setColumnReveal(null), 15000);
+    const tab = activeTab;
+    if (
+      tab &&
+      tab.kind === "table" &&
+      tab.database === columnReveal.database &&
+      tab.table === columnReveal.table &&
+      !columnReveal.excludeTabIds.includes(tab.id) &&
+      tab.result
+    ) {
+      if (tab.result.rows.length > 0) {
+        const grid = resultGridRefs.current.get(activePaneIdRef.current ?? "");
+        if (grid) {
+          grid.revealColumn(columnReveal.column);
+          setColumnReveal(null);
+        }
+      } else if (!tab.streaming) {
+        setColumnReveal(null);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [columnReveal, activeTab]);
 
   const handleImportTable = useCallback((database: string, table: string) => {
     setImportTarget({ database, table });
@@ -8020,18 +8199,32 @@ export default function App() {
   // モーダルは確定と同時に閉じ (CreateTableModal/RenameTableDialog と同じ流儀)、
   // DDL の実行・スキーマキャッシュ更新・成功トーストは非同期に行う。
   const handleSaveAsTableConfirm = useCallback(
-    (newName: string) => {
+    (newName: string, appendSql?: string) => {
       const req = saveAsTableRequest;
       setSaveAsTableRequest(null);
       if (!req) return;
       const driver = selectedProfile?.driver ?? "mysql";
-      const ddl = buildCreateTableAsSql(driver, req.database, newName, req.sql);
+      // 追記 (INSERT ... SELECT、#1623) は呼び出し元のモーダルが組んだ文をそのまま流す。
+      const ddl = appendSql ?? buildCreateTableAsSql(driver, req.database, newName, req.sql);
       void (async () => {
+        // 追記は既存テーブルへの書き込みなので、本番 + confirm_writes では通常の書き込みと同じく確認する (#1623)。
+        if (appendSql && appendNeedsApproval(selectedProfile)) {
+          const ok = await confirm({
+            title: translate("saveAsTableAppendApproveTitle"),
+            message: translate("saveAsTableAppendApproveBody", { table: newName }),
+            confirmLabel: translate("saveAsTableAppendConfirm"),
+            tone: "warning",
+          });
+          if (!ok) return;
+        }
         const success = await runMaintenanceDdl(ddl, req.database);
-        if (success) toast.success(translate("saveAsTableSuccess", { table: newName }));
+        if (success)
+          toast.success(
+            translate(appendSql ? "saveAsTableAppendSuccess" : "saveAsTableSuccess", { table: newName }),
+          );
       })();
     },
-    [saveAsTableRequest, selectedProfile?.driver, runMaintenanceDdl, toast],
+    [saveAsTableRequest, selectedProfile, runMaintenanceDdl, toast, confirm],
   );
 
   // 現在のクエリをビューとして保存 / 既存ビュー定義の編集を保存 (#851)。
@@ -8614,6 +8807,164 @@ export default function App() {
     [toast],
   );
 
+  // 複数選択したテーブルの一括 TRUNCATE (#1629)。確認導線は一括 DROP と同じ (本番接続ではデータベース名の
+  // タイプ入力、対象は全件をスクロール可能な一覧で見せる)。流し方は方言で違う:
+  // PostgreSQL は 1 文 (全件成功か全件失敗)、SQLite は 1 トランザクション (同、FK は COMMIT まで遅延)、
+  // MySQL は暗黙コミットなのでテーブルごとに順に流し、失敗したらそこで止めて途中までの件数を伝える。
+  const handleTruncateTables = useCallback(
+    async (database: string, tables: string[]) => {
+      if (tables.length === 0 || !sessionId) return;
+      const production = Boolean(selectedProfile?.is_production);
+      const names = summarizeTableNames(tables, 10, (count) => translate("batchTablesMore", { count }));
+      const body: ReactNode = production ? (
+        <>
+          {translate("batchTruncateConfirmBodyList", { count: tables.length, database })}
+          <Box as="ul" mt="2" maxH="40vh" overflowY="auto" pl="5" data-testid="batch-truncate-table-list">
+            {tables.map((tbl) => (
+              <Box as="li" key={tbl} wordBreak="break-all">
+                {tbl}
+              </Box>
+            ))}
+          </Box>
+        </>
+      ) : (
+        translate("batchTruncateConfirmBody", { count: tables.length, database, tables: names })
+      );
+      // MySQL は暗黙コミットでテーブルごとに流すため、途中失敗で戻せないことを確認文に足す。
+      const bodyWithNote: ReactNode =
+        selectedProfile?.driver === "mysql" ? (
+          <>
+            {body}
+            <Box mt="2">{translate("batchTruncateMysqlNote")}</Box>
+          </>
+        ) : (
+          body
+        );
+      const ok = await confirm({
+        title: translate("batchTruncateConfirmTitle", { count: tables.length }),
+        message: maintenanceMessage(bodyWithNote),
+        confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
+        tone: "danger",
+        typedConfirmation: production ? database : undefined,
+      });
+      if (!ok) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const { mode, statements } = buildTruncateTablesSql(driver, database, tables);
+      let failed = false;
+      try {
+        if (mode === "transaction") {
+          await api.runQueryTransaction(sessionId, ["PRAGMA defer_foreign_keys=ON", ...statements], database);
+        } else if (mode === "single") {
+          await api.runQuery(sessionId, statements[0], database);
+        } else {
+          let done = 0;
+          for (const sql of statements) {
+            try {
+              await api.runQuery(sessionId, sql, database);
+              done += 1;
+            } catch (e) {
+              failed = true;
+              toast.error(
+                translate("batchTruncatePartial", {
+                  done,
+                  count: tables.length,
+                  table: tables[done] ?? "",
+                  error: String(e),
+                }),
+              );
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        failed = true;
+        toast.error(translate("batchTruncateRolledBack", { error: String(e) }));
+      }
+      // 失敗しても途中まで実行された可能性があるので、ツリーと補完は読み直す。
+      invalidateSchemaCache(database);
+      noteSchemaDdl(statements.join(";\n"), database);
+      connectionListRef.current?.refreshSchema();
+      if (!failed) toast.success(translate("batchTruncateSuccess", { count: tables.length }));
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      sessionId,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
+  );
+
+  // 複数選択したテーブルへの一括保守 (ANALYZE / OPTIMIZE / VACUUM 等、#1629)。単一テーブルの
+  // `handleRunTableMaintenance` と同じく生成した SQL を確認ダイアログで見せ、一括 DROP と同じく
+  // 本番接続ではデータベース名の入力を求める。テーブルごとに 1 文ずつ流し、失敗したテーブルが
+  // あっても残りは続けて、最後に件数と失敗したテーブルを伝える。
+  const handleRunTablesMaintenance = useCallback(
+    async (database: string, tables: string[], kind: MaintenanceKind) => {
+      if (!sessionId) return;
+      const driver = selectedProfile?.driver ?? "mysql";
+      const commands = batchMaintenanceCommands(driver, database, tables, kind);
+      if (commands.length === 0) return;
+      const ok = await confirm({
+        title: translate("batchMaintenanceConfirmTitle", {
+          kind: translate(MAINTENANCE_LABEL_KEYS[kind]),
+          count: commands.length,
+        }),
+        message: maintenanceMessage(
+          <>
+            {translate("batchMaintenanceConfirmBody", { count: commands.length, database })}
+            <br />
+            <br />
+            <CodePreview wrap maxH="40vh">
+              {commands.map((c) => c.command.sql).join("\n")}
+            </CodePreview>
+          </>,
+        ),
+        confirmLabel: translate("batchMaintenanceConfirmOk", { count: commands.length }),
+        typedConfirmation: selectedProfile?.is_production ? database : undefined,
+      });
+      if (!ok) return;
+      const failedTables: string[] = [];
+      let firstError = "";
+      for (const { table, command } of commands) {
+        try {
+          await api.runQuery(sessionId, command.sql, database);
+        } catch (e) {
+          failedTables.push(table);
+          if (!firstError) firstError = String(e);
+        }
+      }
+      invalidateSchemaCache(database);
+      // 統計更新などで推定行数が変わるので、ツリーも読み直す。
+      noteSchemaDdl(commands.map((c) => c.command.sql).join("\n"), database);
+      connectionListRef.current?.refreshSchema();
+      if (failedTables.length === 0) {
+        toast.success(translate("batchMaintenanceDone", { count: commands.length }));
+      } else {
+        toast.error(
+          `${translate("batchMaintenancePartial", {
+            done: commands.length - failedTables.length,
+            count: commands.length,
+            failed: failedTables.join(", "),
+          })} (${firstError})`,
+        );
+      }
+    },
+    [
+      confirm,
+      maintenanceMessage,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      sessionId,
+      invalidateSchemaCache,
+      noteSchemaDdl,
+      toast,
+    ],
+  );
+
   // 複数選択したテーブルの一括 DROP (#1399)。確認導線は単一の `handleDropTable` と同じ
   // `confirm` + 本番接続のタイプ入力ゲート (#675)。対象が複数なので、対象のテーブル名を本文に
   // 並べ、本番ではデータベース名の入力を求める。実行は `buildDropTablesSql` の文を流す
@@ -8866,6 +9217,43 @@ export default function App() {
     [profiles, runWithErrorStatus, refreshProfiles],
   );
 
+  // 接続を別グループへ移す (#1630)。既存の `save_profile` を流用し、`group` だけを書き換える
+  // (秘密は触らない・並び順は id 上書きなので変わらない)。1 件ずつ保存し、終わったら一覧を読み直す。
+  const handleMoveProfilesToGroup = useCallback(
+    async (profileIds: string[], group: string | null) => {
+      const targets = profiles.filter((p) => profileIds.includes(p.id));
+      if (targets.length === 0) return;
+      const ok = await runWithErrorStatus(async () => {
+        for (const p of targets) await api.saveProfile(buildGroupMoveRequest(p, group));
+      }, "statusFailedMoveProfiles");
+      await refreshProfiles();
+      if (ok) {
+        toast.success(
+          group === null
+            ? translate("toastProfilesUngrouped", { count: targets.length })
+            : translate("toastProfilesMoved", { count: targets.length, group }),
+        );
+      }
+    },
+    [profiles, runWithErrorStatus, refreshProfiles, toast],
+  );
+
+  // 保存済みタブの確認・消去 (#1630)。
+  const savedTabsSummary = useMemo(
+    () => (savedTabsTarget ? summarizeSavedWorkspace(loadPersistedWorkspace(savedTabsTarget.id)) : null),
+    [savedTabsTarget],
+  );
+  const handleClearSavedTabs = useCallback(() => {
+    if (!savedTabsTarget) return;
+    // 開いている接続の保存内容は切替/切断時に上書きされるので消せない (モーダルでも無効化済み)。
+    if (openConnectionsRef.current.some((c) => c.profile.id === savedTabsTarget.id)) return;
+    clearPersistedTabs(savedTabsTarget.id);
+    // 「今回は開かない」で保持していた分も忘れる (残すと保存側が書き戻してしまう)。
+    keptSavedTabsRef.current.delete(savedTabsTarget.id);
+    toast.success(translate("savedTabsCleared", { name: savedTabsTarget.name }));
+    setSavedTabsTarget(null);
+  }, [savedTabsTarget, toast]);
+
   // Clear any pending profile-delete timers on unmount. Leaving them uncancelled
   // would fire setState on a torn-down tree; not finalizing is the safe choice
   // (the profile simply isn't deleted — its keyring secrets stay intact).
@@ -8999,7 +9387,8 @@ export default function App() {
    * ウィンドウへドロップされたファイル群を拡張子で振り分けて処理する。
    * - `.sql` / `.txt` … 内容を読んで新規クエリタブとして開く (複数なら複数タブ)。
    * - `.csv` / `.tsv` … アクティブなテーブルタブがあれば ImportModal を事前選択
-   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。
+   *   パス付きで開く (ImportModal は単一ファイルなので先頭のみ)。テーブルタブでなくても
+   *   データベースが決まっていれば新規テーブル作成モードで開く (#1623)。
    * - 非対応拡張子 … トーストで明示的に拒否する。
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
@@ -9070,15 +9459,21 @@ export default function App() {
 
       // .csv / .tsv → ImportModal (アクティブなテーブルタブが対象)。
       if (csvPaths.length > 0) {
-        const tab = activeTabRef.current;
-        if (!sessionIdRef.current || !tab || tab.kind !== "table" || !tab.database || !tab.table) {
+        // テーブルタブならそのテーブルへ、データベースだけ決まっていれば新規テーブルとして取り込む (#1623)。
+        const dropTarget = resolveCsvDropTarget(!!sessionIdRef.current, activeTabRef.current);
+        if (dropTarget.kind === "none") {
           toast.error(translate("dropCsvNoTable"));
         } else {
           if (csvPaths.length > 1) {
             toast.info(translate("dropCsvMultiOnlyFirst"));
           }
           setImportInitialPath(csvPaths[0]);
-          setImportTarget({ database: tab.database, table: tab.table });
+          if (dropTarget.kind === "table") {
+            setImportTarget({ database: dropTarget.database, table: dropTarget.table });
+          } else {
+            toast.info(translate("dropCsvNewTable", { database: dropTarget.database }));
+            setImportTarget({ database: dropTarget.database, table: null });
+          }
         }
       }
 
@@ -9776,6 +10171,15 @@ export default function App() {
     redoCellEditForTab,
   ]);
 
+  // パフォーマンス計測の設定 (#1622) をバックエンドへ反映する。既定 (オフ) のまま起動した
+  // ときは IPC を呼ばず、一度でもオンにしたあとのオフだけを伝える。
+  const perfSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!settings.perfMeasureEnabled && !perfSyncedRef.current) return;
+    perfSyncedRef.current = true;
+    void api.setPerfEnabled(settings.perfMeasureEnabled).catch(() => {});
+  }, [settings.perfMeasureEnabled]);
+
   // 接続のヘルスチェックと自動再接続。ウィンドウがフォーカスを取り戻したとき
   // (= OS スリープ復帰やタブ切り替え後) に SELECT 1 で接続が生きているか確認し、死んで
   // いれば統一ハンドラ (自動再接続 or 手動フォールバック) に倒す。トンネル断やスリープ
@@ -9841,6 +10245,46 @@ export default function App() {
     }, TUNNEL_WATCH_INTERVAL_MS);
     return () => clearInterval(handle);
   }, [sessionId, selectedProfile, connectingId, toast]);
+
+  // 背景接続の生存確認 (#1630)。自動再接続 (`handleConnectionLost`) はアクティブな接続だけが対象で、
+  // 背景の接続が切れても切り替えるまで気付けなかった。低頻度で `pingSession` を呼び、切れていたら
+  // 接続一覧にバッジを出す (再接続は行を選ぶと `handleConnect` が行う)。ウィンドウが隠れている間と、
+  // 接続処理・再接続ループの最中は叩かない。
+  useEffect(() => {
+    if (!openConnections.some((c) => c.sessionId !== sessionId)) {
+      setStaleProfileIds((prev) =>
+        nextStaleProfileIds(
+          prev,
+          [],
+          openConnections.map((c) => c.profile.id),
+        ),
+      );
+      return;
+    }
+    const check = async () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (connectingId || reconnectingRef.current) return;
+      const background = openConnectionsRef.current.filter((c) => c.sessionId !== sessionIdRef.current);
+      if (background.length === 0) return;
+      const results = await Promise.all(
+        background.map(async (c) => ({
+          profileId: c.profile.id,
+          alive: await api.pingSession(c.sessionId).catch(() => false),
+        })),
+      );
+      setStaleProfileIds((prev) =>
+        nextStaleProfileIds(
+          prev,
+          results,
+          openConnectionsRef.current.map((c) => c.profile.id),
+        ),
+      );
+    };
+    const handle = setInterval(() => {
+      void check();
+    }, BACKGROUND_PING_INTERVAL_MS);
+    return () => clearInterval(handle);
+  }, [openConnections, sessionId, connectingId]);
 
   // Cmd/Ctrl+P でサイドバーの接続・スキーマフィルタにフォーカスする。
   // 接続タブが選択されていなければ切り替えてからフォーカスする。
@@ -10153,6 +10597,16 @@ export default function App() {
   }, []);
   focusExplorerRef.current = focusExplorer;
 
+  // エディタの識別子を Ctrl/Cmd+クリックしたとき、サイドバーのスキーマツリーで対象の
+  // テーブル / 列を選ぶ (#1629)。折りたたみ中はサイドバーを開いて接続タブへ切り替える。
+  // ツリー側が DB・テーブルを展開し、行が描画されたらフォーカスする。
+  const handleRevealSchemaObject = useCallback((target: SchemaJumpTarget) => {
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+    setSidebarTab("connections");
+    requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
+  }, []);
+
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
   // 組み立てると全テーブル分の項目生成が行バッチのたびに走っていた。
@@ -10428,6 +10882,18 @@ export default function App() {
       });
     }
 
+    // 背景接続が 1 本以上あるとき、まとめて切断する導線 (#1630)。
+    if (openConnections.some((c) => c.sessionId !== sessionId)) {
+      items.push({
+        id: "nav:disconnect-background",
+        group: "navigation",
+        label: t("cmdkActionDisconnectBackground"),
+        icon: "unplug",
+        keywords: "disconnect background others close all 切断 背景 他の接続 すべて",
+        run: () => void handleDisconnectBackground(),
+      });
+    }
+
     // 接続プロファイル。削除 Undo 待ち (#676) のプロファイルは、finalize で
     // keyring ごと消える前に接続されてしまわないよう除外する。
     for (const profile of visibleProfiles) {
@@ -10662,6 +11128,7 @@ export default function App() {
     handleCloseTab: requestCloseTab,
     handleEditorDocChange,
     handleAiSqlAction,
+    handleRevealSchemaObject,
     handleAiResultSummary,
     handleExploreColumns,
     handleNewTab,
@@ -10862,17 +11329,19 @@ export default function App() {
                 ? t("assertTitle")
                 : tab === "health"
                   ? t("healthTitle")
-                  : tab === "profile"
-                    ? t("profileTitle")
-                    : tab === "structure"
-                      ? t("structureTitle")
-                      : tab === "timelapse"
-                        ? t("timelapseTitle")
-                        : tab === "aiSql"
-                          ? t("aiSqlTitle")
-                          : tab === "aiResultSummary"
-                            ? t("aiResultSummaryTitle")
-                            : t("processTitle");
+                  : tab === "perf"
+                    ? t("perfTitle")
+                    : tab === "profile"
+                      ? t("profileTitle")
+                      : tab === "structure"
+                        ? t("structureTitle")
+                        : tab === "timelapse"
+                          ? t("timelapseTitle")
+                          : tab === "aiSql"
+                            ? t("aiSqlTitle")
+                            : tab === "aiResultSummary"
+                              ? t("aiResultSummaryTitle")
+                              : t("processTitle");
 
   // ConnectionList (memo) へ渡すハンドラの束。`tabs` / `activeTab` / `settings` に依存する
   // ハンドラが多く、そのまま渡すと打鍵・ストリーミング・タブ切替のたびに参照が変わって
@@ -10880,6 +11349,10 @@ export default function App() {
   const connectionListHandlers = useStableCallbacks({
     onConnect: handleConnect,
     onDisconnectProfile: handleDisconnectProfile,
+    onDisconnectBackground: () => void handleDisconnectBackground(),
+    onShowSavedTabs: setSavedTabsTarget,
+    onMoveProfilesToGroup: (ids: string[], group: string | null) =>
+      void handleMoveProfilesToGroup(ids, group),
     onReorderProfiles: handleReorderProfiles,
     onCreate: handleOpenCreateForm,
     onEdit: handleOpenEditForm,
@@ -10914,6 +11387,8 @@ export default function App() {
     onExportTables: (database: string, tables: string[]) => setExportTablesTarget({ database, tables }),
     onDumpTables: (database: string, tables: string[]) => setDumpTablesTarget({ database, tables }),
     onDropTables: handleDropTables,
+    onTruncateTables: handleTruncateTables,
+    onRunTablesMaintenance: handleRunTablesMaintenance,
     onAlterTable: (database: string, table: string) => setAlterTableTarget({ database, table }),
     onCreateIndex: (database: string, table: string) => setCreateIndexTarget({ database, table }),
     onDropIndex: handleDropIndex,
@@ -11248,6 +11723,7 @@ export default function App() {
                 connectingId={connectingId}
                 errorProfileId={errorProfileId}
                 openProfileIds={openProfileIds}
+                staleProfileIds={staleProfileIds}
                 txProfileIds={txProfileIds}
                 {...connectionListHandlers}
                 selectLimit={Math.max(1, settings.defaultDisplayCount)}
@@ -11418,6 +11894,8 @@ export default function App() {
             selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
           }
         >
+          {/* IPC 検証失敗が複数コマンドで続いたときの版不一致の警告 (#1622)。通常は何も描画しない。 */}
+          <IpcMismatchNotice />
           {/* 全画面サーフェスの切替クロスフェード (#1020)。key は上で組み立てた
             `workspaceView` で、結果パネル (#788) と同じ `variants.fade` +
             `transitions.enter` を流用する (尺を二重定義しない)。
@@ -11501,6 +11979,9 @@ export default function App() {
                           }
                         }}
                       />
+                    ) : activeBottomPanelTab === "perf" ? (
+                      // パフォーマンス計測 (#1622)。接続に依存しない診断タブ。
+                      <PerfPanel />
                     ) : !sessionId ? null : activeBottomPanelTab === "processes" ? (
                       <ProcessListPanel
                         sessionId={sessionId}
@@ -11547,6 +12028,7 @@ export default function App() {
                       <QueryInspectorPanel
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
+                        onExplain={explainTailSql}
                       />
                     ) : activeBottomPanelTab === "whereUsed" ? (
                       <WhereUsedPanel
@@ -11933,6 +12415,9 @@ export default function App() {
                           connectingId={connectingId}
                           onConnect={(p) => void handleConnect(p)}
                           onCreate={handleOpenCreateForm}
+                          onEdit={handleOpenEditForm}
+                          onDuplicate={handleDuplicateProfile}
+                          onDelete={(p) => void handleDeleteProfile(p)}
                         />
                       </Flex>
                     )}
@@ -12365,6 +12850,11 @@ export default function App() {
                 profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
+                onImportAllSheets={(req) => {
+                  setImportSheetsRequest({ database: importTarget.database, ...req });
+                  setImportTarget(null);
+                  setImportInitialPath(null);
+                }}
                 onClose={() => {
                   setImportTarget(null);
                   setImportInitialPath(null);
@@ -12378,6 +12868,27 @@ export default function App() {
                     handleOpenTable(importTarget.database, table);
                   } else {
                     handleImported(importTarget.database, table);
+                  }
+                }}
+              />
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {importSheetsRequest && sessionId && (
+              <ImportSheetsModal
+                sessionId={sessionId}
+                database={importSheetsRequest.database}
+                driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
+                path={importSheetsRequest.path}
+                options={importSheetsRequest.options}
+                sheets={importSheetsRequest.sheets}
+                onClose={() => setImportSheetsRequest(null)}
+                onImported={(tables) => {
+                  // 新しいテーブルが増えたのでツリーとスキーマキャッシュを更新する。
+                  if (tables.length > 0) {
+                    invalidateSchemaCache(importSheetsRequest.database);
+                    connectionListRef.current?.refreshSchema();
                   }
                 }}
               />
@@ -12510,6 +13021,20 @@ export default function App() {
                   tables={exportTablesTarget.tables}
                   profileId={selectedProfile?.id}
                   onClose={() => setExportTablesTarget(null)}
+                />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {savedTabsTarget && savedTabsSummary && (
+              <Suspense fallback={null}>
+                <SavedTabsModal
+                  profileName={savedTabsTarget.name}
+                  summary={savedTabsSummary}
+                  isOpen={openProfileIds.has(savedTabsTarget.id)}
+                  onClear={handleClearSavedTabs}
+                  onClose={() => setSavedTabsTarget(null)}
                 />
               </Suspense>
             )}
@@ -12800,6 +13325,8 @@ export default function App() {
                   driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                   database={saveAsTableRequest.database}
                   sourceSql={saveAsTableRequest.sql}
+                  resultColumns={saveAsTableRequest.resultColumns}
+                  readOnly={readOnly}
                   onConfirm={handleSaveAsTableConfirm}
                   onClose={() => setSaveAsTableRequest(null)}
                 />
@@ -13081,6 +13608,11 @@ export default function App() {
                 title: openConnections.length === 0 ? t("appToolsNeedsSession") : undefined,
               },
               {
+                label: t("perfTitle"),
+                icon: "clock",
+                onSelect: () => toggleBottomPanel("perf"),
+              },
+              {
                 label: t("appAssertions"),
                 icon: "check",
                 onSelect: () => toggleBottomPanel("assertions"),
@@ -13236,6 +13768,9 @@ export default function App() {
               sessionId={sessionId}
               currentDatabase={activeTab?.database ?? selectedProfile?.database ?? null}
               onOpenTable={handleOpenTable}
+              onOpenObject={(database, kind, name, id) =>
+                void handleOpenObjectDefinition(database, kind, name, id)
+              }
               onClose={() => setShowObjectSearch(false)}
             />
           )}

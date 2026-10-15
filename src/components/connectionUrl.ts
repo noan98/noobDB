@@ -289,3 +289,69 @@ export function parseConnectionUrl(input: string): ConnectionUrlResult {
     throw e;
   }
 }
+
+/** URL 組み立ての入力 (パスワードは受け取らない)。 */
+export interface ConnectionUrlParts {
+  driver: DriverKind;
+  host?: string;
+  port?: number;
+  user?: string;
+  database?: string | null;
+  sslMode?: SslMode;
+  /** SQLite のファイルパス。 */
+  filePath?: string | null;
+}
+
+const PG_SSLMODE: Record<SslMode, string> = {
+  disable: "disable",
+  prefer: "prefer",
+  require: "require",
+  verify_ca: "verify-ca",
+  verify_full: "verify-full",
+};
+
+const MYSQL_SSLMODE: Record<SslMode, string> = {
+  disable: "DISABLED",
+  prefer: "PREFERRED",
+  require: "REQUIRED",
+  verify_ca: "VERIFY_CA",
+  verify_full: "VERIFY_IDENTITY",
+};
+
+/**
+ * フォームの現在値から接続 URL を組み立てる ([`parseConnectionUrl`] の逆操作, #1630)。
+ * **パスワードは引数に取らず、URL にも含めない**。ユーザー・DB 名は `%XX` エンコードし、
+ * IPv6 ホストは `[..]` で囲む。ホスト未入力のネットワーク DB は `null`。
+ * 出力は `parseConnectionUrl` で同じ項目に戻せる (往復できる)。
+ */
+export function buildConnectionUrl(parts: ConnectionUrlParts): string | null {
+  if (parts.driver === "sqlite") {
+    const path = (parts.filePath ?? "").trim();
+    if (path === "") return null;
+    const normalized = path.replace(/\\/g, "/");
+    // 絶対パス (`/abs`, `C:/x`) は `sqlite:///...`、相対パスは `sqlite:rel` で出す。
+    if (normalized.startsWith("/")) return `sqlite://${normalized}`;
+    if (/^[A-Za-z]:\//.test(normalized)) return `sqlite:///${normalized}`;
+    return `sqlite:${normalized}`;
+  }
+  const host = (parts.host ?? "").trim();
+  if (host === "") return null;
+  const scheme = parts.driver === "mysql" ? "mysql" : "postgres";
+  const hostText = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const user = (parts.user ?? "").trim();
+  let url = `${scheme}://`;
+  if (user !== "") url += `${encodeURIComponent(user)}@`;
+  url += hostText;
+  if (parts.port !== undefined && Number.isInteger(parts.port) && parts.port > 0) {
+    url += `:${parts.port}`;
+  }
+  const database = (parts.database ?? "").trim();
+  if (database !== "") url += `/${encodeURIComponent(database)}`;
+  if (parts.sslMode) {
+    url +=
+      parts.driver === "mysql"
+        ? `?ssl-mode=${MYSQL_SSLMODE[parts.sslMode]}`
+        : `?sslmode=${PG_SSLMODE[parts.sslMode]}`;
+  }
+  return url;
+}

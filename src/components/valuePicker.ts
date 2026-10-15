@@ -83,6 +83,12 @@ export interface FkCandidatesParams {
    * PostgreSQL の ICU / locale)・LIKE の大文字小文字無視 (SQLite) と結果が食い違うため採らない。
    */
   textColumn?: boolean;
+  /**
+   * 参照先の表示列 (name / title など、`pickDisplayColumn` が推定したもの、#1629)。指定すると
+   * `SELECT DISTINCT <参照列>, <表示列>` で取り、候補の説明文に使う。値として入るのは従来どおり
+   * 参照列だけで、入力経路は変わらない。入力中の語は参照列に加えて表示列の前方一致にも当てる。
+   */
+  displayColumn?: string | null;
 }
 
 /**
@@ -121,13 +127,95 @@ export function buildFkCandidatesSql(p: FkCandidatesParams): string {
   const col = quoteIdentFor(p.driver, p.refColumn);
   const where = [`${col} IS NOT NULL`];
   const search = p.search ?? "";
+  const display = p.displayColumn ? quoteIdentFor(p.driver, p.displayColumn) : null;
   if (search !== "") {
     const pattern = quoteString(p.driver, `${escapeLikeWildcards(search)}%`);
+    const escape = `ESCAPE ${quoteString(p.driver, "\\")}`;
     const target = p.textColumn && p.driver !== "mysql" ? col : textCastExpr(p.driver, col);
-    where.push(`${target} LIKE ${pattern} ESCAPE ${quoteString(p.driver, "\\")}`);
+    const byId = `${target} LIKE ${pattern} ${escape}`;
+    // 表示列は文字列型 (`pickDisplayColumn` が保証) なので CAST は要らない。
+    where.push(display ? `(${byId} OR ${display} LIKE ${pattern} ${escape})` : byId);
   }
   const from = tableRef(p.driver, p.database, p.refTable);
-  return `SELECT DISTINCT ${col} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col} LIMIT ${limit}`;
+  const select = display ? `${col}, ${display}` : col;
+  return `SELECT DISTINCT ${select} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col} LIMIT ${limit}`;
+}
+
+/** 参照先テーブルの列名と型を引く読み取り専用 SQL (表示列の推定用、#1629)。行 = `[列名, 型名]`。 */
+export function buildRefColumnsSql(
+  driver: string,
+  database: string | null | undefined,
+  table: string,
+): string {
+  const lit = (v: string) => quoteString(driver, v);
+  switch (driver) {
+    case "sqlite":
+      return `SELECT name, type FROM pragma_table_info(${lit(table)})`;
+    case "postgres":
+      return (
+        "SELECT column_name, data_type FROM information_schema.columns" +
+        ` WHERE table_schema = ${database ? lit(database) : "current_schema()"} AND table_name = ${lit(table)}` +
+        " ORDER BY ordinal_position"
+      );
+    default:
+      return (
+        "SELECT COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS" +
+        ` WHERE TABLE_SCHEMA = ${database ? lit(database) : "DATABASE()"} AND TABLE_NAME = ${lit(table)}` +
+        " ORDER BY ORDINAL_POSITION"
+      );
+  }
+}
+
+/** 表示列として優先する列名 (前にあるほど優先)。完全一致 (大小無視) で探す。 */
+const DISPLAY_COLUMN_PRIORITY = [
+  "name",
+  "display_name",
+  "full_name",
+  "title",
+  "label",
+  "username",
+  "user_name",
+  "login",
+  "nickname",
+  "email",
+  "code",
+  "slug",
+  "description",
+] as const;
+
+/** 優先リストに無くても、`*_name` / `*_title` / `*_label` は表示列の候補にする。 */
+const DISPLAY_COLUMN_SUFFIX = /(_name|_title|_label)$/i;
+
+/**
+ * 参照先テーブルの列から、候補の説明文に使う表示列を推定する (#1629)。文字列型の列だけが対象で、
+ * 参照列自身と `isMasked` が真の列 (機微カラムのマスク対象) は除く。名前が優先リストに完全一致する列、
+ * なければ `*_name` / `*_title` / `*_label` で終わる列の順 (同順位なら列の定義順)。無ければ null。
+ */
+export function pickDisplayColumn(
+  columns: readonly { name: string; type: string | null }[],
+  refColumn: string,
+  isMasked: (name: string) => boolean = () => false,
+): string | null {
+  const usable = columns.filter((c) => c.name !== refColumn && isTextDataType(c.type) && !isMasked(c.name));
+  for (const want of DISPLAY_COLUMN_PRIORITY) {
+    const hit = usable.find((c) => c.name.toLowerCase() === want);
+    if (hit) return hit.name;
+  }
+  return usable.find((c) => DISPLAY_COLUMN_SUFFIX.test(c.name))?.name ?? null;
+}
+
+/** [`buildRefColumnsSql`] の結果を列名と型にする。 */
+export function refColumnsFromResult(
+  result: Pick<QueryResult, "rows">,
+): { name: string; type: string | null }[] {
+  const out: { name: string; type: string | null }[] = [];
+  for (const row of result.rows) {
+    const name = row[0];
+    if (name === null || name === undefined) continue;
+    const type = row[1];
+    out.push({ name: String(name), type: type === null || type === undefined ? null : String(type) });
+  }
+  return out;
 }
 
 /** クエリビルダの WHERE 値入力に出す、列の既存値の候補の最大件数 (#1627)。 */
@@ -618,6 +706,39 @@ export function candidatesFromResult(result: Pick<QueryResult, "rows">): string[
     out.push(s);
   }
   return out;
+}
+
+/** 候補の説明文の最大文字数 (長い値は省略する)。 */
+export const FK_LABEL_MAX_CHARS = 60;
+
+/**
+ * 表示列つきの FK 候補の結果 (`[参照列, 表示列]`) を、候補値と `値 → 説明文` に分ける (#1629)。
+ * 説明文が NULL / 空白だけの行は説明なし。長い説明は `FK_LABEL_MAX_CHARS` で省略する。値の重複は
+ * 最初の行を採る。
+ */
+export function fkCandidatesWithLabels(result: Pick<QueryResult, "rows">): {
+  values: string[];
+  labels: Record<string, string>;
+} {
+  const values: string[] = [];
+  const labels: Record<string, string> = {};
+  const seen = new Set<string>();
+  for (const row of result.rows) {
+    const v = row[0];
+    if (v === null || v === undefined) continue;
+    const value = String(v);
+    if (seen.has(value)) continue;
+    seen.add(value);
+    values.push(value);
+    const raw = row[1];
+    const text = raw === null || raw === undefined ? "" : String(raw).replace(/\s+/g, " ").trim();
+    if (text !== "") {
+      const chars = [...text];
+      labels[value] =
+        chars.length > FK_LABEL_MAX_CHARS ? `${chars.slice(0, FK_LABEL_MAX_CHARS - 1).join("")}…` : text;
+    }
+  }
+  return { values, labels };
 }
 
 /** 定義テキストの結果 (1 列目) を文字列配列にする。 */

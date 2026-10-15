@@ -100,3 +100,44 @@ describe("ServerInfoPanel refresh failure keeps the table (#1529)", () => {
     expect(screen.getByRole("status")).toHaveTextContent(t("serverInfoVarCount", { shown: 1, total: 1 }));
   });
 });
+
+describe("ServerInfoPanel 既定値以外の絞り込みと値コピー (#1622)", () => {
+  const info: ServerInfo = {
+    version: "16.0",
+    variables: [
+      { name: "work_mem", value: "64MB", source: "configuration file" },
+      { name: "shared_buffers", value: "128MB", source: "default" },
+      { name: "timezone", value: "UTC", source: null },
+    ],
+  };
+
+  it("「既定値以外のみ」で source が default 以外の変数だけに絞る", async () => {
+    vi.mocked(api.serverInfo).mockResolvedValue(info);
+    renderWithProviders(<ServerInfoPanel sessionId="s1" onClose={() => {}} />);
+    await screen.findByText("shared_buffers");
+    fireEvent.click(screen.getByLabelText(t("serverInfoOnlyChanged")));
+    expect(screen.getByText("work_mem")).toBeInTheDocument();
+    expect(screen.queryByText("shared_buffers")).not.toBeInTheDocument();
+    expect(screen.queryByText("timezone")).not.toBeInTheDocument();
+  });
+
+  it("source が全く取れないサーバでは絞り込みの欄を出さない", async () => {
+    vi.mocked(api.serverInfo).mockResolvedValue({
+      version: "8.0.0",
+      variables: [{ name: "max_connections", value: "150" }],
+    });
+    renderWithProviders(<ServerInfoPanel sessionId="s1" onClose={() => {}} />);
+    await screen.findByText("max_connections");
+    expect(screen.queryByLabelText(t("serverInfoOnlyChanged"))).not.toBeInTheDocument();
+  });
+
+  it("コピーボタンは「名前 = 値」をクリップボードへ書く", async () => {
+    vi.mocked(api.serverInfo).mockResolvedValue(info);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderWithProviders(<ServerInfoPanel sessionId="s1" onClose={() => {}} />);
+    await screen.findByText("work_mem");
+    fireEvent.click(screen.getByRole("button", { name: t("serverInfoCopyValueAria", { name: "work_mem" }) }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("work_mem = 64MB"));
+  });
+});

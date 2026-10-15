@@ -95,6 +95,29 @@ pub struct GrantSpec {
     pub database: String,
     pub table: Option<String>,
     pub flags: PrivilegeFlags,
+    /// 列単位の権限 (#1622)。空でなければ `table` が `Some` のときだけ有効で、
+    /// SELECT / INSERT / UPDATE のみを `SELECT (a, b)` の形で列に限定して出力する
+    /// (DELETE / DDL は列単位では存在しないため無視)。空 / `None` は従来のテーブル単位。
+    #[serde(default)]
+    pub columns: Option<Vec<String>>,
+}
+
+/// 列リストが有効 (テーブル指定あり・空でない) なら、その列名 (重複除去・順序保持) を返す。
+fn effective_columns(spec: &GrantSpec) -> Option<Vec<&str>> {
+    let cols = spec.columns.as_ref()?;
+    spec.table.as_ref()?;
+    let mut out: Vec<&str> = Vec::new();
+    for c in cols {
+        let c = c.as_str();
+        if !c.is_empty() && !out.contains(&c) {
+            out.push(c);
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
 }
 
 /// Quotes a MySQL account (`'user'@'host'`), doubling embedded single quotes
@@ -226,11 +249,39 @@ fn render_grant_or_revoke(
     verb: &str,
     preposition: &str,
 ) -> Option<String> {
-    let privs = privilege_keywords(driver, spec.flags);
-    if privs.is_empty() {
-        return None;
-    }
-    let priv_list = privs.join(", ");
+    let columns = effective_columns(spec);
+    let priv_list = match &columns {
+        Some(cols) => {
+            // 列単位は SELECT / INSERT / UPDATE のみ (DELETE / DDL は列に付与できない)。
+            let col_list = cols
+                .iter()
+                .map(|c| quote_ident(driver, c))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let keywords: Vec<String> = privilege_keywords(
+                driver,
+                PrivilegeFlags {
+                    delete: false,
+                    ddl: false,
+                    ..spec.flags
+                },
+            )
+            .into_iter()
+            .map(|k| format!("{k} ({col_list})"))
+            .collect();
+            if keywords.is_empty() {
+                return None;
+            }
+            keywords.join(", ")
+        }
+        None => {
+            let privs = privilege_keywords(driver, spec.flags);
+            if privs.is_empty() {
+                return None;
+            }
+            privs.join(", ")
+        }
+    };
     Some(match driver {
         DriverKind::Mysql => format!(
             "{verb} {priv_list} ON {} {preposition} {}",
@@ -252,6 +303,59 @@ fn render_grant_or_revoke(
         }
         DriverKind::Sqlite => String::new(),
     })
+}
+
+/// ロール (メンバーシップ) の付与 SQL を生成する (#1622)。
+/// MySQL 8: ``GRANT 'role'@'%' TO 'user'@'host'`` / PostgreSQL: ``GRANT "role" TO "user"``。
+/// `role_host` は MySQL のロール側ホスト (省略時 `%`)、`user_host` は付与先アカウントのホスト。
+/// SQLite は空文字列。
+///
+/// **MySQL は 8.0 以降が前提** (ロール構文は 5.7 / MariaDB の一部には無い。MariaDB の
+/// `GRANT role TO user` はホスト指定を取らない)。
+pub fn generate_role_grant_sql(
+    driver: DriverKind,
+    role: &str,
+    role_host: Option<&str>,
+    user: &str,
+    user_host: Option<&str>,
+) -> String {
+    render_role_membership(driver, "GRANT", "TO", role, role_host, user, user_host)
+}
+
+/// ロールの剥奪 SQL を生成する (#1622)。MySQL 8: ``REVOKE 'role'@'%' FROM 'user'@'host'`` /
+/// PostgreSQL: ``REVOKE "role" FROM "user"``。
+pub fn generate_role_revoke_sql(
+    driver: DriverKind,
+    role: &str,
+    role_host: Option<&str>,
+    user: &str,
+    user_host: Option<&str>,
+) -> String {
+    render_role_membership(driver, "REVOKE", "FROM", role, role_host, user, user_host)
+}
+
+fn render_role_membership(
+    driver: DriverKind,
+    verb: &str,
+    preposition: &str,
+    role: &str,
+    role_host: Option<&str>,
+    user: &str,
+    user_host: Option<&str>,
+) -> String {
+    match driver {
+        DriverKind::Mysql => format!(
+            "{verb} {} {preposition} {}",
+            mysql_account(role, role_host),
+            mysql_account(user, user_host)
+        ),
+        DriverKind::Postgres => format!(
+            "{verb} {} {preposition} {}",
+            quote_ident(DriverKind::Postgres, role),
+            quote_ident(DriverKind::Postgres, user)
+        ),
+        DriverKind::Sqlite => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -403,6 +507,7 @@ mod tests {
             database: "shop".into(),
             table: Some("orders".into()),
             flags: flags(true, true, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -418,6 +523,7 @@ mod tests {
             database: "shop".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -433,6 +539,7 @@ mod tests {
             database: "shop".into(),
             table: Some("orders".into()),
             flags: flags(false, false, false, false, true),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -448,6 +555,7 @@ mod tests {
             database: "shop".into(),
             table: Some("orders".into()),
             flags: flags(true, false, false, true, false),
+            columns: None,
         };
         assert_eq!(
             generate_revoke_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -463,6 +571,7 @@ mod tests {
             database: "public".into(),
             table: Some("orders".into()),
             flags: flags(true, true, true, true, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Postgres, &spec).as_deref(),
@@ -478,6 +587,7 @@ mod tests {
             database: "public".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Postgres, &spec).as_deref(),
@@ -493,6 +603,7 @@ mod tests {
             database: "public".into(),
             table: Some("orders".into()),
             flags: flags(false, false, false, false, true),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Postgres, &spec).as_deref(),
@@ -508,6 +619,7 @@ mod tests {
             database: "public".into(),
             table: Some("orders".into()),
             flags: flags(false, true, true, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_revoke_sql(DriverKind::Postgres, &spec).as_deref(),
@@ -523,6 +635,7 @@ mod tests {
             database: "shop".into(),
             table: Some("orders".into()),
             flags: flags(false, false, false, false, false),
+            columns: None,
         };
         assert_eq!(generate_grant_sql(DriverKind::Mysql, &spec), None);
         assert_eq!(generate_revoke_sql(DriverKind::Mysql, &spec), None);
@@ -547,6 +660,7 @@ mod tests {
             database: "foo_bar".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -574,6 +688,7 @@ mod tests {
             database: "foo_bar".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_revoke_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -592,6 +707,7 @@ mod tests {
             database: "foo_bar".into(),
             table: Some("orders".into()),
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -611,6 +727,7 @@ mod tests {
             database: r"foo\_bar".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(
             generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
@@ -672,7 +789,101 @@ mod tests {
             database: "main".into(),
             table: None,
             flags: flags(true, false, false, false, false),
+            columns: None,
         };
         assert_eq!(generate_grant_sql(driver, &grant).as_deref(), Some(""));
+    }
+
+    // --- 列単位 GRANT / REVOKE / ロール (#1622) ---------------------------
+
+    fn col_spec(cols: &[&str], f: PrivilegeFlags) -> GrantSpec {
+        GrantSpec {
+            user: "alice".into(),
+            host: Some("%".into()),
+            database: "shop".into(),
+            table: Some("orders".into()),
+            flags: f,
+            columns: Some(cols.iter().map(|c| c.to_string()).collect()),
+        }
+    }
+
+    #[test]
+    fn mysql_column_grant_limits_select_insert_update_to_columns() {
+        let spec = col_spec(&["id", "total"], flags(true, true, true, true, true));
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("GRANT SELECT (`id`, `total`), INSERT (`id`, `total`), UPDATE (`id`, `total`) ON `shop`.`orders` TO 'alice'@'%'")
+        );
+        assert_eq!(
+            generate_revoke_sql(
+                DriverKind::Mysql,
+                &col_spec(&["id"], flags(true, false, false, false, false))
+            )
+            .as_deref(),
+            Some("REVOKE SELECT (`id`) ON `shop`.`orders` FROM 'alice'@'%'")
+        );
+    }
+
+    #[test]
+    fn postgres_column_grant() {
+        let spec = col_spec(
+            &["id", "id", "note"],
+            flags(true, false, true, false, false),
+        );
+        assert_eq!(
+            generate_grant_sql(DriverKind::Postgres, &spec).as_deref(),
+            Some("GRANT SELECT (\"id\", \"note\"), UPDATE (\"id\", \"note\") ON \"shop\".\"orders\" TO \"alice\"")
+        );
+    }
+
+    #[test]
+    fn column_grant_with_only_delete_or_ddl_is_empty() {
+        let spec = col_spec(&["id"], flags(false, false, false, true, true));
+        assert_eq!(generate_grant_sql(DriverKind::Mysql, &spec), None);
+    }
+
+    #[test]
+    fn empty_columns_or_no_table_fall_back_to_table_level() {
+        let mut spec = col_spec(&[], flags(true, false, false, false, false));
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("GRANT SELECT ON `shop`.`orders` TO 'alice'@'%'")
+        );
+        spec.columns = Some(vec!["id".into()]);
+        spec.table = None;
+        assert_eq!(
+            generate_grant_sql(DriverKind::Mysql, &spec).as_deref(),
+            Some("GRANT SELECT ON `shop`.* TO 'alice'@'%'")
+        );
+    }
+
+    #[test]
+    fn role_membership_sql() {
+        assert_eq!(
+            generate_role_grant_sql(
+                DriverKind::Mysql,
+                "reader",
+                None,
+                "alice",
+                Some("localhost")
+            ),
+            "GRANT 'reader'@'%' TO 'alice'@'localhost'"
+        );
+        assert_eq!(
+            generate_role_revoke_sql(DriverKind::Mysql, "reader", Some("h"), "alice", None),
+            "REVOKE 'reader'@'h' FROM 'alice'@'%'"
+        );
+        assert_eq!(
+            generate_role_grant_sql(DriverKind::Postgres, "reader", None, "al\"ice", None),
+            "GRANT \"reader\" TO \"al\"\"ice\""
+        );
+        assert_eq!(
+            generate_role_revoke_sql(DriverKind::Postgres, "reader", None, "alice", None),
+            "REVOKE \"reader\" FROM \"alice\""
+        );
+        assert_eq!(
+            generate_role_grant_sql(DriverKind::Sqlite, "r", None, "u", None),
+            ""
+        );
     }
 }

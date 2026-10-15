@@ -1,6 +1,6 @@
 import { chakra } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { Checkbox, Input, Select } from "./ui";
+import { Button, Checkbox, Input, Select } from "./ui";
 import { DraftNumberInput } from "./DraftNumberInput";
 import { FieldLabel, FormSection } from "./modalForm";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -32,6 +32,9 @@ interface Props {
   overrides: ExportMaskOverrides;
   onOverridesChange: (next: ExportMaskOverrides) => void;
   onSavePreset: (column: string, rule: ExportMaskRule) => void;
+  /** プリセットの JSON 書き出し / 読み込み (#1623)。省略するとボタンを出さない。 */
+  onExportPresets?: () => void;
+  onImportPresets?: () => void;
   disabled?: boolean;
 }
 
@@ -47,6 +50,10 @@ function ruleLabelKey(kind: Choice) {
       return "exportMaskRuleHash" as const;
     case "null":
       return "exportMaskRuleNull" as const;
+    case "email":
+      return "exportMaskRuleEmail" as const;
+    case "date":
+      return "exportMaskRuleDate" as const;
     default:
       return "exportMaskRuleNone" as const;
   }
@@ -60,6 +67,8 @@ export function ExportMaskingSection({
   overrides,
   onOverridesChange,
   onSavePreset,
+  onExportPresets,
+  onImportPresets,
   disabled,
 }: Props) {
   const t = useT();
@@ -135,7 +144,7 @@ export function ExportMaskingSection({
                     )}
                   </chakra.span>
                   <Select
-                    w="170px"
+                    w="200px"
                     value={choice}
                     aria-label={t("exportMaskingRuleFor", { column })}
                     disabled={disabled}
@@ -188,6 +197,42 @@ export function ExportMaskingSection({
                       />
                     </chakra.span>
                   )}
+                  {rule?.kind === "email" && (
+                    <chakra.span
+                      display="inline-flex"
+                      alignItems="center"
+                      gap="1"
+                      textStyle="caption"
+                      color="app.textMuted"
+                    >
+                      {t("exportMaskingKeepStart")}
+                      <DraftNumberInput
+                        min={0}
+                        w="56px"
+                        value={rule.keepStart}
+                        aria-label={t("exportMaskingEmailKeepStartFor", { column })}
+                        disabled={disabled}
+                        onCommit={(n) => setRule(column, { kind: "email", keepStart: n })}
+                      />
+                    </chakra.span>
+                  )}
+                  {rule?.kind === "date" && (
+                    <Select
+                      w="110px"
+                      value={rule.precision}
+                      aria-label={t("exportMaskingDatePrecisionFor", { column })}
+                      disabled={disabled}
+                      onChange={(e) =>
+                        setRule(column, {
+                          kind: "date",
+                          precision: e.target.value === "month" ? "month" : "year",
+                        })
+                      }
+                    >
+                      <option value="year">{t("exportMaskingDateYear")}</option>
+                      <option value="month">{t("exportMaskingDateMonth")}</option>
+                    </Select>
+                  )}
                   {rule?.kind === "hash" && (
                     <chakra.span
                       display="inline-flex"
@@ -238,6 +283,32 @@ export function ExportMaskingSection({
           <chakra.div fontSize="xs" color="app.textMuted">
             {t("exportMaskingHashNote")}
           </chakra.div>
+          {(onExportPresets || onImportPresets) && (
+            <chakra.div display="flex" gap="2" flexWrap="wrap">
+              {onImportPresets && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onImportPresets}
+                >
+                  {t("exportMaskingPresetsImport")}
+                </Button>
+              )}
+              {onExportPresets && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={disabled}
+                  onClick={onExportPresets}
+                >
+                  {t("exportMaskingPresetsExport")}
+                </Button>
+              )}
+            </chakra.div>
+          )}
         </>
       )}
     </FormSection>

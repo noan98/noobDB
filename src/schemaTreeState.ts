@@ -9,6 +9,8 @@
 // へフォールバックする。純ロジックのみを提供し、UI 反映と「存在しなくなった DB/テーブルの
 // 無視」は `ConnectionList` が担う。
 
+import { type ExplorerTableSort, parseExplorerTableSort } from "./components/explorerTree";
+
 const STORAGE_PREFIX = "noobdb.schematree.";
 
 /**
@@ -20,6 +22,8 @@ export interface SchemaTreeState {
   dbs: Record<string, boolean>;
   /** テーブルキー (`db::tbl`) → 開いているか。 */
   tables: Record<string, boolean>;
+  /** テーブル / ビューの並べ替え (#1629)。省略 = 既定の `name` (取得順)。 */
+  sort?: ExplorerTableSort;
 }
 
 export const EMPTY_SCHEMA_TREE: SchemaTreeState = { dbs: {}, tables: {} };
@@ -39,7 +43,8 @@ export function normalizeSchemaTree(parsed: unknown): SchemaTreeState {
   if (Array.isArray(o.tables)) {
     for (const k of o.tables) if (typeof k === "string") tables[k] = true;
   }
-  return { dbs, tables };
+  const sort = parseExplorerTableSort(o.sort);
+  return sort === "name" ? { dbs, tables } : { dbs, tables, sort };
 }
 
 export function loadSchemaTree(profileId: string): SchemaTreeState {
@@ -54,16 +59,20 @@ export function loadSchemaTree(profileId: string): SchemaTreeState {
 
 /**
  * 展開状態を保存する。開いているノードが無いときはエントリを削除して、閉じきった
- * 状態が確実に既定へ戻るようにする (`saveQuickAccess` と同じ発想)。
+ * 状態 (並べ替えも既定) が確実に既定へ戻るようにする (`saveQuickAccess` と同じ発想)。
  */
 export function saveSchemaTree(profileId: string, state: SchemaTreeState): void {
   try {
     const dbs = Object.keys(state.dbs).filter((k) => state.dbs[k]);
     const tables = Object.keys(state.tables).filter((k) => state.tables[k]);
-    if (dbs.length === 0 && tables.length === 0) {
+    const sort = parseExplorerTableSort(state.sort);
+    if (dbs.length === 0 && tables.length === 0 && sort === "name") {
       localStorage.removeItem(STORAGE_PREFIX + profileId);
     } else {
-      localStorage.setItem(STORAGE_PREFIX + profileId, JSON.stringify({ dbs, tables }));
+      localStorage.setItem(
+        STORAGE_PREFIX + profileId,
+        JSON.stringify(sort === "name" ? { dbs, tables } : { dbs, tables, sort }),
+      );
     }
   } catch {
     // ignore (quota / disabled storage)

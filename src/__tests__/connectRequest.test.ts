@@ -65,6 +65,12 @@ describe("connectRequestFromProfile", () => {
     expect(req.ssh?.jump).toMatchObject({ host: "j", passphrase: "", password: "" });
   });
 
+  it("固定ローカルポートは pinLocalPort のときだけ引き継ぐ (#1630)", () => {
+    const pinned = { ...profile, ssh: { ...profile.ssh!, local_port: 15432 } } as ConnectionProfile;
+    expect(connectRequestFromProfile(pinned).ssh?.local_port).toBeNull();
+    expect(connectRequestFromProfile(pinned, { pinLocalPort: true }).ssh?.local_port).toBe(15432);
+  });
+
   it("overrides が read_only / skip_history を上書きする", () => {
     const req = connectRequestFromProfile(profile, { read_only: false, skip_history: true });
     expect(req.read_only).toBe(false);

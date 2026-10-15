@@ -1,4 +1,10 @@
 import {
+  isMacPlatform,
+  isSchemaJumpModifier,
+  resolveSchemaJump,
+  type SchemaJumpTarget,
+} from "./identifierJump";
+import {
   forwardRef,
   memo,
   useEffect,
@@ -360,6 +366,11 @@ interface Props {
    * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
    */
   onAiSqlAction?: (action: AiSqlEditorAction) => void;
+  /**
+   * 識別子を Ctrl/Cmd+クリックしたとき、補完用スキーマ (`databaseSchema`) に一致するテーブル / 列を
+   * スキーマツリーで選択させる (#1629)。一致しないクリックでは呼ばれず、通常のクリックとして扱う。
+   */
+  onRevealSchemaObject?: (target: SchemaJumpTarget) => void;
 }
 
 export interface QueryEditorHandle {
@@ -659,6 +670,7 @@ export const QueryEditor = memo(
       onToggleFocus,
       onPreflightImpact,
       onAiSqlAction,
+      onRevealSchemaObject,
     }: Props,
     ref,
   ) {
@@ -922,6 +934,8 @@ export const QueryEditor = memo(
     onPreflightImpactRef.current = onPreflightImpact;
     const onAiSqlActionRef = useRef(onAiSqlAction);
     onAiSqlActionRef.current = onAiSqlAction;
+    const onRevealSchemaObjectRef = useRef(onRevealSchemaObject);
+    onRevealSchemaObjectRef.current = onRevealSchemaObject;
     const tabIdRef = useRef(tabId);
     tabIdRef.current = tabId;
     const driverRef = useRef(driver);
@@ -1095,6 +1109,29 @@ export const QueryEditor = memo(
             stmtFlashField,
             // スキーマツリー行のドラッグ挿入 (#1414) の着地点マーカー。
             treeDropMarkerField,
+            // 識別子の Ctrl/Cmd+クリックでスキーマツリーの対象を選ぶ (#1629)。補完用スキーマに
+            // 一致したときだけ横取りし、一致しなければ通常のクリック (複数カーソルなど) に任せる。
+            EditorView.domEventHandlers({
+              mousedown: (event, view) => {
+                if (event.button !== 0 || event.altKey || event.shiftKey) return false;
+                if (!isSchemaJumpModifier(event, isMacPlatform())) return false;
+                const reveal = onRevealSchemaObjectRef.current;
+                if (!reveal) return false;
+                const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (pos === null) return false;
+                const a = sqlArgsRef.current;
+                const target = resolveSchemaJump({
+                  text: view.state.doc.toString(),
+                  pos,
+                  tables: a.databaseSchema,
+                  defaultDatabase: a.schemaTable?.database ?? a.defaultDatabase,
+                });
+                if (!target) return false;
+                event.preventDefault();
+                reveal(target);
+                return true;
+              },
+            }),
             // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
             // 再構成できるようにする。作成時点の設定値で初期化する。
             lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),

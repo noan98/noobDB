@@ -4,6 +4,7 @@ import * as schemas from "../schemas";
 import { ipcValidationErrorMessage, parseResponse } from "../schemas";
 import type {
   ConnectionProfile,
+  KeyringStatus,
   SkippedProfile,
   ProfileSecretKind,
   SaveProfileRequest,
@@ -12,6 +13,11 @@ import type {
 } from "../tauri";
 
 export const profilesCommands = {
+  /** OS keyring の疎通診断 (#1622)。一時エントリを書いて読み戻す。理由は固定コードのみ。 */
+  checkKeyring: () =>
+    invoke<KeyringStatus>("check_keyring").then((r) =>
+      parseResponse(schemas.keyringStatus, r, "check_keyring"),
+    ),
   /** 一覧に出ないプロファイル (解釈できない要素・対応外ドライバ) の要約 (#1614)。 */
   listSkippedProfiles: () =>
     invoke<SkippedProfile[]>("list_skipped_profiles").then((r) =>

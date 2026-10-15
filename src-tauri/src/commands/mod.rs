@@ -15,6 +15,7 @@ pub mod flight_recorder;
 pub mod history;
 pub mod import;
 pub mod import_decode;
+pub mod import_templates;
 pub mod import_xlsx;
 pub mod inspector;
 pub mod local;

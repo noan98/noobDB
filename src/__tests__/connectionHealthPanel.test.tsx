@@ -219,3 +219,18 @@ describe("ConnectionHealthPanel (#1068)", () => {
     await waitFor(() => expect(onReconnected).toHaveBeenCalledWith("dead"));
   });
 });
+
+describe("ConnectionHealthPanel のレイテンシ推移 (#1630)", () => {
+  it("確認が 2 回以上たまると、接続ごとにスパークラインを出す", async () => {
+    renderPanel();
+    await waitFor(() => expect(screen.getAllByText(t("healthStatusUp"))).toHaveLength(2));
+    // 1 回分だけでは線が引けないので出さない。
+    expect(screen.queryAllByTestId("health-sparkline")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: t("healthRefresh") }));
+    await waitFor(() => expect(screen.getAllByTestId("health-sparkline")).toHaveLength(2));
+    const row = screen.getByTestId("health-row-m");
+    expect(
+      within(row).getByRole("img", { name: t("healthTrendAria", { count: 2, min: 5, max: 5 }) }),
+    ).toBeInTheDocument();
+  });
+});

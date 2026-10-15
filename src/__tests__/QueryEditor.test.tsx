@@ -438,3 +438,86 @@ describe("QueryEditor: スキーマツリー行のポインタ・ドラッグ挿
     source.remove();
   });
 });
+
+describe("QueryEditor 識別子の Ctrl/Cmd+クリック (#1629)", () => {
+  const schema = [{ name: "users", columns: ["id", "email"] }];
+  const setup = (opts: {
+    initialSql: string;
+    databaseSchema?: typeof schema | null;
+    withHandler?: boolean;
+  }) => {
+    const onRevealSchemaObject = vi.fn();
+    renderWithProviders(
+      <QueryEditor
+        onRun={vi.fn()}
+        tabId="tab1"
+        initialSql={opts.initialSql}
+        databaseSchema={opts.databaseSchema === undefined ? schema : opts.databaseSchema}
+        defaultDatabase="shop"
+        onRevealSchemaObject={opts.withHandler === false ? undefined : onRevealSchemaObject}
+      />,
+    );
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement);
+    if (!view) throw new Error("no view");
+    return { view, onRevealSchemaObject };
+  };
+  // jsdom にはレイアウトが無く `posAtCoords` が使えないので、クリック位置を固定値に差し替える。
+  const clickAt = (view: EditorView, pos: number | null, init: MouseEventInit) => {
+    vi.spyOn(view, "posAtCoords").mockReturnValue(pos);
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    return fireEvent.mouseDown(content, { button: 0, clientX: 1, clientY: 1, ...init });
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("Ctrl+クリックで、補完用スキーマに一致するテーブルを通知し既定動作を止める", () => {
+    const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT * FROM users" });
+    const notCancelled = clickAt(view, 16, { ctrlKey: true });
+    expect(onRevealSchemaObject).toHaveBeenCalledWith({ database: "shop", table: "users" });
+    expect(notCancelled).toBe(false);
+  });
+
+  it("macOS では Cmd (meta)+クリックで列まで解決し、Ctrl+クリック (右クリック扱い) は横取りしない", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT u.email FROM users u" });
+    clickAt(view, 11, { ctrlKey: true });
+    expect(onRevealSchemaObject).not.toHaveBeenCalled();
+    clickAt(view, 11, { metaKey: true });
+    expect(onRevealSchemaObject).toHaveBeenCalledWith({ database: "shop", table: "users", column: "email" });
+  });
+
+  it("macOS 以外では Cmd (meta)+クリックを横取りしない", () => {
+    const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT u.email FROM users u" });
+    clickAt(view, 11, { metaKey: true });
+    expect(onRevealSchemaObject).not.toHaveBeenCalled();
+  });
+
+  it("修飾キー無しのクリック・一致しない識別子・ハンドラ無しでは何もしない", () => {
+    const a = setup({ initialSql: "SELECT * FROM users" });
+    clickAt(a.view, 16, {});
+    expect(a.onRevealSchemaObject).not.toHaveBeenCalled();
+    cleanup();
+
+    const b = setup({ initialSql: "SELECT * FROM missing" });
+    clickAt(b.view, 16, { ctrlKey: true });
+    expect(b.onRevealSchemaObject).not.toHaveBeenCalled();
+    cleanup();
+
+    // ハンドラが無ければ例外なく素通りする。
+    const c = setup({ initialSql: "SELECT * FROM users", withHandler: false });
+    expect(() => clickAt(c.view, 16, { ctrlKey: true })).not.toThrow();
+    cleanup();
+
+    const d = setup({ initialSql: "SELECT * FROM users", databaseSchema: null });
+    clickAt(d.view, 16, { ctrlKey: true });
+    expect(d.onRevealSchemaObject).not.toHaveBeenCalled();
+  });
+
+  it("位置が取れない (null) ときは何もしない", () => {
+    const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT * FROM users" });
+    clickAt(view, null, { ctrlKey: true });
+    expect(onRevealSchemaObject).not.toHaveBeenCalled();
+  });
+});

@@ -598,6 +598,7 @@
         "private_key_path": "",
         "user": "ops"
       },
+      "local_port": 15432,
       "port": 22,
       "private_key_path": "/home/deploy/.ssh/id_ed25519",
       "user": "deploy"
@@ -644,6 +645,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -689,6 +691,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -734,6 +737,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -779,6 +783,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -824,6 +829,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -1381,6 +1387,14 @@
   "importDoneEvent": {
     "elapsedMs": 42,
     "inserted": 99,
+    "sheets": [
+      {
+        "inserted": 99,
+        "sheet": "Sheet1",
+        "skippedTotal": 1,
+        "table": "orders"
+      }
+    ],
     "skipped": [
       {
         "line": 8,
@@ -1388,8 +1402,21 @@
         "record": 7
       }
     ],
+    "skippedDataTruncated": true,
     "skippedTotal": 1234,
     "streamId": "strm0003"
+  },
+  "importDryRunResult": {
+    "dbChecked": true,
+    "failed": 3,
+    "failures": [
+      {
+        "line": 5,
+        "reason": "UNIQUE constraint failed",
+        "record": 4
+      }
+    ],
+    "total": 100
   },
   "importErrorEvent": {
     "committed": 12,
@@ -1403,9 +1430,50 @@
     "streamId": "strm0003",
     "total": 100
   },
+  "importScan": {
+    "candidates": [
+      {
+        "existing_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold",
+        "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+        "host": "db.example.com",
+        "key_type": "ssh-ed25519",
+        "port": 22,
+        "status": "conflict"
+      }
+    ],
+    "found": true,
+    "hashed_skipped": 2,
+    "other_skipped": 1
+  },
   "importStartedEvent": {
     "streamId": "strm0003",
     "total": 100
+  },
+  "importTemplate": {
+    "conflictMode": "update",
+    "database": "shop",
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "errorMode": "skip",
+    "format": "csv",
+    "hasHeader": true,
+    "id": "p1\u001fshop\u001forders",
+    "keyColumns": [
+      "id"
+    ],
+    "mapping": [
+      {
+        "column": "id",
+        "csvIndex": 0,
+        "header": "ID"
+      }
+    ],
+    "nullToken": "",
+    "profileId": "p1",
+    "quote": "\"",
+    "sheet": null,
+    "table": "orders",
+    "updatedAtMs": 1760000000000
   },
   "incomingForeignKey": {
     "column": "user_id",
@@ -1425,15 +1493,44 @@
     "elapsed_ms": 8,
     "inserted": 100
   },
+  "keyringStatus": {
+    "available": false,
+    "reason": "storage_unavailable"
+  },
   "killProcessesResult": {
     "failed": 1,
     "first_error": "permission denied",
-    "killed": 2
+    "killed": 2,
+    "outcomes": [
+      {
+        "error": null,
+        "id": 101,
+        "status": "killed"
+      },
+      {
+        "error": null,
+        "id": 102,
+        "status": "already_gone"
+      },
+      {
+        "error": "permission denied",
+        "id": 103,
+        "status": "failed"
+      }
+    ]
   },
   "knownHost": {
     "fingerprint": "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
     "host": "db.example.com",
     "port": 22
+  },
+  "knownHostEvent": {
+    "action": "trust",
+    "at": "2026-10-15T01:02:03Z",
+    "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+    "host": "db.example.com",
+    "port": 22,
+    "previous_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold"
   },
   "liveQuery": {
     "application": "myapp",
@@ -1466,6 +1563,9 @@
     "column": "email",
     "database": "appdb",
     "kind": "column",
+    "object_id": "16385",
+    "object_kind": "function",
+    "row_estimate": 1200,
     "table": "users"
   },
   "openTableEntryVariants": [
@@ -1524,6 +1624,31 @@
       "strategy": "rowid"
     },
     "sql": "SELECT * FROM `appdb`.`users`"
+  },
+  "perfStatus": {
+    "enabled": true,
+    "env_enabled": false,
+    "samples": [
+      {
+        "at_ms": 1767225600000,
+        "columns": 4,
+        "emit_ms": 3.25,
+        "kind": "stream",
+        "payload_bytes_approx": 4096,
+        "rows": 100,
+        "sql_execute_ms": 12.5
+      },
+      {
+        "at_ms": 1767225500000,
+        "columns": 1,
+        "emit_ms": null,
+        "kind": "query",
+        "payload_bytes_approx": null,
+        "rows": 1,
+        "sql_execute_ms": 8.0
+      }
+    ],
+    "ui_enabled": true
   },
   "planWatchEntryVariants": [
     {
@@ -1632,6 +1757,12 @@
     "host": "127.0.0.1:53344",
     "id": 42,
     "is_self": true,
+    "progress": {
+      "done": 40,
+      "kind": "vacuum",
+      "phase": "scanning heap",
+      "total": 100
+    },
     "query_summary": "SELECT 1",
     "query_truncated": false,
     "state": "executing",
@@ -4615,6 +4746,7 @@
     "variables": [
       {
         "name": "max_connections",
+        "source": "configuration file",
         "value": "151"
       }
     ],
@@ -4626,11 +4758,13 @@
     "idle_in_transaction": 1,
     "lock_waiting": 0,
     "lock_waits": 5,
+    "max_connections": 151,
     "questions": 1000000,
     "slow_queries": 12
   },
   "serverVariable": {
     "name": "max_connections",
+    "source": "configuration file",
     "value": "151"
   },
   "skippedProfileVariants": [
@@ -4881,7 +5015,10 @@
   },
   "tableSizeInfo": {
     "data_bytes": 65536,
+    "dead_rows": 120,
     "index_bytes": 16384,
+    "last_analyze_at": null,
+    "last_vacuum_at": 1700000000,
     "name": "users",
     "row_estimate": 1234,
     "total_bytes": 81920
@@ -4889,10 +5026,13 @@
   "tableStatistic": {
     "column_count": 5,
     "data_bytes": 65536,
+    "dead_rows": 120,
     "foreign_key_count": 1,
     "has_primary_key": true,
     "index_bytes": 16384,
     "index_count": 2,
+    "last_analyze_at": null,
+    "last_vacuum_at": 1700000000,
     "name": "users",
     "previous": {
       "at": "2026-01-01T00:00:00Z",
@@ -5399,6 +5539,13 @@
       {
         "column": "amount",
         "kind": "decimal_clamped",
+        "sourceType": "DECIMAL(70,2)",
+        "targetType": "DECIMAL(65,2)"
+      }
+    ],
+    "sourceColumns": [
+      {
+        "name": "amount",
         "sourceType": "DECIMAL(70,2)",
         "targetType": "DECIMAL(65,2)"
       }

@@ -56,6 +56,10 @@ pub struct NewColumn {
     pub name: String,
     #[serde(rename = "type")]
     pub column_type: NewColumnType,
+    /// 主キーに含める列 (#1623)。複数列に付けると複合主キー (列の並び順で定義)。
+    /// 主キー列は NOT NULL になる。
+    #[serde(default, rename = "primaryKey")]
+    pub primary_key: bool,
 }
 
 /// 抽象型 → 方言の型名。DB が表現できない型はここで縮退させる。
@@ -94,6 +98,16 @@ pub fn column_type_sql(driver: DriverKind, ty: NewColumnType) -> &'static str {
         (D::Sqlite, T::Double) => "REAL",
         (D::Sqlite, T::Boolean) => "BOOLEAN",
         (D::Sqlite, T::Date | T::Datetime | T::Text) => "TEXT",
+    }
+}
+
+/// 主キー列の方言の型名。MySQL の `LONGTEXT` は長さ指定なしでは主キーにできないため、
+/// 主キーに含める文字列列は `VARCHAR(255)` にする (utf8mb4 でも 1020 バイトで索引の上限内)。
+/// それ以外の型は [`column_type_sql`] と同じ。
+pub fn primary_key_type_sql(driver: DriverKind, ty: NewColumnType) -> &'static str {
+    match (driver, ty) {
+        (DriverKind::Mysql, NewColumnType::Text) => "VARCHAR(255)",
+        _ => column_type_sql(driver, ty),
     }
 }
 
@@ -163,26 +177,42 @@ pub fn validate_new_table(driver: DriverKind, table: &str, columns: &[NewColumn]
     Ok(())
 }
 
-/// 方言別の `CREATE TABLE` を生成する。列はすべて NULL 許容 (NULL トークンや
-/// JSON の欠損キーが NULL として入るため)。主キー・制約は付けない — 取り込み後に
-/// 通常の ALTER / インデックス作成で付ける想定。
+/// 方言別の `CREATE TABLE` を生成する。列は NULL 許容 (NULL トークンや JSON の欠損キーが
+/// NULL として入るため)。ただし主キーに含める列 ([`NewColumn::primary_key`], #1623) は
+/// `NOT NULL` にして `PRIMARY KEY (...)` を付ける。主キー以外の制約は付けない。
 pub fn render_create_table(
     driver: DriverKind,
     table: &str,
     columns: &[NewColumn],
 ) -> Result<String> {
     validate_new_table(driver, table, columns)?;
-    let body = columns
+    let mut lines: Vec<String> = columns
         .iter()
         .map(|c| {
-            format!(
-                "  {} {}",
-                quote_ident(driver, &c.name),
-                column_type_sql(driver, c.column_type)
-            )
+            if c.primary_key {
+                format!(
+                    "  {} {} NOT NULL",
+                    quote_ident(driver, &c.name),
+                    primary_key_type_sql(driver, c.column_type)
+                )
+            } else {
+                format!(
+                    "  {} {}",
+                    quote_ident(driver, &c.name),
+                    column_type_sql(driver, c.column_type)
+                )
+            }
         })
-        .collect::<Vec<_>>()
-        .join(",\n");
+        .collect();
+    let pk: Vec<String> = columns
+        .iter()
+        .filter(|c| c.primary_key)
+        .map(|c| quote_ident(driver, &c.name))
+        .collect();
+    if !pk.is_empty() {
+        lines.push(format!("  PRIMARY KEY ({})", pk.join(", ")));
+    }
+    let body = lines.join(",\n");
     Ok(format!(
         "CREATE TABLE {} (\n{}\n)",
         quote_ident(driver, table),
@@ -205,7 +235,61 @@ mod tests {
         NewColumn {
             name: name.to_string(),
             column_type: ty,
+            primary_key: false,
         }
+    }
+
+    fn pk(name: &str, ty: NewColumnType) -> NewColumn {
+        NewColumn {
+            primary_key: true,
+            ..col(name, ty)
+        }
+    }
+
+    #[test]
+    fn primary_key_columns_are_not_null_with_a_primary_key_clause() {
+        let cols = vec![
+            pk("id", NewColumnType::Bigint),
+            col("name", NewColumnType::Text),
+        ];
+        assert_eq!(
+            render_create_table(DriverKind::Mysql, "users", &cols).unwrap(),
+            "CREATE TABLE `users` (\n  `id` BIGINT NOT NULL,\n  `name` LONGTEXT,\n  PRIMARY KEY (`id`)\n)"
+        );
+        assert_eq!(
+            render_create_table(DriverKind::Postgres, "users", &cols).unwrap(),
+            "CREATE TABLE \"users\" (\n  \"id\" BIGINT NOT NULL,\n  \"name\" TEXT,\n  PRIMARY KEY (\"id\")\n)"
+        );
+        assert_eq!(
+            render_create_table(DriverKind::Sqlite, "users", &cols).unwrap(),
+            "CREATE TABLE \"users\" (\n  \"id\" INTEGER NOT NULL,\n  \"name\" TEXT,\n  PRIMARY KEY (\"id\")\n)"
+        );
+    }
+
+    #[test]
+    fn composite_primary_key_keeps_column_order_and_mysql_text_key_gets_a_length() {
+        let cols = vec![
+            pk("tenant", NewColumnType::Text),
+            col("note", NewColumnType::Text),
+            pk("id", NewColumnType::Integer),
+        ];
+        let my = render_create_table(DriverKind::Mysql, "t", &cols).unwrap();
+        assert!(my.contains("`tenant` VARCHAR(255) NOT NULL"));
+        assert!(my.contains("`note` LONGTEXT,"));
+        assert!(my.ends_with("  PRIMARY KEY (`tenant`, `id`)\n)"));
+        let pg = render_create_table(DriverKind::Postgres, "t", &cols).unwrap();
+        assert!(pg.contains("\"tenant\" TEXT NOT NULL"));
+        assert!(pg.ends_with("  PRIMARY KEY (\"tenant\", \"id\")\n)"));
+    }
+
+    #[test]
+    fn primary_key_defaults_to_false_on_the_wire() {
+        let cols: Vec<NewColumn> = serde_json::from_str(
+            r#"[{"name":"id","type":"bigint","primaryKey":true},{"name":"n","type":"text"}]"#,
+        )
+        .unwrap();
+        assert!(cols[0].primary_key);
+        assert!(!cols[1].primary_key);
     }
 
     #[test]

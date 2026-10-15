@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ServerMetrics } from "../api/tauri";
 import {
+  connectionHeadroom,
   counterRate,
   deriveSeries,
   extractSeries,
   formatCount,
   formatRate,
   hasSeriesData,
+  METRICS_CSV_HEADER,
+  metricsToCsvRows,
   pushSample,
   throughputUnitKey,
+  windowSamples,
   type MetricSample,
 } from "../components/serverMetrics";
 
@@ -145,5 +149,45 @@ describe("formatRate / formatCount", () => {
   it("カウントは整数に丸める", () => {
     expect(formatCount(42)).toBe("42");
     expect(formatCount(42.7)).toBe("43");
+  });
+});
+
+describe("期間切替・接続数の余裕・CSV (#1622)", () => {
+  it("windowSamples は最新サンプルを基準に窓内だけを返し、入力を変えない", () => {
+    const all = [sample(0), sample(60_000), sample(200_000), sample(300_000)];
+    expect(windowSamples(all, 120_000).map((s) => s.atMs)).toEqual([200_000, 300_000]);
+    expect(windowSamples(all, 300_000)).toHaveLength(4);
+    expect(windowSamples([], 1000)).toEqual([]);
+    expect(all).toHaveLength(4);
+  });
+
+  it("connectionHeadroom は使用率としきい値 (80% 警告 / 90% 危険) を返す", () => {
+    expect(connectionHeadroom(metrics({ connections: 10, max_connections: 100 }))).toEqual({
+      used: 10,
+      max: 100,
+      percent: 10,
+      level: "ok",
+    });
+    expect(connectionHeadroom(metrics({ connections: 80, max_connections: 100 }))?.level).toBe("warn");
+    expect(connectionHeadroom(metrics({ connections: 79, max_connections: 100 }))?.level).toBe("ok");
+    expect(connectionHeadroom(metrics({ connections: 90, max_connections: 100 }))?.level).toBe("danger");
+    expect(connectionHeadroom(metrics({ connections: 120, max_connections: 100 }))?.percent).toBe(100);
+  });
+
+  it("上限や接続数が不明・0 以下なら null", () => {
+    expect(connectionHeadroom(metrics({ connections: 5 }))).toBeNull();
+    expect(connectionHeadroom(metrics({ connections: 5, max_connections: 0 }))).toBeNull();
+    expect(connectionHeadroom(metrics({ max_connections: 100 }))).toBeNull();
+    expect(connectionHeadroom(undefined)).toBeNull();
+  });
+
+  it("CSV 行は ISO 時刻・ゲージ・差分レートを出し、未報告は空欄(null)", () => {
+    const rows = metricsToCsvRows([
+      sample(1_000, { connections: 5, max_connections: 100, questions: 100 }),
+      sample(3_000, { connections: 6, max_connections: 100, questions: 300 }),
+    ]);
+    expect(METRICS_CSV_HEADER).toHaveLength(rows[0].length);
+    expect(rows[0]).toEqual(["1970-01-01T00:00:01.000Z", 5, 100, null, null, null, null, null, null]);
+    expect(rows[1]).toEqual(["1970-01-01T00:00:03.000Z", 6, 100, null, null, null, 100, null, null]);
   });
 });

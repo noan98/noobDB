@@ -39,16 +39,21 @@ import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
+import { useToast } from "./Toast";
 import { springs, transitions, variants } from "../motion";
 import { beginTabOpenFlight, useTabOpenFlightFor } from "../sharedElement";
 import { FlightIcon } from "./FlightIcon";
-import { semanticColorVar } from "../semanticColors";
+import { semanticColorToken, semanticColorVar } from "../semanticColors";
 import { applyGroupOrder, applySubsequenceOrder, moveItemBy, reorderIfPermutation } from "../connectionOrder";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import {
+  nextTreeTypeahead,
   resolveTreeArrowLeft,
   resolveTreeArrowRight,
+  resolveTreeExpandSiblings,
   resolveTreeMove,
+  resolveTreeTypeahead,
+  type TreeTypeaheadState,
   type TreeNavEntry,
 } from "../treeKeyboardNav";
 import {
@@ -57,6 +62,18 @@ import {
   pickContextMenuOpenKeys,
   type ContextMenuTriggerEvent,
 } from "./contextMenuKeyboard";
+import { existingGroupNames } from "../profileGroup";
+import {
+  EMPTY_PROFILE_SELECTION,
+  isProfileSelected,
+  orderedSelectedProfileIds,
+  profileSelectionSize,
+  pruneProfileSelection,
+  rangeProfileSelection,
+  toggleProfileSelection,
+  type ProfileSelection,
+} from "../profileSelection";
+import { GroupNameModal } from "./GroupNameModal";
 import { ICON_SIZES, Icon, type IconName } from "./Icon";
 import { EmptyState } from "./EmptyState";
 import { WelcomeIllustration } from "./illustrations";
@@ -71,18 +88,25 @@ import { DropInsertionMarker } from "./DropInsertionMarker";
 import { GroupAvatar, ProfileBadges } from "./ProfileBadge";
 import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import {
+  batchMaintenanceKinds,
   databaseMaintenanceCommands,
+  MAINTENANCE_LABEL_KEYS,
   tableMaintenanceCommands,
   matviewRefreshCommands,
   type MaintenanceCommand,
   type MaintenanceKind,
 } from "./maintenanceCommands";
-import { Button, Input } from "./ui";
+import { Segmented } from "./Segmented";
+import { Button, Input, Select } from "./ui";
 import { useConfirm } from "./ConfirmDialog";
 import {
   anchorTableSelection,
   buildExplorerRows,
   EMPTY_TABLE_SELECTION,
+  EXPLORER_KIND_FILTERS,
+  EXPLORER_TABLE_SORTS,
+  type ExplorerKindFilter,
+  type ExplorerTableSort,
   explorerContainerKind,
   explorerRowExpansion,
   explorerRowLabel,
@@ -105,7 +129,6 @@ import {
   type ExplorerRow,
   type ExplorerViewNode,
 } from "./explorerTree";
-import type { I18nKey } from "../i18n";
 import {
   MotionTreeRow,
   TreeBadge,
@@ -132,6 +155,8 @@ async function listVisibleTables(sessionId: string, db: string): Promise<string[
 /** localStorage に永続化するグループ表示順序のキー (#786)。触られていない
  *  グループはアルファベット順の既定挙動のままなので、ドラッグ/キーボードで
  *  実際に動かした結果だけをここに書く (折りたたみ状態と同じ最小保存方針)。 */
+/** 「*」(兄弟の一括展開) で一度に開くテーブルの上限。describeTable の同時発行を抑える。 */
+const EXPAND_SIBLINGS_TABLE_LIMIT = 50;
 const GROUP_ORDER_KEY = "noobdb.connlist.groupOrder";
 
 /** localStorage から永続化済みグループ順序を復元する。SSR/未対応環境や
@@ -193,6 +218,12 @@ export interface ConnectionListHandle {
    * だけバックエンドのキャッシュを捨てる (他のテーブルの列・インデックスは取り直さない, #1539)。
    */
   refreshSchema: (scope?: { database: string; table: string }) => void;
+  /**
+   * スキーマツリーで指定のテーブル (`column` があればその列) を探して選択する (#1629)。種別の絞り込みと
+   * 検索語を解除し、データベース・テーブルが閉じていれば開き、行が描画されたらフォーカスする。
+   * 見つからなければ何もしない。
+   */
+  revealInTree: (target: { database: string; table: string; column?: string }) => void;
 }
 
 /** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
@@ -214,18 +245,6 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 }
 
 /** 保守コマンド種別ごとのメニューラベル i18n キー。#561。 */
-const MAINTENANCE_LABEL_KEYS: Record<MaintenanceKind, I18nKey> = {
-  analyze: "maintenanceAnalyze",
-  optimize: "maintenanceOptimize",
-  check: "maintenanceCheck",
-  repair: "maintenanceRepair",
-  vacuum: "maintenanceVacuum",
-  vacuumAnalyze: "maintenanceVacuumAnalyze",
-  reindex: "maintenanceReindex",
-  refreshMatview: "maintenanceRefreshMatview",
-  refreshMatviewConcurrently: "maintenanceRefreshMatviewConcurrently",
-};
-
 /** 接続リストのグループ折りたたみ状態を永続化する localStorage キー。
  *  既定はすべて展開なので、明示的に「閉じている」グループ key の配列だけを保存する。 */
 const COLLAPSED_GROUPS_KEY = "noobdb.connlist.collapsedGroups";
@@ -322,6 +341,23 @@ interface Props {
   /** Close a specific background (or active) connection without reconnecting. */
   onDisconnectProfile?: (profileId: string) => void;
   /**
+   * アクティブ以外 (背景) の接続をまとめて切断する (#1630)。未確定トランザクションの確認は
+   * 呼び出し側が 1 回だけ行う。背景接続が無いときはメニュー項目を出さない。
+   */
+  onDisconnectBackground?: () => void;
+  /**
+   * 生存確認で切れていると分かった背景接続のプロファイル ID (#1630)。行に「切断」バッジを出し、
+   * 行のクリック / メニューの「再接続」で張り直す (`onConnect` が再接続を引き受ける)。
+   */
+  staleProfileIds?: ReadonlySet<string>;
+  /** 接続ごとの保存済みワークスペース (タブ) を確認・消去する画面を開く (#1630)。 */
+  onShowSavedTabs?: (profile: ConnectionProfile) => void;
+  /**
+   * 接続を別のグループへ移す (#1630)。`group = null` は未分類へ戻す。複数 ID は一括移動。
+   * 保存は呼び出し側 (既存の `save_profile` 流用) で、並び順は変えない。
+   */
+  onMoveProfilesToGroup?: (profileIds: string[], group: string | null) => void;
+  /**
    * Drag/keyboard reorder of connections (#786). Called with the new order of
    * every id present in the `profiles` prop (a true permutation of
    * `profiles.map(p => p.id)`) — the caller is responsible for embedding this
@@ -383,6 +419,10 @@ interface Props {
   onExportTables?: (database: string, tables: string[]) => void;
   onDumpTables?: (database: string, tables: string[]) => void;
   onDropTables?: (database: string, tables: string[]) => void;
+  /** 選択した複数テーブルへ同じ保守コマンド (ANALYZE / OPTIMIZE / VACUUM 等) を流す (#1629)。read_only では無効化。 */
+  onRunTablesMaintenance?: (database: string, tables: string[], kind: MaintenanceKind) => void;
+  /** 選択した複数テーブルを TRUNCATE する (#1629)。read_only では無効化。 */
+  onTruncateTables?: (database: string, tables: string[]) => void;
   /** 列の追加/変更/削除/リネームとインデックス作成の GUI ダイアログを開く (#794)。read_only では無効化。 */
   onAlterTable?: (database: string, table: string) => void;
   /** テーブル右クリックからインデックス作成の軽量モーダルを開く (#850)。`AlterTable`
@@ -1408,7 +1448,9 @@ function SchemaRowContent({ row, level, q, removableFavorites, containerLabel }:
             ? t("treeNoDatabases")
             : row.message === "tables"
               ? t("treeNoTables")
-              : t("treeNoColumns")}
+              : row.message === "filtered"
+                ? t("treeKindFilterEmpty")
+                : t("treeNoColumns")}
         </TreeEmpty>
       );
     case "quick":
@@ -1860,6 +1902,10 @@ export const ConnectionList = memo(
       txProfileIds,
       onConnect,
       onDisconnectProfile,
+      onDisconnectBackground,
+      staleProfileIds,
+      onShowSavedTabs,
+      onMoveProfilesToGroup,
       onReorderProfiles,
       onCreate,
       onEdit,
@@ -1890,6 +1936,8 @@ export const ConnectionList = memo(
       onExportTables,
       onDumpTables,
       onDropTables,
+      onRunTablesMaintenance,
+      onTruncateTables,
       onAlterTable,
       onCreateIndex,
       onDropIndex,
@@ -1926,6 +1974,7 @@ export const ConnectionList = memo(
     ref,
   ) {
     const t = useT();
+    const toast = useToast();
     const { confirm, dialog: confirmDialog } = useConfirm();
     // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
     // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
@@ -1933,6 +1982,11 @@ export const ConnectionList = memo(
     const [expandedProfiles, setExpandedProfiles] = useState<Record<string, boolean>>({});
     const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
     const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
+    // 種別の絞り込み (セッション内のみ) とテーブルの並べ替え (プロファイルごとに永続化, #1629)。
+    const [kindFilter, setKindFilter] = useState<ExplorerKindFilter>("all");
+    const [tableSort, setTableSort] = useState<ExplorerTableSort>("name");
+    const tableSortRef = useRef(tableSort);
+    tableSortRef.current = tableSort;
     // グループ折りたたみ状態は localStorage に永続化し、再起動後も維持する。
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(readCollapsedGroups);
     // グループの表示順序 (#786)。触られていない名前は `applyGroupOrder` が
@@ -1959,6 +2013,12 @@ export const ConnectionList = memo(
     // DB 一覧の初回読み込みに失敗した (スケルトンを出し続けず再試行行を出す)。
     const [schemaLoadFailed, setSchemaLoadFailed] = useState(false);
     const [menu, setMenu] = useState<MenuState | null>(null);
+    // 接続プロファイル行の複数選択 (#1630)。テーブルの複数選択 (#1399) と同じ操作モデル
+    // (Ctrl/Cmd+クリックで出し入れ、Shift+クリックで範囲)。行数は高々数百なので、外部ストアでは
+    // なく state で持つ。
+    const [profileSelection, setProfileSelection] = useState<ProfileSelection>(EMPTY_PROFILE_SELECTION);
+    // 「新しいグループ…」の入力モーダルの対象 (移す接続の ID)。
+    const [groupNameTarget, setGroupNameTarget] = useState<string[] | null>(null);
     // カラム行の詳細ホバーカード (`ColumnTooltip`)。単純テキストではないので
     // `useDelegatedTooltip` ではなくその一般形 `useDelegatedHover` に載せ、hover
     // 遅延・「同時に見えるのは 1 つ」の登録簿・スクロール連動非表示を他の
@@ -1994,7 +2054,21 @@ export const ConnectionList = memo(
       refreshSchema: (scope) => {
         void refreshSchemaRef.current?.(scope);
       },
+      revealInTree: (target) => {
+        setKindFilter("all");
+        setFilter("");
+        setRevealTarget({ ...target, seq: ++revealSeqRef.current });
+      },
     }));
+    // ツリーで選択したい対象 (エディタの識別子 Ctrl/Cmd+クリック、#1629)。行が描画されるまで
+    // 段階的に (DB を開く → テーブルを開く → 行へフォーカス) 進める。
+    const [revealTarget, setRevealTarget] = useState<{
+      database: string;
+      table: string;
+      column?: string;
+      seq: number;
+    } | null>(null);
+    const revealSeqRef = useRef(0);
     // `refreshSchema` is defined later in the body; reach it through a ref so the
     // imperative handle doesn't depend on declaration order.
     const refreshSchemaRef = useRef<((scope?: { database: string; table: string }) => Promise<void>) | null>(
@@ -2027,7 +2101,7 @@ export const ConnectionList = memo(
     expandedTablesRef.current = expandedTables;
     const persistTree = useCallback((dbs: Record<string, boolean>, tables: Record<string, boolean>) => {
       const pid = activeProfileIdRef.current;
-      if (pid) saveSchemaTree(pid, { dbs, tables });
+      if (pid) saveSchemaTree(pid, { dbs, tables, sort: tableSortRef.current });
     }, []);
 
     // Restore the persisted tree expansion for the connecting session's profile
@@ -2038,7 +2112,9 @@ export const ConnectionList = memo(
     const restoreTreeForSession = useCallback(
       async (targetSessionId: string) => {
         const pid = activeProfileIdRef.current;
-        const stored = pid ? loadSchemaTree(pid) : { dbs: {}, tables: {} };
+        const stored = pid ? loadSchemaTree(pid) : { dbs: {}, tables: {}, sort: undefined };
+        setTableSort(stored.sort ?? "name");
+        tableSortRef.current = stored.sort ?? "name";
         const openDbNames = Object.keys(stored.dbs).filter((db) => stored.dbs[db]);
         const openTableKeys = Object.keys(stored.tables).filter((k) => stored.tables[k]);
         // Optimistically open the stored nodes so the tree feels continuous while
@@ -2350,6 +2426,10 @@ export const ConnectionList = memo(
     // スキーマ行リスト (仮想化されていて窓の外の行は DOM に無い) の窓口。キーボード巡回は
     // DOM の `[role=treeitem]` ではなく、ツリー全体を並べた配列で次の行を決める (#1315)。
     const schemaListRef = useRef<SchemaRowListHandle | null>(null);
+    // 先頭文字ジャンプの入力バッファ (短時間に打った文字を連結して前方一致、#1629)。
+    const typeaheadRef = useRef<TreeTypeaheadState | null>(null);
+    // 行キー (`db:` / `tbl:`) の行をまとめて開く。`*` での兄弟一括展開で窓の外の行にも使う。
+    const expandRowsByKeysRef = useRef<(keys: readonly string[]) => void>(() => {});
 
     /** テーブル行のキー操作 (#1399): Shift+Space (または Ctrl/Cmd+Space) で出し入れ、Shift+↑↓ で範囲を伸縮。 */
     const selectionKeyDown = useCallback(
@@ -2455,9 +2535,12 @@ export const ConnectionList = memo(
           const isMove = e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Home" || e.key === "End";
           // 印字可能な単一文字のみ対象。修飾キー (Ctrl/Alt/Meta) 付きはショートカット用途と
           // 衝突しうるため除外する (Shift は大文字入力に必要なので許可)。
-          const isTypeahead =
-            !isArrowLR && !isMove && e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey;
-          if (!isArrowLR && !isMove && !isTypeahead) return;
+          const noModifier = !e.ctrlKey && !e.altKey && !e.metaKey;
+          // `*`: 現在の階層の兄弟をすべて展開する (APG の任意仕様、#1629)。
+          const isExpandSiblings = e.key === "*" && noModifier;
+          const isTypeahead = !isArrowLR && !isMove && !isExpandSiblings && e.key.length === 1 && noModifier;
+          if (!isArrowLR && !isMove && !isTypeahead && !isExpandSiblings) return;
+          if (!isTypeahead) typeaheadRef.current = null;
 
           const row = e.currentTarget;
           const entries = buildNavSequence();
@@ -2496,6 +2579,28 @@ export const ConnectionList = memo(
             return;
           }
 
+          if (isExpandSiblings) {
+            e.preventDefault();
+            e.stopPropagation();
+            // 対象はスキーマツリーの行 (DB / テーブル)。プロファイル / グループの行は開かない。
+            const keys: string[] = [];
+            for (const i of resolveTreeExpandSiblings(entries, index)) {
+              const k = entries[i].key;
+              if (k) keys.push(k);
+            }
+            expandRowsByKeysRef.current(keys);
+            return;
+          }
+          if (isTypeahead) {
+            const state = nextTreeTypeahead(typeaheadRef.current, e.key, Date.now());
+            typeaheadRef.current = state;
+            const hit = resolveTreeTypeahead(entries, index, state.text);
+            if (hit !== null) {
+              e.preventDefault();
+              focusEntry(entries[hit]);
+            }
+            return;
+          }
           const target = resolveTreeMove(entries, index, e.key);
           // 矢印 / Home / End は端でもブラウザ既定のスクロールを止める。先頭文字ジャンプは
           // 一致が無いときに既定の挙動を妨げない。
@@ -2557,6 +2662,17 @@ export const ConnectionList = memo(
      *  their existing "activate the row" behavior. */
     const handleProfileRowKeyDown =
       (p: ConnectionProfile, siblingIds: string[]) => (e: React.KeyboardEvent<HTMLElement>) => {
+        // 複数選択 (#1630): Shift/Ctrl/Cmd+Space で行を選択に出し入れし、Esc で解除する。
+        if (e.key === " " && (e.shiftKey || e.ctrlKey || e.metaKey) && e.target === e.currentTarget) {
+          e.preventDefault();
+          setProfileSelection((sel) => toggleProfileSelection(sel, p.id));
+          return;
+        }
+        if (e.key === "Escape" && profileSelectionSize(profileSelection) > 0) {
+          e.preventDefault();
+          setProfileSelection(EMPTY_PROFILE_SELECTION);
+          return;
+        }
         if (e.key === "Enter" || e.key === " ") {
           // 行内のボタン (スキーマ更新など) から伝わったキーはボタンに任せる
           if (e.target !== e.currentTarget) return;
@@ -2641,18 +2757,127 @@ export const ConnectionList = memo(
       onConnect(p);
     };
 
+    /** いま画面に並んでいる接続の ID (表示順)。畳んだグループの中は含めない。範囲選択の基準 (#1630)。 */
+    const displayedProfileIds = (): string[] =>
+      grouped === null
+        ? visibleProfiles.map((pp) => pp.id)
+        : grouped.flatMap((g) =>
+            expandedGroups[g.name ?? "__ungrouped__"] !== false ? g.profiles.map((pp) => pp.id) : [],
+          );
+
+    // 行のクリック (#1630): Ctrl/Cmd で出し入れ、Shift で範囲。修飾なしは選択を解除してから従来どおり
+    // 接続 / 展開する。
+    const handleProfileRowClick = (e: React.MouseEvent, p: ConnectionProfile) => {
+      if (e.shiftKey) {
+        setProfileSelection((sel) =>
+          rangeProfileSelection(sel, displayedProfileIds(), p.id, e.ctrlKey || e.metaKey),
+        );
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        setProfileSelection((sel) => toggleProfileSelection(sel, p.id));
+        return;
+      }
+      if (profileSelectionSize(profileSelection) > 0) setProfileSelection(EMPTY_PROFILE_SELECTION);
+      handleProfileClick(p);
+    };
+
+    /** 接続を別グループへ移すサブメニュー (#1630)。`ids` は 1 件以上。 */
+    const groupMoveSubmenu = (
+      ids: string[],
+      currentGroup: string | null | undefined,
+    ): ContextMenuEntry | null => {
+      if (!onMoveProfilesToGroup) return null;
+      const others = existingGroupNames(profiles).filter((g) => g !== currentGroup);
+      const items: ContextMenuEntry[] = others.map((g) => ({
+        label: g,
+        onSelect: () => onMoveProfilesToGroup(ids, g),
+      }));
+      if (items.length > 0) items.push({ separator: true });
+      items.push({ label: t("contextMenuGroupNew"), onSelect: () => setGroupNameTarget(ids) });
+      // 全員が未分類なら「未分類へ戻す」は意味が無いので出さない。
+      const anyGrouped = ids.some((id) => profiles.find((pp) => pp.id === id)?.group);
+      if (anyGrouped) {
+        items.push({ label: t("contextMenuGroupNone"), onSelect: () => onMoveProfilesToGroup(ids, null) });
+      }
+      return {
+        label:
+          ids.length > 1 ? t("contextMenuGroupMoveMany", { count: ids.length }) : t("contextMenuGroupMove"),
+        items,
+      };
+    };
+
+    // 選択中の接続の一括メニュー (#1630): 一括削除 (確認付き) / グループ移動 / 選択解除。
+    const openBatchProfilesMenu = (e: ContextMenuTriggerEvent, ids: string[]) => {
+      const count = ids.length;
+      const items: ContextMenuEntry[] = [];
+      const move = groupMoveSubmenu(ids, undefined);
+      if (move) items.push(move);
+      items.push({
+        label: t("batchProfilesClearSelection"),
+        onSelect: () => setProfileSelection(EMPTY_PROFILE_SELECTION),
+      });
+      items.push(
+        { separator: true },
+        {
+          label: t("batchProfilesDelete", { count }),
+          danger: true,
+          onSelect: () => {
+            const targets = profiles.filter((pp) => ids.includes(pp.id));
+            void confirm({
+              title: t("batchProfilesDeleteTitle"),
+              message: t("batchProfilesDeleteConfirm", {
+                count: targets.length,
+                names: targets.map((pp) => pp.name).join(", "),
+              }),
+              confirmLabel: t("batchProfilesDelete", { count: targets.length }),
+              tone: "danger",
+            }).then((ok) => {
+              if (!ok) return;
+              for (const target of targets) onDelete(target);
+              setProfileSelection(EMPTY_PROFILE_SELECTION);
+            });
+          },
+        },
+      );
+      setMenu({ x: e.clientX, y: e.clientY, items });
+    };
+
     const handleProfileContextMenu = (e: ContextMenuTriggerEvent, p: ConnectionProfile) => {
       e.preventDefault();
       e.stopPropagation();
+      // 選択中の接続の上なら一括メニュー。選択の外なら選択を取り直して単一メニュー (#1399 と同じ)。
+      if (profileSelectionSize(profileSelection) >= 2 && isProfileSelected(profileSelection, p.id)) {
+        openBatchProfilesMenu(e, orderedSelectedProfileIds(profileSelection, displayedProfileIds()));
+        return;
+      }
+      if (profileSelectionSize(profileSelection) > 0 && !isProfileSelected(profileSelection, p.id)) {
+        setProfileSelection(EMPTY_PROFILE_SELECTION);
+      }
+      const backgroundCount = Array.from(openProfileIds ?? []).filter((id) => id !== activeProfileId).length;
+      const groupMove = groupMoveSubmenu([p.id], p.group);
       setMenu({
         x: e.clientX,
         y: e.clientY,
         items: [
+          // 生存確認で切れていた背景接続は 1 クリックで張り直せる (#1630)。
+          ...(staleProfileIds?.has(p.id)
+            ? [{ label: t("contextMenuReconnectStale"), onSelect: () => onConnect(p) }]
+            : []),
           ...(onDisconnectProfile && openProfileIds?.has(p.id)
             ? [
                 {
                   label: t("contextMenuDisconnect"),
                   onSelect: () => onDisconnectProfile(p.id),
+                },
+              ]
+            : []),
+          // 背景の接続をまとめて切断 (#1630)。未確定 TX の確認は呼び出し側が 1 回だけ出す。
+          ...(onDisconnectBackground && backgroundCount > 0
+            ? [
+                {
+                  label: t("contextMenuDisconnectBackground", { count: backgroundCount }),
+                  onSelect: () => onDisconnectBackground(),
                 },
               ]
             : []),
@@ -2685,6 +2910,11 @@ export const ConnectionList = memo(
             : []),
           { label: t("contextMenuEdit"), onSelect: () => onEdit(p) },
           { label: t("contextMenuDuplicate"), onSelect: () => onDuplicate(p) },
+          ...(groupMove ? [groupMove] : []),
+          // 保存済みワークスペース (タブ) の確認・消去 (#1630)。
+          ...(onShowSavedTabs
+            ? [{ label: t("contextMenuSavedTabs"), onSelect: () => onShowSavedTabs(p) }]
+            : []),
           {
             label: t("contextMenuDelete"),
             danger: true,
@@ -2747,17 +2977,45 @@ export const ConnectionList = memo(
         label: t("batchMenuClearSelection"),
         onSelect: () => selectionStore.set(EMPTY_TABLE_SELECTION),
       });
-      if (onDropTables) {
+      // 一括の保守コマンド (#1629)。ドライバが持つ種別だけを出し、2 件以上ならサブメニューへ畳む。
+      if (onRunTablesMaintenance) {
+        const kinds = batchMaintenanceKinds(activeDriver);
+        if (kinds.length > 0) {
+          items.push(
+            { separator: true },
+            ...submenuOrFlat(
+              t("batchMenuMaintenance", { count }),
+              kinds.map((kind) => ({
+                label: t(MAINTENANCE_LABEL_KEYS[kind]),
+                onSelect: () => onRunTablesMaintenance(db, selected, kind),
+                disabled: activeReadOnly,
+                title: roTitle,
+              })),
+              { icon: "tools" },
+            ),
+          );
+        }
+      }
+      if (onTruncateTables) {
         items.push(
           { separator: true },
           {
-            label: t("batchMenuDrop", { count }),
-            onSelect: () => onDropTables(db, selected),
+            label: t("batchMenuTruncate", { count }),
+            onSelect: () => onTruncateTables(db, selected),
             disabled: activeReadOnly,
             title: roTitle,
             danger: true,
           },
         );
+      }
+      if (onDropTables) {
+        items.push(...(onTruncateTables ? [] : [{ separator: true } as const]), {
+          label: t("batchMenuDrop", { count }),
+          onSelect: () => onDropTables(db, selected),
+          disabled: activeReadOnly,
+          title: roTitle,
+          danger: true,
+        });
       }
       setMenu({ x: e.clientX, y: e.clientY, items });
     };
@@ -3318,6 +3576,13 @@ export const ConnectionList = memo(
       }
     }
 
+    /** テーブル / ビューの並べ替えを切り替えて保存する (#1629)。 */
+    const changeTableSort = (next: ExplorerTableSort) => {
+      setTableSort(next);
+      tableSortRef.current = next;
+      persistTree(expandedDbsRef.current, expandedTablesRef.current);
+    };
+
     const toggleDb = async (db: string) => {
       if (!sessionId) return;
       // 前の展開失敗の帯は、次の展開/折りたたみ操作で消す (次の成功操作まで残り続けない)。
@@ -3332,6 +3597,11 @@ export const ConnectionList = memo(
       const next = { ...expandedDbs, [db]: true };
       setExpandedDbs(next);
       persistTree(next, expandedTablesRef.current);
+      await ensureDbLoaded(sessionId, db);
+    };
+
+    /** DB 配下のテーブル一覧・行数・コメント・スキーマオブジェクトを (未取得なら) 取得する。 */
+    const ensureDbLoaded = async (sessionId: string, db: string) => {
       if (tables[db]) return;
       // Skip if a fetch is already in flight for this database — covers both
       // rapid collapse / re-expand and overlap with the schema-search eager loader.
@@ -3379,6 +3649,12 @@ export const ConnectionList = memo(
       const next = { ...expandedTables, [key]: true };
       setExpandedTables(next);
       persistTree(expandedDbsRef.current, next);
+      await ensureTableLoaded(sessionId, db, tbl);
+    };
+
+    /** テーブルの列・インデックスを (未取得なら) 取得する。 */
+    const ensureTableLoaded = async (sessionId: string, db: string, tbl: string) => {
+      const key = tableKey(db, tbl);
       if (tableColumns[key]) return;
       // Same in-flight guard as toggleDb: rapid collapse / re-expand mid-fetch
       // must not re-issue describeTable for the same table.
@@ -3400,6 +3676,48 @@ export const ConnectionList = memo(
         columnsInFlightRef.current.delete(key);
       }
     };
+
+    /**
+     * 行キー (`db:<DB>` / `tbl:<db>::<table>`) の行をまとめて開く (`*` キーの兄弟一括展開、#1629)。
+     * 1 回の状態更新にまとめるので、続けて開いても先に開いた分が上書きされない。
+     */
+    const expandRowsByKeys = (keys: readonly string[]) => {
+      if (!sessionId) return;
+      const dbs = { ...expandedDbsRef.current };
+      const tbls = { ...expandedTablesRef.current };
+      const dbLoads: string[] = [];
+      const tableLoads: { db: string; tbl: string }[] = [];
+      let skippedTables = 0;
+      for (const key of keys) {
+        const row = explorerRowsRef.current.find((r) => r.key === key);
+        if (!row) continue;
+        if (row.kind === "db" && !dbs[row.db]) {
+          dbs[row.db] = true;
+          dbLoads.push(row.db);
+        } else if (row.kind === "table" && !tbls[tableKey(row.db, row.tbl)]) {
+          // 「*」で数百テーブルを一度に開くと describeTable が同時にテーブル数ぶん飛ぶので上限を設ける。
+          if (tableLoads.length >= EXPAND_SIBLINGS_TABLE_LIMIT) {
+            skippedTables++;
+            continue;
+          }
+          tbls[tableKey(row.db, row.tbl)] = true;
+          tableLoads.push({ db: row.db, tbl: row.tbl });
+        }
+      }
+      if (skippedTables > 0) {
+        toast.info(
+          t("treeExpandSiblingsLimited", { limit: EXPAND_SIBLINGS_TABLE_LIMIT, skipped: skippedTables }),
+        );
+      }
+      if (dbLoads.length === 0 && tableLoads.length === 0) return;
+      setError(null);
+      setExpandedDbs(dbs);
+      setExpandedTables(tbls);
+      persistTree(dbs, tbls);
+      for (const db of dbLoads) void ensureDbLoaded(sessionId, db);
+      for (const { db, tbl } of tableLoads) void ensureTableLoaded(sessionId, db, tbl);
+    };
+    expandRowsByKeysRef.current = expandRowsByKeys;
 
     // 検索は `useDeferredValue` で遅延させる (#1314)。入力欄 (`filter`) は即座に反映し、
     // ツリーの絞り込みとハイライト (重い) は入力を妨げない優先度で追従する。
@@ -3612,6 +3930,12 @@ export const ConnectionList = memo(
       return groups;
     }, [profiles, visibleProfiles, groupOrder]);
 
+    // 見えなくなった接続 (削除・検索で絞られた・グループを畳んだ) は選択から外す。
+    // biome-ignore lint/correctness/useExhaustiveDependencies: displayedProfileIds は本体の関数で、依存は構造の変化を表す visibleProfiles / expandedGroups / grouped で足りる
+    useEffect(() => {
+      setProfileSelection((sel) => pruneProfileSelection(sel, displayedProfileIds()));
+    }, [visibleProfiles, expandedGroups, grouped]);
+
     // グループ見出しがある (`grouped !== null`) 場合、プロファイル行はグループ行の
     // 1 段下になるため、その配下 (DB/テーブル/カラム…) も `aria-level` が 1 段深くなる。
     const groupLevel = grouped !== null ? 1 : 0;
@@ -3754,6 +4078,8 @@ export const ConnectionList = memo(
           : null,
         partition: partitionFor,
         showObjects: hasObjectDefinitionOpener,
+        kindFilter,
+        tableSort,
         favorites: favorites ?? EMPTY_REFS,
         recent: recent ?? EMPTY_REFS,
         rowEstimate: (db, tbl) => rowEstimates[db]?.[tbl],
@@ -3778,6 +4104,8 @@ export const ConnectionList = memo(
       activeSchemaFiltered,
       schemaMatch,
       hasObjectDefinitionOpener,
+      kindFilter,
+      tableSort,
       favorites,
       recent,
       rowEstimates,
@@ -3786,6 +4114,49 @@ export const ConnectionList = memo(
       activeTableName,
     ]);
     explorerRowsRef.current = explorerRows;
+    // 保留中の「ツリーで選択」を 1 段ずつ進める。開いた直後は行が無いので、`explorerRows` が
+    // 更新されるたびに続きを試す。取得待ち (プレースホルダ行がある) の間は待ち、存在しないと
+    // 確定したら (読み込み済みなのに行が無い) 何もせず終える。
+    useEffect(() => {
+      if (!revealTarget) return;
+      const timer = setTimeout(() => setRevealTarget(null), 8000);
+      const { database, table, column } = revealTarget;
+      const rows = explorerRows;
+      // 絞り込み・検索語の解除が反映されるまで待つ (反映前の行で「無い」と誤判定しない)。
+      const filtersCleared = q.length === 0 && kindFilter === "all";
+      const find = (key: string) => rows.find((r) => r.key === key);
+      const finish = (focusKey: string | null) => {
+        if (focusKey) schemaListRef.current?.focusKey(focusKey);
+        setRevealTarget(null);
+      };
+      const step = () => {
+        const dbKey = `db:${database}`;
+        const dbRow = find(dbKey);
+        if (!dbRow) {
+          // DB 一覧がまだ無い間は待つ。読み込めているのに無い DB は諦める。
+          if (databases !== null || schemaLoadFailed) finish(null);
+          return;
+        }
+        if (dbRow.kind === "db" && !dbRow.open) {
+          expandRowsByKeysRef.current([dbKey]);
+          return;
+        }
+        if (find(`ph:tables:${database}`)) return;
+        const tableRowKey = `tbl:${tableKey(database, table)}`;
+        const tableRow = find(tableRowKey);
+        if (!tableRow) return finish(null);
+        if (!column) return finish(tableRowKey);
+        if (tableRow.kind === "table" && !tableRow.open) {
+          expandRowsByKeysRef.current([tableRowKey]);
+          return;
+        }
+        if (find(`ph:cols:${tableKey(database, table)}`)) return;
+        const colKey = `col:${tableKey(database, table)}:${column}`;
+        finish(find(colKey) ? colKey : tableRowKey);
+      };
+      if (filtersCleared) step();
+      return () => clearTimeout(timer);
+    }, [revealTarget, explorerRows, databases, schemaLoadFailed, q, kindFilter]);
     // 選択は接続を切り替えたら取り直す (同一接続内に限る, #1399)。
     // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / activeProfileId は本体で参照しないが、接続が変わったら選択を捨てるためのトリガーとして意図的に依存へ含めている
     useEffect(() => {
@@ -3827,6 +4198,8 @@ export const ConnectionList = memo(
       const profileTreeKey = `profile:${p.id}`;
       const isActive = p.id === activeProfileId;
       const isOpen = !!expandedProfiles[p.id];
+      const isSelected = isProfileSelected(profileSelection, p.id);
+      const isStale = !!staleProfileIds?.has(p.id) && !isActive;
       const status = profileStatus(p);
       const waitingForConnect = !!connectingId && connectingId !== p.id && activeProfileId !== p.id;
       const accent = normalizeChipColor(p.color) ?? undefined;
@@ -3852,6 +4225,8 @@ export const ConnectionList = memo(
         borderLeftColor = "transparent";
         rowBg = undefined;
       }
+      // 複数選択中の行 (#1630) は、本番 / アクティブより薄いアクセント色で塗る。
+      if (isSelected) rowBg = "color-mix(in srgb, var(--accent) 18%, transparent)";
       const subtitle =
         p.driver === "sqlite"
           ? p.file_path
@@ -3907,7 +4282,7 @@ export const ConnectionList = memo(
                 // ツールチップで理由 (接続中のため待機) を伝える。
                 aria-disabled={waitingForConnect ? true : undefined}
                 cursor={waitingForConnect ? "not-allowed" : undefined}
-                onClick={() => handleProfileClick(p)}
+                onClick={(e: React.MouseEvent) => handleProfileRowClick(e, p)}
                 onContextMenu={(e) => handleProfileContextMenu(e, p)}
                 onKeyDown={handleProfileRowKeyDown(p, siblingIds)}
                 onFocus={onFocus}
@@ -3915,6 +4290,7 @@ export const ConnectionList = memo(
                 role="treeitem"
                 aria-level={groupLevel + 1}
                 aria-expanded={isOpen}
+                aria-selected={isSelected || undefined}
                 // 共有 `Tooltip` (#814) で単純に包むと、この行自体が `AnimatePresence`
                 // の直接の子として追跡される `Reorder.Item` (ドラッグ並べ替え #786) のため、
                 // `TabBar` の `MotionTab` と同じ理由で開閉/並べ替えアニメーションが壊れる
@@ -3980,6 +4356,20 @@ export const ConnectionList = memo(
                   readOnly={p.read_only}
                   inTransaction={txProfileIds?.has(p.id) ?? false}
                 />
+                {/* 生存確認で切れていた背景接続のバッジ (#1630)。行のクリックで再接続する。 */}
+                {isStale && (
+                  <Tooltip label={t("listStaleTooltip")} focusableWrapper>
+                    <TreeBadge
+                      color="app.textWarning"
+                      borderColor={semanticColorToken("warning", "border")}
+                      textTransform="none"
+                      letterSpacing="0"
+                      data-testid="profile-stale-badge"
+                    >
+                      {t("listStaleBadge")}
+                    </TreeBadge>
+                  </Tooltip>
+                )}
                 {/* スキーマ更新ボタンはアクティブ接続でのみ表示する。refreshSchema は
               アクティブな sessionId を対象にするため、背景接続の行に出すと別接続を
               更新してしまい紛らわしい (#複数同時接続)。背景接続は接続済みドットのみ。 */}
@@ -4081,6 +4471,35 @@ export const ConnectionList = memo(
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
+              {/* 種別の絞り込みと並べ替え。検索とは独立で、アクティブ接続のスキーマが
+                  読めているときだけ出す (#1629)。 */}
+              {sessionId && activeProfileId && databases !== null && (
+                <Flex mt="1.5" gap="2" flexWrap="wrap" alignItems="center" data-testid="tree-view-options">
+                  {/* 種別は 4 択でラベルも長く、サイドバー幅では横並びのセグメントが
+                      はみ出すため、幅に追従するセレクトにする。 */}
+                  <Select
+                    aria-label={t("treeKindFilterLabel")}
+                    width="auto"
+                    minW="0"
+                    flex="1 1 auto"
+                    fontSize="sm"
+                    value={kindFilter}
+                    onChange={(e) => setKindFilter(e.target.value as ExplorerKindFilter)}
+                  >
+                    {EXPLORER_KIND_FILTERS.map((k) => (
+                      <option key={k} value={k}>
+                        {t(`treeKindFilter_${k}`)}
+                      </option>
+                    ))}
+                  </Select>
+                  <Segmented
+                    ariaLabel={t("treeSortLabel")}
+                    value={tableSort}
+                    options={EXPLORER_TABLE_SORTS.map((k) => ({ value: k, label: t(`treeSort_${k}`) }))}
+                    onChange={changeTableSort}
+                  />
+                </Flex>
+              )}
             </Box>
 
             {error && (
@@ -4418,6 +4837,18 @@ export const ConnectionList = memo(
             )}
 
             {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+            {groupNameTarget && onMoveProfilesToGroup && (
+              <GroupNameModal
+                count={groupNameTarget.length}
+                existingGroups={existingGroupNames(profiles)}
+                onConfirm={(group) => {
+                  onMoveProfilesToGroup(groupNameTarget, group);
+                  setGroupNameTarget(null);
+                  setProfileSelection(EMPTY_PROFILE_SELECTION);
+                }}
+                onClose={() => setGroupNameTarget(null)}
+              />
+            )}
             {confirmDialog}
           </Flex>
         </SchemaCacheTimesContext.Provider>

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act } from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -72,7 +73,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
-import { ConnectionList } from "../components/ConnectionList";
+import { createRef } from "react";
+import { ConnectionList, type ConnectionListHandle } from "../components/ConnectionList";
 import { api } from "../api/tauri";
 
 const noop = () => {};
@@ -279,8 +281,11 @@ describe("Database Explorer の階層 (#1112)", () => {
     vi.mocked(api.listSchemaObjects).mockResolvedValueOnce([{ kind: "view", name: "v1", id: null }]);
     await openDb();
 
-    await screen.findByText(t("objGroupViews"));
-    expect(screen.getByText(t("objGroupTables"))).toBeInTheDocument();
+    // 種別チップ (#1629) にも同じ語があるので、ツリー行のグループ見出しだけを数える。
+    const inTree = (text: string) =>
+      screen.queryAllByText(text).filter((el) => !el.closest('[data-testid="tree-view-options"]'));
+    await waitFor(() => expect(inTree(t("objGroupViews"))).toHaveLength(1));
+    expect(inTree(t("objGroupTables"))).toHaveLength(1);
     expect(screen.getAllByRole("treeitem", { name: "v1" })).toHaveLength(1);
     expect(screen.getByRole("treeitem", { name: "tbl1" })).toBeInTheDocument();
   });
@@ -314,6 +319,91 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.contextMenu(row);
     fireEvent.click((await screen.findAllByRole("menuitem"))[0]);
     expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  async function renderWithHandle() {
+    const ref = createRef<ConnectionListHandle>();
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        ref={ref}
+        profiles={[profile]}
+        activeProfileId="p-a"
+        sessionId="s1"
+        onOpenObjectDefinition={noop}
+      />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    return ref;
+  }
+
+  it("revealInTree は閉じている DB を開いてテーブル行へフォーカスする (#1629)", async () => {
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl2" }));
+    const row = await screen.findByRole("treeitem", { name: "tbl2" });
+    await waitFor(() => expect(row).toHaveFocus());
+  });
+
+  it("revealInTree は列つきならテーブルを開いて列行へフォーカスする (#1629)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id"), col("user_name")] as never);
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1", column: "user_name" }));
+    const row = await screen.findByRole("treeitem", { name: /user_name/ });
+    await waitFor(() => expect(row).toHaveFocus());
+    vi.mocked(api.describeTable).mockResolvedValue([]);
+  });
+
+  it("revealInTree は種別の絞り込みと検索語を解除してから探す (#1629)", async () => {
+    const ref = await renderWithHandle();
+    fireEvent.change(await screen.findByLabelText(t("treeKindFilterLabel")), { target: { value: "views" } });
+    fireEvent.change(screen.getByPlaceholderText(t("listSearchPlaceholder")), { target: { value: "zzz" } });
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1" }));
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+    await waitFor(() => expect(row).toHaveFocus());
+    expect(screen.getByPlaceholderText(t("listSearchPlaceholder"))).toHaveValue("");
+  });
+
+  it("revealInTree は存在しないテーブルでは何も起こさない (#1629)", async () => {
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "nope" }));
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    expect(document.activeElement?.getAttribute("role")).not.toBe("treeitem");
+  });
+
+  it("複数選択のメニューに一括保守と一括 TRUNCATE が並び、選択したテーブルで呼ばれる (#1629)", async () => {
+    const onRunTablesMaintenance = vi.fn();
+    const onTruncateTables = vi.fn();
+    await openDb({ onRunTablesMaintenance, onTruncateTables, onDropTables: vi.fn() });
+
+    const tbl1 = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(tbl1, { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("treeitem", { name: "tbl2" }), { ctrlKey: true });
+    fireEvent.contextMenu(tbl1);
+
+    const labels = (await screen.findAllByRole("menuitem")).map((el) => el.textContent ?? "");
+    expect(labels.findIndex((l) => l.includes(t("batchMenuMaintenance", { count: 2 })))).toBeGreaterThan(-1);
+    const truncate = await screen.findByRole("menuitem", { name: t("batchMenuTruncate", { count: 2 }) });
+    const drop = await screen.findByRole("menuitem", { name: t("batchMenuDrop", { count: 2 }) });
+    // TRUNCATE は DROP より前 (破壊の度合いが小さい順)。
+    expect(truncate.compareDocumentPosition(drop) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(truncate);
+    expect(onTruncateTables).toHaveBeenCalledWith("db1", ["tbl1", "tbl2"]);
+
+    fireEvent.contextMenu(tbl1);
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("batchMenuMaintenance", { count: 2 }) }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("maintenanceOptimize") }));
+    expect(onRunTablesMaintenance).toHaveBeenCalledWith("db1", ["tbl1", "tbl2"], "optimize");
+  });
+
+  it("read_only 接続では一括保守・一括 TRUNCATE が無効化される (#1629)", async () => {
+    await openDb({ onTruncateTables: vi.fn(), onRunTablesMaintenance: vi.fn() }, { read_only: true });
+    const tbl1 = await screen.findByRole("treeitem", { name: "tbl1" });
+    fireEvent.click(tbl1, { ctrlKey: true });
+    fireEvent.click(await screen.findByRole("treeitem", { name: "tbl2" }), { ctrlKey: true });
+    fireEvent.contextMenu(tbl1);
+    const truncate = await screen.findByRole("menuitem", { name: t("batchMenuTruncate", { count: 2 }) });
+    expect(truncate).toBeDisabled();
   });
 
   it("「テーブルを複製」は onCloneTable を呼び、read_only 接続では無効化される (#1398)", async () => {
@@ -674,6 +764,18 @@ describe("スキーマツリーのキーボード操作 (#1184)", () => {
     expect(tbl1).toHaveFocus();
   });
 
+  it("「*」で兄弟テーブルを一括展開するときは上限 (50 件) で打ち切り、通知する (#1629)", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `m${String(i).padStart(2, "0")}`);
+    vi.mocked(api.listTables).mockResolvedValueOnce(many);
+    vi.mocked(api.describeTable).mockClear();
+    await openDb();
+    const first = await screen.findByRole("treeitem", { name: "m00" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "*" });
+    await screen.findByText(t("treeExpandSiblingsLimited", { limit: 50, skipped: 10 }));
+    await waitFor(() => expect(vi.mocked(api.describeTable)).toHaveBeenCalledTimes(50));
+  });
+
   it("ArrowRight は折りたたみ中のテーブルを展開し、展開済みなら最初のカラムへフォーカスを移す", async () => {
     vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
     await openDb();
@@ -892,5 +994,155 @@ describe("スキーマツリーの IPC 集約 (#1263)", () => {
     await screen.findByRole("treeitem", { name: "tbl2" });
     expect(api.listTablesAll).toHaveBeenCalledTimes(2);
     expect(screen.queryByText(/list tables timed out/)).toBeNull();
+  });
+});
+
+describe("ConnectionList の接続管理 (#1630)", () => {
+  const profiles = [
+    makeProfile({ id: "p-a", name: "Alpha DB", group: "Billing" }),
+    makeProfile({ id: "p-b", name: "Beta DB", group: "Billing" }),
+    makeProfile({ id: "p-c", name: "Gamma DB" }),
+  ];
+  const row = (name: string) => screen.getByText(name).closest('[role="treeitem"]') as HTMLElement;
+
+  it("背景接続があるとき、右クリックから一括切断できる (アクティブ以外の件数つき)", async () => {
+    const onDisconnectBackground = vi.fn();
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={profiles}
+        activeProfileId="p-a"
+        sessionId={null}
+        openProfileIds={new Set(["p-a", "p-b", "p-c"])}
+        onDisconnectProfile={vi.fn()}
+        onDisconnectBackground={onDisconnectBackground}
+      />,
+    );
+    fireEvent.contextMenu(row("Alpha DB"));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: t("contextMenuDisconnectBackground", { count: 2 }) }),
+    );
+    expect(onDisconnectBackground).toHaveBeenCalledOnce();
+  });
+
+  it("背景接続が無ければ一括切断の項目を出さない", async () => {
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={profiles}
+        activeProfileId="p-a"
+        openProfileIds={new Set(["p-a"])}
+        onDisconnectBackground={vi.fn()}
+      />,
+    );
+    fireEvent.contextMenu(row("Alpha DB"));
+    await screen.findByRole("menuitem", { name: t("contextMenuEdit") });
+    expect(
+      screen.queryByRole("menuitem", { name: /背景の接続|background connections/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("切断を検知した背景接続にバッジを出し、メニューから再接続できる", async () => {
+    const onConnect = vi.fn();
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={profiles}
+        activeProfileId="p-a"
+        openProfileIds={new Set(["p-a", "p-b"])}
+        staleProfileIds={new Set(["p-b"])}
+        onConnect={onConnect}
+      />,
+    );
+    expect(screen.getAllByTestId("profile-stale-badge")).toHaveLength(1);
+    fireEvent.contextMenu(row("Beta DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuReconnectStale") }));
+    expect(onConnect).toHaveBeenCalledWith(expect.objectContaining({ id: "p-b" }));
+  });
+
+  it("右クリックの『グループへ移動』で既存グループ・未分類・新規へ移せる", async () => {
+    const onMove = vi.fn();
+    renderWithProviders(<ConnectionList {...baseProps} profiles={profiles} onMoveProfilesToGroup={onMove} />);
+    // 未分類の Gamma を既存グループ Billing へ。
+    fireEvent.contextMenu(row("Gamma DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuGroupMove") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Billing" }));
+    expect(onMove).toHaveBeenLastCalledWith(["p-c"], "Billing");
+
+    // グループ済みの Alpha: 現在のグループは候補に出ず、未分類へ戻せる。
+    fireEvent.contextMenu(row("Alpha DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuGroupMove") }));
+    expect(screen.queryByRole("menuitem", { name: "Billing" })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuGroupNone") }));
+    expect(onMove).toHaveBeenLastCalledWith(["p-a"], null);
+  });
+
+  it("『新しいグループ…』は名前入力モーダルを開き、確定で移動する", async () => {
+    const onMove = vi.fn();
+    renderWithProviders(<ConnectionList {...baseProps} profiles={profiles} onMoveProfilesToGroup={onMove} />);
+    fireEvent.contextMenu(row("Gamma DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuGroupMove") }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuGroupNew") }));
+    const input = await screen.findByLabelText(t("groupNameLabel"));
+    fireEvent.change(input, { target: { value: "  Staging " } });
+    fireEvent.click(screen.getByRole("button", { name: t("groupNameMove") }));
+    expect(onMove).toHaveBeenCalledWith(["p-c"], "Staging");
+  });
+
+  it("Ctrl/Shift+クリックで複数選択し、一括メニューから削除 (確認付き) とグループ移動ができる", async () => {
+    const onDelete = vi.fn();
+    const onMove = vi.fn();
+    const onConnect = vi.fn();
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        profiles={profiles}
+        onDelete={onDelete}
+        onConnect={onConnect}
+        onMoveProfilesToGroup={onMove}
+      />,
+    );
+    fireEvent.click(row("Alpha DB"), { ctrlKey: true });
+    fireEvent.click(row("Gamma DB"), { ctrlKey: true });
+    // 修飾付きクリックは接続しない。
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(row("Alpha DB")).toHaveAttribute("aria-selected", "true");
+    expect(row("Beta DB")).not.toHaveAttribute("aria-selected");
+
+    fireEvent.contextMenu(row("Gamma DB"));
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: t("contextMenuGroupMoveMany", { count: 2 }) }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Billing" }));
+    expect(onMove).toHaveBeenCalledWith(["p-a", "p-c"], "Billing");
+
+    fireEvent.contextMenu(row("Alpha DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("batchProfilesDelete", { count: 2 }) }));
+    expect(onDelete).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: t("batchProfilesDelete", { count: 2 }) }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(2));
+    expect(onDelete.mock.calls.map((c) => c[0].id)).toEqual(["p-a", "p-c"]);
+  });
+
+  it("Shift+クリックは表示順で範囲を選ぶ", () => {
+    renderWithProviders(<ConnectionList {...baseProps} profiles={profiles} />);
+    fireEvent.click(row("Alpha DB"), { ctrlKey: true });
+    fireEvent.click(row("Beta DB"), { shiftKey: true });
+    expect(row("Alpha DB")).toHaveAttribute("aria-selected", "true");
+    expect(row("Beta DB")).toHaveAttribute("aria-selected", "true");
+    expect(row("Gamma DB")).not.toHaveAttribute("aria-selected");
+    // 修飾なしのクリックで選択は解除される。
+    fireEvent.click(row("Gamma DB"));
+    expect(row("Alpha DB")).not.toHaveAttribute("aria-selected");
+  });
+
+  it("保存されたタブの確認を右クリックから開ける", async () => {
+    const onShowSavedTabs = vi.fn();
+    renderWithProviders(
+      <ConnectionList {...baseProps} profiles={profiles} onShowSavedTabs={onShowSavedTabs} />,
+    );
+    fireEvent.contextMenu(row("Gamma DB"));
+    fireEvent.click(await screen.findByRole("menuitem", { name: t("contextMenuSavedTabs") }));
+    expect(onShowSavedTabs).toHaveBeenCalledWith(expect.objectContaining({ id: "p-c" }));
   });
 });
