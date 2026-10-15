@@ -553,8 +553,17 @@ export function UsersPanel({
       const pw = generatePassword();
       setPw(pw);
       reveal(true);
-      if (await copyToClipboard(pw)) toast.info(t("usersPasswordGeneratedCopied"));
-      else toast.info(t("usersPasswordGenerated"));
+      // クリップボードへは自動でコピーしない (履歴ツールなどへ秘密が残るため)。コピーはボタン操作のみ。
+      toast.info(t("usersPasswordGenerated"));
+    },
+    [toast, t],
+  );
+
+  const copyPassword = useCallback(
+    async (pw: string) => {
+      if (!pw) return;
+      if (await copyToClipboard(pw)) toast.info(t("usersPasswordCopied"));
+      else toast.error(t("clipboardCopyFailed"));
     },
     [toast, t],
   );
@@ -786,6 +795,14 @@ export function UsersPanel({
               >
                 {t("usersPasswordGenerate")}
               </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!createPassword}
+                onClick={() => void copyPassword(createPassword)}
+              >
+                {t("usersPasswordCopy")}
+              </Button>
               <Flex gap="2" justifyContent="flex-end">
                 <Button type="button" onClick={() => setShowCreate(false)} disabled={busy}>
                   {t("usersCreateCancel")}
@@ -993,6 +1010,14 @@ export function UsersPanel({
                   >
                     {t("usersPasswordGenerate")}
                   </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!newPassword}
+                    onClick={() => void copyPassword(newPassword)}
+                  >
+                    {t("usersPasswordCopy")}
+                  </Button>
                   <Flex gap="2" justifyContent="flex-end">
                     <Button type="button" onClick={() => setShowPassword(false)} disabled={busy}>
                       {t("usersPasswordCancel")}
@@ -1024,7 +1049,11 @@ export function UsersPanel({
                           variant="ghost"
                           disabled={readOnly || busy}
                           aria-label={t("usersRoleRevokeAria", { role })}
-                          onClick={() => void submitRoleMembership(false, role, null)}
+                          onClick={() => {
+                            // MySQL の member_of は `role@host`。剥奪にはホストが要る。
+                            const parsed = driver === "mysql" ? parseRoleInput(role) : null;
+                            void submitRoleMembership(false, parsed?.role ?? role, parsed?.host ?? null);
+                          }}
                         >
                           {t("usersRoleRevoke")}
                         </Button>
@@ -1184,7 +1213,6 @@ export function UsersPanel({
                             <Checkbox
                               checked={colFlags[f]}
                               onChange={() => setColFlags((cur) => ({ ...cur, [f]: !cur[f] }))}
-                              aria-label={`column ${f}`}
                             />
                             <span>
                               {t(

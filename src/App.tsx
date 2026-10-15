@@ -379,7 +379,6 @@ import { extractQueryParams, substituteQueryParams, type ParamType } from "./que
 import { isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
-import { getKeyringStatus } from "./keyringStatus";
 import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
 import { formatBlobSize } from "./components/blobIo";
 import {
@@ -1613,20 +1612,6 @@ export default function App() {
       cancelled = true;
     };
     // 起動時に一度だけ。t/toast/confirm はレンダー間で安定なので依存に含めない。
-  }, []);
-
-  // OS keyring の疎通診断 (#1622)。使えない環境ではパスワードを保存できないので、
-  // 起動時に一度だけ警告する (接続フォームには常時 Callout が出る)。診断自体はベストエフォート。
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ実行する。t/toast は初回の値で足りる
-  useEffect(() => {
-    let cancelled = false;
-    void getKeyringStatus().then((s) => {
-      if (cancelled || !s || s.available) return;
-      toast.notify({ message: t("keyringStartupWarning"), tone: "info", severity: "warning" });
-    });
-    return () => {
-      cancelled = true;
-    };
   }, []);
 
   const [profiles, setProfiles] = useState<ConnectionProfile[]>([]);

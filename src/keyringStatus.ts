@@ -29,10 +29,14 @@ export function resetKeyringStatusCache(): void {
   cached = null;
 }
 
-/** 診断結果。まだ・取得できないときは `null` (警告は出さない)。 */
-export function useKeyringStatus(): KeyringStatus | null {
+/**
+ * 診断結果。`enabled` のときだけ確認する (パスワード欄を初めて描画したとき。起動時には確認しない)。
+ * まだ・取得できないときは `null` (警告は出さない)。
+ */
+export function useKeyringStatus(enabled: boolean): KeyringStatus | null {
   const [status, setStatus] = useState<KeyringStatus | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     let alive = true;
     void getKeyringStatus().then((s) => {
       if (alive) setStatus(s);
@@ -40,7 +44,7 @@ export function useKeyringStatus(): KeyringStatus | null {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [enabled]);
   return status;
 }
 

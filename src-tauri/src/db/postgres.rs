@@ -964,44 +964,21 @@ impl PostgresConn {
         let others: Vec<i32> = pids.iter().copied().filter(|p| Some(*p) != own).collect();
         let own_requested = pids.iter().any(|p| Some(*p) == own);
 
-        // 段階 1: 自分自身を除いて一括実行する。
-        if !others.is_empty() {
-            let bulk_sql = format!(
-                "SELECT t.p, f.ok FROM ( \
-                   SELECT p, ord FROM unnest($1::int4[]) WITH ORDINALITY AS u(p, ord) \
-                 ) t CROSS JOIN LATERAL {func}(t.p) AS f(ok) ORDER BY t.ord"
-            );
-            match sqlx::query_as::<_, (i32, bool)>(sqlx::AssertSqlSafe(bulk_sql))
-                .bind(&others)
-                .fetch_all(&mut *conn)
+        // 段階 1: 自分自身を除いて pid ごとに実行する。一括 (LATERAL) 文は途中で失敗すると
+        // フォールバックで先に届いたシグナルを再送しうる (キャンセルの二重送信) ので、最初から
+        // pid 単位にする。`pg_backend_pid()` の取得に失敗していても自接続を巻き込まないよう、
+        // SQL 側でも `<> pg_backend_pid()` を条件に残す (その場合は行が返らず skipped になる)。
+        let one_sql = format!("SELECT {func}($1::int4) WHERE $1::int4 <> pg_backend_pid()");
+        for pid in &others {
+            match sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(one_sql.clone()))
+                .bind(pid)
+                .fetch_optional(&mut *conn)
                 .await
             {
-                Ok(rows) => {
-                    for (pid, ok) in rows {
-                        if ok {
-                            out.record_killed(i64::from(pid));
-                        } else {
-                            out.record_already_gone(i64::from(pid));
-                        }
-                    }
-                }
-                Err(_) => {
-                    // 一括文が失敗した (権限不足など)。pid ごとに実行して失敗した pid だけにエラーを付ける。
-                    let one_sql = format!("SELECT {func}($1)");
-                    for pid in &others {
-                        match sqlx::query_scalar::<_, bool>(sqlx::AssertSqlSafe(one_sql.clone()))
-                            .bind(pid)
-                            .fetch_one(&mut *conn)
-                            .await
-                        {
-                            Ok(true) => out.record_killed(i64::from(*pid)),
-                            Ok(false) => out.record_already_gone(i64::from(*pid)),
-                            Err(e) => {
-                                out.record_failure(i64::from(*pid), AppError::from(e).to_string())
-                            }
-                        }
-                    }
-                }
+                Ok(Some(true)) => out.record_killed(i64::from(*pid)),
+                Ok(Some(false)) => out.record_already_gone(i64::from(*pid)),
+                Ok(None) => out.record_skipped(i64::from(*pid)),
+                Err(e) => out.record_failure(i64::from(*pid), AppError::from(e).to_string()),
             }
         }
 
@@ -2329,12 +2306,14 @@ impl PostgresConn {
         // pg_total_relation_size = table + all indexes + TOAST; pg_indexes_size
         // = just the indexes; pg_table_size = total minus indexes (heap + TOAST
         // + FSM/VM). These read catalog bookkeeping, not the heap, so no scan.
-        // reltuples is the planner's cached estimate (-1 == never analyzed,
-        // surfaced as None). relkind 'r'/'p' covers ordinary + partitioned
+        // reltuples is the planner's cached estimate (-1 == never analyzed). PostgreSQL 14+
+        // では未 ANALYZE のとき -1 になるので、統計コレクタの n_live_tup で補う (#1622)。
+        // それも無ければ None. relkind 'r'/'p' covers ordinary + partitioned
         // tables; views/indexes are excluded.
         let rows: Vec<PgRow> = sqlx::query(
             r#"SELECT c.relname,
-                      c.reltuples::bigint,
+                      CASE WHEN c.reltuples < 0 THEN COALESCE(st.n_live_tup, -1)
+                           ELSE c.reltuples END::bigint,
                       pg_table_size(c.oid)::bigint,
                       pg_indexes_size(c.oid)::bigint,
                       pg_total_relation_size(c.oid)::bigint,

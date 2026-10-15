@@ -213,32 +213,54 @@ fn classify_keyring_error(e: &keyring::Error) -> &'static str {
     }
 }
 
+/// 診断用の一時エントリ名。固定にして、異常終了で残っても 1 件に収まるようにする。
+const PROBE_TARGET: &str = "diagnostics/probe";
+/// 診断で書く非秘密の値。
+const PROBE_VALUE: &str = "noobdb-keyring-probe";
+
+/// 診断結果のキャッシュ。ロックを持ったまま診断を実行するので、同時に呼ばれても書き込みは 1 回。
+static KEYRING_STATUS: std::sync::Mutex<Option<KeyringStatus>> = std::sync::Mutex::new(None);
+
+/// 診断済みならその結果を返す (書き込みはしない)。診断バンドルが使う。
+pub fn cached_keyring_status() -> Option<KeyringStatus> {
+    KEYRING_STATUS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+/// keyring の疎通診断を、プロセスで最初の 1 回だけ実行してキャッシュする。接続フォームで
+/// パスワード欄 (保存先 = keyring) を初めて描画したときに呼ぶ。起動時には呼ばない。
+pub fn check_keyring_once() -> KeyringStatus {
+    let mut guard = KEYRING_STATUS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(s) = guard.as_ref() {
+        return s.clone();
+    }
+    let status = probe_keyring();
+    *guard = Some(status.clone());
+    status
+}
+
 /// 一時エントリを書いて読み戻し、削除する (パスワード保存の前に使えるかを確認する)。
-/// 書く値は毎回ランダムな非秘密の文字列で、実プロファイルの秘密には触れない。
-pub fn probe_keyring() -> KeyringStatus {
-    use rand::RngExt;
-    let mut rng = rand::rng();
-    let nonce: String = (0..12)
-        .map(|_| char::from(b'a' + rng.random_range(0..26u8)))
-        .collect();
-    let target = format!("diagnostics/probe-{nonce}");
+/// 書く値は非秘密の固定文字列で、実プロファイルの秘密には触れない。
+fn probe_keyring() -> KeyringStatus {
     let fail = |reason: &'static str| KeyringStatus {
         available: false,
         reason: Some(reason),
     };
-    let entry = match Entry::new(SERVICE, &target) {
+    let entry = match Entry::new(SERVICE, PROBE_TARGET) {
         Ok(e) => e,
         Err(e) => return fail(classify_keyring_error(&e)),
     };
-    if let Err(e) = entry.set_password(&nonce) {
+    if let Err(e) = entry.set_password(PROBE_VALUE) {
         return fail(classify_keyring_error(&e));
     }
     let result = match entry.get_password() {
-        Ok(v) if v == nonce => None,
+        Ok(v) if v == PROBE_VALUE => None,
         Ok(_) => Some("readback_mismatch"),
         Err(e) => Some(classify_keyring_error(&e)),
     };
-    // 後始末の失敗は診断結果に影響させない (残っても無害な一時エントリ)。
+    // 後始末の失敗は診断結果に影響させない (残っても固定名の無害な 1 件)。
     let _ = entry.delete_credential();
     match result {
         None => KeyringStatus {
@@ -302,6 +324,7 @@ mod probe_tests {
     }
 
     #[test]
+    #[ignore = "実 OS keyring に書き込むため手動実行 (cargo test -- --ignored)"]
     fn probe_reports_a_consistent_status() {
         // 実 keyring の有無は環境依存。available と reason が矛盾しないことだけ確認する。
         let st = probe_keyring();

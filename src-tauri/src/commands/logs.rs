@@ -63,10 +63,13 @@ pub async fn clear_perf_samples() {
 /// 保存ダイアログ + 既存のテキスト書き出しで行う。
 #[tauri::command]
 pub async fn build_diagnostic_bundle() -> Result<String> {
-    let status = tauri::async_runtime::spawn_blocking(crate::profiles::secrets::probe_keyring)
-        .await
-        .map_err(|e| crate::error::AppError::Other(e.to_string()))?;
-    let meta = crate::diagnostics::BundleMeta::current(status.available, status.reason);
+    // keyring には書き込まない。接続フォームで診断済みならその結果、未実行なら unchecked。
+    let keyring = match crate::profiles::secrets::cached_keyring_status() {
+        Some(s) if s.available => "available".to_string(),
+        Some(s) => format!("unavailable ({})", s.reason.unwrap_or("other")),
+        None => "unchecked".to_string(),
+    };
+    let meta = crate::diagnostics::BundleMeta::current(&keyring);
     Ok(crate::diagnostics::build_bundle(
         &logs::read(),
         &meta,

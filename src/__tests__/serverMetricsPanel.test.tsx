@@ -174,8 +174,11 @@ describe("ServerMetricsPanel 期間切替・接続数の余裕 (#1622)", () => {
     expect(note).toHaveTextContent("100");
     const select = screen.getByLabelText(t("metricsWindowAria")) as HTMLSelectElement;
     expect([...select.options].map((o) => o.value)).toEqual(["300", "900", "3600"]);
+    const callsBefore = vi.mocked(api.serverMetrics).mock.calls.length;
     fireEvent.change(select, { target: { value: "900" } });
     expect(select.value).toBe("900");
+    // 期間の切替ではバッファを捨てず、取得し直しもしない (表示側で切る)。
+    expect(vi.mocked(api.serverMetrics).mock.calls.length).toBe(callsBefore);
   });
 
   it("上限が不明なら余裕の帯を出さない", async () => {

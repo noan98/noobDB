@@ -451,12 +451,13 @@ export function ConnectionForm({ initial, profiles, onSaved, onCancel }: Props) 
   const [sshJumpPortError, setSshJumpPortError] = useState<string | null>(null);
 
   const isFileBacked = driver === "sqlite";
-  const keyringStatus = useKeyringStatus();
   const useSsh = route === "ssh";
   const useSsm = route === "ssm" && !isFileBacked;
   // AWS IAM auth applies only to network MySQL / PostgreSQL (#734). It forces
   // TLS, so the effective mode shown/sent is at least `require`.
   const iamActive = !isFileBacked && isIamCapableDriver(driver) && authMethod === "aws_iam";
+  // パスワード欄 (保存先 = OS keyring) を描画するときだけ keyring の疎通を確認する (#1622)。
+  const keyringStatus = useKeyringStatus(!isFileBacked && !iamActive);
   const effectiveSslMode: SslMode = iamActive ? effectiveSslModeForIam(sslMode) : sslMode;
   const ssmConfig = (): SsmConfig | null =>
     useSsm

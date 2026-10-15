@@ -1706,6 +1706,28 @@ impl MySqlConn {
             sqlx::query("SELECT User, Host, Super_priv FROM mysql.user ORDER BY User, Host")
                 .fetch_all(&self.pool)
                 .await?;
+        // MySQL 8 のロール付与 (`mysql.role_edges`)。ユーザごとに `role@host` で埋める (#1622)。
+        // 5.7 / MariaDB (テーブルが無い) や権限不足ではクエリが失敗するので、空のままにする。
+        let mut roles: std::collections::HashMap<(String, String), Vec<String>> =
+            std::collections::HashMap::new();
+        if let Ok(edges) = sqlx::query(
+            "SELECT TO_USER, TO_HOST, FROM_USER, FROM_HOST FROM mysql.role_edges \
+             ORDER BY FROM_USER, FROM_HOST",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            for e in edges {
+                let to_user: String = e.try_get(0).unwrap_or_default();
+                let to_host: String = e.try_get(1).unwrap_or_default();
+                let from_user: String = e.try_get(2).unwrap_or_default();
+                let from_host: String = e.try_get(3).unwrap_or_default();
+                roles
+                    .entry((to_user, to_host))
+                    .or_default()
+                    .push(format!("{from_user}@{from_host}"));
+            }
+        }
         Ok(rows
             .into_iter()
             .map(|r| {
@@ -1713,15 +1735,20 @@ impl MySqlConn {
                     .try_get::<String, _>(2)
                     .map(|v| v.eq_ignore_ascii_case("Y"))
                     .unwrap_or(false);
+                let name: String = r.try_get(0).unwrap_or_default();
+                let host: Option<String> = r.try_get::<Option<String>, _>(1).ok().flatten();
+                let member_of = roles
+                    .remove(&(name.clone(), host.clone().unwrap_or_default()))
+                    .unwrap_or_default();
                 DbUserInfo {
-                    name: r.try_get(0).unwrap_or_default(),
-                    host: r.try_get::<Option<String>, _>(1).ok().flatten(),
+                    name,
+                    host,
                     attributes: if is_super {
                         vec!["SUPER".to_string()]
                     } else {
                         Vec::new()
                     },
-                    member_of: Vec::new(),
+                    member_of,
                     is_superuser: is_super,
                     // `mysql.user` also has an `account_locked` column this
                     // panel does not read; login is reported as always

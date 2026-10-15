@@ -240,7 +240,9 @@ export function tableMaintenanceHints(
 ): TableMaintenanceHints {
   const dead = row.dead_rows;
   if (dead == null || !Number.isFinite(dead)) return { bloated: false, deadRatio: null, staleStats: false };
-  const live = Math.max(0, row.row_estimate ?? 0);
+  // 行数の推定が無い (未 ANALYZE で n_live_tup も無い) と比率を出せないので、肥大とは言わない。
+  if (row.row_estimate == null) return { bloated: false, deadRatio: null, staleStats: false };
+  const live = Math.max(0, row.row_estimate);
   const total = live + Math.max(0, dead);
   const deadRatio = total > 0 ? Math.max(0, dead) / total : null;
   const bloated = deadRatio !== null && dead >= BLOAT_MIN_DEAD_ROWS && deadRatio >= BLOAT_DEAD_RATIO;

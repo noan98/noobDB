@@ -53,7 +53,8 @@ pub mod __test_api {
     pub use crate::db::js_compat::{collation_key, js_number_to_string, js_to_number};
     pub use crate::db::privileges::{
         generate_alter_password_sql, generate_create_user_sql, generate_drop_user_sql,
-        generate_grant_sql, generate_revoke_sql, GrantSpec, PrivilegeFlags, UserSpec,
+        generate_grant_sql, generate_revoke_sql, generate_role_grant_sql, generate_role_revoke_sql,
+        GrantSpec, PrivilegeFlags, UserSpec,
     };
     pub use crate::db::profile::{
         ColumnOverview, ColumnProfile, ProfileHistogramBucket, ProfileValueCount,

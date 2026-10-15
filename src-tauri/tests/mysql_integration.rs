@@ -3473,3 +3473,70 @@ async fn mysql_column_profile_sampled_is_subset_of_table() {
         .await
         .expect("cleanup");
 }
+
+/// ロールの付与・一覧・剥奪 (#1622)。`list_db_users` が `mysql.role_edges` から
+/// `member_of` を `role@host` で埋め、剥奪 SQL (ホスト付き) で外せること。MySQL 8 以外
+/// (ロールを作れない版) ではスキップする。
+#[tokio::test]
+async fn mysql_role_membership_is_listed_and_revocable() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP USER IF EXISTS 'noobdb_t1622_u'@'%'",
+        "DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'",
+    ] {
+        let _ = conn.execute(sql, None).await;
+    }
+    if conn
+        .execute("CREATE ROLE 'noobdb_t1622_r'@'%'", None)
+        .await
+        .is_err()
+    {
+        eprintln!("skip: roles are not supported by this server");
+        conn.close().await;
+        return;
+    }
+    conn.execute("CREATE USER 'noobdb_t1622_u'@'%'", None)
+        .await
+        .expect("create user");
+
+    let grant = t::generate_role_grant_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&grant, None).await.expect("grant role");
+    let member_of = |users: Vec<t::DbUserInfo>| {
+        users
+            .into_iter()
+            .find(|u| u.name == "noobdb_t1622_u")
+            .map(|u| u.member_of)
+            .unwrap_or_default()
+    };
+    let listed = member_of(conn.list_db_users().await.expect("list users"));
+    assert_eq!(listed, vec!["noobdb_t1622_r@%".to_string()]);
+
+    let revoke = t::generate_role_revoke_sql(
+        t::DriverKind::Mysql,
+        "noobdb_t1622_r",
+        Some("%"),
+        "noobdb_t1622_u",
+        Some("%"),
+    );
+    conn.execute(&revoke, None).await.expect("revoke role");
+    assert!(member_of(conn.list_db_users().await.expect("list users")).is_empty());
+
+    let _ = conn
+        .execute("DROP USER IF EXISTS 'noobdb_t1622_u'@'%'", None)
+        .await;
+    let _ = conn
+        .execute("DROP ROLE IF EXISTS 'noobdb_t1622_r'@'%'", None)
+        .await;
+    conn.close().await;
+}

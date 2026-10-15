@@ -273,6 +273,12 @@ describe("tableMaintenanceHints (#1622)", () => {
     ).toBe(false);
   });
 
+  it("行数の推定が無い (未 ANALYZE) と、比率を出せないので肥大とも古いとも言わない", () => {
+    expect(
+      tableMaintenanceHints({ row_estimate: null, dead_rows: 50000, last_analyze_at: null }, NOW),
+    ).toEqual({ bloated: false, deadRatio: null, staleStats: false });
+  });
+
   it("行数が少ない表は統計が古くても指摘せず、大きい表は 7 日超 / 未実行で指摘する", () => {
     expect(
       tableMaintenanceHints({ row_estimate: 10, dead_rows: 0, last_analyze_at: null }, NOW).staleStats,

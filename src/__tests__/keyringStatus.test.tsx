@@ -49,6 +49,31 @@ describe("keyring 疎通診断 (#1622)", () => {
     expect(callout.textContent).toContain(t("keyringReasonStorageUnavailable"));
   });
 
+  it("SQLite(ファイル接続)ではパスワード欄が無いので、診断を実行しない", async () => {
+    vi.mocked(api.checkKeyring).mockResolvedValue({ available: false, reason: "storage_unavailable" });
+    renderWithProviders(
+      <ConnectionForm
+        initial={
+          {
+            id: "p1",
+            name: "lite",
+            driver: "sqlite",
+            host: "",
+            port: 0,
+            user: "",
+            database: "/tmp/a.db",
+          } as never
+        }
+        profiles={[]}
+        onSaved={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.checkKeyring).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("keyring-unavailable")).toBeNull();
+  });
+
   it("使える環境では Callout を出さない", async () => {
     vi.mocked(api.checkKeyring).mockResolvedValue({ available: true, reason: null });
     renderWithProviders(

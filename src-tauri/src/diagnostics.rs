@@ -3,10 +3,12 @@
 //! 不具合報告のためにアプリログへ版情報を付けて書き出す。**秘密情報と接続先は含めない**
 //! のが最優先なので、ログ本文は次の順で伏せる (過剰に伏せる側へ倒す)。
 //!
-//! 1. 機微なキーの値 (`host=` / `user=` / `password=` / `path=` / `url=` など)
-//! 2. シングルクォートの SQL リテラル → `'?'`
+//! 1. 機微なキーの値 (`host=` / `user: ` / JSON の `"password":` など。`path=` 系は
+//!    空白入りのパスを考慮して次の `key=` か行末まで)
+//! 2. 引用符の中身 (`"..."` は `"?"`、シングルクォートの SQL リテラルは `'?'`)
 //! 3. ホームディレクトリ配下のユーザ名
-//! 4. 認証情報付き URL・`user@host`・IPv4/IPv6・ホスト名らしいトークン
+//! 4. 認証情報付き URL・`user@host`・IPv4/IPv6・UNC パス・ホスト名らしいトークン・
+//!    `ホスト:ポート` (単一ラベルも)。`key=値` は `=` より後ろを値として判定する。
 //!
 //! パスワード等は元々ログに出さない設計だが、エラー文や外部ライブラリのメッセージに
 //! 混ざる可能性への多層防御として行う。
@@ -16,8 +18,15 @@ const REDACTED: &str = "<redacted>";
 /// 値を伏せるキーに含まれる部分文字列 (小文字で比較)。
 const SENSITIVE_KEY_PARTS: &[&str] = &[
     "host", "addr", "user", "pass", "secret", "token", "key", "path", "url", "dsn", "endpoint",
-    "server", "database", "dbname", "profile", "name", "email", "cert", "account",
+    "server", "database", "dbname", "profile", "name", "email", "cert", "account", "remote",
+    "peer", "target",
 ];
+
+/// 空白を含みうる値を持つキー (パス系)。値は次の `key=` か行末まで伏せる。
+const PATH_KEY_PARTS: &[&str] = &["path", "dir", "file", "cwd", "home"];
+
+/// `key: value` 形式で、散文の語として現れるため値を伏せないキー。
+const PROSE_KEYS: &[&str] = &["keyring"];
 
 /// ホスト名と誤認しないファイル拡張子 / 典型的な末尾ラベル。
 const NON_HOST_SUFFIXES: &[&str] = &[
@@ -34,73 +43,162 @@ fn is_key_char(c: char) -> bool {
 fn is_sensitive_key(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
     // `ip` は `description` や `skip` を巻き込まないよう、区切られた語としてだけ見る。
-    SENSITIVE_KEY_PARTS.iter().any(|p| k.contains(p)) || k.split(['_', '.', '-']).any(|w| w == "ip")
+    SENSITIVE_KEY_PARTS.iter().any(|p| k.contains(p))
+        || PATH_KEY_PARTS.iter().any(|p| k.contains(p))
+        || k.split(['_', '.', '-']).any(|w| w == "ip")
 }
 
-/// `key=value` 形式の機微な値を伏せる。値は `"..."` (エスケープ対応) か次の空白まで。
+fn is_path_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase();
+    PATH_KEY_PARTS.iter().any(|p| k.contains(p))
+}
+
+/// 出力済みの文字列の末尾にあるキーを取り出す。JSON の `"key"` (閉じ引用符つき) も扱う。
+/// 戻り値は (キー, キーの直前の文字)。
+fn trailing_key(out: &str) -> Option<(String, Option<char>)> {
+    let mut rev = out.chars().rev().peekable();
+    if rev.peek() == Some(&'"') {
+        rev.next();
+    }
+    let mut key: Vec<char> = Vec::new();
+    while let Some(&c) = rev.peek() {
+        if is_key_char(c) {
+            key.push(c);
+            rev.next();
+        } else {
+            break;
+        }
+    }
+    if key.is_empty() {
+        return None;
+    }
+    key.reverse();
+    Some((key.into_iter().collect(), rev.next()))
+}
+
+/// 引用符 `q` で始まる値の終わり (閉じ引用符の次の位置)。閉じが無ければ行末。
+fn quoted_end(chars: &[char], start: usize) -> usize {
+    let q = chars[start];
+    let mut j = start + 1;
+    while j < chars.len() {
+        if chars[j] == '\\' {
+            j += 2;
+            continue;
+        }
+        if chars[j] == q {
+            return j + 1;
+        }
+        j += 1;
+    }
+    chars.len()
+}
+
+/// 空白の直後に `ident=` が続く位置か (パス値の終端判定)。
+fn next_key_follows(chars: &[char], ws: usize) -> bool {
+    let mut j = ws;
+    while j < chars.len() && chars[j].is_whitespace() {
+        j += 1;
+    }
+    let s = j;
+    while j < chars.len() && is_key_char(chars[j]) {
+        j += 1;
+    }
+    j > s && chars.get(j) == Some(&'=')
+}
+
+/// `key=value` / `key: value` / JSON `"key":"value"` の機微な値を伏せる。
 fn redact_key_values(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == '=' {
-            // 直前のキー部分 (すでに out に出力済み) を取り出す。
-            let key: String = {
-                let mut k: Vec<char> = out.chars().rev().take_while(|c| is_key_char(*c)).collect();
-                k.reverse();
-                k.into_iter().collect()
+        let c = chars[i];
+        let is_colon = c == ':';
+        if c == '=' || is_colon {
+            // `::` (Rust のパス) は区切りではない。
+            if is_colon && (chars.get(i + 1) == Some(&':') || (i > 0 && chars[i - 1] == ':')) {
+                out.push(c);
+                i += 1;
+                continue;
+            }
+            let key = trailing_key(&out);
+            // 値の開始位置 (コロン形式は直後の空白を読み飛ばす)。
+            let mut v = i + 1;
+            if is_colon {
+                while v < chars.len() && (chars[v] == ' ' || chars[v] == '\t') {
+                    v += 1;
+                }
+            }
+            let sensitive = match &key {
+                Some((k, before)) => {
+                    is_sensitive_key(k)
+                        && (!is_colon
+                            || (*before != Some(':')
+                                && !PROSE_KEYS.contains(&k.to_ascii_lowercase().as_str())))
+                }
+                None => false,
             };
-            out.push('=');
-            i += 1;
-            if !key.is_empty() && is_sensitive_key(&key) && i < chars.len() {
-                // 値の範囲を決める。
-                if chars[i] == '"' {
-                    let mut j = i + 1;
+            if sensitive && v < chars.len() {
+                let path_like = key.as_ref().is_some_and(|(k, _)| is_path_key(k));
+                let end = if chars[v] == '"' || chars[v] == '\'' {
+                    quoted_end(&chars, v)
+                } else if path_like {
+                    let mut j = v;
                     while j < chars.len() {
-                        if chars[j] == '\\' {
-                            j += 2;
-                            continue;
-                        }
-                        if chars[j] == '"' {
-                            j += 1;
+                        if chars[j].is_whitespace() && next_key_follows(&chars, j) {
                             break;
                         }
                         j += 1;
                     }
-                    i = j.min(chars.len());
+                    j
                 } else {
-                    while i < chars.len() && !chars[i].is_whitespace() {
-                        i += 1;
+                    let mut j = v;
+                    while j < chars.len()
+                        && !chars[j].is_whitespace()
+                        && !(is_colon && matches!(chars[j], ',' | '}' | ')'))
+                    {
+                        j += 1;
                     }
+                    j
+                };
+                out.push(c);
+                if is_colon && v > i + 1 {
+                    out.push(' ');
                 }
                 out.push_str(REDACTED);
+                i = end;
+                continue;
             }
-            continue;
         }
-        out.push(chars[i]);
+        out.push(c);
         i += 1;
     }
     out
 }
 
-/// シングルクォートの文字列リテラルを `'?'` に置き換える。英数字の直後のクォート
-/// (`don't` のような省略形) は開始とみなさない。`''` は同じリテラル内のエスケープ。
-fn redact_literals(line: &str) -> String {
+/// 引用符の中身を伏せる。`"..."` は `"?"`、シングルクォートの SQL リテラルは `'?'`。
+/// 出現順に 1 本で走査するので、一方の引用符の中にあるもう一方は外側に含まれる。
+/// 英数字の直後のシングルクォート (`don't`) は開始とみなさない。`''` はリテラル内の
+/// エスケープ。閉じが無ければそのまま残す。
+fn redact_quotes(line: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let mut out = String::with_capacity(line.len());
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
-        let opens = c == '\''
+        if c == '"' {
+            let end = quoted_end(&chars, i);
+            if end <= chars.len() && end > i + 1 && chars[end - 1] == '"' {
+                out.push_str("\"?\"");
+                i = end;
+                continue;
+            }
+        } else if c == '\''
             && !(i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '\''))
-            // 閉じクォートがあるときだけリテラルとみなす (行末までに無ければそのまま)。
-            && chars[i + 1..].contains(&'\'');
-        if opens {
+            && chars[i + 1..].contains(&'\'')
+        {
             let mut j = i + 1;
-            loop {
-                if j >= chars.len() {
-                    break;
-                }
+            while j < chars.len() {
                 if chars[j] == '\'' {
                     if chars.get(j + 1) == Some(&'\'') {
                         j += 2;
@@ -178,7 +276,32 @@ fn is_hostname_like(s: &str) -> bool {
         && !NON_HOST_SUFFIXES.contains(&tld.as_str())
 }
 
+/// 英字を 1 つ以上含む単一ラベル (`bastion`, `jumpbox`, `db-1`)。`ホスト:ポート` の
+/// ホスト側の判定に使う (数字だけの `10:30` のような時刻は除く)。
+fn is_single_label_host(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        && s.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// 末尾の `:ポート` を分ける。ポートが 1〜65535 の数字なら (ホスト部, true)。
+fn split_port(s: &str) -> (&str, bool) {
+    match s.rsplit_once(':') {
+        Some((h, p))
+            if !h.contains(':')
+                && !p.is_empty()
+                && p.len() <= 5
+                && p.chars().all(|c| c.is_ascii_digit())
+                && p.parse::<u32>().is_ok_and(|n| (1..=65535).contains(&n)) =>
+        {
+            (h, true)
+        }
+        _ => (s, false),
+    }
+}
+
 /// 1 トークン (空白区切り) の前後の句読点を除いた中身を判定して伏せる。
+/// `key=値` は最後の `=` より後ろを値として判定する (`remote=10.0.0.7:5432`)。
 fn redact_token(token: &str) -> String {
     const EDGE: &[char] = &[
         '(', ')', '[', ']', '{', '}', ',', ';', '"', '\'', '<', '>', '`',
@@ -193,22 +316,23 @@ fn redact_token(token: &str) -> String {
     // 末尾の `.` `:` は文末の句読点として外して判定する。
     let core_trim = core.trim_end_matches(['.', ':']);
     let punct = &core[core_trim.len()..];
-    // ポート (`host:3306`) を外して判定する。
-    let no_port = match core_trim.rsplit_once(':') {
-        Some((h, p))
-            if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) && !h.contains(':') =>
-        {
-            h
-        }
-        _ => core_trim,
+    let (prefix, value) = match core_trim.rfind('=') {
+        Some(p) => (&core_trim[..=p], &core_trim[p + 1..]),
+        None => ("", core_trim),
     };
-    let sensitive = core_trim.contains("://")
-        || core_trim.contains('@')
-        || is_ipv4(no_port)
-        || is_ipv6ish(&core_trim.replace(['[', ']'], ""))
-        || is_hostname_like(no_port);
+    if value.is_empty() {
+        return token.to_string();
+    }
+    let (host_part, has_port) = split_port(value);
+    let sensitive = value.contains("://")
+        || value.contains('@')
+        || value.starts_with("\\\\")
+        || is_ipv4(host_part)
+        || is_ipv6ish(&value.replace(['[', ']'], ""))
+        || is_hostname_like(host_part)
+        || (has_port && is_single_label_host(host_part));
     if sensitive {
-        format!("{lead}{REDACTED}{punct}{trail}")
+        format!("{lead}{prefix}{REDACTED}{punct}{trail}")
     } else {
         token.to_string()
     }
@@ -236,9 +360,7 @@ fn redact_tokens(line: &str) -> String {
 
 /// ログ 1 行分を匿名化する。
 pub fn redact_log_line(line: &str) -> String {
-    redact_tokens(&redact_home_paths(&redact_literals(&redact_key_values(
-        line,
-    ))))
+    redact_tokens(&redact_home_paths(&redact_quotes(&redact_key_values(line))))
 }
 
 /// ログ全体を行ごとに匿名化する。
@@ -256,26 +378,26 @@ pub struct BundleMeta {
     pub arch: String,
     pub sqlx_version: String,
     pub libsqlite3_version: String,
-    /// `None` なら正常。
-    pub keyring_available: bool,
-    pub keyring_reason: Option<String>,
+    /// keyring の状態を 1 語で表した文字列 (`available` / `unavailable (理由コード)` /
+    /// `unchecked`)。診断バンドルの作成では keyring に書き込まず、キャッシュ済みの値だけを使う。
+    pub keyring: String,
     pub perf_enabled: bool,
 }
 
 impl BundleMeta {
-    pub fn current(keyring_available: bool, keyring_reason: Option<&str>) -> Self {
+    pub fn current(keyring: &str) -> Self {
         Self {
             app_version: env!("CARGO_PKG_VERSION").to_string(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
+            // build.rs が Cargo.lock から埋め込む。取れなかったときだけ "unknown"。
             sqlx_version: option_env!("NOOBDB_SQLX_VERSION")
                 .unwrap_or("unknown")
                 .to_string(),
             libsqlite3_version: option_env!("NOOBDB_LIBSQLITE3_VERSION")
                 .unwrap_or("unknown")
                 .to_string(),
-            keyring_available,
-            keyring_reason: keyring_reason.map(str::to_string),
+            keyring: keyring.to_string(),
             perf_enabled: crate::perf::perf_enabled(),
         }
     }
@@ -291,18 +413,7 @@ pub fn build_bundle(log_text: &str, meta: &BundleMeta, perf: &[crate::perf::Perf
     out.push_str("supported_drivers: mysql, postgres, sqlite\n");
     out.push_str(&format!("sqlx: {}\n", meta.sqlx_version));
     out.push_str(&format!("libsqlite3-sys: {}\n", meta.libsqlite3_version));
-    out.push_str(&format!(
-        "keyring: {}{}\n",
-        if meta.keyring_available {
-            "available"
-        } else {
-            "unavailable"
-        },
-        meta.keyring_reason
-            .as_deref()
-            .map(|r| format!(" ({r})"))
-            .unwrap_or_default()
-    ));
+    out.push_str(&format!("keyring: {}\n", meta.keyring));
     out.push_str(&format!(
         "perf_measurement: {}\n",
         if meta.perf_enabled { "on" } else { "off" }
@@ -421,8 +532,7 @@ mod tests {
             arch: "x86_64".into(),
             sqlx_version: "0.9.0".into(),
             libsqlite3_version: "0.30.1".into(),
-            keyring_available: false,
-            keyring_reason: Some("storage_unavailable".into()),
+            keyring: "unavailable (storage_unavailable)".into(),
             perf_enabled: true,
         };
         let log = "INFO connect host=secret-db.example.com user=root password=pw123\nERROR bad 192.168.1.9";
@@ -439,8 +549,129 @@ mod tests {
 
     #[test]
     fn current_meta_has_embedded_versions() {
-        let m = BundleMeta::current(true, None);
+        let m = BundleMeta::current("unchecked");
         assert!(!m.sqlx_version.is_empty());
-        assert!(!m.libsqlite3_version.is_empty());
+        // build.rs が Cargo.lock から埋め込む。"unknown" は読めなかったときだけ。
+        assert_ne!(m.sqlx_version, "unknown");
+        assert_ne!(m.libsqlite3_version, "unknown");
+        assert_eq!(m.keyring, "unchecked");
+    }
+
+    // ---- Opus レビュー指摘の回帰 (#1622) ----
+
+    #[test]
+    fn key_value_judges_only_the_value_after_the_last_equals() {
+        let out = redact_log_line(
+            "ssh tunnel listening ssh_host=bastion local_port=1 remote=10.0.0.7:5432",
+        );
+        assert!(leaks(&out, &["bastion", "10.0.0.7"]).is_empty(), "{out}");
+        assert!(out.contains("local_port=1"), "{out}");
+        let out = redact_log_line("forwarding remote=db.internal:5432 ok");
+        assert!(leaks(&out, &["db.internal"]).is_empty(), "{out}");
+        // 非機微キーでも値が IP / ホストなら伏せる (トークン判定が `=` の後ろを見る)。
+        let out = redact_log_line("connect via=10.1.2.3:22 lport=1");
+        assert!(leaks(&out, &["10.1.2.3"]).is_empty(), "{out}");
+        assert!(out.contains("lport=1"), "{out}");
+    }
+
+    #[test]
+    fn double_quoted_contents_become_question_marks() {
+        for (line, needle) in [
+            (
+                r#"FATAL: password authentication failed for user "alice""#,
+                "alice",
+            ),
+            (r#"FATAL: database "acme_prod" does not exist"#, "acme_prod"),
+            (r#"ERROR: role "bob" does not exist"#, "bob"),
+            (
+                r#"could not translate host name "pg-internal" to address"#,
+                "pg-internal",
+            ),
+        ] {
+            let out = redact_log_line(line);
+            assert!(!out.contains(needle), "{out}");
+            assert!(out.contains("\"?\""), "{out}");
+        }
+    }
+
+    #[test]
+    fn colon_and_json_forms_are_judged_by_the_key() {
+        let out =
+            redact_log_line(r#"DEBUG Profile { host: "dbserver", user: "admin", port: 3306 }"#);
+        assert!(leaks(&out, &["dbserver", "admin"]).is_empty(), "{out}");
+        assert!(out.contains("port: 3306"), "{out}");
+        let out = redact_log_line(
+            r#"payload {"host":"db.local","user":"admin","password":"pw","port":1}"#,
+        );
+        assert!(
+            leaks(&out, &["db.local", "admin", "\"pw\""]).is_empty(),
+            "{out}"
+        );
+        assert!(!out.contains("pw"), "{out}");
+        // 散文の `keyring:` や Rust のモジュールパスは巻き込まない。
+        let out =
+            redact_log_line("ERROR noobdb_lib::profiles::secrets: keyring: failed to set secret");
+        assert!(out.contains("keyring: failed to set secret"), "{out}");
+    }
+
+    #[test]
+    fn single_label_host_with_port_is_redacted() {
+        let out = redact_log_line("jump via jumpbox:22 then bastion:22, retry in 10:30");
+        assert!(leaks(&out, &["jumpbox", "bastion"]).is_empty(), "{out}");
+        assert!(out.contains("10:30"), "{out}");
+    }
+
+    #[test]
+    fn path_values_with_spaces_are_redacted_up_to_the_next_key() {
+        let out = redact_log_line(
+            "open path=/Users/alice/Library/Application Support/noobDB/x.db mode=ro",
+        );
+        assert!(
+            leaks(&out, &["alice", "Application Support", "x.db"]).is_empty(),
+            "{out}"
+        );
+        assert!(out.contains("mode=ro"), "{out}");
+        let out = redact_log_line("start data_dir=/opt/My Data/noobdb");
+        assert!(!out.contains("My Data"), "{out}");
+    }
+
+    #[test]
+    fn unc_paths_are_redacted() {
+        let out = redact_log_line(r"open \\fileserver\share\noobdb\x.db failed");
+        assert!(leaks(&out, &["fileserver", "share"]).is_empty(), "{out}");
+        assert!(out.contains("failed"), "{out}");
+    }
+
+    #[test]
+    fn bundle_reports_unchecked_keyring_without_probing() {
+        let meta = BundleMeta::current("unchecked");
+        let b = build_bundle("", &meta, &[]);
+        assert!(b.contains("keyring: unchecked"), "{b}");
+    }
+
+    #[test]
+    fn reviewer_sample_lines_do_not_leak() {
+        let cases: [(&str, &[&str]); 4] = [
+            (
+                "2026-10-15T01:00:00Z  INFO noobdb_lib::ssh::tunnel: ssh tunnel listening ssh_host=bastion local_port=50123 remote=10.0.0.7:5432",
+                &["bastion", "10.0.0.7"],
+            ),
+            (
+                "INFO ssh tunnel listening ssh_host=bastion local_port=1 remote=db.internal:5432",
+                &["bastion", "db.internal"],
+            ),
+            (
+                "ERROR ssh: password auth error user=deploy error=failed to connect to jumpbox:22",
+                &["deploy", "jumpbox"],
+            ),
+            (
+                "ERROR schema_drift: failed to open database path=/Users/alice/Library/Application Support/noobDB/x.db error=boom",
+                &["alice", "Application Support", "x.db"],
+            ),
+        ];
+        for (line, needles) in cases {
+            let out = redact_log_line(line);
+            assert!(leaks(&out, needles).is_empty(), "{out}");
+        }
     }
 }

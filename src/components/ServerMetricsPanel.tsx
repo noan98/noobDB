@@ -57,6 +57,9 @@ import { Spinner } from "./Spinner";
 // 折れ線チャート 1 枚の SVG 座標系。ChartView と同じく viewBox 上で計算し、軸/グリッド
 // は CSS 変数でテーマ追従、系列色は可視化共通のカテゴリスケール (colorScale) を参照する。
 const CHART_W = 760;
+/** バッファに保持する期間 (選べる最長)。 */
+const BUFFER_WINDOW_MS = Math.max(...METRICS_WINDOW_OPTIONS_SECS) * 1000;
+
 const CHART_H = 200;
 const PAD = { left: 48, right: 14, top: 12, bottom: 26 };
 const PLOT_W = CHART_W - PAD.left - PAD.right;
@@ -330,7 +333,8 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
   const busyRef = useRef(false);
   // 取得の世代番号。セッション切替前に始まった取得の遅延応答を捨てる。
   const loadSeqRef = useRef(0);
-  // 表示期間 (#1622)。バッファは常に選択中の期間だけ保持する (短くしたら次の取得で古い分が落ちる)。
+  // 表示期間 (#1622)。バッファは選べる最長 (60 分) まで常に保持し、表示側で期間に切る。
+  // 期間を切り替えても取得の履歴を捨てず、短くしてから戻しても過去の分が残る。
   const [windowSecs, setWindowSecs] = useState<number>(DEFAULT_METRICS_WINDOW_SECS);
   const windowMs = windowSecs * 1000;
 
@@ -345,7 +349,7 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
         if (seq !== loadSeqRef.current) return;
         // 受信時刻でスタンプしてリングバッファへ (差分レートの分母に使う)。
         const at = Date.now();
-        setSamples((cur) => pushSample(cur, { atMs: at, metrics: m }, windowMs));
+        setSamples((cur) => pushSample(cur, { atMs: at, metrics: m }, BUFFER_WINDOW_MS));
         setError(null);
         setUpdatedAt(new Date(at));
       } catch (e) {
@@ -358,7 +362,7 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
         }
       }
     },
-    [sessionId, windowMs],
+    [sessionId],
   );
 
   // 初回ロード + セッション切替時のリセット。
@@ -382,7 +386,7 @@ export function ServerMetricsPanel({ sessionId, driver }: { sessionId: string; d
   }, [autoRefresh, intervalSecs, load, active]);
   useRefreshOnReactivate(active, load);
 
-  // 期間を短くした直後は次の取得までバッファに古い分が残るので、表示側でも窓で切る。
+  // バッファは最長期間ぶん持っているので、表示側で選択中の期間に切る。
   const visibleSamples = useMemo(() => windowSamples(samples, windowMs), [samples, windowMs]);
   const points = useMemo(() => deriveSeries(visibleSamples), [visibleSamples]);
   const headroom = useMemo(

@@ -309,6 +309,9 @@ fn render_grant_or_revoke(
 /// MySQL 8: ``GRANT 'role'@'%' TO 'user'@'host'`` / PostgreSQL: ``GRANT "role" TO "user"``。
 /// `role_host` は MySQL のロール側ホスト (省略時 `%`)、`user_host` は付与先アカウントのホスト。
 /// SQLite は空文字列。
+///
+/// **MySQL は 8.0 以降が前提** (ロール構文は 5.7 / MariaDB の一部には無い。MariaDB の
+/// `GRANT role TO user` はホスト指定を取らない)。
 pub fn generate_role_grant_sql(
     driver: DriverKind,
     role: &str,

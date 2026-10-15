@@ -233,8 +233,6 @@ const en = {
   keyringReasonPlatformFailure: "The OS keyring reported an error. Check that it is unlocked and running.",
   keyringReasonReadback: "A test value written to the keyring could not be read back correctly.",
   keyringReasonOther: "The OS keyring could not be used for an unknown reason.",
-  keyringStartupWarning:
-    "The OS keyring is unavailable, so passwords can't be saved. You will be asked for them on every connection.",
   ipcMismatchTitle: "The app and backend versions may not match",
   ipcMismatchBody:
     "Responses from {count} commands did not match the expected format. Please restart the app or check for an update. When reporting this, copy the diagnostic text.",
@@ -4330,10 +4328,12 @@ const en = {
     "The template overwrites every table row currently in the matrix. Nothing runs until you press Apply and confirm the SQL.",
   usersPasswordGenerate: "Generate password",
   usersPasswordGenerated: "Generated a random password. It is shown in the field — copy it before applying.",
-  usersPasswordGeneratedCopied: "Generated a random password and copied it to the clipboard.",
+  usersPasswordCopy: "Copy",
+  usersPasswordCopied: "Copied the password to the clipboard.",
   usersRolesLabel: "Roles (membership)",
   usersRolesNone: "This role is not a member of any other role.",
-  usersRolesMysqlNote: "MySQL does not list role grants here. Enter a role (role or role@host) to grant it.",
+  usersRolesMysqlNote:
+    "No role grants found (MySQL 8 roles only; MySQL 5.7, MariaDB or insufficient privileges show none). Enter a role (role or role@host) to grant it.",
   usersRoleInputPlaceholder: "Role name to grant",
   usersRoleInputPlaceholderMysql: "role or role@host (host defaults to %)",
   usersRoleGrant: "Grant role",
@@ -6021,8 +6021,6 @@ const ja: Dict = {
     "OS の keyring がエラーを返しました。ロック解除されているか、起動しているかを確認してください。",
   keyringReasonReadback: "keyring に書いた確認用の値を正しく読み戻せませんでした。",
   keyringReasonOther: "原因不明の理由で OS の keyring を使えません。",
-  keyringStartupWarning:
-    "OS の keyring が使えないため、パスワードを保存できません。接続のたびに入力が必要です。",
   ipcMismatchTitle: "アプリとバックエンドのバージョンが一致していない可能性があります",
   ipcMismatchBody:
     "{count} 個のコマンドの応答が期待した形式と一致しませんでした。再起動または更新を確認してください。問い合わせる際は診断テキストをコピーして添えてください。",
@@ -10098,11 +10096,12 @@ const ja: Dict = {
   usersPasswordGenerate: "パスワードを生成",
   usersPasswordGenerated:
     "乱数パスワードを生成しました。入力欄に表示しているので、適用前にコピーしてください。",
-  usersPasswordGeneratedCopied: "乱数パスワードを生成し、クリップボードにコピーしました。",
+  usersPasswordCopy: "コピー",
+  usersPasswordCopied: "パスワードをクリップボードにコピーしました。",
   usersRolesLabel: "ロール (メンバーシップ)",
   usersRolesNone: "他のロールのメンバーではありません。",
   usersRolesMysqlNote:
-    "MySQL ではロールの付与状況を一覧表示しません。付与するロール (role または role@host) を入力してください。",
+    "付与済みのロールはありません (MySQL 8 のロールのみ表示。MySQL 5.7・MariaDB・権限不足では表示されません)。付与するロール (role または role@host) を入力してください。",
   usersRoleInputPlaceholder: "付与するロール名",
   usersRoleInputPlaceholderMysql: "role または role@host (ホスト省略時は %)",
   usersRoleGrant: "ロールを付与",
