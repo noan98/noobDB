@@ -12,6 +12,8 @@
 // 永続化と更新の純ロジックのみをここに置き (Vitest でユニットテスト)、UI への
 // 反映は `App.tsx` / `SnippetList.tsx` / `CommandPalette` が担当する。
 
+import { moveTabBy, reorderIfPermutation } from "./tabReorder";
+
 const STORAGE_KEY = "noobdb.snippetQuickAccess.v1";
 
 /** 「最近実行した」として保持する最大件数 (LRU)。 */
@@ -67,6 +69,29 @@ export function toggleSnippetFavorite(state: SnippetQuickAccessState, id: string
     return { ...state, favorites: state.favorites.filter((f) => f !== id) };
   }
   return { ...state, favorites: [...state.favorites, id] };
+}
+
+/**
+ * お気に入りの並びを `proposed` に差し替える (純粋, #1631)。`reorderIfPermutation` で
+ * 現在のお気に入りの真の順列であることを検証し、欠落・重複・混入があれば何もしない
+ * (同じ参照を返す)。`recent` には触れない。
+ */
+export function reorderSnippetFavorites(
+  state: SnippetQuickAccessState,
+  proposed: string[],
+): SnippetQuickAccessState {
+  const next = reorderIfPermutation(state.favorites, proposed);
+  if (!next || next.every((id, i) => id === state.favorites[i])) return state;
+  return { ...state, favorites: next };
+}
+
+/** お気に入りの `id` を `delta` 個ずらす (保存順の向き。端では動かない)。純粋。 */
+export function moveSnippetFavorite(
+  state: SnippetQuickAccessState,
+  id: string,
+  delta: number,
+): SnippetQuickAccessState {
+  return reorderSnippetFavorites(state, moveTabBy(state.favorites, id, delta));
 }
 
 /**

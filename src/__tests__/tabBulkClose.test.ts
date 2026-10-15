@@ -10,6 +10,11 @@ describe("tabsToClose", () => {
   it("others: 唯一のタブなら空", () => {
     expect(tabsToClose(["a"], "a", "others")).toEqual([]);
   });
+  it("left は基点より左のタブだけを返す", () => {
+    expect(tabsToClose(ids, "c", "left")).toEqual(["a", "b"]);
+    expect(tabsToClose(ids, "a", "left")).toEqual([]);
+    expect(tabsToClose(ids, "x", "left")).toEqual([]);
+  });
   it("right: 基点より右だけ", () => {
     expect(tabsToClose(ids, "b", "right")).toEqual(["c", "d"]);
   });

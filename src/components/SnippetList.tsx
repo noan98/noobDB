@@ -26,12 +26,15 @@ import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
 import { Tooltip } from "./Tooltip";
 import { useConfirm } from "./ConfirmDialog";
+import { snippetBodyExcerpt, snippetCopyDraft, snippetMatchesQuery } from "../snippetSearch";
 
 interface Props {
   snippets: Snippet[];
   activeProfile: ConnectionProfile | null;
   onInsert: (snippet: Snippet) => void;
   onEdit: (snippet: Snippet) => void;
+  /** 複製 (#1631): 下書きを渡す。id は空で、保存すると新規スニペットになる。 */
+  onDuplicate?: (draft: Snippet) => void;
   /** Passes the full snippet (not just id) so the caller can offer an Undo (#676). */
   onDelete: (snippet: Snippet) => void;
   /** Empty-state CTA: open a fresh snippet form (same handler as the header "+" button, #599). */
@@ -44,6 +47,8 @@ interface Props {
   onOpenPlanWatch?: () => void;
   /** お気に入り (ピン留め) 済みのスニペット ID (#877)。接続の有無に関わらず永続化される。 */
   favoriteIds?: string[];
+  /** お気に入りの並べ替え (#1631)。delta は登録順での移動量 (負が前)。 */
+  onMoveFavorite?: (snippet: Snippet, delta: number) => void;
   /** お気に入りのトグル。ローカル永続化のみなので接続有無に関わらず常に渡せる。 */
   onToggleFavorite?: (snippet: Snippet) => void;
   /**
@@ -90,6 +95,7 @@ export function scopeMatches(snippet: Pick<Snippet, "scope">, profile: Connectio
  */
 const SnippetRow = memo(function SnippetRow({
   s,
+  excerpt,
   isFavorite,
   isWatched,
   canRun,
@@ -100,6 +106,8 @@ const SnippetRow = memo(function SnippetRow({
   onContextMenu,
 }: {
   s: Snippet;
+  /** 本文だけが一致したときの抜粋 (#1631)。 */
+  excerpt: string | null;
   isFavorite: boolean;
   isWatched: boolean;
   canRun: boolean;
@@ -241,6 +249,22 @@ const SnippetRow = memo(function SnippetRow({
           )}
         </TreeRow>
       </Tooltip>
+      {excerpt && (
+        <chakra.div
+          data-testid="snippet-excerpt"
+          pl="7"
+          pr="2.5"
+          pb="1"
+          color="app.textMuted"
+          textStyle="caption"
+          fontFamily="mono"
+          whiteSpace="nowrap"
+          overflow="hidden"
+          textOverflow="ellipsis"
+        >
+          {excerpt}
+        </chakra.div>
+      )}
     </MotionTreeNode>
   );
 });
@@ -252,6 +276,7 @@ export const SnippetList = memo(function SnippetList({
   activeProfile,
   onInsert,
   onEdit,
+  onDuplicate,
   onDelete,
   onCreate,
   watchedPlanIds,
@@ -259,6 +284,7 @@ export const SnippetList = memo(function SnippetList({
   onOpenPlanWatch,
   favoriteIds,
   onToggleFavorite,
+  onMoveFavorite,
   onRun,
 }: Props) {
   const t = useT();
@@ -284,13 +310,7 @@ export const SnippetList = memo(function SnippetList({
   const visibleSnippets = useMemo(() => {
     const q = filter.trim().toLowerCase();
     if (!q) return scopeFiltered;
-    return scopeFiltered.filter((s) => {
-      if (s.name.toLowerCase().includes(q)) return true;
-      if (s.folder?.toLowerCase().includes(q)) return true;
-      if (s.sql.toLowerCase().includes(q)) return true;
-      if (s.tags.some((tag) => tag.toLowerCase().includes(q))) return true;
-      return false;
-    });
+    return scopeFiltered.filter((s) => snippetMatchesQuery(s, q));
   }, [scopeFiltered, filter]);
 
   const searching = filter.trim() !== "";
@@ -323,10 +343,29 @@ export const SnippetList = memo(function SnippetList({
       items.push({ label: t("snippetMenuRun"), onSelect: () => onRun(s) });
     }
     items.push({ label: t("snippetMenuEdit"), onSelect: () => onEdit(s) });
+    if (onDuplicate) {
+      items.push({
+        label: t("snippetMenuDuplicate"),
+        onSelect: () => onDuplicate(snippetCopyDraft(s, t("snippetCopySuffix"))),
+      });
+    }
     if (onToggleFavorite) {
       items.push({
         label: favoriteIds?.includes(s.id) ? t("snippetMenuUnfavorite") : t("snippetMenuFavorite"),
         onSelect: () => onToggleFavorite(s),
+      });
+    }
+    if (onMoveFavorite && favoriteIds?.includes(s.id)) {
+      const pos = favoriteIds.indexOf(s.id);
+      items.push({
+        label: t("snippetMenuFavoriteEarlier"),
+        onSelect: () => onMoveFavorite(s, -1),
+        disabled: pos <= 0,
+      });
+      items.push({
+        label: t("snippetMenuFavoriteLater"),
+        onSelect: () => onMoveFavorite(s, 1),
+        disabled: pos >= favoriteIds.length - 1,
       });
     }
     if (onTogglePlanWatch) {
@@ -367,6 +406,7 @@ export const SnippetList = memo(function SnippetList({
     <SnippetRow
       key={s.id}
       s={s}
+      excerpt={searching ? snippetBodyExcerpt(s, filter) : null}
       isFavorite={favoriteIds?.includes(s.id) ?? false}
       isWatched={watchedPlanIds?.includes(s.id) ?? false}
       canRun={Boolean(onRun)}

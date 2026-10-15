@@ -487,12 +487,14 @@ import {
   loadQuickAccess,
   recordRecent as recordRecentTable,
   saveQuickAccess,
+  moveFavorite as moveFavoriteTable,
   toggleFavorite as toggleFavoriteTable,
   type QuickAccessState,
 } from "./tableQuickAccess";
 import {
   forgetSnippetQuickAccess,
   loadSnippetQuickAccess,
+  moveSnippetFavorite,
   recordSnippetRun,
   saveSnippetQuickAccess,
   toggleSnippetFavorite,
@@ -3205,12 +3207,35 @@ export default function App() {
     [selectedProfile?.id],
   );
 
+  // お気に入りテーブルの並べ替え (#1631)。delta は保存順の向き (負が前)。
+  const handleMoveFavorite = useCallback(
+    (database: string, table: string, delta: number) => {
+      const id = selectedProfile?.id;
+      if (!id) return;
+      setQuickAccess((prev) => {
+        const next = moveFavoriteTable(prev, { database, table }, delta);
+        if (next !== prev) saveQuickAccess(id, next);
+        return next;
+      });
+    },
+    [selectedProfile?.id],
+  );
+
   // スニペットのお気に入り (ピン留め) トグル (#877)。接続の有無に関わらず常に
   // 使える (ローカル永続化のみで DB には触れない)。
   const handleToggleSnippetFavorite = useCallback((snippet: Snippet) => {
     setSnippetQuickAccess((prev) => {
       const next = toggleSnippetFavorite(prev, snippet.id);
       saveSnippetQuickAccess(next);
+      return next;
+    });
+  }, []);
+
+  // スニペットのお気に入りの並べ替え (#1631)。delta は保存順の向き (負が前)。
+  const handleMoveSnippetFavorite = useCallback((snippet: Snippet, delta: number) => {
+    setSnippetQuickAccess((prev) => {
+      const next = moveSnippetFavorite(prev, snippet.id, delta);
+      if (next !== prev) saveSnippetQuickAccess(next);
       return next;
     });
   }, []);
@@ -6443,6 +6468,12 @@ export default function App() {
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
+
+  // 複製 (#1631): 下書き (id 空) を初期値に新規作成フォームを開く。保存処理は既存の経路。
+  const handleDuplicateSnippet = useCallback(
+    (draft: Snippet) => handleEditSnippet(draft),
+    [handleEditSnippet],
+  );
 
   const handleDeleteSnippet = useCallback(
     async (snippet: Snippet) => {
@@ -10524,6 +10555,7 @@ export default function App() {
     onShowCreateTable: handleShowCreateTable,
     onCopyTableDdl: handleCopyTableDdl,
     onToggleFavorite: handleToggleFavorite,
+    onMoveFavorite: handleMoveFavorite,
     onCreateTable: (db: string) => setCreateTableDb(db),
     onCreateNamespace: () => setCreateNamespaceOpen(true),
     onDropNamespace: handleDropNamespace,
@@ -10889,6 +10921,7 @@ export default function App() {
                   activeProfile={selectedProfile}
                   onInsert={handleInsertSnippet}
                   onEdit={handleEditSnippet}
+                  onDuplicate={handleDuplicateSnippet}
                   onDelete={handleDeleteSnippet}
                   onCreate={handleOpenSnippetForm}
                   watchedPlanIds={watchedPlanIdList}
@@ -10896,6 +10929,7 @@ export default function App() {
                   onOpenPlanWatch={selectedProfile ? handleOpenPlanWatch : undefined}
                   favoriteIds={snippetQuickAccess.favorites}
                   onToggleFavorite={handleToggleSnippetFavorite}
+                  onMoveFavorite={handleMoveSnippetFavorite}
                   onRun={sessionId ? handleRunSnippet : undefined}
                 />
               ) : sidebarTab === "history" ? (
@@ -12566,6 +12600,7 @@ export default function App() {
             // Moving is only possible when it won't leave a single pane empty.
             const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
             const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left").length > 0;
             const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
             const items: ContextMenuEntry[] = [
               // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
@@ -12587,6 +12622,11 @@ export default function App() {
                 label: t("tabCloseOthers"),
                 onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
                 disabled: !hasOthers,
+              },
+              {
+                label: t("tabCloseLeft"),
+                onSelect: () => closeTabsBulk(tabMenu.tabId, "left"),
+                disabled: !hasLeft,
               },
               {
                 label: t("tabCloseRight"),
@@ -12794,6 +12834,17 @@ export default function App() {
           onOpenTable={(ref) => handleOpenTable(ref.database, ref.table)}
           onShowMore={handleLauncherShowMore}
           onOpenSettings={() => openFullView("settings")}
+          // ランチャーはお気に入りを新しい順 (保存順の逆) に見せるので、表示上の移動量は符号を反転する。
+          onMoveSnippetFavorite={(id, delta) => {
+            setSnippetQuickAccess((prev) => {
+              const next = moveSnippetFavorite(prev, id, -delta);
+              if (next !== prev) saveSnippetQuickAccess(next);
+              return next;
+            });
+          }}
+          onMoveTableFavorite={
+            selectedProfile ? (ref, delta) => handleMoveFavorite(ref.database, ref.table, -delta) : undefined
+          }
         />
       )}
       <Suspense fallback={null}>
