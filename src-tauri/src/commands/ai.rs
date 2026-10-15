@@ -18,6 +18,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 
+use crate::ai::budget;
 use crate::ai::client::{
     run_once_with, run_streaming_with, AiCompletion, ReqwestTransport, RetryPolicy,
 };
@@ -278,6 +279,8 @@ pub async fn run_ai_request(
     state: State<'_, AppState>,
 ) -> Result<()> {
     require_enabled(&settings)?;
+    // 月次予算 (#1620): 月初からの概算コストが上限に達していたら、通信前に止める。
+    budget::ensure_within_budget(settings.monthly_budget_usd).await?;
     let history = history.unwrap_or_default();
     validate_history(&history)?;
     let format = format.as_ref().map(validate_format).transpose()?;

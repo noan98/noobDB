@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
+import prices from "./fixtures/aiModelPrices.json";
 import type { AiUsageRecord } from "../api/tauri";
 import { AI_MODEL_IDS, AI_MODEL_PRICES } from "../ai/aiModels";
 import {
+  BUDGET_WARN_RATIO,
+  budgetStatus,
   buildUsageReport,
   estimateRecordCostUsd,
   formatUsd,
@@ -87,5 +90,40 @@ describe("AI 使用量の集計と概算コスト (#1540)", () => {
     expect(formatUsd(0.00009999)).toBe("< $0.0001");
     expect(formatUsd(0.00003)).toBe("< $0.0001");
     expect(formatUsd(1.234)).toBe("$1.23");
+  });
+});
+
+describe("単価表の共有ベクタ (#1620)", () => {
+  it("aiModelPrices.json と AI_MODEL_PRICES が一致する (Rust 側 AiModel::price も同じ JSON を読む)", () => {
+    expect(prices.prices).toEqual(AI_MODEL_PRICES);
+  });
+});
+
+describe("月次予算の状態 (#1620)", () => {
+  const now = new Date("2026-10-15T03:00:00Z");
+  // Opus 入力 $4 / MTok。1M トークンで $4。
+  const spend = (m: number) => [rec({ day: "2026-10-02", inputTokens: m * 250_000 })];
+
+  it("予算なし / 不正値は none", () => {
+    expect(budgetStatus(spend(4), null, now).state).toBe("none");
+    expect(budgetStatus(spend(4), 0, now).state).toBe("none");
+    expect(budgetStatus(spend(4), Number.NaN, now).state).toBe("none");
+  });
+
+  it("8 割未満は ok、8 割以上は warning、予算以上は exceeded (バックエンドと同じ >= 境界)", () => {
+    expect(BUDGET_WARN_RATIO).toBe(0.8);
+    // spent = $4 * m/4... 1M トークン = $4。
+    expect(budgetStatus(spend(4), 10, now).state).toBe("ok"); // $4
+    expect(budgetStatus(spend(4), 5, now).state).toBe("warning"); // $4 / $5 = 80%
+    expect(budgetStatus(spend(4), 4.01, now).state).toBe("warning");
+    expect(budgetStatus(spend(4), 4, now).state).toBe("exceeded"); // ちょうど到達
+    expect(budgetStatus(spend(4), 3, now).state).toBe("exceeded");
+  });
+
+  it("先月分は数えない (月の境目は JST)", () => {
+    const records = [rec({ day: "2026-09-30", inputTokens: 10_000_000 })];
+    expect(budgetStatus(records, 1, now).state).toBe("ok");
+    // UTC 9/30 16:00 は JST 10/1 なので 9/30 の記録は先月。
+    expect(budgetStatus(records, 1, new Date("2026-09-30T16:00:00Z")).spent).toBe(0);
   });
 });

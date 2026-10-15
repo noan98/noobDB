@@ -14,10 +14,13 @@ import { useCopyFeedback } from "./useCopyFeedback";
 import {
   buildSchemaMarkdown,
   defaultSchemaFilename,
+  estimateSchemaTokens,
   expandWithFkRelated,
+  SCHEMA_CONTEXT_LIMIT_TOKENS,
   type SchemaExportTable,
 } from "./schemaExport";
 import { Tooltip } from "./Tooltip";
+import { Callout } from "./Callout";
 
 /** プレビュー欄に表示する最大行数 (コピー/保存は全文が対象)。 */
 const PREVIEW_LINES = 200;
@@ -125,6 +128,13 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
     if (load.kind !== "ready" || effectiveTables.length === 0) return "";
     return buildSchemaMarkdown({ database, driver, tables: effectiveTables, foreignKeys: fks });
   }, [load.kind, effectiveTables, database, driver, fks]);
+
+  const tokenEstimate = useMemo(() => estimateSchemaTokens(markdown), [markdown]);
+  // FK 展開で選択範囲が広がったテーブル数 (選択モードで「FK 関連も含める」ON のときだけ)。
+  const fkAdded =
+    scope === "selected" && includeRelated
+      ? effectiveTables.filter((tb) => !selected.has(tb.name)).length
+      : 0;
 
   const previewLines = useMemo(() => markdown.split("\n"), [markdown]);
   const previewContent =
@@ -410,6 +420,43 @@ export function SchemaExportModal({ sessionId, database, driver, onClose }: Prop
               <CodePreview aria-label={t("exportPreview")} maxH="220px">
                 {previewContent || (emptySelection ? t("schemaExportNoSelection") : t("exportNoData"))}
               </CodePreview>
+              {hasOutput && (
+                <chakra.div
+                  data-testid="schema-export-tokens"
+                  textStyle="caption"
+                  color="app.textMuted"
+                  data-level={tokenEstimate.level}
+                >
+                  {t("schemaExportTokens", {
+                    tokens: tokenEstimate.tokens.toLocaleString("en-US"),
+                    percent: Math.round(tokenEstimate.ratio * 100),
+                    limit: SCHEMA_CONTEXT_LIMIT_TOKENS.toLocaleString("en-US"),
+                  })}
+                </chakra.div>
+              )}
+              {hasOutput && (tokenEstimate.level !== "ok" || fkAdded > 0) && (
+                <Callout
+                  tone={
+                    tokenEstimate.level === "danger"
+                      ? "danger"
+                      : tokenEstimate.level === "warn"
+                        ? "warning"
+                        : "info"
+                  }
+                  data-testid="schema-export-token-callout"
+                >
+                  {fkAdded > 0 &&
+                    t("schemaExportTokensFkExpanded", {
+                      added: fkAdded,
+                      tokens: tokenEstimate.tokens.toLocaleString("en-US"),
+                    })}{" "}
+                  {tokenEstimate.level === "danger"
+                    ? t("schemaExportTokensDanger")
+                    : tokenEstimate.level === "warn"
+                      ? t("schemaExportTokensWarn")
+                      : ""}
+                </Callout>
+              )}
               {previewTruncated && (
                 <chakra.div fontSize="xs" color="app.textMuted">
                   {t("schemaExportPreviewTruncated", {

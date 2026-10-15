@@ -7,12 +7,16 @@ import {
   buildTestDataPrompt,
   buildTestDataSystem,
   generateAiRows,
+  isCachedTestDataPlan,
   isValidTemporal,
   resolveUniqueColumns,
   parseTestDataResponse,
   summarizeTestDataSend,
   TEST_DATA_FORMAT,
   TEST_DATA_MAX_CHOICES,
+  testDataPlanFingerprint,
+  type TestDataAiColumn,
+  type TestDataAiContext,
   type TestDataAiResponse,
 } from "../ai/testData";
 
@@ -460,5 +464,55 @@ describe("uniquifyGeneratedRows (#1607)", () => {
     const out = uniquifyGeneratedRows([sp], rows, ["code"]);
     for (const r of out) expect(String(r[0]).length).toBeLessThanOrEqual(2);
     expect(new Set(out.map((r) => String(r[0]).toLowerCase())).size).toBeGreaterThan(10);
+  });
+});
+
+describe("保存済みプランの指紋 (#1620)", () => {
+  const ctx = (over: Partial<TestDataAiColumn> = {}): TestDataAiContext => ({
+    columns: [
+      {
+        name: "name",
+        dataType: "varchar(100)",
+        nullable: false,
+        primaryKey: false,
+        unique: false,
+        enumChoices: null,
+        hint: "",
+        ...over,
+      },
+    ],
+    references: [],
+  });
+  const fp = (
+    context: TestDataAiContext,
+    over: { driver?: string; table?: string; locale?: "ja" | "en" } = {},
+  ) => testDataPlanFingerprint({ driver: "mysql", table: "t", locale: "ja", context, ...over });
+
+  it("同じ表・列・ヒントなら同じ、列の型・NULL 可・ヒント・表名・言語・ドライバが変われば変わる", () => {
+    const base = fp(ctx());
+    expect(fp(ctx())).toBe(base);
+    expect(fp(ctx({ dataType: "varchar(200)" }))).not.toBe(base);
+    expect(fp(ctx({ nullable: true }))).not.toBe(base);
+    expect(fp(ctx({ hint: "日本人の氏名" }))).not.toBe(base);
+    expect(fp(ctx({ unique: true }))).not.toBe(base);
+    expect(fp(ctx(), { table: "u" })).not.toBe(base);
+    expect(fp(ctx(), { locale: "en" })).not.toBe(base);
+    expect(fp(ctx(), { driver: "postgres" })).not.toBe(base);
+    expect(fp({ ...ctx(), references: [{ column: "c", table: "p", refColumn: "id" }] })).not.toBe(base);
+  });
+
+  it("保存形式の検証は、応答の形が崩れたものを弾く", () => {
+    const ok = {
+      fingerprint: "x",
+      savedAt: 1,
+      response: {
+        columns: [{ name: "a", kind: "choices", choices: ["1"], notes: "" }],
+        consistency_rules: [],
+      },
+    };
+    expect(isCachedTestDataPlan(ok)).toBe(true);
+    expect(isCachedTestDataPlan({ ...ok, response: { columns: "x" } })).toBe(false);
+    expect(isCachedTestDataPlan({ ...ok, fingerprint: 1 })).toBe(false);
+    expect(isCachedTestDataPlan(null)).toBe(false);
   });
 });

@@ -13,6 +13,7 @@ import {
   type AiExchange,
 } from "../ai/conversation";
 import { dialectLabel } from "../ai/errorExplain";
+import { checkSqlNames } from "../ai/nameCheck";
 import {
   approxKb,
   buildNl2SqlPrompt,
@@ -462,6 +463,7 @@ export function AiQueryModal(props: AiQueryModalProps) {
             // 整形できない (方言の構文を sql-formatter が読めない等) ときは AI の出力のまま出す。
             const value = parsed.value;
             const gen = schemaGenRef.current;
+            const schemaTables = schema.kind === "ready" ? schema.tables : [];
             // 整形が返ってこない (ワーカーの起動待ちなど) ときに回答を止めないよう、待つのは一定時間まで。
             const timeout = new Promise<string>((resolve) => {
               window.setTimeout(() => resolve(value.sql), FORMAT_TIMEOUT_MS);
@@ -475,7 +477,23 @@ export function AiQueryModal(props: AiQueryModalProps) {
                   setState({ kind: "idle" });
                   return;
                 }
-                setState({ kind: "done", value: { ...value, sql: sql.trim() === "" ? value.sql : sql } });
+                const finalSql = sql.trim() === "" ? value.sql : sql;
+                // 存在しない表 / 列は、送ったスキーマとの照合でローカルに見つけて警告へ足す (#1620)。
+                const nameWarnings = checkSqlNames(
+                  finalSql,
+                  props.driver,
+                  schemaTables,
+                  value.tables_used,
+                  database,
+                ).map((i) =>
+                  i.kind === "table"
+                    ? t("aiQueryUnknownTable", { name: i.name })
+                    : t("aiQueryUnknownColumn", { name: i.name, table: i.table ?? "" }),
+                );
+                setState({
+                  kind: "done",
+                  value: { ...value, sql: finalSql, warnings: [...value.warnings, ...nameWarnings] },
+                });
               });
           } else {
             setState({ kind: "raw", raw: parsed.raw });

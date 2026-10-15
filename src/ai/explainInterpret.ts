@@ -3,6 +3,9 @@
 // テーブル名抽出・リテラルマスク・送信範囲の判定は #692 (`errorExplain.ts`) を流用する。
 
 import { z } from "zod";
+import { bundleExplainPrefix, bundlePlanSupported } from "../components/investigationBundle";
+import { isReadOnlySql } from "../dangerousSql";
+import { isMultiStatement } from "../sqlScript";
 import { dialectLabel, sqlForAi } from "./errorExplain";
 import { sliceHead } from "./textSlice";
 
@@ -221,4 +224,21 @@ export function buildExplainInterpretPrompt(input: ExplainInterpretInput): strin
     }
   }
   return lines.join("\n");
+}
+
+/**
+ * 提案の書き換え SQL (kind が rewrite) を、元の計画と並べて比べるための EXPLAIN SQL (#1620)。
+ * **ANALYZE なしの推定 EXPLAIN** だけを作る (実行しないのでデータに触れない)。次のどれかなら
+ * `null` (比較しない): 書き換え提案でない / 空 / 複数文 / 読み取り専用と判定できない /
+ * すでに EXPLAIN で始まる / 非対応ドライバ。末尾の `;` は落とす。
+ */
+export function buildRewriteExplainSql(
+  driver: string,
+  suggestion: { kind: string; sql: string },
+): string | null {
+  if (suggestion.kind !== "rewrite" || !bundlePlanSupported(driver)) return null;
+  const body = suggestion.sql.trim().replace(/[;\s]+$/, "");
+  if (body === "" || isMultiStatement(body, driver)) return null;
+  if (!isReadOnlySql(body, driver) || /^\s*EXPLAIN\b/i.test(body)) return null;
+  return `${bundleExplainPrefix(driver)}${body}`;
 }

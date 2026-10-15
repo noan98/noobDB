@@ -80,9 +80,18 @@ const FILTERS: HistoryFilterParams = {
   to: null,
 };
 
-function ui(list: HistoryEntry[] = entries) {
+const onSaveAsSnippet = vi.fn();
+
+function ui(list: HistoryEntry[] = entries, withSnippet = false) {
   listHistory.mockResolvedValue(list);
-  return <AiHistorySearch filters={FILTERS} periodLabel="Last 7 days" onOpen={onOpen} />;
+  return (
+    <AiHistorySearch
+      filters={FILTERS}
+      periodLabel="Last 7 days"
+      onOpen={onOpen}
+      onSaveAsSnippet={withSnippet ? onSaveAsSnippet : undefined}
+    />
+  );
 }
 
 async function typeAndSearch(q = "売上集計") {
@@ -174,6 +183,38 @@ describe("AiHistorySearch (#699)", () => {
     expect(rows[0].querySelector("div")).toBeNull();
     fireEvent.click(rows[0]);
     expect(onOpen).toHaveBeenCalledWith(1);
+  });
+
+  it("結果の行から「スニペットとして保存」で履歴 id を渡せる。未指定なら出さない (#1620)", async () => {
+    const answer = {
+      matches: [{ history_id: "1", relevance: 90, reason: "売上の集計" }],
+    };
+    const first = renderWithProviders(ui(entries, true));
+    await typeAndSearch();
+    await confirmSend();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: JSON.stringify(answer) });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("売上の集計");
+    fireEvent.click(screen.getByRole("button", { name: t("historySaveAsSnippet") }));
+    expect(onSaveAsSnippet).toHaveBeenCalledWith(1);
+    // 保存ボタンを押しても履歴の復元は起きない。
+    expect(onOpen).not.toHaveBeenCalled();
+    first.unmount();
+
+    vi.clearAllMocks();
+    renderWithProviders(ui(entries, false));
+    await typeAndSearch();
+    await confirmSend();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: JSON.stringify(answer) });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText("売上の集計");
+    expect(screen.queryByRole("button", { name: t("historySaveAsSnippet") })).toBeNull();
   });
 
   it("マスク無効ならリテラルもそのまま送る", async () => {

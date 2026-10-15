@@ -84,6 +84,11 @@ pub enum AppError {
     #[error("AI is temporarily busy: {0}")]
     AiOverloaded(String),
 
+    /// AI の月次予算 (#1620): 月初 (JST) からの概算コストが設定の上限に達した。
+    /// 通信前に止めるので API は呼んでいない。予算を引き上げるか翌月まで待てば通る。
+    #[error("AI monthly budget reached: {0}")]
+    AiBudgetExceeded(String),
+
     /// フライトレコーダー (#1533): 既に Undo 済みの記録に対する Undo。
     /// 文言はフロントが `kind` から i18n キーで引くので、ここは英語の既定文だけ持つ。
     #[error("this operation has already been undone")]
@@ -164,6 +169,7 @@ impl AppError {
             AppError::AiNetwork(m) => AppError::AiNetwork(m.clone()),
             AppError::AiApi(m) => AppError::AiApi(m.clone()),
             AppError::AiOverloaded(m) => AppError::AiOverloaded(m.clone()),
+            AppError::AiBudgetExceeded(m) => AppError::AiBudgetExceeded(m.clone()),
             AppError::FlightAlreadyUndone => AppError::FlightAlreadyUndone,
             AppError::FlightPrimaryKeyUnresolved => AppError::FlightPrimaryKeyUnresolved,
             AppError::ViewBaseUnresolved => AppError::ViewBaseUnresolved,
@@ -208,6 +214,7 @@ impl AppError {
             AppError::AiNetwork(_) => "aiNetwork",
             AppError::AiApi(_) => "aiApi",
             AppError::AiOverloaded(_) => "aiOverloaded",
+            AppError::AiBudgetExceeded(_) => "aiBudgetExceeded",
             AppError::FlightAlreadyUndone => "flightAlreadyUndone",
             AppError::FlightPrimaryKeyUnresolved => "flightPrimaryKeyUnresolved",
             AppError::ViewBaseUnresolved => "viewBaseUnresolved",
@@ -336,6 +343,10 @@ mod tests {
         assert_eq!(AppError::AiNetwork("x".into()).kind(), "aiNetwork");
         assert_eq!(AppError::AiApi("x".into()).kind(), "aiApi");
         assert_eq!(AppError::AiOverloaded("x".into()).kind(), "aiOverloaded");
+        assert_eq!(
+            AppError::AiBudgetExceeded("x".into()).kind(),
+            "aiBudgetExceeded"
+        );
         assert_eq!(AppError::Other("x".into()).kind(), "other");
     }
 

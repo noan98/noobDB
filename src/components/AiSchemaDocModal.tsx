@@ -3,6 +3,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { downloadDir, join } from "@tauri-apps/api/path";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api, type SchemaObject } from "../api/tauri";
+import { aiCacheKey, fingerprint, loadAiCache, saveAiCache } from "../ai/aiCache";
 import { toAiSnapshot } from "../ai/aiSettings";
 import { useAiStream } from "../ai/useAiStream";
 import { dialectLabel } from "../ai/errorExplain";
@@ -25,6 +26,17 @@ import {
   utf8Bytes,
   type SchemaDocTable,
 } from "../ai/schemaDoc";
+import {
+  buildCachedSchemaDoc,
+  buildSchemaDocIncrementalPrompt,
+  buildSchemaDocIncrementalSystem,
+  isCachedSchemaDoc,
+  mergeTableSections,
+  objectsFingerprint,
+  planIncremental,
+  tableFingerprints,
+} from "../ai/schemaDocIncremental";
+import { formatDocTimestamp } from "../ai/schemaDoc";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Button, Checkbox, Input, Radio } from "./ui";
@@ -55,7 +67,13 @@ type State =
   | { kind: "idle" }
   | { kind: "collecting" }
   | { kind: "running"; sentKb: number }
-  | { kind: "done"; doc: string; truncated: boolean }
+  | {
+      kind: "done";
+      doc: string;
+      truncated: boolean;
+      /** 差分再生成の内訳 (#1620)。全体の生成では null。 */
+      incremental: { updated: number; reused: number; removed: number; missing: number } | null;
+    }
   | { kind: "tooBig"; kb: number }
   | { kind: "error"; message: string; refused: boolean }
   | { kind: "cancelled" };
@@ -68,6 +86,11 @@ export interface AiSchemaDocModalProps {
   database: string;
   /** 冒頭注記に入れる接続プロファイル名 (ホスト名等は入れない)。 */
   profileName: string;
+  /**
+   * 接続プロファイルの ID。生成したドキュメントを接続・DB 単位で保存し、次回は変わった表の節だけを
+   * 作り直す (差分再生成、#1620) のに使う。無いときは保存せず、毎回全体を生成する。
+   */
+  profileId?: string;
   isProduction: boolean;
   /** ER 図で選択中のテーブル。あれば「選択テーブルとその参照先」を初期スコープにする。 */
   initialTables?: readonly string[];
@@ -96,6 +119,9 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set(initial));
   const [filter, setFilter] = useState("");
   const [state, setState] = useState<State>({ kind: "idle" });
+  // 差分再生成 (#1620): 保存済みの前回ドキュメントがあるとき、変わった表だけを作り直すか。
+  const [useIncremental, setUseIncremental] = useState(true);
+  const [cacheRev, setCacheRev] = useState(0);
   const stream = useAiStream({ idPrefix: "ai_schemadoc" });
   // 定義の収集中 (まだストリームが無い間) に中止されたか。ストリーム開始後の中止はフックが扱う。
   const collectAbortRef = useRef(false);
@@ -194,6 +220,17 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
         pendingObjectCount,
       ),
     [scopedTables, scopedFks, pendingObjectCount],
+  );
+  // 保存先はスコープごとに分ける (全テーブルと、選んだテーブルの組み合わせは別のドキュメント)。
+  const cacheKey = useMemo(() => {
+    if (!props.profileId) return null;
+    const scopePart = mode === "all" ? "all" : `sel-${fingerprint([...scopeNames].sort().join("\n"))}`;
+    return aiCacheKey("schemaDoc", props.profileId, database, scopePart);
+  }, [props.profileId, database, mode, scopeNames]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: cacheRev は保存後に読み直すための合図
+  const cachedDoc = useMemo(
+    () => (cacheKey ? loadAiCache(cacheKey, isCachedSchemaDoc) : null),
+    [cacheKey, cacheRev],
   );
   const filteredNames = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -297,13 +334,137 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
       return;
     }
     const context: SchemaDocContext = { tables: withIndexes, foreignKeys: scopedFks, objects };
-    const header = buildSchemaDocHeader({
-      generatedAt: new Date(),
-      profileName: props.profileName,
-      database,
-      driver: props.driver,
-      locale,
-    });
+    const generatedAt = new Date();
+    const headerFor = (incremental?: { updated: number; reused: number; removed: number }) =>
+      buildSchemaDocHeader({
+        generatedAt,
+        profileName: props.profileName,
+        database,
+        driver: props.driver,
+        locale,
+        incremental,
+      });
+    // 差分再生成 (#1620): 表ごとの指紋を前回と比べ、変わった表 (と外部キーの参照先) だけを作り直す。
+    const hashes = tableFingerprints(withIndexes, scopedFks);
+    const objectsFp = objectsFingerprint(objects);
+    const plan =
+      useIncremental && cachedDoc
+        ? planIncremental({
+            cached: cachedDoc,
+            locale,
+            driver: props.driver,
+            maskLiterals: ai.maskLiterals,
+            objectsFp,
+            tableNames: scopeNames,
+            hashes,
+            foreignKeys: scopedFks,
+          })
+        : null;
+    const remember = (body: string, hashOverride?: Record<string, string>) => {
+      if (!cacheKey) return;
+      const saved = saveAiCache(
+        cacheKey,
+        buildCachedSchemaDoc({
+          locale,
+          driver: props.driver,
+          maskLiterals: ai.maskLiterals,
+          objectsFp,
+          hashes: hashOverride ?? hashes,
+          body,
+          generatedAt: generatedAt.getTime(),
+        }),
+      );
+      if (saved) setCacheRev((r) => r + 1);
+    };
+    if (cachedDoc && plan && plan.mode !== "full") {
+      // 変更なし、または表を取り除くだけなら、AI を呼ばずに前回の本文から組み立てる。
+      if (plan.mode === "none" || plan.regenerate.length === 0) {
+        const removed = plan.mode === "none" ? 0 : plan.removed.length;
+        const merged =
+          plan.mode === "none"
+            ? cachedDoc.body
+            : mergeTableSections({
+                prevBody: cachedDoc.body,
+                newBody: "",
+                order: scopeNames,
+                regenerate: [],
+                removed: plan.removed,
+              }).body;
+        const info = { updated: 0, reused: scopeNames.length, removed };
+        stream.release();
+        if (plan.mode !== "none") remember(merged);
+        setState({
+          kind: "done",
+          doc: assembleSchemaDoc(headerFor(info), merged),
+          truncated: false,
+          incremental: { ...info, missing: 0 },
+        });
+        return;
+      }
+      const targetSet = new Set(plan.regenerate);
+      const system = buildSchemaDocIncrementalSystem({
+        driver: props.driver,
+        database,
+        locale,
+        context: {
+          tables: withIndexes.filter((x) => targetSet.has(x.name)),
+          foreignKeys: scopedFks.filter((fk) => targetSet.has(fk.table)),
+          objects: [],
+        },
+        otherTables: scopeNames.filter((n) => !targetSet.has(n)),
+        mask: { driver: props.driver, maskLiterals: ai.maskLiterals },
+      });
+      const prompt = buildSchemaDocIncrementalPrompt(locale, plan.regenerate);
+      const sentBytes = utf8Bytes(system) + utf8Bytes(prompt);
+      if (sentBytes > SCHEMA_DOC_MAX_PROMPT_BYTES) {
+        stream.release();
+        setState({ kind: "tooBig", kb: approxKb(sentBytes) });
+        return;
+      }
+      setState({ kind: "running", sentKb: approxKb(sentBytes) });
+      await stream.start(
+        { task: "schemaDoc", system, prompt, settings: toAiSnapshot(ai) },
+        {
+          onDone: ({ text, event }) => {
+            const merged = mergeTableSections({
+              prevBody: cachedDoc.body,
+              newBody: text,
+              order: scopeNames,
+              regenerate: plan.regenerate,
+              removed: plan.removed,
+            });
+            const truncated = event.stopReason === "max_tokens";
+            const info = {
+              updated: merged.updated.length,
+              reused: plan.reused + merged.missing.length,
+              removed: plan.removed.length,
+            };
+            // 途中で切れた応答は、次回の「前回の本文」にしない。
+            if (!truncated) {
+              // AI が節を返さなかった表は、前回の節を再利用している。新しい指紋で保存すると
+              // 古い節が二度と再生成されないので、前回の指紋に戻す (無ければ消す) 。
+              const kept = { ...hashes };
+              for (const name of merged.missing) {
+                const prev = cachedDoc.hashes[name];
+                if (prev === undefined) delete kept[name];
+                else kept[name] = prev;
+              }
+              remember(merged.body, kept);
+            }
+            setState({
+              kind: "done",
+              doc: assembleSchemaDoc(headerFor(info), merged.body),
+              truncated,
+              incremental: { ...info, missing: merged.missing.length },
+            });
+          },
+          onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
+          onCancelled: () => setState({ kind: "cancelled" }),
+        },
+      );
+      return;
+    }
+    const header = headerFor();
     const system = buildSchemaDocSystem({
       driver: props.driver,
       database,
@@ -329,12 +490,12 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
         settings: toAiSnapshot(ai),
       },
       {
-        onDone: ({ text, event }) =>
-          setState({
-            kind: "done",
-            doc: assembleSchemaDoc(header, text),
-            truncated: event.stopReason === "max_tokens",
-          }),
+        onDone: ({ text, event }) => {
+          const truncated = event.stopReason === "max_tokens";
+          // 途中で切れた応答は、次回の「前回の本文」にしない。
+          if (!truncated) remember(text.trim());
+          setState({ kind: "done", doc: assembleSchemaDoc(header, text), truncated, incremental: null });
+        },
         onError: (f) => setState({ kind: "error", message: f.message, refused: f.refused }),
         onCancelled: () => setState({ kind: "cancelled" }),
       },
@@ -504,6 +665,30 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
               )}
             </FormSection>
           )}
+          {loaded.kind === "ready" && cachedDoc !== null && allNames.length > 0 && (
+            <FormSection>
+              <chakra.label
+                display="inline-flex"
+                alignItems="center"
+                gap="1.5"
+                cursor="pointer"
+                userSelect="none"
+              >
+                <Checkbox
+                  checked={useIncremental}
+                  onChange={() => setUseIncremental((v) => !v)}
+                  disabled={busy}
+                  data-testid="ai-schema-doc-incremental"
+                />
+                <chakra.span fontSize="md">{t("aiSchemaDocIncremental")}</chakra.span>
+              </chakra.label>
+              <chakra.span textStyle="caption" color="app.textMuted">
+                {t("aiSchemaDocIncrementalHelp", {
+                  at: formatDocTimestamp(new Date(cachedDoc.generatedAt)),
+                })}
+              </chakra.span>
+            </FormSection>
+          )}
           {loaded.kind === "ready" && loaded.fkFailed && (
             <Callout tone="info" role="status">
               {t("aiSchemaDocFkMissing")}
@@ -578,6 +763,17 @@ export function AiSchemaDocModal(props: AiSchemaDocModalProps) {
             ) : (
               <ErrorNote role="alert">{t("aiSchemaDocError", { message: state.message })}</ErrorNote>
             ))}
+          {state.kind === "done" && state.incremental && (
+            <Callout tone="info" role="status" data-testid="ai-schema-doc-incremental-result">
+              {t("aiSchemaDocIncrementalResult", {
+                updated: state.incremental.updated,
+                reused: state.incremental.reused,
+                removed: state.incremental.removed,
+              })}
+              {state.incremental.missing > 0 &&
+                ` ${t("aiSchemaDocIncrementalMissing", { count: state.incremental.missing })}`}
+            </Callout>
+          )}
           {state.kind === "done" && state.truncated && (
             <Callout tone="warning" role="status">
               {t("aiSchemaDocTruncated")}

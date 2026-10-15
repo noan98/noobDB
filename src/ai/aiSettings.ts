@@ -37,6 +37,20 @@ export interface AiSettings {
    * 料金が増える。送信範囲が `schemaAndSql` のときだけ動く。
    */
   inlineComplete: boolean;
+  /**
+   * 月次の予算上限 (USD、#1620)。`null` = 上限なし。月初 (JST) からの概算コストがこの額に
+   * 達すると、バックエンド (`run_ai_request`) が実行前に止める。
+   */
+  monthlyBudgetUsd: number | null;
+}
+
+/** 予算として受け付ける上限 (USD)。桁違いの入力ミスを弾く。 */
+export const MAX_MONTHLY_BUDGET_USD = 100_000;
+
+/** 保存値 / 入力値を予算へ丸める。正の有限値だけ通し、それ以外は `null` (上限なし)。 */
+export function sanitizeMonthlyBudget(v: unknown): number | null {
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return null;
+  return Math.min(Math.round(v * 100) / 100, MAX_MONTHLY_BUDGET_USD);
 }
 
 function nullRecord<V>(): Record<AiTaskKind, V | null> {
@@ -54,6 +68,7 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   maskLiterals: true,
   hideSetupHint: false,
   inlineComplete: false,
+  monthlyBudgetUsd: null,
 };
 
 function sanitizeRecord<V>(input: unknown, valid: (v: unknown) => v is V): Record<AiTaskKind, V | null> {
@@ -84,6 +99,7 @@ export function sanitizeAiSettings(input: unknown): AiSettings {
     maskLiterals: p.maskLiterals !== false,
     hideSetupHint: p.hideSetupHint === true,
     inlineComplete: p.inlineComplete === true,
+    monthlyBudgetUsd: sanitizeMonthlyBudget(p.monthlyBudgetUsd),
   };
 }
 
@@ -101,6 +117,8 @@ export interface AiSettingsSnapshot {
   defaultModel: AiModelId;
   taskModels: Record<AiTaskKind, AiModelId | null>;
   taskEfforts: Record<AiTaskKind, AiEffort | null>;
+  /** 月次予算 (USD)。`null` = 上限なし。判定はバックエンド (#1620)。 */
+  monthlyBudgetUsd: number | null;
 }
 
 export function toAiSnapshot(ai: AiSettings): AiSettingsSnapshot {
@@ -109,5 +127,6 @@ export function toAiSnapshot(ai: AiSettings): AiSettingsSnapshot {
     defaultModel: ai.defaultModel,
     taskModels: { ...ai.taskModels },
     taskEfforts: { ...ai.taskEfforts },
+    monthlyBudgetUsd: ai.monthlyBudgetUsd,
   };
 }

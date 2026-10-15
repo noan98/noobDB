@@ -449,7 +449,7 @@ interface Props {
    * AI による実行計画の解釈 (#693)。未指定なら入口を出さない。AI 無効 / API キー未設定の
    * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
    */
-  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
+  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze" | "planResult">;
   /**
    * 計画の固定と、固定した計画との比較 (#1539)。`scope` は固定の保存先 (EXPLAIN タブの id)。
    * 未指定なら固定 / 比較の操作を出さない。
@@ -781,6 +781,7 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: P
           {...ai}
           driver={driver}
           plan={plan}
+          planResult={result}
           analyze={!!analyze?.active && analyze.supported}
         />
       )}

@@ -77,6 +77,8 @@ MySQL / PostgreSQL ドライバは保存パスワードの代わりに RDS 認�
 - **秘密**: AWS 資格情報は環境変数 / `~/.aws/credentials` / `~/.aws/config` の静的キー
   から接続時に読むだけで、profiles.json にも keyring にも保存しない。トークンも
   `connect_options.password` に残さない (ネイティブダンプだけは
-  `with_fresh_password` で一時オプションファイルへ渡す)。SSO / AssumeRole /
-  `credential_process` は範囲外 (エラーで `aws configure export-credentials` を案内)。
+  `with_fresh_password` で一時オプションファイルへ渡す)。`credential_process`
+  (aws-vault 等、#1682) はシェルなしで実行し、結果を `Expiration` の 15 分前までメモリ
+  キャッシュする。SSO / AssumeRole は範囲外 (エラーで `aws configure export-credentials`
+  を案内)。
 - 依存は `sha2` のみ (HMAC-SHA256 は自前)。`aws-config` / `aws-sdk-rds` は入れていない。
