@@ -48,6 +48,9 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   `onEvent` の Tauri Channel に `kind` タグ付き (`delta` / `retrying` / `done` / `error` / `cancelled`) で届く
   (#1534。`listenAiStream` が Channel を作る)。429 / 529 はストリーム開始前に限り `Retry-After` /
   指数バックオフで最大 3 回再試行し、その間 `retrying` が届く。
+  `settings.monthlyBudgetUsd` (#1620) が設定されていて、使用量台帳の月初 (JST) からの概算コスト
+  (`ai::budget`、単価は `AiModel::price` ⇔ `aiModels.ts` を `fixtures/aiModelPrices.json` で固定) が
+  それ以上なら、通信前に `AppError::AiBudgetExceeded` (kind `aiBudgetExceeded`) で拒否する。
   `systemCached` は任意 (#1473): system の固定部分 (スキーマなど)。`system` より前のブロックになり、
   モデルの最小キャッシュ長 (`AiModel::cache_min_tokens`、UTF-8 バイト数で判定) 以上のとき
   `cache_control: ephemeral` が付く。キャッシュは `systemCached` を渡したときだけ (オプトイン)。

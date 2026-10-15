@@ -13,7 +13,7 @@ import {
   type AiEffort,
   type AiTaskKind,
 } from "../ai/aiModels";
-import { AI_SEND_SCOPES, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
+import { AI_SEND_SCOPES, sanitizeMonthlyBudget, toAiSnapshot, type AiSendScope } from "../ai/aiSettings";
 import { connectionTestView } from "../ai/connectionTest";
 import { useT, type I18nKey } from "../i18n";
 import { setAiKeyPresent } from "../ai/aiKeyStore";
@@ -25,6 +25,7 @@ import {
   setAiEnabled,
   setAiHideSetupHint,
   setAiInlineComplete,
+  setAiMonthlyBudget,
   setAiMaskLiterals,
   setAiSendScope,
   setAiTaskEffort,
@@ -213,6 +214,17 @@ export function AiSettings() {
     (kind) => ai.taskModels[kind] !== null || ai.taskEfforts[kind] !== null,
   ).length;
   const usable = ai.enabled && hasKey;
+
+  // 月次予算 (#1620) の入力。確定 (blur / Enter) で保存し、空・0・不正値は「上限なし」に戻す。
+  const [budgetDraft, setBudgetDraft] = useState(
+    ai.monthlyBudgetUsd === null ? "" : String(ai.monthlyBudgetUsd),
+  );
+  const commitBudget = () => {
+    const raw = budgetDraft.trim();
+    setAiMonthlyBudget(raw === "" ? null : Number(raw));
+    const saved = raw === "" ? null : sanitizeMonthlyBudget(Number(raw));
+    setBudgetDraft(saved === null ? "" : String(saved));
+  };
   const sampleRunning = sample.kind === "running";
   const view = testResult ? connectionTestView(testResult) : null;
 
@@ -468,6 +480,31 @@ export function AiSettings() {
         {ai.inlineComplete && ai.sendScope !== "schemaAndSql" && (
           <Callout tone="info">{t("aiInlineCompleteNeedsScope")}</Callout>
         )}
+      </FormSection>
+
+      <FormSection>
+        <SettingsToggleRow>
+          <SettingsLabelWithInfo>
+            <SettingsToggleLabel htmlFor="settings-ai-monthly-budget">
+              {t("aiMonthlyBudget")}
+            </SettingsToggleLabel>
+            <SettingsInfo>{t("aiMonthlyBudgetHelp")}</SettingsInfo>
+          </SettingsLabelWithInfo>
+          <Input
+            id="settings-ai-monthly-budget"
+            type="number"
+            min={0}
+            step={1}
+            width="auto"
+            value={budgetDraft}
+            placeholder={t("aiMonthlyBudgetPlaceholder")}
+            onChange={(e) => setBudgetDraft(e.target.value)}
+            onBlur={commitBudget}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+        </SettingsToggleRow>
       </FormSection>
 
       <Flex align="center" gap="2" wrap="wrap">

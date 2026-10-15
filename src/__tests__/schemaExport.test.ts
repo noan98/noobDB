@@ -3,6 +3,9 @@ import type { ForeignKey, TableColumnInfo } from "../api/tauri";
 import {
   buildSchemaMarkdown,
   defaultSchemaFilename,
+  estimateSchemaTokens,
+  SCHEMA_TOKEN_DANGER,
+  SCHEMA_TOKEN_WARN,
   expandWithFkRelated,
   type SchemaExportInput,
 } from "../components/schemaExport";
@@ -255,5 +258,25 @@ describe("defaultSchemaFilename", () => {
   it("空の DB 名は database へフォールバックする", () => {
     const now = new Date(2026, 0, 1, 0, 0, 0);
     expect(defaultSchemaFilename("", now)).toBe("schema_database_20260101_000000.md");
+  });
+});
+
+describe("estimateSchemaTokens (#1620)", () => {
+  it("ASCII は 4 文字 1 トークン、非 ASCII は 1 文字 1 トークンで数える", () => {
+    expect(estimateSchemaTokens("").tokens).toBe(0);
+    expect(estimateSchemaTokens("abcd").tokens).toBe(1);
+    expect(estimateSchemaTokens("abcde").tokens).toBe(2);
+    expect(estimateSchemaTokens("注文").tokens).toBe(2);
+  });
+
+  it("閾値で level が ok / warn / danger に変わる", () => {
+    expect(estimateSchemaTokens("a".repeat(4 * (SCHEMA_TOKEN_WARN - 1))).level).toBe("ok");
+    expect(estimateSchemaTokens("a".repeat(4 * SCHEMA_TOKEN_WARN)).level).toBe("warn");
+    expect(estimateSchemaTokens("a".repeat(4 * SCHEMA_TOKEN_DANGER)).level).toBe("danger");
+  });
+
+  it("上限の目安に対する割合を返し、出力は変えない", () => {
+    const est = estimateSchemaTokens("a".repeat(4 * 100_000));
+    expect(est.ratio).toBeCloseTo(0.5);
   });
 });

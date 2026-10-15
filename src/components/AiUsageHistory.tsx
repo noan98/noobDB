@@ -6,6 +6,7 @@ import { chakra, Flex } from "@chakra-ui/react";
 import { api, type AiUsageRecord } from "../api/tauri";
 import { formatTokens, modelLabel } from "../ai/aiUsage";
 import {
+  budgetStatus,
   buildUsageReport,
   formatUsd,
   monthStartKey,
@@ -13,6 +14,8 @@ import {
   type UsageAggregate,
 } from "../ai/aiUsageCost";
 import { useT } from "../i18n";
+import { useSettings } from "../settings";
+import { Callout } from "./Callout";
 import { cacheUsageSuffix } from "./AiUsageNote";
 import { useConfirm } from "./ConfirmDialog";
 import { ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -40,6 +43,7 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [range, setRange] = useState<Range>("month");
   const [allDays, setAllDays] = useState(false);
+  const budget = useSettings().ai.monthlyBudgetUsd;
 
   const load = useCallback(() => {
     api
@@ -63,6 +67,8 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
     return buildUsageReport(records, since);
   }, [records, range]);
   const { total } = report;
+  // 月次予算 (#1620) は表示期間と無関係に「今月」で判定する。
+  const budgetInfo = useMemo(() => budgetStatus(records, budget), [records, budget]);
   const cache = cacheUsageSuffix(
     t,
     total.cacheCreationInputTokens > 0 ? formatTokens(total.cacheCreationInputTokens) : null,
@@ -129,6 +135,28 @@ export function AiUsageHistory({ taskLabel, reloadKey }: Props) {
         </Button>
       </Flex>
       {error && <ErrorNote role="alert">{error}</ErrorNote>}
+      {budgetInfo.state !== "none" && (
+        <Callout
+          tone={
+            budgetInfo.state === "exceeded" ? "danger" : budgetInfo.state === "warning" ? "warning" : "info"
+          }
+          role={budgetInfo.state === "exceeded" ? "alert" : "status"}
+          data-testid="ai-budget-status"
+        >
+          {t(
+            budgetInfo.state === "exceeded"
+              ? "aiBudgetExceeded"
+              : budgetInfo.state === "warning"
+                ? "aiBudgetWarning"
+                : "aiBudgetOk",
+            {
+              spent: formatUsd(budgetInfo.spent),
+              budget: formatUsd(budgetInfo.budget ?? 0),
+              percent: Math.floor(budgetInfo.ratio * 100),
+            },
+          )}
+        </Callout>
+      )}
       {total.calls === 0 ? (
         <chakra.span fontSize="sm" color="app.textMuted">
           {t("aiLedgerEmpty")}

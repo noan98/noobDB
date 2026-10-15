@@ -86,6 +86,7 @@ const col = (name: string, key = "") => ({
 
 beforeEach(() => {
   cleanup();
+  localStorage.clear();
   vi.clearAllMocks();
   handlers = null;
   describeDatabase.mockResolvedValue([
@@ -433,5 +434,157 @@ describe("AiSchemaDocModal の中止・安全網 (#696)", () => {
     await generate();
     await waitFor(() => expect(runAiRequest).toHaveBeenCalled());
     expect(screen.getByText(/sent about \d+ KB|約 \d+ KB 送信/)).toBeTruthy();
+  });
+});
+
+describe("AiSchemaDocModal 差分再生成 (#1620)", () => {
+  const FULL = [
+    "# 店舗",
+    "",
+    "## 概要",
+    "概要の本文",
+    "",
+    "## テーブル詳細",
+    "",
+    "### customers",
+    "OLD CUSTOMERS",
+    "",
+    "### orders",
+    "OLD ORDERS",
+    "",
+    "### logs",
+    "LOGS ROLE",
+    "",
+    "### v_sales (view)",
+    "VIEW ROLE",
+    "",
+    "## 関係",
+    "orders -> customers",
+  ].join("\n");
+
+  async function runFull() {
+    const first = renderWithProviders(ui({ profileId: "p1" }));
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: FULL });
+      handlers?.onDone?.({} as never);
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toContain("AI-generated inferences"),
+    );
+    // 初回は全体の生成なので、差分の内訳は出ない。
+    expect(screen.queryByTestId("ai-schema-doc-incremental-result")).toBeNull();
+    first.unmount();
+    vi.clearAllMocks();
+    handlers = null;
+  }
+
+  it("変わった表と参照先だけを AI に送り、ほかの節・概要・関係は前回のまま結合する", async () => {
+    await runFull();
+    // orders に列が増えた (参照先の customers も作り直し対象になる)。
+    describeDatabase.mockResolvedValue([
+      { name: "customers", columns: [col("id", "PRI")] },
+      { name: "orders", columns: [col("id", "PRI"), col("customer_id"), col("note")] },
+      { name: "logs", columns: [col("id", "PRI")] },
+      { name: "v_sales", columns: [col("id")] },
+    ]);
+    renderWithProviders(ui({ profileId: "p1" }));
+    await screen.findByTestId("ai-schema-doc-incremental");
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const req = runAiRequest.mock.calls[0][0];
+    expect(req.system).toContain("Tables to document (2): customers, orders");
+    expect(req.system).toContain("- note | bigint");
+    // 変わっていない表のスキーマは送らない (名前だけ)。
+    expect(req.system).not.toContain("### logs");
+    expect(req.system).toContain("logs, v_sales");
+    act(() => {
+      handlers?.onDelta?.({
+        streamId: "x",
+        text: "### customers\nNEW CUSTOMERS\n\n### orders\nNEW ORDERS (note)",
+      });
+      handlers?.onDone?.({} as never);
+    });
+    const info = await screen.findByTestId("ai-schema-doc-incremental-result");
+    expect(info.textContent).toContain(
+      t("aiSchemaDocIncrementalResult", { updated: 2, reused: 2, removed: 0 }),
+    );
+    const shown = screen.getByLabelText(t("aiSchemaDocResult")).textContent ?? "";
+    expect(shown).toContain("NEW ORDERS (note)");
+    expect(shown).toContain("NEW CUSTOMERS");
+    expect(shown).not.toContain("OLD ORDERS");
+    expect(shown).toContain("LOGS ROLE");
+    expect(shown).toContain("VIEW ROLE");
+    expect(shown).toContain("概要の本文");
+    expect(shown).toContain("orders -> customers");
+    expect(shown).toContain("Incremental update: 2 tables regenerated");
+  });
+
+  it("AI が節を返さなかった表は指紋を更新せず、次回あらためて再生成する", async () => {
+    await runFull();
+    const changed = [
+      { name: "customers", columns: [col("id", "PRI")] },
+      { name: "orders", columns: [col("id", "PRI"), col("customer_id"), col("note")] },
+      { name: "logs", columns: [col("id", "PRI")] },
+      { name: "v_sales", columns: [col("id")] },
+    ];
+    describeDatabase.mockResolvedValue(changed);
+    const second = renderWithProviders(ui({ profileId: "p1" }));
+    await screen.findByTestId("ai-schema-doc-incremental");
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    act(() => {
+      // orders の節が返らない。
+      handlers?.onDelta?.({ streamId: "x", text: "### customers\nNEW CUSTOMERS" });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByTestId("ai-schema-doc-incremental-result");
+    second.unmount();
+    vi.clearAllMocks();
+    handlers = null;
+    renderWithProviders(ui({ profileId: "p1" }));
+    await screen.findByTestId("ai-schema-doc-incremental");
+    await generate();
+    // 変更なしと見なされず、orders が再生成の対象に残る。
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].system).toContain("orders");
+  });
+
+  it("何も変わっていなければ AI を呼ばずに前回の本文から組み立てる", async () => {
+    await runFull();
+    renderWithProviders(ui({ profileId: "p1" }));
+    await screen.findByTestId("ai-schema-doc-incremental");
+    await generate();
+    const info = await screen.findByTestId("ai-schema-doc-incremental-result");
+    expect(info.textContent).toContain(
+      t("aiSchemaDocIncrementalResult", { updated: 0, reused: 4, removed: 0 }),
+    );
+    expect(runAiRequest).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(t("aiSchemaDocResult")).textContent).toContain("OLD ORDERS");
+  });
+
+  it("オフにすると全体を再生成する。別の接続・ビュー定義の変更でも全体", async () => {
+    await runFull();
+    renderWithProviders(ui({ profileId: "p1" }));
+    fireEvent.click(await screen.findByTestId("ai-schema-doc-incremental"));
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].system).toContain("## Tables");
+    cleanup();
+
+    vi.clearAllMocks();
+    renderWithProviders(ui({ profileId: "other" }));
+    await screen.findByTestId("ai-schema-doc-sends");
+    expect(screen.queryByTestId("ai-schema-doc-incremental")).toBeNull();
+    cleanup();
+
+    vi.clearAllMocks();
+    getObjectDefinition.mockResolvedValue("SELECT 2 AS id");
+    renderWithProviders(ui({ profileId: "p1" }));
+    await screen.findByTestId("ai-schema-doc-incremental");
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    expect(runAiRequest.mock.calls[0][0].system).toContain("## Tables");
   });
 });

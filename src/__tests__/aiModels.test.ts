@@ -8,7 +8,13 @@ import {
   effortOptions,
   modelOptions,
 } from "../ai/aiModels";
-import { DEFAULT_AI_SETTINGS, sanitizeAiSettings, toAiSnapshot } from "../ai/aiSettings";
+import {
+  DEFAULT_AI_SETTINGS,
+  MAX_MONTHLY_BUDGET_USD,
+  sanitizeAiSettings,
+  sanitizeMonthlyBudget,
+  toAiSnapshot,
+} from "../ai/aiSettings";
 import { connectionTestView } from "../ai/connectionTest";
 import { normalizeSettings } from "../settings";
 
@@ -104,7 +110,29 @@ describe("AI 設定の正規化 (#690)", () => {
 
   it("スナップショットはモデル ID を含まず、送信範囲も含まない", () => {
     const snap = toAiSnapshot({ ...DEFAULT_AI_SETTINGS, enabled: true });
-    expect(Object.keys(snap).sort()).toEqual(["defaultModel", "enabled", "taskEfforts", "taskModels"]);
+    expect(Object.keys(snap).sort()).toEqual([
+      "defaultModel",
+      "enabled",
+      "monthlyBudgetUsd",
+      "taskEfforts",
+      "taskModels",
+    ]);
+  });
+});
+
+describe("月次予算の設定値 (#1620)", () => {
+  it("正の有限値だけを残し、それ以外は null (上限なし)", () => {
+    expect(sanitizeAiSettings({}).monthlyBudgetUsd).toBeNull();
+    expect(sanitizeAiSettings({ monthlyBudgetUsd: 25 }).monthlyBudgetUsd).toBe(25);
+    expect(sanitizeAiSettings({ monthlyBudgetUsd: 12.345 }).monthlyBudgetUsd).toBe(12.35);
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, "10", null]) {
+      expect(sanitizeAiSettings({ monthlyBudgetUsd: bad }).monthlyBudgetUsd).toBeNull();
+    }
+    expect(sanitizeMonthlyBudget(1e12)).toBe(MAX_MONTHLY_BUDGET_USD);
+  });
+
+  it("スナップショットへ予算を載せる", () => {
+    expect(toAiSnapshot({ ...DEFAULT_AI_SETTINGS, monthlyBudgetUsd: 5 }).monthlyBudgetUsd).toBe(5);
   });
 });
 

@@ -193,3 +193,37 @@ export function defaultSchemaFilename(database: string, now = new Date()): strin
   const db = sanitizeForFilename(database) || "database";
   return `schema_${db}_${timestamp(now)}.md`;
 }
+
+/** AI のコンテキスト上限の目安 (トークン)。モデル差があるため「目安」であり厳密値ではない。 */
+export const SCHEMA_CONTEXT_LIMIT_TOKENS = 200_000;
+/** この概算トークン数以上で「大きめ」と注意する (上限の 25%)。 */
+export const SCHEMA_TOKEN_WARN = 50_000;
+/** この概算トークン数以上で「上限に近い」と強く警告する (上限の 75%)。 */
+export const SCHEMA_TOKEN_DANGER = 150_000;
+
+export type SchemaTokenLevel = "ok" | "warn" | "danger";
+
+export interface SchemaTokenEstimate {
+  tokens: number;
+  level: SchemaTokenLevel;
+  /** コンテキスト上限の目安に対する割合 (0〜、1 を超えうる)。 */
+  ratio: number;
+}
+
+/**
+ * Markdown の概算トークン数。ASCII は約 4 文字 / トークン、それ以外 (日本語コメント等) は
+ * 約 1 文字 / トークンとして数える粗い見積もりで、モデルのトークナイザとは一致しない。
+ * 純関数で、`buildSchemaMarkdown` の出力は変えない。
+ */
+export function estimateSchemaTokens(markdown: string): SchemaTokenEstimate {
+  let ascii = 0;
+  let other = 0;
+  for (const ch of markdown) {
+    if (ch.charCodeAt(0) < 128) ascii++;
+    else other++;
+  }
+  const tokens = Math.ceil(ascii / 4) + other;
+  const level: SchemaTokenLevel =
+    tokens >= SCHEMA_TOKEN_DANGER ? "danger" : tokens >= SCHEMA_TOKEN_WARN ? "warn" : "ok";
+  return { tokens, level, ratio: tokens / SCHEMA_CONTEXT_LIMIT_TOKENS };
+}

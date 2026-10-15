@@ -11196,6 +11196,7 @@ export default function App() {
                         request={aiSqlRequest}
                         onRequestConsumed={() => setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))}
                         onApply={handleApplyAiSqlRewrite}
+                        onOpenInNewTab={handleOpenAiSql}
                       />
                     ) : activeBottomPanelTab === "aiResultSummary" ? (
                       <AiResultSummaryPanel
@@ -12050,6 +12051,7 @@ export default function App() {
                 database={testDataTarget.database}
                 table={testDataTarget.table}
                 driver={selectedProfile?.driver ?? "mysql"}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 onClose={() => setTestDataTarget(null)}
                 onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
@@ -12162,6 +12164,7 @@ export default function App() {
                 driver={selectedProfile?.driver ?? "mysql"}
                 database={schemaDocTarget.database}
                 profileName={selectedProfile?.name ?? ""}
+                profileId={selectedProfile?.id}
                 isProduction={selectedProfile?.is_production ?? false}
                 initialTables={schemaDocTarget.tables}
                 onClose={() => setSchemaDocTarget(null)}
