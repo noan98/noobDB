@@ -316,7 +316,7 @@ export function TablesExportModal({ sessionId, driver, database, tables, profile
 
       <ModalBody display="flex" flexDirection="column" gap="4">
         <chakra.div fontSize="sm" color="app.textMuted" lineHeight={1.5}>
-          {t("batchExportNote", { database })}
+          {t(workbookMode ? "batchExportNoteWorkbook" : "batchExportNote", { database })}
         </chakra.div>
         <chakra.div
           fontSize="sm"

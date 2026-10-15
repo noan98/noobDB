@@ -2948,6 +2948,8 @@ const en = {
   batchExportTitle: "Export {count} tables",
   batchExportNote:
     'Writes one file per table from "{database}" (the whole table, streamed to disk). Files with the same name in the folder are overwritten.',
+  batchExportNoteWorkbook:
+    'Writes the selected tables from "{database}" into one workbook, one sheet per table (streamed to disk). An existing file at the save path is overwritten.',
   batchExportDir: "Save to folder",
   batchExportDirPlaceholder: "Path to the output folder",
   batchExportPickDir: "Choose an output folder",
@@ -9327,6 +9329,8 @@ const ja: Dict = {
   batchExportTitle: "{count} テーブルのエクスポート",
   batchExportNote:
     "「{database}」のテーブルごとに 1 ファイルを書き出します (テーブル全体を直接ファイルへストリーミング)。フォルダ内の同名ファイルは上書きされます。",
+  batchExportNoteWorkbook:
+    "「{database}」の選んだテーブルを 1 つのブックにまとめて書き出します (テーブルごとに 1 シート、直接ファイルへストリーミング)。保存先の同名ファイルは上書きされます。",
   batchExportDir: "保存先フォルダ",
   batchExportDirPlaceholder: "出力先フォルダのパス",
   batchExportPickDir: "出力先フォルダを選択",
