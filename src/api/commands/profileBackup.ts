@@ -12,11 +12,18 @@ export const profileBackupCommands = {
   /**
    * 接続プロファイルを **keyring の秘密込みで** パスフレーズ暗号化し、`path` に
    * 書き出す (#710。Argon2id + AES-256-GCM)。`ids` 省略時は全件。パスフレーズは
-   * IPC に載せるだけでバックエンドも保存しない。戻り値は件数のみ。
+   * IPC に載せるだけでバックエンドも保存しない。戻り値は件数のみ。書き出し後は読み直して復号
+   * 検証してから保存先へ置く。`keepGenerations` (2 以上) を指定すると、同名の既存ファイルを日時付き
+   * の名前へ退避し、最新を含めてその数まで残す (#1624)。
    */
-  exportProfilesEncrypted: (path: string, passphrase: string, ids?: string[]) =>
+  exportProfilesEncrypted: (
+    path: string,
+    passphrase: string,
+    ids?: string[],
+    keepGenerations?: number | null,
+  ) =>
     invoke<EncryptedProfileExportResult>("export_profiles_encrypted", {
-      req: { path, passphrase, ids: ids ?? null },
+      req: { path, passphrase, ids: ids ?? null, keepGenerations: keepGenerations ?? null },
     }).then((r) => parseResponse(schemas.encryptedProfileExportResult, r, "export_profiles_encrypted")),
   /**
    * `exportProfilesEncrypted` で作った暗号化バックアップをパスフレーズで開封して

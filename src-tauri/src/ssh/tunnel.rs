@@ -38,6 +38,10 @@ pub struct SshConfig {
     /// jump hop (2 SSH hops total) for now.
     #[serde(default)]
     pub jump: Option<Box<SshJumpConfig>>,
+    /// 最終ホップのローカル待受ポート固定 (#1630)。`None` / 0 は OS 任せの自動割当。
+    /// 踏み台ホップの内部転送ポートは常に自動割当で、この値は影響しない。
+    #[serde(default)]
+    pub local_port: Option<u16>,
 }
 
 /// The bastion/jump hop of a 2-hop SSH tunnel (#708): everything needed to
@@ -88,7 +92,7 @@ fn next_accept_backoff(current: Duration) -> Duration {
 /// invariant extended one level further up the chain.
 pub struct SshTunnel {
     pub local_port: u16,
-    accept_task: Option<JoinHandle<()>>,
+    accept_task: Mutex<Option<JoinHandle<()>>>,
     /// Handles for per-connection `copy_bidirectional` tasks.  The accept loop
     /// prunes finished handles on every new connection; `Drop` aborts whatever
     /// remains so no orphan tasks outlive the tunnel.
@@ -188,6 +192,22 @@ struct HopSpec<'a> {
     /// hop's real address for a jump, or the final DB endpoint for the target.
     remote_host: &'a str,
     remote_port: u16,
+    /// ローカル待受ポート (0 = 自動割当)。固定指定は最終ホップのみ (#1630)。
+    bind_port: u16,
+}
+
+/// ローカル待受ポートを bind する。`port` が 0 以外なら固定ポート指定で、使用中の衝突は
+/// 利用者が原因を判断できるメッセージにする (#1630)。
+async fn bind_local_listener(port: u16) -> Result<TcpListener> {
+    match TcpListener::bind(("127.0.0.1", port)).await {
+        Ok(l) => Ok(l),
+        Err(e) if port != 0 && e.kind() == std::io::ErrorKind::AddrInUse => {
+            Err(AppError::InvalidInput(format!(
+                "SSH tunnel local port {port} is already in use; choose another port or leave it empty for automatic assignment"
+            )))
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 impl SshTunnel {
@@ -226,6 +246,7 @@ impl SshTunnel {
                     // through that forward next.
                     remote_host: &cfg.host,
                     remote_port: cfg.port,
+                    bind_port: 0,
                 };
                 let dial = (jump.host.as_str(), jump.port);
                 let t = Self::open_one_hop(spec, dial, HopRole::Jump, &on_phase, None).await?;
@@ -253,6 +274,7 @@ impl SshTunnel {
             password: &cfg.password,
             remote_host: &cfg.remote_host,
             remote_port: cfg.remote_port,
+            bind_port: cfg.local_port.unwrap_or(0),
         };
         Self::open_one_hop(
             spec,
@@ -323,8 +345,8 @@ impl SshTunnel {
 
             let session = Arc::new(session);
 
-            // Bind a local listener on an OS-assigned port.
-            let listener = TcpListener::bind(("127.0.0.1", 0u16)).await?;
+            // Bind a local listener (OS-assigned port, or the pinned port #1630).
+            let listener = bind_local_listener(spec.bind_port).await?;
             let local_port = listener.local_addr()?.port();
             tracing::info!(
                 ssh_host = %spec.host,
@@ -416,7 +438,7 @@ impl SshTunnel {
 
             Ok(Self {
                 local_port,
-                accept_task: Some(accept_task),
+                accept_task: Mutex::new(Some(accept_task)),
                 transfer_tasks,
                 _session: session,
                 _upstream: upstream,
@@ -428,6 +450,31 @@ impl SshTunnel {
 }
 
 impl SshTunnel {
+    fn accept_task_finished(&self) -> bool {
+        self.accept_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map_or(true, |h| h.is_finished())
+    }
+
+    /// 待ち受けソケットだけを先に手放す (#1630)。固定ローカルポートのトンネルを再接続
+    /// するとき、旧セッションが残ったまま同じポートへ bind すると AddrInUse になるため、
+    /// accept ループを中断し、タスクが破棄されて listener が閉じるまで待つ。
+    /// 以後このトンネルは新規接続を受け付けない (`is_alive` も false になる)。
+    pub async fn release_listener(&self) {
+        let handle = self
+            .accept_task
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        if let Some(h) = handle {
+            h.abort();
+            // 中断済みなので Err(cancelled) になる。完了 = listener の drop。
+            let _ = h.await;
+        }
+    }
+
     /// トンネルがまだ使える状態か (#1537)。外部に見えるのは `local_port` だけだったため、
     /// SSH セッションが落ちても accept ループは待ち受けを続け、次のクエリが失敗して
     /// 初めて切断に気付けた。ここでは次の 3 点を**ネットワークに触れず**に調べる:
@@ -440,7 +487,7 @@ impl SshTunnel {
     pub fn is_alive(&self) -> bool {
         tunnel_state_alive(
             self._session.is_closed(),
-            self.accept_task.as_ref().map_or(true, |h| h.is_finished()),
+            self.accept_task_finished(),
             self._upstream.as_ref().map(|u| u.is_alive()),
         )
     }
@@ -457,7 +504,12 @@ fn tunnel_state_alive(
 
 impl Drop for SshTunnel {
     fn drop(&mut self) {
-        if let Some(h) = self.accept_task.take() {
+        if let Some(h) = self
+            .accept_task
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             h.abort();
         }
         // Abort all in-flight transfer tasks so no orphan tasks outlive the
@@ -480,6 +532,23 @@ impl Drop for SshTunnel {
 
 #[cfg(test)]
 mod tests {
+    // 固定ポートの bind: 0 は自動割当、指定ポートはそのまま使い、使用中は分かりやすい
+    // InvalidInput になる (#1630)。
+    #[tokio::test]
+    async fn bind_local_listener_auto_fixed_and_conflict() {
+        let auto = super::bind_local_listener(0).await.unwrap();
+        let port = auto.local_addr().unwrap().port();
+        assert_ne!(port, 0);
+        // 使用中のポートを固定指定するとエラー (メッセージにポート番号を含む)。
+        let err = super::bind_local_listener(port).await.err().unwrap();
+        assert!(matches!(err, crate::error::AppError::InvalidInput(_)));
+        assert!(err.to_string().contains(&port.to_string()));
+        drop(auto);
+        // 解放後は同じポートを固定で取れる。
+        let fixed = super::bind_local_listener(port).await.unwrap();
+        assert_eq!(fixed.local_addr().unwrap().port(), port);
+    }
+
     #[test]
     fn connect_stage_failures_are_told_apart_from_auth_failures() {
         assert!(is_ssh_connect_stage_failure("ssh connect failed: reset"));

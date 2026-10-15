@@ -89,3 +89,32 @@ describe("summarizePlanResult / comparePlanSummaries (#1539)", () => {
     expect(metricDelta(2, 5)).toBe(3);
   });
 });
+
+describe("planCompareMarkdown (#1624)", () => {
+  it("判定文・要約表・変化点を Markdown にし、セルの | と改行を無害化する", async () => {
+    const { planCompareMarkdown } = await import("../components/planCompare");
+    const md = planCompareMarkdown({
+      title: "T",
+      verdict: "improved",
+      headers: ["m", "b", "a", "d"],
+      metrics: [{ label: "x|y", before: "1", after: "2\n3", delta: "+1" }],
+      changesHeading: "C",
+      changes: ["one", "two\nlines"],
+      noChanges: "none",
+    });
+    expect(md).toContain("## T\n\nimproved\n");
+    expect(md).toContain("| m | b | a | d |\n| --- | ---: | ---: | ---: |");
+    expect(md).toContain("| x\\|y | 1 | 2 3 | +1 |");
+    expect(md).toContain("- one\n- two lines");
+    const empty = planCompareMarkdown({
+      title: "T",
+      verdict: "v",
+      headers: ["m", "b", "a", "d"],
+      metrics: [],
+      changesHeading: "C",
+      changes: [],
+      noChanges: "none",
+    });
+    expect(empty).toContain("### C\n\nnone\n");
+  });
+});

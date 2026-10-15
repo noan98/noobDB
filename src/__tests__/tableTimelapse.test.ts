@@ -3,6 +3,7 @@ import type { DataDiff, TableWatch, TimelapseGenerationMeta } from "../api/tauri
 import { MASK_PLACEHOLDER } from "../components/columnMask";
 import { tableToCsv } from "../components/tabularText";
 import {
+  buildTimelapseDml,
   buildTimelapseExportRows,
   buildTimelapseRows,
   countTimelapseDiff,
@@ -229,5 +230,66 @@ describe("差分の書き出し (#1539)", () => {
     expect(json.rows[1].after).toBeNull();
     expect(json.rows[1].before.email).toBeNull();
     expect(json.rows[2].changed_columns).toEqual(["name"]);
+  });
+});
+
+describe("buildTimelapseDml (#1624)", () => {
+  const rows = () => buildTimelapseExportRows(diff(), null);
+  const base = { driver: "mysql", database: "shop", table: "fees" };
+
+  it("forward: 追加は INSERT / 削除は DELETE / 変更は変わった列だけの UPDATE", () => {
+    const r = buildTimelapseDml(rows(), { ...base, direction: "forward" });
+    expect(r.sql.split("\n").filter(Boolean)).toEqual([
+      "UPDATE `shop`.`fees` SET `price` = 250 WHERE `id` = 2;",
+      "INSERT INTO `shop`.`fees` (`id`, `email`, `price`) VALUES (4, 'd@x', 400);",
+      "DELETE FROM `shop`.`fees` WHERE `id` = 3;",
+    ]);
+    expect(r.statements).toBe(3);
+    expect(r.skipped).toBe(0);
+  });
+
+  it("revert: 追加は DELETE / 削除は INSERT (NULL を含む) / 変更は変更前の値へ UPDATE", () => {
+    const r = buildTimelapseDml(rows(), { ...base, direction: "revert" });
+    expect(r.sql.split("\n").filter(Boolean)).toEqual([
+      "UPDATE `shop`.`fees` SET `price` = 200 WHERE `id` = 2;",
+      "DELETE FROM `shop`.`fees` WHERE `id` = 4;",
+      "INSERT INTO `shop`.`fees` (`id`, `email`, `price`) VALUES (3, 'c@x', NULL);",
+    ]);
+  });
+
+  it("PostgreSQL / SQLite は二重引用符で識別子を囲み、SQLite は DB 修飾を付けない", () => {
+    const pg = buildTimelapseDml(rows(), { ...base, driver: "postgres", direction: "forward" });
+    expect(pg.sql).toContain('DELETE FROM "shop"."fees" WHERE "id" = 3;');
+    const lite = buildTimelapseDml(rows(), { ...base, driver: "sqlite", direction: "forward" });
+    expect(lite.sql).toContain('DELETE FROM "fees" WHERE "id" = 3;');
+  });
+
+  it("マスク列を含む文はコメントにし、伏せ字を SQL に書かない", () => {
+    const r = buildTimelapseDml(rows(), {
+      ...base,
+      direction: "forward",
+      maskedColumns: new Set(["email"]),
+      header: "preview only",
+    });
+    expect(r.sql.startsWith("-- preview only\n")).toBe(true);
+    expect(r.sql).not.toContain("d@x");
+    expect(r.sql).toContain("-- skipped (masked / no key): id=4");
+    expect(r.skipped).toBe(1);
+    // 主キーが伏せ字なら UPDATE / DELETE も出さない。
+    const k = buildTimelapseDml(rows(), { ...base, direction: "forward", maskedColumns: new Set(["id"]) });
+    expect(k.statements).toBe(0);
+    expect(k.skipped).toBe(3);
+    // スキップ注記にも主キーの実値(2 / 3 / 4)は出さず、伏せ字にする。
+    expect(k.sql).not.toMatch(/id=[234]\b/);
+    expect(k.sql).toContain(`id=${MASK_PLACEHOLDER}`);
+  });
+
+  it("文字列のクォートと NULL 主キーを安全に扱う", () => {
+    const d = diff();
+    d.rows = [
+      { status: "target_only", key: [null], source: null, target: [null, "o'x", 1], changed_columns: [] },
+    ];
+    const r = buildTimelapseDml(buildTimelapseExportRows(d, null), { ...base, direction: "revert" });
+    expect(r.sql).toContain("VALUES (NULL, 'o''x', 1);");
   });
 });

@@ -21,6 +21,14 @@ interface Props {
   /** 行数推定から算出した総ページ数の目安。不明なら null。 */
   totalPages: number | null;
   loading: boolean;
+  /** 総ページ数が「正確な件数」(#1627) で確定した値か。推定なら false (「約」表示)。 */
+  totalExact?: boolean;
+  /** 数え終えた正確な総行数。未取得なら null。 */
+  exactRowCount?: number | null;
+  /** 正確な件数を数えている最中。 */
+  counting?: boolean;
+  /** 「正確な件数を数える」を押した。渡さなければボタンは出さない。 */
+  onCountExact?: () => void;
   onGoToPage: (page: number) => void;
   onSetPageSize: (size: number) => void;
 }
@@ -55,6 +63,10 @@ export function PaginationBar({
   rowsOnPage,
   totalPages,
   loading,
+  totalExact = false,
+  exactRowCount = null,
+  counting = false,
+  onCountExact,
   onGoToPage,
   onSetPageSize,
 }: Props) {
@@ -66,7 +78,7 @@ export function PaginationBar({
   }, [page]);
 
   const prevOk = canGoPrev(page) && !loading;
-  const nextOk = canGoNext(page, totalPages, rowsOnPage, pageSize) && !loading;
+  const nextOk = canGoNext(page, totalPages, rowsOnPage, pageSize, totalExact) && !loading;
   const lastOk = totalPages != null && page < totalPages && !loading;
   const range = pageRange(page, pageSize, rowsOnPage);
   // 現在のページサイズが選択肢に無ければ先頭に足して必ず選べるようにする。
@@ -121,7 +133,7 @@ export function PaginationBar({
           <chakra.span color="app.textMuted">
             <CountUpText
               values={[Math.max(totalPages, page)]}
-              render={([n]) => t("pageOfTotal", { total: n })}
+              render={([n]) => t(totalExact ? "pageOfTotalExact" : "pageOfTotal", { total: n })}
             />
           </chakra.span>
         )}
@@ -157,6 +169,39 @@ export function PaginationBar({
           />
         ) : null}
       </chakra.span>
+
+      {exactRowCount != null && (
+        <chakra.span textStyle="caption" whiteSpace="nowrap">
+          {t("pageTotalRowsExact", { count: exactRowCount })}
+        </chakra.span>
+      )}
+      {onCountExact && (
+        <Tooltip label={t("pageCountExactHint")} focusableWrapper={counting}>
+          <chakra.button
+            type="button"
+            onClick={onCountExact}
+            disabled={counting}
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            minH={CONTROL_H}
+            px="2"
+            fontSize="xs"
+            whiteSpace="nowrap"
+            borderWidth="1px"
+            borderColor="app.border"
+            borderRadius="md"
+            color="app.text"
+            bg="transparent"
+            cursor="pointer"
+            _hover={{ bg: "app.rowHover" }}
+            _disabled={{ opacity: 0.6, cursor: "progress" }}
+          >
+            {counting && <Spinner size={12} />}
+            {counting ? t("pageCounting") : exactRowCount != null ? t("pageRecount") : t("pageCountExact")}
+          </chakra.button>
+        </Tooltip>
+      )}
 
       <chakra.span flex="1" />
 

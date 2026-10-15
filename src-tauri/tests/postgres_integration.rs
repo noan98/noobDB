@@ -3281,3 +3281,32 @@ async fn postgres_column_profile_sampled_is_subset_of_table() {
         .await
         .expect("cleanup");
 }
+
+/// 構文エラーの本文に、サーバが返すエラー位置 (元の文の 1 始まりの文字オフセット) が
+/// ` (position n)` として載る (#1627)。出力タブの「エラー位置へ移動」がこれを使う。
+#[tokio::test]
+async fn postgres_syntax_error_message_carries_the_error_position() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    // `SELECT 1 FORM` の FORM は別名として読まれ、次の `t` が誤り = 先頭から数えて 15 文字目
+    // ("SELECT 1\n" が 9 文字、"FORM " が 5 文字)。サーバのソース行番号 (`at line N`) は載せない。
+    let err = conn
+        .execute("SELECT 1\nFORM t", None)
+        .await
+        .expect_err("syntax error");
+    let msg = err.to_string();
+    assert!(msg.ends_with("(position 15)"), "message was: {msg}");
+    assert!(!msg.contains("at line"), "message was: {msg}");
+
+    // 位置を持たないエラー (存在しない関数ではなく、実行時エラー) は文言を変えない。
+    let err = conn
+        .execute("SELECT 1/0", None)
+        .await
+        .expect_err("division by zero");
+    assert!(!err.to_string().contains("(position"), "{err}");
+}

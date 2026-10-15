@@ -223,6 +223,39 @@ pub async fn read_sql_file(path: String, encoding: Option<TextEncoding>) -> Resu
     })
 }
 
+/// `preview_sql_file_encodings` の結果 (#1627)。
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SqlEncodingPreview {
+    /// 自動判定の結果。どの文字コードとしても読めなければ `None`。
+    pub detected: Option<TextEncoding>,
+    /// 判定に失敗した理由 (`detected` が `None` のとき)。
+    pub detect_error: Option<String>,
+    /// 候補ごとの先頭数行。
+    pub candidates: Vec<text_encoding::EncodingPreview>,
+}
+
+/// SQL ファイルの文字コードの自動判定結果と、候補ごとに先頭数 KB を読んだプレビューを返す
+/// (#1627)。利用者が判定の誤りに気づいて文字コードを選び直せるようにする読み取り専用コマンド。
+/// 判定の失敗はエラーにせず `detect_error` に載せる (その場合も候補のプレビューは返す)。
+#[tauri::command]
+pub async fn preview_sql_file_encodings(path: String) -> Result<SqlEncodingPreview> {
+    let bytes = read_limited(&path).await?;
+    tokio::task::spawn_blocking(move || {
+        let (detected, detect_error) = match text_encoding::detect_with(&bytes, None) {
+            Ok(enc) => (Some(enc), None),
+            Err(e) => (None, Some(e.into_app_error().to_string())),
+        };
+        SqlEncodingPreview {
+            detected,
+            detect_error,
+            candidates: text_encoding::preview_candidates(&bytes),
+        }
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("preview task failed: {e}")))
+}
+
 /// サイズ上限つきでファイル全体を読む共通処理 (エディタへ取り込むテキスト用)。
 async fn read_limited(path: &str) -> Result<Vec<u8>> {
     if path.trim().is_empty() {
@@ -470,6 +503,38 @@ mod tests {
         assert!(matches!(err, AppError::InvalidInput(_)));
         // read_text_file (UTF-8 固定) は従来どおり拒否。
         assert!(read_text_file(p).await.is_err());
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    #[tokio::test]
+    async fn preview_sql_file_encodings_reports_detection_and_candidates() {
+        let path = std::env::temp_dir().join(format!("noobdb_prev_{}.sql", std::process::id()));
+        let p = path.to_string_lossy().into_owned();
+        write_text_file(
+            p.clone(),
+            "SELECT '山田太郎';\n".into(),
+            Some(TextEncoding::ShiftJis),
+        )
+        .await
+        .unwrap();
+        let r = preview_sql_file_encodings(p.clone()).await.unwrap();
+        assert_eq!(r.detected, Some(TextEncoding::ShiftJis));
+        assert!(r.detect_error.is_none());
+        assert_eq!(r.candidates.len(), 6);
+        let sj = r
+            .candidates
+            .iter()
+            .find(|c| c.encoding == TextEncoding::ShiftJis)
+            .unwrap();
+        assert!(sj.valid);
+        assert_eq!(sj.lines, vec!["SELECT '山田太郎';"]);
+        // どの文字コードでも読めないファイルは、エラーにせず detect_error に載せる。
+        tokio::fs::write(&path, [0x80u8, 0x80, 0xFF, 0xFF])
+            .await
+            .unwrap();
+        let r = preview_sql_file_encodings(p).await.unwrap();
+        assert!(r.detected.is_none());
+        assert!(r.detect_error.is_some());
         let _ = tokio::fs::remove_file(&path).await;
     }
 

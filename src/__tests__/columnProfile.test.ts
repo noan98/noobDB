@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { ColumnProfile } from "../api/tauri";
+import type { ColumnOverview, ColumnProfile } from "../api/tauri";
 import { dictionaries } from "../i18n";
 import {
   formatBucketLabel,
   formatPercent,
   formatProfileCount,
+  nextOverviewSort,
+  overviewTable,
+  sortOverviewColumns,
   profileChartKind,
   profileChartModel,
   profileCountValue,
@@ -127,5 +130,87 @@ describe("縮退理由コード", () => {
       expect(dictionaries.en[key]).toBeTruthy();
       expect(dictionaries.ja[key]).toBeTruthy();
     }
+  });
+});
+
+describe("全列概要の並べ替えと書き出し (#1624)", () => {
+  const ov = (
+    column: string,
+    nulls: number,
+    distinct: number | null,
+    notes: string[] = [],
+  ): ColumnOverview => ({
+    column,
+    data_type: "int",
+    non_null_count: 100 - nulls,
+    null_count: nulls,
+    distinct_count: distinct,
+    min_value: 1,
+    max_value: 9,
+    notes,
+  });
+  const cols = [ov("b", 10, 5), ov("a", 50, 90), ov("c", 0, null, ["overview_skipped_type"]), ov("d", 50, 7)];
+
+  it("見出しのクリックで 昇順 → 降順 → 解除 と進み、別の列なら昇順から始める", () => {
+    const s1 = nextOverviewSort(null, "nullRate");
+    expect(s1).toEqual({ key: "nullRate", dir: "asc" });
+    const s2 = nextOverviewSort(s1, "nullRate");
+    expect(s2).toEqual({ key: "nullRate", dir: "desc" });
+    expect(nextOverviewSort(s2, "nullRate")).toBeNull();
+    expect(nextOverviewSort(s2, "distinct")).toEqual({ key: "distinct", dir: "asc" });
+  });
+
+  it("NULL 率で並べ替える (同率は列名順)", () => {
+    const names = (sort: Parameters<typeof sortOverviewColumns>[2]) =>
+      sortOverviewColumns(cols, 100, sort).map((c) => c.column);
+    expect(names({ key: "nullRate", dir: "asc" })).toEqual(["c", "b", "a", "d"]);
+    expect(names({ key: "nullRate", dir: "desc" })).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("ユニーク数が取れない列 (集計スキップ) は昇順でも降順でも末尾", () => {
+    const names = (dir: "asc" | "desc") =>
+      sortOverviewColumns(cols, 100, { key: "distinct", dir }).map((c) => c.column);
+    expect(names("asc")).toEqual(["b", "d", "a", "c"]);
+    expect(names("desc")).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("sort が null なら取得順のまま (元の配列は変えない)", () => {
+    expect(sortOverviewColumns(cols, 100, null).map((c) => c.column)).toEqual(["b", "a", "c", "d"]);
+    expect(cols.map((c) => c.column)).toEqual(["b", "a", "c", "d"]);
+    expect(sortOverviewColumns(cols, 100, { key: "column", dir: "desc" }).map((c) => c.column)).toEqual([
+      "d",
+      "c",
+      "b",
+      "a",
+    ]);
+  });
+
+  it("書き出し用の表: 件数は生の数、NULL 率は % 、スキップ列の統計は印で埋める", () => {
+    const labels = {
+      column: "Column",
+      type: "Type",
+      nonNull: "Non-NULL",
+      nullCount: "NULL count",
+      nullRate: "NULL %",
+      distinct: "Distinct",
+      min: "Min",
+      max: "Max",
+      skipped: "-",
+    };
+    const t = overviewTable([cols[1], cols[2]], 100, labels);
+    expect(t.header).toEqual([
+      "Column",
+      "Type",
+      "Non-NULL",
+      "NULL count",
+      "NULL %",
+      "Distinct",
+      "Min",
+      "Max",
+    ]);
+    expect(t.rows).toEqual([
+      ["a", "int", 50, 50, "50.0%", 90, "1", "9"],
+      ["c", "int", 100, 0, "0.0%", null, "-", "-"],
+    ]);
   });
 });

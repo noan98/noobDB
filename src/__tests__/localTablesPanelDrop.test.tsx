@@ -89,3 +89,54 @@ describe("LocalTablesPanel 再取得ボタン (#1541)", () => {
     ).toBeNull();
   });
 });
+
+describe("LocalTablesPanel 絞り込みと並べ替え (#1627)", () => {
+  const mk = (name: string, rows: number, at: number) =>
+    ({ ...table, name, row_count: rows, fetched_at_ms: at }) as LocalTableMeta;
+  const tables = [mk("alpha", 10, 100), mk("beta", 500, 300), mk("gamma", 50, 200)];
+  const names = () => screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+
+  it("名前で絞り込め、並べ替えを切り替えられる。登録済みのテーブルは変えない", () => {
+    const onDrop = vi.fn();
+    renderWithProviders(
+      <LocalTablesPanel
+        hasSession
+        isActive={false}
+        tables={tables}
+        onOpenLocal={() => {}}
+        onDropTable={onDrop}
+        onSaveToFile={() => {}}
+      />,
+    );
+    expect(names().map((n) => ["alpha", "beta", "gamma"].find((x) => n.startsWith(x)))).toEqual([
+      "alpha",
+      "beta",
+      "gamma",
+    ]);
+    fireEvent.change(screen.getByLabelText(t("localPanelSortLabel")), { target: { value: "rows" } });
+    expect(names()[0]).toContain("beta");
+    fireEvent.change(screen.getByLabelText(t("localPanelSortLabel")), { target: { value: "fetched" } });
+    expect(names()[0]).toContain("beta");
+    expect(names()[1]).toContain("gamma");
+    fireEvent.change(screen.getByLabelText(t("localPanelFilterPlaceholder")), { target: { value: "AM" } });
+    expect(names()).toHaveLength(1);
+    expect(names()[0]).toContain("gamma");
+    fireEvent.change(screen.getByLabelText(t("localPanelFilterPlaceholder")), { target: { value: "zzz" } });
+    expect(screen.getByText(t("localPanelFilterNoMatches"))).toBeInTheDocument();
+    expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  it("テーブルが無いときは絞り込み欄を出さない", () => {
+    renderWithProviders(
+      <LocalTablesPanel
+        hasSession
+        isActive={false}
+        tables={[]}
+        onOpenLocal={() => {}}
+        onDropTable={() => {}}
+        onSaveToFile={() => {}}
+      />,
+    );
+    expect(screen.queryByLabelText(t("localPanelFilterPlaceholder"))).toBeNull();
+  });
+});

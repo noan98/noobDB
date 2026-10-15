@@ -374,6 +374,7 @@
       }
     ],
     "failed": 1,
+    "manifestFile": "manifest.csv",
     "saved": 3,
     "skippedNull": 1,
     "skippedTooLarge": 2,
@@ -604,6 +605,7 @@
         "private_key_path": "",
         "user": "ops"
       },
+      "local_port": 15432,
       "port": 22,
       "private_key_path": "/home/deploy/.ssh/id_ed25519",
       "user": "deploy"
@@ -650,6 +652,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -695,6 +698,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -740,6 +744,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -785,6 +790,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -830,6 +836,7 @@
           "private_key_path": "",
           "user": "ops"
         },
+        "local_port": 15432,
         "port": 22,
         "private_key_path": "/home/deploy/.ssh/id_ed25519",
         "user": "deploy"
@@ -1171,8 +1178,10 @@
   ],
   "encryptedProfileExportResult": {
     "bytes": 1024,
+    "generations_pruned": 1,
     "profiles": 3,
-    "secrets": 2
+    "secrets": 2,
+    "verified": true
   },
   "encryptedProfileImportResult": {
     "imported": 3,
@@ -1430,6 +1439,21 @@
     "streamId": "strm0003",
     "total": 100
   },
+  "importScan": {
+    "candidates": [
+      {
+        "existing_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold",
+        "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+        "host": "db.example.com",
+        "key_type": "ssh-ed25519",
+        "port": 22,
+        "status": "conflict"
+      }
+    ],
+    "found": true,
+    "hashed_skipped": 2,
+    "other_skipped": 1
+  },
   "importStartedEvent": {
     "streamId": "strm0003",
     "total": 100
@@ -1512,6 +1536,14 @@
     "fingerprint": "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
     "host": "db.example.com",
     "port": 22
+  },
+  "knownHostEvent": {
+    "action": "trust",
+    "at": "2026-10-15T01:02:03Z",
+    "fingerprint": "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew",
+    "host": "db.example.com",
+    "port": 22,
+    "previous_fingerprint": "SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold"
   },
   "liveQuery": {
     "application": "myapp",
@@ -5105,6 +5137,26 @@
       "tags": []
     }
   ],
+  "sqlEncodingPreview": {
+    "candidates": [
+      {
+        "encoding": "shift_jis",
+        "lines": [
+          "SELECT '日本語';"
+        ],
+        "valid": true
+      },
+      {
+        "encoding": "utf-8",
+        "lines": [
+          "SELECT '�';"
+        ],
+        "valid": false
+      }
+    ],
+    "detectError": null,
+    "detected": "shift_jis"
+  },
   "sqlFileContent": {
     "content": "SELECT 1;",
     "encoding": "utf-8-bom"
@@ -5399,11 +5451,15 @@
           "noData": false,
           "noOwner": false,
           "noPrivileges": false,
+          "noTablespaces": false,
           "pgSchema": "public",
           "routines": false,
+          "setGtidPurgedOff": false,
           "singleTransaction": false,
+          "sqliteSnapshot": false,
           "tables": null,
-          "triggers": false
+          "triggers": false,
+          "writeChecksum": false
         },
         "output_path": "/tmp/dump.sql"
       },

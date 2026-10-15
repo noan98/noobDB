@@ -5,7 +5,7 @@ import { useT, type I18nKey } from "../i18n";
 import { CountUp } from "./CountUp";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
-import { Button } from "./ui";
+import { Button, Input } from "./ui";
 import { variants } from "../motion";
 import { semanticColorToken } from "../semanticColors";
 import {
@@ -14,6 +14,7 @@ import {
   clearActivity,
   countBySeverity,
   filterActivity,
+  searchActivity,
   markActivityRead,
   mergeLogEntries,
   relativeActivityTime,
@@ -226,19 +227,46 @@ export function FilterChip({
   );
 }
 
+/** ログの文言検索欄 (#1627)。アクティビティ / 出力 / ベルのポップオーバーで共有する。 */
+export function LogSearchInput({
+  value,
+  onChange,
+  flex = "0 1 180px",
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  flex?: string;
+}) {
+  const t = useT();
+  return (
+    <Input
+      type="search"
+      flex={flex}
+      minW="96px"
+      value={value}
+      placeholder={t("logSearchPlaceholder")}
+      aria-label={t("logSearchPlaceholder")}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
 /**
- * Bottom Panel のログタブ共通のツールバー (左: フィルタ、右: クリア)。
+ * Bottom Panel のログタブ共通のツールバー (左: 検索とフィルタ、右: クリア)。
  * 出力タブ (`OutputPanel`) もこの枠を使い、3 つのログタブの操作位置を揃える。
  */
 export function LogToolbar({
   filterAria,
   filters,
+  search,
   onClear,
   clearDisabled,
   extra,
 }: {
   filterAria: string;
   filters: ReactNode;
+  /** 文言の検索欄 (任意、#1627)。フィルタの左に置く。 */
+  search?: { value: string; onChange: (v: string) => void };
   onClear: () => void;
   clearDisabled: boolean;
   /** クリアの左に置く補助操作 (任意)。 */
@@ -255,6 +283,7 @@ export function LogToolbar({
       borderColor="app.borderSubtle"
       flexShrink={0}
     >
+      {search && <LogSearchInput value={search.value} onChange={search.onChange} />}
       <Flex role="group" aria-label={filterAria} gap="1" flexWrap="wrap" flex="1" minW={0}>
         {filters}
       </Flex>
@@ -289,8 +318,11 @@ function SeverityLogPanel({
 }) {
   const t = useT();
   const [severity, setSeverity] = useState<ActivitySeverity | null>(null);
-  const counts = useMemo(() => countBySeverity(entries), [entries]);
-  const shown = useMemo(() => filterActivity(entries, severity), [entries, severity]);
+  const [query, setQuery] = useState("");
+  // 件数のバッジは文言検索の結果に対する重大度別の件数 (重大度フィルタとは独立に併用できる)。
+  const searched = useMemo(() => searchActivity(entries, query), [entries, query]);
+  const counts = useMemo(() => countBySeverity(searched), [searched]);
+  const shown = useMemo(() => filterActivity(entries, severity, query), [entries, severity, query]);
   const exportLabels = (): ActivityExportLabels => ({
     time: t("activityExportColTime"),
     severity: t("activityExportColSeverity"),
@@ -308,6 +340,7 @@ function SeverityLogPanel({
         filterAria={t("activityFilterAria")}
         onClear={onClear}
         clearDisabled={entries.length === 0}
+        search={{ value: query, onChange: setQuery }}
         extra={
           exportable ? (
             <TextExportButton
@@ -328,7 +361,7 @@ function SeverityLogPanel({
           <>
             <FilterChip
               label={t("activityFilterAll")}
-              count={entries.length}
+              count={searched.length}
               active={severity === null}
               onClick={() => setSeverity(null)}
             />

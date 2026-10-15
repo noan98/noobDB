@@ -119,3 +119,20 @@ export function pushHistoryEntry(
   if (history[0] === sql) return history.slice(0, limit);
   return [sql, ...history].slice(0, limit);
 }
+
+/**
+ * 履歴の部分一致検索 (#1627、Ctrl+R 相当)。大文字小文字を区別せず、空白で区切った語を
+ * すべて含む SQL だけを返す (AND)。並び (最新が先頭) と、隣り合う重複を畳む規約は
+ * そのまま保つ。空の検索語は絞り込まず、履歴をそのまま (重複だけ畳んで) 返す。
+ */
+export function filterHistory(history: readonly string[], query: string): string[] {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matched =
+    terms.length === 0
+      ? history
+      : history.filter((sql) => {
+          const hay = sql.toLowerCase();
+          return terms.every((term) => hay.includes(term));
+        });
+  return dedupeAdjacentHistory(matched);
+}

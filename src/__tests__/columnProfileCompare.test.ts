@@ -4,6 +4,7 @@ import {
   baselineIndex,
   buildMetricRows,
   buildTopValueRows,
+  compareExportTable,
   countMetricDifferences,
   topValueCellDiffers,
   topValueRowDiffers,
@@ -137,5 +138,40 @@ describe("buildTopValueRows (#1539)", () => {
   it("取得済みが 1 接続だけなら差は出ない", () => {
     const entries = [prod, entry("stg", null, "x")];
     expect(buildTopValueRows(entries).some((r) => topValueRowDiffers(r, entries))).toBe(false);
+  });
+});
+
+describe("compareExportTable (#1624)", () => {
+  const labels = {
+    section: "sec",
+    item: "item",
+    differs: "diff",
+    sectionMetric: "metric",
+    sectionTop: "top",
+    metric: {
+      type: "Type",
+      total: "Total",
+      nulls: "Nulls",
+      nullPct: "Null%",
+      distinct: "Distinct",
+      min: "Min",
+      max: "Max",
+    },
+    absent: "absent",
+  };
+  it("指標と上位値を 1 枚の表にし、差のある接続名と『上位値に無い』を出す", () => {
+    const entries = [
+      entry("prod", profile()),
+      entry("stg", profile({ total_count: 50, top_values: [{ value: "active", count: 10 }] })),
+      entry("bad", null, "boom"),
+    ];
+    const t = compareExportTable(entries, labels);
+    expect(t.header).toEqual(["sec", "item", "prod", "stg", "bad", "diff"]);
+    const total = t.rows.find((r) => r[1] === "Total");
+    expect(total).toEqual(["metric", "Total", "1,000", "50", null, "stg"]);
+    const closed = t.rows.find((r) => r[0] === "top" && r[1] === "closed");
+    expect(closed?.[3]).toBe("absent");
+    expect(closed?.[4]).toBeNull();
+    expect(closed?.[5]).toBe("stg");
   });
 });

@@ -287,6 +287,34 @@ export const knownHost = z.object({
 });
 export const knownHostArray = z.array(knownHost);
 
+/** known_hosts の信頼・削除・取り込みの履歴 1 件 (ホスト名・ポート・指紋のみ)。#1630。 */
+export const knownHostEvent = z.object({
+  at: z.string(),
+  action: z.enum(["trust", "forget", "import"]),
+  host: z.string(),
+  port: z.number(),
+  fingerprint: z.string(),
+  previous_fingerprint: z.string().nullable(),
+});
+export const knownHostEventArray = z.array(knownHostEvent);
+
+/** OpenSSH known_hosts の取り込みスキャン結果。#1630。 */
+export const importScan = z.object({
+  found: z.boolean(),
+  candidates: z.array(
+    z.object({
+      host: z.string(),
+      port: z.number(),
+      fingerprint: z.string(),
+      key_type: z.string(),
+      status: z.enum(["new", "same", "conflict"]),
+      existing_fingerprint: z.string().nullable(),
+    }),
+  ),
+  hashed_skipped: z.number(),
+  other_skipped: z.number(),
+});
+
 /**
  * What `resolve_ssh_config_host` can prefill from a `~/.ssh/config` `Host`
  * alias (#708): the target hop's fields plus (when `ProxyJump` is set) the
@@ -437,6 +465,8 @@ const sshProfile = z.object({
   private_key_path: z.string(),
   // 旧プロファイル (#708 以前) には無いフィールドなので optional/nullable。
   jump: sshJumpProfile.nullable().optional(),
+  // トンネルのローカル待受ポート固定 (#1630)。未指定 / null は自動割当。
+  local_port: z.number().nullable().optional(),
 });
 
 export const connectionProfile = z.object({
@@ -1088,6 +1118,8 @@ export const encryptedProfileExportResult = z.object({
   profiles: z.number(),
   secrets: z.number(),
   bytes: z.number(),
+  verified: z.boolean(),
+  generations_pruned: z.number(),
 });
 
 /** テーブル統計ダッシュボードの 1 行 (`table_statistics`、#1255)。サイズ情報に
@@ -1700,6 +1732,7 @@ export const blobFolderSaveResult = z.object({
   skippedTooLarge: z.number(),
   failed: z.number(),
   errors: z.array(z.object({ row: z.number(), error: z.string() })),
+  manifestFile: z.string().nullable(),
 });
 
 export const importErrorEvent = z.object({
@@ -1749,6 +1782,13 @@ export const textEncoding = z.enum(["utf-8", "utf-8-bom", "utf-16le", "utf-16be"
 export const sqlFileContent = z.object({
   content: z.string(),
   encoding: textEncoding,
+});
+
+/** `preview_sql_file_encodings` の戻り値 (#1627)。候補ごとの先頭数行と自動判定の結果。 */
+export const sqlEncodingPreview = z.object({
+  detected: textEncoding.nullable(),
+  detectError: z.string().nullable(),
+  candidates: z.array(z.object({ encoding: textEncoding, valid: z.boolean(), lines: z.array(z.string()) })),
 });
 
 const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);

@@ -196,6 +196,42 @@ describe("normalizePersistedWorkspace", () => {
     expect(ws.panes[0].tabs[0].builderSnapshot).toEqual(snapshot);
   });
 
+  it("BETWEEN の上端 (value2) と OFFSET を持つスナップショットを復元し、型違いは捨てる (#1627)", () => {
+    const base = {
+      kind: "SELECT",
+      database: "db",
+      table: "users",
+      selectAll: true,
+      selectColumns: [],
+      limit: "100",
+      setPairs: [],
+      insertPairs: [],
+    };
+    const ok = {
+      ...base,
+      whereConditions: [{ column: "age", operator: "BETWEEN", value: "1", value2: "9" }],
+      offset: "200",
+    };
+    const ws = normalizePersistedWorkspace([{ kind: "query", title: "Q", sql: "x", builderSnapshot: ok }]);
+    expect(ws.panes[0].tabs[0].builderSnapshot).toEqual(ok);
+    const badOffset = normalizePersistedWorkspace([
+      { kind: "query", title: "Q", sql: "x", builderSnapshot: { ...base, whereConditions: [], offset: 5 } },
+    ]);
+    expect(badOffset.panes[0].tabs[0].builderSnapshot).toBeUndefined();
+    const badValue2 = normalizePersistedWorkspace([
+      {
+        kind: "query",
+        title: "Q",
+        sql: "x",
+        builderSnapshot: {
+          ...base,
+          whereConditions: [{ column: "a", operator: "BETWEEN", value: "1", value2: 9 }],
+        },
+      },
+    ]);
+    expect(badValue2.panes[0].tabs[0].builderSnapshot).toBeUndefined();
+  });
+
   it("drops a builderSnapshot whose orderBy has an invalid direction", () => {
     const ws = normalizePersistedWorkspace([
       {

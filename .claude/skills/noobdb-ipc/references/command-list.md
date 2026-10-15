@@ -73,7 +73,10 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
 - `list_known_hosts`
 - `forget_host_key`
 - `trust_host_key`
-- `resolve_ssh_config_host`
+- `resolve_ssh_config_host` (#708。#1630 で `Host *` / `Include` / `Match host|all` を OpenSSH 規則で解決)
+- `list_known_hosts_history` (#1630。信頼・削除・取り込みの履歴。ホスト名・ポート・指紋のみ)
+- `scan_openssh_known_hosts` (#1630。`~/.ssh/known_hosts` の平文エントリを読む。読み取り専用)
+- `import_known_hosts` (#1630。選択された候補を `set_host_key` で取り込み、履歴に残す)
 
 ## クエリ実行・トランザクション (`commands/query.rs`)
 
@@ -377,6 +380,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)
 - `list_history_sql`
 - `clear_history`
+- `delete_history_entries` (#1627。id 指定の一括削除。履歴の「表示中を削除」「選択を削除」。上限 10,000 件、存在しない id は無視、削除件数を返す)
 - `get_history_retention_days` / `set_history_retention_days` (#1539。履歴の期間ベース保持。0 = 無効。保存と同時に期限切れ行を削除)
 - `read_logs`
 - `clear_logs`
@@ -393,6 +397,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `export_query_result`
 - `export_query_stream`
+- `export_tables_xlsx` (#1624: 複数テーブルを 1 ブック・テーブルごと 1 シートでストリーミング書き出し。`sheets: [{name, sql, masks}]`。進捗・完了は `export_query_stream` と同じ `export-stream:*` イベント (行数は全シート通算)。シート名は 31 文字・禁止文字置換・大文字小文字無視の重複に `_2`)
 - `dump_database` (`options.tables` で対象テーブルを絞れる (#1399): MySQL は `mysqldump <db> <tbl>...`、PostgreSQL は `pg_dump --table` (スキーマ修飾)、SQLite は指定テーブル + 付随する索引/トリガー。未指定は DB 全体)
 - `dump_tool_status`
 - `install_dump_tool`
@@ -401,6 +406,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `preview_create_table_ddl`
 - `read_text_file`
 - `read_sql_file`
+- `preview_sql_file_encodings`
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
@@ -437,7 +443,9 @@ SQL を揃えている)。`fetch_cell_bytes` は主キーで 1 セルの生バ�
 `-` 連結) で 1 つのフォルダへ書き出す。行ごとに probe でサイズ・種別を調べ、NULL / 16 MiB 超過は
 飛ばし、拡張子は種別 (不明は `bin`)、既存ファイルは上書きせず `_2` を付ける。1 行の失敗で止めず
 件数 (`saved` / `skippedNull` / `skippedTooLarge` / `failed`) と先頭 20 件の失敗理由を返す。
-行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。
+行数上限 10,000。保存先は既存のフォルダに限る (作成しない)。`writeManifest: true` (#1624) で
+同じフォルダに対応表 `manifest.csv` (行番号・主キー列・保存ファイル名・サイズ・MIME・状態・エラー。
+飛ばした行・失敗した行も載る) を書き、結果の `manifestFile` にそのファイル名を返す。
 
 `read_sql_file` (`commands/file.rs`, #1535) は SQL ファイルを**文字コード付き**で読む。`encoding`
 省略は自動判定 (BOM → UTF-8 として妥当か → Shift_JIS / EUC-JP をスコアで判別。UTF-16 は BOM または
@@ -447,6 +455,12 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `write_text_file` の `encoding` へ渡して同じ文字コードに書き戻す。識別子は `utf-8` / `utf-8-bom` /
 `utf-16le` / `utf-16be` / `shift_jis` / `euc-jp` (Rust `text_encoding::TextEncoding`)。`read_text_file`
 (JSON の設定ファイルなど) は従来どおり UTF-8 固定。
+
+`preview_sql_file_encodings` (`commands/file.rs`, #1627) は SQL ファイルの文字コード自動判定の結果
+(`detected` / 失敗時は `detectError`) と、全候補 (`utf-8` / `utf-8-bom` / `shift_jis` / `euc-jp` /
+`utf-16le` / `utf-16be`) で先頭 4 KB を読んだ先頭 5 行 (`candidates[].lines`、不正バイトは U+FFFD に置換、
+`valid` は不正の有無) を返す読み取り専用コマンド。`SqlFileEncodingModal` が判定ミスの選び直しに使い、
+実際の読み込みは選んだ文字コードで `read_sql_file` が行う。
 
 `write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
 まま書く (上限 32 MiB)。`encoding` (#1535) を省略すると BOM なし UTF-8。指定すると変換して書き、

@@ -7,6 +7,8 @@ import { readableInk, useIsDarkTheme } from "../colorScale";
 import { durations, easings } from "../motion";
 import { Checkbox } from "./ui";
 import { ImageExportButton } from "./ImageExportButton";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv, tableToMarkdown } from "./tabularText";
 import { ListboxSelect } from "./ListboxSelect";
 import { ResultViewSwitch, type ResultViewKind } from "./ResultViewSwitch";
 import { elementToPngBlob, elementToSvgBytes } from "./imageExport";
@@ -15,6 +17,7 @@ import {
   CHART_PALETTES,
   DEFAULT_CHART_PALETTE,
   buildChartModel,
+  chartModelTable,
   sortChartModel,
   buildChartSql,
   canAggregateInDb,
@@ -310,6 +313,30 @@ export function ChartView({ result, sourceSql, onChangeView, driver, onRunQuery 
             const svg = getSvgForExport();
             return elementToSvgBytes(svg as unknown as HTMLElement, svgExportSize(svg));
           }}
+        />
+        {/* 描画に使ったラベルと系列の値を、画像ではなくデータとして CSV / Markdown に出す (#1624)。 */}
+        <TextExportButton
+          filenameBase="chart"
+          disabled={model.labels.length === 0 || config.yCols.length === 0 || shownModel.series.length === 0}
+          label={t("chartDataExport")}
+          formats={[
+            {
+              id: "csv",
+              label: "CSV",
+              build: () => {
+                const { header, rows } = chartModelTable(shownModel, t("chartDataLabelColumn"));
+                return tableToCsv(header, rows);
+              },
+            },
+            {
+              id: "markdown",
+              label: "Markdown",
+              build: () => {
+                const { header, rows } = chartModelTable(shownModel, t("chartDataLabelColumn"));
+                return tableToMarkdown(header, rows);
+              },
+            },
+          ]}
         />
         <Field label={t("chartType")}>
           <ListboxSelect

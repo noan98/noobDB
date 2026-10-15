@@ -161,6 +161,11 @@ export interface SshProfile {
    * tunnel, including every profile saved before this field existed.
    */
   jump?: SshJumpProfile | null;
+  /**
+   * Fixed local listen port of the tunnel (#1630). `null`/omitted/0 = let the OS
+   * pick a free port (the previous behavior).
+   */
+  local_port?: number | null;
 }
 
 export interface ConnectionProfile extends TlsSettings, SessionInitSettings, AwsIamSettings, SsmSettings {
@@ -315,6 +320,10 @@ export interface EncryptedProfileExportResult {
   profiles: number;
   secrets: number;
   bytes: number;
+  /** 書き出し直後に読み直して復号・件数を確認済み (#1624)。成功応答では常に true。 */
+  verified: boolean;
+  /** 世代管理で削除した古い世代の数 (#1624)。 */
+  generations_pruned: number;
 }
 
 export type SnippetScope =
@@ -1061,6 +1070,37 @@ export interface KnownHost {
   host: string;
   port: number;
   fingerprint: string;
+}
+
+/** One entry of the known_hosts trust/forget/import history (#1630). Never holds key material. */
+export interface KnownHostEvent {
+  /** UTC, RFC 3339. */
+  at: string;
+  action: "trust" | "forget" | "import";
+  host: string;
+  port: number;
+  fingerprint: string;
+  previous_fingerprint: string | null;
+}
+
+/** One OpenSSH known_hosts entry offered for import (#1630). */
+export interface ImportCandidate {
+  host: string;
+  port: number;
+  fingerprint: string;
+  key_type: string;
+  /** `conflict` = noobDB already trusts a different fingerprint (import replaces it). */
+  status: "new" | "same" | "conflict";
+  existing_fingerprint: string | null;
+}
+
+/** Result of scanning `~/.ssh/known_hosts` (#1630). */
+export interface ImportScan {
+  found: boolean;
+  candidates: ImportCandidate[];
+  /** Hashed (`HashKnownHosts`) lines that cannot be matched and were skipped. */
+  hashed_skipped: number;
+  other_skipped: number;
 }
 
 /**
@@ -1846,6 +1886,14 @@ export interface DumpOptions {
    * 空配列は不可 (バックエンドが拒否する)。MySQL ではルーチン / イベントは対象外。
    */
   tables?: string[] | null;
+  /** MySQL のみ — `mysqldump --no-tablespaces` (PROCESS 権限が無いユーザ向け, #1624)。 */
+  noTablespaces?: boolean;
+  /** MySQL のみ — `mysqldump --set-gtid-purged=OFF` (GTID 有効サーバ間の移行向け, #1624)。 */
+  setGtidPurgedOff?: boolean;
+  /** 全ドライバ — 完成したダンプの SHA-256 を `<保存先>.sha256` に書く (#1624)。 */
+  writeChecksum?: boolean;
+  /** SQLite のみ — SQL ではなく `VACUUM INTO` による整合したバイナリ・スナップショット (`.db`, #1624)。 */
+  sqliteSnapshot?: boolean;
 }
 
 // --- タスクスケジューラ (#730) -------------------------------------------
@@ -2509,6 +2557,8 @@ export interface BlobFolderSaveResult {
   failed: number;
   /** 失敗した行の理由 (先頭 20 件まで。`row` は渡した keys の添字)。 */
   errors: { row: number; error: string }[];
+  /** 対応表 (CSV) を書いたときのフォルダ内のファイル名。書かなかったときは null (#1624)。 */
+  manifestFile: string | null;
 }
 
 export interface ImportErrorEvent {
@@ -2717,6 +2767,20 @@ export type TextEncodingId = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "
 export interface SqlFileContent {
   content: string;
   encoding: TextEncodingId;
+}
+
+/** `preview_sql_file_encodings` の候補 1 つ分 (#1627)。`valid` は先頭バイトに不正が無かったか。 */
+export interface SqlEncodingCandidatePreview {
+  encoding: TextEncodingId;
+  valid: boolean;
+  lines: string[];
+}
+
+/** `preview_sql_file_encodings` の戻り値 (#1627): 自動判定の結果と、候補ごとの先頭数行。 */
+export interface SqlEncodingPreview {
+  detected: TextEncodingId | null;
+  detectError: string | null;
+  candidates: SqlEncodingCandidatePreview[];
 }
 
 /** 事前確認で検出する危険な文の種別 (`src/dangerousSql.ts` の `DangerKind` と同じ名前)。 */

@@ -397,6 +397,7 @@ fn build_fixtures() -> serde_json::Value {
             auth_method: SshAuthMethod::Password,
             private_key_path: PathBuf::new(),
         }),
+        local_port: Some(15432),
     };
     let connection_profile_inner = ConnectionProfile {
         id: "abc12345".into(),
@@ -586,6 +587,29 @@ fn build_fixtures() -> serde_json::Value {
         host: "db.example.com".into(),
         port: 22,
         fingerprint: "SHA256:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG".into(),
+    };
+
+    // #1630: known_hosts の履歴と OpenSSH 取り込みスキャン。
+    let known_host_event = t::KnownHostEvent {
+        at: "2026-10-15T01:02:03Z".into(),
+        action: t::KnownHostAction::Trust,
+        host: "db.example.com".into(),
+        port: 22,
+        fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+        previous_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+    };
+    let import_scan = t::ImportScan {
+        found: true,
+        candidates: vec![t::ImportCandidate {
+            host: "db.example.com".into(),
+            port: 22,
+            fingerprint: "SHA256:newnewnewnewnewnewnewnewnewnewnewnewnewnew".into(),
+            key_type: "ssh-ed25519".into(),
+            status: t::ImportStatus::Conflict,
+            existing_fingerprint: Some("SHA256:oldoldoldoldoldoldoldoldoldoldoldoldoldold".into()),
+        }],
+        hashed_skipped: 2,
+        other_skipped: 1,
     };
 
     let column_diff = ColumnDiff {
@@ -986,6 +1010,22 @@ fn build_fixtures() -> serde_json::Value {
         content: "SELECT 1;".into(),
         encoding: t::TextEncoding::Utf8Bom,
     };
+    let sql_encoding_preview = t::SqlEncodingPreview {
+        detected: Some(t::TextEncoding::ShiftJis),
+        detect_error: None,
+        candidates: vec![
+            t::EncodingPreview {
+                encoding: t::TextEncoding::ShiftJis,
+                valid: true,
+                lines: vec!["SELECT '日本語';".into()],
+            },
+            t::EncodingPreview {
+                encoding: t::TextEncoding::Utf8,
+                valid: false,
+                lines: vec!["SELECT '\u{fffd}';".into()],
+            },
+        ],
+    };
     let script_error_event = ScriptErrorEvent {
         stream_id: "strm0007".into(),
         error: "line 12: UNIQUE constraint failed".into(),
@@ -1076,6 +1116,7 @@ fn build_fixtures() -> serde_json::Value {
             row: 4,
             error: "expected exactly one row for the key, got 0".into(),
         }],
+        manifest_file: Some("manifest.csv".into()),
     };
 
     // #1256: エディタのバッチ実行 (`run_sql_batch`) の Channel メッセージ。
@@ -2040,6 +2081,8 @@ fn build_fixtures() -> serde_json::Value {
         profiles: 3,
         secrets: 2,
         bytes: 1024,
+        verified: true,
+        generations_pruned: 1,
     };
     let encrypted_profile_import_result = t::EncryptedImportResult {
         result: ImportResult {
@@ -2100,6 +2143,8 @@ fn build_fixtures() -> serde_json::Value {
         "channelCancelledMessageAi": ai_stream_cancelled_message,
         "taskRunProgressEvent": task_run_progress_event,
         "knownHost": known_host,
+        "knownHostEvent": known_host_event,
+        "importScan": import_scan,
         "schemaDiff": schema_diff,
         "syncPlan": sync_plan,
         "dataDiff": data_diff,
@@ -2155,6 +2200,7 @@ fn build_fixtures() -> serde_json::Value {
         "scriptErrorEvent": script_error_event,
         "scriptAnalyzedEvent": script_analyzed_event,
         "sqlFileContent": sql_file_content,
+        "sqlEncodingPreview": sql_encoding_preview,
 
         // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
         "healthFindingVariants": health_finding_variants,

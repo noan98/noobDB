@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   dedupeAdjacentHistory,
+  filterHistory,
   initialHistoryNav,
   pushHistoryEntry,
   QUERY_HISTORY_LIMIT,
@@ -134,5 +135,32 @@ describe("dedupeAdjacentHistory / pushHistoryEntry (#1256)", () => {
     expect(next).toHaveLength(QUERY_HISTORY_LIMIT);
     expect(next[0]).toBe("new");
     expect(next[next.length - 1]).toBe(`q${QUERY_HISTORY_LIMIT - 2}`);
+  });
+});
+
+describe("filterHistory (#1627)", () => {
+  const history = [
+    "SELECT * FROM users",
+    "select id from Orders",
+    "select id from Orders",
+    "DELETE FROM users WHERE id = 1",
+  ];
+
+  it("大文字小文字を区別せず、語をすべて含む SQL だけを新しい順のまま返す", () => {
+    expect(filterHistory(history, "USERS")).toEqual([
+      "SELECT * FROM users",
+      "DELETE FROM users WHERE id = 1",
+    ]);
+    expect(filterHistory(history, "from   users id")).toEqual(["DELETE FROM users WHERE id = 1"]);
+    expect(filterHistory(history, "nothing")).toEqual([]);
+  });
+
+  it("空の検索語は絞り込まず、隣り合う重複だけ畳む", () => {
+    expect(filterHistory(history, "  ")).toEqual([
+      "SELECT * FROM users",
+      "select id from Orders",
+      "DELETE FROM users WHERE id = 1",
+    ]);
+    expect(filterHistory([], "x")).toEqual([]);
   });
 });

@@ -33,6 +33,8 @@ import { statusColors } from "./diffStatusColors";
 import { AiSyncRisk, RiskBadge, type RiskByIndex } from "./AiSyncRisk";
 import { Icon, ICON_SIZES } from "./Icon";
 import { MigrationExportModal } from "./MigrationExportModal";
+import { TextExportButton } from "./TextExportButton";
+import { schemaCompareReportMarkdown } from "./schemaCompareReport";
 import { Tooltip } from "./Tooltip";
 import { TreeChevron } from "./tree";
 import { Button, Checkbox, Heading, Input, PressableButton, Select } from "./ui";
@@ -419,9 +421,12 @@ const EMPTY_SIDE: SideState = {
 export function SchemaCompareView({
   profiles,
   onClose,
+  onOpenSql,
 }: {
   profiles: ConnectionProfile[];
   onClose: () => void;
+  /** 生成した SQL を新しいクエリタブで開く (実行はしない)。 */
+  onOpenSql?: (sql: string, title: string) => void;
 }) {
   const t = useT();
   const settings = useSettings();
@@ -659,6 +664,42 @@ export function SchemaCompareView({
   useEffect(() => {
     setTableLimit(TABLE_DIFF_PAGE);
   }, [diff, hideSame]);
+
+  /** 比較結果 (と生成済みのスキーマ同期 SQL) の Markdown レポート (#1624)。クリック時にだけ組む。 */
+  const buildReport = (): string => {
+    if (!diff) return "";
+    const side = (s: SideState, profile: ConnectionProfile | null) =>
+      `${profile?.name ?? s.profileId ?? ""} / ${s.database ?? ""}`;
+    return schemaCompareReportMarkdown({
+      source: side(source, sourceProfile),
+      target: side(target, targetProfile),
+      diff,
+      plan: planKind === "schema" ? plan : null,
+      hideSame,
+      labels: {
+        title: t("schemaCompareReportTitle"),
+        source: t("schemaCompareSource"),
+        target: t("schemaCompareTarget"),
+        summaryHeading: t("schemaCompareReportSummary"),
+        statusLabels: {
+          source_only: t("schemaCompareStatusSourceOnly"),
+          target_only: t("schemaCompareStatusTargetOnly"),
+          different: t("schemaCompareStatusDifferent"),
+          same: t("schemaCompareStatusSame"),
+        },
+        tablesHeading: t("schemaCompareReportTables"),
+        tableCol: t("schemaCompareReportColTable"),
+        statusCol: t("schemaCompareReportColStatus"),
+        detailCol: t("schemaCompareReportColDetail"),
+        identical: t("schemaCompareIdentical"),
+        planHeading: t("schemaCompareReportPlan"),
+        planNote: t("schemaCompareReportPlanNote"),
+        noStatements: t("schemaCompareNoStatements"),
+        warningsHeading: t("schemaCompareReportWarnings"),
+        destructive: t("schemaCompareReportDestructive"),
+      },
+    });
+  };
 
   const hasDifferences = counts.different + counts.source_only + counts.target_only > 0;
 
@@ -1005,6 +1046,11 @@ export function SchemaCompareView({
                   <Checkbox checked={hideSame} onChange={(e) => setHideSame(e.target.checked)} />
                   {t("schemaCompareHideSame")}
                 </chakra.label>
+                <TextExportButton
+                  formats={[{ id: "markdown", label: "Markdown", build: buildReport }]}
+                  filenameBase="schema-compare"
+                  label={t("schemaCompareReport")}
+                />
               </Box>
 
               {visibleTables.length === 0 ? (
@@ -1288,6 +1334,7 @@ export function SchemaCompareView({
             targetSessionId={target.sessionId}
             targetDatabase={target.database}
             targetProfile={targetProfile}
+            onOpenInEditor={onOpenSql}
             onClose={() => setMigrationExportOpen(false)}
           />
         )}

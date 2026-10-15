@@ -18,7 +18,7 @@ import {
 } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { registerTreeDropTarget } from "./treeDragStore";
-import { treeItemInsertText } from "./treeDragInsert";
+import { tableSelectWithColumnsText, treeItemInsertText } from "./treeDragInsert";
 import { AnimatePresence, motion } from "motion/react";
 import { Compartment, EditorState, StateEffect, StateField, type Text } from "@codemirror/state";
 import {
@@ -68,7 +68,7 @@ import { renderCompletionIcon } from "./completionIcons";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
-import { statementAtOffset } from "../sqlScript";
+import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { PREFLIGHT_MAX_CHARS } from "./preflight";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
@@ -380,6 +380,10 @@ export interface QueryEditorHandle {
   setText: (text: string) => void;
   /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
   getText: () => string;
+  /** 画面座標 (CSS px) がこのエディタの上か。ファイルのドロップ先判定 (#1627)。重なったモーダル等の上なら false。 */
+  containsPoint: (x: number, y: number) => boolean;
+  /** `[from, to)` を選択してスクロールし、エディタへフォーカスを移す (出力タブのエラー行ジャンプ、#1627)。 */
+  selectRange: (from: number, to: number) => void;
   /** `[from, to)` だけを置き換える。undo 履歴に載る (#692)。 */
   replaceRange: (from: number, to: number, text: string) => void;
   /** キーボードフォーカスをエディタへ移す (ペインフォーカス循環 #681)。 */
@@ -392,6 +396,8 @@ export interface QueryEditorHandle {
   runAll: () => void;
   /** 選択があれば選択を、無ければカーソル位置の 1 文を実行する (Mod+Alt+Enter と同じ)。 */
   runStatement: () => void;
+  /** カーソルの文から末尾までを 1 つのバッチとして実行する (#1627)。 */
+  runFromCursor: () => void;
   formatSql: () => void;
   explain: () => void;
   /** 「AI にクエリを依頼」モーダルを開く (#691。コマンドパレット用)。 */
@@ -783,6 +789,8 @@ export const QueryEditor = memo(
     const fkDatabase = schemaTable?.database ?? defaultDatabase ?? null;
     // ツリーからのドロップ (マウント時に 1 度だけ登録されるコールバック) が現在値を読むための ref。
     const fkDatabaseRef = useRef<string | null>(null);
+    const sessionIdRef = useRef<string | null | undefined>(null);
+    sessionIdRef.current = sessionId;
     fkDatabaseRef.current = fkDatabase;
     const loadColumnsRef = useRef<(table: string) => Promise<TableColumnInfo[]>>(() =>
       Promise.reject(new Error("no session")),
@@ -981,6 +989,18 @@ export const QueryEditor = memo(
       // 文分割の解釈 (バックスラッシュエスケープ、#852/#1004) を実行ゲート
       // (`App.tsx` の `analyzeDangerousSql`/`isReadOnlySql`) と揃える。
       const range = statementAtOffset(view.state.doc.toString(), sel.head, driverRef.current);
+      if (!range) return true;
+      resetHistoryNav();
+      onRunRef.current(range.text);
+      flashStatement(view, range.from, range.to);
+      return true;
+    };
+
+    // カーソルの文から末尾までを 1 つのバッチとして実行する (#1627)。実行経路は選択実行と同じ
+    // `onRun` (複数文なら通常のバッチ実行 + 安全網に載る)。
+    const runFromCursor = (view: EditorView): boolean => {
+      const sel = view.state.selection.main;
+      const range = statementsFromOffset(view.state.doc.toString(), sel.head, driverRef.current);
       if (!range) return true;
       resetHistoryNav();
       onRunRef.current(range.text);
@@ -1226,14 +1246,41 @@ export const QueryEditor = memo(
                   fks: fksRef.current,
                 })[0]?.text
               : undefined;
-          const text = joinText ?? treeItemInsertText(driverRef.current, item, qualified);
-          const at = pos ?? view.state.doc.length;
-          view.dispatch({
-            changes: { from: at, insert: text },
-            selection: { anchor: at + text.length },
-            userEvent: "input.drop",
-          });
-          view.focus();
+          const place = (text: string) => {
+            if (view.dom.isConnected === false) return;
+            const at = Math.min(pos ?? view.state.doc.length, view.state.doc.length);
+            view.dispatch({
+              changes: { from: at, insert: text },
+              selection: { anchor: at + text.length },
+              userEvent: "input.drop",
+            });
+            view.focus();
+          };
+          // Shift でテーブルをドロップ: 列名つきの SELECT 雛形 (#1627)。describe_table の
+          // キャッシュを使い、取れなければ通常の `SELECT * FROM` に落とす。
+          if (joinFk && item.kind === "table") {
+            const driver = driverRef.current;
+            const cols =
+              item.database === fkDatabaseRef.current
+                ? loadColumnsRef.current(item.table)
+                : sessionIdRef.current
+                  ? api.describeTable(sessionIdRef.current, item.database, item.table)
+                  : Promise.reject(new Error("no session"));
+            cols.then(
+              (list) =>
+                place(
+                  tableSelectWithColumnsText(
+                    driver,
+                    item.database,
+                    item.table,
+                    list.map((c) => c.name),
+                  ),
+                ),
+              () => place(treeItemInsertText(driver, item, qualified)),
+            );
+            return;
+          }
+          place(joinText ?? treeItemInsertText(driverRef.current, item, qualified));
         },
       });
       appliedConfigRef.current = desiredConfigRef.current;
@@ -1427,6 +1474,22 @@ export const QueryEditor = memo(
           view.focus();
         },
         getText: () => viewRef.current?.state.doc.toString() ?? "",
+        containsPoint: (x: number, y: number) => {
+          const view = viewRef.current;
+          if (!view) return false;
+          const hit = document.elementFromPoint(x, y);
+          return hit !== null && view.dom.contains(hit);
+        },
+        selectRange: (from: number, to: number) => {
+          const view = viewRef.current;
+          if (!view) return;
+          const len = view.state.doc.length;
+          view.dispatch({
+            selection: { anchor: Math.min(from, len), head: Math.min(Math.max(from, to), len) },
+            scrollIntoView: true,
+          });
+          view.focus();
+        },
         replaceRange: (from: number, to: number, text: string) => {
           const view = viewRef.current;
           if (!view) return;
@@ -1453,6 +1516,10 @@ export const QueryEditor = memo(
         runStatement: () => {
           const view = viewRef.current;
           if (view) runStatementUnderCursor(view);
+        },
+        runFromCursor: () => {
+          const view = viewRef.current;
+          if (view) runFromCursor(view);
         },
         formatSql: () => {
           const view = viewRef.current;
@@ -1537,6 +1604,9 @@ export const QueryEditor = memo(
           break;
         case "runStatement":
           runStatementUnderCursor(view);
+          break;
+        case "runFromCursor":
+          runFromCursor(view);
           break;
         case "preview":
           previewSelectionOrAll();

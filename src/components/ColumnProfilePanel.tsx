@@ -16,6 +16,11 @@ import { CartesianChart } from "./ChartView";
 import {
   formatPercent,
   formatProfileCount,
+  nextOverviewSort,
+  overviewTable,
+  sortOverviewColumns,
+  type OverviewSort,
+  type OverviewSortKey,
   profileChartKind,
   profileChartModel,
   profileNoteKey,
@@ -33,6 +38,8 @@ import { Spinner } from "./Spinner";
 import { Skeleton, SkeletonTableRows } from "./Skeleton";
 import { Tooltip } from "./Tooltip";
 import { Button, Checkbox, Select } from "./ui";
+import { TextExportButton } from "./TextExportButton";
+import { tableToCsv } from "./tabularText";
 import { ErrorNote } from "./modalForm";
 import { Callout } from "./Callout";
 import { transitions, variants } from "../motion";
@@ -109,6 +116,8 @@ export function ColumnProfilePanel({
   const [overviewRunning, setOverviewRunning] = useState(false);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const overviewSeq = useRef(0);
+  // 全列概要の並べ替え (#1624)。null は取得順。表が変わったら解除する。
+  const [overviewSort, setOverviewSort] = useState<OverviewSort | null>(null);
   // 自動実行の debounce タイマー (手動実行で取り消せるよう ref に持つ)。
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -138,7 +147,10 @@ export function ColumnProfilePanel({
     setOverview(null);
     setOverviewError(null);
     setOverviewRunning(false);
+    setOverviewSort(null);
   }, [sessionId, database, table]);
+
+  const sortBy = (key: OverviewSortKey) => setOverviewSort((cur) => nextOverviewSort(cur, key));
 
   const runOverview = async () => {
     const seq = ++overviewSeq.current;
@@ -330,13 +342,43 @@ export function ColumnProfilePanel({
       )}
       {overview && !overviewRunning && (
         <Box data-testid="profile-overview" maxH="260px" overflow="auto" flexShrink={0}>
-          <chakra.div textStyle="caption" color="app.textMuted" marginBottom="1">
-            {t("profileOverviewSummary", {
-              rows: formatProfileCount(overview.total_count),
-              columns: overview.columns.length,
-              scans: overview.scans,
-            })}
-          </chakra.div>
+          <Flex align="center" gap="2" marginBottom="1">
+            <chakra.div textStyle="caption" color="app.textMuted" flex="1">
+              {t("profileOverviewSummary", {
+                rows: formatProfileCount(overview.total_count),
+                columns: overview.columns.length,
+                scans: overview.scans,
+              })}
+            </chakra.div>
+            {/* 並べ替え後の表示順のまま CSV で保存できる (#1624)。 */}
+            <TextExportButton
+              filenameBase={`column-overview-${overview.table}`}
+              formats={[
+                {
+                  id: "csv",
+                  label: "CSV",
+                  build: () => {
+                    const { header, rows } = overviewTable(
+                      sortOverviewColumns(overview.columns, overview.total_count, overviewSort),
+                      overview.total_count,
+                      {
+                        column: t("profileColumnLabel"),
+                        type: t("profileType"),
+                        nonNull: t("profileOverviewNonNull"),
+                        nullCount: t("profileOverviewNullCount"),
+                        nullRate: t("profileNulls"),
+                        distinct: t("profileDistinct"),
+                        min: t("profileMin"),
+                        max: t("profileMax"),
+                        skipped: t("profileOverviewSkippedMark"),
+                      },
+                    );
+                    return tableToCsv(header, rows);
+                  },
+                },
+              ]}
+            />
+          </Flex>
           {overview.notes.includes("overview_approx_no_stats") && (
             <chakra.div
               textStyle="caption"
@@ -350,15 +392,17 @@ export function ColumnProfilePanel({
           <chakra.table width="100%" style={{ borderCollapse: "collapse" }}>
             <chakra.thead>
               <chakra.tr>
-                <chakra.th css={thCss}>{t("profileColumnLabel")}</chakra.th>
+                <SortableTh sortKey="column" sort={overviewSort} onSort={sortBy}>
+                  {t("profileColumnLabel")}
+                </SortableTh>
                 <chakra.th css={thCss}>{t("profileType")}</chakra.th>
-                <chakra.th css={thCss} textAlign="right">
+                <SortableTh sortKey="nonNull" sort={overviewSort} onSort={sortBy} align="right">
                   {t("profileOverviewNonNull")}
-                </chakra.th>
-                <chakra.th css={thCss} textAlign="right">
+                </SortableTh>
+                <SortableTh sortKey="nullRate" sort={overviewSort} onSort={sortBy} align="right">
                   {t("profileNulls")}
-                </chakra.th>
-                <chakra.th css={thCss} textAlign="right">
+                </SortableTh>
+                <SortableTh sortKey="distinct" sort={overviewSort} onSort={sortBy} align="right">
                   {overview.distinct_approximate ? (
                     <Tooltip label={t("profileApproxMark")}>
                       <chakra.span>{t("profileDistinct")} ≈</chakra.span>
@@ -366,13 +410,13 @@ export function ColumnProfilePanel({
                   ) : (
                     t("profileDistinct")
                   )}
-                </chakra.th>
+                </SortableTh>
                 <chakra.th css={thCss}>{t("profileMin")}</chakra.th>
                 <chakra.th css={thCss}>{t("profileMax")}</chakra.th>
               </chakra.tr>
             </chakra.thead>
             <chakra.tbody>
-              {overview.columns.map((c) => {
+              {sortOverviewColumns(overview.columns, overview.total_count, overviewSort).map((c) => {
                 const skipped = c.notes.length > 0;
                 return (
                   <chakra.tr
@@ -606,5 +650,47 @@ export function ColumnProfilePanel({
         </MotionReveal>
       )}
     </Box>
+  );
+}
+
+/** 並べ替えできる列見出し (#1624)。ボタンで操作でき、現在の向きを `aria-sort` で伝える。 */
+function SortableTh({
+  sortKey,
+  sort,
+  onSort,
+  align,
+  children,
+}: {
+  sortKey: OverviewSortKey;
+  sort: OverviewSort | null;
+  onSort: (key: OverviewSortKey) => void;
+  align?: "right";
+  children: React.ReactNode;
+}) {
+  const active = sort?.key === sortKey ? sort.dir : null;
+  return (
+    <chakra.th
+      css={thCss}
+      textAlign={align}
+      aria-sort={active === "asc" ? "ascending" : active === "desc" ? "descending" : "none"}
+    >
+      <chakra.button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        display="inline-flex"
+        alignItems="center"
+        gap="1"
+        color="inherit"
+        font="inherit"
+        cursor="pointer"
+        background="transparent"
+        border="none"
+        padding="0"
+        _hover={{ textDecoration: "underline" }}
+      >
+        {children}
+        <span aria-hidden>{active === "asc" ? "▲" : active === "desc" ? "▼" : ""}</span>
+      </chakra.button>
+    </chakra.th>
   );
 }
