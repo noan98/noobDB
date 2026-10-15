@@ -5507,6 +5507,10 @@ const en = {
     "{count} tables were not returned by the AI and keep their previous section.",
   aiErrorExplainShowFull: "Show full SQL",
   aiErrorExplainShowDiff: "Show diff",
+  aiSqlOpenInNewTab: "Open in new tab",
+  aiSqlOpenInNewTabHelp:
+    "Opens the proposal in a new query tab without running it. The original tab is not changed, so you can run and compare both.",
+  aiSqlOpenedInNewTab: "Opened in a new tab. It has not been run.",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10984,6 +10988,10 @@ const ja: Dict = {
   aiSchemaDocIncrementalMissing: "{count} 表は AI の応答に節が無かったため、前回の節のままです。",
   aiErrorExplainShowFull: "全文を表示",
   aiErrorExplainShowDiff: "差分を表示",
+  aiSqlOpenInNewTab: "新しいタブで開く",
+  aiSqlOpenInNewTabHelp:
+    "提案を新しいクエリタブで開きます (実行はしません)。元のタブは変更しないので、両方を実行して比較できます。",
+  aiSqlOpenedInNewTab: "新しいタブで開きました (未実行)。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

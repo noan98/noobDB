@@ -38,6 +38,7 @@ import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Button, Textarea } from "./ui";
 import { Callout } from "./Callout";
+import { Tooltip } from "./Tooltip";
 import { useConfirm } from "./ConfirmDialog";
 import { EmptyState } from "./EmptyState";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
@@ -105,6 +106,11 @@ export interface AiSqlPanelProps {
    * `closed` = タブが既に無い / `cancelled` = 確認で取り消された。
    */
   onApply: (request: AiSqlRequest, newSql: string) => Promise<"applied" | "cancelled" | "closed">;
+  /**
+   * 提案 SQL を新しいクエリタブで開く (実行はしない、#1620)。元のタブは書き換えないので、範囲の確認は
+   * 行わない。`database` は依頼元のタブのデータベース (開いたタブが同じ DB を向くようにする)。
+   */
+  onOpenInNewTab: (sql: string, database: string | null) => void;
 }
 
 /**
@@ -123,6 +129,8 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
   const [applied, setApplied] = useState<null | "applied" | "closed" | "cancelled">(null);
   // 「エディタに適用」が例外で失敗したときのメッセージ (再試行できるようボタンは有効のまま)。
   const [applyError, setApplyError] = useState<string | null>(null);
+  // 「新しいタブで開く」を押したか (提案が変わる = 新しい依頼ではパネルごと作り直される)。
+  const [openedInNewTab, setOpenedInNewTab] = useState(false);
   const stream = useAiStream({ idPrefix: "ai_sql" });
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [followUp, setFollowUp] = useState("");
@@ -458,6 +466,11 @@ export function AiSqlPanel(props: AiSqlPanelProps) {
           onApply={() => {
             void applyRewrite(state);
           }}
+          openedInNewTab={openedInNewTab}
+          onOpenInNewTab={() => {
+            props.onOpenInNewTab(state.proposal, request.database);
+            setOpenedInNewTab(true);
+          }}
         />
       )}
       {state.kind === "rewrite" && applyError !== null && (
@@ -580,6 +593,8 @@ function RewriteResult({
   restore,
   applied,
   onApply,
+  openedInNewTab,
+  onOpenInNewTab,
 }: {
   value: SqlRewriteResponse;
   original: string;
@@ -587,6 +602,8 @@ function RewriteResult({
   restore: RestoredLiterals["status"];
   applied: null | "applied" | "closed" | "cancelled";
   onApply: () => void;
+  openedInNewTab: boolean;
+  onOpenInNewTab: () => void;
 }) {
   const t = useT();
   const lines = useMemo(() => diffLines(original, proposal), [original, proposal]);
@@ -626,6 +643,16 @@ function RewriteResult({
         >
           {t("aiSqlApply")}
         </Button>
+        <Tooltip label={t("aiSqlOpenInNewTabHelp")}>
+          <Button type="button" variant="secondary" size="sm" disabled={!changed} onClick={onOpenInNewTab}>
+            {t("aiSqlOpenInNewTab")}
+          </Button>
+        </Tooltip>
+        {openedInNewTab && (
+          <chakra.span color="app.textSuccess" role="status">
+            {t("aiSqlOpenedInNewTab")}
+          </chakra.span>
+        )}
         {applied === "applied" && (
           <chakra.span color="app.textSuccess" role="status">
             {t("aiSqlApplied")}

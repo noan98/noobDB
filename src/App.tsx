@@ -11196,6 +11196,7 @@ export default function App() {
                         request={aiSqlRequest}
                         onRequestConsumed={() => setAiSqlRequest((r) => (r ? { ...r, autoRun: false } : r))}
                         onApply={handleApplyAiSqlRewrite}
+                        onOpenInNewTab={handleOpenAiSql}
                       />
                     ) : activeBottomPanelTab === "aiResultSummary" ? (
                       <AiResultSummaryPanel
