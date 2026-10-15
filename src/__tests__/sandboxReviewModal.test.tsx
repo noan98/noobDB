@@ -80,6 +80,7 @@ const SANDBOX: SandboxRecord = {
   file_path: "/tmp/sb1.sqlite",
   created_at: "2026-01-01T00:00:00Z",
   truncated_tables: [],
+  row_filters: [],
 };
 
 beforeEach(() => {

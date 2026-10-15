@@ -168,11 +168,12 @@ pub mod __test_api {
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
+    pub use crate::db::sandbox::SandboxTableSpec;
     pub use crate::history::HistoryEntry;
     pub use crate::import_templates::{ImportTemplate, TemplateColumn};
     pub use crate::perf::PerfSample;
     pub use crate::profiles::secrets::KeyringStatus;
-    pub use crate::sandboxes::SandboxRecord;
+    pub use crate::sandboxes::{SandboxRecord, SandboxRowFilter};
     pub use crate::snippets::{Snippet, SnippetScope};
 
     // `commands::import::CsvPreview` はコマンドモジュール内に定義されているが、
@@ -1056,6 +1057,32 @@ pub mod __test_api {
         include_related: bool,
         row_limit: Option<u64>,
     ) -> crate::error::Result<SandboxCreateResponse> {
+        create_sandbox_with_filters_via_command(
+            state,
+            source_session_id,
+            source_database,
+            name,
+            tables
+                .into_iter()
+                .map(|name| SandboxTableSpec { name, filter: None })
+                .collect(),
+            include_related,
+            row_limit,
+        )
+        .await
+    }
+
+    /// 表ごとの抽出条件つき版 (#1625)。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_sandbox_with_filters_via_command(
+        state: &AppState,
+        source_session_id: &str,
+        source_database: Option<&str>,
+        name: &str,
+        tables: Vec<SandboxTableSpec>,
+        include_related: bool,
+        row_limit: Option<u64>,
+    ) -> crate::error::Result<SandboxCreateResponse> {
         crate::commands::sandbox::create_sandbox_inner(
             state,
             source_session_id.to_string(),
@@ -1172,7 +1199,35 @@ pub mod __test_api {
         allow_delete: bool,
         skip_keys: Option<&[Vec<Value>]>,
     ) -> crate::error::Result<SyncPlan> {
-        crate::commands::sync::generate_data_sync_sql_inner(state, diff_id, allow_delete, skip_keys)
+        generate_data_sync_sql_selected_via_command(
+            state,
+            diff_id,
+            allow_delete,
+            skip_keys,
+            None,
+            None,
+        )
+    }
+
+    /// 種別・主キーで行を絞る版 (#1625)。
+    pub fn generate_data_sync_sql_selected_via_command(
+        state: &AppState,
+        diff_id: &str,
+        allow_delete: bool,
+        skip_keys: Option<&[Vec<Value>]>,
+        kinds: Option<&[RowStatus]>,
+        only_keys: Option<&[Vec<Value>]>,
+    ) -> crate::error::Result<SyncPlan> {
+        crate::commands::sync::generate_data_sync_sql_inner(
+            state,
+            diff_id,
+            allow_delete,
+            &crate::commands::sync::DataSyncSelection {
+                skip_keys,
+                kinds,
+                only_keys,
+            },
+        )
     }
 
     /// Releases stored diffs like the `release_data_diffs` command does (#1259).
@@ -1398,6 +1453,7 @@ pub fn run() {
             commands::query::release_savepoint,
             commands::query::run_query_stream,
             commands::broadcast::broadcast_compare,
+            commands::broadcast::broadcast_sync_sql,
             commands::query::set_emergency_mode,
             commands::query::preview_query_stream,
             commands::query::cancel_stream,

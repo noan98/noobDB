@@ -144,6 +144,7 @@ describe("sandboxToProfile", () => {
     file_path: "/tmp/abcd1234.sqlite",
     created_at: "2026-01-01T00:00:00Z",
     truncated_tables: [],
+    row_filters: [],
   };
 
   it("非永続の合成プロファイルを作る", () => {

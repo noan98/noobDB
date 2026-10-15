@@ -1695,6 +1695,8 @@ export interface SandboxRecord {
   created_at: string;
   /** 行数上限に達し部分コピーになったテーブル。 */
   truncated_tables: string[];
+  /** 作成時に表ごとへ指定した抽出条件 (`WHERE` の中身, #1625)。 */
+  row_filters: { table: string; filter: string }[];
 }
 
 /** `createSandbox` の戻り値。`session_id` は通常のセッションと同様に扱える。 */
@@ -3012,6 +3014,8 @@ export interface BroadcastDiff {
   addedRowIndices: number[];
   /** 基準にだけ存在した行の件数。 */
   removedCount: number;
+  /** 基準にだけ存在した行の位置 (基準の表示行上の添字, #1625)。 */
+  removedRowIndices: number[];
   /** 比較上限に達して先頭行のみで比較した。 */
   truncated: boolean;
   hasDiff: boolean;

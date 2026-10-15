@@ -31,6 +31,7 @@ use serde::{Deserialize, Serialize};
 use super::data_diff::{coerce_binary_key, key_signature, DataDiff, RowDiff, RowStatus};
 use super::diff::{DiffStatus, SchemaDiff, TableColumns, TableDiff};
 use super::types::{ForeignKey, TableColumnInfo, Value};
+use super::DriverKind;
 
 /// Table-name prefix reserved for the frozen "base" snapshot mirrored
 /// alongside every live table copied into a sandbox. Never shown in the
@@ -56,6 +57,99 @@ pub fn is_shadow_table_name(name: &str) -> bool {
 /// to data comparison).
 pub const DEFAULT_ROW_LIMIT: u64 = 5_000;
 pub const MAX_ROW_LIMIT: u64 = 100_000;
+
+/// `create_sandbox` の対象表 1 件 (#1625)。`filter` は `WHERE` の中身 (任意)。
+#[derive(Debug, Clone, Deserialize)]
+pub struct SandboxTableSpec {
+    pub name: String,
+    #[serde(default)]
+    pub filter: Option<String>,
+}
+
+/// 抽出条件の最大長 (文字数)。
+const MAX_ROW_FILTER_LEN: usize = 2000;
+
+/// 表ごとの抽出条件を検査して整える。空白だけなら `None` (条件なし)。
+///
+/// 条件は `SELECT ... FROM t WHERE (<条件>) ...` の括弧の中へ埋め込まれるので、
+/// - 文の区切り (`;`)・コメント (`--` / `/*`) は引用符の外にあれば拒否する
+///   (後ろの `ORDER BY` / `LIMIT` を潰したり、2 文目を足したりさせない)。
+/// - 括弧は閉じ過ぎない・閉じ忘れない (`) UNION SELECT ... (` で埋め込み先の括弧を
+///   抜けさせない)。引用符も閉じていること。
+/// - 最後に、完成した SELECT を読み取り専用ガード (`is_read_only_sql_for`) と副作用関数の
+///   検査に通す (`FOR UPDATE`、`nextval()` など)。
+///
+/// 条件の中の副問い合わせは許す (読み取りだけ)。
+pub fn checked_row_filter(
+    driver: DriverKind,
+    table: &str,
+    filter: Option<&str>,
+) -> std::result::Result<Option<String>, String> {
+    let Some(raw) = filter.map(str::trim).filter(|f| !f.is_empty()) else {
+        return Ok(None);
+    };
+    if raw.chars().count() > MAX_ROW_FILTER_LEN {
+        return Err(format!(
+            "the row filter for '{table}' is too long (max {MAX_ROW_FILTER_LEN} characters)"
+        ));
+    }
+    let bad = |why: &str| Err(format!("invalid row filter for '{table}': {why}"));
+    let chars: Vec<char> = raw.chars().collect();
+    let mut i = 0;
+    let mut depth: i32 = 0;
+    let mut quote: Option<char> = None;
+    while i < chars.len() {
+        let c = chars[i];
+        if let Some(q) = quote {
+            if c == '\\' && q != '`' && driver == DriverKind::Mysql {
+                // MySQL の文字列は `\'` で引用符をエスケープできる。
+                i += 2;
+                continue;
+            }
+            if c == q {
+                if chars.get(i + 1) == Some(&q) {
+                    i += 2;
+                    continue;
+                }
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            '\'' | '"' | '`' => quote = Some(c),
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth < 0 {
+                    return bad("unbalanced parentheses");
+                }
+            }
+            ';' => return bad("a statement separator (;) is not allowed"),
+            '-' if chars.get(i + 1) == Some(&'-') => return bad("comments are not allowed"),
+            '/' if chars.get(i + 1) == Some(&'*') => return bad("comments are not allowed"),
+            '#' if driver == DriverKind::Mysql => return bad("comments are not allowed"),
+            _ => {}
+        }
+        i += 1;
+    }
+    if quote.is_some() {
+        return bad("unterminated quote");
+    }
+    if depth != 0 {
+        return bad("unbalanced parentheses");
+    }
+    let probe = format!(
+        "SELECT 1 FROM {} WHERE ({raw})",
+        super::sync::quote_ident(driver, table)
+    );
+    if !super::is_read_only_sql_for(driver, &probe)
+        || super::sql_has_side_effect_function(driver, &probe)
+    {
+        return bad("only a read-only condition is allowed");
+    }
+    Ok(Some(raw.to_string()))
+}
 
 /// Clamps a caller-supplied row limit into `[1, MAX_ROW_LIMIT]`, defaulting to
 /// `DEFAULT_ROW_LIMIT` when absent or zero.
@@ -360,10 +454,10 @@ pub fn select_rows(
     let rows = diff
         .rows
         .iter()
-        .filter(|r| kinds.is_none_or(|ks| ks.contains(&r.status)))
+        .filter(|r| kinds.map_or(true, |ks| ks.contains(&r.status)))
         .filter(|r| {
             only.as_ref()
-                .is_none_or(|set| set.contains(&key_signature(&r.key)))
+                .map_or(true, |set| set.contains(&key_signature(&r.key)))
         })
         .map(|r| {
             let mut r = r.clone();
@@ -708,6 +802,54 @@ mod tests {
         // 重複キーのない行は信頼できるまま。
         let ok = data_diff(vec![row_diff(RowStatus::Different, 5, Some(1), Some(0))]);
         assert!(!select_rows(&ok, None, None).rows[0].key_unreliable);
+    }
+
+    #[test]
+    fn row_filter_accepts_plain_read_only_conditions() {
+        for d in [DriverKind::Mysql, DriverKind::Postgres, DriverKind::Sqlite] {
+            assert_eq!(checked_row_filter(d, "t", None), Ok(None));
+            assert_eq!(checked_row_filter(d, "t", Some("   ")), Ok(None));
+            assert_eq!(
+                checked_row_filter(d, "t", Some(" created_at >= '2026-01-01' AND a IN (1, 2) ")),
+                Ok(Some(
+                    "created_at >= '2026-01-01' AND a IN (1, 2)".to_string()
+                ))
+            );
+        }
+        // 引用符の中の ; や -- は条件の一部。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("note = 'a;b -- c'")).is_ok());
+        // 副問い合わせ (読み取りだけ) は許す。
+        assert!(checked_row_filter(
+            DriverKind::Mysql,
+            "t",
+            Some("id IN (SELECT user_id FROM vip)")
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn row_filter_rejects_breaking_out_of_the_where() {
+        for bad in [
+            "1=1; DROP TABLE t",
+            "1=1) UNION SELECT password FROM users WHERE (1=1",
+            "a = 1 -- trailing",
+            "a = 1 /* x */",
+            "(a = 1",
+            "a = 'unterminated",
+            "1=1 FOR UPDATE",
+        ] {
+            assert!(
+                checked_row_filter(DriverKind::Postgres, "t", Some(bad)).is_err(),
+                "should reject: {bad}"
+            );
+        }
+        // MySQL の # コメント。
+        assert!(checked_row_filter(DriverKind::Mysql, "t", Some("a = 1 # x")).is_err());
+        // 副作用のある関数。
+        assert!(checked_row_filter(DriverKind::Postgres, "t", Some("id = nextval('s')")).is_err());
+        // 長すぎる条件。
+        let long = format!("a IN ({})", "1,".repeat(2000));
+        assert!(checked_row_filter(DriverKind::Sqlite, "t", Some(&long)).is_err());
     }
 
     fn table_diff(name: &str, status: DiffStatus) -> TableDiff {

@@ -407,7 +407,10 @@
       "comparable": true,
       "hasDiff": true,
       "mode": "pk",
-      "removedCount": 0,
+      "removedCount": 1,
+      "removedRowIndices": [
+        2
+      ],
       "truncated": false
     },
     "elapsedMs": 7,
@@ -441,6 +444,7 @@
         "hasDiff": false,
         "mode": "pk",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -466,6 +470,7 @@
         "hasDiff": false,
         "mode": "hash",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -491,6 +496,7 @@
         "hasDiff": false,
         "mode": "none",
         "removedCount": 0,
+        "removedRowIndices": [],
         "truncated": false
       },
       "elapsedMs": 1,
@@ -2026,6 +2032,12 @@
       "file_path": "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite",
       "id": "sbx00001",
       "name": "experiment",
+      "row_filters": [
+        {
+          "filter": "id > 100",
+          "table": "users"
+        }
+      ],
       "row_limit": 1000,
       "source_database": "appdb",
       "source_driver": "mysql",
@@ -2044,6 +2056,12 @@
     "file_path": "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite",
     "id": "sbx00001",
     "name": "experiment",
+    "row_filters": [
+      {
+        "filter": "id > 100",
+        "table": "users"
+      }
+    ],
     "row_limit": 1000,
     "source_database": "appdb",
     "source_driver": "mysql",

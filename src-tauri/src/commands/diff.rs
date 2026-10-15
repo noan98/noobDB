@@ -107,8 +107,8 @@ pub(crate) async fn compare_schema_core(
         ));
     }
 
-    let source_tables = collect_table_columns(&source, source_database).await?;
-    let target_tables = collect_table_columns(&target, target_database).await?;
+    let source_tables = collect_table_columns(source, source_database).await?;
+    let target_tables = collect_table_columns(target, target_database).await?;
 
     let mut diff =
         compute_schema_diff(source_driver, target_driver, &source_tables, &target_tables);
@@ -198,8 +198,8 @@ pub(crate) async fn compare_schema_core(
             .iter()
             .any(|t| t.status == crate::db::diff::DiffStatus::Different)
     {
-        match (&target_fks, &target_indexes) {
-            (Some(fks), Some(ti)) => match sqlite_master_entries(&target).await {
+        if let (Some(fks), Some(ti)) = (&target_fks, &target_indexes) {
+            match sqlite_master_entries(target).await {
                 Ok(master) => crate::db::diff::attach_sqlite_rebuild_context(
                     &mut diff,
                     &target_tables,
@@ -211,8 +211,7 @@ pub(crate) async fn compare_schema_core(
                     kind = e.kind(),
                     "schema compare: could not read sqlite_master of the target"
                 ),
-            },
-            _ => {}
+            }
         }
     }
     Ok(diff)
@@ -259,6 +258,20 @@ pub(crate) fn select_rows_sql(
     primary_key: &[String],
     limit: usize,
 ) -> String {
+    select_rows_where_sql(driver, table, columns, primary_key, limit, None)
+}
+
+/// [`select_rows_sql`] に抽出条件を足したもの (サンドボックスの表ごとの WHERE, #1625)。
+/// `filter` は `db::sandbox::checked_row_filter` を通した値だけを渡すこと。括弧で包んで
+/// 埋め込むので、`a OR b` のような条件でも `ORDER BY` / `LIMIT` に影響しない。
+pub(crate) fn select_rows_where_sql(
+    driver: DriverKind,
+    table: &str,
+    columns: &[String],
+    primary_key: &[String],
+    limit: usize,
+    filter: Option<&str>,
+) -> String {
     let cols = columns
         .iter()
         .map(|c| quote_ident(driver, c))
@@ -272,10 +285,11 @@ pub(crate) fn select_rows_sql(
     let table = quote_ident(driver, table);
     // 主キーが無い表 (サンドボックスの取り込みなど) は ORDER BY を省く。全列で並べると、
     // json など順序演算子の無い型を含む表で SQL エラーになる。
+    let where_clause = filter.map_or(String::new(), |f| format!(" WHERE ({f})"));
     if order.is_empty() {
-        return format!("SELECT {cols} FROM {table} LIMIT {limit}");
+        return format!("SELECT {cols} FROM {table}{where_clause} LIMIT {limit}");
     }
-    format!("SELECT {cols} FROM {table} ORDER BY {order} LIMIT {limit}")
+    format!("SELECT {cols} FROM {table}{where_clause} ORDER BY {order} LIMIT {limit}")
 }
 
 /// キーセット述語用のキー 1 成分のリテラル。2^53 を超える整数は `Value::String` で来る

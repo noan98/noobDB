@@ -2283,6 +2283,83 @@ async fn fetch_capped_sqlite(
     Ok(rows)
 }
 
+/// 再作成スクリプトの先頭・末尾の `PRAGMA foreign_keys` を外し、先頭に OFF があったかを返す。
+fn split_fk_pragmas(statements: &[String]) -> (Vec<String>, bool) {
+    let off = crate::db::sync::SQLITE_FK_OFF;
+    let on = crate::db::sync::SQLITE_FK_ON;
+    let mut fk_off = false;
+    let out = statements
+        .iter()
+        .map(|s| {
+            let mut t = s.trim();
+            if let Some(rest) = t.strip_prefix(off) {
+                fk_off = true;
+                t = rest.trim_start_matches(';').trim();
+            }
+            let t = t.trim_end_matches(';').trim_end();
+            let t = t
+                .strip_suffix(on)
+                .map(|r| r.trim_end().trim_end_matches(';'))
+                .unwrap_or(t);
+            t.to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    (out, fk_off)
+}
+
+async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>) -> usize {
+    sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut **conn)
+        .await
+        .map(|r| r.len())
+        .unwrap_or(0)
+}
+
+async fn run_batch(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    tx.commit().await?;
+    Ok(affected)
+}
+
+/// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。
+async fn run_batch_checked(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[String],
+    before: usize,
+) -> Result<u64> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut affected: u64 = 0;
+    for sql in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        affected += result.rows_affected();
+    }
+    let after = sqlx::query("PRAGMA foreign_key_check")
+        .fetch_all(&mut *tx)
+        .await?
+        .len();
+    if after > before {
+        return Err(AppError::InvalidInput(format!(
+            "foreign key violations would be introduced by the table rebuild ({} new); rolled back",
+            after - before
+        )));
+    }
+    tx.commit().await?;
+    Ok(affected)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -2568,81 +2645,4 @@ mod tests {
             "WITH c AS (SELECT 1) UPDATE t SET x = 1 WHERE id IN (SELECT * FROM c)"
         ));
     }
-}
-
-/// 再作成スクリプトの先頭・末尾の `PRAGMA foreign_keys` を外し、先頭に OFF があったかを返す。
-fn split_fk_pragmas(statements: &[String]) -> (Vec<String>, bool) {
-    let off = crate::db::sync::SQLITE_FK_OFF;
-    let on = crate::db::sync::SQLITE_FK_ON;
-    let mut fk_off = false;
-    let out = statements
-        .iter()
-        .map(|s| {
-            let mut t = s.trim();
-            if let Some(rest) = t.strip_prefix(off) {
-                fk_off = true;
-                t = rest.trim_start_matches(';').trim();
-            }
-            let t = t.trim_end_matches(';').trim_end();
-            let t = t
-                .strip_suffix(on)
-                .map(|r| r.trim_end().trim_end_matches(';'))
-                .unwrap_or(t);
-            t.to_string()
-        })
-        .filter(|s| !s.is_empty())
-        .collect();
-    (out, fk_off)
-}
-
-async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>) -> usize {
-    sqlx::query("PRAGMA foreign_key_check")
-        .fetch_all(&mut **conn)
-        .await
-        .map(|r| r.len())
-        .unwrap_or(0)
-}
-
-async fn run_batch(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
-    statements: &[String],
-) -> Result<u64> {
-    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
-    let mut affected: u64 = 0;
-    for sql in statements {
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .execute(&mut *tx)
-            .await?;
-        affected += result.rows_affected();
-    }
-    tx.commit().await?;
-    Ok(affected)
-}
-
-/// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。
-async fn run_batch_checked(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
-    statements: &[String],
-    before: usize,
-) -> Result<u64> {
-    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
-    let mut affected: u64 = 0;
-    for sql in statements {
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .execute(&mut *tx)
-            .await?;
-        affected += result.rows_affected();
-    }
-    let after = sqlx::query("PRAGMA foreign_key_check")
-        .fetch_all(&mut *tx)
-        .await?
-        .len();
-    if after > before {
-        return Err(AppError::InvalidInput(format!(
-            "foreign key violations would be introduced by the table rebuild ({} new); rolled back",
-            after - before
-        )));
-    }
-    tx.commit().await?;
-    Ok(affected)
 }

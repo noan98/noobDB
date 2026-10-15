@@ -880,6 +880,7 @@ export const sandboxRecord = z.object({
   file_path: z.string(),
   created_at: z.string(),
   truncated_tables: z.array(z.string()),
+  row_filters: z.array(z.object({ table: z.string(), filter: z.string() })),
 });
 
 export const sandboxRecordArray = z.array(sandboxRecord);
@@ -1311,6 +1312,7 @@ export const broadcastDiff = z.object({
   changedCellCount: z.number(),
   addedRowIndices: z.array(z.number()),
   removedCount: z.number(),
+  removedRowIndices: z.array(z.number()),
   truncated: z.boolean(),
   hasDiff: z.boolean(),
 });

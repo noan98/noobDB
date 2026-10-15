@@ -21,7 +21,8 @@ export const sandboxCommands = {
     sourceSessionId: string;
     sourceDatabase?: string | null;
     name: string;
-    tables: string[];
+    /** 表名と任意の抽出条件 (`WHERE` の中身)。条件は直接選んだ表だけに掛かる (#1625)。 */
+    tables: { name: string; filter?: string | null }[];
     includeRelated: boolean;
     rowLimit?: number | null;
   }) =>
@@ -29,7 +30,7 @@ export const sandboxCommands = {
       sourceSessionId: params.sourceSessionId,
       sourceDatabase: params.sourceDatabase ?? null,
       name: params.name,
-      tables: params.tables,
+      tables: params.tables.map((t) => ({ name: t.name, filter: t.filter?.trim() ? t.filter.trim() : null })),
       includeRelated: params.includeRelated,
       rowLimit: params.rowLimit ?? null,
     }).then((r) => parseResponse(schemas.sandboxCreateResponse, r, "create_sandbox")),

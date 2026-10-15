@@ -806,7 +806,8 @@ fn build_fixtures() -> serde_json::Value {
             }],
             changed_cell_count: 1,
             added_row_indices: vec![],
-            removed_count: 0,
+            removed_count: 1,
+            removed_row_indices: vec![2],
             truncated: false,
             has_diff: true,
         }),
@@ -1362,6 +1363,7 @@ fn build_fixtures() -> serde_json::Value {
                         changed_cell_count: 0,
                         added_row_indices: vec![],
                         removed_count: 0,
+                        removed_row_indices: vec![],
                         truncated: false,
                         has_diff: false,
                     }),
@@ -1680,6 +1682,10 @@ fn build_fixtures() -> serde_json::Value {
         file_path: "/home/user/.local/share/noobDB/sandboxes/sbx00001.sqlite".into(),
         created_at: "2026-01-01T00:00:00Z".into(),
         truncated_tables: vec!["users".into()],
+        row_filters: vec![t::SandboxRowFilter {
+            table: "users".into(),
+            filter: "id > 100".into(),
+        }],
     };
     let sandbox_create_response = t::SandboxCreateResponse {
         sandbox: sandbox_record.clone(),
