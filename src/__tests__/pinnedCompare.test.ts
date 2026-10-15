@@ -3,7 +3,11 @@ import type { Column } from "../api/tauri";
 import {
   addPinned,
   addPinnedWithEvicted,
+  alignResultsByName,
   defaultKeyColumn,
+  keyUniqueness,
+  mapColumnsByName,
+  resultsComparableByName,
   pinToastPlan,
   resultsComparable,
   type PinnedResult,
@@ -117,5 +121,101 @@ describe("defaultKeyColumn", () => {
       ["x", null],
     ];
     expect(defaultKeyColumn({ columns: cols("a", "b"), rows }, { rows })).toBe("a");
+  });
+});
+
+describe("mapColumnsByName (#1625)", () => {
+  it("同じ列が同じ順なら exact", () => {
+    const m = mapColumnsByName({ columns: cols("id", "name") }, { columns: cols("id", "name") });
+    expect(m.exact).toBe(true);
+    expect(m.shared).toEqual(["id", "name"]);
+  });
+
+  it("列順が違っても列名で対応づける (左の列順)", () => {
+    const m = mapColumnsByName(
+      { columns: cols("id", "name", "age") },
+      { columns: cols("age", "id", "name") },
+    );
+    expect(m.exact).toBe(false);
+    expect(m.shared).toEqual(["id", "name", "age"]);
+    expect(m.leftIndices).toEqual([0, 1, 2]);
+    expect(m.rightIndices).toEqual([1, 2, 0]);
+    expect(m.leftOnly).toEqual([]);
+    expect(m.rightOnly).toEqual([]);
+  });
+
+  it("片方にだけある列は対象外として分けて返す", () => {
+    const m = mapColumnsByName({ columns: cols("id", "a") }, { columns: cols("b", "id") });
+    expect(m.shared).toEqual(["id"]);
+    expect(m.leftOnly).toEqual(["a"]);
+    expect(m.rightOnly).toEqual(["b"]);
+    expect(m.exact).toBe(false);
+  });
+
+  it("片側に同名の列が複数あれば曖昧として外す (誤って組まない)", () => {
+    const m = mapColumnsByName({ columns: cols("id", "id", "x") }, { columns: cols("id", "x") });
+    expect(m.shared).toEqual(["x"]);
+    expect(m.ambiguous).toEqual(["id"]);
+    expect(m.exact).toBe(false);
+  });
+});
+
+describe("resultsComparableByName (#1625)", () => {
+  it("共通の列が 1 つでもあれば true、無ければ false", () => {
+    expect(resultsComparableByName({ columns: cols("a", "b") }, { columns: cols("b", "c") })).toBe(true);
+    expect(resultsComparableByName({ columns: cols("a") }, { columns: cols("b") })).toBe(false);
+    expect(resultsComparableByName({ columns: [] }, { columns: [] })).toBe(false);
+  });
+});
+
+describe("alignResultsByName (#1625)", () => {
+  const mk = (names: string[], rows: (string | number | null)[][]) => ({ columns: cols(...names), rows });
+
+  it("共通の列だけを左の列順にそろえて射影する", () => {
+    const left = mk(["id", "name", "only_l"], [[1, "a", "x"]]);
+    const right = mk(["name", "only_r", "id"], [["a", "y", 1]]);
+    const m = mapColumnsByName(left, right);
+    const out = alignResultsByName(left, right, m);
+    expect(out.left.columns.map((c) => c.name)).toEqual(["id", "name"]);
+    expect(out.right.columns.map((c) => c.name)).toEqual(["id", "name"]);
+    expect(out.left.rows).toEqual([[1, "a"]]);
+    expect(out.right.rows).toEqual([[1, "a"]]);
+  });
+
+  it("完全一致なら元のオブジェクトをそのまま返す", () => {
+    const left = mk(["id"], [[1]]);
+    const right = mk(["id"], [[2]]);
+    const out = alignResultsByName(left, right, mapColumnsByName(left, right));
+    expect(out.left).toBe(left);
+    expect(out.right).toBe(right);
+  });
+});
+
+describe("keyUniqueness (#1625)", () => {
+  it("重複したキーの行数と NULL キーの行数を数える", () => {
+    const rows = [
+      [1, "a"],
+      [1, "b"],
+      [2, "c"],
+      [null, "d"],
+    ];
+    expect(keyUniqueness(rows, [0])).toEqual({ duplicateRows: 2, nullKeyRows: 1 });
+  });
+
+  it("複合キーなら組で見る (片方だけ同じでも重複ではない)", () => {
+    const rows = [
+      [1, "a"],
+      [1, "b"],
+    ];
+    expect(keyUniqueness(rows, [0, 1])).toEqual({ duplicateRows: 0, nullKeyRows: 0 });
+    expect(keyUniqueness(rows, [0])).toEqual({ duplicateRows: 2, nullKeyRows: 0 });
+  });
+
+  it("キー列が無ければ 0", () => {
+    expect(keyUniqueness([[1]], [])).toEqual({ duplicateRows: 0, nullKeyRows: 0 });
+  });
+
+  it("数値 1 と文字列 '1' は同じキーとして数える (差分描画と同じ文字列化)", () => {
+    expect(keyUniqueness([[1], ["1"]], [0]).duplicateRows).toBe(2);
   });
 });

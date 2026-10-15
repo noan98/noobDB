@@ -4097,7 +4097,17 @@ const en = {
   pinCompareRight: "Right",
   pinCompareKeyColumn: "Key column",
   pinCompareDiff: "Highlight row diff",
-  pinCompareNotComparable: "Columns differ — row diff is unavailable",
+  pinCompareKeyColumn2: "Key column 2",
+  pinCompareKeyColumn2None: "(none)",
+  pinCompareMappedByName:
+    "Comparing {shared} columns matched by name. Columns present on only one side (or duplicated) are left out: {excluded}",
+  pinCompareSummary: "{changed} changed rows, {added} added, {removed} removed (right vs left)",
+  pinCompareSummaryNone: "No differences",
+  pinCompareKeyDuplicate:
+    "The key is duplicated ({left} rows on the left, {right} on the right), so the diff is inaccurate. Pick another column or add a second key column.",
+  pinCompareKeyNull:
+    "Some rows have a NULL key ({left} on the left, {right} on the right) and cannot be paired reliably.",
+  pinCompareNotComparable: "No column names in common — row diff is unavailable",
   pinCompareUnpin: "Unpin right",
   pinCompareClearAll: "Clear all",
   pinCompareClose: "Close",
@@ -10294,7 +10304,16 @@ const ja: Dict = {
   pinCompareRight: "右",
   pinCompareKeyColumn: "キー列",
   pinCompareDiff: "行差分をハイライト",
-  pinCompareNotComparable: "カラム構成が異なるため行差分は表示できません",
+  pinCompareKeyColumn2: "キー列 2",
+  pinCompareKeyColumn2None: "(なし)",
+  pinCompareMappedByName:
+    "列名で対応づけた {shared} 列を比較しています。片側にだけある列・重複した列名は対象外です: {excluded}",
+  pinCompareSummary: "変更 {changed} 行 / 追加 {added} 行 / 削除 {removed} 行 (左に対する右)",
+  pinCompareSummaryNone: "差分はありません",
+  pinCompareKeyDuplicate:
+    "このキーは重複しているため差分が不正確です (左 {left} 行・右 {right} 行)。別の列を選ぶか、キー列 2 を追加してください。",
+  pinCompareKeyNull: "キーが NULL の行があり、確実にペアリングできません (左 {left} 行・右 {right} 行)。",
+  pinCompareNotComparable: "共通の列名が無いため行差分は表示できません",
   pinCompareUnpin: "右をピン解除",
   pinCompareClearAll: "すべて消去",
   pinCompareClose: "閉じる",
