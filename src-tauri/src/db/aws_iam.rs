@@ -29,7 +29,8 @@
 //!
 //! アクセスキー等の AWS 資格情報は **noobDB のストレージ (profiles.json / keyring)
 //! に一切保存しない**。接続のたびに AWS 標準の置き場所 (環境変数 / 共有資格情報
-//! ファイル) から読み、トークンを作ったら捨てる。プロファイルに残るのはリージョンと
+//! ファイル) から読み、トークンを作ったら捨てる (`credential_process` の結果だけは
+//! 外部コマンドの起動回数を抑えるため、プロセス内メモリに限ってキャッシュする)。プロファイルに残るのはリージョンと
 //! AWS プロファイル名 (非秘密) だけ。生成したトークンもセッションの
 //! `DbConnectOptions.password` には入れず (空のまま)、ログにも出さない。
 //!
@@ -428,10 +429,15 @@ fn static_keys(entries: &[(String, String)]) -> Option<AwsCredentials> {
 
 /// `credential_process` の最大待ち時間。aws-vault は MFA プロンプトで時間がかかる
 /// ことがあるため長めに取る。超えたら子プロセスを kill してエラーにする。
+/// なお接続処理全体のタイムアウト (既定 30 秒) の方が先に効くため、初回接続では
+/// 実質それが上限になる (トークン更新は接続とは別タスクなのでこの値まで待てる)。
 const PROCESS_TIMEOUT: Duration = Duration::from_secs(60);
 
-/// キャッシュを `Expiration` の何分前で無効扱いにするか。
-const CACHE_EXPIRY_MARGIN_SECS: i64 = 5 * 60;
+/// キャッシュを `Expiration` の何分前で無効扱いにするか。トークンはプールに最大
+/// [`TOKEN_REFRESH_INTERVAL`] 残るので、それより長く取らないと、期限が近い一時キーで
+/// 署名したトークンが失効窓を作る (下の const assert で保証)。
+const CACHE_EXPIRY_MARGIN_SECS: i64 = 15 * 60;
+const _: () = assert!(CACHE_EXPIRY_MARGIN_SECS > TOKEN_REFRESH_INTERVAL.as_secs() as i64);
 
 /// `Expiration` が無い出力をキャッシュする時間。
 const CACHE_NO_EXPIRATION_SECS: i64 = 5 * 60;
@@ -465,16 +471,23 @@ struct CachedCredentials {
 }
 
 /// `credential_process` の結果のメモリキャッシュ (キー: プロファイル名 + コマンド文字列)。
-pub struct ProcessCredentialCache(Mutex<Vec<CachedCredentials>>);
+pub struct ProcessCredentialCache {
+    entries: Mutex<Vec<CachedCredentials>>,
+    /// 取得の直列化用 (キャッシュが空のときの同時取得で外部コマンドを二重起動しない)。
+    fetch: Mutex<()>,
+}
 
 impl ProcessCredentialCache {
     pub const fn new() -> Self {
-        Self(Mutex::new(Vec::new()))
+        Self {
+            entries: Mutex::new(Vec::new()),
+            fetch: Mutex::new(()),
+        }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Vec<CachedCredentials>> {
         // 毒化しても中身は単なるキャッシュなので、そのまま使い続けて問題ない。
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.entries.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     fn get(&self, key: &(String, String), now: DateTime<Utc>) -> Option<AwsCredentials> {
@@ -484,9 +497,15 @@ impl ProcessCredentialCache {
             .map(|c| c.creds.clone())
     }
 
-    fn put(&self, key: (String, String), creds: AwsCredentials, valid_until: DateTime<Utc>) {
+    fn put(
+        &self,
+        key: (String, String),
+        creds: AwsCredentials,
+        valid_until: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) {
         let mut g = self.lock();
-        g.retain(|c| c.key != key && c.valid_until > Utc::now());
+        g.retain(|c| c.key != key && c.valid_until > now);
         g.push(CachedCredentials {
             key,
             creds,
@@ -506,6 +525,10 @@ static PROCESS_CACHE: ProcessCredentialCache = ProcessCredentialCache::new();
 /// コマンド文字列をシェルを介さず引数列に分割する。空白区切りで、`"..."` と `'...'`
 /// でまとめられる。`"..."` 内では `\"` と `\\` だけがエスケープ。引用の外の `\` は
 /// そのまま (Windows のパス区切りを壊さないため)。閉じていない引用はエラー。
+///
+/// AWS CLI との差異: AWS CLI は POSIX では shlex 相当 (引用の外の `\ ` で空白を
+/// エスケープできる等)、Windows では `'` を引用扱いしない。ここでは OS によらず
+/// 同じ規則にしており、空白を含む実行ファイルのパスは `"..."` で囲むこと。
 fn split_command(s: &str) -> Result<Vec<String>> {
     let mut args = Vec::new();
     let mut cur = String::new();
@@ -625,6 +648,12 @@ fn credentials_from_process(
     if let Some(c) = src.cache.get(&key, src.now) {
         return Ok(c);
     }
+    // 同時取得 (接続とトークン更新など) で二重起動しないよう直列化し、待っている間に
+    // 他方が取得を終えているかもしれないのでキャッシュを再確認する。
+    let _fetching = src.cache.fetch.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = src.cache.get(&key, src.now) {
+        return Ok(c);
+    }
     let argv = split_command(command)
         .map_err(|e| AppError::InvalidInput(format!("AWS profile '{profile}': {e}")))?;
     let out = (src.run_process)(&argv)?;
@@ -636,14 +665,21 @@ fn credentials_from_process(
             .map_or_else(|| "signal".to_string(), |c| c.to_string());
         return Err(AppError::InvalidInput(format!(
             "credential_process for AWS profile '{profile}' failed (exit code: {code}); \
-             run the command in a terminal to see its error"
+             run the command in a terminal to see its error. If it needs an MFA prompt, \
+             set aws-vault's `--prompt=wincredui` (Windows) / `--prompt=osascript` (macOS) \
+             or the AWS_VAULT_PROMPT environment variable"
         )));
     }
     let (creds, expiration) = parse_process_output(&out.stdout)
         .map_err(|e| AppError::InvalidInput(format!("AWS profile '{profile}': {e}")))?;
+    if expiration.is_some_and(|e| e <= src.now) {
+        return Err(AppError::InvalidInput(format!(
+            "AWS profile '{profile}': credential_process returned expired credentials"
+        )));
+    }
     let valid_until = cache_valid_until(src.now, expiration);
     if valid_until > src.now {
-        src.cache.put(key, creds.clone(), valid_until);
+        src.cache.put(key, creds.clone(), valid_until, src.now);
     }
     Ok(creds)
 }
@@ -667,8 +703,13 @@ fn run_command(argv: &[String], timeout: Duration) -> Result<ProcessOutput> {
     }
     // 起動失敗の OS エラー文にはコマンドが含まれうるので、固定文言にする。
     let mut child = cmd.spawn().map_err(|e| {
+        let hint = if e.kind() == std::io::ErrorKind::NotFound {
+            "; write the absolute path of the executable in credential_process"
+        } else {
+            ""
+        };
         AppError::InvalidInput(format!(
-            "failed to start credential_process ({:?})",
+            "failed to start credential_process ({:?}){hint}",
             e.kind()
         ))
     })?;
@@ -846,7 +887,7 @@ pub fn process_env(key: &str) -> Option<String> {
 }
 
 /// `iam` の設定で今この瞬間に有効なトークンを作る。資格情報は毎回読み直し、
-/// 保持しない。トークン・資格情報はログに出さない (出すのはエンドポイント情報のみ)。
+/// 保持しない (`credential_process` の結果だけはメモリにキャッシュする)。トークン・資格情報はログに出さない (出すのはエンドポイント情報のみ)。
 pub fn fresh_token(iam: &AwsIamOptions, user: &str) -> Result<String> {
     let creds = load_credentials(iam.profile.as_deref())?;
     let token = generate_auth_token(
@@ -1360,14 +1401,14 @@ sso_account_id = 123456789012
         let exp = now + chrono::Duration::minutes(60);
         assert_eq!(
             cache_valid_until(now, Some(exp)),
-            now + chrono::Duration::minutes(55)
+            now + chrono::Duration::minutes(45)
         );
         assert_eq!(
             cache_valid_until(now, None),
             now + chrono::Duration::minutes(5)
         );
-        // 期限まで 5 分を切っていればキャッシュしない (valid_until <= now)。
-        assert!(cache_valid_until(now, Some(now + chrono::Duration::minutes(3))) <= now);
+        // 期限まで 15 分を切っていればキャッシュしない (valid_until <= now)。
+        assert!(cache_valid_until(now, Some(now + chrono::Duration::minutes(14))) <= now);
     }
 
     #[test]
@@ -1395,7 +1436,7 @@ sso_account_id = 123456789012
             .expect("cached");
         assert_eq!(calls.get(), 1, "10 分後はキャッシュを使う");
         // Expiration の 5 分前を過ぎたら再実行。
-        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(116)))
+        resolve_credentials(Some("vault"), &make(t0 + chrono::Duration::minutes(106)))
             .expect("refetch");
         assert_eq!(calls.get(), 2);
     }
@@ -1504,5 +1545,57 @@ sso_account_id = 123456789012
         .expect_err("timeout");
         assert!(e.to_string().contains("timed out"), "{e}");
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn cache_margin_exceeds_the_token_refresh_interval() {
+        assert!(CACHE_EXPIRY_MARGIN_SECS as u64 > TOKEN_REFRESH_INTERVAL.as_secs());
+    }
+
+    #[test]
+    fn expired_credentials_are_rejected() {
+        let none = |_: &str| None;
+        let runner = |_: &[String]| ok_output(PROC_JSON);
+        let cache = ProcessCredentialCache::new();
+        let src = CredentialSources {
+            run_process: &runner,
+            now: Utc.with_ymd_and_hms(2031, 1, 1, 0, 0, 0).unwrap(),
+            cache: &cache,
+            ..sources(&none, &read_files)
+        };
+        let msg = resolve_credentials(Some("vault"), &src)
+            .expect_err("expired")
+            .to_string();
+        assert!(msg.contains("returned expired credentials"), "{msg}");
+        assert!(!msg.contains("SECRETPROC"), "{msg}");
+    }
+
+    #[test]
+    fn cache_is_not_shared_between_profiles() {
+        use std::cell::Cell;
+        let none = |_: &str| None;
+        let calls = Cell::new(0);
+        let runner = |_: &[String]| {
+            calls.set(calls.get() + 1);
+            ok_output(PROC_JSON)
+        };
+        let cache = ProcessCredentialCache::new();
+        let read = |p: &Path| {
+            p.ends_with("credentials").then(|| {
+                "[a]\ncredential_process = same-cmd\n[b]\ncredential_process = same-cmd\n"
+                    .to_string()
+            })
+        };
+        let src = CredentialSources {
+            run_process: &runner,
+            now: Utc.with_ymd_and_hms(2029, 12, 31, 22, 0, 0).unwrap(),
+            cache: &cache,
+            ..sources(&none, &read)
+        };
+        resolve_credentials(Some("a"), &src).expect("a");
+        resolve_credentials(Some("b"), &src).expect("b");
+        assert_eq!(calls.get(), 2, "同じコマンドでもプロファイルが違えば別キー");
+        resolve_credentials(Some("a"), &src).expect("a again");
+        assert_eq!(calls.get(), 2);
     }
 }

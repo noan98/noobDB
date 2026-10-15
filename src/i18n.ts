@@ -1213,7 +1213,7 @@ const en = {
   formAwsProfile: "AWS profile (optional)",
   formAwsProfilePlaceholder: "default",
   formAwsIamHelp:
-    "noobDB signs a short-lived RDS auth token (rds-db:connect) for the DB user above and uses it instead of a password. AWS credentials are read at connect time from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN) or from the named profile in ~/.aws/credentials — noobDB never stores them. SSO / assume-role / credential_process profiles are not resolved directly: run `aws configure export-credentials --profile NAME --format env` and start noobDB with those variables.",
+    "noobDB signs a short-lived RDS auth token (rds-db:connect) for the DB user above and uses it instead of a password. AWS credentials are read at connect time from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN) or from the named profile in ~/.aws/credentials — noobDB never stores them. Profiles with `credential_process` (e.g. aws-vault) are supported: the command is run without a shell and its temporary keys are cached in memory only. SSO / assume-role profiles are not resolved directly: run `aws configure export-credentials --profile NAME --format env` and start noobDB with those variables.",
   formAwsIamExpiryHelp:
     "Tokens expire after 15 minutes. Connections already open keep working; noobDB regenerates the token every 10 minutes for new pooled connections, and on reconnect. If your AWS credentials themselves expire (temporary keys), reconnecting fails until you refresh them.",
   formAwsIamSshHint:
@@ -6680,7 +6680,7 @@ const ja: Dict = {
   formAwsProfile: "AWS プロファイル (任意)",
   formAwsProfilePlaceholder: "default",
   formAwsIamHelp:
-    "上の DB ユーザ向けに有効期限の短い RDS 認証トークン (rds-db:connect) を署名し、パスワードの代わりに使います。AWS の資格情報は接続時に AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN)、または ~/.aws/credentials の指定プロファイルから読み込み、noobDB には一切保存しません。SSO / AssumeRole / credential_process のプロファイルは直接は解決しないため、`aws configure export-credentials --profile 名前 --format env` の結果を環境変数に設定してから noobDB を起動してください。",
+    "上の DB ユーザ向けに有効期限の短い RDS 認証トークン (rds-db:connect) を署名し、パスワードの代わりに使います。AWS の資格情報は接続時に AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY (+ AWS_SESSION_TOKEN)、または ~/.aws/credentials の指定プロファイルから読み込み、noobDB には一切保存しません。`credential_process` (aws-vault など) のプロファイルにも対応しており、コマンドはシェルを介さず実行し、一時キーはメモリ上だけにキャッシュします。SSO / AssumeRole のプロファイルは直接は解決しないため、`aws configure export-credentials --profile 名前 --format env` の結果を環境変数に設定してから noobDB を起動してください。",
   formAwsIamExpiryHelp:
     "トークンの有効期限は 15 分です。確立済みの接続は失効後もそのまま使えます。プールが新しく張る接続向けに 10 分ごとにトークンを作り直し、再接続時にも新しいトークンを生成します。一時的な AWS 資格情報そのものが失効した場合は、資格情報を更新するまで再接続に失敗します。",
   formAwsIamSshHint:
