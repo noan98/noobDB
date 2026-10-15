@@ -1763,6 +1763,8 @@
     "timedOut": false
   },
   "queryStreamPatchMessage": {
+    "addedCount": 1,
+    "changedCount": 1,
     "kind": "patch",
     "removedCount": 1,
     "runs": [

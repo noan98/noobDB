@@ -194,6 +194,8 @@ import {
   type ServerSortDirection,
 } from "./serverBrowse";
 import { diffResultRows, rowDiffFor } from "../resultDiff";
+import { RefreshTrend } from "./RefreshTrend";
+import type { RefreshSample } from "../refreshPatch";
 import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
 import {
   type SelectionSummary,
@@ -1190,6 +1192,8 @@ interface Props {
   autoRefreshAllowed?: boolean;
   /** Wall-clock ms of the last completed auto-refresh tick, for the badge. */
   autoRefreshLastRunAt?: number | null;
+  /** 直近の自動リフレッシュごとの追加・変更・削除件数 (#1621)。小さな棒グラフで出す。 */
+  autoRefreshHistory?: RefreshSample[];
   /** Enable polling at `secs`, or disable it when `null`. */
   onSetAutoRefresh?: (secs: number | null) => void;
   /** Non-null when the last query failed (before a new run). Shows an error EmptyState in the grid body. */
@@ -7512,6 +7516,7 @@ export const ResultGrid = memo(
       autoRefreshSecs,
       autoRefreshAllowed,
       autoRefreshLastRunAt,
+      autoRefreshHistory,
       onSetAutoRefresh,
       queryError,
       onRetry,
@@ -8596,6 +8601,9 @@ export const ResultGrid = memo(
                           })
                         : ""}
                   </chakra.span>
+                )}
+                {autoRefreshOn && autoRefreshHistory && autoRefreshHistory.length > 0 && (
+                  <RefreshTrend samples={autoRefreshHistory} />
                 )}
               </Box>
             </Tooltip>

@@ -697,6 +697,8 @@ fn build_fixtures() -> serde_json::Value {
         total_rows: 3,
         unchanged: false,
         removed_count: 1,
+        added_count: 1,
+        changed_count: 1,
         runs: vec![
             PatchRun::Keep { from: 0, count: 1 },
             PatchRun::Rows {

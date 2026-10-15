@@ -5546,6 +5546,9 @@ const en = {
     "Contains DROP statements that delete data. Review carefully before running.",
   schemaDriftRevertCopy: "Copy DDL",
   schemaDriftRevertInsert: "Insert into editor",
+  refreshTrendAria:
+    "Changes over the last {count} refreshes; latest: +{added} added, ~{changed} changed, -{removed} removed",
+  refreshTrendBar: "{time}: +{added} added, ~{changed} changed, -{removed} removed",
 };
 
 export type I18nKey = keyof typeof en;
@@ -11058,6 +11061,8 @@ const ja: Dict = {
   schemaDriftRevertDestructiveNote: "データを削除する DROP 文を含みます。実行前によく確認してください。",
   schemaDriftRevertCopy: "DDL をコピー",
   schemaDriftRevertInsert: "エディタに挿入",
+  refreshTrendAria: "直近 {count} 回の更新での増減。最新は 追加 {added} / 変更 {changed} / 削除 {removed}",
+  refreshTrendBar: "{time}: 追加 {added} / 変更 {changed} / 削除 {removed}",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

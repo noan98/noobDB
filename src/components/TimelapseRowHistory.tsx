@@ -102,9 +102,7 @@ export function TimelapseRowHistoryView({
       {!history && !error && (
         <Flex align="center" gap="2" role="status">
           <Spinner size={12} decorative />
-          <chakra.span fontSize="xs" color="app.textMuted">
-            {t("timelapseRowHistoryLoading")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("timelapseRowHistoryLoading")}</chakra.span>
         </Flex>
       )}
       {history && (

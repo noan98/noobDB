@@ -75,7 +75,13 @@ import {
 import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
-import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
+import {
+  appendRefreshSample,
+  applyRefreshPatch,
+  attachSnapshotId,
+  snapshotIdFor,
+  type RefreshSample,
+} from "./refreshPatch";
 import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
@@ -931,6 +937,8 @@ export interface Tab {
   autoRefreshSecs?: number | null;
   /** Wall-clock time (ms) of the last completed auto-refresh tick, for the badge. */
   autoRefreshLastRunAt?: number | null;
+  /** 自動リフレッシュごとの追加・変更・削除件数の直近履歴 (#1621)。In-memory only。 */
+  autoRefreshHistory?: RefreshSample[];
   /**
    * 結果差分ハイライト (#597) 用に保持する、前回実行時の結果行スナップショット。
    * 新しい実行のたびに「直前の結果行」を退避し、同一クエリの再実行のときだけ
@@ -4437,6 +4445,8 @@ export default function App() {
           flusher.discard();
           patchTab(tabId, (tt) => ({
             ...tt,
+            // 全行ストリームに戻った (列構成や SQL が変わった) ので、増減の推移は仕切り直す (#1621)。
+            autoRefreshHistory: undefined,
             result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
           }));
         },
@@ -4457,9 +4467,11 @@ export default function App() {
             );
             // 差分は行配列と一緒に作ってあるので、グリッドは全行を突き合わせ直さない。
             if (applied.diff) attachRowDiff(applied.rows, applied.diff);
-            if (applied.rows === tt.result.rows) return tt;
+            const autoRefreshHistory = appendRefreshSample(tt.autoRefreshHistory, patch, Date.now());
+            if (applied.rows === tt.result.rows) return { ...tt, autoRefreshHistory };
             return {
               ...tt,
+              autoRefreshHistory,
               result: {
                 ...tt.result,
                 rows: applied.rows,
@@ -4791,7 +4803,7 @@ export default function App() {
   const setAutoRefreshForTab = useCallback(
     (tabId: string, secs: number | null) => {
       if (secs !== null) setAutoRefreshDefaultSecs(secs);
-      updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null });
+      updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null, autoRefreshHistory: undefined });
     },
     [updateTab],
   );

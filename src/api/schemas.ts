@@ -1112,6 +1112,8 @@ export const queryStreamPatchMessage = z.object({
   totalRows: z.number(),
   unchanged: z.boolean(),
   removedCount: z.number(),
+  addedCount: z.number(),
+  changedCount: z.number(),
   runs: z.array(queryStreamPatchRun),
 });
 

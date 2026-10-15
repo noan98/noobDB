@@ -2041,6 +2041,10 @@ export interface QueryStreamPatchMessage {
   unchanged: boolean;
   /** 前回にあって今回に対応が無い行数。 */
   removedCount: number;
+  /** 前回に対応が無い (新しく現れた) 行数 (#1621)。 */
+  addedCount: number;
+  /** 前回と対応するが値が変わった行数 (#1621)。 */
+  changedCount: number;
   runs: QueryStreamPatchRun[];
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CellValue, QueryStreamPatchMessage } from "../api/tauri";
-import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "../refreshPatch";
+import { appendRefreshSample, applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "../refreshPatch";
 import { attachRowDiff, diffResultRows, rowDiffFor } from "../resultDiff";
 
 const row = (id: number, v: string): CellValue[] => [id, v];
@@ -8,7 +8,14 @@ const row = (id: number, v: string): CellValue[] => [id, v];
 describe("applyRefreshPatch (#1257)", () => {
   it("unchanged は前回の配列をそのまま返す", () => {
     const prev = [row(1, "a"), row(2, "b")];
-    const patch: QueryStreamPatchMessage = { totalRows: 2, unchanged: true, removedCount: 0, runs: [] };
+    const patch: QueryStreamPatchMessage = {
+      totalRows: 2,
+      unchanged: true,
+      removedCount: 0,
+      addedCount: 0,
+      changedCount: 0,
+      runs: [],
+    };
     const out = applyRefreshPatch(prev, patch, 2, true);
     expect(out.rows).toBe(prev);
     expect(out.diff?.hasChanges).toBe(false);
@@ -22,6 +29,8 @@ describe("applyRefreshPatch (#1257)", () => {
       totalRows: 4,
       unchanged: false,
       removedCount: 1,
+      addedCount: 0,
+      changedCount: 0,
       runs: [
         { type: "keep", from: 0, count: 1 },
         { type: "rows", prev: [1], rows: [row(2, "B")] },
@@ -46,6 +55,8 @@ describe("applyRefreshPatch (#1257)", () => {
       totalRows: 1,
       unchanged: false,
       removedCount: 0,
+      addedCount: 0,
+      changedCount: 0,
       runs: [{ type: "rows", prev: [0], rows: [[1, 1]] }],
     };
     const out = applyRefreshPatch(prev, patch, 2, true);
@@ -57,6 +68,8 @@ describe("applyRefreshPatch (#1257)", () => {
       totalRows: 1,
       unchanged: false,
       removedCount: 0,
+      addedCount: 0,
+      changedCount: 0,
       runs: [{ type: "rows", prev: [null], rows: [row(1, "a")] }],
     };
     const out = applyRefreshPatch([], patch, 2, false);
@@ -79,5 +92,27 @@ describe("スナップショット ID / 事前計算済み差分は行配列の�
     attachRowDiff(rows, diff);
     expect(rowDiffFor(rows)).toBe(diff);
     expect(rowDiffFor([...rows])).toBeNull();
+  });
+});
+
+describe("appendRefreshSample (#1621)", () => {
+  const patch = { unchanged: false, addedCount: 2, changedCount: 3, removedCount: 1 };
+
+  it("appends counts and keeps only the most recent samples", () => {
+    let h = appendRefreshSample(undefined, patch, 1, 3);
+    h = appendRefreshSample(h, { ...patch, unchanged: true }, 2, 3);
+    h = appendRefreshSample(h, patch, 3, 3);
+    h = appendRefreshSample(h, { ...patch, addedCount: 9 }, 4, 3);
+    expect(h.map((s) => s.at)).toEqual([2, 3, 4]);
+    // unchanged のパッチは 0 件の 1 本になる。
+    expect(h[0]).toEqual({ at: 2, added: 0, changed: 0, removed: 0 });
+    expect(h[2]).toEqual({ at: 4, added: 9, changed: 3, removed: 1 });
+  });
+
+  it("does not mutate the previous history", () => {
+    const first = appendRefreshSample(undefined, patch, 1);
+    const frozen = [...first];
+    appendRefreshSample(first, patch, 2);
+    expect(first).toEqual(frozen);
   });
 });

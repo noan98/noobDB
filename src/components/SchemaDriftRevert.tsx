@@ -86,9 +86,7 @@ export function SchemaDriftRevert({
       {!result && !error && (
         <Flex align="center" gap="2" role="status">
           <Spinner size={12} decorative />
-          <chakra.span fontSize="xs" color="app.textMuted">
-            {t("schemaDriftRevertLoading")}
-          </chakra.span>
+          <chakra.span textStyle="caption">{t("schemaDriftRevertLoading")}</chakra.span>
         </Flex>
       )}
       {result && (
