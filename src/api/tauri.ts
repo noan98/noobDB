@@ -41,6 +41,7 @@ import { resultCommands } from "./commands/result";
 import { dumpCommands } from "./commands/dump";
 import { dumpToolsCommands } from "./commands/dumpTools";
 import { importCommands } from "./commands/import";
+import { importTemplatesCommands } from "./commands/importTemplates";
 import { scriptCommands } from "./commands/script";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
@@ -1862,6 +1863,7 @@ export const api = {
   ...dumpCommands,
   ...dumpToolsCommands,
   ...importCommands,
+  ...importTemplatesCommands,
   ...scriptCommands,
   ...transferCommands,
   ...fileCommands,
