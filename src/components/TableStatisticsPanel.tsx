@@ -15,6 +15,7 @@ import { useT } from "../i18n";
 import {
   computeTableSizeTotals,
   filterTableStats,
+  formatDelta,
   formatBytes,
   formatCount,
   formatRowCount,
@@ -90,6 +91,34 @@ const openButtonCss: SystemStyleObject = {
   _hover: { textDecoration: "underline" },
 };
 
+/** 前回取得からの増減を値の下に小さく添える (#1621)。`delta` が無い・不明なら何も出さない。 */
+function DeltaText({
+  delta,
+  kind,
+  since,
+}: {
+  delta: number | null | undefined;
+  kind: "count" | "bytes";
+  since: string;
+}) {
+  const t = useT();
+  const text = formatDelta(delta ?? null, kind);
+  if (text == null) return null;
+  return (
+    <Tooltip label={t("sizeDeltaSince", { time: new Date(since).toLocaleString() })}>
+      <chakra.span
+        display="block"
+        fontSize="var(--text-xs)"
+        color="app.textMuted"
+        data-testid="stat-delta"
+        tabIndex={0}
+      >
+        {text}
+      </chakra.span>
+    </Tooltip>
+  );
+}
+
 /**
  * テーブル統計の 1 行 (#1321)。ソート・フィルタの切替では行の中身は変わらないので、
  * `memo` により並べ替えは DOM の移動だけで済み、全行の再描画にならない。
@@ -117,7 +146,10 @@ const TableStatRowView = memo(function TableStatRowView({
           r.name
         )}
       </chakra.td>
-      <chakra.td css={numTdCss}>{formatRowCount(r.row_estimate)}</chakra.td>
+      <chakra.td css={numTdCss}>
+        {formatRowCount(r.row_estimate)}
+        {r.change && <DeltaText delta={r.change.rows} kind="count" since={r.change.since} />}
+      </chakra.td>
       <chakra.td css={numTdCss}>{formatCount(r.columnCount)}</chakra.td>
       <chakra.td css={numTdCss}>{formatCount(r.indexCount)}</chakra.td>
       <chakra.td css={centerTdCss}>
@@ -141,6 +173,11 @@ const TableStatRowView = memo(function TableStatRowView({
             aria-hidden
           />
           <chakra.span position="relative">{formatBytes(r.total_bytes)}</chakra.span>
+          {r.change && (
+            <chakra.span position="relative" display="block">
+              <DeltaText delta={r.change.totalBytes} kind="bytes" since={r.change.since} />
+            </chakra.span>
+          )}
         </Box>
       </chakra.td>
     </tr>

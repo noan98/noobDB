@@ -76,7 +76,13 @@ import {
 import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
-import { applyRefreshPatch, attachSnapshotId, snapshotIdFor } from "./refreshPatch";
+import {
+  appendRefreshSample,
+  applyRefreshPatch,
+  attachSnapshotId,
+  snapshotIdFor,
+  type RefreshSample,
+} from "./refreshPatch";
 import { attachRowDiff } from "./resultDiff";
 import { type BulkEditTarget } from "./components/bulkEdit";
 import { ConnectionList, type ConnectionListHandle } from "./components/ConnectionList";
@@ -529,6 +535,7 @@ import {
 } from "./planWatch";
 import {
   buildDriftDetail,
+  shouldNotifySchemaDrift,
   createDdlCaptureCoalescer,
   isDriftTracked,
   migrateLegacySchemaDrift,
@@ -942,6 +949,8 @@ export interface Tab {
   autoRefreshSecs?: number | null;
   /** Wall-clock time (ms) of the last completed auto-refresh tick, for the badge. */
   autoRefreshLastRunAt?: number | null;
+  /** 自動リフレッシュごとの追加・変更・削除件数の直近履歴 (#1621)。In-memory only。 */
+  autoRefreshHistory?: RefreshSample[];
   /**
    * 結果差分ハイライト (#597) 用に保持する、前回実行時の結果行スナップショット。
    * 新しい実行のたびに「直前の結果行」を退避し、同一クエリの再実行のときだけ
@@ -1608,10 +1617,14 @@ export default function App() {
       onError: (e) => {
         const message = e.message ?? "";
         toast.error(translate("taskRunFailed", { name: e.taskName, error: message }));
+        // 連続失敗の上限で自動停止したときは、止まったことを別に知らせる (#1621)。
+        if (e.autoPaused) toast.error(translate("taskAutoPausedToast", { name: e.taskName }));
         void isAppWindowFocused().then((focused) => {
           if (!focused) {
             void sendQueryNotification(
-              translate("taskRunNotifyTitle", { name: e.taskName }),
+              e.autoPaused
+                ? translate("taskAutoPausedNotifyTitle", { name: e.taskName })
+                : translate("taskRunNotifyTitle", { name: e.taskName }),
               firstLineForNotification(message || translate("taskLastError")),
             );
           }
@@ -3019,7 +3032,11 @@ export default function App() {
           const regressed = res.warned.length > 0;
           toast.notify({
             message: regressed
-              ? translate("planWatchRegressedToast", { names: res.warned.join(", ") })
+              ? translate("planWatchRegressedToast", {
+                  names: res.warned
+                    .map((n, i) => (res.warnedSummaries[i] ? `${n} (${res.warnedSummaries[i]})` : n))
+                    .join(", "),
+                })
               : translate("planWatchChangedToast", { count: res.changed }),
             tone: regressed ? "warning" : "info",
             severity: "warning",
@@ -3125,7 +3142,11 @@ export default function App() {
   const driftResolvedTargetRef = useRef<{ profileId: string; database: string } | null>(null);
   const ddlCoalescerRef = useRef<ReturnType<typeof createDdlCaptureCoalescer> | null>(null);
   const captureSchemaSnapshotRef = useRef<
-    (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => Promise<void>
+    (
+      sid: string,
+      profile: ConnectionProfile,
+      opts?: { triggerSql?: string | null; manual?: boolean },
+    ) => Promise<void>
   >(async () => {});
   if (ddlCoalescerRef.current === null) {
     ddlCoalescerRef.current = createDdlCaptureCoalescer({
@@ -3154,7 +3175,11 @@ export default function App() {
    * 紐づけて保存する。この場合の取得失敗は DDL 自体の成否と無関係なのでトーストを出さない。
    */
   const captureSchemaSnapshot = useCallback(
-    async (sid: string, profile: ConnectionProfile, opts?: { triggerSql?: string | null }) => {
+    async (
+      sid: string,
+      profile: ConnectionProfile,
+      opts?: { triggerSql?: string | null; manual?: boolean },
+    ) => {
       // PostgreSQL のプロファイルの `database` は実 DB 名 (空もありうる) で、記録対象の
       // 既定スキーマはバックエンドが決める。他のドライバは既定 DB が無ければ何もしない。
       const database = profile.database ?? "";
@@ -3188,6 +3213,25 @@ export default function App() {
               onAction: () => setSchemaDriftOpen(true),
             },
           });
+          // 別作業中でも気づけるよう、ウィンドウが非フォーカスなら OS 通知も出す (#1621)。
+          // 本文はテーブル名と増減件数だけで、SQL や値は含めない。
+          const changedSummary = res.summary;
+          void (async () => {
+            const windowFocused = await isAppWindowFocused();
+            if (
+              shouldNotifySchemaDrift({
+                enabled: getSettings().schemaDriftOnDdl,
+                manual: opts?.manual ?? false,
+                windowFocused,
+                summary: changedSummary,
+              })
+            ) {
+              void sendQueryNotification(
+                translate("notifySchemaDriftTitle", { name: profile.name }),
+                buildDriftDetail(changedSummary),
+              );
+            }
+          })();
         }
       } catch (e) {
         if (triggerSql) console.warn("schema drift capture after DDL failed", e);
@@ -3259,7 +3303,8 @@ export default function App() {
     [toast],
   );
   const handleCaptureSchemaDrift = useCallback(() => {
-    if (sessionId && selectedProfile) void captureSchemaSnapshot(sessionId, selectedProfile);
+    if (sessionId && selectedProfile)
+      void captureSchemaSnapshot(sessionId, selectedProfile, { manual: true });
   }, [sessionId, selectedProfile, captureSchemaSnapshot]);
 
   // 最近開いたテーブルを記録する。`handleOpenTable` から呼ばれ、永続化も行う。
@@ -4257,6 +4302,7 @@ export default function App() {
           elapsedMs,
           thresholdSecs: settings.queryNotificationThresholdSecs,
           windowFocused,
+          kind,
         })
       ) {
         return;
@@ -4488,6 +4534,8 @@ export default function App() {
           flusher.discard();
           patchTab(tabId, (tt) => ({
             ...tt,
+            // 全行ストリームに戻った (列構成や SQL が変わった) ので、増減の推移は仕切り直す (#1621)。
+            autoRefreshHistory: undefined,
             result: { columns, rows: [], rows_affected: 0, elapsed_ms: Date.now() - startedAt },
           }));
         },
@@ -4508,9 +4556,11 @@ export default function App() {
             );
             // 差分は行配列と一緒に作ってあるので、グリッドは全行を突き合わせ直さない。
             if (applied.diff) attachRowDiff(applied.rows, applied.diff);
-            if (applied.rows === tt.result.rows) return tt;
+            const autoRefreshHistory = appendRefreshSample(tt.autoRefreshHistory, patch, Date.now());
+            if (applied.rows === tt.result.rows) return { ...tt, autoRefreshHistory };
             return {
               ...tt,
+              autoRefreshHistory,
               result: {
                 ...tt.result,
                 rows: applied.rows,
@@ -4847,7 +4897,7 @@ export default function App() {
   const setAutoRefreshForTab = useCallback(
     (tabId: string, secs: number | null) => {
       if (secs !== null) setAutoRefreshDefaultSecs(secs);
-      updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null });
+      updateTab(tabId, { autoRefreshSecs: secs, autoRefreshLastRunAt: null, autoRefreshHistory: undefined });
     },
     [updateTab],
   );
@@ -12236,6 +12286,10 @@ export default function App() {
                 onClose={() => setSchemaDriftOpen(false)}
                 onOpenStructure={sessionId ? handleOpenStructure : undefined}
                 onOpenData={sessionId ? handleOpenTable : undefined}
+                onInsertSql={sessionId ? handleInsertAdvisorSql : undefined}
+                onLabelChanged={(id, label) =>
+                  setSchemaDrift((prev) => prev.map((g) => (g.id === id ? { ...g, label } : g)))
+                }
               />
             )}
           </AnimatePresence>

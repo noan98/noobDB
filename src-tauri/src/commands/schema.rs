@@ -298,12 +298,23 @@ pub async fn table_statistics(
             .schema_cache
             .foreign_keys(&database, || conn.foreign_keys(&database)),
     );
-    Ok(build_table_statistics(
-        sizes?,
-        &columns?,
-        &indexes?,
-        &foreign_keys?,
-    ))
+    let mut stats = build_table_statistics(sizes?, &columns?, &indexes?, &foreign_keys?);
+    // 前回取得からの増減 (#1621)。補助情報なので、保存に失敗しても統計そのものは返す。
+    let profile_id = session.profile_id.clone();
+    let db = database.clone();
+    let fallback = stats.clone();
+    let attached = crate::commands::assertions::blocking_store(move || {
+        crate::table_stat_store::attach_and_roll(profile_id.as_deref(), &db, &mut stats)?;
+        Ok(stats)
+    })
+    .await;
+    match attached {
+        Ok(stats) => Ok(stats),
+        Err(e) => {
+            tracing::warn!(error = %e, "table statistics: failed to compare with the previous run");
+            Ok(fallback)
+        }
+    }
 }
 
 /// `database` の全テーブル (とビュー) の列メタデータを 1 回で返す (#1255)。

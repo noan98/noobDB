@@ -39,6 +39,9 @@ pub struct TaskRunEvent {
     pub output_path: Option<String>,
     #[serde(rename = "catchUp")]
     pub catch_up: bool,
+    /// この失敗で連続失敗の上限に達し、タスクを自動で一時停止した (#1621)。
+    #[serde(rename = "autoPaused")]
+    pub auto_paused: bool,
 }
 
 /// 「今すぐ実行」の進捗 (#1534)。`unit` は `count` の単位 (`rows` / `bytes` / `items`)。
@@ -288,6 +291,19 @@ pub(crate) async fn record_outcome(
     started: DateTime<Utc>,
     outcome: executor::TaskOutcome,
 ) -> (TaskRunEvent, Option<i64>) {
+    record_outcome_counting(app, task, catch_up, started, outcome, true).await
+}
+
+/// [`record_outcome`] の本体。`count_streak` が false のとき、この結果を連続失敗の
+/// 数え直しに反映しない (手動実行の「中断」は失敗ではないため, #1621)。
+pub(crate) async fn record_outcome_counting(
+    app: &AppHandle,
+    task: TaskDefinition,
+    catch_up: bool,
+    started: DateTime<Utc>,
+    outcome: executor::TaskOutcome,
+    count_streak: bool,
+) -> (TaskRunEvent, Option<i64>) {
     let finished = Utc::now();
     let elapsed_ms = (finished - started).num_milliseconds().max(0);
     let status = if outcome.ok { "ok" } else { "error" };
@@ -326,8 +342,21 @@ pub(crate) async fn record_outcome(
     }
 
     let started_str = started.to_rfc3339();
-    if let Err(e) = update_last_run_mirror(&task.id, &started_str, status) {
-        tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to update task's last-run mirror");
+    let auto_paused = match update_last_run_mirror(
+        &task.id,
+        &started_str,
+        status,
+        outcome.ok,
+        count_streak,
+    ) {
+        Ok(paused) => paused,
+        Err(e) => {
+            tracing::error!(task_id = %task.id, error = %e, "task scheduler: failed to update task's last-run mirror");
+            false
+        }
+    };
+    if auto_paused {
+        tracing::warn!(task_id = %task.id, name = %task.name, limit = task.pause_after_failures, "scheduled task paused after consecutive failures");
     }
 
     if outcome.ok {
@@ -343,6 +372,7 @@ pub(crate) async fn record_outcome(
         message: outcome.error,
         output_path: outcome.output_path,
         catch_up,
+        auto_paused,
     };
     let event_name = if outcome.ok {
         EV_TASK_RUN_DONE
@@ -373,13 +403,27 @@ fn persist_next_run(id: &str, next: DateTime<Utc>) -> Result<()> {
     update_task_fields(id, |t| t.next_run_at = Some(next_str))
 }
 
-fn update_last_run_mirror(id: &str, started_at: &str, status: &str) -> Result<()> {
+/// 直近の実行結果のミラーと連続失敗の数え直しを書く。連続失敗の上限に達して
+/// タスクを自動停止したら `true` (#1621)。
+fn update_last_run_mirror(
+    id: &str,
+    started_at: &str,
+    status: &str,
+    ok: bool,
+    count_streak: bool,
+) -> Result<bool> {
     let started_at = started_at.to_string();
     let status = status.to_string();
+    let now = Utc::now().to_rfc3339();
+    let mut paused = false;
     update_task_fields(id, |t| {
         t.last_run_at = Some(started_at);
         t.last_status = Some(status);
-    })
+        if count_streak {
+            paused = super::apply_run_result(t, ok, &now);
+        }
+    })?;
+    Ok(paused)
 }
 
 #[cfg(test)]

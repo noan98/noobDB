@@ -1613,6 +1613,37 @@ async fn postgres_data_quality_assertions_on_read_only_session() {
             .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
     }
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "status",
+        None,
+    )
+    .await
+    .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "email",
+        None,
+    )
+    .await
+    .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "noobdb_aq_items", "qty", None)
+            .await
+            .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     for sql in [
         "DROP TABLE IF EXISTS noobdb_aq_items",
         "DROP TABLE IF EXISTS noobdb_aq_orders",
@@ -2986,6 +3017,51 @@ async fn postgres_reconstructed_ddl_keeps_include_and_sort_order() {
     assert!(
         ddl.contains("(\"a\" DESC) INCLUDE (\"b\")"),
         "unexpected DDL: {ddl}"
+    );
+}
+
+/// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 一度も使われていないインデックスの
+/// 指摘に、削除で空く容量 (`pg_relation_size`) が載る。
+#[tokio::test]
+async fn postgres_advisor_unused_index_reports_reclaimable_size() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_adv_idx",
+        "CREATE TABLE noobdb_adv_idx (id INT PRIMARY KEY, note TEXT)",
+        "INSERT INTO noobdb_adv_idx SELECT g, repeat('x', 50) FROM generate_series(1, 2000) g",
+        "CREATE INDEX noobdb_adv_idx_note ON noobdb_adv_idx (note)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    // 統計はコミット後に反映される。
+    let report = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let found = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::UnusedIndex && f.table == "noobdb_adv_idx");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::UnusedIndex);
+    conn.execute("DROP TABLE IF EXISTS noobdb_adv_idx", None)
+        .await
+        .expect("drop");
+    assert!(
+        !skipped,
+        "unused index stats must be readable on PostgreSQL"
+    );
+    let f = found.expect("unused index finding");
+    assert!(
+        f.size_bytes.is_some_and(|n| n > 0),
+        "size_bytes must be filled from pg_relation_size: {:?}",
+        f.size_bytes
     );
 }
 

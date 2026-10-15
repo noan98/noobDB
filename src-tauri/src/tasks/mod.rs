@@ -153,16 +153,30 @@ impl ConnectRetry {
     }
 }
 
-/// タスクの発火スケジュール。時刻はすべて UTC で解釈する
-/// (ローカルタイムゾーン変換は未対応。既知の制約として HelpView に明記)。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+/// タスクの発火スケジュール。`Daily` の時刻は `timezone` (IANA 名) で解釈し、
+/// 省略 (旧データ) なら UTC。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TaskSchedule {
     /// `minutes` 分ごと (最小 1 分)。
     Interval { minutes: u32 },
-    /// 毎日 UTC `hour:minute` に 1 回。
-    Daily { hour: u32, minute: u32 },
+    /// 毎日 `timezone` の `hour:minute` に 1 回 (#1621)。
+    Daily {
+        hour: u32,
+        minute: u32,
+        /// IANA タイムゾーン名 (`Asia/Tokyo` など)。`None` は UTC (#730 当初の挙動で、
+        /// 旧 `tasks.json` はこの形)。DST 境界は `schedule` モジュールが解決する。
+        #[serde(default)]
+        timezone: Option<String>,
+        /// 実行する曜日のビットマスク (月 = bit0 … 日 = bit6)。0 は「毎日」(旧データ・既定)。
+        /// 曜日は `timezone` のローカル日付で判定する。
+        #[serde(default)]
+        weekdays: u8,
+    },
 }
+
+/// 曜日マスクで「全曜日」を表す値 (月〜日の 7 ビット)。
+pub const ALL_WEEKDAYS: u8 = 0b111_1111;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskDefinition {
@@ -189,7 +203,43 @@ pub struct TaskDefinition {
     /// 接続失敗時の自動リトライ設定 (#1537)。旧 `tasks.json` には無く、既定は再試行なし。
     #[serde(default)]
     pub connect_retry: ConnectRetry,
+    /// 連続してこの回数失敗したら自動で一時停止する (#1621)。0 (旧データの既定) なら停止しない。
+    /// 認証失敗はリトライ対象外のため、スケジュールのたびに同じ認証を繰り返して
+    /// アカウントロックなどを招くのを防ぐ。
+    #[serde(default)]
+    pub pause_after_failures: u32,
+    /// 現在の連続失敗回数 (成功で 0 に戻る)。表示用のミラーで、再有効化でも 0 に戻す。
+    #[serde(default)]
+    pub consecutive_failures: u32,
+    /// 連続失敗で自動停止した時刻 (RFC3339, UTC)。手動で再有効化すると消える。
+    #[serde(default)]
+    pub auto_paused_at: Option<String>,
 }
+
+/// 実行結果を連続失敗の数え直しに反映する (#1621)。成功で 0 に戻し、失敗で +1。
+/// 失敗が `pause_after_failures` (0 は無効) に達したらタスクを無効化して次回予定を消し、
+/// `auto_paused_at` を記録して `true` を返す。すでに無効なタスク (手動実行など) は
+/// 数えるだけで止め直さない。
+pub fn apply_run_result(task: &mut TaskDefinition, ok: bool, now_rfc3339: &str) -> bool {
+    if ok {
+        task.consecutive_failures = 0;
+        return false;
+    }
+    task.consecutive_failures = task.consecutive_failures.saturating_add(1);
+    if task.pause_after_failures > 0
+        && task.consecutive_failures >= task.pause_after_failures
+        && task.enabled
+    {
+        task.enabled = false;
+        task.next_run_at = None;
+        task.auto_paused_at = Some(now_rfc3339.to_string());
+        return true;
+    }
+    false
+}
+
+/// `pause_after_failures` の上限 (保存時に丸める)。
+pub const MAX_PAUSE_AFTER_FAILURES: u32 = 100;
 
 fn default_true() -> bool {
     true
@@ -353,6 +403,77 @@ mod tests {
             TaskAction::RefreshPlanWatch { snippet_ids } => assert_eq!(snippet_ids, vec!["s1"]),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    fn task_with_limit(limit: u32) -> TaskDefinition {
+        TaskDefinition {
+            id: "t".into(),
+            name: "n".into(),
+            profile_id: "p".into(),
+            action: TaskAction::TimelapseCapture {
+                max_generations: None,
+            },
+            schedule: TaskSchedule::Interval { minutes: 5 },
+            enabled: true,
+            created_at: "c".into(),
+            updated_at: "u".into(),
+            next_run_at: Some("n".into()),
+            last_run_at: None,
+            last_status: None,
+            connect_retry: ConnectRetry::default(),
+            pause_after_failures: limit,
+            consecutive_failures: 0,
+            auto_paused_at: None,
+        }
+    }
+
+    #[test]
+    fn consecutive_failures_pause_the_task_at_the_limit_and_success_resets() {
+        let mut t = task_with_limit(3);
+        assert!(!apply_run_result(&mut t, false, "t1"));
+        assert!(!apply_run_result(&mut t, false, "t2"));
+        // 成功で数え直し。
+        assert!(!apply_run_result(&mut t, true, "t3"));
+        assert_eq!(t.consecutive_failures, 0);
+        assert!(!apply_run_result(&mut t, false, "t4"));
+        assert!(!apply_run_result(&mut t, false, "t5"));
+        assert!(t.enabled && t.next_run_at.is_some());
+        // 3 回目の連続失敗で停止。
+        assert!(apply_run_result(&mut t, false, "t6"));
+        assert!(!t.enabled);
+        assert_eq!(t.next_run_at, None);
+        assert_eq!(t.auto_paused_at.as_deref(), Some("t6"));
+        assert_eq!(t.consecutive_failures, 3);
+        // 既に止まっているタスクの失敗 (手動実行) では止め直さず、印も上書きしない。
+        assert!(!apply_run_result(&mut t, false, "t7"));
+        assert_eq!(t.auto_paused_at.as_deref(), Some("t6"));
+    }
+
+    #[test]
+    fn limit_zero_never_pauses_and_legacy_json_defaults_to_disabled() {
+        let mut t = task_with_limit(0);
+        for _ in 0..50 {
+            assert!(!apply_run_result(&mut t, false, "x"));
+        }
+        assert!(t.enabled);
+        let json = r#"{
+            "id": "abcd1234", "name": "n", "profile_id": "p",
+            "action": {"kind": "timelapse_capture"},
+            "schedule": {"kind": "daily", "hour": 3, "minute": 0},
+            "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z"
+        }"#;
+        let legacy: TaskDefinition = serde_json::from_str(json).unwrap();
+        assert_eq!(legacy.pause_after_failures, 0);
+        assert_eq!(legacy.consecutive_failures, 0);
+        assert_eq!(legacy.auto_paused_at, None);
+        assert!(matches!(
+            legacy.schedule,
+            TaskSchedule::Daily {
+                timezone: None,
+                weekdays: 0,
+                ..
+            }
+        ));
     }
 
     #[test]

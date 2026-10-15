@@ -1110,6 +1110,7 @@ export const PaneView = memo(
                                     )
                                   }
                                   autoRefreshLastRunAt={tab.autoRefreshLastRunAt ?? null}
+                                  autoRefreshHistory={tab.autoRefreshHistory}
                                   onSetAutoRefresh={gridStable.fn(
                                     `${tab.id}:autoRefresh`,
                                     (secs: number | null) => actions.setAutoRefreshForTab(tab.id, secs),

@@ -1,4 +1,11 @@
 {
+  "acceptedValuesCandidates": {
+    "truncated": false,
+    "values": [
+      "active",
+      "closed"
+    ]
+  },
   "aiConnectionTestResult": {
     "elapsedMs": 812,
     "message": "ok",
@@ -81,6 +88,11 @@
     "id": "asrt0001",
     "observed": 3,
     "passed": false,
+    "previous": {
+      "at": "2026-01-01T00:00:00Z",
+      "observed": 1,
+      "passed": false
+    },
     "violations_sql": "SELECT * FROM `users` WHERE `id` IS NULL"
   },
   "assertionRowCountOpVariants": [
@@ -1204,6 +1216,7 @@
     "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
     "rule": "fk_missing_index",
     "severity": "high",
+    "size_bytes": null,
     "statistical": false,
     "table": "orders"
   },
@@ -1217,6 +1230,7 @@
       "fix_ddl_online": null,
       "rule": "fk_missing_index",
       "severity": "high",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1229,6 +1243,7 @@
       "fix_ddl_online": null,
       "rule": "duplicate_index",
       "severity": "medium",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1241,6 +1256,7 @@
       "fix_ddl_online": null,
       "rule": "redundant_index",
       "severity": "low",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1253,6 +1269,7 @@
       "fix_ddl_online": null,
       "rule": "missing_primary_key",
       "severity": "high",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1265,6 +1282,7 @@
       "fix_ddl_online": null,
       "rule": "unused_index",
       "severity": "medium",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     },
@@ -1277,6 +1295,7 @@
       "fix_ddl_online": null,
       "rule": "fk_type_mismatch",
       "severity": "low",
+      "size_bytes": null,
       "statistical": false,
       "table": "orders"
     },
@@ -1289,6 +1308,7 @@
       "fix_ddl_online": null,
       "rule": "sqlite_integer_pk_hint",
       "severity": "high",
+      "size_bytes": 4096,
       "statistical": true,
       "table": "orders"
     }
@@ -1332,6 +1352,31 @@
     "sql_len": 8,
     "sql_preview": "SELECT 1",
     "status": "ok"
+  },
+  "importAssertionsResult": {
+    "imported": [
+      {
+        "id": "asrt0001",
+        "name": "check",
+        "rule": {
+          "column": "id",
+          "kind": "not_null"
+        },
+        "schema": "public",
+        "scope": {
+          "kind": "any"
+        },
+        "table": "users"
+      }
+    ],
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 2,
+        "name": "bad"
+      }
+    ],
+    "skipped_duplicates": 1
   },
   "importDoneEvent": {
     "elapsedMs": 42,
@@ -1520,6 +1565,9 @@
     "recorded": 3,
     "warned": [
       "slow report"
+    ],
+    "warnedSummaries": [
+      "orders: Index Scan → Parallel Seq Scan"
     ]
   },
   "previewStreamCancelledMessage": {
@@ -1729,6 +1777,8 @@
     "timedOut": false
   },
   "queryStreamPatchMessage": {
+    "addedCount": 1,
+    "changedCount": 1,
     "kind": "patch",
     "removedCount": 1,
     "runs": [
@@ -3590,6 +3640,7 @@
         "driver": "postgres",
         "fingerprint": "deadbeef",
         "id": "gen00001",
+        "label": "リリース v1.2",
         "omitted": false,
         "tableCount": 12,
         "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
@@ -3690,9 +3741,28 @@
     "driver": "postgres",
     "fingerprint": "deadbeef",
     "id": "gen00001",
+    "label": "リリース v1.2",
     "omitted": false,
     "tableCount": 12,
     "triggerSql": "ALTER TABLE users ADD COLUMN age INT"
+  },
+  "schemaDriftRevertSql": {
+    "database": "appdb",
+    "omitted_destructive": 2,
+    "plan": {
+      "statements": [
+        {
+          "destructive": false,
+          "kind": "add_column",
+          "sql": "ALTER TABLE `users` ADD COLUMN `email` VARCHAR(255);",
+          "table": "users"
+        }
+      ],
+      "warnings": [
+        "SQLite cannot alter columns in place"
+      ]
+    },
+    "preamble": "USE `appdb`"
   },
   "schemaDriftSummary": {
     "tables": [
@@ -3783,6 +3853,30 @@
     ]
   },
   "schemaHealthReport": {
+    "diff": {
+      "new_indexes": [
+        0
+      ],
+      "previous_at": "2026-01-01T00:00:00Z",
+      "resolved": [
+        {
+          "columns": [
+            "user_id"
+          ],
+          "context": [
+            "users"
+          ],
+          "fix_ddl": "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
+          "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
+          "rule": "fk_missing_index",
+          "severity": "high",
+          "size_bytes": null,
+          "statistical": false,
+          "table": "orders"
+        }
+      ],
+      "unchanged": 2
+    },
     "driver": "mysql",
     "findings": [
       {
@@ -3796,8 +3890,26 @@
         "fix_ddl_online": "ALTER TABLE `orders` ADD INDEX `idx_orders_user_id` (`user_id`), ALGORITHM=INPLACE, LOCK=NONE;",
         "rule": "fk_missing_index",
         "severity": "high",
+        "size_bytes": null,
         "statistical": false,
         "table": "orders"
+      }
+    ],
+    "ignored": [
+      {
+        "columns": [
+          "created_at"
+        ],
+        "context": [
+          "idx_logs_created"
+        ],
+        "fix_ddl": null,
+        "fix_ddl_online": null,
+        "rule": "unused_index",
+        "severity": "low",
+        "size_bytes": 1048576,
+        "statistical": true,
+        "table": "logs"
       }
     ],
     "skipped": [
@@ -3818,6 +3930,7 @@
   },
   "schemaHealthReportVariants": [
     {
+      "diff": null,
       "driver": "mysql",
       "findings": [
         {
@@ -3829,6 +3942,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3841,6 +3955,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3853,6 +3968,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3865,6 +3981,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3877,6 +3994,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3889,6 +4007,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3901,10 +4020,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -3946,6 +4067,7 @@
       "tables_analyzed": 1
     },
     {
+      "diff": null,
       "driver": "postgres",
       "findings": [
         {
@@ -3957,6 +4079,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3969,6 +4092,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -3981,6 +4105,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -3993,6 +4118,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4005,6 +4131,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4017,6 +4144,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4029,10 +4157,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -4074,6 +4204,7 @@
       "tables_analyzed": 1
     },
     {
+      "diff": null,
       "driver": "sqlite",
       "findings": [
         {
@@ -4085,6 +4216,7 @@
           "fix_ddl_online": null,
           "rule": "fk_missing_index",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4097,6 +4229,7 @@
           "fix_ddl_online": null,
           "rule": "duplicate_index",
           "severity": "medium",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4109,6 +4242,7 @@
           "fix_ddl_online": null,
           "rule": "redundant_index",
           "severity": "low",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4121,6 +4255,7 @@
           "fix_ddl_online": null,
           "rule": "missing_primary_key",
           "severity": "high",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4133,6 +4268,7 @@
           "fix_ddl_online": null,
           "rule": "unused_index",
           "severity": "medium",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         },
@@ -4145,6 +4281,7 @@
           "fix_ddl_online": null,
           "rule": "fk_type_mismatch",
           "severity": "low",
+          "size_bytes": null,
           "statistical": false,
           "table": "orders"
         },
@@ -4157,10 +4294,12 @@
           "fix_ddl_online": null,
           "rule": "sqlite_integer_pk_hint",
           "severity": "high",
+          "size_bytes": 4096,
           "statistical": true,
           "table": "orders"
         }
       ],
+      "ignored": [],
       "skipped": [
         {
           "reason": "performance_schema_off",
@@ -4739,6 +4878,11 @@
     "index_bytes": 16384,
     "index_count": 2,
     "name": "users",
+    "previous": {
+      "at": "2026-01-01T00:00:00Z",
+      "row_estimate": 1000,
+      "total_bytes": null
+    },
     "row_estimate": 1234,
     "total_bytes": 81920
   },
@@ -4772,10 +4916,12 @@
         "sql_batch_size": 100,
         "sql_table": "users"
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4783,6 +4929,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4813,10 +4960,12 @@
         },
         "output_path": "/tmp/dump.sql"
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4824,11 +4973,14 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "hour": 3,
         "kind": "daily",
-        "minute": 15
+        "minute": 15,
+        "timezone": "Asia/Tokyo",
+        "weekdays": 31
       },
       "updated_at": "2026-01-02T00:00:00Z"
     },
@@ -4841,10 +4993,12 @@
         "kind": "run_assertions",
         "notify_only_on_increase": true
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4852,6 +5006,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4864,10 +5019,12 @@
         "kind": "timelapse_capture",
         "max_generations": 30
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4875,11 +5032,14 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "hour": 2,
         "kind": "daily",
-        "minute": 0
+        "minute": 0,
+        "timezone": null,
+        "weekdays": 0
       },
       "updated_at": "2026-01-02T00:00:00Z"
     },
@@ -4890,10 +5050,12 @@
           "snip0001"
         ]
       },
+      "auto_paused_at": "2026-01-02T00:00:00Z",
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 3
       },
+      "consecutive_failures": 2,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": true,
       "id": "task0001",
@@ -4901,6 +5063,7 @@
       "last_status": "ok",
       "name": "nightly",
       "next_run_at": "2026-01-03T00:00:00Z",
+      "pause_after_failures": 5,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4920,10 +5083,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4931,6 +5096,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4948,10 +5114,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4959,6 +5127,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -4976,10 +5145,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -4987,6 +5158,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5004,10 +5176,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5015,6 +5189,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5032,10 +5207,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5043,6 +5220,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5060,10 +5238,12 @@
         "sql_batch_size": null,
         "sql_table": null
       },
+      "auto_paused_at": null,
       "connect_retry": {
         "interval_secs": 30,
         "max_retries": 0
       },
+      "consecutive_failures": 0,
       "created_at": "2026-01-01T00:00:00Z",
       "enabled": false,
       "id": "task0002",
@@ -5071,6 +5251,7 @@
       "last_status": null,
       "name": "export",
       "next_run_at": null,
+      "pause_after_failures": 0,
       "profile_id": "abc12345",
       "schedule": {
         "kind": "interval",
@@ -5153,6 +5334,36 @@
     "from_captured_at": "2026-01-01T00:00:00Z",
     "partial": false,
     "to_captured_at": "2026-01-02T00:00:00Z"
+  },
+  "timelapseRowHistory": {
+    "columns": [
+      "id",
+      "price"
+    ],
+    "entries": [
+      {
+        "captured_at": "2026-01-01T00:00:00Z",
+        "changed_columns": [],
+        "generation_id": 1,
+        "present": true,
+        "row": [
+          2,
+          100
+        ]
+      },
+      {
+        "captured_at": "2026-01-02T00:00:00Z",
+        "changed_columns": [],
+        "generation_id": 2,
+        "present": false,
+        "row": null
+      }
+    ],
+    "generations_scanned": 2,
+    "partial": false,
+    "primary_key": [
+      "id"
+    ]
   },
   "timelapseWatchOutcome": {
     "generation_added": true,

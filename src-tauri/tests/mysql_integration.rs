@@ -1836,6 +1836,37 @@ async fn mysql_data_quality_assertions_on_read_only_session() {
             .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
     }
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "status",
+        None,
+    )
+    .await
+    .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "email",
+        None,
+    )
+    .await
+    .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "noobdb_aq_items", "qty", None)
+            .await
+            .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     for sql in [
         "DROP TABLE IF EXISTS noobdb_aq_items",
         "DROP TABLE IF EXISTS noobdb_aq_orders",
@@ -3414,6 +3445,46 @@ async fn mysql_save_cells_to_folder() {
         .execute("DROP TABLE IF EXISTS cell_blob_folder_t", db)
         .await
         .expect("cleanup");
+}
+
+/// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 容量の取得 (`mysql.innodb_index_stats`)
+/// を足しても、統計が読めない環境で指摘そのものが消えたり失敗したりしない。
+#[tokio::test]
+async fn mysql_advisor_unused_index_query_with_size_degrades_safely() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = url.rsplit('/').next().expect("db name").to_string();
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_adv_idx",
+        "CREATE TABLE noobdb_adv_idx (id INT PRIMARY KEY, note VARCHAR(64), KEY noobdb_adv_idx_note (note))",
+        "INSERT INTO noobdb_adv_idx VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    let report = t::analyze_schema_health(&conn, &db).await.expect("analyze");
+    conn.execute("DROP TABLE IF EXISTS noobdb_adv_idx", None)
+        .await
+        .expect("drop");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::UnusedIndex);
+    if skipped {
+        // performance_schema が無効 / sys が読めない環境: 縮退の理由が付く (失敗にはしない)。
+        eprintln!("unused index stats unavailable; degraded as designed");
+        return;
+    }
+    let f = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::UnusedIndex && f.table == "noobdb_adv_idx")
+        .expect("unused index finding");
+    // サイズは取れれば正の値。権限がなければ None のまま指摘は出る。
+    assert!(f.size_bytes.is_none_or(|n| n > 0), "{:?}", f.size_bytes);
 }
 
 #[tokio::test]

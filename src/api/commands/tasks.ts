@@ -4,6 +4,7 @@ import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type {
   TaskDefinition,
+  TaskSchedule,
   SaveTaskRequest,
   TaskRun,
   AssertionRunRecord,
@@ -20,6 +21,15 @@ export const tasksCommands = {
   saveTask: (req: SaveTaskRequest) =>
     invoke<TaskDefinition>("save_task", { req }).then((r) =>
       parseResponse(schemas.taskDefinition, r, "save_task"),
+    ),
+  /**
+   * スケジュールの次回以降の発火時刻 (RFC3339, UTC) を `count` 件 (1〜10) 返す (#1621)。
+   * 保存前の編集中の値で呼べ、DST・曜日マスクを含む実際の計算と同じ経路。副作用なし。
+   * タイムゾーン名が未知ならエラー。
+   */
+  previewTaskSchedule: (schedule: TaskSchedule, count: number) =>
+    invoke<string[]>("preview_task_schedule", { schedule, count }).then((r) =>
+      parseResponse(schemas.taskSchedulePreview, r, "preview_task_schedule"),
     ),
   deleteTask: (id: string) => invoke<void>("delete_task", { id }),
   setTaskEnabled: (id: string, enabled: boolean) =>

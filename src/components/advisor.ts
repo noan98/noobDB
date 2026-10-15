@@ -8,6 +8,7 @@
 import type { AdvisorRuleId, AdvisorSeverity, HealthFinding } from "../api/tauri";
 import type { I18nKey } from "../i18n";
 import type { SemanticRole } from "../semanticColors";
+import { formatBytes } from "./tableSize";
 
 /** 重要度 → semantic 役割 (#664)。high=danger / medium=warning / low=info。 */
 export function severityRole(severity: AdvisorSeverity): SemanticRole {
@@ -149,7 +150,7 @@ export function findingTarget(finding: HealthFinding): string {
 }
 
 /** 指摘一覧のソート列 (表のヘッダ)。 */
-export type AdvisorSortKey = "severity" | "rule" | "target" | "detail";
+export type AdvisorSortKey = "severity" | "rule" | "target" | "detail" | "size";
 export type AdvisorSortDir = "asc" | "desc";
 
 /** 重要度の並び順。昇順 = 重要度の高い順 (high → medium → low) とする。 */
@@ -176,6 +177,10 @@ export function sortFindings(
         return SEVERITY_ORDER[f.severity];
       case "target":
         return findingTarget(f);
+      case "size":
+        // 容量が不明な指摘 (未使用インデックス以外・取得できなかったもの) は常に末尾へ寄せる
+        // (昇順では最大、降順では最小として扱うと逆になるので、符号込みで固定する)。
+        return f.size_bytes ?? (dir === "asc" ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY);
       case "rule":
       case "detail":
         return label(f, key);
@@ -186,7 +191,12 @@ export function sortFindings(
     .sort((a, b) => {
       const cmp =
         typeof a.v === "number" && typeof b.v === "number"
-          ? a.v - b.v
+          ? // 差ではなく大小比較にする (容量不明の ±Infinity 同士の差は NaN になるため)。
+            a.v < b.v
+            ? -1
+            : a.v > b.v
+              ? 1
+              : 0
           : String(a.v).localeCompare(String(b.v), undefined, { sensitivity: "base", numeric: true });
       return cmp !== 0 ? sign * cmp : a.i - b.i;
     })
@@ -204,9 +214,54 @@ export const DEFAULT_ADVISOR_SORT: AdvisorSort = { key: "severity", dir: "asc" }
  * 解除したときは「ソートなし」ではなく既定の重要度順 (DEFAULT_ADVISOR_SORT) に戻る。
  */
 export function nextAdvisorSort(current: AdvisorSort, key: AdvisorSortKey): AdvisorSort {
-  if (current.key !== key) return { key, dir: "asc" };
-  if (current.dir === "asc") return { key, dir: "desc" };
+  // 容量は「大きい順」で見たいので、最初のクリックは降順から始める (#1621)。
+  const first: AdvisorSortDir = key === "size" ? "desc" : "asc";
+  const second: AdvisorSortDir = first === "asc" ? "desc" : "asc";
+  if (current.key !== key) return { key, dir: first };
+  if (current.dir === first) return { key, dir: second };
   return DEFAULT_ADVISOR_SORT;
+}
+
+/** 容量の表示。取得できていない指摘は `—`。 */
+export function findingSizeText(finding: HealthFinding): string {
+  return formatBytes(finding.size_bytes);
+}
+
+/**
+ * 未使用インデックスをすべて削除したときに空く容量の合計 (#1621)。容量が取れた指摘だけを
+ * 足す。未使用インデックスで容量が取れたものが 1 件も無ければ `null` (合計を出さない)。
+ * 件数 `unknown` は容量不明の未使用インデックスの数 (合計が下限であることを注記する)。
+ */
+export function reclaimableSummary(
+  findings: readonly HealthFinding[],
+): { bytes: number; unknown: number } | null {
+  let bytes = 0;
+  let known = 0;
+  let unknown = 0;
+  for (const f of findings) {
+    if (f.rule !== "unused_index") continue;
+    if (f.size_bytes == null) unknown += 1;
+    else {
+      bytes += f.size_bytes;
+      known += 1;
+    }
+  }
+  return known === 0 ? null : { bytes, unknown };
+}
+
+/** 前回診断との差分から、今回の指摘のうち「新規」のものの集合を作る (添字 → 指摘の参照)。
+ *  並べ替えや「対応しない」への移動で添字がずれても、参照で判定できるようにする。 */
+export function newFindingSet(
+  findings: readonly HealthFinding[],
+  diff: { new_indexes: readonly number[] } | null,
+): Set<HealthFinding> {
+  const out = new Set<HealthFinding>();
+  if (!diff) return out;
+  for (const i of diff.new_indexes) {
+    const f = findings[i];
+    if (f) out.add(f);
+  }
+  return out;
 }
 
 // ── 診断結果の書き出し (#1539) ───────────────────────────────────────────
@@ -222,6 +277,7 @@ export interface AdvisorExportLabels {
     fixDdl: string;
     fixDdlOnline: string;
     statistical: string;
+    size: string;
   };
   severity: (severity: AdvisorSeverity) => string;
   rule: (finding: HealthFinding) => string;
@@ -238,7 +294,17 @@ export function findingsToTable(
 ): { header: string[]; rows: (string | null)[][] } {
   const h = labels.headers;
   return {
-    header: [h.severity, h.rule, h.table, h.columns, h.detail, h.fixDdl, h.fixDdlOnline, h.statistical],
+    header: [
+      h.severity,
+      h.rule,
+      h.table,
+      h.columns,
+      h.detail,
+      h.fixDdl,
+      h.fixDdlOnline,
+      h.statistical,
+      h.size,
+    ],
     rows: findings.map((f) => [
       labels.severity(f.severity),
       labels.rule(f),
@@ -248,6 +314,7 @@ export function findingsToTable(
       f.fix_ddl,
       f.fix_ddl_online,
       f.statistical ? "Y" : "",
+      f.size_bytes == null ? null : String(f.size_bytes),
     ]),
   };
 }

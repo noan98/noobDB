@@ -246,7 +246,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
-- `analyze_schema_health`
+- `analyze_schema_health` (#1621。「対応しない」を `ignored` へ振り分け、前回診断 (メモリ上の直近 1 件) との差分 `diff` を載せる。未使用インデックスには `size_bytes`)
+- `ignore_advisor_finding` (#1621。`advisor_ignores.json` に (プロファイル, DB, 指摘キー) を保存)
+- `unignore_advisor_finding` (#1621。「対応しない」の取り消し)
 - `query_stats_support`
 - `sample_live_queries`
 - `start_statement_recording`
@@ -271,6 +273,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `timelapse_capture`
 - `timelapse_list_watches`
 - `timelapse_diff_generations`
+- `timelapse_row_history`
 - `timelapse_unwatch`
 - `timelapse_clear_all`
 
@@ -281,6 +284,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `schema_drift_capture`
 - `schema_drift_list`
 - `schema_drift_compare`
+- `schema_drift_set_label`
+- `schema_drift_revert_sql`
 - `schema_drift_import_legacy`
 
 #736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む。`capture` の任意引数 `trigger_sql` (#1537) は DDL 成功をきっかけにした自動取得のときの実行 SQL で、世代に紐づけて保存する
@@ -300,6 +305,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
+- `preview_task_schedule`
 - `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`
@@ -311,9 +317,13 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_assertions`
 - `save_assertion`
-- `delete_assertion`
+- `delete_assertion` (#1621。一覧から外して `assertions.json` の `trash` (直近 50 件) へ移す)
+- `restore_assertion` (#1621。ごみ箱から一覧へ戻す)
+- `export_assertions` (#1621。定義を JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `import_assertions` (#1621。ID 衝突は新規採番・同内容は追加せず・検証 NG は `rejected` で報告)
+- `suggest_accepted_values` (#1621。列の DISTINCT を `run_lookup_query` 経路で読み、最大 50 種)
 - `preview_assertion_sql`
-- `run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
+- `run_assertion` (#742。結果に前回の観測値 `previous` を添える (#1621, `assertion_history.json` に直近 30 件)。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 

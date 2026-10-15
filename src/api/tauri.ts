@@ -401,6 +401,37 @@ export interface AssertionOutcome extends AssertionSql {
   /** row_count は総行数、それ以外は違反件数。 */
   observed: number;
   elapsed_ms: number;
+  /** 前回の結果 (初回は null)。観測値の履歴 (#1621) から引く。 */
+  previous: AssertionPrevious | null;
+}
+
+/** 前回のアサーション実行結果 (#1621)。 */
+export interface AssertionPrevious {
+  /** 実行時刻 (UTC, RFC 3339)。 */
+  at: string;
+  observed: number;
+  passed: boolean;
+}
+
+/** `accepted_values` の候補 (列の DISTINCT 値、#1621)。 */
+export interface AcceptedValuesCandidates {
+  values: string[];
+  /** 種類が多すぎて打ち切ったか。 */
+  truncated: boolean;
+}
+
+/** アサーション取り込みで読めなかった要素 (#1621)。 */
+export interface AssertionImportRejection {
+  index: number;
+  name: string | null;
+  error: string;
+}
+
+/** `import_assertions` の結果 (#1621)。 */
+export interface ImportAssertionsResult {
+  imported: Assertion[];
+  skipped_duplicates: number;
+  rejected: AssertionImportRejection[];
 }
 
 export interface HistoryEntry {
@@ -751,6 +782,16 @@ export interface TableStatistic extends TableSizeInfo {
   index_count: number;
   has_primary_key: boolean;
   foreign_key_count: number;
+  /** 前回取得時の値 (#1621)。増減 (今回 − 前回) の基準。初回・前回に無かったテーブルは null。 */
+  previous: TableStatPrevious | null;
+}
+
+/** 前回取得時のテーブル統計 (#1621)。 */
+export interface TableStatPrevious {
+  /** 前回取得の時刻 (UTC, RFC 3339)。 */
+  at: string;
+  row_estimate: number | null;
+  total_bytes: number | null;
 }
 
 /** 列編集ダイアログの初期ロード一式 (`alter_table_context`、#1255)。 */
@@ -1162,6 +1203,16 @@ export interface SchemaSnapshotTable {
 }
 
 /** 保存済みスキーマ世代のメタデータ (スキーマドリフト・タイムライン #736 / #1260)。 */
+/** 巻き戻し DDL の生成結果 (#1621)。`plan` は現在側の世代を戻したい世代の形へ揃える DDL。 */
+export interface SchemaDriftRevertSql {
+  plan: SyncPlan;
+  /** 破壊的な文 (DROP) の許可が無いため出力しなかった数。 */
+  omitted_destructive: number;
+  database: string;
+  /** 文の前に置く対象指定 (MySQL は USE、PostgreSQL は SET search_path)。SQLite は null。 */
+  preamble: string | null;
+}
+
 export interface SchemaDriftGeneration {
   id: string;
   /** 取得時刻 (RFC 3339)。 */
@@ -1176,6 +1227,8 @@ export interface SchemaDriftGeneration {
   omitted: boolean;
   /** DDL の成功をきっかけに自動取得した世代のとき、そのとき実行した SQL (#1537)。 */
   triggerSql?: string | null;
+  /** 利用者が付けたラベル (#1621)。ラベル付きの世代はローテーションで消えない。 */
+  label?: string | null;
 }
 
 /** 1 テーブルの変化サマリ。`tableStatus` はテーブル自体の増減、それ以外は
@@ -1279,6 +1332,8 @@ export interface PlanWatchRefreshResult {
   errors: { snippetId: string; name: string; error: string }[];
   /** 前世代から警告相当の変化 (フルスキャンへの退行など) があったスニペットの名前。 */
   warned: string[];
+  /** `warned` と同じ並びの、警告の先頭 1 件の要約 (`orders: Index Scan → Parallel Seq Scan`, #1621)。 */
+  warnedSummaries: string[];
 }
 
 /** スキーマ健全性アドバイザ (#741) の指摘ルール識別子。バックの serde
@@ -1310,6 +1365,8 @@ export interface HealthFinding {
   fix_ddl_online: string | null;
   /** エンジンの実行時統計に由来する指摘 (観測期間に依存する旨を注記)。 */
   statistical: boolean;
+  /** 削除で空く容量 (バイト)。未使用インデックスで、エンジンから取れたときだけ (#1621)。 */
+  size_bytes: number | null;
 }
 
 /** 前提を満たさずスキップしたルールと機械可読な理由コード。 */
@@ -1337,6 +1394,22 @@ export interface SchemaHealthReport {
   skipped: SkippedRule[];
   /** テーブル単位のまとめ DDL (#1540)。 */
   table_plans: TableFixPlan[];
+  /** 「対応しない」にした指摘 (#1621)。`findings` からは除かれ、別枠に折りたたんで出す。 */
+  ignored: HealthFinding[];
+  /** 前回診断 (同じセッション・同じデータベース) との差分 (#1621)。初回は null。 */
+  diff: AdvisorDiff | null;
+}
+
+/** 前回診断との差分 (#1621)。 */
+export interface AdvisorDiff {
+  /** 前回診断の時刻 (UTC, RFC 3339)。 */
+  previous_at: string;
+  /** 今回の `findings` のうち前回は無かった指摘の添字。 */
+  new_indexes: number[];
+  /** 前回は出ていて今回は消えた (解消された) 指摘。 */
+  resolved: HealthFinding[];
+  /** 前回から続いている指摘の件数。 */
+  unchanged: number;
 }
 
 /** What a generated sync statement does. */
@@ -1450,6 +1523,27 @@ export interface TimelapseGenerationDiff {
   partial: boolean;
   from_captured_at: string;
   to_captured_at: string;
+}
+
+/** 主キー指定の 1 行の値の推移 (#1621)。変化があった世代だけが古い順に並ぶ。 */
+export interface TimelapseRowHistoryEntry {
+  generation_id: number;
+  captured_at: string;
+  /** false = この世代でその行が無くなった。 */
+  present: boolean;
+  /** `columns` と同じ並びの値。`present` が false のとき null。 */
+  row: CellValue[] | null;
+  /** 直前の存在世代から値が変わった列 (初出・再出現は空)。 */
+  changed_columns: string[];
+}
+
+export interface TimelapseRowHistory {
+  columns: string[];
+  primary_key: string[];
+  entries: TimelapseRowHistoryEntry[];
+  generations_scanned: number;
+  /** 部分取得の世代を含む (範囲外の行が「消えた」ように見えうる)。 */
+  partial: boolean;
 }
 
 /**
@@ -1653,10 +1747,14 @@ export interface ConnectRetry {
   interval_secs: number;
 }
 
-/** タスクの発火スケジュール。時刻はすべて UTC で解釈する。 */
+/**
+ * タスクの発火スケジュール。`daily` の時刻は `timezone` (IANA 名) のローカル時刻で、
+ * 省略 / null は UTC (旧データ)。`weekdays` は月 = bit0 … 日 = bit6 のマスクで、
+ * 0 / 省略は毎日 (曜日は `timezone` のローカル日付で判定, #1621)。
+ */
 export type TaskSchedule =
   | { kind: "interval"; minutes: number }
-  | { kind: "daily"; hour: number; minute: number };
+  | { kind: "daily"; hour: number; minute: number; timezone?: string | null; weekdays?: number };
 
 export interface TaskDefinition {
   id: string;
@@ -1671,6 +1769,12 @@ export interface TaskDefinition {
   last_run_at: string | null;
   last_status: string | null;
   connect_retry: ConnectRetry;
+  /** 連続この回数失敗したら自動で一時停止する (0 = しない, #1621)。 */
+  pause_after_failures: number;
+  /** 現在の連続失敗回数 (成功で 0 に戻る)。 */
+  consecutive_failures: number;
+  /** 連続失敗で自動停止した時刻 (手動で再有効化すると null)。 */
+  auto_paused_at: string | null;
 }
 
 export interface SaveTaskRequest {
@@ -1681,6 +1785,8 @@ export interface SaveTaskRequest {
   schedule: TaskSchedule;
   enabled: boolean;
   connect_retry?: ConnectRetry;
+  /** 連続失敗で自動停止するまでの回数 (0 / 省略 = しない, #1621)。 */
+  pause_after_failures?: number;
 }
 
 /** 1 回分のタスク実行ログ (`task_runs.sqlite`、クエリ履歴とは別)。 */
@@ -1997,6 +2103,10 @@ export interface QueryStreamPatchMessage {
   unchanged: boolean;
   /** 前回にあって今回に対応が無い行数。 */
   removedCount: number;
+  /** 前回に対応が無い (新しく現れた) 行数 (#1621)。 */
+  addedCount: number;
+  /** 前回と対応するが値が変わった行数 (#1621)。 */
+  changedCount: number;
   runs: QueryStreamPatchRun[];
 }
 
@@ -3200,6 +3310,8 @@ export interface TaskRunEvent {
   message: string | null;
   outputPath: string | null;
   catchUp: boolean;
+  /** この失敗で連続失敗の上限に達し、タスクが自動で一時停止した (#1621)。 */
+  autoPaused: boolean;
 }
 
 /** 「今すぐ実行」(`runTaskNow`) の進捗 (#1534)。`count` の単位は `unit`

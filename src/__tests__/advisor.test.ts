@@ -7,7 +7,9 @@ import {
   findingTarget,
   DEFAULT_ADVISOR_SORT,
   nextAdvisorSort,
+  newFindingSet,
   reasonTextKey,
+  reclaimableSummary,
   ruleTitleKey,
   severityLabelKey,
   severityRole,
@@ -28,6 +30,7 @@ function finding(partial: Partial<HealthFinding> & Pick<HealthFinding, "rule">):
     fix_ddl: null,
     fix_ddl_online: null,
     statistical: false,
+    size_bytes: null,
     ...partial,
   };
 }
@@ -216,6 +219,7 @@ describe("未知ルールのフォールバック (#1194)", () => {
       fix_ddl: null,
       fix_ddl_online: null,
       statistical: false,
+      size_bytes: null,
     });
     expect(d.key).toBe("advisorRuleUnknownDesc");
     expect(d.params.table).toBe("t");
@@ -233,6 +237,7 @@ describe("findingsToTable (#1539)", () => {
       fixDdl: "Fix",
       fixDdlOnline: "Fix online",
       statistical: "Stat",
+      size: "Size",
     },
     severity: (s: string) => s.toUpperCase(),
     rule: (f: HealthFinding) => `rule:${f.rule}`,
@@ -251,7 +256,7 @@ describe("findingsToTable (#1539)", () => {
 
   it("表示順のまま 1 指摘 1 行にし、列は ', ' 連結、DDL が無ければ null", () => {
     const { header, rows } = findingsToTable([f1, f2], labels);
-    expect(header).toHaveLength(8);
+    expect(header).toHaveLength(9);
     expect(rows[0]).toEqual([
       "HIGH",
       "rule:fk_missing_index",
@@ -261,8 +266,11 @@ describe("findingsToTable (#1539)", () => {
       f1.fix_ddl,
       f1.fix_ddl_online,
       "Y",
+      null,
     ]);
-    expect(rows[1].slice(5)).toEqual([null, null, ""]);
+    expect(rows[1].slice(5)).toEqual([null, null, "", null]);
+    // 容量が取れた指摘はバイト数をそのまま書き出す。
+    expect(findingsToTable([{ ...f2, size_bytes: 2048 }], labels).rows[0][8]).toBe("2048");
   });
   it("CSV はカンマ・改行・ダブルクオートを含む DDL を 1 セルに収める", () => {
     const { header, rows } = findingsToTable([f1, f2], labels);
@@ -276,5 +284,45 @@ describe("findingsToTable (#1539)", () => {
     expect(md.split("\n")[2]).toContain("SELECT 1;");
     expect(md.split("\n")).toHaveLength(4);
     expect(md).toContain("<br>");
+  });
+});
+
+describe("容量・前回比 (#1621)", () => {
+  const unused = (index: string, size: number | null) =>
+    finding({ rule: "unused_index", table: "t", columns: ["a"], context: [index], size_bytes: size });
+
+  it("容量列は初回クリックで大きい順、次に小さい順、その次で解除", () => {
+    expect(nextAdvisorSort(DEFAULT_ADVISOR_SORT, "size")).toEqual({ key: "size", dir: "desc" });
+    expect(nextAdvisorSort({ key: "size", dir: "desc" }, "size")).toEqual({ key: "size", dir: "asc" });
+    expect(nextAdvisorSort({ key: "size", dir: "asc" }, "size")).toEqual(DEFAULT_ADVISOR_SORT);
+  });
+
+  it("容量でソートしても、容量不明の指摘は昇順・降順とも末尾に並ぶ", () => {
+    const list = [unused("small", 10), finding({ rule: "missing_primary_key" }), unused("big", 9000)];
+    const label = () => "";
+    const desc = sortFindings(list, "size", "desc", label).map((f) => f.size_bytes);
+    expect(desc).toEqual([9000, 10, null]);
+    const asc = sortFindings(list, "size", "asc", label).map((f) => f.size_bytes);
+    expect(asc).toEqual([10, 9000, null]);
+  });
+
+  it("再利用可能サイズは未使用インデックスだけを足し、不明な件数を返す", () => {
+    expect(reclaimableSummary([unused("a", 1024), unused("b", 2048), unused("c", null)])).toEqual({
+      bytes: 3072,
+      unknown: 1,
+    });
+    // 他ルールの容量は数えない / 容量が 1 件も取れなければ合計を出さない。
+    expect(reclaimableSummary([finding({ rule: "missing_primary_key", size_bytes: 5 })])).toBeNull();
+    expect(reclaimableSummary([unused("a", null)])).toBeNull();
+  });
+
+  it("前回診断との差分の添字を、指摘の参照の集合にする", () => {
+    const a = unused("a", null);
+    const b = unused("b", null);
+    const set = newFindingSet([a, b], { new_indexes: [1, 7] });
+    expect(set.has(b)).toBe(true);
+    expect(set.has(a)).toBe(false);
+    expect(set.size).toBe(1);
+    expect(newFindingSet([a], null).size).toBe(0);
   });
 });

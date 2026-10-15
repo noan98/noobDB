@@ -364,6 +364,32 @@ export function observedText(rule: AssertionRule, outcome: AssertionOutcome): I1
     : { key: "assertObservedViolations", params: { count: String(outcome.observed) } };
 }
 
+/** 前回との差の見せ方 (#1621)。 */
+export interface ObservedChange {
+  /** 悪化 (違反が増えた) / 改善 (減った) / 中立 (増減に良し悪しが無い・変化なし)。 */
+  tone: "worse" | "better" | "neutral";
+  text: I18nText;
+}
+
+/**
+ * 前回の観測値との増減。前回が無ければ `null`。違反件数 (row_count 以外) は増えたら悪化・
+ * 減ったら改善、`row_count` の総行数は良し悪しを決められないので中立にする。
+ * 値は JS の安全整数の範囲 (件数) なので数値のまま引き算する。
+ */
+export function observedChange(rule: AssertionRule, outcome: AssertionOutcome): ObservedChange | null {
+  const prev = outcome.previous;
+  if (!prev) return null;
+  const delta = outcome.observed - prev.observed;
+  if (delta === 0) return { tone: "neutral", text: { key: "assertChangeSame" } };
+  const params = {
+    previous: String(prev.observed),
+    current: String(outcome.observed),
+    delta: String(Math.abs(delta)),
+  };
+  const tone: ObservedChange["tone"] = rule.kind === "row_count" ? "neutral" : delta > 0 ? "worse" : "better";
+  return { tone, text: { key: delta > 0 ? "assertChangeUp" : "assertChangeDown", params } };
+}
+
 /** 1 件の検証状態。未実行は Map に載らない。 */
 export type AssertionRunState =
   | { status: "running" }

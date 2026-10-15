@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 
 /**
@@ -14,6 +14,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       analyzeSchemaHealth: vi.fn(),
+      ignoreAdvisorFinding: vi.fn(),
+      unignoreAdvisorFinding: vi.fn(),
     },
   };
 });
@@ -44,6 +46,8 @@ describe("AdvisorPanel error state (#848)", () => {
       findings: [],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     fireEvent.click(screen.getByRole("button", { name: t("advisorRetry") }));
 
@@ -71,12 +75,15 @@ describe("AdvisorPanel 再実行の失敗", () => {
           columns: [],
           context: [],
           statistical: false,
+          size_bytes: null,
           fix_ddl: null,
           fix_ddl_online: null,
         },
       ],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
     fireEvent.click(screen.getByText(t("advisorRun")));
@@ -122,12 +129,15 @@ describe("AdvisorPanel running skeleton (#1211)", () => {
           columns: [],
           context: [],
           statistical: false,
+          size_bytes: null,
           fix_ddl: null,
           fix_ddl_online: null,
         },
       ],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     await waitFor(() => {
       expect(screen.queryByText(t("advisorRunning"))).not.toBeInTheDocument();
@@ -146,6 +156,7 @@ describe("AdvisorPanel 既定の並び (#1469)", () => {
     columns: [],
     context: [],
     statistical: false,
+    size_bytes: null,
     fix_ddl: null,
     fix_ddl_online: null,
   });
@@ -157,6 +168,8 @@ describe("AdvisorPanel 既定の並び (#1469)", () => {
       findings: [mk("t_low", "low"), mk("t_med1", "medium"), mk("t_high", "high"), mk("t_med2", "medium")],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     const { container } = renderWithProviders(
       <AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />,
@@ -179,6 +192,7 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
     columns: ["user_id"],
     context: ["users"],
     statistical: false,
+    size_bytes: null,
     fix_ddl: 'CREATE INDEX "idx_orders_user_id" ON "orders" ("user_id");',
     fix_ddl_online: online,
   });
@@ -190,6 +204,8 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
       findings: [finding('CREATE INDEX CONCURRENTLY "idx_orders_user_id" ON "orders" ("user_id");')],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     const onInsertSql = vi.fn();
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);
@@ -217,6 +233,8 @@ describe("AdvisorPanel オンライン版の修正 DDL (#1534)", () => {
       findings: [finding(null)],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
     fireEvent.click(screen.getByText(t("advisorRun")));
@@ -244,6 +262,7 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
     columns: ["user_id"],
     context: ["users"],
     statistical: false,
+    size_bytes: null,
     fix_ddl: "CREATE INDEX `idx_orders_user_id` ON `orders` (`user_id`);",
     fix_ddl_online: null,
   };
@@ -255,6 +274,8 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
       findings: [finding],
       skipped: [],
       table_plans: [],
+      ignored: [],
+      diff: null,
     });
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
     fireEvent.click(screen.getByText(t("advisorRun")));
@@ -274,6 +295,8 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
         plan,
         { ...plan, table: "items", ddl: "ALTER TABLE `items`\n  DROP INDEX `x`;", ddl_online: null },
       ],
+      ignored: [],
+      diff: null,
     });
     const onInsertSql = vi.fn();
     renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={onInsertSql} />);
@@ -287,5 +310,111 @@ describe("AdvisorPanel テーブル別のまとめ DDL (#1540)", () => {
     expect(onInsertSql).toHaveBeenLastCalledWith(
       `-- orders\n${plan.ddl}\n\n-- items\nALTER TABLE \`items\`\n  DROP INDEX \`x\`;`,
     );
+  });
+});
+
+describe("AdvisorPanel 前回比・対応しない・容量 (#1621)", () => {
+  const base = {
+    severity: "low" as const,
+    columns: ["a"],
+    context: ["idx_a"],
+    statistical: true,
+    fix_ddl: null,
+    fix_ddl_online: null,
+  };
+  const small = { ...base, rule: "unused_index" as const, table: "t1", size_bytes: 1024 };
+  const big = { ...base, rule: "unused_index" as const, table: "t2", size_bytes: 5 * 1024 * 1024 };
+  const pk = {
+    ...base,
+    rule: "missing_primary_key" as const,
+    table: "log",
+    columns: [],
+    context: [],
+    statistical: false,
+    size_bytes: null,
+  };
+  const report = (over: Partial<import("../api/tauri").SchemaHealthReport>) => ({
+    driver: "postgres" as const,
+    tables_analyzed: 3,
+    findings: [small, big, pk],
+    skipped: [],
+    table_plans: [],
+    ignored: [],
+    diff: null,
+    ...over,
+  });
+
+  it("未使用インデックスの容量を表示し、合計と大きい順の並べ替えを出す", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce(report({}));
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    expect(await screen.findByTestId("advisor-reclaimable")).toHaveTextContent("5.0 MB");
+    expect(screen.getByText("1.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("5.0 MB")).toBeInTheDocument();
+
+    // 容量ヘッダの 1 回目のクリックは大きい順。
+    fireEvent.click(screen.getByRole("columnheader", { name: new RegExp(t("advisorColSize")) }));
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("t2");
+    expect(rows[1]).toHaveTextContent("t1");
+    expect(rows[2]).toHaveTextContent("log");
+  });
+
+  it("前回診断との差分を要約し、新規の指摘にバッジを付け、解消された指摘を挙げる", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce(
+      report({
+        findings: [small, pk],
+        diff: {
+          previous_at: "2026-01-01T00:00:00Z",
+          new_indexes: [0],
+          resolved: [big],
+          unchanged: 1,
+        },
+      }),
+    );
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    const summary = await screen.findByTestId("advisor-diff-summary");
+    expect(summary).toHaveTextContent("1");
+    expect(screen.getByTestId("advisor-diff-resolved")).toHaveTextContent("t2");
+    const badges = screen.getAllByTestId("advisor-new-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].closest("tr")).toHaveTextContent("t1");
+  });
+
+  it("「対応しない」で本表から別枠へ移り、戻すと本表へ帰る", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce(report({ findings: [pk, small] }));
+    vi.mocked(api.ignoreAdvisorFinding).mockResolvedValue(undefined);
+    vi.mocked(api.unignoreAdvisorFinding).mockResolvedValue(undefined);
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+
+    await screen.findByText("log");
+    const logRow = screen.getByText("log").closest("tr") as HTMLElement;
+    fireEvent.click(within(logRow).getByRole("button", { name: t("advisorIgnore") }));
+
+    await waitFor(() => expect(api.ignoreAdvisorFinding).toHaveBeenCalledWith("s1", "testdb", pk));
+    const ignored = await screen.findByTestId("advisor-ignored");
+    expect(ignored).toHaveTextContent(t("advisorIgnoredTitle", { count: "1" }));
+    // 本表の行数は 1 件に減る (見出し行 + 1)。
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+
+    fireEvent.click(within(ignored).getByRole("button", { name: t("advisorUnignore") }));
+    await waitFor(() => expect(api.unignoreAdvisorFinding).toHaveBeenCalledWith("s1", "testdb", pk));
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(3));
+    expect(screen.queryByTestId("advisor-ignored")).toBeNull();
+  });
+
+  it("保存に失敗したら本表のまま残してエラーを出す", async () => {
+    vi.mocked(api.analyzeSchemaHealth).mockResolvedValueOnce(report({ findings: [pk] }));
+    vi.mocked(api.ignoreAdvisorFinding).mockRejectedValueOnce(new Error("disk full"));
+    renderWithProviders(<AdvisorPanel sessionId="s1" database="testdb" onInsertSql={() => {}} />);
+    fireEvent.click(screen.getByText(t("advisorRun")));
+    fireEvent.click(await screen.findByRole("button", { name: t("advisorIgnore") }));
+    await screen.findByText(t("advisorIgnoreError", { error: "Error: disk full" }));
+    expect(screen.queryByTestId("advisor-ignored")).toBeNull();
+    expect(screen.getAllByRole("row")).toHaveLength(2);
   });
 });
