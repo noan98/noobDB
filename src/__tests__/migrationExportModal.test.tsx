@@ -50,7 +50,7 @@ const DOWN_PLAN: SyncPlan = {
   warnings: ["sqlite cannot alter columns in place: t.c"],
 };
 
-function renderModal(onClose = () => {}) {
+function renderModal(onClose = () => {}, onOpenInEditor?: (sql: string, title: string) => void) {
   return renderWithProviders(
     <MigrationExportModal
       plan={UP_PLAN}
@@ -61,6 +61,7 @@ function renderModal(onClose = () => {}) {
       targetSessionId="s-tgt"
       targetDatabase="shop_prod"
       targetProfile={makeProfile({ id: "p-tgt", name: "Prod" })}
+      onOpenInEditor={onOpenInEditor}
       onClose={onClose}
     />,
   );
@@ -132,5 +133,28 @@ describe("MigrationExportModal render smoke (#744)", () => {
     expect(upText).toContain("CREATE TABLE t (id INT);");
     expect(downText).toContain("DROP TABLE t;");
     expect(downText).toContain("sqlite cannot alter columns in place");
+  });
+});
+
+describe("ファイルを書かずに使う (#1624)", () => {
+  it("down を新しいクエリタブへ展開する (ファイルは書かない)", async () => {
+    const onOpen = vi.fn();
+    renderModal(() => {}, onOpen);
+    const btn = await waitFor(() => {
+      const b = screen.getByRole("button", { name: t("schemaCompareMigrationOpenDown") });
+      expect(b).toBeEnabled();
+      return b;
+    });
+    fireEvent.click(btn);
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onOpen.mock.calls[0]?.[0]).toContain("DROP TABLE t");
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  it("onOpenInEditor が無ければ展開ボタンは出ない", async () => {
+    renderModal();
+    await waitFor(() => expect(generateSyncSql).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: t("schemaCompareMigrationOpenUp") })).toBeNull();
+    expect(screen.getByRole("button", { name: t("schemaCompareMigrationCopyUp") })).toBeInTheDocument();
   });
 });

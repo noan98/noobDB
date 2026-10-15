@@ -12058,7 +12058,11 @@ export default function App() {
                 >
                   {showCompare ? (
                     <WorkspaceSurface view="compare" onClose={() => setShowCompare(false)}>
-                      <SchemaCompareView profiles={visibleProfiles} onClose={() => setShowCompare(false)} />
+                      <SchemaCompareView
+                        profiles={visibleProfiles}
+                        onClose={() => setShowCompare(false)}
+                        onOpenSql={(sql) => handleOpenAiSql(sql, null)}
+                      />
                     </WorkspaceSurface>
                   ) : showErd && sessionId ? (
                     <WorkspaceSurface view="erd" onClose={() => setShowErd(false)}>

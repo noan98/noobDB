@@ -11,6 +11,7 @@ import { Button, Input, Select } from "./ui";
 import { LoadingButton } from "./LoadingButton";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { useToast } from "./Toast";
+import { copyToClipboard } from "./clipboard";
 import { coerceDriver } from "./SchemaCompareView";
 import {
   buildMigrationFile,
@@ -35,6 +36,8 @@ interface Props {
   targetSessionId: string;
   targetDatabase: string;
   targetProfile: ConnectionProfile;
+  /** 生成した SQL をファイルを書かずに新しいクエリタブへ展開する (実行はしない)。省略時は非表示。 */
+  onOpenInEditor?: (sql: string, title: string) => void;
   onClose: () => void;
 }
 
@@ -79,6 +82,7 @@ export function MigrationExportModal({
   targetSessionId,
   targetDatabase,
   targetProfile,
+  onOpenInEditor,
   onClose,
 }: Props) {
   const t = useT();
@@ -137,26 +141,41 @@ export function MigrationExportModal({
   const isSaving = status.kind === "saving";
   const downReady = downState.kind === "ready";
 
+  /** up / down のファイル本文。保存・コピー・エディタ展開で同じ生成結果を共有する (#1624)。 */
+  const buildContent = (direction: "up" | "down", p: SyncPlan): string =>
+    buildMigrationFile(
+      buildMigrationHeader({
+        generatedAt,
+        format,
+        direction,
+        source: sourceMeta,
+        target: targetMeta,
+      }),
+      p,
+    );
+
+  const handleCopy = async (direction: "up" | "down") => {
+    if (downState.kind !== "ready") return;
+    const ok = await copyToClipboard(buildContent(direction, direction === "up" ? plan : downState.plan));
+    if (ok) toast.success(t("schemaCompareMigrationCopied", { direction }));
+    else toast.error(t("textExportCopyFailed"));
+  };
+
+  const handleOpenInEditor = (direction: "up" | "down") => {
+    if (downState.kind !== "ready" || !onOpenInEditor) return;
+    onOpenInEditor(
+      buildContent(direction, direction === "up" ? plan : downState.plan),
+      direction === "up" ? fileNames.up : fileNames.down,
+    );
+    toast.success(t("schemaCompareMigrationOpened", { direction }));
+  };
+
   const handleSave = async () => {
     if (downState.kind !== "ready") return;
     setStatus({ kind: "saving" });
     try {
-      const headerUp = buildMigrationHeader({
-        generatedAt,
-        format,
-        direction: "up",
-        source: sourceMeta,
-        target: targetMeta,
-      });
-      const headerDown = buildMigrationHeader({
-        generatedAt,
-        format,
-        direction: "down",
-        source: sourceMeta,
-        target: targetMeta,
-      });
-      const contentUp = buildMigrationFile(headerUp, plan);
-      const contentDown = buildMigrationFile(headerDown, downState.plan);
+      const contentUp = buildContent("up", plan);
+      const contentDown = buildContent("down", downState.plan);
 
       let defaultPath = fileNames.up;
       try {
@@ -244,6 +263,35 @@ export function MigrationExportModal({
         <FormSection>
           <FieldLabel as="div">{t("schemaCompareMigrationFiles")}</FieldLabel>
           <CodePreview wrap>{`up:   ${fileNames.up}\ndown: ${fileNames.down}`}</CodePreview>
+        </FormSection>
+
+        <FormSection>
+          <FieldLabel as="div">{t("schemaCompareMigrationNoFile")}</FieldLabel>
+          <chakra.div display="flex" flexWrap="wrap" gap="2">
+            {(["up", "down"] as const).map((d) => (
+              <Button
+                key={`copy-${d}`}
+                type="button"
+                variant="secondary"
+                onClick={() => void handleCopy(d)}
+                disabled={isSaving || !downReady}
+              >
+                {t(d === "up" ? "schemaCompareMigrationCopyUp" : "schemaCompareMigrationCopyDown")}
+              </Button>
+            ))}
+            {onOpenInEditor &&
+              (["up", "down"] as const).map((d) => (
+                <Button
+                  key={`open-${d}`}
+                  type="button"
+                  variant="secondary"
+                  onClick={() => handleOpenInEditor(d)}
+                  disabled={isSaving || !downReady}
+                >
+                  {t(d === "up" ? "schemaCompareMigrationOpenUp" : "schemaCompareMigrationOpenDown")}
+                </Button>
+              ))}
+          </chakra.div>
         </FormSection>
 
         {/* down マイグレーションの取得は非同期 (loading → ready/error) なので、

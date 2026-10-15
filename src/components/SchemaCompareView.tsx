@@ -411,9 +411,12 @@ const EMPTY_SIDE: SideState = {
 export function SchemaCompareView({
   profiles,
   onClose,
+  onOpenSql,
 }: {
   profiles: ConnectionProfile[];
   onClose: () => void;
+  /** 生成した SQL を新しいクエリタブで開く (実行はしない)。 */
+  onOpenSql?: (sql: string, title: string) => void;
 }) {
   const t = useT();
   const settings = useSettings();
@@ -1257,6 +1260,7 @@ export function SchemaCompareView({
             targetSessionId={target.sessionId}
             targetDatabase={target.database}
             targetProfile={targetProfile}
+            onOpenInEditor={onOpenSql}
             onClose={() => setMigrationExportOpen(false)}
           />
         )}
