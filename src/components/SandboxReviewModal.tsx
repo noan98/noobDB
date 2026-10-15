@@ -613,7 +613,7 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="secondary"
                       aria-label={t("sandboxReviewTableOverwriteAria", { table })}
                       onClick={() => void resolveAll("overwrite", table)}
                     >
@@ -622,51 +622,54 @@ export function SandboxReviewModal({ sandbox, sandboxSessionId, openConnections,
                     <Button
                       type="button"
                       size="sm"
-                      variant="ghost"
+                      variant="secondary"
                       aria-label={t("sandboxReviewTableSkipAria", { table })}
                       onClick={() => void resolveAll("skip", table)}
                     >
                       {t("sandboxReviewTableSkip")}
                     </Button>
                   </chakra.div>
-                  {st.diff.conflicts.map((c) => {
-                    const keySig = sandboxKeySignature(c.key);
-                    const resolution = st.resolutions[keySig];
-                    return (
-                      <chakra.div
-                        key={keySig}
-                        display="flex"
-                        alignItems="center"
-                        gap="2.5"
-                        fontSize="xs"
-                        flexWrap="wrap"
-                      >
-                        <chakra.code>{c.key.map((v) => String(v)).join(", ")}</chakra.code>
-                        <chakra.span color="app.textMuted">
-                          {t("sandboxReviewExternalValue")}:{" "}
-                          {c.external_row
-                            ? c.external_row.map((v) => String(v)).join(", ")
-                            : t("sandboxReviewExternalDeleted")}
-                        </chakra.span>
-                        <chakra.label display="inline-flex" alignItems="center" gap="1" cursor="pointer">
-                          <Radio
-                            name={`sandbox-conflict-${table}-${keySig}`}
-                            checked={resolution === "overwrite"}
-                            onChange={() => setResolution(table, keySig, "overwrite")}
-                          />
-                          {t("sandboxReviewOverwrite")}
-                        </chakra.label>
-                        <chakra.label display="inline-flex" alignItems="center" gap="1" cursor="pointer">
-                          <Radio
-                            name={`sandbox-conflict-${table}-${keySig}`}
-                            checked={resolution === "skip"}
-                            onChange={() => setResolution(table, keySig, "skip")}
-                          />
-                          {t("sandboxReviewSkip")}
-                        </chakra.label>
-                      </chakra.div>
-                    );
-                  })}
+                  {/* 行ごとに flex で並べると主キーの文字幅で列がずれるので、親の grid で列を揃える
+                      (各行は display="contents" で子要素を親のセルに流し込む)。 */}
+                  <chakra.div
+                    display="grid"
+                    gridTemplateColumns="auto minmax(0, 1fr) auto auto"
+                    alignItems="center"
+                    columnGap="2.5"
+                    rowGap="1"
+                  >
+                    {st.diff.conflicts.map((c) => {
+                      const keySig = sandboxKeySignature(c.key);
+                      const resolution = st.resolutions[keySig];
+                      return (
+                        <chakra.div key={keySig} display="contents" fontSize="xs">
+                          <chakra.code>{c.key.map((v) => String(v)).join(", ")}</chakra.code>
+                          <chakra.span color="app.textMuted">
+                            {t("sandboxReviewExternalValue")}:{" "}
+                            {c.external_row
+                              ? c.external_row.map((v) => String(v)).join(", ")
+                              : t("sandboxReviewExternalDeleted")}
+                          </chakra.span>
+                          <chakra.label display="inline-flex" alignItems="center" gap="1" cursor="pointer">
+                            <Radio
+                              name={`sandbox-conflict-${table}-${keySig}`}
+                              checked={resolution === "overwrite"}
+                              onChange={() => setResolution(table, keySig, "overwrite")}
+                            />
+                            {t("sandboxReviewOverwrite")}
+                          </chakra.label>
+                          <chakra.label display="inline-flex" alignItems="center" gap="1" cursor="pointer">
+                            <Radio
+                              name={`sandbox-conflict-${table}-${keySig}`}
+                              checked={resolution === "skip"}
+                              onChange={() => setResolution(table, keySig, "skip")}
+                            />
+                            {t("sandboxReviewSkip")}
+                          </chakra.label>
+                        </chakra.div>
+                      );
+                    })}
+                  </chakra.div>
                 </chakra.div>
               )}
             </chakra.div>
