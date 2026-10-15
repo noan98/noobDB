@@ -97,7 +97,7 @@ export function ImportSheetsModal({
   // シートごとの読み込み: 先頭行 (プレビュー) から列名と型を推論する。
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    void (async () => {
       const [tables, previews] = await Promise.all([
         api.listTables(sessionId, database).catch(() => [] as string[]),
         Promise.all(

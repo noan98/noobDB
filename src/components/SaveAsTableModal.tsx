@@ -198,7 +198,6 @@ export function SaveAsTableModal({
               <Flex direction="column" gap="2">
                 {resultColumns.map((rc, i) => (
                   // 結果列名は重複しうるので位置を含めたキーにする。
-                  // biome-ignore lint/suspicious/noArrayIndexKey: 列の並び自体が識別子
                   <Flex key={`${i}:${rc}`} align="center" gap="2">
                     <chakra.span
                       flex="1"

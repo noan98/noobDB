@@ -114,7 +114,7 @@ fn filter(
     all.into_iter()
         .filter(|t| t.profile_id == profile_id)
         .filter(|t| t.database.as_deref() == db)
-        .filter(|t| table.is_none_or(|tb| t.table == tb))
+        .filter(|t| table.map_or(true, |tb| t.table == tb))
         .collect()
 }
 
