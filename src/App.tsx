@@ -5935,6 +5935,16 @@ export default function App() {
     [runExplainInTab, addTab, panesRef],
   );
 
+  // ライブテールで観測した SQL 原文を、新しい EXPLAIN タブ (推定モード = ANALYZE なし) で開く (#1622)。
+  const explainTailSql = useCallback(
+    (sql: string, database: string | null) => {
+      const tab = makeExplainTab(sql, database ?? undefined);
+      addTab(tab);
+      void runExplainInTab(tab.id, sql, false, { tab });
+    },
+    [runExplainInTab, addTab],
+  );
+
   // 現在のタブの結果セットをピン留めして保持する (#622)。スナップショットなので
   // 以降タブを再実行・破棄しても比較ビューに残る。上限超過時は古い順に破棄。
   const pinCurrentResult = useCallback(
@@ -11157,6 +11167,7 @@ export default function App() {
                       <QueryInspectorPanel
                         sessionId={sessionId}
                         driver={selectedProfile?.driver ?? "mysql"}
+                        onExplain={explainTailSql}
                       />
                     ) : activeBottomPanelTab === "whereUsed" ? (
                       <WhereUsedPanel

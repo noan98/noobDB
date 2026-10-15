@@ -463,6 +463,11 @@ pub struct TableSizeInfo {
 pub struct ServerVariable {
     pub name: String,
     pub value: String,
+    /// 値の出どころ (#1622)。PostgreSQL は `pg_settings.source` (`default` / `configuration file` /
+    /// `session` など)、MySQL 8 は `performance_schema.variables_info` を小文字化したもの
+    /// (`COMPILED` は `default`)。取れない / SQLite は `None`。`default` 以外が「既定値から変更済み」。
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Read-only snapshot of the connected server for the server-info panel (#563):

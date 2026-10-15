@@ -186,6 +186,7 @@ fn build_fixtures() -> serde_json::Value {
     let server_variable = ServerVariable {
         name: "max_connections".into(),
         value: "151".into(),
+        source: Some("configuration file".into()),
     };
     let server_info = ServerInfo {
         version: "8.0.36".into(),

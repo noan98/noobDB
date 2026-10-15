@@ -25,6 +25,7 @@ import {
   sortStatRows,
   statRowsToTable,
   supportReasonI18nKey,
+  tailExplainBlockReason,
   type LiveTailEntry,
   type StatSort,
   type StatSortKey,
@@ -171,14 +172,18 @@ export const TailRow = memo(function TailRow({
   nPlusOneCount,
   nPlusOneWindowMs,
   onCopy,
+  onExplain,
 }: {
   entry: LiveTailEntry;
   showRowsExamined: boolean;
   nPlusOneCount: number | null;
   nPlusOneWindowMs: number;
   onCopy: (sql: string) => void | Promise<void>;
+  /** 観測した原文を EXPLAIN (ANALYZE なし) で開く (#1622)。未指定ならボタンを出さない。 */
+  onExplain?: (sql: string, database: string | null) => void;
 }) {
   const t = useT();
+  const explainBlock = onExplain ? tailExplainBlockReason(e.query) : null;
   return (
     <tr>
       <chakra.td css={tdCss}>
@@ -220,6 +225,24 @@ export const TailRow = memo(function TailRow({
             <Icon name="copy" size={ICON_SIZES.sm} />
           </Button>
         </Tooltip>
+        {onExplain && (
+          <Tooltip
+            label={explainBlock ? t(`inspectorExplainBlocked_${explainBlock}`) : t("inspectorExplainSql")}
+            focusableWrapper={explainBlock !== null}
+          >
+            <Button
+              minWidth="24px"
+              px="1.5"
+              py="0.5"
+              marginLeft="1"
+              disabled={explainBlock !== null}
+              onClick={() => onExplain(e.query, e.database ?? null)}
+              aria-label={t("inspectorExplainSql")}
+            >
+              <Icon name="chart" size={ICON_SIZES.sm} />
+            </Button>
+          </Tooltip>
+        )}
       </chakra.td>
     </tr>
   );
@@ -271,7 +294,16 @@ export const StatRow = memo(function StatRow({
   );
 });
 
-export function QueryInspectorPanel({ sessionId, driver }: { sessionId: string; driver: string }) {
+export function QueryInspectorPanel({
+  sessionId,
+  driver,
+  onExplain,
+}: {
+  sessionId: string;
+  driver: string;
+  /** ライブテールの原文を EXPLAIN タブで開く (#1622)。 */
+  onExplain?: (sql: string, database: string | null) => void;
+}) {
   const t = useT();
   const toast = useToast();
   const settings = useSettings();
@@ -747,6 +779,7 @@ export function QueryInspectorPanel({ sessionId, driver }: { sessionId: string; 
                             nPlusOneCount={finding?.count ?? null}
                             nPlusOneWindowMs={finding?.windowMs ?? 0}
                             onCopy={copySql}
+                            onExplain={onExplain}
                           />
                         );
                       })}

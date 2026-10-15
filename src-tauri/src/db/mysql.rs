@@ -2444,6 +2444,23 @@ impl MySqlConn {
         // variables, which we render as an empty string. Secret-named variables
         // are masked as defense-in-depth (#563).
         let rows: Vec<MySqlRow> = sqlx::query("SHOW VARIABLES").fetch_all(&self.pool).await?;
+        // 値の出どころ (#1622)。MySQL 8 の performance_schema.variables_info が読めるときだけ。
+        // 読めない (5.7 / MariaDB / 権限不足) ときは出どころなしで続行する。
+        let sources: std::collections::HashMap<String, String> = sqlx::query(
+            "SELECT VARIABLE_NAME, VARIABLE_SOURCE FROM performance_schema.variables_info",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .filter_map(|r| {
+                    let name = r.try_get::<String, _>(0).ok()?.to_ascii_lowercase();
+                    let src = r.try_get::<String, _>(1).ok()?;
+                    Some((name, mysql_variable_source(&src)))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
         let variables = rows
             .into_iter()
             .map(|r| {
@@ -2454,7 +2471,12 @@ impl MySqlConn {
                     .flatten()
                     .unwrap_or_default();
                 let value = super::mask_sensitive_var(&name, value);
-                ServerVariable { name, value }
+                let source = sources.get(&name.to_ascii_lowercase()).cloned();
+                ServerVariable {
+                    name,
+                    value,
+                    source,
+                }
             })
             .collect();
         Ok(ServerInfo { version, variables })
@@ -2529,6 +2551,17 @@ pub async fn exec_text_protocol(opts: &DbConnectOptions, sql: &str) -> Result<()
     drop(c);
     conn.close().await;
     Ok(())
+}
+
+/// `performance_schema.variables_info.VARIABLE_SOURCE` を、PostgreSQL の `pg_settings.source` と
+/// 並べて扱える表記にする (#1622)。`COMPILED` (コンパイル時の既定) だけを `default` にし、他は
+/// 小文字化して返す (`GLOBAL` / `COMMAND_LINE` / `PERSISTED` など)。
+fn mysql_variable_source(source: &str) -> String {
+    if source.eq_ignore_ascii_case("COMPILED") {
+        "default".to_string()
+    } else {
+        source.to_ascii_lowercase()
+    }
 }
 
 /// `processlist.STATE` がロック待ち (`Waiting for table metadata lock` /
@@ -3841,6 +3874,13 @@ fn main_statement_is_mutation(masked: &[char]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn variable_source_normalizes_compiled_to_default() {
+        assert_eq!(super::mysql_variable_source("COMPILED"), "default");
+        assert_eq!(super::mysql_variable_source("PERSISTED"), "persisted");
+        assert_eq!(super::mysql_variable_source("COMMAND_LINE"), "command_line");
+    }
+
     #[test]
     fn lock_conflict_errors_are_recognised() {
         let dead = AppError::Other(

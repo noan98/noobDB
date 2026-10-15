@@ -227,6 +227,13 @@ async fn postgres_table_sizes_and_server_info() {
         info.variables.iter().any(|v| v.name == "server_version"),
         "pg_settings must include server_version"
     );
+    // 値の出どころ (#1622): pg_settings.source が入り、既定値のままの変数は `default`。
+    assert!(
+        info.variables
+            .iter()
+            .any(|v| v.source.as_deref() == Some("default")),
+        "pg_settings.source must be reported"
+    );
 
     conn.execute("DROP TABLE public.noobdb_pg_sizes", None)
         .await

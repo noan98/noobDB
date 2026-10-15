@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type ServerInfo } from "../api/tauri";
+import { api, type ServerInfo, type ServerVariable } from "../api/tauri";
 import { useT } from "../i18n";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -10,7 +10,9 @@ import { ErrorNote } from "./modalForm";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
-import { Button, Heading, Input } from "./ui";
+import { copyToClipboard } from "./clipboard";
+import { useToast } from "./Toast";
+import { Button, Checkbox, Heading, Input } from "./ui";
 
 /**
  * サーバ / 接続情報パネル (#563)。接続中サーバのバージョンと設定変数を読み取り専用で
@@ -42,8 +44,21 @@ const tdCss: SystemStyleObject = {
 const nameTdCss: SystemStyleObject = { ...tdCss, whiteSpace: "nowrap", color: "var(--text-secondary)" };
 const valueTdCss: SystemStyleObject = { ...tdCss, wordBreak: "break-all", maxWidth: "640px" };
 
+/** 既定値から変更された変数か (`source` が `default` 以外)。出どころが分からない変数は変更なし扱いにしない (#1622)。 */
+export function isNonDefaultVariable(v: Pick<ServerVariable, "source">): boolean {
+  const src = v.source?.trim().toLowerCase();
+  return !!src && src !== "default";
+}
+
+/** 障害報告へ貼りやすい `name = value` の 1 行。 */
+export function variableAsSetting(v: Pick<ServerVariable, "name" | "value">): string {
+  return `${v.name} = ${v.value}`;
+}
+
 export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const t = useT();
+  const toast = useToast();
+  const [onlyChanged, setOnlyChanged] = useState(false);
 
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,11 +91,24 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
   }, [load]);
 
   const variables = info?.variables ?? [];
+  // 出どころ (source) が分かる変数が 1 つでもあるときだけ「既定値以外のみ」を出す (#1622)。
+  const hasSource = useMemo(() => variables.some((v) => !!v.source), [variables]);
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return variables;
-    return variables.filter((v) => v.name.toLowerCase().includes(q) || v.value.toLowerCase().includes(q));
-  }, [variables, filter]);
+    return variables.filter(
+      (v) =>
+        (!onlyChanged || isNonDefaultVariable(v)) &&
+        (!q || v.name.toLowerCase().includes(q) || v.value.toLowerCase().includes(q)),
+    );
+  }, [variables, filter, onlyChanged]);
+
+  const copyVariable = useCallback(
+    async (text: string) => {
+      if (await copyToClipboard(text)) toast.success(t("serverInfoCopied"));
+      else toast.error(t("serverInfoCopyFailed"));
+    },
+    [toast, t],
+  );
 
   return (
     <Box flex="1" overflowY="auto" py="5" px="6" display="flex" flexDirection="column" gap="3.5">
@@ -142,6 +170,18 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
           width="auto"
           minWidth="220px"
         />
+        {hasSource && (
+          <chakra.label
+            display="inline-flex"
+            alignItems="center"
+            gap="1.5"
+            fontSize="sm"
+            color="app.textSecondary"
+          >
+            <Checkbox checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} />
+            {t("serverInfoOnlyChanged")}
+          </chakra.label>
+        )}
         {loading && <Spinner size={14} />}
         {info && (
           <chakra.span fontSize="xs" color="app.textMuted" role="status">
@@ -177,18 +217,54 @@ export function ServerInfoPanel({ sessionId, onClose }: { sessionId: string; onC
                   {t("serverInfoColName")}
                 </chakra.th>
                 <chakra.th css={thCss}>{t("serverInfoColValue")}</chakra.th>
+                <chakra.th css={thCss} width="1%">
+                  <chakra.span srOnly>{t("serverInfoColCopy")}</chakra.span>
+                </chakra.th>
               </tr>
             </thead>
             <tbody>
               {loading && variables.length === 0 ? (
                 // 初回ロード中 (まだ 1 件も取得していない): 「値」列が埋まる前の
                 // 裸のヘッダのみ表示を避け、行の構造をシマーで予兆表示する (#846)。
-                <SkeletonTableRows columns={2} />
+                <SkeletonTableRows columns={3} />
               ) : (
                 filtered.map((v) => (
                   <tr key={v.name}>
                     <chakra.td css={nameTdCss}>{v.name}</chakra.td>
-                    <chakra.td css={valueTdCss}>{v.value}</chakra.td>
+                    <chakra.td css={valueTdCss}>
+                      {v.value}
+                      {isNonDefaultVariable(v) && (
+                        <Tooltip
+                          label={t("serverInfoChangedHint", { source: v.source ?? "" })}
+                          focusableWrapper
+                        >
+                          <chakra.span
+                            marginLeft="2"
+                            px="1.5"
+                            fontSize="var(--text-xs)"
+                            fontFamily="var(--font-sans)"
+                            color="app.textWarning"
+                            border="1px solid currentColor"
+                            borderRadius="var(--radius-sm)"
+                          >
+                            {t("serverInfoChangedBadge")}
+                          </chakra.span>
+                        </Tooltip>
+                      )}
+                    </chakra.td>
+                    <chakra.td css={tdCss}>
+                      <Tooltip label={t("serverInfoCopyValue")}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          aria-label={t("serverInfoCopyValueAria", { name: v.name })}
+                          onClick={() => void copyVariable(variableAsSetting(v))}
+                        >
+                          <Icon name="copy" size={ICON_SIZES.sm} />
+                        </Button>
+                      </Tooltip>
+                    </chakra.td>
                   </tr>
                 ))
               )}

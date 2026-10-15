@@ -2388,9 +2388,10 @@ impl PostgresConn {
             .unwrap_or_default();
         // pg_settings exposes every GUC as (name, setting). Read-only.
         // Secret-named settings are masked as defense-in-depth (#563).
-        let rows: Vec<PgRow> = sqlx::query("SELECT name, setting FROM pg_settings ORDER BY name")
-            .fetch_all(&self.pool)
-            .await?;
+        let rows: Vec<PgRow> =
+            sqlx::query("SELECT name, setting, source FROM pg_settings ORDER BY name")
+                .fetch_all(&self.pool)
+                .await?;
         let variables = rows
             .into_iter()
             .map(|r| {
@@ -2401,7 +2402,12 @@ impl PostgresConn {
                     .flatten()
                     .unwrap_or_default();
                 let value = super::mask_sensitive_var(&name, value);
-                ServerVariable { name, value }
+                let source = r.try_get::<Option<String>, _>(2).ok().flatten();
+                ServerVariable {
+                    name,
+                    value,
+                    source,
+                }
             })
             .collect();
         Ok(ServerInfo { version, variables })

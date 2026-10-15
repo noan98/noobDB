@@ -4499,6 +4499,7 @@
     "variables": [
       {
         "name": "max_connections",
+        "source": "configuration file",
         "value": "151"
       }
     ],
@@ -4516,6 +4517,7 @@
   },
   "serverVariable": {
     "name": "max_connections",
+    "source": "configuration file",
     "value": "151"
   },
   "skippedProfileVariants": [

@@ -141,6 +141,8 @@ export const tableSizeInfo = z.object({
 export const serverVariable = z.object({
   name: z.string(),
   value: z.string(),
+  // 値の出どころ (#1622)。
+  source: z.string().nullish(),
 });
 
 /** サーバ情報 (バージョン + 設定変数一覧)。 */

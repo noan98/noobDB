@@ -1704,6 +1704,7 @@ impl SqliteConn {
                 variables.push(ServerVariable {
                     name: (*name).to_string(),
                     value,
+                    source: None,
                 });
             }
         }

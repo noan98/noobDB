@@ -818,6 +818,9 @@ export interface SchemaTree {
 export interface ServerVariable {
   name: string;
   value: string;
+  /** 値の出どころ (#1622)。PostgreSQL は pg_settings.source、MySQL 8 は variables_info。`default` 以外が変更済み。
+   *  取れない / SQLite は無し。 */
+  source?: string | null;
 }
 
 /**
