@@ -240,12 +240,7 @@ function RelatedSection({
           {entry.fk.table}.{entry.fk.column}
         </chakra.span>
         {count && count !== "error" && (
-          <chakra.span
-            flexShrink={0}
-            textStyle="caption"
-            fontFamily="mono"
-            data-testid="related-count"
-          >
+          <chakra.span flexShrink={0} textStyle="caption" fontFamily="mono" data-testid="related-count">
             {count.over
               ? t("relatedRowsBadgeOver", { count: count.count })
               : t("relatedRowsBadge", { count: count.count })}
