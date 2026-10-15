@@ -5482,6 +5482,11 @@ const en = {
   gridCondTone_danger: "Red",
   gridCondTone_warning: "Amber",
   gridCondTone_success: "Green",
+  diffChangedOnlyLabel: "Changed only",
+  diffChangedOnlyAria: "Show only changed and added rows",
+  gridFindHitsOnlyTitle: "Show only rows with hits",
+  diffGhostTitle: "Removed rows ({count})",
+  diffGhostCapped: "Showing the first {limit} rows",
 };
 
 export type I18nKey = keyof typeof en;
@@ -10935,6 +10940,11 @@ const ja: Dict = {
   gridCondTone_danger: "赤",
   gridCondTone_warning: "黄",
   gridCondTone_success: "緑",
+  diffChangedOnlyLabel: "変化のみ",
+  diffChangedOnlyAria: "変化した行と追加された行だけを表示",
+  gridFindHitsOnlyTitle: "ヒットのある行だけを表示",
+  diffGhostTitle: "削除された行 ({count})",
+  diffGhostCapped: "先頭 {limit} 行のみ表示",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

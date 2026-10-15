@@ -5,6 +5,8 @@ import {
   computeColumnMatchRows,
   computeFindMatches,
   findMatchKey,
+  findHitRowSet,
+  intersectRowAllow,
   nextMatchIndex,
   stableMatchIndex,
   type GridFindMatch,
@@ -207,5 +209,23 @@ describe("computeColumnMatchRows (#1257)", () => {
     expect(computeColumnMatchRows([], 0, "a", opts).rowIdxs).toEqual([]);
     expect(computeColumnMatchRows(rows, 9, "a", opts).rowIdxs).toEqual([]);
     expect(computeColumnMatchRows(rows, -1, "a", opts).rowIdxs).toEqual([]);
+  });
+});
+
+describe("ヒットのみ表示の行集合 (#1628)", () => {
+  it("findHitRowSet は同じ行の複数ヒットを 1 行にまとめる", () => {
+    const set = findHitRowSet([
+      { rowIdx: 3, colIdx: 0 },
+      { rowIdx: 3, colIdx: 2 },
+      { rowIdx: 7, colIdx: 1 },
+    ]);
+    expect([...set].sort()).toEqual([3, 7]);
+  });
+  it("intersectRowAllow は null を制限なしとして扱い、両方あれば共通部分", () => {
+    expect(intersectRowAllow(null, null)).toBeNull();
+    const a = new Set([1, 2, 3]);
+    expect(intersectRowAllow(a, null)).toBe(a);
+    expect(intersectRowAllow(null, a)).toBe(a);
+    expect([...(intersectRowAllow(a, new Set([2, 3, 9])) ?? [])]).toEqual([2, 3]);
   });
 });

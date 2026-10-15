@@ -199,7 +199,7 @@ import {
   type ServerSort,
   type ServerSortDirection,
 } from "./serverBrowse";
-import { diffResultRows, rowDiffFor } from "../resultDiff";
+import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
 import {
   type SelectionSummary,
@@ -240,6 +240,8 @@ import {
   FIND_DEBOUNCE_MIN_ROWS,
   FIND_DEBOUNCE_MS,
   buildFindKeySet,
+  findHitRowSet,
+  intersectRowAllow,
   computeFindMatches,
   findMatchKey,
   nextMatchIndex,
@@ -1733,6 +1735,55 @@ const FIND_TOGGLE_CSS: SystemStyleObject = {
  * contains/equals/starts/ends; numeric columns expose = / > / < / range; both
  * carry a NULL gate (include / only / exclude).
  */
+const GHOST_ROWS_SHOWN = 200;
+
+/**
+ * 再実行差分で「前回にあって今回に無い」行を、取り消し線の淡い行として並べる (#1628)。
+ * 元の位置には差し込めない (行位置が選択・編集の添字に使われる) ので、グリッドの直下に
+ * まとめて出す。表示専用で、選択・編集・コピーの対象にはならない。
+ */
+function RemovedRowsGhost({ columns, rows }: { columns: string[]; rows: CellValue[][] }) {
+  const t = useT();
+  return (
+    <Box
+      borderTopWidth="1px"
+      borderColor="app.border"
+      px="2"
+      py="1.5"
+      data-testid="removed-rows-ghost"
+      aria-label={t("diffGhostTitle", { count: rows.length })}
+      role="group"
+    >
+      <chakra.div textStyle="caption" mb="1">
+        {t("diffGhostTitle", { count: rows.length })}
+        {rows.length >= GHOST_ROWS_SHOWN ? ` — ${t("diffGhostCapped", { limit: GHOST_ROWS_SHOWN })}` : ""}
+      </chakra.div>
+      <chakra.table fontSize="xs" fontFamily="mono" opacity={0.6} textDecoration="line-through">
+        <thead>
+          <tr>
+            {columns.map((c, ci) => (
+              <chakra.th key={ci} textAlign="left" px="2" fontWeight="600">
+                {c}
+              </chakra.th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri}>
+              {columns.map((_, ci) => (
+                <chakra.td key={ci} px="2" whiteSpace="nowrap">
+                  {r[ci] === null || r[ci] === undefined ? "NULL" : String(r[ci])}
+                </chakra.td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </chakra.table>
+    </Box>
+  );
+}
+
 /** 閾値の数値入力。入力中は文字列で持ち、数値として解釈できたときだけ確定する (#1628)。 */
 function ThresholdValueInput({ value, onCommit }: { value: number; onCommit: (v: number) => void }) {
   const t = useT();
@@ -3624,6 +3675,7 @@ export const DataGrid = memo(function DataGrid({
   changedCells,
   changedColumns,
   addedRowIndices,
+  rowAllowSet,
   globalFilter,
   editable = false,
   editableColumns,
@@ -3691,6 +3743,8 @@ export const DataGrid = memo(function DataGrid({
    * `rows[i]` and resolved through `row.index`, like `changedCells`.
    */
   addedRowIndices?: Set<number>;
+  /** 表示を許可する元の行位置。null/未指定なら制限なし (ヒットのみ / 変化のみ表示, #1628)。 */
+  rowAllowSet?: ReadonlySet<number> | null;
   /** Optional global filter string applied across all visible columns. */
   globalFilter?: string;
   /**
@@ -5131,15 +5185,19 @@ export const DataGrid = memo(function DataGrid({
 
   const tableRows = table.getRowModel().rows;
   const visibleRows = useMemo(() => {
-    if (!handleManual || !handleOrder?.order) return tableRows;
-    // ハンドルの順序は元の行位置 (= core row model の添字) の並び。
-    const out: typeof tableRows = [];
-    for (const i of handleOrder.order) {
-      const r = tableRows[i];
-      if (r) out.push(r);
+    let base: typeof tableRows = tableRows;
+    if (handleManual && handleOrder?.order) {
+      // ハンドルの順序は元の行位置 (= core row model の添字) の並び。
+      const out: typeof tableRows = [];
+      for (const i of handleOrder.order) {
+        const r = tableRows[i];
+        if (r) out.push(r);
+      }
+      base = out;
     }
-    return out;
-  }, [handleManual, handleOrder, tableRows]);
+    // ヒットのみ / 変化のみ表示 (#1628): 並び・フィルタの結果にさらに行の許可集合を掛ける。
+    return rowAllowSet ? base.filter((r) => rowAllowSet.has(r.index)) : base;
+  }, [handleManual, handleOrder, tableRows, rowAllowSet]);
   // Original column indices in their current *display* order (reorder/hide
   // aware). Keyboard navigation steps through this; data lookups use the
   // original index it yields.
@@ -5158,7 +5216,7 @@ export const DataGrid = memo(function DataGrid({
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
-  const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter);
+  const isFiltered = enableColumnControls && (hasColumnFilter || hasGlobalFilter || !!rowAllowSet);
   // Multi-column sort summary: surface a clear-all affordance when more
   // than one sort key is active (single-column sort clears via its own cycle).
   const multiSortActive = enableColumnControls && sorting.length > 1;
@@ -7820,6 +7878,10 @@ export const ResultGrid = memo(
     const [findCaseSensitive, setFindCaseSensitive] = useState(false);
     const [findWholeCell, setFindWholeCell] = useState(false);
     const [findRegex, setFindRegex] = useState(false);
+    // Find の「ヒットのみ表示」(#1628)。
+    const [findHitsOnly, setFindHitsOnly] = useState(false);
+    // 再実行差分の「変化のみ」(#1628)。
+    const [diffChangedOnly, setDiffChangedOnly] = useState(false);
     const [findIdx, setFindIdx] = useState<number | null>(null);
     const [findNav, setFindNav] = useState<GridFindNav | null>(null);
     const findSeqRef = useRef(0);
@@ -7948,6 +8010,19 @@ export const ResultGrid = memo(
     const findHits = useMemo(
       () => (findResult.matches.length > 0 ? buildFindKeySet(findResult.matches) : undefined),
       [findResult],
+    );
+    // ヒット行だけに絞る許可集合。ハンドル経由で先頭 N 件に打ち切られているときは、
+    // 残りのヒット行を隠してしまうので絞らない。
+    const findRowAllow = useMemo(
+      () =>
+        findHitsOnly &&
+        findOpen &&
+        effectiveFindQuery !== "" &&
+        !findResult.invalidRegex &&
+        findTotal <= findResult.matches.length
+          ? findHitRowSet(findResult.matches)
+          : null,
+      [findHitsOnly, findOpen, effectiveFindQuery, findResult, findTotal],
     );
     const findCurrentMatch = findIdx != null ? (findResult.matches[findIdx] ?? null) : null;
 
@@ -8190,6 +8265,23 @@ export const ResultGrid = memo(
       // (全行の突き合わせをやり直さない, #1257)。
       return rowDiffFor(resultRows) ?? diffResultRows(diffPrevRows, resultRows, pkIndices, columns.length);
     }, [diffHighlightEnabled, diffComparable, streaming, diffPrevRows, resultRows, columns, pkIndices]);
+
+    const diffRowAllow = useMemo(
+      () => (diffChangedOnly && diff && result ? changedRowIndexSet(diff, result.rows.length) : null),
+      [diffChangedOnly, diff, result],
+    );
+    const rowAllowSet = useMemo(
+      () => intersectRowAllow(findRowAllow, diffRowAllow),
+      [findRowAllow, diffRowAllow],
+    );
+    // 削除行のゴースト表示 (#1628): 前回にあって今回に無い行 (PK ペア無し)。
+    const ghostRows = useMemo(
+      () =>
+        diff && diff.removedCount > 0 && diffPrevRows && resultRows
+          ? removedPrevRows(diffPrevRows, resultRows, pkIndices, GHOST_ROWS_SHOWN)
+          : [],
+      [diff, diffPrevRows, resultRows, pkIndices],
+    );
 
     // Persist column widths per result shape: same database+table+column set
     // restores saved widths, a different shape falls back to defaults. The
@@ -8792,6 +8884,25 @@ export const ResultGrid = memo(
                   {t("diffHighlightLabel")}
                 </chakra.label>
                 {diff?.hasChanges && (
+                  <chakra.label
+                    display="inline-flex"
+                    alignItems="center"
+                    gap="1"
+                    fontSize="xs"
+                    whiteSpace="nowrap"
+                    color="app.text"
+                    cursor="pointer"
+                  >
+                    <chakra.input
+                      type="checkbox"
+                      checked={diffChangedOnly}
+                      aria-label={t("diffChangedOnlyAria")}
+                      onChange={(e) => setDiffChangedOnly(e.target.checked)}
+                    />
+                    {t("diffChangedOnlyLabel")}
+                  </chakra.label>
+                )}
+                {diff?.hasChanges && (
                   <chakra.span
                     role="status"
                     aria-live="polite"
@@ -9289,6 +9400,17 @@ export const ResultGrid = memo(
                     .*
                   </chakra.button>
                 </Tooltip>
+                <Tooltip label={t("gridFindHitsOnlyTitle")}>
+                  <chakra.button
+                    type="button"
+                    css={FIND_TOGGLE_CSS}
+                    aria-pressed={findHitsOnly}
+                    onClick={() => setFindHitsOnly((v) => !v)}
+                    aria-label={t("gridFindHitsOnlyTitle")}
+                  >
+                    <Icon name="filter" size={ICON_SIZES.sm} />
+                  </chakra.button>
+                </Tooltip>
                 <chakra.span
                   fontSize="xs"
                   fontFamily="mono"
@@ -9384,6 +9506,7 @@ export const ResultGrid = memo(
             onLookupQuery={editableActive ? onLookupQuery : undefined}
             changedCells={diff?.changedCells}
             addedRowIndices={diff?.addedRows}
+            rowAllowSet={rowAllowSet}
             pendingDeleteKeys={pendingDeleteKeys}
             onToggleRowDelete={editableActive ? onToggleRowDelete : undefined}
             onRequestInsertRow={editableActive ? onRequestInsertRow : undefined}
@@ -9424,6 +9547,9 @@ export const ResultGrid = memo(
             onSetServerFilter={onSetServerFilter}
             emptyMessage={gridEmptyMessage}
           />
+          {ghostRows.length > 0 && result && (
+            <RemovedRowsGhost columns={result.columns.map((c) => c.name)} rows={ghostRows} />
+          )}
           {!paginateMode && loadingMore && (
             <Box
               role="status"
