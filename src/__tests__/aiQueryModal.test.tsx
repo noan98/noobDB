@@ -181,6 +181,25 @@ describe("AiQueryModal (#691)", () => {
     await waitFor(() => expect(screen.queryByTestId("ai-query-result")).toBeNull());
   });
 
+  it("送ったスキーマに無い表・列は警告に足す。既存の警告は残す (#1620)", async () => {
+    renderWithProviders(ui());
+    await generate();
+    await waitFor(() => expect(runAiRequest).toHaveBeenCalledTimes(1));
+    const bad = JSON.stringify({
+      sql: "select o.id, o.price from orders o join ghosts g on g.id = o.id",
+      explanation: "",
+      warnings: ["注意です"],
+      tables_used: ["orders", "ghosts"],
+    });
+    act(() => {
+      handlers?.onDelta?.({ streamId: "x", text: bad });
+      handlers?.onDone?.({} as never);
+    });
+    await screen.findByText(t("aiQueryUnknownTable", { name: "ghosts" }));
+    expect(screen.getByText(t("aiQueryUnknownColumn", { name: "price", table: "orders" }))).toBeTruthy();
+    expect(screen.getByText("注意です")).toBeTruthy();
+  });
+
   it("1 行で返った SQL も整形して表示し、整形できない SQL はそのまま出す", async () => {
     renderWithProviders(ui());
     await generate();

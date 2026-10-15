@@ -5472,6 +5472,21 @@ const en = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (for prompts up to 100K tokens; $0.50 / $2.50 beyond that)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  aiMonthlyBudget: "Monthly budget (USD)",
+  aiMonthlyBudgetHelp:
+    "Once the estimated cost since the start of the month (JST) reaches this amount, AI requests are stopped before they are sent. You get a warning at 80%. Empty = no limit. The cost is an estimate from the usage history and the built-in price table.",
+  aiMonthlyBudgetPlaceholder: "No limit",
+  aiBudgetOk: "This month's estimated AI cost: {spent} of {budget} ({percent}%).",
+  aiBudgetWarning:
+    "This month's estimated AI cost is {spent} of {budget} ({percent}%). Requests stop when the budget is reached.",
+  aiBudgetExceeded:
+    "This month's estimated AI cost ({spent}) has reached the budget ({budget}). AI requests are stopped until you raise the budget or the month changes.",
+  errorHintAiBudget:
+    "The monthly AI budget has been reached. Raise it under Settings > AI assistant, or wait for the next month (JST).",
+  aiQueryUnknownTable:
+    'The table "{name}" is not in the schema that was sent. It may not exist; check the name before running.',
+  aiQueryUnknownColumn:
+    'The column "{name}" was not found in the table "{table}" in the schema that was sent. It may not exist; check the name before running.',
 };
 
 export type I18nKey = keyof typeof en;
@@ -10915,6 +10930,21 @@ const ja: Dict = {
   helpAiPriceHaiku:
     "Claude Haiku 5.5: $0.10 / $0.50 (プロンプト 10 万トークン以下の場合。超えると $0.50 / $2.50)",
   helpAiPriceFable: "Claude Fable 5.1: $10 / $50",
+  aiMonthlyBudget: "月次予算 (USD)",
+  aiMonthlyBudgetHelp:
+    "月初 (JST) からの概算コストがこの額に達すると、AI への要求を送る前に止めます。80% に達すると警告を出します。空欄 = 上限なし。コストは使用量の履歴と内蔵の単価表による概算です。",
+  aiMonthlyBudgetPlaceholder: "上限なし",
+  aiBudgetOk: "今月の AI の概算コスト: {budget} 中 {spent} ({percent}%)。",
+  aiBudgetWarning:
+    "今月の AI の概算コストが {budget} 中 {spent} ({percent}%) に達しています。予算に達すると AI の実行を止めます。",
+  aiBudgetExceeded:
+    "今月の AI の概算コスト ({spent}) が予算 ({budget}) に達しました。予算を引き上げるか翌月になるまで、AI の実行は止まります。",
+  errorHintAiBudget:
+    "AI の月次予算に達しました。設定の「AI アシスタント」で予算を引き上げるか、翌月 (JST) まで待ってください。",
+  aiQueryUnknownTable:
+    "テーブル「{name}」は送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
+  aiQueryUnknownColumn:
+    "列「{name}」はテーブル「{table}」の送ったスキーマに見当たりません。存在しない可能性があるので、実行前に名前を確認してください。",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };
