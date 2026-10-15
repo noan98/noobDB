@@ -908,7 +908,7 @@ function sanitizeMotionPreference(input: unknown, fallback: MotionPreference): M
  * 受け入れ、空文字や非文字列は捨てる (壊れた localStorage 耐性)。id の妥当性は
  * `resolveShortcutBindings` 側で既知 id のみ採用するため、ここでは形だけ整える。
  */
-function sanitizeShortcutOverrides(input: unknown): Record<string, string> {
+export function sanitizeShortcutOverrides(input: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (input && typeof input === "object") {
     for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
@@ -1878,6 +1878,26 @@ export function setShortcutBinding(id: string, combo: string | null): void {
     if (next[id] === combo) return;
     next[id] = combo;
   }
+  current = { ...current, shortcutOverrides: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * 複数のショートカット上書きをまとめて反映する (#1631: 衝突時の入れ替え)。1 回の保存・通知で済ませる。
+ */
+export function applyShortcutBindings(changes: Record<string, string>): void {
+  const next = { ...current.shortcutOverrides, ...sanitizeShortcutOverrides(changes) };
+  if (JSON.stringify(next) === JSON.stringify(current.shortcutOverrides)) return;
+  current = { ...current, shortcutOverrides: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** ショートカット上書きを丸ごと置き換える (#1631: JSON の読み込み)。値は検証を通す。 */
+export function replaceShortcutBindings(overrides: Record<string, string>): void {
+  const next = sanitizeShortcutOverrides(overrides);
+  if (JSON.stringify(next) === JSON.stringify(current.shortcutOverrides)) return;
   current = { ...current, shortcutOverrides: next };
   persist();
   listeners.forEach((cb) => cb());
