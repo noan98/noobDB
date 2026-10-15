@@ -17,6 +17,8 @@ import { Tooltip } from "./Tooltip";
  */
 interface Props {
   result: PreflightResult | null;
+  /** 渡すと、影響行を数えられる計画でバッジがボタンになり、押すと影響行のサンプルを開ける (#1626)。 */
+  onOpenSample?: () => void;
 }
 
 const TONE_STYLE: Record<PreflightTone, { bg: string; border: string; fg: string }> = {
@@ -33,7 +35,7 @@ const TONE_STYLE: Record<PreflightTone, { bg: string; border: string; fg: string
   },
 };
 
-export function PreflightBadge({ result }: Props) {
+export function PreflightBadge({ result, onOpenSample }: Props) {
   const t = useT();
   if (!result) return null;
 
@@ -63,16 +65,30 @@ export function PreflightBadge({ result }: Props) {
   }
 
   const style = TONE_STYLE[tone];
+  const canOpenSample = !!onOpenSample && result.plan.countSql !== null && result.status !== "unestimable";
 
   // このバッジ自体は非対話 (`role="status"`) でフォーカス不能なため、native
   // `title=` のツールチップはキーボードでは元々一切読めなかった。共有 `Tooltip`
   // (#814) の `focusableWrapper` で読み取り専用のタブストップを与え、内容
   // (推定である旨の説明) をキーボードでも読めるようにする。
   return (
-    <Tooltip label={title} focusableWrapper>
+    <Tooltip label={canOpenSample ? `${title} ${t("editorPreflightSampleHint")}` : title} focusableWrapper>
       <chakra.span
-        role="status"
-        aria-live="polite"
+        role={canOpenSample ? "button" : "status"}
+        aria-live={canOpenSample ? undefined : "polite"}
+        tabIndex={canOpenSample ? 0 : undefined}
+        cursor={canOpenSample ? "pointer" : undefined}
+        onClick={canOpenSample ? onOpenSample : undefined}
+        onKeyDown={
+          canOpenSample
+            ? (e: React.KeyboardEvent) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpenSample?.();
+                }
+              }
+            : undefined
+        }
         display="inline-flex"
         alignItems="center"
         gap="1.5"

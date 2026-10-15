@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { chakra } from "@chakra-ui/react";
 import { api, type DriverKind } from "../api/tauri";
+import { diffLines, hasDiffChanges } from "../ai/sqlAssist";
 import { useT } from "../i18n";
 import {
   buildApplyRoutineStatements,
@@ -11,6 +13,7 @@ import {
 } from "./routineMaintenance";
 import { useConfirm } from "./ConfirmDialog";
 import { Callout } from "./Callout";
+import { DiffView } from "./AiSqlDiff";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldLabel, FormSection } from "./modalForm";
 import { Button, PressableButton, Textarea } from "./ui";
@@ -102,6 +105,12 @@ export function RoutineEditorModal({
         : [],
     [editing, driver, kind, original, text],
   );
+  // 元の定義との行単位の差分 (#1626)。編集のときだけ。一部だけ書き換えたつもりの意図しない変更を適用前に見つける。
+  const diff = useMemo(
+    () => (editing && original !== null ? diffLines(original, text) : null),
+    [editing, original, text],
+  );
+  const diffChanged = diff ? hasDiffChanges(diff) : false;
   const kindLabel = t(KIND_LABEL_KEYS[kind]);
   const atomic = routineApplyIsAtomic(driver);
   const canApply = !readOnly && !loading && !loadError && !busy && built.ok;
@@ -112,7 +121,12 @@ export function RoutineEditorModal({
     if (editing && !atomic) {
       const ok = await confirm({
         title: t("routineEditConfirmTitle", { name: name ?? "" }),
-        message: t("routineEditConfirmBody", { name: name ?? "" }),
+        message: (
+          <>
+            {t("routineEditConfirmBody", { name: name ?? "" })}
+            {diff && diffChanged && <DiffView lines={diff} />}
+          </>
+        ),
         confirmLabel: t("routineEditConfirmApply"),
         tone: "danger",
       });
@@ -195,6 +209,18 @@ export function RoutineEditorModal({
             {driver === "mysql" ? ` ${t("routineEditNoteMysqlDelimiter")}` : ""}
           </Callout>
           {pgWarnings.length > 0 && <Callout tone="warning">{pgWarnings.map((k) => t(k)).join(" ")}</Callout>}
+          {diff && !loading && (
+            <FormSection>
+              <FieldLabel as="div">{t("routineEditDiffLabel")}</FieldLabel>
+              {diffChanged ? (
+                <DiffView lines={diff} />
+              ) : (
+                <chakra.span color="app.textMuted" textStyle="caption" data-testid="routine-diff-none">
+                  {t("routineEditDiffNone")}
+                </chakra.span>
+              )}
+            </FormSection>
+          )}
           {built.ok && (
             <FormSection>
               <FieldLabel as="div">{t("routineEditPreviewLabel")}</FieldLabel>

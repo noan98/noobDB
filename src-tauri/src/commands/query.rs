@@ -1611,6 +1611,7 @@ async fn finish_captured_write(
                 sql.clone(),
                 capture,
                 retention_days,
+                None,
             )
             .await;
         }

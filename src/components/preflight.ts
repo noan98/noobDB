@@ -304,6 +304,25 @@ function finishPlan(
   };
 }
 
+/** 影響行のサンプルとして先頭に見せる行数 (#1626)。 */
+export const PREFLIGHT_SAMPLE_ROWS = 20;
+
+const COUNT_PREFIX = "SELECT COUNT(*) FROM ";
+
+/**
+ * プリフライトの `countSql` と同じ対象・同じ WHERE から、影響行の先頭数行を読む読み取り専用の
+ * `SELECT * FROM ... [WHERE ...] LIMIT n` を作る (#1626)。件数クエリを派生元にするので、バッジの件数と
+ * サンプルがずれない。件数を数えられない (推定不可) 計画では null。
+ */
+export function buildPreflightSampleSql(
+  plan: Pick<PreflightPlan, "countSql">,
+  limit = PREFLIGHT_SAMPLE_ROWS,
+): string | null {
+  if (!plan.countSql || !plan.countSql.startsWith(COUNT_PREFIX)) return null;
+  const n = Math.max(1, Math.floor(limit));
+  return `SELECT * FROM ${plan.countSql.slice(COUNT_PREFIX.length)} LIMIT ${n}`;
+}
+
 /** バッジの強調度。少数=中立 / 多数=警告 / 全行=危険 (#664 の意味色に対応)。 */
 export type PreflightTone = "neutral" | "warning" | "danger";
 

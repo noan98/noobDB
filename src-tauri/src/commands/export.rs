@@ -412,6 +412,24 @@ async fn write_export(
     .map_err(|e| AppError::Other(format!("export task failed: {e}")))?
 }
 
+/// 完成済みのバイト列を、一時ファイル経由で `path` へ置き換える (#1626)。書き込みに失敗しても
+/// 既存の保存先は壊れず、途中のファイルも残らない (エクスポートと同じ方式)。
+pub(crate) async fn write_file_atomically(path: String, bytes: Vec<u8>) -> Result<()> {
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        use std::io::Write;
+        let (tmp, mut file) = create_export_temp_file(&path)?;
+        let mut cleanup = PartialFileCleanup::new(tmp.clone());
+        file.write_all(&bytes)?;
+        file.flush()?;
+        drop(file);
+        std::fs::rename(&tmp, &path)?;
+        cleanup.commit();
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("file write task failed: {e}")))?
+}
+
 /// 形式ごとのライタへの振り分け。ファイル出力 ([`write_export`]) と、フロントの
 /// プレビュー実装との共有ゴールデン (`tests/export_format_golden.rs`、#879) が
 /// **同じ経路**を通るように、`Write` 実装を取る形で切り出してある。

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
+import { BackendError } from "../api/invoke";
 
 /**
  * 接続ヘルス (#1068) のパネル結線。純ロジックは `connectionHealth.test.ts` が固定し、
@@ -217,6 +218,87 @@ describe("ConnectionHealthPanel (#1068)", () => {
     fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthReconnect")) }));
     await waitFor(() => expect(api.reconnect).toHaveBeenCalledWith("dead"));
     await waitFor(() => expect(onReconnected).toHaveBeenCalledWith("dead"));
+  });
+
+  // 明示トランザクションが生きている接続を再接続すると未確定の変更が失われる (#1626)。
+  it("トランザクション中で拒否されたら確認し、承諾したときだけ force=true で再接続する", async () => {
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new BackendError("transactionActive", "tx"));
+    vi.mocked(api.reconnect).mockResolvedValueOnce(undefined);
+    const onReconnected = vi.fn();
+    renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[{ sessionId: "dead", profile: mysql }]}
+        profiles={[mysql]}
+        activeSessionId={null}
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={onReconnected}
+      />,
+    );
+    const row = await screen.findByTestId("health-row-m");
+    await waitFor(() => expect(within(row).getByText(t("healthStatusDown"))).toBeInTheDocument());
+    fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthReconnect")) }));
+    const dialogs = await screen.findAllByRole("dialog");
+    fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("reconnectTxConfirm") }),
+    );
+    await waitFor(() => expect(api.reconnect).toHaveBeenLastCalledWith("dead", true));
+    await waitFor(() => expect(onReconnected).toHaveBeenCalledWith("dead"));
+    // 画面側の TX 破棄 (とその通知) は onReconnected だけが担う — 二重に呼ばない。
+    expect(onReconnected).toHaveBeenCalledTimes(1);
+  });
+
+  it("強制再接続が失敗したら、TX が残りうることを伝え、再接続完了の通知は出さない", async () => {
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new BackendError("transactionActive", "tx"));
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new Error("boom"));
+    const onReconnected = vi.fn();
+    renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[{ sessionId: "dead", profile: mysql }]}
+        profiles={[mysql]}
+        activeSessionId={null}
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={onReconnected}
+      />,
+    );
+    const row = await screen.findByTestId("health-row-m");
+    await waitFor(() => expect(within(row).getByText(t("healthStatusDown"))).toBeInTheDocument());
+    fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthReconnect")) }));
+    const dialogs = await screen.findAllByRole("dialog");
+    fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("reconnectTxConfirm") }),
+    );
+    expect(await screen.findByText(t("healthReconnectFailedTx", { name: mysql.name }))).toBeInTheDocument();
+    expect(onReconnected).not.toHaveBeenCalled();
+  });
+
+  it("確認で取りやめたら force 付きで再接続しない", async () => {
+    vi.mocked(api.reconnect).mockRejectedValueOnce(new BackendError("transactionActive", "tx"));
+    const onReconnected = vi.fn();
+    renderWithProviders(
+      <ConnectionHealthPanel
+        connections={[{ sessionId: "dead", profile: mysql }]}
+        profiles={[mysql]}
+        activeSessionId={null}
+        defaultIntervalSecs={30}
+        connectingProfileId={null}
+        onOpenProfile={() => {}}
+        onReconnected={onReconnected}
+      />,
+    );
+    const row = await screen.findByTestId("health-row-m");
+    await waitFor(() => expect(within(row).getByText(t("healthStatusDown"))).toBeInTheDocument());
+    fireEvent.click(within(row).getByRole("button", { name: new RegExp(t("healthReconnect")) }));
+    const dialogs = await screen.findAllByRole("dialog");
+    fireEvent.click(
+      within(dialogs[dialogs.length - 1]).getAllByRole("button", { name: t("confirmDefaultCancel") })[0],
+    );
+    await waitFor(() => expect(screen.queryAllByRole("dialog")).toHaveLength(0));
+    expect(api.reconnect).toHaveBeenCalledTimes(1);
+    expect(onReconnected).not.toHaveBeenCalled();
   });
 });
 

@@ -402,7 +402,7 @@ async fn reconnect_replaces_the_session_with_an_empty_cache() {
             .expect("prime with a deliberately wrong value");
     }
 
-    t::reconnect_via_command(&state, &id)
+    t::reconnect_via_command(&state, &id, false)
         .await
         .expect("reconnect");
 

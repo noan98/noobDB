@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useKeepAliveActive, useRefreshOnReactivate } from "./KeepAlive";
 import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 
-import { api, type ConnectionProfile } from "../api/tauri";
+import { api, errorKindOf, type ConnectionProfile } from "../api/tauri";
 import { useT, type I18nKey } from "../i18n";
 import { semanticColorToken } from "../semanticColors";
 import { AUTO_REFRESH_INTERVAL_OPTIONS } from "../settings";
@@ -28,6 +28,7 @@ import { LatencySparkline } from "./LatencySparkline";
 import { SkeletonTableRows } from "./Skeleton";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
+import { useConfirm } from "./ConfirmDialog";
 import { Button, Checkbox, Select } from "./ui";
 import { useToast } from "./Toast";
 
@@ -126,6 +127,7 @@ export function ConnectionHealthPanel({
 }: Props) {
   const t = useT();
   const toast = useToast();
+  const { confirm, dialog: confirmDialogElement } = useConfirm();
 
   const [results, setResults] = useState<Map<string, HealthProbeResult>>(() => new Map());
   const resultsRef = useRef(results);
@@ -239,13 +241,30 @@ export function ConnectionHealthPanel({
       const sid = row.sessionId;
       if (!sid) return;
       setReconnecting((cur) => new Set(cur).add(sid));
+      // 強制再接続まで進んだか。失敗したとき、旧セッションの TX が残っているかをここでは判別できない
+      // (ロールバックが時間切れでも再接続は続けるため) ので、TX の画面状態は消さず、その旨を伝える。
+      let forced = false;
       try {
-        await api.reconnect(sid);
+        try {
+          await api.reconnect(sid);
+        } catch (e) {
+          // 明示トランザクション中の生きた接続は、未確定の書き込みを捨てることを確認してから (#1626)。
+          if (errorKindOf(e) !== "transactionActive") throw e;
+          const ok = await confirm({
+            title: t("reconnectTxTitle"),
+            message: t("reconnectTxMessage", { name: row.name }),
+            confirmLabel: t("reconnectTxConfirm"),
+            tone: "danger",
+          });
+          if (!ok) return;
+          forced = true;
+          await api.reconnect(sid, true);
+        }
         onReconnected(sid);
         toast.success(t("healthReconnected", { name: row.name }));
       } catch {
         // エラー文面は接続先情報を含みうるので出さない (状態は再確認で示す)。
-        toast.error(t("healthReconnectFailed", { name: row.name }));
+        toast.error(t(forced ? "healthReconnectFailedTx" : "healthReconnectFailed", { name: row.name }));
       } finally {
         setReconnecting((cur) => {
           const next = new Set(cur);
@@ -255,7 +274,7 @@ export function ConnectionHealthPanel({
       }
       await runChecks();
     },
-    [onReconnected, runChecks, t, toast],
+    [confirm, onReconnected, runChecks, t, toast],
   );
 
   const rows = buildHealthRows(connections, profiles, results, {
@@ -461,6 +480,7 @@ export function ConnectionHealthPanel({
           </chakra.table>
         </Box>
       )}
+      {confirmDialogElement}
     </Box>
   );
 }

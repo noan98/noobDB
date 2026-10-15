@@ -459,6 +459,87 @@ fn changed_columns(
     changed
 }
 
+/// 取り消し (`redo` ならやり直し) の計画を `.sql` ファイルの本文にする (#1626)。
+/// 先頭に対象の記録・元の文・衝突をコメントで載せ、本体は 1 つのトランザクションで包む
+/// (MySQL は `START TRANSACTION`、他は `BEGIN`)。コメントは `--` 行のみで、元の SQL は
+/// 改行を空白にして切り詰める (コメントの外へ出ないように)。
+pub fn plan_sql_text(
+    driver: DriverKind,
+    records: &[WriteCaptureRecord],
+    plan: &UndoPlan,
+    redo: bool,
+) -> String {
+    const SQL_COMMENT_CHARS: usize = 300;
+    let one_line = |s: &str| -> String {
+        let flat: String = s
+            .chars()
+            .map(|c| if c.is_control() { ' ' } else { c })
+            .collect();
+        let flat = flat.split_whitespace().collect::<Vec<_>>().join(" ");
+        if flat.chars().count() > SQL_COMMENT_CHARS {
+            let cut: String = flat.chars().take(SQL_COMMENT_CHARS).collect();
+            format!("{cut}...")
+        } else {
+            flat
+        }
+    };
+    let mut out = String::new();
+    out.push_str(if redo {
+        "-- noobDB redo plan (flight recorder)\n"
+    } else {
+        "-- noobDB undo plan (flight recorder)\n"
+    });
+    out.push_str(&format!("-- driver: {}\n", driver.as_str()));
+    for r in records {
+        out.push_str(&format!(
+            "-- record #{} [{}] {} {}: {}\n",
+            r.id,
+            r.captured_at,
+            r.table,
+            match r.kind {
+                WriteKind::Insert => "INSERT",
+                WriteKind::Update => "UPDATE",
+                WriteKind::Delete => "DELETE",
+                WriteKind::Other => "OTHER",
+            },
+            one_line(&r.sql)
+        ));
+    }
+    if !plan.conflicts.is_empty() {
+        out.push_str(&format!(
+            "-- conflicts: {} row(s) changed since the capture; their statements are left out unless forced\n",
+            plan.conflicts.len()
+        ));
+        for c in &plan.conflicts {
+            out.push_str(&format!(
+                "--   key {}\n",
+                one_line(&key_sig(&c.key).replace('\u{1f}', ", "))
+            ));
+        }
+    }
+    for w in &plan.warnings {
+        out.push_str(&format!("-- warning: {}\n", one_line(w)));
+    }
+    if plan.statements.is_empty() {
+        out.push_str("-- (no statements)\n");
+        return out;
+    }
+    out.push_str(match driver {
+        DriverKind::Mysql => "START TRANSACTION;\n",
+        _ => "BEGIN;\n",
+    });
+    for stmt in &plan.statements {
+        let t = stmt.trim_end();
+        out.push_str(t);
+        if !t.ends_with(';') {
+            out.push(';');
+        }
+        out.push('\n');
+    }
+    out.push_str("COMMIT;\n");
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +561,8 @@ mod tests {
             rows_affected: 0,
             captured_at: "2026-01-01T00:00:00Z".to_string(),
             undone: false,
+            pinned: false,
+            batch_id: None,
         }
     }
 
@@ -809,5 +892,42 @@ mod tests {
             "{:?}",
             plan.statements
         );
+    }
+
+    #[test]
+    fn plan_sql_text_wraps_statements_in_a_transaction_with_a_header() {
+        let mut r = record(WriteKind::Update);
+        r.sql = "UPDATE users\nSET name = 'x'".to_string();
+        let plan = UndoPlan {
+            statements: vec!["UPDATE `users` SET `name` = 'a' WHERE `id` = 1".to_string()],
+            ..UndoPlan::default()
+        };
+        let text = plan_sql_text(DriverKind::Mysql, &[r.clone()], &plan, false);
+        assert!(text.starts_with("-- noobDB undo plan"));
+        assert!(text.contains("-- record #1"));
+        assert!(text.contains("UPDATE users SET name = 'x'"));
+        assert!(text.contains(
+            "START TRANSACTION;\nUPDATE `users` SET `name` = 'a' WHERE `id` = 1;\nCOMMIT;"
+        ));
+        let text = plan_sql_text(DriverKind::Postgres, &[r], &plan, true);
+        assert!(text.starts_with("-- noobDB redo plan"));
+        assert!(text.contains("BEGIN;\n"));
+    }
+
+    #[test]
+    fn plan_sql_text_without_statements_has_no_transaction() {
+        let plan = UndoPlan {
+            warnings: vec!["w".to_string()],
+            ..UndoPlan::default()
+        };
+        let text = plan_sql_text(
+            DriverKind::Sqlite,
+            &[record(WriteKind::Insert)],
+            &plan,
+            false,
+        );
+        assert!(text.contains("-- warning: w"));
+        assert!(text.contains("(no statements)"));
+        assert!(!text.contains("COMMIT"));
     }
 }

@@ -137,6 +137,9 @@ import {
 } from "./components/tableMaintenance";
 import {
   buildDropNamespaceSql,
+  namespaceContentsSql,
+  parseNamespaceContents,
+  type NamespaceContents,
   treeNamespaceKind,
   type NamespaceKind,
 } from "./components/databaseMaintenance";
@@ -159,13 +162,14 @@ import {
   buildIdentitySyncSql,
   sqliteHasAutoincrementSql,
   findIdentityColumn,
+  identityStatsSql,
   mysqlMaxValueSql,
   mysqlShowCreateTableSql,
   parseAutoIncrementFromShowCreate,
 } from "./components/identitySync";
 import { IdentitySyncBody } from "./components/IdentitySyncBody";
 import type { EditableObjectKind } from "./components/routineMaintenance";
-import { qualifiedTableSql } from "./components/sqlDialect";
+import { qualifiedTableSql, quoteIdentFor } from "./components/sqlDialect";
 import { tableSelectWithColumnsText, treeItemInsertText } from "./components/treeDragInsert";
 import { fkJoinSnippets } from "./components/fkJoin";
 import {
@@ -220,6 +224,7 @@ import {
   isolationIsAliasedOn,
   resolveTxOptions,
   supportsTxOptions,
+  supportsTxReadOnly,
   TX_ISOLATION_DEFAULT,
   type TxIsolation,
 } from "./txOptions";
@@ -414,10 +419,21 @@ const RoutineEditorModal = lazy(() =>
 const RunRoutineModal = lazy(() =>
   import("./components/RunRoutineModal").then((m) => ({ default: m.RunRoutineModal })),
 );
-import { analyzeDangerousSql, isReadOnlySql, type ReadOnlyHint, type DangerFinding } from "./dangerousSql";
+import {
+  analyzeDangerousSql,
+  appendWhereTemplate,
+  buildPkWhereTemplate,
+  isReadOnlySql,
+  type ReadOnlyHint,
+  type DangerFinding,
+} from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
-import { isSingleCapturableStatement } from "./flightRecorder";
+import {
+  countCapturableStatements,
+  isSingleCapturableStatement,
+  noteBatchCaptureStats,
+} from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
@@ -2215,6 +2231,17 @@ export default function App() {
       setTxTick((n) => n + 1);
     }
   }, []);
+  // 再接続で旧接続の TX が破棄されたとき、画面側の TX 状態を捨てて知らせる。
+  const discardTxAfterReconnect = (sid: string) => {
+    if (!txBySessionRef.current.has(sid)) return;
+    resetTxFor(sid);
+    const name = openConnectionsRef.current.find((c) => c.sessionId === sid)?.profile.name ?? "";
+    toast.notify({
+      message: translate("toastReconnectTxDiscarded", { name }),
+      tone: "info",
+      severity: "warning",
+    });
+  };
   // 接続の切替: 切替先に保存済みの TX 状態があれば復元し、無ければ非 TX に戻す。
   useEffect(() => {
     txOwnerRef.current = sessionId;
@@ -4241,7 +4268,26 @@ export default function App() {
         }
         try {
           // 同じ session id のまま張り直す。id が変わらないのでタブ・グリッドは維持。
-          await api.reconnect(oldSessionId);
+          try {
+            await api.reconnect(oldSessionId);
+          } catch (e) {
+            // 明示トランザクション中の生きた接続は、未確定の書き込みを捨てることを確認してから (#1626)。
+            if (errorKindOf(e) !== "transactionActive") throw e;
+            const ok = await confirm({
+              title: translate("reconnectTxTitle"),
+              message: translate("reconnectTxMessage", { name: profile.name }),
+              confirmLabel: translate("reconnectTxConfirm"),
+              tone: "warning",
+            });
+            if (!ok) {
+              // 断ったら接続はそのまま (トランザクションも生きている)。ループを止める。
+              reconnectingRef.current = false;
+              setConnectionStatus("connected");
+              setStatus({ kind: "idle" });
+              return;
+            }
+            await api.reconnect(oldSessionId, true);
+          }
           // 再接続でサーバ側の接続が入れ替わるため、開いていたトランザクションは破棄済み。
           if (txBySessionRef.current.has(oldSessionId)) {
             resetTxFor(oldSessionId);
@@ -4282,7 +4328,7 @@ export default function App() {
       reconnectingRef.current = false;
       await tearDownLostSession(profile, oldSessionId, { gaveUpAfter: maxRetries });
     },
-    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor, resetTxFor],
+    [persistTabsForProfile, tearDownLostSession, toast, clearEmergencyFor, resetTxFor, confirm],
   );
 
   // 接続断 (クエリ失敗 / フォーカス時のヘルスチェック失敗) の統一ハンドラ。設定と
@@ -5886,9 +5932,25 @@ export default function App() {
             // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
             patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
           },
-          onDone: () => {
+          onDone: (done) => {
             finish();
             finishRun();
+            // 全体を包んだ実行でエラーがあったとき、OK と表示された文も取り消されている (#1626)。
+            if (done.rolledBack) toast.error(translate("batchRolledBackNotice"), 10000);
+            // 複数文の DML を記録したとき、何件記録できたかを知らせる (#1626)。
+            if (done.captured > 0 || done.captureSkipped > 0) {
+              noteBatchCaptureStats(done.batchId, done.captured, done.captureSkipped);
+              toast.info(
+                translate("batchCaptureSummary", {
+                  captured: done.captured,
+                  skipped:
+                    done.captureSkipped > 0
+                      ? translate("batchCaptureSkippedSuffix", { skipped: done.captureSkipped })
+                      : "",
+                }),
+                6000,
+              );
+            }
           },
           onError: ({ error, connectionLost }) => {
             finish();
@@ -5903,6 +5965,15 @@ export default function App() {
             if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
           },
         });
+        // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
+        // 包んだ実行ではフライトレコーダの記録はしない (記録は文ごとの専用トランザクションを使う)。
+        const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
+        // 複数文の DML も 1 文ずつ記録する (#1626)。明示トランザクション中は記録しない。
+        const capture =
+          settings.flightRecorderEnabled &&
+          !wrapInTransaction &&
+          !txActiveRef.current &&
+          countCapturableStatements(sql, selectedProfile?.driver) > 0;
         await api.runSqlBatch({
           sessionId,
           streamId,
@@ -5910,13 +5981,29 @@ export default function App() {
           sql,
           stopOnError,
           previewRows: BATCH_PREVIEW_ROWS,
+          wrapInTransaction,
+          capture,
+          captureRowCap: settings.flightRecorderRowCap,
+          captureRetentionDays: settings.flightRecorderRetentionDays,
         });
       } catch (e) {
         finish();
         finishRun({ error: String(e) });
       }
     },
-    [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor],
+    [
+      sessionId,
+      patchTab,
+      recordOutput,
+      tabsRef,
+      outputCtxFor,
+      toast,
+      selectedProfile?.driver,
+      settings.batchWrapInTransaction,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
+    ],
   );
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto
@@ -6282,6 +6369,40 @@ export default function App() {
   }, [pendingDangerous, runQueryInTab, runBatchInTab, runTxInTab, tabsRef]);
 
   const handleCancelDangerous = useCallback(() => setPendingDangerous(null), []);
+
+  // WHERE なしの UPDATE / DELETE の確認に添える「主キーで絞る」提案 (#1626)。対象表の主キー列を
+  // `describe_table` で引き、雛形が作れる単純な文のときだけ出す。実行はしない (読み取りのみ)。
+  const [pkSuggestTemplate, setPkSuggestTemplate] = useState<string | null>(null);
+  useEffect(() => {
+    setPkSuggestTemplate(null);
+    const pending = pendingDangerous;
+    const driver = selectedProfile?.driver;
+    if (!pending || !sessionId || !driver || pending.batch) return;
+    const only = pending.findings.length === 1 ? pending.findings[0] : null;
+    if (!only || (only.kind !== "deleteNoWhere" && only.kind !== "updateNoWhere") || !only.target) return;
+    if (appendWhereTemplate(pending.sql, "WHERE x", driver) === null) return;
+    const parts = only.target.split(".");
+    const table = parts[parts.length - 1];
+    const database =
+      parts.length > 1
+        ? parts[parts.length - 2]
+        : (tabsRef.current.find((tb) => tb.id === pending.tabId)?.database ??
+          selectedProfile?.database ??
+          null);
+    if (!database || !table) return;
+    let cancelled = false;
+    void api
+      .describeTable(sessionId, database, table)
+      .then((cols) => {
+        if (cancelled) return;
+        const pk = cols.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
+        setPkSuggestTemplate(buildPkWhereTemplate(pk, (n) => quoteIdentFor(driver, n)));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pendingDangerous, sessionId, selectedProfile?.driver, selectedProfile?.database, tabsRef]);
 
   // Badge action: re-run the auto-limited query without the cap so the user
   // sees the full result set.
@@ -8135,9 +8256,35 @@ export default function App() {
       const sql = buildDropNamespaceSql(driver, kind, name);
       if (!sql) return;
       const kindLabel = namespaceKindLabel(kind);
+      // 含まれるテーブル数と概算行数を読む (#1626)。読み取り専用で、読めなくても確認は出す。
+      let contents: NamespaceContents | null = null;
+      const contentsSql = namespaceContentsSql(driver, kind, name);
+      if (contentsSql && sessionId) {
+        try {
+          const res = await api.runLookupQuery({ sessionId, sql: contentsSql, rowCap: 1 });
+          contents = parseNamespaceContents(res.rows[0]);
+        } catch {
+          contents = null;
+        }
+      }
       const ok = await confirm({
         title: translate("dropNamespaceConfirmTitle", { kind: kindLabel, name }),
-        message: maintenanceMessage(translate("dropNamespaceConfirmBody", { kind: kindLabel, name })),
+        message: maintenanceMessage(
+          <>
+            {translate("dropNamespaceConfirmBody", { kind: kindLabel, name })}
+            {contents && (
+              <Box mt="2" fontWeight={600} data-testid="drop-namespace-contents">
+                {contents.tables > 0
+                  ? translate("dropNamespaceContents", {
+                      kind: kindLabel,
+                      tables: contents.tables.toLocaleString(),
+                      rows: contents.approxRows.toLocaleString(),
+                    })
+                  : translate("dropNamespaceEmpty", { kind: kindLabel })}
+              </Box>
+            )}
+          </>,
+        ),
         confirmLabel: translate("dropNamespaceConfirmOk", { kind: kindLabel }),
         tone: "danger",
         typedConfirmation: name,
@@ -8156,6 +8303,7 @@ export default function App() {
       confirm,
       maintenanceMessage,
       selectedProfile?.driver,
+      sessionId,
       runNamespaceDdl,
       toast,
       namespaceKindLabel,
@@ -8565,6 +8713,23 @@ export default function App() {
           }
           currentUnknown = currentNext === null;
         }
+        // 確認ダイアログに出す「同期後の次の値」の素データ (#1626)。読めなければ行を出さない (SQL は従来どおり)。
+        let stats: { driver: string; maxRaw: unknown; currentRaw: unknown } | null = null;
+        if (driver === "mysql") {
+          stats = { driver, maxRaw: maxValue, currentRaw: currentNext };
+        } else {
+          const statsSql = identityStatsSql(driver, database, table, column);
+          if (statsSql) {
+            try {
+              const res = await api.runLookupQuery({ sessionId, sql: statsSql, database });
+              stats = { driver, maxRaw: res.rows[0]?.[0] ?? null, currentRaw: res.rows[0]?.[1] ?? null };
+              // PostgreSQL の空表は MAX が NULL = 実データ 0 件。SQLite は 0 が返る。
+              if (stats.maxRaw === null) stats.maxRaw = 0;
+            } catch {
+              stats = null;
+            }
+          }
+        }
         let lower = false;
         const sqlFor = (l: boolean) =>
           buildIdentitySyncSql(driver, database, table, column, maxValue, {
@@ -8586,6 +8751,7 @@ export default function App() {
               column={column}
               buildSql={sqlFor}
               showLower={driver !== "sqlite"}
+              stats={stats}
               unavailable={currentUnknown ? translate("identitySyncCurrentUnknown", { table }) : null}
               onLowerChange={(l) => {
                 lower = l;
@@ -11989,15 +12155,7 @@ export default function App() {
                         onReconnected={(sid) => {
                           clearEmergencyFor(sid);
                           // 再接続でサーバ側の接続が入れ替わり、開いていた TX は破棄されている。
-                          if (txBySessionRef.current.has(sid)) {
-                            resetTxFor(sid);
-                            const name = openConnections.find((c) => c.sessionId === sid)?.profile.name ?? "";
-                            toast.notify({
-                              message: translate("toastReconnectTxDiscarded", { name }),
-                              tone: "info",
-                              severity: "warning",
-                            });
-                          }
+                          discardTxAfterReconnect(sid);
                         }}
                       />
                     ) : activeBottomPanelTab === "perf" ? (
@@ -12328,17 +12486,17 @@ export default function App() {
                               </Tooltip>
                               <Tooltip
                                 label={
-                                  supportsTxOptions(selectedProfile?.driver)
-                                    ? t("txReadOnlyHelp")
-                                    : t("txOptionsUnsupported")
+                                  selectedProfile?.driver === "sqlite"
+                                    ? t("txReadOnlyHelpSqlite")
+                                    : t("txReadOnlyHelp")
                                 }
                                 focusableWrapper
                               >
                                 <Box>
                                   <Switch
-                                    checked={supportsTxOptions(selectedProfile?.driver) && txReadOnly}
+                                    checked={supportsTxReadOnly(selectedProfile?.driver) && txReadOnly}
                                     onChange={setTxReadOnly}
-                                    disabled={!supportsTxOptions(selectedProfile?.driver)}
+                                    disabled={!supportsTxReadOnly(selectedProfile?.driver)}
                                     label={t("txReadOnly")}
                                   />
                                 </Box>
@@ -13511,6 +13669,23 @@ export default function App() {
                           selectedProfile.database ??
                           null,
                         sql: pendingDangerous.sql,
+                      }
+                    : null
+                }
+                pkSuggestion={
+                  pkSuggestTemplate
+                    ? {
+                        template: pkSuggestTemplate,
+                        onInsert: () => {
+                          const next = appendWhereTemplate(
+                            pendingDangerous.sql,
+                            pkSuggestTemplate,
+                            selectedProfile?.driver,
+                          );
+                          const { tabId, sql } = pendingDangerous;
+                          setPendingDangerous(null);
+                          if (next) void handleApplyAiSql(tabId, sql, next);
+                        },
                       }
                     : null
                 }

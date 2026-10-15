@@ -209,6 +209,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["dataDiffHandle", schemas.dataDiffHandle],
   ["undoPreviewResponse", schemas.undoPreviewResponse],
   ["undoOutcome", schemas.undoOutcome],
+  ["undoBatchPreviewResponse", schemas.undoBatchPreviewResponse],
+  ["exportPlanOutcome", schemas.exportPlanOutcome],
   ["taskDefinitionVariants", schemas.taskDefinition],
   ["taskExportFormatVariants", schemas.taskDefinition],
   ["taskRun", schemas.taskRun],

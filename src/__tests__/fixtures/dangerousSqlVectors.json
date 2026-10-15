@@ -223,6 +223,76 @@
       "sql": "UPDATE t\r\nSET a = 1",
       "kind": "updateNoWhere",
       "note": "CRLF 区切りの WHERE なし UPDATE"
+    },
+    {
+      "sql": "ALTER TABLE t DROP COLUMN c",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1626): 列の削除"
+    },
+    {
+      "sql": "alter table `t` drop column if exists `c`",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1626): IF EXISTS とバッククォート付きでも列の削除"
+    },
+    {
+      "sql": "ALTER TABLE ONLY s.t DROP COLUMN c CASCADE",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1626): PostgreSQL の ONLY 付き"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN c INT, DROP COLUMN d",
+      "kind": "dropColumn",
+      "note": "ALTER TABLE (#1626): ADD と同じ文の中の DROP COLUMN"
+    },
+    {
+      "sql": "ALTER TABLE t DROP CONSTRAINT fk",
+      "kind": "dropConstraint",
+      "note": "ALTER TABLE (#1626): 制約の削除"
+    },
+    {
+      "sql": "ALTER TABLE t DROP FOREIGN KEY fk",
+      "kind": "dropConstraint",
+      "note": "ALTER TABLE (#1626): MySQL の外部キー削除"
+    },
+    {
+      "sql": "ALTER TABLE t DROP PRIMARY KEY",
+      "kind": "dropConstraint",
+      "note": "ALTER TABLE (#1626): 主キーの削除"
+    },
+    {
+      "sql": "ALTER TABLE t DROP CHECK ck",
+      "kind": "dropConstraint",
+      "note": "ALTER TABLE (#1626): MySQL の CHECK 制約の削除"
+    },
+    {
+      "sql": "ALTER TABLE t DROP INDEX i",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): インデックスの削除は対象外"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN c INT",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): 列の追加は危険ではない"
+    },
+    {
+      "sql": "ALTER TABLE t ADD COLUMN `drop` INT",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): 引用符付きの列名 drop は無視"
+    },
+    {
+      "sql": "ALTER TABLE t COMMENT 'drop column'",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): 文字列リテラル内の drop column は無視"
+    },
+    {
+      "sql": "ALTER TABLE t -- drop column c\n ADD COLUMN d INT",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): コメント内の drop column は無視"
+    },
+    {
+      "sql": "ALTER INDEX i RENAME TO j",
+      "kind": null,
+      "note": "ALTER TABLE (#1626): ALTER TABLE 以外は対象外"
     }
   ]
 }

@@ -577,17 +577,64 @@ pub async fn disconnect(session_id: String, state: State<'_, AppState>) -> Resul
 /// re-resolved from the keyring by `profile_id` — no new plaintext is retained.
 /// Session flags (`read_only` / `skip_history`) are preserved.
 #[tauri::command]
-pub async fn reconnect(session_id: String, state: State<'_, AppState>) -> Result<()> {
-    reconnect_inner(&state, &session_id).await
+pub async fn reconnect(
+    session_id: String,
+    force: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    reconnect_inner(&state, &session_id, force.unwrap_or(false)).await
 }
+
+/// 再接続の前に行う生存確認 (`SELECT 1`) と強制時のロールバックを待つ上限 (#1626)。
+const RECONNECT_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Core of [`reconnect`], split out so integration tests can drive the
 /// session-swap path without a Tauri runtime (exposed via `__test_api`).
-pub async fn reconnect_inner(state: &AppState, session_id: &str) -> Result<()> {
+///
+/// `force` が偽のとき、明示トランザクション中の **生きている** セッションへの再接続は
+/// [`AppError::TransactionActive`] で拒否する (#1626)。再接続は旧接続を閉じるため、開いている
+/// BEGIN の未確定の書き込みがサーバ側でロールバックされる。トランザクション用接続が本当に
+/// 死んでいる (`SELECT 1` が通らない) ときは失うものが無いので従来どおり再接続できる。
+pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) -> Result<()> {
     let old = state
         .get(session_id)
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.to_string()))?;
+
+    if !force && old.conn.transaction_active().await {
+        // プール側の疎通ではなく、トランザクションが掴んでいる接続自体の生死を見る。
+        // 応答しない接続 (ロック待ち・ネットワーク断の途中) で再接続の確認自体が固まらないよう
+        // 時間を切る。タイムアウトは「生きているかもしれない」ので、安全側で確認を求める。
+        match tokio::time::timeout(
+            RECONNECT_PROBE_TIMEOUT,
+            old.conn.execute_in_transaction("SELECT 1"),
+        )
+        .await
+        {
+            Ok(Ok(_)) => return Err(AppError::TransactionActive),
+            Ok(Err(_)) => {}
+            Err(_) => return Err(AppError::TransactionActive),
+        }
+    }
+    // 強制再接続 (#1626) は未確定の変更を捨てる前提。旧接続のトランザクションを先に破棄して
+    // 書き込みロックを手放す (握ったままだと SQLite では新しい接続がロック待ちで固まる)。
+    if force && old.conn.transaction_active().await {
+        // 失敗・タイムアウトしても再接続は続ける (旧接続は後で閉じるので、サーバ側で破棄される)。
+        match tokio::time::timeout(RECONNECT_PROBE_TIMEOUT, old.conn.finish_transaction(false))
+            .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => {
+                tracing::warn!(session_id, error = %e, "forced reconnect: rollback of the open transaction failed");
+            }
+            Err(_) => {
+                tracing::warn!(
+                    session_id,
+                    "forced reconnect: rollback of the open transaction timed out"
+                );
+            }
+        }
+    }
 
     // Build the fresh transport under an overall deadline so a reconnect against
     // a now-unreachable host can't hang indefinitely (mirrors `connect`'s

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isolationIsAliasedOn, resolveTxOptions, supportsTxOptions } from "../txOptions";
+import { isolationIsAliasedOn, resolveTxOptions, supportsTxOptions, supportsTxReadOnly } from "../txOptions";
 
 describe("txOptions", () => {
   it("MySQL / PostgreSQL のみ対応", () => {
@@ -7,10 +7,16 @@ describe("txOptions", () => {
     expect(supportsTxOptions("postgres")).toBe(true);
     expect(supportsTxOptions("sqlite")).toBe(false);
     expect(supportsTxOptions(undefined)).toBe(false);
+    expect(supportsTxReadOnly("sqlite")).toBe(true);
+    expect(supportsTxReadOnly("mysql")).toBe(true);
+    expect(supportsTxReadOnly(undefined)).toBe(false);
   });
 
   it("SQLite では選択値があっても既定へ落とす", () => {
-    expect(resolveTxOptions("sqlite", "serializable", true)).toEqual({ isolation: null, readOnly: false });
+    // SQLite は分離レベルだけ落とし、READ ONLY は残す (#1626)。
+    expect(resolveTxOptions("sqlite", "serializable", true)).toEqual({ isolation: null, readOnly: true });
+    expect(resolveTxOptions("sqlite", "", false)).toEqual({ isolation: null, readOnly: false });
+    expect(resolveTxOptions(undefined, "serializable", true)).toEqual({ isolation: null, readOnly: false });
   });
 
   it("対応ドライバでは選択を通し、未知値は無視する", () => {

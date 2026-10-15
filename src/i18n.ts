@@ -276,6 +276,8 @@ const en = {
   healthReconnect: "Reconnect",
   healthReconnected: "Reconnected {name}",
   healthReconnectFailed: "Could not reconnect {name}",
+  healthReconnectFailedTx:
+    "Could not reconnect {name}. The open transaction may still be active on the old connection — COMMIT or ROLLBACK it explicitly.",
   toastSshTunnelLost: 'The SSH tunnel for "{name}" was closed.',
   healthSummary: "{up} of {open} up",
   healthSummaryDown: "{count} down",
@@ -618,7 +620,7 @@ const en = {
     "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   settingsFlightRecorderEnabled: "Capture writes for undo",
   settingsFlightRecorderEnabledHelp:
-    "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
+    "When on, an INSERT/UPDATE/DELETE run from the editor (each one in a multi-statement script too, up to 200 per run, counting declined ones) tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
   settingsFlightRecorderRowCap: "Row cap per write",
   settingsFlightRecorderRowCapHelp:
     "A write that would affect more rows than this runs normally but is not captured (no undo available for it).",
@@ -670,6 +672,44 @@ const en = {
   flightRecorderClearAction: "Clear all",
   flightRecorderClearConfirmProfile: "Delete all captured writes for this connection? This cannot be undone.",
   flightRecorderClearConfirmAll: "Delete ALL captured writes for every connection? This cannot be undone.",
+  settingsBatchWrapInTransaction: "Run multi-statement scripts in one transaction",
+  settingsBatchWrapInTransactionHelp:
+    "When on, running several statements from the editor wraps them in a single transaction: if any statement fails, everything that already succeeded is rolled back too. Ignored while you hold an explicit transaction. MySQL DDL commits implicitly and cannot be rolled back. Flight-recorder capture is skipped for these runs.",
+  batchRolledBackNotice:
+    "A statement failed, so the whole script was rolled back — nothing was saved, even for the statements marked OK.",
+  batchCaptureSummary: "Recorded {captured} write(s) for undo{skipped}.",
+  batchCaptureSkippedSuffix: " ({skipped} not recorded)",
+  flightRecorderClearKeepsPinned: "Pinned records are kept.",
+  flightRecorderPinAction: "Pin",
+  flightRecorderUnpinAction: "Unpin",
+  flightRecorderPinTip:
+    "Pinned records are never removed by the automatic cleanup (count, age, size limits).",
+  flightRecorderPinnedBadge: "pinned",
+  flightRecorderPinFailed: "Could not change the pin: {error}",
+  flightRecorderBatchBadge: "batch of {count}",
+  flightRecorderBatchUndoAction: "Undo batch",
+  flightRecorderBatchRedoAction: "Redo batch",
+  flightRecorderBatchUndoConfirmTitle: "Undo this whole batch?",
+  flightRecorderBatchRedoConfirmTitle: "Redo this whole batch?",
+  flightRecorderBatchUndoConfirmBody:
+    "Reverts {count} captured write(s) from the same script in one transaction, last statement first. Nothing is applied if any of them fails.",
+  flightRecorderBatchRedoConfirmBody:
+    "Re-applies {count} undone write(s) from the same script in one transaction, in the original order.",
+  flightRecorderBatchOverlapHint:
+    "A conflict means the row changed after the script ran — review the SQL before forcing. (Batches where several statements touched the same row can't be undone together; undo those records one at a time.)",
+  flightRecorderBatchPartialNote:
+    "Some statements of this script were not recorded (or their records are gone), so undoing this batch will not fully restore the state before the script ran.",
+  flightRecorderExportPlanAction: "Save SQL…",
+  flightRecorderExportPlanTip:
+    "Save the undo (or redo) SQL as a .sql file without running it, so you can review it or run it elsewhere.",
+  flightRecorderExportPlanBatchTip: "Save the undo (or redo) SQL for the whole batch as a .sql file.",
+  flightRecorderExportPlanDone: "Saved {statements} statement(s) to {path}.",
+  flightRecorderExportPlanConflicts:
+    "{conflicts} row(s) have conflicts; their statements were left out of the file.",
+  flightRecorderExportRecordsAction: "Export…",
+  flightRecorderExportRecordsTip:
+    "Export the listed records, including the before/after rows, as CSV or NDJSON.",
+  flightRecorderExportRecordsDone: "Exported {count} record(s) to {path}.",
 
   settingsSchemaDrift: "Schema drift timeline",
   settingsSchemaDriftHelp:
@@ -890,7 +930,9 @@ const en = {
   txIsolationReadUncommitted: "READ UNCOMMITTED",
   txReadOnly: "READ ONLY",
   txReadOnlyHelp: "Start a READ ONLY transaction: writes are rejected by the server.",
-  txOptionsUnsupported: "SQLite does not support isolation level / READ ONLY options.",
+  txOptionsUnsupported: "SQLite does not have isolation levels.",
+  txReadOnlyHelpSqlite:
+    "Start a read-only transaction: writes are rejected while it is open (PRAGMA query_only is turned on for this connection only).",
   txIsolationAliasedHelp: "PostgreSQL treats READ UNCOMMITTED as READ COMMITTED.",
   txBegun: "Transaction started",
   txCommitted: "Transaction committed",
@@ -915,6 +957,18 @@ const en = {
   productionConfirmAction: "Connect",
   productionConfirmHint: "Write operations on this connection will require an additional confirmation.",
   confirmDefaultOk: "OK",
+  confirmRememberLabel: "Don't show this again",
+  preflightSampleTitle: "Rows this statement would touch (first {count})",
+  preflightSampleSql: "Read-only query",
+  preflightSampleClose: "Close",
+  editorPreflightSampleHint: "Click to view a sample of the affected rows",
+  rowSampleLoading: "Loading a sample...",
+  rowSampleError: "Could not load the sample: {error}",
+  rowSampleEmpty: "No matching rows.",
+  settingsSuppressedConfirms: 'Confirmations hidden with "Don\'t show again": {count}',
+  settingsSuppressedConfirmsHelp:
+    "Only non-destructive confirmations can be hidden. Destructive and production-connection confirmations are always shown.",
+  settingsSuppressedConfirmsReset: "Show them again",
   confirmDefaultCancel: "Cancel",
   dangerousTitle: "Confirm dangerous query",
   dangerousIntro: "This query may modify or destroy data:",
@@ -925,6 +979,10 @@ const en = {
   dangerousKindUpdateNoWhere: "UPDATE without WHERE (updates all rows)",
   dangerousKindDrop: "DROP (removes the object)",
   dangerousKindTruncate: "TRUNCATE (removes all rows)",
+  dangerousPkSuggestTitle: "Narrow it down by primary key",
+  dangerousPkSuggestInsert: "Cancel and add this WHERE to the editor",
+  dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN (removes the column and its data)",
+  dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT (removes a constraint)",
   dangerousTargetTable: "Target: {target}",
   dangerousTargetUnknown: "Target: (could not determine)",
   // Impact-row count handed off from the editor preflight (#737).
@@ -2292,6 +2350,8 @@ const en = {
   routineEditLoading: "Loading definition...",
   routineEditLoadError: "Could not load the definition: {error}",
   routineEditSqlLabel: "Definition (SQL)",
+  routineEditDiffLabel: "Changes from the current definition",
+  routineEditDiffNone: "No changes from the current definition.",
   routineEditPreviewLabel: "Statements to run",
   routineEditApply: "Apply",
   routineEditCreate: "Create",
@@ -2607,6 +2667,14 @@ const en = {
     "The script has a BEGIN with no matching COMMIT/ROLLBACK. Running it as is will roll back the changes after that BEGIN at the end of the file.",
   scriptDoneImplicitRollback:
     "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were rolled back at the end of the file.",
+  scriptUnclosedConfirmTitle: "The script ends with an open BEGIN",
+  scriptUnclosedConfirmMessage:
+    "The script has a BEGIN with no matching COMMIT/ROLLBACK. Choose what happens to the changes after that BEGIN at the end of the file.",
+  scriptUnclosedConfirmRollback: "Roll back at the end (recommended)",
+  scriptUnclosedConfirmCommit: "Commit at the end",
+  scriptUnclosedConfirmCancel: "Do not run",
+  scriptDoneImplicitCommit:
+    "The script ended with BEGIN but no COMMIT/ROLLBACK, so the changes after that BEGIN were committed at the end of the file as you chose.",
   scriptDoneSkippedControl:
     "{count} BEGIN/COMMIT statements in the file were skipped (the runner's transaction was used).",
   scriptFailuresLabel: "Failed statements",
@@ -2639,6 +2707,8 @@ const en = {
     "These run for real and cannot be undone unless you wrap the script in a transaction.",
   scriptDangerDrop: "DROP × {count}",
   scriptDangerTruncate: "TRUNCATE × {count}",
+  scriptDangerDropColumn: "DROP COLUMN × {count}",
+  scriptDangerDropConstraint: "DROP CONSTRAINT × {count}",
   scriptDangerDeleteNoWhere: "DELETE without WHERE × {count}",
   scriptDangerUpdateNoWhere: "UPDATE without WHERE × {count}",
   scriptAnalysisDangerOverflow:
@@ -2658,6 +2728,13 @@ const en = {
   scriptStatementLine: "#{index} · line {line}",
   scriptDangerKindDrop: "DROP",
   scriptDangerKindTruncate: "TRUNCATE",
+  scriptDangerKindDropColumn: "DROP COLUMN",
+  scriptDangerKindDropConstraint: "DROP CONSTRAINT",
+  scriptAnalysisInsertTitle: "INSERT targets ({count} tables)",
+  scriptAnalysisInsertRow: "{table}: {statements} statements / about {rows} rows",
+  scriptAnalysisInsertOverflow: "{count} more INSERT statements target tables not listed here.",
+  scriptAnalysisInsertNote:
+    "Row counts are estimated from VALUES tuples (INSERT ... SELECT counts as 0 rows).",
   scriptDangerKindDeleteNoWhere: "DELETE without WHERE",
   scriptDangerKindUpdateNoWhere: "UPDATE without WHERE",
   scriptCategoryRead: "read",
@@ -2984,6 +3061,9 @@ const en = {
     "Advances the auto-increment counter of column {column} on {table} to at least the current maximum value (it is never lowered unless you choose to). The following statement will run:",
   identitySyncCurrentUnknown:
     'Could not read the current AUTO_INCREMENT of {table}, so the counter cannot be guaranteed not to go down. Turn on "lower" to sync anyway.',
+  identitySyncNextValue: "Next value: {before} -> {after} after syncing (max existing value: {max})",
+  identitySyncDecreases:
+    "The next value will go down. A previously issued value can be issued again; make sure the rows with larger values are really gone.",
   identitySyncLower: "Lower the counter to the current maximum + 1 (IDs of deleted rows may be reused)",
   identitySyncNoColumn: "{table} has no auto-increment column to sync",
   identitySyncAutoincrementCheckFailed: "Could not check whether {table} uses AUTOINCREMENT: {error}",
@@ -3059,6 +3139,7 @@ const en = {
   alterPrecheckNotNull: "{count} row(s) are NULL",
   alterPrecheckRunning: "Checking whether existing data fits…",
   alterPrecheckError: "Could not check existing data: {error}",
+  alterPrecheckOpenRows: "Show these rows",
   alterPrecheckOk: "All existing rows fit the new definition.",
   alterTablePreview: "SQL preview",
   alterTablePreviewEmpty: "No changes yet.",
@@ -3111,6 +3192,9 @@ const en = {
   dropNamespaceConfirmTitle: "Drop {kind} {name}?",
   dropNamespaceConfirmBody:
     "This permanently removes the {kind} {name} and everything in it. This cannot be undone.",
+  dropNamespaceContents:
+    "This {kind} contains {tables} tables with about {rows} rows; all of it will be deleted.",
+  dropNamespaceEmpty: "This {kind} contains no tables.",
   dropNamespaceConfirmOk: "Drop {kind}",
   dropNamespaceSuccess: "Dropped {kind} {name}.",
   contextMenuNamespaceProtectedTitle: "System databases cannot be dropped",
@@ -3316,6 +3400,10 @@ const en = {
   connTxOpenBody: "This connection has an uncommitted transaction. Disconnecting rolls back its changes.",
   connTxOpenAction: "Disconnect and roll back",
   toastReconnectTxDiscarded: "Reconnected to {name}, but the open transaction was discarded.",
+  reconnectTxTitle: "Reconnect and discard the open transaction?",
+  reconnectTxMessage:
+    "{name} has an open transaction. Reconnecting closes the old connection, so its uncommitted changes will be rolled back.",
+  reconnectTxConfirm: "Discard and reconnect",
   windowCloseTxBody:
     "{count} connection(s) have an uncommitted transaction. Closing the window rolls back its changes.",
   windowCloseTxAction: "Close and roll back",
@@ -3591,6 +3679,9 @@ const en = {
   gridBulkEditPlaceholder: "Value to apply (or NULL)",
   gridBulkEditValueLabel: "Value",
   gridBulkEditSetNull: 'Set to SQL NULL (no value; not an empty string or the text "NULL")',
+  gridBulkEditPreviewSummary:
+    "{cells} cells in {rows} rows will change. Skipped: {unchanged} already that value, {invalid} invalid for the column type, {readonly} read-only.",
+  gridBulkEditPreviewLabel: "Current value -> new value (first rows)",
   gridBulkEditApply: "Set cells",
   gridBulkEditApplied: "Buffered {cells} cell edits — Apply to commit",
   gridBulkEditAppliedSkipped: "Buffered {cells} cell edits ({skipped} skipped) — Apply to commit",
@@ -3632,6 +3723,7 @@ const en = {
   gridReplaceColumnCountZero: "No rows match, so nothing would be updated.",
   gridReplaceColumnCountError: "Could not count the affected rows: {error}",
   gridReplaceColumnCountRunning: "Counting the affected rows…",
+  gridReplaceSampleTitle: "Before -> after (first {count} rows)",
   gridReplaceColumnWarning:
     "This can rewrite many rows at once. It runs as one transaction (all or nothing) after you confirm.",
   gridReplaceApplyGrid: "Buffer edits",
@@ -4522,6 +4614,8 @@ const en = {
   schemaCompareApplying: "Applying...",
   schemaCompareApplyConfirm:
     'Apply {count} statement(s) to "{name}"? This modifies the target schema ({destructive} destructive).',
+  schemaCompareApplyDmlCounts:
+    "Deletes {deletes} rows / updates {updates} rows / inserts {inserts} rows (counted from the selected statements).",
   schemaCompareApplyProductionConfirm: '"{name}" is a production connection. Apply schema changes anyway?',
   schemaCompareApplyTypedConfirmTitle: "Confirm destructive apply on production",
   schemaCompareApplyTypedConfirmBody:
@@ -6781,6 +6875,8 @@ const ja: Dict = {
   healthReconnect: "再接続",
   healthReconnected: "{name} に再接続しました",
   healthReconnectFailed: "{name} に再接続できませんでした",
+  healthReconnectFailedTx:
+    "{name} に再接続できませんでした。旧接続で開いていたトランザクションが残っている可能性があります。COMMIT または ROLLBACK で明示的に終えてください。",
   toastSshTunnelLost: "「{name}」の SSH トンネルが切断されました。",
   healthSummary: "{open} 本中 {up} 本が稼働中",
   healthSummaryDown: "停止 {count}",
@@ -7117,7 +7213,7 @@ const ja: Dict = {
     "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
   settingsFlightRecorderEnabledHelp:
-    "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
+    "オンのとき、エディタから実行した INSERT/UPDATE/DELETE (複数文スクリプトでは 1 文ずつ、1 回の実行で最大 200 文まで) は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
   settingsFlightRecorderRowCap: "1 回の書き込みあたりの対象行数上限",
   settingsFlightRecorderRowCapHelp:
     "この行数を超える書き込みは通常どおり実行されますが記録はされません (その操作の Undo は使えません)。",
@@ -7169,6 +7265,42 @@ const ja: Dict = {
   flightRecorderClearConfirmProfile:
     "この接続のフライトレコードをすべて削除しますか? この操作は取り消せません。",
   flightRecorderClearConfirmAll: "すべての接続のフライトレコードを削除しますか? この操作は取り消せません。",
+  settingsBatchWrapInTransaction: "複数文のスクリプトを 1 つのトランザクションで実行する",
+  settingsBatchWrapInTransactionHelp:
+    "オンにすると、エディタで複数の文を実行するとき全体を 1 つのトランザクションで包みます。どれか 1 文が失敗したら、成功済みの文も含めてすべて取り消されます。明示トランザクションを開いている間は無視されます。MySQL の DDL は暗黙 COMMIT されるため取り消せません。この実行ではフライトレコーダの記録は行いません。",
+  batchRolledBackNotice:
+    "いずれかの文が失敗したため、スクリプト全体を取り消しました。OK と表示された文も保存されていません。",
+  batchCaptureSummary: "{captured} 件の書き込みを巻き戻し用に記録しました{skipped}。",
+  batchCaptureSkippedSuffix: " (記録できなかった書き込み {skipped} 件)",
+  flightRecorderClearKeepsPinned: "ピン留めした記録は残ります。",
+  flightRecorderPinAction: "ピン留め",
+  flightRecorderUnpinAction: "ピン留め解除",
+  flightRecorderPinTip: "ピン留めした記録は、自動削除 (件数・保持期間・容量の上限) の対象になりません。",
+  flightRecorderPinnedBadge: "ピン留め",
+  flightRecorderPinFailed: "ピン留めを変更できませんでした: {error}",
+  flightRecorderBatchBadge: "{count} 文のバッチ",
+  flightRecorderBatchUndoAction: "バッチを巻き戻す",
+  flightRecorderBatchRedoAction: "バッチをやり直す",
+  flightRecorderBatchUndoConfirmTitle: "このバッチ全体を巻き戻しますか?",
+  flightRecorderBatchRedoConfirmTitle: "このバッチ全体をやり直しますか?",
+  flightRecorderBatchUndoConfirmBody:
+    "同じスクリプトで記録された {count} 件の書き込みを、後に実行した文から順に 1 つのトランザクションで元に戻します。1 件でも失敗すると何も適用されません。",
+  flightRecorderBatchRedoConfirmBody:
+    "同じスクリプトで取り消した {count} 件の書き込みを、元の順に 1 つのトランザクションで再適用します。",
+  flightRecorderBatchOverlapHint:
+    "衝突は、スクリプト実行後にその行が変わったことを示します。強制適用する前に SQL を確認してください (複数の文が同じ行を変更したバッチはまとめて取り消せません。記録を 1 件ずつ取り消してください)。",
+  flightRecorderBatchPartialNote:
+    "このスクリプトには記録できなかった文 (または消えた記録) があるため、バッチを取り消してもスクリプト実行前の状態には完全には戻りません。",
+  flightRecorderExportPlanAction: "SQL を保存…",
+  flightRecorderExportPlanTip:
+    "巻き戻し (または やり直し) の SQL を実行せずに .sql ファイルへ保存します。確認や別環境での実行に使えます。",
+  flightRecorderExportPlanBatchTip:
+    "バッチ全体の巻き戻し (または やり直し) の SQL を .sql ファイルへ保存します。",
+  flightRecorderExportPlanDone: "{statements} 文を {path} に保存しました。",
+  flightRecorderExportPlanConflicts: "{conflicts} 行に衝突があるため、その文はファイルに含めていません。",
+  flightRecorderExportRecordsAction: "書き出し…",
+  flightRecorderExportRecordsTip: "一覧の記録を、変更前後の行データ込みで CSV または NDJSON に書き出します。",
+  flightRecorderExportRecordsDone: "{count} 件を {path} に書き出しました。",
 
   settingsSchemaDrift: "スキーマドリフト・タイムライン",
   settingsSchemaDriftHelp:
@@ -7387,7 +7519,9 @@ const ja: Dict = {
   txIsolationReadUncommitted: "READ UNCOMMITTED",
   txReadOnly: "READ ONLY",
   txReadOnlyHelp: "READ ONLY トランザクションで開始します。書き込みはサーバが拒否します。",
-  txOptionsUnsupported: "SQLite は分離レベル / READ ONLY の指定に対応していません。",
+  txOptionsUnsupported: "SQLite には分離レベルがありません。",
+  txReadOnlyHelpSqlite:
+    "読み取り専用のトランザクションで開始します。開いている間は書き込みが拒否されます (この接続だけ PRAGMA query_only を ON にします)。",
   txIsolationAliasedHelp: "PostgreSQL では READ UNCOMMITTED は READ COMMITTED と同じ扱いになります。",
   txBegun: "トランザクションを開始しました",
   txCommitted: "トランザクションをコミットしました",
@@ -7412,6 +7546,18 @@ const ja: Dict = {
   productionConfirmAction: "接続する",
   productionConfirmHint: "この接続での書き込み操作は実行時にも追加の確認が必要になります。",
   confirmDefaultOk: "OK",
+  confirmRememberLabel: "今後は表示しない",
+  preflightSampleTitle: "この文が対象にする行 (先頭 {count} 件)",
+  preflightSampleSql: "読み取り専用のクエリ",
+  preflightSampleClose: "閉じる",
+  editorPreflightSampleHint: "クリックで対象行のサンプルを表示",
+  rowSampleLoading: "サンプルを取得中...",
+  rowSampleError: "サンプルを取得できませんでした: {error}",
+  rowSampleEmpty: "該当する行はありません。",
+  settingsSuppressedConfirms: "「今後は表示しない」にした確認: {count} 件",
+  settingsSuppressedConfirmsHelp:
+    "非破壊の確認だけを隠せます。破壊的な操作や本番接続の確認は常に表示されます。",
+  settingsSuppressedConfirmsReset: "再び表示する",
   confirmDefaultCancel: "キャンセル",
   dangerousTitle: "危険なクエリの確認",
   dangerousIntro: "このクエリはデータを破壊・変更する可能性があります:",
@@ -7421,6 +7567,10 @@ const ja: Dict = {
   dangerousKindUpdateNoWhere: "WHERE 句のない UPDATE（全行を更新します）",
   dangerousKindDrop: "DROP（オブジェクトを削除します）",
   dangerousKindTruncate: "TRUNCATE（全行を削除します）",
+  dangerousPkSuggestTitle: "主キーで絞り込む",
+  dangerousPkSuggestInsert: "キャンセルしてエディタに WHERE を追加",
+  dangerousKindDropColumn: "ALTER TABLE ... DROP COLUMN（列とそのデータを削除します）",
+  dangerousKindDropConstraint: "ALTER TABLE ... DROP CONSTRAINT（制約を削除します）",
   dangerousTargetTable: "対象: {target}",
   dangerousTargetUnknown: "対象: (特定できませんでした)",
   // エディタのプリフライトから引き継ぐ影響行数 (#737)。
@@ -8789,6 +8939,8 @@ const ja: Dict = {
   routineEditLoading: "定義を読み込み中...",
   routineEditLoadError: "定義を取得できませんでした: {error}",
   routineEditSqlLabel: "定義 (SQL)",
+  routineEditDiffLabel: "現在の定義からの変更点",
+  routineEditDiffNone: "現在の定義からの変更はありません。",
   routineEditPreviewLabel: "実行される文",
   routineEditApply: "適用",
   routineEditCreate: "作成",
@@ -9106,6 +9258,14 @@ const ja: Dict = {
     "このスクリプトには、対応する COMMIT / ROLLBACK のない BEGIN があります。このまま実行すると、ファイルの末尾で BEGIN 以降の変更が取り消され (ROLLBACK) ます。",
   scriptDoneImplicitRollback:
     "スクリプトが BEGIN したまま COMMIT/ROLLBACK なしで終わったため、ファイルの末尾で BEGIN 以降の変更を取り消し (ROLLBACK) ました。",
+  scriptUnclosedConfirmTitle: "スクリプトの終端に閉じられていない BEGIN があります",
+  scriptUnclosedConfirmMessage:
+    "COMMIT / ROLLBACK のない BEGIN があります。その BEGIN 以降の変更をファイルの終端でどう扱うか選んでください。",
+  scriptUnclosedConfirmRollback: "終端で取り消す (推奨)",
+  scriptUnclosedConfirmCommit: "終端で確定する",
+  scriptUnclosedConfirmCancel: "実行しない",
+  scriptDoneImplicitCommit:
+    "スクリプトは COMMIT / ROLLBACK のない BEGIN で終わったため、選択どおり BEGIN 以降の変更をファイルの終端で確定しました。",
   scriptDoneSkippedControl:
     "ファイル内の BEGIN/COMMIT {count} 文は読み飛ばしました (ランナーのトランザクションを使用)。",
   scriptFailuresLabel: "失敗した文",
@@ -9136,6 +9296,8 @@ const ja: Dict = {
   scriptAnalysisDangerBody: "実際に実行され、スクリプトをトランザクションで包まない限り元に戻せません。",
   scriptDangerDrop: "DROP × {count}",
   scriptDangerTruncate: "TRUNCATE × {count}",
+  scriptDangerDropColumn: "DROP COLUMN × {count}",
+  scriptDangerDropConstraint: "DROP CONSTRAINT × {count}",
   scriptDangerDeleteNoWhere: "WHERE なしの DELETE × {count}",
   scriptDangerUpdateNoWhere: "WHERE なしの UPDATE × {count}",
   scriptAnalysisDangerOverflow:
@@ -9155,6 +9317,13 @@ const ja: Dict = {
   scriptStatementLine: "#{index} · {line} 行目",
   scriptDangerKindDrop: "DROP",
   scriptDangerKindTruncate: "TRUNCATE",
+  scriptDangerKindDropColumn: "DROP COLUMN",
+  scriptDangerKindDropConstraint: "DROP CONSTRAINT",
+  scriptAnalysisInsertTitle: "INSERT の対象表 ({count} 表)",
+  scriptAnalysisInsertRow: "{table}: {statements} 文 / 約 {rows} 行",
+  scriptAnalysisInsertOverflow: "ほか {count} 文の INSERT が、ここに載せていない表を対象にしています。",
+  scriptAnalysisInsertNote:
+    "行数は VALUES のタプル数からの概算です (INSERT ... SELECT は 0 行として数えます)。",
   scriptDangerKindDeleteNoWhere: "WHERE なしの DELETE",
   scriptDangerKindUpdateNoWhere: "WHERE なしの UPDATE",
   scriptCategoryRead: "読み取り",
@@ -9478,6 +9647,9 @@ const ja: Dict = {
     "{table} の列 {column} の採番カウンタを、現在の最大値に合わせて進めます (既定では下げません)。次の文を実行します:",
   identitySyncCurrentUnknown:
     "{table} の現在の AUTO_INCREMENT を読めなかったため、採番値が下がらないことを保証できません。「下げる」をオンにすれば同期できます。",
+  identitySyncNextValue: "次の採番値: {before} → 同期後 {after} (実データの最大値: {max})",
+  identitySyncDecreases:
+    "次の採番値が下がります。過去に払い出した値が再び採番されることがあるので、それより大きい値の行が本当に無いか確認してください。",
   identitySyncLower: "採番値を現在の最大値 + 1 まで下げる (削除済み行の ID が再利用されることがあります)",
   identitySyncNoColumn: "{table} には同期できる採番列がありません",
   identitySyncAutoincrementCheckFailed: "{table} が AUTOINCREMENT かどうかを確認できませんでした: {error}",
@@ -9553,6 +9725,7 @@ const ja: Dict = {
   alterPrecheckNotNull: "{count} 行が NULL です",
   alterPrecheckRunning: "既存データが収まるか検査しています…",
   alterPrecheckError: "既存データの検査に失敗しました: {error}",
+  alterPrecheckOpenRows: "該当行を表示",
   alterPrecheckOk: "既存の行はすべて新しい定義に収まります。",
   alterTablePreview: "SQL プレビュー",
   alterTablePreviewEmpty: "まだ変更はありません。",
@@ -9602,6 +9775,8 @@ const ja: Dict = {
     "データベース {name} を作成しました。参照するには別のプロファイルで接続してください。",
   dropNamespaceConfirmTitle: "{kind} {name} を削除しますか?",
   dropNamespaceConfirmBody: "{kind} {name} とその中身をすべて完全に削除します。この操作は取り消せません。",
+  dropNamespaceContents: "この{kind}には {tables} テーブル / 約 {rows} 行が入っており、すべて削除されます。",
+  dropNamespaceEmpty: "この{kind}にはテーブルがありません。",
   dropNamespaceConfirmOk: "{kind}を削除",
   dropNamespaceSuccess: "{kind} {name} を削除しました。",
   contextMenuNamespaceProtectedTitle: "システムデータベースは削除できません",
@@ -9808,6 +9983,10 @@ const ja: Dict = {
     "この接続には COMMIT していないトランザクションがあります。切断すると変更はロールバックされます。",
   connTxOpenAction: "切断してロールバック",
   toastReconnectTxDiscarded: "{name} へ再接続しましたが、開いていたトランザクションは破棄されました。",
+  reconnectTxTitle: "開いているトランザクションを破棄して再接続しますか?",
+  reconnectTxMessage:
+    "{name} にはトランザクションが開いています。再接続すると旧接続が閉じられ、未確定の変更はロールバックされます。",
+  reconnectTxConfirm: "破棄して再接続",
   windowCloseTxBody:
     "COMMIT していないトランザクションを持つ接続が {count} 件あります。ウィンドウを閉じると変更はロールバックされます。",
   windowCloseTxAction: "閉じてロールバック",
@@ -10078,6 +10257,9 @@ const ja: Dict = {
   gridBulkEditPlaceholder: "適用する値 (または NULL)",
   gridBulkEditValueLabel: "設定する値",
   gridBulkEditSetNull: 'NULL にする (値なし。空文字や文字列の "NULL" とは別)',
+  gridBulkEditPreviewSummary:
+    "{rows} 行の {cells} セルが変わります。スキップ: 同じ値 {unchanged} / 型が合わない {invalid} / 編集不可 {readonly}。",
+  gridBulkEditPreviewLabel: "現在値 → 新しい値 (先頭数件)",
   gridBulkEditApply: "セルに設定",
   gridBulkEditApplied: "{cells} セルの編集を保留しました — Apply で確定します",
   gridBulkEditAppliedSkipped: "{cells} セルの編集を保留しました ({skipped} 件スキップ) — Apply で確定します",
@@ -10117,6 +10299,7 @@ const ja: Dict = {
   gridReplaceColumnCountZero: "一致する行がないため、何も更新されません。",
   gridReplaceColumnCountError: "対象行数を数えられませんでした: {error}",
   gridReplaceColumnCountRunning: "対象行数を数えています…",
+  gridReplaceSampleTitle: "変更前 → 変更後 (先頭 {count} 件)",
   gridReplaceColumnWarning:
     "一度に多数の行を書き換える可能性があります。確認後に 1 トランザクション (全件成功か全件ロールバック) で実行します。",
   gridReplaceApplyGrid: "編集を保留",
@@ -10999,6 +11182,8 @@ const ja: Dict = {
   schemaCompareApplying: "適用中...",
   schemaCompareApplyConfirm:
     "{count} 文を「{name}」へ適用しますか? ターゲットのスキーマを変更します (うち破壊的: {destructive})。",
+  schemaCompareApplyDmlCounts:
+    "{deletes} 行を削除 / {updates} 行を更新 / {inserts} 行を追加します (選択中の文から数えた件数)。",
   schemaCompareApplyProductionConfirm: "「{name}」は本番接続です。スキーマ変更を適用しますか?",
   schemaCompareApplyTypedConfirmTitle: "本番への破壊的な適用の確認",
   schemaCompareApplyTypedConfirmBody:

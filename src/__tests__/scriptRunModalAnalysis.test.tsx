@@ -53,7 +53,16 @@ function analysis(over: Partial<ScriptAnalysis> = {}): ScriptAnalysis {
   return {
     totalStatements: 3,
     categories: { read: 0, write: 3, ddl: 0, txControl: 0 },
-    dangerCounts: { deleteNoWhere: 0, updateNoWhere: 0, drop: 0, truncate: 0 },
+    dangerCounts: {
+      deleteNoWhere: 0,
+      updateNoWhere: 0,
+      drop: 0,
+      truncate: 0,
+      dropColumn: 0,
+      dropConstraint: 0,
+    },
+    insertTables: [],
+    insertTablesOverflow: 0,
     dangerousTotal: 0,
     blockedTotal: 0,
     txControlTotal: 0,
@@ -109,6 +118,7 @@ beforeEach(() => {
       skippedExcluded: 0,
       skippedBeforeStart: 0,
       implicitRollback: false,
+      implicitCommit: false,
       rowsAffected: 0,
       elapsedMs: 1,
     });
@@ -129,7 +139,14 @@ describe("ScriptRunModal: 自動事前確認 (#1535)", () => {
       analyzed(
         analysis({
           dangerousTotal: 1,
-          dangerCounts: { deleteNoWhere: 1, updateNoWhere: 0, drop: 0, truncate: 0 },
+          dangerCounts: {
+            deleteNoWhere: 1,
+            updateNoWhere: 0,
+            drop: 0,
+            truncate: 0,
+            dropColumn: 0,
+            dropConstraint: 0,
+          },
           dangerous: [
             {
               index: 2,
@@ -168,6 +185,42 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
     ).toBeTruthy();
   });
 
+  it("閉じていない BEGIN で実行すると、取り消す / 確定するを選ばせ、選択を実行オプションに渡す (#1626)", async () => {
+    analyzeEvent = () =>
+      analyzed(
+        analysis({
+          txControlTotal: 1,
+          txControls: [{ index: 1, line: 1, kind: "begin" }],
+          unclosedTransaction: true,
+        }),
+      );
+    setup();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    fireEvent.click(await screen.findByText(t("scriptUnclosedConfirmCommit"), {}, { timeout: 3000 }));
+    await waitFor(() => expect(runSqlScript).toHaveBeenCalledTimes(1));
+    expect(runSqlScript.mock.calls[0][0].options.unclosedTx).toBe("commit");
+  });
+
+  it("閉じていない BEGIN の確認で既定を選ぶと取り消し、キャンセルなら実行しない (#1626)", async () => {
+    analyzeEvent = () =>
+      analyzed(
+        analysis({
+          txControlTotal: 1,
+          txControls: [{ index: 1, line: 1, kind: "begin" }],
+          unclosedTransaction: true,
+        }),
+      );
+    setup();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    fireEvent.click(await screen.findByText(t("scriptUnclosedConfirmCancel"), {}, { timeout: 3000 }));
+    await waitFor(() => expect(screen.queryByText(t("scriptUnclosedConfirmCommit"))).toBeNull());
+    expect(runSqlScript).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    fireEvent.click(await screen.findByText(t("scriptUnclosedConfirmRollback"), {}, { timeout: 3000 }));
+    await waitFor(() => expect(runSqlScript).toHaveBeenCalledTimes(1));
+    expect(runSqlScript.mock.calls[0][0].options.unclosedTx).toBe("rollback");
+  });
+
   it("閉じている場合は警告しない", async () => {
     analyzeEvent = () =>
       analyzed(analysis({ txControlTotal: 2, txControls: [{ index: 1, line: 1, kind: "begin" }] }));
@@ -177,7 +230,52 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
     expect(screen.queryByText(t("scriptUnclosedTransactionWarning"))).toBeNull();
   });
 
-  it("完了画面に、EOF で自動 COMMIT したことを出す", async () => {
+  it("事前確認に INSERT の対象表別の件数を出す (#1626)", async () => {
+    analyzeEvent = () =>
+      analyzed(
+        analysis({
+          insertTables: [
+            { table: "orders", statements: 3, rows: 120 },
+            { table: "users", statements: 1, rows: 0 },
+          ],
+          insertTablesOverflow: 2,
+        }),
+      );
+    setup();
+    fireEvent.click(screen.getByText(t("scriptAnalyze")));
+    expect(
+      await screen.findByText(
+        t("scriptAnalysisInsertRow", { table: "orders", statements: "3", rows: "120" }),
+        {},
+        { timeout: 3000 },
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText(t("scriptAnalysisInsertOverflow", { count: "2" }))).toBeTruthy();
+  });
+
+  it("完了画面に、EOF で確定したことを出す (#1626)", async () => {
+    runBehavior = (id) => {
+      handlers.get(id)?.onDone?.({
+        streamId: id,
+        executed: 2,
+        succeeded: 2,
+        failedCount: 0,
+        failures: [],
+        skippedControl: 0,
+        skippedExcluded: 0,
+        skippedBeforeStart: 0,
+        implicitRollback: false,
+        implicitCommit: true,
+        rowsAffected: 1,
+        elapsedMs: 1,
+      });
+    };
+    setup();
+    fireEvent.click(screen.getByText(t("scriptExecute")));
+    expect(await screen.findByText(t("scriptDoneImplicitCommit"), {}, { timeout: 3000 })).toBeTruthy();
+  });
+
+  it("完了画面に、EOF で取り消したことを出す", async () => {
     runBehavior = (id) => {
       handlers.get(id)?.onDone?.({
         streamId: id,
@@ -189,6 +287,7 @@ describe("ScriptRunModal: BEGIN を閉じないスクリプト (#1601)", () => {
         skippedExcluded: 0,
         skippedBeforeStart: 0,
         implicitRollback: true,
+        implicitCommit: false,
         rowsAffected: 1,
         elapsedMs: 1,
       });

@@ -216,7 +216,9 @@ pub mod __test_api {
     pub use crate::commands::diff::DataDiffHandle;
     pub use crate::commands::dump::DumpOptions;
     pub use crate::commands::dump_tools::{DumpToolInstallPlan, DumpToolStatus};
-    pub use crate::commands::flight_recorder::{UndoOutcome, UndoPreviewResponse};
+    pub use crate::commands::flight_recorder::{
+        ExportPlanOutcome, UndoBatchPreviewResponse, UndoOutcome, UndoPreviewResponse,
+    };
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
     pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
@@ -279,9 +281,10 @@ pub mod __test_api {
     pub use crate::commands::script::{
         BatchStatementResult, BatchStatus, BatchStreamMessage, FileStamp, ScriptAnalyzedEvent,
         ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptOptions, ScriptProgress,
-        ScriptProgressEvent, ScriptRun,
+        ScriptProgressEvent, ScriptRun, UnclosedTxPolicy,
     };
     pub use crate::db::script_analysis::ScriptAnalysis;
+    pub use crate::db::tx_options::{TxIsolation, TxOptions};
     pub use crate::text_encoding::{EncodingPreview, TextEncoding};
 
     /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
@@ -294,6 +297,8 @@ pub mod __test_api {
             DangerKind::UpdateNoWhere => "updateNoWhere",
             DangerKind::Drop => "drop",
             DangerKind::Truncate => "truncate",
+            DangerKind::DropColumn => "dropColumn",
+            DangerKind::DropConstraint => "dropConstraint",
         })
     }
 
@@ -372,6 +377,40 @@ pub mod __test_api {
         preview_rows: usize,
         committed: std::sync::Arc<std::sync::atomic::AtomicU64>,
     ) -> crate::error::Result<(ScriptRun, Vec<BatchStatementResult>)> {
+        run_sql_batch_via_core_with(
+            session,
+            sql,
+            database,
+            stop_on_error,
+            preview_rows,
+            false,
+            None,
+            committed,
+        )
+        .await
+        .map(|(run, results, _)| (run, results))
+    }
+
+    /// [`run_sql_batch_via_core`] に全体を包む指定と DML 記録 (#1626) を足した版。
+    /// 記録した文の数 (`captured`) も返す。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn run_sql_batch_via_core_with(
+        session: std::sync::Arc<Session>,
+        sql: &str,
+        database: Option<&str>,
+        stop_on_error: bool,
+        preview_rows: usize,
+        wrap_in_transaction: bool,
+        capture_batch_id: Option<&str>,
+        committed: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    ) -> crate::error::Result<(ScriptRun, Vec<BatchStatementResult>, u64)> {
+        let stats = std::sync::Arc::new(crate::commands::script::BatchCaptureStats::default());
+        let capture = capture_batch_id.map(|b| crate::commands::script::BatchCaptureConfig {
+            row_cap: crate::db::DEFAULT_CAPTURE_ROW_CAP,
+            retention_days: None,
+            batch_id: b.to_string(),
+            stats: stats.clone(),
+        });
         let results = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = results.clone();
         let run = crate::commands::script::run_batch_core(
@@ -380,6 +419,8 @@ pub mod __test_api {
             database.map(str::to_string),
             stop_on_error,
             preview_rows,
+            wrap_in_transaction,
+            capture,
             committed,
             move |r| {
                 if let Ok(mut g) = sink.lock() {
@@ -389,7 +430,11 @@ pub mod __test_api {
         )
         .await?;
         let collected = results.lock().map(|g| g.clone()).unwrap_or_default();
-        Ok((run, collected))
+        Ok((
+            run,
+            collected,
+            stats.captured.load(std::sync::atomic::Ordering::SeqCst),
+        ))
     }
 
     /// エクスポート 1 件分を実ファイルではなくメモリへ書き出す (#879)。
@@ -538,6 +583,57 @@ pub mod __test_api {
         }
     }
 
+    /// [`make_session`] の履歴を残す版 (`skip_history = false`)。DML の記録をローカルの
+    /// フライトレコーダへ永続化させたいテスト用 (#1626)。
+    pub fn make_recording_session(id: &str, conn: Connection, opts: DbConnectOptions) -> Session {
+        let mut s = make_session(id, conn, opts, false);
+        s.skip_history = false;
+        s
+    }
+
+    /// `preview_flight_batch` の中核を Tauri ランタイム無しで駆動する (#1626)。
+    pub async fn preview_flight_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        batch_id: &str,
+        redo: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoBatchPreviewResponse> {
+        let (plan, records) =
+            crate::commands::flight_recorder::plan_batch(state, session_id, batch_id, false, redo)
+                .await?;
+        Ok(crate::commands::flight_recorder::UndoBatchPreviewResponse {
+            statements: plan.statements,
+            conflicts: plan.conflicts,
+            warnings: plan.warnings,
+            record_ids: records.iter().map(|r| r.id).collect(),
+        })
+    }
+
+    /// `apply_flight_batch` の中核を Tauri ランタイム無しで駆動する (#1626)。
+    pub async fn apply_flight_batch_via_command(
+        state: &AppState,
+        session_id: &str,
+        batch_id: &str,
+        force: bool,
+        redo: bool,
+    ) -> crate::error::Result<crate::commands::flight_recorder::UndoOutcome> {
+        crate::commands::flight_recorder::apply_flight_batch_inner(
+            state,
+            session_id.to_string(),
+            batch_id.to_string(),
+            force,
+            redo,
+        )
+        .await
+    }
+
+    /// バッチの記録をストアから直接読む (テスト用, #1626)。
+    pub async fn flight_batch_records_for_tests(
+        batch_id: &str,
+    ) -> crate::error::Result<Vec<crate::flight_recorder::WriteCaptureRecord>> {
+        crate::flight_recorder::store::list_batch(batch_id).await
+    }
+
     /// 複数の SELECT を 1 つの xlsx ブックへ書き出す (`export_tables_xlsx` の中核, #1624)。
     /// `sheets` は `(シート名の元, SELECT 文)`。書き出したバイト数と全シート通算の行数を返す。
     pub async fn export_workbook_via_command(
@@ -577,8 +673,9 @@ pub mod __test_api {
     pub async fn reconnect_via_command(
         state: &AppState,
         session_id: &str,
+        force: bool,
     ) -> crate::error::Result<()> {
-        crate::commands::connection::reconnect_inner(state, session_id).await
+        crate::commands::connection::reconnect_inner(state, session_id, force).await
     }
 
     /// Drives the `run_query` IPC command's core path (session lookup +
@@ -1628,6 +1725,11 @@ pub fn run() {
             commands::history::set_history_retention_days,
             commands::flight_recorder::list_flight_records,
             commands::flight_recorder::clear_flight_records,
+            commands::flight_recorder::pin_flight_record,
+            commands::flight_recorder::preview_flight_batch,
+            commands::flight_recorder::apply_flight_batch,
+            commands::flight_recorder::export_flight_plan_sql,
+            commands::flight_recorder::export_flight_records,
             commands::flight_recorder::preview_undo,
             commands::flight_recorder::undo_flight_record,
             commands::flight_recorder::preview_redo,

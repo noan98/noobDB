@@ -370,7 +370,9 @@ impl MySqlConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
-        let (preview, _, tx) = self.preview_inner(sql, database, row_limit, false).await?;
+        let (preview, _, tx) = self
+            .preview_inner(sql, database, row_limit, false, None)
+            .await?;
         tx.rollback().await?;
         Ok(preview)
     }
@@ -389,12 +391,15 @@ impl MySqlConn {
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         QueryResult,
         sqlx::Transaction<'static, MySql>,
     )> {
-        let (preview, result, tx) = self.preview_inner(sql, database, row_limit, true).await?;
+        let (preview, result, tx) = self
+            .preview_inner(sql, database, row_limit, true, upsert)
+            .await?;
         let result =
             result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
         Ok((preview, result, tx))
@@ -406,6 +411,7 @@ impl MySqlConn {
         database: Option<&str>,
         row_limit: usize,
         commit: bool,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         Option<QueryResult>,
@@ -463,14 +469,28 @@ impl MySqlConn {
         let is_insert_stmt = trimmed.starts_with("insert");
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
         // 自動採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
-        let order_clause = if commit && is_insert_stmt {
+        // UPSERT の記録 (#1626): 主キーがリテラルの `INSERT … VALUES … ON …` は、その主キーの行を
+        // 前後で読む (新規行と更新された既存行を分けるため)。組めなければ記録を辞退する。
+        let upsert_requested = upsert.is_some() && commit && is_insert_stmt;
+        let upsert_anchor: Option<String> = match upsert {
+            Some(h) if upsert_requested && !primary_key.is_empty() => {
+                h.anchor_where(&primary_key, quote_ident)
+            }
+            _ => None,
+        };
+        let order_clause = if upsert_anchor.is_some() {
+            String::new()
+        } else if commit && is_insert_stmt {
             super::pk_order_clause_desc(&primary_key, quote_ident)
         } else {
             super::pk_order_clause(&primary_key, quote_ident)
         };
         // 対象表/主キーが無ければ記録できない (呼び出し側が辞退する) ので、キャプチャ時は
         // スナップショットの読み取りを省いて文だけを実行する。
-        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
+        let skip_snapshots = commit
+            && (target.is_none()
+                || primary_key.is_empty()
+                || (upsert_requested && upsert_anchor.is_none()));
 
         // For UPDATE / DELETE we lift the user's WHERE clause out of the
         // statement and use it to filter the BEFORE snapshot. Without this
@@ -493,7 +513,9 @@ impl MySqlConn {
         // PK アンカーもやめ、BEFORE/AFTER を同じ固定窓で撮り直す。
         let pk_changed =
             super::preview::update_assigns_primary_key(sql, super::SqlFlavor::MySql, &primary_key);
-        let where_clause = if pk_changed {
+        let where_clause = if upsert_anchor.is_some() {
+            upsert_anchor.clone()
+        } else if pk_changed {
             None
         } else {
             super::preview::before_where_clause(sql, super::SqlFlavor::MySql, &primary_key)
@@ -518,7 +540,11 @@ impl MySqlConn {
                 });
 
         let started = Instant::now();
-        let mut capture_decline: Option<String> = None;
+        let mut capture_decline: Option<String> = if upsert_requested && upsert_anchor.is_none() {
+            Some("UPSERT の主キーをリテラルで特定できないため記録しません".into())
+        } else {
+            None
+        };
 
         let before_raw: Vec<MySqlRow> = match before_sql.clone() {
             // 行ロックは「ユーザの WHERE を引き継いだ対象行の取得」のときだけ取る。WHERE を
@@ -611,6 +637,7 @@ impl MySqlConn {
             && insert_id > 0
             && rows_affected == 1
             && primary_key.len() == 1
+            && upsert_anchor.is_none()
         {
             match target.as_deref() {
                 Some(t) if pk_is_auto_increment(&mut tx, t, &primary_key[0]).await => {

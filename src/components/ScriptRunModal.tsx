@@ -91,7 +91,7 @@ function basename(path: string): string {
 export function ScriptRunModal({ sessionId, database, isProduction, onClose }: Props) {
   const t = useT();
   const toast = useToast();
-  const { confirm, dialog } = useConfirm();
+  const { confirm, choose, dialog } = useConfirm();
   const [path, setPath] = useState("");
   const [options, setOptions] = useState<ScriptOptions>(DEFAULT_SCRIPT_OPTIONS);
   // 最近実行したファイル (パスと文字コード、全接続共通, #1631)。選ぶだけで事前確認から始められる。
@@ -256,6 +256,20 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
         if (!ok) return;
       }
     }
+    // 終端で閉じられない BEGIN があるときは、実行の前に取り消す / 確定するを選ばせる (#1626)。
+    // 既定 (Esc・キャンセル以外の primary) は取り消し。
+    let unclosedTx: ScriptOptions["unclosedTx"] = override?.unclosedTx ?? options.unclosedTx;
+    if (checked.event.analysis.unclosedTransaction && !options.wrapInTransaction) {
+      const choice = await choose({
+        title: t("scriptUnclosedConfirmTitle"),
+        message: t("scriptUnclosedConfirmMessage"),
+        confirmLabel: t("scriptUnclosedConfirmRollback"),
+        altLabel: t("scriptUnclosedConfirmCommit"),
+        cancelLabel: t("scriptUnclosedConfirmCancel"),
+      });
+      if (choice === "cancel") return;
+      unclosedTx = choice === "alt" ? "commit" : "rollback";
+    }
     if (isProduction) {
       const ok = await confirm({
         title: t("scriptProductionConfirmTitle"),
@@ -272,6 +286,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
     const runOptions: ScriptOptions = {
       ...options,
       ...override,
+      unclosedTx,
       startAtStatement: startAt,
       skipStatements: skipList(skip),
       // 事前確認のときのファイルと違えば、文番号がずれるのでバックエンドが実行前にエラーにする。
@@ -371,7 +386,7 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       ? startInsideTransaction(analysis.event.analysis, parseStartAt(startAtText))
       : null;
 
-  // ラップしない実行で BEGIN が閉じないまま終わると、EOF でランナーが黙って COMMIT する。
+  // ラップしない実行で BEGIN が閉じないまま終わると、EOF でランナーが取り消す (実行前に取り消し / 確定を選べる, #1626)。
   const unclosedTx =
     analysisFresh && !!analysis && !options.wrapInTransaction && analysis.event.analysis.unclosedTransaction;
 
@@ -693,6 +708,11 @@ function ScriptDoneSummary({ event }: { event: ScriptDoneEvent }) {
       {event.implicitRollback && (
         <Callout tone="warning" role="status">
           {t("scriptDoneImplicitRollback")}
+        </Callout>
+      )}
+      {event.implicitCommit && (
+        <Callout tone="warning" role="status">
+          {t("scriptDoneImplicitCommit")}
         </Callout>
       )}
       {event.failures.length > 0 && (

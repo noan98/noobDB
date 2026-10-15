@@ -2,7 +2,13 @@
 import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
-import type { WriteCaptureSummary, UndoPreviewResponse, UndoOutcome } from "../tauri";
+import type {
+  ExportPlanOutcome,
+  UndoBatchPreviewResponse,
+  UndoOutcome,
+  UndoPreviewResponse,
+  WriteCaptureSummary,
+} from "../tauri";
 
 export const flightRecorderCommands = {
   // DML フライトレコーダ (#735)。書き込みの記録は `runQueryStream({ capture: true })`
@@ -15,10 +21,64 @@ export const flightRecorderCommands = {
       limit: limit ?? null,
     }).then((r) => parseResponse(schemas.writeCaptureSummaryArray, r, "list_flight_records")),
 
-  clearFlightRecords: (profileId?: string | null) =>
-    invoke<number>("clear_flight_records", { profileId: profileId ?? null }).then((r) =>
-      parseResponse(schemas.numberResponse, r, "clear_flight_records"),
+  /** 記録を消す。ピン留めした記録 (#1626) は `includePinned` が true のときだけ消す。 */
+  clearFlightRecords: (profileId?: string | null, includePinned?: boolean) =>
+    invoke<number>("clear_flight_records", {
+      profileId: profileId ?? null,
+      includePinned: includePinned ?? false,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "clear_flight_records")),
+
+  /** 記録のピン留めを切り替える (#1626)。ピン留めした記録は自動削除の対象外。 */
+  pinFlightRecord: (id: number, pinned: boolean) => invoke<void>("pin_flight_record", { id, pinned }),
+
+  /** バッチ (#1626) 全体の取り消し / やり直し計画を、適用せずに返す。 */
+  previewFlightBatch: (sessionId: string, batchId: string, redo: boolean) =>
+    invoke<UndoBatchPreviewResponse>("preview_flight_batch", { sessionId, batchId, redo }).then((r) =>
+      parseResponse(schemas.undoBatchPreviewResponse, r, "preview_flight_batch"),
     ),
+
+  /**
+   * バッチ (#1626) を丸ごと取り消す / やり直す。全記録の逆 SQL を 1 トランザクションで適用する。
+   * 衝突があり `force` が false のときは何も適用せず衝突を返す。
+   */
+  applyFlightBatch: (sessionId: string, batchId: string, force: boolean, redo: boolean) =>
+    invoke<UndoOutcome>("apply_flight_batch", { sessionId, batchId, force, redo }).then((r) =>
+      parseResponse(schemas.undoOutcome, r, "apply_flight_batch"),
+    ),
+
+  /** 取り消し / やり直しの SQL を `.sql` ファイルへ書き出す (#1626)。適用はしない。`id` か `batchId` のどちらか。 */
+  exportFlightPlanSql: (params: {
+    sessionId: string;
+    id?: number | null;
+    batchId?: string | null;
+    redo: boolean;
+    force: boolean;
+    path: string;
+  }) =>
+    invoke<ExportPlanOutcome>("export_flight_plan_sql", {
+      sessionId: params.sessionId,
+      id: params.id ?? null,
+      batchId: params.batchId ?? null,
+      redo: params.redo,
+      force: params.force,
+      path: params.path,
+    }).then((r) => parseResponse(schemas.exportPlanOutcome, r, "export_flight_plan_sql")),
+
+  /** 記録を CSV / NDJSON で書き出す (#1626)。`ids` 省略で `profileId` (省略は全接続) の最新分。書き出した件数を返す。 */
+  exportFlightRecords: (params: {
+    path: string;
+    format: "csv" | "ndjson";
+    ids?: number[] | null;
+    profileId?: string | null;
+    limit?: number | null;
+  }) =>
+    invoke<number>("export_flight_records", {
+      path: params.path,
+      format: params.format,
+      ids: params.ids ?? null,
+      profileId: params.profileId ?? null,
+      limit: params.limit ?? null,
+    }).then((r) => parseResponse(schemas.numberResponse, r, "export_flight_records")),
 
   /** 巻き戻しの逆 SQL・競合を副作用なしで確認する (適用前のレビュー用)。 */
   previewUndo: (sessionId: string, id: number) =>

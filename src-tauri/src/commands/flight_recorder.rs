@@ -126,6 +126,7 @@ pub(crate) async fn run_captured_write_inner(
         sql.clone(),
         &capture,
         retention_days.map(|d| d as i64),
+        None,
     )
     .await;
 
@@ -149,9 +150,27 @@ pub async fn list_flight_records(
     flight_store::list(profile_id.as_deref(), limit).await
 }
 
+/// 記録を消す。ピン留めした記録 (#1626) は `include_pinned` が true のときだけ消す
+/// (既定は残す)。
 #[tauri::command]
-pub async fn clear_flight_records(profile_id: Option<String>) -> Result<u64> {
-    flight_store::clear(profile_id.as_deref()).await
+pub async fn clear_flight_records(
+    profile_id: Option<String>,
+    include_pinned: Option<bool>,
+) -> Result<u64> {
+    flight_store::clear(profile_id.as_deref(), include_pinned.unwrap_or(false)).await
+}
+
+/// 記録のピン留めを切り替える (#1626)。ピン留めした記録は件数・保持期間・容量の上限による
+/// 自動削除の対象外。記録が無ければ `InvalidInput`、ピン留めの上限超過もエラー。
+#[tauri::command]
+pub async fn pin_flight_record(id: i64, pinned: bool) -> Result<()> {
+    if flight_store::set_pinned(id, pinned).await? {
+        Ok(())
+    } else {
+        Err(AppError::InvalidInput(format!(
+            "flight record {id} not found"
+        )))
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -341,6 +360,430 @@ async fn mark_flight_state(id: i64, redo: bool) -> Option<String> {
     }
 }
 
+/// バッチの全記録の取り消し / やり直し済みの状態を、ストア側の 1 トランザクションで保存する。
+/// 途中で失敗しても一部だけ更新された状態にはならない。失敗したら警告文を返す。
+async fn mark_flight_batch_state(
+    records: &[crate::flight_recorder::WriteCaptureRecord],
+    redo: bool,
+) -> Option<String> {
+    let ids: Vec<i64> = records.iter().map(|r| r.id).collect();
+    match flight_store::mark_undone_many(&ids, !redo).await {
+        Ok(()) => None,
+        Err(e) => {
+            tracing::warn!(error = %e, batch = ids.len(), redo, "failed to update flight recorder batch state");
+            Some(if redo {
+                "やり直しは適用しましたが、記録の状態を保存できませんでした (記録は取り消し済みのまま残ります)".to_string()
+            } else {
+                "取り消しは適用しましたが、記録の状態を保存できませんでした (記録は未取り消しのまま残ります。再度取り消さないでください)".to_string()
+            })
+        }
+    }
+}
+
+/// 1 つの記録 (`id`) またはバッチ (`batch_id`) を指す (#1626)。ちょうど片方が必要。
+enum FlightTarget {
+    Record(i64),
+    Batch(String),
+}
+
+fn flight_target(id: Option<i64>, batch_id: Option<String>) -> Result<FlightTarget> {
+    match (id, batch_id) {
+        (Some(id), None) => Ok(FlightTarget::Record(id)),
+        (None, Some(b)) if !b.trim().is_empty() => Ok(FlightTarget::Batch(b)),
+        _ => Err(AppError::InvalidInput(
+            "exactly one of id / batchId is required".into(),
+        )),
+    }
+}
+
+/// 1 バッチで一度に取り消せる記録数の上限。記録 1 件ごとに現在行の取得が走るため。
+const MAX_BATCH_RECORDS: usize = 500;
+
+/// バッチ全体の取り消し (`redo` ならやり直し) 計画 (#1626)。取り消しは**後に実行した文から**
+/// (id 降順)、やり直しは元の順 (id 昇順) に、各記録の計画を連結する。全体を 1 つの
+/// トランザクションで適用するため、1 文でも衝突があれば (`force` でない限り) 何も適用しない。
+///
+/// 各記録の計画は「今のライブ行」に対して個別に立てるので、同じ行 (表 + 主キー) を複数の文が
+/// 触ったバッチ (INSERT → DELETE、UPDATE → DELETE など) は、前の文の取り消し後の状態を
+/// 織り込めず最終状態が誤る (衝突も出ないまま行が残る / 値が戻らない)。そうしたバッチは
+/// [`check_batch_overlap`] で拒否し、記録を 1 件ずつ取り消してもらう。
+pub(crate) async fn plan_batch(
+    state: &AppState,
+    session_id: &str,
+    batch_id: &str,
+    force: bool,
+    redo: bool,
+) -> Result<(
+    crate::flight_recorder::undo::UndoPlan,
+    Vec<crate::flight_recorder::WriteCaptureRecord>,
+)> {
+    let mut records = flight_store::list_batch(batch_id).await?;
+    records.retain(|r| r.undone == redo);
+    if records.is_empty() {
+        return Err(AppError::InvalidInput(if redo {
+            "no undone flight records in this batch".into()
+        } else {
+            "no flight records left to undo in this batch".into()
+        }));
+    }
+    if records.len() > MAX_BATCH_RECORDS {
+        return Err(AppError::InvalidInput(format!(
+            "too many records in one batch (max {MAX_BATCH_RECORDS})"
+        )));
+    }
+    if redo {
+        records.reverse();
+    }
+    check_batch_overlap(&records)?;
+    let database = records[0].database.clone();
+    if records.iter().any(|r| r.database != database) {
+        return Err(AppError::InvalidInput(
+            "records in one batch target different databases".into(),
+        ));
+    }
+    let mut merged = crate::flight_recorder::undo::UndoPlan {
+        already_satisfied: true,
+        ..Default::default()
+    };
+    for r in &records {
+        let (plan, _) = plan_flight(state, session_id, r.id, force, redo).await?;
+        merged.already_satisfied &= plan.already_satisfied || plan.statements.is_empty();
+        merged.statements.extend(plan.statements);
+        merged.conflicts.extend(plan.conflicts);
+        merged.warnings.extend(plan.warnings);
+    }
+    if !merged.statements.is_empty() {
+        merged.already_satisfied = false;
+    }
+    Ok((merged, records))
+}
+
+/// 表名の表記揺れ (`users` / `"users"` / `Users` / `public.users` / `"public"."users"`) を
+/// 同じ表として扱うための正規化: 最後のドット以降を取り、引用符を外して小文字にする。
+/// 別スキーマの同名表を同一視しうるが、重なり検出では安全側 (拒否側) に倒れるだけ。
+fn normalize_table_name(name: &str) -> String {
+    let mut last = String::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in name.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None => match c {
+                '"' | '`' => quote = Some(c),
+                '[' => quote = Some(']'),
+                '.' => last = std::mem::take(&mut cur),
+                _ => cur.push(c),
+            },
+        }
+    }
+    if !cur.is_empty() || last.is_empty() {
+        last = cur;
+    }
+    last.to_lowercase()
+}
+
+/// バッチ内で、複数の記録が同じ行 (表 + 主キー、更新前後どちらでも) に触れていればエラー。
+/// UPSERT の本体と companion は行が重ならない (新規行と既存行に分けて記録する) ので対象外になる。
+pub(crate) fn check_batch_overlap(
+    records: &[crate::flight_recorder::WriteCaptureRecord],
+) -> Result<()> {
+    let mut seen: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for r in records {
+        let pk_idx: Vec<usize> = r
+            .primary_key
+            .iter()
+            .filter_map(|n| r.columns.iter().position(|c| c == n))
+            .collect();
+        if pk_idx.is_empty() || pk_idx.len() != r.primary_key.len() {
+            continue;
+        }
+        let mut mine = std::collections::HashSet::new();
+        for row in r.before_rows.iter().chain(r.after_rows.iter()) {
+            let Some(pk) = pk_idx
+                .iter()
+                .map(|&i| row.get(i).cloned())
+                .collect::<Option<Vec<Value>>>()
+            else {
+                continue;
+            };
+            let key = format!(
+                "{}\u{1}{}\u{1}{}",
+                r.database.as_deref().unwrap_or(""),
+                normalize_table_name(&r.table),
+                serde_json::to_string(&pk)?
+            );
+            if let Some(other) = seen.get(&key) {
+                return Err(AppError::InvalidInput(format!(
+                    "flight records {other} and {} in this batch changed the same row of `{}`; undo/redo them one at a time instead of as a batch",
+                    r.id, r.table
+                )));
+            }
+            mine.insert(key);
+        }
+        for key in mine {
+            seen.insert(key, r.id);
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+pub struct UndoBatchPreviewResponse {
+    pub statements: Vec<String>,
+    pub conflicts: Vec<UndoConflict>,
+    pub warnings: Vec<String>,
+    /// 計画に含めた記録の id (適用順)。
+    #[serde(rename = "recordIds")]
+    pub record_ids: Vec<i64>,
+}
+
+/// バッチ (`batch_id`) の取り消し / やり直し計画を、適用せずに返す (#1626)。
+#[tauri::command]
+pub async fn preview_flight_batch(
+    session_id: String,
+    batch_id: String,
+    redo: bool,
+    state: State<'_, AppState>,
+) -> Result<UndoBatchPreviewResponse> {
+    let (plan, records) = plan_batch(state.inner(), &session_id, &batch_id, false, redo).await?;
+    Ok(UndoBatchPreviewResponse {
+        statements: plan.statements,
+        conflicts: plan.conflicts,
+        warnings: plan.warnings,
+        record_ids: records.iter().map(|r| r.id).collect(),
+    })
+}
+
+/// バッチを丸ごと取り消す / やり直す (#1626)。全記録の逆 SQL を 1 つのトランザクション
+/// (`run_query_transaction_inner`、読み取り専用ガード・履歴記録は単発の Undo と同じ) で適用し、
+/// 成功したら全記録を取り消し済み (やり直しなら未取り消し) にする。
+#[tauri::command]
+pub async fn apply_flight_batch(
+    session_id: String,
+    batch_id: String,
+    force: bool,
+    redo: bool,
+    state: State<'_, AppState>,
+) -> Result<UndoOutcome> {
+    apply_flight_batch_inner(state.inner(), session_id, batch_id, force, redo).await
+}
+
+pub(crate) async fn apply_flight_batch_inner(
+    state: &AppState,
+    session_id: String,
+    batch_id: String,
+    force: bool,
+    redo: bool,
+) -> Result<UndoOutcome> {
+    let (plan, records) = plan_batch(state, &session_id, &batch_id, force, redo).await?;
+    let mut warnings = plan.warnings;
+    if plan.statements.is_empty() {
+        if plan.already_satisfied && plan.conflicts.is_empty() {
+            if let Some(w) = mark_flight_batch_state(&records, redo).await {
+                warnings.push(w);
+            }
+            return Ok(UndoOutcome {
+                applied: true,
+                rows_affected: 0,
+                conflicts: plan.conflicts,
+                warnings,
+            });
+        }
+        return Ok(UndoOutcome {
+            applied: false,
+            rows_affected: 0,
+            conflicts: plan.conflicts,
+            warnings,
+        });
+    }
+    if !plan.conflicts.is_empty() && !force {
+        return Ok(UndoOutcome {
+            applied: false,
+            rows_affected: 0,
+            conflicts: plan.conflicts,
+            warnings,
+        });
+    }
+    let database = records.first().and_then(|r| r.database.clone());
+    let result =
+        run_query_transaction_inner(state, session_id, plan.statements.clone(), database).await?;
+    if let Some(w) = mark_flight_batch_state(&records, redo).await {
+        warnings.push(w);
+    }
+    Ok(UndoOutcome {
+        applied: true,
+        rows_affected: result.rows_affected,
+        conflicts: plan.conflicts,
+        warnings,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct ExportPlanOutcome {
+    pub statements: u64,
+    pub conflicts: u64,
+}
+
+/// 取り消し / やり直しの SQL を `.sql` ファイルへ書き出す (#1626)。適用はしない — 「手元で
+/// 確認してから流す」「別環境で実行する」ための保存用。単一の記録 (`id`) かバッチ (`batch_id`)
+/// のどちらかを指定する。`force` が false なら衝突のある行の文は含めず、衝突は先頭の
+/// コメントに列挙する。
+#[tauri::command]
+pub async fn export_flight_plan_sql(
+    session_id: String,
+    id: Option<i64>,
+    batch_id: Option<String>,
+    redo: bool,
+    force: bool,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<ExportPlanOutcome> {
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("save path is empty".into()));
+    }
+    let (plan, records) = match flight_target(id, batch_id)? {
+        FlightTarget::Record(id) => {
+            let (plan, record) = plan_flight(state.inner(), &session_id, id, force, redo).await?;
+            (plan, vec![record])
+        }
+        FlightTarget::Batch(b) => plan_batch(state.inner(), &session_id, &b, force, redo).await?,
+    };
+    let driver = state
+        .get(&session_id)
+        .await
+        .map(|s| s.conn.driver_kind())
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    let text = crate::flight_recorder::undo::plan_sql_text(driver, &records, &plan, redo);
+    crate::commands::export::write_file_atomically(path, text.into_bytes()).await?;
+    Ok(ExportPlanOutcome {
+        statements: plan.statements.len() as u64,
+        conflicts: plan.conflicts.len() as u64,
+    })
+}
+
+/// 書き出し形式 (#1626)。
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum FlightExportFormat {
+    Csv,
+    Ndjson,
+}
+
+/// フライトレコーダの記録を CSV / NDJSON で書き出す (#1626)。`ids` を指定するとその記録だけ、
+/// 省略すると `profile_id` (省略で全接続) の最新 `limit` 件を新しい順に書く。before / after は
+/// JSON 文字列の列 (`before_rows` / `after_rows`)。行データを含むので、扱いは履歴と同じく
+/// 利用者のローカルファイルのみ。書き出した件数を返す。
+#[tauri::command]
+pub async fn export_flight_records(
+    path: String,
+    format: FlightExportFormat,
+    ids: Option<Vec<i64>>,
+    profile_id: Option<String>,
+    limit: Option<i64>,
+) -> Result<u64> {
+    if path.trim().is_empty() {
+        return Err(AppError::InvalidInput("save path is empty".into()));
+    }
+    let records = match ids {
+        Some(ids) if !ids.is_empty() => flight_store::get_many(&ids).await?,
+        Some(_) => Vec::new(),
+        None => {
+            let limit = limit.unwrap_or(MAX_LIST_LIMIT).clamp(1, MAX_EXPORT_LIMIT);
+            let summaries = flight_store::list(profile_id.as_deref(), limit).await?;
+            let ids: Vec<i64> = summaries.iter().map(|s| s.id).collect();
+            flight_store::get_many(&ids).await?
+        }
+    };
+    if records.is_empty() {
+        return Err(AppError::InvalidInput("no flight records to export".into()));
+    }
+    let (columns, rows) = flight_export_table(&records)?;
+    let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+        let mut buf: Vec<u8> = Vec::new();
+        let fmt = match format {
+            FlightExportFormat::Csv => crate::commands::export::ExportFormat::Csv,
+            FlightExportFormat::Ndjson => crate::commands::export::ExportFormat::Ndjson,
+        };
+        crate::commands::export::write_export_to(
+            &mut buf,
+            fmt,
+            &columns,
+            &rows,
+            None,
+            &crate::commands::export::SqlExportOpts::build(None, None, None),
+            None,
+        )?;
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("flight export task failed: {e}")))??;
+    crate::commands::export::write_file_atomically(path, bytes).await?;
+    Ok(records.len() as u64)
+}
+
+/// 書き出しの上限件数。
+const MAX_EXPORT_LIMIT: i64 = 10_000;
+
+/// 記録を書き出し用の表 (列 + 行) に並べる。列は固定。before / after は JSON 文字列。
+fn flight_export_table(
+    records: &[crate::flight_recorder::WriteCaptureRecord],
+) -> Result<(Vec<crate::db::types::Column>, Vec<Vec<Value>>)> {
+    use crate::db::types::Column;
+    let names = [
+        "id",
+        "captured_at",
+        "profile_id",
+        "driver",
+        "database",
+        "table",
+        "kind",
+        "sql",
+        "rows_affected",
+        "undone",
+        "pinned",
+        "batch_id",
+        "primary_key",
+        "columns",
+        "before_rows",
+        "after_rows",
+    ];
+    let columns: Vec<Column> = names
+        .iter()
+        .map(|n| Column {
+            name: (*n).to_string(),
+            type_name: String::new(),
+        })
+        .collect();
+    let opt = |v: &Option<String>| v.clone().map_or(Value::Null, Value::String);
+    let mut rows = Vec::with_capacity(records.len());
+    for r in records {
+        let kind = serde_json::to_value(r.kind)?
+            .as_str()
+            .unwrap_or("other")
+            .to_string();
+        rows.push(vec![
+            Value::Int(r.id),
+            Value::String(r.captured_at.clone()),
+            opt(&r.profile_id),
+            Value::String(r.driver.clone()),
+            opt(&r.database),
+            Value::String(r.table.clone()),
+            Value::String(kind),
+            Value::String(r.sql.clone()),
+            Value::Int(r.rows_affected),
+            Value::Int(i64::from(r.undone)),
+            Value::Int(i64::from(r.pinned)),
+            opt(&r.batch_id),
+            Value::String(serde_json::to_string(&r.primary_key)?),
+            Value::String(serde_json::to_string(&r.columns)?),
+            Value::String(serde_json::to_string(&r.before_rows)?),
+            Value::String(serde_json::to_string(&r.after_rows)?),
+        ]);
+    }
+    Ok((columns, rows))
+}
+
 /// Shared core of [`preview_undo`] / [`undo_flight_record`]: loads the
 /// record, verifies it against the session (driver match, not already
 /// undone), re-fetches the live rows for the captured primary keys, and
@@ -502,7 +945,75 @@ mod tests {
             rows_affected: 0,
             captured_at: "2026-01-01T00:00:00Z".to_string(),
             undone: false,
+            pinned: false,
+            batch_id: None,
         }
+    }
+
+    fn rec(
+        id: i64,
+        table: &str,
+        kind: WriteKind,
+        before: &[i64],
+        after: &[i64],
+    ) -> WriteCaptureRecord {
+        let mut r = record("sqlite", None);
+        r.id = id;
+        r.table = table.to_string();
+        r.kind = kind;
+        r.before_rows = before.iter().map(|k| vec![Value::Int(*k)]).collect();
+        r.after_rows = after.iter().map(|k| vec![Value::Int(*k)]).collect();
+        r
+    }
+
+    #[test]
+    fn batch_overlap_rejects_records_touching_the_same_row() {
+        // INSERT id=1 → DELETE id=1
+        let ins = rec(1, "t", WriteKind::Insert, &[], &[1]);
+        let del = rec(2, "t", WriteKind::Delete, &[1], &[]);
+        assert!(matches!(
+            check_batch_overlap(&[ins.clone(), del]),
+            Err(AppError::InvalidInput(_))
+        ));
+        // UPDATE → DELETE
+        let upd = rec(3, "t", WriteKind::Update, &[1], &[1]);
+        let del = rec(4, "t", WriteKind::Delete, &[1], &[]);
+        assert!(check_batch_overlap(&[upd, del]).is_err());
+        // 主キーを書き換える UPDATE (前後どちらかが重なる)。
+        let moved = rec(5, "t", WriteKind::Update, &[1], &[2]);
+        let other = rec(6, "t", WriteKind::Insert, &[], &[2]);
+        assert!(check_batch_overlap(&[moved, other]).is_err());
+    }
+
+    #[test]
+    fn batch_overlap_normalizes_table_name_spellings() {
+        for (a, b) in [
+            ("users", "\"public\".\"users\""),
+            ("Users", "users"),
+            ("`users`", "db.users"),
+            ("\"users\"", "public.users"),
+        ] {
+            let ins = rec(1, a, WriteKind::Insert, &[], &[1]);
+            let del = rec(2, b, WriteKind::Delete, &[1], &[]);
+            assert!(
+                check_batch_overlap(&[ins, del]).is_err(),
+                "{a} と {b} は同じ表"
+            );
+        }
+        assert_eq!(normalize_table_name("\"a.b\".c"), "c");
+        assert_eq!(normalize_table_name("\"a.b\""), "a.b");
+        let x = rec(1, "users", WriteKind::Insert, &[], &[1]);
+        let y = rec(2, "orders", WriteKind::Delete, &[1], &[]);
+        assert!(check_batch_overlap(&[x, y]).is_ok());
+    }
+
+    #[test]
+    fn batch_overlap_allows_disjoint_rows_and_tables() {
+        let a = rec(1, "t", WriteKind::Insert, &[], &[1, 2]);
+        let b = rec(2, "t", WriteKind::Update, &[3], &[3]);
+        // 表が違えば同じ主キーでも重ならない (UPSERT の本体と companion も行は重ならない)。
+        let c = rec(3, "u", WriteKind::Delete, &[1], &[]);
+        assert!(check_batch_overlap(&[a, b, c]).is_ok());
     }
 
     #[test]

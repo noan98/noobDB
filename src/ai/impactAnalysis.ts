@@ -180,6 +180,8 @@ const KIND_DESCRIPTION: Record<DangerKind, string> = {
   updateNoWhere: "UPDATE without WHERE",
   drop: "DROP",
   truncate: "TRUNCATE",
+  dropColumn: "ALTER TABLE DROP COLUMN",
+  dropConstraint: "ALTER TABLE DROP CONSTRAINT",
 };
 
 export function buildImpactAnalysisSystem(locale: "ja" | "en"): string {

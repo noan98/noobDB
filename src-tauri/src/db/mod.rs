@@ -50,6 +50,7 @@ pub mod tx_options;
 pub mod types;
 /// インポートの競合モード (UPSERT) の方言別 SQL 生成 (#972)。
 pub mod upsert;
+pub(crate) mod upsert_capture;
 /// オブジェクト依存検索 (Where-used) の参照検出 (#1027 / #1261)。
 pub mod where_used;
 
@@ -265,6 +266,8 @@ pub enum CapturePrep {
 pub struct ReadyCapture {
     kind: WriteKind,
     row_cap: usize,
+    /// UPSERT として記録するときの、INSERT の VALUES の解析結果 (#1626)。
+    upsert: Option<upsert_capture::UpsertHint>,
 }
 
 /// 開いたままの書き込みトランザクション (#1536)。`commit` するまで変更は確定せず、
@@ -306,6 +309,9 @@ pub struct PendingCapture {
     preview: PreviewResult,
     result: QueryResult,
     tx: PendingTx,
+    /// UPSERT として前後を撮った (#1626)。`analyze_capture` が新規行と更新行に分ける。
+    /// 解析した UPSERT (競合先・`DO UPDATE … WHERE` の有無を判定に使う)。
+    upsert: Option<upsert_capture::UpsertHint>,
 }
 
 #[derive(Debug, Clone)]
@@ -323,6 +329,9 @@ pub struct WriteCapture {
     /// Rows added/changed, keyed by primary key. Empty for `Delete`.
     pub after_rows: Vec<Vec<Value>>,
     pub rows_affected: u64,
+    /// UPSERT (#1626) が新規行と更新行の両方を起こしたとき、更新行の記録 (kind = `Update`)。
+    /// 本体は新規行の記録 (kind = `Insert`)。同じバッチ id で保存し、まとめて取り消せる。
+    pub companion: Option<Box<WriteCapture>>,
 }
 
 impl WriteCapture {
@@ -338,6 +347,7 @@ impl WriteCapture {
             before_rows: Vec::new(),
             after_rows: Vec::new(),
             rows_affected: 0,
+            companion: None,
         }
     }
 
@@ -357,6 +367,7 @@ impl WriteCapture {
             before_rows: Vec::new(),
             after_rows: Vec::new(),
             rows_affected: 0,
+            companion: None,
         }
     }
 }
@@ -540,7 +551,7 @@ impl Connection {
     }
 
     /// [`Self::begin_transaction`] に分離レベル / READ ONLY を指定する版 (#1166)。
-    /// SQLite は非対応で、オプション指定があれば `InvalidInput`。
+    /// SQLite は分離レベル非対応 (指定は `InvalidInput`)。READ ONLY は `PRAGMA query_only` で実現 (#1626)。
     pub async fn begin_transaction_with(
         &self,
         database: Option<&str>,
@@ -625,23 +636,24 @@ impl Connection {
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
+        upsert: Option<&upsert_capture::UpsertHint>,
     ) -> Result<(PreviewResult, QueryResult, PendingTx)> {
         match self {
             Connection::MySql(c) => {
                 let (p, r, tx) = c
-                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .execute_snapshot_uncommitted(sql, database, row_limit, upsert)
                     .await?;
                 Ok((p, r, PendingTx::MySql(tx)))
             }
             Connection::Postgres(c) => {
                 let (p, r, tx) = c
-                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .execute_snapshot_uncommitted(sql, database, row_limit, upsert)
                     .await?;
                 Ok((p, r, PendingTx::Postgres(tx)))
             }
             Connection::Sqlite(c) => {
                 let (p, r, tx) = c
-                    .execute_snapshot_uncommitted(sql, database, row_limit)
+                    .execute_snapshot_uncommitted(sql, database, row_limit, upsert)
                     .await?;
                 Ok((p, r, PendingTx::Sqlite(tx)))
             }
@@ -1725,12 +1737,21 @@ impl Connection {
         let row_cap = row_cap.max(1);
 
         // UPSERT (ON CONFLICT / ON DUPLICATE KEY UPDATE) は、既存行の更新が「新規行」に見えて
-        // Undo が無関係な既存行を DELETE しかねない。記録は辞退し、書き込みだけ 1 回実行する。
+        // Undo が無関係な既存行を DELETE しかねない。主キーが単純なリテラルの
+        // `INSERT … (列) VALUES (…) ON …` だけは、その主キーの行を前後で読んで新規行と更新行に
+        // 分けて記録する (#1626)。それ以外の形は記録を辞退し、書き込みだけ 1 回実行する。
+        let mut upsert_hint = None;
         if kind == WriteKind::Insert && insert_is_upsert(self.driver_kind(), sql) {
-            return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
-                kind,
-                "UPSERT (ON CONFLICT / ON DUPLICATE KEY UPDATE) は新規行と更新行を区別できないため記録できません",
-            )));
+            let cleaned = strip_sql_comments(sql, sql_flavor_of(self.driver_kind()));
+            match upsert_capture::parse_upsert(&cleaned) {
+                Some(hint) => upsert_hint = Some(hint),
+                None => {
+                    return Ok(CapturePrep::Decline(WriteCapture::not_capturable(
+                        kind,
+                        "UPSERT は主キーを VALUES のリテラルで指定した `INSERT INTO t (列…) VALUES (…) ON …` の形だけ記録できます",
+                    )));
+                }
+            }
         }
 
         // 対象行数が記録の上限を超えるなら、どのみち後で「対象行を特定できない」と辞退する。
@@ -1746,7 +1767,11 @@ impl Connection {
             )));
         }
 
-        Ok(CapturePrep::Ready(Box::new(ReadyCapture { kind, row_cap })))
+        Ok(CapturePrep::Ready(Box::new(ReadyCapture {
+            kind,
+            row_cap,
+            upsert: upsert_hint,
+        })))
     }
 
     /// [`Connection::capture_write`] の中盤: 単一トランザクションで「対象行の取得 → 文の実行 →
@@ -1767,10 +1792,15 @@ impl Connection {
             }
             CapturePrep::Ready(r) => *r,
         };
-        let ReadyCapture { kind, row_cap } = ready;
+        let ReadyCapture {
+            kind,
+            row_cap,
+            upsert,
+        } = ready;
+        let is_upsert = upsert.clone();
 
         match self
-            .execute_snapshot_uncommitted(sql, database, row_cap)
+            .execute_snapshot_uncommitted(sql, database, row_cap, upsert.as_ref())
             .await
         {
             Ok((preview, result, tx)) => Ok(CaptureRun::Pending(Box::new(PendingCapture {
@@ -1778,6 +1808,7 @@ impl Connection {
                 preview,
                 result,
                 tx,
+                upsert: is_upsert,
             }))),
             // トランザクションを開く前に弾かれた (複数文など) 場合は何も実行されていない。
             // 記録を辞退して通常経路で 1 回実行する。
@@ -1810,8 +1841,9 @@ impl Connection {
             preview,
             result,
             tx,
+            upsert,
         } = pending;
-        let analyzed = self.analyze_capture(kind, sql, preview, result)?;
+        let analyzed = self.analyze_capture(kind, sql, preview, result, upsert)?;
         tx.commit().await?;
         Ok(analyzed)
     }
@@ -1824,6 +1856,7 @@ impl Connection {
         sql: &str,
         dry: PreviewResult,
         result: QueryResult,
+        upsert: Option<upsert_capture::UpsertHint>,
     ) -> Result<(QueryResult, WriteCapture)> {
         let decline = |reason: &str| -> Result<(QueryResult, WriteCapture)> {
             Ok((
@@ -1881,6 +1914,109 @@ impl Connection {
 
         let pk_of =
             |row: &[Value]| -> Vec<Value> { pk_idx.iter().map(|&i| row[i].clone()).collect() };
+
+        // UPSERT (#1626): 主キーを指定した行の前後から、新規行 (Undo = DELETE) と更新された
+        // 既存行 (Undo = 元の値へ UPDATE) に分ける。両方あれば 2 件の記録 (本体 + companion)。
+        if let Some(hint) = upsert {
+            if dry.truncated {
+                return decline("対象行数が記録の上限を超えているため記録しません");
+            }
+            let before_by_key: std::collections::HashMap<String, &Vec<Value>> = dry
+                .before_rows
+                .iter()
+                .map(|r| (row_signature(&pk_of(r)), r))
+                .collect();
+            let after_keys: std::collections::HashSet<String> = dry
+                .after_rows
+                .iter()
+                .map(|r| row_signature(&pk_of(r)))
+                .collect();
+            if before_by_key.keys().any(|k| !after_keys.contains(k)) {
+                return decline("UPSERT の後に既存行が消えたため記録しません");
+            }
+            let mut new_rows: Vec<Vec<Value>> = Vec::new();
+            let mut before_changed: Vec<Vec<Value>> = Vec::new();
+            let mut after_changed: Vec<Vec<Value>> = Vec::new();
+            let mut unchanged = 0u64;
+            for a in &dry.after_rows {
+                match before_by_key.get(&row_signature(&pk_of(a))) {
+                    None => new_rows.push(a.clone()),
+                    Some(b) if **b != *a => {
+                        before_changed.push((*b).clone());
+                        after_changed.push(a.clone());
+                    }
+                    Some(_) => unchanged += 1,
+                }
+            }
+            // 影響行数を、見えた変更から正確に数えて照合する。主キー以外の一意キーでの衝突などで
+            // 「見ていない行」が変わっていると食い違う。
+            // MySQL (sqlx は常に CLIENT_FOUND_ROWS): 新規 1・更新 2・変化なし 1。
+            // PostgreSQL / SQLite: 新規・更新・変化なしをすべて 1 と数える。ただし
+            // `DO UPDATE … WHERE` は更新が見送られた行を 0 と数えるので正確に数えられず辞退する。
+            if self.driver_kind() != DriverKind::Mysql
+                && !hint.conflict_target_is_primary_key(&primary_key)
+            {
+                // 競合先が主キーでないと、主キーを指定した行ではなく別の一意キーの行が更新される
+                // (主キー列ごと書き換わることもある)。記録した行と実際に変わった行が食い違う。
+                return decline(
+                    "DO UPDATE の競合先が主キーと一致しないため記録しません (主キー以外の一意キーで更新される可能性があります)",
+                );
+            }
+            if self.driver_kind() == DriverKind::Mysql {
+                let expected = new_rows.len() as u64 + before_changed.len() as u64 * 2 + unchanged;
+                if result.rows_affected != expected {
+                    return decline(
+                        "主キー以外の一意キーの衝突など、記録した行以外も変わった可能性があるため記録しません",
+                    );
+                }
+            } else {
+                if hint.has_update_where() {
+                    return decline(
+                        "DO UPDATE … WHERE を伴う UPSERT は更新された行を正確に数えられないため記録しません",
+                    );
+                }
+                let explained = new_rows.len() as u64 + before_changed.len() as u64 + unchanged;
+                if result.rows_affected > explained {
+                    return decline(
+                        "主キー以外の一意キーの衝突など、記録した行以外も変わった可能性があるため記録しません",
+                    );
+                }
+            }
+            if new_rows.is_empty() && before_changed.is_empty() {
+                return decline("値が変わった行・追加された行がないため記録しません");
+            }
+            let make = |kind: WriteKind, before: Vec<Vec<Value>>, after: Vec<Vec<Value>>| {
+                let rows_affected = before.len().max(after.len()) as u64;
+                WriteCapture {
+                    kind,
+                    capturable: true,
+                    reason: None,
+                    table: table.clone(),
+                    primary_key: primary_key.clone(),
+                    columns: columns.clone(),
+                    column_types: column_types.clone(),
+                    before_rows: before,
+                    after_rows: after,
+                    rows_affected,
+                    companion: None,
+                }
+            };
+            let capture = if new_rows.is_empty() {
+                make(WriteKind::Update, before_changed, after_changed)
+            } else {
+                let mut main = make(WriteKind::Insert, Vec::new(), new_rows);
+                if !before_changed.is_empty() {
+                    main.companion = Some(Box::new(make(
+                        WriteKind::Update,
+                        before_changed,
+                        after_changed,
+                    )));
+                }
+                main
+            };
+            return Ok((result.clone(), capture));
+        }
+
         let ambiguous_reason =
             "対象行を正確に特定できませんでした (対象行数が上限を超えている可能性があります)";
 
@@ -1931,6 +2067,7 @@ impl Connection {
                         before_rows: before_changed,
                         after_rows: after_changed,
                         rows_affected: result.rows_affected,
+                        companion: None,
                     },
                 ))
             }
@@ -1964,6 +2101,7 @@ impl Connection {
                         before_rows: deleted_rows,
                         after_rows: Vec::new(),
                         rows_affected: result.rows_affected,
+                        companion: None,
                     },
                 ))
             }
@@ -2017,6 +2155,7 @@ impl Connection {
                         before_rows: Vec::new(),
                         after_rows: new_rows,
                         rows_affected: result.rows_affected,
+                        companion: None,
                     },
                 ))
             }

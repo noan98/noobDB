@@ -15,6 +15,7 @@ import type {
 export const DEFAULT_SCRIPT_OPTIONS: ScriptOptions = {
   continueOnError: false,
   wrapInTransaction: false,
+  unclosedTx: "rollback",
   encoding: null,
   startAtStatement: 0,
   skipStatements: [],
@@ -153,7 +154,14 @@ export function remainingDangerous(
 export function dangerKindCounts(
   analysis: Pick<ScriptAnalysis, "dangerCounts">,
 ): { kind: ScriptDangerKind; count: number }[] {
-  const order: ScriptDangerKind[] = ["drop", "truncate", "deleteNoWhere", "updateNoWhere"];
+  const order: ScriptDangerKind[] = [
+    "drop",
+    "truncate",
+    "dropColumn",
+    "dropConstraint",
+    "deleteNoWhere",
+    "updateNoWhere",
+  ];
   return order.map((kind) => ({ kind, count: analysis.dangerCounts[kind] })).filter((e) => e.count > 0);
 }
 

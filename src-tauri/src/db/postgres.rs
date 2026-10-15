@@ -336,7 +336,9 @@ impl PostgresConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
-        let (preview, _, tx) = self.preview_inner(sql, database, row_limit, false).await?;
+        let (preview, _, tx) = self
+            .preview_inner(sql, database, row_limit, false, None)
+            .await?;
         tx.rollback().await?;
         Ok(preview)
     }
@@ -354,12 +356,15 @@ impl PostgresConn {
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         QueryResult,
         sqlx::Transaction<'static, sqlx::Postgres>,
     )> {
-        let (preview, result, tx) = self.preview_inner(sql, database, row_limit, true).await?;
+        let (preview, result, tx) = self
+            .preview_inner(sql, database, row_limit, true, upsert)
+            .await?;
         let result =
             result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
         Ok((preview, result, tx))
@@ -371,6 +376,7 @@ impl PostgresConn {
         database: Option<&str>,
         row_limit: usize,
         commit: bool,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         Option<QueryResult>,
@@ -413,13 +419,27 @@ impl PostgresConn {
         let is_insert_stmt = trimmed.starts_with("insert");
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
         // 採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
-        let order_clause = if commit && is_insert_stmt {
+        // UPSERT の記録 (#1626): 主キーがリテラルの `INSERT … VALUES … ON …` は、その主キーの行を
+        // 前後で読む (新規行と更新された既存行を分けるため)。組めなければ記録を辞退する。
+        let upsert_requested = upsert.is_some() && commit && is_insert_stmt;
+        let upsert_anchor: Option<String> = match upsert {
+            Some(h) if upsert_requested && !primary_key.is_empty() => {
+                h.anchor_where(&primary_key, pg_quote_ident)
+            }
+            _ => None,
+        };
+        let order_clause = if upsert_anchor.is_some() {
+            String::new()
+        } else if commit && is_insert_stmt {
             super::pk_order_clause_desc(&primary_key, pg_quote_ident)
         } else {
             super::pk_order_clause(&primary_key, pg_quote_ident)
         };
         // 対象表/主キーが無ければ記録できないので、キャプチャ時はスナップショットを省く。
-        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
+        let skip_snapshots = commit
+            && (target.is_none()
+                || primary_key.is_empty()
+                || (upsert_requested && upsert_anchor.is_none()));
         // ユーザの WHERE を BEFORE へ反映する (PK が判っている UPDATE/DELETE の
         // ときだけ。`UPDATE … FROM other` のように単独 SELECT として成立しない
         // 形は共有ロジック側が弾いて従来の固定窓へ縮退する)。
@@ -431,7 +451,9 @@ impl PostgresConn {
             super::SqlFlavor::Postgres,
             &primary_key,
         );
-        let where_clause = if pk_changed {
+        let where_clause = if upsert_anchor.is_some() {
+            upsert_anchor.clone()
+        } else if pk_changed {
             None
         } else {
             super::preview::before_where_clause(sql, super::SqlFlavor::Postgres, &primary_key)
@@ -588,8 +610,14 @@ impl PostgresConn {
         // xmin だけでは「同一文内のトリガが既存行を UPDATE した」行も自トランザクションの書き込みに
         // 見えるので、これを `new_rows_exact` の根拠にはしない (窓の端の候補を辞退する共通判定に任せる)。
         let new_rows_exact = false;
-        let mut capture_decline: Option<String> = None;
-        if commit && is_insert && !after_raw.is_empty() {
+        let mut capture_decline: Option<String> = if upsert_requested && upsert_anchor.is_none() {
+            Some("UPSERT の主キーをリテラルで特定できないため記録しません".into())
+        } else {
+            None
+        };
+        // UPSERT は既存行の更新も含むので「自トランザクションが書いた新規行」の確認は当てはまらない
+        // (新規行と更新行の分類は analyze_capture が影響行数と突き合わせて行う)。
+        if commit && is_insert && !after_raw.is_empty() && !upsert_requested {
             let verified = verify_inserted_rows(
                 &mut tx,
                 target.as_deref(),

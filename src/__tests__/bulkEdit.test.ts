@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { CellValue, Column } from "../api/tauri";
-import { planBulkCellEdit, type BulkEditTarget } from "../components/bulkEdit";
+import { bulkEditSamples, planBulkCellEdit, type BulkEditTarget } from "../components/bulkEdit";
 import {
   buildUpdateStatements,
   isEditableColumnType,
@@ -261,5 +261,38 @@ describe("planBulkCellEdit", () => {
     expect(plan.applied).toHaveLength(0);
     expect(plan.skippedReadonly).toBe(0);
     expect(plan.skippedInvalid).toBe(0);
+  });
+});
+
+describe("bulkEditSamples (#1626)", () => {
+  const base = {
+    rows,
+    columns,
+    pkIndices: PK,
+    rowIndices: [0, 1, 2],
+    colIndices: [2],
+    value: "50",
+    isColEditable: allEditable,
+    validate: noValidate,
+  };
+
+  it("実際に変わるセルだけを、現在値つきで先頭 limit 件返す", () => {
+    // carol (age 50) は既にその値なので除外される。
+    expect(bulkEditSamples(base)).toEqual([
+      { rowIdx: 0, colIdx: 2, before: 30, after: "50" },
+      { rowIdx: 1, colIdx: 2, before: 40, after: "50" },
+    ]);
+    expect(bulkEditSamples(base, 1)).toHaveLength(1);
+  });
+
+  it("プレビューの件数は planBulkCellEdit の applied と一致する", () => {
+    const plan = planBulkCellEdit(base);
+    expect(bulkEditSamples(base, 100)).toHaveLength(plan.applied.length);
+  });
+
+  it("編集不可列・型不正・PK なしは出さない", () => {
+    expect(bulkEditSamples({ ...base, isColEditable: () => false })).toEqual([]);
+    expect(bulkEditSamples({ ...base, validate: () => "bad" })).toEqual([]);
+    expect(bulkEditSamples({ ...base, pkIndices: [] })).toEqual([]);
   });
 });

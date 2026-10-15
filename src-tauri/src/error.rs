@@ -111,6 +111,12 @@ pub enum AppError {
     #[error("the connected profile differs from the one used when recorded")]
     FlightProfileMismatch,
 
+    /// 明示トランザクション中の生存セッションへの再接続 (#1626)。再接続は旧接続を閉じるので、
+    /// 開いている BEGIN の未確定の書き込みはサーバ側でロールバックされる。`force` 指定が無い限り
+    /// 拒否し、フロントが確認ダイアログを出して `force` 付きで再実行する。
+    #[error("an explicit transaction is open on this session; reconnecting would discard its uncommitted changes")]
+    TransactionActive,
+
     #[error("{0}")]
     Other(String),
 }
@@ -175,6 +181,7 @@ impl AppError {
             AppError::ViewBaseUnresolved => AppError::ViewBaseUnresolved,
             AppError::FlightDriverMismatch => AppError::FlightDriverMismatch,
             AppError::FlightProfileMismatch => AppError::FlightProfileMismatch,
+            AppError::TransactionActive => AppError::TransactionActive,
             AppError::Other(m) => AppError::Other(m.clone()),
         }
     }
@@ -220,6 +227,7 @@ impl AppError {
             AppError::ViewBaseUnresolved => "viewBaseUnresolved",
             AppError::FlightDriverMismatch => "flightDriverMismatch",
             AppError::FlightProfileMismatch => "flightProfileMismatch",
+            AppError::TransactionActive => "transactionActive",
             AppError::Other(_) => "other",
         }
     }

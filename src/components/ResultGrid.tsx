@@ -183,7 +183,7 @@ import {
   type RowIdentityKind,
   type RowSqlKind,
 } from "./cellEdit";
-import { planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
+import { bulkEditSamples, planBulkCellEdit, type BulkEditTarget } from "./bulkEdit";
 import { detectPasteHeader, parseClipboardGrid, planPasteEdit, planPasteInsertRows } from "./pasteEdit";
 import { quickSetOptions, resolveDynamicValue } from "./quickSetValues";
 import {
@@ -5477,6 +5477,25 @@ export const DataGrid = memo(function DataGrid({
     }
   };
 
+  // 一括編集ダイアログの適用前プレビュー (#1626): 適用 / スキップの内訳と、変わるセルの先頭数件の
+  // 「現在値 → 新しい値」。入力のたびに計算するが、判定は `planBulkCellEdit` と同じ関数なので
+  // 実際に保留編集へ積まれるセルと一致する。
+  const bulkEditPreview = useMemo(() => {
+    if (!bulkEdit) return null;
+    const input = {
+      rows,
+      columns,
+      pkIndices: pkIndices ?? [],
+      rowIndices: bulkEdit.rowIndices,
+      colIndices: bulkEdit.colIndices,
+      value: bulkEdit.value,
+      isColEditable: (c: number) => editableColumns?.[c] ?? false,
+      validate: (c: number, v: string) => validateEdit?.(c, v) ?? null,
+    };
+    const plan = planBulkCellEdit(input);
+    return { plan, samples: bulkEditSamples(input, 5) };
+  }, [bulkEdit, rows, columns, pkIndices, editableColumns, validateEdit]);
+
   // Apply the bulk-edit dialog's single value to every selected cell (#596).
   const applyBulkEdit = () => {
     const pending = bulkEdit;
@@ -7535,13 +7554,60 @@ export const DataGrid = memo(function DataGrid({
                   {t("gridBulkEditSetNull")}
                 </Button>
               </FormSection>
+              {bulkEditPreview && (
+                <chakra.div
+                  display="flex"
+                  flexDirection="column"
+                  gap="1.5"
+                  marginTop="3"
+                  data-testid="grid-bulk-edit-preview"
+                >
+                  <Callout tone={bulkEditPreview.plan.applied.length > 0 ? "info" : "warning"} role="status">
+                    {t("gridBulkEditPreviewSummary", {
+                      cells: bulkEditPreview.plan.applied.length,
+                      rows: bulkEditPreview.plan.rowCount,
+                      unchanged: bulkEditPreview.plan.unchanged.length,
+                      invalid: bulkEditPreview.plan.skippedInvalid,
+                      readonly: bulkEditPreview.plan.skippedReadonly,
+                    })}
+                  </Callout>
+                  {bulkEditPreview.samples.length > 0 && (
+                    <chakra.ul
+                      listStyleType="none"
+                      m="0"
+                      p="0"
+                      fontFamily="mono"
+                      fontSize="xs"
+                      aria-label={t("gridBulkEditPreviewLabel")}
+                    >
+                      {bulkEditPreview.samples.map((sm) => (
+                        <chakra.li key={`${sm.rowIdx}:${sm.colIdx}`} wordBreak="break-all">
+                          <chakra.span color="app.textMuted">
+                            {columns[sm.colIdx]?.name} (#{sm.rowIdx + 1}):{" "}
+                          </chakra.span>
+                          {sm.before === null ? "NULL" : String(sm.before)} → {sm.after}
+                        </chakra.li>
+                      ))}
+                    </chakra.ul>
+                  )}
+                </chakra.div>
+              )}
             </ModalBody>
             <ModalFooter>
               <div style={{ flex: 1 }} />
               <Button variant="secondary" size="sm" onClick={() => setBulkEdit(null)}>
                 {t("dangerousCancel")}
               </Button>
-              <Button variant="primary" size="sm" onClick={applyBulkEdit}>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={applyBulkEdit}
+                disabled={
+                  !!bulkEditPreview &&
+                  bulkEditPreview.plan.applied.length === 0 &&
+                  bulkEditPreview.plan.unchanged.length === 0
+                }
+              >
                 {t("gridBulkEditApply")}
               </Button>
             </ModalFooter>

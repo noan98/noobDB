@@ -27,7 +27,7 @@ import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
-import { buildAlterPrechecks, type AlterPrecheck } from "./alterPrecheck";
+import { buildAlterPrechecks, precheckRowsSql, type AlterPrecheck } from "./alterPrecheck";
 import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews, type CountPreviewState } from "../useCountPreviews";
 
 /**
@@ -105,9 +105,12 @@ function groupExistingFks(all: ForeignKey[], table: string): ExistingFk[] {
 function AlterPrecheckNotice({
   prechecks,
   counts,
+  onOpenRows,
 }: {
   prechecks: AlterPrecheck[];
   counts: Record<string, CountPreviewState>;
+  /** 収まらない行を SELECT * でエディタ (結果グリッド) へ開く (#1626)。 */
+  onOpenRows?: (sql: string) => void;
 }) {
   const t = useT();
   if (prechecks.length === 0) return null;
@@ -142,6 +145,22 @@ function AlterPrecheckNotice({
               <chakra.code fontFamily="mono">{check.column}</chakra.code>
               {check.kind === "notNull" ? ` (${check.to})` : ` (${check.from} → ${check.to})`}:{" "}
               {t(kindKey[check.kind], { count })}
+              {onOpenRows && precheckRowsSql(check.sql) && (
+                <>
+                  {" "}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      const rowsSql = precheckRowsSql(check.sql);
+                      if (rowsSql) onOpenRows(rowsSql);
+                    }}
+                  >
+                    {t("alterPrecheckOpenRows")}
+                  </Button>
+                </>
+              )}
             </chakra.span>
           ))}
         </chakra.div>
@@ -889,7 +908,11 @@ export function AlterTableModal({
                 <FieldLabel as="div">{t("alterTablePreview")}</FieldLabel>
                 <CodePreview minH="60px">{sqlPreview || t("alterTablePreviewEmpty")}</CodePreview>
               </FormSection>
-              <AlterPrecheckNotice prechecks={prechecks} counts={precheckCounts} />
+              <AlterPrecheckNotice
+                prechecks={prechecks}
+                counts={precheckCounts}
+                onOpenRows={onSendToEditor}
+              />
               {hasIncompleteIndex && (
                 <Callout tone="warning">{t("alterTableIndexIncompleteBlocked")}</Callout>
               )}

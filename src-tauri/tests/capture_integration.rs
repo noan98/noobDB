@@ -249,6 +249,130 @@ async fn pg_upsert_is_not_recorded_as_a_new_row() {
         .unwrap();
 }
 
+/// 主キーをリテラルで指定した UPSERT (#1626): 新規行は Insert、更新された既存行は companion の Update。
+#[tokio::test]
+async fn pg_upsert_with_literal_keys_splits_new_and_updated_rows() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_pg_ups";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(&format!("INSERT INTO {tb} VALUES (1,'a')"), None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(&format!("INSERT INTO {tb} (id, name) VALUES (1,'b'), (2,'new') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"), None, 100)
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 2);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(cap.kind, t::WriteKind::Insert);
+    assert_eq!(ids(&cap), vec![2]);
+    let companion = cap.companion.as_deref().expect("update companion");
+    assert_eq!(companion.kind, t::WriteKind::Update);
+    assert!(matches!(&companion.before_rows[0][1], t::Value::String(s) if s == "a"));
+    assert!(matches!(&companion.after_rows[0][1], t::Value::String(s) if s == "b"));
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
+/// 主キー以外の一意キー (email) で衝突して「見ていない行」が変わる UPSERT は記録を辞退する (#1626 レビュー)。
+/// MySQL は sqlx が常に CLIENT_FOUND_ROWS を使うので、変化なしの行も 1 と数える。新規 1・更新 2・
+/// 変化なし 1 で正確に数えないと、影響行数 5 が「説明可能」と誤判定されて id 5 の更新が記録から漏れる。
+#[tokio::test]
+async fn my_upsert_declines_when_a_secondary_unique_key_updates_an_unseen_row() {
+    let Some(o) = my_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_my_ups_uq";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, email VARCHAR(20), name VARCHAR(20), UNIQUE KEY uq_email (email)) ENGINE=InnoDB"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(
+        &format!("INSERT INTO {tb} VALUES (1,'e1','s'),(2,'e2','s'),(5,'a','old')"),
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            &format!("INSERT INTO {tb} (id, email, name) VALUES (1,'e1','s'),(2,'e2','s'),(10,'a','new'),(11,'z','n') ON DUPLICATE KEY UPDATE name = VALUES(name)"),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 5, "unchanged 1 + 1 + 更新 2 + 新規 1");
+    assert!(!cap.capturable, "id 5 の更新を見逃さず辞退する: {cap:?}");
+    // 書き込み自体は 1 回実行されている。
+    assert_eq!(
+        count(
+            &c,
+            &format!("SELECT COUNT(*) FROM {tb} WHERE id = 5 AND name = 'new'")
+        )
+        .await,
+        1
+    );
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
+/// PostgreSQL の `ON CONFLICT … DO UPDATE … WHERE` は更新を見送った行を 0 と数えるので、
+/// 影響行数から正確に数えられない。辞退する (#1626 レビュー)。
+#[tokio::test]
+async fn pg_upsert_with_do_update_where_is_declined() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_pg_ups_where";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, email TEXT UNIQUE, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(
+        &format!("INSERT INTO {tb} VALUES (1,'e1','s'),(2,'e2','s')"),
+        None,
+    )
+    .await
+    .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            &format!("INSERT INTO {tb} (id, email, name) VALUES (1,'e1','changed'),(2,'e2','changed') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name WHERE {tb}.id = 1"),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 1, "id 2 の更新は見送られて 0");
+    assert!(!cap.capturable, "{cap:?}");
+    assert!(
+        cap.reason.as_deref().is_some_and(|m| m.contains("WHERE")),
+        "{:?}",
+        cap.reason
+    );
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
 /// WHERE を引き継げない UPDATE (PK を書き換える) が、無関係な行のロックを待たない。
 #[tokio::test]
 async fn pg_pk_changing_update_does_not_wait_on_unrelated_row_lock() {
@@ -441,6 +565,53 @@ async fn my_capture_runs_once_and_attributes_autoinc_insert() {
         .unwrap();
 }
 
+/// 主キーをリテラルで指定した UPSERT (#1626): MySQL は更新行を 2 と数えるが、記録は新規行と更新行に分かれる。
+#[tokio::test]
+async fn my_upsert_with_literal_keys_splits_new_and_updated_rows() {
+    let Some(o) = my_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_my_ups";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, name VARCHAR(20), UNIQUE KEY uq_name (name)) ENGINE=InnoDB"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(&format!("INSERT INTO {tb} VALUES (1,'a')"), None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(&format!("INSERT INTO {tb} (id, name) VALUES (1,'b'), (2,'new') ON DUPLICATE KEY UPDATE name = VALUES(name)"), None, 100)
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 3, "新規 1 + 更新 2");
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(cap.kind, t::WriteKind::Insert);
+    assert_eq!(ids(&cap), vec![2]);
+    let companion = cap.companion.as_deref().expect("update companion");
+    assert!(matches!(&companion.before_rows[0][1], t::Value::String(s) if s == "a"));
+    assert!(matches!(&companion.after_rows[0][1], t::Value::String(s) if s == "b"));
+    // 主キー以外の一意キー (name) で衝突して別の行が更新される形は記録を辞退する。
+    let (r, cap) = c
+        .capture_write(
+            &format!(
+                "INSERT INTO {tb} (id, name) VALUES (9,'b') ON DUPLICATE KEY UPDATE name = 'b2'"
+            ),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(r.rows_affected >= 1, "write must still apply");
+    assert!(!cap.capturable);
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn my_pk_changing_update_does_not_wait_on_unrelated_row_lock() {
     let Some(o) = my_opts().await else { return };
@@ -617,4 +788,84 @@ async fn pg_search_path_does_not_leak_to_schema_less_statements() {
     c.execute("DROP SCHEMA IF EXISTS sp1602 CASCADE", None)
         .await
         .unwrap();
+}
+
+async fn sqlite_conn(tag: &str) -> (std::path::PathBuf, t::Connection) {
+    let path = std::env::temp_dir().join(format!("noobdb_cap1626_{tag}_{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    std::fs::File::create(&path).expect("create sqlite file");
+    let opts = t::sqlite_options(path.to_str().expect("utf8"));
+    let c = t::connect(&opts).await.expect("connect");
+    c.execute(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE, v INTEGER)",
+        None,
+    )
+    .await
+    .unwrap();
+    (path, c)
+}
+
+/// 競合先が主キー以外 (email) の `DO UPDATE` は、主キーを指定した行ではなく別の行を更新する
+/// (主キー列ごと書き換わることもある)。誤った記録 (新規 INSERT) を残さず辞退する (#1626 レビュー)。
+/// 例 a: 既存 (9,'a@x') を id=5 に書き換える UPSERT。記録は「id=5 の新規 INSERT」ではない。
+#[tokio::test]
+async fn sqlite_upsert_with_non_pk_conflict_target_is_declined() {
+    let (path, c) = sqlite_conn("ups_target").await;
+    c.execute("INSERT INTO t VALUES (9,'a@x',0)", None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (5,'a@x',1) ON CONFLICT(email) DO UPDATE SET id=excluded.id, v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 1);
+    assert!(!cap.capturable, "{cap:?}");
+    // 書き込み自体は 1 回実行されている (行 9 が id=5 になった)。
+    assert_eq!(count(&c, "SELECT COUNT(*) FROM t WHERE id = 5").await, 1);
+    assert_eq!(count(&c, "SELECT COUNT(*) FROM t WHERE id = 9").await, 0);
+
+    // 例 b: id=3 は変化なしだが、email 競合で別の行 (9→...) が更新される。件数が一致しても隠れた更新を見逃さない。
+    c.execute("DELETE FROM t", None).await.unwrap();
+    c.execute("INSERT INTO t VALUES (3,'c',0),(9,'a@x',0)", None)
+        .await
+        .unwrap();
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',0),(4,'a@x',7) ON CONFLICT(email) DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(!cap.capturable, "{cap:?}");
+    assert_eq!(count(&c, "SELECT v FROM t WHERE id = 9").await, 7);
+
+    // 競合先が省略されたときも辞退する。
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',1) ON CONFLICT DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(!cap.capturable, "{cap:?}");
+
+    // 競合先が主キーなら従来どおり記録できる。
+    let (_r, cap) = c
+        .capture_write(
+            "INSERT INTO t(id,email,v) VALUES (3,'c',5),(20,'n',1) ON CONFLICT(id) DO UPDATE SET v=excluded.v",
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(ids(&cap), vec![20]);
+    assert!(cap.companion.is_some());
+    let _ = std::fs::remove_file(&path);
 }

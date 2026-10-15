@@ -120,6 +120,8 @@ const COVERED: Record<string, string> = {
   ImportDryRunResult: "importDryRunResult",
   ImportTemplate: "importTemplate",
   UndoOutcome: "undoOutcome",
+  UndoBatchPreviewResponse: "undoBatchPreviewResponse",
+  ExportPlanOutcome: "exportPlanOutcome",
   UndoPreviewResponse: "undoPreviewResponse",
   UserPrivileges: "userPrivileges",
   WatchEntry: "planWatchEntryVariants",

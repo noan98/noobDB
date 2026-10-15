@@ -84,3 +84,56 @@ export function buildDropNamespaceSql(driver: string, kind: NamespaceKind, name:
 export function isProtectedNamespace(driver: string, name: string): boolean {
   return isSystemDatabase(driver, name);
 }
+
+/** 名前空間 (DB / スキーマ) の中身の概算 (#1626)。行数は統計値なので「約」で見せる。 */
+export interface NamespaceContents {
+  tables: number;
+  approxRows: number;
+}
+
+function sqlLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+/**
+ * DROP の確認ダイアログに出す「含まれるテーブル数と概算行数」を読む読み取り専用の SELECT (#1626)。
+ * MySQL は `information_schema.TABLES` (`TABLE_ROWS` は InnoDB では概算)、PostgreSQL は `pg_class.reltuples`
+ * (未集計の -1 は 0 扱い)。結果は 1 行 2 列 (テーブル数, 概算行数)。非対応 (SQLite) や空の名前は null。
+ * `CASCADE` を付けない設計はそのままで、中身がある場合に事前に気づけるようにするための情報。
+ */
+export function namespaceContentsSql(driver: string, kind: NamespaceKind, name: string): string | null {
+  const trimmed = name.trim();
+  if (!isValidNamespaceName(trimmed) || treeNamespaceKind(driver) !== kind) return null;
+  const lit = sqlLiteral(trimmed);
+  if (driver === "mysql") {
+    return (
+      "SELECT COUNT(*), COALESCE(SUM(TABLE_ROWS), 0) FROM information_schema.TABLES " +
+      `WHERE TABLE_SCHEMA = ${lit} AND TABLE_TYPE = 'BASE TABLE'`
+    );
+  }
+  if (driver === "postgres") {
+    return (
+      "SELECT COUNT(*), COALESCE(SUM(GREATEST(c.reltuples, 0))::bigint, 0) FROM pg_class c " +
+      `JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ${lit} AND c.relkind IN ('r', 'p')`
+    );
+  }
+  return null;
+}
+
+function nonNegativeInt(cell: unknown): number | null {
+  const n =
+    typeof cell === "number"
+      ? cell
+      : typeof cell === "string" && /^\d+$/.test(cell.trim())
+        ? Number(cell)
+        : NaN;
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+/** `namespaceContentsSql` の結果の先頭行を読む。形が違えば null。 */
+export function parseNamespaceContents(row: readonly unknown[] | undefined): NamespaceContents | null {
+  if (!row) return null;
+  const tables = nonNegativeInt(row[0]);
+  const approxRows = nonNegativeInt(row[1]);
+  return tables === null || approxRows === null ? null : { tables, approxRows };
+}

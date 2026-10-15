@@ -987,6 +987,7 @@ fn build_fixtures() -> serde_json::Value {
         skipped_excluded: 3,
         skipped_before_start: 10,
         implicit_rollback: true,
+        implicit_commit: false,
         rows_affected: 57,
         elapsed_ms: 900,
     };
@@ -1003,7 +1004,7 @@ fn build_fixtures() -> serde_json::Value {
         analysis: t::analyze_script_text(
             t::DriverKind::Sqlite,
             true,
-            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nROLLBACK;",
+            "BEGIN;\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nSELECT * FROM t;\nDELETE FROM t;\nUPDATE t SET id = 2;\nTRUNCATE TABLE t;\nDROP TABLE t;\nALTER TABLE t DROP COLUMN c;\nALTER TABLE t DROP CONSTRAINT fk;\nROLLBACK;",
         ),
     };
     let sql_file_content = t::SqlFileContent {
@@ -1156,6 +1157,11 @@ fn build_fixtures() -> serde_json::Value {
         errors: 1,
         skipped: 1,
         elapsed_ms: 9,
+        wrapped: true,
+        rolled_back: true,
+        batch_id: Some("b18f3a-abc123".into()),
+        captured: 2,
+        capture_skipped: 1,
     };
     let batch_stream_error_message = BatchStreamMessage::Error {
         error: "connection reset by peer".into(),
@@ -1562,6 +1568,8 @@ fn build_fixtures() -> serde_json::Value {
                 rows_affected: 1,
                 captured_at: "2026-01-01T00:00:00Z".into(),
                 undone: false,
+                pinned: true,
+                batch_id: Some("batch-0001".into()),
             })
             .collect();
     let health_probe_item_variants: Vec<t::HealthProbeItem> =
@@ -1767,6 +1775,16 @@ fn build_fixtures() -> serde_json::Value {
         statements: vec!["INSERT INTO users (id) VALUES (1);".into()],
         conflicts: vec![undo_conflict.clone()],
         warnings: vec!["row was modified".into()],
+    };
+    let undo_batch_preview_response = t::UndoBatchPreviewResponse {
+        statements: vec!["DELETE FROM users WHERE id = 1;".into()],
+        conflicts: vec![undo_conflict.clone()],
+        warnings: vec![],
+        record_ids: vec![12, 11],
+    };
+    let export_plan_outcome = t::ExportPlanOutcome {
+        statements: 3,
+        conflicts: 1,
     };
     let undo_outcome = t::UndoOutcome {
         applied: true,
@@ -2247,6 +2265,8 @@ fn build_fixtures() -> serde_json::Value {
         "dataDiffHandle": data_diff_handle,
         "undoPreviewResponse": undo_preview_response,
         "undoOutcome": undo_outcome,
+        "undoBatchPreviewResponse": undo_batch_preview_response,
+        "exportPlanOutcome": export_plan_outcome,
         "taskDefinitionVariants": task_definition_variants,
         "taskExportFormatVariants": task_export_format_variants,
         "taskRun": task_run,

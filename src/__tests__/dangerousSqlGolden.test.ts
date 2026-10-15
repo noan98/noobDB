@@ -32,7 +32,14 @@ describe("危険文検出ゴールデン (フロント analyzeDangerousSql)", ()
     expect(cases.some((c) => c.kind !== null)).toBe(true);
     expect(cases.some((c) => c.kind === null)).toBe(true);
     expect(cases.some((c) => c.kindMysql !== undefined)).toBe(true);
-    for (const kind of ["deleteNoWhere", "updateNoWhere", "drop", "truncate"]) {
+    for (const kind of [
+      "deleteNoWhere",
+      "updateNoWhere",
+      "drop",
+      "truncate",
+      "dropColumn",
+      "dropConstraint",
+    ]) {
       expect(cases.some((c) => c.kind === kind)).toBe(true);
     }
   });

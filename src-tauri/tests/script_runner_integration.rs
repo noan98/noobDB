@@ -1127,6 +1127,34 @@ async fn unclosed_begin_is_rolled_back_at_eof() {
     assert_eq!(count(&session, "t").await, 2);
 }
 
+/// 終端ポリシーを `commit` にすると、未閉じの BEGIN 以降を EOF で確定し `implicit_commit` で知らせる (#1626)。
+#[tokio::test]
+async fn unclosed_begin_is_committed_at_eof_when_policy_is_commit() {
+    let (mut fx, session) = setup("unclosed_begin_commit", false).await;
+    let path = write_script(
+        &mut fx,
+        "unclosed_begin_commit",
+        "CREATE TABLE t (id INTEGER);\nINSERT INTO t VALUES (1);\nBEGIN;\nINSERT INTO t VALUES (2);\nINSERT INTO t VALUES (3);",
+    );
+    let o = t::ScriptOptions {
+        unclosed_tx: t::UnclosedTxPolicy::Commit,
+        ..Default::default()
+    };
+    match run(&session, &path, o).await {
+        t::ScriptRun::Done {
+            implicit_rollback,
+            implicit_commit,
+            ..
+        } => {
+            assert!(!implicit_rollback);
+            assert!(implicit_commit);
+        }
+        other => panic!("expected Done, got {other:?}"),
+    }
+    assert_eq!(count(&session, "t").await, 3);
+    assert!(!session.conn.transaction_active().await);
+}
+
 /// 全体を包む wrap_in_transaction は従来どおり EOF で確定し、取り消しの通知は出さない。
 #[tokio::test]
 async fn wrapped_script_still_commits_at_eof() {
@@ -1143,4 +1171,218 @@ async fn wrapped_script_still_commits_at_eof() {
         other => panic!("expected Done, got {other:?}"),
     }
     assert_eq!(count(&session, "t").await, 1);
+}
+
+#[tokio::test]
+async fn batch_wrapped_in_a_transaction_rolls_back_everything_on_failure() {
+    let (_fx, session) = setup("batch_wrap_fail", false).await;
+    let (_run, _results, _captured) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)",
+        None,
+        true,
+        200,
+        false,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("setup");
+    let (_run, results, _) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "INSERT INTO t VALUES (1, 'a');\nINSERT INTO t VALUES (2, 'b');\nINSERT INTO t VALUES (1, 'dup');\nINSERT INTO t VALUES (3, 'c')",
+        None,
+        true,
+        200,
+        true,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert_eq!(results[2].status, t::BatchStatus::Error);
+    assert_eq!(results[3].status, t::BatchStatus::Skipped);
+    // 先頭の 2 文は成功扱いで報告されるが、全体を包んでいるので何も残らない。
+    assert_eq!(count(&session, "t").await, 0);
+    assert!(!session.conn.transaction_active().await);
+}
+
+#[tokio::test]
+async fn batch_wrapped_in_a_transaction_commits_when_every_statement_succeeds() {
+    let (_fx, session) = setup("batch_wrap_ok", false).await;
+    let (_run, results, _) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\nINSERT INTO t VALUES (1);\nINSERT INTO t VALUES (2)",
+        None,
+        true,
+        200,
+        true,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(count(&session, "t").await, 2);
+}
+
+#[tokio::test]
+async fn batch_with_capture_still_writes_when_the_session_keeps_no_history() {
+    // make_session は skip_history = true なので記録は永続化されず (ローカルストアを汚さない)、
+    // 書き込み自体は通常どおり行われる。
+    let (_fx, session) = setup("batch_capture", false).await;
+    let (run, results, captured) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);\n\
+         INSERT INTO t VALUES (1, 'a'), (2, 'b');\n\
+         UPDATE t SET v = 'z' WHERE id = 1;\n\
+         DELETE FROM t WHERE id = 2",
+        None,
+        true,
+        200,
+        false,
+        Some("batch-test"),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert!(matches!(run, t::ScriptRun::Done { .. }));
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(captured, 0);
+    assert_eq!(results[2].rows_affected, Some(1));
+    assert_eq!(count(&session, "t").await, 1);
+}
+
+// ── バッチ取り消し (#1626 レビュー) ──
+//
+// 履歴を残すセッションで複数文スクリプトを記録付きで流し、`plan_batch` /
+// `apply_flight_batch_inner` を実走する。記録はローカルの flight_recorder.sqlite に残るが、
+// バッチ id はテストごとに一意なので他のテストとは干渉しない。
+
+fn unique_batch_id(tag: &str) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("test-{tag}-{}-{nanos}", std::process::id())
+}
+
+async fn recorded_batch(tag: &str, script: &str) -> (Fixture, t::AppState, String, String) {
+    let db = unique(tag, "db");
+    let _ = std::fs::remove_file(&db);
+    std::fs::File::create(&db).expect("create temp sqlite file");
+    let opts = t::sqlite_options(db.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let session = t::make_recording_session(tag, conn, opts);
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let session = state.get(&sid).await.expect("session");
+    let batch_id = unique_batch_id(tag);
+    let (_run, results, captured) = t::run_sql_batch_via_core_with(
+        session,
+        script,
+        None,
+        true,
+        200,
+        false,
+        Some(&batch_id),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert!(
+        results.iter().all(|r| r.status == t::BatchStatus::Ok),
+        "{results:?}"
+    );
+    assert!(captured >= 2, "記録できた文: {captured}");
+    (
+        Fixture {
+            db,
+            scripts: Vec::new(),
+        },
+        state,
+        sid,
+        batch_id,
+    )
+}
+
+#[tokio::test]
+async fn batch_undo_refuses_records_that_touch_the_same_row() {
+    // INSERT id=1 → DELETE id=1: 各記録の計画を個別に立てると最終状態が誤るので、まとめては取り消さない。
+    let (_fx, state, sid, batch_id) = recorded_batch(
+        "batch_overlap",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);\n\
+         INSERT INTO t VALUES (1, 'a'), (2, 'b');\n\
+         UPDATE t SET v = 'z' WHERE id = 1;\n\
+         DELETE FROM t WHERE id = 1",
+    )
+    .await;
+    let session = state.get(&sid).await.expect("session");
+    assert_eq!(count(&session, "t").await, 1);
+
+    let preview = t::preview_flight_batch_via_command(&state, &sid, &batch_id, false).await;
+    assert!(
+        matches!(preview, Err(t::AppError::InvalidInput(_))),
+        "{preview:?}"
+    );
+    let applied = t::apply_flight_batch_via_command(&state, &sid, &batch_id, true, false).await;
+    assert!(
+        matches!(applied, Err(t::AppError::InvalidInput(_))),
+        "force でも拒否する: {applied:?}"
+    );
+    // 何も変わっていない。記録も取り消し済みになっていない。
+    assert_eq!(count(&session, "t").await, 1);
+    let records = t::flight_batch_records_for_tests(&batch_id).await.unwrap();
+    assert!(!records.is_empty() && records.iter().all(|r| !r.undone));
+}
+
+#[tokio::test]
+async fn batch_undo_with_a_conflict_applies_nothing_without_force() {
+    let (_fx, state, sid, batch_id) = recorded_batch(
+        "batch_conflict",
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);\n\
+         INSERT INTO t VALUES (1, 'a');\n\
+         INSERT INTO t VALUES (2, 'b')",
+    )
+    .await;
+    let session = state.get(&sid).await.expect("session");
+    // スクリプトの後で id=2 が書き換えられた (衝突)。
+    session
+        .conn
+        .execute("UPDATE t SET v = 'changed' WHERE id = 2", None)
+        .await
+        .expect("drift");
+
+    let preview = t::preview_flight_batch_via_command(&state, &sid, &batch_id, false)
+        .await
+        .expect("preview");
+    assert_eq!(preview.record_ids.len(), 2);
+    assert_eq!(preview.conflicts.len(), 1);
+
+    // force なしでは衝突のない id=1 の取り消しも含め、何も適用しない (原子的)。
+    let outcome = t::apply_flight_batch_via_command(&state, &sid, &batch_id, false, false)
+        .await
+        .expect("apply");
+    assert!(!outcome.applied);
+    assert_eq!(count(&session, "t").await, 2);
+    let records = t::flight_batch_records_for_tests(&batch_id).await.unwrap();
+    assert!(records.iter().all(|r| !r.undone));
+
+    // force なら 1 つのトランザクションで全部取り消し、記録を取り消し済みにする。
+    let outcome = t::apply_flight_batch_via_command(&state, &sid, &batch_id, true, false)
+        .await
+        .expect("force apply");
+    assert!(outcome.applied);
+    assert_eq!(count(&session, "t").await, 0);
+    let records = t::flight_batch_records_for_tests(&batch_id).await.unwrap();
+    assert!(records.iter().all(|r| r.undone));
+
+    // やり直しで元に戻る。
+    let outcome = t::apply_flight_batch_via_command(&state, &sid, &batch_id, false, true)
+        .await
+        .expect("redo");
+    assert!(outcome.applied);
+    assert_eq!(count(&session, "t").await, 2);
+    let records = t::flight_batch_records_for_tests(&batch_id).await.unwrap();
+    assert!(records.iter().all(|r| !r.undone));
 }

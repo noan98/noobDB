@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { analyzeDangerousSql, isReadOnlySql } from "../dangerousSql";
+import {
+  analyzeDangerousSql,
+  appendWhereTemplate,
+  buildPkWhereTemplate,
+  isReadOnlySql,
+} from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
   it("flags DELETE without a top-level WHERE", () => {
@@ -393,5 +398,31 @@ describe("ドライバ別リテラル (#1601)", () => {
     const sql = "SELECT [a'] ; DELETE FROM t;";
     expect(analyzeDangerousSql(sql, "sqlite").map((d) => d.kind)).toEqual(["deleteNoWhere"]);
     expect(isReadOnlySql(sql, "sqlite")).toBe(false);
+  });
+});
+
+describe("主キーで絞る WHERE の雛形 (#1626)", () => {
+  const q = (n: string) => n;
+  it("主キー列から雛形を作り、無ければ null", () => {
+    expect(buildPkWhereTemplate(["id"], q)).toBe("WHERE id = ");
+    expect(buildPkWhereTemplate(["a", "b"], q)).toBe("WHERE a = AND b = ");
+    expect(buildPkWhereTemplate(["id"], (n) => `\`${n}\``)).toBe("WHERE `id` = ");
+    expect(buildPkWhereTemplate([], q)).toBeNull();
+  });
+
+  it("WHERE なしの単純な UPDATE / DELETE の末尾にだけ足す", () => {
+    expect(appendWhereTemplate("DELETE FROM t;", "WHERE id = ")).toBe("DELETE FROM t\nWHERE id = ");
+    expect(appendWhereTemplate("UPDATE t SET a = 'where' ", "WHERE id = ")).toBe(
+      "UPDATE t SET a = 'where'\nWHERE id = ",
+    );
+  });
+
+  it("複数文・RETURNING / ORDER BY / LIMIT / JOIN・SELECT は提案しない", () => {
+    expect(appendWhereTemplate("DELETE FROM t; DELETE FROM u", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("DELETE FROM t RETURNING id", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("UPDATE t SET a = 1 LIMIT 5", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("UPDATE t JOIN u ON 1 SET a = 1", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("SELECT * FROM t", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("", "WHERE id = ")).toBeNull();
   });
 });

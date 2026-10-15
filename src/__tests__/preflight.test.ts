@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildPreflightPlan,
+  buildPreflightSampleSql,
   preflightTone,
   PREFLIGHT_LARGE_THRESHOLD,
   PREFLIGHT_MAX_CHARS,
@@ -403,5 +404,22 @@ describe("buildPreflightPlan — 非 ASCII のテーブル名 (#1527)", () => {
     expect(plan?.table).toBe("user_情報");
     expect(plan?.countSql).toBe("SELECT COUNT(*) FROM user_情報 WHERE b = 2");
     expect(buildPreflightPlan("DELETE FROM 顧客")?.countSql).toBe("SELECT COUNT(*) FROM 顧客");
+  });
+});
+
+describe("buildPreflightSampleSql (#1626)", () => {
+  it("件数クエリと同じ対象・同じ WHERE から先頭 20 行の SELECT * を作る", () => {
+    const plan = buildPreflightPlan("DELETE FROM users WHERE age < 18 RETURNING id", "postgres");
+    expect(buildPreflightSampleSql(plan ?? { countSql: null })).toBe(
+      "SELECT * FROM users WHERE age < 18 LIMIT 20",
+    );
+    const all = buildPreflightPlan("UPDATE `app`.`t` SET a = 1", "mysql");
+    expect(buildPreflightSampleSql(all ?? { countSql: null }, 5)).toBe("SELECT * FROM `app`.`t` LIMIT 5");
+  });
+
+  it("推定不可の計画では null", () => {
+    expect(buildPreflightSampleSql({ countSql: null })).toBeNull();
+    const plan = buildPreflightPlan("DELETE FROM a JOIN b ON 1 WHERE 1", "mysql");
+    expect(buildPreflightSampleSql(plan ?? { countSql: null })).toBeNull();
   });
 });
