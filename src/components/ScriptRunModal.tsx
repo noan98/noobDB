@@ -43,7 +43,8 @@ import { ErrorNote, FieldLabel, FormSection, PathRow } from "./modalForm";
 import { ScriptAnalysisPanel } from "./ScriptAnalysisPanel";
 import { StreamProgressBar } from "./StreamProgressBar";
 import { useToast } from "./Toast";
-import { Button, Input, Switch } from "./ui";
+import { Button, Input, Select, Switch } from "./ui";
+import { loadRecentScripts, pushRecentScript, saveRecentScripts } from "../inputMemory";
 
 /** 事前確認の結果と、それを取ったときの入力 (ファイル + 文字コード) のキー。 */
 interface AnalysisResult {
@@ -93,6 +94,8 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
   const { confirm, dialog } = useConfirm();
   const [path, setPath] = useState("");
   const [options, setOptions] = useState<ScriptOptions>(DEFAULT_SCRIPT_OPTIONS);
+  // 最近実行したファイル (パスと文字コード、全接続共通, #1631)。選ぶだけで事前確認から始められる。
+  const [recents, setRecents] = useState(loadRecentScripts);
   /** 開始文番号の入力欄の文字列 (空 = 先頭から)。 */
   const [startAtText, setStartAtText] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -262,6 +265,10 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
       });
       if (!ok) return;
     }
+    // 実行に進んだファイルを「最近のファイル」の先頭へ (パスと文字コードのみ。内容は保存しない, #1631)。
+    const nextRecents = pushRecentScript(recents, { path: target, encoding: options.encoding });
+    setRecents(nextRecents);
+    saveRecentScripts(nextRecents);
     const runOptions: ScriptOptions = {
       ...options,
       ...override,
@@ -403,6 +410,26 @@ export function ScriptRunModal({ sessionId, database, isProduction, onClose }: P
               {t("scriptBrowse")}
             </Button>
           </PathRow>
+          {recents.length > 0 && (
+            <Select
+              aria-label={t("scriptRecentLabel")}
+              value=""
+              disabled={busy}
+              onChange={(e) => {
+                const picked = recents[Number(e.target.value)];
+                if (!picked) return;
+                setPath(picked.path);
+                setOptions((prev) => ({ ...prev, encoding: picked.encoding }));
+              }}
+            >
+              <option value="">{t("scriptRecentPlaceholder")}</option>
+              {recents.map((r, i) => (
+                <option key={r.path} value={i} title={r.path}>
+                  {basename(r.path)} — {r.path}
+                </option>
+              ))}
+            </Select>
+          )}
         </FormSection>
 
         <FormSection flexDirection="row" flexWrap="wrap" gap="4" alignItems="flex-start">

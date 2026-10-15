@@ -1,13 +1,13 @@
 /**
  * タブの一括クローズ (#1354) が対象にするタブ集合の純ロジック。副作用なし。
  *
- * 複数ペインがあるとき、「他 / 右側 / すべて」は**そのタブが属するペイン内**のタブだけを
+ * 複数ペインがあるとき、「他 / 左側 / 右側 / すべて」は**そのタブが属するペイン内**のタブだけを
  * 対象にする (別ペインのタブは作業コンテキストが違うため巻き込まない)。呼び出し側は
  * 返ってきた id を既存の `handleCloseTab` へ 1 件ずつ渡す。
  */
 
 /** 一括クローズの種別。 */
-export type BulkCloseMode = "others" | "right" | "all";
+export type BulkCloseMode = "others" | "left" | "right" | "all";
 
 /**
  * `paneTabIds` (ペイン内の並び順) から、`targetId` を基点に閉じるべきタブ id を返す。
@@ -19,6 +19,8 @@ export function tabsToClose(paneTabIds: readonly string[], targetId: string, mod
   switch (mode) {
     case "others":
       return paneTabIds.filter((id) => id !== targetId);
+    case "left":
+      return paneTabIds.slice(0, idx);
     case "right":
       return paneTabIds.slice(idx + 1);
     case "all":

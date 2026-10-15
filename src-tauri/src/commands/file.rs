@@ -116,6 +116,73 @@ pub async fn write_text_file(
     }
 }
 
+/// 「保存先を開く」の対象ディレクトリを決める (#1631)。ディレクトリならそれ自身、ファイルなら
+/// 親ディレクトリ。存在しないパスと空パスは拒否する。**ファイルそのものは開かない** (実行可能
+/// ファイルを OS の既定動作で起動してしまわないため、常にディレクトリだけを OS のファイル
+/// マネージャへ渡す)。
+pub(crate) fn resolve_reveal_dir(path: &str) -> Result<std::path::PathBuf> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::InvalidInput("path is empty".into()));
+    }
+    // 絶対パスだけを受け付ける。相対パスや `-` 始まりの文字列がファイルマネージャのコマンドの
+    // オプションとして解釈されないようにする。
+    if trimmed.starts_with('-') {
+        return Err(AppError::InvalidInput(
+            "path must not start with '-'".into(),
+        ));
+    }
+    let p = std::path::PathBuf::from(trimmed);
+    if !p.is_absolute() {
+        return Err(AppError::InvalidInput("path must be absolute".into()));
+    }
+    let meta = std::fs::metadata(&p)
+        .map_err(|e| AppError::InvalidInput(format!("path does not exist: {e}")))?;
+    if meta.is_dir() {
+        return Ok(p);
+    }
+    match p.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => Ok(parent.to_path_buf()),
+        _ => Err(AppError::InvalidInput(
+            "path has no parent directory".into(),
+        )),
+    }
+}
+
+/// OS のファイルマネージャでディレクトリを開く (待たずに起動だけする)。
+fn spawn_file_manager(dir: &std::path::Path) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        // `open <dir>` は `.app` バンドル (実体はディレクトリ) だとアプリを起動してしまうので、
+        // `-R` で Finder 上に表示するだけにする。
+        let mut c = std::process::Command::new("open");
+        c.arg("-R");
+        c
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| AppError::Other(format!("failed to open the file manager: {e}")))
+}
+
+/// 書き出し・ダンプの保存先を OS のファイルマネージャで開く (#1631)。`path` はディレクトリ、
+/// またはそこにあるファイル (その場合は親ディレクトリを開く)。フロントがシェルプラグインを
+/// 直に叩かずバックエンド経由で起動する (capabilities を最小に保つ方針)。
+#[tauri::command]
+pub async fn reveal_in_file_manager(path: String) -> Result<()> {
+    let dir = resolve_reveal_dir(&path)?;
+    tokio::task::spawn_blocking(move || spawn_file_manager(&dir))
+        .await
+        .map_err(|e| AppError::Other(format!("reveal task failed: {e}")))?
+}
+
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
 /// コマンド。フロントが fs プラグインを直に叩かず、バックエンド経由で読む
 /// (capabilities を最小に保つ方針)。UTF-8 として不正なバイトを含むファイル
@@ -194,6 +261,46 @@ async fn read_limited(path: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_reveal_dir_accepts_dir_and_uses_parent_for_files() {
+        let dir = std::env::temp_dir().join(format!("noobdb_reveal_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.sql");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(resolve_reveal_dir(&dir.to_string_lossy()).unwrap(), dir);
+        assert_eq!(resolve_reveal_dir(&file.to_string_lossy()).unwrap(), dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_reveal_dir_rejects_relative_and_option_like_paths() {
+        assert!(matches!(
+            resolve_reveal_dir("relative/dir"),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            resolve_reveal_dir("-R"),
+            Err(AppError::InvalidInput(_))
+        ));
+        assert!(matches!(
+            resolve_reveal_dir(" --help"),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_reveal_dir_rejects_empty_and_missing_paths() {
+        assert!(matches!(
+            resolve_reveal_dir("  "),
+            Err(AppError::InvalidInput(_))
+        ));
+        let missing = std::env::temp_dir().join("noobdb_reveal_missing_dir_xyz");
+        assert!(matches!(
+            resolve_reveal_dir(&missing.to_string_lossy()),
+            Err(AppError::InvalidInput(_))
+        ));
+    }
 
     #[tokio::test]
     async fn reads_utf8_text_file() {

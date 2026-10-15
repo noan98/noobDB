@@ -17,6 +17,7 @@ import {
   MAX_MRU_ITEMS,
   MAX_STAGGER_ITEMS,
   GROUP_ORDER,
+  parsePaletteQuery,
   type CommandItem,
 } from "../components/commandPaletteSearch";
 import { REOPEN_CLOSED_TAB_COMMAND_ID, closedTabItemId } from "../closedTabs";
@@ -467,5 +468,55 @@ describe("scoreItem: keywordsContainsOnly (#1617)", () => {
     const label = scoreItem({ id: "x", group: "tables", label: "users", run: noop }, "users")!;
     expect(body.score).toBeLessThan(label.score);
     expect(body.ranges).toEqual([]);
+  });
+});
+
+describe("接頭辞によるグループ絞り込み (#1631)", () => {
+  const items: CommandItem[] = [
+    item({ id: "h1", group: "history", label: "select * from logs" }),
+    item({ id: "t1", group: "tables", label: "users" }),
+    item({ id: "n1", group: "navigation", label: "Open settings" }),
+    item({ id: "c1", group: "connections", label: "prod-db" }),
+    item({ id: "t2", group: "tables", label: "user_sessions" }),
+    item({ id: "s1", group: "snippets", label: "count users" }),
+  ];
+
+  it("parsePaletteQuery: 先頭 1 文字が接頭辞なら対象グループと残りの検索語に分ける", () => {
+    expect(parsePaletteQuery("@users")).toEqual({ groups: ["tables"], query: "users" });
+    expect(parsePaletteQuery("@  users")).toEqual({ groups: ["tables"], query: "users" });
+    expect(parsePaletteQuery("#")).toEqual({ groups: ["snippets"], query: "" });
+    expect(parsePaletteQuery("!sel").groups).toEqual(["history"]);
+    expect(parsePaletteQuery(">").groups).toEqual(["navigation", "connections"]);
+    expect(parsePaletteQuery("users")).toEqual({ groups: null, query: "users" });
+    // 途中の接頭辞文字は検索語のまま。
+    expect(parsePaletteQuery("a@b")).toEqual({ groups: null, query: "a@b" });
+  });
+
+  it("@ だけで、そのグループの全候補を出す (他グループは出さない)", () => {
+    const grouped = groupCommands(items, "@");
+    expect(grouped.map((g) => g.group)).toEqual(["tables"]);
+    expect(grouped[0].items.map((s) => s.item.id)).toEqual(["t1", "t2"]);
+  });
+
+  it("@users はテーブルだけをスコア順に返す。スニペット 'count users' は含まない", () => {
+    const grouped = groupCommands(items, "@users");
+    expect(grouped.map((g) => g.group)).toEqual(["tables"]);
+    expect(grouped[0].items[0].item.id).toBe("t1");
+  });
+
+  it("> は操作と接続、! は履歴、# はスニペット", () => {
+    expect(groupCommands(items, ">").map((g) => g.group)).toEqual(["navigation", "connections"]);
+    expect(groupCommands(items, "!").map((g) => g.group)).toEqual(["history"]);
+    expect(groupCommands(items, "#count").map((g) => g.group)).toEqual(["snippets"]);
+  });
+
+  it("接頭辞付きでは MRU を合成しない", () => {
+    const grouped = groupCommands(items, "@", ["t2"]);
+    expect(grouped.map((g) => g.group)).toEqual(["tables"]);
+    expect(grouped[0].items).toHaveLength(2);
+  });
+
+  it("一致が無ければ空", () => {
+    expect(groupCommands(items, "@zzz")).toEqual([]);
   });
 });

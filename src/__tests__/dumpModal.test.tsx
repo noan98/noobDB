@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "./testUtils";
 import { DumpModal } from "../components/DumpModal";
 import { t } from "../i18n";
+import { saveDumpPrefs } from "../inputMemory";
 
 /**
  * DB ダンプモーダル (#604)。マウント時に Tauri 呼び出しを持たない (`dumpDatabase` は
@@ -46,5 +47,31 @@ describe("DumpModal render smoke (#604)", () => {
     fireEvent.click(gzip);
     expect(pathInput.value.endsWith(".sql")).toBe(true);
     expect(pathInput.value.endsWith(".gz")).toBe(false);
+  });
+});
+
+// 前回のスイッチと保存先ディレクトリをプロファイルごとに復元する (#1631)。
+describe("DumpModal 前回入力の記憶 (#1631)", () => {
+  it("プロファイルに保存された gzip・保存先ディレクトリを初期値にする", () => {
+    localStorage.clear();
+    saveDumpPrefs("p1", { options: { gzip: true, noData: true }, dir: "/backups/db" });
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="main" driver="sqlite" profileId="p1" onClose={() => {}} />,
+    );
+    const pathInput = screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement;
+    expect(pathInput.value.startsWith("/backups/db/")).toBe(true);
+    expect(pathInput.value.endsWith(".sql.gz")).toBe(true);
+    expect(screen.getByRole("switch", { name: t("dumpOptGzip") })).toBeChecked();
+    expect(screen.getByRole("switch", { name: t("dumpOptNoData") })).toBeChecked();
+  });
+
+  it("別プロファイルや profileId なしでは復元しない", () => {
+    localStorage.clear();
+    saveDumpPrefs("p1", { options: { gzip: true }, dir: "/backups/db" });
+    renderWithProviders(
+      <DumpModal sessionId="s1" database="main" driver="sqlite" profileId="p2" onClose={() => {}} />,
+    );
+    expect((screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement).value.startsWith("/")).toBe(false);
+    expect(screen.getByRole("switch", { name: t("dumpOptGzip") })).not.toBeChecked();
   });
 });

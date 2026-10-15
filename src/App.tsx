@@ -54,7 +54,7 @@ import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profi
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
-import { sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
+import { planSaveAll, sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
 import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
@@ -88,7 +88,12 @@ import {
   closedTabItemId,
   closedTabsForScope,
   dropClosedTabsForScope,
+  loadPersistedClosedTabs,
+  removePersistedClosedTabs,
   pushClosedTab,
+  restoreClosedTabs,
+  savePersistedClosedTabs,
+  toPersistedClosedTabs,
   snapshotClosedTab,
   takeClosedTab,
   type ClosedTab,
@@ -388,7 +393,10 @@ import {
 import { t as translate, useT, useLocale } from "./i18n";
 import { isPartialCloneFailure } from "./tableClone";
 import { isAppWindowFocused, registerNotificationClickFocus, sendQueryNotification } from "./notifications";
-import { checkForAppUpdate } from "./updater";
+import { checkForAppUpdate, dismissUpdate } from "./updater";
+import { applyCustomThemeVars } from "./customTheme";
+import { usePrefersMoreContrast } from "./prefersContrast";
+import { loadSkippedUpdateVersion, shouldSkipStartupNotice } from "./updateSkip";
 import { confirmAndInstallUpdate } from "./components/updatePrompt";
 import {
   firstLineForNotification,
@@ -446,6 +454,7 @@ import {
   monoFontStack,
   uiFontStack,
   effectiveTheme,
+  resolveThemePreset,
   themePresetDataTheme,
   recordCommandPaletteUsage,
   pruneCommandPaletteMru,
@@ -488,12 +497,14 @@ import {
   loadQuickAccess,
   recordRecent as recordRecentTable,
   saveQuickAccess,
+  moveFavorite as moveFavoriteTable,
   toggleFavorite as toggleFavoriteTable,
   type QuickAccessState,
 } from "./tableQuickAccess";
 import {
   forgetSnippetQuickAccess,
   loadSnippetQuickAccess,
+  moveSnippetFavorite,
   recordSnippetRun,
   saveSnippetQuickAccess,
   toggleSnippetFavorite,
@@ -1423,7 +1434,14 @@ export default function App() {
 
   // data-theme はテーマプリセットと light/dark トグルから合成する。
   // THEME_STORAGE_KEY には light/dark のみ保存する。
-  const dataTheme = themePresetDataTheme(settings.themePreset, theme);
+  // OS が「コントラストを上げる」を示し、プリセットが既定なら高コントラストへ (#1631)。
+  const prefersMoreContrast = usePrefersMoreContrast();
+  const activeThemePreset = resolveThemePreset(
+    settings.themePreset,
+    settings.followOsContrast,
+    prefersMoreContrast,
+  );
+  const dataTheme = themePresetDataTheme(activeThemePreset, theme);
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", dataTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
@@ -1432,7 +1450,7 @@ export default function App() {
   useEffect(() => {
     // ダーク専用プリセットでは light/dark トグルが light のままでも画面はダーク。
     // テーマ別の設定は実効テーマで選ぶ (トグル値で選ぶと暗い面に明るい用の文字色が載る)。
-    const effTheme = effectiveTheme(settings.themePreset, theme);
+    const effTheme = effectiveTheme(activeThemePreset, theme);
     const colors = settings.syntaxColors[effTheme];
     const root = document.documentElement;
     for (const [key, val] of Object.entries(colors)) {
@@ -1487,7 +1505,11 @@ export default function App() {
     // `:root[data-motion=...]` ルールが OS 設定を上書きし、"system" は
     // OS の prefers-reduced-motion にそのまま従う (どのセレクタにも一致しない)。
     root.setAttribute("data-motion", settings.motionPreference);
-  }, [settings, theme]);
+
+    // カスタムテーマ (#1631): 上の構文色・アクセント色などの注入より後に当てる (--syntax-* など同名の
+    // トークンを上書きしても、この effect の内側で最後に勝つ)。外すときは effect の再実行で元の値へ戻る。
+    return applyCustomThemeVars(root, settings.customTheme);
+  }, [settings, theme, activeThemePreset]);
 
   // 密度変更の遷移演出 (#1023)。settings.density が実際に変わった瞬間だけ、
   // 一時的な data-density-transition 属性 ("grow"/"shrink") を立てて App.css /
@@ -1552,11 +1574,27 @@ export default function App() {
     else setSidebarUserCollapsed((v) => !v);
   }, []);
 
+  // 通知クリックで開くタブの解決 (#1631)。activateTab は後で定義されるため ref 越しに呼ぶ。
+  const activateTabRef = useRef<(tabId: string) => void>(() => {});
+
   // 長時間クエリ完了時の OS 通知 (#707): クリックでウィンドウを前面化する購読を
   // アプリ起動時に一度だけ登録する。通知自体は runQueryInTab の onDone/onError で
   // 個別に判定・送信する (notifyQueryOutcome を参照)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 起動時に一度だけ登録する (toast は初回の値で足りる)
   useEffect(() => {
-    registerNotificationClickFocus();
+    registerNotificationClickFocus(
+      (tabId) => activateTabRef.current(tabId),
+      // クリックが届かない環境: 勝手にタブを切り替えず、戻ってきたときに移動を提案する (#1631)。
+      (tabId) =>
+        toast.notify({
+          message: translate("notifyFocusReturnMessage"),
+          tone: "info",
+          action: {
+            label: translate("notifyFocusReturnAction"),
+            onAction: () => activateTabRef.current(tabId),
+          },
+        }),
+    );
   }, []);
 
   // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
@@ -1601,7 +1639,12 @@ export default function App() {
       try {
         const update = await checkForAppUpdate();
         if (cancelled || !update) return;
-        await confirmAndInstallUpdate(update, { t, toast, confirm });
+        // 前回の起動時に「見送り」を選んだ版 (とそれより古い版) は出さない (#1631)。
+        if (shouldSkipStartupNotice(update.version, loadSkippedUpdateVersion())) {
+          void dismissUpdate(update);
+          return;
+        }
+        await confirmAndInstallUpdate(update, { t, toast, confirm, choose, rememberSkip: true });
       } catch {
         // ベストエフォート: 起動時チェックの失敗は静かに無視する。
       }
@@ -2308,11 +2351,15 @@ export default function App() {
   // されるため、本文は CodeMirror の doc への参照だけをここへ置き、`tab.sql` は更新しない。
   // 本文を読む経路は必ず `getTabSql` を通す (`tab.sql` を直接読まない)。
   const tabSqlStore = useMemo(() => new TabSqlStore(), []);
-  // 最近閉じたタブ (#1353)。メモリ上のみ (再起動を跨いでは持たない)。パレットの一覧表示用に
+  // 最近閉じたタブ (#1353)。プロファイル単位で localStorage にも保存する (#1631)。パレットの一覧表示用に
   // state、同一ティック内の連続クローズ (一括クローズ) と keydown 用に ref を併せ持つ。
   const [closedTabs, setClosedTabs] = useState<ClosedTab[]>([]);
   const closedTabsRef = useRef<ClosedTab[]>([]);
   const closedTabSeqRef = useRef(0);
+  // 再起動後も残す (#1631): 接続したセッションごとに、プロファイルに保存した履歴を一度だけ読み戻し、
+  // 履歴が変わるたびにそのプロファイルへ保存し直す。読み戻し前に空の履歴で上書きしないよう、
+  // 読み戻し済みのセッションだけを保存対象にする。
+  const closedTabsSeededRef = useRef<Set<string>>(new Set());
   // 接続セッションが終わったとき (手動切断 / セッション喪失 / プロファイル削除) にそのスコープの
   // 履歴を捨てる。自動再接続 (同じ sessionId で張り直す) と接続切替 (背景セッションは生きている)
   // では呼ばない。
@@ -2320,9 +2367,45 @@ export default function App() {
     if (!scope) return;
     const next = dropClosedTabsForScope(closedTabsRef.current, scope);
     if (next.length === closedTabsRef.current.length) return;
+    // 切断で捨てるだけなので、保存済みの履歴は消さない (次の接続で読み戻す)。
+    skipNextClosedPersistRef.current = true;
     closedTabsRef.current = next;
     setClosedTabs(next);
   }, []);
+  // 接続直後に一度だけ、保存済みの履歴を現在のセッションのスコープで読み戻す。
+  useEffect(() => {
+    if (!sessionId || !selectedProfile) return;
+    if (closedTabsSeededRef.current.has(sessionId)) return;
+    closedTabsSeededRef.current.add(sessionId);
+    const persisted = loadPersistedClosedTabs(selectedProfile.id);
+    if (persisted.length === 0) return;
+    const restored = restoreClosedTabs(
+      persisted,
+      sessionId,
+      () => `closed-restored-${Date.now()}-${++closedTabSeqRef.current}`,
+    );
+    const next = [...closedTabsRef.current, ...restored];
+    closedTabsRef.current = next;
+    setClosedTabs(next);
+  }, [sessionId, selectedProfile]);
+  // 履歴が変わるたびに現在のプロファイルへ保存する (読み戻し前のセッションは対象外)。
+  // 接続・プロファイルが変わっただけ (履歴の中身は同じ) のときと、切断で履歴を捨てたときは保存しない
+  // (保存済みの履歴を空で上書きしないため)。
+  const persistedSourceRef = useRef<ClosedTab[] | null>(null);
+  const skipNextClosedPersistRef = useRef(false);
+  useEffect(() => {
+    if (persistedSourceRef.current === closedTabs) return;
+    persistedSourceRef.current = closedTabs;
+    if (skipNextClosedPersistRef.current) {
+      skipNextClosedPersistRef.current = false;
+      return;
+    }
+    if (!sessionId || !selectedProfile || !closedTabsSeededRef.current.has(sessionId)) return;
+    savePersistedClosedTabs(
+      selectedProfile.id,
+      toPersistedClosedTabs(closedTabsForScope(closedTabs, sessionId)),
+    );
+  }, [closedTabs, sessionId, selectedProfile]);
   const getTabSql = useCallback((tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql), [tabSqlStore]);
   // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
   const [dirtyTick, bumpDirty] = useReducer((n: number) => n + 1, 0);
@@ -2502,6 +2585,7 @@ export default function App() {
     },
     [setPanes, panesRef],
   );
+  activateTabRef.current = activateTab;
 
   // Open a second pane on demand. If the source pane has more than one tab the
   // active tab is moved into the new pane; otherwise a fresh query tab is
@@ -3200,6 +3284,20 @@ export default function App() {
       setQuickAccess((prev) => {
         const next = toggleFavoriteTable(prev, { database, table });
         saveQuickAccess(id, next);
+        return next;
+      });
+    },
+    [selectedProfile?.id],
+  );
+
+  // お気に入りテーブルの並べ替え (#1631)。delta は保存順の向き (負が前)。
+  const handleMoveFavorite = useCallback(
+    (database: string, table: string, delta: number) => {
+      const id = selectedProfile?.id;
+      if (!id) return;
+      setQuickAccess((prev) => {
+        const next = moveFavoriteTable(prev, { database, table }, delta);
+        if (next !== prev) saveQuickAccess(id, next);
         return next;
       });
     },
@@ -4148,6 +4246,8 @@ export default function App() {
       kind: QueryNotificationKind,
       elapsedMs: number,
       extra: { rows?: number; error?: string | null } = {},
+      // 実行したタブ。通知クリックでこのタブへ移動する (#1631)。
+      tabId?: string,
     ) => {
       if (!settings.queryNotificationsEnabled) return;
       const windowFocused = await isAppWindowFocused();
@@ -4182,7 +4282,7 @@ export default function App() {
           body = firstLineForNotification(extra.error ?? "");
           break;
       }
-      void sendQueryNotification(title, body);
+      void sendQueryNotification(title, body, tabId);
     },
     [settings.queryNotificationsEnabled, settings.queryNotificationThresholdSecs],
   );
@@ -4542,7 +4642,12 @@ export default function App() {
           // every tick while the window is unfocused would be spam, not a useful
           // nudge, so only long-running *manual* runs are eligible (#707).
           if (!autoRefresh) {
-            void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
+            void notifyQueryOutcome(
+              "done",
+              elapsedMs,
+              { rows: hasColumns ? totalRows : rowsAffected },
+              tabId,
+            );
           }
           // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
           // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
@@ -4593,7 +4698,7 @@ export default function App() {
             );
           }
           if (!autoRefresh && !connectionLost) {
-            void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
+            void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error }, tabId);
           }
           // A dropped connection leaves the session unusable: tear it down and
           // prompt a reconnect rather than showing the raw transport error.
@@ -6065,7 +6170,7 @@ export default function App() {
         // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
         const started = runStartRef.current.get(tab.id);
         const elapsedMs = started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
-        void notifyQueryOutcome("cancelled", elapsedMs);
+        void notifyQueryOutcome("cancelled", elapsedMs, {}, tab.id);
         if (tab.lastExecutedSql) {
           recordOutput(
             { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
@@ -6424,6 +6529,12 @@ export default function App() {
     setShowSnippetForm(true);
     setFormInstanceId((n) => n + 1);
   }, []);
+
+  // 複製 (#1631): 下書き (id 空) を初期値に新規作成フォームを開く。保存処理は既存の経路。
+  const handleDuplicateSnippet = useCallback(
+    (draft: Snippet) => handleEditSnippet(draft),
+    [handleEditSnippet],
+  );
 
   const handleDeleteSnippet = useCallback(
     async (snippet: Snippet) => {
@@ -8504,6 +8615,8 @@ export default function App() {
         // Undo 満了後の無関係なタイミングで再確認しない (force)。
         await handleDisconnectProfile(id, { force: true });
         await api.deleteProfile(id);
+        // 閉じたタブ履歴 (#1631) はプロファイルとともに消す。
+        removePersistedClosedTabs(id);
         await refreshProfiles();
         // コマンドパレット MRU (#845): 削除したプロファイルの候補 id が「最近使った
         // 項目」に残ったままだと、二度と実在しないのに一覧に居座り続けてしまう。
@@ -8846,6 +8959,40 @@ export default function App() {
     },
     [toast, getTabSql, updateTab],
   );
+
+  /**
+   * 開いている SQL タブをまとめて保存する (#1631)。タブごとに「名前を付けて保存」を順に開き、
+   * 既存ファイルの上書きは OS のダイアログの確認に任せる。途中でキャンセルしたら残りは保存しない。
+   * 開いたときの文字コードを維持する点は単体保存 (#1535) と同じ。
+   */
+  const handleSaveAllSqlFiles = useCallback(async () => {
+    const entries = planSaveAll(tabsRef.current, (id) => {
+      const t = tabsRef.current.find((x) => x.id === id);
+      return t ? getTabSql(t) : "";
+    });
+    if (entries.length === 0) {
+      toast.info(translate("saveAllSqlNothing"));
+      return;
+    }
+    let saved = 0;
+    try {
+      for (const entry of entries) {
+        const dest = await saveFileDialog({
+          defaultPath: entry.fileName,
+          title: translate("saveAllSqlDialogTitle", { current: saved + 1, total: entries.length }),
+          filters: [{ name: "SQL", extensions: ["sql"] }],
+        });
+        if (typeof dest !== "string" || !dest) break;
+        await api.writeTextFile(dest, entry.sql, entry.encoding);
+        updateTab(entry.tabId, { fileEncoding: entry.encoding });
+        saved += 1;
+      }
+    } catch (e) {
+      toast.error(translate("saveSqlFileError", { error: String(e) }));
+      return;
+    }
+    if (saved > 0) toast.success(translate("saveAllSqlDone", { saved, total: entries.length }));
+  }, [toast, getTabSql, updateTab, tabsRef]);
 
   // Tauri のウィンドウ drag-drop イベントを購読する。enter でファイル群の
   // 受理可否を判定してオーバーレイ用の状態を立て、drop で実際に振り分ける。over は
@@ -9869,6 +10016,14 @@ export default function App() {
           run: () => void handleSaveSqlFile(),
         });
         items.push({
+          id: "nav:save-all-sql-files",
+          group: "navigation",
+          label: t("cmdkActionSaveAllSqlFiles"),
+          icon: "download",
+          keywords: "save all files sql tabs export まとめて すべて 全部 保存",
+          run: () => void handleSaveAllSqlFiles(),
+        });
+        items.push({
           id: "nav:save-sql-file-encoding",
           group: "navigation",
           label: t("cmdkActionSaveSqlFileEncoding"),
@@ -10149,6 +10304,7 @@ export default function App() {
     closedTabs,
     handleOpenSqlFile,
     handleSaveSqlFile,
+    handleSaveAllSqlFiles,
     handleDisconnect,
     handleConnect,
     handleRunTableSelect,
@@ -10285,6 +10441,7 @@ export default function App() {
     handleRegisterLocalTable,
     handleSaveSnippetFromEditor,
     handleSaveSqlFile,
+    handleSaveAllSqlFiles,
     handleToggleEmergencyMode,
     loadMoreInTab,
     openAndRunQuery,
@@ -10513,6 +10670,7 @@ export default function App() {
     onShowCreateTable: handleShowCreateTable,
     onCopyTableDdl: handleCopyTableDdl,
     onToggleFavorite: handleToggleFavorite,
+    onMoveFavorite: handleMoveFavorite,
     onCreateTable: (db: string) => setCreateTableDb(db),
     onCreateNamespace: () => setCreateNamespaceOpen(true),
     onDropNamespace: handleDropNamespace,
@@ -10878,6 +11036,7 @@ export default function App() {
                   activeProfile={selectedProfile}
                   onInsert={handleInsertSnippet}
                   onEdit={handleEditSnippet}
+                  onDuplicate={handleDuplicateSnippet}
                   onDelete={handleDeleteSnippet}
                   onCreate={handleOpenSnippetForm}
                   watchedPlanIds={watchedPlanIdList}
@@ -11972,6 +12131,7 @@ export default function App() {
                 sessionId={sessionId}
                 database={importTarget.database}
                 table={importTarget.table}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
                 onClose={() => {
@@ -12085,6 +12245,7 @@ export default function App() {
               <DumpModal
                 sessionId={sessionId}
                 database={dumpTarget}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTarget(null)}
               />
@@ -12097,6 +12258,7 @@ export default function App() {
                 sessionId={sessionId}
                 database={dumpTablesTarget.database}
                 tables={dumpTablesTarget.tables}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTablesTarget(null)}
               />
@@ -12111,6 +12273,7 @@ export default function App() {
                   driver={selectedProfile?.driver ?? "mysql"}
                   database={exportTablesTarget.database}
                   tables={exportTablesTarget.tables}
+                  profileId={selectedProfile?.id}
                   onClose={() => setExportTablesTarget(null)}
                 />
               </Suspense>
@@ -12523,6 +12686,7 @@ export default function App() {
                 name={routineTarget.name}
                 id={routineTarget.id}
                 txActive={txActive}
+                profileId={selectedProfile?.id}
                 onRun={handleRoutineRun}
                 onSendToEditor={handleRoutineToEditor}
                 onCancel={() => setRoutineTarget(null)}
@@ -12561,6 +12725,7 @@ export default function App() {
             // Moving is only possible when it won't leave a single pane empty.
             const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
             const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
+            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left").length > 0;
             const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
             const items: ContextMenuEntry[] = [
               // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
@@ -12582,6 +12747,11 @@ export default function App() {
                 label: t("tabCloseOthers"),
                 onSelect: () => closeTabsBulk(tabMenu.tabId, "others"),
                 disabled: !hasOthers,
+              },
+              {
+                label: t("tabCloseLeft"),
+                onSelect: () => closeTabsBulk(tabMenu.tabId, "left"),
+                disabled: !hasLeft,
               },
               {
                 label: t("tabCloseRight"),
@@ -12789,6 +12959,17 @@ export default function App() {
           onOpenTable={(ref) => handleOpenTable(ref.database, ref.table)}
           onShowMore={handleLauncherShowMore}
           onOpenSettings={() => openFullView("settings")}
+          // ランチャーもサイドバーも保存順のまま表示するので、移動量はそのまま保存順に使える。
+          onMoveSnippetFavorite={(id, delta) => {
+            setSnippetQuickAccess((prev) => {
+              const next = moveSnippetFavorite(prev, id, delta);
+              if (next !== prev) saveSnippetQuickAccess(next);
+              return next;
+            });
+          }}
+          onMoveTableFavorite={
+            selectedProfile ? (ref, delta) => handleMoveFavorite(ref.database, ref.table, delta) : undefined
+          }
         />
       )}
       <Suspense fallback={null}>
@@ -12820,6 +13001,8 @@ export default function App() {
               driver={selectedProfile?.driver ?? "mysql"}
               isProduction={selectedProfile?.is_production ?? false}
               profileName={selectedProfile?.name ?? ""}
+              // 履歴を残さない接続 (skip_history) では、値検索の履歴も保存・表示しない (#1631)。
+              profileId={selectedProfile?.skip_history ? undefined : selectedProfile?.id}
               onOpenHit={(sql, title) => openAndRunQuery(sql, title)}
               onClose={() => setShowDataSearch(false)}
             />
@@ -12861,6 +13044,18 @@ export default function App() {
               onOpenCheatSheet={() => {
                 setShowHelp(false);
                 setShowCheatSheet(true);
+              }}
+              onOpenFeature={(target) => {
+                setShowHelp(false);
+                if (target.kind === "newQuery") {
+                  if (sessionIdRef.current) handleNewTab();
+                  else toast.info(translate("helpTryNeedsConnection"));
+                } else if (target.kind === "settings") {
+                  setSettingsInitialSection(target.section);
+                  openFullView("settings");
+                } else {
+                  openFullView(target.view);
+                }
               }}
             />
           )}

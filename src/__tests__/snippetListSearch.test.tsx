@@ -114,3 +114,44 @@ describe("snippetTooltipPreview (#1616)", () => {
     expect(snippetTooltipPreview("x".repeat(500))).toBe(`${"x".repeat(300)}…`);
   });
 });
+
+describe("SnippetList 本文一致の抜粋と複製 (#1631)", () => {
+  it("本文だけが一致した行に抜粋を出し、名前一致の行には出さない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SnippetList
+        snippets={[
+          snippet({ id: "a", name: "alpha", sql: "SELECT user_id FROM orders" }),
+          snippet({ id: "b", name: "orders summary", sql: "SELECT 1" }),
+        ]}
+        activeProfile={null}
+        onInsert={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+    await user.type(screen.getByPlaceholderText(t("snippetSearchPlaceholder")), "orders");
+    const excerpts = screen.getAllByTestId("snippet-excerpt");
+    expect(excerpts).toHaveLength(1);
+    expect(excerpts[0]).toHaveTextContent("SELECT user_id FROM orders");
+  });
+
+  it("右クリックの「複製」で id 空・名前に接尾辞の下書きを渡す", () => {
+    const onDuplicate = vi.fn();
+    renderWithProviders(
+      <SnippetList
+        snippets={[snippet({ id: "a", name: "alpha", sql: "SELECT 1" })]}
+        activeProfile={null}
+        onInsert={vi.fn()}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={onDuplicate}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByRole("treeitem", { name: /alpha/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: t("snippetMenuDuplicate") }));
+    expect(onDuplicate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "", name: `alpha${t("snippetCopySuffix")}`, sql: "SELECT 1" }),
+    );
+  });
+});

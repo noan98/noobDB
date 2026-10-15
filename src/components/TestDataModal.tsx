@@ -39,6 +39,13 @@ import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { Tooltip } from "./Tooltip";
 import {
+  applyRememberedSpecs,
+  loadTestDataPrefs,
+  saveTestDataPrefs,
+  snapshotTestDataPrefs,
+  testDataScope,
+} from "../inputMemory";
+import {
   activeSpecs,
   buildFkSelectSql,
   generateRows,
@@ -66,7 +73,8 @@ interface Props {
   table: string;
   driver: string;
   /**
-   * 接続プロファイルの ID。AI の生成プランを接続単位で保存して再利用する (#1620) のに使う。
+   * 接続プロファイルの ID。AI の生成プランを接続単位で保存して再利用する (#1620) のと、
+   * 列ごとの戦略・シード・行数を接続 × DB × テーブルごとに記憶する (#1631) のに使う。
    * 無いときは保存も再利用もしない。
    */
   profileId?: string;
@@ -137,7 +145,8 @@ export function TestDataModal({
   const t = useT();
   const toast = useToast();
   const locale = useLocale();
-  const aiSettings = useSettings().ai;
+  const settings = useSettings();
+  const aiSettings = settings.ai;
   const aiAvailable = useAiAvailable();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
@@ -158,8 +167,11 @@ export function TestDataModal({
 
   const [specs, setSpecs] = useState<ColumnGenSpec[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [rowCountText, setRowCountText] = useState("100");
-  const [seed, setSeed] = useState<number>(() => randomSeed());
+  // 前回の生成方針 (接続 × DB × テーブル単位, #1631)。秘密情報や機微な列名の固定値は含まれない。
+  const memoryScope = testDataScope(profileId, database, table);
+  const [remembered] = useState(() => (profileId ? loadTestDataPrefs(memoryScope) : null));
+  const [rowCountText, setRowCountText] = useState(remembered?.rowCountText ?? "100");
+  const [seed, setSeed] = useState<number>(() => remembered?.seed ?? randomSeed());
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -197,7 +209,7 @@ export function TestDataModal({
             }
           }),
         );
-        if (!cancelled) setSpecs(withFk);
+        if (!cancelled) setSpecs(remembered ? applyRememberedSpecs(withFk, remembered) : withFk);
       } catch (e) {
         if (!cancelled) setLoadError(String(e));
       }
@@ -205,7 +217,7 @@ export function TestDataModal({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, table, driver]);
+  }, [sessionId, database, table, driver, remembered]);
 
   const rowCount = useMemo(() => {
     const n = Number(rowCountText);
@@ -379,6 +391,13 @@ export function TestDataModal({
         columns: insertColumns.map((s) => s.column),
         rows,
       });
+      // 同じ検証データを再現できるよう、方針・シード・行数を覚える (#1631)。
+      if (profileId) {
+        saveTestDataPrefs(
+          memoryScope,
+          snapshotTestDataPrefs(specs, rowCountText, seed, settings.columnMaskPatterns),
+        );
+      }
       toast.success(t("testDataSuccess", { count: rowCount, table, ms: result.elapsed_ms }));
       onInserted();
       onClose();

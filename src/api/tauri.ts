@@ -44,6 +44,7 @@ import { importCommands } from "./commands/import";
 import { scriptCommands } from "./commands/script";
 import { transferCommands } from "./commands/transfer";
 import { fileCommands } from "./commands/file";
+import { windowCommands } from "./commands/window";
 import { cellBlobCommands } from "./commands/cellBlob";
 import { flightRecorderCommands } from "./commands/flightRecorder";
 import { timelapseCommands } from "./commands/timelapse";
@@ -1885,6 +1886,7 @@ export const api = {
   ...scriptCommands,
   ...transferCommands,
   ...fileCommands,
+  ...windowCommands,
   ...cellBlobCommands,
   ...flightRecorderCommands,
   ...timelapseCommands,
