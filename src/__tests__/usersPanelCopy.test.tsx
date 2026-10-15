@@ -205,6 +205,44 @@ describe("UsersPanel: ロール・列単位・テンプレート・パスワー�
     );
   });
 
+  it("ロールを外したあと、選択中ユーザの所属ロール表示が最新の一覧に更新される", async () => {
+    vi.mocked(api.listDbUsers)
+      .mockResolvedValueOnce([{ ...user("app"), member_of: ["reader"] }])
+      .mockResolvedValue([{ ...user("app"), member_of: [] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue('REVOKE "reader" FROM "app"');
+    vi.mocked(api.applyPrivilegeSql).mockResolvedValue(1);
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="postgres" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleRevokeOk") }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: t("usersRoleRevokeAria", { role: "reader" }) }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("MySQL の空ホストのロール (role@) は空ホストのまま剥奪に渡す", async () => {
+    vi.mocked(api.listDbUsers).mockResolvedValue([{ ...user("app"), member_of: ["r@"] }]);
+    vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });
+    vi.mocked(api.generateRoleMembershipSql).mockResolvedValue("REVOKE 'r'@'' FROM 'app'@'%'");
+    renderWithProviders(
+      <UsersPanel sessionId="s1" driver="mysql" database="public" readOnly={false} onClose={() => {}} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /^app/ }));
+    fireEvent.click(await screen.findByRole("button", { name: t("usersRoleRevokeAria", { role: "r@" }) }));
+    await waitFor(() =>
+      expect(api.generateRoleMembershipSql).toHaveBeenCalledWith(
+        expect.objectContaining({ grant: false, role: "r", roleHost: "" }),
+      ),
+    );
+  });
+
   it("MySQL では role@host を分解してロール付与 SQL を生成する", async () => {
     vi.mocked(api.listDbUsers).mockResolvedValue([user("app")]);
     vi.mocked(api.listUserPrivileges).mockResolvedValue({ global: null, tables: [] });

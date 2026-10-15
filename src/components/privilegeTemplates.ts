@@ -97,7 +97,7 @@ export function generatePassword(
 
 /**
  * ロール入力 (`role` / MySQL の `role@host`) を名前とホストに分ける。MySQL のロール名に `@` は
- * 入らないので最後の `@` で分割してよい。空は null。ホスト省略時は host = null (= `%`)。
+ * 入らないので最後の `@` で分割してよい。空は null。ホスト省略時は host = null (= `%`)、`role@` は空ホスト ("")。
  */
 export function parseRoleInput(input: string): { role: string; host: string | null } | null {
   const s = input.trim();
@@ -107,7 +107,9 @@ export function parseRoleInput(input: string): { role: string; host: string | nu
   const role = s.slice(0, at).trim();
   const host = s.slice(at + 1).trim();
   if (!role) return null;
-  return { role, host: host || null };
+  // `role@` の空ホストは `%` とは別のアカウント (`role`@`''`)。MySQL の member_of が空ホストを
+  // `role@` で返すので、そのまま剥奪対象に渡せるよう空文字を保つ。
+  return { role, host: at === s.length - 1 ? "" : host || null };
 }
 
 /** カンマ / 改行区切りの列入力を、空要素と重複を除いた列名配列にする (順序は入力順)。 */

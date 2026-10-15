@@ -960,15 +960,15 @@ impl PostgresConn {
         out
     }
 
-    /// `pg_terminate_backend(pid)` を `unnest` で 1 文にまとめて実行する (#1259)。
+    /// `pg_terminate_backend(pid)` を pid ごとに実行する (#1259 / #1622)。
     /// MySQL `KILL` と同じく接続全体を終了する。`statement_only` のときは
     /// `pg_cancel_backend` で実行中の文だけをキャンセルし、接続は残す。pid が既に消えていても関数は false を
     /// 返すだけなので成功扱い (`AlreadyGone`。プロセス自然終了との競合は正常)。アプリ自身の接続
     /// (`pg_backend_pid()`) は最後に回す。int4 に収まらない pid は実行前に失敗として数える。
     ///
-    /// 結果は pid ごと (`outcomes`, #1622)。一括文が権限不足などで失敗したときは、全件失敗にせず
-    /// pid を 1 本ずつ実行し直して、失敗した pid だけにそのエラーを付ける
-    /// (自接続を含むときも pid 単位で数えるので件数がずれない)。
+    /// 結果は pid ごと (`outcomes`)。キャンセルの二重送信を避けるため最初から 1 本ずつ実行し、
+    /// 失敗した pid だけにそのエラーを付ける (自接続を含むときも pid 単位で数えるので件数が
+    /// ずれない)。SQL 側の `<> pg_backend_pid()` で自接続は常に除外される。
     pub async fn kill_processes(
         &self,
         ids: &[i64],

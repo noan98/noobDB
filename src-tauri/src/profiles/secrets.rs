@@ -221,12 +221,14 @@ const PROBE_VALUE: &str = "noobdb-keyring-probe";
 /// 診断結果のキャッシュ。ロックを持ったまま診断を実行するので、同時に呼ばれても書き込みは 1 回。
 static KEYRING_STATUS: std::sync::Mutex<Option<KeyringStatus>> = std::sync::Mutex::new(None);
 
-/// 診断済みならその結果を返す (書き込みはしない)。診断バンドルが使う。
+/// 診断済みならその結果を返す (書き込みはしない)。診断バンドルが使う。診断の実行中
+/// (ロック保持中) は待たずに `None` (= 未確認扱い) を返し、async コマンドのワーカーを止めない。
 pub fn cached_keyring_status() -> Option<KeyringStatus> {
-    KEYRING_STATUS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
+    match KEYRING_STATUS.try_lock() {
+        Ok(g) => g.clone(),
+        Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner().clone(),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
 }
 
 /// keyring の疎通診断を、プロセスで最初の 1 回だけ実行してキャッシュする。接続フォームで

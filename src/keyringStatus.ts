@@ -3,7 +3,8 @@ import { api, type KeyringStatus } from "./api/tauri";
 
 /**
  * OS keyring の疎通診断 (#1622) のキャッシュ。診断は一時エントリの書き込み・読み戻し・
- * 削除を行うため、アプリ起動時と接続フォームの両方から呼んでも 1 回だけ実行する。
+ * 削除を行うため、接続フォームがパスワード欄を初めて描画したときに 1 回だけ実行する
+ * (起動時には呼ばない)。
  * 失敗 (IPC エラー) はキャッシュせず、次の呼び出しで再試行する。
  */
 let cached: Promise<KeyringStatus | null> | null = null;

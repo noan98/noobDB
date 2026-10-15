@@ -22,7 +22,7 @@ const SENSITIVE_KEY_PARTS: &[&str] = &[
     "peer", "target",
 ];
 
-/// 空白を含みうる値を持つキー (パス系)。値は次の `key=` か行末まで伏せる。
+/// パス系のキー (語単位で判定)。
 const PATH_KEY_PARTS: &[&str] = &["path", "dir", "file", "cwd", "home"];
 
 /// `key: value` 形式で、散文の語として現れるため値を伏せないキー。
@@ -44,13 +44,16 @@ fn is_sensitive_key(key: &str) -> bool {
     let k = key.to_ascii_lowercase();
     // `ip` は `description` や `skip` を巻き込まないよう、区切られた語としてだけ見る。
     SENSITIVE_KEY_PARTS.iter().any(|p| k.contains(p))
-        || PATH_KEY_PARTS.iter().any(|p| k.contains(p))
+        || is_path_key(key)
         || k.split(['_', '.', '-']).any(|w| w == "ip")
 }
 
+/// パス系のキーか。`profile` / `profile_id` に `file` が部分一致しないよう、`_` `.` `-`
+/// 区切りの語単位で見る。
 fn is_path_key(key: &str) -> bool {
-    let k = key.to_ascii_lowercase();
-    PATH_KEY_PARTS.iter().any(|p| k.contains(p))
+    key.to_ascii_lowercase()
+        .split(['_', '.', '-'])
+        .any(|w| PATH_KEY_PARTS.contains(&w))
 }
 
 /// 出力済みの文字列の末尾にあるキーを取り出す。JSON の `"key"` (閉じ引用符つき) も扱う。
@@ -139,10 +142,11 @@ fn redact_key_values(line: &str) -> String {
                 None => false,
             };
             if sensitive && v < chars.len() {
-                let path_like = key.as_ref().is_some_and(|(k, _)| is_path_key(k));
+                // `=` 形式の引用なしの値は空白を含みうる (`name=Acme Nightly Export`,
+                // 空白入りのパス) ので、次の ` key=` か行末まで伏せる。
                 let end = if chars[v] == '"' || chars[v] == '\'' {
                     quoted_end(&chars, v)
-                } else if path_like {
+                } else if !is_colon {
                     let mut j = v;
                     while j < chars.len() {
                         if chars[j].is_whitespace() && next_key_follows(&chars, j) {
@@ -227,8 +231,11 @@ fn redact_home_paths(line: &str) -> String {
         while let Some(pos) = rest.find(marker) {
             let (head, tail) = rest.split_at(pos + marker.len());
             out.push_str(head);
+            // ユーザ名は空白を含みうる (`C:\Users\Alice Smith\...`) ので、次の区切りまで。
+            // 区切りが無ければ空白・引用符まで。
             let end = tail
-                .find(|c: char| c == '/' || c == '\\' || c.is_whitespace() || c == '"' || c == '\'')
+                .find(['/', '\\'])
+                .or_else(|| tail.find(|c: char| c.is_whitespace() || c == '"' || c == '\''))
                 .unwrap_or(tail.len());
             out.push_str(REDACTED);
             rest = &tail[end..];
@@ -673,5 +680,35 @@ mod tests {
             let out = redact_log_line(line);
             assert!(leaks(&out, needles).is_empty(), "{out}");
         }
+    }
+
+    #[test]
+    fn unquoted_equals_values_with_spaces_are_fully_redacted() {
+        let out = redact_log_line("INFO export started name=Acme Nightly Export rows=10");
+        assert!(
+            leaks(&out, &["Acme", "Nightly", "Export"]).is_empty(),
+            "{out}"
+        );
+        assert!(out.contains("rows=10"), "{out}");
+    }
+
+    #[test]
+    fn path_key_match_is_by_word_not_substring() {
+        // `profile` / `profile_id` に `file` が部分一致してパス扱いにならない。
+        assert!(!is_path_key("profile"));
+        assert!(!is_path_key("profile_id"));
+        assert!(is_path_key("data_dir"));
+        assert!(is_path_key("file"));
+        let out = redact_log_line("DEBUG loaded profile_id=abc123 mode=ro");
+        assert!(out.contains("mode=ro"), "{out}");
+    }
+
+    #[test]
+    fn home_path_user_names_with_spaces_are_redacted() {
+        let out = redact_log_line(r"open C:\Users\Alice Smith\AppData\x.db failed");
+        assert!(leaks(&out, &["Alice", "Smith"]).is_empty(), "{out}");
+        assert!(out.contains("AppData"), "{out}");
+        let out = redact_log_line("see /home/bob");
+        assert!(!out.contains("bob"), "{out}");
     }
 }

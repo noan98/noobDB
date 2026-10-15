@@ -64,7 +64,7 @@ describe("parseRoleInput / parseColumnList (#1622)", () => {
     expect(parseRoleInput("  ")).toBeNull();
     expect(parseRoleInput("reader")).toEqual({ role: "reader", host: null });
     expect(parseRoleInput("reader@localhost")).toEqual({ role: "reader", host: "localhost" });
-    expect(parseRoleInput("reader@")).toEqual({ role: "reader", host: null });
+    expect(parseRoleInput("reader@")).toEqual({ role: "reader", host: "" });
     expect(parseRoleInput("@h")).toEqual({ role: "@h", host: null });
   });
 

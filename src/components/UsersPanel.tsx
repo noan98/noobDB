@@ -252,8 +252,10 @@ export function UsersPanel({
       const list = await api.listDbUsers(sessionId);
       setUsers(list);
       setUsersError(null);
+      return list;
     } catch (e) {
       setUsersError(String(e));
+      return null;
     } finally {
       setLoadingUsers(false);
     }
@@ -487,8 +489,11 @@ export function UsersPanel({
       try {
         await api.applyPrivilegeSql({ sessionId, database, statements });
         toast.success(opts.doneMessage);
-        await loadUsers();
-        if (privSeq.current === seqBefore) await loadPrivileges(selected);
+        const list = await loadUsers();
+        // 選択中ユーザの表示 (所属ロールなど) を最新の一覧へ差し替える。
+        const fresh = list?.find((u) => userKey(u) === userKey(selected)) ?? selected;
+        if (fresh !== selected) setSelected(fresh);
+        if (privSeq.current === seqBefore) await loadPrivileges(fresh);
         return true;
       } catch (e) {
         toast.error(t("usersApplyFailed", { error: String(e) }));
