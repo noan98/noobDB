@@ -38,6 +38,17 @@ use crate::db::{DriverKind, WriteCapture, WriteKind};
 /// `commands::flight_recorder::run_captured_write_inner`) can't drift apart.
 pub const DEFAULT_RETENTION_DAYS: i64 = 30;
 
+/// 複数文スクリプトの記録に共通で付けるバッチ id を作る (#1626)。時刻 + 乱数で衝突しない。
+pub fn new_batch_id() -> String {
+    use rand::RngExt;
+    const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";
+    let mut rng = rand::rng();
+    let suffix: String = (0..6)
+        .map(|_| ALPHABET[rng.random_range(0..ALPHABET.len())] as char)
+        .collect();
+    format!("b{:x}-{suffix}", chrono::Utc::now().timestamp_millis())
+}
+
 /// A persisted capture of one write statement's before/after image. Mirrors
 /// the `write_capture` table; `id`/`captured_at` are filled in by the store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +81,10 @@ pub struct WriteCaptureRecord {
     /// True once [`undo::build_undo_plan`]'s statements have been
     /// successfully applied for this record.
     pub undone: bool,
+    /// ピン留め済み (#1626)。件数・保持期間・容量の上限による自動削除の対象外。
+    pub pinned: bool,
+    /// 同じ複数文スクリプトで記録された文に共通の id (#1626)。単文の記録は `None`。
+    pub batch_id: Option<String>,
 }
 
 /// Insert payload — everything except the auto-assigned `id`.
@@ -88,6 +103,7 @@ pub struct NewWriteCapture {
     pub after_rows: Vec<Vec<Value>>,
     pub rows_affected: i64,
     pub captured_at: String,
+    pub batch_id: Option<String>,
 }
 
 /// Summary used for list views — omits the (potentially large) row payloads.
@@ -103,6 +119,8 @@ pub struct WriteCaptureSummary {
     pub rows_affected: i64,
     pub captured_at: String,
     pub undone: bool,
+    pub pinned: bool,
+    pub batch_id: Option<String>,
 }
 
 impl From<&WriteCaptureRecord> for WriteCaptureSummary {
@@ -118,6 +136,8 @@ impl From<&WriteCaptureRecord> for WriteCaptureSummary {
             rows_affected: r.rows_affected,
             captured_at: r.captured_at.clone(),
             undone: r.undone,
+            pinned: r.pinned,
+            batch_id: r.batch_id.clone(),
         }
     }
 }
@@ -143,10 +163,46 @@ pub async fn persist_capture(
     sql: String,
     capture: &WriteCapture,
     retention_days: Option<i64>,
+    batch_id: Option<String>,
 ) -> Option<i64> {
     if !capture.capturable || skip_history {
         return None;
     }
+    // UPSERT (#1626) は新規行 (Insert) と更新行 (Update) の 2 件になりうる。同じバッチ id で
+    // 保存して、まとめて取り消せるようにする。
+    let batch_id = match (&capture.companion, batch_id) {
+        (Some(_), None) => Some(new_batch_id()),
+        (_, b) => b,
+    };
+    let retention = retention_days.unwrap_or(DEFAULT_RETENTION_DAYS);
+    let first = persist_one(
+        profile_id.clone(),
+        driver,
+        database.clone(),
+        sql.clone(),
+        capture,
+        retention,
+        batch_id.clone(),
+    )
+    .await;
+    if let (Some(companion), Some(_)) = (capture.companion.as_deref(), first) {
+        persist_one(
+            profile_id, driver, database, sql, companion, retention, batch_id,
+        )
+        .await;
+    }
+    first
+}
+
+async fn persist_one(
+    profile_id: Option<String>,
+    driver: DriverKind,
+    database: Option<String>,
+    sql: String,
+    capture: &WriteCapture,
+    retention: i64,
+    batch_id: Option<String>,
+) -> Option<i64> {
     let new = NewWriteCapture {
         profile_id,
         driver: driver.as_str().to_string(),
@@ -161,8 +217,8 @@ pub async fn persist_capture(
         after_rows: capture.after_rows.clone(),
         rows_affected: capture.rows_affected as i64,
         captured_at: chrono::Utc::now().to_rfc3339(),
+        batch_id,
     };
-    let retention = retention_days.unwrap_or(DEFAULT_RETENTION_DAYS);
     match store::record(new, retention).await {
         Ok(id) => Some(id),
         Err(e) => {

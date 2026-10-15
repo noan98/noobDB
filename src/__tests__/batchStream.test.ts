@@ -70,7 +70,18 @@ describe("api.runSqlBatch / listenBatchStream", () => {
       kind: "results",
       results: [{ sql: "SELECT 1", status: "ok", columns: [{ name: "a", type_name: "INT" }], rows: [[1]] }],
     });
-    channel.onmessage({ kind: "done", ok: 1, errors: 0, skipped: 0, elapsedMs: 4 });
+    channel.onmessage({
+      kind: "done",
+      ok: 1,
+      errors: 0,
+      skipped: 0,
+      elapsedMs: 4,
+      wrapped: false,
+      rolledBack: false,
+      batchId: null,
+      captured: 0,
+      captureSkipped: 0,
+    });
     channel.onmessage({ kind: "error", error: "boom", connectionLost: true });
     channel.onmessage({ kind: "cancelled", deliveredStatements: 2 });
     channel.onmessage({ kind: "from-the-future" });
@@ -84,6 +95,11 @@ describe("api.runSqlBatch / listenBatchStream", () => {
       errors: 0,
       skipped: 0,
       elapsedMs: 4,
+      wrapped: false,
+      rolledBack: false,
+      batchId: null,
+      captured: 0,
+      captureSkipped: 0,
     });
     expect(handlers.onError).toHaveBeenCalledWith({ kind: "error", error: "boom", connectionLost: true });
     expect(handlers.onCancelled).toHaveBeenCalledWith({ kind: "cancelled", deliveredStatements: 2 });
@@ -95,7 +111,18 @@ describe("api.runSqlBatch / listenBatchStream", () => {
     await api.runSqlBatch({ ...params, streamId: "strm3" });
     const channel = (mockInvoke.mock.calls[0][1] as { onEvent: InstanceType<typeof FakeChannel> }).onEvent;
     detach();
-    channel.onmessage({ kind: "done", ok: 0, errors: 0, skipped: 0, elapsedMs: 0 });
+    channel.onmessage({
+      kind: "done",
+      ok: 0,
+      errors: 0,
+      skipped: 0,
+      elapsedMs: 0,
+      wrapped: false,
+      rolledBack: false,
+      batchId: null,
+      captured: 0,
+      captureSkipped: 0,
+    });
     expect(onDone).not.toHaveBeenCalled();
     // detach でレジストリからも消えるので、再度 listen せずには呼べない。
     expect(() => api.runSqlBatch({ ...params, streamId: "strm3" })).toThrow();

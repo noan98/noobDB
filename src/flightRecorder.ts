@@ -24,3 +24,15 @@ export function isSingleCapturableStatement(sql: string, driver?: string): boole
   const masked = maskLiterals(statements[0], driver).trim().toLowerCase();
   return /^(insert|update|delete)\b/.test(masked);
 }
+
+/**
+ * 複数文のスクリプトに含まれる、記録の対象になりうる文 (INSERT / UPDATE / DELETE) の数 (#1626)。
+ * エディタのバッチ実行は、1 文でもあれば `capture` を有効にして実行する — 記録できるかの最終判定は
+ * 文ごとにバックエンド (`classify_write_kind`) が行い、対象外の文は記録なしで実行される。
+ */
+export function countCapturableStatements(sql: string, driver?: string): number {
+  return splitSqlStatements(sql, driver).filter((s) => {
+    if (s.trim().length === 0) return false;
+    return /^(insert|update|delete)\b/.test(maskLiterals(s, driver).trim().toLowerCase());
+  }).length;
+}

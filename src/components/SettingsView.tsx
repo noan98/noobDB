@@ -130,6 +130,7 @@ import {
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
+  setBatchWrapInTransaction,
   setFlightRecorderEnabled,
   setFlightRecorderRowCap,
   setFlightRecorderRetentionDays,
@@ -1898,6 +1899,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-confirm-prod"
                     checked={settings.confirmProductionConnect}
                     onChange={setConfirmProductionConnect}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-batch-wrap-tx">
+                      {t("settingsBatchWrapInTransaction")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsBatchWrapInTransactionHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-batch-wrap-tx"
+                    checked={settings.batchWrapInTransaction}
+                    onChange={setBatchWrapInTransaction}
                   />
                 </SettingsToggleRow>
                 <SettingsToggleRow>

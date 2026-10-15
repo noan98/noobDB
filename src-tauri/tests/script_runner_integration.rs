@@ -1172,3 +1172,83 @@ async fn wrapped_script_still_commits_at_eof() {
     }
     assert_eq!(count(&session, "t").await, 1);
 }
+
+#[tokio::test]
+async fn batch_wrapped_in_a_transaction_rolls_back_everything_on_failure() {
+    let (_fx, session) = setup("batch_wrap_fail", false).await;
+    let (_run, _results, _captured) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)",
+        None,
+        true,
+        200,
+        false,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("setup");
+    let (_run, results, _) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "INSERT INTO t VALUES (1, 'a');\nINSERT INTO t VALUES (2, 'b');\nINSERT INTO t VALUES (1, 'dup');\nINSERT INTO t VALUES (3, 'c')",
+        None,
+        true,
+        200,
+        true,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert_eq!(results[2].status, t::BatchStatus::Error);
+    assert_eq!(results[3].status, t::BatchStatus::Skipped);
+    // 先頭の 2 文は成功扱いで報告されるが、全体を包んでいるので何も残らない。
+    assert_eq!(count(&session, "t").await, 0);
+    assert!(!session.conn.transaction_active().await);
+}
+
+#[tokio::test]
+async fn batch_wrapped_in_a_transaction_commits_when_every_statement_succeeds() {
+    let (_fx, session) = setup("batch_wrap_ok", false).await;
+    let (_run, results, _) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY);\nINSERT INTO t VALUES (1);\nINSERT INTO t VALUES (2)",
+        None,
+        true,
+        200,
+        true,
+        None,
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(count(&session, "t").await, 2);
+}
+
+#[tokio::test]
+async fn batch_with_capture_still_writes_when_the_session_keeps_no_history() {
+    // make_session は skip_history = true なので記録は永続化されず (ローカルストアを汚さない)、
+    // 書き込み自体は通常どおり行われる。
+    let (_fx, session) = setup("batch_capture", false).await;
+    let (run, results, captured) = t::run_sql_batch_via_core_with(
+        session.clone(),
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT);\n\
+         INSERT INTO t VALUES (1, 'a'), (2, 'b');\n\
+         UPDATE t SET v = 'z' WHERE id = 1;\n\
+         DELETE FROM t WHERE id = 2",
+        None,
+        true,
+        200,
+        false,
+        Some("batch-test"),
+        Arc::new(AtomicU64::new(0)),
+    )
+    .await
+    .expect("batch");
+    assert!(matches!(run, t::ScriptRun::Done { .. }));
+    assert!(results.iter().all(|r| r.status == t::BatchStatus::Ok));
+    assert_eq!(captured, 0);
+    assert_eq!(results[2].rows_affected, Some(1));
+    assert_eq!(count(&session, "t").await, 1);
+}

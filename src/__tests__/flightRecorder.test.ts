@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSingleCapturableStatement } from "../flightRecorder";
+import { countCapturableStatements, isSingleCapturableStatement } from "../flightRecorder";
 
 describe("isSingleCapturableStatement", () => {
   it("recognises a single INSERT/UPDATE/DELETE statement", () => {
@@ -33,5 +33,23 @@ describe("isSingleCapturableStatement", () => {
   it("ignores a DML keyword hidden inside a comment or string literal", () => {
     expect(isSingleCapturableStatement("-- insert style guide\nSELECT * FROM t")).toBe(false);
     expect(isSingleCapturableStatement("SELECT 'update me' FROM t")).toBe(false);
+  });
+});
+
+describe("countCapturableStatements (#1626)", () => {
+  it("counts only INSERT / UPDATE / DELETE statements of a multi-statement script", () => {
+    const sql =
+      "CREATE TABLE t (id INT); INSERT INTO t VALUES (1); SELECT * FROM t; UPDATE t SET id = 2; DELETE FROM t;";
+    expect(countCapturableStatements(sql)).toBe(3);
+  });
+
+  it("ignores semicolons inside string literals and empty statements", () => {
+    expect(countCapturableStatements("INSERT INTO t VALUES ('a;b');;  ;")).toBe(1);
+    expect(countCapturableStatements("SELECT 1; SELECT 2")).toBe(0);
+    expect(countCapturableStatements("")).toBe(0);
+  });
+
+  it("does not treat a keyword inside a literal as a statement start", () => {
+    expect(countCapturableStatements("SELECT 'insert into x'")).toBe(0);
   });
 });

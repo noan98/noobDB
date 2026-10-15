@@ -250,7 +250,9 @@ impl SqliteConn {
         database: Option<&str>,
         row_limit: usize,
     ) -> Result<PreviewResult> {
-        let (preview, _, tx) = self.preview_inner(sql, database, row_limit, false).await?;
+        let (preview, _, tx) = self
+            .preview_inner(sql, database, row_limit, false, None)
+            .await?;
         tx.rollback().await?;
         Ok(preview)
     }
@@ -270,12 +272,15 @@ impl SqliteConn {
         sql: &str,
         database: Option<&str>,
         row_limit: usize,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         QueryResult,
         sqlx::Transaction<'static, sqlx::Sqlite>,
     )> {
-        let (preview, result, tx) = self.preview_inner(sql, database, row_limit, true).await?;
+        let (preview, result, tx) = self
+            .preview_inner(sql, database, row_limit, true, upsert)
+            .await?;
         let result =
             result.unwrap_or_else(|| QueryResult::empty(preview.rows_affected, preview.elapsed_ms));
         Ok((preview, result, tx))
@@ -287,6 +292,7 @@ impl SqliteConn {
         _database: Option<&str>,
         row_limit: usize,
         commit: bool,
+        upsert: Option<&super::upsert_capture::UpsertHint>,
     ) -> Result<(
         PreviewResult,
         Option<QueryResult>,
@@ -325,9 +331,23 @@ impl SqliteConn {
         // 書き込みキャプチャ (#1536) の INSERT は、新規行が末尾 (最大 PK 側) に付く
         // 採番表でも窓の外に出ないよう、PK 降順の末尾窓で前後を撮る。
         let is_insert_stmt = trimmed.starts_with("insert") || trimmed.starts_with("replace");
+        // UPSERT の記録 (#1626): 主キーがリテラルの `INSERT … VALUES … ON …` は、その主キーの行を
+        // 前後で読む (新規行と更新された既存行を分けるため)。組めなければ記録を辞退する。
+        let upsert_requested = upsert.is_some() && commit && is_insert_stmt;
+        let upsert_anchor: Option<String> = match upsert {
+            Some(h) if upsert_requested && !primary_key.is_empty() => {
+                h.anchor_where(&primary_key, quote_ident)
+            }
+            _ => None,
+        };
         // 対象表/主キーが無ければ記録できないので、キャプチャ時はスナップショットを省く。
-        let skip_snapshots = commit && (target.is_none() || primary_key.is_empty());
-        let order_clause = if commit && is_insert_stmt {
+        let skip_snapshots = commit
+            && (target.is_none()
+                || primary_key.is_empty()
+                || (upsert_requested && upsert_anchor.is_none()));
+        let order_clause = if upsert_anchor.is_some() {
+            String::new()
+        } else if commit && is_insert_stmt {
             super::pk_order_clause_desc(&primary_key, quote_ident)
         } else {
             super::pk_order_clause(&primary_key, quote_ident)
@@ -338,7 +358,9 @@ impl SqliteConn {
         // AFTER を取れないので、WHERE も PK アンカーも使わず固定窓で撮り直す。
         let pk_changed =
             super::preview::update_assigns_primary_key(sql, super::SqlFlavor::Sqlite, &primary_key);
-        let where_clause = if pk_changed {
+        let where_clause = if upsert_anchor.is_some() {
+            upsert_anchor.clone()
+        } else if pk_changed {
             None
         } else {
             super::preview::before_where_clause(sql, super::SqlFlavor::Sqlite, &primary_key)
@@ -457,7 +479,11 @@ impl SqliteConn {
                 elapsed_ms,
                 truncated,
                 new_rows_exact: false,
-                capture_decline: None,
+                capture_decline: if upsert_requested && upsert_anchor.is_none() {
+                    Some("UPSERT の主キーをリテラルで特定できないため記録しません".into())
+                } else {
+                    None
+                },
             },
             committed_result,
             tx,

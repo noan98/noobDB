@@ -624,6 +624,8 @@ export const writeCaptureSummary = z.object({
   rows_affected: z.number(),
   captured_at: z.string(),
   undone: z.boolean(),
+  pinned: z.boolean(),
+  batch_id: z.string().nullable(),
 });
 export const writeCaptureSummaryArray = z.array(writeCaptureSummary);
 
@@ -637,6 +639,18 @@ export const undoPreviewResponse = z.object({
   statements: z.array(z.string()),
   conflicts: z.array(undoConflict),
   warnings: z.array(z.string()),
+});
+
+export const undoBatchPreviewResponse = z.object({
+  statements: z.array(z.string()),
+  conflicts: z.array(undoConflict),
+  warnings: z.array(z.string()),
+  recordIds: z.array(z.number()),
+});
+
+export const exportPlanOutcome = z.object({
+  statements: z.number(),
+  conflicts: z.number(),
 });
 
 export const undoOutcome = z.object({
@@ -1415,6 +1429,11 @@ export const batchStreamDoneMessage = z.object({
   errors: z.number(),
   skipped: z.number(),
   elapsedMs: z.number(),
+  wrapped: z.boolean(),
+  rolledBack: z.boolean(),
+  batchId: z.string().nullable(),
+  captured: z.number(),
+  captureSkipped: z.number(),
 });
 
 export const batchStreamErrorMessage = z.object({
@@ -1681,7 +1700,14 @@ export const sqlFileContent = z.object({
   encoding: textEncoding,
 });
 
-const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);
+const scriptDangerKind = z.enum([
+  "deleteNoWhere",
+  "updateNoWhere",
+  "drop",
+  "truncate",
+  "dropColumn",
+  "dropConstraint",
+]);
 
 /** 事前確認の一覧の 1 文 (#1535)。`index` は実行時の通し番号と同じ。 */
 const analyzedStatement = z.object({

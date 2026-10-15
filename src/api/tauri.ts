@@ -471,6 +471,10 @@ export interface WriteCaptureSummary {
   rows_affected: number;
   captured_at: string;
   undone: boolean;
+  /** ピン留め済み (#1626)。自動削除 (件数・期間・容量) の対象外。 */
+  pinned: boolean;
+  /** 同じ複数文スクリプト / UPSERT の記録に共通の id (#1626)。単発の記録は null。 */
+  batch_id: string | null;
 }
 
 /** Undo プレビュー/適用で検出される 1 行の競合。 */
@@ -484,6 +488,18 @@ export interface UndoPreviewResponse {
   statements: string[];
   conflicts: UndoConflict[];
   warnings: string[];
+}
+
+/** バッチ単位の取り消し / やり直しのプレビュー (#1626)。 */
+export interface UndoBatchPreviewResponse extends UndoPreviewResponse {
+  /** 計画に含めた記録の id (適用順)。 */
+  recordIds: number[];
+}
+
+/** 取り消し計画の `.sql` 書き出し結果 (#1626)。 */
+export interface ExportPlanOutcome {
+  statements: number;
+  conflicts: number;
 }
 
 export interface UndoOutcome {
@@ -2259,6 +2275,15 @@ export interface BatchStreamDoneMessage {
   errors: number;
   skipped: number;
   elapsedMs: number;
+  /** 全体を 1 つのトランザクションで包んで実行した (#1626)。 */
+  wrapped: boolean;
+  /** `wrapped` でエラーがあり、成功扱いの文も含めて全部取り消した (#1626)。 */
+  rolledBack: boolean;
+  /** DML を記録したときのバッチ id (#1626)。記録が無ければ null。 */
+  batchId: string | null;
+  /** 記録できた DML の数 / 記録を辞退した DML の数 (#1626)。 */
+  captured: number;
+  captureSkipped: number;
 }
 
 export interface BatchStreamErrorMessage {

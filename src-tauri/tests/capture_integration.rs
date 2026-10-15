@@ -249,6 +249,41 @@ async fn pg_upsert_is_not_recorded_as_a_new_row() {
         .unwrap();
 }
 
+/// 主キーをリテラルで指定した UPSERT (#1626): 新規行は Insert、更新された既存行は companion の Update。
+#[tokio::test]
+async fn pg_upsert_with_literal_keys_splits_new_and_updated_rows() {
+    let Some(o) = pg_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_pg_ups";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, name TEXT)"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(&format!("INSERT INTO {tb} VALUES (1,'a')"), None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(&format!("INSERT INTO {tb} (id, name) VALUES (1,'b'), (2,'new') ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name"), None, 100)
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 2);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(cap.kind, t::WriteKind::Insert);
+    assert_eq!(ids(&cap), vec![2]);
+    let companion = cap.companion.as_deref().expect("update companion");
+    assert_eq!(companion.kind, t::WriteKind::Update);
+    assert!(matches!(&companion.before_rows[0][1], t::Value::String(s) if s == "a"));
+    assert!(matches!(&companion.after_rows[0][1], t::Value::String(s) if s == "b"));
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+}
+
 /// WHERE を引き継げない UPDATE (PK を書き換える) が、無関係な行のロックを待たない。
 #[tokio::test]
 async fn pg_pk_changing_update_does_not_wait_on_unrelated_row_lock() {
@@ -437,6 +472,53 @@ async fn my_capture_runs_once_and_attributes_autoinc_insert() {
         .expect("rows must not stay locked");
     c2.finish_transaction(false).await.unwrap();
     c.execute(&format!("DROP TABLE IF EXISTS {tb}, {tb2}"), None)
+        .await
+        .unwrap();
+}
+
+/// 主キーをリテラルで指定した UPSERT (#1626): MySQL は更新行を 2 と数えるが、記録は新規行と更新行に分かれる。
+#[tokio::test]
+async fn my_upsert_with_literal_keys_splits_new_and_updated_rows() {
+    let Some(o) = my_opts().await else { return };
+    let c = connect(&o).await;
+    let tb = "cap1626_my_ups";
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
+        .await
+        .unwrap();
+    c.execute(
+        &format!("CREATE TABLE {tb} (id INT PRIMARY KEY, name VARCHAR(20), UNIQUE KEY uq_name (name)) ENGINE=InnoDB"),
+        None,
+    )
+    .await
+    .unwrap();
+    c.execute(&format!("INSERT INTO {tb} VALUES (1,'a')"), None)
+        .await
+        .unwrap();
+    let (r, cap) = c
+        .capture_write(&format!("INSERT INTO {tb} (id, name) VALUES (1,'b'), (2,'new') ON DUPLICATE KEY UPDATE name = VALUES(name)"), None, 100)
+        .await
+        .unwrap();
+    assert_eq!(r.rows_affected, 3, "新規 1 + 更新 2");
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(cap.kind, t::WriteKind::Insert);
+    assert_eq!(ids(&cap), vec![2]);
+    let companion = cap.companion.as_deref().expect("update companion");
+    assert!(matches!(&companion.before_rows[0][1], t::Value::String(s) if s == "a"));
+    assert!(matches!(&companion.after_rows[0][1], t::Value::String(s) if s == "b"));
+    // 主キー以外の一意キー (name) で衝突して別の行が更新される形は記録を辞退する。
+    let (r, cap) = c
+        .capture_write(
+            &format!(
+                "INSERT INTO {tb} (id, name) VALUES (9,'b') ON DUPLICATE KEY UPDATE name = 'b2'"
+            ),
+            None,
+            100,
+        )
+        .await
+        .unwrap();
+    assert!(r.rows_affected >= 1, "write must still apply");
+    assert!(!cap.capturable);
+    c.execute(&format!("DROP TABLE IF EXISTS {tb}"), None)
         .await
         .unwrap();
 }

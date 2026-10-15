@@ -371,6 +371,13 @@ where
             "an explicit transaction is already active on this session; commit or roll it back before running a script".into(),
         ));
     }
+    // バッチ全体を 1 つのトランザクションで包む指定 (#1626) は、呼び出し側の明示トランザクションと
+    // 二重になるので受け付けない。
+    if tx_active && options.wrap_in_transaction {
+        return Err(AppError::InvalidInput(
+            "cannot wrap the batch in a transaction while an explicit transaction is active".into(),
+        ));
+    }
 
     let started = Instant::now();
     let encoding = options.encoding.unwrap_or(TextEncoding::Utf8);
@@ -408,6 +415,7 @@ where
             external_tx: tx_active,
             skipping: false,
             on_result: cfg.on_result,
+            capture: cfg.capture,
         }),
         caches_invalidated: false,
     };
@@ -680,6 +688,32 @@ struct BatchConfig {
     /// SELECT の結果として保持する最大行数。これに達したら取得を打ち切る。
     preview_rows: usize,
     on_result: Box<dyn FnMut(BatchStatementResult) + Send + Sync>,
+    /// 各 DML をフライトレコーダに記録する設定 (#1626)。`None` なら記録しない。
+    capture: Option<BatchCaptureConfig>,
+}
+
+/// 1 回のバッチ実行で記録を試みる DML の上限 (#1626)。記録は 1 文ごとに専用トランザクションで
+/// 対象行を読み直すため、数千文のスクリプト (mysqldump など) では実行時間とストアの両方が
+/// 膨らむ。辞退された文も数えて、上限を超えた文は記録を試みずに実行する
+/// (件数は `BatchCaptureStats::skipped` に数える)。
+pub(crate) const BATCH_CAPTURE_LIMIT: u64 = 200;
+
+/// バッチ実行の記録結果の集計 (#1626)。実行タスクと完了通知の両方から読むので共有する。
+#[derive(Debug, Default)]
+pub(crate) struct BatchCaptureStats {
+    /// 記録できた文の数。
+    pub captured: AtomicU64,
+    /// 記録を辞退した (捕捉不可・上限超過・履歴を残さない接続) DML の数。
+    pub skipped: AtomicU64,
+}
+
+/// バッチ実行の DML 記録の設定 (#1626)。同じ `batch_id` の記録はまとめて取り消せる。
+#[derive(Clone)]
+pub(crate) struct BatchCaptureConfig {
+    pub row_cap: usize,
+    pub retention_days: Option<i64>,
+    pub batch_id: String,
+    pub stats: Arc<BatchCaptureStats>,
 }
 
 struct BatchState {
@@ -690,6 +724,7 @@ struct BatchState {
     /// エラー停止後の残りの文をスキップとして返している最中。
     skipping: bool,
     on_result: Box<dyn FnMut(BatchStatementResult) + Send + Sync>,
+    capture: Option<BatchCaptureConfig>,
 }
 
 /// プレビュー上限で取得を打ち切るための目印エラー (呼び出し元で成功に読み替える)。
@@ -771,12 +806,15 @@ async fn execute_preview(
 /// バッチ実行の本体 (Tauri ランタイム非依存。統合テストからも駆動する)。`sql` を
 /// 文字列の `Cursor` として [`run_script_core_with`] へ流す。`stop_on_error` が
 /// true なら最初のエラーで残りをスキップ、false なら続行する。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_batch_core<G>(
     session: Arc<Session>,
     sql: String,
     database: Option<String>,
     stop_on_error: bool,
     preview_rows: usize,
+    wrap_in_transaction: bool,
+    capture: Option<BatchCaptureConfig>,
     committed: Arc<AtomicU64>,
     on_result: G,
 ) -> Result<ScriptRun>
@@ -792,6 +830,7 @@ where
         database,
         ScriptOptions {
             continue_on_error: !stop_on_error,
+            wrap_in_transaction,
             ..ScriptOptions::default()
         },
         committed,
@@ -799,6 +838,7 @@ where
         Some(BatchConfig {
             preview_rows,
             on_result: Box::new(on_result),
+            capture,
         }),
     )
     .await
@@ -1003,6 +1043,8 @@ impl Runner {
                             });
                             (r, cut)
                         })
+                } else if let Some(cap) = self.batch_capture_for(&stmt.sql) {
+                    self.run_captured_statement(&stmt.sql, &cap).await
                 } else {
                     execute_preview(
                         &self.session.conn,
@@ -1059,6 +1101,64 @@ impl Runner {
             }
             Err(e) => self.on_failure(&stmt, e).await,
         }
+    }
+
+    /// この文を記録つきで実行すべきなら、その設定を返す (#1626)。バッチ実行で記録が
+    /// 有効、かつ単独の INSERT / UPDATE / DELETE のときだけ。トランザクションの内側
+    /// (呼び出し側の明示トランザクション・全体を包む指定) は記録用の専用トランザクションを
+    /// 開けないので対象外 (記録せずに実行する)。
+    fn batch_capture_for(&self, sql: &str) -> Option<BatchCaptureConfig> {
+        let cap = self.batch.as_ref()?.capture.clone()?;
+        if self.guard.active
+            || crate::db::classify_write_kind_for(self.driver, sql) == crate::db::WriteKind::Other
+        {
+            return None;
+        }
+        Some(cap)
+    }
+
+    /// 1 文を記録つきで実行して、プレビュー用の結果に整える (#1626)。記録の成否に
+    /// 関わらず書き込み自体は行われる。上限 ([`BATCH_CAPTURE_LIMIT`]) を超えた文は記録しない。
+    async fn run_captured_statement(
+        &self,
+        sql: &str,
+        cap: &BatchCaptureConfig,
+    ) -> Result<(QueryResult, Option<PreviewCut>)> {
+        use std::sync::atomic::Ordering::SeqCst;
+        if cap.stats.captured.load(SeqCst) + cap.stats.skipped.load(SeqCst) >= BATCH_CAPTURE_LIMIT {
+            cap.stats.skipped.fetch_add(1, SeqCst);
+            return self
+                .session
+                .conn
+                .execute(sql, self.database.as_deref())
+                .await
+                .map(|r| (r, None));
+        }
+        let (result, capture) = super::query::run_captured_write(
+            self.session.clone(),
+            sql.to_string(),
+            self.database.clone(),
+            cap.row_cap,
+            None,
+        )
+        .await?;
+        let id = crate::flight_recorder::persist_capture(
+            self.session.skip_history,
+            self.session.profile_id.clone(),
+            self.driver,
+            self.database.clone(),
+            sql.to_string(),
+            &capture,
+            cap.retention_days,
+            Some(cap.batch_id.clone()),
+        )
+        .await;
+        if id.is_some() {
+            cap.stats.captured.fetch_add(1, SeqCst);
+        } else {
+            cap.stats.skipped.fetch_add(1, SeqCst);
+        }
+        Ok((result, None))
     }
 
     /// バッチ実行の 1 文ぶんの結果を通知する (バッチモード以外では何もしない)。
@@ -1752,6 +1852,15 @@ pub enum BatchStreamMessage {
         errors: u64,
         skipped: u64,
         elapsed_ms: u64,
+        /// 全体を 1 つのトランザクションで包んで実行した (#1626)。
+        wrapped: bool,
+        /// `wrapped` でエラーがあり、成功扱いだった文も含めて全部取り消した (#1626)。
+        rolled_back: bool,
+        /// DML を記録したときのバッチ id (#1626)。1 件も記録していなければ `None`。
+        batch_id: Option<String>,
+        /// 記録できた DML の数と、記録を辞退した DML の数 (#1626)。
+        captured: u64,
+        capture_skipped: u64,
     },
     Error {
         error: String,
@@ -1819,6 +1928,14 @@ pub async fn run_sql_batch(
     sql: String,
     stop_on_error: bool,
     preview_rows: usize,
+    // 全体を 1 つのトランザクションで包む (#1626)。いずれかの文が失敗したら全部取り消す。
+    // `stop_on_error` が true で、呼び出し側の明示トランザクションが無いときだけ有効。
+    wrap_in_transaction: Option<bool>,
+    // 各 INSERT / UPDATE / DELETE をフライトレコーダに記録する (#1626)。同じバッチ id で
+    // まとめて取り消せる。`wrap_in_transaction` のときは記録しない。
+    capture: Option<bool>,
+    capture_row_cap: Option<u32>,
+    capture_retention_days: Option<u32>,
     on_event: Channel<BatchStreamMessage>,
     state: State<'_, AppState>,
 ) -> Result<()> {
@@ -1829,6 +1946,22 @@ pub async fn run_sql_batch(
     // 件数 (Started の total) のための分割は数 MB の SQL では CPU を食うので、IPC の
     // ランタイム上では行わず、下で起動するタスク側で spawn_blocking に逃がす (#1530)。
     let driver = session.conn.driver_kind();
+    let wrap = wrap_in_transaction.unwrap_or(false);
+    if wrap && !stop_on_error {
+        return Err(AppError::InvalidInput(
+            "wrapping the batch in a transaction requires stop-on-error".into(),
+        ));
+    }
+    let capture_stats = Arc::new(BatchCaptureStats::default());
+    let capture_cfg = (capture.unwrap_or(false) && !wrap).then(|| BatchCaptureConfig {
+        row_cap: capture_row_cap
+            .map(|n| n as usize)
+            .unwrap_or(crate::db::DEFAULT_CAPTURE_ROW_CAP),
+        retention_days: capture_retention_days.map(|n| n as i64),
+        batch_id: crate::flight_recorder::new_batch_id(),
+        stats: capture_stats.clone(),
+    });
+    let batch_id_for_done = capture_cfg.as_ref().map(|c| c.batch_id.clone());
 
     let committed = Arc::new(AtomicU64::new(0));
     let cancel_channel = on_event.clone();
@@ -1876,6 +2009,8 @@ pub async fn run_sql_batch(
             database,
             stop_on_error,
             preview_rows,
+            wrap,
+            capture_cfg,
             committed_for_task,
             move |r| lock_emitter(&sink).push(r),
         )
@@ -1886,12 +2021,20 @@ pub async fn run_sql_batch(
             (g.ok, g.errors, g.skipped)
         };
         let msg = match outcome {
-            Ok(ScriptRun::Done { elapsed_ms, .. }) => BatchStreamMessage::Done {
-                ok,
-                errors,
-                skipped,
-                elapsed_ms,
-            },
+            Ok(ScriptRun::Done { elapsed_ms, .. }) => {
+                let captured = capture_stats.captured.load(Ordering::SeqCst);
+                BatchStreamMessage::Done {
+                    ok,
+                    errors,
+                    skipped,
+                    elapsed_ms,
+                    wrapped: wrap,
+                    rolled_back: wrap && errors > 0,
+                    batch_id: batch_id_for_done.filter(|_| captured > 0),
+                    captured,
+                    capture_skipped: capture_stats.skipped.load(Ordering::SeqCst),
+                }
+            }
             Ok(ScriptRun::Failed { message, .. }) => BatchStreamMessage::Error {
                 error: message,
                 connection_lost: false,

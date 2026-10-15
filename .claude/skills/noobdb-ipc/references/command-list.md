@@ -21,7 +21,7 @@
 - `session_tunnel_alive`
 - `health_probe_all`
 - `disconnect`
-- `reconnect`
+- `reconnect` (任意引数 `force` (#1626)。明示トランザクションが生きている接続は `force` なしだと `transactionActive` で拒否する。再接続すると未確定の変更は失われるため、フロントは確認ダイアログを経て `force: true` で再実行する)
 
 `health_probe_all(sessionIds, timeoutMs, refreshVersion)` (#1259) は接続ヘルスの一括プローブ。
 Rust が全セッションを並列に問い合わせ、各セッションを `tokio::time::timeout` で打ち切る。
@@ -328,8 +328,12 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
-- `list_flight_records`
-- `clear_flight_records`
+- `list_flight_records` (各行に `pinned` / `batch_id` (#1626))
+- `clear_flight_records` (任意引数 `includePinned` (#1626)。既定ではピン留めした記録を残す)
+- `pin_flight_record` (#1626。ピン留めした記録は件数・保持期間・容量の自動削除の対象外。上限 500 件、超過は `InvalidInput`)
+- `preview_flight_batch` / `apply_flight_batch` (#1626。同じ `batch_id` の記録を、取り消しは id 降順・やり直しは昇順に連結して 1 つのトランザクション (`run_query_transaction_inner`) で適用する。衝突が 1 件でもあれば `force` なしでは何も適用しない。上限 500 件)
+- `export_flight_plan_sql` (#1626。取り消し / やり直しの SQL を `.sql` に保存 (適用しない)。`id` か `batchId` のどちらか。`force` でなければ衝突行の文は含めずヘッダのコメントに列挙)
+- `export_flight_records` (#1626。記録を CSV / NDJSON で書き出す。before/after は JSON 文字列の列。`write_export_to` を通す)
 - `preview_undo`
 - `undo_flight_record`
 - `preview_redo` (#1536。取り消し済みの記録を再適用する SQL と衝突のプレビュー)
@@ -563,6 +567,13 @@ DROP、TRUNCATE) は `classify_dangerous` (フロント `analyzeDangerousSql` �
 `execute_in_transaction` で同じ接続に流す (制御文の読み替えなし)、(3) 履歴には記録
 しない。結果は Channel (`started` / `results` / `done` / `error` / `cancelled`) で、
 `results` は 150ms 間引きでまとめて届く。`cancel_stream` で中断できる。
+
+`run_sql_batch` の任意引数 (#1626): `wrapInTransaction` は全体を 1 つのトランザクションで包む
+(`stopOnError` が必須・明示トランザクション中は不可。失敗したら成功済みの文も取り消し、`done` の
+`rolledBack` が true)。`capture` / `captureRowCap` / `captureRetentionDays` は各 INSERT / UPDATE /
+DELETE をフライトレコーダに 1 文ずつ記録し (`run_captured_write` 経由)、同じ `batch_id` を付ける
+(1 回の実行で最大 200 文まで記録を試みる、`wrapInTransaction` と明示トランザクション中は記録しない)。`done` に
+`batchId` / `captured` / `captureSkipped` が載る。
 
 ## 接続間データ転送 (`commands/transfer.rs`, #986)
 

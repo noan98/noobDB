@@ -410,7 +410,7 @@ import {
 } from "./dangerousSql";
 import { resolveTypedConfirmTarget } from "./typeToConfirm";
 import { extractQueryParams, substituteQueryParams, type ParamType } from "./queryParams";
-import { isSingleCapturableStatement } from "./flightRecorder";
+import { countCapturableStatements, isSingleCapturableStatement } from "./flightRecorder";
 import { resolveErrorHint } from "./errorHints";
 import { errorKindOf } from "./api/tauri";
 import { IpcMismatchNotice } from "./components/IpcMismatchNotice";
@@ -5718,9 +5718,24 @@ export default function App() {
             // 進捗を反映 (途中経過を見せる)。バックエンドが間引いた単位で 1 回だけ更新する。
             patchTab(tabId, (tt) => ({ ...tt, batchResults: [...results] }));
           },
-          onDone: () => {
+          onDone: (done) => {
             finish();
             finishRun();
+            // 全体を包んだ実行でエラーがあったとき、OK と表示された文も取り消されている (#1626)。
+            if (done.rolledBack) toast.error(translate("batchRolledBackNotice"), 10000);
+            // 複数文の DML を記録したとき、何件記録できたかを知らせる (#1626)。
+            if (done.captured > 0 || done.captureSkipped > 0) {
+              toast.info(
+                translate("batchCaptureSummary", {
+                  captured: done.captured,
+                  skipped:
+                    done.captureSkipped > 0
+                      ? translate("batchCaptureSkippedSuffix", { skipped: done.captureSkipped })
+                      : "",
+                }),
+                6000,
+              );
+            }
           },
           onError: ({ error, connectionLost }) => {
             finish();
@@ -5735,6 +5750,15 @@ export default function App() {
             if (current) setStatus({ kind: "key", key: "statusQueryCancelled" });
           },
         });
+        // 全体を 1 つのトランザクションで包む (#1626): 設定がオン、停止モード、明示トランザクションなし。
+        // 包んだ実行ではフライトレコーダの記録はしない (記録は文ごとの専用トランザクションを使う)。
+        const wrapInTransaction = settings.batchWrapInTransaction && stopOnError && !txActiveRef.current;
+        // 複数文の DML も 1 文ずつ記録する (#1626)。明示トランザクション中は記録しない。
+        const capture =
+          settings.flightRecorderEnabled &&
+          !wrapInTransaction &&
+          !txActiveRef.current &&
+          countCapturableStatements(sql, selectedProfile?.driver) > 0;
         await api.runSqlBatch({
           sessionId,
           streamId,
@@ -5742,13 +5766,29 @@ export default function App() {
           sql,
           stopOnError,
           previewRows: BATCH_PREVIEW_ROWS,
+          wrapInTransaction,
+          capture,
+          captureRowCap: settings.flightRecorderRowCap,
+          captureRetentionDays: settings.flightRecorderRetentionDays,
         });
       } catch (e) {
         finish();
         finishRun({ error: String(e) });
       }
     },
-    [sessionId, patchTab, recordOutput, tabsRef, outputCtxFor],
+    [
+      sessionId,
+      patchTab,
+      recordOutput,
+      tabsRef,
+      outputCtxFor,
+      toast,
+      selectedProfile?.driver,
+      settings.batchWrapInTransaction,
+      settings.flightRecorderEnabled,
+      settings.flightRecorderRowCap,
+      settings.flightRecorderRetentionDays,
+    ],
   );
 
   // Run the editor's SQL in a specific tab, applying the danger gate and auto

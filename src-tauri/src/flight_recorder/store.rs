@@ -87,19 +87,48 @@ async fn init_schema(pool: &SqlitePool) -> Result<()> {
             after_rows    TEXT NOT NULL,
             rows_affected INTEGER NOT NULL,
             captured_at   TEXT NOT NULL,
-            undone        INTEGER NOT NULL DEFAULT 0
+            undone        INTEGER NOT NULL DEFAULT 0,
+            pinned        INTEGER NOT NULL DEFAULT 0,
+            batch_id      TEXT
         )",
     )
     .execute(pool)
     .await?;
+    // #1626: 既存ストアに ピン留め / バッチ列を足す (列が無いときだけ)。
+    let existing: Vec<String> = sqlx::query("PRAGMA table_info(write_capture)")
+        .fetch_all(pool)
+        .await?
+        .iter()
+        .filter_map(|r| r.try_get::<String, _>("name").ok())
+        .collect();
+    if !existing.iter().any(|c| c == "pinned") {
+        sqlx::query("ALTER TABLE write_capture ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+            .execute(pool)
+            .await?;
+    }
+    if !existing.iter().any(|c| c == "batch_id") {
+        sqlx::query("ALTER TABLE write_capture ADD COLUMN batch_id TEXT")
+            .execute(pool)
+            .await?;
+    }
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_flight_profile_time
             ON write_capture(profile_id, captured_at DESC)",
     )
     .execute(pool)
     .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_flight_batch
+            ON write_capture(batch_id)",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
+
+/// ピン留めできる記録の上限 (#1626)。ピン留めは保持件数・容量上限の対象外なので、
+/// 無制限だとストアが際限なく膨らむ。
+pub const MAX_PINNED_RECORDS: i64 = 500;
 
 /// Row-count retention cap, mirroring `history::store::MAX_HISTORY_ROWS`: a
 /// ring buffer across all profiles combined, oldest evicted first.
@@ -162,8 +191,9 @@ async fn record_in(
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO write_capture
             (profile_id, driver, \"database\", table_name, kind, \"sql\", primary_key,
-             columns, column_types, before_rows, after_rows, rows_affected, captured_at, undone)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+             columns, column_types, before_rows, after_rows, rows_affected, captured_at, undone,
+             pinned, batch_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
          RETURNING id",
     )
     .bind(entry.profile_id)
@@ -179,6 +209,7 @@ async fn record_in(
     .bind(after_rows)
     .bind(entry.rows_affected)
     .bind(entry.captured_at)
+    .bind(entry.batch_id)
     .fetch_one(pool)
     .await?;
 
@@ -194,8 +225,8 @@ async fn record_in(
 async fn enforce_retention(pool: &SqlitePool, max_rows: i64, retention_days: i64) -> Result<()> {
     sqlx::query(
         "DELETE FROM write_capture
-            WHERE id NOT IN (
-                SELECT id FROM write_capture ORDER BY id DESC LIMIT ?
+            WHERE pinned = 0 AND id NOT IN (
+                SELECT id FROM write_capture WHERE pinned = 0 ORDER BY id DESC LIMIT ?
             )",
     )
     .bind(max_rows.max(1))
@@ -204,7 +235,7 @@ async fn enforce_retention(pool: &SqlitePool, max_rows: i64, retention_days: i64
 
     if retention_days > 0 {
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(retention_days)).to_rfc3339();
-        sqlx::query("DELETE FROM write_capture WHERE captured_at < ?")
+        sqlx::query("DELETE FROM write_capture WHERE pinned = 0 AND captured_at < ?")
             .bind(cutoff)
             .execute(pool)
             .await?;
@@ -278,9 +309,10 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
     // Always leaves at least the single newest row behind — even a lone
     // oversized capture stays queryable — rather than evicting down to zero.
     // 件数は退避前に 1 回だけ数え、以降は削除件数で減算する (1 行ごとの COUNT(*) を避ける)。
-    let mut row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM write_capture")
-        .fetch_one(pool)
-        .await?;
+    let mut row_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM write_capture WHERE pinned = 0")
+            .fetch_one(pool)
+            .await?;
     loop {
         // 削除済みページは freelist に残りファイルサイズは縮まないため、
         // 実使用量 (freelist を除く) で判定する。
@@ -292,7 +324,7 @@ async fn enforce_byte_cap(pool: &SqlitePool, max_bytes: u64) -> Result<()> {
         }
         let deleted = sqlx::query(
             "DELETE FROM write_capture
-                WHERE id = (SELECT id FROM write_capture ORDER BY id ASC LIMIT 1)",
+                WHERE id = (SELECT id FROM write_capture WHERE pinned = 0 ORDER BY id ASC LIMIT 1)",
         )
         .execute(pool)
         .await?
@@ -327,7 +359,7 @@ async fn list_in(
 ) -> Result<Vec<WriteCaptureSummary>> {
     let mut sql = String::from(
         "SELECT id, profile_id, driver, \"database\", table_name, kind, \"sql\",
-                rows_affected, captured_at, undone
+                rows_affected, captured_at, undone, pinned, batch_id
          FROM write_capture",
     );
     if profile_id.is_some() {
@@ -354,7 +386,8 @@ pub async fn get(id: i64) -> Result<Option<WriteCaptureRecord>> {
 async fn get_in(pool: &SqlitePool, id: i64) -> Result<Option<WriteCaptureRecord>> {
     let row: Option<SqliteRow> = sqlx::query(
         "SELECT id, profile_id, driver, \"database\", table_name, kind, \"sql\", primary_key,
-                columns, column_types, before_rows, after_rows, rows_affected, captured_at, undone
+                columns, column_types, before_rows, after_rows, rows_affected, captured_at, undone,
+                pinned, batch_id
          FROM write_capture WHERE id = ?",
     )
     .bind(id)
@@ -390,24 +423,107 @@ async fn mark_redone_in(pool: &SqlitePool, id: i64) -> Result<()> {
 }
 
 /// Deletes captures. `Some(profile_id)` clears just that profile; `None`
-/// clears everything. Returns the number of rows removed.
-pub async fn clear(profile_id: Option<&str>) -> Result<u64> {
-    clear_in(pool().await?, profile_id).await
+/// clears everything. ピン留めした記録は `include_pinned` が true のときだけ消す (#1626)。
+/// Returns the number of rows removed.
+pub async fn clear(profile_id: Option<&str>, include_pinned: bool) -> Result<u64> {
+    clear_in(pool().await?, profile_id, include_pinned).await
 }
 
-async fn clear_in(pool: &SqlitePool, profile_id: Option<&str>) -> Result<u64> {
+async fn clear_in(
+    pool: &SqlitePool,
+    profile_id: Option<&str>,
+    include_pinned: bool,
+) -> Result<u64> {
+    let pin_clause = if include_pinned {
+        ""
+    } else {
+        " AND pinned = 0"
+    };
     let affected = match profile_id {
-        Some(pid) => sqlx::query("DELETE FROM write_capture WHERE profile_id = ?")
-            .bind(pid.to_string())
-            .execute(pool)
-            .await?
-            .rows_affected(),
-        None => sqlx::query("DELETE FROM write_capture")
-            .execute(pool)
-            .await?
-            .rows_affected(),
+        Some(pid) => sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM write_capture WHERE profile_id = ?{pin_clause}"
+        )))
+        .bind(pid.to_string())
+        .execute(pool)
+        .await?
+        .rows_affected(),
+        None => sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM write_capture WHERE 1 = 1{pin_clause}"
+        )))
+        .execute(pool)
+        .await?
+        .rows_affected(),
     };
     Ok(affected)
+}
+
+/// 記録のピン留めを切り替える (#1626)。ピン留めした記録は件数・保持期間・容量の上限による
+/// 自動削除の対象外になる。上限 ([`MAX_PINNED_RECORDS`]) に達していたら新たなピン留めは拒否する。
+/// 戻り値は記録が存在したか。
+pub async fn set_pinned(id: i64, pinned: bool) -> Result<bool> {
+    set_pinned_in(pool().await?, id, pinned).await
+}
+
+async fn set_pinned_in(pool: &SqlitePool, id: i64, pinned: bool) -> Result<bool> {
+    if pinned {
+        let current: Option<i64> =
+            sqlx::query_scalar("SELECT pinned FROM write_capture WHERE id = ?")
+                .bind(id)
+                .fetch_optional(pool)
+                .await?;
+        match current {
+            None => return Ok(false),
+            Some(1) => return Ok(true),
+            Some(_) => {}
+        }
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM write_capture WHERE pinned = 1")
+            .fetch_one(pool)
+            .await?;
+        if count >= MAX_PINNED_RECORDS {
+            return Err(AppError::InvalidInput(format!(
+                "too many pinned flight records (max {MAX_PINNED_RECORDS})"
+            )));
+        }
+    }
+    let affected = sqlx::query("UPDATE write_capture SET pinned = ? WHERE id = ?")
+        .bind(i64::from(pinned))
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(affected > 0)
+}
+
+/// 同じバッチ (`batch_id`) の記録を新しい順 (id 降順) で返す (#1626)。バッチの取り消しは
+/// この順 (最後に実行した文から) に逆 SQL を並べる。
+pub async fn list_batch(batch_id: &str) -> Result<Vec<WriteCaptureRecord>> {
+    list_batch_in(pool().await?, batch_id).await
+}
+
+async fn list_batch_in(pool: &SqlitePool, batch_id: &str) -> Result<Vec<WriteCaptureRecord>> {
+    let rows: Vec<SqliteRow> = sqlx::query(
+        "SELECT id, profile_id, driver, \"database\", table_name, kind, \"sql\", primary_key,
+                columns, column_types, before_rows, after_rows, rows_affected, captured_at, undone,
+                pinned, batch_id
+         FROM write_capture WHERE batch_id = ? ORDER BY id DESC",
+    )
+    .bind(batch_id.to_string())
+    .fetch_all(pool)
+    .await?;
+    rows.into_iter().map(row_to_record).collect()
+}
+
+/// 指定した記録 (複数) を新しい順に返す (書き出し用、#1626)。存在しない id は無視する。
+pub async fn get_many(ids: &[i64]) -> Result<Vec<WriteCaptureRecord>> {
+    let pool = pool().await?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        if let Some(r) = get_in(pool, *id).await? {
+            out.push(r);
+        }
+    }
+    out.sort_by_key(|r| std::cmp::Reverse(r.id));
+    Ok(out)
 }
 
 fn row_to_summary(r: &SqliteRow) -> WriteCaptureSummary {
@@ -422,6 +538,8 @@ fn row_to_summary(r: &SqliteRow) -> WriteCaptureSummary {
         rows_affected: r.try_get("rows_affected").unwrap_or_default(),
         captured_at: r.try_get("captured_at").unwrap_or_default(),
         undone: r.try_get::<i64, _>("undone").unwrap_or_default() != 0,
+        pinned: r.try_get::<i64, _>("pinned").unwrap_or_default() != 0,
+        batch_id: r.try_get("batch_id").unwrap_or(None),
     }
 }
 
@@ -452,6 +570,8 @@ fn row_to_record(r: SqliteRow) -> Result<WriteCaptureRecord> {
         rows_affected: r.try_get("rows_affected")?,
         captured_at: r.try_get("captured_at")?,
         undone: r.try_get::<i64, _>("undone")? != 0,
+        pinned: r.try_get::<i64, _>("pinned")? != 0,
+        batch_id: r.try_get("batch_id")?,
     })
 }
 
@@ -474,6 +594,7 @@ mod tests {
             after_rows: vec![vec![Value::Int(1), Value::Int(1)]],
             rows_affected: 1,
             captured_at: at.to_string(),
+            batch_id: None,
         }
     }
 
@@ -647,13 +768,130 @@ mod tests {
         .await
         .unwrap();
 
-        let removed = clear_in(&pool, Some("p1")).await.unwrap();
+        let removed = clear_in(&pool, Some("p1"), true).await.unwrap();
         assert_eq!(removed, 1);
         assert_eq!(list_in(&pool, None, 100).await.unwrap().len(), 1);
 
-        let removed_all = clear_in(&pool, None).await.unwrap();
+        let removed_all = clear_in(&pool, None, true).await.unwrap();
         assert_eq!(removed_all, 1);
         assert!(list_in(&pool, None, 100).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pinned_records_survive_row_cap_age_and_clear() {
+        let pool = temp_pool().await;
+        let old = "2000-01-01T00:00:00Z";
+        let first = record_in(&pool, entry("p1", "t1", old), 100, 0, u64::MAX)
+            .await
+            .unwrap();
+        assert!(set_pinned_in(&pool, first, true).await.unwrap());
+        // 件数上限 2: ピン留めは数えず、ピン留めなしの新しい 2 件だけが残る。
+        for t in ["t2", "t3", "t4"] {
+            record_in(
+                &pool,
+                entry("p1", t, "2026-01-02T00:00:00Z"),
+                2,
+                0,
+                u64::MAX,
+            )
+            .await
+            .unwrap();
+        }
+        let tables: Vec<String> = list_in(&pool, None, 100)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.table)
+            .collect();
+        assert_eq!(tables.len(), 3);
+        assert!(tables.contains(&"t1".to_string()));
+        // 保持期間: 古い記録は消えるが、ピン留め (2000 年の記録) は残る。
+        let now = chrono::Utc::now().to_rfc3339();
+        record_in(&pool, entry("p1", "t5", &now), 100, 30, u64::MAX)
+            .await
+            .unwrap();
+        assert!(get_in(&pool, first).await.unwrap().unwrap().pinned);
+        assert_eq!(list_in(&pool, None, 100).await.unwrap().len(), 2);
+        // clear はピン留めを残し、include_pinned で消す。
+        let removed = clear_in(&pool, None, false).await.unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(list_in(&pool, None, 100).await.unwrap().len(), 1);
+        assert_eq!(clear_in(&pool, None, true).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn pin_toggles_and_reports_missing_records() {
+        let pool = temp_pool().await;
+        let id = record_in(
+            &pool,
+            entry("p1", "t1", "2026-01-01T00:00:00Z"),
+            100,
+            0,
+            u64::MAX,
+        )
+        .await
+        .unwrap();
+        assert!(!set_pinned_in(&pool, 9999, true).await.unwrap());
+        assert!(set_pinned_in(&pool, id, true).await.unwrap());
+        assert!(list_in(&pool, None, 10).await.unwrap()[0].pinned);
+        assert!(set_pinned_in(&pool, id, false).await.unwrap());
+        assert!(!list_in(&pool, None, 10).await.unwrap()[0].pinned);
+    }
+
+    #[tokio::test]
+    async fn batch_records_are_listed_newest_first() {
+        let pool = temp_pool().await;
+        for (t, b) in [
+            ("t1", Some("b1")),
+            ("t2", Some("b1")),
+            ("t3", Some("b2")),
+            ("t4", None),
+        ] {
+            let mut e = entry("p1", t, "2026-01-01T00:00:00Z");
+            e.batch_id = b.map(str::to_string);
+            record_in(&pool, e, 100, 0, u64::MAX).await.unwrap();
+        }
+        let rows = list_batch_in(&pool, "b1").await.unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.table.as_str()).collect::<Vec<_>>(),
+            vec!["t2", "t1"]
+        );
+        assert!(rows.iter().all(|r| r.batch_id.as_deref() == Some("b1")));
+        assert!(list_batch_in(&pool, "none").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn init_schema_adds_missing_columns_to_an_old_store() {
+        let pool = SqlitePoolOptions::new()
+            .min_connections(1)
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(":memory:"))
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE write_capture (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, profile_id TEXT, driver TEXT NOT NULL,
+                \"database\" TEXT, table_name TEXT NOT NULL, kind TEXT NOT NULL, \"sql\" TEXT NOT NULL,
+                primary_key TEXT NOT NULL, columns TEXT NOT NULL, column_types TEXT NOT NULL,
+                before_rows TEXT NOT NULL, after_rows TEXT NOT NULL, rows_affected INTEGER NOT NULL,
+                captured_at TEXT NOT NULL, undone INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        init_schema(&pool).await.unwrap();
+        init_schema(&pool).await.unwrap();
+        let id = record_in(
+            &pool,
+            entry("p1", "t1", "2026-01-01T00:00:00Z"),
+            100,
+            0,
+            u64::MAX,
+        )
+        .await
+        .unwrap();
+        assert!(!get_in(&pool, id).await.unwrap().unwrap().pinned);
     }
 
     /// A real file-backed pool (unlike `temp_pool`'s `:memory:`), so

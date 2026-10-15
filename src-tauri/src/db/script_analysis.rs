@@ -753,14 +753,46 @@ mod tests {
     #[test]
     fn classifies_alter_table_drops() {
         for (driver, sql, want) in [
-            (D, "ALTER TABLE t DROP COLUMN c", Some(DangerKind::DropColumn)),
-            (D, "alter table `t` drop column if exists `c`", Some(DangerKind::DropColumn)),
-            (D, "ALTER TABLE t DROP CONSTRAINT fk", Some(DangerKind::DropConstraint)),
-            (D, "ALTER TABLE t DROP FOREIGN KEY fk", Some(DangerKind::DropConstraint)),
-            (D, "ALTER TABLE t DROP PRIMARY KEY", Some(DangerKind::DropConstraint)),
-            (D, "ALTER TABLE t DROP CHECK ck", Some(DangerKind::DropConstraint)),
-            (DriverKind::Postgres, "ALTER TABLE ONLY s.t DROP COLUMN c CASCADE", Some(DangerKind::DropColumn)),
-            (D, "ALTER TABLE t ADD COLUMN c INT, DROP COLUMN d", Some(DangerKind::DropColumn)),
+            (
+                D,
+                "ALTER TABLE t DROP COLUMN c",
+                Some(DangerKind::DropColumn),
+            ),
+            (
+                D,
+                "alter table `t` drop column if exists `c`",
+                Some(DangerKind::DropColumn),
+            ),
+            (
+                D,
+                "ALTER TABLE t DROP CONSTRAINT fk",
+                Some(DangerKind::DropConstraint),
+            ),
+            (
+                D,
+                "ALTER TABLE t DROP FOREIGN KEY fk",
+                Some(DangerKind::DropConstraint),
+            ),
+            (
+                D,
+                "ALTER TABLE t DROP PRIMARY KEY",
+                Some(DangerKind::DropConstraint),
+            ),
+            (
+                D,
+                "ALTER TABLE t DROP CHECK ck",
+                Some(DangerKind::DropConstraint),
+            ),
+            (
+                DriverKind::Postgres,
+                "ALTER TABLE ONLY s.t DROP COLUMN c CASCADE",
+                Some(DangerKind::DropColumn),
+            ),
+            (
+                D,
+                "ALTER TABLE t ADD COLUMN c INT, DROP COLUMN d",
+                Some(DangerKind::DropColumn),
+            ),
             (D, "ALTER TABLE t DROP INDEX i", None),
             (D, "ALTER TABLE t ADD COLUMN c INT", None),
             (D, "ALTER TABLE t ADD COLUMN `drop` INT", None),
@@ -775,9 +807,18 @@ mod tests {
     fn insert_target_reads_table_names() {
         let name = |sql: &str| insert_target(sql).map(|(n, _)| n);
         assert_eq!(name("INSERT INTO t VALUES (1)").as_deref(), Some("t"));
-        assert_eq!(name("insert into `db`.`my t` (a) values (1)").as_deref(), Some("db.my t"));
-        assert_eq!(name("INSERT IGNORE INTO \"s\".t VALUES (1)").as_deref(), Some("s.t"));
-        assert_eq!(name("INSERT OR REPLACE INTO t VALUES (1)").as_deref(), Some("t"));
+        assert_eq!(
+            name("insert into `db`.`my t` (a) values (1)").as_deref(),
+            Some("db.my t")
+        );
+        assert_eq!(
+            name("INSERT IGNORE INTO \"s\".t VALUES (1)").as_deref(),
+            Some("s.t")
+        );
+        assert_eq!(
+            name("INSERT OR REPLACE INTO t VALUES (1)").as_deref(),
+            Some("t")
+        );
         assert_eq!(name("INSERT t VALUES (1)").as_deref(), Some("t"));
         assert_eq!(name("INSERT INTO"), None);
     }
@@ -788,11 +829,20 @@ mod tests {
             let (_, rest) = insert_target(sql).expect("target");
             count_values_tuples(rest, mysql)
         };
-        assert_eq!(rows("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')", false), 3);
-        assert_eq!(rows("INSERT INTO t (a, b) VALUES (1,'),('),(2,'x')", false), 2);
+        assert_eq!(
+            rows("INSERT INTO t VALUES (1,'a'),(2,'b'),(3,'c')", false),
+            3
+        );
+        assert_eq!(
+            rows("INSERT INTO t (a, b) VALUES (1,'),('),(2,'x')", false),
+            2
+        );
         assert_eq!(rows("INSERT INTO t VALUES (1,'it\\'s ('),(2,'x')", true), 2);
         assert_eq!(
-            rows("INSERT INTO t VALUES (1,2) ON DUPLICATE KEY UPDATE a = VALUES(a)", true),
+            rows(
+                "INSERT INTO t VALUES (1,2) ON DUPLICATE KEY UPDATE a = VALUES(a)",
+                true
+            ),
             1
         );
         assert_eq!(rows("INSERT INTO t SELECT * FROM u", false), 0);

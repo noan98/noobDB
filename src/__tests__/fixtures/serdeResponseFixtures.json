@@ -304,11 +304,16 @@
     "kind": "cancelled"
   },
   "batchStreamDoneMessage": {
+    "batchId": "b18f3a-abc123",
+    "captureSkipped": 1,
+    "captured": 2,
     "elapsedMs": 9,
     "errors": 1,
     "kind": "done",
     "ok": 1,
-    "skipped": 1
+    "rolledBack": true,
+    "skipped": 1,
+    "wrapped": true
   },
   "batchStreamErrorMessage": {
     "connectionLost": true,
@@ -1184,6 +1189,10 @@
       "truncatedCells": 2,
       "writtenRows": 1048575
     }
+  },
+  "exportPlanOutcome": {
+    "conflicts": 1,
+    "statements": 3
   },
   "exportProgressEvent": {
     "rows": 500,
@@ -5549,6 +5558,28 @@
       }
     ]
   },
+  "undoBatchPreviewResponse": {
+    "conflicts": [
+      {
+        "current": null,
+        "expected": [
+          1,
+          "a"
+        ],
+        "key": [
+          1
+        ]
+      }
+    ],
+    "recordIds": [
+      12,
+      11
+    ],
+    "statements": [
+      "DELETE FROM users WHERE id = 1;"
+    ],
+    "warnings": []
+  },
   "undoOutcome": {
     "applied": true,
     "conflicts": [
@@ -5608,11 +5639,13 @@
   },
   "writeCaptureSummaryVariants": [
     {
+      "batch_id": "batch-0001",
       "captured_at": "2026-01-01T00:00:00Z",
       "database": "appdb",
       "driver": "mysql",
       "id": 101,
       "kind": "insert",
+      "pinned": true,
       "profile_id": "abc12345",
       "rows_affected": 1,
       "sql": "DELETE FROM users WHERE id = 1",
@@ -5620,11 +5653,13 @@
       "undone": false
     },
     {
+      "batch_id": "batch-0001",
       "captured_at": "2026-01-01T00:00:00Z",
       "database": "appdb",
       "driver": "mysql",
       "id": 101,
       "kind": "update",
+      "pinned": true,
       "profile_id": "abc12345",
       "rows_affected": 1,
       "sql": "DELETE FROM users WHERE id = 1",
@@ -5632,11 +5667,13 @@
       "undone": false
     },
     {
+      "batch_id": "batch-0001",
       "captured_at": "2026-01-01T00:00:00Z",
       "database": "appdb",
       "driver": "mysql",
       "id": 101,
       "kind": "delete",
+      "pinned": true,
       "profile_id": "abc12345",
       "rows_affected": 1,
       "sql": "DELETE FROM users WHERE id = 1",
@@ -5644,11 +5681,13 @@
       "undone": false
     },
     {
+      "batch_id": "batch-0001",
       "captured_at": "2026-01-01T00:00:00Z",
       "database": "appdb",
       "driver": "mysql",
       "id": 101,
       "kind": "other",
+      "pinned": true,
       "profile_id": "abc12345",
       "rows_affected": 1,
       "sql": "DELETE FROM users WHERE id = 1",

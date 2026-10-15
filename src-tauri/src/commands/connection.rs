@@ -592,6 +592,13 @@ pub async fn reconnect_inner(state: &AppState, session_id: &str, force: bool) ->
             return Err(AppError::TransactionActive);
         }
     }
+    // 強制再接続 (#1626) は未確定の変更を捨てる前提。旧接続のトランザクションを先に破棄して
+    // 書き込みロックを手放す (握ったままだと SQLite では新しい接続がロック待ちで固まる)。
+    if force && old.conn.transaction_active().await {
+        if let Err(e) = old.conn.finish_transaction(false).await {
+            tracing::warn!(session_id, error = %e, "forced reconnect: rollback of the open transaction failed");
+        }
+    }
 
     // Build the fresh transport under an overall deadline so a reconnect against
     // a now-unreachable host can't hang indefinitely (mirrors `connect`'s

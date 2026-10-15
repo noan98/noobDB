@@ -58,6 +58,12 @@ export const scriptCommands = {
     sql: string;
     stopOnError: boolean;
     previewRows: number;
+    /** 全体を 1 つのトランザクションで包む (#1626)。`stopOnError` と明示トランザクション無しが前提。 */
+    wrapInTransaction?: boolean;
+    /** 各 INSERT/UPDATE/DELETE をフライトレコーダに記録する (#1626)。`wrapInTransaction` のときは記録しない。 */
+    capture?: boolean;
+    captureRowCap?: number | null;
+    captureRetentionDays?: number | null;
   }) => {
     const channel = batchStreamChannels.get(params.streamId);
     if (!channel) {
@@ -72,6 +78,10 @@ export const scriptCommands = {
       sql: params.sql,
       stopOnError: params.stopOnError,
       previewRows: params.previewRows,
+      wrapInTransaction: params.wrapInTransaction ?? false,
+      capture: params.capture ?? false,
+      captureRowCap: params.captureRowCap ?? null,
+      captureRetentionDays: params.captureRetentionDays ?? null,
       onEvent: channel,
     });
   },

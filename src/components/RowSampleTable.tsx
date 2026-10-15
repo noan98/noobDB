@@ -57,7 +57,6 @@ export function RowSampleTable({
         <thead>
           <tr>
             {state.columns.map((c, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: 列名は重複しうる (別名なし SELECT *)
               <chakra.th key={i} textAlign="left" px="2" py="1" color="app.textMuted" fontWeight={600}>
                 {c}
               </chakra.th>
@@ -66,10 +65,8 @@ export function RowSampleTable({
         </thead>
         <tbody>
           {state.rows.map((row, ri) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: サンプル行は表示専用で並びが変わらない
             <tr key={ri}>
               {row.map((v, ci) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: 同上
                 <chakra.td
                   key={ci}
                   px="2"

@@ -597,7 +597,7 @@ const en = {
     "Best-effort local safety net: running a single INSERT/UPDATE/DELETE captures a before/after image of the rows it touched, so you can undo it later from the history panel. This never replaces a real backup — DDL (DROP/TRUNCATE) is out of scope, and changes made by other clients between capture and undo are only detected, not prevented.",
   settingsFlightRecorderEnabled: "Capture writes for undo",
   settingsFlightRecorderEnabledHelp:
-    "When on, a single-statement INSERT/UPDATE/DELETE run from the editor tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
+    "When on, an INSERT/UPDATE/DELETE run from the editor (each one in a multi-statement script too, up to 200 per run, counting declined ones) tries to capture a before/after image before executing, stored only in a local file (never sent to the server).",
   settingsFlightRecorderRowCap: "Row cap per write",
   settingsFlightRecorderRowCapHelp:
     "A write that would affect more rows than this runs normally but is not captured (no undo available for it).",
@@ -649,6 +649,42 @@ const en = {
   flightRecorderClearAction: "Clear all",
   flightRecorderClearConfirmProfile: "Delete all captured writes for this connection? This cannot be undone.",
   flightRecorderClearConfirmAll: "Delete ALL captured writes for every connection? This cannot be undone.",
+  settingsBatchWrapInTransaction: "Run multi-statement scripts in one transaction",
+  settingsBatchWrapInTransactionHelp:
+    "When on, running several statements from the editor wraps them in a single transaction: if any statement fails, everything that already succeeded is rolled back too. Ignored while you hold an explicit transaction. MySQL DDL commits implicitly and cannot be rolled back. Flight-recorder capture is skipped for these runs.",
+  batchRolledBackNotice:
+    "A statement failed, so the whole script was rolled back — nothing was saved, even for the statements marked OK.",
+  batchCaptureSummary: "Recorded {captured} write(s) for undo{skipped}.",
+  batchCaptureSkippedSuffix: " ({skipped} not recorded)",
+  flightRecorderClearKeepsPinned: "Pinned records are kept.",
+  flightRecorderPinAction: "Pin",
+  flightRecorderUnpinAction: "Unpin",
+  flightRecorderPinTip:
+    "Pinned records are never removed by the automatic cleanup (count, age, size limits).",
+  flightRecorderPinnedBadge: "pinned",
+  flightRecorderPinFailed: "Could not change the pin: {error}",
+  flightRecorderBatchBadge: "batch of {count}",
+  flightRecorderBatchUndoAction: "Undo batch",
+  flightRecorderBatchRedoAction: "Redo batch",
+  flightRecorderBatchUndoConfirmTitle: "Undo this whole batch?",
+  flightRecorderBatchRedoConfirmTitle: "Redo this whole batch?",
+  flightRecorderBatchUndoConfirmBody:
+    "Reverts {count} captured write(s) from the same script in one transaction, last statement first. Nothing is applied if any of them fails.",
+  flightRecorderBatchRedoConfirmBody:
+    "Re-applies {count} undone write(s) from the same script in one transaction, in the original order.",
+  flightRecorderBatchOverlapHint:
+    "If several statements changed the same row, they show up as conflicts here — review the SQL before forcing.",
+  flightRecorderExportPlanAction: "Save SQL…",
+  flightRecorderExportPlanTip:
+    "Save the undo (or redo) SQL as a .sql file without running it, so you can review it or run it elsewhere.",
+  flightRecorderExportPlanBatchTip: "Save the undo (or redo) SQL for the whole batch as a .sql file.",
+  flightRecorderExportPlanDone: "Saved {statements} statement(s) to {path}.",
+  flightRecorderExportPlanConflicts:
+    "{conflicts} row(s) have conflicts; their statements were left out of the file.",
+  flightRecorderExportRecordsAction: "Export…",
+  flightRecorderExportRecordsTip:
+    "Export the listed records, including the before/after rows, as CSV or NDJSON.",
+  flightRecorderExportRecordsDone: "Exported {count} record(s) to {path}.",
 
   settingsSchemaDrift: "Schema drift timeline",
   settingsSchemaDriftHelp:
@@ -6773,7 +6809,7 @@ const ja: Dict = {
     "ベストエフォートのローカル保険です。単文の INSERT/UPDATE/DELETE を実行すると、対象行の before/after イメージを退避し、あとから履歴パネルの「巻き戻す」でワンクリック Undo できます。本物のバックアップの代わりにはなりません — DDL (DROP/TRUNCATE) は対象外で、退避後〜Undo までの間に他クライアントが加えた変更は検出のみで防止はできません。",
   settingsFlightRecorderEnabled: "書き込みを記録して Undo に備える",
   settingsFlightRecorderEnabledHelp:
-    "オンのとき、エディタから実行した単文の INSERT/UPDATE/DELETE は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
+    "オンのとき、エディタから実行した INSERT/UPDATE/DELETE (複数文スクリプトでは 1 文ずつ、1 回の実行で最大 200 文まで) は実行前に before/after イメージの記録を試みます。ローカルのファイルにのみ保存され、サーバへは送信されません。",
   settingsFlightRecorderRowCap: "1 回の書き込みあたりの対象行数上限",
   settingsFlightRecorderRowCapHelp:
     "この行数を超える書き込みは通常どおり実行されますが記録はされません (その操作の Undo は使えません)。",
@@ -6825,6 +6861,40 @@ const ja: Dict = {
   flightRecorderClearConfirmProfile:
     "この接続のフライトレコードをすべて削除しますか? この操作は取り消せません。",
   flightRecorderClearConfirmAll: "すべての接続のフライトレコードを削除しますか? この操作は取り消せません。",
+  settingsBatchWrapInTransaction: "複数文のスクリプトを 1 つのトランザクションで実行する",
+  settingsBatchWrapInTransactionHelp:
+    "オンにすると、エディタで複数の文を実行するとき全体を 1 つのトランザクションで包みます。どれか 1 文が失敗したら、成功済みの文も含めてすべて取り消されます。明示トランザクションを開いている間は無視されます。MySQL の DDL は暗黙 COMMIT されるため取り消せません。この実行ではフライトレコーダの記録は行いません。",
+  batchRolledBackNotice:
+    "いずれかの文が失敗したため、スクリプト全体を取り消しました。OK と表示された文も保存されていません。",
+  batchCaptureSummary: "{captured} 件の書き込みを巻き戻し用に記録しました{skipped}。",
+  batchCaptureSkippedSuffix: " (記録できなかった書き込み {skipped} 件)",
+  flightRecorderClearKeepsPinned: "ピン留めした記録は残ります。",
+  flightRecorderPinAction: "ピン留め",
+  flightRecorderUnpinAction: "ピン留め解除",
+  flightRecorderPinTip: "ピン留めした記録は、自動削除 (件数・保持期間・容量の上限) の対象になりません。",
+  flightRecorderPinnedBadge: "ピン留め",
+  flightRecorderPinFailed: "ピン留めを変更できませんでした: {error}",
+  flightRecorderBatchBadge: "{count} 文のバッチ",
+  flightRecorderBatchUndoAction: "バッチを巻き戻す",
+  flightRecorderBatchRedoAction: "バッチをやり直す",
+  flightRecorderBatchUndoConfirmTitle: "このバッチ全体を巻き戻しますか?",
+  flightRecorderBatchRedoConfirmTitle: "このバッチ全体をやり直しますか?",
+  flightRecorderBatchUndoConfirmBody:
+    "同じスクリプトで記録された {count} 件の書き込みを、後に実行した文から順に 1 つのトランザクションで元に戻します。1 件でも失敗すると何も適用されません。",
+  flightRecorderBatchRedoConfirmBody:
+    "同じスクリプトで取り消した {count} 件の書き込みを、元の順に 1 つのトランザクションで再適用します。",
+  flightRecorderBatchOverlapHint:
+    "複数の文が同じ行を変更していると、ここでは衝突として表示されます。強制適用する前に SQL を確認してください。",
+  flightRecorderExportPlanAction: "SQL を保存…",
+  flightRecorderExportPlanTip:
+    "巻き戻し (または やり直し) の SQL を実行せずに .sql ファイルへ保存します。確認や別環境での実行に使えます。",
+  flightRecorderExportPlanBatchTip:
+    "バッチ全体の巻き戻し (または やり直し) の SQL を .sql ファイルへ保存します。",
+  flightRecorderExportPlanDone: "{statements} 文を {path} に保存しました。",
+  flightRecorderExportPlanConflicts: "{conflicts} 行に衝突があるため、その文はファイルに含めていません。",
+  flightRecorderExportRecordsAction: "書き出し…",
+  flightRecorderExportRecordsTip: "一覧の記録を、変更前後の行データ込みで CSV または NDJSON に書き出します。",
+  flightRecorderExportRecordsDone: "{count} 件を {path} に書き出しました。",
 
   settingsSchemaDrift: "スキーマドリフト・タイムライン",
   settingsSchemaDriftHelp:

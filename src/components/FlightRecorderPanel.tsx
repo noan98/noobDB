@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { save } from "@tauri-apps/plugin-dialog";
 import { Box, chakra, Flex } from "@chakra-ui/react";
 import { api, UndoConflict, WriteCaptureSummary } from "../api/tauri";
 import { localizedErrorMessage } from "../errorHints";
@@ -77,10 +78,30 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyBatch, setBusyBatch] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const scopeId = showAll ? null : profileId;
+
+  // 同じバッチ (複数文スクリプト / UPSERT) の記録 (#1626)。2 件以上あるものだけをバッチとして扱い、
+  // 一覧の最も新しい行にだけ「バッチを巻き戻す」を出す。
+  const batches = useMemo(() => {
+    const map = new Map<string, { count: number; allUndone: boolean; firstId: number }>();
+    for (const e of entries) {
+      if (!e.batch_id) continue;
+      const cur = map.get(e.batch_id);
+      if (cur) {
+        cur.count += 1;
+        cur.allUndone = cur.allUndone && e.undone;
+      } else {
+        map.set(e.batch_id, { count: 1, allUndone: e.undone, firstId: e.id });
+      }
+    }
+    for (const [k, v] of map) if (v.count < 2) map.delete(k);
+    return map;
+  }, [entries]);
+  const hasPinned = entries.some((e) => e.pinned);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadKey の変化で再読み込みするトリガ依存 (effect 内では参照しない)
   useEffect(() => {
@@ -217,10 +238,153 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     }
   };
 
+  // 取り消し / やり直しの SQL を .sql に保存する (#1626)。適用はしない。
+  const handleExportPlan = async (entry: WriteCaptureSummary, batchId: string | null) => {
+    if (!sessionId) return;
+    try {
+      const path = await save({
+        defaultPath: batchId ? `undo-batch-${batchId}.sql` : `undo-${entry.table}-${entry.id}.sql`,
+        title: t("flightRecorderExportPlanAction"),
+        filters: [{ name: "SQL", extensions: ["sql"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      const out = await api.exportFlightPlanSql({
+        sessionId,
+        id: batchId ? null : entry.id,
+        batchId,
+        redo: batchId ? (batches.get(batchId)?.allUndone ?? false) : entry.undone,
+        force: false,
+        path,
+      });
+      toast.success(t("flightRecorderExportPlanDone", { statements: out.statements, path }));
+      if (out.conflicts > 0)
+        toast.info(t("flightRecorderExportPlanConflicts", { conflicts: out.conflicts }), 8000);
+    } catch (e) {
+      toast.error(localizedErrorMessage(e, t));
+    }
+  };
+
+  // 一覧の記録を CSV / NDJSON に書き出す (#1626)。形式は保存先の拡張子で決める。
+  const handleExportRecords = async () => {
+    try {
+      const path = await save({
+        defaultPath: "flight-records.csv",
+        title: t("flightRecorderExportRecordsAction"),
+        filters: [
+          { name: "CSV", extensions: ["csv"] },
+          { name: "NDJSON", extensions: ["ndjson"] },
+        ],
+      });
+      if (typeof path !== "string" || !path) return;
+      const format = path.toLowerCase().endsWith(".ndjson") ? "ndjson" : "csv";
+      const count = await api.exportFlightRecords({
+        path,
+        format,
+        ids: entries.map((e) => e.id),
+      });
+      toast.success(t("flightRecorderExportRecordsDone", { count, path }));
+    } catch (e) {
+      toast.error(localizedErrorMessage(e, t));
+    }
+  };
+
+  const handleTogglePin = async (entry: WriteCaptureSummary) => {
+    try {
+      await api.pinFlightRecord(entry.id, !entry.pinned);
+      setEntries((rows) => rows.map((r) => (r.id === entry.id ? { ...r, pinned: !entry.pinned } : r)));
+    } catch (e) {
+      toast.error(t("flightRecorderPinFailed", { error: localizedErrorMessage(e, t) }));
+    }
+  };
+
+  // バッチ (#1626) の取り消し / やり直し。単発と同じ「プレビュー → 確認 → 適用」だが、
+  // 全記録の逆 SQL を 1 つのトランザクションで適用する。
+  const handleApplyBatch = async (batchId: string, mode: "undo" | "redo") => {
+    if (!sessionId) return;
+    const redo = mode === "redo";
+    const count = batches.get(batchId)?.count ?? 0;
+    setBusyBatch(batchId);
+    try {
+      const preview = await api.previewFlightBatch(sessionId, batchId, redo);
+      if (preview.statements.length === 0 && preview.conflicts.length === 0) {
+        if (preview.warnings.length === 0) {
+          const settled = await api.applyFlightBatch(sessionId, batchId, false, redo);
+          if (settled.applied) setReloadKey((k) => k + 1);
+          toast.info(t(settled.applied ? "flightRecorderAlreadyRestored" : "flightRecorderNothingToUndo"));
+          return;
+        }
+        toast.info(t(redo ? "flightRecorderNothingToRedo" : "flightRecorderNothingToUndo"));
+        return;
+      }
+      const ok = await confirm({
+        title: t(redo ? "flightRecorderBatchRedoConfirmTitle" : "flightRecorderBatchUndoConfirmTitle"),
+        message: (
+          <Box>
+            <chakra.p m={0}>
+              {t(redo ? "flightRecorderBatchRedoConfirmBody" : "flightRecorderBatchUndoConfirmBody", {
+                count: preview.recordIds.length || count,
+              })}
+            </chakra.p>
+            <CodePreview wrap mt="2" maxH="160px">
+              {preview.statements.join(";\n") || t("flightRecorderNoStatements")}
+            </CodePreview>
+            {preview.conflicts.length > 0 && (
+              <>
+                <chakra.p m={0} mt="2" color="app.textError" fontWeight={600}>
+                  {t("flightRecorderConflictsFound", { count: preview.conflicts.length })}
+                </chakra.p>
+                <ConflictList conflicts={preview.conflicts} t={t} />
+                <chakra.p m={0} mt="2" textStyle="caption">
+                  {t("flightRecorderBatchOverlapHint")}
+                </chakra.p>
+              </>
+            )}
+          </Box>
+        ),
+        confirmLabel: preview.conflicts.length > 0 ? t("flightRecorderForceApply") : t("flightRecorderApply"),
+        tone: preview.conflicts.length > 0 ? "danger" : "warning",
+      });
+      if (!ok) return;
+      const force = preview.conflicts.length > 0;
+      if (force) {
+        // 確認中に増えた競合を、見せないまま上書きしない (単発の強制適用と同じ)。
+        const fresh = await api.previewFlightBatch(sessionId, batchId, redo);
+        const sig = (c: (typeof preview.conflicts)[number]) => JSON.stringify([c.key, c.current]);
+        const shown = new Set(preview.conflicts.map(sig));
+        if (fresh.conflicts.some((c) => !shown.has(sig(c)))) {
+          toast.error(t("flightRecorderConflictsChanged"));
+          return;
+        }
+      }
+      const outcome = await api.applyFlightBatch(sessionId, batchId, force, redo);
+      if (outcome.applied) {
+        if (outcome.rowsAffected > 0) {
+          toast.success(
+            t(redo ? "flightRecorderRedoApplied" : "flightRecorderUndoApplied", {
+              rows: outcome.rowsAffected,
+            }),
+          );
+        } else {
+          toast.info(t("flightRecorderAlreadyRestored"));
+        }
+        setReloadKey((k) => k + 1);
+        for (const w of outcome.warnings ?? []) toast.info(w, 8000);
+      } else {
+        toast.error(t("flightRecorderUndoBlocked"));
+      }
+    } catch (e) {
+      toast.error(localizedErrorMessage(e, t));
+    } finally {
+      setBusyBatch(null);
+    }
+  };
+
   const handleClear = async () => {
     const ok = await confirm({
       title: t("flightRecorderClearAction"),
-      message: scopeId ? t("flightRecorderClearConfirmProfile") : t("flightRecorderClearConfirmAll"),
+      message: `${scopeId ? t("flightRecorderClearConfirmProfile") : t("flightRecorderClearConfirmAll")}${
+        hasPinned ? ` ${t("flightRecorderClearKeepsPinned")}` : ""
+      }`,
       confirmLabel: t("flightRecorderClearAction"),
       tone: "danger",
     });
@@ -228,7 +392,8 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
     setClearing(true);
     try {
       await api.clearFlightRecords(scopeId);
-      setEntries([]);
+      // ピン留めした記録は残る (#1626) ので、空にせず取り直す。
+      setReloadKey((k) => k + 1);
       setError(null);
     } catch (e) {
       toast.error(String(e));
@@ -267,14 +432,21 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
             <Box />
           )}
           {entries.length > 0 && (
-            <PressableButton
-              type="button"
-              variant="danger"
-              onClick={() => void handleClear()}
-              disabled={clearing}
-            >
-              {t("flightRecorderClearAction")}
-            </PressableButton>
+            <Flex align="center" gap="2">
+              <Tooltip label={t("flightRecorderExportRecordsTip")}>
+                <PressableButton type="button" variant="secondary" onClick={() => void handleExportRecords()}>
+                  <Icon name="download" size={ICON_SIZES.sm} /> {t("flightRecorderExportRecordsAction")}
+                </PressableButton>
+              </Tooltip>
+              <PressableButton
+                type="button"
+                variant="danger"
+                onClick={() => void handleClear()}
+                disabled={clearing}
+              >
+                {t("flightRecorderClearAction")}
+              </PressableButton>
+            </Flex>
           )}
         </Flex>
         <Box
@@ -329,8 +501,65 @@ export function FlightRecorderPanel({ profileId, sessionId, onClose }: Props) {
                       {entry.table} · {formatCaptured(entry.captured_at)} ·{" "}
                       {t("flightRecorderRowsAffected", { rows: entry.rows_affected })}
                       {entry.undone && ` · ${t("flightRecorderUndoneBadge")}`}
+                      {entry.pinned && ` · ${t("flightRecorderPinnedBadge")}`}
+                      {entry.batch_id &&
+                        batches.has(entry.batch_id) &&
+                        ` · ${t("flightRecorderBatchBadge", { count: batches.get(entry.batch_id)?.count ?? 0 })}`}
                     </chakra.div>
                   </Box>
+                  <Tooltip label={entry.pinned ? t("flightRecorderUnpinAction") : t("flightRecorderPinTip")}>
+                    <PressableButton
+                      type="button"
+                      variant="secondary"
+                      aria-pressed={entry.pinned}
+                      aria-label={
+                        entry.pinned ? t("flightRecorderUnpinAction") : t("flightRecorderPinAction")
+                      }
+                      onClick={() => void handleTogglePin(entry)}
+                    >
+                      <Icon name="pin" size={ICON_SIZES.sm} />
+                    </PressableButton>
+                  </Tooltip>
+                  <Tooltip label={t("flightRecorderExportPlanTip")}>
+                    <PressableButton
+                      type="button"
+                      variant="secondary"
+                      disabled={!sessionId}
+                      aria-label={t("flightRecorderExportPlanAction")}
+                      onClick={() => void handleExportPlan(entry, null)}
+                    >
+                      <Icon name="download" size={ICON_SIZES.sm} />
+                    </PressableButton>
+                  </Tooltip>
+                  {entry.batch_id && batches.get(entry.batch_id)?.firstId === entry.id && (
+                    <>
+                      <Tooltip label={t("flightRecorderExportPlanBatchTip")}>
+                        <PressableButton
+                          type="button"
+                          variant="secondary"
+                          disabled={!sessionId}
+                          onClick={() => void handleExportPlan(entry, entry.batch_id)}
+                        >
+                          <Icon name="download" size={ICON_SIZES.sm} /> {t("flightRecorderExportPlanAction")}
+                        </PressableButton>
+                      </Tooltip>
+                      <PressableButton
+                        type="button"
+                        variant="secondary"
+                        disabled={!sessionId || busyBatch === entry.batch_id}
+                        onClick={() =>
+                          void handleApplyBatch(
+                            entry.batch_id as string,
+                            batches.get(entry.batch_id as string)?.allUndone ? "redo" : "undo",
+                          )
+                        }
+                      >
+                        {batches.get(entry.batch_id)?.allUndone
+                          ? t("flightRecorderBatchRedoAction")
+                          : t("flightRecorderBatchUndoAction")}
+                      </PressableButton>
+                    </>
+                  )}
                   <PressableButton
                     type="button"
                     variant="secondary"

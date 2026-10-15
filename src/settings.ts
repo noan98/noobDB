@@ -65,6 +65,13 @@ export interface Settings {
    */
   suppressedConfirms: string[];
   /**
+   * エディタで複数文を実行するとき、全体を 1 つのトランザクションで包む (#1626)。いずれかの
+   * 文が失敗したら成功した文も含めて全部取り消す。明示トランザクション中は無視される (すでに
+   * 1 つのトランザクションの上で動くため)。MySQL の DDL は暗黙 COMMIT するので取り消せない。
+   * 有効なときはフライトレコーダの記録は行わない (記録は文ごとの専用トランザクションを使うため)。
+   */
+  batchWrapInTransaction: boolean;
+  /**
    * Show a confirmation dialog before running destructive write statements
    * (WHERE-less UPDATE/DELETE, DROP, TRUNCATE). Production profiles always
    * confirm regardless of this flag.
@@ -756,6 +763,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoLimitCount: DEFAULT_AUTO_LIMIT_COUNT,
   confirmProductionConnect: DEFAULT_CONFIRM_PRODUCTION_CONNECT,
   suppressedConfirms: [],
+  batchWrapInTransaction: false,
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
@@ -988,6 +996,7 @@ export function normalizeSettings(input: unknown): Settings {
     autoLimitCount?: unknown;
     confirmProductionConnect?: unknown;
     suppressedConfirms?: unknown;
+    batchWrapInTransaction?: unknown;
     confirmDangerousQueries?: unknown;
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
@@ -1058,6 +1067,7 @@ export function normalizeSettings(input: unknown): Settings {
         ? parsed.confirmProductionConnect
         : DEFAULT_CONFIRM_PRODUCTION_CONNECT,
     suppressedConfirms: sanitizeSuppressedConfirms(parsed.suppressedConfirms),
+    batchWrapInTransaction: parsed.batchWrapInTransaction === true,
     confirmDangerousQueries:
       typeof parsed.confirmDangerousQueries === "boolean"
         ? parsed.confirmDangerousQueries
@@ -1421,6 +1431,13 @@ export function suppressConfirm(key: string): void {
 export function clearSuppressedConfirms(): void {
   if (current.suppressedConfirms.length === 0) return;
   current = { ...current, suppressedConfirms: [] };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setBatchWrapInTransaction(value: boolean): void {
+  if (current.batchWrapInTransaction === value) return;
+  current = { ...current, batchWrapInTransaction: value };
   persist();
   listeners.forEach((cb) => cb());
 }

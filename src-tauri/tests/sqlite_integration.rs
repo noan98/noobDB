@@ -2071,7 +2071,9 @@ async fn sqlite_read_only_transaction_rejects_writes_then_restores() {
         isolation: None,
         read_only: true,
     };
-    conn.begin_transaction_with(None, ro).await.expect("begin ro");
+    conn.begin_transaction_with(None, ro)
+        .await
+        .expect("begin ro");
     assert!(conn
         .execute_in_transaction("INSERT INTO rot (id) VALUES (1)")
         .await
@@ -2103,7 +2105,10 @@ async fn sqlite_read_only_transaction_rejects_writes_then_restores() {
 #[tokio::test]
 async fn sqlite_reconnect_refuses_live_explicit_transaction_without_force() {
     let mut path = std::env::temp_dir();
-    path.push(format!("noobdb_sqlite_reconnect_tx_{}.db", std::process::id()));
+    path.push(format!(
+        "noobdb_sqlite_reconnect_tx_{}.db",
+        std::process::id()
+    ));
     let _ = std::fs::remove_file(&path);
     std::fs::File::create(&path).expect("create temp sqlite file");
 
@@ -2743,6 +2748,8 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
         rows_affected: capture.rows_affected as i64,
         captured_at: "2026-01-01T00:00:00Z".to_string(),
         undone: false,
+        pinned: false,
+        batch_id: None,
     };
 
     // No further drift since capture: undo restores the before-value cleanly.
@@ -2798,6 +2805,8 @@ async fn undo_plan_round_trips_a_real_capture_and_a_real_conflict_check() {
         rows_affected: capture2.rows_affected as i64,
         captured_at: "2026-01-01T00:00:01Z".to_string(),
         undone: false,
+        pinned: false,
+        batch_id: None,
     };
     // record2's own before_rows drive its pk_values — reusing record1's would
     // happen to work here (both target id=1) but is the wrong derivation in
@@ -2923,6 +2932,8 @@ async fn redo_plan_reapplies_an_undone_capture() {
         rows_affected: capture.rows_affected as i64,
         captured_at: "2026-01-01T00:00:00Z".to_string(),
         undone: false,
+        pinned: false,
+        batch_id: None,
     };
     let keys = vec![vec![t::Value::Int(1)]];
     let current = conn
@@ -5045,8 +5056,8 @@ async fn capture_insert_outside_window_with_trigger_delete_is_not_misattributed(
 }
 
 #[tokio::test]
-async fn capture_upsert_is_declined_but_written_once() {
-    let (path, conn) = flight_fixture("upsert_decline").await;
+async fn capture_upsert_updating_an_existing_row_records_an_update() {
+    let (path, conn) = flight_fixture("upsert_update").await;
     let (res, cap) = conn
         .capture_write(
             "INSERT INTO t (id, name) VALUES (1, 'u') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
@@ -5056,7 +5067,89 @@ async fn capture_upsert_is_declined_but_written_once() {
         .await
         .expect("capture");
     assert_eq!(res.rows_affected, 1);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    assert_eq!(cap.kind, t::WriteKind::Update);
+    assert!(cap.companion.is_none());
+    assert_eq!(cap.before_rows.len(), 1);
+    assert!(matches!(&cap.before_rows[0][1], t::Value::String(s) if s == "alice"));
+    assert!(matches!(&cap.after_rows[0][1], t::Value::String(s) if s == "u"));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_upsert_mixing_new_and_existing_rows_splits_insert_and_update() {
+    let (path, conn) = flight_fixture("upsert_mixed").await;
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1, 'x'), (3, 'carol') ON CONFLICT (id) DO UPDATE SET name = excluded.name",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 2);
+    assert!(cap.capturable, "{:?}", cap.reason);
+    // 新規行は Insert (Undo = DELETE)、更新された既存行は companion の Update (元の値へ戻す)。
+    assert_eq!(cap.kind, t::WriteKind::Insert);
+    assert_eq!(cap.after_rows.len(), 1);
+    assert!(matches!(&cap.after_rows[0][0], t::Value::Int(3)));
+    let companion = cap.companion.as_deref().expect("update companion");
+    assert_eq!(companion.kind, t::WriteKind::Update);
+    assert!(matches!(&companion.before_rows[0][1], t::Value::String(s) if s == "alice"));
+    assert!(matches!(&companion.after_rows[0][1], t::Value::String(s) if s == "x"));
+    let live = conn
+        .execute("SELECT COUNT(*) FROM t", None)
+        .await
+        .expect("count");
+    assert!(matches!(&live.rows[0][0], t::Value::Int(3)));
+    conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+#[tokio::test]
+async fn capture_upsert_that_changes_nothing_or_hits_another_unique_key_is_declined() {
+    let (path, conn) = flight_fixture("upsert_decline2").await;
+    conn.execute("CREATE UNIQUE INDEX t_name ON t (name)", None)
+        .await
+        .expect("unique index");
+    // 何も変わらない (DO NOTHING): 記録なし、書き込みは 1 回 (0 行)。
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1, 'zzz') ON CONFLICT (id) DO NOTHING",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 0);
     assert!(!cap.capturable);
+    // 主キー以外の一意キー (name) での衝突: 主キーの行は変わらず別の行が更新されるので辞退する。
+    let (res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (9, 'alice') ON CONFLICT (name) DO UPDATE SET name = 'alice2'",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert_eq!(res.rows_affected, 1, "write must still apply");
+    assert!(!cap.capturable);
+    // 主キーが式の UPSERT は行を引けないので辞退する。
+    let (_res, cap) = conn
+        .capture_write(
+            "INSERT INTO t (id, name) VALUES (1 + 10, 'k') ON CONFLICT (id) DO NOTHING",
+            None,
+            100,
+        )
+        .await
+        .expect("capture");
+    assert!(!cap.capturable);
+    let live = conn
+        .execute("SELECT name FROM t WHERE id = 1", None)
+        .await
+        .expect("select");
+    assert!(matches!(&live.rows[0][0], t::Value::String(s) if s == "alice2"));
     conn.close().await;
     let _ = std::fs::remove_file(&path);
 }

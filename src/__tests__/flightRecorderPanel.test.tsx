@@ -23,6 +23,8 @@ const ENTRY: WriteCaptureSummary = {
   rows_affected: 1,
   captured_at: "2026-01-01T00:00:00Z",
   undone: false,
+  pinned: false,
+  batch_id: null,
 };
 
 const listFlightRecords = vi.fn();
@@ -31,6 +33,13 @@ const previewUndo = vi.fn();
 const previewRedo = vi.fn();
 const undoFlightRecord = vi.fn();
 const redoFlightRecord = vi.fn();
+const pinFlightRecord = vi.fn();
+const previewFlightBatch = vi.fn();
+const applyFlightBatch = vi.fn();
+const exportFlightPlanSql = vi.fn();
+const exportFlightRecords = vi.fn();
+const dialog = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: dialog.save, open: vi.fn() }));
 
 vi.mock("../api/tauri", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/tauri")>();
@@ -44,6 +53,11 @@ vi.mock("../api/tauri", async (importOriginal) => {
       previewRedo: (...args: unknown[]) => previewRedo(...args),
       undoFlightRecord: (...args: unknown[]) => undoFlightRecord(...args),
       redoFlightRecord: (...args: unknown[]) => redoFlightRecord(...args),
+      pinFlightRecord: (...args: unknown[]) => pinFlightRecord(...args),
+      previewFlightBatch: (...args: unknown[]) => previewFlightBatch(...args),
+      applyFlightBatch: (...args: unknown[]) => applyFlightBatch(...args),
+      exportFlightPlanSql: (...args: unknown[]) => exportFlightPlanSql(...args),
+      exportFlightRecords: (...args: unknown[]) => exportFlightRecords(...args),
     },
   };
 });
@@ -69,6 +83,8 @@ describe("FlightRecorderPanel 全消去 (#910)", () => {
 
     const dialogs = await screen.findAllByRole("dialog");
     const confirmDialog = within(dialogs[dialogs.length - 1]);
+    // 全消去のあとは取り直す (ピン留めした記録は残るため)。
+    listFlightRecords.mockResolvedValue([]);
     await user.click(confirmDialog.getByRole("button", { name: t("flightRecorderClearAction") }));
 
     await waitFor(() => expect(clearFlightRecords).toHaveBeenCalledWith("p-test"));
@@ -237,5 +253,116 @@ describe("FlightRecorderPanel 強制適用の再確認 (#1600)", () => {
 
     await waitFor(() => expect(previewUndo).toHaveBeenCalledTimes(2));
     expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+});
+
+/** ピン留め・バッチ・書き出し (#1626)。 */
+describe("FlightRecorderPanel ピン留め / バッチ / 書き出し (#1626)", () => {
+  const BATCH_ENTRIES: WriteCaptureSummary[] = [
+    { ...ENTRY, id: 3, batch_id: "b1" },
+    { ...ENTRY, id: 2, batch_id: "b1" },
+    { ...ENTRY, id: 1, batch_id: null },
+  ];
+
+  it("ピン留めを切り替えると pinFlightRecord を呼び、バッジが付く", async () => {
+    const user = userEvent.setup();
+    pinFlightRecord.mockResolvedValue(undefined);
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderPinAction") }));
+
+    await waitFor(() => expect(pinFlightRecord).toHaveBeenCalledWith(1, true));
+    await waitFor(() =>
+      expect(screen.getByText(new RegExp(t("flightRecorderPinnedBadge")))).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: t("flightRecorderUnpinAction") })).toBeInTheDocument();
+  });
+
+  it("同じバッチの記録には最新の行にだけ「バッチを巻き戻す」が出て、1 回の確認で applyFlightBatch を呼ぶ", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue(BATCH_ENTRIES);
+    previewFlightBatch.mockResolvedValue({
+      statements: ["DELETE FROM users WHERE id = 3"],
+      conflicts: [],
+      warnings: [],
+      recordIds: [3, 2],
+    });
+    applyFlightBatch.mockResolvedValue({ applied: true, rowsAffected: 2, conflicts: [], warnings: [] });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    const buttons = await screen.findAllByRole("button", { name: t("flightRecorderBatchUndoAction") });
+    expect(buttons).toHaveLength(1);
+    await user.click(buttons[0]);
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("flightRecorderApply") }),
+    );
+
+    await waitFor(() => expect(applyFlightBatch).toHaveBeenCalledWith("s1", "b1", false, false));
+    expect(previewFlightBatch).toHaveBeenCalledWith("s1", "b1", false);
+    expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+
+  it("バッチの取り消しで衝突があれば、直前にもう一度プレビューしてから force で適用する", async () => {
+    const user = userEvent.setup();
+    listFlightRecords.mockResolvedValue(BATCH_ENTRIES);
+    const preview = {
+      statements: ["DELETE FROM users WHERE id = 3"],
+      conflicts: [{ key: ["3"], expected: [], current: null }],
+      warnings: [],
+      recordIds: [3, 2],
+    };
+    previewFlightBatch.mockResolvedValue(preview);
+    applyFlightBatch.mockResolvedValue({ applied: true, rowsAffected: 1, conflicts: [], warnings: [] });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderBatchUndoAction") }));
+    const dialogs = await screen.findAllByRole("dialog");
+    await user.click(
+      within(dialogs[dialogs.length - 1]).getByRole("button", { name: t("flightRecorderForceApply") }),
+    );
+
+    await waitFor(() => expect(applyFlightBatch).toHaveBeenCalledWith("s1", "b1", true, false));
+    expect(previewFlightBatch).toHaveBeenCalledTimes(2);
+  });
+
+  it("行の保存ボタンは巻き戻し SQL を .sql に書き出す (適用はしない)", async () => {
+    const user = userEvent.setup();
+    dialog.save.mockResolvedValue("/tmp/undo.sql");
+    exportFlightPlanSql.mockResolvedValue({ statements: 2, conflicts: 0 });
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(await screen.findByRole("button", { name: t("flightRecorderExportPlanAction") }));
+
+    await waitFor(() =>
+      expect(exportFlightPlanSql).toHaveBeenCalledWith({
+        sessionId: "s1",
+        id: 1,
+        batchId: null,
+        redo: false,
+        force: false,
+        path: "/tmp/undo.sql",
+      }),
+    );
+    expect(undoFlightRecord).not.toHaveBeenCalled();
+  });
+
+  it("記録の書き出しは保存先の拡張子で CSV / NDJSON を選ぶ", async () => {
+    const user = userEvent.setup();
+    dialog.save.mockResolvedValue("/tmp/records.ndjson");
+    exportFlightRecords.mockResolvedValue(1);
+    renderWithProviders(<FlightRecorderPanel profileId="p-test" sessionId="s1" onClose={() => {}} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(t("flightRecorderExportRecordsAction")) }),
+    );
+
+    await waitFor(() =>
+      expect(exportFlightRecords).toHaveBeenCalledWith({
+        path: "/tmp/records.ndjson",
+        format: "ndjson",
+        ids: [1],
+      }),
+    );
   });
 });
