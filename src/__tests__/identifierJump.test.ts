@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { TableSchema } from "../api/tauri";
-import { identifierChainAt, resolveSchemaJump, tableRefsInStatement } from "../components/identifierJump";
+import {
+  identifierChainAt,
+  isSchemaJumpModifier,
+  resolveSchemaJump,
+  tableRefsInStatement,
+} from "../components/identifierJump";
 
 /** SQL エディタの識別子 Ctrl/Cmd+クリックからスキーマツリーへ移動する純ロジック (#1629)。 */
 
@@ -124,5 +129,15 @@ describe("resolveSchemaJump", () => {
     const { text, pos } = at("SELECT * FROM us|ers");
     expect(resolveSchemaJump({ text, pos, tables: null, defaultDatabase: "shop" })).toBeNull();
     expect(resolveSchemaJump({ text, pos, tables: [], defaultDatabase: "shop" })).toBeNull();
+  });
+});
+
+describe("isSchemaJumpModifier", () => {
+  it("macOS は Cmd のみ、それ以外は Ctrl のみ", () => {
+    expect(isSchemaJumpModifier({ ctrlKey: false, metaKey: true }, true)).toBe(true);
+    expect(isSchemaJumpModifier({ ctrlKey: true, metaKey: false }, true)).toBe(false);
+    expect(isSchemaJumpModifier({ ctrlKey: true, metaKey: false }, false)).toBe(true);
+    expect(isSchemaJumpModifier({ ctrlKey: false, metaKey: true }, false)).toBe(false);
+    expect(isSchemaJumpModifier({ ctrlKey: false, metaKey: false }, false)).toBe(false);
   });
 });

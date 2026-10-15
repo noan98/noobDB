@@ -453,10 +453,19 @@ describe("QueryEditor 識別子の Ctrl/Cmd+クリック (#1629)", () => {
     expect(notCancelled).toBe(false);
   });
 
-  it("Cmd (meta)+クリックでも列まで解決する", () => {
+  it("macOS では Cmd (meta)+クリックで列まで解決し、Ctrl+クリック (右クリック扱い) は横取りしない", () => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
     const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT u.email FROM users u" });
+    clickAt(view, 11, { ctrlKey: true });
+    expect(onRevealSchemaObject).not.toHaveBeenCalled();
     clickAt(view, 11, { metaKey: true });
     expect(onRevealSchemaObject).toHaveBeenCalledWith({ database: "shop", table: "users", column: "email" });
+  });
+
+  it("macOS 以外では Cmd (meta)+クリックを横取りしない", () => {
+    const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT u.email FROM users u" });
+    clickAt(view, 11, { metaKey: true });
+    expect(onRevealSchemaObject).not.toHaveBeenCalled();
   });
 
   it("修飾キー無しのクリック・一致しない識別子・ハンドラ無しでは何もしない", () => {

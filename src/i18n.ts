@@ -1148,7 +1148,9 @@ const en = {
   treeKindFilter_all: "All",
   treeKindFilter_tables: "Tables",
   treeKindFilter_views: "Views",
-  treeKindFilter_routines: "Routines",
+  treeKindFilter_routines: "Routines / Triggers",
+  treeExpandSiblingsLimited:
+    "Expanded the first {limit} tables only ({skipped} more were left collapsed to avoid loading too many at once)",
   treeKindFilterEmpty: "No objects of this type",
   treeSortLabel: "Sort tables",
   treeSort_name: "Name",
@@ -2559,6 +2561,8 @@ const en = {
   batchTruncateConfirmBodyList:
     "This permanently deletes all rows in these {count} tables in {database}. This cannot be undone. Targets:",
   batchTruncateConfirmOk: "Truncate {count} tables",
+  batchTruncateMysqlNote:
+    "MySQL runs these one table at a time, so if one fails partway the tables already truncated cannot be restored (a table referenced by a foreign key from another table will fail).",
   batchTruncateSuccess: "Truncated {count} tables",
   batchTruncateRolledBack:
     "Could not truncate the tables; everything was rolled back and no rows were deleted: {error}",
@@ -6694,7 +6698,9 @@ const ja: Dict = {
   treeKindFilter_all: "すべて",
   treeKindFilter_tables: "テーブル",
   treeKindFilter_views: "ビュー",
-  treeKindFilter_routines: "ルーチン",
+  treeKindFilter_routines: "ルーチン / トリガー",
+  treeExpandSiblingsLimited:
+    "先頭の {limit} 件だけ展開しました (残り {skipped} 件は一度に読み込みすぎないよう閉じたままです)",
   treeKindFilterEmpty: "この種別のオブジェクトはありません",
   treeSortLabel: "テーブルの並べ替え",
   treeSort_name: "名前順",
@@ -8104,6 +8110,8 @@ const ja: Dict = {
   batchTruncateConfirmBodyList:
     "{database} の次の {count} テーブルの全行を完全に削除します。この操作は取り消せません。対象:",
   batchTruncateConfirmOk: "{count} 件を TRUNCATE",
+  batchTruncateMysqlNote:
+    "MySQL では 1 テーブルずつ実行するため、途中で失敗するとそれまでに TRUNCATE した分は元に戻せません (他のテーブルから外部キーで参照されているテーブルは失敗します)。",
   batchTruncateSuccess: "{count} 件のテーブルを TRUNCATE しました",
   batchTruncateRolledBack:
     "テーブルを TRUNCATE できませんでした。すべてロールバックされ、どの行も削除されていません: {error}",

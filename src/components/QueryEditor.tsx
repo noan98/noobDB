@@ -1,4 +1,9 @@
-import { resolveSchemaJump, type SchemaJumpTarget } from "./identifierJump";
+import {
+  isMacPlatform,
+  isSchemaJumpModifier,
+  resolveSchemaJump,
+  type SchemaJumpTarget,
+} from "./identifierJump";
 import {
   forwardRef,
   memo,
@@ -1089,7 +1094,7 @@ export const QueryEditor = memo(
             EditorView.domEventHandlers({
               mousedown: (event, view) => {
                 if (event.button !== 0 || event.altKey || event.shiftKey) return false;
-                if (!(event.ctrlKey || event.metaKey)) return false;
+                if (!isSchemaJumpModifier(event, isMacPlatform())) return false;
                 const reveal = onRevealSchemaObjectRef.current;
                 if (!reveal) return false;
                 const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });

@@ -39,6 +39,7 @@ import { formatRowEstimate } from "./rowEstimate";
 import { isRoutineKind, supportsRoutineExecution } from "./routineCall";
 import { isEditableObjectKind, supportsRoutineEditing, type EditableObjectKind } from "./routineMaintenance";
 import { useT } from "../i18n";
+import { useToast } from "./Toast";
 import { springs, transitions, variants } from "../motion";
 import { beginTabOpenFlight, useTabOpenFlightFor } from "../sharedElement";
 import { FlightIcon } from "./FlightIcon";
@@ -142,6 +143,8 @@ async function listVisibleTables(sessionId: string, db: string): Promise<string[
 /** localStorage に永続化するグループ表示順序のキー (#786)。触られていない
  *  グループはアルファベット順の既定挙動のままなので、ドラッグ/キーボードで
  *  実際に動かした結果だけをここに書く (折りたたみ状態と同じ最小保存方針)。 */
+/** 「*」(兄弟の一括展開) で一度に開くテーブルの上限。describeTable の同時発行を抑える。 */
+const EXPAND_SIBLINGS_TABLE_LIMIT = 50;
 const GROUP_ORDER_KEY = "noobdb.connlist.groupOrder";
 
 /** localStorage から永続化済みグループ順序を復元する。SSR/未対応環境や
@@ -1935,6 +1938,7 @@ export const ConnectionList = memo(
     ref,
   ) {
     const t = useT();
+    const toast = useToast();
     const { confirm, dialog: confirmDialog } = useConfirm();
     // アクティブテーブル行のスパインが共有する layoutId (#982)。`TabBar` の
     // `indicatorId` と同じ理由でコンポーネントインスタンスごとにスコープする。
@@ -3495,6 +3499,7 @@ export const ConnectionList = memo(
       const tbls = { ...expandedTablesRef.current };
       const dbLoads: string[] = [];
       const tableLoads: { db: string; tbl: string }[] = [];
+      let skippedTables = 0;
       for (const key of keys) {
         const row = explorerRowsRef.current.find((r) => r.key === key);
         if (!row) continue;
@@ -3502,9 +3507,19 @@ export const ConnectionList = memo(
           dbs[row.db] = true;
           dbLoads.push(row.db);
         } else if (row.kind === "table" && !tbls[tableKey(row.db, row.tbl)]) {
+          // 「*」で数百テーブルを一度に開くと describeTable が同時にテーブル数ぶん飛ぶので上限を設ける。
+          if (tableLoads.length >= EXPAND_SIBLINGS_TABLE_LIMIT) {
+            skippedTables++;
+            continue;
+          }
           tbls[tableKey(row.db, row.tbl)] = true;
           tableLoads.push({ db: row.db, tbl: row.tbl });
         }
+      }
+      if (skippedTables > 0) {
+        toast.info(
+          t("treeExpandSiblingsLimited", { limit: EXPAND_SIBLINGS_TABLE_LIMIT, skipped: skippedTables }),
+        );
       }
       if (dbLoads.length === 0 && tableLoads.length === 0) return;
       setError(null);

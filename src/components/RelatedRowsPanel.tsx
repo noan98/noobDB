@@ -74,6 +74,9 @@ type CountState = { count: number; over: boolean } | "error";
  * 見出しの子行件数を 1 件ずつ順に取る (#1629)。結果は取得時のエントリ集合の署名とともに持ち、
  * 親行が変わって署名がずれたら古い件数は使わない。
  */
+/** 親行の切り替えから子行件数を取り始めるまでの待ち (ms)。 */
+const RELATED_COUNT_DEBOUNCE_MS = 250;
+
 function useRelatedCounts(
   entries: RelatedEntry[],
   driver: string,
@@ -97,30 +100,34 @@ function useRelatedCounts(
   // biome-ignore lint/correctness/useExhaustiveDependencies: entries の中身は sig に畳み込んである。sig が変わったときだけ取り直す
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      const counts: Record<string, CountState> = {};
-      for (const entry of entries) {
-        if (entry.blocked !== null) continue;
-        const sql = buildRelatedCountSql({
-          driver,
-          database,
-          childTable: entry.fk.table,
-          childColumn: entry.fk.column,
-          value: entry.value,
-        });
-        if (!sql) continue;
-        try {
-          const n = parseRelatedCount((await runRef.current(sql)).rows);
-          counts[entry.key] = n === null ? "error" : describeRelatedCount(n);
-        } catch {
-          counts[entry.key] = "error";
+    // 親行をすばやく切り替えている間は COUNT を発行しない (止まってから 1 回だけ取る)。
+    const timer = setTimeout(() => {
+      void (async () => {
+        const counts: Record<string, CountState> = {};
+        for (const entry of entries) {
+          if (entry.blocked !== null) continue;
+          const sql = buildRelatedCountSql({
+            driver,
+            database,
+            childTable: entry.fk.table,
+            childColumn: entry.fk.column,
+            value: entry.value,
+          });
+          if (!sql) continue;
+          try {
+            const n = parseRelatedCount((await runRef.current(sql)).rows);
+            counts[entry.key] = n === null ? "error" : describeRelatedCount(n);
+          } catch {
+            counts[entry.key] = "error";
+          }
+          if (cancelled) return;
+          setDone({ sig, counts: { ...counts } });
         }
-        if (cancelled) return;
-        setDone({ sig, counts: { ...counts } });
-      }
-    })();
+      })();
+    }, RELATED_COUNT_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [sig]);
   return done.sig === sig ? done.counts : {};

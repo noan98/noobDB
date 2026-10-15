@@ -220,3 +220,16 @@ export function resolveSchemaJump(args: {
   }
   return null;
 }
+
+/** macOS 系のプラットフォームか (CodeMirror の `Mod` と同じ判定。判定できなければ false)。 */
+export function isMacPlatform(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iP(hone|ad|od)/.test(navigator.platform ?? "");
+}
+
+/**
+ * 識別子ジャンプのクリック修飾キー。macOS では Ctrl+クリックが右クリック (コンテキストメニュー) 扱いに
+ * なるため Cmd (metaKey) だけ、それ以外は Ctrl (ctrlKey) だけを見る。逆側の修飾キーは通常のクリック。
+ */
+export function isSchemaJumpModifier(event: { ctrlKey: boolean; metaKey: boolean }, mac: boolean): boolean {
+  return mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
+}

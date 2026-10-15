@@ -764,6 +764,18 @@ describe("スキーマツリーのキーボード操作 (#1184)", () => {
     expect(tbl1).toHaveFocus();
   });
 
+  it("「*」で兄弟テーブルを一括展開するときは上限 (50 件) で打ち切り、通知する (#1629)", async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `m${String(i).padStart(2, "0")}`);
+    vi.mocked(api.listTables).mockResolvedValueOnce(many);
+    vi.mocked(api.describeTable).mockClear();
+    await openDb();
+    const first = await screen.findByRole("treeitem", { name: "m00" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "*" });
+    await screen.findByText(t("treeExpandSiblingsLimited", { limit: 50, skipped: 10 }));
+    await waitFor(() => expect(vi.mocked(api.describeTable)).toHaveBeenCalledTimes(50));
+  });
+
   it("ArrowRight は折りたたみ中のテーブルを展開し、展開済みなら最初のカラムへフォーカスを移す", async () => {
     vi.mocked(api.describeTable).mockResolvedValueOnce([col("id", { key: "PRI" })]);
     await openDb();

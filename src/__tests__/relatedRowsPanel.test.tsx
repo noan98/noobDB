@@ -218,6 +218,18 @@ describe("RowInspector の関連タブ (#1028)", () => {
     expect(rowCalls(runQuery)).toEqual([]);
   });
 
+  it("件数の COUNT は親行が落ち着いてから投げる (デバウンス、#1629)", async () => {
+    const runQuery = routedRunQuery();
+    const { unmount } = renderInspector({ runQuery });
+    fireEvent.click(screen.getByRole("radio", { name: t("inspectorTabRelated", { count: 2 }) }));
+    // 直後はまだ投げない。
+    expect(runQuery).not.toHaveBeenCalled();
+    // すぐ閉じる (別の親行へ切り替えた相当) と、COUNT は 1 回も飛ばない。
+    unmount();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(runQuery).not.toHaveBeenCalled();
+  });
+
   it("上限を超える件数は「超」で表示する (#1629)", async () => {
     const runQuery = routedRunQuery({ counts: { orders: 1001 } });
     renderInspector({ runQuery });

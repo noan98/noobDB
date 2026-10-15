@@ -8425,9 +8425,19 @@ export default function App() {
       ) : (
         translate("batchTruncateConfirmBody", { count: tables.length, database, tables: names })
       );
+      // MySQL は暗黙コミットでテーブルごとに流すため、途中失敗で戻せないことを確認文に足す。
+      const bodyWithNote: ReactNode =
+        selectedProfile?.driver === "mysql" ? (
+          <>
+            {body}
+            <Box mt="2">{translate("batchTruncateMysqlNote")}</Box>
+          </>
+        ) : (
+          body
+        );
       const ok = await confirm({
         title: translate("batchTruncateConfirmTitle", { count: tables.length }),
-        message: maintenanceMessage(body),
+        message: maintenanceMessage(bodyWithNote),
         confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
         tone: "danger",
         typedConfirmation: production ? database : undefined,
