@@ -26,6 +26,7 @@ import {
 } from "../quickLauncher";
 import type { TableRef } from "../tableQuickAccess";
 import { ContextMenu } from "./ContextMenu";
+import { Input } from "./ui";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES } from "./Icon";
 import {
@@ -63,6 +64,12 @@ interface Props {
   onShowMore: (section: QuickLauncherSectionId) => void;
   /** 設定画面を開く (右クリックメニュー)。 */
   onOpenSettings: () => void;
+  /**
+   * お気に入りの並べ替え (#1631)。`delta` は**ランチャーの表示順**での移動量 (負が上)。
+   * 未指定なら並べ替え操作 (ドラッグ / Alt+↑↓) を出さない。
+   */
+  onMoveSnippetFavorite?: (id: string, delta: number) => void;
+  onMoveTableFavorite?: (ref: TableRef, delta: number) => void;
 }
 
 /** ボタンの一辺 (px)。レイアウトの実寸なので px で持つ。 */
@@ -109,6 +116,8 @@ export function QuickLauncher({
   onOpenTable,
   onShowMore,
   onOpenSettings,
+  onMoveSnippetFavorite,
+  onMoveTableFavorite,
 }: Props) {
   const t = useT();
   const [position, setPosition] = useState<LauncherPosition>(() => loadLauncherPosition());
@@ -214,7 +223,14 @@ export function QuickLauncher({
   };
 
   // ---- ポップオーバー ----
-  const sections = useMemo(() => buildQuickLauncherSections(sources, limits), [sources, limits]);
+  // 検索語 (#1631)。検索中は表示件数の上限を外し、ヒットした全件から選べる。
+  const [query, setQuery] = useState("");
+  const searching = query.trim() !== "";
+  const searchRef = useRef<HTMLInputElement>(null);
+  const sections = useMemo(
+    () => buildQuickLauncherSections(sources, limits, query),
+    [sources, limits, query],
+  );
   const visibleSections = sections.filter((s) => s.items.length > 0);
   const [popoverPos, setPopoverPos] = useState<Point | null>(null);
 
@@ -236,15 +252,30 @@ export function QuickLauncher({
     // 位置・中身が変わったときだけ測り直す。
   }, [open, point.left, point.top, bounds, visibleSections.length]);
 
-  // 開いたら先頭の項目へフォーカスを移す。
+  // 開いたら検索欄へフォーカスを移し (すぐ打ち始められる)、閉じたら検索語を捨てる。
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setQuery("");
+      return;
+    }
     const id = window.requestAnimationFrame(() => {
-      const first = popoverRef.current?.querySelector<HTMLElement>(ITEM_SELECTOR);
-      (first ?? popoverRef.current)?.focus();
+      (searchRef.current ?? popoverRef.current)?.focus();
     });
     return () => window.cancelAnimationFrame(id);
   }, [open]);
+
+  // お気に入りの並べ替え (#1631): 同じセクション内のドラッグ、または Alt+↑↓。検索中は
+  // 表示が絞り込まれていて移動量が保存順とずれるため無効。
+  const dragKeyRef = useRef<string | null>(null);
+  const moveItem = (item: QuickLauncherItem, delta: number) => {
+    if (delta === 0) return;
+    if (item.kind === "snippet") onMoveSnippetFavorite?.(item.snippet.id, delta);
+    else if (item.kind === "table") onMoveTableFavorite?.(item.ref, delta);
+  };
+  const reorderable = (sectionId: QuickLauncherSectionId) =>
+    !searching &&
+    ((sectionId === "favoriteSnippets" && onMoveSnippetFavorite !== undefined) ||
+      (sectionId === "favoriteTables" && onMoveTableFavorite !== undefined));
 
   const close = useCallback(
     (returnFocus: boolean) => {
@@ -367,16 +398,43 @@ export function QuickLauncher({
                 close(true);
                 return;
               }
+              // 検索欄での入力は roving のタイプアヘッドに奪わせない。↓ だけ先頭の項目へ移る。
+              if (e.target === searchRef.current) {
+                if (e.key === "ArrowDown") {
+                  const first = popoverRef.current?.querySelector<HTMLElement>(ITEM_SELECTOR);
+                  if (first) {
+                    e.preventDefault();
+                    first.focus();
+                  }
+                }
+                return;
+              }
               roving.onKeyDown(e);
             }}
           >
+            <Input
+              ref={searchRef}
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={t("quickLauncherSearchPlaceholder")}
+              aria-label={t("quickLauncherSearchAria")}
+              data-testid="quick-launcher-search"
+              mb="1"
+            />
             {visibleSections.length === 0 ? (
-              <EmptyState
-                compact
-                icon="star"
-                title={t("quickLauncherEmptyTitle")}
-                description={t("quickLauncherEmptyDescription")}
-              />
+              searching ? (
+                <chakra.p color="app.textMuted" px="2" py="3" fontSize="sm">
+                  {t("quickLauncherNoMatches")}
+                </chakra.p>
+              ) : (
+                <EmptyState
+                  compact
+                  icon="star"
+                  title={t("quickLauncherEmptyTitle")}
+                  description={t("quickLauncherEmptyDescription")}
+                />
+              )
             ) : (
               visibleSections.map((section) => (
                 <Box
@@ -388,8 +446,9 @@ export function QuickLauncher({
                   <chakra.div textStyle="overline" px="2" py="1">
                     {t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
                   </chakra.div>
-                  {section.items.map((item) => {
+                  {section.items.map((item, itemIndex) => {
                     const label = itemLabel(item);
+                    const canReorder = reorderable(section.id);
                     return (
                       <Flex
                         key={item.key}
@@ -397,6 +456,38 @@ export function QuickLauncher({
                         gap="1"
                         borderRadius="sm"
                         _hover={{ bg: "app.hover" }}
+                        draggable={canReorder || undefined}
+                        onDragStart={
+                          canReorder
+                            ? (e) => {
+                                dragKeyRef.current = item.key;
+                                e.dataTransfer.effectAllowed = "move";
+                              }
+                            : undefined
+                        }
+                        onDragOver={
+                          canReorder && dragKeyRef.current !== null
+                            ? (e) => {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = "move";
+                              }
+                            : undefined
+                        }
+                        onDrop={
+                          canReorder
+                            ? (e) => {
+                                e.preventDefault();
+                                const fromKey = dragKeyRef.current;
+                                dragKeyRef.current = null;
+                                const from = section.items.findIndex((i) => i.key === fromKey);
+                                if (from < 0) return;
+                                moveItem(section.items[from], itemIndex - from);
+                              }
+                            : undefined
+                        }
+                        onDragEnd={() => {
+                          dragKeyRef.current = null;
+                        }}
                       >
                         <chakra.button
                           type="button"
@@ -419,6 +510,17 @@ export function QuickLauncher({
                           fontFamily={item.kind === "query" ? "mono" : undefined}
                           aria-label={t("quickLauncherInsertAria", { name: label.primary })}
                           _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
+                          title={canReorder ? t("quickLauncherReorderHint") : undefined}
+                          onKeyDown={
+                            canReorder
+                              ? (e) => {
+                                  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  moveItem(item, e.key === "ArrowUp" ? -1 : 1);
+                                }
+                              : undefined
+                          }
                           onClick={(e) => activate(item, e.metaKey || e.ctrlKey)}
                         >
                           <chakra.span truncate maxW="100%">

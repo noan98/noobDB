@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAssertionTrends,
+  draftFromSchedule,
+  flagsToWeekdays,
+  scheduleFromDraft,
+  weekdaysToFlags,
   localToUtcClock,
   tzOffsetMinutes,
   utcToLocalClock,
@@ -296,5 +300,47 @@ describe("summarizeAction for timelapse / plan watch (#1537)", () => {
     expect(summarizeAction({ kind: "refresh_plan_watch", snippet_ids: ["a", "b"] }, en)).toBe(
       "plan watch (2)",
     );
+  });
+});
+
+describe("#1621 スケジュールのドラフト変換", () => {
+  it("曜日マスクとフラグを相互変換する (0 は毎日、全オフは不正)", () => {
+    expect(weekdaysToFlags(0)).toEqual(Array(7).fill(true));
+    expect(weekdaysToFlags(0b001_1111)).toEqual([true, true, true, true, true, false, false]);
+    expect(flagsToWeekdays(Array(7).fill(true))).toBe(0);
+    expect(flagsToWeekdays([true, true, true, true, true, false, false])).toBe(0b001_1111);
+    expect(flagsToWeekdays(Array(7).fill(false))).toBeNull();
+  });
+
+  it("旧データ (タイムゾーンなし) は UTC のドラフトになり、保存でも維持される", () => {
+    const d = draftFromSchedule({ kind: "daily", hour: 9, minute: 30 } as TaskSchedule, "Asia/Tokyo");
+    expect(d.timezone).toBe("UTC");
+    const r = scheduleFromDraft(d);
+    expect(r).toEqual({
+      ok: true,
+      schedule: { kind: "daily", hour: 9, minute: 30, timezone: "UTC", weekdays: 0 },
+    });
+  });
+
+  it("新規の既定は端末のタイムゾーンの 9:00 毎日", () => {
+    const d = draftFromSchedule(undefined, "Asia/Tokyo");
+    expect(d).toMatchObject({ kind: "interval", hour: "9", minute: "0", timezone: "Asia/Tokyo" });
+  });
+
+  it("時刻は範囲内に丸め、曜日が空なら不正", () => {
+    const d = draftFromSchedule(undefined, "UTC");
+    const r = scheduleFromDraft({ ...d, kind: "daily", hour: "99", minute: "-5" });
+    expect(r).toMatchObject({ ok: true, schedule: { hour: 23, minute: 0 } });
+    expect(scheduleFromDraft({ ...d, kind: "daily", days: Array(7).fill(false) })).toEqual({ ok: false });
+  });
+
+  it("summarizeSchedule はタイムゾーンと曜日を含める", () => {
+    const en = mk("en");
+    const s = summarizeSchedule(
+      { kind: "daily", hour: 9, minute: 0, timezone: "Asia/Tokyo", weekdays: 0b001_1111 } as TaskSchedule,
+      en,
+    );
+    expect(s).toContain("Asia/Tokyo");
+    expect(s).toContain("09:00");
   });
 });

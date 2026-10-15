@@ -48,6 +48,9 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   `onEvent` の Tauri Channel に `kind` タグ付き (`delta` / `retrying` / `done` / `error` / `cancelled`) で届く
   (#1534。`listenAiStream` が Channel を作る)。429 / 529 はストリーム開始前に限り `Retry-After` /
   指数バックオフで最大 3 回再試行し、その間 `retrying` が届く。
+  `settings.monthlyBudgetUsd` (#1620) が設定されていて、使用量台帳の月初 (JST) からの概算コスト
+  (`ai::budget`、単価は `AiModel::price` ⇔ `aiModels.ts` を `fixtures/aiModelPrices.json` で固定) が
+  それ以上なら、通信前に `AppError::AiBudgetExceeded` (kind `aiBudgetExceeded`) で拒否する。
   `systemCached` は任意 (#1473): system の固定部分 (スキーマなど)。`system` より前のブロックになり、
   モデルの最小キャッシュ長 (`AiModel::cache_min_tokens`、UTF-8 バイト数で判定) 以上のとき
   `cache_control: ephemeral` が付く。キャッシュは `systemCached` を渡したときだけ (オプトイン)。
@@ -243,7 +246,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 
 ## 診断 (`commands/advisor.rs`, `commands/inspector.rs`, `commands/server.rs`)
 
-- `analyze_schema_health`
+- `analyze_schema_health` (#1621。「対応しない」を `ignored` へ振り分け、前回診断 (メモリ上の直近 1 件) との差分 `diff` を載せる。未使用インデックスには `size_bytes`)
+- `ignore_advisor_finding` (#1621。`advisor_ignores.json` に (プロファイル, DB, 指摘キー) を保存)
+- `unignore_advisor_finding` (#1621。「対応しない」の取り消し)
 - `query_stats_support`
 - `sample_live_queries`
 - `start_statement_recording`
@@ -254,7 +259,9 @@ ID から Rust 側で描画する。`release_data_diffs(diffIds)` で保持を�
 ## 列データプロファイル (`commands/profile.rs`)
 
 `profile_column` (#974。NULL 率 / DISTINCT / MIN・MAX / 上位頻出値 / ヒストグラムを
-サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可)
+サーバ側で全件集計。単一 SELECT のみで read_only セッションでも可。`sample_percent` で標本モード #1628:
+PostgreSQL は `TABLESAMPLE SYSTEM`、MySQL は `RAND() <`、SQLite は `random()` で抽出し、`ColumnProfile.sample_percent` と
+notes `sampled` に印を付ける)
 
 `profile_table` (#1539。表の全列の件数 / NULL 数 / DISTINCT / MIN・MAX を 1 回の走査で一括取得。
 上位値・ヒストグラムは含まず `profile_column` で列ごとに遅延取得。`approximate` で PostgreSQL の
@@ -266,6 +273,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `timelapse_capture`
 - `timelapse_list_watches`
 - `timelapse_diff_generations`
+- `timelapse_row_history`
 - `timelapse_unwatch`
 - `timelapse_clear_all`
 
@@ -276,6 +284,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `schema_drift_capture`
 - `schema_drift_list`
 - `schema_drift_compare`
+- `schema_drift_set_label`
+- `schema_drift_revert_sql`
 - `schema_drift_import_legacy`
 
 #736 / #1260。`capture` は `columns_for_database` + `indexes_for_database` の 2 クエリで DB 全体を取得 → 正規化・フィンガープリント → `<data_dir>/schema_drift.sqlite` へ保存 (最大 20 世代) → 前世代との変化サマリだけを返す。`list` / `compare` はセッション不要。`import_legacy` は旧 localStorage 世代を初回だけ取り込む。`capture` の任意引数 `trigger_sql` (#1537) は DDL 成功をきっかけにした自動取得のときの実行 SQL で、世代に紐づけて保存する
@@ -295,6 +305,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `save_task`
 - `delete_task`
 - `set_task_enabled`
+- `preview_task_schedule`
 - `run_task_now` (引数 `id`, `streamId`) — `cancel_stream` で中断でき、進捗は `task-run:progress` (`streamId` で絞る。#1534)
 - `list_task_runs`
 - `list_assertion_runs`
@@ -306,9 +317,13 @@ DISTINCT を `pg_stats` から近似、#1609)
 
 - `list_assertions`
 - `save_assertion`
-- `delete_assertion`
+- `delete_assertion` (#1621。一覧から外して `assertions.json` の `trash` (直近 50 件) へ移す)
+- `restore_assertion` (#1621。ごみ箱から一覧へ戻す)
+- `export_assertions` (#1621。定義を JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `import_assertions` (#1621。ID 衝突は新規採番・同内容は追加せず・検証 NG は `rejected` で報告)
+- `suggest_accepted_values` (#1621。列の DISTINCT を `run_lookup_query` 経路で読み、最大 50 種)
 - `preview_assertion_sql`
-- `run_assertion` (#742。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
+- `run_assertion` (#742。結果に前回の観測値 `previous` を添える (#1621, `assertion_history.json` に直近 30 件)。定義は `assertions.json`、ルール → SQL は純ロジック `db::assertions`。実行は `run_lookup_query` と同じ裏方経路で、read_only セッションでも可・ルールごとにタイムアウト・履歴/結果キャッシュに載らない)
 
 ## フライトレコーダー / Undo (`commands/flight_recorder.rs`)
 
@@ -378,6 +393,8 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `read_sql_file`
 - `write_text_file`
 - `write_binary_file`
+- `reveal_in_file_manager`
+- `set_window_title`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
 - `save_cell_to_file`
@@ -426,6 +443,13 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 その文字コードで表せない文字があれば置換せずエラーにする (UTF-8 BOM / UTF-16 は BOM を付ける)。`write_binary_file` は `tauri::ipc::Request` の raw ボディ
 (`InvokeBody::Raw`) を受け、保存先パスはヘッダ `x-noobdb-path` に URL エンコードして載せる
 (`api.writeBinaryFile` が `encodeURIComponent`、Rust 側 `decode_path_header` が復元)。
+
+`reveal_in_file_manager` (`commands/file.rs`, #1631) は書き出し・ダンプの保存先を OS のファイルマネージャ
+(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。`path` がファイルなら親ディレクトリを開き、
+**ファイルそのものは開かない** (実行可能ファイルを起動しないため)。存在しない・空のパスは `InvalidInput`。
+`set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
+区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
+空白にして 200 文字に切り詰める。
 
 `get_import_skipped_text` / `save_import_skipped_rows` (`commands/import.rs`, #1258) は
 skip モードの取り込みでスキップされた行の「全件」を扱う。`csv-import:done` には先頭
@@ -483,6 +507,8 @@ JS から行を送る。ハンドルは「行配列」に紐づけて持ち (`co
 
 `result_find` — 結果内検索 (正規表現なし。正規表現は JS の文法と違うためフロントが JS で
 処理する)。ヒットは行優先で `limit` 件 + 総数。`null` はハンドルが無い。
+
+`result_duplicate_keys` — 重複キー検出 (#1628。指定列の組み合わせで同じ値を持つ行のグループ数・行数・上位グループ・重複行インデックスを返す。保持済みの行だけで完結)。`null` はハンドルが無い。
 
 `result_column_stats` — 列クイック統計 (`gridStats.ts::columnStats` と同じ値)。
 

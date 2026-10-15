@@ -20,6 +20,13 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { SkeletonSearchRows } from "./Skeleton";
 import { shouldStaggerEntrance } from "./commandPaletteSearch";
 import { staggerContainer, variants } from "../motion";
+import {
+  dataSearchScope,
+  loadDataSearchHistory,
+  pushDataSearchHistory,
+  saveDataSearchHistory,
+  type DataSearchHistoryEntry,
+} from "../inputMemory";
 
 /**
  * DB 全体からの値検索 (#748)。「この値はどのテーブル・どの列にあるか」を、対象
@@ -40,6 +47,8 @@ interface Props {
   driver: string;
   isProduction: boolean;
   profileName: string;
+  /** 接続プロファイル ID。検索条件の履歴を接続 × DB ごとに覚える (#1631)。 */
+  profileId?: string;
   /** ヒット行クリック時、絞り込み結果を新規タブで開くためのコールバック。 */
   onOpenHit: (sql: string, title: string) => void;
   onClose: () => void;
@@ -216,6 +225,7 @@ export function DataSearchModal({
   driver,
   isProduction,
   profileName,
+  profileId,
   onOpenHit,
   onClose,
 }: Props) {
@@ -232,6 +242,13 @@ export function DataSearchModal({
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [tableFilter, setTableFilter] = useState("");
   const [threshold, setThreshold] = useState(DEFAULT_SCAN_ROW_THRESHOLD);
+
+  // 検索条件の履歴 (語・一致方式・対象テーブル, 接続 × DB 単位, #1631)。保存するのは非秘密の条件だけ。
+  const historyScope = dataSearchScope(profileId, database);
+  const [history, setHistory] = useState<DataSearchHistoryEntry[]>(() =>
+    profileId ? loadDataSearchHistory(historyScope) : [],
+  );
+  const [rescanRequested, setRescanRequested] = useState(false);
 
   const [meta, setMeta] = useState<MetaState>({ kind: "loading" });
   const [scanning, setScanning] = useState(false);
@@ -364,6 +381,17 @@ export function DataSearchModal({
     });
     if (!ok) return;
 
+    if (profileId) {
+      const next = pushDataSearchHistory(history, {
+        term,
+        mode: matchMode,
+        scope,
+        tables: scope === "selected" ? targetTables : [],
+      });
+      setHistory(next);
+      saveDataSearchHistory(historyScope, next);
+    }
+
     const streamId = makeDataSearchStreamId();
     const slot = { streamId, unlisten: () => {} };
     activeRef.current = slot;
@@ -420,6 +448,33 @@ export function DataSearchModal({
     setResults([]);
     setProgress(null);
   };
+
+  /** 履歴の条件を画面へ戻し、1 クリックで再走査する (確認ダイアログは通常どおり出る)。 */
+  const applyHistory = (entry: DataSearchHistoryEntry) => {
+    if (scanning) return;
+    handleReset();
+    setTerm(entry.term);
+    setMatchMode(entry.mode);
+    setScope(entry.scope);
+    if (entry.scope === "selected") {
+      const known = new Set(allTables);
+      setSelected(new Set(entry.tables.filter((tb) => known.has(tb))));
+    }
+    setRescanRequested(true);
+  };
+
+  const clearHistory = () => {
+    setHistory([]);
+    saveDataSearchHistory(historyScope, []);
+  };
+
+  // 履歴の条件を反映した描画のあとで走査を始める (handleStart は最新の状態を読む)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rescanRequested の立ち上がりだけをトリガにする (handleStart は毎回作り直される)
+  useEffect(() => {
+    if (!rescanRequested) return;
+    setRescanRequested(false);
+    void handleStart();
+  }, [rescanRequested]);
 
   const openColumnHit = (table: string, column: string, dataType: string) => {
     const scanned = scannedRef.current;
@@ -537,6 +592,43 @@ export function DataSearchModal({
                 </Select>
               </chakra.div>
             </FormSection>
+
+            {history.length > 0 && !scanning && (
+              <FormSection>
+                <chakra.div display="flex" alignItems="center" justifyContent="space-between" gap="2">
+                  <FieldLabel as="div">{t("dataSearchHistoryLabel")}</FieldLabel>
+                  <Button type="button" variant="ghost" size="sm" onClick={clearHistory}>
+                    {t("dataSearchHistoryClear")}
+                  </Button>
+                </chakra.div>
+                <chakra.div display="flex" flexWrap="wrap" gap="1.5" data-testid="data-search-history">
+                  {history.map((h) => (
+                    <Button
+                      key={JSON.stringify([h.term, h.mode, h.scope, h.tables])}
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      title={t("dataSearchHistoryTitle", {
+                        mode: t(
+                          h.mode === "exact"
+                            ? "dataSearchMatchExact"
+                            : h.mode === "prefix"
+                              ? "dataSearchMatchPrefix"
+                              : "dataSearchMatchContains",
+                        ),
+                        scope:
+                          h.scope === "all"
+                            ? t("dataSearchScopeAll")
+                            : t("dataSearchHistoryTables", { count: h.tables.length }),
+                      })}
+                      onClick={() => applyHistory(h)}
+                    >
+                      {h.term}
+                    </Button>
+                  ))}
+                </chakra.div>
+              </FormSection>
+            )}
 
             <FormSection>
               <FieldLabel as="div">{t("dataSearchScopeLabel")}</FieldLabel>

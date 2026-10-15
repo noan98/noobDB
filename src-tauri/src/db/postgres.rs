@@ -71,7 +71,7 @@ fn connect_options(opts: &DbConnectOptions, password: &str) -> PgConnectOptions 
 
 impl PostgresConn {
     pub async fn connect(opts: &DbConnectOptions) -> Result<Self> {
-        let password = super::aws_iam::password_for(opts)?;
+        let password = super::aws_iam::password_for(opts).await?;
         let connect = connect_options(opts, &password);
         drop(password);
         let mut pool_opts = PgPoolOptions::new()
@@ -1137,7 +1137,8 @@ impl PostgresConn {
     /// 担うためここではそのまま返す。読み取りのみ。
     pub async fn unused_indexes(&self, schema: &str) -> Result<UnusedIndexStats> {
         let rows: Vec<PgRow> = match sqlx::query(
-            r#"SELECT relname, indexrelname
+            // 容量 (`pg_relation_size`) は削除で空く量の見積もりと優先順位付けに使う (#1621)。
+            r#"SELECT relname, indexrelname, pg_relation_size(indexrelid)::bigint AS size_bytes
                FROM pg_stat_user_indexes
                WHERE schemaname = $1 AND idx_scan = 0
                ORDER BY relname, indexrelname"#,
@@ -1160,7 +1161,16 @@ impl PostgresConn {
             .filter_map(|r| {
                 let table = r.try_get::<String, _>("relname").ok()?;
                 let index = r.try_get::<String, _>("indexrelname").ok()?;
-                Some(UnusedIndexEntry { table, index })
+                let size_bytes = r
+                    .try_get::<Option<i64>, _>("size_bytes")
+                    .ok()
+                    .flatten()
+                    .and_then(|n| u64::try_from(n).ok());
+                Some(UnusedIndexEntry {
+                    table,
+                    index,
+                    size_bytes,
+                })
             })
             .collect();
         Ok(UnusedIndexStats {

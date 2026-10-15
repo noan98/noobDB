@@ -3,6 +3,7 @@ import {
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
@@ -11,7 +12,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { QueryResult } from "../api/tauri";
 import { useLocale, useT, type I18nKey } from "../i18n";
 import { semanticColorVar } from "../semanticColors";
-import { Button, Switch } from "./ui";
+import { Button, Input, Switch } from "./ui";
 import { Spinner } from "./Spinner";
 import { Tooltip } from "./Tooltip";
 import { Skeleton } from "./Skeleton";
@@ -38,7 +39,9 @@ import {
   nodeMisestimate,
   parseExplainForDriver,
   parseNum,
+  planAncestorIds,
   scorePlan,
+  searchPlanNodes,
   severityLabelKey,
   worstSeverity,
 } from "./explainPlan";
@@ -159,8 +162,10 @@ const treeCss: SystemStyleObject = {
 };
 
 /** ツリー行。ヒートと選択状態で背景/ホバーを切り替える。 */
-function nodeCss(heat: Heat, selected: boolean): SystemStyleObject {
+function nodeCss(heat: Heat, selected: boolean, match = false): SystemStyleObject {
   const base: SystemStyleObject = {
+    // 検索に一致した行 (#1628): 選択・ヒートの背景とは独立した枠線で示す。
+    ...(match ? { outline: "1px solid var(--accent)", outlineOffset: "-1px" } : {}),
     display: "flex",
     alignItems: "center",
     gap: "1.5",
@@ -444,7 +449,7 @@ interface Props {
    * AI による実行計画の解釈 (#693)。未指定なら入口を出さない。AI 無効 / API キー未設定の
    * ときは指定しても何も描かない。計画・方言・実測フラグは ExplainViewer 自身が渡す。
    */
-  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze">;
+  ai?: Omit<AiExplainInterpretProps, "driver" | "plan" | "analyze" | "planResult">;
   /**
    * 計画の固定と、固定した計画との比較 (#1539)。`scope` は固定の保存先 (EXPLAIN タブの id)。
    * 未指定なら固定 / 比較の操作を出さない。
@@ -470,6 +475,8 @@ interface NodeRowProps {
   neverExecutedLabel: string;
   /** 初回描画で stagger 出現させるノード ID。展開/折りたたみ後は空にして再生しない。 */
   staggerIds: ReadonlySet<string>;
+  /** ノード検索に一致した ID (#1628)。 */
+  matchIds: ReadonlySet<string>;
 }
 
 /**
@@ -512,6 +519,7 @@ function NodeRow({
   nodeRowsLabel,
   neverExecutedLabel,
   staggerIds,
+  matchIds,
 }: NodeRowProps) {
   const isCollapsed = collapsed.has(node.id);
   const hasChildren = node.children.length > 0;
@@ -530,7 +538,8 @@ function NodeRow({
   return (
     <>
       <MotionNode
-        css={nodeCss(heat, selected)}
+        css={nodeCss(heat, selected, matchIds.has(node.id))}
+        data-search-match={matchIds.has(node.id) ? "true" : undefined}
         variants={staggerIds.has(node.id) ? variants.staggerItem : undefined}
         pl={`${6 + depth * 16}px`}
         role="treeitem"
@@ -691,6 +700,7 @@ function NodeRow({
             nodeRowsLabel={nodeRowsLabel}
             neverExecutedLabel={neverExecutedLabel}
             staggerIds={staggerIds}
+            matchIds={matchIds}
           />
         ))}
     </>
@@ -771,6 +781,7 @@ export function ExplainViewer({ result, driver, streaming, analyze, ai, pin }: P
           {...ai}
           driver={driver}
           plan={plan}
+          planResult={result}
           analyze={!!analyze?.active && analyze.supported}
         />
       )}
@@ -824,6 +835,30 @@ function ExplainViewerBody({
   const entranceIds = useMemo(() => staggerPlanIds(allIds), [allIds]);
   const staggerIds = entered === root ? EMPTY_IDS : entranceIds;
   const markEntered = () => setEntered(root);
+
+  // ノード検索 (#1628): 一致ノードを枠線で示し、Enter / ボタンで前後へ巡回する。
+  // 選択 (selectedId) はツリーとグラフで共有なので、巡回すると両ビューが同期する。
+  const [query, setQuery] = useState("");
+  const [matchPos, setMatchPos] = useState(0);
+  const matchIds = useMemo(() => (root ? searchPlanNodes(root, query) : []), [root, query]);
+  const matchIdSet = useMemo(() => new Set(matchIds), [matchIds]);
+  const paneRef = useRef<HTMLDivElement>(null);
+  const goToMatch = (pos: number) => {
+    if (!root || matchIds.length === 0) return;
+    const i = ((pos % matchIds.length) + matchIds.length) % matchIds.length;
+    const id = matchIds[i];
+    setMatchPos(i);
+    // 畳まれた祖先を展開して一致行を見えるようにする。
+    const anc = planAncestorIds(root, id);
+    setCollapsed((prev) =>
+      anc.some((a) => prev.has(a)) ? new Set([...prev].filter((x) => !anc.includes(x))) : prev,
+    );
+    setSelectedId(id);
+    window.setTimeout(() => {
+      const el = paneRef.current?.querySelector(`[data-node-id="${CSS.escape(id)}"]`);
+      el?.scrollIntoView?.({ block: "nearest" });
+    }, 0);
+  };
 
   const toggle = (id: string) => {
     markEntered();
@@ -914,7 +949,7 @@ function ExplainViewerBody({
       bg="app.surface"
       overflow="hidden"
     >
-      <Box css={treePaneCss}>
+      <Box css={treePaneCss} ref={paneRef}>
         <Box css={toolbarCss}>
           {score && (
             <Tooltip
@@ -949,6 +984,53 @@ function ExplainViewerBody({
             </chakra.span>
           )}
           <chakra.span flex={1} />
+          <Input
+            width="220px"
+            value={query}
+            placeholder={t("explainSearchPlaceholder")}
+            aria-label={t("explainSearchAria")}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setMatchPos(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                goToMatch(e.shiftKey ? matchPos - 1 : matchPos + (matchIds[matchPos] === selectedId ? 1 : 0));
+              }
+            }}
+          />
+          {query.trim() && (
+            <>
+              <chakra.span role="status" textStyle="caption">
+                {matchIds.length === 0
+                  ? t("explainSearchNone")
+                  : t("explainSearchCount", { current: matchPos + 1, total: matchIds.length })}
+              </chakra.span>
+              <Tooltip label={t("explainSearchPrev")}>
+                <Button
+                  size="sm"
+                  px="2"
+                  disabled={matchIds.length === 0}
+                  onClick={() => goToMatch(matchPos - 1)}
+                  aria-label={t("explainSearchPrev")}
+                >
+                  ‹
+                </Button>
+              </Tooltip>
+              <Tooltip label={t("explainSearchNext")}>
+                <Button
+                  size="sm"
+                  px="2"
+                  disabled={matchIds.length === 0}
+                  onClick={() => goToMatch(matchPos + 1)}
+                  aria-label={t("explainSearchNext")}
+                >
+                  ›
+                </Button>
+              </Tooltip>
+            </>
+          )}
           <Tooltip label={t("explainViewTree")}>
             <Button
               size="sm"
@@ -1016,7 +1098,13 @@ function ExplainViewerBody({
                 </Box>
               }
             >
-              <ExplainGraphView root={root} maxCost={max} selectedId={selectedId} onSelect={setSelectedId} />
+              <ExplainGraphView
+                root={root}
+                maxCost={max}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                matchIds={matchIdSet}
+              />
             </Suspense>
           </Box>
         ) : (
@@ -1042,6 +1130,7 @@ function ExplainViewerBody({
               nodeRowsLabel={(rows) => t("explainNodeRows", { rows })}
               neverExecutedLabel={t("explainNeverExecuted")}
               staggerIds={staggerIds}
+              matchIds={matchIdSet}
             />
           </MotionTree>
         )}

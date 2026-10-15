@@ -141,11 +141,147 @@ export function summarizeSchedule(
   if (schedule.kind === "interval") {
     return t("taskSummaryInterval", { n: Math.max(1, schedule.minutes) });
   }
-  const now = opts.now ?? new Date();
-  const local = utcToLocalClock(schedule.hour, schedule.minute, now, opts.timeZone);
-  return t("taskSummaryDaily", {
-    time: formatClock(local.hour, local.minute),
-    tz: timeZoneLabel(now, opts.locale, opts.timeZone),
+  const mask = (schedule.weekdays ?? 0) & ALL_WEEKDAYS_MASK;
+  if (schedule.timezone == null && mask === 0) {
+    // 旧データ (UTC 保存): 実行環境のローカル時刻に換算して表示する。
+    const now = opts.now ?? new Date();
+    const local = utcToLocalClock(schedule.hour, schedule.minute, now, opts.timeZone);
+    return t("taskSummaryDaily", {
+      time: formatClock(local.hour, local.minute),
+      tz: timeZoneLabel(now, opts.locale, opts.timeZone),
+    });
+  }
+  // タイムゾーン指定あり (#1621): 保存した時刻をその IANA 名のまま示す。
+  const time = formatClock(clamp(schedule.hour, 0, 23), clamp(schedule.minute, 0, 59));
+  const tz = schedule.timezone ?? "UTC";
+  if (mask === 0 || mask === ALL_WEEKDAYS_MASK) return t("taskSummaryDailyTz", { time, tz });
+  if (mask === WORKDAYS_MASK) return t("taskSummaryWeekdaysTz", { time, tz });
+  const labels = weekdayLabels(opts.locale);
+  const days = weekdaysToFlags(mask)
+    .flatMap((on, i) => (on ? [labels[i]] : []))
+    .join(", ");
+  return t("taskSummaryDaysTz", { days, time, tz });
+}
+
+// --- 日次スケジュールの編集用ドラフト (#1621) ---
+
+/** 曜日マスク: 月 = bit0 … 日 = bit6。バックエンドの `ALL_WEEKDAYS` と同じ。 */
+export const ALL_WEEKDAYS_MASK = 0b111_1111;
+/** 平日 (月〜金)。 */
+export const WORKDAYS_MASK = 0b001_1111;
+
+/** 端末の IANA タイムゾーン名。取れなければ UTC。 */
+export function deviceTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** 選択肢に出すタイムゾーン名。端末の TZ と UTC を先頭に、`Intl.supportedValuesOf` の一覧を続ける。 */
+export function timeZoneChoices(device: string = deviceTimeZone(), selected?: string): string[] {
+  let all: string[] = [];
+  try {
+    all =
+      (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.("timeZone") ??
+      [];
+  } catch {
+    all = [];
+  }
+  return [...new Set([device, "UTC", ...(selected ? [selected] : []), ...all])];
+}
+
+/** 曜日の短い表記 (月曜始まり、7 個)。 */
+export function weekdayLabels(locale?: string): string[] {
+  const fmt = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
+  // 2024-01-01 は月曜日。
+  return Array.from({ length: 7 }, (_, i) => fmt.format(new Date(Date.UTC(2024, 0, 1 + i))));
+}
+
+/** マスク → 曜日ごとの実行フラグ (月始まり)。0 は毎日。 */
+export function weekdaysToFlags(mask: number | undefined): boolean[] {
+  const m = (mask ?? 0) & ALL_WEEKDAYS_MASK;
+  const all = m === 0;
+  return Array.from({ length: 7 }, (_, i) => all || (m & (1 << i)) !== 0);
+}
+
+/** 曜日ごとのフラグ → マスク。全曜日は 0 (毎日)、1 つも選ばないときは null (不正)。 */
+export function flagsToWeekdays(flags: readonly boolean[]): number | null {
+  let mask = 0;
+  flags.forEach((on, i) => {
+    if (on) mask |= 1 << i;
+  });
+  if (mask === 0) return null;
+  return mask === ALL_WEEKDAYS_MASK ? 0 : mask;
+}
+
+export interface ScheduleDraft {
+  kind: TaskSchedule["kind"];
+  intervalMinutes: string;
+  hour: string;
+  minute: string;
+  timezone: string;
+  /** 月始まりの 7 要素。 */
+  days: boolean[];
+}
+
+/**
+ * 既存のスケジュール (なければ新規の既定) から編集用ドラフトを作る。新規の既定は
+ * 端末のタイムゾーンの 9:00 毎日。旧データ (タイムゾーンなし) は UTC として開く。
+ */
+export function draftFromSchedule(schedule: TaskSchedule | undefined, device: string): ScheduleDraft {
+  const base: ScheduleDraft = {
+    kind: "interval",
+    intervalMinutes: "60",
+    hour: "9",
+    minute: "0",
+    timezone: device,
+    days: weekdaysToFlags(0),
+  };
+  if (!schedule) return base;
+  if (schedule.kind === "interval") return { ...base, intervalMinutes: String(schedule.minutes) };
+  return {
+    ...base,
+    kind: "daily",
+    hour: String(schedule.hour),
+    minute: String(schedule.minute),
+    timezone: schedule.timezone || "UTC",
+    days: weekdaysToFlags(schedule.weekdays),
+  };
+}
+
+/** ドラフト → 保存・プレビュー用のスケジュール。曜日が 1 つも選ばれていなければ不正。 */
+export function scheduleFromDraft(d: ScheduleDraft): { ok: true; schedule: TaskSchedule } | { ok: false } {
+  if (d.kind === "interval") {
+    return { ok: true, schedule: { kind: "interval", minutes: Math.max(1, Number(d.intervalMinutes) || 1) } };
+  }
+  const weekdays = flagsToWeekdays(d.days);
+  if (weekdays === null) return { ok: false };
+  return {
+    ok: true,
+    schedule: {
+      kind: "daily",
+      hour: clamp(Math.floor(Number(d.hour) || 0), 0, 23),
+      minute: clamp(Math.floor(Number(d.minute) || 0), 0, 59),
+      timezone: d.timezone || "UTC",
+      weekdays,
+    },
+  };
+}
+
+/** 次回実行予定の 1 行 (曜日・日付・時刻)。`timeZone` 省略時は端末のローカル。 */
+export function formatRunPreview(iso: string, locale?: string, timeZone?: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(locale, {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 

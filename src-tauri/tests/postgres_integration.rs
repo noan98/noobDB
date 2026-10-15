@@ -1613,6 +1613,37 @@ async fn postgres_data_quality_assertions_on_read_only_session() {
             .unwrap_or_else(|e| panic!("{} violations: {e}", a.id));
     }
 
+    // accepted_values の候補 (#1621): DISTINCT を読み取り専用セッションで取得できる。
+    // NULL は除かれ、列の型どおりの昇順に並ぶ。
+    let status = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "status",
+        None,
+    )
+    .await
+    .expect("distinct status");
+    assert_eq!(status.values, ["active", "banned", "weird"]);
+    assert!(!status.truncated);
+    let email = t::suggest_accepted_values_via_command(
+        &state,
+        &sid,
+        None,
+        "noobdb_aq_items",
+        "email",
+        None,
+    )
+    .await
+    .expect("distinct email");
+    assert_eq!(email.values, ["a@x", "b@x"]);
+    let qty =
+        t::suggest_accepted_values_via_command(&state, &sid, None, "noobdb_aq_items", "qty", None)
+            .await
+            .expect("distinct qty");
+    assert_eq!(qty.values, ["1", "5", "10", "500"]);
+
     for sql in [
         "DROP TABLE IF EXISTS noobdb_aq_items",
         "DROP TABLE IF EXISTS noobdb_aq_orders",
@@ -3052,6 +3083,84 @@ async fn postgres_import_dry_run_does_not_persist() {
         .expect("seed");
     assert_dry_run_counts_failures_without_persisting(&conn, "noobdb_pg_dry").await;
     conn.execute("DROP TABLE noobdb_pg_dry", None)
+        .await
+        .expect("cleanup");
+}
+
+/// スキーマ健全性アドバイザの未使用インデックス (#741 / #1621): 一度も使われていないインデックスの
+/// 指摘に、削除で空く容量 (`pg_relation_size`) が載る。
+#[tokio::test]
+async fn postgres_advisor_unused_index_reports_reclaimable_size() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    for sql in [
+        "DROP TABLE IF EXISTS noobdb_adv_idx",
+        "CREATE TABLE noobdb_adv_idx (id INT PRIMARY KEY, note TEXT)",
+        "INSERT INTO noobdb_adv_idx SELECT g, repeat('x', 50) FROM generate_series(1, 2000) g",
+        "CREATE INDEX noobdb_adv_idx_note ON noobdb_adv_idx (note)",
+    ] {
+        conn.execute(sql, None).await.expect(sql);
+    }
+    // 統計はコミット後に反映される。
+    let report = t::analyze_schema_health(&conn, "public")
+        .await
+        .expect("analyze");
+    let found = report
+        .findings
+        .iter()
+        .find(|f| f.rule == t::RuleId::UnusedIndex && f.table == "noobdb_adv_idx");
+    let skipped = report
+        .skipped
+        .iter()
+        .any(|s| s.rule == t::RuleId::UnusedIndex);
+    conn.execute("DROP TABLE IF EXISTS noobdb_adv_idx", None)
+        .await
+        .expect("drop");
+    assert!(
+        !skipped,
+        "unused index stats must be readable on PostgreSQL"
+    );
+    let f = found.expect("unused index finding");
+    assert!(
+        f.size_bytes.is_some_and(|n| n > 0),
+        "size_bytes must be filled from pg_relation_size: {:?}",
+        f.size_bytes
+    );
+}
+
+#[tokio::test]
+async fn postgres_column_profile_sampled_is_subset_of_table() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    conn.execute("DROP TABLE IF EXISTS public.prof_sample_t", None)
+        .await
+        .expect("drop");
+    conn.execute(
+        "CREATE TABLE public.prof_sample_t AS \
+         SELECT g AS id, g % 7 AS v FROM generate_series(1, 20000) g",
+        None,
+    )
+    .await
+    .expect("create");
+    let p = conn
+        .column_profile("public", "prof_sample_t", "v", false, 5, Some(10.0))
+        .await
+        .expect("sampled profile");
+    assert_eq!(p.sample_percent, Some(10.0));
+    assert!(p.notes.contains(&"sampled".to_string()));
+    match p.total_count {
+        t::Value::UInt(n) => assert!(n < 20000, "sample must be a strict subset: {n}"),
+        ref other => panic!("unexpected count: {other:?}"),
+    }
+    conn.execute("DROP TABLE IF EXISTS public.prof_sample_t", None)
         .await
         .expect("cleanup");
 }

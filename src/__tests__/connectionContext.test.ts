@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { connectionBandColor } from "../components/titleBarContext";
+import { connectionBandColor, windowTitleFor } from "../components/titleBarContext";
 import { semanticColorVar } from "../semanticColors";
 
 /**
@@ -68,5 +68,27 @@ describe("connectionBandColor (#466)", () => {
         status: "reconnecting",
       }),
     ).toBe(WARNING);
+  });
+});
+
+describe("windowTitleFor (#1631)", () => {
+  const labels = { production: "本番", sandbox: "サンドボックス", reconnecting: "再接続中" };
+  const base = { name: "main-db", isProduction: false };
+
+  it("未接続はアプリ名だけ", () => {
+    expect(windowTitleFor(null, labels)).toBe("noobDB");
+    expect(windowTitleFor(undefined, labels)).toBe("noobDB");
+  });
+
+  it("通常の接続は接続名 — noobDB", () => {
+    expect(windowTitleFor(base, labels)).toBe("main-db — noobDB");
+  });
+
+  it("本番・サンドボックス・再接続中を角括弧で前置する", () => {
+    expect(windowTitleFor({ ...base, isProduction: true }, labels)).toBe("[本番] main-db — noobDB");
+    expect(windowTitleFor({ ...base, isSandbox: true }, labels)).toBe("[サンドボックス] main-db — noobDB");
+    expect(windowTitleFor({ ...base, isProduction: true, status: "reconnecting" }, labels)).toBe(
+      "[本番] [再接続中] main-db — noobDB",
+    );
   });
 });

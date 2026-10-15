@@ -25,6 +25,14 @@ export type Aggregation = "none" | "sum" | "avg" | "count";
  */
 export type TimeBucket = "none" | "day" | "week" | "month";
 
+/**
+ * 棒グラフの並び順 (#1628)。`x` は X 軸の順 (取得順 / DB 集計の昇順) のまま、`desc` / `asc` は
+ * 値の大きい順 / 小さい順 (複数系列は系列の合計値で並べる)。折れ線・面は X の順序が意味を持つ
+ * ので対象外 (棒のときだけ効く)。
+ */
+export type BarSort = "x" | "desc" | "asc";
+export const BAR_SORTS: BarSort[] = ["x", "desc", "asc"];
+
 export interface ChartConfig {
   type: ChartType;
   /** X 軸 (カテゴリ) の列インデックス。 */
@@ -49,6 +57,8 @@ export interface ChartConfig {
   donut?: boolean;
   /** 時間バケット (#1541)。DB 側集計のときだけ効く。省略 = `none`。 */
   timeBucket?: TimeBucket;
+  /** 棒グラフの並び順 (#1628)。省略 = `x` (X 軸の順のまま)。棒グラフ以外では無視される。 */
+  barSort?: BarSort;
 }
 
 export interface ChartSeries {
@@ -267,6 +277,28 @@ function cellLabel(v: CellValue): string {
  * (上限超過時はサンプリング)、sum/avg/count なら X 値でグループ化する。
  */
 export function buildChartModel(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
+  return sortChartModel(buildChartModelUnsorted(columns, rows, config), config);
+}
+
+/**
+ * 棒グラフの並び順 (`config.barSort`) をモデルへ適用する (#1628)。ラベルと全系列の値を
+ * 同じ順で並べ替えるだけで、値そのものは変えない。同値は元の順を保つ (安定ソート)。
+ * 棒グラフ以外・`x` 指定・点が 1 つ以下はそのまま返す。
+ */
+export function sortChartModel(model: ChartModel, config: Pick<ChartConfig, "type" | "barSort">): ChartModel {
+  const mode = config.barSort ?? "x";
+  if (config.type !== "bar" || mode === "x" || model.labels.length < 2) return model;
+  const total = (i: number) => model.series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0);
+  const order = model.labels.map((_, i) => i);
+  order.sort((a, b) => (mode === "desc" ? total(b) - total(a) : total(a) - total(b)) || a - b);
+  return {
+    ...model,
+    labels: order.map((i) => model.labels[i]),
+    series: model.series.map((s) => ({ ...s, values: order.map((i) => s.values[i]) })),
+  };
+}
+
+function buildChartModelUnsorted(columns: Column[], rows: CellValue[][], config: ChartConfig): ChartModel {
   const { xCol, yCols, aggregation } = config;
   const yNames = yCols.map((c) => columns[c]?.name ?? `col${c}`);
 
@@ -725,6 +757,12 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
       ? { timeBucket: o.timeBucket as TimeBucket }
       : {};
 
+  // 棒グラフの並び順 (#1628) も後付け。既知の値だけ引き継ぐ。
+  const barSort =
+    typeof o.barSort === "string" && BAR_SORTS.includes(o.barSort as BarSort)
+      ? { barSort: o.barSort as BarSort }
+      : {};
+
   return {
     type: type as ChartType,
     xCol,
@@ -733,6 +771,7 @@ export function sanitizeChartConfig(raw: unknown, columns: Column[]): ChartConfi
     palette,
     ...donut,
     ...timeBucket,
+    ...barSort,
   };
 }
 

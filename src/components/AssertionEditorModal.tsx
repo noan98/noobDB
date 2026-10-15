@@ -20,8 +20,10 @@ import {
   type AssertionRuleKind,
   type AssertionScopeKind,
 } from "./assertions";
+import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { SqlCountCheck } from "./SqlCountCheck";
 import { Button, Input, PressableButton, Select, Textarea } from "./ui";
 
 /**
@@ -38,6 +40,12 @@ import { Button, Input, PressableButton, Select, Textarea } from "./ui";
  */
 interface Props {
   initial: AssertionDraft;
+  /** 違反件数の確認 (#1621) と DISTINCT 候補の取得に使う接続。 */
+  sessionId: string;
+  /** 検証を実行するデータベース (パネルと同じ)。 */
+  database: string | null;
+  /** 設定の「クエリタイムアウト」(秒、0 = なし)。 */
+  queryTimeoutSecs: number;
   driver: DriverKind;
   /** スコープの解決に使う接続中プロファイル (未接続なら `null` = 全接続)。 */
   profile: { id: string; group?: string | null } | null;
@@ -47,7 +55,16 @@ interface Props {
 
 const PREVIEW_DEBOUNCE_MS = 250;
 
-export function AssertionEditorModal({ initial, driver, profile, onSave, onClose }: Props) {
+export function AssertionEditorModal({
+  initial,
+  sessionId,
+  database,
+  queryTimeoutSecs,
+  driver,
+  profile,
+  onSave,
+  onClose,
+}: Props) {
   const t = useT();
   const [draft, setDraft] = useState<AssertionDraft>(initial);
   const [showErrors, setShowErrors] = useState(false);
@@ -56,6 +73,18 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
   const [preview, setPreview] = useState<AssertionSql | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  // 実データから許可値の候補を取得する状態 (#1621)。
+  const [fetching, setFetching] = useState(false);
+  const [fetchNote, setFetchNote] = useState<{ tone: "info" | "warning" | "error"; text: string } | null>(
+    null,
+  );
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   const set = <K extends keyof AssertionDraft>(key: K, value: AssertionDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }));
@@ -95,6 +124,41 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
       window.clearTimeout(timer);
     };
   }, [ruleKey, driver]);
+
+  const fetchValues = async () => {
+    if (!draft.table.trim() || !draft.column.trim()) {
+      setFetchNote({ tone: "warning", text: t("assertFetchValuesNeedTable") });
+      return;
+    }
+    setFetching(true);
+    setFetchNote(null);
+    try {
+      const r = await api.suggestAcceptedValues({
+        sessionId,
+        schema: draft.schema.trim() || null,
+        table: draft.table.trim(),
+        column: draft.column.trim(),
+        database,
+        queryTimeoutSecs: queryTimeoutSecs > 0 ? queryTimeoutSecs : null,
+      });
+      if (!aliveRef.current) return;
+      if (r.values.length === 0) {
+        setFetchNote({ tone: "info", text: t("assertFetchValuesEmpty") });
+      } else {
+        set("values", r.values.join("\n"));
+        setFetchNote(
+          r.truncated
+            ? { tone: "warning", text: t("assertFetchValuesTruncated", { count: r.values.length }) }
+            : { tone: "info", text: t("assertFetchValuesDone", { count: r.values.length }) },
+        );
+      }
+    } catch (e) {
+      if (aliveRef.current)
+        setFetchNote({ tone: "error", text: t("assertFetchValuesError", { error: String(e) }) });
+    } finally {
+      if (aliveRef.current) setFetching(false);
+    }
+  };
 
   const submit = async () => {
     if (!requestResult.ok) {
@@ -233,6 +297,26 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
                 fontFamily="mono"
               />
               {err("values", "assertErrValues")}
+              <Flex align="center" gap="2" wrap="wrap">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  disabled={fetching || saving}
+                  title={t("assertFetchValuesTooltip")}
+                  onClick={() => void fetchValues()}
+                >
+                  {fetching ? t("assertFetchValuesRunning") : t("assertFetchValues")}
+                </Button>
+              </Flex>
+              {fetchNote &&
+                (fetchNote.tone === "error" ? (
+                  <ErrorNote role="alert">{fetchNote.text}</ErrorNote>
+                ) : (
+                  <Callout tone={fetchNote.tone} role="status">
+                    {fetchNote.text}
+                  </Callout>
+                ))}
             </FormSection>
           </>
         )}
@@ -386,6 +470,17 @@ export function AssertionEditorModal({ initial, driver, profile, onSave, onClose
             {preview?.violations_sql ?? t("assertPreviewEmpty")}
           </CodePreview>
         </FormSection>
+
+        {preview && draft.kind !== "row_count" && (
+          <SqlCountCheck
+            sessionId={sessionId}
+            database={database}
+            driver={driver}
+            sql={preview.violations_sql}
+            mode="violations"
+            disabled={saving}
+          />
+        )}
 
         {saveError && <ErrorNote role="alert">{t("assertSaveError", { error: saveError })}</ErrorNote>}
       </ModalBody>

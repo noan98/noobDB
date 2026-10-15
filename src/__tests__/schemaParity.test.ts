@@ -105,6 +105,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // 結果ハンドル (#1264)。
   ["resultFindOutput", schemas.resultFindOutput],
   ["resultColumnStats", schemas.resultColumnStats],
+  ["resultDuplicateKeys", schemas.resultDuplicateKeys],
   ["queryStreamPatchMessage", schemas.queryStreamPatchMessage],
   // #1257: ブロードキャスト比較の Channel メッセージ。
   ["broadcastEnvMessage", schemas.broadcastEnvMessage],
@@ -173,6 +174,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["alterTableContext", schemas.alterTableContext],
   ["assertionSql", schemas.assertionSql],
   ["assertionOutcome", schemas.assertionOutcome],
+  ["acceptedValuesCandidates", schemas.acceptedValuesCandidates],
+  ["importAssertionsResult", schemas.importAssertionsResult],
   ["assertionVariants", schemas.assertion],
   ["assertionRowCountOpVariants", schemas.assertion],
   ["assertionRunRecord", schemas.assertionRunRecord],
@@ -207,6 +210,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["timelapseCaptureOutcome", schemas.timelapseCaptureOutcome],
   ["tableWatch", schemas.tableWatch],
   ["timelapseGenerationDiff", schemas.timelapseGenerationDiff],
+  ["timelapseRowHistory", schemas.timelapseRowHistory],
+  ["schemaDriftRevertSql", schemas.schemaDriftRevertSql],
   ["schemaDriftGeneration", schemas.schemaDriftGeneration],
   ["schemaDriftSummary", schemas.schemaDriftSummary],
   ["schemaDriftCapture", schemas.schemaDriftCapture],

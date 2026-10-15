@@ -16,7 +16,8 @@ use crate::db::DriverKind;
 use crate::error::{AppError, Result};
 use crate::state::{AppState, Session};
 use crate::timelapse::{
-    clamp_max_generations, diff_snapshots, store, GenerationDiff, Snapshot, TableWatch,
+    clamp_max_generations, diff_snapshots, store, GenerationDiff, RowHistory, RowHistoryBuilder,
+    Snapshot, TableWatch,
 };
 
 /// `timelapse_watch_table` の結果。
@@ -224,6 +225,27 @@ pub async fn timelapse_diff_generations(from_id: i64, to_id: i64) -> Result<Gene
         from_captured_at: older.captured_at,
         to_captured_at: newer.captured_at,
     })
+}
+
+/// 主キーを指定して 1 行の値の推移を世代横断で返す (#1621)。変化があった世代だけを
+/// 古い順に返す。`key` は主キー列の並びの値 (差分行の `key` をそのまま渡せる)。
+#[tauri::command]
+pub async fn timelapse_row_history(
+    watch_id: i64,
+    key: Vec<crate::db::types::Value>,
+) -> Result<RowHistory> {
+    if key.is_empty() {
+        return Err(AppError::InvalidInput(
+            "primary key value is required".into(),
+        ));
+    }
+    let ids = store::list_generation_ids(watch_id).await?;
+    let mut builder = RowHistoryBuilder::new(&key);
+    for id in ids {
+        let g = store::load_generation(id).await?;
+        builder.push(id, &g.captured_at, &g.snapshot);
+    }
+    Ok(builder.finish())
 }
 
 /// ウォッチを解除する。`delete_data` が true なら保存済み世代も削除する。

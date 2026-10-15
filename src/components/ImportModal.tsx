@@ -48,6 +48,7 @@ import { copyToClipboard } from "./clipboard";
 import { useToast } from "./Toast";
 import { DeterminateProgressBar } from "./StreamProgressBar";
 import { Tooltip } from "./Tooltip";
+import { delimiterAfterPick, importScope, loadImportPrefs, saveImportPrefs } from "../inputMemory";
 
 interface Props {
   sessionId: string;
@@ -74,7 +75,9 @@ interface Props {
   initialPath?: string;
   /**
    * 接続プロファイルの ID。渡すと、既存テーブルへの取り込みで保存済みのマッピング
-   * テンプレートを候補に出し、現在のマッピングを保存できる (#1623)。
+   * テンプレートを候補に出し、現在のマッピングを保存できる (#1623)。あわせて接続 × DB ×
+   * テーブルごとに、前回の区切り・エンコーディング・NULL 表記・エラーモードなどを次回の
+   * 初期値にする (#1631)。秘密情報は扱わない。
    */
   profileId?: string;
   /**
@@ -128,11 +131,6 @@ function formatFromPath(path: string): ImportFormat {
   return "csv";
 }
 
-// .tsv はタブ区切りで読む。それ以外は既定のカンマ (ユーザが後から選び直せる)。
-function delimiterFromPath(path: string): DelimiterChoice {
-  return path.toLowerCase().endsWith(".tsv") ? "\t" : ",";
-}
-
 function newStreamId(): string {
   return `import_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -184,6 +182,9 @@ export function ImportModal({
 }: Props) {
   const t = useT();
   const toast = useToast();
+  // 前回の取り込み設定 (接続 × DB × テーブル単位, #1631)。新規テーブル作成モード (table = null) は DB 単位。
+  const memoryScope = importScope(profileId, database, table);
+  const [remembered] = useState(() => (profileId ? loadImportPrefs(memoryScope) : null));
   const [path, setPath] = useState(initialPath ?? "");
   // ファイルから新規テーブルを作成するモード (#985)。対象テーブルが無い
   // (DB のコンテキストメニューから開いた) ときは常にこのモード。
@@ -200,18 +201,21 @@ export function ImportModal({
   // 既存テーブルへ取り込み済みのファイルパス。同じファイルのまま再実行すると行が重複するので、
   // ファイルを選び直す / パスを編集するまで実行ボタンを無効にする (#1598)。
   const [importedPath, setImportedPath] = useState<string | null>(null);
-  const [format, setFormat] = useState<ImportFormat>(initialPath ? formatFromPath(initialPath) : "csv");
-  const [encoding, setEncoding] = useState("utf-8");
-  const [delimiter, setDelimiter] = useState<DelimiterChoice>(() =>
-    initialPath ? delimiterFromPath(initialPath) : ",",
+  const [format, setFormat] = useState<ImportFormat>(
+    initialPath ? formatFromPath(initialPath) : (remembered?.format ?? "csv"),
   );
-  const [quote, setQuote] = useState('"');
-  const [hasHeader, setHasHeader] = useState(true);
+  const [encoding, setEncoding] = useState(remembered?.encoding ?? "utf-8");
+  const [delimiter, setDelimiter] = useState<DelimiterChoice>(() => {
+    const prev = remembered?.delimiter ?? ",";
+    return initialPath ? delimiterAfterPick(prev, initialPath) : prev;
+  });
+  const [quote, setQuote] = useState(remembered?.quote ?? '"');
+  const [hasHeader, setHasHeader] = useState(remembered?.hasHeader ?? true);
   // xlsx のシート名 (#1171)。空 = 先頭シート。ファイル・形式を変えたら選び直す。
   const [sheet, setSheet] = useState("");
-  const [nullMode, setNullMode] = useState<NullMode>("empty");
-  const [nullCustom, setNullCustom] = useState("NULL");
-  const [errorMode, setErrorMode] = useState<ImportErrorMode>("abort");
+  const [nullMode, setNullMode] = useState<NullMode>(remembered?.nullMode ?? "empty");
+  const [nullCustom, setNullCustom] = useState(remembered?.nullCustom ?? "NULL");
+  const [errorMode, setErrorMode] = useState<ImportErrorMode>(remembered?.errorMode ?? "abort");
   // 既存キーの扱い (#972)。`keyColumns` が null の間は「未操作」とみなし、
   // マッピング済みの主キー列を既定のキーとして使う。
   const [conflictMode, setConflictMode] = useState<ImportConflictMode>("insert");
@@ -549,7 +553,7 @@ export function ImportModal({
       setImportedPath(null);
       // Auto-select the format from the extension; the user can still override.
       setFormat(formatFromPath(selected));
-      setDelimiter(delimiterFromPath(selected));
+      setDelimiter((cur) => delimiterAfterPick(cur, selected));
       mappingEditedRef.current = false;
       setSheet("");
       setStatus({ kind: "idle" });
@@ -616,6 +620,19 @@ export function ImportModal({
         if (unlistenRef.current) {
           unlistenRef.current();
           unlistenRef.current = null;
+        }
+        // 成功した設定を次回の初期値にする (#1631)。
+        if (profileId) {
+          saveImportPrefs(memoryScope, {
+            format,
+            encoding,
+            delimiter,
+            quote,
+            hasHeader,
+            nullMode,
+            nullCustom,
+            errorMode,
+          });
         }
         const skippedTotal = Math.max(e.skippedTotal, e.skipped.length);
         if (skippedTotal > 0) {

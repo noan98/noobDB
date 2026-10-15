@@ -11,7 +11,16 @@ import {
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { isPlainEnterKey } from "./modalKeys";
-import { Button, Input, PressableButton } from "./ui";
+import { Button, Input, PressableButton, Select } from "./ui";
+import { useSettings } from "../settings";
+import {
+  describeArgSet,
+  fitArgSet,
+  loadRoutineArgSets,
+  pushRoutineArgSet,
+  routineArgsScope,
+  saveRoutineArgSets,
+} from "../inputMemory";
 
 /**
  * ストアドプロシージャ / 関数の「実行…」フォーム (#1003)。
@@ -31,6 +40,8 @@ interface Props {
   id: string | null;
   /** 明示的トランザクション中か (MySQL の OUT / INOUT は固定接続が必要)。 */
   txActive: boolean;
+  /** 接続プロファイル ID。直近の引数セットをルーチンごとに (アプリ起動中だけ) 覚える (#1631)。 */
+  profileId?: string;
   onRun: (sql: string) => void;
   onSendToEditor: (sql: string) => void;
   onCancel: () => void;
@@ -44,11 +55,17 @@ export function RunRoutineModal({
   name,
   id,
   txActive,
+  profileId,
   onRun,
   onSendToEditor,
   onCancel,
 }: Props) {
   const t = useT();
+  const maskPatterns = useSettings().columnMaskPatterns;
+  // 直近に使った引数セット (#1631)。値に機微な情報が入りうるので、ディスクには書かず、アプリ起動中の
+  // メモリだけに持つ。引数名がマスク対象に一致する引数は覚えない。
+  const argScope = routineArgsScope(profileId, database, kind, name, id);
+  const [argHistory, setArgHistory] = useState(() => loadRoutineArgSets(argScope));
   const firstInputRef = useRef<HTMLInputElement>(null);
   const [signature, setSignature] = useState<RoutineSignature | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -87,8 +104,24 @@ export function RunRoutineModal({
   const blockedBySession = !!call?.needsSameConnection && !txActive;
   const canRun = !!call && !hasError && !blockedBySession;
 
+  /** 実行 / エディタへ送る直前に、今回の引数セットを履歴の先頭へ足す。 */
+  const rememberArgs = () => {
+    if (!signature) return;
+    const next = pushRoutineArgSet(
+      argHistory,
+      signature.parameters.map((p, i) => (routineParamTakesInput(p) ? (values[i] ?? "") : "")),
+      signature.parameters.map((p) => p.name),
+      maskPatterns,
+    );
+    setArgHistory(next);
+    saveRoutineArgSets(argScope, next);
+  };
+
   const run = () => {
-    if (canRun && call) onRun(call.sql);
+    if (canRun && call) {
+      rememberArgs();
+      onRun(call.sql);
+    }
   };
 
   const args = signature ? signature.parameters.filter(routineParamIsArgument) : [];
@@ -126,6 +159,28 @@ export function RunRoutineModal({
               <chakra.p m={0} color="app.textMuted" fontSize="sm">
                 {t("runRoutineNoParams")}
               </chakra.p>
+            )}
+            {args.length > 0 && argHistory.length > 0 && (
+              <FormSection>
+                <FieldLabel htmlFor="run-routine-history">{t("runRoutineHistoryLabel")}</FieldLabel>
+                <Select
+                  id="run-routine-history"
+                  value=""
+                  onChange={(e) => {
+                    const set = argHistory[Number(e.target.value)];
+                    if (set) setValues(fitArgSet(set, signature.parameters.length));
+                  }}
+                >
+                  <option value="">{t("runRoutineHistoryPlaceholder")}</option>
+                  {argHistory.map((set, i) => (
+                    // 履歴は並びが順序のみで一意な ID を持たないため、内容と位置をキーにする。
+                    <option key={`${i}:${set.join("\u0001")}`} value={i}>
+                      {describeArgSet(set)}
+                    </option>
+                  ))}
+                </Select>
+                <chakra.span textStyle="caption">{t("runRoutineHistoryNote")}</chakra.span>
+              </FormSection>
             )}
             {args.map((p, argIdx) => {
               const i = signature.parameters.indexOf(p);
@@ -195,7 +250,11 @@ export function RunRoutineModal({
           type="button"
           variant="secondary"
           disabled={!call || hasError}
-          onClick={() => call && onSendToEditor(call.sql)}
+          onClick={() => {
+            if (!call) return;
+            rememberArgs();
+            onSendToEditor(call.sql);
+          }}
         >
           {t("runRoutineSendToEditor")}
         </Button>

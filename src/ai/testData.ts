@@ -21,6 +21,7 @@ import {
   type ColumnGenSpec,
   type TemporalFormat,
 } from "../components/testDataGen";
+import { fingerprint } from "./aiCache";
 import { dialectLabel } from "./errorExplain";
 
 /** 1 列あたりに AI へ求める候補値 / テンプレートの最大数。 */
@@ -277,6 +278,53 @@ export function summarizeTestDataSend(
     rows: rowCount,
     locale,
   };
+}
+
+/**
+ * 保存済みプランの形式バージョン。プロンプトや応答の形を変えたら上げる
+ * (古い保存分は指紋が一致しなくなり、自然に作り直される)。
+ */
+const TEST_DATA_PLAN_CACHE_VERSION = 1;
+
+/**
+ * 表と AI へ送る列情報の指紋 (#1620)。ドライバ・表名・言語・列 (型・NULL 可・主キー・ユニーク・
+ * ENUM 候補・ヒント)・外部キー参照のどれかが変わると変わる。**行数は含めない** (計画は件数に依存せず、
+ * 同じ表への投入件数違いでも使い回せる)。スキーマが変わった = 指紋が変わった保存分は使わない。
+ */
+export function testDataPlanFingerprint(input: {
+  driver: string;
+  table: string;
+  locale: "ja" | "en";
+  context: TestDataAiContext;
+}): string {
+  return fingerprint(
+    JSON.stringify([
+      TEST_DATA_PLAN_CACHE_VERSION,
+      input.driver,
+      input.table,
+      input.locale,
+      input.context.columns,
+      input.context.references,
+    ]),
+  );
+}
+
+/** 保存する AI 生成プラン (#1620)。応答そのものを持ち、使うたびに `buildTestDataPlan` で検証し直す。 */
+export interface CachedTestDataPlan {
+  fingerprint: string;
+  response: TestDataAiResponse;
+  /** 保存時刻 (ms)。 */
+  savedAt: number;
+}
+
+export function isCachedTestDataPlan(v: unknown): v is CachedTestDataPlan {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.fingerprint === "string" &&
+    typeof o.savedAt === "number" &&
+    responseSchema.safeParse(o.response).success
+  );
 }
 
 /** 応答の検証で見つかった注意点 (表示は呼び出し側が i18n する)。 */

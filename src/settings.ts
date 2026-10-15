@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { isDarkDataTheme } from "./colorScale";
+import { sanitizeCustomTheme } from "./customTheme";
 import { pruneMruIds, recordMruUsage, sanitizeMruIds } from "./components/commandPaletteSearch";
 import { DEFAULT_MASK_PATTERNS, sanitizeMaskPatterns } from "./components/columnMask";
 import {
@@ -18,7 +19,13 @@ import {
   sanitizeQuickLauncherSectionLimits,
   type QuickLauncherSectionLimits,
 } from "./quickLauncher";
-import { DEFAULT_AI_SETTINGS, sanitizeAiSettings, type AiSendScope, type AiSettings } from "./ai/aiSettings";
+import {
+  DEFAULT_AI_SETTINGS,
+  sanitizeAiSettings,
+  sanitizeMonthlyBudget,
+  type AiSendScope,
+  type AiSettings,
+} from "./ai/aiSettings";
 import type { AiEffort, AiModelId, AiTaskKind } from "./ai/aiModels";
 
 export type Theme = "light" | "dark";
@@ -298,6 +305,13 @@ export interface Settings {
   tableOpenQueryOverrides: TableOpenQueryOverride[];
   /** フローティング・ランチャー (#1254) を表示するか。 */
   quickLauncherEnabled: boolean;
+  /**
+   * OS の「コントラストを上げる」(`prefers-contrast: more`) に追従して高コントラストプリセットへ
+   * 切り替える (#1631)。プリセットが既定のときだけ働き、明示的に選んだプリセットは上書きしない。
+   */
+  followOsContrast: boolean;
+  /** カスタムテーマ (#1631): 色トークンの上書き (トークン名 → 16 進色)。空なら無効。 */
+  customTheme: Record<string, string>;
   /** ランチャーの各セクションの表示件数。 */
   quickLauncherSectionLimits: QuickLauncherSectionLimits;
   /**
@@ -772,6 +786,8 @@ export const DEFAULT_SETTINGS: Settings = {
   tableOpenQueryTemplate: "",
   tableOpenQueryOverrides: [],
   quickLauncherEnabled: true,
+  followOsContrast: true,
+  customTheme: {},
   quickLauncherSectionLimits: { ...DEFAULT_QUICK_LAUNCHER_SECTION_LIMITS },
   ai: DEFAULT_AI_SETTINGS,
 };
@@ -898,7 +914,7 @@ function sanitizeMotionPreference(input: unknown, fallback: MotionPreference): M
  * 受け入れ、空文字や非文字列は捨てる (壊れた localStorage 耐性)。id の妥当性は
  * `resolveShortcutBindings` 側で既知 id のみ採用するため、ここでは形だけ整える。
  */
-function sanitizeShortcutOverrides(input: unknown): Record<string, string> {
+export function sanitizeShortcutOverrides(input: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (input && typeof input === "object") {
     for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
@@ -1000,6 +1016,8 @@ export function normalizeSettings(input: unknown): Settings {
     tableOpenQueryTemplate?: unknown;
     tableOpenQueryOverrides?: unknown;
     quickLauncherEnabled?: unknown;
+    followOsContrast?: unknown;
+    customTheme?: unknown;
     quickLauncherSectionLimits?: unknown;
     ai?: unknown;
   };
@@ -1146,6 +1164,8 @@ export function normalizeSettings(input: unknown): Settings {
     tableOpenQueryOverrides: sanitizeTableOpenQueryOverrides(parsed.tableOpenQueryOverrides),
     quickLauncherEnabled:
       typeof parsed.quickLauncherEnabled === "boolean" ? parsed.quickLauncherEnabled : true,
+    followOsContrast: typeof parsed.followOsContrast === "boolean" ? parsed.followOsContrast : true,
+    customTheme: sanitizeCustomTheme(parsed.customTheme),
     quickLauncherSectionLimits: sanitizeQuickLauncherSectionLimits(parsed.quickLauncherSectionLimits),
     ai: sanitizeAiSettings(parsed.ai),
   };
@@ -1727,6 +1747,34 @@ export function setQuickLauncherEnabled(value: boolean): void {
   listeners.forEach((cb) => cb());
 }
 
+export function setFollowOsContrast(value: boolean): void {
+  if (current.followOsContrast === value) return;
+  current = { ...current, followOsContrast: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** カスタムテーマ (#1631) を保存する。値は `sanitizeCustomTheme` を通す。空オブジェクトで解除。 */
+export function setCustomTheme(tokens: Record<string, string>): void {
+  const next = sanitizeCustomTheme(tokens);
+  if (JSON.stringify(current.customTheme) === JSON.stringify(next)) return;
+  current = { ...current, customTheme: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * OS の高コントラスト指定に追従した実効プリセット (#1631)。追従がオンで OS が `prefers-contrast: more` を
+ * 示し、ユーザが特定のプリセットを選んでいない (既定) ときだけ `high-contrast` にする。
+ */
+export function resolveThemePreset(
+  preset: ThemePreset,
+  followOsContrast: boolean,
+  prefersMoreContrast: boolean,
+): ThemePreset {
+  return followOsContrast && prefersMoreContrast && preset === "default" ? "high-contrast" : preset;
+}
+
 export function setQuickLauncherSectionLimit(section: keyof QuickLauncherSectionLimits, value: number): void {
   const next = sanitizeQuickLauncherSectionLimits({
     ...current.quickLauncherSectionLimits,
@@ -1792,6 +1840,11 @@ export function setAiHideSetupHint(value: boolean): void {
   patchAi({ hideSetupHint: value });
 }
 
+/** AI の月次予算 (USD、#1620)。`null` / 不正な値は上限なし。 */
+export function setAiMonthlyBudget(value: number | null): void {
+  patchAi({ monthlyBudgetUsd: sanitizeMonthlyBudget(value) });
+}
+
 /** エディタの AI インライン補完 (#1479) のオン / オフ。 */
 export function setAiInlineComplete(value: boolean): void {
   patchAi({ inlineComplete: value });
@@ -1836,6 +1889,26 @@ export function setShortcutBinding(id: string, combo: string | null): void {
     if (next[id] === combo) return;
     next[id] = combo;
   }
+  current = { ...current, shortcutOverrides: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/**
+ * 複数のショートカット上書きをまとめて反映する (#1631: 衝突時の入れ替え)。1 回の保存・通知で済ませる。
+ */
+export function applyShortcutBindings(changes: Record<string, string>): void {
+  const next = { ...current.shortcutOverrides, ...sanitizeShortcutOverrides(changes) };
+  if (JSON.stringify(next) === JSON.stringify(current.shortcutOverrides)) return;
+  current = { ...current, shortcutOverrides: next };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+/** ショートカット上書きを丸ごと置き換える (#1631: JSON の読み込み)。値は検証を通す。 */
+export function replaceShortcutBindings(overrides: Record<string, string>): void {
+  const next = sanitizeShortcutOverrides(overrides);
+  if (JSON.stringify(next) === JSON.stringify(current.shortcutOverrides)) return;
   current = { ...current, shortcutOverrides: next };
   persist();
   listeners.forEach((cb) => cb());

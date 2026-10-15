@@ -5,7 +5,8 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { BrandMark } from "../brand";
 import { ProductionBadge, ProfileColorChip, SandboxBadge } from "./ProfileBadge";
-import { connectionBandColor, type TitleBarConnection } from "./titleBarContext";
+import { api } from "../api/tauri";
+import { connectionBandColor, windowTitleFor, type TitleBarConnection } from "./titleBarContext";
 import { Tooltip } from "./Tooltip";
 import { ActivityCenter } from "./ActivityCenter";
 
@@ -92,6 +93,19 @@ export function TitleBar({
       unlisten?.();
     };
   }, []);
+
+  // OS のタスクバー / Alt+Tab に出るウィンドウタイトルへ、接続名と本番・サンドボックスの区別を
+  // 反映する (#1631)。ウィンドウの操作は capability を増やさず Rust コマンド経由。
+  const windowTitle = windowTitleFor(connection, {
+    production: t("windowTitleProduction"),
+    sandbox: t("windowTitleSandbox"),
+    reconnecting: t("statusReconnecting"),
+  });
+  useEffect(() => {
+    api.setWindowTitle(windowTitle).catch(() => {
+      // ベストエフォート: タイトルを変えられなくても画面内の帯・バッジで判別できる。
+    });
+  }, [windowTitle]);
 
   // 接続中はタイトルバー下端にアクセントの帯を常時表示する。本番接続は
   // 危険色の帯にして全画面で「本番にいる」ことを一目で示す。色遷移は CSS transition。

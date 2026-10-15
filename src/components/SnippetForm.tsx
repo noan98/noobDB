@@ -90,7 +90,8 @@ export function SnippetForm({
     setSaving(true);
     try {
       await api.saveSnippet({
-        id: initial?.id,
+        // 複製の下書きは id が空 (新規として保存する, #1631)。
+        id: initial?.id || undefined,
         name: name.trim(),
         folder: folder.trim() || null,
         tags: tags
@@ -126,7 +127,7 @@ export function SnippetForm({
     >
       {/* 見出しは接続フォームと同じ共通 Heading (#1114)。 */}
       <Heading gridColumn="span 2">
-        {initial ? t("snippetEditTitle", { name: initial.name }) : t("snippetNewTitle")}
+        {initial?.id ? t("snippetEditTitle", { name: initial.name }) : t("snippetNewTitle")}
       </Heading>
 
       <Box gridColumn="span 2">

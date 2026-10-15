@@ -91,6 +91,10 @@ pub struct PatchPayload {
     pub unchanged: bool,
     /// 前回にあって今回に対応が無い行の数。
     pub removed_count: u64,
+    /// 前回に対応が無い (新しく現れた) 行の数 (#1621)。
+    pub added_count: u64,
+    /// 前回と対応するが値が変わった行の数 (#1621)。
+    pub changed_count: u64,
     pub runs: Vec<PatchRun>,
 }
 
@@ -122,6 +126,8 @@ pub struct RefreshBuilder {
     pending_prev: Vec<Option<u32>>,
     pending_rows: Vec<Vec<Value>>,
     total: u64,
+    added: u64,
+    changed: u64,
 }
 
 impl RefreshBuilder {
@@ -156,6 +162,8 @@ impl RefreshBuilder {
             pending_prev: Vec::new(),
             pending_rows: Vec::new(),
             total: 0,
+            added: 0,
+            changed: 0,
         })
     }
 
@@ -238,12 +246,14 @@ impl RefreshBuilder {
                         }
                     }
                 } else {
+                    self.changed += 1;
                     self.flush_keep();
                     self.pending_prev.push(Some(p));
                     self.pending_rows.push(row.to_vec());
                 }
             }
             None => {
+                self.added += 1;
                 self.flush_keep();
                 self.pending_prev.push(None);
                 self.pending_rows.push(row.to_vec());
@@ -267,6 +277,8 @@ impl RefreshBuilder {
                 total_rows: self.total,
                 unchanged,
                 removed_count: removed,
+                added_count: self.added,
+                changed_count: self.changed,
                 runs: if unchanged {
                     Vec::new()
                 } else {
@@ -432,6 +444,7 @@ mod tests {
         let p = patch_for(&rows, &rows);
         assert!(p.unchanged);
         assert_eq!(p.removed_count, 0);
+        assert_eq!((p.added_count, p.changed_count), (0, 0));
         assert_eq!(p.total_rows, 3);
         assert!(p.runs.is_empty());
     }
@@ -444,6 +457,8 @@ mod tests {
         let p = patch_for(&prev, &next);
         assert!(!p.unchanged);
         assert_eq!(p.removed_count, 1);
+        // 追加 (5) 1 行、変更 (2) 1 行 (#1621)。順序入れ替えだけの行は変更に数えない。
+        assert_eq!((p.added_count, p.changed_count), (1, 1));
         assert_eq!(apply(&prev, &p), next);
         // 変更行は前回位置付き、追加行は null。
         let mut saw_changed = false;
@@ -498,6 +513,7 @@ mod tests {
         let p = patch_for(&prev, &next);
         assert_eq!(apply(&prev, &p), next);
         assert_eq!(p.removed_count, 0);
+        assert_eq!((p.added_count, p.changed_count), (1, 0));
     }
 
     #[test]
@@ -569,6 +585,8 @@ mod tests {
             total_rows: 2,
             unchanged: false,
             removed_count: 1,
+            added_count: 1,
+            changed_count: 0,
             runs: vec![
                 PatchRun::Keep { from: 0, count: 1 },
                 PatchRun::Rows {
@@ -580,6 +598,8 @@ mod tests {
         let v = serde_json::to_value(&p).expect("json");
         assert_eq!(v["totalRows"], 2);
         assert_eq!(v["removedCount"], 1);
+        assert_eq!(v["addedCount"], 1);
+        assert_eq!(v["changedCount"], 0);
         assert_eq!(v["runs"][0]["type"], "keep");
         assert_eq!(v["runs"][1]["type"], "rows");
         assert_eq!(v["runs"][1]["prev"][0], serde_json::Value::Null);

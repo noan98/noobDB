@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
 import {
   Background,
@@ -6,9 +6,11 @@ import {
   Controls,
   Handle,
   MiniMap,
+  Panel,
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getNodesBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -34,6 +36,8 @@ import {
   worstSeverity,
   type PlanNode,
 } from "./explainPlan";
+import { ImageExportButton } from "./ImageExportButton";
+import { elementToPngBlob, elementToSvgBytes, erExportGeometry } from "./imageExport";
 import { Tooltip } from "./Tooltip";
 
 /**
@@ -55,6 +59,8 @@ interface PlanNodeData {
   actualMs: number | null;
   worstHint: "info" | "caution" | "warning" | null;
   selected: boolean;
+  /** ノード検索に一致 (#1628)。 */
+  match: boolean;
   onSelect: () => void;
   [key: string]: unknown;
 }
@@ -108,7 +114,7 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
     background: fill ?? "var(--bg-elevated)",
     color: ink,
     borderColor: data.selected ? "var(--accent)" : "var(--border)",
-    outline: data.selected ? "2px solid var(--accent)" : "none",
+    outline: data.selected ? "2px solid var(--accent)" : data.match ? "2px dashed var(--accent)" : "none",
     // キーボードフォーカス中は、選択リングとは別に共通のフォーカスリングを重ねる。
     "&:focus-visible": { outline: "none", boxShadow: "var(--focus-ring)" },
   };
@@ -123,6 +129,7 @@ function PlanFlowNodeView({ data }: NodeProps<PlanFlowNode>) {
         tabIndex={0}
         aria-label={data.label}
         aria-pressed={data.selected}
+        data-search-match={data.match ? "true" : undefined}
         onClick={data.onSelect}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -186,12 +193,15 @@ interface ExplainGraphViewProps {
   maxCost: number;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** ノード検索に一致した ID (#1628)。 */
+  matchIds?: ReadonlySet<string>;
 }
 
-function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraphViewProps) {
+function ExplainGraphInner({ root, maxCost, selectedId, onSelect, matchIds }: ExplainGraphViewProps) {
   const reduceMotion = useReducedMotion();
   const { fitView } = useReactFlow();
   const isDark = useIsDarkTheme();
+  const wrapRef = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<PlanFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -215,12 +225,13 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
           actualMs: actualTotalMs(n.node),
           worstHint: worstSeverity(computeHints(n.node)),
           selected: selectedId === n.id,
+          match: matchIds?.has(n.id) ?? false,
           onSelect: () => onSelect(n.id),
         },
       })),
     );
     setEdges(positioned.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })));
-  }, [positioned, maxCost, selectedId, onSelect, setNodes, setEdges]);
+  }, [positioned, maxCost, selectedId, onSelect, matchIds, setNodes, setEdges]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: グラフ配置 (positioned) が変わるたび全体表示へ合わせ直すトリガ依存
   useEffect(() => {
@@ -237,26 +248,61 @@ function ExplainGraphInner({ root, maxCost, selectedId, onSelect }: ExplainGraph
     [isDark],
   );
 
+  // 全景エクスポート (#1628): 現在のズーム/パンに依存せず、ノード外接矩形を等倍で収める。
+  const buildExportCapture = useCallback(() => {
+    const viewport = wrapRef.current?.querySelector(".react-flow__viewport") as HTMLElement | null;
+    if (!viewport || nodes.length === 0) {
+      throw new Error("plan graph is not rendered");
+    }
+    const { width, height, tx, ty, scale } = erExportGeometry(getNodesBounds(nodes));
+    const style: Partial<CSSStyleDeclaration> = {
+      width: `${width}px`,
+      height: `${height}px`,
+      transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+    };
+    return { viewport, width, height, style };
+  }, [nodes]);
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      nodeTypes={nodeTypes}
-      defaultEdgeOptions={defaultEdgeOptions}
-      nodesConnectable={false}
-      nodesFocusable={false}
-      edgesFocusable={false}
-      fitView
-      minZoom={0.1}
-      colorMode={isDark ? "dark" : "light"}
-      proOptions={{ hideAttribution: true }}
-    >
-      <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-      <Controls showInteractive={false} />
-      <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
-    </ReactFlow>
+    <Box ref={wrapRef} w="100%" h="100%">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        nodeTypes={nodeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
+        nodesConnectable={false}
+        nodesFocusable={false}
+        edgesFocusable={false}
+        fitView
+        minZoom={0.1}
+        colorMode={isDark ? "dark" : "light"}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+        <Controls showInteractive={false} />
+        <MiniMap<PlanFlowNode> pannable zoomable nodeColor={miniMapNodeColor} />
+        <Panel position="top-right">
+          <ImageExportButton
+            filenameBase="explain_plan"
+            makePng={(opts) => {
+              const c = buildExportCapture();
+              return elementToPngBlob(c.viewport, {
+                width: c.width,
+                height: c.height,
+                style: c.style,
+                ...opts,
+              });
+            }}
+            makeSvg={() => {
+              const c = buildExportCapture();
+              return elementToSvgBytes(c.viewport, { width: c.width, height: c.height, style: c.style });
+            }}
+          />
+        </Panel>
+      </ReactFlow>
+    </Box>
   );
 }
 

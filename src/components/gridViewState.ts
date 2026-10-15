@@ -74,6 +74,7 @@ const FILTER_OPS: FilterOp[] = [
   "notEquals",
   "startsWith",
   "endsWith",
+  "in",
   "eq",
   "ne",
   "gt",
@@ -94,6 +95,9 @@ function isNullMode(v: unknown): v is FilterNullMode {
 function isColumnFilter(v: unknown): v is ColumnFilter {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
+  if (o.op === "in" && !(Array.isArray(o.values) && o.values.every((x) => typeof x === "string"))) {
+    return false;
+  }
   return (
     isFilterOp(o.op) && typeof o.value === "string" && typeof o.value2 === "string" && isNullMode(o.nullMode)
   );

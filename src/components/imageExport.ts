@@ -21,6 +21,32 @@ export function themeBackground(): string {
   return v || "#ffffff";
 }
 
+/** PNG の解像度倍率 (ピクセル比)。 */
+export type ExportScale = 1 | 2 | 3;
+export const EXPORT_SCALES: readonly ExportScale[] = [1, 2, 3];
+/** PNG の背景: 現在のテーマの背景 / 白 / 透過。 */
+export type ExportBackground = "theme" | "white" | "transparent";
+export const EXPORT_BACKGROUNDS: readonly ExportBackground[] = ["theme", "white", "transparent"];
+
+/** `makePng` へ渡す、倍率と背景色の解決済みオプション。 */
+export interface PngExportOptions {
+  pixelRatio: number;
+  /** CSS の色指定 (`transparent` を含む)。 */
+  background: string;
+}
+
+/**
+ * 画像書き出しメニューで選んだ倍率と背景から、`elementToPngBlob` へ渡す値を作る (#1628)。
+ * `theme` はその時点のテーマ背景 (ダークテーマの見た目をそのまま焼き込む)。
+ */
+export function resolvePngExportOptions(scale: ExportScale, background: ExportBackground): PngExportOptions {
+  return {
+    pixelRatio: scale,
+    background:
+      background === "white" ? "#ffffff" : background === "transparent" ? "transparent" : themeBackground(),
+  };
+}
+
 /**
  * `data:` URL をバイト列へデコードする純関数。`base64` (`;base64,`) と
  * URI エンコード (SVG の `toSvg` が返す形式) の両方に対応する。テスト可能なように
@@ -105,3 +131,32 @@ export async function copyPngToClipboard(blob: Blob): Promise<boolean> {
 }
 
 export { blobToBytes };
+
+/** ER 図の全景エクスポート時に内容の周囲へ取る余白 (px)。 */
+const ER_EXPORT_PADDING = 40;
+/** 出力画像の 1 辺の上限 (px)。巨大スキーマで過大なキャンバスを避ける。 */
+const ER_EXPORT_MAX_DIM = 8000;
+
+/**
+ * 全景エクスポートの出力サイズと変換を求める。内容が `ER_EXPORT_MAX_DIM` を超えるときは
+ * 切り捨てずに縮小 (scale < 1) して全体を収める。
+ */
+export function erExportGeometry(bounds: { x: number; y: number; width: number; height: number }): {
+  width: number;
+  height: number;
+  tx: number;
+  ty: number;
+  scale: number;
+} {
+  const pad = ER_EXPORT_PADDING;
+  const fullW = Math.max(1, bounds.width + pad * 2);
+  const fullH = Math.max(1, bounds.height + pad * 2);
+  const scale = Math.min(1, ER_EXPORT_MAX_DIM / fullW, ER_EXPORT_MAX_DIM / fullH);
+  return {
+    width: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullW * scale))),
+    height: Math.min(ER_EXPORT_MAX_DIM, Math.max(1, Math.ceil(fullH * scale))),
+    tx: (-bounds.x + pad) * scale,
+    ty: (-bounds.y + pad) * scale,
+    scale,
+  };
+}

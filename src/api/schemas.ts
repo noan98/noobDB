@@ -318,6 +318,8 @@ export const columnProfile = z.object({
   top_values: z.array(profileValueCount),
   histogram: z.array(profileHistogramBucket),
   notes: z.array(z.string()),
+  /** 標本モード (#1628) の抽出率 (%)。全件なら null。 */
+  sample_percent: z.number().nullish(),
 });
 
 /** 全列の概要 (#1539)。 */
@@ -421,6 +423,16 @@ export const connectionProfile = z.object({
     })
     .nullable()
     .optional(),
+  // AWS SSM ポートフォワード経由の接続 (#1683)。踏み台のインスタンス ID・リージョン・
+  // AWS プロファイル名のみ (すべて非秘密)。null / 欠落は SSM 不使用。
+  ssm: z
+    .object({
+      target: z.string(),
+      region: z.string(),
+      profile: z.string().nullable().optional(),
+    })
+    .nullable()
+    .optional(),
   // 以下は list_profiles の戻り値にのみ含まれる「秘密が設定済みか」の表示用フラグ。
   has_db_password: z.boolean().optional(),
   has_ssh_passphrase: z.boolean().optional(),
@@ -501,6 +513,30 @@ export const assertionOutcome = z.object({
   check_sql: z.string(),
   violations_sql: z.string(),
   elapsed_ms: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      observed: z.number(),
+      passed: z.boolean(),
+    })
+    .nullable(),
+});
+
+export const acceptedValuesCandidates = z.object({
+  values: z.array(z.string()),
+  truncated: z.boolean(),
+});
+
+export const importAssertionsResult = z.object({
+  imported: z.array(assertion),
+  skipped_duplicates: z.number(),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
 });
 
 export const historyEntry = z.object({
@@ -698,6 +734,22 @@ export const timelapseGenerationDiff = z.object({
   to_captured_at: z.string(),
 });
 
+export const timelapseRowHistory = z.object({
+  columns: z.array(z.string()),
+  primary_key: z.array(z.string()),
+  entries: z.array(
+    z.object({
+      generation_id: z.number(),
+      captured_at: z.string(),
+      present: z.boolean(),
+      row: z.array(cellValue).nullable(),
+      changed_columns: z.array(z.string()),
+    }),
+  ),
+  generations_scanned: z.number(),
+  partial: z.boolean(),
+});
+
 /** サンドボックス (壊せる砂場、#747) の非秘密メタデータ。 */
 export const sandboxRecord = z.object({
   id: z.string(),
@@ -767,6 +819,7 @@ export const healthFinding = z.object({
   fix_ddl: z.string().nullable(),
   fix_ddl_online: z.string().nullable(),
   statistical: z.boolean(),
+  size_bytes: z.number().nullable(),
 });
 
 export const skippedRule = z.object({
@@ -787,6 +840,15 @@ export const schemaHealthReport = z.object({
   findings: z.array(healthFinding),
   skipped: z.array(skippedRule),
   table_plans: z.array(tableFixPlan),
+  ignored: z.array(healthFinding),
+  diff: z
+    .object({
+      previous_at: z.string(),
+      new_indexes: z.array(z.number()),
+      resolved: z.array(healthFinding),
+      unchanged: z.number(),
+    })
+    .nullable(),
 });
 
 export const csvPreview = z.object({
@@ -823,6 +885,7 @@ export const connectPhaseEvent = z.object({
 /** 単純なプリミティブ/配列レスポンス用の共有スキーマ。 */
 export const stringArray = z.array(z.string());
 export const numberResponse = z.number();
+export const booleanResponse = z.boolean();
 export const nullableBooleanResponse = z.boolean().nullable();
 export const stringResponse = z.string();
 export const stringArrayResponse = z.array(z.string());
@@ -867,6 +930,20 @@ export const resultColumnStats = z.object({
 });
 export const resultColumnStatsResponse = resultColumnStats.nullable();
 
+/** `result_duplicate_keys` の戻り値 (#1628)。`null` はハンドルが無い。 */
+export const resultDuplicateKeys = z.object({
+  rowCount: z.number(),
+  nullKeyRows: z.number(),
+  distinctKeys: z.number(),
+  groupCount: z.number(),
+  duplicateRows: z.number(),
+  extraRows: z.number(),
+  top: z.array(z.object({ values: z.array(z.string()), count: z.number(), firstRow: z.number() })),
+  rowIndices: z.array(z.number()),
+  indicesTruncated: z.boolean(),
+});
+export const resultDuplicateKeysResponse = resultDuplicateKeys.nullable();
+
 /** `cancel_stream` の戻り値。中断できた行数 (#685) を運ぶため単純な bool から
  *  拡張されている。 */
 export const cancelStreamResponse = z.object({
@@ -901,6 +978,13 @@ export const tableStatistic = tableSizeInfo.extend({
   index_count: z.number(),
   has_primary_key: z.boolean(),
   foreign_key_count: z.number(),
+  previous: z
+    .object({
+      at: z.string(),
+      row_estimate: z.number().nullable(),
+      total_bytes: z.number().nullable(),
+    })
+    .nullable(),
 });
 
 /** 1 テーブル分の全列メタデータ (`describe_database`、#1255)。Rust の
@@ -1020,6 +1104,8 @@ export const streamStatsSnapshot = z.object({
   numMin: z.array(z.number().nullable()),
   numMax: z.array(z.number().nullable()),
   duplicateRows: z.boolean().nullable(),
+  /** 列ごとの近似ユニーク数 (HyperLogLog、#1628)。 */
+  distinctEstimates: z.array(z.number()).optional(),
 });
 
 export const queryStreamColumnsMessage = z.object({
@@ -1054,6 +1140,8 @@ export const queryStreamPatchMessage = z.object({
   totalRows: z.number(),
   unchanged: z.boolean(),
   removedCount: z.number(),
+  addedCount: z.number(),
+  changedCount: z.number(),
   runs: z.array(queryStreamPatchRun),
 });
 
@@ -1687,7 +1775,14 @@ const connectRetry = z.object({
 
 const taskSchedule = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("interval"), minutes: z.number() }),
-  z.object({ kind: z.literal("daily"), hour: z.number(), minute: z.number() }),
+  z.object({
+    kind: z.literal("daily"),
+    hour: z.number(),
+    minute: z.number(),
+    // IANA タイムゾーン (null = UTC) と曜日マスク (0 = 毎日)。#1621。
+    timezone: z.string().nullable(),
+    weekdays: z.number(),
+  }),
 ]);
 
 export const taskDefinition = z.object({
@@ -1703,6 +1798,9 @@ export const taskDefinition = z.object({
   last_run_at: z.string().nullable(),
   last_status: z.string().nullable(),
   connect_retry: connectRetry,
+  pause_after_failures: z.number(),
+  consecutive_failures: z.number(),
+  auto_paused_at: z.string().nullable(),
 });
 
 export const taskRun = z.object({
@@ -1735,6 +1833,9 @@ export const assertionRunRecord = z.object({
 
 export const assertionRunRecordArray = z.array(assertionRunRecord);
 
+/** `preview_task_schedule` の戻り値: 次回以降の発火時刻 (RFC3339, UTC)。 */
+export const taskSchedulePreview = z.array(z.string());
+
 export const schedulerSettings = z.object({
   catch_up_missed: z.boolean(),
 });
@@ -1746,6 +1847,7 @@ export const taskRunEvent = z.object({
   message: z.string().nullable(),
   outputPath: z.string().nullable(),
   catchUp: z.boolean(),
+  autoPaused: z.boolean(),
 });
 
 /** 「今すぐ実行」の進捗 (`task-run:progress`、#1534)。`unit` は `rows` / `bytes` / `items`。 */
@@ -1890,6 +1992,15 @@ export const schemaDriftGeneration = z.object({
   omitted: z.boolean(),
   // DDL の成功をきっかけに自動取得した世代のときの実行 SQL (#1537)。
   triggerSql: z.string().nullable().optional(),
+  // 利用者が付けたラベル (#1621)。
+  label: z.string().nullable().optional(),
+});
+/** `schema_drift_revert_sql` の結果 (#1621)。 */
+export const schemaDriftRevertSql = z.object({
+  plan: syncPlan,
+  omitted_destructive: z.number(),
+  database: z.string(),
+  preamble: z.string().nullable(),
 });
 export const schemaDriftGenerationArray = z.array(schemaDriftGeneration);
 
@@ -1977,4 +2088,5 @@ export const planWatchRefreshResult = z.object({
     }),
   ),
   warned: z.array(z.string()),
+  warnedSummaries: z.array(z.string()),
 });

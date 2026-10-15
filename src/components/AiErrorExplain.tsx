@@ -15,12 +15,14 @@ import {
   type ErrorExplainResponse,
   type ExplainTable,
 } from "../ai/errorExplain";
+import { buildFixDiff } from "../ai/fixDiff";
 import { useLocale, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { Button } from "./ui";
 import { Callout } from "./Callout";
 import { useConfirm } from "./ConfirmDialog";
 import { CodePreview, ErrorNote, FieldLabel } from "./modalForm";
+import { DiffView } from "./AiSqlDiff";
 import { AiStreamProgress } from "./AiStreamProgress";
 import { useAiKeyPresent } from "../ai/aiKeyStore";
 import { AiSetupHint } from "./AiSetupHint";
@@ -212,41 +214,17 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
           <Section label={t("aiErrorExplainExplanation")}>{state.value.explanation}</Section>
           <Section label={t("aiErrorExplainCause")}>{state.value.cause}</Section>
           {state.value.suggestedSql && (
-            <Flex direction="column" gap="1">
-              <FieldLabel as="div">{t("aiErrorExplainSuggested")}</FieldLabel>
-              {state.masked && (
-                <Callout tone="warning" role="status">
-                  {t("aiErrorExplainMaskedNote")}
-                </Callout>
-              )}
-              <CodePreview wrap maxH="160px">
-                {state.value.suggestedSql}
-              </CodePreview>
-              <Flex align="center" gap="2">
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  onClick={() => {
-                    void props.onApply(state.value.suggestedSql ?? "").then((r) => {
-                      if (r === "applied" || r === "closed") setApplied(r);
-                    });
-                  }}
-                >
-                  {t("aiErrorExplainApply")}
-                </Button>
-                {applied === "applied" && (
-                  <chakra.span color="app.textSuccess" role="status">
-                    {t("aiErrorExplainApplied")}
-                  </chakra.span>
-                )}
-                {applied === "closed" && (
-                  <chakra.span color="app.textWarning" role="status">
-                    {t("aiErrorExplainTabClosed")}
-                  </chakra.span>
-                )}
-              </Flex>
-            </Flex>
+            <SuggestedFix
+              original={props.sql}
+              suggested={state.value.suggestedSql}
+              masked={state.masked}
+              applied={applied}
+              onApply={(sql) => {
+                void props.onApply(sql).then((r) => {
+                  if (r === "applied" || r === "closed") setApplied(r);
+                });
+              }}
+            />
           )}
           {state.value.notes.length > 0 && (
             <Callout tone="warning" title={t("aiErrorExplainNotes")} role="status">
@@ -280,6 +258,85 @@ export function AiErrorExplain(props: AiErrorExplainProps) {
         </Callout>
       )}
       {dialog}
+    </Flex>
+  );
+}
+
+/**
+ * 修正 SQL 案。失敗した元の SQL との行単位の差分を既定で見せ、全文は切り替えで見る (#1620)。
+ * 「エディタに反映」で入れるのは、見ている差分と同じ SQL (マスク送信で伏せたリテラルは
+ * 個数と並びが合うときだけ元の値へ差し戻す)。自動実行はしない。
+ */
+function SuggestedFix({
+  original,
+  suggested,
+  masked,
+  applied,
+  onApply,
+}: {
+  original: string;
+  suggested: string;
+  masked: boolean;
+  applied: null | "applied" | "closed";
+  onApply: (sql: string) => void;
+}) {
+  const t = useT();
+  const [showFull, setShowFull] = useState(false);
+  const fix = useMemo(() => buildFixDiff(original, suggested, masked), [original, suggested, masked]);
+  return (
+    <Flex direction="column" gap="1" data-testid="ai-error-fix">
+      <FieldLabel as="div">{t("aiErrorExplainSuggested")}</FieldLabel>
+      {masked && fix.restore === "restored" && (
+        <Callout tone="info" role="status">
+          {t("aiSqlRestoredNote")}
+        </Callout>
+      )}
+      {masked && fix.restore !== "restored" && (
+        <Callout tone="warning" role="status">
+          {t("aiErrorExplainMaskedNote")}
+        </Callout>
+      )}
+      {showFull ? (
+        <CodePreview wrap maxH="160px" data-testid="ai-error-fix-full">
+          {fix.sql}
+        </CodePreview>
+      ) : fix.changed ? (
+        <DiffView lines={fix.lines} />
+      ) : (
+        <Callout tone="info" role="status">
+          {t("aiSqlNoChange")}
+        </Callout>
+      )}
+      <Flex align="center" gap="2" wrap="wrap">
+        <Button
+          type="button"
+          variant="primary"
+          size="sm"
+          disabled={!fix.changed || applied === "applied"}
+          onClick={() => onApply(fix.sql)}
+        >
+          {t("aiErrorExplainApply")}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          aria-pressed={showFull}
+          onClick={() => setShowFull((v) => !v)}
+        >
+          {showFull ? t("aiErrorExplainShowDiff") : t("aiErrorExplainShowFull")}
+        </Button>
+        {applied === "applied" && (
+          <chakra.span color="app.textSuccess" role="status">
+            {t("aiErrorExplainApplied")}
+          </chakra.span>
+        )}
+        {applied === "closed" && (
+          <chakra.span color="app.textWarning" role="status">
+            {t("aiErrorExplainTabClosed")}
+          </chakra.span>
+        )}
+      </Flex>
     </Flex>
   );
 }

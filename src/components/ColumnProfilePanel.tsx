@@ -72,6 +72,9 @@ const countTile = (c: ProfileCount | null | undefined) => integerCountUpTarget(c
 // 補間中の小数は四捨五入してから整形する (CountUp 既定と同じ)。
 const formatCount = (n: number) => formatProfileCount(Math.round(n));
 
+/** 標本モードで選べる抽出率 (%)。 */
+const PROFILE_SAMPLE_PERCENTS = [10, 1, 0.1] as const;
+
 /** 列選択から自動集計を発行するまでの待ち時間 (ms)。 */
 const PROFILE_DEBOUNCE_MS = 300;
 
@@ -94,6 +97,8 @@ export function ColumnProfilePanel({
   const [columns, setColumns] = useState<TableColumnInfo[] | null>(null);
   const [columnsError, setColumnsError] = useState<string | null>(null);
   const [approximate, setApproximate] = useState(false);
+  // 標本モード (#1628)。null は全件。数千万行の表で傾向を素早く掴むための抽出率 (%)。
+  const [samplePercent, setSamplePercent] = useState<number | null>(null);
   const [profile, setProfile] = useState<ColumnProfile | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -158,7 +163,10 @@ export function ColumnProfilePanel({
     setRunning(true);
     setError(null);
     try {
-      const p = await api.profileColumn(sessionId, database, table, column, approximate);
+      const p =
+        samplePercent === null
+          ? await api.profileColumn(sessionId, database, table, column, approximate)
+          : await api.profileColumn(sessionId, database, table, column, approximate, null, samplePercent);
       if (seq === requestSeq.current) setProfile(p);
     } catch (e) {
       if (seq === requestSeq.current) {
@@ -168,7 +176,7 @@ export function ColumnProfilePanel({
     } finally {
       if (seq === requestSeq.current) setRunning(false);
     }
-  }, [sessionId, database, table, column, approximate]);
+  }, [sessionId, database, table, column, approximate, samplePercent]);
 
   // 対象列が決まった / 変わったら自動で実行する (近似の切替も再実行する)。
   // 列を素早く切り替えたときに全件集計が並走しないよう、自動実行は PROFILE_DEBOUNCE_MS 待つ
@@ -248,6 +256,24 @@ export function ColumnProfilePanel({
           <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm" cursor="pointer">
             <Checkbox checked={approximate} onChange={() => setApproximate((v) => !v)} />
             {t("profileApproximate")}
+          </chakra.label>
+        </Tooltip>
+        <Tooltip label={driver === "postgres" ? t("profileSampleHint") : t("profileSampleHintScan")}>
+          <chakra.label display="inline-flex" alignItems="center" gap="1.5" fontSize="sm">
+            <chakra.span color="app.textMuted">{t("profileSampleLabel")}</chakra.span>
+            <Select
+              value={samplePercent === null ? "" : String(samplePercent)}
+              onChange={(e) => setSamplePercent(e.target.value === "" ? null : Number(e.target.value))}
+              width="auto"
+              aria-label={t("profileSampleLabel")}
+            >
+              <option value="">{t("profileSampleFull")}</option>
+              {PROFILE_SAMPLE_PERCENTS.map((p) => (
+                <option key={p} value={p}>
+                  {t("profileSamplePercent", { percent: p })}
+                </option>
+              ))}
+            </Select>
           </chakra.label>
         </Tooltip>
         <Button type="button" variant="primary" size="sm" onClick={runNow} disabled={!column || running}>
@@ -473,11 +499,18 @@ export function ColumnProfilePanel({
           flexDirection="column"
           gap="3"
         >
-          {profile.notes.length > 0 && (
+          {profile.sample_percent !== null && profile.sample_percent !== undefined && (
+            <Callout tone="info" px="3" data-testid="profile-sample-note">
+              {t("profileSampleNote", { percent: profile.sample_percent })}
+            </Callout>
+          )}
+          {profile.notes.some((code) => code !== "sampled") && (
             <Callout tone="warning" px="3">
-              {profile.notes.map((code) => (
-                <chakra.div key={code}>{t(profileNoteKey(code))}</chakra.div>
-              ))}
+              {profile.notes
+                .filter((code) => code !== "sampled")
+                .map((code) => (
+                  <chakra.div key={code}>{t(profileNoteKey(code))}</chakra.div>
+                ))}
             </Callout>
           )}
 

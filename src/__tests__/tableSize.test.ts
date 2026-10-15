@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   computeTableSizeTotals,
+  deltaOf,
   filterTableStats,
+  formatDelta,
   formatBytes,
   formatCount,
   formatRowCount,
@@ -30,6 +32,7 @@ function statRow(name: string, partial: Partial<TableStatRow> = {}): TableStatRo
     indexCount: null,
     hasPrimaryKey: null,
     foreignKeyCount: null,
+    change: null,
     ...partial,
   };
 }
@@ -160,6 +163,7 @@ describe("toTableStatRows", () => {
         index_count: 2,
         has_primary_key: true,
         foreign_key_count: 0,
+        previous: { at: "2026-01-01T00:00:00Z", row_estimate: 4, total_bytes: null },
       },
       {
         ...row("ghost"),
@@ -167,6 +171,7 @@ describe("toTableStatRows", () => {
         index_count: 0,
         has_primary_key: false,
         foreign_key_count: 1,
+        previous: null,
       },
     ];
     const rows = toTableStatRows(stats);
@@ -184,6 +189,26 @@ describe("toTableStatRows", () => {
     expect(rows[1].indexCount).toBe(0);
     expect(rows[1].hasPrimaryKey).toBe(false);
     expect(rows[1].foreignKeyCount).toBe(1);
+    // 前回値があれば増減を計算し、片側が不明な項目は null (0 にしない)。
+    expect(rows[0].change).toEqual({ since: "2026-01-01T00:00:00Z", rows: 6, totalBytes: null });
+    expect(rows[1].change).toBeNull();
+  });
+});
+
+describe("formatDelta (#1621)", () => {
+  it("符号つきで件数とバイトを整形し、不明は表示しない", () => {
+    expect(formatDelta(1234, "count")).toBe("+1,234");
+    expect(formatDelta(-5, "count")).toBe("−5");
+    expect(formatDelta(0, "count")).toBe("±0");
+    expect(formatDelta(1536, "bytes")).toBe("+1.5 KB");
+    expect(formatDelta(-2048, "bytes")).toBe("−2.0 KB");
+    expect(formatDelta(null, "bytes")).toBeNull();
+  });
+
+  it("deltaOf は片側が不明なら null", () => {
+    expect(deltaOf(10, 4)).toBe(6);
+    expect(deltaOf(null, 4)).toBeNull();
+    expect(deltaOf(10, null)).toBeNull();
   });
 });
 

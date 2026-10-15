@@ -2,10 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { api, type CellValue, type TableColumnInfo } from "../api/tauri";
 import { toAiSnapshot } from "../ai/aiSettings";
+import { aiCacheKey, loadAiCache, saveAiCache } from "../ai/aiCache";
+import { formatDocTimestamp } from "../ai/schemaDoc";
 import { useAiStream } from "../ai/useAiStream";
 import {
   buildTestDataAiContext,
   buildTestDataPlan,
+  isCachedTestDataPlan,
+  testDataPlanFingerprint,
   buildTestDataPrompt,
   buildTestDataSystem,
   generateAiRows,
@@ -35,6 +39,13 @@ import { useToast } from "./Toast";
 import { useConfirm } from "./ConfirmDialog";
 import { Tooltip } from "./Tooltip";
 import {
+  applyRememberedSpecs,
+  loadTestDataPrefs,
+  saveTestDataPrefs,
+  snapshotTestDataPrefs,
+  testDataScope,
+} from "../inputMemory";
+import {
   activeSpecs,
   buildFkSelectSql,
   generateRows,
@@ -61,6 +72,12 @@ interface Props {
   database: string;
   table: string;
   driver: string;
+  /**
+   * 接続プロファイルの ID。AI の生成プランを接続単位で保存して再利用する (#1620) のと、
+   * 列ごとの戦略・シード・行数を接続 × DB × テーブルごとに記憶する (#1631) のに使う。
+   * 無いときは保存も再利用もしない。
+   */
+  profileId?: string;
   /** 本番フラグ。true なら投入前にタイプ確認付きの強確認を挟む。 */
   isProduction: boolean;
   onClose: () => void;
@@ -120,6 +137,7 @@ export function TestDataModal({
   database,
   table,
   driver,
+  profileId,
   isProduction,
   onClose,
   onInserted,
@@ -127,7 +145,8 @@ export function TestDataModal({
   const t = useT();
   const toast = useToast();
   const locale = useLocale();
-  const aiSettings = useSettings().ai;
+  const settings = useSettings();
+  const aiSettings = settings.ai;
   const aiAvailable = useAiAvailable();
   const { confirm, dialog: confirmDialog } = useConfirm();
 
@@ -137,6 +156,10 @@ export function TestDataModal({
   const [hints, setHints] = useState<Record<string, string>>({});
   const [aiState, setAiState] = useState<AiState>({ kind: "idle" });
   const [plan, setPlan] = useState<TestDataAiPlan | null>(null);
+  // 今の計画が保存済みの再利用か、今回 AI が作ったものか (#1620)。
+  const [planSource, setPlanSource] = useState<{ kind: "cache"; savedAt: number } | { kind: "ai" } | null>(
+    null,
+  );
   const stream = useAiStream({ idPrefix: "ai_testdata" });
   // AI が使えない状態 (無効化・キー削除) では必ずルールベースとして扱う。
   const aiMode = aiAvailable && mode === "ai";
@@ -144,8 +167,11 @@ export function TestDataModal({
 
   const [specs, setSpecs] = useState<ColumnGenSpec[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [rowCountText, setRowCountText] = useState("100");
-  const [seed, setSeed] = useState<number>(() => randomSeed());
+  // 前回の生成方針 (接続 × DB × テーブル単位, #1631)。秘密情報や機微な列名の固定値は含まれない。
+  const memoryScope = testDataScope(profileId, database, table);
+  const [remembered] = useState(() => (profileId ? loadTestDataPrefs(memoryScope) : null));
+  const [rowCountText, setRowCountText] = useState(remembered?.rowCountText ?? "100");
+  const [seed, setSeed] = useState<number>(() => remembered?.seed ?? randomSeed());
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
 
@@ -183,7 +209,7 @@ export function TestDataModal({
             }
           }),
         );
-        if (!cancelled) setSpecs(withFk);
+        if (!cancelled) setSpecs(remembered ? applyRememberedSpecs(withFk, remembered) : withFk);
       } catch (e) {
         if (!cancelled) setLoadError(String(e));
       }
@@ -191,7 +217,7 @@ export function TestDataModal({
     return () => {
       cancelled = true;
     };
-  }, [sessionId, database, table, driver]);
+  }, [sessionId, database, table, driver, remembered]);
 
   const rowCount = useMemo(() => {
     const n = Number(rowCountText);
@@ -236,6 +262,21 @@ export function TestDataModal({
       return next;
     });
   };
+
+  // 保存済みプラン (#1620): 同じ接続・DB・表で、表と送る列情報の指紋が一致するときだけ使う。
+  const planCacheKey = profileId ? aiCacheKey("testDataPlan", profileId, database, table) : null;
+  const planFingerprint = useMemo(
+    () => (aiContext ? testDataPlanFingerprint({ driver, table, locale, context: aiContext }) : null),
+    [aiContext, driver, table, locale],
+  );
+  // AI モードに入ったとき、まだ計画が無ければ保存済みの計画を自動で使う (AI は呼ばない)。
+  useEffect(() => {
+    if (!aiMode || plan !== null || !planCacheKey || !planFingerprint || !aiContext) return;
+    const cached = loadAiCache(planCacheKey, isCachedTestDataPlan);
+    if (cached === null || cached.fingerprint !== planFingerprint) return;
+    setPlan(buildTestDataPlan(cached.response, aiContext.columns));
+    setPlanSource({ kind: "cache", savedAt: cached.savedAt });
+  }, [aiMode, plan, planCacheKey, planFingerprint, aiContext]);
 
   const aiSends = useMemo(
     () => (aiContext ? summarizeTestDataSend(table, aiContext, rowCount, locale) : null),
@@ -286,6 +327,8 @@ export function TestDataModal({
       }
     }
     setAiState({ kind: "running" });
+    // 保存時の指紋は送信時点の値で取る (生成中にヒントが編集されても取り違えない)。
+    const sentFingerprint = planFingerprint;
     await stream.start(
       {
         task: "testData",
@@ -299,6 +342,14 @@ export function TestDataModal({
         onDone: ({ parsed }) => {
           if (parsed.ok) {
             setPlan(buildTestDataPlan(parsed.value, context.columns));
+            setPlanSource({ kind: "ai" });
+            if (planCacheKey && sentFingerprint) {
+              saveAiCache(planCacheKey, {
+                fingerprint: sentFingerprint,
+                response: parsed.value,
+                savedAt: Date.now(),
+              });
+            }
             setAiState({ kind: "idle" });
           } else {
             setAiState({ kind: "raw", raw: parsed.raw });
@@ -340,6 +391,13 @@ export function TestDataModal({
         columns: insertColumns.map((s) => s.column),
         rows,
       });
+      // 同じ検証データを再現できるよう、方針・シード・行数を覚える (#1631)。
+      if (profileId) {
+        saveTestDataPrefs(
+          memoryScope,
+          snapshotTestDataPrefs(specs, rowCountText, seed, settings.columnMaskPatterns),
+        );
+      }
       toast.success(t("testDataSuccess", { count: rowCount, table, ms: result.elapsed_ms }));
       onInserted();
       onClose();
@@ -623,6 +681,11 @@ export function TestDataModal({
             {plan && aiState.kind === "idle" && (
               <Callout tone="success" role="status">
                 {t("testDataAiPlanReady", { count: Object.keys(plan.columns).length })}
+              </Callout>
+            )}
+            {plan && aiState.kind === "idle" && planSource?.kind === "cache" && (
+              <Callout tone="info" role="status" data-testid="testdata-ai-plan-cached">
+                {t("testDataAiPlanCached", { at: formatDocTimestamp(new Date(planSource.savedAt)) })}
               </Callout>
             )}
             {plan?.warnings.map((w) => (

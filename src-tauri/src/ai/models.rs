@@ -40,6 +40,30 @@ impl AiModel {
         }
     }
 
+    /// 100 万トークンあたりの単価 (USD、#1620)。月次予算の判定に使う概算値で、
+    /// フロント `aiModels.ts` の `AI_MODEL_PRICES` と二重定義
+    /// (共有ベクタ `fixtures/aiModelPrices.json` を両側のテストが読んで一致を固定する)。
+    pub fn price(self) -> AiPrice {
+        match self {
+            AiModel::Opus55 => AiPrice::new(4.0, 20.0, 0.2, 5.0),
+            AiModel::Sonnet55 => AiPrice::new(2.0, 10.0, 0.2, 2.5),
+            AiModel::Haiku55 => AiPrice::new(0.1, 0.5, 0.01, 0.125),
+            AiModel::Fable51 => AiPrice::new(10.0, 50.0, 0.25, 12.5),
+        }
+    }
+
+    /// API のモデル ID から引く。未知の ID は `None`。
+    pub fn from_id(id: &str) -> Option<AiModel> {
+        [
+            AiModel::Opus55,
+            AiModel::Sonnet55,
+            AiModel::Haiku55,
+            AiModel::Fable51,
+        ]
+        .into_iter()
+        .find(|m| m.id() == id)
+    }
+
     /// プロンプトキャッシュが効く最小のプロンプト長 (トークン数、#1473)。
     /// 現行 4 モデルはいずれも 512 トークン。モデルを足すときは公式資料
     /// (https://docs.claude.com/en/docs/build-with-claude/prompt-caching の
@@ -47,6 +71,26 @@ impl AiModel {
     pub fn cache_min_tokens(self) -> usize {
         match self {
             AiModel::Opus55 | AiModel::Sonnet55 | AiModel::Haiku55 | AiModel::Fable51 => 512,
+        }
+    }
+}
+
+/// 100 万トークンあたりの単価 (USD)。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AiPrice {
+    pub input: f64,
+    pub output: f64,
+    pub cache_read: f64,
+    pub cache_write: f64,
+}
+
+impl AiPrice {
+    const fn new(input: f64, output: f64, cache_read: f64, cache_write: f64) -> Self {
+        Self {
+            input,
+            output,
+            cache_read,
+            cache_write,
         }
     }
 }
@@ -206,6 +250,10 @@ pub struct AiSettingsSnapshot {
     /// `null` = 推奨エフォート。キーが無いタスク種別も同じ扱い。
     #[serde(default)]
     pub task_efforts: HashMap<AiTaskKind, Option<AiEffort>>,
+    /// 月次予算 (USD、#1620)。`None` = 上限なし。月初 (JST) からの概算コストがこれ以上なら
+    /// `run_ai_request` が実行前に止める。
+    #[serde(default)]
+    pub monthly_budget_usd: Option<f64>,
 }
 
 impl AiTaskKind {
@@ -253,7 +301,34 @@ mod tests {
             default_model: AiModel::Opus55,
             task_models: HashMap::new(),
             task_efforts: HashMap::new(),
+            monthly_budget_usd: None,
         }
+    }
+
+    #[test]
+    fn prices_match_the_shared_fixture() {
+        // フロント `AI_MODEL_PRICES` と同じ共有ベクタ。片方だけ単価を変えるとどちらかが落ちる。
+        let v: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../src/__tests__/fixtures/aiModelPrices.json"
+        ))
+        .unwrap();
+        let prices = v["prices"].as_object().unwrap();
+        assert_eq!(prices.len(), AiModel::ALL.len());
+        for m in AiModel::ALL {
+            let e = &prices[m.id()];
+            let p = m.price();
+            assert_eq!(e["input"].as_f64().unwrap(), p.input, "{}", m.id());
+            assert_eq!(e["output"].as_f64().unwrap(), p.output, "{}", m.id());
+            assert_eq!(e["cacheRead"].as_f64().unwrap(), p.cache_read, "{}", m.id());
+            assert_eq!(
+                e["cacheWrite"].as_f64().unwrap(),
+                p.cache_write,
+                "{}",
+                m.id()
+            );
+            assert_eq!(AiModel::from_id(m.id()), Some(m));
+        }
+        assert_eq!(AiModel::from_id("nope"), None);
     }
 
     #[test]

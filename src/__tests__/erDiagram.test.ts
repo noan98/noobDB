@@ -449,14 +449,14 @@ describe("focusNeighborhood / buildErGraph の focus (#1540)", () => {
 
 describe("erExportGeometry: 8000px を超える図は縮小して全体を収める", () => {
   it("小さい図は等倍のまま", async () => {
-    const { erExportGeometry } = await import("../components/ERDiagramView");
+    const { erExportGeometry } = await import("../components/imageExport");
     const g = erExportGeometry({ x: 10, y: 20, width: 500, height: 300 });
     expect(g.scale).toBe(1);
     expect(g.width).toBe(580);
     expect(g.tx).toBe(-10 + 40);
   });
   it("縦に長い図は scale < 1 で上限内に収まる", async () => {
-    const { erExportGeometry } = await import("../components/ERDiagramView");
+    const { erExportGeometry } = await import("../components/imageExport");
     const g = erExportGeometry({ x: 0, y: 0, width: 800, height: 20000 });
     expect(g.scale).toBeLessThan(1);
     expect(g.height).toBeLessThanOrEqual(8000);

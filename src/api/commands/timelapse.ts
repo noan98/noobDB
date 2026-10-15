@@ -3,10 +3,12 @@ import { invoke } from "../invoke";
 import * as schemas from "../schemas";
 import { parseResponse } from "../schemas";
 import type {
+  CellValue,
   TableWatch,
   TimelapseWatchOutcome,
   TimelapseCaptureOutcome,
   TimelapseGenerationDiff,
+  TimelapseRowHistory,
 } from "../tauri";
 
 export const timelapseCommands = {
@@ -54,6 +56,12 @@ export const timelapseCommands = {
     ),
 
   /** ウォッチ解除。`deleteData` なら保存済み世代も削除する。 */
+  // 主キーを指定して 1 行の値の推移を世代横断で取得する (#1621)。`key` は差分行の `key` をそのまま渡せる。
+  timelapseRowHistory: (watchId: number, key: CellValue[]) =>
+    invoke<TimelapseRowHistory>("timelapse_row_history", { watchId, key }).then((r) =>
+      parseResponse(schemas.timelapseRowHistory, r, "timelapse_row_history"),
+    ),
+
   timelapseUnwatch: (watchId: number, deleteData: boolean) =>
     invoke<void>("timelapse_unwatch", { watchId, deleteData }),
 
