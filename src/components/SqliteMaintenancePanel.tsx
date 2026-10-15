@@ -6,6 +6,7 @@ import { useT } from "../i18n";
 import { Callout } from "./Callout";
 import { EmptyState } from "./EmptyState";
 import { groupFkViolations, freelistRatio, shouldSuggestVacuum } from "./sqliteMaintenance";
+import { CodePreview } from "./modalForm";
 import { Tooltip } from "./Tooltip";
 import { Button, Heading } from "./ui";
 import { useToast } from "./Toast";
@@ -139,11 +140,7 @@ export function SqliteMaintenancePanel({ sessionId, readOnly }: { sessionId: str
             </Callout>
           )}
 
-          {result.messages.length > 0 && (
-            <Box as="pre" margin={0} fontSize="sm" fontFamily="var(--font-mono)" whiteSpace="pre-wrap">
-              {result.messages.join("\n")}
-            </Box>
-          )}
+          {result.messages.length > 0 && <CodePreview>{result.messages.join("\n")}</CodePreview>}
 
           {violationGroups.length > 0 && (
             <Box overflowX="auto">

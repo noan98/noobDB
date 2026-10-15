@@ -510,6 +510,107 @@ fn index_method(idx: &IndexInfo) -> String {
         .unwrap_or_else(|| "btree".to_string())
 }
 
+/// `y` が、構成列 `x_cols`・アクセスメソッド `x_method`・述語 `x_predicate` のインデックスと
+/// 完全に同じ構成か (重複)。式インデックスの `y` は列だけでは比べられないので除く。
+/// アドバイザの重複検出と、インデックス作成前の重複警告 ([`find_overlapping_indexes`]) が共有する。
+fn is_same_shape(
+    y: &IndexInfo,
+    x_cols: &[String],
+    x_method: &str,
+    x_predicate: &Option<String>,
+) -> bool {
+    y.first_expression_at.is_none()
+        && &y.predicate == x_predicate
+        && index_method(y) == x_method
+        && lower_cols(y) == x_cols
+}
+
+/// `y` の先頭列が `x_cols` に一致して `y` の方が長いか (x は y の真のプレフィックス)。
+/// 先頭列の包含は btree 同士のときだけ成り立つ。`y` が部分インデックスなら `x` と同じ述語の
+/// ときだけ `x` の行を全て含む。アドバイザの冗長検出と重複警告が共有する。
+fn is_longer_prefix_match(
+    y: &IndexInfo,
+    x_cols: &[String],
+    x_method: &str,
+    x_predicate: &Option<String>,
+) -> bool {
+    y.first_expression_at.is_none()
+        && (y.predicate.is_none() || &y.predicate == x_predicate)
+        && y.columns.len() > x_cols.len()
+        && x_method == "btree"
+        && index_method(y) == "btree"
+        && lower_cols(y).starts_with(x_cols)
+}
+
+/// 新しく作るインデックスと既存インデックスの重なり方 (#1625)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexOverlapKind {
+    /// 既存と列・順序が完全に同じ (新規は不要)。
+    Duplicate,
+    /// 新規の列が、既存の長いインデックスの先頭列に含まれる (既存で賄える)。
+    CoveredByExisting,
+    /// 既存の列が、新規の長いインデックスの先頭列に含まれる (既存が冗長になる)。
+    MakesExistingRedundant,
+}
+
+/// 新規インデックスと重なる既存インデックス 1 件。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndexOverlap {
+    pub name: String,
+    pub kind: IndexOverlapKind,
+}
+
+/// 作ろうとしているインデックス (`columns` を順序どおり、`unique` か) と重なる既存インデックスを
+/// 返す (#1625)。判定はアドバイザの重複 / 冗長インデックス検出と同じ述語を使う。
+/// UNIQUE の新規は制約を足すので、列が同じでも既存が UNIQUE / PRIMARY でない限り重複としない
+/// (既存が長い・短いのプレフィックス関係も、一意性が変わるので対象外)。
+pub fn find_overlapping_indexes(
+    existing: &[IndexInfo],
+    columns: &[String],
+    unique: bool,
+) -> Vec<IndexOverlap> {
+    if columns.is_empty() {
+        return Vec::new();
+    }
+    let cols: Vec<String> = columns.iter().map(|c| c.to_lowercase()).collect();
+    let method = "btree";
+    let predicate: Option<String> = None;
+    let mut out = Vec::new();
+    for y in existing {
+        if y.columns.is_empty() {
+            continue;
+        }
+        if is_same_shape(y, &cols, method, &predicate) {
+            if !unique || y.unique || y.primary {
+                out.push(IndexOverlap {
+                    name: y.name.clone(),
+                    kind: IndexOverlapKind::Duplicate,
+                });
+            }
+        } else if !unique && is_longer_prefix_match(y, &cols, method, &predicate) {
+            out.push(IndexOverlap {
+                name: y.name.clone(),
+                kind: IndexOverlapKind::CoveredByExisting,
+            });
+        } else if !unique
+            && !y.primary
+            && !y.unique
+            && y.first_expression_at.is_none()
+            && y.predicate.is_none()
+            && index_method(y) == "btree"
+            && cols.len() > y.columns.len()
+            && cols.starts_with(&lower_cols(y))
+        {
+            out.push(IndexOverlap {
+                name: y.name.clone(),
+                kind: IndexOverlapKind::MakesExistingRedundant,
+            });
+        }
+    }
+    out
+}
+
 fn rule_duplicate_and_redundant_indexes(
     driver: DriverKind,
     table: &TableMeta,
@@ -531,10 +632,7 @@ fn rule_duplicate_and_redundant_indexes(
         // 部分インデックスは述語が同じものどうしだけを重複とみなす (述語が違えば別の行集合を担う)。
         if let Some(dup) = indexes.iter().find(|y| {
             y.name != x.name
-                && y.first_expression_at.is_none()
-                && y.predicate == x.predicate
-                && index_method(y) == index_method(x)
-                && lower_cols(y) == xcols
+                && is_same_shape(y, &xcols, &index_method(x), &x.predicate)
                 && (y.primary || y.unique || y.name < x.name)
         }) {
             out.push(HealthFinding {
@@ -556,14 +654,7 @@ fn rule_duplicate_and_redundant_indexes(
         // その先頭列でのルックアップを賄う)。
         // y が部分インデックスなら、x と同じ述語のときだけ x の行を全て含む (非部分 y は常に包含)。
         if let Some(cov) = indexes.iter().find(|y| {
-            y.name != x.name
-                && y.first_expression_at.is_none()
-                && (y.predicate.is_none() || y.predicate == x.predicate)
-                && y.columns.len() > x.columns.len()
-                // 先頭列の包含は btree 同士のときだけ成り立つ (複合 hash / GIN は先頭列だけでは引けない)。
-                && index_method(x) == "btree"
-                && index_method(y) == "btree"
-                && lower_cols(y).starts_with(&xcols)
+            y.name != x.name && is_longer_prefix_match(y, &xcols, &index_method(x), &x.predicate)
         }) {
             out.push(HealthFinding {
                 rule: RuleId::RedundantIndex,
@@ -2052,5 +2143,63 @@ mod tests {
         assert_eq!(f.size_bytes, Some(8192));
         assert!(report.ignored.is_empty());
         assert!(report.diff.is_none());
+    }
+
+    fn plain(name: &str, cols: &[&str], unique: bool) -> IndexInfo {
+        IndexInfo {
+            name: name.to_string(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique,
+            ..Default::default()
+        }
+    }
+
+    fn cols(c: &[&str]) -> Vec<String> {
+        c.iter().map(|c| c.to_string()).collect()
+    }
+
+    #[test]
+    fn overlap_detects_duplicate_covered_and_redundant() {
+        let existing = vec![
+            plain("idx_ab", &["a", "b"], false),
+            plain("idx_c", &["c"], false),
+        ];
+        let dup = find_overlapping_indexes(&existing, &cols(&["C"]), false);
+        assert_eq!(dup.len(), 1);
+        assert_eq!(dup[0].name, "idx_c");
+        assert_eq!(dup[0].kind, IndexOverlapKind::Duplicate);
+
+        let covered = find_overlapping_indexes(&existing, &cols(&["a"]), false);
+        assert_eq!(covered[0].name, "idx_ab");
+        assert_eq!(covered[0].kind, IndexOverlapKind::CoveredByExisting);
+
+        let redundant = find_overlapping_indexes(&existing, &cols(&["c", "d"]), false);
+        assert_eq!(redundant[0].name, "idx_c");
+        assert_eq!(redundant[0].kind, IndexOverlapKind::MakesExistingRedundant);
+
+        // 列の順序が違えば別物
+        assert!(find_overlapping_indexes(&existing, &cols(&["b", "a"]), false).is_empty());
+    }
+
+    #[test]
+    fn overlap_respects_unique_partial_expression_and_method() {
+        let mut partial = plain("idx_partial", &["a"], false);
+        partial.predicate = Some("(x > 0)".into());
+        let mut expr = plain("idx_expr", &["a"], false);
+        expr.first_expression_at = Some(0);
+        let mut hash = plain("idx_hash", &["a"], false);
+        hash.method = Some("hash".into());
+        let existing = vec![partial, expr, hash, plain("uq_a", &["a"], true)];
+        // 部分 / 式 / hash は btree の通常インデックスを賄わない。UNIQUE の uq_a だけが重複。
+        let r = find_overlapping_indexes(&existing, &cols(&["a"]), false);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "uq_a");
+        // UNIQUE の新規は、既存が UNIQUE でなければ制約を足すので重複ではない
+        let non_unique = vec![plain("idx_a", &["a"], false)];
+        assert!(find_overlapping_indexes(&non_unique, &cols(&["a"]), true).is_empty());
+        assert_eq!(
+            find_overlapping_indexes(&existing, &cols(&["a"]), true).len(),
+            1
+        );
     }
 }

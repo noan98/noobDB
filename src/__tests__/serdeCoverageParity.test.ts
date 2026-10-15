@@ -98,6 +98,7 @@ const COVERED: Record<string, string> = {
   ServerInfo: "serverInfo",
   ServerMetrics: "serverMetrics",
   SqliteMaintenanceResult: "sqliteMaintenanceResult",
+  IndexOverlap: "indexOverlap",
   Snippet: "snippet",
   SqlFileContent: "sqlFileContent",
   StatementDeltaRow: "statementDeltaRow",

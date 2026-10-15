@@ -1468,6 +1468,10 @@
     "primary": false,
     "unique": true
   },
+  "indexOverlap": {
+    "kind": "covered_by_existing",
+    "name": "idx_email"
+  },
   "insertRowsResult": {
     "elapsed_ms": 8,
     "inserted": 100

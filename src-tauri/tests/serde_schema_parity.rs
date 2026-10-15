@@ -47,18 +47,18 @@ use t::{
     DataDiff, DiffMode, DiffStatus, DriverKind, DumpDoneEvent, DumpErrorEvent, DumpProgressEvent,
     ExportDoneEvent, ExportErrorEvent, ExportProgressEvent, ForeignKey, HealthFinding,
     HistoryEntry, ImportDoneEvent, ImportDryRunResult, ImportErrorEvent, ImportProgressEvent,
-    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, KeyringStatus, KnownHost,
-    LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus, PreviewStreamMessage,
-    ProcessListItem, ProfileHistogramBucket, ProfileValueCount, ProfileWithSecretFlags,
-    QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter, RoutineSignature,
-    RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject, ScriptDoneEvent,
-    ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo, ServerMessage,
-    ServerMessageSeverity, ServerMetrics, ServerVariable, Severity, SheetImportResult,
-    SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SqliteFkViolation, SqliteMaintenanceAction,
-    SqliteMaintenanceResult, SshAuthMethod, SshJumpProfile, SshProfile, SslMode, StatementDeltaRow,
-    StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan, SyncStatement, TableColumnInfo,
-    TableComment, TableDiff, TableFixPlan, TableRowEstimate, TableRowIdentity, TableSchema,
-    TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
+    ImportResult, ImportStartedEvent, ImportTemplate, IndexInfo, IndexOverlap, IndexOverlapKind,
+    KeyringStatus, KnownHost, LiveQuery, LocalTableMeta, LogView, PatchRun, PerfSample, PerfStatus,
+    PreviewStreamMessage, ProcessListItem, ProfileHistogramBucket, ProfileValueCount,
+    ProfileWithSecretFlags, QueryResult, QueryStatsSupport, QueryStreamMessage, RoutineParameter,
+    RoutineSignature, RowDiff, RowStatus, RuleId, SchemaDiff, SchemaHealthReport, SchemaObject,
+    ScriptDoneEvent, ScriptErrorEvent, ScriptFailure, ScriptProgressEvent, ServerInfo,
+    ServerMessage, ServerMessageSeverity, ServerMetrics, ServerVariable, Severity,
+    SheetImportResult, SkippedRowInfo, SkippedRule, Snippet, SnippetScope, SqliteFkViolation,
+    SqliteMaintenanceAction, SqliteMaintenanceResult, SshAuthMethod, SshJumpProfile, SshProfile,
+    SslMode, StatementDeltaRow, StreamCancelledEvent, StreamStatsSnapshot, SyncKind, SyncPlan,
+    SyncStatement, TableColumnInfo, TableComment, TableDiff, TableFixPlan, TableRowEstimate,
+    TableRowIdentity, TableSchema, TableSizeInfo, TaskRunProgressEvent, TemplateColumn, Value,
 };
 // #1243: 全バリアント列挙 (`variants!`) に使う enum。
 use t::{
@@ -317,6 +317,10 @@ fn build_fixtures() -> serde_json::Value {
         page_count: Some(100),
         freelist_count: Some(5),
         elapsed_ms: 3,
+    };
+    let index_overlap = IndexOverlap {
+        name: "idx_email".into(),
+        kind: IndexOverlapKind::CoveredByExisting,
     };
     let server_metrics = ServerMetrics {
         connections: Some(42),
@@ -2059,6 +2063,7 @@ fn build_fixtures() -> serde_json::Value {
         "serverInfo": server_info,
         "processInfo": process_info,
         "serverMetrics": server_metrics,
+        "indexOverlap": index_overlap,
         "sqliteMaintenanceResult": sqlite_maintenance_result,
         "queryStatsSupport": query_stats_support,
         "liveQuery": live_query,

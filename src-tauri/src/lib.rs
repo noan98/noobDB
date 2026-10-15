@@ -45,8 +45,9 @@ pub mod __test_api {
     };
     pub use crate::commands::broadcast::{BroadcastEnvReport, BroadcastMessage};
     pub use crate::db::advisor::{
-        analyze, AdvisorDiff, AdvisorInput, HealthFinding, RuleId, SchemaHealthReport, Severity,
-        SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry, UnusedIndexStats,
+        analyze, AdvisorDiff, AdvisorInput, HealthFinding, IndexOverlap, IndexOverlapKind, RuleId,
+        SchemaHealthReport, Severity, SkippedRule, TableFixPlan, TableMeta, UnusedIndexEntry,
+        UnusedIndexStats,
     };
     pub use crate::db::aws_iam::AwsIamConfig;
     pub use crate::db::broadcast_diff::{BroadcastDiff, ChangedRow, DiffMode};
@@ -1445,6 +1446,7 @@ pub fn run() {
             commands::profile::profile_column,
             commands::profile::profile_table,
             commands::advisor::analyze_schema_health,
+            commands::advisor::check_duplicate_index,
             commands::advisor::ignore_advisor_finding,
             commands::advisor::unignore_advisor_finding,
             commands::diff::compare_schema,

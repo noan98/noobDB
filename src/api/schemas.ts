@@ -231,6 +231,12 @@ export const userPrivileges = z.object({
 });
 
 /** サーバランタイムの軽量メトリクス 1 サンプル (監視ダッシュボード #731)。 */
+export const indexOverlap = z.object({
+  name: z.string(),
+  kind: z.enum(["duplicate", "covered_by_existing", "makes_existing_redundant"]),
+});
+export const indexOverlapArray = z.array(indexOverlap);
+
 export const sqliteMaintenanceResult = z.object({
   action: z.enum(["integrity_check", "foreign_key_check", "optimize", "analyze"]),
   ok: z.boolean(),

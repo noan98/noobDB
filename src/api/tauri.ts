@@ -1274,6 +1274,15 @@ export interface DiffForeignKey {
   on_update: string | null;
 }
 
+/** 新規インデックスと既存インデックスの重なり方 (#1625)。 */
+export type IndexOverlapKind = "duplicate" | "covered_by_existing" | "makes_existing_redundant";
+
+/** 新規インデックスと重なる既存インデックス 1 件 (#1625)。 */
+export interface IndexOverlap {
+  name: string;
+  kind: IndexOverlapKind;
+}
+
 /** SQLite のメンテナンス操作 (#1625)。 */
 export type SqliteMaintenanceAction = "integrity_check" | "foreign_key_check" | "optimize" | "analyze";
 

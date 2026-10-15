@@ -4314,6 +4314,12 @@ const en = {
   alterTablePositionAria: "Position of new column ({n})",
   alterTablePositionUnsupported:
     "Only MySQL can place a new column at a position; PostgreSQL and SQLite always append it at the end",
+  createIndexOverlapDuplicate:
+    "The existing index {name} has the same columns in the same order. A new one is redundant and only slows down writes.",
+  createIndexOverlapCovered:
+    "The existing index {name} already starts with these columns, so lookups on them are covered.",
+  createIndexOverlapRedundant:
+    "After creating this index, the existing index {name} becomes redundant (these columns start with its columns).",
   schemaCompareKindAddIndex: "CREATE INDEX",
   schemaCompareKindDropIndex: "DROP INDEX",
   schemaCompareKindDropForeignKey: "DROP FOREIGN KEY",
@@ -10469,6 +10475,12 @@ const ja: Dict = {
   alterTablePositionAria: "新規列 ({n}) の位置",
   alterTablePositionUnsupported:
     "列の位置を指定できるのは MySQL だけです (PostgreSQL / SQLite は常に末尾に追加されます)",
+  createIndexOverlapDuplicate:
+    "既存の {name} と列・順序が同じで重複します。作っても書き込みが遅くなるだけです。",
+  createIndexOverlapCovered:
+    "既存の {name} の先頭列がこの列構成と一致しており、この列での検索は既存のインデックスで賄えます。",
+  createIndexOverlapRedundant:
+    "このインデックスを作ると、既存の {name} は先頭列が含まれるため冗長になります。",
   schemaCompareKindAddIndex: "CREATE INDEX",
   schemaCompareKindDropIndex: "DROP INDEX",
   schemaCompareKindDropForeignKey: "DROP FOREIGN KEY",

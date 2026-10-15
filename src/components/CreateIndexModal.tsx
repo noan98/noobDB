@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
-import { api, type DriverKind, type TableColumnInfo } from "../api/tauri";
+import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from "../api/tauri";
 import { buildCreateIndexSql } from "./tableMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
+import { Callout } from "./Callout";
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 
@@ -51,6 +52,8 @@ export function CreateIndexModal({
   const [selected, setSelected] = useState<string[]>([]);
   const [name, setName] = useState("");
   const [unique, setUnique] = useState(false);
+  // 同じ列構成の既存インデックス (#1625)。判定はバックエンド (アドバイザの重複検出と同じ)。
+  const [overlaps, setOverlaps] = useState<IndexOverlap[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -86,6 +89,26 @@ export function CreateIndexModal({
       [next[i], next[j]] = [next[j], next[i]];
       return next;
     });
+
+  useEffect(() => {
+    if (selected.length === 0) {
+      setOverlaps([]);
+      return;
+    }
+    let cancelled = false;
+    api
+      .checkDuplicateIndex(sessionId, database ?? "", table, selected, unique)
+      .then((r) => {
+        if (!cancelled) setOverlaps(r);
+      })
+      .catch(() => {
+        // 警告は補助情報。取れなくても作成自体は妨げない。
+        if (!cancelled) setOverlaps([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, database, table, selected, unique]);
 
   const valid = selected.length > 0;
   const sql = useMemo(
@@ -178,6 +201,15 @@ export function CreateIndexModal({
             <FormSection>
               <FieldLabel as="div">{t("createTablePreview")}</FieldLabel>
               <CodePreview minH="48px">{sql || t("createIndexPreviewEmpty")}</CodePreview>
+              {overlaps.map((o) => (
+                <Callout key={o.name} tone="warning" data-testid="create-index-overlap">
+                  {o.kind === "duplicate"
+                    ? t("createIndexOverlapDuplicate", { name: o.name })
+                    : o.kind === "covered_by_existing"
+                      ? t("createIndexOverlapCovered", { name: o.name })
+                      : t("createIndexOverlapRedundant", { name: o.name })}
+                </Callout>
+              ))}
               {valid && (
                 <chakra.span textStyle="caption" data-testid="create-index-leading">
                   {t("createIndexLeadingColumn", { column: selected[0] })}
