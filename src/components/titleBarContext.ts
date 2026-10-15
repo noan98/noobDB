@@ -40,3 +40,31 @@ export function connectionBandColor(connection: TitleBarConnection | null | unde
   if (connection) return connection.color ?? "var(--ws-accent)";
   return "transparent";
 }
+
+/** アプリ名 (未接続時のウィンドウタイトル、接続中の末尾)。 */
+const APP_WINDOW_TITLE = "noobDB";
+
+/** ウィンドウタイトルの先頭に付ける状態ラベル (i18n 済みの文字列を呼び出し側が渡す)。 */
+export interface WindowTitleLabels {
+  production: string;
+  sandbox: string;
+  reconnecting: string;
+}
+
+/**
+ * OS のタスクバー / Alt+Tab に出るウィンドウタイトル (#1631)。未接続は `noobDB` のみ。接続中は
+ * `[本番] 接続名 — noobDB` のように、本番・サンドボックス・再接続中を角括弧で前置して、別ウィンドウと
+ * 取り違えやすい本番接続を一目で見分けられるようにする。
+ */
+export function windowTitleFor(
+  connection: Pick<TitleBarConnection, "name" | "isProduction" | "isSandbox" | "status"> | null | undefined,
+  labels: WindowTitleLabels,
+): string {
+  if (!connection) return APP_WINDOW_TITLE;
+  const tags: string[] = [];
+  if (connection.isProduction) tags.push(labels.production);
+  if (connection.isSandbox) tags.push(labels.sandbox);
+  if (connection.status === "reconnecting") tags.push(labels.reconnecting);
+  const prefix = tags.map((t) => `[${t}] `).join("");
+  return `${prefix}${connection.name} — ${APP_WINDOW_TITLE}`;
+}

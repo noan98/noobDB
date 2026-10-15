@@ -1481,6 +1481,8 @@ pub fn run() {
             commands::cell_blob::read_binary_file,
             commands::file::write_binary_file,
             commands::file::write_text_file,
+            commands::file::reveal_in_file_manager,
+            commands::window::set_window_title,
             commands::import::get_import_skipped_text,
             commands::import::save_import_skipped_rows,
             commands::local::create_local_session,

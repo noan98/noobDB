@@ -42,3 +42,4 @@ pub mod table_open;
 pub mod tasks;
 pub mod timelapse;
 pub mod transfer;
+pub mod window;

@@ -23,6 +23,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       describeTable: vi.fn(),
       exportQueryStream: vi.fn(),
       cancelStream: vi.fn().mockResolvedValue({ cancelled: false, deliveredRows: 0 }),
+      revealInFileManager: vi.fn().mockResolvedValue(undefined),
     },
     listenExportStream: vi.fn(async (_id: string, h: ExportStreamHandlers) => {
       handlers.current = h;
@@ -33,6 +34,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 
 import { TablesExportModal } from "../components/TablesExportModal";
 import { api } from "../api/tauri";
+import { loadTablesExportPrefs, saveTablesExportPrefs, tablesExportScope } from "../inputMemory";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -61,5 +63,54 @@ describe("TablesExportModal (#1594)", () => {
     resolveDescribe([] as never);
     await waitFor(() => expect(screen.getByRole("button", { name: t("exportExecute") })).toBeInTheDocument());
     expect(api.exportQueryStream).not.toHaveBeenCalled();
+  });
+});
+
+describe("TablesExportModal 前回設定と保存先を開く (#1631)", () => {
+  it("接続 × DB に保存した形式・保存先・マスク・DDL 同梱で初期化する", async () => {
+    localStorage.clear();
+    saveTablesExportPrefs(tablesExportScope("p1", "app"), {
+      format: "sql",
+      dir: "/exports/app",
+      maskEnabled: true,
+      includeDdl: true,
+    });
+    renderWithProviders(
+      <TablesExportModal
+        sessionId="s1"
+        driver="mysql"
+        database="app"
+        tables={["a"]}
+        profileId="p1"
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: t("exportFormatSql") })).toBeChecked();
+    expect((screen.getByLabelText(t("batchExportDir")) as HTMLInputElement).value).toBe("/exports/app");
+    expect(screen.getByRole("checkbox", { name: t("exportMaskingEnable") })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: t("exportSqlIncludeDdl") })).toBeChecked();
+  });
+
+  it("実行すると設定を保存し、完了トーストの「保存先を開く」でファイルマネージャを開く", async () => {
+    localStorage.clear();
+    renderWithProviders(
+      <TablesExportModal
+        sessionId="s1"
+        driver="mysql"
+        database="app"
+        tables={["a"]}
+        profileId="p1"
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: t("exportFormatJson") }));
+    await waitFor(() => expect(screen.getByRole("button", { name: t("exportExecute") })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: t("exportExecute") }));
+    fireEvent.click(await screen.findByRole("button", { name: t("batchExportOpenDir"), hidden: true }));
+    expect(api.revealInFileManager).toHaveBeenCalledWith("/dl");
+    expect(loadTablesExportPrefs(tablesExportScope("p1", "app"))).toMatchObject({
+      format: "json",
+      dir: "/dl",
+    });
   });
 });

@@ -87,7 +87,11 @@ import {
   closedTabItemId,
   closedTabsForScope,
   dropClosedTabsForScope,
+  loadPersistedClosedTabs,
   pushClosedTab,
+  restoreClosedTabs,
+  savePersistedClosedTabs,
+  toPersistedClosedTabs,
   snapshotClosedTab,
   takeClosedTab,
   type ClosedTab,
@@ -1553,11 +1557,14 @@ export default function App() {
     else setSidebarUserCollapsed((v) => !v);
   }, []);
 
+  // 通知クリックで開くタブの解決 (#1631)。activateTab は後で定義されるため ref 越しに呼ぶ。
+  const activateTabRef = useRef<(tabId: string) => void>(() => {});
+
   // 長時間クエリ完了時の OS 通知 (#707): クリックでウィンドウを前面化する購読を
   // アプリ起動時に一度だけ登録する。通知自体は runQueryInTab の onDone/onError で
   // 個別に判定・送信する (notifyQueryOutcome を参照)。
   useEffect(() => {
-    registerNotificationClickFocus();
+    registerNotificationClickFocus((tabId) => activateTabRef.current(tabId));
   }, []);
 
   // タスクスケジューラ (#730): バックグラウンドで発火した実行結果をアプリ起動中
@@ -2309,11 +2316,15 @@ export default function App() {
   // されるため、本文は CodeMirror の doc への参照だけをここへ置き、`tab.sql` は更新しない。
   // 本文を読む経路は必ず `getTabSql` を通す (`tab.sql` を直接読まない)。
   const tabSqlStore = useMemo(() => new TabSqlStore(), []);
-  // 最近閉じたタブ (#1353)。メモリ上のみ (再起動を跨いでは持たない)。パレットの一覧表示用に
+  // 最近閉じたタブ (#1353)。プロファイル単位で localStorage にも保存する (#1631)。パレットの一覧表示用に
   // state、同一ティック内の連続クローズ (一括クローズ) と keydown 用に ref を併せ持つ。
   const [closedTabs, setClosedTabs] = useState<ClosedTab[]>([]);
   const closedTabsRef = useRef<ClosedTab[]>([]);
   const closedTabSeqRef = useRef(0);
+  // 再起動後も残す (#1631): 接続したセッションごとに、プロファイルに保存した履歴を一度だけ読み戻し、
+  // 履歴が変わるたびにそのプロファイルへ保存し直す。読み戻し前に空の履歴で上書きしないよう、
+  // 読み戻し済みのセッションだけを保存対象にする。
+  const closedTabsSeededRef = useRef<Set<string>>(new Set());
   // 接続セッションが終わったとき (手動切断 / セッション喪失 / プロファイル削除) にそのスコープの
   // 履歴を捨てる。自動再接続 (同じ sessionId で張り直す) と接続切替 (背景セッションは生きている)
   // では呼ばない。
@@ -2324,6 +2335,29 @@ export default function App() {
     closedTabsRef.current = next;
     setClosedTabs(next);
   }, []);
+  // 接続直後に一度だけ、保存済みの履歴を現在のセッションのスコープで読み戻す。
+  useEffect(() => {
+    if (!sessionId || !selectedProfile) return;
+    if (closedTabsSeededRef.current.has(sessionId)) return;
+    closedTabsSeededRef.current.add(sessionId);
+    const persisted = loadPersistedClosedTabs(selectedProfile.id);
+    if (persisted.length === 0) return;
+    const restored = restoreClosedTabs(
+      persisted,
+      sessionId,
+      () => `closed-restored-${Date.now()}-${++closedTabSeqRef.current}`,
+    );
+    const next = [...closedTabsRef.current, ...restored];
+    closedTabsRef.current = next;
+    setClosedTabs(next);
+  }, [sessionId, selectedProfile]);
+  // 履歴が変わるたびに現在のプロファイルへ保存する (読み戻し前のセッションは対象外)。
+  useEffect(() => {
+    const sid = sessionIdRef.current;
+    const profile = selectedProfileRef.current;
+    if (!sid || !profile || !closedTabsSeededRef.current.has(sid)) return;
+    savePersistedClosedTabs(profile.id, toPersistedClosedTabs(closedTabsForScope(closedTabs, sid)));
+  }, [closedTabs]);
   const getTabSql = useCallback((tab: Tab) => tabSqlStore.resolve(tab.id, tab.sql), [tabSqlStore]);
   // dirty 表示の切り替わりだけを検知して再描画する (連続入力中は再描画しない)。
   const [dirtyTick, bumpDirty] = useReducer((n: number) => n + 1, 0);
@@ -2503,6 +2537,7 @@ export default function App() {
     },
     [setPanes, panesRef],
   );
+  activateTabRef.current = activateTab;
 
   // Open a second pane on demand. If the source pane has more than one tab the
   // active tab is moved into the new pane; otherwise a fresh query tab is
@@ -4192,6 +4227,8 @@ export default function App() {
       kind: QueryNotificationKind,
       elapsedMs: number,
       extra: { rows?: number; error?: string | null } = {},
+      // 実行したタブ。通知クリックでこのタブへ移動する (#1631)。
+      tabId?: string,
     ) => {
       if (!settings.queryNotificationsEnabled) return;
       const windowFocused = await isAppWindowFocused();
@@ -4226,7 +4263,7 @@ export default function App() {
           body = firstLineForNotification(extra.error ?? "");
           break;
       }
-      void sendQueryNotification(title, body);
+      void sendQueryNotification(title, body, tabId);
     },
     [settings.queryNotificationsEnabled, settings.queryNotificationThresholdSecs],
   );
@@ -4586,7 +4623,12 @@ export default function App() {
           // every tick while the window is unfocused would be spam, not a useful
           // nudge, so only long-running *manual* runs are eligible (#707).
           if (!autoRefresh) {
-            void notifyQueryOutcome("done", elapsedMs, { rows: hasColumns ? totalRows : rowsAffected });
+            void notifyQueryOutcome(
+              "done",
+              elapsedMs,
+              { rows: hasColumns ? totalRows : rowsAffected },
+              tabId,
+            );
           }
           // 実行完了時に結果グリッドへフォーカスを渡し、キーボード完結フロー
           // (実行→結果閲覧→コピー) を繋げる (#816)。エディタの Cmd/Ctrl+Enter
@@ -4637,7 +4679,7 @@ export default function App() {
             );
           }
           if (!autoRefresh && !connectionLost) {
-            void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error });
+            void notifyQueryOutcome(timedOut ? "timeout" : "error", Date.now() - startedAt, { error }, tabId);
           }
           // A dropped connection leaves the session unusable: tear it down and
           // prompt a reconnect rather than showing the raw transport error.
@@ -6109,7 +6151,7 @@ export default function App() {
         // result.elapsed_ms (行到着まで 0) ではなく実行開始時刻から算出する。
         const started = runStartRef.current.get(tab.id);
         const elapsedMs = started !== undefined ? Date.now() - started : (tab.result?.elapsed_ms ?? 0);
-        void notifyQueryOutcome("cancelled", elapsedMs);
+        void notifyQueryOutcome("cancelled", elapsedMs, {}, tab.id);
         if (tab.lastExecutedSql) {
           recordOutput(
             { sql: tab.lastExecutedSql, outcome: "cancelled", rows, elapsedMs, error: null },
@@ -12014,6 +12056,7 @@ export default function App() {
                 sessionId={sessionId}
                 database={importTarget.database}
                 table={importTarget.table}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 initialPath={importInitialPath ?? undefined}
                 onClose={() => {
@@ -12085,6 +12128,7 @@ export default function App() {
                 table={testDataTarget.table}
                 driver={selectedProfile?.driver ?? "mysql"}
                 isProduction={selectedProfile?.is_production ?? false}
+                profileId={selectedProfile?.id}
                 onClose={() => setTestDataTarget(null)}
                 onInserted={() => handleImported(testDataTarget.database, testDataTarget.table)}
               />
@@ -12126,6 +12170,7 @@ export default function App() {
               <DumpModal
                 sessionId={sessionId}
                 database={dumpTarget}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTarget(null)}
               />
@@ -12138,6 +12183,7 @@ export default function App() {
                 sessionId={sessionId}
                 database={dumpTablesTarget.database}
                 tables={dumpTablesTarget.tables}
+                profileId={selectedProfile?.id}
                 driver={(selectedProfile?.driver ?? "mysql") as DriverKind}
                 onClose={() => setDumpTablesTarget(null)}
               />
@@ -12152,6 +12198,7 @@ export default function App() {
                   driver={selectedProfile?.driver ?? "mysql"}
                   database={exportTablesTarget.database}
                   tables={exportTablesTarget.tables}
+                  profileId={selectedProfile?.id}
                   onClose={() => setExportTablesTarget(null)}
                 />
               </Suspense>
@@ -12562,6 +12609,7 @@ export default function App() {
                 name={routineTarget.name}
                 id={routineTarget.id}
                 txActive={txActive}
+                profileId={selectedProfile?.id}
                 onRun={handleRoutineRun}
                 onSendToEditor={handleRoutineToEditor}
                 onCancel={() => setRoutineTarget(null)}
@@ -12876,6 +12924,7 @@ export default function App() {
               driver={selectedProfile?.driver ?? "mysql"}
               isProduction={selectedProfile?.is_production ?? false}
               profileName={selectedProfile?.name ?? ""}
+              profileId={selectedProfile?.id}
               onOpenHit={(sql, title) => openAndRunQuery(sql, title)}
               onClose={() => setShowDataSearch(false)}
             />

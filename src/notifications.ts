@@ -9,6 +9,7 @@
  * 継続させたいので、例外は握りつぶす (呼び出し元をブロックしない)。
  */
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { consumeFocusTarget, tabIdFromNotificationExtra, type NotifiedTab } from "./notificationTarget";
 import {
   isPermissionGranted,
   onAction,
@@ -57,29 +58,55 @@ export async function isAppWindowFocused(): Promise<boolean> {
 /** クエリ完了などのメタ情報 (件数・経過時間・エラー先頭行) のみを載せた OS
  *  通知を送る。SQL 本文や結果データはここでは一切扱わない — 呼び出し元
  *  (`App.tsx`) が渡す `title`/`body` に含めないこと。 */
-export async function sendQueryNotification(title: string, body: string): Promise<void> {
+export async function sendQueryNotification(title: string, body: string, tabId?: string): Promise<void> {
   try {
     const granted = await ensurePermission();
     if (!granted) return;
-    sendNotification({ title, body });
+    // 実行したタブの ID だけを載せる (#1631)。クリックでそのタブへ移動するために使い、SQL や結果は載せない。
+    if (tabId) lastNotified = { tabId, at: Date.now() };
+    sendNotification(tabId ? { title, body, extra: { tabId } } : { title, body });
   } catch {
     // ベストエフォート: 通知が失敗してもアプリの他の処理には影響させない。
   }
 }
 
 let clickFocusRegistered = false;
+/** 直近に出した通知のタブ。クリックを通知してこない環境のフォールバックに使う。 */
+let lastNotified: NotifiedTab | null = null;
 
 /** 通知クリックでアプリウィンドウを前面化する購読を 1 回だけ登録する
- *  (何度呼んでも安全な冪等操作)。アプリ起動時に一度呼び出しておく想定。 */
-export function registerNotificationClickFocus(): void {
+ *  (何度呼んでも安全な冪等操作)。アプリ起動時に一度呼び出しておく想定。
+ *  `onActivateTab` を渡すと、通知に載せたタブ ID のタブへ移動する (#1631)。クリックが届かない
+ *  環境では、通知の直後 (猶予内) にウィンドウが前面化されたことをクリックの代わりにする。 */
+export function registerNotificationClickFocus(onActivateTab?: (tabId: string) => void): void {
   if (clickFocusRegistered) return;
   clickFocusRegistered = true;
-  onAction(() => {
+  onAction((notification) => {
     const win = getCurrentWindow();
     void win.unminimize().catch(() => {});
     void win.setFocus().catch(() => {});
+    const tabId = tabIdFromNotificationExtra(notification?.extra);
+    if (tabId) {
+      // クリックで移動したので、フォーカスのフォールバックで二重に移動しない。
+      lastNotified = null;
+      onActivateTab?.(tabId);
+    }
   }).catch(() => {
     // リスナー登録自体に失敗した場合は次回呼び出しで再試行できるようにする。
     clickFocusRegistered = false;
   });
+  if (onActivateTab) {
+    try {
+      void getCurrentWindow()
+        .onFocusChanged(({ payload: focused }) => {
+          if (!focused) return;
+          const { tabId, next } = consumeFocusTarget(lastNotified, Date.now());
+          lastNotified = next;
+          if (tabId) onActivateTab(tabId);
+        })
+        .catch(() => {});
+    } catch {
+      // ウィンドウ API が使えない環境ではフォールバックなし。
+    }
+  }
 }
