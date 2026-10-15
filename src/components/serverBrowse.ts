@@ -118,6 +118,34 @@ export function escapeLikeValue(raw: string): string {
   return raw.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
+/** LIKE のパターンの付け方。含む / 前方一致 / 後方一致。 */
+export type LikeMode = "contains" | "prefix" | "suffix";
+
+/** `raw` のワイルドカードをエスケープし、`mode` に応じて `%` を付けた LIKE パターン (クオート前)。 */
+export function likePattern(raw: string, mode: LikeMode): string {
+  const body = escapeLikeValue(raw);
+  if (mode === "prefix") return `${body}%`;
+  if (mode === "suffix") return `%${body}`;
+  return `%${body}%`;
+}
+
+/**
+ * `target LIKE 'パターン' ESCAPE '\'` を作る。ESCAPE 文字は常に明示し (SQLite は既定のエスケープ
+ * 文字を持たない)、MySQL ではリテラル中のバックスラッシュが二重化されるので `quoteString` で
+ * 方言別に引用する。`target` は列の識別子、または `CAST(... AS TEXT)` などの式。
+ * サーバ側フィルタ (`contains`) とクエリビルダの「含む / 前方一致 / 後方一致」が共有する (#1627)。
+ */
+export function buildLikeClause(
+  driver: string,
+  target: string,
+  raw: string,
+  mode: LikeMode,
+  negate = false,
+): string {
+  const op = negate ? "NOT LIKE" : "LIKE";
+  return `${target} ${op} ${quoteString(driver, likePattern(raw, mode))} ESCAPE ${quoteString(driver, "\\")}`;
+}
+
 /** 数値カラムかつ数値リテラルなら裸の数値、それ以外は方言別にクオートした文字列。 */
 function filterLiteral(driver: string, filter: ServerFilter, raw: string): string {
   const trimmed = raw.trim();
@@ -134,12 +162,11 @@ export function buildServerFilterClause(driver: string, filter: ServerFilter): s
     case "isNotNull":
       return `${ident} IS NOT NULL`;
     case "contains": {
-      const pattern = `%${escapeLikeValue(filter.value)}%`;
       // PostgreSQL は integer 等に LIKE を直接適用できないため文字列へキャストする
       // (MySQL / SQLite は暗黙変換で動く)。ESCAPE 文字は MySQL ではリテラル中の
       // バックスラッシュが二重化される必要があるので方言別に引用する。
       const target = filter.numeric && driver === "postgres" ? `CAST(${ident} AS TEXT)` : ident;
-      return `${target} LIKE ${quoteString(driver, pattern)} ESCAPE ${quoteString(driver, "\\")}`;
+      return buildLikeClause(driver, target, filter.value, "contains");
     }
     case "between":
       return `${ident} BETWEEN ${filterLiteral(driver, filter, filter.value)} AND ${filterLiteral(driver, filter, filter.value2 ?? "")}`;

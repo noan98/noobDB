@@ -60,6 +60,8 @@ export interface ComboSelectProps {
    *  流れる (常に controlled)。false なら候補から明示的に選択するまで
    *  `onChange` を呼ばず、確定されないまま blur すると直前の `value` へ戻す。 */
   freeSolo?: boolean;
+  /** 入力欄にフォーカスしたときに呼ぶ (候補を遅延取得したいときに使う)。 */
+  onFocus?: () => void;
   /** 入力要素へ適用する Chakra css。 */
   css?: SystemStyleObject;
   /** 候補 0 件時に表示する文言 (i18n はこのコンポーネントでは持たないため props で受ける)。 */
@@ -202,6 +204,7 @@ export function ComboSelect({
   id,
   onEnter,
   freeSolo = true,
+  onFocus,
   css,
   emptyText,
   showMoreText,
@@ -371,7 +374,10 @@ export function ComboSelect({
         placeholder={placeholder}
         disabled={disabled}
         autoComplete="off"
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          setOpen(true);
+          onFocus?.();
+        }}
         onChange={(e) => {
           commitText(e.target.value);
           setQuery(e.target.value);

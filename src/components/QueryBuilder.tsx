@@ -19,6 +19,13 @@ import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { Button, Checkbox, Select } from "./ui";
 import { Tooltip } from "./Tooltip";
 import { ErrorNote } from "./modalForm";
+import { buildLikeClause, type LikeMode } from "./serverBrowse";
+import {
+  buildDistinctValuesSql,
+  candidatesFromResult,
+  isTextDataType,
+  WHERE_VALUE_CANDIDATE_LIMIT,
+} from "./valuePicker";
 
 /**
  * Query Builder のフォーム部のスタイル。各要素へ直接 `css` を適用する。
@@ -92,7 +99,7 @@ const checkboxLabelCss: SystemStyleObject = {
 const rowCss: SystemStyleObject = { display: "flex", gap: "1.5", alignItems: "center" };
 // 行内の入力は伸縮させる。
 const rowInputCss: SystemStyleObject = { flex: 1, minWidth: 0 };
-const opCss: SystemStyleObject = { width: "110px", flexShrink: 0 };
+const opCss: SystemStyleObject = { width: "132px", flexShrink: 0 };
 // WHERE 行の先頭にある AND/OR 選択と括弧グループのトグル (#1540)。先頭行は
 // 結合相手がないので、同じ幅の空きを置いて列を揃える。
 const connectorCss: SystemStyleObject = { width: "76px", flexShrink: 0 };
@@ -281,12 +288,54 @@ const qbHighlightStyle = HighlightStyle.define([
 
 export type QueryKind = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
-const WHERE_OPERATORS = ["=", "!=", "<", "<=", ">", ">=", "LIKE", "IN", "IS NULL", "IS NOT NULL"] as const;
+/** 値の候補 (DISTINCT) を引くクエリのタイムアウト秒数。大きいテーブルで待たせ続けない。 */
+const SUGGESTION_TIMEOUT_SECS = 10;
+
+const WHERE_OPERATORS = [
+  "=",
+  "!=",
+  "<",
+  "<=",
+  ">",
+  ">=",
+  "BETWEEN",
+  "LIKE",
+  "NOT LIKE",
+  "CONTAINS",
+  "STARTS WITH",
+  "ENDS WITH",
+  "IN",
+  "NOT IN",
+  "IS NULL",
+  "IS NOT NULL",
+] as const;
+
+/**
+ * 「含む / 前方一致 / 後方一致」の演算子 (#1627)。値はワイルドカード (`% _ \`) をエスケープした
+ * うえで `%` を付け、`LIKE ... ESCAPE` にする (サーバ側フィルタ `buildLikeClause` と同じ生成)。
+ */
+const LIKE_MODE_OPERATORS: Record<string, LikeMode> = {
+  CONTAINS: "contains",
+  "STARTS WITH": "prefix",
+  "ENDS WITH": "suffix",
+};
+
+/** 候補の説明 (i18n キー)。演算子名そのものでは意味が伝わりにくいものだけ。 */
+const OPERATOR_DETAIL_KEYS: Partial<Record<(typeof WHERE_OPERATORS)[number], I18nKey>> = {
+  CONTAINS: "qbOpContains",
+  "STARTS WITH": "qbOpStartsWith",
+  "ENDS WITH": "qbOpEndsWith",
+  "NOT LIKE": "qbOpNotLike",
+  BETWEEN: "qbOpBetween",
+  "NOT IN": "qbOpNotIn",
+};
 
 export interface WhereCondition {
   column: string;
   operator: string;
   value: string;
+  /** `BETWEEN` の上端 (`value` が下端、#1627)。他の演算子では無視される。 */
+  value2?: string;
   /**
    * 直前の条件との結合 (#1540)。省略 / `"AND"` は AND、`"OR"` は OR。先頭の条件では
    * 無視される。旧スナップショット (このフィールドなし) は全 AND として復元される。
@@ -301,7 +350,22 @@ export interface WhereCondition {
 }
 
 function normalizeOperator(op: string): string {
-  return op.trim().toUpperCase();
+  return op.trim().toUpperCase().replace(/\s+/g, " ");
+}
+
+/** `IN` / `NOT IN` (カンマ区切りの値リストを取る演算子)。 */
+function isInOperator(op: string): boolean {
+  const n = normalizeOperator(op);
+  return n === "IN" || n === "NOT IN";
+}
+
+function isBetweenOperator(op: string): boolean {
+  return normalizeOperator(op) === "BETWEEN";
+}
+
+/** 「含む / 前方一致 / 後方一致」なら LIKE の付け方。それ以外は undefined。 */
+function likeModeOf(op: string): LikeMode | undefined {
+  return LIKE_MODE_OPERATORS[normalizeOperator(op)];
 }
 
 /** `IN` の入力 (カンマ区切り) を前後空白除去・空要素除外で分割する。 */
@@ -352,6 +416,11 @@ export interface QueryBuilderSnapshot {
   orderBy?: OrderByItem[];
   limitEnabled: boolean;
   limit: string;
+  /**
+   * `OFFSET` (SELECT のみ、#1627)。LIMIT が有効なときだけ出力する。旧スナップショットは持たない
+   * (空として復元)。
+   */
+  offset?: string;
   setPairs: ColumnValuePair[];
   insertPairs: ColumnValuePair[];
 }
@@ -551,10 +620,22 @@ function renderWhereClause(driver: string, columns: TableColumnInfo[], condition
       info ? quoteValueForColumn(driver, raw, info) : quoteValue(driver, raw);
     const opNorm = normalizeOperator(c.operator);
     if (opNorm === "IS NULL" || opNorm === "IS NOT NULL") return `${col} ${opNorm}`;
-    if (opNorm === "IN") {
+    if (opNorm === "IN" || opNorm === "NOT IN") {
       const items = splitInItems(c.value).map(literal);
       const inner = items.length > 0 ? items.join(", ") : "<values>";
-      return `${col} IN (${inner})`;
+      return `${col} ${opNorm} (${inner})`;
+    }
+    if (opNorm === "BETWEEN") {
+      const lo = c.value.trim() === "" ? "<value>" : literal(c.value);
+      const hi = (c.value2 ?? "").trim() === "" ? "<value>" : literal(c.value2 ?? "");
+      return `${col} BETWEEN ${lo} AND ${hi}`;
+    }
+    const likeMode = likeModeOf(c.operator);
+    if (likeMode) {
+      // PostgreSQL は文字列でない列 (integer など) に LIKE を直接適用できないのでキャストする。
+      const target =
+        driver === "postgres" && info && !isTextDataType(info.data_type) ? `CAST(${col} AS TEXT)` : col;
+      return buildLikeClause(driver, target, c.value, likeMode);
     }
     const opOut = c.operator.trim() || "=";
     return `${col} ${opOut} ${literal(c.value)}`;
@@ -588,6 +669,20 @@ function renderOrderByClause(driver: string, orderBy: OrderByItem[]): string {
   return " ORDER BY " + rendered.join(", ");
 }
 
+/** OFFSET の入力を正規化する。非負整数でなければ・0 なら空文字 (= 出力しない)。先頭の 0 は落とす。 */
+export function normalizeOffset(raw: string): string {
+  const v = raw.trim();
+  if (!/^\d+$/.test(v)) return "";
+  const digits = v.replace(/^0+/, "");
+  return digits;
+}
+
+/** OFFSET が入力されているのに非負整数でない (空欄は除く)。インライン警告用。 */
+export function isOffsetInvalid(offset: string): boolean {
+  const v = offset.trim();
+  return v !== "" && !/^\d+$/.test(v);
+}
+
 // テスト (QueryBuilder.test.ts) から ORDER BY を含む SQL 生成をドライバ別に
 // 直接検証できるよう export する (WHERE 句の `renderWhereClause` と違い、
 // ORDER BY の方言差はこの関数でしか組み立てられていない)。
@@ -606,6 +701,7 @@ export function buildSql(
   limit: string,
   setPairs: ColumnValuePair[],
   insertPairs: ColumnValuePair[],
+  offset = "",
 ): string {
   const ref = tableRef(driver, database, table);
   const where = whereEnabled ? renderWhereClause(driver, columns, whereConditions) : "";
@@ -624,7 +720,12 @@ export function buildSql(
       const trimmedLimit = limit.trim();
       const hasLimit = limitEnabled && trimmedLimit && /^\d+$/.test(trimmedLimit);
       const orderByClause = renderOrderByClause(driver, orderBy);
-      const limitClause = hasLimit ? ` LIMIT ${trimmedLimit}` : "";
+      // OFFSET は LIMIT とセットでだけ出す (MySQL / SQLite は LIMIT なしの OFFSET を受けない)。
+      // 0 や空は出力しない。桁数の大きい値を丸めないよう数値化せず文字列のまま扱う (#1627)。
+      const offsetDigits = normalizeOffset(offset);
+      const limitClause = hasLimit
+        ? ` LIMIT ${trimmedLimit}${offsetDigits ? ` OFFSET ${offsetDigits}` : ""}`
+        : "";
       return `SELECT ${cols} FROM ${ref}${where}${orderByClause}${limitClause};`;
     }
     case "UPDATE": {
@@ -710,11 +811,22 @@ export function computeBuilderBlockedReason(input: BuilderValidationInput): I18n
   if (
     kind !== "INSERT" &&
     whereEnabled &&
-    whereConditions.some(
-      (c) => c.column && normalizeOperator(c.operator) === "IN" && splitInItems(c.value).length === 0,
-    )
+    whereConditions.some((c) => c.column && isInOperator(c.operator) && splitInItems(c.value).length === 0)
   ) {
     return "qbValidationNoInValues";
+  }
+  // BETWEEN は下端・上端の両方が要る (片方が空だと `<value>` が DB に送られてしまう、#1627)。
+  if (
+    kind !== "INSERT" &&
+    whereEnabled &&
+    whereConditions.some(
+      (c) =>
+        c.column &&
+        isBetweenOperator(c.operator) &&
+        (c.value.trim() === "" || (c.value2 ?? "").trim() === ""),
+    )
+  ) {
+    return "qbValidationNoBetweenValues";
   }
   return null;
 }
@@ -775,6 +887,7 @@ export function QueryBuilder({
   const [orderBy, setOrderBy] = useState<OrderByItem[]>(initialSnapshot?.orderBy ?? []);
   const [limitEnabled, setLimitEnabled] = useState(initialSnapshot?.limitEnabled ?? true);
   const [limit, setLimit] = useState(initialSnapshot?.limit ?? "100");
+  const [offset, setOffset] = useState(initialSnapshot?.offset ?? "");
   const [setPairs, setSetPairs] = useState<ColumnValuePair[]>(
     initialSnapshot?.setPairs ?? [{ column: "", value: "" }],
   );
@@ -860,6 +973,52 @@ export function QueryBuilder({
     };
   }, [sessionId, database, table]);
 
+  // WHERE の値入力に出す列の既存値の候補 (#1627)。入力欄にフォーカスしたときに 1 列 1 回だけ取る。
+  // テーブルが変わったら捨てる。取得失敗は候補なし (従来の自由入力) に縮退する。
+  const [valueSuggestions, setValueSuggestions] = useState<Record<string, string[]>>({});
+  const suggestionRequested = useRef(new Set<string>());
+  // biome-ignore lint/correctness/useExhaustiveDependencies: テーブル (session / database / table) が変わったときだけ候補を捨てる
+  useEffect(() => {
+    suggestionRequested.current = new Set();
+    setValueSuggestions({});
+  }, [sessionId, database, table]);
+  const requestValueSuggestions = useCallback(
+    (column: string) => {
+      if (!database || !table || !column) return;
+      const key = column;
+      if (suggestionRequested.current.has(key)) return;
+      suggestionRequested.current.add(key);
+      const requested = suggestionRequested.current;
+      api
+        .runLookupQuery({
+          sessionId,
+          sql: buildDistinctValuesSql({
+            driver,
+            database,
+            table,
+            column,
+            limit: WHERE_VALUE_CANDIDATE_LIMIT,
+          }),
+          database: null,
+          queryTimeoutSecs: SUGGESTION_TIMEOUT_SECS,
+          rowCap: WHERE_VALUE_CANDIDATE_LIMIT,
+        })
+        .then(
+          (res) => {
+            // テーブルが切り替わって集合が差し替わっていたら捨てる。
+            if (suggestionRequested.current !== requested) return;
+            const values = candidatesFromResult(res).sort((a, b) => a.localeCompare(b));
+            setValueSuggestions((cur) => ({ ...cur, [key]: values }));
+          },
+          () => {
+            if (suggestionRequested.current !== requested) return;
+            setValueSuggestions((cur) => ({ ...cur, [key]: [] }));
+          },
+        );
+    },
+    [sessionId, driver, database, table],
+  );
+
   const sql = useMemo(
     () =>
       buildSql(
@@ -877,6 +1036,7 @@ export function QueryBuilder({
         limit,
         setPairs,
         insertPairs,
+        offset,
       ),
     [
       driver,
@@ -893,6 +1053,7 @@ export function QueryBuilder({
       limit,
       setPairs,
       insertPairs,
+      offset,
     ],
   );
 
@@ -913,6 +1074,12 @@ export function QueryBuilder({
   );
   // 改善 2-2: LIMIT が有効なのに数値でない (ブロックはしない、インライン警告のみ)。
   const limitInvalid = isLimitInvalid(limitEnabled, limit);
+  // OFFSET は非負整数だけ。LIMIT が無い (無効 / 不正) と出力されないことも伝える (#1627)。
+  const offsetInvalid = isOffsetInvalid(offset);
+  const offsetNeedsLimit =
+    !offsetInvalid &&
+    normalizeOffset(offset) !== "" &&
+    (!limitEnabled || limit.trim() === "" || limitInvalid);
   // 改善 3: WHERE 句を無効化した UPDATE/DELETE (= 全行が対象)。
   const noWhereBand = showsNoWhereBand(kind, whereEnabled);
 
@@ -932,6 +1099,7 @@ export function QueryBuilder({
       orderBy: orderBy.map((o) => ({ ...o })),
       limitEnabled,
       limit,
+      offset,
       setPairs: setPairs.map((p) => ({ ...p })),
       insertPairs: insertPairs.map((p) => ({ ...p })),
     }),
@@ -946,6 +1114,7 @@ export function QueryBuilder({
       orderBy,
       limitEnabled,
       limit,
+      offset,
       setPairs,
       insertPairs,
     ],
@@ -1067,8 +1236,12 @@ export function QueryBuilder({
     [tableColumns, t],
   );
   const operatorComboOptions: ComboSelectOption[] = useMemo(
-    () => WHERE_OPERATORS.map((op) => ({ value: op })),
-    [],
+    () =>
+      WHERE_OPERATORS.map((op) => {
+        const detailKey = OPERATOR_DETAIL_KEYS[op];
+        return detailKey ? { value: op, detail: t(detailKey) } : { value: op };
+      }),
+    [t],
   );
 
   return (
@@ -1357,7 +1530,15 @@ export function QueryBuilder({
                   // date "now" button can't represent, so it keeps the plain
                   // free-text box regardless of the column's type. The two
                   // "IS [NOT] NULL" operators need no value at all.
-                  const isIn = normalizeOperator(c.operator) === "IN";
+                  const isIn = isInOperator(c.operator);
+                  const isBetween = isBetweenOperator(c.operator);
+                  // 含む / 前方一致 / 後方一致は「検索語」なので、型対応の入力ではなく常に文字列入力。
+                  const likeMode = likeModeOf(c.operator);
+                  // 文字列列の = / != / 比較は、列の既存値を候補に出す (#1627)。
+                  const suggestable =
+                    !!info &&
+                    isTextDataType(info.data_type) &&
+                    SUGGEST_OPERATORS.has(normalizeOperator(c.operator));
                   const notNullWarning = !nullOp && isNullValueOnNotNullColumn(c.value, info);
                   const inGroup =
                     c.groupWithPrevious === true || whereConditions[i + 1]?.groupWithPrevious === true;
@@ -1411,15 +1592,33 @@ export function QueryBuilder({
                           emptyText={t("qbComboNoMatches")}
                           showMoreText={(count) => t("qbComboShowMore", { count })}
                         />
-                        {nullOp || isIn ? (
+                        {nullOp || isIn || likeMode ? (
                           <chakra.input
                             css={rowInputCss}
                             value={c.value}
-                            placeholder={nullOp ? "—" : t("qbValuesPlaceholder")}
+                            placeholder={nullOp ? "—" : isIn ? t("qbValuesPlaceholder") : t("qbValue")}
                             disabled={nullOp}
                             aria-label={t("qbValue")}
                             onChange={(e) => updateCondition(i, { value: e.target.value })}
                           />
+                        ) : isBetween ? (
+                          <>
+                            <ValueControl
+                              value={c.value}
+                              onChange={(v) => updateCondition(i, { value: v })}
+                              columnInfo={info}
+                              placeholder={t("qbBetweenFrom")}
+                              t={t}
+                            />
+                            <chakra.span css={eqCss}>AND</chakra.span>
+                            <ValueControl
+                              value={c.value2 ?? ""}
+                              onChange={(v) => updateCondition(i, { value2: v })}
+                              columnInfo={info}
+                              placeholder={t("qbBetweenTo")}
+                              t={t}
+                            />
+                          </>
                         ) : (
                           <ValueControl
                             value={c.value}
@@ -1427,6 +1626,8 @@ export function QueryBuilder({
                             columnInfo={info}
                             placeholder={t("qbValue")}
                             t={t}
+                            suggestions={suggestable ? (valueSuggestions[c.column] ?? []) : undefined}
+                            onSuggestOpen={suggestable ? () => requestValueSuggestions(c.column) : undefined}
                           />
                         )}
                         <Tooltip label={t("qbRemove")} focusableWrapper={whereConditions.length <= 1}>
@@ -1529,6 +1730,25 @@ export function QueryBuilder({
                   inputMode="numeric"
                 />
                 {limitInvalid && <chakra.span css={inlineWarningCss}>{t("qbLimitInvalid")}</chakra.span>}
+              </Box>
+              <chakra.label htmlFor="qb-offset" css={{ ...checkboxLabelCss, m: 0 }}>
+                {t("qbOffset")}
+              </chakra.label>
+              <Box css={stackedRowCss}>
+                <chakra.input
+                  id="qb-offset"
+                  css={limitInputCss}
+                  value={offset}
+                  placeholder="0"
+                  disabled={!limitEnabled}
+                  aria-label={t("qbOffset")}
+                  onChange={(e) => setOffset(e.target.value)}
+                  inputMode="numeric"
+                />
+                {offsetInvalid && <chakra.span css={inlineWarningCss}>{t("qbOffsetInvalid")}</chakra.span>}
+                {offsetNeedsLimit && (
+                  <chakra.span css={inlineWarningCss}>{t("qbOffsetNeedsLimit")}</chakra.span>
+                )}
               </Box>
             </chakra.section>
           )}
@@ -1633,6 +1853,9 @@ export function QueryBuilder({
   );
 }
 
+/** 列の既存値を候補に出す演算子 (#1627)。IN / LIKE 系は値の形が違うので対象外。 */
+const SUGGEST_OPERATORS: ReadonlySet<string> = new Set(["=", "!=", "<", "<=", ">", ">="]);
+
 interface ValueControlProps {
   value: string;
   onChange: (v: string) => void;
@@ -1642,6 +1865,12 @@ interface ValueControlProps {
   disabled?: boolean;
   placeholder?: string;
   t: ReturnType<typeof useT>;
+  /**
+   * 列の既存値の候補 (#1627)。渡されたときだけ、文字列入力を候補つきの `ComboSelect` にする
+   * (自由入力のまま。候補に無い値もそのまま使える)。取得は `onSuggestOpen` (フォーカス時)。
+   */
+  suggestions?: readonly string[];
+  onSuggestOpen?: () => void;
 }
 
 /**
@@ -1659,8 +1888,33 @@ interface ValueControlProps {
  * 呼び出し元で同じ位置に出したいのと、値そのものの入力 UI とは関心事が
  * 別なため。
  */
-function ValueControl({ value, onChange, columnInfo, disabled, placeholder, t }: ValueControlProps) {
+function ValueControl({
+  value,
+  onChange,
+  columnInfo,
+  disabled,
+  placeholder,
+  t,
+  suggestions,
+  onSuggestOpen,
+}: ValueControlProps) {
   const kind: EditTypeKind = columnInfo ? classifyEditType(columnInfo.data_type) : "other";
+  const suggestOptions = useMemo(() => (suggestions ?? []).map((v) => ({ value: v })), [suggestions]);
+
+  if (suggestions && kind === "other") {
+    return (
+      <ComboSelect
+        css={rowInputCss}
+        value={value}
+        options={suggestOptions}
+        placeholder={placeholder}
+        disabled={disabled}
+        onChange={onChange}
+        onFocus={onSuggestOpen}
+        showMoreText={(count) => t("qbComboShowMore", { count })}
+      />
+    );
+  }
 
   if (kind === "boolean") {
     return (

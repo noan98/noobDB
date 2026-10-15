@@ -117,6 +117,25 @@ export function buildFkCandidatesSql(p: FkCandidatesParams): string {
   return `SELECT DISTINCT ${col} FROM ${from} WHERE ${where.join(" AND ")} ORDER BY ${col} LIMIT ${limit}`;
 }
 
+/** クエリビルダの WHERE 値入力に出す、列の既存値の候補の最大件数 (#1627)。 */
+export const WHERE_VALUE_CANDIDATE_LIMIT = 50;
+
+/**
+ * 列の既存値の候補 (DISTINCT 上位 N 件) を引く読み取り専用 SQL (#1627)。NULL は候補にしない。
+ * 先頭から N 種類見つかった時点で打ち切れるよう `ORDER BY` は付けない (並べ替えは呼び出し側)。
+ */
+export function buildDistinctValuesSql(p: {
+  driver: string;
+  database?: string | null;
+  table: string;
+  column: string;
+  limit?: number;
+}): string {
+  const limit = Math.max(1, Math.floor(p.limit ?? WHERE_VALUE_CANDIDATE_LIMIT));
+  const col = quoteIdentFor(p.driver, p.column);
+  return `SELECT DISTINCT ${col} FROM ${tableRef(p.driver, p.database, p.table)} WHERE ${col} IS NOT NULL LIMIT ${limit}`;
+}
+
 /** 許可値取得クエリの用途。 */
 export type AllowedValuesQueryPurpose = "pgEnum" | "check";
 

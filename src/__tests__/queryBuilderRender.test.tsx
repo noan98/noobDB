@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent, waitFor } from "./testUtils";
+import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { t } from "../i18n";
 import type { TableColumnInfo } from "../api/tauri";
 
@@ -57,6 +57,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
       listDatabases: vi.fn().mockResolvedValue(["testdb"]),
       listTables: vi.fn().mockResolvedValue(["users"]),
       describeTable: vi.fn().mockResolvedValue(COLUMNS),
+      runLookupQuery: vi.fn(),
     },
   };
 });
@@ -368,11 +369,12 @@ describe("QueryBuilder WHERE の AND / OR とグループ (#1540)", () => {
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
     fireEvent.click(screen.getByRole("button", { name: new RegExp(t("qbAddCondition")) }));
     const cols = screen.getAllByPlaceholderText(t("qbColumn"));
-    const vals = screen.getAllByPlaceholderText(t("qbValue"));
     expect(cols).toHaveLength(3);
     ["id", "name", "active"].forEach((c, i) => {
       fireEvent.change(cols[i], { target: { value: c } });
     });
+    // 文字列列は値入力が候補つきの入力に差し替わる (#1627) ので、列を決めたあとで取り直す。
+    const vals = screen.getAllByPlaceholderText(t("qbValue"));
     fireEvent.change(vals[0], { target: { value: "1" } });
     fireEvent.change(vals[1], { target: { value: "x" } });
     const connectors = screen.getAllByLabelText(t("qbWhereConnector"));
@@ -426,5 +428,110 @@ describe("QueryBuilder 読み込みエラー (#1602)", () => {
     await screen.findByText(/describe failed/);
     fireEvent.change(screen.getByLabelText(t("qbTable")), { target: { value: "orders" } });
     await waitFor(() => expect(screen.queryByText(/describe failed/)).not.toBeInTheDocument());
+  });
+});
+
+describe("QueryBuilder の BETWEEN / OFFSET / 値の候補 (#1627)", () => {
+  const renderSelect = (onExecute = vi.fn(), driver = "mysql") =>
+    renderWithProviders(
+      <QueryBuilder
+        sessionId="s1"
+        driver={driver}
+        defaultDatabase="testdb"
+        defaultTable="users"
+        onExecute={onExecute}
+        onClose={() => {}}
+      />,
+    );
+
+  it("BETWEEN を選ぶと値入力が 2 つになり、両方そろうまで実行できない", async () => {
+    const onExecute = vi.fn();
+    renderSelect(onExecute);
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
+    // 演算子の入力欄 (既定値 "=") に BETWEEN を入れる。
+    const op = screen
+      .getAllByRole("combobox")
+      .find((el) => el.tagName === "INPUT" && (el as HTMLInputElement).value === "=") as HTMLElement;
+    fireEvent.change(op, { target: { value: "BETWEEN" } });
+    fireEvent.change(screen.getByPlaceholderText(t("qbBetweenFrom")), { target: { value: "10" } });
+    expect(screen.getByRole("button", { name: t("qbExecute") })).toBeDisabled();
+    fireEvent.change(screen.getByPlaceholderText(t("qbBetweenTo")), { target: { value: "20" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: t("qbExecute") }));
+    expect(onExecute.mock.calls[0][0]).toContain("`id` BETWEEN 10 AND 20");
+  });
+
+  it("OFFSET を入れると LIMIT n OFFSET m になり、LIMIT を切ると注意を出す", async () => {
+    const onExecute = vi.fn();
+    renderSelect(onExecute);
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
+    fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText(t("qbOffset")), { target: { value: "200" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).not.toBeDisabled());
+    expect(screen.queryByText(t("qbOffsetNeedsLimit"))).toBeNull();
+    fireEvent.click(screen.getByLabelText(t("qbLimitToggle")));
+    expect(screen.getByText(t("qbOffsetNeedsLimit"))).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(t("qbLimitToggle")));
+    fireEvent.change(screen.getByLabelText(t("qbOffset")), { target: { value: "x" } });
+    expect(screen.getByText(t("qbOffsetInvalid"))).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(t("qbOffset")), { target: { value: "200" } });
+    fireEvent.click(screen.getByRole("button", { name: t("qbExecute") }));
+    expect(onExecute.mock.calls[0][0]).toContain("LIMIT 100 OFFSET 200;");
+  });
+
+  it("文字列列の値入力にフォーカスすると候補を 1 回だけ取り、選べる", async () => {
+    vi.mocked(api.runLookupQuery).mockResolvedValue({
+      columns: [{ name: "name", type_name: "varchar" }],
+      rows: [["bob"], ["alice"], [null]],
+      rows_affected: null,
+      elapsed_ms: 1,
+    } as never);
+    const onExecute = vi.fn();
+    renderSelect(onExecute);
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "name" } });
+    const value = () => screen.getByPlaceholderText(t("qbValue"));
+    expect(api.runLookupQuery).not.toHaveBeenCalled();
+    fireEvent.focus(value());
+    await waitFor(() => expect(api.runLookupQuery).toHaveBeenCalledTimes(1));
+    const call = vi.mocked(api.runLookupQuery).mock.calls[0][0];
+    expect(call.sql).toBe("SELECT DISTINCT `name` FROM `testdb`.`users` WHERE `name` IS NOT NULL LIMIT 50");
+    expect(call.rowCap).toBe(50);
+    // 並べ替えたうえで候補に出る。
+    const alice = await screen.findByRole("option", { name: "alice" });
+    const bob = screen.getByRole("option", { name: "bob" });
+    expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(["alice", "bob"]),
+    );
+    expect(alice.compareDocumentPosition(bob) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(bob.closest("[role=listbox]") as HTMLElement).queryAllByRole("option")).toHaveLength(2);
+    fireEvent.mouseDown(bob);
+    fireEvent.click(bob);
+    await waitFor(() => expect((value() as HTMLInputElement).value).toBe("bob"));
+    // 再フォーカスしても取り直さない。
+    fireEvent.blur(value());
+    fireEvent.focus(value());
+    expect(api.runLookupQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("数値列・IN 演算子では候補を取りに行かない", async () => {
+    renderSelect();
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "id" } });
+    fireEvent.focus(screen.getByPlaceholderText(t("qbValue")));
+    expect(api.runLookupQuery).not.toHaveBeenCalled();
+  });
+
+  it("候補の取得に失敗しても自由入力のまま使える", async () => {
+    vi.mocked(api.runLookupQuery).mockRejectedValue(new Error("denied"));
+    renderSelect();
+    await waitFor(() => expect(api.describeTable).toHaveBeenCalled());
+    fireEvent.change(screen.getByPlaceholderText(t("qbColumn")), { target: { value: "name" } });
+    fireEvent.focus(screen.getByPlaceholderText(t("qbValue")));
+    await waitFor(() => expect(api.runLookupQuery).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByPlaceholderText(t("qbValue")), { target: { value: "zed" } });
+    await waitFor(() => expect(screen.getByRole("button", { name: t("qbExecute") })).not.toBeDisabled());
   });
 });

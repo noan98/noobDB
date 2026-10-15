@@ -5,6 +5,7 @@ import {
   allowedValuesFromCheck,
   allowedValuesFromType,
   buildAllowedValuesQueries,
+  buildDistinctValuesSql,
   buildFkCandidatesSql,
   candidatesFromResult,
   collectAllowedValues,
@@ -326,5 +327,35 @@ describe("candidatesFromResult / fkSearchTerm (#1067)", () => {
     expect(fkSearchTerm("NULL")).toBe("");
     expect(fkSearchTerm("nu")).toBe("nu");
     expect(fkSearchTerm("")).toBe("");
+  });
+});
+
+describe("buildDistinctValuesSql (#1627)", () => {
+  it("DISTINCT 上位 N 件の読み取り専用 SQL を方言別に作る", () => {
+    const p = { database: "db", table: "users", column: "status" };
+    expect(buildDistinctValuesSql({ driver: "mysql", ...p })).toBe(
+      "SELECT DISTINCT `status` FROM `db`.`users` WHERE `status` IS NOT NULL LIMIT 50",
+    );
+    expect(buildDistinctValuesSql({ driver: "postgres", ...p, limit: 10 })).toBe(
+      'SELECT DISTINCT "status" FROM "db"."users" WHERE "status" IS NOT NULL LIMIT 10',
+    );
+    // SQLite は名前空間修飾なし。
+    expect(buildDistinctValuesSql({ driver: "sqlite", ...p })).toBe(
+      'SELECT DISTINCT "status" FROM "users" WHERE "status" IS NOT NULL LIMIT 50',
+    );
+  });
+
+  it("識別子を引用符でエスケープし、読み取り専用で、件数は 1 以上に丸める", () => {
+    const sql = buildDistinctValuesSql({
+      driver: "mysql",
+      database: "d`b",
+      table: "t",
+      column: "a`b",
+      limit: 0,
+    });
+    expect(sql).toContain("`a``b`");
+    expect(sql).toContain("`d``b`.`t`");
+    expect(sql.endsWith("LIMIT 1")).toBe(true);
+    expect(isReadOnlySql(sql)).toBe(true);
   });
 });
