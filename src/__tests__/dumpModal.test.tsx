@@ -48,6 +48,32 @@ describe("DumpModal render smoke (#604)", () => {
     expect(pathInput.value.endsWith(".sql")).toBe(true);
     expect(pathInput.value.endsWith(".gz")).toBe(false);
   });
+
+  // #1624: ドライバ別の追加オプション。
+  it("shows the mysql-only extra flags and the sqlite-only snapshot toggle per driver", () => {
+    const { unmount } = renderWithProviders(
+      <DumpModal sessionId="s1" database="app" driver="mysql" onClose={() => {}} />,
+    );
+    expect(screen.getByRole("switch", { name: t("dumpOptNoTablespaces") })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: t("dumpOptGtidPurgedOff") })).not.toBeChecked();
+    expect(screen.getByRole("switch", { name: t("dumpOptChecksum") })).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: t("dumpOptSqliteSnapshot") })).not.toBeInTheDocument();
+    unmount();
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
+    expect(screen.queryByRole("switch", { name: t("dumpOptNoTablespaces") })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") })).toBeInTheDocument();
+  });
+
+  it("snapshot toggle swaps the save path extension to .db (and .db.gz with gzip)", () => {
+    renderWithProviders(<DumpModal sessionId="s1" database="main" driver="sqlite" onClose={() => {}} />);
+    const pathInput = screen.getByLabelText(t("dumpSavePath")) as HTMLInputElement;
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") }));
+    expect(pathInput.value.endsWith(".db")).toBe(true);
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptGzip") }));
+    expect(pathInput.value.endsWith(".db.gz")).toBe(true);
+    fireEvent.click(screen.getByRole("switch", { name: t("dumpOptSqliteSnapshot") }));
+    expect(pathInput.value.endsWith(".sql.gz")).toBe(true);
+  });
 });
 
 // 前回のスイッチと保存先ディレクトリをプロファイルごとに復元する (#1631)。

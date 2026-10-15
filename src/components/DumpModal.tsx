@@ -105,6 +105,10 @@ const DEFAULT_OPTIONS: DumpOptions = {
   pgSchema: null,
   formatSql: false,
   gzip: false,
+  noTablespaces: false,
+  setGtidPurgedOff: false,
+  writeChecksum: false,
+  sqliteSnapshot: false,
 };
 
 type BoolOptionKey = {
@@ -126,6 +130,10 @@ const OPTION_ROWS: { key: BoolOptionKey; label: I18nKey; hint: I18nKey }[] = [
   { key: "noPrivileges", label: "dumpOptNoPrivileges", hint: "dumpOptNoPrivilegesHint" },
   { key: "formatSql", label: "dumpOptFormatSql", hint: "dumpOptFormatSqlHint" },
   { key: "gzip", label: "dumpOptGzip", hint: "dumpOptGzipHint" },
+  { key: "noTablespaces", label: "dumpOptNoTablespaces", hint: "dumpOptNoTablespacesHint" },
+  { key: "setGtidPurgedOff", label: "dumpOptGtidPurgedOff", hint: "dumpOptGtidPurgedOffHint" },
+  { key: "writeChecksum", label: "dumpOptChecksum", hint: "dumpOptChecksumHint" },
+  { key: "sqliteSnapshot", label: "dumpOptSqliteSnapshot", hint: "dumpOptSqliteSnapshotHint" },
 ];
 
 /** Which toggle keys each driver shows. Omitted fields are sent at their default
@@ -141,11 +149,23 @@ const DRIVER_OPTIONS: Record<DriverKind, BoolOptionKey[]> = {
     "completeInsert",
     "noData",
     "noCreateInfo",
+    "noTablespaces",
+    "setGtidPurgedOff",
     "formatSql",
     "gzip",
+    "writeChecksum",
   ],
-  postgres: ["addDropTable", "noData", "noCreateInfo", "noOwner", "noPrivileges", "formatSql", "gzip"],
-  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql", "gzip"],
+  postgres: [
+    "addDropTable",
+    "noData",
+    "noCreateInfo",
+    "noOwner",
+    "noPrivileges",
+    "formatSql",
+    "gzip",
+    "writeChecksum",
+  ],
+  sqlite: ["addDropTable", "noData", "noCreateInfo", "formatSql", "gzip", "writeChecksum", "sqliteSnapshot"],
 };
 
 /** 外部クライアントツールを使わずに接続から直接 SQL を生成するドライバ。 */
@@ -243,7 +263,28 @@ function DumpToolNotice({
 type Status = { kind: "idle" } | { kind: "running" } | { kind: "error"; message: string };
 
 /** テーブル指定のダンプでは意味を持たない (テーブル指定時はバックエンドが無効にする) スイッチ。 */
-const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>(["routines", "events"]);
+const TABLE_SCOPE_HIDDEN_OPTIONS: ReadonlySet<BoolOptionKey> = new Set<BoolOptionKey>([
+  "routines",
+  "events",
+  "sqliteSnapshot",
+]);
+
+/** 保存先の拡張子。SQL / gzip 圧縮 SQL / SQLite スナップショット (#1624) / その gzip。 */
+function dumpExtension(o: Pick<DumpOptions, "gzip" | "sqliteSnapshot">): string {
+  const base = o.sqliteSnapshot ? "db" : "sql";
+  return o.gzip ? `${base}.gz` : base;
+}
+
+/** 保存先の拡張子を新しいオプションに追従させる (手で別の名前にした場合は触らない)。 */
+function swapDumpExtension(path: string, next: Pick<DumpOptions, "gzip" | "sqliteSnapshot">): string {
+  return path.replace(/\.(sql\.gz|sql|db\.gz|db)$/i, `.${dumpExtension(next)}`);
+}
+
+/** 保存ダイアログの拡張子フィルタ。 */
+function dumpFilter(o: Pick<DumpOptions, "gzip" | "sqliteSnapshot">): { name: string; extensions: string[] } {
+  if (o.sqliteSnapshot) return { name: "SQLite", extensions: o.gzip ? ["gz"] : ["db"] };
+  return { name: "SQL", extensions: o.gzip ? ["gz"] : ["sql"] };
+}
 
 export function DumpModal({ sessionId, database, driver, tables, profileId, onClose }: Props) {
   const t = useT();
@@ -271,7 +312,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
   const [path, setPath] = useState<string>(() =>
     joinDirAndName(
       remembered?.dir ?? "",
-      `${initialBasename}${remembered?.options.gzip ? ".sql.gz" : ".sql"}`,
+      `${initialBasename}.${dumpExtension(remembered?.options ?? {})}`,
     ),
   );
   const [options, setOptions] = useState<DumpOptions>(() => {
@@ -351,18 +392,18 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
 
   const toggle = (key: BoolOptionKey) => {
     setOptions((prev) => ({ ...prev, [key]: !prev[key] }));
-    // gzip (#1539): 保存先の拡張子を `.sql` ⇔ `.sql.gz` に追従させる (手で別の名前にした場合は触らない)。
-    if (key === "gzip")
-      setPath((cur) =>
-        options.gzip ? cur.replace(/\.sql\.gz$/i, ".sql") : cur.replace(/\.sql$/i, ".sql.gz"),
-      );
+    // gzip (#1539) / SQLite スナップショット (#1624): 保存先の拡張子を追従させる。
+    if (key === "gzip" || key === "sqliteSnapshot") {
+      const next = { ...options, [key]: !options[key] };
+      setPath((cur) => swapDumpExtension(cur, next));
+    }
   };
 
   const handleBrowse = async () => {
     const selected = await save({
-      defaultPath: path || `${initialBasename}.sql`,
+      defaultPath: path || `${initialBasename}.${dumpExtension(options)}`,
       title: t("dumpPickFileTitle"),
-      filters: [{ name: "SQL", extensions: options.gzip ? ["gz"] : ["sql"] }],
+      filters: [dumpFilter(options)],
     });
     if (typeof selected === "string" && selected) {
       setPath(selected);
@@ -384,7 +425,7 @@ export function DumpModal({ sessionId, database, driver, tables, profileId, onCl
       const selected = await save({
         defaultPath: target,
         title: t("dumpPickFileTitle"),
-        filters: [{ name: "SQL", extensions: options.gzip ? ["gz"] : ["sql"] }],
+        filters: [dumpFilter(options)],
       });
       if (typeof selected !== "string" || !selected) return;
       setPath(selected);

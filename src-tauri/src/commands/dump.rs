@@ -155,6 +155,29 @@ pub struct DumpOptions {
     ///   テーブル名は `InvalidInput`
     #[serde(default)]
     pub tables: Option<Vec<String>>,
+
+    // ── MySQL 追加オプション (#1624) ──
+    /// `mysqldump --no-tablespaces`: `CREATE TABLESPACE` 文を出さない。PROCESS 権限が無い
+    /// ユーザ (マネージド DB で多い) は、これが無いと mysqldump が失敗する。既定オフ。
+    #[serde(default)]
+    pub no_tablespaces: bool,
+    /// `mysqldump --set-gtid-purged=OFF`: `SET @@GLOBAL.GTID_PURGED` を出さない。GTID 有効の
+    /// サーバから別サーバへ復元するときの衝突を避ける。既定オフ (mysqldump の既定のまま)。
+    #[serde(default)]
+    pub set_gtid_purged_off: bool,
+
+    // ── 全ドライバ共通 (#1624) ──
+    /// 完成したダンプの SHA-256 を `<保存先>.sha256` (`sha256sum -c` 形式) に書く。gzip 後の
+    /// 最終ファイルが対象。既定オフ。
+    #[serde(default)]
+    pub write_checksum: bool,
+
+    // ── SQLite 専用 (#1624) ──
+    /// SQL ではなく `VACUUM INTO` による整合したバイナリ・スナップショット (`.db`) を作る。
+    /// SQLite 以外では `InvalidInput`。`tables` / `format_sql` / `no_data` などの SQL 形式向け
+    /// オプションは無視する (`tables` との併用は拒否)。`gzip` は併用できる。
+    #[serde(default)]
+    pub sqlite_snapshot: bool,
 }
 
 /// `DumpOptions::tables` を検証して重複を除いた一覧にする。`None` は全体ダンプ。
@@ -399,6 +422,11 @@ pub(crate) async fn run_dump(
     // that happen before they ever touch the file) must still delete this
     // reserved-but-unused temp file, which only a guard spanning the whole
     // function can guarantee.
+    if options.sqlite_snapshot && session.connect_options.driver != DriverKind::Sqlite {
+        return Err(AppError::InvalidInput(
+            "sqliteSnapshot is only supported for SQLite connections".into(),
+        ));
+    }
     let (tmp, tmp_file) = create_dump_temp_file(final_path).await?;
     let tmp_str = tmp.to_string_lossy().to_string();
     let mut cleanup = PartialFileCleanup::new(tmp.clone());
@@ -428,6 +456,9 @@ pub(crate) async fn run_dump(
             )
             .await?
         }
+        DriverKind::Sqlite if options.sqlite_snapshot => {
+            dump_sqlite_snapshot(&session.conn, tmp_file, &tmp_str, options, counter).await?
+        }
         DriverKind::Sqlite => {
             dump_sqlite(
                 app,
@@ -444,7 +475,7 @@ pub(crate) async fn run_dump(
 
     // 整形オプションが有効なら、書き出した SQL を整形して保存し直す (#546)。整形も
     // 一時ファイル上で行う。失敗時は `cleanup` (未 commit) が末尾の Drop で消す。
-    let bytes = if options.format_sql && bytes > 0 {
+    let bytes = if options.format_sql && bytes > 0 && !options.sqlite_snapshot {
         format_dump_file(tmp_str).await?
     } else {
         bytes
@@ -456,14 +487,27 @@ pub(crate) async fn run_dump(
         let (gz_tmp, gz_file) = create_dump_temp_file(final_path).await?;
         let mut gz_cleanup = PartialFileCleanup::new(gz_tmp.clone());
         let gz_bytes = gzip_dump_file(tmp.clone(), gz_file.into_std().await).await?;
+        let digest = if options.write_checksum {
+            Some(sha256_hex_of_file(gz_tmp.clone()).await?)
+        } else {
+            None
+        };
         tokio::fs::rename(&gz_tmp, final_path)
             .await
             .map_err(AppError::Io)?;
         gz_cleanup.commit();
+        if let Some(digest) = digest {
+            write_checksum_sidecar(final_path, &digest).await?;
+        }
         // `cleanup` は未 commit のまま関数末尾で Drop され、未圧縮の一時ファイルを消す。
         return Ok(gz_bytes);
     }
 
+    let digest = if options.write_checksum {
+        Some(sha256_hex_of_file(tmp.clone()).await?)
+    } else {
+        None
+    };
     // Everything succeeded: atomically move the temp file onto the final path,
     // replacing any existing file only now (not mid-write). Failure here is
     // also covered by `cleanup`'s Drop.
@@ -471,6 +515,80 @@ pub(crate) async fn run_dump(
         .await
         .map_err(AppError::Io)?;
     cleanup.commit();
+    if let Some(digest) = digest {
+        write_checksum_sidecar(final_path, &digest).await?;
+    }
+    Ok(bytes)
+}
+
+/// ファイルの SHA-256 を 16 進で返す (#1624)。ストリームで読むので巨大なダンプでもメモリに
+/// 載せない。同期 I/O は blocking スレッドで行う。
+async fn sha256_hex_of_file(path: PathBuf) -> Result<String> {
+    use sha2::{Digest, Sha256};
+    tokio::task::spawn_blocking(move || -> Result<String> {
+        let mut input = std::io::BufReader::new(std::fs::File::open(&path)?);
+        let mut hasher = Sha256::new();
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            let n = std::io::Read::read(&mut input, &mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect())
+    })
+    .await
+    .map_err(|e| AppError::Other(format!("dump checksum task failed: {e}")))?
+}
+
+/// `<final_path>.sha256` のパス。
+fn checksum_sidecar_path(final_path: &str) -> PathBuf {
+    let mut os = std::ffi::OsString::from(final_path);
+    os.push(".sha256");
+    PathBuf::from(os)
+}
+
+/// `sha256sum -c` で検証できる形式 (`<hex>  <ファイル名>`) で、保存先の隣へサイドカーを書く。
+async fn write_checksum_sidecar(final_path: &str, digest: &str) -> Result<()> {
+    let name = Path::new(final_path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let body = format!("{digest}  {name}\n");
+    tokio::fs::write(checksum_sidecar_path(final_path), body)
+        .await
+        .map_err(|e| {
+            AppError::Other(format!(
+                "dump was saved, but writing the .sha256 checksum file failed: {e}"
+            ))
+        })
+}
+
+/// SQLite の整合スナップショット (#1624): 予約済みの空の一時ファイルへ `VACUUM INTO` する。
+/// `VACUUM INTO` は単一トランザクションの一貫したコピーを作り、`.db` としてそのまま開ける。
+/// SQL 生成の進捗は無いので完了時にまとめてバイト数を数える。
+async fn dump_sqlite_snapshot(
+    conn: &crate::db::Connection,
+    file: tokio::fs::File,
+    tmp_path: &str,
+    options: &DumpOptions,
+    counter: &Arc<AtomicU64>,
+) -> Result<u64> {
+    if options.tables.is_some() {
+        return Err(AppError::InvalidInput(
+            "a SQLite snapshot copies the whole database; table selection is not supported".into(),
+        ));
+    }
+    // `VACUUM INTO` は自分でファイルを作る (空ファイルは許容される)。予約したハンドルは閉じる。
+    drop(file);
+    conn.vacuum_into(tmp_path).await?;
+    let bytes = tokio::fs::metadata(tmp_path).await?.len();
+    counter.store(bytes, Ordering::SeqCst);
     Ok(bytes)
 }
 
@@ -843,6 +961,12 @@ async fn dump_mysql(
     }
     if options.no_create_info {
         cmd.arg("--no-create-info");
+    }
+    if options.no_tablespaces {
+        cmd.arg("--no-tablespaces");
+    }
+    if options.set_gtid_purged_off {
+        cmd.arg("--set-gtid-purged=OFF");
     }
     // `--` でオプション終端を明示し、以降の引数 (DB 名) をオプションとして解釈させない。
     // `--all-databases` や `--result-file=...` のような値を DB 名として渡された場合の
@@ -1824,6 +1948,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(o.tables, Some(vec!["a".to_string(), "b".to_string()]));
+    }
+
+    #[test]
+    fn dump_options_new_flags_default_off() {
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false}"#,
+        )
+        .unwrap();
+        assert!(!o.no_tablespaces && !o.set_gtid_purged_off && !o.write_checksum && !o.sqlite_snapshot);
+        let o: DumpOptions = serde_json::from_str(
+            r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false,"noTablespaces":true,"setGtidPurgedOff":true,"writeChecksum":true,"sqliteSnapshot":true}"#,
+        )
+        .unwrap();
+        assert!(o.no_tablespaces && o.set_gtid_purged_off && o.write_checksum && o.sqlite_snapshot);
+    }
+
+    #[test]
+    fn checksum_sidecar_path_appends_sha256() {
+        assert_eq!(
+            checksum_sidecar_path("/tmp/a/dump.sql.gz"),
+            PathBuf::from("/tmp/a/dump.sql.gz.sha256")
+        );
+    }
+
+    #[tokio::test]
+    async fn sha256_sidecar_matches_sha256sum_format() {
+        let dir = std::env::temp_dir().join(format!("noobdb-sha-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("d.sql");
+        std::fs::write(&f, b"abc").unwrap();
+        let digest = sha256_hex_of_file(f.clone()).await.unwrap();
+        assert_eq!(
+            digest,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        write_checksum_sidecar(f.to_str().unwrap(), &digest).await.unwrap();
+        let body = std::fs::read_to_string(dir.join("d.sql.sha256")).unwrap();
+        assert_eq!(body, format!("{digest}  d.sql\n"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

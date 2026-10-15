@@ -2239,6 +2239,18 @@ const en = {
   dumpOptGzip: "Compress with gzip (.sql.gz)",
   dumpOptGzipHint:
     "Compresses the finished dump with gzip and saves it as a .sql.gz file. Saves disk space and transfer size; restore with gunzip or zcat.",
+  dumpOptNoTablespaces: "Skip tablespace statements (--no-tablespaces)",
+  dumpOptNoTablespacesHint:
+    "Omits CREATE TABLESPACE statements. Without it mysqldump fails for users without the PROCESS privilege (common on managed databases).",
+  dumpOptGtidPurgedOff: "Omit GTID_PURGED (--set-gtid-purged=OFF)",
+  dumpOptGtidPurgedOffHint:
+    "Does not write SET @@GLOBAL.GTID_PURGED. Avoids restore errors when moving a dump from a GTID-enabled server to another one.",
+  dumpOptChecksum: "Write a SHA-256 checksum file (.sha256)",
+  dumpOptChecksumHint:
+    "Saves <file>.sha256 next to the dump (sha256sum -c compatible) so corruption or tampering can be detected later. Computed on the final file, including gzip output.",
+  dumpOptSqliteSnapshot: "Binary snapshot (.db) via VACUUM INTO",
+  dumpOptSqliteSnapshotHint:
+    "Instead of SQL, writes a consistent single-transaction copy of the database that opens directly as a .db file. Much faster for large databases; the SQL-format options are ignored.",
   dumpOptFormatSql: "Format SQL",
   dumpOptFormatSqlHint:
     "Reformat the saved SQL for readability (2-space indent, keyword case preserved), matching the editor's formatter. Best-effort; for review/version control. Off keeps the raw output.",
@@ -8234,6 +8246,18 @@ const ja: Dict = {
   dumpOptGzip: "gzip で圧縮 (.sql.gz)",
   dumpOptGzipHint:
     "完成したダンプを gzip 圧縮し、.sql.gz として保存します。ディスクと転送量を減らせます (復元は gunzip / zcat)。進捗のバイト数は圧縮前、完了時のサイズは圧縮後です。",
+  dumpOptNoTablespaces: "テーブルスペース文を出力しない (--no-tablespaces)",
+  dumpOptNoTablespacesHint:
+    "CREATE TABLESPACE 文を出力しません。PROCESS 権限が無いユーザ (マネージド DB に多い) は、これが無いと mysqldump が失敗します。",
+  dumpOptGtidPurgedOff: "GTID_PURGED を出力しない (--set-gtid-purged=OFF)",
+  dumpOptGtidPurgedOffHint:
+    "SET @@GLOBAL.GTID_PURGED を書きません。GTID を有効にしたサーバから別サーバへ復元するときのエラーを防げます。",
+  dumpOptChecksum: "SHA-256 チェックサムファイル (.sha256) を書く",
+  dumpOptChecksumHint:
+    "ダンプと同じ場所に <ファイル名>.sha256 を保存します (sha256sum -c で検証可)。後から破損や改ざんを検出できます。gzip 後の最終ファイルのハッシュです。",
+  dumpOptSqliteSnapshot: "VACUUM INTO のバイナリ・スナップショット (.db)",
+  dumpOptSqliteSnapshotHint:
+    "SQL ではなく、単一トランザクションで整合したデータベースのコピーを書き出します。そのまま .db として開け、大きな DB でも高速です。SQL 形式向けのオプションは無視されます。",
   dumpOptFormatSql: "SQL を整形",
   dumpOptFormatSqlHint:
     "保存する SQL を可読性向上のため整形します (2 スペース字下げ・キーワードのケースは保持) — エディタの整形と方針を揃えています。best-effort でレビュー/バージョン管理向け。オフなら出力そのままです。",
