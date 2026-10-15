@@ -1590,6 +1590,13 @@ export const sqlFileContent = z.object({
   encoding: textEncoding,
 });
 
+/** `preview_sql_file_encodings` の戻り値 (#1627)。候補ごとの先頭数行と自動判定の結果。 */
+export const sqlEncodingPreview = z.object({
+  detected: textEncoding.nullable(),
+  detectError: z.string().nullable(),
+  candidates: z.array(z.object({ encoding: textEncoding, valid: z.boolean(), lines: z.array(z.string()) })),
+});
+
 const scriptDangerKind = z.enum(["deleteNoWhere", "updateNoWhere", "drop", "truncate"]);
 
 /** 事前確認の一覧の 1 文 (#1535)。`index` は実行時の通し番号と同じ。 */

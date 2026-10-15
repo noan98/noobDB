@@ -254,7 +254,7 @@ pub mod __test_api {
     pub use crate::commands::connection::ConnectPhaseEvent;
     pub use crate::commands::dump::{DumpDoneEvent, DumpErrorEvent, DumpProgressEvent};
     pub use crate::commands::export::{ExportDoneEvent, ExportErrorEvent, ExportProgressEvent};
-    pub use crate::commands::file::SqlFileContent;
+    pub use crate::commands::file::{SqlEncodingPreview, SqlFileContent};
     pub use crate::commands::import::{
         ImportDoneEvent, ImportErrorEvent, ImportProgressEvent, ImportStartedEvent, SkippedRowInfo,
     };
@@ -267,7 +267,7 @@ pub mod __test_api {
         ScriptProgressEvent, ScriptRun,
     };
     pub use crate::db::script_analysis::ScriptAnalysis;
-    pub use crate::text_encoding::TextEncoding;
+    pub use crate::text_encoding::{EncodingPreview, TextEncoding};
 
     /// 危険文判定 ([`crate::db::script_analysis::classify_dangerous`]) の種別名。
     /// フロント `analyzeDangerousSql` の `DangerKind` と同じ文字列で、共有ゴールデン
@@ -1517,6 +1517,7 @@ pub fn run() {
             commands::import::preview_create_table_ddl,
             commands::file::read_text_file,
             commands::file::read_sql_file,
+            commands::file::preview_sql_file_encodings,
             commands::cell_blob::fetch_cell_bytes,
             commands::cell_blob::probe_cell_blob,
             commands::cell_blob::save_cell_to_file,

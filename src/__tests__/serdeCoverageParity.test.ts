@@ -97,6 +97,7 @@ const COVERED: Record<string, string> = {
   ServerMetrics: "serverMetrics",
   Snippet: "snippet",
   SqlFileContent: "sqlFileContent",
+  SqlEncodingPreview: "sqlEncodingPreview",
   StatementDeltaRow: "statementDeltaRow",
   SyncPlan: "syncPlan",
   TableColumnInfo: "tableColumnInfo",

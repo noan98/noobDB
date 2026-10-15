@@ -2460,6 +2460,20 @@ export interface SqlFileContent {
   encoding: TextEncodingId;
 }
 
+/** `preview_sql_file_encodings` の候補 1 つ分 (#1627)。`valid` は先頭バイトに不正が無かったか。 */
+export interface SqlEncodingCandidatePreview {
+  encoding: TextEncodingId;
+  valid: boolean;
+  lines: string[];
+}
+
+/** `preview_sql_file_encodings` の戻り値 (#1627): 自動判定の結果と、候補ごとの先頭数行。 */
+export interface SqlEncodingPreview {
+  detected: TextEncodingId | null;
+  detectError: string | null;
+  candidates: SqlEncodingCandidatePreview[];
+}
+
 /** 事前確認で検出する危険な文の種別 (`src/dangerousSql.ts` の `DangerKind` と同じ名前)。 */
 export type ScriptDangerKind = "deleteNoWhere" | "updateNoWhere" | "drop" | "truncate";
 

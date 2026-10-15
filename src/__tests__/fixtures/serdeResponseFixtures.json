@@ -4711,6 +4711,22 @@
     "content": "SELECT 1;",
     "encoding": "utf-8-bom"
   },
+  "sqlEncodingPreview": {
+    "detected": "shift_jis",
+    "detectError": null,
+    "candidates": [
+      {
+        "encoding": "shift_jis",
+        "valid": true,
+        "lines": ["SELECT '日本語';"]
+      },
+      {
+        "encoding": "utf-8",
+        "valid": false,
+        "lines": ["SELECT '\ufffd';"]
+      }
+    ]
+  },
   "statementDeltaRow": {
     "calls": 1200,
     "database": "appdb",

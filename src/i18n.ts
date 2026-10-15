@@ -2430,6 +2430,19 @@ const en = {
   sqlFileEncodingOpen: "Choose file…",
   sqlFileEncodingSave: "Choose destination…",
   sqlFileEncodingCancel: "Cancel",
+  sqlFileEncodingOpenWith: "Open as {encoding}",
+  sqlFileEncodingPreviewLabel: "Preview",
+  sqlFileEncodingPreviewPick: "Choose a file and preview…",
+  sqlFileEncodingPreviewAgain: "Choose another file…",
+  sqlFileEncodingDetected:
+    "Detected: {encoding}. Compare the first lines below and pick the one that reads correctly.",
+  sqlFileEncodingDetectFailed:
+    "The encoding could not be detected ({error}). Pick the candidate that reads correctly.",
+  sqlFileEncodingDetectedBadge: "(detected)",
+  sqlFileEncodingInvalidBytes: "contains invalid bytes",
+  sqlFileEncodingPreviewEmpty: "(empty)",
+  sqlFileLineEndingLabel: "Line endings",
+  sqlFileLineEndingNote: "Converted when saving. The editor always holds LF internally.",
   cmdkActionOpenSqlFileEncoding: "Open SQL file with encoding…",
   cmdkActionSaveSqlFileEncoding: "Save SQL as file with encoding…",
   // Cross-connection data transfer (#986).
@@ -8262,6 +8275,18 @@ const ja: Dict = {
   sqlFileEncodingOpen: "ファイルを選ぶ…",
   sqlFileEncodingSave: "保存先を選ぶ…",
   sqlFileEncodingCancel: "キャンセル",
+  sqlFileEncodingOpenWith: "{encoding} で開く",
+  sqlFileEncodingPreviewLabel: "プレビュー",
+  sqlFileEncodingPreviewPick: "ファイルを選んでプレビュー…",
+  sqlFileEncodingPreviewAgain: "別のファイルを選ぶ…",
+  sqlFileEncodingDetected: "判定: {encoding}。下の先頭行を見比べて、文字化けしていない候補を選んでください。",
+  sqlFileEncodingDetectFailed:
+    "文字コードを判定できませんでした ({error})。文字化けしていない候補を選んでください。",
+  sqlFileEncodingDetectedBadge: "(判定)",
+  sqlFileEncodingInvalidBytes: "不正なバイトを含む",
+  sqlFileEncodingPreviewEmpty: "(空)",
+  sqlFileLineEndingLabel: "改行コード",
+  sqlFileLineEndingNote: "保存時に変換します。エディタの内部では常に LF で持っています。",
   cmdkActionOpenSqlFileEncoding: "文字コードを指定して SQL ファイルを開く…",
   cmdkActionSaveSqlFileEncoding: "文字コードを指定して SQL を保存…",
   // 接続間データ転送 (#986)。

@@ -391,6 +391,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `preview_create_table_ddl`
 - `read_text_file`
 - `read_sql_file`
+- `preview_sql_file_encodings`
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
@@ -432,6 +433,12 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `write_text_file` の `encoding` へ渡して同じ文字コードに書き戻す。識別子は `utf-8` / `utf-8-bom` /
 `utf-16le` / `utf-16be` / `shift_jis` / `euc-jp` (Rust `text_encoding::TextEncoding`)。`read_text_file`
 (JSON の設定ファイルなど) は従来どおり UTF-8 固定。
+
+`preview_sql_file_encodings` (`commands/file.rs`, #1627) は SQL ファイルの文字コード自動判定の結果
+(`detected` / 失敗時は `detectError`) と、全候補 (`utf-8` / `utf-8-bom` / `shift_jis` / `euc-jp` /
+`utf-16le` / `utf-16be`) で先頭 4 KB を読んだ先頭 5 行 (`candidates[].lines`、不正バイトは U+FFFD に置換、
+`valid` は不正の有無) を返す読み取り専用コマンド。`SqlFileEncodingModal` が判定ミスの選び直しに使い、
+実際の読み込みは選んだ文字コードで `read_sql_file` が行う。
 
 `write_text_file` (`commands/file.rs`, #1258) は SQL・Markdown・JSON などのテキストを文字列の
 まま書く (上限 32 MiB)。`encoding` (#1535) を省略すると BOM なし UTF-8。指定すると変換して書き、

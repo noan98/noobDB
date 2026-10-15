@@ -839,6 +839,22 @@ fn build_fixtures() -> serde_json::Value {
         content: "SELECT 1;".into(),
         encoding: t::TextEncoding::Utf8Bom,
     };
+    let sql_encoding_preview = t::SqlEncodingPreview {
+        detected: Some(t::TextEncoding::ShiftJis),
+        detect_error: None,
+        candidates: vec![
+            t::EncodingPreview {
+                encoding: t::TextEncoding::ShiftJis,
+                valid: true,
+                lines: vec!["SELECT '日本語';".into()],
+            },
+            t::EncodingPreview {
+                encoding: t::TextEncoding::Utf8,
+                valid: false,
+                lines: vec!["SELECT '\u{fffd}';".into()],
+            },
+        ],
+    };
     let script_error_event = ScriptErrorEvent {
         stream_id: "strm0007".into(),
         error: "line 12: UNIQUE constraint failed".into(),
@@ -1960,6 +1976,7 @@ fn build_fixtures() -> serde_json::Value {
         "scriptErrorEvent": script_error_event,
         "scriptAnalyzedEvent": script_analyzed_event,
         "sqlFileContent": sql_file_content,
+        "sqlEncodingPreview": sql_encoding_preview,
 
         // --- #1195: enum の全バリアントを網羅した配列 (`*Variants`) ---
         "healthFindingVariants": health_finding_variants,

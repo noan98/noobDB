@@ -54,7 +54,14 @@ import { BACKUP_FILE_EXTENSION, defaultBackupFileName } from "./components/profi
 import { isSandboxProfileId, sandboxProfileId, sandboxToProfile } from "./sandbox";
 import { cancelledPartialResult, timeoutPartialResult } from "./streamPartialResult";
 import { createStreamRowFlusher, type StreamRowFlusher } from "./streamRowFlusher";
-import { planSaveAll, sqlSaveFileName, textEncodingLabel } from "./sqlFileIO";
+import {
+  convertLineEnding,
+  detectLineEnding,
+  planSaveAll,
+  sqlSaveFileName,
+  textEncodingLabel,
+  type LineEnding,
+} from "./sqlFileIO";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみで、計測ロジック
 // 本体は perf.ts に閉じる。
 import { markFirstRow, markQueryDone, markQueryStart } from "./perf";
@@ -772,6 +779,8 @@ export interface Tab {
    * 書き戻す。未設定は UTF-8。永続化しない。
    */
   fileEncoding?: TextEncodingId;
+  /** ファイルから開いた / 保存したタブの改行コード (#1627)。保存で同じ改行へ戻す。未設定は LF。永続化しない。 */
+  fileLineEnding?: LineEnding;
   database?: string;
   table?: string;
   sql: string;
@@ -8944,6 +8953,7 @@ export default function App() {
             sql: content,
             lastExecutedSql: content,
             fileEncoding: encoding,
+            fileLineEnding: detectLineEnding(content),
           });
           openedSql += 1;
           lastEncoding = encoding;
@@ -9022,9 +9032,10 @@ export default function App() {
    * ディスクへ書き出す。
    */
   const handleSaveSqlFile = useCallback(
-    async (encodingOverride: TextEncodingId | null = null) => {
+    async (encodingOverride: TextEncodingId | null = null, lineEndingOverride: LineEnding | null = null) => {
       const tab = activeTabRef.current;
       if (!tab) return;
+      const lineEnding = lineEndingOverride ?? tab.fileLineEnding ?? "lf";
       // 開いたときの文字コード (または指定) で書き戻す。表せない文字があれば保存は失敗する (#1535)。
       const encoding = encodingOverride ?? tab.fileEncoding ?? "utf-8";
       try {
@@ -9034,8 +9045,8 @@ export default function App() {
           filters: [{ name: "SQL", extensions: ["sql"] }],
         });
         if (typeof dest !== "string" || !dest) return;
-        await api.writeTextFile(dest, getTabSql(tab), encoding);
-        updateTab(tab.id, { fileEncoding: encoding });
+        await api.writeTextFile(dest, convertLineEnding(getTabSql(tab), lineEnding), encoding);
+        updateTab(tab.id, { fileEncoding: encoding, fileLineEnding: lineEnding });
         toast.success(translate("saveSqlFileSuccess", { name: fileBaseName(dest) }));
       } catch (e) {
         toast.error(translate("saveSqlFileError", { error: String(e) }));
@@ -9068,7 +9079,7 @@ export default function App() {
         });
         if (typeof dest !== "string" || !dest) break;
         await api.writeTextFile(dest, entry.sql, entry.encoding);
-        updateTab(entry.tabId, { fileEncoding: entry.encoding });
+        updateTab(entry.tabId, { fileEncoding: entry.encoding, fileLineEnding: entry.lineEnding });
         saved += 1;
       }
     } catch (e) {
@@ -12375,11 +12386,16 @@ export default function App() {
                 <SqlFileEncodingModal
                   mode={sqlEncodingDialog.mode}
                   initial={activeTabRef.current?.fileEncoding}
-                  onConfirm={(encoding) => {
+                  initialLineEnding={activeTabRef.current?.fileLineEnding}
+                  onConfirmFile={(path, encoding) => {
+                    setSqlEncodingDialog(null);
+                    void handleFilesDropped([path], encoding);
+                  }}
+                  onConfirm={(encoding, lineEnding) => {
                     const mode = sqlEncodingDialog.mode;
                     setSqlEncodingDialog(null);
                     if (mode === "open") void handleOpenSqlFile(encoding);
-                    else void handleSaveSqlFile(encoding);
+                    else void handleSaveSqlFile(encoding, lineEnding);
                   }}
                   onClose={() => setSqlEncodingDialog(null)}
                 />
