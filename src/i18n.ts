@@ -5503,6 +5503,8 @@ const en = {
   editPreviewNormalized: 'Will be saved as: {value} (from "{raw}")',
   editPreviewEdgeSpace: "Leading / trailing spaces are saved as typed",
   gridPasteHeaderMapped: "Treated the first row as column names and mapped {matched} column(s) by name",
+  gridQuickSetAbove: "Same as the row above",
+  gridQuickSetAboveAmbiguous: 'The text "NULL" cannot be told apart from a NULL; type it by hand',
 };
 
 export type I18nKey = keyof typeof en;
@@ -10976,6 +10978,8 @@ const ja: Dict = {
   editPreviewNormalized: '保存される値: {value} (入力 "{raw}" から正規化)',
   editPreviewEdgeSpace: "前後の空白もそのまま保存されます",
   gridPasteHeaderMapped: "1 行目を列名として扱い、{matched} 列を名前で対応付けました",
+  gridQuickSetAbove: "上の行と同じ値",
+  gridQuickSetAboveAmbiguous: "文字列の NULL は NULL 化と区別できないため、手で入力してください",
 };
 
 const dicts: Record<Locale, Dict> = { en, ja };

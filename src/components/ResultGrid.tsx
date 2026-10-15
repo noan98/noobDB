@@ -7128,28 +7128,40 @@ export const DataGrid = memo(function DataGrid({
                   : 0;
               const scopeNote =
                 selectedCells > 1 ? t("gridQuickSetSelectionNote", { count: selectedCells }) : null;
-              const items = quickSetOptions({ column: col, meta, now: new Date(), driver: rowSqlDriver }).map(
-                (opt) => {
-                  const note = opt.noteKey ? t(opt.noteKey) : null;
-                  const title = opt.disabledReason
-                    ? t(opt.disabledReason)
-                    : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
-                  return {
-                    label: t(opt.labelKey),
-                    title,
-                    disabled: !!opt.disabledReason,
-                    onSelect: () => {
-                      const rk = copyMenu.rowIdx;
-                      const ck = copyMenu.colIdx;
-                      // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
-                      // 確定した瞬間の時計で組み立て直す。
-                      const value = opt.dynamic ? resolveDynamicValue(opt.dynamic, new Date()) : opt.value;
-                      setCopyMenu(null);
-                      applyQuickSet(rk, ck, value);
-                    },
-                  };
-                },
-              );
+              // 同じ列で表示順の直前の行の値 (#1628)。範囲選択の一括設定とは意味が違う
+              // (範囲全体に同じ値を入れる) ので単一セルのときだけ。マスク中は渡さない。
+              const visPos = visibleRows.findIndex((r) => r.index === copyMenu.rowIdx);
+              const aboveRowIdx = selectedCells > 1 || visPos <= 0 ? null : visibleRows[visPos - 1].index;
+              const aboveValue =
+                aboveRowIdx === null || cellMaskedNow(aboveRowIdx, copyMenu.colIdx)
+                  ? undefined
+                  : (rows[aboveRowIdx]?.[copyMenu.colIdx] ?? null);
+              const items = quickSetOptions({
+                column: col,
+                meta,
+                now: new Date(),
+                driver: rowSqlDriver,
+                aboveValue,
+              }).map((opt) => {
+                const note = opt.noteKey ? t(opt.noteKey) : null;
+                const title = opt.disabledReason
+                  ? t(opt.disabledReason)
+                  : [scopeNote, note].filter(Boolean).join("\n\n") || undefined;
+                return {
+                  label: t(opt.labelKey),
+                  title,
+                  disabled: !!opt.disabledReason,
+                  onSelect: () => {
+                    const rk = copyMenu.rowIdx;
+                    const ck = copyMenu.colIdx;
+                    // 時刻系はメニューを開いてから選ぶまでの間に古くなるので、
+                    // 確定した瞬間の時計で組み立て直す。
+                    const value = opt.dynamic ? resolveDynamicValue(opt.dynamic, new Date()) : opt.value;
+                    setCopyMenu(null);
+                    applyQuickSet(rk, ck, value);
+                  },
+                };
+              });
               // 保留中の編集があるセルだけ、その 1 セルぶんを取り消す導線を足す
               // (Undo は編集履歴全体を 1 手戻すので、狙ったセルだけ戻したいとき用)。
               const rowKey = rowEditKey(rows[copyMenu.rowIdx] ?? [], pkIndices ?? [], copyMenu.rowIdx);
