@@ -203,6 +203,12 @@ export interface ConnectionListHandle {
    * だけバックエンドのキャッシュを捨てる (他のテーブルの列・インデックスは取り直さない, #1539)。
    */
   refreshSchema: (scope?: { database: string; table: string }) => void;
+  /**
+   * スキーマツリーで指定のテーブル (`column` があればその列) を探して選択する (#1629)。種別の絞り込みと
+   * 検索語を解除し、データベース・テーブルが閉じていれば開き、行が描画されたらフォーカスする。
+   * 見つからなければ何もしない。
+   */
+  revealInTree: (target: { database: string; table: string; column?: string }) => void;
 }
 
 /** 検索クエリ `query` にマッチする部分をハイライト表示するシンプルなコンポーネント。
@@ -2002,7 +2008,21 @@ export const ConnectionList = memo(
       refreshSchema: (scope) => {
         void refreshSchemaRef.current?.(scope);
       },
+      revealInTree: (target) => {
+        setKindFilter("all");
+        setFilter("");
+        setRevealTarget({ ...target, seq: ++revealSeqRef.current });
+      },
     }));
+    // ツリーで選択したい対象 (エディタの識別子 Ctrl/Cmd+クリック、#1629)。行が描画されるまで
+    // 段階的に (DB を開く → テーブルを開く → 行へフォーカス) 進める。
+    const [revealTarget, setRevealTarget] = useState<{
+      database: string;
+      table: string;
+      column?: string;
+      seq: number;
+    } | null>(null);
+    const revealSeqRef = useRef(0);
     // `refreshSchema` is defined later in the body; reach it through a ref so the
     // imperative handle doesn't depend on declaration order.
     const refreshSchemaRef = useRef<((scope?: { database: string; table: string }) => Promise<void>) | null>(
@@ -3885,6 +3905,49 @@ export const ConnectionList = memo(
       activeTableName,
     ]);
     explorerRowsRef.current = explorerRows;
+    // 保留中の「ツリーで選択」を 1 段ずつ進める。開いた直後は行が無いので、`explorerRows` が
+    // 更新されるたびに続きを試す。取得待ち (プレースホルダ行がある) の間は待ち、存在しないと
+    // 確定したら (読み込み済みなのに行が無い) 何もせず終える。
+    useEffect(() => {
+      if (!revealTarget) return;
+      const timer = setTimeout(() => setRevealTarget(null), 8000);
+      const { database, table, column } = revealTarget;
+      const rows = explorerRows;
+      // 絞り込み・検索語の解除が反映されるまで待つ (反映前の行で「無い」と誤判定しない)。
+      const filtersCleared = q.length === 0 && kindFilter === "all";
+      const find = (key: string) => rows.find((r) => r.key === key);
+      const finish = (focusKey: string | null) => {
+        if (focusKey) schemaListRef.current?.focusKey(focusKey);
+        setRevealTarget(null);
+      };
+      const step = () => {
+        const dbKey = `db:${database}`;
+        const dbRow = find(dbKey);
+        if (!dbRow) {
+          // DB 一覧がまだ無い間は待つ。読み込めているのに無い DB は諦める。
+          if (databases !== null || schemaLoadFailed) finish(null);
+          return;
+        }
+        if (dbRow.kind === "db" && !dbRow.open) {
+          expandRowsByKeysRef.current([dbKey]);
+          return;
+        }
+        if (find(`ph:tables:${database}`)) return;
+        const tableRowKey = `tbl:${tableKey(database, table)}`;
+        const tableRow = find(tableRowKey);
+        if (!tableRow) return finish(null);
+        if (!column) return finish(tableRowKey);
+        if (tableRow.kind === "table" && !tableRow.open) {
+          expandRowsByKeysRef.current([tableRowKey]);
+          return;
+        }
+        if (find(`ph:cols:${tableKey(database, table)}`)) return;
+        const colKey = `col:${tableKey(database, table)}:${column}`;
+        finish(find(colKey) ? colKey : tableRowKey);
+      };
+      if (filtersCleared) step();
+      return () => clearTimeout(timer);
+    }, [revealTarget, explorerRows, databases, schemaLoadFailed, q, kindFilter]);
     // 選択は接続を切り替えたら取り直す (同一接続内に限る, #1399)。
     // biome-ignore lint/correctness/useExhaustiveDependencies: sessionId / activeProfileId は本体で参照しないが、接続が変わったら選択を捨てるためのトリガーとして意図的に依存へ含めている
     useEffect(() => {

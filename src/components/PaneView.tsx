@@ -1,3 +1,4 @@
+import type { SchemaJumpTarget } from "./identifierJump";
 import {
   lazy,
   memo,
@@ -142,6 +143,8 @@ export interface PaneActions {
   handleNewTab: (paneId?: string) => void;
   handleOpenAiSql: (sql: string, database: string | null) => void;
   handleAiSqlAction: (action: AiSqlEditorAction) => void;
+  /** エディタの識別子 Ctrl/Cmd+クリックで、スキーマツリーの対象を選ぶ (#1629)。 */
+  handleRevealSchemaObject: (target: SchemaJumpTarget) => void;
   handleAiResultSummary: (tab: Tab) => void;
   handleOpenSqlFile: () => unknown;
   handleRegisterLocalTable: (result: QueryResult, sourceSql: string, tabDatabase: string | null) => void;
@@ -601,6 +604,7 @@ export const PaneView = memo(
                         isProduction={selectedProfile?.is_production ?? false}
                         onOpenSqlInNewTab={actions.handleOpenAiSql}
                         onAiSqlAction={actions.handleAiSqlAction}
+                        onRevealSchemaObject={actions.handleRevealSchemaObject}
                         emergencyMode={emergencyMode}
                         onToggleEmergencyMode={onToggleEmergencyMode}
                         queryHistory={queryHistory}

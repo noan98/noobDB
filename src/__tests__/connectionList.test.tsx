@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { act } from "react";
 import { renderWithProviders, screen, fireEvent, waitFor, within } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
@@ -72,7 +73,8 @@ vi.mock("../api/tauri", async (importOriginal) => {
   };
 });
 
-import { ConnectionList } from "../components/ConnectionList";
+import { createRef } from "react";
+import { ConnectionList, type ConnectionListHandle } from "../components/ConnectionList";
 import { api } from "../api/tauri";
 
 const noop = () => {};
@@ -314,6 +316,56 @@ describe("Database Explorer の階層 (#1112)", () => {
     fireEvent.contextMenu(row);
     fireEvent.click((await screen.findAllByRole("menuitem"))[0]);
     expect(onPickTable).toHaveBeenCalledWith("db1", "tbl1");
+  });
+
+  async function renderWithHandle() {
+    const ref = createRef<ConnectionListHandle>();
+    const profile = makeProfile({ id: "p-a", name: "Alpha DB" });
+    renderWithProviders(
+      <ConnectionList
+        {...baseProps}
+        ref={ref}
+        profiles={[profile]}
+        activeProfileId="p-a"
+        sessionId="s1"
+        onOpenObjectDefinition={noop}
+      />,
+    );
+    await screen.findByRole("treeitem", { name: "db1" });
+    return ref;
+  }
+
+  it("revealInTree は閉じている DB を開いてテーブル行へフォーカスする (#1629)", async () => {
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl2" }));
+    const row = await screen.findByRole("treeitem", { name: "tbl2" });
+    await waitFor(() => expect(row).toHaveFocus());
+  });
+
+  it("revealInTree は列つきならテーブルを開いて列行へフォーカスする (#1629)", async () => {
+    vi.mocked(api.describeTable).mockResolvedValue([col("id"), col("user_name")] as never);
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1", column: "user_name" }));
+    const row = await screen.findByRole("treeitem", { name: /user_name/ });
+    await waitFor(() => expect(row).toHaveFocus());
+    vi.mocked(api.describeTable).mockResolvedValue([]);
+  });
+
+  it("revealInTree は種別の絞り込みと検索語を解除してから探す (#1629)", async () => {
+    const ref = await renderWithHandle();
+    fireEvent.click(await screen.findByRole("radio", { name: t("treeKindFilter_views") }));
+    fireEvent.change(screen.getByPlaceholderText(t("listSearchPlaceholder")), { target: { value: "zzz" } });
+    act(() => ref.current?.revealInTree({ database: "db1", table: "tbl1" }));
+    const row = await screen.findByRole("treeitem", { name: "tbl1" });
+    await waitFor(() => expect(row).toHaveFocus());
+    expect(screen.getByPlaceholderText(t("listSearchPlaceholder"))).toHaveValue("");
+  });
+
+  it("revealInTree は存在しないテーブルでは何も起こさない (#1629)", async () => {
+    const ref = await renderWithHandle();
+    act(() => ref.current?.revealInTree({ database: "db1", table: "nope" }));
+    await screen.findByRole("treeitem", { name: "tbl1" });
+    expect(document.activeElement?.getAttribute("role")).not.toBe("treeitem");
   });
 
   it("複数選択のメニューに一括保守と一括 TRUNCATE が並び、選択したテーブルで呼ばれる (#1629)", async () => {

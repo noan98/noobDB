@@ -177,6 +177,7 @@ import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
 import { planLocalRefetch } from "./components/localRefetch";
 import type { QueryEditorHandle, SchemaTable } from "./components/QueryEditor";
+import type { SchemaJumpTarget } from "./components/identifierJump";
 import type { PreflightResult } from "./components/usePreflight";
 import type { PreflightImpact } from "./components/DangerousQueryDialog";
 import type { QueryBuilderSnapshot } from "./components/QueryBuilder";
@@ -10002,6 +10003,16 @@ export default function App() {
   }, []);
   focusExplorerRef.current = focusExplorer;
 
+  // エディタの識別子を Ctrl/Cmd+クリックしたとき、サイドバーのスキーマツリーで対象の
+  // テーブル / 列を選ぶ (#1629)。折りたたみ中はサイドバーを開いて接続タブへ切り替える。
+  // ツリー側が DB・テーブルを展開し、行が描画されたらフォーカスする。
+  const handleRevealSchemaObject = useCallback((target: SchemaJumpTarget) => {
+    if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
+    else setSidebarUserCollapsed(false);
+    setSidebarTab("connections");
+    requestAnimationFrame(() => connectionListRef.current?.revealInTree(target));
+  }, []);
+
   // コマンドパレットの項目はパレットを開いている間だけ組み立てる (#1257)。
   // 依存の `activeTab` はストリーミングの行バッチごとに作り直されるため、常時
   // 組み立てると全テーブル分の項目生成が行バッチのたびに走っていた。
@@ -10492,6 +10503,7 @@ export default function App() {
     handleCloseTab: requestCloseTab,
     handleEditorDocChange,
     handleAiSqlAction,
+    handleRevealSchemaObject,
     handleAiResultSummary,
     handleExploreColumns,
     handleNewTab,
