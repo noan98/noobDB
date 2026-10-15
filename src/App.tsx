@@ -4176,6 +4176,7 @@ export default function App() {
           elapsedMs,
           thresholdSecs: settings.queryNotificationThresholdSecs,
           windowFocused,
+          kind,
         })
       ) {
         return;

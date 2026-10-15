@@ -636,7 +636,8 @@ const en = {
   settingsQueryNotificationsHelp:
     "Shows an OS desktop notification when a query finishes (success, error, cancelled, or timed out) while the window is in the background. The notification contains only row counts, timing, and the first line of an error — never the SQL or its results. Clicking it brings the window to the front.",
   settingsQueryNotificationThreshold: "Notify after (seconds)",
-  settingsQueryNotificationThresholdHelp: "Only notify for queries that took at least this long to finish.",
+  settingsQueryNotificationThresholdHelp:
+    "Only notify for queries that took at least this long to finish. Failed and timed-out queries are always notified, regardless of this value.",
   notifyQueryDoneTitle: "Query finished",
   notifyQueryDoneBody: "{rows} rows in {ms} ms",
   notifyQueryErrorTitle: "Query failed",
@@ -6166,7 +6167,8 @@ const ja: Dict = {
   settingsQueryNotificationsHelp:
     "ウィンドウが背面にあるときにクエリが完了 (成功・エラー・キャンセル・タイムアウト) すると、OS のデスクトップ通知を表示します。通知に含まれるのは件数・経過時間・エラーの先頭 1 行のみで、SQL 本文や結果データは含みません。クリックするとウィンドウを前面に表示します。",
   settingsQueryNotificationThreshold: "通知するまでの経過時間 (秒)",
-  settingsQueryNotificationThresholdHelp: "この秒数以上かかったクエリの完了時のみ通知します。",
+  settingsQueryNotificationThresholdHelp:
+    "この秒数以上かかったクエリの完了時のみ通知します。失敗・タイムアウトしたクエリはこの秒数に関係なく通知します。",
   notifyQueryDoneTitle: "クエリが完了しました",
   notifyQueryDoneBody: "{rows} 件取得 ({ms} ms)",
   notifyQueryErrorTitle: "クエリでエラーが発生しました",

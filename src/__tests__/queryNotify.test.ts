@@ -4,6 +4,23 @@ import { firstLineForNotification, shouldNotifyQueryCompletion } from "../queryN
 describe("shouldNotifyQueryCompletion (#707)", () => {
   const base = { enabled: true, elapsedMs: 20_000, thresholdSecs: 10, windowFocused: false };
 
+  it("failed and timed-out queries notify regardless of the threshold (#1621)", () => {
+    const quick = { ...base, elapsedMs: 100 };
+    expect(shouldNotifyQueryCompletion({ ...quick, kind: "error" })).toBe(true);
+    expect(shouldNotifyQueryCompletion({ ...quick, kind: "timeout" })).toBe(true);
+    // done / cancelled / 省略は従来どおり閾値を適用する。
+    expect(shouldNotifyQueryCompletion({ ...quick, kind: "done" })).toBe(false);
+    expect(shouldNotifyQueryCompletion({ ...quick, kind: "cancelled" })).toBe(false);
+    expect(shouldNotifyQueryCompletion(quick)).toBe(false);
+  });
+
+  it("failures still respect the enabled flag, the focused window, and invalid numbers (#1621)", () => {
+    const quick = { ...base, elapsedMs: 100, kind: "error" as const };
+    expect(shouldNotifyQueryCompletion({ ...quick, enabled: false })).toBe(false);
+    expect(shouldNotifyQueryCompletion({ ...quick, windowFocused: true })).toBe(false);
+    expect(shouldNotifyQueryCompletion({ ...quick, elapsedMs: Number.NaN })).toBe(false);
+  });
+
   it("notifies when unfocused and over the threshold", () => {
     expect(shouldNotifyQueryCompletion(base)).toBe(true);
   });
