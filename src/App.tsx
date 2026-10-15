@@ -449,6 +449,7 @@ import { ActivityLogPanel } from "./components/SeverityLog";
 import { OutputPanel } from "./components/OutputPanel";
 import { statusLogClass, statusTone, type Status } from "./statusMessage";
 import { pushMessage } from "./messageLog";
+import { joinDroppedSql, physicalToCssPoint } from "./dropInsert";
 import { lineRangeOf, pushOutput, type OutputInput } from "./outputLog";
 import {
   availableBottomPanelTabs,
@@ -8928,7 +8929,11 @@ export default function App() {
    * 最新のセッション/アクティブタブは ref 経由で読むため、購読は貼り直さない。
    */
   const handleFilesDropped = useCallback(
-    async (paths: string[], sqlEncoding: TextEncodingId | null = null) => {
+    async (
+      paths: string[],
+      sqlEncoding: TextEncodingId | null = null,
+      dropPoint: { x: number; y: number } | null = null,
+    ) => {
       if (paths.length === 0) return;
       const sqlPaths = paths.filter((p) => classifyDroppedFile(p) === "sql");
       const csvPaths = paths.filter((p) => classifyDroppedFile(p) === "csv");
@@ -8941,25 +8946,39 @@ export default function App() {
       if (sqlPaths.length > 0 && !sessionIdRef.current) {
         toast.error(translate("dropSqlNoConnection"));
       }
+      // エディタの上へのドロップは、新規タブではなくそのエディタのカーソル位置へ挿入する (#1627)。
+      const dropEditor = dropPoint
+        ? ([...editorRefs.current.values()].find((ed) => ed.containsPoint(dropPoint.x, dropPoint.y)) ?? null)
+        : null;
+      const readContents: string[] = [];
       for (const p of sessionIdRef.current ? sqlPaths : []) {
         try {
           // 文字コードは自動判定 (BOM → UTF-8 → Shift_JIS / EUC-JP)。指定があればそれを使い、
           // 判定結果は保存時に同じ文字コードへ戻すためタブに覚えておく (#1535)。
           const { content, encoding } = await api.readSqlFile(p, sqlEncoding);
-          addTab({
-            ...makeQueryTab(),
-            title: fileBaseName(p),
-            titleManual: true,
-            sql: content,
-            lastExecutedSql: content,
-            fileEncoding: encoding,
-            fileLineEnding: detectLineEnding(content),
-          });
+          if (dropEditor) {
+            readContents.push(content);
+          } else {
+            addTab({
+              ...makeQueryTab(),
+              title: fileBaseName(p),
+              titleManual: true,
+              sql: content,
+              lastExecutedSql: content,
+              fileEncoding: encoding,
+              fileLineEnding: detectLineEnding(content),
+            });
+          }
           openedSql += 1;
           lastEncoding = encoding;
         } catch (e) {
           toast.error(translate("dropReadError", { name: fileBaseName(p), error: String(e) }));
         }
+      }
+      if (dropEditor && readContents.length > 0) {
+        dropEditor.insertText(joinDroppedSql(readContents));
+        toast.success(translate("dropInsertedSql", { count: readContents.length }));
+        openedSql = 0;
       }
       if (openedSql === 1 && sqlPaths.length === 1) {
         toast.success(
@@ -9108,7 +9127,11 @@ export default function App() {
             setDragFeedback(null);
           } else if (payload.type === "drop") {
             setDragFeedback(null);
-            void handleFilesDropped(payload.paths);
+            void handleFilesDropped(
+              payload.paths,
+              null,
+              physicalToCssPoint(payload.position, window.devicePixelRatio),
+            );
           }
         });
         if (disposed) un();

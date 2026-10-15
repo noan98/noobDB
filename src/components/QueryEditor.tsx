@@ -369,6 +369,8 @@ export interface QueryEditorHandle {
   setText: (text: string) => void;
   /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
   getText: () => string;
+  /** 画面座標 (CSS px) がこのエディタの上か。ファイルのドロップ先判定 (#1627)。重なったモーダル等の上なら false。 */
+  containsPoint: (x: number, y: number) => boolean;
   /** `[from, to)` を選択してスクロールし、エディタへフォーカスを移す (出力タブのエラー行ジャンプ、#1627)。 */
   selectRange: (from: number, to: number) => void;
   /** `[from, to)` だけを置き換える。undo 履歴に載る (#692)。 */
@@ -1421,6 +1423,12 @@ export const QueryEditor = memo(
           view.focus();
         },
         getText: () => viewRef.current?.state.doc.toString() ?? "",
+        containsPoint: (x: number, y: number) => {
+          const view = viewRef.current;
+          if (!view) return false;
+          const hit = document.elementFromPoint(x, y);
+          return hit !== null && view.dom.contains(hit);
+        },
         selectRange: (from: number, to: number) => {
           const view = viewRef.current;
           if (!view) return;
