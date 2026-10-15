@@ -368,7 +368,10 @@ impl XlsxSheetWriter {
         }
         self.column_count = columns.len();
         let row = self.next_row;
-        let sheet = self.workbook.worksheet_from_index(self.current).map_err(xlsx_err)?;
+        let sheet = self
+            .workbook
+            .worksheet_from_index(self.current)
+            .map_err(xlsx_err)?;
         for (i, col) in columns.iter().enumerate() {
             let (text, truncated) = clamp_cell_text(&col.name);
             if truncated {
@@ -404,7 +407,10 @@ impl XlsxSheetWriter {
 
     /// データ行を書く。行数上限を超えた分は書かずに `dropped_rows` へ数える。
     pub(crate) fn write_rows(&mut self, columns: &[Column], rows: &[Vec<Value>]) -> Result<()> {
-        let sheet = self.workbook.worksheet_from_index(self.current).map_err(xlsx_err)?;
+        let sheet = self
+            .workbook
+            .worksheet_from_index(self.current)
+            .map_err(xlsx_err)?;
         for row in rows {
             if u64::from(self.next_row) >= XLSX_MAX_SHEET_ROWS {
                 self.report.dropped_rows += 1;
@@ -708,7 +714,10 @@ mod tests {
         assert_eq!(xlsx_sheet_name("USERS", &mut used), "USERS_2");
         assert_eq!(xlsx_sheet_name("users", &mut used), "users_3");
         // 禁止文字は `_`、先頭末尾の `'` は除く。
-        assert_eq!(xlsx_sheet_name("'a/b:c*d?e[f]g\\h'", &mut used), "a_b_c_d_e_f_g_h");
+        assert_eq!(
+            xlsx_sheet_name("'a/b:c*d?e[f]g\\h'", &mut used),
+            "a_b_c_d_e_f_g_h"
+        );
         // 空・予約名。
         assert_eq!(xlsx_sheet_name("  ", &mut used), "Sheet");
         assert_eq!(xlsx_sheet_name("History", &mut used), "History_");
@@ -721,7 +730,10 @@ mod tests {
         assert!(second.ends_with("_2"));
         assert_ne!(first, second);
         // 全角文字も文字数で数える。
-        assert_eq!(xlsx_sheet_name(&"表".repeat(40), &mut used).chars().count(), 31);
+        assert_eq!(
+            xlsx_sheet_name(&"表".repeat(40), &mut used).chars().count(),
+            31
+        );
     }
 
     #[test]
@@ -747,7 +759,10 @@ mod tests {
             s
         };
         let wb = read("xl/workbook.xml");
-        assert!(wb.contains("name=\"a\"") && wb.contains("name=\"b\""), "{wb}");
+        assert!(
+            wb.contains("name=\"a\"") && wb.contains("name=\"b\""),
+            "{wb}"
+        );
         let s1 = read("xl/worksheets/sheet1.xml");
         let s2 = read("xl/worksheets/sheet2.xml");
         assert!(s1.contains("id") && !s1.contains(">name<"), "{s1}");

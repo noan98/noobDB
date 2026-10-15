@@ -527,7 +527,13 @@ pub mod __test_api {
             .map(|(name, sql)| crate::commands::export::PreparedSheet::for_test(name, sql))
             .collect();
         let outcome = crate::commands::export::run_export_workbook(
-            session, None, prepared, path, 100, 100, |_| {},
+            session,
+            None,
+            prepared,
+            path,
+            100,
+            100,
+            |_| {},
         )
         .await?;
         Ok((outcome.bytes, outcome.rows))

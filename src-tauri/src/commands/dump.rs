@@ -1956,7 +1956,9 @@ mod tests {
             r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false}"#,
         )
         .unwrap();
-        assert!(!o.no_tablespaces && !o.set_gtid_purged_off && !o.write_checksum && !o.sqlite_snapshot);
+        assert!(
+            !o.no_tablespaces && !o.set_gtid_purged_off && !o.write_checksum && !o.sqlite_snapshot
+        );
         let o: DumpOptions = serde_json::from_str(
             r#"{"singleTransaction":true,"routines":false,"events":false,"triggers":true,"addDropTable":true,"extendedInsert":true,"completeInsert":false,"noData":false,"noCreateInfo":false,"noTablespaces":true,"setGtidPurgedOff":true,"writeChecksum":true,"sqliteSnapshot":true}"#,
         )
@@ -1983,7 +1985,9 @@ mod tests {
             digest,
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
-        write_checksum_sidecar(f.to_str().unwrap(), &digest).await.unwrap();
+        write_checksum_sidecar(f.to_str().unwrap(), &digest)
+            .await
+            .unwrap();
         let body = std::fs::read_to_string(dir.join("d.sql.sha256")).unwrap();
         assert_eq!(body, format!("{digest}  d.sql\n"));
         std::fs::remove_dir_all(&dir).ok();

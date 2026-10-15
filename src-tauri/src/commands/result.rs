@@ -243,10 +243,9 @@ pub async fn render_export_text_inner(
         ));
     }
     let rows = resolve_rows(state, req.result_id.as_deref(), req.rows)?;
-    let sql_opts =
-        SqlExportOpts::build(req.driver, req.table, req.batch_size)
-            .with_ddl(req.ddl_header)
-            .with_conflict(req.sql_conflict);
+    let sql_opts = SqlExportOpts::build(req.driver, req.table, req.batch_size)
+        .with_ddl(req.ddl_header)
+        .with_conflict(req.sql_conflict);
     let mask_spec = load_mask_spec(req.masks).await?;
     let (format, columns, query) = (req.format, req.columns, req.query);
     let bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {

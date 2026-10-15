@@ -292,12 +292,11 @@ fn split_backup_name(path: &std::path::Path) -> (String, String) {
 fn generation_key(name: &str, stem: &str, ext: &str) -> Option<(String, u32)> {
     let rest = name.strip_prefix(stem)?.strip_prefix('.')?;
     let mid = rest.strip_suffix(ext)?;
-    let (stamp, seq) = match mid.split_once('-')? {
-        // `20260101-120000` の `-` は日時の一部。連番は 2 つ目の `-` 以降。
-        (date, tail) => match tail.split_once('-') {
-            Some((time, seq)) => (format!("{date}-{time}"), Some(seq)),
-            None => (format!("{date}-{tail}"), None),
-        },
+    let (date, tail) = mid.split_once('-')?;
+    // `20260101-120000` の `-` は日時の一部。連番は 2 つ目の `-` 以降。
+    let (stamp, seq) = match tail.split_once('-') {
+        Some((time, seq)) => (format!("{date}-{time}"), Some(seq)),
+        None => (format!("{date}-{tail}"), None),
     };
     let stamp_ok = stamp.len() == 15
         && stamp.bytes().enumerate().all(|(i, b)| {
@@ -366,7 +365,9 @@ fn prune_generations(path: &std::path::Path, keep_archived: usize) -> Result<usi
     for (_, name) in found.into_iter().take(excess) {
         match std::fs::remove_file(dir.join(&name)) {
             Ok(()) => pruned += 1,
-            Err(e) => tracing::warn!(file = %name, error = %e, "failed to remove an old backup generation"),
+            Err(e) => {
+                tracing::warn!(file = %name, error = %e, "failed to remove an old backup generation")
+            }
         }
     }
     Ok(pruned)
@@ -851,7 +852,10 @@ mod tests {
         assert_eq!(names.len(), 3, "{names:?}");
         assert!(names.contains(&"b.noobdb".to_string()));
         assert_eq!(
-            names.iter().filter(|n| is_generation_name(n, "b", ".noobdb")).count(),
+            names
+                .iter()
+                .filter(|n| is_generation_name(n, "b", ".noobdb"))
+                .count(),
             2
         );
         // 世代管理なし (None / 0) は退避も削除もしない。
@@ -862,13 +866,29 @@ mod tests {
 
     #[test]
     fn generation_names_are_recognised_strictly() {
-        assert!(is_generation_name("b.20260101-120000.noobdb", "b", ".noobdb"));
-        assert!(is_generation_name("b.20260101-120000-2.noobdb", "b", ".noobdb"));
+        assert!(is_generation_name(
+            "b.20260101-120000.noobdb",
+            "b",
+            ".noobdb"
+        ));
+        assert!(is_generation_name(
+            "b.20260101-120000-2.noobdb",
+            "b",
+            ".noobdb"
+        ));
         assert!(!is_generation_name("b.noobdb", "b", ".noobdb"));
         assert!(!is_generation_name("b.2026.noobdb", "b", ".noobdb"));
-        assert!(!is_generation_name("c.20260101-120000.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name(
+            "c.20260101-120000.noobdb",
+            "b",
+            ".noobdb"
+        ));
         assert!(!is_generation_name("b.20260101-120000.txt", "b", ".noobdb"));
-        assert!(!is_generation_name("b.20260101-1200xx.noobdb", "b", ".noobdb"));
+        assert!(!is_generation_name(
+            "b.20260101-1200xx.noobdb",
+            "b",
+            ".noobdb"
+        ));
         assert_eq!(
             split_backup_name(std::path::Path::new("/x/profiles.noobdb-backup")),
             ("profiles".to_string(), ".noobdb-backup".to_string())

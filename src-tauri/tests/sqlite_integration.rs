@@ -5303,7 +5303,10 @@ async fn export_workbook_writes_one_sheet_per_query() {
         s
     };
     let book = read("xl/workbook.xml");
-    assert!(book.contains("name=\"users\"") && book.contains("name=\"orders\""), "{book}");
+    assert!(
+        book.contains("name=\"users\"") && book.contains("name=\"orders\""),
+        "{book}"
+    );
     let users = read("xl/worksheets/sheet1.xml");
     assert!(users.contains("alice") && users.contains("bob"), "{users}");
     let orders = read("xl/worksheets/sheet2.xml");
@@ -5359,7 +5362,10 @@ async fn sqlite_save_cells_to_folder_writes_manifest() {
     .await
     .expect("save to folder");
     assert_eq!(r.manifest_file.as_deref(), Some("manifest_2.csv"));
-    assert_eq!(std::fs::read(dir.join("manifest.csv")).expect("kept"), b"mine");
+    assert_eq!(
+        std::fs::read(dir.join("manifest.csv")).expect("kept"),
+        b"mine"
+    );
     let manifest = std::fs::read_to_string(dir.join("manifest_2.csv")).expect("manifest");
     let lines: Vec<&str> = manifest.split("\r\n").collect();
     assert_eq!(lines[0], "row,key_id,file,bytes,mime,status,error");

@@ -15,12 +15,12 @@ use crate::db::data_diff::build_sql_insert_statement;
 use crate::db::data_diff::sql_literal;
 use crate::db::masking::{mask_columns, mask_rows, needs_salt, ColumnMask, MaskPlan, MaskSpec};
 use crate::db::sync::quote_ident;
-use crate::db::upsert::{conflict_clause, ConflictMode, ImportConflict};
-use crate::text_encoding::{ChunkEncoder, TextEncoding};
 use crate::db::types::{float_text, Column, StreamBatch, Value};
+use crate::db::upsert::{conflict_clause, ConflictMode, ImportConflict};
 use crate::db::{is_read_only_sql_for, DriverKind};
 use crate::error::{AppError, Result};
 use crate::state::{AppState, StreamHandle, StreamKind};
+use crate::text_encoding::{ChunkEncoder, TextEncoding};
 
 /// SQL INSERT 形式で出力するときの対象テーブル名が空のときに使うプレースホルダ。
 /// JOIN など結果元テーブルが特定できないケースでも有効な SQL になるようにする。
@@ -2225,8 +2225,16 @@ mod tests {
             let expected = crate::text_encoding::encode(&utf8, enc).unwrap();
             let opts = test_sql_opts().with_csv_encoding(Some(enc));
             let mut mem = Vec::new();
-            write_export_to(&mut mem, ExportFormat::Csv, &columns, &rows, None, &opts, None)
-                .unwrap();
+            write_export_to(
+                &mut mem,
+                ExportFormat::Csv,
+                &columns,
+                &rows,
+                None,
+                &opts,
+                None,
+            )
+            .unwrap();
             assert_eq!(mem, expected, "in-memory {enc:?}");
 
             let path = std::env::temp_dir().join(format!(
@@ -2280,7 +2288,15 @@ mod tests {
             }),
         );
         let mut buf = Vec::new();
-        write_export_to(&mut buf, ExportFormat::Sql, &columns, &rows, None, &opts, None)?;
+        write_export_to(
+            &mut buf,
+            ExportFormat::Sql,
+            &columns,
+            &rows,
+            None,
+            &opts,
+            None,
+        )?;
         Ok(String::from_utf8(buf).unwrap())
     }
 
@@ -2294,16 +2310,25 @@ mod tests {
             "INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a') ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);\n"
         );
         let my_skip = conflict_sql(DriverKind::Mysql, Skip, &["id"]).unwrap();
-        assert!(my_skip.ends_with("ON DUPLICATE KEY UPDATE `id` = `id`;\n"), "{my_skip}");
+        assert!(
+            my_skip.ends_with("ON DUPLICATE KEY UPDATE `id` = `id`;\n"),
+            "{my_skip}"
+        );
         let pg_up = conflict_sql(DriverKind::Postgres, Update, &["id"]).unwrap();
         assert!(
             pg_up.ends_with("ON CONFLICT (\"id\") DO UPDATE SET \"name\" = EXCLUDED.\"name\";\n"),
             "{pg_up}"
         );
         let sq_skip = conflict_sql(DriverKind::Sqlite, Skip, &["id"]).unwrap();
-        assert!(sq_skip.ends_with("ON CONFLICT (\"id\") DO NOTHING;\n"), "{sq_skip}");
+        assert!(
+            sq_skip.ends_with("ON CONFLICT (\"id\") DO NOTHING;\n"),
+            "{sq_skip}"
+        );
         let sq_rep = conflict_sql(DriverKind::Sqlite, Replace, &[]).unwrap();
-        assert!(sq_rep.starts_with("INSERT OR REPLACE INTO \"t\""), "{sq_rep}");
+        assert!(
+            sq_rep.starts_with("INSERT OR REPLACE INTO \"t\""),
+            "{sq_rep}"
+        );
         let my_rep = conflict_sql(DriverKind::Mysql, Replace, &[]).unwrap();
         assert!(my_rep.starts_with("REPLACE INTO `t`"), "{my_rep}");
         // 検証: PostgreSQL の REPLACE、キー無し / 出力に無いキーの skip・update は拒否。
@@ -2312,7 +2337,10 @@ mod tests {
         assert!(conflict_sql(DriverKind::Sqlite, Skip, &["missing"]).is_err());
         // 既定 (素の INSERT) は従来と同じ。
         let plain = conflict_sql(DriverKind::Mysql, SqlConflictMode::Insert, &[]).unwrap();
-        assert_eq!(plain, "INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a');\n");
+        assert_eq!(
+            plain,
+            "INSERT INTO `t` (`id`, `name`) VALUES\n  (1, 'a');\n"
+        );
     }
 
     #[test]

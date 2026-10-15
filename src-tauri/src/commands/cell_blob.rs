@@ -628,6 +628,7 @@ async fn create_unique_file(
 /// 既存のファイルは上書きせず `_2` などを付ける。1 行の失敗で全体は止めず、件数と
 /// 先頭の失敗理由を返す。読み取りの SELECT だけなので read_only セッションでも使える。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri コマンドの引数は IPC の形そのもので、まとめられない
 pub async fn save_cells_to_folder(
     session_id: String,
     database: Option<String>,
@@ -757,9 +758,7 @@ pub(crate) async fn save_cells_to_folder_inner(
                 result.total_bytes += bytes.len() as u64;
                 entry.status = "saved";
                 entry.bytes = Some(bytes.len() as u64);
-                entry.file = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned());
+                entry.file = path.file_name().map(|n| n.to_string_lossy().into_owned());
                 manifest.push(entry);
             }
             Err(e) => {
