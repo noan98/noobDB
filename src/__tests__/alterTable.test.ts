@@ -7,6 +7,8 @@ import {
   type AlterTableForm,
   type ExistingColumnBaseline,
   type ExistingColumnEdit,
+  type NewColumn,
+  supportsColumnPosition,
 } from "../components/alterTable";
 
 function baseline(over: Partial<ExistingColumnBaseline>): ExistingColumnBaseline {
@@ -665,5 +667,37 @@ describe("renameCollisions (#1602)", () => {
     expect(
       renameCollisions("mysql", { baseline: b, existing: [edit({ original: "a", name: "A" })] }),
     ).toEqual([]);
+  });
+});
+
+describe("buildAlterPlan: 新規列の位置 (#1625)", () => {
+  const col = (position?: NewColumn["position"]): NewColumn => ({
+    name: "age",
+    type: "INT",
+    notNull: false,
+    defaultValue: "",
+    position,
+  });
+
+  it("MySQL は FIRST / AFTER を付ける。末尾指定・未指定は付けない", () => {
+    const sql = (position?: NewColumn["position"]) =>
+      buildAlterPlan("mysql", form({ added: [col(position)] })).statements[0].sql;
+    expect(sql({ mode: "first" })).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `age` INT FIRST;");
+    expect(sql({ mode: "after", column: "id" })).toBe(
+      "ALTER TABLE `shop`.`users` ADD COLUMN `age` INT AFTER `id`;",
+    );
+    expect(sql({ mode: "after", column: "we`ird" })).toContain("AFTER `we``ird`");
+    expect(sql({ mode: "end" })).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `age` INT;");
+    expect(sql({ mode: "after", column: "  " })).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `age` INT;");
+    expect(sql()).toBe("ALTER TABLE `shop`.`users` ADD COLUMN `age` INT;");
+  });
+
+  it("PostgreSQL / SQLite は位置指定を無視する", () => {
+    for (const driver of ["postgres", "sqlite"]) {
+      const sql = buildAlterPlan(driver, form({ added: [col({ mode: "first" })] })).statements[0].sql;
+      expect(sql).not.toContain("FIRST");
+      expect(supportsColumnPosition(driver)).toBe(false);
+    }
+    expect(supportsColumnPosition("mysql")).toBe(true);
   });
 });

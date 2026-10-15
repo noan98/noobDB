@@ -96,6 +96,20 @@ export interface NewColumn {
   type: string;
   notNull: boolean;
   defaultValue: string;
+  /**
+   * 列の位置 (#1625)。MySQL だけが `FIRST` / `AFTER <列>` を持つ。未指定 (`end`) は末尾。
+   * PostgreSQL / SQLite は列の位置を指定できないので、指定があっても無視する
+   * (`supportsColumnPosition` が false のドライバでは UI が選択肢を無効にする)。
+   */
+  position?: ColumnPosition;
+}
+
+/** 新規列の位置指定。 */
+export type ColumnPosition = { mode: "end" } | { mode: "first" } | { mode: "after"; column: string };
+
+/** 列の位置を指定できるドライバか (MySQL のみ)。 */
+export function supportsColumnPosition(driver: string): boolean {
+  return driver === "mysql";
 }
 
 export interface IndexDef {
@@ -235,6 +249,13 @@ function newColumnLine(driver: string, col: NewColumn): string {
   if (col.notNull) parts.push("NOT NULL");
   const def = formatDefault(driver, col.defaultValue, type);
   if (def !== null) parts.push(`DEFAULT ${def}`);
+  const pos = col.position;
+  if (supportsColumnPosition(driver) && pos) {
+    if (pos.mode === "first") parts.push("FIRST");
+    else if (pos.mode === "after" && pos.column.trim()) {
+      parts.push(`AFTER ${quoteIdentFor(driver, pos.column.trim())}`);
+    }
+  }
   return parts.join(" ");
 }
 

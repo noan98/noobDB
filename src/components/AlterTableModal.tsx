@@ -5,6 +5,7 @@ import { useT } from "../i18n";
 import { api, type DriverKind, type ForeignKey } from "../api/tauri";
 import {
   buildAlterPlan,
+  supportsColumnPosition,
   supportsComments,
   supportsConstraintAlter,
   type AlterStatement,
@@ -20,7 +21,7 @@ import {
 import { transitions, variants } from "../motion";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
-import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
+import { Button, Checkbox, Input, PressableButton, Select, Switch } from "./ui";
 import { Callout } from "./Callout";
 import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
@@ -172,6 +173,18 @@ function emptyNewColumn(driver: DriverKind): NewColumn {
   return { name: "", type: driver === "sqlite" ? "TEXT" : "VARCHAR(255)", notNull: false, defaultValue: "" };
 }
 
+/** `<select>` の値 ⇔ 位置指定。列名に `:` が含まれても `after:` の後ろを丸ごと列名として扱う。 */
+function positionValue(p: NewColumn["position"]): string {
+  if (!p || p.mode === "end") return "end";
+  return p.mode === "first" ? "first" : `after:${p.column}`;
+}
+
+function parsePositionValue(v: string): NewColumn["position"] {
+  if (v === "first") return { mode: "first" };
+  if (v.startsWith("after:")) return { mode: "after", column: v.slice("after:".length) };
+  return { mode: "end" };
+}
+
 function emptyIndex(): IndexDef {
   return { name: "", columns: [], unique: false };
 }
@@ -304,6 +317,18 @@ export function AlterTableModal({
     return [...new Set([...kept, ...addedNames])];
   }, [existing, added]);
 
+  // 新規列の位置指定 (#1625, MySQL のみ): AFTER の候補は、削除予定でない既存列と、
+  // この行より前の新規列 (その ALTER が先に実行されるので参照できる)。
+  const positionSupported = supportsColumnPosition(driver);
+  const positionAnchors = (index: number) => {
+    const kept = existing.filter((e) => !e.drop).map((e) => e.name.trim() || e.original);
+    const earlier = added
+      .slice(0, index)
+      .map((c) => c.name.trim())
+      .filter((n) => n.length > 0);
+    return [...new Set([...kept, ...earlier])];
+  };
+
   // DROP / 改名で選択肢から消えた列を選んだままの行は、その列を未選択として扱う。
   const effectiveIndexes = useMemo(
     () => indexes.map((r) => ({ ...r, columns: r.columns.filter((c) => availableColumns.includes(c)) })),
@@ -323,6 +348,7 @@ export function AlterTableModal({
           type: r.type,
           notNull: r.notNull,
           defaultValue: r.defaultValue,
+          position: r.position,
         })),
         indexes: effectiveIndexes.map((r) => ({ name: r.name, columns: r.columns, unique: r.unique })),
         tableComment,
@@ -571,7 +597,7 @@ export function AlterTableModal({
                   <chakra.div
                     key={c.id}
                     display="grid"
-                    gridTemplateColumns="1.3fr 1.3fr auto 1.2fr auto"
+                    gridTemplateColumns="1.3fr 1.3fr auto 1.2fr 1.2fr auto"
                     gap="1.5"
                     alignItems="center"
                   >
@@ -597,6 +623,25 @@ export function AlterTableModal({
                       placeholder={t("createTableColDefault")}
                       aria-label={`${t("createTableColDefault")} (${i + 1})`}
                     />
+                    <Tooltip
+                      label={positionSupported ? undefined : t("alterTablePositionUnsupported")}
+                      focusableWrapper={!positionSupported}
+                    >
+                      <Select
+                        value={positionValue(c.position)}
+                        onChange={(e) => setAddedAt(i, { position: parsePositionValue(e.target.value) })}
+                        disabled={!positionSupported}
+                        aria-label={t("alterTablePositionAria", { n: i + 1 })}
+                      >
+                        <option value="end">{t("alterTablePositionEnd")}</option>
+                        <option value="first">{t("alterTablePositionFirst")}</option>
+                        {positionAnchors(i).map((name) => (
+                          <option key={name} value={`after:${name}`}>
+                            {t("alterTablePositionAfter", { column: name })}
+                          </option>
+                        ))}
+                      </Select>
+                    </Tooltip>
                     <chakra.button
                       type="button"
                       onClick={() => removeNewColumn(i)}

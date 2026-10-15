@@ -4308,6 +4308,12 @@ const en = {
   sqliteMaintPages: "{pages} pages, {free} free ({percent}%)",
   sqliteMaintVacuumHint:
     "Many pages are free. Running VACUUM can shrink the file (run it from the SQL editor; it needs temporary space as large as the database).",
+  alterTablePositionEnd: "At the end",
+  alterTablePositionFirst: "First",
+  alterTablePositionAfter: "After {column}",
+  alterTablePositionAria: "Position of new column ({n})",
+  alterTablePositionUnsupported:
+    "Only MySQL can place a new column at a position; PostgreSQL and SQLite always append it at the end",
   schemaCompareKindAddIndex: "CREATE INDEX",
   schemaCompareKindDropIndex: "DROP INDEX",
   schemaCompareKindDropForeignKey: "DROP FOREIGN KEY",
@@ -10457,6 +10463,12 @@ const ja: Dict = {
   sqliteMaintPages: "{pages} ページ中 {free} ページが空き ({percent}%)",
   sqliteMaintVacuumHint:
     "空きページが多くなっています。VACUUM でファイルを縮められます (SQL エディタから実行。DB と同じ大きさの一時領域が必要です)。",
+  alterTablePositionEnd: "末尾",
+  alterTablePositionFirst: "先頭",
+  alterTablePositionAfter: "{column} の後",
+  alterTablePositionAria: "新規列 ({n}) の位置",
+  alterTablePositionUnsupported:
+    "列の位置を指定できるのは MySQL だけです (PostgreSQL / SQLite は常に末尾に追加されます)",
   schemaCompareKindAddIndex: "CREATE INDEX",
   schemaCompareKindDropIndex: "DROP INDEX",
   schemaCompareKindDropForeignKey: "DROP FOREIGN KEY",
