@@ -2456,6 +2456,10 @@ td.is-find-current::after {
   white-space: nowrap;
   box-shadow: var(--elevation-popover);
 }
+.col-resize-guide[data-flip="left"] .col-resize-guide-badge {
+  left: auto;
+  right: var(--space-1);
+}
 .col-resize-guide[data-clamp="min"] .col-resize-guide-badge,
 .col-resize-guide[data-clamp="max"] .col-resize-guide-badge {
   background: var(--warning-solid);

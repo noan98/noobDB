@@ -42,26 +42,40 @@ function createResizeGuide(header: HTMLElement, table: HTMLElement | null, label
   const badge = document.createElement("span");
   badge.className = "col-resize-guide-badge";
   el.appendChild(badge);
-  // 縦ガイドの範囲: ヘッダ上端から、スクロール領域 (無ければテーブル) の下端まで。
-  let bottomEl: HTMLElement | null = table?.parentElement ?? null;
-  while (bottomEl && bottomEl !== document.body) {
-    const oy = getComputedStyle(bottomEl).overflowY;
+  // ガイドの範囲: スクロール領域 (祖先) の内側に収める。縦はヘッダ上端から
+  // min(スクロール領域の下端, テーブルの下端) まで (行が少ないとき空白を貫かない)。
+  let scrollEl: HTMLElement | null = table?.parentElement ?? null;
+  while (scrollEl && scrollEl !== document.body) {
+    const oy = getComputedStyle(scrollEl).overflowY;
     if (oy === "auto" || oy === "scroll") break;
-    bottomEl = bottomEl.parentElement;
+    scrollEl = scrollEl.parentElement;
   }
+  if (scrollEl === document.body) scrollEl = null;
+  const scrollRect = scrollEl?.getBoundingClientRect() ?? null;
   const topRect = header.getBoundingClientRect();
-  const bottom = (
-    bottomEl && bottomEl !== document.body ? bottomEl : (table ?? header)
-  ).getBoundingClientRect().bottom;
+  const bottoms = [table?.getBoundingClientRect().bottom, scrollRect?.bottom].filter(
+    (v): v is number => typeof v === "number",
+  );
+  const bottom = bottoms.length > 0 ? Math.min(...bottoms) : topRect.bottom;
   el.style.top = `${topRect.top}px`;
   el.style.height = `${Math.max(0, bottom - topRect.top)}px`;
+  // バッジは右隣の列ヘッダ名を隠さないよう、ヘッダ行の下に出す。
+  badge.style.top = `${Math.max(0, (topRect.bottom ?? topRect.top) - topRect.top)}px`;
+  const place = () => {
+    let x = header.getBoundingClientRect().right;
+    if (scrollRect) x = Math.min(Math.max(x, scrollRect.left), scrollRect.right);
+    el.style.transform = `translateX(${x}px)`;
+    // 右端に近いときはバッジを線の左側へ反転する。
+    const limit = scrollRect ? scrollRect.right : window.innerWidth;
+    el.dataset.flip = x + badge.offsetWidth + 16 > limit ? "left" : "";
+  };
   // 初回の位置は追加前に確定させる (transition で画面左端から滑ってこないように)。
-  el.style.transform = `translateX(${topRect.right}px)`;
+  place();
   document.body.appendChild(el);
   return {
     update(size: number, clamp: "min" | "max" | null) {
-      el.style.transform = `translateX(${header.getBoundingClientRect().right}px)`;
       badge.textContent = label(formatResizeWidth(size));
+      place();
       el.dataset.clamp = clamp ?? "";
     },
     remove() {
@@ -134,6 +148,11 @@ export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
   const onMove = (e: MouseEvent | TouchEvent) => {
     const x = clientXOf(e);
     if (x === null) return;
+    // フォーカス喪失などで mouseup を取り逃がした場合は、ボタンが離れていればここで終える。
+    if (!isTouch && (e as MouseEvent).buttons === 0) {
+      onEnd();
+      return;
+    }
     if (isTouch && e.cancelable) e.preventDefault();
     pendingX = x;
     if (!raf) {
@@ -148,6 +167,7 @@ export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
     document.removeEventListener(isTouch ? "touchmove" : "mousemove", onMove);
     document.removeEventListener(isTouch ? "touchend" : "mouseup", onEnd);
     if (isTouch) document.removeEventListener("touchcancel", onEnd);
+    window.removeEventListener("blur", onEnd);
     header?.classList.remove("is-resizing");
     guide?.remove();
     if (size !== startSize) onCommit(size);
@@ -155,4 +175,5 @@ export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
   document.addEventListener(isTouch ? "touchmove" : "mousemove", onMove, { passive: false });
   document.addEventListener(isTouch ? "touchend" : "mouseup", onEnd);
   if (isTouch) document.addEventListener("touchcancel", onEnd);
+  window.addEventListener("blur", onEnd);
 }
