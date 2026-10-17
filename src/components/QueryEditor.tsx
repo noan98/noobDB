@@ -1177,6 +1177,8 @@ export const QueryEditor = memo(
                 key: "ArrowUp",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== 1) return false;
@@ -1190,6 +1192,8 @@ export const QueryEditor = memo(
                 key: "ArrowDown",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false;

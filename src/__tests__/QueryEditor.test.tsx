@@ -526,11 +526,6 @@ describe("QueryEditor 識別子の Ctrl/Cmd+クリック (#1629)", () => {
 describe("QueryEditor マルチカーソル (#1488)", () => {
   beforeEach(() => {
     setLocale("en");
-    // jsdom の Range には getClientRects が無い。drawSelection の計測が呼ぶので空を返す。
-    const proto = Range.prototype as { getClientRects?: () => unknown };
-    proto.getClientRects ??= () => [] as unknown as DOMRectList;
-    const rangeProto = Range.prototype as { getBoundingClientRect?: () => DOMRect };
-    rangeProto.getBoundingClientRect ??= () => new DOMRect();
   });
 
   const mount = (onRun = vi.fn()) => {
@@ -584,5 +579,25 @@ describe("QueryEditor マルチカーソル (#1488)", () => {
     const user = userEvent.setup();
     await user.keyboard("{Control>}{Enter}{/Control}");
     await waitFor(() => expect(onRun).toHaveBeenCalledWith("SELECT 2;"));
+  });
+
+  it("複数カーソルで 1 行目で ↑ / 末尾行で ↓ を押しても本文は変わらない", async () => {
+    renderWithProviders(
+      <QueryEditor onRun={vi.fn()} initialSql={"SELECT 1;\nSELECT 2"} queryHistory={["SELECT 99"]} />,
+    );
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.cursor(0), EditorSelection.cursor(3)], 0),
+    });
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    content.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{ArrowUp}");
+    expect(view.state.doc.toString()).toBe("SELECT 1;\nSELECT 2");
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.cursor(11), EditorSelection.cursor(14)], 0),
+    });
+    await user.keyboard("{ArrowDown}");
+    expect(view.state.doc.toString()).toBe("SELECT 1;\nSELECT 2");
   });
 });
