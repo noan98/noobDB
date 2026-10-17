@@ -156,14 +156,14 @@ export function AppearancePreview({ previewVars }: { previewVars?: Record<string
         </Sidebar>
         <Main>
           <Sql>
-            <chakra.span color="syntax.keyword">SELECT</chakra.span> id,{" "}
-            <chakra.span color="syntax.function">COUNT</chakra.span>(*){" "}
-            <chakra.span color="syntax.keyword">FROM</chakra.span> orders{" "}
-            <chakra.span color="syntax.keyword">WHERE</chakra.span> total{" "}
-            <chakra.span color="syntax.operator">&gt;</chakra.span>{" "}
-            <chakra.span color="syntax.number">100</chakra.span>{" "}
-            <chakra.span color="syntax.string">&apos;paid&apos;</chakra.span>{" "}
-            <chakra.span color="syntax.comment">-- sample</chakra.span>
+            <chakra.span color="app.syntax.keyword">SELECT</chakra.span> id,{" "}
+            <chakra.span color="app.syntax.function">COUNT</chakra.span>(*){" "}
+            <chakra.span color="app.syntax.keyword">FROM</chakra.span> orders{" "}
+            <chakra.span color="app.syntax.keyword">WHERE</chakra.span> total{" "}
+            <chakra.span color="app.syntax.operator">&gt;</chakra.span>{" "}
+            <chakra.span color="app.syntax.number">100</chakra.span>{" "}
+            <chakra.span color="app.syntax.string">&apos;paid&apos;</chakra.span>{" "}
+            <chakra.span color="app.syntax.comment">-- sample</chakra.span>
           </Sql>
           <GridRow kind="head" style={rowPad}>
             <Cell>id</Cell>

@@ -692,7 +692,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   const theme = effectiveTheme(settings.themePreset, toggleTheme);
   // 「選ぶ前」のプレビュー (#1581): ホバー / フォーカス中のプリセット・アクセントだけモックへ上書きする。
   const [previewPreset, setPreviewPreset] = useState<ThemePreset | null>(null);
-  const [previewAccent, setPreviewAccent] = useState<string | null>(null);
+  const [previewAccent, setPreviewAccent] = useState<{ hex: string | null } | null>(null);
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
   const themeLabel = t(theme === "dark" ? "settingsThemeDark" : "settingsThemeLight");
@@ -1242,7 +1242,14 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                 </SettingsSectionHeader>
                 <AppearancePreviewDock>
                   <AppearancePreview
-                    previewVars={appearancePreviewVars(previewPreset, previewAccent, toggleTheme)}
+                    previewVars={appearancePreviewVars({
+                      previewPreset,
+                      previewAccent,
+                      currentPreset: settings.themePreset,
+                      toggleTheme,
+                      accentColor: settings.accentColor,
+                      syntaxColors: settings.syntaxColors,
+                    })}
                   />
                 </AppearancePreviewDock>
                 <SettingsNumberRow>
@@ -1393,7 +1400,10 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                   <SettingsSwatchRow
                     role="group"
                     aria-label={t("settingsAccentColor")}
-                    {...previewHandlers("accent", setPreviewAccent)}
+                    {...previewHandlers("accent", (key) => {
+                      const found = ACCENT_PRESETS.find((a) => a.key === key);
+                      setPreviewAccent(found ? { hex: found.hex } : null);
+                    })}
                   >
                     {ACCENT_PRESETS.map((p) => {
                       const selected =
@@ -1408,7 +1418,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                             aria-label={t(ACCENT_LABEL_KEYS[p.key])}
                             data-default={p.hex === null ? "" : undefined}
                             style={p.hex ? { background: p.hex } : undefined}
-                            data-accent={p.hex ?? undefined}
+                            data-accent={p.key}
                             onClick={() => setAccentColor(p.hex)}
                           />
                         </Tooltip>
