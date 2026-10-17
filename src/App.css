@@ -185,6 +185,10 @@
   /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
   --overlay: rgba(0, 0, 0, 0.45);
 
+  /* オンボーディングツアーのスポットライト (#1504) の暗幕。--overlay より濃くして、
+     暗いテーマでもくり抜きが際立つようにする。全テーマ共通。 */
+  --tour-dim: rgba(0, 0, 0, 0.62);
+
   /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
      マジックナンバーを解消する。低→高:
        base < sticky < raised < sidebar < modal < dropdown < popover < toast
@@ -2463,6 +2467,36 @@ td.is-find-current::after {
 .col-resize-guide[data-clamp="min"] .col-resize-guide-badge,
 .col-resize-guide[data-clamp="max"] .col-resize-guide-badge {
   background: var(--warning-solid);
+}
+
+/* ---------- BrandMark シグネチャ・アニメーション (#1505) ----------
+   `<BrandMark animate />` (起動スプラッシュ) が 1 回だけ再生する: n のストロークが
+   描かれ、ティールの横線が左から滑って n の右脚を貫き定位置に収まる。全体は
+   `--dur-med` の 3 倍 (600ms) の 1 本のタイムラインで、横線は 35% 地点から動く
+   (animation-delay を使わないので、下の reduced-motion ブロックの 0.01ms 化で最終
+   フレーム = 静止ロゴへ即座に収まる)。最終キーフレームは要素本来のスタイルと一致する。
+   hc-* は装飾より AAA を優先して静止させる (最終フレームのまま)。 */
+@keyframes brand-mark-n-draw {
+  from { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  55%, to { stroke-dasharray: 1; stroke-dashoffset: 0; }
+}
+@keyframes brand-mark-bar-slide {
+  0%, 35% { transform: translateX(-130%); opacity: 0; }
+  50% { opacity: 1; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.brand-mark-anim .brand-mark-n {
+  animation: brand-mark-n-draw calc(var(--dur-med) * 3) var(--ease);
+}
+.brand-mark-anim .brand-mark-bar {
+  transform-box: fill-box;
+  animation: brand-mark-bar-slide calc(var(--dur-med) * 3) var(--ease-out);
+}
+:root[data-theme="hc-light"] .brand-mark-anim .brand-mark-n,
+:root[data-theme="hc-dark"] .brand-mark-anim .brand-mark-n,
+:root[data-theme="hc-light"] .brand-mark-anim .brand-mark-bar,
+:root[data-theme="hc-dark"] .brand-mark-anim .brand-mark-bar {
+  animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
