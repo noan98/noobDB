@@ -48,7 +48,7 @@ describe("onboardingAnchors (#1504)", () => {
 
   it("spotlightRect: 余白ぶん広がり、クリップ後の矩形を基準にする", () => {
     expect(spotlightRect(rect(100, 100, 50, 20), VP, 4)).toEqual(rect(96, 96, 58, 28));
-    expect(spotlightRect(rect(-20, 10, 60, 20), VP, 4)).toEqual(rect(-4, 6, 48, 28));
+    expect(spotlightRect(rect(-20, 10, 60, 20), VP, 4)).toEqual(rect(0, 6, 44, 28));
     expect(spotlightRect(rect(0, 2000, 10, 10), VP)).toBeNull();
   });
 

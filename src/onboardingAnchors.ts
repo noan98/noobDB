@@ -74,7 +74,7 @@ export function isAnchorUsable(rect: TooltipRect, viewport: TooltipSize): boolea
   return (clipped.width * clipped.height) / (rect.width * rect.height) >= MIN_VISIBLE_RATIO;
 }
 
-/** ビューポートでクリップしたうえで、四方へ `pad` 広げたスポットライト枠を返す。 */
+/** ビューポートでクリップしたうえで、四方へ `pad` 広げ (ビューポート内にクランプした) スポットライト枠を返す。 */
 export function spotlightRect(
   rect: TooltipRect,
   viewport: TooltipSize,
@@ -82,11 +82,12 @@ export function spotlightRect(
 ): TooltipRect | null {
   const clipped = clipRect(rect, viewport);
   if (!clipped) return null;
-  const left = clipped.left - pad;
-  const top = clipped.top - pad;
-  const width = clipped.width + pad * 2;
-  const height = clipped.height + pad * 2;
-  return { left, top, width, height, right: left + width, bottom: top + height };
+  // 余白込みでもビューポート内に収め、枠線が画面端で切れないようにする。
+  const left = Math.max(clipped.left - pad, 0);
+  const top = Math.max(clipped.top - pad, 0);
+  const right = Math.min(clipped.right + pad, viewport.width);
+  const bottom = Math.min(clipped.bottom + pad, viewport.height);
+  return { left, top, width: right - left, height: bottom - top, right, bottom };
 }
 
 /** 2 つの矩形が重なるか (接するだけは重ならない)。 */

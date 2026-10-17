@@ -29,6 +29,13 @@ import {
 // 既存 (ContextMenu / SplashScreen) と同じく chakra でラップした motion 要素。
 // `transition` を Chakra のスタイルプロップに飲まれず motion へ渡すため
 // forwardProps で素通しする。
+/** 不可視 (inert / aria-hidden / hidden / visibility:hidden) の要素はアンカーにしない。 */
+function isElementVisible(el: HTMLElement): boolean {
+  if (el.closest('[inert],[aria-hidden="true"],[hidden]')) return false;
+  if (typeof el.checkVisibility === "function") return el.checkVisibility({ visibilityProperty: true });
+  return true;
+}
+
 const MotionCard = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 interface StepContent {
@@ -79,6 +86,8 @@ export function OnboardingTour({ onClose }: Props) {
   }));
   // ステップごとに 1 度だけ scrollIntoView する (測定のたびにスクロールを奪わない)。
   const scrolledStepRef = useRef(-1);
+  // ビューポートに加えてアンカー要素自体のサイズ変化も拾う (サイドバー幅変更など)。
+  const roRef = useRef<ResizeObserver | null>(null);
 
   // 開く前にフォーカスしていた要素へ、閉じたときに戻す。
   useReturnFocus();
@@ -124,7 +133,8 @@ export function OnboardingTour({ onClose }: Props) {
     let found: { spot: TooltipRect; placement: TooltipPlacement } | null = null;
     for (const cand of anchorsForStep(step)) {
       const el = document.querySelector<HTMLElement>(cand.selector);
-      if (!el) continue;
+      if (!el || !isElementVisible(el)) continue;
+      roRef.current?.observe(el);
       let rect = el.getBoundingClientRect();
       if (
         !isAnchorUsable(rect, vp) &&
@@ -154,7 +164,6 @@ export function OnboardingTour({ onClose }: Props) {
   }, [step]);
 
   useLayoutEffect(() => {
-    measure();
     let raf = 0;
     const schedule = () => {
       if (raf) return;
@@ -167,13 +176,16 @@ export function OnboardingTour({ onClose }: Props) {
     // スクロール可能な祖先すべてを拾うためキャプチャ相で受ける。
     document.addEventListener("scroll", schedule, true);
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    roRef.current = ro;
     ro?.observe(document.documentElement);
+    measure();
     // 後から現れる / 動く要素 (タブを開いた直後のエディタ、サイドバーの開閉など) を拾う保険。
     const timer = window.setInterval(measure, 500);
     return () => {
       window.removeEventListener("resize", schedule);
       document.removeEventListener("scroll", schedule, true);
       ro?.disconnect();
+      roRef.current = null;
       window.clearInterval(timer);
       if (raf) cancelAnimationFrame(raf);
     };
@@ -192,7 +204,11 @@ export function OnboardingTour({ onClose }: Props) {
   // カード内の Esc は useFocusTrap が処理済み (defaultPrevented) なので二重に呼ばない。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // IME 変換取消・他の Esc 処理 (最大化解除など) は横取りしない。フォーカスが
+      // どこにも無い (背景クリック後など) ときだけ拾う。
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
       e.preventDefault();
       onClose();
     };

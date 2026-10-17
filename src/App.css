@@ -185,6 +185,10 @@
   /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
   --overlay: rgba(0, 0, 0, 0.45);
 
+  /* オンボーディングツアーのスポットライト (#1504) の暗幕。--overlay より濃くして、
+     暗いテーマでもくり抜きが際立つようにする。全テーマ共通。 */
+  --tour-dim: rgba(0, 0, 0, 0.62);
+
   /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
      マジックナンバーを解消する。低→高:
        base < sticky < raised < sidebar < modal < dropdown < popover < toast
@@ -2621,11 +2625,4 @@ td.is-find-current::after {
   vertical-align: middle;
   pointer-events: none;
   animation: streaming-pulse 1.2s ease-in-out infinite;
-}
-
-/* オンボーディングツアーのスポットライト (#1504)。くり抜き以外を覆う暗幕。
-   モーダルの --overlay より濃くして、暗いテーマでもくり抜きが際立つようにする。
-   全テーマ共通。OnboardingTour.tsx が参照する。 */
-:root {
-  --tour-dim: rgba(0, 0, 0, 0.62);
 }

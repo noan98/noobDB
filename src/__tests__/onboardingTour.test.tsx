@@ -166,4 +166,35 @@ describe("OnboardingTour のコーチマーク (#1504)", () => {
     fireEvent.keyDown(getByRole("dialog"), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("IME 変換中の Esc・入力欄にフォーカスがあるときの Esc ではツアーを閉じない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(<OnboardingTour onClose={onClose} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "Escape", isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    try {
+      input.focus();
+      fireEvent.keyDown(input, { key: "Escape" });
+      expect(onClose).not.toHaveBeenCalled();
+    } finally {
+      input.remove();
+    }
+  });
+
+  it("inert / aria-hidden 配下のアンカーはフォールバック扱い", () => {
+    const wrap = document.createElement("div");
+    wrap.setAttribute("aria-hidden", "true");
+    document.body.appendChild(wrap);
+    const el = mountAnchor(["data-tour", "sidebar-tabs"], { left: 10, top: 40, width: 200, height: 30 });
+    wrap.appendChild(el);
+    try {
+      const { queryByTestId } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+      expect(queryByTestId("onboarding-spotlight")).toBeNull();
+    } finally {
+      wrap.remove();
+    }
+  });
 });
