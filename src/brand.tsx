@@ -29,11 +29,12 @@ import { useId } from "react";
  * `animate` を付けると、マウント時に 1 回だけ「*n* のストロークが描かれ、ティールの
  * 横線が左からタイルの内側を滑って *n* の右脚を貫き定位置に収まる」動きを再生する。
  * 実装は `App.css` の `.brand-mark-anim` (`@keyframes brand-mark-n-draw` /
- * `brand-mark-bar-slide`、時間は `--dur-med` の倍数、easing は `--ease-out`)。CSS に
+ * `brand-mark-bar-slide`、時間は `--dur-med` の倍数。n の描画は線の伸びが見えるよう `--ease`、
+ * 横線は `--ease-out`)。CSS に
  * 閉じているので、`prefers-reduced-motion` / アプリ内モーション量設定は末尾の
  * reduced-motion ブロックが即時化し、`hc-*` は `App.css` が静止に上書きする。どちらも
  * 最終フレーム (= 通常の静止ロゴ) で止まるため、再生後や抑制時は他の箇所と同じ見た目。
- * アニメが終わっても要素は残らず、`animate` を外せば従来の静的ロゴと同じ DOM。
+ * DOM には `clipPath` / `pathLength` などが残るが、再生後の見た目は静的ロゴと同一。
  *
  * 依存ライブラリは増やさず SVG を直接持つ (`illustrations.tsx` と同じ方針)。
  */

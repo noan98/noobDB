@@ -2482,7 +2482,7 @@ td.is-find-current::after {
   to { transform: translateX(0); opacity: 1; }
 }
 .brand-mark-anim .brand-mark-n {
-  animation: brand-mark-n-draw calc(var(--dur-med) * 3) var(--ease-out);
+  animation: brand-mark-n-draw calc(var(--dur-med) * 3) var(--ease);
 }
 .brand-mark-anim .brand-mark-bar {
   transform-box: fill-box;
