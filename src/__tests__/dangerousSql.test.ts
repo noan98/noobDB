@@ -4,6 +4,7 @@ import {
   appendWhereTemplate,
   buildPkWhereTemplate,
   isReadOnlySql,
+  MASK_SPLIT_PAIRS,
 } from "../dangerousSql";
 
 describe("analyzeDangerousSql", () => {
@@ -424,5 +425,202 @@ describe("主キーで絞る WHERE の雛形 (#1626)", () => {
     expect(appendWhereTemplate("UPDATE t JOIN u ON 1 SET a = 1", "WHERE id = ")).toBeNull();
     expect(appendWhereTemplate("SELECT * FROM t", "WHERE id = ")).toBeNull();
     expect(appendWhereTemplate("", "WHERE id = ")).toBeNull();
+  });
+});
+
+// --- #1663: Stryker 生存変異の補強 -------------------------------------------------
+
+describe("maskLiterals — 境界・オプション・キャッシュキー (#1663)", () => {
+  it("改行はリテラル/ブロックコメントの内側でも保たれ、行コメントは改行の手前で止まる", () => {
+    expect(maskLiterals("SELECT 'a\nb'")).toBe("SELECT ' \n '");
+    expect(maskLiterals("/* a\nb */SELECT 1")).toBe("    \n    SELECT 1");
+    expect(maskLiterals("SELECT 1 -- x\nSELECT 2")).toBe("SELECT 1     \nSELECT 2");
+  });
+
+  it("`-` 1 文字は行コメントにならない (算術のマイナス)", () => {
+    expect(maskLiterals("SELECT 5-3 FROM t")).toBe("SELECT 5-3 FROM t");
+    expect(maskLiterals("SELECT a - b, 1--1")).toBe("SELECT a - b, 1   ");
+  });
+
+  it("行頭の # コメントでも前進する (直前が改行でも無限ループしない)", () => {
+    expect(maskLiterals("SELECT 1\n# DROP\nSELECT 2", "mysql")).toBe("SELECT 1\n      \nSELECT 2");
+    // PostgreSQL / SQLite の # は演算子。
+    expect(maskLiterals("SELECT 1\n# DROP", "postgres")).toBe("SELECT 1\n# DROP");
+  });
+
+  it("`/*/` は閉じコメントではない (開始の `/*` と終端の `*/` で `*` を共有しない)", () => {
+    expect(maskLiterals("SELECT 1 /*/ ; DROP TABLE t */ ;")).toBe("SELECT 1                       ;");
+  });
+
+  it("文字列の先頭が `$$` のドル引用でも伏せる (i === 0)", () => {
+    expect(maskLiterals("$$ x ; y $$ SELECT 1", "postgres")).toBe("$$       $$ SELECT 1");
+  });
+
+  it("ドル引用を閉じた後は閉じタグの先頭から再走査せず、本文末尾の引用符で新たな文字列を開かない", () => {
+    // 本文が `'a` で終わる。閉じタグより手前へ戻ると `'` が文字列を開き、後続の DROP を隠してしまう。
+    expect(maskLiterals("SELECT $$'a$$; DROP TABLE t; --'", "postgres")).toBe(
+      "SELECT $$  $$; DROP TABLE t;    ",
+    );
+  });
+
+  it("`$1$` のように数字で始まるタグはドル引用ではない", () => {
+    expect(maskLiterals("SELECT $1$ ; DROP TABLE t $1$", "postgres")).toBe("SELECT $1$ ; DROP TABLE t $1$");
+  });
+
+  it("末尾が `$tag` で閉じない入力でも停止し、タグ文字列の再出現をドル引用と誤認しない", () => {
+    expect(maskLiterals("SELECT $abc", "postgres")).toBe("SELECT $abc");
+    expect(maskLiterals("SELECT $a FROM t WHERE x = $a AND 1", "postgres")).toBe(
+      "SELECT $a FROM t WHERE x = $a AND 1",
+    );
+  });
+
+  it("SQLite の角括弧識別子: 直前の `]` へ戻らず前進し、keepQuotedIdentifiers で中身を残す", () => {
+    expect(maskLiterals("SELECT a][b] FROM t", "sqlite")).toBe("SELECT a][ ] FROM t");
+    expect(maskLiterals("SELECT [name] FROM t", "sqlite")).toBe("SELECT [    ] FROM t");
+    expect(maskLiterals("SELECT [name] FROM t", "sqlite", { keepQuotedIdentifiers: true })).toBe(
+      "SELECT [name] FROM t",
+    );
+    // keepBrackets なら角括弧を特別扱いしない (中の `'` が文字列を開く従来の読み方)。
+    expect(maskLiterals("SELECT [a'b] FROM t", "sqlite", { keepBrackets: true })).toBe("SELECT [a'         ");
+    expect(maskLiterals("SELECT [a'b] FROM t", "sqlite")).toBe("SELECT [   ] FROM t");
+  });
+
+  it("PostgreSQL の E'…' だけが \\ をエスケープとして読む", () => {
+    // 先頭 (i === 1) の E'。
+    expect(maskLiterals("E'a\\'b'; DROP TABLE t", "postgres")).toBe("E'    '; DROP TABLE t");
+    expect(maskLiterals("e'a\\'b'; DROP TABLE t", "postgres")).toBe("e'    '; DROP TABLE t");
+    // 途中の E'。
+    expect(maskLiterals("SELECT E'a\\'b'; DROP TABLE t", "postgres")).toBe("SELECT E'    '; DROP TABLE t");
+    // 直前が識別子文字 (ASCII / U+0080 以上) なら E 接頭辞ではない。
+    expect(maskLiterals("SELECT tE'a\\'; DROP TABLE t", "postgres")).toBe("SELECT tE'  '; DROP TABLE t");
+    expect(maskLiterals("\u0080E'a\\'; DROP TABLE t", "postgres")).toBe("\u0080E'  '; DROP TABLE t");
+    // `'` 以外の引用符 (識別子) は E 接頭辞でも \\ をエスケープにしない。
+    expect(maskLiterals('SELECT e"a\\" , 1; DROP TABLE t', "postgres")).toBe(
+      'SELECT e"  " , 1; DROP TABLE t',
+    );
+  });
+
+  it("オプション違いはキャッシュキーを共有しない (同じ SQL・同じ driver でも結果が変わる)", () => {
+    const sql = "SELECT `col_a`, [col_b] FROM t";
+    // 同じ入力を先にオプション無しで、次にオプション付きで、さらに逆順で呼ぶ。
+    const plain = maskLiterals(sql, "sqlite");
+    const keepIdent = maskLiterals(sql, "sqlite", { keepQuotedIdentifiers: true });
+    const keepBr = maskLiterals(sql, "sqlite", { keepBrackets: true });
+    expect(plain).not.toBe(keepIdent);
+    expect(plain).not.toBe(keepBr);
+    expect(keepIdent).not.toBe(keepBr);
+    expect(maskLiterals(sql, "sqlite")).toBe(plain);
+    expect(maskLiterals(sql, "sqlite", { keepQuotedIdentifiers: true })).toBe(keepIdent);
+    expect(maskLiterals(sql, "sqlite", { keepBrackets: true })).toBe(keepBr);
+    // driver 違いも別キー: MySQL だけ \\ をエスケープと読む。
+    const bs = "SELECT 'a\\' ; DROP TABLE t; --'";
+    const my = maskLiterals(bs, "mysql");
+    const pg = maskLiterals(bs, "postgres");
+    expect(my).not.toBe(pg);
+    expect(maskLiterals(bs, "mysql")).toBe(my);
+    expect(maskLiterals(bs)).toBe(pg);
+  });
+
+  it("MASK_SPLIT_PAIRS は補完が割ってはならない 2 文字の組を過不足なく持つ", () => {
+    expect([...MASK_SPLIT_PAIRS].sort()).toEqual(["--", "/*", "*/", "''", '""', "``"].sort());
+  });
+});
+
+describe("analyzeDangerousSql — 文ごとの対象・WHERE 判定 (#1663)", () => {
+  it("2 文目の対象は 2 文目の表名 (文全体ではなく当該文の原文から取る)", () => {
+    expect(analyzeDangerousSql("DELETE FROM a WHERE x = 1; DELETE FROM b")).toEqual([
+      { kind: "deleteNoWhere", target: "b" },
+    ]);
+    expect(analyzeDangerousSql("UPDATE a SET x = 1 WHERE y = 1; UPDATE b SET x = 1")).toEqual([
+      { kind: "updateNoWhere", target: "b" },
+    ]);
+  });
+
+  it("`w` で始まる別の語・列名を WHERE と誤認しない", () => {
+    expect(analyzeDangerousSql("UPDATE t SET w = 1")).toEqual([{ kind: "updateNoWhere", target: "t" }]);
+    expect(analyzeDangerousSql("UPDATE t SET word = 1, whereabouts = 2")).toEqual([
+      { kind: "updateNoWhere", target: "t" },
+    ]);
+  });
+
+  it("対象表の読み取り: 先頭アンカー・括弧つき識別子・修飾名の各パート", () => {
+    // 表名が読めない形は null (途中の語を拾わない)。
+    expect(analyzeDangerousSql("DELETE FROM (t)")).toEqual([{ kind: "deleteNoWhere", target: null }]);
+    expect(analyzeDangerousSql("DROP TABLE (x)")).toEqual([{ kind: "drop", target: null }]);
+    // 2 パート目以降が複数文字でも丸ごと読む (角括弧 / 裸の識別子)。
+    expect(analyzeDangerousSql("DELETE FROM dbo.[ab]")).toEqual([
+      { kind: "deleteNoWhere", target: "dbo.ab" },
+    ]);
+    expect(analyzeDangerousSql("DELETE FROM [ab].[cd]")).toEqual([
+      { kind: "deleteNoWhere", target: "ab.cd" },
+    ]);
+    expect(analyzeDangerousSql("DELETE FROM [ab]")).toEqual([{ kind: "deleteNoWhere", target: "ab" }]);
+    expect(analyzeDangerousSql("DELETE FROM shop.orders")).toEqual([
+      { kind: "deleteNoWhere", target: "shop.orders" },
+    ]);
+    expect(analyzeDangerousSql("DELETE FROM `shop`.`orders`")).toEqual([
+      { kind: "deleteNoWhere", target: "shop.orders" },
+    ]);
+    expect(analyzeDangerousSql('TRUNCATE TABLE "s"."tt"')).toEqual([{ kind: "truncate", target: "s.tt" }]);
+  });
+
+  it("ALTER ... DROP の対象表: 語間の複数空白・ONLY / IF EXISTS を読み飛ばす", () => {
+    expect(analyzeDangerousSql("ALTER  TABLE  t  DROP COLUMN c")).toEqual([
+      { kind: "dropColumn", target: "t" },
+    ]);
+    expect(analyzeDangerousSql("ALTER TABLE ONLY IF EXISTS s.t DROP CONSTRAINT k")).toEqual([
+      { kind: "dropConstraint", target: "s.t" },
+    ]);
+    expect(analyzeDangerousSql("ALTER TABLE t ADD COLUMN c INT")).toEqual([]);
+  });
+});
+
+describe("appendWhereTemplate — 対象の先頭アンカー (#1663)", () => {
+  it("文の先頭が UPDATE / DELETE でなければ提案しない (語の途中・文中の語を拾わない)", () => {
+    expect(appendWhereTemplate("xupdate t SET a = 1", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("SELECT delete FROM t", "WHERE id = ")).toBeNull();
+    expect(appendWhereTemplate("UPDATE t SET w = 1", "WHERE id = ")).toBe("UPDATE t SET w = 1\nWHERE id = ");
+  });
+});
+
+describe("isReadOnlySql — WITH (...) ロックヒントの範囲 (#1663)", () => {
+  it("ヒントの括弧を閉じた後ろの語はヒントとして数えない", () => {
+    expect(isReadOnlySql("SELECT * FROM t WITH (NOLOCK) WHERE updlock = 1")).toBe(true);
+    expect(isReadOnlySql("SELECT * FROM t WITH (INDEX(0)) WHERE holdlock = 1")).toBe(true);
+  });
+
+  it("入れ子の括弧に包まれたヒントも検出する", () => {
+    expect(isReadOnlySql("SELECT * FROM t WITH (UPDLOCK(1))")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t WITH (INDEX(0)UPDLOCK)")).toBe(false);
+    expect(isReadOnlySql("SELECT * FROM t WITH (NOLOCK) JOIN u WITH (HOLDLOCK) ON 1")).toBe(false);
+  });
+});
+
+describe("変異テスト補強 その 2 (#1663)", () => {
+  it("MySQL バージョンコメント `/*!` の判定は `/` `*` `!` が揃ったときだけ", () => {
+    // `/` の 2 つ後ろが `!` でも、間が `*` でなければバージョンコメントではない。
+    expect(maskLiterals("SELECT 4/2!=3")).toBe("SELECT 4/2!=3");
+    expect(maskLiterals("SELECT a*!b")).toBe("SELECT a*!b");
+    expect(maskLiterals("SELECT 1 /*!40000 , 2 */", "mysql")).toBe("SELECT 1          , 2 */");
+  });
+
+  it("ALTER TABLE 以外の ALTER ... DROP は危険文として数えない", () => {
+    expect(analyzeDangerousSql("ALTER VIEW v DROP COLUMN c")).toEqual([]);
+    expect(analyzeDangerousSql("ALTER INDEX i DROP CONSTRAINT k")).toEqual([]);
+  });
+
+  it("IF と EXISTS の間の複数空白でも ALTER TABLE の対象表を読む", () => {
+    expect(analyzeDangerousSql("ALTER TABLE IF  EXISTS t DROP COLUMN c")).toEqual([
+      { kind: "dropColumn", target: "t" },
+    ]);
+  });
+
+  it("角括弧で囲んだ識別子は記号・空白を含んでも 1 つの名前として読む", () => {
+    expect(analyzeDangerousSql("DELETE FROM [my table]")).toEqual([
+      { kind: "deleteNoWhere", target: "my table" },
+    ]);
+    expect(analyzeDangerousSql("DELETE FROM dbo.[my table]")).toEqual([
+      { kind: "deleteNoWhere", target: "dbo.my table" },
+    ]);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  maskedTopLevelWords,
   buildPreflightPlan,
   buildPreflightSampleSql,
   preflightTone,
@@ -421,5 +422,50 @@ describe("buildPreflightSampleSql (#1626)", () => {
     expect(buildPreflightSampleSql({ countSql: null })).toBeNull();
     const plan = buildPreflightPlan("DELETE FROM a JOIN b ON 1 WHERE 1", "mysql");
     expect(buildPreflightSampleSql(plan ?? { countSql: null })).toBeNull();
+  });
+});
+
+describe("変異テスト補強 (#1663)", () => {
+  it("maskedTopLevelWords は end を超えて単語を読まない", () => {
+    expect(maskedTopLevelWords("abcdef ghi", 0, 3)).toEqual([{ text: "abc", from: 0, to: 3 }]);
+    expect(maskedTopLevelWords("ab (cd) ef", 0, 10).map((w) => w.text)).toEqual(["ab", "ef"]);
+  });
+
+  it("対応の無い閉じ括弧で深さが負にならず、後続の括弧内を引き続きスキップする", () => {
+    // `)` が深さ 0 で現れても depth は 0 のまま。負になると続く `(` が深さ 0 に戻り、
+    // サブクエリの FROM をトップレベルと誤認して推定不可へ降格してしまう。
+    const plan = buildPreflightPlan("UPDATE t SET a = 1) WHERE x IN (SELECT 1 FROM y)");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM t WHERE x IN (SELECT 1 FROM y)");
+  });
+
+  it("数字始まりのテーブル参照は途中の単語を拾わず推定不可", () => {
+    // 先頭アンカーが無いと `12 SET` の `SET` を識別子として拾い、`12 ` を表名にした計画が出る。
+    expect(buildPreflightPlan("UPDATE 12 SET x = 1")).toEqual({
+      verb: "update",
+      table: null,
+      allRows: false,
+      countSql: null,
+    });
+  });
+
+  it("DELETE の直後が FROM でない形 (別名 + WHERE / RETURNING) は推定不可", () => {
+    for (const sql of ["DELETE a b WHERE x = 1", "DELETE t WHERE", "DELETE t RETURNING"]) {
+      expect(buildPreflightPlan(sql, "postgres")).toEqual({
+        verb: "delete",
+        table: null,
+        allRows: false,
+        countSql: null,
+      });
+    }
+  });
+
+  it("RETURNING は最初の 1 つで条件を切る (後続の同名語で切り位置を動かさない)", () => {
+    const plan = buildPreflightPlan("DELETE FROM t WHERE a = 1 RETURNING x, returning", "postgres");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM t WHERE a = 1");
+  });
+
+  it("WHERE より前に RETURNING が来る不正な並びでも条件を空に切り落とさない", () => {
+    const plan = buildPreflightPlan("DELETE FROM t RETURNING id WHERE a = 1", "postgres");
+    expect(plan?.countSql).toBe("SELECT COUNT(*) FROM t WHERE a = 1");
   });
 });
