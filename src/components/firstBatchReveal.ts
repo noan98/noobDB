@@ -9,9 +9,6 @@ import { durations, staggerTiming } from "../motion";
  * (こちらは `useRowCrossfade`, #1416) では再生しない。
  */
 
-/** リビール対象の行数の上限 (描画コストの上限)。仮想化で描画済みの行のうち画面内のものだけが対象。 */
-export const FIRST_BATCH_REVEAL_MAX_ROWS = 24;
-
 /** stagger を段階的にずらす行数の上限。これ以降の行は最終段と同時に出し、高いビューポートでも
  *  総所要時間が伸びず、遅れて出る行の手前だけ空白になる見た目も避ける。 */
 export const FIRST_BATCH_REVEAL_MAX_STEPS = 12;
@@ -26,22 +23,20 @@ export function isFirstBatchArrival(prevSkeletonShown: boolean, rowCount: number
 }
 
 /**
- * リビールする行数。描画済みの行のうち、ビューポート内 (上端が `viewportBottom` より上) の
- * ものを先頭から数え、`max` で打ち切る (`viewportBottom` が未計測の 0 以下なら上限のみ)。仮想化の overscan で描画されているだけの
- * 画面外の行は数えない。`rowTops` は行の上端座標 (表示順・昇順)。
+ * リビールする行数。描画済みの `total` 行のうち、先頭から上端が `viewportBottom` より上の
+ * ものを数える (仮想化の overscan で描画されているだけの画面外の行は数えない)。上限は設けず
+ * 画面内の全行が対象 (描画済みの行数は仮想化が抑えている)。`topAt(i)` は i 行目の上端座標で、
+ * 画面外に達した時点で打ち切るため、読み取り (レイアウト計測) は対象行 + 1 回だけになる。
+ * `viewportBottom` が未計測の 0 以下 / 非有限なら絞らず全行。
  */
 export function firstBatchRevealCount(
-  rowTops: readonly number[],
+  total: number,
+  topAt: (index: number) => number,
   viewportBottom: number,
-  max: number = FIRST_BATCH_REVEAL_MAX_ROWS,
 ): number {
-  // 未計測 (高さ 0 / jsdom / display:none) ではビューポートで絞れないので上限だけで打ち切る。
-  const bounded = Number.isFinite(viewportBottom) && viewportBottom > 0;
+  if (!Number.isFinite(viewportBottom) || viewportBottom <= 0) return total;
   let n = 0;
-  for (const top of rowTops) {
-    if (n >= max || (bounded && top >= viewportBottom)) break;
-    n++;
-  }
+  while (n < total && topAt(n) < viewportBottom) n++;
   return n;
 }
 

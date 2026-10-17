@@ -13,14 +13,14 @@ function prefersStaticMotion(): boolean {
 /**
  * 結果グリッドの初回バッチ着弾リビール (#1579)。ストリーミング中のスケルトン
  * (`skeleton && rowCount === 0`) の次のコミットで行が現れたとき、`<tbody>` 直下の
- * 見えている行 (上限 `FIRST_BATCH_REVEAL_MAX_ROWS`、遅延は `FIRST_BATCH_REVEAL_MAX_STEPS` 段で頭打ち) の `<tr>` だけを Web Animations API で
- * 1 回 stagger フェード / slide-up する。先頭行は遅延 0 で始まるのでスケルトンの消失と
- * ほぼ同時に立ち上がり、控えめなクロスフェードに見える。
+ * 画面内の行 (遅延は `FIRST_BATCH_REVEAL_MAX_STEPS` 段で頭打ち) の `<tr>` だけを Web Animations API で
+ * 1 回 stagger フェード / slide-up する。スケルトンは即時に退場し、実データの行が透明から
+ * 立ち上がる「フェードスルー」であって、両者が重なるクロスフェードではない。
  *
  * ## `motion.ts` の「per-row FLIP は重いので避ける」との関係
  * 本件は FLIP (行ごとの位置計測 → 差分アニメ) ではない。(1) 入場 1 回限り
- * (追加バッチ・スクロール・ソートでは再生しない)、(2) 対象は最大 24 行 (仮想化されたグリッドで
- * 描画済みの行のうち画面内のものだけ)、(3) 計測は上端座標の 1 回読み取りのみで
+ * (追加バッチ・スクロール・ソートでは再生しない)、(2) 対象は仮想化されたグリッドで描画済みの行の
+ * うち画面内のものだけ (画面外に達した時点で計測を打ち切る)、(3) 計測は上端座標の読み取りのみで
  * `Element.animate` に委ねる (motion コンポーネントを行に常駐させない)。仮想スクロール中の
  * 再レンダーには一切関与せず、`fill` を残さないので終了後に inline style も残らない。
  *
@@ -41,6 +41,8 @@ export function useFirstBatchReveal(
   useLayoutEffect(() => {
     const prevSkeleton = prevSkeletonRef.current;
     prevSkeletonRef.current = skeleton && rowCount === 0;
+    // スケルトンに戻った (次のクエリ) コミットでは、終わった Animation の参照を捨てる。
+    if (prevSkeletonRef.current) runningRef.current = [];
     if (!isFirstBatchArrival(prevSkeleton, rowCount)) return;
     if (reduced || prefersStaticMotion()) return;
     const tbody = tbodyRef.current;
@@ -49,11 +51,12 @@ export function useFirstBatchReveal(
     if (trs.length === 0) return;
     const viewportBottom = (scrollRef?.current ?? tbody).getBoundingClientRect().bottom;
     const count = firstBatchRevealCount(
-      trs.map((tr) => tr.getBoundingClientRect().top),
+      trs.length,
+      (i) => trs[i].getBoundingClientRect().top,
       viewportBottom,
     );
     for (const a of runningRef.current) a.cancel();
-    runningRef.current = trs.slice(0, count).map((tr, i) =>
+    const started = trs.slice(0, count).map((tr, i) =>
       tr.animate(
         [
           { opacity: 0, transform: `translateY(${firstBatchReveal.offsetY}px)` },
@@ -68,6 +71,14 @@ export function useFirstBatchReveal(
         },
       ),
     );
+    runningRef.current = started;
+    // 終わった (または cancel された) Animation は参照を外す。
+    for (const a of started) {
+      const drop = () => {
+        runningRef.current = runningRef.current.filter((x) => x !== a);
+      };
+      a.finished?.then(drop, drop);
+    }
   });
 
   // アンマウント時に再生中のものを止める。

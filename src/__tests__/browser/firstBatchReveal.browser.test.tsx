@@ -47,7 +47,7 @@ describe("初回バッチのリビール (#1579, 実ブラウザ)", () => {
     expect(animatedRows().length).toBe(0);
     setRows(200);
     await expect.poll(() => animatedRows().length).toBeGreaterThan(0);
-    expect(animatedRows().length).toBeLessThanOrEqual(24);
+    expect(animatedRows().length).toBeLessThanOrEqual(200);
     const tbody = document.querySelector("tbody") as HTMLElement;
     expect(tbody.getAnimations().length).toBe(0);
     for (const tr of animatedRows()) for (const a of tr.getAnimations()) a.finish();

@@ -21,12 +21,14 @@ const result = (n: number): QueryResult => ({
 });
 
 describe("結果グリッドの初回バッチリビール (#1579)", () => {
-  const animate = vi.fn(() => ({ cancel: vi.fn() }));
+  const cancel = vi.fn();
+  const animate = vi.fn(() => ({ cancel }));
   beforeEach(() => {
     localStorage.clear();
     setLocale("en");
     reducedRef.value = false;
     animate.mockClear();
+    cancel.mockClear();
     Object.defineProperty(HTMLElement.prototype, "animate", { configurable: true, value: animate });
   });
   afterEach(() => {
@@ -64,5 +66,23 @@ describe("結果グリッドの初回バッチリビール (#1579)", () => {
     const { rerender } = renderWithProviders(<ResultGrid result={result(0)} streaming />);
     rerender(<ResultGrid result={result(5)} streaming />);
     expect(animate).not.toHaveBeenCalled();
+  });
+
+  it("2 回目のクエリ (スケルトンに戻る → 再着弾) でもう一度再生する", () => {
+    const { rerender } = renderWithProviders(<ResultGrid result={result(0)} streaming />);
+    rerender(<ResultGrid result={result(3)} streaming />);
+    expect(animate).toHaveBeenCalledTimes(3);
+    rerender(<ResultGrid result={result(0)} streaming />);
+    animate.mockClear();
+    rerender(<ResultGrid result={result(4)} streaming />);
+    expect(animate).toHaveBeenCalledTimes(4);
+  });
+
+  it("アンマウント時に再生中の Animation を cancel する", () => {
+    const { rerender, unmount } = renderWithProviders(<ResultGrid result={result(0)} streaming />);
+    rerender(<ResultGrid result={result(3)} streaming />);
+    cancel.mockClear();
+    unmount();
+    expect(cancel).toHaveBeenCalledTimes(3);
   });
 });

@@ -73,7 +73,7 @@ import type { Transition, Variants } from "motion/react";
  *   `durations.quick`)。key で再マウントしないのでスクロール・選択・編集状態は保たれ、
  *   reduced-motion は `useReducedMotionConfig` で見る。
  * - 結果グリッドの初回バッチ着弾リビール (`ResultGrid` — `useFirstBatchReveal`、#1579)。
- *   ストリーミング中のスケルトンの次に最初の行が届いたコミットで、画面内の行 (上限 24、遅延は 12 段で頭打ち) の
+ *   ストリーミング中のスケルトンの次に最初の行が届いたコミットで、画面内の行 (遅延は 12 段で頭打ち) の
  *   `<tr>` だけを Web Animations API で 1 回 stagger フェード / slide-up する。per-row FLIP
  *   ではなく「入場 1 回・可視行限定・計測は上端座標の読み取りのみ」で、追加バッチ / スクロール /
  *   ソートでは再生しない。遅延は `staggerTiming.each` を再利用。reduced-motion・ハイコントラストは即時。
