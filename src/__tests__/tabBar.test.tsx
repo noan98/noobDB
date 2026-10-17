@@ -188,3 +188,62 @@ describe("sameTabInfo (#1500)", () => {
     expect(sameTabInfo(undefined, a)).toBe(false);
   });
 });
+
+describe("TabBar pinned (#1486)", () => {
+  it("ピン留めタブは閉じるボタンの代わりにピンアイコンを出し、未ピンは閉じるボタンのまま", () => {
+    const tabs: TabInfo[] = [
+      { id: "t1", kind: "query", title: "監視", pinned: true },
+      { id: "t2", kind: "query", title: "Query 2" },
+    ];
+    renderWithProviders(
+      <TabBar tabs={tabs} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
+    );
+    const [t1, t2] = screen.getAllByRole("tab");
+    expect(t1.querySelector('[data-pinned="true"]')).not.toBeNull();
+    expect(t1.querySelector(`button[aria-label="${t("tabClose")}"]`)).toBeNull();
+    expect(t2.querySelector(`button[aria-label="${t("tabClose")}"]`)).not.toBeNull();
+  });
+
+  it("sameTabInfo は pinned の変化を検知する", () => {
+    const a: TabInfo = { id: "t1", kind: "query", title: "Q" };
+    expect(sameTabInfo(a, { ...a, pinned: true })).toBe(false);
+  });
+});
+
+describe("TabBar pinned keyboard reorder (#1486)", () => {
+  const tabs: TabInfo[] = [
+    { id: "p1", kind: "query", title: "P1", pinned: true },
+    { id: "p2", kind: "query", title: "P2", pinned: true },
+    { id: "a", kind: "query", title: "A" },
+    { id: "b", kind: "query", title: "B" },
+  ];
+  const setup = () => {
+    const onReorder = vi.fn();
+    renderWithProviders(
+      <TabBar
+        tabs={tabs}
+        activeTabId="a"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onNew={() => {}}
+        onReorder={onReorder}
+      />,
+    );
+    return { onReorder, tabEls: screen.getAllByRole("tab") };
+  };
+
+  it("ピンの境界を跨ぐ移動は何もせず、preventDefault もしない", () => {
+    const { onReorder, tabEls } = setup();
+    const notPrevented = fireEvent.keyDown(tabEls[2], { key: "ArrowLeft", ctrlKey: true, shiftKey: true });
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(true);
+  });
+
+  it("同じ群の中での移動は従来どおり通る", () => {
+    const { onReorder, tabEls } = setup();
+    fireEvent.keyDown(tabEls[0], { key: "ArrowRight", ctrlKey: true, shiftKey: true });
+    expect(onReorder).toHaveBeenCalledWith(["p2", "p1", "a", "b"]);
+    fireEvent.keyDown(tabEls[2], { key: "ArrowRight", ctrlKey: true, shiftKey: true });
+    expect(onReorder).toHaveBeenLastCalledWith(["p1", "p2", "b", "a"]);
+  });
+});

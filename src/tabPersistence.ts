@@ -10,6 +10,8 @@ export interface PersistedTab {
    * 実行時の自動命名で上書きしない。旧データには無いので、欠落は false 扱い。
    */
   titleManual?: boolean;
+  /** ピン留め済みタブ (#1486)。旧データには無いので、欠落は false 扱い。 */
+  pinned?: boolean;
   database?: string;
   table?: string;
   sql: string;
@@ -132,6 +134,7 @@ function sanitizeTab(raw: unknown): PersistedTab | null {
   if (typeof o.table === "string") out.table = o.table;
   // 真のときだけ持つ (旧データ・不正な型は無視して自動命名のまま)。
   if (o.titleManual === true) out.titleManual = true;
+  if (o.pinned === true) out.pinned = true;
   if (isValidBuilderSnapshot(o.builderSnapshot)) {
     out.builderSnapshot = o.builderSnapshot;
   }
