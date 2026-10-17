@@ -14,6 +14,7 @@ export default defineConfig({
       "src/__tests__/cellEdit.test.ts",
       "src/__tests__/columnReplace.test.ts",
       "src/__tests__/dangerousSql.test.ts",
+      "src/__tests__/dangerousSqlGolden.test.ts",
       "src/__tests__/editApplyState.test.ts",
       "src/__tests__/maskGolden.test.ts",
       "src/__tests__/maskLiteralsIdentifiers.test.ts",
