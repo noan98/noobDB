@@ -4,6 +4,7 @@ import { renderWithProviders, screen, waitFor } from "./testUtils";
 import { createRef } from "react";
 import { cleanup, fireEvent } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
+import { EditorSelection } from "@codemirror/state";
 import { QueryEditor, type QueryEditorHandle } from "../components/QueryEditor";
 import { setLocale, t } from "../i18n";
 import { resetAiKeyStoreForTest, setAiKeyPresent } from "../ai/aiKeyStore";
@@ -519,5 +520,84 @@ describe("QueryEditor 識別子の Ctrl/Cmd+クリック (#1629)", () => {
     const { view, onRevealSchemaObject } = setup({ initialSql: "SELECT * FROM users" });
     clickAt(view, null, { ctrlKey: true });
     expect(onRevealSchemaObject).not.toHaveBeenCalled();
+  });
+});
+
+describe("QueryEditor マルチカーソル (#1488)", () => {
+  beforeEach(() => {
+    setLocale("en");
+  });
+
+  const mount = (onRun = vi.fn()) => {
+    renderWithProviders(<QueryEditor onRun={onRun} initialSql={"SELECT 1;\nSELECT 2;\nSELECT 3"} />);
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    return { view, onRun };
+  };
+
+  it("複数選択が保持され、同時入力が全カーソルに反映される", () => {
+    const { view } = mount();
+    view.dispatch({ selection: { anchor: 0 } });
+    view.dispatch({
+      selection: EditorSelection.create([
+        EditorSelection.cursor(0),
+        EditorSelection.cursor(10),
+        EditorSelection.cursor(20),
+      ]),
+    });
+    expect(view.state.selection.ranges).toHaveLength(3);
+    view.dispatch(view.state.replaceSelection("-- "));
+    expect(view.state.doc.toString()).toBe("-- SELECT 1;\n-- SELECT 2;\n-- SELECT 3");
+  });
+
+  it("Mod-d で次の一致が選択に加わり、Mod-Shift-l はエディタが奪わない", async () => {
+    const { view } = mount();
+    view.dispatch({ selection: { anchor: 0, head: 6 } });
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    content.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}d{/Control}");
+    expect(view.state.selection.ranges).toHaveLength(2);
+    // Mod-Shift-l はアプリのテーマ切替用。エディタ側では preventDefault しない。
+    const ev = new KeyboardEvent("keydown", {
+      key: "L",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    content.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
+  it("複数選択でも実行は主選択だけを対象にする", async () => {
+    const { view, onRun } = mount();
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.range(0, 9), EditorSelection.range(10, 19)], 1),
+    });
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    content.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() => expect(onRun).toHaveBeenCalledWith("SELECT 2;"));
+  });
+
+  it("複数カーソルで 1 行目で ↑ / 末尾行で ↓ を押しても本文は変わらない", async () => {
+    renderWithProviders(
+      <QueryEditor onRun={vi.fn()} initialSql={"SELECT 1;\nSELECT 2"} queryHistory={["SELECT 99"]} />,
+    );
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement) as EditorView;
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.cursor(0), EditorSelection.cursor(3)], 0),
+    });
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    content.focus();
+    const user = userEvent.setup();
+    await user.keyboard("{ArrowUp}");
+    expect(view.state.doc.toString()).toBe("SELECT 1;\nSELECT 2");
+    view.dispatch({
+      selection: EditorSelection.create([EditorSelection.cursor(11), EditorSelection.cursor(14)], 0),
+    });
+    await user.keyboard("{ArrowDown}");
+    expect(view.state.doc.toString()).toBe("SELECT 1;\nSELECT 2");
   });
 });
