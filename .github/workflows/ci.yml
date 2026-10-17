@@ -439,7 +439,7 @@ jobs:
 
       - name: Upload Vitest blob
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # 隠しディレクトリ (先頭 `.`) は upload-artifact が既定で除外するため、
           # 先頭に `.` を付けない名前にする (付けると blob が 0 件になり統合で失敗する)。
