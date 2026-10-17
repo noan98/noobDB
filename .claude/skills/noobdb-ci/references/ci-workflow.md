@@ -226,6 +226,12 @@
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
   フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  `rust (windows test)` は `cargo nextest run` の前に `cargo fetch --locked --offline --target
+  x86_64-pc-windows-msvc` で registry が全部キャッシュ済みか確かめ、成功なら
+  `CARGO_NET_OFFLINE=true` にして `Updating crates.io index` (実測 約 26 秒) を省く (#1680。
+  失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
+  セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
+  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。Windows を 2 ランナーに分ける案は見送り済み。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。

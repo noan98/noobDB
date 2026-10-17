@@ -1554,6 +1554,24 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680)。
+      # 実測 (main の push, 2026-10-18 JST) で `cargo nextest run` の冒頭にこれが約 26 秒かかる。
+      # rust-cache が registry (index とダウンロード済みクレート) を復元しているので、
+      # 依存が全部キャッシュ済みなら `--offline` で足りる。キャッシュに無い依存があれば
+      # (Cargo.lock を変えた PR で rust-cache が部分一致のときなど) probe が失敗するので
+      # オンラインのまま走る。失敗は握りつぶしてよい (オンラインへフォールバックするだけ)。
+      # probe は Windows ターゲットの依存だけを見る (cargo のビルドと同じ範囲)。
+      - name: Use offline registry when fully cached (#1680)
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          if cargo fetch --locked --offline --target x86_64-pc-windows-msvc; then
+            echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+            echo "registry fully cached: running cargo offline"
+          else
+            echo "registry not fully cached: running cargo online"
+          fi
+
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
       # 実行される (integration グループ)。
       # external グループ (MySQL/PostgreSQL/SSH/TLS) は NOOBDB_TEST_* の env ゲート
