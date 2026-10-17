@@ -2821,7 +2821,8 @@ export default function App() {
           // ピン留めタブ (#1486) は左端固定。ピンの境界を跨ぐ移動は境界で止める。
           const pinned = pinnedIdSet(tabsRef.current);
           const fixed = pinnedFirst(validated, (id) => pinned.has(id));
-          return { ...p, tabIds: fixed };
+          // 並びが変わらない (ピンの境界を跨ごうとした) ときは参照を保ち、ドラッグ中の無駄な再描画を避ける。
+          return fixed.every((id, i) => id === p.tabIds[i]) ? p : { ...p, tabIds: fixed };
         }),
       );
     },

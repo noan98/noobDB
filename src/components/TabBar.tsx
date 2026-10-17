@@ -281,6 +281,9 @@ export const TabBar = memo(function TabBar({
         (e.key === "ArrowLeft" || e.key === "ArrowRight")
       ) {
         const dir = e.key === "ArrowRight" ? 1 : -1;
+        // ピン留めの境界 (#1486) は跨げない: 移動先のタブとピン状態が違うときは何もしない。
+        const neighbor = tabs[idx + dir];
+        if (neighbor && !!neighbor.pinned !== !!tabs[idx].pinned) return;
         const order = tabs.map((tt) => tt.id);
         const moved = moveTabBy(order, currentId, dir);
         // moveTabBy returns the same array reference (no-op) at the edges —
@@ -669,7 +672,7 @@ export const TabBar = memo(function TabBar({
                     color="app.textMuted"
                     flexShrink={0}
                     role="img"
-                    aria-label={t("tabPinned")}
+                    aria-label={`(${t("tabPinned")})`}
                     data-pinned="true"
                   >
                     <Icon name="pin" size={ICON_SIZES.sm} />

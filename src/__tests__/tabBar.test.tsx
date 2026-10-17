@@ -209,3 +209,41 @@ describe("TabBar pinned (#1486)", () => {
     expect(sameTabInfo(a, { ...a, pinned: true })).toBe(false);
   });
 });
+
+describe("TabBar pinned keyboard reorder (#1486)", () => {
+  const tabs: TabInfo[] = [
+    { id: "p1", kind: "query", title: "P1", pinned: true },
+    { id: "p2", kind: "query", title: "P2", pinned: true },
+    { id: "a", kind: "query", title: "A" },
+    { id: "b", kind: "query", title: "B" },
+  ];
+  const setup = () => {
+    const onReorder = vi.fn();
+    renderWithProviders(
+      <TabBar
+        tabs={tabs}
+        activeTabId="a"
+        onSelect={() => {}}
+        onClose={() => {}}
+        onNew={() => {}}
+        onReorder={onReorder}
+      />,
+    );
+    return { onReorder, tabEls: screen.getAllByRole("tab") };
+  };
+
+  it("ピンの境界を跨ぐ移動は何もせず、preventDefault もしない", () => {
+    const { onReorder, tabEls } = setup();
+    const notPrevented = fireEvent.keyDown(tabEls[2], { key: "ArrowLeft", ctrlKey: true, shiftKey: true });
+    expect(onReorder).not.toHaveBeenCalled();
+    expect(notPrevented).toBe(true);
+  });
+
+  it("同じ群の中での移動は従来どおり通る", () => {
+    const { onReorder, tabEls } = setup();
+    fireEvent.keyDown(tabEls[0], { key: "ArrowRight", ctrlKey: true, shiftKey: true });
+    expect(onReorder).toHaveBeenCalledWith(["p2", "p1", "a", "b"]);
+    fireEvent.keyDown(tabEls[2], { key: "ArrowRight", ctrlKey: true, shiftKey: true });
+    expect(onReorder).toHaveBeenLastCalledWith(["p1", "p2", "b", "a"]);
+  });
+});
