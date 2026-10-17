@@ -534,7 +534,7 @@ import {
   type PersistedTab,
   type PersistedWorkspace,
 } from "./tabPersistence";
-import { reorderIfPermutation } from "./tabReorder";
+import { orderAfterPinChange, pinnedFirst, reorderIfPermutation } from "./tabReorder";
 import { applyRename, autoTitleOnRun, deriveResultTabTitle as deriveTitleFromSql } from "./tabTitle";
 import { applySubsequenceOrder } from "./connectionOrder";
 import { BACKGROUND_PING_INTERVAL_MS, nextStaleProfileIds } from "./backgroundHealth";
@@ -830,6 +830,8 @@ export interface Tab {
   title: string;
   /** 手動リネーム済み / 名前付きで開いたタブ。true なら実行時の自動命名で上書きしない (#1390)。 */
   titleManual?: boolean;
+  /** ピン留め済み (#1486)。ペインの左端に固定され、一括クローズの対象から外れる。永続化する。 */
+  pinned?: boolean;
   /**
    * ファイルから開いたタブの文字コード (#1535)。「名前を付けて保存」は同じ文字コードで
    * 書き戻す。未設定は UTF-8。永続化しない。
@@ -1229,6 +1231,11 @@ function dragFeedbackFor(paths: string[], connected: boolean): DragFeedback {
   return { accept: true, kind: hasSql ? "sql" : "csv" };
 }
 
+/** ピン留め中のタブ id の集合 (#1486)。 */
+function pinnedIdSet(tabs: readonly Tab[]): Set<string> {
+  return new Set(tabs.filter((tt) => tt.pinned).map((tt) => tt.id));
+}
+
 function toPersistedTab(
   tab: Tab,
   liveSelection?: { anchor: number; head: number },
@@ -1236,6 +1243,7 @@ function toPersistedTab(
 ): PersistedTab {
   const out: PersistedTab = { kind: tab.kind, title: tab.title, sql: tab.sql };
   if (tab.titleManual) out.titleManual = true;
+  if (tab.pinned) out.pinned = true;
   if (tab.database) out.database = tab.database;
   if (tab.table) out.table = tab.table;
   // Carry the Query Builder snapshot through so the inputs come back on
@@ -2809,12 +2817,50 @@ export default function App() {
           // Accept only a true permutation of this pane's ids so a stale callback
           // can't smuggle in foreign tabs or drop one (see tabReorder.ts).
           const validated = reorderIfPermutation(p.tabIds, orderedIds);
-          return validated ? { ...p, tabIds: validated } : p;
+          if (!validated) return p;
+          // ピン留めタブ (#1486) は左端固定。ピンの境界を跨ぐ移動は境界で止める。
+          const pinned = pinnedIdSet(tabsRef.current);
+          const fixed = pinnedFirst(validated, (id) => pinned.has(id));
+          return { ...p, tabIds: fixed };
         }),
       );
     },
-    [setPanes],
+    [setPanes, tabsRef],
   );
+
+  // タブのピン留め / 解除 (#1486)。ピン留めしたタブはペイン左端のピン群の末尾へ、解除したタブは
+  // 未ピン群の先頭へ移す。
+  const togglePinTab = useCallback(
+    (tabId: string) => {
+      const pinnedBefore = pinnedIdSet(tabsRef.current);
+      const nextPinned = !pinnedBefore.has(tabId);
+      setTabs((prev) => prev.map((tt) => (tt.id === tabId ? { ...tt, pinned: nextPinned } : tt)));
+      setPanes((prev) =>
+        prev.map((p) =>
+          p.tabIds.includes(tabId)
+            ? { ...p, tabIds: orderAfterPinChange(p.tabIds, tabId, (id) => pinnedBefore.has(id)) }
+            : p,
+        ),
+      );
+    },
+    [setPanes, setTabs, tabsRef],
+  );
+
+  // どの経路 (別ペインへの移動・ペイン統合・復元など) でタブが並んでも、ピン留めタブが各ペインの
+  // 左端に揃うよう正規化する安全網 (#1486)。すでに揃っていれば setPanes しない (ループしない)。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tabs はピン状態の変化を拾うための再計算トリガー (本体は tabsRef 経由で読む)
+  useEffect(() => {
+    const pinned = pinnedIdSet(tabsRef.current);
+    if (pinned.size === 0) return;
+    const needsFix = panesRef.current.some((p) => pinnedFirst(p.tabIds, (id) => pinned.has(id)) !== p.tabIds);
+    if (!needsFix) return;
+    setPanes((prev) =>
+      prev.map((p) => {
+        const fixed = pinnedFirst(p.tabIds, (id) => pinned.has(id));
+        return fixed === p.tabIds ? p : { ...p, tabIds: fixed };
+      }),
+    );
+  }, [panes, tabs, setPanes, panesRef, tabsRef]);
 
   const openTabMenu = useCallback((tabId: string, x: number, y: number) => {
     setTabMenu({ tabId, x, y });
@@ -5270,6 +5316,7 @@ export default function App() {
               openTemplate,
               previewRowLimit: limit,
               paginatable: base,
+              pinned: s.pinned === true,
               builderSnapshot: restoredSnapshot,
               selection: s.selection,
               gridScrollTop: s.gridScrollTop,
@@ -5298,6 +5345,7 @@ export default function App() {
             ...tab,
             title: s.title || tab.title,
             titleManual: s.titleManual === true,
+            pinned: s.pinned === true,
             previewRowLimit: limit,
             builderSnapshot: restoredSnapshot,
             selection: s.selection,
@@ -5306,6 +5354,7 @@ export default function App() {
         return {
           ...makeTab("query", s.kind === "query" ? s.title : translate("tabUntitledQuery"), s.sql),
           titleManual: s.kind === "query" && s.titleManual === true,
+          pinned: s.pinned === true,
           previewRowLimit: limit,
           builderSnapshot: restoredSnapshot,
           selection: s.selection,
@@ -9967,9 +10016,10 @@ export default function App() {
     (tabId: string, mode: BulkCloseMode) => {
       const owner = panesRef.current.find((p) => p.tabIds.includes(tabId));
       if (!owner) return;
-      void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode));
+      // ピン留めタブ (#1486) は一括クローズの対象から除く。
+      void requestCloseTabs(tabsToClose(owner.tabIds, tabId, mode, pinnedIdSet(tabsRef.current)));
     },
-    [panesRef, requestCloseTabs],
+    [panesRef, tabsRef, requestCloseTabs],
   );
 
   // タブの複製 (#1354)。基点と同じペインの末尾に追加してアクティブにする。
@@ -13701,9 +13751,12 @@ export default function App() {
             const owner = panes.find((p) => p.tabIds.includes(tabMenu.tabId));
             // Moving is only possible when it won't leave a single pane empty.
             const canMove = !!owner && (panes.length > 1 || owner.tabIds.length > 1);
-            const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others").length > 0;
-            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left").length > 0;
-            const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right").length > 0;
+            // ピン留めタブ (#1486) は一括クローズの対象外なので、項目の有効判定も除いて数える。
+            const pinnedIds = pinnedIdSet(tabsRef.current);
+            const isTabPinned = pinnedIds.has(tabMenu.tabId);
+            const hasOthers = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "others", pinnedIds).length > 0;
+            const hasLeft = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "left", pinnedIds).length > 0;
+            const hasRight = tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "right", pinnedIds).length > 0;
             const items: ContextMenuEntry[] = [
               // 名前を持つのは query タブだけ (table / explain は内容から決まる)。
               ...(tabsRef.current.find((tt) => tt.id === tabMenu.tabId)?.kind === "query"
@@ -13714,6 +13767,11 @@ export default function App() {
                 onSelect: () => moveTabToOtherPane(tabMenu.tabId),
                 disabled: !canMove,
                 title: canMove ? undefined : t("tabMoveOtherPaneDisabled"),
+              },
+              {
+                label: isTabPinned ? t("tabUnpin") : t("tabPin"),
+                icon: "pin",
+                onSelect: () => togglePinTab(tabMenu.tabId),
               },
               {
                 label: t("tabDuplicate"),
@@ -13747,6 +13805,7 @@ export default function App() {
                 // 分割表示中は基点タブのペインだけが対象 (tabBulkClose)。ラベルもそれに合わせる。
                 label: panes.length > 1 ? t("tabCloseAllInPane") : t("tabCloseAll"),
                 onSelect: () => closeTabsBulk(tabMenu.tabId, "all"),
+                disabled: tabsToClose(owner?.tabIds ?? [], tabMenu.tabId, "all", pinnedIds).length === 0,
                 danger: true,
               },
             ];

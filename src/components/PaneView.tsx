@@ -387,6 +387,7 @@ export const PaneView = memo(
         })(),
         // 実行中 (ストリーミング / バッチ) インジケータ (#1500)。
         running: tt.streaming || tt.batchRunning === true,
+        pinned: tt.pinned === true,
       }));
       // ストリーミング中は行の到着ごとに paneTabs が更新されるが、TabBar が見る項目 (タイトル・
       // dirty・running など) は変わらない。前回と全項目が一致するなら前回の配列を返し、
