@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "./testUtils";
-import { TabBar, type TabInfo } from "../components/TabBar";
+import { TabBar, sameTabInfo, type TabInfo } from "../components/TabBar";
 import { t } from "../i18n";
 
 /**
@@ -160,5 +160,31 @@ describe("TabBar 閉じるボタンのキー操作", () => {
       expect(notPrevented).toBe(true);
     }
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("TabBar running indicator (#1500)", () => {
+  it("marks only the running tab with the spinner and aria-busy", () => {
+    const tabs: TabInfo[] = [
+      { id: "t1", kind: "query", title: "Query 1" },
+      { id: "t2", kind: "query", title: "Query 2", running: true },
+    ];
+    const { container } = renderWithProviders(
+      <TabBar tabs={tabs} activeTabId="t1" onSelect={() => {}} onClose={() => {}} onNew={() => {}} />,
+    );
+    const [t1, t2] = screen.getAllByRole("tab");
+    expect(t1).not.toHaveAttribute("aria-busy");
+    expect(t2).toHaveAttribute("aria-busy", "true");
+    expect(container.querySelectorAll('[data-running="true"]')).toHaveLength(1);
+    expect(t2.querySelector('[data-running="true"]')).not.toBeNull();
+  });
+});
+
+describe("sameTabInfo (#1500)", () => {
+  it("detects running changes", () => {
+    const a: TabInfo = { id: "t1", kind: "query", title: "Q" };
+    expect(sameTabInfo(a, { ...a })).toBe(true);
+    expect(sameTabInfo(a, { ...a, running: true })).toBe(false);
+    expect(sameTabInfo(undefined, a)).toBe(false);
   });
 });
