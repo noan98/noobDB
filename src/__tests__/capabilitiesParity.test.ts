@@ -32,22 +32,50 @@ function stripComments(src: string): string {
 
 const sources = Object.entries(sourceModules).map(([path, src]) => ({ path, src: stripComments(src) }));
 
-/** 非コメントのコード中の `@tauri-apps/*` からの named import を `module -> 名前集合` で返す。 */
+/** 名前を特定できない `@tauri-apps/*` の import (名前空間 / default / 動的 import / re-export)。 */
+const unidentifiedImports: { mod: string; where: string }[] = [];
+
+/**
+ * 非コメントのコード中の `@tauri-apps/*` からの named import を `module -> 名前集合` で返す。
+ * `import * as ns` / `import X from` / `import X, { y } from` / 動的 `import("…")` /
+ * `export … from` は使う API 名を静的に特定できないため `unidentifiedImports` に記録し、
+ * `KNOWN_IMPORTS` で `"*"` 扱いでないモジュールでは失敗させる (`dialog.ask()` の見逃し防止)。
+ * `import type` は実行時に何も呼ばないので対象外。限界: 文字列連結で組み立てた動的 import や
+ * 再 export 経由 (自作モジュールが `@tauri-apps/*` を中継) は検出できない。
+ */
 function collectImports(): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
-  const re = /import\s+(?:type\s+)?(?:\{([^}]*)\}|[\w*\s,]+)\s*from\s*["'](@tauri-apps\/[^"']+)["']/g;
-  for (const { src } of sources) {
-    for (const m of src.matchAll(re)) {
-      const names = out.get(m[2]) ?? new Set<string>();
-      for (const part of (m[1] ?? "").split(",")) {
-        const n = part
-          .trim()
-          .replace(/^type\s+/, "")
-          .split(/\s+as\s+/)[0]
-          .trim();
-        if (n) names.add(n);
-      }
-      out.set(m[2], names);
+  const addNames = (mod: string, clause: string) => {
+    const names = out.get(mod) ?? new Set<string>();
+    for (const part of clause.split(",")) {
+      const n = part
+        .trim()
+        .replace(/^type\s+/, "")
+        .split(/\s+as\s+/)[0]
+        .trim();
+      if (n) names.add(n);
+    }
+    out.set(mod, names);
+  };
+  const stmt = /\b(import|export)\s+(type\s+)?([^;"'`]*?)\s*from\s*["'](@tauri-apps\/[^"']+)["']/g;
+  const dynamic = /\b(?:import|require)\s*\(\s*["'`](@tauri-apps\/[^"'`]+)["'`]\s*\)/g;
+  for (const { path, src } of sources) {
+    for (const m of src.matchAll(stmt)) {
+      const [, kind, typeOnly, clause, mod] = m;
+      if (typeOnly && kind === "import") continue;
+      const braces = clause.match(/\{([^}]*)\}/);
+      const outside = clause
+        .replace(/\{[^}]*\}/, "")
+        .replace(/[,\s]+/g, " ")
+        .trim();
+      addNames(mod, braces?.[1] ?? "");
+      if (kind === "export") unidentifiedImports.push({ mod, where: `${path}: export … from` });
+      else if (/\*/.test(outside)) unidentifiedImports.push({ mod, where: `${path}: import * as …` });
+      else if (outside) unidentifiedImports.push({ mod, where: `${path}: default import` });
+    }
+    for (const m of src.matchAll(dynamic)) {
+      out.set(m[1], out.get(m[1]) ?? new Set());
+      unidentifiedImports.push({ mod: m[1], where: `${path}: 動的 import()` });
     }
   }
   return out;
@@ -61,6 +89,8 @@ const KNOWN_IMPORTS: Record<string, string[]> = {
   "@tauri-apps/api/app": ["getVersion"],
   "@tauri-apps/api/window": ["getCurrentWindow"],
   "@tauri-apps/api/webview": ["getCurrentWebview"],
+  // dialog の `ask` / `confirm` / `message` を使い始めたら `dialog:allow-message` (ask / confirm は
+  // 対応する `dialog:allow-ask` / `dialog:allow-confirm`) の追加が要る。ここに足すだけでは足りない。
   "@tauri-apps/plugin-dialog": ["open", "save"],
   "@tauri-apps/plugin-process": ["relaunch"],
   "@tauri-apps/plugin-updater": ["check", "Update"],
@@ -77,7 +107,11 @@ const importedNames = (mod: string): Set<string> => importsFrom.get(mod) ?? new 
 const imports = (mod: string, name?: string): boolean =>
   importsFrom.has(mod) && (name === undefined || importedNames(mod).has(name));
 
-/** `getCurrentWindow` を使うファイルで呼ばれているウィンドウメソッド名の集合。 */
+/**
+ * `getCurrentWindow` を使うファイルで呼ばれているウィンドウメソッド名の集合。
+ * 限界: ファイル単位の文字列一致なので、同じファイル内の別オブジェクトの同名メソッドも拾う
+ * (過剰許可の検出が甘くなる方向)。`getCurrentWindow` を別ファイルへ渡して呼ぶ経路は検出できない。
+ */
 function windowMethodsUsed(): Set<string> {
   const used = new Set<string>();
   for (const { src } of sources) {
@@ -90,7 +124,7 @@ function windowMethodsUsed(): Set<string> {
 /** 許可が要るウィンドウメソッド → 必要な permission。 */
 const WINDOW_METHOD_PERMISSIONS: Record<string, string[]> = {
   minimize: ["core:window:allow-minimize"],
-  toggleMaximize: ["core:window:allow-toggle-maximize", "core:window:allow-internal-toggle-maximize"],
+  toggleMaximize: ["core:window:allow-toggle-maximize"],
   close: ["core:window:allow-close"],
   startDragging: ["core:window:allow-start-dragging"],
   isMaximized: ["core:window:allow-is-maximized"],
@@ -127,7 +161,11 @@ const PERMISSION_USAGE: Record<string, () => boolean> = {
   "notification:default": () => imports("@tauri-apps/plugin-notification"),
   "updater:default": () => imports("@tauri-apps/plugin-updater", "check"),
   "process:allow-restart": () => imports("@tauri-apps/plugin-process", "relaunch"),
+  // `internal-toggle-maximize` は `toggleMaximize()` ではなく、`data-tauri-drag-region` の
+  // ダブルクリックで Tauri 本体が呼ぶ内部コマンド。
   "core:window:allow-start-dragging": () => sources.some(({ src }) => /data-tauri-drag-region/.test(src)),
+  "core:window:allow-internal-toggle-maximize": () =>
+    sources.some(({ src }) => /data-tauri-drag-region/.test(src)),
 };
 for (const [method, perms] of Object.entries(WINDOW_METHOD_PERMISSIONS)) {
   for (const p of perms) {
@@ -160,6 +198,13 @@ describe("Tauri capabilities とフロントのプラグイン API 利用のパ�
       for (const n of names) if (!allowed.includes(n)) unknown.push(`${mod}: ${n}`);
     }
     expect(unknown, "権限が要るかもしれない未登録のプラグイン / ウィンドウ API の利用").toEqual([]);
+  });
+
+  it("名前を特定できない import (名前空間 / default / 動的 / re-export) がない", () => {
+    const bad = unidentifiedImports
+      .filter(({ mod }) => !KNOWN_IMPORTS[mod]?.includes("*"))
+      .map(({ where }) => where);
+    expect(bad, "named import に書き換えて KNOWN_IMPORTS / PERMISSION_USAGE に追記してください").toEqual([]);
   });
 
   it("使っているウィンドウメソッドは全て表にある or 許可不要 (未登録メソッドの検出)", () => {
