@@ -152,7 +152,7 @@ export function themePreviewGradient(colors: ThemePreviewColors): string {
  * 変数名とトークン名の対応はここ 1 か所だけに置く。Chakra のトークンは `:root` で
  * `--chakra-colors-<token>` へ解決済みの値が継承されるため、`--x` だけを
  * 上書きしても効かない — 対応する `--chakra-colors-*` も同時に上書きする
- * (`previewChakraVar`)。`theme.test` 系のテストが、この表の全エントリが実在する
+ * (`previewChakraVar`)。`appearancePreview.test.tsx`が、この表の全エントリが実在する
  * トークンを指すことを固定する。
  */
 export const PREVIEW_VAR_TOKENS = {
