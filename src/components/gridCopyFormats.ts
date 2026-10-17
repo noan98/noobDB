@@ -64,7 +64,7 @@ export function buildGridCopyText(format: GridCopyFormat, input: GridCopyInput):
   }
 }
 
-export interface GridCopyInsertInput extends GridCopyInput {
+export interface GridCopyInsertInput extends Omit<GridCopyInput, "copyPlaceholder"> {
   driver: string;
   database: string;
   /** 対象テーブル名。解決できないとき (JOIN など) は null で、プレースホルダ名になる。 */

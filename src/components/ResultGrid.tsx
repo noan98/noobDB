@@ -5414,7 +5414,6 @@ export const DataGrid = memo(function DataGrid({
       rowIndices: target.rowIndices,
       colIndices: target.colIndices,
       isMasked: cellMaskedNow,
-      copyPlaceholder: false,
       driver: rowSqlDriver ?? "mysql",
       database: rowSqlDatabase ?? "",
       table: rowSqlTable,
@@ -6956,6 +6955,11 @@ export const DataGrid = memo(function DataGrid({
                 const insertTarget = copyTargetFor(copyMenu.rowIdx, copyMenu.colIdx);
                 const insertRowIndices = insertTarget.rowIndices;
                 const multiRow = insertRowIndices.length > 1;
+                // 矩形選択が表示中の全列より少ないとき、INSERT は選択列だけを出す。
+                // 含まれない列は既定値 / NOT NULL 違反になるので、ラベルで気づけるようにする。
+                const insertPartialCols = insertTarget.colIndices.length < visibleColIds.length;
+                const insertColCount = insertTarget.colIndices.length;
+                const partialTitle = t("gridCopyAsInsertPartialTitle");
                 // マスク中のセルを含む範囲は SQL としてコピーできない (#1069)。
                 const insertMasked = rowSqlBlockedByMask(insertRowIndices, insertTarget.colIndices);
                 const rowMasked = rowSqlBlockedByMask([copyMenu.rowIdx]);
@@ -6990,24 +6994,42 @@ export const DataGrid = memo(function DataGrid({
                   { separator: true as const },
                   multiRow
                     ? {
-                        label: t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
-                        title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsTitle"),
+                        label: insertPartialCols
+                          ? t("gridCopyAsInsertRowsPartial", {
+                              count: insertRowIndices.length,
+                              cols: insertColCount,
+                            })
+                          : t("gridCopyAsInsertRows", { count: insertRowIndices.length }),
+                        title: insertMasked
+                          ? maskTitle
+                          : insertPartialCols
+                            ? partialTitle
+                            : t("gridCopyAsInsertRowsTitle"),
                         disabled: insertMasked,
                         onSelect: () => copyRowsAsInsert(insertTarget, false),
                       }
                     : {
-                        label: t("gridCopyAsInsert"),
-                        title: insertMasked ? maskTitle : undefined,
+                        label: insertPartialCols
+                          ? t("gridCopyAsInsertPartial", { cols: insertColCount })
+                          : t("gridCopyAsInsert"),
+                        title: insertMasked ? maskTitle : insertPartialCols ? partialTitle : undefined,
                         disabled: insertMasked,
                         onSelect: () => copyRowsAsInsert(insertTarget, false),
                       },
                   ...(multiRow
                     ? [
                         {
-                          label: t("gridCopyAsInsertRowsCombined", {
-                            count: insertRowIndices.length,
-                          }),
-                          title: insertMasked ? maskTitle : t("gridCopyAsInsertRowsCombinedTitle"),
+                          label: insertPartialCols
+                            ? t("gridCopyAsInsertRowsCombinedPartial", {
+                                count: insertRowIndices.length,
+                                cols: insertColCount,
+                              })
+                            : t("gridCopyAsInsertRowsCombined", { count: insertRowIndices.length }),
+                          title: insertMasked
+                            ? maskTitle
+                            : insertPartialCols
+                              ? partialTitle
+                              : t("gridCopyAsInsertRowsCombinedTitle"),
                           disabled: insertMasked,
                           onSelect: () => copyRowsAsInsert(insertTarget, true),
                         },

@@ -3607,6 +3607,11 @@ const en = {
   gridCopyAsInsertRowsCombined: "Copy {count} rows as INSERT (combined)",
   gridCopyAsInsertRowsCombinedTitle:
     "A single INSERT INTO ... VALUES (...), (...); statement covering all selected rows",
+  gridCopyAsInsertPartial: "Copy 1 row × {cols} columns as INSERT",
+  gridCopyAsInsertRowsPartial: "Copy {count} rows × {cols} columns as INSERT (one statement per row)",
+  gridCopyAsInsertRowsCombinedPartial: "Copy {count} rows × {cols} columns as INSERT (combined)",
+  gridCopyAsInsertPartialTitle:
+    "Only the selected columns are included. Columns left out fall back to their defaults or violate NOT NULL",
   gridCopyAsInsertAmbiguousTable:
     "Couldn't resolve a single source table for this result — copied with a placeholder table name; edit it before running",
   gridCopyAsUpdate: "Copy as UPDATE",
@@ -10187,6 +10192,11 @@ const ja: Dict = {
   gridCopyAsInsertRowsCombined: "{count} 行を INSERT としてコピー (まとめて1文)",
   gridCopyAsInsertRowsCombinedTitle:
     "選択したすべての行を 1 つの INSERT INTO ... VALUES (...), (...); 文にまとめます",
+  gridCopyAsInsertPartial: "1 行 × {cols} 列を INSERT としてコピー",
+  gridCopyAsInsertRowsPartial: "{count} 行 × {cols} 列を INSERT としてコピー (1行1文)",
+  gridCopyAsInsertRowsCombinedPartial: "{count} 行 × {cols} 列を INSERT としてコピー (まとめて1文)",
+  gridCopyAsInsertPartialTitle:
+    "選択した列だけを出します。含まれない列は既定値になるか NOT NULL 違反になります",
   gridCopyAsInsertAmbiguousTable:
     "この結果の元テーブルを一意に特定できなかったため、仮のテーブル名でコピーしました。実行前に書き換えてください",
   gridCopyAsUpdate: "UPDATE としてコピー",

@@ -73,7 +73,6 @@ describe("gridCopyGolden", () => {
       rowIndices: [0],
       colIndices: c.colIndices,
       isMasked: noMask,
-      copyPlaceholder: false,
       driver: "sqlite",
       database: "",
       table: null,

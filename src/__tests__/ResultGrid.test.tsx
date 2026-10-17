@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
@@ -21,6 +21,7 @@ import type { CellValue, Column, QueryResult, TableColumnInfo } from "../api/tau
 import { attachStreamStats } from "../components/streamStats";
 import { setLocale, t } from "../i18n";
 import {
+  setColumnMaskCopyPlaceholder,
   setColumnMaskEnabled,
   setColumnMaskPatterns,
   setColumnNullBars,
@@ -1187,6 +1188,80 @@ describe("キーボードセルナビゲーション (#406)", () => {
     });
     await user.click(await screen.findByRole("menuitem", { name: t("gridCopyAsCsvRows", { count: 2 }) }));
     await waitFor(() => expect(writeText).toHaveBeenLastCalledWith("name\r\nbanana\r\napple\r\n"));
+  });
+
+  describe("矩形選択からの INSERT コピー (#1585)", () => {
+    const COLS: Column[] = [
+      { name: "id", type_name: "INT" },
+      { name: "user_id", type_name: "INT" },
+    ];
+    const RESULT = makeResult(COLS, [
+      [1, 10],
+      [2, 20],
+    ]);
+
+    afterEach(() => {
+      setColumnMaskEnabled(false);
+      setColumnMaskPatterns([]);
+      setColumnMaskCopyPlaceholder(true);
+    });
+
+    /** 先頭列を 2 行ぶん矩形選択し、2 行目のセルで右クリックして「コピー」サブメニューを開く。 */
+    async function openCopyMenuWithColumn(colIdx: number) {
+      const { container } = renderWithProviders(<ResultGrid result={RESULT} database="db" table="t" />);
+      const cells = dataCells(container);
+      fireEvent.focus(cells[0][colIdx]);
+      fireEvent.keyDown(cells[0][colIdx], { key: "ArrowDown", shiftKey: true });
+      fireEvent.contextMenu(cells[1][colIdx]);
+      fireEvent.keyDown(await screen.findByRole("menuitem", { name: t("gridCopyGroup") }), {
+        key: "ArrowRight",
+      });
+    }
+
+    it("選択列だけを出し、ラベルに列数を出す", async () => {
+      const user = userEvent.setup();
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        writable: true,
+        configurable: true,
+      });
+      await openCopyMenuWithColumn(0);
+      const item = await screen.findByRole("menuitem", {
+        name: t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 }),
+      });
+      await user.hover(item);
+      expect(await screen.findByText(t("gridCopyAsInsertPartialTitle"))).toBeInTheDocument();
+      // 全列のときの文言は出ない。
+      expect(screen.queryByRole("menuitem", { name: t("gridCopyAsInsertRows", { count: 2 }) })).toBeNull();
+      await user.click(item);
+      await waitFor(() => expect(writeText).toHaveBeenCalled());
+      const sql = writeText.mock.calls[0][0] as string;
+      expect(sql).toContain("(`id`)");
+      expect(sql).not.toContain("user_id");
+    });
+
+    it("マスク中のセルが選択列にあれば無効、選択外なら有効", async () => {
+      setColumnMaskEnabled(true);
+      setColumnMaskPatterns(["user_id"]);
+      setColumnMaskCopyPlaceholder(true);
+      const name = t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 });
+      // マスク列 (user_id) だけを選択 → 無効。
+      await openCopyMenuWithColumn(1);
+      expect(await screen.findByRole("menuitem", { name })).toBeDisabled();
+    });
+
+    it("マスク列が選択外なら有効", async () => {
+      setColumnMaskEnabled(true);
+      setColumnMaskPatterns(["user_id"]);
+      setColumnMaskCopyPlaceholder(true);
+      await openCopyMenuWithColumn(0);
+      expect(
+        await screen.findByRole("menuitem", {
+          name: t("gridCopyAsInsertRowsPartial", { count: 2, cols: 1 }),
+        }),
+      ).not.toBeDisabled();
+    });
   });
 
   it("Ctrl/Cmd+A で表示中の全セルを選択し、ページ全体の選択にさせない (#1529)", () => {
