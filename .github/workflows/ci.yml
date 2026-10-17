@@ -1556,11 +1556,24 @@ jobs:
 
       # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680)。
       # 実測 (main の push, 2026-10-18 JST) で `cargo nextest run` の冒頭にこれが約 26 秒かかる。
-      # rust-cache が registry (index とダウンロード済みクレート) を復元しているので、
-      # 依存が全部キャッシュ済みなら `--offline` で足りる。キャッシュに無い依存があれば
-      # (Cargo.lock を変えた PR で rust-cache が部分一致のときなど) probe が失敗するので
-      # オンラインのまま走る。失敗は握りつぶしてよい (オンラインへフォールバックするだけ)。
-      # probe は Windows ターゲットの依存だけを見る (cargo のビルドと同じ範囲)。
+      # rust-cache は ~/.cargo/registry を保存対象にしているが、sparse index (registry/index)
+      # は復元されず、`cargo fetch --offline` が `no matching package named aes-gcm found`
+      # で失敗することを PR #1721 の run で確認した (rust-cache が index キャッシュを掃除
+      # するため)。そこで index だけを自前の actions/cache で持つ。ダウンロード済みクレート
+      # (registry/cache) は rust-cache が復元する。保存は他の Windows キャッシュと同じく
+      # main の push だけ (index は数 MB 程度で、保存コストは短縮分を食わない)。
+      - name: Cache cargo registry index
+        id: cargo-index-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-index-${{ runner.os }}-windows-test-
+
+      # index とクレートが全部そろっていれば `--offline` で足りる。足りないもの (Cargo.lock を
+      # 変えた PR など) があると probe が失敗するので、オンラインのまま走る。失敗は握りつぶして
+      # よい (オンラインへフォールバックするだけ)。probe は Windows ターゲットの依存だけを見る。
       - name: Use offline registry when fully cached (#1680)
         shell: bash
         working-directory: src-tauri
@@ -1583,6 +1596,14 @@ jobs:
       - name: cargo nextest run
         working-directory: src-tauri
         run: cargo nextest run --locked --lib --test golden --test integration --test serde_schema_parity
+
+      # cargo の index は main の push で、完全一致のキーが無かったときだけ保存する (#1680)。
+      - name: Save cargo registry index (main only)
+        if: success() && github.ref == 'refs/heads/main' && steps.cargo-index-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
