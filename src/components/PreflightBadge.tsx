@@ -21,7 +21,7 @@ interface Props {
   onOpenSample?: () => void;
 }
 
-const TONE_STYLE: Record<PreflightTone, { bg: string; border: string; fg: string }> = {
+export const PREFLIGHT_TONE_STYLE: Record<PreflightTone, { bg: string; border: string; fg: string }> = {
   neutral: { bg: "app.toolbar", border: "app.border", fg: "app.textMuted" },
   warning: {
     bg: semanticColorToken("warning", "subtle"),
@@ -64,7 +64,7 @@ export function PreflightBadge({ result, onOpenSample }: Props) {
     title = t("editorPreflightTooltip");
   }
 
-  const style = TONE_STYLE[tone];
+  const style = PREFLIGHT_TONE_STYLE[tone];
   const canOpenSample = !!onOpenSample && result.plan.countSql !== null && result.status !== "unestimable";
 
   // このバッジ自体は非対話 (`role="status"`) でフォーカス不能なため、native

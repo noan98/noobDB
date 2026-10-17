@@ -602,6 +602,13 @@ const en = {
   settingsPreflightImpactEnabledHelp:
     'Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show "can\'t estimate", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.',
 
+  settingsScanPreflight: "Scan preflight (SELECT)",
+  settingsScanPreflightHelp:
+    "For a plain SELECT in the editor, show a badge with the estimated scan rows and a full-table-scan warning before you run, taken from EXPLAIN.",
+  settingsScanPreflightEnabled: "Show scan-rows / full-scan badge",
+  settingsScanPreflightEnabledHelp:
+    'Runs EXPLAIN in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Off by default. Multi-statement scripts and non-SELECT statements show nothing; unions, WITH and subqueries show "can\'t estimate". Row counts are planner estimates and mean slightly different things per driver (MySQL: rows examined; PostgreSQL: rows the scan node is expected to return; SQLite: no row estimate, full-scan detection only).',
+
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp:
     "Watched snippets keep EXPLAIN plan generations locally and flag structural regressions (index → full scan, join method changes, order-of-magnitude row estimates).",
@@ -1702,6 +1709,19 @@ const en = {
     "No WHERE clause: this write affects every row in the table. Count is a snapshot and may drift by run time.",
   editorPreflightUnestimableTooltip:
     "The statement shape (join, subquery FROM, ORDER BY/LIMIT, …) can't be safely converted to a row count, so no number is shown.",
+
+  // Scan preflight badge for SELECT (#1508).
+  editorScanEstimating: "Estimating scan…",
+  editorScanFullScanRows: "Possible full scan (~{count} rows)",
+  editorScanFullScan: "Possible full table scan",
+  editorScanRows: "Scan: ~{count} rows",
+  editorScanIndexed: "Scan: uses an index",
+  editorScanUnestimable: "Scan: can't estimate",
+  editorScanTooltip:
+    "Estimate from a background EXPLAIN (nothing is executed). Row counts are the planner's estimate and drift from reality; their exact meaning differs per driver.",
+  editorScanFullScanTooltip:
+    "EXPLAIN shows a table read without an index ({tables}). On a large table this can be slow. Consider a WHERE condition on an indexed column or a LIMIT.",
+  editorScanUnestimableTooltip: "Unions, WITH and subqueries are not analysed, so no estimate is shown.",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -7207,6 +7227,13 @@ const ja: Dict = {
   settingsPreflightImpactEnabledHelp:
     "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
 
+  settingsScanPreflight: "スキャンプリフライト (SELECT)",
+  settingsScanPreflightHelp:
+    "エディタの単純な SELECT に対し、実行前に EXPLAIN から得た推定スキャン行数と全表スキャンの警告をバッジで表示します。",
+  settingsScanPreflightEnabled: "スキャン行数 / フルスキャンのバッジを表示",
+  settingsScanPreflightEnabledHelp:
+    "EXPLAIN をバックグラウンドで実行し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定を表示します。既定はオフです。複数文のスクリプトや SELECT 以外は何も表示せず、UNION・WITH・サブクエリは「推定不可」になります。行数はオプティマイザの推定で、ドライバごとに意味が少し異なります (MySQL: 走査行数 / PostgreSQL: スキャンノードが返す見込み行数 / SQLite: 行数推定なし、フルスキャン判定のみ)。",
+
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp:
     "ウォッチ登録したスニペットの EXPLAIN 計画をローカルに世代管理し、構造的なリグレッション (インデックス → フルスキャン・結合方式の変化・推定行数の桁違い) を検知します。",
@@ -8301,6 +8328,19 @@ const ja: Dict = {
     "WHERE 句がありません: テーブルの全行が対象です。件数は実行時点とズレうるスナップショットです。",
   editorPreflightUnestimableTooltip:
     "この文の形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT など) は安全に行数へ変換できないため、数字は表示しません。",
+
+  // SELECT のスキャンプリフライトのバッジ (#1508)。
+  editorScanEstimating: "スキャンを見積り中…",
+  editorScanFullScanRows: "全表スキャンの可能性 (約 {count} 行)",
+  editorScanFullScan: "全表スキャンの可能性",
+  editorScanRows: "スキャン: 約 {count} 行",
+  editorScanIndexed: "スキャン: インデックス利用",
+  editorScanUnestimable: "スキャン: 推定不可",
+  editorScanTooltip:
+    "裏で実行した EXPLAIN からの推定です (クエリ自体は実行しません)。行数はオプティマイザの推定で実際とズレ、意味もドライバごとに少し異なります。",
+  editorScanFullScanTooltip:
+    "EXPLAIN 上、インデックスを使わずテーブルを読む箇所があります ({tables})。大きなテーブルでは遅くなりえます。インデックス列への WHERE 条件や LIMIT を検討してください。",
+  editorScanUnestimableTooltip: "UNION・WITH・サブクエリは解析対象外のため、推定は表示しません。",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
