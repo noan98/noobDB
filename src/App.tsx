@@ -11877,6 +11877,7 @@ export default function App() {
             ref={sidebarTablistRef}
             role="tablist"
             aria-label={t("sidebarTablistAria")}
+            data-tour="sidebar-tabs"
           >
             {/* アクティブ下線のスプリングが端のタブで行き過ぎる (オーバーシュート) と、その数 px が
               スクロール可能な範囲に数えられ、タブ切替のたびに一瞬スクロールバーが出ていた。
