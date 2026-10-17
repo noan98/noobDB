@@ -13,6 +13,9 @@ import { durations, staggerTiming } from "../motion";
  *  総所要時間が伸びず、遅れて出る行の手前だけ空白になる見た目も避ける。 */
 export const FIRST_BATCH_REVEAL_MAX_STEPS = 12;
 
+/** ビューポートが未計測のときに演出する行数の上限 (数千行を一斉にアニメーションさせない)。 */
+export const FIRST_BATCH_REVEAL_FALLBACK_ROWS = 50;
+
 /**
  * 初回バッチの着弾か。直前のコミットでスケルトンを出していて (= 行が 0 件のまま
  * ストリーミング待ち)、今回のコミットで行が 1 件以上になったときだけ true。
@@ -27,14 +30,15 @@ export function isFirstBatchArrival(prevSkeletonShown: boolean, rowCount: number
  * ものを数える (仮想化の overscan で描画されているだけの画面外の行は数えない)。上限は設けず
  * 画面内の全行が対象 (描画済みの行数は仮想化が抑えている)。`topAt(i)` は i 行目の上端座標で、
  * 画面外に達した時点で打ち切るため、読み取り (レイアウト計測) は対象行 + 1 回だけになる。
- * `viewportBottom` が未計測の 0 以下 / 非有限なら絞らず全行。
+ * `viewportBottom` が未計測の 0 以下 / 非有限なら先頭 `FIRST_BATCH_REVEAL_FALLBACK_ROWS` 行まで。
  */
 export function firstBatchRevealCount(
   total: number,
   topAt: (index: number) => number,
   viewportBottom: number,
 ): number {
-  if (!Number.isFinite(viewportBottom) || viewportBottom <= 0) return total;
+  if (!Number.isFinite(viewportBottom) || viewportBottom <= 0)
+    return Math.min(total, FIRST_BATCH_REVEAL_FALLBACK_ROWS);
   let n = 0;
   while (n < total && topAt(n) < viewportBottom) n++;
   return n;

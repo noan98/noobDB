@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  FIRST_BATCH_REVEAL_FALLBACK_ROWS,
   FIRST_BATCH_REVEAL_MAX_STEPS,
   firstBatchRevealCount,
   firstBatchRevealDelayMs,
@@ -34,7 +35,8 @@ describe("firstBatchRevealCount (#1579)", () => {
     firstBatchRevealCount(40, (i) => (reads++, tops[i]), 100);
     expect(reads).toBe(5);
   });
-  it("未計測 (0 / NaN) は絞らず全行、空なら 0", () => {
+  it("未計測 (0 / NaN) は上限内で全行、空なら 0", () => {
+    expect(firstBatchRevealCount(5000, at, 0)).toBe(FIRST_BATCH_REVEAL_FALLBACK_ROWS);
     expect(firstBatchRevealCount(7, at, 0)).toBe(7);
     expect(firstBatchRevealCount(7, at, Number.NaN)).toBe(7);
     expect(firstBatchRevealCount(0, at, 100)).toBe(0);
