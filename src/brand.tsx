@@ -24,6 +24,17 @@ import { useId } from "react";
  * - `tone="mono"` は周囲の文字色 (`currentColor`) 1 色でタイルを塗り、*n* と横線を
  *   マスクで抜く。低彩度な文脈 (ローディングのインライン等) で使う。
  *
+ * ## シグネチャ・アニメーション (#1505)
+ *
+ * `animate` を付けると、マウント時に 1 回だけ「*n* のストロークが描かれ、ティールの
+ * 横線が左からタイルの内側を滑って *n* の右脚を貫き定位置に収まる」動きを再生する。
+ * 実装は `App.css` の `.brand-mark-anim` (`@keyframes brand-mark-n-draw` /
+ * `brand-mark-bar-slide`、時間は `--dur-med` の倍数、easing は `--ease-out`)。CSS に
+ * 閉じているので、`prefers-reduced-motion` / アプリ内モーション量設定は末尾の
+ * reduced-motion ブロックが即時化し、`hc-*` は `App.css` が静止に上書きする。どちらも
+ * 最終フレーム (= 通常の静止ロゴ) で止まるため、再生後や抑制時は他の箇所と同じ見た目。
+ * アニメが終わっても要素は残らず、`animate` を外せば従来の静的ロゴと同じ DOM。
+ *
  * 依存ライブラリは増やさず SVG を直接持つ (`illustrations.tsx` と同じ方針)。
  */
 
@@ -54,6 +65,11 @@ export interface BrandMarkProps extends Omit<HTMLChakraProps<"svg">, "css"> {
    * `"mono"`: タイルを `currentColor` で塗り、*n* と横線を抜いた 1 色 (周囲の文字色を継承)。
    */
   tone?: BrandTone;
+  /**
+   * マウント時にシグネチャ・アニメーションを 1 回再生する (#1505)。`tone="brand"` のみ有効
+   * (`"mono"` は無視)。reduced-motion / `hc-*` では再生せず静止表示。既定 false。
+   */
+  animate?: boolean;
 }
 
 /**
@@ -61,11 +77,18 @@ export interface BrandMarkProps extends Omit<HTMLChakraProps<"svg">, "css"> {
  * `size` でスケールし、`tone` でフルカラー / モノクロを切り替える。装飾用途のため
  * 既定で `aria-hidden`。
  */
-export function BrandMark({ size = 24, tone = "brand", ...rest }: BrandMarkProps) {
+export function BrandMark({
+  size = 24,
+  tone = "brand",
+  animate = false,
+  className,
+  ...rest
+}: BrandMarkProps) {
   // マスク ID はインスタンスごとに一意でないと、同一ページに複数の BrandMark が
   // ある場合に SVG の id 衝突で抜きが壊れる。React の useId で隔離する。
   const mid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const tile = "var(--brand-mark-tile)";
+  const play = animate && tone === "brand";
 
   return (
     <chakra.svg
@@ -76,24 +99,43 @@ export function BrandMark({ size = 24, tone = "brand", ...rest }: BrandMarkProps
       flexShrink={0}
       aria-hidden
       role="img"
+      className={play ? [className, "brand-mark-anim"].filter(Boolean).join(" ") : className}
       {...rest}
     >
       {tone === "brand" ? (
         <>
           <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} fill={tile} />
-          {/* 小文字 n */}
-          <path d={N_PATH} fill="none" stroke="#ffffff" strokeWidth={N_STROKE} />
-          {/* n の右脚を突き抜けるトンネル。縁取りをタイル色にして脚との隙間を見せる。 */}
-          <rect
-            x={BAR.x}
-            y={BAR.y}
-            width={BAR.width}
-            height={BAR.height}
-            rx={BAR.rx}
-            fill="var(--brand-teal)"
-            stroke={tile}
-            strokeWidth={BAR.stroke}
+          {play && (
+            <defs>
+              {/* 横線がタイルの外へはみ出して見えないよう、滑走中はタイル形で切り抜く。 */}
+              <clipPath id={`${mid}-tile`}>
+                <rect x={TILE.x} y={TILE.y} width={TILE.size} height={TILE.size} rx={TILE.rx} />
+              </clipPath>
+            </defs>
+          )}
+          {/* 小文字 n。animate 時は pathLength=1 に正規化し、ストロークを描き進める。 */}
+          <path
+            d={N_PATH}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={N_STROKE}
+            className={play ? "brand-mark-n" : undefined}
+            pathLength={play ? 1 : undefined}
           />
+          {/* n の右脚を突き抜けるトンネル。縁取りをタイル色にして脚との隙間を見せる。 */}
+          <g clipPath={play ? `url(#${mid}-tile)` : undefined}>
+            <rect
+              x={BAR.x}
+              y={BAR.y}
+              width={BAR.width}
+              height={BAR.height}
+              rx={BAR.rx}
+              fill="var(--brand-teal)"
+              stroke={tile}
+              strokeWidth={BAR.stroke}
+              className={play ? "brand-mark-bar" : undefined}
+            />
+          </g>
         </>
       ) : (
         <>
