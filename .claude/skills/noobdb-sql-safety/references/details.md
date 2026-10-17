@@ -136,6 +136,10 @@ Rust の `db::sync::quote_ident` (MySQL/SQLite ドライバの `quote_ident` は
 危険入力: 各方言の引用文字 / バックスラッシュ / NUL / マルチバイト / 非 BMP / 空文字列)。
 BLOB だけはフロントが `Value::Bytes` を `Value::String` と区別できない (JSON 上はただの
 16 進文字列) ため意図的に食い違い、その差分を `frontend` キーで明記しています。
+実際に DB へ発行される DELETE / INSERT / WHERE で使う実働エスケーパ
+`components/cellEdit.ts` の `quoteString` / `literalFromCellValue` も同じベクタで固定します
+(#1510)。真偽値 (全方言 TRUE/FALSE) と指数表記の浮動小数 (展開しない) だけ `sqlLiteral`
+と異なり、その差分は `cellEdit` キーで明記しています。
 `cargo-mutants` のスコープにも `sync.rs::quote_ident` / `data_diff.rs::sql_literal` を関数単位で追加済み (`src-tauri/.cargo/mutants.toml`)
 (可視化のみ・fail させない既存方針)。
 
