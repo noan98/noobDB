@@ -315,6 +315,10 @@ describe("scanTone", () => {
     expect(scanTone(mk(true, 1, null, true))).toBe("warning");
   });
 
+  it("cheapLimit でも行数不明の全表スキャンがあれば降格しない", () => {
+    expect(scanTone(mk(true, null, null, true), true)).toBe("warning");
+  });
+
   it("cheapLimit なら neutral に下げる", () => {
     expect(scanTone(mk(true, 1_000_000, 1_000_000), true)).toBe("neutral");
   });
@@ -390,8 +394,9 @@ describe("summarizeScan: 並列 (PostgreSQL)", () => {
         },
       ]),
     );
-    expect(s?.fullScanRows).toBe(600000);
-    expect(s?.scanRows).toBe(600000);
+    // PostgreSQL の並列除数 workers + (1 - 0.3 * workers) = 2.4 で戻す。
+    expect(s?.fullScanRows).toBeCloseTo(480000);
+    expect(s?.scanRows).toBeCloseTo(480000);
   });
 
   it("Gather が無い Parallel Aware は行数不明の全表スキャン", () => {
@@ -409,7 +414,6 @@ describe("summarizeScan: 並列 (PostgreSQL)", () => {
 describe("buildScanPlan: cheapLimit", () => {
   it("LIMIT のみ (ソート・集約なし) は cheapLimit", () => {
     expect(buildScanPlan("SELECT * FROM t LIMIT 10", "mysql")?.cheapLimit).toBe(true);
-    expect(buildScanPlan("SELECT * FROM t WHERE a = 1 LIMIT 10 OFFSET 5", "postgres")?.cheapLimit).toBe(true);
   });
   it("ORDER BY / GROUP BY / DISTINCT / 集約 / ウィンドウ付き、LIMIT 無しは cheapLimit でない", () => {
     for (const q of [
@@ -419,6 +423,12 @@ describe("buildScanPlan: cheapLimit", () => {
       "SELECT MAX(a) FROM t LIMIT 1",
       "SELECT a, ROW_NUMBER() OVER (ORDER BY a) FROM t LIMIT 10",
       "SELECT * FROM t",
+      "SELECT * FROM t WHERE a = 1 LIMIT 1",
+      "SELECT * FROM t LIMIT 10 OFFSET 1000000",
+      "SELECT * FROM t LIMIT 1000000, 10",
+      "SELECT * FROM a JOIN b ON a.id = b.id LIMIT 10",
+      "SELECT * FROM a, b LIMIT 10",
+      "SELECT * FROM a NATURAL JOIN b LIMIT 10",
     ]) {
       expect(buildScanPlan(q, "mysql")?.cheapLimit).toBeUndefined();
     }

@@ -73,6 +73,21 @@ export interface ScanSummary {
 /** フルスキャンでも行数がこの値未満なら注意を促さない (開発 DB の小テーブルでの誤警告を避ける)。 */
 export const SCAN_SMALL_TABLE_ROWS = 1_000;
 
+/** これらがトップレベルにあると、LIMIT があっても実読み取りが頭打ちにならない。 */
+const CHEAP_LIMIT_BLOCKERS = new Set([
+  "order",
+  "group",
+  "distinct",
+  "having",
+  "over",
+  "where",
+  "join",
+  "natural",
+  "cross",
+  "straight_join",
+  "offset",
+]);
+
 /** 「推定不可」へ降格するトップレベルの集合演算キーワード。 */
 const SET_OPERATORS = new Set(["union", "intersect", "except", "minus"]);
 
@@ -102,11 +117,27 @@ export function buildScanPlan(sql: string, driver?: string): ScanPlan | null {
   // サブクエリ (括弧内の SELECT)。マスク済み文字列なので文字列リテラル内は誤検出しない。
   if (/\(\s*(select|with)\b/i.test(trimmed)) return { explainSql: null };
   // LIMIT 付きでも ORDER BY / GROUP BY / DISTINCT / 集約 / ウィンドウがあれば全件を読む。
+  // さらに WHERE (非インデックス列なら LIMIT 1 でも全件読みうる)・JOIN (build 側の全読み)・
+  // OFFSET / MySQL の `LIMIT n, m` (読み飛ばし分も読む)・FROM が複数テーブル (カンマ結合) も
+  // 実読み取りが LIMIT で頭打ちにならないので cheapLimit にしない。
+  const limitWord = words.find((w) => w.text === "limit");
+  const fromWord = words.find((w) => w.text === "from");
+  const hasTopLevelComma = (start: number, end: number): boolean => {
+    let depth = 0;
+    for (let i = start; i < end; i++) {
+      const c = masked[i];
+      if (c === "(") depth++;
+      else if (c === ")") depth = Math.max(0, depth - 1);
+      else if (c === "," && depth === 0) return true;
+    }
+    return false;
+  };
   const cheapLimit =
-    texts.includes("limit") &&
-    !texts.some(
-      (w) => w === "order" || w === "group" || w === "distinct" || w === "having" || w === "over",
-    ) &&
+    !!limitWord &&
+    !!fromWord &&
+    !texts.some((w) => CHEAP_LIMIT_BLOCKERS.has(w)) &&
+    !hasTopLevelComma(fromWord.to, limitWord.from) &&
+    !hasTopLevelComma(limitWord.to, trimmed.length) &&
     !/\b(count|sum|avg|min|max|group_concat|string_agg|array_agg|json_agg|total)\s*\(/i.test(trimmed);
   return {
     explainSql: `${bundleExplainPrefix(driver)}${sql.trim()}`,
@@ -171,7 +202,8 @@ export function summarizeScan(driver: string, result: QueryResult | null): ScanS
           // 並列スキャンの `Plan Rows` はワーカー 1 つぶん。祖先 Gather の計画ワーカー数で補正する
           // (取れなければ行数は不明)。
           if (rows !== null && attrVal(node, "Parallel Aware") === true) {
-            rows = workers === null ? null : rows * (workers + 1);
+            // PostgreSQL の並列除数: workers + max(0, 1 - 0.3 * workers) (リーダーの寄与を加味)。
+            rows = workers === null ? null : rows * (workers + Math.max(0, 1 - 0.3 * workers));
           }
           // Filter 付きの Seq Scan は `Plan Rows` がフィルタ後の見込み行数で、実際に読む行数
           // (= テーブル全行) を大きく下回る。誤解を招く小さな数字を出さず行数は不明にする。
@@ -205,10 +237,12 @@ export function summarizeScan(driver: string, result: QueryResult | null): ScanS
  * - 推定行数 ≥ 100 万: danger / ≥ 10 万: warning (インデックスを使っていても大量走査は警告)
  * - 行数不明の全表スキャンがある、または全表スキャンの行数 ≥ `SCAN_SMALL_TABLE_ROWS`: warning
  *   (それ未満の小テーブルだけなら neutral)
- * - `cheapLimit` (ソート・集約の無い LIMIT 付き) は実読み取りが LIMIT で頭打ちになりうるので neutral。
+ * - `cheapLimit` (単一テーブルで WHERE / JOIN / OFFSET / ソート・集約の無い LIMIT 付き) は実読み取りが
+ *   LIMIT で頭打ちになるので neutral (行数不明の全表スキャンがあれば降格しない)。
  */
 export function scanTone(summary: ScanSummary, cheapLimit = false): PreflightTone {
-  if (cheapLimit) return "neutral";
+  // Filter 付きノードや行数不明の全表スキャンがあるときは降格しない。
+  if (cheapLimit && !summary.unknownRowsFullScan) return "neutral";
   const rows = summary.scanRows;
   if (rows !== null && rows >= ROWS_WARNING_THRESHOLD) return "danger";
   if (rows !== null && rows >= ROWS_CAUTION_THRESHOLD) return "warning";

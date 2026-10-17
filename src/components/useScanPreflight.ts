@@ -18,6 +18,9 @@ import { buildScanPlan, summarizeScan, type ScanSummary } from "./scanPreflight"
 /** EXPLAIN を裏実行するまでのデバウンス遅延 (ms)。エディタ側のテキストデバウンスを差し引いた値。 */
 const SCAN_PREFLIGHT_DEBOUNCE_MS = 350;
 
+/** EXPLAIN がこの時間を超えて帰らなければ結果を捨ててバッジを隠す (次は 1 本目が帰るまで投げない)。 */
+const SCAN_PREFLIGHT_TIMEOUT_MS = 10_000;
+
 export interface ScanPreflightResult {
   /** この結果が対象とする厳密な SQL テキスト。 */
   sql: string;
@@ -40,15 +43,27 @@ export function useScanPreflight(params: {
   /** 設定 `scanPreflightEnabled` かつ接続中のとき true。 */
   enabled: boolean;
   driver?: string;
+  /** EXPLAIN が帰らないとき (ロック待ち等) にバッジを隠すまでの時間 (ms)。 */
+  timeoutMs?: number;
 }): ScanPreflightResult | null {
-  const { sql, sessionId, database, enabled, driver } = params;
+  const { sql, sessionId, database, enabled, driver, timeoutMs = SCAN_PREFLIGHT_TIMEOUT_MS } = params;
   const [result, setResult] = useState<ScanPreflightResult | null>(null);
   const runIdRef = useRef(0);
   // single-flight: EXPLAIN は同時に 1 本だけ流す。編集のたびに古い EXPLAIN を重ねて投げると、
   // 手動トランザクションの ALTER 後などでロック待ちが積もり接続プールが枯れるため、実行中に
   // 来た要求は最新の 1 件だけ覚え、完了後にまとめて 1 回だけ再実行する。
-  const inFlightRef = useRef(false);
+  // 実行中の EXPLAIN のトークン (セッションが変わったら無効扱いにして、別接続の待ちに引きずられない)。
+  const inFlightRef = useRef<{ sessionId: string } | null>(null);
   const pendingRef = useRef<(() => void) | null>(null);
+
+  // アンマウント後に保留中の再実行が走らないようにする。
+  useEffect(
+    () => () => {
+      runIdRef.current += 1;
+      pendingRef.current = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     runIdRef.current += 1;
@@ -80,7 +95,12 @@ export function useScanPreflight(params: {
     setResult({ sql, status: "estimating", summary: null, cheapLimit });
 
     const launch = (): void => {
-      inFlightRef.current = true;
+      const token = { sessionId };
+      inFlightRef.current = token;
+      // 帰ってこない (ロック待ち等) 間、「見積り中」を出し続けない。
+      const giveUp = window.setTimeout(() => {
+        if (runIdRef.current === myId) setResult(null);
+      }, timeoutMs);
       void api
         .runQuery(sessionId, explainSql, database)
         .then((res) => {
@@ -93,18 +113,20 @@ export function useScanPreflight(params: {
           setResult(null);
         })
         .finally(() => {
-          inFlightRef.current = false;
+          window.clearTimeout(giveUp);
+          if (inFlightRef.current !== token) return;
+          inFlightRef.current = null;
           const next = pendingRef.current;
           pendingRef.current = null;
           next?.();
         });
     };
     const timer = window.setTimeout(() => {
-      if (inFlightRef.current) pendingRef.current = launch;
+      if (inFlightRef.current && inFlightRef.current.sessionId === sessionId) pendingRef.current = launch;
       else launch();
     }, SCAN_PREFLIGHT_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [sql, sessionId, database, enabled, driver]);
+  }, [sql, sessionId, database, enabled, driver, timeoutMs]);
 
   return result;
 }

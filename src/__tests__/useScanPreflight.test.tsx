@@ -87,7 +87,7 @@ describe("useScanPreflight", () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   it("single-flight: 実行中は次を投げず、完了後に最新 SQL で 1 回だけ再実行し、古い結果は捨てる", async () => {
-    delayedExplain([1000, 10]);
+    delayedExplain([1500, 10]);
     const { result, rerender } = renderHook(
       ({ sql }) => useScanPreflight({ sql, sessionId: "s1", database: null, enabled: true, driver: "mysql" }),
       { initialProps: { sql: "SELECT * FROM a WHERE x = 1" } },
@@ -95,9 +95,9 @@ describe("useScanPreflight", () => {
     await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
     // 1 本目が実行中 (約 1 秒) に編集が 2 回入る。
     rerender({ sql: "SELECT * FROM b WHERE x = 1" });
-    await sleep(450);
+    await sleep(400);
     rerender({ sql: "SELECT * FROM c WHERE x = 1" });
-    await sleep(450);
+    await sleep(400);
     expect(runQuery).toHaveBeenCalledTimes(1);
     // 1 本目が戻ると、古い SQL (a) の結果は捨てて、最新 (c) で 1 回だけ再実行する。
     await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2), { timeout: 2000 });
@@ -122,5 +122,46 @@ describe("useScanPreflight", () => {
     await sleep(700);
     expect(runQuery).toHaveBeenCalledTimes(1);
     expect(result.current).toBeNull();
+  });
+
+  it("1 本目が帰らなくても timeoutMs でバッジを隠し、帰るまで次は投げない", async () => {
+    delayedExplain([1200, 10]);
+    const { result, rerender } = renderHook(
+      ({ sql }) =>
+        useScanPreflight({
+          sql,
+          sessionId: "s1",
+          database: null,
+          enabled: true,
+          driver: "mysql",
+          timeoutMs: 300,
+        }),
+      { initialProps: { sql: "SELECT * FROM a WHERE x = 1" } },
+    );
+    await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+    expect(result.current?.status).toBe("estimating");
+    await waitFor(() => expect(result.current).toBeNull(), { timeout: 1000 });
+    rerender({ sql: "SELECT * FROM b WHERE x = 1" });
+    await sleep(500);
+    expect(runQuery).toHaveBeenCalledTimes(1);
+  });
+
+  it("sessionId が変わったら、別セッションの実行中 EXPLAIN を待たずに流す", async () => {
+    delayedExplain([1500, 10]);
+    const { rerender } = renderHook(
+      ({ sessionId }) =>
+        useScanPreflight({
+          sql: "SELECT * FROM a WHERE x = 1",
+          sessionId,
+          database: null,
+          enabled: true,
+          driver: "mysql",
+        }),
+      { initialProps: { sessionId: "s1" } },
+    );
+    await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(1));
+    rerender({ sessionId: "s2" });
+    await waitFor(() => expect(runQuery).toHaveBeenCalledTimes(2), { timeout: 1000 });
+    expect(runQuery.mock.calls.map((c) => c[0])).toEqual(["s1", "s2"]);
   });
 });
