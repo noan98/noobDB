@@ -4,7 +4,8 @@
 //! `quote_ident` はこれへ委譲する薄いラッパー) と、フロントの
 //! `components/sqlDialect.ts::quoteIdentFor` / `components/exportPreview.ts::
 //! quoteSqlIdent` に分散している。リテラルエスケープは `db::data_diff::sql_literal`
-//! をフロントの `exportPreview.ts::sqlLiteral` がミラーする。いずれも SQL
+//! をフロントの `exportPreview.ts::sqlLiteral` と、実働の `cellEdit.ts::literalFromCellValue` /
+//! `quoteString` (#1510) がミラーする。いずれも SQL
 //! インジェクション隣接の安全性ロジックなので、read-only 判定 (#444) と同じ
 //! 共有ベクタ方式で全実装を固定する。
 //!

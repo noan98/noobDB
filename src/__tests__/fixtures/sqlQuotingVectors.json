@@ -66,7 +66,7 @@
     }
   ],
 
-  "literalNotes": "kind は Rust 側 db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected は Rust の sql_literal の出力。frontend は exportPreview.ts の sqlLiteral の期待値で、省略時は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか持たないため BLOB を文字列と区別できず、bytes ケースだけ意図的に食い違う — その差分をここに明記して固定する。",
+  "literalNotes": "kind は Rust 側 db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected は Rust の sql_literal の出力。frontend は exportPreview.ts の sqlLiteral の期待値で、省略時は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか持たないため BLOB を文字列と区別できず、bytes ケースだけ意図的に食い違う — その差分をここに明記して固定する。cellEdit は components/cellEdit.ts の literalFromCellValue (実際に DB へ発行される DELETE / INSERT / WHERE / 検索で使う実働エスケーパ、#1510) の期待値で、省略時は frontend → expected の順に同じ。真偽値は全方言で TRUE/FALSE になる点が sqlLiteral と異なる。string ケースは cellEdit.ts の quoteString (文字列 → クオート) も同じ expected で固定する。",
   "literals": [
     {
       "kind": "null",
@@ -77,13 +77,15 @@
       "kind": "bool",
       "value": true,
       "note": "PostgreSQL は TRUE/FALSE、MySQL / SQLite は 1/0",
-      "expected": { "mysql": "1", "postgres": "TRUE", "sqlite": "1" }
+      "expected": { "mysql": "1", "postgres": "TRUE", "sqlite": "1" },
+      "cellEdit": { "mysql": "TRUE", "postgres": "TRUE", "sqlite": "TRUE" }
     },
     {
       "kind": "bool",
       "value": false,
       "note": "同上の false",
-      "expected": { "mysql": "0", "postgres": "FALSE", "sqlite": "0" }
+      "expected": { "mysql": "0", "postgres": "FALSE", "sqlite": "0" },
+      "cellEdit": { "mysql": "FALSE", "postgres": "FALSE", "sqlite": "FALSE" }
     },
     {
       "kind": "int",
@@ -156,6 +158,36 @@
       "value": "日本語🙂",
       "note": "マルチバイト / 非 BMP 文字はそのまま",
       "expected": { "mysql": "'日本語🙂'", "postgres": "'日本語🙂'", "sqlite": "'日本語🙂'" }
+    },
+    {
+      "kind": "string",
+      "value": "a\\",
+      "note": "末尾のバックスラッシュ — MySQL は二重化して閉じ引用符を守る (しないと閉じ引用符がエスケープされ文字列が閉じない)",
+      "expected": { "mysql": "'a\\\\'", "postgres": "'a\\'", "sqlite": "'a\\'" }
+    },
+    {
+      "kind": "string",
+      "value": "\\\\",
+      "note": "連続するバックスラッシュ — MySQL は各々を二重化する",
+      "expected": { "mysql": "'\\\\\\\\'", "postgres": "'\\\\'", "sqlite": "'\\\\'" }
+    },
+    {
+      "kind": "string",
+      "value": "''",
+      "note": "連続するシングルクォートは各々二重化",
+      "expected": { "mysql": "''''''", "postgres": "''''''", "sqlite": "''''''" }
+    },
+    {
+      "kind": "string",
+      "value": "a\r\n\tb",
+      "note": "CR / LF / タブはエスケープせずそのまま",
+      "expected": { "mysql": "'a\r\n\tb'", "postgres": "'a\r\n\tb'", "sqlite": "'a\r\n\tb'" }
+    },
+    {
+      "kind": "string",
+      "value": "%_\\%",
+      "note": "LIKE のワイルドカード文字はリテラル側では何もしない (ESCAPE は呼び出し側の責務)",
+      "expected": { "mysql": "'%_\\\\%'", "postgres": "'%_\\%'", "sqlite": "'%_\\%'" }
     },
     {
       "kind": "bytes",
