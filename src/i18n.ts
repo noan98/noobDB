@@ -1203,6 +1203,7 @@ const en = {
   spinnerLoadingAria: "Loading",
   toastRegionAria: "Notifications",
   toastDismissAria: "Dismiss notification",
+  toastOverflow: "+{count} more — see Activity for all",
   statusSeverityCritical: "Critical",
   statusQueryTimeout:
     "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
@@ -7790,6 +7791,7 @@ const ja: Dict = {
   spinnerLoadingAria: "読み込み中",
   toastRegionAria: "通知",
   toastDismissAria: "通知を閉じる",
+  toastOverflow: "他 {count} 件 — すべてアクティビティで確認できます",
   statusSeverityCritical: "重大",
   statusQueryTimeout:
     "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
