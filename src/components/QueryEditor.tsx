@@ -28,6 +28,9 @@ import {
   keymap,
   lineNumbers,
   highlightActiveLine,
+  drawSelection,
+  rectangularSelection,
+  crosshairCursor,
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, selectAll, toggleComment } from "@codemirror/commands";
@@ -1095,6 +1098,14 @@ export const QueryEditor = memo(
           extensions: [
             lineNumbers(),
             highlightActiveLine(),
+            // 矩形選択 / マルチカーソル (#1488)。複数選択の描画には drawSelection が必須。
+            // Alt+ドラッグ (macOS は Option+ドラッグ) で矩形選択、Ctrl/Cmd+クリックでカーソル追加、
+            // Mod-d で次の一致を選択に追加、Mod-Alt-↑/↓ で上下にカーソル追加 (defaultKeymap)。
+            // 実行系 (選択範囲を実行・整形・プリフライト) は主選択 (`selection.main`) だけを対象にする。
+            EditorState.allowMultipleSelections.of(true),
+            drawSelection(),
+            rectangularSelection(),
+            crosshairCursor(),
             history(),
             indentOnInput(),
             bracketMatching(),
@@ -1185,7 +1196,9 @@ export const QueryEditor = memo(
                   return applyHistoryNav(v, navigateNewer(historyRef.current, navStateRef.current));
                 },
               },
-              ...searchKeymap,
+              // Mod-Shift-l (一致をすべて選択) はアプリ共通のテーマ切替 (toggleTheme) と衝突する
+              // ので外す (#1488)。次の一致の追加は Mod-d が担う。
+              ...searchKeymap.filter((b) => b.key !== "Mod-Shift-l"),
               ...defaultKeymap,
               ...historyKeymap,
               ...completionKeymap,
