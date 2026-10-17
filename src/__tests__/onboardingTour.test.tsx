@@ -95,3 +95,75 @@ describe("OnboardingTour の初期フォーカス (#1529)", () => {
     expect(document.activeElement).toBe(getByRole("button", { name: t("onboardingNext") }));
   });
 });
+
+describe("OnboardingTour のコーチマーク (#1504)", () => {
+  /** jsdom はレイアウトを持たないので、測定結果を差し込んだアンカー要素を置く。 */
+  function mountAnchor(
+    selectorAttr: [string, string],
+    r: { left: number; top: number; width: number; height: number },
+  ) {
+    const el = document.createElement("div");
+    el.setAttribute(selectorAttr[0], selectorAttr[1]);
+    el.getBoundingClientRect = () =>
+      ({
+        ...r,
+        right: r.left + r.width,
+        bottom: r.top + r.height,
+        x: r.left,
+        y: r.top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    document.body.appendChild(el);
+    return el;
+  }
+
+  it("アンカーが無いときは従来の右下カード (スポットライト無し) にフォールバックする", () => {
+    const { getByRole, queryByTestId } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+    expect(queryByTestId("onboarding-spotlight")).toBeNull();
+    expect(getByRole("dialog").getAttribute("data-anchored")).toBeNull();
+  });
+
+  it("アンカーがあるステップではスポットライトを出し、無いステップでは消える", () => {
+    // ステップ 1 (接続) はサイドバーのタブ列、ステップ 2 (クエリ) の候補は置かない。
+    const el = mountAnchor(["data-tour", "sidebar-tabs"], { left: 10, top: 40, width: 200, height: 30 });
+    try {
+      const { getByRole, getByTestId, queryByTestId } = renderWithProviders(
+        <OnboardingTour onClose={() => {}} />,
+      );
+      const spot = getByTestId("onboarding-spotlight");
+      expect(spot).toBeTruthy();
+      // 4px の余白ぶん広がる。
+      expect(spot.style.left).toBe("6px");
+      expect(spot.style.width).toBe("208px");
+      fireEvent.click(getByRole("button", { name: t("onboardingNext") }));
+      expect(queryByTestId("onboarding-spotlight")).toBeNull();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it("アンカーが画面外・サイズ 0 のときもフォールバックする", () => {
+    const el = mountAnchor(["data-tour", "sidebar-tabs"], { left: 10, top: 5000, width: 200, height: 30 });
+    try {
+      const { queryByTestId } = renderWithProviders(<OnboardingTour onClose={() => {}} />);
+      expect(queryByTestId("onboarding-spotlight")).toBeNull();
+    } finally {
+      el.remove();
+    }
+  });
+
+  it("フォーカスがカード外にあっても Esc で閉じ、二重には呼ばない", () => {
+    const onClose = vi.fn();
+    renderWithProviders(<OnboardingTour onClose={onClose} />);
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("カード内の Esc は 1 回だけ onClose を呼ぶ", () => {
+    const onClose = vi.fn();
+    const { getByRole } = renderWithProviders(<OnboardingTour onClose={onClose} />);
+    fireEvent.keyDown(getByRole("dialog"), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});

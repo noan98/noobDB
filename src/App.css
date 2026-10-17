@@ -2622,3 +2622,10 @@ td.is-find-current::after {
   pointer-events: none;
   animation: streaming-pulse 1.2s ease-in-out infinite;
 }
+
+/* オンボーディングツアーのスポットライト (#1504)。くり抜き以外を覆う暗幕。
+   モーダルの --overlay より濃くして、暗いテーマでもくり抜きが際立つようにする。
+   全テーマ共通。OnboardingTour.tsx が参照する。 */
+:root {
+  --tour-dim: rgba(0, 0, 0, 0.62);
+}

@@ -48,6 +48,8 @@ interface CardProps {
   title: string;
   description: string;
   onClick: () => void;
+  /** オンボーディングツアー (#1504) がスポットライトで照らすためのフック (`data-tour`)。 */
+  tourId?: string;
 }
 
 /**
@@ -59,7 +61,7 @@ interface CardProps {
  * (アイコンだけが aria-hidden で除外される)、スクリーンリーダーでの読み上げが
  * 冗長になる。
  */
-function WelcomeCard({ icon, title, description, onClick }: CardProps) {
+function WelcomeCard({ icon, title, description, onClick, tourId }: CardProps) {
   const descId = useId();
   return (
     <MotionCardWrap variants={variants.staggerItem} flex="1 1 220px" minW="200px" maxW="280px">
@@ -68,6 +70,7 @@ function WelcomeCard({ icon, title, description, onClick }: CardProps) {
         onClick={onClick}
         aria-label={title}
         aria-describedby={descId}
+        data-tour={tourId}
         flex="1"
         alignItems="flex-start"
       >
@@ -197,6 +200,7 @@ export function WelcomeView({ onCreateConnection, onOpenSqlite, onStartTour }: P
           title={t("welcomeCreateConnectionTitle")}
           description={t("welcomeCreateConnectionDesc")}
           onClick={onCreateConnection}
+          tourId="welcome-create"
         />
         <WelcomeCard
           icon="sqlite"
