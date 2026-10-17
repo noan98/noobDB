@@ -2433,6 +2433,38 @@ td.is-find-current::after {
      duplicate を避けきれないため、上の @media ブロックと**同じプロパティを
      保つ**ことをここに明記する (変更時は両方を揃えること)。 */
 
+/* 列幅ドラッグ中のライブガイド (#1580)。縦線 + 幅バッジ。位置は JS が transform で動かし、
+   追従はここの transition で滑らかにする (reduced-motion では下のブロックが無効化する)。 */
+.col-resize-guide {
+  position: fixed;
+  left: 0;
+  width: 0;
+  border-left: 1px solid var(--accent);
+  pointer-events: none;
+  z-index: var(--z-popover);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.col-resize-guide-badge {
+  position: absolute;
+  top: 0;
+  left: var(--space-1);
+  padding: var(--space-0-75) var(--space-1-5);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--on-solid);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  box-shadow: var(--elevation-popover);
+}
+.col-resize-guide[data-flip="left"] .col-resize-guide-badge {
+  left: auto;
+  right: var(--space-1);
+}
+.col-resize-guide[data-clamp="min"] .col-resize-guide-badge,
+.col-resize-guide[data-clamp="max"] .col-resize-guide-badge {
+  background: var(--warning-solid);
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) *,
   :root:not([data-motion="full"]) *::before,
