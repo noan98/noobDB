@@ -607,7 +607,7 @@ const en = {
     "For a plain SELECT in the editor, show a badge with the estimated scan rows and a full-table-scan warning before you run, taken from EXPLAIN.",
   settingsScanPreflightEnabled: "Show scan-rows / full-scan badge",
   settingsScanPreflightEnabledHelp:
-    'Runs EXPLAIN in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Off by default. Multi-statement scripts and non-SELECT statements show nothing; unions, WITH and subqueries show "can\'t estimate". Row counts are planner estimates and mean slightly different things per driver (MySQL: rows examined; PostgreSQL: rows the scan node is expected to return; SQLite: no row estimate, full-scan detection only).',
+    'Runs EXPLAIN in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Off by default. Multi-statement scripts and non-SELECT statements show nothing; unions and subqueries show "can\'t estimate" and statements starting with WITH show nothing. Row counts are planner estimates and mean slightly different things per driver (MySQL: rows examined; PostgreSQL: rows the scan node is expected to return; SQLite: no row estimate, full-scan detection only).',
 
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp:
@@ -1721,7 +1721,9 @@ const en = {
     "Estimate from a background EXPLAIN (nothing is executed). Row counts are the planner's estimate and drift from reality; their exact meaning differs per driver.",
   editorScanFullScanTooltip:
     "EXPLAIN shows a table read without an index ({tables}). On a large table this can be slow. Consider a WHERE condition on an indexed column or a LIMIT.",
-  editorScanUnestimableTooltip: "Unions, WITH and subqueries are not analysed, so no estimate is shown.",
+  editorScanUnestimableTooltip: "Unions and subqueries are not analysed, so no estimate is shown.",
+  editorScanLimitedNote:
+    "This SELECT has a LIMIT and no sort or aggregation, so it may stop reading early and the real cost can be much lower.",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -7232,7 +7234,7 @@ const ja: Dict = {
     "エディタの単純な SELECT に対し、実行前に EXPLAIN から得た推定スキャン行数と全表スキャンの警告をバッジで表示します。",
   settingsScanPreflightEnabled: "スキャン行数 / フルスキャンのバッジを表示",
   settingsScanPreflightEnabledHelp:
-    "EXPLAIN をバックグラウンドで実行し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定を表示します。既定はオフです。複数文のスクリプトや SELECT 以外は何も表示せず、UNION・WITH・サブクエリは「推定不可」になります。行数はオプティマイザの推定で、ドライバごとに意味が少し異なります (MySQL: 走査行数 / PostgreSQL: スキャンノードが返す見込み行数 / SQLite: 行数推定なし、フルスキャン判定のみ)。",
+    "EXPLAIN をバックグラウンドで実行し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定を表示します。既定はオフです。複数文のスクリプトや SELECT 以外は何も表示せず、UNION・サブクエリは「推定不可」、WITH で始まる文は何も表示しません。行数はオプティマイザの推定で、ドライバごとに意味が少し異なります (MySQL: 走査行数 / PostgreSQL: スキャンノードが返す見込み行数 / SQLite: 行数推定なし、フルスキャン判定のみ)。",
 
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp:
@@ -8340,7 +8342,9 @@ const ja: Dict = {
     "裏で実行した EXPLAIN からの推定です (クエリ自体は実行しません)。行数はオプティマイザの推定で実際とズレ、意味もドライバごとに少し異なります。",
   editorScanFullScanTooltip:
     "EXPLAIN 上、インデックスを使わずテーブルを読む箇所があります ({tables})。大きなテーブルでは遅くなりえます。インデックス列への WHERE 条件や LIMIT を検討してください。",
-  editorScanUnestimableTooltip: "UNION・WITH・サブクエリは解析対象外のため、推定は表示しません。",
+  editorScanUnestimableTooltip: "UNION・サブクエリは解析対象外のため、推定は表示しません。",
+  editorScanLimitedNote:
+    "この SELECT は LIMIT があり並べ替え・集計も無いため、途中で読み取りを止められ、実際の負荷はもっと軽い場合があります。",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",

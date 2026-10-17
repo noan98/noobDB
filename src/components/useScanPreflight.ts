@@ -28,6 +28,8 @@ export interface ScanPreflightResult {
    */
   status: "estimating" | "ready" | "unestimable";
   summary: ScanSummary | null;
+  /** ソート・集約の無い LIMIT 付き SELECT (実読み取りが少ない)。バッジの警告を和らげる。 */
+  cheapLimit: boolean;
 }
 
 export function useScanPreflight(params: {
@@ -42,10 +44,16 @@ export function useScanPreflight(params: {
   const { sql, sessionId, database, enabled, driver } = params;
   const [result, setResult] = useState<ScanPreflightResult | null>(null);
   const runIdRef = useRef(0);
+  // single-flight: EXPLAIN は同時に 1 本だけ流す。編集のたびに古い EXPLAIN を重ねて投げると、
+  // 手動トランザクションの ALTER 後などでロック待ちが積もり接続プールが枯れるため、実行中に
+  // 来た要求は最新の 1 件だけ覚え、完了後にまとめて 1 回だけ再実行する。
+  const inFlightRef = useRef(false);
+  const pendingRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     runIdRef.current += 1;
     const myId = runIdRef.current;
+    pendingRef.current = null;
 
     if (
       !enabled ||
@@ -64,23 +72,36 @@ export function useScanPreflight(params: {
       return;
     }
     if (plan.explainSql === null) {
-      setResult({ sql, status: "unestimable", summary: null });
+      setResult({ sql, status: "unestimable", summary: null, cheapLimit: false });
       return;
     }
     const explainSql = plan.explainSql;
-    setResult({ sql, status: "estimating", summary: null });
-    const timer = window.setTimeout(() => {
+    const cheapLimit = plan.cheapLimit === true;
+    setResult({ sql, status: "estimating", summary: null, cheapLimit });
+
+    const launch = (): void => {
+      inFlightRef.current = true;
       void api
         .runQuery(sessionId, explainSql, database)
         .then((res) => {
           if (runIdRef.current !== myId) return;
           const summary = summarizeScan(driver, res);
-          setResult(summary ? { sql, status: "ready", summary } : null);
+          setResult(summary ? { sql, status: "ready", summary, cheapLimit } : null);
         })
         .catch(() => {
           if (runIdRef.current !== myId) return;
           setResult(null);
+        })
+        .finally(() => {
+          inFlightRef.current = false;
+          const next = pendingRef.current;
+          pendingRef.current = null;
+          next?.();
         });
+    };
+    const timer = window.setTimeout(() => {
+      if (inFlightRef.current) pendingRef.current = launch;
+      else launch();
     }, SCAN_PREFLIGHT_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [sql, sessionId, database, enabled, driver]);

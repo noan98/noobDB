@@ -41,6 +41,11 @@ import { maskedTopLevelWords, PREFLIGHT_MAX_CHARS, type PreflightTone } from "./
 
 export interface ScanPlan {
   /**
+   * トップレベルに LIMIT があり、ORDER BY / GROUP BY / DISTINCT / 集約 / ウィンドウが無い SELECT。
+   * 実際に読む行数は LIMIT で頭打ちになりうるので、バッジの警告を和らげる。
+   */
+  cheapLimit?: boolean;
+  /**
    * 裏実行する `EXPLAIN ...` 文。**変換可能な単純 SELECT のときだけ**非 null。UNION・
    * サブクエリなど解析対象外の形状では null (= UI は「推定不可」を表示)。
    */
@@ -52,8 +57,15 @@ export interface ScanSummary {
   fullScan: boolean;
   /** 全表スキャンの対象テーブル名 (取れた分のみ、重複なし)。 */
   fullScanTables: string[];
-  /** 推定スキャン行数 (走査ノードの最大値)。推定できなければ null (SQLite は常に null)。 */
+  /** 推定スキャン行数 (全走査ノードの最大値)。推定できなければ null (SQLite は常に null)。 */
   scanRows: number | null;
+  /** 全表スキャンのノードだけから取った推定行数 (最大値)。行数が分かる全表スキャンが無ければ null。 */
+  fullScanRows: number | null;
+  /**
+   * 行数が分からない全表スキャンが 1 つでもあるか (PostgreSQL の Filter 付き Seq Scan・
+   * SQLite など)。立っていると、他ノードの小さな行数で「軽い」と誤解させないよう警告以上にする。
+   */
+  unknownRowsFullScan: boolean;
   /** プラン内の走査ノード数。0 のときは何も表示しない。 */
   scanNodes: number;
 }
@@ -89,13 +101,17 @@ export function buildScanPlan(sql: string, driver?: string): ScanPlan | null {
   if (texts.some((w) => SET_OPERATORS.has(w))) return { explainSql: null };
   // サブクエリ (括弧内の SELECT)。マスク済み文字列なので文字列リテラル内は誤検出しない。
   if (/\(\s*(select|with)\b/i.test(trimmed)) return { explainSql: null };
-  return { explainSql: `${bundleExplainPrefix(driver)}${sql.trim()}` };
-}
-
-/** プランツリーの全ノードを走査する。 */
-function walk(node: PlanNode, visit: (n: PlanNode) => void): void {
-  visit(node);
-  for (const c of node.children) walk(c, visit);
+  // LIMIT 付きでも ORDER BY / GROUP BY / DISTINCT / 集約 / ウィンドウがあれば全件を読む。
+  const cheapLimit =
+    texts.includes("limit") &&
+    !texts.some(
+      (w) => w === "order" || w === "group" || w === "distinct" || w === "having" || w === "over",
+    ) &&
+    !/\b(count|sum|avg|min|max|group_concat|string_agg|array_agg|json_agg|total)\s*\(/i.test(trimmed);
+  return {
+    explainSql: `${bundleExplainPrefix(driver)}${sql.trim()}`,
+    ...(cheapLimit ? { cheapLimit: true } : {}),
+  };
 }
 
 // SQLite の走査ステップ: `SCAN t` / `SCAN TABLE t` / `SEARCH t USING INDEX ...`。
@@ -113,65 +129,92 @@ export function summarizeScan(driver: string, result: QueryResult | null): ScanS
   let fullScan = false;
   const tables: string[] = [];
   let scanRows: number | null = null;
+  let fullScanRows: number | null = null;
+  let unknownRowsFullScan = false;
   let scanNodes = 0;
-  const noteRows = (n: number | null) => {
-    if (n !== null && (scanRows === null || n > scanRows)) scanRows = n;
-  };
-  const noteFull = (table: unknown) => {
+  // 走査ノード 1 つを記録する。`rows` は推定できなければ null、`table` は全表スキャンのときだけ渡す。
+  const note = (rows: number | null, full: boolean, table?: unknown) => {
+    scanNodes++;
+    if (rows !== null && (scanRows === null || rows > scanRows)) scanRows = rows;
+    if (!full) return;
     fullScan = true;
     if (typeof table === "string" && table && !tables.includes(table)) tables.push(table);
+    if (rows === null) unknownRowsFullScan = true;
+    else if (fullScanRows === null || rows > fullScanRows) fullScanRows = rows;
   };
 
-  walk(root, (node) => {
+  // `workers`: 直近の祖先 Gather / Gather Merge の `Workers Planned` (PostgreSQL の並列計画)。
+  const visit = (node: PlanNode, workers: number | null): void => {
+    let childWorkers = workers;
     if (driver === "sqlite") {
       const detail = attrVal(node, "detail");
-      if (typeof detail !== "string" || !SQLITE_SCAN_RE.test(detail)) return;
-      // 定数行 (`SCAN CONSTANT ROW`) はテーブルを読まない。
-      if (/^\s*SCAN\s+CONSTANT\s+ROW\b/i.test(detail)) return;
-      scanNodes++;
-      // インデックス指定の無い SCAN だけが全表スキャン (`SCAN t USING [COVERING] INDEX` は
-      // 全インデックス走査で、テーブル全読みではない)。
-      if (/^\s*SCAN\b/i.test(detail) && !/\bUSING\s+(?:COVERING\s+)?INDEX\b/i.test(detail)) {
-        noteFull(SQLITE_TABLE_RE.exec(detail)?.[1]);
+      if (
+        typeof detail === "string" &&
+        SQLITE_SCAN_RE.test(detail) &&
+        !/^\s*SCAN\s+CONSTANT\s+ROW\b/i.test(detail)
+      ) {
+        // 定数行はテーブルを読まない。インデックス指定の無い SCAN だけが全表スキャン
+        // (`SCAN t USING [COVERING] INDEX` は全インデックス走査で、テーブル全読みではない)。
+        const full = /^\s*SCAN\b/i.test(detail) && !/\bUSING\s+(?:COVERING\s+)?INDEX\b/i.test(detail);
+        note(null, full, full ? SQLITE_TABLE_RE.exec(detail)?.[1] : undefined);
       }
-      return;
-    }
-    if (driver === "postgres") {
+    } else if (driver === "postgres") {
       const type = attrVal(node, "Node Type");
-      if (typeof type !== "string" || !/\bScan$/.test(type)) return;
-      // CTE / サブクエリ / 関数 / VALUES の走査は実テーブルの走査ではない。
-      if (/^(CTE|Subquery|Function|Table Function|Values|WorkTable)\b/.test(type)) return;
-      scanNodes++;
-      // Filter 付きの Seq Scan は `Plan Rows` がフィルタ後の見込み行数で、実際に読む行数
-      // (= テーブル全行) を大きく下回る。誤解を招く小さな数字を出さず行数は不明にする。
-      const filtered = attrVal(node, "Filter") !== undefined;
-      if (!(type === "Seq Scan" && filtered)) noteRows(parseNum(attrVal(node, "Plan Rows")));
-      if (type === "Seq Scan") noteFull(attrVal(node, "Relation Name"));
-      return;
+      if (typeof type === "string") {
+        if (type === "Gather" || type === "Gather Merge")
+          childWorkers = parseNum(attrVal(node, "Workers Planned"));
+        // CTE / サブクエリ / 関数 / VALUES の走査は実テーブルの走査ではない。
+        const isScan =
+          /\bScan$/.test(type) && !/^(CTE|Subquery|Function|Table Function|Values|WorkTable)\b/.test(type);
+        if (isScan) {
+          let rows = parseNum(attrVal(node, "Plan Rows"));
+          // 並列スキャンの `Plan Rows` はワーカー 1 つぶん。祖先 Gather の計画ワーカー数で補正する
+          // (取れなければ行数は不明)。
+          if (rows !== null && attrVal(node, "Parallel Aware") === true) {
+            rows = workers === null ? null : rows * (workers + 1);
+          }
+          // Filter 付きの Seq Scan は `Plan Rows` がフィルタ後の見込み行数で、実際に読む行数
+          // (= テーブル全行) を大きく下回る。誤解を招く小さな数字を出さず行数は不明にする。
+          const full = type === "Seq Scan";
+          if (full && attrVal(node, "Filter") !== undefined) rows = null;
+          note(rows, full, full ? attrVal(node, "Relation Name") : undefined);
+        }
+      }
+    } else if (node.kind === "table") {
+      // MySQL / MariaDB (`EXPLAIN FORMAT=JSON`)。
+      const access = attrVal(node, "access_type");
+      if (typeof access === "string") {
+        const full = access === "ALL";
+        note(
+          parseNum(attrVal(node, "rows_examined_per_scan")),
+          full,
+          full ? attrVal(node, "table_name") : undefined,
+        );
+      }
     }
-    // MySQL / MariaDB (`EXPLAIN FORMAT=JSON`)。
-    if (node.kind !== "table") return;
-    const access = attrVal(node, "access_type");
-    if (typeof access !== "string") return;
-    scanNodes++;
-    noteRows(parseNum(attrVal(node, "rows_examined_per_scan")));
-    if (access === "ALL") noteFull(attrVal(node, "table_name"));
-  });
+    for (const c of node.children) visit(c, childWorkers);
+  };
+  visit(root, null);
 
   if (scanNodes === 0) return null;
-  return { fullScan, fullScanTables: tables, scanRows, scanNodes };
+  return { fullScan, fullScanTables: tables, scanRows, fullScanRows, unknownRowsFullScan, scanNodes };
 }
 
 /**
  * バッジの色調。全表スキャン + 大きい推定行数ほど強く警告する。
  * - 推定行数 ≥ 100 万: danger / ≥ 10 万: warning (インデックスを使っていても大量走査は警告)
- * - 全表スキャン: 行数不明 (SQLite) または ≥ `SCAN_SMALL_TABLE_ROWS` なら warning、
- *   それ未満の小テーブルは neutral
+ * - 行数不明の全表スキャンがある、または全表スキャンの行数 ≥ `SCAN_SMALL_TABLE_ROWS`: warning
+ *   (それ未満の小テーブルだけなら neutral)
+ * - `cheapLimit` (ソート・集約の無い LIMIT 付き) は実読み取りが LIMIT で頭打ちになりうるので neutral。
  */
-export function scanTone(summary: ScanSummary): PreflightTone {
+export function scanTone(summary: ScanSummary, cheapLimit = false): PreflightTone {
+  if (cheapLimit) return "neutral";
   const rows = summary.scanRows;
   if (rows !== null && rows >= ROWS_WARNING_THRESHOLD) return "danger";
   if (rows !== null && rows >= ROWS_CAUTION_THRESHOLD) return "warning";
-  if (summary.fullScan && (rows === null || rows >= SCAN_SMALL_TABLE_ROWS)) return "warning";
+  if (summary.unknownRowsFullScan) return "warning";
+  if (summary.fullScan && summary.fullScanRows !== null && summary.fullScanRows >= SCAN_SMALL_TABLE_ROWS) {
+    return "warning";
+  }
   return "neutral";
 }

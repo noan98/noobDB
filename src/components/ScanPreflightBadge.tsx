@@ -34,14 +34,19 @@ export function ScanPreflightBadge({ result }: Props) {
     title = t("editorScanUnestimableTooltip");
   } else {
     const s = result.summary;
-    tone = scanTone(s);
-    const count = s.scanRows !== null ? Math.round(s.scanRows).toLocaleString() : null;
+    tone = scanTone(s, result.cheapLimit);
+    const fmt = (n: number | null) => (n !== null ? Math.round(n).toLocaleString() : null);
     if (s.fullScan) {
+      // 全表スキャンの行数は全表スキャンのノードだけから取る。行数不明の全表スキャンが
+      // 混ざるときは、他ノードの小さな数字で誤解させないよう行数を出さない。
+      const count = s.unknownRowsFullScan ? null : fmt(s.fullScanRows);
       label = count !== null ? t("editorScanFullScanRows", { count }) : t("editorScanFullScan");
       title = t("editorScanFullScanTooltip", {
         tables: s.fullScanTables.length > 0 ? s.fullScanTables.join(", ") : "-",
       });
+      if (result.cheapLimit) title = `${title} ${t("editorScanLimitedNote")}`;
     } else {
+      const count = fmt(s.scanRows);
       label = count !== null ? t("editorScanRows", { count }) : t("editorScanIndexed");
       title = t("editorScanTooltip");
     }

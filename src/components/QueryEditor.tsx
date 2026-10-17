@@ -364,6 +364,8 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /** 手動トランザクション中は true。スキャンプリフライトの EXPLAIN を休止する (#1508)。 */
+  scanPreflightPaused?: boolean;
   /**
    * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
    * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
@@ -672,6 +674,7 @@ export const QueryEditor = memo(
       focusMode,
       onToggleFocus,
       onPreflightImpact,
+      scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
     }: Props,
@@ -1432,7 +1435,7 @@ export const QueryEditor = memo(
       sql: preflightSql || null,
       sessionId: sessionId ?? null,
       database: defaultDatabase ?? null,
-      enabled: settings.scanPreflightEnabled && !disabled,
+      enabled: settings.scanPreflightEnabled && !disabled && !scanPreflightPaused,
       driver,
     });
     // バッジから開く影響行サンプル (#1626)。開いている間はその時点の SQL に固定する。
