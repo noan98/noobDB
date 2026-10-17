@@ -85,6 +85,13 @@
 読み取り専用ガードは副作用のある関数 (`pg_terminate_backend` / `nextval` / `setval` /
 `lo_*` など) も拒否する。`set_config` はセッション初期化で使うため対象外。
 
+**MySQL の `--` コメントは直後が空白・制御文字・文末のときだけ (#1735)。** `1--1` は `1 - (-1)` で
+コメントではない。`mask_for_driver` / `maskLiterals(sql, "mysql")` / `ScriptSplitter` は MySQL でだけこの規則に従い、
+PostgreSQL / SQLite は空白不要でコメントのまま。ドライバ不明の `is_read_only_sql` / `isReadOnlySql(sql)` は
+両方の読み方で判定して両方通ったときだけ読み取り専用とする (マスク自体 = `masked` は従来どおり `--` 常時コメント)。
+SQLite の `[関数名]` は引用符付き識別子と同様に拒否関数リストと照合する (フロントは `[` を含む SQL でも再照合)。
+ベクタは `readOnly` (ドライバ不明) / `readOnlyStandard` / `maskedMysql` / `statementsMysql` で固定。
+
 **ドライバ別の字句の例外 (#1601)。** PostgreSQL の `E'…'` (直前が単独の E/e) だけは `\` が
 エスケープ、SQLite の `[角括弧]` 識別子は本文を空白化する (閉じ `]` が無ければ識別子扱いにしない)。
 `mask_for_driver` / `maskLiterals(sql, driver)` / `ScriptSplitter` / プレビューの句切り出しが共通で従う。

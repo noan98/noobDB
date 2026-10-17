@@ -56,15 +56,16 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
   // キャッシュに持ち、同じ (driver, options, sql) は 1 回しか走査しない (#1256)。
   const keepIdent = options?.keepQuotedIdentifiers === true;
   const keepBrackets = options?.keepBrackets === true;
+  const dashSpace = options?.dashNeedsSpace ?? driver === "mysql";
   // 補完は毎打鍵で大きな文書を渡すので、安全網のキャッシュ (直近 8 件) を押し出さないよう外せる。
   if (options?.cache === false || sql.length > MASK_CACHE_MAX_SQL_CHARS) {
-    return maskLiteralsUncached(sql, driver, keepIdent, keepBrackets);
+    return maskLiteralsUncached(sql, driver, keepIdent, keepBrackets, dashSpace);
   }
   // オプション未指定のキーは従来どおり `driver\0sql` (既存のキャッシュ挙動を変えない)。
-  const key = `${keepIdent ? "ident\u0001" : ""}${keepBrackets ? "brackets\u0001" : ""}${driver ?? ""}\u0000${sql}`;
+  const key = `${keepIdent ? "ident\u0001" : ""}${keepBrackets ? "brackets\u0001" : ""}${dashSpace ? "dash\u0001" : ""}${driver ?? ""}\u0000${sql}`;
   const hit = maskCache.get(key);
   if (hit !== undefined) return hit;
-  const masked = maskLiteralsUncached(sql, driver, keepIdent, keepBrackets);
+  const masked = maskLiteralsUncached(sql, driver, keepIdent, keepBrackets, dashSpace);
   if (maskCache.size >= MASK_CACHE_ENTRIES) {
     // Map は挿入順なので、先頭 = 最も古いエントリを捨てる (FIFO)。
     const oldest = maskCache.keys().next();
@@ -96,6 +97,13 @@ export interface MaskOptions {
    * `mask_for_driver_keeping_brackets` と対)。
    */
   keepBrackets?: boolean;
+  /**
+   * true なら `--` を「直後が空白・制御文字・文末」のときだけ行コメントとする (MySQL の規則。
+   * `1--1` は `1 - (-1)` でコメントではない)。既定は driver が mysql のときだけ true。
+   * ドライバ不明の入口 (`isReadOnlySql` の driver 省略時) が、MySQL 解釈でも判定するために使う
+   * (Rust の `MaskExtras::mysql_dash` と対)。PostgreSQL / SQLite は空白不要でコメント。
+   */
+  dashNeedsSpace?: boolean;
 }
 
 /** マスク結果キャッシュの上限エントリ数。直近数回の実行ぶんで足りる。 */
@@ -104,7 +112,13 @@ const MASK_CACHE_ENTRIES = 8;
 const MASK_CACHE_MAX_SQL_CHARS = 256 * 1024;
 const maskCache = new Map<string, string>();
 
-function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false, keepBrackets = false): string {
+function maskLiteralsUncached(
+  sql: string,
+  driver?: string,
+  keepIdent = false,
+  keepBrackets = false,
+  dashNeedsSpace = false,
+): string {
   const backslashEscapes = driverBackslashEscapes(driver);
   const out = sql.split("");
   const n = sql.length;
@@ -117,7 +131,7 @@ function maskLiteralsUncached(sql: string, driver?: string, keepIdent = false, k
   while (i < n) {
     const c = sql[i];
     const c2 = sql[i + 1];
-    if (c === "-" && c2 === "-") {
+    if (c === "-" && c2 === "-" && (!dashNeedsSpace || dashStartsComment(sql[i + 2]))) {
       let j = i + 2;
       while (j < n && sql[j] !== "\n") j++;
       blank(i, j);
@@ -290,6 +304,13 @@ function driverBackslashEscapes(driver?: string): boolean {
  */
 function hashIsComment(driver?: string): boolean {
   return driver !== "postgres" && driver !== "sqlite";
+}
+
+/** MySQL では `--` の直後が空白・制御文字・文末のときだけコメント。バックの `dash_starts_comment` と同じ規則。 */
+function dashStartsComment(next: string | undefined): boolean {
+  if (next === undefined) return true;
+  const code = next.charCodeAt(0);
+  return code <= 0x20 || code === 0x7f;
 }
 
 function startsWithKeyword(body: string, keyword: string): boolean {
@@ -666,7 +687,15 @@ function hasLockingTableHint(body: string): boolean {
  * prompt, never a missed one). See `driverBackslashEscapes`.
  */
 export function isReadOnlySql(sql: string, driver?: string): boolean {
-  const masked = maskLiterals(sql, driver);
+  if (!isReadOnlySqlMasked(sql, driver)) return false;
+  // ドライバ不明のときは、MySQL の `--` 規則 (直後が空白でなければコメントではない) でも判定する。
+  // `SELECT 1--1; DROP TABLE t` は PostgreSQL / SQLite ではコメントだが MySQL では実行される。
+  return driver !== undefined || isReadOnlySqlMasked(sql, driver, true);
+}
+
+function isReadOnlySqlMasked(sql: string, driver?: string, dashNeedsSpace?: boolean): boolean {
+  const dash = dashNeedsSpace === undefined ? {} : { dashNeedsSpace };
+  const masked = maskLiterals(sql, driver, dash);
   const body = trimTrailingSeparators(masked.toLowerCase()).replace(/^\s+/, "");
   if (!body) return false;
   const allowedPrefix =
@@ -679,8 +708,10 @@ export function isReadOnlySql(sql: string, driver?: string): boolean {
   if (DENIED_FUNCTIONS.some((kw) => containsWord(body, kw))) return false;
   // 引用符付き識別子の中身を残したマスクでも照合する。引用符を含む SQL だけ計算し、
   // 補完向けの大きな入力と同様にキャッシュを汚さない (`cache: false`)。
-  if (/["`]/.test(sql)) {
+  // SQLite の `[関数名]` も識別子なので `[` を含む SQL も対象にする。
+  if (/["`[]/.test(sql)) {
     const withIdents = maskLiterals(sql, driver, {
+      ...dash,
       keepQuotedIdentifiers: true,
       cache: false,
     }).toLowerCase();
