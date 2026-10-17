@@ -114,6 +114,7 @@ import {
   marqueeSelection,
   parseCellKey,
   selectionFrameKey,
+  selectionMountedRows,
 } from "./selectionGlide";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Callout } from "./Callout";
@@ -1029,7 +1030,9 @@ export const GRID_CSS: SystemStyleObject = {
   // 入力欄が開いていない間はそれも枠に任せて消す (二重表示の防止)。
   "&[data-glide-active='on'] td.is-editable-cell.is-active-cell:focus-within:not(:has(.cell-edit-input)):not(.is-pending-edit):not(.is-invalid-edit)":
     { boxShadow: "none" },
-  "&[data-glide-selection='on'] tbody td.is-selected-cell:not(.is-active-cell)": { boxShadow: "none" },
+  "&[data-glide-selection='on'] tbody td.is-selected-cell:not(.is-active-cell):not(.is-pinned)": {
+    boxShadow: "none",
+  },
   "&[data-glide-find='on'] tbody td.is-find-current, &[data-glide-find='on'] tbody tr.grid-row-stripe td.is-find-current, &[data-glide-find='on'] tbody tr:hover td.is-find-current":
     { boxShadow: "none" },
   // マーキー選択中はセル内テキストの選択を止める (#1578)。
@@ -6837,16 +6840,16 @@ export const DataGrid = memo(function DataGrid({
     resolve: () => {
       if (!selectionRect) return [];
       // 端の行・列 (マウント済みのうち左上と右下) だけを測る。全選択でも O(窓) で済む。
-      const rowOf = (vi: number) => visibleRows[vi]?.index;
-      const mountedRow = (from: number, to: number, step: 1 | -1) => {
-        for (let vi = from; step === 1 ? vi <= to : vi >= to; vi += step) {
-          const ri = rowOf(vi);
-          if (ri !== undefined && visibleColIds.some((c) => cellEl(ri, c))) return ri;
-        }
-        return undefined;
-      };
-      const top = mountedRow(selectionRect.r0, selectionRect.r1, 1);
-      const bottom = mountedRow(selectionRect.r1, selectionRect.r0, -1);
+      // 選択の行範囲とマウント済みの行範囲の交わりの両端だけを使う (選択の大きさに比例させない)。
+      const mounted =
+        virtualize && bodyIndices.length > 0
+          ? { first: bodyIndices[0], last: bodyIndices[bodyIndices.length - 1] }
+          : virtualize
+            ? { first: 1, last: 0 }
+            : null;
+      const span = selectionMountedRows(selectionRect.r0, selectionRect.r1, mounted);
+      const top = span ? visibleRows[span.top]?.index : undefined;
+      const bottom = span ? visibleRows[span.bottom]?.index : undefined;
       if (top === undefined || bottom === undefined) return [];
       const colsIn = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
       const firstCol = colsIn.find((c) => cellEl(top, c));

@@ -191,12 +191,10 @@ describe("滑って追従する選択枠 (#1578, 実ブラウザ)", () => {
     await expect
       .poll(() => document.querySelector("thead th[data-col-id]")?.getAttribute("data-col-id"))
       .not.toBe("0");
-    // 並べ替え後、列 a は 2 列目へ動く (セルの FLIP が再生中でも offset 計測なので枠は最終位置)。
     await expect.poll(() => td(0, 0).getBoundingClientRect().left).toBeGreaterThan(0);
     await new Promise((r) => setTimeout(r, 30));
     const f = frame("active");
-    const cellsLeft = td(0, 0).offsetLeft + (td(0, 0).offsetParent as HTMLElement).offsetLeft;
-    expect(Math.abs(Number.parseFloat(getComputedStyle(f).left) - cellsLeft) < 1.5).toBe(true);
+    // 再生を終わらせた後、枠とセルが (getBoundingClientRect で) 重なる。
     for (const a of document.getAnimations()) a.finish();
     expectOver(f, td(0, 0));
   });

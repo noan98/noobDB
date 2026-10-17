@@ -12,6 +12,7 @@ import {
   marqueeSelection,
   parseCellKey,
   selectionFrameKey,
+  selectionMountedRows,
   shouldGlide,
   toContentBox,
   unionBoxes,
@@ -141,5 +142,18 @@ describe("marqueeSelection", () => {
     });
     expect(marqueeSelection(a, a)).toBeNull();
     expect(marqueeSelection(a, null)).toBeNull();
+  });
+});
+
+describe("selectionMountedRows", () => {
+  it("選択とマウント済みの行範囲の交わりを返す", () => {
+    expect(selectionMountedRows(0, 99999, { first: 500, last: 540 })).toEqual({ top: 500, bottom: 540 });
+    expect(selectionMountedRows(510, 520, { first: 500, last: 540 })).toEqual({ top: 510, bottom: 520 });
+    expect(selectionMountedRows(0, 505, { first: 500, last: 540 })).toEqual({ top: 500, bottom: 505 });
+  });
+  it("重なりが無ければ null、仮想化しない (null) なら選択範囲そのまま", () => {
+    expect(selectionMountedRows(0, 10, { first: 500, last: 540 })).toBeNull();
+    expect(selectionMountedRows(0, 10, { first: 1, last: 0 })).toBeNull();
+    expect(selectionMountedRows(3, 9, null)).toEqual({ top: 3, bottom: 9 });
   });
 });

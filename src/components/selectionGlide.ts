@@ -180,3 +180,20 @@ export function parseCellKey(key: string): { rowIdx: number; colIdx: number } | 
   const colIdx = Number(key.slice(sep + 1));
   return Number.isInteger(rowIdx) && Number.isInteger(colIdx) ? { rowIdx, colIdx } : null;
 }
+
+/**
+ * 選択の行範囲 `[r0, r1]` (表示位置) のうち、マウント済みの行範囲 `[mountedFirst, mountedLast]`
+ * との交わり。重なりが無ければ `null`。計算量は選択の大きさに依らず O(1) で、巨大な選択
+ * (Ctrl+A) でスクロールするたびに全行を走査しないための土台 (選択枠の端の行を測るのに使う)。
+ * `mounted` が `null` (仮想化しない) なら選択範囲をそのまま返す。
+ */
+export function selectionMountedRows(
+  r0: number,
+  r1: number,
+  mounted: { first: number; last: number } | null,
+): { top: number; bottom: number } | null {
+  if (mounted === null) return { top: r0, bottom: r1 };
+  const top = Math.max(r0, mounted.first);
+  const bottom = Math.min(r1, mounted.last);
+  return top <= bottom ? { top, bottom } : null;
+}
