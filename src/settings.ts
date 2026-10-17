@@ -214,6 +214,13 @@ export interface Settings {
    */
   shortcutOverrides: Record<string, string>;
   /**
+   * 修飾キー (Cmd/Ctrl) を押し続けている間、その文脈で押せるショートカットを画面下部に
+   * ヒント表示する (which-key 風, #1487)。表示のみで、キー処理は横取りしない。
+   */
+  shortcutHintEnabled: boolean;
+  /** ヒントを出すまでの押しっぱなし時間 (ミリ秒)。短い押下や通常のショートカット入力では出さない。 */
+  shortcutHintDelayMs: number;
+  /**
    * 長時間クエリ完了時に OS デスクトップ通知を出す (#707)。ウィンドウが
    * 非フォーカスかつ実行時間が `queryNotificationThresholdSecs` 以上のときのみ
    * 発火する (判定は `queryNotify.ts`)。
@@ -708,6 +715,11 @@ const MAX_INSPECTOR_N_PLUS_ONE_WINDOW_MS = 60_000;
 
 export const DEFAULT_AUTO_RECONNECT_ENABLED = true;
 export const DEFAULT_AUTO_RECONNECT_MAX_RETRIES = 5;
+
+/** ショートカットヒント (#1487) の既定の遅延と許容範囲 (ミリ秒)。 */
+export const DEFAULT_SHORTCUT_HINT_DELAY_MS = 600;
+export const MIN_SHORTCUT_HINT_DELAY_MS = 300;
+export const MAX_SHORTCUT_HINT_DELAY_MS = 3000;
 export const MIN_AUTO_RECONNECT_RETRIES = 1;
 export const MAX_AUTO_RECONNECT_RETRIES = 20;
 
@@ -800,6 +812,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoReconnectEnabled: DEFAULT_AUTO_RECONNECT_ENABLED,
   autoReconnectMaxRetries: DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
   shortcutOverrides: {},
+  shortcutHintEnabled: true,
+  shortcutHintDelayMs: DEFAULT_SHORTCUT_HINT_DELAY_MS,
   queryNotificationsEnabled: DEFAULT_QUERY_NOTIFICATIONS_ENABLED,
   queryNotificationThresholdSecs: DEFAULT_QUERY_NOTIFICATION_THRESHOLD_SECS,
   autoUpdateCheckEnabled: DEFAULT_AUTO_UPDATE_CHECK_ENABLED,
@@ -832,6 +846,15 @@ export function sanitizeAutoReconnectRetries(input: unknown, fallback: number): 
   const n = Math.floor(input);
   if (n < MIN_AUTO_RECONNECT_RETRIES) return MIN_AUTO_RECONNECT_RETRIES;
   if (n > MAX_AUTO_RECONNECT_RETRIES) return MAX_AUTO_RECONNECT_RETRIES;
+  return n;
+}
+
+/** ショートカットヒントの遅延 (ミリ秒) を許容範囲へ丸める (#1487)。 */
+export function sanitizeShortcutHintDelayMs(input: unknown, fallback: number): number {
+  if (typeof input !== "number" || !Number.isFinite(input)) return fallback;
+  const n = Math.round(input);
+  if (n < MIN_SHORTCUT_HINT_DELAY_MS) return MIN_SHORTCUT_HINT_DELAY_MS;
+  if (n > MAX_SHORTCUT_HINT_DELAY_MS) return MAX_SHORTCUT_HINT_DELAY_MS;
   return n;
 }
 
@@ -1034,6 +1057,8 @@ export function normalizeSettings(input: unknown): Settings {
     autoReconnectEnabled?: unknown;
     autoReconnectMaxRetries?: unknown;
     shortcutOverrides?: unknown;
+    shortcutHintEnabled?: unknown;
+    shortcutHintDelayMs?: unknown;
     queryNotificationsEnabled?: unknown;
     queryNotificationThresholdSecs?: unknown;
     autoUpdateCheckEnabled?: unknown;
@@ -1139,6 +1164,11 @@ export function normalizeSettings(input: unknown): Settings {
       DEFAULT_AUTO_RECONNECT_MAX_RETRIES,
     ),
     shortcutOverrides: sanitizeShortcutOverrides(parsed.shortcutOverrides),
+    shortcutHintEnabled: typeof parsed.shortcutHintEnabled === "boolean" ? parsed.shortcutHintEnabled : true,
+    shortcutHintDelayMs: sanitizeShortcutHintDelayMs(
+      parsed.shortcutHintDelayMs,
+      DEFAULT_SHORTCUT_HINT_DELAY_MS,
+    ),
     queryNotificationsEnabled:
       typeof parsed.queryNotificationsEnabled === "boolean"
         ? parsed.queryNotificationsEnabled
@@ -1844,6 +1874,21 @@ export function setTableOpenQueryOverride(entry: TableOpenQueryOverride): boolea
 /** テーブル別の上書きを削除する。 */
 export function removeTableOpenQueryOverride(profileId: string, database: string, table: string): void {
   setTableOpenQueryOverride({ profileId, profileName: "", database, table, template: "" });
+}
+
+export function setShortcutHintEnabled(value: boolean): void {
+  if (current.shortcutHintEnabled === value) return;
+  current = { ...current, shortcutHintEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setShortcutHintDelayMs(value: number): void {
+  const next = sanitizeShortcutHintDelayMs(value, current.shortcutHintDelayMs);
+  if (current.shortcutHintDelayMs === next) return;
+  current = { ...current, shortcutHintDelayMs: next };
+  persist();
+  listeners.forEach((cb) => cb());
 }
 
 export function setQuickLauncherEnabled(value: boolean): void {
