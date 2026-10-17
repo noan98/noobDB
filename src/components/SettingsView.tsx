@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { chakra } from "@chakra-ui/react";
 import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { api } from "../api/tauri";
-import { THEME_PREVIEW_CHIP_ORDER, themePreviewColors, themePreviewGradient } from "../themePresetPreview";
+import {
+  THEME_PREVIEW_CHIP_ORDER,
+  appearancePreviewVars,
+  themePreviewColors,
+  themePreviewGradient,
+} from "../themePresetPreview";
+import { AppearancePreview } from "./AppearancePreview";
 import { useT, type I18nKey } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -461,6 +467,11 @@ const ThemePresetRow = chakra("div", {
 // いたため、専用の recipe を持たず `SelectableCard size="compact"` を直接使う。
 const ThemePresetCard = SelectableCard;
 
+// ライブ・アピアランス・プレビュー (#1581) を表示セクションの先頭に固定する。
+const AppearancePreviewDock = chakra("div", {
+  base: { position: "sticky", top: 0, zIndex: "sticky", bg: "app.surface", pb: "2", pt: "1" },
+});
+
 // 5 色を 1 本の帯 (CSS グラデーション) で並べたミニパレット。チップ 1 個ずつを
 // 別 DOM 要素にすると 7 プリセット × 5 チップ = 35 要素が常時マウントされ、設定
 // モーダルの初期レンダーコストが目に見えて増える (#789 実装時に settingsView.test.tsx
@@ -657,6 +668,20 @@ const SECTIONS: SettingsSectionMeta[] = [
 
 const SETTINGS_IMPORT_DIFF_PREVIEW = 15;
 
+/**
+ * ホバー / フォーカス中のカードやスウォッチ (`data-<attr>` 付き) を拾って「選ぶ前」の
+ * プレビュー状態へ流す委譲ハンドラ (#1581)。個々のカードは `Tooltip` に包まれていて
+ * イベントハンドラを直接足せないため、親の行で拾う。
+ */
+function previewHandlers(attr: string, set: (v: string | null) => void) {
+  const pick = (e: React.SyntheticEvent) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>(`[data-${attr}]`);
+    set(el?.getAttribute(`data-${attr}`) ?? null);
+  };
+  const clear = () => set(null);
+  return { onMouseOver: pick, onMouseLeave: clear, onFocus: pick, onBlur: clear };
+}
+
 export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Props) {
   const t = useT();
   const toast = useToast();
@@ -665,6 +690,9 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
   // 編集対象は画面に実際に適用されている配色 (ダーク専用プリセットではトグル値ではなく
   // 実効テーマ) に揃える。
   const theme = effectiveTheme(settings.themePreset, toggleTheme);
+  // 「選ぶ前」のプレビュー (#1581): ホバー / フォーカス中のプリセット・アクセントだけモックへ上書きする。
+  const [previewPreset, setPreviewPreset] = useState<ThemePreset | null>(null);
+  const [previewAccent, setPreviewAccent] = useState<{ hex: string | null } | null>(null);
   const colors = settings.syntaxColors[theme];
   const previewHighlight = settings.previewHighlight[theme];
   const themeLabel = t(theme === "dark" ? "settingsThemeDark" : "settingsThemeLight");
@@ -1212,6 +1240,18 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                   <chakra.h3>{t("settingsAppearance")}</chakra.h3>
                   <SettingsReset onClick={resetAppearanceDefaults}>{t("settingsReset")}</SettingsReset>
                 </SettingsSectionHeader>
+                <AppearancePreviewDock>
+                  <AppearancePreview
+                    previewVars={appearancePreviewVars({
+                      previewPreset,
+                      previewAccent,
+                      currentPreset: settings.themePreset,
+                      toggleTheme,
+                      accentColor: settings.accentColor,
+                      syntaxColors: settings.syntaxColors,
+                    })}
+                  />
+                </AppearancePreviewDock>
                 <SettingsNumberRow>
                   <SettingsLabelWithInfo>
                     <chakra.label htmlFor="settings-font-size">{t("settingsFontSize")}</chakra.label>
@@ -1282,7 +1322,11 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     <SettingsToggleLabel as="span">{t("settingsThemePreset")}</SettingsToggleLabel>
                     <SettingsInfo>{t("settingsThemePresetHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
-                  <ThemePresetRow role="group" aria-label={t("settingsThemePreset")}>
+                  <ThemePresetRow
+                    role="group"
+                    aria-label={t("settingsThemePreset")}
+                    {...previewHandlers("preset", (v) => setPreviewPreset(v as ThemePreset | null))}
+                  >
                     {THEME_PRESET_ORDER.map((p) => {
                       const selected = settings.themePreset === p;
                       const colors = themePreviewColors(p, toggleTheme);
@@ -1299,6 +1343,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                             size="compact"
                             width="92px"
                             aria-pressed={selected}
+                            data-preset={p}
                             onClick={() => setThemePreset(p as ThemePreset)}
                           >
                             <ThemePresetSwatchStrip
@@ -1352,7 +1397,14 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     <SettingsToggleLabel as="span">{t("settingsAccentColor")}</SettingsToggleLabel>
                     <SettingsInfo>{t("settingsAccentColorHelp")}</SettingsInfo>
                   </SettingsLabelWithInfo>
-                  <SettingsSwatchRow role="group" aria-label={t("settingsAccentColor")}>
+                  <SettingsSwatchRow
+                    role="group"
+                    aria-label={t("settingsAccentColor")}
+                    {...previewHandlers("accent", (key) => {
+                      const found = ACCENT_PRESETS.find((a) => a.key === key);
+                      setPreviewAccent(found ? { hex: found.hex } : null);
+                    })}
+                  >
                     {ACCENT_PRESETS.map((p) => {
                       const selected =
                         p.hex === null
@@ -1366,6 +1418,7 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                             aria-label={t(ACCENT_LABEL_KEYS[p.key])}
                             data-default={p.hex === null ? "" : undefined}
                             style={p.hex ? { background: p.hex } : undefined}
+                            data-accent={p.key}
                             onClick={() => setAccentColor(p.hex)}
                           />
                         </Tooltip>
