@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 
@@ -20,8 +20,8 @@ const APP: &str = "noobDB";
 /// 状態のままなので安全。
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &sandboxes_path()?)
 }
 
 pub fn data_dir() -> Option<PathBuf> {
@@ -78,7 +78,7 @@ fn save_all_at(path: &std::path::Path, sandboxes: &[SandboxRecord]) -> Result<()
 }
 
 pub fn load_all() -> Result<Vec<SandboxRecord>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     load_all_locked()
 }
 
@@ -134,7 +134,7 @@ fn write_atomic(path: &std::path::Path, content: &[u8]) -> std::io::Result<()> {
 
 pub fn upsert(record: SandboxRecord) -> Result<()> {
     // 読み→書きの全体でロックを保持するため、ロックを取らない内部版を直接使う。
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     if let Some(existing) = all.iter_mut().find(|s| s.id == record.id) {
         *existing = record;
@@ -145,7 +145,7 @@ pub fn upsert(record: SandboxRecord) -> Result<()> {
 }
 
 pub fn delete(id: &str) -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     let mut all = load_all_locked()?;
     all.retain(|s| s.id != id);
     save_all_locked(&all)

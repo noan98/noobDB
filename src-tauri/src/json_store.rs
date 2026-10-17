@@ -8,7 +8,7 @@
 //! - **秘密情報は載せない**こと (`profiles.json` / keyring の分離規約は呼び出し側が守る)。
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::Mutex;
 
 use directories::ProjectDirs;
 use serde::de::DeserializeOwned;
@@ -30,10 +30,11 @@ impl JsonStore {
         }
     }
 
-    fn guard(&self) -> MutexGuard<'_, ()> {
-        // poisoning は無視して続行する: 本ファイルは `write_atomic` のおかげで常に
-        // 直前の一貫した状態のまま。
-        self.lock.lock().unwrap_or_else(PoisonError::into_inner)
+    /// プロセス内 `Mutex` + プロセス間ファイルロック (`store_lock`、#1546) を取得する。
+    /// poisoning は無視して続行する: 本ファイルは `write_atomic` のおかげで常に
+    /// 直前の一貫した状態のまま。
+    fn guard(&self, path: &Path) -> Result<crate::store_lock::StoreGuard<'_>> {
+        crate::store_lock::acquire(&self.lock, path)
     }
 
     fn path(&self) -> Result<PathBuf> {
@@ -46,8 +47,9 @@ impl JsonStore {
 
     /// 読み込み (ロックあり)。
     pub fn read<T: DeserializeOwned + Default>(&self) -> Result<T> {
-        let _g = self.guard();
-        load_from(&self.path()?)
+        let path = self.path()?;
+        let _g = self.guard(&path)?;
+        load_from(&path)
     }
 
     /// 読み込み → 変更 → 書き込みを 1 回のロックで行い、`f` の戻り値を返す。
@@ -55,8 +57,9 @@ impl JsonStore {
     where
         T: DeserializeOwned + Serialize + Default,
     {
-        let _g = self.guard();
-        update_at(&self.path()?, f)
+        let path = self.path()?;
+        let _g = self.guard(&path)?;
+        update_at(&path, f)
     }
 }
 

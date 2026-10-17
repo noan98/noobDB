@@ -27,6 +27,7 @@ mod snippets;
 mod ssh;
 mod ssm;
 mod state;
+mod store_lock;
 mod table_stat_store;
 mod tasks;
 mod text_encoding;
