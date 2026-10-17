@@ -580,6 +580,7 @@ import {
 } from "./snippetQuickAccess";
 import { TableOpenQueryModal } from "./components/TableOpenQueryModal";
 import { QuickLauncher } from "./components/QuickLauncher";
+import { ShortcutHintOverlay } from "./components/ShortcutHintOverlay";
 import type { QuickLauncherSectionId } from "./quickLauncher";
 import {
   applyTableOpenTemplate,
@@ -13996,6 +13997,10 @@ export default function App() {
           />
         )}
       </Grid>
+      <ShortcutHintOverlay
+        surface={workspaceView !== "workspace" || !sessionId}
+        isBlocked={() => overlayOpenRef.current}
+      />
       {quickLauncherVisible && (
         <QuickLauncher
           open={quickLauncherOpen}
