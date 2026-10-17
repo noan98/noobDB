@@ -3,6 +3,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion, Reorder, useReducedMotion } from "motion/react";
 import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
+import { Spinner } from "./Spinner";
 import { transitions, variants } from "../motion";
 import { moveTabBy } from "../tabReorder";
 import { Tooltip } from "./Tooltip";
@@ -34,6 +35,7 @@ const ReorderItemDiv = forwardRef<HTMLDivElement, React.ComponentProps<typeof Re
     return <Reorder.Item as="div" ref={ref} {...props} />;
   },
 );
+const MotionTabIcon = chakra(motion.span, {}, { forwardProps: ["transition", "initial", "animate", "exit"] });
 const MotionTab = chakra(ReorderItemDiv, {}, { forwardProps: ["transition"] });
 
 export interface TabInfo {
@@ -43,6 +45,22 @@ export interface TabInfo {
   database?: string;
   table?: string;
   dirty?: boolean;
+  /** クエリ実行中 (ストリーミング / バッチ)。種別アイコンがスピナーに切り替わる (#1500)。 */
+  running?: boolean;
+}
+
+/** TabBar が描画に使う項目が全て一致するか (PaneView が配列参照を安定させるのに使う, #1500)。 */
+export function sameTabInfo(a: TabInfo | undefined, b: TabInfo): boolean {
+  return (
+    a !== undefined &&
+    a.id === b.id &&
+    a.kind === b.kind &&
+    a.title === b.title &&
+    a.database === b.database &&
+    a.table === b.table &&
+    a.dirty === b.dirty &&
+    a.running === b.running
+  );
 }
 
 interface Props {
@@ -496,6 +514,7 @@ export const TabBar = memo(function TabBar({
                 // 装飾的な補足情報のため、実害の小さいこの 1 箇所のみ native
                 // title を残す判断とする。
                 title={renamingTabId === tab.id ? undefined : title}
+                aria-busy={tab.running ? true : undefined}
                 // 追加・削除は opacity + scaleX だけで表す (#1322)。width を 0 ↔ auto に
                 // 補間すると隣のタブが毎フレーム再配置されるため。隣は即時に詰まる。
                 initial={variants.fadeScaleX.initial}
@@ -574,9 +593,31 @@ export const TabBar = memo(function TabBar({
                         : null
                     }
                   >
-                    <Icon
-                      name={tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"}
-                    />
+                    {/* 実行中は種別アイコンをスピナーへクロスフェードする (#1500)。reduced-motion は
+                        ルートの MotionConfig と App.css が抑制する (スピナーは静止リングになる)。 */}
+                    <AnimatePresence mode="wait" initial={false}>
+                      <MotionTabIcon
+                        key={tab.running ? "running" : "kind"}
+                        initial={variants.fadeScale.initial}
+                        animate={variants.fadeScale.animate}
+                        exit={variants.fadeScale.exit}
+                        transition={transitions.crossfade}
+                        display="inline-flex"
+                        alignItems="center"
+                        justifyContent="center"
+                        data-running={tab.running ? "true" : undefined}
+                      >
+                        {tab.running ? (
+                          <Spinner size={12} decorative />
+                        ) : (
+                          <Icon
+                            name={
+                              tab.kind === "table" ? "table" : tab.kind === "explain" ? "explain" : "query"
+                            }
+                          />
+                        )}
+                      </MotionTabIcon>
+                    </AnimatePresence>
                   </FlightIcon>
                 </chakra.span>
                 {renamingTabId === tab.id && tab.kind === "query" ? (
