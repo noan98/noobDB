@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { animate, motion, useMotionValue, useReducedMotionConfig, useTransform } from "motion/react";
 import { durations, easings, transitions } from "../motion";
 import { revealClipPath, revealRadius, type RevealPoint } from "./revealOrigin";
@@ -114,14 +114,19 @@ function HoleReveal({
       `radial-gradient(circle at ${Math.round(origin.x)}px ${Math.round(origin.y)}px, transparent ${v}px, #000 ${v}px)`,
   );
 
+  // 呼び出し側は onDone を毎回新しく渡すので、最新値を ref で参照し、effect の依存には
+  // 入れない (入れると親の再描画のたびにアニメが最初からやり直しになる)。
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
   useEffect(() => {
     const controls = animate(r, radius, {
       duration: durations.slow + durations.med,
       ease: easings.out,
-      onComplete: onDone,
+      onComplete: () => onDoneRef.current(),
     });
     return () => controls.stop();
-  }, [r, radius, onDone]);
+  }, [r, radius]);
 
   return (
     <motion.div

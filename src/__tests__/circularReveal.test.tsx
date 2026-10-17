@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, waitFor } from "@testing-library/react";
 import { MotionConfig } from "motion/react";
 import { describe, expect, it } from "vitest";
 import { CircularReveal } from "../components/CircularReveal";
@@ -37,5 +37,23 @@ describe("CircularReveal (#1582)", () => {
     const el = mount("never", { plain: true });
     expect(el?.dataset.reveal).toBe("flat");
     expect(el?.style.opacity).toBe("0.3");
+  });
+
+  it("親の再描画で onDone が新しくなってもアニメは再開せず、onDone は 1 回だけ呼ばれる", async () => {
+    const calls: string[] = [];
+    const ui = (tag: string) => (
+      <MotionConfig reducedMotion="never">
+        <CircularReveal origin={origin} variant="hole" color="black" onDone={() => calls.push(tag)} />
+      </MotionConfig>
+    );
+    const { rerender } = render(ui("a"));
+    // アニメ (約 0.52 秒) の途中で、新しい onDone を渡して何度も再描画する
+    await new Promise((r) => setTimeout(r, 150));
+    rerender(ui("b"));
+    await new Promise((r) => setTimeout(r, 150));
+    rerender(ui("c"));
+    await waitFor(() => expect(calls.length).toBeGreaterThan(0), { timeout: 1500 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(calls).toEqual(["c"]);
   });
 });

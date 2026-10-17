@@ -65,7 +65,7 @@ export function ThemeTransition({ themeKey }: { themeKey: string }) {
           flatColor="var(--bg)"
           flatOpacity={0.5}
           plain={flash.plain}
-          onDone={() => setFlash(null)}
+          onDone={() => setFlash((f) => (f?.key === flash.key ? null : f))}
         />
       )}
     </AnimatePresence>,

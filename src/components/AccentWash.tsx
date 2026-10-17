@@ -89,7 +89,7 @@ export function AccentWash({
           plain={flash.plain}
           color={flash.color}
           opacity={flash.opacity}
-          onDone={() => setFlash(null)}
+          onDone={() => setFlash((f) => (f?.key === flash.key ? null : f))}
         />
       )}
     </AnimatePresence>,
