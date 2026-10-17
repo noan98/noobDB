@@ -23,7 +23,8 @@ jobs:
   # ワークフロー単位の paths: で丸ごとスキップすると必須チェック設定時に「待機中」で
   # 固まるため、ジョブ単位の if: でゲートする (スキップは必須チェックを満たす)。
   # ジョブレベルの if: は matrix 展開前に評価され matrix コンテキストを参照できないので、
-  # このジョブが解析対象の言語を JSON (outputs.matrix) にして analyze の matrix に渡す。週次の schedule 実行は常にフル解析する。
+  # このジョブが解析対象の言語を JSON (outputs.matrix) にして analyze の matrix に渡す。
+  # 週次の schedule と手動実行 (workflow_dispatch) は常にフル解析する。
   changes:
     name: detect changed areas
     runs-on: ubuntu-latest
@@ -83,8 +84,8 @@ jobs:
     name: CodeQL (${{ matrix.language }})
     needs: changes
     # 解析対象の言語が 1 つも無い PR (ドキュメントのみ等) ではスキップする。
-    # changes ジョブは常に走るが、!cancelled() で依存ジョブの状態に引きずられないようにする。
-    if: ${{ !cancelled() && needs.changes.outputs.matrix != '[]' }}
+    # changes が失敗したときは matrix が空文字になり fromJSON で分かりにくく落ちるので、成功時だけ走らせる。
+    if: ${{ needs.changes.result == 'success' && needs.changes.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -133,7 +134,7 @@ jobs:
           # 追加のカスタムクエリは queries: フィールドで指定できる。
           queries: security-extended
 
-      # JS/TS は autobuild で対応できる (Rust は build-mode: none のため対象外) (ビルド成果物に依存しないため)。
+      # JS/TS は autobuild で対応できる (ビルド成果物に依存しないため。Rust は build-mode: none なので対象外)。
       # init / autobuild / analyze は同一バージョンに揃える必要がある (init が書いた
       # 設定を後続ステップが読むため)。一部のステップだけバージョンが上がると
       # 「Loaded a configuration file for version 'X', but running version 'Y'」の
