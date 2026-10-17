@@ -4490,6 +4490,7 @@ export const DataGrid = memo(function DataGrid({
       col: tableEl?.querySelector<HTMLElement>(`col[data-col-id="${column.id}"]`) ?? null,
       table: tableEl,
       header: (e.currentTarget as HTMLElement).closest("th"),
+      guideLabel: (width) => t("gridResizeWidthBadge", { width }),
       onCommit: (size) => handleColumnSizingChange((prev) => ({ ...prev, [column.id]: size })),
     });
   };

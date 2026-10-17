@@ -18,6 +18,58 @@ export function resizedColumnWidth(
   return Math.max(minSize, Math.min(maxSize, next));
 }
 
+/** 幅バッジに出す数値 (整数 px)。 */
+export function formatResizeWidth(size: number): string {
+  return String(Math.round(size));
+}
+
+/** 幅が最小 / 最大に張り付いているか (バッジの強調表示用)。 */
+export function resizeClampState(size: number, minSize: number, maxSize: number): "min" | "max" | null {
+  if (size <= minSize) return "min";
+  if (size >= maxSize) return "max";
+  return null;
+}
+
+/**
+ * ドラッグ中だけ出すライブガイド (縦線 + 幅バッジ) (#1580)。単一の `position: fixed` 要素を
+ * `document.body` へ足し、`transform` だけを rAF で動かす (React の state / 再レンダーには
+ * 乗せない)。離したら取り除く。見た目は `App.css` の `.col-resize-guide`。
+ */
+function createResizeGuide(header: HTMLElement, table: HTMLElement | null, label: (width: string) => string) {
+  const el = document.createElement("div");
+  el.className = "col-resize-guide";
+  el.setAttribute("aria-hidden", "true");
+  const badge = document.createElement("span");
+  badge.className = "col-resize-guide-badge";
+  el.appendChild(badge);
+  // 縦ガイドの範囲: ヘッダ上端から、スクロール領域 (無ければテーブル) の下端まで。
+  let bottomEl: HTMLElement | null = table?.parentElement ?? null;
+  while (bottomEl && bottomEl !== document.body) {
+    const oy = getComputedStyle(bottomEl).overflowY;
+    if (oy === "auto" || oy === "scroll") break;
+    bottomEl = bottomEl.parentElement;
+  }
+  const topRect = header.getBoundingClientRect();
+  const bottom = (
+    bottomEl && bottomEl !== document.body ? bottomEl : (table ?? header)
+  ).getBoundingClientRect().bottom;
+  el.style.top = `${topRect.top}px`;
+  el.style.height = `${Math.max(0, bottom - topRect.top)}px`;
+  // 初回の位置は追加前に確定させる (transition で画面左端から滑ってこないように)。
+  el.style.transform = `translateX(${topRect.right}px)`;
+  document.body.appendChild(el);
+  return {
+    update(size: number, clamp: "min" | "max" | null) {
+      el.style.transform = `translateX(${header.getBoundingClientRect().right}px)`;
+      badge.textContent = label(formatResizeWidth(size));
+      el.dataset.clamp = clamp ?? "";
+    },
+    remove() {
+      el.remove();
+    },
+  };
+}
+
 export interface ColumnResizeDragOptions {
   /** `mousedown` / `touchstart` のイベント。 */
   event: React.MouseEvent | React.TouchEvent;
@@ -30,6 +82,8 @@ export interface ColumnResizeDragOptions {
   table: HTMLElement | null;
   /** 列ヘッダ `<th>` (リサイズ中の見た目用クラスを付ける)。 */
   header: HTMLElement | null;
+  /** 幅バッジの文言 (数値文字列 → 表示文)。省略するとライブガイドを出さない。 */
+  guideLabel?: (width: string) => string;
   /** 確定した幅。変化が無ければ呼ばれない。 */
   onCommit: (size: number) => void;
 }
@@ -44,7 +98,7 @@ function clientXOf(e: MouseEvent | TouchEvent): number | null {
 
 /** ドラッグを開始する。ドキュメントへ move / up を張り、終了時に解除する。 */
 export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
-  const { event, startSize, minSize, maxSize, col, table, header, onCommit } = opts;
+  const { event, startSize, minSize, maxSize, col, table, header, guideLabel, onCommit } = opts;
   const native = event.nativeEvent;
   // 副ボタンのクリックではドラッグしない (TanStack の既定と同じ)。
   if ("button" in native && native.button !== 0 && native.type === "mousedown") return;
@@ -58,11 +112,14 @@ export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
   let pendingX: number | null = null;
   let raf = 0;
   header?.classList.add("is-resizing");
+  const guide = header && guideLabel ? createResizeGuide(header, table, guideLabel) : null;
+  guide?.update(size, resizeClampState(size, minSize, maxSize));
 
   const apply = (x: number) => {
     size = resizedColumnWidth(startSize, x - startX, minSize, maxSize);
     if (col) col.style.width = `${size}px`;
     if (table && startTableWidth > 0) table.style.width = `${startTableWidth + (size - startSize)}px`;
+    guide?.update(size, resizeClampState(size, minSize, maxSize));
   };
   const flush = () => {
     if (raf) {
@@ -92,6 +149,7 @@ export function beginColumnResizeDrag(opts: ColumnResizeDragOptions): void {
     document.removeEventListener(isTouch ? "touchend" : "mouseup", onEnd);
     if (isTouch) document.removeEventListener("touchcancel", onEnd);
     header?.classList.remove("is-resizing");
+    guide?.remove();
     if (size !== startSize) onCommit(size);
   };
   document.addEventListener(isTouch ? "touchmove" : "mousemove", onMove, { passive: false });

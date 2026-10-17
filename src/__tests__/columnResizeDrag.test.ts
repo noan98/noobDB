@@ -1,6 +1,11 @@
 // @vitest-environment jsdom (localStorage / DOM に触れるため。DOM を使わないテストは node 環境で走る)
 import { describe, expect, it, vi } from "vitest";
-import { beginColumnResizeDrag, resizedColumnWidth } from "../components/columnResizeDrag";
+import {
+  beginColumnResizeDrag,
+  formatResizeWidth,
+  resizeClampState,
+  resizedColumnWidth,
+} from "../components/columnResizeDrag";
 
 describe("resizedColumnWidth (#1312)", () => {
   it("ドラッグ量を足し、min / max に収める", () => {
@@ -69,5 +74,52 @@ describe("beginColumnResizeDrag (#1312)", () => {
     });
     document.dispatchEvent(new MouseEvent("mouseup"));
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe("ライブガイド (#1580)", () => {
+  it("幅バッジは整数 px、最小 / 最大に張り付いたら状態を返す", () => {
+    expect(formatResizeWidth(150.4)).toBe("150");
+    expect(formatResizeWidth(150.5)).toBe("151");
+    expect(resizeClampState(40, 40, 600)).toBe("min");
+    expect(resizeClampState(600, 40, 600)).toBe("max");
+    expect(resizeClampState(300, 40, 600)).toBeNull();
+  });
+
+  it("ドラッグ中だけガイドを body に出し、幅バッジを更新し、離すと消す", () => {
+    const rafs: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => rafs.push(cb));
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    try {
+      const th = document.createElement("th");
+      th.getBoundingClientRect = () => ({ top: 10, right: 250 }) as DOMRect;
+      beginColumnResizeDrag({
+        event: {
+          nativeEvent: new MouseEvent("mousedown", { clientX: 100, button: 0 }),
+        } as unknown as React.MouseEvent,
+        startSize: 150,
+        minSize: 40,
+        maxSize: 600,
+        col: null,
+        table: null,
+        header: th,
+        guideLabel: (w) => `幅 ${w} px`,
+        onCommit: vi.fn(),
+      });
+      const guide = document.querySelector<HTMLElement>(".col-resize-guide");
+      expect(guide).not.toBeNull();
+      expect(guide?.textContent).toBe("幅 150 px");
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: 130 }));
+      rafs.shift()?.(0);
+      expect(guide?.textContent).toBe("幅 180 px");
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: -500 }));
+      rafs.shift()?.(0);
+      expect(guide?.textContent).toBe("幅 40 px");
+      expect(guide?.dataset.clamp).toBe("min");
+      document.dispatchEvent(new MouseEvent("mouseup"));
+      expect(document.querySelector(".col-resize-guide")).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
