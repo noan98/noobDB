@@ -83,6 +83,18 @@ describe("Rust tests/*.rs の結線パリティ (#1509)", () => {
     expect(missing, "結線されているが tests/ に存在しないファイル").toEqual([]);
   });
 
+  it("groups/*.rs は全て Cargo.toml の [[test]].path に登録されている", () => {
+    const registered = new Set(
+      [...cargoToml.replace(/#.*$/gm, "").matchAll(/^\s*path\s*=\s*"tests\/groups\/([^"/]+\.rs)"/gm)].map(
+        (m) => m[1],
+      ),
+    );
+    const unregistered = Object.keys(groups)
+      .map(baseName)
+      .filter((g) => !registered.has(g));
+    expect(unregistered, "[[test]] に登録されていない (= バイナリが作られない) グループ").toEqual([]);
+  });
+
   it("#[path] の直後に mod 宣言がある", () => {
     const dangling = groupWiring()
       .filter((w) => !w.hasMod)
