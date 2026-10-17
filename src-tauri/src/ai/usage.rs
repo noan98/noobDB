@@ -11,7 +11,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use chrono::{DateTime, Duration, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
@@ -49,8 +49,8 @@ struct UsageFile {
 
 static STORE_LOCK: Mutex<()> = Mutex::new(());
 
-fn lock_store() -> std::sync::MutexGuard<'static, ()> {
-    STORE_LOCK.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock_store() -> Result<crate::store_lock::StoreGuard<'static>> {
+    crate::store_lock::acquire(&STORE_LOCK, &usage_path()?)
 }
 
 /// JST の日付キー。
@@ -197,7 +197,7 @@ pub fn record(
 
 fn record_blocking(task: AiTaskKind, model: &str, usage: &AiUsage) {
     let result = (|| -> Result<()> {
-        let _guard = lock_store();
+        let _guard = lock_store()?;
         let mut all = load_locked()?;
         apply(&mut all, Utc::now(), &task_name(task), model, usage);
         save_locked(all)
@@ -208,12 +208,12 @@ fn record_blocking(task: AiTaskKind, model: &str, usage: &AiUsage) {
 }
 
 fn load_all_blocking() -> Result<Vec<AiUsageRecord>> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     load_locked()
 }
 
 fn clear_blocking() -> Result<()> {
-    let _guard = lock_store();
+    let _guard = lock_store()?;
     save_locked(Vec::new())
 }
 
