@@ -1,5 +1,5 @@
 import { Box, chakra } from "@chakra-ui/react";
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n";
 import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { singleLine } from "./commandPaletteSearch";
@@ -32,6 +32,12 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const rows = useMemo(() => filterHistory(history, query).slice(0, MAX_ROWS), [history, query]);
   const activeIndex = Math.min(active, Math.max(0, rows.length - 1));
+  const listRef = useRef<HTMLDivElement>(null);
+  // アクティブ行を可視範囲へ追従させる (ObjectSearchModal と同じ block:"nearest")。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeIndex / rows が変わったら再実行するためのトリガー
+  useEffect(() => {
+    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, rows]);
 
   const pick = (sql: string | undefined) => {
     if (sql === undefined) return;
@@ -85,6 +91,7 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
         fontSize="md"
       />
       <Box
+        ref={listRef}
         role="listbox"
         aria-label={t("queryHistorySearchListAria")}
         maxH="min(420px, 60vh)"
@@ -114,13 +121,17 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
               position="relative"
               bg="transparent"
               color="app.text"
-              overflow="hidden"
-              textOverflow="ellipsis"
-              whiteSpace="nowrap"
               cursor="pointer"
             >
               {i === activeIndex && <ActiveRowHighlight layoutId={highlightId} />}
-              <chakra.span position="relative" zIndex={1}>
+              <chakra.span
+                position="relative"
+                zIndex={1}
+                display="block"
+                overflow="hidden"
+                textOverflow="ellipsis"
+                whiteSpace="nowrap"
+              >
                 {singleLine(sql)}
               </chakra.span>
             </chakra.button>

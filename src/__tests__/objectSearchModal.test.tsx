@@ -310,3 +310,26 @@ describe("ObjectSearchModal ビュー・ルーチン・列ジャンプ・行数 
     expect(onOpenTable).toHaveBeenCalledWith("testdb", "v_users", { newTab: true });
   });
 });
+
+describe("ObjectSearchModal active row highlight (#1502)", () => {
+  it("アクティブ行 (aria-selected) の中にだけハイライトがあり、↓ で次の行へ移る", async () => {
+    Element.prototype.scrollIntoView = vi.fn();
+    vi.mocked(api.searchSchemaObjects).mockResolvedValue([
+      { kind: "table", database: "testdb", table: "users" },
+      { kind: "table", database: "testdb", table: "orders" },
+    ] as ObjectSearchHit[]);
+    renderWithProviders(
+      <ObjectSearchModal sessionId="s1" currentDatabase="testdb" onOpenTable={() => {}} onClose={() => {}} />,
+    );
+    await waitFor(() => expect(screen.getAllByRole("option")).toHaveLength(2));
+    const expectHighlightIn = (index: number) => {
+      const options = screen.getAllByRole("option");
+      expect(screen.getAllByTestId("active-row-highlight")).toHaveLength(1);
+      expect(options[index]?.getAttribute("aria-selected")).toBe("true");
+      expect(options[index]?.querySelector('[data-testid="active-row-highlight"]')).not.toBeNull();
+    };
+    expectHighlightIn(0);
+    fireEvent.keyDown(screen.getByPlaceholderText(t("objSearchPlaceholder")), { key: "ArrowDown" });
+    expectHighlightIn(1);
+  });
+});

@@ -15,7 +15,7 @@ const MotionHighlight = chakra(motion.div, {}, { forwardProps: ["transition"] })
  * layout アニメーションを自動計算する。reduced-motion は `MotionConfig` が自動で瞬時化する。
  *
  * `layoutId` は画面内で一意にすること。モーダルごとに `useId()` で名前空間を分ける
- * (`activeRowHighlightId` を使う)。
+ * (呼び出し側で `${prefix}-${useId()}` を作って渡す)。
  */
 export function ActiveRowHighlight({ layoutId }: { layoutId: string }) {
   return (
@@ -28,6 +28,7 @@ export function ActiveRowHighlight({ layoutId }: { layoutId: string }) {
       zIndex={0}
       pointerEvents="none"
       aria-hidden
+      data-testid="active-row-highlight"
     />
   );
 }
