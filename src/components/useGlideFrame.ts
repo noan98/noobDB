@@ -1,13 +1,32 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
 import { easings, transitions } from "../motion";
-import { shouldGlide, toContentBox, unionBoxes, type BoxRect } from "./selectionGlide";
+import { shouldGlide, unionBoxes, type BoxRect } from "./selectionGlide";
 
 /** ハイコントラスト (テーマ hc-* / forced-colors) か。装飾的な動きは出さない。 */
 function prefersStaticMotion(): boolean {
   if (typeof document === "undefined") return false;
   if (document.documentElement.getAttribute("data-theme")?.startsWith("hc-")) return true;
   return typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
+}
+
+/**
+ * `el` のスクロールコンテンツ座標の矩形。`getBoundingClientRect` は祖先の transform
+ * (列並べ替え FLIP の translateX・密度変更の scale) を含んでしまい、再生中に測ると枠が
+ * ずれたまま残る。レイアウト値の `offset*` を offsetParent チェーンで足し合わせれば
+ * transform の影響を受けない。チェーンがスクロールコンテナに届かなければ `null`。
+ */
+function layoutBox(el: HTMLElement, scroller: HTMLElement): BoxRect | null {
+  let left = 0;
+  let top = 0;
+  let cur: HTMLElement | null = el;
+  while (cur && cur !== scroller) {
+    left += cur.offsetLeft;
+    top += cur.offsetTop;
+    cur = cur.offsetParent as HTMLElement | null;
+  }
+  if (cur !== scroller) return null;
+  return { left, top, width: el.offsetWidth, height: el.offsetHeight };
 }
 
 export interface GlideFrameOptions {
@@ -73,23 +92,27 @@ export function useGlideFrame(opts: GlideFrameOptions): void {
       if (key === null) return hide();
       const els = resolveNow().filter((el) => el.isConnected);
       if (els.length === 0 || els.some((el) => el.classList.contains("is-pinned"))) return hide();
-      const sr = scroller.getBoundingClientRect();
-      const metrics = {
-        left: sr.left,
-        top: sr.top,
-        clientLeft: scroller.clientLeft,
-        clientTop: scroller.clientTop,
-        scrollLeft: scroller.scrollLeft,
-        scrollTop: scroller.scrollTop,
-      };
-      const to = unionBoxes(els.map((el) => toContentBox(el.getBoundingClientRect(), metrics)));
+      const boxes: BoxRect[] = [];
+      for (const el of els) {
+        const b = layoutBox(el, scroller);
+        if (!b) return hide();
+        boxes.push(b);
+      }
+      const to = unionBoxes(boxes);
       if (!to) return hide();
 
       const wasHidden = frame.hidden;
       // 再生中なら見かけの現在位置から続ける (cancel する前に読む)。
       let from = lastBoxRef.current;
       if (animRef.current && !wasHidden) {
-        from = unionBoxes([toContentBox(frame.getBoundingClientRect(), metrics)]);
+        // 枠自身の現在値 (アニメーション途中の left/top/width/height)。
+        const cs = getComputedStyle(frame);
+        from = {
+          left: Number.parseFloat(cs.left) || 0,
+          top: Number.parseFloat(cs.top) || 0,
+          width: Number.parseFloat(cs.width) || 0,
+          height: Number.parseFloat(cs.height) || 0,
+        };
       }
       animRef.current?.cancel();
       animRef.current = null;
@@ -139,9 +162,14 @@ export function useGlideFrame(opts: GlideFrameOptions): void {
   });
 
   // 表の大きさが変わったとき (列幅ドラッグ・フォント拡大・ウィンドウ) は滑らせずに追従だけ。
+  // 表の要素が差し替わったら監視し直すため、毎コミット要素の同一性だけ比べる。
+  const roRef = useRef<{ el: Element; ro: ResizeObserver } | null>(null);
   useEffect(() => {
     const el = observeRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (roRef.current?.el === el || typeof ResizeObserver === "undefined") return;
+    roRef.current?.ro.disconnect();
+    roRef.current = null;
+    if (!el) return;
     let first = true;
     const ro = new ResizeObserver(() => {
       // observe 直後の初回通知は無視 (直前のコミットで計測済み)。
@@ -152,8 +180,15 @@ export function useGlideFrame(opts: GlideFrameOptions): void {
       if (latest.current.targetKey !== null) measure(false);
     });
     ro.observe(el);
-    return () => ro.disconnect();
-  }, [observeRef, measure]);
+    roRef.current = { el, ro };
+  });
+  useEffect(
+    () => () => {
+      roRef.current?.ro.disconnect();
+      roRef.current = null;
+    },
+    [],
+  );
 
   // アンマウント時に後始末する。
   useLayoutEffect(() => {

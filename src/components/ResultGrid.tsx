@@ -1022,11 +1022,13 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 70%, transparent)",
   },
   "& .grid-glide-find": { boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}` },
+  // 未適用 / 不正な編集のセルには枠を出さない (resolve が [] を返す) ので、ここでは対象外。
   "&[data-glide-active='on'] td.is-active-cell:not(.is-pending-edit):not(.is-invalid-edit):not(:focus-within)":
     { boxShadow: "none" },
-  "&[data-glide-active='on'] td.is-pending-edit.is-active-cell:not(:focus-within)": {
-    boxShadow: "inset 2px 0 0 var(--preview-highlight)",
-  },
+  // 編集可能セルは矢印移動で td 自身にフォーカスが移り `:focus-within` のリングが出るので、
+  // 入力欄が開いていない間はそれも枠に任せて消す (二重表示の防止)。
+  "&[data-glide-active='on'] td.is-editable-cell.is-active-cell:focus-within:not(:has(.cell-edit-input)):not(.is-pending-edit):not(.is-invalid-edit)":
+    { boxShadow: "none" },
   "&[data-glide-selection='on'] tbody td.is-selected-cell:not(.is-active-cell)": { boxShadow: "none" },
   "&[data-glide-find='on'] tbody td.is-find-current, &[data-glide-find='on'] tbody tr.grid-row-stripe td.is-find-current, &[data-glide-find='on'] tbody tr:hover td.is-find-current":
     { boxShadow: "none" },
@@ -6222,6 +6224,8 @@ export const DataGrid = memo(function DataGrid({
     let raf = 0;
     const hoverAt = (target: EventTarget | null): { rowIdx: number; colIdx: number } | null => {
       let td = (target as Element | null)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+      // 隣のグリッドなど、このスクロールコンテナの外のセルは拾わない。
+      if (td && !scroller.contains(td)) td = null;
       if (!td && typeof document.elementFromPoint === "function") {
         // 表の外 (ヘッダ・行番号・余白・コンテナの外) にいるときは、本体領域へ丸めた位置のセルを使う。
         const r = scroller.getBoundingClientRect();
@@ -6229,6 +6233,7 @@ export const DataGrid = memo(function DataGrid({
         const px = Math.min(Math.max(x, r.left + leftDeadZone + 1), r.right - rightDeadZone - 2);
         const py = Math.min(Math.max(y, r.top + head + 1), r.bottom - 2);
         td = document.elementFromPoint(px, py)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+        if (td && !scroller.contains(td)) td = null;
       }
       if (!td) return null;
       const rowIdx = Number(td.dataset.r);
@@ -6274,6 +6279,9 @@ export const DataGrid = memo(function DataGrid({
     function stop() {
       document.removeEventListener("mousemove", onMove, true);
       document.removeEventListener("mouseup", stop, true);
+      document.removeEventListener("dragstart", stop, true);
+      document.removeEventListener("contextmenu", stop, true);
+      document.removeEventListener("visibilitychange", stop);
       window.removeEventListener("blur", stop);
       if (raf) cancelAnimationFrame(raf);
       scroller?.removeAttribute("data-marquee");
@@ -6281,6 +6289,10 @@ export const DataGrid = memo(function DataGrid({
     }
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("mouseup", stop, true);
+    // ドラッグ開始 (列の並べ替えなど) / コンテキストメニュー / タブの非表示でも追跡を止める。
+    document.addEventListener("dragstart", stop, true);
+    document.addEventListener("contextmenu", stop, true);
+    document.addEventListener("visibilitychange", stop);
     window.addEventListener("blur", stop);
     marqueeStopRef.current = stop;
   };
@@ -6789,7 +6801,12 @@ export const DataGrid = memo(function DataGrid({
   // 対象が変わった確定コミットでだけセルを計測して滑らせる (`useGlideFrame`)。
   const glideLayoutKey = `${columnLayoutKey}#${visibleRows.length}:${visibleRows[0]?.index ?? ""}:${
     visibleRows[visibleRows.length - 1]?.index ?? ""
-  }#${bodyIndices[0] ?? ""}:${bodyIndices[bodyIndices.length - 1] ?? ""}#${colWinFirst}:${colWinLast}`;
+  }#${bodyIndices[0] ?? ""}:${bodyIndices[bodyIndices.length - 1] ?? ""}#${colWinFirst}:${colWinLast}#${bodyPaddingTop}`;
+  // 未適用の編集が変わったら、アクティブセルの枠を出す/隠すの判定をやり直す。
+  const pendingVerRef = useRef({ obj: pendingEdits, n: 0 });
+  if (pendingVerRef.current.obj !== pendingEdits) {
+    pendingVerRef.current = { obj: pendingEdits, n: pendingVerRef.current.n + 1 };
+  }
   const activeFrameRef = useRef<HTMLDivElement>(null);
   const selectionFrameRef = useRef<HTMLDivElement>(null);
   const findFrameRef = useRef<HTMLDivElement>(null);
@@ -6800,10 +6817,13 @@ export const DataGrid = memo(function DataGrid({
     observeRef: gridTableRef,
     // 編集中は入力欄自身の枠が「どこを編集中か」を示すので出さない。
     targetKey: editing ? null : activeFrameKey(activeCell),
-    layoutKey: glideLayoutKey,
+    layoutKey: `${glideLayoutKey}#p${pendingVerRef.current.n}`,
     resolve: () => {
       const el = activeCell ? cellEl(activeCell.rowIdx, activeCell.colIdx) : undefined;
-      return el ? [el] : [];
+      // 未適用の編集バー / 不正な編集のリングはセル自身が描く。枠で覆わずセル単位の表示に戻す。
+      if (!el || el.classList.contains("is-pending-edit") || el.classList.contains("is-invalid-edit"))
+        return [];
+      return [el];
     },
     attr: "data-glide-active",
   });
@@ -6816,11 +6836,33 @@ export const DataGrid = memo(function DataGrid({
     // 選択範囲の中でマウント済みのセルの外接矩形 (描画窓の外は含まれないので、窓の端で切れる)。
     resolve: () => {
       if (!selectionRect) return [];
-      const out: HTMLTableCellElement[] = [];
-      for (const [key, el] of cellRefs.current) {
-        const k = parseCellKey(key);
-        if (k && selectionRect.rowIndexSet.has(k.rowIdx) && selectionRect.colIdSet.has(k.colIdx))
-          out.push(el);
+      // 端の行・列 (マウント済みのうち左上と右下) だけを測る。全選択でも O(窓) で済む。
+      const rowOf = (vi: number) => visibleRows[vi]?.index;
+      const mountedRow = (from: number, to: number, step: 1 | -1) => {
+        for (let vi = from; step === 1 ? vi <= to : vi >= to; vi += step) {
+          const ri = rowOf(vi);
+          if (ri !== undefined && visibleColIds.some((c) => cellEl(ri, c))) return ri;
+        }
+        return undefined;
+      };
+      const top = mountedRow(selectionRect.r0, selectionRect.r1, 1);
+      const bottom = mountedRow(selectionRect.r1, selectionRect.r0, -1);
+      if (top === undefined || bottom === undefined) return [];
+      const colsIn = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+      const firstCol = colsIn.find((c) => cellEl(top, c));
+      const lastCol = [...colsIn].reverse().find((c) => cellEl(bottom, c));
+      const lastColTop = [...colsIn].reverse().find((c) => cellEl(top, c));
+      const firstColBottom = colsIn.find((c) => cellEl(bottom, c));
+      const corners: Array<[number, number | undefined]> = [
+        [top, firstCol],
+        [top, lastColTop],
+        [bottom, firstColBottom],
+        [bottom, lastCol],
+      ];
+      const out: HTMLElement[] = [];
+      for (const [r, c] of corners) {
+        const el = c === undefined ? undefined : cellEl(r, c);
+        if (el) out.push(el);
       }
       return out;
     },

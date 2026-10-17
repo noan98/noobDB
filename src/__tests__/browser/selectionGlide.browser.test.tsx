@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { MotionConfig } from "motion/react";
 import { renderInBrowser } from "./render";
 import { ResultGrid } from "../../components/ResultGrid";
-import type { QueryResult } from "../../api/tauri";
+import type { QueryResult, TableColumnInfo } from "../../api/tauri";
 
 // 滑って追従する選択枠 (#1578) を実ブラウザで検証する。枠がセルの矩形に重なり、
 // 移動で Animation が付き、reduced-motion では付かないこと、元のセル単位のリングが
@@ -19,11 +19,27 @@ const RESULT: QueryResult = {
   elapsed_ms: 1,
 };
 
-function Host({ reduced }: { reduced: "never" | "always" }) {
+const TABLE_COLUMNS = RESULT.columns.map((c, i) => ({
+  name: c.name,
+  type_name: c.type_name,
+  nullable: i !== 0,
+  key: i === 0 ? "PRI" : "",
+  default_value: null,
+  extra: "",
+  comment: null,
+  referenced_table: null,
+  referenced_column: null,
+})) as unknown as TableColumnInfo[];
+
+function Host({ reduced, editable }: { reduced: "never" | "always"; editable?: boolean }) {
   return (
     <MotionConfig reducedMotion={reduced}>
       <div style={{ width: 700, height: 400, display: "flex", flexDirection: "column" }}>
-        <ResultGrid result={RESULT} />
+        {editable ? (
+          <ResultGrid result={RESULT} editable tableColumns={TABLE_COLUMNS} onSetCellEdit={() => {}} />
+        ) : (
+          <ResultGrid result={RESULT} />
+        )}
       </div>
     </MotionConfig>
   );
@@ -150,5 +166,38 @@ describe("滑って追従する選択枠 (#1578, 実ブラウザ)", () => {
     expect(scroller.scrollTop).toBe(top);
     // 基点 (アクティブセル) は動かない。
     expect(document.querySelector("td.is-active-cell")?.getAttribute("data-r")).toBe("0");
+  });
+
+  it("編集可能なグリッドで矢印移動しても、移動先のセル単独のリングは出ない (二重表示しない)", async () => {
+    await renderInBrowser(<Host reduced="always" editable />);
+    await expect.poll(() => td(0, 1)).not.toBeNull();
+    td(0, 1).focus();
+    await expect.poll(() => frame("active").hidden).toBe(false);
+    key(td(0, 1), "ArrowDown");
+    await expect.poll(() => td(1, 1).classList.contains("is-active-cell")).toBe(true);
+    expect(td(1, 1).classList.contains("is-editable-cell")).toBe(true);
+    expect(getComputedStyle(td(1, 1)).boxShadow).toBe("none");
+    expectOver(frame("active"), td(1, 1));
+  });
+
+  it("列並べ替えの FLIP 再生中に計測しても、枠は並べ替え後のセルに重なる", async () => {
+    await renderInBrowser(<Host reduced="never" />);
+    await expect.poll(() => td(0, 0)).not.toBeNull();
+    td(0, 0).focus();
+    await expect.poll(() => frame("active").hidden).toBe(false);
+    for (const a of frame("active").getAnimations()) a.finish();
+    const grip = document.querySelector("thead .th-drag-grip") as HTMLElement;
+    grip.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+    await expect
+      .poll(() => document.querySelector("thead th[data-col-id]")?.getAttribute("data-col-id"))
+      .not.toBe("0");
+    // 並べ替え後、列 a は 2 列目へ動く (セルの FLIP が再生中でも offset 計測なので枠は最終位置)。
+    await expect.poll(() => td(0, 0).getBoundingClientRect().left).toBeGreaterThan(0);
+    await new Promise((r) => setTimeout(r, 30));
+    const f = frame("active");
+    const cellsLeft = td(0, 0).offsetLeft + (td(0, 0).offsetParent as HTMLElement).offsetLeft;
+    expect(Math.abs(Number.parseFloat(getComputedStyle(f).left) - cellsLeft) < 1.5).toBe(true);
+    for (const a of document.getAnimations()) a.finish();
+    expectOver(f, td(0, 0));
   });
 });
