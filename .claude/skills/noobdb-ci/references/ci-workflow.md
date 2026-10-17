@@ -37,7 +37,11 @@
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`frontend` ジョブは加えて Vite の依存プリバンドルキャッシュ
   (`node_modules/.vite`) と Playwright の Chromium バイナリ (`~/.cache/ms-playwright`)
-  も `actions/cache` でブランチ跨ぎに温めます (#908。ブラウザテスト側の
+  も `actions/cache` でブランチ跨ぎに温めます (#908。加えて `tsc` の `.tsbuildinfo`
+  (`tsconfig.json` の `incremental` + `tsBuildInfoFile` = `node_modules/.cache/tsc/app.tsbuildinfo`)
+  も同様にキャッシュし、`pnpm run build` 先頭の型検査を差分のみにします (#1589。キーは `github.sha`
+  付きで毎回保存、`restore-keys` で直近を復元。ローカルの `pnpm run build` も 2 回目以降は速くなるだけで
+  結果は不変、release.yml / e2e.yml / tauri の `beforeBuildCommand` は初回フル型検査のまま)。ブラウザテスト側の
   「install/トランスパイル部」の壁時計短縮が目的で、pnpm store キャッシュと同じ
   パターンでキー付けします)。
   Playwright の OS 依存 (apt: 共有ライブラリ・フォント・xvfb) は `playwright

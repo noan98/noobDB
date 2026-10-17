@@ -210,6 +210,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vite-deps-
 
+      # tsc のインクリメンタル型チェック用 `.tsbuildinfo` (#1589)。`tsconfig.json` の
+      # `incremental` + `tsBuildInfoFile` で `node_modules/.cache/tsc/` に書かれ、300 本超の
+      # テストを含む `src` の再型検査を差分だけにする。pnpm store / Vite プリバンドルと同じく
+      # ブランチ跨ぎ (main push による温め含む) で効かせるため、キーは実行ごとに変わる
+      # `github.sha` 付きにして毎回保存し、restore-keys で直近のものを復元する。
+      # TypeScript のバージョン / tsconfig が変わっても tsc 自身が buildinfo を無効化する
+      # ので、キャッシュが古くても型検査結果は変わらない (遅くなるだけ)。
+      - name: Cache tsc incremental build info
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.cache/tsc
+          key: ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-
+            ${{ runner.os }}-tsc-
+
       - name: Type-check and build
         run: pnpm run build
 
