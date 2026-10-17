@@ -58,6 +58,13 @@ describe("inlineCompleteAllowed", () => {
 });
 
 describe("buildInlineRequest", () => {
+  it("`--` の直後では送らない (MySQL で印がコメントを崩しリテラルが漏れる回帰、#1735)", () => {
+    const doc = "SELECT id, name FROM users WHERE id = 1 -- don't touch\nSELECT 'secret-token' AS x FROM t";
+    const pos = doc.indexOf("--") + 2;
+    expect(req(doc, pos)).toBeNull();
+    expect(req(doc, pos, { driver: "postgres" })).toBeNull();
+  });
+
   it("入力が短いときは送らない", () => {
     expect(req("SE")).toBeNull();
     expect(req("  \n ")).toBeNull();
