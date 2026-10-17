@@ -65,3 +65,12 @@ wrapper above is intentionally a one-liner over this.」のような**説明文�
 共有ゴールデン (`src/__tests__/fixtures/errorKindVectors.json` を
 `errorKindGolden.test.ts` と `tests/error_kind_golden.rs` が突き合わせ) で固定して
 います。**`error.rs` にバリアントを追加するときは `kind()` の分岐も更新**してください。
+
+**プラグイン権限 (capabilities) のパリティ (#1587)。** 上の 3 点コントラクトは自作
+`#[tauri::command]` だけが対象で、Tauri v2 で権限 (ACL) が要るプラグインコマンド /
+コアのウィンドウ API は射程外だった。`src/__tests__/capabilitiesParity.test.ts` が
+非テストの全 TS/TSX から `@tauri-apps/*` の import とウィンドウメソッド呼び出し
+(`data-tauri-drag-region` 含む) を抽出し、`src-tauri/capabilities/default.json` の
+`permissions` と**両方向**で突き合わせる (未許可の利用 / 使われない過剰許可)。新しい
+プラグイン API を使うときは、テスト内の `KNOWN_IMPORTS` と `PERMISSION_USAGE` に追記し、
+本当にその permission が必要か確認してから `default.json` に足す (capabilities は意図的に最小)。
