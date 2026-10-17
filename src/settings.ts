@@ -253,6 +253,12 @@ export interface Settings {
    */
   preflightImpactEnabled: boolean;
   /**
+   * SELECT 実行前のスキャン行数 / フルスキャン警告プリフライト (#1508、既定オフ): 現在文が単純な
+   * SELECT のとき、裏で EXPLAIN を実行し「全表スキャンの可能性 (約 N 行)」バッジを表示する。
+   * EXPLAIN は読み取りだが重いテーブルでは計画取得にも負荷がかかりうるため opt-in。
+   */
+  scanPreflightEnabled: boolean;
+  /**
    * 実行計画ウォッチ (#743): 接続確立時にウォッチ登録済みスニペットの EXPLAIN を
    * 自動取得して世代記録・変化検知を行う。既定オン。EXPLAIN は読み取り操作のみで
    * 履歴も汚さないが、接続直後の負荷を避けたい場合にオフにできる。
@@ -723,6 +729,9 @@ export const DEFAULT_SQL_LINT_ENABLED = true;
 /** 実行前の影響行数プリフライト (#737) は既定オン。 */
 export const DEFAULT_PREFLIGHT_IMPACT_ENABLED = true;
 
+/** SELECT 実行前のスキャン行数 / フルスキャン警告プリフライト (#1508) は既定オフ (opt-in)。 */
+export const DEFAULT_SCAN_PREFLIGHT_ENABLED = false;
+
 /** 実行計画ウォッチ (#743) の接続時自動チェックは既定オン。 */
 export const DEFAULT_PLAN_WATCH_ON_CONNECT = true;
 
@@ -797,6 +806,7 @@ export const DEFAULT_SETTINGS: Settings = {
   perfMeasureEnabled: DEFAULT_PERF_MEASURE_ENABLED,
   sqlLintEnabled: DEFAULT_SQL_LINT_ENABLED,
   preflightImpactEnabled: DEFAULT_PREFLIGHT_IMPACT_ENABLED,
+  scanPreflightEnabled: DEFAULT_SCAN_PREFLIGHT_ENABLED,
   planWatchOnConnect: DEFAULT_PLAN_WATCH_ON_CONNECT,
   schemaDriftOnConnect: DEFAULT_SCHEMA_DRIFT_ON_CONNECT,
   schemaDriftOnDdl: DEFAULT_SCHEMA_DRIFT_ON_DDL,
@@ -1030,6 +1040,7 @@ export function normalizeSettings(input: unknown): Settings {
     perfMeasureEnabled?: unknown;
     sqlLintEnabled?: unknown;
     preflightImpactEnabled?: unknown;
+    scanPreflightEnabled?: unknown;
     planWatchOnConnect?: unknown;
     schemaDriftOnConnect?: unknown;
     schemaDriftOnDdl?: unknown;
@@ -1150,6 +1161,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.preflightImpactEnabled === "boolean"
         ? parsed.preflightImpactEnabled
         : DEFAULT_PREFLIGHT_IMPACT_ENABLED,
+    scanPreflightEnabled:
+      typeof parsed.scanPreflightEnabled === "boolean"
+        ? parsed.scanPreflightEnabled
+        : DEFAULT_SCAN_PREFLIGHT_ENABLED,
     planWatchOnConnect:
       typeof parsed.planWatchOnConnect === "boolean"
         ? parsed.planWatchOnConnect
@@ -1712,6 +1727,13 @@ export function setSqlLintEnabled(value: boolean): void {
 export function setPreflightImpactEnabled(value: boolean): void {
   if (current.preflightImpactEnabled === value) return;
   current = { ...current, preflightImpactEnabled: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setScanPreflightEnabled(value: boolean): void {
+  if (current.scanPreflightEnabled === value) return;
+  current = { ...current, scanPreflightEnabled: value };
   persist();
   listeners.forEach((cb) => cb());
 }

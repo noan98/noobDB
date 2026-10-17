@@ -72,6 +72,8 @@ import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
+import { ScanPreflightBadge } from "./ScanPreflightBadge";
+import { useScanPreflight } from "./useScanPreflight";
 import { PreflightSampleModal } from "./PreflightSampleModal";
 import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
@@ -362,6 +364,8 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /** 手動トランザクション中は true。スキャンプリフライトの EXPLAIN を休止する (#1508)。 */
+  scanPreflightPaused?: boolean;
   /**
    * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
    * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
@@ -670,6 +674,7 @@ export const QueryEditor = memo(
       focusMode,
       onToggleFocus,
       onPreflightImpact,
+      scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
     }: Props,
@@ -1423,6 +1428,16 @@ export const QueryEditor = memo(
       enabled: settings.preflightImpactEnabled && !disabled,
       driver,
     });
+    // SELECT のスキャンプリフライト (#1508、既定オフ)。現在文が単純な SELECT のとき、
+    // 裏で EXPLAIN を実行して推定スキャン行数 / 全表スキャンを出す。影響行数バッジとは
+    // 対象文が排他 (SELECT か UPDATE/DELETE か) なので同じ入力テキストを共有する。
+    const scanPreflight = useScanPreflight({
+      sql: preflightSql || null,
+      sessionId: sessionId ?? null,
+      database: defaultDatabase ?? null,
+      enabled: settings.scanPreflightEnabled && !disabled && !scanPreflightPaused,
+      driver,
+    });
     // バッジから開く影響行サンプル (#1626)。開いている間はその時点の SQL に固定する。
     const [preflightSampleOpen, setPreflightSampleOpen] = useState(false);
     const [preflightSampleSql, setPreflightSampleSql] = useState<string | null>(null);
@@ -1902,6 +1917,8 @@ export const QueryEditor = memo(
           )}
           {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}
           <PreflightBadge result={preflight} onOpenSample={sessionId ? openPreflightSample : undefined} />
+          {/* SELECT のスキャン行数 / フルスキャン警告バッジ (#1508、opt-in)。 */}
+          <ScanPreflightBadge result={scanPreflight} />
           <ToolbarButton
             onClick={formatSelectionOrAll}
             disabled={disabled || !hasContent}

@@ -222,6 +222,8 @@ export interface PaneEnv {
   actions: PaneActions;
   t: ReturnType<typeof useT>;
   sessionId: string | null;
+  /** 手動トランザクション中か (#1508: スキャンプリフライトの EXPLAIN を休止する)。 */
+  txActive: boolean;
   selectedProfile: ConnectionProfile | null;
   layoutMode: LayoutMode;
   readOnly: boolean;
@@ -277,6 +279,7 @@ export const PaneView = memo(
       actions,
       t,
       sessionId,
+      txActive,
       selectedProfile,
       layoutMode,
       readOnly,
@@ -605,6 +608,7 @@ export const PaneView = memo(
                         onSaveFile={onSaveSqlFile}
                         onFormatError={onFormatError}
                         disabled={!sessionId}
+                        scanPreflightPaused={txActive}
                         schemaTable={tab.schemaTable}
                         databaseSchema={paneSchema}
                         activeTable={gridStable.memo(

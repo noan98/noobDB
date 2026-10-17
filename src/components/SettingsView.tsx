@@ -136,6 +136,7 @@ import {
   setTimelapseMaxGenerations,
   setSqlLintEnabled,
   setPreflightImpactEnabled,
+  setScanPreflightEnabled,
   setBatchWrapInTransaction,
   setFlightRecorderEnabled,
   setFlightRecorderRowCap,
@@ -646,6 +647,7 @@ const SECTIONS: SettingsSectionMeta[] = [
   { id: "settings-sec-auto-limit", titleKey: "settingsAutoLimit" },
   { id: "settings-sec-sql-lint", titleKey: "settingsSqlLint" },
   { id: "settings-sec-preflight-impact", titleKey: "settingsPreflightImpact" },
+  { id: "settings-sec-scan-preflight", titleKey: "settingsScanPreflight" },
   { id: "settings-sec-plan-watch", titleKey: "settingsPlanWatch" },
   { id: "settings-sec-schema-drift", titleKey: "settingsSchemaDrift" },
   { id: "settings-sec-timelapse", titleKey: "settingsTimelapse" },
@@ -1600,6 +1602,28 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-preflight-impact"
                     checked={settings.preflightImpactEnabled}
                     onChange={setPreflightImpactEnabled}
+                  />
+                </SettingsToggleRow>
+              </SettingsSection>
+
+              <SettingsSection id="settings-sec-scan-preflight" scrollMarginTop="8px">
+                <SettingsSectionHeader>
+                  <SettingsLabelWithInfo>
+                    <chakra.h3>{t("settingsScanPreflight")}</chakra.h3>
+                    <SettingsInfo>{t("settingsScanPreflightHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                </SettingsSectionHeader>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-scan-preflight">
+                      {t("settingsScanPreflightEnabled")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsScanPreflightEnabledHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-scan-preflight"
+                    checked={settings.scanPreflightEnabled}
+                    onChange={setScanPreflightEnabled}
                   />
                 </SettingsToggleRow>
               </SettingsSection>

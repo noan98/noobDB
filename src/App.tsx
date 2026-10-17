@@ -11439,6 +11439,7 @@ export default function App() {
     actions: paneActions,
     t,
     sessionId,
+    txActive,
     selectedProfile,
     layoutMode,
     readOnly,
