@@ -94,8 +94,10 @@ export function ShortcutHintOverlay({ surface, isBlocked }: Props) {
         timer = setTimeout(show, delayMs);
         return;
       }
-      // AltGr (Windows では Ctrl+Alt として届く) は文字入力なので出さない。
-      if (e.key === "AltGraph" || e.getModifierState?.("AltGraph")) {
+      // AltGr (Windows では Control の keydown の直後に AltGraph が届く) は文字入力なので出さない。
+      // getModifierState("AltGraph") は配列によって左 Ctrl+左 Alt でも true になり、
+      // Ctrl+Alt の絞り込みまで消してしまうので key だけで判定する。
+      if (e.key === "AltGraph") {
         hide();
         return;
       }
