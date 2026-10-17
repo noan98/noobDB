@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { transitions } from "../motion";
+import { AnimatePresence } from "motion/react";
+import { CircularReveal } from "./CircularReveal";
+import { installRevealOriginTracking, resolveRevealOrigin, type RevealPoint } from "./revealOrigin";
 import type { TitleBarConnection } from "./titleBarContext";
 import { accentWashSpec, shouldFireAccentWash } from "./accentWashSpec";
 
+/** 接続は確立まで時間がかかるため、切替の直前に押した位置を少し長めに許す。 */
+const ORIGIN_MAX_AGE_MS = 15000;
+
 interface Flash {
   key: number;
+  origin: RevealPoint;
   color: string;
   opacity: number;
 }
 
 /**
  * 接続切替 (#978) 時の控えめなアクセント/環境ウォッシュ。`ThemeTransition` と
- * 同じポータル方式のクロスフェードで、新しい接続の環境色 (`titleBarContext` の
+ * 同じポータル方式で、押した位置 (接続リスト) を原点に円状に広がる (#1582。
+ * 原点が取れないときは画面中央、reduced-motion では従来のクロスフェード。`CircularReveal`)。新しい接続の環境色 (`titleBarContext` の
  * `connectionBandColor` と同じ優先順位 — 本番接続=危険色、サンドボックス=専用
  * violet、通常接続=プロファイル色 or ワークスペースアクセント。#978 の要件どおり
  * これらの識別性は弱めない) を一瞬重ねてからフェードアウトし、「別の DB に
@@ -43,6 +49,10 @@ export function AccentWash({
   const counter = useRef(0);
 
   useEffect(() => {
+    installRevealOriginTracking();
+  }, []);
+
+  useEffect(() => {
     if (!shouldFireAccentWash(prev.current, connectionKey)) {
       prev.current = connectionKey;
       return;
@@ -51,27 +61,26 @@ export function AccentWash({
     const spec = accentWashSpec(connection);
     if (!spec) return;
     counter.current += 1;
-    setFlash({ key: counter.current, color: spec.color, opacity: spec.opacity });
+    setFlash({
+      key: counter.current,
+      color: spec.color,
+      opacity: spec.opacity,
+      origin: resolveRevealOrigin(performance.now(), ORIGIN_MAX_AGE_MS, {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    });
   }, [connectionKey, connection]);
 
   return createPortal(
     <AnimatePresence>
       {flash && (
-        <motion.div
+        <CircularReveal
           key={flash.key}
-          aria-hidden
-          initial={{ opacity: flash.opacity }}
-          animate={{ opacity: 0 }}
-          exit={{ opacity: 0 }}
-          transition={transitions.emphasized}
-          onAnimationComplete={() => setFlash(null)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: flash.color,
-            pointerEvents: "none",
-            zIndex: "var(--z-toast)" as unknown as number,
-          }}
+          origin={flash.origin}
+          color={flash.color}
+          opacity={flash.opacity}
+          onDone={() => setFlash(null)}
         />
       )}
     </AnimatePresence>,
