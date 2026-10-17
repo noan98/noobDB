@@ -1,6 +1,7 @@
 import { Box, chakra } from "@chakra-ui/react";
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useT } from "../i18n";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { singleLine } from "./commandPaletteSearch";
 import { Modal } from "./Modal";
 import { isImeComposing } from "./modalKeys";
@@ -26,6 +27,8 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
   const t = useT();
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  // アクティブ行ハイライトの layoutId をモーダルごとに分ける。
+  const highlightId = `history-search-active-highlight-${useId()}`;
   const inputRef = useRef<HTMLInputElement>(null);
   const rows = useMemo(() => filterHistory(history, query).slice(0, MAX_ROWS), [history, query]);
   const activeIndex = Math.min(active, Math.max(0, rows.length - 1));
@@ -108,14 +111,18 @@ export function HistorySearchModal({ history, onPick, onClose }: Props) {
               textAlign="left"
               fontSize="sm"
               fontFamily="mono"
-              bg={i === activeIndex ? "app.active" : "transparent"}
+              position="relative"
+              bg="transparent"
               color="app.text"
               overflow="hidden"
               textOverflow="ellipsis"
               whiteSpace="nowrap"
               cursor="pointer"
             >
-              {singleLine(sql)}
+              {i === activeIndex && <ActiveRowHighlight layoutId={highlightId} />}
+              <chakra.span position="relative" zIndex={1}>
+                {singleLine(sql)}
+              </chakra.span>
             </chakra.button>
           ))
         )}
