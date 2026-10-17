@@ -5,9 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  qs: '>=6.16.0'
-  smol-toml: '>=1.9.0'
-  source-map-js: '>=1.2.2'
+  qs@6.15.1: ^6.16.0
 
 importers:
 

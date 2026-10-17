@@ -139,7 +139,8 @@ describeMaybe("SQLite ハッピーパス E2E (#1245)", () => {
     await (await $('[data-testid="connection-profile-row"]')).click();
     // 接続直後はエディタが自動表示されず、空ワークスペースの「新しいクエリ」ボタンが出る。
     // ボタンの出現自体が接続 (実 IPC → 実 SQLite のオープン) 成功の合図になる。
-    const newQuery = await $('[data-testid="new-query-empty"]');
+    // 空ペインが複数あると同 testid が複数描画されうるため strict を切る (wdio 10 は既定で strict)。
+    const newQuery = await $('[data-testid="new-query-empty"]', { strict: false });
     await newQuery.waitForExist({ timeout: 30_000 });
     await newQuery.click();
     const editor = await $('[data-testid="query-editor"]');
