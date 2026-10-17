@@ -41,6 +41,18 @@ ignore = [
     # 低い。plist/Tauri の更新で解消次第、この 2 件を外す。
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # zip の展開 API (`ZipArchive::extract` / `ZipStreamReader::extract`) の 3 件
+    # (RUSTSEC-2026-0367: SUID/SGID ビットの保持 / -0368: 展開先外を指すシンボリック
+    # リンクの作成 / -0369: シンボリックリンク越しのパーミッション適用)。修正版は
+    # zip >= 9.0.0 だが、zip 8.6.0 は calamine 0.36 / rust_xlsxwriter 0.99〜0.100、
+    # zip 4.6.1 は tauri-plugin-updater 2.x が固定しており cargo update では上げられない。
+    # 本アプリは zip をメモリ上の xlsx 読み書き (calamine / rust_xlsxwriter) にしか使わず、
+    # ディスクへの extract は呼ばない。updater が展開するのは署名検証を通った自前の
+    # 更新アーカイブだけなので、攻撃者が用意した ZIP を展開する経路は無い。上流が
+    # zip 9 系へ更新したら cargo update して、この 3 件を外す。
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
 ]
 
 [licenses]
