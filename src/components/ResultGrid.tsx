@@ -104,6 +104,7 @@ import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
+import { useFirstBatchReveal } from "./useFirstBatchReveal";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
@@ -5237,6 +5238,8 @@ export const DataGrid = memo(function DataGrid({
   const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
   // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
   useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
+  // 初回バッチ着弾 (スケルトン → 実データ) の 1 回限りの stagger リビール (#1579)。
+  useFirstBatchReveal(gridTbodyRef, scrollContainerRef, skeleton, rows.length);
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
