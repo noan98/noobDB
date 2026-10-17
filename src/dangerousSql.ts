@@ -61,7 +61,7 @@ export function maskLiterals(sql: string, driver?: string, options?: MaskOptions
   if (options?.cache === false || sql.length > MASK_CACHE_MAX_SQL_CHARS) {
     return maskLiteralsUncached(sql, driver, keepIdent, keepBrackets, dashSpace);
   }
-  // オプション未指定のキーは従来どおり `driver\0sql` (既存のキャッシュ挙動を変えない)。
+  // オプション未指定でも MySQL は dash キー (`dash\u0001`) が付く。それ以外は従来どおり `driver\0sql`。
   const key = `${keepIdent ? "ident\u0001" : ""}${keepBrackets ? "brackets\u0001" : ""}${dashSpace ? "dash\u0001" : ""}${driver ?? ""}\u0000${sql}`;
   const hit = maskCache.get(key);
   if (hit !== undefined) return hit;
