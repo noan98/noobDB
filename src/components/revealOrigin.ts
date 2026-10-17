@@ -47,17 +47,21 @@ export function resetRevealOrigin(): void {
 export function installRevealOriginTracking(): void {
   if (installed || typeof window === "undefined") return;
   installed = true;
-  window.addEventListener("pointerdown", (e) => recordPointer({ x: e.clientX, y: e.clientY }, e.timeStamp), {
-    capture: true,
-    passive: true,
-  });
-  window.addEventListener("keydown", (e) => recordKey(e.timeStamp), { capture: true, passive: true });
+  window.addEventListener(
+    "pointerdown",
+    (e) => recordPointer({ x: e.clientX, y: e.clientY }, performance.now()),
+    {
+      capture: true,
+      passive: true,
+    },
+  );
+  window.addEventListener("keydown", () => recordKey(performance.now()), { capture: true, passive: true });
 }
 
 /**
  * 原点を決める。直近のポインタ操作が `maxAgeMs` 以内で、かつその後にキー操作が
- * 無ければその座標、そうでなければ画面中央。`now` は `performance.now()` 相当
- * (`Event.timeStamp` と同じ時間軸)。
+ * 無ければその座標、そうでなければ画面中央。`now` は `performance.now()` (リスナーも同じ
+ * 時計で記録する)。
  */
 export function resolveRevealOrigin(
   now: number,

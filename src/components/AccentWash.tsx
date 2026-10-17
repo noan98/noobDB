@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence } from "motion/react";
 import { CircularReveal } from "./CircularReveal";
-import { installRevealOriginTracking, resolveRevealOrigin, type RevealPoint } from "./revealOrigin";
+import {
+  installRevealOriginTracking,
+  isHighContrastDataTheme,
+  resolveRevealOrigin,
+  type RevealPoint,
+} from "./revealOrigin";
 import type { TitleBarConnection } from "./titleBarContext";
 import { accentWashSpec, shouldFireAccentWash } from "./accentWashSpec";
 
@@ -12,6 +17,7 @@ const ORIGIN_MAX_AGE_MS = 15000;
 interface Flash {
   key: number;
   origin: RevealPoint;
+  plain: boolean;
   color: string;
   opacity: number;
 }
@@ -65,6 +71,7 @@ export function AccentWash({
       key: counter.current,
       color: spec.color,
       opacity: spec.opacity,
+      plain: isHighContrastDataTheme(document.documentElement.getAttribute("data-theme") ?? ""),
       origin: resolveRevealOrigin(performance.now(), ORIGIN_MAX_AGE_MS, {
         width: window.innerWidth,
         height: window.innerHeight,
@@ -78,6 +85,8 @@ export function AccentWash({
         <CircularReveal
           key={flash.key}
           origin={flash.origin}
+          variant="disc"
+          plain={flash.plain}
           color={flash.color}
           opacity={flash.opacity}
           onDone={() => setFlash(null)}
