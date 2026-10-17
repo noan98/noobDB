@@ -231,7 +231,7 @@
   `CARGO_NET_OFFLINE=true` にして `Updating crates.io index` (実測 約 26 秒) を省く (#1680。
   失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
   セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
-  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。Windows を 2 ランナーに分ける案は見送り済み。
+  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。Windows を 2 ランナーに分ける案は優先度が低いので今回は見送り。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。
