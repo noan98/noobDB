@@ -98,8 +98,9 @@ export function useScanPreflight(params: {
       const token = { sessionId };
       inFlightRef.current = token;
       // 帰ってこない (ロック待ち等) 間、「見積り中」を出し続けない。
+      // 実行中に編集されて後続が保留になっている場合も、その「見積り中」ごと隠す。
       const giveUp = window.setTimeout(() => {
-        if (runIdRef.current === myId) setResult(null);
+        setResult((prev) => (prev?.status === "estimating" ? null : prev));
       }, timeoutMs);
       void api
         .runQuery(sessionId, explainSql, database)
