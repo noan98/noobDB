@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { buildShortcutHints, classifyFocus, hintContextFor } from "../shortcutHint";
+import { splitComboKeys } from "../shortcutKeys";
 import { resolveShortcutBindings } from "../shortcuts";
 import { t } from "../i18n";
 import {
@@ -72,6 +73,19 @@ describe("buildShortcutHints (#1487)", () => {
     const items = buildShortcutHints("editor", bindings, none, t);
     const same = items.filter((i) => i.keys === "Cmd/Ctrl+Shift+Enter");
     expect(same.map((i) => i.key)).toEqual(["preview"]);
+  });
+
+  it("グリッド文脈で Mod+A が出て、固定項目のキー表記に ' / ' や括弧が混ざらない", () => {
+    const grid = buildShortcutHints("grid", bindings, none, t);
+    expect(grid.find((i) => i.key === "shortcutGridSelectAllTitle")?.keys).toBe("Cmd/Ctrl+A");
+    for (const ctx of ["editor", "grid", "global"] as const) {
+      for (const i of buildShortcutHints(ctx, bindings, none, t)) {
+        for (const k of splitComboKeys(i.keys)) {
+          if (k === "Cmd/Ctrl" || k === "Alt/Option") continue;
+          expect(k).not.toMatch(/[\s/()（）]/);
+        }
+      }
+    }
   });
 
   it("Shift を押している間は Shift 付きのコンボだけに絞る", () => {
@@ -212,6 +226,25 @@ describe("ShortcutHintOverlay (#1487)", () => {
     down({ key: "Control", ctrlKey: true });
     wait(delay() + 10);
     expect(overlay()).toBeNull();
+  });
+
+  it("遅延前に離した Shift は絞り込みに残らない", () => {
+    renderWithProviders(<ShortcutHintOverlay surface={false} isBlocked={() => false} />);
+    // Ctrl+Shift を押し、遅延前に Shift だけ離す。
+    down({ key: "Shift", shiftKey: true });
+    down({ key: "Control", ctrlKey: true, shiftKey: true });
+    up({ key: "Shift", ctrlKey: true, shiftKey: false });
+    wait(delay() + 10);
+    expect(overlay()).not.toBeNull();
+    expect(screen.getAllByText(/^Cmd\/Ctrl$/).length).toBeGreaterThan(0);
+    expect(overlay()?.textContent).toContain(t("shortcutHintCommandPalette"));
+    up({ key: "Control" });
+    // Shift 単独で押して離してから Ctrl 長押し。
+    down({ key: "Shift", shiftKey: true });
+    up({ key: "Shift" });
+    down({ key: "Control", ctrlKey: true });
+    wait(delay() + 10);
+    expect(overlay()?.textContent).toContain(t("shortcutHintCommandPalette"));
   });
 
   it("設定した遅延に従う", () => {

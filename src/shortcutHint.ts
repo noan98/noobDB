@@ -44,9 +44,6 @@ const CONTEXT_CATEGORIES: Record<HintContext, ShortcutCategory[]> = {
   surface: ["global"],
 };
 
-/** 表示専用 (再割り当て不可) の項目のうち、主修飾キーで始まるものか。 */
-const FIXED_MOD_PREFIX = /^(Cmd\/Ctrl|Ctrl)\+/;
-
 function scopeApplies(scope: ShortcutScope, context: HintContext): boolean {
   if (scope === "global") return true;
   return scope === context;
@@ -87,8 +84,10 @@ export function buildShortcutHints(
       keys = formatCombo(combo);
       specific = def.scope !== "global";
     } else {
-      keys = t(def.keysKey);
-      if (!FIXED_MOD_PREFIX.test(keys)) continue;
+      const combo = def.hintCombo;
+      if (!combo || !/^(Mod|Ctrl)\+/.test(combo)) continue;
+      // Ctrl 固定 (Cmd では効かない) は "Ctrl+R" のまま、それ以外は Cmd/Ctrl 表記にする。
+      keys = combo.startsWith("Ctrl+") ? combo : formatCombo(combo);
     }
     if (!matchesHeld(keys, held)) continue;
     candidates.push({

@@ -81,6 +81,11 @@ export interface ShortcutDef {
   hint?: false;
   /** ヒントに出す短い名前の i18n キー (説明文は長いため)。無ければ `descKey` を使う。 */
   hintKey?: I18nKey;
+  /**
+   * 再割り当て不可 (表示専用) の項目のヒント用コンボ (`shortcutKeys.ts` の形式、Ctrl 固定は "Ctrl+...")。
+   * 訳文の `keysKey` から組み立て直さないための単一ソース。無ければヒントには出さない。
+   */
+  hintCombo?: string;
 }
 
 /** カテゴリ見出しの i18n キー。チートシートのセクション順にも対応する。 */
@@ -193,6 +198,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   // 再割り当ては対象外の表示専用。
   {
     keysKey: "shortcutHistorySearchTitle",
+    hintCombo: "Ctrl+R",
     hintKey: "shortcutHintHistorySearch",
     descKey: "shortcutHistorySearchDesc",
     category: "editor",
@@ -263,6 +269,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "helpShortcutCompleteTitle", descKey: "helpShortcutCompleteDesc", category: "editor" },
   {
     keysKey: "shortcutEditorFindTitle",
+    hintCombo: "Mod+F",
     hintKey: "shortcutHintEditorFind",
     descKey: "shortcutEditorFindDesc",
     category: "editor",
@@ -281,6 +288,7 @@ export const SHORTCUTS: ShortcutDef[] = [
   { keysKey: "shortcutGridSelectTitle", descKey: "shortcutGridSelectDesc", category: "grid" },
   {
     keysKey: "shortcutGridSelectAllTitle",
+    hintCombo: "Mod+A",
     hintKey: "shortcutHintGridSelectAll",
     descKey: "shortcutGridSelectAllDesc",
     category: "grid",
@@ -388,12 +396,14 @@ export const SHORTCUTS: ShortcutDef[] = [
   },
   {
     keysKey: "helpShortcutCycleTabTitle",
+    hintCombo: "Ctrl+Tab",
     hintKey: "shortcutHintCycleTab",
     descKey: "helpShortcutCycleTabDesc",
     category: "tabs",
   },
   {
     keysKey: "helpShortcutNthTabTitle",
+    hintCombo: "Mod+1",
     hintKey: "shortcutHintNthTab",
     descKey: "helpShortcutNthTabDesc",
     category: "tabs",

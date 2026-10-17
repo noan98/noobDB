@@ -90,7 +90,13 @@ export function ShortcutHintOverlay({ surface, isBlocked }: Props) {
       if (e.key === "Control" || e.key === "Meta") {
         // 長押しの自動リピートでは再起動しない。
         if (e.repeat || visible || timer !== null) return;
+        held = { shift: e.shiftKey, alt: e.altKey };
         timer = setTimeout(show, delayMs);
+        return;
+      }
+      // AltGr (Windows では Ctrl+Alt として届く) は文字入力なので出さない。
+      if (e.key === "AltGraph" || e.getModifierState?.("AltGraph")) {
+        hide();
         return;
       }
       if (e.key === "Shift" || e.key === "Alt") {
@@ -111,10 +117,12 @@ export function ShortcutHintOverlay({ surface, isBlocked }: Props) {
         if (!e.ctrlKey && !e.metaKey) hide();
         return;
       }
-      if ((e.key === "Shift" || e.key === "Alt") && visible) {
+      if (e.key === "Shift" || e.key === "Alt") {
         held = { shift: e.shiftKey, alt: e.altKey };
-        const context = contextNow();
-        if (context !== null) setShown({ context, held });
+        if (visible) {
+          const context = contextNow();
+          if (context !== null) setShown({ context, held });
+        }
       }
     };
     const onCompositionStart = () => {
@@ -130,13 +138,22 @@ export function ShortcutHintOverlay({ surface, isBlocked }: Props) {
       if (context === null) hide();
       else setShown({ context, held });
     };
+    // keyup を取りこぼした (他ウィンドウで離した等) ときのフォールバック。
+    const onPointerMove = (e: PointerEvent) => {
+      if (!e.ctrlKey && !e.metaKey) hide();
+    };
+    const onBlur = () => {
+      composing = false;
+      hide();
+    };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") hide();
     };
 
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
-    window.addEventListener("blur", hide);
+    window.addEventListener("blur", onBlur);
+    window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerdown", hide, true);
     window.addEventListener("wheel", hide, { capture: true, passive: true });
     document.addEventListener("compositionstart", onCompositionStart, true);
@@ -147,7 +164,8 @@ export function ShortcutHintOverlay({ surface, isBlocked }: Props) {
       hide();
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
-      window.removeEventListener("blur", hide);
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("pointermove", onPointerMove, true);
       window.removeEventListener("pointerdown", hide, true);
       window.removeEventListener("wheel", hide, true);
       document.removeEventListener("compositionstart", onCompositionStart, true);
