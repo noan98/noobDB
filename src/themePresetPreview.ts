@@ -139,3 +139,47 @@ export function themePreviewGradient(colors: ThemePreviewColors): string {
   });
   return `linear-gradient(90deg, ${stops.join(", ")})`;
 }
+
+/**
+ * ライブ・アピアランス・プレビュー (#1581) の「選択前に見る」用の上書き変数。
+ * モックのルート要素へインラインで当てる CSS カスタムプロパティを返す。
+ * プリセット (ホバー / フォーカス中のカード) の 5 色と、アクセント (ホバー中のスウォッチ)
+ * だけを上書きし、何も無ければ空 — このとき現在の設定がトークン経由でそのまま映る。
+ * 値は上の静的マップ (App.css と同期テストで固定済み) を使い、枠線・淡色テキストは
+ * そこから `color-mix` で導く (色の二重管理を増やさない)。
+ *
+ * Chakra の `app.*` トークンは `:root` で `--chakra-colors-app-*` へ解決済みの値が
+ * 継承されるため、`--x` だけを上書きしても効かない。対応する `--chakra-colors-app-*` も
+ * 同時に上書きする。
+ */
+export function appearancePreviewVars(
+  preset: ThemePreset | null,
+  accent: string | null,
+  theme: Theme,
+): Record<string, string> {
+  const vars: Record<string, string> = {};
+  const set = (cssVar: string, chakraVar: string, value: string) => {
+    vars[cssVar] = value;
+    vars[`--chakra-colors-${chakraVar}`] = value;
+  };
+  const mix = (fg: string, pct: number, bg: string) => `color-mix(in srgb, ${fg} ${pct}%, ${bg})`;
+  if (preset) {
+    const c = themePreviewColors(preset, theme);
+    set("--bg", "app-bg", c.bg);
+    set("--bg-toolbar", "app-toolbar", c.surface);
+    set("--bg-header", "app-header", c.surface);
+    set("--bg-elevated", "app-surface", c.surface);
+    set("--text", "app-text", c.text);
+    set("--text-secondary", "app-text-secondary", mix(c.text, 75, c.bg));
+    set("--text-muted", "app-text-muted", mix(c.text, 55, c.bg));
+    set("--border", "app-border", mix(c.text, 18, c.bg));
+    set("--border-strong", "app-border-strong", mix(c.text, 28, c.bg));
+    set("--syntax-keyword", "syntax-keyword", c.keyword);
+    set("--accent-text", "app-accent-text", c.bg);
+    set("--accent", "app-accent", c.accent);
+  }
+  if (accent) set("--accent", "app-accent", accent);
+  const acc = vars["--accent"];
+  if (acc) set("--accent-highlight", "app-accent-highlight", mix(acc, 35, "transparent"));
+  return vars;
+}

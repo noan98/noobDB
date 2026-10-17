@@ -770,6 +770,9 @@ const en = {
   settingsTabRestoreModeAsk: "Ask each time",
   settingsTabRestoreModeNever: "Never restore",
   settingsAppearance: "Appearance",
+  settingsAppearancePreviewLabel: "Appearance preview (a mock of the toolbar, sidebar, result grid and SQL)",
+  settingsAppearancePreviewRun: "Run",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "Font size (px)",
   settingsFontSizeHelp:
     "Base font size in pixels. Scales the entire interface, including the SQL editor and result grid. Allowed range: {min}–{max} px (default {default}).",
@@ -7360,6 +7363,9 @@ const ja: Dict = {
   settingsTabRestoreModeAsk: "都度確認する",
   settingsTabRestoreModeNever: "復元しない",
   settingsAppearance: "表示",
+  settingsAppearancePreviewLabel: "外観プレビュー (ツールバー・サイドバー・結果グリッド・SQL のモック)",
+  settingsAppearancePreviewRun: "実行",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "フォントサイズ (px)",
   settingsFontSizeHelp:
     "基準フォントサイズ (ピクセル単位)。SQL エディタや結果グリッドを含む UI 全体を拡大・縮小します。指定可能範囲: {min}〜{max} px (既定 {default})。",
