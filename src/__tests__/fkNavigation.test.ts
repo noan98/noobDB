@@ -124,3 +124,28 @@ describe("buildReverseRefSql", () => {
     ).toBe('SELECT * FROM "orders" WHERE "user_id" IS NULL');
   });
 });
+
+describe("列型付きのリテラル化", () => {
+  it("BLOB 列のキーは 16 進リテラルになる (順方向 / 逆方向)", () => {
+    expect(
+      buildFkJumpSql({ driver: "mysql", refTable: "t", refColumn: "id", value: "ab12", valueType: "BLOB" }),
+    ).toBe("SELECT * FROM `t` WHERE `id` = 0xab12");
+    expect(
+      buildReverseRefSql({
+        driver: "sqlite",
+        childTable: "c",
+        childColumn: "pid",
+        value: "ab12",
+        valueType: "BLOB",
+      }),
+    ).toBe('SELECT * FROM "c" WHERE "pid" = X\'ab12\'');
+  });
+
+  it("文字列で届いた BIGINT は裸の数値になり、型なしなら従来どおり引用符付き", () => {
+    const p = { driver: "postgres", refTable: "t", refColumn: "id", value: "9007199254740993" };
+    expect(buildFkJumpSql({ ...p, valueType: "BIGINT" })).toBe(
+      'SELECT * FROM "t" WHERE "id" = 9007199254740993',
+    );
+    expect(buildFkJumpSql(p)).toBe('SELECT * FROM "t" WHERE "id" = \'9007199254740993\'');
+  });
+});
