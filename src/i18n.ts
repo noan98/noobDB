@@ -3276,6 +3276,32 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
   dropReferencedByMore: "and {count} more",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "{count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactTitlePartial: "At least {count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactIntroRows:
+    "These child tables have rows pointing at the rows you are about to delete (child.column ← parent.column).",
+  refImpactIntroTruncate:
+    "These child tables have rows pointing at this table (child.column ← parent.column).",
+  refImpactBlockedRows: "Rules without CASCADE / SET NULL make the DELETE fail with a foreign key error.",
+  refImpactBlockedTruncate:
+    "Rules without CASCADE / SET NULL make the TRUNCATE (a DELETE FROM in SQLite) fail with a foreign key error.",
+  refImpactTruncateRefusesMysql:
+    "MySQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, so this TRUNCATE will fail.",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, unless CASCADE is given (which also empties the child tables), so this TRUNCATE will fail.",
+  refImpactUnverified:
+    "Could not check how many rows reference this data (timeout or error). Child tables referencing it: {tables}. Deleting may be blocked or cascade to them.",
+  refImpactRowCountCapped: "{count}+ rows",
+  statusCheckingRefs: "Checking rows that reference the deletion...",
+  refImpactCascading: "Child rows under ON DELETE CASCADE are deleted together with them.",
+  refImpactSqlite:
+    "SQLite enforces foreign keys only while PRAGMA foreign_keys is ON; otherwise orphaned child rows are left behind.",
+  refImpactRowCount: "{count} rows",
+  refImpactOpen: "Open child rows",
+  refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
+  refImpactDeleteOk: "Delete anyway",
+  refImpactMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -9934,6 +9960,31 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
   dropReferencedByMore: "ほか {count} 件",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "削除対象を {tables} テーブルの子行 {count} 件が参照しています",
+  refImpactTitlePartial: "削除対象を {tables} テーブルの子行 {count} 件以上が参照しています",
+  refImpactIntroRows: "次の子テーブルに、削除しようとしている行を指す行があります (子.列 ← 親.列)。",
+  refImpactIntroTruncate: "次の子テーブルに、このテーブルを指す行があります (子.列 ← 親.列)。",
+  refImpactBlockedRows:
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで DELETE が失敗します。",
+  refImpactBlockedTruncate:
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで TRUNCATE (SQLite では DELETE FROM) が失敗します。",
+  refImpactTruncateRefusesMysql:
+    "MySQL は外部キーで参照されているテーブルを、ON DELETE に関係なく TRUNCATE できません。この TRUNCATE は失敗します。",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL は外部キーで参照されているテーブルを、ON DELETE に関係なく CASCADE 指定なしでは TRUNCATE できません (CASCADE を付けると子テーブルも空になります)。この TRUNCATE は失敗します。",
+  refImpactUnverified:
+    "参照行数を確認できませんでした (タイムアウトまたはエラー)。参照している子テーブル: {tables}。削除がブロックされたり、子の行へ連鎖したりする可能性があります。",
+  refImpactRowCountCapped: "{count} 行以上",
+  statusCheckingRefs: "削除対象を参照する行を確認中...",
+  refImpactCascading: "ON DELETE CASCADE の子行は一緒に削除されます。",
+  refImpactSqlite:
+    "SQLite は PRAGMA foreign_keys が ON の間だけ外部キーを強制します。OFF だと子の行が孤立します。",
+  refImpactRowCount: "{count} 行",
+  refImpactOpen: "子行を開く",
+  refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",
+  refImpactDeleteOk: "削除する",
+  refImpactMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",

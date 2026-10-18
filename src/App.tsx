@@ -228,7 +228,7 @@ import {
   TX_ISOLATION_DEFAULT,
   type TxIsolation,
 } from "./txOptions";
-import { useConfirm } from "./components/ConfirmDialog";
+import { useConfirm, type ConfirmControls } from "./components/ConfirmDialog";
 import { CodePreview } from "./components/modalForm";
 import { ContextMenu, type ContextMenuEntry } from "./components/ContextMenu";
 import { SavepointControl } from "./components/SavepointControl";
@@ -459,6 +459,8 @@ import {
 } from "./queryNotify";
 import type { IncomingFk } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
+import { buildOpenChildrenSql, collectDeletedKeyValues, loadRefImpacts, type RefImpact } from "./refImpact";
+import { RefImpactList } from "./components/RefImpactList";
 import { DropReferencedBy } from "./components/DropReferencedBy";
 import type { ValueLookup } from "./components/useValuePicker";
 import { addPinnedWithEvicted, MAX_PINNED, pinToastPlan, type PinnedResult } from "./pinnedCompare";
@@ -7206,6 +7208,21 @@ export default function App() {
     [sessionId, previewQueryInTab, selectedProfile?.driver],
   );
 
+  // 削除予定の行を子テーブルが参照していないか確認する (#1506)。`openAndRunQuery` など後段の
+  // フックに依存するため、定義は後ろ (handleTruncateTable の近く) に置き、ここは ref 越しに呼ぶ。
+  const applyGuardRef = useRef<Set<string>>(new Set());
+  const confirmRowDeleteImpactsRef = useRef<
+    | ((input: {
+        database: string;
+        table: string;
+        columns: { name: string; type_name?: string }[];
+        rows: CellValue[][];
+        pkIndices: number[];
+        deleteKeys: ReadonlySet<string>;
+      }) => Promise<boolean>)
+    | null
+  >(null);
+
   /**
    * 保留中の編集を一括適用する。`rowScope` (rowEditKey → 列 → 生の入力値) を渡すと、
    * その行のセル編集だけを送り、ほかの保留編集・削除予定・新規行は保留のまま残す
@@ -7215,6 +7232,8 @@ export default function App() {
   const applyEditsForTab = useCallback(
     async (tab: Tab, rowScope?: PendingEdits): Promise<boolean> => {
       if (!sessionId) return false;
+      // 参照の確認 (#1506) 中の二重 Apply を防ぐ (bulkUpdateCells が 2 回走ると INSERT が重複しうる)。
+      if (applyGuardRef.current.has(tab.id)) return false;
       const { result, tableColumns, database, table, paginatable, rowIdentity } = tab;
       if (!result || !tableColumns || !database || !table) return false;
       const scoped = rowScope !== undefined;
@@ -7290,6 +7309,33 @@ export default function App() {
           tone: "warning",
         });
         if (!ok) return false;
+      }
+      // 削除予定の行を子テーブルが参照しているなら、行数と ON DELETE を見せて確認する (#1506)。
+      if (deletes.length > 0) {
+        // 確認中も Apply ボタンを無効 (loading) にし、状態バーに出す。中止・失敗で必ず戻す。
+        applyGuardRef.current.add(tab.id);
+        patchTab(tab.id, (tt) => ({ ...tt, applyingEdits: true }));
+        setStatus({ kind: "key", key: "statusCheckingRefs" });
+        let proceed = true;
+        try {
+          proceed =
+            (await confirmRowDeleteImpactsRef.current?.({
+              database,
+              table,
+              columns: result.columns,
+              rows: result.rows,
+              pkIndices,
+              deleteKeys: new Set(pendingDeletes),
+            })) ?? true;
+        } finally {
+          applyGuardRef.current.delete(tab.id);
+          patchTab(tab.id, (tt) => ({ ...tt, applyingEdits: false }));
+          // 「確認中...」を残さない (キャンセル・「子行を開く」でも)。続行時は直後に適用中表示へ置き換わる。
+          setStatus((cur) =>
+            cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur,
+          );
+        }
+        if (!proceed) return false;
       }
       const tabId = tab.id;
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: true }));
@@ -7987,13 +8033,190 @@ export default function App() {
     [selectedProfile?.is_production],
   );
 
+  // 行削除 / TRUNCATE の確認に添える「子テーブルの参照行数」(#1506)。逆方向 FK
+  // (`incoming_foreign_keys`、DB 単位でキャッシュ済み) の子テーブルごとに COUNT を 1 往復で数える。
+  // 読み取り専用クエリ (`run_lookup_query`) なので read_only でも動き、書き込み経路は増えない。
+  // 取得に失敗しても確認自体は妨げない (警告を出さないだけ)。
+  const refImpactLookup = useCallback(
+    (database: string) => (sql: string, rowCap: number) => {
+      if (!sessionId) return Promise.resolve({ rows: [] as CellValue[][] });
+      // 重いテーブルで確認を待たせ続けないよう 5 秒で打ち切る (失敗時は警告なしで確認を続行)。
+      return api.runLookupQuery({ sessionId, sql, database, rowCap, queryTimeoutSecs: 5 });
+    },
+    [sessionId],
+  );
+
+  const confirmRowDeleteImpacts = useCallback(
+    async (input: {
+      database: string;
+      table: string;
+      columns: { name: string; type_name?: string }[];
+      rows: CellValue[][];
+      pkIndices: number[];
+      deleteKeys: ReadonlySet<string>;
+    }): Promise<boolean> => {
+      if (!sessionId) return true;
+      const driver = selectedProfile?.driver ?? "mysql";
+      let refs: IncomingFk[];
+      try {
+        refs = await api.incomingForeignKeys(sessionId, input.database, input.table);
+      } catch {
+        // 子テーブルの有無そのものが分からないときは確認を足さない (従来どおり)。
+        return true;
+      }
+      if (refs.length === 0) return true;
+      const collected = collectDeletedKeyValues({
+        columns: input.columns,
+        rows: input.rows,
+        pkIndices: input.pkIndices,
+        deleteKeys: input.deleteKeys,
+        referencedColumns: refs.map((r) => r.referencedColumn),
+      });
+      const { keys, types, partial } = collected;
+      let impacts: RefImpact[] = [];
+      let failed = false;
+      try {
+        impacts = await loadRefImpacts({
+          driver,
+          database: input.database,
+          refs,
+          keys,
+          types,
+          parentTable: input.table,
+          lookup: refImpactLookup(input.database),
+        });
+      } catch {
+        failed = true;
+      }
+      // 集計できなかった (タイムアウト等)、または参照先の列が結果に無く数えられない場合は、
+      // 黙って進めず「確認できなかった」旨を添えて確認を挟む。
+      // 注記には数えられなかった子テーブルだけを挙げる (集計失敗は全部、列不明は該当の子のみ)。
+      const unverifiedTables = [
+        ...new Set(
+          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map(
+            (r) => r.table,
+          ),
+        ),
+      ];
+      // 値の上限で打ち切って一件も見つからなかったときは、数えていない値に子行がありうるので
+      // 黙って進めず「確認できなかった」として全子テーブルを挙げる。
+      if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
+        unverifiedTables.push(...new Set(refs.map((r) => r.table)));
+      }
+      const unverified = unverifiedTables.length > 0;
+      if (impacts.length === 0 && !unverified) return true;
+      return confirm({
+        title: translate("refImpactDeleteTitle", { table: input.table }),
+        message: (controls) => (
+          <RefImpactList
+            impacts={impacts}
+            mode="rows"
+            driver={driver}
+            partial={partial}
+            unverified={unverified ? unverifiedTables : undefined}
+            onOpen={(imp) => {
+              controls.cancel();
+              openAndRunQuery(
+                buildOpenChildrenSql({ driver, database: input.database, impact: imp, keys, types }),
+                imp.table,
+              );
+            }}
+          />
+        ),
+        confirmLabel: translate("refImpactDeleteOk"),
+        tone: "warning",
+      });
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup, confirm, openAndRunQuery],
+  );
+  confirmRowDeleteImpactsRef.current = confirmRowDeleteImpacts;
+
+  // TRUNCATE の前に、対象テーブルを参照している子行数を数える (#1506)。`excludeChildren` に含まれる
+  // 子 (同じ操作で一緒に消える) と自己参照は影響として数えない。数えられなかった親テーブルは
+  // `unverified` に入れ、確認に「確認できなかった」旨を添える。
+  const loadTruncateImpacts = useCallback(
+    async (
+      database: string,
+      tables: readonly string[],
+      excludeChildren: readonly string[],
+    ): Promise<{ impacts: RefImpact[]; unverified: string[] }> => {
+      if (!sessionId) return { impacts: [], unverified: [] };
+      const driver = selectedProfile?.driver ?? "mysql";
+      const lookup = refImpactLookup(database);
+      const perTable = await Promise.all(
+        tables.map(async (tbl): Promise<{ impacts: RefImpact[]; unverified: string[] }> => {
+          let refs: IncomingFk[];
+          try {
+            const all = await api.incomingForeignKeys(sessionId, database, tbl);
+            refs = all.filter((fk) => fk.table !== tbl && !excludeChildren.includes(fk.table));
+          } catch {
+            return { impacts: [], unverified: [] };
+          }
+          if (refs.length === 0) return { impacts: [], unverified: [] };
+          try {
+            const impacts = await loadRefImpacts({
+              driver,
+              database,
+              refs,
+              keys: null,
+              parentTable: tbl,
+              lookup,
+            });
+            return { impacts, unverified: [] };
+          } catch {
+            return { impacts: [], unverified: [...new Set(refs.map((r) => r.table))] };
+          }
+        }),
+      );
+      return {
+        impacts: perTable.flatMap((r) => r.impacts),
+        unverified: [...new Set(perTable.flatMap((r) => r.unverified))],
+      };
+    },
+    [sessionId, selectedProfile?.driver, refImpactLookup],
+  );
+
+  const refImpactTruncateBody = useCallback(
+    (base: ReactNode, found: { impacts: RefImpact[]; unverified: string[] }, database: string) =>
+      (controls: ConfirmControls) => {
+        const driver = selectedProfile?.driver ?? "mysql";
+        return (
+          <>
+            {base}
+            <RefImpactList
+              impacts={found.impacts}
+              mode="truncate"
+              driver={driver}
+              unverified={found.unverified}
+              onOpen={(imp) => {
+                controls.cancel();
+                openAndRunQuery(
+                  buildOpenChildrenSql({ driver, database, impact: imp, keys: null }),
+                  imp.table,
+                );
+              }}
+            />
+          </>
+        );
+      },
+    [selectedProfile?.driver, openAndRunQuery],
+  );
+
   const handleTruncateTable = useCallback(
     async (database: string, table: string) => {
       // 不可逆 (TRUNCATE) × 本番接続では、対象テーブル名のタイプ入力を要求する
       // 強確認ゲートを追加する (#675)。非本番はこれまで通り 1 クリック確認。
+      const found = await loadTruncateImpacts(database, [table], []);
       const ok = await confirm({
         title: translate("truncateConfirmTitle", { table }),
-        message: maintenanceMessage(translate("truncateConfirmBody", { table })),
+        message:
+          found.impacts.length > 0 || found.unverified.length > 0
+            ? refImpactTruncateBody(
+                maintenanceMessage(translate("truncateConfirmBody", { table })),
+                found,
+                database,
+              )
+            : maintenanceMessage(translate("truncateConfirmBody", { table })),
         confirmLabel: translate("truncateConfirmOk"),
         tone: "danger",
         typedConfirmation: selectedProfile?.is_production ? table : undefined,
@@ -8002,7 +8225,15 @@ export default function App() {
       const driver = selectedProfile?.driver ?? "mysql";
       await runMaintenanceDdl(buildTruncateSql(driver, database, table), database);
     },
-    [confirm, maintenanceMessage, selectedProfile?.driver, selectedProfile?.is_production, runMaintenanceDdl],
+    [
+      confirm,
+      maintenanceMessage,
+      loadTruncateImpacts,
+      refImpactTruncateBody,
+      selectedProfile?.driver,
+      selectedProfile?.is_production,
+      runMaintenanceDdl,
+    ],
   );
 
   // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
@@ -9076,9 +9307,18 @@ export default function App() {
         ) : (
           body
         );
+      // PostgreSQL / SQLite は同じ操作で子も空にするので、含まれる子は影響として数えない。
+      const found = await loadTruncateImpacts(
+        database,
+        tables,
+        selectedProfile?.driver === "mysql" ? [] : tables,
+      );
       const ok = await confirm({
         title: translate("batchTruncateConfirmTitle", { count: tables.length }),
-        message: maintenanceMessage(bodyWithNote),
+        message:
+          found.impacts.length > 0 || found.unverified.length > 0
+            ? refImpactTruncateBody(maintenanceMessage(bodyWithNote), found, database)
+            : maintenanceMessage(bodyWithNote),
         confirmLabel: translate("batchTruncateConfirmOk", { count: tables.length }),
         tone: "danger",
         typedConfirmation: production ? database : undefined,
@@ -9125,6 +9365,8 @@ export default function App() {
     [
       confirm,
       maintenanceMessage,
+      loadTruncateImpacts,
+      refImpactTruncateBody,
       selectedProfile?.driver,
       selectedProfile?.is_production,
       sessionId,

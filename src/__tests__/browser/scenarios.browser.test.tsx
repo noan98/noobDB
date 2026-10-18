@@ -490,6 +490,84 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
   });
 });
 
+describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
+  it("参照の確認中に Apply が再入しても bulk_update_cells は 1 回だけ走る (INSERT の重複を防ぐ)", async () => {
+    registerAutoStream();
+    let applyCalls = 0;
+    const applied: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      applyCalls += 1;
+      applied.push(args);
+      return { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 };
+    });
+    onCommand("incoming_foreign_keys", () => [
+      { table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" },
+    ]);
+    // 子行は 0 件 (確認ダイアログは出ない経路)。集計をわざと遅らせて確認中の時間帯を作る。
+    onCommand("run_lookup_query", async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      return {
+        columns: [
+          { name: "i", type_name: "INT" },
+          { name: "n", type_name: "INT" },
+        ],
+        rows: [[0, 0]],
+        rows_affected: 0,
+        elapsed_ms: 1,
+      };
+    });
+
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    // 行削除を保留にし、新規行 (INSERT) も保留に混ぜる。
+    await screen.getByRole("gridcell", { name: "banana", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridMarkDelete") }).click();
+    await screen.getByRole("gridcell", { name: "apple", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridAddRow") }).click();
+    // 全列が既定値だと INSERT が組まれないので、name 欄に値を入れる。
+    const insertFields = await vi.waitFor(
+      () => {
+        const els = document.querySelectorAll<HTMLInputElement>("[data-insert-fields] input");
+        if (els.length === 0) throw new Error("insert modal not open");
+        return els;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(insertFields[1] ?? insertFields[0]).fill("cherry");
+    await screen.getByRole("button", { name: t("rowOpsInsertAdd") }).click();
+
+    // Apply ボタンの React onClick (= PaneView が組む onApplyEdits) を直接 2 回起動する。
+    // ボタンは確認中 disabled になるので、ボタン越しでは 2 回目が空振りしてガードを検証できない。
+    const btn = await vi.waitFor(
+      () => {
+        const el = screen.getByRole("button", { name: t("editApplyButton") }).query();
+        if (!el) throw new Error("apply button missing");
+        return el as HTMLElement;
+      },
+      { timeout: 5000 },
+    );
+    const propsKey = Object.keys(btn).find((k) => k.startsWith("__reactProps$"));
+    const onClick = (btn as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+    if (!onClick) throw new Error("onClick not found");
+    onClick();
+    await new Promise((r) => setTimeout(r, 100));
+    onClick();
+
+    await vi.waitFor(() => expect(applyCalls).toBeGreaterThanOrEqual(1), { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(applyCalls).toBe(1);
+    expect(applied[0]).toMatchObject({ extraStatements: [expect.any(String), expect.any(String)] });
+  });
+});
+
 describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)", () => {
   it("保存済みワークスペースが接続時に復元され、テーブルタブは自動で再実行される", async () => {
     registerAutoStream();

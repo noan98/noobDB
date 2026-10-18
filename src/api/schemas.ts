@@ -1219,6 +1219,7 @@ export const incomingForeignKey = z.object({
   table: z.string(),
   column: z.string(),
   referencedColumn: z.string(),
+  onDelete: z.string().nullish(),
 });
 
 /** 配列を返すコマンド用のラッパースキーマ。 */

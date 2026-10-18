@@ -1588,6 +1588,7 @@ fn build_fixtures() -> serde_json::Value {
         table: "orders".into(),
         column: "user_id".into(),
         referenced_column: "id".into(),
+        on_delete: Some("CASCADE".into()),
     };
     let table_statistic = t::TableStatistic {
         name: "users".into(),
