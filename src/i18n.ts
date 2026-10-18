@@ -1246,6 +1246,7 @@ const en = {
   spinnerLoadingAria: "Loading",
   toastRegionAria: "Notifications",
   toastDismissAria: "Dismiss notification",
+  toastOverflow: "+{count} more — see Activity for all",
   statusSeverityCritical: "Critical",
   statusQueryTimeout:
     "Query timed out after {secs}s and was cancelled. The connection is still open — raise or disable the timeout in Settings.",
@@ -2212,6 +2213,12 @@ const en = {
   // 矩形選択範囲のエクスポート (#917)。
   exportScopeSelection: "Selected cells only",
   exportScopeSelectionHint: "Export the {rows} rows × {cols} columns currently selected in the grid.",
+  // 現在のビュー (フィルタ・ソート・列の表示/順序を反映) のエクスポート (#1507)。
+  exportScopeView: "Current view",
+  exportScopeViewHint:
+    "Export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
+  exportScopeViewHintPartial:
+    "Of the rows loaded so far, export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
   exportScopeFull: "Full result (re-run query)",
   exportScopeFullHint: "Re-run the query and stream every row to the file (no auto LIMIT).",
   exportFullProgress: "Exported {rows} rows...",
@@ -7902,6 +7909,7 @@ const ja: Dict = {
   spinnerLoadingAria: "読み込み中",
   toastRegionAria: "通知",
   toastDismissAria: "通知を閉じる",
+  toastOverflow: "他 {count} 件 — すべてアクティビティで確認できます",
   statusSeverityCritical: "重大",
   statusQueryTimeout:
     "クエリが {secs} 秒でタイムアウトし、中断されました。接続は維持されています。設定でタイムアウトを延長または無効化できます。",
@@ -8870,6 +8878,12 @@ const ja: Dict = {
   // 矩形選択範囲のエクスポート (#917)。
   exportScopeSelection: "選択範囲のみ",
   exportScopeSelectionHint: "グリッドで選択中の {rows} 行 × {cols} 列を書き出します。",
+  // 現在のビュー (フィルタ・ソート・列の表示/順序を反映) のエクスポート (#1507)。
+  exportScopeView: "現在のビュー",
+  exportScopeViewHint:
+    "フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
+  exportScopeViewHintPartial:
+    "読み込み済みの行のうち、フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
   exportScopeFull: "全件 (クエリを再実行)",
   exportScopeFullHint: "クエリを再実行し、全行をストリーミングでファイルへ書き出します (自動 LIMIT なし)。",
   exportFullProgress: "{rows} 行をエクスポート中...",

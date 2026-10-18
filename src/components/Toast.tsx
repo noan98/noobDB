@@ -14,8 +14,14 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, semanticColorVar, type SemanticRole } from "../semanticColors";
-import { pushActivity, type ActivityDetail, type ActivitySeverity } from "../activityLog";
+import {
+  pushActivity,
+  requestActivityCenterToggle,
+  type ActivityDetail,
+  type ActivitySeverity,
+} from "../activityLog";
 import { railDurationSeconds, railRatio } from "./toastProgress";
+import { splitToastStack } from "./toastStack";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
 
@@ -316,6 +322,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [notify, dismiss, update],
   );
 
+  // 上限を超えた分は「他 N 件」の deck に畳む (#1501)。タイマーは畳んだ分も進むので、
+  // 期限が来れば通常どおり消える (アクション付きも畳まれている間に Undo の期限が進む)。
+  // 履歴はアクティビティセンターに全件残っていて、deck を押すとそこを開く。
+  const { visible: visibleToasts, hiddenCount } = splitToastStack(toasts);
+
   return (
     <ToastContext.Provider value={api}>
       {children}
@@ -334,7 +345,68 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-label={t("toastRegionAria")}
       >
         <AnimatePresence initial={false}>
-          {toasts.map((toast) => (
+          {hiddenCount > 0 && (
+            <motion.div
+              key="toast-overflow"
+              layout
+              initial={{ opacity: 0, y: 14, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.96 }}
+              transition={transitions.emphasized}
+            >
+              {/* 奥に薄く重ねた 2 枚の縁で「積み重なっている」ことを示す deck 表現。 */}
+              <Box position="relative" pointerEvents="auto" mx="2" mb="1">
+                <Box
+                  position="absolute"
+                  left="2"
+                  right="2"
+                  top="-1"
+                  h="full"
+                  borderRadius="md"
+                  bg="app.surfaceMuted"
+                  border="1px solid"
+                  borderColor="app.border"
+                  opacity={0.6}
+                  aria-hidden
+                />
+                <Box
+                  position="absolute"
+                  left="1"
+                  right="1"
+                  top="-0.5"
+                  h="full"
+                  borderRadius="md"
+                  bg="app.surfaceMuted"
+                  border="1px solid"
+                  borderColor="app.border"
+                  opacity={0.85}
+                  aria-hidden
+                />
+                <chakra.button
+                  type="button"
+                  onClick={() => requestActivityCenterToggle()}
+                  display="block"
+                  w="full"
+                  cursor="pointer"
+                  _hover={{ bg: "app.hover" }}
+                  _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+                  position="relative"
+                  px="3"
+                  py="1.5"
+                  borderRadius="md"
+                  bg="app.surfaceMuted"
+                  border="1px solid"
+                  borderColor="app.border"
+                  boxShadow="elevationToast"
+                  textStyle="caption"
+                  textAlign="center"
+                >
+                  {t("toastOverflow", { count: hiddenCount })}
+                </chakra.button>
+              </Box>
+            </motion.div>
+          )}
+          {visibleToasts.map((toast) => (
             // motion drives the enter/exit; styling lives on the inner Chakra
             // Box so motion's `transition` object isn't swallowed by Chakra's
             // `transition` style prop.
