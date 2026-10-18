@@ -110,6 +110,13 @@ interface Props {
    */
   selection?: { columns: Column[]; rows: CellValue[][] } | null;
   /**
+   * 「現在のビュー」(#1507)。グリッドが今見せている状態 (列フィルタ・全体フィルタ・ソート・
+   * 列の表示/非表示・列順を適用した、表示順の列/行) の切り出し。`ResultGrid` が
+   * エクスポートを開く時点で `DataGrid` から取得する。生の全件と同一 (何も絞っていない)
+   * ときは null にして、冗長なスコープを出さない。
+   */
+  view?: { columns: Column[]; rows: CellValue[][] } | null;
+  /**
    * 調査バンドル (#745) の文脈。提供されると形式に「調査バンドル (HTML)」が増える。
    */
   bundle?: BundleContext;
@@ -244,7 +251,7 @@ type Status =
  * エクスポート対象: 現在のグリッドのみ / 矩形選択範囲のみ (#917) / クエリを
  * 再実行して全件。
  */
-type ExportScope = "current" | "selection" | "full";
+type ExportScope = "current" | "view" | "selection" | "full";
 
 const SQL_CONFLICT_LABELS: Record<SqlConflictMode, I18nKey> = {
   insert: "exportSqlConflictInsert",
@@ -277,6 +284,7 @@ export function ExportModal({
   stoppedPartial,
   fullExport,
   selection,
+  view,
   bundle,
   elapsedMs,
   resultId,
@@ -323,8 +331,17 @@ export function ExportModal({
   // 次点は、部分結果かつ全件モードが使えるときの「全件」(誤って部分だけ書き出す
   // のを防ぐ)。それ以外は従来どおりグリッドのみ。
   const hasSelection = !!selection && selection.rows.length > 0;
+  // 絞り込み/並べ替え/列の調整をしたビューがあるとき (#1507) は、画面に見えているものを
+  // そのまま出す「現在のビュー」が次点 (選択範囲の次、全件再実行より前)。
+  const hasView = !!view;
   const [scope, setScope] = useState<ExportScope>(
-    hasSelection ? "selection" : fullExport && partial ? "full" : "current",
+    hasSelection
+      ? "selection"
+      : view && view.rows.length > 0
+        ? "view"
+        : fullExport && partial
+          ? "full"
+          : "current",
   );
   const initialBasename = useMemo(() => defaultBasename(database, table), [database, table]);
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
@@ -346,10 +363,12 @@ export function ExportModal({
   // スコープが "selection" のときは、選択範囲の列/行部分集合を整形対象にする。
   // それ以外 ("current" / "full" 起動前のプレビュー・コピー・グリッドのみ保存) は
   // 従来どおりグリッド全体。`buildExportContent` は共通なので書式は二重定義しない。
-  const effectiveColumns = scope === "selection" && selection ? selection.columns : columns;
-  const effectiveRows = scope === "selection" && selection ? selection.rows : rows;
-  // 選択範囲は行の部分集合なのでハンドルを使えない。それ以外は `rows` = ハンドルの行。
-  const rowsHandle = scope === "selection" && selection ? null : (resultId ?? null);
+  // "view" (#1507) も同様に表示順の部分集合 (行の並びが元と違う) なので同じ扱い。
+  const subset = scope === "selection" && selection ? selection : scope === "view" && view ? view : null;
+  const effectiveColumns = subset ? subset.columns : columns;
+  const effectiveRows = subset ? subset.rows : rows;
+  // 選択範囲/ビューは行の部分集合・並べ替えなのでハンドルを使えない。それ以外は `rows` = ハンドルの行。
+  const rowsHandle = subset ? null : (resultId ?? null);
   /**
    * 結果ハンドルがあれば行を送らずに `run(true)` を試し、破棄済み (`result handle gone`) なら
    * 行を送る `run(false)` で再試行する。ハンドルが無ければ最初から `run(false)`。
@@ -922,7 +941,7 @@ export function ExportModal({
         <chakra.div fontSize="md" color="app.text">
           {t("exportRowCount", { rows: effectiveRows.length })}
         </chakra.div>
-        {(hasSelection || (fullExport && !isBundle)) && (
+        {(hasSelection || hasView || (fullExport && !isBundle)) && (
           <FormSection>
             <FieldLabel as="div">{t("exportScope")}</FieldLabel>
             <chakra.div
@@ -935,6 +954,7 @@ export function ExportModal({
               {(
                 [
                   "current",
+                  ...(hasView ? (["view"] as const) : []),
                   ...(hasSelection ? (["selection"] as const) : []),
                   // 調査バンドルは在グリッドの取得済み行のスナップショットなので、
                   // 全件 (再実行) スコープは出さない。
@@ -961,19 +981,26 @@ export function ExportModal({
                     <chakra.span fontSize="md">
                       {sc === "current"
                         ? t("exportScopeCurrent")
-                        : sc === "selection"
-                          ? t("exportScopeSelection")
-                          : t("exportScopeFull")}
+                        : sc === "view"
+                          ? t("exportScopeView")
+                          : sc === "selection"
+                            ? t("exportScopeSelection")
+                            : t("exportScopeFull")}
                     </chakra.span>
                     <chakra.span fontSize="xs" color="app.textMuted">
                       {sc === "current"
                         ? t("exportScopeCurrentHint", { rows: rows.length })
-                        : sc === "selection"
-                          ? t("exportScopeSelectionHint", {
-                              rows: selection?.rows.length ?? 0,
-                              cols: selection?.columns.length ?? 0,
+                        : sc === "view"
+                          ? t(partial ? "exportScopeViewHintPartial" : "exportScopeViewHint", {
+                              rows: view?.rows.length ?? 0,
+                              cols: view?.columns.length ?? 0,
                             })
-                          : t("exportScopeFullHint")}
+                          : sc === "selection"
+                            ? t("exportScopeSelectionHint", {
+                                rows: selection?.rows.length ?? 0,
+                                cols: selection?.columns.length ?? 0,
+                              })
+                            : t("exportScopeFullHint")}
                     </chakra.span>
                   </chakra.span>
                 </chakra.label>
@@ -986,7 +1013,7 @@ export function ExportModal({
             {t("exportFullProgress", { rows: status.rows })}
           </chakra.div>
         )}
-        {partial && (scope === "current" || (isBundle && scope === "full")) && (
+        {partial && (scope === "current" || scope === "view" || (isBundle && scope === "full")) && (
           <Callout tone="warning" role="status">
             {stoppedPartial ? t("exportPartialWarningStopped") : t("exportPartialWarning")}
           </Callout>

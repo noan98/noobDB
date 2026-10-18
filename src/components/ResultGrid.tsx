@@ -4036,6 +4036,7 @@ export const DataGrid = memo(function DataGrid({
   canRedo,
   onSelectionSummary,
   onExportSelection,
+  exportViewRef,
   onRunStatsQuery,
   valuePicker,
   onExploreColumn,
@@ -4213,6 +4214,14 @@ export const DataGrid = memo(function DataGrid({
    * `selection` prop へそのまま渡し、モーダル側で「選択範囲」スコープを提示する。
    */
   onExportSelection?: (data: { columns: Column[]; rows: CellValue[][] }) => void;
+  /**
+   * 「現在のビュー」エクスポート (#1507) 用の取得口。`DataGrid` が毎レンダーで
+   * 「いまの表示 (フィルタ・ソート・列の表示/順序を適用した列/行) を切り出す関数」を
+   * ここへ置く。親 (`ResultGrid`) はツールバーの Export を押した瞬間だけ呼ぶ —
+   * 行を継続的に親へ push しない (`onExportSelection` と同じ理由)。表示が生の全件と
+   * 同一なら null を返す。
+   */
+  exportViewRef?: RefObject<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>;
   /**
    * Runs an ad-hoc SELECT for the column quick-stats popover's "aggregate all
    * rows" action (#524). Provided by App bound to the active session; omit to
@@ -5587,6 +5596,30 @@ export const DataGrid = memo(function DataGrid({
     visibleColIdsRef.current = visibleColIdsRaw;
   }
   const visibleColIds = visibleColIdsRef.current;
+  // 依存配列なしの layout effect で毎コミット最新の閉包を置く (描画中の ref 代入だと、
+  // deferredSearch で中断・破棄された描画の閉包が残りうる)。呼ばれるのは Export を開く瞬間だけ。
+  useLayoutEffect(() => {
+    if (!exportViewRef) return;
+    // 書式生成は ExportModal 側の既存経路 (buildExportContent) に任せ、ここは表示順の
+    // 切り出しだけ。大結果 (ハンドル) の表示順は visibleRows が既に反映している (#1507)。
+    exportViewRef.current = () => {
+      // ページング表示では visibleRows が今のページだけなので、ページ分割前の行モデル
+      // (フィルタ・ソート後の全ページ分) から切り出す。
+      const viewRows = paginationState
+        ? rowAllowSet
+          ? table.getPrePaginatedRowModel().rows.filter((r) => rowAllowSet.has(r.index))
+          : table.getPrePaginatedRowModel().rows
+        : visibleRows;
+      const identityCols =
+        visibleColIds.length === columns.length && visibleColIds.every((ci, i) => ci === i);
+      const identityRows = viewRows.length === rows.length && viewRows.every((r, i) => r.index === i);
+      if (identityCols && identityRows) return null;
+      return {
+        columns: visibleColIds.map((ci) => columns[ci]).filter((c): c is Column => !!c),
+        rows: viewRows.map((r) => visibleColIds.map((ci) => rows[r.index]?.[ci] ?? null)),
+      };
+    };
+  });
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
@@ -8544,8 +8577,16 @@ export const ResultGrid = memo(
     // 新しい無名関数を渡すと props の shallow 比較が常に不一致になり memo が
     // 無意味になる。setState はどれも同一性の保証されたセッターなので依存配列は
     // 空でよい。
+    // 「現在のビュー」(#1507): DataGrid が置く切り出し関数。Export を開く瞬間にだけ呼ぶ。
+    const exportViewRef = useRef<(() => { columns: Column[]; rows: CellValue[][] } | null) | null>(null);
+    const [viewExport, setViewExport] = useState<{ columns: Column[]; rows: CellValue[][] } | null>(null);
+    const openExport = () => {
+      setViewExport(exportViewRef.current?.() ?? null);
+      setShowExport(true);
+    };
     const handleExportSelection = useCallback((data: { columns: Column[]; rows: CellValue[][] }) => {
       setSelectionExport(data);
+      setViewExport(exportViewRef.current?.() ?? null);
       setShowExport(true);
     }, []);
     const [search, setSearch] = useState("");
@@ -9491,7 +9532,7 @@ export const ResultGrid = memo(
               size="sm"
               px="1.5"
               aria-label={t("exportButton")}
-              onClick={() => setShowExport(true)}
+              onClick={openExport}
               disabled={!canExport}
             >
               <Icon name="download" size={ICON_SIZES.md} />
@@ -10325,6 +10366,7 @@ export const ResultGrid = memo(
             skeleton={!!streaming}
             onSelectionSummary={setSelSummary}
             onExportSelection={handleExportSelection}
+            exportViewRef={exportViewRef}
             onRunStatsQuery={onRunStatsQuery}
             valuePicker={editableActive ? valuePicker : undefined}
             onExploreColumn={onExploreColumn}
@@ -10507,9 +10549,11 @@ export const ResultGrid = memo(
                 maskConfig ?? { enabled: settings.columnMaskEnabled, patterns: settings.columnMaskPatterns }
               }
               selection={selectionExport}
+              view={viewExport}
               onClose={() => {
                 setShowExport(false);
                 setSelectionExport(null);
+                setViewExport(null);
               }}
             />
           )}
