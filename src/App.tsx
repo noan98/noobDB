@@ -8098,6 +8098,11 @@ export default function App() {
           ),
         ),
       ];
+      // 値の上限で打ち切って一件も見つからなかったときは、数えていない値に子行がありうるので
+      // 黙って進めず「確認できなかった」として全子テーブルを挙げる。
+      if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
+        unverifiedTables.push(...new Set(refs.map((r) => r.table)));
+      }
       const unverified = unverifiedTables.length > 0;
       if (impacts.length === 0 && !unverified) return true;
       return confirm({
