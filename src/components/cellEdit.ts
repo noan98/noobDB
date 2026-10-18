@@ -898,7 +898,7 @@ function blobLiteral(driver: string, hex: string): string {
  *     BIGINT/DECIMAL kept as text to preserve precision) → unquoted numeral
  *   - everything else → a quoted, escaped string literal
  */
-function rowValueLiteral(driver: string, v: CellValue, col: Column): string {
+export function rowValueLiteral(driver: string, v: CellValue, col: Column): string {
   if (v === null || v === undefined) return "NULL";
   const t = col.type_name.toUpperCase();
   if (BINARY_TYPES.has(t)) return blobLiteral(driver, String(v));

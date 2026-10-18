@@ -29,12 +29,12 @@ describe("RefImpactList (#1506)", () => {
   beforeEach(() => setLocale("en"));
 
   it("参照が無ければ何も描かない", () => {
-    const { container } = renderWithProviders(<RefImpactList impacts={[]} mode="rows" sqlite={false} />);
+    const { container } = renderWithProviders(<RefImpactList impacts={[]} mode="rows" driver="mysql" />);
     expect(container.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
   });
 
   it("子テーブルごとの行数と ON DELETE を出し、合計をタイトルに出す", () => {
-    renderWithProviders(<RefImpactList impacts={impacts} mode="rows" sqlite={false} />);
+    renderWithProviders(<RefImpactList impacts={impacts} mode="rows" driver="mysql" />);
     expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("5 child rows in 2 table(s)");
     const rows = screen.getAllByTestId("ref-impact-row");
     expect(rows[0]).toHaveTextContent("orders.user_id ← users.id");
@@ -44,7 +44,7 @@ describe("RefImpactList (#1506)", () => {
   });
 
   it("SQLite では PRAGMA foreign_keys の注意書きを足す / partial は下限表示", () => {
-    renderWithProviders(<RefImpactList impacts={impacts} mode="rows" sqlite partial />);
+    renderWithProviders(<RefImpactList impacts={impacts} mode="rows" driver="sqlite" partial />);
     expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("PRAGMA foreign_keys");
     expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("At least 5");
   });
@@ -66,7 +66,7 @@ describe("RefImpactList (#1506)", () => {
                   <RefImpactList
                     impacts={impacts}
                     mode="rows"
-                    sqlite={false}
+                    driver="mysql"
                     onOpen={(imp) => {
                       controls.cancel();
                       onOpen(imp);
@@ -89,5 +89,49 @@ describe("RefImpactList (#1506)", () => {
     await user.click(screen.getAllByRole("button", { name: "Open child rows" })[0]);
     expect(onOpen).toHaveBeenCalledWith(impacts[0]);
     expect(onResult).toHaveBeenCalledWith(false);
+  });
+
+  it("TRUNCATE (MySQL / PostgreSQL) は ON DELETE に関係なく失敗すると伝える", () => {
+    const onlyCascade = [impacts[0]];
+    const { unmount } = renderWithProviders(
+      <RefImpactList impacts={onlyCascade} mode="truncate" driver="mysql" />,
+    );
+    const box = screen.getByTestId("ref-impact-list");
+    expect(box).toHaveTextContent("MySQL refuses to TRUNCATE");
+    expect(box).toHaveTextContent("this TRUNCATE will fail");
+    expect(box).not.toHaveTextContent("deleted together");
+    expect(box).not.toHaveTextContent("SQLite");
+    unmount();
+    renderWithProviders(<RefImpactList impacts={onlyCascade} mode="truncate" driver="postgres" />);
+    expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("PostgreSQL refuses to TRUNCATE");
+  });
+
+  it("TRUNCATE (SQLite) は DELETE FROM なので CASCADE の連鎖削除と PRAGMA の注記を出す", () => {
+    renderWithProviders(<RefImpactList impacts={impacts} mode="truncate" driver="sqlite" />);
+    const box = screen.getByTestId("ref-impact-list");
+    expect(box).toHaveTextContent("deleted together");
+    expect(box).toHaveTextContent("PRAGMA foreign_keys");
+    expect(box).not.toHaveTextContent("MySQL");
+    expect(box).not.toHaveTextContent("PostgreSQL");
+  });
+
+  it("上限に達した子テーブルは「N+ 行」と表示し、タイトルも下限表記にする", () => {
+    renderWithProviders(
+      <RefImpactList
+        impacts={[{ ...impacts[0], count: 1000, capped: true }]}
+        mode="truncate"
+        driver="sqlite"
+      />,
+    );
+    expect(screen.getByTestId("ref-impact-list")).toHaveTextContent("At least 1000 child rows");
+    expect(screen.getByTestId("ref-impact-row")).toHaveTextContent("1000+ rows");
+  });
+
+  it("数えられなかったときは確認できなかった旨と子テーブル名を出す", () => {
+    renderWithProviders(
+      <RefImpactList impacts={[]} mode="rows" driver="mysql" unverified={["orders", "logs"]} />,
+    );
+    expect(screen.getByTestId("ref-impact-unverified")).toHaveTextContent("Could not check");
+    expect(screen.getByTestId("ref-impact-unverified")).toHaveTextContent("orders, logs");
   });
 });

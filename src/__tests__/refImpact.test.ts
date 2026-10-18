@@ -52,7 +52,7 @@ describe("collectDeletedKeyValues", () => {
     });
     expect(keys.get("id")).toEqual([1, 2]);
     expect(keys.has("missing")).toBe(false);
-    expect(partial).toBe(false);
+    expect(partial).toBe(true);
   });
   it("上限を超えたら打ち切って partial にする", () => {
     const big: CellValue[][] = Array.from({ length: REF_KEY_LIMIT + 5 }, (_, i) => [i]);
@@ -86,7 +86,9 @@ describe("buildRefCountSqls", () => {
   });
   it("TRUNCATE (keys=null) は子の FK 列が NULL でない行を数える", () => {
     const [sql] = buildRefCountSqls({ driver: "mysql", database: "app", refs: [refs[0]], keys: null });
-    expect(sql).toBe("SELECT 0 AS i, COUNT(*) AS n FROM `app`.`orders` WHERE `user_id` IS NOT NULL");
+    expect(sql).toBe(
+      "SELECT 0 AS i, COUNT(*) AS n FROM (SELECT 1 AS o FROM `app`.`orders` WHERE `user_id` IS NOT NULL LIMIT 1001) AS c",
+    );
   });
   it("値が無い FK は枝を作らず、IN は 500 件ごとに分ける", () => {
     expect(buildRefCountSqls({ driver: "mysql", database: "a", refs, keys: new Map() })).toEqual([]);
@@ -107,6 +109,63 @@ describe("buildRefCountSqls", () => {
       keys: new Map([["id", [1]]]),
     });
     expect(sqls).toHaveLength(2);
+  });
+});
+
+describe("列型に合わせたリテラル化", () => {
+  const ref = [{ table: "child", column: "pid", referencedColumn: "id" }];
+  it("バイナリ列は hex を blob リテラルにする (ドライバ別)", () => {
+    const keys = new Map<string, CellValue[]>([["id", ["00ff10"]]]);
+    const types = new Map([["id", "BINARY"]]);
+    const mysql = buildRefCountSqls({ driver: "mysql", database: "a", refs: ref, keys, types })[0];
+    expect(mysql).toContain("IN (0x00ff10)");
+    const pg = buildRefCountSqls({
+      driver: "postgres",
+      database: "p",
+      refs: ref,
+      keys,
+      types: new Map([["id", "BYTEA"]]),
+    })[0];
+    expect(pg).toContain("IN ('\\x00ff10')");
+    const lite = buildRefCountSqls({
+      driver: "sqlite",
+      database: "m",
+      refs: ref,
+      keys,
+      types: new Map([["id", "BLOB"]]),
+    })[0];
+    expect(lite).toContain("IN (X'00ff10')");
+  });
+  it("安全整数を超える BIGINT 文字列は引用しない (MySQL の double 比較を避ける)", () => {
+    const keys = new Map<string, CellValue[]>([["id", ["9007199254740993"]]]);
+    const types = new Map([["id", "BIGINT"]]);
+    const [sql] = buildRefCountSqls({ driver: "mysql", database: "a", refs: ref, keys, types });
+    expect(sql).toContain("IN (9007199254740993)");
+    expect(buildOpenChildrenSql({ driver: "mysql", database: "a", impact: ref[0], keys, types })).toContain(
+      "IN (9007199254740993)",
+    );
+  });
+  it("collectDeletedKeyValues は参照先列の型を返し、結果に無い列は partial にする", () => {
+    const out = collectDeletedKeyValues({
+      columns: [{ name: "id", type_name: "BIGINT" }],
+      rows: [["9007199254740993"]],
+      pkIndices: [],
+      deleteKeys: new Set(["i0"]),
+      referencedColumns: ["id", "code"],
+    });
+    expect(out.types.get("id")).toBe("BIGINT");
+    expect(out.unresolved).toEqual(["code"]);
+    expect(out.partial).toBe(true);
+  });
+  it("TRUNCATE は 1000 を超えたら capped にして件数を 1000 に丸める", async () => {
+    const impacts = await loadRefImpacts({
+      driver: "mysql",
+      database: "a",
+      refs: ref,
+      keys: null,
+      lookup: async () => ({ rows: [[0, 1001]] }),
+    });
+    expect(impacts[0]).toMatchObject({ count: 1000, capped: true });
   });
 });
 

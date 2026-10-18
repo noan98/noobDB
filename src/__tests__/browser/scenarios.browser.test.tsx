@@ -490,6 +490,58 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
   });
 });
 
+describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
+  it("参照確認中に Apply を重ねて押しても bulk_update_cells は 1 回だけ走る", async () => {
+    registerAutoStream();
+    let applyCalls = 0;
+    onCommand("bulk_update_cells", () => {
+      applyCalls += 1;
+      return { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 };
+    });
+    onCommand("incoming_foreign_keys", () => [
+      { table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" },
+    ]);
+    // 集計をわざと遅らせ、確認中の時間帯を作る。
+    onCommand("run_lookup_query", async () => {
+      await new Promise((r) => setTimeout(r, 600));
+      return {
+        columns: [
+          { name: "i", type_name: "INT" },
+          { name: "n", type_name: "INT" },
+        ],
+        rows: [[0, 4]],
+        rows_affected: 0,
+        elapsed_ms: 1,
+      };
+    });
+
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    await screen.getByRole("gridcell", { name: "banana", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridMarkDelete") }).click();
+
+    const apply = screen.getByRole("button", { name: t("editApplyButton") });
+    await apply.click();
+    await apply.click({ force: true }).catch(() => undefined);
+
+    // 参照行数つきの確認が出る。確認するまで書き込みは走らない。
+    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
+    expect(applyCalls).toBe(0);
+    await screen.getByRole("button", { name: t("refImpactDeleteOk") }).click();
+    await vi.waitFor(() => expect(applyCalls).toBe(1), { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 500));
+    expect(applyCalls).toBe(1);
+  });
+});
+
 describe("シナリオ: タブ復元と複数接続の切替 (実ブラウザ)", () => {
   it("保存済みワークスペースが接続時に復元され、テーブルタブは自動で再実行される", async () => {
     registerAutoStream();

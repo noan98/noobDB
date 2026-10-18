@@ -6,7 +6,7 @@
 // read_only でも可) へ流す。書き込み経路は増やさない。
 
 import type { CellValue, QueryResult } from "./api/tauri";
-import { literalFromCellValue, rowEditKey } from "./components/cellEdit";
+import { rowEditKey, rowValueLiteral } from "./components/cellEdit";
 import { quoteIdentFor } from "./components/sqlDialect";
 import { type IncomingFk, qualifiedTable } from "./fkNavigation";
 
@@ -26,8 +26,20 @@ export interface RefImpact {
   referencedColumn: string;
   /** 正規化済みの ON DELETE (`NO ACTION` を含む)。 */
   onDelete: OnDeleteRule;
-  /** 削除対象を参照している子行数。 */
+  /** 削除対象を参照している子行数。`capped` のときは `count` 以上 (数えるのを打ち切った)。 */
   count: number;
+  /** TRUNCATE の集計で上限 (`TRUNCATE_COUNT_CAP`) に達し、実際はもっと多い。 */
+  capped?: boolean;
+}
+
+/** TRUNCATE の子行数の集計上限。これを超える分は数えず「N 件以上」と表示する。 */
+export const TRUNCATE_COUNT_CAP = 1000;
+
+/** 参照先の列名 → 列の型名。バイナリ列や 64bit 整数列のリテラル化を型に合わせるために持つ。 */
+export type KeyTypes = ReadonlyMap<string, string>;
+
+function keyLiteral(driver: string, v: CellValue, name: string, types: KeyTypes | undefined): string {
+  return rowValueLiteral(driver, v, { name, type_name: types?.get(name) ?? "" });
 }
 
 export type OnDeleteRule = "CASCADE" | "SET NULL" | "SET DEFAULT" | "RESTRICT" | "NO ACTION";
@@ -55,13 +67,16 @@ function valueKey(v: CellValue): string {
  * 打ち切って `partial: true` を返す。
  */
 export function collectDeletedKeyValues(input: {
-  columns: { name: string }[];
+  columns: { name: string; type_name?: string }[];
   rows: CellValue[][];
   pkIndices: number[];
   deleteKeys: ReadonlySet<string>;
   referencedColumns: readonly string[];
-}): { keys: Map<string, CellValue[]>; partial: boolean } {
+}): { keys: Map<string, CellValue[]>; types: Map<string, string>; partial: boolean; unresolved: string[] } {
   const keys = new Map<string, CellValue[]>();
+  const types = new Map<string, string>();
+  // 結果に無い参照先列 (UNIQUE 列を参照している・大文字小文字が違うなど) は数えられない。
+  const unresolved: string[] = [];
   const seen = new Map<string, Set<string>>();
   let partial = false;
   const idx = new Map<string, number>();
@@ -70,7 +85,10 @@ export function collectDeletedKeyValues(input: {
     if (i >= 0) {
       idx.set(name, i);
       keys.set(name, []);
+      types.set(name, input.columns[i]?.type_name ?? "");
       seen.set(name, new Set());
+    } else if (!unresolved.includes(name)) {
+      unresolved.push(name);
     }
   }
   for (let r = 0; r < input.rows.length; r++) {
@@ -92,7 +110,7 @@ export function collectDeletedKeyValues(input: {
       list.push(v);
     }
   }
-  return { keys, partial };
+  return { keys, types, partial: partial || unresolved.length > 0, unresolved };
 }
 
 /**
@@ -106,19 +124,26 @@ export function buildRefCountSqls(input: {
   database: string | null | undefined;
   refs: readonly IncomingFk[];
   keys: ReadonlyMap<string, CellValue[]> | null;
+  types?: KeyTypes;
 }): string[] {
-  const { driver, database, refs, keys } = input;
+  const { driver, database, refs, keys, types } = input;
   const branches: string[] = [];
   refs.forEach((fk, fkIndex) => {
     const col = quoteIdentFor(driver, fk.column);
     const from = qualifiedTable(driver, database, fk.table);
     const wheres: string[] = [];
     if (keys === null) {
-      wheres.push(`${col} IS NOT NULL`);
+      // TRUNCATE: 全件を数えると重いので 1 件余分に拾う上限付きサブクエリにする (3 方言共通)。
+      branches.push(
+        `SELECT ${fkIndex} AS i, COUNT(*) AS n FROM (SELECT 1 AS o FROM ${from} WHERE ${col} IS NOT NULL LIMIT ${TRUNCATE_COUNT_CAP + 1}) AS c`,
+      );
+      return;
     } else {
       const vals = keys.get(fk.referencedColumn) ?? [];
       for (let i = 0; i < vals.length; i += IN_CHUNK) {
-        const lits = vals.slice(i, i + IN_CHUNK).map((v) => literalFromCellValue(driver, v));
+        const lits = vals
+          .slice(i, i + IN_CHUNK)
+          .map((v) => keyLiteral(driver, v, fk.referencedColumn, types));
         wheres.push(`${col} IN (${lits.join(", ")})`);
       }
     }
@@ -157,6 +182,7 @@ export async function loadRefImpacts(input: {
   database: string | null | undefined;
   refs: readonly IncomingFk[];
   keys: ReadonlyMap<string, CellValue[]> | null;
+  types?: KeyTypes;
   /** 参照先 (親) テーブル名。結果の `parentTable` に入れる。 */
   parentTable?: string;
   lookup: (sql: string, rowCap: number) => Promise<Pick<QueryResult, "rows">>;
@@ -175,7 +201,8 @@ export async function loadRefImpacts(input: {
       column: fk.column,
       referencedColumn: fk.referencedColumn,
       onDelete: normalizeOnDelete(fk.onDelete),
-      count,
+      count: input.keys === null ? Math.min(count, TRUNCATE_COUNT_CAP) : count,
+      ...(input.keys === null && count > TRUNCATE_COUNT_CAP ? { capped: true } : {}),
     });
   });
   return impacts;
@@ -190,13 +217,14 @@ export function buildOpenChildrenSql(input: {
   database: string | null | undefined;
   impact: Pick<RefImpact, "table" | "column" | "referencedColumn">;
   keys: ReadonlyMap<string, CellValue[]> | null;
+  types?: KeyTypes;
   limit?: number;
 }): string {
-  const { driver, database, impact, keys } = input;
+  const { driver, database, impact, keys, types } = input;
   const col = quoteIdentFor(driver, impact.column);
   const from = qualifiedTable(driver, database, impact.table);
   if (keys === null) return `SELECT * FROM ${from} WHERE ${col} IS NOT NULL`;
   const vals = (keys.get(impact.referencedColumn) ?? []).slice(0, input.limit ?? 100);
   if (vals.length === 0) return `SELECT * FROM ${from} WHERE 1 = 0`;
-  return `SELECT * FROM ${from} WHERE ${col} IN (${vals.map((v) => literalFromCellValue(driver, v)).join(", ")})`;
+  return `SELECT * FROM ${from} WHERE ${col} IN (${vals.map((v) => keyLiteral(driver, v, impact.referencedColumn, types)).join(", ")})`;
 }

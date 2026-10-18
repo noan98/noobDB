@@ -3278,7 +3278,15 @@ const en = {
     "These child tables have rows pointing at this table (child.column ← parent.column).",
   refImpactBlockedRows: "Rules without CASCADE / SET NULL make the DELETE fail with a foreign key error.",
   refImpactBlockedTruncate:
-    "MySQL and PostgreSQL refuse to TRUNCATE a table that is still referenced (PostgreSQL only with CASCADE, which also empties the child tables).",
+    "Rules without CASCADE / SET NULL make the TRUNCATE (a DELETE FROM in SQLite) fail with a foreign key error.",
+  refImpactTruncateRefusesMysql:
+    "MySQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, so this TRUNCATE will fail.",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL refuses to TRUNCATE a table that is referenced by a foreign key, whatever ON DELETE says, unless CASCADE is given (which also empties the child tables), so this TRUNCATE will fail.",
+  refImpactUnverified:
+    "Could not check how many rows reference this data (timeout or error). Child tables referencing it: {tables}. Deleting may be blocked or cascade to them.",
+  refImpactRowCountCapped: "{count}+ rows",
+  statusCheckingRefs: "Checking rows that reference the deletion...",
   refImpactCascading: "Child rows under ON DELETE CASCADE are deleted together with them.",
   refImpactSqlite:
     "SQLite enforces foreign keys only while PRAGMA foreign_keys is ON; otherwise orphaned child rows are left behind.",
@@ -9946,7 +9954,15 @@ const ja: Dict = {
   refImpactBlockedRows:
     "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで DELETE が失敗します。",
   refImpactBlockedTruncate:
-    "MySQL / PostgreSQL は参照されたままのテーブルを TRUNCATE できません (PostgreSQL は CASCADE 指定のときだけで、子テーブルも空になります)。",
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで TRUNCATE (SQLite では DELETE FROM) が失敗します。",
+  refImpactTruncateRefusesMysql:
+    "MySQL は外部キーで参照されているテーブルを、ON DELETE に関係なく TRUNCATE できません。この TRUNCATE は失敗します。",
+  refImpactTruncateRefusesPg:
+    "PostgreSQL は外部キーで参照されているテーブルを、ON DELETE に関係なく CASCADE 指定なしでは TRUNCATE できません (CASCADE を付けると子テーブルも空になります)。この TRUNCATE は失敗します。",
+  refImpactUnverified:
+    "参照行数を確認できませんでした (タイムアウトまたはエラー)。参照している子テーブル: {tables}。削除がブロックされたり、子の行へ連鎖したりする可能性があります。",
+  refImpactRowCountCapped: "{count} 行以上",
+  statusCheckingRefs: "削除対象を参照する行を確認中...",
   refImpactCascading: "ON DELETE CASCADE の子行は一緒に削除されます。",
   refImpactSqlite:
     "SQLite は PRAGMA foreign_keys が ON の間だけ外部キーを強制します。OFF だと子の行が孤立します。",
