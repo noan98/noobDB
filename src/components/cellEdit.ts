@@ -875,6 +875,17 @@ export function buildDeleteStatements(input: {
 }
 
 /**
+ * BINARY 系の列でも、値が 16 進文字列として届いたときだけバイナリリテラルにする。
+ * SQLite の非 STRICT テーブルは BLOB 宣言の列に TEXT / INTEGER を入れられ、その値は
+ * 文字列・数値のまま届く。確認せず `X'…'` に埋めると SQL インジェクション / 構文エラーになる
+ * (Rust 側 `sqlite.rs` の `pk_literal` も同じ確認をする)。16 進に見える TEXT (`'cafe'` など) は
+ * フロントでは区別できずバイナリ扱いになるが、TEXT と BLOB は等しくならないので 0 行一致で済む。
+ */
+function isHexBytes(v: CellValue): v is string {
+  return typeof v === "string" && /^([0-9a-f]{2})*$/i.test(v);
+}
+
+/**
  * Renders a BLOB cell value (carried as a bare hex string, per CLAUDE.md's
  * `Value::Bytes`) as a driver-appropriate binary literal:
  *   - PostgreSQL: `'\xDEADBEEF'` (bytea hex input; one `\x` prefix for the
@@ -883,16 +894,6 @@ export function buildDeleteStatements(input: {
  *   - MySQL:      `0xDEADBEEF` (hex literal; an empty blob has no `0x` form, so
  *     it falls back to the empty string `''`)
  */
-/**
- * BINARY 系の列でも、値が 16 進文字列として届いたときだけバイナリリテラルにする。
- * SQLite の非 STRICT テーブルは BLOB 宣言の列に TEXT / INTEGER を入れられ、その値は
- * 文字列・数値のまま届く。確認せず `X'…'` に埋めると SQL インジェクション / 構文エラーになる
- * (Rust 側 `sqlite.rs` の `pk_literal` も同じ確認をする)。
- */
-function isHexBytes(v: CellValue): v is string {
-  return typeof v === "string" && /^([0-9a-f]{2})*$/i.test(v);
-}
-
 function blobLiteral(driver: string, hex: string): string {
   if (driver === "postgres") return "'\\x" + hex + "'";
   if (driver === "sqlite") return "X'" + hex + "'";
