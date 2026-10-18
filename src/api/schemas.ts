@@ -618,6 +618,48 @@ export const importAssertionsResult = z.object({
   ),
 });
 
+/** `preview_import_snippets` の結果 (#1490)。 */
+export const snippetImportPreview = z.object({
+  total: z.number(),
+  new_count: z.number(),
+  conflict_count: z.number(),
+  scope_reset_by_strategy: z.object({
+    rename: z.number(),
+    skip: z.number(),
+    overwrite: z.number(),
+  }),
+  duplicate_in_file_count: z.number(),
+  conflicts: z.array(
+    z.object({
+      id: z.string(),
+      existing_name: z.string(),
+      incoming_name: z.string(),
+    }),
+  ),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
+});
+
+/** `import_snippets` の結果 (#1490)。 */
+export const snippetImportResult = z.object({
+  imported: z.number(),
+  skipped: z.number(),
+  overwritten: z.number(),
+  scope_reset: z.number(),
+  rejected: z.array(
+    z.object({
+      index: z.number(),
+      name: z.string().nullable(),
+      error: z.string(),
+    }),
+  ),
+});
+
 export const historyEntry = z.object({
   id: z.number(),
   profile_id: z.string().nullable(),

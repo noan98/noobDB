@@ -379,6 +379,9 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `list_snippets`
 - `save_snippet`
 - `delete_snippet`
+- `export_snippets` (#1490。スニペットを JSON 文字列で返す。ファイル保存はフロントが `write_text_file`)
+- `preview_import_snippets` (#1490。取り込み前の件数・ID 衝突件数・スコープ付け替え件数。書き込まない)
+- `import_snippets` (#1490。ID 衝突は `rename` / `skip` / `overwrite`。未知のプロファイルを指すスコープは全接続へ戻す)
 - `list_history`
 - `get_history_sql`
 - `get_history_sqls` (#1608。複数 id の全文をまとめて取得。入力と同じ順・長さで、無い行は null。履歴 AI 検索の候補取得用)

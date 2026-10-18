@@ -1526,6 +1526,38 @@ fn build_fixtures() -> serde_json::Value {
             error: "name is required".into(),
         }],
     };
+    let snippet_import_preview = t::SnippetImportPreview {
+        total: 3,
+        new_count: 2,
+        conflict_count: 1,
+        scope_reset_by_strategy: t::ScopeResetByStrategy {
+            rename: 1,
+            skip: 0,
+            overwrite: 1,
+        },
+        duplicate_in_file_count: 0,
+        conflicts: vec![t::SnippetConflict {
+            id: "aaaaaaaa".into(),
+            existing_name: "old".into(),
+            incoming_name: "new".into(),
+        }],
+        rejected: vec![t::ImportRejection {
+            index: 4,
+            name: Some("bad".into()),
+            error: "name is required".into(),
+        }],
+    };
+    let snippet_import_result = t::SnippetImportResult {
+        imported: 2,
+        skipped: 1,
+        overwritten: 0,
+        scope_reset: 1,
+        rejected: vec![t::ImportRejection {
+            index: 4,
+            name: None,
+            error: "name is required".into(),
+        }],
+    };
     // RowCountOp の全種は別個に通す (上の Between だけでは 1 種しか出ない)。
     let row_count_op_variants: Vec<t::Assertion> =
         variants!(RowCountOp [Gt, Gte, Lt, Lte, Eq, Between])
@@ -2241,6 +2273,8 @@ fn build_fixtures() -> serde_json::Value {
         "assertionOutcome": assertion_outcome,
         "acceptedValuesCandidates": accepted_values_candidates,
         "importAssertionsResult": import_assertions_result,
+        "snippetImportPreview": snippet_import_preview,
+        "snippetImportResult": snippet_import_result,
         "assertionVariants": assertion_variants,
         "assertionRowCountOpVariants": row_count_op_variants,
         "assertionRunRecord": assertion_run_record,

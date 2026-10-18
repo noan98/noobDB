@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, chakra } from "@chakra-ui/react";
 import { AnimatePresence } from "motion/react";
-import { ConnectionProfile, Snippet } from "../api/tauri";
+import { open as openFileDialog, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
+import { downloadDir, join } from "@tauri-apps/api/path";
+import { api, ConnectionProfile, ProfileImportStrategy, Snippet, SnippetImportPreview } from "../api/tauri";
 import { useT } from "../i18n";
 import { transitions, variants } from "../motion";
 import { Icon, ICON_SIZES } from "./Icon";
@@ -26,6 +28,8 @@ import { ContextMenu, type ContextMenuEntry } from "./ContextMenu";
 import { readCollapsedSnippetFolders, writeCollapsedSnippetFolders } from "./snippetFolders";
 import { Tooltip } from "./Tooltip";
 import { useConfirm } from "./ConfirmDialog";
+import { SnippetImportDialog } from "./SnippetImportDialog";
+import { useToast } from "./Toast";
 import { snippetBodyExcerpt, snippetCopyDraft, snippetMatchesQuery } from "../snippetSearch";
 
 interface Props {
@@ -54,6 +58,8 @@ interface Props {
    * 読み取り専用ガードをそのまま通す。#877)。未接続時は undefined。
    */
   onRun?: (snippet: Snippet) => void;
+  /** インポートでスニペットが増減したときに一覧を取得し直す (#1490)。 */
+  onChanged?: () => void;
 }
 
 interface MenuState {
@@ -283,8 +289,10 @@ export const SnippetList = memo(function SnippetList({
   favoriteIds,
   onToggleFavorite,
   onRun,
+  onChanged,
 }: Props) {
   const t = useT();
+  const toast = useToast();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [filter, setFilter] = useState("");
   const [showAllScopes, setShowAllScopes] = useState(false);
@@ -293,6 +301,8 @@ export const SnippetList = memo(function SnippetList({
   const [expandedFolders, setExpandedFolders] =
     useState<Record<string, boolean>>(readCollapsedSnippetFolders);
   const [menu, setMenu] = useState<MenuState | null>(null);
+  // インポート確認ダイアログの内容 (#1490)。読み込んだ JSON とそのプレビュー。
+  const [importing, setImporting] = useState<{ json: string; preview: SnippetImportPreview } | null>(null);
 
   // 閉じているフォルダの集合を永続化する (開くと自動でエントリが消える)。
   useEffect(() => {
@@ -331,6 +341,79 @@ export const SnippetList = memo(function SnippetList({
     if (unfiled && unfiled.length > 0) groups.push({ name: null, snippets: unfiled });
     return groups;
   }, [scopeFiltered, visibleSnippets]);
+
+  // 全スニペットを JSON ファイルへ書き出す (#1490)。保存先は保存ダイアログ、書き込みは
+  // 既存の `write_text_file` (Rust 経由。fs capability は増やさない)。
+  const handleExport = async () => {
+    if (snippets.length === 0) {
+      toast.info(t("snippetExportEmpty"));
+      return;
+    }
+    try {
+      let defaultPath = "noobdb-snippets.json";
+      try {
+        defaultPath = await join(await downloadDir(), defaultPath);
+      } catch {
+        // ダウンロードフォルダが解決できない環境ではファイル名のみで開く。
+      }
+      const picked = await saveFileDialog({
+        defaultPath,
+        title: t("snippetExport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.exportSnippets(null);
+      await api.writeTextFile(picked, json);
+      toast.success(t("snippetExportSaved", { count: snippets.length, path: picked }));
+    } catch (e) {
+      toast.error(t("snippetExportError", { error: String(e) }));
+    }
+  };
+
+  // ファイルを選んで読み、プレビュー付きの確認ダイアログを開く (#1490)。
+  const handleImportPick = async () => {
+    try {
+      const picked = await openFileDialog({
+        multiple: false,
+        title: t("snippetImport"),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (typeof picked !== "string" || !picked) return;
+      const json = await api.readTextFile(picked);
+      const preview = await api.previewImportSnippets(json);
+      setImporting({ json, preview });
+    } catch (e) {
+      toast.error(t("snippetImportError", { error: String(e) }));
+    }
+  };
+
+  // 成功してからダイアログを閉じる。失敗したら例外を投げ直し、ダイアログ内に表示させる。
+  const handleImportConfirm = async (strategy: ProfileImportStrategy) => {
+    if (!importing) return;
+    const res = await api.importSnippets(importing.json, strategy);
+    setImporting(null);
+    onChanged?.();
+    toast.success(
+      t("snippetImportDone", {
+        imported: res.imported,
+        overwritten: res.overwritten,
+        skipped: res.skipped,
+        rejected: res.rejected.length,
+      }),
+    );
+  };
+
+  const openTransferMenu = (e: React.MouseEvent<HTMLElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setMenu({
+      x: rect.left,
+      y: rect.bottom,
+      items: [
+        { label: t("snippetExport"), onSelect: () => void handleExport() },
+        { label: t("snippetImport"), onSelect: () => void handleImportPick() },
+      ],
+    });
+  };
 
   const handleContextMenu = (e: React.MouseEvent, s: Snippet) => {
     e.preventDefault();
@@ -413,6 +496,18 @@ export const SnippetList = memo(function SnippetList({
             onChange={(e) => setFilter(e.target.value)}
             flex="1"
           />
+          <Tooltip label={t("snippetTransferMenu")}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={openTransferMenu}
+              aria-label={t("snippetTransferMenu")}
+              aria-haspopup="menu"
+              css={{ flex: "none", minWidth: "28px", px: "2", py: "1", lineHeight: 1 }}
+            >
+              <Icon name="more" size={ICON_SIZES.sm} />
+            </Button>
+          </Tooltip>
           {onOpenPlanWatch && (
             <Tooltip label={t("snippetOpenPlanWatch")}>
               <Button
@@ -523,6 +618,13 @@ export const SnippetList = memo(function SnippetList({
       )}
 
       {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {importing && (
+        <SnippetImportDialog
+          preview={importing.preview}
+          onConfirm={handleImportConfirm}
+          onCancel={() => setImporting(null)}
+        />
+      )}
       {confirmDialog}
     </TreePane>
   );

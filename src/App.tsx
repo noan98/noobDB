@@ -12234,6 +12234,7 @@ export default function App() {
                   favoriteIds={snippetQuickAccess.favorites}
                   onToggleFavorite={handleToggleSnippetFavorite}
                   onRun={sessionId ? handleRunSnippet : undefined}
+                  onChanged={() => void refreshSnippets()}
                 />
               ) : sidebarTab === "history" ? (
                 <HistoryList

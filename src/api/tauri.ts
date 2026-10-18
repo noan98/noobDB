@@ -437,6 +437,36 @@ export interface AssertionImportRejection {
   error: string;
 }
 
+/** `SnippetImportPreview.conflicts` の 1 件 (#1490)。既存と ID が衝突する要素。 */
+export interface SnippetConflict {
+  id: string;
+  existing_name: string;
+  incoming_name: string;
+}
+
+/** `preview_import_snippets` の結果 (#1490)。書き込まずに適用前の確認へ使う。 */
+export interface SnippetImportPreview {
+  total: number;
+  new_count: number;
+  conflict_count: number;
+  /** 全接続スコープへ付け替える件数 (戦略別。衝突する要素の扱いで変わる)。 */
+  scope_reset_by_strategy: { rename: number; skip: number; overwrite: number };
+  /** ファイル内で ID が重複している件数 (既存との衝突とは別)。 */
+  duplicate_in_file_count: number;
+  /** 衝突する要素の先頭数件 (「上書き」で置き換わる先の表示用)。 */
+  conflicts: SnippetConflict[];
+  rejected: AssertionImportRejection[];
+}
+
+/** `import_snippets` の結果 (#1490)。 */
+export interface SnippetImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  scope_reset: number;
+  rejected: AssertionImportRejection[];
+}
+
 /** `import_assertions` の結果 (#1621)。 */
 export interface ImportAssertionsResult {
   imported: Assertion[];
