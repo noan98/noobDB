@@ -33,3 +33,12 @@ SQL 全文だけを返す (実行のたびの再取得はせず、実行直後�
 `folder`・`tags`・対象 `driver` (任意)・`scope` (`SnippetScope`: `Any` / `Profile` /
 `Group`) を持ち、scope で「どの接続のときに表示するか」を絞り込めます。プロファイルと
 同じ 8 文字スラッグを ID に使います。
+
+**タブストップ記法 (#1489、フロント完結・保存形式は変えない)。** 本文の `${1:既定値}` /
+`${1}` / `${name}` / `${0}` は、エディタへ挿入するとき (`QueryEditorHandle.insertSnippet`) と
+補完 (`components/sqlSnippetCompletion.ts`) で CodeMirror の `snippet()` に載り、Tab /
+Shift+Tab でフィールドを巡回する。パーサは `src/snippetTemplate.ts`。**素の `$1` / `$$` は
+タブストップにしない** (PostgreSQL のパラメータ・ドル引用との後方互換)、`{{name}}` (実行時
+パラメータ) は `$` を伴わないので衝突しない、記法を含まない本文は従来どおり平文挿入。
+新規タブ・ワンクリック実行など エディタを介さない経路は `snippetPlainText` で既定値に置換した
+平文を使う。補完候補は `scopeMatches` で現在の接続に合うものだけ (`App.tsx` の `completionSnippets`)。

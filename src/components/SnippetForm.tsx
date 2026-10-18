@@ -252,6 +252,9 @@ export function SnippetForm({
           aria-invalid={fieldErrors.sql ? true : undefined}
         />
         {fieldErrors.sql && <FieldError>{fieldErrors.sql}</FieldError>}
+        <chakra.p textStyle="caption" color="app.textMuted" mt="1" mx="0" mb="0">
+          {t("snippetSqlHelp")}
+        </chakra.p>
       </Box>
 
       {/* 保存を止める持続的なエラーは ErrorNote (#1114)。 */}

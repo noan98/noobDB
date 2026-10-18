@@ -382,6 +382,7 @@ const en = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "Derived table",
   editorCompletionAlias: "Alias",
+  editorCompletionSnippet: "Snippet",
   editorColInfoType: "Type",
   editorColInfoNullable: "Nullable",
   editorColInfoNullAllowed: "NULL allowed",
@@ -540,6 +541,8 @@ const en = {
   snippetScopeHelp: "Controls which connections show this snippet in the sidebar.",
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
+  snippetSqlHelp:
+    "Tab stops: ${1:default} jumps between fields with Tab / Shift+Tab when inserted; ${1} repeated mirrors the field, ${name} uses its name as the default, ${0} is where the cursor ends. A bare $1 (PostgreSQL parameter) and {{name}} (run-time parameter) are left as they are. Write \\${ for a literal ${.",
   snippetErrorNameRequired: "Name is required.",
   snippetErrorSqlRequired: "SQL is required.",
   snippetErrorScopeProfile: "Pick a connection for this scope.",
@@ -7108,6 +7111,7 @@ const ja: Dict = {
   editorCompletionCte: "CTE",
   editorCompletionDerived: "派生表",
   editorCompletionAlias: "別名",
+  editorCompletionSnippet: "スニペット",
   editorColInfoType: "データ型",
   editorColInfoNullable: "NULL 可否",
   editorColInfoNullAllowed: "NULL 可",
@@ -7265,6 +7269,8 @@ const ja: Dict = {
   snippetScopeHelp: "このスニペットをサイドバーに表示する接続を制御します。",
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
+  snippetSqlHelp:
+    "タブストップ: ${1:既定値} と書くと、挿入後に Tab / Shift+Tab でフィールド間を移動できます。同じ番号 ${1} は連動し、${name} は名前が既定値、${0} は最後のカーソル位置です。素の $1 (PostgreSQL のパラメータ) や {{name}} (実行時パラメータ) はそのまま残ります。文字どおりの ${ は \\${ と書きます。",
   snippetErrorNameRequired: "名前を入力してください。",
   snippetErrorSqlRequired: "SQL を入力してください。",
   snippetErrorScopeProfile: "このスコープの接続を選択してください。",

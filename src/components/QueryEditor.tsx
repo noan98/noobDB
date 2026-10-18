@@ -44,6 +44,7 @@ import {
   closeBracketsKeymap,
   completionKeymap,
   completionStatus,
+  snippet,
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
@@ -55,7 +56,7 @@ import {
   syntaxTree,
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
-import { api, type ForeignKey, type TableColumnInfo, type TableSchema } from "../api/tauri";
+import { api, type ForeignKey, type Snippet, type TableColumnInfo, type TableSchema } from "../api/tauri";
 import { joinCompletions } from "./sqlJoinCompletion";
 import { fkJoinSnippets } from "./fkJoin";
 import { derivedCompletions } from "./sqlDerivedCompletion";
@@ -68,6 +69,8 @@ import {
 } from "./sqlSchemaCompletion";
 import { renderColumnInfo } from "./completionInfoPanel";
 import { renderCompletionIcon } from "./completionIcons";
+import { snippetCompletionSource } from "./sqlSnippetCompletion";
+import { snippetHasFields, snippetPlainText, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -351,6 +354,11 @@ interface Props {
    */
   queryHistory?: string[];
   /**
+   * 補完候補に出す保存済みスニペット (#1489)。呼び出し側が現在の接続のスコープで絞り込んで
+   * 渡す。補完ソースは ref 越しに最新を読むので、変わってもエディタは作り直さない。
+   */
+  snippets?: Snippet[];
+  /**
    * エディタ系ショートカット (Run / Run statement / Preview / Format) の解決済み
    * コンボ (#557)。未指定の項目は既定にフォールバックする。バインドが変わると
    * CodeMirror のキーマップを Compartment 経由で再構成する。
@@ -384,6 +392,11 @@ interface Props {
 export interface QueryEditorHandle {
   /** Inserts text at the current cursor (replacing any selection). */
   insertText: (text: string) => void;
+  /**
+   * スニペット本文を挿入する (#1489)。タブストップ記法 (`${1:...}`) を含めば Tab / Shift+Tab で
+   * 巡回できる形で展開し、含まなければ `insertText` と同じ。
+   */
+  insertSnippet: (text: string) => void;
   /** Replaces the entire editor contents (used to restore a history entry). */
   setText: (text: string) => void;
   /** エディタ本文の全文 (#692。失敗した SQL の範囲探索用)。 */
@@ -673,6 +686,7 @@ export const QueryEditor = memo(
       emergencyMode,
       onToggleEmergencyMode,
       queryHistory,
+      snippets,
       editorBindings,
       focusMode,
       onToggleFocus,
@@ -951,6 +965,9 @@ export const QueryEditor = memo(
     driverRef.current = driver;
     // 履歴ナビゲーション用。エディタは初回だけ生成されキーマップ内のクロージャ
     // から ref を読むため、props の履歴はレンダのたびに ref へ流し込む。
+    // スニペット補完 (#1489) の候補。毎レンダーで最新を差し、補完ソースが ref 越しに読む。
+    const snippetsRef = useRef<Snippet[]>(snippets ?? []);
+    snippetsRef.current = snippets ?? [];
     const historyRef = useRef<string[]>(queryHistory ?? []);
     historyRef.current = queryHistory ?? [];
     const navStateRef = useRef<HistoryNavState>(initialHistoryNav);
@@ -1091,6 +1108,10 @@ export const QueryEditor = memo(
       // タブごとの state を作る (#1308)。初回マウントと、保存済み state の無いタブへの
       // 切替の両方で使う。拡張はすべて ref / compartment 越しに props を読むので、
       // どのタブの state にも同じものを載せてよい。
+      const snippetSource = snippetCompletionSource(
+        () => snippetsRef.current,
+        () => t("editorCompletionSnippet"),
+      );
       const makeState = (doc: string, selection: { anchor: number; head: number } | null): EditorState =>
         EditorState.create({
           doc,
@@ -1117,6 +1138,11 @@ export const QueryEditor = memo(
               icons: false,
               addToOptions: [{ render: (c) => renderCompletionIcon(c.type), position: 20 }],
             }),
+            // 保存済みスニペットの補完 (#1489)。名前 / タグで候補に出て、確定でタブストップ展開する。
+            // スキーマ補完とは別の補完ソースとして languageData に載せ、併存させる。
+            // 補完ソースは関数の同一性でキー付けされる (毎回作り直すと結果が捨てられる) ので、
+            // ここで 1 度だけ作って返す。
+            EditorState.languageData.of(() => [{ autocomplete: snippetSource }]),
             // エディタ内検索・置換。検索パネルはエディタ上部に出し、選択語の
             // 同一語ハイライトも有効化する。キーバインドは下の keymap に searchKeymap
             // を含める (Mod-f はエディタにフォーカスがあるときだけ起動し、結果横断検索
@@ -1487,6 +1513,21 @@ export const QueryEditor = memo(
       view.focus();
     };
 
+    // スニペット本文を挿入する (#1489)。`${1:...}` などのタブストップ記法を含めば
+    // CodeMirror の snippet として展開し (Tab / Shift+Tab でフィールド移動)、含まなければ
+    // `insertAtCursor` と同じ平文挿入 (従来どおりカーソルは末尾)。
+    const insertSnippetText = (text: string) => {
+      const view = viewRef.current;
+      if (!view) return;
+      if (!snippetHasFields(text)) {
+        insertAtCursor(snippetPlainText(text));
+        return;
+      }
+      const sel = view.state.selection.main;
+      snippet(snippetToCodeMirrorTemplate(text))(view, null, sel.from, sel.to);
+      view.focus();
+    };
+
     // 選択範囲 (無ければ全文) の SQL を AI の解説 / 最適化案へ渡す (#695)。ref だけを読むので、
     // 初回だけ構築するハンドルから呼んでも古いクロージャにならない。
     const requestAiSql = (kind: SqlAssistKind) => {
@@ -1506,6 +1547,7 @@ export const QueryEditor = memo(
       ref,
       () => ({
         insertText: insertAtCursor,
+        insertSnippet: insertSnippetText,
         setText: (text: string) => {
           const view = viewRef.current;
           if (!view) return;

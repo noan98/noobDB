@@ -13,7 +13,7 @@ import {
 } from "react";
 import { Box, Flex, chakra } from "@chakra-ui/react";
 import { AnimatePresence, motion } from "motion/react";
-import { api, ConnectionProfile, QueryResult, TableSchema } from "../api/tauri";
+import { api, ConnectionProfile, QueryResult, Snippet, TableSchema } from "../api/tauri";
 import { countEditedCells, countEditedRows, type PendingEdits, type PendingInsertRow } from "./cellEdit";
 import { type BulkEditTarget } from "./bulkEdit";
 import { TabDirtyWatcher } from "../tabSqlStore";
@@ -230,6 +230,8 @@ export interface PaneEnv {
   emergencyMode: boolean;
   broadcastAvailable: boolean;
   queryHistory: string[];
+  /** エディタの補完候補に出すスニペット (現在の接続のスコープで絞り込み済み、#1489)。 */
+  completionSnippets: Snippet[];
   editorBindings: ComponentProps<typeof QueryEditor>["editorBindings"];
   gridBindings: ComponentProps<typeof ResultGrid>["gridBindings"];
   shortcutBindings: ReturnType<typeof resolveShortcutBindings>;
@@ -286,6 +288,7 @@ export const PaneView = memo(
       emergencyMode,
       broadcastAvailable,
       queryHistory,
+      completionSnippets,
       editorBindings,
       gridBindings,
       shortcutBindings,
@@ -636,6 +639,7 @@ export const PaneView = memo(
                         emergencyMode={emergencyMode}
                         onToggleEmergencyMode={onToggleEmergencyMode}
                         queryHistory={queryHistory}
+                        snippets={completionSnippets}
                         editorBindings={editorBindings}
                         focusMode={editorFocused}
                         onToggleFocus={sessionId ? onToggleEditorFocus : undefined}
