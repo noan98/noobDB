@@ -2568,6 +2568,42 @@ describe("FK セルのリンク・アフォーダンス (#1393)", () => {
     expect(screen.queryByRole("menuitem", { name: t("gridFkJump", { table: "users" }) })).toBeNull();
   });
 
+  it("PK セルの右クリックに、子テーブルの行を開く「Referencing rows」が出て、子の FK 列で絞る SQL を渡す", async () => {
+    const onFkJump = vi.fn();
+    const { container } = renderFk(
+      { incomingFks: [{ table: "orders", column: "user_id", referencedColumn: "id" }] },
+      onFkJump,
+    );
+    // 1 行目の id セル (PK)。
+    fireEvent.contextMenu(container.querySelectorAll("td.col-number")[0] as HTMLElement);
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: t("gridFkReverse", { table: "orders", column: "user_id" }),
+      }),
+    );
+    expect(onFkJump).toHaveBeenCalledTimes(1);
+    expect(onFkJump.mock.calls[0][0]).toBe("SELECT * FROM `orders` WHERE `user_id` = 1");
+  });
+
+  it("BLOB キーを参照する子行は、16 進リテラルで絞る SQL を渡す", async () => {
+    const onFkJump = vi.fn();
+    const blobCols: Column[] = [{ name: "id", type_name: "BLOB" }];
+    const { container } = renderWithProviders(
+      <ResultGrid
+        result={makeResult(blobCols, [["deadbeef"]])}
+        tableColumns={[meta("id", "id")[0]]}
+        onFkJump={onFkJump}
+        driver="mysql"
+        incomingFks={[{ table: "child", column: "pid", referencedColumn: "id" }]}
+      />,
+    );
+    fireEvent.contextMenu(container.querySelector("td[role='gridcell']") as HTMLElement);
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: t("gridFkReverse", { table: "child", column: "pid" }) }),
+    );
+    expect(onFkJump.mock.calls[0][0]).toBe("SELECT * FROM `child` WHERE `pid` = 0xdeadbeef");
+  });
+
   it("参照先が解決できない / onFkJump が無いときは出さない", () => {
     const a = renderWithProviders(
       <ResultGrid result={result} tableColumns={meta("users", null)} onFkJump={vi.fn()} />,

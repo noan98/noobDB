@@ -6241,6 +6241,7 @@ export const DataGrid = memo(function DataGrid({
         refTable: fkMeta.referenced_table,
         refColumn: fkMeta.referenced_column,
         value: rows[rowIdx]?.[colIdx] ?? null,
+        valueType: columns[colIdx]?.type_name,
       }),
     };
   };
@@ -7670,6 +7671,7 @@ export const DataGrid = memo(function DataGrid({
                   childTable: inc.table,
                   childColumn: inc.column,
                   value,
+                  valueType: columns[refColIdx]?.type_name,
                 });
                 reverse.push({
                   label: grouped
@@ -8243,6 +8245,7 @@ export const DataGrid = memo(function DataGrid({
                         columns.map((c) => c.name),
                         rows[activeCell.rowIdx],
                         (ci) => cellMaskedNow(activeCell.rowIdx, ci),
+                        columns.map((c) => c.type_name),
                       ),
                       driver: rowSqlDriver ?? "mysql",
                       database: rowSqlDatabase ?? null,
