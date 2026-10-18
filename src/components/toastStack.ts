@@ -17,7 +17,7 @@ export interface StackSplit<T> {
 /**
  * `items` (古い順) を表示分と畳む分に分ける。新しいものを優先して残す。ただしアクション付き
  * (Undo など、#676) は押す機会を奪わないよう、通常のトーストより先に枠を確保する。
- * アクション付きだけで上限を超える場合は古い方から畳む。
+ * アクション付きだけで上限を超える場合は古い方から畳む。最新の 1 件は種類を問わず常に表示する。
  */
 export function splitToastStack<T extends { action?: unknown }>(
   items: readonly T[],
@@ -25,7 +25,8 @@ export function splitToastStack<T extends { action?: unknown }>(
 ): StackSplit<T> {
   const limit = Math.max(1, Math.floor(max));
   if (items.length <= limit) return { visible: [...items], hiddenCount: 0 };
-  const keep = new Set<number>();
+  // 最新の 1 件 (たった今出たエラーなど) は、アクション付きが並んでいても必ず見せる。
+  const keep = new Set<number>([items.length - 1]);
   for (let i = items.length - 1; i >= 0 && keep.size < limit; i--) {
     if (items[i].action) keep.add(i);
   }

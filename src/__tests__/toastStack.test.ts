@@ -25,6 +25,11 @@ describe("splitToastStack (#1501)", () => {
     expect(ids(r.visible)).toEqual([2, 3]);
     expect(r.hiddenCount).toBe(1);
   });
+  it("アクション付きで埋まっていても最新の 1 件は必ず表示する", () => {
+    const r = splitToastStack([n(1, true), n(2, true), n(3, true), n(4, true), n(5)], 4);
+    expect(ids(r.visible)).toEqual([2, 3, 4, 5]);
+    expect(r.hiddenCount).toBe(1);
+  });
   it("max が不正でも最低 1 件は残し、既定値は 4", () => {
     expect(splitToastStack([n(1), n(2)], 0).visible).toHaveLength(1);
     expect(MAX_VISIBLE_TOASTS).toBe(4);

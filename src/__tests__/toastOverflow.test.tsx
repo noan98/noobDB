@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, act } from "./testUtils";
 import { useToast } from "../components/Toast";
 import { t } from "../i18n";
@@ -25,5 +25,22 @@ describe("トーストのスタック上限 (#1501)", () => {
     expect(screen.getByText("msg 4")).toBeInTheDocument();
     expect(screen.queryByText("msg 3")).not.toBeInTheDocument();
     expect(screen.getByText(t("toastOverflow", { count: 3 }))).toBeInTheDocument();
+  });
+  it("表示中のトーストを閉じると畳んでいた分が繰り上がり、件数が減る", () => {
+    renderWithProviders(<Burst />);
+    act(() => screen.getByRole("button", { name: "burst" }).click());
+    act(() => screen.getAllByRole("button", { name: t("toastDismissAria") })[0].click());
+    expect(screen.getByText("msg 3")).toBeInTheDocument();
+    expect(screen.getByText(t("toastOverflow", { count: 2 }))).toBeInTheDocument();
+  });
+  it("「他 N 件」はボタンで、押すとアクティビティセンターを開く要求を出す", async () => {
+    const mod = await import("../components/ActivityCenter");
+    const spy = vi.spyOn(mod, "toggleActivityCenter");
+    renderWithProviders(<Burst />);
+    act(() => screen.getByRole("button", { name: "burst" }).click());
+    const deck = screen.getByText(t("toastOverflow", { count: 3 }));
+    expect(deck.tagName).toBe("BUTTON");
+    act(() => deck.click());
+    expect(spy).toHaveBeenCalled();
   });
 });

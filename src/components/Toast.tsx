@@ -17,6 +17,7 @@ import { semanticColorToken, semanticColorVar, type SemanticRole } from "../sema
 import { pushActivity, type ActivityDetail, type ActivitySeverity } from "../activityLog";
 import { railDurationSeconds, railRatio } from "./toastProgress";
 import { splitToastStack } from "./toastStack";
+import { toggleActivityCenter } from "./ActivityCenter";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
 
@@ -318,7 +319,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 
   // 上限を超えた分は「他 N 件」の deck に畳む (#1501)。タイマーは畳んだ分も進むので、
-  // 期限が来れば通常どおり消える。履歴はアクティビティセンターに全件残っている。
+  // 期限が来れば通常どおり消える (アクション付きも畳まれている間に Undo の期限が進む)。
+  // 履歴はアクティビティセンターに全件残っていて、deck を押すとそこを開く。
   const { visible: visibleToasts, hiddenCount } = splitToastStack(toasts);
 
   return (
@@ -354,7 +356,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   position="absolute"
                   left="2"
                   right="2"
-                  top="-4px"
+                  top="-1"
                   h="full"
                   borderRadius="md"
                   bg="app.surfaceMuted"
@@ -367,7 +369,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   position="absolute"
                   left="1"
                   right="1"
-                  top="-2px"
+                  top="-0.5"
                   h="full"
                   borderRadius="md"
                   bg="app.surfaceMuted"
@@ -376,8 +378,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   opacity={0.85}
                   aria-hidden
                 />
-                <Box
-                  role="status"
+                <chakra.button
+                  type="button"
+                  onClick={toggleActivityCenter}
+                  display="block"
+                  w="full"
+                  cursor="pointer"
+                  _hover={{ bg: "app.hover" }}
+                  _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
                   position="relative"
                   px="3"
                   py="1.5"
@@ -390,7 +398,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                   textAlign="center"
                 >
                   {t("toastOverflow", { count: hiddenCount })}
-                </Box>
+                </chakra.button>
               </Box>
             </motion.div>
           )}
