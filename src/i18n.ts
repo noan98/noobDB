@@ -542,7 +542,7 @@ const en = {
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
   snippetSqlHelp:
-    "Tab stops: ${1:default} jumps between fields with Tab / Shift+Tab when inserted; ${1} repeated mirrors the field, ${name} uses its name as the default, ${0} is where the cursor ends. A bare $1 (PostgreSQL parameter) and {{name}} (run-time parameter) are left as they are. Write \\${ for a literal ${.",
+    "Tab stops: ${1:default} jumps between fields with Tab / Shift+Tab when inserted; ${1} repeated mirrors the field, ${name} uses its name as the default, ${0} is where the cursor ends. A bare $1 (PostgreSQL parameter) and {{name}} (run-time parameter) are left as they are. Write \\${ for a literal ${ (the escape only works in a body that has at least one tab stop; one line per default value).",
   snippetErrorNameRequired: "Name is required.",
   snippetErrorSqlRequired: "SQL is required.",
   snippetErrorScopeProfile: "Pick a connection for this scope.",
@@ -7270,7 +7270,7 @@ const ja: Dict = {
   snippetSql: "SQL",
   snippetSqlPlaceholder: "SELECT * FROM ...",
   snippetSqlHelp:
-    "タブストップ: ${1:既定値} と書くと、挿入後に Tab / Shift+Tab でフィールド間を移動できます。同じ番号 ${1} は連動し、${name} は名前が既定値、${0} は最後のカーソル位置です。素の $1 (PostgreSQL のパラメータ) や {{name}} (実行時パラメータ) はそのまま残ります。文字どおりの ${ は \\${ と書きます。",
+    "タブストップ: ${1:既定値} と書くと、挿入後に Tab / Shift+Tab でフィールド間を移動できます。同じ番号 ${1} は連動し、${name} は名前が既定値、${0} は最後のカーソル位置です。素の $1 (PostgreSQL のパラメータ) や {{name}} (実行時パラメータ) はそのまま残ります。文字どおりの ${ は \\${ と書きます (エスケープは記法を含む本文でのみ有効。既定値は 1 行で書く)。",
   snippetErrorNameRequired: "名前を入力してください。",
   snippetErrorSqlRequired: "SQL を入力してください。",
   snippetErrorScopeProfile: "このスコープの接続を選択してください。",

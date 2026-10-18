@@ -33,9 +33,11 @@ describe("parseSnippetTemplate", () => {
     );
   });
 
-  it("\\${ は記法ではなく文字どおりの ${ になる", () => {
+  it("\\${ は記法を含む本文でだけ文字どおりの ${ になる", () => {
     expect(snippetHasFields("echo \\${1:x}")).toBe(false);
-    expect(snippetPlainText("echo \\${1:x}")).toBe("echo ${1:x}");
+    // 記法を含まない本文は原文のまま (エスケープも解かない)。
+    expect(snippetPlainText("echo \\${1:x}")).toBe("echo \\${1:x}");
+    expect(snippetPlainText("echo \\${1:x} ${2:y}")).toBe("echo ${1:x} y");
   });
 });
 
@@ -57,6 +59,9 @@ describe("後方互換: 既存スニペットを壊さない", () => {
     "SELECT ${1x} FROM t",
     "SELECT #{1} FROM t",
     "\tSELECT 1\n\tFROM t",
+    "SELECT ${1:a\nb} FROM t",
+    "SELECT ${1:a\r\nb} FROM t",
+    "echo \\${1:x}",
   ];
 
   it.each(legacy)("記法を含まず本文が変わらない: %s", (sql) => {
@@ -122,6 +127,12 @@ describe("snippetToCodeMirrorTemplate", () => {
     expect(snippetToCodeMirrorTemplate("SELECT '{\"a\":1}' ${1:x} $1 $$ #")).toBe(
       "SELECT '\\{\"a\":1\\}' ${1:x} $1 $$ #",
     );
+  });
+
+  it("名前付きフィールドには本文中の最大番号の次から出現順に番号を振る (同名は同番号)", () => {
+    expect(snippetToCodeMirrorTemplate("${cols} ${tbl} ${cols}")).toBe("${1:cols} ${2:tbl} ${1:cols}");
+    expect(snippetToCodeMirrorTemplate("${1:a} ${tbl} ${3:c}")).toBe("${1:a} ${4:tbl} ${3:c}");
+    expect(snippetToCodeMirrorTemplate("${cols}${0}")).toBe("${1:cols}${0}");
   });
 
   it("\\${ は $\\{ に変換され CodeMirror にフィールドと解釈されない", () => {

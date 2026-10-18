@@ -70,7 +70,7 @@ import {
 import { renderColumnInfo } from "./completionInfoPanel";
 import { renderCompletionIcon } from "./completionIcons";
 import { snippetCompletionSource } from "./sqlSnippetCompletion";
-import { snippetHasFields, snippetPlainText, snippetToCodeMirrorTemplate } from "../snippetTemplate";
+import { snippetHasFields, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { t, useT } from "../i18n";
 import { useSettings } from "../settings";
 import { springs } from "../motion";
@@ -1520,7 +1520,7 @@ export const QueryEditor = memo(
       const view = viewRef.current;
       if (!view) return;
       if (!snippetHasFields(text)) {
-        insertAtCursor(snippetPlainText(text));
+        insertAtCursor(text);
         return;
       }
       const sel = view.state.selection.main;

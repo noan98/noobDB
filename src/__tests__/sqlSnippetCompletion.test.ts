@@ -6,11 +6,12 @@ import {
   type Completion,
 } from "@codemirror/autocomplete";
 import { EditorState } from "@codemirror/state";
+import { sql } from "@codemirror/lang-sql";
 import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import type { Snippet } from "../api/tauri";
 import { matchSnippets, snippetCompletionSource } from "../components/sqlSnippetCompletion";
-import { snippetToCodeMirrorTemplate } from "../snippetTemplate";
+import { snippetPlainText, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 import { snippet as cmSnippet } from "@codemirror/autocomplete";
 
 const mk = (name: string, sql: string, tags: string[] = []): Snippet => ({
@@ -39,6 +40,13 @@ describe("matchSnippets", () => {
       ["count", 2],
     ]);
     expect(matchSnippets(SNIPS, "all").map((m) => [m.snippet.name, m.rank])).toEqual([["select-all", 1]]);
+  });
+
+  it("部分一致とタグ一致は 2 文字以上から (1 文字は先頭一致だけ)", () => {
+    expect(matchSnippets(SNIPS, "l").map((m) => m.snippet.name)).toEqual(["sel", "select-all"].slice(0, 0));
+    expect(matchSnippets(SNIPS, "c").map((m) => m.snippet.name)).toEqual(["count"]);
+    expect(matchSnippets(SNIPS, "q").map((m) => m.snippet.name)).toEqual([]);
+    expect(matchSnippets(SNIPS, "qu").map((m) => m.snippet.name)).toEqual(["sel"]);
   });
 
   it("大文字小文字を区別せず、空の語は全件", () => {
@@ -81,18 +89,49 @@ describe("snippetCompletionSource", () => {
     expect(run("sel", false, [])).toBeNull();
   });
 
-  it("記法の無い本文は文字列で挿入、記法ありは関数 (snippet) で展開する", () => {
+  it("info / apply は遅延評価の関数で、確定時に記法の有無で挿入方法を切り替える", () => {
     const r = run("sel");
     const byLabel = (l: string) => r?.options.find((o) => o.label === l) as Completion;
     expect(typeof byLabel("sel").apply).toBe("function");
-    expect(byLabel("select-all").apply).toBe("SELECT * FROM users");
-    // 情報パネルは既定値に置き換えた本文
-    expect(byLabel("sel").info).toBe("SELECT cols FROM table WHERE cond");
+    expect(typeof byLabel("sel").info).toBe("function");
+    const info = (byLabel("sel").info as (c: Completion) => Node)(byLabel("sel"));
+    expect(info.textContent).toBe("SELECT cols FROM table WHERE cond");
   });
 
-  it("$1 を含む既存スニペットは $1 のまま挿入される", () => {
-    const r = run("ユーザー");
-    expect(r?.options[0].apply).toBe("SELECT * FROM users WHERE id = $1");
+  const applyTo = (label: string, text: string) => {
+    const r = run(text);
+    const c = r?.options.find((o) => o.label === label) as Completion;
+    const view = new EditorView({
+      state: EditorState.create({ doc: text, extensions: [EditorState.allowMultipleSelections.of(true)] }),
+      parent: document.body,
+    });
+    (c.apply as (v: EditorView, c: Completion, from: number, to: number) => void)(
+      view,
+      c,
+      r?.from ?? 0,
+      text.length,
+    );
+    return view;
+  };
+
+  it("$1 や \\${ を含む記法なしの既存スニペットは原文のまま挿入される", () => {
+    const v = applyTo("ユーザー一覧", "ユーザー");
+    expect(v.state.doc.toString()).toBe("SELECT * FROM users WHERE id = $1");
+    v.destroy();
+  });
+
+  it("文字列リテラル・コメントの中では候補を出さない", () => {
+    // lang-sql の構文木が無い素の state では判定できないので、SQL 言語付きの state で確かめる。
+    const state = EditorState.create({ doc: "SELECT 'sel", extensions: [sql()] });
+    const src = snippetCompletionSource(
+      () => SNIPS,
+      () => "x",
+    );
+    expect(src(new CompletionContext(state, state.doc.length, false))).toBeNull();
+    const c = EditorState.create({ doc: "-- sel", extensions: [sql()] });
+    expect(src(new CompletionContext(c, c.doc.length, false))).toBeNull();
+    const ok = EditorState.create({ doc: "SELECT sel", extensions: [sql()] });
+    expect(src(new CompletionContext(ok, ok.doc.length, false))).not.toBeNull();
   });
 
   it("ソースが例外を投げても null を返す", () => {
@@ -161,5 +200,57 @@ describe("タブストップ展開 (CodeMirror snippet)", () => {
     v.dispatch(v.state.replaceSelection("xyz"));
     expect(v.state.doc.toString()).toBe("xyz = xyz");
     v.destroy();
+  });
+});
+
+describe("単一行・行頭タブなしの本文: 展開した doc と snippetPlainText が一致する", () => {
+  const cases = [
+    "SELECT ${1:cols} FROM ${2:table} WHERE ${3:cond}",
+    "SELECT ${cols} FROM ${tbl} WHERE a = {{id}}",
+    "SELECT ${1:a}, ${1} FROM t",
+    "SELECT '{\"a\":1}'::jsonb, ${1:x}",
+    "echo \\${1:x} ${2:y}",
+    "SELECT * FROM users WHERE id = $1 AND x = ${1:v}",
+    "SELECT ${cols} FROM ${tbl}${0}",
+    "${1:a} ${tbl} ${0}",
+    "SELECT * FROM t -- {not a field}",
+  ];
+  it.each(cases)("%s", (src) => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "", extensions: [EditorState.allowMultipleSelections.of(true)] }),
+      parent: document.body,
+    });
+    cmSnippet(snippetToCodeMirrorTemplate(src))(view, null, 0, 0);
+    expect(view.state.doc.toString()).toBe(snippetPlainText(src));
+    view.destroy();
+  });
+});
+
+describe("巡回順: ${0} は他のフィールドより必ず後", () => {
+  const order = (src: string) => {
+    const view = new EditorView({
+      state: EditorState.create({ doc: "", extensions: [EditorState.allowMultipleSelections.of(true)] }),
+      parent: document.body,
+    });
+    cmSnippet(snippetToCodeMirrorTemplate(src))(view, null, 0, 0);
+    const stops: string[] = [];
+    const cur = () => view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+    stops.push(`${view.state.selection.main.from}:${cur()}`);
+    while (nextSnippetField(view)) stops.push(`${view.state.selection.main.from}:${cur()}`);
+    view.destroy();
+    return stops;
+  };
+
+  it("名前付きだけ + ${0}", () => {
+    // cols → tbl → 末尾 (${0})
+    expect(order("SELECT ${cols} FROM ${tbl}${0}")).toEqual(["7:cols", "17:tbl", "20:"]);
+  });
+
+  it("番号付きと名前付きの混在 + ${0}", () => {
+    expect(order("${1:a} ${tbl} ${0}")).toEqual(["0:a", "2:tbl", "6:"]);
+  });
+
+  it("名前付きだけ (${0} なし) は出現順", () => {
+    expect(order("${x} ${y}")).toEqual(["0:x", "2:y"]);
   });
 });

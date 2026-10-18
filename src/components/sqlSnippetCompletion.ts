@@ -10,8 +10,12 @@ import {
   type Completion,
   type CompletionContext,
   type CompletionResult,
+  insertCompletionText,
+  pickedCompletion,
   snippet,
 } from "@codemirror/autocomplete";
+import { syntaxTree } from "@codemirror/language";
+import type { SyntaxNode } from "@lezer/common";
 import type { Snippet } from "../api/tauri";
 import { snippetHasFields, snippetPlainText, snippetToCodeMirrorTemplate } from "../snippetTemplate";
 
@@ -20,6 +24,9 @@ export const SNIPPET_COMPLETION_LIMIT = 30;
 
 /** 補完の起点にする語 (英数字・アンダースコア・ハイフン・日本語などの文字)。 */
 const WORD_RE = /[\p{L}\p{N}_-]+$/u;
+
+/** 補完を出さない構文ノード (lang-sql のスキーマ補完の除外と同じ)。 */
+const NO_COMPLETE_NODES = ["QuotedIdentifier", "SpecialVar", "String", "LineComment", "BlockComment"];
 
 /** 情報パネルに出す本文の最大行数 (超過分は「…」)。 */
 const INFO_MAX_LINES = 8;
@@ -41,6 +48,8 @@ export function matchSnippets(snippets: readonly Snippet[], word: string): Snipp
     const name = s.name.toLowerCase();
     let rank: SnippetMatch["rank"] | null = null;
     if (q === "" || name.startsWith(q)) rank = 0;
+    // 部分一致とタグ一致は 2 文字以上から (1 文字だと候補が多すぎてスキーマ補完を邪魔する)。
+    else if (q.length < 2) rank = null;
     else if (name.includes(q)) rank = 1;
     else if (s.tags.some((tag) => tag.toLowerCase().includes(q))) rank = 2;
     if (rank !== null) out.push({ snippet: s, rank });
@@ -49,24 +58,41 @@ export function matchSnippets(snippets: readonly Snippet[], word: string): Snipp
   return out;
 }
 
-/** 候補の情報パネル用に、タブストップを既定値へ置き換えた本文の先頭だけを返す。 */
-function infoText(sql: string): string {
+/** 候補の情報パネル。候補を作る時点ではパースせず、表示されたときに平文へ展開する。 */
+function renderInfo(sql: string): Node {
   const lines = snippetPlainText(sql).split("\n");
   const head = lines.slice(0, INFO_MAX_LINES).join("\n");
-  return lines.length > INFO_MAX_LINES ? `${head}\n…` : head;
+  const el = document.createElement("div");
+  el.style.whiteSpace = "pre-wrap";
+  el.textContent = lines.length > INFO_MAX_LINES ? `${head}\n…` : head;
+  return el;
 }
 
-/** 1 件分の補完候補。記法の無い本文は文字列でそのまま挿入し、従来どおり末尾へカーソルを置く。 */
+/**
+ * 1 件分の補完候補。`info` / `apply` は関数で遅延評価にし、候補を作る時点では本文を
+ * パースしない (確定時に初めて記法を解釈する)。記法の無い本文は原文のまま挿入し、
+ * カーソルは末尾に来る。
+ */
 export function snippetToCompletion(s: Snippet, detail: string, rank: SnippetMatch["rank"]): Completion {
-  return {
+  const completion: Completion = {
     label: s.name,
     detail,
-    info: infoText(s.sql),
+    info: () => renderInfo(s.sql),
     type: "snippet",
     // 先頭一致を他の補完ソース (キーワード等) より上、タグ一致は下に置く。
     boost: 5 - rank * 5,
-    apply: snippetHasFields(s.sql) ? snippet(snippetToCodeMirrorTemplate(s.sql)) : snippetPlainText(s.sql),
+    apply: (view, picked, from, to) => {
+      if (snippetHasFields(s.sql)) {
+        snippet(snippetToCodeMirrorTemplate(s.sql))(view, picked, from, to);
+        return;
+      }
+      view.dispatch({
+        ...insertCompletionText(view.state, s.sql, from, to),
+        annotations: pickedCompletion.of(picked),
+      });
+    },
   };
+  return completion;
 }
 
 /**
@@ -77,7 +103,7 @@ export function snippetCompletionSource(
   getSnippets: () => readonly Snippet[],
   detail: () => string,
 ): (ctx: CompletionContext) => CompletionResult | null {
-  return (ctx) => {
+  const source = (ctx: CompletionContext): CompletionResult | null => {
     try {
       const snippets = getSnippets();
       if (snippets.length === 0) return null;
@@ -96,5 +122,13 @@ export function snippetCompletionSource(
     } catch {
       return null;
     }
+  };
+  // 文字列リテラル・コメント・引用符付き識別子の中では出さない (lang-sql のスキーマ補完と同じ除外)。
+  return (ctx) => {
+    for (let n: SyntaxNode | null = syntaxTree(ctx.state).resolveInner(ctx.pos, -1); n; n = n.parent) {
+      if (NO_COMPLETE_NODES.includes(n.name)) return null;
+      if (n.type.isTop) break;
+    }
+    return source(ctx);
   };
 }

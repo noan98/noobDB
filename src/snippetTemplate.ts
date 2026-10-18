@@ -18,7 +18,10 @@
 //     `${{name}}` も `${` の直後が `{` なので記法ではなく、そのまま残る。
 //   - `${` で始まっても上の形に当てはまらないもの (`${ x }` / `${1:{}}` / 閉じ括弧なし)
 //     は記法ではなく文字どおりに残す。既定値には `{` `}` を含められない。
-//   - 記法を 1 つも含まない本文は従来どおり丸ごと挿入し、カーソルは末尾に来る。
+//   - 既定値は 1 行に収まるものだけ (CodeMirror が行をまたぐフィールドを扱えないため)。
+//     改行を含む `${1:a⏎b}` は記法ではなく文字どおり残す。
+//   - 記法を 1 つも含まない本文は原文のまま丸ごと挿入し、カーソルは末尾に来る。`\${` の
+//     エスケープも**記法を含む本文でだけ**効く (含まない本文は `\${` もそのまま)。
 
 /** 本文を分解した 1 片。 */
 export type SnippetPart =
@@ -26,7 +29,7 @@ export type SnippetPart =
   | { kind: "field"; key: string; index: number | null; name: string | null; placeholder: string };
 
 /** フィールド記法: `${1}` `${1:x}` `${name}`。名前は識別子形 (英字 / _ で始まる)。 */
-const FIELD_RE = /\$\{(?:(\d+)(?::([^{}]*))?|([A-Za-z_]\w*))\}/y;
+const FIELD_RE = /\$\{(?:(\d+)(?::([^{}\r\n]*))?|([A-Za-z_]\w*))\}/y;
 
 /** 本文をテキストとフィールドの列に分解する。 */
 export function parseSnippetTemplate(src: string): SnippetPart[] {
@@ -96,6 +99,8 @@ function resolveDefaults(parts: SnippetPart[]): Map<string, string> {
  */
 export function snippetPlainText(src: string): string {
   const parts = parseSnippetTemplate(src);
+  // 記法を含まない本文は原文のまま (`\${` を含む既存 SQL を書き換えない)。
+  if (!parts.some((p) => p.kind === "field")) return src;
   const defaults = resolveDefaults(parts);
   return parts.map((p) => (p.kind === "text" ? p.text : (defaults.get(p.key) ?? ""))).join("");
 }
@@ -109,13 +114,22 @@ export function snippetPlainText(src: string): string {
 export function snippetToCodeMirrorTemplate(src: string): string {
   const parts = parseSnippetTemplate(src);
   const defaults = resolveDefaults(parts);
+  // 名前付きフィールドには番号を振る。CodeMirror は `${0}` (最終位置) を名前付きより先に
+  // 巡回してしまうので、本文中の最大番号 + 1, +2, … を出現順に割り当てる (同名は同番号)。
+  let next = Math.max(0, ...parts.map((p) => (p.kind === "field" && p.index ? p.index : 0))) + 1;
+  const named = new Map<string, number>();
   return parts
     .map((p) => {
       if (p.kind === "text") return p.text.replace(/[{}]/g, (b) => `\\${b}`);
       const d = defaults.get(p.key) ?? "";
       if (p.index !== null) return d ? `\${${p.index}:${d}}` : `\${${p.index}}`;
-      // 名前付きは名前がそのまま表示名 (既定値は持てない)。
-      return `\${${p.name}}`;
+      // 名前付きは名前がそのまま既定値 (表示名)。
+      let n = named.get(p.key);
+      if (n === undefined) {
+        n = next++;
+        named.set(p.key, n);
+      }
+      return `\${${n}:${d}}`;
     })
     .join("");
 }
