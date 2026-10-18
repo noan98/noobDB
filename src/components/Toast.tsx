@@ -14,10 +14,14 @@ import { useT } from "../i18n";
 import { Icon, ICON_SIZES } from "./Icon";
 import { transitions } from "../motion";
 import { semanticColorToken, semanticColorVar, type SemanticRole } from "../semanticColors";
-import { pushActivity, type ActivityDetail, type ActivitySeverity } from "../activityLog";
+import {
+  pushActivity,
+  requestActivityCenterToggle,
+  type ActivityDetail,
+  type ActivitySeverity,
+} from "../activityLog";
 import { railDurationSeconds, railRatio } from "./toastProgress";
 import { splitToastStack } from "./toastStack";
-import { toggleActivityCenter } from "./ActivityCenter";
 
 export type ToastTone = "success" | "error" | "info" | "warning";
 
@@ -380,7 +384,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 />
                 <chakra.button
                   type="button"
-                  onClick={toggleActivityCenter}
+                  onClick={() => requestActivityCenterToggle()}
                   display="block"
                   w="full"
                   cursor="pointer"

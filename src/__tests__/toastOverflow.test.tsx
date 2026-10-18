@@ -34,13 +34,15 @@ describe("トーストのスタック上限 (#1501)", () => {
     expect(screen.getByText(t("toastOverflow", { count: 2 }))).toBeInTheDocument();
   });
   it("「他 N 件」はボタンで、押すとアクティビティセンターを開く要求を出す", async () => {
-    const mod = await import("../components/ActivityCenter");
-    const spy = vi.spyOn(mod, "toggleActivityCenter");
+    const { onActivityCenterToggleRequest } = await import("../activityLog");
+    const spy = vi.fn();
+    const off = onActivityCenterToggleRequest(spy);
     renderWithProviders(<Burst />);
     act(() => screen.getByRole("button", { name: "burst" }).click());
     const deck = screen.getByText(t("toastOverflow", { count: 3 }));
     expect(deck.tagName).toBe("BUTTON");
     act(() => deck.click());
     expect(spy).toHaveBeenCalled();
+    off();
   });
 });
