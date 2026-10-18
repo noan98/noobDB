@@ -203,8 +203,7 @@ pub async fn import_snippets(
 ) -> Result<SnippetImportResult> {
     blocking(move || {
         let (incoming, rejected) = transfer::parse_import(&json)?;
-        let known = known_profile_ids()?;
-        let counts = store::import(incoming, strategy, &known, new_snippet_id)?;
+        let counts = store::import(incoming, strategy, known_profile_ids, new_snippet_id)?;
         tracing::info!(
             imported = counts.imported,
             skipped = counts.skipped,

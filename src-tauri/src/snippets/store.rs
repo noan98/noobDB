@@ -170,16 +170,20 @@ pub fn delete(id: &str) -> Result<()> {
 
 /// 取り込み (#1490): 読み → 統合 → 書きをロックを握ったまま一息で行う。統合の規則は
 /// 純ロジック `transfer::plan_import`。件数だけを返す。変更が無ければ書かない。
+/// 既存プロファイル ID は**ロック取得後に**読む: 先に読むと、その間に `delete_profile` が
+/// プロファイル削除 → `release_profile_scope` まで終え、消えたプロファイル限定のスニペットが
+/// 残ってしまう。ロック後に読めば、削除が先なら付け替え、後なら `release_profile_scope` が
+/// このロック解放を待ってから外す。
 pub fn import(
     incoming: Vec<Snippet>,
     strategy: crate::commands::profiles::ImportStrategy,
-    known_profile_ids: &std::collections::HashSet<String>,
+    known_profile_ids: impl FnOnce() -> Result<std::collections::HashSet<String>>,
     new_id: impl FnMut() -> String,
 ) -> Result<super::transfer::ImportCounts> {
     let _guard = lock_store()?;
+    let known = known_profile_ids()?;
     let all = load_all_locked()?;
-    let (merged, counts) =
-        super::transfer::plan_import(all, incoming, strategy, known_profile_ids, new_id);
+    let (merged, counts) = super::transfer::plan_import(all, incoming, strategy, &known, new_id);
     if counts.imported > 0 || counts.overwritten > 0 {
         save_all_locked(&merged)?;
     }
