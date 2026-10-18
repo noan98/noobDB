@@ -168,6 +168,24 @@ pub fn delete(id: &str) -> Result<()> {
     save_all_locked(&all)
 }
 
+/// 取り込み (#1490): 読み → 統合 → 書きをロックを握ったまま一息で行う。統合の規則は
+/// 純ロジック `transfer::plan_import`。件数だけを返す。変更が無ければ書かない。
+pub fn import(
+    incoming: Vec<Snippet>,
+    strategy: crate::commands::profiles::ImportStrategy,
+    known_profile_ids: &std::collections::HashSet<String>,
+    new_id: impl FnMut() -> String,
+) -> Result<super::transfer::ImportCounts> {
+    let _guard = lock_store()?;
+    let all = load_all_locked()?;
+    let (merged, counts) =
+        super::transfer::plan_import(all, incoming, strategy, known_profile_ids, new_id);
+    if counts.imported > 0 || counts.overwritten > 0 {
+        save_all_locked(&merged)?;
+    }
+    Ok(counts)
+}
+
 pub fn new_snippet_id() -> String {
     use rand::RngExt;
     const ALPHABET: &[u8] = b"abcdefghijkmnpqrstuvwxyz23456789";

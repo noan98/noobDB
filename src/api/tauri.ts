@@ -437,6 +437,24 @@ export interface AssertionImportRejection {
   error: string;
 }
 
+/** `preview_import_snippets` の結果 (#1490)。書き込まずに適用前の確認へ使う。 */
+export interface SnippetImportPreview {
+  total: number;
+  new_count: number;
+  conflict_count: number;
+  scope_reset_count: number;
+  rejected: AssertionImportRejection[];
+}
+
+/** `import_snippets` の結果 (#1490)。 */
+export interface SnippetImportResult {
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  scope_reset: number;
+  rejected: AssertionImportRejection[];
+}
+
 /** `import_assertions` の結果 (#1621)。 */
 export interface ImportAssertionsResult {
   imported: Assertion[];

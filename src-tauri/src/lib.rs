@@ -171,6 +171,7 @@ pub mod __test_api {
     pub use crate::commands::sandbox::{
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
+    pub use crate::commands::snippets::{SnippetImportPreview, SnippetImportResult};
     pub use crate::db::sandbox::SandboxTableSpec;
     pub use crate::history::HistoryEntry;
     pub use crate::import_templates::{ImportTemplate, TemplateColumn};
@@ -1707,6 +1708,9 @@ pub fn run() {
             commands::snippets::list_snippets,
             commands::snippets::save_snippet,
             commands::snippets::delete_snippet,
+            commands::snippets::export_snippets,
+            commands::snippets::preview_import_snippets,
+            commands::snippets::import_snippets,
             commands::assertions::list_assertions,
             commands::assertions::save_assertion,
             commands::assertions::delete_assertion,

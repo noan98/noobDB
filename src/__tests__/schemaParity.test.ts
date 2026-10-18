@@ -183,6 +183,8 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   ["assertionOutcome", schemas.assertionOutcome],
   ["acceptedValuesCandidates", schemas.acceptedValuesCandidates],
   ["importAssertionsResult", schemas.importAssertionsResult],
+  ["snippetImportPreview", schemas.snippetImportPreview],
+  ["snippetImportResult", schemas.snippetImportResult],
   ["assertionVariants", schemas.assertion],
   ["assertionRowCountOpVariants", schemas.assertion],
   ["assertionRunRecord", schemas.assertionRunRecord],

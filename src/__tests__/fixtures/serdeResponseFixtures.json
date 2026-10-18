@@ -5152,6 +5152,32 @@
       "active"
     ]
   },
+  "snippetImportPreview": {
+    "conflict_count": 1,
+    "new_count": 2,
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 4,
+        "name": "bad"
+      }
+    ],
+    "scope_reset_count": 1,
+    "total": 3
+  },
+  "snippetImportResult": {
+    "imported": 2,
+    "overwritten": 0,
+    "rejected": [
+      {
+        "error": "name is required",
+        "index": 4,
+        "name": null
+      }
+    ],
+    "scope_reset": 1,
+    "skipped": 1
+  },
   "snippetVariants": [
     {
       "driver": null,
