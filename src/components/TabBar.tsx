@@ -47,6 +47,8 @@ export interface TabInfo {
   dirty?: boolean;
   /** クエリ実行中 (ストリーミング / バッチ)。種別アイコンがスピナーに切り替わる (#1500)。 */
   running?: boolean;
+  /** ピン留め済み (#1486)。ペイン左端に固定され、省スペース表示 (ピンアイコン、閉じるボタン無し) になる。 */
+  pinned?: boolean;
 }
 
 /** TabBar が描画に使う項目が全て一致するか (PaneView が配列参照を安定させるのに使う, #1500)。 */
@@ -59,7 +61,8 @@ export function sameTabInfo(a: TabInfo | undefined, b: TabInfo): boolean {
     a.database === b.database &&
     a.table === b.table &&
     a.dirty === b.dirty &&
-    a.running === b.running
+    a.running === b.running &&
+    a.pinned === b.pinned
   );
 }
 
@@ -278,6 +281,9 @@ export const TabBar = memo(function TabBar({
         (e.key === "ArrowLeft" || e.key === "ArrowRight")
       ) {
         const dir = e.key === "ArrowRight" ? 1 : -1;
+        // ピン留めの境界 (#1486) は跨げない: 移動先のタブとピン状態が違うときは何もしない。
+        const neighbor = tabs[idx + dir];
+        if (neighbor && !!neighbor.pinned !== !!tabs[idx].pinned) return;
         const order = tabs.map((tt) => tt.id);
         const moved = moveTabBy(order, currentId, dir);
         // moveTabBy returns the same array reference (no-op) at the edges —
@@ -538,7 +544,7 @@ export const TabBar = memo(function TabBar({
                 userSelect="none"
                 fontSize="sm"
                 whiteSpace="nowrap"
-                maxW="240px"
+                maxW={tab.pinned ? "140px" : "240px"}
                 flexShrink={0}
                 transitionProperty="background, color, border-color, box-shadow"
                 transitionDuration="var(--dur-fast)"
@@ -628,7 +634,12 @@ export const TabBar = memo(function TabBar({
                     onDone={(name, reason) => endRename(tab.id, name, reason)}
                   />
                 ) : (
-                  <chakra.span overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap" maxW="180px">
+                  <chakra.span
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
+                    maxW={tab.pinned ? "80px" : "180px"}
+                  >
                     {tab.title}
                   </chakra.span>
                 )}
@@ -649,35 +660,54 @@ export const TabBar = memo(function TabBar({
                     </chakra.span>
                   </Tooltip>
                 )}
-                <Tooltip label={t("tabClose")}>
-                  <chakra.button
+                {tab.pinned ? (
+                  // ピン留めタブは閉じるボタンの代わりにピンアイコンを出して省スペース化する (#1486)。
+                  // 閉じる操作は中クリック / Delete / Cmd+W / メニューから行える。
+                  <chakra.span
                     display="inline-flex"
                     alignItems="center"
                     justifyContent="center"
                     w="18px"
                     h="18px"
-                    p="0"
-                    border="none"
-                    bg="transparent"
                     color="app.textMuted"
-                    borderRadius="sm"
-                    fontSize="xs"
-                    lineHeight="1"
-                    cursor="pointer"
                     flexShrink={0}
-                    transitionProperty="background, color, border-color, box-shadow"
-                    transitionDuration="var(--dur-fast)"
-                    transitionTimingFunction="var(--ease)"
-                    _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
-                    aria-label={t("tabClose")}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onClose(tab.id);
-                    }}
+                    role="img"
+                    aria-label={`(${t("tabPinned")})`}
+                    data-pinned="true"
                   >
-                    <Icon name="close" size={ICON_SIZES.sm} />
-                  </chakra.button>
-                </Tooltip>
+                    <Icon name="pin" size={ICON_SIZES.sm} />
+                  </chakra.span>
+                ) : (
+                  <Tooltip label={t("tabClose")}>
+                    <chakra.button
+                      display="inline-flex"
+                      alignItems="center"
+                      justifyContent="center"
+                      w="18px"
+                      h="18px"
+                      p="0"
+                      border="none"
+                      bg="transparent"
+                      color="app.textMuted"
+                      borderRadius="sm"
+                      fontSize="xs"
+                      lineHeight="1"
+                      cursor="pointer"
+                      flexShrink={0}
+                      transitionProperty="background, color, border-color, box-shadow"
+                      transitionDuration="var(--dur-fast)"
+                      transitionTimingFunction="var(--ease)"
+                      _hover={{ bg: isActive ? "app.active" : "app.hover", color: "app.text" }}
+                      aria-label={t("tabClose")}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onClose(tab.id);
+                      }}
+                    >
+                      <Icon name="close" size={ICON_SIZES.sm} />
+                    </chakra.button>
+                  </Tooltip>
+                )}
                 {isActive && (
                   <MotionIndicator
                     layoutId={indicatorId}

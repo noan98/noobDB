@@ -240,6 +240,9 @@
         "UPDATE t SET a = 2 WHERE id = 1",
         "DELETE FROM t WHERE id = 3"
       ]
-    }
+    },
+    {"sql": "SELECT 1--1; DROP TABLE t", "note": "#1735: MySQL は -- 直後が空白でなければコメントではないので ; で 2 文に分かれる", "statements": ["SELECT 1--1; DROP TABLE t"], "statementsMysql": ["SELECT 1--1", "DROP TABLE t"]},
+    {"sql": "SELECT 1-- ; DROP TABLE t", "note": "#1735: -- の直後が空白なら全ドライバでコメント (従来どおり 1 文)", "statements": ["SELECT 1-- ; DROP TABLE t"]}
+
   ]
 }

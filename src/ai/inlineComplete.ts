@@ -166,6 +166,9 @@ export function buildInlineRequest(input: InlineContextInput): InlineRequestPart
   const pos = Math.max(0, Math.min(input.pos, input.doc.length));
   // 2 文字記号 (`--` `/*` など) の間では、差し込んだ印で字句が変わりマスクが崩れるので出さない。
   if (pos > 0 && MASK_SPLIT_PAIRS.has(input.doc.slice(pos - 1, pos + 1))) return null;
+  // `--` の直後 (#1735): MySQL は `--` の直後が空白でないとコメントではなく、差し込んだ印 (`--Z`) で
+  // コメントの扱いが変わりマスクが崩れる。コメント中の `'` で引用の対応がずれ、リテラルが素で送られる。
+  if (pos >= 2 && input.doc.slice(pos - 2, pos) === "--") return null;
   const rawBefore = tailWindow(input.doc.slice(0, pos), INLINE_BEFORE_MAX_LINES, INLINE_BEFORE_MAX_CHARS);
   const rawAfter = headWindow(
     input.doc.slice(pos, pos + INLINE_AFTER_MAX_CHARS),

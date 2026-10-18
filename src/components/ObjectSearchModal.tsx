@@ -1,8 +1,9 @@
 import { chakra, Box, Flex } from "@chakra-ui/react";
 import { motion, useReducedMotion } from "motion/react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { api, type ObjectSearchHit, type ObjectSearchScope } from "../api/tauri";
 import { useT } from "../i18n";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { EmptyState } from "./EmptyState";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import { NoResultsIllustration } from "./illustrations";
@@ -61,6 +62,8 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onO
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  // アクティブ行ハイライトの layoutId をモーダルごとに分ける (他の layoutId と衝突させない)。
+  const highlightId = `object-search-active-highlight-${useId()}`;
   const inputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   // 最後に発行した要求の番号。古い応答 (追い越された要求) は捨てる。
@@ -302,6 +305,7 @@ export function ObjectSearchModal({ sessionId, currentDatabase, onOpenTable, onO
               entry={entry}
               animateEntrance={shouldStaggerEntrance(i)}
               active={i === activeIndex}
+              highlightId={highlightId}
               onHover={onRowHover}
               onOpen={onRowOpen}
             />
@@ -325,6 +329,8 @@ interface RowProps {
   id: string;
   entry: ObjectSearchHit;
   active: boolean;
+  /** アクティブ行ハイライトの layoutId。 */
+  highlightId: string;
   /** 先頭 `MAX_STAGGER_ITEMS` 件だけ stagger 出現させる (CommandPalette と同じ上限ガード)。 */
   animateEntrance: boolean;
   index: number;
@@ -362,6 +368,7 @@ const ResultRow = memo(function ResultRow({
   id,
   entry,
   active,
+  highlightId,
   animateEntrance,
   index,
   itemKey,
@@ -390,14 +397,16 @@ const ResultRow = memo(function ResultRow({
       py="1.75"
       border="none"
       cursor="pointer"
-      bg={active ? "app.active" : "transparent"}
+      position="relative"
+      bg="transparent"
       color="app.text"
       css={{ scrollMarginBlock: "8px" }}
     >
-      <Box color="app.textMuted" flexShrink={0} display="inline-flex">
+      {active && <ActiveRowHighlight layoutId={highlightId} />}
+      <Box color="app.textMuted" flexShrink={0} display="inline-flex" position="relative" zIndex={1}>
         <Icon name={HIT_ICON[entry.kind]} size={ICON_SIZES.md} />
       </Box>
-      <Flex direction="column" minW={0} flex="1" gap="0.25">
+      <Flex direction="column" minW={0} flex="1" gap="0.25" position="relative" zIndex={1}>
         <chakra.span fontSize="sm" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
           {entry.kind === "column" ? entry.column : entry.table}
         </chakra.span>
@@ -418,6 +427,8 @@ const ResultRow = memo(function ResultRow({
       {/* 行数の目安 (テーブルのみ)。大きなテーブルかを開く前に判断できる (#1629)。 */}
       {entry.kind === "table" && typeof entry.row_estimate === "number" && (
         <chakra.span
+          position="relative"
+          zIndex={1}
           flexShrink={0}
           fontFamily="mono"
           fontSize="2xs"

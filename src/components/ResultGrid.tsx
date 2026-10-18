@@ -104,6 +104,18 @@ import { rowSelectRange, selectAllRange } from "./gridSelection";
 import { useColumnReorderFlip } from "./useColumnReorderFlip";
 import { rowCrossfadeKeys, type RowCrossfadeKeys } from "./rowCrossfade";
 import { useRowCrossfade } from "./useRowCrossfade";
+import { useFirstBatchReveal } from "./useFirstBatchReveal";
+import { useGlideFrame } from "./useGlideFrame";
+import {
+  activeFrameKey,
+  autoScrollDelta,
+  canStartMarquee,
+  exceedsDragThreshold,
+  marqueeSelection,
+  parseCellKey,
+  selectionFrameKey,
+  selectionMountedRows,
+} from "./selectionGlide";
 import { NoResultsIllustration, errorIllustration } from "./illustrations";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
@@ -311,6 +323,9 @@ const DISCARD_CANCEL_ID = "result-grid-discard-cancel";
  */
 
 export const GRID_CSS: SystemStyleObject = {
+  // 滑って追従する選択枠 (`.grid-glide-frame`, #1578) の座標系。枠はコンテンツ座標で
+  // 絶対配置するので、スクロールコンテナ自身を基準にする。
+  position: "relative",
   // 密度変更の遷移演出 (#1023)。この Box 自身 (スクロール枠) へ、密度が実際に
   // 変わった瞬間だけ App.css 側の density-settle-grow/shrink keyframes を 1 回
   // 重ねる。scale/opacity のみの compositor アニメーションで実レイアウトには
@@ -990,6 +1005,38 @@ export const GRID_CSS: SystemStyleObject = {
     outline: "none",
     boxShadow: "var(--focus-ring-inset)",
   },
+  // 滑って追従する枠 (#1578)。アクティブセル / 範囲選択 / 現在の検索ヒットごとに 1 枚。
+  // 絶対配置・ポインタ透過で、セルより手前 (固定列・ヘッダ・行番号よりは奥) に描く。位置と
+  // 大きさは `useGlideFrame` が確定時に書く。枠が出ている間はコンテナに data-glide-* が立ち、
+  // 下の規則で元のセル単位のリングを消す (枠が出せない固定列・描画窓の外では元のリングのまま)。
+  "& .grid-glide-frame": {
+    position: "absolute",
+    zIndex: 0,
+    boxSizing: "border-box",
+    pointerEvents: "none",
+    borderRadius: "var(--radius-sm)",
+    willChange: "left, top, width, height",
+  },
+  "& .grid-glide-frame[hidden]": { display: "none" },
+  "& .grid-glide-active": { boxShadow: "var(--focus-ring-inset)" },
+  "& .grid-glide-selection": {
+    boxShadow: "inset 0 0 0 var(--focus-ring-width, 2px) color-mix(in srgb, var(--accent) 70%, transparent)",
+  },
+  "& .grid-glide-find": { boxShadow: `inset 0 0 0 2px ${semanticColorVar("warning", "solid")}` },
+  // 未適用 / 不正な編集のセルには枠を出さない (resolve が [] を返す) ので、ここでは対象外。
+  "&[data-glide-active='on'] td.is-active-cell:not(.is-pending-edit):not(.is-invalid-edit):not(:focus-within)":
+    { boxShadow: "none" },
+  // 編集可能セルは矢印移動で td 自身にフォーカスが移り `:focus-within` のリングが出るので、
+  // 入力欄が開いていない間はそれも枠に任せて消す (二重表示の防止)。
+  "&[data-glide-active='on'] td.is-editable-cell.is-active-cell:focus-within:not(:has(.cell-edit-input)):not(.is-pending-edit):not(.is-invalid-edit)":
+    { boxShadow: "none" },
+  "&[data-glide-selection='on'] tbody td.is-selected-cell:not(.is-active-cell):not(.is-pinned)": {
+    boxShadow: "none",
+  },
+  "&[data-glide-find='on'] tbody td.is-find-current, &[data-glide-find='on'] tbody tr.grid-row-stripe td.is-find-current, &[data-glide-find='on'] tbody tr:hover td.is-find-current":
+    { boxShadow: "none" },
+  // マーキー選択中はセル内テキストの選択を止める (#1578)。
+  "&[data-marquee='on']": { userSelect: "none", cursor: "default" },
   // pending edit のセルがアクティブ/フォーカス中のとき: 上記リングが is-pending-edit の
   // 左端バーを上書きしてしまうため、専用セレクタでバー + リングを明示的に重ねる。
   "& td.is-pending-edit.is-editable-cell:focus-within": {
@@ -3698,6 +3745,8 @@ const GridRow = memo(function GridRow({
         key={cell.id}
         role="gridcell"
         tabIndex={isActiveCell ? 0 : -1}
+        data-r={row.index}
+        data-c={colIdx}
         style={pinStyle}
         ref={(el) => {
           const key = `${row.index}:${colIdx}`;
@@ -5237,6 +5286,8 @@ export const DataGrid = memo(function DataGrid({
   const gridTbodyRef = useRef<HTMLTableSectionElement>(null);
   // ハンドル経由 (非同期ソート) の間は、順序が届いたコミットで再生するよう適用済みの順序のキーを使う。
   useRowCrossfade(gridTbodyRef, handleManual && handleOrder ? handleOrder.fade : fadeKeys, gridViewKey ?? "");
+  // 初回バッチ着弾 (スケルトン → 実データ) の 1 回限りの stagger リビール (#1579)。
+  useFirstBatchReveal(gridTbodyRef, scrollContainerRef, skeleton, rows.length);
 
   // Right-click "copy" menu. `rowIdx` is the ORIGINAL row index (so copied
   // values match `rows` regardless of sort/filter) and `colIdx` the display
@@ -6160,6 +6211,96 @@ export const DataGrid = memo(function DataGrid({
       }),
     };
   };
+  // クリック&ドラッグのマーキー選択 (#1578)。mousedown で追跡を始め、ポインタが
+  // しきい値を超えて「別のセル」に入った時点で初めてマーキーになる (同じセル内の
+  // ドラッグはブラウザ既定のセル内テキスト選択のまま)。選択の基点は mousedown の
+  // セルで、アクティブセルも動かさない。ビューポート端ではスクロールを rAF で自動送りする。
+  const marqueeStopRef = useRef<(() => void) | null>(null);
+  const beginMarquee = (x0: number, y0: number, anchor: { rowIdx: number; colIdx: number }) => {
+    marqueeStopRef.current?.();
+    const scroller = scrollContainerRef?.current;
+    if (!scroller) return;
+    let started = false;
+    let x = x0;
+    let y = y0;
+    let hoverKey = "";
+    let raf = 0;
+    const hoverAt = (target: EventTarget | null): { rowIdx: number; colIdx: number } | null => {
+      let td = (target as Element | null)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+      // 隣のグリッドなど、このスクロールコンテナの外のセルは拾わない。
+      if (td && !scroller.contains(td)) td = null;
+      if (!td && typeof document.elementFromPoint === "function") {
+        // 表の外 (ヘッダ・行番号・余白・コンテナの外) にいるときは、本体領域へ丸めた位置のセルを使う。
+        const r = scroller.getBoundingClientRect();
+        const head = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+        const px = Math.min(Math.max(x, r.left + leftDeadZone + 1), r.right - rightDeadZone - 2);
+        const py = Math.min(Math.max(y, r.top + head + 1), r.bottom - 2);
+        td = document.elementFromPoint(px, py)?.closest?.("td[data-r]") as HTMLElement | null | undefined;
+        if (td && !scroller.contains(td)) td = null;
+      }
+      if (!td) return null;
+      const rowIdx = Number(td.dataset.r);
+      const colIdx = Number(td.dataset.c);
+      return Number.isInteger(rowIdx) && Number.isInteger(colIdx) ? { rowIdx, colIdx } : null;
+    };
+    const apply = (hover: { rowIdx: number; colIdx: number } | null) => {
+      if (!hover) return;
+      const key = `${hover.rowIdx}:${hover.colIdx}`;
+      if (key === hoverKey) return;
+      hoverKey = key;
+      setSelection(marqueeSelection(anchor, hover));
+    };
+    const tick = () => {
+      raf = 0;
+      const r = scroller.getBoundingClientRect();
+      const head = scroller.querySelector("thead")?.getBoundingClientRect().height ?? 0;
+      const dx = autoScrollDelta(x, r.left + leftDeadZone, r.right - rightDeadZone);
+      const dy = autoScrollDelta(y, r.top + head, r.bottom);
+      if (dx !== 0 || dy !== 0) {
+        scroller.scrollLeft += dx;
+        scroller.scrollTop += dy;
+        apply(hoverAt(null));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    const onMove = (e: MouseEvent) => {
+      // ボタンを離したイベントを取りこぼした (ウィンドウ外で離したなど)。
+      if (e.buttons === 0) return stop();
+      x = e.clientX;
+      y = e.clientY;
+      const hover = hoverAt(e.target);
+      if (!started) {
+        if (!exceedsDragThreshold(x - x0, y - y0)) return;
+        if (!hover || (hover.rowIdx === anchor.rowIdx && hover.colIdx === anchor.colIdx)) return;
+        started = true;
+        scroller.setAttribute("data-marquee", "on");
+        window.getSelection()?.removeAllRanges();
+        if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(tick);
+      }
+      apply(hover);
+    };
+    function stop() {
+      document.removeEventListener("mousemove", onMove, true);
+      document.removeEventListener("mouseup", stop, true);
+      document.removeEventListener("dragstart", stop, true);
+      document.removeEventListener("contextmenu", stop, true);
+      document.removeEventListener("visibilitychange", stop);
+      window.removeEventListener("blur", stop);
+      if (raf) cancelAnimationFrame(raf);
+      scroller?.removeAttribute("data-marquee");
+      if (marqueeStopRef.current === stop) marqueeStopRef.current = null;
+    }
+    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("mouseup", stop, true);
+    // ドラッグ開始 (列の並べ替えなど) / コンテキストメニュー / タブの非表示でも追跡を止める。
+    document.addEventListener("dragstart", stop, true);
+    document.addEventListener("contextmenu", stop, true);
+    document.addEventListener("visibilitychange", stop);
+    window.addEventListener("blur", stop);
+    marqueeStopRef.current = stop;
+  };
+  // アンマウント時にドラッグ追跡を止める。
+  useEffect(() => () => marqueeStopRef.current?.(), []);
   // `GridRow` に渡すハンドラ。最新の state を読む関数を参照固定で渡す (#1341)。
   const rowHandlers = useStableCallbacks({
     onCellMouseDown: (e: ReactMouseEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -6173,6 +6314,24 @@ export const DataGrid = memo(function DataGrid({
         extendSelectionTo(rowIdx, colIdx);
       } else if (selection) {
         setSelection(null);
+      }
+      // 素の左ボタンのドラッグでマーキー選択 (#1578)。Shift+クリック・編集中・入力欄/
+      // ボタン (FK ジャンプなど) 上は既存の挙動に任せる。
+      if (
+        scrollContainerRef &&
+        canStartMarquee({
+          button: e.button,
+          shiftKey: e.shiftKey,
+          ctrlKey: e.ctrlKey,
+          metaKey: e.metaKey,
+          altKey: e.altKey,
+          editing: editing !== null,
+          onInteractive: !!(e.target as Element).closest?.(
+            "button, a, input, textarea, select, [contenteditable='true']",
+          ),
+        })
+      ) {
+        beginMarquee(e.clientX, e.clientY, { rowIdx, colIdx });
       }
     },
     onCellFocus: (e: ReactFocusEvent<HTMLTableCellElement>, rowIdx: number, colIdx: number) => {
@@ -6641,6 +6800,91 @@ export const DataGrid = memo(function DataGrid({
   const bodyPaddingTop = hiddenWindow ? hiddenWindow.top : virtualPaddingTop;
   const bodyPaddingBottom = hiddenWindow ? hiddenWindow.bottom : virtualPaddingBottom;
 
+  // 滑って追従する枠 (#1578)。アクティブセル / 範囲選択 / 現在の検索ヒットに 1 枚ずつ。
+  // 対象が変わった確定コミットでだけセルを計測して滑らせる (`useGlideFrame`)。
+  const glideLayoutKey = `${columnLayoutKey}#${visibleRows.length}:${visibleRows[0]?.index ?? ""}:${
+    visibleRows[visibleRows.length - 1]?.index ?? ""
+  }#${bodyIndices[0] ?? ""}:${bodyIndices[bodyIndices.length - 1] ?? ""}#${colWinFirst}:${colWinLast}#${bodyPaddingTop}`;
+  // 未適用の編集が変わったら、アクティブセルの枠を出す/隠すの判定をやり直す。
+  const pendingVerRef = useRef({ obj: pendingEdits, n: 0 });
+  if (pendingVerRef.current.obj !== pendingEdits) {
+    pendingVerRef.current = { obj: pendingEdits, n: pendingVerRef.current.n + 1 };
+  }
+  const activeFrameRef = useRef<HTMLDivElement>(null);
+  const selectionFrameRef = useRef<HTMLDivElement>(null);
+  const findFrameRef = useRef<HTMLDivElement>(null);
+  const cellEl = (rowIdx: number, colIdx: number) => cellRefs.current.get(`${rowIdx}:${colIdx}`);
+  useGlideFrame({
+    frameRef: activeFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    // 編集中は入力欄自身の枠が「どこを編集中か」を示すので出さない。
+    targetKey: editing ? null : activeFrameKey(activeCell),
+    layoutKey: `${glideLayoutKey}#p${pendingVerRef.current.n}`,
+    resolve: () => {
+      const el = activeCell ? cellEl(activeCell.rowIdx, activeCell.colIdx) : undefined;
+      // 未適用の編集バー / 不正な編集のリングはセル自身が描く。枠で覆わずセル単位の表示に戻す。
+      if (!el || el.classList.contains("is-pending-edit") || el.classList.contains("is-invalid-edit"))
+        return [];
+      return [el];
+    },
+    attr: "data-glide-active",
+  });
+  useGlideFrame({
+    frameRef: selectionFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    targetKey: selectionRect ? selectionFrameKey(selection) : null,
+    layoutKey: glideLayoutKey,
+    // 選択範囲の中でマウント済みのセルの外接矩形 (描画窓の外は含まれないので、窓の端で切れる)。
+    resolve: () => {
+      if (!selectionRect) return [];
+      // 端の行・列 (マウント済みのうち左上と右下) だけを測る。全選択でも O(窓) で済む。
+      // 選択の行範囲とマウント済みの行範囲の交わりの両端だけを使う (選択の大きさに比例させない)。
+      const mounted =
+        virtualize && bodyIndices.length > 0
+          ? { first: bodyIndices[0], last: bodyIndices[bodyIndices.length - 1] }
+          : virtualize
+            ? { first: 1, last: 0 }
+            : null;
+      const span = selectionMountedRows(selectionRect.r0, selectionRect.r1, mounted);
+      const top = span ? visibleRows[span.top]?.index : undefined;
+      const bottom = span ? visibleRows[span.bottom]?.index : undefined;
+      if (top === undefined || bottom === undefined) return [];
+      const colsIn = visibleColIds.slice(selectionRect.c0, selectionRect.c1 + 1);
+      const firstCol = colsIn.find((c) => cellEl(top, c));
+      const lastCol = [...colsIn].reverse().find((c) => cellEl(bottom, c));
+      const lastColTop = [...colsIn].reverse().find((c) => cellEl(top, c));
+      const firstColBottom = colsIn.find((c) => cellEl(bottom, c));
+      const corners: Array<[number, number | undefined]> = [
+        [top, firstCol],
+        [top, lastColTop],
+        [bottom, firstColBottom],
+        [bottom, lastCol],
+      ];
+      const out: HTMLElement[] = [];
+      for (const [r, c] of corners) {
+        const el = c === undefined ? undefined : cellEl(r, c);
+        if (el) out.push(el);
+      }
+      return out;
+    },
+    attr: "data-glide-selection",
+  });
+  useGlideFrame({
+    frameRef: findFrameRef,
+    scrollRef: scrollContainerRef,
+    observeRef: gridTableRef,
+    targetKey: findCurrentKey ? `f:${findCurrentKey}` : null,
+    layoutKey: glideLayoutKey,
+    resolve: () => {
+      const k = findCurrentKey ? parseCellKey(findCurrentKey) : null;
+      const el = k ? cellEl(k.rowIdx, k.colIdx) : undefined;
+      return el ? [el] : [];
+    },
+    attr: "data-glide-find",
+  });
+
   return (
     <>
       {/* スクロール端影 (#1073)。スクロールコンテナ直下の先頭に置く高さ 0 の
@@ -6932,6 +7176,15 @@ export const DataGrid = memo(function DataGrid({
           </tfoot>
         )}
       </table>
+      {/* 滑って追従する枠 (#1578)。プレビュー用の小さなグリッド (スクロールコンテナ無し) では
+          出さず、元のセル単位のリングのまま。 */}
+      {scrollContainerRef && (
+        <>
+          <div ref={findFrameRef} className="grid-glide-frame grid-glide-find" aria-hidden hidden />
+          <div ref={selectionFrameRef} className="grid-glide-frame grid-glide-selection" aria-hidden hidden />
+          <div ref={activeFrameRef} className="grid-glide-frame grid-glide-active" aria-hidden hidden />
+        </>
+      )}
       {copyMenu && (
         <ContextMenu
           x={copyMenu.x}

@@ -292,6 +292,17 @@ describe("normalizePersistedWorkspace", () => {
     expect(tabs[2].titleManual).toBeUndefined();
     expect(tabs[3].titleManual).toBeUndefined();
   });
+
+  it("pinned (#1486): true は引き継ぎ、旧データ(欠落)・false・不正な型は無しとして読む", () => {
+    const ws = normalizePersistedWorkspace([
+      { kind: "query", title: "監視", sql: "SELECT 1", pinned: true },
+      { kind: "query", title: "旧", sql: "SELECT 2" },
+      { kind: "query", title: "false", sql: "SELECT 3", pinned: false },
+      { kind: "query", title: "不正", sql: "SELECT 4", pinned: "yes" },
+    ]);
+    const tabs = ws.panes[0].tabs;
+    expect(tabs.map((t) => t.pinned)).toEqual([true, undefined, undefined, undefined]);
+  });
 });
 
 describe("activePane の補正 (空ペイン除去)", () => {

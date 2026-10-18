@@ -28,6 +28,9 @@ import {
   keymap,
   lineNumbers,
   highlightActiveLine,
+  drawSelection,
+  rectangularSelection,
+  crosshairCursor,
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, selectAll, toggleComment } from "@codemirror/commands";
@@ -72,6 +75,8 @@ import { statementAtOffset, statementsFromOffset } from "../sqlScript";
 import { diagnosticsFromTree, type SqlLintMessages } from "./sqlLint";
 import { usePreflightImpact, type PreflightResult } from "./usePreflight";
 import { PreflightBadge } from "./PreflightBadge";
+import { ScanPreflightBadge } from "./ScanPreflightBadge";
+import { useScanPreflight } from "./useScanPreflight";
 import { PreflightSampleModal } from "./PreflightSampleModal";
 import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
@@ -362,6 +367,8 @@ interface Props {
    * 保持し、危険クエリ確認ダイアログへ件数を引き継ぐのに使う。
    */
   onPreflightImpact?: (result: PreflightResult | null) => void;
+  /** 手動トランザクション中は true。スキャンプリフライトの EXPLAIN を休止する (#1508)。 */
+  scanPreflightPaused?: boolean;
   /**
    * 「この SQL を解説」「最適化案を提案」(#695) の起動先。選択範囲 (無ければ全文) を渡す。
    * 結果はボトムパネルに出る。AI が使えないときは渡されても項目を出さない。
@@ -670,6 +677,7 @@ export const QueryEditor = memo(
       focusMode,
       onToggleFocus,
       onPreflightImpact,
+      scanPreflightPaused,
       onAiSqlAction,
       onRevealSchemaObject,
     }: Props,
@@ -1090,6 +1098,14 @@ export const QueryEditor = memo(
           extensions: [
             lineNumbers(),
             highlightActiveLine(),
+            // 矩形選択 / マルチカーソル (#1488)。複数選択の描画には drawSelection が必須。
+            // Alt+ドラッグ (macOS は Option+ドラッグ) で矩形選択、Ctrl/Cmd+クリックでカーソル追加、
+            // Mod-d で次の一致を選択に追加、Mod-Alt-↑/↓ で上下にカーソル追加 (defaultKeymap)。
+            // 実行系 (選択範囲を実行・整形・プリフライト) は主選択 (`selection.main`) だけを対象にする。
+            EditorState.allowMultipleSelections.of(true),
+            drawSelection(),
+            rectangularSelection(),
+            crosshairCursor(),
             history(),
             indentOnInput(),
             bracketMatching(),
@@ -1161,6 +1177,8 @@ export const QueryEditor = memo(
                 key: "ArrowUp",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== 1) return false;
@@ -1174,13 +1192,17 @@ export const QueryEditor = memo(
                 key: "ArrowDown",
                 run: (v) => {
                   if (completionStatus(v.state) === "active") return false;
+                  // 複数カーソル中は履歴ナビで本文を置き換えない (#1488)。
+                  if (v.state.selection.ranges.length !== 1) return false;
                   const sel = v.state.selection.main;
                   if (!sel.empty) return false;
                   if (v.state.doc.lineAt(sel.head).number !== v.state.doc.lines) return false;
                   return applyHistoryNav(v, navigateNewer(historyRef.current, navStateRef.current));
                 },
               },
-              ...searchKeymap,
+              // Mod-Shift-l (一致をすべて選択) はアプリ共通のテーマ切替 (toggleTheme) と衝突する
+              // ので外す (#1488)。次の一致の追加は Mod-d が担う。
+              ...searchKeymap.filter((b) => b.key !== "Mod-Shift-l"),
               ...defaultKeymap,
               ...historyKeymap,
               ...completionKeymap,
@@ -1421,6 +1443,16 @@ export const QueryEditor = memo(
       sessionId: sessionId ?? null,
       database: defaultDatabase ?? null,
       enabled: settings.preflightImpactEnabled && !disabled,
+      driver,
+    });
+    // SELECT のスキャンプリフライト (#1508、既定オフ)。現在文が単純な SELECT のとき、
+    // 裏で EXPLAIN を実行して推定スキャン行数 / 全表スキャンを出す。影響行数バッジとは
+    // 対象文が排他 (SELECT か UPDATE/DELETE か) なので同じ入力テキストを共有する。
+    const scanPreflight = useScanPreflight({
+      sql: preflightSql || null,
+      sessionId: sessionId ?? null,
+      database: defaultDatabase ?? null,
+      enabled: settings.scanPreflightEnabled && !disabled && !scanPreflightPaused,
       driver,
     });
     // バッジから開く影響行サンプル (#1626)。開いている間はその時点の SQL に固定する。
@@ -1902,6 +1934,8 @@ export const QueryEditor = memo(
           )}
           {/* 影響行数プリフライトのバッジ (#737)。実行ボタン付近に常時表示する。 */}
           <PreflightBadge result={preflight} onOpenSample={sessionId ? openPreflightSample : undefined} />
+          {/* SELECT のスキャン行数 / フルスキャン警告バッジ (#1508、opt-in)。 */}
+          <ScanPreflightBadge result={scanPreflight} />
           <ToolbarButton
             onClick={formatSelectionOrAll}
             disabled={disabled || !hasContent}

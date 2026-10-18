@@ -222,6 +222,8 @@ export interface PaneEnv {
   actions: PaneActions;
   t: ReturnType<typeof useT>;
   sessionId: string | null;
+  /** 手動トランザクション中か (#1508: スキャンプリフライトの EXPLAIN を休止する)。 */
+  txActive: boolean;
   selectedProfile: ConnectionProfile | null;
   layoutMode: LayoutMode;
   readOnly: boolean;
@@ -277,6 +279,7 @@ export const PaneView = memo(
       actions,
       t,
       sessionId,
+      txActive,
       selectedProfile,
       layoutMode,
       readOnly,
@@ -387,6 +390,7 @@ export const PaneView = memo(
         })(),
         // 実行中 (ストリーミング / バッチ) インジケータ (#1500)。
         running: tt.streaming || tt.batchRunning === true,
+        pinned: tt.pinned === true,
       }));
       // ストリーミング中は行の到着ごとに paneTabs が更新されるが、TabBar が見る項目 (タイトル・
       // dirty・running など) は変わらない。前回と全項目が一致するなら前回の配列を返し、
@@ -604,6 +608,7 @@ export const PaneView = memo(
                         onSaveFile={onSaveSqlFile}
                         onFormatError={onFormatError}
                         disabled={!sessionId}
+                        scanPreflightPaused={txActive}
                         schemaTable={tab.schemaTable}
                         databaseSchema={paneSchema}
                         activeTable={gridStable.memo(

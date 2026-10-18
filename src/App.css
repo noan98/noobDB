@@ -185,6 +185,10 @@
   /* モーダルバックドロップの暗幕。Modal.tsx が参照する。全テーマ共通。 */
   --overlay: rgba(0, 0, 0, 0.45);
 
+  /* オンボーディングツアーのスポットライト (#1504) の暗幕。--overlay より濃くして、
+     暗いテーマでもくり抜きが際立つようにする。全テーマ共通。 */
+  --tour-dim: rgba(0, 0, 0, 0.62);
+
   /* z-index スケール (#500): オーバーレイの重なり順を中央管理し、各所に散在する
      マジックナンバーを解消する。低→高:
        base < sticky < raised < sidebar < modal < dropdown < popover < toast
@@ -2465,6 +2469,36 @@ td.is-find-current::after {
   background: var(--warning-solid);
 }
 
+/* ---------- BrandMark シグネチャ・アニメーション (#1505) ----------
+   `<BrandMark animate />` (起動スプラッシュ) が 1 回だけ再生する: n のストロークが
+   描かれ、ティールの横線が左から滑って n の右脚を貫き定位置に収まる。全体は
+   `--dur-med` の 3 倍 (600ms) の 1 本のタイムラインで、横線は 35% 地点から動く
+   (animation-delay を使わないので、下の reduced-motion ブロックの 0.01ms 化で最終
+   フレーム = 静止ロゴへ即座に収まる)。最終キーフレームは要素本来のスタイルと一致する。
+   hc-* は装飾より AAA を優先して静止させる (最終フレームのまま)。 */
+@keyframes brand-mark-n-draw {
+  from { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  55%, to { stroke-dasharray: 1; stroke-dashoffset: 0; }
+}
+@keyframes brand-mark-bar-slide {
+  0%, 35% { transform: translateX(-130%); opacity: 0; }
+  50% { opacity: 1; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.brand-mark-anim .brand-mark-n {
+  animation: brand-mark-n-draw calc(var(--dur-med) * 3) var(--ease);
+}
+.brand-mark-anim .brand-mark-bar {
+  transform-box: fill-box;
+  animation: brand-mark-bar-slide calc(var(--dur-med) * 3) var(--ease-out);
+}
+:root[data-theme="hc-light"] .brand-mark-anim .brand-mark-n,
+:root[data-theme="hc-dark"] .brand-mark-anim .brand-mark-n,
+:root[data-theme="hc-light"] .brand-mark-anim .brand-mark-bar,
+:root[data-theme="hc-dark"] .brand-mark-anim .brand-mark-bar {
+  animation: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root:not([data-motion="full"]) *,
   :root:not([data-motion="full"]) *::before,
@@ -2599,6 +2633,66 @@ td.is-find-current::after {
 :root[data-theme="hc-dark"] .noob-illust {
   --illust-body-fill: none;
   --illust-ground: none;
+}
+
+/* ── イラストのアクセント強調部のループ微動 (#1583) ───────────────────
+   illustrations.tsx の強調部 (スパーク / 虫眼鏡 / 砂粒 / 時計の針) にだけ付ける。本体
+   (currentColor の淡い部分) は静止のままにして可読性を保つ。どのキーフレームも 0% と
+   100% を静止時の姿に揃えてあるので、アニメ無効化 (テスト共通セットアップの
+   animation-duration: 0s、下の reduced-motion の 0.01ms) でも描画が変わらない。
+   動きは transform / opacity だけ (合成のみ)。単位は % と deg で、px 直値は使わない
+   (transform-box: fill-box の % は要素自身の大きさ基準)。
+   reduced-motion (OS / data-motion="reduced") と hc-* は明示的に静止させる。
+   周期は --dur-shimmer の倍数に揃えて画面間のリズムをそろえる。 */
+.illust-spark,
+.illust-float,
+.illust-grain,
+.illust-hand {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.illust-spark { animation: illust-spark calc(var(--dur-shimmer) * 2) var(--ease) infinite; }
+.illust-float { animation: illust-float calc(var(--dur-shimmer) * 3) var(--ease) infinite; }
+.illust-grain { animation: illust-grain calc(var(--dur-shimmer) * 2) var(--ease) infinite; }
+/* 時計の針は円の中心 (viewBox 128x96 の 100,22) を軸に回す */
+.illust-hand {
+  transform-box: view-box;
+  transform-origin: 78.125% 22.9167%;
+  animation: illust-hand calc(var(--dur-shimmer) * 8) linear infinite;
+}
+
+@keyframes illust-spark {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.08); }
+}
+
+@keyframes illust-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6%); }
+}
+
+@keyframes illust-grain {
+  0%, 100% { opacity: 0.7; transform: translateY(0); }
+  45% { opacity: 0.7; transform: translateY(0); }
+  80% { opacity: 0; transform: translateY(400%); }
+  81% { opacity: 0; transform: translateY(0); }
+}
+
+@keyframes illust-hand {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) :is(.illust-spark, .illust-float, .illust-grain, .illust-hand) {
+    animation: none;
+  }
+}
+
+:root[data-motion="reduced"] :is(.illust-spark, .illust-float, .illust-grain, .illust-hand),
+:root[data-theme="hc-light"] :is(.illust-spark, .illust-float, .illust-grain, .illust-hand),
+:root[data-theme="hc-dark"] :is(.illust-spark, .illust-float, .illust-grain, .illust-hand) {
+  animation: none;
 }
 
 /* AI インライン補完 (#1479) のゴーストテキスト。確定前の提案なので本文より薄く見せる。 */
