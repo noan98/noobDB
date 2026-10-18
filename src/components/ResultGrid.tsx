@@ -8245,6 +8245,7 @@ export const DataGrid = memo(function DataGrid({
                         columns.map((c) => c.name),
                         rows[activeCell.rowIdx],
                         (ci) => cellMaskedNow(activeCell.rowIdx, ci),
+                        columns.map((c) => c.type_name),
                       ),
                       driver: rowSqlDriver ?? "mysql",
                       database: rowSqlDatabase ?? null,

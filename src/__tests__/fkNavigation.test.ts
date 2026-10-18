@@ -141,11 +141,36 @@ describe("列型付きのリテラル化", () => {
     ).toBe('SELECT * FROM "c" WHERE "pid" = X\'ab12\'');
   });
 
-  it("文字列で届いた BIGINT は裸の数値になり、型なしなら従来どおり引用符付き", () => {
-    const p = { driver: "postgres", refTable: "t", refColumn: "id", value: "9007199254740993" };
-    expect(buildFkJumpSql({ ...p, valueType: "BIGINT" })).toBe(
-      'SELECT * FROM "t" WHERE "id" = 9007199254740993',
+  it("文字列で届いた BIGINT / BIGINT UNSIGNED は裸の数値になり、型なしなら従来どおり引用符付き", () => {
+    const p = { driver: "mysql", refTable: "t", refColumn: "id", value: "9007199254740993" };
+    for (const valueType of ["BIGINT", "BIGINT UNSIGNED"]) {
+      expect(buildFkJumpSql({ ...p, valueType })).toBe("SELECT * FROM `t` WHERE `id` = 9007199254740993");
+    }
+    expect(buildFkJumpSql(p)).toBe("SELECT * FROM `t` WHERE `id` = '9007199254740993'");
+  });
+
+  it("DECIMAL の文字列は裸の数値、日時 / UUID は引用符付き、bool は TRUE/FALSE", () => {
+    const base = { driver: "mysql", refTable: "t", refColumn: "k" };
+    expect(buildFkJumpSql({ ...base, value: "1.50", valueType: "DECIMAL" })).toBe(
+      "SELECT * FROM `t` WHERE `k` = 1.50",
     );
-    expect(buildFkJumpSql(p)).toBe('SELECT * FROM "t" WHERE "id" = \'9007199254740993\'');
+    expect(buildFkJumpSql({ ...base, value: "2024-01-02 03:04:05", valueType: "DATETIME" })).toBe(
+      "SELECT * FROM `t` WHERE `k` = '2024-01-02 03:04:05'",
+    );
+    expect(
+      buildFkJumpSql({ ...base, value: "123e4567-e89b-12d3-a456-426614174000", valueType: "CHAR" }),
+    ).toBe("SELECT * FROM `t` WHERE `k` = '123e4567-e89b-12d3-a456-426614174000'");
+    expect(buildFkJumpSql({ ...base, value: true, valueType: "BOOLEAN" })).toBe(
+      "SELECT * FROM `t` WHERE `k` = TRUE",
+    );
+  });
+
+  it("BLOB 宣言でも値が 16 進でなければ (SQLite 非 STRICT の TEXT / INTEGER) 通常のリテラルに戻る", () => {
+    const base = { driver: "sqlite", refTable: "t", refColumn: "k", valueType: "BLOB" };
+    expect(buildFkJumpSql({ ...base, value: "a'b" })).toBe("SELECT * FROM \"t\" WHERE \"k\" = 'a''b'");
+    expect(buildFkJumpSql({ ...base, value: 5 })).toBe('SELECT * FROM "t" WHERE "k" = 5');
+    expect(buildFkJumpSql({ ...base, value: "a' OR 1=1 --" })).toBe(
+      "SELECT * FROM \"t\" WHERE \"k\" = 'a'' OR 1=1 --'",
+    );
   });
 });

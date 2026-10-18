@@ -392,7 +392,9 @@ function whereEqualsClause(driver: string, col: Column, v: CellValue): string {
   // BLOB 列の値は 16 進文字列で届く。通常の文字列として引用すると 0 行にしか
   // 当たらない (all_columns 同定で BLOB を含む表の更新・削除) ため、バイナリ
   // リテラルにする。
-  if (BINARY_TYPES.has(col.type_name.toUpperCase())) return `${quoted} = ${blobLiteral(driver, String(v))}`;
+  if (BINARY_TYPES.has(col.type_name.toUpperCase()) && isHexBytes(v)) {
+    return `${quoted} = ${blobLiteral(driver, v)}`;
+  }
   // 単精度 (PG の FLOAT4 / REAL、MySQL の FLOAT) は、バックエンドが f32 の最短表記
   // (0.1 など) で返す (#1534)。`col = 0.1` は列が倍精度へ広がった値と比べられて一致しない
   // ため、f32 の丸め誤差より十分大きい相対許容差で比較する。
@@ -881,6 +883,16 @@ export function buildDeleteStatements(input: {
  *   - MySQL:      `0xDEADBEEF` (hex literal; an empty blob has no `0x` form, so
  *     it falls back to the empty string `''`)
  */
+/**
+ * BINARY 系の列でも、値が 16 進文字列として届いたときだけバイナリリテラルにする。
+ * SQLite の非 STRICT テーブルは BLOB 宣言の列に TEXT / INTEGER を入れられ、その値は
+ * 文字列・数値のまま届く。確認せず `X'…'` に埋めると SQL インジェクション / 構文エラーになる
+ * (Rust 側 `sqlite.rs` の `pk_literal` も同じ確認をする)。
+ */
+function isHexBytes(v: CellValue): v is string {
+  return typeof v === "string" && /^([0-9a-f]{2})*$/i.test(v);
+}
+
 function blobLiteral(driver: string, hex: string): string {
   if (driver === "postgres") return "'\\x" + hex + "'";
   if (driver === "sqlite") return "X'" + hex + "'";
@@ -901,7 +913,7 @@ function blobLiteral(driver: string, hex: string): string {
 export function rowValueLiteral(driver: string, v: CellValue, col: Column): string {
   if (v === null || v === undefined) return "NULL";
   const t = col.type_name.toUpperCase();
-  if (BINARY_TYPES.has(t)) return blobLiteral(driver, String(v));
+  if (BINARY_TYPES.has(t) && isHexBytes(v)) return blobLiteral(driver, v);
   if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
   if (typeof v === "number") return Number.isFinite(v) ? String(v) : "NULL";
   if (NUMERIC_TYPES.has(t) && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(String(v).trim())) {
