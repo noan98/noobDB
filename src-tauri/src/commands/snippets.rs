@@ -18,8 +18,8 @@ pub struct SnippetImportPreview {
     pub new_count: u32,
     /// 既存と ID が衝突する件数。戦略 (採番 / スキップ / 上書き) で扱いが変わる。
     pub conflict_count: u32,
-    /// 取り込み先に無いプロファイルを指すため全接続スコープへ戻す件数。
-    pub scope_reset_count: u32,
+    /// 取り込み先に無いプロファイルを指すため全接続スコープへ戻す件数 (戦略別)。
+    pub scope_reset_by_strategy: ScopeResetByStrategy,
     /// ファイルの中で ID が重複している件数 (既存との衝突とは別)。
     pub duplicate_in_file_count: u32,
     /// 既存と ID が衝突する要素の先頭数件 (「上書き」で何が置き換わるかを見せる)。
@@ -28,12 +28,16 @@ pub struct SnippetImportPreview {
     pub rejected: Vec<ImportRejection>,
 }
 
-/// `SnippetImportPreview::conflicts` の 1 件 (#1490)。
+/// 衝突 1 件 (`SnippetImportPreview::conflicts`。#1490)。
+pub use crate::snippets::transfer::SnippetConflict;
+
+/// 戦略ごとの、全接続スコープへ付け替える件数。衝突する要素は Rename / Overwrite では
+/// 取り込まれ、Skip では捨てられるので、戦略によって変わる。
 #[derive(Debug, Clone, Serialize)]
-pub struct SnippetConflict {
-    pub id: String,
-    pub existing_name: String,
-    pub incoming_name: String,
+pub struct ScopeResetByStrategy {
+    pub rename: u32,
+    pub skip: u32,
+    pub overwrite: u32,
 }
 
 /// プレビューに載せる衝突の最大件数 (全件数は `conflict_count`)。
@@ -154,35 +158,32 @@ pub async fn preview_import_snippets(json: String) -> Result<SnippetImportPrevie
         let total = u32::try_from(incoming.len()).unwrap_or(u32::MAX);
         let existing = store::load_all()?;
         let known = known_profile_ids()?;
-        let mut conflicts = Vec::new();
-        for inc in &incoming {
-            if conflicts.len() >= MAX_PREVIEW_CONFLICTS {
-                break;
-            }
-            if let Some(ex) = existing
-                .iter()
-                .find(|e| !inc.id.is_empty() && e.id == inc.id)
-            {
-                conflicts.push(SnippetConflict {
-                    id: inc.id.clone(),
-                    existing_name: ex.name.clone(),
-                    incoming_name: inc.name.clone(),
-                });
-            }
-        }
-        // 衝突件数は戦略に依らないので、副作用のない `Skip` で数える。
-        let (_, counts): (_, ImportCounts) = transfer::plan_import(
-            existing,
-            incoming,
-            ImportStrategy::Skip,
-            &known,
-            new_snippet_id,
-        );
+        // 3 つの戦略それぞれで (副作用なしに) 統合を回し、件数と衝突一覧を同じ処理から出す。
+        let run = |strategy| {
+            transfer::plan_import(
+                existing.clone(),
+                incoming.clone(),
+                strategy,
+                &known,
+                new_snippet_id,
+            )
+            .1
+        };
+        let skip: ImportCounts = run(ImportStrategy::Skip);
+        let rename = run(ImportStrategy::Rename);
+        let overwrite = run(ImportStrategy::Overwrite);
+        let mut conflicts = skip.conflict_list.clone();
+        conflicts.truncate(MAX_PREVIEW_CONFLICTS);
+        let counts = skip;
         Ok(SnippetImportPreview {
             total,
             new_count: total.saturating_sub(counts.conflicts + counts.duplicates_in_file),
             conflict_count: counts.conflicts,
-            scope_reset_count: counts.scope_reset,
+            scope_reset_by_strategy: ScopeResetByStrategy {
+                rename: rename.scope_reset,
+                skip: counts.scope_reset,
+                overwrite: overwrite.scope_reset,
+            },
             duplicate_in_file_count: counts.duplicates_in_file,
             conflicts,
             rejected,

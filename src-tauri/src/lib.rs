@@ -172,7 +172,7 @@ pub mod __test_api {
         SandboxCreateResponse, SandboxResetResult, SandboxSchemaDiffResult, SandboxTableDiffResult,
     };
     pub use crate::commands::snippets::{
-        SnippetConflict, SnippetImportPreview, SnippetImportResult,
+        ScopeResetByStrategy, SnippetConflict, SnippetImportPreview, SnippetImportResult,
     };
     pub use crate::db::sandbox::SandboxTableSpec;
     pub use crate::history::HistoryEntry;

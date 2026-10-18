@@ -5170,7 +5170,11 @@
         "name": "bad"
       }
     ],
-    "scope_reset_count": 1,
+    "scope_reset_by_strategy": {
+      "overwrite": 1,
+      "rename": 1,
+      "skip": 0
+    },
     "total": 3
   },
   "snippetImportResult": {

@@ -44,6 +44,8 @@ export function SnippetImportDialog({ preview, onConfirm, onCancel }: Props) {
   const [error, setError] = useState<string | null>(null);
   const canSubmit = !busy && preview.total > 0;
   // 衝突があって「上書き」を選んだときだけ、既存のスニペットが置き換わる破壊的な確定になる。
+  // 選んだ戦略で実際に取り込まれる要素の付け替え件数。
+  const scopeReset = preview.scope_reset_by_strategy[strategy];
   const overwriting = strategy === "overwrite" && preview.conflict_count > 0;
 
   const submit = async () => {
@@ -91,11 +93,13 @@ export function SnippetImportDialog({ preview, onConfirm, onCancel }: Props) {
               fresh: preview.new_count,
               conflicts: preview.conflict_count,
             })}
+            {preview.duplicate_in_file_count > 0 &&
+              ` ${t("snippetImportDuplicates", { count: preview.duplicate_in_file_count })}`}
           </chakra.p>
         )}
-        {preview.scope_reset_count > 0 && (
+        {scopeReset > 0 && (
           <Callout tone="info" role="status" mb="3">
-            {t("snippetImportScopeReset", { count: preview.scope_reset_count })}
+            {t("snippetImportScopeReset", { count: scopeReset })}
           </Callout>
         )}
         {preview.rejected.length > 0 && (
@@ -133,8 +137,8 @@ export function SnippetImportDialog({ preview, onConfirm, onCancel }: Props) {
           <chakra.div mt="3" data-testid="snippet-import-overwrite-list">
             <FieldLabel as="div">{t("snippetImportOverwriteList")}</FieldLabel>
             <chakra.ul listStyleType="none" fontSize="sm" color="app.textSecondary" m="0" p="0">
-              {preview.conflicts.slice(0, OVERWRITE_PREVIEW_LIMIT).map((c) => (
-                <li key={c.id}>
+              {preview.conflicts.slice(0, OVERWRITE_PREVIEW_LIMIT).map((c, i) => (
+                <li key={`${c.id}-${i}`}>
                   {c.existing_name} → {c.incoming_name}
                 </li>
               ))}

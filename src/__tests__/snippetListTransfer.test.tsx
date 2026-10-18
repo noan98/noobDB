@@ -31,6 +31,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
 });
 
 import { SnippetList } from "../components/SnippetList";
+import { SnippetImportDialog } from "../components/SnippetImportDialog";
 import { api } from "../api/tauri";
 
 const snip: Snippet = {
@@ -96,7 +97,7 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
       total: 3,
       new_count: 2,
       conflict_count: 1,
-      scope_reset_count: 1,
+      scope_reset_by_strategy: { rename: 1, skip: 0, overwrite: 1 },
       duplicate_in_file_count: 0,
       conflicts: [{ id: "a", existing_name: "旧", incoming_name: "新" }],
       rejected: [],
@@ -113,6 +114,7 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
     expect(
       await screen.findByText(t("snippetImportSummary", { total: 3, fresh: 2, conflicts: 1 })),
     ).toBeInTheDocument();
+    // 既定 (新規採番) の件数が出る。
     expect(screen.getByText(t("snippetImportScopeReset", { count: 1 }))).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportOverwrite")) }));
     // 上書きを選ぶと置き換わる先が出て、確定ボタンは「上書きしてインポート」になる。
@@ -131,7 +133,7 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
       total: 0,
       new_count: 0,
       conflict_count: 0,
-      scope_reset_count: 0,
+      scope_reset_by_strategy: { rename: 0, skip: 0, overwrite: 0 },
       duplicate_in_file_count: 0,
       conflicts: [],
       rejected: [],
@@ -150,7 +152,7 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
       total: 1,
       new_count: 1,
       conflict_count: 0,
-      scope_reset_count: 0,
+      scope_reset_by_strategy: { rename: 0, skip: 0, overwrite: 0 },
       duplicate_in_file_count: 0,
       conflicts: [],
       rejected: [],
@@ -162,5 +164,32 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
     expect(await screen.findByText(t("snippetImportError", { error: "boom" }))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("snippetImportConfirm") })).toBeInTheDocument();
     expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("スコープ付け替え件数は選んだ戦略の値を出し、ファイル内の ID 重複も添える", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SnippetImportDialog
+        preview={{
+          total: 3,
+          new_count: 1,
+          conflict_count: 1,
+          scope_reset_by_strategy: { rename: 2, skip: 0, overwrite: 1 },
+          duplicate_in_file_count: 1,
+          conflicts: [{ id: "a", existing_name: "旧", incoming_name: "新" }],
+          rejected: [],
+        }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(t("snippetImportScopeReset", { count: 2 }))).toBeInTheDocument();
+    expect(
+      screen.getByText((c) => c.includes(t("snippetImportDuplicates", { count: 1 }))),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportSkip")) }));
+    expect(screen.queryByText(t("snippetImportScopeReset", { count: 2 }))).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportOverwrite")) }));
+    expect(screen.getByText(t("snippetImportScopeReset", { count: 1 }))).toBeInTheDocument();
   });
 });

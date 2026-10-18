@@ -410,6 +410,7 @@ const en = {
   snippetImportError: "Could not import the snippets: {error}",
   snippetImportTitle: "Import snippets",
   snippetImportSummary: "{total} snippet(s) found: {fresh} new, {conflicts} with an id that already exists.",
+  snippetImportDuplicates: "{count} duplicate id(s) inside the file.",
   snippetImportNoConflicts: "No ids collide with existing snippets; all of them will be added.",
   snippetImportConflictHeading: "When an id already exists",
   snippetImportRename: "Add as new",
@@ -7103,6 +7104,7 @@ const ja: Dict = {
   snippetImportTitle: "スニペットをインポート",
   snippetImportSummary:
     "スニペットが {total} 件見つかりました (新規 {fresh} 件、ID が既存と衝突 {conflicts} 件)。",
+  snippetImportDuplicates: "ファイル内の ID 重複 {count} 件。",
   snippetImportNoConflicts: "既存のスニペットと ID が衝突するものはありません。すべて追加されます。",
   snippetImportConflictHeading: "ID が既存と衝突したとき",
   snippetImportRename: "新規として追加",

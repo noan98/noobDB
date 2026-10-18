@@ -1530,7 +1530,11 @@ fn build_fixtures() -> serde_json::Value {
         total: 3,
         new_count: 2,
         conflict_count: 1,
-        scope_reset_count: 1,
+        scope_reset_by_strategy: t::ScopeResetByStrategy {
+            rename: 1,
+            skip: 0,
+            overwrite: 1,
+        },
         duplicate_in_file_count: 0,
         conflicts: vec![t::SnippetConflict {
             id: "aaaaaaaa".into(),

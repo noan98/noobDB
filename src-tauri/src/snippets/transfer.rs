@@ -24,6 +24,14 @@ pub const MAX_IMPORT_BYTES: usize = 8 * 1024 * 1024;
 /// 取り込む ID の最大文字数。これを超える ID は採番し直す。
 const MAX_ID_LEN: usize = 64;
 
+/// 既存と ID が衝突した要素 1 件 (#1490)。プレビューの「上書きで置き換わる先」の表示用。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SnippetConflict {
+    pub id: String,
+    pub existing_name: String,
+    pub incoming_name: String,
+}
+
 /// 取り込みの集計。プレビュー (書き込まない) と本番で同じ意味。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ImportCounts {
@@ -39,6 +47,8 @@ pub struct ImportCounts {
     pub duplicates_in_file: u32,
     /// 取り込み先に存在しないプロファイルを指していたため、全接続スコープへ戻した件数。
     pub scope_reset: u32,
+    /// 既存と ID が衝突した要素の一覧 (件数 `conflicts` と同じ処理から出す)。
+    pub conflict_list: Vec<SnippetConflict>,
 }
 
 /// 書き出し用の JSON 文字列を作る。
@@ -154,14 +164,23 @@ pub fn plan_import(
     mut new_id: impl FnMut() -> String,
 ) -> (Vec<Snippet>, ImportCounts) {
     let mut counts = ImportCounts::default();
-    let existing_ids: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
-    let mut taken = existing_ids.clone();
+    let mut taken: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
+    // 衝突一覧に載せる「既存側の名前」。上書きで差し替わる前の名前を保つ。
+    let existing_names: std::collections::HashMap<String, String> = existing
+        .iter()
+        .map(|e| (e.id.clone(), e.name.clone()))
+        .collect();
     for mut s in incoming {
         let collides = !s.id.is_empty() && taken.contains(&s.id);
         if collides {
             // 既存との衝突と、ファイル内の先行要素との重複は別々に数える。
-            if existing_ids.contains(&s.id) {
+            if let Some(existing_name) = existing_names.get(&s.id) {
                 counts.conflicts += 1;
+                counts.conflict_list.push(SnippetConflict {
+                    id: s.id.clone(),
+                    existing_name: existing_name.clone(),
+                    incoming_name: s.name.clone(),
+                });
             } else {
                 counts.duplicates_in_file += 1;
             }
@@ -549,5 +568,30 @@ mod tests {
         let big = " ".repeat(MAX_IMPORT_BYTES + 1);
         assert!(parse_import(&big).is_err());
         assert_eq!(MAX_IMPORT_BYTES, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn preview_scope_reset_matches_each_strategy_for_colliding_unknown_scope() {
+        let gone = SnippetScope::Profile {
+            profile_id: "gone".into(),
+        };
+        let run = |strategy| {
+            plan_import(
+                vec![snip("aaaaaaaa", "old", SnippetScope::Any)],
+                vec![snip("aaaaaaaa", "new", gone.clone())],
+                strategy,
+                &known(&[]),
+                counter(),
+            )
+            .1
+        };
+        // 衝突しても取り込まれる Rename / Overwrite では数え、Skip では数えない。
+        assert_eq!(run(ImportStrategy::Rename).scope_reset, 1);
+        assert_eq!(run(ImportStrategy::Overwrite).scope_reset, 1);
+        assert_eq!(run(ImportStrategy::Skip).scope_reset, 0);
+        let c = run(ImportStrategy::Skip);
+        assert_eq!(c.conflict_list.len(), 1);
+        assert_eq!(c.conflict_list[0].existing_name, "old");
+        assert_eq!(c.conflict_list[0].incoming_name, "new");
     }
 }
