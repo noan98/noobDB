@@ -1531,6 +1531,12 @@ fn build_fixtures() -> serde_json::Value {
         new_count: 2,
         conflict_count: 1,
         scope_reset_count: 1,
+        duplicate_in_file_count: 0,
+        conflicts: vec![t::SnippetConflict {
+            id: "aaaaaaaa".into(),
+            existing_name: "old".into(),
+            incoming_name: "new".into(),
+        }],
         rejected: vec![t::ImportRejection {
             index: 4,
             name: Some("bad".into()),

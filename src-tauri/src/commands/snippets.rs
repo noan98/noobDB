@@ -20,9 +20,24 @@ pub struct SnippetImportPreview {
     pub conflict_count: u32,
     /// 取り込み先に無いプロファイルを指すため全接続スコープへ戻す件数。
     pub scope_reset_count: u32,
+    /// ファイルの中で ID が重複している件数 (既存との衝突とは別)。
+    pub duplicate_in_file_count: u32,
+    /// 既存と ID が衝突する要素の先頭数件 (「上書き」で何が置き換わるかを見せる)。
+    pub conflicts: Vec<SnippetConflict>,
     /// 解釈・検証に失敗して取り込めない要素。
     pub rejected: Vec<ImportRejection>,
 }
+
+/// `SnippetImportPreview::conflicts` の 1 件 (#1490)。
+#[derive(Debug, Clone, Serialize)]
+pub struct SnippetConflict {
+    pub id: String,
+    pub existing_name: String,
+    pub incoming_name: String,
+}
+
+/// プレビューに載せる衝突の最大件数 (全件数は `conflict_count`)。
+const MAX_PREVIEW_CONFLICTS: usize = 20;
 
 /// `import_snippets` の結果 (#1490)。
 #[derive(Debug, Clone, Serialize)]
@@ -139,6 +154,22 @@ pub async fn preview_import_snippets(json: String) -> Result<SnippetImportPrevie
         let total = u32::try_from(incoming.len()).unwrap_or(u32::MAX);
         let existing = store::load_all()?;
         let known = known_profile_ids()?;
+        let mut conflicts = Vec::new();
+        for inc in &incoming {
+            if conflicts.len() >= MAX_PREVIEW_CONFLICTS {
+                break;
+            }
+            if let Some(ex) = existing
+                .iter()
+                .find(|e| !inc.id.is_empty() && e.id == inc.id)
+            {
+                conflicts.push(SnippetConflict {
+                    id: inc.id.clone(),
+                    existing_name: ex.name.clone(),
+                    incoming_name: inc.name.clone(),
+                });
+            }
+        }
         // 衝突件数は戦略に依らないので、副作用のない `Skip` で数える。
         let (_, counts): (_, ImportCounts) = transfer::plan_import(
             existing,
@@ -149,9 +180,11 @@ pub async fn preview_import_snippets(json: String) -> Result<SnippetImportPrevie
         );
         Ok(SnippetImportPreview {
             total,
-            new_count: total.saturating_sub(counts.conflicts),
+            new_count: total.saturating_sub(counts.conflicts + counts.duplicates_in_file),
             conflict_count: counts.conflicts,
             scope_reset_count: counts.scope_reset,
+            duplicate_in_file_count: counts.duplicates_in_file,
+            conflicts,
             rejected,
         })
     })

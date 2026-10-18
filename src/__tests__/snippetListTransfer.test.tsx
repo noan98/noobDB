@@ -97,6 +97,8 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
       new_count: 2,
       conflict_count: 1,
       scope_reset_count: 1,
+      duplicate_in_file_count: 0,
+      conflicts: [{ id: "a", existing_name: "旧", incoming_name: "新" }],
       rejected: [],
     });
     vi.mocked(api.importSnippets).mockResolvedValue({
@@ -113,7 +115,10 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(t("snippetImportScopeReset", { count: 1 }))).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportOverwrite")) }));
-    await user.click(screen.getByRole("button", { name: t("snippetImportConfirm") }));
+    // 上書きを選ぶと置き換わる先が出て、確定ボタンは「上書きしてインポート」になる。
+    expect(screen.getByText("旧 → 新")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("snippetImportConfirm") })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("snippetImportOverwriteConfirm") }));
     await waitFor(() => expect(api.importSnippets).toHaveBeenCalledWith("{json}", "overwrite"));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
@@ -127,11 +132,35 @@ describe("SnippetList エクスポート / インポート (#1490)", () => {
       new_count: 0,
       conflict_count: 0,
       scope_reset_count: 0,
+      duplicate_in_file_count: 0,
+      conflicts: [],
       rejected: [],
     });
     renderList([snip]);
     await openMenu(user, t("snippetImport"));
     expect(await screen.findByText(t("snippetImportNothing"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: t("snippetImportConfirm") })).toBeDisabled();
+  });
+
+  it("取り込みに失敗したらダイアログを閉じず、ダイアログ内にエラーを出す", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/in/snippets.json");
+    vi.mocked(api.readTextFile).mockResolvedValue("{json}" as never);
+    vi.mocked(api.previewImportSnippets).mockResolvedValue({
+      total: 1,
+      new_count: 1,
+      conflict_count: 0,
+      scope_reset_count: 0,
+      duplicate_in_file_count: 0,
+      conflicts: [],
+      rejected: [],
+    });
+    vi.mocked(api.importSnippets).mockRejectedValue("boom");
+    const onChanged = renderList([snip]);
+    await openMenu(user, t("snippetImport"));
+    await user.click(await screen.findByRole("button", { name: t("snippetImportConfirm") }));
+    expect(await screen.findByText(t("snippetImportError", { error: "boom" }))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("snippetImportConfirm") })).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
   });
 });

@@ -624,6 +624,14 @@ export const snippetImportPreview = z.object({
   new_count: z.number(),
   conflict_count: z.number(),
   scope_reset_count: z.number(),
+  duplicate_in_file_count: z.number(),
+  conflicts: z.array(
+    z.object({
+      id: z.string(),
+      existing_name: z.string(),
+      incoming_name: z.string(),
+    }),
+  ),
   rejected: z.array(
     z.object({
       index: z.number(),

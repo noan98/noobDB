@@ -4,7 +4,7 @@ import { useT } from "../i18n";
 import type { ProfileImportStrategy, SnippetImportPreview } from "../api/tauri";
 import { Callout } from "./Callout";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
-import { FormSection, FieldLabel } from "./modalForm";
+import { ErrorNote, FormSection, FieldLabel } from "./modalForm";
 import { Button, PressableButton, Radio } from "./ui";
 
 /**
@@ -17,6 +17,9 @@ interface Props {
   onConfirm: (strategy: ProfileImportStrategy) => Promise<void> | void;
   onCancel: () => void;
 }
+
+/** 「上書き」で置き換わる先として一覧に出す最大件数。 */
+const OVERWRITE_PREVIEW_LIMIT = 5;
 
 const Option = chakra("label", {
   base: {
@@ -38,13 +41,19 @@ export function SnippetImportDialog({ preview, onConfirm, onCancel }: Props) {
   const [strategy, setStrategy] = useState<ProfileImportStrategy>("rename");
   const [busy, setBusy] = useState(false);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const [error, setError] = useState<string | null>(null);
   const canSubmit = !busy && preview.total > 0;
+  // 衝突があって「上書き」を選んだときだけ、既存のスニペットが置き換わる破壊的な確定になる。
+  const overwriting = strategy === "overwrite" && preview.conflict_count > 0;
 
   const submit = async () => {
     if (!canSubmit) return;
     setBusy(true);
+    setError(null);
     try {
       await onConfirm(strategy);
+    } catch (e) {
+      setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -120,15 +129,54 @@ export function SnippetImportDialog({ preview, onConfirm, onCancel }: Props) {
               </chakra.div>
             </FormSection>
           ))}
+        {overwriting && (
+          <chakra.div mt="3" data-testid="snippet-import-overwrite-list">
+            <FieldLabel as="div">{t("snippetImportOverwriteList")}</FieldLabel>
+            <chakra.ul listStyleType="none" fontSize="sm" color="app.textSecondary" m="0" p="0">
+              {preview.conflicts.slice(0, OVERWRITE_PREVIEW_LIMIT).map((c) => (
+                <li key={c.id}>
+                  {c.existing_name} → {c.incoming_name}
+                </li>
+              ))}
+            </chakra.ul>
+            {preview.conflict_count > OVERWRITE_PREVIEW_LIMIT && (
+              <chakra.p textStyle="caption">
+                {t("snippetImportOverwriteMore", {
+                  count: preview.conflict_count - OVERWRITE_PREVIEW_LIMIT,
+                })}
+              </chakra.p>
+            )}
+          </chakra.div>
+        )}
+        {error && <ErrorNote mt="3">{t("snippetImportError", { error })}</ErrorNote>}
       </ModalBody>
       <ModalFooter>
-        <div style={{ flex: 1 }} />
-        <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel} disabled={busy}>
-          {t("confirmDefaultCancel")}
-        </Button>
-        <PressableButton type="button" variant="primary" disabled={!canSubmit} onClick={() => void submit()}>
-          {t("snippetImportConfirm")}
-        </PressableButton>
+        {overwriting ? (
+          <>
+            <Button type="button" variant="dangerOutline" disabled={!canSubmit} onClick={() => void submit()}>
+              {t("snippetImportOverwriteConfirm")}
+            </Button>
+            <div style={{ flex: 1 }} />
+            <Button ref={cancelRef} type="button" variant="primary" onClick={onCancel} disabled={busy}>
+              {t("confirmDefaultCancel")}
+            </Button>
+          </>
+        ) : (
+          <>
+            <div style={{ flex: 1 }} />
+            <Button ref={cancelRef} type="button" variant="secondary" onClick={onCancel} disabled={busy}>
+              {t("confirmDefaultCancel")}
+            </Button>
+            <PressableButton
+              type="button"
+              variant="primary"
+              disabled={!canSubmit}
+              onClick={() => void submit()}
+            >
+              {t("snippetImportConfirm")}
+            </PressableButton>
+          </>
+        )}
       </ModalFooter>
     </Modal>
   );

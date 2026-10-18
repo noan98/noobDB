@@ -387,17 +387,20 @@ export const SnippetList = memo(function SnippetList({
     }
   };
 
+  // 成功してからダイアログを閉じる。失敗したら例外を投げ直し、ダイアログ内に表示させる。
   const handleImportConfirm = async (strategy: ProfileImportStrategy) => {
-    const current = importing;
+    if (!importing) return;
+    const res = await api.importSnippets(importing.json, strategy);
     setImporting(null);
-    if (!current) return;
-    try {
-      const res = await api.importSnippets(current.json, strategy);
-      onChanged?.();
-      toast.success(t("snippetImportDone", res as unknown as Record<string, string | number>));
-    } catch (e) {
-      toast.error(t("snippetImportError", { error: String(e) }));
-    }
+    onChanged?.();
+    toast.success(
+      t("snippetImportDone", {
+        imported: res.imported,
+        overwritten: res.overwritten,
+        skipped: res.skipped,
+        rejected: res.rejected.length,
+      }),
+    );
   };
 
   const openTransferMenu = (e: React.MouseEvent<HTMLElement>) => {

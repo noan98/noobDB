@@ -5154,6 +5154,14 @@
   },
   "snippetImportPreview": {
     "conflict_count": 1,
+    "conflicts": [
+      {
+        "existing_name": "old",
+        "id": "aaaaaaaa",
+        "incoming_name": "new"
+      }
+    ],
+    "duplicate_in_file_count": 0,
     "new_count": 2,
     "rejected": [
       {

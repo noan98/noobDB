@@ -18,8 +18,11 @@ use crate::error::{AppError, Result};
 
 pub const EXPORT_FORMAT: &str = "noobdb-snippets";
 pub const EXPORT_VERSION: u32 = 1;
-/// 取り込む JSON の最大バイト数 (手違いで巨大なファイルを読み込まない)。
-pub const MAX_IMPORT_BYTES: usize = 16 * 1024 * 1024;
+/// 取り込む JSON の最大バイト数。`read_text_file` の上限 (8MB) に揃え、フロントが読めない
+/// 大きさのファイルを IPC 経由で渡されても拒否する (手違いで巨大なファイルを取り込まない)。
+pub const MAX_IMPORT_BYTES: usize = 8 * 1024 * 1024;
+/// 取り込む ID の最大文字数。これを超える ID は採番し直す。
+const MAX_ID_LEN: usize = 64;
 
 /// 取り込みの集計。プレビュー (書き込まない) と本番で同じ意味。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -30,8 +33,10 @@ pub struct ImportCounts {
     pub skipped: u32,
     /// 衝突して既存を上書きした件数。
     pub overwritten: u32,
-    /// 既存と ID が衝突した件数 (戦略に関わらず数える。プレビュー用)。
+    /// 既存のスニペットと ID が衝突した件数 (戦略に関わらず数える。プレビュー用)。
     pub conflicts: u32,
+    /// ファイルの中で、先に出てきた要素と ID が重複した件数 (既存との衝突とは別に数える)。
+    pub duplicates_in_file: u32,
     /// 取り込み先に存在しないプロファイルを指していたため、全接続スコープへ戻した件数。
     pub scope_reset: u32,
 }
@@ -113,7 +118,14 @@ pub fn parse_import(json: &str) -> Result<(Vec<Snippet>, Vec<ImportRejection>)> 
             .map(|t| t.trim().to_string())
             .filter(|t| !t.is_empty())
             .collect();
-        s.driver = s.driver.filter(|d| !d.is_empty());
+        // 知らないドライバ名は「ドライバ指定なし」にする (どの接続にも出ない孤立を避ける)。
+        s.driver = s
+            .driver
+            .filter(|d| crate::commands::profiles::is_known_driver(d));
+        // 空・長すぎる・制御文字入りの ID は採番し直す (空 ID は取り込み時に採番される)。
+        if s.id.len() > MAX_ID_LEN || s.id.chars().any(char::is_control) {
+            s.id = String::new();
+        }
         if s.name.is_empty() {
             rejected.push(ImportRejection {
                 index,
@@ -142,23 +154,24 @@ pub fn plan_import(
     mut new_id: impl FnMut() -> String,
 ) -> (Vec<Snippet>, ImportCounts) {
     let mut counts = ImportCounts::default();
-    let mut taken: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let existing_ids: HashSet<String> = existing.iter().map(|s| s.id.clone()).collect();
+    let mut taken = existing_ids.clone();
     for mut s in incoming {
-        if let SnippetScope::Profile { profile_id } = &s.scope {
-            if !known_profile_ids.contains(profile_id) {
-                s.scope = SnippetScope::Any;
-                counts.scope_reset += 1;
-            }
-        }
         let collides = !s.id.is_empty() && taken.contains(&s.id);
         if collides {
-            counts.conflicts += 1;
+            // 既存との衝突と、ファイル内の先行要素との重複は別々に数える。
+            if existing_ids.contains(&s.id) {
+                counts.conflicts += 1;
+            } else {
+                counts.duplicates_in_file += 1;
+            }
             match strategy {
                 ImportStrategy::Skip => {
                     counts.skipped += 1;
                     continue;
                 }
                 ImportStrategy::Overwrite => {
+                    reset_unknown_scope(&mut s, known_profile_ids, &mut counts);
                     if let Some(slot) = existing.iter_mut().find(|e| e.id == s.id) {
                         *slot = s;
                     }
@@ -172,6 +185,8 @@ pub fn plan_import(
         } else if s.id.is_empty() {
             s.id = fresh_id(&taken, &mut new_id);
         }
+        // スコープの付け替えは、実際に取り込む要素だけを数える (スキップ分は数えない)。
+        reset_unknown_scope(&mut s, known_profile_ids, &mut counts);
         taken.insert(s.id.clone());
         existing.push(s);
         counts.imported += 1;
@@ -179,15 +194,42 @@ pub fn plan_import(
     (existing, counts)
 }
 
-/// 衝突し続ける生成器でも無限ループしないよう、試行回数に上限を置いて採番する。
+/// 取り込み先に無いプロファイルを指すスコープを全接続 (`Any`) へ戻す。
+fn reset_unknown_scope(
+    s: &mut Snippet,
+    known_profile_ids: &HashSet<String>,
+    counts: &mut ImportCounts,
+) {
+    if let SnippetScope::Profile { profile_id } = &s.scope {
+        if !known_profile_ids.contains(profile_id) {
+            s.scope = SnippetScope::Any;
+            counts.scope_reset += 1;
+        }
+    }
+}
+
+/// 採番する。生成器が 16 回続けて衝突したら、最後の候補に連番の接尾辞を付けて
+/// 一意になるまで回す (必ず終わり、必ず一意)。
 fn fresh_id(taken: &HashSet<String>, new_id: &mut impl FnMut() -> String) -> String {
     let mut candidate = new_id();
-    let mut tries = 0;
-    while taken.contains(&candidate) && tries < 16 {
+    for _ in 0..16 {
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
         candidate = new_id();
-        tries += 1;
     }
-    candidate
+    if !taken.contains(&candidate) {
+        return candidate;
+    }
+    let base = candidate;
+    let mut n: u64 = 2;
+    loop {
+        let next = format!("{base}-{n}");
+        if !taken.contains(&next) {
+            return next;
+        }
+        n += 1;
+    }
 }
 
 #[cfg(test)]
@@ -365,7 +407,7 @@ mod tests {
         );
         assert_eq!(all.len(), 2);
         assert_ne!(all[0].id, all[1].id);
-        assert_eq!(c.conflicts, 1);
+        assert_eq!((c.conflicts, c.duplicates_in_file), (0, 1));
     }
 
     #[test]
@@ -425,9 +467,12 @@ mod tests {
     }
 
     #[test]
-    fn a_generator_that_keeps_colliding_still_terminates() {
+    fn a_generator_that_keeps_colliding_still_yields_unique_ids() {
         let existing = vec![snip("aaaaaaaa", "old", SnippetScope::Any)];
-        let incoming = vec![snip("aaaaaaaa", "new", SnippetScope::Any)];
+        let incoming = vec![
+            snip("aaaaaaaa", "new", SnippetScope::Any),
+            snip("aaaaaaaa", "new2", SnippetScope::Any),
+        ];
         let (all, _) = plan_import(
             existing,
             incoming,
@@ -435,6 +480,74 @@ mod tests {
             &known(&[]),
             || "aaaaaaaa".to_string(),
         );
-        assert_eq!(all.len(), 2);
+        let ids: HashSet<&str> = all.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(all.len(), 3);
+        assert_eq!(ids.len(), 3);
+    }
+
+    #[test]
+    fn duplicates_inside_the_file_are_counted_apart_from_existing_conflicts() {
+        let existing = vec![snip("aaaaaaaa", "old", SnippetScope::Any)];
+        let incoming = vec![
+            snip("aaaaaaaa", "hits existing", SnippetScope::Any),
+            snip("bbbbbbbb", "first", SnippetScope::Any),
+            snip("bbbbbbbb", "dup in file", SnippetScope::Any),
+        ];
+        let (_, c) = plan_import(
+            existing,
+            incoming,
+            ImportStrategy::Skip,
+            &known(&[]),
+            counter(),
+        );
+        assert_eq!((c.conflicts, c.duplicates_in_file), (1, 1));
+        assert_eq!((c.imported, c.skipped), (1, 2));
+    }
+
+    #[test]
+    fn scope_reset_counts_only_snippets_that_are_actually_imported() {
+        let existing = vec![snip("aaaaaaaa", "old", SnippetScope::Any)];
+        let gone = SnippetScope::Profile {
+            profile_id: "gone".into(),
+        };
+        let incoming = vec![
+            snip("aaaaaaaa", "skipped", gone.clone()),
+            snip("bbbbbbbb", "kept", gone),
+        ];
+        let (_, c) = plan_import(
+            existing,
+            incoming,
+            ImportStrategy::Skip,
+            &known(&[]),
+            counter(),
+        );
+        assert_eq!((c.skipped, c.imported, c.scope_reset), (1, 1, 1));
+    }
+
+    #[test]
+    fn parse_drops_unknown_drivers_and_reassigns_bad_ids() {
+        let long = "x".repeat(MAX_ID_LEN + 1);
+        let json = format!(
+            r#"[
+            {{"id": "ok", "name": "a", "sql": "s", "driver": "oracle"}},
+            {{"id": "ok2", "name": "b", "sql": "s", "driver": "postgres"}},
+            {{"id": "{long}", "name": "c", "sql": "s"}},
+            {{"id": "bad\u0007id", "name": "d", "sql": "s"}}
+        ]"#
+        );
+        let (v, rejected) = parse_import(&json).unwrap();
+        assert!(rejected.is_empty());
+        assert_eq!(v[0].driver, None);
+        assert_eq!(v[1].driver.as_deref(), Some("postgres"));
+        assert_eq!(v[0].id, "ok");
+        assert_eq!(v[2].id, "");
+        assert_eq!(v[3].id, "");
+    }
+
+    #[test]
+    fn oversized_import_is_rejected_at_the_read_text_file_limit() {
+        let big = " ".repeat(MAX_IMPORT_BYTES + 1);
+        assert!(parse_import(&big).is_err());
+        assert_eq!(MAX_IMPORT_BYTES, 8 * 1024 * 1024);
     }
 }
