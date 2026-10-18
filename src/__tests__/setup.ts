@@ -22,3 +22,11 @@ afterEach(async () => {
   if (typeof document === "undefined") return;
   await flushMacrotask();
 });
+
+// jsdom の Range には getClientRects / getBoundingClientRect が無い。CodeMirror の drawSelection
+// (#1488) の計測が呼ぶので、未定義のときだけ空の実装を足す。
+if (typeof Range !== "undefined") {
+  const proto = Range.prototype as { getClientRects?: () => unknown; getBoundingClientRect?: () => DOMRect };
+  proto.getClientRects ??= () => [] as unknown as DOMRectList;
+  proto.getBoundingClientRect ??= () => new DOMRect();
+}

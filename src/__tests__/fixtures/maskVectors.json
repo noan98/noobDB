@@ -171,6 +171,12 @@
       "note": "#1601: 識別子 ée (非 ASCII も識別子の一部) の末尾の e は E 文字列の接頭辞ではない (PostgreSQL でも通常のリテラル)",
       "masked": "SELECT ée' ' ; DELETE FROM t;    ",
       "maskedMysql": "SELECT ée'                      '"
-    }
+    },
+    {"sql": "SELECT 1--1; DROP TABLE t", "note": "#1735: MySQL は -- の直後が空白でなければコメントではない (1 - -1)。PG/SQLite/ドライバ不明は空白不要でコメント", "masked": "SELECT 1                 ", "maskedMysql": "SELECT 1--1; DROP TABLE t"},
+    {"sql": "SELECT 1-- x\nFROM t", "note": "#1735: -- の直後が空白なら全ドライバでコメント", "masked": "SELECT 1    \nFROM t"},
+    {"sql": "SELECT 1--\tx", "note": "#1735: -- の直後がタブでもコメント", "masked": "SELECT 1    "},
+    {"sql": "SELECT 1--", "note": "#1735: 文末の -- はコメント (MySQL でも)", "masked": "SELECT 1  "},
+    {"sql": "SELECT 1--\u0001x", "note": "#1735: -- の直後が制御文字でもコメント (MySQL)", "masked": "SELECT 1    "}
+
   ]
 }

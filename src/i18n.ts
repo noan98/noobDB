@@ -563,6 +563,39 @@ const en = {
   settingsShortcutRecord: "Change",
   settingsShortcutRecording: "Press keys… (Esc to cancel)",
   settingsShortcutConflict: "Conflict",
+  shortcutHintEnabled: "Show shortcut hints while holding Cmd/Ctrl",
+  shortcutHintEnabledHelp:
+    "Holding Cmd/Ctrl for a moment shows the shortcuts available in the current context at the bottom of the window. Release the key or press Esc to dismiss. It never intercepts key presses.",
+  shortcutHintDelay: "Hold time before the hint appears (ms)",
+  shortcutHintMore: "+{count} more (press ? for the full list)",
+  shortcutHintCommandPalette: "Command palette",
+  shortcutHintSidebarFilter: "Sidebar filter",
+  shortcutHintQuickLauncher: "Floating launcher",
+  shortcutHintObjectSearch: "Search objects",
+  shortcutHintOpenSettings: "Settings",
+  shortcutHintToggleTheme: "Toggle theme",
+  shortcutHintToggleSidebar: "Toggle sidebar",
+  shortcutHintRunNewTab: "Run in new tab",
+  shortcutHintRun: "Run",
+  shortcutHintRunStatement: "Run statement",
+  shortcutHintPreview: "Dry run",
+  shortcutHintFormat: "Format SQL",
+  shortcutHintExplain: "Explain",
+  shortcutHintFocusEditor: "Focus editor",
+  shortcutHintResultSearch: "Search results",
+  shortcutHintGridCopy: "Copy",
+  shortcutHintGridCopyHeaders: "Copy with headers",
+  shortcutHintGridUndo: "Undo edit",
+  shortcutHintGridRedo: "Redo edit",
+  shortcutHintMaximizeResult: "Maximize results",
+  shortcutHintNewTab: "New tab",
+  shortcutHintCloseTab: "Close tab",
+  shortcutHintReopenClosedTab: "Reopen tab",
+  shortcutHintHistorySearch: "History search",
+  shortcutHintEditorFind: "Find in editor",
+  shortcutHintGridSelectAll: "Select all",
+  shortcutHintCycleTab: "Next / previous tab",
+  shortcutHintNthTab: "Go to tab 1–9",
   settingsShortcutSwapped: 'Swapped keys with "{other}", which was using that shortcut.',
   settingsShortcutsExport: "Export JSON",
   settingsShortcutsImport: "Import JSON",
@@ -601,6 +634,13 @@ const en = {
   settingsPreflightImpactEnabled: "Show impact-row badge",
   settingsPreflightImpactEnabledHelp:
     'Counts the affected rows in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Complex queries (joins, subqueries, ORDER BY/LIMIT) show "can\'t estimate", and the count may drift by the time you run. Turn off to avoid background counts on heavy tables.',
+
+  settingsScanPreflight: "Scan preflight (SELECT)",
+  settingsScanPreflightHelp:
+    "For a plain SELECT in the editor, show a badge with the estimated scan rows and a full-table-scan warning before you run, taken from EXPLAIN.",
+  settingsScanPreflightEnabled: "Show scan-rows / full-scan badge",
+  settingsScanPreflightEnabledHelp:
+    'Runs EXPLAIN in the background (read-only, never recorded in query history) and shows the estimate near the Run button. Off by default. Multi-statement scripts and non-SELECT statements show nothing; unions and subqueries show "can\'t estimate" and statements starting with WITH show nothing. Row counts are planner estimates and mean slightly different things per driver (MySQL: rows examined; PostgreSQL: rows the scan node is expected to return; SQLite: no row estimate, full-scan detection only).',
 
   settingsPlanWatch: "Execution plan watch",
   settingsPlanWatchHelp:
@@ -770,6 +810,9 @@ const en = {
   settingsTabRestoreModeAsk: "Ask each time",
   settingsTabRestoreModeNever: "Never restore",
   settingsAppearance: "Appearance",
+  settingsAppearancePreviewLabel: "Appearance preview (a mock of the toolbar, sidebar, result grid and SQL)",
+  settingsAppearancePreviewRun: "Run",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "Font size (px)",
   settingsFontSizeHelp:
     "Base font size in pixels. Scales the entire interface, including the SQL editor and result grid. Allowed range: {min}–{max} px (default {default}).",
@@ -1501,6 +1544,8 @@ const en = {
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
   formDriverSqlite: "SQLite",
+  formDriverHintPort: "Default port {port}",
+  formDriverHintFile: "Local file",
   formMysqlLegend: "MySQL",
   formPostgresLegend: "PostgreSQL",
   formSqliteLegend: "SQLite",
@@ -1700,6 +1745,21 @@ const en = {
     "No WHERE clause: this write affects every row in the table. Count is a snapshot and may drift by run time.",
   editorPreflightUnestimableTooltip:
     "The statement shape (join, subquery FROM, ORDER BY/LIMIT, …) can't be safely converted to a row count, so no number is shown.",
+
+  // Scan preflight badge for SELECT (#1508).
+  editorScanEstimating: "Estimating scan…",
+  editorScanFullScanRows: "Possible full scan (~{count} rows)",
+  editorScanFullScan: "Possible full table scan",
+  editorScanRows: "Scan: ~{count} rows",
+  editorScanIndexed: "Scan: uses an index",
+  editorScanUnestimable: "Scan: can't estimate",
+  editorScanTooltip:
+    "Estimate from a background EXPLAIN (nothing is executed). Row counts are the planner's estimate and drift from reality; their exact meaning differs per driver.",
+  editorScanFullScanTooltip:
+    "EXPLAIN shows a table read without an index ({tables}). On a large table this can be slow. Consider a WHERE condition on an indexed column or a LIMIT.",
+  editorScanUnestimableTooltip: "Unions and subqueries are not analysed, so no estimate is shown.",
+  editorScanLimitedNote:
+    "This SELECT has a LIMIT and no sort or aggregation, so it may stop reading early and the real cost can be much lower.",
 
   explainEmpty: "No plan yet. Use the Explain button to analyze a query.",
   explainLoading: "Analyzing query plan...",
@@ -3376,6 +3436,9 @@ const en = {
   tabNew: "New query tab",
   tabClose: "Close tab",
   tabDuplicate: "Duplicate tab",
+  tabPin: "Pin tab",
+  tabUnpin: "Unpin tab",
+  tabPinned: "Pinned",
   tabCloseOthers: "Close other tabs",
   tabCloseRight: "Close tabs to the right",
   tabCloseLeft: "Close tabs to the left",
@@ -3498,6 +3561,7 @@ const en = {
   gridDragColumn: "Drag to reorder column",
   gridMoveColumnLeft: "Move left",
   gridMoveColumnRight: "Move right",
+  gridResizeWidthBadge: "{width} px wide",
   gridResizeColumnAria: "Resize column {column} (left/right arrow keys; Shift for larger steps)",
   gridColumnsLabel: "Columns",
   gridHideColumn: "Hide this column",
@@ -3608,6 +3672,11 @@ const en = {
   gridCopyAsInsertRowsCombined: "Copy {count} rows as INSERT (combined)",
   gridCopyAsInsertRowsCombinedTitle:
     "A single INSERT INTO ... VALUES (...), (...); statement covering all selected rows",
+  gridCopyAsInsertPartial: "Copy 1 row × {cols} columns as INSERT",
+  gridCopyAsInsertRowsPartial: "Copy {count} rows × {cols} columns as INSERT (one statement per row)",
+  gridCopyAsInsertRowsCombinedPartial: "Copy {count} rows × {cols} columns as INSERT (combined)",
+  gridCopyAsInsertPartialTitle:
+    "Only the selected columns are included. Columns left out fall back to their defaults or violate NOT NULL",
   gridCopyAsInsertAmbiguousTable:
     "Couldn't resolve a single source table for this result — copied with a placeholder table name; edit it before running",
   gridCopyAsUpdate: "Copy as UPDATE",
@@ -7158,6 +7227,39 @@ const ja: Dict = {
   settingsShortcutRecord: "変更",
   settingsShortcutRecording: "キーを押す… (Esc で取消)",
   settingsShortcutConflict: "衝突",
+  shortcutHintEnabled: "Cmd/Ctrl の押しっぱなしでショートカットをヒント表示する",
+  shortcutHintEnabledHelp:
+    "Cmd/Ctrl を少し押し続けると、今の文脈で押せるショートカットを画面下部に表示します。キーを離すか Esc で閉じます。キー入力は横取りしません。",
+  shortcutHintDelay: "ヒントが出るまでの押しっぱなし時間 (ミリ秒)",
+  shortcutHintMore: "ほか {count} 件 (? で一覧)",
+  shortcutHintCommandPalette: "コマンドパレット",
+  shortcutHintSidebarFilter: "サイドバー検索",
+  shortcutHintQuickLauncher: "ランチャー",
+  shortcutHintObjectSearch: "オブジェクト検索",
+  shortcutHintOpenSettings: "設定",
+  shortcutHintToggleTheme: "テーマ切替",
+  shortcutHintToggleSidebar: "サイドバー開閉",
+  shortcutHintRunNewTab: "新しいタブで実行",
+  shortcutHintRun: "実行",
+  shortcutHintRunStatement: "カーソル位置の文を実行",
+  shortcutHintPreview: "Dry Run",
+  shortcutHintFormat: "SQL を整形",
+  shortcutHintExplain: "実行計画",
+  shortcutHintFocusEditor: "エディタに集中",
+  shortcutHintResultSearch: "結果内検索",
+  shortcutHintGridCopy: "コピー",
+  shortcutHintGridCopyHeaders: "ヘッダ付きコピー",
+  shortcutHintGridUndo: "編集を元に戻す",
+  shortcutHintGridRedo: "編集をやり直す",
+  shortcutHintMaximizeResult: "結果を最大化",
+  shortcutHintNewTab: "新しいタブ",
+  shortcutHintCloseTab: "タブを閉じる",
+  shortcutHintReopenClosedTab: "閉じたタブを開く",
+  shortcutHintHistorySearch: "履歴を検索",
+  shortcutHintEditorFind: "エディタ内検索",
+  shortcutHintGridSelectAll: "すべて選択",
+  shortcutHintCycleTab: "タブ切替",
+  shortcutHintNthTab: "n 番目のタブ",
   settingsShortcutSwapped: "そのキーを使っていた「{other}」と割り当てを入れ替えました。",
   settingsShortcutsExport: "JSON で書き出す",
   settingsShortcutsImport: "JSON を読み込む",
@@ -7195,6 +7297,13 @@ const ja: Dict = {
   settingsPreflightImpactEnabled: "影響行数バッジを表示",
   settingsPreflightImpactEnabledHelp:
     "対象行数をバックグラウンドで集計し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定件数を表示します。JOIN やサブクエリなど複雑なクエリは「推定不可」になり、件数も実行時点とはずれることがあります。重いテーブルでの集計を避けたい場合はオフにしてください。",
+
+  settingsScanPreflight: "スキャンプリフライト (SELECT)",
+  settingsScanPreflightHelp:
+    "エディタの単純な SELECT に対し、実行前に EXPLAIN から得た推定スキャン行数と全表スキャンの警告をバッジで表示します。",
+  settingsScanPreflightEnabled: "スキャン行数 / フルスキャンのバッジを表示",
+  settingsScanPreflightEnabledHelp:
+    "EXPLAIN をバックグラウンドで実行し (読み取り専用・履歴には残りません)、実行ボタンの近くに推定を表示します。既定はオフです。複数文のスクリプトや SELECT 以外は何も表示せず、UNION・サブクエリは「推定不可」、WITH で始まる文は何も表示しません。行数はオプティマイザの推定で、ドライバごとに意味が少し異なります (MySQL: 走査行数 / PostgreSQL: スキャンノードが返す見込み行数 / SQLite: 行数推定なし、フルスキャン判定のみ)。",
 
   settingsPlanWatch: "実行計画ウォッチ",
   settingsPlanWatchHelp:
@@ -7361,6 +7470,9 @@ const ja: Dict = {
   settingsTabRestoreModeAsk: "都度確認する",
   settingsTabRestoreModeNever: "復元しない",
   settingsAppearance: "表示",
+  settingsAppearancePreviewLabel: "外観プレビュー (ツールバー・サイドバー・結果グリッド・SQL のモック)",
+  settingsAppearancePreviewRun: "実行",
+  settingsAppearancePreviewConn: "Alpha DB",
   settingsFontSize: "フォントサイズ (px)",
   settingsFontSizeHelp:
     "基準フォントサイズ (ピクセル単位)。SQL エディタや結果グリッドを含む UI 全体を拡大・縮小します。指定可能範囲: {min}〜{max} px (既定 {default})。",
@@ -8090,6 +8202,8 @@ const ja: Dict = {
   formDriverMysql: "MySQL",
   formDriverPostgres: "PostgreSQL",
   formDriverSqlite: "SQLite",
+  formDriverHintPort: "既定ポート {port}",
+  formDriverHintFile: "ローカルファイル",
   formMysqlLegend: "MySQL",
   formPostgresLegend: "PostgreSQL",
   formSqliteLegend: "SQLite",
@@ -8288,6 +8402,21 @@ const ja: Dict = {
     "WHERE 句がありません: テーブルの全行が対象です。件数は実行時点とズレうるスナップショットです。",
   editorPreflightUnestimableTooltip:
     "この文の形状 (JOIN・サブクエリ FROM・ORDER BY / LIMIT など) は安全に行数へ変換できないため、数字は表示しません。",
+
+  // SELECT のスキャンプリフライトのバッジ (#1508)。
+  editorScanEstimating: "スキャンを見積り中…",
+  editorScanFullScanRows: "全表スキャンの可能性 (約 {count} 行)",
+  editorScanFullScan: "全表スキャンの可能性",
+  editorScanRows: "スキャン: 約 {count} 行",
+  editorScanIndexed: "スキャン: インデックス利用",
+  editorScanUnestimable: "スキャン: 推定不可",
+  editorScanTooltip:
+    "裏で実行した EXPLAIN からの推定です (クエリ自体は実行しません)。行数はオプティマイザの推定で実際とズレ、意味もドライバごとに少し異なります。",
+  editorScanFullScanTooltip:
+    "EXPLAIN 上、インデックスを使わずテーブルを読む箇所があります ({tables})。大きなテーブルでは遅くなりえます。インデックス列への WHERE 条件や LIMIT を検討してください。",
+  editorScanUnestimableTooltip: "UNION・サブクエリは解析対象外のため、推定は表示しません。",
+  editorScanLimitedNote:
+    "この SELECT は LIMIT があり並べ替え・集計も無いため、途中で読み取りを止められ、実際の負荷はもっと軽い場合があります。",
 
   explainEmpty: "まだ実行計画はありません。Explain ボタンでクエリを解析してください。",
   explainLoading: "実行計画を解析中...",
@@ -9959,6 +10088,9 @@ const ja: Dict = {
   tabNew: "新しいクエリタブ",
   tabClose: "タブを閉じる",
   tabDuplicate: "このタブを複製",
+  tabPin: "タブをピン留め",
+  tabUnpin: "ピン留めを解除",
+  tabPinned: "ピン留め中",
   tabCloseOthers: "他のタブを閉じる",
   tabCloseRight: "右側のタブを閉じる",
   tabCloseLeft: "左側のタブを閉じる",
@@ -10082,6 +10214,7 @@ const ja: Dict = {
   gridDragColumn: "ドラッグで列を並び替え",
   gridMoveColumnLeft: "左へ移動",
   gridMoveColumnRight: "右へ移動",
+  gridResizeWidthBadge: "幅 {width} px",
   gridResizeColumnAria: "列 {column} の幅を変更 (左右キー、Shift で大きく変更)",
   gridColumnsLabel: "列",
   gridHideColumn: "この列を隠す",
@@ -10189,6 +10322,11 @@ const ja: Dict = {
   gridCopyAsInsertRowsCombined: "{count} 行を INSERT としてコピー (まとめて1文)",
   gridCopyAsInsertRowsCombinedTitle:
     "選択したすべての行を 1 つの INSERT INTO ... VALUES (...), (...); 文にまとめます",
+  gridCopyAsInsertPartial: "1 行 × {cols} 列を INSERT としてコピー",
+  gridCopyAsInsertRowsPartial: "{count} 行 × {cols} 列を INSERT としてコピー (1行1文)",
+  gridCopyAsInsertRowsCombinedPartial: "{count} 行 × {cols} 列を INSERT としてコピー (まとめて1文)",
+  gridCopyAsInsertPartialTitle:
+    "選択した列だけを出します。含まれない列は既定値になるか NOT NULL 違反になります",
   gridCopyAsInsertAmbiguousTable:
     "この結果の元テーブルを一意に特定できなかったため、仮のテーブル名でコピーしました。実行前に書き換えてください",
   gridCopyAsUpdate: "UPDATE としてコピー",

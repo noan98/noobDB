@@ -4,7 +4,7 @@
 //!
 //! 個々のテストファイルは `tests/<名前>.rs` のまま置き、ここから `#[path]` で取り込む
 //! (`include_str!` の相対パスやドキュメント上の参照先を変えないため)。新しいテストを足すときは
-//! ファイルを作ってここに `mod` を 1 行足す (足し忘れるとそのテストは走らない)。
+//! ファイルを作ってここに `mod` を 1 行足す (足し忘れるとそのテストは走らない。`src/__tests__/testWiringParity.test.ts` が結線漏れを CI で検出する)。
 
 #[path = "../auto_limit_golden.rs"]
 mod auto_limit_golden;

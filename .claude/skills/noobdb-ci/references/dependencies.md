@@ -29,3 +29,11 @@ PR の自動生成と脆弱性の可視化を次のように役割分担して�
   **当面 fail させず可視化のみ**とし (終了コードは step output に残して吸収。検出は `notify` ジョブがトラッキング Issue へ通知する、`references/scheduled-notify.md`)、PR ごとではなく週次
   スケジュールにしているのは、依存を変更しない PR でも毎回外部の npm advisory DB
   に問い合わせるコストを避けるためです。
+
+## pnpm overrides の方針 (#1566)
+
+- `package.json` の `pnpm.overrides` は**セレクタ + キャレット**で最小限にする (上限なしの `>=` は
+  将来の major を意図せず引き込むので使わない)。宣言範囲内で解消できる推移依存は override せず
+  lockfile の更新だけで直す。
+- `qs@6.15.1: ^6.16.0` は `typed-rest-client` が `qs` を 6.15.1 に固定しているための暫定措置。
+  `typed-rest-client` が修正版 `qs` を取り込んだら削除する (`pnpm audit` が 0 件のまま消せるか確認)。

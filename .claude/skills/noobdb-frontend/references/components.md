@@ -56,6 +56,9 @@ UI は Chakra UI に全面移行済み (#271)。ルートは `App.tsx`、Chakra 
     直前の SQL の実行計画を EXPLAIN タブで開く。
   - グリッド右クリックの「コピー」に CSV / JSON (`gridCopyFormats.ts`、書式は
     エクスポートの `buildCsv` / `buildJson` を再利用、マスク規則は TSV コピーと同じ)。
+    Markdown / INSERT (`buildGridCopyInsert`、リテラルは `cellEdit.ts` の `buildInsertClipboard`)
+    も同じ対象範囲 (`copyTargetFor`: 矩形選択の行・列、無ければ右クリック行の表示中全列)。
+    INSERT はマスク中のセルを含む範囲だと無効。ゴールデンは `fixtures/gridCopyVectors.json` (#1585)。
 - `api/tauri.ts` — 全 IPC の型付きラッパーを束ねた `api` とイベント購読ヘルパー (上述)。
   ラッパー本体は `api/commands/<module>.ts` (Rust の `commands/<module>.rs` と 1 対 1)、
   `invoke` とエラー正規化は `api/invoke.ts`、Channel の受け渡しは `api/streamChannels.ts`。

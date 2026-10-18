@@ -445,6 +445,8 @@ export function derivedCompletions(opts: {
   // 記号の意味が変わるため、安全側に倒して補完しない。
   const splitPair = pos > 0 ? text.slice(pos - 1, pos + 1) : "";
   if (MASK_SPLIT_PAIRS.has(splitPair) || text[pos] === "$") return null;
+  // `--` の直後 (#1735): 印を入れると MySQL ではコメントでなくなりマスクが崩れる。
+  if (pos >= 2 && text.slice(pos - 2, pos) === "--") return null;
   // 入力中の語: 識別子・引用符・ドット。`x.` / `d.a` のような修飾子付きも 1 語として扱う。
   const token = /[\w`".]*$/.exec(text.slice(Math.max(0, pos - 256), pos))?.[0] ?? "";
   const tokenStart = pos - token.length;

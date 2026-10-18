@@ -1,9 +1,10 @@
 import type { CellValue, Column } from "../api/tauri";
 import { MASK_PLACEHOLDER } from "./columnMask";
+import { buildInsertClipboard, type BuildInsertClipboardResult } from "./cellEdit";
 import { buildCsv, buildJson, buildMarkdownTable } from "./exportPreview";
 
 /**
- * 結果グリッドの「CSV / JSON / Markdown 表としてコピー」(#1113, #1541) の純ロジック。
+ * 結果グリッドの「CSV / JSON / Markdown 表 / INSERT 文としてコピー」(#1113, #1541, #1585) の純ロジック。
  *
  * 書式はエクスポート (`exportPreview.ts` の `buildCsv` / `buildJson`) をそのまま
  * 再利用し、ファイル書き出しとクリップボードで同じ出力になるようにする
@@ -61,4 +62,28 @@ export function buildGridCopyText(format: GridCopyFormat, input: GridCopyInput):
     default:
       return buildJson(columns, rows);
   }
+}
+
+export interface GridCopyInsertInput extends Omit<GridCopyInput, "copyPlaceholder"> {
+  driver: string;
+  database: string;
+  /** 対象テーブル名。解決できないとき (JOIN など) は null で、プレースホルダ名になる。 */
+  table: string | null | undefined;
+  /** true なら 1 文に `VALUES` タプルを並べる。false なら 1 行 1 文。 */
+  combineValues: boolean;
+}
+
+/**
+ * 対象範囲を INSERT 文にする (#1585)。リテラルのクォート・BLOB・64bit 整数の扱いは
+ * 行コンテキストメニューの「INSERT としてコピー」(`buildInsertClipboard`) と同じ。
+ *
+ * 伏せ字を INSERT に埋めると壊れた SQL になるため、マスクの置換はしない
+ * (マスク中のセルを含む範囲は呼び出し側が選べないようにする)。
+ */
+export function buildGridCopyInsert(input: GridCopyInsertInput): BuildInsertClipboardResult {
+  const { columns, rows } = sliceForCopy({ ...input, copyPlaceholder: false });
+  return buildInsertClipboard(
+    { driver: input.driver, database: input.database, table: input.table, columns, rows },
+    input.combineValues,
+  );
 }

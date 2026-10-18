@@ -66,7 +66,7 @@
     }
   ],
 
-  "literalNotes": "kind は Rust 側 db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected は Rust の sql_literal の出力。frontend は exportPreview.ts の sqlLiteral の期待値で、省略時は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか持たないため BLOB を文字列と区別できず、bytes ケースだけ意図的に食い違う — その差分をここに明記して固定する。",
+  "literalNotes": "kind は Rust 側 db::types::Value のどのバリアントを組み立てるかを指す (untagged serde では JSON からバリアントを一意に決められないため明示する)。expected は Rust の sql_literal の出力。frontend は exportPreview.ts の sqlLiteral の期待値で、省略時は expected と同じ。フロントは JSON 化された CellValue (string | number | boolean | null) しか持たないため BLOB を文字列と区別できず、bytes ケースだけ意図的に食い違う — その差分をここに明記して固定する。cellEdit は components/cellEdit.ts の literalFromCellValue (実際に DB へ発行される DELETE / INSERT / WHERE / 検索で使う実働エスケーパ、#1510) の期待値で、省略時は frontend → expected の順に同じ。真偽値は全方言で TRUE/FALSE になる点と、指数表記の浮動小数を展開しない点が sqlLiteral と異なる。string ケースは cellEdit.ts の quoteString (文字列 → クオート) も同じ expected で固定する。",
   "literals": [
     {
       "kind": "null",
@@ -76,14 +76,16 @@
     {
       "kind": "bool",
       "value": true,
-      "note": "PostgreSQL は TRUE/FALSE、MySQL / SQLite は 1/0",
-      "expected": { "mysql": "1", "postgres": "TRUE", "sqlite": "1" }
+      "note": "PostgreSQL は TRUE/FALSE、MySQL / SQLite は 1/0 (cellEdit は全方言 TRUE/FALSE)",
+      "expected": { "mysql": "1", "postgres": "TRUE", "sqlite": "1" },
+      "cellEdit": { "mysql": "TRUE", "postgres": "TRUE", "sqlite": "TRUE" }
     },
     {
       "kind": "bool",
       "value": false,
       "note": "同上の false",
-      "expected": { "mysql": "0", "postgres": "FALSE", "sqlite": "0" }
+      "expected": { "mysql": "0", "postgres": "FALSE", "sqlite": "0" },
+      "cellEdit": { "mysql": "FALSE", "postgres": "FALSE", "sqlite": "FALSE" }
     },
     {
       "kind": "int",
@@ -102,6 +104,20 @@
       "value": 1.5,
       "note": "有限の浮動小数",
       "expected": { "mysql": "1.5", "postgres": "1.5", "sqlite": "1.5" }
+    },
+    {
+      "kind": "float",
+      "value": 1e21,
+      "note": "指数表記になる大きな浮動小数 (sql_literal / sqlLiteral は展開、cellEdit は JS の String() のまま。どちらも 3 方言で有効な数値リテラル)",
+      "expected": { "mysql": "1000000000000000000000", "postgres": "1000000000000000000000", "sqlite": "1000000000000000000000" },
+      "cellEdit": { "mysql": "1e+21", "postgres": "1e+21", "sqlite": "1e+21" }
+    },
+    {
+      "kind": "float",
+      "value": 1e-7,
+      "note": "指数表記になる小さな浮動小数 (同上)",
+      "expected": { "mysql": "0.0000001", "postgres": "0.0000001", "sqlite": "0.0000001" },
+      "cellEdit": { "mysql": "1e-7", "postgres": "1e-7", "sqlite": "1e-7" }
     },
     {
       "kind": "string",
@@ -156,6 +172,36 @@
       "value": "日本語🙂",
       "note": "マルチバイト / 非 BMP 文字はそのまま",
       "expected": { "mysql": "'日本語🙂'", "postgres": "'日本語🙂'", "sqlite": "'日本語🙂'" }
+    },
+    {
+      "kind": "string",
+      "value": "a\\",
+      "note": "末尾のバックスラッシュ — MySQL は二重化して閉じ引用符を守る (しないと閉じ引用符がエスケープされ文字列が閉じない)",
+      "expected": { "mysql": "'a\\\\'", "postgres": "'a\\'", "sqlite": "'a\\'" }
+    },
+    {
+      "kind": "string",
+      "value": "\\\\",
+      "note": "連続するバックスラッシュ — MySQL は各々を二重化する",
+      "expected": { "mysql": "'\\\\\\\\'", "postgres": "'\\\\'", "sqlite": "'\\\\'" }
+    },
+    {
+      "kind": "string",
+      "value": "''",
+      "note": "連続するシングルクォートは各々二重化",
+      "expected": { "mysql": "''''''", "postgres": "''''''", "sqlite": "''''''" }
+    },
+    {
+      "kind": "string",
+      "value": "a\r\n\tb",
+      "note": "CR / LF / タブはエスケープせずそのまま",
+      "expected": { "mysql": "'a\r\n\tb'", "postgres": "'a\r\n\tb'", "sqlite": "'a\r\n\tb'" }
+    },
+    {
+      "kind": "string",
+      "value": "%_\\%",
+      "note": "LIKE のワイルドカード文字はリテラル側では何もしない (ESCAPE は呼び出し側の責務)",
+      "expected": { "mysql": "'%_\\\\%'", "postgres": "'%_\\%'", "sqlite": "'%_\\%'" }
     },
     {
       "kind": "bytes",

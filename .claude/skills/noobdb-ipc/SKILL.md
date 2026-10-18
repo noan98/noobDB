@@ -57,8 +57,11 @@ PR がどちらも同じ数に書き換えると、git は衝突なしでマー�
 
 ## capabilities は増やさない
 
-`src-tauri/capabilities/default.json` は意図的に最小 (window / app / event の
-デフォルト + `dialog:allow-open` / `dialog:allow-save` + updater 関連のみ)。
+`src-tauri/capabilities/default.json` は意図的に最小 (core の window / app / event / path の
+デフォルトと使用中のウィンドウ個別許可、`dialog:allow-open` / `dialog:allow-save`、
+`notification:default`、`updater:default`、`process:allow-restart` のみ)。
+フロントのプラグイン / ウィンドウ API の利用との突き合わせは
+`src/__tests__/capabilitiesParity.test.ts` が両方向で固定する (#1587)。
 **フロントはシェルや fs の API を直接叩かず、必ず Rust コマンドを経由します。**
 `read_text_file` / `write_binary_file` はまさにそのための経路です。
 

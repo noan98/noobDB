@@ -26,7 +26,10 @@ read_only セッションでも通ること」を外部サーバ無しで固定�
 
 ## Tauri capabilities
 
-`src-tauri/capabilities/default.json` は意図的に最小限です: ウィンドウ / app /
-イベントのデフォルトに加え、`dialog:allow-open` / `dialog:allow-save` のみ。
+`src-tauri/capabilities/default.json` は意図的に最小限です: core の window / app / event /
+path のデフォルトと使用中のウィンドウ個別許可 (minimize / toggle-maximize / close /
+start-dragging ほか)、`dialog:allow-open` / `dialog:allow-save`、`notification:default`、
+`updater:default`、`process:allow-restart` のみ。実際の利用との突き合わせは
+`src/__tests__/capabilitiesParity.test.ts` (#1587) が固定します。
 具体的な必要性がない限り、権限を追加しないでください — フロントエンドはバックエンドの
 コマンドを呼び出すべきで、シェルや fs の API を直接叩くべきではありません。

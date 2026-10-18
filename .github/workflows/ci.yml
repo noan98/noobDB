@@ -210,6 +210,22 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-vite-deps-
 
+      # tsc のインクリメンタル型チェック用 `.tsbuildinfo` (#1589)。`tsconfig.json` の
+      # `incremental` + `tsBuildInfoFile` で `node_modules/.cache/tsc/` に書かれ、300 本超の
+      # テストを含む `src` の再型検査を差分だけにする。pnpm store / Vite プリバンドルと同じく
+      # ブランチ跨ぎ (main push による温め含む) で効かせるため、キーは実行ごとに変わる
+      # `github.sha` 付きにして毎回保存し、restore-keys で直近のものを復元する。
+      # TypeScript のバージョン / tsconfig が変わっても tsc 自身が buildinfo を無効化する
+      # ので、キャッシュが古くても型検査結果は変わらない (遅くなるだけ)。
+      - name: Cache tsc incremental build info
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: node_modules/.cache/tsc
+          key: ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-tsc-${{ hashFiles('pnpm-lock.yaml', 'tsconfig.json') }}-
+            ${{ runner.os }}-tsc-
+
       - name: Type-check and build
         run: pnpm run build
 
@@ -1554,6 +1570,37 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # crates.io インデックス更新 (`Updating crates.io index`) を省く (#1680)。
+      # 実測 (main の push, 2026-10-18 JST) で `cargo nextest run` の冒頭にこれが約 26 秒かかる。
+      # rust-cache は ~/.cargo/registry を保存対象にしているが、sparse index (registry/index)
+      # は復元されず、`cargo fetch --offline` が `no matching package named aes-gcm found`
+      # で失敗することを PR #1721 の run で確認した (rust-cache が index キャッシュを掃除
+      # するため)。そこで index だけを自前の actions/cache で持つ。ダウンロード済みクレート
+      # (registry/cache) は rust-cache が復元する。保存は他の Windows キャッシュと同じく
+      # main の push だけ (index は数 MB 程度で、保存コストは短縮分を食わない)。
+      - name: Cache cargo registry index
+        id: cargo-index-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-index-${{ runner.os }}-windows-test-
+
+      # index とクレートが全部そろっていれば `--offline` で足りる。足りないもの (Cargo.lock を
+      # 変えた PR など) があると probe が失敗するので、オンラインのまま走る。失敗は握りつぶして
+      # よい (オンラインへフォールバックするだけ)。probe は Windows ターゲットの依存だけを見る。
+      - name: Use offline registry when fully cached (#1680)
+        shell: bash
+        working-directory: src-tauri
+        run: |
+          if cargo fetch --locked --offline --target x86_64-pc-windows-msvc; then
+            echo "CARGO_NET_OFFLINE=true" >> "$GITHUB_ENV"
+            echo "registry fully cached: running cargo offline"
+          else
+            echo "registry not fully cached: running cargo online"
+          fi
+
       # SQLite 統合テスト (tests/sqlite_integration.rs) は外部サービス不要で常時
       # 実行される (integration グループ)。
       # external グループ (MySQL/PostgreSQL/SSH/TLS) は NOOBDB_TEST_* の env ゲート
@@ -1565,6 +1612,14 @@ jobs:
       - name: cargo nextest run
         working-directory: src-tauri
         run: cargo nextest run --locked --lib --test golden --test integration --test serde_schema_parity
+
+      # cargo の index は main の push で、完全一致のキーが無かったときだけ保存する (#1680)。
+      - name: Save cargo registry index (main only)
+        if: success() && github.ref == 'refs/heads/main' && steps.cargo-index-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/registry/index
+          key: cargo-index-${{ runner.os }}-windows-test-${{ hashFiles('src-tauri/Cargo.lock') }}
 
       # main の push のときだけ sccache を保存する。復元時に完全一致した場合は
       # 内容が変わらないので保存しない (従来の actions/cache と同じ挙動)。
