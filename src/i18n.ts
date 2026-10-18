@@ -3209,6 +3209,24 @@ const en = {
   dropReferencedBySqlite:
     "These tables still reference the table(s) being dropped. SQLite may let the DROP through depending on PRAGMA foreign_keys and leave orphaned child rows. Parent.column ← child.column:",
   dropReferencedByMore: "and {count} more",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "{count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactTitlePartial: "At least {count} child rows in {tables} table(s) reference the data being deleted",
+  refImpactIntroRows:
+    "These child tables have rows pointing at the rows you are about to delete (child.column ← parent.column).",
+  refImpactIntroTruncate:
+    "These child tables have rows pointing at this table (child.column ← parent.column).",
+  refImpactBlockedRows: "Rules without CASCADE / SET NULL make the DELETE fail with a foreign key error.",
+  refImpactBlockedTruncate:
+    "MySQL and PostgreSQL refuse to TRUNCATE a table that is still referenced (PostgreSQL only with CASCADE, which also empties the child tables).",
+  refImpactCascading: "Child rows under ON DELETE CASCADE are deleted together with them.",
+  refImpactSqlite:
+    "SQLite enforces foreign keys only while PRAGMA foreign_keys is ON; otherwise orphaned child rows are left behind.",
+  refImpactRowCount: "{count} rows",
+  refImpactOpen: "Open child rows",
+  refImpactDeleteTitle: "Delete rows still referenced from child tables of {table}?",
+  refImpactDeleteOk: "Delete anyway",
+  refImpactMore: "and {count} more",
   dropConfirmOk: "Drop table",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "Drop index {index}?",
@@ -9797,6 +9815,23 @@ const ja: Dict = {
   dropReferencedBySqlite:
     "次のテーブルがここで削除するテーブルを参照しています。SQLite は PRAGMA foreign_keys の設定次第で DROP が通り、子の行が孤立することがあります。親.列 ← 子.列:",
   dropReferencedByMore: "ほか {count} 件",
+  // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
+  refImpactTitle: "削除対象を {tables} テーブルの子行 {count} 件が参照しています",
+  refImpactTitlePartial: "削除対象を {tables} テーブルの子行 {count} 件以上が参照しています",
+  refImpactIntroRows: "次の子テーブルに、削除しようとしている行を指す行があります (子.列 ← 親.列)。",
+  refImpactIntroTruncate: "次の子テーブルに、このテーブルを指す行があります (子.列 ← 親.列)。",
+  refImpactBlockedRows:
+    "ON DELETE が CASCADE / SET NULL 以外のものは、外部キーエラーで DELETE が失敗します。",
+  refImpactBlockedTruncate:
+    "MySQL / PostgreSQL は参照されたままのテーブルを TRUNCATE できません (PostgreSQL は CASCADE 指定のときだけで、子テーブルも空になります)。",
+  refImpactCascading: "ON DELETE CASCADE の子行は一緒に削除されます。",
+  refImpactSqlite:
+    "SQLite は PRAGMA foreign_keys が ON の間だけ外部キーを強制します。OFF だと子の行が孤立します。",
+  refImpactRowCount: "{count} 行",
+  refImpactOpen: "子行を開く",
+  refImpactDeleteTitle: "{table} の子テーブルから参照されている行を削除しますか?",
+  refImpactDeleteOk: "削除する",
+  refImpactMore: "ほか {count} 件",
   dropConfirmOk: "DROP TABLE",
   // インデックス削除 (#850)。ツリーのインデックスノード右クリックから。
   dropIndexConfirmTitle: "インデックス {index} を DROP しますか?",

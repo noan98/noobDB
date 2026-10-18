@@ -58,6 +58,8 @@ export interface IncomingFk {
   column: string;
   /** 子テーブルが指す、現在 (参照先) テーブル側のカラム。 */
   referencedColumn: string;
+  /** `ON DELETE` の参照動作 (CASCADE / SET NULL / SET DEFAULT / RESTRICT)。既定の NO ACTION・不明は省略 / null (#1506)。 */
+  onDelete?: string | null;
 }
 
 export interface ReverseRefParams {

@@ -1495,6 +1495,7 @@
   },
   "incomingForeignKey": {
     "column": "user_id",
+    "onDelete": "CASCADE",
     "referencedColumn": "id",
     "table": "orders"
   },
