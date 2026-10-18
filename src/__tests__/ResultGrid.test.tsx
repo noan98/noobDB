@@ -25,6 +25,8 @@ import {
   setColumnMaskEnabled,
   setColumnMaskPatterns,
   setColumnNullBars,
+  DEFAULT_RESULT_GRID_MODE,
+  DEFAULT_RESULT_GRID_PAGE_SIZE,
   setResultGridMode,
   setResultGridPageSize,
   setRichCellRendering,
@@ -2096,7 +2098,10 @@ describe("現在のビューのエクスポート (#1507)", () => {
       setResultGridMode("paginate");
       setResultGridPageSize(2);
     });
-    afterEach(() => setResultGridMode("scroll"));
+    afterEach(() => {
+      setResultGridMode(DEFAULT_RESULT_GRID_MODE);
+      setResultGridPageSize(DEFAULT_RESULT_GRID_PAGE_SIZE);
+    });
 
     it("何も絞らなければ (ページ分割だけでは) スコープを出さない", async () => {
       const user = userEvent.setup();
