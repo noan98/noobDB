@@ -35,6 +35,8 @@ const COVERED: Record<string, string> = {
   AssertionRunRecord: "assertionRunRecord",
   AssertionSql: "assertionSql",
   ImportAssertionsResult: "importAssertionsResult",
+  SnippetImportPreview: "snippetImportPreview",
+  SnippetImportResult: "snippetImportResult",
   CancelStreamResult: "cancelStreamResponse",
   CaptureOutcome: "timelapseCaptureOutcome",
   BlobFolderSaveResult: "blobFolderSaveResult",

@@ -1,0 +1,195 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { renderWithProviders, screen, waitFor } from "./testUtils";
+import { t } from "../i18n";
+import type { Snippet } from "../api/tauri";
+
+/**
+ * スニペット一覧のエクスポート / インポート (#1490) の画面配線。IPC (`api`) とファイル
+ * ダイアログはモックし、メニュー → ダイアログ → 確定の流れだけを固定する (衝突解決の規則
+ * そのものは Rust 側の単体テストが固定している)。
+ */
+const mocks = vi.hoisted(() => ({ open: vi.fn(), save: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open, save: mocks.save }));
+vi.mock("@tauri-apps/api/path", () => ({
+  downloadDir: () => Promise.resolve("/dl"),
+  join: (...p: string[]) => Promise.resolve(p.join("/")),
+}));
+vi.mock("../api/tauri", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/tauri")>();
+  return {
+    ...actual,
+    api: {
+      ...actual.api,
+      exportSnippets: vi.fn(),
+      previewImportSnippets: vi.fn(),
+      importSnippets: vi.fn(),
+      writeTextFile: vi.fn(),
+      readTextFile: vi.fn(),
+    },
+  };
+});
+
+import { SnippetList } from "../components/SnippetList";
+import { SnippetImportDialog } from "../components/SnippetImportDialog";
+import { api } from "../api/tauri";
+
+const snip: Snippet = {
+  id: "a",
+  name: "report",
+  folder: null,
+  tags: [],
+  sql: "SELECT 1",
+  driver: null,
+  scope: { kind: "any" },
+};
+
+function renderList(snippets: Snippet[], onChanged = vi.fn()) {
+  renderWithProviders(
+    <SnippetList
+      snippets={snippets}
+      activeProfile={null}
+      onInsert={vi.fn()}
+      onEdit={vi.fn()}
+      onDelete={vi.fn()}
+      onChanged={onChanged}
+    />,
+  );
+  return onChanged;
+}
+
+async function openMenu(user: ReturnType<typeof userEvent.setup>, item: string) {
+  await user.click(screen.getByRole("button", { name: t("snippetTransferMenu") }));
+  await user.click(await screen.findByRole("menuitem", { name: item }));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("SnippetList エクスポート / インポート (#1490)", () => {
+  it("エクスポートは保存ダイアログで選んだパスへ全件の JSON を書く", async () => {
+    const user = userEvent.setup();
+    mocks.save.mockResolvedValue("/out/snippets.json");
+    vi.mocked(api.exportSnippets).mockResolvedValue('{"snippets":[]}');
+    vi.mocked(api.writeTextFile).mockResolvedValue(undefined as never);
+    renderList([snip]);
+    await openMenu(user, t("snippetExport"));
+    await waitFor(() =>
+      expect(api.writeTextFile).toHaveBeenCalledWith("/out/snippets.json", '{"snippets":[]}'),
+    );
+    expect(api.exportSnippets).toHaveBeenCalledWith(null);
+  });
+
+  it("スニペットが無いときはエクスポートせずダイアログも開かない", async () => {
+    const user = userEvent.setup();
+    renderList([]);
+    await openMenu(user, t("snippetExport"));
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(api.exportSnippets).not.toHaveBeenCalled();
+  });
+
+  it("インポートはプレビューを出し、選んだ戦略で確定して一覧を取得し直す", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/in/snippets.json");
+    vi.mocked(api.readTextFile).mockResolvedValue("{json}" as never);
+    vi.mocked(api.previewImportSnippets).mockResolvedValue({
+      total: 3,
+      new_count: 2,
+      conflict_count: 1,
+      scope_reset_by_strategy: { rename: 1, skip: 0, overwrite: 1 },
+      duplicate_in_file_count: 0,
+      conflicts: [{ id: "a", existing_name: "旧", incoming_name: "新" }],
+      rejected: [],
+    });
+    vi.mocked(api.importSnippets).mockResolvedValue({
+      imported: 2,
+      skipped: 0,
+      overwritten: 1,
+      scope_reset: 1,
+      rejected: [],
+    });
+    const onChanged = renderList([snip]);
+    await openMenu(user, t("snippetImport"));
+    expect(
+      await screen.findByText(t("snippetImportSummary", { total: 3, fresh: 2, conflicts: 1 })),
+    ).toBeInTheDocument();
+    // 既定 (新規採番) の件数が出る。
+    expect(screen.getByText(t("snippetImportScopeReset", { count: 1 }))).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportOverwrite")) }));
+    // 上書きを選ぶと置き換わる先が出て、確定ボタンは「上書きしてインポート」になる。
+    expect(screen.getByText("旧 → 新")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: t("snippetImportConfirm") })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: t("snippetImportOverwriteConfirm") }));
+    await waitFor(() => expect(api.importSnippets).toHaveBeenCalledWith("{json}", "overwrite"));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+  });
+
+  it("取り込めるものが無いときは確定できない", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/in/empty.json");
+    vi.mocked(api.readTextFile).mockResolvedValue("[]" as never);
+    vi.mocked(api.previewImportSnippets).mockResolvedValue({
+      total: 0,
+      new_count: 0,
+      conflict_count: 0,
+      scope_reset_by_strategy: { rename: 0, skip: 0, overwrite: 0 },
+      duplicate_in_file_count: 0,
+      conflicts: [],
+      rejected: [],
+    });
+    renderList([snip]);
+    await openMenu(user, t("snippetImport"));
+    expect(await screen.findByText(t("snippetImportNothing"))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("snippetImportConfirm") })).toBeDisabled();
+  });
+
+  it("取り込みに失敗したらダイアログを閉じず、ダイアログ内にエラーを出す", async () => {
+    const user = userEvent.setup();
+    mocks.open.mockResolvedValue("/in/snippets.json");
+    vi.mocked(api.readTextFile).mockResolvedValue("{json}" as never);
+    vi.mocked(api.previewImportSnippets).mockResolvedValue({
+      total: 1,
+      new_count: 1,
+      conflict_count: 0,
+      scope_reset_by_strategy: { rename: 0, skip: 0, overwrite: 0 },
+      duplicate_in_file_count: 0,
+      conflicts: [],
+      rejected: [],
+    });
+    vi.mocked(api.importSnippets).mockRejectedValue("boom");
+    const onChanged = renderList([snip]);
+    await openMenu(user, t("snippetImport"));
+    await user.click(await screen.findByRole("button", { name: t("snippetImportConfirm") }));
+    expect(await screen.findByText(t("snippetImportError", { error: "boom" }))).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: t("snippetImportConfirm") })).toBeInTheDocument();
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
+  it("スコープ付け替え件数は選んだ戦略の値を出し、ファイル内の ID 重複も添える", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <SnippetImportDialog
+        preview={{
+          total: 3,
+          new_count: 1,
+          conflict_count: 1,
+          scope_reset_by_strategy: { rename: 2, skip: 0, overwrite: 1 },
+          duplicate_in_file_count: 1,
+          conflicts: [{ id: "a", existing_name: "旧", incoming_name: "新" }],
+          rejected: [],
+        }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(t("snippetImportScopeReset", { count: 2 }))).toBeInTheDocument();
+    expect(
+      screen.getByText((c) => c.includes(t("snippetImportDuplicates", { count: 1 }))),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportSkip")) }));
+    expect(screen.queryByText(t("snippetImportScopeReset", { count: 2 }))).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: new RegExp(t("snippetImportOverwrite")) }));
+    expect(screen.getByText(t("snippetImportScopeReset", { count: 1 }))).toBeInTheDocument();
+  });
+});
