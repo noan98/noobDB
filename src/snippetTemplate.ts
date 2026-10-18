@@ -28,8 +28,11 @@ export type SnippetPart =
   | { kind: "text"; text: string }
   | { kind: "field"; key: string; index: number | null; name: string | null; placeholder: string };
 
-/** フィールド記法: `${1}` `${1:x}` `${name}`。名前は識別子形 (英字 / _ で始まる)。 */
-const FIELD_RE = /\$\{(?:(\d+)(?::([^{}\r\n]*))?|([A-Za-z_]\w*))\}/y;
+/**
+ * フィールド記法: `${1}` `${1:x}` `${name}`。名前は識別子形 (英字 / _ で始まる)。
+ * 番号は 4 桁まで (CodeMirror は `${0}` を内部で 1e9 として扱うため、巨大な番号は最後の位置と衝突する)。
+ */
+const FIELD_RE = /\$\{(?:(\d{1,4})(?::([^{}\r\n]*))?|([A-Za-z_]\w*))\}/y;
 
 /** 本文をテキストとフィールドの列に分解する。 */
 export function parseSnippetTemplate(src: string): SnippetPart[] {

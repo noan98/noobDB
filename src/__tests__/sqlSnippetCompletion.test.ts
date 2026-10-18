@@ -43,7 +43,7 @@ describe("matchSnippets", () => {
   });
 
   it("部分一致とタグ一致は 2 文字以上から (1 文字は先頭一致だけ)", () => {
-    expect(matchSnippets(SNIPS, "l").map((m) => m.snippet.name)).toEqual(["sel", "select-all"].slice(0, 0));
+    expect(matchSnippets(SNIPS, "l").map((m) => m.snippet.name)).toEqual([]);
     expect(matchSnippets(SNIPS, "c").map((m) => m.snippet.name)).toEqual(["count"]);
     expect(matchSnippets(SNIPS, "q").map((m) => m.snippet.name)).toEqual([]);
     expect(matchSnippets(SNIPS, "qu").map((m) => m.snippet.name)).toEqual(["sel"]);

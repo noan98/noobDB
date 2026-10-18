@@ -43,6 +43,7 @@ describe("parseSnippetTemplate", () => {
 
 describe("後方互換: 既存スニペットを壊さない", () => {
   const legacy = [
+    "${1000000000}",
     "SELECT * FROM users WHERE id = $1 AND status = $2",
     "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql",
     "DO $body$ BEGIN PERFORM 1; END $body$",
