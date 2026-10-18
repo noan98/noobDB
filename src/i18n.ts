@@ -2216,6 +2216,8 @@ const en = {
   exportScopeView: "Current view",
   exportScopeViewHint:
     "Export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
+  exportScopeViewHintPartial:
+    "Of the rows loaded so far, export the {rows} rows × {cols} columns as shown now: filters, sort order, hidden columns and column order applied.",
   exportScopeFull: "Full result (re-run query)",
   exportScopeFullHint: "Re-run the query and stream every row to the file (no auto LIMIT).",
   exportFullProgress: "Exported {rows} rows...",
@@ -8878,6 +8880,8 @@ const ja: Dict = {
   exportScopeView: "現在のビュー",
   exportScopeViewHint:
     "フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
+  exportScopeViewHintPartial:
+    "読み込み済みの行のうち、フィルタ・並べ替え・列の表示/非表示・列順を反映した、いま見えている {rows} 行 × {cols} 列を書き出します。",
   exportScopeFull: "全件 (クエリを再実行)",
   exportScopeFullHint: "クエリを再実行し、全行をストリーミングでファイルへ書き出します (自動 LIMIT なし)。",
   exportFullProgress: "{rows} 行をエクスポート中...",

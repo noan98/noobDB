@@ -335,7 +335,13 @@ export function ExportModal({
   // そのまま出す「現在のビュー」が次点 (選択範囲の次、全件再実行より前)。
   const hasView = !!view;
   const [scope, setScope] = useState<ExportScope>(
-    hasSelection ? "selection" : hasView ? "view" : fullExport && partial ? "full" : "current",
+    hasSelection
+      ? "selection"
+      : view && view.rows.length > 0
+        ? "view"
+        : fullExport && partial
+          ? "full"
+          : "current",
   );
   const initialBasename = useMemo(() => defaultBasename(database, table), [database, table]);
   const [path, setPath] = useState<string>(`${initialBasename}${extensionFor("csv")}`);
@@ -985,7 +991,7 @@ export function ExportModal({
                       {sc === "current"
                         ? t("exportScopeCurrentHint", { rows: rows.length })
                         : sc === "view"
-                          ? t("exportScopeViewHint", {
+                          ? t(partial ? "exportScopeViewHintPartial" : "exportScopeViewHint", {
                               rows: view?.rows.length ?? 0,
                               cols: view?.columns.length ?? 0,
                             })

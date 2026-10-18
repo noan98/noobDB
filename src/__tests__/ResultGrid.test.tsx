@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { act, fireEvent, renderWithProviders, screen, waitFor, within } from "./testUtils";
@@ -25,6 +25,8 @@ import {
   setColumnMaskEnabled,
   setColumnMaskPatterns,
   setColumnNullBars,
+  setResultGridMode,
+  setResultGridPageSize,
   setRichCellRendering,
 } from "../settings";
 import { formatJsonCompact } from "../components/cellFormat";
@@ -2049,6 +2051,76 @@ describe("現在のビューのエクスポート (#1507)", () => {
     expect(preview).toContain("banana");
     expect(preview).not.toContain("apple");
     expect(preview).not.toContain("cherry");
+  });
+
+  it("列を隠すと、CSV のヘッダと値にその列が出ない", async () => {
+    const user = userEvent.setup();
+    const key = resultShapeSizingKey(FRUIT_COLUMNS, null, null);
+    writeStoredColumnState(colStateKeyFrom(key), { visibility: { "1": false } });
+    onTestFinished(() => localStorage.removeItem(colStateKeyFrom(key) ?? ""));
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).toBeChecked();
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("name");
+    expect(preview).not.toContain("qty");
+    expect(preview).toContain("banana");
+    expect(preview).not.toContain("banana,2");
+  });
+
+  it("選択範囲とビューが両方あるときは選択範囲が既定", async () => {
+    const user = userEvent.setup();
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.type(screen.getByLabelText(t("gridSearchAria")), "a");
+    const cells = Array.from(container.querySelectorAll("tbody tr")).map(
+      (tr) => Array.from(tr.querySelectorAll("td[role='gridcell']")) as HTMLElement[],
+    );
+    fireEvent.focus(cells[0][0]);
+    fireEvent.keyDown(cells[0][0], { key: "ArrowRight", shiftKey: true });
+    fireEvent.contextMenu(cells[0][0]);
+    await user.click(await screen.findByRole("menuitem", { name: t("gridExportSelection", { count: 2 }) }));
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeSelection")) })).toBeChecked();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).not.toBeChecked();
+  });
+
+  describe("ページング表示", () => {
+    const PAGED = makeResult(FRUIT_COLUMNS, [
+      ["banana", 1],
+      ["apple", 2],
+      ["cherry", 3],
+      ["mango", 4],
+      ["banjo", 5],
+    ]);
+    beforeEach(() => {
+      setResultGridMode("paginate");
+      setResultGridPageSize(2);
+    });
+    afterEach(() => setResultGridMode("scroll"));
+
+    it("何も絞らなければ (ページ分割だけでは) スコープを出さない", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ResultGrid result={PAGED} />);
+      await user.click(screen.getByRole("button", { name: t("exportButton") }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      expect(screen.queryByText(t("exportScopeView"))).toBeNull();
+      expect(screen.getByText(t("exportRowCount", { rows: 5 }))).toBeInTheDocument();
+    });
+
+    it("フィルタすると、全ページ分の該当行がビューに出る", async () => {
+      const user = userEvent.setup();
+      renderWithProviders(<ResultGrid result={PAGED} />);
+      await user.type(screen.getByLabelText(t("gridSearchAria")), "an");
+      await user.click(screen.getByRole("button", { name: t("exportButton") }));
+      expect(await screen.findByRole("dialog")).toBeInTheDocument();
+      // banana (1 ページ目) / mango (2) / banjo (3) が複数ページにまたがって出る。
+      expect(screen.getByText(t("exportRowCount", { rows: 3 }))).toBeInTheDocument();
+      const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+      expect(preview).toContain("banana");
+      expect(preview).toContain("mango");
+      expect(preview).toContain("banjo");
+      expect(preview).not.toContain("apple");
+    });
   });
 });
 

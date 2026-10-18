@@ -5596,20 +5596,30 @@ export const DataGrid = memo(function DataGrid({
     visibleColIdsRef.current = visibleColIdsRaw;
   }
   const visibleColIds = visibleColIdsRef.current;
-  if (exportViewRef) {
+  // 依存配列なしの layout effect で毎コミット最新の閉包を置く (描画中の ref 代入だと、
+  // deferredSearch で中断・破棄された描画の閉包が残りうる)。呼ばれるのは Export を開く瞬間だけ。
+  useLayoutEffect(() => {
+    if (!exportViewRef) return;
     // 書式生成は ExportModal 側の既存経路 (buildExportContent) に任せ、ここは表示順の
     // 切り出しだけ。大結果 (ハンドル) の表示順は visibleRows が既に反映している (#1507)。
     exportViewRef.current = () => {
+      // ページング表示では visibleRows が今のページだけなので、ページ分割前の行モデル
+      // (フィルタ・ソート後の全ページ分) から切り出す。
+      const viewRows = paginationState
+        ? rowAllowSet
+          ? table.getPrePaginatedRowModel().rows.filter((r) => rowAllowSet.has(r.index))
+          : table.getPrePaginatedRowModel().rows
+        : visibleRows;
       const identityCols =
         visibleColIds.length === columns.length && visibleColIds.every((ci, i) => ci === i);
-      const identityRows = visibleRows.length === rows.length && visibleRows.every((r, i) => r.index === i);
+      const identityRows = viewRows.length === rows.length && viewRows.every((r, i) => r.index === i);
       if (identityCols && identityRows) return null;
       return {
         columns: visibleColIds.map((ci) => columns[ci]).filter((c): c is Column => !!c),
-        rows: visibleRows.map((r) => visibleColIds.map((ci) => rows[r.index]?.[ci] ?? null)),
+        rows: viewRows.map((r) => visibleColIds.map((ci) => rows[r.index]?.[ci] ?? null)),
       };
     };
-  }
+  });
   const totalRows = rows.length;
   const hasColumnFilter = columnFilters.length > 0;
   const hasGlobalFilter = (globalFilter ?? "").trim().length > 0;
