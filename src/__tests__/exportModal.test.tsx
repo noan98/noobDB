@@ -142,6 +142,65 @@ describe("ExportModal 選択範囲スコープ (#917)", () => {
 });
 
 /**
+ * 現在のビュー (フィルタ・ソート・列順を反映) のエクスポート (#1507)。`view` prop が
+ * あるときだけスコープを出し、既定で選び、整形は既存の `buildExportContent` を通す。
+ */
+describe("ExportModal 現在のビュースコープ (#1507)", () => {
+  // name 列だけ・行は逆順 (ソート + 列非表示の結果を模す)。
+  const VIEW = {
+    columns: [makeColumn("name", "varchar")],
+    rows: [["bob"], ["alice"]] as unknown as typeof SAMPLE_ROWS,
+  };
+
+  it("view が無ければスコープを出さない", () => {
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table={null}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.queryByText(t("exportScopeView"))).not.toBeInTheDocument();
+  });
+
+  it("view があれば既定で選択し、表示順・表示列のままプレビューへ出す", () => {
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table={null}
+        view={VIEW}
+        onClose={() => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).toBeChecked();
+    expect(screen.getByText(t("exportRowCount", { rows: 2 }))).toBeInTheDocument();
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).not.toContain("id,name");
+    expect(preview.indexOf("bob")).toBeGreaterThan(-1);
+    expect(preview.indexOf("bob")).toBeLessThan(preview.indexOf("alice"));
+  });
+
+  it("「現在のグリッドのみ」に切り替えると生の全件に戻る", () => {
+    renderWithProviders(
+      <ExportModal
+        columns={SAMPLE_COLUMNS}
+        rows={SAMPLE_ROWS}
+        database={null}
+        table={null}
+        view={VIEW}
+        onClose={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: new RegExp(t("exportScopeCurrent")) }));
+    expect(screen.getByLabelText(t("exportPreview")).textContent).toContain("id,name");
+  });
+});
+
+/**
  * 調査バンドル (#745)。`bundle` 文脈が渡されたときだけ形式に現れ、保存前に
  * 持ち出す件数と伏せ字化される列を明示し、`write_text_file` で自己完結 HTML を書く。
  */

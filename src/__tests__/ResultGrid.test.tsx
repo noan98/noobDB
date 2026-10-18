@@ -2024,6 +2024,34 @@ describe("選択範囲のエクスポート (#917)", () => {
   });
 });
 
+// 現在のビューのエクスポート (#1507)。ツールバーの Export を開いた時点の表示
+// (フィルタ・ソート) が「現在のビュー」スコープとして渡る。
+describe("現在のビューのエクスポート (#1507)", () => {
+  beforeEach(() => setLocale("en"));
+
+  it("何も絞っていなければスコープを出さない", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.queryByText(t("exportScopeView"))).toBeNull();
+  });
+
+  it("全体フィルタで絞ると、絞った行だけが既定のスコープで出力対象になる", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    await user.type(screen.getByLabelText(t("gridSearchAria")), "an");
+    await user.click(screen.getByRole("button", { name: t("exportButton") }));
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: new RegExp(t("exportScopeView")) })).toBeChecked();
+    const preview = screen.getByLabelText(t("exportPreview")).textContent ?? "";
+    expect(preview).toContain("banana");
+    expect(preview).not.toContain("apple");
+    expect(preview).not.toContain("cherry");
+  });
+});
+
 // セル右クリックのクイックフィルタ (#914)。既存のフィルタモデル
 // (`onSetServerFilter` / TanStack の ColumnFilter) へセル値を流し込むだけなので、
 // ここでは「どちらの経路に載るか」と「NULL / BLOB の扱い」を固定する。値 → 条件の
