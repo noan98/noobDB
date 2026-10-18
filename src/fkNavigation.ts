@@ -6,7 +6,7 @@
 // 値のリテラル化は `cellEdit.ts` の既存方針を踏襲し、二重定義しない。副作用なし。
 
 import type { CellValue } from "./api/tauri";
-import { literalFromCellValue } from "./components/cellEdit";
+import { rowValueLiteral } from "./components/cellEdit";
 import { quoteIdentFor } from "./components/sqlDialect";
 
 /**
@@ -20,11 +20,13 @@ export function qualifiedTable(driver: string, database: string | null | undefin
 }
 
 /** `column` を `value` に一致させる述語を NULL 安全に生成する。 */
-function matchPredicate(driver: string, column: string, value: CellValue): string {
+function matchPredicate(driver: string, column: string, value: CellValue, typeName?: string): string {
   if (value === null || value === undefined) {
     return `${quoteIdentFor(driver, column)} IS NULL`;
   }
-  return `${quoteIdentFor(driver, column)} = ${literalFromCellValue(driver, value)}`;
+  // 列型が分かるときは行編集と同じ型付きリテラルにする (BLOB キーは 16 進リテラル、
+  // 文字列で届いた数値は裸の数値)。不明なら従来どおり値の実行時型だけで決める。
+  return `${quoteIdentFor(driver, column)} = ${rowValueLiteral(driver, value, { name: column, type_name: typeName ?? "" })}`;
 }
 
 export interface FkJumpParams {
@@ -36,6 +38,8 @@ export interface FkJumpParams {
   refColumn: string;
   /** ジャンプ元セルの値。 */
   value: CellValue;
+  /** ジャンプ元セルの列型 (`Column.type_name`)。省略時は値の実行時型だけでリテラル化する。 */
+  valueType?: string;
 }
 
 /**
@@ -47,6 +51,7 @@ export function buildFkJumpSql(p: FkJumpParams): string {
     p.driver,
     p.refColumn,
     p.value,
+    p.valueType,
   )}`;
 }
 
@@ -71,6 +76,8 @@ export interface ReverseRefParams {
   childColumn: string;
   /** 現在の行が持つ、参照されているキー値。 */
   value: CellValue;
+  /** キー値の列型 (`Column.type_name`)。省略時は値の実行時型だけでリテラル化する。 */
+  valueType?: string;
 }
 
 /**
@@ -82,5 +89,6 @@ export function buildReverseRefSql(p: ReverseRefParams): string {
     p.driver,
     p.childColumn,
     p.value,
+    p.valueType,
   )}`;
 }

@@ -242,3 +242,14 @@ describe("buildOpenChildrenSql", () => {
     );
   });
 });
+
+describe("buildOpenChildrenSql: BLOB 宣言でも 16 進でない値はリテラル化し直す", () => {
+  it("SQLite 非 STRICT で TEXT / INTEGER が入った BLOB キーを X'…' に埋めない", () => {
+    const impact = { table: "c", column: "pid", referencedColumn: "id" };
+    const keys = new Map<string, CellValue[]>([["id", ["a' OR 1=1 --", 5, "ab12"]]]);
+    const types = new Map([["id", "BLOB"]]);
+    expect(buildOpenChildrenSql({ driver: "sqlite", database: null, impact, keys, types })).toBe(
+      "SELECT * FROM \"c\" WHERE \"pid\" IN ('a'' OR 1=1 --', 5, X'ab12')",
+    );
+  });
+});

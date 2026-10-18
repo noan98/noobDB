@@ -112,6 +112,7 @@ function useRelatedCounts(
             childTable: entry.fk.table,
             childColumn: entry.fk.column,
             value: entry.value,
+            valueType: entry.valueType,
           });
           if (!sql) continue;
           try {
@@ -322,7 +323,14 @@ function RelatedRowsBody({
     setState({ kind: "loading" });
   }
 
-  const params = { driver, database, childTable: entry.fk.table, childColumn: entry.fk.column, value };
+  const params = {
+    driver,
+    database,
+    childTable: entry.fk.table,
+    childColumn: entry.fk.column,
+    value,
+    valueType: entry.valueType,
+  };
   const sql = buildRelatedRowsSql({ ...params, limit });
   const openSql = buildRelatedOpenSql(params);
 

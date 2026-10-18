@@ -224,3 +224,21 @@ describe("子行件数の事前表示 (#1629)", () => {
     expect(describeRelatedCount(RELATED_ROWS_MAX + 1)).toEqual({ count: RELATED_ROWS_MAX, over: true });
   });
 });
+
+describe("valueType の受け渡し", () => {
+  it("resolveRelatedEntries が参照先列の型を載せ、buildRelatedRowsSql が型付きリテラルにする", () => {
+    const fk = { table: "child", column: "pid", referencedColumn: "id" };
+    const [e] = resolveRelatedEntries([fk], ["id"], ["ab12"], () => false, ["BLOB"]);
+    expect(e.valueType).toBe("BLOB");
+    expect(
+      buildRelatedRowsSql({
+        driver: "mysql",
+        childTable: "child",
+        childColumn: "pid",
+        value: e.value,
+        valueType: e.valueType,
+        limit: 10,
+      }),
+    ).toBe("SELECT * FROM `child` WHERE `pid` = 0xab12 LIMIT 11");
+  });
+});

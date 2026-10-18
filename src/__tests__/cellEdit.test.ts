@@ -1195,6 +1195,24 @@ describe("数値判定の境界 (インジェクション隣接のリテラル�
       expect(ok).toContain("'a', 42)");
     });
 
+    it("BLOB 宣言の列に 16 進でない値が届いたら (SQLite 非 STRICT)、エスケープ済みの文字列 / 数値に戻る", () => {
+      const cols = [col("k", "BLOB")];
+      const b = { driver: "sqlite", database: "d", table: "t", columns: cols, pkIndices: [0] };
+      const [ins] = buildRowSql({ ...b, rows: [["a' OR 1=1 --"]] }, "insert");
+      expect(ins).toContain("'a'' OR 1=1 --'");
+      expect(ins).not.toContain("X'");
+      const [five] = buildRowSql({ ...b, rows: [[5]] }, "insert");
+      expect(five).toContain("(5)");
+      const [del] = buildDeleteStatements({
+        ...b,
+        rows: [["a'b"]],
+        deleteKeys: new Set([rowEditKey(["a'b"], [0], 0)]),
+      });
+      expect(del).toContain("\"k\" = 'a''b'");
+      const [hex] = buildRowSql({ ...b, rows: [["deadbeef"]] }, "insert");
+      expect(hex).toContain("X'deadbeef'");
+    });
+
     it("buildDeleteStatements: 文字列 PK の先頭ゼロを保つ", () => {
       const cols = [col("code", "VARCHAR")];
       const rows: CellValue[][] = [["00123"]];
