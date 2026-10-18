@@ -1,0 +1,221 @@
+{
+  "description": "結果グリッド選択範囲のコピー書式 (CSV / JSON / Markdown / INSERT) のゴールデンベクタ (#1585)。フロントの純関数 gridCopyFormats.ts を固定する (Rust 側に対応実装は無い)。CSV/JSON/Markdown はエクスポートと同じ書式、INSERT は行コンテキストメニューの「INSERT としてコピー」と同じリテラル規則。新しい境界ケースはこの JSON に追記する。",
+  "drivers": [
+    "mysql",
+    "postgres",
+    "sqlite"
+  ],
+  "cases": [
+    {
+      "name": "基本の型 (整数・文字列・NULL・真偽・日時)",
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INT"
+        },
+        {
+          "name": "name",
+          "type_name": "VARCHAR"
+        },
+        {
+          "name": "note",
+          "type_name": "TEXT"
+        },
+        {
+          "name": "active",
+          "type_name": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type_name": "DATETIME"
+        }
+      ],
+      "rows": [
+        [
+          1,
+          "apple",
+          null,
+          true,
+          "2024-01-02 03:04:05"
+        ],
+        [
+          2,
+          "it's, \"q\"",
+          "line1\nline2",
+          false,
+          null
+        ]
+      ],
+      "rowIndices": [
+        0,
+        1
+      ],
+      "colIndices": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "expected": {
+        "csv": "id,name,note,active,created_at\r\n1,apple,,true,2024-01-02 03:04:05\r\n2,\"it's, \"\"q\"\"\",\"line1\nline2\",false,\r\n",
+        "json": "[\n  {\n    \"active\": true,\n    \"created_at\": \"2024-01-02 03:04:05\",\n    \"id\": 1,\n    \"name\": \"apple\",\n    \"note\": null\n  },\n  {\n    \"active\": false,\n    \"created_at\": null,\n    \"id\": 2,\n    \"name\": \"it's, \\\"q\\\"\",\n    \"note\": \"line1\\nline2\"\n  }\n]",
+        "markdown": "| id | name | note | active | created_at |\n| --- | --- | --- | --- | --- |\n| 1 | apple |  | true | 2024-01-02 03:04:05 |\n| 2 | it's, \"q\" | line1<br>line2 | false |  |\n",
+        "insert": {
+          "mysql": "INSERT INTO `shop`.`items` (`id`, `name`, `note`, `active`, `created_at`) VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05');\nINSERT INTO `shop`.`items` (`id`, `name`, `note`, `active`, `created_at`) VALUES (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05');\nINSERT INTO \"shop\".\"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);",
+          "sqlite": "INSERT INTO \"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05');\nINSERT INTO \"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);"
+        },
+        "insertCombined": {
+          "mysql": "INSERT INTO `shop`.`items` (`id`, `name`, `note`, `active`, `created_at`) VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05'), (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05'), (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);",
+          "sqlite": "INSERT INTO \"items\" (\"id\", \"name\", \"note\", \"active\", \"created_at\") VALUES (1, 'apple', NULL, TRUE, '2024-01-02 03:04:05'), (2, 'it''s, \"q\"', 'line1\nline2', FALSE, NULL);"
+        }
+      }
+    },
+    {
+      "name": "64bit 整数は文字列のまま丸めず、数値列のリテラルは無引用",
+      "columns": [
+        {
+          "name": "big",
+          "type_name": "BIGINT"
+        },
+        {
+          "name": "price",
+          "type_name": "DECIMAL"
+        }
+      ],
+      "rows": [
+        [
+          "9223372036854775807",
+          "12.50"
+        ],
+        [
+          "-9007199254740993",
+          null
+        ]
+      ],
+      "rowIndices": [
+        0,
+        1
+      ],
+      "colIndices": [
+        0,
+        1
+      ],
+      "expected": {
+        "csv": "big,price\r\n9223372036854775807,12.50\r\n-9007199254740993,\r\n",
+        "json": "[\n  {\n    \"big\": \"9223372036854775807\",\n    \"price\": \"12.50\"\n  },\n  {\n    \"big\": \"-9007199254740993\",\n    \"price\": null\n  }\n]",
+        "markdown": "| big | price |\n| --- | --- |\n| 9223372036854775807 | 12.50 |\n| -9007199254740993 |  |\n",
+        "insert": {
+          "mysql": "INSERT INTO `shop`.`items` (`big`, `price`) VALUES (9223372036854775807, 12.50);\nINSERT INTO `shop`.`items` (`big`, `price`) VALUES (-9007199254740993, NULL);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"big\", \"price\") VALUES (9223372036854775807, 12.50);\nINSERT INTO \"shop\".\"items\" (\"big\", \"price\") VALUES (-9007199254740993, NULL);",
+          "sqlite": "INSERT INTO \"items\" (\"big\", \"price\") VALUES (9223372036854775807, 12.50);\nINSERT INTO \"items\" (\"big\", \"price\") VALUES (-9007199254740993, NULL);"
+        },
+        "insertCombined": {
+          "mysql": "INSERT INTO `shop`.`items` (`big`, `price`) VALUES (9223372036854775807, 12.50), (-9007199254740993, NULL);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"big\", \"price\") VALUES (9223372036854775807, 12.50), (-9007199254740993, NULL);",
+          "sqlite": "INSERT INTO \"items\" (\"big\", \"price\") VALUES (9223372036854775807, 12.50), (-9007199254740993, NULL);"
+        }
+      }
+    },
+    {
+      "name": "列の部分集合と表示順 (並べ替え・列入れ替え)",
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INT"
+        },
+        {
+          "name": "name",
+          "type_name": "VARCHAR"
+        },
+        {
+          "name": "memo",
+          "type_name": "TEXT"
+        }
+      ],
+      "rows": [
+        [
+          1,
+          "a",
+          "x"
+        ],
+        [
+          2,
+          "b",
+          "y"
+        ],
+        [
+          3,
+          "c",
+          "z"
+        ]
+      ],
+      "rowIndices": [
+        2,
+        0
+      ],
+      "colIndices": [
+        1,
+        0
+      ],
+      "expected": {
+        "csv": "name,id\r\nc,3\r\na,1\r\n",
+        "json": "[\n  {\n    \"id\": 3,\n    \"name\": \"c\"\n  },\n  {\n    \"id\": 1,\n    \"name\": \"a\"\n  }\n]",
+        "markdown": "| name | id |\n| --- | --- |\n| c | 3 |\n| a | 1 |\n",
+        "insert": {
+          "mysql": "INSERT INTO `shop`.`items` (`name`, `id`) VALUES ('c', 3);\nINSERT INTO `shop`.`items` (`name`, `id`) VALUES ('a', 1);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"name\", \"id\") VALUES ('c', 3);\nINSERT INTO \"shop\".\"items\" (\"name\", \"id\") VALUES ('a', 1);",
+          "sqlite": "INSERT INTO \"items\" (\"name\", \"id\") VALUES ('c', 3);\nINSERT INTO \"items\" (\"name\", \"id\") VALUES ('a', 1);"
+        },
+        "insertCombined": {
+          "mysql": "INSERT INTO `shop`.`items` (`name`, `id`) VALUES ('c', 3), ('a', 1);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"name\", \"id\") VALUES ('c', 3), ('a', 1);",
+          "sqlite": "INSERT INTO \"items\" (\"name\", \"id\") VALUES ('c', 3), ('a', 1);"
+        }
+      }
+    },
+    {
+      "name": "バックスラッシュとバイナリ列",
+      "columns": [
+        {
+          "name": "path",
+          "type_name": "VARCHAR"
+        },
+        {
+          "name": "data",
+          "type_name": "BLOB"
+        }
+      ],
+      "rows": [
+        [
+          "C:\\temp\\x",
+          "deadbeef"
+        ]
+      ],
+      "rowIndices": [
+        0
+      ],
+      "colIndices": [
+        0,
+        1
+      ],
+      "expected": {
+        "csv": "path,data\r\nC:\\temp\\x,deadbeef\r\n",
+        "json": "[\n  {\n    \"data\": \"deadbeef\",\n    \"path\": \"C:\\\\temp\\\\x\"\n  }\n]",
+        "markdown": "| path | data |\n| --- | --- |\n| C:\\\\temp\\\\x | deadbeef |\n",
+        "insert": {
+          "mysql": "INSERT INTO `shop`.`items` (`path`, `data`) VALUES ('C:\\\\temp\\\\x', 0xdeadbeef);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"path\", \"data\") VALUES ('C:\\temp\\x', '\\xdeadbeef');",
+          "sqlite": "INSERT INTO \"items\" (\"path\", \"data\") VALUES ('C:\\temp\\x', X'deadbeef');"
+        },
+        "insertCombined": {
+          "mysql": "INSERT INTO `shop`.`items` (`path`, `data`) VALUES ('C:\\\\temp\\\\x', 0xdeadbeef);",
+          "postgres": "INSERT INTO \"shop\".\"items\" (\"path\", \"data\") VALUES ('C:\\temp\\x', '\\xdeadbeef');",
+          "sqlite": "INSERT INTO \"items\" (\"path\", \"data\") VALUES ('C:\\temp\\x', X'deadbeef');"
+        }
+      }
+    }
+  ]
+}

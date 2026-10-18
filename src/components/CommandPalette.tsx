@@ -12,11 +12,12 @@ import {
   type ReactNode,
 } from "react";
 import { useT } from "../i18n";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Kbd } from "./Kbd";
 import { Modal } from "./Modal";
 import { isImeComposing } from "./modalKeys";
-import { staggerContainer, transitions, variants } from "../motion";
+import { staggerContainer, variants } from "../motion";
 import {
   groupCommands,
   limitAndIndexGroups,
@@ -30,9 +31,7 @@ import {
 // motion 用 props は Chakra のスタイルプロップ名 (`transition`) と衝突したり、
 // スタイルプロップ以外は既定で無視されたりするため、必要なものだけ明示的に転送する
 // (`TabBar` の `MotionIndicator` / `ProfileCardGrid` の `MotionFlex` と同じパターン)。
-// - `MotionHighlight`: アクティブ行の背後を滑らせる `layoutId` ハイライト (#976)。
 // - `MotionRow`: 結果グループのスタッガー出現に使う `variants` を持つ行本体。
-const MotionHighlight = chakra(motion.div, {}, { forwardProps: ["transition"] });
 const MotionRow = chakra(motion.button, {}, { forwardProps: ["variants"] });
 const MotionListBox = chakra(motion.div, {}, { forwardProps: ["variants", "initial", "animate"] });
 
@@ -405,18 +404,7 @@ const CommandRow = memo(function CommandRow({
           ↑/↓ 移動のたびに Motion がこの要素の前回位置 → 新しい位置への layout
           アニメーションを自動計算する (`TabBar` のアクティブインジケータと同じ手法)。
           reduced-motion は MotionConfig が自動で瞬時化する。 */}
-      {active && (
-        <MotionHighlight
-          layoutId={highlightId}
-          transition={transitions.emphasized}
-          position="absolute"
-          inset="0"
-          bg="app.active"
-          zIndex={0}
-          pointerEvents="none"
-          aria-hidden
-        />
-      )}
+      {active && <ActiveRowHighlight layoutId={highlightId} />}
       <Flex position="relative" zIndex={1} align="center" gap="2" w="100%">
         {item.icon && (
           <Box color="app.textMuted" flexShrink={0} display="inline-flex">

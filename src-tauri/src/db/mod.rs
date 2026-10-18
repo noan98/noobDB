@@ -2762,6 +2762,12 @@ pub fn is_read_only_sql(sql: &str) -> bool {
     is_read_only_sql_masked(
         &mask_for_analysis_conservative(&orig),
         &mask_keeping_identifiers(None, &orig),
+    ) && is_read_only_sql_masked(
+        // ドライバ不明のときは MySQL の `--` 規則 (直後が空白でなければコメントではない)
+        // でも判定する。`SELECT 1--1; DROP TABLE t` は PG / SQLite ではコメントだが
+        // MySQL では実行される (#1735)。
+        &mask_for_analysis_impl(&orig, false, true, KeepIdents::None, MaskExtras::MYSQL_DASH),
+        &mask_for_analysis_impl(&orig, false, true, KeepIdents::All, MaskExtras::MYSQL_DASH),
     )
 }
 
@@ -3568,19 +3574,35 @@ fn driver_hash_comment(driver: DriverKind) -> bool {
 struct MaskExtras {
     e_strings: bool,
     bracket_idents: bool,
+    /// MySQL: `--` は直後が空白・制御文字・文末のときだけ行コメント (`1--1` は
+    /// `1 - (-1)`)。PostgreSQL / SQLite は空白不要でコメント。
+    mysql_dash: bool,
 }
 
 impl MaskExtras {
     const NONE: Self = Self {
         e_strings: false,
         bracket_idents: false,
+        mysql_dash: false,
     };
+
+    /// ドライバ不明の入口が MySQL の `--` 規則でも判定するための変種。
+    const MYSQL_DASH: Self = Self {
+        mysql_dash: true,
+        ..Self::NONE
+    };
+}
+
+/// MySQL の `--` コメント開始の判定。`next` は `--` の直後の文字 (無ければ文末)。
+fn dash_starts_comment(next: Option<char>) -> bool {
+    next.map_or(true, |c| c.is_ascii_whitespace() || c.is_ascii_control())
 }
 
 fn driver_mask_extras(driver: DriverKind) -> MaskExtras {
     MaskExtras {
         e_strings: driver == DriverKind::Postgres,
         bracket_idents: driver == DriverKind::Sqlite,
+        mysql_dash: driver == DriverKind::Mysql,
     }
 }
 
@@ -3840,7 +3862,12 @@ fn mask_for_analysis_impl(
         let c = src[i];
         // Line comment: `-- …` or (MySQL / driver-less only) `# …`, terminated
         // by newline.
-        if (c == '-' && i + 1 < n && src[i + 1] == '-') || (c == '#' && hash_comment) {
+        if (c == '-'
+            && i + 1 < n
+            && src[i + 1] == '-'
+            && (!extras.mysql_dash || dash_starts_comment(src.get(i + 2).copied())))
+            || (c == '#' && hash_comment)
+        {
             while i < n && src[i] != '\n' {
                 out.push(' ');
                 i += 1;
@@ -4702,6 +4729,38 @@ mod tests {
         assert!(!is_read_only_sql_for(lite, "SELECT [a ; DELETE FROM t;"));
         // 括弧内の本文は隠れる。
         assert!(is_read_only_sql_for(lite, "SELECT [delete me] FROM t"));
+    }
+
+    #[test]
+    fn mysql_dash_comment_needs_trailing_space_1735() {
+        let sql = "SELECT 1--1; DROP TABLE t";
+        // MySQL: `--1` はコメントではない (1 - -1) ので DROP が見える。
+        assert!(!is_read_only_sql_for(DriverKind::Mysql, sql));
+        // ドライバ不明は MySQL 解釈でも判定する (fail-closed)。
+        assert!(!is_read_only_sql(sql));
+        // PostgreSQL / SQLite は空白不要でコメント。
+        assert!(is_read_only_sql_for(DriverKind::Postgres, sql));
+        assert!(is_read_only_sql_for(DriverKind::Sqlite, sql));
+        // 空白・タブ・制御文字・文末ならどのドライバでもコメント。
+        for ok in [
+            "SELECT 1-- ; DROP TABLE t",
+            "SELECT 1--\t; DROP TABLE t",
+            "SELECT 1--",
+        ] {
+            assert!(is_read_only_sql_for(DriverKind::Mysql, ok), "{ok:?}");
+            assert!(is_read_only_sql(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn sqlite_bracketed_denied_function_is_rejected_1735() {
+        let lite = DriverKind::Sqlite;
+        assert!(!is_read_only_sql_for(lite, "SELECT [load_extension]('x')"));
+        assert!(!is_read_only_sql_for(lite, "SELECT [nextval]('s')"));
+        assert!(is_read_only_sql_for(
+            lite,
+            "SELECT [name] FROM [load_extension_log]"
+        ));
     }
 
     #[test]

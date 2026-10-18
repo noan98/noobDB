@@ -122,6 +122,7 @@ function makeEnv(store: TabPaneStore<Tab, PaneState>, overrides: Partial<PaneEnv
     t,
     renamingTabId: null,
     sessionId: null,
+    txActive: false,
     selectedProfile: null,
     layoutMode: "normal",
     readOnly: false,

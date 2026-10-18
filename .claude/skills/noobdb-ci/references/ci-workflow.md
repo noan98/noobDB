@@ -37,7 +37,11 @@
   ストアを `actions/cache` でキャッシュします (`actions/setup-node` の `cache: npm`
   は使いません)。`frontend` ジョブは加えて Vite の依存プリバンドルキャッシュ
   (`node_modules/.vite`) と Playwright の Chromium バイナリ (`~/.cache/ms-playwright`)
-  も `actions/cache` でブランチ跨ぎに温めます (#908。ブラウザテスト側の
+  も `actions/cache` でブランチ跨ぎに温めます (#908。加えて `tsc` の `.tsbuildinfo`
+  (`tsconfig.json` の `incremental` + `tsBuildInfoFile` = `node_modules/.cache/tsc/app.tsbuildinfo`)
+  も同様にキャッシュし、`pnpm run build` 先頭の型検査を差分のみにします (#1589。キーは `github.sha`
+  付きで毎回保存、`restore-keys` で直近を復元。ローカルの `pnpm run build` も 2 回目以降は速くなるだけで
+  結果は不変、release.yml / e2e.yml / tauri の `beforeBuildCommand` は初回フル型検査のまま)。ブラウザテスト側の
   「install/トランスパイル部」の壁時計短縮が目的で、pnpm store キャッシュと同じ
   パターンでキー付けします)。
   Playwright の OS 依存 (apt: 共有ライブラリ・フォント・xvfb) は `playwright
@@ -226,6 +230,14 @@
   --test serde_schema_parity` を明示しています (#1511。`[[test]]` を足したらここにも追加)。Windows の 2 ジョブは
   `CARGO_PROFILE_DEV_DEBUG=0` (PDB を出さない) と Defender のリアルタイム保護 OFF を使います。
   フロントの単体テストは `--shard` の 4 分割 (上記) です (`--project` で dom / node に分ける案は、blob を統合したカバレッジが大きく低く出るため不可)。
+  `rust (windows test)` は `cargo nextest run` の前に、registry の index だけを自前の
+  `actions/cache` (`cargo-index-…`、保存は main の push のみ) で復元する (rust-cache は sparse index を
+  復元しないため。PR #1721 で `cargo fetch --offline` が `no matching package` で失敗して判明)。そのうえで
+  `cargo fetch --locked --offline --target x86_64-pc-windows-msvc` で全部そろっているか確かめ、成功なら
+  `CARGO_NET_OFFLINE=true` にして `Updating crates.io index` (実測 約 26 秒) を省く (#1680。
+  失敗時はオンラインのまま)。同ジョブの実測内訳 (2026-10-18 JST の main push, 計 約 255 秒):
+  セットアップ 約 75 秒 (Setup Rust 23 / rust-cache 24 / sccache 復元 9)、index 更新 26、
+  `noobdb` 本体コンパイル 97、テスト実行 46 (1864 件)。Windows を 2 ランナーに分ける案は優先度が低いので今回は見送り。
   Windows の 2 ジョブは rust-cache (`save-if`) と sccache (`actions/cache/restore` +
   `actions/cache/save`) の**保存を main の push だけ**にしています (保存が約 1 分かかり、
   PR のキャッシュは他 PR から参照できないため。PR は main スコープを復元するだけ)。

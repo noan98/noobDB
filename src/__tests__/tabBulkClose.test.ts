@@ -3,6 +3,27 @@ import { tabsToClose } from "../tabBulkClose";
 
 const ids = ["a", "b", "c", "d"];
 
+describe("tabsToClose: ピン留めタブの除外 (#1486)", () => {
+  const ids = ["p1", "a", "b", "c"];
+  const pinned = new Set(["p1", "b"]);
+
+  it("others / left / right / all のどれもピン留めタブを含めない", () => {
+    expect(tabsToClose(ids, "a", "others", pinned)).toEqual(["c"]);
+    expect(tabsToClose(ids, "c", "left", pinned)).toEqual(["a"]);
+    expect(tabsToClose(ids, "p1", "right", pinned)).toEqual(["a", "c"]);
+    expect(tabsToClose(ids, "a", "all", pinned)).toEqual(["a", "c"]);
+  });
+
+  it("基点自身がピン留めでも all では閉じない", () => {
+    expect(tabsToClose(ids, "p1", "all", pinned)).toEqual(["a", "c"]);
+  });
+
+  it("ピン無し (未指定 / 空) は従来どおり", () => {
+    expect(tabsToClose(ids, "a", "others")).toEqual(["p1", "b", "c"]);
+    expect(tabsToClose(ids, "a", "others", new Set())).toEqual(["p1", "b", "c"]);
+  });
+});
+
 describe("tabsToClose", () => {
   it("others: 基点以外すべて", () => {
     expect(tabsToClose(ids, "b", "others")).toEqual(["a", "c", "d"]);

@@ -53,3 +53,31 @@ export function moveTabBy(order: string[], id: string, delta: number): string[] 
   if (to < 0 || to >= order.length) return order;
   return moveTabToIndex(order, id, to);
 }
+
+/**
+ * ピン留めタブ (#1486) を左端に固定した並びを返す。ピン済み同士・未ピン同士の相対順は
+ * 保つ (安定パーティション)。すでに条件を満たしていれば入力の参照をそのまま返すので、
+ * 呼び出し側は `next !== order` で変更有無を判定できる。
+ */
+export function pinnedFirst(order: string[], isPinned: (id: string) => boolean): string[] {
+  const pinned = order.filter(isPinned);
+  if (pinned.length === 0 || pinned.length === order.length) return order;
+  const next = [...pinned, ...order.filter((id) => !isPinned(id))];
+  return next.every((id, i) => id === order[i]) ? order : next;
+}
+
+/**
+ * `id` のピン状態を切り替えた直後の並びを返す。ピン留めしたタブはピン群の末尾へ、解除した
+ * タブは未ピン群の先頭へ移す。どちらも「`id` 以外のピン済みタブの直後」になるので、ピン留め
+ * 境界のすぐ隣に置いて位置を大きく飛ばさない。`isPinned` は**切り替え前**の状態を返す関数。
+ * `id` が無いときは入力をそのまま返す。
+ */
+export function orderAfterPinChange(
+  order: string[],
+  id: string,
+  isPinned: (id: string) => boolean,
+): string[] {
+  if (!order.includes(id)) return order;
+  const rest = order.filter((x) => x !== id);
+  return [...rest.filter(isPinned), id, ...rest.filter((x) => !isPinned(x))];
+}

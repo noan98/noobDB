@@ -66,7 +66,7 @@ const TROUBLE_KEYWORDS = new Set([
   "except",
 ]);
 
-interface MaskedWord {
+export interface MaskedWord {
   /** 小文字化した単語テキスト (キーワード比較用)。 */
   text: string;
   /** マスク文字列 (= 元 SQL) 上の開始オフセット。 */
@@ -87,7 +87,7 @@ function isKeywordChar(ch: string): boolean {
  * 文字列/コメント/クオート識別子の中身は空白化されているため、ここに現れる単語は
  * 実際の SQL キーワード/識別子だけになる。
  */
-function maskedTopLevelWords(masked: string, start: number, end: number): MaskedWord[] {
+export function maskedTopLevelWords(masked: string, start: number, end: number): MaskedWord[] {
   const out: MaskedWord[] = [];
   let depth = 0;
   let i = start;
