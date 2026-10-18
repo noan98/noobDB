@@ -196,7 +196,8 @@ import { RESULT_SUMMARY_STATS_MAX_ROWS } from "./ai/resultSummary";
 import type { AiResultSummaryRequest } from "./components/AiResultSummaryPanel";
 import { StatusAnnouncer, StatusBarIcon, StatusBarText } from "./components/StatusBarMessage";
 import { useToast } from "./components/Toast";
-import { SnippetList } from "./components/SnippetList";
+import { snippetPlainText } from "./snippetTemplate";
+import { SnippetList, scopeMatches } from "./components/SnippetList";
 import type { WhereUsedRequest } from "./components/WhereUsedPanel";
 import { HistoryList } from "./components/HistoryList";
 import { LocalTablesPanel } from "./components/LocalTablesPanel";
@@ -6644,9 +6645,12 @@ export default function App() {
   const handleInsertSnippet = useCallback(
     (snippet: Snippet) => {
       if (activeTab) {
-        activeEditor()?.insertText(snippet.sql);
+        // `${1:...}` 記法を含むときはタブストップ付きで展開する (#1489)。含まなければ従来どおり。
+        activeEditor()?.insertSnippet(snippet.sql);
       } else if (sessionId) {
-        addTab({ ...makeQueryTab(), sql: snippet.sql, lastExecutedSql: snippet.sql });
+        // エディタが無いのでタブストップは使えない。既定値に置き換えた平文を新規タブへ入れる。
+        const plain = snippetPlainText(snippet.sql);
+        addTab({ ...makeQueryTab(), sql: plain, lastExecutedSql: plain });
       }
     },
     [activeTab, sessionId, activeEditor, addTab],
@@ -6662,15 +6666,17 @@ export default function App() {
   const handleRunSnippet = useCallback(
     (snippet: Snippet) => {
       if (!sessionId) return;
+      // タブストップ記法 (#1489) は既定値に置き換えた平文で実行する。
+      const plain = snippetPlainText(snippet.sql);
       const tab: Tab = {
         ...makeQueryTab(),
-        sql: snippet.sql,
-        lastExecutedSql: snippet.sql,
+        sql: plain,
+        lastExecutedSql: plain,
         title: snippet.name,
         titleManual: true,
       };
       addTab(tab);
-      runInTabWithGate(tab, snippet.sql, { newTab: false });
+      runInTabWithGate(tab, plain, { newTab: false });
       recordSnippetRunUsage(snippet.id);
     },
     [sessionId, addTab, runInTabWithGate, recordSnippetRunUsage],
@@ -6962,6 +6968,12 @@ export default function App() {
     if (window.innerWidth < NARROW_BREAKPOINT) setNarrowSidebarOpen(true);
     else setSidebarUserCollapsed(false);
   }, []);
+
+  // エディタの補完候補に出すスニペット (#1489)。一覧と同じく現在の接続に合うスコープだけ。
+  const completionSnippets = useMemo(
+    () => snippets.filter((s) => scopeMatches(s, selectedProfile)),
+    [snippets, selectedProfile],
+  );
 
   const quickLauncherSources = useMemo(
     () => ({
@@ -11677,6 +11689,7 @@ export default function App() {
         !isSandboxProfileId(c.profile.id),
     );
   const paneEnv: PaneEnv = {
+    completionSnippets,
     renamingTabId,
     store: tabPaneStore,
     actions: paneActions,

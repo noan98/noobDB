@@ -2181,6 +2181,7 @@ html, body, #root {
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-database { color: var(--db-accent); }
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-columns { color: var(--text-secondary); }
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-link { color: var(--accent); }
+.cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-snippet { color: var(--accent); }
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-routine { color: var(--syntax-function); }
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-braces,
 .cm-tooltip.cm-tooltip-autocomplete .cm-completionIcon.cm-completionIcon-hash { color: var(--text-muted); }

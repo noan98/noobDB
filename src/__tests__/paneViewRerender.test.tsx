@@ -129,6 +129,7 @@ function makeEnv(store: TabPaneStore<Tab, PaneState>, overrides: Partial<PaneEnv
     emergencyMode: false,
     broadcastAvailable: false,
     queryHistory: [],
+    completionSnippets: [],
     editorBindings: undefined,
     gridBindings: undefined,
     shortcutBindings: resolveShortcutBindings({}),

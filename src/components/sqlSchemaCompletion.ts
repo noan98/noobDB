@@ -212,7 +212,15 @@ export function findColumnInfo(columns: TableColumnInfo[], name: string): TableC
 }
 
 /** `Completion.type` → `Icon` の語彙。対応が無い種別は null (アイコンなし)。 */
-export type CompletionIconName = "table" | "database" | "columns" | "routine" | "braces" | "hash" | "link";
+export type CompletionIconName =
+  | "table"
+  | "database"
+  | "columns"
+  | "routine"
+  | "braces"
+  | "hash"
+  | "link"
+  | "snippet";
 
 const ICON_BY_TYPE: Record<string, CompletionIconName> = {
   table: "table",
@@ -223,6 +231,8 @@ const ICON_BY_TYPE: Record<string, CompletionIconName> = {
   function: "routine",
   keyword: "braces",
   datatype: "hash",
+  // 保存済みスニペット (#1489)。
+  snippet: "snippet",
   // 他の補完ソースが付ける lang-sql 由来の種別。JOIN / CTE・派生表・別名は
   // sqlDerivedCompletion.ts が `class` (CTE・派生表) / `property` (その列) / `variable`
   // (SELECT 別名) を付け、lang-sql 自動生成の名前空間階層は `type` を付ける。
