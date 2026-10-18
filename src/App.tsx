@@ -7330,6 +7330,10 @@ export default function App() {
         } finally {
           applyGuardRef.current.delete(tab.id);
           patchTab(tab.id, (tt) => ({ ...tt, applyingEdits: false }));
+          // 「確認中...」を残さない (キャンセル・「子行を開く」でも)。続行時は直後に適用中表示へ置き換わる。
+          setStatus((cur) =>
+            cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur,
+          );
         }
         if (!proceed) return false;
       }
@@ -8086,7 +8090,15 @@ export default function App() {
       }
       // 集計できなかった (タイムアウト等)、または参照先の列が結果に無く数えられない場合は、
       // 黙って進めず「確認できなかった」旨を添えて確認を挟む。
-      const unverified = failed || (impacts.length === 0 && collected.unresolved.length > 0);
+      // 注記には数えられなかった子テーブルだけを挙げる (集計失敗は全部、列不明は該当の子のみ)。
+      const unverifiedTables = [
+        ...new Set(
+          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map(
+            (r) => r.table,
+          ),
+        ),
+      ];
+      const unverified = unverifiedTables.length > 0;
       if (impacts.length === 0 && !unverified) return true;
       return confirm({
         title: translate("refImpactDeleteTitle", { table: input.table }),
@@ -8096,7 +8108,7 @@ export default function App() {
             mode="rows"
             driver={driver}
             partial={partial}
-            unverified={unverified ? [...new Set(refs.map((r) => r.table))] : undefined}
+            unverified={unverified ? unverifiedTables : undefined}
             onOpen={(imp) => {
               controls.cancel();
               openAndRunQuery(

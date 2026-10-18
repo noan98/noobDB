@@ -491,17 +491,19 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
 });
 
 describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
-  it("参照確認中に Apply を重ねて押しても bulk_update_cells は 1 回だけ走る", async () => {
+  it("参照の確認中に Apply が再入しても bulk_update_cells は 1 回だけ走る (INSERT の重複を防ぐ)", async () => {
     registerAutoStream();
     let applyCalls = 0;
-    onCommand("bulk_update_cells", () => {
+    const applied: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
       applyCalls += 1;
-      return { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 };
+      applied.push(args);
+      return { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 };
     });
     onCommand("incoming_foreign_keys", () => [
       { table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" },
     ]);
-    // 集計をわざと遅らせ、確認中の時間帯を作る。
+    // 子行は 0 件 (確認ダイアログは出ない経路)。集計をわざと遅らせて確認中の時間帯を作る。
     onCommand("run_lookup_query", async () => {
       await new Promise((r) => setTimeout(r, 600));
       return {
@@ -509,7 +511,7 @@ describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
           { name: "i", type_name: "INT" },
           { name: "n", type_name: "INT" },
         ],
-        rows: [[0, 4]],
+        rows: [[0, 0]],
         rows_affected: 0,
         elapsed_ms: 1,
       };
@@ -525,20 +527,44 @@ describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
       },
       { timeout: 5000 },
     );
+    // 行削除を保留にし、新規行 (INSERT) も保留に混ぜる。
     await screen.getByRole("gridcell", { name: "banana", exact: true }).click({ button: "right" });
     await screen.getByRole("menuitem", { name: t("gridMarkDelete") }).click();
+    await screen.getByRole("gridcell", { name: "apple", exact: true }).click({ button: "right" });
+    await screen.getByRole("menuitem", { name: t("gridAddRow") }).click();
+    // 全列が既定値だと INSERT が組まれないので、name 欄に値を入れる。
+    const insertFields = await vi.waitFor(
+      () => {
+        const els = document.querySelectorAll<HTMLInputElement>("[data-insert-fields] input");
+        if (els.length === 0) throw new Error("insert modal not open");
+        return els;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(insertFields[1] ?? insertFields[0]).fill("cherry");
+    await screen.getByRole("button", { name: t("rowOpsInsertAdd") }).click();
 
-    const apply = screen.getByRole("button", { name: t("editApplyButton") });
-    await apply.click();
-    await apply.click({ force: true }).catch(() => undefined);
+    // Apply ボタンの React onClick (= PaneView が組む onApplyEdits) を直接 2 回起動する。
+    // ボタンは確認中 disabled になるので、ボタン越しでは 2 回目が空振りしてガードを検証できない。
+    const btn = await vi.waitFor(
+      () => {
+        const el = screen.getByRole("button", { name: t("editApplyButton") }).query();
+        if (!el) throw new Error("apply button missing");
+        return el as HTMLElement;
+      },
+      { timeout: 5000 },
+    );
+    const propsKey = Object.keys(btn).find((k) => k.startsWith("__reactProps$"));
+    const onClick = (btn as unknown as Record<string, { onClick?: () => void }>)[propsKey ?? ""]?.onClick;
+    if (!onClick) throw new Error("onClick not found");
+    onClick();
+    await new Promise((r) => setTimeout(r, 100));
+    onClick();
 
-    // 参照行数つきの確認が出る。確認するまで書き込みは走らない。
-    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
-    expect(applyCalls).toBe(0);
-    await screen.getByRole("button", { name: t("refImpactDeleteOk") }).click();
-    await vi.waitFor(() => expect(applyCalls).toBe(1), { timeout: 5000 });
-    await new Promise((r) => setTimeout(r, 500));
+    await vi.waitFor(() => expect(applyCalls).toBeGreaterThanOrEqual(1), { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 1500));
     expect(applyCalls).toBe(1);
+    expect(applied[0]).toMatchObject({ extraStatements: [expect.any(String), expect.any(String)] });
   });
 });
 
