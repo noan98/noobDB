@@ -130,6 +130,38 @@ fn statement_split_golden_matches_shared_vectors() {
     );
 }
 
+/// stacked 検出の逆方向 (#1657): 単一文を stacked と誤判定しない。
+/// 上のベクタ検証は「複数文なら true」の一方向だけなので、`has_stacked_statements_for` が
+/// 常に true を返す変異 (cargo-mutants の `replace … -> bool with true`) が生き残っていた。
+/// 末尾セミコロン・コメント・文字列/識別子内の `;` は単一文として扱われる。
+#[test]
+fn single_statements_are_not_stacked() {
+    let singles = [
+        "SELECT 1",
+        "SELECT 1;",
+        "SELECT 1;  ",
+        "SELECT ';' AS semi",
+        "SELECT 1 -- ; trailing comment",
+        "/* ; */ SELECT 1",
+        "DELETE FROM t WHERE id = 1",
+    ];
+    for driver in ALL_DRIVERS {
+        for sql in singles {
+            assert!(
+                !t::has_stacked_statements_for(driver, sql),
+                "{sql:?} is a single statement but was reported as stacked [{driver:?}]"
+            );
+        }
+    }
+    // 対になる正例 (常に false を返す変異を殺す)。
+    for driver in ALL_DRIVERS {
+        assert!(
+            t::has_stacked_statements_for(driver, "SELECT 1; DROP TABLE t"),
+            "[{driver:?}] two statements must be stacked"
+        );
+    }
+}
+
 /// ドライバ次元 (#1004) が形骸化していないことの確認。
 #[test]
 fn statement_split_golden_exercises_the_driver_dimension() {
