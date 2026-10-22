@@ -2076,6 +2076,12 @@ html, body, #root {
   padding: var(--space-2) 0;
   caret-color: var(--accent);
 }
+/* 空エディタのゴースト・プレースホルダ (#1785)。CodeMirror 既定の固定灰色をテーマ追従の淡色に差し替える。 */
+.cm-editor .cm-placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+  pointer-events: none;
+}
 .cm-editor .cm-line { padding: 0 var(--space-3) 0 var(--space-2); }
 .cm-editor .cm-gutters {
   background: var(--bg-muted);
