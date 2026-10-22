@@ -83,7 +83,13 @@ import {
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
-import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
+import {
+  applyWithRowCountGuard,
+  appliedRowShortfall,
+  pendingEditsAfterApply,
+  remainingAfterSent,
+  tabStateAfterApply,
+} from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import {
@@ -7365,8 +7371,10 @@ export default function App() {
       // table is never left in a half-applied state.
       let totalAffected = 0;
       let failure: string | null = null;
+      let notApplied: { expected: number; actual: number } | null = null;
+      let incomplete: { expected: number; actual: number } | null = null;
       try {
-        const res = await api.bulkUpdateCells({
+        const bulkParams = {
           sessionId,
           database,
           table,
@@ -7374,12 +7382,75 @@ export default function App() {
           groups: updateGroups,
           extraStatements,
           pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
+        };
+        // 実影響行数が想定を超えた (画面外の重複行などに当たった) ときバックエンドはコミットせず
+        // ロールバックして件数を返す (#1777)。利用者が明示的に承認した件数までに限って再実行する。
+        // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
+        const guarded = await applyWithRowCountGuard({
+          run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
+          confirmExceeded: ({ expected, actual, total }) =>
+            confirm({
+              title: translate("editRowOvershootConfirmTitle"),
+              message: translate(
+                identityStrategy === "all_columns"
+                  ? "editRowOvershootConfirmBodyAllColumns"
+                  : "editRowOvershootConfirmBody",
+                { expected, actual, total },
+              ),
+              confirmLabel: translate("editRowOvershootConfirmButton"),
+              tone: "warning",
+            }),
+          // 確認中は「適用中…」を出さず、二重 Apply も防ぐ (確認のあとは適用中表示へ戻す)。
+          onAwaitingConfirm: () => {
+            applyGuardRef.current.add(tabId);
+            setStatus({ kind: "key", key: "statusAwaitingRowCountConfirm" });
+          },
+          onResume: () => {
+            applyGuardRef.current.delete(tabId);
+            setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
+          },
         });
-        totalAffected = Number(res.rows_affected ?? 0);
+        if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
+        else if (guarded.kind === "not_applied") notApplied = guarded;
+        else incomplete = guarded;
       } catch (e) {
         failure = String(e);
       }
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
+      if (incomplete) {
+        // トランザクション非対応の表 (MyISAM など) はロールバックしても戻らない。書き込みの一部が
+        // 残っているので、承認して再実行させず、再読込して現状を確認してもらう。送信した保留編集・
+        // 削除予定・新規行は破棄する (残すと Apply の再実行で INSERT / UPDATE が二重に書かれる)。
+        // Apply 中に追加された未送信の分は残す。グリッドの表示は古いままなので再読込を促す。
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
+          ...(scoped
+            ? {}
+            : {
+                pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
+                pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
+                editUndoStack: [],
+                editRedoStack: [],
+              }),
+        }));
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsRollbackIncomplete",
+          vars: incomplete,
+          error: true,
+        });
+        return false;
+      }
+      if (notApplied) {
+        // ロールバック済みで DB は未変更。保留中の編集と行操作はそのまま残す。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsOvershootCancelled",
+          vars: notApplied,
+        });
+        return false;
+      }
       if (failure) {
         // トランザクションはロールバックされ DB は未変更。保留中の編集と行操作は
         // そのまま残し、ユーザが原因を直して再適用できるようにする (以前はここで

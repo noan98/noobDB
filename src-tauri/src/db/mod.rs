@@ -419,6 +419,124 @@ pub enum Connection {
     Sqlite(sqlite::SqliteConn),
 }
 
+/// 1 文に期待する影響行数の範囲 (#1777)。`max` を超えたら「想定より多い」、`min` を下回ったら
+/// 「想定より少ない」で、どちらも文のコミット前に検出してロールバックの根拠にできる。`None` は
+/// その側を検査しない。今は `max` だけを使う (楽観ロック #1766 が `min` で「少ない側」を止める予定)。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RowExpectation {
+    pub min: Option<u64>,
+    pub max: Option<u64>,
+}
+
+impl RowExpectation {
+    /// 検査しない。
+    pub const NONE: Self = Self {
+        min: None,
+        max: None,
+    };
+
+    /// 多い側だけを検査する (`affected > n` で違反)。
+    pub const fn at_most(n: u64) -> Self {
+        Self {
+            min: None,
+            max: Some(n),
+        }
+    }
+
+    fn violated_by(&self, affected: u64) -> bool {
+        self.max.is_some_and(|m| affected > m) || self.min.is_some_and(|m| affected < m)
+    }
+
+    /// 違反の表示に使う「想定件数」(上限があれば上限、無ければ下限)。
+    fn expected_hint(&self) -> u64 {
+        self.max.or(self.min).unwrap_or(0)
+    }
+}
+
+/// 実行する 1 文と、その影響行数の期待 ([`Connection::execute_transaction_guarded`] の入力)。
+#[derive(Debug, Clone, Copy)]
+pub struct GuardedStatement<'a> {
+    pub sql: &'a str,
+    pub expect: RowExpectation,
+}
+
+impl<'a> GuardedStatement<'a> {
+    /// 影響行数を検査しない文。
+    pub fn unchecked(sql: &'a str) -> Self {
+        Self {
+            sql,
+            expect: RowExpectation::NONE,
+        }
+    }
+}
+
+/// 期待を外れて巻き戻した内訳。`expected` / `actual` は**違反した文だけ**の合計 (表示用)、
+/// `total` は全文の合計、`counts` は全文の実際の影響行数 (文の並び順)。利用者が承認するときは
+/// `counts` を文ごとの上限に使う (合計での承認は、確認の間に他のクライアントが変えた件数が
+/// 相殺されて通ってしまうため)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GuardViolation {
+    pub expected: u64,
+    pub actual: u64,
+    pub total: u64,
+    pub counts: Vec<u64>,
+}
+
+/// [`Connection::execute_transaction_guarded`] の結果 (#1777)。期待外れはエラーではなく判別できる
+/// 値で返す (呼び出し側が確認を取って再実行できるように)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GuardedTxOutcome {
+    /// コミットした。合計 `rows_affected`。
+    Committed(u64),
+    /// 期待を外れたのでロールバックした (DB は未変更)。
+    RolledBack(GuardViolation),
+    /// 期待を外れてロールバックしたが、**一部が戻らなかった**。トランザクション非対応のエンジン
+    /// (MySQL の MyISAM など。警告 1196) の表を含むとき。書き込みの一部はコミット済みと同じ。
+    RollbackIncomplete(GuardViolation),
+}
+
+/// 検算なしの文列へ変換する (`execute_transaction` が `execute_transaction_guarded` へ委譲する用)。
+pub(crate) fn unchecked_statements(statements: &[String]) -> Vec<GuardedStatement<'_>> {
+    statements
+        .iter()
+        .map(|s| GuardedStatement::unchecked(s))
+        .collect()
+}
+
+impl GuardedTxOutcome {
+    /// 検算なしで流したときの合計 `rows_affected` (違反は起きないが、型の上では畳んでおく)。
+    pub(crate) fn total_affected(self) -> u64 {
+        match self {
+            Self::Committed(n) => n,
+            Self::RolledBack(v) | Self::RollbackIncomplete(v) => v.total,
+        }
+    }
+}
+
+/// 全文を流した後の各文の影響行数 `counts` を、文ごとの期待と突き合わせる (3 ドライバ共通)。
+/// 違反した文の合計を内訳に載せる。
+pub(crate) fn evaluate_guard(
+    statements: &[GuardedStatement<'_>],
+    counts: &[u64],
+) -> Option<GuardViolation> {
+    let mut expected = 0;
+    let mut actual = 0;
+    let mut violated = false;
+    for (st, &n) in statements.iter().zip(counts) {
+        if st.expect.violated_by(n) {
+            violated = true;
+            expected += st.expect.expected_hint();
+            actual += n;
+        }
+    }
+    violated.then(|| GuardViolation {
+        expected,
+        actual,
+        total: counts.iter().sum(),
+        counts: counts.to_vec(),
+    })
+}
+
 /// A single row skipped by a resilient (skip-mode) import: its 0-based index
 /// among the parsed data records and the driver's rejection reason (#687). The
 /// command layer maps `index` to a 1-based record number and, for CSV/NDJSON, a
@@ -1089,6 +1207,24 @@ impl Connection {
             Connection::MySql(c) => c.execute_transaction(statements, database).await,
             Connection::Postgres(c) => c.execute_transaction(statements, database).await,
             Connection::Sqlite(c) => c.execute_transaction(statements, database).await,
+        }
+    }
+
+    /// [`Self::execute_transaction`] に、コミット前の実影響行数の検算 (#1777) を足したもの。
+    /// 全文を流した後、文ごとの期待 ([`RowExpectation`]) を外れていたらコミットせずロールバックし、エラーではなく
+    /// [`GuardedTxOutcome`] で内訳を返す。3 ドライバとも `rows_affected` は「一致した行数」
+    /// (MySQL は sqlx が常に CLIENT_FOUND_ROWS を立てる) なので、値が変わらない UPDATE も
+    /// 1 行と数える。MySQL はロールバック後に警告 1196 を調べ、戻らなかったときは
+    /// [`GuardedTxOutcome::RollbackIncomplete`] を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+    ) -> Result<GuardedTxOutcome> {
+        match self {
+            Connection::MySql(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Postgres(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Sqlite(c) => c.execute_transaction_guarded(statements, database).await,
         }
     }
 
@@ -5979,6 +6115,52 @@ mod tests {
 /// 先頭文は必ず拒否される / コメント・文字列リテラルに隠したキーワードは判定を
 /// 変えない / 既存 LIMIT への二重付与は起きない 等) を検証する。反例が見つかれば
 /// proptest が最小化して報告するため、安全網の穴を継続的に検出できる。
+#[cfg(test)]
+mod guard_tests {
+    use super::{evaluate_guard, GuardViolation, GuardedStatement, RowExpectation};
+
+    fn st(expect: RowExpectation) -> GuardedStatement<'static> {
+        GuardedStatement { sql: "", expect }
+    }
+
+    #[test]
+    fn per_statement_max_only_flags_the_over_side() {
+        let sts = [
+            st(RowExpectation::at_most(1)),
+            st(RowExpectation::at_most(2)),
+            st(RowExpectation::at_most(3)),
+        ];
+        // 少ない側 (0 行) と上限ちょうどは違反ではない。
+        assert_eq!(evaluate_guard(&sts, &[1, 2, 0]), None);
+        // 1 文が超えたら、その文だけの内訳・全体合計・文ごとの件数を返す (他文の不足で相殺されない)。
+        assert_eq!(
+            evaluate_guard(&sts, &[2, 0, 0]),
+            Some(GuardViolation {
+                expected: 1,
+                actual: 2,
+                total: 2,
+                counts: vec![2, 0, 0],
+            })
+        );
+    }
+
+    #[test]
+    fn min_flags_the_under_side_and_none_is_unchecked() {
+        let sts = [
+            st(RowExpectation {
+                min: Some(1),
+                max: Some(1),
+            }),
+            st(RowExpectation::NONE),
+        ];
+        assert_eq!(evaluate_guard(&sts, &[1, 99]), None);
+        assert_eq!(
+            evaluate_guard(&sts, &[0, 5]).map(|v| (v.expected, v.actual, v.total)),
+            Some((1, 0, 5))
+        );
+    }
+}
+
 #[cfg(test)]
 mod proptests {
     use super::{apply_auto_limit, is_read_only_sql};

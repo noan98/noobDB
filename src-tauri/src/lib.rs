@@ -534,7 +534,8 @@ pub mod __test_api {
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
     pub use crate::commands::bulk_write::{
-        BulkSetColumn, BulkSetValue, BulkUpdateGroup, InsertRowsResult,
+        BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions, BulkWriteOutcome,
+        InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{
@@ -1051,6 +1052,39 @@ pub mod __test_api {
         groups: Vec<BulkUpdateGroup>,
         extra_statements: Vec<String>,
     ) -> crate::error::Result<QueryResult> {
+        // 既存テスト用の薄いラッパー: 超過はそのままエラーにして Applied の結果だけ返す。
+        match bulk_update_cells_outcome_via_command(
+            state,
+            session_id,
+            database,
+            table,
+            pk_columns,
+            groups,
+            extra_statements,
+            BulkWriteOptions::default(),
+        )
+        .await?
+        {
+            BulkWriteOutcome::Applied { result } => Ok(result),
+            other => Err(crate::error::AppError::InvalidInput(format!(
+                "bulk write was not applied: {other:?}"
+            ))),
+        }
+    }
+
+    /// [`bulk_update_cells_via_command`] の結果を判別して返す版 (#1777)。想定行数の超過
+    /// (ロールバック) をエラーにせず `BulkWriteOutcome` で受け、`options` で承認も渡せる。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn bulk_update_cells_outcome_via_command(
+        state: &AppState,
+        session_id: &str,
+        database: Option<&str>,
+        table: &str,
+        pk_columns: Vec<String>,
+        groups: Vec<BulkUpdateGroup>,
+        extra_statements: Vec<String>,
+        options: BulkWriteOptions,
+    ) -> crate::error::Result<BulkWriteOutcome> {
         crate::commands::bulk_write::bulk_update_cells_inner(
             state,
             session_id.to_string(),
@@ -1059,6 +1093,7 @@ pub mod __test_api {
             pk_columns,
             groups,
             extra_statements,
+            options,
         )
         .await
     }

@@ -20,6 +20,7 @@ use super::types::{
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -844,21 +845,39 @@ impl PostgresConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database)
+            .await?
+            .total_affected())
+    }
+
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// を外れたらコミットせずロールバックして内訳を返す。
+    pub async fn execute_transaction_guarded(
+        &self,
+        statements: &[GuardedStatement<'_>],
+        database: Option<&str>,
+    ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
-            return Ok(0);
+            return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
         let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+        for st in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;
-            affected += result.rows_affected();
+            counts.push(result.rows_affected());
+        }
+        if let Some(violation) = super::evaluate_guard(statements, &counts) {
+            tx.rollback().await?;
+            return Ok(GuardedTxOutcome::RolledBack(violation));
         }
         tx.commit().await?;
-        Ok(affected)
+        Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
     }
 
     /// In the tree UI, the "database" level surfaces PostgreSQL schemas

@@ -191,6 +191,32 @@ export const insertRowsResult = z.object({
   elapsed_ms: z.number(),
 });
 
+/**
+ * `bulk_update_cells` の結果 (#1777)。想定行数の超過はエラーではなく `row_count_exceeded` で届く
+ * (ロールバック済み・DB は未変更)。新しい種類の結果はバリアントを足して拡張する。
+ */
+export const bulkWriteOutcomeApplied = z.object({
+  status: z.literal("applied"),
+  result: queryResultLite,
+});
+export const bulkWriteOutcomeRowCountExceeded = z.object({
+  status: z.literal("row_count_exceeded"),
+  expected_rows: z.number(),
+  actual_rows: z.number(),
+  batch_total_rows: z.number(),
+  statement_counts: z.array(z.number()),
+});
+export const bulkWriteOutcomeRollbackIncomplete = z.object({
+  status: z.literal("rollback_incomplete"),
+  expected_rows: z.number(),
+  actual_rows: z.number(),
+});
+export const bulkWriteOutcome = z.discriminatedUnion("status", [
+  bulkWriteOutcomeApplied,
+  bulkWriteOutcomeRowCountExceeded,
+  bulkWriteOutcomeRollbackIncomplete,
+]);
+
 /** `kill_processes` の結果 (#1259)。 */
 export const killProcessesResult = z.object({
   killed: z.number(),

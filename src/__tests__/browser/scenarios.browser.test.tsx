@@ -425,7 +425,7 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
       applied.push(args);
       // サーバ側データを更新し、Apply 後の自動リフレッシュで新値が返るようにする。
       fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
-      return { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 };
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
     });
 
     const screen = await renderInBrowser(<App />);
@@ -490,6 +490,153 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
   });
 });
 
+describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", () => {
+  /** banana の qty を 42 に編集して Apply を押す (保留編集 → Apply)。 */
+  async function editQtyAndApply(screen: Awaited<ReturnType<typeof renderInBrowser>>) {
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await openFruitsTable(screen);
+    await expect.element(screen.getByRole("gridcell", { name: "banana", exact: true })).toBeVisible();
+    await vi.waitFor(
+      () => {
+        const cell = screen.getByRole("gridcell", { name: "3", exact: true }).query();
+        if (!cell?.classList.contains("is-editable-cell")) throw new Error("qty cell is not editable yet");
+      },
+      { timeout: 5000 },
+    );
+    await screen.getByRole("gridcell", { name: "3", exact: true }).dblClick();
+    const input = await vi.waitFor(
+      () => {
+        const el = document.querySelector<HTMLInputElement>("input.cell-edit-input");
+        if (!el) throw new Error("cell edit input not open");
+        return el;
+      },
+      { timeout: 5000 },
+    );
+    await page.elementLocator(input).fill("42");
+    await userEvent.keyboard("{Enter}");
+    await screen.getByRole("button", { name: t("editApplyButton") }).click();
+  }
+
+  it("超過 (ロールバック) を確認で承認すると、許可フラグ付きで再実行される", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      const options = args.options as { approved_counts?: number[] } | undefined;
+      if (!options?.approved_counts) {
+        return {
+          status: "row_count_exceeded",
+          expected_rows: 1,
+          actual_rows: 2,
+          batch_total_rows: 2,
+          statement_counts: [2],
+        };
+      }
+      fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 } };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).toBeVisible();
+    await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
+
+    await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
+    expect(calls[0]?.options).toBeUndefined();
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    await expect.element(screen.getByRole("gridcell", { name: "42", exact: true })).toBeVisible();
+  });
+
+  it("超過の確認をキャンセルすると再実行せず、保留中の編集が残る", async () => {
+    registerAutoStream();
+    let calls = 0;
+    onCommand("bulk_update_cells", () => {
+      calls += 1;
+      return {
+        status: "row_count_exceeded",
+        expected_rows: 1,
+        actual_rows: 2,
+        batch_total_rows: 2,
+        statement_counts: [2],
+      };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).toBeVisible();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
+
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).not.toBeInTheDocument();
+    expect(calls).toBe(1);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("承認したあとにまた超過したら、新しい件数で確認し直す (承認した件数を上限にして再実行)", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      const approved = (args.options as { approved_counts?: number[] } | undefined)?.approved_counts;
+      // 1 回目は 2 行 (承認 2)、承認後の再実行では 3 行に増えていて再び超過する。
+      return approved === undefined
+        ? {
+            status: "row_count_exceeded",
+            expected_rows: 1,
+            actual_rows: 2,
+            batch_total_rows: 2,
+            statement_counts: [2],
+          }
+        : {
+            status: "row_count_exceeded",
+            expected_rows: 2,
+            actual_rows: 3,
+            batch_total_rows: 3,
+            statement_counts: [3],
+          };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
+    await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
+    // 2 回目の確認 (新しい件数 3) が出る。キャンセルすると適用されず、保留中の編集が残る。
+    await expect
+      .element(screen.getByText(t("editRowOvershootConfirmBody", { expected: 2, actual: 3, total: 3 })))
+      .toBeVisible();
+    await screen
+      .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
+      .first()
+      .click();
+    expect(calls.length).toBe(2);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("ロールバックが不完全なときは再実行の選択肢を出さず、再読込を促す", async () => {
+    registerAutoStream();
+    let calls = 0;
+    onCommand("bulk_update_cells", () => {
+      calls += 1;
+      return { status: "rollback_incomplete", expected_rows: 1, actual_rows: 2 };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect
+      .element(screen.getByText(t("statusApplyEditsRollbackIncomplete", { expected: 1, actual: 2 })).first())
+      .toBeVisible();
+    await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).not.toBeInTheDocument();
+    expect(calls).toBe(1);
+    // 送信した保留編集は破棄され、Apply を押し直して二重に書くことはできない。
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+});
+
 describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
   it("参照の確認中に Apply が再入しても bulk_update_cells は 1 回だけ走る (INSERT の重複を防ぐ)", async () => {
     registerAutoStream();
@@ -498,7 +645,7 @@ describe("シナリオ: 削除前の参照行数の確認 (#1506)", () => {
     onCommand("bulk_update_cells", (args) => {
       applyCalls += 1;
       applied.push(args);
-      return { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 };
+      return { status: "applied", result: { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 } };
     });
     onCommand("incoming_foreign_keys", () => [
       { table: "orders", column: "fruit_id", referencedColumn: "id", onDelete: "CASCADE" },

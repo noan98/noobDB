@@ -514,6 +514,54 @@
       "totalRows": 0
     }
   ],
+  "bulkWriteOutcomeApplied": {
+    "result": {
+      "columns": [
+        {
+          "name": "id",
+          "type_name": "INTEGER"
+        },
+        {
+          "name": "label",
+          "type_name": "TEXT"
+        }
+      ],
+      "elapsed_ms": 12,
+      "rows": [
+        [
+          1,
+          "a"
+        ],
+        [
+          null,
+          "deadbeef"
+        ]
+      ],
+      "rows_affected": 0,
+      "server_messages": [
+        {
+          "severity": "notice",
+          "text": "table \"t\" does not exist, skipping"
+        }
+      ]
+    },
+    "status": "applied"
+  },
+  "bulkWriteOutcomeRollbackIncomplete": {
+    "actual_rows": 2,
+    "expected_rows": 1,
+    "status": "rollback_incomplete"
+  },
+  "bulkWriteOutcomeRowCountExceeded": {
+    "actual_rows": 2,
+    "batch_total_rows": 3,
+    "expected_rows": 1,
+    "statement_counts": [
+      2,
+      1
+    ],
+    "status": "row_count_exceeded"
+  },
   "cancelStreamResponse": {
     "cancelled": true,
     "deliveredRows": 42

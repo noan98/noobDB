@@ -5778,3 +5778,249 @@ async fn sqlite_save_cells_to_folder_writes_manifest() {
     assert!(lines[4].starts_with("4,99,,,,failed,"), "{}", lines[4]);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #1777: PK / UNIQUE の無い (純 all_columns) 表で、off-page の重複行があると 1 行の編集が 2 行に
+/// 当たる。`bulk_update_cells` は合計 `rows_affected` を検算し、想定を超えたらコミットせず
+/// ロールバックして件数を返す。承認 (`allow_row_overshoot`) 付きでだけ適用でき、少ない側 (一致
+/// なし) や値が変わらない UPDATE は止めない。
+#[tokio::test]
+async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
+    let path = temp_cmd_db("overshoot1777");
+    let opts = t::sqlite_options(path.to_str().expect("utf8 path"));
+    let conn = t::connect(&opts).await.expect("connect");
+    let tbl = "dup".to_string();
+    conn.execute("CREATE TABLE dup (a INTEGER, b TEXT, n INTEGER)", None)
+        .await
+        .expect("ddl");
+    conn.execute(
+        "INSERT INTO dup VALUES (1, 'x', 0), (1, 'x', 0), (2, 'y', 0)",
+        None,
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session(
+        "bulk_overshoot",
+        conn,
+        opts.clone(),
+        /* read_only */ false,
+    );
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+    let cols: Vec<String> = vec!["a".into(), "b".into(), "n".into()];
+    let set_n = |v: &str| t::BulkUpdateGroup {
+        set: vec![t::BulkSetColumn {
+            column: "n".into(),
+            value: t::BulkSetValue::Number { text: v.into() },
+        }],
+        keys: vec![vec![
+            t::Value::Int(1),
+            t::Value::String("x".into()),
+            t::Value::Int(0),
+        ]],
+    };
+    let read_ns = || async {
+        let s = state.get(&sid).await.expect("session");
+        let r = s
+            .conn
+            .execute(&format!("SELECT n FROM {tbl} ORDER BY a, b, n"), None)
+            .await
+            .expect("verify");
+        r.rows
+            .iter()
+            .map(|row| format!("{:?}", row[0]))
+            .collect::<Vec<_>>()
+    };
+    let before = read_ns().await;
+    // 結果キャッシュ: ロールバックした書き込みは何も変えていないので破棄しない。コミットされた
+    // 書き込みの後は破棄する。
+    let probe_calls = std::sync::atomic::AtomicUsize::new(0);
+    let probe_sql = format!("SELECT COUNT(*) FROM {tbl}");
+    let warm = || async {
+        let s = state.get(&sid).await.expect("session");
+        s.query_cache
+            .get_or_fetch(s.conn.driver_kind(), None, &probe_sql, || async {
+                probe_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                s.conn.execute(&probe_sql, None).await
+            })
+            .await
+            .expect("probe");
+    };
+    let calls = || probe_calls.load(std::sync::atomic::Ordering::SeqCst);
+    warm().await;
+    assert_eq!(calls(), 1);
+
+    // 1 行 (1,'x',0) を指定したのに 2 行が一致 → ロールバックして件数を返す。DB は未変更。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(read_ns().await, before, "ロールバックされ未変更のはず");
+    warm().await;
+    assert_eq!(calls(), 1, "ロールバックでは結果キャッシュを破棄しない");
+
+    // 削除予定行 (extra_statements の DELETE) も同じ検算を受ける。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols.clone(),
+        vec![],
+        vec![format!(
+            "DELETE FROM {tbl} WHERE a = 1 AND b = 'x' AND n = 0;"
+        )],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(read_ns().await, before, "DELETE もロールバックされる");
+
+    // 一意に当たる行 (2,'y',0) への更新は通る。値が変わらない UPDATE (n = 0 のまま) でも
+    // 一致行数 1 と数える (MySQL は CLIENT_FOUND_ROWS)。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols.clone(),
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "0".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(2),
+                t::Value::String("y".into()),
+                t::Value::Int(0),
+            ]],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 1),
+        other => panic!("unique row must apply: {other:?}"),
+    }
+
+    // 少ない側 (一致する行が無い) はブロックしない。
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols.clone(),
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "9".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(99),
+                t::Value::String("none".into()),
+                t::Value::Int(0),
+            ]],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 0),
+        other => panic!("fewer rows must not be blocked: {other:?}"),
+    }
+
+    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。承認した件数が足りなければ
+    // 再実行でもロールバックする。
+    let before_approved = read_ns().await;
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_counts: Some(vec![1]),
+        },
+    )
+    .await
+    .expect("outcome");
+    // 承認した件数 (1) より多く当たるなら、承認後の再実行でもロールバックする。
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        read_ns().await,
+        before_approved,
+        "未承認の件数ではロールバック"
+    );
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        None,
+        &tbl,
+        cols,
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_counts: Some(vec![2]),
+        },
+    )
+    .await
+    .expect("outcome");
+    match out {
+        t::BulkWriteOutcome::Applied { result } => assert_eq!(result.rows_affected, 2),
+        other => panic!("approved overshoot must apply: {other:?}"),
+    }
+    assert_eq!(
+        read_ns().await.iter().filter(|v| v.contains('5')).count(),
+        2
+    );
+    warm().await;
+    assert_eq!(calls(), 2, "コミット後は結果キャッシュが破棄される");
+}
