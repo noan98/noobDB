@@ -18,11 +18,11 @@ SSH やセッション層には触らないでください — それらはド�
 (MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、
 SQLite では多くがサーバ機能非対応のため空や no-op で短絡します。
 
-`execute_transaction_guarded(statements: &[GuardedStatement], database, total_max)` (#1777) は
+`execute_transaction_guarded(statements: &[GuardedStatement], database)` (#1777) は
 `execute_transaction` に、コミット前の文ごとの影響行数検算 (`RowExpectation { min, max }`) を足したもので、
 `execute_transaction` はこれに委譲します。期待を外れたらロールバックして `GuardedTxOutcome::RolledBack`
-(エラーではない) を返し、`total_max` があれば文ごとの検査の代わりに合計の上限で判定します。MySQL は
-ロールバック直後に `SHOW WARNINGS` で 1196 (MyISAM など非トランザクション表) を調べ、あれば
+(エラーではない) を返し。違反の内訳には文ごとの実件数 (`counts`) を載せます。MySQL はロールバック直後に `SHOW WARNINGS` の 1196 と、対象表の
+`write_target_is_non_transactional` による事前判定 (`max_error_count=0` 対策) の両方で非トランザクション表 (MyISAM など) を調べ、どちらかに当たれば
 `RollbackIncomplete` を返します。`rows_affected` は 3 ドライバとも一致行数 (MySQL は CLIENT_FOUND_ROWS)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,

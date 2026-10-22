@@ -5788,7 +5788,8 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
                 actual_rows: 2,
-                batch_total_rows: 2
+                batch_total_rows: 2,
+                ..
             }
         ),
         "{out:?}"
@@ -5818,7 +5819,8 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
                 actual_rows: 2,
-                batch_total_rows: 2
+                batch_total_rows: 2,
+                ..
             }
         ),
         "{out:?}"
@@ -5894,7 +5896,7 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
         vec![set_n("5")],
         vec![],
         t::BulkWriteOptions {
-            approved_max_rows: Some(1),
+            approved_counts: Some(vec![1]),
         },
     )
     .await
@@ -5906,7 +5908,8 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
                 actual_rows: 2,
-                batch_total_rows: 2
+                batch_total_rows: 2,
+                ..
             }
         ),
         "{out:?}"
@@ -5925,7 +5928,7 @@ async fn sqlite_bulk_write_row_count_overshoot_rolls_back() {
         vec![set_n("5")],
         vec![],
         t::BulkWriteOptions {
-            approved_max_rows: Some(2),
+            approved_counts: Some(vec![2]),
         },
     )
     .await

@@ -75,13 +75,15 @@ pub struct BulkUpdateGroup {
 
 /// `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロック #1766 など) も
 /// ここへフィールドを足す。`#[serde(default)]` なので、指定の無い項目は安全側 (= 検査する) になる。
-#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct BulkWriteOptions {
-    /// 利用者が確認ダイアログで承認した合計の影響行数。指定すると、文ごとの検査の代わりに
-    /// 「合計がこの件数を超えたらロールバック」で再実行する (承認した以上には書かない)。
-    /// `row_count_exceeded` が返した `batch_total_rows` をそのまま渡す。
-    pub approved_max_rows: Option<u64>,
+    /// 利用者が確認ダイアログで承認した、文ごとの実際の影響行数 (`row_count_exceeded` が返した
+    /// `statement_counts` をそのまま渡す)。指定すると各文を `max = max(期待, 承認件数)` で再実行
+    /// する。承認した件数までしか書かないうえ、確認の間に他のクライアントが変えた件数が別の文で
+    /// 相殺されて通ることもない。`min` の検査は承認でも外れない。文の並び (純関数で決まる) と
+    /// 長さが合わなければ拒否する。
+    pub approved_counts: Option<Vec<u64>>,
 }
 
 /// `bulk_update_cells` の結果 (#1777)。想定外はエラーではなく判別できる値で返し、フロントが
@@ -94,11 +96,13 @@ pub enum BulkWriteOutcome {
     Applied { result: QueryResult },
     /// 実影響行数が想定 (編集対象として指定した行数) を外れたのでロールバックした。DB は未変更。
     /// `expected_rows` / `actual_rows` は違反した文だけの合計 (表示用)、`batch_total_rows` は
-    /// 全文の合計で、承認して再実行するときの `approved_max_rows` に使う。
+    /// 全文の合計 (「最大で N 行が変わる」の表示用)、`statement_counts` は文ごとの実際の影響行数
+    /// (文の順)。承認して再実行するときは `statement_counts` を `approved_counts` に渡す。
     RowCountExceeded {
         expected_rows: u64,
         actual_rows: u64,
         batch_total_rows: u64,
+        statement_counts: Vec<u64>,
     },
     /// 想定を外れてロールバックしたが、トランザクション非対応の表 (MyISAM など) を含み、
     /// 書き込みの一部が**戻らなかった**。承認して再実行してはいけない (二重に書く)。
@@ -120,6 +124,25 @@ pub(crate) struct BuiltStatement {
 /// 追加文 (削除予定行 / 新規行の `DELETE` / `INSERT`) 1 文に期待する影響行数。フロントは
 /// 1 文 = 1 行で生成する。
 const EXTRA_STATEMENT_ROWS: u64 = 1;
+
+/// 承認済みの文ごとの件数で、各文の上限を引き上げる (`max = max(期待, 承認件数)`)。`min` は
+/// そのまま残す (承認しても「少ない側」の検査は外れない)。文の数が合わなければ拒否する。
+pub(crate) fn apply_approved_counts(
+    expects: &mut [RowExpectation],
+    approved: &[u64],
+) -> Result<()> {
+    if approved.len() != expects.len() {
+        return Err(AppError::InvalidInput(format!(
+            "approved count mismatch: expected {} statements, got {}",
+            expects.len(),
+            approved.len()
+        )));
+    }
+    for (e, &n) in expects.iter_mut().zip(approved) {
+        e.max = Some(e.max.unwrap_or(0).max(n));
+    }
+    Ok(())
+}
 
 fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
     // SQLite は接続ごとに単一の名前空間なので DB 名で修飾しない (フロントの
@@ -296,7 +319,7 @@ pub(crate) fn build_bulk_update_statements_expected(
 /// `run_query_transaction` と同一。さらに合計 `rows_affected` を想定行数と検算し、超えたら
 /// コミットせずロールバックして [`BulkWriteOutcome::RowCountExceeded`] を返す (#1777、画面外の
 /// 重複行への多重更新の最終防波堤)。検算は文ごと (UPDATE チャンク = 対象行数、追加文 = 1 行)。
-/// 利用者が承認した件数 (`options.approved_max_rows`) があれば、その合計までは通す。
+/// 利用者が承認した文ごとの件数 (`options.approved_counts`) があれば、各文その件数までは通す。
 // IPC コマンドの引数は 1 引数 1 フィールドのフラット形が契約 (State 含め 8 個) のため許可する。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -365,27 +388,24 @@ pub(crate) async fn bulk_update_cells_inner(
         expects.push(RowExpectation::at_most(EXTRA_STATEMENT_ROWS));
         statements.push(sql);
     }
+    if let Some(approved) = &options.approved_counts {
+        apply_approved_counts(&mut expects, approved)?;
+    }
     if statements.is_empty() {
         return Ok(BulkWriteOutcome::Applied {
             result: QueryResult::empty(0, 0),
         });
     }
     Ok(
-        match run_query_transaction_guarded_inner(
-            state,
-            session_id,
-            statements,
-            expects,
-            database,
-            options.approved_max_rows,
-        )
-        .await?
+        match run_query_transaction_guarded_inner(state, session_id, statements, expects, database)
+            .await?
         {
             TransactionRun::Committed(result) => BulkWriteOutcome::Applied { result },
             TransactionRun::RolledBack(v) => BulkWriteOutcome::RowCountExceeded {
                 expected_rows: v.expected,
                 actual_rows: v.actual,
                 batch_total_rows: v.total,
+                statement_counts: v.counts,
             },
             TransactionRun::RollbackIncomplete(v) => BulkWriteOutcome::RollbackIncomplete {
                 expected_rows: v.expected,
@@ -571,16 +591,33 @@ mod tests {
     }
 
     #[test]
+    fn approved_counts_raise_max_per_statement_and_keep_min() {
+        let mut e = vec![
+            RowExpectation {
+                min: Some(1),
+                max: Some(1),
+            },
+            RowExpectation::at_most(2),
+        ];
+        assert!(apply_approved_counts(&mut e, &[3, 0]).is_ok());
+        assert_eq!((e[0].min, e[0].max), (Some(1), Some(3)));
+        // 承認件数が期待より小さくても、上限は下げない。
+        assert_eq!((e[1].min, e[1].max), (None, Some(2)));
+        assert!(apply_approved_counts(&mut e, &[1]).is_err());
+    }
+
+    #[test]
     fn outcome_serializes_with_status_tag() {
         let v = serde_json::to_value(BulkWriteOutcome::RowCountExceeded {
             expected_rows: 1,
             actual_rows: 2,
             batch_total_rows: 3,
+            statement_counts: vec![2, 1],
         })
         .unwrap_or_default();
         assert_eq!(
             v,
-            serde_json::json!({"status": "row_count_exceeded", "expected_rows": 1, "actual_rows": 2, "batch_total_rows": 3})
+            serde_json::json!({"status": "row_count_exceeded", "expected_rows": 1, "actual_rows": 2, "batch_total_rows": 3, "statement_counts": [2, 1]})
         );
     }
 

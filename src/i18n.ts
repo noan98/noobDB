@@ -2052,9 +2052,9 @@ const en = {
     "This table has no primary key, and some of the loaded rows have identical values in every column. {count} statement(s) will run, and a statement targeting a duplicated row will affect all of its duplicates at once. Continue?",
   editRowOvershootConfirmTitle: "More rows match than expected",
   editRowOvershootConfirmBody:
-    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. Rows you did not select (for example, other rows sharing the same key values, including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {actual} rows.",
+    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. Rows you did not select (for example, other rows sharing the same key values, including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {total} rows (all statements combined).",
   editRowOvershootConfirmBodyAllColumns:
-    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. This table is matched on every column's value, so rows with identical values (including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {actual} rows.",
+    "You specified {expected} row(s), but {actual} row(s) match. The write was rolled back, so nothing has been changed yet. This table is matched on every column's value, so rows with identical values (including ones not loaded in this grid) are probably being matched as well. Applying anyway will change up to {total} rows (all statements combined).",
   editRowOvershootConfirmButton: "Apply anyway",
   editApplyDisabledInvalid: "Fix the highlighted invalid edits before applying.",
   editInvalidNumber: "Enter a number (or NULL).",
@@ -8829,9 +8829,9 @@ const ja: Dict = {
     "このテーブルには主キーが無く、表示中の行の一部は全列が同一の値を持っています。{count} 件の文を実行しますが、重複行を対象とした文はその重複すべてに影響します。続行しますか？",
   editRowOvershootConfirmTitle: "想定より多くの行が一致します",
   editRowOvershootConfirmBody:
-    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。選んでいない行 (同じキーの値を持つ行や、このグリッドに読み込んでいない行) も一緒に一致している可能性があります。それでも適用すると、最大 {actual} 行が変更されます。",
+    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。選んでいない行 (同じキーの値を持つ行や、このグリッドに読み込んでいない行) も一緒に一致している可能性があります。それでも適用すると、全体で最大 {total} 行が変更されます。",
   editRowOvershootConfirmBodyAllColumns:
-    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。このテーブルは全列の値で行を照合するため、全列が同じ値の行 (このグリッドに読み込んでいない行を含む) も一緒に一致している可能性があります。それでも適用すると、最大 {actual} 行が変更されます。",
+    "指定した {expected} 行に対し、{actual} 行が一致します。書き込みはロールバックしたので、まだ何も変更されていません。このテーブルは全列の値で行を照合するため、全列が同じ値の行 (このグリッドに読み込んでいない行を含む) も一緒に一致している可能性があります。それでも適用すると、全体で最大 {total} 行が変更されます。",
   editRowOvershootConfirmButton: "それでも適用",
   editApplyDisabledInvalid: "不正な入力を修正してから適用してください。",
   editInvalidNumber: "数値を入力してください（または NULL）。",

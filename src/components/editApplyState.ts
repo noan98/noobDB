@@ -138,20 +138,20 @@ export type GuardedApplyResult =
   /** コミットした。 */
   | { kind: "applied"; totalAffected: number }
   /** 適用していない (キャンセル / 承認後も超過が続いて確認の上限に達した)。DB は未変更。 */
-  | { kind: "not_applied"; expected: number; actual: number }
+  | { kind: "not_applied"; expected: number; actual: number; total: number }
   /** ロールバックが不完全 (MyISAM など)。書き込みの一部が残っている。再実行しない。 */
   | { kind: "rollback_incomplete"; expected: number; actual: number };
 
 /**
  * `bulk_update_cells` を実行し、想定行数の超過 (`row_count_exceeded`、#1777) なら確認を取って
- * 承認した件数つきで再実行する。承認した件数 (`batch_total_rows`) を上限にするので、確認の間に
- * さらに増えれば再び超過になり、新しい件数で確認し直す (最大 `MAX_OVERSHOOT_CONFIRMATIONS` 回)。
+ * 承認した件数つきで再実行する。承認は文ごとの件数 (`statement_counts`) なので、確認の間に
+ * さらに増えれば (別の文の減少で相殺されず) 再び超過になり、新しい件数で確認し直す (最大 `MAX_OVERSHOOT_CONFIRMATIONS` 回)。
  * `rollback_incomplete` は再実行せずそのまま返す。確認の前後に `onAwaitingConfirm` /
  * `onResume` を呼ぶ (状態バー表示と二重 Apply の防止用)。
  */
 export async function applyWithRowCountGuard(input: {
   run: (options?: BulkWriteOptions) => Promise<BulkWriteOutcome>;
-  confirmExceeded: (counts: { expected: number; actual: number }) => Promise<boolean>;
+  confirmExceeded: (counts: { expected: number; actual: number; total: number }) => Promise<boolean>;
   onAwaitingConfirm?: () => void;
   onResume?: () => void;
 }): Promise<GuardedApplyResult> {
@@ -164,7 +164,7 @@ export async function applyWithRowCountGuard(input: {
     if (res.status === "rollback_incomplete") {
       return { kind: "rollback_incomplete", expected: res.expected_rows, actual: res.actual_rows };
     }
-    const counts = { expected: res.expected_rows, actual: res.actual_rows };
+    const counts = { expected: res.expected_rows, actual: res.actual_rows, total: res.batch_total_rows };
     if (confirmations >= MAX_OVERSHOOT_CONFIRMATIONS) return { kind: "not_applied", ...counts };
     input.onAwaitingConfirm?.();
     let ok = false;
@@ -174,6 +174,6 @@ export async function applyWithRowCountGuard(input: {
       input.onResume?.();
     }
     if (!ok) return { kind: "not_applied", ...counts };
-    options = { approvedMaxRows: res.batch_total_rows };
+    options = { approvedCounts: res.statement_counts };
   }
 }

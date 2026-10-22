@@ -398,15 +398,8 @@ pub(crate) async fn run_query_transaction_inner(
     statements: Vec<String>,
     database: Option<String>,
 ) -> Result<QueryResult> {
-    match run_query_transaction_guarded_inner(
-        state,
-        session_id,
-        statements,
-        Vec::new(),
-        database,
-        None,
-    )
-    .await?
+    match run_query_transaction_guarded_inner(state, session_id, statements, Vec::new(), database)
+        .await?
     {
         TransactionRun::Committed(result) => Ok(result),
         // 期待を与えていないので違反は起きない。
@@ -444,9 +437,8 @@ pub(crate) fn rolled_back_message(v: &GuardViolation, incomplete: bool) -> Strin
 }
 
 /// [`run_query_transaction_inner`] に実影響行数の検算を足したもの (#1777)。`expects` は文ごとの
-/// 期待 (空なら全文検査なし、そうでなければ `statements` と同じ長さ)、`total_max` は利用者が
-/// 承認した合計の上限 (あれば文ごとの検査の代わりに使う)。期待を外れたらコミットせずロール
-/// バックし、内訳を返す。read_only ガード・キャッシュ invalidate は従来と同じ経路で、
+/// 期待 (空なら全文検査なし、そうでなければ `statements` と同じ長さ)。期待を外れたら
+/// コミットせずロールバックし、内訳を返す。read_only ガード・キャッシュ invalidate は従来と同じ経路で、
 /// ロールバックしたときは履歴にエラーとして残し (`rolled back: matched M rows, expected N`)、
 /// キャッシュには触れない。ロールバックが不完全 (MyISAM など) なときは書き込み済みなので履歴
 /// (成功扱い・件数つき) とキャッシュ invalidate を成功時と同じに行う。
@@ -456,7 +448,6 @@ pub(crate) async fn run_query_transaction_guarded_inner(
     statements: Vec<String>,
     expects: Vec<RowExpectation>,
     database: Option<String>,
-    total_max: Option<u64>,
 ) -> Result<TransactionRun> {
     if !expects.is_empty() && expects.len() != statements.len() {
         return Err(AppError::InvalidInput(
@@ -487,13 +478,13 @@ pub(crate) async fn run_query_transaction_guarded_inner(
         .collect();
     let outcome = session
         .conn
-        .execute_transaction_guarded(&guarded, database.as_deref(), total_max)
+        .execute_transaction_guarded(&guarded, database.as_deref())
         .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
     // ロールバックした (できなかった) 場合の内訳。`incomplete` なら書き込み済み扱い。
     let (violation, incomplete) = match &outcome {
-        Ok(GuardedTxOutcome::RolledBack(v)) => (Some(*v), false),
-        Ok(GuardedTxOutcome::RollbackIncomplete(v)) => (Some(*v), true),
+        Ok(GuardedTxOutcome::RolledBack(v)) => (Some(v.clone()), false),
+        Ok(GuardedTxOutcome::RollbackIncomplete(v)) => (Some(v.clone()), true),
         _ => (None, false),
     };
     if let Some(v) = &violation {
@@ -525,7 +516,7 @@ pub(crate) async fn run_query_transaction_guarded_inner(
                 Some(rolled_back_message(v, false)),
             )
             .await;
-            return Ok(TransactionRun::RolledBack(*v));
+            return Ok(TransactionRun::RolledBack(v.clone()));
         }
     }
     let result = outcome.map(GuardedTxOutcome::total_affected);
@@ -2180,6 +2171,7 @@ mod tests {
             expected: 1,
             actual: 2,
             total: 2,
+            counts: vec![2],
         };
         assert_eq!(
             rolled_back_message(&v, false),

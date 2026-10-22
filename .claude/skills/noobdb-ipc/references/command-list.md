@@ -110,13 +110,13 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   `row_count_exceeded` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
   文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
   履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
-  `row_count_exceeded { expected_rows, actual_rows, batch_total_rows }` で返す (`expected_rows` / `actual_rows` は
-  超過した文の合計、`batch_total_rows` は全文の合計。少ない側は今は止めない)。MySQL でロールバック後に警告 1196
-  (MyISAM など非トランザクション表) があれば、書き込みが**戻っていない**ので `rollback_incomplete` を返し、履歴 (件数つき)・
-  キャッシュ invalidate は成功時と同じに行う。UI は再読込を促し、承認して再実行させない。
+  `row_count_exceeded { expected_rows, actual_rows, batch_total_rows, statement_counts }` で返す (`expected_rows` / `actual_rows` は
+  超過した文の合計、`batch_total_rows` は全文の合計 [表示用]、`statement_counts` は文ごとの実件数。少ない側は今は止めない)。MySQL でロールバック後に警告 1196
+  か、対象表の事前判定 (`write_target_is_non_transactional`、`max_error_count=0` 対策) で非トランザクション表 (MyISAM など) と分かれば、書き込みが**戻っていない**ので `rollback_incomplete` を返し、履歴 (件数つき)・
+  キャッシュ invalidate は成功時と同じに行う。UI は送信済みの保留編集を破棄して再読込を促し、承認して再実行させない。
   3 ドライバとも `rows_affected` は一致行数 (MySQL は sqlx が CLIENT_FOUND_ROWS を常に立てる)。利用者が確認で
-  承認したときだけ `options: { approved_max_rows: <batch_total_rows> }` で再実行する (文ごとの検査の代わりに「合計がこの件数を超えたらロールバック」。
-  承認後にさらに増えれば再び `row_count_exceeded`。`BulkWriteOptions`、後続の検査用の項目もここへ足す)。
+  承認したときだけ `options: { approved_counts: <statement_counts> }` で再実行する (各文の上限を max(期待, 承認件数) に引き上げ、`min` は外さない。
+  文ごとなので他の変更で相殺されない。承認後にさらに増えれば再び `row_count_exceeded`。`BulkWriteOptions`、後続の検査用の項目もここへ足す)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

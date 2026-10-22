@@ -719,24 +719,23 @@ impl SqliteConn {
     ) -> Result<u64> {
         let stmts = super::unchecked_statements(statements);
         Ok(self
-            .execute_transaction_guarded(&stmts, database, None)
+            .execute_transaction_guarded(&stmts, database)
             .await?
             .total_affected())
     }
 
     /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
-    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
+    /// を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
         statements: &[GuardedStatement<'_>],
         _database: Option<&str>,
-        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
-        run_batch_guarded(&mut conn, statements, total_max).await
+        run_batch_guarded(&mut conn, statements).await
     }
 
     /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。
@@ -2493,12 +2492,11 @@ async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>)
         .unwrap_or(0)
 }
 
-/// 文を 1 トランザクションで流す。期待 (`GuardedStatement::expect` / `total_max`) を外れたら
+/// 文を 1 トランザクションで流す。期待 (`GuardedStatement::expect`) を外れたら
 /// コミットせずロールバックして内訳を返す (#1777)。検算なしの `run_batch` もこれに載せる。
 async fn run_batch_guarded(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
     statements: &[GuardedStatement<'_>],
-    total_max: Option<u64>,
 ) -> Result<GuardedTxOutcome> {
     let mut tx = sqlx::Connection::begin(&mut **conn).await?;
     let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
@@ -2508,7 +2506,7 @@ async fn run_batch_guarded(
             .await?;
         counts.push(result.rows_affected());
     }
-    if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
+    if let Some(violation) = super::evaluate_guard(statements, &counts) {
         tx.rollback().await?;
         return Ok(GuardedTxOutcome::RolledBack(violation));
     }
@@ -2521,9 +2519,7 @@ async fn run_batch(
     statements: &[String],
 ) -> Result<u64> {
     let stmts = super::unchecked_statements(statements);
-    Ok(run_batch_guarded(conn, &stmts, None)
-        .await?
-        .total_affected())
+    Ok(run_batch_guarded(conn, &stmts).await?.total_affected())
 }
 
 /// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。

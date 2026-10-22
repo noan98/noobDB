@@ -1068,6 +1068,35 @@ impl MySqlConn {
         }
     }
 
+    /// 文列の対象表に非トランザクショナル (MyISAM 等) があるか。警告 1196 の検出
+    /// (`rollback_was_incomplete`) は `max_error_count=0` のセッションでは警告が出ないため
+    /// 取りこぼす。そこで、対象表のエンジンを `write_target_is_non_transactional` で事前に
+    /// 判定した結果も併用する (#1777)。同じ対象表は 1 回だけ調べる。調べられないとき
+    /// (照会失敗) は安全側で true。
+    async fn touches_non_transactional_table(
+        &self,
+        database: Option<&str>,
+        statements: &[GuardedStatement<'_>],
+    ) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        for st in statements {
+            let Some((target, _)) = extract_target_table_with_alias(st.sql) else {
+                continue;
+            };
+            if !seen.insert(target) {
+                continue;
+            }
+            if self
+                .write_target_is_non_transactional(database, st.sql)
+                .await
+                .unwrap_or(true)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Row-by-row probe inside a rolled-back transaction to find the first
     /// rejected row. See [`Connection::probe_failing_row`] (#687).
     pub(crate) async fn probe_failing_row(
@@ -1196,18 +1225,17 @@ impl MySqlConn {
     ) -> Result<u64> {
         let stmts = super::unchecked_statements(statements);
         Ok(self
-            .execute_transaction_guarded(&stmts, database, None)
+            .execute_transaction_guarded(&stmts, database)
             .await?
             .total_affected())
     }
 
     /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
-    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
+    /// を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
         statements: &[GuardedStatement<'_>],
         database: Option<&str>,
-        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
@@ -1222,11 +1250,15 @@ impl MySqlConn {
                 .await?;
             counts.push(result.rows_affected());
         }
-        if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
+        if let Some(violation) = super::evaluate_guard(statements, &counts) {
             tx.rollback().await?;
             // MyISAM など非トランザクション表を触っていると ROLLBACK は警告 1196 を出し、
             // 書き込みの一部が戻らない。直後の SHOW WARNINGS (同じ接続) で見分ける。
-            if rollback_was_incomplete(&mut conn).await {
+            if rollback_was_incomplete(&mut conn).await
+                || self
+                    .touches_non_transactional_table(database, statements)
+                    .await
+            {
                 return Ok(GuardedTxOutcome::RollbackIncomplete(violation));
             }
             return Ok(GuardedTxOutcome::RolledBack(violation));

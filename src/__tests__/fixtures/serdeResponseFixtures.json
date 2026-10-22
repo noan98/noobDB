@@ -556,6 +556,10 @@
     "actual_rows": 2,
     "batch_total_rows": 3,
     "expected_rows": 1,
+    "statement_counts": [
+      2,
+      1
+    ],
     "status": "row_count_exceeded"
   },
   "cancelStreamResponse": {

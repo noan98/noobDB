@@ -84,6 +84,7 @@ import {
 import {
   applyWithRowCountGuard,
   appliedRowShortfall,
+  pendingEditsAfterApply,
   remainingAfterSent,
   tabStateAfterApply,
 } from "./components/editApplyState";
@@ -7383,14 +7384,14 @@ export default function App() {
         // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
         const guarded = await applyWithRowCountGuard({
           run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
-          confirmExceeded: ({ expected, actual }) =>
+          confirmExceeded: ({ expected, actual, total }) =>
             confirm({
               title: translate("editRowOvershootConfirmTitle"),
               message: translate(
                 identityStrategy === "all_columns"
                   ? "editRowOvershootConfirmBodyAllColumns"
                   : "editRowOvershootConfirmBody",
-                { expected, actual },
+                { expected, actual, total },
               ),
               confirmLabel: translate("editRowOvershootConfirmButton"),
               tone: "warning",
@@ -7414,7 +7415,21 @@ export default function App() {
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
       if (incomplete) {
         // トランザクション非対応の表 (MyISAM など) はロールバックしても戻らない。書き込みの一部が
-        // 残っているので、承認して再実行させず、再読込して現状を確認してもらう。
+        // 残っているので、承認して再実行させず、再読込して現状を確認してもらう。送信した保留編集・
+        // 削除予定・新規行は破棄する (残すと Apply の再実行で INSERT / UPDATE が二重に書かれる)。
+        // Apply 中に追加された未送信の分は残す。グリッドの表示は古いままなので再読込を促す。
+        patchTab(tabId, (tt) => ({
+          ...tt,
+          pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
+          ...(scoped
+            ? {}
+            : {
+                pendingDeletes: remainingAfterSent(tt.pendingDeletes ?? [], pendingDeletes),
+                pendingInserts: remainingAfterSent(tt.pendingInserts ?? [], pendingInserts),
+                editUndoStack: [],
+                editRedoStack: [],
+              }),
+        }));
         setStatus({
           kind: "key",
           key: "statusApplyEditsRollbackIncomplete",

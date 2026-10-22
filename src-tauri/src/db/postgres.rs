@@ -847,18 +847,17 @@ impl PostgresConn {
     ) -> Result<u64> {
         let stmts = super::unchecked_statements(statements);
         Ok(self
-            .execute_transaction_guarded(&stmts, database, None)
+            .execute_transaction_guarded(&stmts, database)
             .await?
             .total_affected())
     }
 
     /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
-    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
+    /// を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
         statements: &[GuardedStatement<'_>],
         database: Option<&str>,
-        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
@@ -873,7 +872,7 @@ impl PostgresConn {
                 .await?;
             counts.push(result.rows_affected());
         }
-        if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
+        if let Some(violation) = super::evaluate_guard(statements, &counts) {
             tx.rollback().await?;
             return Ok(GuardedTxOutcome::RolledBack(violation));
         }

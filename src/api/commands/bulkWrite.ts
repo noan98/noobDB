@@ -15,7 +15,7 @@ export const bulkWriteCommands = {
    *
    * 合計の実影響行数が想定 (`groups` の行数 + `extraStatements` の数) を超えたらバックエンドが
    * ロールバックして `status: "row_count_exceeded"` を返す (#1777)。承認後の再実行は
-   * `options.approvedMaxRows` (= `batch_total_rows`) を付ける。
+   * `options.approvedCounts` (= `statement_counts`) を付ける。
    */
   bulkUpdateCells: (params: {
     sessionId: string;
@@ -39,7 +39,7 @@ export const bulkWriteCommands = {
       groups: params.groups,
       extraStatements: params.extraStatements ?? [],
       pkBinary: params.pkBinary ?? null,
-      options: params.options ? { approved_max_rows: params.options.approvedMaxRows ?? null } : undefined,
+      options: params.options ? { approved_counts: params.options.approvedCounts ?? null } : undefined,
     }).then((r) => parseResponse(schemas.bulkWriteOutcome, r, "bulk_update_cells")),
   /**
    * テストデータ生成 (#602) の生成行を 1 トランザクションで投入する (#1259)。セルは

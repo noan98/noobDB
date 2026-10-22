@@ -204,6 +204,7 @@ export const bulkWriteOutcomeRowCountExceeded = z.object({
   expected_rows: z.number(),
   actual_rows: z.number(),
   batch_total_rows: z.number(),
+  statement_counts: z.array(z.number()),
 });
 export const bulkWriteOutcomeRollbackIncomplete = z.object({
   status: z.literal("rollback_incomplete"),

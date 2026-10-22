@@ -189,11 +189,12 @@ describe("applyWithRowCountGuard", () => {
     status: "applied",
     result: { columns: [], rows: [], rows_affected: n, elapsed_ms: 1 },
   });
-  const exceeded = (expected: number, actual: number, total = actual): BulkWriteOutcome => ({
+  const exceeded = (expected: number, actual: number, counts: number[] = [actual]): BulkWriteOutcome => ({
     status: "row_count_exceeded",
     expected_rows: expected,
     actual_rows: actual,
-    batch_total_rows: total,
+    batch_total_rows: counts.reduce((a, b) => a + b, 0),
+    statement_counts: counts,
   });
 
   it("超過が無ければ確認せずそのまま適用する", async () => {
@@ -203,30 +204,30 @@ describe("applyWithRowCountGuard", () => {
     expect(confirmExceeded).not.toHaveBeenCalled();
   });
 
-  it("承認すると、全文の合計を承認件数として再実行する", async () => {
+  it("承認すると、文ごとの件数を承認件数として再実行する", async () => {
     const seen: (BulkWriteOptions | undefined)[] = [];
     const events: string[] = [];
     const res = await applyWithRowCountGuard({
       run: async (o) => {
         seen.push(o);
-        return o ? applied(5) : exceeded(1, 2, 5);
+        return o ? applied(5) : exceeded(1, 2, [2, 3]);
       },
       confirmExceeded: async (c) => {
-        events.push(`confirm ${c.expected}/${c.actual}`);
+        events.push(`confirm ${c.expected}/${c.actual}/${c.total}`);
         return true;
       },
       onAwaitingConfirm: () => events.push("awaiting"),
       onResume: () => events.push("resume"),
     });
     expect(res).toEqual({ kind: "applied", totalAffected: 5 });
-    expect(seen).toEqual([undefined, { approvedMaxRows: 5 }]);
-    expect(events).toEqual(["awaiting", "confirm 1/2", "resume"]);
+    expect(seen).toEqual([undefined, { approvedCounts: [2, 3] }]);
+    expect(events).toEqual(["awaiting", "confirm 1/2/5", "resume"]);
   });
 
   it("キャンセルなら再実行せず、件数を返す", async () => {
     const run = vi.fn(async () => exceeded(1, 2));
     const res = await applyWithRowCountGuard({ run, confirmExceeded: async () => false });
-    expect(res).toEqual({ kind: "not_applied", expected: 1, actual: 2 });
+    expect(res).toEqual({ kind: "not_applied", expected: 1, actual: 2, total: 2 });
     expect(run).toHaveBeenCalledTimes(1);
   });
 

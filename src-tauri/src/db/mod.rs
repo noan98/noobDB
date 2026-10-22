@@ -470,18 +470,21 @@ impl<'a> GuardedStatement<'a> {
     }
 }
 
-/// 期待を外れて巻き戻した内訳。`expected` / `actual` は**違反した文だけ**の合計 (総計上限での
-/// 違反では上限と総計)。`total` は全文の合計で、利用者が承認するときの上限 (`total_max`) になる。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// 期待を外れて巻き戻した内訳。`expected` / `actual` は**違反した文だけ**の合計 (表示用)、
+/// `total` は全文の合計、`counts` は全文の実際の影響行数 (文の並び順)。利用者が承認するときは
+/// `counts` を文ごとの上限に使う (合計での承認は、確認の間に他のクライアントが変えた件数が
+/// 相殺されて通ってしまうため)。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GuardViolation {
     pub expected: u64,
     pub actual: u64,
     pub total: u64,
+    pub counts: Vec<u64>,
 }
 
 /// [`Connection::execute_transaction_guarded`] の結果 (#1777)。期待外れはエラーではなく判別できる
 /// 値で返す (呼び出し側が確認を取って再実行できるように)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardedTxOutcome {
     /// コミットした。合計 `rows_affected`。
     Committed(u64),
@@ -510,22 +513,12 @@ impl GuardedTxOutcome {
     }
 }
 
-/// 全文を流した後の各文の影響行数 `counts` を期待と突き合わせる (3 ドライバ共通)。
-/// `total_max` があれば (利用者が承認した件数) 文ごとの検査は行わず、合計がそれを超えたときだけ
-/// 違反にする。なければ文ごとに検査し、違反した文の合計を返す。
+/// 全文を流した後の各文の影響行数 `counts` を、文ごとの期待と突き合わせる (3 ドライバ共通)。
+/// 違反した文の合計を内訳に載せる。
 pub(crate) fn evaluate_guard(
     statements: &[GuardedStatement<'_>],
     counts: &[u64],
-    total_max: Option<u64>,
 ) -> Option<GuardViolation> {
-    let total: u64 = counts.iter().sum();
-    if let Some(max) = total_max {
-        return (total > max).then_some(GuardViolation {
-            expected: max,
-            actual: total,
-            total,
-        });
-    }
     let mut expected = 0;
     let mut actual = 0;
     let mut violated = false;
@@ -536,10 +529,11 @@ pub(crate) fn evaluate_guard(
             actual += n;
         }
     }
-    violated.then_some(GuardViolation {
+    violated.then(|| GuardViolation {
         expected,
         actual,
-        total,
+        total: counts.iter().sum(),
+        counts: counts.to_vec(),
     })
 }
 
@@ -1217,8 +1211,7 @@ impl Connection {
     }
 
     /// [`Self::execute_transaction`] に、コミット前の実影響行数の検算 (#1777) を足したもの。
-    /// 全文を流した後、文ごとの期待 ([`RowExpectation`]) を外れていたら (`total_max` が
-    /// あれば合計がそれを超えたら) コミットせずロールバックし、エラーではなく
+    /// 全文を流した後、文ごとの期待 ([`RowExpectation`]) を外れていたらコミットせずロールバックし、エラーではなく
     /// [`GuardedTxOutcome`] で内訳を返す。3 ドライバとも `rows_affected` は「一致した行数」
     /// (MySQL は sqlx が常に CLIENT_FOUND_ROWS を立てる) なので、値が変わらない UPDATE も
     /// 1 行と数える。MySQL はロールバック後に警告 1196 を調べ、戻らなかったときは
@@ -1227,21 +1220,11 @@ impl Connection {
         &self,
         statements: &[GuardedStatement<'_>],
         database: Option<&str>,
-        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         match self {
-            Connection::MySql(c) => {
-                c.execute_transaction_guarded(statements, database, total_max)
-                    .await
-            }
-            Connection::Postgres(c) => {
-                c.execute_transaction_guarded(statements, database, total_max)
-                    .await
-            }
-            Connection::Sqlite(c) => {
-                c.execute_transaction_guarded(statements, database, total_max)
-                    .await
-            }
+            Connection::MySql(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Postgres(c) => c.execute_transaction_guarded(statements, database).await,
+            Connection::Sqlite(c) => c.execute_transaction_guarded(statements, database).await,
         }
     }
 
@@ -6148,14 +6131,15 @@ mod guard_tests {
             st(RowExpectation::at_most(3)),
         ];
         // 少ない側 (0 行) と上限ちょうどは違反ではない。
-        assert_eq!(evaluate_guard(&sts, &[1, 2, 0], None), None);
-        // 1 文が超えたら、その文だけの内訳と全体合計を返す (他文の不足で相殺されない)。
+        assert_eq!(evaluate_guard(&sts, &[1, 2, 0]), None);
+        // 1 文が超えたら、その文だけの内訳・全体合計・文ごとの件数を返す (他文の不足で相殺されない)。
         assert_eq!(
-            evaluate_guard(&sts, &[2, 0, 0], None),
+            evaluate_guard(&sts, &[2, 0, 0]),
             Some(GuardViolation {
                 expected: 1,
                 actual: 2,
-                total: 2
+                total: 2,
+                counts: vec![2, 0, 0],
             })
         );
     }
@@ -6169,29 +6153,10 @@ mod guard_tests {
             }),
             st(RowExpectation::NONE),
         ];
-        assert_eq!(evaluate_guard(&sts, &[1, 99], None), None);
+        assert_eq!(evaluate_guard(&sts, &[1, 99]), None);
         assert_eq!(
-            evaluate_guard(&sts, &[0, 5], None).map(|v| (v.expected, v.actual, v.total)),
+            evaluate_guard(&sts, &[0, 5]).map(|v| (v.expected, v.actual, v.total)),
             Some((1, 0, 5))
-        );
-    }
-
-    #[test]
-    fn approved_total_replaces_per_statement_checks() {
-        let sts = [
-            st(RowExpectation::at_most(1)),
-            st(RowExpectation::at_most(1)),
-        ];
-        // 承認済みの合計 (3) までは、文ごとの超過があっても通す。
-        assert_eq!(evaluate_guard(&sts, &[2, 1], Some(3)), None);
-        // 承認後にさらに増えたら (合計 4 > 3) 違反。
-        assert_eq!(
-            evaluate_guard(&sts, &[3, 1], Some(3)),
-            Some(GuardViolation {
-                expected: 3,
-                actual: 4,
-                total: 4
-            })
         );
     }
 }

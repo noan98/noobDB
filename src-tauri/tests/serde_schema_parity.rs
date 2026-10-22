@@ -1833,6 +1833,7 @@ fn build_fixtures() -> serde_json::Value {
         expected_rows: 1,
         actual_rows: 2,
         batch_total_rows: 3,
+        statement_counts: vec![2, 1],
     };
     let bulk_write_outcome_rollback_incomplete = t::BulkWriteOutcome::RollbackIncomplete {
         expected_rows: 1,

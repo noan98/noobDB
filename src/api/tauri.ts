@@ -984,20 +984,28 @@ export interface InsertRowsResult {
 /**
  * `bulk_update_cells` の結果 (#1777)。実影響行数が想定 (編集対象として指定した行数) を超えると、
  * バックエンドはコミットせずロールバックして `row_count_exceeded` を返す (エラーではない)。
- * `expected_rows` / `actual_rows` は想定を外れた文の合計 (表示用)、`batch_total_rows` は全文の合計。
- * 利用者が確認して承認したときだけ、`batch_total_rows` を `approvedMaxRows` に付けて再実行する。
+ * `expected_rows` / `actual_rows` は想定を外れた文の合計 (表示用)、`batch_total_rows` は全文の合計
+ * (「最大で N 行が変わる」の表示用)、`statement_counts` は文ごとの実際の影響行数。
+ * 利用者が確認して承認したときだけ、`statement_counts` を `approvedCounts` に付けて再実行する
+ * (各文の上限を max(期待, 承認件数) に引き上げる。合計での承認と違い、他の変更で相殺されない)。
  * `rollback_incomplete` は、トランザクション非対応の表 (MyISAM など) のため書き込みの一部が
  * 戻らなかったことを表す。承認して再実行してはいけない (再読込して現状を確認させる)。
  */
 export type BulkWriteOutcome =
   | { status: "applied"; result: QueryResult }
-  | { status: "row_count_exceeded"; expected_rows: number; actual_rows: number; batch_total_rows: number }
+  | {
+      status: "row_count_exceeded";
+      expected_rows: number;
+      actual_rows: number;
+      batch_total_rows: number;
+      statement_counts: number[];
+    }
   | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
 
 /** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
 export interface BulkWriteOptions {
-  /** 確認ダイアログで承認した合計の影響行数 (`row_count_exceeded.batch_total_rows`)。これを上限に再実行する。 */
-  approvedMaxRows?: number;
+  /** 確認ダイアログで承認した文ごとの影響行数 (`row_count_exceeded.statement_counts`)。各文の上限にして再実行する。 */
+  approvedCounts?: number[];
 }
 
 export interface KillProcessesResult {

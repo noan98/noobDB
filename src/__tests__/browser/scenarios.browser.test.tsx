@@ -522,9 +522,15 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
     const calls: Record<string, unknown>[] = [];
     onCommand("bulk_update_cells", (args) => {
       calls.push(args);
-      const options = args.options as { approved_max_rows?: number } | undefined;
-      if ((options?.approved_max_rows ?? 0) < 2) {
-        return { status: "row_count_exceeded", expected_rows: 1, actual_rows: 2, batch_total_rows: 2 };
+      const options = args.options as { approved_counts?: number[] } | undefined;
+      if (!options?.approved_counts) {
+        return {
+          status: "row_count_exceeded",
+          expected_rows: 1,
+          actual_rows: 2,
+          batch_total_rows: 2,
+          statement_counts: [2],
+        };
       }
       fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
       return { status: "applied", result: { columns: [], rows: [], rows_affected: 2, elapsed_ms: 2 } };
@@ -537,7 +543,7 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
 
     await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
     expect(calls[0]?.options).toBeUndefined();
-    expect(calls[1]?.options).toEqual({ approved_max_rows: 2 });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
     await expect.element(screen.getByRole("gridcell", { name: "42", exact: true })).toBeVisible();
   });
 
@@ -546,7 +552,13 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
     let calls = 0;
     onCommand("bulk_update_cells", () => {
       calls += 1;
-      return { status: "row_count_exceeded", expected_rows: 1, actual_rows: 2, batch_total_rows: 2 };
+      return {
+        status: "row_count_exceeded",
+        expected_rows: 1,
+        actual_rows: 2,
+        batch_total_rows: 2,
+        statement_counts: [2],
+      };
     });
     const screen = await renderInBrowser(<App />);
     await editQtyAndApply(screen);
@@ -567,21 +579,33 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
     const calls: Record<string, unknown>[] = [];
     onCommand("bulk_update_cells", (args) => {
       calls.push(args);
-      const approved = (args.options as { approved_max_rows?: number } | undefined)?.approved_max_rows;
+      const approved = (args.options as { approved_counts?: number[] } | undefined)?.approved_counts;
       // 1 回目は 2 行 (承認 2)、承認後の再実行では 3 行に増えていて再び超過する。
       return approved === undefined
-        ? { status: "row_count_exceeded", expected_rows: 1, actual_rows: 2, batch_total_rows: 2 }
-        : { status: "row_count_exceeded", expected_rows: 2, actual_rows: 3, batch_total_rows: 3 };
+        ? {
+            status: "row_count_exceeded",
+            expected_rows: 1,
+            actual_rows: 2,
+            batch_total_rows: 2,
+            statement_counts: [2],
+          }
+        : {
+            status: "row_count_exceeded",
+            expected_rows: 2,
+            actual_rows: 3,
+            batch_total_rows: 3,
+            statement_counts: [3],
+          };
     });
     const screen = await renderInBrowser(<App />);
     await editQtyAndApply(screen);
 
     await screen.getByRole("button", { name: t("editRowOvershootConfirmButton") }).click();
     await vi.waitFor(() => expect(calls.length).toBe(2), { timeout: 5000 });
-    expect(calls[1]?.options).toEqual({ approved_max_rows: 2 });
+    expect(calls[1]?.options).toEqual({ approved_counts: [2] });
     // 2 回目の確認 (新しい件数 3) が出る。キャンセルすると適用されず、保留中の編集が残る。
     await expect
-      .element(screen.getByText(t("editRowOvershootConfirmBody", { expected: 2, actual: 3 })))
+      .element(screen.getByText(t("editRowOvershootConfirmBody", { expected: 2, actual: 3, total: 3 })))
       .toBeVisible();
     await screen
       .getByRole("button", { name: t("confirmDefaultCancel"), exact: true })
@@ -606,6 +630,10 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
       .toBeVisible();
     await expect.element(screen.getByText(t("editRowOvershootConfirmTitle"))).not.toBeInTheDocument();
     expect(calls).toBe(1);
+    // 送信した保留編集は破棄され、Apply を押し直して二重に書くことはできない。
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
   });
 });
 
