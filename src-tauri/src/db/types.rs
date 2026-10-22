@@ -37,8 +37,22 @@ impl Serialize for Value {
         match self {
             Value::Null => serializer.serialize_unit(),
             Value::Bool(b) => serializer.serialize_bool(*b),
-            Value::Int(i) => serializer.serialize_i64(*i),
-            Value::UInt(u) => serializer.serialize_u64(*u),
+            Value::Int(_) | Value::UInt(_) => {
+                // IPC 越えの全 Value シリアライズ境界での不変条件チェック (#1780)。
+                // どのモジュールが組み立てた Value でも、安全整数 (2^53 - 1) を超える
+                // 整数が素の JSON 数値として出る前に debug ビルド (テスト) で検出する。
+                // release は無コスト (debug_assert)。出力形式は変えない。
+                debug_assert!(
+                    self.is_js_safe(),
+                    "安全整数 (2^53 - 1) を超える整数を Value::Int/UInt のまま IPC へ出力しようとしました: {self:?}。\
+                     Value::from_i64_lossless / from_u64_lossless を経由してください (#1780)"
+                );
+                match self {
+                    Value::Int(i) => serializer.serialize_i64(*i),
+                    Value::UInt(u) => serializer.serialize_u64(*u),
+                    _ => serializer.serialize_unit(),
+                }
+            }
             Value::Float(f) if f.is_finite() => serializer.serialize_f64(*f),
             Value::Float(f) => serializer.serialize_str(&float_text(*f)),
             Value::String(s) | Value::Bytes(s) => serializer.serialize_str(s),
@@ -1160,41 +1174,118 @@ mod js_safe_tests {
         let _ = Value::UInt(u64::MAX).debug_assert_js_safe();
     }
 
-    /// 3 ドライバのデコーダ本体 (テストモジュールより前) に、`Value::Int(` /
-    /// `Value::UInt(` を直接組み立てる行が無いことを固定する (#1422)。
-    ///
-    /// PostgreSQL の INT2 / INT4 / OID のように元の型が 2^53 に収まる場合でも、
-    /// 直接構築の前例があると BIGINT 相当の新しい分岐がそれをコピーして静かに
-    /// 丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
-    /// `=>` を含む行 (match のパターン) と `matches!` / `if let` は「読む側」なので対象外。
     #[test]
-    fn driver_decoders_never_construct_raw_int_values() {
-        let sources = [
-            ("mysql.rs", include_str!("mysql.rs")),
-            ("postgres.rs", include_str!("postgres.rs")),
-            ("sqlite.rs", include_str!("sqlite.rs")),
-        ];
+    #[should_panic(expected = "#1780")]
+    fn serialize_panics_on_out_of_range_int_in_debug_builds() {
+        let _ = serde_json::to_string(&Value::Int(SAFE + 1));
+    }
+
+    #[test]
+    #[should_panic(expected = "#1780")]
+    fn serialize_panics_on_out_of_range_uint_in_debug_builds() {
+        let _ = serde_json::to_string(&vec![Value::UInt(u64::MAX)]);
+    }
+
+    #[test]
+    fn serialize_keeps_json_shape_for_safe_values() {
+        assert_eq!(
+            serde_json::to_string(&Value::Int(-SAFE)).unwrap(),
+            "-9007199254740991"
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::UInt(SAFE as u64)).unwrap(),
+            "9007199254740991"
+        );
+        assert_eq!(
+            serde_json::to_string(&Value::from_u64_lossless(u64::MAX)).unwrap(),
+            "\"18446744073709551615\""
+        );
+    }
+
+    /// `Value::Int(` / `Value::UInt(` を直接組み立てる行 (本体コード) を探す。
+    /// `#[cfg(test)]` 以降は対象外。`=>` を含む行 (match のパターン) と `matches!` /
+    /// `if let` は「読む側」なので対象外。
+    fn raw_int_constructions(name: &str, src: &str) -> Vec<String> {
         let mut offenders = Vec::new();
-        for (name, src) in sources {
-            for (no, line) in src.lines().enumerate() {
-                let code = line.split("//").next().unwrap_or("");
-                if code.trim_start().starts_with("#[cfg(test)]") {
-                    break;
-                }
-                let constructs = code.contains("Value::Int(") || code.contains("Value::UInt(");
-                let is_pattern =
-                    code.contains("=>") || code.contains("matches!") || code.contains("if let");
-                if constructs && !is_pattern {
-                    offenders.push(format!("{name}:{}: {}", no + 1, line.trim()));
-                }
+        for (no, line) in src.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            if code.trim_start().starts_with("#[cfg(test)]") {
+                break;
             }
+            let constructs = code.contains("Value::Int(") || code.contains("Value::UInt(");
+            let is_pattern =
+                code.contains("=>") || code.contains("matches!") || code.contains("if let");
+            if constructs && !is_pattern {
+                offenders.push(format!("{name}:{}: {}", no + 1, line.trim()));
+            }
+        }
+        offenders
+    }
+
+    fn collect_rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_rs_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// `db/**/*.rs` の本体コードに、`Value::Int(` / `Value::UInt(` を直接組み立てる行が
+    /// 無いことを固定する (#1422 / #1780)。
+    ///
+    /// 元の型が 2^53 に収まる場合でも、直接構築の前例があると BIGINT 相当の新しい分岐が
+    /// それをコピーして静かに丸めを再発させる。整数は必ず `from_*_lossless` を経由させる。
+    /// 唯一の許可は `from_*_lossless` 自身を定義する `types.rs`。ファイル列挙は glob 走査で、
+    /// ドライバやモジュールの追加に自動で追従する。
+    #[test]
+    fn db_modules_never_construct_raw_int_values() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/db");
+        let mut files = Vec::new();
+        collect_rs_files(&root, &mut files);
+        // 走査が空振りして素通りしないよう下限を固定する (db/ には 40 超のモジュールがある)。
+        assert!(
+            files.len() >= 30,
+            "db/**/*.rs の走査結果が少なすぎます: {}",
+            files.len()
+        );
+        let mut offenders = Vec::new();
+        for path in &files {
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if rel == "types.rs" {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(path) else {
+                panic!("読み込めません: {rel}");
+            };
+            offenders.extend(raw_int_constructions(&rel, &src));
         }
         assert!(
             offenders.is_empty(),
-            "デコーダが Value::Int/UInt を直接組み立てています。\
-             Value::from_i64_lossless / from_u64_lossless を経由してください (#1422):\n{}",
+            "db/ のモジュールが Value::Int/UInt を直接組み立てています。\
+             Value::from_i64_lossless / from_u64_lossless を経由してください (#1422, #1780):\n{}",
             offenders.join("\n")
         );
+    }
+
+    #[test]
+    fn raw_int_lint_detects_synthetic_violations_and_ignores_tests() {
+        let src = "fn f() -> Value { Value::Int(n) }\nlet _ = Value::UInt(1);\n\
+                   match v { Value::Int(i) => i }\nlet s = Value::Int(1); // コメント Value::UInt(\n\
+                   #[cfg(test)]\nmod t { fn g() { Value::Int(1); } }\n";
+        let hits = raw_int_constructions("x.rs", src);
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        assert!(hits[0].starts_with("x.rs:1:"));
+        assert!(raw_int_constructions("x.rs", "fn f() { Value::from_i64_lossless(1) }").is_empty());
     }
 }
 

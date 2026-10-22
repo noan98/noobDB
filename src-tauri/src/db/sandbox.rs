@@ -273,7 +273,7 @@ fn is_decimal_type(data_type: &str) -> bool {
 /// 整数値の `f64` (2^53 未満) を `Value::Int` にそろえる。小数や範囲外は `None`。
 fn integral_float(f: f64) -> Option<Value> {
     (f.is_finite() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0)
-        .then_some(Value::Int(f as i64))
+        .then(|| Value::from_i64_lossless(f as i64))
 }
 
 /// DECIMAL 文字列を比較用の正準形にする。小数部が無い (またはすべて 0 の) 整数は
@@ -292,9 +292,9 @@ fn canonical_decimal(s: &str) -> Option<Value> {
             .parse::<i128>()
         {
             return Some(if let Ok(i) = i64::try_from(n) {
-                Value::Int(i)
+                Value::from_i64_lossless(i)
             } else if let Ok(u) = u64::try_from(n) {
-                Value::UInt(u)
+                Value::from_u64_lossless(u)
             } else {
                 Value::String(n.to_string())
             });
@@ -1037,7 +1037,7 @@ mod tests {
             vec![Value::String("9007199254740993".into())],
             vec![Value::String("9007199254740992".into())],
             vec![Value::String("9007199254740993.00".into())],
-            vec![Value::Int(9_007_199_254_740_993)],
+            vec![Value::from_i64_lossless(9_007_199_254_740_993)],
             vec![Value::Float(10.0)],
             vec![Value::String("10.00".into())],
         ];
