@@ -93,6 +93,35 @@ export function DisconnectedIllustration({ size = 96 }: IllustrationProps) {
   );
 }
 
+/** クエリ実行前: エディタ窓 (SQL 行) + アクセントの実行 (再生) ボタン。 */
+export function RunQueryIllustration({ size = 96 }: IllustrationProps) {
+  return (
+    <Svg
+      width={`${size}px`}
+      height={`${(size * 3) / 4}px`}
+      viewBox="0 0 128 96"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      color="app.textSecondary"
+      aria-hidden="true"
+      role="img"
+    >
+      <ellipse cx="64" cy="91" rx="38" ry="3" fill="var(--illust-ground)" stroke="none" />
+      <rect x="22" y="18" width="72" height="56" rx="4" fill="var(--illust-body-fill)" strokeOpacity="0.6" />
+      <path d="M22 30h72" opacity="0.45" />
+      <path d="M32 42h30M32 52h42M32 62h22" opacity="0.5" />
+      {/* 実行ボタン (アクセント) */}
+      <g className="illust-float" stroke="var(--ws-accent, var(--accent))" strokeWidth={2.5}>
+        <circle cx="88" cy="66" r="14" fill="var(--illust-tint)" />
+        <path d="M84 59l11 7-11 7z" />
+      </g>
+    </Svg>
+  );
+}
+
 /** 結果なし: 空のグリッド + 虫眼鏡。 */
 export function NoResultsIllustration({ size = 84 }: IllustrationProps) {
   return (

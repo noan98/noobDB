@@ -1985,6 +1985,9 @@ const en = {
   qbInsertToEditorTitle: "Insert the generated SQL into the editor without running it.",
 
   resultEmpty: "No results yet. Run a query above.",
+  resultEmptyTitle: "Ready to run",
+  resultEmptySnippets: "Snippets",
+  resultEmptyCommandPalette: "Command palette",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
   resultNull: "NULL",
   resultEmptyString: "Empty string",
@@ -8712,6 +8715,9 @@ const ja: Dict = {
   qbInsertToEditorTitle: "生成した SQL を実行せずにエディタへ挿入します。",
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
+  resultEmptyTitle: "クエリを実行しましょう",
+  resultEmptySnippets: "スニペット",
+  resultEmptyCommandPalette: "コマンドパレット",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
   resultEmptyString: "空文字列",

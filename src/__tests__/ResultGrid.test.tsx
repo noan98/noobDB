@@ -114,6 +114,28 @@ describe("ResultGrid", () => {
     expect(screen.getByText(t("resultEmpty"))).toBeInTheDocument();
   });
 
+  it("実行前の空状態は EmptyState として実行ショートカット付きの補助アクションを出す (#1784)", async () => {
+    const { buildResultEmptyActions } = await import("../components/resultEmptyActions");
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    const emptyActions = buildResultEmptyActions(
+      t,
+      {
+        run: () => calls.push("run"),
+        snippets: () => calls.push("snip"),
+        commandPalette: () => calls.push("pal"),
+      },
+      { run: "Ctrl+Enter", commandPalette: "Ctrl+K" },
+    );
+    renderWithProviders(<ResultGrid result={null} emptyActions={emptyActions} />);
+    expect(screen.getByText(t("resultEmptyTitle"))).toBeInTheDocument();
+    const run = screen.getByRole("button", { name: new RegExp(t("shortcutHintRun")) });
+    expect(run).toHaveTextContent("Ctrl+Enter");
+    await user.click(run);
+    await user.click(screen.getByRole("button", { name: new RegExp(t("resultEmptySnippets")) }));
+    expect(calls).toEqual(["run", "snip"]);
+  });
+
   it("全文フィルタで一致行だけに絞り込み、件数サマリを表示する", async () => {
     const user = userEvent.setup();
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
