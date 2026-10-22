@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
+import { prefersStaticMotion } from "./revealOrigin";
 import { easings, transitions } from "../motion";
 import { shouldGlide, unionBoxes, type BoxRect } from "./selectionGlide";
-import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * `el` のスクロールコンテンツ座標の矩形。`getBoundingClientRect` は祖先の transform

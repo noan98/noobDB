@@ -947,6 +947,10 @@ export const PaneView = memo(
                                   onScroll={gridStable.fn(`${tab.id}:scroll`, (top: number) =>
                                     gridScrollRef.current.set(tab.id, top),
                                   )}
+                                  pageTurnPage={
+                                    tab.kind === "table" && tab.paginatable ? (tab.page ?? 1) : undefined
+                                  }
+                                  pageTurnScope={tab.id}
                                   streaming={tab.streaming}
                                   onStopStreaming={gridStable.fn(`${tab.id}:stop`, () =>
                                     actions.stopTab(tab),

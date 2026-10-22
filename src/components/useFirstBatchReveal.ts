@@ -1,8 +1,8 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
+import { prefersStaticMotion } from "./revealOrigin";
 import { durations, easings, firstBatchReveal } from "../motion";
 import { firstBatchRevealCount, firstBatchRevealDelayMs, isFirstBatchArrival } from "./firstBatchReveal";
-import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * 結果グリッドの初回バッチ着弾リビール (#1579)。ストリーミング中のスケルトン
