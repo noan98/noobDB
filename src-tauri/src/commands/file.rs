@@ -1,6 +1,6 @@
 use tokio::io::AsyncReadExt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, Result};
 use crate::text_encoding::{self, TextEncoding};
@@ -183,6 +183,56 @@ pub async fn reveal_in_file_manager(path: String) -> Result<()> {
         .map_err(|e| AppError::Other(format!("reveal task failed: {e}")))?
 }
 
+/// About 面から開けるプロジェクトのリンク (#1770)。フロントは種類だけを渡し、URL は
+/// バックエンドで決め打ちにする (任意の URL / パスを OS の既定動作へ渡さない多層防御)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectLink {
+    Repository,
+    Docs,
+}
+
+impl ProjectLink {
+    fn url(self) -> &'static str {
+        match self {
+            ProjectLink::Repository => "https://github.com/noan98/noobDB",
+            ProjectLink::Docs => "https://github.com/noan98/noobDB#readme",
+        }
+    }
+}
+
+/// 既定のブラウザで URL を開く。起動したプロセスは呼び出し元 (`spawn_blocking`) で
+/// `wait` して回収し、ゾンビを残さない。`xdg-open` / `open` / `explorer` は起動を
+/// 仲介するだけですぐ終了する。
+fn open_in_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = std::process::Command::new("explorer");
+    #[cfg(target_os = "macos")]
+    let mut cmd = std::process::Command::new("open");
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Other(format!("failed to open the browser: {e}")))?;
+    // 終了コードは見ない (explorer は成功でも非 0 を返すことがある)。回収だけ行う。
+    let _ = child.wait();
+    Ok(())
+}
+
+/// About 面のリポジトリ / ドキュメントリンクを既定のブラウザで開く (#1770)。フロントが
+/// シェルプラグインを直に叩かずバックエンド経由で起動する (capabilities を増やさない)。
+/// URL は [`ProjectLink`] から Rust 側で決まり、フロントからは受け取らない。
+#[tauri::command]
+pub async fn open_project_link(target: ProjectLink) -> Result<()> {
+    tokio::task::spawn_blocking(move || open_in_browser(target.url()))
+        .await
+        .map_err(|e| AppError::Other(format!("open link task failed: {e}")))?
+}
+
 /// ドロップされた `.sql` / `.txt` の内容を読んでエディタへ流し込むための読み取り
 /// コマンド。フロントが fs プラグインを直に叩かず、バックエンド経由で読む
 /// (capabilities を最小に保つ方針)。UTF-8 として不正なバイトを含むファイル
@@ -333,6 +383,23 @@ mod tests {
             resolve_reveal_dir(&missing.to_string_lossy()),
             Err(AppError::InvalidInput(_))
         ));
+    }
+
+    #[test]
+    fn project_link_urls_are_fixed_repository_urls() {
+        assert_eq!(
+            ProjectLink::Repository.url(),
+            "https://github.com/noan98/noobDB"
+        );
+        assert_eq!(
+            ProjectLink::Docs.url(),
+            "https://github.com/noan98/noobDB#readme"
+        );
+        assert_eq!(
+            serde_json::from_str::<ProjectLink>("\"docs\"").unwrap(),
+            ProjectLink::Docs
+        );
+        assert!(serde_json::from_str::<ProjectLink>("\"https://evil.example\"").is_err());
     }
 
     #[tokio::test]

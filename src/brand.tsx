@@ -211,6 +211,8 @@ export interface BrandLockupProps {
   tone?: BrandTone;
   /** マークとワードマークの間隔 (Chakra spacing トークン)。既定 "2.5"。 */
   gap?: string;
+  /** マウント時にマークのシグネチャ・アニメーションを 1 回再生する (`BrandMark` の `animate`)。既定 false。 */
+  animate?: boolean;
 }
 
 /**
@@ -222,10 +224,11 @@ export function BrandLockup({
   wordSize = "var(--text-lg)",
   tone = "brand",
   gap = "2.5",
+  animate = false,
 }: BrandLockupProps) {
   return (
     <Flex align="center" gap={gap}>
-      <BrandMark size={markSize} tone={tone} />
+      <BrandMark size={markSize} tone={tone} animate={animate} />
       <Wordmark fontSize={wordSize} />
     </Flex>
   );

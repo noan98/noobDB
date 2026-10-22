@@ -272,6 +272,7 @@ const PlanWatchPanel = lazy(() =>
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
 );
+const AboutDialog = lazy(() => import("./components/AboutDialog").then((m) => ({ default: m.AboutDialog })));
 const SavedTabsModal = lazy(() =>
   import("./components/SavedTabsModal").then((m) => ({ default: m.SavedTabsModal })),
 );
@@ -1446,6 +1447,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
   // 両方でこのフラグを立てる。表示済みフラグの永続化は閉じるときに行う。
@@ -11264,6 +11266,14 @@ export default function App() {
         run: () => openFullView("help"),
       },
       {
+        id: "nav:about",
+        group: "navigation",
+        label: t("cmdkActionAbout"),
+        icon: "info",
+        keywords: "about version license noobDB バージョン 情報 について",
+        run: () => setShowAbout(true),
+      },
+      {
         id: "nav:compare",
         group: "navigation",
         label: t("cmdkActionCompare"),
@@ -13559,6 +13569,14 @@ export default function App() {
           </AnimatePresence>
 
           <AnimatePresence>
+            {showAbout && (
+              <Suspense fallback={null}>
+                <AboutDialog onClose={() => setShowAbout(false)} />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
             {savedTabsTarget && savedTabsSummary && (
               <Suspense fallback={null}>
                 <SavedTabsModal
@@ -14280,6 +14298,8 @@ export default function App() {
                 disabled: pinnedResults.length === 0,
                 title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
               },
+              { separator: true },
+              { label: t("appAbout"), icon: "info", onSelect: () => setShowAbout(true) },
             ]}
             onClose={() => setToolsMenu(null)}
           />
