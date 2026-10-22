@@ -88,6 +88,12 @@
   縮んでフロントがクリティカルパスになったら再検討してください (必須チェック名
   `frontend (build + browser tests)` は変えないこと)。
 
+  **crosslang の実走対象の固定 (#1760)**: 命名規約外の `awsIam.test.ts` /
+  `apiModuleLayout.test.ts` は ci.yml のステップに個別指定している。`src-tauri` を
+  `from` / `import.meta.glob` で読むテストがすべてステップのフィルタに一致することを
+  `crosslangGatingParity.test.ts` (メタテスト) が検査するので、規約外の名前で Rust を
+  読むテストを足したらフィルタを足す (または `*Parity.test.ts` にする)。
+
   **`crosslang parity` ジョブ (#853)**: `ipcCommandParity.test.ts` (`?raw`
   インポートで `src-tauri/src/lib.rs` を読む) / `ipcArgParity.test.ts` /
   `streamEventParity.test.ts` (いずれも `import.meta.glob` で `src-tauri/src/`

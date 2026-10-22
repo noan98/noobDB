@@ -384,6 +384,50 @@
   --sandbox-subtle: color-mix(in srgb, var(--sandbox-violet) 16%, transparent);
   --sandbox-border: color-mix(in srgb, var(--sandbox-violet) 50%, transparent);
 
+  /* ── Ambient env wash (#1768) ─────────────────────────────────────────
+     本番接続中 / サンドボックス接続中に、ワークスペース (セッションヘッダ・タブ・エディタ・結果の
+     領域) の上端だけへごく薄く重ねる環境色のグラデーション。App.tsx が `pointer-events: none` の
+     overlay 要素の background-image として前景ごと重ねる (不透明な子要素に隠れないため)。
+     文字の透かしは出さない。色は意味色 / サンドボックス色トークンを color-mix で薄めた単一ソース。
+     不透明度は「前景・背景の両方に合成しても全テーマで AA 4.5:1 を保つ」最大値で、上端中央が
+     本番 3.5% / サンドボックス 4%、左右の隅はその半分 (themeContrast.test.ts が検証)。縦は約
+     140px で透明へ消え、--font-scale に追従する。静止背景で reduced-motion の影響は無い。
+     hc-light/hc-dark は AAA 優先のため下のプリセットで none に上書きする。 */
+  /* wash overlay の高さ (最大のグラデーション半径に一致。App.tsx が参照)。 */
+  --ambient-wash-height: calc(180px * var(--font-scale, 1));
+  --prod-wash:
+    radial-gradient(
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
+      color-mix(in srgb, var(--error-solid) 3.5%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
+      color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
+      color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
+      transparent 100%
+    );
+  --sandbox-wash:
+    radial-gradient(
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 4%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
+      transparent 100%
+    );
+
   /* ── Semantic color families (#476) ───────────────────────────────────
      状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
      しない運用 (アイコン/形状/テキストラベル併用) を前提とする — 赤緑色弱でも
@@ -735,6 +779,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
@@ -838,6 +884,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
@@ -2075,6 +2123,10 @@ html, body, #root {
 .cm-editor .cm-content {
   padding: var(--space-2) 0;
   caret-color: var(--accent);
+}
+/* 空エディタのゴースト・プレースホルダ (#1785)。CodeMirror 既定の固定灰色をテーマ追従の淡色に差し替える。 */
+.cm-editor .cm-placeholder {
+  color: var(--text-muted);
 }
 .cm-editor .cm-line { padding: 0 var(--space-3) 0 var(--space-2); }
 .cm-editor .cm-gutters {

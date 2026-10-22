@@ -41,6 +41,18 @@ export function connectionBandColor(connection: TitleBarConnection | null | unde
   return "transparent";
 }
 
+/**
+ * ワークスペース (<main>) 上端のアンビエントウォッシュ (#1768) に使う `background-image` を返す。
+ * 本番=`--prod-wash` (危険色)、サンドボックス=`--sandbox-wash` (violet)、それ以外は `undefined`
+ * (通常接続・未接続・再接続中の警告は帯側が担うため敷かない)。本番がサンドボックスより優先
+ * (`connectionBandColor` と同順)。hc-* では変数側が `none`。
+ */
+export function ambientWashImage(connection: TitleBarConnection | null | undefined): string | undefined {
+  if (connection?.isProduction) return "var(--prod-wash)";
+  if (connection?.isSandbox) return "var(--sandbox-wash)";
+  return undefined;
+}
+
 /** アプリ名 (未接続時のウィンドウタイトル、接続中の末尾)。 */
 const APP_WINDOW_TITLE = "noobDB";
 
