@@ -191,7 +191,8 @@ pub mod __test_api {
     // コアは SQLite 統合テスト (`tests/search_integration.rs`) が Tauri 無しで駆動する。
     pub use crate::commands::search::{
         data_search_core, find_where_used_report, search_schema_objects_core, DataSearchEntry,
-        DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedReport,
+        DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedEmptyDefinition,
+        WhereUsedFailure, WhereUsedMatch, WhereUsedMessage, WhereUsedReport,
     };
     pub use crate::db::data_search::{
         build_column_predicate, build_table_scan_sql, classify_for_search, classify_type_name,
@@ -201,7 +202,7 @@ pub mod __test_api {
     pub use crate::db::object_search::{ObjectHit, ObjectIndex};
     pub use crate::db::where_used::{
         analyze_definition, find_references, prepare_for_reference_scan, DefinitionAnalysis,
-        ReferenceConfidence, WhereUsedTarget,
+        ReferenceConfidence, ReferenceLine, WhereUsedTarget,
     };
 
     // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
