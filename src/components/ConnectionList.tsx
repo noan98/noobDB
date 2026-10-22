@@ -609,6 +609,52 @@ function createTableSelectionStore(): TableSelectionStore {
   };
 }
 
+/** お気に入りを「追加した」直後の 1 行だけ★をポップさせる (#1782) ための外部ストア。
+ *  行は自分のキーが「直前に追加された id」かどうかだけを購読するので、ポップの開始・終了で
+ *  再描画されるのは当該 1 行だけ (全行の `memo` を壊さない)。初回描画・解除・フィルタ変更・
+ *  一覧の再描画では `mark` が呼ばれないのでポップしない。窓が閉じたら消える (一度きり)。 */
+interface FavoritePopStore {
+  popped: (key: string) => boolean;
+  mark: (key: string) => void;
+  dispose: () => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+const FAVORITE_POP_WINDOW_MS = 900;
+
+function createFavoritePopStore(): FavoritePopStore {
+  let current: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const listeners = new Set<() => void>();
+  const notify = () => {
+    for (const l of Array.from(listeners)) l();
+  };
+  const clearTimer = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  };
+  return {
+    popped: (key) => current === key,
+    mark: (key) => {
+      clearTimer();
+      current = key;
+      notify();
+      timer = setTimeout(() => {
+        timer = null;
+        current = null;
+        notify();
+      }, FAVORITE_POP_WINDOW_MS);
+    },
+    dispose: clearTimer,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+  };
+}
+
 type HoverHandlers = {
   onMouseEnter: (e: React.MouseEvent<HTMLElement>) => void;
   onMouseLeave: (e: React.MouseEvent<HTMLElement>) => void;
@@ -635,6 +681,8 @@ interface TreeActions {
   selectionKeyDown: (e: React.KeyboardEvent<HTMLElement>, db: string, tbl: string) => boolean;
   toggleTable: (db: string, tbl: string) => void;
   toggleFavorite: (db: string, tbl: string) => void;
+  /** お気に入り追加直後の★ポップ (#1782)。 */
+  favoritePop: FavoritePopStore;
   openObjectDefinition: (db: string, kind: string, name: string, id: string | null) => void;
   tableMenu: (e: ContextMenuTriggerEvent, db: string, tbl: string) => void;
   viewMenu: (e: ContextMenuTriggerEvent, db: string, view: ExplorerViewNode, asNode?: boolean) => void;
@@ -814,6 +862,25 @@ function TreeMoreActions({ onOpen }: { onOpen: (e: ContextMenuTriggerEvent) => v
   );
 }
 
+/** ★アイコン。`popped` で mount されたときだけ scale ポップ + 淡いスパークを一度再生する。 */
+function FavoritePopStar({ popped }: { popped: boolean }) {
+  const [playOnMount] = useState(popped);
+  return (
+    <>
+      {popped && <span className="fav-pop-spark" />}
+      <motion.span
+        style={{ display: "inline-flex" }}
+        variants={variants.fadeScale}
+        initial={playOnMount ? "initial" : false}
+        animate="animate"
+        transition={springs.gentle}
+      >
+        <Icon name="star-filled" />
+      </motion.span>
+    </>
+  );
+}
+
 // クイックアクセス: アクティブ接続の databases の上に「お気に入り」「最近」を
 // 並べ、ワンクリックで開けるようにする。各行は db.table を表示し、`pickTable` で開く。
 const QuickAccessRow = memo(function QuickAccessRow({
@@ -838,6 +905,8 @@ const QuickAccessRow = memo(function QuickAccessRow({
   const star = kind === "favorite";
   const key = `qa:${kind}:${tableKey(refItem.database, refItem.table)}`;
   const { tabIndex, onFocus } = useTabStop(actions.store, key);
+  const popStore = actions.favoritePop;
+  const popped = useSyncExternalStore(popStore.subscribe, () => star && popStore.popped(key));
   const activate = () => actions.pickTable(refItem.database, refItem.table);
   const openMenu = (e: ContextMenuTriggerEvent) => actions.tableMenu(e, refItem.database, refItem.table);
   return (
@@ -859,8 +928,19 @@ const QuickAccessRow = memo(function QuickAccessRow({
       <TreeChevron aria-hidden style={{ visibility: "hidden" }}>
         ▸
       </TreeChevron>
-      <TreeIcon color={star ? "app.favorite" : "app.textSecondary"} aria-hidden>
-        <Icon name={star ? "star-filled" : "clock"} />
+      <TreeIcon
+        color={star ? "app.favorite" : "app.textSecondary"}
+        position="relative"
+        aria-hidden
+        data-fav-pop={popped ? "" : undefined}
+      >
+        {star ? (
+          // 追加直後に mount された行だけ initial を与える (それ以外は静止)。reduced-motion は
+          // ルートの MotionConfig が即時化し、スパークは CSS 側で hc-* / reduced を止める。
+          <FavoritePopStar popped={popped} />
+        ) : (
+          <Icon name="clock" />
+        )}
       </TreeIcon>
       <TreeLabel fontWeight={400}>
         {refItem.table}
@@ -3020,6 +3100,16 @@ export const ConnectionList = memo(
       setMenu({ x: e.clientX, y: e.clientY, items });
     };
 
+    const [favoritePop] = useState(createFavoritePopStore);
+    useEffect(() => favoritePop.dispose, [favoritePop]);
+    const toggleFavoriteEvent = useEvent((db: string, tbl: string) => {
+      // 追加のときだけポップを予約する (解除では何もしない)。
+      if (!(favorites ?? []).some((f) => tableRefEquals(f, { database: db, table: tbl }))) {
+        favoritePop.mark(`qa:favorite:${tableKey(db, tbl)}`);
+      }
+      onToggleFavorite?.(db, tbl);
+    });
+
     const handleTableContextMenu = (e: ContextMenuTriggerEvent, db: string, tbl: string) => {
       e.preventDefault();
       e.stopPropagation();
@@ -3092,7 +3182,7 @@ export const ConnectionList = memo(
         items.push({ separator: true });
         items.push({
           label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
-          onSelect: () => onToggleFavorite(db, tbl),
+          onSelect: () => toggleFavoriteEvent(db, tbl),
         });
         if (fav && onMoveFavorite) {
           const pos = (favorites ?? []).findIndex((f) => tableRefEquals(f, { database: db, table: tbl }));
@@ -3323,7 +3413,7 @@ export const ConnectionList = memo(
         items.push({ separator: true });
         items.push({
           label: fav ? t("contextMenuRemoveFavorite") : t("contextMenuAddFavorite"),
-          onSelect: () => onToggleFavorite(db, name),
+          onSelect: () => toggleFavoriteEvent(db, name),
         });
       }
       if (asNode && onCopyTableName) {
@@ -3967,7 +4057,7 @@ export const ConnectionList = memo(
     // (行の props / context が変わらず、描き直されない)。
     const pickTable = useEvent((db: string, tbl: string) => onPickTable(db, tbl));
     const toggleTableEvent = useEvent((db: string, tbl: string) => void toggleTable(db, tbl));
-    const toggleFavoriteEvent = useEvent((db: string, tbl: string) => onToggleFavorite?.(db, tbl));
+
     const openObjectDefinitionEvent = useEvent((db: string, kind: string, name: string, id: string | null) =>
       onOpenObjectDefinition?.(db, kind, name, id),
     );
@@ -3993,6 +4083,7 @@ export const ConnectionList = memo(
         selectionKeyDown,
         toggleTable: toggleTableEvent,
         toggleFavorite: toggleFavoriteEvent,
+        favoritePop,
         openObjectDefinition: openObjectDefinitionEvent,
         tableMenu: tableMenuEvent,
         viewMenu: viewMenuEvent,
@@ -4015,6 +4106,7 @@ export const ConnectionList = memo(
         selectionKeyDown,
         toggleTableEvent,
         toggleFavoriteEvent,
+        favoritePop,
         openObjectDefinitionEvent,
         tableMenuEvent,
         viewMenuEvent,
