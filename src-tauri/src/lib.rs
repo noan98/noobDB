@@ -191,7 +191,8 @@ pub mod __test_api {
     // コアは SQLite 統合テスト (`tests/search_integration.rs`) が Tauri 無しで駆動する。
     pub use crate::commands::search::{
         data_search_core, find_where_used_report, search_schema_objects_core, DataSearchEntry,
-        DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedReport,
+        DataSearchMessage, DataSearchRequest, ObjectSearchScope, WhereUsedEmptyDefinition,
+        WhereUsedFailure, WhereUsedMatch, WhereUsedMessage, WhereUsedReport,
     };
     pub use crate::db::data_search::{
         build_column_predicate, build_table_scan_sql, classify_for_search, classify_type_name,
@@ -201,7 +202,7 @@ pub mod __test_api {
     pub use crate::db::object_search::{ObjectHit, ObjectIndex};
     pub use crate::db::where_used::{
         analyze_definition, find_references, prepare_for_reference_scan, DefinitionAnalysis,
-        ReferenceConfidence, WhereUsedTarget,
+        ReferenceConfidence, ReferenceLine, WhereUsedTarget,
     };
 
     // 接続間データ転送 (#986)。Tauri を介さずに統合テストから駆動するコア。
@@ -225,11 +226,14 @@ pub mod __test_api {
     };
     pub use crate::commands::plan_watch::{PlanWatchRefresh, PlanWatchRefreshError};
     pub use crate::commands::profile_backup::{EncryptedExportResult, EncryptedImportResult};
-    pub use crate::commands::schema::{AlterTableContext, SchemaCacheTime};
+    pub use crate::commands::schema::{
+        column_dependencies_core, AlterTableContext, ColumnDependencyReport, SchemaCacheTime,
+    };
     pub use crate::commands::schema_drift::{RevertSql, SchemaDriftCapture};
     pub use crate::commands::ssh::ResolvedSshAlias;
     pub use crate::commands::timelapse::{CaptureOutcome, WatchOutcome};
     pub use crate::db::assertions::AssertionSql;
+    pub use crate::db::column_deps::ColumnDependency;
     pub use crate::db::diff::TableColumns;
     pub use crate::db::sandbox::SandboxConflict;
     pub use crate::db::schema_insight::{IncomingForeignKey, TableStatPrevious, TableStatistic};
@@ -1658,6 +1662,7 @@ pub fn run() {
             commands::search::data_search_stream,
             commands::schema::alter_table_context,
             commands::schema::incoming_foreign_keys,
+            commands::schema::column_dependencies,
             commands::server::server_info,
             commands::server::server_metrics,
             commands::server::sqlite_maintenance,

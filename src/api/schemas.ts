@@ -1265,6 +1265,27 @@ export const incomingForeignKey = z.object({
   onDelete: z.string().nullish(),
 });
 
+/** DROP COLUMN の依存 1 件 (`column_dependencies`、#1758)。 */
+export const columnDependency = z.object({
+  column: z.string(),
+  kind: z.enum([
+    "view",
+    "materialized_view",
+    "trigger",
+    "generated_column",
+    "index",
+    "foreign_key",
+    "referenced_by",
+  ]),
+  name: z.string(),
+  detail: z.string().nullable(),
+  confidence: z.enum(["direct", "possible"]),
+});
+export const columnDependencyReport = z.object({
+  dependencies: z.array(columnDependency),
+  warnings: z.array(z.string()),
+});
+
 /** 配列を返すコマンド用のラッパースキーマ。 */
 export const tableStatisticArray = z.array(tableStatistic);
 export const schemaSnapshotTableArray = z.array(schemaSnapshotTable);

@@ -145,6 +145,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `describe_database`
 - `alter_table_context`
 - `incoming_foreign_keys` (#1255)
+- `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)
 
 #1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す

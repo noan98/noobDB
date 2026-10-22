@@ -540,6 +540,27 @@
     "name": "id",
     "type_name": "INTEGER"
   },
+  "columnDependencyReport": {
+    "dependencies": [
+      {
+        "column": "price",
+        "confidence": "possible",
+        "detail": null,
+        "kind": "view",
+        "name": "v_orders"
+      },
+      {
+        "column": "price",
+        "confidence": "direct",
+        "detail": "price, qty",
+        "kind": "index",
+        "name": "idx_price"
+      }
+    ],
+    "warnings": [
+      "definitions"
+    ]
+  },
   "columnProfile": {
     "column": "age",
     "data_type": "bigint",
@@ -1129,6 +1150,77 @@
       "target_count": 1,
       "target_driver": "sqlite",
       "truncated": false
+    }
+  ],
+  "dataSearchCancelledMessage": {
+    "deliveredRows": 2,
+    "kind": "cancelled"
+  },
+  "dataSearchDoneMessage": {
+    "kind": "done"
+  },
+  "dataSearchErrorMessage": {
+    "connectionLost": false,
+    "error": "connection reset",
+    "kind": "error"
+  },
+  "dataSearchProgressMessage": {
+    "index": 1,
+    "kind": "progress",
+    "table": "orders",
+    "total": 5
+  },
+  "dataSearchTableMessageVariants": [
+    {
+      "entry": {
+        "columns": [
+          {
+            "dataType": "varchar",
+            "name": "email"
+          }
+        ],
+        "hits": [
+          {
+            "column": "email",
+            "count": 3.0
+          }
+        ],
+        "status": "hit",
+        "table": "users"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "status": "no-hit",
+        "table": "orders"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "reason": "row-threshold",
+        "status": "skipped",
+        "table": "logs"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "reason": "no-searchable-columns",
+        "status": "skipped",
+        "table": "blobs"
+      },
+      "kind": "table"
+    },
+    {
+      "entry": {
+        "detail": "permission denied",
+        "reason": "error",
+        "status": "skipped",
+        "table": "broken"
+      },
+      "kind": "table"
     }
   ],
   "databaseTables": {
@@ -6068,6 +6160,128 @@
         "update": false
       }
     ]
+  },
+  "whereUsedCancelledMessage": {
+    "kind": "cancelled",
+    "report": {
+      "cancelled": true,
+      "emptyDefinitions": [
+        {
+          "kind": "function",
+          "name": "f_empty"
+        }
+      ],
+      "failed": [
+        {
+          "error": "permission denied",
+          "kind": "procedure",
+          "name": "p_secret"
+        }
+      ],
+      "matches": [
+        {
+          "confidence": "direct",
+          "hitCount": 1,
+          "id": "view:v_users",
+          "kind": "view",
+          "lines": [
+            {
+              "clippedEnd": true,
+              "clippedStart": false,
+              "line": 3,
+              "ranges": [
+                [
+                  14,
+                  19
+                ]
+              ],
+              "text": "SELECT * FROM users"
+            }
+          ],
+          "name": "v_users",
+          "snippetId": null,
+          "source": "object"
+        },
+        {
+          "confidence": "possible",
+          "hitCount": 2,
+          "id": null,
+          "kind": "snippet",
+          "lines": [],
+          "name": "ユーザ一覧",
+          "snippetId": "snip-1",
+          "source": "snippet"
+        }
+      ],
+      "scannedObjects": 12,
+      "scannedSnippets": 3
+    }
+  },
+  "whereUsedDoneMessage": {
+    "kind": "done",
+    "report": {
+      "cancelled": false,
+      "emptyDefinitions": [
+        {
+          "kind": "function",
+          "name": "f_empty"
+        }
+      ],
+      "failed": [
+        {
+          "error": "permission denied",
+          "kind": "procedure",
+          "name": "p_secret"
+        }
+      ],
+      "matches": [
+        {
+          "confidence": "direct",
+          "hitCount": 1,
+          "id": "view:v_users",
+          "kind": "view",
+          "lines": [
+            {
+              "clippedEnd": true,
+              "clippedStart": false,
+              "line": 3,
+              "ranges": [
+                [
+                  14,
+                  19
+                ]
+              ],
+              "text": "SELECT * FROM users"
+            }
+          ],
+          "name": "v_users",
+          "snippetId": null,
+          "source": "object"
+        },
+        {
+          "confidence": "possible",
+          "hitCount": 2,
+          "id": null,
+          "kind": "snippet",
+          "lines": [],
+          "name": "ユーザ一覧",
+          "snippetId": "snip-1",
+          "source": "snippet"
+        }
+      ],
+      "scannedObjects": 12,
+      "scannedSnippets": 3
+    }
+  },
+  "whereUsedErrorMessage": {
+    "connectionLost": true,
+    "error": "connection reset",
+    "kind": "error"
+  },
+  "whereUsedProgressMessage": {
+    "done": 4,
+    "kind": "progress",
+    "total": 12
   },
   "writeCaptureSummaryVariants": [
     {
