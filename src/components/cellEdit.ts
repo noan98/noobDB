@@ -231,7 +231,7 @@ export function resolvePkIndices(columns: Column[], tableColumns: TableColumnInf
 }
 
 /** Which row-identity strategy backs a set of identity indices (#849). */
-export type RowIdentityKind = "primary_key" | "rowid" | "ctid" | "all_columns" | "none";
+export type RowIdentityKind = "primary_key" | "unique_key" | "rowid" | "ctid" | "all_columns" | "none";
 
 export interface RowIdentityResolution {
   /** Result-column indices to use in the WHERE clause identifying a row. */
@@ -248,6 +248,9 @@ export interface RowIdentityResolution {
  *    resolves.
  * 2. The backend's `rowIdentity` fallback (`open_table` の `row_identity`, #849) when
  *    the table has none:
+ *    - `"unique_key"` — the table's UNIQUE NOT NULL index columns
+ *      (`key_columns`, #1776). Handled like a primary key; if any of the
+ *      columns is missing from the result there is no safe WHERE, so → `"none"`.
  *    - `"rowid"` / `"ctid"` — a single pseudo-column the caller must have
  *      appended to the browse `SELECT` (see `qualifiedTableSql`) and that
  *      must therefore already be present in `columns` under that name.
@@ -260,11 +263,22 @@ export interface RowIdentityResolution {
 export function resolveRowIdentity(
   columns: Column[],
   tableColumns: TableColumnInfo[] | null,
-  rowIdentity: Pick<TableRowIdentity, "strategy" | "hidden_column"> | null,
+  rowIdentity: (Pick<TableRowIdentity, "strategy" | "hidden_column"> & { key_columns?: string[] }) | null,
 ): RowIdentityResolution {
   const pk = resolvePkIndices(columns, tableColumns);
   if (pk.length > 0) return { indices: pk, strategy: "primary_key" };
   if (!rowIdentity || columns.length === 0) return { indices: [], strategy: "none" };
+  if (rowIdentity.strategy === "unique_key") {
+    const names = rowIdentity.key_columns ?? [];
+    if (names.length === 0) return { indices: [], strategy: "none" };
+    const indices: number[] = [];
+    for (const name of names) {
+      const i = columns.findIndex((c) => c.name === name);
+      if (i < 0) return { indices: [], strategy: "none" };
+      indices.push(i);
+    }
+    return { indices, strategy: "unique_key" };
+  }
   if (rowIdentity.strategy === "rowid" || rowIdentity.strategy === "ctid") {
     if (!rowIdentity.hidden_column) return { indices: [], strategy: "none" };
     const idx = columns.findIndex((c) => c.name === rowIdentity.hidden_column);

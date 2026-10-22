@@ -2159,16 +2159,23 @@ impl MySqlConn {
 
     /// Row identity strategy for inline editing (#849). MySQL has no cheap
     /// physical row identifier exposed to SQL (unlike SQLite's `rowid` or
-    /// PostgreSQL's `ctid`), so the only fallback once a table has no PK is
-    /// matching every column in the WHERE clause.
+    /// PostgreSQL's `ctid`), so once a table has no PK the identity is a UNIQUE NOT NULL
+    /// key (#1776) if there is one, else matching every column in the WHERE clause.
     pub async fn row_identity(&self, db: &str, table: &str) -> Result<TableRowIdentity> {
         let cols = self.columns(db, table).await?;
         if let Some(identity) = super::row_identity_pk_or_none(&cols) {
             return Ok(identity);
         }
+        // PK は無いが UNIQUE NOT NULL キーがあれば、それで 1 行に定める (#1776)。
+        // 取得に失敗しても編集不可にはせず、従来の all_columns 判定へ進める。
+        let indexes = self.list_indexes(db, table).await.unwrap_or_default();
+        if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+            return Ok(super::unique_key_identity(key));
+        }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 

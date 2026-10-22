@@ -402,6 +402,112 @@ async fn postgres_row_identity_pk_ctid_and_view_fallback() {
     conn.close().await;
 }
 
+/// #1776: PK が無くても UNIQUE NOT NULL キーがあれば `ctid` ではなく `unique_key`。
+/// 部分インデックス・式インデックス・NULL 可の UNIQUE・INCLUDE 列は対象外/除外。
+#[tokio::test]
+async fn postgres_row_identity_prefers_unique_not_null_key() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_POSTGRES_URL") else {
+        eprintln!("skip: NOOBDB_TEST_POSTGRES_URL not set");
+        return;
+    };
+    let opts = t::parse_postgres_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let names = [
+        "noobdb_ri_uq_single",
+        "noobdb_ri_uq_composite",
+        "noobdb_ri_uq_prefers_single",
+        "noobdb_ri_uq_nullable",
+        "noobdb_ri_uq_partial",
+        "noobdb_ri_uq_expr",
+        "noobdb_ri_uq_include",
+        "noobdb_ri_uq_invalid",
+        "noobdb_ri_uq_coll",
+    ];
+    for n in names {
+        conn.execute(&format!("DROP TABLE IF EXISTS public.{n}"), None)
+            .await
+            .expect("drop");
+    }
+    for ddl in [
+        "CREATE TABLE public.noobdb_ri_uq_single (code TEXT NOT NULL UNIQUE, note TEXT)",
+        "CREATE TABLE public.noobdb_ri_uq_composite (a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE (a, b))",
+        "CREATE TABLE public.noobdb_ri_uq_prefers_single (a TEXT NOT NULL, b TEXT NOT NULL, UNIQUE (a, b), UNIQUE (b))",
+        "CREATE TABLE public.noobdb_ri_uq_nullable (code TEXT UNIQUE, note TEXT)",
+        "CREATE TABLE public.noobdb_ri_uq_partial (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX noobdb_ri_uq_partial_idx ON public.noobdb_ri_uq_partial (code) WHERE note IS NOT NULL",
+        "CREATE TABLE public.noobdb_ri_uq_expr (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX noobdb_ri_uq_expr_idx ON public.noobdb_ri_uq_expr (lower(code))",
+        "CREATE TABLE public.noobdb_ri_uq_include (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX noobdb_ri_uq_include_idx ON public.noobdb_ri_uq_include (code) INCLUDE (note)",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    // INVALID な UNIQUE: 重複行があるところへ CONCURRENTLY で作ると失敗し、INVALID が残る。
+    for ddl in [
+        "CREATE TABLE public.noobdb_ri_uq_invalid (code TEXT NOT NULL, note TEXT)",
+        "INSERT INTO public.noobdb_ri_uq_invalid VALUES ('x', 'a'), ('x', 'b')",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let failed = conn
+        .execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY noobdb_ri_uq_invalid_idx ON public.noobdb_ri_uq_invalid (code)",
+            None,
+        )
+        .await;
+    assert!(failed.is_err(), "duplicate rows must make the build fail");
+    // 列は既定の照合順序、インデックスは "C": インデックス上は別値でも列の比較では同値になりうる。
+    for ddl in [
+        "CREATE TABLE public.noobdb_ri_uq_coll (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX noobdb_ri_uq_coll_idx ON public.noobdb_ri_uq_coll (code COLLATE \"C\")",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+
+    let single = conn
+        .row_identity("public", "noobdb_ri_uq_single")
+        .await
+        .expect("single");
+    assert_eq!(single.strategy, "unique_key");
+    assert_eq!(single.hidden_column, None);
+    assert_eq!(single.key_columns, ["code"]);
+    let composite = conn
+        .row_identity("public", "noobdb_ri_uq_composite")
+        .await
+        .expect("composite");
+    assert_eq!(composite.strategy, "unique_key");
+    assert_eq!(composite.key_columns, ["a", "b"]);
+    let prefers = conn
+        .row_identity("public", "noobdb_ri_uq_prefers_single")
+        .await
+        .expect("prefers");
+    assert_eq!(prefers.key_columns, ["b"]);
+    for n in [
+        "noobdb_ri_uq_nullable",
+        "noobdb_ri_uq_partial",
+        "noobdb_ri_uq_expr",
+        "noobdb_ri_uq_invalid",
+        "noobdb_ri_uq_coll",
+    ] {
+        let id = conn.row_identity("public", n).await.expect(n);
+        assert_eq!(id.strategy, "ctid", "{n}");
+    }
+    let include = conn
+        .row_identity("public", "noobdb_ri_uq_include")
+        .await
+        .expect("include");
+    assert_eq!(include.strategy, "unique_key");
+    assert_eq!(include.key_columns, ["code"]);
+
+    for n in names {
+        conn.execute(&format!("DROP TABLE public.{n}"), None)
+            .await
+            .expect("cleanup");
+    }
+    conn.close().await;
+}
+
 /// list_indexes / schema_objects + object_definition (oid 識別子) /
 /// 明示トランザクション / health_check を PostgreSQL 上で実行する。
 /// CI のサービスコンテナで実走し、ドライバメソッドの動作とカバレッジを担保する。

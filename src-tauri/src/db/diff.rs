@@ -141,6 +141,7 @@ impl DiffIndex {
             key_column_count: self.key_column_count,
             column_options: self.column_options.clone(),
             nulls_not_distinct: self.nulls_not_distinct,
+            ..Default::default()
         }
     }
 }

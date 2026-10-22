@@ -1468,6 +1468,12 @@ impl SqliteConn {
         if let Some(identity) = super::row_identity_pk_or_none(&cols) {
             return Ok(identity);
         }
+        // PK は無いが UNIQUE NOT NULL キーがあれば、rowid より先にそれを採る (#1776)。
+        // 取得に失敗しても編集不可にはせず、従来の rowid 判定へ進める。
+        let indexes = self.list_indexes(db, table).await.unwrap_or_default();
+        if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+            return Ok(super::unique_key_identity(key));
+        }
         let row: Option<SqliteRow> =
             sqlx::query("SELECT type, sql FROM sqlite_master WHERE name = ?1")
                 .bind(table)
@@ -1488,12 +1494,14 @@ impl SqliteConn {
                 return Ok(TableRowIdentity {
                     strategy: "rowid".into(),
                     hidden_column: Some("rowid".into()),
+                    key_columns: Vec::new(),
                 });
             }
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 
@@ -1615,12 +1623,47 @@ impl SqliteConn {
         let list_rows: Vec<SqliteRow> = sqlx::query(sqlx::AssertSqlSafe(list_sql))
             .fetch_all(&self.pool)
             .await?;
+        // #1776: 照合順序の食い違いを疑うため、インデックス / テーブルの DDL を引いておく。
+        // 取れなければ全インデックスを照合順序不一致の疑いありとして扱う (安全側)。
+        let ddl_rows: Option<Vec<SqliteRow>> = sqlx::query(
+            "SELECT type, name, sql FROM sqlite_master WHERE tbl_name = ?1 COLLATE NOCASE AND type IN ('index', 'table')",
+        )
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await
+        .ok();
+        let ddl_ok = ddl_rows.is_some();
+        let ddl_rows = ddl_rows.unwrap_or_default();
+        let mut table_ddl = String::new();
+        let mut index_ddl: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        for d in &ddl_rows {
+            let kind = d.try_get::<String, _>("type").unwrap_or_default();
+            let sql = d
+                .try_get::<Option<String>, _>("sql")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            if kind == "table" {
+                table_ddl = sql;
+            } else if let Ok(n) = d.try_get::<String, _>("name") {
+                index_ddl.insert(n, sql);
+            }
+        }
         let mut out = Vec::with_capacity(list_rows.len());
         for r in &list_rows {
             let name = r.try_get::<String, _>("name").unwrap_or_default();
             if name.is_empty() || name.contains('\0') {
                 continue;
             }
+            let collation_differs = !ddl_ok
+                || match index_ddl.get(&name) {
+                    Some(sql) if !sql.is_empty() => sqlite_sql_has_collate(sql),
+                    // 自動インデックス (sql が NULL) はテーブル DDL から疑う。
+                    Some(_) => sqlite_table_unique_has_collate(&table_ddl),
+                    // sqlite_master に見つからないインデックスは判定できないので除外側に倒す。
+                    None => true,
+                };
             let unique = r.try_get::<i64, _>("unique").unwrap_or(0) != 0;
             let primary = r
                 .try_get::<String, _>("origin")
@@ -1664,6 +1707,7 @@ impl SqliteConn {
                 method: None,
                 predicate,
                 first_expression_at,
+                collation_differs,
                 ..Default::default()
             });
         }
@@ -1999,6 +2043,30 @@ async fn run_sql_on(conn: &mut sqlx::SqliteConnection, sql: &str) -> Result<Quer
             started.elapsed().as_millis() as u64,
         ))
     }
+}
+
+/// DDL に `COLLATE` が明示されているか (単語境界つき、大文字小文字無視) (#1776)。
+fn sqlite_sql_has_collate(sql: &str) -> bool {
+    let up = sql.to_ascii_uppercase();
+    up.match_indices("COLLATE").any(|(i, _)| {
+        let before = up[..i].chars().next_back();
+        let after = up[i + 7..].chars().next();
+        !before.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+    })
+}
+
+/// テーブル DDL のテーブル制約 `UNIQUE (... COLLATE ...)` に照合順序の明示があるか (#1776)。
+/// 自動インデックス (`sqlite_autoindex_*`) には `CREATE INDEX` 文が無いので DDL から疑う。
+/// 列定義の `col TEXT COLLATE NOCASE UNIQUE` は列と同じ照合順序なので対象外。
+fn sqlite_table_unique_has_collate(table_ddl: &str) -> bool {
+    let up = table_ddl.to_ascii_uppercase();
+    up.match_indices("UNIQUE").any(|(i, _)| {
+        let rest = up[i + 6..].trim_start();
+        rest.strip_prefix('(')
+            .and_then(|r| r.split(')').next())
+            .is_some_and(sqlite_sql_has_collate)
+    })
 }
 
 /// `CREATE [UNIQUE] INDEX … ON t (…) WHERE <述語>` から述語部分を取り出す (部分インデックス用)。
@@ -2455,6 +2523,25 @@ async fn run_batch_checked(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn collate_detection_for_row_identity() {
+        use super::{sqlite_sql_has_collate, sqlite_table_unique_has_collate};
+        assert!(sqlite_sql_has_collate(
+            "CREATE UNIQUE INDEX i ON t (code collate BINARY)"
+        ));
+        assert!(!sqlite_sql_has_collate("CREATE UNIQUE INDEX i ON t (code)"));
+        assert!(!sqlite_sql_has_collate(
+            "CREATE UNIQUE INDEX i ON t (mycollate_x)"
+        ));
+        assert!(sqlite_table_unique_has_collate(
+            "CREATE TABLE t (code TEXT COLLATE NOCASE, UNIQUE (code COLLATE BINARY))"
+        ));
+        // 列定義の COLLATE + 列 UNIQUE は列と同じ照合順序。
+        assert!(!sqlite_table_unique_has_collate(
+            "CREATE TABLE t (code TEXT COLLATE NOCASE UNIQUE, n TEXT)"
+        ));
+    }
+
     #[test]
     fn partial_predicate_is_extracted_from_create_index_sql() {
         use super::sqlite_partial_predicate as p;

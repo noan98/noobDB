@@ -1608,6 +1608,7 @@ mod tests {
                 Ok(TableRowIdentity {
                     strategy: "primary_key".to_string(),
                     hidden_column: None,
+                    key_columns: Vec::new(),
                 })
             })
             .await;
