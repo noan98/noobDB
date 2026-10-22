@@ -1568,6 +1568,7 @@
     "column": "user_id",
     "onDelete": "CASCADE",
     "referencedColumn": "id",
+    "schema": "sales",
     "table": "orders"
   },
   "indexInfo": {

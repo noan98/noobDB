@@ -1255,6 +1255,20 @@ impl Connection {
         }
     }
 
+    /// 別スキーマの子テーブルから `db.table` を参照する外部キー (#1786)。PostgreSQL 専用で、
+    /// MySQL の DB をまたぐ FK は対象外 (#1786 は PostgreSQL のみ)、SQLite は DB をまたげないため、
+    /// どちらも `foreign_keys` だけで賄い常に空 (挙動は変えない)。
+    pub async fn cross_schema_incoming_foreign_keys(
+        &self,
+        db: &str,
+        table: &str,
+    ) -> Result<Vec<crate::db::schema_insight::IncomingForeignKey>> {
+        match self {
+            Connection::Postgres(c) => c.cross_schema_incoming_foreign_keys(db, table).await,
+            Connection::MySql(_) | Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
     /// 1 表分の外部キー (#1609)。PostgreSQL は `conrelid` で絞った専用クエリ、
     /// MySQL / SQLite は DB 全体の取得から表で絞る (どちらも 1 回の取得で足りる)。
     pub async fn foreign_keys_for_table(&self, db: &str, table: &str) -> Result<Vec<ForeignKey>> {
