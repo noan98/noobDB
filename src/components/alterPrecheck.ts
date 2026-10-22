@@ -1,5 +1,11 @@
 import { quoteIdentFor } from "./sqlDialect";
-import type { ExistingColumnBaseline, ExistingColumnEdit } from "./alterTable";
+import {
+  supportsConstraintAlter,
+  type ExistingColumnBaseline,
+  type ExistingColumnEdit,
+  type IndexDef,
+} from "./alterTable";
+import { isCompleteCheck, isCompleteForeignKey, type CheckDef, type ForeignKeyDef } from "./tableConstraints";
 
 /**
  * ALTER TABLE の事前検査 (#1536)。列の型を縮小する / NOT NULL を付けると、既存行が
@@ -109,7 +115,21 @@ export function parseTypeSpec(driver: string, raw: string): TypeSpec {
   return { kind: "other" };
 }
 
-export type PrecheckKind = "length" | "range" | "decimal" | "scale" | "notNull";
+export type PrecheckKind =
+  | "length"
+  | "range"
+  | "decimal"
+  | "scale"
+  | "notNull"
+  // 制約の追加で既存データが違反する行 (#1757)。
+  | "orphanFk"
+  | "duplicateUnique"
+  | "checkViolation";
+
+/** 制約追加 (FK / UNIQUE / CHECK) 由来の事前検査か (#1757)。`from` / `to` の意味が列の型検査と違う。 */
+export function isConstraintPrecheck(kind: PrecheckKind): boolean {
+  return kind === "orphanFk" || kind === "duplicateUnique" || kind === "checkViolation";
+}
 
 /** 事前検査 1 件。`sql` は「収まらない行数」を返す `SELECT COUNT(*)`。 */
 export interface AlterPrecheck {
@@ -238,6 +258,97 @@ export function buildAlterPrechecks(
       });
     }
   }
+  return out;
+}
+
+/** 制約追加の事前検査の入力 (#1757)。 */
+export interface ConstraintPrecheckInput {
+  /** 追加する外部キー。不完全な行は無視する。 */
+  addedForeignKeys?: readonly ForeignKeyDef[];
+  /** 追加する CHECK。式が空の行は無視する。 */
+  addedChecks?: readonly CheckDef[];
+  /** 追加するインデックス。`unique` のものだけ重複検査する。 */
+  indexes?: readonly IndexDef[];
+  /**
+   * 検査できる (= ALTER 前から DB に存在する) 列名。UNIQUE / FK の対象列がここに無い
+   * (同じ ALTER で追加・リネームする列) 場合、現状のテーブルに列が無く COUNT が必ず失敗するので検査しない。
+   * 省略時は絞り込まない。
+   */
+  knownColumns?: ReadonlySet<string>;
+}
+
+/**
+ * 制約の追加 (ADD FOREIGN KEY / UNIQUE インデックス / ADD CHECK) で、既存データが違反する行数を数える
+ * 読み取り専用の事前検査を作る (#1757)。判定は assertions.rs (referential / unique) と同じ:
+ *  - FK: 参照列がすべて非 NULL で、参照先に対応行が無い行 (NULL を含む行は FK の対象外)
+ *  - UNIQUE: NULL を含まないキーが重複している行 (NULL は重複扱いにならない。3 ドライバ共通)
+ *  - CHECK: `NOT (式)` が真の行 (式が NULL になる行は CHECK を満たす扱い)
+ * FK / CHECK の ALTER に対応するのは MySQL / PostgreSQL のみ (SQLite は表の再作成が要るため
+ * `buildAlterPlan` が unsupported にする)。UNIQUE は 3 ドライバとも対象。
+ * すべて `SELECT COUNT(*) FROM t [AS x] WHERE ...` の形なので `precheckRowsSql` で該当行の SELECT にできる。
+ */
+export function buildConstraintPrechecks(
+  driver: string,
+  database: string | null,
+  table: string,
+  input: ConstraintPrecheckInput,
+): AlterPrecheck[] {
+  const from = qualified(driver, database, table);
+  const q = (n: string) => quoteIdentFor(driver, n.trim());
+  const known = input.knownColumns;
+  const allKnown = (cols: readonly string[]) => !known || cols.every((c) => known.has(c.trim()));
+  const out: AlterPrecheck[] = [];
+
+  if (supportsConstraintAlter(driver)) {
+    (input.addedForeignKeys ?? []).filter(isCompleteForeignKey).forEach((fk, i) => {
+      const cols = fk.columns.map((c) => c.trim()).filter((c) => c);
+      const refs = fk.refColumns.map((c) => c.trim()).filter((c) => c);
+      if (!allKnown(cols)) return;
+      const target = qualified(driver, database, fk.refTable.trim());
+      const notNull = cols.map((c) => `a_src.${q(c)} IS NOT NULL`).join(" AND ");
+      const join = cols.map((c, k) => `a_ref.${q(refs[k])} = a_src.${q(c)}`).join(" AND ");
+      out.push({
+        id: `orphanFk:${i}`,
+        kind: "orphanFk",
+        column: fk.name.trim() || cols.join(", "),
+        from: "",
+        to: `FOREIGN KEY (${cols.join(", ")}) → ${fk.refTable.trim()} (${refs.join(", ")})`,
+        sql: `SELECT COUNT(*) FROM ${from} AS a_src WHERE ${notNull} AND NOT EXISTS (SELECT 1 FROM ${target} AS a_ref WHERE ${join})`,
+      });
+    });
+    (input.addedChecks ?? []).filter(isCompleteCheck).forEach((ck, i) => {
+      const expr = ck.expression.trim();
+      out.push({
+        id: `checkViolation:${i}`,
+        kind: "checkViolation",
+        column: ck.name.trim() || expr,
+        from: "",
+        to: `CHECK (${expr})`,
+        // 末尾の `--` コメントが閉じ括弧を巻き込まないよう改行で挟む。
+        sql: `SELECT COUNT(*) FROM ${from} WHERE NOT (${expr}\n)`,
+      });
+    });
+  }
+
+  (input.indexes ?? [])
+    .filter((idx) => idx.unique)
+    .forEach((idx, i) => {
+      const cols = idx.columns.map((c) => c.trim()).filter((c) => c);
+      if (cols.length === 0 || !allKnown(cols)) return;
+      const list = cols.map(q).join(", ");
+      const notNull = cols.map((c) => `${q(c)} IS NOT NULL`).join(" AND ");
+      // 重複グループに属する行そのものを数える (該当行プレビューで原因の行を見られるように)。
+      // 行値 IN は MySQL / PostgreSQL / SQLite (3.15+) 共通。1 列のときは括弧なし。
+      const key = cols.length > 1 ? `(${list})` : list;
+      out.push({
+        id: `duplicateUnique:${i}`,
+        kind: "duplicateUnique",
+        column: idx.name.trim() || cols.join(", "),
+        from: "",
+        to: `UNIQUE (${cols.join(", ")})`,
+        sql: `SELECT COUNT(*) FROM ${from} WHERE ${notNull} AND ${key} IN (SELECT ${list} FROM ${from} WHERE ${notNull} GROUP BY ${list} HAVING COUNT(*) > 1)`,
+      });
+    });
   return out;
 }
 
