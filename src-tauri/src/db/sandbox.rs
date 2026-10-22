@@ -710,6 +710,34 @@ mod tests {
     }
 
     #[test]
+    fn detect_conflicts_distinguishes_decimal_values_beyond_2_pow_53() {
+        // DECIMAL(20,0) の列で 2^53 を超える値は、隣り合う値 (...992 / ...993) を区別できる (#1780)。
+        let diff_with = |v: &str| {
+            let mut d = data_diff(vec![RowDiff {
+                status: RowStatus::Different,
+                key: vec![Value::Int(1)],
+                source: Some(vec![Value::Int(1), Value::String(v.into())]),
+                target: Some(vec![Value::Int(1), Value::String("0".into())]),
+                changed_columns: vec!["v".to_string()],
+                key_unreliable: false,
+            }]);
+            d.column_types = vec!["BIGINT".to_string(), "DECIMAL(20,0)".to_string()];
+            d
+        };
+        let conflicts = detect_conflicts(
+            &diff_with("9007199254740993"),
+            &diff_with("9007199254740992"),
+        );
+        assert_eq!(conflicts.len(), 1, "隣り合う値は衝突として検出される");
+        // 同じ値は表記が違っても (小数部 .00 / 先頭 +) 収束し、衝突にならない。
+        assert!(detect_conflicts(
+            &diff_with("9007199254740993"),
+            &diff_with("+9007199254740993.00")
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn detect_conflicts_skips_rows_both_sides_changed_to_the_same_value() {
         let desired = data_diff(vec![
             // 両側が同じ値 (99) に更新 → 収束。
@@ -1037,7 +1065,7 @@ mod tests {
             vec![Value::String("9007199254740993".into())],
             vec![Value::String("9007199254740992".into())],
             vec![Value::String("9007199254740993.00".into())],
-            vec![Value::from_i64_lossless(9_007_199_254_740_993)],
+            vec![Value::String("+9007199254740993".into())],
             vec![Value::Float(10.0)],
             vec![Value::String("10.00".into())],
         ];
