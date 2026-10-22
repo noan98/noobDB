@@ -1617,6 +1617,7 @@ fn build_fixtures() -> serde_json::Value {
             })
             .collect();
     let incoming_foreign_key = t::IncomingForeignKey {
+        schema: Some("sales".into()),
         table: "orders".into(),
         column: "user_id".into(),
         referenced_column: "id".into(),

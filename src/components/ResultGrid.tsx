@@ -216,7 +216,7 @@ import {
 import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { RefreshTrend } from "./RefreshTrend";
 import type { RefreshSample } from "../refreshPatch";
-import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -7675,14 +7675,15 @@ export const DataGrid = memo(function DataGrid({
                   driver,
                   database: rowSqlDatabase,
                   childTable: inc.table,
+                  childSchema: inc.schema,
                   childColumn: inc.column,
                   value,
                   valueType: columns[refColIdx]?.type_name,
                 });
                 reverse.push({
                   label: grouped
-                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
-                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
+                    ? t("gridFkReverseChild", { table: incomingFkTableName(inc), column: inc.column })
+                    : t("gridFkReverse", { table: incomingFkTableName(inc), column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => {
                     setCopyMenu(null);

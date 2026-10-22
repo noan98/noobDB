@@ -152,6 +152,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 (スキーマエクスポート / ER 図)。`alter_table_context` は列編集ダイアログの初期ロード一式
 (列・テーブルコメント・このテーブルの FK・テーブル名一覧)。`incoming_foreign_keys` は
 `foreign_keys` のキャッシュから対象テーブルを参照する FK だけを返す(逆方向 FK ジャンプ)。
+PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用クエリで補い、`schema` に子のスキーマを入れる (#1786)。
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
