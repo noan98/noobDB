@@ -108,6 +108,7 @@ fn _exhaustive_bulk_write_outcome(o: &t::BulkWriteOutcome) {
     match o {
         t::BulkWriteOutcome::Applied { .. }
         | t::BulkWriteOutcome::RowCountExceeded { .. }
+        | t::BulkWriteOutcome::OptimisticConflict { .. }
         | t::BulkWriteOutcome::RollbackIncomplete { .. } => {}
     }
 }
@@ -1835,6 +1836,10 @@ fn build_fixtures() -> serde_json::Value {
         batch_total_rows: 3,
         statement_counts: vec![2, 1],
     };
+    let bulk_write_outcome_optimistic_conflict = t::BulkWriteOutcome::OptimisticConflict {
+        conflict_rows: 2,
+        statement_counts: vec![0, 1],
+    };
     let bulk_write_outcome_rollback_incomplete = t::BulkWriteOutcome::RollbackIncomplete {
         expected_rows: 1,
         actual_rows: 2,
@@ -2489,6 +2494,7 @@ fn build_fixtures() -> serde_json::Value {
         "insertRowsResult": insert_rows_result,
         "bulkWriteOutcomeApplied": bulk_write_outcome_applied,
         "bulkWriteOutcomeRowCountExceeded": bulk_write_outcome_row_count_exceeded,
+        "bulkWriteOutcomeOptimisticConflict": bulk_write_outcome_optimistic_conflict,
         "bulkWriteOutcomeRollbackIncomplete": bulk_write_outcome_rollback_incomplete,
         "openTableResult": open_table_result,
         "openTableEntryVariants": open_table_entry_variants,

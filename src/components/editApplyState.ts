@@ -121,6 +121,9 @@ export function tabStateAfterApply<T extends ApplyTabState>(
 
 /**
  * Apply (`bulk_update_cells`) が期待した件数より少ない行しか書き換えなかった数。
+ * 楽観ロック (#1766) がオンの UPDATE は 0 件一致で全体ロールバックされる (`optimistic_conflict`) ので、
+ * コミット後にここへ来る不足は、追加文 (DELETE) の不足と、楽観ロックをオフにした Apply での行消失に
+ * なる。全列一致 / ctid の行識別は楽観ロックの対象外で、そこでの行消失もここで警告する (旧値を検査しない列だけの編集でも、行が見つからなければ楽観ロックが 0 件一致で止める)。オフのときは従来どおり唯一の検出手段。
  * 編集行・削除行・新規行はどれも「1 行 = 1 件」なので、`expected` は操作行の合計。
  * 3 ドライバとも `rows_affected` は一致した行数 (MySQL は FOUND_ROWS 相当) を返すため、
  * 値が変わらない更新でも不足とは数えない。0 以下なら不足なし (トリガ等で多い場合も含む)。
@@ -139,6 +142,12 @@ export type GuardedApplyResult =
   | { kind: "applied"; totalAffected: number }
   /** 適用していない (キャンセル / 承認後も超過が続いて確認の上限に達した)。DB は未変更。 */
   | { kind: "not_applied"; expected: number; actual: number; total: number }
+  /**
+   * 楽観ロックの競合 (#1766): 読込後に他の人が値を変えた (または行を消した) 行があり、全体を
+   * ロールバックした。DB は未変更。承認して上書きする経路は無く、再読込して編集し直す。
+   * `conflictRows` は当たらなかった行数。
+   */
+  | { kind: "conflict"; conflictRows: number }
   /** ロールバックが不完全 (MyISAM など)。書き込みの一部が残っている。再実行しない。 */
   | { kind: "rollback_incomplete"; expected: number; actual: number };
 
@@ -146,7 +155,7 @@ export type GuardedApplyResult =
  * `bulk_update_cells` を実行し、想定行数の超過 (`row_count_exceeded`、#1777) なら確認を取って
  * 承認した件数つきで再実行する。承認は文ごとの件数 (`statement_counts`) なので、確認の間に
  * さらに増えれば (別の文の減少で相殺されず) 再び超過になり、新しい件数で確認し直す (最大 `MAX_OVERSHOOT_CONFIRMATIONS` 回)。
- * `rollback_incomplete` は再実行せずそのまま返す。確認の前後に `onAwaitingConfirm` /
+ * `optimistic_conflict` (楽観ロックの競合) と `rollback_incomplete` は承認での再実行をせずそのまま返す。確認の前後に `onAwaitingConfirm` /
  * `onResume` を呼ぶ (状態バー表示と二重 Apply の防止用)。
  */
 export async function applyWithRowCountGuard(input: {
@@ -161,6 +170,7 @@ export async function applyWithRowCountGuard(input: {
     if (res.status === "applied") {
       return { kind: "applied", totalAffected: Number(res.result.rows_affected ?? 0) };
     }
+    if (res.status === "optimistic_conflict") return { kind: "conflict", conflictRows: res.conflict_rows };
     if (res.status === "rollback_incomplete") {
       return { kind: "rollback_incomplete", expected: res.expected_rows, actual: res.actual_rows };
     }

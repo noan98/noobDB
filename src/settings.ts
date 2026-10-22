@@ -78,6 +78,11 @@ export interface Settings {
    */
   confirmDangerousQueries: boolean;
   /**
+   * セル編集の Apply で、編集した列の読込時点の旧値を UPDATE の WHERE に足し、読込後に他者が
+   * 変えた行の無言上書き (lost update) を検出してロールバックする (楽観ロック、#1766)。既定オン。
+   */
+  optimisticCellEditLock: boolean;
+  /**
    * 複数結果タブ: true のとき、エディタでのクエリ実行は現在の結果を
    * 置き換えず、SQL を複製した**新しいタブ**で実行して前の結果を残す。複数クエリの
    * 結果を別タブとして保持・比較できるようにする。
@@ -672,6 +677,7 @@ const MAX_BATCH = 100_000;
 export const DEFAULT_CONFIRM_PRODUCTION_CONNECT = true;
 
 export const DEFAULT_CONFIRM_DANGEROUS_QUERIES = true;
+export const DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK = true;
 
 export const DEFAULT_TAB_RESTORE_MODE: TabRestoreMode = "ask";
 
@@ -786,6 +792,7 @@ export const DEFAULT_SETTINGS: Settings = {
   suppressedConfirms: [],
   batchWrapInTransaction: false,
   confirmDangerousQueries: DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+  optimisticCellEditLock: DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK,
   resultsInNewTab: false,
   tabRestoreMode: DEFAULT_TAB_RESTORE_MODE,
   queryTimeoutSecs: DEFAULT_QUERY_TIMEOUT_SECS,
@@ -1031,6 +1038,7 @@ export function normalizeSettings(input: unknown): Settings {
     suppressedConfirms?: unknown;
     batchWrapInTransaction?: unknown;
     confirmDangerousQueries?: unknown;
+    optimisticCellEditLock?: unknown;
     resultsInNewTab?: unknown;
     tabRestoreMode?: unknown;
     queryTimeoutSecs?: unknown;
@@ -1108,6 +1116,10 @@ export function normalizeSettings(input: unknown): Settings {
       typeof parsed.confirmDangerousQueries === "boolean"
         ? parsed.confirmDangerousQueries
         : DEFAULT_CONFIRM_DANGEROUS_QUERIES,
+    optimisticCellEditLock:
+      typeof parsed.optimisticCellEditLock === "boolean"
+        ? parsed.optimisticCellEditLock
+        : DEFAULT_OPTIMISTIC_CELL_EDIT_LOCK,
     resultsInNewTab: typeof parsed.resultsInNewTab === "boolean" ? parsed.resultsInNewTab : false,
     tabRestoreMode: sanitizeTabRestoreMode(parsed.tabRestoreMode, DEFAULT_TAB_RESTORE_MODE),
     queryTimeoutSecs: sanitizeTimeout(parsed.queryTimeoutSecs, DEFAULT_QUERY_TIMEOUT_SECS),
@@ -1483,6 +1495,13 @@ export function clearSuppressedConfirms(): void {
 export function setBatchWrapInTransaction(value: boolean): void {
   if (current.batchWrapInTransaction === value) return;
   current = { ...current, batchWrapInTransaction: value };
+  persist();
+  listeners.forEach((cb) => cb());
+}
+
+export function setOptimisticCellEditLock(value: boolean): void {
+  if (current.optimisticCellEditLock === value) return;
+  current = { ...current, optimisticCellEditLock: value };
   persist();
   listeners.forEach((cb) => cb());
 }

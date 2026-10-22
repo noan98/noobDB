@@ -608,6 +608,11 @@ export interface BuildUpdateInput {
   rows: CellValue[][];
   pkIndices: number[];
   edits: PendingEdits;
+  /**
+   * true なら `buildUpdateGroups` が編集した列の読込時点の旧値 (`UpdateGroup.olds`) も付ける
+   * (楽観ロック、#1766)。省略 / false は従来どおり主キーだけ。
+   */
+  optimisticLock?: boolean;
 }
 
 /**
@@ -691,10 +696,115 @@ export function setValueFromInput(raw: string, col: Column): BulkSetValue {
   return { kind: "text", text: raw };
 }
 
-/** 同じ `SET` (列, 値) を適用する行の集合。`keys` は各行の元の主キー値。 */
+/**
+ * 編集した列の読込時点の旧値 (楽観ロック、#1766)。Rust の `BulkOldValue` と同じ形で、`UPDATE` の
+ * `WHERE` に `col = 旧値` / `col IS NULL` / (単精度 float は許容誤差) として足される。
+ */
+export type BulkOldValue =
+  | { kind: "null" }
+  | { kind: "number"; text: string }
+  | { kind: "bool"; value: boolean }
+  | { kind: "text"; text: string }
+  | { kind: "float4"; text: string };
+
+/**
+ * 同じ `SET` (列, 値) を適用する行の集合。`keys` は各行の元の主キー値。`olds` は楽観ロック用で、
+ * 省略 (または空) なら主キーだけで特定する。あれば `keys` と同じ行数で、各行は `set` と同順
+ * (`null` = その列は旧値を検査しない)。
+ */
 export interface UpdateGroup {
   set: { column: string; value: BulkSetValue }[];
   keys: CellValue[][];
+  olds?: (BulkOldValue | null)[][];
+}
+
+/** 等値比較で旧値を検査してよい文字列型 (保守的な許可リスト)。 */
+const LOCK_TEXT_TYPES = new Set([
+  "CHAR",
+  "VARCHAR",
+  "NCHAR",
+  "NVARCHAR",
+  "CHARACTER",
+  "CHARACTER VARYING",
+  "BPCHAR",
+  "TEXT",
+  "TINYTEXT",
+  "MEDIUMTEXT",
+  "LONGTEXT",
+  "CITEXT",
+  "ENUM",
+  "UUID",
+]);
+
+/** 旧値を検査してよい日付/時刻型と、リテラルで往復できる書式 (これに合わない値は検査しない)。 */
+const LOCK_TEMPORAL_RE: Record<string, RegExp | undefined> = {
+  DATE: DATE_RE,
+  DATETIME: DATETIME_RE,
+  TIMESTAMP: DATETIME_RE,
+  TIME: TIME_RE,
+};
+
+/**
+ * 楽観ロック (#1766) を使ってよい行識別か。主キー / UNIQUE NOT NULL キー / rowid だけ。
+ * 全列一致 (`all_columns`) は float4・ゼロ日付など等値で往復しない列を含んで誤競合し、`ctid` は
+ * 自分の UPDATE で変わるため対象外 (従来どおり適用後の不足警告で知らせる)。
+ */
+export function isLockableIdentity(strategy: string): boolean {
+  return strategy === "primary_key" || strategy === "unique_key" || strategy === "rowid";
+}
+
+/**
+ * 楽観ロック (#1766) で、読込時点のセル値 `v` から `WHERE` に足す旧値の述語を決める。検査しない
+ * (等値比較が不安定) 列は null。方針は保守的 (検査しないと見逃すだけだが、誤って検査すると
+ * 他者が何も変えていないのに衝突扱いになる):
+ *   - NULL は型を問わず `IS NULL` (安定)。
+ *   - 検査する: 整数・DECIMAL・倍精度 float・BOOLEAN・文字列型・タイムゾーン無しの日付/時刻。
+ *   - 単精度 float (FLOAT4 / REAL / FLOAT) は `singleFloatWhere` と同じ許容誤差。
+ *   - 検査しない: BLOB/BINARY/BYTEA・JSON/JSONB・配列・XML・INTERVAL・タイムゾーン付き時刻・
+ *     BIT・SET・空間型・不明な型 (表現が往復で変わる、または `=` が使えない)。
+ * 64bit 整数は IPC で文字列で届く (`from_*_lossless`) ので、数値化せず文字列のまま `number.text`
+ * に載せる (丸めない)。
+ */
+export function oldValueForLock(driver: string, col: Column, v: CellValue): BulkOldValue | null {
+  const base = col.type_name
+    .toUpperCase()
+    .replace(/\(.*$/, "")
+    .replace(/\s+(UNSIGNED|ZEROFILL)\b/g, "")
+    .trim();
+  const temporalRe = LOCK_TEMPORAL_RE[base];
+  if (v === null || v === undefined) {
+    // MySQL はゼロ日付 (0000-00-00) や範囲外の TIME など、デコードできない日時を NULL で返す。
+    // 実際は NULL ではないので `IS NULL` を足すと他者が何も変えていなくても競合になる。
+    if (temporalRe && driver === "mysql") return null;
+    return { kind: "null" };
+  }
+  if (BINARY_TYPES.has(base)) return null;
+  if (base === "BOOLEAN" || base === "BOOL") {
+    return typeof v === "boolean" ? { kind: "bool", value: v } : null;
+  }
+  const isNumberType =
+    NUMERIC_TYPES.has(base) || /^(SERIAL|BIGSERIAL|SMALLSERIAL|FLOAT4|FLOAT8|INT2|INT4|INT8)$/.test(base);
+  if (isNumberType) {
+    if (typeof v === "boolean") return null;
+    const text = typeof v === "number" ? (Number.isFinite(v) ? String(v) : "") : String(v).trim();
+    if (!NUMERIC_INPUT_RE.test(text)) return null;
+    // 桁数の多い DECIMAL を JS の数値で持っていると丸め済みで、DB の値と一致しない。
+    if (
+      typeof v === "number" &&
+      /^(DECIMAL|NEWDECIMAL|NUMERIC)$/.test(base) &&
+      text.replace(/\D/g, "").length > 15
+    ) {
+      return null;
+    }
+    if (isSinglePrecisionFloat(driver, col)) return { kind: "float4", text };
+    return { kind: "number", text };
+  }
+  if (temporalRe) {
+    // PG の 'infinity' や紀元前の日付 (`0044-03-15 BC`) などは、リテラルで往復できる保証が無い。
+    return typeof v === "string" && temporalRe.test(v) ? { kind: "text", text: v } : null;
+  }
+  if (LOCK_TEXT_TYPES.has(base) && typeof v === "string") return { kind: "text", text: v };
+  return null;
 }
 
 /**
@@ -722,11 +832,18 @@ export function buildUpdateGroups(input: BuildUpdateInput): {
     if (!rowEdits) continue;
     emitted.add(key);
     const set: UpdateGroup["set"] = [];
+    const olds: (BulkOldValue | null)[] = [];
     for (const colKey of Object.keys(rowEdits)) {
       const colIdx = Number(colKey);
       const col = input.columns[colIdx];
       if (!col) continue;
       set.push({ column: col.name, value: setValueFromInput(rowEdits[colIdx], col) });
+      // 主キー列は WHERE に元の値が入っているので旧値の述語は足さない。
+      olds.push(
+        input.optimisticLock && !input.pkIndices.includes(colIdx)
+          ? oldValueForLock(input.driver, col, row[colIdx])
+          : null,
+      );
     }
     if (set.length === 0) continue;
     rowCount++;
@@ -737,6 +854,7 @@ export function buildUpdateGroups(input: BuildUpdateInput): {
       groups.set(sig, g);
     }
     g.keys.push(input.pkIndices.map((i) => row[i]));
+    if (input.optimisticLock) (g.olds ??= []).push(olds);
   }
   return { groups: [...groups.values()], rowCount };
 }

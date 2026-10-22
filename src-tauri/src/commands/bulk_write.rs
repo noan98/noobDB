@@ -66,11 +66,42 @@ pub struct BulkSetColumn {
     pub value: BulkSetValue,
 }
 
+/// 編集した列の、読込時点の旧値 (楽観ロック #1766)。`WHERE` に `col = 旧値` を足す。NULL は
+/// `IS NULL`。64bit 整数は IPC では文字列で届くので `Number.text` として引用符なしの数値
+/// リテラルで比較する (丸めない)。等値比較が不安定な型 (BLOB / JSON など) はフロントが除外する。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum BulkOldValue {
+    Null,
+    Number {
+        text: String,
+    },
+    Bool {
+        value: bool,
+    },
+    Text {
+        text: String,
+    },
+    /// 単精度 float (PG の FLOAT4 / MySQL の FLOAT)。列が倍精度へ広がって比べられ `=` では一致
+    /// しないため、フロントの `singleFloatWhere` と同じ相対許容差で比較する (#1534)。
+    Float4 {
+        text: String,
+    },
+}
+
+/// f32 の相対精度 (約 6e-8) より大きく、別の値と取り違えない程度の許容差。フロント
+/// `cellEdit.ts` の `FLOAT4_WHERE_REL_TOLERANCE` と同じ値にする。
+const FLOAT4_WHERE_REL_TOLERANCE: &str = "0.000001";
+
 /// 同じ `SET` を適用する行の集合。`keys` は各行の**元の**主キー値 (`pk_columns` と同順)。
+/// `olds` は楽観ロック (#1766) 用の旧値で、空なら主キーだけで特定する (従来どおり)。空でなければ
+/// `keys` と同じ行数で、各行は `set` と同順 (`None` = その列は検査しない)。
 #[derive(Debug, Clone, Deserialize)]
 pub struct BulkUpdateGroup {
     pub set: Vec<BulkSetColumn>,
     pub keys: Vec<Vec<Value>>,
+    #[serde(default)]
+    pub olds: Vec<Vec<Option<BulkOldValue>>>,
 }
 
 /// `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロック #1766 など) も
@@ -104,6 +135,14 @@ pub enum BulkWriteOutcome {
         batch_total_rows: u64,
         statement_counts: Vec<u64>,
     },
+    /// 楽観ロック (#1766): 読込後に他の人が値を変えた (または行を消した) 行があり、UPDATE が
+    /// 想定より少ない行にしか当たらなかったのでロールバックした。DB は未変更。`conflict_rows` は
+    /// 当たらなかった行数の合計、`statement_counts` は文ごとの実際の影響行数 (文の順)。承認して
+    /// 上書きする経路は設けない (再読込して編集し直す)。
+    OptimisticConflict {
+        conflict_rows: u64,
+        statement_counts: Vec<u64>,
+    },
     /// 想定を外れてロールバックしたが、トランザクション非対応の表 (MyISAM など) を含み、
     /// 書き込みの一部が**戻らなかった**。承認して再実行してはいけない (二重に書く)。
     /// 再読込して現状を確認させる。
@@ -119,6 +158,9 @@ pub(crate) struct BuiltStatement {
     pub sql: String,
     /// 期待する影響行数 (`UPDATE` チャンクの対象行数)。
     pub expected: u64,
+    /// 旧値の述語を含む (楽観ロック)。真なら件数は `expected` ちょうどでなければならない
+    /// (少ないのは他者の変更)。
+    pub locked: bool,
 }
 
 /// 追加文 (削除予定行 / 新規行の `DELETE` / `INSERT`) 1 文に期待する影響行数。フロントは
@@ -187,6 +229,46 @@ fn row_condition(driver: DriverKind, pk_columns: &[String], key: &[Value]) -> St
         })
         .collect::<Vec<_>>()
         .join(" AND ")
+}
+
+/// 旧値 1 つぶんの述語 (`col = 旧値` / `col IS NULL` / 単精度 float の許容誤差)。
+fn old_predicate(driver: DriverKind, column: &str, old: &BulkOldValue) -> Result<String> {
+    let col = quote_ident(driver, column);
+    Ok(match old {
+        BulkOldValue::Null => format!("{col} IS NULL"),
+        BulkOldValue::Number { text } => {
+            if !is_numeric_literal(text) {
+                return Err(AppError::InvalidInput(format!(
+                    "not a numeric literal: {text}"
+                )));
+            }
+            format!("{col} = {text}")
+        }
+        // MySQL (TINYINT(1)) / SQLite は真偽値が 0 / 1 以外 (2 など) の整数にもなりうるので、
+        // `= TRUE` (= 1) ではなく「0 でない / 0」で比べる。PostgreSQL は本物の boolean。
+        BulkOldValue::Bool { value } => match driver {
+            DriverKind::Postgres => {
+                format!("{col} = {}", sql_literal(driver, &Value::Bool(*value)))
+            }
+            DriverKind::Mysql | DriverKind::Sqlite => {
+                format!("{col} {} 0", if *value { "<>" } else { "=" })
+            }
+        },
+        BulkOldValue::Text { text } => {
+            format!(
+                "{col} = {}",
+                sql_literal(driver, &Value::String(text.clone()))
+            )
+        }
+        BulkOldValue::Float4 { text } => {
+            if !is_numeric_literal(text) {
+                return Err(AppError::InvalidInput(format!(
+                    "not a numeric literal: {text}"
+                )));
+            }
+            format!("ABS({col} - ({text})) <= ABS(({text})) * {FLOAT4_WHERE_REL_TOLERANCE}")
+        }
+    })
 }
 
 /// `pk_binary[i]` が真の主キー列 (BLOB/BINARY/BYTEA) の `keys` は、IPC で 16 進文字列
@@ -276,6 +358,61 @@ pub(crate) fn build_bulk_update_statements_expected(
             ));
         }
         let set_sql = assignments.join(", ");
+        // 旧値を付けて送ってきたグループは楽観ロック有効 (`min = 対象行数`)。主キー列だけの編集や
+        // BLOB / JSON だけの編集でも旧値の述語は付かないが、行が見つからない (他者が変更・
+        // 削除した) ことは 0 件一致で検出してロールバックできる。
+        let locked = !group.olds.is_empty();
+        let has_predicate = group.olds.iter().flatten().any(Option::is_some);
+        if !group.olds.is_empty() {
+            if group.olds.len() != group.keys.len() {
+                return Err(AppError::InvalidInput(format!(
+                    "old value row count mismatch: expected {}, got {}",
+                    group.keys.len(),
+                    group.olds.len()
+                )));
+            }
+            if let Some(bad) = group.olds.iter().find(|o| o.len() != group.set.len()) {
+                return Err(AppError::InvalidInput(format!(
+                    "old value count mismatch: expected {}, got {}",
+                    group.set.len(),
+                    bad.len()
+                )));
+            }
+        }
+        if has_predicate {
+            // 楽観ロック (#1766): 行ごとに旧値が違うので、主キー + 旧値の行条件を `OR` で連結する。
+            let conds = group
+                .keys
+                .iter()
+                .zip(&group.olds)
+                .map(|(key, olds)| {
+                    let mut parts = vec![row_condition(driver, pk_columns, key)];
+                    for (s, old) in group.set.iter().zip(olds) {
+                        if let Some(old) = old {
+                            parts.push(old_predicate(driver, &s.column, old)?);
+                        }
+                    }
+                    Ok(parts.join(" AND "))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for chunk in conds.chunks(OR_CHUNK) {
+                let cond = if chunk.len() == 1 {
+                    chunk[0].clone()
+                } else {
+                    chunk
+                        .iter()
+                        .map(|c| format!("({c})"))
+                        .collect::<Vec<_>>()
+                        .join(" OR ")
+                };
+                out.push(BuiltStatement {
+                    sql: format!("UPDATE {table_ref} SET {set_sql} WHERE {cond};"),
+                    expected: chunk.len() as u64,
+                    locked: true,
+                });
+            }
+            continue;
+        }
         let single_non_null =
             pk_columns.len() == 1 && group.keys.iter().all(|k| !matches!(k[0], Value::Null));
         if single_non_null {
@@ -289,6 +426,7 @@ pub(crate) fn build_bulk_update_statements_expected(
                 out.push(BuiltStatement {
                     sql: format!("UPDATE {table_ref} SET {set_sql} WHERE {col} IN ({list});"),
                     expected: chunk.len() as u64,
+                    locked,
                 });
             }
         } else {
@@ -305,6 +443,7 @@ pub(crate) fn build_bulk_update_statements_expected(
                 out.push(BuiltStatement {
                     sql: format!("UPDATE {table_ref} SET {set_sql} WHERE {cond};"),
                     expected: chunk.len() as u64,
+                    locked,
                 });
             }
         }
@@ -380,7 +519,17 @@ pub(crate) async fn bulk_update_cells_inner(
     let mut statements: Vec<String> = Vec::with_capacity(built.len() + extra_statements.len());
     let mut expects: Vec<RowExpectation> = Vec::with_capacity(statements.capacity());
     for b in built {
-        expects.push(RowExpectation::at_most(b.expected));
+        expects.push(if b.locked {
+            // 楽観ロック: 当たった行が編集対象ちょうどでなければ、他者が変えた行がある。
+            // 既知の限界: 検算は文ごとの件数の合計なので、1 文の中で「多い」(重複行) と「少ない」
+            // (他者が変更) が同時に起きて打ち消し合うと見逃す (チャンクが 100 行まで)。
+            RowExpectation {
+                min: Some(b.expected),
+                max: Some(b.expected),
+            }
+        } else {
+            RowExpectation::at_most(b.expected)
+        });
         statements.push(b.sql);
     }
     // 追加文 (DELETE / INSERT) は 1 文 = 1 行。多い側だけを止める (少ない側は従来どおり通す)。
@@ -401,6 +550,11 @@ pub(crate) async fn bulk_update_cells_inner(
             .await?
         {
             TransactionRun::Committed(result) => BulkWriteOutcome::Applied { result },
+            // 楽観ロックの競合は承認で上書きさせない。多い側の違反が同居していても競合を優先する。
+            TransactionRun::RolledBack(v) if v.under > 0 => BulkWriteOutcome::OptimisticConflict {
+                conflict_rows: v.under,
+                statement_counts: v.counts,
+            },
             TransactionRun::RolledBack(v) => BulkWriteOutcome::RowCountExceeded {
                 expected_rows: v.expected,
                 actual_rows: v.actual,
@@ -562,7 +716,142 @@ mod tests {
     }
 
     fn group(set: Vec<BulkSetColumn>, keys: Vec<Vec<Value>>) -> BulkUpdateGroup {
-        BulkUpdateGroup { set, keys }
+        BulkUpdateGroup {
+            set,
+            keys,
+            olds: vec![],
+        }
+    }
+
+    #[test]
+    fn optimistic_lock_adds_old_value_predicates_and_min() {
+        let groups = vec![BulkUpdateGroup {
+            set: vec![set_text("name", "n"), set_text("f", "1")],
+            keys: keys1(&[1, 2, 3]),
+            olds: vec![
+                vec![
+                    Some(BulkOldValue::Text { text: "o'1".into() }),
+                    Some(BulkOldValue::Float4 { text: "0.1".into() }),
+                ],
+                vec![Some(BulkOldValue::Null), None],
+                vec![
+                    Some(BulkOldValue::Number {
+                        text: "9007199254740993".into(),
+                    }),
+                    Some(BulkOldValue::Bool { value: true }),
+                ],
+            ],
+        }];
+        let built = build_bulk_update_statements_expected(
+            DriverKind::Postgres,
+            "db",
+            "t",
+            &["id".to_string()],
+            &groups,
+        )
+        .expect("build");
+        assert_eq!(built.len(), 1);
+        assert!(built[0].locked);
+        assert_eq!(built[0].expected, 3);
+        let sql = &built[0].sql;
+        assert!(
+            sql.contains(
+                r#"("id" = 1 AND "name" = 'o''1' AND ABS("f" - (0.1)) <= ABS((0.1)) * 0.000001)"#
+            ),
+            "{sql}"
+        );
+        assert!(sql.contains(r#"("id" = 2 AND "name" IS NULL)"#), "{sql}");
+        assert!(
+            sql.contains(r#""name" = 9007199254740993 AND "f" = TRUE"#),
+            "{sql}"
+        );
+    }
+
+    #[test]
+    fn optimistic_lock_bool_compares_zero_on_mysql_and_sqlite() {
+        let mk = |driver| {
+            build_bulk_update_statements_expected(
+                driver,
+                "d",
+                "t",
+                &["id".to_string()],
+                &[BulkUpdateGroup {
+                    set: vec![set_text("a", "x"), set_text("b", "y")],
+                    keys: keys1(&[1]),
+                    olds: vec![vec![
+                        Some(BulkOldValue::Bool { value: true }),
+                        Some(BulkOldValue::Bool { value: false }),
+                    ]],
+                }],
+            )
+            .expect("build")
+            .remove(0)
+            .sql
+        };
+        for d in [DriverKind::Mysql, DriverKind::Sqlite] {
+            let sql = mk(d);
+            assert!(sql.contains("<> 0") && sql.contains("= 0"), "{sql}");
+            assert!(!sql.contains("TRUE"), "{sql}");
+        }
+        assert!(mk(DriverKind::Postgres).contains("= TRUE"));
+    }
+
+    #[test]
+    fn optimistic_lock_without_any_old_value_keeps_in_list_form() {
+        let groups = vec![BulkUpdateGroup {
+            set: vec![set_text("name", "n")],
+            keys: keys1(&[1, 2]),
+            olds: vec![vec![None], vec![None]],
+        }];
+        let built = build_bulk_update_statements_expected(
+            DriverKind::Sqlite,
+            "",
+            "t",
+            &["id".to_string()],
+            &groups,
+        )
+        .expect("build");
+        // 述語は無いが、旧値つきで送ったグループは楽観ロック有効 (行が無ければ不足で検出する)。
+        assert!(built[0].locked);
+        assert!(built[0].sql.contains("IN (1, 2)"), "{}", built[0].sql);
+    }
+
+    #[test]
+    fn optimistic_lock_rejects_malformed_olds_and_numbers() {
+        let pk = ["id".to_string()];
+        let build = |g: BulkUpdateGroup| {
+            build_bulk_update_statements_expected(DriverKind::Mysql, "d", "t", &pk, &[g])
+        };
+        // 行数不一致。
+        assert!(build(BulkUpdateGroup {
+            set: vec![set_text("a", "x")],
+            keys: keys1(&[1, 2]),
+            olds: vec![vec![None]],
+        })
+        .is_err());
+        // 列数不一致。
+        assert!(build(BulkUpdateGroup {
+            set: vec![set_text("a", "x")],
+            keys: keys1(&[1]),
+            olds: vec![vec![None, None]],
+        })
+        .is_err());
+        // 数値リテラルでない旧値 (SQL インジェクション防止)。
+        for old in [
+            BulkOldValue::Number {
+                text: "1; DROP TABLE t".into(),
+            },
+            BulkOldValue::Float4 {
+                text: "1) OR (1=1".into(),
+            },
+        ] {
+            assert!(build(BulkUpdateGroup {
+                set: vec![set_text("a", "x")],
+                keys: keys1(&[1]),
+                olds: vec![vec![Some(old)]],
+            })
+            .is_err());
+        }
     }
 
     #[test]

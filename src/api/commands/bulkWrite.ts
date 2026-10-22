@@ -15,7 +15,9 @@ export const bulkWriteCommands = {
    *
    * 合計の実影響行数が想定 (`groups` の行数 + `extraStatements` の数) を超えたらバックエンドが
    * ロールバックして `status: "row_count_exceeded"` を返す (#1777)。承認後の再実行は
-   * `options.approvedCounts` (= `statement_counts`) を付ける。
+   * `options.approvedCounts` (= `statement_counts`) を付ける。`groups[].olds` を付けると編集した列の
+   * 読込時点の旧値も WHERE に足し、他者が変えた行があれば全体をロールバックして
+   * `status: "optimistic_conflict"` を返す (楽観ロック、#1766)。
    */
   bulkUpdateCells: (params: {
     sessionId: string;

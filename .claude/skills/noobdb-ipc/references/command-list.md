@@ -107,7 +107,7 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
   **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
-  `row_count_exceeded` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
+  `row_count_exceeded` / `optimistic_conflict` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
   文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
   履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
   `row_count_exceeded { expected_rows, actual_rows, batch_total_rows, statement_counts }` で返す (`expected_rows` / `actual_rows` は
@@ -117,6 +117,13 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   3 ドライバとも `rows_affected` は一致行数 (MySQL は sqlx が CLIENT_FOUND_ROWS を常に立てる)。利用者が確認で
   承認したときだけ `options: { approved_counts: <statement_counts> }` で再実行する (各文の上限を max(期待, 承認件数) に引き上げ、`min` は外さない。
   文ごとなので他の変更で相殺されない。承認後にさらに増えれば再び `row_count_exceeded`。`BulkWriteOptions`、後続の検査用の項目もここへ足す)。
+  **楽観ロック (#1766)**: `groups[].olds` (任意。`keys` と同じ行数 × `set` と同順の `BulkOldValue | null`、
+  `kind` = `null` / `number` / `bool` / `text` / `float4`) があると、その行の条件に `col = 旧値` / `col IS NULL` / 単精度 float の
+  許容誤差述語 (フロント `singleFloatWhere` と同じ相対 1e-6) を AND し、旧値のある行を含むチャンクは `OR` 連結で組む。
+  `olds` を送ったグループは述語が 1 つも無くても (BLOB / JSON だけの編集) 同じ `min` 検査を受ける (述語が無ければ `IN` 形のまま)。bool 旧値は MySQL / SQLite では `col <> 0` / `col = 0`。その文は `RowExpectation { min = max = 対象行数 }` で、他者が値を変えた (または行を消した) 行は 0 件一致 → 全体ロールバックして
+  `optimistic_conflict { conflict_rows, statement_counts }` (`conflict_rows` = `min` を下回った不足行数の合計) を返す。多い側の違反と
+  同居しても競合を優先し (1 文の中で多い/少ないが相殺される場合は見逃す既知の限界)、承認での上書き経路は無い (UI は再読込を案内)。旧値を付けるか (BLOB / JSON などは除外) と設定
+  `optimisticCellEditLock` (既定オン) はフロント (`cellEdit.oldValueForLock` / `buildUpdateGroups`) が決める。オフなら `olds` を送らず従来どおり。**行識別が PK / UNIQUE / rowid の表のみ**で、全列一致 (`all_columns`) と `ctid` は誤競合するため `olds` を送らない (不足は適用後の shortfall 警告)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

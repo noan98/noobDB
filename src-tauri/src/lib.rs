@@ -534,8 +534,8 @@ pub mod __test_api {
     // から SQLite 短絡パス (非対応エラー / 縮退レスポンス) とセッション未検出の
     // 経路を駆動できるよう、ここでピンポイントに公開する。
     pub use crate::commands::bulk_write::{
-        BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions, BulkWriteOutcome,
-        InsertRowsResult,
+        BulkOldValue, BulkSetColumn, BulkSetValue, BulkUpdateGroup, BulkWriteOptions,
+        BulkWriteOutcome, InsertRowsResult,
     };
     pub use crate::commands::connection::{health_probe_all_inner, HealthProbeStatus};
     pub use crate::commands::inspector::{

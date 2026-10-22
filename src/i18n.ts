@@ -809,6 +809,9 @@ const en = {
   settingsConfirmDangerousQueries: "Confirm before dangerous write queries",
   settingsConfirmDangerousQueriesHelp:
     "Show a confirmation dialog before running WHERE-less UPDATE/DELETE, DROP or TRUNCATE. Production profiles always confirm.",
+  settingsOptimisticCellEditLock: "Detect concurrent changes when applying cell edits",
+  settingsOptimisticCellEditLockHelp:
+    "When applying inline cell edits, also match the edited columns' values as they were when the rows were loaded. If someone else changed a row in the meantime, nothing is applied and the whole batch is rolled back, so their change is never silently overwritten. Binary, JSON and other types that cannot be compared reliably are not checked. Turn off to match by primary key only.",
   settingsResultsInNewTab: "Keep results in new tabs",
   settingsResultsInNewTabHelp:
     "Run each editor query in a new tab so previous results stay open for comparison. Use Cmd/Ctrl+Shift+Enter for a one-off new-tab run.",
@@ -2092,6 +2095,15 @@ const en = {
     "Rollback was incomplete: {actual} row(s) matched the {expected} you specified, and this table cannot be rolled back (a non-transactional engine such as MyISAM), so some changes were already written. Do not apply again; reload the data to check the current state.",
   statusApplyEditsOvershootCancelled:
     "Not applied: {actual} row(s) matched the {expected} you specified. Nothing was changed; your pending edits are kept.",
+  statusApplyEditsConflict:
+    "Not applied: {rows} row(s) were changed by someone else after you loaded them. Nothing was changed; your pending edits are kept. Reload the data to see the current values.",
+  editConflictTitle: "Rows were changed by someone else",
+  editConflictBody:
+    "{rows} row(s) were changed (or deleted) by someone else after you loaded them, so nothing was applied. Reload to see the current values and edit again, or keep your edits for now.",
+  editConflictReload: "Reload (discard all edits)",
+  statusEditConflictReloadSkipped:
+    "Not reloaded: the last statement of this tab is not a read-only query. Your edits are kept. Re-run the query yourself to see the current values.",
+  editConflictKeep: "Keep my edits",
   statusApplyEditsError: "Apply failed: {error}",
   statusApplyEditsPartial: "Apply failed; all {total} update(s) rolled back, nothing was applied: {error}",
 
@@ -7636,6 +7648,9 @@ const ja: Dict = {
   settingsConfirmDangerousQueries: "危険な書き込みクエリの実行前に確認",
   settingsConfirmDangerousQueriesHelp:
     "WHERE 句のない UPDATE/DELETE、DROP、TRUNCATE を実行する前に確認ダイアログを表示します。本番環境では設定に関わらず必ず確認します。",
+  settingsOptimisticCellEditLock: "セル編集の適用時に他者の変更を検出",
+  settingsOptimisticCellEditLockHelp:
+    "セル編集を適用するとき、編集した列が読み込み時点の値のままであることも条件にします。読み込み後に他の人が同じ行を変更していた場合は、何も適用せずバッチ全体をロールバックし、他の人の変更を無言で上書きしません。バイナリ・JSON など確実に比較できない型は検査しません。オフにすると主キーだけで行を特定します。",
   settingsResultsInNewTab: "結果を新しいタブで保持",
   settingsResultsInNewTabHelp:
     "エディタのクエリを毎回新しいタブで実行し、前の結果を残して見比べられるようにします。一回限りの新タブ実行は Cmd/Ctrl+Shift+Enter。",
@@ -8915,6 +8930,15 @@ const ja: Dict = {
     "ロールバックが不完全です: 指定した {expected} 行に対し {actual} 行が一致し、このテーブルは元に戻せない (MyISAM などトランザクション非対応のエンジン) ため、変更の一部がすでに書き込まれています。再度適用せず、再読込して現在の状態を確認してください。",
   statusApplyEditsOvershootCancelled:
     "適用しませんでした: 指定した {expected} 行に対し {actual} 行が一致しました。変更はありません (保留中の編集は残っています)。",
+  statusApplyEditsConflict:
+    "適用しませんでした: 読み込み後に他の人が変更した行が {rows} 行あります。変更はありません (保留中の編集は残っています)。再読込して現在の値を確認してください。",
+  editConflictTitle: "他の人が変更した行があります",
+  editConflictBody:
+    "{rows} 行は読込後に他の人が変更 (または削除) したため適用しませんでした。再読込して現在の値を確認し、編集し直してください。いったん編集を残すこともできます。",
+  editConflictReload: "再読込 (すべての編集を破棄)",
+  statusEditConflictReloadSkipped:
+    "再読込しませんでした: このタブの直近の文は読み取り専用のクエリではありません。現在の値を見るには、編集はそのまま残っています。クエリを自分で実行し直してください。",
+  editConflictKeep: "編集を残す",
   statusApplyEditsError: "適用に失敗しました: {error}",
   statusApplyEditsPartial:
     "適用に失敗したため、{total} 件の UPDATE をすべてロールバックしました（変更は適用されていません）: {error}",

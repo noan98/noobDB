@@ -2172,6 +2172,7 @@ mod tests {
             actual: 2,
             total: 2,
             counts: vec![2],
+            under: 0,
         };
         assert_eq!(
             rolled_back_message(&v, false),

@@ -3,7 +3,7 @@ import { page, userEvent } from "vitest/browser";
 import { renderInBrowser } from "./render";
 import App from "../../App";
 import { t } from "../../i18n";
-import { setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
+import { setOptimisticCellEditLock, setQueryTimeoutSecs, setTabRestoreMode } from "../../settings";
 import {
   emitChannelMessage,
   installTauriMock,
@@ -472,7 +472,14 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
             table: "fruits",
             pkColumns: ["id"],
             pkBinary: [false],
-            groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
+            groups: [
+              {
+                set: [{ column: "qty", value: { kind: "number", text: "42" } }],
+                keys: [[2]],
+                // 楽観ロック (#1766、既定オン): 編集した列の読込時点の旧値が付く。
+                olds: [[{ kind: "number", text: "3" }]],
+              },
+            ],
             extraStatements: [],
           },
         ]);
@@ -634,6 +641,72 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
     await expect
       .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
       .not.toBeInTheDocument();
+  });
+  it("楽観ロック: 既定で旧値つきで送り、他者の変更による競合は全件ロールバックして再読込を案内する (#1766)", async () => {
+    registerAutoStream();
+    const calls: Record<string, unknown>[] = [];
+    onCommand("bulk_update_cells", (args) => {
+      calls.push(args);
+      return { status: "optimistic_conflict", conflict_rows: 1, statement_counts: [0] };
+    });
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    // 編集した列 (qty) の読込時点の旧値 (3) が行ごとに付く。
+    await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
+    const groups = calls[0]?.groups as { olds?: unknown[][] }[];
+    expect(groups[0]?.olds).toEqual([[{ kind: "number", text: "3" }]]);
+
+    await expect.element(screen.getByText(t("editConflictTitle"))).toBeVisible();
+    await expect.element(screen.getByText(t("editConflictBody", { rows: 1 }))).toBeVisible();
+    // 承認して上書きする選択肢は無い (再読込 / 編集を残す の 2 択)。再実行もしない。
+    await screen
+      .getByRole("button", { name: t("editConflictKeep"), exact: true })
+      .first()
+      .click();
+    await expect.element(screen.getByText(t("editConflictTitle"))).not.toBeInTheDocument();
+    expect(calls.length).toBe(1);
+    await expect.element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 }))).toBeVisible();
+  });
+
+  it("楽観ロックの競合で「再読込」を選ぶと、送った編集を破棄して取り直す (#1766)", async () => {
+    registerAutoStream();
+    onCommand("bulk_update_cells", () => ({
+      status: "optimistic_conflict",
+      conflict_rows: 1,
+      statement_counts: [0],
+    }));
+    const screen = await renderInBrowser(<App />);
+    await editQtyAndApply(screen);
+
+    await expect.element(screen.getByText(t("editConflictTitle"))).toBeVisible();
+    await screen
+      .getByRole("button", { name: t("editConflictReload"), exact: true })
+      .first()
+      .click();
+    await expect
+      .element(screen.getByText(t("editPendingCount", { cells: 1, rows: 1 })))
+      .not.toBeInTheDocument();
+  });
+
+  it("楽観ロックをオフにすると旧値を送らない (#1766)", async () => {
+    registerAutoStream();
+    setOptimisticCellEditLock(false);
+    try {
+      const calls: Record<string, unknown>[] = [];
+      onCommand("bulk_update_cells", (args) => {
+        calls.push(args);
+        fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+        return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
+      });
+      const screen = await renderInBrowser(<App />);
+      await editQtyAndApply(screen);
+      await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
+      const groups = calls[0]?.groups as { olds?: unknown[][] }[];
+      expect(groups[0]?.olds).toBeUndefined();
+    } finally {
+      setOptimisticCellEditLock(true);
+    }
   });
 });
 

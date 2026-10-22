@@ -107,6 +107,7 @@ import {
   setAutoRefreshDefaultSecs,
   setConfirmDangerousQueries,
   setConfirmProductionConnect,
+  setOptimisticCellEditLock,
   clearSuppressedConfirms,
   setResultsInNewTab,
   getSettings,
@@ -2027,6 +2028,19 @@ export function SettingsView({ theme: toggleTheme, onClose, initialSection }: Pr
                     id="settings-confirm-dangerous"
                     checked={settings.confirmDangerousQueries}
                     onChange={setConfirmDangerousQueries}
+                  />
+                </SettingsToggleRow>
+                <SettingsToggleRow>
+                  <SettingsLabelWithInfo>
+                    <SettingsToggleLabel htmlFor="settings-optimistic-lock">
+                      {t("settingsOptimisticCellEditLock")}
+                    </SettingsToggleLabel>
+                    <SettingsInfo>{t("settingsOptimisticCellEditLockHelp")}</SettingsInfo>
+                  </SettingsLabelWithInfo>
+                  <Switch
+                    id="settings-optimistic-lock"
+                    checked={settings.optimisticCellEditLock}
+                    onChange={setOptimisticCellEditLock}
                   />
                 </SettingsToggleRow>
                 <SettingsToggleRow>

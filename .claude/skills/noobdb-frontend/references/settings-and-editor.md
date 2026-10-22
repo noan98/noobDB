@@ -4,7 +4,7 @@
   (`syntaxColors` light/dark)・プレビューハイライト色・表示行数 (`defaultDisplayCount` /
   `streamPrefetchSize`)・自動 LIMIT (`autoLimitEnabled` / `autoLimitCount`)・SQL 構文
   チェック (`sqlLintEnabled`。#704)・本番接続確認
-  (`confirmProductionConnect`)・危険クエリ確認 (`confirmDangerousQueries`)・新規タブ実行
+  (`confirmProductionConnect`)・危険クエリ確認 (`confirmDangerousQueries`)・セル編集の楽観ロック (`optimisticCellEditLock`、既定オン。#1766)・新規タブ実行
   (`resultsInNewTab`)・タブ復元 (`tabRestoreMode`)・クエリタイムアウト
   (`queryTimeoutSecs`)・フォントサイズ (`fontSizePx`) / フォントファミリ
   (`monoFontFamily` / `uiFontFamily`)・アクセント色 (`accentColor`)・UI 密度

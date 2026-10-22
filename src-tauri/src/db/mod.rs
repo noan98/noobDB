@@ -421,7 +421,7 @@ pub enum Connection {
 
 /// 1 文に期待する影響行数の範囲 (#1777)。`max` を超えたら「想定より多い」、`min` を下回ったら
 /// 「想定より少ない」で、どちらも文のコミット前に検出してロールバックの根拠にできる。`None` は
-/// その側を検査しない。今は `max` だけを使う (楽観ロック #1766 が `min` で「少ない側」を止める予定)。
+/// その側を検査しない。`max` は画面外の重複行への多重更新 (#1777)、`min` は楽観ロックの競合 (他者が変えた行は 0 件一致、#1766) を止める。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RowExpectation {
     pub min: Option<u64>,
@@ -480,6 +480,9 @@ pub struct GuardViolation {
     pub actual: u64,
     pub total: u64,
     pub counts: Vec<u64>,
+    /// `min` を下回った文の不足行数の合計 (`min - 実際` の和)。0 でなければ「想定より少ない」違反を
+    /// 含む。楽観ロック (#1766) では、他者が値を変えた (または行を消した) 行の数になる。
+    pub under: u64,
 }
 
 /// [`Connection::execute_transaction_guarded`] の結果 (#1777)。期待外れはエラーではなく判別できる
@@ -521,8 +524,12 @@ pub(crate) fn evaluate_guard(
 ) -> Option<GuardViolation> {
     let mut expected = 0;
     let mut actual = 0;
+    let mut under = 0;
     let mut violated = false;
     for (st, &n) in statements.iter().zip(counts) {
+        if let Some(min) = st.expect.min {
+            under += min.saturating_sub(n);
+        }
         if st.expect.violated_by(n) {
             violated = true;
             expected += st.expect.expected_hint();
@@ -534,6 +541,7 @@ pub(crate) fn evaluate_guard(
         actual,
         total: counts.iter().sum(),
         counts: counts.to_vec(),
+        under,
     })
 }
 
@@ -6140,6 +6148,7 @@ mod guard_tests {
                 actual: 2,
                 total: 2,
                 counts: vec![2, 0, 0],
+                under: 0,
             })
         );
     }
@@ -6158,6 +6167,16 @@ mod guard_tests {
             evaluate_guard(&sts, &[0, 5]).map(|v| (v.expected, v.actual, v.total)),
             Some((1, 0, 5))
         );
+        // 不足行数 (楽観ロックの競合行数) は min を下回った文だけ数える。
+        let two = [
+            st(RowExpectation {
+                min: Some(3),
+                max: Some(3),
+            }),
+            st(RowExpectation::at_most(1)),
+        ];
+        assert_eq!(evaluate_guard(&two, &[1, 2]).map(|v| v.under), Some(2));
+        assert_eq!(evaluate_guard(&two, &[3, 2]).map(|v| v.under), Some(0));
     }
 }
 

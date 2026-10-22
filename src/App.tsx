@@ -17,6 +17,7 @@ import {
 import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
+import { Callout } from "./components/Callout";
 import { ConnectionPathDiagram } from "./components/ConnectionPathDiagram";
 import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./components/connectionPath";
 import { AnimatePresence, motion } from "motion/react";
@@ -76,6 +77,7 @@ import {
   buildInsertStatements,
   buildBlobUpdateStatement,
   buildUpdateGroups,
+  isLockableIdentity,
   buildUpdateStatements,
   hasAmbiguousIdentity,
   isBinaryColumnType,
@@ -7354,6 +7356,13 @@ export default function App() {
         rows: result.rows,
         pkIndices,
         edits: pendingEdits,
+        // 編集した列の読込時点の旧値も WHERE に足し、読込後に他者が変えた行の無言上書きを防ぐ (#1766)。
+        // 全列一致 (all_columns) と ctid の行識別は対象外: 全列キーは float4 やゼロ日付 (NULL で届く)
+        // で等値に往復せず 0 件一致 (誤競合) になり、ctid は自分の UPDATE で変わる。従来どおり
+        // 不足は適用後の shortfall 警告で知らせる。
+        // 既知の限界: Apply 後は画面の行が入力文字列のままで、DB が丸めた値 (NUMERIC(10,2) に 1.234 など) と
+        // 差が出る。再読込せず同じセルを再編集すると誤競合になりうる (その場合は再読込で解消する)。
+        optimisticLock: settings.optimisticCellEditLock && isLockableIdentity(identityStrategy),
       });
       const deletes = buildDeleteStatements({
         driver,
@@ -7441,6 +7450,7 @@ export default function App() {
       let totalAffected = 0;
       let failure: string | null = null;
       let notApplied: { expected: number; actual: number } | null = null;
+      let conflictRows: number | null = null;
       let incomplete: { expected: number; actual: number } | null = null;
       try {
         const bulkParams = {
@@ -7481,6 +7491,7 @@ export default function App() {
         });
         if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
         else if (guarded.kind === "not_applied") notApplied = guarded;
+        else if (guarded.kind === "conflict") conflictRows = guarded.conflictRows;
         else incomplete = guarded;
       } catch (e) {
         failure = String(e);
@@ -7509,6 +7520,43 @@ export default function App() {
           vars: incomplete,
           error: true,
         });
+        return false;
+      }
+      if (conflictRows !== null) {
+        // 楽観ロックの競合 (#1766): 読込後に他の人が変えた行があり、全体をロールバックした (DB は未変更)。
+        // 承認して上書きする選択肢は設けない。再読込して現在の値を見てから編集し直してもらう。
+        // 「編集を残す」なら保留編集はそのまま。「再読込」なら送った編集を破棄して取り直す
+        // (残すと現在の値を旧値として再送され、他の人の変更を知らないまま上書きしてしまう)。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsConflict",
+          vars: { rows: conflictRows },
+          error: true,
+        });
+        const reload = await confirm({
+          title: translate("editConflictTitle"),
+          message: <Callout tone="warning">{translate("editConflictBody", { rows: conflictRows })}</Callout>,
+          confirmLabel: translate("editConflictReload"),
+          cancelLabel: translate("editConflictKeep"),
+          tone: "warning",
+        });
+        if (reload) {
+          // 再実行 (runQueryInTab) は保留編集と Undo/Redo をすべて消す。ボタンの文言も
+          // 「すべての編集を破棄」にして挙動と揃えている。
+          const latest = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+          if (latest.paginatable) {
+            const limit = Math.max(1, latest.previewRowLimit || settings.defaultDisplayCount);
+            // 生の base SQL の 1 ページ目に戻すので、サーバ側ソート/フィルタの表示 (#792) も解除する。
+            patchTab(tabId, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
+            void runQueryInTab(tabId, `${latest.paginatable} LIMIT ${limit}`, latest.paginatable);
+          } else if (latest.lastExecutedSql && isReadOnlySql(latest.lastExecutedSql, driver)) {
+            // エディタの現在の SQL ではなく、直近に実行した読み取り専用 SQL だけを取り直す
+            // (自動リフレッシュと同じ防御)。
+            void runQueryInTab(tabId, latest.lastExecutedSql, null, null);
+          } else {
+            setStatus({ kind: "key", key: "statusEditConflictReloadSkipped", error: true });
+          }
+        }
         return false;
       }
       if (notApplied) {
@@ -7598,6 +7646,8 @@ export default function App() {
       patchTab,
       runQueryInTab,
       settings.defaultDisplayCount,
+      settings.optimisticCellEditLock,
+      tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,
       selectedProfile?.confirm_writes,

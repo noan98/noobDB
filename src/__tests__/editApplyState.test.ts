@@ -197,6 +197,21 @@ describe("applyWithRowCountGuard", () => {
     statement_counts: counts,
   });
 
+  it("楽観ロックの競合は確認も再実行もせず、そのまま返す (承認で上書きさせない)", async () => {
+    const confirmExceeded = vi.fn(async () => true);
+    const run = vi.fn(
+      async (): Promise<BulkWriteOutcome> => ({
+        status: "optimistic_conflict",
+        conflict_rows: 2,
+        statement_counts: [1, 0],
+      }),
+    );
+    const res = await applyWithRowCountGuard({ run, confirmExceeded });
+    expect(res).toEqual({ kind: "conflict", conflictRows: 2 });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(confirmExceeded).not.toHaveBeenCalled();
+  });
+
   it("超過が無ければ確認せずそのまま適用する", async () => {
     const confirmExceeded = vi.fn(async () => true);
     const res = await applyWithRowCountGuard({ run: async () => applied(3), confirmExceeded });
