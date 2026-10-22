@@ -31,6 +31,7 @@ import {
   drawSelection,
   rectangularSelection,
   crosshairCursor,
+  placeholder,
   type DecorationSet,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, selectAll, toggleComment } from "@codemirror/commands";
@@ -82,6 +83,7 @@ import { ScanPreflightBadge } from "./ScanPreflightBadge";
 import { useScanPreflight } from "./useScanPreflight";
 import { PreflightSampleModal } from "./PreflightSampleModal";
 import { buildPreflightSampleSql, PREFLIGHT_MAX_CHARS } from "./preflight";
+import { buildEditorPlaceholder, pickExampleTable } from "./editorPlaceholder";
 import { EditorStateCache, sqlConfigChanged, type AppliedEditorConfig } from "./editorStateCache";
 import { comboToCodeMirror } from "../shortcutKeys";
 import { DEFAULT_SHORTCUT_COMBOS } from "../shortcuts";
@@ -704,6 +706,7 @@ export const QueryEditor = memo(
     const sqlCompartment = useMemo(() => new Compartment(), []);
     const actionKeymapCompartment = useMemo(() => new Compartment(), []);
     const lintCompartment = useMemo(() => new Compartment(), []);
+    const placeholderCompartment = useMemo(() => new Compartment(), []);
 
     // リアルタイム構文チェック (#704)。設定でオン/オフでき、診断メッセージは i18n
     // 経由で日英対応。linter は `syntaxTree(state)` の (lang-sql が既に構築した)
@@ -778,7 +781,17 @@ export const QueryEditor = memo(
     const schemaKey = `${
       schemaTable ? `${schemaTable.database}.${schemaTable.name}|${schemaTable.columns.join(",")}` : ""
     }|fk:${fkRev}`;
+    // 空エディタのゴースト文面 (#1785)。選択中のテーブル名 > スキーマ先頭のテーブル名を例示に
+    // 使い、実行ショートカットは割り当て変更に追従する。文面が変わったときだけ Compartment を
+    // 再構成するので、テーブル切替のたびにエディタは作り直さない。
+    const placeholderText = buildEditorPlaceholder({
+      driver,
+      table: pickExampleTable(activeTable, schemaTable, databaseSchema),
+      genericTable: t("editorPlaceholderGenericTable"),
+      hint: t("editorPlaceholderHint", { shortcut: formatComboLabel(runCombo) }),
+    });
     const desiredConfig: AppliedEditorConfig = {
+      placeholder: placeholderText,
       driver,
       schemaKey,
       databaseSchema: databaseSchema ?? null,
@@ -1178,6 +1191,8 @@ export const QueryEditor = memo(
             // 構文チェック (#704) は Compartment 越しにして、設定トグルや言語切替で
             // 再構成できるようにする。作成時点の設定値で初期化する。
             lintCompartment.of(buildLintExtension(sqlLintEnabledRef.current)),
+            // 空時のみ出る淡色ゴースト (#1785)。文面は Compartment 越しに差し替える。
+            placeholderCompartment.of(placeholder(desiredConfigRef.current.placeholder)),
             sqlCompartment.of(
               buildSqlExtension(
                 sqlArgsRef.current.driver,
@@ -1421,7 +1436,8 @@ export const QueryEditor = memo(
       const sqlChanged = sqlConfigChanged(applied, want);
       const lintChanged = applied.lint !== want.lint;
       const keymapChanged = applied.keymap !== want.keymap;
-      if (!sqlChanged && !lintChanged && !keymapChanged) return;
+      const placeholderChanged = applied.placeholder !== want.placeholder;
+      if (!sqlChanged && !lintChanged && !keymapChanged && !placeholderChanged) return;
       const effects: StateEffect<unknown>[] = [];
       if (sqlChanged) {
         effects.push(
@@ -1441,6 +1457,7 @@ export const QueryEditor = memo(
       if (keymapChanged) {
         effects.push(actionKeymapCompartment.reconfigure(keymap.of(buildActionKeymap(bindingsRef.current))));
       }
+      if (placeholderChanged) effects.push(placeholderCompartment.reconfigure(placeholder(want.placeholder)));
       appliedConfigRef.current = want;
       view.dispatch({ effects });
       // 方言 (driver) が変わっても `@codemirror/lint` は doc 変更が無い限り再実行
@@ -1458,6 +1475,7 @@ export const QueryEditor = memo(
       desiredConfig.defaultDatabase,
       desiredConfig.lint,
       desiredConfig.keymap,
+      desiredConfig.placeholder,
     ]);
 
     // 影響行数プリフライト (#737)。現在文が単純な UPDATE / DELETE のとき、対象と

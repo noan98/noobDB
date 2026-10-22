@@ -212,6 +212,7 @@ import { type ResultViewKind } from "./components/ResultViewSwitch";
 import { bundleExplainPrefix } from "./components/investigationBundle";
 import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
+import { ambientWashImage } from "./components/titleBarContext";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -11679,6 +11680,12 @@ export default function App() {
     },
     openErDiagramFromEmpty: () => openFullView("erDiagram"),
     openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+    runOrFocusEditorFromEmpty: (paneId: string) => {
+      const editor = editorRefs.current.get(paneId);
+      if (!editor) return;
+      editor.focus();
+      editor.runAll();
+    },
   });
   const broadcastAvailable =
     !!sessionId &&
@@ -11746,6 +11753,9 @@ export default function App() {
           status: connectionStatus,
         }
       : null;
+
+  // ワークスペース上端のアンビエントウォッシュ (#1768)。本番 / サンドボックス以外は undefined。
+  const ambientWash = ambientWashImage(titleBarConnection);
 
   // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
   // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
@@ -12606,6 +12616,26 @@ export default function App() {
               flexDirection="column"
               overflow="hidden"
             >
+              {/* 本番 / サンドボックス接続中のアンビエントウォッシュ (#1768)。セッションヘッダ・
+                タブ列・エディタは不透明な背景を持つため `<main>` の背景では隠れる。そこで作業領域の
+                上端に操作を一切奪わない overlay を重ねる (pointer-events: none / aria-hidden、
+                z-index はモーダル・ポップオーバー・ツールチップより下)。値は App.css の
+                `--prod-wash` / `--sandbox-wash` (hc-* では none)。 */}
+              {ambientWash && (
+                <div
+                  aria-hidden
+                  data-ambient-wash={titleBarConnection?.isProduction ? "prod" : "sandbox"}
+                  style={{
+                    position: "absolute",
+                    inset: "0 0 auto 0",
+                    height: "var(--ambient-wash-height)",
+                    pointerEvents: "none",
+                    zIndex: 1, // 作業領域内のローカルな重ね順 (モーダル・ポップオーバーより下)
+                    backgroundImage: ambientWash,
+                    backgroundRepeat: "no-repeat",
+                  }}
+                />
+              )}
               <div
                 inert={workspaceView !== "workspace" || undefined}
                 aria-hidden={workspaceView !== "workspace" || undefined}

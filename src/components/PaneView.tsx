@@ -37,6 +37,7 @@ import { Splitter } from "./Splitter";
 import { Icon, ICON_SIZES } from "./Icon";
 import { Button } from "./ui";
 import { buildTabsEmptyActions } from "./tabsEmptyActions";
+import { buildResultEmptyActions } from "./resultEmptyActions";
 import { LoadingButton } from "./LoadingButton";
 import { readOnlyWithHint } from "../dangerousSql";
 import { useT } from "../i18n";
@@ -214,6 +215,8 @@ export interface PaneActions {
   openSnippetsFromEmpty: () => void;
   openErDiagramFromEmpty: () => void;
   openCommandPaletteFromEmpty: () => void;
+  /** 結果ペインの実行前状態 (#1784): Cmd/Ctrl+Enter と同じく選択→無ければ全文を実行。エディタへフォーカスも移す。 */
+  runOrFocusEditorFromEmpty: (paneId: string) => void;
 }
 
 export interface PaneEnv {
@@ -328,6 +331,21 @@ export const PaneView = memo(
           emptyCombo,
         ),
       [t, actions, emptyCombo],
+    );
+    // 結果ペインの「クエリ実行前」状態 (#1784) の補助導線。
+    const runCombo = formatCombo(shortcutBindings.run);
+    const resultEmptyActions = useMemo(
+      () =>
+        buildResultEmptyActions(
+          t,
+          {
+            run: () => actions.runOrFocusEditorFromEmpty(paneId),
+            snippets: actions.openSnippetsFromEmpty,
+            commandPalette: actions.openCommandPaletteFromEmpty,
+          },
+          { run: runCombo, commandPalette: emptyCombo },
+        ),
+      [t, actions, paneId, runCombo, emptyCombo],
     );
     const pane = useSyncExternalStore(store.subscribe, () => store.getPane(paneId));
     const paneTabs = useStoreSelector(
@@ -919,6 +937,7 @@ export const PaneView = memo(
                                 <ResultGrid
                                   ref={gridRef}
                                   gridBindings={gridBindings}
+                                  emptyActions={tab.kind === "query" ? resultEmptyActions : undefined}
                                   result={tab.result}
                                   initialScrollTop={
                                     tab.kind === "table"
