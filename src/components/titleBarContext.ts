@@ -14,6 +14,11 @@ export interface TitleBarConnection {
   color: string | null;
   isProduction: boolean;
   /**
+   * DB エンジン (`mysql` / `postgres` / `sqlite`、#1769)。プロファイルの `driver` をそのまま渡す。
+   * 省略または未知のドライバならエンジングリフは出さない。
+   */
+  driver?: string;
+  /**
    * サンドボックス (壊せる砂場、#747) のセッションかどうか。true の間は帯・
    * バッジを専用色 (`SANDBOX_BAND_COLOR`) にして「接続先へは何の影響も無い
    * ローカルコピーである」ことを常時明示する。

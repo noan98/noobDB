@@ -6,6 +6,7 @@ import { Icon, ICON_SIZES } from "./Icon";
 import { BrandMark } from "../brand";
 import { ProductionBadge, ProfileColorChip, SandboxBadge } from "./ProfileBadge";
 import { api } from "../api/tauri";
+import { driverColor, driverIconName } from "../profileIdentity";
 import { connectionBandColor, windowTitleFor, type TitleBarConnection } from "./titleBarContext";
 import { Tooltip } from "./Tooltip";
 import { ActivityCenter } from "./ActivityCenter";
@@ -110,6 +111,7 @@ export function TitleBar({
   // 接続中はタイトルバー下端にアクセントの帯を常時表示する。本番接続は
   // 危険色の帯にして全画面で「本番にいる」ことを一目で示す。色遷移は CSS transition。
   const bandColor = connectionBandColor(connection);
+  const engineIcon = connection?.driver ? driverIconName(connection.driver) : null;
 
   return (
     <Flex
@@ -147,6 +149,19 @@ export function TitleBar({
             {/* プロファイルカラーの丸チップ (#663)。ConnectionList / 本番接続確認
                 ダイアログと同じ `ProfileColorChip` を共有する。 */}
             <ProfileColorChip color={connection.color} size={9} />
+            {/* DB エンジンの識別グリフ (#1769)。ツリー行 / カードと同じ `driverIconName` +
+                `driverColor`。常時見える面で「いま何エンジンか」を示す。 */}
+            {engineIcon && (
+              <chakra.span
+                aria-hidden
+                display="inline-flex"
+                flexShrink={0}
+                style={{ color: driverColor(connection.driver ?? "") }}
+                data-testid="titlebar-engine-glyph"
+              >
+                <Icon name={engineIcon} size={ICON_SIZES.sm} />
+              </chakra.span>
+            )}
             {/* 省略記号で切れる可能性がある接続名。全文は Tooltip で確認できる
                 (#884)。`focusableWrapper` — この span 自体は非対話でフォーカス
                 不能なため。 */}

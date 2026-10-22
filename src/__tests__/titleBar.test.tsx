@@ -54,4 +54,23 @@ describe("TitleBar render smoke (#604)", () => {
     renderWithProviders(<TitleBar connection={connection} />);
     expect(screen.getByText("Alpha DB")).toBeInTheDocument();
   });
+
+  it.each([
+    ["mysql", "mysql"],
+    ["postgres", "postgres"],
+    ["sqlite", "sqlite"],
+  ])("shows the engine glyph for %s (#1769)", (driver) => {
+    const connection: TitleBarConnection = { name: "Alpha DB", color: null, isProduction: false, driver };
+    renderWithProviders(<TitleBar connection={connection} />);
+    expect(screen.getByTestId("titlebar-engine-glyph")).toBeInTheDocument();
+  });
+
+  it("omits the engine glyph for an unknown or missing driver (#1769)", () => {
+    const base: TitleBarConnection = { name: "Alpha DB", color: null, isProduction: false };
+    const { unmount } = renderWithProviders(<TitleBar connection={base} />);
+    expect(screen.queryByTestId("titlebar-engine-glyph")).toBeNull();
+    unmount();
+    renderWithProviders(<TitleBar connection={{ ...base, driver: "oracle" }} />);
+    expect(screen.queryByTestId("titlebar-engine-glyph")).toBeNull();
+  });
 });

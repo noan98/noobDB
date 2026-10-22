@@ -11741,6 +11741,7 @@ export default function App() {
           name: selectedProfile.name,
           color: selectedProfile.color ?? null,
           isProduction: selectedProfile.is_production,
+          driver: selectedProfile.driver,
           isSandbox: isSandboxProfileId(selectedProfile.id),
           status: connectionStatus,
         }
