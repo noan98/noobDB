@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../api/tauri";
+import { parseSync } from "vite";
 import { reachableModules, toSrcRelative } from "./moduleGraph";
 
 // API 到達性パリティ検証 (#907 / #1421)。
@@ -44,12 +45,54 @@ const ENTRY = "main.tsx";
 const reachable = reachableModules([ENTRY], allSources);
 
 /**
+ * コメントと文字列リテラル (テンプレートの文字列部分・JSX テキスト含む) を空白に潰す (#1774)。
+ * 生ソースのまま走査すると、`// api.fooBar は廃止予定` のようなコメントや文字列中に名前が
+ * 1 回出るだけで、実際は呼ばれていないラッパーが「到達可能」と誤判定される。
+ * 正規表現ではなく oxc パーサの位置情報で潰すので、正規表現リテラルや JSX 内の `'` に惑わされない。
+ * テンプレートの `${api.x}` 式の中身は実コードなので残す。
+ */
+function stripCommentsAndStrings(path: string, source: string): string {
+  const { program, comments } = parseSync(path, source);
+  const ranges: [number, number][] = comments.map((c) => [c.start, c.end]);
+  const visit = (node: unknown): void => {
+    if (node === null || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      for (const n of node) visit(n);
+      return;
+    }
+    const n = node as { type?: string; value?: unknown; start?: number; end?: number };
+    if (
+      typeof n.start === "number" &&
+      typeof n.end === "number" &&
+      ((n.type === "Literal" && typeof n.value === "string") ||
+        n.type === "TemplateElement" ||
+        n.type === "JSXText")
+    ) {
+      ranges.push([n.start, n.end]);
+      return;
+    }
+    for (const v of Object.values(n)) visit(v);
+  };
+  visit(program);
+  let out = "";
+  let pos = 0;
+  for (const [start, end] of ranges.sort((a, b) => a[0] - b[0])) {
+    if (start < pos) continue;
+    out += source.slice(pos, start) + source.slice(start, end).replace(/[^\n]/g, " ");
+    pos = end;
+  }
+  return out + source.slice(pos);
+}
+
+/**
  * 到達性の判定に使うソース。`api/` 配下 (`tauri.ts` と、ラッパー本体を分割した
  * `api/commands/*.ts`) と `__tests__/` 配下は対象外 (テストが呼んでいるだけの
  * ラッパーは UI から到達できていない)。
  */
 const isConsumer = (path: string) => !path.startsWith("api/") && !path.startsWith("__tests__/");
-const consumerSources = Object.entries(allSources).filter(([path]) => isConsumer(path));
+const consumerSources = Object.entries(allSources)
+  .filter(([path]) => isConsumer(path))
+  .map(([path, src]) => [path, stripCommentsAndStrings(path, src)] as [string, string]);
 const reachableConsumers = consumerSources.filter(([path]) => reachable.has(path));
 
 /**
@@ -81,6 +124,24 @@ describe("API 到達性パリティ (tauri.ts の api メンバ ↔ UI からの
     expect(members.size).toBeGreaterThanOrEqual(50);
     expect(members.has("connect")).toBe(true);
     expect(members.has("runQueryStream")).toBe(true);
+  });
+
+  it("コメント・文字列・JSX テキスト内の api.xxx は参照と数えない (#1774)", () => {
+    const src = [
+      "// api.inComment は廃止予定",
+      "/* api.inBlock */",
+      'const a = "api.inString";',
+      "const b = `api.inTemplate ${api.realCall}`;",
+      "const c = <div title='api.inAttr'>api.inJsxText {api.jsxCall()}</div>;",
+      "const d = /'/; api\n  .chained();",
+    ].join("\n");
+    const stripped = stripCommentsAndStrings("x.tsx", src);
+    const found = (name: string) => new RegExp(`\\bapi\\s*\\.\\s*${name}\\b`).test(stripped);
+    for (const name of ["inComment", "inBlock", "inString", "inTemplate", "inAttr", "inJsxText"]) {
+      expect(found(name), name).toBe(false);
+    }
+    for (const name of ["realCall", "jsxCall", "chained"]) expect(found(name), name).toBe(true);
+    expect(stripped.length).toBe(src.length);
   });
 
   it("走査対象のソースを十分な数だけ読み込めている", () => {
