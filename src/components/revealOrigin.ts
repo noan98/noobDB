@@ -91,3 +91,10 @@ export function revealClipPath(origin: RevealPoint, radius: number): string {
 export function isHighContrastDataTheme(dataTheme: string): boolean {
   return dataTheme.startsWith("hc-");
 }
+
+/** ハイコントラスト (テーマ hc-* / forced-colors) か。装飾的な動きは出さない。 */
+export function prefersStaticMotion(): boolean {
+  if (typeof document === "undefined") return false;
+  if (isHighContrastDataTheme(document.documentElement.getAttribute("data-theme") ?? "")) return true;
+  return typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
+}
