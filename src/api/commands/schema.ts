@@ -15,6 +15,7 @@ import type {
   TableComment,
   TableStatistic,
   AlterTableContext,
+  ColumnDependencyReport,
   SchemaSnapshotTable,
 } from "../tauri";
 
@@ -89,6 +90,17 @@ export const schemaCommands = {
     invoke<IncomingFk[]>("incoming_foreign_keys", { sessionId, database, table }).then((r) =>
       parseResponse(schemas.incomingForeignKeyArray, r, "incoming_foreign_keys"),
     ),
+  /**
+   * DROP COLUMN の前に、`columns` を参照するビュー・生成列・インデックス・FK・トリガーを
+   * 洗い出す (#1758)。読み取りのみ。
+   */
+  columnDependencies: (sessionId: string, database: string, table: string, columns: string[]) =>
+    invoke<ColumnDependencyReport>("column_dependencies", {
+      sessionId,
+      database,
+      table,
+      columns,
+    }).then((r) => parseResponse(schemas.columnDependencyReport, r, "column_dependencies")),
   /** テーブルのインデックス一覧を取得する。 */
   listIndexes: (sessionId: string, database: string, table: string) =>
     invoke<IndexInfo[]>("list_indexes", { sessionId, database, table }).then((r) =>
