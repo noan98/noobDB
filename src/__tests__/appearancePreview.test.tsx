@@ -195,8 +195,29 @@ describe("AppearancePreview のライブデモ (#1781)", () => {
       const r = renderWithProviders(ui("never", "a"));
       await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
       r.rerender(ui("never", "b"));
-      expect(bar()?.style.transform).toBe(START);
+      // 開始位置へ移るのは再生の直前 (押下の後ではなく play() 先頭)。待ち中は動かさない。
+      expect(bar()?.style.transform).toBe("");
+      await waitFor(() => expect(bar()?.style.transform).toBe(START), { timeout: 3000 });
       await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+    });
+
+    it("設定変更と同時に hc-* へ切り替わったら、開始位置へ一度も跳ばない", async () => {
+      stubIo(true);
+      const r = renderWithProviders(ui("never", "a"));
+      await waitFor(() => expect(bar()?.style.transform).toBe(""), { timeout: 3000 });
+      const seen: string[] = [];
+      const mo = new MutationObserver(() => seen.push(bar()?.style.transform ?? ""));
+      mo.observe(bar() as HTMLElement, { attributes: true, attributeFilter: ["style"] });
+      r.rerender(ui("never", "b"));
+      document.documentElement.setAttribute("data-theme", "hc-dark");
+      try {
+        await new Promise((res) => setTimeout(res, 500));
+        expect(seen).not.toContain(START);
+        expect(bar()?.style.transform ?? "").toBe("");
+      } finally {
+        mo.disconnect();
+        document.documentElement.removeAttribute("data-theme");
+      }
     });
   });
 });

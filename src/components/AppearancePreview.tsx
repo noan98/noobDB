@@ -214,14 +214,16 @@ export function AppearancePreview({
       run.style.transform = "";
       flash.style.opacity = "";
     };
-    // 静止 (reduced / hc) と再生済みのキーは終了状態のまま。再生中に reduced へ変わった場合は
-    // 前回の cleanup が止めて settle 済み。
-    if (reduced || prefersStaticMotion() || playedKey.current === replayKey) {
+    // reduced と再生済みのキーは終了状態のまま。hc の判定は play() だけで行う (data-theme の更新が
+    // 子の effect より後になりうるため、ここで見ると古い値で誤判定する)。再生中に reduced へ変わった
+    // 場合は前回の cleanup が止めて settle 済み。
+    if (reduced || playedKey.current === replayKey) {
       settle();
       return;
     }
-    // 未再生: 開始位置 (1 行上) へ戻す。StrictMode の二重 effect でも cleanup の settle を打ち消す。
-    bar.style.transform = START_TRANSFORM;
+    // 初回だけ開始位置 (1 行上) を先に置く (StrictMode の二重 effect でも cleanup の settle を打ち消す)。
+    // 2 回目以降は動きなしで 1 行目へ跳ばないよう、play() の押下の直前に移す。
+    if (playedKey.current === null && !prefersStaticMotion()) bar.style.transform = START_TRANSFORM;
     let started = false;
     let stopped = false;
     const controls: { stop: () => void }[] = [];
@@ -233,6 +235,7 @@ export function AppearancePreview({
       }
       started = true;
       playedKey.current = replayKey;
+      bar.style.transform = START_TRANSFORM;
       const press = animate(run, { scale: [1, 0.92, 1] }, { duration: durations.base, ease: easings.out });
       controls.push(press);
       await press;
