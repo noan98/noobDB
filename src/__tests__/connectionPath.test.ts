@@ -18,6 +18,7 @@ describe("buildConnectionPath", () => {
     expect(kinds(p)).toEqual(["local", "target"]);
     expect(p.edges).toEqual(["plain"]);
     expect(p.nodes[1].label).toBe("db.example:3306");
+    expect(p.nodes[1].fullLabel).toBe("db.example:3306");
   });
 
   it("SSH: ローカル → 踏み台 → 目標、線は tunnel", () => {
@@ -79,6 +80,13 @@ describe("truncateMiddle", () => {
     expect(out.endsWith("b")).toBe(true);
   });
 
+  it("中略しても fullLabel は全文のまま", () => {
+    const host = `${"h".repeat(40)}.example.com`;
+    const p = buildConnectionPath({ route: "direct", host, port: 5432 });
+    expect(p.nodes[1].label).not.toBe(`${host}:5432`);
+    expect(p.nodes[1].fullLabel).toBe(`${host}:5432`);
+  });
+
   it("サロゲートペアを壊さない", () => {
     const out = truncateMiddle("🚀".repeat(40), 10);
     expect(Array.from(out)).toHaveLength(10);
@@ -93,6 +101,7 @@ describe("接続フェーズの点灯", () => {
     expect(activeIndexForPhase(4, "tunnel_authenticating")).toBe(2);
     expect(activeIndexForPhase(4, "db_connecting")).toBe(3);
     expect(activeIndexForPhase(4, "unknown")).toBe(0);
+    expect(activeIndexForPhase(4, "connected")).toBeNull();
   });
 
   it("単一ホップ / 直接でも範囲外に出ない", () => {

@@ -18,7 +18,7 @@ import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
 import { ConnectionPathDiagram } from "./components/ConnectionPathDiagram";
-import { buildConnectionPath, pathInputFromProfile } from "./components/connectionPath";
+import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./components/connectionPath";
 import { AnimatePresence, motion } from "motion/react";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { QUERY_HISTORY_LIMIT, dedupeAdjacentHistory, pushHistoryEntry } from "./components/queryHistoryNav";
@@ -3854,6 +3854,8 @@ export default function App() {
               attemptId,
               settings.connectTimeoutSecs,
             );
+        // 確立後は経路図を「全点灯・静止」にする (タブ復元の確認を待つ間も脈動させない, #1754)。
+        setConnectAttempt((prev) => (prev?.id === attemptId ? { ...prev, phase: CONNECTED_PHASE } : prev));
         setSessionId(res.session_id);
         setSelectedProfile(profile);
         // 新しいセッションを同時接続レジストリへ登録する (#複数同時接続)。
@@ -13317,7 +13319,7 @@ export default function App() {
                   {connectAttempt && (
                     <>
                       {connectingPath && connectingProfile && (
-                        <Box flexShrink="0" w="32">
+                        <Box flexShrink="0" w={connectingPath.nodes.length > 3 ? "44" : "32"}>
                           <ConnectionPathDiagram
                             compact
                             path={connectingPath}

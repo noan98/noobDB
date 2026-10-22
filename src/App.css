@@ -2603,6 +2603,16 @@ td.is-find-current::after {
 .conn-path-fill[data-kind="plain"] { background: var(--text-muted); }
 .conn-path-fill[data-lit="true"] { transform: scaleX(1); }
 .conn-path-node[data-state="pending"] { opacity: 0.55; }
+/* 未到達は破線の枠でも区別する (hc-* は opacity を使わず形だけで示す)。 */
+.conn-path-node[data-state="pending"] .conn-path-tile { border-style: dashed; }
+/* 点灯済みトンネルの外枠はティール寄りの濃い色にして、ライトテーマでも充填が読める。 */
+.conn-path-edge:has(> .conn-path-fill[data-kind="tunnel"][data-lit="true"]) {
+  border-color: color-mix(in srgb, var(--brand-teal) 45%, var(--text));
+}
+:root[data-theme="hc-light"] .conn-path-node[data-state="pending"],
+:root[data-theme="hc-dark"] .conn-path-node[data-state="pending"] {
+  opacity: 1;
+}
 .conn-path-node[data-state="active"] {
   animation: pulse var(--dur-progress-loop) var(--ease) infinite;
 }

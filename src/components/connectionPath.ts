@@ -21,6 +21,8 @@ export interface PathNode {
   kind: PathNodeKind;
   /** 表示名 (`host:port` など、長ければ中略済み)。ローカル / 未入力は null (呼び出し側で i18n)。 */
   label: string | null;
+  /** 中略前の全文 (title / aria 用)。未入力は null。 */
+  fullLabel: string | null;
 }
 
 /** ホップ間の線種。`tunnel` はブランドのティール (横線 = トンネル)、`plain` は直結。 */
@@ -46,6 +48,9 @@ export interface ConnectionPathInput {
   ssm?: { target: string } | null;
 }
 
+/** 接続確立後を表す擬似フェーズ (バックエンドのフェーズではなくフロントが与える)。 */
+export const CONNECTED_PHASE = "connected";
+
 /** ラベルの最大文字数。これを超えたら中略する。 */
 export const PATH_LABEL_MAX = 24;
 
@@ -64,8 +69,12 @@ export function hostPortLabel(host: string, port: number | string): string | nul
   const h = host.trim();
   if (!h) return null;
   const p = String(port).trim();
-  const label = /^\d+$/.test(p) && Number(p) > 0 ? `${h}:${p}` : h;
-  return truncateMiddle(label);
+  return /^\d+$/.test(p) && Number(p) > 0 ? `${h}:${p}` : h;
+}
+
+/** 全文ラベルから `PathNode` を作る (表示用は中略、全文は `fullLabel` に残す)。 */
+function makeNode(kind: PathNodeKind, full: string | null): PathNode {
+  return { kind, label: full === null ? null : truncateMiddle(full), fullLabel: full };
 }
 
 /**
@@ -77,20 +86,20 @@ export function hostPortLabel(host: string, port: number | string): string | nul
  * - route が ssh / ssm でも該当設定が無ければ直接として描く。
  */
 export function buildConnectionPath(input: ConnectionPathInput): ConnectionPath {
-  const nodes: PathNode[] = [{ kind: "local", label: null }];
+  const nodes: PathNode[] = [makeNode("local", null)];
   let edge: PathEdgeKind = "plain";
   if (input.route === "ssh" && input.ssh) {
     edge = "tunnel";
     if (input.ssh.jump) {
-      nodes.push({ kind: "jump", label: hostPortLabel(input.ssh.jump.host, input.ssh.jump.port) });
+      nodes.push(makeNode("jump", hostPortLabel(input.ssh.jump.host, input.ssh.jump.port)));
     }
-    nodes.push({ kind: "bastion", label: hostPortLabel(input.ssh.host, input.ssh.port) });
+    nodes.push(makeNode("bastion", hostPortLabel(input.ssh.host, input.ssh.port)));
   } else if (input.route === "ssm" && input.ssm) {
     edge = "tunnel";
     const target = input.ssm.target.trim();
-    nodes.push({ kind: "ssm", label: target ? truncateMiddle(target) : null });
+    nodes.push(makeNode("ssm", target || null));
   }
-  nodes.push({ kind: "target", label: hostPortLabel(input.host, input.port) });
+  nodes.push(makeNode("target", hostPortLabel(input.host, input.port)));
   return { nodes, edges: nodes.slice(1).map(() => edge) };
 }
 
@@ -105,11 +114,13 @@ export type PathNodeState = "done" | "active" | "pending";
  * - `tunnel_connecting`: 最初のリモートホップ (1)
  * - `tunnel_authenticating`: トンネルの最終ホップ (目標の手前。単一ホップなら 1)
  * - `db_connecting`: 目標 (末尾)
+ * - `connected` (確立済み): null = 全点灯・静止 (`nodeStateAt` / `edgeLitAt` が done 扱い)
  *
  * バックエンドはホップ単位のフェーズを流さないため、多段 jump の途中経過は
  * `tunnel_connecting` → `tunnel_authenticating` の 2 段階で近似する。
  */
-export function activeIndexForPhase(nodeCount: number, phase: string): number {
+export function activeIndexForPhase(nodeCount: number, phase: string): number | null {
+  if (phase === CONNECTED_PHASE) return null;
   const last = Math.max(0, nodeCount - 1);
   switch (phase) {
     case "tunnel_connecting":

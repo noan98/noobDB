@@ -1,7 +1,7 @@
 import { Box, Flex, Text } from "@chakra-ui/react";
 import { BrandMark } from "../brand";
 import { useT } from "../i18n";
-import { driverColor, driverIconName } from "../profileIdentity";
+import { driverColor, driverIconName, normalizeChipColor } from "../profileIdentity";
 import { Icon, ICON_SIZES, type IconName } from "./Icon";
 import {
   activeIndexForPhase,
@@ -53,7 +53,7 @@ export function ConnectionPathDiagram({
 }: ConnectionPathDiagramProps) {
   const t = useT();
   const active = phase === undefined ? null : activeIndexForPhase(path.nodes.length, phase);
-  const accent = accentColor?.trim() || driverColor(driver);
+  const accent = normalizeChipColor(accentColor) ?? driverColor(driver);
   const tile = compact ? "5" : "8";
 
   const roleName = (kind: PathNodeKind): string => {
@@ -71,10 +71,12 @@ export function ConnectionPathDiagram({
     }
   };
   const nodeText = (node: PathNode): string =>
-    node.kind === "local" ? roleName("local") : (node.label ?? `${roleName(node.kind)} (${t("pathUnset")})`);
+    node.kind === "local"
+      ? roleName("local")
+      : (node.fullLabel ?? `${roleName(node.kind)} (${t("pathUnset")})`);
 
   const glyph = (node: PathNode, state: string) => {
-    if (node.kind === "local") return <BrandMark size={compact ? 20 : 32} />;
+    if (node.kind === "local") return <BrandMark boxSize={tile} />;
     const icon = node.kind === "target" ? driverIconName(driver) : GLYPHS[node.kind];
     return (
       <Flex
@@ -144,7 +146,7 @@ export function ConnectionPathDiagram({
                 overflow="hidden"
                 textOverflow="ellipsis"
                 whiteSpace="nowrap"
-                title={node.label ?? undefined}
+                title={node.fullLabel ?? undefined}
               >
                 {node.label ?? t("pathUnset")}
               </Text>
