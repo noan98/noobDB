@@ -1009,6 +1009,24 @@ describe("キーボードセルナビゲーション (#406)", () => {
     expect(cells[0][0].classList.contains("is-active-cell")).toBe(false);
   });
 
+  it("アクティブセルの列ヘッダと行番号に強調が付き、移動に追従する (#1755)", () => {
+    const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
+    const cells = dataCells(container);
+    const activeCols = () => Array.from(container.querySelectorAll("thead th.is-active-col"));
+    const activeRows = () => Array.from(container.querySelectorAll("tbody td.row-index.is-active-row"));
+    expect(activeCols()).toHaveLength(0);
+    expect(activeRows()).toHaveLength(0);
+    fireEvent.focus(cells[0][0]);
+    expect(activeCols().map((e) => e.getAttribute("data-col-id"))).toEqual(["0"]);
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]).toBe(cells[0][0].closest("tr")?.querySelector("td.row-index"));
+    fireEvent.keyDown(cells[0][0], { key: "ArrowDown" });
+    fireEvent.keyDown(cells[1][0], { key: "ArrowRight" });
+    expect(activeCols().map((e) => e.getAttribute("data-col-id"))).toEqual(["1"]);
+    expect(activeRows()).toHaveLength(1);
+    expect(activeRows()[0]).toBe(cells[1][0].closest("tr")?.querySelector("td.row-index"));
+  });
+
   it("ArrowUp でひとつ上の行に移動する", () => {
     const { container } = renderWithProviders(<ResultGrid result={FRUIT_RESULT} />);
     const cells = dataCells(container);
