@@ -8318,8 +8318,10 @@ export default function App() {
         qualifier: ref.qualifier,
         database,
         // タブにスキーマが無い PostgreSQL は、接続の現在のスキーマを引く (search_path 次第なので固定しない)。
+        // database を空にすると search_path を切り替えず接続既定のまま問い合わせるので、実際の DELETE と
+        // 同じ名前解決になる (プロファイルの database は DB 名でありスキーマではない)。
         currentSchema: async () => {
-          const res = await refImpactLookup(selectedProfile?.database ?? "")("SELECT current_schema()", 1);
+          const res = await refImpactLookup("")("SELECT current_schema()", 1);
           const v = res.rows[0]?.[0];
           return typeof v === "string" ? v : null;
         },
@@ -8338,7 +8340,7 @@ export default function App() {
         lookup: refImpactLookup(database ?? db),
       });
     },
-    [sessionId, selectedProfile?.driver, selectedProfile?.database, refImpactLookup],
+    [sessionId, selectedProfile?.driver, refImpactLookup],
   );
 
   precheckDeleteRef.current = async ({
