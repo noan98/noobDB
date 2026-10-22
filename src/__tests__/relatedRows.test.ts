@@ -242,3 +242,19 @@ describe("valueType の受け渡し", () => {
     ).toBe("SELECT * FROM `child` WHERE `pid` = 0xab12 LIMIT 11");
   });
 });
+
+describe("childSchema (#1786)", () => {
+  it("子テーブルを childSchema で修飾する", () => {
+    expect(
+      buildRelatedRowsSql({
+        driver: "postgres",
+        database: "public",
+        childSchema: "sales",
+        childTable: "child",
+        childColumn: "pid",
+        value: 1,
+        limit: 10,
+      }),
+    ).toBe('SELECT * FROM "sales"."child" WHERE "pid" = 1 LIMIT 11');
+  });
+});

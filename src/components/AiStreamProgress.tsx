@@ -51,11 +51,13 @@ export function AiStreamProgress({
   const { text, retrying, startedAt } = stream;
   const elapsedSec = useElapsedSec(startedAt);
   const preview = !previewText ? "" : fields ? partialJsonPreview(text, fields) : text;
+  // 応答が届き始めていて再試行待ちでない間だけ「生成中」演出 (ブランド色ラベル + キャレット) を出す。
+  const receiving = !retrying && text.length > 0;
   return (
     <Flex direction="column" gap="1" data-testid="ai-stream-progress" minW="0">
       <Flex align="center" gap="2" wrap="wrap" color="app.textMuted" textStyle="caption">
         <Spinner size={12} />
-        <chakra.span role="status">
+        <chakra.span role="status" className={receiving ? "ai-stream-label-live" : undefined}>
           {retrying
             ? t("aiStreamRetrying", {
                 attempt: retrying.attempt,
@@ -80,6 +82,10 @@ export function AiStreamProgress({
           data-testid="ai-stream-preview"
         >
           {preview}
+          {/* 装飾。点滅は CSS のみ (再描画なし)、読み上げ対象にしない。 */}
+          {receiving && (
+            <chakra.span className="ai-stream-caret" aria-hidden="true" data-testid="ai-stream-caret" />
+          )}
         </chakra.div>
       )}
     </Flex>

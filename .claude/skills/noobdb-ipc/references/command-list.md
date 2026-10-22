@@ -145,6 +145,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 - `describe_database`
 - `alter_table_context`
 - `incoming_foreign_keys` (#1255)
+- `column_dependencies` (DROP COLUMN 前の依存列挙 — ビュー / トリガー / 生成列 / インデックス / FK、#1758)
 
 #1255 の 148 コマンドは N+1 の IPC を 1 回に畳む一括取得。いずれも読み取り専用。
 `table_statistics` はサイズ・行数に列数・インデックス数・PK 有無・FK 数を合成して返す
@@ -152,6 +153,7 @@ DB に触れず実行もしない (UI のプレビュー専用)。両環境の�
 (スキーマエクスポート / ER 図)。`alter_table_context` は列編集ダイアログの初期ロード一式
 (列・テーブルコメント・このテーブルの FK・テーブル名一覧)。`incoming_foreign_keys` は
 `foreign_keys` のキャッシュから対象テーブルを参照する FK だけを返す(逆方向 FK ジャンプ)。
+PostgreSQL は別スキーマの子テーブルからの単一列 FK も専用クエリで補い、`schema` に子のスキーマを入れる (#1786)。
 `table_statistics` / `describe_database` は取得結果でテーブル単位の `columns` / `list_indexes`
 キャッシュも埋める。
 
@@ -417,6 +419,7 @@ DISTINCT を `pg_stats` から近似、#1609)
 - `write_text_file`
 - `write_binary_file`
 - `reveal_in_file_manager`
+- `open_project_link`
 - `set_window_title`
 - `fetch_cell_bytes`
 - `probe_cell_blob`
@@ -478,6 +481,9 @@ NUL の比率パターン。自動判定で本文に NUL があればエラー)�
 `reveal_in_file_manager` (`commands/file.rs`, #1631) は書き出し・ダンプの保存先を OS のファイルマネージャ
 (Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。`path` がファイルなら親ディレクトリを開き、
 **ファイルそのものは開かない** (実行可能ファイルを起動しないため)。存在しない・空のパスは `InvalidInput`。
+`open_project_link` (`commands/file.rs`, #1770) は About 面のリポジトリ / ドキュメントリンクを既定のブラウザ
+(Windows: `explorer` / macOS: `open` / Linux: `xdg-open`) で開く。引数は `target` (`repository` / `docs`、Rust の `ProjectLink`) だけで、URL は
+バックエンドで決め打ち (任意 URL は受け取らない)。起動した子プロセスは `wait` で回収する。
 `set_window_title` (`commands/window.rs`, #1631) はウィンドウタイトルを設定する (接続名と本番 / サンドボックスの
 区別を OS のタスクバー・Alt+Tab に出すため)。window の capability を増やさずに済むよう Rust 経由で行い、制御文字は
 空白にして 200 文字に切り詰める。

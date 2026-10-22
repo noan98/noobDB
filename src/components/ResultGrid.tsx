@@ -216,7 +216,7 @@ import {
 import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { RefreshTrend } from "./RefreshTrend";
 import type { RefreshSample } from "../refreshPatch";
-import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -368,6 +368,7 @@ export const GRID_CSS: SystemStyleObject = {
   },
   "& th": {
     background: "var(--bg-header)",
+    transition: "background var(--dur-fast) var(--ease)",
     position: "sticky",
     top: 0,
     zIndex: 2,
@@ -942,6 +943,50 @@ export const GRID_CSS: SystemStyleObject = {
     boxShadow: "inset 0 -2px 0 var(--preview-highlight)",
   },
   "& th.is-changed-col .th-name": { color: "var(--preview-highlight)" },
+  // アクティブセルの列ヘッダ / 行番号ガターを地色で薄く差すクロスハイライト (#1755)。
+  // 追従リング (useGlideFrame) と重ならないよう地色だけの弱い強調にとどめる。保留編集行の
+  // 左端バー・変更列の下線 (box-shadow) とは干渉しない。
+  // フィルタ中 / 変更列はそれぞれの地色を残し、上辺バーだけで示す。
+  "& thead th.is-active-col:not(.is-filtered-col):not(.is-changed-col)": {
+    background: "color-mix(in srgb, var(--accent) 6%, var(--bg-header))",
+  },
+  // 行番号の文字は地 (accent 6%) の上でも AA を保つよう --text にする
+  // (保留編集行の preview 色の文字は外れるが、左端バーで保留は示される)。
+  // 戻り (外れる) 側の transition は付けず、hover の背景切替が遅れないようにする。
+  "& tbody tr td.row-index.is-active-row": {
+    background: "color-mix(in srgb, var(--accent) 6%, var(--bg-header))",
+    color: "var(--text)",
+    transition: "background var(--dur-fast) var(--ease)",
+  },
+  // 列ヘッダは地色だけだとフィルタ中 (accent 14%) と見分けにくいので、上辺に inset バーを足す。
+  // 固定列の境界影・変更列の下線 (box-shadow) と合成されないので、組み合わせはここで重ねる。
+  "& thead th.is-active-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent)",
+  },
+  "& thead th.is-active-col.is-changed-col": {
+    boxShadow: "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight)",
+  },
+  "& thead th.is-active-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-left": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), 2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  "& thead th.is-active-col.is-changed-col.is-pinned-right": {
+    boxShadow:
+      "inset 0 var(--space-0-5) 0 var(--accent), inset 0 -2px 0 var(--preview-highlight), -2px 0 4px -2px color-mix(in srgb, var(--text) 30%, transparent)",
+  },
+  // 列ドラッグ中はドロップ先の目印 (左端線 + 12% の地) を優先し、上辺バーと重ねる。
+  "& thead th.is-active-col.is-drag-over": {
+    boxShadow: "inset 2px 0 0 0 var(--accent), inset 0 var(--space-0-5) 0 var(--accent)",
+    background: "color-mix(in srgb, var(--accent) 12%, var(--bg-header))",
+  },
   // 再実行差分の追加行 (#597, ResultGrid のみ)。変更セルは上の is-changed (黄) を
   // 流用し、追加行は緑で示す (削除行は今回結果に無いためツールバーの件数で示す)。
   // 緑は色覚に配慮しつつ「追加=増加」の直感に沿う。reduced-motion 時も色は残る。
@@ -3323,6 +3368,8 @@ interface GridHeaderCellProps {
   sortDir: false | "asc" | "desc";
   sortRank: number;
   isChangedCol: boolean;
+  /** アクティブセルがこの列にある (列ヘッダのクロスハイライト, #1755)。 */
+  isActiveCol: boolean;
   colFilterActive: boolean;
   pinSide: ReturnType<typeof pinSideFromTable>;
   /** ピン留め列の sticky オフセット (左なら left、右なら right)。 */
@@ -3362,6 +3409,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
   sortDir,
   sortRank,
   isChangedCol,
+  isActiveCol,
   colFilterActive,
   pinSide,
   pinOffset,
@@ -3392,7 +3440,7 @@ const GridHeaderCell = memo(function GridHeaderCell({
     <th
       data-col-id={h.column.id}
       style={pinStyle}
-      className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${isDragOver ? "is-drag-over" : ""} ${isDragSource ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
+      className={`col-${kind} ${canSort ? "is-sortable" : ""} ${sortDir ? `is-sorted-${sortDir}` : ""} ${isResizing ? "is-resizing" : ""} ${isChangedCol ? "is-changed-col" : ""} ${isActiveCol ? "is-active-col" : ""} ${colFilterActive ? "is-filtered-col" : ""} ${isDragOver ? "is-drag-over" : ""} ${isDragSource ? "is-dragging-col" : ""} ${pinSide ? `is-pinned is-pinned-${pinSide}` : ""}`}
       aria-sort={sortDir === "asc" ? "ascending" : sortDir === "desc" ? "descending" : "none"}
       onDragOver={dragActive ? (e) => handlers.onDragOver(e, h.column.id) : undefined}
       onDrop={dragActive ? (e) => handlers.onDrop(e, h.column.id) : undefined}
@@ -3936,7 +3984,7 @@ const GridRow = memo(function GridRow({
   return (
     <tr role="row" className={rowClass || undefined} ref={measureRef} data-index={measureIndex}>
       <td
-        className="row-index"
+        className={activeColIdx !== null ? "row-index is-active-row" : "row-index"}
         // Shift+クリックでブラウザ既定のテキスト選択が走らないようにする。
         onMouseDown={(e) => {
           if (e.shiftKey) e.preventDefault();
@@ -7031,6 +7079,7 @@ export const DataGrid = memo(function DataGrid({
                     sortDir={sortDir}
                     sortRank={sortDir && multiSort ? h.column.getSortIndex() + 1 : 0}
                     isChangedCol={changedColumns?.[colIdx] ?? false}
+                    isActiveCol={activeCell?.colIdx === colIdx}
                     colFilterActive={
                       isColumnFilterActive(h.column.getFilterValue() as ColumnFilter | undefined) ||
                       // サーバ側フィルタ (#792) 中の列もヘッダで有効表示する (#1610)。
@@ -7675,14 +7724,15 @@ export const DataGrid = memo(function DataGrid({
                   driver,
                   database: rowSqlDatabase,
                   childTable: inc.table,
+                  childSchema: inc.schema,
                   childColumn: inc.column,
                   value,
                   valueType: columns[refColIdx]?.type_name,
                 });
                 reverse.push({
                   label: grouped
-                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
-                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
+                    ? t("gridFkReverseChild", { table: incomingFkTableName(inc), column: inc.column })
+                    : t("gridFkReverse", { table: incomingFkTableName(inc), column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => {
                     setCopyMenu(null);
@@ -9465,6 +9515,7 @@ export const ResultGrid = memo(
         minWidth={0}
         overflow="hidden"
         bg="app.surface"
+        data-focus-landing-region=""
         position={streaming ? "relative" : undefined}
         // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
         // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
