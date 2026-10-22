@@ -316,7 +316,7 @@ export function rootPredicatesFromDelete(input: {
  * - 1 段目は `rootPredicates` で数える。CASCADE の子に行があれば、その子を参照する FK
  *   (`fetchIncoming`) を次の段として副問い合わせで数える (SET NULL / RESTRICT は子行が消えない
  *   ので辿らない)。
- * - 深さは `CASCADE_MAX_DEPTH`、FK の総数は `CASCADE_MAX_EDGES` まで。超える分、および循環
+ * - 深さは `CASCADE_MAX_DEPTH`、FK の総数は `CASCADE_MAX_EDGES` まで (1 段目の FK は上限なしで数え、上限は 2 段目以降に掛ける)。超える分、および循環
  *   (同じ FK に再度到達) は数えず `moreCascade` を立てる。
  * - 1 段目の集計が失敗したら例外を投げる (呼び出し側が「確認できなかった」にする)。2 段目以降の
  *   失敗は、そこまでの結果を返して `unverified` に該当テーブルを入れる。
@@ -342,10 +342,7 @@ export async function loadCascadeImpacts(input: {
   for (const fk of input.refs) {
     const preds = input.rootPredicates(fk);
     if (preds.length === 0) continue;
-    if (budget <= 0) {
-      moreCascade = true;
-      continue;
-    }
+    // 1 段目の FK は全部数える (上限は 2 段目以降の探索にだけ掛ける)。
     budget--;
     visited.add(edgeKey(fk));
     level.push({ fk, preds, parentName: input.parentTable, depth: 1 });

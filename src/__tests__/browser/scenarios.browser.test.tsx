@@ -1676,7 +1676,7 @@ describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", (
     rows_affected: 0,
     elapsed_ms: 1,
   });
-  async function openDeleteTab(lookupRows: CellValue[][] | "fail") {
+  async function openDeleteTab(lookupRows: CellValue[][] | "fail", sql = SQL) {
     registerAutoStream();
     // プリフライトの COUNT (run_query) は 1 行と答える。
     onCommand("run_query", () => countResult([[1]]));
@@ -1692,14 +1692,18 @@ describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", (
     localStorage.setItem(
       `noobdb.tabs.${ALPHA.id}`,
       JSON.stringify({
-        panes: [{ tabs: [{ kind: "query", title: "Del", sql: SQL }], activeIndex: 0 }],
+        panes: [{ tabs: [{ kind: "query", title: "Del", sql }], activeIndex: 0 }],
         activePane: 0,
       }),
     );
     const screen = await renderInBrowser(<App />);
     await connectToProfile(screen, /Alpha DB/, "appdb");
     // プリフライト (デバウンス後の COUNT) が済んでから実行する。
-    await vi.waitFor(() => expect(invocationsOf("run_query").length).toBeGreaterThan(0), { timeout: 5000 });
+    await expect
+      .element(
+        screen.getByText(t(sql === SQL ? "editorPreflightImpact" : "editorPreflightAllRows", { count: 1 })),
+      )
+      .toBeVisible();
     await vi.waitFor(
       async () => {
         const el = document.querySelector<HTMLElement>(".cm-content");
@@ -1734,5 +1738,12 @@ describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", (
     await openDeleteTab("fail");
     await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 5000 });
     expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
+
+  it("WHERE なしの DELETE でも、危険クエリの確認に子行影響が載る (deleteTarget 経路)", async () => {
+    const screen = await openDeleteTab([[0, 7]], "DELETE FROM fruits");
+    await expect.element(screen.getByTestId("ref-impact-list")).toBeVisible();
+    await expect.element(screen.getByText(t("refImpactActCascade", { count: 7 }))).toBeVisible();
+    expect(streams()).toHaveLength(0);
   });
 });

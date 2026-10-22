@@ -2364,6 +2364,7 @@ export default function App() {
         target: { table: string; condition: string | null };
         database: string | null;
         count: number;
+        allRows: boolean;
         proceed: () => void;
       }) => Promise<void>)
     | null
@@ -6435,7 +6436,11 @@ export default function App() {
       // (CASCADE / RESTRICT) を数え、ある場合だけ確認を挟む (#1767)。0 件なら集計を省く。
       const pfDel = preflightRef.current.get(tab.id);
       const delTarget =
-        pfDel && pfDel.sql === sql && pfDel.status === "ready" && (pfDel.count ?? 0) > 0
+        pfDel &&
+        pfDel.sql === sql &&
+        pfDel.status === "ready" &&
+        (pfDel.count ?? 0) > 0 &&
+        !selectedProfile?.read_only
           ? preflightDeleteTarget(pfDel.plan)
           : null;
       if (delTarget && target.kind === "query" && precheckDeleteRef.current) {
@@ -6444,8 +6449,12 @@ export default function App() {
           sql,
           autoLimit,
           target: delTarget,
-          database: target.database ?? selectedProfile?.database ?? null,
+          // PostgreSQL の `database` 引数はスキーマ。プロファイルの database (= DB 名) へは寄せない。
+          database:
+            target.database ??
+            (selectedProfile?.driver === "postgres" ? null : (selectedProfile?.database ?? null)),
           count: pfDel?.count ?? 0,
+          allRows: pfDel?.plan.allRows ?? false,
           proceed: runPlain,
         });
         return;
@@ -8308,22 +8317,44 @@ export default function App() {
         refs,
         rootPredicates: rootPredicatesFromDelete({ driver, ...target }),
         fetchIncoming: (fk) => api.incomingForeignKeys(sessionId, fk.schema ?? db, fk.table),
-        lookup: refImpactLookup(db),
+        // COUNT は DELETE と同じ名前解決 (タブの database) で流す。修飾子は FK 取得と子表の修飾にだけ使う。
+        lookup: refImpactLookup(database ?? db),
       });
     },
     [sessionId, selectedProfile?.driver, refImpactLookup],
   );
 
-  precheckDeleteRef.current = async ({ tabId, sql, autoLimit, target, database, count, proceed }) => {
+  precheckDeleteRef.current = async ({
+    tabId,
+    sql,
+    autoLimit,
+    target,
+    database,
+    count,
+    allRows,
+    proceed,
+  }) => {
+    const startedSession = sessionIdRef.current;
     setStatus({ kind: "key", key: "statusCheckingRefs" });
     let res: CascadeImpacts | null = null;
+    let timer: number | undefined;
     try {
-      res = await loadEditorDeleteImpacts(target, database);
+      // 1 本ごとの 5 秒に加え、FK 取得を含む全体も 5 秒で打ち切る (待たせ続けない)。
+      res = await Promise.race([
+        loadEditorDeleteImpacts(target, database),
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error("timeout")), 5000);
+        }),
+      ]);
     } catch {
       // 集計できなくても実行は妨げない。確認は出さず、見えなかった旨だけ伝える。
       res = null;
+    } finally {
+      window.clearTimeout(timer);
     }
     setStatus((cur) => (cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur));
+    // 確認中に接続が切り替わった / 切れたら、元の接続向けの DELETE は流さない。
+    if (sessionIdRef.current !== startedSession) return;
     if (!res) {
       toast.info(translate("refImpactCheckSkipped"));
       proceed();
@@ -8344,7 +8375,7 @@ export default function App() {
       autoLimit,
       batch: false,
       typedConfirmTarget: null,
-      impact: { verb: "delete", count, allRows: false },
+      impact: { verb: "delete", count, allRows },
       fkResult: res,
     });
   };
@@ -14273,8 +14304,9 @@ export default function App() {
                             loadEditorDeleteImpacts(
                               pendingDangerous.deleteTarget as { table: string; condition: string | null },
                               tabsRef.current.find((tb) => tb.id === pendingDangerous.tabId)?.database ??
-                                selectedProfile.database ??
-                                null,
+                                (selectedProfile.driver === "postgres"
+                                  ? null
+                                  : (selectedProfile.database ?? null)),
                             ),
                         }
                       : null

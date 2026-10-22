@@ -6,6 +6,7 @@ import {
   buildOpenChildrenSql,
   buildRefCountSqls,
   CASCADE_MAX_DEPTH,
+  CASCADE_MAX_EDGES,
   collectDeletedKeyValues,
   loadCascadeImpacts,
   loadRefImpacts,
@@ -439,5 +440,27 @@ describe("loadCascadeImpacts (#1767)", () => {
     expect(rootPredicatesFromDelete({ driver: "sqlite", table: '"users"', condition: null })(fk)).toEqual([
       '"user_id" IN (SELECT "id" FROM "users")',
     ]);
+  });
+
+  it("1 段目の FK は CASCADE_MAX_EDGES を超えても全部数える", async () => {
+    const many: IncomingFk[] = Array.from({ length: CASCADE_MAX_EDGES + 5 }, (_, i) => ({
+      table: `c${i}`,
+      column: "p",
+      referencedColumn: "id",
+      onDelete: "SET NULL",
+    }));
+    const res = await loadCascadeImpacts({
+      driver: "mysql",
+      database: "app",
+      parentTable: "root",
+      refs: many,
+      rootPredicates: root(),
+      fetchIncoming: async () => [],
+      lookup: async (sql) => ({
+        rows: [...sql.matchAll(/SELECT (\d+) AS i/g)].map((m) => [Number(m[1]), 1] as CellValue[]),
+      }),
+    });
+    expect(res.impacts).toHaveLength(many.length);
+    expect(res.moreCascade).toBe(false);
   });
 });
