@@ -589,6 +589,16 @@ describe("ConnectionForm connection route (#1684)", () => {
     expect(req.ssh?.host).toBe("bastion.example.com");
   });
 
+  it("shows a jump node in the route diagram once a jump host is entered", () => {
+    renderForm(null);
+    pick(t("formRouteSsh"));
+    expect(screen.queryByTestId("conn-path-node-jump")).toBeNull();
+    fireEvent.click(screen.getByRole("switch", { name: t("formUseSshJump") }));
+    fireEvent.change(screen.getByLabelText(t("formSshJumpHost")), { target: { value: "gw.example.com" } });
+    expect(screen.getByTestId("conn-path-node-jump")).toBeTruthy();
+    expect(screen.getByText("gw.example.com:22")).toBeTruthy();
+  });
+
   it("rejects a malformed instance ID with an inline error and does not save", async () => {
     renderForm(null);
     fireEvent.change(screen.getByTestId("connection-form-name"), { target: { value: "X" } });
