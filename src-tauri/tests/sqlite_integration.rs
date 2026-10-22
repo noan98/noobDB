@@ -1606,6 +1606,16 @@ async fn read_only_session_rejects_every_representative_write_command() {
         .await
         .expect("verify select");
     assert_eq!(rows.rows.len(), 1, "read-only 拒否後も行数が変わらない");
+    assert!(
+        matches!(&rows.rows[0][0], t::Value::Int(1)),
+        "id が変わっていない: {:?}",
+        rows.rows[0][0]
+    );
+    assert!(
+        matches!(&rows.rows[0][1], t::Value::String(s) if s == "a"),
+        "label が変わっていない: {:?}",
+        rows.rows[0][1]
+    );
     verify.close().await;
     state.get(&sid).await.expect("session").conn.close().await;
     let _ = std::fs::remove_file(&path);

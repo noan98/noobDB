@@ -240,8 +240,7 @@ function extractCommands(file: string, rawSource: string): CommandInfo[] {
 // ---------------------------------------------------------------------------
 
 /** 一次ガード: これらの参照自体が read_only を判定して `AppError::ReadOnly` を返す。 */
-const PRIMARY_GUARD_RE =
-  /\bensure_allowed_for_session\b|\bensure_broadcast_read_only\b|\b(?:session|sandbox)\.read_only\b/;
+const PRIMARY_GUARD_RE = /\bensure_allowed_for_session\b|\b(?:session|sandbox)\.read_only\b/;
 
 /**
  * ヘルパ経由のガード。本体が直接ガードを書かず、これらを呼ぶことで間接的にガードを通るもの。
@@ -262,38 +261,97 @@ function hasGuard(reachableCode: string): boolean {
 // 分類
 // ---------------------------------------------------------------------------
 
-/** 書き込み得る / クライアント供給の SQL を実行するコマンド。値は「どのガードを通るか」。 */
-const WRITE_CAPABLE: Record<string, string> = {
+/**
+ * 書き込み得る / クライアント供給の SQL を実行するコマンド。各エントリは
+ * `why` (どのガードを通るか) と `guards` (到達コード内に**すべて**現れるべき必須ガードの正規表現) を持つ。
+ * 「どこかにガード語が現れる」では、同ファイルの無関係な関数のガードや条件付き検査
+ * (`ensure_broadcast_read_only` は force_read_only 時のみ) を拾って、本物のガードを消しても
+ * 落ちなくなるため、コマンドごとに拒否の形まで照合する。
+ */
+interface WriteCapable {
+  why: string;
+  guards: RegExp[];
+}
+const ESA_SESSION = /\bensure_allowed_for_session\s*\(\s*&session\b/;
+const wc = (why: string, ...guards: RegExp[]): WriteCapable => ({ why, guards });
+const VIA_TX = wc(
+  "run_query_transaction_inner 経由 (全文を ensure_allowed_for_session)",
+  /\brun_query_transaction_inner\s*\(/,
+);
+const RO_IF_SESSION = /\bif\s+session\.read_only\s*\{/;
+const RO_IF_SANDBOX = /\bif\s+sandbox\.read_only\s*\{/;
+
+const WRITE_CAPABLE: Record<string, WriteCapable> = {
   // --- SQL 文字列経路: ensure_allowed_for_session (= read_only && !is_read_only_sql) ---
-  run_query: "run_query_inner が ensure_allowed_for_session",
-  run_query_stream: "ストリーム実行前に ensure_allowed_for_session",
-  run_query_transaction: "run_query_transaction_inner が全文を ensure_allowed_for_session",
-  run_in_transaction: "run_in_transaction_inner が ensure_allowed_for_session",
-  run_sql_batch: "文ごとに ensure_allowed_for_session / enforce_read_only",
-  run_sql_script: "文ごとに ensure_allowed_for_session / enforce_read_only",
-  export_query_stream: "実行前に ensure_allowed_for_session",
-  export_tables_xlsx: "シートごとに ensure_allowed_for_session",
-  data_search_stream: "走査 SQL を ensure_allowed_for_session",
-  timelapse_capture: "ensure_allowed_for_session",
-  timelapse_watch_table: "ensure_allowed_for_session",
-  plan_watch_refresh: "EXPLAIN SQL を ensure_allowed_for_session",
-  broadcast_compare: "ensure_allowed_for_session + ensure_broadcast_read_only",
+  run_query: wc("run_query_inner が ensure_allowed_for_session", /\brun_query_inner\s*\(/),
+  run_query_stream: wc("ストリーム実行前に ensure_allowed_for_session", ESA_SESSION),
+  run_query_transaction: VIA_TX,
+  run_in_transaction: wc(
+    "run_in_transaction_inner が ensure_allowed_for_session",
+    /\brun_in_transaction_inner\s*\(/,
+  ),
+  run_sql_batch: wc(
+    "run_statement が文ごとに ensure_allowed_for_session",
+    /\bensure_allowed_for_session\s*\(\s*&self\.session\b/,
+  ),
+  run_sql_script: wc(
+    "run_statement が文ごとに ensure_allowed_for_session",
+    /\bensure_allowed_for_session\s*\(\s*&self\.session\b/,
+  ),
+  export_query_stream: wc("実行前に ensure_allowed_for_session", ESA_SESSION),
+  export_tables_xlsx: wc("シートごとに ensure_allowed_for_session", ESA_SESSION),
+  data_search_stream: wc("走査 SQL を ensure_allowed_for_session", ESA_SESSION),
+  timelapse_capture: wc("ensure_allowed_for_session", /\bensure_allowed_for_session\s*\(\s*session\b/),
+  timelapse_watch_table: wc("ensure_allowed_for_session", /\bensure_allowed_for_session\s*\(\s*session\b/),
+  plan_watch_refresh: wc(
+    "EXPLAIN SQL を ensure_allowed_for_session",
+    /\bensure_allowed_for_session\s*\(\s*session\b/,
+  ),
+  broadcast_compare: wc(
+    "ensure_allowed_for_session (+ force_read_only 時の ensure_broadcast_read_only)",
+    ESA_SESSION,
+  ),
   // --- 経由ヘルパのガード ---
-  bulk_update_cells: "run_query_transaction_inner 経由",
-  undo_flight_record: "run_query_transaction_inner 経由",
-  redo_flight_record: "run_query_transaction_inner 経由",
-  apply_flight_batch: "run_query_transaction_inner 経由",
+  bulk_update_cells: VIA_TX,
+  undo_flight_record: wc(
+    "flight_recorder.rs の apply_flight_plan が run_query_transaction_inner 経由",
+    /\brun_query_transaction_inner\s*\(/,
+  ),
+  redo_flight_record: wc(
+    "flight_recorder.rs の apply_flight_plan が run_query_transaction_inner 経由",
+    /\brun_query_transaction_inner\s*\(/,
+  ),
+  apply_flight_batch: VIA_TX,
   // --- SQL 文字列を経由しない書き込み経路: session.read_only を手書きで拒否 ---
-  insert_generated_rows: "ensure_allowed_for_session (INSERT 相当で検査)",
-  apply_sync_sql: "session.read_only を拒否 (SQL 判定を通らない)",
-  apply_privilege_sql: "session.read_only を拒否 (SQL 判定を通らない)",
-  import_xlsx_sheets: "session.read_only を拒否 (xlsx インポート経路)",
-  import_csv: "session.read_only を拒否 (インポート経路)",
-  transfer_data: "転送先 session.read_only を拒否 (prepare_transfer_with)",
-  kill_processes: "session.read_only を拒否 (KILL / pg_cancel_backend)",
-  sqlite_maintenance: "action.writes() && session.read_only を拒否",
-  sandbox_advance_base: "sandbox.read_only を拒否",
-  sandbox_reset_table: "sandbox.read_only を拒否",
+  insert_generated_rows: wc("ensure_allowed_for_session (INSERT 相当で検査)", ESA_SESSION),
+  apply_sync_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),
+  apply_privilege_sql: wc("session.read_only を拒否 (SQL 判定を通らない)", RO_IF_SESSION),
+  import_csv: wc(
+    "ensure_import_writable が session.read_only を拒否",
+    /\bensure_import_writable\s*\(/,
+    RO_IF_SESSION,
+  ),
+  import_xlsx_sheets: wc(
+    "ensure_import_writable が session.read_only を拒否",
+    /\bensure_import_writable\s*\(/,
+    RO_IF_SESSION,
+  ),
+  transfer_data: wc(
+    "ensure_transfer_target_writable が転送先の session.read_only を拒否",
+    /\bensure_transfer_target_writable\s*\(/,
+    RO_IF_SESSION,
+  ),
+  preview_transfer: wc(
+    "転送元の SQL を ensure_allowed_for_session (転送先は書き込まないので read_only でも可)",
+    /\bensure_allowed_for_session\s*\(\s*&source\b/,
+  ),
+  kill_processes: wc("session.read_only を拒否 (KILL / pg_cancel_backend)", RO_IF_SESSION),
+  sqlite_maintenance: wc(
+    "action.writes() && session.read_only を拒否",
+    /\baction\.writes\(\)\s*&&\s*session\.read_only\b/,
+  ),
+  sandbox_advance_base: wc("sandbox.read_only を拒否", RO_IF_SANDBOX),
+  sandbox_reset_table: wc("sandbox.read_only を拒否", RO_IF_SANDBOX),
 };
 
 /**
@@ -513,7 +571,6 @@ safe(
   "schema_drift_capture",
   "sandbox_schema_diff",
   "sandbox_table_diff",
-  "preview_transfer",
 );
 
 safe(
@@ -575,16 +632,35 @@ safe(
 const WRITE_DRIVER_CALL_RE =
   /\b(?:execute_transaction|execute_in_transaction|execute_sync_transaction|import_rows|drop_local_table|sqlite_maintenance|kill_process\w*)\s*\(/;
 const EXECUTE_CALL_RE = /\.\s*execute(?:_[a-z_]+)?\s*\(/;
+/**
+ * SESSION_READ のうち、内部で組み立てた SELECT を `execute` するコマンド (クライアント供給の SQL は
+ * 実行しない)。ここに無いコマンドが `execute` に到達したら、読み取りのつもりでも要レビュー。
+ */
+const SESSION_READ_EXECUTES_SELECT = new Set([
+  "fetch_cell_bytes",
+  "probe_cell_blob",
+  "save_cell_to_file",
+  "save_cells_to_folder",
+  "compare_schema",
+  "compare_table_data",
+  "dump_database",
+  "sandbox_table_diff",
+]);
 
 const SAFE_CHECKS: Record<Reason, (c: CommandInfo) => string | null> = {
   [REASON.LOCAL_ONLY]: (c) =>
     /session/i.test(c.signature)
       ? "シグネチャに session を含む (LOCAL_ONLY ではなく SESSION_READ / WRITE_CAPABLE を検討)"
       : null,
-  [REASON.SESSION_READ]: (c) =>
-    WRITE_DRIVER_CALL_RE.test(c.reachable)
-      ? "書き込み系のドライバ呼び出しに到達する (WRITE_CAPABLE へ移しガードを入れる)"
-      : null,
+  [REASON.SESSION_READ]: (c) => {
+    if (WRITE_DRIVER_CALL_RE.test(c.reachable)) {
+      return "書き込み系のドライバ呼び出しに到達する (WRITE_CAPABLE へ移しガードを入れる)";
+    }
+    if (EXECUTE_CALL_RE.test(c.reachable) && !SESSION_READ_EXECUTES_SELECT.has(c.name)) {
+      return "SQL 文字列を execute する (内部で組み立てた SELECT のみなら SESSION_READ_EXECUTES_SELECT へ、そうでなければ WRITE_CAPABLE へ)";
+    }
+    return null;
+  },
   [REASON.GENERATE_ONLY]: (c) =>
     WRITE_DRIVER_CALL_RE.test(c.reachable) || EXECUTE_CALL_RE.test(c.reachable)
       ? "SQL を実行するドライバ呼び出しに到達する (GENERATE_ONLY ではない)"
@@ -659,17 +735,18 @@ describe("read_only 書き込みコマンド網羅パリティ (#1778)", () => {
     expect(stale).toEqual([]);
   });
 
-  it("WRITE_CAPABLE のコマンドは本体 (または到達する同ファイル関数) にガード参照を持つ", () => {
-    const missing = Object.keys(WRITE_CAPABLE).filter((n) => {
+  it("WRITE_CAPABLE のコマンドは必須ガードの形を到達コードに持つ", () => {
+    const missing = Object.entries(WRITE_CAPABLE).flatMap(([n, w]) => {
       const c = byName.get(n);
-      return c !== undefined && !hasGuard(c.reachable);
+      if (c === undefined) return [];
+      const lacking = w.guards.filter((g) => !g.test(c.reachable));
+      return lacking.length > 0 ? [`${n} (${w.why}): ${lacking.join(", ")}`] : [];
     });
     expect(
       missing,
-      `read_only ガード参照が無い書き込みコマンド: ${missing.join(", ")}\n` +
-        "ensure_allowed_for_session / ensure_broadcast_read_only / session.read_only / " +
-        "sandbox.read_only のいずれかを本体 (または呼び先の *_inner) に入れること。" +
-        "read_only は『バックエンド強制』の安全網なので、このテストを緩めて通さない",
+      `必須の read_only ガードが無い書き込みコマンド:\n${missing.join("\n")}\n` +
+        "ガードを本体 (または呼び先の *_inner) に戻すこと。read_only は『バックエンド強制』の" +
+        "安全網なので、このテストを緩めて通さない",
     ).toEqual([]);
   });
 
@@ -770,6 +847,22 @@ describe("read_only パリティ自体の自己検証 (合成ソース)", () => 
     expect(hasGuard(m.get("w")?.reachable ?? "")).toBe(true);
     // 呼ばれていない関数のガードは別コマンドへ波及しない。
     expect(hasGuard(m.get("unrelated")?.reachable ?? "")).toBe(false);
+  });
+
+  it("無関係な関数のガードしか到達しないコマンドは必須ガードの照合で失敗する", () => {
+    const m = analyze(`
+      #[tauri::command]
+      pub async fn w(state: State<'_, AppState>) -> Result<()> {
+          ensure_allowed_for_session(&source, "x")?;
+          ensure_broadcast_read_only(driver, "x")?;
+          Ok(())
+      }`);
+    const reachable = m.get("w")?.reachable ?? "";
+    // 別の一次ガード (転送元側) や条件付き検査があっても、このコマンドが要求する形でなければ不合格。
+    expect(RO_IF_SESSION.test(reachable)).toBe(false);
+    expect(ESA_SESSION.test(reachable)).toBe(false);
+    // ensure_broadcast_read_only は一次ガードではない。
+    expect(hasGuard("ensure_broadcast_read_only(driver, sql)?;")).toBe(false);
   });
 
   it("ガードヘルパ呼び出しは間接ガードとして数える", () => {
