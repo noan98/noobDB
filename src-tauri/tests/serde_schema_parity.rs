@@ -1617,10 +1617,30 @@ fn build_fixtures() -> serde_json::Value {
             })
             .collect();
     let incoming_foreign_key = t::IncomingForeignKey {
+        schema: Some("sales".into()),
         table: "orders".into(),
         column: "user_id".into(),
         referenced_column: "id".into(),
         on_delete: Some("CASCADE".into()),
+    };
+    let column_dependency_report = t::ColumnDependencyReport {
+        dependencies: vec![
+            t::ColumnDependency {
+                column: "price".into(),
+                kind: "view".into(),
+                name: "v_orders".into(),
+                detail: None,
+                confidence: t::ReferenceConfidence::Possible,
+            },
+            t::ColumnDependency {
+                column: "price".into(),
+                kind: "index".into(),
+                name: "idx_price".into(),
+                detail: Some("price, qty".into()),
+                confidence: t::ReferenceConfidence::Direct,
+            },
+        ],
+        warnings: vec!["definitions".into()],
     };
     let table_statistic = t::TableStatistic {
         name: "users".into(),
@@ -2281,6 +2301,7 @@ fn build_fixtures() -> serde_json::Value {
         "writeCaptureSummaryVariants": write_capture_summary_variants,
         "healthProbeItemVariants": health_probe_item_variants,
         "incomingForeignKey": incoming_foreign_key,
+        "columnDependencyReport": column_dependency_report,
         "tableStatistic": table_statistic,
         "insertRowsResult": insert_rows_result,
         "openTableResult": open_table_result,

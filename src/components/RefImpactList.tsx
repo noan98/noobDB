@@ -2,6 +2,7 @@ import { Box, chakra } from "@chakra-ui/react";
 import { Callout } from "./Callout";
 import { Button } from "./ui";
 import { useT } from "../i18n";
+import { incomingFkTableName } from "../fkNavigation";
 import { blocksDelete, type RefImpact } from "../refImpact";
 
 /** 一覧に出す子テーブルの最大行数。超えた分は「ほか N 件」に畳む。 */
@@ -73,14 +74,14 @@ export function RefImpactList({
           {shown.map((imp) => (
             <Box
               as="li"
-              key={`${imp.parentTable ?? ""}\0${imp.table}\0${imp.column}`}
+              key={`${imp.parentTable ?? ""}\0${incomingFkTableName(imp)}\0${imp.column}`}
               display="flex"
               alignItems="center"
               gap="2"
               data-testid="ref-impact-row"
             >
               <Box flex="1" minW="0" fontFamily="mono" fontSize="sm" wordBreak="break-all">
-                {`${imp.table}.${imp.column} ← ${imp.parentTable ? `${imp.parentTable}.` : ""}${imp.referencedColumn}`}
+                {`${incomingFkTableName(imp)}.${imp.column} ← ${imp.parentTable ? `${imp.parentTable}.` : ""}${imp.referencedColumn}`}
                 <chakra.span display="block" fontFamily="body" color="app.textMuted">
                   {t(imp.capped ? "refImpactRowCountCapped" : "refImpactRowCount", { count: imp.count })} · ON
                   DELETE {imp.onDelete}

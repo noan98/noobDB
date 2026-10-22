@@ -17,7 +17,7 @@
 //   読めてしまうため)。
 
 import type { CellValue } from "./api/tauri";
-import { buildReverseRefSql, type IncomingFk } from "./fkNavigation";
+import { buildReverseRefSql, type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import type { CellKind } from "./components/cellTypeMeta";
 import { takeGraphemes } from "./truncateText";
 
@@ -50,6 +50,8 @@ export interface RelatedRowsSqlParams {
   driver: string;
   database?: string | null;
   childTable: string;
+  /** 子テーブルのスキーマ (PostgreSQL のスキーマをまたぐ FK、#1786)。 */
+  childSchema?: string | null;
   childColumn: string;
   /** 親行が持つ、参照されているキー値。 */
   value: CellValue;
@@ -69,6 +71,7 @@ export function buildRelatedRowsSql(p: RelatedRowsSqlParams): string | null {
     driver: p.driver,
     database: p.database,
     childTable: p.childTable,
+    childSchema: p.childSchema,
     childColumn: p.childColumn,
     value: p.value,
     valueType: p.valueType,
@@ -150,7 +153,7 @@ export function resolveRelatedEntries(
   const out: RelatedEntry[] = [];
   const seen = new Set<string>();
   for (const fk of incoming) {
-    const key = `${fk.table}.${fk.column}`;
+    const key = `${incomingFkTableName(fk)}.${fk.column}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const refColIdx = columnNames.indexOf(fk.referencedColumn);

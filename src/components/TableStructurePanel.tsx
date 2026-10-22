@@ -3,7 +3,7 @@ import { Box, chakra, Flex, VisuallyHidden, type SystemStyleObject } from "@chak
 
 import { api, type IndexInfo, type TableColumnInfo } from "../api/tauri";
 import { useT } from "../i18n";
-import type { IncomingFk } from "../fkNavigation";
+import { type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import { foreignKeysOf, foreignKeyTargetLabel, type ExplorerForeignKey } from "./explorerTree";
 import { EmptyState } from "./EmptyState";
 import { errorIllustration } from "./illustrations";
@@ -466,15 +466,18 @@ export function TableStructurePanel({
                     </chakra.thead>
                     <chakra.tbody>
                       {incomingRows.map((fk) => (
-                        <chakra.tr key={`${fk.table}.${fk.column}.${fk.referencedColumn}`}>
+                        <chakra.tr key={`${fk.schema ?? ""}.${fk.table}.${fk.column}.${fk.referencedColumn}`}>
                           <chakra.td css={tdCss}>
                             <ForeignKeyLink
                               fk={{
                                 column: fk.column,
-                                referencedTable: fk.table,
+                                referencedTable: incomingFkTableName(fk),
                                 referencedColumn: fk.column,
                               }}
-                              onSelect={selectReferenced}
+                              // 別スキーマの子 (#1786) はそのスキーマのテーブルとして開く。
+                              onSelect={() =>
+                                onSelectTable({ database: fk.schema ?? database, table: fk.table })
+                              }
                               hint={t("structureOpenReferencingHint")}
                             />
                           </chakra.td>
