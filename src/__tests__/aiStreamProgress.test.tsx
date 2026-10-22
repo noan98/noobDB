@@ -45,7 +45,7 @@ describe("AiStreamProgress のキャレット演出 (#1756)", () => {
 });
 
 describe("キャレット点滅の CSS ガード (#1756)", () => {
-  it("点滅は CSS アニメで、キーフレームは最終状態を持たない (reduced-motion の 1 回再生後は点灯のまま静止)", () => {
+  it("点滅は CSS アニメで、fill-mode を持たない (reduced-motion の 1 回再生後は点灯のまま静止)", () => {
     expect(css).toMatch(/\.ai-stream-caret\s*\{[^}]*animation:\s*stream-caret-blink/);
     const kf = css.match(/@keyframes stream-caret-blink\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
     expect(kf).toMatch(/opacity:\s*0/);

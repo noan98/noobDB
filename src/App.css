@@ -2362,8 +2362,8 @@ html, body, #root {
   50% { opacity: 0.35; }
 }
 
-/* キャレットは 55% で点灯 / 45% で消灯する。最終キーフレームを付けず、reduced-motion の
-   1 回再生 (0.01ms) 後は要素本来のスタイル (点灯) の静止表示になる。 */
+/* キャレットは 55% で点灯 / 45% で消灯する。animation-fill-mode を指定しないため、
+   reduced-motion の 1 回再生 (0.01ms) の後は要素本来のスタイル (点灯) の静止表示に戻る。 */
 @keyframes stream-caret-blink {
   0%, 55% { opacity: 1; }
   56%, 100% { opacity: 0; }
