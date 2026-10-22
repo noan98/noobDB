@@ -7532,9 +7532,9 @@ export default function App() {
       const row = result.rows[rowIdx];
       if (!row) return false;
       const { indices: pkIndices, strategy } = resolveRowIdentity(result.columns, tableColumns, rowIdentity);
-      // 実の主キーで行を特定できるときだけ (rowid / ctid / 全列一致では誤った行を
-      // 書き換えうる)。
-      if (strategy !== "primary_key") return false;
+      // 実の主キー、または UNIQUE NOT NULL キー (unique_key, #1776) で行を特定できるときだけ
+      // (rowid / ctid / 全列一致では誤った行を書き換えうる)。
+      if (strategy !== "primary_key" && strategy !== "unique_key") return false;
       const driver = selectedProfile?.driver ?? "mysql";
       const stmt = buildBlobUpdateStatement({
         driver,

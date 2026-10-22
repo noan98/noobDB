@@ -214,8 +214,9 @@ fn build_fixtures() -> serde_json::Value {
         estimate: Some(1234),
     };
     let table_row_identity = TableRowIdentity {
-        strategy: "rowid".into(),
-        hidden_column: Some("rowid".into()),
+        strategy: "unique_key".into(),
+        hidden_column: None,
+        key_columns: vec!["code".into()],
     };
     let table_size_info = TableSizeInfo {
         name: "users".into(),

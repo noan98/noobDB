@@ -119,6 +119,24 @@ describe("resolveRowIdentity", () => {
     ).toEqual({ indices: [0], strategy: "primary_key" });
   });
 
+  it("resolves a unique_key identity from key_columns, in key order (#1776)", () => {
+    const cols = [col("id", "INT"), col("a", "VARCHAR"), col("b", "VARCHAR")];
+    const tcols = [tcol("id", ""), tcol("a", ""), tcol("b", "")];
+    expect(
+      resolveRowIdentity(cols, tcols, { ...rowIdentity("unique_key"), key_columns: ["b", "a"] }),
+    ).toEqual({ indices: [2, 1], strategy: "unique_key" });
+  });
+
+  it("returns none for unique_key when a key column is missing from the result or key_columns is empty", () => {
+    const cols = [col("id", "INT"), col("a", "VARCHAR")];
+    const tcols = [tcol("id", ""), tcol("a", ""), tcol("b", "")];
+    const none = { indices: [], strategy: "none" };
+    expect(
+      resolveRowIdentity(cols, tcols, { ...rowIdentity("unique_key"), key_columns: ["a", "b"] }),
+    ).toEqual(none);
+    expect(resolveRowIdentity(cols, tcols, rowIdentity("unique_key"))).toEqual(none);
+  });
+
   it("returns none when there is no PK and no rowIdentity", () => {
     expect(resolveRowIdentity(columns, [tcol("id", ""), tcol("name", "")], null)).toEqual({
       indices: [],

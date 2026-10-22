@@ -1632,7 +1632,13 @@ impl PostgresConn {
                  -- 以下 3 列は list_indexes と同じ (INCLUDE / DESC / NULLS NOT DISTINCT)。
                  COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
                  COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
-                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct,
+                 -- #1776: INVALID (CONCURRENTLY の失敗残骸・未 ATTACH) は一意性を保証しない。
+                 NOT (ix.indisvalid AND ix.indisready) AS is_invalid,
+                 -- #1776: キー列でインデックスの照合順序が列と違えば、WHERE が複数行に当たりうる。
+                 (k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
+                  AND a.attnum IS NOT NULL
+                  AND ix.indcollation[(k.ord - 1)::int] IS DISTINCT FROM a.attcollation) AS coll_differs
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -1664,6 +1670,8 @@ impl PostgresConn {
                     r.try_get::<i32, _>("col_option").unwrap_or(0),
                 )),
                 nulls_not_distinct: r.try_get::<bool, _>("nulls_not_distinct").unwrap_or(false),
+                invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
+                collation_differs: r.try_get::<bool, _>("coll_differs").unwrap_or(true),
             })
             .collect();
         Ok(super::group_index_rows(index_rows))
@@ -1778,30 +1786,49 @@ impl PostgresConn {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         };
         if r.try_get::<bool, _>("has_pk").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "primary_key".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         if !r.try_get::<bool, _>("has_columns").unwrap_or(false) {
             return Ok(TableRowIdentity {
                 strategy: "none".into(),
                 hidden_column: None,
+                key_columns: Vec::new(),
             });
         }
         let relkind = r.try_get::<String, _>("relkind").unwrap_or_default();
+        // PK は無いが UNIQUE NOT NULL キーがあれば、ctid より先にそれを採る (#1776)。
+        // ビュー / 外部テーブルには UNIQUE インデックスが無いので通常テーブル
+        // (パーティション親を含む) だけ調べる。
+        if relkind == "r" || relkind == "p" {
+            // 取得に失敗しても編集不可にはせず、従来の ctid 判定へ進める。
+            if let (Ok(cols), Ok(indexes)) = (
+                self.columns(schema, table).await,
+                self.list_indexes(schema, table).await,
+            ) {
+                if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
+                    return Ok(super::unique_key_identity(key));
+                }
+            }
+        }
         if relkind == "r" {
             return Ok(TableRowIdentity {
                 strategy: "ctid".into(),
                 hidden_column: Some("ctid".into()),
+                key_columns: Vec::new(),
             });
         }
         Ok(TableRowIdentity {
             strategy: "all_columns".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         })
     }
 
@@ -2335,7 +2362,13 @@ impl PostgresConn {
                  COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int) AS key_count,
                  -- indoption: bit0 = DESC, bit1 = NULLS FIRST。
                  COALESCE(ix.indoption[(k.ord - 1)::int], 0)::int AS col_option,
-                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct
+                 COALESCE((to_jsonb(ix) ->> 'indnullsnotdistinct')::bool, false) AS nulls_not_distinct,
+                 -- #1776: INVALID (CONCURRENTLY の失敗残骸・未 ATTACH) は一意性を保証しない。
+                 NOT (ix.indisvalid AND ix.indisready) AS is_invalid,
+                 -- #1776: キー列でインデックスの照合順序が列と違えば、WHERE が複数行に当たりうる。
+                 (k.ord <= COALESCE((to_jsonb(ix) ->> 'indnkeyatts')::int, ix.indnatts::int)
+                  AND a.attnum IS NOT NULL
+                  AND ix.indcollation[(k.ord - 1)::int] IS DISTINCT FROM a.attcollation) AS coll_differs
                FROM pg_class t
                JOIN pg_namespace n ON n.oid = t.relnamespace
                JOIN pg_index ix    ON ix.indrelid = t.oid
@@ -2382,9 +2415,13 @@ impl PostgresConn {
                     first_expression_at: None,
                     key_column_count: key_count,
                     nulls_not_distinct,
+                    invalid: r.try_get::<bool, _>("is_invalid").unwrap_or(true),
                     ..Default::default()
                 }
             });
+            if r.try_get::<bool, _>("coll_differs").unwrap_or(true) {
+                entry.collation_differs = true;
+            }
             // attnum 0 (an expression index column) resolves to NULL. 列名は積めないので
             // 式インデックスの印だけ残す (列だけで同一視・再構成させないため)。
             match column {
