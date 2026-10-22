@@ -2125,6 +2125,31 @@ impl MySqlConn {
             .collect())
     }
 
+    /// 生成列の式 (#1758)。`GENERATION_EXPRESSION` は MySQL 5.7+ / MariaDB 10.2+ にある。
+    pub async fn generated_column_exprs(&self, db: &str, table: &str) -> Result<Vec<(String, String)>> {
+        let rows: Vec<MySqlRow> = sqlx::query(
+            "SELECT COLUMN_NAME, GENERATION_EXPRESSION FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+               AND GENERATION_EXPRESSION IS NOT NULL AND GENERATION_EXPRESSION <> '' \
+             ORDER BY ORDINAL_POSITION",
+        )
+        .bind(db)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let text = |i: usize| {
+                    r.try_get::<String, _>(i)
+                        .ok()
+                        .or_else(|| decode_text_col(r, i).ok())
+                };
+                Some((text(0)?, text(1)?))
+            })
+            .collect())
+    }
+
     /// Row identity strategy for inline editing (#849). MySQL has no cheap
     /// physical row identifier exposed to SQL (unlike SQLite's `rowid` or
     /// PostgreSQL's `ctid`), so the only fallback once a table has no PK is

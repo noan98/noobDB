@@ -878,6 +878,33 @@ export interface AlterTableContext {
   warnings: string[];
 }
 
+/** DROP COLUMN の依存 1 件の種別 (`column_dependencies`、#1758)。 */
+export type ColumnDependencyKind =
+  | "view"
+  | "materialized_view"
+  | "trigger"
+  | "generated_column"
+  | "index"
+  | "foreign_key"
+  | "referenced_by";
+
+/** DROP COLUMN で影響を受ける依存 1 件 (`column_dependencies`、#1758)。 */
+export interface ColumnDependency {
+  /** 削除対象の列名。 */
+  column: string;
+  kind: ColumnDependencyKind;
+  name: string;
+  detail: string | null;
+  confidence: ReferenceConfidence;
+}
+
+/** `column_dependencies` の結果 (#1758)。 */
+export interface ColumnDependencyReport {
+  dependencies: ColumnDependency[];
+  /** 取得できず調べられなかった依存の種別 (`definitions` / `indexes` / `foreign_keys` / `generated_columns`)。 */
+  warnings: string[];
+}
+
 /** テーブルを開いた結果 (`open_table` / `open_tables`、#1263)。 */
 export interface OpenTableResult {
   /** ページネーションの土台 (`SELECT *[, rowid|ctid] FROM ...`、LIMIT なし)。 */

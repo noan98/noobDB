@@ -1,8 +1,15 @@
+use std::sync::Arc;
+
 use tauri::State;
 
 use serde::Serialize;
 
+use crate::commands::search::find_where_used_report;
+use crate::db::column_deps::{
+    foreign_key_dependencies, generated_column_dependencies, index_dependencies, ColumnDependency,
+};
 use crate::db::diff::TableColumns;
+use crate::db::where_used::WhereUsedTarget;
 use crate::db::schema_insight::{
     build_table_statistics, incoming_foreign_keys as filter_incoming_foreign_keys,
     IncomingForeignKey, TableStatistic,
@@ -459,6 +466,129 @@ pub async fn incoming_foreign_keys(
         .foreign_keys_shared(&database, || conn.foreign_keys(&database))
         .await?;
     Ok(filter_incoming_foreign_keys(&all, &table))
+}
+
+/// `column_dependencies` の結果 (#1758)。
+#[derive(Debug, Clone, Serialize)]
+pub struct ColumnDependencyReport {
+    pub dependencies: Vec<ColumnDependency>,
+    /// 取得に失敗して調べられなかった依存の種別 (`"definitions"` / `"indexes"` /
+    /// `"foreign_keys"` / `"generated_columns"`)。空でなければ「検出が不完全」と表示する。
+    pub warnings: Vec<String>,
+}
+
+/// DROP COLUMN の前に、`columns` を参照している依存オブジェクトを洗い出す (#1758)。
+/// ビュー / マテビュー / トリガーは Where-used の定義走査、生成列・インデックス・FK (自列・
+/// 被参照) はカタログから。読み取りのみなので `read_only` でも動く。依存の一部を取得できなくても
+/// 取れた分は返し、取れなかった種別を `warnings` に載せる。
+#[tauri::command]
+pub async fn column_dependencies(
+    session_id: String,
+    database: String,
+    table: String,
+    columns: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<ColumnDependencyReport> {
+    let session = state
+        .get(&session_id)
+        .await
+        .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
+    column_dependencies_core(session, &database, &table, &columns).await
+}
+
+/// [`column_dependencies`] の本体 (Tauri 無しで統合テストから駆動する)。
+pub async fn column_dependencies_core(
+    session: Arc<Session>,
+    database: &str,
+    table: &str,
+    columns: &[String],
+) -> Result<ColumnDependencyReport> {
+    let conn = &session.conn;
+    let driver = conn.driver_kind();
+    let mut warnings = Vec::new();
+    let mut dependencies = Vec::new();
+    if columns.is_empty() {
+        return Ok(ColumnDependencyReport {
+            dependencies,
+            warnings,
+        });
+    }
+
+    let (indexes, fks, generated) = tokio::join!(
+        session
+            .schema_cache
+            .list_indexes(database, table, || conn.list_indexes(database, table)),
+        session
+            .schema_cache
+            .foreign_keys_shared(database, || conn.foreign_keys(database)),
+        conn.generated_column_exprs(database, table),
+    );
+    match indexes {
+        Ok(idx) => dependencies.extend(index_dependencies(&idx, columns)),
+        Err(e) => {
+            tracing::warn!(error = %e, "列依存: インデックスの取得に失敗");
+            warnings.push("indexes".to_string());
+        }
+    }
+    match fks {
+        Ok(all) => {
+            let own: Vec<ForeignKey> = all.iter().filter(|f| f.table == table).cloned().collect();
+            let incoming = filter_incoming_foreign_keys(&all, table);
+            dependencies.extend(foreign_key_dependencies(table, &own, &incoming, columns));
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "列依存: 外部キーの取得に失敗");
+            warnings.push("foreign_keys".to_string());
+        }
+    }
+    match generated {
+        Ok(g) => dependencies.extend(generated_column_dependencies(
+            driver, database, table, &g, columns,
+        )),
+        Err(e) => {
+            tracing::warn!(error = %e, "列依存: 生成列の取得に失敗");
+            warnings.push("generated_columns".to_string());
+        }
+    }
+
+    // ビュー / マテビュー / トリガーの定義本文を列ごとに走査する (ルーチンは DROP を止めないので除く)。
+    let mut definitions_incomplete = false;
+    for column in columns {
+        let target = WhereUsedTarget {
+            database: database.to_string(),
+            table: table.to_string(),
+            column: Some(column.clone()),
+        };
+        match find_where_used_report(session.clone(), database, &target, &[], |_, _| {}).await {
+            Ok(report) => {
+                if !report.failed.is_empty() {
+                    definitions_incomplete = true;
+                }
+                for m in report.matches {
+                    if matches!(m.kind.as_str(), "view" | "materialized_view" | "trigger") {
+                        dependencies.push(ColumnDependency {
+                            column: column.clone(),
+                            kind: m.kind,
+                            name: m.name,
+                            detail: None,
+                            confidence: m.analysis.confidence,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "列依存: 定義の走査に失敗");
+                definitions_incomplete = true;
+            }
+        }
+    }
+    if definitions_incomplete {
+        warnings.push("definitions".to_string());
+    }
+    Ok(ColumnDependencyReport {
+        dependencies,
+        warnings,
+    })
 }
 
 /// このセッションのスキーマキャッシュ (#1097) を明示的に無効化する。

@@ -1693,6 +1693,33 @@ impl PostgresConn {
             .collect())
     }
 
+    /// 生成列の式 (#1758)。`attgenerated` が空でない列の `pg_attrdef` を `pg_get_expr` で読む。
+    pub async fn generated_column_exprs(&self, schema: &str, table: &str) -> Result<Vec<(String, String)>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT a.attname::text, pg_catalog.pg_get_expr(d.adbin, d.adrelid)
+               FROM pg_catalog.pg_attribute a
+               JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+               JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+               WHERE n.nspname = $1 AND c.relname = $2
+                 AND a.attgenerated <> '' AND NOT a.attisdropped
+               ORDER BY a.attnum"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some((
+                    r.try_get::<String, _>(0).ok()?,
+                    r.try_get::<String, _>(1).ok()?,
+                ))
+            })
+            .collect())
+    }
+
     /// Row identity strategy for inline editing (#849). Once a table has no
     /// resolvable primary key, PostgreSQL ordinary heap tables (`pg_class.
     /// relkind = 'r'`) still carry a physical `ctid` that can pin a single

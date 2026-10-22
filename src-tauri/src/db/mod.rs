@@ -3,6 +3,8 @@ pub mod assertions;
 pub mod aws_iam;
 /// 環境横断ブロードキャストの結果比較 (#1257)。
 pub mod broadcast_diff;
+/// DROP COLUMN の依存オブジェクト検出 (#1758)。
+pub mod column_deps;
 /// ファイルから新規テーブルを作るときの方言別 CREATE TABLE 生成 (#985)。
 pub mod create_table;
 pub mod data_diff;
@@ -1444,6 +1446,17 @@ impl Connection {
             Connection::MySql(c) => c.table_comments(db).await,
             Connection::Postgres(c) => c.table_comments(db).await,
             Connection::Sqlite(_) => Ok(Vec::new()),
+        }
+    }
+
+    /// テーブルの生成列 (`(列名, 式)`) を返す (#1758)。DROP COLUMN が壊す生成列を事前に
+    /// 洗い出すために使う。MySQL / MariaDB は `information_schema.COLUMNS.GENERATION_EXPRESSION`、
+    /// PostgreSQL は `pg_attrdef` の `pg_get_expr`、SQLite は `sqlite_master.sql` の解析。
+    pub async fn generated_column_exprs(&self, db: &str, table: &str) -> Result<Vec<(String, String)>> {
+        match self {
+            Connection::MySql(c) => c.generated_column_exprs(db, table).await,
+            Connection::Postgres(c) => c.generated_column_exprs(db, table).await,
+            Connection::Sqlite(c) => c.generated_column_exprs(table).await,
         }
     }
 
