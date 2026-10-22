@@ -2,6 +2,19 @@ import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen } from "./testUtils";
 import type { TitleBarConnection } from "../components/titleBarContext";
 import { t } from "../i18n";
+import { driverColor } from "../profileIdentity";
+
+const driverLabelKey = {
+  mysql: "formDriverMysql",
+  postgres: "formDriverPostgres",
+  sqlite: "formDriverSqlite",
+} as const;
+/** jsdom は style.color を rgb() に正規化するため、同じ正規化を通した値と比べる。 */
+function colorOf(c: string): string {
+  const el = document.createElement("span");
+  el.style.color = c;
+  return el.style.color;
+}
 
 /**
  * カスタムウィンドウクローム (#604)。`@tauri-apps/api/window` を**モジュール読み込み時**
@@ -59,10 +72,13 @@ describe("TitleBar render smoke (#604)", () => {
     ["mysql", "mysql"],
     ["postgres", "postgres"],
     ["sqlite", "sqlite"],
-  ])("shows the engine glyph for %s (#1769)", (driver) => {
+  ] as const)("shows the engine glyph for %s (#1769)", (driver, icon) => {
     const connection: TitleBarConnection = { name: "Alpha DB", color: null, isProduction: false, driver };
     renderWithProviders(<TitleBar connection={connection} />);
-    expect(screen.getByTestId("titlebar-engine-glyph")).toBeInTheDocument();
+    const glyph = screen.getByTestId("titlebar-engine-glyph");
+    expect(glyph).toBeInTheDocument();
+    expect(glyph.style.color).toBe(colorOf(driverColor(driver)));
+    expect(screen.getByText(t(driverLabelKey[icon]))).toBeInTheDocument();
   });
 
   it("omits the engine glyph for an unknown or missing driver (#1769)", () => {
