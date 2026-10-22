@@ -9,12 +9,6 @@ const driverLabelKey = {
   postgres: "formDriverPostgres",
   sqlite: "formDriverSqlite",
 } as const;
-/** jsdom は style.color を rgb() に正規化するため、同じ正規化を通した値と比べる。 */
-function colorOf(c: string): string {
-  const el = document.createElement("span");
-  el.style.color = c;
-  return el.style.color;
-}
 
 /**
  * カスタムウィンドウクローム (#604)。`@tauri-apps/api/window` を**モジュール読み込み時**
@@ -77,7 +71,7 @@ describe("TitleBar render smoke (#604)", () => {
     renderWithProviders(<TitleBar connection={connection} />);
     const glyph = screen.getByTestId("titlebar-engine-glyph");
     expect(glyph).toBeInTheDocument();
-    expect(glyph.style.color).toBe(colorOf(driverColor(driver)));
+    expect(glyph.getAttribute("style")).toContain(driverColor(driver));
     expect(screen.getByText(t(driverLabelKey[icon]))).toBeInTheDocument();
   });
 
