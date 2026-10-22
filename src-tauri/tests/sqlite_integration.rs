@@ -1541,6 +1541,76 @@ async fn read_only_session_rejects_csv_import() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// 書き込みコマンド網羅パリティ (#1778) の実挙動側。`src/__tests__/readOnlyGuardParity.test.ts`
+/// が「各書き込みコマンドの本体にガード参照があること」をソース上で機械検出するのに対し、
+/// ここでは read-only セッションに対して代表的な書き込みコマンドの `_inner` コアを実際に
+/// 呼び、すべて `AppError::ReadOnly` で**ドライバに届く前に**拒否され、データが無変化で
+/// あることを確認する (`run_query` / `run_query_transaction` / `import_csv` /
+/// `apply_privilege_sql` は上の個別テストが担当)。
+#[tokio::test]
+async fn read_only_session_rejects_every_representative_write_command() {
+    let path = seed_ro_fixture("matrix").await;
+    let (state, sid) = ro_state(&path).await;
+
+    // 明示トランザクション内の書き込み。
+    let err = t::run_in_transaction_via_command(&state, &sid, "DELETE FROM ro_t")
+        .await
+        .expect_err("run_in_transaction must reject a write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // セル編集の一括更新 (追加文の経路でも SET 生成の経路でも拒否される)。
+    let err = t::bulk_update_cells_via_command(
+        &state,
+        &sid,
+        None,
+        "ro_t",
+        vec!["id".into()],
+        Vec::new(),
+        vec!["UPDATE ro_t SET label = 'z'".to_string()],
+    )
+    .await
+    .expect_err("bulk_update_cells must reject a write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // 生成行の INSERT。
+    let err = t::insert_generated_rows_via_command(
+        &state,
+        &sid,
+        None,
+        "ro_t",
+        &["id".to_string(), "label".to_string()],
+        &[vec![serde_json::json!(9), serde_json::json!("g")]],
+    )
+    .await
+    .expect_err("insert_generated_rows must reject a write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // スキーマ同期の適用。
+    let err = t::apply_sync_sql_via_command(&state, &sid, None, vec!["DROP TABLE ro_t".into()])
+        .await
+        .expect_err("apply_sync_sql must reject a write");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // 統計を更新するメンテナンス (ANALYZE) は書き込み扱い。
+    let err = t::sqlite_maintenance_inner(&state, &sid, t::SqliteMaintenanceAction::Analyze)
+        .await
+        .expect_err("sqlite_maintenance(Analyze) must reject on a read-only session");
+    assert!(matches!(err, t::AppError::ReadOnly(_)), "{err:?}");
+
+    // どれもドライバに届いていないので、データは最初のまま。
+    let verify = t::connect(&t::sqlite_options(path.to_str().unwrap()))
+        .await
+        .expect("connect (verify)");
+    let rows = verify
+        .execute("SELECT id, label FROM ro_t ORDER BY id", None)
+        .await
+        .expect("verify select");
+    assert_eq!(rows.rows.len(), 1, "read-only 拒否後も行数が変わらない");
+    verify.close().await;
+    state.get(&sid).await.expect("session").conn.close().await;
+    let _ = std::fs::remove_file(&path);
+}
+
 #[tokio::test]
 async fn writable_session_allows_writes_via_ipc() {
     // ガードが過剰に広くないことの確認: read-only でないセッションでは書き込みが
