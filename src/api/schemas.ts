@@ -206,6 +206,11 @@ export const bulkWriteOutcomeRowCountExceeded = z.object({
   batch_total_rows: z.number(),
   statement_counts: z.array(z.number()),
 });
+export const bulkWriteOutcomeOptimisticConflict = z.object({
+  status: z.literal("optimistic_conflict"),
+  conflict_rows: z.number(),
+  statement_counts: z.array(z.number()),
+});
 export const bulkWriteOutcomeRollbackIncomplete = z.object({
   status: z.literal("rollback_incomplete"),
   expected_rows: z.number(),
@@ -214,6 +219,7 @@ export const bulkWriteOutcomeRollbackIncomplete = z.object({
 export const bulkWriteOutcome = z.discriminatedUnion("status", [
   bulkWriteOutcomeApplied,
   bulkWriteOutcomeRowCountExceeded,
+  bulkWriteOutcomeOptimisticConflict,
   bulkWriteOutcomeRollbackIncomplete,
 ]);
 

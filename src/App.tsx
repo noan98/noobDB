@@ -17,6 +17,7 @@ import {
 import { connectRequestFromProfile } from "./connectRequest";
 import { beginBatchRun, endBatchRun, isCurrentBatchRun } from "./batchRunGuard";
 import { Box, Flex, Grid, chakra, visuallyHiddenStyle } from "@chakra-ui/react";
+import { Callout } from "./components/Callout";
 import { ConnectionPathDiagram } from "./components/ConnectionPathDiagram";
 import { buildConnectionPath, CONNECTED_PHASE, pathInputFromProfile } from "./components/connectionPath";
 import { AnimatePresence, motion } from "motion/react";
@@ -7285,6 +7286,8 @@ export default function App() {
         rows: result.rows,
         pkIndices,
         edits: pendingEdits,
+        // 編集した列の読込時点の旧値も WHERE に足し、読込後に他者が変えた行の無言上書きを防ぐ (#1766)。
+        optimisticLock: settings.optimisticCellEditLock,
       });
       const deletes = buildDeleteStatements({
         driver,
@@ -7372,6 +7375,7 @@ export default function App() {
       let totalAffected = 0;
       let failure: string | null = null;
       let notApplied: { expected: number; actual: number } | null = null;
+      let conflictRows: number | null = null;
       let incomplete: { expected: number; actual: number } | null = null;
       try {
         const bulkParams = {
@@ -7412,6 +7416,7 @@ export default function App() {
         });
         if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
         else if (guarded.kind === "not_applied") notApplied = guarded;
+        else if (guarded.kind === "conflict") conflictRows = guarded.conflictRows;
         else incomplete = guarded;
       } catch (e) {
         failure = String(e);
@@ -7440,6 +7445,43 @@ export default function App() {
           vars: incomplete,
           error: true,
         });
+        return false;
+      }
+      if (conflictRows !== null) {
+        // 楽観ロックの競合 (#1766): 読込後に他の人が変えた行があり、全体をロールバックした (DB は未変更)。
+        // 承認して上書きする選択肢は設けない。再読込して現在の値を見てから編集し直してもらう。
+        // 「編集を残す」なら保留編集はそのまま。「再読込」なら送った編集を破棄して取り直す
+        // (残すと現在の値を旧値として再送され、他の人の変更を知らないまま上書きしてしまう)。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsConflict",
+          vars: { rows: conflictRows },
+          error: true,
+        });
+        const reload = await confirm({
+          title: translate("editConflictTitle"),
+          message: (
+            <Callout tone="warning" role="alert">
+              {translate("editConflictBody", { rows: conflictRows })}
+            </Callout>
+          ),
+          confirmLabel: translate("editConflictReload"),
+          cancelLabel: translate("editConflictKeep"),
+          tone: "warning",
+        });
+        if (reload) {
+          patchTab(tabId, (tt) => ({
+            ...tt,
+            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
+          }));
+          const latest = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
+          if (latest.paginatable) {
+            const limit = Math.max(1, latest.previewRowLimit || settings.defaultDisplayCount);
+            void runQueryInTab(tabId, `${latest.paginatable} LIMIT ${limit}`, latest.paginatable);
+          } else {
+            void runQueryInTab(tabId, getTabSql(latest), null, null);
+          }
+        }
         return false;
       }
       if (notApplied) {
@@ -7529,6 +7571,9 @@ export default function App() {
       patchTab,
       runQueryInTab,
       settings.defaultDisplayCount,
+      settings.optimisticCellEditLock,
+      getTabSql,
+      tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,
       selectedProfile?.confirm_writes,

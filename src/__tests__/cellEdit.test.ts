@@ -25,6 +25,7 @@ import {
   buildRowWhere,
   previewSavedValue,
   literalFromCellValue,
+  oldValueForLock,
   literalFromInput,
   resolvePkIndices,
   setValueFromInput,
@@ -1973,5 +1974,109 @@ describe("editIsNoop / previewSavedValue の境界 (#1663)", () => {
     expect(previewSavedValue(" x ", text)).toEqual({ kind: "edgeSpace" });
     expect(previewSavedValue(" 2020-01-01 ", col("d", "DATE"))).toBeNull();
     expect(previewSavedValue(" abc ", col("n", "INT"))).toBeNull();
+  });
+});
+
+describe("oldValueForLock / 楽観ロックの旧値 (#1766)", () => {
+  it("NULL は型を問わず IS NULL", () => {
+    expect(oldValueForLock("mysql", col("a", "JSON"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("postgres", col("a", "BYTEA"), null)).toEqual({ kind: "null" });
+  });
+
+  it("数値・文字列・真偽値は等値で検査する。64bit 整数は文字列のまま渡す", () => {
+    expect(oldValueForLock("mysql", col("a", "INT"), 5)).toEqual({ kind: "number", text: "5" });
+    expect(oldValueForLock("mysql", col("a", "BIGINT UNSIGNED"), "18446744073709551615")).toEqual({
+      kind: "number",
+      text: "18446744073709551615",
+    });
+    expect(oldValueForLock("postgres", col("a", "INT8"), "9007199254740993")).toEqual({
+      kind: "number",
+      text: "9007199254740993",
+    });
+    expect(oldValueForLock("postgres", col("a", "NUMERIC"), "1.50")).toEqual({
+      kind: "number",
+      text: "1.50",
+    });
+    expect(oldValueForLock("sqlite", col("a", "TEXT"), "x")).toEqual({ kind: "text", text: "x" });
+    expect(oldValueForLock("mysql", col("a", "VARCHAR(20)"), "x")).toEqual({ kind: "text", text: "x" });
+    expect(oldValueForLock("postgres", col("a", "BOOL"), true)).toEqual({ kind: "bool", value: true });
+    expect(oldValueForLock("mysql", col("a", "DATETIME"), "2020-01-02 03:04:05")).toEqual({
+      kind: "text",
+      text: "2020-01-02 03:04:05",
+    });
+  });
+
+  it("単精度 float は許容誤差の述語 (float4)、SQLite の REAL と倍精度は厳密比較", () => {
+    expect(oldValueForLock("postgres", col("a", "FLOAT4"), 0.1)).toEqual({ kind: "float4", text: "0.1" });
+    expect(oldValueForLock("mysql", col("a", "FLOAT"), 0.1)).toEqual({ kind: "float4", text: "0.1" });
+    expect(oldValueForLock("sqlite", col("a", "REAL"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+    expect(oldValueForLock("mysql", col("a", "DOUBLE"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+    expect(oldValueForLock("postgres", col("a", "FLOAT8"), 0.1)).toEqual({ kind: "number", text: "0.1" });
+  });
+
+  it("等値比較が不安定な型・値は検査しない", () => {
+    for (const t of [
+      "BLOB",
+      "BYTEA",
+      "JSON",
+      "JSONB",
+      "TIMESTAMPTZ",
+      "INTERVAL",
+      "BIT",
+      "_INT4",
+      "GEOMETRY",
+      "",
+    ]) {
+      expect(
+        oldValueForLock("postgres", col("a", t), t === "BLOB" || t === "BYTEA" ? "00ff" : "v"),
+      ).toBeNull();
+    }
+    // 非有限の数・数値でない文字列。
+    expect(oldValueForLock("mysql", col("a", "DOUBLE"), Number.NaN)).toBeNull();
+    expect(oldValueForLock("mysql", col("a", "INT"), "abc")).toBeNull();
+    // 丸め済みかもしれない桁数の多い DECIMAL (JS の数値で持っているもの)。
+    expect(oldValueForLock("mysql", col("a", "DECIMAL"), 123456789.12345679)).toBeNull();
+  });
+});
+
+describe("buildUpdateGroups の楽観ロック (#1766)", () => {
+  const columns = [col("id", "INT"), col("name", "VARCHAR"), col("score", "FLOAT4"), col("data", "JSON")];
+  const rows: CellValue[][] = [
+    [1, "a", 0.1, '{"k":1}'],
+    [2, null, 0.2, null],
+  ];
+  const base = (edits: PendingEdits, optimisticLock?: boolean) => ({
+    driver: "postgres",
+    database: "db",
+    table: "t",
+    columns,
+    rows,
+    pkIndices: [0],
+    edits,
+    optimisticLock,
+  });
+  const k = (id: number) => rowEditKey([id, "", 0, null], [0], 0);
+
+  it("オフ (既定) のときは olds を付けない", () => {
+    const { groups } = buildUpdateGroups(base({ [k(1)]: { 1: "x" } }));
+    expect(groups[0].olds).toBeUndefined();
+    expect(buildUpdateGroups(base({ [k(1)]: { 1: "x" } }, false)).groups[0].olds).toBeUndefined();
+  });
+
+  it("オンのときは編集した列の旧値を行ごとに keys と同順で付ける (同じ SET でも旧値は行ごと)", () => {
+    const { groups } = buildUpdateGroups(
+      base({ [k(1)]: { 1: "x", 2: "5", 3: "{}" }, [k(2)]: { 1: "x", 2: "5", 3: "{}" } }, true),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].keys).toEqual([[1], [2]]);
+    expect(groups[0].olds).toEqual([
+      [{ kind: "text", text: "a" }, { kind: "float4", text: "0.1" }, null],
+      [{ kind: "null" }, { kind: "float4", text: "0.2" }, { kind: "null" }],
+    ]);
+  });
+
+  it("主キー列の編集には旧値を付けない (WHERE に元の値が入っている)", () => {
+    const { groups } = buildUpdateGroups(base({ [k(1)]: { 0: "9" } }, true));
+    expect(groups[0].olds).toEqual([[null]]);
   });
 });

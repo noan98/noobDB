@@ -1000,6 +1000,7 @@ export type BulkWriteOutcome =
       batch_total_rows: number;
       statement_counts: number[];
     }
+  | { status: "optimistic_conflict"; conflict_rows: number; statement_counts: number[] }
   | { status: "rollback_incomplete"; expected_rows: number; actual_rows: number };
 
 /** `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロックなど) もここへ足す。 */
