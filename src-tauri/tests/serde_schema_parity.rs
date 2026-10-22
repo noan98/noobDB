@@ -90,11 +90,47 @@ macro_rules! variants {
     }};
 }
 
+/// #1773: 検索系 Channel メッセージ enum のバリアント追加をコンパイル時に検出する。
+/// 新バリアントを足したら、ここの `match` と `build_fixtures` の代表インスタンス配列の
+/// 両方を更新すること (更新しないとビルドが落ちる)。
+#[allow(dead_code)]
+fn _exhaustive_data_search_entry(e: &DataSearchEntry) {
+    match e {
+        DataSearchEntry::Hit { .. }
+        | DataSearchEntry::NoHit { .. }
+        | DataSearchEntry::Skipped { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn _exhaustive_where_used_message(m: &WhereUsedMessage) {
+    match m {
+        WhereUsedMessage::Progress { .. }
+        | WhereUsedMessage::Done { .. }
+        | WhereUsedMessage::Error { .. }
+        | WhereUsedMessage::Cancelled { .. } => {}
+    }
+}
+
+#[allow(dead_code)]
+fn _exhaustive_data_search_message(m: &DataSearchMessage) {
+    match m {
+        DataSearchMessage::Progress { .. }
+        | DataSearchMessage::Table { .. }
+        | DataSearchMessage::Done { .. }
+        | DataSearchMessage::Error { .. }
+        | DataSearchMessage::Cancelled { .. } => {}
+    }
+}
+
 /// 主要レスポンス型の代表インスタンスを serde で JSON 化し、
 /// `{ 型名: JSON }` のマップにまとめて返す。フロントのフィクスチャと同一内容。
 ///
 /// Option フィールドは基本的に `Some` を入れてキー + 型を露出させる (serde は None も
 /// `null` として出すのでキー自体は常に present)。zod の `.nullable()` は両方受ける。
+/// 例外: `skip_serializing_if` の付いた Option (例: `DataSearchEntry` の `detail`) は
+/// `None` のときキー自体が出ない。zod 側は `.optional()` で受けるので、`Some` / `None`
+/// の両方を代表インスタンスに入れる。
 fn build_fixtures() -> serde_json::Value {
     let column = Column {
         name: "id".into(),
