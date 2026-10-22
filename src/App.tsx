@@ -213,6 +213,7 @@ import { bundleExplainPrefix } from "./components/investigationBundle";
 import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
 import { ambientWashImage } from "./components/titleBarContext";
+import { pulseFocusLanding } from "./components/focusLandingPulse";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -10489,6 +10490,8 @@ export default function App() {
           const idx = (paneFocusCursorRef.current + i) % focusTargets.length;
           if (focusTargets[idx]()) {
             paneFocusCursorRef.current = (idx + 1) % focusTargets.length;
+            // 着地した領域の外枠を一瞬パルスさせ、現在地を示す (#1764)。
+            pulseFocusLanding();
             break;
           }
         }
@@ -11971,6 +11974,7 @@ export default function App() {
       >
         <Flex
           as="aside"
+          data-focus-landing-region=""
           gridColumn="1"
           direction="column"
           overflow="hidden"
