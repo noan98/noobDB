@@ -1983,7 +1983,6 @@ const en = {
 
   resultEmpty: "No results yet. Run a query above.",
   resultEmptyTitle: "Ready to run",
-  resultEmptyRun: "Run selection",
   resultEmptySnippets: "Snippets",
   resultEmptyCommandPalette: "Command palette",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
@@ -8712,7 +8711,6 @@ const ja: Dict = {
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
   resultEmptyTitle: "クエリを実行しましょう",
-  resultEmptyRun: "選択範囲を実行",
   resultEmptySnippets: "スニペット",
   resultEmptyCommandPalette: "コマンドパレット",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",

@@ -17,7 +17,7 @@ export interface ResultEmptyActionDef {
 }
 
 export const RESULT_EMPTY_ACTIONS: readonly ResultEmptyActionDef[] = [
-  { id: "run", labelKey: "resultEmptyRun", icon: "play" },
+  { id: "run", labelKey: "shortcutHintRun", icon: "play" },
   { id: "snippets", labelKey: "resultEmptySnippets", icon: "snippet" },
   { id: "commandPalette", labelKey: "resultEmptyCommandPalette", icon: "search" },
 ];

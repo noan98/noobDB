@@ -129,7 +129,7 @@ describe("ResultGrid", () => {
     );
     renderWithProviders(<ResultGrid result={null} emptyActions={emptyActions} />);
     expect(screen.getByText(t("resultEmptyTitle"))).toBeInTheDocument();
-    const run = screen.getByRole("button", { name: new RegExp(t("resultEmptyRun")) });
+    const run = screen.getByRole("button", { name: new RegExp(t("shortcutHintRun")) });
     expect(run).toHaveTextContent("Ctrl+Enter");
     await user.click(run);
     await user.click(screen.getByRole("button", { name: new RegExp(t("resultEmptySnippets")) }));

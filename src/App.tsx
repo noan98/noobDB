@@ -11681,9 +11681,8 @@ export default function App() {
     runOrFocusEditorFromEmpty: (paneId: string) => {
       const editor = editorRefs.current.get(paneId);
       if (!editor) return;
-      // 本文が空だと runAll は何もしないので、書き始められるようフォーカスを渡す。
-      if (editor.getText().trim()) editor.runAll();
-      else editor.focus();
+      editor.focus();
+      editor.runAll();
     },
   });
   const broadcastAvailable =

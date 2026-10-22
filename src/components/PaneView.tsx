@@ -215,7 +215,7 @@ export interface PaneActions {
   openSnippetsFromEmpty: () => void;
   openErDiagramFromEmpty: () => void;
   openCommandPaletteFromEmpty: () => void;
-  /** 結果ペインの実行前状態 (#1784): 本文があれば全文実行、空ならエディタへフォーカス。 */
+  /** 結果ペインの実行前状態 (#1784): Cmd/Ctrl+Enter と同じく選択→無ければ全文を実行。エディタへフォーカスも移す。 */
   runOrFocusEditorFromEmpty: (paneId: string) => void;
 }
 
@@ -937,7 +937,7 @@ export const PaneView = memo(
                                 <ResultGrid
                                   ref={gridRef}
                                   gridBindings={gridBindings}
-                                  emptyActions={resultEmptyActions}
+                                  emptyActions={tab.kind === "query" ? resultEmptyActions : undefined}
                                   result={tab.result}
                                   initialScrollTop={
                                     tab.kind === "table"

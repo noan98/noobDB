@@ -9257,22 +9257,17 @@ export const ResultGrid = memo(
 
     if (!result) {
       return (
-        <Flex
-          flex="1 1 auto"
-          minHeight={0}
-          minWidth={0}
-          overflow="auto"
-          bg="app.surface"
-          align="center"
-          justify="center"
-        >
-          <EmptyState
-            illustration={<RunQueryIllustration />}
-            icon="play"
-            title={t("resultEmptyTitle")}
-            description={t("resultEmpty")}
-            secondaryActions={emptyActions}
-          />
+        <Flex flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
+          {/* m="auto": 収まれば中央、溢れたら上端からスクロールできる (center だと上が切れる) */}
+          <Box m="auto">
+            <EmptyState
+              illustration={<RunQueryIllustration />}
+              icon="play"
+              title={t("resultEmptyTitle")}
+              description={t("resultEmpty")}
+              secondaryActions={emptyActions}
+            />
+          </Box>
         </Flex>
       );
     }
