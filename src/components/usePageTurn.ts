@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
 import { durations, easings, rowCrossfadeFrom, slideOffsets } from "../motion";
 import { pageTurnDirection } from "./pageTurn";
+import { prefersStaticMotion } from "./revealOrigin";
 
 /**
  * 結果グリッドのページ送りの方向付きスライド (#1752)。
@@ -17,7 +18,8 @@ import { pageTurnDirection } from "./pageTurn";
  * - `scope` (タブ ID 等) が変わったコミットは別の結果への切り替えなので再生もスクロール
  *   リセットもせず、前回値だけ更新する。
  * - 新しい行は到着済みの 1 回の置換なので、旧ページが抜ける演出はなく「入る側」のみ。
- * - reduced-motion (`motionPreference:"reduced"` / ハイコントラスト含む) は再生しない。
+ * - reduced-motion (`motionPreference:"reduced"`) と、ハイコントラスト (hc-* テーマ /
+ *   forced-colors、`prefersStaticMotion`) は再生しない。
  *   `Element.animate` が無い環境 (jsdom) では何もしない。
  */
 export function usePageTurn(
@@ -29,6 +31,7 @@ export function usePageTurn(
   const reduced = useReducedMotionConfig();
   const prevRef = useRef({ page, scope });
   const runningRef = useRef<Animation | null>(null);
+  const lockRef = useRef<{ el: HTMLElement; orig: string } | null>(null);
 
   // 毎コミット走るが、ページ比較だけの軽い処理 (依存配列なし)。
   useLayoutEffect(() => {
@@ -39,7 +42,7 @@ export function usePageTurn(
     if (dir === null) return;
     const scroller = scrollRef?.current;
     if (scroller) scroller.scrollTop = 0;
-    if (reduced) return;
+    if (reduced || prefersStaticMotion()) return;
     const el = tbodyRef.current;
     if (!el || typeof el.animate !== "function") return;
     runningRef.current?.cancel();
@@ -47,7 +50,14 @@ export function usePageTurn(
     // 大ジャンプ (dir 0) は x 移動なしなので、暗転は行クロスフェードと同じ控えめな値にする。
     const x = dir * slideOffsets.page;
     const opacityFrom = dir === 0 ? rowCrossfadeFrom : 0;
-    runningRef.current = el.animate(
+    // 列が少なく表が幅いっぱいのとき、+x の移動で scrollWidth が一瞬増えて横スクロールバーが
+    // 出る (常時スクロールバー環境で縦もずれる)。はみ出さない表は再生中だけ overflow-x を隠す。
+    // 連続操作で前の再生を cancel した場合は、保存済みの元の inline 値を引き継ぐ。
+    if (!lockRef.current && scroller && scroller.scrollWidth <= scroller.clientWidth) {
+      lockRef.current = { el: scroller, orig: scroller.style.overflowX };
+    }
+    if (lockRef.current) lockRef.current.el.style.overflowX = "hidden";
+    const anim = el.animate(
       [
         { opacity: opacityFrom, transform: `translateX(${x}px)` },
         { opacity: 1, transform: "translateX(0)" },
@@ -57,5 +67,16 @@ export function usePageTurn(
         easing: `cubic-bezier(${easings.out.join(", ")})`,
       },
     );
+    runningRef.current = anim;
+    if (lockRef.current) {
+      // 最新の再生が終わった (cancel 含む) ときだけ元に戻す。古い再生の完了では戻さない。
+      const restore = () => {
+        const lock = lockRef.current;
+        if (runningRef.current !== anim || !lock) return;
+        lock.el.style.overflowX = lock.orig;
+        lockRef.current = null;
+      };
+      anim.finished?.then(restore, restore);
+    }
   });
 }

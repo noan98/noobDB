@@ -76,6 +76,46 @@ describe("結果グリッドのページ送り演出 (#1752)", () => {
     expect(animate).not.toHaveBeenCalled();
   });
 
+  it("ハイコントラストテーマ (hc-*) では再生しない", () => {
+    document.documentElement.setAttribute("data-theme", "hc-dark");
+    try {
+      const { rerender } = renderWithProviders(
+        <ResultGrid result={result} pageTurnPage={1} pageTurnScope="t1" />,
+      );
+      rerender(<ResultGrid result={{ ...result }} pageTurnPage={2} pageTurnScope="t1" />);
+      expect(animate).not.toHaveBeenCalled();
+    } finally {
+      document.documentElement.removeAttribute("data-theme");
+    }
+  });
+
+  it("ページ変更でスクロールが先頭に戻り、scope 変更では維持される", () => {
+    const { container, rerender } = renderWithProviders(
+      <ResultGrid result={result} pageTurnPage={1} pageTurnScope="t1" />,
+    );
+    const scroller = container.querySelector("tbody")?.closest("div") as HTMLElement;
+    scroller.scrollTop = 50;
+    rerender(<ResultGrid result={{ ...result }} pageTurnPage={2} pageTurnScope="t2" />);
+    expect(scroller.scrollTop).toBe(50);
+    rerender(<ResultGrid result={{ ...result }} pageTurnPage={3} pageTurnScope="t2" />);
+    expect(scroller.scrollTop).toBe(0);
+  });
+
+  it("列が少なく横にはみ出さない表では、再生中だけ overflow-x を隠す", () => {
+    const fin = Promise.resolve();
+    animate.mockImplementation(() => ({ cancel: vi.fn(), finished: fin }) as never);
+    const { container, rerender } = renderWithProviders(
+      <ResultGrid result={result} pageTurnPage={1} pageTurnScope="t1" />,
+    );
+    const scroller = container.querySelector("tbody")?.closest("div") as HTMLElement;
+    rerender(<ResultGrid result={{ ...result }} pageTurnPage={2} pageTurnScope="t1" />);
+    // jsdom は scrollWidth/clientWidth とも 0 なので「はみ出さない」扱い。
+    expect(scroller.style.overflowX).toBe("hidden");
+    return fin.then(() => {
+      expect(scroller.style.overflowX).toBe("");
+    });
+  });
+
   it("reduced-motion では再生しない", () => {
     reducedRef.value = true;
     const { rerender } = renderWithProviders(

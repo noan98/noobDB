@@ -1,14 +1,8 @@
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { useReducedMotionConfig } from "motion/react";
+import { prefersStaticMotion } from "./revealOrigin";
 import { durations, easings, firstBatchReveal } from "../motion";
 import { firstBatchRevealCount, firstBatchRevealDelayMs, isFirstBatchArrival } from "./firstBatchReveal";
-
-/** ハイコントラスト (テーマ hc-* / forced-colors) か。装飾的な動きは出さない。 */
-function prefersStaticMotion(): boolean {
-  if (typeof document === "undefined") return false;
-  if (document.documentElement.getAttribute("data-theme")?.startsWith("hc-")) return true;
-  return typeof window.matchMedia === "function" && window.matchMedia("(forced-colors: active)").matches;
-}
 
 /**
  * 結果グリッドの初回バッチ着弾リビール (#1579)。ストリーミング中のスケルトン

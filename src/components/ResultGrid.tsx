@@ -9019,6 +9019,22 @@ export const ResultGrid = memo(
     const keepAliveActiveRef = useRef(keepAliveActive);
     keepAliveActiveRef.current = keepAliveActive;
     const lastScrollTopRef = useRef(0);
+    // ページ送り (同一タブ内の page 変更) は先頭リセット (usePageTurn) に合わせて記録済みの
+    // スクロール位置も捨てる。keep-alive で隠れている間は DOM の scrollTop を戻せず、
+    // 再表示時に古い位置へ復元されてしまうため。
+    const pageTurnPrevRef = useRef({ page: pageTurnPage, scope: pageTurnScope });
+    useLayoutEffect(() => {
+      const prev = pageTurnPrevRef.current;
+      pageTurnPrevRef.current = { page: pageTurnPage, scope: pageTurnScope };
+      if (
+        prev.scope === pageTurnScope &&
+        prev.page !== undefined &&
+        pageTurnPage !== undefined &&
+        prev.page !== pageTurnPage
+      ) {
+        lastScrollTopRef.current = 0;
+      }
+    });
     const wasKeepAliveActiveRef = useRef(keepAliveActive);
     useLayoutEffect(() => {
       const was = wasKeepAliveActiveRef.current;
