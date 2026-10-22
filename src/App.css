@@ -384,6 +384,47 @@
   --sandbox-subtle: color-mix(in srgb, var(--sandbox-violet) 16%, transparent);
   --sandbox-border: color-mix(in srgb, var(--sandbox-violet) 50%, transparent);
 
+  /* ── Ambient env wash (#1768) ─────────────────────────────────────────
+     本番接続中 / サンドボックス接続中に、ワークスペース (<main>) の上端だけへごく薄く
+     敷く環境色のグラデーション。「いま本番にいる」を作業に没入していても気づける
+     程度に常時提示する。文字の透かしは出さない。色は意味色トークン (--error-solid /
+     --sandbox-violet、テーマ追従) を color-mix で薄めた単一ソースで、不透明度は
+     10% 以下 (上端中央 8% + 左右の隅 4%)。縦は約 140px で完全な透明へ消えるので
+     本文・グリッド・エディタのコントラストを損なわない。静止背景で reduced-motion の
+     影響は無い。hc-light/hc-dark は AAA 優先のため下のプリセットで none に上書きする。 */
+  --prod-wash:
+    radial-gradient(
+      ellipse 100% calc(140px * var(--font-scale, 1)) at 50% 0%,
+      color-mix(in srgb, var(--error-solid) 8%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% calc(180px * var(--font-scale, 1)) at 0% 0%,
+      color-mix(in srgb, var(--error-solid) 4%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% calc(180px * var(--font-scale, 1)) at 100% 0%,
+      color-mix(in srgb, var(--error-solid) 4%, transparent) 0%,
+      transparent 100%
+    );
+  --sandbox-wash:
+    radial-gradient(
+      ellipse 100% calc(140px * var(--font-scale, 1)) at 50% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 8%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% calc(180px * var(--font-scale, 1)) at 0% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 4%, transparent) 0%,
+      transparent 100%
+    ),
+    radial-gradient(
+      ellipse 28% calc(180px * var(--font-scale, 1)) at 100% 0%,
+      color-mix(in srgb, var(--sandbox-violet) 4%, transparent) 0%,
+      transparent 100%
+    );
+
   /* ── Semantic color families (#476) ───────────────────────────────────
      状態色 (info/success/warning/error) を役割別に展開する。色だけに依存
      しない運用 (アイコン/形状/テキストラベル併用) を前提とする — 赤緑色弱でも
@@ -735,6 +776,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;
@@ -838,6 +881,8 @@
   /* #1163: 高コントラストプリセットは装飾より AAA を優先し、ヒーロー画面の
      ブランドウォッシュは敷かない。 */
   --hero-wash: none;
+  --prod-wash: none; /* #1768 */
+  --sandbox-wash: none;
   --hero-halo: none;
   --hero-rule: none;
   --hero-rule-display: none;

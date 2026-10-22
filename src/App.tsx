@@ -212,6 +212,7 @@ import { type ResultViewKind } from "./components/ResultViewSwitch";
 import { bundleExplainPrefix } from "./components/investigationBundle";
 import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
+import { ambientWashImage } from "./components/titleBarContext";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -12391,11 +12392,17 @@ export default function App() {
           gridColumn="2"
           direction="column"
           overflow="hidden"
-          bg="app.bg"
+          bgColor="app.bg"
           minW={0}
-          style={
-            selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
-          }
+          style={{
+            ...(selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : {}),
+            // 本番 / サンドボックス接続中だけ上端にごく薄い環境色を敷く (#1768。値は App.css の
+            // `--prod-wash` / `--sandbox-wash`、hc-* では none)。`bg` ショートハンドは
+            // background-image を打ち消すため bgColor を使う。
+            ...(ambientWashImage(titleBarConnection)
+              ? { backgroundImage: ambientWashImage(titleBarConnection), backgroundRepeat: "no-repeat" }
+              : {}),
+          }}
         >
           {/* IPC 検証失敗が複数コマンドで続いたときの版不一致の警告 (#1622)。通常は何も描画しない。 */}
           <IpcMismatchNotice />

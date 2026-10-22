@@ -543,3 +543,63 @@ describe("spacing scale tracks the font scale (#327)", () => {
     }
   });
 });
+
+describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash) の上でも前景が読める (#1768)", () => {
+  /** 上端中央 10% + 隅 6% が最悪でも重なる上限 (重なり合う最大でも 10% 程度) で bg に合成する。 */
+  /** 本文 (--text) は wash 上でも AA。補足/エラー文はテーマ側のベース余白が元々僅差 (4.5 付近) で、
+   *  上端 140px だけの 10% 以下のウォッシュで 0.3 前後下がるため、下限を 4.0:1 に固定して極端な劣化だけ検知する。 */
+  const WASH_MIN_SECONDARY = 4.0;
+  const WORST_ALPHA = 0.1;
+  function blend(fg: string, bg: string, a: number): string {
+    const f = fg.replace("#", "");
+    const b = bg.replace("#", "");
+    const ch = (i: number) =>
+      Math.round(parseInt(f.slice(i, i + 2), 16) * a + parseInt(b.slice(i, i + 2), 16) * (1 - a))
+        .toString(16)
+        .padStart(2, "0");
+    return `#${ch(0)}${ch(2)}${ch(4)}`;
+  }
+  const themes: [string, Record<string, string>, boolean][] = [
+    ["light", light, false],
+    ["dark", { ...light, ...dark }, false],
+    ...presets.map(
+      (p) => [p.name, { ...light, ...p.vars }, p.isHighContrast] as [string, Record<string, string>, boolean],
+    ),
+  ];
+
+  it("wash の不透明度は 12% 以下で、色は意味色トークンのみ", () => {
+    for (const name of ["prod-wash", "sandbox-wash"]) {
+      const m = css.match(new RegExp(`--${name}:([\\s\\S]*?);\\n`));
+      expect(m, `--${name} が :root に定義されている`).toBeTruthy();
+      const body = m![1];
+      expect(body).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
+      const pcts = [...body.matchAll(/color-mix\(in srgb, var\(--[\w-]+\) (\d+)%/g)].map(([, p]) =>
+        Number(p),
+      );
+      expect(pcts.length).toBeGreaterThan(0);
+      for (const p of pcts) expect(p).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it("hc-* では none", () => {
+    for (const name of ["hc-light", "hc-dark"]) {
+      const m = css.match(new RegExp(`:root\\[data-theme="${name}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`));
+      expect(m![1]).toMatch(/--prod-wash:\s*none;/);
+      expect(m![1]).toMatch(/--sandbox-wash:\s*none;/);
+    }
+  });
+
+  describe.each(themes)("%s", (_name, vars, isHc) => {
+    it.skipIf(isHc)("本番/サンドボックスの wash 上で本文・補足・エラー文が AA を満たす", () => {
+      for (const solid of ["error-solid", "sandbox-violet"]) {
+        const washed = blend(vars[solid], vars.bg, WORST_ALPHA);
+        for (const fg of ["text", "text-secondary", "text-muted", "text-error"]) {
+          const r = contrastRatio(vars[fg], washed);
+          expect(r, `--${fg} on ${solid} wash (${washed}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(
+            fg === "text" ? AA_TEXT : WASH_MIN_SECONDARY,
+          );
+        }
+      }
+    });
+  });
+});
