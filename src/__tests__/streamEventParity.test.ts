@@ -27,7 +27,9 @@ const rustSources = Object.values(rustModules);
 // バックエンドのイベント名は emit している各 `.rs` ファイルに文字列リテラルとして
 // 散在し、フロントも `src/api/tauri.ts` の `listen("query-stream:columns", …)` 等で
 // 別途ハードコードしている。両者はコンパイラが対応関係を検証してくれないため、名前の
-// タイポや片側だけの追加・削除漏れは実行時まで気付けない。ここでは両ソースから
+// タイポや片側だけの追加・削除漏れは実行時まで気付けない。(`Channel<T>` 経由の `kind` タグ付き
+// メッセージは対象外で、`channelMessageParity.test.ts` (#1772) が Rust enum ⇔ switch ⇔ Zod を検証する。)
+// ここでは両ソースから
 // イベント名の集合を機械的に抽出して突き合わせ、片側にしか存在しない名前があれば
 // テストを落とす。
 
