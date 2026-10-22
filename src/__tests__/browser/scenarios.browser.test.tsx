@@ -1746,4 +1746,35 @@ describe("シナリオ: WHERE 付き DELETE の子行影響の確認 (#1767)", (
     await expect.element(screen.getByText(t("refImpactActCascade", { count: 7 }))).toBeVisible();
     expect(streams()).toHaveLength(0);
   });
+
+  it("FK の取得が返らなくても、全体の待ち上限 (5 秒) の後に DELETE を実行する", async () => {
+    registerAutoStream();
+    onCommand("run_query", () => countResult([[1]]));
+    onCommand("incoming_foreign_keys", () => new Promise(() => {}));
+    onCommand("run_lookup_query", () => countResult([[0, 0]]));
+    localStorage.setItem(
+      `noobdb.tabs.${ALPHA.id}`,
+      JSON.stringify({
+        panes: [{ tabs: [{ kind: "query", title: "Del", sql: SQL }], activeIndex: 0 }],
+        activePane: 0,
+      }),
+    );
+    const screen = await renderInBrowser(<App />);
+    await connectToProfile(screen, /Alpha DB/, "appdb");
+    await expect.element(screen.getByText(t("editorPreflightImpact", { count: 1 }))).toBeVisible();
+    await vi.waitFor(
+      async () => {
+        const el = document.querySelector<HTMLElement>(".cm-content");
+        if (!el) throw new Error("editor not mounted");
+        await page.elementLocator(el).click({ button: "right" });
+        await screen
+          .getByRole("menuitem", { name: new RegExp(`^${t("editorMenuRunAll")}`) })
+          .click({ timeout: 2000 });
+      },
+      { timeout: 20000, interval: 300 },
+    );
+    expect(streams()).toHaveLength(0);
+    await vi.waitFor(() => expect(streams()).toHaveLength(1), { timeout: 12000 });
+    expect(document.querySelector('[data-testid="ref-impact-list"]')).toBeNull();
+  });
 });

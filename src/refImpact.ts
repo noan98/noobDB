@@ -422,3 +422,46 @@ export async function loadCascadeImpacts(input: {
   }
   return { impacts, moreCascade, unverified: [...new Set(unverified)] };
 }
+
+/** エディタ DELETE の事前確認 (子行影響の集計) を待つ上限 (ミリ秒)。FK 取得も含めた全体に掛ける (#1767)。 */
+export const EDITOR_DELETE_PRECHECK_TIMEOUT_MS = 5000;
+
+/** `promise` が `ms` を過ぎても解決しなければ reject する。タイマーは必ず解除する。 */
+export async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * エディタ DELETE の親テーブルを探す先 (`incoming_foreign_keys` の `database` 引数) を決める (#1767)。
+ * MySQL はデータベース、PostgreSQL はスキーマを受ける。修飾子があればそれ、無ければタブの値。
+ * タブに無いとき、SQLite は既定の `main`、PostgreSQL は `current_schema()` を `currentSchema` で引く。
+ * 決められなければ null (呼び出し側は「確認できなかった」にする)。
+ */
+export async function resolveParentDatabase(input: {
+  driver: string;
+  qualifier: string | null;
+  database: string | null;
+  currentSchema: () => Promise<string | null>;
+}): Promise<string | null> {
+  if (input.qualifier && input.driver !== "sqlite") return input.qualifier;
+  if (input.database) return input.database;
+  if (input.driver === "sqlite") return "main";
+  if (input.driver === "postgres") {
+    try {
+      return (await input.currentSchema()) || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

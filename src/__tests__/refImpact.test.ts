@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CellValue } from "../api/tauri";
 import type { IncomingFk } from "../fkNavigation";
 import {
@@ -13,7 +13,9 @@ import {
   normalizeOnDelete,
   REF_KEY_LIMIT,
   rootPredicatesFromDelete,
+  resolveParentDatabase,
   rootPredicatesFromKeys,
+  withTimeout,
   sumRefCounts,
 } from "../refImpact";
 
@@ -462,5 +464,65 @@ describe("loadCascadeImpacts (#1767)", () => {
     });
     expect(res.impacts).toHaveLength(many.length);
     expect(res.moreCascade).toBe(false);
+  });
+});
+
+describe("resolveParentDatabase / withTimeout (#1767)", () => {
+  afterEach(() => vi.useRealTimers());
+  const none = async () => null;
+
+  it("SQLite でタブの database が無ければ main、MySQL / PostgreSQL は修飾子 → タブの値の順", async () => {
+    expect(
+      await resolveParentDatabase({ driver: "sqlite", qualifier: null, database: null, currentSchema: none }),
+    ).toBe("main");
+    expect(
+      await resolveParentDatabase({
+        driver: "mysql",
+        qualifier: "db1",
+        database: "db2",
+        currentSchema: none,
+      }),
+    ).toBe("db1");
+    expect(
+      await resolveParentDatabase({
+        driver: "postgres",
+        qualifier: null,
+        database: "s1",
+        currentSchema: none,
+      }),
+    ).toBe("s1");
+    expect(
+      await resolveParentDatabase({ driver: "mysql", qualifier: null, database: null, currentSchema: none }),
+    ).toBeNull();
+  });
+
+  it("スキーマの無い PostgreSQL は current_schema() で引き、失敗したら null", async () => {
+    expect(
+      await resolveParentDatabase({
+        driver: "postgres",
+        qualifier: null,
+        database: null,
+        currentSchema: async () => "app",
+      }),
+    ).toBe("app");
+    expect(
+      await resolveParentDatabase({
+        driver: "postgres",
+        qualifier: null,
+        database: null,
+        currentSchema: async () => {
+          throw new Error("x");
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("解決しない Promise は指定時間で reject する", async () => {
+    vi.useFakeTimers();
+    const p = withTimeout(new Promise<never>(() => {}), 5000);
+    const assertion = expect(p).rejects.toThrow("timeout");
+    await vi.advanceTimersByTimeAsync(5000);
+    await assertion;
+    await expect(withTimeout(Promise.resolve(1), 5000)).resolves.toBe(1);
   });
 });

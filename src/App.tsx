@@ -476,7 +476,10 @@ import {
   buildOpenChildrenSql,
   type CascadeImpacts,
   collectDeletedKeyValues,
+  EDITOR_DELETE_PRECHECK_TIMEOUT_MS,
   loadCascadeImpacts,
+  resolveParentDatabase,
+  withTimeout,
   blocksDelete,
   loadRefImpacts,
   type RefImpact,
@@ -2356,6 +2359,8 @@ export default function App() {
     fkResult?: CascadeImpacts | null;
   } | null>(null);
   // WHERE 付きの通常 DELETE を実行する前の子行影響の事前確認 (#1767)。定義は loadEditorDeleteImpacts の後ろ。
+  const precheckingTabsRef = useRef<Set<string>>(new Set());
+  const gateRunSeqRef = useRef<Map<string, number>>(new Map());
   const precheckDeleteRef = useRef<
     | ((input: {
         tabId: string;
@@ -6331,6 +6336,9 @@ export default function App() {
 
   const runInTabWithGate = useCallback(
     (tab: Tab, sql: string, opts?: { newTab?: boolean; fresh?: boolean }) => {
+      // 子行影響の事前確認中 (ステータスに「確認中」) の再実行は無視する (#1767)。
+      if (precheckingTabsRef.current.has(tab.id)) return;
+      gateRunSeqRef.current.set(tab.id, (gateRunSeqRef.current.get(tab.id) ?? 0) + 1);
       // On an explain tab the primary action re-runs EXPLAIN so the viewer keeps
       // getting plan JSON instead of a raw result set. EXPLAIN is read-only, so
       // it never trips the destructive-query gate or auto LIMIT.
@@ -8304,10 +8312,19 @@ export default function App() {
       const ref = parseTableRef(target.table);
       // `incoming_foreign_keys` の `database` は MySQL ではデータベース、PostgreSQL ではスキーマを受ける
       // ので、修飾子はそのまま渡せる。SQLite は修飾を扱わない。
-      if (!ref || (ref.qualifier && driver === "sqlite") || !(ref.qualifier ?? database)) {
-        throw new Error("unresolved table");
-      }
-      const db = ref.qualifier ?? database ?? "";
+      if (!ref || (ref.qualifier && driver === "sqlite")) throw new Error("unresolved table");
+      const db = await resolveParentDatabase({
+        driver,
+        qualifier: ref.qualifier,
+        database,
+        // タブにスキーマが無い PostgreSQL は、接続の現在のスキーマを引く (search_path 次第なので固定しない)。
+        currentSchema: async () => {
+          const res = await refImpactLookup(selectedProfile?.database ?? "")("SELECT current_schema()", 1);
+          const v = res.rows[0]?.[0];
+          return typeof v === "string" ? v : null;
+        },
+      });
+      if (!db) throw new Error("unresolved table");
       const refs = await api.incomingForeignKeys(sessionId, db, ref.name);
       if (refs.length === 0) return { impacts: [], moreCascade: false, unverified: [] };
       return loadCascadeImpacts({
@@ -8321,7 +8338,7 @@ export default function App() {
         lookup: refImpactLookup(database ?? db),
       });
     },
-    [sessionId, selectedProfile?.driver, refImpactLookup],
+    [sessionId, selectedProfile?.driver, selectedProfile?.database, refImpactLookup],
   );
 
   precheckDeleteRef.current = async ({
@@ -8335,26 +8352,27 @@ export default function App() {
     proceed,
   }) => {
     const startedSession = sessionIdRef.current;
+    const startedSeq = gateRunSeqRef.current.get(tabId) ?? 0;
+    precheckingTabsRef.current.add(tabId);
     setStatus({ kind: "key", key: "statusCheckingRefs" });
     let res: CascadeImpacts | null = null;
-    let timer: number | undefined;
     try {
-      // 1 本ごとの 5 秒に加え、FK 取得を含む全体も 5 秒で打ち切る (待たせ続けない)。
-      res = await Promise.race([
-        loadEditorDeleteImpacts(target, database),
-        new Promise<never>((_, reject) => {
-          timer = window.setTimeout(() => reject(new Error("timeout")), 5000);
-        }),
-      ]);
+      // 1 本ごとの 5 秒に加え、FK 取得を含む全体も打ち切る (待たせ続けない)。
+      res = await withTimeout(loadEditorDeleteImpacts(target, database), EDITOR_DELETE_PRECHECK_TIMEOUT_MS);
     } catch {
       // 集計できなくても実行は妨げない。確認は出さず、見えなかった旨だけ伝える。
       res = null;
     } finally {
-      window.clearTimeout(timer);
+      precheckingTabsRef.current.delete(tabId);
     }
     setStatus((cur) => (cur.kind === "key" && cur.key === "statusCheckingRefs" ? { kind: "idle" } : cur));
     // 確認中に接続が切り替わった / 切れたら、元の接続向けの DELETE は流さない。
-    if (sessionIdRef.current !== startedSession) return;
+    if (sessionIdRef.current !== startedSession) {
+      toast.info(translate("refImpactRunAborted"));
+      return;
+    }
+    // 確認中に同じタブで別の実行が始まっていたら、古い DELETE は流さない。
+    if ((gateRunSeqRef.current.get(tabId) ?? 0) !== startedSeq) return;
     if (!res) {
       toast.info(translate("refImpactCheckSkipped"));
       proceed();
