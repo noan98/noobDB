@@ -32,8 +32,12 @@ export type AlterCostReason =
   | "mysqlRebuildNullability"
   /** PostgreSQL: 型変更でテーブル全体を書き換える (`ACCESS EXCLUSIVE`)。 */
   | "pgRewriteType"
+  /** MySQL: AUTO_INCREMENT / STORED 生成列付きの ADD COLUMN は COPY。 */
+  | "mysqlCopyAddColumn"
   /** PostgreSQL: 揮発的な DEFAULT 付き ADD COLUMN は全行を書き換える。 */
   | "pgRewriteVolatileDefault"
+  /** PostgreSQL: serial / IDENTITY / STORED 生成列付きの ADD COLUMN は全行を書き換える。 */
+  | "pgRewriteAddColumn"
   /** PostgreSQL: SET NOT NULL は `ACCESS EXCLUSIVE` のまま全行を検証する。 */
   | "pgScanSetNotNull"
   /** PostgreSQL: 外部キー追加は両テーブルをロックして全行を検証する。 */
@@ -65,10 +69,16 @@ export const MYSQL_ONLINE_CLAUSE = "ALGORITHM=INPLACE, LOCK=NONE";
 
 /** PostgreSQL で揮発的 (行ごとに評価され、全行の書き換えが要る) として知られる関数。 */
 const PG_VOLATILE_FN =
-  /\b(random|gen_random_uuid|uuid_generate_v\d\w*|clock_timestamp|timeofday|nextval|setseed|txid_current|pg_current_xact_id)\s*\(/i;
+  /\b(random|gen_random_uuid|uuid_generate_v\d\w*|uuidv[47]|clock_timestamp|timeofday|nextval|setseed|txid_current|pg_current_xact_id)\s*\(/i;
 
-/** MySQL の VARCHAR 長さプレフィックスが 1 バイトで済む上限 (utf8mb4 の 4 バイト/文字で 63 文字)。 */
-const MYSQL_VARCHAR_ONE_BYTE_CHARS = 63;
+/**
+ * MySQL の VARCHAR は最大バイト長が 255 以下なら長さプレフィックス 1 バイト、256 以上なら 2 バイト。
+ * 境界を越える拡張は COPY になるが、文字コード (utf8mb4=64 文字 / utf8mb3=86 / latin1=256) はモーダルに無い。
+ * そこで、どの文字コードでも同じ側に収まると言える「前後とも 63 文字以下」か「前後とも 256 文字以上」だけを
+ * インプレースとみなし、それ以外は COPY の可能性として警告する。
+ */
+const MYSQL_VARCHAR_SAFE_SMALL = 63;
+const MYSQL_VARCHAR_SAFE_LARGE = 256;
 
 function isVarchar(t: string): boolean {
   return /^(varchar|character varying)\b/.test(normalizeType(t));
@@ -81,8 +91,9 @@ function mysqlTypeChangeInPlace(from: string, to: string): boolean {
   const b = parseTypeSpec("mysql", to);
   if (a.kind !== "string" || b.kind !== "string" || a.length === null || b.length === null) return false;
   if (b.length < a.length) return false;
-  const small = (n: number) => n <= MYSQL_VARCHAR_ONE_BYTE_CHARS;
-  return small(a.length) === small(b.length);
+  const small = (n: number) => n <= MYSQL_VARCHAR_SAFE_SMALL;
+  const large = (n: number) => n >= MYSQL_VARCHAR_SAFE_LARGE;
+  return (small(a.length) && small(b.length)) || (large(a.length) && large(b.length));
 }
 
 /** PostgreSQL で型変更がテーブルの書き換えを要さないか (型の別名・VARCHAR 拡張・NUMERIC 精度拡張)。 */
@@ -109,10 +120,15 @@ function pgTypeChangeNoRewrite(from: string, to: string): boolean {
   return false;
 }
 
+/** PostgreSQL: 型欄の serial 系 / IDENTITY / 生成列は ADD COLUMN で全行を書き換える。 */
+const PG_ADD_REWRITE = /\b(small|big)?serial\d?\b|\bgenerated\b/i;
+/** MySQL: 型欄の AUTO_INCREMENT / STORED 生成列は ADD COLUMN が COPY になる。 */
+const MYSQL_ADD_COPY = /\bauto_increment\b|\bstored\b/i;
+
 export interface AlterCostInput {
   baseline: readonly ExistingColumnBaseline[];
   existing: readonly ExistingColumnEdit[];
-  added: readonly Pick<NewColumn, "name" | "defaultValue">[];
+  added: readonly Pick<NewColumn, "name" | "defaultValue" | "type">[];
   /** 作成するインデックス (不備のない行だけ渡す)。 */
   indexes?: readonly IndexDef[];
   addedForeignKeys?: readonly ForeignKeyDef[];
@@ -164,18 +180,29 @@ export function classifyAlterCost(driver: string, input: AlterCostInput): AlterC
     }
   }
 
-  // 列追加は MySQL 8 では INSTANT。PostgreSQL 11+ も定数 DEFAULT なら書き換えないが、揮発的な DEFAULT は全行書き換え。
-  if (!mysql) {
-    for (const col of input.added) {
-      const name = col.name.trim();
-      if (name && PG_VOLATILE_FN.test(col.defaultValue)) {
+  // 列追加は MySQL 8 では INSTANT、PostgreSQL 11+ も定数 DEFAULT なら書き換えない。
+  // ただし型欄に書いた serial / IDENTITY / 生成列 (STORED) や揮発的 DEFAULT は全行を書き換える。
+  for (const col of input.added) {
+    const name = col.name.trim();
+    if (!name) continue;
+    if (mysql) {
+      if (MYSQL_ADD_COPY.test(col.type)) {
         out.push({
-          id: `volatileDefault:${name}`,
+          id: `addColumn:${name}`,
           severity: "rewrite",
-          reason: "pgRewriteVolatileDefault",
+          reason: "mysqlCopyAddColumn",
           subject: name,
         });
       }
+    } else if (PG_ADD_REWRITE.test(col.type)) {
+      out.push({ id: `addColumn:${name}`, severity: "rewrite", reason: "pgRewriteAddColumn", subject: name });
+    } else if (PG_VOLATILE_FN.test(col.defaultValue)) {
+      out.push({
+        id: `volatileDefault:${name}`,
+        severity: "rewrite",
+        reason: "pgRewriteVolatileDefault",
+        subject: name,
+      });
     }
   }
 

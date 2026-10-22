@@ -31,7 +31,7 @@ vi.mock("../api/tauri", async (importOriginal) => {
     api: {
       ...actual.api,
       alterTableContext: vi.fn().mockResolvedValue(ctx),
-      tableStatistics: vi.fn(async () => [{ name: "t", row_estimate: stats.rows }]),
+      tableRowEstimate: vi.fn(async () => stats.rows),
       runLookupQuery: vi.fn().mockResolvedValue({ columns: [], rows: [] }),
     },
   };
@@ -81,6 +81,16 @@ describe("AlterTableModal 書き換え警告 (#1771)", () => {
     await changeType("bigint");
     expect(await screen.findByTestId("alter-cost-warning")).toBeInTheDocument();
     expect(screen.queryByText(t("alterCostOnlineHint"))).toBeNull();
+  });
+
+  it("推定 0 行は不明として警告する", async () => {
+    stats.rows = 0;
+    renderModal("mysql");
+    await changeType("bigint");
+    expect(await screen.findByTestId("alter-cost-warning")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId("alter-cost-rows")).toHaveTextContent(t("alterCostRowsUnknown")),
+    );
   });
 
   it("小さなテーブルでは警告しない", async () => {

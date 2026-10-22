@@ -3259,6 +3259,10 @@ const en = {
   alterCostMysqlCopyCheck: "adding a CHECK validates every row and can fall back to COPY (writes blocked)",
   alterCostMysqlRebuildNullability: "changing NULL / NOT NULL rebuilds the table in place",
   alterCostPgRewriteType: "the type change rewrites the whole table and its indexes under ACCESS EXCLUSIVE",
+  alterCostMysqlCopyAddColumn:
+    "an AUTO_INCREMENT or STORED generated column needs COPY when added (writes blocked)",
+  alterCostPgRewriteAddColumn:
+    "a serial / IDENTITY / generated (STORED) column rewrites every row when added",
   alterCostPgRewriteVolatileDefault: "a volatile DEFAULT rewrites every row when the column is added",
   alterCostPgScanSetNotNull: "SET NOT NULL scans every row under ACCESS EXCLUSIVE",
   alterCostPgScanForeignKey: "adding a foreign key validates every row while locking both tables",
@@ -3266,7 +3270,7 @@ const en = {
   alterCostPgIndexBuildLock: "CREATE INDEX (not CONCURRENTLY) blocks writes while the index is built",
   alterCostOnlineToggle: "Add {clause}",
   alterCostOnlineHint:
-    "Changes that cannot run in place without locking fail with an error instead of silently copying the table.",
+    "Changes that cannot run in place without locking fail with an error instead of silently copying the table. If it stops with an error, statements that already ran stay applied (MySQL DDL commits implicitly).",
   alterPrecheckFailTitle: "{count} change(s) conflict with existing data",
   alterPrecheckFailBody:
     "Existing rows would not satisfy the new definition or constraint, so this ALTER is expected to fail (or truncate data). The counts are a snapshot taken just now.",
@@ -10043,6 +10047,8 @@ const ja: Dict = {
   alterCostMysqlCopyCheck: "CHECK の追加は全行を検証し、COPY (書き込み停止) になる場合があります",
   alterCostMysqlRebuildNullability: "NULL / NOT NULL の変更はテーブルをその場で再構築します",
   alterCostPgRewriteType: "型の変更は ACCESS EXCLUSIVE のままテーブルとインデックス全体を書き換えます",
+  alterCostMysqlCopyAddColumn: "AUTO_INCREMENT や STORED 生成列の追加は COPY (書き込み停止) になります",
+  alterCostPgRewriteAddColumn: "serial / IDENTITY / 生成列 (STORED) の追加は全行を書き換えます",
   alterCostPgRewriteVolatileDefault: "揮発的な DEFAULT 付きの列追加は全行を書き換えます",
   alterCostPgScanSetNotNull: "SET NOT NULL は ACCESS EXCLUSIVE のまま全行を走査します",
   alterCostPgScanForeignKey: "外部キーの追加は両テーブルをロックして全行を検証します",
@@ -10050,7 +10056,7 @@ const ja: Dict = {
   alterCostPgIndexBuildLock: "CREATE INDEX (CONCURRENTLY なし) は構築中ずっと書き込みを止めます",
   alterCostOnlineToggle: "{clause} を付ける",
   alterCostOnlineHint:
-    "ロックなしでインプレース実行できない変更は、黙ってテーブルをコピーせずエラーで止まります。",
+    "ロックなしでインプレース実行できない変更は、黙ってテーブルをコピーせずエラーで止まります。エラーで止まった場合、先に実行された文は適用済みのまま残ります (MySQL の DDL は暗黙コミット)。",
   alterPrecheckFailTitle: "{count} 件の変更が既存データと衝突する見込みです",
   alterPrecheckFailBody:
     "既存の行が新しい定義・制約を満たさないため、この ALTER は失敗する (またはデータが切り詰められる) 見込みです。件数はいま取得した時点の値です。",

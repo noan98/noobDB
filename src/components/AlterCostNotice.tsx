@@ -11,6 +11,8 @@ const REASON_KEY = {
   mysqlCopyCheck: "alterCostMysqlCopyCheck",
   mysqlRebuildNullability: "alterCostMysqlRebuildNullability",
   pgRewriteType: "alterCostPgRewriteType",
+  mysqlCopyAddColumn: "alterCostMysqlCopyAddColumn",
+  pgRewriteAddColumn: "alterCostPgRewriteAddColumn",
   pgRewriteVolatileDefault: "alterCostPgRewriteVolatileDefault",
   pgScanSetNotNull: "alterCostPgScanSetNotNull",
   pgScanForeignKey: "alterCostPgScanForeignKey",
@@ -67,10 +69,11 @@ export function AlterCostNotice({
         ))}
         {!heavy && <chakra.span fontSize="sm">{t("alterCostRebuildOnly")}</chakra.span>}
         {showOnlineToggle && (
-          <chakra.label display="flex" alignItems="center" gap="1.5" fontSize="sm" mt="1">
-            <Switch checked={onlineEnabled} onChange={() => onOnlineChange(!onlineEnabled)} />
-            {t("alterCostOnlineToggle", { clause: MYSQL_ONLINE_CLAUSE })}
-          </chakra.label>
+          <Switch
+            checked={onlineEnabled}
+            onChange={() => onOnlineChange(!onlineEnabled)}
+            label={t("alterCostOnlineToggle", { clause: MYSQL_ONLINE_CLAUSE })}
+          />
         )}
         {showOnlineToggle && (
           <chakra.span textStyle="caption" color="app.textMuted">

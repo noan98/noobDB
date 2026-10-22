@@ -47,10 +47,26 @@ describe("classifyAlterCost (#1771)", () => {
     });
     it("VARCHAR を同じ長さクラスで拡張するのはインプレース", () => {
       expect(run("mysql", base("a", "varchar(20)"), { type: "varchar(60)" })).toEqual([]);
-      expect(run("mysql", base("a", "varchar(100)"), { type: "varchar(300)" })).toEqual([]);
+      expect(run("mysql", base("a", "varchar(300)"), { type: "varchar(400)" })).toEqual([]);
     });
-    it("VARCHAR の拡張でも長さプレフィックスが 1→2 バイトにまたがるなら COPY", () => {
+    it("VARCHAR の拡張でも長さプレフィックスが 1→2 バイトにまたがりうるなら COPY (文字コード不明)", () => {
       expect(run("mysql", base("a", "varchar(60)"), { type: "varchar(100)" })).toEqual(["mysqlCopyType"]);
+      // utf8mb3 の境界 (86 文字) をまたぐ / latin1 の境界 (256 文字) をまたぐ
+      expect(run("mysql", base("a", "varchar(70)"), { type: "varchar(90)" })).toEqual(["mysqlCopyType"]);
+      expect(run("mysql", base("a", "varchar(100)"), { type: "varchar(300)" })).toEqual(["mysqlCopyType"]);
+      expect(run("mysql", base("a", "varchar(300)"), { type: "varchar(400)" })).toEqual([]);
+    });
+    it("ADD COLUMN の型欄に AUTO_INCREMENT / STORED があると COPY", () => {
+      const r = (type: string) =>
+        classifyAlterCost("mysql", {
+          baseline: [],
+          existing: [],
+          added: [{ name: "c", defaultValue: "", type }],
+        }).map((x) => x.reason);
+      expect(r("int AUTO_INCREMENT")).toEqual(["mysqlCopyAddColumn"]);
+      expect(r("int GENERATED ALWAYS AS (a + 1) STORED")).toEqual(["mysqlCopyAddColumn"]);
+      expect(r("int GENERATED ALWAYS AS (a + 1) VIRTUAL")).toEqual([]);
+      expect(r("int")).toEqual([]);
     });
     it("NULL 可否の変更はインプレース再構築、DEFAULT 変更は何も出ない", () => {
       expect(run("mysql", base("a", "int"), { notNull: true })).toEqual(["mysqlRebuildNullability"]);
@@ -64,7 +80,7 @@ describe("classifyAlterCost (#1771)", () => {
       const risks = classifyAlterCost("mysql", {
         baseline: [],
         existing: [],
-        added: [{ name: "c", defaultValue: "random()" }],
+        added: [{ name: "c", defaultValue: "random()", type: "int" }],
         indexes: [{ name: "i", columns: ["a"], unique: true }],
         addedForeignKeys: [
           {
@@ -117,13 +133,27 @@ describe("classifyAlterCost (#1771)", () => {
         classifyAlterCost("postgres", {
           baseline: [],
           existing: [],
-          added: [{ name: "c", defaultValue: d }],
+          added: [{ name: "c", defaultValue: d, type: "uuid" }],
         }).map((x) => x.reason);
       expect(r("gen_random_uuid()")).toEqual(["pgRewriteVolatileDefault"]);
       expect(r("random()")).toEqual(["pgRewriteVolatileDefault"]);
       expect(r("now()")).toEqual([]);
+      expect(r("uuidv7()")).toEqual(["pgRewriteVolatileDefault"]);
       expect(r("0")).toEqual([]);
       expect(r("")).toEqual([]);
+    });
+    it("ADD COLUMN の serial / IDENTITY / 生成列 (STORED) は書き換え", () => {
+      const r = (type: string) =>
+        classifyAlterCost("postgres", {
+          baseline: [],
+          existing: [],
+          added: [{ name: "c", defaultValue: "", type }],
+        }).map((x) => x.reason);
+      expect(r("bigserial")).toEqual(["pgRewriteAddColumn"]);
+      expect(r("serial")).toEqual(["pgRewriteAddColumn"]);
+      expect(r("integer GENERATED ALWAYS AS IDENTITY")).toEqual(["pgRewriteAddColumn"]);
+      expect(r("integer GENERATED ALWAYS AS (a * 2) STORED")).toEqual(["pgRewriteAddColumn"]);
+      expect(r("integer")).toEqual([]);
     });
     it("FK / CHECK 追加は走査、CREATE INDEX は書き込みロック", () => {
       const risks = classifyAlterCost("postgres", {
