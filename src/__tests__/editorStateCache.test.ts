@@ -14,6 +14,7 @@ const applied: AppliedEditorConfig = {
   defaultDatabase: null,
   lint: "1",
   keymap: "k",
+  placeholder: "p",
 };
 
 function entry(doc: string): CachedEditorState {
