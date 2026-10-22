@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { chakra, Flex } from "@chakra-ui/react";
 import { useT } from "../i18n";
 import { api, type DriverKind, type IndexOverlap, type TableColumnInfo } from "../api/tauri";
@@ -6,6 +6,9 @@ import { buildCreateIndexSql } from "./tableMaintenance";
 import { Modal, ModalBody, ModalFooter, ModalHeader } from "./Modal";
 import { CodePreview, ErrorNote, FieldError, FieldLabel, FormSection } from "./modalForm";
 import { Callout } from "./Callout";
+import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
+import { buildConstraintPrechecks } from "./alterPrecheck";
+import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 import { Icon } from "./Icon";
 import { Button, Checkbox, Input, PressableButton, Switch } from "./ui";
 
@@ -116,6 +119,29 @@ export function CreateIndexModal({
     [valid, driver, database, table, selected, name, unique],
   );
 
+  // UNIQUE のときだけ、既存データに重複キーが無いかを読み取り専用 COUNT で事前検査する (#1757)。
+  const prechecks = useMemo(
+    () =>
+      valid && unique
+        ? buildConstraintPrechecks(driver, database, table, {
+            indexes: [{ name, columns: selected, unique }],
+          })
+        : [],
+    [valid, unique, driver, database, table, name, selected],
+  );
+  const runCount = useCallback(
+    (countSql: string) =>
+      api.runLookupQuery({
+        sessionId,
+        sql: countSql,
+        database,
+        queryTimeoutSecs: COUNT_PREVIEW_TIMEOUT_SECS,
+        rowCap: 1,
+      }),
+    [sessionId, database],
+  );
+  const precheckCounts = useCountPreviews(runCount, prechecks, !loading && !loadError);
+
   return (
     <Modal onSubmit={() => onRun(sql)} submitDisabled={!valid || readOnly} width="520px" onClose={onClose}>
       <ModalHeader onClose={onClose} closeLabel={t("createTableClose")}>
@@ -210,6 +236,11 @@ export function CreateIndexModal({
                       : t("createIndexOverlapRedundant", { name: o.name })}
                 </Callout>
               ))}
+              <AlterPrecheckNotice
+                prechecks={prechecks}
+                counts={precheckCounts}
+                onOpenRows={onSendToEditor}
+              />
               {valid && (
                 <chakra.span textStyle="caption" data-testid="create-index-leading">
                   {t("createIndexLeadingColumn", { column: selected[0] })}
