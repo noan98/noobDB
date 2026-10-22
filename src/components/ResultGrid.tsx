@@ -9515,6 +9515,7 @@ export const ResultGrid = memo(
         minWidth={0}
         overflow="hidden"
         bg="app.surface"
+        data-focus-landing-region=""
         position={streaming ? "relative" : undefined}
         // カラム確定でスケルトン → 実データへ切り替わる瞬間だけ一度フェードイン
         // させ、滑らかに差し替える (#657)。reduced-motion では静止 (App.css)。
