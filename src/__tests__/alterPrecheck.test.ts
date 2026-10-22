@@ -307,4 +307,32 @@ describe("buildConstraintPrechecks (#1757)", () => {
       expect(precheckRowsSql(c.sql)).toMatch(/^SELECT \* FROM [\s\S]* WHERE [\s\S]* LIMIT 1000;$/);
     }
   });
+
+  it("MySQL の CHECK は NOT (式) を DB 修飾つきで数える", () => {
+    const got = buildConstraintPrechecks("mysql", "app", "t", {
+      addedChecks: [{ name: "", expression: "qty >= 0" }],
+    });
+    expect(got[0].sql).toBe("SELECT COUNT(*) FROM `app`.`t` WHERE NOT (qty >= 0\n)");
+  });
+
+  it("SQLite は DB 修飾を付けない", () => {
+    const got = buildConstraintPrechecks("sqlite", "main", "t", {
+      indexes: [{ name: "u", columns: ["a"], unique: true }],
+    });
+    expect(got[0].sql).toContain('FROM "t" WHERE');
+    expect(got[0].sql).not.toContain('"main"');
+  });
+
+  it("CHECK の式が追加・リネームする列を単語単位で含むなら検査しない", () => {
+    const input = {
+      pendingColumns: new Set(["new_col"]),
+      addedChecks: [
+        { name: "", expression: "new_col > 0" },
+        { name: "", expression: "new_columns > 0" },
+      ],
+    };
+    const got = buildConstraintPrechecks("mysql", null, "t", input);
+    expect(got).toHaveLength(1);
+    expect(got[0].to).toBe("CHECK (new_columns > 0)");
+  });
 });

@@ -12,6 +12,9 @@ import { isCompleteCheck, isCompleteForeignKey, type CheckDef, type ForeignKeyDe
  * 新しい定義に収まらず ALTER が途中で失敗する。失敗してから気付くのではなく、収まらない行数を
  * 読み取り専用の `SELECT COUNT(*)` で先に数えて警告するための SQL を組み立てる純ロジック。
  *
+ * #1757 で制約の追加 (ADD FOREIGN KEY / UNIQUE インデックス / ADD CHECK) で違反する既存行の検査
+ * (`buildConstraintPrechecks`) も加えた。
+ *
  * 対象は MySQL / PostgreSQL。SQLite は `ALTER COLUMN` による型変更自体を持たない
  * (`buildAlterPlan` が unsupported 扱いにする) ので検査も作らない。
  */
@@ -147,7 +150,8 @@ function intDigitsOfRange(r: NumericRange): number {
 }
 
 function qualified(driver: string, database: string | null, table: string): string {
-  return database
+  // SQLite は接続あたり 1 つの名前空間なので DB 修飾を付けない (`qualifiedTableName` と同じ規則)。
+  return database && driver !== "sqlite"
     ? `${quoteIdentFor(driver, database)}.${quoteIdentFor(driver, table)}`
     : quoteIdentFor(driver, table);
 }
@@ -275,6 +279,11 @@ export interface ConstraintPrecheckInput {
    * 省略時は絞り込まない。
    */
   knownColumns?: ReadonlySet<string>;
+  /**
+   * 同じ ALTER で追加・リネーム後の名前になる列。CHECK の式がこれらの名前を (単語単位で) 含むときは、
+   * 現状のテーブルに無い列を参照して COUNT が失敗するので検査しない。
+   */
+  pendingColumns?: ReadonlySet<string>;
 }
 
 /**
@@ -318,6 +327,8 @@ export function buildConstraintPrechecks(
     });
     (input.addedChecks ?? []).filter(isCompleteCheck).forEach((ck, i) => {
       const expr = ck.expression.trim();
+      const words = expr.match(/[\p{L}\p{N}_$]+/gu) ?? [];
+      if (words.some((w) => input.pendingColumns?.has(w))) return;
       out.push({
         id: `checkViolation:${i}`,
         kind: "checkViolation",

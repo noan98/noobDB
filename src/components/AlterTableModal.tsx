@@ -343,9 +343,13 @@ export function AlterTableModal({
         addedChecks: addedChecks.filter(isCompleteCheck),
         indexes: effectiveIndexes.filter((r) => indexRowProblems(r) === null),
         knownColumns: new Set(baseline.map((b) => b.name)),
+        pendingColumns: new Set([
+          ...added.map((c) => c.name.trim()).filter((n) => n),
+          ...existing.filter((e) => !e.drop && e.name.trim() !== e.original).map((e) => e.name.trim()),
+        ]),
       }),
     ],
-    [driver, database, table, baseline, existing, addedFks, addedChecks, effectiveIndexes],
+    [driver, database, table, baseline, existing, added, addedFks, addedChecks, effectiveIndexes],
   );
   const runCount = useCallback(
     (sql: string) =>

@@ -61,7 +61,7 @@ describe("CreateIndexModal UNIQUE 事前検査 (#1757)", () => {
     expect(warning).toHaveTextContent(t("alterPrecheckDuplicateUnique", { count: 3 }));
     expect(vi.mocked(api.runLookupQuery).mock.calls[0][0].sql).toContain("HAVING COUNT(*) > 1");
     fireEvent.click(screen.getByRole("button", { name: t("alterPrecheckOpenRows") }));
-    expect(onSend.mock.calls[0][0]).toMatch(/^SELECT \* FROM "main"."t" WHERE/);
+    expect(onSend.mock.calls[0][0]).toMatch(/^SELECT \* FROM "t" WHERE/);
   });
 
   it("違反 0 件なら警告を出さない", async () => {
