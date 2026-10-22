@@ -11753,6 +11753,9 @@ export default function App() {
         }
       : null;
 
+  // ワークスペース上端のアンビエントウォッシュ (#1768)。本番 / サンドボックス以外は undefined。
+  const ambientWash = ambientWashImage(titleBarConnection);
+
   // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
   // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
   // (`components/workspaceView.ts`) に委譲し、これを `AnimatePresence
@@ -12392,17 +12395,11 @@ export default function App() {
           gridColumn="2"
           direction="column"
           overflow="hidden"
-          bgColor="app.bg"
+          bg="app.bg"
           minW={0}
-          style={{
-            ...(selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : {}),
-            // 本番 / サンドボックス接続中だけ上端にごく薄い環境色を敷く (#1768。値は App.css の
-            // `--prod-wash` / `--sandbox-wash`、hc-* では none)。`bg` ショートハンドは
-            // background-image を打ち消すため bgColor を使う。
-            ...(ambientWashImage(titleBarConnection)
-              ? { backgroundImage: ambientWashImage(titleBarConnection), backgroundRepeat: "no-repeat" }
-              : {}),
-          }}
+          style={
+            selectedProfile?.color ? ({ "--ws-accent": selectedProfile.color } as CSSProperties) : undefined
+          }
         >
           {/* IPC 検証失敗が複数コマンドで続いたときの版不一致の警告 (#1622)。通常は何も描画しない。 */}
           <IpcMismatchNotice />
@@ -12618,6 +12615,26 @@ export default function App() {
               flexDirection="column"
               overflow="hidden"
             >
+              {/* 本番 / サンドボックス接続中のアンビエントウォッシュ (#1768)。セッションヘッダ・
+                タブ列・エディタは不透明な背景を持つため `<main>` の背景では隠れる。そこで作業領域の
+                上端に操作を一切奪わない overlay を重ねる (pointer-events: none / aria-hidden、
+                z-index はモーダル・ポップオーバー・ツールチップより下)。値は App.css の
+                `--prod-wash` / `--sandbox-wash` (hc-* では none)。 */}
+              {ambientWash && (
+                <div
+                  aria-hidden
+                  data-ambient-wash={titleBarConnection?.isProduction ? "prod" : "sandbox"}
+                  style={{
+                    position: "absolute",
+                    inset: "0 0 auto 0",
+                    height: "100%",
+                    pointerEvents: "none",
+                    zIndex: 1,
+                    backgroundImage: ambientWash,
+                    backgroundRepeat: "no-repeat",
+                  }}
+                />
+              )}
               <div
                 inert={workspaceView !== "workspace" || undefined}
                 aria-hidden={workspaceView !== "workspace" || undefined}

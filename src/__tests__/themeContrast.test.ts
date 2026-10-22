@@ -544,21 +544,35 @@ describe("spacing scale tracks the font scale (#327)", () => {
   });
 });
 
-describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash) の上でも前景が読める (#1768)", () => {
-  /** 上端中央 10% + 隅 6% が最悪でも重なる上限 (重なり合う最大でも 10% 程度) で bg に合成する。 */
-  /** 本文 (--text) は wash 上でも AA。補足/エラー文はテーマ側のベース余白が元々僅差 (4.5 付近) で、
-   *  上端 140px だけの 10% 以下のウォッシュで 0.3 前後下がるため、下限を 4.0:1 に固定して極端な劣化だけ検知する。 */
-  const WASH_MIN_SECONDARY = 4.0;
-  const WORST_ALPHA = 0.1;
-  function blend(fg: string, bg: string, a: number): string {
+describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash) を重ねても全テーマで前景が AA を保つ (#1768)", () => {
+  /**
+   * wash は作業領域の上に `pointer-events: none` の overlay として**前景 (文字) ごと**重なる。
+   * よって文字色も背景色も同じ色 w・不透明度 a で合成した `c' = c*(1-a) + w*a` のペアでコントラストを測る。
+   * a は CSS から読んだ最大の不透明度 (上端中央。隅は中央の半分以下で、両者が重なる左右端でも
+   * 中央のグラデーション末端 (半減) と足して中央値を超えない) を最悪ケースとして使う。
+   */
+  function blend(fg: string, over: string, a: number): string {
     const f = fg.replace("#", "");
-    const b = bg.replace("#", "");
+    const o = over.replace("#", "");
     const ch = (i: number) =>
-      Math.round(parseInt(f.slice(i, i + 2), 16) * a + parseInt(b.slice(i, i + 2), 16) * (1 - a))
+      Math.round(parseInt(f.slice(i, i + 2), 16) * (1 - a) + parseInt(o.slice(i, i + 2), 16) * a)
         .toString(16)
         .padStart(2, "0");
     return `#${ch(0)}${ch(2)}${ch(4)}`;
   }
+  /** `--<name>: radial-gradient(...), ...;` の color-mix の % (と参照トークン名) を抽出する。 */
+  function washStops(name: string): { token: string; pct: number }[] {
+    const m = css.match(new RegExp(`--${name}:\\s*([\\s\\S]*?);\\n`));
+    expect(m, `--${name} が :root に定義されている`).toBeTruthy();
+    return [...m![1].matchAll(/color-mix\(in srgb, var\(--([\w-]+)\) ([\d.]+)%/g)].map(([, token, pct]) => ({
+      token,
+      pct: Number(pct),
+    }));
+  }
+  const WASHES = [
+    ["prod-wash", "error-solid"],
+    ["sandbox-wash", "sandbox-violet"],
+  ] as const;
   const themes: [string, Record<string, string>, boolean][] = [
     ["light", light, false],
     ["dark", { ...light, ...dark }, false],
@@ -566,18 +580,24 @@ describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash)
       (p) => [p.name, { ...light, ...p.vars }, p.isHighContrast] as [string, Record<string, string>, boolean],
     ),
   ];
+  /** 既存の「コアトークン AA」と同じ前景/背景ペア (wash を重ねても同じ基準を維持する)。 */
+  const PAIRS: [string, string][] = [
+    ["text", "bg"],
+    ["text", "bg-elevated"],
+    ["text-secondary", "bg"],
+    ["text-muted", "bg"],
+    ["text-muted", "bg-header"],
+    ["text-error", "bg"],
+  ];
 
-  it("wash の不透明度は 12% 以下で、色は意味色トークンのみ", () => {
-    for (const name of ["prod-wash", "sandbox-wash"]) {
-      const m = css.match(new RegExp(`--${name}:([\\s\\S]*?);\\n`));
-      expect(m, `--${name} が :root に定義されている`).toBeTruthy();
-      const body = m![1];
-      expect(body).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
-      const pcts = [...body.matchAll(/color-mix\(in srgb, var\(--[\w-]+\) (\d+)%/g)].map(([, p]) =>
-        Number(p),
-      );
-      expect(pcts.length).toBeGreaterThan(0);
-      for (const p of pcts) expect(p).toBeLessThanOrEqual(12);
+  it("wash の不透明度は 12% 以下で、色は意味色/サンドボックス色トークンのみ", () => {
+    for (const [name, token] of WASHES) {
+      const stops = washStops(name);
+      expect(stops.length).toBeGreaterThan(0);
+      for (const st of stops) {
+        expect(st.token).toBe(token);
+        expect(st.pct, `--${name} の ${st.pct}% は上限 (12%) を超えている`).toBeLessThanOrEqual(12);
+      }
     }
   });
 
@@ -590,14 +610,15 @@ describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash)
   });
 
   describe.each(themes)("%s", (_name, vars, isHc) => {
-    it.skipIf(isHc)("本番/サンドボックスの wash 上で本文・補足・エラー文が AA を満たす", () => {
-      for (const solid of ["error-solid", "sandbox-violet"]) {
-        const washed = blend(vars[solid], vars.bg, WORST_ALPHA);
-        for (const fg of ["text", "text-secondary", "text-muted", "text-error"]) {
-          const r = contrastRatio(vars[fg], washed);
-          expect(r, `--${fg} on ${solid} wash (${washed}) = ${r.toFixed(2)}:1`).toBeGreaterThanOrEqual(
-            fg === "text" ? AA_TEXT : WASH_MIN_SECONDARY,
-          );
+    it.skipIf(isHc)("前景・背景の両方に wash を合成しても本文/補足/意味色テキストが AA (4.5:1)", () => {
+      for (const [name, token] of WASHES) {
+        const a = Math.max(...washStops(name).map((st) => st.pct)) / 100;
+        for (const [fg, bg] of PAIRS) {
+          const r = contrastRatio(blend(vars[fg], vars[token], a), blend(vars[bg], vars[token], a));
+          expect(
+            r,
+            `--${fg} on --${bg} under ${name} (${a * 100}%) = ${r.toFixed(2)}:1`,
+          ).toBeGreaterThanOrEqual(AA_TEXT);
         }
       }
     });
