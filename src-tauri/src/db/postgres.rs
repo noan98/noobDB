@@ -7,6 +7,7 @@ use sqlx::postgres::{
 use sqlx::{Acquire, Column as _, Row, TypeInfo, ValueRef};
 
 use super::advisor::{UnusedIndexEntry, UnusedIndexStats};
+use super::schema_insight::IncomingForeignKey;
 use super::server_messages::capture;
 use super::tx_options::TxOptions;
 use super::types::{non_empty_comment, TableComment};
@@ -1872,6 +1873,60 @@ impl PostgresConn {
                 ),
                 on_update: pg_fk_action(
                     r.try_get::<Option<String>, _>(6).ok().flatten().as_deref(),
+                ),
+            })
+            .collect())
+    }
+
+    /// 別スキーマの子テーブルから `schema.table` を参照する単一列の外部キー (#1786)。
+    /// `foreign_keys` は ER 図・DDL・アドバイザが「同一スキーマ内」を前提にしているため
+    /// 条件を緩めず、逆参照 (参照行数の確認・参照元の表示) だけがこの専用クエリで補う。
+    /// `schema` 欄に子テーブルのスキーマ名を入れて返す。複合 FK は単一列の条件で
+    /// 子行を絞れないので除く (同一スキーマ側の `incoming_foreign_keys` と同じ方針)。
+    pub async fn cross_schema_incoming_foreign_keys(
+        &self,
+        schema: &str,
+        table: &str,
+    ) -> Result<Vec<IncomingForeignKey>> {
+        let rows: Vec<PgRow> = sqlx::query(
+            r#"SELECT
+                 n.nspname::text    AS child_schema,
+                 cl.relname::text   AS table_name,
+                 a.attname::text    AS column_name,
+                 fa.attname::text   AS ref_column,
+                 con.confdeltype::text
+               FROM pg_catalog.pg_constraint con
+               JOIN pg_catalog.pg_class cl ON cl.oid = con.conrelid
+               JOIN pg_catalog.pg_namespace n ON n.oid = cl.relnamespace
+               JOIN pg_catalog.pg_class fcl ON fcl.oid = con.confrelid
+               JOIN pg_catalog.pg_namespace fn ON fn.oid = fcl.relnamespace
+               JOIN pg_catalog.pg_attribute a
+                 ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
+               JOIN pg_catalog.pg_attribute fa
+                 ON fa.attrelid = con.confrelid AND fa.attnum = con.confkey[1]
+               WHERE con.contype = 'f'
+                 AND array_length(con.conkey, 1) = 1
+                 AND NOT EXISTS (
+                       SELECT 1 FROM pg_catalog.pg_constraint p
+                        WHERE p.oid = con.conparentid AND p.conrelid = con.conrelid)
+                 AND fcl.relnamespace <> cl.relnamespace
+                 AND fn.nspname = $1
+                 AND fcl.relname::text = $2::text
+               ORDER BY n.nspname, cl.relname, con.conname"#,
+        )
+        .bind(schema)
+        .bind(table)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|r| IncomingForeignKey {
+                schema: r.try_get::<Option<String>, _>(0).ok().flatten(),
+                table: r.try_get::<String, _>(1).unwrap_or_default(),
+                column: r.try_get::<String, _>(2).unwrap_or_default(),
+                referenced_column: r.try_get::<String, _>(3).unwrap_or_default(),
+                on_delete: pg_fk_action(
+                    r.try_get::<Option<String>, _>(4).ok().flatten().as_deref(),
                 ),
             })
             .collect())

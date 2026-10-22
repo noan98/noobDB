@@ -109,6 +109,16 @@ const en = {
   shortcutModalSubmitDesc: "In a dialog or form: run the primary action (Esc closes without running).",
 
   splashTagline: "Lightweight SQL client",
+  aboutTitle: "About noobDB",
+  aboutClose: "Close",
+  aboutVersion: "Version {version}",
+  aboutVersionUnknown: "Version unknown",
+  aboutReplay: "Replay logo animation",
+  aboutRepository: "Repository",
+  aboutDocs: "Documentation",
+  aboutOpenFailed: "Could not open the link",
+  cmdkActionAbout: "About noobDB",
+  appAbout: "About noobDB",
 
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
@@ -1740,6 +1750,9 @@ const en = {
   editorMoreActionsTitle: "Explain, snippets, files, broadcast and the query builder.",
   editorHintDisabled: "Connect a session to run queries.",
   editorHintEmpty: "Type a SQL statement first.",
+  // 空エディタのゴースト・プレースホルダ (#1785)。{shortcut} は実行ショートカット。
+  editorPlaceholderHint: "-- Press {shortcut} to run",
+  editorPlaceholderGenericTable: "your_table",
   // Emergency query mode on read-only sessions.
   editorEmergencyMode: "Emergency mode",
   editorEmergencyModeTitle:
@@ -1982,6 +1995,9 @@ const en = {
   qbInsertToEditorTitle: "Insert the generated SQL into the editor without running it.",
 
   resultEmpty: "No results yet. Run a query above.",
+  resultEmptyTitle: "Ready to run",
+  resultEmptySnippets: "Snippets",
+  resultEmptyCommandPalette: "Command palette",
   resultExecuted: "Statement executed. {rows} rows affected ({ms} ms).",
   resultNull: "NULL",
   resultEmptyString: "Empty string",
@@ -6868,6 +6884,16 @@ const ja: Dict = {
   shortcutModalSubmitDesc: "ダイアログ / フォームで主アクションを実行します (Esc は実行せずに閉じます)。",
 
   splashTagline: "軽量 SQL クライアント",
+  aboutTitle: "noobDB について",
+  aboutClose: "閉じる",
+  aboutVersion: "バージョン {version}",
+  aboutVersionUnknown: "バージョン不明",
+  aboutReplay: "ロゴのアニメーションを再生",
+  aboutRepository: "リポジトリ",
+  aboutDocs: "ドキュメント",
+  aboutOpenFailed: "リンクを開けませんでした",
+  cmdkActionAbout: "noobDB について",
+  appAbout: "noobDB について",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",
@@ -8486,6 +8512,8 @@ const ja: Dict = {
   editorMoreActionsTitle: "Explain・スニペット・ファイル・一括実行・Query Builder。",
   editorHintDisabled: "クエリを実行するにはセッションに接続してください。",
   editorHintEmpty: "先に SQL を入力してください。",
+  editorPlaceholderHint: "-- {shortcut} で実行",
+  editorPlaceholderGenericTable: "テーブル名",
   // 読み取り専用セッションの緊急クエリ実行モード。
   editorEmergencyMode: "緊急モード",
   editorEmergencyModeTitle:
@@ -8729,6 +8757,9 @@ const ja: Dict = {
   qbInsertToEditorTitle: "生成した SQL を実行せずにエディタへ挿入します。",
 
   resultEmpty: "まだ結果はありません。上のエディタでクエリを実行してください。",
+  resultEmptyTitle: "クエリを実行しましょう",
+  resultEmptySnippets: "スニペット",
+  resultEmptyCommandPalette: "コマンドパレット",
   resultExecuted: "ステートメントを実行しました。影響行数 {rows} 件 ({ms} ms)。",
   resultNull: "NULL",
   resultEmptyString: "空文字列",

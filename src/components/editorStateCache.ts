@@ -24,6 +24,8 @@ export interface AppliedEditorConfig {
   lint: string;
   /** 再割り当て可能なアクションのコンボを連結したキー。 */
   keymap: string;
+  /** 空エディタのゴースト・プレースホルダ文面 (#1785)。 */
+  placeholder: string;
 }
 
 export interface CachedEditorState {

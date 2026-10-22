@@ -1258,6 +1258,7 @@ export const schemaTree = z.object({
 /** 逆方向 FK 1 件 (`incoming_foreign_keys`、#1255)。このレスポンスだけ camelCase
  *  (Rust 側が `serde(rename_all = "camelCase")`、フロントの `IncomingFk` と同形)。 */
 export const incomingForeignKey = z.object({
+  schema: z.string().nullish(),
   table: z.string(),
   column: z.string(),
   referencedColumn: z.string(),

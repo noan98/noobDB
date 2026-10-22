@@ -212,6 +212,7 @@ import { type ResultViewKind } from "./components/ResultViewSwitch";
 import { bundleExplainPrefix } from "./components/investigationBundle";
 import { buildExplainAnalyzeSql } from "./components/explainAnalyze";
 import { TitleBar, type TitleBarConnection } from "./components/TitleBar";
+import { ambientWashImage } from "./components/titleBarContext";
 import { ProductionBadge, ProfileColorChip } from "./components/ProfileBadge";
 import { SplashScreen } from "./components/SplashScreen";
 import { Splitter } from "./components/Splitter";
@@ -271,6 +272,7 @@ const PlanWatchPanel = lazy(() =>
 const SchemaDriftPanel = lazy(() =>
   import("./components/SchemaDriftPanel").then((m) => ({ default: m.SchemaDriftPanel })),
 );
+const AboutDialog = lazy(() => import("./components/AboutDialog").then((m) => ({ default: m.AboutDialog })));
 const SavedTabsModal = lazy(() =>
   import("./components/SavedTabsModal").then((m) => ({ default: m.SavedTabsModal })),
 );
@@ -458,7 +460,7 @@ import {
   shouldNotifyQueryCompletion,
   type QueryNotificationKind,
 } from "./queryNotify";
-import type { IncomingFk } from "./fkNavigation";
+import { type IncomingFk, incomingFkTableName } from "./fkNavigation";
 import { collectDropImpacts, type DropImpact } from "./dropImpact";
 import { buildOpenChildrenSql, collectDeletedKeyValues, loadRefImpacts, type RefImpact } from "./refImpact";
 import { RefImpactList } from "./components/RefImpactList";
@@ -1445,6 +1447,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTasks, setShowTasks] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   // 初回起動オンボーディングツアー (#599)。ウェルカム画面の「はじめかたを見る」
   // からの手動起動、および新規ユーザ (プロファイル 0 件・未表示) への自動起動の
   // 両方でこのフラグを立てる。表示済みフラグの永続化は閉じるときに行う。
@@ -4453,7 +4456,7 @@ export default function App() {
   // table tab so the result grid can offer reverse FK navigation (rows
   // referencing the current row). Cached per table and reused across tabs. The
   // backend keeps one database-wide FK list, so this costs no extra DB queries
-  // per table. #621 / #1255
+  // per table (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786). #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
     for (const tt of paneActiveTabs) {
@@ -8105,15 +8108,15 @@ export default function App() {
       // 注記には数えられなかった子テーブルだけを挙げる (集計失敗は全部、列不明は該当の子のみ)。
       const unverifiedTables = [
         ...new Set(
-          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map(
-            (r) => r.table,
+          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map((r) =>
+            incomingFkTableName(r),
           ),
         ),
       ];
       // 値の上限で打ち切って一件も見つからなかったときは、数えていない値に子行がありうるので
       // 黙って進めず「確認できなかった」として全子テーブルを挙げる。
       if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
-        unverifiedTables.push(...new Set(refs.map((r) => r.table)));
+        unverifiedTables.push(...new Set(refs.map((r) => incomingFkTableName(r))));
       }
       const unverified = unverifiedTables.length > 0;
       if (impacts.length === 0 && !unverified) return true;
@@ -8130,7 +8133,7 @@ export default function App() {
               controls.cancel();
               openAndRunQuery(
                 buildOpenChildrenSql({ driver, database: input.database, impact: imp, keys, types }),
-                imp.table,
+                incomingFkTableName(imp),
               );
             }}
           />
@@ -8160,7 +8163,8 @@ export default function App() {
           let refs: IncomingFk[];
           try {
             const all = await api.incomingForeignKeys(sessionId, database, tbl);
-            refs = all.filter((fk) => fk.table !== tbl && !excludeChildren.includes(fk.table));
+            // 別スキーマの同名テーブル (#1786) は親自身でも除外対象でもないので残す。
+            refs = all.filter((fk) => fk.schema || (fk.table !== tbl && !excludeChildren.includes(fk.table)));
           } catch {
             return { impacts: [], unverified: [] };
           }
@@ -8176,7 +8180,7 @@ export default function App() {
             });
             return { impacts, unverified: [] };
           } catch {
-            return { impacts: [], unverified: [...new Set(refs.map((r) => r.table))] };
+            return { impacts: [], unverified: [...new Set(refs.map((r) => incomingFkTableName(r)))] };
           }
         }),
       );
@@ -8204,7 +8208,7 @@ export default function App() {
                 controls.cancel();
                 openAndRunQuery(
                   buildOpenChildrenSql({ driver, database, impact: imp, keys: null }),
-                  imp.table,
+                  incomingFkTableName(imp),
                 );
               }}
             />
@@ -8250,7 +8254,7 @@ export default function App() {
 
   // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
   // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
-  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  // DB 問い合わせは増えない (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786)。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
   const loadDropImpacts = useCallback(
     async (database: string, tables: string[]): Promise<DropImpact[]> => {
       if (!sessionId) return [];
@@ -11262,6 +11266,14 @@ export default function App() {
         run: () => openFullView("help"),
       },
       {
+        id: "nav:about",
+        group: "navigation",
+        label: t("cmdkActionAbout"),
+        icon: "info",
+        keywords: "about version license noobDB バージョン 情報 について",
+        run: () => setShowAbout(true),
+      },
+      {
         id: "nav:compare",
         group: "navigation",
         label: t("cmdkActionCompare"),
@@ -11678,6 +11690,12 @@ export default function App() {
     },
     openErDiagramFromEmpty: () => openFullView("erDiagram"),
     openCommandPaletteFromEmpty: () => setShowCommandPalette(true),
+    runOrFocusEditorFromEmpty: (paneId: string) => {
+      const editor = editorRefs.current.get(paneId);
+      if (!editor) return;
+      editor.focus();
+      editor.runAll();
+    },
   });
   const broadcastAvailable =
     !!sessionId &&
@@ -11745,6 +11763,9 @@ export default function App() {
           status: connectionStatus,
         }
       : null;
+
+  // ワークスペース上端のアンビエントウォッシュ (#1768)。本番 / サンドボックス以外は undefined。
+  const ambientWash = ambientWashImage(titleBarConnection);
 
   // メイン領域が「今どの全画面サーフェスを表示しているか」の判別子 (#1020)。
   // 下の `<main>` 直下の三項チェーンと**同順・同条件**で判定する純関数
@@ -12605,6 +12626,26 @@ export default function App() {
               flexDirection="column"
               overflow="hidden"
             >
+              {/* 本番 / サンドボックス接続中のアンビエントウォッシュ (#1768)。セッションヘッダ・
+                タブ列・エディタは不透明な背景を持つため `<main>` の背景では隠れる。そこで作業領域の
+                上端に操作を一切奪わない overlay を重ねる (pointer-events: none / aria-hidden、
+                z-index はモーダル・ポップオーバー・ツールチップより下)。値は App.css の
+                `--prod-wash` / `--sandbox-wash` (hc-* では none)。 */}
+              {ambientWash && (
+                <div
+                  aria-hidden
+                  data-ambient-wash={titleBarConnection?.isProduction ? "prod" : "sandbox"}
+                  style={{
+                    position: "absolute",
+                    inset: "0 0 auto 0",
+                    height: "var(--ambient-wash-height)",
+                    pointerEvents: "none",
+                    zIndex: 1, // 作業領域内のローカルな重ね順 (モーダル・ポップオーバーより下)
+                    backgroundImage: ambientWash,
+                    backgroundRepeat: "no-repeat",
+                  }}
+                />
+              )}
               <div
                 inert={workspaceView !== "workspace" || undefined}
                 aria-hidden={workspaceView !== "workspace" || undefined}
@@ -13528,6 +13569,14 @@ export default function App() {
           </AnimatePresence>
 
           <AnimatePresence>
+            {showAbout && (
+              <Suspense fallback={null}>
+                <AboutDialog onClose={() => setShowAbout(false)} />
+              </Suspense>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
             {savedTabsTarget && savedTabsSummary && (
               <Suspense fallback={null}>
                 <SavedTabsModal
@@ -14249,6 +14298,8 @@ export default function App() {
                 disabled: pinnedResults.length === 0,
                 title: pinnedResults.length === 0 ? t("pinCompareEmptyHint") : undefined,
               },
+              { separator: true },
+              { label: t("appAbout"), icon: "info", onSelect: () => setShowAbout(true) },
             ]}
             onClose={() => setToolsMenu(null)}
           />

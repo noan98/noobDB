@@ -27,7 +27,7 @@ import { transitions, variants } from "../motion";
 // 開発用パフォーマンス計測 (#1094)。既定 OFF — フックの差し込みのみ。
 import { markGridCommit } from "../perf";
 import { measureElement as defaultMeasureElement, useVirtualizer } from "@tanstack/react-virtual";
-import { Box, chakra, type SystemStyleObject } from "@chakra-ui/react";
+import { Box, chakra, Flex, type SystemStyleObject } from "@chakra-ui/react";
 import {
   COLLAPSIBLE_TOOLBAR_ACTIONS,
   nextCollapsedCount,
@@ -116,7 +116,8 @@ import {
   selectionFrameKey,
   selectionMountedRows,
 } from "./selectionGlide";
-import { NoResultsIllustration, errorIllustration } from "./illustrations";
+import { NoResultsIllustration, RunQueryIllustration, errorIllustration } from "./illustrations";
+import type { ResultEmptyActionItem } from "./resultEmptyActions";
 import { Callout } from "./Callout";
 import { Icon, ICON_SIZES, ICON_STROKE, type IconName } from "./Icon";
 import { useAiAvailable } from "../ai/useAiAvailable";
@@ -215,7 +216,7 @@ import {
 import { changedRowIndexSet, diffResultRows, removedPrevRows, rowDiffFor } from "../resultDiff";
 import { RefreshTrend } from "./RefreshTrend";
 import type { RefreshSample } from "../refreshPatch";
-import { buildFkJumpSql, buildReverseRefSql, type IncomingFk } from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, type IncomingFk, incomingFkTableName } from "../fkNavigation";
 import {
   type SelectionSummary,
   type ColumnStats,
@@ -1437,6 +1438,11 @@ interface Props {
    * のまま動く。
    */
   gridBindings?: GridBindings;
+  /**
+   * クエリ実行前 (result が null) の空状態に出す補助アクション (#1784)。
+   * `buildResultEmptyActions` で組み立てたものを渡す。省略時はボタン無しの説明のみ。
+   */
+  emptyActions?: ResultEmptyActionItem[];
   /**
    * サーバ側ソート/フィルタ (#792): table タブでヘッダーメニューから適用した
    * 全件対象の並び替え/絞り込み。SQL 組み立て・再フェッチは App が担う。
@@ -7669,14 +7675,15 @@ export const DataGrid = memo(function DataGrid({
                   driver,
                   database: rowSqlDatabase,
                   childTable: inc.table,
+                  childSchema: inc.schema,
                   childColumn: inc.column,
                   value,
                   valueType: columns[refColIdx]?.type_name,
                 });
                 reverse.push({
                   label: grouped
-                    ? t("gridFkReverseChild", { table: inc.table, column: inc.column })
-                    : t("gridFkReverse", { table: inc.table, column: inc.column }),
+                    ? t("gridFkReverseChild", { table: incomingFkTableName(inc), column: inc.column })
+                    : t("gridFkReverse", { table: incomingFkTableName(inc), column: inc.column }),
                   title: t("gridFkReverseTitle"),
                   onSelect: () => {
                     setCopyMenu(null);
@@ -8511,6 +8518,7 @@ export const ResultGrid = memo(
       initialScrollTop,
       onScroll,
       gridBindings,
+      emptyActions,
       serverSort,
       serverFilter,
       onSetServerSort,
@@ -9250,9 +9258,18 @@ export const ResultGrid = memo(
 
     if (!result) {
       return (
-        <Box flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
-          {t("resultEmpty")}
-        </Box>
+        <Flex flex="1 1 auto" minHeight={0} minWidth={0} overflow="auto" bg="app.surface">
+          {/* m="auto": 収まれば中央、溢れたら上端からスクロールできる (center だと上が切れる) */}
+          <Box m="auto">
+            <EmptyState
+              illustration={<RunQueryIllustration />}
+              icon="play"
+              title={t("resultEmptyTitle")}
+              description={t("resultEmpty")}
+              secondaryActions={emptyActions}
+            />
+          </Box>
+        </Flex>
       );
     }
     if (result.columns.length === 0) {

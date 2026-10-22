@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildFkJumpSql, buildReverseRefSql } from "../fkNavigation";
+import { buildFkJumpSql, buildReverseRefSql, incomingFkTableName } from "../fkNavigation";
 
 describe("buildFkJumpSql", () => {
   it("qualifies the referenced table with the database for MySQL", () => {
@@ -172,5 +172,26 @@ describe("列型付きのリテラル化", () => {
     expect(buildFkJumpSql({ ...base, value: "a' OR 1=1 --" })).toBe(
       "SELECT * FROM \"t\" WHERE \"k\" = 'a'' OR 1=1 --'",
     );
+  });
+});
+
+describe("別スキーマの子テーブル (#1786)", () => {
+  it("buildReverseRefSql は childSchema を database より優先して修飾する", () => {
+    expect(
+      buildReverseRefSql({
+        driver: "postgres",
+        database: "public",
+        childSchema: "sales",
+        childTable: "child",
+        childColumn: "pid",
+        value: 7,
+      }),
+    ).toBe('SELECT * FROM "sales"."child" WHERE "pid" = 7');
+  });
+
+  it("incomingFkTableName はスキーマをまたぐときだけ修飾する", () => {
+    expect(incomingFkTableName({ table: "child" })).toBe("child");
+    expect(incomingFkTableName({ schema: null, table: "child" })).toBe("child");
+    expect(incomingFkTableName({ schema: "sales", table: "child" })).toBe("sales.child");
   });
 });
