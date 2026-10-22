@@ -27,8 +27,9 @@ import { Icon } from "./Icon";
 import { Tooltip } from "./Tooltip";
 import { TableConstraintEditor, type CheckRow, type FkRow } from "./TableConstraintEditor";
 import { isCompleteCheck, isCompleteForeignKey } from "./tableConstraints";
-import { buildAlterPrechecks, precheckRowsSql, type AlterPrecheck } from "./alterPrecheck";
-import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews, type CountPreviewState } from "../useCountPreviews";
+import { buildAlterPrechecks, buildConstraintPrechecks } from "./alterPrecheck";
+import { AlterPrecheckNotice } from "./AlterPrecheckNotice";
+import { COUNT_PREVIEW_TIMEOUT_SECS, useCountPreviews } from "../useCountPreviews";
 
 /**
  * 既存テーブルの列編集ダイアログ (#794)。`describeTable` で現状の列を取得し、
@@ -96,96 +97,6 @@ function groupExistingFks(all: ForeignKey[], table: string): ExistingFk[] {
     out.push(fk);
   }
   return out;
-}
-
-/**
- * ALTER の事前検査の結果表示 (#1536)。型を縮小した列・NOT NULL を付けた列について、既存行のうち
- * 新しい定義に収まらない件数を警告する。実行は止めない (件数は目安で、判断は利用者に任せる)。
- */
-function AlterPrecheckNotice({
-  prechecks,
-  counts,
-  onOpenRows,
-}: {
-  prechecks: AlterPrecheck[];
-  counts: Record<string, CountPreviewState>;
-  /** 収まらない行を SELECT * でエディタ (結果グリッド) へ開く (#1626)。 */
-  onOpenRows?: (sql: string) => void;
-}) {
-  const t = useT();
-  if (prechecks.length === 0) return null;
-  const failing = prechecks.flatMap((p) => {
-    const c = counts[p.id];
-    return c?.status === "ok" && c.count > 0 ? [{ check: p, count: c.count }] : [];
-  });
-  const pending = prechecks.some((p) => (counts[p.id]?.status ?? "loading") === "loading");
-  const errors = prechecks.flatMap((p) => {
-    const c = counts[p.id];
-    return c?.status === "error" ? [{ check: p, error: c.error }] : [];
-  });
-  const kindKey = {
-    length: "alterPrecheckLength",
-    range: "alterPrecheckRange",
-    decimal: "alterPrecheckDecimal",
-    scale: "alterPrecheckScale",
-    notNull: "alterPrecheckNotNull",
-  } as const;
-  if (failing.length > 0) {
-    return (
-      <Callout
-        tone="warning"
-        role="status"
-        title={t("alterPrecheckFailTitle", { count: failing.length })}
-        data-testid="alter-precheck-warning"
-      >
-        <chakra.div display="flex" flexDirection="column" gap="0.5">
-          <span>{t("alterPrecheckFailBody")}</span>
-          {failing.map(({ check, count }) => (
-            <chakra.span key={check.id} fontSize="sm">
-              <chakra.code fontFamily="mono">{check.column}</chakra.code>
-              {check.kind === "notNull" ? ` (${check.to})` : ` (${check.from} → ${check.to})`}:{" "}
-              {t(kindKey[check.kind], { count })}
-              {onOpenRows && precheckRowsSql(check.sql) && (
-                <>
-                  {" "}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      const rowsSql = precheckRowsSql(check.sql);
-                      if (rowsSql) onOpenRows(rowsSql);
-                    }}
-                  >
-                    {t("alterPrecheckOpenRows")}
-                  </Button>
-                </>
-              )}
-            </chakra.span>
-          ))}
-        </chakra.div>
-      </Callout>
-    );
-  }
-  if (pending) {
-    return (
-      <chakra.span textStyle="caption" color="app.textMuted" role="status">
-        {t("alterPrecheckRunning")}
-      </chakra.span>
-    );
-  }
-  if (errors.length > 0) {
-    return (
-      <chakra.span textStyle="caption" color="app.textMuted" role="status">
-        {t("alterPrecheckError", { error: errors[0].error })}
-      </chakra.span>
-    );
-  }
-  return (
-    <Callout tone="success" role="status" data-testid="alter-precheck-ok">
-      {t("alterPrecheckOk")}
-    </Callout>
-  );
 }
 
 function emptyNewColumn(driver: DriverKind): NewColumn {
@@ -422,9 +333,23 @@ export function AlterTableModal({
   const sqlPreview = statements.map((s: AlterStatement) => s.sql).join("\n");
   // 型の縮小・NOT NULL 追加で既存行が収まらないかの事前検査 (#1536)。読み取り専用の COUNT を
   // デバウンスして発行するので、read_only 接続でも動く。
+  // FK / UNIQUE / CHECK の追加で既存データが違反しないかも同じ枠で検査する (#1757)。
+  // 同じ ALTER で追加・リネームする列は現状のテーブルに無く COUNT が失敗するので、DB に既にある列だけを対象にする。
   const prechecks = useMemo(
-    () => buildAlterPrechecks(driver, database, table, baseline, existing),
-    [driver, database, table, baseline, existing],
+    () => [
+      ...buildAlterPrechecks(driver, database, table, baseline, existing),
+      ...buildConstraintPrechecks(driver, database, table, {
+        addedForeignKeys: addedFks.filter(isCompleteForeignKey),
+        addedChecks: addedChecks.filter(isCompleteCheck),
+        indexes: effectiveIndexes.filter((r) => indexRowProblems(r) === null),
+        knownColumns: new Set(baseline.map((b) => b.name)),
+        pendingColumns: new Set([
+          ...added.map((c) => c.name.trim()).filter((n) => n),
+          ...existing.filter((e) => !e.drop && e.name.trim() !== e.original).map((e) => e.name.trim()),
+        ]),
+      }),
+    ],
+    [driver, database, table, baseline, existing, added, addedFks, addedChecks, effectiveIndexes],
   );
   const runCount = useCallback(
     (sql: string) =>
