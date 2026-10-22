@@ -1953,7 +1953,14 @@ export const QueryEditor = memo(
     }
 
     return (
-      <Box display="flex" flexDirection="column" flex="1 1 auto" minHeight={0} minWidth={0}>
+      <Box
+        display="flex"
+        flexDirection="column"
+        flex="1 1 auto"
+        minHeight={0}
+        minWidth={0}
+        data-focus-landing-region=""
+      >
         <Box
           display="flex"
           gap="2"

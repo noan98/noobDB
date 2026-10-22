@@ -2426,44 +2426,27 @@ td.is-find-current::after {
 }
 
 /* F6 の領域フォーカス巡回 (#681) で着地した領域の外枠パルス (#1764)。
-   `components/focusLandingPulse.ts` が `is-focus-landing` を付け、animationend で外す。
-   レイアウトは動かさない (pointer-events: none の疑似要素 / outline のみ)。
-   - サイドバー (aside) とエディタのルートは `is-focus-landing-overlay`: 疑似要素の内側リング。
-     outline / inset box-shadow は position: relative の子孫 (CodeMirror 等) の下に隠れる
-     ため。z-index: 2 は作業領域先頭のアンビエントウォッシュ (z-index: 1, #1768) の上に出す。
-   - 結果グリッド (スクロールコンテナ。疑似要素だとスクロールで流れる) は負オフセットの outline。
-   reduced-motion は JS 側で付与しない。hc-* も付与せず、念のため下で無効化。 */
+   `components/focusLandingPulse.ts` が `[data-focus-landing-region]` (サイドバー aside /
+   QueryEditor ルート / 結果グリッド外枠) に `is-focus-landing` を付け、animationend で外す。
+   レイアウトは動かさない (pointer-events: none の疑似要素の内側リングのみ)。
+   outline / inset box-shadow は position: relative の子孫 (CodeMirror・sticky 行 / ヘッダ) の
+   下に隠れるため疑似要素にし、スクロールで流れないよう領域はスクロールコンテナの外側に置く。
+   z-index: 6 は結果グリッドの sticky 行・ヘッダ (最大 5) とアンビエントウォッシュ (1, #1768) の上。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない。 */
 @keyframes focus-landing-pulse {
   0%   { opacity: 1; }
   100% { opacity: 0; }
 }
-@keyframes focus-landing-pulse-outline {
-  0%   { outline-color: var(--accent); }
-  100% { outline-color: transparent; }
-}
-.is-focus-landing-overlay { position: relative; }
-.is-focus-landing-overlay::after {
+:where(.is-focus-landing) { position: relative; }
+.is-focus-landing::after {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 2;
+  z-index: 6;
   pointer-events: none;
   box-shadow: inset 0 0 0 calc(var(--focus-ring-width) * 2) var(--accent);
   opacity: 0;
   animation: focus-landing-pulse 0.6s var(--ease-out);
-}
-/* :root を足して特異度を上げる (フォーカス中のコンテナは `&:focus { outline: none }` を持つことがある)。 */
-:root .is-focus-landing:not(.is-focus-landing-overlay) {
-  outline: calc(var(--focus-ring-width) * 2) solid transparent;
-  outline-offset: calc(var(--focus-ring-width) * -2);
-  animation: focus-landing-pulse-outline 0.6s var(--ease-out);
-}
-:root[data-theme="hc-light"] .is-focus-landing,
-:root[data-theme="hc-dark"] .is-focus-landing,
-:root[data-theme="hc-light"] .is-focus-landing::after,
-:root[data-theme="hc-dark"] .is-focus-landing::after {
-  animation: none;
-  outline: none;
 }
 
 /* 結果グリッド全体 (スクロールコンテナ) の適用成功フラッシュ。疑似要素だと

@@ -11963,6 +11963,7 @@ export default function App() {
       >
         <Flex
           as="aside"
+          data-focus-landing-region=""
           gridColumn="1"
           direction="column"
           overflow="hidden"

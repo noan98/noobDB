@@ -255,6 +255,8 @@ function landed(): Element[] {
   return Array.from(document.querySelectorAll(".is-focus-landing"));
 }
 
+const regionAttr = "data-focus-landing-region";
+
 async function bootWithTable() {
   const screen = await renderInBrowser(<App />);
   await connectToProfile(screen, /Alpha DB/, "appdb");
@@ -283,10 +285,13 @@ describe("F6 フォーカス遷移キュー (#1764)", () => {
       await userEvent.keyboard("{F6}");
       await expect.poll(() => landed().map((el) => !!el.querySelector(".cm-editor"))).toEqual([true]);
       await userEvent.keyboard("{F6}");
-      await expect
-        .poll(() => landed().map((el) => el.getAttribute("data-testid") ?? el.tagName))
-        .toHaveLength(1);
-      expect(landed()[0]?.matches("aside") || landed()[0]?.querySelector(".cm-editor")).toBeFalsy();
+      // 3 回目はグリッド領域 (サイドバー / エディタではなく、グリッドのスクロールコンテナを含む外枠)。
+      await expect.poll(() => landed()).toHaveLength(1);
+      const grid = landed()[0] as Element;
+      expect(grid.hasAttribute(regionAttr)).toBe(true);
+      expect(grid.tagName).not.toBe("ASIDE");
+      expect(grid.querySelector(".cm-editor")).toBeNull();
+      expect(grid.contains(document.activeElement)).toBe(true);
     } finally {
       hold.remove();
     }
@@ -298,6 +303,8 @@ describe("F6 フォーカス遷移キュー (#1764)", () => {
     try {
       await bootWithTable();
       await userEvent.keyboard("{F6}");
+      // 演出は出さないが、フォーカスはサイドバー (aside) へ実際に移っている。
+      expect(document.activeElement?.closest("aside")).not.toBeNull();
       await userEvent.keyboard("{F6}");
       expect(landed()).toHaveLength(0);
     } finally {
