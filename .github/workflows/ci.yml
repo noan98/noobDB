@@ -634,7 +634,9 @@ jobs:
       # 手書き列挙は新規ゴールデンの追記漏れで「Rust 専用 PR で一度も走らない」
       # テストを生むため、`src/__tests__/` の `*Golden.test.ts` / `*Parity.test.ts`
       # は自動で拾われる。Rust ソースやフィクスチャを読むパリティテストを足すときは
-      # この命名規約に従うこと。規約に合わない例外 (awsIam.test.ts) だけ個別に足す。
+      # この命名規約に従うこと。規約に合わない例外 (awsIam.test.ts / apiModuleLayout.test.ts)
+      # だけ個別に足す。src-tauri を import するテストが本フィルタに一致することは
+      # `crosslangGatingParity.test.ts` (自身も *Parity.test.ts) がメタテストで固定する (#1760)。
       # (Vitest の位置引数は「パスの部分一致」フィルタなので glob 相当になる。)
       - name: Cross-language parity/golden tests (Vitest)
         run: >-
@@ -642,6 +644,7 @@ jobs:
           Golden.test.ts
           Parity.test.ts
           src/__tests__/awsIam.test.ts
+          src/__tests__/apiModuleLayout.test.ts
 
   # automerge の変更依頼ゲート (#1108) の判定ロジックと、定期ジョブの通知スクリプト
   # (upsert-tracking-issue.sh, #1633) のユニットテスト。
