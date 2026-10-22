@@ -345,6 +345,16 @@ pub struct IndexInfo {
     /// PostgreSQL 15+ の `NULLS NOT DISTINCT` な UNIQUE インデックスか。IPC には出さない内部用。
     #[serde(skip)]
     pub nulls_not_distinct: bool,
+    /// PostgreSQL: INVALID なインデックス (`CREATE INDEX CONCURRENTLY` の失敗残骸、`ON ONLY`
+    /// 親で未 ATTACH など。`indisvalid` / `indisready` が偽)。一意性が保証されないので行識別に
+    /// 使わない (#1776)。IPC には出さない内部用。既定 (偽) は有効。
+    #[serde(skip)]
+    pub invalid: bool,
+    /// キー列のどれかで、インデックスの照合順序が列自身の照合順序と違うか (#1776)。
+    /// 違うと「インデックス上は別値、列の比較では同値」になり WHERE が複数行に当たる。
+    /// IPC には出さない内部用。
+    #[serde(skip)]
+    pub collation_differs: bool,
 }
 
 /// ストアドプロシージャ / 関数の 1 パラメータ (#1003)。`get_routine_signature`

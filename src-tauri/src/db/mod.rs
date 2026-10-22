@@ -2376,7 +2376,7 @@ pub(crate) fn row_identity_pk_or_none(cols: &[TableColumnInfo]) -> Option<TableR
 /// PK が無い表の行識別に使える UNIQUE NOT NULL キーを選ぶ (#1776)。
 ///
 /// 採用条件: UNIQUE で PRIMARY KEY でなく、部分インデックス (述語あり) でも式インデックス
-/// でもなく、キー列 (PostgreSQL の `INCLUDE` 列は除く) がすべて実在し NOT NULL なもの。
+/// でもなく、有効 (INVALID でない) で、インデックスと列の照合順序が一致し、キー列 (PostgreSQL の `INCLUDE` 列は除く) がすべて実在し NOT NULL なもの。
 /// NULL を許す UNIQUE 列は NULL 同士が重複できる (= 1 行に定まらない) ので使わない。
 /// 候補が複数あるときは列数が少ないもの (単一列の UNIQUE が最優先)、同数ならインデックスの
 /// 並び順で最初のものを選ぶ。
@@ -2387,7 +2387,12 @@ pub(crate) fn pick_unique_row_key(
     indexes
         .iter()
         .filter(|i| {
-            i.unique && !i.primary && i.predicate.is_none() && i.first_expression_at.is_none()
+            i.unique
+                && !i.primary
+                && i.predicate.is_none()
+                && i.first_expression_at.is_none()
+                && !i.invalid
+                && !i.collation_differs
         })
         .filter_map(|i| {
             let n = i
@@ -2600,6 +2605,10 @@ pub(crate) struct IndexRow {
     pub column_option: Option<String>,
     /// PostgreSQL 15+ の `NULLS NOT DISTINCT`。
     pub nulls_not_distinct: bool,
+    /// PostgreSQL: INVALID なインデックス (#1776)。
+    pub invalid: bool,
+    /// この列でインデックスと列の照合順序が違う (#1776)。
+    pub collation_differs: bool,
 }
 
 /// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
@@ -2645,12 +2654,14 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     first_expression_at: None,
                     key_column_count: r.key_column_count,
                     nulls_not_distinct: r.nulls_not_distinct,
+                    invalid: r.invalid,
                     ..Default::default()
                 });
                 i
             }
         };
         if let Some(index) = entry.indexes.get_mut(ii) {
+            index.collation_differs |= r.collation_differs;
             match r.column {
                 Some(col) => {
                     index.columns.push(col);
@@ -4490,7 +4501,19 @@ mod tests {
             key_column_count: None,
             column_options: Vec::new(),
             nulls_not_distinct: false,
+            invalid: false,
+            collation_differs: false,
         }
+    }
+
+    #[test]
+    fn pick_unique_row_key_skips_invalid_and_collation_mismatch() {
+        let cols = [nn_col("a", false)];
+        let mut invalid = uq_index("invalid", &["a"]);
+        invalid.invalid = true;
+        let mut coll = uq_index("coll", &["a"]);
+        coll.collation_differs = true;
+        assert_eq!(super::pick_unique_row_key(&cols, &[invalid, coll]), None);
     }
 
     #[test]

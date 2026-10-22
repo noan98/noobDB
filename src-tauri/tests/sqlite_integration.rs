@@ -567,6 +567,12 @@ async fn sqlite_row_identity_prefers_unique_not_null_key() {
         "CREATE TABLE uq_nullable (code TEXT UNIQUE, note TEXT)",
         "CREATE TABLE uq_partial (code TEXT NOT NULL, note TEXT)",
         "CREATE UNIQUE INDEX uq_partial_idx ON uq_partial (code) WHERE note IS NOT NULL",
+        // 列は NOCASE、インデックスは BINARY: 'a' と 'A' が別値として共存でき、WHERE が 2 行に当たる。
+        "CREATE TABLE uq_coll_idx (code TEXT NOT NULL COLLATE NOCASE, note TEXT)",
+        "CREATE UNIQUE INDEX uq_coll_idx_i ON uq_coll_idx (code COLLATE BINARY)",
+        "CREATE TABLE uq_coll_tbl (code TEXT NOT NULL COLLATE NOCASE, note TEXT, UNIQUE (code COLLATE BINARY))",
+        // 列定義側の COLLATE + 列 UNIQUE は列と同じ照合順序なので採用してよい。
+        "CREATE TABLE uq_coll_same (code TEXT NOT NULL COLLATE NOCASE UNIQUE, note TEXT)",
     ] {
         conn.execute(ddl, None).await.expect(ddl);
     }
@@ -585,6 +591,9 @@ async fn sqlite_row_identity_prefers_unique_not_null_key() {
     assert_eq!(id("uq_prefers_single").await.key_columns, ["b"]);
     assert_eq!(id("uq_nullable").await.strategy, "rowid");
     assert_eq!(id("uq_partial").await.strategy, "rowid");
+    assert_eq!(id("uq_coll_idx").await.strategy, "rowid");
+    assert_eq!(id("uq_coll_tbl").await.strategy, "rowid");
+    assert_eq!(id("uq_coll_same").await.strategy, "unique_key");
 
     conn.close().await;
     let _ = std::fs::remove_file(&path);

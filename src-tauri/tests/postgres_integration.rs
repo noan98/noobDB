@@ -421,6 +421,8 @@ async fn postgres_row_identity_prefers_unique_not_null_key() {
         "noobdb_ri_uq_partial",
         "noobdb_ri_uq_expr",
         "noobdb_ri_uq_include",
+        "noobdb_ri_uq_invalid",
+        "noobdb_ri_uq_coll",
     ];
     for n in names {
         conn.execute(&format!("DROP TABLE IF EXISTS public.{n}"), None)
@@ -438,6 +440,27 @@ async fn postgres_row_identity_prefers_unique_not_null_key() {
         "CREATE UNIQUE INDEX noobdb_ri_uq_expr_idx ON public.noobdb_ri_uq_expr (lower(code))",
         "CREATE TABLE public.noobdb_ri_uq_include (code TEXT NOT NULL, note TEXT)",
         "CREATE UNIQUE INDEX noobdb_ri_uq_include_idx ON public.noobdb_ri_uq_include (code) INCLUDE (note)",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    // INVALID な UNIQUE: 重複行があるところへ CONCURRENTLY で作ると失敗し、INVALID が残る。
+    for ddl in [
+        "CREATE TABLE public.noobdb_ri_uq_invalid (code TEXT NOT NULL, note TEXT)",
+        "INSERT INTO public.noobdb_ri_uq_invalid VALUES ('x', 'a'), ('x', 'b')",
+    ] {
+        conn.execute(ddl, None).await.expect(ddl);
+    }
+    let failed = conn
+        .execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY noobdb_ri_uq_invalid_idx ON public.noobdb_ri_uq_invalid (code)",
+            None,
+        )
+        .await;
+    assert!(failed.is_err(), "duplicate rows must make the build fail");
+    // 列は既定の照合順序、インデックスは "C": インデックス上は別値でも列の比較では同値になりうる。
+    for ddl in [
+        "CREATE TABLE public.noobdb_ri_uq_coll (code TEXT NOT NULL, note TEXT)",
+        "CREATE UNIQUE INDEX noobdb_ri_uq_coll_idx ON public.noobdb_ri_uq_coll (code COLLATE \"C\")",
     ] {
         conn.execute(ddl, None).await.expect(ddl);
     }
@@ -464,6 +487,8 @@ async fn postgres_row_identity_prefers_unique_not_null_key() {
         "noobdb_ri_uq_nullable",
         "noobdb_ri_uq_partial",
         "noobdb_ri_uq_expr",
+        "noobdb_ri_uq_invalid",
+        "noobdb_ri_uq_coll",
     ] {
         let id = conn.row_identity("public", n).await.expect(n);
         assert_eq!(id.strategy, "ctid", "{n}");

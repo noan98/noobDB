@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyServerBrowse } from "../components/serverBrowse";
 import {
+  applyTableOpenTemplate,
   isPrimaryKeyAscOrder,
   planTableOpenQuery,
   resolveTableOpenTemplate,
@@ -358,5 +359,34 @@ describe("#1527 OFFSET のみ / バックスラッシュ", () => {
     expect(validateTableQueryTemplate(tpl, "sqlite")).toBeNull();
     expect(validateTableQueryTemplate(tpl, "postgres")).toBeNull();
     expect(validateTableQueryTemplate(tpl, "mysql")).toEqual({ kind: "syntax" });
+  });
+});
+
+describe("applyTableOpenTemplate の unique_key (#1776)", () => {
+  const args = (rowIdentity: { strategy: string; hidden_column: string | null; key_columns?: string[] }) => ({
+    resolved: { template: "SELECT * FROM {table} LIMIT {limit}", source: "global" as const },
+    driver: "sqlite",
+    database: "main",
+    table: "t",
+    limit: 100,
+    columns: [
+      { name: "code", key: "" },
+      { name: "note", key: "" },
+    ],
+    rowIdentity,
+    legacyBase: "SELECT * FROM t",
+    legacySql: "SELECT * FROM t LIMIT 100",
+  });
+
+  it("PK が無くても unique_key のキー列を PK 相当として渡し、編集可能のまま保つ", () => {
+    const r = applyTableOpenTemplate(
+      args({ strategy: "unique_key", hidden_column: null, key_columns: ["code"] }),
+    );
+    expect(r.openTemplate?.editable).toBe(true);
+  });
+
+  it("識別子が無い (all_columns) と編集可能にならない", () => {
+    const r = applyTableOpenTemplate(args({ strategy: "all_columns", hidden_column: null }));
+    expect(r.openTemplate?.editable).toBe(false);
   });
 });

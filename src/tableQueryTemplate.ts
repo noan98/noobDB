@@ -613,14 +613,18 @@ export function applyTableOpenTemplate(args: {
   table: string;
   limit: number;
   columns: readonly { name: string; key: string }[];
-  rowIdentity: { strategy: string; hidden_column: string | null } | null;
+  rowIdentity: { strategy: string; hidden_column: string | null; key_columns?: string[] } | null;
   legacyBase: string;
   legacySql: string;
 }): { base: string; sql: string; openTemplate: TableOpenTemplateState | null } {
   const legacy = { base: args.legacyBase, sql: args.legacySql, openTemplate: null };
   if (!args.resolved) return legacy;
-  const pkColumns = args.columns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
   const id = args.rowIdentity;
+  const declaredPk = args.columns.filter((c) => c.key.toUpperCase() === "PRI").map((c) => c.name);
+  // PK が無くても UNIQUE NOT NULL キー (unique_key, #1776) があれば PK 相当として渡す。
+  // 渡さないと、テンプレート使用時に PK 無し表だけ編集不可へ後退する。
+  const pkColumns =
+    declaredPk.length === 0 && id?.strategy === "unique_key" ? (id.key_columns ?? []) : declaredPk;
   const hiddenColumn = id && (id.strategy === "rowid" || id.strategy === "ctid") ? id.hidden_column : null;
   const plan = planTableOpenQuery(args.resolved.template, {
     driver: args.driver,

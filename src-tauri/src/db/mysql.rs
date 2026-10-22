@@ -2135,7 +2135,8 @@ impl MySqlConn {
             return Ok(identity);
         }
         // PK は無いが UNIQUE NOT NULL キーがあれば、それで 1 行に定める (#1776)。
-        let indexes = self.list_indexes(db, table).await?;
+        // 取得に失敗しても編集不可にはせず、従来の all_columns 判定へ進める。
+        let indexes = self.list_indexes(db, table).await.unwrap_or_default();
         if let Some(key) = super::pick_unique_row_key(&cols, &indexes) {
             return Ok(super::unique_key_identity(key));
         }

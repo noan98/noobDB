@@ -4484,7 +4484,9 @@ export const DataGrid = memo(function DataGrid({
     setReveal((r) => {
       if (!r || r.kind !== "cell") return r;
       const pks = pkIndices ?? [];
-      if (rowIdentityStrategy !== "primary_key" || pks.length === 0) return null;
+      // unique_key (UNIQUE NOT NULL, #1776) は値が行に固有で動かないので PK と同様に追従してよい。
+      if ((rowIdentityStrategy !== "primary_key" && rowIdentityStrategy !== "unique_key") || pks.length === 0)
+        return null;
       const prev = prevRows[r.rowIdx];
       if (!prev) return null;
       const key = rowEditKey(prev, pks, r.rowIdx);
@@ -10362,7 +10364,9 @@ export const ResultGrid = memo(
             rowSqlDriver={driver}
             rowSqlDatabase={database}
             rowSqlTable={table}
-            blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
+            blobIo={
+              identityStrategy === "primary_key" || identityStrategy === "unique_key" ? blobIo : undefined
+            }
             columnMeta={tableColumns ?? undefined}
             incomingFks={incomingFks}
             onRunRelatedQuery={onRunRelatedQuery}
