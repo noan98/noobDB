@@ -223,4 +223,76 @@ describe("DangerousQueryDialog", () => {
       expect(onConfirm).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("子テーブルへの影響 (#1767)", () => {
+    const base = {
+      findings,
+      isProduction: false,
+      onConfirm: () => {},
+      onCancel: () => {},
+    };
+
+    it("CASCADE / RESTRICT / SET NULL を参照動作ごとの文言で出し、さらに連鎖があれば注記する", async () => {
+      const load = vi.fn().mockResolvedValue({
+        impacts: [
+          {
+            parentTable: "users",
+            table: "orders",
+            column: "user_id",
+            referencedColumn: "id",
+            onDelete: "CASCADE",
+            count: 3,
+          },
+          {
+            parentTable: "users",
+            table: "logs",
+            column: "user_id",
+            referencedColumn: "id",
+            onDelete: "RESTRICT",
+            count: 2,
+          },
+          {
+            parentTable: "users",
+            table: "prefs",
+            column: "user_id",
+            referencedColumn: "id",
+            onDelete: "SET NULL",
+            count: 1,
+          },
+          {
+            parentTable: "orders",
+            table: "items",
+            column: "order_id",
+            referencedColumn: "id",
+            onDelete: "CASCADE",
+            count: 9,
+            depth: 2,
+          },
+        ],
+        moreCascade: true,
+        unverified: [],
+      });
+      renderWithProviders(<DangerousQueryDialog {...base} fkImpact={{ driver: "mysql", load }} />);
+      expect(screen.getByTestId("dangerous-fk-loading")).toBeInTheDocument();
+      const rows = await screen.findAllByTestId("ref-impact-row");
+      expect(load).toHaveBeenCalledTimes(1);
+      expect(rows[0]).toHaveTextContent("3 rows will be cascade-deleted");
+      expect(rows[1]).toHaveTextContent("delete is expected to fail");
+      expect(rows[2]).toHaveTextContent("1 rows will be set to NULL");
+      expect(rows[3]).toHaveTextContent("cascade level 2");
+      expect(screen.getByTestId("ref-impact-more-cascade")).toBeInTheDocument();
+    });
+
+    it("集計に失敗しても実行ボタンは押せて、確認できなかった旨を出す", async () => {
+      const onConfirm = vi.fn();
+      const user = userEvent.setup();
+      const load = vi.fn().mockRejectedValue(new Error("timeout"));
+      renderWithProviders(
+        <DangerousQueryDialog {...base} onConfirm={onConfirm} fkImpact={{ driver: "mysql", load }} />,
+      );
+      expect(await screen.findByTestId("dangerous-fk-failed")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: t("dangerousConfirm") }));
+      expect(onConfirm).toHaveBeenCalled();
+    });
+  });
 });
