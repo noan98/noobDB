@@ -109,6 +109,16 @@ const en = {
   shortcutModalSubmitDesc: "In a dialog or form: run the primary action (Esc closes without running).",
 
   splashTagline: "Lightweight SQL client",
+  aboutTitle: "About noobDB",
+  aboutClose: "Close",
+  aboutVersion: "Version {version}",
+  aboutVersionUnknown: "Version unknown",
+  aboutReplay: "Replay logo animation",
+  aboutRepository: "Repository",
+  aboutDocs: "Documentation",
+  aboutOpenFailed: "Could not open the link",
+  cmdkActionAbout: "About noobDB",
+  appAbout: "About noobDB",
 
   sidebarTabConnections: "Connections",
   sidebarTabSnippets: "Snippets",
@@ -6849,6 +6859,16 @@ const ja: Dict = {
   shortcutModalSubmitDesc: "ダイアログ / フォームで主アクションを実行します (Esc は実行せずに閉じます)。",
 
   splashTagline: "軽量 SQL クライアント",
+  aboutTitle: "noobDB について",
+  aboutClose: "閉じる",
+  aboutVersion: "バージョン {version}",
+  aboutVersionUnknown: "バージョン不明",
+  aboutReplay: "ロゴのアニメーションを再生",
+  aboutRepository: "リポジトリ",
+  aboutDocs: "ドキュメント",
+  aboutOpenFailed: "リンクを開けませんでした",
+  cmdkActionAbout: "noobDB について",
+  appAbout: "noobDB について",
 
   sidebarTabConnections: "接続",
   sidebarTabSnippets: "スニペット",

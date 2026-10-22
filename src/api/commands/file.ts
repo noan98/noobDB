@@ -65,4 +65,10 @@ export const fileCommands = {
    * 直に叩かずバックエンド経由で起動する (capabilities を増やさない)。
    */
   revealInFileManager: (path: string) => invoke<void>("reveal_in_file_manager", { path }),
+
+  /**
+   * About 面のリポジトリ / ドキュメントリンクを既定のブラウザで開く (#1770)。許可されるのは
+   * プロジェクトのリポジトリ配下の URL だけで、それ以外は reject (バックエンドの許可リスト)。
+   */
+  openExternalUrl: (url: string) => invoke<void>("open_external_url", { url }),
 };
