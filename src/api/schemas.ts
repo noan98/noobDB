@@ -203,10 +203,17 @@ export const bulkWriteOutcomeRowCountExceeded = z.object({
   status: z.literal("row_count_exceeded"),
   expected_rows: z.number(),
   actual_rows: z.number(),
+  batch_total_rows: z.number(),
+});
+export const bulkWriteOutcomeRollbackIncomplete = z.object({
+  status: z.literal("rollback_incomplete"),
+  expected_rows: z.number(),
+  actual_rows: z.number(),
 });
 export const bulkWriteOutcome = z.discriminatedUnion("status", [
   bulkWriteOutcomeApplied,
   bulkWriteOutcomeRowCountExceeded,
+  bulkWriteOutcomeRollbackIncomplete,
 ]);
 
 /** `kill_processes` の結果 (#1259)。 */

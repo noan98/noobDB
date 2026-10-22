@@ -1066,11 +1066,8 @@ pub mod __test_api {
         .await?
         {
             BulkWriteOutcome::Applied { result } => Ok(result),
-            BulkWriteOutcome::RowCountExceeded {
-                expected_rows,
-                actual_rows,
-            } => Err(crate::error::AppError::InvalidInput(format!(
-                "row count exceeded: expected {expected_rows}, matched {actual_rows}"
+            other => Err(crate::error::AppError::InvalidInput(format!(
+                "bulk write was not applied: {other:?}"
             ))),
         }
     }

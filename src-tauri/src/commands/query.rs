@@ -13,7 +13,7 @@ use crate::db::tx_options::{TxIsolation, TxOptions};
 use crate::db::types::{Column, QueryResult, ServerMessage, StreamBatch, Value};
 use crate::db::{
     apply_auto_limit_for, decide_auto_limit_for, is_read_only_sql_for, AutoLimitSkip, DriverKind,
-    GuardedTxOutcome,
+    GuardViolation, GuardedStatement, GuardedTxOutcome, RowExpectation,
 };
 use crate::error::{AppError, Result};
 use crate::history::store as history_store;
@@ -398,11 +398,21 @@ pub(crate) async fn run_query_transaction_inner(
     statements: Vec<String>,
     database: Option<String>,
 ) -> Result<QueryResult> {
-    match run_query_transaction_guarded_inner(state, session_id, statements, database, None).await?
+    match run_query_transaction_guarded_inner(
+        state,
+        session_id,
+        statements,
+        Vec::new(),
+        database,
+        None,
+    )
+    .await?
     {
         TransactionRun::Committed(result) => Ok(result),
-        // 上限なし (`None`) では超過判定が働かないので到達しない。
-        TransactionRun::Exceeded { affected } => Ok(QueryResult::empty(affected, 0)),
+        // 期待を与えていないので違反は起きない。
+        TransactionRun::RolledBack(v) | TransactionRun::RollbackIncomplete(v) => {
+            Ok(QueryResult::empty(v.total, 0))
+        }
     }
 }
 
@@ -411,21 +421,48 @@ pub(crate) async fn run_query_transaction_inner(
 pub(crate) enum TransactionRun {
     /// コミットした。
     Committed(QueryResult),
-    /// 合計 `rows_affected` が上限を超えたためロールバックした (DB は未変更・履歴にも残さない)。
-    Exceeded { affected: u64 },
+    /// 影響行数が期待を外れたためロールバックした (DB は未変更。履歴にはエラーとして残す)。
+    RolledBack(GuardViolation),
+    /// 期待を外れてロールバックしたが、非トランザクション表のため一部が戻らなかった。
+    /// 書き込みは (一部) 反映済みなので、履歴・キャッシュは成功時と同じく扱う。
+    RollbackIncomplete(GuardViolation),
 }
 
-/// [`run_query_transaction_inner`] に実影響行数の検算を足したもの (#1777)。合計
-/// `rows_affected` が `max_affected` を超えたらコミットせずロールバックし、`Exceeded` で
-/// 実際の件数を返す。read_only ガード・履歴・キャッシュ invalidate は従来と同じ経路
-/// (ロールバックしたときは何も書き換わっていないので、履歴・キャッシュには触れない)。
+/// 期待を外れてロールバックしたことの履歴用メッセージ。
+pub(crate) fn rolled_back_message(v: &GuardViolation, incomplete: bool) -> String {
+    if incomplete {
+        format!(
+            "rollback incomplete: matched {} rows, expected {} (non-transactional tables were not rolled back)",
+            v.actual, v.expected
+        )
+    } else {
+        format!(
+            "rolled back: matched {} rows, expected {}",
+            v.actual, v.expected
+        )
+    }
+}
+
+/// [`run_query_transaction_inner`] に実影響行数の検算を足したもの (#1777)。`expects` は文ごとの
+/// 期待 (空なら全文検査なし、そうでなければ `statements` と同じ長さ)、`total_max` は利用者が
+/// 承認した合計の上限 (あれば文ごとの検査の代わりに使う)。期待を外れたらコミットせずロール
+/// バックし、内訳を返す。read_only ガード・キャッシュ invalidate は従来と同じ経路で、
+/// ロールバックしたときは履歴にエラーとして残し (`rolled back: matched M rows, expected N`)、
+/// キャッシュには触れない。ロールバックが不完全 (MyISAM など) なときは書き込み済みなので履歴
+/// (成功扱い・件数つき) とキャッシュ invalidate を成功時と同じに行う。
 pub(crate) async fn run_query_transaction_guarded_inner(
     state: &AppState,
     session_id: String,
     statements: Vec<String>,
+    expects: Vec<RowExpectation>,
     database: Option<String>,
-    max_affected: Option<u64>,
+    total_max: Option<u64>,
 ) -> Result<TransactionRun> {
+    if !expects.is_empty() && expects.len() != statements.len() {
+        return Err(AppError::InvalidInput(
+            "expectation count does not match statement count".into(),
+        ));
+    }
     let session = state
         .get(&session_id)
         .await
@@ -440,25 +477,58 @@ pub(crate) async fn run_query_transaction_guarded_inner(
         "transaction starting"
     );
     let started = std::time::Instant::now();
-    let result = session
+    let guarded: Vec<GuardedStatement<'_>> = statements
+        .iter()
+        .enumerate()
+        .map(|(i, sql)| GuardedStatement {
+            sql,
+            expect: expects.get(i).copied().unwrap_or(RowExpectation::NONE),
+        })
+        .collect();
+    let outcome = session
         .conn
-        .execute_transaction_guarded(&statements, database.as_deref(), max_affected)
+        .execute_transaction_guarded(&guarded, database.as_deref(), total_max)
         .await;
     let elapsed_ms = started.elapsed().as_millis() as u64;
-    if let Ok(GuardedTxOutcome::Exceeded { affected }) = &result {
+    // ロールバックした (できなかった) 場合の内訳。`incomplete` なら書き込み済み扱い。
+    let (violation, incomplete) = match &outcome {
+        Ok(GuardedTxOutcome::RolledBack(v)) => (Some(*v), false),
+        Ok(GuardedTxOutcome::RollbackIncomplete(v)) => (Some(*v), true),
+        _ => (None, false),
+    };
+    if let Some(v) = &violation {
         tracing::warn!(
             session_id = %session.id,
-            rows_affected = *affected,
-            max_affected = ?max_affected,
-            "transaction rolled back: affected rows exceeded the expected count"
+            expected = v.expected,
+            actual = v.actual,
+            incomplete,
+            "transaction rolled back: affected rows were outside the expected count"
         );
-        return Ok(TransactionRun::Exceeded {
-            affected: *affected,
-        });
+        let sql_text = statements.join("\n");
+        if incomplete {
+            record_write_history(
+                &session,
+                sql_text,
+                database.as_deref(),
+                Some(v.total as i64),
+                Some(elapsed_ms as i64),
+                Some(rolled_back_message(v, true)),
+            )
+            .await;
+        } else {
+            record_write_history(
+                &session,
+                sql_text,
+                database.as_deref(),
+                None,
+                None,
+                Some(rolled_back_message(v, false)),
+            )
+            .await;
+            return Ok(TransactionRun::RolledBack(*v));
+        }
     }
-    let result = result.map(|outcome| match outcome {
-        GuardedTxOutcome::Committed(n) | GuardedTxOutcome::Exceeded { affected: n } => n,
-    });
+    let result = outcome.map(GuardedTxOutcome::total_affected);
     match &result {
         Ok(affected) => tracing::debug!(
             session_id = %session.id,
@@ -474,29 +544,32 @@ pub(crate) async fn run_query_transaction_guarded_inner(
     }
     // The cell-edit Apply path is a primary write entry point, so record the
     // generated statements to history for auditability (skip_history honoured).
+    // 不完全なロールバックは上で記録済み。
     let sql_text = statements.join("\n");
-    match &result {
-        Ok(affected) => {
-            record_write_history(
-                &session,
-                sql_text,
-                database.as_deref(),
-                Some(*affected as i64),
-                Some(elapsed_ms as i64),
-                None,
-            )
-            .await
-        }
-        Err(e) => {
-            record_write_history(
-                &session,
-                sql_text,
-                database.as_deref(),
-                None,
-                None,
-                Some(e.to_string()),
-            )
-            .await
+    if !incomplete {
+        match &result {
+            Ok(affected) => {
+                record_write_history(
+                    &session,
+                    sql_text,
+                    database.as_deref(),
+                    Some(*affected as i64),
+                    Some(elapsed_ms as i64),
+                    None,
+                )
+                .await
+            }
+            Err(e) => {
+                record_write_history(
+                    &session,
+                    sql_text,
+                    database.as_deref(),
+                    None,
+                    None,
+                    Some(e.to_string()),
+                )
+                .await
+            }
         }
     }
     // Schema Cache (#1097): まとめて実行した文のいずれか 1 つでも DDL 相当なら
@@ -521,6 +594,9 @@ pub(crate) async fn run_query_transaction_guarded_inner(
         }
     }
     let affected = result?;
+    if let Some(v) = violation {
+        return Ok(TransactionRun::RollbackIncomplete(v));
+    }
     Ok(TransactionRun::Committed(QueryResult::empty(
         affected, elapsed_ms,
     )))
@@ -2097,6 +2173,20 @@ pub async fn cancel_stream(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rolled_back_history_message_names_matched_and_expected_rows() {
+        let v = GuardViolation {
+            expected: 1,
+            actual: 2,
+            total: 2,
+        };
+        assert_eq!(
+            rolled_back_message(&v, false),
+            "rolled back: matched 2 rows, expected 1"
+        );
+        assert!(rolled_back_message(&v, true).starts_with("rollback incomplete: matched 2 rows"));
+    }
 
     /// Every supported driver, so the read-only guards are asserted under both
     /// masking flavours (MySQL's backslash escapes vs. the standard reading)

@@ -107,11 +107,16 @@ Rust が全セッションを並列に問い合わせ、各セッションを `t
   の単文のみ)。リテラルは `db::data_diff::sql_literal` (バインドにしないのは PostgreSQL が
   text 型パラメータを整数列へ暗黙変換しないため)。64bit PK は文字列のまま引用リテラルで比較。`pkBinary` (任意、`pkColumns` と同順の bool) が真の列は 16 進文字列の key を `Value::Bytes` に戻してバイナリリテラルで比較する (BLOB 列を含む all_columns 同定用)。
   **戻り値は判別付き enum `BulkWriteOutcome`** (#1777、`status` タグ): `applied` (`result` = `QueryResult`) /
-  `row_count_exceeded` (`expected_rows` = 編集対象として指定した行数 [各グループの keys + extraStatements の数]、
-  `actual_rows` = 実際の合計 `rows_affected`)。合計 `rows_affected` が想定より**多い**とコミットせず
-  ロールバックし (DB 未変更・履歴/キャッシュに触れない)、エラーではなくこの値で返す (少ない側は止めない)。
+  `row_count_exceeded` / `rollback_incomplete`。検算は**文ごと** (UPDATE チャンク = 対象行数、追加文 = 1 行)。
+  文の `rows_affected` が想定より**多い**とコミットせずロールバックし (DB 未変更・結果キャッシュに触れない・
+  履歴にはエラー `rolled back: matched M rows, expected N` として残す)、エラーではなく
+  `row_count_exceeded { expected_rows, actual_rows, batch_total_rows }` で返す (`expected_rows` / `actual_rows` は
+  超過した文の合計、`batch_total_rows` は全文の合計。少ない側は今は止めない)。MySQL でロールバック後に警告 1196
+  (MyISAM など非トランザクション表) があれば、書き込みが**戻っていない**ので `rollback_incomplete` を返し、履歴 (件数つき)・
+  キャッシュ invalidate は成功時と同じに行う。UI は再読込を促し、承認して再実行させない。
   3 ドライバとも `rows_affected` は一致行数 (MySQL は sqlx が CLIENT_FOUND_ROWS を常に立てる)。利用者が確認で
-  承認したときだけ `options: { allow_row_overshoot: true }` で再実行する (`BulkWriteOptions`、後続の検査用フラグもここへ足す)。
+  承認したときだけ `options: { approved_max_rows: <batch_total_rows> }` で再実行する (文ごとの検査の代わりに「合計がこの件数を超えたらロールバック」。
+  承認後にさらに増えれば再び `row_count_exceeded`。`BulkWriteOptions`、後続の検査用の項目もここへ足す)。
 - `insert_generated_rows` はテストデータ生成の投入。生成行を `Connection::import_rows`
   (1 トランザクション) へ直接渡す。履歴には 1 行の要約を残す。
 

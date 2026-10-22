@@ -30,6 +30,7 @@ use crate::db::sync::quote_ident;
 use crate::db::types::{QueryResult, Value};
 use crate::db::upsert::ImportConflict;
 use crate::db::DriverKind;
+use crate::db::RowExpectation;
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 
@@ -73,40 +74,52 @@ pub struct BulkUpdateGroup {
 }
 
 /// `bulk_update_cells` の追加オプション (#1777)。後続の検査 (楽観ロック #1766 など) も
-/// ここへフラグを足す。`#[serde(default)]` なので、指定の無いフラグは安全側 (= 検査する) になる。
+/// ここへフィールドを足す。`#[serde(default)]` なので、指定の無い項目は安全側 (= 検査する) になる。
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
 #[serde(default)]
 pub struct BulkWriteOptions {
-    /// 実影響行数が想定行数を超えても適用する。確認ダイアログで利用者が「それでも適用」を
-    /// 選んだときだけ true にして再実行する。
-    pub allow_row_overshoot: bool,
+    /// 利用者が確認ダイアログで承認した合計の影響行数。指定すると、文ごとの検査の代わりに
+    /// 「合計がこの件数を超えたらロールバック」で再実行する (承認した以上には書かない)。
+    /// `row_count_exceeded` が返した `batch_total_rows` をそのまま渡す。
+    pub approved_max_rows: Option<u64>,
 }
 
 /// `bulk_update_cells` の結果 (#1777)。想定外はエラーではなく判別できる値で返し、フロントが
-/// 確認を取ってフラグ付きで再実行できるようにする。新しい種類の結果 (楽観ロックの競合など)
+/// 確認を取って承認つきで再実行できるようにする。新しい種類の結果 (楽観ロックの競合など)
 /// はバリアントを足して拡張する。
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum BulkWriteOutcome {
     /// コミットした。
     Applied { result: QueryResult },
-    /// 実影響行数が想定 (編集対象として指定した行数) を超えたのでロールバックした。DB は未変更。
+    /// 実影響行数が想定 (編集対象として指定した行数) を外れたのでロールバックした。DB は未変更。
+    /// `expected_rows` / `actual_rows` は違反した文だけの合計 (表示用)、`batch_total_rows` は
+    /// 全文の合計で、承認して再実行するときの `approved_max_rows` に使う。
     RowCountExceeded {
+        expected_rows: u64,
+        actual_rows: u64,
+        batch_total_rows: u64,
+    },
+    /// 想定を外れてロールバックしたが、トランザクション非対応の表 (MyISAM など) を含み、
+    /// 書き込みの一部が**戻らなかった**。承認して再実行してはいけない (二重に書く)。
+    /// 再読込して現状を確認させる。
+    RollbackIncomplete {
         expected_rows: u64,
         actual_rows: u64,
     },
 }
 
-/// 想定する合計影響行数: UPDATE の対象行 (各グループの `keys`) + 追加文 (1 文 = 1 行の
-/// `DELETE` / `INSERT`)。`SET` または `keys` が空で無視されるグループは数えない。
-pub(crate) fn expected_rows(groups: &[BulkUpdateGroup], extra_statements: usize) -> u64 {
-    let updates: usize = groups
-        .iter()
-        .filter(|g| !g.set.is_empty() && !g.keys.is_empty())
-        .map(|g| g.keys.len())
-        .sum();
-    (updates + extra_statements) as u64
+/// 組み立てた 1 文と、その文に期待する影響行数。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BuiltStatement {
+    pub sql: String,
+    /// 期待する影響行数 (`UPDATE` チャンクの対象行数)。
+    pub expected: u64,
 }
+
+/// 追加文 (削除予定行 / 新規行の `DELETE` / `INSERT`) 1 文に期待する影響行数。フロントは
+/// 1 文 = 1 行で生成する。
+const EXTRA_STATEMENT_ROWS: u64 = 1;
 
 fn qualified_ref(driver: DriverKind, database: &str, table: &str) -> String {
     // SQLite は接続ごとに単一の名前空間なので DB 名で修飾しない (フロントの
@@ -185,10 +198,8 @@ pub(crate) fn apply_pk_binary(
     Ok(groups)
 }
 
-/// グループ化された構造化入力から `UPDATE` 文を組み立てる (純関数)。
-/// 単一 PK 列で NULL を含まないグループは `WHERE pk IN (…)` を [`IN_CHUNK`] 件ずつ、
-/// それ以外 (複合 PK / NULL を含む) は行条件を `OR` で連結して [`OR_CHUNK`] 行ずつ
-/// 1 文にする。
+/// [`build_bulk_update_statements_expected`] の SQL だけ版 (テスト用)。
+#[cfg(test)]
 pub(crate) fn build_bulk_update_statements(
     driver: DriverKind,
     database: &str,
@@ -196,6 +207,25 @@ pub(crate) fn build_bulk_update_statements(
     pk_columns: &[String],
     groups: &[BulkUpdateGroup],
 ) -> Result<Vec<String>> {
+    Ok(
+        build_bulk_update_statements_expected(driver, database, table, pk_columns, groups)?
+            .into_iter()
+            .map(|b| b.sql)
+            .collect(),
+    )
+}
+
+/// グループ化された構造化入力から `UPDATE` 文を (期待影響行数つきで) 組み立てる (純関数)。
+/// 単一 PK 列で NULL を含まないグループは `WHERE pk IN (…)` を [`IN_CHUNK`] 件ずつ、
+/// それ以外 (複合 PK / NULL を含む) は行条件を `OR` で連結して [`OR_CHUNK`] 行ずつ
+/// 1 文にする。
+pub(crate) fn build_bulk_update_statements_expected(
+    driver: DriverKind,
+    database: &str,
+    table: &str,
+    pk_columns: &[String],
+    groups: &[BulkUpdateGroup],
+) -> Result<Vec<BuiltStatement>> {
     if pk_columns.is_empty() {
         return Err(AppError::InvalidInput(
             "bulk update requires at least one primary key column".into(),
@@ -233,9 +263,10 @@ pub(crate) fn build_bulk_update_statements(
                     .map(|k| sql_literal(driver, &k[0]))
                     .collect::<Vec<_>>()
                     .join(", ");
-                out.push(format!(
-                    "UPDATE {table_ref} SET {set_sql} WHERE {col} IN ({list});"
-                ));
+                out.push(BuiltStatement {
+                    sql: format!("UPDATE {table_ref} SET {set_sql} WHERE {col} IN ({list});"),
+                    expected: chunk.len() as u64,
+                });
             }
         } else {
             for chunk in group.keys.chunks(OR_CHUNK) {
@@ -248,7 +279,10 @@ pub(crate) fn build_bulk_update_statements(
                         .collect::<Vec<_>>()
                         .join(" OR ")
                 };
-                out.push(format!("UPDATE {table_ref} SET {set_sql} WHERE {cond};"));
+                out.push(BuiltStatement {
+                    sql: format!("UPDATE {table_ref} SET {set_sql} WHERE {cond};"),
+                    expected: chunk.len() as u64,
+                });
             }
         }
     }
@@ -261,7 +295,8 @@ pub(crate) fn build_bulk_update_statements(
 /// 全体が all-or-nothing で、read_only ガード・履歴・キャッシュ invalidate は
 /// `run_query_transaction` と同一。さらに合計 `rows_affected` を想定行数と検算し、超えたら
 /// コミットせずロールバックして [`BulkWriteOutcome::RowCountExceeded`] を返す (#1777、画面外の
-/// 重複行への多重更新の最終防波堤)。`options.allow_row_overshoot` で利用者が承認済みなら通す。
+/// 重複行への多重更新の最終防波堤)。検算は文ごと (UPDATE チャンク = 対象行数、追加文 = 1 行)。
+/// 利用者が承認した件数 (`options.approved_max_rows`) があれば、その合計までは通す。
 // IPC コマンドの引数は 1 引数 1 フィールドのフラット形が契約 (State 含め 8 個) のため許可する。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -308,10 +343,10 @@ pub(crate) async fn bulk_update_cells_inner(
         .await
         .ok_or_else(|| AppError::SessionNotFound(session_id.clone()))?;
     let driver = session.conn.driver_kind();
-    let mut statements = if groups.is_empty() {
+    let built = if groups.is_empty() {
         Vec::new()
     } else {
-        build_bulk_update_statements(
+        build_bulk_update_statements_expected(
             driver,
             database.as_deref().unwrap_or_default(),
             &table,
@@ -319,29 +354,42 @@ pub(crate) async fn bulk_update_cells_inner(
             &groups,
         )?
     };
-    let expected = expected_rows(&groups, extra_statements.len());
-    statements.extend(extra_statements);
+    let mut statements: Vec<String> = Vec::with_capacity(built.len() + extra_statements.len());
+    let mut expects: Vec<RowExpectation> = Vec::with_capacity(statements.capacity());
+    for b in built {
+        expects.push(RowExpectation::at_most(b.expected));
+        statements.push(b.sql);
+    }
+    // 追加文 (DELETE / INSERT) は 1 文 = 1 行。多い側だけを止める (少ない側は従来どおり通す)。
+    for sql in extra_statements {
+        expects.push(RowExpectation::at_most(EXTRA_STATEMENT_ROWS));
+        statements.push(sql);
+    }
     if statements.is_empty() {
         return Ok(BulkWriteOutcome::Applied {
             result: QueryResult::empty(0, 0),
         });
     }
-    // 「より多い」だけを止める。少ない側 (別クライアントによる削除など) は従来どおり通す。
-    let max_affected = (!options.allow_row_overshoot).then_some(expected);
     Ok(
         match run_query_transaction_guarded_inner(
             state,
             session_id,
             statements,
+            expects,
             database,
-            max_affected,
+            options.approved_max_rows,
         )
         .await?
         {
             TransactionRun::Committed(result) => BulkWriteOutcome::Applied { result },
-            TransactionRun::Exceeded { affected } => BulkWriteOutcome::RowCountExceeded {
-                expected_rows: expected,
-                actual_rows: affected,
+            TransactionRun::RolledBack(v) => BulkWriteOutcome::RowCountExceeded {
+                expected_rows: v.expected,
+                actual_rows: v.actual,
+                batch_total_rows: v.total,
+            },
+            TransactionRun::RollbackIncomplete(v) => BulkWriteOutcome::RollbackIncomplete {
+                expected_rows: v.expected,
+                actual_rows: v.actual,
             },
         },
     )
@@ -498,16 +546,28 @@ mod tests {
     }
 
     #[test]
-    fn expected_rows_counts_update_keys_and_extra_statements() {
+    fn built_statements_carry_per_chunk_expected_rows() {
+        let mut keys = keys1(&(1..=501).collect::<Vec<_>>());
+        keys.push(vec![Value::Int(900)]);
         let groups = vec![
-            group(vec![set_text("a", "x")], keys1(&[1, 2, 3])),
-            group(vec![set_text("a", "y")], keys1(&[4])),
-            // 無視されるグループ (空の SET / 空の keys) は数えない。
+            group(vec![set_text("a", "x")], keys),
+            // 無視されるグループ (空の SET / 空の keys) は文にならない。
             group(vec![], keys1(&[5])),
             group(vec![set_text("a", "z")], vec![]),
         ];
-        assert_eq!(expected_rows(&groups, 2), 6);
-        assert_eq!(expected_rows(&[], 0), 0);
+        let built = build_bulk_update_statements_expected(
+            DriverKind::Mysql,
+            "d",
+            "t",
+            &["id".to_string()],
+            &groups,
+        )
+        .unwrap_or_default();
+        // 502 件 → 500 + 2。
+        assert_eq!(
+            built.iter().map(|b| b.expected).collect::<Vec<_>>(),
+            vec![500, 2]
+        );
     }
 
     #[test]
@@ -515,11 +575,12 @@ mod tests {
         let v = serde_json::to_value(BulkWriteOutcome::RowCountExceeded {
             expected_rows: 1,
             actual_rows: 2,
+            batch_total_rows: 3,
         })
         .unwrap_or_default();
         assert_eq!(
             v,
-            serde_json::json!({"status": "row_count_exceeded", "expected_rows": 1, "actual_rows": 2})
+            serde_json::json!({"status": "row_count_exceeded", "expected_rows": 1, "actual_rows": 2, "batch_total_rows": 3})
         );
     }
 

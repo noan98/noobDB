@@ -6,7 +6,7 @@ DB レイヤは意図的に手書きの enum で実装されており、トレ�
 `src-tauri/src/db/mod.rs` の `db::Connection` は `MySql` / `Postgres` / `Sqlite` の
 3 バリアントを持ち、各操作 (`execute`, `begin_transaction` / `execute_in_transaction` /
 `finish_transaction` / `transaction_active`, `health_check`,
-`preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`,
+`preview_execute_with_limit`, `execute_stream`, `import_rows`, `execute_transaction`, `execute_transaction_guarded`,
 `databases`, `tables`, `columns`, `schema_overview`, `foreign_keys`, `schema_objects`,
 `object_definition`, `list_indexes`, `table_row_estimates`, `list_processes`,
 `kill_processes`, `close`, `driver_kind`) でバリアントに対してマッチします。**新しい
@@ -17,6 +17,13 @@ SSH やセッション層には触らないでください — それらはド�
 `table_row_estimates` (統計情報ベースの概算行数)、`list_processes` / `kill_processes`
 (MySQL `PROCESSLIST` / PostgreSQL `pg_stat_activity`) もこの enum 表面の一部で、
 SQLite では多くがサーバ機能非対応のため空や no-op で短絡します。
+
+`execute_transaction_guarded(statements: &[GuardedStatement], database, total_max)` (#1777) は
+`execute_transaction` に、コミット前の文ごとの影響行数検算 (`RowExpectation { min, max }`) を足したもので、
+`execute_transaction` はこれに委譲します。期待を外れたらロールバックして `GuardedTxOutcome::RolledBack`
+(エラーではない) を返し、`total_max` があれば文ごとの検査の代わりに合計の上限で判定します。MySQL は
+ロールバック直後に `SHOW WARNINGS` で 1196 (MyISAM など非トランザクション表) を調べ、あれば
+`RollbackIncomplete` を返します。`rows_affected` は 3 ドライバとも一致行数 (MySQL は CLIENT_FOUND_ROWS)。
 
 `db::types::{Value, Column, QueryResult, TableColumnInfo, TableSchema,
 PreviewResult, StreamBatch}` がドライバ横断のワイヤフォーマットです。`Value` は

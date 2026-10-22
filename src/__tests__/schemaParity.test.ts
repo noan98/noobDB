@@ -209,6 +209,7 @@ const cases: Array<[keyof typeof fixtures, AnyObjectSchema]> = [
   // #1777: `status` タグ付き enum は shape が違うので、バリアントごとに 1 キーずつ検証する。
   ["bulkWriteOutcomeApplied", schemas.bulkWriteOutcomeApplied],
   ["bulkWriteOutcomeRowCountExceeded", schemas.bulkWriteOutcomeRowCountExceeded],
+  ["bulkWriteOutcomeRollbackIncomplete", schemas.bulkWriteOutcomeRollbackIncomplete],
   ["openTableResult", schemas.openTableResult],
   ["openTableEntryVariants", schemas.openTableEntry],
   ["databaseTables", schemas.databaseTables],

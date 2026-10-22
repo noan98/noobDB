@@ -17,11 +17,11 @@ use super::types::{
 };
 use super::types::{ServerMessage, ServerMessageSeverity};
 use super::upsert::{conflict_clause, ImportConflict};
-use super::GuardedTxOutcome;
 use super::{
     build_insert_sql, columns_of, decode_string_or_bytes, init_sql_of, DbConnectOptions,
     DriverKind, SslMode,
 };
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 pub struct MySqlConn {
@@ -1194,21 +1194,20 @@ impl MySqlConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
-        match self
-            .execute_transaction_guarded(statements, database, None)
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database, None)
             .await?
-        {
-            GuardedTxOutcome::Committed(n) | GuardedTxOutcome::Exceeded { affected: n } => Ok(n),
-        }
+            .total_affected())
     }
 
-    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。合計が
-    /// `max_affected` を超えたらコミットせずロールバックして `Exceeded` を返す。
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
-        statements: &[String],
+        statements: &[GuardedStatement<'_>],
         database: Option<&str>,
-        max_affected: Option<u64>,
+        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
@@ -1216,19 +1215,24 @@ impl MySqlConn {
         let mut conn = self.pool.acquire().await?;
         apply_use_database(&mut conn, database).await?;
         let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+        for st in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;
-            affected += result.rows_affected();
+            counts.push(result.rows_affected());
         }
-        if super::exceeds_limit(affected, max_affected) {
+        if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
             tx.rollback().await?;
-            return Ok(GuardedTxOutcome::Exceeded { affected });
+            // MyISAM など非トランザクション表を触っていると ROLLBACK は警告 1196 を出し、
+            // 書き込みの一部が戻らない。直後の SHOW WARNINGS (同じ接続) で見分ける。
+            if rollback_was_incomplete(&mut conn).await {
+                return Ok(GuardedTxOutcome::RollbackIncomplete(violation));
+            }
+            return Ok(GuardedTxOutcome::RolledBack(violation));
         }
         tx.commit().await?;
-        Ok(GuardedTxOutcome::Committed(affected))
+        Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
     }
 
     pub async fn databases(&self) -> Result<Vec<String>> {
@@ -3198,6 +3202,19 @@ async fn run_sql_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<Query
             QueryResult::empty(result.rows_affected(), started.elapsed().as_millis() as u64)
                 .with_server_messages(messages),
         )
+    }
+}
+
+/// 直前の `ROLLBACK` が「一部の非トランザクション表を戻せなかった」(警告 1196
+/// `ER_WARNING_NOT_COMPLETE_ROLLBACK`) を出したか (#1777)。`SHOW WARNINGS` は読み取り専用文で、
+/// 診断領域を消すような文を挟まないよう ROLLBACK の直後に呼ぶ。取得に失敗したときは
+/// 「戻った」とは言い切れないので、安全側で未完了 (true) とする。
+async fn rollback_was_incomplete(conn: &mut sqlx::MySqlConnection) -> bool {
+    match sqlx::raw_sql("SHOW WARNINGS").fetch_all(&mut *conn).await {
+        Ok(rows) => rows
+            .iter()
+            .any(|r| r.try_get::<u32, _>(1).ok() == Some(1196)),
+        Err(_) => true,
     }
 }
 

@@ -19,8 +19,8 @@ use super::types::{
     TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict, KeyKind};
-use super::GuardedTxOutcome;
 use super::{columns_of, init_sql_of, DbConnectOptions, DriverKind, SslMode};
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 /// pg_stat_activity の `application_name` に載せる接続の表示名。
@@ -845,21 +845,20 @@ impl PostgresConn {
         statements: &[String],
         database: Option<&str>,
     ) -> Result<u64> {
-        match self
-            .execute_transaction_guarded(statements, database, None)
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database, None)
             .await?
-        {
-            GuardedTxOutcome::Committed(n) | GuardedTxOutcome::Exceeded { affected: n } => Ok(n),
-        }
+            .total_affected())
     }
 
-    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。合計が
-    /// `max_affected` を超えたらコミットせずロールバックして `Exceeded` を返す。
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
-        statements: &[String],
+        statements: &[GuardedStatement<'_>],
         database: Option<&str>,
-        max_affected: Option<u64>,
+        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
@@ -867,19 +866,19 @@ impl PostgresConn {
         let mut conn = self.pool.acquire().await?;
         apply_search_path(&mut conn, database, &self.search_path).await?;
         let mut tx = conn.begin().await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+        for st in statements {
+            let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
                 .execute(&mut *tx)
                 .await?;
-            affected += result.rows_affected();
+            counts.push(result.rows_affected());
         }
-        if super::exceeds_limit(affected, max_affected) {
+        if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
             tx.rollback().await?;
-            return Ok(GuardedTxOutcome::Exceeded { affected });
+            return Ok(GuardedTxOutcome::RolledBack(violation));
         }
         tx.commit().await?;
-        Ok(GuardedTxOutcome::Committed(affected))
+        Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
     }
 
     /// In the tree UI, the "database" level surfaces PostgreSQL schemas

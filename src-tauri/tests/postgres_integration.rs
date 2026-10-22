@@ -3561,7 +3561,8 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
             out,
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
-                actual_rows: 2
+                actual_rows: 2,
+                batch_total_rows: 2
             }
         ),
         "{out:?}"
@@ -3588,7 +3589,8 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
             out,
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
-                actual_rows: 2
+                actual_rows: 2,
+                batch_total_rows: 2
             }
         ),
         "{out:?}"
@@ -3652,7 +3654,40 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         other => panic!("fewer rows must not be blocked: {other:?}"),
     }
 
-    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。
+    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。承認した件数が足りなければ
+    // 再実行でもロールバックする。
+    let before_approved = read_ns().await;
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_max_rows: Some(1),
+        },
+    )
+    .await
+    .expect("outcome");
+    // 承認した件数 (1) より多く当たるなら、承認後の再実行でもロールバックする。
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        read_ns().await,
+        before_approved,
+        "未承認の件数ではロールバック"
+    );
     let out = t::bulk_update_cells_outcome_via_command(
         &state,
         &sid,
@@ -3662,7 +3697,7 @@ async fn postgres_bulk_write_row_count_overshoot_rolls_back() {
         vec![set_n("5")],
         vec![],
         t::BulkWriteOptions {
-            allow_row_overshoot: true,
+            approved_max_rows: Some(2),
         },
     )
     .await

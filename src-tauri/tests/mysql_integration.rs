@@ -3864,7 +3864,8 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
             out,
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
-                actual_rows: 2
+                actual_rows: 2,
+                batch_total_rows: 2
             }
         ),
         "{out:?}"
@@ -3891,7 +3892,8 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
             out,
             t::BulkWriteOutcome::RowCountExceeded {
                 expected_rows: 1,
-                actual_rows: 2
+                actual_rows: 2,
+                batch_total_rows: 2
             }
         ),
         "{out:?}"
@@ -3955,7 +3957,40 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
         other => panic!("fewer rows must not be blocked: {other:?}"),
     }
 
-    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。
+    // 承認付きなら超過を許して適用する (2 行とも書き換わる)。承認した件数が足りなければ
+    // 再実行でもロールバックする。
+    let before_approved = read_ns().await;
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        cols.clone(),
+        vec![set_n("5")],
+        vec![],
+        t::BulkWriteOptions {
+            approved_max_rows: Some(1),
+        },
+    )
+    .await
+    .expect("outcome");
+    // 承認した件数 (1) より多く当たるなら、承認後の再実行でもロールバックする。
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RowCountExceeded {
+                expected_rows: 1,
+                actual_rows: 2,
+                batch_total_rows: 2
+            }
+        ),
+        "{out:?}"
+    );
+    assert_eq!(
+        read_ns().await,
+        before_approved,
+        "未承認の件数ではロールバック"
+    );
     let out = t::bulk_update_cells_outcome_via_command(
         &state,
         &sid,
@@ -3965,7 +4000,7 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
         vec![set_n("5")],
         vec![],
         t::BulkWriteOptions {
-            allow_row_overshoot: true,
+            approved_max_rows: Some(2),
         },
     )
     .await
@@ -3979,6 +4014,99 @@ async fn mysql_bulk_write_row_count_overshoot_rolls_back() {
         2
     );
     let s = state.get(&sid).await.expect("session");
+    let _ = s
+        .conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+}
+
+/// #1777: トランザクション非対応エンジン (MyISAM) の表では、想定超過でロールバックしても書き込みが
+/// 戻らない (警告 1196)。`bulk_update_cells` はそれを `RollbackIncomplete` として返し (「まだ何も
+/// 変更されていない」とは言わない)、承認して再実行させない。InnoDB では通常どおり `RowCountExceeded`。
+#[tokio::test]
+async fn mysql_bulk_write_rollback_incomplete_on_myisam() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let conn = t::connect(&opts).await.expect("connect");
+    let db = opts.database.clone().expect("database in url");
+    let tbl = format!("noobdb_myisam1777_{}", std::process::id());
+    let _ = conn
+        .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))
+        .await;
+    if conn
+        .execute(
+            &format!(
+                "CREATE TABLE {tbl} (a INT NOT NULL, b VARCHAR(10) NOT NULL, n INT NOT NULL) ENGINE=MyISAM"
+            ),
+            Some(&db),
+        )
+        .await
+        .is_err()
+    {
+        eprintln!("skip: MyISAM is not available");
+        return;
+    }
+    conn.execute(
+        &format!("INSERT INTO {tbl} VALUES (1, 'x', 0), (1, 'x', 0), (2, 'y', 0)"),
+        Some(&db),
+    )
+    .await
+    .expect("seed");
+    let session = t::make_session(
+        "myisam_overshoot",
+        conn,
+        opts.clone(),
+        /* read_only */ false,
+    );
+    let state = t::AppState::default();
+    let sid = state.insert(session).await;
+
+    let out = t::bulk_update_cells_outcome_via_command(
+        &state,
+        &sid,
+        Some(&db),
+        &tbl,
+        vec!["a".into(), "b".into(), "n".into()],
+        vec![t::BulkUpdateGroup {
+            set: vec![t::BulkSetColumn {
+                column: "n".into(),
+                value: t::BulkSetValue::Number { text: "5".into() },
+            }],
+            keys: vec![vec![
+                t::Value::Int(1),
+                t::Value::String("x".into()),
+                t::Value::Int(0),
+            ]],
+        }],
+        vec![],
+        t::BulkWriteOptions::default(),
+    )
+    .await
+    .expect("outcome");
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::RollbackIncomplete {
+                expected_rows: 1,
+                actual_rows: 2
+            }
+        ),
+        "{out:?}"
+    );
+    // 実際に書き込みが残っている (MyISAM は戻せない)。
+    let s = state.get(&sid).await.expect("session");
+    let r = s
+        .conn
+        .execute(
+            &format!("SELECT COUNT(*) FROM {tbl} WHERE n = 5"),
+            Some(&db),
+        )
+        .await
+        .expect("verify");
+    assert_eq!(format!("{:?}", r.rows[0][0]), "Int(2)");
     let _ = s
         .conn
         .execute(&format!("DROP TABLE IF EXISTS {tbl}"), Some(&db))

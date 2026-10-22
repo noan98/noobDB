@@ -13,8 +13,8 @@ use super::types::{
     TableRowEstimate, TableRowIdentity, TableSchema, TableSizeInfo, UserPrivileges, Value,
 };
 use super::upsert::{conflict_clause, ImportConflict};
-use super::GuardedTxOutcome;
 use super::{build_insert_sql, columns_of, init_sql_of, DbConnectOptions, DriverKind};
+use super::{GuardedStatement, GuardedTxOutcome};
 use crate::error::{AppError, Result};
 
 /// 同梱 SQLite (3.32 以降) の bound variable 上限。
@@ -715,41 +715,28 @@ impl SqliteConn {
     pub async fn execute_transaction(
         &self,
         statements: &[String],
-        _database: Option<&str>,
+        database: Option<&str>,
     ) -> Result<u64> {
-        if statements.is_empty() {
-            return Ok(0);
-        }
-        let mut conn = self.pool.acquire().await?;
-        run_batch(&mut conn, statements).await
+        let stmts = super::unchecked_statements(statements);
+        Ok(self
+            .execute_transaction_guarded(&stmts, database, None)
+            .await?
+            .total_affected())
     }
 
-    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。合計が
-    /// `max_affected` を超えたらコミットせずロールバックして `Exceeded` を返す。
+    /// [`Self::execute_transaction`] に実影響行数の検算 (#1777) を足したもの。文ごとの期待
+    /// (`total_max` があれば合計の上限) を外れたらコミットせずロールバックして内訳を返す。
     pub async fn execute_transaction_guarded(
         &self,
-        statements: &[String],
+        statements: &[GuardedStatement<'_>],
         _database: Option<&str>,
-        max_affected: Option<u64>,
+        total_max: Option<u64>,
     ) -> Result<GuardedTxOutcome> {
         if statements.is_empty() {
             return Ok(GuardedTxOutcome::Committed(0));
         }
         let mut conn = self.pool.acquire().await?;
-        let mut tx = sqlx::Connection::begin(&mut *conn).await?;
-        let mut affected: u64 = 0;
-        for sql in statements {
-            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-                .execute(&mut *tx)
-                .await?;
-            affected += result.rows_affected();
-        }
-        if super::exceeds_limit(affected, max_affected) {
-            tx.rollback().await?;
-            return Ok(GuardedTxOutcome::Exceeded { affected });
-        }
-        tx.commit().await?;
-        Ok(GuardedTxOutcome::Committed(affected))
+        run_batch_guarded(&mut conn, statements, total_max).await
     }
 
     /// スキーマ同期の適用用 ([`Self::execute_transaction`] との違いはテーブル再作成の扱いだけ)。
@@ -2506,20 +2493,37 @@ async fn fk_violation_count(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>)
         .unwrap_or(0)
 }
 
+/// 文を 1 トランザクションで流す。期待 (`GuardedStatement::expect` / `total_max`) を外れたら
+/// コミットせずロールバックして内訳を返す (#1777)。検算なしの `run_batch` もこれに載せる。
+async fn run_batch_guarded(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    statements: &[GuardedStatement<'_>],
+    total_max: Option<u64>,
+) -> Result<GuardedTxOutcome> {
+    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
+    let mut counts: Vec<u64> = Vec::with_capacity(statements.len());
+    for st in statements {
+        let result = sqlx::query(sqlx::AssertSqlSafe(st.sql))
+            .execute(&mut *tx)
+            .await?;
+        counts.push(result.rows_affected());
+    }
+    if let Some(violation) = super::evaluate_guard(statements, &counts, total_max) {
+        tx.rollback().await?;
+        return Ok(GuardedTxOutcome::RolledBack(violation));
+    }
+    tx.commit().await?;
+    Ok(GuardedTxOutcome::Committed(counts.iter().sum()))
+}
+
 async fn run_batch(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
     statements: &[String],
 ) -> Result<u64> {
-    let mut tx = sqlx::Connection::begin(&mut **conn).await?;
-    let mut affected: u64 = 0;
-    for sql in statements {
-        let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
-            .execute(&mut *tx)
-            .await?;
-        affected += result.rows_affected();
-    }
-    tx.commit().await?;
-    Ok(affected)
+    let stmts = super::unchecked_statements(statements);
+    Ok(run_batch_guarded(conn, &stmts, None)
+        .await?
+        .total_affected())
 }
 
 /// `run_batch` に、コミット前の外部キー検査 (違反が増えたら巻き戻す) を足したもの。

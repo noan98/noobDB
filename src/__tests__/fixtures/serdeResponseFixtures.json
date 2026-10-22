@@ -547,8 +547,14 @@
     },
     "status": "applied"
   },
+  "bulkWriteOutcomeRollbackIncomplete": {
+    "actual_rows": 2,
+    "expected_rows": 1,
+    "status": "rollback_incomplete"
+  },
   "bulkWriteOutcomeRowCountExceeded": {
     "actual_rows": 2,
+    "batch_total_rows": 3,
     "expected_rows": 1,
     "status": "row_count_exceeded"
   },

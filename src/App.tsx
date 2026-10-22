@@ -81,7 +81,12 @@ import {
   type PendingEdits,
   type PendingInsertRow,
 } from "./components/cellEdit";
-import { appliedRowShortfall, remainingAfterSent, tabStateAfterApply } from "./components/editApplyState";
+import {
+  applyWithRowCountGuard,
+  appliedRowShortfall,
+  remainingAfterSent,
+  tabStateAfterApply,
+} from "./components/editApplyState";
 import { attachStreamStats } from "./components/streamStats";
 import { attachResultHandle, isResultGoneError, resultHandleFor } from "./components/resultHandle";
 import {
@@ -7361,7 +7366,8 @@ export default function App() {
       // table is never left in a half-applied state.
       let totalAffected = 0;
       let failure: string | null = null;
-      let declinedOvershoot: { expected: number; actual: number } | null = null;
+      let notApplied: { expected: number; actual: number } | null = null;
+      let incomplete: { expected: number; actual: number } | null = null;
       try {
         const bulkParams = {
           sessionId,
@@ -7372,42 +7378,57 @@ export default function App() {
           extraStatements,
           pkBinary: pkIndices.map((i) => isBinaryColumnType(result.columns[i].type_name)),
         };
-        let res = await api.bulkUpdateCells(bulkParams);
         // 実影響行数が想定を超えた (画面外の重複行などに当たった) ときバックエンドはコミットせず
-        // ロールバックして件数を返す (#1777)。利用者が明示的に承認したときだけ、超過を許可して
-        // 再実行する。キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
-        if (res.status === "row_count_exceeded") {
-          const ok = await confirm({
-            title: translate("editRowOvershootConfirmTitle"),
-            message: translate("editRowOvershootConfirmBody", {
-              expected: res.expected_rows,
-              actual: res.actual_rows,
+        // ロールバックして件数を返す (#1777)。利用者が明示的に承認した件数までに限って再実行する。
+        // キャンセルなら何も変わらない (保留中の編集もそのまま残す)。
+        const guarded = await applyWithRowCountGuard({
+          run: (options) => api.bulkUpdateCells({ ...bulkParams, options }),
+          confirmExceeded: ({ expected, actual }) =>
+            confirm({
+              title: translate("editRowOvershootConfirmTitle"),
+              message: translate(
+                identityStrategy === "all_columns"
+                  ? "editRowOvershootConfirmBodyAllColumns"
+                  : "editRowOvershootConfirmBody",
+                { expected, actual },
+              ),
+              confirmLabel: translate("editRowOvershootConfirmButton"),
+              tone: "warning",
             }),
-            confirmLabel: translate("editRowOvershootConfirmButton"),
-            tone: "warning",
-          });
-          if (ok) {
-            res = await api.bulkUpdateCells({ ...bulkParams, options: { allowRowOvershoot: true } });
-          } else {
-            declinedOvershoot = { expected: res.expected_rows, actual: res.actual_rows };
-          }
-        }
-        if (res.status === "applied") {
-          totalAffected = Number(res.result.rows_affected ?? 0);
-        } else if (!declinedOvershoot) {
-          // 承認して再実行したのにまた超過した (確認の間に別の変更が入った等)。適用はされていない。
-          declinedOvershoot = { expected: res.expected_rows, actual: res.actual_rows };
-        }
+          // 確認中は「適用中…」を出さず、二重 Apply も防ぐ (確認のあとは適用中表示へ戻す)。
+          onAwaitingConfirm: () => {
+            applyGuardRef.current.add(tabId);
+            setStatus({ kind: "key", key: "statusAwaitingRowCountConfirm" });
+          },
+          onResume: () => {
+            applyGuardRef.current.delete(tabId);
+            setStatus({ kind: "key", key: "statusApplyingEdits", vars: { count: opCount } });
+          },
+        });
+        if (guarded.kind === "applied") totalAffected = guarded.totalAffected;
+        else if (guarded.kind === "not_applied") notApplied = guarded;
+        else incomplete = guarded;
       } catch (e) {
         failure = String(e);
       }
       patchTab(tabId, (tt) => ({ ...tt, applyingEdits: false }));
-      if (declinedOvershoot) {
+      if (incomplete) {
+        // トランザクション非対応の表 (MyISAM など) はロールバックしても戻らない。書き込みの一部が
+        // 残っているので、承認して再実行させず、再読込して現状を確認してもらう。
+        setStatus({
+          kind: "key",
+          key: "statusApplyEditsRollbackIncomplete",
+          vars: incomplete,
+          error: true,
+        });
+        return false;
+      }
+      if (notApplied) {
         // ロールバック済みで DB は未変更。保留中の編集と行操作はそのまま残す。
         setStatus({
           kind: "key",
           key: "statusApplyEditsOvershootCancelled",
-          vars: declinedOvershoot,
+          vars: notApplied,
         });
         return false;
       }
