@@ -867,7 +867,7 @@ function FavoritePopStar({ popped }: { popped: boolean }) {
   const [playOnMount] = useState(popped);
   return (
     <>
-      {popped && <span className="fav-pop-spark" />}
+      {playOnMount && popped && <span className="fav-pop-spark" />}
       <motion.span
         style={{ display: "inline-flex" }}
         variants={variants.fadeScale}

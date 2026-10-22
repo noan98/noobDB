@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, renderWithProviders, screen, waitFor } from "./testUtils";
 import { makeProfile } from "./fixtures/componentFixtures";
 import { t } from "../i18n";
 import type { TableRef } from "../tableQuickAccess";
@@ -75,7 +75,11 @@ async function openMenuOn(name: string, item: string) {
 }
 
 describe("お気に入り追加のポップ (#1782)", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => vi.useRealTimers());
 
   it("初回描画の既存お気に入りはポップしない", async () => {
     renderWithProviders(<Harness initial={[{ database: "db1", table: "tbl1" }]} />);
@@ -92,7 +96,10 @@ describe("お気に入り追加のポップ (#1782)", () => {
     await waitFor(() => expect(favRow("tbl2")?.querySelector("[data-fav-pop]")).not.toBeNull());
     expect(favRow("tbl1")?.querySelector("[data-fav-pop]")).toBeNull();
     // 窓が閉じたら一度きりで外れる。
-    await waitFor(() => expect(popping()).toHaveLength(0), { timeout: 3000 });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    await waitFor(() => expect(popping()).toHaveLength(0));
 
     await openMenuOn("tbl2", t("contextMenuRemoveFavorite"));
     await waitFor(() => expect(favRow("tbl2")).toBeNull());

@@ -2774,16 +2774,24 @@ td.is-find-current::after {
    (合成のみ)・色は --favorite のみ。一度きりで、reduced-motion / hc-* では出さない。 */
 .fav-pop-spark {
   position: absolute;
-  inset: -40%;
+  inset: -20%;
+  aspect-ratio: 1;
+  margin: auto;
   border-radius: 50%;
   pointer-events: none;
-  background: radial-gradient(circle, color-mix(in srgb, var(--favorite) 45%, transparent), transparent 70%);
+  /* 中心を抜いたリングにして★の裏に隠れないようにする。 */
+  background: radial-gradient(
+    circle,
+    transparent 35%,
+    color-mix(in srgb, var(--favorite) 70%, transparent) 45%,
+    transparent 70%
+  );
   animation: fav-pop-spark calc(var(--dur-shimmer) * 0.5) var(--ease) 1 both;
 }
 
 @keyframes fav-pop-spark {
-  0% { opacity: 0.9; transform: scale(0.5); }
-  100% { opacity: 0; transform: scale(1.8); }
+  0% { opacity: 1; transform: scale(0.8); }
+  100% { opacity: 0; transform: scale(1.4); }
 }
 
 @media (prefers-reduced-motion: reduce) {
