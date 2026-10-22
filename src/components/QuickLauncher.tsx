@@ -608,8 +608,6 @@ export function QuickLauncher({
                         type="button"
                         data-launcher-item=""
                         position="relative"
-                        onFocus={() => setActiveKey(`more-${section.id}`)}
-                        onBlur={onItemBlur}
                         display="block"
                         w="100%"
                         px="2"
@@ -623,6 +621,8 @@ export function QuickLauncher({
                         cursor="pointer"
                         _hover={{ color: "app.text", bg: "app.hover" }}
                         _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
+                        onFocus={() => setActiveKey(`more-${section.id}`)}
+                        onBlur={onItemBlur}
                         onClick={() => {
                           close(false);
                           onShowMore(section.id);

@@ -278,7 +278,7 @@ describe("design tokens: 本文 / 補足の textStyle (#1392)", () => {
     ["../components/ProcessListPanel.tsx", 2],
     ["../components/ProfileImportDialog.tsx", 1],
     ["../components/QueryInspectorPanel.tsx", 4],
-    ["../components/QuickLauncher.tsx", 1],
+    ["../components/QuickLauncher.tsx", 2],
     ["../components/RegisterLocalTableModal.tsx", 2],
     ["../components/RelatedRowsPanel.tsx", 1],
     ["../components/ResultGrid.tsx", 5],
