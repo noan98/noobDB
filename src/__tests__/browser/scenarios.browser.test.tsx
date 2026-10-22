@@ -472,7 +472,14 @@ describe("シナリオ: インラインセル編集 → pending → Apply (実�
             table: "fruits",
             pkColumns: ["id"],
             pkBinary: [false],
-            groups: [{ set: [{ column: "qty", value: { kind: "number", text: "42" } }], keys: [[2]] }],
+            groups: [
+              {
+                set: [{ column: "qty", value: { kind: "number", text: "42" } }],
+                keys: [[2]],
+                // 楽観ロック (#1766、既定オン): 編集した列の読込時点の旧値が付く。
+                olds: [[{ kind: "number", text: "3" }]],
+              },
+            ],
             extraStatements: [],
           },
         ]);
@@ -685,17 +692,21 @@ describe("シナリオ: 想定行数を超える書き込みの確認 (#1777)", 
   it("楽観ロックをオフにすると旧値を送らない (#1766)", async () => {
     registerAutoStream();
     setOptimisticCellEditLock(false);
-    const calls: Record<string, unknown>[] = [];
-    onCommand("bulk_update_cells", (args) => {
-      calls.push(args);
-      fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
-      return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
-    });
-    const screen = await renderInBrowser(<App />);
-    await editQtyAndApply(screen);
-    await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
-    const groups = calls[0]?.groups as { olds?: unknown[][] }[];
-    expect(groups[0]?.olds).toBeUndefined();
+    try {
+      const calls: Record<string, unknown>[] = [];
+      onCommand("bulk_update_cells", (args) => {
+        calls.push(args);
+        fruitsRows = fruitsRows.map((r) => (r[0] === 2 ? [2, "banana", 42] : r));
+        return { status: "applied", result: { columns: [], rows: [], rows_affected: 1, elapsed_ms: 2 } };
+      });
+      const screen = await renderInBrowser(<App />);
+      await editQtyAndApply(screen);
+      await vi.waitFor(() => expect(calls.length).toBe(1), { timeout: 5000 });
+      const groups = calls[0]?.groups as { olds?: unknown[][] }[];
+      expect(groups[0]?.olds).toBeUndefined();
+    } finally {
+      setOptimisticCellEditLock(true);
+    }
   });
 });
 

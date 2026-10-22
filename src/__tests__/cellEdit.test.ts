@@ -2014,6 +2014,36 @@ describe("oldValueForLock / 楽観ロックの旧値 (#1766)", () => {
     expect(oldValueForLock("postgres", col("a", "FLOAT8"), 0.1)).toEqual({ kind: "number", text: "0.1" });
   });
 
+  it("MySQL でデコードできず NULL になる日時 (ゼロ日付など) は IS NULL を足さない", () => {
+    for (const t of ["DATE", "DATETIME", "TIMESTAMP", "TIME"]) {
+      expect(oldValueForLock("mysql", col("a", t), null)).toBeNull();
+    }
+    // PG / SQLite の NULL や、日時でない MySQL 列の NULL は従来どおり。
+    expect(oldValueForLock("postgres", col("a", "DATE"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("sqlite", col("a", "DATETIME"), null)).toEqual({ kind: "null" });
+    expect(oldValueForLock("mysql", col("a", "VARCHAR"), null)).toEqual({ kind: "null" });
+  });
+
+  it("リテラルで往復できない日時 (infinity・紀元前) は検査しない", () => {
+    expect(oldValueForLock("postgres", col("a", "DATE"), "2020-01-02")).toEqual({
+      kind: "text",
+      text: "2020-01-02",
+    });
+    expect(oldValueForLock("postgres", col("a", "TIME"), "12:30:00")).toEqual({
+      kind: "text",
+      text: "12:30:00",
+    });
+    for (const [t, v] of [
+      ["DATE", "infinity"],
+      ["DATE", "0044-03-15 BC"],
+      ["TIMESTAMP", "-infinity"],
+      ["TIMESTAMP", "0044-03-15 12:00:00 BC"],
+      ["TIME", "24:00:00 junk"],
+    ]) {
+      expect(oldValueForLock("postgres", col("a", t), v)).toBeNull();
+    }
+  });
+
   it("等値比較が不安定な型・値は検査しない", () => {
     for (const t of [
       "BLOB",

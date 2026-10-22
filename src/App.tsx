@@ -7460,26 +7460,26 @@ export default function App() {
         });
         const reload = await confirm({
           title: translate("editConflictTitle"),
-          message: (
-            <Callout tone="warning" role="alert">
-              {translate("editConflictBody", { rows: conflictRows })}
-            </Callout>
-          ),
+          message: <Callout tone="warning">{translate("editConflictBody", { rows: conflictRows })}</Callout>,
           confirmLabel: translate("editConflictReload"),
           cancelLabel: translate("editConflictKeep"),
           tone: "warning",
         });
         if (reload) {
-          patchTab(tabId, (tt) => ({
-            ...tt,
-            pendingEdits: pendingEditsAfterApply(tt.pendingEdits, pendingEdits),
-          }));
+          // 再実行 (runQueryInTab) は保留編集と Undo/Redo をすべて消す。ボタンの文言も
+          // 「すべての編集を破棄」にして挙動と揃えている。
           const latest = tabsRef.current.find((tt) => tt.id === tabId) ?? tab;
           if (latest.paginatable) {
             const limit = Math.max(1, latest.previewRowLimit || settings.defaultDisplayCount);
+            // 生の base SQL の 1 ページ目に戻すので、サーバ側ソート/フィルタの表示 (#792) も解除する。
+            patchTab(tabId, (tt) => ({ ...tt, serverSort: null, serverFilter: null }));
             void runQueryInTab(tabId, `${latest.paginatable} LIMIT ${limit}`, latest.paginatable);
+          } else if (latest.lastExecutedSql && isReadOnlySql(latest.lastExecutedSql, driver)) {
+            // エディタの現在の SQL ではなく、直近に実行した読み取り専用 SQL だけを取り直す
+            // (自動リフレッシュと同じ防御)。
+            void runQueryInTab(tabId, latest.lastExecutedSql, null, null);
           } else {
-            void runQueryInTab(tabId, getTabSql(latest), null, null);
+            setStatus({ kind: "key", key: "statusEditConflictReloadSkipped", error: true });
           }
         }
         return false;
@@ -7572,7 +7572,6 @@ export default function App() {
       runQueryInTab,
       settings.defaultDisplayCount,
       settings.optimisticCellEditLock,
-      getTabSql,
       tabsRef,
       selectedProfile?.driver,
       selectedProfile?.is_production,

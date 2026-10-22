@@ -6254,6 +6254,31 @@ async fn sqlite_bulk_write_optimistic_lock_detects_lost_update() {
         "{out:?}"
     );
 
+    // (8b) 述語が無くても旧値つきで送れば、行が消えている (他者が削除) ことを 0 件一致で検出する。
+    other
+        .execute("DELETE FROM items WHERE id = 3", None)
+        .await
+        .expect("other delete");
+    let out = apply(
+        vec![t::BulkUpdateGroup {
+            set: vec![col("name", text("skip2"))],
+            keys: vec![pk(3)],
+            olds: vec![vec![None]],
+        }],
+        None,
+    )
+    .await;
+    assert!(
+        matches!(
+            out,
+            t::BulkWriteOutcome::OptimisticConflict {
+                conflict_rows: 1,
+                ..
+            }
+        ),
+        "{out:?}"
+    );
+
     // (9) 旧値の行数・列数が合わなければ拒否する。
     let bad = t::bulk_update_cells_outcome_via_command(
         &state,

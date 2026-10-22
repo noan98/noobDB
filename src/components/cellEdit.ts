@@ -734,11 +734,15 @@ const LOCK_TEXT_TYPES = new Set([
   "CITEXT",
   "ENUM",
   "UUID",
-  "DATE",
-  "DATETIME",
-  "TIMESTAMP",
-  "TIME",
 ]);
+
+/** 旧値を検査してよい日付/時刻型と、リテラルで往復できる書式 (これに合わない値は検査しない)。 */
+const LOCK_TEMPORAL_RE: Record<string, RegExp | undefined> = {
+  DATE: DATE_RE,
+  DATETIME: DATETIME_RE,
+  TIMESTAMP: DATETIME_RE,
+  TIME: TIME_RE,
+};
 
 /**
  * 楽観ロック (#1766) で、読込時点のセル値 `v` から `WHERE` に足す旧値の述語を決める。検査しない
@@ -753,12 +757,18 @@ const LOCK_TEXT_TYPES = new Set([
  * に載せる (丸めない)。
  */
 export function oldValueForLock(driver: string, col: Column, v: CellValue): BulkOldValue | null {
-  if (v === null || v === undefined) return { kind: "null" };
   const base = col.type_name
     .toUpperCase()
     .replace(/\(.*$/, "")
     .replace(/\s+(UNSIGNED|ZEROFILL)\b/g, "")
     .trim();
+  const temporalRe = LOCK_TEMPORAL_RE[base];
+  if (v === null || v === undefined) {
+    // MySQL はゼロ日付 (0000-00-00) や範囲外の TIME など、デコードできない日時を NULL で返す。
+    // 実際は NULL ではないので `IS NULL` を足すと他者が何も変えていなくても競合になる。
+    if (temporalRe && driver === "mysql") return null;
+    return { kind: "null" };
+  }
   if (BINARY_TYPES.has(base)) return null;
   if (base === "BOOLEAN" || base === "BOOL") {
     return typeof v === "boolean" ? { kind: "bool", value: v } : null;
@@ -779,6 +789,10 @@ export function oldValueForLock(driver: string, col: Column, v: CellValue): Bulk
     }
     if (isSinglePrecisionFloat(driver, col)) return { kind: "float4", text };
     return { kind: "number", text };
+  }
+  if (temporalRe) {
+    // PG の 'infinity' や紀元前の日付 (`0044-03-15 BC`) などは、リテラルで往復できる保証が無い。
+    return typeof v === "string" && temporalRe.test(v) ? { kind: "text", text: v } : null;
   }
   if (LOCK_TEXT_TYPES.has(base) && typeof v === "string") return { kind: "text", text: v };
   return null;
