@@ -22,23 +22,34 @@ const sources = import.meta.glob(
   },
 ) as Record<string, string>;
 
-// ファイルのパス (src/ 起点) → ソース。同一ファイルが ./ と ../ の両方から来るので正規化する。
+// ファイルのパス (src/ 起点) → ソース。glob は `../**` でも同ディレクトリ分は `./` 始まりで返るため正規化する。
 const testSources = new Map<string, string>();
 for (const [p, src] of Object.entries(sources)) {
-  const rel = p.startsWith("./") ? `src/__tests__/${p.slice(2)}` : `src/${p.slice(3)}`;
-  testSources.set(rel, src);
+  testSources.set(p.startsWith("./") ? `src/__tests__/${p.slice(2)}` : `src/${p.slice(3)}`, src);
 }
 
 const SELF = "src/__tests__/crosslangGatingParity.test.ts";
 
-// `from "…src-tauri/…"` か `import.meta.glob("…src-tauri/…"` / `glob([ "…src-tauri/…"` の形だけを
-// 「Rust ソースを読む」とみなす (コメント中の言及は対象外)。
-const READS_RUST = /(?:\bfrom\s+|import\.meta\.glob\(\s*\[?\s*)["'`][^"'`]*src-tauri\//;
+// コメントを除いた文字列リテラルに `src-tauri/` を含むテストを「Rust を読む」とみなす
+// (`?raw` import / `import.meta.glob`(型引数付き・配列の 2 番目以降も) / 動的 import /
+// readFileSync など読み方を問わない)。`./` `../` `/` 始まりのパスのみ対象で、コメントや it 名の言及は対象外。
+const READS_RUST = /["'`][./][^"'`\n]*src-tauri\/[^"'`\n]*["'`]/;
 
+function stripComments(src: string): string {
+  // glob 文字列 (`**/*.rs`) 中の `/*` を誤って拾わないよう、コメント開始は行頭の空白の直後か
+  // 空白の後ろに限る。
+  return src.replace(/(^|\s)\/\*[\s\S]*?\*\//g, "$1").replace(/(^|\s)\/\/.*$/gm, "$1");
+}
+
+// 前提: ステップが `run: >-` の折り畳み複数行で、`pnpm vitest run` の次行以降に
+// フィルタを 1 行 1 個で並べている。単一行 `run: pnpm vitest run a b` には対応しない。
 function crosslangFilters(): string[] {
   const lines = ciYml.split("\n");
   const start = lines.findIndex((l) => l.includes("name: Cross-language parity/golden tests (Vitest)"));
-  expect(start, "ci.yml に crosslang のテスト実行ステップが見つかりません").toBeGreaterThanOrEqual(0);
+  expect(
+    start,
+    "ci.yml に crosslang のテスト実行ステップが見つかりません (`run: >-` の複数行形式でフィルタを 1 行ずつ並べる前提。形式を変えたらこのパーサも直すこと)",
+  ).toBeGreaterThanOrEqual(0);
   const filters: string[] = [];
   let inRun = false;
   for (const line of lines.slice(start + 1)) {
@@ -56,7 +67,7 @@ function crosslangFilters(): string[] {
 }
 
 const rustReaders = [...testSources.entries()]
-  .filter(([p, src]) => p !== SELF && READS_RUST.test(src))
+  .filter(([p, src]) => p !== SELF && READS_RUST.test(stripComments(src)))
   .map(([p]) => p)
   .sort();
 const filters = crosslangFilters();
