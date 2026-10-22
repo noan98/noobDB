@@ -12627,9 +12627,9 @@ export default function App() {
                   style={{
                     position: "absolute",
                     inset: "0 0 auto 0",
-                    height: "100%",
+                    height: "var(--ambient-wash-height)",
                     pointerEvents: "none",
-                    zIndex: 1,
+                    zIndex: 1, // 作業領域内のローカルな重ね順 (モーダル・ポップオーバーより下)
                     backgroundImage: ambientWash,
                     backgroundRepeat: "no-repeat",
                   }}

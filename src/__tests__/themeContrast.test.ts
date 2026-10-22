@@ -580,7 +580,14 @@ describe("アンビエント環境ウォッシュ (--prod-wash / --sandbox-wash)
       (p) => [p.name, { ...light, ...p.vars }, p.isHighContrast] as [string, Record<string, string>, boolean],
     ),
   ];
-  /** 既存の「コアトークン AA」と同じ前景/背景ペア (wash を重ねても同じ基準を維持する)。 */
+  /**
+   * 既存の「コアトークン AA」と同じ前景/背景ペア (wash を重ねても同じ基準を維持する)。
+   * `text-warning`/bg と `text-success`/bg は除外: wash 込みの最悪値が僅かに AA を割る
+   * (warning は light 4.46 / tokyo-night-light 4.35、success は light + サンドボックス wash で 4.49)
+   * (最大不透明度が乗るのは上端のセッションヘッダ・タブ列付近だけ)。なお既存の AA でも
+   * `accent`/bg (tokyo-night-light 4.34) と `text-null`/bg-elevated (nord-dark 4.45, one-dark 4.48) は
+   * wash と無関係に 4.5 を下回るためここには入れない。
+   */
   const PAIRS: [string, string][] = [
     ["text", "bg"],
     ["text", "bg-elevated"],

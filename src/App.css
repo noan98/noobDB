@@ -393,35 +393,37 @@
      本番 3.5% / サンドボックス 4%、左右の隅はその半分 (themeContrast.test.ts が検証)。縦は約
      140px で透明へ消え、--font-scale に追従する。静止背景で reduced-motion の影響は無い。
      hc-light/hc-dark は AAA 優先のため下のプリセットで none に上書きする。 */
+  /* wash overlay の高さ (最大のグラデーション半径に一致。App.tsx が参照)。 */
+  --ambient-wash-height: calc(180px * var(--font-scale, 1));
   --prod-wash:
     radial-gradient(
-      ellipse 100% calc(140px * var(--font-scale, 1)) at 50% 0%,
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
       color-mix(in srgb, var(--error-solid) 3.5%, transparent) 0%,
       transparent 100%
     ),
     radial-gradient(
-      ellipse 28% calc(180px * var(--font-scale, 1)) at 0% 0%,
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
       color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
       transparent 100%
     ),
     radial-gradient(
-      ellipse 28% calc(180px * var(--font-scale, 1)) at 100% 0%,
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
       color-mix(in srgb, var(--error-solid) 1.75%, transparent) 0%,
       transparent 100%
     );
   --sandbox-wash:
     radial-gradient(
-      ellipse 100% calc(140px * var(--font-scale, 1)) at 50% 0%,
+      ellipse 100% calc(var(--ambient-wash-height) * 140 / 180) at 50% 0%,
       color-mix(in srgb, var(--sandbox-violet) 4%, transparent) 0%,
       transparent 100%
     ),
     radial-gradient(
-      ellipse 28% calc(180px * var(--font-scale, 1)) at 0% 0%,
+      ellipse 28% var(--ambient-wash-height) at 0% 0%,
       color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
       transparent 100%
     ),
     radial-gradient(
-      ellipse 28% calc(180px * var(--font-scale, 1)) at 100% 0%,
+      ellipse 28% var(--ambient-wash-height) at 100% 0%,
       color-mix(in srgb, var(--sandbox-violet) 2%, transparent) 0%,
       transparent 100%
     );
