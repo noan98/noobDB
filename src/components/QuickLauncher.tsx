@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Box, chakra, Flex } from "@chakra-ui/react";
+import { chakra, Flex } from "@chakra-ui/react";
+import { motion, useReducedMotion, type Variants } from "motion/react";
 import type { Snippet } from "../api/tauri";
 import { useT } from "../i18n";
 import { useRovingFocus } from "../keyboardNav";
@@ -11,6 +12,7 @@ import {
   computeLauncherPopoverPosition,
   exceedsDragThreshold,
   launcherPointToPosition,
+  launcherPopoverOrigin,
   launcherPositionToPoint,
   loadLauncherPosition,
   nudgeLauncherPoint,
@@ -25,6 +27,8 @@ import {
   type QuickLauncherSources,
 } from "../quickLauncher";
 import type { TableRef } from "../tableQuickAccess";
+import { staggerContainer, transitions, variants } from "../motion";
+import { ActiveRowHighlight } from "./ActiveRowHighlight";
 import { ContextMenu } from "./ContextMenu";
 import { Input } from "./ui";
 import { EmptyState } from "./EmptyState";
@@ -102,6 +106,13 @@ function itemLabel(item: QuickLauncherItem): { primary: string; secondary: strin
 }
 
 const ITEM_SELECTOR = "[data-launcher-item]";
+
+// motion 用 props の `transition` は Chakra のスタイルプロップ名と衝突するため明示的に転送する
+// (`ContextMenu` の `MotionMenu` と同じパターン)。
+// stagger 完了後に検索で新しく現れるセクションを再演出させないための静止 variants。
+const STATIC_ITEM: Variants = { initial: { opacity: 1, y: 0 }, animate: { opacity: 1, y: 0 } };
+const MotionPopover = chakra(motion.div, {}, { forwardProps: ["transition"] });
+const MotionSection = chakra(motion.div, {}, { forwardProps: ["transition"] });
 
 export function QuickLauncher({
   open,
@@ -233,22 +244,37 @@ export function QuickLauncher({
   );
   const visibleSections = sections.filter((s) => s.items.length > 0);
   const [popoverPos, setPopoverPos] = useState<Point | null>(null);
+  // 出現モーションの起点 (ボタンに近い隅, #1763)。
+  const [popoverOrigin, setPopoverOrigin] = useState("left top");
+  // 開いた直後の stagger が終わったら true。以降に検索で現れるセクションは再演出しない。
+  const [entered, setEntered] = useState(false);
+  const reduced = useReducedMotion() ?? false;
+  // 項目へフォーカスが移ったとき滑るハイライト (#1763)。フォーカスが項目から外れたら null。
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const highlightId = `quick-launcher-active-${useId()}`;
+  const onItemBlur = (e: React.FocusEvent) => {
+    const next = e.relatedTarget as HTMLElement | null;
+    if (!next?.closest?.(ITEM_SELECTOR)) setActiveKey(null);
+  };
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: bounds / visibleSections.length は本体では使わないが、ポップオーバーの大きさ・位置が変わるので測り直すためのトリガー
   useLayoutEffect(() => {
     if (!open) {
       setPopoverPos(null);
+      setEntered(false);
+      setActiveKey(null);
       return;
     }
     const el = popoverRef.current;
     if (!el) return;
-    const rect = el.getBoundingClientRect();
+    // 出現モーションの scale に影響されないよう、transform を含まない offset 寸法で測る。
     const p = computeLauncherPopoverPosition(
       { left: point.left, top: point.top, width: BUTTON_SIZE, height: BUTTON_SIZE },
-      { width: rect.width, height: rect.height },
+      { width: el.offsetWidth, height: el.offsetHeight },
       { width: window.innerWidth, height: window.innerHeight },
     );
     setPopoverPos({ left: p.left, top: p.top });
+    setPopoverOrigin(launcherPopoverOrigin(p));
     // 位置・中身が変わったときだけ測り直す。
   }, [open, point.left, point.top, bounds, visibleSections.length]);
 
@@ -369,7 +395,7 @@ export function QuickLauncher({
 
       {open &&
         createPortal(
-          <Box
+          <MotionPopover
             ref={popoverRef}
             role="dialog"
             aria-label={t("quickLauncherTitle")}
@@ -377,10 +403,16 @@ export function QuickLauncher({
             data-testid="quick-launcher-popover"
             position="fixed"
             zIndex="popover"
+            // ボタンに近い隅から伸びる出現モーション (#1763)。reduced-motion / data-motion="reduced" は
+            // MotionConfig と motion トークンが即時化する。
+            initial={{ opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={transitions.enter}
             style={{
               left: popoverPos?.left ?? point.left,
               top: popoverPos?.top ?? point.top,
               visibility: popoverPos ? "visible" : "hidden",
+              transformOrigin: popoverOrigin,
             }}
             w="320px"
             maxH="min(480px, 70vh)"
@@ -436,158 +468,180 @@ export function QuickLauncher({
                 />
               )
             ) : (
-              visibleSections.map((section) => (
-                <Box
-                  key={section.id}
-                  role="group"
-                  aria-label={t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
-                  py="1"
-                >
-                  <chakra.div textStyle="overline" px="2" py="1">
-                    {t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
-                  </chakra.div>
-                  {section.items.map((item, itemIndex) => {
-                    const label = itemLabel(item);
-                    const canReorder = reorderable(section.id);
-                    return (
-                      <Flex
-                        key={item.key}
-                        align="center"
-                        gap="1"
-                        borderRadius="sm"
-                        _hover={{ bg: "app.hover" }}
-                        draggable={canReorder || undefined}
-                        onDragStart={
-                          canReorder
-                            ? (e) => {
-                                dragKeyRef.current = item.key;
-                                e.dataTransfer.effectAllowed = "move";
-                              }
-                            : undefined
-                        }
-                        onDragOver={
-                          canReorder && dragKeyRef.current !== null
-                            ? (e) => {
-                                e.preventDefault();
-                                e.dataTransfer.dropEffect = "move";
-                              }
-                            : undefined
-                        }
-                        onDrop={
-                          canReorder
-                            ? (e) => {
-                                e.preventDefault();
-                                const fromKey = dragKeyRef.current;
-                                dragKeyRef.current = null;
-                                const from = section.items.findIndex((i) => i.key === fromKey);
-                                if (from < 0) return;
-                                moveItem(section.items[from], itemIndex - from);
-                              }
-                            : undefined
-                        }
-                        onDragEnd={() => {
-                          dragKeyRef.current = null;
-                        }}
-                      >
-                        <chakra.button
-                          type="button"
-                          data-launcher-item=""
-                          flex="1"
-                          minW="0"
-                          display="flex"
-                          flexDirection="column"
-                          alignItems="flex-start"
-                          gap="0.25"
-                          px="2"
-                          py="1"
-                          bg="transparent"
-                          border="none"
+              <motion.div
+                variants={staggerContainer(reduced)}
+                initial="initial"
+                animate="animate"
+                onAnimationComplete={() => setEntered(true)}
+              >
+                {visibleSections.map((section) => (
+                  <MotionSection
+                    key={section.id}
+                    role="group"
+                    aria-label={t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
+                    py="1"
+                    variants={entered ? STATIC_ITEM : variants.staggerItem}
+                  >
+                    <chakra.div textStyle="overline" px="2" py="1">
+                      {t(QUICK_LAUNCHER_SECTION_LABEL[section.id])}
+                    </chakra.div>
+                    {section.items.map((item, itemIndex) => {
+                      const label = itemLabel(item);
+                      const canReorder = reorderable(section.id);
+                      return (
+                        <Flex
+                          key={item.key}
+                          align="center"
+                          gap="1"
+                          position="relative"
                           borderRadius="sm"
-                          textAlign="left"
-                          cursor="pointer"
-                          color="app.text"
-                          fontSize="sm"
-                          fontFamily={item.kind === "query" ? "mono" : undefined}
-                          aria-label={t("quickLauncherInsertAria", { name: label.primary })}
-                          _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
-                          title={canReorder ? t("quickLauncherReorderHint") : undefined}
-                          onKeyDown={
+                          _hover={{ bg: "app.hover" }}
+                          draggable={canReorder || undefined}
+                          onDragStart={
                             canReorder
                               ? (e) => {
-                                  if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  moveItem(item, e.key === "ArrowUp" ? -1 : 1);
+                                  dragKeyRef.current = item.key;
+                                  e.dataTransfer.effectAllowed = "move";
                                 }
                               : undefined
                           }
-                          onClick={(e) => activate(item, e.metaKey || e.ctrlKey)}
+                          onDragOver={
+                            canReorder && dragKeyRef.current !== null
+                              ? (e) => {
+                                  e.preventDefault();
+                                  e.dataTransfer.dropEffect = "move";
+                                }
+                              : undefined
+                          }
+                          onDrop={
+                            canReorder
+                              ? (e) => {
+                                  e.preventDefault();
+                                  const fromKey = dragKeyRef.current;
+                                  dragKeyRef.current = null;
+                                  const from = section.items.findIndex((i) => i.key === fromKey);
+                                  if (from < 0) return;
+                                  moveItem(section.items[from], itemIndex - from);
+                                }
+                              : undefined
+                          }
+                          onDragEnd={() => {
+                            dragKeyRef.current = null;
+                          }}
                         >
-                          <chakra.span truncate maxW="100%">
-                            {label.primary}
-                          </chakra.span>
-                          {label.secondary && (
-                            <chakra.span fontSize="xs" color="app.textMuted" truncate maxW="100%">
-                              {label.secondary}
-                            </chakra.span>
-                          )}
-                        </chakra.button>
-                        <Tooltip label={runLabel(item)}>
+                          {activeKey === item.key && <ActiveRowHighlight layoutId={highlightId} />}
                           <chakra.button
                             type="button"
-                            aria-label={`${runLabel(item)}: ${label.primary}`}
-                            display="inline-flex"
-                            alignItems="center"
-                            justifyContent="center"
-                            p="1"
-                            mr="1"
+                            data-launcher-item=""
+                            position="relative"
+                            zIndex={1}
+                            onFocus={() => setActiveKey(item.key)}
+                            onBlur={onItemBlur}
+                            flex="1"
+                            minW="0"
+                            display="flex"
+                            flexDirection="column"
+                            alignItems="flex-start"
+                            gap="0.25"
+                            px="2"
+                            py="1"
                             bg="transparent"
                             border="none"
                             borderRadius="sm"
-                            color="app.textMuted"
+                            textAlign="left"
                             cursor="pointer"
-                            _hover={{ color: "app.text" }}
-                            _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
-                            onClick={() => activate(item, true)}
+                            color="app.text"
+                            fontSize="sm"
+                            fontFamily={item.kind === "query" ? "mono" : undefined}
+                            aria-label={t("quickLauncherInsertAria", { name: label.primary })}
+                            _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
+                            title={canReorder ? t("quickLauncherReorderHint") : undefined}
+                            onKeyDown={
+                              canReorder
+                                ? (e) => {
+                                    if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    moveItem(item, e.key === "ArrowUp" ? -1 : 1);
+                                  }
+                                : undefined
+                            }
+                            onClick={(e) => activate(item, e.metaKey || e.ctrlKey)}
                           >
-                            <Icon name={item.kind === "table" ? "table" : "play"} size={ICON_SIZES.sm} />
+                            <chakra.span truncate maxW="100%">
+                              {label.primary}
+                            </chakra.span>
+                            {label.secondary && (
+                              <chakra.span fontSize="xs" color="app.textMuted" truncate maxW="100%">
+                                {label.secondary}
+                              </chakra.span>
+                            )}
                           </chakra.button>
-                        </Tooltip>
-                      </Flex>
-                    );
-                  })}
-                  {section.hasMore && (
-                    <chakra.button
-                      type="button"
-                      data-launcher-item=""
-                      display="block"
-                      w="100%"
-                      px="2"
-                      py="1"
-                      bg="transparent"
-                      border="none"
-                      borderRadius="sm"
-                      textAlign="left"
-                      fontSize="xs"
-                      color="app.textMuted"
-                      cursor="pointer"
-                      _hover={{ color: "app.text", bg: "app.hover" }}
-                      _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
-                      onClick={() => {
-                        close(false);
-                        onShowMore(section.id);
-                      }}
-                    >
-                      {t("quickLauncherShowMore")}
-                    </chakra.button>
-                  )}
-                </Box>
-              ))
+                          <Tooltip label={runLabel(item)}>
+                            <chakra.button
+                              type="button"
+                              position="relative"
+                              zIndex={1}
+                              aria-label={`${runLabel(item)}: ${label.primary}`}
+                              display="inline-flex"
+                              alignItems="center"
+                              justifyContent="center"
+                              p="1"
+                              mr="1"
+                              bg="transparent"
+                              border="none"
+                              borderRadius="sm"
+                              color="app.textMuted"
+                              cursor="pointer"
+                              _hover={{ color: "app.text" }}
+                              _focusVisible={{ outline: "none", boxShadow: "var(--focus-ring)" }}
+                              onClick={() => activate(item, true)}
+                            >
+                              <Icon name={item.kind === "table" ? "table" : "play"} size={ICON_SIZES.sm} />
+                            </chakra.button>
+                          </Tooltip>
+                        </Flex>
+                      );
+                    })}
+                    {section.hasMore && (
+                      <chakra.button
+                        type="button"
+                        data-launcher-item=""
+                        position="relative"
+                        onFocus={() => setActiveKey(`more-${section.id}`)}
+                        onBlur={onItemBlur}
+                        display="block"
+                        w="100%"
+                        px="2"
+                        py="1"
+                        bg="transparent"
+                        border="none"
+                        borderRadius="sm"
+                        textAlign="left"
+                        fontSize="xs"
+                        color="app.textMuted"
+                        cursor="pointer"
+                        _hover={{ color: "app.text", bg: "app.hover" }}
+                        _focusVisible={{ outline: "none", boxShadow: "inset var(--focus-ring)" }}
+                        onClick={() => {
+                          close(false);
+                          onShowMore(section.id);
+                        }}
+                      >
+                        {activeKey === `more-${section.id}` && <ActiveRowHighlight layoutId={highlightId} />}
+                        <chakra.span position="relative" zIndex={1}>
+                          {t("quickLauncherShowMore")}
+                        </chakra.span>
+                      </chakra.button>
+                    )}
+                  </MotionSection>
+                ))}
+              </motion.div>
             )}
             <chakra.div px="2" pt="1" fontSize="2xs" color="app.textMuted">
               {t("quickLauncherFooterHint")}
             </chakra.div>
-          </Box>,
+          </MotionPopover>,
           document.body,
         )}
 
