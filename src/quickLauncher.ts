@@ -360,6 +360,16 @@ export interface LauncherPopoverPlacement extends Point {
 export const LAUNCHER_POPOVER_GAP = 8;
 
 /**
+ * 出現モーション (scale) の `transform-origin`。ポップオーバーが開く向きの逆側、つまり
+ * ボタンに近い隅 (下半分なら下端、右半分なら右端) を起点にして、ボタンから伸びて見せる (#1763)。
+ */
+export function launcherPopoverOrigin(
+  placement: Pick<LauncherPopoverPlacement, "above" | "alignEnd">,
+): string {
+  return `${placement.alignEnd ? "right" : "left"} ${placement.above ? "bottom" : "top"}`;
+}
+
+/**
  * ポップオーバーの左上点を決める。画面の中央側へ開く (下半分なら上、右半分なら
  * 左へ広げる) ので、画面端では自動で向きが反転する。はみ出す分は `viewport` 内へ
  * クランプする。

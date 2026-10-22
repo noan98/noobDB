@@ -2391,15 +2391,64 @@ pub(crate) fn row_identity_pk_or_none(cols: &[TableColumnInfo]) -> Option<TableR
         return Some(TableRowIdentity {
             strategy: "primary_key".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         });
     }
     if cols.is_empty() {
         return Some(TableRowIdentity {
             strategy: "none".into(),
             hidden_column: None,
+            key_columns: Vec::new(),
         });
     }
     None
+}
+
+/// PK が無い表の行識別に使える UNIQUE NOT NULL キーを選ぶ (#1776)。
+///
+/// 採用条件: UNIQUE で PRIMARY KEY でなく、部分インデックス (述語あり) でも式インデックス
+/// でもなく、有効 (INVALID でない) で、インデックスと列の照合順序が一致し、キー列 (PostgreSQL の `INCLUDE` 列は除く) がすべて実在し NOT NULL なもの。
+/// NULL を許す UNIQUE 列は NULL 同士が重複できる (= 1 行に定まらない) ので使わない。
+/// 候補が複数あるときは列数が少ないもの (単一列の UNIQUE が最優先)、同数ならインデックスの
+/// 並び順で最初のものを選ぶ。
+pub(crate) fn pick_unique_row_key(
+    cols: &[TableColumnInfo],
+    indexes: &[IndexInfo],
+) -> Option<Vec<String>> {
+    indexes
+        .iter()
+        .filter(|i| {
+            i.unique
+                && !i.primary
+                && i.predicate.is_none()
+                && i.first_expression_at.is_none()
+                && !i.invalid
+                && !i.collation_differs
+        })
+        .filter_map(|i| {
+            let n = i
+                .key_column_count
+                .unwrap_or(i.columns.len())
+                .min(i.columns.len());
+            let key = i.columns.get(..n)?;
+            let usable = !key.is_empty()
+                && key
+                    .iter()
+                    .all(|name| cols.iter().any(|c| &c.name == name && !c.nullable));
+            usable.then(|| key.to_vec())
+        })
+        .enumerate()
+        .min_by_key(|(pos, key)| (key.len(), *pos))
+        .map(|(_, key)| key)
+}
+
+/// `pick_unique_row_key` で選んだキーから `unique_key` の行識別を作る (#1776)。
+pub(crate) fn unique_key_identity(key_columns: Vec<String>) -> TableRowIdentity {
+    TableRowIdentity {
+        strategy: "unique_key".into(),
+        hidden_column: None,
+        key_columns,
+    }
 }
 
 /// Builds the driver-agnostic column metadata (`Column`) from the first row of
@@ -2587,6 +2636,10 @@ pub(crate) struct IndexRow {
     pub column_option: Option<String>,
     /// PostgreSQL 15+ の `NULLS NOT DISTINCT`。
     pub nulls_not_distinct: bool,
+    /// PostgreSQL: INVALID なインデックス (#1776)。
+    pub invalid: bool,
+    /// この列でインデックスと列の照合順序が違う (#1776)。
+    pub collation_differs: bool,
 }
 
 /// `IndexRow` をテーブル → インデックスの順にまとめる。単一テーブル版
@@ -2632,12 +2685,14 @@ pub(crate) fn group_index_rows(rows: Vec<IndexRow>) -> Vec<TableIndexes> {
                     first_expression_at: None,
                     key_column_count: r.key_column_count,
                     nulls_not_distinct: r.nulls_not_distinct,
+                    invalid: r.invalid,
                     ..Default::default()
                 });
                 i
             }
         };
         if let Some(index) = entry.indexes.get_mut(ii) {
+            index.collation_differs |= r.collation_differs;
             match r.column {
                 Some(col) => {
                     index.columns.push(col);
@@ -4457,6 +4512,96 @@ mod tests {
             referenced_column: None,
             comment: None,
         }
+    }
+
+    fn nn_col(name: &str, nullable: bool) -> super::types::TableColumnInfo {
+        let mut c = test_col(name);
+        c.nullable = nullable;
+        c
+    }
+
+    fn uq_index(name: &str, cols: &[&str]) -> super::types::IndexInfo {
+        super::types::IndexInfo {
+            name: name.into(),
+            columns: cols.iter().map(|c| c.to_string()).collect(),
+            unique: true,
+            primary: false,
+            method: None,
+            predicate: None,
+            first_expression_at: None,
+            key_column_count: None,
+            column_options: Vec::new(),
+            nulls_not_distinct: false,
+            invalid: false,
+            collation_differs: false,
+        }
+    }
+
+    #[test]
+    fn pick_unique_row_key_skips_invalid_and_collation_mismatch() {
+        let cols = [nn_col("a", false)];
+        let mut invalid = uq_index("invalid", &["a"]);
+        invalid.invalid = true;
+        let mut coll = uq_index("coll", &["a"]);
+        coll.collation_differs = true;
+        assert_eq!(super::pick_unique_row_key(&cols, &[invalid, coll]), None);
+    }
+
+    #[test]
+    fn pick_unique_row_key_prefers_single_column_and_requires_not_null() {
+        let cols = [nn_col("a", false), nn_col("b", false), nn_col("n", true)];
+        // 複合が先に並んでいても単一列を優先する。
+        let idx = [uq_index("ab", &["a", "b"]), uq_index("b", &["b"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["b".to_string()])
+        );
+        // 同じ列数なら先に並んだものを採る。
+        let idx = [uq_index("b", &["b"]), uq_index("a", &["a"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["b".to_string()])
+        );
+        // NULL 可の列を含む UNIQUE は使えない (NULL は重複できる)。
+        let idx = [uq_index("n", &["n"]), uq_index("an", &["a", "n"])];
+        assert_eq!(super::pick_unique_row_key(&cols, &idx), None);
+        // 複合でも全列 NOT NULL なら採用。
+        let idx = [uq_index("ab", &["a", "b"])];
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &idx),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+    }
+
+    #[test]
+    fn pick_unique_row_key_skips_primary_partial_expression_and_non_unique() {
+        let cols = [nn_col("a", false), nn_col("b", false)];
+        let mut primary = uq_index("PRIMARY", &["a"]);
+        primary.primary = true;
+        let mut partial = uq_index("partial", &["a"]);
+        partial.predicate = Some("(b > 0)".into());
+        let mut expr = uq_index("expr", &["a"]);
+        expr.first_expression_at = Some(1);
+        let mut plain = uq_index("plain", &["a"]);
+        plain.unique = false;
+        let missing = uq_index("missing", &["zzz"]);
+        let empty = uq_index("empty", &[]);
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &[primary, partial, expr, plain, missing, empty]),
+            None
+        );
+    }
+
+    #[test]
+    fn pick_unique_row_key_ignores_include_columns() {
+        let cols = [nn_col("a", false), nn_col("inc", true)];
+        // PostgreSQL の INCLUDE 列 (NULL 可) はキーに含めない。
+        let mut idx = uq_index("a_inc", &["a", "inc"]);
+        idx.key_column_count = Some(1);
+        assert_eq!(
+            super::pick_unique_row_key(&cols, &[idx]),
+            Some(vec!["a".to_string()])
+        );
     }
 
     #[test]

@@ -4538,7 +4538,9 @@ export const DataGrid = memo(function DataGrid({
     setReveal((r) => {
       if (!r || r.kind !== "cell") return r;
       const pks = pkIndices ?? [];
-      if (rowIdentityStrategy !== "primary_key" || pks.length === 0) return null;
+      // unique_key (UNIQUE NOT NULL, #1776) は値が行に固有で動かないので PK と同様に追従してよい。
+      if ((rowIdentityStrategy !== "primary_key" && rowIdentityStrategy !== "unique_key") || pks.length === 0)
+        return null;
       const prev = prevRows[r.rowIdx];
       if (!prev) return null;
       const key = rowEditKey(prev, pks, r.rowIdx);
@@ -8482,6 +8484,8 @@ function StreamingBanner({
  */
 function identityHintKeys(strategy: RowIdentityKind, ambiguous: boolean): { label: I18nKey; title: I18nKey } {
   switch (strategy) {
+    case "unique_key":
+      return { label: "editUniqueKeyHint", title: "editUniqueKeyHintTitle" };
     case "rowid":
       return { label: "editRowidHint", title: "editRowidHintTitle" };
     case "ctid":
@@ -10427,7 +10431,9 @@ export const ResultGrid = memo(
             rowSqlDriver={driver}
             rowSqlDatabase={database}
             rowSqlTable={table}
-            blobIo={identityStrategy === "primary_key" ? blobIo : undefined}
+            blobIo={
+              identityStrategy === "primary_key" || identityStrategy === "unique_key" ? blobIo : undefined
+            }
             columnMeta={tableColumns ?? undefined}
             incomingFks={incomingFks}
             onRunRelatedQuery={onRunRelatedQuery}

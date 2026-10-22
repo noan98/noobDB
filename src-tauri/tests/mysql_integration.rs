@@ -154,6 +154,60 @@ async fn mysql_row_identity_pk_and_all_columns_fallback() {
     conn.close().await;
 }
 
+/// #1776: PK が無くても UNIQUE NOT NULL キーがあれば `all_columns` ではなく `unique_key`。
+#[tokio::test]
+async fn mysql_row_identity_prefers_unique_not_null_key() {
+    let Ok(url) = std::env::var("NOOBDB_TEST_MYSQL_URL") else {
+        eprintln!("skip: NOOBDB_TEST_MYSQL_URL not set");
+        return;
+    };
+    let opts = t::parse_mysql_url(&url).expect("valid url");
+    let db = opts
+        .database
+        .clone()
+        .expect("test url must include a database");
+    let conn = t::connect(&opts).await.expect("connect");
+
+    let tables = [
+        ("ri_uq_single", "CREATE TABLE ri_uq_single (code VARCHAR(32) NOT NULL, note VARCHAR(32), UNIQUE KEY uq_code (code))"),
+        ("ri_uq_composite", "CREATE TABLE ri_uq_composite (a VARCHAR(32) NOT NULL, b VARCHAR(32) NOT NULL, UNIQUE KEY uq_ab (a, b))"),
+        ("ri_uq_nullable", "CREATE TABLE ri_uq_nullable (code VARCHAR(32) NULL, note VARCHAR(32), UNIQUE KEY uq_code (code))"),
+    ];
+    for (name, ddl) in tables {
+        conn.execute(&format!("DROP TABLE IF EXISTS {name}"), Some(&db))
+            .await
+            .expect("drop");
+        conn.execute(ddl, Some(&db)).await.expect(ddl);
+    }
+
+    // MySQL は PK が無い表の「最初の UNIQUE NOT NULL インデックス」を COLUMN_KEY='PRI' と
+    // して報告する (サーバ側の昇格)。そのため通常は primary_key になり、いずれにせよ
+    // all_columns には落ちない (#1776)。昇格が効かない場合の unique_key は
+    // `pick_unique_row_key` の単体テストで担保する。
+    for name in ["ri_uq_single", "ri_uq_composite"] {
+        let id = conn.row_identity(&db, name).await.expect(name);
+        assert!(
+            id.strategy == "primary_key" || id.strategy == "unique_key",
+            "{name}: {}",
+            id.strategy
+        );
+        assert_eq!(id.hidden_column, None);
+    }
+    // NULL 可の UNIQUE は一意に定まらないので従来どおり all_columns。
+    let nullable = conn
+        .row_identity(&db, "ri_uq_nullable")
+        .await
+        .expect("nullable");
+    assert_eq!(nullable.strategy, "all_columns");
+
+    for (name, _) in tables {
+        conn.execute(&format!("DROP TABLE {name}"), Some(&db))
+            .await
+            .expect("cleanup");
+    }
+    conn.close().await;
+}
+
 /// `table_sizes` must report a real base table with byte figures from
 /// information_schema.TABLES (DATA_LENGTH / INDEX_LENGTH). InnoDB's lengths are
 /// approximate, so we only assert the table appears with a non-negative total
