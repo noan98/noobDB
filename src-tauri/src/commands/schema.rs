@@ -460,10 +460,16 @@ pub async fn incoming_foreign_keys(
         .await?;
     let mut incoming = filter_incoming_foreign_keys(&all, &table);
     // PostgreSQL はスキーマをまたぐ FK が `foreign_keys` に含まれないので別クエリで補う (#1786)。
-    incoming.extend(
-        conn.cross_schema_incoming_foreign_keys(&database, &table)
-            .await?,
-    );
+    // 補完クエリが失敗しても、同一スキーマ分は返す (既存の挙動を弱めない)。
+    match conn
+        .cross_schema_incoming_foreign_keys(&database, &table)
+        .await
+    {
+        Ok(extra) => incoming.extend(extra),
+        Err(e) => {
+            tracing::warn!(error = %e, "スキーマをまたぐ外部キーの取得に失敗");
+        }
+    }
     Ok(incoming)
 }
 

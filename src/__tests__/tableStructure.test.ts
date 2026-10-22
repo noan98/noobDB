@@ -102,3 +102,17 @@ describe("structureIncomingRows (#1628)", () => {
     expect(structureIncomingRows([])).toEqual([]);
   });
 });
+
+describe("structureIncomingRows のスキーマ (#1786)", () => {
+  it("別スキーマの同名テーブルを別行にし、同一スキーマ→スキーマ名順に並べ、重複は 1 行にする", () => {
+    const rows = structureIncomingRows([
+      { schema: "sales", table: "child", column: "pid", referencedColumn: "id" },
+      { table: "child", column: "pid", referencedColumn: "id" },
+      { schema: "sales", table: "child", column: "pid", referencedColumn: "id" },
+    ]);
+    expect(rows).toEqual([
+      { table: "child", column: "pid", referencedColumn: "id" },
+      { schema: "sales", table: "child", column: "pid", referencedColumn: "id" },
+    ]);
+  });
+});

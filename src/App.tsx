@@ -4453,7 +4453,7 @@ export default function App() {
   // table tab so the result grid can offer reverse FK navigation (rows
   // referencing the current row). Cached per table and reused across tabs. The
   // backend keeps one database-wide FK list, so this costs no extra DB queries
-  // per table. #621 / #1255
+  // per table (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786). #621 / #1255
   useEffect(() => {
     if (!sessionId) return;
     for (const tt of paneActiveTabs) {
@@ -8105,15 +8105,15 @@ export default function App() {
       // 注記には数えられなかった子テーブルだけを挙げる (集計失敗は全部、列不明は該当の子のみ)。
       const unverifiedTables = [
         ...new Set(
-          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map(
-            (r) => r.table,
+          (failed ? refs : refs.filter((r) => collected.unresolved.includes(r.referencedColumn))).map((r) =>
+            incomingFkTableName(r),
           ),
         ),
       ];
       // 値の上限で打ち切って一件も見つからなかったときは、数えていない値に子行がありうるので
       // 黙って進めず「確認できなかった」として全子テーブルを挙げる。
       if (impacts.length === 0 && partial && unverifiedTables.length === 0) {
-        unverifiedTables.push(...new Set(refs.map((r) => r.table)));
+        unverifiedTables.push(...new Set(refs.map((r) => incomingFkTableName(r))));
       }
       const unverified = unverifiedTables.length > 0;
       if (impacts.length === 0 && !unverified) return true;
@@ -8130,7 +8130,7 @@ export default function App() {
               controls.cancel();
               openAndRunQuery(
                 buildOpenChildrenSql({ driver, database: input.database, impact: imp, keys, types }),
-                imp.table,
+                incomingFkTableName(imp),
               );
             }}
           />
@@ -8205,7 +8205,7 @@ export default function App() {
                 controls.cancel();
                 openAndRunQuery(
                   buildOpenChildrenSql({ driver, database, impact: imp, keys: null }),
-                  imp.table,
+                  incomingFkTableName(imp),
                 );
               }}
             />
@@ -8251,7 +8251,7 @@ export default function App() {
 
   // DROP 確認ダイアログ用に、対象テーブルを参照している (DROP されずに残る) 子テーブルの FK を
   // 取る (#1536)。バックエンドは DB 全体の FK 一覧を持っているので 1 テーブルあたり追加の
-  // DB 問い合わせは増えない。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
+  // DB 問い合わせは増えない (PostgreSQL はスキーマをまたぐ FK の分だけ 1 クエリ追加, #1786)。取得に失敗しても確認自体は妨げず、警告を出さないだけにする。
   const loadDropImpacts = useCallback(
     async (database: string, tables: string[]): Promise<DropImpact[]> => {
       if (!sessionId) return [];

@@ -1256,7 +1256,8 @@ impl Connection {
     }
 
     /// 別スキーマの子テーブルから `db.table` を参照する外部キー (#1786)。PostgreSQL 専用で、
-    /// MySQL / SQLite は逆参照を `foreign_keys` だけで賄うため常に空 (挙動は変えない)。
+    /// MySQL の DB をまたぐ FK は対象外 (#1786 は PostgreSQL のみ)、SQLite は DB をまたげないため、
+    /// どちらも `foreign_keys` だけで賄い常に空 (挙動は変えない)。
     pub async fn cross_schema_incoming_foreign_keys(
         &self,
         db: &str,
