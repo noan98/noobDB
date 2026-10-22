@@ -245,16 +245,32 @@ const PRIMARY_GUARD_RE = /\bensure_allowed_for_session\b|\b(?:session|sandbox)\.
 /**
  * ヘルパ経由のガード。本体が直接ガードを書かず、これらを呼ぶことで間接的にガードを通るもの。
  * 各ヘルパの本体に一次ガードが実在することも検証する (ヘルパからガードが消えたら落ちる)。
- *   - run_query_transaction_inner : 渡された全文を `ensure_allowed_for_session` に通してから
- *     トランザクション実行する。セル編集 (`bulk_update_cells`)・Undo/Redo
- *     (`*_flight_record` / `apply_flight_batch`) はこの経路で書き込む。
+ *   - run_query_transaction_guarded_inner : 渡された全文を `ensure_allowed_for_session` に通してから
+ *     トランザクション実行する。セル編集 (`bulk_update_cells`) はこの経路で影響行数を検算しつつ書き込む (#1777)。
  *   - run_query_inner             : `run_query` の本体。実行前に `ensure_allowed_for_session`。
  *   - run_in_transaction_inner    : 明示トランザクション内の実行。同じく実行前に検査。
  */
-const GUARD_HELPERS = ["run_query_transaction_inner", "run_query_inner", "run_in_transaction_inner"] as const;
+const GUARD_HELPERS = [
+  "run_query_transaction_guarded_inner",
+  "run_query_inner",
+  "run_in_transaction_inner",
+] as const;
+
+/**
+ * 自身はガードを書かず、ガードヘルパへ丸ごと委ねるだけの関数 (委譲先を必ず呼ぶことを検証する)。
+ *   - run_query_transaction_inner : 検算なしで `run_query_transaction_guarded_inner` に委ねる。
+ *     Undo/Redo (`*_flight_record` / `apply_flight_batch`) と `run_query_transaction` はこの経路。
+ */
+const GUARD_DELEGATES: Record<string, (typeof GUARD_HELPERS)[number]> = {
+  run_query_transaction_inner: "run_query_transaction_guarded_inner",
+};
 
 function hasGuard(reachableCode: string): boolean {
-  return PRIMARY_GUARD_RE.test(reachableCode) || GUARD_HELPERS.some((h) => calls(reachableCode, h));
+  return (
+    PRIMARY_GUARD_RE.test(reachableCode) ||
+    GUARD_HELPERS.some((h) => calls(reachableCode, h)) ||
+    Object.keys(GUARD_DELEGATES).some((d) => calls(reachableCode, d))
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -275,8 +291,8 @@ interface WriteCapable {
 const ESA_SESSION = /\bensure_allowed_for_session\s*\(\s*&session\b/;
 const wc = (why: string, ...guards: RegExp[]): WriteCapable => ({ why, guards });
 const VIA_TX = wc(
-  "run_query_transaction_inner 経由 (全文を ensure_allowed_for_session)",
-  /\brun_query_transaction_inner\s*\(/,
+  "run_query_transaction(_guarded)_inner 経由 (全文を ensure_allowed_for_session)",
+  /\brun_query_transaction(?:_guarded)?_inner\s*\(/,
 );
 const RO_IF_SESSION = /\bif\s+session\.read_only\s*\{/;
 const RO_IF_SANDBOX = /\bif\s+sandbox\.read_only\s*\{/;
@@ -759,6 +775,14 @@ describe("read_only 書き込みコマンド網羅パリティ (#1778)", () => {
       expect(
         defs.some((f) => PRIMARY_GUARD_RE.test(f.body)),
         `${helper} の本体に一次ガード参照が無い (ヘルパ経由のガードが空洞化している)`,
+      ).toBe(true);
+    }
+    for (const [delegate, helper] of Object.entries(GUARD_DELEGATES)) {
+      const defs = allFns.filter((f) => f.name === delegate);
+      expect(defs.length, `${delegate} の定義が見つからない`).toBeGreaterThan(0);
+      expect(
+        defs.some((f) => calls(f.body, helper)),
+        `${delegate} が ${helper} へ委ねていない (委譲経由のガードが空洞化している)`,
       ).toBe(true);
     }
   });
