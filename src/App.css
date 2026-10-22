@@ -2437,6 +2437,30 @@ td.is-find-current::after {
   animation: find-current-pulse 0.45s var(--ease-out);
 }
 
+/* F6 の領域フォーカス巡回 (#681) で着地した領域の外枠パルス (#1764)。
+   `components/focusLandingPulse.ts` が `[data-focus-landing-region]` (サイドバー aside /
+   QueryEditor ルート / 結果グリッド外枠) に `is-focus-landing` を付け、animationend で外す。
+   レイアウトは動かさない (pointer-events: none の疑似要素の内側リングのみ)。
+   outline / inset box-shadow は position: relative の子孫 (CodeMirror・sticky 行 / ヘッダ) の
+   下に隠れるため疑似要素にし、スクロールで流れないよう領域はスクロールコンテナの外側に置く。
+   z-index: 6 は結果グリッドの sticky 行・ヘッダ (最大 5) とアンビエントウォッシュ (1, #1768) の上。
+   reduced-motion / hc-* / forced-colors は JS 側で付与しない。 */
+@keyframes focus-landing-pulse {
+  0%   { opacity: 1; }
+  100% { opacity: 0; }
+}
+:where(.is-focus-landing) { position: relative; }
+.is-focus-landing::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 calc(var(--focus-ring-width) * 2) var(--accent);
+  opacity: 0;
+  animation: focus-landing-pulse 0.6s var(--ease-out);
+}
+
 /* 結果グリッド全体 (スクロールコンテナ) の適用成功フラッシュ。疑似要素だと
    スクロールで流れてしまうため、1 要素・1 回きりのここだけ box-shadow を使う。 */
 @keyframes apply-flash-box {
