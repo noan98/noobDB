@@ -3327,6 +3327,11 @@ const en = {
   dropColumnDepForeignKey: "foreign key",
   dropColumnDepReferencedBy: "referenced by table",
   dropColumnDepPossible: "possible",
+  dropColumnWarnDefinitions: "views / triggers",
+  dropColumnWarnIndexes: "indexes",
+  dropColumnWarnForeignKeys: "foreign keys",
+  dropColumnWarnGenerated: "generated columns",
+  dropColumnWarnOther: "other",
   // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
   refImpactTitle: "{count} child rows in {tables} table(s) reference the data being deleted",
   refImpactTitlePartial: "At least {count} child rows in {tables} table(s) reference the data being deleted",
@@ -10063,6 +10068,11 @@ const ja: Dict = {
   dropColumnDepForeignKey: "外部キー",
   dropColumnDepReferencedBy: "参照元テーブル",
   dropColumnDepPossible: "候補",
+  dropColumnWarnDefinitions: "ビュー・トリガー",
+  dropColumnWarnIndexes: "インデックス",
+  dropColumnWarnForeignKeys: "外部キー",
+  dropColumnWarnGenerated: "生成列",
+  dropColumnWarnOther: "その他",
   // 行削除 / TRUNCATE の前に出す子テーブルの参照行数 (#1506)。
   refImpactTitle: "削除対象を {tables} テーブルの子行 {count} 件が参照しています",
   refImpactTitlePartial: "削除対象を {tables} テーブルの子行 {count} 件以上が参照しています",

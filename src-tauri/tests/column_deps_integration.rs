@@ -50,6 +50,8 @@ async fn sqlite_column_dependencies() {
         "CREATE TABLE nb1758_p (id INTEGER PRIMARY KEY, price INTEGER, qty INTEGER, owner INTEGER REFERENCES nb1758_u(id), \
          total INTEGER GENERATED ALWAYS AS (price * qty) VIRTUAL)",
         "CREATE TABLE nb1758_c (id INTEGER PRIMARY KEY, pid INTEGER REFERENCES nb1758_p(id))",
+        "CREATE TABLE nb1758_k (a INTEGER, b INTEGER, PRIMARY KEY (a, b))",
+        "CREATE TABLE nb1758_kc (x INTEGER, y INTEGER, FOREIGN KEY (x, y) REFERENCES nb1758_k(a, b))",
         "CREATE INDEX nb1758_idx ON nb1758_p (price, qty)",
         "CREATE VIEW nb1758_v AS SELECT id, price FROM nb1758_p",
         "CREATE TRIGGER nb1758_t AFTER INSERT ON nb1758_p BEGIN UPDATE nb1758_p SET qty = NEW.price WHERE id = NEW.id; END",
@@ -83,6 +85,10 @@ async fn sqlite_column_dependencies() {
         deps(&session, "main", "nb1758_p", &["price", "total"], "price").await,
         vec!["index:nb1758_idx", "trigger:nb1758_t", "view:nb1758_v"]
     );
+    // 複合 FK で参照される列 (#1758)。
+    assert!(deps(&session, "main", "nb1758_k", &["a"], "a")
+        .await
+        .contains(&"referenced_by:nb1758_kc".to_string()));
     // 依存の無い列は何も返さない。
     assert!(deps(&session, "main", "nb1758_c", &["pid"], "unused")
         .await
@@ -106,10 +112,12 @@ async fn mysql_column_dependencies_when_env_set() {
         format!("CREATE TABLE {MYSQL_DB}.nb1758_u (id INT PRIMARY KEY)"),
         format!(
             "CREATE TABLE {MYSQL_DB}.nb1758_p (id INT PRIMARY KEY, price INT, qty INT, owner INT, \
-             total INT AS (price * qty) VIRTUAL, KEY nb1758_idx (price, qty), \
+             total INT AS (price * qty) VIRTUAL, a INT, b INT, nm VARCHAR(20), \
+             label VARCHAR(40) AS (concat('x', nm)) VIRTUAL, UNIQUE KEY nb1758_ab (a, b), KEY nb1758_idx (price, qty), \
              CONSTRAINT nb1758_fk FOREIGN KEY (owner) REFERENCES nb1758_u(id))"
         ),
         format!("CREATE TABLE {MYSQL_DB}.nb1758_c (id INT PRIMARY KEY, pid INT, CONSTRAINT nb1758_cfk FOREIGN KEY (pid) REFERENCES nb1758_p(id))"),
+        format!("CREATE TABLE {MYSQL_DB}.nb1758_cc (x INT, y INT, CONSTRAINT nb1758_ccfk FOREIGN KEY (x, y) REFERENCES nb1758_p(a, b))"),
         format!("CREATE VIEW {MYSQL_DB}.nb1758_v AS SELECT id, price FROM {MYSQL_DB}.nb1758_p"),
     ] {
         conn.execute(&sql, None).await.expect("ddl");
@@ -133,6 +141,16 @@ async fn mysql_column_dependencies_when_env_set() {
     assert_eq!(
         deps(&session, MYSQL_DB, "nb1758_p", &["id"], "id").await,
         vec!["index:PRIMARY", "referenced_by:nb1758_c", "view:nb1758_v"]
+    );
+    // 複合 FK で参照される列 (#1758)。
+    assert_eq!(
+        deps(&session, MYSQL_DB, "nb1758_p", &["a"], "a").await,
+        vec!["index:nb1758_ab", "referenced_by:nb1758_cc"]
+    );
+    // 文字列リテラル入りの生成列の式 (MySQL 8.0 は `\\'` 付きで返す)。
+    assert_eq!(
+        deps(&session, MYSQL_DB, "nb1758_p", &["nm"], "nm").await,
+        vec!["generated_column:label"]
     );
     assert_eq!(
         deps(&session, MYSQL_DB, "nb1758_p", &["owner"], "owner").await,

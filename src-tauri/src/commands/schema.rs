@@ -533,7 +533,12 @@ pub async fn column_dependencies_core(
     match fks {
         Ok(all) => {
             let own: Vec<ForeignKey> = all.iter().filter(|f| f.table == table).cloned().collect();
-            let incoming = filter_incoming_foreign_keys(&all, table);
+            // 複合 FK も列ごとの行のまま渡す (単一列だけを返す逆参照ヘルパは使わない)。
+            let incoming: Vec<ForeignKey> = all
+                .iter()
+                .filter(|f| f.referenced_table == table)
+                .cloned()
+                .collect();
             dependencies.extend(foreign_key_dependencies(table, &own, &incoming, columns));
         }
         Err(e) => {
@@ -561,7 +566,11 @@ pub async fn column_dependencies_core(
         };
         match find_where_used_report(session.clone(), database, &target, &[], |_, _| {}).await {
             Ok(report) => {
-                if !report.failed.is_empty() {
+                if report
+                    .failed
+                    .iter()
+                    .any(|f| matches!(f.kind.as_str(), "view" | "materialized_view" | "trigger"))
+                {
                     definitions_incomplete = true;
                 }
                 for m in report.matches {

@@ -2149,7 +2149,10 @@ impl MySqlConn {
                         .ok()
                         .or_else(|| decode_text_col(r, i).ok())
                 };
-                Some((text(0)?, text(1)?))
+                Some((
+                    text(0)?,
+                    super::column_deps::unescape_mysql_generation_expression(&text(1)?),
+                ))
             })
             .collect())
     }

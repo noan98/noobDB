@@ -96,4 +96,48 @@ describe("AlterTableModal DROP COLUMN の依存警告 (#1758)", () => {
     await waitFor(() => expect(screen.queryByTestId("drop-column-deps-loading")).toBeNull());
     expect(screen.queryByTestId("drop-column-deps")).toBeNull();
   });
+
+  it("DROP を解除すると警告が消える", async () => {
+    deps.mockResolvedValue({
+      dependencies: [{ column: "price", kind: "view", name: "v", detail: null, confidence: "direct" }],
+      warnings: [],
+    });
+    renderModal();
+    const dropButtons = await screen.findAllByRole(
+      "button",
+      { name: t("alterTableDrop") },
+      { timeout: 3000 },
+    );
+    fireEvent.click(dropButtons[1]);
+    await screen.findByTestId("drop-column-deps", undefined, { timeout: 3000 });
+    fireEvent.click(await screen.findByRole("button", { name: t("alterTableKeep") }));
+    await waitFor(() => expect(screen.queryByTestId("drop-column-deps")).toBeNull());
+  });
+
+  it("warnings だけのときは不完全タイトルを出す", async () => {
+    deps.mockResolvedValue({ dependencies: [], warnings: ["definitions"] });
+    renderModal();
+    const dropButtons = await screen.findAllByRole(
+      "button",
+      { name: t("alterTableDrop") },
+      { timeout: 3000 },
+    );
+    fireEvent.click(dropButtons[1]);
+    const box = await screen.findByTestId("drop-column-deps", undefined, { timeout: 3000 });
+    expect(box.textContent).toContain(t("dropColumnDepsIncompleteTitle"));
+    expect(box.textContent).toContain(t("dropColumnWarnDefinitions"));
+  });
+
+  it("取得に失敗したらエラー帯を出す", async () => {
+    deps.mockRejectedValue("boom");
+    renderModal();
+    const dropButtons = await screen.findAllByRole(
+      "button",
+      { name: t("alterTableDrop") },
+      { timeout: 3000 },
+    );
+    fireEvent.click(dropButtons[1]);
+    const box = await screen.findByTestId("drop-column-deps-error", undefined, { timeout: 3000 });
+    expect(box.textContent).toContain("boom");
+  });
 });

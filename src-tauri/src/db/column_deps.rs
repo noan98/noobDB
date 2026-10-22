@@ -9,7 +9,6 @@
 
 use serde::Serialize;
 
-use super::schema_insight::IncomingForeignKey;
 use super::sync::quote_ident;
 use super::types::{ForeignKey, IndexInfo};
 use super::where_used::{find_references, ReferenceConfidence, WhereUsedTarget};
@@ -60,11 +59,12 @@ pub fn index_dependencies(indexes: &[IndexInfo], dropped: &[String]) -> Vec<Colu
 }
 
 /// 削除する列を FK 列に持つ制約 (`own`) と、削除する列を参照先に持つ他テーブルの FK (`incoming`)。
-/// `own` は `table` 自身の行だけを渡すこと。
+/// `own` は `table` 自身の行、`incoming` は `referenced_table == table` の行 (複合 FK も列ごとの行のまま)
+/// だけを渡すこと。
 pub fn foreign_key_dependencies(
     table: &str,
     own: &[ForeignKey],
-    incoming: &[IncomingForeignKey],
+    incoming: &[ForeignKey],
     dropped: &[String],
 ) -> Vec<ColumnDependency> {
     let mut out = Vec::new();
@@ -92,14 +92,24 @@ pub fn foreign_key_dependencies(
         }
     }
     for fk in incoming {
-        if let Some(d) = is_dropped(dropped, &fk.referenced_column) {
+        let Some(ref_col) = fk.referenced_column.as_deref() else {
+            continue;
+        };
+        if let Some(d) = is_dropped(dropped, ref_col) {
             out.push(ColumnDependency {
                 column: d.clone(),
                 kind: "referenced_by".into(),
                 name: fk.table.clone(),
                 detail: Some(format!(
-                    "{}.{} → {}.{}",
-                    fk.table, fk.column, table, fk.referenced_column
+                    "{}.{} → {}.{}{}",
+                    fk.table,
+                    fk.column,
+                    table,
+                    ref_col,
+                    fk.constraint_name
+                        .as_deref()
+                        .map(|n| format!(" ({n})"))
+                        .unwrap_or_default()
                 )),
                 confidence: ReferenceConfidence::Direct,
             });
@@ -314,6 +324,28 @@ fn generated_expr(rest: &str) -> Option<String> {
     None
 }
 
+/// MySQL 8.0 の `GENERATION_EXPRESSION` は文字列リテラルの引用符を `\'` と
+/// バックスラッシュ付きで返す (`concat(_latin1\'x\',`name`)`)。そのままだと識別子走査が
+/// 閉じない文字列とみなして以降を読み飛ばすので、`\'` を含むときだけ `\'`→`'`、`\\`→`\` に戻す
+/// (MariaDB はエスケープ無しで返すので触らない)。
+pub fn unescape_mysql_generation_expression(expr: &str) -> String {
+    if !expr.contains("\\'") {
+        return expr.to_string();
+    }
+    let mut out = String::with_capacity(expr.len());
+    let mut chars = expr.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && matches!(chars.peek(), Some('\'') | Some('\\')) {
+            if let Some(n) = chars.next() {
+                out.push(n);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,11 +381,14 @@ mod tests {
             on_delete: None,
             on_update: None,
         }];
-        let incoming = vec![IncomingForeignKey {
+        let incoming = vec![ForeignKey {
             table: "child".into(),
             column: "t_id".into(),
-            referenced_column: "id".into(),
+            referenced_table: "t".into(),
+            referenced_column: Some("id".into()),
+            constraint_name: Some("fk_child".into()),
             on_delete: None,
+            on_update: None,
         }];
         let deps = foreign_key_dependencies(
             "t",
@@ -367,6 +402,39 @@ mod tests {
         assert_eq!(deps[1].kind, "referenced_by");
         assert_eq!(deps[1].name, "child");
         assert!(foreign_key_dependencies("t", &own, &incoming, &["other".to_string()]).is_empty());
+    }
+
+    #[test]
+    fn composite_foreign_key_is_reported_per_column() {
+        let mk = |col: &str, refcol: &str| ForeignKey {
+            table: "child".into(),
+            column: col.into(),
+            referenced_table: "t".into(),
+            referenced_column: Some(refcol.into()),
+            constraint_name: Some("fk_ab".into()),
+            on_delete: None,
+            on_update: None,
+        };
+        let incoming = vec![mk("x", "a"), mk("y", "b")];
+        let deps = foreign_key_dependencies("t", &[], &incoming, &["a".to_string()]);
+        assert_eq!(deps.len(), 1);
+        assert_eq!(deps[0].kind, "referenced_by");
+        assert_eq!(deps[0].detail.as_deref(), Some("child.x → t.a (fk_ab)"));
+    }
+
+    #[test]
+    fn mysql_escaped_string_literal_expression_still_detects_later_column() {
+        let expr = unescape_mysql_generation_expression(r"concat(_latin1\'x\',`name`)");
+        assert_eq!(expr, "concat(_latin1'x',`name`)");
+        let gen = vec![("label".to_string(), expr)];
+        let deps = generated_column_dependencies(
+            DriverKind::Mysql,
+            "db",
+            "t",
+            &gen,
+            &["name".to_string()],
+        );
+        assert_eq!(deps.len(), 1, "{deps:?}");
     }
 
     #[test]

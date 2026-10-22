@@ -17,6 +17,20 @@ const KIND_KEY = {
   referenced_by: "dropColumnDepReferencedBy",
 } as const satisfies Record<ColumnDependencyKind, string>;
 
+/** `warnings` の内部キー → 表示名。 */
+const WARNING_KEY: Record<
+  string,
+  | "dropColumnWarnDefinitions"
+  | "dropColumnWarnIndexes"
+  | "dropColumnWarnForeignKeys"
+  | "dropColumnWarnGenerated"
+> = {
+  definitions: "dropColumnWarnDefinitions",
+  indexes: "dropColumnWarnIndexes",
+  foreign_keys: "dropColumnWarnForeignKeys",
+  generated_columns: "dropColumnWarnGenerated",
+};
+
 /**
  * DROP COLUMN の確認に添える「この列を参照している依存オブジェクト」の警告 (#1758)。
  * ビュー・生成列・インデックス・外部キー・トリガーを `列 ← 種別 名前` の形で並べる。依存が無ければ
@@ -70,7 +84,9 @@ export function DropColumnDependencies({ state }: { state: ColumnDependencyState
       )}
       {warnings.length > 0 && (
         <chakra.p m={0} mt="1" data-testid="drop-column-deps-warnings">
-          {t("dropColumnDepsIncomplete", { kinds: warnings.join(", ") })}
+          {t("dropColumnDepsIncomplete", {
+            kinds: warnings.map((w) => t(WARNING_KEY[w] ?? "dropColumnWarnOther")).join(", "),
+          })}
         </chakra.p>
       )}
     </Callout>
