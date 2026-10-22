@@ -105,6 +105,8 @@
   フィクスチャ (`COVERED`) か理由つき除外 (`EXCLUDED`) に分類されていることを強制する。
   新コマンドの戻り値型を足したら `serde_schema_parity.rs` に代表インスタンスを足し
   `NOOBDB_WRITE_SERDE_FIXTURES=1 cargo test --test serde_schema_parity` で再生成する) /
+  `channelMessageParity.test.ts` (#1772。`src-tauri/src/**/*.rs` を読み、`Channel<T>` の
+  内部タグ enum の kind ⇔ `tauri.ts` の `switch` ⇔ Zod スキーマを両方向で照合する) /
   `sqlQuotingGolden.test.ts` (#880) /
   `exportFormatGolden.test.ts` (#879) (Rust の統合テストと
   共有するフィクスチャ `src/__tests__/fixtures/*.json` を検証する)、および
