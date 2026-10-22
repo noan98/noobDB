@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // `ipcCommandParity.test.ts` / `commandRegistrationParity.test.ts` と同じ
 // `import.meta.glob` + `?raw` 方式で Rust / TS ソースを読む。
@@ -11,6 +14,21 @@ const tsModules = import.meta.glob("../api/tauri.ts", {
   query: "?raw",
   import: "default",
 }) as Record<string, string>;
+// IPC 境界を越える serde enum は tauri.ts の外 (`txOptions.ts` / `components/*.ts` など) でも
+// ミラーされる。それらは「Rust 側に対応する serde enum がある union」だけを拾う (#1759)。
+// 約 350 ファイル・3.6MB を `import.meta.glob("?raw")` で束ねると Vite の変換だけで数秒かかる
+// ので、こちらは fs で直接読む。
+const srcRoot = fileURLToPath(new URL("..", import.meta.url));
+function listSourceFiles(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) return e.name === "__tests__" ? [] : listSourceFiles(full);
+    const ok = e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") && !e.name.endsWith(".d.ts");
+    return ok && full !== join(srcRoot, "api", "tauri.ts") ? [full] : [];
+  });
+}
+const otherTsModules: Record<string, string> = {};
+for (const f of listSourceFiles(srcRoot)) otherTsModules[f] = readFileSync(f, "utf8");
 
 // Rust の serde enum ⇔ フロントの union のバリアント完全性 (#1194 / #1759)。
 //
@@ -30,6 +48,10 @@ const tsModules = import.meta.glob("../api/tauri.ts", {
 //
 //   - 自動 COVERED : 同名の Rust enum がある (名前が違うものは `NAME_MAP` に明示)
 //   - `EXCLUDED`   : Rust 側に serde enum が無い / 照合できない型 (理由つき・最小限)
+//
+// tauri.ts 以外の `src/**/*.ts` (テスト除く) は 2 段目: 同名 (または `NAME_MAP`) で、かつ Rust 側が
+// serde derive 付きの enum である union だけを自動で照合し、それ以外 (フロント内部専用の型や
+// 無関係な同名 enum) は黙ってスキップする。同名の union が複数ファイルにあるものも対象外。
 //
 // 新しい union を足したのにどちらにも当てはまらないとここで落ちる。同名の Rust enum が
 // あれば自動で照合されるので、追記を忘れて素通りすることがない。
@@ -148,6 +170,7 @@ function parseRustEnum(attrs: string, body: string, file: string, label: string)
 
 /** 全 Rust ソースから `enum <name> { ... }` の定義をすべて集める (`pub` / `pub(crate)` / 非公開)。 */
 function findRustEnums(name: string, sources: Record<string, string> = rustModules): RustEnum[] {
+  // serde の `Serialize` / `Deserialize` を derive していない同名 enum (内部専用) は IPC に流れないので除く。
   const found: RustEnum[] = [];
   const head = new RegExp(`((?:#\\[[^\\]]*\\]\\s*)*)(?:pub(?:\\([^)]*\\))?\\s+)?enum\\s+${name}\\s*\\{`, "g");
   const cheap = new RegExp(`\\benum\\s+${name}\\b`);
@@ -157,6 +180,7 @@ function findRustEnums(name: string, sources: Record<string, string> = rustModul
     const src = stripRustComments(raw);
     head.lastIndex = 0;
     for (let m = head.exec(src); m !== null; m = head.exec(src)) {
+      if (!/\b(?:Serialize|Deserialize)\b/.test(m[1])) continue;
       const open = m.index + m[0].length - 1;
       const close = matchingClose(src, open);
       found.push(parseRustEnum(m[1], src.slice(open + 1, close), file, name));
@@ -167,25 +191,10 @@ function findRustEnums(name: string, sources: Record<string, string> = rustModul
 
 /** 文字列リテラル・コメントを意識して TS のコメントを除去する。 */
 function stripTsComments(src: string): string {
-  let out = "";
-  for (let i = 0; i < src.length; ) {
-    const c = src[i];
-    if (c === '"' || c === "'" || c === "`") {
-      let j = i + 1;
-      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
-      out += src.slice(i, j + 1);
-      i = j + 1;
-    } else if (c === "/" && src[i + 1] === "/") {
-      while (i < src.length && src[i] !== "\n") i++;
-    } else if (c === "/" && src[i + 1] === "*") {
-      const end = src.indexOf("*/", i + 2);
-      i = end < 0 ? src.length : end + 2;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
+  return src.replace(
+    /("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`)|\/\/[^\n]*|\/\*[\s\S]*?\*\//g,
+    (_m, str: string | undefined) => str ?? "",
+  );
 }
 
 type TsUnion = { kind: "string"; variants: string[] } | { kind: "tagged"; tag: string; variants: string[] };
@@ -221,7 +230,7 @@ function classifyTsUnion(rhs: string): TsUnion | null {
 }
 
 /** ソース中の `export type <name> = ...;` をすべて走査し、対象になる union だけ返す。 */
-function extractTsUnions(raw: string): Map<string, TsUnion> {
+function extractTsUnions(raw: string, unclassified?: string[]): Map<string, TsUnion> {
   const src = stripTsComments(raw);
   const out = new Map<string, TsUnion>();
   const head = /export\s+type\s+(\w+)\s*=/g;
@@ -236,18 +245,32 @@ function extractTsUnions(raw: string): Map<string, TsUnion> {
       else if (c === "}" || c === ")" || c === "]") depth--;
       else if (c === ";" && depth === 0) break;
     }
-    const u = classifyTsUnion(src.slice(start, end));
+    const rhs = src.slice(start, end);
+    const u = classifyTsUnion(rhs);
     if (u) out.set(m[1], u);
+    else if (unclassified && /"[^"]*"/.test(rhs)) unclassified.push(m[1]);
   }
   return out;
 }
 
 /** glob で拾った全 TS ファイルの対象 union (名前 → 定義)。 */
 const tsUnions = new Map<string, TsUnion>();
+/** 文字列リテラルを含むのに string union / 判別子付き union として拾えなかった型 (tauri.ts)。 */
+const unclassifiedTs: string[] = [];
 for (const [file, raw] of Object.entries(tsModules)) {
-  for (const [name, union] of extractTsUnions(raw)) {
+  for (const [name, union] of extractTsUnions(raw, unclassifiedTs)) {
     if (tsUnions.has(name)) throw new Error(`${name}: TS 側の union が複数ファイルにある (${file})`);
     tsUnions.set(name, union);
+  }
+}
+
+/** tauri.ts 以外の union (名前 → 定義)。同名が複数ファイルにあるものは null (曖昧なのでスキップ)。 */
+const otherUnions = new Map<string, TsUnion | null>();
+for (const raw of Object.values(otherTsModules)) {
+  // union の候補 (右辺が文字列リテラルか `{` で始まる) を含むファイルだけ処理する。
+  if (!/export\s+type\s+\w+\s*=\s*(?:\|\s*)?["{]/.test(raw)) continue;
+  for (const [name, union] of extractTsUnions(raw)) {
+    otherUnions.set(name, otherUnions.has(name) ? null : union);
   }
 }
 
@@ -263,7 +286,21 @@ const NAME_MAP: Record<string, string> = {
   TextEncodingId: "TextEncoding",
   TransferLossyKind: "LossyKind",
   TransferTypeKind: "OverrideKind",
+  // tauri.ts 以外のミラー (components/exportMasking.ts)。
+  FilterNullMode: "NullMode",
+  ExportMaskRule: "MaskRule",
+  ExportMaskDatePrecision: "DatePrecision",
 };
+
+// tauri.ts 以外で、たまたま Rust の serde enum と同名なだけの無関係な union (自動照合から外す)。
+const OTHER_NOT_MIRRORS: Record<string, string> = {
+  NullMode:
+    "`components/importTemplate.ts` のインポート用 NULL 扱い (none/empty/custom)。Rust の `NullMode` (result_ops.rs, 結果のフィルタ用) とは別物で、ミラーは `FilterNullMode`。",
+};
+
+// 文字列リテラルを含むが string union / 判別子付き union ではない tauri.ts の型 (照合対象外)。
+// 新しく増えたらここへ理由付きで足すか、照合できる形にする。
+const NON_UNION_LITERAL_TYPES: Record<string, string> = {};
 
 // 逃げ道の許可リスト (**空を維持するのが理想**)。Rust 側に serde enum が無い / 完全一致で
 // 照合できない union だけを、根拠付きで載せる。
@@ -284,6 +321,15 @@ function rustNameFor(ts: string): string | null {
 
 const covered = [...tsUnions.keys()].filter((n) => !(n in EXCLUDED));
 
+/** tauri.ts 以外で、serde derive 付きの Rust enum と対応する union (自動 COVERED)。 */
+const otherCovered = [...otherUnions.entries()]
+  .filter(([n, u]) => u !== null && !tsUnions.has(n) && !(n in OTHER_NOT_MIRRORS) && rustNameFor(n) !== null)
+  .map(([n]) => n);
+/** 照合に使う union 定義 (tauri.ts を優先)。 */
+function unionOf(name: string): TsUnion | undefined {
+  return tsUnions.get(name) ?? otherUnions.get(name) ?? undefined;
+}
+
 describe("Rust serde enum ⇔ フロント union のバリアント完全性 (#1194 / #1759)", () => {
   it("serde の rename 規則変換が期待どおり動く (抽出ロジックの自己検証)", () => {
     expect(renameVariant("FkMissingIndex", "snake_case")).toBe("fk_missing_index");
@@ -299,7 +345,7 @@ describe("Rust serde enum ⇔ フロント union のバリアント完全性 (#1
     const sources = {
       a: [
         "/// doc `pub enum Fake {`",
-        '#[derive(Debug)]\n#[serde(tag = "kind", rename_all = "snake_case")]',
+        '#[derive(Debug, Serialize)]\n#[serde(tag = "kind", rename_all = "snake_case")]',
         "pub enum Fake {",
         "    /// 説明",
         "    #[default]",
@@ -378,49 +424,86 @@ describe("Rust serde enum ⇔ フロント union のバリアント完全性 (#1
 
   it("NAME_MAP は実在する union と Rust enum だけを結び、同名で自動照合できるものを含まない", () => {
     for (const [ts, rust] of Object.entries(NAME_MAP)) {
-      expect(tsUnions.has(ts), `${ts} は TS に無い (NAME_MAP が古い)`).toBe(true);
+      expect(unionOf(ts), `${ts} は TS に無い (NAME_MAP が古い)`).toBeDefined();
       expect(findRustEnums(rust).length, `${rust} は Rust に無い (NAME_MAP が古い)`).toBeGreaterThan(0);
       expect(ts === rust, `${ts} は同名なので NAME_MAP は不要`).toBe(false);
     }
   });
 
-  describe.each(covered.map((ts) => [ts]))("%s", (ts) => {
-    const rust = rustNameFor(ts);
-    const union = tsUnions.get(ts);
-    if (rust === null || !union) return; // 未分類は上のテストが報告する。
-    const defs = findRustEnums(rust);
-
-    it(`${rust} ⇔ ${ts}: Rust 側の定義がちょうど 1 件`, () => {
-      expect(defs.length, `${rust}: Rust 側の定義が ${defs.length} 件 (1 件のはず)`).toBe(1);
-    });
-
-    const def = defs[0];
-    if (!def) return;
-    const rustSide = def.variants;
-    const tsSide = union.variants;
-
-    it("バリアントが 1 つ以上あり重複しない", () => {
-      expect(rustSide.length).toBeGreaterThan(0);
-      expect(new Set(rustSide).size).toBe(rustSide.length);
-      expect(new Set(tsSide).size).toBe(tsSide.length);
-    });
-
-    it("判別子の形が一致する (string union ⇔ タグ無し / tagged union ⇔ 同名タグ)", () => {
-      if (union.kind === "tagged") {
-        expect(def.tag, `${rust} に #[serde(tag = "${union.tag}")] が必要`).toBe(union.tag);
-      } else {
-        expect(def.tag, `${ts} は string union だが ${rust} は内部タグ付き`).toBeNull();
-      }
-    });
-
-    it("Rust にあって TS union に無いバリアントが無い (フロントの欠落)", () => {
-      const missing = rustSide.filter((v) => !tsSide.includes(v));
-      expect(missing, `${ts} に追加が必要`).toEqual([]);
-    });
-
-    it("TS union にあって Rust に無いバリアントが無い (フロントの余剰)", () => {
-      const extra = tsSide.filter((v) => !rustSide.includes(v));
-      expect(extra, `${rust} に存在しない`).toEqual([]);
-    });
+  it("OTHER_NOT_MIRRORS は根拠付きで、実在する union だけを指す", () => {
+    for (const [n, reason] of Object.entries(OTHER_NOT_MIRRORS)) {
+      expect(reason.length, `${n} の根拠が必要`).toBeGreaterThan(0);
+      expect(otherUnions.get(n), `${n} は tauri.ts 以外に無い (許可リストが古い)`).toBeTruthy();
+    }
   });
+
+  it("tauri.ts 以外のミラー (TxIsolation / SqlConflictMode / PlanChangeKind / MatchMode / BulkSetValue 等) も対象に入っている", () => {
+    for (const n of [
+      "TxIsolation",
+      "SqlConflictMode",
+      "PlanChangeKind",
+      "PlanChangeSeverity",
+      "MatchMode",
+      "BulkSetValue",
+      "ExportMaskRule",
+      "ExportMaskDatePrecision",
+    ]) {
+      expect([...covered, ...otherCovered], `${n} が対象に入っていない`).toContain(n);
+    }
+  });
+
+  it("文字列リテラルを含む tauri.ts の型は、拾えたか許可リストに理由付きで載っている", () => {
+    const stray = unclassifiedTs.filter((n) => !(n in NON_UNION_LITERAL_TYPES));
+    expect(
+      stray,
+      "string union / 判別子付き union として拾えない型。形を直すか NON_UNION_LITERAL_TYPES に理由付きで足す",
+    ).toEqual([]);
+    for (const [n, reason] of Object.entries(NON_UNION_LITERAL_TYPES)) {
+      expect(reason.length, `${n} の根拠が必要`).toBeGreaterThan(0);
+      expect(unclassifiedTs, `${n} はもう該当しない (許可リストが古い)`).toContain(n);
+    }
+  });
+
+  // 未分類 (Rust に対応が無い) union は上のテストが報告するので、ここでは除外して空 suite を作らない。
+  describe.each([...covered, ...otherCovered].filter((n) => rustNameFor(n) !== null).map((ts) => [ts]))(
+    "%s",
+    (ts) => {
+      const rust = rustNameFor(ts) as string;
+      const union = unionOf(ts) as TsUnion;
+      const defs = findRustEnums(rust);
+
+      it(`${rust} ⇔ ${ts}: Rust 側の定義がちょうど 1 件`, () => {
+        expect(defs.length, `${rust}: Rust 側の定義が ${defs.length} 件 (1 件のはず)`).toBe(1);
+      });
+
+      const def = defs[0];
+      if (!def) return;
+      const rustSide = def.variants;
+      const tsSide = union.variants;
+
+      it("バリアントが 1 つ以上あり重複しない", () => {
+        expect(rustSide.length).toBeGreaterThan(0);
+        expect(new Set(rustSide).size).toBe(rustSide.length);
+        expect(new Set(tsSide).size).toBe(tsSide.length);
+      });
+
+      it("判別子の形が一致する (string union ⇔ タグ無し / tagged union ⇔ 同名タグ)", () => {
+        if (union.kind === "tagged") {
+          expect(def.tag, `${rust} に #[serde(tag = "${union.tag}")] が必要`).toBe(union.tag);
+        } else {
+          expect(def.tag, `${ts} は string union だが ${rust} は内部タグ付き`).toBeNull();
+        }
+      });
+
+      it("Rust にあって TS union に無いバリアントが無い (フロントの欠落)", () => {
+        const missing = rustSide.filter((v) => !tsSide.includes(v));
+        expect(missing, `${ts} に追加が必要`).toEqual([]);
+      });
+
+      it("TS union にあって Rust に無いバリアントが無い (フロントの余剰)", () => {
+        const extra = tsSide.filter((v) => !rustSide.includes(v));
+        expect(extra, `${rust} に存在しない`).toEqual([]);
+      });
+    },
+  );
 });
